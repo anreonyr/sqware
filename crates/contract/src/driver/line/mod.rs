@@ -94,7 +94,6 @@
 //!   `router: line 1 = virtio_mmio@10001000` 与 `router: vacate line=1`（`crates/gate/src/soak.rs`（已删）的固定
 //!   读数）——"死会叫醒"由此从读代码变成量出来的。
 
-
 pub mod core;
 pub mod frame;
 

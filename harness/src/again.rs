@@ -77,9 +77,15 @@ const MS: usize = 1_000;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else { return die("again: boot args unreadable") };
-    let Some((elf, kind)) = find(&boot, VICTIM) else { return die("again: victim not in manifest") };
-    let Ok(name) = Name::new(ROW) else { return die("again: bad row name") };
+    let Some(boot) = boot::Root::take() else {
+        return die("again: boot args unreadable");
+    };
+    let Some((elf, kind)) = find(&boot, VICTIM) else {
+        return die("again: victim not in manifest");
+    };
+    let Ok(name) = Name::new(ROW) else {
+        return die("again: bad row name");
+    };
 
     // 一整场只用这一张表：**这就是本台子与 rig 的关键差别**（那个每轮造新表）。
     let mut table = Table::new();
@@ -152,7 +158,10 @@ fn main() -> Reason {
         // `Slot` 是"最近一次实例的坐标"、死亡不清它 ⇒ 这里读得出来，Oust 正好要用它。
         // `team = None` 是**住本域**的那一枚（iii）：它没有别人的域可放下（放下了就是
         // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
-        if let Some(Slot::Live { team: Some(team), .. }) = table.find(name).map(|s| s.slot) {
+        if let Some(Slot::Live {
+            team: Some(team), ..
+        }) = table.find(name).map(|s| s.slot)
+        {
             let _ = unit::oust(team);
         }
         trace(&table, name, round, "ousted");
@@ -174,7 +183,10 @@ fn main() -> Reason {
         }
         // `team = None` 是**住本域**的那一枚（iii）：它没有别人的域可放下（放下了就是
         // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
-        if let Some(Slot::Live { team: Some(team), .. }) = table.find(name).map(|s| s.slot) {
+        if let Some(Slot::Live {
+            team: Some(team), ..
+        }) = table.find(name).map(|s| s.slot)
+        {
             let _ = unit::oust(team);
         }
         let Ok(task) = service::mint(&mut table, name, elf, kind) else {
@@ -249,4 +261,3 @@ fn die(msg: &str) -> Reason {
     say(msg);
     1
 }
-

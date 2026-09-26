@@ -18,8 +18,8 @@
 //! （`let [Some(a), ..] = slots else { … }`）——缺一格就是装配错，而"该有几格"是收方那张单
 //! 的账（收方那张需求单，今天住 `plan::assembly`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
 
-use env::Wait;
 use alloc::vec;
+use env::Wait;
 use plan::{PAIR_LEN, Pair};
 use protocol::session::Quay;
 use protocol::system::grant;

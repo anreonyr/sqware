@@ -6,9 +6,9 @@
 //             排除双释放与漏释放。
 //             SendSlot 整个传给方法走（whole-struct 捕获，使 Send 生效）。
 
-use env::Wait;
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use env::Wait;
 
 use env::{EnvResult, TaskId, TeamId};
 

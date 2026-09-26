@@ -5,8 +5,8 @@
 //! 因为它要用**船台**：`Slip` 同时看得见"孔"（`runtime`）与"报"（`contract`），而那一层只有
 //! `protocol` 有。**判据一字未改**——尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
 
-use env::wire::Field;
 use env::Wait;
+use env::wire::Field;
 use env::{PieToken, TaskId};
 use plan::{Key, PAIR_LEN, Pair};
 

@@ -3,7 +3,6 @@
 //! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造）——
 //! 判据见 `crates/protocol/src/lib.rs` 与 `crates/contract/src/lib.rs`。
 
-
 // ── 载体：三份各住哪里 ─────────────────────────────────────
 //
 // **判定与接口**（正文、六条原语、帧、客侧那一面）住在这里；**实现方**（真在
@@ -14,6 +13,6 @@ pub mod client;
 // 形与据已搬进「约」——转出。
 pub use contract::system::coalition::{core, frame};
 
-pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Union, Wire, code_to_fail, fail_to_code};
 pub use crate::session::call::opened_by;
 pub use crate::system::coalition::core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};
+pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Union, Wire, code_to_fail, fail_to_code};

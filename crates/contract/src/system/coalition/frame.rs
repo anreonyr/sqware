@@ -181,8 +181,7 @@ pub fn cursor_in(b: u64) -> Option<usize> {
 /// **照实记（为什么这一族多出这一形）**：成功那两形都带回荷载，失败没有——故线上有三种长度
 /// （1 / 10 / `3 + 8n`），客侧按"我问的是哪一条"认。principal 那一面没有这一形：它的失败也占满
 /// 10 字节（`Reply` 那一形）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
     pub status: u8,
 }
@@ -195,8 +194,7 @@ pub struct Status {
 ///
 /// **`more` 那一格是真 `bool`**：只许 0 / 1 这条判据收在 [`env::wire::Field`] 一处
 /// （`bool` 那一格），本族不再手写一遍、也没有"畸形的 2"这一形可读。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SeqHead {
     pub status: u8,
     pub more: bool,

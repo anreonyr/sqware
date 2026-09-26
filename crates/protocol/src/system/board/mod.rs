@@ -3,7 +3,6 @@
 //! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造）——
 //! 判据见 `crates/protocol/src/lib.rs` 与 `crates/contract/src/lib.rs`。
 
-
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
 // **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上板"。**实现侧**（板那一台）
@@ -72,11 +71,11 @@ pub use contract::system::board::{core, frame};
 use contract::system::desk::Desk;
 use env::{PieToken, TaskId};
 
-pub use frame::{
-    ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, TIP_NAME, Tip, UNKNOWN,
-    Union, Wire, code_to_fail, fail_to_code,
-};
 pub use crate::system::board::core::{Board, Fail, Sign, Unship, VestedBy};
+pub use frame::{
+    ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, TIP_NAME, Tip, UNKNOWN, Union,
+    Wire, code_to_fail, fail_to_code,
+};
 
 // ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
 //

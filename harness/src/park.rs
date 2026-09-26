@@ -27,4 +27,3 @@ fn main() -> ! {
         let _ = room::sleep(Duration::from_millis(MS));
     }
 }
-

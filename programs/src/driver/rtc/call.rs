@@ -104,16 +104,14 @@ contract::fail_codes! {
 /// **问那一形 · 「现在几点」**：动作码 ＋ 那一格。
 ///
 /// 动作码由 [`Now::of`] 钉进来（表那一格是裸字节，是构造那一手保证的）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Now {
     pub op: u8,
     pub back: PieToken,
 }
 
 /// **问那一形 · 「再过多 long 叫我」**：动作码 ＋ 那一格 ＋ **一个相对量**。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Arm {
     pub op: u8,
     pub back: PieToken,
@@ -169,7 +167,12 @@ impl Wire {
             }
             ARM if bytes.len() == Arm::LEN => {
                 let ask = Arm::fetch(bytes)?;
-                Some((ask.back, Wire::Arm { after_ns: ask.after_ns }))
+                Some((
+                    ask.back,
+                    Wire::Arm {
+                        after_ns: ask.after_ns,
+                    },
+                ))
             }
             _ => None,
         }
@@ -179,8 +182,7 @@ impl Wire {
 // ── 一答：两形各一张表（**只有这两张上船台**）────────────────
 
 /// **答那一形 · 一个时刻**：驱动读设备那一刻的纳秒计数（u64 LE）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Time {
     pub ns: u64,
 }
@@ -188,8 +190,7 @@ pub struct Time {
 /// **答那一形 · 一个答码**：收下了没有（[`OK`] / [`TAKEN`] / [`PAST`] / [`BAD`]）。
 ///
 /// 与板 / 树那两族的 1 字节答**同名同位**（`Status`）：一格状态、没有荷载。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
     pub status: u8,
 }

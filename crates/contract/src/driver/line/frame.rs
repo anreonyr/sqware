@@ -65,8 +65,7 @@ crate::fail_codes! {
 ///
 /// **`op` 那一格留着**（用户裁定，见文件头）：[`Message::fetch`] 真的读它——形状不对就答
 /// `None`，路由器不动账。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Occupy {
     pub op: u8,
     pub key: Key,

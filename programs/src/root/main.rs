@@ -40,8 +40,8 @@ extern crate alloc;
 extern crate programs;
 
 // 两块账在引导域自己那一摊里（只有它读得到）；装配机器是两个装配者共用的一台。
-use env::Wait;
 use env::Mark;
+use env::Wait;
 use programs::root::boot;
 use programs::service;
 
@@ -182,4 +182,3 @@ fn mint(
         Err(_) => Err(Die::Orch(E_ORCH)),
     }
 }
-

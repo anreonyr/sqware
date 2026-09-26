@@ -53,14 +53,14 @@ extern crate programs;
 
 // 共享件住驱动这一族里：`assemble` 是三台驱动都要写一遍的那段客侧装配。
 use env::Wait;
-use programs::driver::assemble;
 use plan::assembly::UART_WANTS as WANTS;
+use programs::driver::assemble;
 
 // 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`、按名找线路由者）。
-use protocol::system::operator::Where;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 use protocol::system::board::client as board;
+use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
+use protocol::system::operator::client as operator;
 
 use env::{Name, PieToken, TaskId};
 use protocol::driver::line;
@@ -88,7 +88,6 @@ const MS: usize = 1000;
 /// 一次排空最多搬走多少字节。FIFO 只有 16 字节，取四倍宽；满了剩下的还在设备里，
 /// **下一次中断（本域说"排空了" ⇒ 路由者放回线）再来**。
 const DRAIN_MAX: usize = 64;
-
 
 /// 本域那一台：**返回类型就是它的死法**——`Err(Fail::…)` 一路 `?` 出来，
 /// `Ok(())` 是"跑完了"（常驻域走不到那一格）。
@@ -159,7 +158,6 @@ fn main() -> Result<(), fail::Fail> {
     }
 }
 
-
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（门牌 = 那枚读行的孔）。
 ///
 /// ```text
@@ -221,17 +219,15 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {{
-        assert_eq!(part, ocall::OK)
-    }}
+    {
+        { assert_eq!(part, ocall::OK) }
+    }
     assert_eq!(land, ocall::OK);
-    {{
-        assert_eq!(find, ocall::OK)
-    }}
+    {
+        { assert_eq!(find, ocall::OK) }
+    }
     assert!(got);
-    {{
-        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
-    }}
+    { { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME)) } }
 }
 
 /// 从树上找到线路由者，把本域那条线登记下来。
@@ -239,11 +235,7 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
 /// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；坐标是**发下来的那一段区**
 /// （随配给记录到本域，见 `main` 第 2 步——本域不写死它）；入口经会话从树上授进来，
 /// 泊位由 `line` 那一层装。
-fn register(
-    link: &Quay,
-    talk: PieToken,
-    key: plan::Key,
-) -> Result<line::client::Line, fail::Fail> {
+fn register(link: &Quay, talk: PieToken, key: plan::Key) -> Result<line::client::Line, fail::Fail> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| fail::Fail::Line)?;
     let want = Name::new(SERVICE).map_err(|_| fail::Fail::Line)?;
     let road = [dir, want];

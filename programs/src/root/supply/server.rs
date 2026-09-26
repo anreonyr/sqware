@@ -2,8 +2,8 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`contract::driver::supply::frame`]。
 
+use env::PieToken;
 use env::Wait;
-use env::{PieToken};
 use plan::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
@@ -11,8 +11,8 @@ use runtime::env::mail::{NolePie, PolePie};
 use contract::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
-use protocol::session::slip::Slip;
 use protocol::session::slip::Land;
+use protocol::session::slip::Slip;
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///
@@ -110,6 +110,9 @@ fn reply(pier: &Pier, code: u8, records: &[Pair]) {
     if let Some(reply) = Reply::of(code, records) {
         // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
         // 的照实记）：`.ok()` 显式落地一个到不了的点，不是吞错。
-        let _ = Slip::<Reply>::seal(at_peer).load(reply).ok().map(|s| s.ship());
+        let _ = Slip::<Reply>::seal(at_peer)
+            .load(reply)
+            .ok()
+            .map(|s| s.ship());
     }
 }

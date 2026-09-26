@@ -9,7 +9,7 @@
 //! **定长帧**（`#[derive(Frame)]`，实现住 `mold`）的底座就是这里：帧的偏移全部由
 //! [`Field::WIDTH`] 求和得出，从而两头不可能各写一份。
 
-use crate::wire::{Name, PieToken, TaskId, NAME_LEN};
+use crate::wire::{NAME_LEN, Name, PieToken, TaskId};
 
 /// **过线的一格**：定宽 ＋ 会写会读。
 pub trait Field: Sized {

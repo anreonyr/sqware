@@ -105,17 +105,17 @@ extern crate alloc;
 extern crate programs;
 
 // 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给）。
-use env::Wait;
 use env::Mark;
-use programs::driver::assemble;
+use env::Wait;
 use plan::assembly::ROUTER_WANTS as WANTS;
+use programs::driver::assemble;
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use contract::message::Message;
 use protocol::system::board::client as board;
 // 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
-use protocol::system::operator::Where;
 use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
@@ -128,6 +128,7 @@ use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line::{core::Lines, frame as lcall};
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
+use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
 use runtime::core::dock::Dock;
 use runtime::core::pile::Pile;
@@ -135,7 +136,6 @@ use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::mail::{HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
-use runtime::PAGE_SIZE;
 
 use crate::plic::{LINE_PRIORITY, Plic, Sources};
 
@@ -160,8 +160,10 @@ fn main() -> Result<(), fail::Fail> {
     say(&alloc::format!("router: got {got}"));
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
-    let plic_dock = Dock::open(PolePie::from_token(plic_pie.token())).map_err(|_| fail::Fail::Open)?;
-    let dtb_dock = Dock::open(PolePie::from_token(dtb_pie.token())).map_err(|_| fail::Fail::Open)?;
+    let plic_dock =
+        Dock::open(PolePie::from_token(plic_pie.token())).map_err(|_| fail::Fail::Open)?;
+    let dtb_dock =
+        Dock::open(PolePie::from_token(dtb_pie.token())).map_err(|_| fail::Fail::Open)?;
     let (plic, sources) = Plic::new(plic_dock.view(), dtb_dock.view()).ok_or(fail::Fail::Tree)?;
     say("router: docks open");
     // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
@@ -436,7 +438,8 @@ fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
     let mut quay = Quay::open(from, protocol::session::call::hands());
     quay.seat(mark).ok()?;
-    quay.claim(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?;
+    quay.claim(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS))
+        .ok()?;
     // **码头一起交出去**：`Lines` 收不下这条泊位时，得由拿着码头的人把它放回去
     // （只有码头知道那一枚是本端铸的，见 `drop_lane`）。
     let pier = quay.find(mark).copied()?;
@@ -546,22 +549,18 @@ fn tree_trip(sire: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {{
-        assert_eq!(part, ocall::OK)
-    }}
+    {
+        { assert_eq!(part, ocall::OK) }
+    }
     assert_eq!(land, ocall::OK);
-    {{
-        assert_eq!(find, ocall::OK)
-    }}
+    {
+        { assert_eq!(find, ocall::OK) }
+    }
     assert!(got);
-    {{
-        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE))
-    }}
+    { { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE)) } }
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-
-

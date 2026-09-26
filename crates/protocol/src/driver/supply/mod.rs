@@ -5,6 +5,6 @@
 pub mod client;
 
 // 形、据**转出**（`crate::driver::supply::{frame,core}` 照旧解析）。
-pub use contract::driver::supply::{core, frame};
-pub use contract::driver::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
 pub use contract::driver::supply::core::Fail;
+pub use contract::driver::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
+pub use contract::driver::supply::{core, frame};

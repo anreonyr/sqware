@@ -32,10 +32,8 @@
 //! 这是本协议**不发明名字系统**的原因：按名字寻址是目录的事，不在这一层——记号只回答
 //! "这是哪条路上的那一枚"，不回答"谁在哪儿"。
 
-
 pub mod core;
 pub mod hands;
 
-pub use core::{ Claim, Pier, Quay, Seat };
-pub use hands::{ Hands, Hole };
-
+pub use core::{Claim, Pier, Quay, Seat};
+pub use hands::{Hands, Hole};

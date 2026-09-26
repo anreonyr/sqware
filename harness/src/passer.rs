@@ -58,18 +58,28 @@ const E_TRIP: usize = 1;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("passer: no sire") };
+    let Ok(sire) = utask::sire() else {
+        return bail("passer: no sire");
+    };
     // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子那一格只认得 `entry` 那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else { return bail("passer: no board link") };
+    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
+        return bail("passer: no board link");
+    };
     // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
-    let Ok(talk) = board::ask_hole(board) else { return bail("passer: no ask hole") };
+    let Ok(talk) = board::ask_hole(board) else {
+        return bail("passer: no ask hole");
+    };
     // 本域的服务入口：别人按名字找到本域之后往它说话。它也是要交给板的那一枚——记号
     // `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else { return bail("passer: no entry") };
-    let Ok(me) = Name::new(ME) else { return bail("passer: bad name") };
+    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
+        return bail("passer: no entry");
+    };
+    let Ok(me) = Name::new(ME) else {
+        return bail("passer: bad name");
+    };
 
     // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
     let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
@@ -77,9 +87,9 @@ fn main() -> Report<'static> {
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"
     // 是本站此刻就知道的期望（旧宿主靶上那一条 `passer: reg=0 entry=… say=passer` 钉的就是它）。
-    {{
-        assert_eq!(reg, bcall::OK)
-    }}
+    {
+        { assert_eq!(reg, bcall::OK) }
+    }
 
     // 二、**直接死**：不说退场那一句、不交回、不留门闩。板上那枚牌子与板侧那一格从此是
     //     死实例——只有"那一枚还答得出吗"（`VestedBy`）问得出来。
@@ -91,7 +101,7 @@ fn main() -> Report<'static> {
         } else {
             "passer: failed"
         },
-    )
+    );
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
@@ -103,4 +113,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

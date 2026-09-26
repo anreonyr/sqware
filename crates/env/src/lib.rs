@@ -38,11 +38,11 @@ pub use fid::{
     EnvCall, HoleDir, MailCall, MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall,
     PieCallRet, ProgramKind, RoomCall, RoomCallRet, ToleCall, ToleCallRet, UnitCall, UnitCallRet,
 };
-pub use permission::{Access, Permission, Policy};
-pub use wait::Wait;
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`contract` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
+pub use permission::{Access, Permission, Policy};
+pub use wait::Wait;
 pub use wire::{
     Decode, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
 };

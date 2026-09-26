@@ -6,10 +6,10 @@
 
 use alloc::format;
 
+use env::PieToken;
 use plan::key::{DTB, IRQ, REGION};
-use plan::{args as boot_args, manifest};
-use env::{PieToken};
 use plan::{Key, PAIR_LEN, Pair};
+use plan::{args as boot_args, manifest};
 
 /// boot 给引导域的两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
 pub struct Root {

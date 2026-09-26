@@ -3,7 +3,6 @@
 //! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造）——
 //! 判据见 `crates/protocol/src/lib.rs` 与 `crates/contract/src/lib.rs`。
 
-
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
 // **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上树"。**今天的客人**：六台域
@@ -71,14 +70,18 @@ pub use contract::system::operator::{core, frame};
 use contract::system::desk::Desk;
 use env::{PieToken, TaskId};
 
+pub use crate::system::operator::core::gate::{Blind, Code, Control, verdict};
+pub use crate::system::operator::core::judge::{
+    Branch, Door, Id, League, Rule, Ruling, Who, judge,
+};
+pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
+pub use crate::system::operator::core::{
+    EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where,
+};
 pub use frame::{
     ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,
     TIP_NAME, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
-pub use crate::system::operator::core::{EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where};
-pub use crate::system::operator::core::gate::{Blind, Code, Control, verdict};
-pub use crate::system::operator::core::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
-pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
 
 // ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
 //

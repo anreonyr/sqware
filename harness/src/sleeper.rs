@@ -39,10 +39,10 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
+use protocol::system::operator as ocall;
+use protocol::system::operator::client as operator;
 
 use alloc::format;
 use core::time::Duration;
@@ -157,14 +157,14 @@ fn main() -> Report<'static> {
     // 那一行就恒等于 0，所以"它是 0"是**控制流证据**，不是判据；把它写成
     // `assert_eq!(armed_code, 0)` 就是把 `bail` 改个名字（这一格是写的时候当场撞上的：
     // 第一版写了 `assert!(armed.is_ok())`，而 `armed` 根本不是 `Result`）。
-    {{
-        assert_eq!(reg, bcall::OK)
-    }}
+    {
+        { assert_eq!(reg, bcall::OK) }
+    }
     // 照实记：`arming_the_past_is_refused` 那一例随 `Wire::Arm` 收相对量而退场（"过去"
     // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs`（已删）那张表跟着改。
-    {{
-        assert_eq!(taken, rcall::TAKEN)
-    }}
+    {
+        { assert_eq!(taken, rcall::TAKEN) }
+    }
 
     return Report::note(env::EXIT_OK, "sleeper: gone");
 }
@@ -223,4 +223,3 @@ fn register() -> u8 {
     };
     board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
 }
-

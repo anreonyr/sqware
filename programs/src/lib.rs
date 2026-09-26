@@ -94,6 +94,6 @@ pub mod user;
 // 这里只是转发，故 `use programs::{Exit, Report}` 这一形照旧。
 pub use runtime::core::exit::{Exit, Report};
 
+pub use env::Reason;
 /// 入口那一手（过程宏）：bin 里写 `#[entry] fn main() …`，展开与符号名见那个 crate。
 pub use mold::entry;
-pub use env::Reason;

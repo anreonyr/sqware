@@ -52,12 +52,18 @@ const REPORT_WAKE: bool = false;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Ok(sire) = utask::sire() else { return bail("hang: no sire") };
-    let Ok(mark) = Name::new(MARK) else { return bail("hang: bad mark") };
+    let Ok(sire) = utask::sire() else {
+        return bail("hang: no sire");
+    };
+    let Ok(mark) = Name::new(MARK) else {
+        return bail("hang: bad mark");
+    };
 
     // 码头朝生我者：把本端那一枚孔交出去（台主认领它 ⇒ 台主手里有写端，推得醒本端）。
     let mut quay = Quay::open(sire, protocol::session::call::hands());
-    let Ok(pie) = quay.seat(mark).map(|p| *p) else { return bail("hang: seat") };
+    let Ok(pie) = quay.seat(mark).map(|p| *p) else {
+        return bail("hang: seat");
+    };
 
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。
     let mut buf = [0u8; 8];
@@ -91,4 +97,3 @@ fn bail(msg: &str) -> Reason {
     say(msg);
     1
 }
-

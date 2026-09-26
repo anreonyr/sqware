@@ -3,8 +3,8 @@
 //! 本文件**不碰内核**：它要的十件手全部**注入**进来（[`Hands`]），故会话的规矩喂一张假表
 //! 就能推理，换载体不必重写。那条"不碰内核"的纪律现在由 **crate 边界**管着（见本 crate 头注）。
 
-use env::Wait;
 use alloc::vec::Vec;
+use env::Wait;
 
 use env::{Mark, Name, PieToken, TaskId};
 
@@ -245,9 +245,7 @@ impl Quay {
         // 唯一刻意保留旧形状的地方**：把永久改成不武装定时器要先动内核，不在这一刀里。
         let deadline = match millis {
             Wait::Forever => u64::MAX,
-            Wait::AtMost(ms) => {
-                (self.hands.now_ns)().saturating_add(ms as u64 * 1_000_000)
-            }
+            Wait::AtMost(ms) => (self.hands.now_ns)().saturating_add(ms as u64 * 1_000_000),
         };
         loop {
             self.scan(of, mark)?;

@@ -59,8 +59,8 @@ use programs::Report;
 // 需求单归**收方**：单子的**定义**住 `plan::assembly`（装配单本就要把那一格摆出来，故与它同层
 // ——见那一处头注），本域直接从定义处取；装配者照同一张表开单。
 // 客侧装配也共用驱动那一族那段机器（会话 + 收配给 + 归位）——它领门闩走的是同一条路。
-use programs::driver::assemble;
 use plan::assembly::LODGER_WANTS as WANTS;
+use programs::driver::assemble;
 
 // 树：本域是**客侧**（按名找服务）。
 use protocol::system::operator as ocall;
@@ -69,7 +69,7 @@ use protocol::system::operator::client as operator;
 use alloc::format;
 
 use env::{Name, PieToken};
-use plan::{Key};
+use plan::Key;
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
 use runtime::env::debug;
@@ -134,15 +134,15 @@ fn main() -> Report<'static> {
     // 孔，这一例就红）。旧宿主靶上 `lodger: occupy=0` / `taken=2` / `unknown=1` / `pies=9` 钉的
     // 就是这四样。
     assert_eq!(ok, lcall::OK);
-    {{
-        assert_eq!(taken, lcall::TAKEN)
-    }}
-    {{
-        assert_eq!(unknown, lcall::UNKNOWN)
-    }}
-    {{
-        assert_eq!(pies, 9)
-    }}
+    {
+        { assert_eq!(taken, lcall::TAKEN) }
+    }
+    {
+        { assert_eq!(unknown, lcall::UNKNOWN) }
+    }
+    {
+        { assert_eq!(pies, 9) }
+    }
 
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;
     return Report::note(
@@ -152,7 +152,7 @@ fn main() -> Report<'static> {
         } else {
             "lodger: failed"
         },
-    )
+    );
 }
 
 /// 上树一趟：`FIND /device/router` ⇒ 那扇门（登记从它走）。
@@ -185,4 +185,3 @@ fn attempt(entry: PieToken, key: Key) -> (u8, Option<line::client::Line>) {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

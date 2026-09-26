@@ -473,7 +473,6 @@
 //!
 //! 策略（该不该杀、该给什么身份）不在这里：**内核只回答"能不能"**。
 
-
 pub mod board;
 pub mod coalition;
 pub mod core;

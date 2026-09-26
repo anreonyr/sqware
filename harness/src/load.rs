@@ -139,9 +139,15 @@ const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else { return die("load: boot args unreadable") };
-    let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else { return die("load: busy not in manifest") };
-    let Some((parker, parker_kind)) = find(&boot, PARKER_ELF) else { return die("load: park not in manifest") };
+    let Some(boot) = boot::Root::take() else {
+        return die("load: boot args unreadable");
+    };
+    let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else {
+        return die("load: busy not in manifest");
+    };
+    let Some((parker, parker_kind)) = find(&boot, PARKER_ELF) else {
+        return die("load: park not in manifest");
+    };
 
     // 校准在铺负荷**之前**：此刻机器是静的，量出来的是"空载那把尺"（只用来定放行间隔）。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -230,4 +236,3 @@ fn die(msg: &str) -> Reason {
     say(msg);
     1
 }
-

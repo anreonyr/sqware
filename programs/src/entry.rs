@@ -44,7 +44,7 @@ global_asm!(
     "    addi sp, sp, -8", // 出口槽：`Reason` 就住这里（8 字节，栈对齐）
     "    mv   a0, sp",
     "    call clean_ret", // `#[entry]` 展开出的那一层（形状固定：a0 = 槽）
-    "1: j 1b",           // main 返回则兜底循环（它理论上不返回）
+    "1: j 1b",            // main 返回则兜底循环（它理论上不返回）
 );
 
 #[unsafe(no_mangle)]

@@ -67,20 +67,32 @@ const OK_NOTE: &str = "probe-owner: owner rule held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-owner: no sire") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-owner: no sire");
+    };
 
     // 一、与树开会话（同 `echo` / `probe-denied`）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-owner: no tree link") };
-    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-owner: no tree ask") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-owner: no tree link");
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        return bail("probe-owner: no tree ask");
+    };
 
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-owner: bad name") };
+    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
+        return bail("probe-owner: bad name");
+    };
     let road = [dir, me];
 
     // 二、那一格**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
-    let Some(before) = wait_id(hedge, &tree, &road) else { return bail("probe-owner: no /device/uart") };
+    let Some(before) = wait_id(hedge, &tree, &road) else {
+        return bail("probe-owner: no /device/uart");
+    };
 
     // 三、铸一枚自己的孔，去顶那一格——**这一手该被拒**。
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else { return bail("probe-owner: no entry") };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
+        return bail("probe-owner: no entry");
+    };
     let at = Where::At(wait_dir(hedge, &tree, dir).unwrap_or(EntryId::new(0)));
     let land = operator::land(
         hedge,
@@ -131,18 +143,20 @@ fn main() -> Report<'static> {
 
     // 七、判据：**一例一条**（原先三格 `&&` 成一句）。
     let took = taken.is_ok();
-    {{
-        assert!(
-            denied,
-            "那一格的主人还活着，land 本该被拒（land={land_code}）"
-        )
-    }}
-    {{
-        assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")
-    }}
-    {{
-        assert!(took, "probe-lease 已经死了，那一格该重新可落")
-    }}
+    {
+        {
+            assert!(
+                denied,
+                "那一格的主人还活着，land 本该被拒（land={land_code}）"
+            )
+        }
+    }
+    {
+        { assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）") }
+    }
+    {
+        { assert!(took, "probe-lease 已经死了，那一格该重新可落") }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
@@ -224,4 +238,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

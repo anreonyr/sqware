@@ -51,9 +51,9 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use protocol::session::Quay;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -83,18 +83,26 @@ const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-other: no sire") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-other: no sire");
+    };
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-other: no tree link") };
-    let Ok(talk) = operator::ask_hole(host) else { return bail("probe-other: no tree ask") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-other: no tree link");
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        return bail("probe-other: no tree ask");
+    };
     let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
         Name::new(DIR),
         Name::new(PANE),
         Name::new(IS),
         Name::new(UNDER),
         Name::new(FOREIGN),
-    ) else { return bail("probe-other: bad name") };
+    ) else {
+        return bail("probe-other: bad name");
+    };
 
     // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
     let is = denied(talk, &tree, &[dir, pane, is_name]);
@@ -107,15 +115,15 @@ fn main() -> Report<'static> {
     ));
 
     // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
-    {{
-        assert_eq!(is, ocall::DENIED)
-    }}
-    {{
-        assert_eq!(under, ocall::DENIED)
-    }}
-    {{
-        assert_eq!(foreign, ocall::DENIED)
-    }}
+    {
+        { assert_eq!(is, ocall::DENIED) }
+    }
+    {
+        { assert_eq!(under, ocall::DENIED) }
+    }
+    {
+        { assert_eq!(foreign, ocall::DENIED) }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
@@ -153,4 +161,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

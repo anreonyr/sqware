@@ -3,17 +3,17 @@
 //! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
 
-use env::wire::Field;
-use env::Wait;
 use env::Mark;
-use plan::assembly::Eyes;
+use env::Wait;
+use env::wire::Field;
 use env::{Name, PieToken, TaskId};
+use plan::assembly::Eyes;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-pub use protocol::system::operator::{LINK, TIP_MARK, TIP_NAME};
-use protocol::system::operator::frame::CoordFrame;
 use protocol::session::Quay;
+use protocol::system::operator::frame::CoordFrame;
+pub use protocol::system::operator::{LINK, TIP_MARK, TIP_NAME};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
 

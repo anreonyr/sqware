@@ -205,7 +205,6 @@
 //! - **与 Pie**：零交集。`System = 存在与生命周期`、`Principal = 策略身份`、
 //!   `Pie = 实际持有的 authority`、`具体协议 = authority 的语义`。
 
-
 pub mod core;
 pub mod frame;
 

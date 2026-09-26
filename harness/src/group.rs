@@ -103,28 +103,42 @@ const SETTLE: u64 = 200;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else { return die("group: boot args unreadable") };
-    let Some((elf, kind)) = find(&boot, WAITER) else { return die("group: waiter not in manifest") };
+    let Some(boot) = boot::Root::take() else {
+        return die("group: boot args unreadable");
+    };
+    let Some((elf, kind)) = find(&boot, WAITER) else {
+        return die("group: waiter not in manifest");
+    };
 
     // ① 组：**共享**（不带 `ONLY` ⇒ 同一枚 accord 给两个任务都成立）。
-    let Ok(pile) = Pile::unseal(true) else { return die("group: unseal shared") };
+    let Ok(pile) = Pile::unseal(true) else {
+        return die("group: unseal shared");
+    };
     let group = pile.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = mail::unseal_hole(Mark::of("member")) else { return die("group: member hole") };
+    let Ok(member) = mail::unseal_hole(Mark::of("member")) else {
+        return die("group: member hole");
+    };
     let member = HolePie::from_token(member);
     // ③ 回报孔**一人一枚**：孔是单槽，共用一枚时第二条会撞 `Busy`（那是台子的噪声，
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else { return die("group: report hole") };
+        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else {
+            return die("group: report hole");
+        };
         *slot = tok;
     }
 
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut tasks = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(team) = unit::build(elf, kind) else { return die("group: build") };
-        let Ok(task) = unit::spawn(team, 0, &[], 0) else { return die("group: spawn") };
+        let Ok(team) = unit::build(elf, kind) else {
+            return die("group: build");
+        };
+        let Ok(task) = unit::spawn(team, 0, &[], 0) else {
+            return die("group: spawn");
+        };
         tasks[i] = task;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
@@ -178,8 +192,8 @@ fn main() -> Reason {
     //    取一次该成功，再取一次该答 `Busy`。这一格与"整链放行"是两件事：共享的是**唤醒**，
     //    不是**交付**。
     let mut buf = [0u8; 1];
-    let deliver =
-        member.pull_timeout(&mut buf, Wait::POLL).is_ok() && member.pull_timeout(&mut buf, Wait::POLL).is_err();
+    let deliver = member.pull_timeout(&mut buf, Wait::POLL).is_ok()
+        && member.pull_timeout(&mut buf, Wait::POLL).is_err();
 
     // ⑨ 收尾：两个等待者都得退场（**没醒的那个还在永久等** ⇒ 收掉它；这也是"少醒一人"
     //    那一格能被观察到收场的原因）。**这一步不设判据**：「都退场了」由机器那一句
@@ -251,4 +265,3 @@ fn die(msg: &str) -> Reason {
     say(msg);
     1
 }
-

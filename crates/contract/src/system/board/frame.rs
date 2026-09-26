@@ -55,8 +55,7 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Name> {
 // 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 
 /// 登记那一问：动作码 ＋ 名字 ＋ 入口那 8 字节。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Seed {
     pub op: u8,
     pub name: env::Name,
@@ -64,23 +63,20 @@ pub struct Seed {
 }
 
 /// 只报名字那两问（注销 / 查）共用的形状。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Name {
     pub op: u8,
     pub name: env::Name,
 }
 
 /// 空载荷那一问（退场）：整帧只有动作码这一格。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Evict {
     pub op: u8,
 }
 
 /// **答话那一格**：整帧一格——答只有一句话（成功 / 四种失败 / 读不懂）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
     pub status: u8,
 }
@@ -167,9 +163,16 @@ pub enum Req {
 /// ——那一个尾巴说不了它与 [`Req`] 的分别。用户裁定的第三个词是 `Wire`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
-    Register { name: env::Name, seed: PieToken },
-    Unregister { name: env::Name },
-    Lookup { name: env::Name },
+    Register {
+        name: env::Name,
+        seed: PieToken,
+    },
+    Unregister {
+        name: env::Name,
+    },
+    Lookup {
+        name: env::Name,
+    },
     Evict,
     /// 表外的动作码：**这一帧读得懂（`[码][名字]`），但那一码不是这四枚之一**。
     Unknown,
@@ -190,7 +193,11 @@ impl Message for Req {
                 seed,
             }
             .store_in(out),
-            Req::Unregister { name } => Name { op: UNREGISTER, name }.store_in(out),
+            Req::Unregister { name } => Name {
+                op: UNREGISTER,
+                name,
+            }
+            .store_in(out),
             Req::Lookup { name } => Name { op: LOOKUP, name }.store_in(out),
             Req::Evict => Evict { op: EVICT }.store_in(out),
         }
@@ -323,8 +330,7 @@ pub const TIP_NAME: &str = "board-tip";
 /// `board: swept n=1` 有、**`system: gone coalition` 一条都没有**——三枚内件与三台驱动都
 /// 不登记。名字搭提示这一格过来之后，板在 `admit` 那一刻就把"谁 → 道"记下，
 /// **与客人登不登记无关**；`REGISTER` 从此只管"名字 → 入口"那一件事。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tip {
     pub who: TaskId,
     pub name: env::Name,

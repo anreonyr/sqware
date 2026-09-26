@@ -49,8 +49,7 @@ use env::PieToken;
 /// `coalition/frame.rs` 与两族的 `mod.rs` 原先都写"一问 17 字节"——那是 `back` 那一格
 /// **落地之前**抄的，此后它一直是 `1 + 8 + 8 + 8 = 25`（`pack_ask` 写满 25、`unpack_ask`
 /// 要 25）。今天这个数**一处都不写**（表求和），那几处假的也一并改真。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Query {
     pub op: u8,
     pub a: u64,
@@ -86,8 +85,7 @@ pub struct Query {
 /// 而当**那一格还是 `!= 0`** 时，畸形的 `2` 会读成"是"——故这一条账当时记着"要严格就把
 /// '这一格只许 0 / 1'并进判据"。**今天严格收在 [`env::wire::Field`] 一处了**（`bool` 那一格只
 /// 认 0 / 1）：合法帧逐字不变，畸形的 `2` 整个读不懂（`fetch` 答 `None`），本文件不再另判。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Reply {
     pub status: u8,
     pub flag: bool,

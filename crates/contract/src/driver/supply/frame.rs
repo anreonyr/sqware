@@ -61,8 +61,7 @@ pub const BAD: u8 = 4;
 ///
 /// 条数是**声明**：与后面那一段绑死（读的人两边对不上就是读不懂）。这一族一问只有这一形，
 /// 故不留"未完"那一格（对照 coalition 那扇窗：盟籍没有上限）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct OrderHead {
     pub op: u8,
     pub count: u8,
@@ -160,8 +159,7 @@ impl Message for Order {
 
 /// 回单那头两格：**答话那一格**（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）
 /// ＋ 条数。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReplyHead {
     pub code: u8,
     pub count: u8,

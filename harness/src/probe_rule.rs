@@ -90,6 +90,7 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
+use protocol::session::Quay;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::operator as ocall;
@@ -98,12 +99,10 @@ use protocol::system::operator::core::judge::Rule;
 use protocol::system::operator::{EntryId, Where};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;
-use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
-
 
 /// 本域分出来的那一块：`/sys/rule`。
 const DIR: &str = "sys";
@@ -144,39 +143,73 @@ const OK_NOTE: &str = "probe-rule: the rules held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-rule: no sire") };
-    let Ok(me) = utask::self_id() else { return bail("probe-rule: no self id") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-rule: no sire");
+    };
+    let Ok(me) = utask::self_id() else {
+        return bail("probe-rule: no self id");
+    };
 
     // 一、上树：本域开一条会话，走两趟按名字找（盟册那一面 + 名册那一面）——与 `member` 同形。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-rule: no tree link") };
-    let Ok(talk) = operator::ask_hole(host) else { return bail("probe-rule: no tree ask") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-rule: no tree link");
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        return bail("probe-rule: no tree ask");
+    };
     // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
     // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
     // 这些话就全石沉大海（`session` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
-    let Ok(again) = operator::ask_hole(host) else { return bail("probe-rule: no second tree ask") };
+    let Ok(again) = operator::ask_hole(host) else {
+        return bail("probe-rule: no second tree ask");
+    };
     let ask_same = again == talk;
     let talk = again;
-    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else { return bail("probe-rule: no coalition") };
-    let Ok(coal) = CoalitionFace::of(entry) else { return bail("probe-rule: bad coalition face") };
-    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else { return bail("probe-rule: no identity") };
-    let Ok(policy) = PrincipalFace::of(entry) else { return bail("probe-rule: bad identity face") };
+    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else {
+        return bail("probe-rule: no coalition");
+    };
+    let Ok(coal) = CoalitionFace::of(entry) else {
+        return bail("probe-rule: bad coalition face");
+    };
+    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else {
+        return bail("probe-rule: no identity");
+    };
+    let Ok(policy) = PrincipalFace::of(entry) else {
+        return bail("probe-rule: bad identity face");
+    };
 
     // 二、我是谁：装配期绑的那一条（`p`），以及它底下的一条（`q`，给"换一位代表"用）。
-    let Ok(Some(p)) = policy.resolve(me, Wait::AtMost(MS)) else { return bail("probe-rule: unbound") };
-    let Ok(q) = policy.derive(p, Wait::AtMost(MS)) else { return bail("probe-rule: no sub identity") };
+    let Ok(Some(p)) = policy.resolve(me, Wait::AtMost(MS)) else {
+        return bail("probe-rule: unbound");
+    };
+    let Ok(q) = policy.derive(p, Wait::AtMost(MS)) else {
+        return bail("probe-rule: no sub identity");
+    };
 
     // 三、立一枚盟并**进去**（"立了不等于进了"：`found` 只发号，成员要靠 `enter`）。
-    let Ok(c) = coal.found(Wait::AtMost(MS)) else { return bail("probe-rule: no coalition id") };
+    let Ok(c) = coal.found(Wait::AtMost(MS)) else {
+        return bail("probe-rule: no coalition id");
+    };
     if coal.enter(c, Wait::AtMost(MS)).is_err() {
         return bail("probe-rule: enter failed");
     }
 
     // 四、分 `/sys/rule`（"分"是幂等的，故重来一次也无事）。
-    let Ok(dir) = Name::new(DIR) else { return bail("probe-rule: bad name") };
-    let Ok(pane) = Name::new(PANE) else { return bail("probe-rule: bad name") };
-    let Ok(mine) = Name::new(MINE) else { return bail("probe-rule: bad name") };
-    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, Wait::AtMost(MS)) else { return bail("probe-rule: no /sys") };
-    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, Wait::AtMost(MS)) else { return bail("probe-rule: no /sys/rule") };
+    let Ok(dir) = Name::new(DIR) else {
+        return bail("probe-rule: bad name");
+    };
+    let Ok(pane) = Name::new(PANE) else {
+        return bail("probe-rule: bad name");
+    };
+    let Ok(mine) = Name::new(MINE) else {
+        return bail("probe-rule: bad name");
+    };
+    let Ok(at) = operator::part(talk, &tree, Where::Root, dir, Wait::AtMost(MS)) else {
+        return bail("probe-rule: no /sys");
+    };
+    let Ok(pane_id) = operator::part(talk, &tree, Where::At(at), pane, Wait::AtMost(MS)) else {
+        return bail("probe-rule: no /sys/rule");
+    };
 
     // 五、落三格，各带一条规矩。`mine = false`：这一台证的是**"用"那一轴**，故不声明归属
     //     （那一轴由 `probe-owner` / `probe-lease` 那两台管）。
@@ -257,7 +290,8 @@ fn main() -> Report<'static> {
         None => EntryId::new(0),
     };
     let temp_id = plate(talk, &tree, host, pane_id, TEMP, Rule::Public, false);
-    let trimmed = temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, Wait::AtMost(MS)).is_ok();
+    let trimmed =
+        temp_id.get() != 0 && operator::trim(talk, &tree, temp_id, Wait::AtMost(MS)).is_ok();
     let gone_id = plate(
         talk,
         &tree,
@@ -336,67 +370,71 @@ fn main() -> Report<'static> {
     // hold`——还得回头看上面那 19 个计数器才认得出是哪一条。现在一例一个名字，而**名字就是
     // 结论**（每一例后面那句"为什么"，与头注里那几条同源）。
     // —— 装配：一条规矩没落上，后面全没意义。故它排第一：红了不会被后面的假红淹没。
-    {{
-        assert!(made == 3, "made={made}")
-    }}
+    {
+        { assert!(made == 3, "made={made}") }
+    }
     // —— 以 p 试（`p = resolve(self)`）：三条正证。
     assert_eq!(is, ocall::OK);
-    {{
-        assert_eq!(under, ocall::OK)
-    }}
-    {{
-        assert_eq!(inside, ocall::OK)
-    }}
+    {
+        { assert_eq!(under, ocall::OK) }
+    }
+    {
+        { assert_eq!(inside, ocall::OK) }
+    }
     // 每一问用的都是**第二枚**孔那个号：它要是另一枚，持树者认的是第一枚，这些话全石沉大海。
-    {{
-        assert!(
-            ask_same,
-            "先找后铸叫回来的不是同一枚孔：ask2={}",
-            again.get()
-        )
-    }}
+    {
+        {
+            assert!(
+                ask_same,
+                "先找后铸叫回来的不是同一枚孔：ask2={}",
+                again.get()
+            )
+        }
+    }
     // —— `Opens` 的正负两面。
-    {{
-        assert_eq!(open, ocall::OK)
-    }}
-    {{
-        assert_eq!(foreign, ocall::DENIED, "别人开着的那一格，我该被拒")
-    }}
+    {
+        { assert_eq!(open, ocall::OK) }
+    }
+    {
+        { assert_eq!(foreign, ocall::DENIED, "别人开着的那一格，我该被拒") }
+    }
     // —— 两格「判不了」：`9` 单列的理由正是"这一格没通"，故它**不算通过**。
-    {{
-        assert_eq!(on_pane, ocall::UNJUDGED, "那一号是块 Pane：没有开者这一说")
-    }}
-    {{
-        assert_eq!(on_gone, ocall::UNJUDGED, "那一格剪掉了 ⇒ 永久没有开者")
-    }}
+    {
+        { assert_eq!(on_pane, ocall::UNJUDGED, "那一号是块 Pane：没有开者这一说") }
+    }
+    {
+        { assert_eq!(on_gone, ocall::UNJUDGED, "那一格剪掉了 ⇒ 永久没有开者") }
+    }
     // —— `trim` 那一手真的落下去了（上面 `gone-door` 那一格的前提）。
-    {{
-        assert!(trimmed, "temp 没剪掉")
-    }}
+    {
+        { assert!(trimmed, "temp 没剪掉") }
+    }
     // —— 换一位代表（**同一条 TID**）：`adopt` 成功；两条负证、两条仍是正证。
-    {{
-        assert!(adopt, "adopt(q) 没成功")
-    }}
-    {{
-        assert_eq!(is_sub, ocall::DENIED, "换代表之后 Is(p) 该拒")
-    }}
-    {{
-        assert_eq!(in_sub, ocall::DENIED, "换代表之后不在那枚盟里了")
-    }}
-    {{
-        assert_eq!(under_sub, ocall::OK, "q 仍在 p 那一支里 ⇒ Under(p) 照旧过")
-    }}
-    {{
-        assert_eq!(
-            open_sub,
-            ocall::OK,
-            "开者与问的是同一条 TID ⇒ 两边一起变成 q"
-        )
-    }}
+    {
+        { assert!(adopt, "adopt(q) 没成功") }
+    }
+    {
+        { assert_eq!(is_sub, ocall::DENIED, "换代表之后 Is(p) 该拒") }
+    }
+    {
+        { assert_eq!(in_sub, ocall::DENIED, "换代表之后不在那枚盟里了") }
+    }
+    {
+        { assert_eq!(under_sub, ocall::OK, "q 仍在 p 那一支里 ⇒ Under(p) 照旧过") }
+    }
+    {
+        {
+            assert_eq!(
+                open_sub,
+                ocall::OK,
+                "开者与问的是同一条 TID ⇒ 两边一起变成 q"
+            )
+        }
+    }
     // —— "改"那一轴：归属记的是**命**，换代表之后自己那一格照样改得。
-    {{
-        assert_eq!(keep, ocall::OK, "归属记的是命，换代表照样改得")
-    }}
+    {
+        { assert_eq!(keep, ocall::OK, "归属记的是命，换代表照样改得") }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
@@ -420,8 +458,18 @@ fn plate(
     let Ok(one) = Name::new(name) else {
         return EntryId::new(0);
     };
-    operator::land(talk, link, host, Where::At(at), one, entry, rule, mine, Wait::AtMost(MS))
-        .unwrap_or(EntryId::new(0))
+    operator::land(
+        talk,
+        link,
+        host,
+        Where::At(at),
+        one,
+        entry,
+        rule,
+        mine,
+        Wait::AtMost(MS),
+    )
+    .unwrap_or(EntryId::new(0))
 }
 
 /// 拿那一格去 `find`：答线上那一格码（`OK` = 放行；本程序只看码，不看那一枚）。
@@ -477,4 +525,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

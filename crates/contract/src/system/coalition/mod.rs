@@ -230,7 +230,6 @@
 //! - **两个号空间不同型**：`CoalitionId` 与 `PrincipalId` 同形不同源，互相拿错是**编译错误**；
 //!   `CoalitionId(0)` 是一枚**普通的盟**，`PrincipalId(0)` 是**根**。
 
-
 pub mod core;
 pub mod frame;
 

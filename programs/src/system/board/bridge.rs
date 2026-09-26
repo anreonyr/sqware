@@ -3,10 +3,10 @@
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
-use env::wire::Field;
-use env::Wait;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use env::Mark;
+use env::Wait;
+use env::wire::Field;
 
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -134,7 +134,12 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 /// **末格同一条理由**：那个号也只有装配者手里有（它刚转授过去），板叫不出——故随这一格一起过去。
 /// **帧形只有一处**：三项怎么排、各占多宽，全在 `bcall::Tip` 那一对 `store` / `fetch` 里；
 /// 这一侧只管把值递过去（从前这里是三行手切的偏移，与读者那一侧各写一遍）。
-pub(crate) fn tell_guest(who: TaskId, name: Name, seed: PieToken, into: PieToken) -> Result<(), ()> {
+pub(crate) fn tell_guest(
+    who: TaskId,
+    name: Name,
+    seed: PieToken,
+    into: PieToken,
+) -> Result<(), ()> {
     let mut rec = [0u8; bcall::Tip::LEN];
     bcall::Tip {
         who,

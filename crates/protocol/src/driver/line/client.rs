@@ -2,15 +2,15 @@
 //!
 //! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报**那一段区**。
 
-use env::Wait;
 use env::Mark;
+use env::Wait;
 use env::{Name, PieToken};
-use plan::{Key};
+use plan::Key;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
-use super::frame;
 use super::core::Fail;
+use super::frame;
 use crate::session::slip::Slip;
 use crate::session::{Pier, Quay};
 

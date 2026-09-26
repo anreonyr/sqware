@@ -61,9 +61,9 @@ extern crate programs;
 
 // 板与树：本域都只用**客侧**那几手。
 use env::Wait;
-use protocol::system::operator::client as operator;
 use protocol::session::Quay;
 use protocol::system::board::client as board;
+use protocol::system::operator::client as operator;
 
 use alloc::format;
 use alloc::string::String;
@@ -71,9 +71,9 @@ use core::time::Duration;
 
 use env::DBCN_MAX;
 use env::{Name, PieToken, TaskId};
+use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::{EntryId, Listing, Where};
-use protocol::system::board as bcall;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::room;
@@ -141,9 +141,9 @@ fn main() -> Result<(), env::Reason> {
     let _ = debug::put(&format!("echo: seq={seq}"));
 
     // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。
-    {{
-        assert_eq!(seq, ocall::OK)
-    }}
+    {
+        { assert_eq!(seq, ocall::OK) }
+    }
 
     let Some(console) = console else {
         return Err(E_NO_CONSOLE);
@@ -182,7 +182,6 @@ fn main() -> Result<(), env::Reason> {
 
     Ok(())
 }
-
 
 /// 找控制台：`FIND /device/uart`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
@@ -296,20 +295,20 @@ fn trip(link: &Quay, talk: PieToken, host: TaskId) -> u8 {
     ));
 
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {{
-        assert_eq!(a, ocall::OK)
-    }}
+    {
+        { assert_eq!(a, ocall::OK) }
+    }
     assert_eq!(b, ocall::OK);
-    {{
-        assert_eq!(c, ocall::OK)
-    }}
+    {
+        { assert_eq!(c, ocall::OK) }
+    }
     assert!(got);
-    {{
-        assert_eq!(d, ocall::OK)
-    }}
-    {{
-        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
-    }}
+    {
+        { assert_eq!(d, ocall::OK) }
+    }
+    {
+        { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME)) }
+    }
 
     d
 }

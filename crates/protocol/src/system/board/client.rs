@@ -4,17 +4,17 @@
 //! 帧与记号见 [`crate::system::board`]。
 
 use contract::message::Message;
-use env::wire::Field;
-use env::Wait;
 use env::Mark;
+use env::Wait;
+use env::wire::Field;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
-use crate::session::slip::Slip;
 use crate::session::Quay;
-use crate::system::board::Fail;
+use crate::session::slip::Slip;
 use crate::system::board as bcall;
+use crate::system::board::Fail;
 pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 
 /// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下

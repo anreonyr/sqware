@@ -44,17 +44,17 @@ use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use protocol::id::Id;
+use protocol::session::Quay;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::core::{CoalitionId, Fail, Window};
-use protocol::id::Id;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PolicyFace;
 use protocol::system::principal::core::Fail as PolicyFail;
 use protocol::system::principal::core::PrincipalId;
-use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -74,24 +74,42 @@ const OUTSIDE: usize = 4095;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("member: no sire") };
-    let Ok(me) = utask::self_id() else { return bail("member: no self id") };
+    let Ok(sire) = utask::sire() else {
+        return bail("member: no sire");
+    };
+    let Ok(me) = utask::self_id() else {
+        return bail("member: no self id");
+    };
 
     // 上树：本域只开一条链，走两趟按名字找（结盟服务那一面 + 身份服务那一面）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("member: no tree link") };
-    let Ok(talk) = operator::ask_hole(host) else { return bail("member: no tree ask") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("member: no tree link");
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        return bail("member: no tree ask");
+    };
 
-    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else { return bail("member: no coalition") };
-    let Ok(coal) = CoalitionFace::of(entry) else { return bail("member: bad coalition face") };
+    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else {
+        return bail("member: no coalition");
+    };
+    let Ok(coal) = CoalitionFace::of(entry) else {
+        return bail("member: bad coalition face");
+    };
 
     // 身份那一面：**本域自己也要用它**（派生第二条身份、领、弃）。
-    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else { return bail("member: no identity") };
-    let Ok(policy) = PolicyFace::of(entry) else { return bail("member: bad identity face") };
+    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else {
+        return bail("member: no identity");
+    };
+    let Ok(policy) = PolicyFace::of(entry) else {
+        return bail("member: bad identity face");
+    };
 
     // 一、此刻代表谁——装配期绑的那一条。
     let mine = policy.resolve(me, Wait::AtMost(MS));
     say(&format!("member: me={}", one_opt(mine)));
-    let Ok(Some(p)) = mine else { return bail("member: unbound") };
+    let Ok(Some(p)) = mine else {
+        return bail("member: unbound");
+    };
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
     // 都是本域头注那 16 步里写着的那一句（旧宿主靶上 `member: …` 那 21 条钉的就是它们）。
@@ -117,17 +135,19 @@ fn main() -> Report<'static> {
     say(&format!("member: found={}", one_id(c0)));
     let c1 = coal.found(Wait::AtMost(MS));
     say(&format!("member: found={}", one_id(c1)));
-    let (Ok(c0), Ok(c1)) = (c0, c1) else { return bail("member: no coalition id") };
-    {{
-        assert!(c1.get() > c0.get())
-    }}
+    let (Ok(c0), Ok(c1)) = (c0, c1) else {
+        return bail("member: no coalition id");
+    };
+    {
+        { assert!(c1.get() > c0.get()) }
+    }
 
     // 三、立了不等于进了。
     let apart = coal.amid(p, c0, Wait::AtMost(MS));
     say(&format!("member: amid(me,c0)={}", flag(apart)));
-    {{
-        assert_eq!(apart, Ok(false))
-    }}
+    {
+        { assert_eq!(apart, Ok(false)) }
+    }
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
     let entered = coal.enter(c0, Wait::AtMost(MS));
@@ -137,9 +157,9 @@ fn main() -> Report<'static> {
     let again = coal.enter(c0, Wait::AtMost(MS));
     say(&format!("member: enter(c0)={}", done(again)));
     assert!(entered.is_ok());
-    {{
-        assert_eq!(inside, Ok(true))
-    }}
+    {
+        { assert_eq!(inside, Ok(true)) }
+    }
     assert!(again.is_ok());
 
     // 五、同一条身份可以在第二枚盟里。
@@ -147,17 +167,19 @@ fn main() -> Report<'static> {
     say(&format!("member: enter(c1)={}", done(in_c1)));
     let amid_c1 = coal.amid(p, c1, Wait::AtMost(MS));
     say(&format!("member: amid(me,c1)={}", flag(amid_c1)));
-    {{
-        assert!(in_c1.is_ok())
-    }}
-    {{
-        assert_eq!(amid_c1, Ok(true))
-    }}
+    {
+        { assert!(in_c1.is_ok()) }
+    }
+    {
+        { assert_eq!(amid_c1, Ok(true)) }
+    }
 
     // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
     let sub = policy.derive(p, Wait::AtMost(MS));
     say(&format!("member: derive(me)={}", one_policy(sub)));
-    let Some(q) = sub.ok() else { return bail("member: no sub identity") };
+    let Some(q) = sub.ok() else {
+        return bail("member: no sub identity");
+    };
     let adopted = policy.adopt(q, Wait::AtMost(MS));
     say(&format!("member: adopt(sub)={}", done(adopted)));
     let q_in = coal.enter(c0, Wait::AtMost(MS));
@@ -166,16 +188,18 @@ fn main() -> Report<'static> {
     say(&format!("member: amid(me,c0)={}", flag(p_there)));
     let q_there = coal.amid(q, c0, Wait::AtMost(MS));
     say(&format!("member: amid(sub,c0)={}", flag(q_there)));
-    {{
-        assert!(adopted.is_ok())
-    }}
-    {{
-        assert!(q_in.is_ok())
-    }}
-    {{
-        assert_eq!(p_there, Ok(true));
-        assert_eq!(q_there, Ok(true));
-    }}
+    {
+        { assert!(adopted.is_ok()) }
+    }
+    {
+        { assert!(q_in.is_ok()) }
+    }
+    {
+        {
+            assert_eq!(p_there, Ok(true));
+            assert_eq!(q_there, Ok(true));
+        }
+    }
 
     // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行。
     let left = coal.leave(c0, Wait::AtMost(MS));
@@ -185,10 +209,12 @@ fn main() -> Report<'static> {
     let p_still = coal.amid(p, c0, Wait::AtMost(MS));
     say(&format!("member: amid(me,c0)={}", flag(p_still)));
     assert!(left.is_ok());
-    {{
-        assert_eq!(q_gone, Ok(false));
-        assert_eq!(p_still, Ok(true));
-    }}
+    {
+        {
+            assert_eq!(q_gone, Ok(false));
+            assert_eq!(p_still, Ok(true));
+        }
+    }
 
     // 八、弃回起点：键 = 身份那条定理的另一半——第一条身份那一行照旧在。
     let waived = policy.waive(Wait::AtMost(MS));
@@ -196,9 +222,9 @@ fn main() -> Report<'static> {
     let after_waive = coal.amid(p, c0, Wait::AtMost(MS));
     say(&format!("member: amid(me,c0)={}", flag(after_waive)));
     assert!(waived.is_ok());
-    {{
-        assert_eq!(after_waive, Ok(true))
-    }}
+    {
+        { assert_eq!(after_waive, Ok(true)) }
+    }
 
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
     let outside = CoalitionId::new(OUTSIDE);
@@ -208,22 +234,22 @@ fn main() -> Report<'static> {
     say(&format!("member: enter(out)={}", done(out_enter)));
     let out_leave = coal.leave(outside, Wait::AtMost(MS));
     say(&format!("member: leave(out)={}", done(out_leave)));
-    {{
-        assert!(matches!(out_amid, Err(Fail::Unknown)))
-    }}
-    {{
-        assert!(matches!(out_enter, Err(Fail::Unknown)))
-    }}
-    {{
-        assert!(matches!(out_leave, Err(Fail::Unknown)))
-    }}
+    {
+        { assert!(matches!(out_amid, Err(Fail::Unknown))) }
+    }
+    {
+        { assert!(matches!(out_enter, Err(Fail::Unknown))) }
+    }
+    {
+        { assert!(matches!(out_leave, Err(Fail::Unknown))) }
+    }
 
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
     let forged = coal.amid(PrincipalId::new(OUTSIDE), c1, Wait::AtMost(MS));
     say(&format!("member: amid(out,me)={}", flag(forged)));
-    {{
-        assert_eq!(forged, Ok(false))
-    }}
+    {
+        { assert_eq!(forged, Ok(false)) }
+    }
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
     let band = coal.band(c0, None, Wait::AtMost(MS));
@@ -238,20 +264,20 @@ fn main() -> Report<'static> {
     // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
     let bloc = coal.bloc(p, None, Wait::AtMost(MS));
     say(&format!("member: bloc(me)={}", window_ids(bloc)));
-    {{
-        assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1))
-    }}
-    {{
-        assert_eq!(empty.as_ref().ok().map(|w| w.len()), Some(0))
-    }}
-    {{
-        assert!(matches!(out_band, Err(Fail::Unknown)))
-    }}
-    {{
-        assert_eq!(bloc.as_ref().ok().map(|w| w.len()), Some(2))
-    }}
+    {
+        { assert_eq!(band.as_ref().ok().map(|w| w.len()), Some(1)) }
+    }
+    {
+        { assert_eq!(empty.as_ref().ok().map(|w| w.len()), Some(0)) }
+    }
+    {
+        { assert!(matches!(out_band, Err(Fail::Unknown))) }
+    }
+    {
+        { assert_eq!(bloc.as_ref().ok().map(|w| w.len()), Some(2)) }
+    }
 
-    return Report::note(E_OK, "member: done")
+    return Report::note(E_OK, "member: done");
 }
 
 /// 按名字找一面服务：`FIND "/<dir>/<name>"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
@@ -378,11 +404,10 @@ impl Why for PolicyFail {
 
 /// 报一行就走（本域没有控制台，调试面是唯一能说话的地方）。
 fn bail<'a>(msg: &'a str) -> Report<'a> {
-    return Report::note(E_NO_SERVICE, msg)
+    return Report::note(E_NO_SERVICE, msg);
 }
 
 /// 打一行。
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

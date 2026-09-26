@@ -30,8 +30,8 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::system::operator::Where;
 use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
 
 use alloc::format;
@@ -60,13 +60,25 @@ const OK_NOTE: &str = "probe-lease: landed, leaving";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-lease: no sire") };
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-lease: no tree link") };
-    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-lease: no tree ask") };
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else { return bail("probe-lease: bad name") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-lease: no sire");
+    };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-lease: no tree link");
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        return bail("probe-lease: no tree ask");
+    };
+    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
+        return bail("probe-lease: bad name");
+    };
     // `/sys` 已经在（principal / coalition 起的头）；`part` 幂等，故这里照走一遍拿号。
-    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, Wait::AtMost(MS)) else { return bail("probe-lease: no /sys") };
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else { return bail("probe-lease: no entry") };
+    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, Wait::AtMost(MS)) else {
+        return bail("probe-lease: no /sys");
+    };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {
+        return bail("probe-lease: no entry");
+    };
 
     // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
     let landed = operator::land(
@@ -93,9 +105,9 @@ fn main() -> Report<'static> {
 
     // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。
     let ok = landed.is_ok();
-    {{
-        assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）")
-    }}
+    {
+        { assert!(ok, "牌没落上（land 答的是码，见上面那一行读数）") }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
@@ -110,4 +122,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

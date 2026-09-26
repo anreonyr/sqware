@@ -3,14 +3,14 @@
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
-use env::Wait;
 use alloc::format;
 use env::Mark;
+use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
-use runtime::core::port::{self, Access, Policy};
-use runtime::core::pile::Pile;
 use protocol::session::slip::Slip;
+use runtime::core::pile::Pile;
+use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::system::board as bcall;
@@ -89,7 +89,11 @@ pub(crate) fn host_loop(me: TaskId) {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut lanes);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
-        let millis = if settling { Wait::AtMost(SETTLE_MS) } else { Wait::Forever };
+        let millis = if settling {
+            Wait::AtMost(SETTLE_MS)
+        } else {
+            Wait::Forever
+        };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
             swept += tell_gone(&mut desk, &mut lanes);
             continue;
@@ -99,13 +103,7 @@ pub(crate) fn host_loop(me: TaskId) {
             && let Some(guest) = desk.guest(tok).copied()
         {
             serve_one(
-                &mut board,
-                &mut desk,
-                &pile,
-                guest,
-                swept,
-                &mut lanes,
-                &mut buf,
+                &mut board, &mut desk, &pile, guest, swept, &mut lanes, &mut buf,
             );
         }
         // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
@@ -128,43 +126,38 @@ pub(crate) fn host_loop(me: TaskId) {
 ///   **一次 `Reserve`** 验过 ⇒ `admit` 收一位客人（`Taken` = 已经在账上）。判据与旧那一扫
 ///   一字不差（开者 = 这位客人 ＋ 记号 = 板路），只是不再扫自己的表；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
-fn settle(
-    desk: &mut Desk,
-    pile: &Pile,
-    tip: &mail::HolePie,
-    lanes: &mut Lanes,
-) -> bool {
+fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
     let mut rec = [0u8; bcall::Tip::LEN];
-        let mut pending = false;
-        let board = Mark::of(LINK);
-        while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
-            // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。从前这里三行手切，
-            // 其中一句注释自认"最容易切错"（"名字按自己的宽度切……静默退回空名"）——它随这一刀
-            // 一起退场。**代价照实**：名字那一段读不成一个合法 `Name` 时，从前是"当没有名字、
-            // 照样收下这位客人"，现在是**整帧读不懂**（答一句 `board: no reply`，不收）——
-            // 那一格只有装配者推得进来，而它推的一定是合法名字。
-            let Some(tip) = bcall::Tip::fetch(&rec) else {
-                say("board: no reply");
-                continue;
-            };
-            let client = tip.who;
-            // 答话路那一格随提示一起来：**一次 `Reserve` 验它**，不扫自己的表。
-            match mail::reserve(tip.reply) {
-                Ok((_vestor, owner, mark)) if owner == client && mark == board => {
-                    let _ = desk.admit(client, tip.reply);
-                    // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
-                    // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
-                    if let Some(lane) = lane_for(tip.name) {
-                        remember_lane(lanes, client, lane);
-                    }
+    let mut pending = false;
+    let board = Mark::of(LINK);
+    while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
+        // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。从前这里三行手切，
+        // 其中一句注释自认"最容易切错"（"名字按自己的宽度切……静默退回空名"）——它随这一刀
+        // 一起退场。**代价照实**：名字那一段读不成一个合法 `Name` 时，从前是"当没有名字、
+        // 照样收下这位客人"，现在是**整帧读不懂**（答一句 `board: no reply`，不收）——
+        // 那一格只有装配者推得进来，而它推的一定是合法名字。
+        let Some(tip) = bcall::Tip::fetch(&rec) else {
+            say("board: no reply");
+            continue;
+        };
+        let client = tip.who;
+        // 答话路那一格随提示一起来：**一次 `Reserve` 验它**，不扫自己的表。
+        match mail::reserve(tip.reply) {
+            Ok((_vestor, owner, mark)) if owner == client && mark == board => {
+                let _ = desk.admit(client, tip.reply);
+                // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
+                // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
+                if let Some(lane) = lane_for(tip.name) {
+                    remember_lane(lanes, client, lane);
                 }
-                // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
-                // 客人那边会报它自己的超时。
-                _ => say("board: no reply"),
             }
+            // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
+            // 客人那边会报它自己的超时。
+            _ => say("board: no reply"),
         }
+    }
 
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
     // 调用方这一侧因此不必先抄一份到自己的栈上，那一张按常数开的数组就此退场。
@@ -185,9 +178,7 @@ fn settle(
 /// 过来）⇒ `None`：**这一位死了就没有读数**（与从前"没登记就没读数"同一个静默）。
 fn lane_for(name: Name) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
-    mail::pies()
-        .find(|p| p.mark == want)
-        .map(|p| p.token)
+    mail::pies().find(|p| p.mark == want).map(|p| p.token)
 }
 
 /// 本线程的 `who → 死亡道` 小表（一位客人一格；**备不下就丢这一条读数**）。

@@ -41,12 +41,12 @@ use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
+use protocol::session::Quay;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::{Fail, PrincipalId};
-use protocol::session::Quay;
 use runtime::env::debug;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -66,19 +66,33 @@ const OUTSIDE: usize = 4095;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("subject: no sire") };
-    let Ok(me) = utask::self_id() else { return bail("subject: no self id") };
+    let Ok(sire) = utask::sire() else {
+        return bail("subject: no sire");
+    };
+    let Ok(me) = utask::self_id() else {
+        return bail("subject: no self id");
+    };
 
     // 上树：本域只开一条会话——按名字找那面身份服务。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("subject: no tree link") };
-    let Ok(talk) = operator::ask_hole(host) else { return bail("subject: no tree ask") };
-    let Some(entry) = find_face(&tree, talk) else { return bail("subject: no face") };
-    let Ok(face) = Face::of(entry) else { return bail("subject: bad face") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("subject: no tree link");
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        return bail("subject: no tree ask");
+    };
+    let Some(entry) = find_face(&tree, talk) else {
+        return bail("subject: no face");
+    };
+    let Ok(face) = Face::of(entry) else {
+        return bail("subject: bad face");
+    };
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
     let mine = face.resolve(me, Wait::AtMost(MS));
     say(&format!("policy: me={}", one_opt(mine)));
-    let Ok(Some(p)) = mine else { return bail("subject: unbound") };
+    let Ok(Some(p)) = mine else {
+        return bail("subject: unbound");
+    };
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
     // 都是本域头注那 14 步里写着的那一句（旧宿主靶上 `policy: …` 那 12 条钉的就是它们）。
@@ -89,19 +103,19 @@ fn main() -> Report<'static> {
     say(&format!("policy: sire(root)={}", one_opt(no_sire)));
     let sired = face.sire(p, Wait::AtMost(MS));
     say(&format!("policy: sire(me)={}", one_opt(sired)));
-    {{
-        assert_eq!(no_sire, Ok(None))
-    }}
-    {{
-        assert_eq!(sired, Ok(Some(PrincipalId::ROOT)))
-    }}
+    {
+        { assert_eq!(no_sire, Ok(None)) }
+    }
+    {
+        { assert_eq!(sired, Ok(Some(PrincipalId::ROOT))) }
+    }
 
     // 三、自反。
     let reflexive = face.heir(p, p, Wait::AtMost(MS));
     say(&format!("policy: heir(me,me)={}", flag(reflexive)));
-    {{
-        assert_eq!(reflexive, Ok(true))
-    }}
+    {
+        { assert_eq!(reflexive, Ok(true)) }
+    }
 
     // 四、向下派生一条自己的子身份。
     let sub = face.derive(p, Wait::AtMost(MS));
@@ -114,32 +128,34 @@ fn main() -> Report<'static> {
     if let Some(r) = not_ancestor {
         say(&format!("policy: heir(sub,me)={}", flag(r)));
     }
-    {{
-        assert_eq!(not_ancestor, Some(Ok(false)))
-    }}
+    {
+        { assert_eq!(not_ancestor, Some(Ok(false))) }
+    }
 
     // 六、第三态：树外的号。
     let out_heir = face.heir(PrincipalId::new(OUTSIDE), p, Wait::AtMost(MS));
     say(&format!("policy: heir(out,me)={}", flag(out_heir)));
-    {{
-        assert!(matches!(out_heir, Err(Fail::Unknown)))
-    }}
+    {
+        { assert!(matches!(out_heir, Err(Fail::Unknown))) }
+    }
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
     let bound = face.bind(me, p, Wait::AtMost(MS));
     say(&format!("policy: bind(self)={}", done(bound)));
-    {{
-        assert!(matches!(bound, Err(Fail::Denied)))
-    }}
+    {
+        { assert!(matches!(bound, Err(Fail::Denied))) }
+    }
 
     // ── 转换那两条（刀 2）────────────────────────────────────
-    let Some(q) = child else { return bail("subject: no sub identity") };
+    let Some(q) = child else {
+        return bail("subject: no sub identity");
+    };
     // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
     let adopted = face.adopt(q, Wait::AtMost(MS));
     say(&format!("policy: adopt(sub)={}", done(adopted)));
-    {{
-        assert!(adopted.is_ok())
-    }}
+    {
+        { assert!(adopted.is_ok()) }
+    }
 
     // 九、名册真的改了（不是打个印记）。
     let led = face.resolve(me, Wait::AtMost(MS));
@@ -148,23 +164,23 @@ fn main() -> Report<'static> {
     // 十、**钥匙反证**：已不代表 `p`，故"从 `p` 派生"被拒。
     let stale = face.derive(p, Wait::AtMost(MS));
     say(&format!("policy: derive(old)={}", one(stale)));
-    {{
-        assert!(matches!(stale, Err(Fail::Denied)))
-    }}
+    {
+        { assert!(matches!(stale, Err(Fail::Denied))) }
+    }
 
     // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
     let up = face.adopt(p, Wait::AtMost(MS));
     say(&format!("policy: adopt(up)={}", done(up)));
-    {{
-        assert!(matches!(up, Err(Fail::Denied)))
-    }}
+    {
+        { assert!(matches!(up, Err(Fail::Denied))) }
+    }
 
     // 十二、树外。
     let outside = face.adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     say(&format!("policy: adopt(out)={}", done(outside)));
-    {{
-        assert!(matches!(outside, Err(Fail::Unknown)))
-    }}
+    {
+        { assert!(matches!(outside, Err(Fail::Unknown))) }
+    }
 
     // 十三、弃：回到装配给我的那一条（不删格）。
     let waived = face.waive(Wait::AtMost(MS));
@@ -180,10 +196,12 @@ fn main() -> Report<'static> {
     // **照实记（这一条原先住在宿主靶上）**：它是 `soak::verdict` 里那段 `values(...)` 比较 ——
     // 宿主数了三行、比了两个关系；而那三行是**本域自己打的**，本域当然也知道它们该是什么关系。
     // 搬进来之后宿主那一侧不必再数那三行（见四处那一段的改动）。
-    {{
-        assert_ne!(led, mine);
-        assert_eq!(back, mine);
-    }}
+    {
+        {
+            assert_ne!(led, mine);
+            assert_eq!(back, mine);
+        }
+    }
 
     return Report::note(E_OK, "subject: done");
 }
@@ -266,4 +284,3 @@ fn bail<'a>(msg: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

@@ -43,4 +43,3 @@ fn main() -> ! {
         let _ = room::sleep(Duration::from_millis(tick::BURST_MS as u64)); // 离核
     }
 }
-

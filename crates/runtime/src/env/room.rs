@@ -1,7 +1,7 @@
 //! Room 域：`RoomCall::*` 转发（调度词族）。
 
-use env::Wait;
 use core::time::Duration;
+use env::Wait;
 
 use env::{EnvResult, Reason, RoomCall, RoomCallRet, TaskId, VirtAddr};
 

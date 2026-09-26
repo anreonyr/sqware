@@ -75,21 +75,35 @@ const OK_NOTE: &str = "probe-denied: denied";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-denied: no sire") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-denied: no sire");
+    };
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-denied: no tree link") };
-    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-denied: no tree ask") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-denied: no tree link");
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        return bail("probe-denied: no tree ask");
+    };
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else { return bail("probe-denied: no entry") };
-    let Ok(dir) = Name::new("sys") else { return bail("probe-denied: bad name") };
-    let Ok(me) = Name::new(ME) else { return bail("probe-denied: bad name") };
+    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
+        return bail("probe-denied: no entry");
+    };
+    let Ok(dir) = Name::new("sys") else {
+        return bail("probe-denied: bad name");
+    };
+    let Ok(me) = Name::new(ME) else {
+        return bail("probe-denied: bad name");
+    };
 
     // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
     // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里），故本域虽然没有身份，
     // 这两手照旧答得出号。
-    let Some(at) = tree_dir(hedge, &tree, dir) else { return bail("probe-denied: no /sys") };
+    let Some(at) = tree_dir(hedge, &tree, dir) else {
+        return bail("probe-denied: no /sys");
+    };
 
     // 三、落牌——**这一手该被拒**。
     let land = operator::land(
@@ -126,12 +140,12 @@ fn main() -> Report<'static> {
     // 五、判据：**一例一条**（原先两格 `&&` 成一句）。名字即结论。
     let denied = land_code == ocall::DENIED;
     let unplaced = matches!(after, Err(ocall::UNKNOWN));
-    {{
-        assert!(denied, "本该被拒，land={land_code}")
-    }}
-    {{
-        assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）")
-    }}
+    {
+        { assert!(denied, "本该被拒，land={land_code}") }
+    }
+    {
+        { assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）") }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
@@ -152,4 +166,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

@@ -59,8 +59,8 @@ use env::Mark;
 use env::{Name, PieToken, TaskId};
 use plan::assembly::Eyes;
 
-use super::core::{EntryId, Fail, Operator, Where};
 use super::core::judge::Id;
+use super::core::{EntryId, Fail, Operator, Where};
 // **照实记（同一个词的第二件事）**：本文件里的 `Id` 是 `judge` 的**宽度别名**（u64），
 // 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
 // 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
@@ -178,24 +178,21 @@ const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNIO
 /// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
 /// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。故这一格**允许大于实际带的
 /// 项数**——它是**声明**，不是长度（"尾巴"那一族里只有它这样）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RoadHead {
     pub op: u8,
     pub count: u8,
 }
 
 /// `List` 那一问：动作码 ＋ 容器坐标。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct List {
     pub op: u8,
     pub at: Where,
 }
 
 /// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Part {
     pub op: u8,
     pub at: Where,
@@ -204,8 +201,7 @@ pub struct Part {
 
 /// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
 /// （改那一轴 `mine` / 用那一轴 `rule`）。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Land {
     pub op: u8,
     pub at: Where,
@@ -220,8 +216,7 @@ pub struct Land {
 /// **照实记（这三条为什么共用一张表）**：三者的荷载逐字同形（一枚 [`EntryId`]），差别只在
 /// 动作码那一格——故解出来仍是三格（[`Wire::Find`] / [`Wire::Trim`] / [`Wire::Name`]），
 /// 而"这一格占多宽"只有一处。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Entry {
     pub op: u8,
     pub id: EntryId,
@@ -477,8 +472,7 @@ impl Listing {
 
 /// **头一格**：状态。它自己就是"一格状态"那一形（六格失败与"门外那两格"都走它），也是另外
 /// 三形的起头。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
     pub status: u8,
 }
@@ -488,8 +482,7 @@ pub struct Status {
 ///
 /// **这一格的条数与帧长绑死**（读的人两边对不上就判读不懂），故它**不是** `Road` 那一格
 /// 的条数（那里的条数是**声明**，允许大于实际带的）——两句不同的话，故各说各的。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tally {
     pub status: u8,
     pub count: u8,
@@ -500,8 +493,7 @@ pub struct Tally {
 ///
 /// **照实记（这一格的类型为什么是裸 8 字节）**：两个号空间（[`EntryId`] / [`PieToken`]）
 /// 在这一格上分不开，故字段表不假装它是哪一枚——读面见 [`Said::entry`] / [`Said::seed`]。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Word {
     pub status: u8,
     pub word: [u8; 8],
@@ -722,8 +714,7 @@ impl Message for Union {
 /// - 持树者拿到的门牌**一手来源**，没有第二手转授；
 /// - 装配者只剩"递一格号"这一件事，`attach` 里不多一次 `Ship`；
 /// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
-#[derive(env::Frame)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CoordFrame {
     pub who: TaskId,
     pub eyes: Eyes,

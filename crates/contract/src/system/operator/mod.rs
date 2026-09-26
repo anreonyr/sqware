@@ -179,8 +179,9 @@
 //! 主人，而"撤回已经授出去的"是另一件事）、**撤到什么程度**（那一枚的下游要不要一并失效）。
 //! 这一格今天停在"**载体做得到、协议没这一格**"。
 
-
 pub mod core;
 pub mod frame;
 
-pub use crate::system::operator::core::{EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where};
+pub use crate::system::operator::core::{
+    EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where,
+};

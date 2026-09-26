@@ -296,12 +296,20 @@ struct Tally {
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else { return die("rig: boot args unreadable") };
-    let Some((elf, kind)) = find(&boot, VICTIM) else { return die("rig: victim not in manifest") };
-    let Ok(name) = Name::new(ROW) else { return die("rig: bad row name") };
+    let Some(boot) = boot::Root::take() else {
+        return die("rig: boot args unreadable");
+    };
+    let Some((elf, kind)) = find(&boot, VICTIM) else {
+        return die("rig: victim not in manifest");
+    };
+    let Ok(name) = Name::new(ROW) else {
+        return die("rig: bad row name");
+    };
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
     // 一条早退的来路，见 `trial` 头注）。
-    let Ok(link) = Name::new(LINK) else { return die("rig: bad link name") };
+    let Ok(link) = Name::new(LINK) else {
+        return die("rig: bad link name");
+    };
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -432,7 +440,10 @@ fn trial(
 
     // ── 收场（**不论这一轮成没成**）────────────────────────
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
-    if let Some(Slot::Live { team: Some(team), .. }) = table.find(name).map(|s| s.slot) {
+    if let Some(Slot::Live {
+        team: Some(team), ..
+    }) = table.find(name).map(|s| s.slot)
+    {
         let _ = unit::oust(team);
     }
     // 本端那一枚孔随码头放下。对端交上来的那一枚不归我：受害者在 `reap` 里先跑退出钩子
@@ -516,4 +527,3 @@ fn die(msg: &str) -> Reason {
     say(msg);
     1
 }
-

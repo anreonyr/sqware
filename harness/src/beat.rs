@@ -123,4 +123,3 @@ fn now_ns() -> u64 {
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-

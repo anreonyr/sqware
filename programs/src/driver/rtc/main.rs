@@ -68,8 +68,8 @@ extern crate programs;
 
 // 共享件住驱动这一族里：`assemble` 是各驱动都要写一遍的那段客侧装配，需求单同一份源码编一次。
 use env::Wait;
-use programs::driver::assemble;
 use plan::assembly::RTC_WANTS as WANTS;
+use programs::driver::assemble;
 // 服务面那三份：帧形与记号、那一格、客侧两手（客人 `use` 的是同一份）。
 use programs::driver::rtc::{
     call::{self, Status, Time},
@@ -77,10 +77,10 @@ use programs::driver::rtc::{
 };
 
 // 板：本域是**客侧**（只装板路）；树：也是客侧（落门牌 + 按名找线路由者）。
-use protocol::system::operator::Where;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 use protocol::system::board::client as board;
+use protocol::system::operator as ocall;
+use protocol::system::operator::Where;
+use protocol::system::operator::client as operator;
 
 use alloc::format;
 
@@ -88,12 +88,12 @@ use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::driver::line;
 use protocol::session::Quay;
 use protocol::session::slip::Slip;
+use runtime::PAGE_SIZE;
 use runtime::core::dock::{Dock, View};
 use runtime::core::pile::Pile;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, PolePie};
 use runtime::env::unit as utask;
-use runtime::PAGE_SIZE;
 
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod rtc;
@@ -190,7 +190,11 @@ fn main() -> Result<(), fail::Fail> {
                 // 那一声**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
                 // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见
                 // `Slip::load` 的照实记）；真到了那里，那一层是 `None`，与"推不出去"同一行读数。
-                match Slip::<Time>::seal(back).load(Time::of(now)).ok().map(|s| s.ship()) {
+                match Slip::<Time>::seal(back)
+                    .load(Time::of(now))
+                    .ok()
+                    .map(|s| s.ship())
+                {
                     Some(Ok(())) => {
                         rang += 1;
                         say(&format!("rtc: rang n={rang} now={now}"));
@@ -237,7 +241,10 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
         call::Wire::Now => {
             let now = rtc::now(view);
             // 答话**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
-            let _ = Slip::<Time>::seal(back).load(Time::of(now)).ok().map(|s| s.ship());
+            let _ = Slip::<Time>::seal(back)
+                .load(Time::of(now))
+                .ok()
+                .map(|s| s.ship());
             let _ = mail::release(back);
             say(&format!("rtc: asked now={now}"));
         }
@@ -350,28 +357,22 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     ));
     // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {{
-        assert_eq!(part, ocall::OK)
-    }}
+    {
+        { assert_eq!(part, ocall::OK) }
+    }
     assert_eq!(land, ocall::OK);
-    {{
-        assert_eq!(find, ocall::OK)
-    }}
+    {
+        { assert_eq!(find, ocall::OK) }
+    }
     assert!(got);
-    {{
-        assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
-    }}
+    { { assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME)) } }
 }
 
 /// 从树上找到线路由者，把本域那条线登记下来。
 ///
 /// 会话是**上面那一条**（同一个域只开一条，见 `driver/uart` 头注）；坐标是**配给回给本域的
 /// 那一段区**（本域不写死它）；入口经会话从树上授进来，泊位由 `line` 那一层装。
-fn register(
-    link: &Quay,
-    talk: PieToken,
-    key: plan::Key,
-) -> Result<line::client::Line, ()> {
+fn register(link: &Quay, talk: PieToken, key: plan::Key) -> Result<line::client::Line, ()> {
     let dir = Name::new(protocol::driver::DIR).map_err(|_| ())?;
     let want = Name::new(SERVICE).map_err(|_| ())?;
     let road = [dir, want];
@@ -388,5 +389,3 @@ fn register(
 fn say(msg: &str) {
     let _ = debug::put(msg);
 }
-
-

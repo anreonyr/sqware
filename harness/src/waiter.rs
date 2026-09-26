@@ -47,7 +47,9 @@ use runtime::env::mail::{self, HolePie, TolePie};
 
 #[programs::entry]
 fn main() -> Reason {
-    let (Some(group), Some(member), Some(report)) = discover() else { return bail("waiter: table incomplete") };
+    let (Some(group), Some(member), Some(report)) = discover() else {
+        return bail("waiter: table incomplete");
+    };
 
     let pile = Pile::new(TolePie::from_token(group));
     let member = HolePie::from_token(member);
@@ -128,4 +130,3 @@ fn bail(msg: &str) -> Reason {
     say(msg);
     1
 }
-

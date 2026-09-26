@@ -60,12 +60,12 @@ use alloc::format;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
+use protocol::session::Quay;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{LINK, Where};
-use protocol::session::Quay;
 use runtime::PAGE_SIZE;
 use runtime::env::debug;
 use runtime::env::mail;
@@ -105,7 +105,9 @@ fn junk() -> [u8; JUNK] {
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else { return bail("probe-bound: no sire") };
+    let Ok(sire) = utask::sire() else {
+        return bail("probe-bound: no sire");
+    };
 
     // 一、**两条路先都装上**：本端那一枚交给生我者（它再转授给对方），另铸一枚问话孔给它。
     //
@@ -119,12 +121,20 @@ fn main() -> Report<'static> {
     let Ok(bolt) = board::ask_hole(seat) else {
         return bail("probe-bound: no board ask");
     };
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else { return bail("probe-bound: no tree link") };
-    let Ok(hedge) = operator::ask_hole(host) else { return bail("probe-bound: no tree ask") };
-    let Ok(dir) = Name::new("sys") else { return bail("probe-bound: bad name") };
+    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+        return bail("probe-bound: no tree link");
+    };
+    let Ok(hedge) = operator::ask_hole(host) else {
+        return bail("probe-bound: no tree ask");
+    };
+    let Ok(dir) = Name::new("sys") else {
+        return bail("probe-bound: bad name");
+    };
 
     // 二、自铸一枚孔（**本域自己那一枚，没有读者**）——界那一格就在这里量。
-    let Ok(hole) = mail::unseal_hole(Mark::of("probe-bound")) else { return bail("probe-bound: no hole") };
+    let Ok(hole) = mail::unseal_hole(Mark::of("probe-bound")) else {
+        return bail("probe-bound: no hole");
+    };
     let mine = mail::HolePie::from_token(hole);
 
     // 二·一、一页 + 1 ⇒ 期望拒。**那一页自己在堆上备**（一页这一档不住栈，与门那一侧同一句）。
@@ -154,24 +164,35 @@ fn main() -> Report<'static> {
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
 
     // 四、判据：**一例一条**，名字即结论。
-    {{
-        assert_eq!(over_code, -1, "一页 + 1 本该被拒（`Denied` = -1）");
-    }}
-    {{
-        assert!(empty, "拒是拒了，可那一枚孔的槽里已经有东西了");
-        assert!(small, "拒完之后再推一条 8 字节的也推不进去（这一枚孔坏了？）");
-        assert_eq!(len, 8, "槽里那条不是刚推的那一条（长度 {len}）");
-    }}
-    {{
-        assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");
-        assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
-        assert!(after, "吞了 junk 之后，门不再答正经的问了");
-    }}
-    {{
-        assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
-        assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
-        assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
-    }}
+    {
+        {
+            assert_eq!(over_code, -1, "一页 + 1 本该被拒（`Denied` = -1）");
+        }
+    }
+    {
+        {
+            assert!(empty, "拒是拒了，可那一枚孔的槽里已经有东西了");
+            assert!(
+                small,
+                "拒完之后再推一条 8 字节的也推不进去（这一枚孔坏了？）"
+            );
+            assert_eq!(len, 8, "槽里那条不是刚推的那一条（长度 {len}）");
+        }
+    }
+    {
+        {
+            assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");
+            assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
+            assert!(after, "吞了 junk 之后，门不再答正经的问了");
+        }
+    }
+    {
+        {
+            assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
+            assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
+            assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
+        }
+    }
 
     return Report::note(E_OK, OK_NOTE);
 }
