@@ -242,7 +242,7 @@ pub use alloc::format as __format;
 // ——`frame.rs` 那两份只认得 `env` 与同层 `core`，看不见 `driver`。这一处看得见整棵树，故由它钉。
 //
 // **照实记（这两对原先一直是空的）**：三条断言原先都写作 `Mark::of("board-back")`，而**那个名字
-// 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路
+// 从来没有存在过**——板那条路的答话走板路那一枚（`system/board/client.rs`：问话孔只写、答话从板路
 // 读），它没有 `*-back` 记号。故换成真在的那一条。
 const _: () = assert!(
     crate::system::principal::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()

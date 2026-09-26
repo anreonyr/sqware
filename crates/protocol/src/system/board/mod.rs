@@ -226,7 +226,7 @@
 //! # 一问一答的次序
 //!
 //! ```text
-//!   1  装配者在本域与客人那座码头上加一条板泊位（本端交出自己那一枚 —— 答话从它走）
+//!   1  装配者在本域与客人之间装一对孔（`establish::endpoint`：本端交出自己那一枚 —— 答话从它走）
 //!   2  认领：**这位客人**交出来的那一枚落进本域表里（客人只认得生我者，故先落这里）
 //!   3  板线程（只起一枚）→ 把客人那一枚转授给它 → 板路上递一格「答话的是谁」 → 提示来客人了
 //! ```
@@ -246,8 +246,9 @@ pub mod client;
 // board 的**适配那一半** —— 内核那几只手的别名、立板、交出。
 //
 // 帧与码见 [`frame`]；本模块把那一整片**点名转出** ⇒ 调用点只在路径那一处改过
-// （原 `board::call::X`、今 `board::X`）。两张会话失败域的对照表（`map_claim` / `map_seat`）
-// 随它们产出的 [`Fail`] 落进同层的 `core`（`system/board/core.rs` 末尾）。
+// （原 `board::call::X`、今 `board::X`）。建立那一手的失败域对照表（`map_establish`）随它产出的
+// [`Fail`] 落进同层的 `core`（`system/board/core.rs` 末尾）——`map_claim` 与 `map_seat` 两张表在
+// 会话那一刀里并成这一张。
 //
 // 判据只有一条可机械检查的纪律——
 //
@@ -303,7 +304,7 @@ pub const fn desk() -> Desk {
 /// 的用法），故这里也不替调用方裁剪。
 ///
 /// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
-/// （`Denied`）：身体共用，失败值各自说（与 `map_claim` / `map_seat` 同款）。
+/// （`Denied`）：身体共用，失败值各自说（与 `map_establish` 那两张对照表同款）。
 pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     crate::communication::hands::ship(entry, to).map_err(|()| Fail::Denied)
 }

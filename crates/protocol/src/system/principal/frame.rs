@@ -201,7 +201,7 @@ pub const NAME: &str = "principal";
 // 看不见 `driver`。
 //
 // **照实记（这一条曾经一直是空的）**：跨面那一对原先写作 `Mark::of("board-back")`，而**那个名字
-// 从来没有存在过**——板那条路的答话走码头（`system/board/client.rs`：问话孔只写、答话从板路
+// 从来没有存在过**——板那条路的答话走板路那一枚（`system/board/client.rs`：问话孔只写、答话从板路
 // 读），它没有 `*-back` 记号。故换成真在的那一条（见 `lib.rs`）。
 
 const _: () = assert!(BACK.get() != Mark::NONE.get());

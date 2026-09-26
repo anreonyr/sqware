@@ -247,9 +247,9 @@ pub mod client;
 // operator 的**适配那一半** —— 内核那几只手的别名、立树、交出。
 //
 // 帧与码见 [`frame`]；本模块把那一整片**点名转出** ⇒ 调用点只在路径那一处改过
-// （原 `operator::call::X`、今 `operator::X`）。两张会话失败域的对照表（`map_claim` /
-// `map_seat`）随它们产出的 [`Fail`] 落进同层的 `core`（`system/operator/core/mod.rs`
-// 末尾）。
+// （原 `operator::call::X`、今 `operator::X`）。建立那一手的失败域对照表（`map_establish`）随它
+// 产出的 [`Fail`] 落进同层的 `core`（`system/operator/core/mod.rs` 末尾）——`map_claim` 与
+// `map_seat` 两张表在会话那一刀里并成这一张。
 
 use crate::system::desk::Desk;
 use env::{PieToken, TaskId};
@@ -300,7 +300,7 @@ pub fn desk() -> Desk {
 /// ——那正是"一个名字指向一枚 Pie"的用法，故这里也不替调用方裁剪。
 ///
 /// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
-/// （`Unknown`）：身体共用，失败值各自说（与 `map_claim` / `map_seat` 同款）。
+/// （`Unknown`）：身体共用，失败值各自说（与 `map_establish` 那两张对照表同款）。
 pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
     crate::communication::hands::ship(entry, to).map_err(|()| Fail::Unknown)
 }

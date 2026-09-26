@@ -5,10 +5,10 @@
 //! 由 `System` 在装配那一圈按次序落到协议各自的手上。
 //!
 //! ```text
-//!   Program（静态声明）── spawn → 装会话 → start → wire ──▶ Service（域 + 线程 + 会话）
+//!   Program（静态声明）── spawn → connect → start → wire ──▶ Service（域 + 线程 + 通道）
 //! ```
 //!
-//! **`Service` 不另立类型**：它就是"一枚线程 ＋ 它的码头"（[`Service`] 是那两样的别名）。
+//! **`Service` 不另立类型**：它就是"一枚线程 ＋ 它那几条通道"（[`Service`] 是那两样的别名）。
 //! 原先那个六格结构体（`name` / `task` / `quay` / `marks` / `needs` / `channel`）是"把一个
 //! 函数拆成三个调用点"逼出来的壳——后三格每次都能从 `setup` 现推，`name`/`task` 账里本来就有。
 //!
