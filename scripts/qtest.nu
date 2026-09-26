@@ -20,6 +20,13 @@
 # 跑七个景就是七次调用。`--scene` 给的景名由本脚本打印出来——报告里那一行只说 `scene`，
 # 景在这一行。
 #
+# **照实记（结构边界：这条路上没有 stdin）**：`cargo-qtest` 起 QEMU 时**不给 stdin**，
+# 而整机收场的扳机是 `echo`（装配单位次 18）——它的退场由控制台输入驱动。故**依赖输入
+# 日程的景**（`root` / `product`）在这条路上判不了：它们偶尔能收场，是因为探针先 panic、
+# 级联把 `echo` 扑杀，那条道才响。自足的景（`again` `load` `group` `beat` `rig`）不受
+# 影响——整机判据今天覆盖的正是它们。产品路那一格的修法见
+# [`boot.nu`](boot.nu) 的 stdin 那一段（管道攒住、等机器起稳再开闸）。
+#
 # **先装那个 runner**（它是个宿主工具，不在仓里）：
 #
 #   cargo install cargo-qemu-test --target x86_64-unknown-linux-gnu   # ⇒ cargo-qtest
