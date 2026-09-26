@@ -16,13 +16,18 @@
 //! Pie"）。住进编排域之后它们**随域**变成 S 态——这是用户裁定接受的代价（iii 那一句
 //! "接受 U 态那两台升 S 态"）；同域四枚线程**共享一张页表**是这条路的另一半代价。
 //!
-//! **照实记（这张表为什么住 lib，而不是随装配单住 bin）**：读它的是**装配单**（`scenario.rs`：
-//! 把它接在镜像那几台前面，接成一条名册）。
+//! **照实记（这张表为什么住 lib，而不随 bin 走）**：iii 之后它一度与 `scenario.rs` 分居两处
+//! （一个在 lib、一个在 bin），而读它的正是那张装配单——**两张表本是一件事**（"内件三枚接在
+//! 镜像那几台前面"）。这一刀把它们并进本目录 `assemble/`：**文件夹就是那条判据**。
+//! 名字仍叫 `inner`（不并进 `mod.rs`）：它是**一张表 + 一条名册**，与"怎么把一行 `Row` 投成
+//! `Program`"（[`super::plan`]）是两件事。
 //!
 //! **照实记（原来还有第二个读者，它已退场）**：那个读者是**板那本账的界**——`Desk::CAP` 要数
 //! "内件里有几位上板"，而它住在 bin 里数不到 ⇒ 那个界就只剩一个手挑的数。两本客人账并成一本、
 //! 那个常数退场之后这里不再是"两处、不同 crate"。留这段是因为它记的是**一个界曾经靠装配事实
 //! 撑着**——同一个教训现在写在 `contract::system::desk` 的并本记里。
+
+use alloc::vec::Vec;
 
 use plan::assembly::{Announce, Eyes};
 use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
@@ -108,3 +113,17 @@ pub const INNER: &[(Role, Program)] = &[
 // 而两侧都在那一格上留了读数（板：`board: swept … occupied=…`；树：`operator: desk full`）
 // ⇒ 断言、数它的两条函数、以及"数出这个界"的那条来路一并退场。
 // **代价照实**：这件病从此**没有编译期的挡板**——它换成了"运行期如实报 + 有人读那一行"。
+
+/// **本次要起的全部成员**，按起手次序：**内件三枚在前，镜像里那几台在后**。
+///
+/// **一处定义**：铸死亡道那一侧（`main.rs`）与起它们那一侧（`service::assemble`）都只读它
+/// ——两处各排一遍次序，正是 `scenario.rs` 记过的那条"下标＝道位次"耦合的温床。
+///
+/// **住这里有三个出处**：它是**两张表接起来**的那一手（[`INNER`] 接 [`super::plan`]）、
+/// 它的读者在 bin 那一侧（`main.rs`），而 `INNER` 本身是 lib 的。三者同住本文件，接线只有一处。
+pub fn roster(catalog: &super::Catalog) -> Vec<(Option<Role>, Program)> {
+    let mut all: Vec<(Option<Role>, Program)> =
+        INNER.iter().map(|(role, p)| (Some(*role), *p)).collect();
+    all.extend(super::plan(catalog).into_iter().map(|p| (None, p)));
+    all
+}

@@ -1,4 +1,20 @@
-//! scenario — **这一景起哪些程序**（装配单本身）。
+//! assemble — **装配那一份数据**：这一景起哪些程序、每一条的装配参数。
+//!
+//! # 这一间住什么（照实记：用户裁定"装配能单独一个文件夹"）
+//!
+//! 原先它分住两处：[`plan`]（"从 `plan::assembly::ALL` 投影出这一景的装配单"）住
+//! `system/scenario.rs`（**bin**，`main.rs` 的 `mod scenario;`），而 [`inner`]（内件三枚那张表）
+//! 住 **lib**（`system/inner.rs`）——**两张表本是一件事**，却被拆在两半。本目录把两处并成一处：
+//!
+//!   - **本文件 = 投影**：一行 `plan::assembly::Row` → 编排域认识的 [`Program`]（[`plan`] 与
+//!     [`plan_row`]）；
+//!   - **[`inner`] = 内件三枚那张表 + 把两张表接成一条名册的那一手**（[`roster`] 从那里转出）。
+//!
+//! **为什么是 lib 模块、不是 bin 的目录**：`system/main.rs` 是 **bin 根**，它只能声明
+//! `system/<名字>.rs` 或 lib 模块；而 `INNER` 原先就住 lib（"住 lib 而不随 bin 走"那条照实记
+//! 在 [`inner`] 里）。两处并拢 ⇒ 只能在 lib 面开这一间，bin 那一侧 `use
+//! crate::system::assemble as scenario;` 把名字接着叫（`main.rs` 里读起来仍是"装配单/名册"
+//! 那一件事）。
 //!
 //! # 为什么装配单单独立一份源（照实记：用户裁定"测试和程序分开"）
 //!
@@ -18,10 +34,9 @@
 
 use alloc::vec::Vec;
 
-use super::*;
+use crate::service::{Catalog, Program};
 
-use programs::service::Role;
-use programs::system::inner::INNER;
+pub mod inner;
 
 /// 这一景的装配单：**从 `plan::assembly::ALL` 派生**——`plan: Some` 的那些行里、**这张镜像真有的**
 /// 那些，按 `order` 排。
@@ -62,7 +77,7 @@ pub fn plan(catalog: &Catalog) -> Vec<Program> {
         .collect();
     rows.sort_by_key(|row| row.plan.as_ref().map(|p| p.order));
     rows.iter()
-        .filter_map(|row| row.plan.as_ref().map(|p| of(row.name, p)))
+        .filter_map(|row| row.plan.as_ref().map(|p| plan_row(row.name, p)))
         .collect()
 }
 
@@ -71,7 +86,7 @@ pub fn plan(catalog: &Catalog) -> Vec<Program> {
 /// **照实记（为什么是自由函数，不是 `Program::of`）**：`Program` 住 **lib**（`service`），
 /// 而本文件是 **bin** `prog-system` 的一部分 ⇒ inherent impl 落在"类型所属 crate 之外"，
 /// `E0116` 当场拒绝。自由函数不受这条约束。
-fn of(name: &'static str, p: &plan::assembly::Plan) -> Program {
+fn plan_row(name: &'static str, p: &plan::assembly::Plan) -> Program {
     Program {
         name,
         announce: p.announce,
@@ -89,20 +104,11 @@ fn of(name: &'static str, p: &plan::assembly::Plan) -> Program {
 
 // ── 内件三枚（iii：住本域的那三枚）─────────────────────────────
 //
-// 它们那张**表**（`INNER`）搬去本域的实现侧（`inner.rs`）了：读它的是**本文件**（把它接在
-// 镜像那几台前面，接成一条名册）。
+// 它们那张**表**（`INNER`）与**把两张表接起来**的那一手（`roster`）住同目录的 `inner.rs`：
+// 读它的是**本文件**（把内件三枚接在镜像那几台前面，接成一条名册）。
 //
 // **照实记（原来还有第二个读者，它已退场）**：那个读者是**板那本账的界**（`Desk::CAP` 要数
 // "内件里有几位上板"），住在 bin 里数不到 ⇒ 那个界就只剩一个手挑的数。两本客人账并成一本、
-// 那个常数退场之后（见 `contract::system::desk` 的并本记），这里只剩本文件一处。
+// 那个常数退场之后（见 `contract::system::desk` 的并本记），这里只剩一处。
 
-/// **本次要起的全部成员**，按起手次序：**内件三枚在前，镜像里那几台在后**。
-///
-/// **一处定义**：铸死亡道那一侧（`main.rs`）与起它们那一侧（`service::assemble`）都只读它
-/// ——两处各排一遍次序，正是本文件记过的那条"下标＝道位次"耦合的温床。
-pub fn roster(catalog: &Catalog) -> Vec<(Option<Role>, Program)> {
-    let mut all: Vec<(Option<Role>, Program)> =
-        INNER.iter().map(|(role, p)| (Some(*role), *p)).collect();
-    all.extend(plan(catalog).into_iter().map(|p| (None, p)));
-    all
-}
+pub use inner::{INNER, roster};

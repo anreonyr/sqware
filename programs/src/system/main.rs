@@ -23,7 +23,7 @@
 //! ```
 //!
 //! **本文件只剩流程**：起谁、按什么顺序、开哪几条通道、要哪些门闩、上不上板、上不上树，
-//! 全在 `scenario.rs`（`INNER` 那三枚 ＋ 从 `plan::assembly::ALL` 派生的那几台——**一张表只有
+//! 全在 `system/assemble/`（`INNER` 那三枚 ＋ 从 `plan::assembly::ALL` 派生的那几台——**一张表只有
 //! 一处**）。要加第三个服务 —— 表里加一行，本文件一个字不改。
 //!
 //! # 四种角色的出口（照实记：这一格原来写三遍）
@@ -60,11 +60,12 @@ use runtime::env::unit as utask;
 
 use contract::driver::supply::frame::{Kind, Want};
 use plan::assembly::E_BOOT;
-use programs::system::{coalition, operator, principal};
 use protocol::driver::supply;
-use service::{Catalog, Lane, Program, Role};
+use service::{Catalog, Lane, Role};
 
-mod scenario;
+// 装配单/名册住 lib 的 `system/assemble/`（同一份数据的两半：投影 + 内件表）。
+use programs::system::assemble as scenario;
+use programs::system::{coalition, operator, principal};
 
 // **照实记（这里原先有四个名字常量：`TREE` / `PRINCIPAL` / `COALITION` / `MEMBER`）**：
 // 它们是"装配期认谁"的四个名字，而**认它们的是装配的机器**（`service::assemble` 里那三处
@@ -75,10 +76,10 @@ mod scenario;
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
-// ── 装配单搬到 `scenario.rs`（用户裁定"测试和程序分开"）──────────────
+// ── 装配单搬去 `assemble/`（用户裁定"测试和程序分开"，后一刀收成一个文件夹）──
 //
-// 那些行 [`Program`] 与装配单现在住 `scenario.rs`：本文件是**机器**，
-// 不认识具体哪一台。名册在 `system()` 那一趟现取（`scenario::roster`），故下面
+// 那些行 [`service::Program`] 与装配单现在住 `assemble/`：本文件是**机器**，
+// 不认识具体哪一台。名册在 `system()` 那一趟现取（`assemble::roster`），故下面
 // [`service::assemble`] 那一处只多收了一格、其余一字未改。
 
 /// 本域的死法：**一格 = 死在起手的哪一步**——号与从前的 `service::die` **同值**
