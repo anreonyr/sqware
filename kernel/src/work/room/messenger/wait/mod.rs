@@ -24,6 +24,45 @@ use self::holder::{Ticket, hold, void};
 use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
 use super::handoff::Handoff;
 
+/// **等待轴答得出的条件**：`Busy`（条件未就绪）与 `OoM`（备料失败）。
+///
+/// 这一层被 **Room**（`park`/`park_until`/`wait`）与 **Unit**（`fall`/`join`）共用，
+/// 故它不能只挂一个域的词表——泛型到"答得出这两枚条件的域"上，各域实现各自的词表。
+/// `Fail` 那一份是**过渡期**的（还没域化的类仍写 `Fail::X`），清尾时删。
+pub(crate) trait WaitFail: env::FailCode {
+    /// 条件未就绪（退化上下文 / 落表那一格）。
+    fn busy() -> Self;
+    /// 备料失败（站点 / 票根 / 到点备不下）。
+    fn oom() -> Self;
+}
+
+impl WaitFail for env::RoomFail {
+    fn busy() -> Self {
+        env::RoomFail::Busy
+    }
+    fn oom() -> Self {
+        env::RoomFail::OoM
+    }
+}
+
+impl WaitFail for env::UnitFail {
+    fn busy() -> Self {
+        env::UnitFail::Busy
+    }
+    fn oom() -> Self {
+        env::UnitFail::OoM
+    }
+}
+
+impl WaitFail for Fail {
+    fn busy() -> Self {
+        Fail::Busy
+    }
+    fn oom() -> Self {
+        Fail::OoM
+    }
+}
+
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
 
 /// 挂起的唯一实现：三处入口（`park` / `wait` / `join`）只差一个键。
@@ -51,7 +90,7 @@ use super::handoff::Handoff;
 /// 到点未登记、任务状态未改，调用方当场拿到 `OoM`。
 ///
 /// 锁纪律：站点表与票根都是 L3，**绝不互相嵌套**——「作用域内取、作用域外用」。
-fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, Fail> {
+fn block<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, E> {
     // ① 信标先探
     if take_beacon(key) {
         return Ok(Handoff::Resume(()));
@@ -73,7 +112,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
     let Some(me) = current().running_task() else {
         // envcall 恒在任务上下文（见 `dispatch` 头注）；退化路径不挂起、不动表，
         // 按"条件未就绪"答（`Busy`）。
-        return Err(Fail::Busy);
+        return Err(E::busy());
     };
     // **离核前自查**：我正在离开核——若此刻已被点名（他杀 / 级联的跨核分支），就地自退。
     //
@@ -92,7 +131,7 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
     {
         let mut sites = sites(key).lock();
         if !sites.contains_key(&key) {
-            sites.try_reserve(1).map_err(|_| Fail::OoM)?;
+            sites.try_reserve(1).map_err(|_| E::oom())?;
             let mut site = Site::new(&Weak::new());
             site.life = life;
             sites.insert(key, site);
@@ -101,10 +140,10 @@ fn block(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, F
     let ticket = Ticket::alloc();
     let at = (dur != Duration::MAX).then(|| clock::now().add(dur).as_ticks());
     if let Some(at) = at {
-        hold(ticket, key, &me).map_err(|()| Fail::OoM)?;
+        hold(ticket, key, &me).map_err(|()| E::oom())?;
         if timer::tock(ticket.raw(), at).is_err() {
             void(ticket); // 到点没登记上 ⇒ 票根也不留（`void` 顺带消音，幂等）
-            return Err(Fail::OoM);
+            return Err(E::oom());
         }
         // # 照实记（已裁：**删**）——这里曾经有一句"登记后当场重武装"
         //
@@ -244,7 +283,7 @@ impl Iterator for Unchain {
 /// 一枚弱引用。
 ///
 /// Running → Blocked；返回下一帧 PA（若 scheduler 装了下一 starved）。
-pub fn park(duration: Duration) -> Result<usize, Fail> {
+pub fn park<E: WaitFail>(duration: Duration) -> Result<usize, E> {
     let Some(task) = current().running_task() else {
         // 唯一调用点（envcall `Park`）恒在任务上下文；退化路径不空转也不挂：
         // 无任务即无「本核无后继」可谈，直接取活。
@@ -275,7 +314,7 @@ pub fn park(duration: Duration) -> Result<usize, Fail> {
 /// 路径与 [`park`] 唯一不同在"到点谁算"：`park` 用 `now + duration`，这里用 `at`
 /// 折回的刻度（`duration_to_ticks`，饱和）。折回去用的是**同一个钟**，故"不早于"
 /// 这条下限不受影响。
-pub fn park_until(at: u64) -> Result<Option<usize>, Fail> {
+pub fn park_until<E: WaitFail>(at: u64) -> Result<Option<usize>, E> {
     // `duration_to_ticks` 自带 u128 中间量与饱和 ⇒ 这里不需要防溢出的钳制。
     //
     // **基准要对齐**：`at` 是 `Chrono::Clock` 的口径 = **自启动**基准，故这里用
@@ -312,7 +351,7 @@ pub fn park_until(at: u64) -> Result<Option<usize>, Fail> {
 
 /// 事件等待（`RoomCall::Wait`）：直通 [`block`]。有投信方的键，信标先探可能命中
 /// 而当场续跑（[`Handoff::Resume`]）；键已死则 ⑤ 的锁内判死把它当场放回。
-pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, Fail> {
+pub fn wait<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, E> {
     block(key, life, dur)
 }
 
@@ -351,7 +390,7 @@ pub fn wait(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>
 /// ——醒来自己扫表分辨。与 [`join`] 的唯一差别是 `dur == ZERO` **不特判**：`join` 探的是
 /// 资源状态（重复问答案一样，故不消费），这里探的是**事件位**——问了就是取了，
 /// 不取就会永远答"是"（`block` 第一步的 `take_beacon` 正好是这件事）。
-pub fn fall(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, Fail> {
+pub fn fall<E: WaitFail>(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, E> {
     let TaskLife { id, life } = me;
     match block(WakeKey::Pies { task: id }, life, dur)? {
         Handoff::Switch(pa) => Ok(Handoff::Switch(pa)),
@@ -359,7 +398,7 @@ pub fn fall(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, Fail> {
     }
 }
 
-pub fn join(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>, Fail> {
+pub fn join<E: WaitFail>(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>, E> {
     if reaped {
         return Ok(Handoff::Resume(true));
     }

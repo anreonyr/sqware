@@ -11,7 +11,7 @@
 //! **监督相已分出去**（[`supervise`]）：本文件全是**装配期**的事。
 
 use env::Wait;
-use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, Reason, TaskId, TeamId};
+use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, Reason, TaskId, TeamId, UnitFail};
 use runtime::core::exit::Report;
 use runtime::env::unit as utask;
 
@@ -32,7 +32,7 @@ use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
 ///
 /// **名字不过这里**：清单名归装配账（`system::desk`），内核不收名字。
 pub fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
-    utask::build(image, kind).map_err(fail)
+    utask::build(image, kind).map_err(unit_fail)
 }
 
 /// 产一枚线程（未放行）：`entry = 0` ⇒ 走域默认入口。
@@ -40,7 +40,7 @@ pub fn build(image: &[u8], kind: ProgramKind) -> Result<TeamId, Fail> {
 /// `args` 是 `Spawn` 的那一格（内核拷到新任务栈顶，子方用 `runtime::core::unit::args()` 读）。
 /// 今天只有一处非空：iii 的三枚内件用**同一个入口**、靠这一格分派角色（[`crate::service::Role`]）。
 pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
-    utask::spawn(team, 0, args, 0).map_err(fail)
+    utask::spawn(team, 0, args, 0).map_err(unit_fail)
 }
 
 /// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。
@@ -52,7 +52,7 @@ pub fn accord(token: env::PieToken, task: TaskId, perm: env::Permission) -> Resu
 
 /// 放行。
 pub fn hatch(task: TaskId) -> Result<(), Fail> {
-    utask::hatch(task).map_err(fail)
+    utask::hatch(task).map_err(unit_fail)
 }
 
 /// 收掉目标所属的域（连它的线程一起）。**`doom`：不靠血缘。**
@@ -67,12 +67,25 @@ pub fn reaped(task: TaskId) -> bool {
     utask::join(task, Wait::POLL).unwrap_or(true)
 }
 
-/// 内核负码 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
+/// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 ///
-/// **码读 `env` 的词汇**（[`EnvFail::of_code`]）：本层出现数字就等于把码表抄成第二处。
-/// 三格的来路：`+` 装不上 = [`EnvFail::BadImage`]；`+` 内存不够 / 产不出来 =
-/// [`EnvFail::OoM`]（本协议名 [`Fail::Full`]）；其余（含表外那一格 `None`）
-/// 落 [`Fail::Unknown`]——"不认识的失败"不该猜成某一种。
+/// **穷尽 match 在域词表上**（`env::UnitFail`）：装不上 = [`UnitFail::BadImage`]；
+/// 内存不够 / 产不出来 = [`UnitFail::OoM`]（本协议名 [`Fail::Full`]）；其余
+/// （`Denied` 不在我 heir 里 / 启动参数读不出来；`Busy` 条件未就绪）落 [`Fail::Unknown`]
+/// ——"不认识的失败"不该猜成某一种。**没有表外那一格**：域词表是穷尽的，表外码在
+/// 生成的那一格就 `unreachable!` 了。
+fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
+    match e.source {
+        UnitFail::BadImage => Fail::BadImage,
+        UnitFail::OoM => Fail::Full,
+        UnitFail::Denied | UnitFail::Busy => Fail::Unknown,
+    }
+}
+
+/// **Pie 域**的失败 → 本协议的失败域（今天只有 `accord` 一处用它）。
+///
+/// **过渡期**：Pie 那几格还没换域词表，故这里仍按 `env::Fail` 的码读；Pie 那一刀落地时
+/// 它会变成 `pie_fail(e: erra::Error<PieFail>)` 的穷尽 match（`EnvFail`/`EnvError` 随之退场）。
 fn fail(e: erra::Error<EnvError>) -> Fail {
     match EnvFail::of_code(e.source.code()) {
         Some(EnvFail::BadImage) => Fail::BadImage,

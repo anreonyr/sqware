@@ -10,7 +10,7 @@ use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use env::Wait;
 
-use env::{EnvResult, TaskId, TeamId};
+use env::{TaskId, TeamId, UnitResult};
 
 use crate::core::tls;
 use crate::env::{room, unit as env_task};
@@ -124,7 +124,7 @@ where
 /// （在 `Team.held` 里）但未放行，本函数**只可能**在父方被 doom 级联扑杀的
 /// 窗口里走到，那时该任务已随父域停摆、由级联的 `reap` 收尾——故此处不留孤儿。
 /// 不在这里 `kill`：本模块不该认识「杀」这条路径（它属 room）。
-pub fn try_closure<F, T>(f: F) -> EnvResult<Join<T>>
+pub fn try_closure<F, T>(f: F) -> UnitResult<Join<T>>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send,

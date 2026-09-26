@@ -308,7 +308,7 @@ fn drain_exhaust(lines: &mut Lines, plic: &Plic, buf: &mut [u8]) {
         while lane.pull(buf, Wait::POLL).is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
-            say(&alloc::format!("router: exhaust line={line}"));
+            // say(&alloc::format!("router: exhaust line={line}"));
         }
     }
 }

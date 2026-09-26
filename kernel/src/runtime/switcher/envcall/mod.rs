@@ -22,7 +22,7 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, DebugCall, EnvCall, RoomCall, TaskId, UnitCall};
+use env::{ChronoCall, DebugCall, EnvCall, RoomCall, RoomFail, TaskId, UnitCall, UnitFail};
 
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
@@ -100,10 +100,19 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
 }
 
 /// 映射错误 → 负码（`Spawn` 的栈/帧分配失败）。
-fn map_err(e: crate::memory::manager::MapError) -> Fail {
+fn map_err(e: crate::memory::manager::MapError) -> UnitFail {
     match e {
-        crate::memory::manager::MapError::OutOfMemory => Fail::OoM,
-        _ => Fail::Denied,
+        crate::memory::manager::MapError::OutOfMemory => UnitFail::OoM,
+        // 其余（对齐 / 已映射 / 未映射 / 无区段 / 借入加宽 / 段状态不符 / 恒等压栈）在
+        // "产线程的栈与帧"这条路上都是"要的东西给不出" ⇒ `Denied`。**穷尽 match**：
+        // `MapError` 多一枚变体就编不过（同一个内核错误在 Memory 域另有一处折算）。
+        crate::memory::manager::MapError::NotAligned
+        | crate::memory::manager::MapError::AlreadyMapped
+        | crate::memory::manager::MapError::NotMapped
+        | crate::memory::manager::MapError::NoRegion
+        | crate::memory::manager::MapError::WidenDenied
+        | crate::memory::manager::MapError::SegmentMismatch
+        | crate::memory::manager::MapError::DramOverlap => UnitFail::Denied,
     }
 }
 
@@ -219,14 +228,14 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let target = muster(task).and_then(|w| w.upgrade());
             let Some(target) = target else {
                 // 名册升不起来 = 从未入册 / 已回收——与 `Join` 判活三态同一口径。
-                return ret_err(frame, Fail::Dead);
+                return ret_err(frame, RoomFail::Dead);
             };
             let team = target.ident.team.clone();
             // **判活是域粒度**：域里已没有还没收尾的线程 ⇒ 与"名册升不起"同答 `Dead`，
             // 不再"答成功却什么都没做"（读法与 `Team::all_reaped` 同一句）。
             // 空域够不到这一支——它没有 `TaskId` 手柄，那条边界照旧（见 `protocol::system` §八）。
             if team.all_reaped() {
-                return ret_err(frame, Fail::Dead);
+                return ret_err(frame, RoomFail::Dead);
             }
             // 下令时记一笔（谁杀的）；死亡时受害者那颗核另记 `Exit { EXIT_DOOM }`
             // ——两条分开是因为它们落在不同的核上（见 `RoomEvent::Doomed`）。
@@ -253,7 +262,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Room(RoomCall::Park { millis }) => {
             drop(ident);
-            match park(Duration::from_millis(millis as u64)) {
+            match park::<RoomFail>(Duration::from_millis(millis as u64)) {
                 Ok(pa) => return pa as *mut TrapContext,
                 // 备料失败（内存耗尽）：本任务**没挂起**，当场答 `OoM`。
                 Err(e) => return ret_err(frame, e),
@@ -261,7 +270,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Room(RoomCall::ParkUntil { at }) => {
             drop(ident);
-            match park_until(at) {
+            match park_until::<RoomFail>(at) {
                 // 到点已过 ⇒ 未离核即续跑（ABI 契约：当场返回，不是让出一拍）。
                 Ok(None) => {}
                 Ok(Some(pa)) => return pa as *mut TrapContext,
@@ -280,7 +289,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let dur = millis.into_duration();
             drop(ident);
             // `wlife` **按值**交给等待机（站点是它唯一的持有者）。
-            match wait(wkey, wlife, dur) {
+            match wait::<RoomFail>(wkey, wlife, dur) {
                 // `RoomCall::Wait` 没有当场结论：未离核即续跑。
                 Ok(Handoff::Resume(())) => {}
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
@@ -319,13 +328,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             } else {
                 match current().running_task().and_then(|me| me.heir(team)) {
                     Some(t) => t,
-                    None => return ret_err(frame, Fail::Denied),
+                    None => return ret_err(frame, UnitFail::Denied),
                 }
             };
             // 启动参数：从调用方空间拷（count == 0 → 空）
             let words = match copy_words(&ident.team.space, KVirt::from_raw(args.get()), count) {
                 Some(w) => w,
-                None => return ret_err(frame, Fail::Denied),
+                None => return ret_err(frame, UnitFail::Denied),
             };
             // entry = 0 → 域默认入口（`Build` 装载所得 e_entry）
             let entry_va = if entry == 0 {
@@ -406,17 +415,17 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 // 源读不到 = 调用方自己的映射不在（或本域另一枚线程刚放手）——与从前
                 // "暂存拷不进来"同一个负码。
-                Err(UnitError::Unreadable) => return ret_err(frame, Fail::Denied),
+                Err(UnitError::Unreadable) => return ret_err(frame, UnitFail::Denied),
                 // 内存不够从"镜像不认"里分出来：`-4` 这一格编排者本来就接
                 // （`protocol::system::core::Fail::Full`），`-6` 没有。
-                Err(UnitError::OoM) => return ret_err(frame, Fail::OoM),
-                Err(UnitError::Load) => return ret_err(frame, Fail::BadImage),
+                Err(UnitError::OoM) => return ret_err(frame, UnitFail::OoM),
+                Err(UnitError::Load) => return ret_err(frame, UnitFail::BadImage),
             }
         }
         EnvCall::Unit(UnitCall::Hatch { task }) => {
             let target = match muster(task).and_then(|w| w.upgrade()) {
                 Some(t) => t,
-                None => return ret_err(frame, Fail::Denied),
+                None => return ret_err(frame, UnitFail::Denied),
             };
             // 授权：与我同域，或属于我 heir 里的子域
             let same = Arc::ptr_eq(&target.ident.team, &ident.team);
@@ -425,7 +434,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 .map(|me| me.heir(target.ident.team.id).is_some())
                 .unwrap_or(false);
             if !(same || mine) {
-                return ret_err(frame, Fail::Denied);
+                return ret_err(frame, UnitFail::Denied);
             }
             if let Err(e) = Task::release(&target) {
                 return ret_err(frame, e);
@@ -443,7 +452,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             //      （照旧放行；寿命无从谈起 ⇒ 空弱引用，站点当场判死、不建站点）。
             //   ③ 仍是活任务 ⇒ 当场核对授权，并把「退出钩子是否已跑完」读出来。
             let Some(target) = muster(task) else {
-                return ret_err(frame, Fail::Denied);
+                return ret_err(frame, UnitFail::Denied);
             };
             // **挂起前放掉那枚抄件**（`muster` 抄出来的弱引用）：`target` 只用来当场判活
             // 与取 `(reaped, life)`，此后它就是一具"跨挂起还压在栈上"的引用 —— 而
@@ -460,7 +469,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                         .map(|me| me.heir(t.ident.team.id).is_some())
                         .unwrap_or(false);
                     if !(same || mine) {
-                        return ret_err(frame, Fail::Denied);
+                        return ret_err(frame, UnitFail::Denied);
                     }
                     (t.tag() == TaskTag::Reaped, t.life())
                 }
@@ -470,7 +479,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             frame.gpr.set_x(Gprs::A0, 0);
             drop(ident);
             drop(target);
-            match messenger::join(TaskLife { id: task, life }, reaped, dur) {
+            match messenger::join::<UnitFail>(TaskLife { id: task, life }, reaped, dur) {
                 // 未离核：当场结论（true = 调用开始时目标已回收）。
                 Ok(Handoff::Resume(dead)) => frame.gpr.set_x(Gprs::A0, dead as usize),
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
@@ -483,7 +492,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // **只等"我自己这张表"**：键由内核从调用者推出来，故这里没有参数、
             // 也就没有伪造面（同 `SelfId` / `Sire` 那一路）。
             let Some(me) = current().running_task() else {
-                return ret_err(frame, Fail::Busy);
+                return ret_err(frame, UnitFail::Busy);
             };
             let mine = TaskLife {
                 id: me.ident.id,
@@ -494,7 +503,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             drop(ident);
             // 跨挂起不得持强引用（同 `Join` 那条纪律）：只留那份弱引用。
             drop(me);
-            match messenger::fall(mine, dur) {
+            match messenger::fall::<UnitFail>(mine, dur) {
                 Ok(Handoff::Resume(landed)) => frame.gpr.set_x(Gprs::A0, landed as usize),
                 Ok(Handoff::Switch(pa)) => return pa as *mut TrapContext,
                 Err(e) => return ret_err(frame, e),
@@ -502,15 +511,15 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         }
         EnvCall::Unit(UnitCall::Oust { team }) => {
             let Some(me) = current().running_task() else {
-                return ret_err(frame, Fail::Denied);
+                return ret_err(frame, UnitFail::Denied);
             };
             // 凭证就是**我自己那张血缘表**（同 `Spawn` 的门）：查到 = 我是它的 sire。
             let Some(child) = me.heir(team) else {
-                return ret_err(frame, Fail::Denied);
+                return ret_err(frame, UnitFail::Denied);
             };
             // 前置：域里没有还没收尾的线程（判据读法与"回收对调用方不可观测"那条一致）。
             if !child.all_reaped() {
-                return ret_err(frame, Fail::Busy);
+                return ret_err(frame, UnitFail::Busy);
             }
             // 手里那份瞬时引用先还掉：摘除只需 id，析构留给锁外。
             drop(child);

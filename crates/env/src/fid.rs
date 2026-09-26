@@ -80,6 +80,9 @@ pub enum RoomFail {
     Dead = -1,
     /// 备料失败（`Park` / `ParkUntil` / `Wait` 的等待位备不下）。
     OoM = -2,
+    /// 条件未就绪（等待那一路在退化上下文里答这一枚）。
+    #[busy]
+    Busy = -3,
 }
 
 /// `RoomFail` 的结果别名。

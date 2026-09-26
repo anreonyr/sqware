@@ -1,20 +1,24 @@
 //! Room 域：`RoomCall::*` 转发（调度词族）。
+//!
+//! 每格一个**精确签名的入口**（`env::room::*`，由 `#[derive(Envcall)]` 生成）：本层只留
+//! "调用方口径 → 内核口径"的那点转换（`Duration` → 毫秒、`Wait` 原样）。错类型是**这一域
+//! 的词汇**（`RoomFail`：`Dead` / `OoM` / `Busy`）。
+//!
+//! [`exit`] 是**唯一手写**的一格（`RoomCall::Reap`）：它发散（`!`），且在栈上拼 `&str`
+//! 那两个参数——形状与"每格一个入口"不同，故标了 `#[manual]`。
 
 use core::time::Duration;
-use env::Wait;
 
-use env::{EnvResult, Reason, RoomCall, RoomCallRet, TaskId, VirtAddr};
+use env::{Reason, RoomCall, RoomResult, TaskId, VirtAddr, Wait};
 
 /// 让出处理器。
 ///
-/// **返 `()`，不返 `EnvResult`**：这一手在**内核里没有失败分支**——`RoomCall::Starve` 那一格
-/// 直接就是"切走"（`envcall/mod.rs`：`return current().starve()`），没有 `ret_err` 那一支。
-/// 从前它写着 `EnvResult<()>` 而函数体 `let _ = …call(); Ok(())`：**签名许诺了一个永不到来的
+/// **不返 `Result`**：这一手在**内核里没有失败分支**——`RoomCall::Starve` 那一格直接就是
+/// "切走"（`envcall/mod.rs`：`return current().starve()`），没有 `ret_err` 那一支。从前它
+/// 写着 `EnvResult<()>` 而函数体 `let _ = …call(); Ok(())`：**签名许诺了一个永不到来的
 /// 失败**，读签名的人会去写 `?`，而那是死代码。
 pub fn starve() {
-    // 唯一能答 `Err` 的是"这一问读不懂"（调用号不对）——那一格由**生成的**调用点排掉，
-    // 不是这一手的失败域（同 `Reap` 之后那句 `unreachable!` 的口径：破的是不变量，不是失败）。
-    let _ = RoomCall::Starve.call();
+    env::room::starve()
 }
 
 /// 结束本任务：**原因码 + 可选的一句话**——全仓**唯一**的出口原语。
@@ -51,7 +55,11 @@ pub fn exit(reason: Reason, note: Option<&str>) -> ! {
     unreachable!("Reap 返回了：reason={reason}")
 }
 
-pub fn sleep(d: Duration) -> EnvResult<()> {
+/// 睡一段（相对）：**至少这么久**，向上取整到毫秒。
+///
+/// # Errors
+/// - `OoM`(-2) 等待位备料失败（**本任务没挂起**——见 `envcall/mod.rs` 的 `Park` 那一支）
+pub fn sleep(d: Duration) -> RoomResult<()> {
     // **向上取整到毫秒**：`Park{millis}` 是**下限族**（"至少这么久"），而 `Park{0}` 的
     // 语义是**让出一拍**、不是"睡 0 毫秒"。
     //
@@ -63,15 +71,10 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
     if d.subsec_nanos() % 1_000_000 != 0 {
         millis += 1;
     }
-    // **`?`，不是 `let _ =`**：这一手**会失败**——内核那一格在"备料失败（内存耗尽）"时
-    // 当场答 `OoM`，而**本任务没挂起**（见 `envcall/mod.rs` 的 `Park` 那一支）。吞掉它
-    // 就是"答 `Ok` 而根本没睡"：调用方以为睡过了，实际是空转。要不要紧由**调用点**说
-    // （它们今天一律 `let _ =`）——那才是政策该在的地方。
-    RoomCall::Park {
-        millis: millis.min(usize::MAX as u128) as usize,
-    }
-    .call()?;
-    Ok(())
+    // **不吞错**：这一手**会失败**——内核那一格在"备料失败（内存耗尽）"时当场答 `OoM`，
+    // 而**本任务没挂起**。吞掉它就是"答 `Ok` 而根本没睡"：调用方以为睡过了，实际是空转。
+    // 要不要紧由**调用点**说（它们今天一律 `let _ =`）——那才是政策该在的地方。
+    env::room::park(millis.min(usize::MAX as u128) as usize)
 }
 
 /// 睡到**绝对点**（`at` = `chrono::clock()` 的纳秒基准）：**不早于 `at`，且至多晚一拍**；
@@ -79,11 +82,10 @@ pub fn sleep(d: Duration) -> EnvResult<()> {
 ///
 /// 周期任务用它才不会漂：`next += period; sleep_until(next)?;` —— 迟到不累积。
 /// 与 [`sleep`] 的分工：那个是"至少睡这么久"（相对），这个是"到某个时刻再回来"（绝对）。
-pub fn sleep_until(at: u64) -> EnvResult<()> {
-    // 同 [`sleep`]：**会失败**（`ParkUntil` 那一支同样会因备料失败答 `OoM`，而本任务没挂起）
-    // ⇒ 不吞。
-    RoomCall::ParkUntil { at }.call()?;
-    Ok(())
+/// # Errors
+/// - `OoM`(-2) 等待位备料失败（**本任务没挂起**）
+pub fn sleep_until(at: u64) -> RoomResult<()> {
+    env::room::park_until(at)
 }
 
 /// 他杀：把 `task` 送进既有的死亡路径——与 [`exit`] 成对（**自杀 ↔ 他杀**）。
@@ -93,7 +95,8 @@ pub fn sleep_until(at: u64) -> EnvResult<()> {
 /// 不是"血缘特权"。曾经那道传递门（目标域沿 `sire` 链可达本域）已随 `Build` 的 S 态门
 /// 同一次分家删掉，"该不该收"归 `protocol::system` 的编排者。
 ///
-/// 失败只有 `Dead`(-2)：目标从未入册 / 已回收 / **它那个域里已经没有还没收尾的线程**。
+/// 失败只有 `Dead`（本域词汇里的那一枚）：目标从未入册 / 已回收 / **它那个域里已经没有
+/// 还没收尾的线程**。
 /// **不等它回收**——要等用 [`crate::env::unit::join`]，且注意 `Join` 只在"收尾"之前
 /// 答得出（入土之后它问不出"没了"与"从来没有过"的区别）。
 ///
@@ -106,26 +109,21 @@ pub fn sleep_until(at: u64) -> EnvResult<()> {
 /// 同域那枚板线程）。它已删：按域粒度那一刀收的正是**编排域自己**，代价是最后那句判词
 /// `system: done` 永远够不到（见 `system/main.rs` 收尾那一格的照实记）。板线程随"域亡＝成员
 /// 清零"一起走，不需要点名。
-pub fn doom(task: TaskId) -> EnvResult<()> {
-    let _ = RoomCall::Doom { task }.call()?;
-    Ok(())
+pub fn doom(task: TaskId) -> RoomResult<()> {
+    env::room::doom(task)
 }
 
-pub fn wait(key: usize, millis: Wait) -> EnvResult<()> {
-    // 同 [`sleep`]：**会失败**（`Wait` 那一支的备料同样会答 `OoM`，而本任务没挂起）⇒ 不吞。
-    RoomCall::Wait { key, millis }.call()?;
-    Ok(())
+/// # Errors
+/// - `OoM`(-2) 等待位备料失败（**本任务没挂起**）
+pub fn wait(key: usize, millis: Wait) -> RoomResult<()> {
+    env::room::wait(key, millis)
 }
 
 /// 唤醒 `key` 上的等待者：答**有没有人可唤醒**（`false` = 没有等待者，内核当场置
 /// `pend` 给下一次等待）。
 ///
-/// **不返 `EnvResult`**：内核那一格恒写这一枚 bool，没有失败支
-/// （见 `env::ecall::EnvResult` 的注）。
-pub fn wake(key: usize) -> usize {
-    let r = RoomCall::Wake { key }.call();
-    match r {
-        Ok(RoomCallRet::Wake(woke)) => woke as usize,
-        _ => unreachable!(),
-    }
+/// **不返 `Result`**：内核那一格恒写这一枚 bool，没有失败支（生成的那一格标了
+/// `#[infallible]`）。
+pub fn wake(key: usize) -> bool {
+    env::room::wake(key)
 }
