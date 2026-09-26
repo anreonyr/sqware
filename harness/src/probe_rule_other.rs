@@ -83,9 +83,7 @@ const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-other: no sire");
-    };
+    let sire = utask::sire();
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {

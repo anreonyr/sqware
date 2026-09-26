@@ -95,9 +95,7 @@ fn main() -> Report<'static> {
     let reg = register();
     let _ = debug::put(&format!("sleeper: reg={reg}"));
 
-    let Ok(sire) = utask::sire() else {
-        return no_service("sleeper: no sire");
-    };
+    let sire = utask::sire();
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
         return no_service("sleeper: no operator");
     };
@@ -206,9 +204,7 @@ fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
 
 /// 上板报到（与 `passer` / `echo` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
 fn register() -> u8 {
-    let Ok(sire) = utask::sire() else {
-        return bcall::BAD;
-    };
+    let sire = utask::sire();
     let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
         return bcall::BAD;
     };

@@ -165,13 +165,13 @@ fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
         return;
     };
     table.set_state(name, State::Dead);
-    let before = utask::heir_count().unwrap_or(0);
+    let before = utask::heir_count();
     // **本域那一枚没有别人的域可放下**（`team = None`）：放下它就是扑杀本域自己。
     let ousted = match team {
         Some(team) => utask::oust(team).is_ok(),
         None => false,
     };
-    let after = utask::heir_count().unwrap_or(0);
+    let after = utask::heir_count();
     let wait = match reaped {
         Reaped::Now => "now",
         Reaped::Waited => "waited",

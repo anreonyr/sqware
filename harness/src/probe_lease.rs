@@ -60,9 +60,7 @@ const OK_NOTE: &str = "probe-lease: landed, leaving";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-lease: no sire");
-    };
+    let sire = utask::sire();
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };

@@ -105,9 +105,7 @@ fn junk() -> [u8; JUNK] {
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-bound: no sire");
-    };
+    let sire = utask::sire();
 
     // 一、**两条路先都装上**：本端那一枚交给生我者（它再转授给对方），另铸一枚问话孔给它。
     //

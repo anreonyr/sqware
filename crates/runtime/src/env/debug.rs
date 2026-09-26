@@ -52,10 +52,10 @@ pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
 ///
 /// 为什么留在 ABI 上而不是编译期开关：布局错位只有**真实字节**能证，而这类病一旦出现
 /// 就要能在**同一个产物**上打开对账再跑一遍。
-pub fn trace(on: bool) -> EnvResult<()> {
+///
+/// **不返 `EnvResult`**：内核那一格把开关的**回读值**写进 `a0`（0/1），没有失败支
+/// ——同 [`starve`](crate::env::room::starve) 的形状（见 `env::ecall::EnvResult` 的注）。
+pub fn trace(on: bool) {
     let call = DebugCall::SetTrace { on: on as usize };
-    match call.call()? {
-        DebugCallRet::SetTrace(()) => Ok(()),
-        _ => unreachable!(),
-    }
+    let _ = call.call();
 }

@@ -40,7 +40,7 @@ pub fn spin_iters(iters: usize) {
 }
 
 fn now() -> usize {
-    chrono::ticks().unwrap_or(0)
+    chrono::ticks()
 }
 
 /// 量本机两件事：`(每毫秒的空转轮数, 每刻度多少毫秒)`。

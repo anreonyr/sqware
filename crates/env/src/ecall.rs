@@ -5,6 +5,18 @@
 //! `derive(Envcall)` 生成（见 `fid.rs`），它们调用本文件的 `trap`。
 
 /// 环境调用结果。
+///
+/// # 什么时候**不**写 `EnvResult`
+///
+/// 判据是**内核那一格有没有失败支**，不是"这一手看起来会不会出错"。内核整条路径只写
+/// 读数（不写 `ret_err`、不写负码）的那些格——`ChronoCall::{Ticks, Clock}`、
+/// `UnitCall::{SelfId, Sire, HeirCount, Heir}`、`RoomCall::Wake`、`DebugCall::SetTrace`、
+/// `PieCall::Collect`——用户侧一律返裸值：给它们写上 `EnvResult` 就是**签名许诺一个
+/// 永不到来的失败**，读签名的人会去写 `?` 或 `let Ok(..) = .. else`，而那些分支是死的。
+///
+/// 样板是 `runtime::env::room::starve`（它返 `()`）；同一条口径下 `RoomCall::Reap`
+/// 的包装返 `!`。破不变量那一路（调用号读不懂）**不算失败域**——它由生成的调用点排掉，
+/// 与 `Reap` 之后那句 `unreachable!` 同一口径。
 pub type EnvResult<T> = Result<T, erra::Error<EnvError>>;
 
 /// envcall 的失败词汇。**负码即契约**（D1）：判别值就是 a0 被读成负数时那一格的值，

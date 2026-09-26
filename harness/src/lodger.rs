@@ -157,7 +157,7 @@ fn main() -> Report<'static> {
 
 /// 上树一趟：`FIND /device/router` ⇒ 那扇门（登记从它走）。
 fn find_router() -> Option<PieToken> {
-    let sire = utask::sire().ok()?;
+    let sire = utask::sire();
     let (link, host) = operator::open(sire, Wait::AtMost(MS)).ok()?;
     let talk = operator::ask_hole(host).ok()?;
     let dir = Name::new(protocol::driver::DIR).ok()?;

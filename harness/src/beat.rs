@@ -116,7 +116,7 @@ fn main() {
 
 /// 自启动基准的纳秒标量（与 `sleep_until` 的 `at` 同基准同单位）。
 fn now_ns() -> u64 {
-    chrono::clock().unwrap_or(0)
+    chrono::clock()
 }
 
 /// 打一行读数。台子的嘴只有调试面这一格。

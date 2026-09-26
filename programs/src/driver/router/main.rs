@@ -196,7 +196,7 @@ fn main() -> Result<(), fail::Fail> {
     let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Desk)?;
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌）。
-    let sire = utask::sire()?;
+    let sire = utask::sire();
     serve_board(sire, entry);
 
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线

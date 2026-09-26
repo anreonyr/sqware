@@ -52,9 +52,7 @@ const REPORT_WAKE: bool = false;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Ok(sire) = utask::sire() else {
-        return bail("hang: no sire");
-    };
+    let sire = utask::sire();
     let Ok(mark) = Name::new(MARK) else {
         return bail("hang: bad mark");
     };

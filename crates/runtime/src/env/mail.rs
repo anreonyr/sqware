@@ -36,8 +36,9 @@ use env::{
 };
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
-/// timebase 频率）。
-fn now_ns() -> EnvResult<u64> {
+/// timebase 频率）。内核那一格没有失败支，故跟着 [`clock`](crate::env::chrono::clock)
+/// 一起不返 `EnvResult`。
+fn now_ns() -> u64 {
     crate::env::chrono::clock()
 }
 
@@ -279,13 +280,13 @@ impl HolePie {
         // 永远不醒"那条实测）。落成真永久 = 不武装定时器，要先动内核那一格——**不在这一刀里**。
         let deadline = match millis {
             Wait::Forever => u64::MAX,
-            Wait::AtMost(ms) => now_ns()?.saturating_add((ms as u64).saturating_mul(1_000_000)),
+            Wait::AtMost(ms) => now_ns().saturating_add((ms as u64).saturating_mul(1_000_000)),
         };
         loop {
             match pull_from(self.token, buf.as_mut_ptr(), buf.len()) {
                 Ok(v) => return Ok(v),
                 Err(e) if e.source.is_busy() => {
-                    let now = now_ns()?;
+                    let now = now_ns();
                     if now >= deadline {
                         return pull_from(self.token, buf.as_mut_ptr(), buf.len());
                     }

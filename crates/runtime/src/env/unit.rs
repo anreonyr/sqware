@@ -93,10 +93,12 @@ pub fn fall(millis: Wait) -> EnvResult<bool> {
 }
 
 /// 当前 task id（0 = 无上下文）。
-pub fn self_id() -> EnvResult<TaskId> {
-    let r = UnitCall::SelfId.call()?;
-    match r {
-        UnitCallRet::SelfId(id) => Ok(id),
+///
+/// **不返 `EnvResult`**：内核那一格恒写 id（无上下文也是 0），没有失败支
+/// （见 `env::ecall::EnvResult` 的注）。
+pub fn self_id() -> TaskId {
+    match UnitCall::SelfId.call() {
+        Ok(UnitCallRet::SelfId(id)) => id,
         _ => unreachable!(),
     }
 }
@@ -105,28 +107,37 @@ pub fn self_id() -> EnvResult<TaskId> {
 ///
 /// **层**：这一格问的是**任务血缘**（谁生了我）——与 `AnyPie::sire`（这枚门闩从哪一枚派生）
 /// 同字不同层。
-pub fn sire() -> EnvResult<TaskId> {
-    let r = UnitCall::Sire.call()?;
-    match r {
-        UnitCallRet::Sire(id) => Ok(id),
+///
+/// **不返 `EnvResult`**：同 [`self_id`]——内核恒写 id（顶级域 / 父已亡也是 0）。
+pub fn sire() -> TaskId {
+    match UnitCall::Sire.call() {
+        Ok(UnitCallRet::Sire(id)) => id,
         _ => unreachable!(),
     }
 }
 
 /// 我生的子域数量（heir 枚举 first pass）。
-pub fn heir_count() -> EnvResult<usize> {
-    let r = UnitCall::HeirCount.call()?;
-    match r {
-        UnitCallRet::HeirCount(n) => Ok(n),
+///
+/// **不返 `EnvResult`**：无上下文那一路也答 0（见 [`self_id`]）。
+pub fn heir_count() -> usize {
+    match UnitCall::HeirCount.call() {
+        Ok(UnitCallRet::HeirCount(n)) => n,
         _ => unreachable!(),
     }
 }
 
 /// 按索引取子域 TeamId（heir 枚举 second pass；越界 → 0）。
-pub fn heir_at(index: usize) -> EnvResult<TeamId> {
-    let r = UnitCall::Heir { index }.call()?;
+///
+/// **不返 `EnvResult`**：越界也是 0（见 [`self_id`]）——"没有这一格"与"不在上下文里"
+/// 用同一条哨兵，故没有失败域。
+///
+/// **照实记（今天没有调用者）**：本手与 `UnitCall::Heir` 这一格今天全仓无人用
+/// （`contract/src/system/mod.rs` 记着"枚举出来的域在三条动作面上仍是死端"）。
+/// 留着是因为它是那套枚举的第二趟，不是"备复用"。
+pub fn heir_at(index: usize) -> TeamId {
+    let r = UnitCall::Heir { index }.call();
     match r {
-        UnitCallRet::Heir(id) => Ok(id),
+        Ok(UnitCallRet::Heir(id)) => id,
         _ => unreachable!(),
     }
 }

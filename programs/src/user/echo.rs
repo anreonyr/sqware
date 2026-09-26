@@ -117,9 +117,7 @@ fn main() -> Result<(), env::Reason> {
     let reg = register();
     let _ = debug::put(&format!("echo: reg={reg}"));
 
-    let Ok(sire) = utask::sire() else {
-        return Err(E_NO_CONSOLE);
-    };
+    let sire = utask::sire();
     // 树那条路：本域只开一条会话——先找控制台，再落自己那块牌子（次序见头注）。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
@@ -215,9 +213,7 @@ fn find_console(link: &Quay, talk: PieToken) -> Option<HolePie> {
 
 /// 上板报到（与 `passer` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
 fn register() -> u8 {
-    let Ok(sire) = utask::sire() else {
-        return bcall::BAD;
-    };
+    let sire = utask::sire();
     let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
         return bcall::BAD;
     };

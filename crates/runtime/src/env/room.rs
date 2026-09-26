@@ -117,10 +117,15 @@ pub fn wait(key: usize, millis: Wait) -> EnvResult<()> {
     Ok(())
 }
 
-pub fn wake(key: usize) -> EnvResult<usize> {
-    let r = RoomCall::Wake { key }.call()?;
+/// 唤醒 `key` 上的等待者：答**有没有人可唤醒**（`false` = 没有等待者，内核当场置
+/// `pend` 给下一次等待）。
+///
+/// **不返 `EnvResult`**：内核那一格恒写这一枚 bool，没有失败支
+/// （见 `env::ecall::EnvResult` 的注）。
+pub fn wake(key: usize) -> usize {
+    let r = RoomCall::Wake { key }.call();
     match r {
-        RoomCallRet::Wake(woke) => Ok(woke as usize),
+        Ok(RoomCallRet::Wake(woke)) => woke as usize,
         _ => unreachable!(),
     }
 }

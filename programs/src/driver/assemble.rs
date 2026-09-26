@@ -32,7 +32,10 @@ pub const RECORDS: &str = "records";
 pub const MS: usize = 1000;
 
 /// 装配失败编号，**这一族共用**：指"死在装配的哪一步"（各驱动自己那几格从 4 起）。
-pub const E_SIRE: usize = 1;
+///
+/// **照实记（`E_SIRE = 1` 已撤）**：那一格是 `sire()` 失败时的号，而 `UnitCall::Sire`
+/// 恒写 id（见 `env::ecall::EnvResult` 的注）⇒ `1` 今天无人产生。**号不回填**：
+/// 旧 trace 里 `1` 照旧读作 E_SIRE。
 pub const E_UP: usize = 2;
 pub const E_GRANT: usize = 3;
 
@@ -42,7 +45,7 @@ pub const E_GRANT: usize = 3;
 /// 契约：回单与单子**同序同长**——长度不符 ⇒ `Err(E_GRANT)`（这次配给不算，不是"少收几样"）。
 /// 坐标与号一起收下（[`Pair`]）：驱动要报线、要开图，都从那一条记录里取，不自己再写一遍。
 pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
-    let sire = utask::sire().map_err(|_| E_SIRE)?;
+    let sire = utask::sire();
     let channel = env::Name::new(RECORDS).map_err(|_| E_UP)?;
     let mut quay = Quay::open(sire, protocol::session::call::hands());
     quay.seat(channel).map_err(|_| E_UP)?;

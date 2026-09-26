@@ -67,9 +67,7 @@ const OK_NOTE: &str = "probe-owner: owner rule held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-owner: no sire");
-    };
+    let sire = utask::sire();
 
     // 一、与树开会话（同 `echo` / `probe-denied`）。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {

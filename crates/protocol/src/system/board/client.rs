@@ -46,7 +46,7 @@ pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
     // **一个域只铸一枚问话孔**：与我这一面同一句（见 `operator::client::ask_hole` 的照实记）
     // ——先找我表里那一枚，有就不铸第二枚。板那一侧按 `(开者, 记号)` 两格认孔，故第二枚的
     // 症状是"多出来的那枚永远没人读它的推"。
-    if let Some(have) = crate::session::call::find(me()?, ASK_MARK) {
+    if let Some(have) = crate::session::call::find(me(), ASK_MARK) {
         return Ok(have);
     }
     let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Denied)?;
@@ -59,8 +59,10 @@ pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
 }
 
 /// **本端是哪一枚线程**（"这一枚孔是谁开的"那一问要它；同 `operator` 那一面）。
-fn me() -> Result<TaskId, Fail> {
-    runtime::env::unit::self_id().map_err(|_| Fail::Unknown)
+///
+/// 不返 `Result`：`SelfId` 那一格恒写 id（见 `env::ecall::EnvResult` 的注）。
+fn me() -> TaskId {
+    runtime::env::unit::self_id()
 }
 
 /// 客侧第二步（**登记那一句**）：报上名字 ＋ 把入口交出去，取一句答。

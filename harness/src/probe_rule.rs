@@ -143,12 +143,8 @@ const OK_NOTE: &str = "probe-rule: the rules held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-rule: no sire");
-    };
-    let Ok(me) = utask::self_id() else {
-        return bail("probe-rule: no self id");
-    };
+    let sire = utask::sire();
+    let me = utask::self_id();
 
     // 一、上树：本域开一条会话，走两趟按名字找（盟册那一面 + 名册那一面）——与 `member` 同形。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {

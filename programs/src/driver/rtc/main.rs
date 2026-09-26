@@ -130,7 +130,7 @@ fn main() -> Result<(), fail::Fail> {
 
     // 3. 上板（只为让板看得见本域的死）+ 上树：门牌 `/device/rtc` 落在树上（那一枚入口先取出来，
     //    树的 LAND 与组的两只耳朵都要它）。
-    let sire = utask::sire()?;
+    let sire = utask::sire();
     let (_link, board_link) = board::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Board)?;
     if board::ask_hole(board_link).is_err() {
         return Err(fail::Fail::Board);

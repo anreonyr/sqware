@@ -10,7 +10,7 @@ use programs::{Exit, Report};
 pub enum Fail {
     /// 环境调用失败（`sire` / 铸孔 / 开会话这一类）。
     Env(EnvError),
-    /// `assemble::receive` 带来的号（`E_SIRE` / `E_UP` / `E_GRANT`——原样往外带）。
+    /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
     Assemble(env::Reason),
     /// 两枚门闩开不动（控制器 / 树）。
     Open,

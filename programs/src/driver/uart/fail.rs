@@ -7,7 +7,7 @@
 //!   - **能过 `?`**：`EnvError` 与 `assemble` 那一族的号各有 `From`，调用点不必再拆
 //!     `Err(code) => return code`。
 //!
-//! 编号口径：`1..=3` 是 [`assemble`] 那一族（客侧装配的三步），`4..` 起是本域自己的。
+//! 编号口径：`2..=3` 是 [`assemble`] 那一族（`1` 是已撤的 `E_SIRE`），`4..` 起是本域自己的。
 
 use env::EnvError;
 use programs::{Exit, Report};
@@ -17,7 +17,7 @@ use programs::{Exit, Report};
 pub enum Fail {
     /// 环境调用失败（`sire` / 开会话 / 铸孔这一类）。
     Env(EnvError),
-    /// `assemble::receive` 带来的号（`E_SIRE` / `E_UP` / `E_GRANT`——原样往外带）。
+    /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
     Assemble(env::Reason),
     /// 设备门开不动 / 坐标不是区（`Dock::open`、`key.base()`）。
     Open,

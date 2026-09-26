@@ -430,10 +430,7 @@ pub fn start(
 
     // 二、会话：对端 = **建它那个域的那一枚线程**（= 本域）——它把自己的孔交给"生我者"，
     //     而"生我者"是建域那一枚，**不是刚产出的那一枚**（`task`）。
-    let me = runtime::env::unit::self_id().map_err(|_| {
-        step(p, "no self id");
-        p.died
-    })?;
+    let me = runtime::env::unit::self_id();
     // 这座码头的**对端就是客人**（`task`）——与 `board.rs` 的 `Quay::open(client)` 对称：
     // 两侧各按对方的身份开码头，`seat` 那一枚才发得到它手里，谁都不必猜。
     let mut quay = Quay::open(task, protocol::session::call::hands());

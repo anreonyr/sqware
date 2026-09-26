@@ -205,7 +205,7 @@ fn system() -> Result<(), Fail> {
 /// 两侧各装一枚（`seat`）、各认下对方那一枚（`claim`）：本域**读**自己那一枚（回单从这来），
 /// **写**对端那一枚（单子往那去）。
 fn talk_to_root() -> Option<Pier> {
-    let sire = utask::sire().ok()?;
+    let sire = utask::sire();
     let slot = Name::new(supply::BOOT).ok()?;
     let mut quay = Quay::open(sire, protocol::session::call::hands());
     quay.seat(slot).ok()?;
@@ -241,7 +241,7 @@ fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, Fail> {
 ///
 /// 缓冲是本调用的局部（**一问一答**，一问一次）；引导期只发生两次。
 fn take(pier: &Pier, want: Want) -> Option<PieToken> {
-    let me = utask::self_id().ok()?;
+    let me = utask::self_id();
     let key = want.key()?;
     let mut reply = [0u8; supply::REPLY_CAP];
     let records =

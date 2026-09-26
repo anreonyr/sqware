@@ -192,9 +192,7 @@ pub fn mint(
 pub fn spawn_here(table: &mut Table, name: Name, role: Role) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let Ok(me) = utask::self_id() else {
-        return Err(Fail::Unknown);
-    };
+    let me = utask::self_id();
     let Ok(task) = spawn(TeamId::new(0), &role.args(me.get())) else {
         return Err(Fail::Full);
     };

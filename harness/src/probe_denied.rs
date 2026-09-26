@@ -75,9 +75,7 @@ const OK_NOTE: &str = "probe-denied: denied";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("probe-denied: no sire");
-    };
+    let sire = utask::sire();
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {

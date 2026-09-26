@@ -143,10 +143,12 @@ pub struct Pie {
 ///
 /// 原始自持 pie（vestor = None）编码为 `TaskId(0)`，与 `UnitCall::SelfId` 的"无上下文
 /// 也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
-pub fn collect(index: usize) -> EnvResult<Pie> {
-    let r = PieCall::Collect { index }.call()?;
+///
+/// **不返 `EnvResult`**：内核那一格恒写三件事实，没有失败支（理由见 [`Pies`] 的那条裁定）。
+pub fn collect(index: usize) -> Pie {
+    let r = PieCall::Collect { index }.call();
     match r {
-        PieCallRet::Collect((token, owner, mark)) => Ok(Pie { token, owner, mark }),
+        Ok(PieCallRet::Collect((token, owner, mark))) => Pie { token, owner, mark },
         _ => unreachable!(),
     }
 }
@@ -173,6 +175,9 @@ pub fn collect(index: usize) -> EnvResult<Pie> {
 /// 代价照实记两条：① 约那一侧的 `Claim::Unread`（第三个变体）随之退场；② 另外三处
 /// （`operator/server.rs::claim` 与两处 `client.rs::take`）原先"读不动就整趟作废"的
 /// fail-closed 一起松掉——`Err` 之前已经认到的那一枚**照旧交出去**。
+///
+/// **签名即那条裁定**：`collect` 因此返 [`Pie`] 而不是 `EnvResult<Pie>`——内核那一格
+/// 恒写三件事实（越界也是四格哨兵），没有失败支；`Pies::next` 先前那一支 `Err` 是死代码。
 pub struct Pies {
     index: usize,
     done: bool,
@@ -185,20 +190,14 @@ impl Iterator for Pies {
         if self.done {
             return None;
         }
-        match collect(self.index) {
-            // 越界哨兵：这一遍扫完了（`Collect` 契约：不报错）。
-            Ok(one) if one.token == PieToken::NONE => {
-                self.done = true;
-                None
-            }
-            Ok(one) => {
-                self.index += 1;
-                Some(one)
-            }
-            Err(_) => {
-                self.done = true;
-                None
-            }
+        let one = collect(self.index);
+        // 越界哨兵：这一遍扫完了（`Collect` 契约：不报错）。
+        if one.token == PieToken::NONE {
+            self.done = true;
+            None
+        } else {
+            self.index += 1;
+            Some(one)
         }
     }
 }

@@ -56,7 +56,7 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
     // 照实记：这一手**不改签名、不动调用点**——`ASK_MARK` 全仓只有本函数用它铸孔，
     // 故把闸装在这个记号唯一的铸者身上，与"把它改成有名有姓的泊位（`Quay::seat`）"是**同一句
     // 保证的小形状**（那一版要改二十处调用点的签名）。
-    if let Some(have) = crate::session::call::find(me()?, ASK_MARK) {
+    if let Some(have) = crate::session::call::find(me(), ASK_MARK) {
         return Ok(have);
     }
     let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Unknown)?;
@@ -72,8 +72,10 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
 ///
 /// 认领的两格正判据里，"谁开的"是内核盖的那个戳；而**铸孔的人**就是本线程 ⇒ 扫自己这张表
 /// 时它只能是自己。
-fn me() -> Result<TaskId, Fail> {
-    runtime::env::unit::self_id().map_err(|_| Fail::Unknown)
+///
+/// 不返 `Result`：`SelfId` 那一格恒写 id（见 `env::ecall::EnvResult` 的注）。
+fn me() -> TaskId {
+    runtime::env::unit::self_id()
 }
 
 /// 客侧第二步（内里那一手）：**编好的一问推上去，收一句答**。

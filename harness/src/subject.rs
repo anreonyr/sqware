@@ -66,12 +66,8 @@ const OUTSIDE: usize = 4095;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(sire) = utask::sire() else {
-        return bail("subject: no sire");
-    };
-    let Ok(me) = utask::self_id() else {
-        return bail("subject: no self id");
-    };
+    let sire = utask::sire();
+    let me = utask::self_id();
 
     // 上树：本域只开一条会话——按名字找那面身份服务。
     let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {

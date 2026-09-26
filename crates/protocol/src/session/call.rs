@@ -246,8 +246,10 @@ pub(super) fn fall(millis: Wait) -> bool {
 }
 
 /// 单调时钟读数（纳秒）——有界等待按 deadline 循环用它（不依赖 timebase 频率）。
+///
+/// 不返 `Result`：`Clock` 那一格恒写读数（见 `env::ecall::EnvResult` 的注）。
 pub(super) fn now_ns() -> u64 {
-    runtime::env::chrono::clock().unwrap_or(0)
+    runtime::env::chrono::clock()
 }
 
 /// **这一层唯一的出口**：把身体已经在这里的那十件，装成一张 [`Hands`]——「约」的 `Quay::open`
