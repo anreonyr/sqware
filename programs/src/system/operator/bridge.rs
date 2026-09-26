@@ -28,11 +28,6 @@ fn coord_frame(into: PieToken, who: TaskId, eyes: Eyes) -> Result<(), ()> {
 ///
 /// 一格一个位、**可以分两帧到**（次序不定），故装配者收着、持树者补着，都不当"一次性解出来"。
 /// 两侧共读这一个类型（`server.rs` 原先自己写了一份同形的私有 `Coord`）。
-///
-/// **照实记（为什么具名，不按位）**：装配机器原先攥着一个 `[(Option<TaskId>, Eyes); 2]`——
-/// "`[0]` 是名册、`[1]` 是盟册"这条约定**只活在装配者的脑子里**，写反一位编得过，症状要到
-/// 门禁判不了身份时才显形。现在两格各有名字；帧要的那两对由 [`Coord::pairs`] **一处**给出
-/// （槽位与眼睛写在同一行上）。
 #[derive(Clone, Copy, Default)]
 pub struct Coord {
     pub roster: Option<TaskId>,
@@ -75,7 +70,7 @@ pub fn attach(
     let _ = host_of(host, millis, tip)?;
     let tip_at = (*tip).ok_or("operator:tip")?;
     // 3.5 **协调那一帧**：把递门牌那几位域的号推过去。**门牌不由这里转授**（那是各域自己
-    // 在 `serve_tree` 之后直接交给持树者的，理由见 [`CoordFrame`] 那段照实记）。
+    // 在 `serve_tree` 之后直接交给持树者的）。
     // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
     // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
     for (who, eyes) in coord.pairs() {
@@ -126,8 +121,7 @@ pub fn host_of(
 /// 两处都是"装配者知道、对方叫不出"的那个号——故 `tell` 只认"推给哪一枚孔"，不认语义。
 ///
 /// **帧形只有一处**：宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对
-/// `store` / `fetch`（从前这里是手写的一遍 `(who.get() as u64).to_le_bytes()`，那一对里记着
-/// 这一格原先散在五处）。
+/// `store` / `fetch`。
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);

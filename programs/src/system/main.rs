@@ -4,12 +4,7 @@
 //! system — **编排域**：这台机器上有哪些服务、怎么起、谁死了怎么办。
 //!
 //! 它是 boot 之后**唯一**起服务的地方。引导域（`root`）只把一样东西交给它：**这块字节**
-//! （清单 + 全部镜像，一枚只读门闩）；此外一概不给——连"要哪几枚设备门闩"都是本域按需求单
-//! 去问的（配给由引导域直接授进**客人**的表里，本域只转投那段记录，一枚原件都不经过它）。
-//!
-//! **持树者也是本域起的服务**（名册第一条：`scenario::INNER`）：它不另走引导域那条路——
-//! 引导域不当它的装配者，也不替它把提示之路转来转去（那是"它是引导设施"时代的形状，那一笔
-//! 已经清掉）。
+//! （清单 + 全部镜像，一枚只读门闩）；此外一概不给。
 //!
 //! ```text
 //! 1  会话：交给"生我者"（= 引导域）本域那一枚孔，认下它那一枚 ⇒ 一条问答路
@@ -23,18 +18,7 @@
 //! ```
 //!
 //! **本文件只剩流程**：起谁、按什么顺序、开哪几条通道、要哪些门闩、上不上板、上不上树，
-//! 全在 `system/assemble/`（`INNER` 那三枚 ＋ 从 `plan::assembly::ALL` 派生的那几台——**一张表只有
-//! 一处**）。要加第三个服务 —— 表里加一行，本文件一个字不改。
-//!
-//! # 四种角色的出口（照实记：这一格原来写三遍）
-//!
-//! `main` 那四个分支各自的失败类型是**各自的 `Fail`**，故从前每个分支各写一遍"折成内核那一格"
-//! 的 match。现在每一域先折成 `Report<'static>`（那四支 `map_err`），四格汇进 [`exit`] 一处
-//! ——**加第五种角色也只加一行**。折法各自只有一行，理由是**同一句话**：`Exit::report` 取
-//! `&self`、返 `Report<'_>`（输出的寿命借在它那个参数上），故本文件里没有能把它转发出去的
-//! 泛型写法；而各域那两句话都是常量（`code()` + `text()`）⇒ 这里自己拼一格。
-//! 另一处细节也是被编译器逼出来的：`Result<(), Report>` 那一层由 `Exit` 为 `Result<T, E>`
-//! 的那份实现拆平（故 `main` 那一格不必自己 match）。
+//! 全在 `system/assemble/`。要加第三个服务 —— 表里加一行，本文件一个字不改。
 
 extern crate alloc;
 extern crate programs;
@@ -43,9 +27,6 @@ use env::Mark;
 use env::Wait;
 use programs::service;
 
-// 照实记：这里原来还 `use ...::board::bridge as board`——只为收尾那一句 `board::shut()`。
-// 那一手已删（它收掉的是本域自己，见第 7 步的照实记），故这一行也走了。板那一侧的装配
-// （把客人接上板）住 `service::start`，本文件本来就不碰它。
 use env::{HoleDir, Name, PieToken};
 use programs::system::machine::Machine;
 use programs::system::{server, supervise};
@@ -67,23 +48,10 @@ use service::{Catalog, Lane, Role};
 use programs::system::assemble as scenario;
 use programs::system::{coalition, operator, principal};
 
-// **照实记（这里原先有四个名字常量：`TREE` / `PRINCIPAL` / `COALITION` / `MEMBER`）**：
-// 它们是"装配期认谁"的四个名字，而**认它们的是装配的机器**（`service::assemble` 里那三处
-// `p.name == …`），不是本文件。装配单搬去 `plan::assembly` 那一刀之后，本文件只剩流程，
-// 这四个名字在这里**一个读者都没有**（编译期一直报 `never used`）——留着就是同一条事实
-// 写两处，故删。名字仍各自只有一处：住 `service.rs`（持树者那条在 `Plan::holds_tree` 上）。
-
 /// 结算两条上限（毫秒）：与引导域开会话、以及装配期的等。
 const BOOT_MS: usize = 1000;
 
-// ── 装配单搬去 `assemble/`（用户裁定"测试和程序分开"，后一刀收成一个文件夹）──
-//
-// 那些行 [`service::Program`] 与装配单现在住 `assemble/`：本文件是**机器**，
-// 不认识具体哪一台。名册在 `system()` 那一趟现取（`assemble::roster`），故下面
-// [`service::assemble`] 那一处只多收了一格、其余一字未改。
-
-/// 本域的死法：**一格 = 死在起手的哪一步**——号与从前的 `service::die` **同值**
-/// （`1` 引导那一族；`2/3/4` 归 [`service`] 那三格；`5/6/7` 是本域自己的）。
+/// 本域的死法：**一格 = 死在起手的哪一步**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     /// 与引导域那条会话没搭上。
@@ -148,24 +116,15 @@ fn exit(role: Result<(), programs::Report<'static>>) -> programs::Report<'static
 
 /// **本域的死法 → 出口那一格**（两句话都是常量：`code()` + `text()`）。
 ///
-/// 三枚内件走 [`server::said`](server::said)——它们共用 [`server::Start`] 那一枚死法类型
-/// （三份同构的 `fail.rs` 已并掉），故 `main` 那三支是 `map_err(server::said)`。
-///
-/// **照实记（为什么不叫 `Exit::report`）**：那一手取 `&self`、返 [`Report<'_>`](programs::Report)
-/// ——输出的寿命借在**它那个参数**上，故它出不了这个函数（真机报 E0515：cannot return value
-/// referencing function parameter）。而两句话都是常量 ⇒ 这里自己拼一格（`Report` 里存的是码与
-/// **指向常量**的那一对指针，故返 `'static` 是诚实的）。
+/// 三枚内件走 [`server::said`](server::said)——它们共用 [`server::Start`] 那一枚死法类型。
 fn said(f: Fail) -> programs::Report<'static> {
     programs::Report::note(f.code(), f.text())
 }
 
 #[programs::entry]
 fn main() -> programs::Report<'static> {
-    // **一枚 ELF 四种角色**（iii）：角色由 `Spawn` 那一格 `args` 递进来（[`Role`]）。空 args
-    // ⇒ **编排域自己那一枚**——引导域起它时走的就是这一路，照旧。
-    //
-    // 四个分支各一行：三枚内件共用同一枚死法类型（[`server::Start`]），本域那一支另有自己的
-    // [`Fail`]——两支各自折一次，四格汇进 [`exit`] 一处。**加第五种角色也只加一行**。
+    // **一枚 ELF 四种角色**：角色由 `Spawn` 那一格 `args` 递进来（[`Role`]）。空 args
+    // ⇒ **编排域自己那一枚**。
     match Role::of_args(runtime::core::unit::args()) {
         Role::System => exit(system().map_err(said)),
         Role::Tree => exit(operator::server::serve().map_err(server::said)),
@@ -174,14 +133,9 @@ fn main() -> programs::Report<'static> {
     }
 }
 
-/// **编排域那一枚的身子**（原来就是 `main` 的正文）：这台机器上有哪些服务、怎么起、谁死了怎么办。
+/// **编排域那一枚的身子**：这台机器上有哪些服务、怎么起、谁死了怎么办。
 ///
-/// 返 `Result<(), Fail>`：本域的死法有类型（[`Fail`]），折成出口那一格是 [`main`] 那一步的事
-/// ——**这一层只管"哪一步没成"**。
-///
-/// **照实记（那一句 `system: done` 已退场）**：本域收场是"被内核那一刀扑杀"（见本函数尾注），
-/// 那句判词**到不了**；它从前那一版只是"`Ok` 那一格想带一句话"的产物（`Report` 不能白借一句
-/// 话，而本域确实没有那句话要说）——故收掉它、成功一格留空，反而与事实一致。
+/// 返 `Result<(), Fail>`：本域的死法有类型（[`Fail`]），折成出口那一格是 [`main`] 那一步的事。
 fn system() -> Result<(), Fail> {
     // 1. 与引导域开会话：本域那一枚交给"生我者"，并认下它那一枚（一问一答两个方向）。
     let Some(boot_pier) = talk_to_root() else {
@@ -189,15 +143,14 @@ fn system() -> Result<(), Fail> {
     };
 
     // 2. 领树：本域手里那台机器的自述——单子上那一格写的是**类**，翻成"哪一段区"要有它。
-    //    坐标是 `Key::dtb()`（"哪一件"那一形：树不知道自己写在哪，故只能这么取）。
+    //    坐标是 `Key::dtb()`。
     let machine = match take_machine(&boot_pier) {
         Ok(machine) => machine,
         Err(_) => return Err(Fail::Machine),
     };
 
     // 2′. 领账：这块字节里**清单与全部镜像都在里头**（同一批物理页，借映进本域的 VA）。
-    //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）——机器自己写着它在哪，
-    //     本域不另抄一个名字。树也在这一块里——它是**本域起的服务**（名册第一条）。
+    //     载荷区的**坐标从树里读**（`/chosen` 的 `linux,initrd-start`）。
     let Some(payload) = machine.payload() else {
         return Err(Fail::Payload);
     };
@@ -209,30 +162,17 @@ fn system() -> Result<(), Fail> {
     // 3/4. 死亡道：**上板的那几位**一位一条（本域铸、记号 `gone-<名字>`；装配时各交一份给
     //      板线程）。一服务一道 ⇒ **身份就是"哪条道响了"**：两位同时死也不会挤丢；本线程用
     //      一只**组**等任一道（`Pile`），零轮询。组是**独占**的（`shared = false`）。
-    //
-    //      **照实记（这一圈原先给名册上每一位都铸）**：写端**只有板有**——`service::start`
-    //      那一手只在 `p.board` 时把道转授出去。故 `board: false` 的那几位（试客、探针）
-    //      铸出来的是一枚**没有写端的道**：它永远不会响，只占着组里一格与一条转发登记。
-    //      今天这一圈跟着 `p.board` 走 ⇒ **有写端才有道**。读数：产品那一景名册 7 条 →
-    //      道 **7** 条（三枚内件全上板），验收那一景 19 条 → **10** 条。
-    //      **照实记（"看得见死"另有一关）**：有写端只是必要条件——板还要认得出那一条道是谁的
-    //      （道按**名字**认领）。乙2 把名字从"客人自己报名"挪到"装配者随提示那一格递"之后，
-    //      `p.board = true` 才真的等于"它的死编排域看得见"（此前三枚内件与三台驱动都不报名 ⇒
-    //      死了没有读数）。
     let pile = match Pile::unseal(false) {
         Ok(pile) => pile,
         Err(_) => return Err(Fail::Group),
     };
-    // **名册**：内件三枚在前、镜像里那几台在后（`roster` 那一处给次序）。道**自己带着名字**
-    // ——`Lane` 那段照实记说了为什么不再按下标。
+    // **名册**：内件三枚在前、镜像里那几台在后（`roster` 那一处给次序）。
     let roster = scenario::roster(&catalog);
     let mut lanes: alloc::vec::Vec<Lane> = alloc::vec::Vec::new();
     if lanes.try_reserve(roster.len()).is_err() {
         return Err(Fail::Group);
     }
     for (_, p) in roster.iter() {
-        // **有写端才有道**：板不看的那几位不铸（见上面那条照实记）。名册**每一位都在**
-        // `lanes` 里——它在收场那一趟还有另一个读者（`stop_running` 按它点名收）。
         let road = if p.board {
             // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
             // 拼出来找它——见 `lane_for`）。
@@ -256,27 +196,14 @@ fn system() -> Result<(), Fail> {
 
     // 5/6. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
     supervise::run(&mut table, last, &lanes, &pile);
-    // 会话的收尾由会话的主人负责：常驻线程是它起的，也是它收的。本域里那枚板线程没有
-    // `Join` 可等（`attach` 里弃权了），故按号点名收掉——同域线程之间没有寿命耦合。
-    // **等待线程也住本域**，这一刀连它们一起收（域亡 = 成员清零）。
     // 7. 本域退出 ⇒ 引导域那枚孔封印 ⇒ 它退出 ⇒ 级联 ⇒ 停机。
-    //
-    // **照实记（这一格量出来的）**：这一句上面原来还有一手 `board::shut()`——它点名
-    // `doom` 本域那枚常驻板线程。而内核那一手的粒度是**域**（"杀它所属的域连同它的子树"），
-    // 板线程**就住在编排域里** ⇒ 那一叫收掉的正是**本域自己**：编排域当场被扑杀，
-    // 下面这一句判词**永远够不到**（实测：`TMP-c: board shut returned` 不出现，而
-    // `system: done` 在 **1005 份 soak 日志里一次都没有**）。
-    // 板线程本来就不必点名收：本域一退场，"域亡＝成员清零"把它一起带走——故那一手是
-    // **重复的一刀**，代价是把本机最后一句读数一起收走了。
-    // （本域收场是"被板那一刀扑杀"，故那句判词**到不了**——成功一格因此不带话。）
     Ok(())
 }
 
 /// 与引导域搭一条**双向**的问答路。
 ///
 /// 两侧各装一枚（`seat`）、各认下对方那一枚（`claim`）：本域**读**自己那一枚（回单从这来），
-/// **写**对端那一枚（单子往那去）。只 `seat` 不 `claim` 就只有读端——那是只收配给的客人
-/// （如 `router`）的用法，编排者要问，故两半都要。
+/// **写**对端那一枚（单子往那去）。
 fn talk_to_root() -> Option<Pier> {
     let sire = utask::sire().ok()?;
     let slot = Name::new(supply::BOOT).ok()?;
@@ -288,10 +215,6 @@ fn talk_to_root() -> Option<Pier> {
 }
 
 /// 领树：与载荷区同一条路（一张只有一条的单子 + 借映）。
-///
-/// **本域为什么读树**：单子上那一格写的是类（`compatible`），翻成"哪一段区"要有设备树；而单子
-/// 是本域造的（子方只认得生我者，单子不经过它），故读树只能落在本域（理由见
-/// `system::machine` 头注）。这一枚的坐标是 [`plan::Key::dtb`]——**它不是树里的节点**。
 fn take_machine(pier: &Pier) -> Result<Machine, Fail> {
     let want = Want::new(plan::Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or(Fail::Machine)?;
@@ -299,10 +222,9 @@ fn take_machine(pier: &Pier) -> Result<Machine, Fail> {
     Machine::of(dock.view()).map_err(|_| Fail::Machine)
 }
 
-/// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`，见 `main`）。
+/// 领那块载荷区并把清单读出来。坐标是**机器自己在树里写的那一段**（`/chosen`）。
 ///
-/// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域——固化在清单里的镜像坐标
-/// 是**相对这块区**的切片，故换一张表、换一个 VA 照样解析得出来。
+/// **零拷贝**：那几十 MB 不是搬过来的，是同一批物理页借映进本域。
 fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, Fail> {
     let want = Want::new(key, Kind::Pole, Access::FETCH, Policy::NONE);
     let token = take(pier, want).ok_or(Fail::Payload)?;
@@ -315,8 +237,7 @@ fn take_catalog(pier: &Pier, key: plan::Key) -> Result<Catalog<'static>, Fail> {
     Catalog::new(blob).ok_or(Fail::Manifest)
 }
 
-/// 问引导域要一枚：递一张只有一条的单子，取回那一条的号（按**坐标**认，不按位次——这一手
-/// 是编排域给自己领，与"配给推进客人"那条路无关）。
+/// 问引导域要一枚：递一张只有一条的单子，取回那一条的号（按**坐标**认，不按位次）。
 ///
 /// 缓冲是本调用的局部（**一问一答**，一问一次）；引导期只发生两次。
 fn take(pier: &Pier, want: Want) -> Option<PieToken> {

@@ -24,9 +24,7 @@ use protocol::system::desk::{Slot, State, Table};
 use super::server::{stop, until};
 use crate::service::Lane;
 
-/// 监督循环：**发现死亡 + 记账 + 放下死域**（见编排域的头注第 5 条）。
-///
-/// 名字取 `run`：它是本模块**唯一**的入口（那圈循环），而模块名 `supervise` 已经说了它是什么。
+/// 监督循环：**发现死亡 + 记账 + 放下死域**。
 ///
 /// 事件来自**板**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来
 /// ⇒ 往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
@@ -40,8 +38,7 @@ use crate::service::Lane;
 pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
     // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
     // 不按"这条路上平常走几个字节"备）。一枚更长的推落进道里时，1 字节的读法取不出也丢不掉，
-    // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联（那条路本来就是可靠收场
-    // 路径，见本函数尾注），不在这里赌。
+    // 那一位的死就永远记不上账。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
     let mut lane_buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
         let _ = runtime::env::debug::put("system: no room");
@@ -69,7 +66,6 @@ pub fn run(table: &mut Table, last: Name, lanes: &[Lane], pile: &Pile) {
             {
                 continue; // 这一条没货
             }
-            // **道自己带着名字**（不用下标去装配单里翻：见 [`Lane`] 那段照实记）。
             let Ok(name) = Name::new(lane.name) else {
                 continue;
             };
@@ -97,8 +93,8 @@ pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
         let Some(name) = Name::new(lane.name).ok() else {
             continue;
         };
-        // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己（板线程那一格
-        // 量过）。它随本域退场时的"域亡＝成员清零"一起走。
+        // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己。它随本域退场
+        // 时的"域亡＝成员清零"一起走。
         if matches!(
             table.find(name).map(|s| s.slot),
             Some(Slot::Live { team: None, .. })
@@ -170,9 +166,7 @@ fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
     };
     table.set_state(name, State::Dead);
     let before = utask::heir_count().unwrap_or(0);
-    // **本域那一枚没有别人的域可放下**（`team = None`）：放下它就是扑杀本域自己——板线程
-    // 那一格量过（`system: done` 在 1005 份 soak 日志里一次都没有）。那一枚随"域亡＝成员
-    // 清零"一起走，故这里什么都不做，读数照实说 `inner`。
+    // **本域那一枚没有别人的域可放下**（`team = None`）：放下它就是扑杀本域自己。
     let ousted = match team {
         Some(team) => utask::oust(team).is_ok(),
         None => false,

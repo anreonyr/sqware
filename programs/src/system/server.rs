@@ -2,27 +2,13 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 //!
-//! # 内核那一侧也在这里（照实记：原 `system/call.rs` 已收进本文件）
+//! **内核那一侧也在这里**：建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾那七手是本文件的
+//! 唯一读者，故收在这里（每条链子少一跳转发）。
 //!
-//! 那七手（建域 / 产线程 / 塞门闩 / 放行 / 收域 / 判收尾）原来另立一个 `call.rs`，而它们的
-//! **唯一读者就是本文件**——分家分错了地方：本文件的名分本来就是"适配"（把内核答的事实
-//! 写回表），那几手正是这句话的孩子。收进来之后每条链子少一跳转发，也不再有一层"转发壳"
-//! 夹在适配与内核之间。
+//! **一处语义翻译留在这里**（[`fail`]）：内核负码 → 本协议的 [`Fail`]。码本身读
+//! [`EnvFail::of_code`]——**一个数字都不写**。
 //!
-//! **一处语义翻译留在这里**（[`fail`]）：内核负码 → 本协议的 [`Fail`]。它在 `env` 的词汇
-//! （[`EnvFail`]）与本协议的词汇之间过一手，故它住适配层、不进「约」（那要给 `contract`
-//! 加一条依赖）。码本身读 [`EnvFail::of_code`]——**一个数字都不写**。
-//!
-//! # 监督相已分出去（照实记：本文件原来还装着那一半）
-//!
-//! 收场那一半（那圈循环、死亡道那一页、记账与放下死域）搬去了 [`supervise`]。分家的判据是
-//! **两相**：本文件全是**装配期**的事（建域 / 放行 / 等就绪 / 收一枚），而监督是**起完之后
-//! 一直看**（直到名册上每一位都 `Dead`）——它们之间只有两处来往：表里那几格状态，与 [`stop`]
-//! / [`until`] 那两枚原语。`main` 的流程本来就写着这两步（先 [`assemble`](crate::service::assemble)，
-//! 再监督）。
-//!
-//! 顺手收掉两枚没有读者的 `pub`（`find` / `watch`）——与 `service::die` / `E_OK` 那一刀同一条
-//! 纪律：`pub` 也是要有人读的。
+//! **监督相已分出去**（[`supervise`]）：本文件全是**装配期**的事。
 
 use env::Wait;
 use env::{EnvError, Fail as EnvFail, Mark, Name, ProgramKind, Reason, TaskId, TeamId};
@@ -37,13 +23,7 @@ use protocol::system::desk::{Announce, Service, Slot, State, Table};
 use crate::service::Role;
 use plan::assembly::{E_COALITION, E_PRINCIPAL, E_TREE};
 
-// ── 内核那一侧（原 `system/call.rs`）：每个函数只做一件事——转发一次 ──────
-//
-// 这几手原来住 `crate::system::call`。它们**只有本文件一个读者**，故收在这里；
-// 判断一律不在这里（那在协议那一侧的判定与账里），下面每一枚都是一行转发。
-//
-// **"它交回了一枚孔"那件事不在这里**——归 `protocol::session`：会话的建立与认领是另一份
-// 协议，本处只剩"起一个服务"需要的那几手。
+// ── 内核那一侧：每个函数只做一件事——转发一次 ──────
 
 /// 建域（Mint）：镜像字节 + 特权级 → 新域。
 ///
@@ -64,9 +44,6 @@ pub fn spawn(team: TeamId, args: &[usize]) -> Result<TaskId, Fail> {
 }
 
 /// 把一枚门闩塞进目标线程手里（放行前做）。**给多大权由调用方定**——这里不替它做主。
-///
-/// **收的是"交成了"这一格**：内核那手回的是"它种在目标表里那一号"，本层没有读者
-/// （装配期要认的是**别人**交上来的孔，不是自己塞进去的那枚号）——故 `map(|_| ())`。
 pub fn accord(token: env::PieToken, task: TaskId, perm: env::Permission) -> Result<(), Fail> {
     runtime::env::mail::accord(token, task, perm)
         .map(|_| ())
@@ -93,8 +70,8 @@ pub fn reaped(task: TaskId) -> bool {
 /// 内核负码 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 ///
 /// **码读 `env` 的词汇**（[`EnvFail::of_code`]）：本层出现数字就等于把码表抄成第二处。
-/// 三格的来路：`+` 装不上 = [`EnvFail::BadImage`]（`-6`）；`+` 内存不够 / 产不出来 =
-/// [`EnvFail::OoM`]（`-4`，本协议名 [`Fail::Full`]）；其余（含表外那一格 `None`）
+/// 三格的来路：`+` 装不上 = [`EnvFail::BadImage`]；`+` 内存不够 / 产不出来 =
+/// [`EnvFail::OoM`]（本协议名 [`Fail::Full`]）；其余（含表外那一格 `None`）
 /// 落 [`Fail::Unknown`]——"不认识的失败"不该猜成某一种。
 fn fail(e: erra::Error<EnvError>) -> Fail {
     match EnvFail::of_code(e.source.code()) {
@@ -104,21 +81,7 @@ fn fail(e: erra::Error<EnvError>) -> Fail {
     }
 }
 
-// ── 内件那一族的起手失败（照实记：三份同构的 `fail.rs` 已并成这一枚）─────────
-//
-// **为什么能并**：那三份 `operator/fail.rs` / `principal/fail.rs` / `coalition/fail.rs` 是**同一
-// 件事的三份写法**——各自的 `Fail` + `code()` + `text()` + `impl Exit`，总共 143 行里只有变体名
-// 与文案不同；而三者都实现 `Exit`、都被 `main` 折成同一个出口。那正是"形状相同"的机械证据。
-//
-// **为什么之前那三份是错的**：每一份各从 `1` 起编号 ⇒ 同一台服务"死在起手"有**两套号**在跑：
-// 装配期那一条（`service::{mint,spawn_here}` / `assemble`，答 `Plan::died`）与 `serve()` 自己那
-// 一条（答 1..5）。`operator` 的 `Sire = 1` 甚至与 `E_BOOT` 撞号。现在**号一律取自装配单**
-// （`plan::assembly` 那一套，含内件三枚 10/14/16）⇒ `serve()` 与装配期说的是同一句话。
-//
-// **留下的几格只在"各域真的做过的事"上分**：`Book`（立两张表）只有名册有、`Face`（按名字找
-// 身份那份门牌）只有盟册有、`Room`（收帧那一页）只有持树者有；`Sire` / `Board` / `Entry` 三台
-// 同款，`Tree` 把"铸提示孔"与"上树"这两步**同一个来路**收成一格，`Desk` 收"那只组 + 收帧那
-// 一页"。
+// ── 内件那一族的起手失败（三枚共用）─────────
 
 /// 内件**起手**失败：三枚共用（`Role::System` 那一枚另有 [`super::main::Fail`]）。
 ///
@@ -150,7 +113,7 @@ pub enum Start {
 }
 
 impl Start {
-    /// **号一律取自装配单**（[`Died`](plan::assembly::Died)）——本域自己的死法**一个数都不写**。
+    /// **号一律取自装配单**——本域自己的死法**一个数都不写**。
     pub fn code(self) -> Reason {
         match self {
             Start::Sire => E_TREE,
@@ -182,8 +145,7 @@ impl Start {
 
 /// **内件那一支的出口格**（`main` 那三个分支 `map_err` 的就是它）。
 ///
-/// 与 [`super::main`] 的 `said` 同一形状：自己拼一格 `Report<'static>`（不叫 `Exit::report` 的
-/// 理由见那一处）。
+/// 与 [`super::main`] 的 `said` 同一形状：自己拼一格 `Report<'static>`。
 pub fn said(f: Start) -> Report<'static> {
     Report::note(f.code(), f.text())
 }
@@ -324,9 +286,7 @@ pub fn ready(
     // 它会交回一枚孔 ⇒ 那件事归会话：`claim` 把它认下来（凑齐了才算）。
     if let Some(q) = quay {
         // 它会交回孔、也会自己装一条 ⇒ 那件事归会话：**逐条按记号认领**（记号 = 那条
-        // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。认领的是**它**交上来的
-        // 那一批（`owner` = 这个孩子）：孔交给的是"生我者"（建域那一枚线程），而
-        // **"谁的孔"与"我认的对端"是两件事**——见 `Quay::claim` 的正文。
+        // 泊位的名字 = 装配单给的通道名），每条都配齐才算起来。
         if !marks.is_empty()
             && marks
                 .iter()
@@ -367,12 +327,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// **只读：不动表**。
 ///
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
-/// `Join{task, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探——**"他杀
-/// 偶发不生效"那条错读就是漏了这一步**：把"醒过"当成了"没收到"。
-///
-/// 为什么有界等不需要 clock、也不必睡满那一格：`WakeKey::Task{id}` 上的投信方只有 `wipe`，
-/// 而它只在 `bury` 里、`Reaped` 置位**之后**调（`kernel/src/work/room/messenger/reap.rs`）
-/// ⇒ 等待里的"早醒"只可能来自收尾；"到点"那一支由复探分出来（答 [`Reaped::Unsettled`]）。
+/// `Join{task, millis}` 挂起过之后的返回值不含信息（见 [`Reaped`]），故醒来必须复探。
 ///
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
 /// 已入土 / 从未入册）按"收尾了"处理——与 [`reaped`] 同一折法。
@@ -416,8 +371,7 @@ fn live_task(table: &Table, name: Name) -> Option<TaskId> {
 /// 那是"还没收干净"，不是"收了"。
 /// `millis` = **上限族**（`Wait`，口径见 `env::fid` 文件头的定式）。
 ///
-/// **读者只有一处**（[`crate::service::wait_last`]）：跟着 [`until`] 一起放进本模块的公面，
-/// 是因为它属于"等一条服务退场"这一族（`find` 那一枚没有读者，已删）。
+/// **读者只有一处**（[`crate::service::wait_last`]）：跟着 [`until`] 一起放进本模块的公面。
 pub fn watch(table: &mut Table, name: Name, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {

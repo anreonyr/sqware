@@ -37,7 +37,7 @@ const MS: usize = 1000;
 
 /// 起服务：**读锚 → 上板 → 铸门牌（给生我者 + 上树）→ 一枚线程招待所有客人**。
 ///
-/// **起手那几步收在一个闭包**（照实记，与持树者 / 盟册那两台同形）：它们清一色是"不成 ⇒ 这域
+/// **起手那几步收在一个闭包**（与持树者 / 盟册那两台同形）：它们清一色是"不成 ⇒ 这域
 /// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
 /// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
 /// `serve` 的主干于是只剩两步：**起手 → 常驻**。
@@ -50,7 +50,7 @@ pub fn serve() -> Result<(), Start> {
         // 一、锚：**生我者就是装配者**。名册只认这一枚——`Sire` 是内核盖的，比任何自报都硬；
         //    它还是弱引用，装配者一退这一格就答 0（那之后没人能写名册，也不该有）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-        // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+        // 这一枚指的不是编排者）。
         let assembler = crate::service::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
@@ -62,14 +62,10 @@ pub fn serve() -> Result<(), Start> {
         let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
         // **先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
         //
-        // **照实记（这一格的理由换过一次，多出来的那一格也收了）**：原写的是"给 `FETCH` 是因为
-        // **装配者还要把这一枚再转授给树**（门禁那一刀：树要问 `resolve` / `heir`）"——那一版真机
-        // 栽在 `coord-ship`，现在**门牌由各域自己交**（见 `operator/bridge.rs` 的 `COORD` 段），
-        // 那条理由已经不存在。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
+        // **本域自己交、不是装配者转授**：门牌由各域自己交（见 `operator/bridge.rs` 的
+        // `COORD` 段）。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
         // 答话走每一趟自己铸的那枚回信孔（`session::call::lend_out` ＋ `push_to`：铸孔 → 交
-        // `STORE` → 把"那一格"编进帧 → 推），
-        // 读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**（孔上：`STORE` = `push`、
-        // `FETCH` = `pull`，见 `env::permission` 的位表）；`FETCH` 是旧理由留下的，已收。
+        // `STORE` → 把"那一格"编进帧 → 推），读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**。
         port::ship(
             &HolePie::from_token(entry),
             assembler,
@@ -86,8 +82,6 @@ pub fn serve() -> Result<(), Start> {
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
         // `operator::open` 交回来的那一格）。它据此才判得了"这一位此刻代表谁"。
         //
-        // 为什么是**本域自己**交、不是装配者转授：见 `programs/src/system/operator/bridge.rs`
-        // 的 `COORD` 那段照实记——装配者转授那一版真机报 `operator:coord-ship`（内核 `-1`）。
         // 这一枚在手时权限是 `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。
         port::ship(
             &HolePie::from_token(entry),
@@ -126,11 +120,9 @@ pub fn serve() -> Result<(), Start> {
 
 /// 门上一句话：解帧 → 交给核心 → **从这一趟自带的那枚孔答回去**。
 ///
-/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（用户裁定甲′）：那一格是
+/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**：那一格是
 /// "客人借来的那枚回信孔**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——
-/// 否则客人能让本域往**别人的孔**里写。旧写法是扫本表按"谁给的 ＋ 记号"找（每趟请求一遍全表，
-/// 见 `session::call::find` 与其 `Collect` 的价钱）。判据一字未改，只是从"扫遍全表找 match"
-/// 变成"验这一格 match"。
+/// 否则客人能让本域往**别人的孔**里写。
 ///
 /// `from` 是**内核盖的发送者**，名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
 fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
@@ -147,8 +139,8 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
     }
     // 答一句：**一格**（[`pcall::Reply`] 那一形）——走这一趟那枚回信孔，装与发都不在这一层
     // 写字节（缓冲是船台自己那只：这一形定长 10）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
-    // 的照实记）；真到了那里，这一答就发不出去。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）；
+    // 真到了那里，这一答就发不出去。
     let _ = Slip::<pcall::Reply>::seal(back)
         .load(answer(book, from, ask))
         .ok()
@@ -245,7 +237,6 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         },
         Err(code) => (code, false),
     };
-    // **`got` 换了来路**（乙′）：见 `ocall::Union::Seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()

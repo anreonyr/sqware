@@ -48,7 +48,7 @@ const RETRY_MS: usize = 1;
 
 /// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**。
 ///
-/// **起手那几步收在一个闭包**（照实记，与持树者 / 名册那两台同形）：它们清一色是"不成 ⇒ 这域
+/// **起手那几步收在一个闭包**（与持树者 / 名册那两台同形）：它们清一色是"不成 ⇒ 这域
 /// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
 /// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
 pub fn serve() -> Result<(), Start> {
@@ -57,7 +57,7 @@ pub fn serve() -> Result<(), Start> {
         // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
         // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-        // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+        // 这一枚指的不是编排者）。
         let assembler = crate::service::assembler().ok_or(Start::Sire)?;
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
@@ -76,8 +76,7 @@ pub fn serve() -> Result<(), Start> {
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
         // `operator::open` 交回来的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Rule::In`）。
         //
-        // 与 principal 那一格同一形状（见 `programs/src/system/operator/bridge.rs` 的 `COORD`
-        // 照实记：装配者转授那一版真机报 `operator:coord-ship`，内核 `-1`）。这一枚在手时权限是
+        // 与 principal 那一格同一形状。这一枚在手时权限是
         // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按装配单上那一格
         // （`Eyes::League`）递——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
         port::ship(
@@ -137,8 +136,8 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
     }
     // 答一句：**形由 [`ccall::Union`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
     // 都不在这一层写字节（缓冲是船台自己那只＝本族最大那一形）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
-    // 的照实记）；真到了那里，这一答就发不出去。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）；
+    // 真到了那里，这一答就发不出去。
     let _ = Slip::<ccall::Union>::seal(back)
         .load(answer(book, face, from, ask))
         .ok()
@@ -202,9 +201,9 @@ fn answer(
 
 /// 发送者此刻代表谁——**"self"的全部护栏就是这一句**（正文"已知边界"）。
 ///
-/// **照实记：两条失败压成一格**——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"。
-/// 压它的理由同 rtc 那一格：**调用方的下一步在两种情况下相同**（别指望这条路）；principal
-/// 那枚 `Denied` 翻不过来，因为本族的 `Denied` 是空的（盟无主）。
+/// 两条失败压成一格——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"：
+/// **调用方的下一步在两种情况下相同**（别指望这条路）；principal 那枚 `Denied` 翻不过来，
+/// 因为本族的 `Denied` 是空的（盟无主）。
 fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
     face.resolve(from, Wait::AtMost(MS))
         .map_err(|_| Fail::Unknown)?
@@ -216,13 +215,7 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故这一趟**必须有重试**：撞 `UNKNOWN` 就睡 `RETRY_MS` 再来，总预算 [`MS`]。
 ///
-/// **照实记（"总预算"曾经不是预算）**：每一趟 `seek` 的期限原来是写死的 [`MS`]——而那一趟
-/// **自己就能花掉 `MS`**，`left` 却只减 `RETRY_MS` ⇒ 真实墙钟上界是"重试次数 × MS"，
-/// 与这一行字面差三个数量级。现在**把剩下的预算当这一趟的期限**递下去：总账 ≤ `MS` + 一趟。
-///
-/// 取回的那一枚**随答话回来**（`operator::find` 的第二格）：从前要按"谁给的"扫本端表、取
-/// 满足条件的**最后**一枚——本域表里此刻还有刚验完的那一枚自己的门牌副本，靠次序才分得开。
-/// 甲′ 之后号在答话里，次序那条契约随之退场（照实记见 `echo.rs` 那一份）。
+/// 把剩下的预算当这一趟的期限递下去：总账 ≤ `MS` + 一趟。
 fn find_face(link: &Quay, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
@@ -289,7 +282,6 @@ fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
         },
         Err(code) => (code, false),
     };
-    // **`got` 换了来路**（乙′）：见 `ocall::Union::Seed` 的照实记。
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()

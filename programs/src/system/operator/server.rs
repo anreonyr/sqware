@@ -43,9 +43,8 @@ const SETTLE_MS: usize = 1;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
-/// `contract/src/system/operator/frame.rs` 的 `CoordFrame` 照实记：装配者转授那一版真机
-/// 栽在 `coord-ship`）。树**不当自己的客人**：它不去 `seek("/sys/principal")`，理由同那一笔
-/// （自指 ⇒ 环）。
+/// `contract/src/system/operator/frame.rs` 的 `CoordFrame`）。树**不当自己的客人**：
+/// 它不去 `seek("/sys/principal")`，理由同那一笔（自指 ⇒ 环）。
 ///
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
@@ -59,7 +58,7 @@ impl Session {
     ///
     /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = 服务入口记号
     /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接交给
-    /// 持树者（见 `CoordFrame` 的照实记）。
+    /// 持树者。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ 整格 `None`（读数会喊一句）。盟册那枚
     /// 认不出 ⇒ 只少 `Rule::In` 那一格。
@@ -85,7 +84,7 @@ fn find_face(who: TaskId) -> Option<PieToken> {
 /// 门禁要的那几条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`），
 /// 外加**树自己**那一问（第 `n` 格是谁的门牌）。
 ///
-/// 照实记（第五格那一刀）：`Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），
+/// `Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），
 /// 故这一格把**两半**凑在一起——名册/盟册（[`Session`]）+ 树（[`Operator`]）。名字取"那一问在
 /// 哪儿答"，与 [`operator::core::gate`](protocol::system::operator::core::gate) 的裁决/门禁一族同调。
 struct Court<'a> {
@@ -96,8 +95,7 @@ struct Court<'a> {
 impl Control for Court<'_> {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
         match self.session.roster.resolve(tid, Wait::AtMost(MS)) {
-            // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。照实记：这里原写的是
-            // `p.get() as u32`——号不上帧时看不出来，那一刀之后号要上帧，故一并提宽。
+            // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。
             Ok(found) => Ok(found.map(|p| p.get() as Id)),
             Err(_) => Err(()),
         }
@@ -132,10 +130,6 @@ impl Control for Court<'_> {
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
         // **判据要的只有"有没有那一位"**（见 `judge::Door`），故三种"没有"在裁决那一侧同落
         // `Ok(None)`。这一条**不动树**：剔死是 `find` 的活儿。
-        //
-        // **照实记（这一刀）**：三因同落是**判据**要的，但**后两因永远好不了**，而它们与
-        // "对面暂时不答"在线上同落 `UNJUDGED` ⇒ 客人看不见差别（也对：下一步都是当趟放弃）。
-        // 故这里**不压成一句 `.ok()`**：每一因各说一行读数——要的就是"为什么判不了"。
         match self.tree.opens(at) {
             Ok(tid) => Ok(Some(tid)),
             // 碑 / 从没铸过：**永久**。
@@ -164,14 +158,10 @@ impl Control for Court<'_> {
 /// **门禁的入口**：`session` 为 `None` ⇒ **放行**；`Some` ⇒ 按那一格自己的规矩判
 /// （[`Ledger::rule`] 答出来的那一条）。
 ///
-/// **照实记（这一格原来挂着一条"不许放行"的裁决）**：本节原写、并曾记成已定的是
-/// 「没有门牌时客人请求答 `UNJUDGED`，**不许**答 `Allow`」。实现是放行，而它
-/// **不是**门禁的例外，是**装配期根本不在门禁这条轴上**：
-///
-/// principal 挂自己门牌那一趟（`part /sys` + `land /sys/principal`）发生在它的 `serve_tree`
-/// 里，而本域**认下它的门牌**与它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后**
-/// （`service.rs` 的 `assemble` 里那两段）⇒ 那一刻它**既没有门牌、又还没有身份**。门禁若在
-/// 那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前
+/// 装配期根本不在门禁这条轴上：principal 挂自己门牌那一趟（`part /sys` + `land /sys/principal`）
+/// 发生在它的 `serve_tree` 里，而本域**认下它的门牌**与它**拿到身份**（`derive(ROOT)` + `bind`）
+/// 都在**那之后**（`service.rs` 的 `assemble` 里那两段）⇒ 那一刻它**既没有门牌、又还没有身份**。
+/// 门禁若在那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前
 /// 拿到了身份——**挡门的是它们，不是装配这一步**。
 ///
 /// `tree` 只给第 `n` 格那一问（`Rule::Opens`）：判据要问"那一格是谁的门牌"，而树就在手里
@@ -212,15 +202,14 @@ const MS: usize = 1000;
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
 pub fn serve() -> Result<(), Start> {
     // **起我那一枚线程**（不是 `sire()`：那一手答的是**域级**的生我者，对住本域的
-    // 这一枚指的不是编排者。见 `service::Role::args` 的照实记）。
+    // 这一枚指的不是编排者）。
     let Some(assembler) = crate::service::assembler() else {
         return Err(Start::Sire);
     };
-    // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
-    // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来
-    // （[`protocol::system::board::frame::Tip::LEN`] 的照实记）；这一格只管把板那条路装上
-    // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
-    // `board:claim`——实测栽过一次）。
+    // **上板**：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
+    // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来；
+    // 这一格只管把板那条路装上（装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，
+    // 故少了这一步装配当场报 `board:claim`）。
     let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
         return Err(Start::Board);
     };
@@ -264,10 +253,7 @@ pub fn serve() -> Result<(), Start> {
     // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait。
     let mut book: Book = Ledger::new(ocall::vested_by);
     // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`REQ_LEN`），
-    // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页；拿家族帧当缓冲时，
-    // 比它长的那一枚（≤ 一页）客人推得进、这道门取不出 ⇒ 那一位客人从此没人招待。
-    // **本处是 A 那一刀漏掉的第六处**（前五处：principal / coalition / router / rtc / 板），
-    // 由 `probe-bound` 那一条探针当场抓出来（读数见 `harness/src/probe_bound.rs`）。
+    // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Start::Room);
@@ -357,14 +343,10 @@ fn settle(
                 // 收了。
                 Ok(_) => {}
                 // **重放**（提示是单槽，可能重放）：一位客人只占一格，旧的那一格**原样留着**
-                // ——这一趟不动账，也不打行（重放是常态）。交来的那一枚与账上那一枚**是同一枚**
-                // （按"开者 + 树路记号"认，一位客人只 seat 一次），故这里不丢任何东西
-                // （见 `DeskFail::Already` 的照实记）。
+                // ——这一趟不动账，也不打行（重放是常态）。
                 Err(DeskFail::Already) => {}
                 // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
-                // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**；
-                // 这本账的上限史（撞满过三次）见 `desk.rs` 里 `Desk` 那一格的照实记——这一格
-                // 就是它量出来的那一次。
+                // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
                 Err(DeskFail::Full) => say("operator: desk full"),
             },
             // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
@@ -373,7 +355,7 @@ fn settle(
     }
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
     // 调用方这一侧因此既不必按常数开数组（"一本账的容量渗到别人的栈上"那一格），
-    // 也不必为"抄一份"再分配一次（`collect` 那次分配没有预留，失败同样是 abort）。
+    // 也不必为"抄一份"再分配一次。
     pending |= desk.arm_pending(
         |who| ask_of(who),
         |ask| {
@@ -389,15 +371,6 @@ fn settle(
 /// 正文在协议那一侧（[`protocol::system::operator::core::ledger`]），本域只做三件事：**接上"活着"那一问**
 /// （`ocall::vested_by`，与树收的是同一枚函数指针）、**接上"那一格还是不是那一格"那一问**
 /// （[`fresh`]，一趟读）、**按钥匙查**。
-///
-/// **照实记（这一格原来住在这里）**：前身是 `type Publishers = Vec<(Where, Name, TaskId,
-/// PieToken)>`，只记"声明归自己"的那些。它在这份文件里量错过两次——第一版按**号**记，而
-/// `land` 那一问手里只有坐标，于是**整道判据被跳过**，`probe-owner` 当场顶掉了 `/device/uart`
-/// 的牌子（读数 `land=OK id=5`）；改按坐标记之后，`find` / `trim` 手里又只有号，于是要补一趟
-/// `container_of`（O(树) 的全树递归）。
-///
-/// 两条寻址打的是同一格——**这一条现在由结构说话**（一条记录、两把钥匙），不再靠两处各补
-/// 一次补丁。而它搬进「约」之后进过宿主靶（**那台靶已删**）：**没有门的档 = 没有编译过的档**。
 type Book = Ledger<Id, Id>;
 
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
@@ -417,16 +390,12 @@ fn serve_one(
         return;
     };
     // **收帧用调用方那一页**（[`Slip::land`]）：比家族最长那一枚更长的一条也取得出来、
-    // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。拿家族帧那么大的一只缓冲收不下它，而核**不丢**
-    // 取不出的消息（见 `Slip::land` 的照实记与 `probe-bound` 那两趟——这一门正是那一格
-    // 从前量过的地方）。
+    // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
     let decoded = Slip::<ocall::Req<'_>>::seal(ask).land(buf, Wait::POLL).ok();
     let said = answer(tree, decoded, guest.who(), session, book);
-    // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节（那四种答形在线上分不开，
-    // 故读的那一面由问的人认，见 [`ocall::Said`] 的照实记）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
-    // 的照实记）；真到了那里，这一答就发不出去。
+    // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`）。
     let _ = Slip::<ocall::Union>::seal(guest.reply())
         .load(said)
         .ok()
@@ -468,12 +437,9 @@ fn answer(
     match ask {
         // **`find` 看这一格自己的"用"那一轴**。
         //
-        // 照实记（为什么这里从"全局默认"变成"逐格规矩"，而不是反过来）：上一刀把主人判据也
-        // 挂在 `find` 上，`uart` 声明归自己之后，`echo` 当场取不到 `/device/uart`——机器还在，
-        // 控制台没人读（`examine` 0/3）。**读是公开的，写才归属主**：改那一轴（`land` 那一格
-        // 的 `mine`，账里记成 `Owner`）管的是**改这一格**，不是**用这一格**。这一刀让「用」有
-        // 自己的那一格，故默认值（公开）与主人那
-        // 一轴不再互相牵制。
+        // **读是公开的，写才归属主**：改那一轴（`land` 那一格的 `mine`，账里记成 `Owner`）
+        // 管的是**改这一格**，不是**用这一格**。这一刀让「用」有自己的那一格，故默认值（公开）
+        // 与主人那一轴不再互相牵制。
         ocall::Wire::Find(id) => {
             let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
             let ruling = may(tree, session, who, rule);
@@ -492,8 +458,7 @@ fn answer(
         }
         // **`land` 也要先问身份**（与 `find`/`trim` 同一道门）：它虽然不动别人的格子，
         // 但"往树上挂东西"这件事本身要求来的人是个**已绑身份**——否则没身份的任务就能
-        // 往命名空间里塞条目。**实测栽过一次**：漏了这一支，负证客人当场落牌成功
-        // （读数 `probe: tree land=OK id=7`）。
+        // 往命名空间里塞条目。
         ocall::Wire::Land { .. } => {
             let ruling = may(tree, session, who, Rule::Public);
             if !ruling.passed() {
@@ -515,8 +480,7 @@ fn answer(
             // **活着的主人**说了算；空着的位置谁都能落，落了就登记成他的。
             //
             // **按坐标查**（不是按号）：`land` 那一问发生在动树之前，而 `land` 换绑**不动号**
-            // ——故那一刻手里只有坐标。见 [`Book`] 那段照实记（第一版按号查，真机上把这一道
-            // 判据整个跳过去了）。
+            // ——故那一刻手里只有坐标。
             if !book.claimable(Key::At(at, name), who, |id| fresh(tree, id)) {
                 return ocall::Union::Status(ocall::DENIED);
             }
@@ -545,7 +509,7 @@ fn answer(
         }
         // 查到就**把树上那一份转授给客人**：Pie 本身不从报文里走，从会话里走；而
         // **它在客人表里的号**从这条答话里走（[`ocall::Union::Seed`]）——客人拿它一次 `Reserve`
-        // 就认得出，不必扫自己的表（见 [`ocall::Union::Seed`] 的照实记）。
+        // 就认得出，不必扫自己的表。
         // "查不到"与"授不出去"是两件事，故查的结论优先：`said` 先答，其次才轮到 `grant`。
         ocall::Wire::Find(id) => {
             let mut seed = None;
@@ -604,11 +568,6 @@ fn answer(
 ///
 /// - `owner == who` —— **谁的**：那扇门是**这位客人**开的（副本共享同一事实）；
 /// - **记号 == `operator`** —— 那一枚是**树路**上的一枚。
-///
-/// **照实记（分开之后的改动）**：原来还有第三格 `vestor == 装配者`——"谁转的"。它随
-/// **装配者是谁**而失效：树这一侧现在有两个域跟它打交道（引导域起它、编排域接客人），
-/// 而它认的本来就是"**这扇门是谁开的**、**走的哪条路**"，不是"谁转的"。次序那件事仍由
-/// `settle` 管（答话路没到就先报一句，见那里）。
 fn reply_of(who: TaskId) -> Option<PieToken> {
     // 多枚不可能（`seat` 的同名判据兜着）⇒ 不说。
     claim(Mark::of(LINK), who, None)
@@ -628,13 +587,6 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 /// 三处认领（答话路 / 问话孔 / 门牌）原先各写一遍同一段扫表，且**都取第一枚而从不看有几枚**。
 /// 这一格把那段扫表合成一处；`more` 是"多枚要不要说一句"。
 ///
-/// # 照实记：这一格原来**一律"多枚就报一句"**，真机上每启一次误报几十行
-///
-/// 理由是当时以为"命中两枚 = 纪律被破"。**真机把它顶掉了**：`land` 自己那一手也会把入口
-/// 那一枚交到持树者表里（树就是这么存东西的），而门禁那一手又交一枚——**凡在树上挂了自己
-/// 入口的域，持树者手里必然有两枚 `ENTRY` 记号的副本**，两枚的 `opened_by` 都是那个域
-/// （副本共享同一事实）。实测：一次启动 `operator: two entries` 出了 **60 行**。
-///
 /// 这个过滤器**分不出副本与"第二扇门"，也不该分**。故：
 ///
 /// | 处 | 记号 | 多枚是 |
@@ -652,10 +604,6 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 ///   （持树者会永远停在"还有人没挂上"那一档）；
 /// - **干净的关法**是让 `ask_hole` 与入口那一枚也走**有名有姓的泊位**（`Quay::seat` 那条路
 ///   已有同名闸），把"只可能有一枚"从纪律变成**构造**——那是客侧形状的改动，另一刀。
-/// - **照实记（裁定甲之后松掉的一格）**："本表读不动 ⇒ 一枚都不认"那条 fail-closed 随
-///   `mail::collect` 的 `Err` 通道一起没了：迭代器读到读不动就**打住**，与"扫完了"合流
-///   ⇒ 读不动之前已经认到的那一枚**照旧交出去**。今天够不着（那条 `Err` 是防御读数），
-///   但它是**松开**，不是等价。
 fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
     let mut hits = mail::pies().filter(|p| p.owner == who && p.mark == mark);
     let first = hits.next()?;

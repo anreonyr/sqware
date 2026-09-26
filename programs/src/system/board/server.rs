@@ -75,10 +75,6 @@ pub(crate) fn host_loop(me: TaskId) {
     // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
     // 见 [`Slip::land`]：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
     // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
-    //
-    // **照实记（刀一那一句被证伪）**：本处原写着"缓冲躺在船台自己身上，尺寸就是这一族最长
-    // 那一枚——那一页不再需要"。那是假的：`land` 拿家族帧那只缓冲收不下更长的推，而核**不丢**
-    // 取不出的那一条。判据是 `harness/src/probe_bound.rs` 第四条（板那一道门那一腿）。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
         say("board: no room");
@@ -133,11 +129,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
     let mut pending = false;
     let board = Mark::of(LINK);
     while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
-        // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。从前这里三行手切，
-        // 其中一句注释自认"最容易切错"（"名字按自己的宽度切……静默退回空名"）——它随这一刀
-        // 一起退场。**代价照实**：名字那一段读不成一个合法 `Name` 时，从前是"当没有名字、
-        // 照样收下这位客人"，现在是**整帧读不懂**（答一句 `board: no reply`，不收）——
-        // 那一格只有装配者推得进来，而它推的一定是合法名字。
+        // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。
         let Some(tip) = bcall::Tip::fetch(&rec) else {
             say("board: no reply");
             continue;
@@ -175,7 +167,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
 ///
 /// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::Tip::LEN`]），而牌子会被惰性
 /// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
-/// 过来）⇒ `None`：**这一位死了就没有读数**（与从前"没登记就没读数"同一个静默）。
+/// 过来）⇒ `None`：**这一位死了就没有读数**。
 fn lane_for(name: Name) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     mail::pies().find(|p| p.mark == want).map(|p| p.token)
@@ -183,10 +175,7 @@ fn lane_for(name: Name) -> Option<PieToken> {
 
 /// 本线程的 `who → 死亡道` 小表（一位客人一格；**备不下就丢这一条读数**）。
 ///
-/// **照实记（它为什么是 `Vec`）**：它原先是 `[(TaskId, PieToken); Desk::CAP]`——**借来的界**
-/// （客人账那个常数）。两本客人账并成一本、常数退场之后那个界就没了，而这里本来就有"满了就
-/// 丢"的下场 ⇒ 如实收成 `Vec` + 失败即丢。丢的是一条**死亡读数**，不是监督本身：牌子由
-/// 板自己扫，道只喂装配者。
+/// 丢的是一条**死亡读数**，不是监督本身：牌子由板自己扫，道只喂装配者。
 type Lanes = alloc::vec::Vec<(TaskId, PieToken)>;
 
 /// 把 `who` 的道记下来（同一位重复登记就覆盖）；**备不下就丢**（见上面那一格）。
@@ -210,9 +199,6 @@ fn take_lane(lanes: &mut Lanes, who: TaskId) -> Option<PieToken> {
 ///
 /// 判据全在 [`Desk::sweep_each`] 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
 /// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
-/// **照实记（两个副作用的次序换了）**：从前是"先打一行、再挨个推道"（号先抄进一个按常数
-/// 开的 `dead` 缓冲）。现在号只在回调里拿得到，故推道在打行之前。两条读数走两条不同的路
-/// （道是消息、`say` 是串口），这个次序不承载意义。
 fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
     let n = desk.sweep_each(|who| {
         if let Some(lane) = take_lane(lanes, who) {
@@ -234,11 +220,6 @@ fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
 ///
 /// - `owner == who` —— 那扇门是它开的（副本共享同一事实）；
 /// - **记号 == `ask`** —— 它亲手铸的那一枚问话孔（[`ask_hole`] 刻的）。
-///
-/// 从前第三格是"**不带 `VEST`**"：它交来的**入口**也满足前两格（交者、开者都是它），而入口
-/// 是"能再授出"的那一枚（`ship` 给了 `VEST`）。那一格是**用权限位兼职表达语义**——权限位
-/// 回答的是"能不能再授出"，不是"这是什么"，故换成记号：入口刻的是 `entry`（见 [`answer`]
-/// 那一支），两枚同来源的孔靠**记号**分开。
 fn ask_of(who: TaskId) -> Option<PieToken> {
     let ask = ASK_MARK;
     mail::pies()
@@ -274,10 +255,6 @@ fn serve_one(
     };
     // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
-    //
-    // **照实记（`buf` 那一页为什么回来）**：收帧用的是**载体那一页**（调用方在循环外备的那
-    // 一只），不是家族帧那么大的一只——理由与实测见 [`Slip::land`] 的照实记：拿家族缓冲
-    // 收不下比它更长的一条，核**不丢**取不出的消息 ⇒ 门卡死且空转。
     let decoded = Slip::<bcall::Req>::seal(ask).land(buf, Wait::POLL);
     let said = match decoded {
         Ok(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
@@ -302,10 +279,6 @@ fn serve_one(
 ///
 /// **形状由 [`bcall::Wire`] 说**：退场那一句是**一字节短帧**（没有名字也没有入口），
 /// 另外三条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同）。
-///
-/// **照实记（`op_of` 那一手退场）**：从前这里先 `op_of` 读裸码、按码分流、再 `match op` 认
-/// 四枚 `u8`——两个 `match` 都有"没见过的码"那一支，多一条动作**编得过**。现在那个 `match`
-/// 是穷举的：少写一条动作，这里当场编不过。
 fn answer(
     board: &mut Board,
     desk: &mut Desk,
@@ -344,9 +317,6 @@ fn answer(
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
-            //
-            // **那一格 0 是"这枚号不合法"，不是"这一码没带"**：动作码那一格已经说了它会带
-            // （见 [`bcall::Req`]），故 0 只剩一个意思——**这一帧不是我们的客人编的**。
             Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
                 // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
                 // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
