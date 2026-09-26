@@ -108,7 +108,7 @@ pub struct Pie {
 /// 原始自持 pie（vestor = None）编码为 `TaskId(0)`，与 `UnitCall::SelfId` 的"无上下文
 /// 也是 0"是**同一条哨兵口径**（0 = 这一格没有答案）。
 ///
-/// **不返 `EnvResult`**：内核那一格恒写三件事实，没有失败支（理由见 [`Pies`] 的那条裁定）。
+/// **不返 `Result`**：内核那一格恒写三件事实，没有失败支（理由见 [`Pies`] 的那条裁定）。
 pub fn collect(index: usize) -> Pie {
     let (token, owner, mark) = env::pie::collect(index);
     Pie { token, owner, mark }
@@ -137,7 +137,7 @@ pub fn collect(index: usize) -> Pie {
 /// （`operator/server.rs::claim` 与两处 `client.rs::take`）原先"读不动就整趟作废"的
 /// fail-closed 一起松掉——`Err` 之前已经认到的那一枚**照旧交出去**。
 ///
-/// **签名即那条裁定**：`collect` 因此返 [`Pie`] 而不是 `EnvResult<Pie>`——内核那一格
+/// **签名即那条裁定**：`collect` 因此返 [`Pie`] 而不是 `Result<Pie, _>`——内核那一格
 /// 恒写三件事实（越界也是四格哨兵），没有失败支；`Pies::next` 先前那一支 `Err` 是死代码。
 pub struct Pies {
     index: usize,

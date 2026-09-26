@@ -4,19 +4,17 @@
 //! 读 trace 的人照样一眼看出死在第几步），只是现在
 //!   - **有类型**：忘了一个格子是编译错误（从前 `exit_with(6)` 谁也拦不住）；
 //!   - **能带话**：退场那一句 note 与号长在一起（`Report::note`），内核在出口当场打；
-//!   - **能过 `?`**：`EnvError` 与 `assemble` 那一族的号各有 `From`，调用点不必再拆
+//!   - **能过 `?`**：`assemble` 那一族的号有 `From`，调用点不必再拆
 //!     `Err(code) => return code`。
 //!
 //! 编号口径：`2..=3` 是 [`assemble`] 那一族（`1` 是已撤的 `E_SIRE`），`4..` 起是本域自己的。
 
-use env::EnvError;
 use programs::{Exit, Report};
 
 /// uart 的死法：**一格 = 死在启动/常驻的哪一步**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     /// 环境调用失败（`sire` / 开会话 / 铸孔这一类）。
-    Env(EnvError),
     /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
     Assemble(env::Reason),
     /// 设备门开不动 / 坐标不是区（`Dock::open`、`key.base()`）。
@@ -36,7 +34,6 @@ impl Fail {
     fn code(self) -> env::Reason {
         match self {
             // 环境负码的**样子**照实带出去：`usize` 是 64 位，负码在自己那段高位上仍互不相同。
-            Fail::Env(e) => e.code() as env::Reason,
             Fail::Assemble(code) => code,
             Fail::Open => 4,
             Fail::Board => 5,
@@ -48,7 +45,6 @@ impl Fail {
 
     const fn text(self) -> &'static str {
         match self {
-            Fail::Env(_) => "uart: envcall",
             Fail::Assemble(_) => "uart: assemble",
             Fail::Open => "uart: device open failed",
             Fail::Board => "uart: board",
@@ -65,19 +61,7 @@ impl Exit for Fail {
     }
 }
 
-impl From<EnvError> for Fail {
-    fn from(e: EnvError) -> Self {
-        Fail::Env(e)
-    }
-}
 
-/// `?` 那条路上有两种包装：裸的 [`EnvError`]（`env` 层的转发）与 `erra::Error<EnvError>`
-/// （`runtime`/`protocol` 那两层包过的）。两者都收进同一格——号的账是同一本（`EnvError::code`）。
-impl From<erra::Error<EnvError>> for Fail {
-    fn from(e: erra::Error<EnvError>) -> Self {
-        Fail::Env(e.into_source())
-    }
-}
 
 impl From<env::Reason> for Fail {
     fn from(code: env::Reason) -> Self {

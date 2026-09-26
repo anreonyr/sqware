@@ -18,7 +18,6 @@ use crate::work::room::scheduler::core::{current, kick};
 use crate::work::room::scheduler::trap::run;
 use crate::work::unit::life::{Life, TaskLife};
 use crate::work::unit::task::{Task, TaskState};
-use env::Fail;
 
 use self::holder::{Ticket, hold, void};
 use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
@@ -26,9 +25,9 @@ use super::handoff::Handoff;
 
 /// **等待轴答得出的条件**：`Busy`（条件未就绪）与 `OoM`（备料失败）。
 ///
-/// 这一层被 **Room**（`park`/`park_until`/`wait`）与 **Unit**（`fall`/`join`）共用，
-/// 故它不能只挂一个域的词表——泛型到"答得出这两枚条件的域"上，各域实现各自的词表。
-/// `Fail` 那一份是**过渡期**的（还没域化的类仍写 `Fail::X`），清尾时删。
+/// 这一层被 **Room**（`park`/`park_until`/`wait`）、**Unit**（`fall`/`join`）、
+/// **Mail**（`hole`/`nole` 的 `wait`）与 **Tole**（`await`）共用，故它不能只挂一个域的
+/// 词表——泛型到"答得出这两枚条件的域"上，各域实现各自的词表。
 pub(crate) trait WaitFail: env::FailCode {
     /// 条件未就绪（退化上下文 / 落表那一格）。
     fn busy() -> Self;
@@ -72,14 +71,6 @@ impl WaitFail for env::ToleFail {
     }
 }
 
-impl WaitFail for Fail {
-    fn busy() -> Self {
-        Fail::Busy
-    }
-    fn oom() -> Self {
-        Fail::OoM
-    }
-}
 
 // ── 操作：挂起（用 scheduler::core::Scheduler::swap） ──
 

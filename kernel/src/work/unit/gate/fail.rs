@@ -2,8 +2,7 @@
 //
 // `gate::accede` 与 `envcall::pie::usable` 被 **Pie / Mail / Tole** 三域共用，故它们泛型到
 // "答得出这三枚条件的域"上，各域实现各自的词表（答不出的域——Memory / Unit / Room /
-// Debug / Control——**不实现它，于是编译期就调不到这两手**）。`Fail` 那一份是过渡期的
-// （还没域化的轴仍写 `Fail::X`），清尾时删。
+// Debug / Control——**不实现它，于是编译期就调不到这两手**）。
 
 /// 取用这条路上答得出的三枚：**没这枚 / 已封印 / 已交出去**。
 pub(crate) trait GateFail: env::FailCode {
@@ -48,17 +47,5 @@ impl GateFail for env::ToleFail {
     }
     fn handed_over() -> Self {
         env::ToleFail::HandedOver
-    }
-}
-
-impl GateFail for env::Fail {
-    fn denied() -> Self {
-        env::Fail::Denied
-    }
-    fn dead() -> Self {
-        env::Fail::Dead
-    }
-    fn handed_over() -> Self {
-        env::Fail::HandedOver
     }
 }

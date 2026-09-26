@@ -60,7 +60,7 @@ pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
 
 /// **本端是哪一枚线程**（"这一枚孔是谁开的"那一问要它；同 `operator` 那一面）。
 ///
-/// 不返 `Result`：`SelfId` 那一格恒写 id（见 `env::ecall::EnvResult` 的注）。
+/// 不返 `Result`：`SelfId` 那一格恒写 id（生成的入口标了 `#[infallible]`）。
 fn me() -> TaskId {
     runtime::env::unit::self_id()
 }

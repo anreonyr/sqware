@@ -30,7 +30,7 @@
 //   release.rs — 自释自己持有的一份（含全部后代）
 //
 // 用户态：Task 持 `Vec<AnyPie>`（`unit::task::pies`）；envcall 以 token 寻址。
-// `Permission` 单一真相在 `env`（本层 re-export）；错误码契约见 [`Fail::code`]。
+// `Permission` 单一真相在 `env`（本层 re-export）；错误码契约见**属主域的词表**（`env::fid`）。
 
 mod accord;
 mod cull;

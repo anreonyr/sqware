@@ -155,8 +155,8 @@ where
 /// 返回句柄而非裸数：它是本任务身份、要喂给 `accord`/`revoke` 这类权柄操作，
 /// 化回 `usize` 只会让调用点不得不再包一次。
 ///
-/// **不返 `EnvResult`**：内核那一格恒写 id（无上下文也是 0），没有失败支
-/// （见 `env::ecall::EnvResult` 的注）。
+/// **不返 `Result`**：内核那一格恒写 id（无上下文也是 0），没有失败支
+/// （生成的入口标了 `#[infallible]`）。
 pub fn self_id() -> TaskId {
     env_task::self_id()
 }

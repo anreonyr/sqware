@@ -73,7 +73,7 @@ pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
 /// 认领的两格正判据里，"谁开的"是内核盖的那个戳；而**铸孔的人**就是本线程 ⇒ 扫自己这张表
 /// 时它只能是自己。
 ///
-/// 不返 `Result`：`SelfId` 那一格恒写 id（见 `env::ecall::EnvResult` 的注）。
+/// 不返 `Result`：`SelfId` 那一格恒写 id（生成的入口标了 `#[infallible]`）。
 fn me() -> TaskId {
     runtime::env::unit::self_id()
 }

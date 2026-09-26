@@ -31,7 +31,7 @@ pub mod permission;
 pub mod wait;
 pub mod wire;
 
-pub use ecall::{EnvError, EnvResult, Fail, FailCode, make_err, make_fail};
+pub use ecall::{FailCode, make_fail};
 pub use exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use fid::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,

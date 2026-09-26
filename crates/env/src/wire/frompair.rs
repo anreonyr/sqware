@@ -2,7 +2,7 @@
 //!
 //! 每个 `#[ret(T)]` 的 `T` 在此实现 [`FromPair`]；derive 生成的 `call()`
 //! 在非负路径调用 `<T as FromPair>::from_pair(v0, v1)`。错误路径由
-//! `EnvError::from_raw` 接管，故此处只见成功值。
+//! 各域的**词表读法**（生成的入口里那一格）接管，故此处只见成功值。
 //!
 //! **宽返回那一格**（`#[ret3(T)]`，今天只有 `PieCall::Collect`）走 [`FromTriple`]：
 //! 两口寄存器装不下它那四件事实，故读 `a0..a2`。两条路的分工是**线宽**，不是语义——
@@ -18,7 +18,7 @@
 //! | 策略 | **拒绝**：非法位 / 超宽 → `Err(Decode)` | **按契约取位**（截断是位打包的一部分） |
 //! | 依据 | 不可信输入 | §"由内核保证" |
 //!
-//! 内核侧那一条不写成 `Err`，理由是**错误域的形状**：`EnvError` 整张表（`ecall.rs` 的
+//! 内核侧那一条不写成 `Err`，理由是**错误域的形状**：各域词表（`fid.rs` 那一节）的
 //! D1 契约）说的都是**内核→用户**的答案（`Denied`/`Dead`/`Busy`/…）。把"内核自己违约"
 //! 塞进同一个域，等于让用户程序去处理内核的 bug，且每条 `call()` 都要多一个分支。
 //!
@@ -43,7 +43,7 @@ use crate::permission::Permission;
 ///
 /// derive(Envcall) 生成的 `call()` 在正（非负）路径按 variant 调用
 /// `<T as FromPair>::from_pair(v0, v1)` 组装 Ret 载荷；错误路径已在
-/// `EnvError::from_raw` 分支，故此处只见成功值。
+/// 词表读法那一分支，故此处只见成功值。
 pub trait FromPair: Sized {
     fn from_pair(v0: usize, v1: usize) -> Self;
 }
@@ -140,7 +140,7 @@ impl FromPair for (PieToken, Permission) {
 /// `Collect` 返回值打包（本文件唯一一格 [`FromTriple`]）：`v0` = token、
 /// `v1` = **owner**（这扇门谁开的）、`v2` = **整一枚记号**。
 ///
-/// 两条口径与内核那边逐位同形：`v0` 兼作"成 / 不成"那一格（用户态按符号读 `EnvError`），
+/// 两条口径与内核那边逐位同形：`v0` 兼作"成 / 不成"那一格（用户态按符号读域词表），
 /// 故只装小号；记号整枚另占一格（64 位）。**`owner` 读 `0` 作哨兵**（"查不出"）。
 ///
 /// **照实记（`vestor` 那一半撤了）**：`v1` 从前是 `owner << 32 | vestor`——挤一格是因为

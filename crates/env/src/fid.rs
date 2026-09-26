@@ -7,7 +7,7 @@
 //! ABI，写进本文件注释即文档）。
 //!
 //! 返回类型（R3）：每个 variant 标 `#[ret(T)]`，derive 生成域 `*Ret` 枚举与
-//! `call()`（负值即 `EnvError`，非负蒸馏为 Ret）。`call()` 绑定 envcall 汇编入口，
+//! 每格一个入口（负值读回**该域的词汇**，非负蒸馏成那一格的载荷）。入口绑定 envcall 汇编，
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
@@ -714,7 +714,7 @@ pub enum PieCall {
     /// `a1` = **整一枚记号**（64 位）。
     ///
     /// 两处不能换位，各栽过一次：① 记号挤在 `a0` 的高半或整个放 `a0`——`a0` 是"成 / 不成"
-    /// 那一格（用户态按它的**符号**读 `EnvError`），64 位记号有一半最高位是 1 ⇒ 每次查询都
+    /// 那一格（用户态按它的**符号**读词表），64 位记号有一半最高位是 1 ⇒ 每次查询都
     /// 被读成出错；② 记号挤在 `a1` 的高 32 位——静默截断，所有认领孔都"记号对不上"。
     #[ret((usize, usize))]
     Reserve { token: PieToken },
@@ -791,7 +791,7 @@ pub enum ControlCall {
     ///
     /// `buf` = 用户预分配的 `[usize; N]` 数组 VA；`frames` = 该数组最大容量。
     /// 内核经 `mail::copy_out` 写 `frames` 个 pc 到 buf；返回实际捕获帧数（`usize`），
-    /// buf 非法（未映射/不可写）→ 负值（EnvError）。
+    /// buf 非法（未映射/不可写）→ 负值（`ControlFail`）。
     #[ret(usize)]
     Backtrace { buf: usize, frames: usize },
 }

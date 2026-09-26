@@ -1,23 +1,14 @@
 //! envcall — U-mode → S-mode 环境调用原语 / 错误 / 汇编入口。
 //!
-//! 本文件只保留**跨域共用**的调用骨架：失败词汇（`Fail`）、错误读法（`EnvError`）、
-//! 结果（`EnvResult`）、唯一汇编入口（`trap`）。各域枚举的 `call()/slot()/pack()` 由
-//! `derive(Envcall)` 生成（见 `fid.rs`），它们调用本文件的 `trap`。
-
-/// 环境调用结果。
-///
-/// # 什么时候**不**写 `EnvResult`
-///
-/// 判据是**内核那一格有没有失败支**，不是"这一手看起来会不会出错"。内核整条路径只写
-/// 读数（不写 `ret_err`、不写负码）的那些格——`ChronoCall::{Ticks, Clock}`、
-/// `UnitCall::{SelfId, Sire, HeirCount, Heir}`、`RoomCall::Wake`、`DebugCall::SetTrace`、
-/// `PieCall::Collect`——用户侧一律返裸值：给它们写上 `EnvResult` 就是**签名许诺一个
-/// 永不到来的失败**，读签名的人会去写 `?` 或 `let Ok(..) = .. else`，而那些分支是死的。
-///
-/// 样板是 `runtime::env::room::starve`（它返 `()`）；同一条口径下 `RoomCall::Reap`
-/// 的包装返 `!`。破不变量那一路（调用号读不懂）**不算失败域**——它由生成的调用点排掉，
-/// 与 `Reap` 之后那句 `unreachable!` 同一口径。
-pub type EnvResult<T> = Result<T, erra::Error<EnvError>>;
+//! 本文件只保留**跨域共用**的调用骨架：域失败词汇的共同部分（`FailCode`）、
+//! 唯一汇编入口（`trap`）、以及"把词汇装进 `erra::Error`"那一手（`make_fail`）。
+//!
+//! **码的单一真相在各域词表里**（`fid.rs`，`#[derive(Fail)]` 生成）：域内自 `-1` 起、
+//! 判别值即码。从前这里还有一枚**全局**七枚码表（`Fail`）与一层无类型的读法
+//! （`EnvError`/`EnvResult`）——"按域分持"那一刀把它们整个退掉了：同一个条件在不同域
+//! 不同号，**读法按域**（调用点知道自己在调哪一域），故不需要也不该有全局码表。
+//! 各域枚举的 `slot()/pack()/from_wire()` 与**每格一个入口**由 `derive(Envcall)` 生成
+//! （见 `fid.rs`），它们都调本文件的 `trap`。
 
 /// **域失败词汇的共同部分**：只有"码"。
 ///
@@ -33,170 +24,6 @@ pub trait FailCode: Copy + core::fmt::Debug {
 /// 把域词汇装进 `erra::Error`（derive 生成的每格入口用）。
 pub fn make_fail<F: FailCode + core::fmt::Display>(f: F) -> erra::Error<F> {
     erra::Error::new("envcall", f)
-}
-
-/// envcall 的失败词汇。**负码即契约**（D1）：判别值就是 a0 被读成负数时那一格的值，
-/// 也是内核侧 `ret_err` 写出去的那张表的**唯一真相**（[`EnvError::code`] 的表由此得来，
-/// 不再指向内核）。
-///
-/// 与 [`EnvError`] 的分工：这一枚是**词汇**（哪个码是什么失败），后者是**对线的读法**
-/// （裸 `isize` + 符号 + [`EnvError::is_busy`]）——线上那一格只有数字，没有枚举。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Fail {
-    /// 权限不足 / 句柄不存在 / 类型不符。
-    Denied = -1,
-    /// 资源已封印 / 弱引用升不起来。
-    Dead = -2,
-    /// 条件未就绪（用户态 [`EnvError::is_busy`] 消费这一格）。
-    Busy = -3,
-    /// 资源耗尽。
-    OoM = -4,
-    /// 字节数非页对齐 / 非法。
-    NotAligned = -5,
-    /// 镜像不可装载（parse / 装载任一步失败）。
-    BadImage = -6,
-    /// 这一枚**已被我交出**（接收方手里那一枚还在）：交回即复原，**不是失败**。
-    ///
-    /// **照实记（名字的来历）**：它曾叫 `Caged`——那是 `CAGE` 形态位的时代（`aa50a95`
-    /// 用 `ONLY` 取代了 CAGE）。机制今天叫"移交"（`ONLY` 形态位 + `Pie.heir` 锚 + 用户态
-    /// 的「被关住」判据），故名字换成说"已交出"的这一个；**码 −7 一字未动**（ABI 不变）。
-    HandedOver = -7,
-}
-
-impl Fail {
-    /// 那一格里的负码。**判别值即码**，故实现是 `self as isize`——码表只有一处
-    /// （旧形状是一张 `match` 表，与本文件的文档表各写一遍）。
-    pub const fn code(self) -> isize {
-        self as isize
-    }
-
-    /// 七枚词汇（次序就是 [`Fail::of_code`] 走的那一趟）。**它与枚举是两处**，见下。
-    const ALL: [Self; 7] = [
-        Self::Denied,
-        Self::Dead,
-        Self::Busy,
-        Self::OoM,
-        Self::NotAligned,
-        Self::BadImage,
-        Self::HandedOver,
-    ];
-
-    /// **读法**：a0 里那一格负码，是七枚里的哪一枚；表外（含 `0` 与正数）⇒ `None`。
-    ///
-    /// 这是 [`EnvError`] 那一格的**唯一一道读法**（[`Fail::code`] 的逆）：`HolePie::push`
-    /// 那一族报回来的 `erra::Error<EnvError>` 就靠它收成词汇（收的那一手在
-    /// `protocol::session::slip` 的 `Slip::ship`）。
-    ///
-    /// **照实记（为什么不是一张 `match` 码表）**：那会把 `-1..=-7` 在那些支里再写一遍——
-    /// 正是 [`Fail::code`] 的注里说的那个旧形状（一张 `match` 表 ＋ 文档表各写一遍）。
-    /// 这一趟里**一个数都不写**：比的是判别值自己。
-    ///
-    /// **照实记（`ALL` 与枚举是两处——已知的空隙）**：Rust 没有"枚举的变体表"
-    /// （`core::mem::variant_count` 在本仓这条 nightly 上实测 `E0658`，还在 unstable 口上），
-    /// 故加一枚词汇要**两处都改**。兜底是本文件紧接着那条编译期断言：它逐枚验"读得回来"
-    /// （**写错**一枚编不过），但**盯不了"漏写"**——新加的那一枚若没进 `ALL`，那一条不会知道。
-    pub const fn of_code(code: isize) -> Option<Self> {
-        let mut at = 0;
-        while at < Self::ALL.len() {
-            if Self::ALL[at].code() == code {
-                return Some(Self::ALL[at]);
-            }
-            at += 1;
-        }
-        None
-    }
-}
-
-/// 负码即 ABI 契约：七枚码**一个都不许动**（编译期锁死——改一个就是改 ABI）。
-/// 同 `layout.rs` / `PAIR_LEN` 那类编译期断言的纪律。
-const _: () = {
-    assert!(Fail::Denied.code() == -1);
-    assert!(Fail::Dead.code() == -2);
-    assert!(Fail::Busy.code() == -3);
-    assert!(Fail::OoM.code() == -4);
-    assert!(Fail::NotAligned.code() == -5);
-    assert!(Fail::BadImage.code() == -6);
-    assert!(Fail::HandedOver.code() == -7);
-};
-
-/// **读法**那一侧也锁死（同一条纪律：写错一枚就是"另一种失败"）：七枚逐枚读得回来、
-/// 表外答 `None`。
-///
-/// **为什么是编译期断言、不是宿主靶**：这一格全是常量，而用户裁定过"**常量交给编译器**"
-/// （板那几条"面不相撞"的判据就是这么从运行时用例搬过来的）——故它在**编的时候**红，
-/// 比在某一台上红早一步，也不给"少跑一台"留缝。码一律从判别值取，故这一块里一个数都不写。
-const _: () = {
-    assert!(matches!(
-        Fail::of_code(Fail::Denied.code()),
-        Some(Fail::Denied)
-    ));
-    assert!(matches!(Fail::of_code(Fail::Dead.code()), Some(Fail::Dead)));
-    assert!(matches!(Fail::of_code(Fail::Busy.code()), Some(Fail::Busy)));
-    assert!(matches!(Fail::of_code(Fail::OoM.code()), Some(Fail::OoM)));
-    assert!(matches!(
-        Fail::of_code(Fail::NotAligned.code()),
-        Some(Fail::NotAligned)
-    ));
-    assert!(matches!(
-        Fail::of_code(Fail::BadImage.code()),
-        Some(Fail::BadImage)
-    ));
-    assert!(matches!(
-        Fail::of_code(Fail::HandedOver.code()),
-        Some(Fail::HandedOver)
-    ));
-    // 表外：**不是"某一枚失败"**（`0` 与正数按 D1 就不是错误；更负的码这一版不认得）。
-    assert!(matches!(Fail::of_code(0), None));
-    assert!(matches!(Fail::of_code(1), None));
-    assert!(matches!(Fail::of_code(-8), None));
-    assert!(matches!(Fail::of_code(isize::MIN), None));
-    assert!(matches!(Fail::of_code(isize::MAX), None));
-};
-
-/// **过渡期**：还没域化的那些 class 仍写 `Fail::X`，故这枚全局词表先实现共同部分；
-/// 九域切完随 `Fail` 一起退役（域的码与读法见 `fid.rs` 的词表面）。
-impl FailCode for Fail {
-    fn code(self) -> isize {
-        self.code()
-    }
-}
-
-/// 环境调用错误。D1 契约：仅负值构成错误，非负为成功值。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EnvError(isize);
-
-impl core::fmt::Display for EnvError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "envcall failed: {}", self.0)
-    }
-}
-
-/// 把裸错误码包装进 erra::Error（derive(Envcall) 的 call() 用）。
-pub fn make_err(e: EnvError) -> erra::Error<EnvError> {
-    erra::Error::new("envcall", e)
-}
-
-impl EnvError {
-    /// 从 a0 的 signed 解释构造错误码。
-    pub fn from_raw(raw: isize) -> Self {
-        Self(raw)
-    }
-
-    /// 错误码。D1 负值契约：**仅负值构成错误，非负是成功值**。
-    ///
-    /// 每一种码是什么失败，**只有一份账**：[`Fail`] 的判别值（`-1..=-7`）。线上的格子里
-    /// 只有数字，故这里只交数字。
-    pub fn code(&self) -> isize {
-        self.0
-    }
-
-    /// 是否"条件未就绪"（[`Fail::Busy`]）——非阻塞原语的可重试信号。
-    ///
-    /// 判据取自 [`Fail::Busy`] 而**不是**字面 `-3`：本文件头注立的规矩是"码表只有一处"
-    /// （`Fail` 的判别值），这一格从前是第二处。
-    pub fn is_busy(&self) -> bool {
-        self.0 == Fail::Busy.code()
-    }
 }
 
 /// # Safety

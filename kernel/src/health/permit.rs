@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Fail, HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
+use env::{HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -222,8 +222,8 @@ pub fn order() {
 
     crate::expect!(
         matches!(
-            gate::accede(&task, dead_token, Need::Store),
-            Err(Fail::Dead)
+            gate::accede::<PieFail>(&task, dead_token, Need::Store),
+            Err(PieFail::Dead)
         ),
         "已封印 + 权不够：必须答 Dead（死活先于权限）"
     );
@@ -235,7 +235,7 @@ pub fn order() {
         "活着但权不够：必须答 Denied"
     );
     crate::expect!(
-        gate::accede::<Fail>(&task, live_token, Need::Fetch).is_ok(),
+        gate::accede::<PieFail>(&task, live_token, Need::Fetch).is_ok(),
         "活着且权够：必须取到"
     );
     crate::expect!(

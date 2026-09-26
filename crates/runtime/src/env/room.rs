@@ -43,6 +43,7 @@ pub fn starve() {
 /// note 那个是前两者的下半。
 pub fn exit(reason: Reason, note: Option<&str>) -> ! {
     let note = note.unwrap_or("");
+    // 这一格标了 `#[manual]`（发散），故它是全仓唯一还用 `call()` 的地方。
     let _ = RoomCall::Reap {
         reason,
         note: VirtAddr::new(note.as_ptr() as usize),

@@ -2,14 +2,12 @@
 //!
 //! 号与从前的 `const E_*` **同值**（1–3 归 [`assemble`]，4 起是本域），只是现在有类型、能带话。
 
-use env::EnvError;
 use programs::{Exit, Report};
 
 /// 线路由者的死法：**一格 = 死在启动/常驻的哪一步**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     /// 环境调用失败（`sire` / 铸孔 / 开会话这一类）。
-    Env(EnvError),
     /// `assemble::receive` 带来的号（`E_UP` / `E_GRANT`——原样往外带）。
     Assemble(env::Reason),
     /// 两枚门闩开不动（控制器 / 树）。
@@ -28,7 +26,6 @@ impl Fail {
     fn code(self) -> env::Reason {
         match self {
             // 环境负码的**样子**照实带出去：`usize` 是 64 位，负码在自己那段高位上仍互不相同。
-            Fail::Env(e) => e.code() as env::Reason,
             Fail::Assemble(code) => code,
             Fail::Open => 4,
             Fail::Tree => 5,
@@ -40,7 +37,6 @@ impl Fail {
 
     const fn text(self) -> &'static str {
         match self {
-            Fail::Env(_) => "router: envcall",
             Fail::Assemble(_) => "router: assemble",
             Fail::Open => "router: docks",
             Fail::Tree => "router: tree",
@@ -57,19 +53,7 @@ impl Exit for Fail {
     }
 }
 
-impl From<EnvError> for Fail {
-    fn from(e: EnvError) -> Self {
-        Fail::Env(e)
-    }
-}
 
-/// `?` 那条路上有两种包装：裸的 [`EnvError`] 与 `erra::Error<EnvError>`（`runtime`/`protocol`
-/// 那两层包过的）。两者都收进同一格——号的账是同一本（`EnvError::code`）。
-impl From<erra::Error<EnvError>> for Fail {
-    fn from(e: erra::Error<EnvError>) -> Self {
-        Fail::Env(e.into_source())
-    }
-}
 
 impl From<env::Reason> for Fail {
     fn from(code: env::Reason) -> Self {

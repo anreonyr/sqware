@@ -34,7 +34,7 @@ use env::{HoleDir, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, Vi
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
 /// timebase 频率）。内核那一格没有失败支，故跟着 [`clock`](crate::env::chrono::clock)
-/// 一起不返 `EnvResult`。
+/// 一起不返 `Result`。
 fn now_ns() -> u64 {
     crate::env::chrono::clock()
 }

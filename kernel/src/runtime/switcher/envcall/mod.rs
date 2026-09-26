@@ -76,8 +76,8 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, env::PieFail> {
 /// 写回错误码并返回待恢复帧。
 ///
 /// **泛型**：收的是**域词表**（`env::FailCode` 的共同部分只有"码"）。九域各自一枚枚举，
-/// 这里不做任何折算——折算在**产生错误的那一处**（如 `memory.rs` 的 `From<MapError>`）。
-/// 过渡期还没域化的 class 写 `Fail::X` 也走这一条（`Fail` 临时实现了 `FailCode`）。
+/// 这里不做任何折算——折算在**产生错误的那一处**（如 `memory.rs` 的 `From<MapError>`、
+/// `gate/` 的 `GateFail` 构造子）。
 fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame as *mut TrapContext
@@ -415,8 +415,8 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                 // 源读不到 = 调用方自己的映射不在（或本域另一枚线程刚放手）——与从前
                 // "暂存拷不进来"同一个负码。
                 Err(UnitError::Unreadable) => return ret_err(frame, UnitFail::Denied),
-                // 内存不够从"镜像不认"里分出来：`-4` 这一格编排者本来就接
-                // （`protocol::system::core::Fail::Full`），`-6` 没有。
+                // 内存不够从"镜像不认"里分出来：`OoM` 这一格编排者本来就接
+                // （`protocol::system::core::Fail::Full`），`BadImage` 没有。
                 Err(UnitError::OoM) => return ret_err(frame, UnitFail::OoM),
                 Err(UnitError::Load) => return ret_err(frame, UnitFail::BadImage),
             }
