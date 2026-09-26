@@ -35,7 +35,26 @@ use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{self, AnyPie, GateFail, Need, Permission, Pie, clear_heir};
 use crate::work::unit::task::TaskIdent;
 
-use super::subset_to_pte;
+/// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
+///
+/// | subset                  | PteFlags                |
+/// |-------------------------|-------------------------|
+/// | FETCH                    | V\|R\|A\|D              |
+/// | FETCH \| STORE           | V\|R\|W\|A\|D           |
+/// | other（含空 / 仅 STORE）| Denied                  |
+///
+/// U 位不在此处决定——由目标空间的 `Space::pte_policy` 加。
+fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
+    if !subset.contains(Permission::FETCH) {
+        return Err(PieFail::Denied);
+    }
+    let mut f = PteFlags::V | PteFlags::A | PteFlags::D;
+    f |= PteFlags::R;
+    if subset.contains(Permission::STORE) {
+        f |= PteFlags::W;
+    }
+    Ok(f)
+}
 
 /// 一次权柄 envcall 的落点：本轴从不换帧，故只有一个变体。
 ///

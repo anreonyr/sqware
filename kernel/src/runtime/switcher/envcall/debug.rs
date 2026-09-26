@@ -19,6 +19,12 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::unit::task::TaskIdent;
 use env::DebugFail;
 
+/// 报文对账开关：`DebugCall::SetTrace` 写（每域各自一份静态——域是独立地址空间，
+/// 开关不跨域）。**今天没有读者**：原先读它的是 `Port::call`，那一层已随 Port 那轮
+/// 搬去各协议；用户侧那份 `env::debug::tracing()` 因此闲置。
+/// 只在调试时打开——布局错位这类病只有真实字节能证。
+pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// 一次能搬的字节数上限（与 `env::DBCN_MAX` 同值：栈上定长，不分配）。
 const DBCN_MAX: usize = 256;
 
@@ -89,7 +95,7 @@ pub(super) fn get(
 /// 开关报文对账（开关住在**发起那一域的静态**里——域是独立地址空间，故每域一份）。
 pub(super) fn set_trace(on: usize) -> usize {
     let v = on != 0;
-    crate::runtime::switcher::envcall::TRACE.store(v, core::sync::atomic::Ordering::Relaxed);
+    TRACE.store(v, core::sync::atomic::Ordering::Relaxed);
     v as usize
 }
 
