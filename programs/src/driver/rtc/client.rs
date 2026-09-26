@@ -11,7 +11,7 @@
 //! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
 //! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //!
-//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`communication::hands::push_to`，同 `principal`
+//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`communication::establish::push_to`，同 `principal`
 //! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
 //! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
 //!
@@ -20,6 +20,7 @@
 use protocol::message::Message;
 use env::PieToken;
 use env::Wait;
+use protocol::communication::establish;
 use protocol::communication::receiver::Receiver;
 use runtime::env::mail::{self, HolePie};
 
@@ -31,11 +32,13 @@ use super::core::Fail;
 /// 一问一答——这一趟的回信孔只活到这句话答完（同一次往返借一枚，见 [`protocol::communication`]
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
 pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
-    let (back, seed) = lend_out(entry)?;
+    // **借一枚回信孔**（铸 ＋ 交，记号 = 本面自己的 `BACK`）：返 `(本端那一枚, 驱动表里那一枚)`
+    // ——后者写进帧，收的人一次 `reserve` 就用，不必扫全表。
+    let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
     let mut frame = [0u8; Now::LEN];
     Now::of(seed).store(&mut frame);
-    if push(entry, &frame).is_err() {
+    if establish::push_to(entry, &frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -57,10 +60,12 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
 pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> {
-    let (back, seed) = lend_out(entry)?;
+    // **借一枚回信孔**（铸 ＋ 交，记号 = 本面自己的 `BACK`）：返 `(本端那一枚, 驱动表里那一枚)`
+    // ——后者写进帧，收的人一次 `reserve` 就用，不必扫全表。
+    let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     let mut frame = [0u8; Arm::LEN];
     Arm::of(seed, after_ns).store(&mut frame);
-    if push(entry, &frame).is_err() {
+    if establish::push_to(entry, &frame).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -106,18 +111,7 @@ impl Alarm {
     }
 }
 
-/// 借一枚回信孔过去、把这一帧推上那扇门：返**本端那一枚**（答话与那一声都从它回来）。
-///
-/// 借一枚回信孔（铸 ＋ 交）：返 `(本端那一枚, **在驱动表里那一枚**)`——后者要写进帧
-/// （用户裁定甲′：收方拿它一次 `reserve` 就用，不必扫全表）。
-///
-/// 身体住在 [`protocol::communication::hands::lend_out`]（"借一枚回信孔"只有那一手），
-/// 这里只留本面自己的记号。
-fn lend_out(entry: PieToken) -> Result<(PieToken, PieToken), Fail> {
-    protocol::communication::hands::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)
-}
-
-/// 把一帧推上那扇门（`lend_out` 的后半）。
-fn push(entry: PieToken, frame: &[u8]) -> Result<(), Fail> {
-    protocol::communication::hands::push_to(entry, frame).map_err(|()| Fail::Denied)
-}
+// **照实记（本文件那两层转发退场）**：这里从前有 `fn lend_out(entry)` 与
+// `fn push(entry, frame)` 两个**一行正文**的转发（各自只做 `map_err(|()| Fail::Denied)`）。
+// "借一枚回信孔"只有一具身体（[`establish::lend_out`]），而本面自己那一格记号是
+// [`frame::BACK`]（**调用点上写出来**，比藏在一层函数里更看得见）⇒ 两层壳一起删。

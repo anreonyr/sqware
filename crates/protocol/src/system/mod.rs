@@ -491,10 +491,9 @@ pub mod grant;
 pub mod operator;
 pub mod principal;
 
-pub use crate::system::core::{Fail, Ready, Reaped, Watch};
-
-
-// **判定的三件住同层的 `core` / `desk` / `grant`**——不再是“转出”：那是同一个 crate 里的模块。
-// 正文（那句话是什么）留在本文件，调用点只认 `crate::system::…` 那几条路。
-
-pub use crate::system::desk::{Announce, Service, Slot, State, Table};
+// **照实记（那两条 `pub use` 已撤）**：这里从前把 `core` 的五件（`Fail` / `Ready` /
+// `Reaped` / `Watch`）与 `desk` 的五件（`Announce` / `Service` / `Slot` / `State` / `Table`）
+// **转出一遍**，好让调用点写 `crate::system::X`。那是**薄封装**——那些东西本来就住
+// `system::core` / `system::desk` 这两个模块里（同一个 crate），转出只多一层名字，
+// 而且**今天一个调用点都没用到**（全仓叫的是 `system::core::X` / `system::desk::X`）。
+// 故两条一起撤：要看那一件，去它住的模块看。

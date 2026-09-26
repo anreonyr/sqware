@@ -1,7 +1,9 @@
 //! communication — **通信**：关系怎么建立、一枚孔上怎么收发。
 //!
 //! ```text
-//!   establish.rs  Pair / endpoint / give / find   关系怎么建立
+//!   establish.rs  Endpoint / Held / endpoint / hold / give / claim / find
+//!                 关系怎么建立（＋ 一枚孔本身那几手：ship / unship / push_to /
+//!                 lend_out / `Reserve` 三格）
 //!   sender.rs     Sender<M>                       我推的那一枚（类型 = 我发的那种报）
 //!   receiver.rs   Receiver<M>                     我收的那一枚（类型 = 我收的那种报）
 //! ```
@@ -35,7 +37,6 @@ use env::Wait;
 use runtime::env::chrono;
 
 pub mod establish;
-pub mod hands;
 pub mod receiver;
 pub mod sender;
 

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId, TeamId};
 
-use super::core::{Fail, VestedBy};
+use super::core::Fail;
 
 // ── 核心：类型 ──────────────────────────────────────────────
 
@@ -224,19 +224,17 @@ impl Guest {
 /// 条数是策略、容器要有界，那一格落在**分配**上，不落在常数上。
 pub struct Desk {
     guests: Vec<Option<Guest>>,
-    vested_by: VestedBy,
 }
 
 impl Desk {
-    /// 立一本账：**探活**跟着账走——它对每一格同值，故不必逐个作参数传。
+    /// 立一本账。**不预分配**（`Vec::new()`）：这本账起手时只装几位客人——让
+    /// [`Desk::admit`] 按需 `try_reserve` 那一格去报 `Full`，比这里先按一个猜的数占一片更诚实。
     ///
-    /// **不预分配**（`Vec::new()`）：这本账起手时只装几位客人——让 [`Desk::admit`] 按需
-    /// `try_reserve` 那一格去报 `Full`，比这里先按一个猜的数占一片更诚实。
-    pub const fn new(vested_by: VestedBy) -> Desk {
-        Desk {
-            guests: Vec::new(),
-            vested_by,
-        }
+    /// **探活那一手不在这里注入**（照实记）：从前它跟账走（`Desk { vested_by }`），
+    /// 于是多出一个构造点、多一个类型别名、多一层"谁来接"；而它只有一个身体
+    /// （[`vested_by`](crate::communication::establish::vested_by)）——直接叫就是。
+    pub const fn new() -> Desk {
+        Desk { guests: Vec::new() }
     }
 
     /// 收一位客人（答话路到手时叫）。返它的格子号。
@@ -385,11 +383,10 @@ impl Desk {
     /// 它挂在板上的牌子随时会被摘掉，摘了就认不出"这一位叫什么"（道的记号是名字）。
     /// 有了它，调用方那一侧那个 `out: &mut [TaskId]` 出口缓冲（按常数开的那一张）就不必存在了。
     pub fn sweep_each(&mut self, mut f: impl FnMut(TaskId)) -> usize {
-        let vested_by = self.vested_by;
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && vested_by(guest.reply).is_none()
+                && crate::communication::establish::vested_by(guest.reply).is_none()
             {
                 f(guest.who());
                 *cell = None;

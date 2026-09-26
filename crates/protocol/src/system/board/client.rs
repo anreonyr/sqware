@@ -77,7 +77,7 @@ pub fn register(
     millis: Wait,
 ) -> Result<u8, Fail> {
     // 先把入口交出去、换回"它在板表里是几号"，再编帧——两个编号空间不同源。
-    let seed = bcall::ship(entry, board).map_err(|_| Fail::Denied)?;
+    let seed = crate::communication::establish::ship(entry, board).map_err(|()| Fail::Denied)?;
     // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`send` 满则挂），不是错误。
     Sender::<bcall::Req>::from_token(say)

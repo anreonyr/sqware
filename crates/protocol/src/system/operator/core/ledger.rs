@@ -1,6 +1,8 @@
 //! operator::core::ledger —— **那一本账**：一格的两轴事实（谁许用 / 归谁改）。**不带载体。**
 //!
-//! 本文件与 [`judge`](super::judge) / [`gate`](super::gate) 同一站位：只判、只记，**不发消息**。
+//! 本文件与 [`judge`](super::judge) / [`gate`](super::gate) 同一站位：只判、只记，**不发消息**——
+//! 它唯一的"问"是那一问活性（[`crate::communication::establish::vested_by`]：主人还在场吗），
+//! 那是**读**内核盖的那一格，不推不收。
 //! 唯一一处动树的手是 [`Ledger::land`]——它把"要位 → 落树 → 记账"收成一条动词，而**落树
 //! 那一手仍由调用方注入**（理由见那里）。
 //! 它住在协议里而不在服务里：这本账的前身（`server.rs` 的 `Publishers`）住在适配层，碰内核因而
@@ -52,7 +54,7 @@ use alloc::vec::Vec;
 use env::{Name, PieToken, TaskId};
 
 use super::judge::Rule;
-use super::{EntryId, Fail, VestedBy, Where};
+use super::{EntryId, Fail, Where};
 
 // ── 两把钥匙 ────────────────────────────────────────────────
 
@@ -132,19 +134,18 @@ impl<P, C> Line<P, C> {
 
 /// **那一本账**：一格一条，按两种钥匙查。
 ///
-/// 它的"活着"那一问与树要的是**同一句**（[`VestedBy`]：那一枚还答得出吗），故这里直接复用
-/// 内核注入树的那一枚函数指针，不另开一个 trait。
+/// 它的"活着"那一问与树要的是**同一句**（[`vested_by`]：那一枚还答得出吗），故两边叫的是
+/// **同一个身体**（[`crate::communication::establish::vested_by`]），不另开一个 trait、
+/// 也不接一枚函数指针进来。
 pub struct Ledger<P, C> {
     lines: Vec<Line<P, C>>,
-    vested_by: VestedBy,
 }
 
 impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
-    /// 起一本空账。`vested_by` 与 [`Operator::new`](super::Operator::new) 收的是同一枚。
-    pub const fn new(vested_by: VestedBy) -> Self {
+    /// 起一本空账。
+    pub const fn new() -> Self {
         Self {
             lines: Vec::new(),
-            vested_by,
         }
     }
 
@@ -175,7 +176,7 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
         match self.lines[at].owner {
             None => true,
             Some(owner) if owner.who == who => true,
-            Some(owner) => (self.vested_by)(owner.pie).is_none(),
+            Some(owner) => crate::communication::establish::vested_by(owner.pie).is_none(),
         }
     }
 

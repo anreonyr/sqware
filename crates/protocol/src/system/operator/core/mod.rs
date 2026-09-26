@@ -1,11 +1,14 @@
 //! operator 的核心 —— **树、八条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名 / 开）、失败域**。
 //!
-//! 本文件**不碰内核**——并回一个 crate 之后这条纪律不再是 crate 边界，只在目录上分家
-//! （判定与账住 `core/`，落内核的住 `client.rs` 与那几手），见本 crate 头注的照实记。
+//! 本文件**不装载体**：立孔 / 推 / 收那一层不在这里（住 `client.rs` 与
+//! [`crate::communication::establish`]）；它只**问**内核查得到的三格事实（这一枚还答不答得出 /
+//! 这扇门是谁开的）并**放下一手**——那三具身体只有一处，故这里直接叫。
 //!
-//! 外部事实是**注入**的：两枚戳子 [`Stamps`]（那一枚 Pie 还答得出吗、这扇门是谁开的）与
-//! [`Unship`]（把我这一份放下）。于是喂三个假闭包就能把这棵树与八条原语的规矩推理干净，
-//! 换载体不必重写。
+//! **照实记（这一句原先写的是"本文件不碰内核"）**：那时这三手是**注入**的（三枚函数指针、
+//! 一格 `Stamps` 组、`tree()` 那个构造点），本文件手里只有指针、确实不碰内核。注入撤了
+//! （一处身体，"接上去"只是换个名字传一圈），这句话跟着改真：碰内核的是
+//! [`crate::communication::establish`] 那三具身体，本文件只是**叫**它们。
+//! 树的规矩与那三格事实**分开摆**这条没变——八条原语仍只认号与名字。
 //!
 //! 照实记：**第八条（[`Operator::opens`]）不上线**——它没有动作码，是持树者自己判
 //! [`Rule::Opens`](judge::Rule::Opens) 时问的一句（"这一格是谁的门牌"）。对外那一族
@@ -72,7 +75,7 @@ use env::{Name, PieToken, TaskId};
 
 use crate::id::Id;
 
-use crate::communication::establish::EstablishFail;
+use crate::communication::establish::{EstablishFail, opened_by, unship, vested_by};
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -228,34 +231,12 @@ pub enum Fail {
     Dead,
 }
 
-/// **定义在 `system::core`**（照实记：两个面原是各写一遍的同名同形别名；共用的客人账
-/// 要的是**一个**类型 ⇒ 收成了一处）。
-pub use crate::system::core::VestedBy;
-
-/// **放下**：把我这一份自释。剪掉或换掉一枚 `Tile` 时用它——不加这一格，那一枚句柄就漏在树里。
-pub type Unship = fn(PieToken) -> Result<(), ()>;
-
-/// **这扇门是谁开的**：内核 `Reserve` 第二格（`protocol::communication::hands::opened_by`）。
-///
-/// 与 [`VestedBy`] **同一个类型、不同一句话**——故两枚戳子收在一格里（[`Stamps`]）：谁写反了
-/// **编不过**（照实记：这两枚放成位置参数时是同一个类型，写反照样编过；会话那一族认
-/// `owner` 还是 `grantor` 实测栽过一次，同族的坑不再留）。
-///
-/// **"答不出"这一格里就有"那扇门封印了"**：开者一退场，它开的门随之封印 ⇒ 答 `None`。
-/// 故 `None` 只读作"没有那一位"，不必再问第二个问题。
-pub type OpenedBy = fn(PieToken) -> Option<TaskId>;
-
-/// 树要的**两枚戳子**（内核在开门那一刻盖上去的）：这枚还答得出吗 / 这扇门是谁开的。
-///
-/// 两枚对每一条同值，故跟着树走，不必逐个作参数传（[`Operator::new`] 收一格）。
-/// [`Unship`] 不在这里：那两个是**问题**，它是一次**动作**。
-#[derive(Clone, Copy)]
-pub struct Stamps {
-    /// 这一枚还答得出吗（活性）——[`Operator::find`] 的惰性剔死问它。
-    pub vested_by: VestedBy,
-    /// 这扇门是谁开的——[`Operator::opens`] 问它。
-    pub opened_by: OpenedBy,
-}
+// **照实记（三枚注入的函数指针退场）**：这里从前有 `VestedBy`（那一枚还答得出吗）、
+// `Unship`（把我这一份放下）、`OpenedBy`（这扇门是谁开的）三个类型别名，外加一格
+// `Stamps { vested_by, opened_by }` 把它们成组收着——由 `tree()` 在构造时接上身体。
+// 判据一字没改：**身体只有一个**（[`crate::communication::establish`]），
+// 而"接上"只是把同一个函数换名字传一圈 ⇒ 别名、`Stamps`、构造点一起撤，用到的地方直接叫。
+// 那一格"两枚同型、摆成位置参数会写反"的顾虑随之不存在（不再有位置参数）。
 
 /// **落 / 分想要什么**——两条原语共用 [`Operator::put`] 那一手，差别只在这一格。
 ///
@@ -285,10 +266,6 @@ pub struct Operator {
     /// `slots.len()` 同值，留着它只为把这条纪律写在一处"——而"两个数必须相等"正是要靠自律
     /// 的那一条；这一处纪律改住在本字段上。
     slots: Vec<Option<Slot>>,
-    /// 两枚注入的戳子（[`Stamps`]，对每一条同值）。
-    stamps: Stamps,
-    /// 一次注入的动作（[`Unship`]）。
-    unship: Unship,
 }
 
 impl Operator {
@@ -300,16 +277,12 @@ impl Operator {
     /// 而自从号成了表里的下标，**深度也不再吃调用栈**（见文件头那一节）。
     pub const ROAD_MAX: usize = 8;
 
-    /// 立一棵树：注入的两枚戳子与那一次动作跟着树走——它们对每一条同值，故不必逐个作参数传。
-    ///
-    /// `stamps` 收成**一格具名的组**（照实记：两枚戳子是同型的函数指针，摆成位置参数时写反了
-    /// 编不过才算数——会话那一族认 `owner` 还是 `grantor` 实测栽过一次）。
-    pub const fn new(stamps: Stamps, unship: Unship) -> Operator {
+    /// 立一棵树。**机制不进这里**（照实记见文件头）：要探活 / 要开者 / 要放下，
+    /// 直接叫 [`crate::communication::establish`] 那三具身体。
+    pub const fn new() -> Operator {
         Operator {
             root: Vec::new(),
             slots: Vec::new(),
-            stamps,
-            unship,
         }
     }
 
@@ -319,7 +292,7 @@ impl Operator {
     ///
     /// - `at` 那块 `Pane` 得在（号不在 ⇒ [`Fail::Unknown`]）；它是一枚 `Tile` ⇒ [`Fail::NotAPane`]；
     /// - `name` 那一格空着 ⇒ **铸一枚新号**放上去；
-    /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（[`Unship`]）、**号不动**，答原来那一枚号
+    /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（[`unship`]）、**号不动**，答原来那一枚号
     ///   ——除非它是一块**非空** `Pane`（⇒ [`Fail::NonEmpty`]：要动它先清空）；
     /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
@@ -350,14 +323,13 @@ impl Operator {
     ///
     /// - 号不在树上 ⇒ [`Fail::Unknown`]（剪掉、剔死、从没铸过长得一样）；
     /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]；
-    /// - 是一枚 `Tile`：**先探一次**（[`VestedBy`]）——答不出 ⇒ 当场剔掉那一格、放下那一份
-    ///   （[`Unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
+    /// - 是一枚 `Tile`：**先探一次**（[`vested_by`]）——答不出 ⇒ 当场剔掉那一格、放下那一份
+    ///   （[`unship`]），答 [`Fail::Dead`]；答得出 ⇒ 交给 `ship`。
     ///
-    /// `ship` 是"交出去"那一手（适配层在这里把 Pie 授给调用方，核心因此不碰内核）——与同文件
-    /// 另一个注入事实 [`Unship`] 正好是一式的两半（交出 / 放下）。
+    /// `ship` 是"交出去"那一手（**回调**：适配层把那一枚授给调用方）——与 [`unship`] 正好是
+    /// 一式的两半（交出 / 放下）。它留成参数而不直接叫，是因为它带**去授给谁**那一格
+    /// （调用方手里那个号），不是无参动作。
     pub fn find(&mut self, id: EntryId, mut ship: impl FnMut(PieToken)) -> Result<(), Fail> {
-        let vested_by = self.stamps.vested_by;
-        let unship = self.unship;
         // 先只读地问一遍（借用到此为止），再决定要不要动树。
         let pie = match self.slot(id) {
             None => return Err(Fail::Unknown),
@@ -387,13 +359,12 @@ impl Operator {
     /// - 那一格是一块 `Pane` ⇒ [`Fail::NotATile`]（**没有开者这一说**）；
     /// - 是一枚 `Tile`，但开者那扇门封印了 ⇒ [`Fail::Dead`]。
     ///
-    /// 照实记：`Dead` 那一格是**三因一码**（不是孔 / 不在我表里 / 已封印），与 [`VestedBy`] 的
+    /// 照实记：`Dead` 那一格是**三因一码**（不是孔 / 不在我表里 / 已封印），与 [`vested_by`] 的
     /// 口径同一句。**不许拆它**——今天没有一位客人分得开这三因，分开就是造三个没人读的格。
     ///
     /// 谁问它：持树者判 [`Rule::Opens`](judge::Rule::Opens) 时，把这一格翻成开者，再拿
     /// 开者去问名册"这一刻代表谁"。故它答的是 **TID**，不是身份号——两件事两个落点。
     pub fn opens(&self, id: EntryId) -> Result<TaskId, Fail> {
-        let opened_by = self.stamps.opened_by;
         let pie = match self.slot(id) {
             None => return Err(Fail::Unknown),
             Some(slot) => match &slot.node {
@@ -407,12 +378,11 @@ impl Operator {
     /// **剪**：把那一号那一格剪掉。
     ///
     /// 那一格得存在（否则 [`Fail::Unknown`]）；是 `Pane` 的话**必须空着**（否则 [`Fail::NonEmpty`]）。
-    /// 剪掉一枚 `Tile` 时那一枚放下（[`Unship`]）——它是资源实体的一份引用，不放下就漏水。
+    /// 剪掉一枚 `Tile` 时那一枚放下（[`unship`]）——它是资源实体的一份引用，不放下就漏水。
     ///
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 [`Fail::Unknown`]，而**它不会被重新铸出来**（水位只增）。
     pub fn trim(&mut self, id: EntryId) -> Result<(), Fail> {
-        let unship = self.unship;
         let dropped = match self.slot(id) {
             None => return Err(Fail::Unknown),
             Some(slot) => match &slot.node {
@@ -488,7 +458,6 @@ impl Operator {
     /// **先只读地问一遍**（那一格叫什么号），再动手：这样动手那一段只需要一次
     /// `slots[i]` 的可变借用，不必在 children 里穿一层 `&mut`（那正是老一版递归的由头）。
     fn put(&mut self, at: Where, name: Name, node: Node, want: Want) -> Result<EntryId, Fail> {
-        let unship = self.unship;
         let existing = self
             .kids(at)?
             .iter()

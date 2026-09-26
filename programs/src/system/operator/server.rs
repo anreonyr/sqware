@@ -30,8 +30,8 @@ use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
 use crate::system::control::service::Start;
+use protocol::communication::establish;
 use protocol::system::desk::{Desk, DeskFail, Guest};
-use protocol::system::operator::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -240,8 +240,8 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Desk);
     }
 
-    let mut tree = ocall::tree();
-    let mut desk = desk();
+    let mut tree = Operator::new();
+    let mut desk = Desk::new();
     // **装配期**：还没有协调门牌（装配者那一帧到了才是 `Some`）⇒ 门禁放行——**装配期不在门禁
     // 这条轴上**（理由见 [`may`]），不是给它的例外。
     let mut session: Option<Session> = None;
@@ -249,9 +249,9 @@ pub fn serve() -> Result<(), Start> {
     let mut coord = Coord::default();
     // **那本账**：一格一条，两轴都记（见 [`Book`]）。
     //
-    // "活着"那一问与树收的是**同一枚函数指针**（`ocall::vested_by`）——账要问的"主人还在吗"
-    // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait。
-    let mut book: Book = Ledger::new(ocall::vested_by);
+    // "活着"那一问与树叫的是**同一具身体**（`establish::vested_by`）——账要问的"主人还在吗"
+    // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait、也不接一枚指针进来。
+    let mut book: Book = Ledger::new();
     // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`REQ_LEN`），
     // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
@@ -368,9 +368,10 @@ fn settle(
 
 /// **那本账**：一格一条，记着两轴（谁许用 / 归谁改）。
 ///
-/// 正文在协议那一侧（[`protocol::system::operator::core::ledger`]），本域只做三件事：**接上"活着"那一问**
-/// （`ocall::vested_by`，与树收的是同一枚函数指针）、**接上"那一格还是不是那一格"那一问**
-/// （[`fresh`]，一趟读）、**按钥匙查**。
+/// 正文在协议那一侧（[`protocol::system::operator::core::ledger`]），本域只做两件事：
+/// **接上"那一格还是不是那一格"那一问**（[`fresh`]，一趟读）与**按钥匙查**。
+/// "活着"那一问**不在本域的接线里**：账与树叫的是同一具身体
+/// （[`protocol::communication::establish::vested_by`]）。
 type Book = Ledger<Id, Id>;
 
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
@@ -514,7 +515,9 @@ fn answer(
             let mut seed = None;
             let mut grant = Ok(());
             let said = tree.find(id, |pie| {
-                grant = ocall::ship(pie, who).map(|at| seed = Some(at));
+                grant = establish::ship(pie, who)
+                    .map(|at| seed = Some(at))
+                    .map_err(|()| Fail::Unknown);
             });
             if said == Err(Fail::Dead) {
                 // 核心**已经**把那一格剔了（"惰性剔死"）——顺手销账，别留一条陈的。

@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
-use env::{Name, PieToken, TaskId};
+use env::Name;
 
 use super::desk::{Announce, Service, Slot, State, Table};
 
@@ -110,21 +110,10 @@ pub enum Fail {
     NotReady,
 }
 
-// ── 注入的事实：那一枚还答得出吗 ────────────────────────────
-
-/// **活性**：那一枚 Pie 还答得出吗？答不出（`None`）= **它后面的人没了**。
-///
-/// 它答两件事，而两者在这一格里**不可分**（也不该分）：
-///
-/// - 那一枚**不在我表里**（令牌越界，或它已被 `Unship` 放下）；
-/// - **或**它那扇门**已经封印**：`Reserve` 的 `owner` 那一格带存活闸（内核
-///   `envcall/pie.rs` 的 `owner().ok_or(Fail::Dead)`，闸在 `work/unit/gate/pie.rs`
-///   的 `alive().then(...)`）⇒ 门一封印就答 `Err(-2 Dead)`，而 `env::fid` 的 `Reserve`
-///   注记写着这条契约。**故"答不出"这一格里就有"门封印了"**。
-///
-/// 返回的 [`TaskId`] 是授与人（原始自持编码为 `TaskId(0)`）。
-///
-/// **它为什么住这里**（照实记）：板那一份与树那一份原是**两个同名同形、各写一遍的别名**；
-/// 两本客人账并成一本之后，共用的那本账要的是**一个**类型 ⇒ 收进 `system::core`，
-/// 两处各自 `pub use` 回去（路径照旧，调用点不动）。
-pub type VestedBy = fn(PieToken) -> Option<TaskId>;
+// **照实记（`VestedBy` 那枚函数指针已经退场）**：从前这里有一格"探活"的**注入类型**
+// （`pub type VestedBy = fn(PieToken) -> Option<TaskId>`）——板与树各 `pub use` 一份回去，
+// 由各自的构造点（`board()` / `tree()`）接上身体。判据一字没改，**注入这一层撤了**：
+// 它只有一个身体（[`crate::communication::establish::vested_by`]），
+// 而"接上"这件事只是把同一个函数换个名字传一圈（薄封装）。今天要用它的地方**直接叫**。
+// 那一条"活性"的口径（答不出 = 不在我表里 **或** 那扇门已经封印）写在
+// [`vested_by`](crate::communication::establish::vested_by) 上。

@@ -23,7 +23,7 @@
 //!
 //! **只上答那一半**（`protocol::communication::sender::Sender`）：答的两侧各拿一枚**裸孔**——驱动
 //! `seal(back).load(..).ok().map(|s| s.ship())`、客人 `seal(back).land(..)`（到点那一声同）。问那两侧上不去：
-//! 客侧推的是**门**（`communication::hands::push_to`，与 `principal` 的客侧同一手），驱动那侧要
+//! 客侧推的是**门**（`communication::establish::push_to`，与 `principal` 的客侧同一手），驱动那侧要
 //! **内核盖的发送者印章**（`pull_timeout_from` 那一扫的验），而手柄只返报文的送达结果。故问那两张表
 //! **不实现 [`Message`]**——今天没有一处读它（同两族共用的那张 `Query`）。
 //!
@@ -120,7 +120,7 @@ pub struct Arm {
 
 impl Now {
     /// 编一问：`back` = "我借给你的那枚回信孔**在你表里**是几号"
-    /// （`communication::hands::lend_out` 的第二格）——见本文件头注的照实记。
+    /// （`communication::establish::lend_out` 的第二格）——见本文件头注的照实记。
     pub fn of(back: PieToken) -> Now {
         Now { op: ASK, back }
     }

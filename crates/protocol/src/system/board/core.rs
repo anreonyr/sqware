@@ -1,14 +1,17 @@
 //! board 的核心 —— **公示板、牌子、失败域，与那四个动作**。
 //!
-//! 本文件**不碰内核**——并回一个 crate 之后这条纪律不再是 crate 边界，只在目录上分家
-//! （判定与账住 `core.rs`，落内核的住 `client.rs` 与那几手），见本 crate 头注的照实记。
+//! 本文件**不装载体**：立孔 / 推 / 收那一层不在这里（住 `client.rs` 与
+//! [`crate::communication::establish`]）；它只**读**内核查得到的两格事实（谁授的 / 还答不答
+//! 得出）并**放下一手**——那几具身体只有一处，故这里直接叫。
 //!
-//! "谁授的这枚入口""这枚入口还答得出吗""放下它"全是**注入的事实与动作**（[`VestedBy`] /
-//! [`Unship`]），故一块板的规矩喂两个假闭包就能推理，换载体不必重写。
+//! **照实记（这一句原先写的是"本文件不碰内核"）**：那时这几手是**注入**的（两枚函数指针
+//! ＋ `board()` 那个构造点），本文件手里只有指针、确实不碰内核。注入撤了（身体只有一处，
+//! "接上去"只是换个名字传一圈），这句话跟着改真：碰内核的是
+//! [`crate::communication::establish`] 那两具身体，本文件只是**叫**它们。
 
 use env::{Name, PieToken, TaskId};
 
-use crate::communication::establish::EstablishFail;
+use crate::communication::establish::{EstablishFail, unship, vested_by};
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -81,12 +84,10 @@ pub enum Fail {
     Full,
 }
 
-/// **定义在 `system::core`**（照实记：两个面原是各写一遍的同名同形别名；共用的客人账
-/// 要的是**一个**类型 ⇒ 收成了一处）。
-pub use crate::system::core::VestedBy;
-
-/// **放下**：把自己那一份入口自释。牌子被换掉或扫空时用它，否则那枚门闩漏在板上。
-pub type Unship = fn(PieToken) -> Result<(), ()>;
+// **照实记（"放下"那一枚函数指针已经退场）**：它从前是一个注入的别名
+// （`pub type Unship = fn(PieToken) -> Result<(), ()>`），由 `board()` 接上身体；身体只有
+// 一个（[`unship`](crate::communication::establish::unship)）⇒ 这里直接叫，别名与构造点
+// 一并撤掉。
 
 // ── 板 ──────────────────────────────────────────────────────
 
@@ -106,21 +107,18 @@ pub type Unship = fn(PieToken) -> Result<(), ()>;
 /// 的护栏。
 pub struct Board {
     signs: [Sign; Board::CAP],
-    vested_by: VestedBy,
-    unship: Unship,
 }
 
 impl Board {
     /// 板上有多少枚牌子。条数是策略，容器要有界。
     pub const CAP: usize = 16;
 
-    /// 立一块板：两个注入的机制事实（探入口 / 放下）跟着板走——它们对每一枚牌子同值，
-    /// 故不必逐个作参数传。
-    pub const fn new(vested_by: VestedBy, unship: Unship) -> Board {
+    /// 立一块板。**两枚机制事实不进这里**（照实记）：从前它们跟板走（`Board { vested_by,
+    /// unship }`），故多出两枚类型别名、一个构造点、一层"谁接上"；而两边各只有一个身体
+    /// （[`crate::communication::establish`] 的 [`vested_by`] / [`unship`]）⇒ 直接叫。
+    pub const fn new() -> Board {
         Board {
             signs: [Sign::VACANT; Board::CAP],
-            vested_by,
-            unship,
         }
     }
 
@@ -134,7 +132,7 @@ impl Board {
     /// - 已有**别人**挂着的实例 ⇒ [`Fail::Taken`]；**自己**挂着的 ⇒ 覆盖（重登 / 换绑）；
     /// - 都没占 ⇒ 找一枚空牌子立上，板满则 [`Fail::Full`]。
     pub fn register(&mut self, name: Name, entry: PieToken, who: TaskId) -> Result<PieToken, Fail> {
-        if (self.vested_by)(entry) != Some(who) {
+        if vested_by(entry) != Some(who) {
             return Err(Fail::Denied);
         }
         match self.find(name) {
@@ -210,7 +208,7 @@ impl Board {
     }
 
     /// 同 [`Board::lookup`]，但拿到入口后先交给 `ship`（适配层在这里把入口授给调用方，
-    /// 免得"先查再授"中间再多一次查找）——`ship` 是那一手的名字（与 [`Unship`] 成对）。
+    /// 免得"先查再授"中间再多一次查找）——`ship` 是那一手的名字（与 `unship` 成对）。
     pub fn lookup_after(
         &mut self,
         name: Name,
@@ -241,7 +239,7 @@ impl Board {
 
     // ── 惰性剔除：板上不留死实例 ──────────────────────────────
 
-    /// 扫一枚牌子：那一枚入口**答不出**（[`VestedBy`] 答 `None`——**不在我表里**与**门已封印**
+    /// 扫一枚牌子：那一枚入口**答不出**（[`vested_by`] 答 `None`——**不在我表里**与**门已封印**
     /// 是同一格）即**当场把牌子扫空**——不留死实例，也不留一个"实例已死"的中间状态。
     ///
     /// 读路径也扫（[`Board::lookup`] 会扫），故"已死"永远不会被答出去；代价是读也要
@@ -250,7 +248,7 @@ impl Board {
         let Some(entry) = self.signs[at].entry else {
             return;
         };
-        if (self.vested_by)(entry).is_none() {
+        if vested_by(entry).is_none() {
             self.unship_at(at);
         }
     }
@@ -258,7 +256,7 @@ impl Board {
     /// 摘实例、清主人，**牌子留着**。
     fn unship_at(&mut self, at: usize) {
         if let Some(entry) = self.signs[at].entry {
-            let _ = (self.unship)(entry);
+            let _ = unship(entry);
         }
         self.signs[at].lift();
     }
@@ -276,7 +274,7 @@ impl Board {
 //   - [`Board::lookup`] 里那次 `sweep` 是**留着的**（见 `board/mod.rs` 末段）；
 //   - [`Board::unregister`] 里那次 `sweep_at`：撤牌子也**先扫后判**。
 //
-// 三个注入点（`vested_by` / `unship`，见 [`Board::new`]）就是全部外部依赖。
+// 全部外部依赖只有两处：`vested_by`（探入口）与 `unship`（放下）——直接叫的那两具身体。
 
 // ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
 //

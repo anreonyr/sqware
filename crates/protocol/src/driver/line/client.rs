@@ -11,7 +11,6 @@ use runtime::env::mail::{self, HolePie};
 use super::core::Fail;
 use super::frame;
 use crate::communication::establish::{self, Held};
-use crate::communication::hands;
 use crate::communication::sender::Sender;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）。
@@ -35,7 +34,7 @@ impl Line {
     /// 故这一侧自己收干净。不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，
     /// 直到它退场（读数见 `programs/src/driver/router/adapt/desk.rs` 那一格 `pies=`）。
     pub fn occupy(entry: PieToken, key: Key, millis: Wait) -> Result<Line, Fail> {
-        let host = hands::opened_by(entry).ok_or(Fail::Denied)?;
+        let host = establish::opened_by(entry).ok_or(Fail::Denied)?;
         // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
         // **有主地建**（`hold`）：这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟

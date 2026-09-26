@@ -50,7 +50,7 @@ pub fn open(holder: TaskId, millis: Wait) -> Result<(Endpoint, TaskId), Fail> {
 pub fn ask_hole(host: TaskId) -> Result<PieToken, Fail> {
     // **一个域只铸一枚问话孔**——先找我表里那一枚，有就不铸第二枚。
     //
-    // 认的是"**本端开的** + 记号"两格（[`crate::communication::hands::find`]，与持树者那一侧认孔
+    // 认的是"**本端开的** + 记号"两格（[`crate::communication::establish::find`]，与持树者那一侧认孔
     // 的两格正判据同一句话）。于是"一个域只铸一枚"从**纪律**变成**构造**：这一条路再也生不出
     // 第二枚，而第二枚的症状是"多出来的那枚永远没人读它的推"（`server.rs::claim` 那一格记着）。
     //
@@ -102,7 +102,8 @@ fn ask_out(
 /// 客侧第二步（**落**）：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答**那一格自己的号**。
 ///
 /// `entry` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的
-/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与 [`ocall::ship`]）。
+/// 是"种在持树者表里的那个号"，那才是它认得的坐标（见文件头与
+/// [`crate::communication::establish::ship`]）。
 ///
 /// `rule` / `mine` 是**这一格的两轴条件**（用 / 改）——落牌的人当场声明，此后就由持树者
 /// 那一本账替它记着；默认是"公开 + 不声明归属"（既有的装配读数因此一字不改）。
@@ -122,7 +123,7 @@ pub fn land(
     mine: bool,
     millis: Wait,
 ) -> Result<EntryId, u8> {
-    let shipped = ocall::ship(entry, host).map_err(|_| ocall::BAD)?;
+    let shipped = crate::communication::establish::ship(entry, host).map_err(|()| ocall::BAD)?;
     ask_out(
         say,
         link,

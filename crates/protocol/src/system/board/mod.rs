@@ -56,7 +56,7 @@
 //!
 //! 往返**建在会话上**，不另铸一条路——两侧都用同一手（[`endpoint`](crate::communication::establish::endpoint)，
 //! 铸本端那一枚 ＋ 认下对端那一枚），靠**孔上的记号**对位，见
-//! [`marked_as`](crate::communication::hands::marked_as)）：
+//! [`marked_as`](crate::communication::establish::marked_as)）：
 //!
 //! ```text
 //!   客侧（问）                              板侧（答）
@@ -236,7 +236,7 @@
 pub mod core;
 pub mod frame;
 
-pub use crate::system::board::core::{Board, Fail, Sign, Unship, VestedBy};
+pub use crate::system::board::core::{Board, Fail, Sign};
 
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`），不再有“转出”那一层。
@@ -258,7 +258,6 @@ pub mod client;
 // （旧注写的是"这里不出现 `if` / `match`"——**照实记：`map_*` 那两张表与它同一次落地，
 // 那句话从写下的第一天起就是假的**。）
 
-use crate::system::desk::Desk;
 use env::{PieToken, TaskId};
 
 pub use frame::{
@@ -266,32 +265,14 @@ pub use frame::{
     code_to_fail, fail_to_code,
 };
 
-// ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────
+// ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────
 //
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
 // **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。板这一侧原先各抄一份
 // （`probe`5 / `opened_by`9 / `mark_of`7——不等长本身就是"这一组还没想清楚"的信号），
-// 那一份已删；本模块要讲的话堆在下面这一段。
-pub use crate::communication::hands::{marked_as, opened_by, vested_by};
-
-/// 自释一份：**装运 / 卸下**——`ship` 的反面。牌子被换掉或扫空时用它，
-/// 否则那枚门闩漏在板上。身体在 [`crate::communication::hands::unship`]。
-pub use crate::communication::hands::unship;
-
-/// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
-///
-/// `const` 是为了它能当 `static` 的初值：板只有一份，住在板那一台（`super::server`）。
-pub const fn board() -> Board {
-    let vested_by: VestedBy = vested_by;
-    let unship: Unship = unship;
-    Board::new(vested_by, unship)
-}
-
-/// **立一本账**（一位客人一格）：把"读内核事实"的那一枚接上（`vested_by`，`Reserve` 那一问）
-/// ——**账与手各住各的模块**，这一手就是那个接口。
-pub const fn desk() -> Desk {
-    Desk::new(vested_by)
-}
+// 那一份已删；**别名也不再各取一份**（照实记）：身体只有一个
+// （[`crate::communication::establish`]），要它的人**直接叫**，
+// 于是 `board()` / `desk()` 两个"把身体接上去"的构造点、以及 `ship` 那一层转发一起退场。
 
 /// **交出**：把调用方手里那枚入口交给持板者（`Accord` 一份副本），返"种在持板者表里"的号；
 /// 反过来的那一半（把板上那一份转授给调用方，`Query` 的下场）**是同一件事**，故同一个名字
@@ -303,8 +284,8 @@ pub const fn desk() -> Desk {
 /// "板查到了却授不出去"；拿到它的人把它转给第三方是常态（那正是"一个名字指向一个入口"
 /// 的用法），故这里也不替调用方裁剪。
 ///
-/// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
+/// 身体在 [`crate::communication::establish::ship`]（**同名的裸手**）；**失败域是本模块的**
 /// （`Denied`）：身体共用，失败值各自说（与 `map_establish` 那两张对照表同款）。
 pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    crate::communication::hands::ship(entry, to).map_err(|()| Fail::Denied)
+    crate::communication::establish::ship(entry, to).map_err(|()| Fail::Denied)
 }

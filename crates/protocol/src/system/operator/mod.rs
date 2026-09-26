@@ -235,9 +235,7 @@
 pub mod core;
 pub mod frame;
 
-pub use crate::system::operator::core::{
-    EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where,
-};
+pub use crate::system::operator::core::{EntryId, Fail, Operator, Where};
 
 pub mod client;
 // 形、据、账就在本模块树下（`core` / `frame`）。
@@ -251,9 +249,6 @@ pub mod client;
 // 产出的 [`Fail`] 落进同层的 `core`（`system/operator/core/mod.rs` 末尾）——`map_claim` 与
 // `map_seat` 两张表在会话那一刀里并成这一张。
 
-use crate::system::desk::Desk;
-use env::{PieToken, TaskId};
-
 pub use crate::system::operator::core::gate::{Blind, Code, Control, verdict};
 pub use crate::system::operator::core::judge::{
     Branch, Door, Id, League, Rule, Ruling, Who, judge,
@@ -264,46 +259,19 @@ pub use frame::{
     UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 
-// ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────
+// ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────
 //
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
 // **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。树这一侧原先各抄一份
-// （`probe`5 / `opened_by`9 / `mark_of`7），那一份已删（三格上三处的读法见 `vested_by`）。
-pub use crate::communication::hands::{marked_as, opened_by, vested_by};
+// （`probe`5 / `opened_by`9 / `mark_of`7），那一份已删（三格上三处的读法见 `vested_by`）；
+// **别名也不再各取一份**（照实记）：身体只有一个
+// （[`crate::communication::establish`]），要它的人**直接叫**，
+// 于是 `tree()` / `desk()` 两个"把身体接上去"的构造点、以及 `ship` 那一层转发一起退场。
 
-/// **卸下**：自释一份。剪掉或换掉一枚 `Tile` 时由核心叫它。
-pub use crate::communication::hands::unship;
-
-/// 立一棵树：把注入的机制交给核心（核心因此不 `use` 内核）。
-///
-/// `const` 是为了它能当 `static` 的初值——树只有一棵，住在本域（`bin/operator`）。
-pub const fn tree() -> Operator {
-    let stamps: Stamps = Stamps {
-        vested_by,
-        opened_by,
-    };
-    let unship: Unship = unship;
-    Operator::new(stamps, unship)
-}
-
-/// **立一本账**（一位客人一格）：把"读内核事实"的那一枚接上——账与手各住各的模块。
-pub fn desk() -> Desk {
-    Desk::new(vested_by)
-}
-
-/// **交出**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号；
-/// 反过来的那一半（持树者把树上那一枚转授给客人，`find` 的下场）**是同一件事**，故同一个名字
-/// ——照实记：这两个方向原先叫 `hang` 与 `give`，收口那一刀并成了这一个。
-///
-/// 权限给满（`R|W`）**加一格 `VEST`**：持树者查到名字时要**再授出**（`find` 的下场）——
-/// 内核那道"持 `VEST` 才交得出去"的闸挡的就是"查到了却授不出去"；拿到它的人可以再传
-/// ——那正是"一个名字指向一枚 Pie"的用法，故这里也不替调用方裁剪。
-///
-/// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
-/// （`Unknown`）：身体共用，失败值各自说（与 `map_establish` 那两张对照表同款）。
-pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    crate::communication::hands::ship(entry, to).map_err(|()| Fail::Unknown)
-}
+// **照实记（"交出"那一层转发退场）**：这里从前有 `pub fn ship(entry, to)` —— 一行正文加一次
+// `map_err(|()| Fail::Unknown)`。身体只有一具（[`crate::communication::establish::ship`]），
+// 失败域那一格**在调用点上**了：谁用它、谁按自己那一头折（树这一头是 `Unknown`），
+// 于是"同一个身体、两处不同的话"不靠两层函数说，靠两个调用点说。
 
 /// **同步义务**：`gate.rs` 自己留了那三格线上码（它只认 `env` 与同层 `core`，`frame.rs` 拖着帧
 /// 那一族 ⇒ 它看不见）。这里在编译期把两份钉在一起——真正的对照表只有 [`frame`] 那一份，

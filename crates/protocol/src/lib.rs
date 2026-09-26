@@ -38,8 +38,8 @@
 //!   id            号：`Id` 那一族怎么编、怎么读
 //!   message       报：一族会编会解的那条约定（`store` / `fetch`）
 //!   fail_codes    负码表：`fail_codes!` 宏 ＋ 全协议共用的那一格 `OK`
-//!   communication 建：一段关系怎么建立、报怎么收发（`establish` / `sender` / `receiver` /
-//!                 `hands`）——**其余每一份都建在它上面**
+//!   communication 建：一段关系怎么建立、报怎么收发（`establish` / `sender` / `receiver`）
+//!                 ——**其余每一份都建在它上面**
 //! ```
 //!
 //! **照实记（`frame` / `id` / `fail_codes` 为什么是一组）**：`frame` 要 `id` 与 `fail_codes`
@@ -53,7 +53,8 @@
 //!
 //! - `system/{board,operator}/mod.rs` **不碰 `runtime`**，但它 `pub use` 的三手
 //!   （`marked_as` / `opened_by` / `vested_by`）由 `reserve_reads!` 包着 `mail::reserve`
-//!   ——**是内核读**。这三手的身体如今只住 [`communication::hands`]（一处分身、两处取名）；
+//!   ——**是内核读**。这三手的身体如今只住 [`communication::establish`]（一处分身，谁要谁直接叫；
+//!   "两处取名"那一层别名也已经撤了）；
 //! - **客侧那几手与碰内核的那几手另开一份**（`client.rs` / [`communication`]），与判定、账
 //!   分开摆——这是本 crate 内部的分家依据，与 crate 边界不是一回事。
 //!
@@ -95,7 +96,8 @@
 //! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。实现树上最后一个也走了：`programs/src/system/call.rs`
 //! （编排者的适配）**唯一读者就是 `system/server.rs`**，故并进那个文件。驱动那一侧也走了：
 //! `programs/src/driver/rtc/call.rs` 拆进 `rtc/core/`（形与记号归 `core/frame.rs`）⇒
-//! 这个名字今天只剩一处：底座 `communication/hands.rs` 是**那几件手的身体**。
+//! 这个名字今天**一处都不剩**：底座那几件手的身体并进了 `communication/establish.rs`
+//! （照实记见那一份的文件头）。
 //!
 //! **照实记（"容纳"是用户裁的）**：`board` 一直在 [`system`] 之下；`operator` / `principal` /
 //! `coalition` 原先是**顶层**（与 `system` 平级），裁定之后收进去。**判据是"谁住编排域"**：

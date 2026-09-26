@@ -19,9 +19,9 @@ use runtime::env::mail;
 
 use super::core::{Fail, PrincipalId};
 use super::frame::{self, BACK};
+use crate::communication::establish;
 use crate::communication::receiver::Receiver;
 
-pub use super::opened_by;
 
 /// 一面身份服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
@@ -32,9 +32,9 @@ pub struct Face {
 impl Face {
     /// 把一枚门牌收成一面。
     ///
-    /// 对端从**这一枚门闩自己**问出来（[`opened_by`]）——门牌是 Server 挂的，不是本端开的。
+    /// 对端从**这一枚门闩自己**问出来（[`establish::opened_by`]）——门牌是 Server 挂的，不是本端开的。
     pub fn of(entry: PieToken) -> Result<Face, Fail> {
-        let host = opened_by(entry).ok_or(Fail::Unknown)?;
+        let host = establish::opened_by(entry).ok_or(Fail::Unknown)?;
         Ok(Face { entry, host })
     }
 
@@ -99,14 +99,14 @@ impl Face {
     /// 分得开它们的那一格在**对面**：`Denied` 是服务真会答的码（判据在 `judge`），
     /// "没走到"是本端自己在码表之外判的。
     fn raw(&self, act: frame::Req, millis: Wait) -> Result<frame::Reply, Fail> {
-        // **先铸、先交，再推**（次序是契约的一半，见 `communication::hands::lend_out`）：那一枚
+        // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）：那一枚
         // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
         let (back, seed) =
-            crate::communication::hands::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
+            crate::communication::establish::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
         act.query(seed).store(&mut frame);
-        if crate::communication::hands::push_to(self.entry, &frame).is_err() {
+        if crate::communication::establish::push_to(self.entry, &frame).is_err() {
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来（与 `lend` 同一手收尾）。
             let _ = mail::release(back);
             return Err(Fail::Denied);

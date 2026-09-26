@@ -219,5 +219,4 @@ pub use crate::system::principal::core::{Fail, Principal, PrincipalId};
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`）。
 
-pub use crate::communication::hands::opened_by;
 pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Wire, code_to_fail, fail_to_code, reply_present};

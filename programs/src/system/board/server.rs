@@ -20,8 +20,8 @@ use protocol::system::board::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
+use protocol::communication::establish;
 use protocol::system::desk::{Desk, DeskFail, Guest};
-use protocol::system::board::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -68,8 +68,8 @@ pub(crate) fn host_loop(me: TaskId) {
         return;
     }
 
-    let mut board = bcall::board();
-    let mut desk = desk();
+    let mut board = Board::new();
+    let mut desk = Desk::new();
     // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::Tip::LEN`]），
     // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
     let mut lanes: Lanes = alloc::vec::Vec::new();
@@ -323,7 +323,7 @@ fn answer(
             // `{交者 == 它, 记号 == entry}`：前格在核心（`probe(entry) == who`），后格在这里。
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
-            Some(entry) if bcall::marked_as(entry) == Some(ENTRY_MARK) => {
+            Some(entry) if establish::marked_as(entry) == Some(ENTRY_MARK) => {
                 // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
                 // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
                 // 由装配者递；见 [`bcall::Tip::LEN`] 的照实记）。两件事从此分家：
@@ -338,7 +338,9 @@ fn answer(
             // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
             let mut grant = Ok(());
             board
-                .lookup_after(name, |entry| grant = bcall::ship(entry, who).map(|_| ()))
+                .lookup_after(name, |entry| {
+                    grant = establish::ship(entry, who).map(|_| ()).map_err(|()| Fail::Denied)
+                })
                 .and(grant)
         }
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。
