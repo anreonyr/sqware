@@ -11,7 +11,7 @@
 /// `mark`）与**自己那一侧的名字**，故"三格是一组、三个名字等长"在调用处一眼可见——
 /// 原先板与树各写一份 `probe`5 / `opened_by`9 / `mark_of`7，不等长本身就是信号。
 ///
-/// `$vis` 那一格是给**共享体与领域名分家**用的：身体住 `session::call`，名字由调用点给。
+/// `$vis` 那一格是给**共享体与领域名分家**用的：身体住 `communication::hands`，名字由调用点给。
 macro_rules! reserve_reads {
     ($(#[$meta:meta])* $vis:vis fn $name:ident($arg:ident) => vestor $(;)?) => {
         $(#[$meta])*

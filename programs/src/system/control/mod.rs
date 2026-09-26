@@ -150,7 +150,7 @@ impl Control {
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         let task = service::mint(&mut self.table, name, entry.elf, entry.kind)
             .map_err(|_| Error::Spawn)?;
-        Ok((task, Quay::open(task, protocol::session::call::hands())))
+        Ok((task, Quay::open(task, protocol::communication::hands::hands())))
     }
 
     /// **放行 + 等就绪 + 认领通道**（有通道的那一条顺带逐条认领）。

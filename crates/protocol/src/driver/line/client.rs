@@ -30,9 +30,9 @@ impl Line {
     /// 那侧**收不了别人的表**（它只放得下自己表里的副本，见 `driver/router` 的 `drop_lane`）。
     /// 不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，直到它退场。
     pub fn occupy(entry: PieToken, key: Key, millis: Wait) -> Result<Line, Fail> {
-        let host = crate::session::call::opened_by(entry).ok_or(Fail::Denied)?;
+        let host = crate::communication::hands::opened_by(entry).ok_or(Fail::Denied)?;
         let mark = Name::new(frame::LANE).map_err(|_| Fail::Denied)?;
-        let mut quay = Quay::open(host, crate::session::call::hands());
+        let mut quay = Quay::open(host, crate::communication::hands::hands());
         // 本端那一枚交给它（它按"谁开的 + 记号"认下来，往这里投递）。
         quay.seat(mark).map_err(|_| Fail::Denied)?;
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。

@@ -265,17 +265,17 @@ pub use frame::{
     Wire, code_to_fail, fail_to_code,
 };
 
-// ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
+// ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────
 //
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
 // **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。板这一侧原先各抄一份
 // （`probe`5 / `opened_by`9 / `mark_of`7——不等长本身就是"这一组还没想清楚"的信号），
 // 那一份已删；本模块要讲的话堆在下面这一段。
-pub use crate::session::call::{marked_as, opened_by, vested_by};
+pub use crate::communication::hands::{marked_as, opened_by, vested_by};
 
 /// 自释一份：**装运 / 卸下**——`ship` 的反面。牌子被换掉或扫空时用它，
-/// 否则那枚门闩漏在板上。身体在 [`crate::session::call::unship`]。
-pub use crate::session::call::unship;
+/// 否则那枚门闩漏在板上。身体在 [`crate::communication::hands::unship`]。
+pub use crate::communication::hands::unship;
 
 /// 立一块板：把两枚机制函数交给核心（核心因此不 `use` 内核）。
 ///
@@ -302,8 +302,8 @@ pub const fn desk() -> Desk {
 /// "板查到了却授不出去"；拿到它的人把它转给第三方是常态（那正是"一个名字指向一个入口"
 /// 的用法），故这里也不替调用方裁剪。
 ///
-/// 身体在 [`crate::session::call::ship`]（**同名的裸手**）；**失败域是本模块的**
+/// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
 /// （`Denied`）：身体共用，失败值各自说（与 `map_claim` / `map_seat` 同款）。
 pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    crate::session::call::ship(entry, to).map_err(|()| Fail::Denied)
+    crate::communication::hands::ship(entry, to).map_err(|()| Fail::Denied)
 }

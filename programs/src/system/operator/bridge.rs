@@ -147,7 +147,7 @@ pub fn host_of(
         return Ok(host);
     }
     let slot = Name::new(TIP_NAME).map_err(|_| "operator:name")?;
-    let mut quay = Quay::open(host, protocol::session::call::hands());
+    let mut quay = Quay::open(host, protocol::communication::hands::hands());
     quay.seat(slot).map_err(|_| "operator:seat")?;
     quay.claim(host, TIP_MARK, millis)
         .map_err(|_| "operator:tip")?;

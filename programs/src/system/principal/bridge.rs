@@ -10,7 +10,7 @@ use core::time::Duration;
 
 use env::{TaskId, Wait};
 use protocol::debug;
-use protocol::session::call as scall;
+use protocol::communication::hands as scall;
 use protocol::system::board as bcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;

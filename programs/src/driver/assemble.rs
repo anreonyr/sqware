@@ -48,7 +48,7 @@ pub const E_GRANT: usize = 3;
 pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
     let sire = utask::sire();
     let channel = env::Name::new(RECORDS).map_err(|_| E_UP)?;
-    let mut quay = Quay::open(sire, protocol::session::call::hands());
+    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
     quay.seat(channel).map_err(|_| E_UP)?;
     let up = quay.find(channel).ok_or(E_UP)?;
     // 缓冲按本域那张单子备：需求单几条就备几条（发货方不必抄这个数）。

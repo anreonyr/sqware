@@ -18,7 +18,7 @@
 //! 那一枚（`M::Buf` 就是它）⇒ 既不占调用方的缓冲、也不占结构体的字段。而
 //! **`HolePie::push` 把等待写死成 `Wait::Forever`**（`runtime/src/env/mail.rs` 那一圈）⇒
 //! `POLL` 与 `AtMost` 在它那里落不下来；故下面这一手用 `env::mail::push` ＋
-//! `HolePie::wait(HoleDir::Push, …)` 把那一圈重写一遍（原 `session::call::push_to` /
+//! `HolePie::wait(HoleDir::Push, …)` 把那一圈重写一遍（原 `communication::hands::push_to` /
 //! `try_post` 就是这两态各自一副身体，现在收成同一条路上的三态）。
 
 use core::marker::PhantomData;

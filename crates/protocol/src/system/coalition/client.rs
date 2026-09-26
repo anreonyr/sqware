@@ -109,13 +109,13 @@ impl Face {
     /// `fail_codes!` 的**双射表**（加变体 = 加线上码）——较真值得，但它是动协议面的一刀，不混在
     /// 这一条里。
     fn ask(&self, act: frame::Req, millis: Wait) -> Result<frame::Union, Fail> {
-        // **先铸、先交，再推**（同 `principal/client.rs` 那一面；身体在 `session::call::lend_out`）。
+        // **先铸、先交，再推**（同 `principal/client.rs` 那一面；身体在 `communication::hands::lend_out`）。
         let (back, seed) =
-            crate::session::call::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
+            crate::communication::hands::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
         act.query(seed).store(&mut frame);
-        if crate::session::call::push_to(self.entry, &frame).is_err() {
+        if crate::communication::hands::push_to(self.entry, &frame).is_err() {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
         }

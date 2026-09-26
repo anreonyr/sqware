@@ -244,5 +244,5 @@ pub use crate::system::coalition::core::{Coalition, CoalitionId, Fail, WINDOW_CA
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`）。
 
-pub use crate::session::call::opened_by;
+pub use crate::communication::hands::opened_by;
 pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Union, Wire, code_to_fail, fail_to_code};

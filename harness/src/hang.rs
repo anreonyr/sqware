@@ -58,7 +58,7 @@ fn main() -> Reason {
     };
 
     // 码头朝生我者：把本端那一枚孔交出去（台主认领它 ⇒ 台主手里有写端，推得醒本端）。
-    let mut quay = Quay::open(sire, protocol::session::call::hands());
+    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
     let Ok(pie) = quay.seat(mark).map(|p| *p) else {
         return bail("hang: seat");
     };

@@ -11,7 +11,7 @@
 //! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
 //! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //!
-//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`session::call::push_to`，同 `principal`
+//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`communication::hands::push_to`，同 `principal`
 //! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
 //! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
 //!
@@ -111,13 +111,13 @@ impl Alarm {
 /// 借一枚回信孔（铸 ＋ 交）：返 `(本端那一枚, **在驱动表里那一枚**)`——后者要写进帧
 /// （用户裁定甲′：收方拿它一次 `reserve` 就用，不必扫全表）。
 ///
-/// 身体住在 [`protocol::session::call::lend_out`]（"借一枚回信孔"只有那一手），
+/// 身体住在 [`protocol::communication::hands::lend_out`]（"借一枚回信孔"只有那一手），
 /// 这里只留本面自己的记号。
 fn lend_out(entry: PieToken) -> Result<(PieToken, PieToken), Fail> {
-    protocol::session::call::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)
+    protocol::communication::hands::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)
 }
 
 /// 把一帧推上那扇门（`lend_out` 的后半）。
 fn push(entry: PieToken, frame: &[u8]) -> Result<(), Fail> {
-    protocol::session::call::push_to(entry, frame).map_err(|()| Fail::Denied)
+    protocol::communication::hands::push_to(entry, frame).map_err(|()| Fail::Denied)
 }

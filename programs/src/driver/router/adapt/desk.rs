@@ -10,7 +10,7 @@ use protocol::message::Message;
 use env::{HoleDir, Mark, Name, TaskId, Wait};
 use protocol::debug;
 use protocol::driver::line::{core::Lines, frame as lcall};
-use protocol::session::call as scall;
+use protocol::communication::hands as scall;
 use protocol::session::{Pier, Quay};
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
@@ -85,7 +85,7 @@ pub fn serve(
 /// 它没交（或交不出来）。
 fn take_lane(from: TaskId) -> Option<(Quay, Pier)> {
     let mark = Name::new(lcall::LANE).ok()?;
-    let mut quay = Quay::open(from, protocol::session::call::hands());
+    let mut quay = Quay::open(from, protocol::communication::hands::hands());
     quay.seat(mark).ok()?;
     quay.claim(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS))
         .ok()?;

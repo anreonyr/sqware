@@ -29,7 +29,7 @@ pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 /// 的那一枚），记号就是板路的名字。
 pub fn open(holder: TaskId, millis: Wait) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
-    let mut quay = Quay::open(holder, crate::session::call::hands());
+    let mut quay = Quay::open(holder, crate::communication::hands::hands());
     quay.seat(link).map_err(bcall::core::map_seat)?;
     quay.claim(holder, Mark::of(link.as_str()), millis)
         .map_err(bcall::core::map_claim)?;
@@ -47,7 +47,7 @@ pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
     // **一个域只铸一枚问话孔**：与我这一面同一句（见 `operator::client::ask_hole` 的照实记）
     // ——先找我表里那一枚，有就不铸第二枚。板那一侧按 `(开者, 记号)` 两格认孔，故第二枚的
     // 症状是"多出来的那枚永远没人读它的推"。
-    if let Some(have) = crate::session::call::find(me(), ASK_MARK) {
+    if let Some(have) = crate::communication::hands::find(me(), ASK_MARK) {
         return Ok(have);
     }
     let ask = mail::unseal_hole(ASK_MARK).map_err(|_| Fail::Denied)?;
@@ -114,7 +114,7 @@ pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
 // 照实记（删掉的一处：板那一面的 `take`）：它从前在这儿，形状与 `operator::take` 逐字同构
 // ——"板刚授进来的那一枚"按**来源位是板**（`vestor`）扫本表认回来。**它一天都没有调用者**：
 // 客人拿板查到的那个入口走的是另一条路（`service.rs::face_of` 按"开者 = 板 ＋ 记号 = 入口"
-// 问，`session::call::find` 那两格正判据），板这一面从来不靠"谁给的"认。
+// 问，`communication::hands::find` 那两格正判据），板这一面从来不靠"谁给的"认。
 //
 // 按"没有读者的格不留在协议面上"的口径删掉。它顺带也是 `vestor` 在扫描里的**第二个**读者
 // （另一个是 `operator::take`，那一个活的）——乙′ 那一步要把 `vestor` 从 `Collect` 上拿掉，

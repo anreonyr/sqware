@@ -1,4 +1,4 @@
-//! session 的转发层 —— 内核那几只手的别名。
+//! hands — **内核那几只手的身体**（原 `session/call.rs` 的转发层搬到这里）。
 //!
 //! 本文件**不做裁决**：全会话的规矩（额度、齐没齐、谁的孔归谁）都在
 //! [`core`](super::core)。这里只做两件事：**转发一次**、把内核的错误码翻成"没成"。
@@ -29,11 +29,11 @@
 use env::Wait;
 use env::{Mark, PieToken, TaskId};
 
-use super::core::Claim;
+use crate::session::core::Claim;
 
 use runtime::core::port::{self, Access, Policy};
 
-use super::hands::{Hands, Hole};
+use crate::session::hands::{Hands, Hole};
 use runtime::env::mail;
 
 /// 铸一枚孔（本端那一枚），并把**记号**刻在它上面。

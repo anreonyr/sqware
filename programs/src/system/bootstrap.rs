@@ -107,7 +107,7 @@ pub fn take() -> Result<Boot, Fail> {
 fn talk_to_root() -> Option<Pier> {
     let sire = utask::sire();
     let slot = Name::new(supply::BOOT).ok()?;
-    let mut quay = Quay::open(sire, protocol::session::call::hands());
+    let mut quay = Quay::open(sire, protocol::communication::hands::hands());
     quay.seat(slot).ok()?;
     quay.claim(sire, Mark::of(supply::BOOT), Wait::AtMost(BOOT_MS))
         .ok()?;

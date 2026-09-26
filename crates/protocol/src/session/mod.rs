@@ -166,4 +166,3 @@ pub mod hands;
 pub use core::{Claim, Pier, Quay, Seat};
 pub use hands::{Hands, Hole};
 
-pub mod call;

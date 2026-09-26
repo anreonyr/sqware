@@ -63,7 +63,7 @@ pub fn serve() -> Result<(), Start> {
         //
         // **本域自己交、不是装配者转授**：门牌由各域自己交（见 `operator/bridge.rs` 的
         // `COORD` 段）。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
-        // 答话走每一趟自己铸的那枚回信孔（`session::call::lend_out` ＋ `push_to`：铸孔 → 交
+        // 答话走每一趟自己铸的那枚回信孔（`communication::hands::lend_out` ＋ `push_to`：铸孔 → 交
         // `STORE` → 把"那一格"编进帧 → 推），读端在装配者这边。⇒ **`STORE` 就是这一格的全部需要**。
         port::ship(
             &HolePie::from_token(entry),

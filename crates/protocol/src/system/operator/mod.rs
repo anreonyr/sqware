@@ -262,15 +262,15 @@ pub use frame::{
     TIP_NAME, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 
-// ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
+// ── 一个调用的三个事实：身体在 `communication::hands`，这里只取名字 ──────────
 //
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
 // **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。树这一侧原先各抄一份
 // （`probe`5 / `opened_by`9 / `mark_of`7），那一份已删（三格上三处的读法见 `vested_by`）。
-pub use crate::session::call::{marked_as, opened_by, vested_by};
+pub use crate::communication::hands::{marked_as, opened_by, vested_by};
 
 /// **卸下**：自释一份。剪掉或换掉一枚 `Tile` 时由核心叫它。
-pub use crate::session::call::unship;
+pub use crate::communication::hands::unship;
 
 /// 立一棵树：把注入的机制交给核心（核心因此不 `use` 内核）。
 ///
@@ -297,10 +297,10 @@ pub fn desk() -> Desk {
 /// 内核那道"持 `VEST` 才交得出去"的闸挡的就是"查到了却授不出去"；拿到它的人可以再传
 /// ——那正是"一个名字指向一枚 Pie"的用法，故这里也不替调用方裁剪。
 ///
-/// 身体在 [`crate::session::call::ship`]（**同名的裸手**）；**失败域是本模块的**
+/// 身体在 [`crate::communication::hands::ship`]（**同名的裸手**）；**失败域是本模块的**
 /// （`Unknown`）：身体共用，失败值各自说（与 `map_claim` / `map_seat` 同款）。
 pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
-    crate::session::call::ship(entry, to).map_err(|()| Fail::Unknown)
+    crate::communication::hands::ship(entry, to).map_err(|()| Fail::Unknown)
 }
 
 /// **同步义务**：`gate.rs` 自己留了那三格线上码（它只认 `env` 与同层 `core`，`frame.rs` 拖着帧
