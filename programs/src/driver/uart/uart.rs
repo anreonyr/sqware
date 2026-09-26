@@ -5,7 +5,7 @@
 //! 内核的调试面（固件代读 `RBR`），今天在持有设备的本域。**一台设备只有一个读者**。
 //!
 //! 不碰 FIFO 配置、不管行、不解释字节：FIFO 是固件初始化时开好的（`uart8250_device_init`），
-//! "一行"是**终端**的约定（在客人那侧，见 `programs/src/user/echo.rs`）。
+//! "一行"是**终端**的约定（在客人那侧，见 `programs/src/user/echo/mod.rs`）。
 
 use runtime::core::dock::View;
 

@@ -74,7 +74,7 @@ impl Write for Console {
 ///
 /// **不阻塞**：实测（OpenSBI v1.9 / QEMU virt）没数据时**立刻返 0**，不是"等到至少一个
 /// 字节"。这条差别是**空转的红线**——调用方拿到 0 若立刻再问，就是在 U 态烧一颗核
-/// （实测宿主 99%，见 `programs/src/user/echo.rs` 那条注）。读入方要么睡一毫秒再来，
+/// （实测宿主 99%，见 `programs/src/user/echo/adapt/echo.rs` 那条注）。读入方要么睡一毫秒再来，
 /// 要么等中断（那是 console 域的事）。`None` = 缓冲不可直读。
 pub fn read(buf: &mut [u8]) -> Option<usize> {
     if buf.is_empty() {

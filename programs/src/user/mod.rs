@@ -1,8 +1,8 @@
 //! user — **U 态那一档**：不建域、不读设备、不碰 MMIO，也不转授权。
 //!
 //! 判据是特权级（唯一声明处：`plan::assembly::ALL` 里这一行的 `kind`）：今天这一档**只剩一台**
-//! ——`echo.rs`，产品侧的**调试回显**（它只走 `env` 的调试面，够不着建域那道 S 态门，故最小特权
-//! 够用）。
+//! ——`echo/`（入口 `main.rs` ＋ 纯核 `core/` ＋ 适配 `adapt/`），产品侧的**调试回显**（它只走
+//! `env` 的调试面，够不着建域那道 S 态门，故最小特权够用）。
 //!
 //! **照实记（这一屋原先住着七台，六位试客是第二刀搬走的）**：`guest` / `passer` / `lodger` /
 //! `sleeper` / `subject` / `member` 与 `echo` 同住这里。它们**量的是服务**（身份 / 盟籍 / 时钟 /
@@ -17,6 +17,11 @@
 //!   programs/ 的 6 个 bin  ==  产品镜像那 6 条（`cargo image product` 打出来那 6 个名字）
 //! ```
 //!
-//! **本文件今天没有一行代码**：这一档只剩一份 bin（`echo.rs`），而 bin **不进 lib**（`programs`
-//! 的共享件只有三枚：`entry` / `service` / `driver::assemble`）。留这一份是为了上面
-//! 那条照实记有地方住——`programs/src/lib.rs` 的 `pub mod user;` 认的就是它。
+//! **本文件今天没有一行代码**：这一档只剩一份 bin（`echo/` —— 入口 `echo/main.rs`），而 bin
+//! **不进 lib**（`programs` 的共享件仍只有那三枚：`entry` / `service` / `driver::assemble`——
+//! 本档新加的那一枚是**空锚**，没有身子）。留这一份是为了上面那条照实记有地方住
+//! ——`programs/src/lib.rs` 的 `pub mod user;` 认的就是它。**本档那一份锚是 [`echo`]**
+//! （`echo/mod.rs`：判据与照实记住在那里，同样一行代码也没有），与 `driver/uart/mod.rs` 同一条
+//! 判据：**锚留给链接与判据**。
+
+pub mod echo;

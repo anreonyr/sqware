@@ -35,7 +35,7 @@ erra = { version = "0.2.0", default-features = false }
 
 [[bin]]
 name = "prog-echo"
-path = "src/user/echo.rs"
+path = "src/user/echo/main.rs"
 test = false
 bench = false
 doctest = false

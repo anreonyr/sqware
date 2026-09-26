@@ -17,7 +17,7 @@ fn main() {
     // 拿到的是**旧产物**。实测栽过：`cargo image` 打出旧 initrd，量出来的东西其实不是刚改的。
     // 一条一条列（不走 `src` 目录的 `rerun-if-changed`：那是未定义行为），让 cargo 自己算指纹。
     println!("cargo::rerun-if-changed=src/lib.rs");
-    println!("cargo::rerun-if-changed=src/user/echo.rs");
+    println!("cargo::rerun-if-changed=src/user/echo/main.rs");
     println!("cargo::rerun-if-changed=src/driver/router/main.rs");
     println!("cargo::rerun-if-changed=src/driver/uart/main.rs");
     println!("cargo::rerun-if-changed=src/driver/rtc/main.rs");
