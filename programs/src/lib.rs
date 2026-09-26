@@ -95,5 +95,5 @@ pub mod user;
 pub use runtime::core::exit::{Exit, Report};
 
 /// 入口那一手（过程宏）：bin 里写 `#[entry] fn main() …`，展开与符号名见那个 crate。
-pub use entry_macro::entry;
+pub use mold::entry;
 pub use env::Reason;

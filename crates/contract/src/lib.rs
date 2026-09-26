@@ -33,11 +33,11 @@
 //!   形     `frame.rs`
 //!   据     `core.rs`
 //!   账     `desk.rs`
-//!   适配   `call.rs`（**不碰内核**的那几手：立板、注入、对照表）
+//!   适配   `system/*/mod.rs`（**不碰内核**的那几手：立板、注入；两张对照表随失败域落进 `core`）
 //! ```
 //!
 //! **不进来**：`client.rs` 的客侧那几手、`session/call.rs` 的会话手——它们碰内核，住 `protocol`。
-//! **照实记（一处按手切、不按文件切）**：`system/{board,operator}/call.rs` 现在不碰 `runtime`，
+//! **照实记（一处按手切、不按文件切）**：`system/{board,operator}/mod.rs` 现在不碰 `runtime`，
 //! 但它 `pub use` 的三手（`marked_as` / `opened_by` / `vested_by`）由 `reserve_reads!` 包着
 //! `mail::reserve`——**是内核读**。搬它们那一批时按手劈：立板与两张对照表进本 crate，
 //! `ship` 与那三手进口。
@@ -73,11 +73,13 @@
 //! ```
 //!
 //! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**（真凭据：[`system::principal::frame`]
-//! 头注写着那个宿主靶"模块树里没有 `driver`"，[`system::operator::gate`] 同理）。`driver` 那
+//! 头注写着那个宿主靶"模块树里没有 `driver`"，[`system::operator::core::gate`] 同理）。`driver` 那
 //! 两半（[`driver::supply`] / [`driver::line`]）的帧**整份都在宿主靶的判据里**（`crates/protocol-case/
-//! tests/{supply,line}.rs` 跑的就是那一份）⇒ 没有分家的需要。**故同一个文件名在两族里指两件
-//! 事**：`system/*/call.rs` 是**转发那几手**，`driver/*/call.rs` 是**形状与记号**。名字不并
-//! （改名要动四十余处引用，换一条对称），差异由这一句兜住。
+//! tests/{supply,line}.rs` 跑的就是那一份）⇒ 没有分家的需要。**照实记（`call.rs` 那一格已经收掉）**：
+//! 系统那四份 `system/*/call.rs` 是**薄封装**（文件里除 `pub use` 外没有一个自己的 `fn`），已并进
+//! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。这个名字今天只剩三处，各指各的事：
+//! `programs/src/driver/rtc/call.rs` 是**形状与记号**、`programs/src/system/call.rs` 是**编排者的适配**、
+//! 底座 `session/call.rs` 是**十件手的身体**。
 //!
 //! **照实记（"容纳"是用户裁的）**：`board` 一直在 [`system`] 之下；`operator` / `principal` /
 //! `coalition` 原先是**顶层**（与 `system` 平级），裁定之后收进去。**判据是"谁住编排域"**：
@@ -121,7 +123,7 @@
 //!   在哪些盟里、哪枚盟里有谁，反着念是同一个关系的两个方向。号由服务铸（铸过就一直在），
 //!   盟无主（故失败域里没有 `Denied`），不产生 PrincipalId、不发 Pie、不解释成员资格的含义。
 //!   六条原语（`found` / `enter` / `leave` / `amid` / `band` / `bloc`）——**六条都在线上**
-//!   （`call.rs` 那一排码 `1..6`，BAND / BLOC 那两条已由服务实现）。
+//!   （`frame.rs` 那一排码 `1..6`，BAND / BLOC 那两条已由服务实现）。
 //!   照实记：这一句原来写的是"四条上线、两条住核心"，那是 `band` / `bloc` 还没接上时的口径。
 //!   它是**身份服务的客人**：每条写原语嵌一次 `Resolve(发送者)`——"self"因此在适配层，
 //!   不在核心（正文的"已知边界"里写着这一条的确切含义）。

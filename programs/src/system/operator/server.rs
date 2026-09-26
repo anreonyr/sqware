@@ -1,7 +1,7 @@
 //! operator::server — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）
 //!
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::system::operator::call`]。
+//! 帧与记号见 [`protocol::system::operator`]。
 
 use env::wire::Field;
 use env::Wait;
@@ -12,14 +12,14 @@ use runtime::core::pile::Pile;
 use runtime::env::mail;
 use runtime::PAGE_SIZE;
 
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::session::slip::Slip;
-use protocol::system::operator::gate::{Code, Control, verdict};
-use protocol::system::operator::judge::{Id, Rule};
-use protocol::system::operator::ledger::{Key, Ledger};
+use protocol::system::operator::core::gate::{Code, Control, verdict};
+use protocol::system::operator::core::judge::{Id, Rule};
+use protocol::system::operator::core::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
 use protocol::system::operator::{EntryId, Fail, Listing, Operator, Where};
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 
 use protocol::system::coalition::client::Face as CoalitionFace;
@@ -28,7 +28,7 @@ use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
 use contract::system::desk::{Desk, DeskFail, Guest};
-use protocol::system::operator::call::desk;
+use protocol::system::operator::desk;
 
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -87,7 +87,7 @@ fn find_face(who: TaskId) -> Option<PieToken> {
 ///
 /// 照实记（第五格那一刀）：`Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），
 /// 故这一格把**两半**凑在一起——名册/盟册（[`Session`]）+ 树（[`Operator`]）。名字取"那一问在
-/// 哪儿答"，与 [`operator::gate`](protocol::system::operator::gate) 的裁决/门禁一族同调。
+/// 哪儿答"，与 [`operator::core::gate`](protocol::system::operator::core::gate) 的裁决/门禁一族同调。
 struct Court<'a> {
     session: &'a Session,
     tree: &'a Operator,
@@ -218,7 +218,7 @@ pub fn serve() -> Result<(), super::fail::Fail> {
     };
     // **上板**（乙那一刀）：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
     // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来
-    // （[`protocol::system::board::call::Tip::LEN`] 的照实记）；这一格只管把板那条路装上
+    // （[`protocol::system::board::frame::Tip::LEN`] 的照实记）；这一格只管把板那条路装上
     // （装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，故少了这一步装配当场报
     // `board:claim`——实测栽过一次）。
     let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
@@ -321,7 +321,7 @@ fn settle(
         };
         if n == ocall::CoordFrame::LEN {
             // **开闸**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交进来
-            // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::system::operator::gate)）
+            // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::system::operator::core::gate)）
             // 判得了身份。
             //
             // 后 8 字节能不能翻（表外的眼睛码）归 [`Eyes`] 自己的 `Field::fetch`：读不懂 ⇒
@@ -382,7 +382,7 @@ fn settle(
 
 /// **那本账**：一格一条，记着两轴（谁许用 / 归谁改）。
 ///
-/// 正文在协议那一侧（[`protocol::system::operator::ledger`]），本域只做三件事：**接上"活着"那一问**
+/// 正文在协议那一侧（[`protocol::system::operator::core::ledger`]），本域只做三件事：**接上"活着"那一问**
 /// （`ocall::vested_by`，与树收的是同一枚函数指针）、**接上"那一格还是不是那一格"那一问**
 /// （[`fresh`]，一趟读）、**按钥匙查**。
 ///

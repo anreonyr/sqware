@@ -44,13 +44,13 @@ use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
-use protocol::system::coalition::call as ccall;
+use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::core::{CoalitionId, Fail, Window};
 use protocol::id::Id;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::principal::call as pcall;
+use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PolicyFace;
 use protocol::system::principal::core::Fail as PolicyFail;
 use protocol::system::principal::core::PrincipalId;

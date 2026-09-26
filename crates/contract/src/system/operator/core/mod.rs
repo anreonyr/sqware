@@ -8,7 +8,7 @@
 //! 换载体不必重写。
 //!
 //! 照实记：**第八条（[`Operator::opens`]）不上线**——它没有动作码，是持树者自己判
-//! [`Rule::Opens`](super::judge::Rule::Opens) 时问的一句（"这一格是谁的门牌"）。对外那一族
+//! [`Rule::Opens`](judge::Rule::Opens) 时问的一句（"这一格是谁的门牌"）。对外那一族
 //! 仍是七条（见 `super::mod` 那两张表）。
 //!
 //! # 这批判据住在哪
@@ -61,11 +61,17 @@
 //! 一条**已知边界**（不给手拍的上限，失败答 [`Fail::Full`]）。另一笔：`children ↔ 槽` 从此是**两条真相**（谁的孩子
 //! 里有我 / 我在哪个槽），"一格只有一个父"由每条写原语维护，不再是构造性事实。
 
+pub mod gate;
+pub mod judge;
+pub mod ledger;
+
 use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
 use crate::id::Id;
+
+use crate::session::{Claim, Seat};
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -383,7 +389,7 @@ impl Operator {
     /// 照实记：`Dead` 那一格是**三因一码**（不是孔 / 不在我表里 / 已封印），与 [`VestedBy`] 的
     /// 口径同一句。**不许拆它**——今天没有一位客人分得开这三因，分开就是造三个没人读的格。
     ///
-    /// 谁问它：持树者判 [`Rule::Opens`](super::judge::Rule::Opens) 时，把这一格翻成开者，再拿
+    /// 谁问它：持树者判 [`Rule::Opens`](judge::Rule::Opens) 时，把这一格翻成开者，再拿
     /// 开者去问名册"这一刻代表谁"。故它答的是 **TID**，不是身份号——两件事两个落点。
     pub fn opens(&self, id: EntryId) -> Result<TaskId, Fail> {
         let opened_by = self.stamps.opened_by;
@@ -517,8 +523,8 @@ impl Operator {
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
                 // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
-                // （`programs/src/system/operator/desk.rs`）与 `Ledger::land`
-                // （`crates/contract/src/system/operator/ledger.rs`）。**同一句话，三处一个纪律。**
+                // （`crates/contract/src/system/desk.rs`）与 `Ledger::land`
+                // （`crates/contract/src/system/operator/core/ledger.rs`）。**同一句话，三处一个纪律。**
                 //
                 // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。
                 // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。
@@ -609,5 +615,36 @@ impl Operator {
             }
         }
         Some(taken)
+    }
+}
+
+// ── 两张会话失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
+//
+// 两个入参都出自「约」（`session::core` 的 `Claim` / `Seat`）、产出的又是本文件自己的
+// [`Fail`]，故它们与产出的那一格同住。`call.rs` 并进 `system/operator/mod.rs` 那一刀
+// 把这两张表落在这里。
+
+/// 会话的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字
+/// （[`Fail::Unknown`]）。
+///
+/// 「一笔都没到」与「到了一些、不齐」在上面那一层都归 `Unknown` / `Full`：树这一侧只有
+/// 一格答话码，问的人按它决定要不要重问。
+pub fn map_claim(claim: Claim) -> Fail {
+    match claim {
+        Claim::Timeout => Fail::Unknown,
+        Claim::Partial => Fail::Full,
+    }
+}
+
+/// 装一条路的失败域 → 树的失败域。
+///
+/// 名字 / 资源上的毛病（名字非法、同名已装、铸不出孔）是**调用方写错了** ⇒ `Unknown`
+/// （树上没有这一格可指）；交不出去（对端已不在）⇒ `Unknown`（"它不在"）；账腾不出来 ⇒ `Full`。
+pub fn map_seat(seat: Seat) -> Fail {
+    match seat {
+        Seat::NoName => Fail::Unknown,
+        Seat::NoHole => Fail::Unknown,
+        Seat::NoSeed => Fail::Unknown,
+        Seat::Full => Fail::Full,
     }
 }

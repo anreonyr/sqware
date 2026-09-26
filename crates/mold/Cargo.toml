@@ -1,5 +1,5 @@
 [package]
-name = "envmacros"
+name = "mold"
 version.workspace = true
 edition.workspace = true
 

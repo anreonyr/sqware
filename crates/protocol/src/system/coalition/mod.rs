@@ -1,6 +1,6 @@
 //! system/coalition — **正文已搬进「约」**（`crates/contract/src/system/coalition/mod.rs`）。
 //!
-//! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造与两张对照表）——
+//! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造）——
 //! 判据见 `crates/protocol/src/lib.rs` 与 `crates/contract/src/lib.rs`。
 
 
@@ -10,10 +10,10 @@
 // `prog-coalition` 域里跑的那枚线程）住 `programs/src/system/coalition/`。
 // 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/service.rs`。
 
-pub mod call;
 pub mod client;
 // 形与据已搬进「约」——转出。
 pub use contract::system::coalition::{core, frame};
 
-pub use call::{BACK, DIR, NAME};
+pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Union, Wire, code_to_fail, fail_to_code};
+pub use crate::session::call::opened_by;
 pub use crate::system::coalition::core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};

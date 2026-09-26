@@ -52,7 +52,7 @@ use programs::Report;
 
 // 共享物住 `src/` 顶层，由各 bin 各自声明一次（见 `needs.rs` 头注）。
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::board::client as board;
 
@@ -60,7 +60,7 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken};
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
@@ -77,7 +77,7 @@ const MS: usize = 1000;
 /// 找不到就再问一次的间隔（毫秒）：板是**运行期**的账，本域可能比 `router` 先起。
 const RETRY_MS: usize = 1;
 
-/// 本地失败写进读数的那一格（与 `board::call::BAD` 同值：没走到 / 读不懂）。
+/// 本地失败写进读数的那一格（与 `board::BAD` 同值：没走到 / 读不懂）。
 const BAD: u8 = bcall::BAD;
 
 /// 两种退场：走通了 / 没走通（都**不是 panic**；kernel 会把那一行连同域号打出来）。

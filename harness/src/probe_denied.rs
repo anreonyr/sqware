@@ -3,7 +3,7 @@
 
 //! probe-denied — **负证客人**：一位**没有身份**的任务去撞树的门，期望被拒。
 //!
-//! 门禁那条判据里有一格是"**没绑身份 ⇒ 拒绝**"（`operator::judge` 的第一格）。在这一台之前，
+//! 门禁那条判据里有一格是"**没绑身份 ⇒ 拒绝**"（`operator::core::judge` 的第一格）。在这一台之前，
 //! 真机上**没有反例**：11 台客人全都是装配期绑好的身份，全部放行——那条判据只有宿主台
 //! （`protocol-case` 的 `judge` 靶）喂假事实证过。本程序就是把反例搬到真机上。
 //!
@@ -45,7 +45,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{EntryId, Where};
 

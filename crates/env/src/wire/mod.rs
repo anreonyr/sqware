@@ -16,7 +16,7 @@
 //! `env::wire::name::Name` 两条路都在。
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
-//! 由 [`derive(Envcall)`](envmacros) 生成的 codec 自动接线，用户侧与内核侧不再手写
+//! 由 [`derive(Envcall)`](mold) 生成的 codec 自动接线，用户侧与内核侧不再手写
 //! `as usize` / `from_bits_truncate`。非法位校验收敛在此：`Permission` 的 unpack
 //! 是 `from_bits(...).ok_or(...)`，而非静默截断。
 //!

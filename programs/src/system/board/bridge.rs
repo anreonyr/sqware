@@ -1,7 +1,7 @@
 //! board::bridge — **装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名
 //!
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::system::board::call`]。
+//! 帧与记号见 [`protocol::system::board`]。
 
 use env::wire::Field;
 use env::Wait;
@@ -14,7 +14,7 @@ use runtime::core::unit::{self, Join};
 use runtime::env::mail;
 
 use protocol::session::Quay;
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 pub use protocol::system::board::{LINK, TIP_MARK, TIP_NAME};
 
 use super::server::host_loop;

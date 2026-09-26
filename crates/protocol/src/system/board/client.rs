@@ -1,7 +1,7 @@
 //! board::client — **客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）
 //!
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::system::board::call`]。
+//! 帧与记号见 [`crate::system::board`]。
 
 use contract::message::Message;
 use env::wire::Field;
@@ -14,7 +14,7 @@ use runtime::env::mail::{self, AnyPie};
 use crate::session::slip::Slip;
 use crate::session::Quay;
 use crate::system::board::Fail;
-use crate::system::board::call as bcall;
+use crate::system::board as bcall;
 pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 
 /// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
@@ -29,9 +29,9 @@ pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 pub fn open(holder: TaskId, millis: Wait) -> Result<(Quay, TaskId), Fail> {
     let link = Name::new(LINK).map_err(|_| Fail::Unknown)?;
     let mut quay = Quay::open(holder, crate::session::call::hands());
-    quay.seat(link).map_err(bcall::map_seat)?;
+    quay.seat(link).map_err(bcall::core::map_seat)?;
     quay.claim(holder, Mark::of(link.as_str()), millis)
-        .map_err(bcall::map_claim)?;
+        .map_err(bcall::core::map_claim)?;
     let board = hear(&quay, millis).ok_or(Fail::Unknown)?;
     Ok((quay, board))
 }

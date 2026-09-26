@@ -27,5 +27,5 @@ docs/.obsidian/
 crates/*/target/
 
 # **照实记**：这一行原先是给 `scripts/teeth.py`（一份 Python 量具）留的——它跑起来会在旁边落
-# 一份字节码缓存。那一门已经收进 `crates/gate/src/mutations.rs`（"完全消除测试脚本"那一刀），
+# 一份字节码缓存。那一门已经收进 `crates/gate`（"完全消除测试脚本"那一刀），
 # 仓里再没有 Python，故这一条随之删掉。

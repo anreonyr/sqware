@@ -1,7 +1,7 @@
 //! board::server — **板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）
 //!
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::system::board::call`]。
+//! 帧与记号见 [`protocol::system::board`]。
 
 use env::Wait;
 use alloc::format;
@@ -13,13 +13,13 @@ use runtime::core::pile::Pile;
 use protocol::session::slip::Slip;
 use runtime::env::mail;
 
-use protocol::system::board::call as bcall;
-use protocol::system::board::call::ENTRY_MARK;
+use protocol::system::board as bcall;
+use protocol::system::board::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
 use contract::system::desk::{Desk, Guest};
-use protocol::system::board::call::desk;
+use protocol::system::board::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///

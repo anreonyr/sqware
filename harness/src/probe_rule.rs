@@ -90,13 +90,13 @@ use alloc::format;
 use core::time::Duration;
 
 use env::{Name, PieToken, TaskId};
-use protocol::system::coalition::call as ccall;
+use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::judge::Rule;
+use protocol::system::operator::core::judge::Rule;
 use protocol::system::operator::{EntryId, Where};
-use protocol::system::principal::call as pcall;
+use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::session::Quay;
 use runtime::env::debug;
@@ -128,7 +128,7 @@ const TEMP: &str = "temp";
 const AT_PANE: &str = "at-pane";
 /// 规矩 = `Opens(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
 const GONE_DOOR: &str = "gone-door";
-/// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（理由见 `operator::ledger` 的 `Owner`）。
+/// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（理由见 `operator::core::ledger` 的 `Owner`）。
 const MINE: &str = "mine";
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

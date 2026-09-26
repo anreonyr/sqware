@@ -41,8 +41,8 @@ bench = false
 doctest = false
 
 [dependencies]
-# `#[entry]`：同上（21 台测具与产品那 9 条共用这一手）。
-entry-macro = { path = "../crates/entry-macro" }
+# `#[entry]`：同上（22 台测具与产品那 6 条共用这一手）。
+mold = { path = "../crates/mold" }
 # 程序侧用例那一台（搬出去之后仍从这里转出去，见 `src/lib.rs`）。
 cases = { path = "../crates/cases" }
 env = { path = "../crates/env" }
@@ -107,7 +107,7 @@ doctest = false
 #
 # **照实记（它们是第二刀搬来的）**：第一刀搬的是探针与压测台，这六位留在 `programs/src/user/`
 # 与产品程序同住一间——而它们早就符合本 crate 的定义（**只为了量**；去掉机器照转，产品镜像
-# 实测过）。用户裁定 **甲**：搬过来。于是边界变成一句话——`programs/` = 产品镜像那 9 条，
+# 实测过）。用户裁定 **甲**：搬过来。于是边界变成一句话——`programs/` = 产品镜像那 6 条，
 # 本 crate = 不进产品镜像的一切。
 [[bin]]
 name = "prog-guest"

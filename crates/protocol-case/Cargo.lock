@@ -21,17 +21,8 @@ name = "env"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "envmacros",
  "erra",
-]
-
-[[package]]
-name = "envmacros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "mold",
 ]
 
 [[package]]
@@ -39,6 +30,15 @@ name = "erra"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
+
+[[package]]
+name = "mold"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "plan"

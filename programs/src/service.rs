@@ -44,7 +44,7 @@ use protocol::system::principal::client::Face;
 use protocol::system::principal::core::PrincipalId;
 use protocol::session::call as scall;
 use protocol::session::{Pier, Quay};
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use protocol::system::desk::{Announce, Table};
 use runtime::env::room;
 
@@ -101,7 +101,7 @@ pub struct Program {
     /// **装配期给不给它一条身份**（`derive(ROOT)` + `bind`）。
     ///
     /// 默认 `true`（每一条都绑，与从前一致）。**`false` 是给负证客人的**：门禁那条判据
-    /// 里"没绑身份 ⇒ 拒绝"（`operator::judge` 的第一格）今天在真机上**没有反例**——11 台
+    /// 里"没绑身份 ⇒ 拒绝"（`operator::core::judge` 的第一格）今天在真机上**没有反例**——11 台
     /// 客人全都是已绑身份、全放行。要读出"拒得住"，就得有一位**真的没身份**的客人去撞门。
     ///
     /// 与 [`Program::board`] / [`Program::operator`] 同一形状（两端共用）：`false` ⇒ 装配者
@@ -469,7 +469,7 @@ pub fn start(
     //     **在 `records` 之后**：板那条路由客人在起来之后自己装（它是问的那一侧），
     //     而它要先收到配给才轮得到板那一问。
     //     `name` 跟着走：板据此在 `admit` 那一刻认下**这一位的死亡道**（道按名字认领，
-    //     而名字只有装配者手里有——见 `protocol::system::board::call::Tip::LEN` 的照实记）。
+    //     而名字只有装配者手里有——见 `protocol::system::board::frame::Tip::LEN` 的照实记）。
     if p.board {
         board::attach(&mut quay, me, task, name, Wait::AtMost(READY_MS), btip, lane).map_err(|why| {
             step(p, why);

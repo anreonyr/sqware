@@ -1,4 +1,4 @@
-//! operator::gate —— **裁决 → 线上那一格**：怎么问（[`Control`]）、怎么翻（[`verdict`]）。
+//! operator::core::gate —— **裁决 → 线上那一格**：怎么问（[`Control`]）、怎么翻（[`verdict`]）。
 //!
 //! 本文件与 [`judge`](super::judge) 同一站位：**不带载体**。它只做两件事——
 //!
@@ -39,21 +39,21 @@
 //! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
 //! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
 
-use super::core::EntryId;
+use super::EntryId;
 use super::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
 use env::TaskId;
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
 //
-// 照实记：这里**不 `use super::call::*`**。转发表那一份住 **`protocol`** 的
-// `system/operator/call.rs`（它拖着 `runtime` 与 `session`），而本文件住 `contract`
-// ——`contract` 在 `protocol` 的**下游**、够不着它（宿主靶能不能编它是另一回事）。
+// 照实记：这里**不 `use` 上面那一份**。转发表那一份住同 crate 的
+// `system/operator/frame.rs`（它拖着 `plan` 与 `message`），而本文件**不带载体**、
+// 只认 `env`——两条依赖面有意不同，故这一份不伸手过去拿。
 // 故这三格在本文件里各留一个常量，**同步义务由 `protocol` 的 `system/operator/mod.rs` 末尾
-// 那条 `const _: () = assert!(…)` 在编译期钉住**：真正的对照表只有一份（`call.rs`），
+// 那条 `const _: () = assert!(…)` 在编译期钉住**：真正的对照表只有一份（`frame.rs`），
 // 这里这一份只要一漂就编不过。
 //
 // 这三格是 **`pub` 而不是 `pub(crate)`**：那条同步断言住在搬运之后的**另一侧**
-// （`protocol` 的 `system/operator/mod.rs`——它同时看得见本文件与 `call.rs`），跨 crate 才够得着。
+// （`protocol` 的 `system/operator/mod.rs`——它同时看得见本文件与 `frame.rs`），跨 crate 才够得着。
 pub const WIRE_OK: u8 = 0;
 pub const WIRE_DENIED: u8 = 8;
 pub const WIRE_UNJUDGED: u8 = 9;

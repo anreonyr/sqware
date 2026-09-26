@@ -194,7 +194,7 @@ impl Wire for VirtAddr {
 /// **照实记**：`of` 是 64 位 FNV-1a —— 两个不同的名字理论上可能撞成同一枚数，撞了是
 /// **静默**的（同一张表里认错孔）。名字总数 ≤ 数十条、空间 2^64，概率 ~1e-17，本仓接受；
 /// 要绝对无撞就得改成手排号表（每个协议自己排号，代价是"记号"这个概念要集中到一处，
-/// 而它今天住在各协议自己的 `call.rs` 里）。
+/// 而它今天住在各协议自己的 `frame.rs` 里）。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct Mark(u64);

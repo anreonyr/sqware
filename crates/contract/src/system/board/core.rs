@@ -8,6 +8,8 @@
 
 use env::{Name, PieToken, TaskId};
 
+use crate::session::{Claim, Seat};
+
 // ── 结构 ────────────────────────────────────────────────────
 
 /// 板上的一枚牌子：**叫什么、在哪、谁挂的**。
@@ -280,3 +282,32 @@ impl Board {
 //
 // 三个注入点（`vested_by` / `unship`，见 [`Board::new`]）就是全部外部依赖，故喂两张假表即可
 // 把板上规矩推理干净。
+
+// ── 两张会话失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
+//
+// 两个入参都出自「约」（`session::core` 的 `Claim` / `Seat`）、产出的又是本文件自己的
+// [`Fail`]，故它们与产出的那一格同住。`call.rs` 并进 `system/board/mod.rs` 那一刀
+// 把这两张表落在这里。
+
+/// 牌子上的名字（**定长解码面**：尾随 NUL 是填充，不是内容）。
+
+pub fn map_claim(claim: Claim) -> Fail {
+    match claim {
+        Claim::Timeout => Fail::Unknown,
+        Claim::Partial => Fail::Full,
+    }
+}
+
+/// 装一条路的失败域 → 板的失败域。
+///
+/// 与 [`map_claim`] 同一条口径：名字/资源上的毛病（名字非法、同名已装、铸不出孔）是
+/// **调用方写错了** ⇒ `Denied`；交不出去（对端已不在）⇒ `Unknown`（"它不在"）；
+/// 账腾不出来 ⇒ `Full`。
+pub fn map_seat(seat: Seat) -> Fail {
+    match seat {
+        Seat::NoName => Fail::Denied,
+        Seat::NoHole => Fail::Denied,
+        Seat::NoSeed => Fail::Unknown,
+        Seat::Full => Fail::Full,
+    }
+}

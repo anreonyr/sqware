@@ -36,30 +36,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "361a90feb7004eca4019fb28352a9465666b24f840f5c3cddf0ff13920590b89"
 
 [[package]]
-name = "entry-macro"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
 name = "env"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "envmacros",
  "erra",
-]
-
-[[package]]
-name = "envmacros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
+ "mold",
 ]
 
 [[package]]
@@ -122,9 +104,9 @@ name = "harness"
 version = "0.1.0"
 dependencies = [
  "cases",
- "entry-macro",
  "env",
  "erra",
+ "mold",
  "plan",
  "programs",
  "protocol",
@@ -182,6 +164,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mold"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -209,10 +200,10 @@ version = "0.1.0"
 dependencies = [
  "cases",
  "contract",
- "entry-macro",
  "env",
  "erra",
  "fdt",
+ "mold",
  "plan",
  "protocol",
  "runtime",

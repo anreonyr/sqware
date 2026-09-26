@@ -78,7 +78,7 @@ use programs::driver::rtc::{
 
 // 板：本域是**客侧**（只装板路）；树：也是客侧（落门牌 + 按名找线路由者）。
 use protocol::system::operator::Where;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::board::client as board;
 

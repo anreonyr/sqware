@@ -36,7 +36,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{EntryId, Where};
 

@@ -6,7 +6,7 @@
 //! 写全了。本文件因此只剩**入口那一手**：`_start` 的汇编（引导）、[`entry`]（把生成物与
 //! bin 自己的 `main` 接上）、panic 处理。
 //!
-//! # 那一层是**宏展开**出来的（`crates/entry-macro`）
+//! # 那一层是**宏展开**出来的（`crates/mold`）
 //!
 //! bin 里写 `#[entry] fn main() …`，宏展开成两件东西（**你写的那个函数一个字没动**）：
 //!
@@ -15,7 +15,7 @@
 //! ```
 //!
 //! ——`_start` 那句 `call clean_ret` 找的就是它。**符号名不再是 `main`**，故写程序的人既不必
-//! 改名，也不必签 `#[unsafe(no_mangle)]`（展开那一侧的照实记在 `crates/entry-macro`）。
+//! 改名，也不必签 `#[unsafe(no_mangle)]`（展开那一侧的照实记在 `crates/mold`）。
 //! 退出的三笔账里，"码从哪来、话怎么带"是 `runtime::core::exit` 的词汇，"往哪送"是本文件
 //! [`entry`] 走到底那一手（`runtime::core::exit::finish`）——`room::exit` 因此全仓只有两处
 //! 调用点（它，与 `runtime::core::unit` 的线程收尾）。

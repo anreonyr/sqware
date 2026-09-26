@@ -8,7 +8,7 @@
 //! riscv 内联汇编在宿主编译器上编不出来（见本 crate 的 `Cargo.toml`，那里记着实测读数）。
 //!
 //! 故这一台与 `crates/alloc-probe` 同路：宿主 crate、**真依赖**「约」`contract`——
-//! `crates/contract/src/system/operator/core.rs`（树）与 `crates/contract/src/id.rs`（号的词汇）。
+//! `crates/contract/src/system/operator/core/mod.rs`（树）与 `crates/contract/src/id.rs`（号的词汇）。
 //!
 //! **照实记（`#[path]` 退场）**：这一台原先用 `#[path]` 把那两份逐字编进靶。
 //! 用 `#[path]` 而不是 `include!` 的另一条**照实记**：`include!` 那一版第一跑就红，
@@ -580,8 +580,8 @@ fn the_tree_has_a_bottom() {
 
 #[test]
 fn a_pane_that_cannot_be_grown_answers_full() {
-    // **同一句话，三处一个纪律**：`Desk::admit`（`programs/.../desk.rs`）与 `Ledger::land`
-    // （`crates/contract/src/system/operator/ledger.rs`）都是 `try_reserve → Full`，而树这一处原来
+    // **同一句话，三处一个纪律**：`Desk::admit`（`crates/contract/src/system/desk.rs`）与 `Ledger::land`
+    // （`crates/contract/src/system/operator/core/ledger.rs`）都是 `try_reserve → Full`，而树这一处原来
     // 只有**条数**那道闸（`PANE_CAP`）——分配失败走的是 `handle_alloc_error`，客人连一句答话
     // 都收不到（不是 `Full`，是整机 abort）。
     //

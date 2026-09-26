@@ -31,7 +31,7 @@
 //!
 //! **照实记**：排空读到 0 字节时**不推**（内核 `Push` 那一格不收 0 字节的报文）——这不是丢字节，
 //! 一批 0 字节本来就没有内容可交。**照实记之二**：树授出去的副本是 `R|W|VEST`
-//! （[`protocol::system::operator::call::ship`] 的统一口径），故客人**也推得动**这枚孔；"客人在读、
+//! （[`protocol::system::operator::ship`] 的统一口径），故客人**也推得动**这枚孔；"客人在读、
 //! 不在写"是约定、不是判据——与线路由者那边"抢线没有属主验证"同一类代价。
 //!
 //! # 为什么它不退场
@@ -58,7 +58,7 @@ use programs::driver::uart::needs;
 
 // 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`、按名找线路由者）。
 use protocol::system::operator::Where;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::board::client as board;
 

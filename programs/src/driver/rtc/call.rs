@@ -83,7 +83,7 @@ pub const PAST: u8 = 2;
 ///
 /// **照实记**：本面只有两个"驱动说的话"（`TAKEN` / `PAST`），第三个失败格 `Fail::Denied`
 /// 是**客侧自己判的**（推不进去、等到期、答话读不懂），它没有第二件要说的事，故与这一格
-/// 合流——`system::board::call` 那张表里 `BAD` 在表外、`Denied` 另有 `DENIED` 一格，
+/// 合流——`system::board::frame` 那张表里 `BAD` 在表外、`Denied` 另有 `DENIED` 一格，
 /// 两处的差别就是"持有者那一侧会不会说出'我没接住'这句话"。
 pub const BAD: u8 = 3;
 

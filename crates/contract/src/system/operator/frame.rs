@@ -1,10 +1,10 @@
-//! operator 的**帧那一半** —— 帧、码、记号（内核那几只手的别名与适配在 `protocol` 那一侧的 `call`）。
+//! operator 的**帧那一半** —— 帧、码、记号（内核那几只手的别名与适配在 `protocol` 那一侧的 `mod.rs`）。
 //!
 //! **照实记（这一份为什么拆出来）**：帧形今天只有机器在跑，而机器只走**顺路**——边角
 //! （短帧 / 长帧 / 动作码不对 / 那一串号的条数对不上 / 表外的码）一格都走不到。拆开之后这一份
 //! **只认 `env` / `plan` 与同层 `core`/`judge`**（[`CoordFrame`] 的后半是装配单上的
 //! [`Eyes`]），宿主靶能把它逐字编进去跑判据；适配那半（内核手别名、
-//! `tree()`、`ship`、两张会话失败域的映射）留在 `call.rs`。
+//! `tree()`、`ship`）留在 `protocol` 那一侧的 `mod.rs`，两张会话失败域的映射随本层 [`core`](super::core) 同住。
 //!
 //! 本文件**不做裁决**：树上的规矩（谁能落、什么时候剔死）全在 [`core`](super::core)。
 //! 这里只有三件事——**编一帧 / 解一帧**、把"不在我表里"翻成 `None`、把失败域翻成答话码。
@@ -59,7 +59,7 @@ use env::{Name, PieToken, TaskId};
 use plan::assembly::Eyes;
 
 use super::core::{EntryId, Fail, Operator, Where};
-use super::judge::Id;
+use super::core::judge::Id;
 // **照实记（同一个词的第二件事）**：本文件里的 `Id` 是 `judge` 的**宽度别名**（u64），
 // 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
 // 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
@@ -92,7 +92,7 @@ pub use crate::fail_codes::OK;
 
 /// 答话那一格。**前六格与 [`Fail`] 一一对应**，第七格不是失败域
 /// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
-/// （[`judge`](crate::system::operator::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
+/// （[`judge`](crate::system::operator::core::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
@@ -106,7 +106,7 @@ pub const BAD: u8 = 7;
 /// **门外那一问答"不"**：这一位不许动这一格。**终态**——换人 / 换目标，别重试。
 ///
 /// **第八格起不再是 [`Fail`] 的对照表**（[`Fail`] 只有六格）：这两格来自适配层的裁决
-/// （[`judge`](crate::system::operator::judge)），核心一个字节都不知道它们。分开的理由与
+/// （[`judge`](crate::system::operator::core::judge)），核心一个字节都不知道它们。分开的理由与
 /// [`UNJUDGED`] 同款——"你不许"的下一步与"没铸过 / 剪掉了"不同。
 pub const DENIED: u8 = 8;
 /// **门外那一问答"判不了"**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），
@@ -127,7 +127,7 @@ pub const UNJUDGED: u8 = 9;
 ///
 /// **两轴是两件事**，故各占各的格：
 ///
-/// - **用**那一轴 = [`Rule<Id, Id>`]（[`judge`](super::judge) 那一套四格：公开 / 就是某一位 /
+/// - **用**那一轴 = [`Rule<Id, Id>`]（[`judge`](super::core::judge) 那一套四格：公开 / 就是某一位 /
 ///   在某一位那一支里 / 在某枚盟里）；
 /// - **改**那一轴 = 今天原来那一格（"归落牌的那一位"），**它本来就只是 0/1**，故退成一个
 ///   `bool`——线上值逐字同义（`Owner` 原是 1、`Public` 原是 0）。
@@ -140,10 +140,10 @@ pub const UNJUDGED: u8 = 9;
 /// `use` 了两个——再加一轴就会写出"这个 `Rule` 不是那个 `Rule`"的代码。这一刀把它拆开：
 /// 线上一侧只剩 [`Rule`] 这一个名字（**再出口**自模型那一侧），"改"退成 `bool`。
 ///
-/// **方向也是挑过的**：本文件反向依赖 [`judge`](super::judge)（同一模块树内），而后者从不
-/// 依赖本文件——故 [`gate`](super::gate) 那条"不与 `call.rs` 沾边"的纪律一字不破（`call.rs`
+/// **方向也是挑过的**：本文件反向依赖 [`judge`](super::core::judge)（同一模块树内），而后者从不
+/// 依赖本文件——故 [`gate`](super::core::gate) 那条"不与 `protocol` 那一侧沾边"的纪律一字不破（那一侧
 /// 拖着 `runtime`，`judge.rs` 不拖）。
-pub use super::judge::Rule;
+pub use super::core::judge::Rule;
 
 /// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ 段数 ＋ [`Operator::ROAD_MAX`] 段名字）。
 ///

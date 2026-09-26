@@ -1,4 +1,4 @@
-//! operator::ledger —— **那一本账**：一格的两轴事实（谁许用 / 归谁改）。**不带载体。**
+//! operator::core::ledger —— **那一本账**：一格的两轴事实（谁许用 / 归谁改）。**不带载体。**
 //!
 //! 本文件与 [`judge`](super::judge) / [`gate`](super::gate) 同一站位：只判、只记，**不发消息**。
 //! 唯一一处动树的手是 [`Ledger::land`]——它把"要位 → 落树 → 记账"收成一条动词，而**落树
@@ -25,8 +25,8 @@
 //! | 路 | 谁干的 |
 //! |---|---|
 //! | `trim` | 客人 |
-//! | [`find`](super::core::Operator::find) 的**惰性剔死** | 持树者自己（那一枚答不出就当场剔掉） |
-//! | `part` **顶掉**一枚 `Tile`（[`Operator::part`](super::core::Operator::part) 那条照实记） | 客人 |
+//! | [`find`](super::Operator::find) 的**惰性剔死** | 持树者自己（那一枚答不出就当场剔掉） |
+//! | `part` **顶掉**一枚 `Tile`（[`Operator::part`](super::Operator::part) 那条照实记） | 客人 |
 //!
 //! 想把"账 ⊆ 树"当不变量，就得给树装三个回调——而**"树不知道规矩"是已定的边界**。
 //! 故这里换一条：**查的时候对一次真相**（[`Ledger::rule`] / [`Ledger::claimable`] 收的那个
@@ -51,7 +51,7 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
-use super::core::{EntryId, Fail, VestedBy, Where};
+use super::{EntryId, Fail, VestedBy, Where};
 use super::judge::Rule;
 
 // ── 两把钥匙 ────────────────────────────────────────────────
@@ -140,7 +140,7 @@ pub struct Ledger<P, C> {
 }
 
 impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
-    /// 起一本空账。`vested_by` 与 [`Operator::new`](super::core::Operator::new) 收的是同一枚。
+    /// 起一本空账。`vested_by` 与 [`Operator::new`](super::Operator::new) 收的是同一枚。
     pub const fn new(vested_by: VestedBy) -> Self {
         Self {
             lines: Vec::new(),

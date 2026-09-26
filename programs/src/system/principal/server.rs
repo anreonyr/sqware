@@ -18,13 +18,13 @@ use alloc::format;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::system::operator::Where;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::principal::call as pcall;
+use protocol::system::principal as pcall;
 use protocol::system::principal::core::{Principal, PrincipalId};
 use protocol::session::Quay;
 use protocol::session::slip::Slip;
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::pile::Pile;

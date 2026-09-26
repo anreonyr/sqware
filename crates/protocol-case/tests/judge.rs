@@ -3,7 +3,7 @@
 //!
 //! # 这批判据钉的是什么
 //!
-//! `crates/contract/src/system/operator/judge.rs` 是"这一位许不许动这一格"的**定义**；
+//! `crates/contract/src/system/operator/core/judge.rs` 是"这一位许不许动这一格"的**定义**；
 //! `gate.rs` 是它**翻成线上那一格**的那一层；`ledger.rs` 是"这一格的规矩与归属"**记在哪**。
 //! 三份都一行不发消息，故喂假事实就能把规矩推理干净：
 //!
@@ -30,7 +30,7 @@
 //! # 为什么这一台也要编 `core.rs`
 //!
 //! `ledger.rs` 的两把钥匙是 [`Where`] / [`EntryId`]，失败域是 [`Fail`]——那三样住在
-//! `operator/core.rs` 里。**多编一份它是挑过的**：`core.rs` 里**没有**测试（它的用例住这台
+//! `operator/core/mod.rs` 里。**多编一份它是挑过的**：`core.rs` 里**没有**测试（它的用例住这台
 //! 靶里 `operator` 那一份），故引它**不带进重复用例**；反过来把 `judge` 那几份并进
 //! `tests/operator.rs` 会把上面这些**再跑一遍**。
 //!
@@ -60,13 +60,14 @@ use std::cell::Cell;
 /// 全是"没被叫过"）。真依赖挂上之后这些一起退场：`dead_code` 按**定义它的 crate** 算，
 /// `contract` 是依赖、不重算；那批用例也不会被带进来（`contract` 是 `test = false`）。
 /// **为什么当初要编 `core.rs`**：`ledger.rs` 的两把钥匙是 `Where` / `EntryId`、失败域是 `Fail`，
-/// 三样都住 `operator/core.rs`；**这就是"这一台要它"的全部理由**，与"要不要测树"无关。
+/// 三样都住 `operator/core/mod.rs`；**这就是"这一台要它"的全部理由**，与"要不要测树"无关。
 ///
 /// **为什么这一台不编 `principal/core.rs`**：`judge.rs` 里两个号是**泛型**（`Rule<P, C>`），
 /// 本台就用 `u64` 当那两个号（= `Id`，也是线上那一格的宽度）。那不是省事：若判据直接写死
 /// `PrincipalId` / `CoalitionId`，这一台就得跟着编那两份核心源码，而那两份的用例住在**别的靶**
 /// 里（`roster`）——把新判据挂在别处跑着的桩上不划算（照实记见 `judge.rs` 头注）。
-use contract::system::operator::{core, frame, gate, judge, ledger};
+use contract::system::operator::{core, frame};
+use contract::system::operator::core::{gate, judge, ledger};
 
 use env::{Name, PieToken, TaskId};
 
@@ -99,7 +100,7 @@ unsafe impl GlobalAlloc for Flaky {
             // 让 `Vec::try_reserve` 如实答 `Err`。
             //
             // 照实记：这里只能写 `std::ptr`——本台的 `mod core;` 把 `core` 那个 crate 名
-            // 遮住了（它编的是 `contract/src/system/operator/core.rs` 那一份）。
+            // 遮住了（它编的是 `contract/src/system/operator/core/mod.rs` 那一份）。
             return std::ptr::null_mut();
         }
         unsafe { System.alloc(layout) }

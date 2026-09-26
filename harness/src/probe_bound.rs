@@ -61,9 +61,9 @@ use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
 use harness::cases;
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use protocol::system::board::client as board;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{LINK, Where};
 use protocol::session::Quay;

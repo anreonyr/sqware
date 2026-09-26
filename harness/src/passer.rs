@@ -39,7 +39,7 @@ use protocol::system::board::client as board;
 use alloc::format;
 
 use env::Name;
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use cases::Suite;
 use runtime::env::debug;
 use runtime::env::mail;
@@ -51,7 +51,7 @@ const ME: &str = "passer";
 /// 等板 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 本地失败写进读数的那一格（与 `board::call::BAD` 同值：没走到 / 读不懂）。
+/// 本地失败写进读数的那一格（与 `board::BAD` 同值：没走到 / 读不懂）。
 const BAD: u8 = bcall::BAD;
 
 /// 两种退场：挂上了 / 没挂上（都**不是 panic**；kernel 会把那一行连同域号打出来）。

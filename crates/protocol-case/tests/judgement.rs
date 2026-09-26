@@ -2,7 +2,7 @@
 //!
 //! # 这一台钉的是什么
 //!
-//! `crates/protocol/src/system/{desk,core,grant}.rs` 三份都是纯的（只认 `env`，`core.rs` 另认
+//! `crates/contract/src/system/{desk,core,grant}.rs` 三份都是纯的（只认 `env`，`core.rs` 另认
 //! 同层 `desk.rs` 的那几个类型），故这一台**无桩**。规格写在靶子里（照 `protocol-case` 的 `line` 靶的
 //! 做法），三份源码**一个字不动**：
 //!

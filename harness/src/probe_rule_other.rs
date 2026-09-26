@@ -52,7 +52,7 @@ use core::time::Duration;
 
 use env::{Name, PieToken};
 use harness::cases;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::session::Quay;
 use runtime::env::debug;

@@ -71,7 +71,7 @@
 //!
 //! 这一格的值是**三元组**：**那一枚**（`Tile` 里那枚 Pie）＋ **用**那一轴（`Rule`：谁许用）
 //! ＋ **改**那一轴（`mine`：归不归落牌的那一位）。线上那一问带的就是这一整份，持树者照单全收、
-//! 一次写完（[`Ledger::write`](ledger::Ledger::write)）。
+//! 一次写完（[`Ledger::write`](core::ledger::Ledger::write)）。
 //!
 //! **核心那一侧只有一件**：[`Operator::land`] 贴一枚 `Tile`——空着就铸号、占着就换绑，两条
 //! 是 `put` 里同一支；两轴不进核心（核心连 `Rule` 都不认识）。故"一条原语担四件事"这句的
@@ -99,7 +99,7 @@
 //!    ⇒ 那一格指着的**不再是原来那一枚**；而**格号（[`EntryId`]）不动**——两个"号"是两件事；
 //! 3. **手里没有那一枚就改不了**：`ship` 的源头是自己手里那一枚，而内核 `Accord` 那道闸是
 //!    "持 `VEST` 才交得出去"；唯一绕开的路是**原主人已死**
-//!    （[`Ledger::claimable`](ledger::Ledger::claimable) 的接手支）——那时谁都能重落，
+//!    （[`Ledger::claimable`](core::ledger::Ledger::claimable) 的接手支）——那时谁都能重落，
 //!    但那已经不是"改规矩"，是**换人**。
 //!
 //! **照实记（庚 的翻案条件）**：偏更新要单开一条原语的话，代价是动作码 + 帧形 + 门禁落点 +
@@ -152,7 +152,7 @@
 //! # 落地程度
 //!
 //! 三层都在：**核心**（[`core`]：树 + 八条原语；用例在**编外宿主台**
-//! `protocol-case` 的 `operator` 靶，门口 `crates/gate/tests/host.rs`）、**载体**（`call` 的帧与转发、
+//! `protocol-case` 的 `operator` 靶，门口 `crates/gate/tests/host.rs`）、**载体**（`protocol` 那一侧的帧与转发、
 //! 持树者那本客人小账 `desk`）、**服务**（[`server`](/crate::system::operator::server) 的
 //! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
 //! `programs/.../service.rs` 的 `Program::operator`）。
@@ -169,7 +169,7 @@
 //!
 //! # 交出去的权柄收不回来（已知边界，照实写不是待办）
 //!
-//! [`Operator::find`] 交出去的那一枚**带 `VEST`**（`call` 那一份记了为什么：持树者查到名字时
+//! [`Operator::find`] 交出去的那一枚**带 `VEST`**（`protocol` 那一侧的 `system/operator/mod.rs` 记了为什么：持树者查到名字时
 //! 要能**再授出**）⇒ 拿到它的人可以再传、可以再落；而**改这一格的规矩影响不到它**：`Rule`
 //! 判的是"许不许往外授"那一手，不是"它拿在手里能干什么"。
 //!
@@ -183,8 +183,5 @@
 
 pub mod core;
 pub mod frame;
-pub mod gate;
-pub mod judge;
-pub mod ledger;
 
 pub use crate::system::operator::core::{EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where};

@@ -31,7 +31,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::system::operator::Where;
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 
 use alloc::format;

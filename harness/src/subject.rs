@@ -41,9 +41,9 @@ use alloc::string::String;
 use core::time::Duration;
 
 use env::{Name, PieToken};
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::principal::call as pcall;
+use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::core::{Fail, PrincipalId};
 use protocol::session::Quay;

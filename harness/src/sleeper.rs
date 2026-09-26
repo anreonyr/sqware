@@ -39,9 +39,9 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
-use protocol::system::operator::call as ocall;
+use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::board::call as bcall;
+use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 
 use alloc::format;

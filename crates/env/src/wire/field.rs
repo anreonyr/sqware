@@ -186,11 +186,11 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
     bytes.get(at..)
 }
 
-// ── `frame!`：搬去 `envmacros` 了 ────────────────────────────
+// ── `frame!`：搬去 `mold` 了 ────────────────────────────
 //
 // 它从前就在这一格（`#[macro_export] macro_rules! frame`，故名字落在 **crate 根**上）。
-// 改成**过程宏**（用户裁定）之后，实现住 `crates/envmacros/src/frame_impl.rs`，由 `env` 转出来
-// （`crates/env/src/lib.rs` 的 `pub use envmacros::frame;`）——**调用点一个字没改**。
+// 改成**过程宏**（用户裁定）之后，实现住 `crates/mold/src/frame_impl.rs`，由 `env` 转出来
+// （`crates/env/src/lib.rs` 的 `pub use mold::frame;`）——**调用点一个字没改**。
 //
 // 两件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再在
 // `env` 的 crate 根上当一条"与模块同名的宏"（第一刀与 `contract::frame` 撞的正是那一次）。

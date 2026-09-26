@@ -1,6 +1,6 @@
 //! system/operator — **正文已搬进「约」**（`crates/contract/src/system/operator/mod.rs`）。
 //!
-//! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造与两张对照表）——
+//! 这里只剩**碰内核的那几件**（客侧那几手、十件手的身体、绑真手的构造）——
 //! 判据见 `crates/protocol/src/lib.rs` 与 `crates/contract/src/lib.rs`。
 
 
@@ -42,7 +42,7 @@
 //!     那一格——只有"看出来"那一档（那一枚答不出 ⇒ 剔格子）。
 //!  3. **死亡那一档不在本协议里**：它由**板**那条路看——树这一侧也**上板**、与别的服务同形
 //!     （`scenario.rs` 的 `INNER` 里那一格 `board: true`；道是装配者铸的，名字也由它随提示
-//!     那一格递过去，见 `protocol::system::board::call::Tip::LEN`）。本协议不推任何东西给
+//!     那一格递过去，见 `protocol::system::board::frame::Tip::LEN`）。本协议不推任何东西给
 //!     装配者。
 //!  4. **帧里带一整条路**（段列表），不是单个名字；入口那一枚仍然经会话交出去，报文里只有
 //!     一格状态。
@@ -55,23 +55,78 @@
 //!  持树者做的（板那一台也是这么交入口的）。
 //!
 
-pub mod call;
 pub mod client;
 // 形、据、账已搬进「约」——转出。
-pub use contract::system::operator::{core, frame, gate, judge, ledger};
+pub use contract::system::operator::{core, frame};
 
-pub use call::{ASK_MARK, LINK, Listing, TIP_MARK, TIP_NAME};
+// ── 适配那一半（原 `call.rs`；文件并进本模块）────────────────────────
+//
+// operator 的**适配那一半** —— 内核那几只手的别名、立树、交出。
+//
+// 帧与码见 [`frame`]；本模块把那一整片**点名转出** ⇒ 调用点只在路径那一处改过
+// （原 `operator::call::X`、今 `operator::X`）。两张会话失败域的对照表（`map_claim` /
+// `map_seat`）随它们产出的 [`Fail`] 落进「约」的 `core`（`system/operator/core/mod.rs`
+// 末尾）。
+
+use contract::system::desk::Desk;
+use env::{PieToken, TaskId};
+
+pub use frame::{
+    ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,
+    TIP_NAME, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
+};
 pub use crate::system::operator::core::{EntryId, Fail, OpenedBy, Operator, Stamps, Unship, VestedBy, Where};
-pub use crate::system::operator::gate::{Blind, Code, Control, verdict};
-pub use crate::system::operator::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
-pub use crate::system::operator::ledger::{Key, Ledger, Line, Owner};
+pub use crate::system::operator::core::gate::{Blind, Code, Control, verdict};
+pub use crate::system::operator::core::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
+pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
 
-/// **同步义务**：`gate.rs` 自己留了那三格线上码（它要在宿主靶里编，而 `call.rs` 拖着 `runtime`
-/// 与 `session` ⇒ 编不动）。这里在编译期把两份钉在一起——真正的对照表只有 [`call`] 那一份，
-/// `gate` 那一份一漂就编不过。宿主靶那一侧没有这条断言（它编不到 `call.rs`），所以它**必须**
-/// 住在这里。
+// ── 一个调用的三个事实：身体在 `session::call`，这里只取名字 ──────────
+//
+// 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：
+// **这枚是谁授的 / 这扇门是谁开的 / 这枚被标成什么**。树这一侧原先各抄一份
+// （`probe`5 / `opened_by`9 / `mark_of`7），那一份已删（三格上三处的读法见 `vested_by`）。
+pub use crate::session::call::{marked_as, opened_by, vested_by};
+
+/// **卸下**：自释一份。剪掉或换掉一枚 `Tile` 时由核心叫它。
+pub use crate::session::call::unship;
+
+/// 立一棵树：把注入的机制交给核心（核心因此不 `use` 内核）。
+///
+/// `const` 是为了它能当 `static` 的初值——树只有一棵，住在本域（`bin/operator`）。
+pub const fn tree() -> Operator {
+    let stamps: Stamps = Stamps {
+        vested_by,
+        opened_by,
+    };
+    let unship: Unship = unship;
+    Operator::new(stamps, unship)
+}
+
+/// **立一本账**（一位客人一格）：把"读内核事实"的那一枚接上——账住「约」，手在「口」。
+pub fn desk() -> Desk {
+    Desk::new(vested_by)
+}
+
+/// **交出**：把调用方手里那一枚交给持树者（`Accord` 一份副本），返"种在持树者表里"的号；
+/// 反过来的那一半（持树者把树上那一枚转授给客人，`find` 的下场）**是同一件事**，故同一个名字
+/// ——照实记：这两个方向原先叫 `hang` 与 `give`，收口那一刀并成了这一个。
+///
+/// 权限给满（`R|W`）**加一格 `VEST`**：持树者查到名字时要**再授出**（`find` 的下场）——
+/// 内核那道"持 `VEST` 才交得出去"的闸挡的就是"查到了却授不出去"；拿到它的人可以再传
+/// ——那正是"一个名字指向一枚 Pie"的用法，故这里也不替调用方裁剪。
+///
+/// 身体在 [`crate::session::call::ship`]（**同名的裸手**）；**失败域是本模块的**
+/// （`Unknown`）：身体共用，失败值各自说（与 `map_claim` / `map_seat` 同款）。
+pub fn ship(entry: PieToken, to: TaskId) -> Result<PieToken, Fail> {
+    crate::session::call::ship(entry, to).map_err(|()| Fail::Unknown)
+}
+
+/// **同步义务**：`gate.rs` 自己留了那三格线上码（它要在宿主靶里编，而 `frame.rs` 拖着帧
+/// 那一族 ⇒ 编不动）。这里在编译期把两份钉在一起——真正的对照表只有 [`frame`] 那一份，
+/// `gate` 那一份一漂就编不过。宿主靶那一侧没有这条断言（它编不到 `protocol` 这一层），
+/// 所以它**必须**住在这里。
 const _: () = {
-    assert!(gate::WIRE_OK == call::OK);
-    assert!(gate::WIRE_DENIED == call::DENIED);
-    assert!(gate::WIRE_UNJUDGED == call::UNJUDGED);
+    assert!(core::gate::WIRE_OK == frame::OK);
+    assert!(core::gate::WIRE_DENIED == frame::DENIED);
+    assert!(core::gate::WIRE_UNJUDGED == frame::UNJUDGED);
 };

@@ -113,7 +113,7 @@ impl<T: Id> Window<T> {
     /// 由一串号凑一窗（`more` = 窗外还有）——**解码面**：线上收来的那一窗由这里成形。
     ///
     /// 收够 [`WINDOW_CAP`] 枚就停：帧长了是帧的毛病，读的人只认窗前这些（帧长与条数对不对
-    /// 由 `protocol` 那一侧的 `call` 那一层先挡掉）。
+    /// 由 `protocol` 那一侧的 `frame` 那一层先挡掉）。
     pub fn gather(more: bool, ids: impl Iterator<Item = T>) -> Window<T> {
         let mut out = Window::new();
         for id in ids.take(WINDOW_CAP) {

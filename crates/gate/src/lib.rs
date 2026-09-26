@@ -97,7 +97,7 @@ impl Deadline {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scenario {
     Root,
-    /// **真正要发出去的那一景**（用户裁定"7 台"）：6 台服务 + `echo`，外加两个域 ⇒ 镜像 9 条。
+    /// **真正要发出去的那一景**（用户裁定"7 台"）：3 台服务 + `echo`，外加两个域 ⇒ 镜像 6 条。
     /// 验收镜像仍是 [`Scenario::Root`]（它把表里每一条都装上）——这一景量的是"产品自己起不起得来"。
     Product,
     Rig,
@@ -835,7 +835,7 @@ pub fn count(t: &Transcript, shape: &str, want: usize) -> Result<(), Gap> {
     })
 }
 
-/// `[case]` 协议那一行的前缀（`cases.rs` 那个运行器打的）。
+/// `[case]` 协议那一行的前缀（`crates/cases/src/lib.rs` 那个运行器打的）。
 const CASE: &str = "[case]";
 
 /// 读数行的前缀：`名字: …` 与 `[case] …` 两种形状（与今天的对账器同一口径）。

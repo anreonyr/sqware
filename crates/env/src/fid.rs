@@ -46,7 +46,7 @@
 //! 它不在本 crate 的 `Wire` 面里）。两处都非法位 → `Err`，不再 `from_bits_truncate`
 //! 静默截断。
 
-use envmacros::Envcall;
+use mold::Envcall;
 
 use crate::wait::Wait;
 

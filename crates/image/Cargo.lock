@@ -13,17 +13,8 @@ name = "env"
 version = "0.1.0"
 dependencies = [
  "bitflags",
- "envmacros",
  "erra",
-]
-
-[[package]]
-name = "envmacros"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "mold",
 ]
 
 [[package]]
@@ -38,6 +29,15 @@ version = "0.1.0"
 dependencies = [
  "env",
  "plan",
+]
+
+[[package]]
+name = "mold"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
