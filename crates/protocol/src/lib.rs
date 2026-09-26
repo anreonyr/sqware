@@ -209,6 +209,7 @@ extern crate alloc;
 #[macro_use]
 mod reserve_reads;
 
+pub mod communication;
 pub mod debug;
 pub mod driver;
 pub mod fail_codes;
