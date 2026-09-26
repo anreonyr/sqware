@@ -33,7 +33,10 @@
 //! 块的内容是 boot 的供给清单，寿命就是镜像的寿命（它不回收），用门闩去管它只会多
 //! 一次分配、多一个失败模式。内核恒等装载 ⇒ 静态区的地址即物理地址，借映不需要翻译。
 
+use alloc::format;
+use alloc::string::String;
 use alloc::sync::Arc;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use env::{Fail, TaskId};
@@ -41,8 +44,11 @@ use plan::{Key, PAIR_LEN, Pair};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::console::Sink;
 use crate::lock::OnceLock;
 use crate::platform::machine;
+use crate::runtime::diagnose::render::render;
+use crate::runtime::diagnose::report::Report;
 use crate::work::mail;
 use crate::work::mail::nole::NoleMeta;
 use crate::work::unit::gate::{self, AnyPie, Permission};
@@ -198,13 +204,20 @@ pub(crate) fn block() -> (usize, usize) {
 /// - `memory`：内核已把它解析成 `dram`，再交出去就是第二份账；
 /// - `clint`：内核的时钟与 IPI 经 SBI 走它，交出去等于交出节拍。
 ///
-/// **逐条打印在这一处**（节点名只有这里读得到，且**一读即丢**——它不进任何类型）；
-/// `install` 只印总数那一行。
+/// **逐条登记在这一处**（节点名只有这里读得到，且**一读即丢**——它不进任何类型）。
+///
+/// 日志走与 `boot::banner` 同源的 `Report` 协议——两列段落（label / value），
+/// 段名 `"supplies"`；收尾那行 `handed to root` 也并入此处的段尾，`install`
+/// 不再单独印。两段（`banner` / `supplies`）各持一份 `Report` 实例、各自 seal，
+/// **不**共享同一棵段落树——一个记「机器/板级事实」，一个记「门闩供给清单」，
+/// 语义单元独立。
 pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
     let dtb = machine::info().dtb();
     // SAFETY: dtb 是 boot 交上来的设备树区（已进保留区，终身存活），此处只读。
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base as *const u8) }.expect("device tree blob");
     let mut out = Vec::new();
+    let mut log = Report::default();
+    let log_p = log.paragraph("supplies", None);
     for node in fdt.all_nodes() {
         if exempt(node.name) {
             continue;
@@ -234,24 +247,44 @@ pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
                 None,
             );
             let pie = AnyPie::Pole(pie);
-            crate::putln!("  {} -> token {}", node.name, pie.token().get());
+            log_p.items.push(vec![
+                Some(String::from(node.name)),
+                Some(format!("token {}", pie.token().get())),
+            ]);
             out.push((Key::region(base as u64), pie));
         }
     }
     // 设备树本体与中断门闩也与设备同列（见 [`supply_dtb`] / [`supply_irq`]）：
     // 它们不是"设备"，但都是 boot 交出去的门闩——这张账记的是后者。
     let (key, pie) = supply_dtb();
-    crate::putln!("  devicetree -> token {}", pie.token().get());
+    log_p.items.push(vec![
+        Some(String::from("devicetree")),
+        Some(format!("token {}", pie.token().get())),
+    ]);
     out.push((key, pie));
     let (key, pie) = supply_irq();
-    crate::putln!("  irq -> token {}", pie.token().get());
+    log_p.items.push(vec![
+        Some(String::from("irq")),
+        Some(format!("token {}", pie.token().get())),
+    ]);
     out.push((key, pie));
     // initrd 载荷区同列：引导域只借映了它，**手上没有能转手的句柄**——给它一枚，
     // 它才能把这批字节交给编排域（零拷贝，见 [`supply_initrd`]）。
     if let Some((key, pie)) = supply_initrd() {
-        crate::putln!("  initrd -> token {}", pie.token().get());
+        log_p.items.push(vec![
+            Some(String::from("initrd")),
+            Some(format!("token {}", pie.token().get())),
+        ]);
         out.push((key, pie));
     }
+    // 收尾：清单总数并入段尾——「这台机器上交了几枚门闩」与「每一枚是什么」
+    // 同一个段落、同一次 seal、同一次 render。
+    log_p.items.push(vec![
+        Some(String::from("handed to root")),
+        Some(format!("{} entries", out.len())),
+    ]);
+    let sealed = log.seal();
+    render(sealed, &mut Sink, 0);
     out
 }
 
@@ -269,9 +302,8 @@ pub(crate) fn install(task: &Task, items: Vec<(Key, AnyPie)>) -> usize {
     }
     let (pa, _bytes) = block();
     let n = items.len();
-    // 供给清单的**总数**打进 boot 日志：这是**这台机器上有什么**的唯一一次陈述（此后内核
-    // 零设备概念，要问只能问域）。内核打印走 SBI，不碰设备。
-    crate::putln!("devices: {n} handed to root");
+    // 「这台机器上交了几枚门闩」这一句已在 [`scan`] 的 `Report` 收尾印过——
+    // `install` 不再单独打总数。
     for (i, (key, pie)) in items.into_iter().enumerate() {
         let token = pie.token();
         // 内核这一侧写的是**字节**（[`Pair::bytes`]）：配对块是**记录**（线上形），
