@@ -62,50 +62,63 @@ mod tests {
         kernel::init(BOOT_DTP.load(Ordering::Relaxed));
     }
 
-    // 用例：前八个的名字与次序照搬原先 `health/mod.rs` 那 8 个 `test!` 块（失败的人要
-    // 看得懂哪一块塌了），第九个是后补的 `hart_multi`。用例体仍在 `kernel::health` 里。
+    // 用例：**健康面那九例只在 debug 档存在**——它们的身体是 `kernel::health::*`，而那些
+    // 模块本身 `#![cfg(debug_assertions)]`。不 gate 的话 **release 档的测试目标编不过**
+    // （`cannot find `spare` in `health``），而整机用例恰恰要在 **release** 下才稳：
+    // 同一个 `root` 景，release 产品路 **6/6 稳、14 笔结局**；debug 产品路结局笔数
+    // **5 / 11 / 6 / 11** 乱跳、偶发 panic。故 release 档的测试目标里**只剩整机那一例**
+    // （`--scene` 会带 `-r`，见 `scripts/qtest.nu`），健康面由默认那轮（debug）覆盖。
 
+    #[cfg(debug_assertions)]
     #[test]
     fn spare_budget() {
         kernel::health::spare::accept();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn pagetable_recycle() {
         kernel::health::pagetable::pagetable();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn stress_allocator() {
         kernel::health::stress::accept();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn shell_primitives() {
         kernel::health::shell::accept();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn permit_form() {
         kernel::health::permit::form();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn permit_members() {
         kernel::health::permit::members();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn permit_fanout() {
         kernel::health::permit::fanout();
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     fn permit_order() {
         kernel::health::permit::order();
     }
 
     // 第九例（后补）：钉住参数表那颗 `-smp` 默认——见 `kernel/src/health/hart.rs` 的头注。
+    #[cfg(debug_assertions)]
     #[test]
     fn hart_multi() {
         kernel::health::hart::count();
