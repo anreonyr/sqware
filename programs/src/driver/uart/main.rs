@@ -51,20 +51,18 @@
 extern crate alloc;
 extern crate programs;
 
-// 共享件住驱动这一族里：`assemble` 是三台驱动都要写一遍的那段客侧装配。
+// 共享件住驱动这一族里：`assemble` 是各驱动都要写一遍的那段客侧装配，需求单同一份源码编一次；
+// `tree` 是三台共用的**上树那一趟**，`register` 是两台共用的**登记那一条线**。
 use env::Wait;
 use plan::assembly::UART_WANTS as WANTS;
 use programs::driver::assemble;
+use programs::driver::register;
+use programs::driver::tree::{self, Mine};
 
-// 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`、按名找线路由者）。
+// 板：本域是**客侧**（只装上板路，不挂牌子）；树：也是客侧（门牌挂 `/device/uart`，这里只开会话）。
 use protocol::system::board::client as board;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
 
-use env::{Name, PieToken, TaskId};
-use protocol::driver::line;
-use protocol::session::Quay;
 use runtime::core::dock::Dock;
 use runtime::env::debug;
 use runtime::env::mail::{self, HolePie, PolePie};
@@ -75,9 +73,6 @@ mod uart;
 
 /// 本域的死法（编号 + 那句话）——见那个文件与 `programs::Exit`。
 mod fail;
-
-/// 要找的那位服务（线路由者）在树上的名字。
-const SERVICE: &str = "router";
 
 /// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
 const ME: &str = "uart";
@@ -130,11 +125,12 @@ fn main() -> Result<(), fail::Fail> {
     let (link, host) = operator::open(sire, Wait::AtMost(MS)).map_err(|_| fail::Fail::Tree)?;
     let talk = operator::ask_hole(host).map_err(|_| fail::Fail::Tree)?;
     let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| fail::Fail::Tree)?;
-    serve_tree(&link, talk, host, entry);
+    // 上树那一趟（三台共用）：名字既是树上的那一段，也是读数前缀——`Mine::Yes` 说"这枚是我的"。
+    tree::plate(ME, Mine::Yes, &link, talk, host, entry, Wait::AtMost(MS));
 
     // 5. **登记本域那条线**：按名从树上找到线路由者（`/device/router`），报的是**发下来的那一段
     //    区**——"线 = 区的函数"那条权威在路由者那边解，本域从不说线号，也不自己造坐标。
-    let held = register(&link, talk, key).map_err(|_| fail::Fail::Line)?;
+    let held = register::occupy(&link, talk, key, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)?;
     say("uart: line occupied");
 
     // 6. 常驻：那条线一响 ⇒ 排空设备 ⇒ 把这一批字节交给读行的人 ⇒ 说一句"我排空了"。
@@ -152,99 +148,19 @@ fn main() -> Result<(), fail::Fail> {
         let n = uart::drain(dock.view(), &mut raw);
         // 交给读行的人。**这一手要阻塞**：字节是内容，丢了补不回来；读行的人（`echo`）
         // 总会回到"取一行"那一格，故等它是有界的。
-        // let handed = n == 0 || console.push(&raw[..n]).is_ok();
-        console.push(&raw[..n]).is_ok();
-        let _ = held.exhaust();
-        // say(&alloc::format!("uart: rang n={n} out={handed}"));
+        //
+        // **`n == 0` 那一趟不推**（见文件头那条照实记）：内核那一格只收 `1..=一页` 的报文
+        // ——0 字节答 `Denied`。一批 0 字节本来就没有内容可交，故"推"这一手不是无条件的：
+        // `unwrap` 只在真有内容那一趟上成立。**实测**：少了这个 `if`，第一次空排空
+        // （`router: line=10` 那一趟、FIFO 里没有字节）当场把本域打死
+        // （`MailFail::Denied`），整台机器随之级联收场。
+        if n > 0 {
+            console.push(&raw[..n]).unwrap();
+        }
+        // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 + 把线放回去。
+        held.exhaust().unwrap();
+        // say(&alloc::format!("uart: rang n={n}"));
     }
-}
-
-/// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（门牌 = 那枚读行的孔）。
-///
-/// ```text
-///   PART ["device"]           → 0 = 拿到那块目录的号（本域建的 / 已经在了——`part` 幂等）
-///   LAND ["device","uart"]    → 0 = 门牌落上（那枚孔经会话交给持树者）
-///   FIND ["device","uart"]    → 0 = 查得到，且那一枚经会话授回本域表里
-///   got                        → 本域在表里认出刚授回来的那一枚了吗
-/// ```
-///
-/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`echo`）证——它照同一条路
-/// 找上门、从这枚孔读行。故本域不自问自答。
-fn serve_tree(link: &Quay, talk: PieToken, host: TaskId, entry: PieToken) {
-    let (Ok(dir), Ok(me)) = (Name::new(protocol::driver::DIR), Name::new(ME)) else {
-        say("uart: tree: bad name");
-        return;
-    };
-    // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
-    let (part, dir_id) = match dir_at {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // **落门牌**：答的是门牌自己那一格的号。
-    let plate = match dir_at {
-        Ok(at) => operator::land(
-            talk,
-            link,
-            host,
-            Where::At(at),
-            me,
-            entry,
-            ocall::Rule::Public,
-            true,
-            Wait::AtMost(MS),
-        ),
-        Err(code) => Err(code),
-    };
-    let (land, pid) = match plate {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
-            Ok((code, entry)) => (code, entry.is_some()),
-            Err(_) => (ocall::BAD, false),
-        },
-        Err(code) => (code, false),
-    };
-    // **`got` 换了来路**（乙′）：见 `ocall::Union::Seed` 的照实记。
-    // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = plate
-        .ok()
-        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
-    say(&alloc::format!(
-        "uart: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
-        entry.get(),
-        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    ));
-    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-
-    assert_eq!(part, ocall::OK);
-    assert_eq!(land, ocall::OK);
-    assert_eq!(find, ocall::OK);
-    assert!(got);
-    assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(ME))
-}
-
-/// 从树上找到线路由者，把本域那条线登记下来。
-///
-/// 会话是**上面那一条**（同一个域只开一条，见 `main` 第 4 步）；坐标是**发下来的那一段区**
-/// （随配给记录到本域，见 `main` 第 2 步——本域不写死它）；入口经会话从树上授进来，
-/// 泊位由 `line` 那一层装。
-fn register(link: &Quay, talk: PieToken, key: plan::Key) -> Result<line::client::Line, fail::Fail> {
-    let dir = Name::new(protocol::driver::DIR).map_err(|_| fail::Fail::Line)?;
-    let want = Name::new(SERVICE).map_err(|_| fail::Fail::Line)?;
-    let road = [dir, want];
-    // **间接寻址那一手**：名字先译成号（号才是树的直接坐标），此后按号。
-    let id = operator::seek(talk, link, &road, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)?;
-    let entry = match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => entry,
-        // **查不到**与**授不出去**都落进这一格（`find` 的状态那一格说得出是哪一种）。
-        _ => return Err(fail::Fail::Line),
-    };
-    line::client::Line::occupy(entry, key, Wait::AtMost(MS)).map_err(|_| fail::Fail::Line)
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

@@ -104,18 +104,18 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-// 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给）。
+// 客侧装配与需求单都住在驱动这一族里：`assemble` 是三台驱动与房客共用的那段机器（会话 + 配给），
+// `tree` 是三台共用的**上树那一趟**（分目录 / 落门牌 / 查回来 / 那一行读数都在它里面）。
 use env::Mark;
 use env::Wait;
 use plan::assembly::ROUTER_WANTS as WANTS;
 use programs::driver::assemble;
+use programs::driver::tree::{self, Mine};
 
 // 板：本域是**客侧**（装板路、交问话孔——**只为让板看得见本域的死**；名字不挂这里）。
 use contract::message::Message;
 use protocol::system::board::client as board;
-// 树：本域也是**客侧**（门牌挂 `/device/router`，见文件头）。
-use protocol::system::operator as ocall;
-use protocol::system::operator::Where;
+// 树：本域也是**客侧**——那一趟的身子住 `programs::driver::tree`，这里只开会话、递过去。
 use protocol::system::operator::client as operator;
 
 /// 设备侧（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
@@ -366,7 +366,25 @@ fn serve_board(sire: TaskId, entry: PieToken) {
         say("router: board: no link");
     }
     // 上树：本域的门牌 = `/device/router`（名字用服务名，见 [`protocol::driver::DIR`]）。
-    tree_trip(sire, entry);
+    // **开会话那两步留在这里**（那一趟同构的部分在 [`tree::plate`]）：拿不到会话就只报一行、
+    // 不拦主循环——收与结照旧。
+    let Ok((link, host)) = operator::open(sire, Wait::AtMost(QUAY_MS)) else {
+        say("router: tree: no lane");
+        return;
+    };
+    let Ok(talk) = operator::ask_hole(host) else {
+        say("router: tree: no ask");
+        return;
+    };
+    tree::plate(
+        SERVICE,
+        Mine::No,
+        &link,
+        talk,
+        host,
+        entry,
+        Wait::AtMost(QUAY_MS),
+    );
 }
 
 /// 门上那一句话：**登记**（带动作码）——报**那一段区** ⇒ **解树**（"线 = 区的函数"，权威只在
@@ -473,91 +491,6 @@ fn drop_lane(quay: &mut Quay, lane: Pier, line: u32) {
         "router: lane dropped line={line} pies={}",
         mail::table_size()
     ));
-}
-
-/// 树上一趟：**分目录 → 落门牌 → 查回来验一遍**。读数一行四格 + 入口的号。
-///
-/// ```text
-///   PART ["device"]              → 0 = 拿到那块目录的号（本域建的 / 已经在了——`part` 幂等）
-///   LAND ["device","router"]     → 0 = 门牌落上（入口经会话交给持树者）
-///   FIND ["device","router"]     → 0 = 查得到，且那一枚经会话授回本域表里
-///   got                           → 本域在表里认出刚授回来的那一枚了吗
-/// ```
-///
-/// `got` **只是"认出了那一枚"**：它指不指得回原物，由**真客人**（`guest`）那一趟证——它
-/// 照同一条路找上门、说一句话、拿回答话。故本域不再自问自答（推读自检早已拆掉）。
-///
-/// 三格答码用的是树自己的失败域（[`ocall::NONEMPTY`] 是"那块目录已经有人建了"，**不是错误**）。
-fn tree_trip(sire: TaskId, entry: PieToken) {
-    let Ok((link, host)) = operator::open(sire, Wait::AtMost(QUAY_MS)) else {
-        say("router: tree: no lane");
-        return;
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        say("router: tree: no ask");
-        return;
-    };
-    let (Ok(dir), Ok(me)) = (
-        env::Name::new(protocol::driver::DIR),
-        env::Name::new(SERVICE),
-    ) else {
-        say("router: tree: bad name");
-        return;
-    };
-    // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, &link, Where::Root, dir, Wait::AtMost(QUAY_MS));
-    let (part, dir_id) = match dir_at {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // **落门牌**：答的是门牌自己那一格的号。
-    let plate = match dir_at {
-        Ok(at) => operator::land(
-            talk,
-            &link,
-            host,
-            Where::At(at),
-            me,
-            entry,
-            ocall::Rule::Public,
-            false,
-            Wait::AtMost(QUAY_MS),
-        ),
-        Err(code) => Err(code),
-    };
-    let (land, pid) = match plate {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, &link, id, Wait::AtMost(QUAY_MS)) {
-            Ok((code, entry)) => (code, entry.is_some()),
-            Err(_) => (ocall::BAD, false),
-        },
-        Err(code) => (code, false),
-    };
-    // **`got` 换了来路**（乙′）：见 `ocall::Union::Seed` 的照实记。
-    // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = plate
-        .ok()
-        .and_then(|id| operator::name(talk, &link, id, Wait::AtMost(QUAY_MS)).ok());
-    say(&alloc::format!(
-        "router: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
-        entry.get(),
-        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    ));
-    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {
-        assert_eq!(part, ocall::OK)
-    }
-    assert_eq!(land, ocall::OK);
-    {
-        assert_eq!(find, ocall::OK)
-    }
-    assert!(got);
-    assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(SERVICE))
 }
 
 /// 打一行。调试面是"服务还没起来的嘴"：本域没有会话、没有控制台，只有它。

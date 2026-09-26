@@ -77,8 +77,9 @@
 //! **照实记（`call.rs` 那一格已经收掉）**：
 //! 系统那四份 `system/*/call.rs` 是**薄封装**（文件里除 `pub use` 外没有一个自己的 `fn`），已并进
 //! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。实现树上最后一个也走了：`programs/src/system/call.rs`
-//! （编排者的适配）**唯一读者就是 `system/server.rs`**，故并进那个文件。这个名字今天只剩两处，各指各的事：
-//! `programs/src/driver/rtc/call.rs` 是**形状与记号**、底座 `session/call.rs` 是**十件手的身体**。
+//! （编排者的适配）**唯一读者就是 `system/server.rs`**，故并进那个文件。驱动那一侧也走了：
+//! `programs/src/driver/rtc/call.rs` 拆进 `rtc/core/`（形与记号归 `core/frame.rs`）⇒
+//! 这个名字今天只剩一处：底座 `session/call.rs` 是**十件手的身体**。
 //!
 //! **照实记（"容纳"是用户裁的）**：`board` 一直在 [`system`] 之下；`operator` / `principal` /
 //! `coalition` 原先是**顶层**（与 `system` 平级），裁定之后收进去。**判据是"谁住编排域"**：

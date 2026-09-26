@@ -50,7 +50,7 @@ use core::time::Duration;
 use env::{Name, PieToken};
 use protocol::session::Quay;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
-use programs::driver::rtc::call as rcall;
+use programs::driver::rtc::core::frame as rcall;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
 use runtime::env::debug;
@@ -72,7 +72,7 @@ const RETRY_MS: usize = 1;
 
 /// 这一槽的**周期**（纳秒）："再过这么久叫我"。`Wire::Arm` 收了相对量之后，这个数就是
 /// **想要的那段距离本身**，不再是"要罩住一趟往返的提前量"——延迟由收帧的驱动承担
-/// （见 `programs/src/driver/rtc/call.rs` 那格的照实记），故它不必再留 4× 余量。
+/// （见 `programs/src/driver/rtc/core/frame.rs` 那格的照实记），故它不必再留 4× 余量。
 const SLOT_NS: u64 = 50_000_000;
 
 /// 没搭上（找不到那面服务 / 有一条往返没走成）：报这一格退场。
@@ -124,7 +124,7 @@ fn main() -> Report<'static> {
         Err(fail) => {
             // **哪一格失败，落一行**（照实记：这一格从前只报 `no alarm`，而 `arm` 的三条失败路
             // ——借孔/推帧没走成、答复没来、答了但不是 `OK`——在读数里长得一模一样）。
-            // 码本在 `programs/src/driver/rtc/core.rs`：**1 = `Taken`**（那一格有人了）/
+            // 码本在 `programs/src/driver/rtc/core/fail.rs`：**1 = `Taken`**（那一格有人了）/
             // **2 = `Past`**（相对量下只剩 `after_ns == 0` 到得了）/ **3 = `Denied`**（这一趟
             // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
             let _ = debug::put(&format!(

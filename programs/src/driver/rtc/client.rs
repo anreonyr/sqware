@@ -13,7 +13,7 @@
 //!
 //! **问走门、答走船台**：问那一侧推的是那扇**门**（`session::call::push_to`，同 `principal`
 //! 的客侧），答那一侧是本端自己那枚孔——**上船台**（`Slip::<Time>` / `Slip::<Status>`：答的
-//! 两形各是一张实现了报文约定的表，见 `call`）。
+//! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
 //!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
@@ -23,7 +23,7 @@ use env::Wait;
 use protocol::session::slip::Slip;
 use runtime::env::mail::{self, HolePie};
 
-use super::call::{self, Arm, Now, Status, Time};
+use super::core::frame::{self, Arm, Now, Status, Time};
 use super::core::Fail;
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
@@ -52,7 +52,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
 /// 约一段**时间**：`after_ns`（相对纳秒，"再过多 long"）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
 ///
 /// **照实记（从"时刻"改成"时长"）**：绝对时刻那版要客侧自己补一个送达延迟的猜（见
-/// `call::Wire::Arm` 那一格的照实记）；相对量由收帧的驱动算，客侧不必知道路有多长。
+/// `frame::Wire::Arm` 那一格的照实记）；相对量由收帧的驱动算，客侧不必知道路有多长。
 ///
 /// 失败域两格都由**驱动说的话**给出（`Taken` / `Past`），第三格 `Denied` 是这一趟自己没
 /// 走到——三种情况对客人是三个不同的下一步，故不合并成一格。
@@ -73,14 +73,14 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             return Err(Fail::Denied);
         }
     };
-    if code == call::OK {
+    if code == frame::OK {
         // **这一枚不还**：那一格现在收着它，到点从那枚孔回来。
         return Ok(Alarm {
             back: HolePie::from_token(back),
         });
     }
     let _ = mail::release(back);
-    Err(call::code_to_fail(code).unwrap_or(Fail::Denied))
+    Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }
 
 /// 一次**约**：那一格里收着的，就是它。
@@ -114,7 +114,7 @@ impl Alarm {
 /// 身体住在 [`protocol::session::call::lend_out`]（"借一枚回信孔"只有那一手），
 /// 这里只留本面自己的记号。
 fn lend_out(entry: PieToken) -> Result<(PieToken, PieToken), Fail> {
-    protocol::session::call::lend_out(entry, call::BACK).map_err(|()| Fail::Denied)
+    protocol::session::call::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)
 }
 
 /// 把一帧推上那扇门（`lend_out` 的后半）。

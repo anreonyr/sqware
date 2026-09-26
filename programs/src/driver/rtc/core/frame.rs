@@ -1,4 +1,4 @@
-//! rtc::call — **帧形与记号**：两句话、两种答形（**一张字段表就是一处定义**）。
+//! rtc::core::frame — **形与记号**：两句话、两种答形（**一张字段表就是一处定义**）。
 //!
 //! ```text
 //!   问（客人 → 驱动）   Now  [ASK][那一格 8B]                →  Time    [时刻 8B]   「现在几点」
@@ -59,7 +59,7 @@
 //! 船台）、**"失败域 ↔ 线上那一格"那张表**（`contract::fail_codes!`）与**成功那一格**
 //! （`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
-use super::core::Fail;
+use super::fail::Fail;
 use contract::message::Message;
 use env::{Mark, PieToken};
 
