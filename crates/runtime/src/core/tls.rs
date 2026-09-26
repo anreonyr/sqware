@@ -1,6 +1,6 @@
 //! 用户 TLS 地基 — 每线程独立 tp 指向的 TLS 块。
 
-use env::EnvResult;
+use env::MemoryResult;
 
 use crate::PAGE_SIZE;
 use crate::env::memory;
@@ -19,7 +19,8 @@ pub fn base() -> usize {
     tp
 }
 
-pub fn allocate() -> EnvResult<usize> {
+/// 本线程的 TLS 块（一整页）——错类型是 Memory 域的词汇（`OoM` / `NoRegion`）。
+pub fn allocate() -> MemoryResult<usize> {
     memory::allocate(TLS_SIZE)
 }
 

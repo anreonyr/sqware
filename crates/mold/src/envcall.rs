@@ -28,7 +28,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
         Err(e) => return e.to_compile_error(),
     };
     let name = &ast.ident;
-    let class = match class(&ast.attrs) {
+    let (class, fail_ty) = match call_attrs(&ast.attrs) {
         Ok(c) => c,
         Err(e) => return e.to_compile_error(),
     };
@@ -46,6 +46,24 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
         quote! { v2 }
     } else {
         quote! { _v2 }
+    };
+
+    // 每格一个精确签名的入口（住本类自己的模块）：`#[derive(Envcall)]` 的另一半产出。
+    let mod_name = Ident::new(&class_module(&name.to_string()), proc_macro2::Span::call_site());
+    let gen_fns: Vec<TokenStream2> = vols
+        .iter()
+        .filter(|v| !v.manual)
+        .map(|v| gen_fn(name, v, fail_ty.as_ref()))
+        .collect();
+    let gen_mod = quote! {
+        /// **每格一个精确签名的入口**：载荷类型就是那一格的契约；标 `#[infallible]` 的格
+        /// **不返 `Result`**（那一格没有失败域）。错误类型是这一域的词汇（`fail = XxxFail`）；
+        /// 没标 `fail` 的类在过渡期仍返 `EnvResult`。
+        pub mod #mod_name {
+            use super::*;
+
+            #(#gen_fns)*
+        }
     };
 
     let slot_arms: Vec<_> = vols
@@ -214,12 +232,15 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
                 }
             }
         }
+
+        #gen_mod
     };
 
     expanded
 }
 
-/// 一枚变体：**名字、字段、返回载荷、返回宽度**四件事绑在一起。
+/// 一枚变体：**名字、字段、返回载荷、返回宽度、以及"这一格有没有失败面/是不是手写"**
+/// 绑在一起。
 ///
 /// 从前它们是四个并行数组（`vs` / `flds` / `rets` / `wides`），靠下标对齐——于是每一处用它的
 /// 地方都要写一遍 `&vs[i]` / `&flds[i]` / `rets[i].clone()`，下标写错一格**编得过**。
@@ -233,6 +254,10 @@ struct Variant {
     ret: Type,
     /// 标的是 `#[ret3(T)]` ⇒ 蒸馏走 `FromTriple` 而不是 `FromPair`。
     wide: bool,
+    /// `#[infallible]`：**这一格没有失败域** ⇒ 生成的入口返裸载荷，不返 `Result`。
+    infallible: bool,
+    /// `#[manual]`：这一格的手写包装有形状要求（今天只有 `Reap`：发散）⇒ 不生成入口。
+    manual: bool,
 }
 
 impl Variant {
@@ -306,30 +331,45 @@ fn ret_wide_type(attrs: &[Attribute]) -> syn::Result<Option<Type>> {
     Ok(None)
 }
 
-/// 解析 `#[call(class = N)]` 属性里的 class。
-fn class(attrs: &[Attribute]) -> syn::Result<usize> {
+/// 解析 `#[call(class = N, fail = XxxFail)]`：class 必给，`fail` 可缺（缺 ⇒ 这一类的
+/// 每格入口在过渡期返 `EnvResult`）。
+///
+/// **`fail` 是"这一类的失败词汇"**：词表由 `#[derive(Fail)]` 生成，码按域自持；
+/// 类里每一格的入口都用它当错类型（`#[infallible]` 的格除外）。
+fn call_attrs(attrs: &[Attribute]) -> syn::Result<(usize, Option<Type>)> {
     for attr in attrs {
         if attr.path().is_ident("call") {
-            let mut value = None;
-            let _ = attr.parse_nested_meta(|nested| {
+            let mut class = None;
+            let mut fail = None;
+            attr.parse_nested_meta(|nested| {
                 if nested.path.is_ident("class") {
                     let lit: Lit = nested.value()?.parse()?;
                     if let Lit::Int(i) = lit {
-                        value = Some(i.base10_parse::<usize>()?);
+                        class = Some(i.base10_parse::<usize>()?);
                     }
+                } else if nested.path.is_ident("fail") {
+                    fail = Some(nested.value()?.parse::<Type>()?);
                 }
                 Ok(())
-            });
-            if let Some(v) = value {
-                return Ok(v);
-            }
-            return Err(syn::Error::new_spanned(attr, "expected #[call(class = N)]"));
+            })?;
+            return match class {
+                Some(c) => Ok((c, fail)),
+                None => Err(syn::Error::new_spanned(
+                    attr,
+                    "expected #[call(class = N, fail = XxxFail)]",
+                )),
+            };
         }
     }
     Err(syn::Error::new_spanned(
         &attrs[0],
-        "expected #[call(class = N)] on the enum",
+        "expected #[call(class = N, fail = XxxFail)] on the enum",
     ))
+}
+
+/// 一格有没有标某个变体级属性（`#[infallible]` / `#[manual]`）。
+fn marked(attrs: &[Attribute], name: &str) -> bool {
+    attrs.iter().any(|a| a.path().is_ident(name))
 }
 
 /// 从 `DeriveInput` 提取变体列表；三条当场报错，都落在**那一格的名字**上：不是枚举、
@@ -369,7 +409,120 @@ fn variants(ast: &DeriveInput) -> syn::Result<Vec<Variant>> {
                 fields: v.fields.clone(),
                 ret,
                 wide: is_wide,
+                infallible: marked(&v.attrs, "infallible"),
+                manual: marked(&v.attrs, "manual"),
             })
         })
         .collect()
+}
+
+/// 一格一个入口（住本类那个生成模块里）。
+///
+/// 签名 = **这一格自己的载荷**：字段按声明顺序成为参数；`#[infallible]` 的格返裸载荷，
+/// 其余返 `Result<载荷, erra::Error<域词表>>`（类没标 `fail` 的过渡期返 `EnvResult`）。
+fn gen_fn(owner: &Ident, v: &Variant, fail: Option<&Type>) -> TokenStream2 {
+    let fname = Ident::new(&snake_case(&v.ident.to_string()), v.ident.span());
+    let variant = &v.ident;
+    let binds = v.binds();
+    let types = v.types();
+    let ctor = match &v.fields {
+        Fields::Unit => quote! { #owner::#variant },
+        Fields::Unnamed(_) => quote! { #owner::#variant(#(#binds),*) },
+        Fields::Named(_) => quote! { #owner::#variant { #(#binds),* } },
+    };
+    let ret = &v.ret;
+    // `()` 载荷不写 `-> ()`（那是噪音）。
+    let is_unit = matches!(ret, Type::Tuple(t) if t.elems.is_empty());
+    let unpack = if v.wide {
+        quote! { <#ret as crate::wire::FromTriple>::from_triple(v0, v1, v2) }
+    } else {
+        quote! { <#ret as crate::wire::FromPair>::from_pair(v0, v1) }
+    };
+    let v2_bind = if v.wide {
+        quote!(v2)
+    } else {
+        quote!(_v2)
+    };
+
+    let (sig_ret, tail) = if v.infallible {
+        let sig = if is_unit { quote! {} } else { quote! { -> #ret } };
+        (
+            sig,
+            quote! {
+                debug_assert!((v0 as isize) >= 0, "这一格不失败，内核却答了负码");
+                #unpack
+            },
+        )
+    } else {
+        let sig = match fail {
+            Some(f) => quote! { -> Result<#ret, erra::Error<#f>> },
+            None => quote! { -> crate::ecall::EnvResult<#ret> },
+        };
+        let on_err = match fail {
+            Some(f) => quote! {
+                match <#f>::of_code(v0 as isize) {
+                    Some(f) => Err(crate::ecall::make_fail(f)),
+                    None => unreachable!("内核答了本域表外的码：{}", v0),
+                }
+            },
+            None => quote! {
+                Err(crate::ecall::make_err(crate::ecall::EnvError::from_raw(v0 as isize)))
+            },
+        };
+        (
+            sig,
+            quote! {
+                if (v0 as isize) < 0 {
+                    #on_err
+                } else {
+                    Ok(#unpack)
+                }
+            },
+        )
+    };
+
+    quote! {
+        #[inline]
+        pub fn #fname(#(#binds: #types),*) #sig_ret {
+            let this = #ctor;
+            let (v0, v1, #v2_bind) = unsafe { crate::ecall::trap(this.slot(), this.pack()) };
+            #tail
+        }
+    }
+}
+
+/// `UnsealHole` → `unseal_hole`（生成入口的名字由变体名定）。
+///
+/// **撞上关键字的加下划线**（`Await` → `await_`，与手写那一层的 `mail::await_` 同拼法）——
+/// 否则生成的是 `pub fn await`，编都编不过。
+fn snake_case(name: &str) -> String {
+    let cs: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    for (i, c) in cs.iter().enumerate() {
+        if c.is_ascii_uppercase() {
+            let prev_small = i > 0 && (cs[i - 1].is_ascii_lowercase() || cs[i - 1].is_ascii_digit());
+            let next_small = i + 1 < cs.len() && cs[i + 1].is_ascii_lowercase();
+            if i > 0 && (prev_small || next_small) {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(*c);
+        }
+    }
+    if KEYWORDS.contains(&out.as_str()) {
+        out.push('_');
+    }
+    out
+}
+
+/// 生成入口要避开的 Rust 关键字（**认到一个加一个**，不是全集洁癖）。
+const KEYWORDS: [&str; 12] = [
+    "as", "await", "box", "do", "fn", "in", "let", "loop", "match", "move", "ref", "type",
+];
+
+/// `RoomCall` → `room`：**每类一个生成模块**，跨类的同名变体（`Wait` 在 Room/Mail/Unit）
+/// 靠它隔离。
+fn class_module(name: &str) -> String {
+    name.strip_suffix("Call").unwrap_or(name).to_ascii_lowercase()
 }

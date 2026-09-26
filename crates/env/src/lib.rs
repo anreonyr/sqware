@@ -31,13 +31,20 @@ pub mod permission;
 pub mod wait;
 pub mod wire;
 
-pub use ecall::{EnvError, EnvResult, Fail, make_err};
+pub use ecall::{EnvError, EnvResult, Fail, FailCode, make_err, make_fail};
 pub use exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use fid::{
-    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, DBCN_MAX, DebugCall, DebugCallRet,
-    EnvCall, HoleDir, MailCall, MailCallRet, MemoryCall, MemoryCallRet, NOTE_MAX, PieCall,
-    PieCallRet, ProgramKind, RoomCall, RoomCallRet, ToleCall, ToleCallRet, UnitCall, UnitCallRet,
+    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
+    DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleDir, MailCall,
+    MailCallRet, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
+    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, ProgramKind, RoomCall, RoomCallRet,
+    RoomFail, RoomResult, ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet,
+    UnitFail, UnitResult,
 };
+/// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
+/// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
+/// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
+pub use fid::{chrono, control, debug, mail, memory, pie, room, tole, unit};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`contract` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;

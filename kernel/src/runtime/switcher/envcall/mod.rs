@@ -22,9 +22,8 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, DebugCall, EnvCall, MemoryCall, RoomCall, TaskId, UnitCall};
+use env::{ChronoCall, ControlCall, DebugCall, EnvCall, RoomCall, TaskId, UnitCall};
 
-use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
@@ -36,8 +35,7 @@ use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::Permission;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::source::Source;
-use crate::work::unit::space::window::{HeapWindow, ShareWindow};
-use crate::work::unit::space::{Pending, PendingState, Space, SpaceKind};
+use crate::work::unit::space::{Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
 use crate::work::unit::team::UnitError;
 use crate::work::unit::weak::{Site, TaskWeak};
@@ -45,6 +43,7 @@ use env::Fail;
 
 mod debug;
 mod mail;
+mod memory;
 mod pie;
 mod tole;
 
@@ -76,7 +75,11 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, Fail> {
 }
 
 /// 写回错误码并返回待恢复帧。
-fn ret_err(frame: &mut TrapContext, e: Fail) -> *mut TrapContext {
+///
+/// **泛型**：收的是**域词表**（`env::FailCode` 的共同部分只有"码"）。九域各自一枚枚举，
+/// 这里不做任何折算——折算在**产生错误的那一处**（如 `memory.rs` 的 `From<MapError>`）。
+/// 过渡期还没域化的 class 写 `Fail::X` 也走这一条（`Fail` 临时实现了 `FailCode`）。
+fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame as *mut TrapContext
 }
@@ -172,7 +175,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
     // （panic 即 U 态一发 ebreak 打死整机）。想主动终止有正规原语 `RoomCall::Reap`。
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
-        Err(_) => return ret_err(frame, Fail::Denied),
+        Err(_) => return ret_err(frame, env::DispatchFail::Unknown),
     };
     match envcall {
         EnvCall::Room(RoomCall::Starve) => return current().starve() as *mut TrapContext,
@@ -299,28 +302,9 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             let ns = clock::uptime().as_nanos().min(u64::MAX as u128) as u64;
             frame.gpr.set_x(Gprs::A0, ns as usize);
         }
-        EnvCall::Memory(MemoryCall::Allocate { size }) => {
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let addr = {
-                let s = &ident.team.space;
-                HeapWindow::allocate(s, size).map(|span| span.va)
-            };
-            frame.gpr.set_x(
-                Gprs::A0,
-                match addr {
-                    Ok(va) => va.as_usize(),
-                    Err(_) => usize::MAX,
-                },
-            );
-        }
-        EnvCall::Memory(MemoryCall::Deallocate { addr, size }) => {
-            let addr = addr.get();
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let ok = {
-                let s = &ident.team.space;
-                HeapWindow::deallocate(s, KVirt::from_raw(addr), size)
-            };
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
+        // Memory 域的臂整个在 `memory.rs`：五格 + **一处** `MapError → MemoryFail` 折算。
+        EnvCall::Memory(call) => {
+            memory::dispatch(frame, call, &ident);
         }
         EnvCall::Unit(UnitCall::Spawn {
             team,
@@ -568,54 +552,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
                     Fail::Denied.code() as usize
                 },
             );
-        }
-        EnvCall::Memory(MemoryCall::Mmap { size, at }) => {
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let fixed = at.get();
-            let va = {
-                let s = &ident.team.space;
-                if fixed == 0 {
-                    ShareWindow::mmap(s, size).map(|span| span.va)
-                } else {
-                    let flags = s.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
-                    s.map(KVirt::from_raw(fixed), size, flags, Some(Pending::Lazy))
-                        .map(|()| KVirt::from_raw(fixed))
-                }
-            };
-            frame.gpr.set_x(
-                Gprs::A0,
-                match va {
-                    Ok(va) => va.as_usize(),
-                    Err(_) => usize::MAX,
-                },
-            );
-        }
-        EnvCall::Memory(MemoryCall::Munmap { addr, size }) => {
-            let addr = KVirt::from_raw(addr.get());
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let ok = {
-                let s = &ident.team.space;
-                if ShareWindow::munmap(s, addr, size) {
-                    true
-                } else if s.pending_state(addr) != PendingState::Absent {
-                    // 部分覆盖时 `unmap` 要分裂、分裂要造图 ⇒ 可能答 `OutOfMemory`
-                    // （簿记一字未动）——用户面照旧是"没拆成"。
-                    s.unmap(addr, size).is_ok()
-                } else {
-                    false
-                }
-            };
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
-        }
-        EnvCall::Memory(MemoryCall::Mprotect { addr, size, flags }) => {
-            let addr = KVirt::from_raw(addr.get());
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            // 校验式：非法位 → 拒绝（不再 from_bits_truncate 静默截断）。
-            let ok = match PteFlags::from_bits(flags) {
-                Some(f) => ident.team.space.protect(addr, size, f).is_ok(),
-                None => false,
-            };
-            frame.gpr.set_x(Gprs::A0, if ok { 0 } else { usize::MAX });
         }
         // 两条轴各自成模块；命中的臂直接解构，未命中回落到下一个 match 腿。
         EnvCall::Mail(call) => {

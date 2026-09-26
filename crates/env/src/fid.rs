@@ -46,16 +46,158 @@
 //! 它不在本 crate 的 `Wire` 面里）。两处都非法位 → `Err`，不再 `from_bits_truncate`
 //! 静默截断。
 
-use mold::Envcall;
+use mold::{Envcall, Fail};
 
 use crate::wait::Wait;
 
 use crate::permission::Permission;
 use crate::wire::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 
+// ── 域失败词汇 ─────────────────────────────────────────────────────────────
+//
+// **码是各域自己的**：域内自 `-1` 起、按声明顺序连续（`#[derive(Fail)]` 逐格核对，写错编不过）。
+// 同一个条件在不同域**不同号**——读法按域（调用点知道自己在调哪一域），故码不必也不该
+// 全局唯一；`Display` 出 `<域>:<变体名>`，跨域日志靠域名分，不靠号分。
+//
+// 每域另给一枚结果别名（`XxxResult<T>`）：调用点的错类型从此是**这一域的词表**，
+// 不再是全仓统一的那一枚。
+
+/// **无域那一层**（dispatch）：`EnvCall::from_wire` 失败——调用号读不懂。
+///
+/// 它不是任何域的失败：发生在我们还不知道这是哪一域的时候。与各域首码同为 `-1`，
+/// 区分靠"回答发生在选定域之前"；良构调用到不了这一格（slot 由生成的代码给出，
+/// 内核表与域同镜像 ⇒ 真到 = 不变量破裂）。
+#[derive(Fail)]
+pub enum DispatchFail {
+    /// 未声明的 class / 越界索引。
+    Unknown = -1,
+}
+
+/// Room 域（class 0：调度词族）的失败词汇。
+#[derive(Fail)]
+pub enum RoomFail {
+    /// 目标域 / 任务已回收（`Doom`）。
+    Dead = -1,
+    /// 备料失败（`Park` / `ParkUntil` / `Wait` 的等待位备不下）。
+    OoM = -2,
+}
+
+/// `RoomFail` 的结果别名。
+pub type RoomResult<T> = Result<T, erra::Error<RoomFail>>;
+
+/// Unit 域（class 1：装域 / 产线程 / 血缘）的失败词汇。
+#[derive(Fail)]
+pub enum UnitFail {
+    /// 不在我 heir 里 / 名册里没有这个 id / 启动参数读不出来。
+    Denied = -1,
+    /// 条件未就绪（`Fall` 没等到 / `Oust` 还有没收尾的线程）。
+    #[busy]
+    Busy = -2,
+    /// 备料失败（装载头窗口 / 任务帧 / 等待位）。
+    OoM = -3,
+    /// 镜像不可装载。
+    BadImage = -4,
+}
+
+/// `UnitFail` 的结果别名。
+pub type UnitResult<T> = Result<T, erra::Error<UnitFail>>;
+
+/// Memory 域（class 2：用户堆与映射）的失败词汇。
+#[derive(Fail)]
+pub enum MemoryFail {
+    /// 这一区间不在本任务那张簿记里 / `flags` 非法。
+    Denied = -1,
+    /// 段耗尽 / 物理帧耗尽 / 映射表备不下。
+    OoM = -2,
+    /// 地址未按页对齐（定点 `mmap` / `mprotect`）。
+    NotAligned = -3,
+    /// 这一段不在任何已声明的映射里。
+    NoRegion = -4,
+    /// 该 VA 已被映射。
+    AlreadyMapped = -5,
+    /// 借入页（别人的所有权）不许加宽。
+    WidenDenied = -6,
+}
+
+/// `MemoryFail` 的结果别名。
+pub type MemoryResult<T> = Result<T, erra::Error<MemoryFail>>;
+
+/// Mail 域（class 5：数据轴）的失败词汇。
+#[derive(Fail)]
+pub enum MailFail {
+    /// token 不在表里 / 权不够 / 不是孔（递了铃、页、组）。
+    Denied = -1,
+    /// 那一枚已封印。
+    Dead = -2,
+    /// 条件未就绪（槽满 / 槽空 / 铃已响）。
+    #[busy]
+    Busy = -3,
+    /// 表项备不下。
+    OoM = -4,
+    /// 这一枚已交出去（交回即复原）。
+    HandedOver = -5,
+}
+
+/// `MailFail` 的结果别名。
+pub type MailResult<T> = Result<T, erra::Error<MailFail>>;
+
+/// Control 域（class 6：自诊断）的失败词汇。
+#[derive(Fail)]
+pub enum ControlFail {
+    /// `buf` 非法（未映射 / 不可写）。
+    Denied = -1,
+}
+
+/// `ControlFail` 的结果别名。
+pub type ControlResult<T> = Result<T, erra::Error<ControlFail>>;
+
+/// Pie 域（class 7：权柄轴）的失败词汇。
+#[derive(Fail)]
+pub enum PieFail {
+    /// 不是开辟者 / 表里没这枚 / 类型不符。
+    Denied = -1,
+    /// 资源已封印。
+    Dead = -2,
+    /// 门闩表备不下。
+    OoM = -3,
+    /// Pole 的 `size` / 区间非法（未页对齐）。
+    NotAligned = -4,
+    /// 这一枚已交出去（交回即复原）。
+    HandedOver = -5,
+}
+
+/// `PieFail` 的结果别名。
+pub type PieResult<T> = Result<T, erra::Error<PieFail>>;
+
+/// Debug 域（class 8：调试面）的失败词汇。
+#[derive(Fail)]
+pub enum DebugFail {
+    /// `buf` 非法（未映射 / 不可读）/ 长度为零。
+    Denied = -1,
+}
+
+/// `DebugFail` 的结果别名。
+pub type DebugResult<T> = Result<T, erra::Error<DebugFail>>;
+
+/// Tole 域（class 9：多路等待）的失败词汇。
+#[derive(Fail)]
+pub enum ToleFail {
+    /// token 不在表里 / 不是组 / 权不够。
+    Denied = -1,
+    /// 组已封印。
+    Dead = -2,
+    /// 组表备不下。
+    OoM = -3,
+    /// 这一枚已交出去（交回即复原）。
+    HandedOver = -4,
+}
+
+/// `ToleFail` 的结果别名。
+pub type ToleResult<T> = Result<T, erra::Error<ToleFail>>;
+
 /// 调度词族调用（class 0；域 = work/room）。
 #[derive(Envcall)]
-#[call(class = 0)]
+#[call(class = 0, fail = RoomFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 /// **时间参数的定式**（全树唯一一份，其它处只引用它）：
 ///
@@ -75,6 +217,7 @@ use crate::wire::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 /// 的文档都要能一眼看出它属于哪一族。
 pub enum RoomCall {
     /// 主动让出处理器（词族 starve）。
+    #[infallible]
     #[ret(())]
     Starve,
     /// 睡眠指定毫秒数（词族 park）——**下限**：不早于 `millis` 才可能回到本任务。
@@ -103,6 +246,7 @@ pub enum RoomCall {
     /// 为什么原因码与这句话长在本原语上、而不另立"panic 调用"：**"域不可续"是域的判断，
     /// 内核只需要知道"这个任务不再续跑 + 为什么"**。另立入口等于把域的策略写进 ABI，
     /// 且让"任务终止"这条不变量在 ABI 里有两个出口。
+    #[manual]
     #[ret(())]
     Reap {
         reason: usize,
@@ -113,6 +257,7 @@ pub enum RoomCall {
     #[ret(())]
     Wait { key: usize, millis: Wait },
     /// 事件唤醒（词族 wake）：key；返回是否唤到人。
+    #[infallible]
     #[ret(bool)]
     Wake { key: usize },
     /// 他杀（词族 doom）：把一个任务送进既有的死亡路径——与 [`RoomCall::Reap`] 成对，
@@ -175,7 +320,7 @@ pub enum ProgramKind {
 /// 的 index `0..=9` **连续无空号**：`Build` 落在 5、`Hatch`/`Fall`/`Join` 在 6/7/8、
 /// `Oust` 在 9——注释占不住槽位，没有变体就没有号。
 #[derive(Envcall)]
-#[call(class = 1)]
+#[call(class = 1, fail = UnitFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum UnitCall {
     /// 产线程（**Held**，未放行）：`team`（`TeamId(0)` = 当前域）+ `entry`（0 = 域默认
@@ -192,15 +337,19 @@ pub enum UnitCall {
         stack: usize,
     },
     /// 取当前 task id（无参 → 0 = 无上下文）。
+    #[infallible]
     #[ret(TaskId)]
     SelfId,
     /// 溯源：生我者的 task id（0 = 顶级域 / 父已亡）。
+    #[infallible]
     #[ret(TaskId)]
     Sire,
     /// 我生的子域数量（heir 枚举的 first pass；0 = 无子域）。
+    #[infallible]
     #[ret(usize)]
     HeirCount,
     /// 按索引取子域 TeamId（heir 枚举的 second pass；越界 → 0）。
+    #[infallible]
     #[ret(TeamId)]
     Heir { index: usize },
     /// 装域：镜像字节区间 + 特权级 → 新域（Space + Team，**无线程**）。
@@ -296,7 +445,7 @@ pub enum UnitCall {
 
 /// 内存调用（class 2；trace 事件名 `MemoryEvent` 同词）。
 #[derive(Envcall)]
-#[call(class = 2)]
+#[call(class = 2, fail = MemoryFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MemoryCall {
     /// 用户堆分配（字节数，页对齐向上取整）。
@@ -326,6 +475,7 @@ pub enum MemoryCall {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ChronoCall {
     /// 读取定时器 tick 计数（诊断，非时间单位）。
+    #[infallible]
     #[ret(usize)]
     Ticks,
     /// 读取单调时钟（自启动基准）：**单字 `u64` 纳秒**。
@@ -335,6 +485,7 @@ pub enum ChronoCall {
     /// timebase 的一跳（QEMU virt 10 MHz ⇒ **100 ns**，"纳秒"这个单位名比它细）。
     /// `u64` 纳秒覆盖约 584 年，不回绕。展示用的"秒 + 亚秒纳秒"由域自己拆
     /// （`/ 1e9`、`% 1e9`）——ABI 只给一个标量。
+    #[infallible]
     #[ret(u64)]
     Clock,
 }
@@ -366,7 +517,7 @@ pub enum HoleDir {
 /// **空载荷**：门铃没有载荷，故它没有 Push/Pull——"有事"就是那一位本身。`Wait` 复用
 /// 在两种资源上，靠 `dir` 分：Hole 两个方向，**Nole 只认 `Pull`**（门铃只有一条方向）。
 #[derive(Envcall)]
-#[call(class = 5)]
+#[call(class = 5, fail = MailFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
     /// push msg：token + msg VA + 长度（**`1..=一页`**）。
@@ -442,7 +593,7 @@ pub enum MailCall {
 /// `Reserve` 与 `Collect` 分工：`Collect` 按 index 枚举（发现未见过的句柄），
 /// `Reserve` 按句柄查事实（vestor = 父门闩的持有者，owner 随资源不变）。
 #[derive(Envcall)]
-#[call(class = 7)]
+#[call(class = 7, fail = PieFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieCall {
     /// 解封 Hole（数据过内核管道）：孔上刻**一枚记号**（[`Mark`]）。
@@ -539,6 +690,7 @@ pub enum PieCall {
     /// 本仓对这类格子的口径是"没有读者的格不留在 ABI 上"（见 `wire::frompair` 头注里
     /// 清掉的那三处），故这一刀把它**撤掉**、换成真正有三处读者的 `owner` 与记号。
     /// 这是**撤掉一格能力**，不是等价改写：要问"我这枚能做什么"今天没有原语答得出。
+    #[infallible]
     #[ret3((PieToken, TaskId, Mark))]
     Collect { index: usize },
     /// 查这枚门闩的来历：`vestor`（谁授的）+ `owner`（资源谁开的）+ **记号**（第三格）。
@@ -584,7 +736,7 @@ pub enum PieCall {
 /// 本类落在 **8** 上：class 3（原 `IO`）退役后那个号一直空着，而 8 也没人占——
 /// 判别号是声明顺序，取哪个空号都一样，不占任何既有号。
 #[derive(Envcall)]
-#[call(class = 8)]
+#[call(class = 8, fail = DebugFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DebugCall {
     /// 把域里的一段字节写进调试控制台（SBI DBCN，**不经过任何服务**）。
@@ -613,6 +765,7 @@ pub enum DebugCall {
     ///
     /// 为什么它是 ABI 的一格而不是一个环境变量：布局错位这类病**只有真实字节能证**，
     /// 而"读代码推布局"正是上一轮连试三轮都没走出来的那条路。
+    #[infallible]
     #[ret(())]
     SetTrace { on: usize },
 }
@@ -625,7 +778,7 @@ pub const DBCN_MAX: usize = 256;
 
 /// 控制调用（class 6）。
 #[derive(Envcall)]
-#[call(class = 6)]
+#[call(class = 6, fail = ControlFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ControlCall {
     /// 用户自诊断：采样当前任务调用栈，把 pc 地址数组写进用户 buf，返回帧数。
@@ -652,7 +805,7 @@ pub enum ControlCall {
 /// 号段取 9：class 3（原 `IO`）退役后一直空着、也不去复活它（号段口径见文件头）；
 /// 8 已归调试面，故本类顺延到 9——判别号是声明顺序，取号不改任何既有号。
 #[derive(Envcall)]
-#[call(class = 9)]
+#[call(class = 9, fail = ToleFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ToleCall {
     /// 造一个空组 → `PieToken`。

@@ -19,6 +19,22 @@
 /// 与 `Reap` 之后那句 `unreachable!` 同一口径。
 pub type EnvResult<T> = Result<T, erra::Error<EnvError>>;
 
+/// **域失败词汇的共同部分**：只有"码"。
+///
+/// 各域的词汇由 `#[derive(Fail)]`（`mold`）生成——**域内自 `-1` 起**，判别值即码；
+/// 同一个条件在不同域不同号，读法按域（调用点知道自己在调哪一域）。这一个 trait 是
+/// "把任意域的词汇当失败读"的最小面：内核的 `ret_err` 与上层的 `From` 链只认它。
+/// `Display` 由 derive 一并给出（`<域>:<变体名>`），故日志不必看号猜域。
+pub trait FailCode: Copy + core::fmt::Debug {
+    /// 那一格里的负码。
+    fn code(self) -> isize;
+}
+
+/// 把域词汇装进 `erra::Error`（derive 生成的每格入口用）。
+pub fn make_fail<F: FailCode + core::fmt::Display>(f: F) -> erra::Error<F> {
+    erra::Error::new("envcall", f)
+}
+
 /// envcall 的失败词汇。**负码即契约**（D1）：判别值就是 a0 被读成负数时那一格的值，
 /// 也是内核侧 `ret_err` 写出去的那张表的**唯一真相**（[`EnvError::code`] 的表由此得来，
 /// 不再指向内核）。
@@ -136,6 +152,14 @@ const _: () = {
     assert!(matches!(Fail::of_code(isize::MIN), None));
     assert!(matches!(Fail::of_code(isize::MAX), None));
 };
+
+/// **过渡期**：还没域化的那些 class 仍写 `Fail::X`，故这枚全局词表先实现共同部分；
+/// 九域切完随 `Fail` 一起退役（域的码与读法见 `fid.rs` 的词表面）。
+impl FailCode for Fail {
+    fn code(self) -> isize {
+        self.code()
+    }
+}
 
 /// 环境调用错误。D1 契约：仅负值构成错误，非负为成功值。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
