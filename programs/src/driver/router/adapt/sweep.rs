@@ -1,6 +1,6 @@
 //! router::adapt::sweep — **逐客（适配）**：`alive` 答不出的那几条线——**拆线 + 空出格子**。
 //!
-//! 判定在 `contract::driver::line::core`（`vacate` 那一手，连它的两个后果）；探活是内核的一问
+//! 判定在 `protocol::driver::line::core`（`vacate` 那一手，连它的两个后果）；探活是内核的一问
 //! （`mail::reserve`），拆线是设备面的一手（`plic.unwire`）。
 //!
 //! 时机是**每一次醒**（组那一次等待回来就扫一遍）：主人一没，它铸的那一枚孔就封印，而那一格

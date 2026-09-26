@@ -1,7 +1,7 @@
 //! **上限族的期限** —— "时间参数的定式"（[`crate::fid`] 头注那一份）的**类型义务版**。
 //!
 //! 三态里的"`usize::MAX` = 永久"与"一个很大的毫秒数"在整数里**长得一样**，故它欠一个类型。
-//! 两处护栏就是证据（`contract/src/session/core.rs` 的 `(left != usize::MAX).then(…)` 与
+//! 两处护栏就是证据（`protocol/src/session/core.rs` 的 `(left != usize::MAX).then(…)` 与
 //! `.min(usize::MAX as u64)`）：不先判一下，哨兵就会被当成一个真实的毫秒数算进去。
 //!
 //! **`0` 不是第三格**：它就是 [`Wait::AtMost(0)`]（至多 0 毫秒 = 当场答、不挂起）。

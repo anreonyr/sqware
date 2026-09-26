@@ -3,7 +3,7 @@
 //! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`crate::system::board`]。
 
-use contract::message::Message;
+use crate::message::Message;
 use env::Mark;
 use env::Wait;
 use env::wire::Field;

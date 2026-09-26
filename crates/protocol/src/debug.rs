@@ -1,7 +1,7 @@
 //! debug — **一行调试面的嘴**：`debug!(...)` 就是"打一行"。
 //!
 //! 全树那二十几份逐字相同的 `fn say(msg: &str)` 与各处 `debug::put(&format!(…))` 收成这一支宏
-//! ——与 `contract` 那支 `fail_codes!` 同一条口径：**一处定义，谁都能用**。
+//! ——与 `protocol` 那支 `fail_codes!` 同一条口径：**一处定义，谁都能用**。
 //!
 //! **它只在 debug 构建下有效**：`cfg!(debug_assertions)` 为假时那一格不进 ⇒ release 的机器
 //! **不带解读数**（要读数就跑 dev 档，或在档里显式 `debug-assertions = true`）。
@@ -12,7 +12,7 @@
 //! `unused`），只是运行时不落一格。
 //!
 //! **它住 `protocol`**：那是**唯一同时被 `programs` 与 `harness` 依赖、又已经拖着 `runtime`**
-//! 的一层（`contract` 的判据正是"依赖里没有 `runtime`"，碰不得）。
+//! 的一层（`protocol` 的判据正是"依赖里没有 `runtime`"，碰不得）。
 
 /// 宏的身子。不导出：调用点一律走 [`debug!`]。
 #[doc(hidden)]

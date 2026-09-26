@@ -19,7 +19,7 @@ use env::Name;
 use env::Wait;
 use protocol::session::{Pier, Quay};
 
-use contract::driver::supply::frame::{Kind, Want};
+use protocol::driver::supply::frame::{Kind, Want};
 use protocol::driver::supply;
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};

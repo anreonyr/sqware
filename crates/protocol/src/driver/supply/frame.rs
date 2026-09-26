@@ -45,7 +45,7 @@ pub const WANT_MAX: usize = 5;
 pub const ORDER_CAP: usize = OrderHead::LEN + WANT_LEN * WANT_MAX;
 pub const REPLY_CAP: usize = ReplyHead::LEN + PAIR_LEN * WANT_MAX;
 
-/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 

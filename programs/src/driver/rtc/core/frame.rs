@@ -50,17 +50,17 @@
 //! `harness/src/sleeper.rs` 走：`Now`→[`Time`]、
 //! `Arm`→[`Status`]`(OK)`、再约一次→[`Status`]`(TAKEN)`、到点→[`Time`]）。**够不着的是畸形帧**
 //! ——长短不对 / 动作码不认 / 答话那一格长度不对：判据与手写那版**一字不改**，但它今天仍是
-//! "写着的规格"。要让它有跑着的判据，唯一的路是把帧挪进「约」（`contract`），而
-//! `contract::driver` 那张表写着"服务面不放本层"——那是翻裁定的一刀，不混在这一条里。
+//! "写着的规格"。要让它有跑着的判据，唯一的路是把帧挪进 `crates/protocol`，而
+//! `protocol::driver` 那张表写着"服务面不放本层"——那是翻裁定的一刀，不混在这一条里。
 //!
 //! 本文件住**驱动自己那一片目录**，不在 `crates/protocol`：服务面 = 各驱动自己的具体协议
 //! （那一条裁定见 `protocol::driver`），而它由驱动与客人**同一份源码**各 `use` 一次。
 //! 可共用的只有那几样：**帧的骨架**（`#[derive(env::Frame)]`）、**报文那一条约定**（[`Message`] 与
-//! 船台）、**"失败域 ↔ 线上那一格"那张表**（`contract::fail_codes!`）与**成功那一格**
+//! 船台）、**"失败域 ↔ 线上那一格"那张表**（`protocol::fail_codes!`）与**成功那一格**
 //! （`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
 use super::fail::Fail;
-use contract::message::Message;
+use protocol::message::Message;
 use env::{Mark, PieToken};
 
 // ── 码 ──────────────────────────────────────────────────────
@@ -88,7 +88,7 @@ pub const PAST: u8 = 2;
 /// 两处的差别就是"持有者那一侧会不会说出'我没接住'这句话"。
 pub const BAD: u8 = 3;
 
-contract::fail_codes! {
+protocol::fail_codes! {
     /// 失败域 → 答话那一格（**一处编**：客人那一侧与驱动那一侧看同一张表）。
     ///
     /// `None`（没失败）⇒ `OK`；反向（[`code_to_fail`]）只在双射时生成——本表是双射
@@ -226,7 +226,7 @@ impl Message for Time {
     /// 读不懂（旧 `unpack_time` 那一句 `frame.try_into()` 逐字就是这个判据）。
     ///
     /// `Time::fetch` 在这里指的是**表那一手**：两枚同名，靠语言那条"固有 impl 优先于 trait"分得
-    /// 开，不是递归（同 `contract::frame` 里 `Reply` 那一处）。
+    /// 开，不是递归（同 `protocol::frame` 里 `Reply` 那一处）。
     fn fetch(bytes: &[u8]) -> Option<u64> {
         if bytes.len() != Time::LEN {
             return None;

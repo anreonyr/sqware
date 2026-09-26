@@ -42,7 +42,7 @@ use syn::{Data, DeriveInput, Fields, parse2};
 /// 给一枚具名字段的结构体生成：`LEN` ＋ `store` / `store_in` / `fetch`。展开见文件头。
 ///
 /// **生成的路径是 `::env::wire::Field`**（过程宏没有 `$crate`）：故调用方的 extern prelude
-/// 里要有 `env`——`contract` / `programs` 都有。`env` 自己若要这个 derive，先写一句
+/// 里要有 `env`——`protocol` / `programs` 都有。`env` 自己若要这个 derive，先写一句
 /// `extern crate self as env;`（今天没有这个需要）。
 pub fn expand(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = match parse2(input) {

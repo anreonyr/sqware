@@ -4,9 +4,9 @@
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/.cargo/config.toml` 里那十条别名跑。
 #
 # **照实记（用户裁定"protocol-case 没必要，删了"）**：这里原先还编外着一台 `crates/protocol-case`
-# ——八个宿主靶、120 例，把「约」那八处纯核心（operator / line / judge / roster / board / quay /
+# ——八个宿主靶、120 例，把那八处纯核心（operator / line / judge / roster / board / quay /
 # judgement / supply）的规矩在宿主上真跑一遍；门口是 `crates/gate` 的 `host` 那一门。整台连同那
-# 一门一并删了，故 `contract` 里那些"用例住 X 靶"的话也一并清掉——那八处纯核心今天**没有判据**，
+# 一门一并删了，故那个纯核 crate（今 `crates/protocol`）里"用例住 X 靶"的话也一并清掉——那八处纯核心今天**没有判据**，
 # 只剩真机那几门间接覆盖。它的来由（八台收成一台、`#[path]` 换真依赖）随它一起撤。
 exclude = [
     "crates/alloc-probe",
@@ -42,7 +42,6 @@ members = [
     # `crates/plan` 是**装机的账**（装配单 / 需求单 / 坐标 / 开机三笔账）：
     # 判据见 `crates/plan/src/lib.rs`——"这里只认表与字节，不碰任何运行时代码"。
     "crates/plan",
-    "crates/contract",
     "crates/protocol",
     "crates/runtime",
     "crates/sbi",
@@ -54,14 +53,14 @@ resolver = "3"
 # ── 排版口径（**明文声明**，用户裁定：本仓手排、`cargo fmt` 不是判据）──────────────
 #
 # **不跑 `cargo fmt --all`**：它在这棵树上一直是红的。实测（2026-09-26）**207 处、75 个文件**
-# ——`harness` 91 / `programs` 68 / `crates/protocol` 25 / `crates/contract` 16 / `crates/env` 3 /
+# ——`harness` 91 / `programs` 68 / `crates/protocol` 25 / `crates/contract` 16（**今已并入 `protocol`**）/ `crates/env` 3 /
 # `crates/runtime` 2 / `kernel` 2（75 份全是被 git 跟踪的 `.rs`；全树 338 份里 263 份本来就
 # 是干净的）。故 **fmt 绿不是任何一关的判据**，`cargo fmt --all --check` 的读数只当参考。
 #
 # **照实记（"这一仓的排版是刻意的"不是这 207 处的解释）**：我上一条提议里把现状说成"排版是
 # 刻意的：成对的表、和代码对齐的注释"——读数不支持那个说法，收回来：里面既有**从没被 rustfmt
 # 碰过的漂移**，也有**报文层那一程我自己写下的行**（`protocol/src/session/slip.rs`、
-# `contract/src/system/board/frame.rs`、`protocol/src/driver/{line,supply}/client.rs` …）——
+# `protocol/src/system/board/frame.rs`、`protocol/src/driver/{line,supply}/client.rs` …）——
 # 那几刀的判据里没有 fmt，故没有一处拦得住它。这一条是**口径**，规矩两条：
 #
 #   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；

@@ -96,7 +96,7 @@ const LOOKUP: u8 = 3;
 // 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
 const EVICT: u8 = 4;
 
-/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 

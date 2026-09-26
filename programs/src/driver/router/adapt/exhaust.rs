@@ -1,6 +1,6 @@
 //! router::adapt::exhaust — **排空（适配）**：客人说一句"这一条我排空了" ⇒ 那一格回闲 + 把线放回去。
 //!
-//! 判定在 `contract::driver::line::core`（`exhaust` 那一手）；放线是设备面的一手
+//! 判定在 `protocol::driver::line::core`（`exhaust` 那一手）；放线是设备面的一手
 //! （`plic.enable`）。
 //!
 //! **按泊位认线**：一条线一枚泊位，谁推的那一枚就是哪一条——**帧里没有线号**（1 字节记号，

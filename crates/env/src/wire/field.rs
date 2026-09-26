@@ -205,6 +205,6 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
 // 由 `env` 转出来（`crates/env/src/lib.rs` 的 `pub use mold::Frame;`）。
 //
 // 三件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再是
-// `env` 的 crate 根上一条"与模块同名的宏"（第一刀与 `contract::frame` 撞的正是那一次）；
+// `env` 的 crate 根上一条"与模块同名的宏"（第一刀与 `protocol::frame` 撞的正是那一次）；
 // 结构体现在**写在调用点**——各格的 `pub` 与字段上的文档都在用户那一边看得见，而生成的
 // `LEN` / `store` / `store_in` / `fetch` 一个字没变（展开物逐字节比对过）。

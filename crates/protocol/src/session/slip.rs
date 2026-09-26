@@ -12,7 +12,7 @@
 //!
 //! 四个方法（＋ [`Land`] 那两格失败）只碰**两枚原语**（`HolePie::push` / `pull_timeout`）与
 //! **一条约定**（[`Message`]），与哪一族、哪条路、什么荷载全无关。它住 `protocol`
-//! 是因为只有这一层同时看得见"孔"（`runtime`）与"报"（`contract`）。
+//! 是因为只有这一层同时看得见"孔"（`runtime`）与"报"（`protocol`）。
 //!
 //! # 本仓每一枚孔是**单向**的
 //!
@@ -38,7 +38,7 @@
 
 use core::marker::PhantomData;
 
-use contract::message::Message;
+use crate::message::Message;
 use env::{MailFail, Wait};
 use runtime::env::mail::HolePie;
 

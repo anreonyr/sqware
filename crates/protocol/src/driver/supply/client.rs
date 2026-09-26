@@ -1,9 +1,9 @@
 //! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按坐标取一枚（[`pick`]）
 //!
-//! **照实记（这一份为什么搬到 `protocol`）**：它从前住「约」（`contract::driver::supply::client`）
-//! ——那时它手里只有会话核心那条泊位（`Pier::post` / `Pier::pull`），编解还是自由函数。搬过来是
-//! 因为它要用**船台**：`Slip` 同时看得见"孔"（`runtime`）与"报"（`contract`），而那一层只有
-//! `protocol` 有。**判据一字未改**——尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
+//! **照实记（这一份的前身）**：它从前住那个只做形与据的 crate（`driver::supply::client`）
+//! ——那时它手里只有会话核心那条泊位（`Pier::post` / `Pier::pull`），编解还是自由函数。它要用
+//! **船台**：`Slip` 同时看得见"孔"（`runtime`）与"报"（`message`）。**判据一字未改**——
+//! 尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
 
 use env::Wait;
 use env::wire::Field;

@@ -85,7 +85,7 @@ pub(super) fn try_post(at_peer: PieToken, msg: &[u8]) -> Result<(), ()> {
 ///
 /// **"枚举本身失败"那一格不再分辨**（照实记：用户裁定甲）：[`mail::pies`] 读到读不动就
 /// **打住**，与"这一遍扫完了"合流 ⇒ `Claim::Unread` 那个变体随之退场（照实记在
-/// `contract/src/session/core.rs` 那一份里）。
+/// `protocol/src/session/core.rs` 那一份里）。
 pub(super) fn each(f: &mut dyn FnMut(Hole) -> Result<(), Claim>) -> Result<(), Claim> {
     for p in mail::pies() {
         f(Hole {
@@ -177,7 +177,7 @@ pub fn push_to(entry: PieToken, frame: &[u8]) -> Result<(), ()> {
 ///
 /// **照实记（我先把这一处删了，编译器叫回来的）**：落这一刀时我按"全树只有 [`each`]
 /// 一处叫它"把它删了，`cargo check` 当场报 `hands()` 少一格——它是 **`Hands` 的一枚
-/// 字段**（十件手之一），读者在 `contract` 那一侧、不在本文件里：我搜的是**调用点**，
+/// 字段**（十件手之一），读者在 `protocol` 那一侧、不在本文件里：我搜的是**调用点**，
 /// 漏的是**登记点**。教训：函数指针那一类"手"的用家要按 `Hands` 的字段去找，`rg`
 /// 叫不出它的名字。
 ///
@@ -252,7 +252,7 @@ pub(super) fn now_ns() -> u64 {
     runtime::env::chrono::clock()
 }
 
-/// **这一层唯一的出口**：把身体已经在这里的那十件，装成一张 [`Hands`]——「约」的 `Quay::open`
+/// **这一层唯一的出口**：把身体已经在这里的那十件，装成一张 [`Hands`]——`Quay::open` 要它
 /// 要它。
 ///
 /// **照实记**：这十件从前靠"同住一个模块 + `pub(super)`"给 `core` 用；现在靠**一张函数指针表**，

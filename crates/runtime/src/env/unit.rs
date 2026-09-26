@@ -99,7 +99,7 @@ pub fn heir_count() -> usize {
 /// 用同一条哨兵，故没有失败域。
 ///
 /// **照实记（今天没有调用者）**：本手与 `UnitCall::Heir` 这一格今天全仓无人用
-/// （`contract/src/system/mod.rs` 记着"枚举出来的域在三条动作面上仍是死端"）。
+/// （`protocol/src/system/mod.rs` 记着"枚举出来的域在三条动作面上仍是死端"）。
 /// 留着是因为它是那套枚举的第二趟，不是"备复用"。
 pub fn heir_at(index: usize) -> TeamId {
     env::unit::heir(index)

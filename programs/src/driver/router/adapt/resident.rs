@@ -1,6 +1,6 @@
 //! router::adapt::resident — **常驻· 壳**：等三源 → 四手各就位。
 //!
-//! 判定不在这里：账与四原语住 `contract::driver::line::core`，"区 ↔ 线号"住 `crate::core::sources`，
+//! 判定不在这里：账与四原语住 `protocol::driver::line::core`，"区 ↔ 线号"住 `crate::core::sources`，
 //! 每一次醒来的四件事各有一份（`sweep` / `exhaust` / `desk` / `bell`）——本文件只做"等、取、喂"。
 
 use super::boot::Up;

@@ -6,7 +6,7 @@
 //! **一手对一条原语**（`land` / `part` / `find` / `trim` / `list` / `seek` / `name`）：线上与模型
 //! 是同一件事的两层，客侧这一层也不再拿一个 `op` 码当参数——问什么形状由函数名说。
 
-use contract::message::Message;
+use crate::message::Message;
 use env::Mark;
 use env::Wait;
 use env::wire::Field;

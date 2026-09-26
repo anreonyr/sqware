@@ -1,6 +1,6 @@
 //! supply::server — **引导域那一侧**：照单取源、授出、回一张回单（常驻循环 [`serve`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`contract::driver::supply::frame`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::frame`]。
 
 use env::PieToken;
 use env::Wait;
@@ -8,7 +8,7 @@ use plan::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 
-use contract::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
+use protocol::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
 use protocol::driver::supply::core::Fail;
 use protocol::session::Pier;
 use protocol::session::slip::Land;

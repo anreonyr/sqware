@@ -26,7 +26,7 @@ semihosting = ["dep:serde_json"]
 
 [lib]
 path = "src/lib.rs"
-# **与 `protocol` / `contract` 同款，理由同**：riscv 目标上编不出 libtest（它要 std）。
+# **与 `protocol` 同款，理由同**：riscv 目标上编不出 libtest（它要 std）。
 # `cargo test` 会把 lib 也编成一个测试目标 ⇒ 不关就是 `E0463: can't find crate for test`。
 # 关掉的是"lib 自身当测试目标"，**不影响** `[[test]] embedded`（集成测试是另一个目标）。
 test = false

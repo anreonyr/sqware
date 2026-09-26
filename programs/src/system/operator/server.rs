@@ -29,7 +29,7 @@ use protocol::system::principal::core::PrincipalId;
 
 use super::bridge::Coord;
 use crate::system::control::service::Start;
-use contract::system::desk::{Desk, DeskFail, Guest};
+use protocol::system::desk::{Desk, DeskFail, Guest};
 use protocol::system::operator::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -44,7 +44,7 @@ const SETTLE_MS: usize = 1;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的（见
-/// `contract/src/system/operator/frame.rs` 的 `CoordFrame`）。树**不当自己的客人**：
+/// `protocol/src/system/operator/frame.rs` 的 `CoordFrame`）。树**不当自己的客人**：
 /// 它不去 `seek("/sys/principal")`，理由同那一笔（自指 ⇒ 环）。
 ///
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"

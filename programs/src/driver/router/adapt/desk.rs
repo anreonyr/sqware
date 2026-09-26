@@ -1,12 +1,12 @@
 //! router::adapt::desk — **门面（适配）**：登记那一句话——报**那一段区** ⇒ 解树（"线 = 区的函数"）
 //! ⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 //!
-//! 判定在 `contract::driver::line::core`（`Lines` 的四原语）与 `crate::core::sources`（区 → 线号）；
+//! 判定在 `protocol::driver::line::core`（`Lines` 的四原语）与 `crate::core::sources`（区 → 线号）；
 //! 本文件只做碰内核与设备的那几手：认泊位、解帧、接线、挂组、答话、清账外的那两枚。
 
 use crate::core::sources::Sources;
 use crate::plic::{LINE_PRIORITY, Plic};
-use contract::message::Message;
+use protocol::message::Message;
 use env::{HoleDir, Mark, Name, TaskId, Wait};
 use protocol::debug;
 use protocol::driver::line::{core::Lines, frame as lcall};

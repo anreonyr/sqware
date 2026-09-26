@@ -17,7 +17,7 @@
 //! **没有会话可选装**：这一面不装码头、不定泊位——门牌自己就是那条路（同 rtc / principal
 //! 那两面）。
 
-use contract::message::Message;
+use crate::message::Message;
 use env::Wait;
 use env::{PieToken, TaskId};
 use runtime::env::mail;

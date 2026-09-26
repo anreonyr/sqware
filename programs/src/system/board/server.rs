@@ -19,7 +19,7 @@ use protocol::system::board::ENTRY_MARK;
 pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 use protocol::system::board::{Board, Fail};
 
-use contract::system::desk::{Desk, Guest};
+use protocol::system::desk::{Desk, Guest};
 use protocol::system::board::desk;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
@@ -299,7 +299,7 @@ fn answer(
                     );
                     Ok(())
                 }
-                None => Err(contract::system::board::core::Fail::Unknown),
+                None => Err(protocol::system::board::core::Fail::Unknown),
             };
             // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
             if let Some(lane) = lane {

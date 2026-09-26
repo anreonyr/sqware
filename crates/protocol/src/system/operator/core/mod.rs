@@ -1,7 +1,7 @@
 //! operator 的核心 —— **树、八条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名 / 开）、失败域**。
 //!
-//! 本文件**不碰内核**——这条纪律现在由 **crate 边界**管着（`contract` 全树不碰内核那一层，
-//! 见本 crate 的头注），故这里不再复述。
+//! 本文件**不碰内核**——并回一个 crate 之后这条纪律不再是 crate 边界，只在目录上分家
+//! （判定与账住 `core/`，落内核的住 `client.rs` 与那几手），见本 crate 头注的照实记。
 //!
 //! 外部事实是**注入**的：两枚戳子 [`Stamps`]（那一枚 Pie 还答得出吗、这扇门是谁开的）与
 //! [`Unship`]（把我这一份放下）。于是喂三个假闭包就能把这棵树与八条原语的规矩推理干净，
@@ -114,7 +114,7 @@ impl Id for EntryId {
 /// `to_bytes` / `from_bytes` 就是这一格的正文）。
 ///
 /// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
-/// [`EntryId`]（依赖是单向的 `contract → env`），故宽度与字节序只能由定义它的这一处给。
+/// [`EntryId`]（依赖是单向的 `protocol → env`），故宽度与字节序只能由定义它的这一处给。
 /// 口径与 `plan::assembly::Eyes` 那一处相同（`Field` 那一族的正文记着）。
 ///
 /// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
@@ -524,8 +524,8 @@ impl Operator {
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
                 // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
-                // （`crates/contract/src/system/desk.rs`）与 `Ledger::land`
-                // （`crates/contract/src/system/operator/core/ledger.rs`）。**同一句话，三处一个纪律。**
+                // （`crates/protocol/src/system/desk.rs`）与 `Ledger::land`
+                // （`crates/protocol/src/system/operator/core/ledger.rs`）。**同一句话，三处一个纪律。**
                 //
                 // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。
                 // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。
@@ -621,7 +621,7 @@ impl Operator {
 
 // ── 两张会话失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
 //
-// 两个入参都出自「约」（`session::core` 的 `Claim` / `Seat`）、产出的又是本文件自己的
+// 两个入参都出自 `session::core`（`Claim` / `Seat`）、产出的又是本文件自己的
 // [`Fail`]，故它们与产出的那一格同住。`call.rs` 并进 `system/operator/mod.rs` 那一刀
 // 把这两张表落在这里。
 

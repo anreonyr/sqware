@@ -17,7 +17,7 @@
 //!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use contract::message::Message;
+use protocol::message::Message;
 use env::PieToken;
 use env::Wait;
 use protocol::session::slip::Slip;

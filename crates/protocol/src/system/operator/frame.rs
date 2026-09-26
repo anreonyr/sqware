@@ -87,7 +87,7 @@ const NAME: u8 = 6;
 // （今天 `LAND`..`NAME` 的 1..6 与 `UNKNOWN`..`DEAD` 的 1..6 已经重号），故两边各按各的序列。
 const SEEK: u8 = 7;
 
-/// 成功那一格：**全协议同一个号**——定义在 `contract/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
@@ -695,7 +695,7 @@ impl Message for Union {
 ///
 /// **照实记（它为什么从 `programs/.../operator/bridge.rs` 搬到这里）**：那一帧原先跟着它的
 /// 那个常量住在**装配侧**（`pub(crate) const COORD_FRAME`），故它**只有真机能跑**——宿主靶
-/// 编不到 `programs`。搬进「约」的这一半之后，它与 [`Tip`](crate::system::board::frame::Tip)
+/// 编不到 `programs`。并回本 crate 之后，它与 [`Tip`](crate::system::board::frame::Tip)
 /// 一样在宿主上编得动；**"表外的眼睛码 ⇒ 整帧读不懂"那一条原先由 `judge` 靶钉着，那条判据
 /// 随靶一并删了**（用户裁定"protocol-case 没必要"）——搬家的理由撤了一半，位置不动。
 ///

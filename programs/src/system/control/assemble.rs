@@ -16,7 +16,7 @@ use env::{Name, Wait};
 use protocol::debug;
 use protocol::system::desk::Announce;
 
-use contract::driver::supply::frame::{WANT_MAX, Want};
+use protocol::driver::supply::frame::{WANT_MAX, Want};
 use protocol::driver::supply;
 
 use crate::system::program::Setup;

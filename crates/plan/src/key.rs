@@ -121,7 +121,7 @@ impl Key {
     }
 }
 
-/// 线上那一格（帧表里"坐标"那一格要 `T: Field`，见 `contract::driver::line::frame`）。
+/// 线上那一格（帧表里"坐标"那一格要 `T: Field`，见 `protocol::driver::line::frame`）。
 ///
 /// **照实记（这条 impl 为什么只有两行）**：这一格的两手早就在类型自己身上（[`Key::bytes`] /
 /// [`Key::from_bytes`]）——它们说的是"这一格怎么落字节、判别号不认识怎么判废"。`Field` 只是把

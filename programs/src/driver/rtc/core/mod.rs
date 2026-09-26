@@ -10,7 +10,7 @@
 //! 对外只有三件：[`Host`]（会话核）、[`frame`]（形与记号）、[`fail::Fail`]（失败域）——
 //! 那一格是核的内件，它的不变量（一台设备一个闹钟）由 [`Host`] 持有它的方式承载。
 //!
-//! 这一层与 `crates/contract/driver/line/` 同一个分工（那边是 `core.rs` 账 ＋ `frame.rs` 形）：
+//! 这一层与 `crates/protocol/driver/line/` 同一个分工（那边是 `core.rs` 账 ＋ `frame.rs` 形）：
 //! **只有数据与决定**。碰内核的那几手（船台、借孔、推帧）住 [`super::client`]；碰内核动作与
 //! 设备的那几手住 `src/driver/rtc/adapt/`。
 
