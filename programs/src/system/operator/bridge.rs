@@ -41,6 +41,51 @@ impl Coord {
     }
 }
 
+/// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路 ＋ 协调帧那两格。
+///
+/// 原先这三样是 `System` 上的三个裸字段（`tree` / `otip` / `coord`）。它们问的是**树的语义**
+/// ——客人怎么接、提示怎么认、哪一双眼睛往哪记——故收进树这一间。
+#[derive(Default)]
+pub struct Tree {
+    host: Option<TaskId>,
+    tip: Option<PieToken>,
+    coord: Coord,
+}
+
+impl Tree {
+    /// 持树者那一枚的号（`None` = 还没起）。
+    pub fn host(&self) -> Option<TaskId> {
+        self.host
+    }
+
+    /// **把这位客人接上树**（三步见 [`attach`]）。持树者还没起就没得接。
+    pub fn attach(
+        &mut self,
+        quay: &mut Quay,
+        client: TaskId,
+        millis: Wait,
+    ) -> Result<(), &'static str> {
+        let host = self.host.ok_or("no tree yet")?;
+        attach(quay, client, host, millis, &mut self.tip, self.coord)
+    }
+
+    /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走。
+    pub fn adopt(&mut self, host: TaskId, millis: Wait) -> Result<(), &'static str> {
+        self.host = Some(host);
+        self.tip = None;
+        host_of(host, millis, &mut self.tip)?;
+        Ok(())
+    }
+
+    /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。
+    pub fn eye(&mut self, eyes: Eyes, who: TaskId) {
+        match eyes {
+            Eyes::Roster => self.coord.roster = Some(who),
+            Eyes::League => self.coord.league = Some(who),
+        }
+    }
+}
+
 /// 把持树者接上一位客人（装配者调用）：**三步**（见文件头那张图）。
 ///
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。

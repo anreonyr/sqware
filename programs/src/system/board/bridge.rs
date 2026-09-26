@@ -24,6 +24,30 @@ static HOST: AtomicUsize = AtomicUsize::new(0);
 // 提示之路在**装配者表里**的那一枚句柄**不放 static**：`PieToken` 是表的身份、标着 `!Sync`
 // （`env::wire::handle`），static 装不下它——它由装配者这一枚线程自己拿着，逐次传下去。
 
+/// **板在装配者这一侧的状态**：那条提示之路（一枚装配线程用一条）。
+///
+/// 原先它是 `System` 上的一个裸字段（`btip`）。它问的是**板的语义**——提示怎么认、往哪递
+/// ——故收进板这一间；装配者那一侧只留这一个手柄。
+#[derive(Default)]
+pub struct Bridge {
+    tip: Option<PieToken>,
+}
+
+impl Bridge {
+    /// **把这位客人接上板**（三步见 [`attach`]，次序即契约）。返 `Err(哪一步)`。
+    pub fn attach(
+        &mut self,
+        quay: &mut Quay,
+        me: TaskId,
+        client: TaskId,
+        name: Name,
+        millis: Wait,
+        lane: Option<PieToken>,
+    ) -> Result<(), &'static str> {
+        attach(quay, me, client, name, millis, &mut self.tip, lane)
+    }
+}
+
 /// 把板接上一位客人（装配者调用）：**三步**（见文件头"一问一答的次序"）。
 ///
 /// `client` = 客人（= 装配者刚起的那一枚线程；iii 之后它可能住**本域**）：**客人交出来的那一枚就落在

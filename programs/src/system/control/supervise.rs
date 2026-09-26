@@ -1,99 +1,143 @@
 //! control::supervise — **监督相**：哪一位没了、怎么记账、怎么收场。
 //!
-//! 本文件只管**起完之后一直看**：板把"某位的门封印了"变成它那条死亡道上的一格，本线程从
-//! 组上醒来、按道上的名字认人、等它真收尾、写 `Dead`、放下它的域、报一行读数；名册最后一条
+//! 本文件管**起完之后一直看**：板把"某位的门封印了"变成它那条死亡道上的一格，本线程从
+//! 组上醒来、按道上的名字认人、等它真收尾、写 `Dead`、放下它的域、报一行读数；最后一条
 //! 走了之后，把仍在跑的**有界地**收掉，然后收场。
 //!
 //! **装配那一半不在这里**（[`super`] 与 [`super::service`]）：建域 / 放行 / 等就绪 / 收一枚都是
 //! **装配期**的事。两半之间只有两处来往——表里那几格状态（`State` / `Slot`），与那两枚原语
 //! [`service::stop`] / [`service::until`]（本文件只读它们，不重写）。
 //!
-//! **死亡道**（[`Lane`]）也住这一半，**表也住调用方**（`System` 铸、`System` 收着）：
-//! 那枚孔是装配期铸的（装配时转授给板），但它的**读者只有本文件**——一条道响一次、响完就完，
-//! 正是"监督相"这件事本身。
+//! **道与组是这一相自己的状态**（[`Watch`]）：装配期铸、起完之后一直看——一枚孔一条道，
+//! 读者只有本文件。原先它们是 `System` 上的两个裸字段，现收进这一间。
 
-use env::{Name, PieToken, Wait};
-use runtime::core::pile::Pile;
-use runtime::env::mail::HolePie;
-use runtime::env::unit as utask;
+use alloc::vec::Vec;
 
+use env::{HoleDir, Mark, Name, PieToken, Wait};
+use plan::assembly::Row;
 use protocol::debug;
+use protocol::system::board::LANE_PREFIX;
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Slot, State, Table};
+use runtime::core::pile::Pile;
+use runtime::env::mail::{self, HolePie};
+use runtime::env::unit as utask;
 
-// 表那一侧的两手（本文件只读、不重写）与装配期铸的那一条道。
-use super::service::{stop, until};
+// 表那一侧的两手（本文件只读、不重写）。
 use super::Control;
+use super::service::{stop, until};
 
 /// **一条死亡道**：哪一位 + 那一条路（装配期铸的孔，记号 `gone-<名字>`）。
 ///
 /// **照实记（为什么按名字，不按下标）**：原先道与装配单**按下标**对齐（`lanes[i]` ↔ `plan[i]`，
-/// 本文件又按同一个下标把"哪条道响"翻回名字）——两张表必须各自自洽。装配单变成**两段相接**
-/// （内件 ＋ 镜像里那几台）之后，跨两段维持"位次自洽"正是那条隐患复发的地方 ⇒ 改成**按名字**
-/// （板那一侧本来就是按记号 `gone-<名字>` 认领的）。
+/// 本文件又按同一个下标把"哪条道响"翻回名字）——两张表必须各自自洽。装配单变成两段相接之后，
+/// 跨两段维持"位次自洽"正是那条隐患复发的地方 ⇒ 改成**按名字**（板那一侧本来就是按记号
+/// `gone-<名字>` 认领的）。
 pub struct Lane {
     /// 这一位是谁（装配单上的名字）。
     pub name: &'static str,
-    /// 那一条道。`None` 有**两条来路**：**这一位不上板**（边里 `board = false`——道是板写的，
+    /// 那一条道。`None` 有**两条来路**：**这一位不上板**（`plan.board = false`——道是板写的，
     /// 没有写端就不铸）或**本域铸不出孔**（交给退场级联）。
     pub road: Option<PieToken>,
 }
 
-/// 监督循环：**发现死亡 + 记账 + 放下死域**。
-///
-/// 事件来自**板**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来
-/// ⇒ 往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
-/// **哪条道响**给出——不必猜、也不会两条挤一格丢名字。
-///
-/// 醒来做两件事：先 `until` 等它真的收尾（板报的是"门封印了"，而 `Oust` 要的前置是"域里没有
-/// 还没收尾的线程"——这一步等的是**事件**，不是节拍）；再写 `State::Dead`（**不 `detach`**：
-/// 坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、报一行。最后一条没了
-/// 之后，对**仍在跑的**逐个 `stop`——它们的死会再走同一条路回来；在册的每一行都 `Dead` 之后
-/// 才收场。
-pub fn run(control: &mut Control, lanes: &[Lane], pile: &Pile, last: Name) {
-    // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
-    // 不按"这条路上平常走几个字节"备）。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
-    let mut lane_buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-    if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
-        debug!("system: no room");
-        return;
+/// **监督相在编排域这一侧的状态**：死亡道表 ＋ 等任一道响的组。
+pub struct Watch {
+    lanes: Vec<Lane>,
+    pile: Pile,
+}
+
+impl Watch {
+    /// **铸道 + 立组**：上板的那几位一位一条（记号 `LANE_PREFIX` ＋ 名字）。
+    ///
+    /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
+    /// **不上板的那几位不铸道**：没有写端的道永远不会响。
+    pub fn of(rows: &[&'static Row]) -> Result<Watch, ()> {
+        // 组是**独占**的（`shared = false`）：本线程用它等任一道响（零轮询）。
+        let pile = Pile::unseal(false).map_err(|_| ())?;
+        let mut lanes: Vec<Lane> = Vec::new();
+        lanes.try_reserve(rows.len()).map_err(|_| ())?;
+        for row in rows {
+            // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
+            // 拼出来找它）。
+            let board = row.plan.as_ref().map(|p| p.board).unwrap_or(false);
+            let road = if board {
+                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", row.name))).ok()
+            } else {
+                None
+            };
+            if let Some(road) = road {
+                let _ = pile.attach(&HolePie::from_token(road), HoleDir::Pull);
+            }
+            lanes.push(Lane {
+                name: row.name,
+                road,
+            });
+        }
+        Ok(Watch { lanes, pile })
     }
-    lane_buf.resize(runtime::PAGE_SIZE, 0);
-    let mut stopping = false;
-    loop {
-        // 等任一条道响。**`Pile` 的既定用法**：**挂起过的那一侧返回的是预置值**——内核没有
-        // 第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
-        if pile.await_(Wait::Forever).is_err() {
-            // 组坏了：退回"等最后一条退场"，行为与改动前一致。
-            control.wait_last(last);
+
+    /// 这一位的死亡道（按名字取，不是按下标：见 [`Lane`]）。
+    pub fn lane_of(&self, name: &str) -> Option<PieToken> {
+        self.lanes.iter().find(|l| l.name == name).and_then(|l| l.road)
+    }
+
+    /// 监督循环：**发现死亡 + 记账 + 放下死域**。
+    ///
+    /// 事件来自**板**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来
+    /// ⇒ 往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
+    /// **哪条道响**给出——不必猜、也不会两条挤一格丢名字。
+    ///
+    /// 醒来做两件事：先 `until` 等它真的收尾（板报的是"门封印了"，而 `Oust` 要的前置是"域里
+    /// 没有还没收尾的线程"——这一步等的是**事件**，不是节拍）；再写 `State::Dead`（**不
+    /// `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、报一行。
+    /// 最后一条没了之后，对**仍在跑的**逐个 `stop`——它们的死会再走同一条路回来；在册的每一行
+    /// 都 `Dead` 之后才收场。
+    pub fn run(&mut self, control: &mut Control, last: Name) {
+        // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
+        // 不按"这条路上平常走几个字节"备）。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
+        let mut lane_buf: Vec<u8> = Vec::new();
+        if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
+            debug!("system: no room");
             return;
         }
-        // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
-        // 可能带走多条（两位前后脚死）。
-        for lane in lanes {
-            let Some(road) = lane.road else {
-                continue;
-            };
-            if HolePie::from_token(road)
-                .pull_timeout(&mut lane_buf, Wait::POLL)
-                .is_err()
-            {
-                continue; // 这一条没货
+        lane_buf.resize(runtime::PAGE_SIZE, 0);
+        let mut stopping = false;
+        loop {
+            // 等任一条道响。**`Pile` 的既定用法**：**挂起过的那一侧返回的是预置值**——内核
+            // 没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
+            if self.pile.await_(Wait::Forever).is_err() {
+                // 组坏了：退回"等最后一条退场"，行为与改动前一致。
+                control.wait_last(last);
+                return;
             }
-            let Ok(name) = Name::new(lane.name) else {
-                continue;
-            };
-            account(&mut control.table, name);
-            // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
-            if name == last && !stopping {
-                stopping = true;
-                stop_running(&mut control.table, lanes);
+            // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
+            // 可能带走多条（两位前后脚死）。
+            for lane in &self.lanes {
+                let Some(road) = lane.road else {
+                    continue;
+                };
+                if HolePie::from_token(road)
+                    .pull_timeout(&mut lane_buf, Wait::POLL)
+                    .is_err()
+                {
+                    continue; // 这一条没货
+                }
+                let Ok(name) = Name::new(lane.name) else {
+                    continue;
+                };
+                account(&mut control.table, name);
+                // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
+                if name == last && !stopping {
+                    stopping = true;
+                    stop_running(&mut control.table, &self.lanes);
+                }
             }
-        }
-        if stopping {
-            // 收场：仍在跑的已经**有界地**下过一刀并等过（见 [`stop_running`]）；等不到的
-            // 那些交给本域退场时的级联——那条路是既有的可靠收场路径，不在这里等。
-            return;
+            if stopping {
+                // 收场：仍在跑的已经**有界地**下过一刀并等过（见 [`stop_running`]）；等不到的
+                // 那些交给本域退场时的级联——那条路是既有的可靠收场路径，不在这里等。
+                return;
+            }
         }
     }
 }
