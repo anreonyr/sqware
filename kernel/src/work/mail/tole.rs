@@ -70,7 +70,7 @@ use crate::work::mail::nole::NoleId;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use core::time::Duration;
-use env::Fail;
+use env::ToleFail;
 
 /// Tole 的全局身份（自 1 递增、永不复用）。
 ///
@@ -222,9 +222,9 @@ impl ToleMeta {
 ///
 /// 尾巴上**敲一次组键**（`knock`，提示型）：快照变了，等本组的人该重取一遍。独占组上
 /// 链长恒 ≤ 1（等价于叫醒那一个），共享组上放行全链——扇出由**键的种类**决定，见头注。
-pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), Fail> {
+pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<(), ToleFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(ToleFail::Dead);
     }
     let cell = Cell {
         mate,
@@ -236,7 +236,7 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
             return Ok(());
         }
         if cells.try_reserve(1).is_err() {
-            return Err(Fail::OoM);
+            return Err(ToleFail::OoM);
         }
         cells.push(cell);
     }
@@ -249,7 +249,7 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
         if let Some(at) = cells.iter().position(|c| c.mate == mate) {
             cells.swap_remove(at);
         }
-        return Err(Fail::OoM);
+        return Err(ToleFail::OoM);
     }
     // 叫醒等本组的人：快照变了，它们该重取一遍（信标只是提示，醒来自己复核）。
     //
@@ -267,9 +267,9 @@ pub(crate) fn attach(meta: &ToleMeta, mate: Mate, life: Weak<Life>) -> Result<()
 /// **这是组级动作，不是个人动作**：格子表是**共享池**（[`Cell`] 不记谁挂的），有组
 /// `STORE` 就能摘任何一格——共享组下"我挂的"与"他挂的"在数据面里没有分别。代价照实记：
 /// 一个持有者退场后，它挂的格子**留到成员死**（`cells()` 按存活过滤），不替它清。
-pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), Fail> {
+pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), ToleFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(ToleFail::Dead);
     }
     {
         let mut cells = meta.cells.lock();
@@ -335,9 +335,9 @@ impl Drop for ToleMeta {
 /// `dur == ZERO` = **只探测**：当场 `Resume(())`（不挂起、也不消费信标）——
 /// 与全树的"上限族"口径一致（[`crates/env` 的时间定式]），与 `hole::wait` /
 /// `nole::wait` 同款；`fall` 那一边不特判是因为它探的**就是**信标本身。
-pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, Fail> {
+pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, ToleFail> {
     if !meta.alive() {
-        return Err(Fail::Dead);
+        return Err(ToleFail::Dead);
     }
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(()));

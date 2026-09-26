@@ -19,7 +19,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
-use env::{Fail, PieToken, TaskId};
+use env::{PieToken, TaskId};
+
+use super::GateFail;
 
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
@@ -275,12 +277,9 @@ pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<PieT
 /// **表里没有 → `Denied`**（不是我的东西）。整枚在放锁前克隆出来：最后一份 clone 落在
 /// 锁外 drop，`Meta::drop`（唤醒等待者 / 撤映射 / 还帧）是 L3 或更外层的活，绝不能压在
 /// `pies` 锁上。
-pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, Fail> {
+pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Option<AnyPie> {
     let pies = task.pies.lock();
-    pies.iter()
-        .find(|p| p.token() == token)
-        .cloned()
-        .ok_or(Fail::Denied)
+    pies.iter().find(|p| p.token() == token).cloned()
 }
 
 /// 定位 + 过两关：**已封印 → `Dead`；权不够 → `Denied`**。
@@ -294,13 +293,17 @@ pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Result<AnyPie, Fail> 
 ///
 /// **不查「被关住」**（第三维，见 `envcall::pie::usable`）：它要摸**别人**的表，必须在
 /// 放开本任务 `pies` 之后判——故调用方拿到这里返回的抄件、放锁之后再问它。
-pub(crate) fn accede(task: &Arc<Task>, token: PieToken, need: Need) -> Result<AnyPie, Fail> {
-    let pie = locate(task, token)?;
+pub(crate) fn accede<E: GateFail>(
+    task: &Arc<Task>,
+    token: PieToken,
+    need: Need,
+) -> Result<AnyPie, E> {
+    let pie = locate(task, token).ok_or_else(E::denied)?;
     if !pie.alive() {
-        return Err(Fail::Dead);
+        return Err(E::dead());
     }
     if !pie.allows(need) {
-        return Err(Fail::Denied);
+        return Err(E::denied());
     }
     Ok(pie)
 }

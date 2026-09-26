@@ -32,7 +32,7 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, AnyPie, Need, Permission, Pie, clear_heir};
+use crate::work::unit::gate::{self, AnyPie, GateFail, Need, Permission, Pie, clear_heir};
 use crate::work::unit::task::TaskIdent;
 
 use super::subset_to_pte;
@@ -115,7 +115,7 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), Fail>) {
 ///
 /// 锁序：核对要摸**别人**的表（L3），故必须**在放开本任务 `pies` 之后**调用；本函数
 /// 自己逐任务取放，绝不嵌套。
-pub(super) fn usable(pie: &AnyPie) -> Result<(), Fail> {
+pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     let Some(h) = pie.heir().copied() else {
         return Ok(());
     };
@@ -123,7 +123,7 @@ pub(super) fn usable(pie: &AnyPie) -> Result<(), Fail> {
         .and_then(|t| t.upgrade())
         .is_some_and(|t| t.pies.lock().iter().any(|p| p.token() == h.token));
     if held {
-        return Err(Fail::HandedOver);
+        return Err(E::handed_over());
     }
     if let Some(task) = current().running_task() {
         clear_heir(&task, pie.token());
@@ -227,8 +227,8 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
     let looked = current()
         .running_task()
         .ok_or(Fail::Denied)
-        .and_then(|task| gate::accede(&task, token, Need::Fetch));
-    let r = match looked.and_then(|p| usable(&p).map(|()| p)) {
+        .and_then(|task| gate::accede::<Fail>(&task, token, Need::Fetch));
+    let r = match looked.and_then(|p| usable::<Fail>(&p).map(|()| p)) {
         Err(e) => Err(e),
         Ok(AnyPie::Pole(p)) => match subset_to_pte(p.permission) {
             Err(e) => Err(e),
@@ -260,11 +260,11 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
     let _ = &ident;
     let r = (|| -> Result<usize, Fail> {
         let task = current().running_task().ok_or(Fail::Denied)?;
-        let pie = gate::locate(&task, token)?;
+        let pie = gate::locate(&task, token).ok_or(Fail::Denied)?;
         if !pie.allows(Need::Fetch) {
             return Err(Fail::Denied);
         }
-        usable(&pie)?;
+        usable::<Fail>(&pie)?;
         match pie {
             AnyPie::Pole(p) => mail::pole::shut(p.meta(), token).map(|()| 0),
             // Hole / Nole / Tole 都没有「关闩」这回事（无映射可撤）。
@@ -285,7 +285,7 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         let me = current().running_task().ok_or(Fail::Denied)?;
         // `locate` 只定位；**死活先判、再判"是不是我开的"**——与 `accede` 同一条顺序，
         // 判据本身不同（`Seal` 要的是 `owner`，不是某一位权）。
-        let pie = gate::locate(&me, token)?;
+        let pie = gate::locate(&me, token).ok_or(Fail::Denied)?;
         if !pie.alive() {
             return Err(Fail::Dead);
         }
@@ -320,8 +320,8 @@ fn accord(
         let caller = current().running_task().ok_or(Fail::Denied)?;
         // 源枚**只定位**：存活/持 `VEST`/覆盖子集/形态一致这四道闸在 `gate::accord` 里
         // （"交出"要在调用方表内就地写锚，抄件做不到）。
-        let src = gate::locate(&caller, src_token)?;
-        usable(&src)?;
+        let src = gate::locate(&caller, src_token).ok_or(Fail::Denied)?;
+        usable::<Fail>(&src)?;
         let dst = muster(dst_id).ok_or(Fail::Denied)?;
         gate::accord(&caller, src_token, &dst, subset)
     })();
@@ -338,7 +338,7 @@ fn accord(
 fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, Fail> {
         let task = current().running_task().ok_or(Fail::Denied)?;
-        let pie = gate::locate(&task, token)?;
+        let pie = gate::locate(&task, token).ok_or(Fail::Denied)?;
         if !pie.alive() {
             return Err(Fail::Dead);
         }
@@ -440,7 +440,7 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outc
         let task = current().running_task().ok_or(Fail::Denied)?;
         // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
         // 死活闸，`owner()` 自己用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
-        let p = gate::locate(&task, token)?;
+        let p = gate::locate(&task, token).ok_or(Fail::Denied)?;
         let owner = p.owner().ok_or(Fail::Dead)?;
         let AnyPie::Hole(h) = &p else {
             return Err(Fail::Denied);

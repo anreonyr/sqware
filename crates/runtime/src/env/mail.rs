@@ -31,8 +31,7 @@
 
 use env::Wait;
 use env::{
-    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieToken, TaskId, ToleCall, ToleCallRet,
-    VirtAddr,
+    EnvResult, HoleDir, MailCall, MailCallRet, Mark, PieToken, TaskId, ToleResult, VirtAddr,
 };
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
@@ -138,42 +137,26 @@ pub fn hush(token: PieToken) -> EnvResult<()> {
 /// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，见 `env::fid` 的
 /// `ToleCall::Unseal`）：`false` = 独占组（授出即移交、复制不出来），`true` = 共享组
 /// （可 `accord` 复制给多个任务；组键的唤醒是提示型——放行全链）。
-pub fn unseal(shared: bool) -> EnvResult<PieToken> {
-    let r = ToleCall::Unseal { shared }.call()?;
-    match r {
-        ToleCallRet::Unseal(t) => Ok(t),
-        _ => unreachable!(),
-    }
+pub fn unseal(shared: bool) -> ToleResult<PieToken> {
+    env::tole::unseal(shared)
 }
 
 /// 把 `pie` 的一个方向挂进 `tole`（同成员幂等）。
-pub fn attach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
-    let r = ToleCall::Attach { tole, pie, dir }.call()?;
-    match r {
-        ToleCallRet::Attach(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn attach(tole: PieToken, pie: PieToken, dir: HoleDir) -> ToleResult<()> {
+    env::tole::attach(tole, pie, dir)
 }
 
 /// 从 `tole` 摘掉一格；没挂过即无事。
-pub fn detach(tole: PieToken, pie: PieToken, dir: HoleDir) -> EnvResult<()> {
-    let r = ToleCall::Detach { tole, pie, dir }.call()?;
-    match r {
-        ToleCallRet::Detach(()) => Ok(()),
-        _ => unreachable!(),
-    }
+pub fn detach(tole: PieToken, pie: PieToken, dir: HoleDir) -> ToleResult<()> {
+    env::tole::detach(tole, pie, dir)
 }
 
 /// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 上限族，同全树。
 ///
 /// `PieToken::NONE` = 没等到（或挂起过——见 `env::fid` 的 `ToleCall::Await`）。
 /// 这一格是**裸函数层**：把"没等到"翻成 `Option` 的是 `crate::core::pile::Pile`。
-pub fn await_(tole: PieToken, millis: Wait) -> EnvResult<(PieToken, HoleDir)> {
-    let r = ToleCall::Await { tole, millis }.call()?;
-    match r {
-        ToleCallRet::Await(pair) => Ok(pair),
-        _ => unreachable!(),
-    }
+pub fn await_(tole: PieToken, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {
+    env::tole::await_(tole, millis)
 }
 
 // ── 四种资源的用户态句柄 ──────────────────────────────────────────────────
@@ -380,7 +363,7 @@ pub struct TolePie {
 
 impl TolePie {
     /// 造一个空组（种类见 [`unseal`]）。
-    pub fn unseal(shared: bool) -> EnvResult<Self> {
+    pub fn unseal(shared: bool) -> ToleResult<Self> {
         Ok(Self {
             token: unseal(shared)?,
         })
@@ -392,17 +375,17 @@ impl TolePie {
     }
 
     /// 把一枚成员的一个方向挂进来。
-    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
         attach(self.token, mate.token(), dir)
     }
 
     /// 摘掉一格。
-    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
         detach(self.token, mate.token(), dir)
     }
 
     /// 等到任意一格有事。
-    pub fn await_(&self, millis: Wait) -> EnvResult<(PieToken, HoleDir)> {
+    pub fn await_(&self, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {
         await_(self.token, millis)
     }
 

@@ -193,6 +193,9 @@ pub enum ToleFail {
     OoM = -3,
     /// 这一枚已交出去（交回即复原）。
     HandedOver = -4,
+    /// 条件未就绪（`Await` 的等待位在退化上下文里答这一枚）。
+    #[busy]
+    Busy = -5,
 }
 
 /// `ToleFail` 的结果别名。

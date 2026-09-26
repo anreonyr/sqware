@@ -16,7 +16,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Fail, HoleDir, Mark, PieToken, TaskId};
+use env::{Fail, HoleDir, Mark, PieToken, TaskId, ToleFail};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -173,7 +173,7 @@ pub fn fanout() {
 
     let extra = tole::meta(TaskId::new(0));
     crate::expect!(
-        matches!(tole::attach(&extra, mate, hole.life()), Err(Fail::OoM)),
+        matches!(tole::attach(&extra, mate, hole.life()), Err(ToleFail::OoM)),
         "转发格满（{} 个组）时挂格应当报 OoM，不静默丢",
         FWD_MAX
     );
@@ -235,17 +235,17 @@ pub fn order() {
         "活着但权不够：必须答 Denied"
     );
     crate::expect!(
-        gate::accede(&task, live_token, Need::Fetch).is_ok(),
+        gate::accede::<Fail>(&task, live_token, Need::Fetch).is_ok(),
         "活着且权够：必须取到"
     );
     crate::expect!(
-        gate::locate(&task, dead_token).is_ok(),
+        gate::locate(&task, dead_token).is_some(),
         "locate 不过闸：已封印的那一枚也定位得到"
     );
     crate::expect!(
         matches!(
             gate::locate(&task, PieToken::mint(live_token.get() + 4_096)),
-            Err(Fail::Denied)
+            None
         ),
         "表里没有：locate 必须答 Denied"
     );

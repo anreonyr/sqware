@@ -77,11 +77,11 @@ fn push(
     let found = current()
         .running_task()
         .ok_or(Fail::Denied)
-        .and_then(|t| gate::accede(&t, token, Need::Store));
+        .and_then(|t| gate::accede::<Fail>(&t, token, Need::Store));
     let r = match found {
         Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Ok(pie) => match usable(&pie) {
+        Ok(pie) => match usable::<Fail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
@@ -144,11 +144,11 @@ fn pull(
     let found = current()
         .running_task()
         .ok_or(Fail::Denied)
-        .and_then(|t| gate::accede(&t, token, Need::Fetch));
+        .and_then(|t| gate::accede::<Fail>(&t, token, Need::Fetch));
     let r = match found {
         Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Ok(pie) => match usable(&pie) {
+        Ok(pie) => match usable::<Fail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => {
@@ -217,11 +217,11 @@ fn wait_dir(
     let found = current()
         .running_task()
         .ok_or(Fail::Denied)
-        .and_then(|t| gate::accede(&t, token, need));
+        .and_then(|t| gate::accede::<Fail>(&t, token, need));
     // ② 锁外：第四道判据（陈旧锚在此自愈）。
     let resolved = match found {
         Err(e) => Err(e),
-        Ok(pie) => match usable(&pie) {
+        Ok(pie) => match usable::<Fail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => Ok(Ready::Hole(p.meta().clone())),
@@ -305,11 +305,11 @@ fn with_bell(
     let found = current()
         .running_task()
         .ok_or(Fail::Denied)
-        .and_then(|t| gate::accede(&t, token, need));
+        .and_then(|t| gate::accede::<Fail>(&t, token, need));
     match found {
         Err(e) => Err(e),
         // ② 锁外：第四道判据（陈旧锚在此自愈）。
-        Ok(pie) => match usable(&pie) {
+        Ok(pie) => match usable::<Fail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
                 AnyPie::Nole(p) => op(p.meta()),

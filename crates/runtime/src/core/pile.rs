@@ -18,7 +18,7 @@
 //! 循环，否则 `None` 会被误当成"永远没有"。
 
 use env::Wait;
-use env::{EnvResult, HoleDir, PieToken};
+use env::{HoleDir, PieToken, ToleResult};
 
 use crate::env::mail::{Mate, TolePie};
 
@@ -33,7 +33,7 @@ impl Pile {
     /// `shared` = 允不许多个使用者（造的时候定、之后不可变）：`false` = 独占组（授出即
     /// 移交、复制不出来），`true` = 共享组（可交给多个任务各持一枚；组键的唤醒是**提示
     /// 型**——放行全链，人人醒来自己按组复核）。
-    pub fn unseal(shared: bool) -> EnvResult<Pile> {
+    pub fn unseal(shared: bool) -> ToleResult<Pile> {
         Ok(Pile {
             pie: TolePie::unseal(shared)?,
         })
@@ -45,18 +45,18 @@ impl Pile {
     }
 
     /// 把一枚成员的一个方向挂进来（同成员幂等）。
-    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
         self.pie.attach(mate, dir)
     }
 
     /// 摘掉一格；没挂过即无事。
-    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> EnvResult<()> {
+    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
         self.pie.detach(mate, dir)
     }
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到
     /// （挂起过，或期限到）——**继续等就再叫一次**，别把 `None` 当成终局。
-    pub fn await_(&self, millis: Wait) -> EnvResult<Option<(PieToken, HoleDir)>> {
+    pub fn await_(&self, millis: Wait) -> ToleResult<Option<(PieToken, HoleDir)>> {
         let (token, dir) = self.pie.await_(millis)?;
         Ok((token != PieToken::NONE).then_some((token, dir)))
     }

@@ -34,10 +34,13 @@
 
 mod accord;
 mod cull;
+mod fail;
 mod narrow;
 mod pie;
 mod release;
 mod revoke;
+
+pub(crate) use fail::GateFail;
 mod snap;
 
 pub(crate) use pie::{AnyPie, Need, Permission, Pie, accede, locate, new_pie};

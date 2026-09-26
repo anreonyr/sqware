@@ -20,7 +20,7 @@ use alloc::sync::{Arc, Weak};
 
 use env::{HoleDir, ToleCall};
 
-use env::{Fail, PieToken, Wait};
+use env::{PieToken, ToleFail, Wait};
 
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::tole::Mate;
@@ -67,8 +67,8 @@ pub(crate) fn dispatch(
 /// **不在 S 态设闸**（与 `UnsealNole` 的铸币权政策不同）：组不授予任何对资源的权柄，
 /// 它只是"我自己关心哪几枚可等地"的账。U 态域等多个源是常态，不该逼它回 S 态。
 fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
-    let r = (|| -> Result<usize, Fail> {
-        let task = current().running_task().ok_or(Fail::Denied)?;
+    let r = (|| -> Result<usize, ToleFail> {
+        let task = current().running_task().ok_or(ToleFail::Denied)?;
         let meta = tole::meta(task.ident.id);
         // 读写两支人人有；`VEST` 两种都有（共享组靠它复制出去）；`ONLY` 只给独占组。
         let mut latch = Permission::FETCH | Permission::STORE | Permission::VEST;
@@ -79,7 +79,7 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
         let token = pie.token;
         // **紧贴 push**：`pie` 是最后一步造的，drop 它即回收资源实体 ⇒ 失败就地退回。
         let mut pies = task.pies.lock();
-        pies.try_reserve(1).map_err(|_| Fail::OoM)?;
+        pies.try_reserve(1).map_err(|_| ToleFail::OoM)?;
         pies.push(AnyPie::Tole(pie));
         Ok(token.get())
     })();
@@ -93,12 +93,12 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
 /// （`HandedOver`），挂进来只会让组替我答"它有事"而我又取不走它。组的「被关住」不查：
 /// `ONLY` 只在**等待位**上成立，改池子不算用它（见模块头）。
 fn attach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
-    let r = (|| -> Result<(), Fail> {
-        let task = current().running_task().ok_or(Fail::Denied)?;
-        let latch = gate::accede(&task, group, Need::Store)?;
+    let r = (|| -> Result<(), ToleFail> {
+        let task = current().running_task().ok_or(ToleFail::Denied)?;
+        let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = gate::accede(&task, member, Need::Fetch)?;
-        usable(&latch)?;
+        let latch = gate::accede::<ToleFail>(&task, member, Need::Fetch)?;
+        usable::<ToleFail>(&latch)?;
         let (mate, life) = mate(&latch, dir)?;
         tole::attach(&meta, mate, life)
     })();
@@ -108,11 +108,11 @@ fn attach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleD
 
 /// 摘一格：组要 `STORE`，成员要 `FETCH`；**两道「被关住」都不查**（收场动作）。
 fn detach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
-    let r = (|| -> Result<(), Fail> {
-        let task = current().running_task().ok_or(Fail::Denied)?;
-        let latch = gate::accede(&task, group, Need::Store)?;
+    let r = (|| -> Result<(), ToleFail> {
+        let task = current().running_task().ok_or(ToleFail::Denied)?;
+        let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = gate::accede(&task, member, Need::Fetch)?;
+        let latch = gate::accede::<ToleFail>(&task, member, Need::Fetch)?;
         let (mate, _life) = mate(&latch, dir)?;
         tole::detach(&meta, mate)
     })();
@@ -137,10 +137,10 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
     // 当前任务那份 `Arc` 是**临时量**：第一段闭包里就落地（跨挂起不得持强引用）。
     let looked = current()
         .running_task()
-        .ok_or(Fail::Denied)
-        .and_then(|task| gate::accede(&task, group, Need::Fetch))
+        .ok_or(ToleFail::Denied)
+        .and_then(|task| gate::accede::<ToleFail>(&task, group, Need::Fetch))
         .and_then(|latch| {
-            usable(&latch)?;
+            usable::<ToleFail>(&latch)?;
             rack(&latch)
         });
     let meta = match looked {
@@ -220,11 +220,11 @@ fn ready(meta: &ToleMeta) -> Option<(PieToken, HoleDir)> {
 // `rack`/`mate`（认成组、认成成员）。
 
 /// 认成一枚架子（组）：不是组 ⇒ `Denied`。
-fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, Fail> {
+fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, ToleFail> {
     match pie {
         AnyPie::Tole(t) => Ok(t.meta().clone()),
         // 孔 / 页 / 铃都不是组：这一轴只有组是架子。
-        _ => Err(Fail::Denied),
+        _ => Err(ToleFail::Denied),
     }
 }
 
@@ -232,16 +232,16 @@ fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, Fail> {
 ///
 /// 成员只有孔与铃：孔自带方向；**铃只有一条方向**，故它只认 `Pull`（别的值不是
 /// "暂时没有"，是不存在这个操作——同 `MailCall::Wait`）。
-fn mate(pie: &AnyPie, dir: HoleDir) -> Result<(Mate, Weak<Life>), Fail> {
+fn mate(pie: &AnyPie, dir: HoleDir) -> Result<(Mate, Weak<Life>), ToleFail> {
     match pie {
         AnyPie::Hole(h) => Ok((Mate::Hole(h.meta().id(), dir), h.meta().life())),
         AnyPie::Nole(n) if dir == HoleDir::Pull => Ok((Mate::Nole(n.meta().id()), n.meta().life())),
-        _ => Err(Fail::Denied),
+        _ => Err(ToleFail::Denied),
     }
 }
 
 /// 写回 a0（单值返回；错误路径只写 a0）。
-fn answer(frame: &mut TrapContext, r: Result<usize, Fail>) {
+fn answer(frame: &mut TrapContext, r: Result<usize, ToleFail>) {
     frame.gpr.set_x(
         Gprs::A0,
         match r {
@@ -252,7 +252,7 @@ fn answer(frame: &mut TrapContext, r: Result<usize, Fail>) {
 }
 
 /// 写回 a0（`()` 返回：成功写 0，失败写负码）。
-fn answer_void(frame: &mut TrapContext, r: Result<(), Fail>) {
+fn answer_void(frame: &mut TrapContext, r: Result<(), ToleFail>) {
     answer(frame, r.map(|()| 0));
 }
 

@@ -54,6 +54,15 @@ impl WaitFail for env::UnitFail {
     }
 }
 
+impl WaitFail for env::ToleFail {
+    fn busy() -> Self {
+        env::ToleFail::Busy
+    }
+    fn oom() -> Self {
+        env::ToleFail::OoM
+    }
+}
+
 impl WaitFail for Fail {
     fn busy() -> Self {
         Fail::Busy
