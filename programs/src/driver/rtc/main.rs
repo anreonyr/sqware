@@ -188,14 +188,16 @@ fn main() -> Result<(), fail::Fail> {
             rtc::clear(view);
             if let Some(back) = slot.fire(now) {
                 // 那一声**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
-                match Slip::<Time>::seal(back).load(Time::of(now)).ship() {
-                    Ok(()) => {
+                // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见
+                // `Slip::load` 的照实记）；真到了那里，那一层是 `None`，与"推不出去"同一行读数。
+                match Slip::<Time>::seal(back).load(Time::of(now)).ok().map(|s| s.ship()) {
+                    Some(Ok(())) => {
                         rang += 1;
                         say(&format!("rtc: rang n={rang} now={now}"));
                     }
                     // **推不出去 = 那位客人没了**（它开的那枚孔随它退场封印）。那一格已经空着
                     // （取走就是兑现），故这里只报一行，不重试、不补发。
-                    Err(_) => say("rtc: notify failed"),
+                    _ => say("rtc: notify failed"),
                 }
                 let _ = mail::release(back);
             }
@@ -235,7 +237,7 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
         call::Wire::Now => {
             let now = rtc::now(view);
             // 答话**上船台**（答那一形：一个时刻）——与客人收它走的是同一张表。
-            let _ = Slip::<Time>::seal(back).load(Time::of(now)).ship();
+            let _ = Slip::<Time>::seal(back).load(Time::of(now)).ok().map(|s| s.ship());
             let _ = mail::release(back);
             say(&format!("rtc: asked now={now}"));
         }
@@ -255,11 +257,17 @@ fn desk(slot: &mut Slot, view: View, from: TaskId, frame: &[u8]) {
                         rtc::armed(view)
                     ));
                     // 答码**先于**那一声：那一格已经占上，而设备要过一会儿才拉线。
-                    let _ = Slip::<Status>::seal(back).load(Status::of(call::OK)).ship();
+                    let _ = Slip::<Status>::seal(back)
+                        .load(Status::of(call::OK))
+                        .ok()
+                        .map(|s| s.ship());
                 }
                 Err(fail) => {
                     let code = call::fail_to_code(Some(fail));
-                    let _ = Slip::<Status>::seal(back).load(Status::of(code)).ship();
+                    let _ = Slip::<Status>::seal(back)
+                        .load(Status::of(code))
+                        .ok()
+                        .map(|s| s.ship());
                     let _ = mail::release(back);
                     // **照实记（这一行为什么在，以及为什么排在这里）**：拒绝路从前一个字都不
                     // 打，于是"sleeper 那台偶尔少一台"只剩客人侧一句 `alarm err=2`——**迟到

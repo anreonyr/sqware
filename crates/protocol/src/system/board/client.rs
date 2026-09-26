@@ -89,6 +89,9 @@ pub fn register(
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     Slip::<bcall::Req>::seal(say)
         .load(bcall::Req::Register { name, seed })
+        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
+        // （见 `Slip::load` 的照实记）。
+        .map_err(|_| Fail::Denied)?
         .ship()
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)
@@ -105,6 +108,7 @@ pub fn evict(say: PieToken, link: &Quay, millis: Wait) -> Result<u8, Fail> {
     // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
     Slip::<bcall::Req>::seal(say)
         .load(bcall::Req::Evict)
+        .map_err(|_| Fail::Denied)?
         .ship()
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)

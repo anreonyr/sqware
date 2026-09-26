@@ -52,14 +52,13 @@ pub fn supply(
 
 /// 固件的常驻循环：收一张单子 → 供 → 回一张回单。
 ///
-/// `alive` = "客户还在吗"。**为什么需要它**：本域读的那一枚孔**命随本端**（对端退出时
-/// 内核的寿命边封的是**对端开的那几枚**）⇒ 读超时不能当作"它没了"。故读有上界地等，
-/// 超时只探一次活（非阻塞），探出没了就收场。对端活着时它就是在等，不占核。
+/// `alive` = "客户还在吗"。**为什么还需要它**（照实记：这一格收窄过一次）：本域读的那一枚孔
+/// **命随本端**（对端退出时，内核那条寿命边封的是**对端开的那几枚**）⇒ "对端没了"在这条路上
+/// **报不出来**，读超时也不能当作它没了。故读有上界地等，超时只探一次活（非阻塞），探出没了
+/// 就收场；对端活着时它就是在等，不占核。
 ///
-/// 不碰策略：只按单子发货，形态剔 `VEST`。
-///
-/// 前条件：`ask` ≥ [`ORDER_CAP`]（**收帧那一只由调用方给**——理由见 `Slip::land` 的照实记：
-/// 门那一侧收帧拿的是载体那一页；这里给的是本族最长那一只）。
+/// **它现在只管"没消息"那一支**：内核当场说"这一枚孔用不动了"时走 [`Land::Unavailable`]，
+/// 那一支直接收摊、**不再问 `alive`**（端点没了，没有下一步可走）——两条判据不再互相顶替。
 pub fn serve(
     pier: &Pier,
     src_of: impl Fn(Key) -> Option<PieToken>,
@@ -72,7 +71,7 @@ pub fn serve(
     let mut records = [Pair::NONE; WANT_MAX];
     let slip = Slip::<Order>::seal(pier.hole());
     loop {
-        // **两格失败分得开**（[`Land`]）：没收到 ⇒ 去探活；收到了解不动 ⇒ 答一句 `BAD`。
+        // **三格失败分得开**（[`Land`]）：没收到 ⇒ 去探活；孔用不动了 ⇒ 收摊；解不动 ⇒ 答 `BAD`。
         let order = match slip.land(ask, Wait::AtMost(WAIT_MS)) {
             Ok(order) => order,
             Err(Land::Expired) => {
@@ -81,6 +80,9 @@ pub fn serve(
                 }
                 continue;
             }
+            // **内核当场说"这一枚孔用不动了"**——不必再问 `alive()`（那是"没消息"时的替代判据，
+            // 见上面 `alive` 那一段）：端点没了，这条循环没有下一步可走。
+            Err(Land::Unavailable) => return,
             Err(Land::Unread) => {
                 reply(pier, BAD, &[]);
                 continue;
@@ -106,6 +108,8 @@ fn reply(pier: &Pier, code: u8, records: &[Pair]) {
         return;
     };
     if let Some(reply) = Reply::of(code, records) {
-        let _ = Slip::<Reply>::seal(at_peer).load(reply).ship();
+        // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+        // 的照实记）：`.ok()` 显式落地一个到不了的点，不是吞错。
+        let _ = Slip::<Reply>::seal(at_peer).load(reply).ok().map(|s| s.ship());
     }
 }

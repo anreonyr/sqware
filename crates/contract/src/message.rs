@@ -49,11 +49,14 @@ pub trait Message {
     /// 编进 `out`，返**实际长度**（形状不同则长度不同）。
     ///
     /// `None` = 缓冲不够（`Buf` 就是 `MAX`，故这一支只在类型被写错时才到得了——不 `panic`）。
+    /// **收它的是 `protocol` 那一侧的 `Slip::load`**：那一手把这一格落成"消息原样交回"，
+    /// 不落成"发出一帧空的"（本 crate 不依赖 `protocol`，故这里只有这一句）。
     fn store(&self, out: &mut [u8]) -> Option<usize>;
 
     /// 从 `bytes` 读回来。**读不懂 ⇒ `None`**（不猜、不崩）。
     ///
     /// "长度为该形状该有的长度"是帧的契约，故**短一字节即读不懂**；长一字节算不算读得懂，
-    /// 由各族自己判（板那一族判"不算"，见 `system::board::frame`）。
+    /// 由各族自己判（板那一族判"不算"，见 `system::board::frame`）。**一格自己的值合不合规矩**
+    /// 也归它的 [`env::wire::Field`]（如今 `bool` 那一格**只认 0 / 1**，畸形的 `2` 整个读不懂）。
     fn fetch(bytes: &[u8]) -> Option<Self::In>;
 }

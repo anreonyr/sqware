@@ -93,6 +93,9 @@ fn ask_out(
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     Slip::<ocall::Req<'_>>::seal(say)
         .load(ask)
+        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
+        // （见 `Slip::load` 的照实记）。
+        .map_err(|_| Fail::Unknown)?
         .ship()
         .map_err(|_| Fail::Unknown)?;
     // 收：答话走本端这条树路——与板那一族同一个形状（`Slip::<Union>::seal(pier.hole()).land(buf, ..)`）。

@@ -50,6 +50,9 @@ impl Line {
             // 写字节（缓冲是船台自己那只：这一形定长 [`frame::Occupy::LEN`]）。
             Slip::<frame::Occupy>::seal(entry)
                 .load(frame::Occupy::of(key))
+                // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
+                // （见 `Slip::load` 的照实记）。
+                .map_err(|_| ())?
                 .ship()
                 .map_err(|_| ())
         });

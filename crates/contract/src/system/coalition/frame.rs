@@ -193,13 +193,13 @@ pub struct Status {
 /// **"未完"那一格为什么只此一族有**：盟籍没有上限（一格盟可以有很多人）⇒ 窗装不下是常态；
 /// 对照 operator 那一侧：一条 pane 本来就不超过 `PANE_CAP`，故那边不用带。
 ///
-/// **`more` 那一格是裸字节、不是 `bool`**：`Field for bool` 的读法是 `!= 0`，而这一形的判据是
-/// **只许 0 / 1**（[`Union`] 的 `fetch` 里判）——借 `bool` 会把畸形的 `2` 读成"未完"。
+/// **`more` 那一格是真 `bool`**：只许 0 / 1 这条判据收在 [`env::wire::Field`] 一处
+/// （`bool` 那一格），本族不再手写一遍、也没有"畸形的 2"这一形可读。
 #[derive(env::Frame)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SeqHead {
     pub status: u8,
-    pub more: u8,
+    pub more: bool,
     pub count: u8,
 }
 
@@ -287,7 +287,7 @@ impl Message for Union {
             Union::Seq(seq) => {
                 let head = SeqHead {
                     status: OK,
-                    more: seq.more as u8,
+                    more: seq.more,
                     count: seq.len as u8,
                 };
                 let at = head.store_in(out)?;
@@ -310,12 +310,7 @@ impl Message for Union {
             Reply::LEN => Some(Union::One(Reply::fetch(bytes)?)),
             len if (SeqHead::LEN..=UNION_LEN).contains(&len) => {
                 let head = SeqHead::fetch(bytes)?;
-                let more = match head.more {
-                    0 => false,
-                    1 => true,
-                    // **只许 0 / 1**：`2` 是读不懂——这一格正因如此不借 `bool`。
-                    _ => return None,
-                };
+                let more = head.more;
                 let count = head.count as usize;
                 if count > WINDOW_CAP {
                     return None;

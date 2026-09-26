@@ -81,10 +81,11 @@ pub struct Query {
 /// `a` 那一格是**裸的 8 字节小端**（[`Id::to_bytes`] 就是它，与 `Field for u64` 同一条
 /// 口径）：principal 的 `DERIVE` / `SIRE` / `RESOLVE` 与 coalition 的 `FOUND` 都填这一格。
 ///
-/// **照实记（`flag` 那一格：`== 1` 变成 `!= 0`）**：换表之前这一格由 `unpack_reply` 交成**裸
-/// 字节**，读法是**调用方**各写的那一句 `present == 1`；而 `Field for bool` 的读法是 `!= 0`。
-/// 合法帧（写的那一侧只写 0 / 1）逐字与读法都不变，**畸形的 `2` 从此读成"是"**。要严格就把
-/// "这一格只许 0 / 1"并进下面 `fetch` 的判据（今天没有这一格）。
+/// **照实记（`flag` 那一格：`== 1` 变成严格 0 / 1）**：换表之前这一格由 `unpack_reply` 交成**裸
+/// 字节**，读法是**调用方**各写的那一句 `present == 1`。换表那一刀把读法交给 `Field for bool`，
+/// 而当**那一格还是 `!= 0`** 时，畸形的 `2` 会读成"是"——故这一条账当时记着"要严格就把
+/// '这一格只许 0 / 1'并进判据"。**今天严格收在 [`env::wire::Field`] 一处了**（`bool` 那一格只
+/// 认 0 / 1）：合法帧逐字不变，畸形的 `2` 整个读不懂（`fetch` 答 `None`），本文件不再另判。
 #[derive(env::Frame)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Reply {

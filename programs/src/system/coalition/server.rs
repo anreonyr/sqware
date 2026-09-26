@@ -152,9 +152,12 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
     }
     // 答一句：**形由 [`ccall::Union`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
     // 都不在这一层写字节（缓冲是船台自己那只＝本族最大那一形）。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+    // 的照实记）；真到了那里，这一答就发不出去。
     let _ = Slip::<ccall::Union>::seal(back)
         .load(answer(book, face, from, ask))
-        .ship();
+        .ok()
+        .map(|s| s.ship());
     let _ = mail::release(back);
 }
 

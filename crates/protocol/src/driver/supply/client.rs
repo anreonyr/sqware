@@ -32,14 +32,20 @@ pub fn draw<'r>(
     let at_peer = pier.at_peer().ok_or(Fail::Local)?;
     Slip::<Order>::seal(at_peer)
         .load(order)
+        // **装不上这一格是"没做成"**：真落到这里只可能是本族的 `Buf` 被改窄了
+        // （见 `Slip::load` 的照实记）。
+        .map_err(|_| Fail::Local)?
         .ship()
         .map_err(|_| Fail::Local)?;
-    // 收一张回单：**两格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
-    // "收下来解不动" ⇒ `Bad`。这两句话与从前 `pier.pull` ＋ `fetch` 那两句一字不差。
+    // 收一张回单：**三格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
+    // "这一枚孔用不动了" ⇒ `Denied`（"这一手没做成"）；"收下来解不动" ⇒ `Bad`。前两句与从前
+    // `pier.pull` ＋ `fetch` 那两句一字不差，第三句是 [`Land::Unavailable`] 加进来之后才分开的
+    // （从前它与 `Expired` 合流）。
     let slip = Slip::<Reply>::seal(pier.hole());
     let said = match slip.land(reply, millis) {
         Ok(said) => said,
         Err(Land::Expired) => return Err(Fail::Local),
+        Err(Land::Unavailable) => return Err(Fail::Denied),
         Err(Land::Unread) => return Err(Fail::Bad),
     };
     match said.code() {

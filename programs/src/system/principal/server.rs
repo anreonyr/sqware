@@ -159,9 +159,12 @@ fn turn(book: &mut Principal, from: TaskId, frame: &[u8]) {
     }
     // 答一句：**一格**（[`pcall::Reply`] 那一形）——走这一趟那枚回信孔，装与发都不在这一层
     // 写字节（缓冲是船台自己那只：这一形定长 10）。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+    // 的照实记）；真到了那里，这一答就发不出去。
     let _ = Slip::<pcall::Reply>::seal(back)
         .load(answer(book, from, ask))
-        .ship();
+        .ok()
+        .map(|s| s.ship());
     let _ = mail::release(back);
 }
 

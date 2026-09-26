@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   Slip::seal(pie)                 认下一枚孔 ⇒ 一个船台（类型在这儿绑上）
-//!         .load(m)                  装上一条报（编进船台自己那只缓冲）
+//!         .load(m)                  装上一条报（编进船台自己那只缓冲）；编不上 ⇒ Err(那条报)
 //!         .ship()                   发出去
 //!
 //!   slip.land(buf, millis)          收一条报（缓冲由调用方给；失败两格见 [`Land`]）
@@ -64,13 +64,44 @@ impl<M: Message> Slip<M> {
         }
     }
 
-    /// 装上一条报（编进自己那只缓冲）。
+    /// 装上一条报（编进自己那只缓冲）：**编不进 ⇒ 把消息原样交回**。
     ///
-    /// `Message::store` 返 `None`（缓冲不够）时长度按 0 记——`Buf` 就是这一族的最长，故那一支
-    /// 只在类型被写错时才到得了（`store` 的文档记着）。
-    pub fn load(mut self, m: M) -> Self {
-        self.len = m.store(self.buf.as_mut()).unwrap_or(0);
-        self
+    /// **照实记（它替掉了什么）**：原先是
+    /// ```ignore
+    /// self.len = m.store(self.buf.as_mut()).unwrap_or(0);
+    /// ```
+    /// ⇒ 编码失败把长度记成 0，[`Slip::ship`] 于是往孔里推一条 **0 字节帧**（内核答 `Denied`），
+    /// 真因被伪装成"对面坏了"。这一支按构造到不了（`Buf` 就是本族最长的那一枚），
+    /// **但"到不了"不等于"可以不报"**：今天它报得出来——消息原样交回。
+    ///
+    /// **照实记（`Err` 那一格带的是消息、不是失败码）**：这一层不认识任何一族的失败域
+    /// （见文件头的分层），而"没装进去"这件事的全部内容就是那条消息本身；调用方按自己的
+    /// 失败域解释它（今天各处折成 `Denied` 之类的"这一手没做成"）。
+    ///
+    /// **照实记（这一格的保证是什么、不是什么）**：本文件住 `protocol`，后者拖 `runtime`
+    /// （riscv 内联汇编、无 `cfg` 护栏）⇒ 这一支**宿主上链接不到、更判不了**。它的保证是
+    /// **类型上到不了**：`Buf` 由本族 `Message` 自己给。故这里不写 `expect`、不写
+    /// `unwrap_or`，只留一条读得见的返回值。
+    pub fn load(self, m: M) -> Result<Self, M> {
+        let mut buf = self.buf;
+        let Some(len) = m.store(buf.as_mut()) else {
+            return Err(m);
+        };
+        // **长度也归这一格管**：`store` 报的比 `Buf` 还大时，`ship` 那一刀会把它当"整只缓冲"
+        // 切——那是**编出来的字节说了谎**，与"装不下"同一条下场。
+        debug_assert!(
+            len <= buf.as_ref().len(),
+            "Message::store 报的长度超出了它自己的 Buf"
+        );
+        if len > buf.as_ref().len() {
+            return Err(m);
+        }
+        Ok(Self {
+            pie: self.pie,
+            buf,
+            len,
+            _m: PhantomData,
+        })
     }
 
     /// 发出去。
@@ -95,9 +126,10 @@ impl<M: Message> Slip<M> {
 
     /// 收一条报（**有界等**由参数说，**缓冲由调用方给**）。
     ///
-    /// 失败两格**分得开**（[`Land`]）：[`Land::Expired`] = 没收到、[`Land::Unread`] = 收到了解不动。
+    /// 失败三格**分得开**（[`Land`]）：[`Land::Expired`] = 没收到、[`Land::Unavailable`] =
+    /// 这一枚孔用不动、[`Land::Unread`] = 收到了解不动。
     ///
-    /// **照实记（为什么是两格失败，不是折成一个 `None`）**：门那两侧把两格折成同一句 `BAD`
+    /// **照实记（为什么是分格失败，不是折成一个 `None`）**：门那两侧把失败都折成同一句 `BAD`
     /// （`Err(_) ⇒ BAD`，与从前那个 `None` 一字不差）；而**靠收帧结果判活**的循环要把它们分开
     /// ——供单那圈发货循环就是：没收到 ⇒ 去探对端还活着没有；收到了解不动 ⇒ 答一句 `BAD`。
     /// 两件事共用一个 `None` 是我上一版写的（照实记在那一刀里），今天由**类型**分开：
@@ -117,21 +149,46 @@ impl<M: Message> Slip<M> {
     ///
     /// 表外的动作码**不是**任何一格失败，它是那一族 `In` 自己的一格（如 `Wire::Unknown`）。
     pub fn land(&self, buf: &mut [u8], millis: Wait) -> Result<M::In, Land> {
-        let n = self.pie.pull_timeout(buf, millis).map_err(|_| Land::Expired)?;
+        let n = match self.pie.pull_timeout(buf, millis) {
+            Ok(n) => n,
+            // **收这一侧的失败也要分层**：内核答的码分成"再等等"与"别等了"两件事（见 [`Land`]）。
+            // 表外的码按 [`Land::Expired`] 落——那是"没读到"里最不含承诺的一格（与
+            // [`Slip::ship`] 把表外的码折成 `Denied` 同一条口径）。
+            Err(e) => {
+                return Err(match env::Fail::of_code(e.source.code()) {
+                    Some(env::Fail::Dead | env::Fail::Denied) => Land::Unavailable,
+                    _ => Land::Expired,
+                });
+            }
+        };
         let frame = buf.get(..n).ok_or(Land::Unread)?;
         M::fetch(frame).ok_or(Land::Unread)
     }
 }
 
-/// 「收一条报」（[`Slip::land`]）那两格失败——**分得开**。
+/// 「收一条报」（[`Slip::land`]）那三格失败——**分得开**。
 ///
-/// **照实记（为什么要两格）**：门那两侧只关心"这一问成没成"（两种都答 `BAD`）；而**判活**的循环
-/// 要分开——"没收到"是去探对端还活着没有，"收到了解不动"是这一问自己的毛病。两件事两个下一步，
-/// 故落成两格。
+/// **照实记（为什么要分开）**：门那两侧只关心"这一问成没成"（怎么失败都答一句 `BAD`）；而
+/// **判活**的循环要分开——"没收到"是去探对端还活着没有，"收到了解不动"是这一问自己的毛病。
+/// 两件事两个下一步，故落成格。
+///
+/// **照实记（[`Land::Unavailable`] 是后加的，以及它为什么不是"对端没了"）**：原先只有两格，而
+/// [`Slip::land`] 把 `pull_timeout` 的**任何**错误都折成 [`Land::Expired`]（`.map_err(|_| …)`）
+/// ⇒ 内核那七枚词汇在收这一侧**一格都不剩**：`Dead`（这一枚孔已封印）与 `Busy`（期限内没等到）
+/// 被说成同一件事。加这一格就是把它分层。
+///
+/// **它报的是"这个端点用不动了"，不是"对端没了"**——这两件事在这一层**本来就不同**：本端读的
+/// 那一枚孔**命随本端**（对端退出时，内核那条寿命边封的是**对端开的那几枚**）⇒ "对端没了"在
+/// 这条路上通常**报不出来**，那正是 `root` 发货循环要额外探活（`alive`）的理由（见
+/// `programs/src/root/supply/server.rs` 的头注）。故那一处的 `Unavailable` 是"这一枚孔已经用
+/// 不动"，与 `Expired` 的"再等等、顺手探一次活"分得开。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Land {
-    /// **没收到**：期限内没等到（或孔不通——这一层不分辨：今天没有读者要那一格）。
+    /// **没收到**：期限内没等到（内核答 `Busy`，含表外的码）。
     Expired,
+    /// **这个端点用不动了**（内核答 `Dead` / `Denied`）：这一枚孔已封印、或号本来就不对。
+    /// 与 [`Land::Expired`] 是两件事——那是"再等等"，这是"别等了"。
+    Unavailable,
     /// **收到了，解不动**：长度不对 / 形状不对（那是这一族 `fetch` 的判据）；
     /// 缓冲比帧还短也落这一格（那一格类型上到不了：缓冲按本族最长给）。
     Unread,

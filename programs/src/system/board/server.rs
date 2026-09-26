@@ -294,9 +294,12 @@ fn serve_one(
         Err(_) => bcall::BAD,
     };
     // 答一句：**一格**（[`bcall::Union`] 那一张形状）——装与发都不在这一层写字节。
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+    // 的照实记）；真到了那里，这一答就发不出去。
     let _ = Slip::<bcall::Union>::seal(guest.reply())
         .load(bcall::Union::of(said))
-        .ship();
+        .ok()
+        .map(|s| s.ship());
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
     if matches!(decoded, Ok(bcall::Wire::Evict)) {

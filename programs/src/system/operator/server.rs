@@ -421,7 +421,12 @@ fn serve_one(
     let said = answer(tree, decoded, guest.who(), session, book);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节（那四种答形在线上分不开，
     // 故读的那一面由问的人认，见 [`ocall::Said`] 的照实记）。
-    let _ = Slip::<ocall::Union>::seal(guest.reply()).load(said).ship();
+    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Slip::load`
+    // 的照实记）；真到了那里，这一答就发不出去。
+    let _ = Slip::<ocall::Union>::seal(guest.reply())
+        .load(said)
+        .ok()
+        .map(|s| s.ship());
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
