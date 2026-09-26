@@ -20,17 +20,19 @@
 # `[build] target` 钉在 riscv 上，而 `cargo install` **也吃这一格** ⇒ 不带
 # `--target x86_64-unknown-linux-gnu` 会拿 riscv 去编这个宿主工具，编出来一堆
 # `cannot find trait PartialEq`（`std` 不在场）。实测踩过。
-# **照实记（两处默认与"起机那条路"不同）**：
-#
-#   ① `-smp 1`。内核对 `-smp 4` 的默认是为**整机场景**定的；而 embedded-test 的入口是
-#      `_start → main`，**每颗 hart 都会跑一遍** ⇒ 4 颗一起冲进 `__embedded_test_start`、
-#      并发读 semihosting 命令行，是必炸的。参数表里那颗旋钮仍经 `QEMU_SMP` 给，
-#      这里只把**默认**改成 1（调用方显式设了就听调用方的）。
-#   ② `icount` 置空。旧的门统一关掉它（"按宿主时间节流会让 guest 与输入日程失步"，
-#      见 `qemu-args.nu` 的头注）；用例要在同一档下可比，故这里也关。
+# **照实记（`--smp` 那一格原本默认成 1，已撤）**：原先这里写"`-smp 4` 必炸——`_start`
+# 每颗 hart 都会跑一遍 ⇒ 4 颗一起冲进 `__embedded_test_start`、并发读 semihosting 命令行"。
+# **量下来那句是错的**：它只对 `-bios none`（M 态、所有 hart 从复位向量起跑）成立，
+# 而参数表给的是 `-bios SBI.bin`——S 态下**只有引导 hart 进内核**，副核由
+# `boot::boot_harts()` 经 HSM 拉起（**产品路本来就是 `-smp 4`**，`rig`/`soak` 的判据
+# 前提正是"空核替全局兑现到点"）。实测 `QEMU_SMP=4` 下原八例 8/8 绿、1.92 s。
+# 故这里不再改 `-smp` **默认**，跟参数表走；`QEMU_SMP` 显式设了当然也听调用方的。
+# 那条结论有钉子：`kernel/src/health/hart.rs` 的 `hart_multi` 用例。
+# **照实记（`icount` 那一格仍与"起机那条路"不同）**：这里把 `icount` 置空。旧的门
+# 统一关掉它（"按宿主时间节流会让 guest 与输入日程失步"，见 `qemu-args.nu` 的头注）；
+# 用例要在同一档下可比，故这里也关。
 
 def main [--package: string, ...rest: string] {
-  if ($env.QEMU_SMP? | is-empty) { $env.QEMU_SMP = "1" }
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
   let script_dir = $env.FILE_PWD

@@ -6,14 +6,16 @@
 // `kernel/tests/embedded.rs` 的 `#[embedded_test::tests] mod`。**本文件只剩用例体**，
 // 它们从 `pub(super)` 变成 `pub`，因为那个测试目标是**另一个 crate**。
 //
-// 八个用例 = 四块子系统各一 + `permit` 四例，都只经公开接口验收，与生产断言分离：
+// 九个用例 = 四块子系统各一 + `permit` 四例 + `hart` 一例，都只经公开接口验收，
+// 与生产断言分离：
+//   · `hart`   —— 进来的 hart 有几颗（钉住参数表那颗 `-smp` 默认）
 //   · `spare`  —— 后备仓预算（ring 常驻 + 溢出演练闭环）
 //   · `pagetable` —— PT 回收（map/unmap 32 轮，无孤儿表、无 double-free）
 //   · `stress` —— 分配器压测（block/frame 两档：混合闭环 + 持有-全释放 + 耗尽-反还）
 //   · `shell` —— 内核原语外壳（任务/团队/空间）的造-收闭环（逐类净额）
 //   · `permit` —— 权柄代数四例（形态位 / 成员投影 / 转发容量 / 取用顺序）
 //
-// 这一档（`debug`）另有一条**静默**入口（[`run`]）：同样八例、同样顺序，**失败才 panic**。
+// 这一档（`debug`）另有一条**静默**入口（[`run`]）：同样九例、同样顺序，**失败才 panic**。
 
 #[cfg(debug_assertions)]
 use core::fmt;
@@ -45,6 +47,7 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
+pub mod hart;
 pub mod pagetable;
 pub mod permit;
 pub mod shell;
@@ -75,5 +78,6 @@ pub fn run() {
         permit::members();
         permit::fanout();
         permit::order();
+        hart::count();
     }
 }

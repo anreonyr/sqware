@@ -62,8 +62,8 @@ mod tests {
         kernel::init(BOOT_DTP.load(Ordering::Relaxed));
     }
 
-    // 八个用例：名字与次序照搬原先 `health/mod.rs` 那 8 个 `test!` 块（失败的人要看得懂
-    // 哪一块塌了），用例体仍在 `kernel::health` 里、一个字没改。
+    // 用例：前八个的名字与次序照搬原先 `health/mod.rs` 那 8 个 `test!` 块（失败的人要
+    // 看得懂哪一块塌了），第九个是后补的 `hart_multi`。用例体仍在 `kernel::health` 里。
 
     #[test]
     fn spare_budget() {
@@ -103,5 +103,11 @@ mod tests {
     #[test]
     fn permit_order() {
         kernel::health::permit::order();
+    }
+
+    // 第九例（后补）：钉住参数表那颗 `-smp` 默认——见 `kernel/src/health/hart.rs` 的头注。
+    #[test]
+    fn hart_multi() {
+        kernel::health::hart::count();
     }
 }
