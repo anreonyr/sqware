@@ -13,39 +13,31 @@
 //! ——整条账一并删。**`DebugCall::SetTrace` 那一格不动**：内核那一侧的对账仍由它开关，
 //! 只是域不再替自己记一份"要不要打"。
 
-use env::{DBCN_MAX, DebugCall, DebugCallRet, EnvResult};
+use env::{DBCN_MAX, DebugResult, VirtAddr};
 
 /// 把一个字符串写进调试控制台（`len == 0` ⇒ `Denied`；返**写出去的字节数**）。
 ///
 /// **超 [`DBCN_MAX`] 的那一段被内核截断**（本层照 `s.len()` 递上去，不预截）：
 /// 一件长东西只印出前 `DBCN_MAX` 字节，返回值就是那个数。**这不是错误**——与
 /// [`get`] 的"多出即拒"不同形（两处的实测读法见 `env::fid::DebugCall`）。
-pub fn put(s: &str) -> EnvResult<usize> {
+///
+/// # Errors
+/// - `Denied`(-1) `buf` 未映射 / 长度为零
+pub fn put(s: &str) -> DebugResult<usize> {
     let bytes = s.as_bytes();
-    let call = DebugCall::Put {
-        buf: env::VirtAddr::new(bytes.as_ptr() as usize),
-        len: bytes.len(),
-    };
-    match call.call()? {
-        DebugCallRet::Put(n) => Ok(n),
-        _ => unreachable!(),
-    }
+    env::debug::put(VirtAddr::new(bytes.as_ptr() as usize), bytes.len())
 }
 
 /// 从调试控制台读一段字节写进 `buf`，返**实际写入的字节数**。
 ///
 /// **可能阻塞**（SBI 的 console read 语义）：单核上会挂住整机，直到串口来字节。
 /// 敢不敢在这儿等，是调用方的判断（见 `env::fid::DebugCall::Get` 的注）。
-pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
+///
+/// # Errors
+/// - `Denied`(-1) `buf` 非法 / 长度为零或超 `DBCN_MAX` / 固件给不出这一格
+pub fn get(buf: &mut [u8]) -> DebugResult<usize> {
     let len = buf.len().min(DBCN_MAX);
-    let call = DebugCall::Get {
-        buf: env::VirtAddr::new(buf.as_mut_ptr() as usize),
-        len,
-    };
-    match call.call()? {
-        DebugCallRet::Get(n) => Ok(n),
-        _ => unreachable!(),
-    }
+    env::debug::get(VirtAddr::new(buf.as_mut_ptr() as usize), len)
 }
 
 /// 开关**报文对账**（此后每次一次往返都打两帧的十六进制）。
@@ -53,9 +45,8 @@ pub fn get(buf: &mut [u8]) -> EnvResult<usize> {
 /// 为什么留在 ABI 上而不是编译期开关：布局错位只有**真实字节**能证，而这类病一旦出现
 /// 就要能在**同一个产物**上打开对账再跑一遍。
 ///
-/// **不返 `EnvResult`**：内核那一格把开关的**回读值**写进 `a0`（0/1），没有失败支
-/// ——同 [`starve`](crate::env::room::starve) 的形状（见 `env::ecall::EnvResult` 的注）。
+/// **这一格不失败**（`#[infallible]`）：内核把开关的**回读值**写进 `a0`（0/1），没有失败支
+/// ⇒ 生成的入口 `env::debug::set_trace` 返 `()`，本层照旧把它当"开关一手"用。
 pub fn trace(on: bool) {
-    let call = DebugCall::SetTrace { on: on as usize };
-    let _ = call.call();
+    env::debug::set_trace(on as usize)
 }

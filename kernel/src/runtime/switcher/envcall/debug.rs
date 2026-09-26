@@ -17,7 +17,7 @@ use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::putln;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::unit::task::TaskIdent;
-use env::Fail;
+use env::DebugFail;
 
 /// 一次能搬的字节数上限（与 `env::DBCN_MAX` 同值：栈上定长，不分配）。
 const DBCN_MAX: usize = 256;
@@ -34,7 +34,7 @@ pub(super) fn put(
     len: usize,
 ) -> *mut TrapContext {
     if len == 0 {
-        return err(frame, Fail::Denied);
+        return err(frame, DebugFail::Denied);
     }
     let n = len.min(DBCN_MAX);
     let mut text = [0u8; DBCN_MAX];
@@ -42,7 +42,7 @@ pub(super) fn put(
     for (i, slot) in text[..n].iter_mut().enumerate() {
         let at = KVirt::from_raw(buf.wrapping_add(i));
         let Some((pa, _)) = space.translate(at) else {
-            return err(frame, Fail::Denied);
+            return err(frame, DebugFail::Denied);
         };
         // SAFETY: `translate` 已把该 VA 落到一个有效物理页；恒等映射区 PA 可直读。
         *slot = unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) };
@@ -66,13 +66,13 @@ pub(super) fn get(
     len: usize,
 ) -> *mut TrapContext {
     if len == 0 || len > DBCN_MAX {
-        return err(frame, Fail::Denied);
+        return err(frame, DebugFail::Denied);
     }
     let mut stage = [0u8; DBCN_MAX];
     let n = match crate::console::read(&mut stage[..len]) {
         Some(n) if n <= len => n,
         // 固件给不出这一格（非 DBCN / 短读）：如实拒，不假装成功。
-        _ => return err(frame, Fail::Denied),
+        _ => return err(frame, DebugFail::Denied),
     };
     if n == 0 {
         frame.gpr.set_x(Gprs::A0, 0);
@@ -80,7 +80,7 @@ pub(super) fn get(
     }
     let space = &ident.team.space;
     if !crate::work::mail::copy_out(space, &stage[..n], buf) {
-        return err(frame, Fail::Denied);
+        return err(frame, DebugFail::Denied);
     }
     frame.gpr.set_x(Gprs::A0, n);
     frame
@@ -93,7 +93,7 @@ pub(super) fn set_trace(on: usize) -> usize {
     v as usize
 }
 
-fn err(frame: &mut TrapContext, e: Fail) -> *mut TrapContext {
+fn err(frame: &mut TrapContext, e: DebugFail) -> *mut TrapContext {
     frame.gpr.set_x(Gprs::A0, e.code() as usize);
     frame
 }

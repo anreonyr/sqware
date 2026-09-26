@@ -22,12 +22,11 @@ use core::time::Duration;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{ChronoCall, ControlCall, DebugCall, EnvCall, RoomCall, TaskId, UnitCall};
+use env::{ChronoCall, DebugCall, EnvCall, RoomCall, TaskId, UnitCall};
 
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::{clock, timer};
-use crate::runtime::diagnose::frame::{self, ResolveCfg, StackReader};
 use crate::runtime::diagnose::trace::{self, EnvEvent, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff, WakeKey, park, park_until, wait, wake};
@@ -41,6 +40,7 @@ use crate::work::unit::team::UnitError;
 use crate::work::unit::weak::{Site, TaskWeak};
 use env::Fail;
 
+mod control;
 mod debug;
 mod mail;
 mod memory;
@@ -518,40 +518,9 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
             // ⇒ `Team`（连带 `Space`）的析构不在 L3 锁里走。
             drop(me.oust(team));
         }
-        EnvCall::Control(ControlCall::Backtrace { buf, frames }) => {
-            // Normal 任务自诊断回溯：采样当前任务的栈（`user_satp` 根表，零锁不触缺页），
-            // 把 pc 数组经 mail::copy_out 写进用户 buf。buf 非法（未映射/不可写）→
-            // copy_out 返 false → A0 = 负值（EnvError）。
-            let world = ident.team.space.kind();
-            let sp = frame.gpr.x(Gprs::SP);
-            let fp = frame.gpr.x(Gprs::S0);
-            let mut reader = StackReader::new(frame.user_satp.ppn());
-            let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
-            // 域筛：候选 pc 是否属本域代码。符号表已移除：不再做符号命中域筛。
-            let code = move |_w: usize| true;
-            let (pc_arr, count) = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));
-            // 打包 pc 数组字节（仅前 min(count, frames) 帧），copy_out 写用户 buf。
-            let keep = count.min(frames);
-            let mut bytes = [0u8; frame::DEPTH * core::mem::size_of::<usize>()];
-            for i in 0..keep {
-                bytes[i * core::mem::size_of::<usize>()..][..core::mem::size_of::<usize>()]
-                    .copy_from_slice(&pc_arr[i].pc.as_usize().to_le_bytes());
-            }
-            let ok = crate::work::mail::copy_out(
-                &ident.team.space,
-                &bytes[..keep * core::mem::size_of::<usize>()],
-                buf,
-            );
-            // 用户 buf 非法（未映射 / 不可写）→ 统一错误表（写裸 -1 与 `Denied` 同值，
-            // 但把「通道」写死在一处：D1 负码的单一真相是 `Fail::code`）。
-            frame.gpr.set_x(
-                Gprs::A0,
-                if ok {
-                    keep
-                } else {
-                    Fail::Denied.code() as usize
-                },
-            );
+        // Control 域的臂整个在 `control.rs`（回溯采样 + 一处 `ControlFail`）。
+        EnvCall::Control(call) => {
+            control::dispatch(frame, call, &ident);
         }
         // 两条轴各自成模块；命中的臂直接解构，未命中回落到下一个 match 腿。
         EnvCall::Mail(call) => {
