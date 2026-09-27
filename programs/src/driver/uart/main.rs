@@ -4,26 +4,24 @@
 //! uart — **串口驱动域**：`serial@10000000` 的持有者，兼**控制台服务**（**U 态**，见
 //! `driver/uart/mod.rs`）。
 //!
+//! **主流程只有三段**（本文件就是全部）：
+//!
 //! ```text
-//! 收配给（父域按本域那张单子推来记录：**位置即格**）
-//!   → 开图：那台串口那一页借映进本域
-//!   → 把"收到字节就拉线"打开（`IER.RX`）——**线的闸门归设备持有者**
-//!   → 上板：板因此看得见本域的死（**不挂牌子**：名字挂在树上）
-//!   → 上树：门牌 `/device/uart` —— 牌子上挂的就是"读行"的那枚孔
-//!   → 从树上找到线路由者（`/device/router`）、**登记本域那条线**（报那一段区，不说线号）
-//!   → 常驻：那条线一响 ⇒ **排空设备**（读走 `RBR`）⇒ 把这一批字节推给读行的人
-//!            ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
+//! 设备   领配给 → 开图 → 把"收到字节就拉线"打开（IER.RX，线的闸门归设备持有者）
+//! 入系统 解门牌 → 上板（板因此看得见本域的死）→ 上树（/device/uart）
+//!         → 从树上找到线路由者、登记本域那条线（报那一段区，不说线号）
+//! 核心   那条线一响 ⇒ 排空设备（读走 RBR）⇒ 把这一批字节推给读行的人
+//!         ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
 //! ```
 //!
-//! **本文件只剩流程**：起手在 `adapt/boot.rs`，上树与登记在 `adapt/tree.rs`，常驻在
-//! `adapt/resident.rs`，死法在 `adapt/fail.rs`；"这一批能不能交"那条纪律在 `core/batch.rs`。
-//! 服务面的判据与照实记（读口归谁、一条消息是什么、为什么它不退场、特权级）在
-//! `driver/uart/mod.rs`。
+//! **适配那几段不在这里**：`Device` / `Context` 住 [`programs::driver`]（三台逐字同构的那些
+//! 步骤）；设备面在 [`uart`](self)；"这一批能不能交"那条纪律在 `core::batch`。服务面的判据与
+//! 照实记（读口归谁、一条消息是什么、为什么它不退场、特权级）在 `driver/uart/mod.rs`。
 
 extern crate alloc;
 extern crate programs;
 
-/// 住持面（适配）：起手 / 上树 / 常驻 / 死法——由 bin 自己 `mod`。
+/// 住持面（适配）：只剩本域的死法（一族口径在 [`programs::driver::fail`]）。
 mod adapt;
 
 /// 纯功能：交出去的那一批（非空不可表达）。
@@ -32,15 +30,75 @@ mod core;
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod uart;
 
-/// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(Step::…))` 一路 `?` 出来，
-/// `Ok(())` 是"跑完了"（常驻域走不到那一格）。一格一格在 [`adapt::fail`] 里，
-/// **一族口径**在 [`programs::driver::fail`]（号取自装配表）。
+use adapt::fail::{ASSEMBLE, DIED, Fail};
+use crate::core::batch::Batch;
+use crate::uart as device;
+use env::Wait;
+use programs::driver::context::{Context, Mine, Step};
+use programs::driver::device::Device;
+use programs::program::uart::UART_WANTS as WANTS;
+use protocol::debug;
+use protocol::system::board::ENTRY_MARK;
+use runtime::env::mail;
+use runtime::env::unit as utask;
+
+/// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
+const ME: &str = "uart";
+
+/// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
+const MS: usize = 1000;
+
+/// 一次排空最多搬走多少字节。FIFO 只有 16 字节，取四倍宽；满了剩下的还在设备里，
+/// **下一次中断（本域说"排空了" ⇒ 路由者放回线）再来**。
+const DRAIN_MAX: usize = 64;
+
+/// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(DIED, "…"))` 一路 `?` 出来，
+/// `Ok(())` 是"跑完了"（常驻域走不到那一格）。**一族口径**在 [`programs::driver::fail`]
+/// （号取自装配表；本域只声明 [`adapt::fail::DIED`]）。
 #[programs::entry]
-fn main() -> Result<(), adapt::fail::Fail> {
-    // 1–3 ＋ 树那条会话：领配给 → 开图开闸 → 上板。
-    let up = adapt::boot::up()?;
-    // 4–5：上树那一趟 + 登记本域那一条线。
-    let held = adapt::tree::plate(&up)?;
-    // 6：常驻。
-    adapt::resident::run(&up, held)
+fn main() -> Result<(), Fail> {
+    // ── 设备 ───────────────────────────────────────────────
+    let [serial] = Device::claim::<{ WANTS.len() }>(ASSEMBLE)?;
+    debug!("uart: got {}", WANTS.len());
+    let dev = Device::open(serial).map_err(|_| Fail::at(DIED, "uart: device open failed"))?;
+    device::arm_rx(dev.view());
+    // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
+    let base = dev.key().base().ok_or(Fail::at(DIED, "uart: device open failed"))?;
+    debug!("uart: ier=rx at={base:#x}");
+
+    // ── 入系统 ─────────────────────────────────────────────
+    let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(DIED, "uart: tree"))?;
+    let ctx = Context::join(entry, utask::sire(), Wait::AtMost(MS)).map_err(|s| {
+        Fail::at(
+            DIED,
+            match s {
+                Step::Board => "uart: board",
+                Step::Tree => "uart: tree",
+            },
+        )
+    })?;
+    ctx.plate(ME, Mine::Yes, Wait::AtMost(MS));
+    // 报的是**发下来的那一段区**——"线 = 区的函数"那条权威在路由者那边解。
+    let line = ctx
+        .line(dev.key(), Wait::AtMost(MS))
+        .map_err(|_| Fail::at(DIED, "uart: line"))?;
+    debug!("uart: line occupied");
+
+    // ── 核心 ───────────────────────────────────────────────
+    let mut raw = [0u8; DRAIN_MAX];
+    loop {
+        if line.receive(Wait::Forever).is_err() {
+            return Err(Fail::at(DIED, "uart: line gone"));
+        }
+        let n = device::drain(dev.view(), &mut raw);
+        // 交给读行的人（门牌那枚孔＝读行的那一枚）。**这一手要阻塞**：字节是内容，丢了补不回来；
+        // 读行的人（`echo`）总会回到"取一行"那一格，故等它是有界的。
+        //
+        // **`n == 0` 那一趟不推**：[`Batch::of`] 把那一格做进了类型（内核只收 `1..=一页`）。
+        if let Some(batch) = Batch::of(&raw, n) {
+            ctx.publish(batch.bytes()).unwrap();
+        }
+        // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 + 把线放回去。
+        line.exhaust().unwrap();
+    }
 }

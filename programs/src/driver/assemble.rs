@@ -14,9 +14,10 @@
 //!
 //! # 判据落在哪
 //!
-//! **"要几样"不在这台机器里**：调用方按自己的需求单把数组**解构**出来
-//! （`let [Some(a), ..] = slots else { … }`）——缺一格就是装配错，而"该有几格"是收方那张单
-//! 的账（收方那张需求单，今天住 `programs::program`）。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
+//! **"要几样"只由收方那张单子说**：[`take`] 的 `N` 就是它的长度，调用方按它**解构**
+//! （`let [serial] = assemble::take::<{ WANTS.len() }>()?;`）——缺一格就是装配错，而那张单
+//! 今天住 `programs::program`。本模块只保证**回单与单子同序同长**：第 i 条落第 i 格。
+//! **`Option` 数组与"第 i 格"不再出现在驱动里**（照实记见 [`take`]）。
 
 use alloc::vec;
 use env::Wait;
@@ -25,6 +26,8 @@ use protocol::communication::establish;
 use protocol::system::grant;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
+
+use crate::program::Died;
 
 /// 收记录那条通道的名字——**两端同一个**（装配表里 `Setup::Channel("records")` 也写的它）。
 pub const RECORDS: &str = "records";
@@ -41,12 +44,17 @@ pub const MS: usize = 1000;
 pub const E_UP: usize = 2;
 pub const E_GRANT: usize = 3;
 
-/// 收一次配给：**回单第 i 条落第 i 格**，返**收到的条数**（读数用）。
+/// 收一次配给：**回单第 i 条落第 i 格**——`N` 就是本域那张单子的条数。
 ///
-/// 前置：`slots.len()` = 本域那张单子的条数。
 /// 契约：回单与单子**同序同长**——长度不符 ⇒ `Err(E_GRANT)`（这次配给不算，不是"少收几样"）。
 /// 坐标与号一起收下（[`Pair`]）：驱动要报线、要开图，都从那一条记录里取，不自己再写一遍。
-pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
+///
+/// **照实记（从前是 `receive(&mut [Option<Pair>])`）**：旧签名把"收几样"提前摊在调用方——
+/// 每一处都要先 `let mut slots = [None; WANTS.len()];`，再逐格 pattern match `Some(..)`，
+/// 于是 `Option` 数组与"第 i 格"这个**装配内部表示**漏进了驱动里。今天一次收齐：
+/// `let [serial] = assemble::take::<{ WANTS.len() }>()?;`——缺格/条数不符仍是同一个 `E_GRANT`，
+/// 而"有几格"只由收方那张单子说。
+pub fn take<const N: usize>() -> Result<[Pair; N], Died> {
     let sire = utask::sire();
     let channel = env::Name::new(RECORDS).map_err(|_| E_UP)?;
     // 一手就是"两头都装"：铸本域那一枚（刻 `records` 的记号）交给生我者，并顺手试认它那一枚
@@ -55,19 +63,19 @@ pub fn receive(slots: &mut [Option<Pair>]) -> Result<usize, usize> {
     let up = establish::endpoint(sire, env::Mark::of(channel.as_str()), Wait::POLL)
         .map_err(|_| E_UP)?;
     // 缓冲按本域那张单子备：需求单几条就备几条（发货方不必抄这个数）。
-    let mut buf = vec![0u8; PAIR_LEN * slots.len()];
+    let mut buf = vec![0u8; PAIR_LEN * N];
     let n = HolePie::from_token(up.rx())
         .pull_timeout(&mut buf, Wait::AtMost(MS))
         .map_err(|_| E_GRANT)?;
-    if n != PAIR_LEN * slots.len() {
+    if n != PAIR_LEN * N {
         // 短了/长了都算这次配给不成立：位置即格，条数对不上就没有"第 i 格"可言。
         return Err(E_GRANT);
     }
+    let mut out = [Pair::NONE; N];
     grant::each(&buf[..n], |i, pair| {
-        if let Some(cell) = slots.get_mut(i) {
-            *cell = Some(pair);
+        if let Some(cell) = out.get_mut(i) {
+            *cell = pair;
         }
     });
-    // 回**条数**（读数是"收到几样"，不是"收到几个字节"）。
-    Ok(slots.len())
+    Ok(out)
 }

@@ -235,11 +235,16 @@
 //! 跟着走则"生的"这个事实丢掉，不跟着走则 disown 等于没做。**这一格没定，故整个动作
 //! 搁置**；§九 的收域那一枚与 §二 的"父亲 = 调用者"都因此保持今天的形状。
 //!
-//! **同一族里已经删掉的一格**（交接那一族收口那一刀）：台账上那个 `desk::hand_over`
-//! （"记下它交回的通道"）**一处调用都没有**，它唯一写的那一格 `Service::root` 全仓没有读者，
-//! 而它服务的 `Announce::Channel` 也没有任何清单在用（`Ready::Pending` 走不到）⇒ 那一手删了。
-//! `root` / `Channel` / `Pending` 三块**没有一起删**：它们与 `disown` 是同一个问题的两面
-//! （谁宣布、谁接手），归这一节。
+//! **同一族里已经删掉的两格**（交接那一族收口那一刀 ＋ 残枝那一刀）：台账上那个
+//! `desk::hand_over`（"记下它交回的通道"）**一处调用都没有** ⇒ 那一手删了；它唯一写的那一格
+//! `Service::root`（`Option<PieToken>`）随后也**没有一处读**（`attach` / `detach` / `EMPTY`
+//! 三处只写 `None`）⇒ 残枝那一刀连字段一起删。
+//!
+//! **照实记（这一句原先举错了另一半）**：原写"`Announce::Channel` 也没有任何清单在用
+//! （`Ready::Pending` 走不到）"——**读数不支持**：驱动四台（`uart` / `rtc` / `router` /
+//! `lodger`）的 `setup` 里都有 `Setup::Channel("records")`，而 `control::assemble` 正是按
+//! "有没有 `Channel`"推出 [`Announce::Channel`]（`service::ready` 那一支因此真在跑）。
+//! 故 `Announce::Channel` 与 `Ready::Pending` 是**活的**，不在残枝之列。
 //!
 //! # 七、服务名与"代表线程"
 //!
@@ -490,6 +495,11 @@ pub mod desk;
 pub mod grant;
 pub mod operator;
 pub mod principal;
+// **照实记（`supply` 是残枝那一刀搬来的）**：它原先住 [`crate::driver::supply`]——而实测
+// 它的消费者只有**引导域**（发货）与**编排域**（`bootstrap` 领设备树与载荷区、`control::assemble`
+// 领配给），`programs/src/driver/` 一处都不用 ⇒ 它不是驱动协议，是**装配/配给**这一半
+// （"单子上的每一格都是设备这一件事的词汇，而递单的人不是驱动"）。
+pub mod supply;
 
 // **照实记（那两条 `pub use` 已撤）**：这里从前把 `core` 的五件（`Fail` / `Ready` /
 // `Reaped` / `Watch`）与 `desk` 的五件（`Announce` / `Service` / `Slot` / `State` / `Table`）

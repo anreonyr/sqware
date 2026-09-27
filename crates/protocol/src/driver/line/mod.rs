@@ -32,18 +32,19 @@
 //! **属主验不动**：内核交完设备就零设备账，句柄号又不跨表 ⇒ 抢线如实记为代价；真护栏在装配期
 //! （谁拿到那台设备的 `ONLY` 门闩）。
 //!
-//! # 两层
+//! # 两个文件
 //!
 //! ```text
-//!   core.rs    账 + 四个原语 + 失败域   —— 不碰内核（不出现 runtime::）
-//!   call.rs    帧形与记号
+//!   frame.rs   帧形与记号 + 失败域与状态码的双射表
 //!   client.rs  客侧几手（占线 / 收投递 / 说排空）
+//!   （账 = 按线号索引的表 + 四个原语，**住路由者那一侧**：
+//!   `programs/src/driver/router/core/lines.rs`——"只有持有那台设备的人读得到它"）
 //!   （服务面 = 设备持有者自己的具体协议，**不进本 crate**：`driver/uart` 那枚门牌孔、
 //!   `driver/rtc` 那面报时服务）
 //!   （不在协议里）接线 / 静音 / 拆线 / claim / complete —— programs/src/driver/router/plic.rs
 //! ```
 //!
-//! 核心只记账：**"登记了就接线、放回了就接着、空了就拆"**那三手紧随其后，由适配层做
+//! 账那一侧只记账：**"登记了就接线、放回了就接着、空了就拆"**那三手紧随其后，由适配层做
 //! （它要动硬件）。门牌：驱动挂在 [`crate::system::operator`] 的 **`/device`**（`super::DIR`）之下，
 //! 名字用服务名。
 //!
@@ -94,11 +95,10 @@
 //!   `router: line 1 = virtio_mmio@10001000` 与 `router: vacate line=1`（`crates/gate/src/soak.rs`（已删）的固定
 //!   读数）——"死会叫醒"由此从读代码变成量出来的。
 
-pub mod core;
 pub mod frame;
 
-pub use crate::driver::line::core::{Fail, Lines};
+pub use frame::Fail;
 
 pub mod client;
 
-// **客侧留在本侧**（`client`）：它自己铸孔、自己 `claim`，碰内核；形与据住同层（`core` / `frame`）。
+// **客侧留在本侧**（`client`）：它自己铸孔、自己 `claim`，碰内核；形与据住同层（`frame`）。

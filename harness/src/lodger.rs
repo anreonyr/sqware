@@ -62,13 +62,11 @@ use programs::Report;
 use programs::program::harness::LODGER_WANTS as WANTS;
 use programs::driver::assemble;
 
-// 树：本域是**客侧**（按名找服务）。
+// 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
+use programs::driver::context::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 
-
-use env::{Name, PieToken};
+use env::{PieToken};
 use env::Key;
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
@@ -88,15 +86,11 @@ const E_TRIP: usize = 1;
 #[programs::entry]
 fn main() -> Report<'static> {
     // 1. 领配给：门闩到手就是"持有"的全部（本域不映视图、不碰寄存器）。缺格即装配错。
-    let mut slots = [None; WANTS.len()];
-    let got = match assemble::receive(&mut slots) {
-        Ok(n) => n,
+    let [grant] = match assemble::take::<{ WANTS.len() }>() {
+        Ok(taken) => taken,
         Err(code) => return Report::note(code, "lodger: assemble"),
     };
-    let [Some(grant)] = slots else {
-        return Report::note(assemble::E_GRANT, "lodger: no grant");
-    };
-    debug!("lodger: got {got}");
+    debug!("lodger: got {}", WANTS.len());
 
     // 2. 上树一条会话：找到线路由者，取回那扇门——三趟登记都往它推（会话一个域只开一条）。
     let entry = match find_router() {
@@ -155,19 +149,15 @@ fn main() -> Report<'static> {
 }
 
 /// 上树一趟：`FIND /device/router` ⇒ 那扇门（登记从它走）。
+///
+/// **照实记（这一份复制已并进 `driver::context`）**：本域从前自己写了一遍"开会话 → 要问话孔
+/// → 名字译成号 → 按号取入口"——与驱动那两份（旧 `tree` / `register`）逐字同构。今天只用
+/// [`Session::open`] ＋ [`Session::service`]：房客**没有门牌**，故只要那条会话这一半。
 fn find_router() -> Option<PieToken> {
-    let sire = utask::sire();
-    let (link, host) = operator::open(sire, Wait::AtMost(MS)).ok()?;
-    let talk = operator::ask_hole(host).ok()?;
-    let dir = Name::new(protocol::driver::DIR).ok()?;
-    let want = Name::new(SERVICE).ok()?;
-    let road = [dir, want];
-    // **间接寻址那一手**：名字先译成号，此后按号。
-    let id = operator::seek(talk, &link, &road, Wait::AtMost(MS)).ok()?;
-    match operator::find(talk, &link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
+    let session = Session::open(utask::sire(), Wait::AtMost(MS)).ok()?;
+    session
+        .service(protocol::driver::DIR, SERVICE, Wait::AtMost(MS))
+        .ok()
 }
 
 /// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。

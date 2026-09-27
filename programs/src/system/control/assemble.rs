@@ -17,8 +17,8 @@ use protocol::debug;
 use protocol::system::desk::Announce;
 use runtime::env::mail;
 
-use protocol::driver::supply::frame::{WANT_MAX, Want};
-use protocol::driver::supply;
+use protocol::system::supply::frame::{WANT_MAX, Want};
+use protocol::system::supply;
 
 use crate::program::Setup;
 

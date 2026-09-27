@@ -1,16 +1,16 @@
 //! router::adapt::resident — **常驻· 壳**：等三源 → 四手各就位。
 //!
-//! 判定不在这里：账与四原语住 `protocol::driver::line::core`，"区 ↔ 线号"住 `crate::core::sources`，
+//! 判定不在这里：账与四原语住 `crate::core::lines`，"区 ↔ 线号"住 `crate::core::sources`，
 //! 每一次醒来的四件事各有一份（`sweep` / `exhaust` / `desk` / `bell`）——本文件只做"等、取、喂"。
 
 use super::boot::Up;
 use super::{bell, desk, exhaust, sweep};
-use super::fail::{Fail, Step};
+use super::fail::{DIED, Fail};
 use env::Wait;
 
 /// 常驻：**一只组等两个源**（加上门牌，共三个）。
 ///
-/// 失败：组坏了 ⇒ `Err(Fail::at(Step::Bell))`——本域没有可继续的状态（铃那一格今天不可达：它的资源实体
+/// 失败：组坏了 ⇒ `Err(Fail::at(DIED, "router: bell"))`——本域没有可继续的状态（铃那一格今天不可达：它的资源实体
 /// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）。
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
@@ -26,7 +26,7 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
             Ok(Some(_)) => {}
             // 挂起过（不是期限）：照样往下走一遍——`claim` 领到空就什么也不做。
             Ok(None) => {}
-            Err(_) => return Err(Fail::at(Step::Bell)),
+            Err(_) => return Err(Fail::at(DIED, "router: bell")),
         }
         // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：
         // 那一格收掉之后再取排空、再登记，账里就只剩还活着的客人。

@@ -236,7 +236,7 @@
 pub mod core;
 pub mod frame;
 
-pub use crate::system::board::core::{Board, Fail, Sign};
+pub use crate::system::board::core::{Board, Fail};
 
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`），不再有“转出”那一层。

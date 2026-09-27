@@ -1,38 +1,36 @@
-//! line::core — **账**：一张按线号索引的表、四个原语、几个查询、失败域。
+//! router::core::lines — **线那本账**：一张按线号索引的表、四个原语、几个查询。
 //!
-//! **四个原语**（`occupy` / `deliver` / `exhaust` / `vacate`）动账；**查询**（`lane` / `busy` /
-//! `held` / `told`）只读账（`told` 顺手置一格"报过没有"，见它自己的注）。
+//! ```text
+//!   occupy   占住这一格 + （适配层紧随其后）接线
+//!   deliver  往这一格的泊位推一帧 + 置忙
+//!   exhaust  排空：这一格回闲 + （适配层）放回
+//!   vacate   主人没了：空出这一格 + （适配层）拆线
+//! ```
 //!
-//! **它碰内核的地方只有一处**：`deliver` 推那一帧（`mail::HolePie::from_token(..).push(..)`）——
-//! 那句话不在账上，
-//! 是"往对端那枚孔推一串字节"。**设备侧的动作**（接线 / 静音 / 拆线）一律不在这里：它们由
-//! 适配层紧随原语之后做（那几手要动硬件），故账仍可独立推理。
+//! **照实记（它原先住 `protocol::driver::line::core`）**：那一份的读者只有本域一处——按
+//! [`crate::driver`] 的判据（"只有持有那台设备的人读得到它吗"），它是**线路由者的内部管理表**，
+//! 不是两侧共享的语言。故搬回持有它的人这里：协议那一侧只留**形与码**
+//! （`protocol::driver::line::frame`）与**客侧几手**（`protocol::driver::line::client`）。
 //!
-//! 那一处从前是**注入**进来的（`Pier` 里挂着 `post` 那只函数指针，会话那一层一件内核都不碰）；
-//! 注入与 `Hands` 一起退场之后，这一句留在这里（纪律由 **crate 边界**管着，见本 crate 头注）。
+//! **两侧之间的约定**（"权威与属主"、"静音还是压着不结"、"线 = 区的函数"）仍写在
+//! `protocol::driver::line` 那一份正文里——那几节讲的是约定，不是这本账的形状。
+//!
+//! **它碰内核的地方只有一处**：`deliver` 推那一帧（`mail::HolePie::from_token(..).push(..)`）。
+//! **设备侧的动作**（接线 / 静音 / 拆线）一律不在这里：它们由适配层紧随原语之后做（那几手要动
+//! 硬件），故账仍可独立推理。
 
 use alloc::vec::Vec;
 
-use crate::communication::establish::Held;
+use protocol::communication::establish::Held;
+use protocol::driver::line::Fail;
 use runtime::env::mail;
-
-/// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 本控制器上没有这条线（没有主、或线号越出 `[1, device_count]`）⇒ 回头查树。
-    Unknown,
-    /// 这条线有人了 ⇒ 换个名字，或者等它 `vacate`。
-    Taken,
-    /// 那一帧推不出去（口封了 / 对端没了）⇒ 按"没投成"算，不置忙。
-    Denied,
-}
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）。
 ///
-/// **装的是 [`Held`]**（不是 [`Endpoint`](crate::communication::establish::Endpoint)）：
-/// 这一格的关系是**真·作用域寿命**——"这一格归这位主人"就是它活着的全部理由，主人没了
-/// （`vacate`）或换一条线占进来，那一格就该被放下。放下一手因此由 `Held` 的 `Drop` 代劳，
-/// **一处也不用记**（旧形状里那一手是适配层自己写的 `drop_lane` / `unseat`）。
+/// **装的是 [`Held`]**（不是 `Endpoint`）：这一格的关系是**真·作用域寿命**——"这一格归这位
+/// 主人"就是它活着的全部理由，主人没了（`vacate`）或换一条线占进来，那一格就该被放下。
+/// 放下一手因此由 `Held` 的 `Drop` 代劳，**一处也不用记**（旧形状里那一手是适配层自己写的
+/// `drop_lane` / `unseat`）。
 enum Cell {
     Idle,
     Owned { lane: Held, busy: bool },

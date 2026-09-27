@@ -8,7 +8,7 @@
 //!
 //! **照实记（这一族两端都上类型化手柄——上一版这里写反了）**：
 //!
-//! · **客侧**（`protocol::driver::supply::client::draw`）：发走 `Sender::<Order>`、收走
+//! · **客侧**（`protocol::system::supply::client::draw`）：发走 `Sender::<Order>`、收走
 //!   `Receiver::<Reply>`。它那两句判据仍分得开——"期限内没等到" ⇒ `Local`、"收下来解不动"
 //!   ⇒ `Bad`——靠的是 `Receiver::recv` 那三格失败（`Mail` 那一族的忙/死/拒 ＋ `Unread`）。
 //! · **服务侧**（`programs::root::supply::server`）：收帧走同一手（"先探活、再解题"那两格照旧），
@@ -16,7 +16,7 @@
 //!
 //! ⇒ 编解一处（表 ＋ `Message`）、收发一处（手柄），运输只剩"泊位就是那条路"这一件。
 //!
-//! 正文见 `protocol` 那一侧的 `driver/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
+//! 正文见 `protocol` 那一侧的 `system/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
 use env::TaskId;
 use env::{PAIR_LEN, Pair};

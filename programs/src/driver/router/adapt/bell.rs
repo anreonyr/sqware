@@ -1,6 +1,6 @@
 //! router::adapt::bell — **铃（适配）**：领一条 → 往主人手里投一帧 → 投到了才静音 ＋ 结 → 报一行。
 //!
-//! 判定在 `protocol::driver::line::core`（`deliver` 与 `told`）；静音/结是设备面的一手
+//! 判定在 `crate::core::lines`（`deliver` 与 `told`）；静音/结是设备面的一手
 //! （`plic.disable` / `plic.complete`）。
 //!
 //! **领到空**——不按 `bell.wait(0)` 的返回值判。那一位是**中断闸门的账**（响着 ⇒ 本 hart 的
@@ -11,7 +11,8 @@
 
 use crate::plic::Plic;
 use protocol::debug;
-use protocol::driver::line::{core::Lines, frame as lcall};
+use crate::core::lines::Lines;
+use protocol::driver::line::frame as lcall;
 
 /// 领干净这一趟铃：每条领到的线投一帧、静音、报过没有、结清。
 pub fn ring(lines: &mut Lines, plic: &Plic) {

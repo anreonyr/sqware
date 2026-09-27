@@ -6,6 +6,7 @@
 //!
 //! 它只吃**设备树那段字节**（适配层把借映进来的视图切好交给它），故可独立推理；
 //! 寄存器那一半住 `../plic.rs`（设备面）。**账与四原语**（登记 / 投递 / 排空 / 收线）不在这里
-//! ——那一条线的权威住 `protocol::driver::line::core`（两侧共用一份）。
+//! ——那一条线的账住本目录 `lines.rs`（协议只留形与码，见 `protocol::driver::line`）。
 
+pub mod lines;
 pub mod sources;

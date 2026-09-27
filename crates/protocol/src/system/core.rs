@@ -1,10 +1,10 @@
-//! system::core — **判定（纯）**：起不起、起来了没有、还活着没有、收尾完了没有——只读表，不碰内核
+//! system::core — **判定（纯）**：起不起、起来了没有、收尾完了没有——只读表，不碰内核
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
 use env::Name;
 
-use super::desk::{Announce, Service, Slot, State, Table};
+use super::desk::{Announce, Slot, State, Table};
 
 // ── 核心：判定（纯函数，只读表）─────────────────────────────
 
@@ -57,28 +57,10 @@ pub fn probe_ready(table: &Table, name: Name) -> Ready {
     }
 }
 
-/// 还活着没有。
-///
-/// **照实记（口径未齐）**：本判定读的是"身子里还有没有坐标"，而 [`Slot`] 的裁决是**死亡记账
-/// 不清坐标**（留给重启与放下）⇒ 一位已经收尾的 Service 在这里仍答 [`Watch::Alive`]。也就是说
-/// 这一对名字（`Alive`/`Gone`）现在名不副实：生死该看 [`State`]。今天没有调用者（`watch` 收尾
-/// 时不再 `detach`），故留着不动；要用它的人先裁这一处读法。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Watch {
-    Alive,
-    Gone,
-}
-
-/// 身子判定（纯）：**表里还有没有那对坐标**——不是生死（见 [`Watch`] 的照实记）。
-pub fn probe_watch(table: &Table, name: Name) -> Watch {
-    match table.find(name) {
-        Some(Service {
-            slot: Slot::Live { .. },
-            ..
-        }) => Watch::Alive,
-        _ => Watch::Gone,
-    }
-}
+// **照实记（`Watch` / `probe_watch` 已删）**：它们答的是"身子里还有没有那对坐标"，
+// 而 [`Slot`] 的裁决是**死亡记账不清坐标**（留给重启与放下）⇒ 一位已经收尾的 Service 在那里
+// 仍答 `Alive`——名不副实，生死该看 [`State`]。全仓零调用者（`watch` 收尾时不再 `detach`），
+// 故按"没有读者的格不留在面上"删掉整对：要用"它还在不在"，问 [`probe_ready`]。
 
 /// "收尾完了没有"的三态判定 —— 与 [`Ready`] 同形：**判决 + 判决的来路**。
 ///

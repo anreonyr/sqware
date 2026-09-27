@@ -1,6 +1,6 @@
 //! supply::client — **编排域那一侧**：递一张单子、取回一段记录（[`draw`]），并按坐标取一枚（[`pick`]）
 //!
-//! **照实记（这一份的前身）**：它从前住那个只做形与据的 crate（`driver::supply::client`）
+//! **照实记（这一份的前身）**：它从前住那个只做形与据的 crate（那一份里的 `supply::client`）
 //! ——那时它手里只有会话核心那条泊位（`Pier::post` / `Pier::pull`），编解还是自由函数。它要用
 //! **通信那一层**：它同时看得见"孔"（`runtime`）与"报"（`message`）。**判据一字未改**——
 //! 尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
@@ -10,8 +10,8 @@ use env::wire::Field;
 use env::{MailFail, PieToken, TaskId};
 use env::{Key, PAIR_LEN, Pair};
 
-use crate::driver::supply::core::Fail;
-use crate::driver::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
+use crate::system::supply::core::Fail;
+use crate::system::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
 use crate::communication::establish::Endpoint;
 use crate::communication::receiver::RecvFail;
 

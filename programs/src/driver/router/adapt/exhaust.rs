@@ -1,6 +1,6 @@
 //! router::adapt::exhaust — **排空（适配）**：客人说一句"这一条我排空了" ⇒ 那一格回闲 + 把线放回去。
 //!
-//! 判定在 `protocol::driver::line::core`（`exhaust` 那一手）；放线是设备面的一手
+//! 判定在 `crate::core::lines`（`exhaust` 那一手）；放线是设备面的一手
 //! （`plic.enable`）。
 //!
 //! **按泊位认线**：一条线一枚泊位，谁推的那一枚就是哪一条——**帧里没有线号**（1 字节记号，
@@ -11,7 +11,7 @@
 
 use crate::plic::{LINE_PRIORITY, Plic};
 use env::Wait;
-use protocol::driver::line::core::Lines;
+use crate::core::lines::Lines;
 use runtime::env::mail::HolePie;
 
 /// 排空：取"忙"的那些，把里面的通知取干净，每条回闲 + 放线。

@@ -1,18 +1,18 @@
 //! operator::core::judge —— **门外那一问**：这一位许不许动这一格。**不带载体、不碰内核。**
 //!
 //! 本文件与 [`core`](super) 同一站位：**只判规矩，不发消息**。判据要问的事实由
-//! 调用方以四个 trait 注入（本文件因此既不认识会话、也不认识门牌）：
+//! 调用方以**一个** trait（[`Facts`]）注入（本文件因此既不认识会话、也不认识门牌）：
 //!
 //! ```text
-//!   Who      TID ──→ 此刻代表哪条号            谁在问（名册，纵向）
-//!   Branch   (号, 号) ──→ 在不在一支里          谱系谓词（纵向）
-//!   League   盟 ──→ 这一位在不在这枚盟里        盟籍（横向）
-//!   Door     格号 ──→ 开着那一格的那一位       树（**那一格是谁的门牌**）
+//!   Facts::who    TID ──→ 此刻代表哪条号            谁在问（名册，纵向）
+//!   Facts::heir   (号, 号) ──→ 在不在一支里          谱系谓词（纵向）
+//!   Facts::amid   盟 ──→ 这一位在不在这枚盟里        盟籍（横向）
+//!   Facts::opens  格号 ──→ 开着那一格的那一位       树（**那一格是谁的门牌**）
 //! ```
 //!
-//! `Door` 是唯一带**坐标**的一条：`Rule::Opens(e)` 比的是"开着第 `e` 格的那一位"，故它答的是
-//! 一个 **TID**（内核戳"谁开的这扇门"），再拿那个 TID 回 [`Who`] 问"此刻代表谁"——两件事两个
-//! 落点。
+//! `opens` 是唯一带**坐标**的一条：`Rule::Opens(e)` 比的是"开着第 `e` 格的那一位"，故它答的是
+//! 一个 **TID**（内核戳"谁开的这扇门"），再拿那个 TID 回 [`Facts::who`] 问"此刻代表谁"——
+//! 两件事两个落点。
 //!
 //! # 三格答案，每格一个不同的下一步
 //!
@@ -26,8 +26,8 @@
 //!
 //! **`Unjudged` 不承诺"等一会儿会好"**。它的因有两类——**会好的**（对面不答 / 超时、门牌还没
 //! 到）与**好不了的**（那一号是碑、那一格是块窗格、开者那扇门封印了）。这两类在**客人那一侧**
-//! 是同一个下一步（当趟放弃），差别只在**为什么** ⇒ 那是**读数**的格（[`Door`] 那一侧分得开），
-//! 不是码的格。「重试」是**客人的策略**：本格只说"判不了"，不说"再等等"。
+//! 是同一个下一步（当趟放弃），差别只在**为什么** ⇒ 那是**读数**的格（[`Facts::opens`] 那一侧
+//! 分得开），不是码的格。「重试」是**客人的策略**：本格只说"判不了"，不说"再等等"。
 //!
 //! # 两层判据不许混进失败域
 //!
@@ -131,7 +131,7 @@ pub type Id = u64;
 /// **封顶不等于五格都好判**：[`Rule::In`] 与 [`Rule::Opens`] 都是"引用 + 现场求解"，而**只有
 /// `Opens` 的引用对象会死**（上一段）⇒ 这个封闭集里**存在"永远判不了"的一格**——它与"对面
 /// 暂时不答"同落 [`Ruling::Unjudged`]（两类同格是那一格自己的口径：客人那一侧同一步，差别由
-/// 持树者各说一行读数分开，见 [`Ruling::Unjudged`] 与 [`Door`]）。
+/// 持树者各说一行读数分开，见 [`Ruling::Unjudged`] 与 [`Facts::opens`]）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rule<P, C> {
     /// 任何**已绑身份**都可以（这就是"公开入口"）。没绑的仍然不行（见 [`judge`] 的第一格）。
@@ -209,59 +209,42 @@ pub enum Ruling {
     /// 那一格是块窗格 / 开者那扇门封印了（**好不了**）。
     ///
     /// 两类在这里**同格**：客人的下一步是同一个（当趟放弃），差别在"为什么"⇒ 那是读数
-    /// （[`Door`] 那一侧的三因分得开）。**重试是客人的策略**，本格不作承诺。
+    /// （[`Facts::opens`] 那一侧的三因分得开）。**重试是客人的策略**，本格不作承诺。
     Unjudged,
 }
 
-// ── 四个注入的事实 ──────────────────────────────────────────
+// ── 门外那一问要问的四条边（**一个** trait）─────────────────
 
-/// 名册那一侧：**这个 TID 此刻代表谁**（纵向）。
+/// 名册 / 谱系 / 盟册 / 树——**判一格要问的全部事实**，四条边一个出口。
 ///
-/// `Ok(None)` = 没绑（**不是失败**，是"没有身份"）；`Err` = 问不到（⇒ [`Ruling::Unjudged`]）。
-pub trait Who<P> {
-    fn who(&self, tid: TaskId) -> Result<Option<P>, ()>;
-}
-
-/// 谱系那一侧：**`a` 在 `b` 那一支里吗**（纵向的谓词，含 `a == b`）。
+/// **照实记（这一层原先有两重，已折平）**：从前是四枚单方法 trait（`Who` / `Branch` /
+/// `League` / `Door`），而 `gate::Facts<'a, C>` 再把 `gate::Control` 的四问逐个转发过去
+/// ——同一条链上两层 trait 说同一件事。它们存在的理由只有一个**已经删掉的宿主靶**
+/// （"换一份假实现就能单独推理"）；那台靶一走，留下的就是纯粹的绕路。故按"一个动作不许有
+/// 两套类型"折成**这一个** trait：`judge` 直接问它，`gate::verdict` 也直接收它。
 ///
-/// `Err` = 问不到（⇒ `Unjudged`）；`Ok(false)` = 不在这一支里（⇒ `Deny`）。
-pub trait Branch<P> {
-    fn heir(&self, a: P, b: P) -> Result<bool, ()>;
-}
-
-/// 盟册那一侧：**`me` 此刻在这枚盟里吗**（横向）。
+/// 四格的读法（**逐字保留原样**）：
 ///
-/// 与 [`Branch`] 分家（纵向 / 横向），实现上通常都是另一枚门牌。
+/// - [`Facts::who`]：`Ok(None)` = 没绑（**不是失败**，是"没有身份"）；`Err` = 问不到
+///   （⇒ [`Ruling::Unjudged`]）。
+/// - [`Facts::heir`]：`Err` = 问不到（⇒ `Unjudged`）；`Ok(false)` = 不在这一支里（⇒ `Deny`）。
+/// - [`Facts::amid`]：**两格都要**（盟册那一问本来就是"谁在哪个盟里"）。
+/// - [`Facts::opens`]：`Ok(Some(tid))` = 那一格是枚 `Tile`、开者是 `tid`；`Ok(None)` =
+///   **没有那一位**——碑 / 那一号是块 `Pane` / 开者那扇门封印了（**三因同落**：判据只需要
+///   "有没有那一位"这一件事）。后两因**永远好不了**，与"对面暂时不答"同落 ⇒ 都判
+///   [`Ruling::Unjudged`]。把三因分开的是**读数**，不是码：树那一侧本来就分得开
+///   （`Operator::opens` 答 `Unknown` / `NotATile` / `Dead`），由
+///   `programs/src/system/operator/server.rs` 的 `Court::opens` 把它们说进读数。
+///   `Err(())` = 树自己问不到 ⇒ `Unjudged`（**今天没有生产者**：`Court::opens` 一律返
+///   `Ok(None)`，它连 `_` 都不写，就为了将来 `Fail` 多一格时**编不过**；留这一格是因为
+///   四条边同形，缺一条就不是"四问"了）。
 ///
-/// **照实记：这一格原来少一个号。** 第一版写的是 `amid(&self, at: C)`——可盟册那一问本来
-/// 就要两个号（`coalition::client::Face::amid(p, c)`，线上那一帧也带两格）。而 `judge` 手里
-/// 明明有 `me`（第一步就问出来了），却没往下传。**当时它是一颗恒答"问不到"的桩**，故那个错
-/// 一次没响过。**已补上**：`Court::amid`（`programs/src/system/operator/server.rs`）真查
-/// 盟册门牌，而 `Rule::In` 有真机读数——`in=0` / `in_sub=8`（`harness/src/probe_rule.rs`
-/// 那一沓；是桩的话这两格只可能答 `9`）。
-pub trait League<P, C> {
-    fn amid(&self, me: P, at: C) -> Result<bool, ()>;
-}
-
-/// 树那一侧：**第 `at` 格是谁开的**（一格里那件事）。
-///
-/// - `Ok(Some(tid))` = 那一格是枚 `Tile`，开者是 `tid`；
-/// - `Ok(None)` = **没有那一位**——碑 / 那一号是块 `Pane` / 开者那扇门封印了（**三因同落**：
-///   判据只需要"有没有那一位"这一件事）。**照实记**：后两因**永远好不了**，而它们在本格与
-///   "对面暂时不答"同落 ⇒ 判出来都是 [`Ruling::Unjudged`]。把三因分开的是**读数**，不是码：
-///   树那一侧本来就分得开（`Operator::opens` 答 `Unknown` / `NotATile` / `Dead`），
-///   由 `programs/src/system/operator/server.rs` 的 `Court::opens` 把它们说进读数。
-/// - `Err(())` = 树自己问不到（⇒ [`Ruling::Unjudged`]）。
-///
-/// **照实记（这一格生产里到不了）**：`Operator::opens` 只会答
-/// `Unknown` / `NotATile` / `Dead` 三因，而生产那一份 `Court::opens` 把它们**一因各说一行
-/// 读数**、一律返 `Ok(None)`（它连 `_` 都不写，就为了将来 `Fail` 多一格时**编不过**）⇒
-/// `Err(())` 今天**没有生产者**（原先只有宿主靶喂得出来——**那台靶已删**）。留着这一格不是为生产：
-/// 它是一个"对面问不到"的**出口**，而 `Who` / `Branch` / `League` 那三条边同形。
-///
-/// 答的是 **TID 不是号**：树的读答"谁开的这扇门"（内核戳），名册那一边答"这个 TID 是谁"——
-/// 两件事两个落点，故 `Rule::Opens` 那一格要走两问。
-pub trait Door {
+/// 答的是 **TID 不是号**：树的读答"谁开的这扇门"（内核戳），名册那一边答"这个 TID 是谁"
+/// ——两件事两个落点，故 `Rule::Opens` 那一格要走两问。
+pub trait Facts {
+    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()>;
+    fn heir(&self, a: Id, b: Id) -> Result<bool, ()>;
+    fn amid(&self, me: Id, at: Id) -> Result<bool, ()>;
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()>;
 }
 
@@ -276,20 +259,9 @@ pub trait Door {
 /// - **只问一次**——[`Rule::Opens`] 那一格是唯一的例外：它要**再问一次名册**，问的是**另一条
 ///   TID**（那一格的开者）"此刻代表谁"。这是晚绑定的代价，写在签名边上，不藏在实现里
 ///   （照实记：这一句原来写的是"只问一次"，一个字不含糊；加第五格时它被破了，故改口径）。
-pub fn judge<P, C>(
-    who: TaskId,
-    rule: Rule<P, C>,
-    roster: &impl Who<P>,
-    branch: &impl Branch<P>,
-    league: &impl League<P, C>,
-    door: &impl Door,
-) -> Ruling
-where
-    P: PartialEq + Copy,
-    C: Copy,
-{
+pub fn judge(f: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Ruling {
     // 一、谁在问。没绑 ⇒ 没资格（编排域落的正是这一格）；**问不到 ⇒ 判不了**。
-    let Some(me) = (match roster.who(who) {
+    let Some(me) = (match f.who(who) {
         Ok(found) => found,
         Err(()) => return Ruling::Unjudged,
     }) else {
@@ -299,21 +271,21 @@ where
     match rule {
         Rule::Public => Ruling::Allow,
         Rule::Is(p) => allow(me == p),
-        Rule::Under(p) => match branch.heir(p, me) {
+        Rule::Under(p) => match f.heir(p, me) {
             Ok(true) => Ruling::Allow,
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
         },
-        Rule::In(c) => match league.amid(me, c) {
+        Rule::In(c) => match f.amid(me, c) {
             Ok(true) => Ruling::Allow,
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
         },
         // 三、**两问**：先问树"那一格谁开着"，再问名册"那位此刻代表谁"。两问的失败域各自落格，
-        //    与上面几条同一分法：**"没有那一位"是判不了**（三因同落，其中两因永久，见 [`Door`]），
+        //    与上面几条同一分法：**"没有那一位"是判不了**（三因同落，其中两因永久，见 [`Facts::opens`]），
         //    **"那一位没身份"是终态拒**。
-        Rule::Opens(at) => match door.opens(at) {
-            Ok(Some(that)) => match roster.who(that) {
+        Rule::Opens(at) => match f.opens(at) {
+            Ok(Some(that)) => match f.who(that) {
                 Ok(Some(theirs)) => allow(me == theirs),
                 Ok(None) => Ruling::Deny,
                 Err(()) => Ruling::Unjudged,

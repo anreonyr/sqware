@@ -1,32 +1,34 @@
-//! driver::fail — **一台驱动怎么死**：三台共用这一格口径（**号取自装配表**）。
+//! driver::fail — **一台驱动怎么死**：三台共用一枚扁平的死法（号取自装配表）。
 //!
 //! ```text
-//!   Step   死在起手/常驻的**哪一步**——各域自己那一枚枚举实现它（只列自己走得到的那几格）
-//!   Who     **哪一台**——决定号（[`Who::DIED`]）与"配给那一趟没成"那一格长什么样
-//!   Fail    一台驱动的死法：`main` 的返回类型，`?` 一路把它带出来
+//!   Fail      { code, text }：一个号 + 那一句话 —— `main` 的返回类型
+//!   DIED      各域在装配表上那一号（各域自己那份 `fail.rs` 里一行 `const`）
+//!   ASSEMBLE  "配给那一趟没成"那句话（号由 `assemble` 原样带来）
 //! ```
 //!
-//! 从前三台各有一份 `adapt/fail.rs`（三份逐字同构：同款的 derive、同款的 `Assemble(env::Reason)`、
-//! 同款的 `impl Exit` 与 `impl From`，三份共 198 行）。这一刀并成族一级一枚，与
-//! [`tree`](crate::driver::tree) / [`register`](crate::driver::register) /
-//! [`assemble`](crate::driver::assemble) 同一条判据：**同构才收**。
+//! # 照实记（`Step` / `Who` 两个 trait 与泛型 `Fail<W>` 已退场）
 //!
-//! # 照实记（并的理由不是"少写三遍"，是"两套号在跑"）
+//! 从前这里是一套三件的机制：各域一枚 `Step` 枚举（"只列自己走得到的步"）、两个 trait
+//! （`Step` 折号与取句、`Who` 给号与"配给那趟"的格子）、外加泛型 `Fail<W>` 落地 [`Exit`]。
+//! 三份 `adapt/fail.rs` 各写一遍，**共 277 行**，办的是同一件事：把"死在第几步"折成一个号
+//! ＋一句话。
 //!
-//! 装配表里 `E_ROUTER` / `E_UART` / `E_RTC` 说的是"**这一台**死了"，而三台自己那几格从前写的是
-//! `4..=8`——**同一件事两套号**，与内件那三枚当年一模一样（那一刀记在
-//! `programs/src/system/{operator,principal,coalition}/program.rs` 的 `E_TREE` / `E_PRINCIPAL` / `E_COALITION` 那几格：
-//! 三份同构的 `fail::Fail` 并成 `system::Start` 一枚，号也收进那张表）。
+//! 折叠的判据：那套机制换来一条**类型级**性质——"返回类型只说得出本域走得到的步子集"。
+//! 而变体全是 `pub`、可达性本来就靠人看 ⇒ 那条性质是文档性的；行数却是实打实的。故按
+//! "一个动作不许有两套类型"折平：**一枚结构 ＋ 各域一个 `const` 号**，读数写在死处。
 //!
-//! 故本表**一个数都不写**：本域那几步一律报 [`Who::DIED`]，"死在第几步"留在那一句话里
-//! （`"uart: line gone"`）。唯一自己带号的是"**配给那一趟没成**"那一格——它带的是装配那一族的号
-//! （`assemble::E_UP` / `assemble::E_GRANT`），**原样往外带**（折成同一个号就等于把那几个编号
-//! 变成没人读得到的死码）。
+//! **代价照实记**：那一步的读数不再集中在一张 `text()` 表里，而是写在**死处**
+//! （`Fail::at(DIED, "uart: tree")`）——判据是"读数离它描述的那件事越近越好"，与
+//! "一格判据只问一件事"同一条口径。
 //!
-//! # 照实记（读数因此变了）
+//! # 照实记（号从哪来）
 //!
-//! uart 起手各步 `4..=8` → **`9`**（`E_UART`）、router → **`5`**（`E_ROUTER`）、
-//! rtc → **`12`**（`E_RTC`）；**那句话一个字没变**，故 trace 里仍一眼看出死在哪一步。
+//! [E_ROUTER](programs::program::router::E_ROUTER) /
+//! [E_UART](programs::program::uart::E_UART) /
+//! [E_RTC](programs::program::rtc::E_RTC) 取自 [programs::program] 那张装配表
+//! （"**这一台**死了"，见那份 `program` 的 `died`）。唯一自己带号的是"配给那一趟没成"
+//! ——它带装配那一族的号（`assemble::E_UP` / `E_GRANT`），**原样往外带**（折成同一个号就
+//! 等于把那几个编号变成没人读得到的死码）。
 //!
 //! # 两枚 `fail` 是两件事
 //!
@@ -34,52 +36,30 @@
 //! `rtc::core::Fail` 是**上线**那一格——"客人那一问怎么了"，折成答码过线（`Taken` / `Past` /
 //! `Denied`）。故本表住适配侧（[`Exit`] 是程序侧那一手），而它**不是**服务面的失败域。
 
-use crate::{Exit, Report};
 use crate::program::Died;
+use crate::{Exit, Report};
 
-/// 死在起手/常驻的**哪一步**：各域自己那一枚枚举实现它（**只列自己走得到的那几格**）。
-pub trait Step: Copy {
-    /// 这一格报什么号：**本域那几步一律取装配表里那一号**（`died` 那一格），唯一自己带号的是
-    /// "配给那一趟没成"。
-    fn code(self, died: Died) -> Died;
-    /// 交给内核出口的那句话（带本域名，如 `"uart: line gone"`）。
-    fn text(self) -> &'static str;
+/// 一台驱动的死法：**一个号 ＋ 那一句话**（`main` 的返回类型），`?` 一路把它带出来。
+pub struct Fail {
+    code: Died,
+    text: &'static str,
 }
 
-/// **哪一台驱动**：决定号（取自装配表）与"配给那一趟没成"那一格。
-pub trait Who {
-    /// 本域自己那几格——只有它走得到的那些。
-    type Step: Step;
-    /// **号取自装配表**：本域一个数都不写（`programs::program` 那一族）。
-    const DIED: Died;
-    /// "配给那一趟没成"那一格：`?` 把装配那一族的号交给它。
-    fn assembled(code: Died) -> Self::Step;
-}
+impl Fail {
+    /// 死在**本域那几步**之一：号取装配表里那一号（各域那份 `fail.rs` 的 `DIED`）。
+    pub const fn at(code: Died, text: &'static str) -> Self {
+        Self { code, text }
+    }
 
-/// 一台驱动的死法：`main` 的返回类型，`?` 一路把它带出来。
-///
-/// 三台是**同一个类型**（只是 `W` 不同）：`Fail<Uart>` / `Fail<Router>` / `Fail<Rtc>`——
-/// 各自的 `Fail` 是各域那一份 `pub type`，格集仍只有自己那几格。
-pub struct Fail<W: Who> {
-    step: W::Step,
-}
-
-impl<W: Who> Fail<W> {
-    /// 死在**本域那几步**之一。
-    pub fn at(step: W::Step) -> Self {
-        Self { step }
+    /// 死在**配给那一趟**：号由调用方带（`assemble::E_UP` / `E_GRANT`，原样带过），
+    /// 那句话各域自己说（`"uart: assemble"`）。
+    pub const fn assemble(code: Died, text: &'static str) -> Self {
+        Self { code, text }
     }
 }
 
-impl<W: Who> Exit for Fail<W> {
+impl Exit for Fail {
     fn report(&self) -> Report<'_> {
-        Report::note(self.step.code(W::DIED), self.step.text())
-    }
-}
-
-/// `assemble::receive` 那一族的号（"装配的哪一步没成"）由这里过 `?`。
-impl<W: Who> From<Died> for Fail<W> {
-    fn from(code: Died) -> Self {
-        Self::at(W::assembled(code))
+        Report::note(self.code, self.text)
     }
 }

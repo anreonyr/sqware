@@ -175,7 +175,7 @@
 //!
 //! **本仓没有任何一族协议带"撤销"这一格**——载体有（`mail::revoke` 能收回我授给某位的副本、
 //! 含其全部后代），协议层没有；仓里唯一写过这一句的是
-//! [`driver::supply`](crate::driver::supply)（"**没有撤销**：授出去的门闩归对端；要收回得走
+//! [`system::supply`](crate::system::supply)（"**没有撤销**：授出去的门闩归对端；要收回得走
 //! `Revoke`，本协议不带这一格"）。要收，先得裁两件事：**谁来撤**（"这一格归谁改"那一轴已经有
 //! 主人，而"撤回已经授出去的"是另一件事）、**撤到什么程度**（那一枚的下游要不要一并失效）。
 //! 这一格今天停在"**载体做得到、协议没这一格**"。
@@ -249,10 +249,8 @@ pub mod client;
 // 产出的 [`Fail`] 落进同层的 `core`（`system/operator/core/mod.rs` 末尾）——`map_claim` 与
 // `map_seat` 两张表在会话那一刀里并成这一张。
 
-pub use crate::system::operator::core::gate::{Blind, Code, Control, verdict};
-pub use crate::system::operator::core::judge::{
-    Branch, Door, Id, League, Rule, Ruling, Who, judge,
-};
+pub use crate::system::operator::core::gate::{Code, verdict};
+pub use crate::system::operator::core::judge::{Facts, Id, Rule, Ruling, judge};
 pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
 pub use frame::{
     ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,

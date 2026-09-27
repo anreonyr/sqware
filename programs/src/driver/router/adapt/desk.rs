@@ -1,7 +1,7 @@
 //! router::adapt::desk — **门面（适配）**：登记那一句话——报**那一段区** ⇒ 解树（"线 = 区的函数"）
 //! ⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 //!
-//! 判定在 `protocol::driver::line::core`（`Lines` 的四原语）与 `crate::core::sources`（区 → 线号）；
+//! 判定在 `crate::core::lines`（`Lines` 的四原语）与 `crate::core::sources`（区 → 线号）；
 //! 本文件只做碰内核与设备的那几手：认泊位、解帧、接线、挂组、答话。**放回那一手不在这里**：
 //! 登记被拒时那一条由 [`Held`] 的 `Drop` 当场放下（见 [`serve`] 里那一支）——这一格的关系是
 //! 真·作用域寿命，故交给类型管（`establish` 文件头那条照实记）。
@@ -11,7 +11,8 @@ use crate::plic::{LINE_PRIORITY, Plic};
 use protocol::message::Message;
 use env::{HoleDir, Mark, TaskId, Wait};
 use protocol::debug;
-use protocol::driver::line::{core::Lines, frame as lcall};
+use crate::core::lines::Lines;
+use protocol::driver::line::frame as lcall;
 use protocol::communication::establish::{self, Held};
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};

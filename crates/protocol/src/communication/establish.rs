@@ -338,34 +338,47 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
 // 三格是一**组**：三个名字读成同一句式的被动式事实（*这枚是谁授的 / 这扇门是谁开的 /
 // 这枚被标成什么*），故**等长**（9/9/9）——原先板与树是 `probe`5 / `opened_by`9 /
 // `mark_of`7，不等长本身就是"这一组还没想清楚"的信号。
+//
+// **照实记（`reserve_reads!` 那支宏已退场）**：这三具身体原先由一支宏按格名铺开，理由是
+// "板 / 树 / 线 / 货四家都要用"——而今天**只有本文件一家用**（板与树那两处取名层早已撤），
+// 宏的 `$vis` 那一格是给"共享体与领域名分家"用的，那件事也不存在了。故按"一处形状不值一支
+// 宏"拆成三具寻常函数，**三格的读法与哨兵逐字未动**（`mail::reserve` 那一问 ＋ 两个哨兵）。
 
-reserve_reads! {
-    /// **这枚是谁授的**（`Reserve` 第一格）。
-    ///
-    /// 转手（`Accord`）会改写这一格（root 转授过的门闩，`vestor` 会变成 root），故
-    /// **不能用它认"对端是谁"**；要认"这扇门本身是谁的"，读 [`opened_by`]。
-    ///
-    /// **"答不出"这一格里就有"那扇门封印了"**：`Reserve` 的 `owner` 那一格带存活闸
-    /// ⇒ 开者一退场，它开的门随之封印 ⇒ 这里当场答 `None`。故 `None` 只读作
-    /// "这一条候选不成立"（不在我表里 / 不是孔 / 已封印），**不必再问第二个问题**。
-    pub fn vested_by(entry) => vestor;
+/// **这枚是谁授的**（`Reserve` 第一格）。
+///
+/// 转手（`Accord`）会改写这一格（root 转授过的门闩，`vestor` 会变成 root），故
+/// **不能用它认"对端是谁"**；要认"这扇门本身是谁的"，读 [`opened_by`]。
+///
+/// **"答不出"这一格里就有"那扇门封印了"**：`Reserve` 的 `owner` 那一格带存活闸
+/// ⇒ 开者一退场，它开的门随之封印 ⇒ 这里当场答 `None`。故 `None` 只读作
+/// "这一条候选不成立"（不在我表里 / 不是孔 / 已封印），**不必再问第二个问题**。
+pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
+    runtime::env::mail::reserve(entry)
+        .ok()
+        .map(|(vestor, _owner, _mark)| vestor)
 }
 
-reserve_reads! {
-    /// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变。
-    ///
-    /// 回答"这一位客人自己交来的那一枚"就靠它；与 [`marked_as`] 合起来才分得开
-    /// "同一位开的多枚孔"（那一格答"这是哪条路上的"）。
-    ///
-    /// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立。
-    pub fn opened_by(hole) => owner;
+/// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变。
+///
+/// 回答"这一位客人自己交来的那一枚"就靠它；与 [`marked_as`] 合起来才分得开
+/// "同一位开的多枚孔"（那一格答"这是哪条路上的"）。
+///
+/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立。
+pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
+    match runtime::env::mail::reserve(hole) {
+        Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
+        _ => None,
+    }
 }
 
-reserve_reads! {
-    /// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变。
-    ///
-    /// **为什么另开一手、而不是折进 [`opened_by`] 那一格**：`opened_by` 在 `owner == 0`
-    /// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
-    /// `entry`"在 owner 0 的那批门闩上照样要答得出。
-    pub fn marked_as(hole) => mark;
+/// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变。
+///
+/// **为什么另开一手、而不是折进 [`opened_by`] 那一格**：`opened_by` 在 `owner == 0`
+/// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
+/// `entry`"在 owner 0 的那批门闩上照样要答得出。
+pub fn marked_as(hole: env::PieToken) -> Option<env::Mark> {
+    match runtime::env::mail::reserve(hole) {
+        Ok((_vestor, _owner, mark)) => Some(mark),
+        _ => None,
+    }
 }

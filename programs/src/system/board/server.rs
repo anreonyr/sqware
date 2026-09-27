@@ -70,9 +70,10 @@ pub(crate) fn host_loop(me: TaskId) {
 
     let mut board = Board::new();
     let mut desk = Desk::new();
-    // `who → 死亡道` 的小表：**在 `admit` 那一刻**记——名字随提示那一格来（[`bcall::Tip::LEN`]），
-    // 而道按名字认领（[`lane_for`]）。见 [`remember_lane`] / [`take_lane`]。
-    let mut lanes: Lanes = alloc::vec::Vec::new();
+    // **`who → 死亡道` 就记在 `Desk` 那一格里**（`Guest::lane`）：在 `admit` 那一刻记——名字
+    // 随提示那一格来（[`bcall::Tip::LEN`]），而道按名字认领（[`lane_for`]）。
+    // **照实记**：这里从前还有一本 `Lanes = Vec<(TaskId, PieToken)>`，与 `Desk` 同键——
+    // 同一把键两本账，已并进 `Guest`（见 `Desk::note_lane` / `Desk::take_lane`）。
     let mut swept = 0usize;
     // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
     // 见 `Receiver::recv`：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
@@ -85,7 +86,7 @@ pub(crate) fn host_loop(me: TaskId) {
     buf.resize(runtime::PAGE_SIZE, 0);
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
-        let settling = settle(&mut desk, &pile, &tip_hole, &mut lanes);
+        let settling = settle(&mut desk, &pile, &tip_hole);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling {
             Wait::AtMost(SETTLE_MS)
@@ -93,21 +94,19 @@ pub(crate) fn host_loop(me: TaskId) {
             Wait::Forever
         };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
-            swept += tell_gone(&mut desk, &mut lanes);
+            swept += tell_gone(&mut desk);
             continue;
         };
         // 提示孔那一格由下一轮的 `settle` 收（它非阻塞地拉）；这里只管"是哪位客人的问话孔"。
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(
-                &mut board, &mut desk, &pile, guest, swept, &mut lanes, &mut buf,
-            );
+            serve_one(&mut board, &mut desk, &pile, guest, swept, &mut buf);
         }
         // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
         //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，并推它那条死亡道。
         //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
-        swept += tell_gone(&mut desk, &mut lanes);
+        swept += tell_gone(&mut desk);
     }
 }
 
@@ -124,7 +123,7 @@ pub(crate) fn host_loop(me: TaskId) {
 ///   **一次 `Reserve`** 验过 ⇒ `admit` 收一位客人（`Taken` = 已经在账上）。判据与旧那一扫
 ///   一字不差（开者 = 这位客人 ＋ 记号 = 板路），只是不再扫自己的表；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
-fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) -> bool {
+fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
     let mut rec = [0u8; bcall::Tip::LEN];
@@ -153,7 +152,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie, lanes: &mut Lanes) 
                 // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
                 // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
                 if let Some(lane) = lane_for(tip.name) {
-                    remember_lane(lanes, client, lane);
+                    desk.note_lane(client, lane);
                 }
             }
             // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
@@ -185,35 +184,20 @@ fn lane_for(name: Name) -> Option<PieToken> {
     mail::pies().find(|p| p.mark == want).map(|p| p.token)
 }
 
-/// 本线程的 `who → 死亡道` 小表（一位客人一格；**备不下就丢这一条读数**）。
-///
-/// 丢的是一条**死亡读数**，不是监督本身：牌子由板自己扫，道只喂装配者。
-type Lanes = alloc::vec::Vec<(TaskId, PieToken)>;
-
-/// 把 `who` 的道记下来（同一位重复登记就覆盖）；**备不下就丢**（见上面那一格）。
-fn remember_lane(lanes: &mut Lanes, who: TaskId, lane: PieToken) {
-    if let Some(cell) = lanes.iter_mut().find(|cell| cell.0 == who) {
-        cell.1 = lane;
-        return;
-    }
-    if lanes.try_reserve(1).is_ok() {
-        lanes.push((who, lane));
-    }
-}
-
-/// 取走这一位的道（取走即清：一条道一位客人，一次死亡一份）。
-fn take_lane(lanes: &mut Lanes, who: TaskId) -> Option<PieToken> {
-    let at = lanes.iter().position(|cell| cell.0 == who)?;
-    Some(lanes.remove(at).1)
-}
+// **照实记（`Lanes` / `remember_lane` / `take_lane` 已并进 `Desk`）**：这里从前另有一本
+// `type Lanes = Vec<(TaskId, PieToken)>` 存 `who → 死亡道`——与 `Desk` 那本账**同一把键**。
+// 两本同键的账就是"一位客人两处记"，一处漏写就分成两份真相；并进 `Guest::lane` 之后，
+// 记（`Desk::note_lane`）与取（`Desk::take_lane` / `Desk::sweep_each` 交出来的那一格）
+// 都落回同一个容器，三具搬运函数一起退场。**丢一条读数**那件事照旧（道认不出 ⇒ `lane` 是
+// `None`）：牌子由板自己扫，道只喂装配者。
 
 /// 剔掉**已经走了**的客人，并把"没了"这件事推进**它那条死亡道**；返剔了几格。
 ///
 /// 判据全在 [`Desk::sweep_each`] 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
 /// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
-fn tell_gone(desk: &mut Desk, lanes: &mut Lanes) -> usize {
-    let n = desk.sweep_each(|who| {
-        if let Some(lane) = take_lane(lanes, who) {
+fn tell_gone(desk: &mut Desk) -> usize {
+    let n = desk.sweep_each(|_who, lane| {
+        if let Some(lane) = lane {
             let _ = mail::HolePie::from_token(lane).push(&[0u8]);
         }
     });
@@ -254,7 +238,6 @@ fn serve_one(
     pile: &Pile,
     guest: Guest,
     swept: usize,
-    lanes: &mut Lanes,
     buf: &mut [u8],
 ) {
     let Some(ask) = guest.ask() else {
@@ -264,7 +247,7 @@ fn serve_one(
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
     let decoded = Receiver::<bcall::Req>::from_token(ask).recv(buf, Wait::POLL);
     let said = match decoded {
-        Ok(ask) => answer(board, desk, ask, guest.who(), swept, lanes),
+        Ok(ask) => answer(board, desk, ask, guest.who(), swept),
         // 空帧 / 长度不对 / 期限到了：**两格失败同一落点**——读不懂就答 `BAD`，不猜、不崩。
         Err(_) => bcall::BAD,
     };
@@ -291,12 +274,11 @@ fn answer(
     ask: bcall::Wire,
     who: TaskId,
     swept: usize,
-    lanes: &mut Lanes,
 ) -> u8 {
     let said = match ask {
         bcall::Wire::Evict => {
             // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
-            let lane = take_lane(lanes, who);
+            let lane = desk.take_lane(who);
             // 退场：撤它那一格（`None` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
             let said = match desk.evict(who) {
                 Some(_slot) => {

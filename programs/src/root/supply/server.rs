@@ -1,14 +1,14 @@
 //! supply::server — **引导域那一侧**：照单取源、授出、回一张回单（常驻循环 [`serve`]）
 //!
-//! 正文见 [`super`]；记号、帧与上限见 [`protocol::driver::supply::frame`]。
+//! 正文见 [`super`]；记号、帧与上限见 [`protocol::system::supply::frame`]。
 
 use env::{MailFail, PieToken, Wait};
 use env::{Key, Pair};
 use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 
-use protocol::driver::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
-use protocol::driver::supply::core::Fail;
+use protocol::system::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
+use protocol::system::supply::core::Fail;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;

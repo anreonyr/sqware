@@ -6,7 +6,7 @@
 //! ```text
 //! 1  启动参数 → 清单（有哪些程序）与配对块（有哪些门闩）——两块都是 boot 只读借映的
 //! 2  起一条：编排者（`system`，一条 `boot` 通道）
-//! 3  发货循环：收一张单子 → 按坐标取原件、授出 → 回一张回单（[`protocol::driver::supply::server::serve`]）
+//! 3  发货循环：收一张单子 → 按坐标取原件、授出 → 回一张回单（[`protocol::system::supply::server::serve`]）
 //! 4  那枚孔**读不出** = 编排者没了 ⇒ 本域退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
@@ -52,7 +52,7 @@ use programs::system::control::{Catalog, Died, E_MANIFEST, READY_MS};
 use protocol::system::core::Reaped;
 use protocol::system::desk::{Announce, Table};
 
-use protocol::driver::supply;
+use protocol::system::supply;
 
 /// 编排者那一条在清单里的名字。
 const ORCH: &str = "system";
@@ -145,7 +145,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
         return Err(Die::Orch(E_ORCH));
     }
 
-    // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::driver::supply::server::serve` 的
+    // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::system::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
     // 收帧那一只由本域给（**发**那一侧的缓冲在 `Sender::send` 的栈帧上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];

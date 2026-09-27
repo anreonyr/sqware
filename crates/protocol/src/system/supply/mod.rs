@@ -1,6 +1,6 @@
 //! supply — **物料到手**：引导域向上层露的那一面（**按坐标发货**）。
 //!
-//! 它是 [`crate::driver`] 的**供给侧**：这一层记的是"引导域交给域的一切"。**不全是设备**——
+//! 它是 [`crate::system`] 的**供给侧**：这一层记的是"引导域交给域的一切"。**不全是设备**——
 //! 今天五笔货分两类：
 //!
 //! ```text
@@ -24,7 +24,7 @@
 //! # 谁在用它
 //!
 //! - **服务端**（发货循环）在引导域：`programs/src/root/supply/server.rs`；
-//! - **客户端**（递单取记录）是**编排域**：`protocol::driver::supply::client::draw`，今天唯一一个
+//! - **客户端**（递单取记录）是**编排域**：`protocol::system::supply::client::draw`，今天唯一一个
 //!   客户。**照实记（它为什么不在这一份里）**：它要用**通信那一层**（孔 ＋ 报），
 //!   而那一层只有 `protocol` 有——故客侧住那边，本 crate 只管"形"与"据"；
 //! - **收方**是各驱动：`call::Need` 的常量形态就在它们自己那张需求单里
@@ -90,6 +90,6 @@ pub mod frame;
 
 pub mod client;
 
-// 形、据**转出**（`crate::driver::supply::{frame,core}` 照旧解析）。
-pub use crate::driver::supply::core::Fail;
-pub use crate::driver::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
+// 形、据**转出**（`crate::system::supply::{frame,core}` 照旧解析）。
+pub use crate::system::supply::core::Fail;
+pub use crate::system::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};

@@ -1,19 +1,16 @@
-//! operator::core::gate —— **裁决 → 线上那一格**：怎么问（[`Control`]）、怎么翻（[`verdict`]）。
+//! operator::core::gate —— **裁决 → 线上那一格**：怎么问（[`Facts`]）、怎么翻（[`verdict`]）。
 //!
-//! 本文件与 [`judge`](super::judge) 同一站位：**不带载体**。它只做两件事——
+//! 本文件与 [`judge`](super::judge) 同一站位：**不带载体**。它只做一件事——
+//! 把 [`judge`] 那三格答案翻成线上那一格码（[`Code`]）。判据要问的那几条边由树域那一侧
+//! 实现 [`Facts`]（两枚门牌 + `Face::resolve` / `heir` / `amid`，外加**树自己**那条"这一格是
+//! 谁的门牌"）；`Facts` 的定义在 `judge.rs`——它是 `judge` 直接问的那四条边，本文件不再转发。
 //!
-//! 1. 把"判据要问的那几条边"收成**一个 trait**（[`Control`]）：树域那一侧用一个真实现
-//!    （两枚门牌 + `Face::resolve` / `heir` / `amid`，外加**树自己**那条"这一格是谁的门牌"）
-//!    ——换一份假实现就能单独推理（原先宿主台那一侧就是这么用的，**那台已删**）；
-//! 2. 把 [`judge`] 那三格答案 + "手里没有门牌"这一格，翻成线上那一格码（[`Code`]）。
-//!
-//! # 四种码，四种下一步
+//! # 三种码，三种下一步
 //!
 //! ```text
 //!   Code::Ok        放行（继续去动树）
 //!   Code::Denied    「这一位不许」——**终态**：换人 / 换目标，别重试
 //!   Code::Unjudged  「判不了」——这一问要的那条事实问不到（因分两类，见下）
-//!   Code::Blind     「本域手里还没有门牌」——模型里保留的一格（见下）
 //! ```
 //!
 //! **`Code::Unjudged` 不承诺"等一会儿会好"**：它的因有两类——**会好的**（对面不答 / 超时、
@@ -21,13 +18,12 @@
 //! 那一侧是同一个下一步（当趟放弃），差别只在**为什么** ⇒ 那是**读数**的格。「重试」是
 //! **客人的策略**，不是这一格的承诺。
 //!
-//! [`Code::Blind`] **不是运行期的一格**：它来自"本域手里还没有协调门牌"这个**模型状态**
-//! （[`Blind`] 那一份实现），而生产路径**到不了它**——树域在 `session == None` 时由
-//! `may`（`programs/src/system/operator/server.rs`）**在更早处短路**。理由照实记在
-//! 那个函数自己的头注里：装配期 principal 挂自己门牌那一趟**既没有门牌、又还没有
-//! 身份**（`derive` + `bind` 都在它之后），门禁若在那一刻生效，整机起不来。
-//! ⇒ 这一格留着，是因为它把"手里没门牌"表达成一个**可推理的状态**（原先由宿主靶喂它——
-//! **那台靶已删**，用户裁定"protocol-case 没必要"，故它今天**没有读者**），**不是**因为生产会走到它。
+//! **照实记（第四格 `Code::Blind` 已退场）**：它表达的是"本域手里还没有协调门牌"这个模型
+//! 状态，读者只有已删的宿主靶；生产路径**到不了它**——树域在 `session == None` 时由 `may`
+//! （`programs/src/system/operator/server.rs`）**在更早处短路**（理由照实记在那个函数自己的
+//! 头注里：装配期 principal 挂自己门牌那一趟既没有门牌、又还没有身份，门禁若在那一刻生效，
+//! 整机起不来）。那条短路还在，故这一格连"模型里的一格"都不是了 ⇒ 连同它的来源 `Blind`
+//! 一起删。
 //!
 //! # 默认策略 = 公开
 //!
@@ -39,8 +35,7 @@
 //! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
 //! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
 
-use super::EntryId;
-use super::judge::{Branch, Door, Id, League, Rule, Ruling, Who, judge};
+use super::judge::{Facts, Id, Rule, Ruling, judge};
 use env::TaskId;
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
@@ -68,8 +63,6 @@ pub enum Code {
     /// 判不了：这一问要的那条事实问不到——对面不答 / 超时（**会好**），或那一号是碑 /
     /// 那一格是块窗格 / 开者那扇门封印了（**好不了**）。两类同格；**重试是客人的策略**。
     Unjudged,
-    /// 本域手里还没有门牌——**模型里的一格，生产由 `may` 在更早处短路**（见文件头）。
-    Blind,
 }
 
 impl Code {
@@ -78,7 +71,7 @@ impl Code {
         match self {
             Code::Ok => WIRE_OK,
             Code::Denied => WIRE_DENIED,
-            Code::Unjudged | Code::Blind => WIRE_UNJUDGED,
+            Code::Unjudged => WIRE_UNJUDGED,
         }
     }
 
@@ -88,101 +81,26 @@ impl Code {
     }
 }
 
-/// 判据要问的那几条边的**一个**出口：树域用它接两枚门牌与树自己；换一份假实现就能喂假事实。
-pub trait Control {
-    /// **手里有没有协调门牌**。答 `false` ⇒ 一律 [`Code::Blind`]。
-    ///
-    /// 单列这一格的道理：`judge` 分不出"问不到"是"对面没答"还是"我压根没门牌问"——而这两件事
-    /// 在装配诊断上不是一回事。默认 `true`（有门牌是实现这一 trait 的前提）。
-    ///
-    /// **照实记**：生产那一份实现（`server.rs` 的 `Court`）**不覆盖它** ⇒ 吃默认的 `true`；
-    /// 而"手里还没门牌"那一档由 `may` 在更早处短路。故答 `false` 的只有 [`Blind`]（原先靠宿主靶喂它——
-    /// **那台靶已删**，这一支今天没有调用者）。
-    fn has_face(&self) -> bool {
-        true
-    }
-    /// 这个 TID 此刻代表哪条号（`Ok(None)` = 没绑；`Err` = 问不到）。
-    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()>;
-    /// `a` 在 `b` 那一支里吗（`Err` = 问不到）。
-    fn heir(&self, a: Id, b: Id) -> Result<bool, ()>;
-    /// **`me`** 在这一枚盟里吗（`Err` = 问不到）。两格都要：盟册那一问本来就是这个形状。
-    fn amid(&self, me: Id, at: Id) -> Result<bool, ()>;
-    /// 第 `at` 格**是谁开的**（树那条读）。
-    ///
-    /// **三因同落 `Ok(None)` 是有意的**：格不在 / 那一号是块 `Pane` / 开者那扇门封印了——
-    /// 判据（[`Door`]）只需要"有没有那一位"这一件事。**照实记**：后两因**永远好不了**，
-    /// 判出来与"对面暂时不答"同落 [`Code::Unjudged`]；把三因分开的是**读数**——那一份实现
-    /// （`server.rs` 的 `Court::opens`）把它们说进读数，而不是造第三格码。
-    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()>;
-}
-
-/// **还没有门牌**的那一份实现：`has_face` 答 `false`，其余几问一律答"问不到"。
+/// 判一格：`facts` 是那几条边（[`Facts`] 的四问），`rule` 是那一格自己的规矩。
 ///
-/// 它就是 [`Code::Blind`] 的来源。**读者今天一个都没有**（原先只有宿主靶的 `judge` 靶，**那台靶
-/// 已删**）——生产路径由 `may` 在更早处短路，见文件头。
-pub struct Blind;
-
-impl Control for Blind {
-    fn has_face(&self) -> bool {
-        false
-    }
-    fn who(&self, _: TaskId) -> Result<Option<Id>, ()> {
-        Err(())
-    }
-    fn heir(&self, _: Id, _: Id) -> Result<bool, ()> {
-        Err(())
-    }
-    fn amid(&self, _: Id, _: Id) -> Result<bool, ()> {
-        Err(())
-    }
-    fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
-        Err(())
-    }
-}
-
-/// 那几条边拼成 [`judge`] 要的那四个 trait——**本文件的全部粘合**。
-struct Facts<'a, C: Control>(&'a C);
-
-impl<C: Control> Who<Id> for Facts<'_, C> {
-    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-        self.0.who(tid)
-    }
-}
-
-impl<C: Control> Branch<Id> for Facts<'_, C> {
-    fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
-        self.0.heir(a, b)
-    }
-}
-
-impl<C: Control> League<Id, Id> for Facts<'_, C> {
-    fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
-        self.0.amid(me, at)
-    }
-}
-
-impl<C: Control> Door for Facts<'_, C> {
-    fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
-        self.0.opens(at)
-    }
-}
-
-/// 判一格：`control` 是那几条边（没有门牌那一份喂 [`Blind`]），`rule` 是那一格自己的规矩。
-pub fn verdict(control: &impl Control, who: TaskId, rule: Rule<Id, Id>) -> Code {
-    // 手里没有门牌 ⇒ 当场答 `Blind`，一次问都不发（省一次注定失败的 envcalls）。
-    // **生产到不了这一支**：树域在 `session == None` 时由 `may` 短路，见文件头。
-    if !control.has_face() {
-        return Code::Blind;
-    }
-    let facts = Facts(control);
-    match judge(who, rule, &facts, &facts, &facts, &facts) {
+/// **照实记（这里原先还站着一层 trait，已折平）**：从前本文件有一枚 `Control`（四问 ＋
+/// `has_face`）、一枚"还没有门牌"的假实现 `Blind`，以及一枚把 `Control` 四问逐个转发成
+/// `judge` 要的四 trait 的 `Facts<'a, C>`。三样加起来只办一件事：让 `judge` 不认得
+/// 树域那一份具体实现——而那个理由的**唯一消费者是已删的宿主靶**。折叠之后
+/// **`Facts` 就是 `judge` 直接问的那四条边**（定义在 `judge.rs`），本文件只做"判 → 线上码"
+/// 这一手。`Code::Blind` 随之退场：它只可能由 `has_face() == false` 产生，而那条路
+/// （"手里还没门牌"）生产里由 `may` 在更早处短路。
+pub fn verdict(facts: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Code {
+    match judge(facts, who, rule) {
         Ruling::Allow => Code::Ok,
         Ruling::Deny => Code::Denied,
         Ruling::Unjudged => Code::Unjudged,
     }
 }
+
 // ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
 //
 // 原先那个 `#[cfg(test)] mod tests`（**6 条**）曾搬进宿主靶的 `judge` 靶，那台靶与那门判据
-// 已一并删。那六条里唯靶里没有的是三处：三格码 ↔ 线上那一格的映射、"服务在但答不上来"那一颗
-// 桩（`Mute`）、以及 `Blind` 对 `Under` / `Opens` 也答 `Blind`——**今天一处判据都没有**。
+// 已一并删。那六条里唯靶里没有的是两处：三格码 ↔ 线上那一格的映射、以及"服务在但答不上来"
+// 那一颗桩（`Mute`）——**今天一处判据都没有**。（第三处 `Blind` 对 `Under` / `Opens` 也答
+// `Blind` 随 `Blind` 一起退场。）

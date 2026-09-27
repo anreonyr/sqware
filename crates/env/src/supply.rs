@@ -7,7 +7,7 @@
 //! 而 `programs` / `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是
 //! "装配表要摆出来的东西"，定义都得住 `env`。
 //!
-//! **照实记（这几样是从 `protocol::driver::supply::frame` 搬下来的）**：那一处现在是
+//! **照实记（这几样是从 `protocol::system::supply::frame` 搬下来的）**：那一处现在是
 //! `pub use` 转发，**调用点一行没改**（与 `Access`/`Policy`、`Announce`/`Grant`/`Died` 同一条
 //! 先例）。搬的时候把 [`Want`] **连同它的 `impl` 一起带走**——`impl` 是 inherent 的，必须与
 //! 类型同住一个 crate，劈开就要改 API；`Need::settle` 正是这么依赖它的。
@@ -123,7 +123,7 @@ impl Want {
         Access::from_bits(self.access)
     }
 
-    /// 形态**原样**读出；"剔掉 `VEST`"是发货那一侧（`protocol::driver::supply`）的事。
+    /// 形态**原样**读出；"剔掉 `VEST`"是发货那一侧（`protocol::system::supply`）的事。
     pub fn policy(&self) -> Option<Policy> {
         Policy::from_bits(self.policy)
     }
@@ -136,7 +136,7 @@ pub const WANT_LEN: usize = size_of::<Want>();
 const _: () = assert!(WANT_LEN == 32);
 const _: () = assert!(WANT_LEN == crate::key::KEY_LEN + 4 + 4 + 1 + 7);
 
-/// 线上那一条的那一格（单子那一段尾巴要 `T: Field`，见 `protocol::driver::supply::frame`）。
+/// 线上那一条的那一格（单子那一段尾巴要 `T: Field`，见 `protocol::system::supply::frame`）。
 ///
 /// **照实记（为什么可以整条按字节搬）**：[`Want`] 是 `repr(C)`、尺寸由上面那两条编译期断言钉死，
 /// 而且**各字段之和 == 尺寸**（没有隐式留白）⇒ 按字节写满、按字节读回都合法。这一手从前散在

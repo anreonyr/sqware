@@ -3,11 +3,12 @@
 //! 判定在 [`Host`]（纯，见 `core/host.rs`）：本文件只做"等、取、喂、执行"——组与泊位是内核的，
 //! 设备的读与清是设备面的。[`Host::ask`] / [`Host::ring`] 吐什么，这里就执行什么。
 
-use super::boot::Up;
 use super::desk;
-use super::fail::{Fail, Step};
+use super::fail::{DIED, Fail};
 use crate::rtc;
 use env::{HoleDir, Wait};
+use programs::driver::context::Context;
+use programs::driver::device::Device;
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use protocol::debug;
@@ -22,25 +23,28 @@ use runtime::env::mail::{self, HolePie};
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限。
 /// 那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
 ///
-/// 失败：组坏了 ⇒ `Err(Fail::at(Step::Desk))`——本域没有可继续的状态。
-pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), Fail> {
-    let pile = Pile::unseal(false).map_err(|_| Fail::at(Step::Desk))?;
-    let entry_hole = HolePie::from_token(up.entry);
-    let lane = held.hole().map_err(|_| Fail::at(Step::Line))?;
+/// **这两个源是 rtc 自己的形状**（`uart` 只有一个源、`router` 有三个），故它不收进
+/// `driver::`——见 [`programs::driver::mod`] 那条入库判据。
+///
+/// 失败：组坏了 ⇒ `Err(Fail::at(DIED, "rtc: desk"))`——本域没有可继续的状态。
+pub fn run(ctx: &Context, dev: &Device, held: line::client::Line, host: &mut Host) -> Result<(), Fail> {
+    let pile = Pile::unseal(false).map_err(|_| Fail::at(DIED, "rtc: desk"))?;
+    let entry_hole = HolePie::from_token(ctx.entry);
+    let lane = held.hole().map_err(|_| Fail::at(DIED, "rtc: line"))?;
     if pile.attach(&entry_hole, HoleDir::Pull).is_err()
         || pile
             .attach(&HolePie::from_token(lane), HoleDir::Pull)
             .is_err()
     {
-        return Err(Fail::at(Step::Desk));
+        return Err(Fail::at(DIED, "rtc: desk"));
     }
 
-    let view = up.view();
+    let view = dev.view();
     // 一问最长那一形是 `Arm`（`Now` 更短，也走得进来）；缓冲给**一页**（载体的界，
     // 见 `Push` 的前置条件）——于是任何一条消息一趟都取得出来。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(Fail::at(Step::Desk));
+        return Err(Fail::at(DIED, "rtc: desk"));
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
@@ -48,7 +52,7 @@ pub fn run(up: &Up, held: line::client::Line, host: &mut Host) -> Result<(), Fai
         // 到点才有的说（次序不承担语义，只省一次绕回）。
         match pile.await_(Wait::Forever) {
             Ok(_) => {}
-            Err(_) => return Err(Fail::at(Step::Desk)),
+            Err(_) => return Err(Fail::at(DIED, "rtc: desk")),
         }
         // 门牌是**单槽**：一趟把槽里的都取走。缓冲是一页（见上），故"取不出也丢不掉"
         // 那个状态不存在。

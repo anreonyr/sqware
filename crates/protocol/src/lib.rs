@@ -90,7 +90,7 @@
 //! ```
 //!
 //! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**。`driver` 那
-//! 两半（[`driver::supply`] / [`driver::line`]）的帧整份编得动 ⇒ 没有分家的需要。
+//! 两半（[`system::supply`] / [`driver::line`]）的帧整份编得动 ⇒ 没有分家的需要。
 //! **照实记（`call.rs` 那一格已经收掉）**：
 //! 系统那四份 `system/*/call.rs` 是**薄封装**（文件里除 `pub use` 外没有一个自己的 `fn`），已并进
 //! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。实现树上最后一个也走了：`programs/src/system/call.rs`
@@ -207,11 +207,11 @@
 // `env` / `runtime` 同款：这里引 `alloc`。
 extern crate alloc;
 
-// 那一支宏（`reserve_reads!`）住自己的文件：它是"`Reserve` 三格一组"的形状声明，板、树、线、
-// 货四家都要用——**本仓为这一个形状新开了文件**。`#[macro_use]` 把它带进本 crate 后面那些
-// 模块的作用域（宏的可见性按正文先后）。
-#[macro_use]
-mod reserve_reads;
+// **照实记（`reserve_reads!` 那支宏与它的文件已退场）**：这里原先是 `#[macro_use] mod
+// reserve_reads;` —— 一支按格名铺开"`Reserve` 三格一组"那三具身体的宏，理由是"板、树、线、
+// 货四家都要用"。今天**只剩 `communication::establish` 一家**（板与树那两处取名层早已撤），
+// 宏的 `$vis` 那一格（"共享体与领域名分家"）也无事可做 ⇒ 按"一处形状不值一支宏"拆成三具寻常
+// 函数，宏与那一份文件一并撤。
 
 pub mod communication;
 pub mod debug;

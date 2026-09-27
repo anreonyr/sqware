@@ -30,6 +30,11 @@ pub struct PrincipalId(usize);
 
 impl PrincipalId {
     /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
+    ///
+    /// **照实记（它今天没有代码读者，留着是有意的）**：`clan` 是它唯一的使用者，那一具已按
+    /// 残枝删掉 ⇒ 这一格只剩"号空间的事实"这一重身份。**不删**：盟册与树那一侧有六处正文
+    /// 拿它当锚（"零号是真格子"——`CoalitionId(0)` / `EntryId` 的对照都指着这里），删了那些
+    /// 说法就没有落点。它不是机制，是一个**被引用的事实常量**。
     pub const ROOT: PrincipalId = PrincipalId(0);
 
     /// 由裸号造一个（线上解码面；树外的号从这里进来）。
@@ -153,22 +158,9 @@ impl Principal {
         Ok(())
     }
 
-    /// 名册 · 写：撤一格（只有装配者能写）。**线上不发**——核心有、报文里没有这一格。
-    ///
-    /// 撞空答 [`Fail::Unknown`]（不是幂等的"收到"）：装配者是自己那本账的主人，
-    /// "这一格本来就没有"是一条值得如实回答的事实。
-    pub fn unbind(&mut self, from: TaskId, tid: TaskId) -> Result<(), Fail> {
-        if from != self.assembler {
-            return Err(Fail::Denied);
-        }
-        let at = self
-            .roster
-            .iter()
-            .position(|r| r.tid == tid)
-            .ok_or(Fail::Unknown)?;
-        self.roster.remove(at);
-        Ok(())
-    }
+    // **照实记（`unbind` 已删）**：名册那一侧原先还有一具"撤一格"的写（`unbind(from, tid)`），
+    // 只有装配者叫得动、且**线上不发**。全仓零调用者（`pcall::Wire` 里也没有这一格）⇒ 按
+    // "没有读者的格不留在面上"删掉。名册的写从此只有 [`Principal::bind`] 与 [`Principal::adopt`]。
 
     /// 名册 · 读：这条 TID **此刻**代表谁。
     ///
@@ -220,32 +212,9 @@ impl Principal {
         Ok(false)
     }
 
-    /// 谱系 · 读：最近公共祖先（`clan`）。**核心，不上线**——今天没有真客人
-    /// （核心有、线上不发）。
-    ///
-    /// 单根 ⇒ 必有解（最坏是根）；`a == b` 时答它自己。
-    ///
-    /// **照实记（收尾那一格改过一次）**：原来写成 `while let` 上溯 + 循环外一句
-    /// `Ok(PrincipalId::ROOT)`——那一句**到不了**（单根 ⇒ 上溯走到底是根，而 `heir(根, b)` 必真，
-    /// 故循环里那个 `return` 一定先发生）⇒ 一条死尾巴。现在把它并进循环：没有父的那一格就落在
-    /// **根**上，下一轮必答。这样本函数**没有到不了的分支**，也不必 `unwrap` / panic。
-    pub fn clan(&self, a: PrincipalId, b: PrincipalId) -> Result<PrincipalId, Fail> {
-        if self.node(a).is_none() || self.node(b).is_none() {
-            return Err(Fail::Unknown);
-        }
-        let mut cur = a;
-        loop {
-            if self.heir(cur, b)? {
-                return Ok(cur);
-            }
-            // 上溯一步；没有父的那一格就是根——下一轮它必答（根是所有人的祖先）。故这一句不是
-            // "兜底"，是**那一步本身**（连"父指针指到树外"这种坏树也只会落回根，不会转圈）。
-            cur = self
-                .node(cur)
-                .and_then(|n| n.parent)
-                .unwrap_or(PrincipalId::ROOT);
-        }
-    }
+    // **照实记（`clan` 已删）**：谱系那一侧原先还有一具"最近公共祖先"的读（`clan(a, b)`），
+    // 头注自己写着"核心，不上线——今天没有真客人"。全仓零调用者 ⇒ 按"没有读者的格不留在
+    // 面上"删掉。要它的时候，`heir` 已经够（本函数的身体就是"自 `a` 上溯，第一次在 `b` 那一支里"）。
 
     // ── 转换 ────────────────────────────────────────────────
 

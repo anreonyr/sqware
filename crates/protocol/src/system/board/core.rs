@@ -22,8 +22,11 @@ use crate::communication::establish::{EstablishFail, vested_by};
 ///
 /// `owner` 是挂牌人：它在**有实例**时才有意义，而实例一死 `sweep_at` 就把牌子扫空
 /// （连 `owner` 一起）——**故它不可能过期**，不需要第二套"owner 还在吗"的规则。
+///
+/// **它不外露**（残枝那一刀）：唯一的观察口 [`Board::rows`] 与 `Sign::{owner, standing}`
+/// 全仓零读者，故一并删掉——牌子是本账的内部格，外面只经 [`Board::lookup`] 问"这一枚在哪"。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Sign {
+struct Sign {
     name: Name,
     entry: Option<PieToken>,
     owner: Option<TaskId>,
@@ -31,34 +34,14 @@ pub struct Sign {
 
 impl Sign {
     /// 空牌子：板子的初值。
-    pub const VACANT: Sign = Sign {
+    const VACANT: Sign = Sign {
         name: Name::EMPTY,
         entry: None,
         owner: None,
     };
 
-    /// 这一枚叫什么。
-    pub fn name(&self) -> Name {
-        self.name
-    }
-
-    /// 挂在哪（`None` = 没人挂 / 挂的人已经不在）。
-    pub fn entry(&self) -> Option<PieToken> {
-        self.entry
-    }
-
-    /// 谁挂的（`None` = 同上）。
-    pub fn owner(&self) -> Option<TaskId> {
-        self.owner
-    }
-
-    /// 牌子立着——有实例，故这一枚此刻答得出"在哪"。
-    pub fn standing(&self) -> bool {
-        self.entry.is_some()
-    }
-
     /// 板上有没有这一枚的名字（诊断：牌子存在，哪怕此刻是空的）。
-    pub fn named(&self) -> bool {
+    fn named(&self) -> bool {
         !self.name.is_empty()
     }
 
@@ -223,11 +206,6 @@ impl Board {
             }
             None => Err(Fail::Unknown),
         }
-    }
-
-    /// 板上此刻立着的牌子（诊断 / 将来的枚举：**只报有实例的**）。
-    pub fn rows(&self) -> impl Iterator<Item = Sign> + '_ {
-        self.signs.iter().copied().filter(Sign::standing)
     }
 
     /// 名字 → 牌子号。

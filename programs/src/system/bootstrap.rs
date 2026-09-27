@@ -10,7 +10,7 @@
 //! ```
 //!
 //! **配给从哪来**：装配者自己不持设备门闩——它在引导域手里。故发货走一次往返：
-//! [`protocol::driver::supply::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里
+//! [`protocol::system::supply::client::draw`] 把"要哪几样"递过去，固件把门闩直接授进**客人**的表里
 //! 并回一段记录，装配者再把这**一段字节原样**投到客人那条通道上（那一手在
 //! [`Control::wire`](crate::system::control::Control::wire)）。
 
@@ -18,8 +18,8 @@ use env::Mark;
 use env::Wait;
 use protocol::communication::establish::{self, Endpoint};
 
-use protocol::driver::supply::frame::{Kind, Want};
-use protocol::driver::supply;
+use protocol::system::supply::frame::{Kind, Want};
+use protocol::system::supply;
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};
 use runtime::env::mail::PolePie;

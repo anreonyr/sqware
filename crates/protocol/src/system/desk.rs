@@ -1,4 +1,4 @@
-//! system::desk — **账**：一张定长表与一行的形状（名字、身子、生命阶段、就绪凭据）
+//! system::desk — **账**：一张定长表与一行的形状（名字、身子、生命阶段、怎么算起来）
 //!
 //! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
 
@@ -72,8 +72,6 @@ pub struct Service {
     pub state: State,
     /// 怎么算"起来了"。
     pub announce: Announce,
-    /// 它交回来的通道句柄（未交 = `None`）。`Announce::Channel` 的就绪证据就是它。
-    pub root: Option<PieToken>,
 }
 
 /// 一行的初值（表是定长数组，故要一个可复制的空行）。
@@ -82,7 +80,6 @@ const EMPTY: Service = Service {
     slot: Slot::None,
     state: State::NeverStarted,
     announce: Announce::None,
-    root: None,
 };
 
 /// Service 表：**定长、线性查**。
@@ -144,16 +141,14 @@ impl Table {
             return Err(Fail::Unknown);
         };
         s.slot = Slot::Live { team, task };
-        s.root = None;
         s.state = State::NeverStarted;
         Ok(())
     }
 
-    /// 摘掉身子与通道（行留着：状态要能说出"起过、现在死了"）。
+    /// 摘掉身子（行留着：状态要能说出"起过、现在死了"）。
     pub fn detach(&mut self, name: Name) {
         if let Some(s) = self.row_mut(name) {
             s.slot = Slot::None;
-            s.root = None;
         }
     }
 
@@ -201,6 +196,14 @@ pub struct Guest {
     who: TaskId,
     ask: Option<PieToken>,
     reply: PieToken,
+    /// 它那条**死亡道**（装配者铸、随提示那一格一起递来）。
+    ///
+    /// `None` = 还没认下来（名字认不出 / 那一条道没转授过来）⇒ **这一位死了就没有读数**。
+    /// **照实记（这一格原先另住一本账）**：板从前在自己那一侧另开一本
+    /// `Lanes = Vec<(TaskId, PieToken)>` 存 `who → 道`——与这本账**同一把键**，于是"一位客人
+    /// 一处记"变成两处记，还多出 `remember_lane` / `take_lane` 两具搬运。并进来之后
+    /// **一位客人只有一格**，两本账分成两份真相这件事从根上没了。
+    lane: Option<PieToken>,
 }
 
 impl Guest {
@@ -268,6 +271,7 @@ impl Desk {
                     who,
                     ask: None,
                     reply,
+                    lane: None,
                 });
                 Ok(slot)
             }
@@ -277,6 +281,7 @@ impl Desk {
                     who,
                     ask: None,
                     reply,
+                    lane: None,
                 }));
                 Ok(self.guests.len() - 1)
             }
@@ -300,6 +305,24 @@ impl Desk {
         Some(slot)
     }
 
+    /// 记下这一位的**死亡道**（名字随提示那一格来时才知道）；重复登记 = 覆盖。
+    ///
+    /// 认不出这一位 ⇒ 什么都不做（**不是错误**：道是读数，不是判据）。
+    pub fn note_lane(&mut self, who: TaskId, lane: PieToken) {
+        if let Some(g) = self.guests.iter_mut().flatten().find(|g| g.who == who) {
+            g.lane = Some(lane);
+        }
+    }
+
+    /// 取走这一位的死亡道（**取走即清**：一条道一位客人，一次死亡一份）。
+    pub fn take_lane(&mut self, who: TaskId) -> Option<PieToken> {
+        self.guests
+            .iter_mut()
+            .flatten()
+            .find(|g| g.who == who)
+            .and_then(|g| g.lane.take())
+    }
+
     /// 记下"这位客人的问话孔是**本表里的哪一枚**"。返**成不成**。
     ///
     /// **两桩不成合成一格**（号不在账上 / 这一格已经挂着一枚）：调用方的下一步相同——这一格
@@ -318,7 +341,9 @@ impl Desk {
 
     /// 摘掉这一格挂的问话孔（换孔或退场时用）；本就没挂即无事。返**成不成**（同
     /// [`Desk::arm`]：号不在账上 = 不成，而调用方那一侧同样无事可做）。
-    pub fn unarm(&mut self, slot: usize) -> bool {
+    ///
+    /// **只被 [`Desk::arm_pending`] 用**（那两步要成对、任一步不成要回退），故不外露。
+    fn unarm(&mut self, slot: usize) -> bool {
         let Some(guest) = self.guests.get_mut(slot).and_then(Option::as_mut) else {
             return false;
         };
@@ -330,14 +355,6 @@ impl Desk {
     /// （提示孔那一路也叫醒同一次等待，它的号自然不在这本账上）。
     pub fn guest(&self, ask: PieToken) -> Option<&Guest> {
         self.guests.iter().flatten().find(|g| g.ask == Some(ask))
-    }
-
-    /// 还没挂上问话孔的那几格：`(格子号, 谁)`——**只读**那一半。
-    pub fn unarmed(&self) -> impl Iterator<Item = (usize, TaskId)> + '_ {
-        self.guests
-            .iter()
-            .enumerate()
-            .filter_map(|(slot, cell)| cell.as_ref().filter(|g| !g.armed()).map(|g| (slot, g.who)))
     }
 
     /// 还没挂上问话孔的那几格——**改得动**那一半：每格叫一次 `ask_of`，挂得上就 arm 并
@@ -389,21 +406,24 @@ impl Desk {
     /// **听来的**那一档是 [`Desk::evict`]（客人自己说了走，账当场撤，不等它的门封印）。
     /// 两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
-        self.sweep_each(|_| {})
+        self.sweep_each(|_, _| {})
     }
 
-    /// 与 [`Desk::sweep`] **同判据**，但每剔一位叫一次 `f`（**趁它还认得出**）。
+    /// 与 [`Desk::sweep`] **同判据**，但每剔一位叫一次 `f`（**趁它还认得出**），
+    /// 交给它的两样是**这一格的两件事**：**谁**（推道要按名字认）与**它那条道**（`take_lane`
+    /// 取走，取走即清）。
     ///
     /// 板要用这个号去做第二件事：**推那一位的死亡道**。号只在这里拿得到——客人一旦退场，
     /// 它挂在板上的牌子随时会被摘掉，摘了就认不出"这一位叫什么"（道的记号是名字）。
-    /// 有了它，调用方那一侧那个 `out: &mut [TaskId]` 出口缓冲（按常数开的那一张）就不必存在了。
-    pub fn sweep_each(&mut self, mut f: impl FnMut(TaskId)) -> usize {
+    /// **道与号一起交出去**（照实记）：从前这一手只交号，板得拿号去**旁边那本同键的
+    /// `Lanes`** 反查——那一本已并进 [`Guest`]，反查随它一起没了。
+    pub fn sweep_each(&mut self, mut f: impl FnMut(TaskId, Option<PieToken>)) -> usize {
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
                 && crate::communication::establish::vested_by(guest.reply).is_none()
             {
-                f(guest.who());
+                f(guest.who(), guest.lane.take());
                 *cell = None;
                 gone += 1;
             }

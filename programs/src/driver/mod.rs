@@ -90,12 +90,24 @@
 //!   单子必须住那一层——装配表本就要把那一格摆出来。**照实记**：各域原先是 `needs.rs` 一行
 //!   转发到那里，那一刀删掉转发、直接取（见 `driver/uart/mod.rs`）。
 //!
-//! 本级的 [`assemble`] 是各驱动**都要写一遍**的那一段客侧装配（会话 + 收配给 + 归位）。
+//! # 这一级给驱动作者什么（四个名词）
+//!
+//! ```text
+//!   Device    一台设备：领配给 → 开图 → 交出坐标与视图
+//!   Context   本域在系统里的位置：门牌 + 上板 + 一条会话（上树 / 占线 / 交件）
+//!   Fail      一台驱动的死法：一个号 + 那一句话
+//!   Line      本域那条线（客手来自 protocol::driver::line::client）
+//! ```
+//!
+//! **入库判据**：一个 API 进 `driver::` **当且仅当三台逐字同构**。设备长什么样、服务协议
+//! 长什么样，永远在域里。**照实记（`tree` / `register` 两份已并进 [`context`]）**：那两份
+//! 加 `harness/lodger.rs` 的 `find_router` 抄的是同一趟路（开会话 → 要问话孔 → 名字译成号 →
+//! 按号取入口），参数表 7 / 4 / 0 参而只要同一条会话 ⇒ 并成 [`context::Session`]。
 
 pub mod assemble;
+pub mod context;
+pub mod device;
 pub mod fail;
-pub mod register;
 pub mod router;
 pub mod rtc;
-pub mod tree;
 pub mod uart;

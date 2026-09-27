@@ -18,8 +18,8 @@ use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
-use protocol::system::operator::core::gate::{Code, Control, verdict};
-use protocol::system::operator::core::judge::{Id, Rule};
+use protocol::system::operator::core::gate::{Code, verdict};
+use protocol::system::operator::core::judge::{Facts, Id, Rule};
 use protocol::system::operator::core::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
 use protocol::system::operator::{EntryId, Fail, Listing, Operator, Where};
@@ -93,7 +93,7 @@ struct Court<'a> {
     tree: &'a Operator,
 }
 
-impl Control for Court<'_> {
+impl Facts for Court<'_> {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
         match self.session.roster.resolve(tid, Wait::AtMost(MS)) {
             // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。
@@ -129,7 +129,7 @@ impl Control for Court<'_> {
     }
 
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
-        // **判据要的只有"有没有那一位"**（见 `judge::Door`），故三种"没有"在裁决那一侧同落
+        // **判据要的只有"有没有那一位"**（见 `Facts::opens`），故三种"没有"在裁决那一侧同落
         // `Ok(None)`。这一条**不动树**：剔死是 `find` 的活儿。
         match self.tree.opens(at) {
             Ok(tid) => Ok(Some(tid)),
@@ -169,13 +169,11 @@ impl Control for Court<'_> {
 /// ——故它一并与门牌合成 [`Court`]。
 fn may(tree: &Operator, session: Option<&Session>, who: TaskId, rule: Rule<Id, Id>) -> Code {
     match session {
+        // **手里没有门牌 ⇒ 放行**：见上面那一段——装配期那一刻它既没门牌也没身份，
+        // 门禁若在那一刻生效，整机起不来。这一句就是原先 `Code::Blind` 那一格的替代：
+        // 判据从来没有落在那条路上（`has_face` 在生产实现里恒 `true`）。
         None => Code::Ok,
-        Some(s) => match verdict(&Court { session: s, tree }, who, rule) {
-            // 「手里没有门牌」在客人那一侧与「判不了」同一格；`Some` 的时候不该出现它
-            // （`Court` 不覆盖 `has_face`），真出现了也按"判不了"走，不按"放行"。
-            Code::Blind => Code::Unjudged,
-            other => other,
-        },
+        Some(s) => verdict(&Court { session: s, tree }, who, rule),
     }
 }
 

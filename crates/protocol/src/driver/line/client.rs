@@ -8,7 +8,7 @@ use env::Key;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
-use super::core::Fail;
+use super::frame::Fail;
 use super::frame;
 use crate::communication::establish::{self, Held};
 use crate::communication::sender::Sender;
@@ -106,7 +106,7 @@ impl Line {
     ///
     /// 为什么不能阻塞：路由者投递、客户说排空，两边都是"往对方的单槽里推"。两边都等 ⇒
     /// 谁也回不去取自己那一格，机器当场不动（实测）。堵死的那一条只能是**通知**，
-    /// 不能是**移交**——真需要送达的那一路（投递）留在 [`super::core::Lines::deliver`] 上，
+    /// 不能是**移交**——真需要送达的那一路（投递）留在 投递那一手（`Lines::deliver`，住路由者那一侧） 上，
     /// 它阻塞，且客户**总会**回到收投递那一格（客户从不堵在说排空上）。
     pub fn exhaust(&self) -> Result<(), ()> {
         let Some(tx) = self.pair.tx() else {
