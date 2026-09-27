@@ -48,10 +48,9 @@ use programs::Report;
 use alloc::format;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::{EntryId, Where};
+use protocol::system::operator::client::{Face as TreeFace, Mine};
+use protocol::system::operator::{Fail, Rule};
 
 
 use env::Name;
@@ -81,8 +80,8 @@ fn main() -> Report<'static> {
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
     //
     // **照实记（这一台为什么整体改走 `Face`，task-2 那一刀）**：本台每一问（`part` / `seek` /
-    // `land`）都在 [`TreeFace`] 的面上，裸孔一个都不用 ⇒ 交给（吃所有权的）[`TreeFace::of`]，
-    // 帮手 `tree_dir` 一并从裸 `(say, link)` 改收 `&TreeFace`。
+    // `land`）都在 [`TreeFace`] 的面上，裸孔一个都不用 ⇒ 交给（吃所有权的）[`TreeFace::of`]；
+    // 那两问也从"坐标 + 名字 + 裸布尔"改说成"那块 Pane 上的两手"（`Pane::open` / `Pane::bind`）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-denied: no tree link");
     };
@@ -99,61 +98,49 @@ fn main() -> Report<'static> {
         return bail("probe-denied: bad name");
     };
 
-    // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
-    // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里），故本域虽然没有身份，
-    // 这两手照旧答得出号。
-    let Some(at) = tree_dir(&tree, dir) else {
+    // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——分那一块目录
+    // （**幂等**），拿到的就是那块 Pane。**这一手不过门禁**（`part` 不在闸口里），故本域虽然
+    // 没有身份，它照旧答得出。
+    let root = tree.root();
+    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
         return bail("probe-denied: no /sys");
     };
 
     // 三、落牌——**这一手该被拒**。
-    let land = tree.land(
-        Where::At(at),
-        me,
-        entry,
-        ocall::Rule::Public,
-        false,
-        Wait::AtMost(MS),
-    );
-    let land_code = match land {
-        Ok(id) => {
-            // 居然成了：把号也报出来（读数要能指认"哪一格被占了"）。
-            debug!("probe: tree land=OK id={}", id.get());
-            ocall::OK
-        }
-        Err(code) => code,
+    let land = sys.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS));
+    let land_code = match &land {
+        // 居然成了：把号也报出来（读数要能指认"哪一格被占了"）。
+        Ok(id) => format!("ok id={}", id.id().get()),
+        Err(fail) => format!("{fail:?}"),
     };
 
-    // 四、拒绝之后那一格**在不在**——`UNKNOWN` 才是"没被占"。
-    let after = tree.seek(&[dir, me], Wait::AtMost(MS));
-    let seq = match after {
-        Ok(id) => format!("id={}", id.get()),
-        Err(code) => format!("err:{code}"),
+    // 四、拒绝之后那一格**在不在**——`Unknown` 才是"没被占"。
+    //
+    // **照实记（这一格为什么走 `Pane::tile` 而不是 `Face::tile`）**：旧面用的是 `seek`
+    // （只译号，**不动树**）；新面若用 `entry`，它内部会 `find`——而 `find` 对"主人没了"的
+    // 那一格答 `Dead` **并顺手剔掉那一格**（`operator::core` 的 `find`），那是读取之外的一笔账。
+    // `Pane::tile` 是旧 `seek` 的同形。
+    let after = root.tile(&[dir, me], Wait::AtMost(MS));
+    let seq = match &after {
+        Ok(entry) => format!("id={}", entry.id().get()),
+        Err(fail) => format!("err:{fail:?}"),
     };
     debug!(
         "probe: tree land={land_code} seek={seq} dir={}",
-        at.get()
+        sys.id().get()
     );
 
     // 五、判据：**一例一条**（原先两格 `&&` 成一句）。名字即结论。
-    let denied = land_code == ocall::DENIED;
-    let unplaced = matches!(after, Err(ocall::UNKNOWN));
+    let denied = matches!(land, Err(Fail::Denied));
+    let unplaced = matches!(after, Err(Fail::Unknown));
     {
         assert!(denied, "本该被拒，land={land_code}")
     }
     {
-        assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 UNKNOWN）")
+        assert!(unplaced, "拒了，可那一格动过了（seek 答的不是 Unknown）")
     }
 
     return Report::note(E_OK, OK_NOTE);
-}
-
-/// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
-///
-/// **照实记（收 `&TreeFace`，task-2 那一刀）**：两问都在面上，故不再收裸 `(say_hole, link)`。
-fn tree_dir(tree: &TreeFace, dir: Name) -> Option<EntryId> {
-    tree.part(Where::Root, dir, Wait::AtMost(MS)).ok()?;
-    tree.seek(&[dir], Wait::AtMost(MS)).ok()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

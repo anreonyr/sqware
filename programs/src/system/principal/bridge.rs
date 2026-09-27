@@ -13,7 +13,6 @@ use protocol::debug;
 use protocol::communication::establish;
 use protocol::system::board as bcall;
 use protocol::system::principal::client::Face;
-use protocol::system::principal::PrincipalId;
 use runtime::env::room;
 
 use crate::system::control::{READY_MS, RETRY_MS};
@@ -36,10 +35,10 @@ impl Roster {
         let Some(face) = self.face.as_ref() else {
             return Ok(());
         };
-        let mine = face
-            .derive(PrincipalId::ROOT, Wait::AtMost(READY_MS))
-            .map_err(|_| "derive")?;
-        face.bind(task, mine, Wait::AtMost(READY_MS))
+        let root = face.new_principal();
+        let mine = root.derive(Wait::AtMost(READY_MS)).map_err(|_| "derive")?;
+        face.task(task)
+            .bind(mine.id(), Wait::AtMost(READY_MS))
             .map_err(|_| "bind")?;
         Ok(())
     }
@@ -50,17 +49,20 @@ impl Roster {
     /// ——原来它静默跳过）。
     pub fn adopt(&mut self, task: TaskId, tree: Option<TaskId>) -> Result<TaskId, &'static str> {
         let f = face_of(task).ok_or("no identity face")?;
-        let mine = f
-            .derive(PrincipalId::ROOT, Wait::AtMost(READY_MS))
+        let root = f.new_principal();
+        let mine = root
+            .derive(Wait::AtMost(READY_MS))
             .map_err(|_| "derive self")?;
-        f.bind(task, mine, Wait::AtMost(READY_MS))
+        f.task(task)
+            .bind(mine.id(), Wait::AtMost(READY_MS))
             .map_err(|_| "bind self")?;
         match tree {
             Some(t) => {
-                let pt = f
-                    .derive(PrincipalId::ROOT, Wait::AtMost(READY_MS))
+                let pt = root
+                    .derive(Wait::AtMost(READY_MS))
                     .map_err(|_| "derive tree")?;
-                f.bind(t, pt, Wait::AtMost(READY_MS))
+                f.task(t)
+                    .bind(pt.id(), Wait::AtMost(READY_MS))
                     .map_err(|_| "bind tree")?;
             }
             None => debug!("principal: no tree to bind"),

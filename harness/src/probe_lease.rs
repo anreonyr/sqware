@@ -32,10 +32,9 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::client::{Face as TreeFace, Mine};
+use protocol::system::operator::Rule;
 
 
 use env::Name;
@@ -72,32 +71,27 @@ fn main() -> Report<'static> {
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
         return bail("probe-lease: bad name");
     };
-    // `/sys` 已经在（principal / coalition 起的头）；`part` 幂等，故这里照走一遍拿号。
-    let Ok(at) = tree.part(Where::Root, dir, Wait::AtMost(MS)) else {
+    // `/sys` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——
+    // 拿到的就是那块 Pane（"分"与"落"现在都挂在那块 Pane 上）。
+    let root = tree.root();
+    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
         return bail("probe-lease: no /sys");
     };
     let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {
         return bail("probe-lease: no entry");
     };
 
-    // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
-    let landed = tree.land(
-        Where::At(at),
-        me,
-        entry,
-        ocall::Rule::Public,
-        true,
-        Wait::AtMost(MS),
-    );
+    // 落牌：**声明归本域**（`Mine::Yes`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
+    let landed = sys.bind(me, entry, Rule::Public, Mine::Yes, Wait::AtMost(MS));
 
-    // 读数那一行照旧（两种形状：落上了报号、没落上报码）——**判据**在下面那一例里。
+    // 读数那一行照旧（两种形状：落上了报号、没落上报失败域那一格的名字）——**判据**在下面那一例里。
     match &landed {
         Ok(id) => debug!(
             "probe-lease: tree land=0 dir={} plate={}",
-            at.get(),
-            id.get()
+            sys.id().get(),
+            id.id().get()
         ),
-        Err(code) => debug!("probe-lease: tree land={code}"),
+        Err(fail) => debug!("probe-lease: tree land={fail:?}"),
     }
 
     // 判据：**一例**（这一台只有一条：牌落上了；落完就退场，把那一格留成"没主"）。

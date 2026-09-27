@@ -28,10 +28,9 @@ use crate::system::board::client as board;
 use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
 use protocol::system::coalition::Fail;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::client::{Face as TreeFace, Mine};
+use protocol::system::operator::Rule;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::PrincipalId;
@@ -205,8 +204,10 @@ fn answer(
 /// **调用方的下一步在两种情况下相同**（别指望这条路）；principal 那枚 `Denied` 翻不过来，
 /// 因为本族的 `Denied` 是空的（盟无主）。
 fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
-    face.resolve(from, Wait::AtMost(MS))
+    let task = face.task(from);
+    task.principal(Wait::AtMost(MS))
         .map_err(|_| Fail::Unknown)?
+        .map(|p| p.id())
         .ok_or(Fail::Unknown)
 }
 
@@ -215,7 +216,7 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，额度 [`MS`]）→ 入口。
 /// 这一趟与另外七处（`canonical` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，
-/// 已并进 [`TreeFace::entry_of`]（那一圈重试也在它里面）。**`MS` 是额度不是时限**——往返耗时
+/// 已并进 [`TreeFace::tile`] ＋ [`Tile::token`] 那一趟（重试与额度都在里面）。**`MS` 是额度不是时限**——往返耗时
 /// 不计账、推不进去还会等在门外，两处照实记见 `operator/client.rs` 的 `entry_of`。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：本域**已持**一面（上树那一趟包出来的），
@@ -224,7 +225,10 @@ fn find_face(tree: &TreeFace) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    tree.entry_of(&[dir, name], Wait::AtMost(MS)).ok()
+    tree.tile(&[dir, name], Wait::AtMost(MS))
+        .ok()?
+        .token(Wait::AtMost(MS))
+        .ok()
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。
@@ -241,42 +245,42 @@ fn serve_tree(tree: &TreeFace, entry: PieToken) {
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = tree.part(Where::Root, dir, Wait::AtMost(MS));
-    let (part, dir_id) = match dir_at {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
+    // **分目录**：`open` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
+    let root = tree.root();
+    let opened = root.open(dir, Wait::AtMost(MS));
+    let (part, dir_id) = match &opened {
+        Ok(at) => (Ok(()), at.id().get()),
+        Err(fail) => (Err(*fail), 0),
     };
     // **落门牌**：答的是门牌自己那一格的号。
-    let plate = match dir_at {
-        Ok(at) => tree.land(
-            Where::At(at),
-            me,
-            entry,
-            ocall::Rule::Public,
-            false,
-            Wait::AtMost(MS),
-        ),
-        Err(code) => Err(code),
+    let landed = match &opened {
+        Ok(at) => at
+            .bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS))
+            .map(|plate| plate.id()),
+        Err(fail) => Err(*fail),
     };
-    let (land, pid) = match plate {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
+    let (land, pid) = match &landed {
+        Ok(id) => (Ok(()), id.get()),
+        Err(fail) => (Err(*fail), 0),
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (find, got) = match plate {
-        Ok(id) => match tree.find(id, Wait::AtMost(MS)) {
-            Ok((code, entry)) => (code, entry.is_some()),
-            Err(_) => (ocall::BAD, false),
+    let (find, got) = match &landed {
+        Ok(_) => match tree.tile(&[dir, me], Wait::AtMost(MS)) {
+            Ok(e) => match e.token(Wait::AtMost(MS)) {
+                Ok(_) => (Ok(()), true),
+                Err(fail) => (Err(fail), false),
+            },
+            Err(fail) => (Err(fail), false),
         },
-        Err(code) => (code, false),
+        Err(fail) => (Err(*fail), false),
     };
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = plate
-        .ok()
-        .and_then(|id| tree.name(id, Wait::AtMost(MS)).ok());
+    let pname = match landed {
+        Ok(id) => root.name(id, Wait::AtMost(MS)).ok(),
+        Err(_) => None,
+    };
     debug!(
-        "coalition: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
+        "coalition: tree part={part:?} dir={dir_id} land={land:?} find={find:?} got={got} entry={} plate={pid} pname={}",
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     );

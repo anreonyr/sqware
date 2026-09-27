@@ -67,6 +67,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
+use protocol::system::operator::Fail;
 
 use env::{Name, PieToken};
 use env::Key;
@@ -154,20 +155,41 @@ fn main() -> Report<'static> {
 ///
 /// **照实记（这一份复制已并进 `driver::context`）**：本域从前自己写了一遍"开会话 → 要问话孔
 /// → 名字译成号 → 按号取入口"——与驱动那两份（旧 `tree` / `register`）逐字同构。今天只用
-/// [`Session::open`]（`Session::open(sire, operator::BERTH, …)`）＋ [`Face::entry_of`]：
-/// 房客**没有门牌**，故只要那条会话这一半。
+/// [`Session::open`]（`Session::open(sire, operator::BERTH, …)`）＋ 下面那两格：房客**没有门牌**，
+/// 故只要那条会话这一半。
 ///
 /// **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话是本手自己开的、此后只有这一趟
 /// 用它 ⇒ 按"已持 `Session` 则用 `Face`"当场交给 [`Face::of`]（吃所有权），不再把那条线
 /// 往函数体里摊开。
+///
+/// **照实记（为什么不用 `Face::tile`）**：`entry` 自己已经译号一次 + `find` 一次，随后
+/// `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本。本台**末尾那一格读数**
+/// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须照旧面 `entry_of` 的**一枚**写：
+/// [`Pane::tile`]（译号）＋ [`Tile::token`]（这一趟 `find`）。
 fn find_router() -> Option<PieToken> {
     let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)).ok()?;
     let tree = Face::of(session);
-    // 先拼路（`/device/router` 两格名字），再沿那条路取入口。
+    // 先拼路（`/device/router` 两格名字），再沿那条路取入口（**译不出就重试**：门牌是驱动落的，
+    // 它可能落得比本域晚）。
     let (Ok(dir), Ok(name)) = (Name::new(protocol::driver::DIR), Name::new(SERVICE)) else {
         return None;
     };
-    tree.entry_of(&[dir, name], Wait::AtMost(MS)).ok()
+    let root = tree.root();
+    let road = [dir, name];
+    let mut left = MS;
+    loop {
+        match root
+            .tile(&road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+        {
+            Ok(entry) => return Some(entry),
+            Err(Fail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。

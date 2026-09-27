@@ -202,6 +202,10 @@ impl env::wire::Field for Where {
 /// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
 /// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
 /// "自己 / 别人"，所以"已占即拒"在这里无处落脚。
+///
+/// **后两格（[`Fail::Denied`] / [`Fail::Unjudged`]）来自门外那一问**：核心一个字节都不知道
+/// 它们（判据住实现侧，见 [`DENIED`] / [`UNJUDGED`]），但它们同样是**客侧要按下一步区分**的
+/// 答案 ⇒ 与前面六格同住这一枚类型。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Fail {
     /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
@@ -225,7 +229,16 @@ pub enum Fail {
     Full,
     /// 那枚 Pie 后面的人没了（探不到）⇒ 重落 / 重寻。**剔掉那一条的同时**答这一格。
     Dead,
-}// ── 一格规则 ────────────────────────────────────────────────
+    /// 门外那一问答"不"：[`DENIED`] ——这一位不许动这一格。**终态**：换人 / 换目标，别重试。
+    Denied,
+    /// 门外那一问答"判不了"：[`UNJUDGED`] ——要问的那条事实问不到。
+    ///
+    /// **它不承诺"等一会儿会好"**：对面不答 / 超时（会好），与那一号是碑 / 那一格是块窗格 /
+    /// 开者那扇门封印了（好不了）都落这一格；分开它们的**是读数，不是第三格码**。
+    Unjudged,
+}
+
+// ── 一格规则 ────────────────────────────────────────────────
 
 /// **这一格谁许用**。五格覆盖"公开 / 就是某一位 / 在某一位那一支里 / 在某枚盟里 /
 /// 就是开着某一格的那一位"。
@@ -383,9 +396,10 @@ const SEEK: u8 = 7;
 /// 本族只把它转出来。
 pub use crate::fail_codes::OK;
 
-/// 答话那一格。**前六格与 [`Fail`] 一一对应**，第七格不是失败域
-/// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
-/// （判据那一半住 `programs/src/system/operator/core/judge.rs`）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
+/// 答话那一格。**前六格与 [`Fail`] 的前六格一一对应**，第七格不是失败域的：这一问读不懂
+/// （帧坏了 ⇒ 不猜、不崩）。**第八、九格来自门外那一问**（判据那一半住
+/// `programs/src/system/operator/core/judge.rs`），它们与 [`Fail::Denied`] / [`Fail::Unjudged`]
+/// 一一对应。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
@@ -1015,6 +1029,9 @@ pub struct CoordFrame {
 
 crate::fail_codes! {
     /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
+    ///
+    /// **九格成一枚完整双射**：前六格是核心自己的失败，后两格是门外那一问（判据层）的两格
+    /// ——`DENIED` / `UNJUDGED` 本来就在线上答得出来，故客侧读得回来。`BAD` 在表外。
     bijective Fail; OK;
     Fail::Unknown => UNKNOWN,
     Fail::NonEmpty => NONEMPTY,
@@ -1022,6 +1039,8 @@ crate::fail_codes! {
     Fail::NotAPane => NOTAPANE,
     Fail::Full => FULL,
     Fail::Dead => DEAD,
+    Fail::Denied => DENIED,
+    Fail::Unjudged => UNJUDGED,
 }
 
 // ── 载体两侧共用的坐标 ─────────────────────────────────────

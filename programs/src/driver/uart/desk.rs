@@ -24,9 +24,9 @@ use protocol::debug;
 use protocol::driver::DIR;
 use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::{EntryId, Where};
+use protocol::system::operator::client::Mine;
+use protocol::system::operator::{EntryId, Rule};
 use runtime::env::mail;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -80,12 +80,8 @@ pub fn start(key: Key, ms: Wait) -> Result<Desk, Fail> {
 /// 判据与 [`Context::enter`] 那一趟同一条：**这一域没登记上就不该活着** ⇒ 不成即断言。
 /// 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
 ///
-/// **照实记（这一台为什么不改走 `Face`，task-2 那一刀）**：`Context` 是驱动族**共用**的载体
-/// （`pub session: Session`），本台要的正是那条会话上的**裸** `talk` / `link` / `host`——
-/// 两枚门牌一趟落完、还要自己读回号与名。而 `Face`（[`operator::Face`]）吃一条
-/// `Session` 的所有权、且把那条线**故意藏起来**（"四面不出 Face"）。故本台照旧用协议层的
-/// 自由函数（成员那一手 `part` / `land` / `find` / `name` 一个都没变），只把 `Context` 留在
-/// 手里。同理 [`Context::line`](programs::driver::context::Context::line) 也留自由函数。
+/// **本台借一面 `Face` 的视图**（[`operator::Face::from`]）：它要在**同一条会话**上落两枚门牌，
+/// 而会话本身仍归 [`Context`]。两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
 fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     let (Ok(dev), Ok(me), Ok(rx_name), Ok(tx_name)) =
         (Name::new(DIR), Name::new(ME), Name::new(RX), Name::new(TX))
@@ -93,67 +89,62 @@ fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
         debug!("{ME}: tree: bad name");
         return;
     };
-    let (talk, link, host) = (ctx.session.talk, &ctx.session.link, ctx.session.host);
+    let tree = operator::Face::from(&ctx.session);
+    let root = tree.root();
     // 分目录两趟：第一趟 `/device`（幂等），第二趟本域那块 `/device/uart`。
-    let (part, dir) = match operator::part(talk, link, Where::Root, dev, ms) {
-        Ok(id) => (ocall::OK, id),
-        Err(code) => (code, EntryId::new(0)),
+    let opened_dir = root.open(dev, ms);
+    let (part, _dir) = match &opened_dir {
+        Ok(at) => (Ok(()), at.id()),
+        Err(fail) => (Err(*fail), EntryId::new(0)),
     };
-    let (pane, at) = match operator::part(talk, link, Where::At(dir), me, ms) {
-        Ok(id) => (ocall::OK, id),
-        Err(code) => (code, EntryId::new(0)),
+    let opened_pane = match &opened_dir {
+        Ok(at) => at.open(me, ms),
+        Err(fail) => Err(*fail),
     };
-    let (laid_rx, rx_id) = match operator::land(
-        talk,
-        link,
-        host,
-        Where::At(at),
-        rx_name,
-        rx,
-        ocall::Rule::Public,
-        true,
-        ms,
-    ) {
-        Ok(id) => (ocall::OK, id),
-        Err(code) => (code, EntryId::new(0)),
+    let (pane, at) = match &opened_pane {
+        Ok(pane) => (Ok(()), pane.id()),
+        Err(fail) => (Err(*fail), EntryId::new(0)),
     };
-    let (laid_tx, tx_id) = match operator::land(
-        talk,
-        link,
-        host,
-        Where::At(at),
-        tx_name,
-        tx,
-        ocall::Rule::Public,
-        true,
-        ms,
-    ) {
-        Ok(id) => (ocall::OK, id),
-        Err(code) => (code, EntryId::new(0)),
+    let _ = at;
+    // 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
+    let laid_rx = match &opened_pane {
+        Ok(pane) => pane
+            .bind(rx_name, rx, Rule::Public, Mine::Yes, ms)
+            .map(|e| e.id()),
+        Err(fail) => Err(*fail),
     };
-    // 自证：按号查回来（`got`）＋ 按号问名。
-    let (found_rx, got_rx) = match operator::find(talk, link, rx_id, ms) {
-        Ok((code, entry)) => (code, entry.is_some()),
-        Err(_) => (ocall::BAD, false),
+    let laid_tx = match &opened_pane {
+        Ok(pane) => pane
+            .bind(tx_name, tx, Rule::Public, Mine::Yes, ms)
+            .map(|e| e.id()),
+        Err(fail) => Err(*fail),
     };
-    let (found_tx, got_tx) = match operator::find(talk, link, tx_id, ms) {
-        Ok((code, entry)) => (code, entry.is_some()),
-        Err(_) => (ocall::BAD, false),
+    // 自证：按号问名——**一次问完两格**（`name` 那一手既答名、也证明那一号还在）。
+    let found_rx = match &laid_rx {
+        Ok(id) => root.name(*id, ms),
+        Err(fail) => Err(*fail),
     };
-    let named_rx = operator::name(talk, link, rx_id, ms).ok();
-    let named_tx = operator::name(talk, link, tx_id, ms).ok();
+    let found_tx = match &laid_tx {
+        Ok(id) => root.name(*id, ms),
+        Err(fail) => Err(*fail),
+    };
+    let named_rx = found_rx.as_ref().ok();
+    let named_tx = found_tx.as_ref().ok();
+    let (got_rx, got_tx) = (found_rx.is_ok(), found_tx.is_ok());
     debug!(
-        "{ME}: tree part={part} pane={pane} rx={laid_rx} tx={laid_tx} find_rx={found_rx} find_tx={found_tx} got={got_rx},{got_tx} pname={},{}",
-        named_rx.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-        named_tx.as_ref().map(|n| n.as_str()).unwrap_or("-"),
+        "{ME}: tree part={part:?} pane={pane:?} rx={:?} tx={:?} find_rx={found_rx:?} find_tx={found_tx:?} got={got_rx},{got_tx} pname={},{}",
+        laid_rx.as_ref().map(|id| id.get()),
+        laid_tx.as_ref().map(|id| id.get()),
+        named_rx.map(|n| n.as_str()).unwrap_or("-"),
+        named_tx.map(|n| n.as_str()).unwrap_or("-"),
     );
-    assert_eq!(part, ocall::OK);
-    assert_eq!(pane, ocall::OK);
-    assert_eq!(laid_rx, ocall::OK);
-    assert_eq!(laid_tx, ocall::OK);
-    assert_eq!(found_rx, ocall::OK);
-    assert_eq!(found_tx, ocall::OK);
+    assert!(part.is_ok());
+    assert!(pane.is_ok());
+    assert!(laid_rx.is_ok());
+    assert!(laid_tx.is_ok());
+    assert!(found_rx.is_ok());
+    assert!(found_tx.is_ok());
     assert!(got_rx && got_tx);
-    assert_eq!(named_rx.as_ref().map(|n| n.as_str()), Some(RX));
-    assert_eq!(named_tx.as_ref().map(|n| n.as_str()), Some(TX));
+    assert_eq!(named_rx.map(|n| n.as_str()), Some(RX));
+    assert_eq!(named_tx.map(|n| n.as_str()), Some(TX));
 }

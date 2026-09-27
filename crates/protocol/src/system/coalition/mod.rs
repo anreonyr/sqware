@@ -180,12 +180,14 @@
 //! 回信孔借过去（记号 `call::BACK`），把帧推上门牌，答话从那枚孔回来——一份报文里没有
 //! "往哪回"这一格。
 //!
-//! **客侧那一面只出七手 ＋ 一处读数，四面一个都不出**（照实记，与 principal 那一面同形）：
-//! [`client::Face`] 的面上是 `of` / `found` / `enter` / `leave` / `amid` / `band` / `bloc`
-//! ——返回一律 `Result<T, Fail>`（[`Window<T>`] 原样不动）；**开会话那一手（`Session`）、树路
-//! 那一枚（`Endpoint`）、发话那一枚（`Sender`）在 `client.rs` 里一次都不出现**（门牌自己就是
-//! 那条路），**收话那一枚（`Receiver`）只在 `ask` 的身体里出现一次**。唯一的例外是读数
-//! [`client::Face::host`]——它是诊断那一格，不是协议面（同 principal 那边照实记的一格）。
+//! **客侧那一面只出三个柄，四面一个都不出**（照实记，与 principal 那一面同形）：
+//! [`client::Face`] 的面上是 `of` / `host` / `found` / `coalition` / `bloc`——**其余各手挂在
+//! 它还回来的宾语上**（[`client::Coalition`] 的 `enter` / `leave` / `holds` / `members`，
+//! [`client::Band`] 与 [`client::Bloc`] 是取窗那一趟的结果值：一页 ＋ 游标 ＋ `next`）。
+//! 每一手一律 `Result<_, Fail>`；**开会话那一手（`Session`）、树路那一枚（`Endpoint`）、发话
+//! 那一枚（`Sender`）在 `client.rs` 里一次都不出现**（门牌自己就是那条路），**收话那一枚
+//! （`Receiver`）只在 `call` 的身体里出现一次**。唯一的例外是读数 [`client::Face::host`]
+//! ——它是诊断那一格，不是协议面（同 principal 那边照实记的一格）。
 //!
 //! **起手两颗锚**：`Sire`（只为上板与上树两条会话，**之后不落任何字段**——盟无主，核心不需
 //! 要它；对照 `Principal` 拿它当名册钥匙）、以及树上那面身份服务的门牌（**带重试**：门牌是

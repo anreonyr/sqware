@@ -67,7 +67,6 @@ use protocol::system::board as bcall;
 use programs::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::Where;
 use runtime::PAGE_SIZE;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -122,6 +121,9 @@ fn main() -> Report<'static> {
         return bail("probe-bound: no tree link");
     };
     let (tree, hedge, _) = (&session.link, session.talk, session.host);
+    // **正经那一问要一面 `Face`**（自由函数那一层已随新面退场），而它是**借**一条会话：
+    // [`operator::Face::from`]（树那三格是 `Copy`）——junk 那一趟照旧走裸孔，见 `junk_trip`。
+    let face = operator::Face::from(&session);
     let Ok(dir) = Name::new("sys") else {
         return bail("probe-bound: bad name");
     };
@@ -153,7 +155,7 @@ fn main() -> Report<'static> {
     );
 
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
-    let (junk_in, said_bad, after) = junk_trip(hedge, &tree, dir);
+    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir);
 
     // 三·五、**板那一道门**：同一条判据的另一条腿（来历见文件头那一段照实记）。
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
@@ -200,12 +202,21 @@ fn main() -> Report<'static> {
 /// 正经那一问取 `part(/sys)`：**幂等**（`/sys` 是服务起手时立的那一格，重复 `part` 只答同一个
 /// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管。
 ///
-/// **照实记（这一台为什么不改走 `Face`，task-2 那一刀）**：这一趟量的**不是**一个 RPC——
-/// 它要往门那一枚孔上**推一条不合族的原始字节**、再从树路那一枚孔**读回原始答字节**；那两格
-/// 在 [`operator::Face`] **下面**（那一面故意把 `Endpoint` / `Sender` / `Receiver`
-/// 藏起来，见它的正文）。故本台照旧拿裸 `(talk, link)` 走自由函数与 `mail`——**"未持（可交出去
-/// 的）`Session`"就是这一格的确切含义**。`junk_trip_board` 同理（换一道门）。
-fn junk_trip(hedge: PieToken, tree: &Endpoint, dir: Name) -> (bool, bool, bool) {
+/// **照实记（这一台为什么不把 junk 那一趟改走 `Face`，task-2 那一刀）**：这一趟量的**不是**
+/// 一个 RPC——它要往门那一枚孔上**推一条不合族的原始字节**、再从树路那一枚孔**读回原始答字节**；
+/// 那两格在 [`operator::Face`] **下面**（那一面故意把 `Endpoint` / `Sender` / `Receiver`
+/// 藏起来，见它的正文）。故那两格照旧拿裸 `(talk, link)` 走 `mail`——
+/// **"未持（可交出去的）`Session`"就是这一格的确切含义**。
+///
+/// 只有**紧跟其后那句正经的问**（`part /sys`，幂等）走 `Face`：新面已没有那条自由函数那一层，
+/// 而这一面正好**借**同一枚问话孔与同一条答话路（[`operator::Face::from`]）——门上那一趟
+/// 一个字没变。`junk_trip_board` 同理（换一道门，板那一面不在本刀范围内，照旧自由函数）。
+fn junk_trip(
+    hedge: PieToken,
+    tree: &Endpoint,
+    face: &operator::Face,
+    dir: Name,
+) -> (bool, bool, bool) {
     let junk = junk();
     let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();
 
@@ -217,7 +228,8 @@ fn junk_trip(hedge: PieToken, tree: &Endpoint, dir: Name) -> (bool, bool, bool) 
     let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
 
     // 正经的一问：**门还在答**。
-    let after = operator::part(hedge, tree, Where::Root, dir, Wait::AtMost(MS)).is_ok();
+    let root = face.root();
+    let after = root.open(dir, Wait::AtMost(MS)).is_ok();
     (pushed, bad, after)
 }
 

@@ -50,9 +50,9 @@ use programs::Report;
 use env::Name;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::Fail;
 use runtime::env::unit as utask;
 
 const DIR: &str = "sys";
@@ -104,37 +104,49 @@ fn main() -> Report<'static> {
 
     // 三、一行读数。
     debug!(
-        "probe-other: tree is={is} under={under} foreign={foreign}"
+        "probe-other: tree is={is:?} under={under:?} foreign={foreign:?}"
     );
 
-    // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是 `0` 放行，也不是 `9` 判不了）。
+    // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是放行，也不是"判不了"）。
     {
-        assert_eq!(is, ocall::DENIED)
+        assert_eq!(is, Err(Fail::Denied))
     }
     {
-        assert_eq!(under, ocall::DENIED)
+        assert_eq!(under, Err(Fail::Denied))
     }
     {
-        assert_eq!(foreign, ocall::DENIED)
+        assert_eq!(foreign, Err(Fail::Denied))
     }
 
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 沿一条路译成号再 `find`：答线上那一格码（译不出号 ⇒ `UNKNOWN`）。
+/// 沿一条路译成号再 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 [`Fail`]。
 ///
-/// **带一轮有界重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
+/// **译不出就重试**（有界）：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的）。
-fn denied(tree: &TreeFace, road: &[Name]) -> u8 {
-    // 名字 → 号（**译不出就重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚）
-    // → 入口：那一趟在 [`TreeFace::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
-    //
-    // 答话码原样往外带；`find` 那一族的失败由 [`TreeFace::entry_of`] 折成
-    // [`ocall::BAD`]（"译不出号 / 推不动"在这里本就分不开，见 `ocall` 那张表）。
-    match tree.entry_of(road, Wait::AtMost(MS)) {
-        Ok(_) => ocall::OK,
-        Err(code) => code,
+///
+/// **照实记（task-2 那一刀；两格为什么分开走）**：旧面 `entry_of` = 译号（重试）＋一趟 `find`。
+/// 新面的 `Face::tile` 已经译号一次 + `find` 一次，随后 `Tile::token` 又 `find` 一次——
+/// 每趟多授一枚没人接的副本；且门禁那趟会答"不"，**它在译号之后才发生**，而这一台量的正是
+/// 门禁那一格（`Denied`），故两格分开写：`Pane::tile` 译号（可重试）＋ `Tile::token` 取那一枚。
+fn denied(tree: &TreeFace, road: &[Name]) -> Result<(), Fail> {
+    let root = tree.root();
+    let mut left = MS;
+    loop {
+        match root
+            .tile(road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+            .map(|_| ())
+        {
+            Ok(()) => return Ok(()),
+            Err(Fail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(fail) => return Err(fail),
+        }
     }
 }
 

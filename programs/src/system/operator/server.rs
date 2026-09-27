@@ -32,6 +32,7 @@ use crate::system::operator::core::Operator;
 use protocol::system::operator::{EntryId, Fail, Listing, Where};
 
 use protocol::system::coalition::client::Face as CoalitionFace;
+use protocol::system::coalition::CoalitionId;
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::PrincipalId;
 
@@ -102,21 +103,21 @@ struct Court<'a> {
 
 impl Facts for Court<'_> {
     fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
-        match self.session.roster.resolve(tid, Wait::AtMost(MS)) {
+        match self.session.roster.task(tid).principal(Wait::AtMost(MS)) {
             // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。
-            Ok(found) => Ok(found.map(|p| p.get() as Id)),
+            Ok(found) => Ok(found.map(|p| p.id().get() as Id)),
             Err(_) => Err(()),
         }
     }
 
     fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
+        // **柄与参数的方向**：`contains` 发的是 `heir(参数, self)`，故要问 `heir(a, b)`
+        // （`a ≼ b`，就是这一条判据的语义）得把 `b` 当柄、`a` 当参数；
+        // `principal(a).contains(b)` 问的是 `b ≼ a`——那是另一条判据，不是这一格。
         self.session
             .roster
-            .heir(
-                PrincipalId::new(a as usize),
-                PrincipalId::new(b as usize),
-                Wait::AtMost(MS),
-            )
+            .principal(PrincipalId::new(b as usize))
+            .contains(PrincipalId::new(a as usize), Wait::AtMost(MS))
             .map_err(|_| ())
     }
 
@@ -127,11 +128,8 @@ impl Facts for Court<'_> {
             return Err(());
         };
         league
-            .amid(
-                PrincipalId::new(me as usize),
-                protocol::system::coalition::CoalitionId::new(at as usize),
-                Wait::AtMost(MS),
-            )
+            .coalition(CoalitionId::new(at as usize))
+            .holds(PrincipalId::new(me as usize), Wait::AtMost(MS))
             .map_err(|_| ())
     }
 
@@ -159,6 +157,14 @@ impl Facts for Court<'_> {
             // 余下三格**到不了**（`core::opens` 的判据表只有上面三条）。一格一格列出来，是为了
             // 将来 `Fail` 多一格时**编不过**，而不是悄悄落进一个 `_`。
             Err(Fail::NonEmpty | Fail::NotAPane | Fail::Full) => Ok(None),
+            // **门外那一问答"不"**（终态）：这一位不许。它与上面那三条一样**到不了**
+            // （`core::opens` 不过门禁），也**不去** `Unjudged` 那一格：那句话是**确定**的，
+            // 而 `Err(())` 是"连有没有都问不到"。故落在 `Ok(None)`（"没有那一位"那一句确定的话）。
+            Err(Fail::Denied) => Ok(None),
+            // **问不到**：树自己答不出这一问 ⇒ 落 `Err(())`——正是 `Facts::opens` 契约里
+            // "树自己问不到"那一格（判据那一侧由它得"判不了"）。同样到不了；两格分开列，
+            // 是为了这句话（"不许"与"问不到"不是同一件事）在形状上就分得开。
+            Err(Fail::Unjudged) => Err(()),
         }
     }
 }

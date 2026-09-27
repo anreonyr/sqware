@@ -39,10 +39,9 @@ use programs::Report;
 use alloc::format;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::{EntryId, Where};
+use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::system::operator::{EntryId, Fail, Rule};
 
 use env::Name;
 use protocol::driver;
@@ -102,30 +101,34 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
-    let at = Where::At(wait_pane(&tree, dir, service).unwrap_or(EntryId::new(0)));
-    let land = tree.land(at, me, entry, ocall::Rule::Public, false, Wait::AtMost(MS));
-    let land_code = match land {
-        Ok(id) => {
-            debug!("probe-owner: tree land=OK id={}", id.get());
-            ocall::OK
-        }
-        Err(code) => code,
+    // `/device/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
+    let Some(pane) = wait_pane(&tree, dir, service) else {
+        return bail("probe-owner: no /device/uart");
+    };
+    let land = pane.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS));
+    let land_code = match &land {
+        Ok(id) => format!("ok id={}", id.id().get()),
+        Err(fail) => format!("{fail:?}"),
     };
 
     // 四、那一格**还在不在**（应是原来那个号）。
-    let after = tree.seek(&road, Wait::AtMost(MS));
-    let seq = match after {
-        Ok(id) => format!("id={}", id.get()),
-        Err(code) => format!("err:{code}"),
+    //
+    // **照实记（这一格为什么也走 `Pane::tile`）**：旧面用 `seek`（只译号、不动树）；新面若用
+    // `Face::tile`，它内部那一趟 `find` 会**授一枚副本**进来（旧面没有这一笔）——而这一格只要号。
+    let root = tree.root();
+    let after = root.tile(&road, Wait::AtMost(MS));
+    let seq = match &after {
+        Ok(entry) => format!("id={}", entry.id().get()),
+        Err(fail) => format!("err:{fail:?}"),
     };
     debug!(
         "probe-owner: tree land={land_code} before={} after={seq}",
         before.get()
     );
 
-    // 五、判据两格：被拒（`DENIED`）**且**那一格没动（还是原来那个号）。
-    let denied = land_code == ocall::DENIED;
-    let untouched = matches!(after, Ok(id) if id == before);
+    // 五、判据两格：被拒（`Denied`）**且**那一格没动（还是原来那个号）。
+    let denied = matches!(land, Err(Fail::Denied));
+    let untouched = matches!(after, Ok(entry) if entry.id() == before);
 
     // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/sys/lease`（`mine = true`）就死，
     //     故它的资源已被退场钩子封印 ⇒ 持树者该让那一格重新可落。**有界重试**：本域可能
@@ -136,7 +139,7 @@ fn main() -> Report<'static> {
         "probe-owner: lease land={} (owner gone ⇒ take-over)",
         match taken {
             Ok(id) => format!("0 id={}", id.get()),
-            Err(code) => format!("{code}"),
+            Err(fail) => format!("{fail:?}"),
         }
     );
 
@@ -164,58 +167,72 @@ fn main() -> Report<'static> {
 ///
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
 ///
-/// **照实记（收 `&TreeFace`，task-2 那一刀）**：三问全是面上的方法（`part` / `seek` / `land`），
-/// 故不再收裸 `(say, link, host)`——对端号与那条线都在 `Face` 里面。
-fn take_over(tree: &TreeFace) -> Result<EntryId, u8> {
+/// **照实记（收 `&TreeFace`，task-2 那一刀）**：三问全是面上的方法（`open` / `road` / `bind`），
+/// 故不再收裸 `(say, link, host)`——对端号与那条线都在 `Face` 里面。"接不上"这一档的落点从
+/// 线上那一格码收成 [`Fail`]（`BAD` / `UNKNOWN` / 没走到同落 [`Fail::Unknown`]）。
+///
+/// **照实记（那一格的存在性为什么走 `Pane::tile` 而不是 `Face::tile`）**：旧面用 `seek`
+/// ——只译号，**不动树**。新面若用 `Face::tile`，它内部会 `find` 一次，而 `find` 对"主人没了"
+/// 的那一格答 [`Fail::Dead`] **并顺手把那一格从树上剔掉**（见 `operator::core` 的 `find`）——
+/// 于是这一格的判据（"那一格还在，只是主人不在场 ⇒ 可接手"）当场翻面：存在性答假、格子还被删了。
+/// `Pane::tile` 才是旧 `seek` 的同形（只译号），故这一手用它。
+fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     let (Ok(dir), Ok(me)) = (Name::new("sys"), Name::new("lease")) else {
-        return Err(ocall::BAD);
+        return Err(Fail::Unknown);
     };
     let road = [dir, me];
-    let Ok(at) = tree.part(Where::Root, dir, Wait::AtMost(MS)) else {
-        return Err(ocall::BAD);
+    // `/sys` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
+    let root = tree.root();
+    let _ = root.open(dir, Wait::AtMost(MS));
+    let Some(sys) = tree.pane(&[dir], Wait::AtMost(MS)).ok() else {
+        return Err(Fail::Unknown);
     };
     let mut left = MS;
     loop {
         // 那一格先得**已经在树上**（`probe-lease` 落过）——否则本域量的是"落一个新名字"。
-        if tree.seek(&road, Wait::AtMost(MS)).is_ok() {
+        if root.tile(&road, Wait::AtMost(MS)).is_ok() {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
-                return Err(ocall::BAD);
+                return Err(Fail::Unknown);
             };
-            match tree.land(Where::At(at), me, entry, ocall::Rule::Public, false, Wait::AtMost(MS)) {
-                Ok(id) => return Ok(id),
-                Err(ocall::DENIED) if left > 0 => {
+            match sys.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS)) {
+                Ok(id) => return Ok(id.id()),
+                Err(Fail::Denied) if left > 0 => {
                     // 还没死透（或我们比它先到）：等一下再来。
                     let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
                     left = left.saturating_sub(1);
                 }
-                Err(code) => return Err(code),
+                Err(fail) => return Err(fail),
             }
         } else if left > 0 {
             let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
             left = left.saturating_sub(1);
         } else {
-            return Err(ocall::UNKNOWN);
+            return Err(Fail::Unknown);
         }
     }
 }
 
-/// `/device/uart` 那块 Pane 的号（分目录**幂等两趟** + 译号）：要顶的那枚砖落在它下面。
-fn wait_pane(tree: &TreeFace, dir: Name, service: Name) -> Option<EntryId> {
+/// `/device/uart` 那块 Pane（分目录**幂等两趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
+fn wait_pane<'a>(tree: &'a TreeFace, dir: Name, service: Name) -> Option<Pane<'a>> {
     // 第一趟：`/device`（幂等——别的驱动也在它下面）。
-    tree.part(Where::Root, dir, Wait::AtMost(MS)).ok()?;
-    let at = tree.seek(&[dir], Wait::AtMost(MS)).ok()?;
+    let _ = tree.root().open(dir, Wait::AtMost(MS));
+    let dev = tree.pane(&[dir], Wait::AtMost(MS)).ok()?;
     // 第二趟：`/device/uart`（幂等——`uart` 自己已经分出来那块）。
-    tree.part(Where::At(at), service, Wait::AtMost(MS)).ok()?;
-    tree.seek(&[dir, service], Wait::AtMost(MS)).ok()
+    let _ = dev.open(service, Wait::AtMost(MS));
+    tree.pane(&[dir, service], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
+///
+/// **照实记（同上：`Pane::tile` 是旧 `seek` 的同形）**：这一格只要那一枚**号**，不要那一枚
+/// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 `Face::tile`。
 fn wait_id(tree: &TreeFace, road: &[Name]) -> Option<EntryId> {
+    let root = tree.root();
     let mut left = MS;
     loop {
-        match tree.seek(road, Wait::AtMost(MS)) {
-            Ok(id) => return Some(id),
-            Err(ocall::UNKNOWN) if left > 0 => {
+        match root.tile(road, Wait::AtMost(MS)) {
+            Ok(entry) => return Some(entry.id()),
+            Err(Fail::Unknown) if left > 0 => {
                 let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }

@@ -45,6 +45,7 @@ use protocol::system::board as bcall;
 use programs::system::board::client as board;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
+use protocol::system::operator::Fail;
 
 use env::{Name, PieToken};
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
@@ -182,9 +183,28 @@ fn find_face(tree: &Face) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
-    // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：那一趟在
-    // [`Face::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
-    tree.entry_of(&[dir, want], Wait::AtMost(MS)).ok()
+    // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：两格在
+    // [`Pane::tile`] 与 [`Tile::token`] 上（旧 `Face::tile` 那一趟；本域从前自己抄了一遍）。
+    //
+    // **照实记（task-2 那一刀；为什么不用 `Face::tile`）**：`entry` 自己已经译号一次 + `find`
+    // 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有
+    // 一枚，故这里也照一枚写（重试那一圈照旧留着）。
+    let root = tree.root();
+    let road = [dir, want];
+    let mut left = MS;
+    loop {
+        match root
+            .tile(&road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+        {
+            Ok(entry) => return Some(entry),
+            Err(Fail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// 上板报到（与 `passer` / `canonical` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。

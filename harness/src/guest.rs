@@ -59,6 +59,7 @@ use programs::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
+use protocol::system::operator::Fail;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -118,12 +119,13 @@ fn main() -> Report<'static> {
     // 另叫一手 `operator::take` 扫本域表按"谁给的"认回来。今天那一枚号**随答话回来**，故
     // 这一趟连号带状态一起破出去；`at` 就是本域表里那一枚（读数里的 `entry`）。
     //
-    // 那一趟（含"译不出就重试"）今天在 [`Face::entry_of`]（本域从前自己抄了一遍）：
-    // 答话码原样往外带，`find` 那一族的失败折成 `BAD`。`AtMost(MS)` 是**额度不是整趟时限**
-    // （往返耗时不计账、推不进去还会等在门外，见 `operator/client.rs` 的 `entry_of` 照实记）。
-    let (find, at) = match tree.entry_of(&path, Wait::AtMost(MS)) {
+    // 那一趟（含"译不出就重试"）在 [`find_face`] 里（旧 `Face::tile` 那一趟；本域从前自己
+    // 抄了一遍）：答话码原样往外带，`find` 那一族的失败折成失败域那一格（按本族那张表折回数：
+    // **`BAD` / `UNKNOWN` / 没走到现在是同一格** `Fail::Unknown`）。
+    // `AtMost(MS)` 是**额度不是整趟时限**（往返耗时不计账、推不进去还会等在门外）。
+    let (find, at) = match find_face(&tree, &path) {
         Ok(entry) => (ocall::OK, entry),
-        Err(code) => (code, none),
+        Err(fail) => (ocall::fail_to_code(Some(fail)), none),
     };
 
     // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）
@@ -161,6 +163,31 @@ fn main() -> Report<'static> {
             "guest: trip failed"
         },
     );
+}
+
+/// 沿一条路取那一枚入口（旧 `Face::tile` 那一趟）：**译不出就重试**（有界——门牌是别的域
+/// 落的，本域可能比它先起），译出来再要那一枚。
+///
+/// **照实记（task-2 那一刀；两格为什么分开走）**：旧面 `entry_of` = 译号（重试）＋一趟 `find`。
+/// 新面的 `Face::tile` 已经译号一次 + `find` 一次，随后 `Tile::token` 又 `find` 一次 ⇒
+/// **每趟多授一枚没人接的副本**进本域表（树上 `find` 还带"惰性剔死"那一笔）。故照旧面的
+/// 两格写：[`Pane::tile`]（只译号，不动树）＋ [`Tile::token`]（这一趟 `find`）。
+fn find_face(tree: &Face, road: &[Name]) -> Result<PieToken, Fail> {
+    let root = tree.root();
+    let mut left = MS;
+    loop {
+        match root
+            .tile(road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+        {
+            Ok(entry) => return Ok(entry),
+            Err(Fail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(fail) => return Err(fail),
+        }
+    }
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

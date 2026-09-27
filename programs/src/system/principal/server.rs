@@ -22,9 +22,9 @@ use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::communication::session::Session;
 use crate::system::board::client as board;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Mine;
+use protocol::system::operator::Rule;
 use protocol::system::principal as pcall;
 use crate::system::principal::core::Principal;
 use protocol::system::principal::PrincipalId;
@@ -197,51 +197,48 @@ fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> pcall
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/subject.rs`）证——它照同一条路
 /// 找上门、问一句、拿回一条号。故本域不自问自答。
 fn serve_tree(session: &Session, entry: PieToken) {
-    let (link, talk, host) = (&session.link, session.talk, session.host);
+    let tree = operator::Face::from(session);
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         debug!("principal: tree: bad name");
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
-    let (part, dir_id) = match dir_at {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
+    // **分目录**：`open` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
+    let root = tree.root();
+    let opened = root.open(dir, Wait::AtMost(MS));
+    let (part, dir_id) = match &opened {
+        Ok(at) => (Ok(()), at.id().get()),
+        Err(fail) => (Err(*fail), 0),
     };
     // **落门牌**：答的是门牌自己那一格的号。
-    let plate = match dir_at {
-        Ok(at) => operator::land(
-            talk,
-            link,
-            host,
-            Where::At(at),
-            me,
-            entry,
-            ocall::Rule::Public,
-            false,
-            Wait::AtMost(MS),
-        ),
-        Err(code) => Err(code),
+    let landed = match &opened {
+        Ok(at) => at
+            .bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS))
+            .map(|plate| plate.id()),
+        Err(fail) => Err(*fail),
     };
-    let (land, pid) = match plate {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
+    let (land, pid) = match &landed {
+        Ok(id) => (Ok(()), id.get()),
+        Err(fail) => (Err(*fail), 0),
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
-            Ok((code, entry)) => (code, entry.is_some()),
-            Err(_) => (ocall::BAD, false),
+    let (find, got) = match &landed {
+        Ok(_) => match tree.tile(&[dir, me], Wait::AtMost(MS)) {
+            Ok(e) => match e.token(Wait::AtMost(MS)) {
+                Ok(_) => (Ok(()), true),
+                Err(fail) => (Err(fail), false),
+            },
+            Err(fail) => (Err(fail), false),
         },
-        Err(code) => (code, false),
+        Err(fail) => (Err(*fail), false),
     };
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = plate
-        .ok()
-        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
+    let pname = match landed {
+        Ok(id) => root.name(id, Wait::AtMost(MS)).ok(),
+        Err(_) => None,
+    };
     debug!(
-        "principal: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
+        "principal: tree part={part:?} dir={dir_id} land={land:?} find={find:?} got={got} entry={} plate={pid} pname={}",
         entry.get(),
         pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
     );

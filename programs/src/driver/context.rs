@@ -15,8 +15,8 @@
 //! 一半不是驱动**——房客、客人、内件都要"开会话 ＋ 找一枚入口"⇒ 开门那一手（装路 / 认对端 /
 //! 要问话孔）抬进 [`protocol::communication::session`]（那是**地板**：只认孔与路），
 //! 树上那几手（"名字 → 号 → 入口"）回它们自己的协议客手
-//! （[`operator::entry_of`]）；**上树那一趟**（`plate`）原也住那边，按"一个组合动作只有一个
-//! 实现消费者就不强升为协议"的裁定**下移到这里**（[`Context::plate`]，task-2 那一刀）。
+//! （[`operator::Face::tile`]）；**上树那一趟**（`plate`）原也住那边，按"一个组合动作只有一个
+//! 实现消费者就不强升为协议"的裁定**下移到这里**（[`Context::plate`]）。
 //! 本目录只剩**设备面那一半**：门牌、线、推一批字节。
 //!
 //! **两条判据**（与旧两份逐字同，正文现在住那两个定义处）：
@@ -33,10 +33,9 @@ use protocol::debug;
 use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
 use crate::system::board::client as board;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::{Rule, Where};
+use protocol::system::operator::Rule;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -111,73 +110,66 @@ impl Context {
 
     /// **上树那一趟**：分目录 → 落门牌 → 查回来 → 按号问名（五条判据 ＋ 一行读数）。
     ///
-    /// **照实记（这一手从协议层下移到这里，task-2 那一刀）**：它原先住
-    /// `protocol::system::operator::client::plate`。它是**驱动族那一段路的装配 recipe**——
-    /// `dir` 恒为 [`protocol::driver::DIR`]、`entry` 恒为 `Context::entry`，而两个调用点
-    /// （[`Context::enter`] 与 `router` 的起手）手里都是 `Context` ⇒ 按"一个组合动作只有一个
-    /// 实现消费者就不强升为协议"的裁定搬回这里，落成 `Context` 自己那一手。判据一个字没改。
+    /// **它是驱动族那一段路的装配 recipe**（`dir` 恒为 [`protocol::driver::DIR`]、`entry` 恒为
+    /// `Context::entry`），按"一个组合动作只有一个实现消费者就不强升为协议"的裁定住在这一层；
+    /// 判据一个字不改。
     ///
-    /// **下移改的是住处，不是调什么**：它仍调协议层那四手自由函数（[`operator::part`] /
-    /// [`operator::land`] / [`operator::find`] / [`operator::name`]）——`Context` 只持
-    /// `&self.session`（它还要留给 [`Context::line`] 与 `uart` 那一台），拿不出 `Face` 要的
-    /// 所有权（`Face::of` 吃一条 `Session`）。
+    /// **它借一面 `Face` 而不是收走会话**：`Context` 还要把这条会话留给 [`Context::line`] 与
+    /// `uart` 那一台 ⇒ [`operator::Face::from`] 按值取一份视图（树那三格是 `Copy`）。
     pub fn plate(&self, me: &str, mine: Mine, ms: Wait) {
-        let session = &self.session;
+        let tree = operator::Face::from(&self.session);
         let entry = self.entry;
         let (Ok(dir), Ok(who)) = (Name::new(protocol::driver::DIR), Name::new(me)) else {
             debug!("{me}: tree: bad name");
             return;
         };
         // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-        // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-        let dir_at = operator::part(session.talk, &session.link, Where::Root, dir, ms);
-        let (part, dir_id) = match dir_at {
-            Ok(id) => (ocall::OK, id.get()),
-            Err(code) => (code, 0),
+        // **分目录**：`open` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
+        let root = tree.root();
+        let opened = root.open(dir, ms);
+        let (part, dir_id) = match &opened {
+            Ok(at) => (Ok(()), at.id().get()),
+            Err(fail) => (Err(*fail), 0),
         };
         // **落门牌**：答的是门牌自己那一格的号。
-        let landed = match dir_at {
-            Ok(at) => operator::land(
-                session.talk,
-                &session.link,
-                session.host,
-                Where::At(at),
-                who,
-                entry,
-                Rule::Public,
-                matches!(mine, Mine::Yes),
-                ms,
-            ),
-            Err(code) => Err(code),
+        let landed = match &opened {
+            Ok(at) => at
+                .bind(who, entry, Rule::Public, mine, ms)
+                .map(|plate| plate.id()),
+            Err(fail) => Err(*fail),
         };
-        let (laid, pid) = match landed {
-            Ok(id) => (ocall::OK, id.get()),
-            Err(code) => (code, 0),
+        let (laid, pid) = match &landed {
+            Ok(id) => (Ok(()), id.get()),
+            Err(fail) => (Err(*fail), 0),
         };
-        // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-        let (found, got) = match landed {
-            Ok(id) => match operator::find(session.talk, &session.link, id, ms) {
-                Ok((code, entry)) => (code, entry.is_some()),
-                Err(_) => (ocall::BAD, false),
+        // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）——把那一枚要回来。
+        let (found, got) = match &landed {
+            Ok(_) => match tree.tile(&[dir, who], ms) {
+                Ok(entry) => match entry.token(ms) {
+                    Ok(_) => (Ok(()), true),
+                    Err(fail) => (Err(fail), false),
+                },
+                Err(fail) => (Err(fail), false),
             },
-            Err(code) => (code, false),
+            Err(fail) => (Err(*fail), false),
         };
         // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-        let pname = landed
-            .ok()
-            .and_then(|id| operator::name(session.talk, &session.link, id, ms).ok());
+        let pname = match landed {
+            Ok(id) => root.name(id, ms).ok(),
+            Err(_) => None,
+        };
         debug!(
-            "{me}: tree part={part} dir={dir_id} land={laid} find={found} got={got} entry={} plate={pid} pname={}",
+            "{me}: tree part={part:?} dir={dir_id} land={laid:?} find={found:?} got={got} entry={} plate={pid} pname={}",
             entry.get(),
             pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
         );
         // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
         {
-            assert_eq!(part, ocall::OK)
+            assert!(part.is_ok())
         }
-        assert_eq!(laid, ocall::OK);
+        assert!(laid.is_ok());
         {
-            assert_eq!(found, ocall::OK)
+            assert!(found.is_ok())
         }
         assert!(got);
         assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(me))
@@ -186,18 +178,18 @@ impl Context {
     /// **登记本域那一条线**：从树上找到线路由者（`/device/router`）＋ 占住。
     ///
     /// 坐标是**配给回给本域的那一段区**（本域不写死它）；入口经会话从树上授进来，
-    /// 泊位由 [`Line`] 那一层装。那一趟（译号带重试 ＋ `find`）见 [`operator::entry_of`]。
+    /// 泊位由 [`Line`] 那一层装。那一趟（译号带重试 ＋ 取那一枚）在
+    /// [`operator::Face::tile`]，本手从它取门闩。
     ///
-    /// **照实记（这一处为什么留自由函数）**：`Context` **持**一条 `Session`，但它是这一族
-    /// 共用的载体（`uart` 那一台要从 `ctx.session` 取 `talk` / `link` / `host` 编自己那两枚
-    /// 门牌，见 `driver/uart/desk.rs`）⇒ 不能把它交给 `Face`（[`operator::Face::of`] 吃所有权，
-    /// 见 `protocol::system::operator::client`）。本手只借 `&self.session`，故照旧走自由函数
-    /// ——同一份判据，只是不经那一层壳。
+    /// **它拿一面借来的视图**而不是收走会话：`Context` 持着这条会话（`uart` 那一台还要从它
+    /// 编自己那两枚门牌），故 [`operator::Face::from`] 按值取一份视图（树那三格是 `Copy`）。
     pub fn line(&self, key: Key, ms: Wait) -> Result<Line, ()> {
         let (Ok(dir), Ok(router)) = (Name::new(protocol::driver::DIR), Name::new(ROUTER)) else {
             return Err(());
         };
-        let entry = operator::entry_of(&self.session, &[dir, router], ms).map_err(|_| ())?;
+        let tree = operator::Face::from(&self.session);
+        let entry = tree.tile(&[dir, router], ms).map_err(|_| ())?;
+        let entry = entry.token(ms).map_err(|_| ())?;
         Line::occupy(entry, key, ms).map_err(|_| ())
     }
 

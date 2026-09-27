@@ -1,34 +1,35 @@
-//! principal::client — **客侧**：按门牌借一枚回信孔，一问一答。
+//! principal::client — **客侧**：一面身份服务，以及它的两个柄（[`Task`] / [`Principal`]）。
 //!
 //! ```text
-//!   Face::of(门牌)               门牌那一枚是树上查回来的（开者 = 对端）
-//!   bind / resolve / derive /
-//!   adopt / waive /
-//!   sire / heir                  一问一答：替这一趟铸一枚回信孔借过去，答完丢掉
-//!   host()                       读数：对端是谁（不出线，见下）
+//!   Face::of(门牌)           门牌那一枚是树上查回来的（开者 = 对端）
+//!   Face::task(tid)          把一个线程收成 Task（读面）
+//!   Face::principal(p)       把一条号收成 Principal（读面）
+//!   Face::new_principal()    从根派生一条新号
+//!   Task::principal / bind   这一条线程此刻代表谁 / 把它定到一条号上
+//!   Principal::derive / adopt / waive / sire / contains   这一条号自己那几手
 //! ```
 //!
 //! **问话走门牌、答话走这一趟自带的那一枚孔**：报文里没有"往哪回"这一格——号只在持有它的
 //! 那张表里念得动（[`communication`](crate::communication) 事实 8），故每一趟借一枚新的回信孔过去，收的人按
-//! "谁给的 + 记号"两格认出它，答完当场放下。
+//! "谁给的 + 记号"两格认出它，答完当场放下。答话是定长那一形（`[status][flag][a]`），故读的人
+//! 按**自己问的那一条**解释那两格。
 //!
-//! **没有会话可选装**：这一面不另铸一条路、不定泊位——门牌自己就是那条路（同 rtc 那一面）。
+//! **没有会话可选装**：这一面不另铸一条路、不定泊位——门牌自己就是那条路（同 rtc / coalition
+//! 那两面）。**四面一个都不出这一面**：开会话那一手（`Session`）、树路那一枚（`Endpoint`）、
+//! 发话那一枚（`Sender`）在本文件里一次都不出现；收话那一枚（`Receiver`）只在 [`Face::call`]
+//! 的身体里出现一次。
 //!
-//! **四面一个都不出这一面**（照实记）：开会话那一手（`Session`）、树路那一枚（`Endpoint`）、
-//! 发话那一枚（`Sender`）在本文件里**一次都不出现**（门牌自己就是那条路）；收话那一枚
-//! （`Receiver`）只在 [`Face::raw`] 的身体里出现一次。调用方拿到的只有 `Face` ＋ 一处读数，
-//! "这一族的线怎么走"不外泄。
+//! **柄只多"我还回得去那条服务"这一件事**：号本身仍是 [`PrincipalId`]（可比较、可打印、
+//! 可伪造，跨协议只出现这个值）；`Task` / `Principal` 只是把一个宾语固定下来。
 
 use crate::message::Message;
 use env::Wait;
 use env::{PieToken, TaskId};
 use runtime::env::mail;
 
-use super::frame::{Fail, PrincipalId};
-use super::frame::{self, BACK};
+use super::frame::{self, Fail, PrincipalId, BACK};
 use crate::communication::establish;
 use crate::communication::receiver::Receiver;
-
 
 /// 一面身份服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
@@ -40,112 +41,159 @@ impl Face {
     /// 把一枚门牌收成一面。
     ///
     /// 对端从**这一枚门闩自己**问出来（[`establish::opened_by`]）——门牌是 Server 挂的，不是本端开的。
-    pub fn of(entry: PieToken) -> Result<Face, Fail> {
+    pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Unknown)?;
         Ok(Face { entry, host })
     }
 
     /// 对端是谁。**这是这一面唯一的读数，不出线**（不在那七条原语里）。
     ///
-    /// **照实记（为什么留着）**：全树**无生产消费者**——测具读的是 `Session.host` 那一格
-    /// （`operator::land` 要它），不叫这一手；但"这一面在跟谁说话"只有它答得出，排查时是唯一
-    /// 的那一格。故**留着，不声明读者**：它不是协议面，是诊断读数。
+    /// 全树无生产消费者，留着只为"这一面在跟谁说话"答得出来——它是诊断读数，不是协议面。
     pub fn host(&self) -> TaskId {
         self.host
     }
 
-    /// 名册 · 写：把一条 TID 定到一条已存在的号上。**只有装配者那一枚问得出 `OK`**。
-    pub fn bind(&self, tid: TaskId, p: PrincipalId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(frame::Req::Bind(tid, p), millis)?;
-        self.answer(out, |_flag, _at| Ok(()))
+    /// 把一个线程收成 [`Task`]（读面：只固定那条 `TaskId`，不对端问一句）。
+    pub fn task(&self, tid: TaskId) -> Task<'_> {
+        Task { face: self, tid }
     }
 
-    /// 名册 · 读：这条 TID 此刻代表谁。`None` = 没绑（**不是失败**）。
-    pub fn resolve(&self, tid: TaskId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
-        let out = self.raw(frame::Req::Resolve(tid), millis)?;
-        self.answer(out, |flag, at| {
-            Ok(flag.then(|| PrincipalId::new(at as usize)))
-        })
+    /// 把一条号收成 [`Principal`]（读面：号是别人给的标签，本手不去问它对不对）。
+    pub fn principal(&self, p: PrincipalId) -> Principal<'_> {
+        Principal { face: self, at: p }
     }
 
-    /// 谱系 · 写：由 `p` 派生一枚新节点（装配者，或当前正好代表 `p` 的那一枚）。
-    pub fn derive(&self, p: PrincipalId, millis: Wait) -> Result<PrincipalId, Fail> {
-        let out = self.raw(frame::Req::Derive(p), millis)?;
-        self.answer(out, |_flag, at| Ok(PrincipalId::new(at as usize)))
-    }
-
-    /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
-    pub fn adopt(&self, q: PrincipalId, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(frame::Req::Adopt(q), millis)?;
-        self.answer(out, |_flag, _at| Ok(()))
-    }
-
-    /// 转换 · 弃：回到**装配给我的那一条**（不删格，故还能再领一次）。
-    pub fn waive(&self, millis: Wait) -> Result<(), Fail> {
-        let out = self.raw(frame::Req::Waive, millis)?;
-        self.answer(out, |_flag, _at| Ok(()))
-    }
-
-    /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
-    pub fn sire(&self, p: PrincipalId, millis: Wait) -> Result<Option<PrincipalId>, Fail> {
-        let out = self.raw(frame::Req::Sire(p), millis)?;
-        self.answer(out, |flag, at| {
-            Ok(flag.then(|| PrincipalId::new(at as usize)))
-        })
-    }
-
-    /// 谱系 · 读：`a ≼ b`。
-    pub fn heir(&self, a: PrincipalId, b: PrincipalId, millis: Wait) -> Result<bool, Fail> {
-        let out = self.raw(frame::Req::Heir(a, b), millis)?;
-        // `HEIR` 的答案在**有没有**那一格（是 / 不是），8 字节那一格留空。
-        self.answer(out, |flag, _at| Ok(flag))
+    /// `derive(ROOT)`：开一条**新**的身份（装配者那一枚才答应）。
+    pub fn new_principal(&self) -> Principal<'_> {
+        self.principal(PrincipalId::ROOT)
     }
 
     /// 问一句、取一句答。
     ///
-    /// **照实记（传输失败折进语义那一格）**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
-    /// [`Fail::Denied`]，与"**对端说了不**"同一格。压它的理由同 [`Face::answer`] 那一格：**对
-    /// 本端是同一个下一步**（这一趟别指望了）。要给它单开一格，就得往 [`Fail`] 里加一个变体，
-    /// 而那一份是 `fail_codes!` 的**双射表**（加变体 = 加一个线上码）——那是动协议面的事。
-    /// 分得开它们的那一格在**对面**：`Denied` 是服务真会答的码（判据在 `judge`），
-    /// "没走到"是本端自己在码表之外判的。
-    fn raw(&self, act: frame::Req, millis: Wait) -> Result<frame::Reply, Fail> {
+    /// **传输失败折进 [`Fail::Denied`]**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
+    /// [`Fail::Denied`]，与"**对端说了不**"同一格。压它的理由：**对本端是同一个下一步**（这一趟
+    /// 别指望了）；要给它单开一格，就得往 [`Fail`] 里加一个变体，而那一份是 `fail_codes!` 的
+    /// **双射表**（加变体 = 加一个线上码）——那是动协议面的事。分得开它们的那一格在**对面**：
+    /// `Denied` 是服务真会答的码，"没走到"是本端自己在码表之外判的。
+    fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Reply, Fail> {
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）：那一枚
         // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
-        let (back, seed) =
-            crate::communication::establish::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
+        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
         act.query(seed).store(&mut frame);
         if mail::HolePie::from_token(self.entry).push(&frame).is_err() {
-            // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来（与 `lend` 同一手收尾）。
+            // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
-        // 收：答话走**这一趟借出去的那一枚孔**（`Receiver::recv`；缓冲由调用方给——这一形 10 字节）。
-        // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
+        // 收：答话走**这一趟借出去的那一枚孔**（缓冲由调用方给——这一形 10 字节）。
         let mut buf = frame::Reply::EMPTY;
         let got = Receiver::<frame::Reply>::from_token(back)
-            .recv(buf.as_mut(), millis)
+            .recv(buf.as_mut(), wait)
+            // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`。
             .map_err(|_| Fail::Denied);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
         let _ = mail::release(back);
         got
     }
+}
 
-    /// 一句答：先看状态那一格（失败域 + 读不懂），再看答案那一格。
-    fn answer<T>(
-        &self,
-        reply: frame::Reply,
-        read: impl FnOnce(bool, u64) -> Result<T, Fail>,
-    ) -> Result<T, Fail> {
-        match frame::code_to_fail(reply.status) {
-            None if reply.status == frame::OK => read(reply.flag, reply.a),
-            Some(fail) => Err(fail),
-            // **读不懂在这一侧与"没走到"同一格**（照实记）：对本端是同一个下一步——
-            // 别指望这条路；Principal 那一侧说不出"我没接住"这句话（`BAD` 是 Server 说的，
-            // 走到这里说明连它那一格都没读成）。
-            None => Err(Fail::Denied),
-        }
+/// **一条线程**：`TaskId` 是固定下来的宾语，`principal` / `bind` 都不再重复传它。
+pub struct Task<'a> {
+    face: &'a Face,
+    tid: TaskId,
+}
+
+impl Task<'_> {
+    /// 这一条线程是谁（读数用）。
+    pub fn id(&self) -> TaskId {
+        self.tid
+    }
+
+    /// 名册 · 读：这条线程**此刻**代表谁。`None` = 没绑（**不是失败**）；
+    /// 这条号不在树里才是 `Err(Fail::Unknown)`。
+    pub fn principal(&self, wait: Wait) -> Result<Option<Principal<'_>>, Fail> {
+        let reply = self.face.call(frame::Req::Resolve(self.tid), wait)?;
+        let (present, at) = decode(reply)?;
+        Ok(present.then(|| self.face.principal(PrincipalId::new(at as usize))))
+    }
+
+    /// 名册 · 写：把这条线程定到一条已存在的号上（换绑 = 重定起点）。
+    /// **只有装配者那一枚问得出 `OK`**。
+    pub fn bind(&self, p: PrincipalId, wait: Wait) -> Result<(), Fail> {
+        let reply = self.face.call(frame::Req::Bind(self.tid, p), wait)?;
+        decode(reply).map(|_| ())
+    }
+}
+
+/// **一条身份**：`PrincipalId` 是固定下来的宾语，那几条谱系 / 转换都不再重复传它。
+pub struct Principal<'a> {
+    face: &'a Face,
+    at: PrincipalId,
+}
+
+impl Principal<'_> {
+    /// 这一条号是几（读数用；**跨协议交接的只有这个值**）。
+    pub fn id(&self) -> PrincipalId {
+        self.at
+    }
+
+    /// 它是不是那条树根（零号是真格子，不是"没有"）。
+    pub fn is_root(&self) -> bool {
+        self.at == PrincipalId::ROOT
+    }
+
+    /// 谱系 · 写：由这一条派生一枚新节点（装配者，**或当前正好代表它**的那一枚）。
+    pub fn derive(&self, wait: Wait) -> Result<Principal<'_>, Fail> {
+        let reply = self.face.call(frame::Req::Derive(self.at), wait)?;
+        let (_flag, at) = decode(reply)?;
+        Ok(self.face.principal(PrincipalId::new(at as usize)))
+    }
+
+    /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
+    ///
+    /// **报文里没有"我是谁"那一格**：它认的是内核盖的那枚印章，故宾语是"此刻的自己"，不是
+    /// 这枚 Rust 值——柄不因此改变（`&self`）。
+    pub fn adopt(&self, q: PrincipalId, wait: Wait) -> Result<(), Fail> {
+        let reply = self.face.call(frame::Req::Adopt(q), wait)?;
+        decode(reply).map(|_| ())
+    }
+
+    /// 转换 · 弃：回到**装配给我的那一条**（不删格，故还能再领一次）。
+    pub fn waive(&self, wait: Wait) -> Result<(), Fail> {
+        let reply = self.face.call(frame::Req::Waive, wait)?;
+        decode(reply).map(|_| ())
+    }
+
+    /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
+    pub fn sire(&self, wait: Wait) -> Result<Option<Principal<'_>>, Fail> {
+        let reply = self.face.call(frame::Req::Sire(self.at), wait)?;
+        let (present, at) = decode(reply)?;
+        Ok(present.then(|| self.face.principal(PrincipalId::new(at as usize))))
+    }
+
+    /// 谱系 · 读：`p` 在**自己**这一支里吗——即原语那一形 `heir(p, self)` = `p ≼ self`。
+    ///
+    /// **方向是这一手最容易写反的一格**：线上那一问的两格是 `heir(a, b)` = `a ≼ b`（`a` 是
+    /// `b` 的祖先，见 `programs/src/system/principal/core.rs` 的 `heir`），故问"`p` 是不是
+    /// **自己**的祖先"要写 `principal(self).contains(p)`；反过来写就是另一个谓词。
+    pub fn contains(&self, p: PrincipalId, wait: Wait) -> Result<bool, Fail> {
+        let reply = self.face.call(frame::Req::Heir(p, self.at), wait)?;
+        // `HEIR` 的答案在**有没有**那一格（是 / 不是），8 字节那一格留空。
+        let (flag, _at) = decode(reply)?;
+        Ok(flag)
+    }
+}
+
+/// 一句答拆两格：先看状态那一格（失败域 + 读不懂），再交出 `(有没有, 号)` 那两格。
+///
+/// 它不用 `self`（纯解码）⇒ 自由函数，不是一个为了"看起来属于 Face"而写成方法的手。
+fn decode(reply: frame::Reply) -> Result<(bool, u64), Fail> {
+    match frame::code_to_fail(reply.status) {
+        None if reply.status == frame::OK => Ok((reply.flag, reply.a)),
+        Some(fail) => Err(fail),
+        // 读不懂在这一侧与"没走到"同一格：对本端是同一个下一步。
+        None => Err(Fail::Denied),
     }
 }

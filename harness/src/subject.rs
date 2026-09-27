@@ -44,6 +44,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::Fail as TreeFail;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::{Fail, PrincipalId};
@@ -83,7 +84,13 @@ fn main() -> Report<'static> {
     };
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
-    let mine = face.resolve(me, Wait::AtMost(MS));
+    //
+    // **照实记（task-2 那一刀）**：`resolve` 那一手折进 `Task::principal`（返一条 `Principal`
+    // 柄）；本台只读数，故在调用点把柄投影回它那一枚号——下面每一处都这样收。
+    let mine = face
+        .task(me)
+        .principal(Wait::AtMost(MS))
+        .map(|found| found.map(|p| p.id()));
     debug!("policy: me={}", one_opt(mine));
     let Ok(Some(p)) = mine else {
         return bail("subject: unbound");
@@ -94,9 +101,15 @@ fn main() -> Report<'static> {
     // 台名 = 本域打的那个前缀，门按它钉逐台基线。
 
     // 二、三态的头两格。
-    let no_sire = face.sire(PrincipalId::ROOT, Wait::AtMost(MS));
+    let no_sire = face
+        .principal(PrincipalId::ROOT)
+        .sire(Wait::AtMost(MS))
+        .map(|found| found.map(|s| s.id()));
     debug!("policy: sire(root)={}", one_opt(no_sire));
-    let sired = face.sire(p, Wait::AtMost(MS));
+    let sired = face
+        .principal(p)
+        .sire(Wait::AtMost(MS))
+        .map(|found| found.map(|s| s.id()));
     debug!("policy: sire(me)={}", one_opt(sired));
     {
         assert_eq!(no_sire, Ok(None))
@@ -106,20 +119,26 @@ fn main() -> Report<'static> {
     }
 
     // 三、自反。
-    let reflexive = face.heir(p, p, Wait::AtMost(MS));
+    //
+    // **照实记（方向，task-2 那一刀）**：`contains(&self, p)` 发的是 `Heir(p, self.at)`，
+    // 故旧 `heir(a, b)`（= `a ≼ b`）要写成 `principal(b).contains(a)`——柄是**祖先那一侧**。
+    let reflexive = face.principal(p).contains(p, Wait::AtMost(MS));
     debug!("policy: heir(me,me)={}", flag(reflexive));
     {
         assert_eq!(reflexive, Ok(true))
     }
 
     // 四、向下派生一条自己的子身份。
-    let sub = face.derive(p, Wait::AtMost(MS));
+    let sub = face
+        .principal(p)
+        .derive(Wait::AtMost(MS))
+        .map(|child| child.id());
     debug!("policy: derive(me)={}", one(sub));
     let child = sub.ok();
     assert!(sub.is_ok());
 
     // 五、否定：子代不是祖先（拿刚派生出来的那一条问）。
-    let not_ancestor = child.map(|q| face.heir(q, p, Wait::AtMost(MS)));
+    let not_ancestor = child.map(|q| face.principal(p).contains(q, Wait::AtMost(MS)));
     if let Some(r) = not_ancestor {
         debug!("policy: heir(sub,me)={}", flag(r));
     }
@@ -128,14 +147,16 @@ fn main() -> Report<'static> {
     }
 
     // 六、第三态：树外的号。
-    let out_heir = face.heir(PrincipalId::new(OUTSIDE), p, Wait::AtMost(MS));
+    let out_heir = face
+        .principal(p)
+        .contains(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     debug!("policy: heir(out,me)={}", flag(out_heir));
     {
         assert!(matches!(out_heir, Err(Fail::Unknown)))
     }
 
     // 七、越权一趟：名册只有装配者能写，本域不是它。
-    let bound = face.bind(me, p, Wait::AtMost(MS));
+    let bound = face.task(me).bind(p, Wait::AtMost(MS));
     debug!("policy: bind(self)={}", done(bound));
     {
         assert!(matches!(bound, Err(Fail::Denied)))
@@ -146,44 +167,53 @@ fn main() -> Report<'static> {
         return bail("subject: no sub identity");
     };
     // 八、领：换到自己刚派生出来的那一支里（`sub` 一定在 `p` 那一支里）。
-    let adopted = face.adopt(q, Wait::AtMost(MS));
+    let adopted = face.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("policy: adopt(sub)={}", done(adopted));
     {
         assert!(adopted.is_ok())
     }
 
     // 九、名册真的改了（不是打个印记）。
-    let led = face.resolve(me, Wait::AtMost(MS));
+    let led = face
+        .task(me)
+        .principal(Wait::AtMost(MS))
+        .map(|found| found.map(|p| p.id()));
     debug!("policy: me={}", one_opt(led));
 
     // 十、**钥匙反证**：已不代表 `p`，故"从 `p` 派生"被拒。
-    let stale = face.derive(p, Wait::AtMost(MS));
+    let stale = face
+        .principal(p)
+        .derive(Wait::AtMost(MS))
+        .map(|child| child.id());
     debug!("policy: derive(old)={}", one(stale));
     {
         assert!(matches!(stale, Err(Fail::Denied)))
     }
 
     // 十一、向上 / 跨支：`p` 是 `sub` 的父，不在 `sub` 那一支里。
-    let up = face.adopt(p, Wait::AtMost(MS));
+    let up = face.principal(q).adopt(p, Wait::AtMost(MS));
     debug!("policy: adopt(up)={}", done(up));
     {
         assert!(matches!(up, Err(Fail::Denied)))
     }
 
     // 十二、树外。
-    let outside = face.adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
+    let outside = face.principal(q).adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     debug!("policy: adopt(out)={}", done(outside));
     {
         assert!(matches!(outside, Err(Fail::Unknown)))
     }
 
     // 十三、弃：回到装配给我的那一条（不删格）。
-    let waived = face.waive(Wait::AtMost(MS));
+    let waived = face.principal(q).waive(Wait::AtMost(MS));
     debug!("policy: waive={}", done(waived));
     assert!(waived.is_ok());
 
     // 十四、回到起点。
-    let back = face.resolve(me, Wait::AtMost(MS));
+    let back = face
+        .task(me)
+        .principal(Wait::AtMost(MS))
+        .map(|found| found.map(|p| p.id()));
     debug!("policy: me={}", one_opt(back));
 
     // 三条 `policy: me=`（装配绑的 / 领之后 / 弃之后）的关系：**绑 ≠ 领 = 弃**。
@@ -203,8 +233,12 @@ fn main() -> Report<'static> {
 
 /// 找那面服务：`"/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
-/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`TreeFace::entry_of`]（本域从前自己抄了一遍）。
-/// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
+/// 名字 → 号（译不出就重试）落在 [`Pane::tile`] 上，`find` 落在 [`Tile::token`] 上——**两格各
+/// 一趟**，与旧 `Face::tile` 逐格同形（那一手本域从前自己抄了一遍）。
+///
+/// **照实记（task-2 那一刀；为什么不用 `Face::tile`）**：`entry` 自己已经译号一次 + `find`
+/// 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有一枚，
+/// 故这里也照一枚写（重试那一圈照旧留着）。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
 /// 故这一手只借它。
@@ -212,7 +246,22 @@ fn find_face(tree: &TreeFace) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    tree.entry_of(&[dir, me], Wait::AtMost(MS)).ok()
+    let root = tree.root();
+    let road = [dir, me];
+    let mut left = MS;
+    loop {
+        match root
+            .tile(&road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+        {
+            Ok(entry) => return Some(entry),
+            Err(TreeFail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(_) => return None,
+        }
+    }
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。
