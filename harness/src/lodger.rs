@@ -46,8 +46,8 @@
 //! **照实记（形状归一这一刀；用户裁定"外围再收一轮"）**：本台原先住 `lodger/`——`main.rs`
 //! ＋ `mod.rs` ＋ `needs.rs`，三件里 `needs.rs` 只有**一行转发**（定义早在
 //! `programs::program`），`mod.rs` 只为把那一行交给 lib、好让 bin 经 `harness::lodger::needs`
-//! 取到它。22 台测具**只有这一台成目录**，形状因此不齐。这一刀把它拉平成 `lodger.rs`
-//! （与其余 21 台同形），那张单子**直接从定义处取**（`programs::program::harness::LODGER_WANTS`），
+//! 取到它。23 台测具**只有这一台成目录**，形状因此不齐。这一刀把它拉平成 `lodger.rs`
+//! （与其余 22 台同形），那张单子**直接从定义处取**（`programs::program::harness::LODGER_WANTS`），
 //! `lib.rs` 里那两行转发随之下岗——定义仍然只有一处，只是不再绕一圈。
 
 extern crate alloc;

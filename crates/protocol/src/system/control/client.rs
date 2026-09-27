@@ -19,7 +19,9 @@
 //!
 //! **没有会话可选装**：这一面不另铸一条路、不定泊位——门牌自己就是那条路（同 rtc / principal
 //! 那两面）。**泊位那一格（[`BERTH`]）是给"上树那一侧"用的**：control 把自己的入口挂到
-//! `/sys/control` 时，装路那一步要它。
+//! `/sys/control` 时，装路那一步要它——挂载者（编排域主线程）是**自己给自己**那棵树上树，
+//! 故走的是 `Session::own(本端铸的那一枚读孔, BERTH, 持树者)`，而这一格里真正被读的只有
+//! **问话孔那一格**（`ask` = `control-ask`）。
 
 use crate::message::Message;
 use env::Wait;

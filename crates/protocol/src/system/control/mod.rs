@@ -54,7 +54,10 @@
 //!                ⇒ 任何走到树的任务 `operator::Face::entry` 一查就有 ⇒ [`Face::of`] 直接成立
 //! ```
 //!
-//! 上树那一条最干净：取面方式与 principal / coalition **逐字同形**。
+//! 上树那一条最干净：取面方式与 principal / coalition **逐字同形**——**今天走的就是它**：
+//! 编排域主线程在整表起完之后把它挂到 `/sys/control`（`programs/src/system/control/mount.rs`），
+//! 而"铸入口那一枚必须长命"那一格由它此后进监督那一趟满足（那条挂载路原先死在这里，原委见
+//! `programs/src/system/Assembly::supervise` 的照实记）。真客人是 `harness/src/probe_control.rs`。
 //!
 //! # 已知边界（照实写，不是待办）
 //!
@@ -68,11 +71,11 @@
 //!   风险落在 `operator::Face::entry` / `Face::room` 那一族（它们的照实记写了同一句）。
 //! - **状态与实例坐标是两件事**：`State::Dead` 与"上一个实例的坐标还在"并存是合法的
 //!   （"起过、现在死了"）——本协议的 `state()` 只读前者。
-//! - **这一面今天只在编排域内可达**：`Face` 与帧是定稿的协议形状，但"上树 `/sys/control`"
-//!   那条路**未做成**——树表里那枚副本的派生边指向铸入口的那一枚线程，边沿线程一退场就被
-//!   内核级联摘掉（证据：`kernel/src/work/unit/gate/accord.rs` 的 `sire`、
-//!   `cull.rs` 的 `doom` 沿 `snap::heirs` 跨表摘后代）。要成，**铸入口那一枚线程必须是长命的**
-//!   ——那与"control 自己有一枚长命线程"是同一件事。
+//! - **这一面上了树，但门禁只有"已绑身份"那一格**：`/sys/control` 那一格是 `Rule::Public`
+//!   （与 `/sys/principal` / `/sys/coalition` 同一格），故**任何已绑身份的域**都取得回入口，
+//!   进而 `mint` / `start` / `stop` 装配表里任意一台。这不是新开的口子（`doom` 同样没有门禁），
+//!   但它是这一面今天的口径，照实写在这里。要收，收的是那一格的 `Rule`（`operator` 那一侧），
+//!   不是本协议的形状。
 
 pub mod client;
 pub mod frame;

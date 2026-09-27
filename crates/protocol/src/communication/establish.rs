@@ -11,6 +11,7 @@
 //!   Held(endpoint(..))              同上，但这一段关系**归本端持有**（落出作用域即放下）
 //!   give(to, mark)                  只要前一半，且**把读端交出去**：本端留写端
 //!   claim / find(of, mark)          只要后一半：别人交来的那一枚，按 owner ＋ mark 找回来
+//!   own(rx)                         只记下本端铸的那一枚（对端那一半由调用方自己安排）
 //! ```
 //!
 //! **判据两格**（`owner` ＋ `mark`），都读内核查得到的事实。编号分不开"同一位开的多枚孔"
@@ -120,6 +121,25 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
+    /// **只有本端铸过的那一枚**（给"装配者本人也是客人"那一档）。
+    ///
+    /// [`endpoint`] 那一形是"两边各铸一枚、互相认"的常态；本手给的是**没有对端那一半**的一档
+    /// ——本端那一枚读孔自己铸、自己交出去，而"认对端那一枚"（`claim` 按 `owner ＋ mark` 扫表）
+    /// 在这里会认到**本端替别人垫的同记号孔**：装配者替每一位客人垫过一枚 `operator` 路的孔
+    /// （`programs/src/system/operator/bridge.rs::attach` 第一步），那些孔的开者也是它
+    /// ⇒ `find(me, LINK)` 给的是最后那一位客人的那一枚，不是本端要的那一枚。故这一档**不扫表**：
+    /// 号由调用方给（它自己刚铸的那一枚）。
+    ///
+    /// `tx` 因此是 `None`（这条路上没有对端铸给本端的那一枚），`seed` 是 [`PieToken::NONE`]
+    /// （没有"我交出去的那一枚在对端表里是几号"这一格要随帧交接）。
+    pub fn own(rx: PieToken) -> Endpoint {
+        Endpoint {
+            rx,
+            tx: None,
+            seed: PieToken::NONE,
+        }
+    }
+
     /// 我收的那一枚（本端铸的、交给对端的那一枚）。
     pub fn rx(&self) -> PieToken {
         self.rx

@@ -240,9 +240,9 @@ pub mod router;
 pub mod uart;
 #[path = "driver/rtc/program.rs"]
 pub mod rtc;
-/// harness 那 22 台（**测具**）：它们的身子住隔壁那个 crate，而其中 12 台**由编排域起**
+/// harness 那 23 台（**测具**）：它们的身子住隔壁那个 crate，而其中 13 台**由编排域起**
 /// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。
-/// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 22 份：
+/// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 23 份：
 /// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
 #[path = "decl/harness.rs"]
 pub mod harness;
@@ -280,6 +280,8 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::PROBE_RULE_OTHER,
     &harness::PROBE_LEASE,
     &harness::PROBE_BOUND,
+    // 控制面那位真客人（`/sys/control`）：**排在 `canonical` 之前**，见它自己那份声明。
+    &harness::PROBE_CONTROL,
     // 压测台与它们的受害者（整台替换引导镜像）。
     &harness::CHURN,
     &harness::RIG,

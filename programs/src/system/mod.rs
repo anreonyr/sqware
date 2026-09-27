@@ -35,8 +35,9 @@
 
 use env::TaskId;
 use env::wire::Eyes;
-use env::{Name, Wait};
+use env::{Name, PieToken, Wait};
 use protocol::debug;
+use protocol::communication::session::Session;
 
 use runtime::env::unit as utask;
 
@@ -98,11 +99,11 @@ impl Assembly {
         })
     }
 
-    /// 交棒给监督相（道表与那只组都在 [`Sensor`] 手里）。
+    /// 交棒给监督相之前，**先把 `control` 那一面挂上树**；道表与那只组都在 [`Sensor`] 手里。
     ///
-    /// **照实记（control 的边沿面已撤下来：那条挂载路是死的）**：task-4 曾在这里调
-    /// `control::edge::mount`——起一枚**一次性**边沿线程，把本线程铸的入口副本挂到
-    /// `/sys/control`。它**挂不出真正的门牌**，证据链（内核三处）：
+    /// **照实记（这一刀：`control` 的边沿面挂回来了，换的是"谁在铸"）**：task-4 那条挂载路
+    /// （`control::edge::mount`：起一枚**一次性**边沿线程去落门牌）**挂不出真正的门牌**，被撤过
+    /// 一次。它坏在"铸入口的是谁"，证据链在内核三处：
     ///
     /// - `kernel/src/work/unit/gate/accord.rs`：**新 pie 的 `sire = Some(src.token())`**，
     ///   派生边只写在这里；
@@ -111,19 +112,47 @@ impl Assembly {
     ///   token** 调 `cull`，而 `cull` 沿 `snap::heirs`（`p.sire() == Some(token)`）**跨所有
     ///   任务**摘掉全部后代。
     ///
-    /// 于是"铸入口那一枚线程"（一次性边沿线程）一收尾，**持树者表里那枚入口副本被连带摘掉**；
-    /// 而 plate 那一格还存着这个号 ⇒ `operator::Face::entry(["sys", "control"])` 查得到、门闩却
-    /// 拿不回来 ⇒ `Face::of` 永远拿不到可用入口。`mount` 的回查发生在边沿线程退出**之前**，
-    /// 故它照旧返 `Some`——**那条回查抓不到这个死**。
+    /// 于是"铸入口那一枚线程"一收尾，**持树者表里那枚入口副本被连带摘掉**；plate 那一格还留着
+    /// 那个号 ⇒ `operator::Face::tile(["sys","control"])` 查得到、门闩却拿不回来 ⇒ 客人永远拿不到
+    /// 可用入口。**这一次铸入口的是编排域主线程**（[`Assembly::mount_control`]），它此后就进
+    /// [`Sensor::run`] 那一趟——**本域活多久它活多久**：那三处内核事实一条都没变，变的正是它们
+    /// 要的那一格（"铸入口那一枚必须长命"）。
     ///
-    /// 故这一刀把整条挂载路撤下（`programs/src/system/control/edge.rs` 一并删）：**不把已知
-    /// 坏死的机制留在码里**。要做成的**前置**是：**铸入口那一枚线程必须长命**——而 control 的
-    /// 面今天由编排域主线程铸、它只活到监督这一段 ⇒ "把 control 挂上树"与"control 自己有一枚
-    /// 长命线程"是**同一件事**，留到那一步一起做。面的形状（`protocol::system::control::Face`
-    /// 与帧）原样留着；今天它**只在编排域内可达**（见 `control/mod.rs` 与 `control/supervise.rs`
-    /// 的正文）。
+    /// 面的形状（[`protocol::system::control::Face`] 与帧）一个字节没动；今天它**外面也到得了**
+    /// （`/sys/control` ＋ `harness/src/probe_control.rs` 那位真客人）。
     pub fn supervise(&mut self, last: Name) {
+        self.mount_control();
         self.sensor.run(&mut self.life, last);
+    }
+
+    /// **把 `control` 这一面挂上树**（`/sys/control`）：本域那一枚**长命线程**自己铸入口、自己待客。
+    ///
+    /// 三步，次序即契约：
+    ///
+    /// 1. **补绑本域自己的身份**：`land` 那一问要求来的人是**已绑身份**（`core/judge.rs::judge`
+    ///    第一段：`who` 答不出就当场 `Deny`），而装配那一趟只绑**子域**——本域主线程从没上过
+    ///    名册（同 [`Roster::adopt`] 补绑"它自己与树"那一笔）；
+    /// 2. **本域自己上树**：那三趟要走一条会话才动得了（[`Naming::self_session`]）；
+    /// 3. **挂**：分目录 / 落门牌 / 回查（[`control::mount::mount`]），入口随即接进监督那一趟
+    ///    那只组（[`Sensor::attach_face`]）——**本域当场开始待客**（面 ＋ 道表两源同一个等待）。
+    ///
+    /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
+    /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
+    fn mount_control(&mut self) {
+        if let Err(why) = self.identity.bind(utask::self_id(), true) {
+            return debug!("system: control mount: bind self ({why})");
+        }
+        let session = match self.naming.self_session() {
+            Ok(session) => session,
+            Err(why) => return debug!("system: control mount: {why}"),
+        };
+        match control::mount::mount(&session) {
+            Ok(entry) => {
+                self.sensor.attach_face(entry);
+                debug!("system: control mounted at /sys/control");
+            }
+            Err(why) => debug!("system: control not mounted ({why})"),
+        }
     }
 
     /// **起一条**——这一台自己的装配，按它自己的声明走：
@@ -265,6 +294,14 @@ impl Naming {
         self.0.adopt(host, Wait::AtMost(READY_MS))
     }
 
+    /// **本域自己上树**（挂 `control` 那一面要一条会话）：装配者本人也是这棵树的客人。
+    ///
+    /// 与 [`Naming::attach`] 的差别在"谁替谁接"，正文在
+    /// [`Tree::self_session`](crate::system::operator::bridge::Tree::self_session)。
+    fn self_session(&mut self) -> Result<Session, &'static str> {
+        self.0.self_session()
+    }
+
     /// 它是哪一双眼睛：那一格记进给持树者的协调帧（重复推是幂等的）。
     fn eye(&mut self, eyes: Eyes, who: TaskId) {
         self.0.eye(eyes, who);
@@ -344,6 +381,15 @@ impl Sensor {
     /// 交棒给监督相（道表与那只组都在 [`Watch`] 手里；生命轴那一本表是它要改的账）。
     fn run(&mut self, life: &mut Life, last: Name) {
         self.watch.run(&mut life.0, last);
+    }
+
+    /// **把 `control` 那一面接上监督那一趟**：入口挂进同一只组。
+    ///
+    /// 两源（道表 ＋ 面）那形状住 [`Watch`]（`attach_face` 与它那一格 `face`）；本块只是把
+    /// "这一枚是 control 的入口"这句话转过去——**存在信号的传感器与它监视的那几条道同块**，
+    /// 而那一条待客的路与道共用的正是同一只组（同一个等待）。
+    fn attach_face(&mut self, face: PieToken) {
+        self.watch.attach_face(face);
     }
 }
 

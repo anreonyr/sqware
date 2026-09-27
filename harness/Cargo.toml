@@ -60,7 +60,7 @@ test = false
 bench = false
 doctest = false
 
-# ── 那二十一个 bin 的清单 ───────────────────────────────────────────
+# ── 那二十三个 bin 的清单 ───────────────────────────────────────────
 #
 # 特权级**不在这里**声明（与产品同一条规矩）：那一格在 `programs/src/program.rs` 的 `PROGRAMS` 里
 # （`ProgramKind::User` / `Supervisor`），而且**按场景分**（看每行的 `scenes`）——验收那张只列
@@ -83,6 +83,13 @@ doctest = false
 [[bin]]
 name = "prog-probe-bound"
 path = "src/probe_bound.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-control"
+path = "src/probe_control.rs"
 test = false
 bench = false
 doctest = false

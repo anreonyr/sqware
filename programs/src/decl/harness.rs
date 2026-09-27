@@ -1,13 +1,13 @@
-//! decl::harness — **测具那 22 台**的装配声明。
+//! decl::harness — **测具那 23 台**的装配声明。
 //!
 //! # 它为什么住本 crate（而不是隔壁 `harness`）
 //!
-//! 这 22 台的身子住 `harness`，但其中 **12 台由编排域起**（`guest` / `passer` / `lodger` /
-//! `sleeper` / `subject` / `member` 与六台 `probe-*`）——编排域要按 `order` / 存在信号
+//! 这 23 台的身子住 `harness`，但其中 **13 台由编排域起**（`guest` / `passer` / `lodger` /
+//! `sleeper` / `subject` / `member` 与七台 `probe-*`）——编排域要按 `order` / 存在信号
 //! （`Relation::presence`）/ `bind` / `died` 起它们，故这几格必须由 `programs` 编译得出来。而 `harness` 依赖
 //! `programs`，反向建依赖是环 ⇒ **声明只能住这一侧**。
 //!
-//! **为什么不拆成 22 份**：「一台一份 `program.rs`」的判据是"声明紧挨着它的身子"；这几台的
+//! **为什么不拆成 23 份**：「一台一份 `program.rs`」的判据是"声明紧挨着它的身子"；这几台的
 //! 身子**不在本 crate**，那句话对它们本来就不成立，不假装。可 grep 的那条规矩因此是：
 //! **声明跟着"起它的那一侧"走**——产品程序由编排域起（身子也在本 crate）⇒ 住各自目录；
 //! 测具由编排域起（身子在隔壁）⇒ 住本文件。
@@ -35,6 +35,7 @@ pub const E_PROBE_LEASE: Died = 20;
 pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
 pub const E_PROBE_BOUND: Died = 23;
+pub const E_PROBE_CONTROL: Died = 25;
 
 /// 房客要的那一枚：**一条没人要的线**（`virtio,mmio`），领上就死。
 pub const LODGER_WANTS: &[Need] = &[Need::class(
@@ -332,6 +333,40 @@ pub static PROBE_BOUND: Program = Program {
     demand: Demand {
         origin: Origin::Initrd,
         died: E_PROBE_BOUND,
+        setup: &[],
+    },
+};
+
+/// **控制面的真客人**：从树上找 `/sys/control`，问一句 control 的话（`state`）。
+///
+/// task-4 那条挂载路挂出过一块**查得到、取不回**的门牌（铸入口的是一枚一次性边沿线程，
+/// 它一收尾，持树者表里那枚副本就被内核的派生链级联摘掉）。这一台量的正是那件事的反面：
+/// **在另一个域里**照 principal / coalition 逐字同形的路找上门、把门牌取回来、问一句话。
+/// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
+/// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
+///
+/// **它排在 `canonical` 之前**（`order: Some(18)`，`canonical` 让到 19）：那一面是在**整表起完
+/// 之后**才挂上树的（`Assembly::supervise`），故这一台头几拍那一问会等在门外（`Face::tile`
+/// 按额度重试）；而 `canonical` 必须是最后一条（编排域等它退场才收场）⇒ 让位的只能是这一台。
+pub static PROBE_CONTROL: Program = Program {
+    identity: Identity {
+        name: "probe-control",
+        kind: ProgramKind::User,
+        spot: Spot::Probe,
+        scenes: &["root"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(18),
+        presence: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_PROBE_CONTROL,
         setup: &[],
     },
 };
