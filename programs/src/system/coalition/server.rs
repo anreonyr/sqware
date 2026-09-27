@@ -207,7 +207,7 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，总预算 [`MS`]）→ 入口。
-/// 这一趟与另外七处（`echo` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，
+/// 这一趟与另外七处（`canonical` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，
 /// 已并进 [`operator::entry_of`]（那一圈重试也在它里面）。
 fn find_face(session: &Session) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {

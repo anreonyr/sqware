@@ -34,7 +34,7 @@
 //! 事分开读出来。
 
 // 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-denied`），**不进 lib**
-// ——与 `echo` / `guest` 同一条：`programs/src/user/mod.rs` 里没有它。
+// ——与 `canonical` / `guest` 同一条：`programs/src/user/mod.rs` 里没有它。
 //
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了
 // 用它里面的东西，而是为了把 `libprograms` 链进来——**panic handler 与 `_start` 都住那份
@@ -84,7 +84,7 @@ fn main() -> Report<'static> {
     };
     let (tree, hedge, host) = (&session.link, session.talk, session.host);
 
-    // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
+    // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `uart` / `rtc` 上树那一趟同一形状）。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-denied: no entry");
     };

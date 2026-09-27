@@ -197,7 +197,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             // **照实记（IPI 自检的负载期采样点从这里搬走了）**：它原先就挂在这一格，而这一片
             // 地方抢的是"**当时恰好在这颗核上的任务**"——装配者起 guest 的两条握手（各
             // 1000 ms 预算）被它吃掉过：guest 报 `no tree link`、装配者报 `operator:hand` /
-            // `operator:claim`、`system: assemble` 当场收场，其后几条（含末条 `echo`）都不起。
+            // `operator:claim`、`system: assemble` 当场收场，其后几条（含末条 `canonical`）都不起。
             // 今天它住**空闲路**（`fetch::wait`，见 `runtime::diagnose::ipi::idle_hook`）——占的
             // 是本来就要睡的核。dev 档同一景、同一份字节：挂这里折 5 / 成 6，搬走之后折 0 / 成 6。
             // 闸门重开：外部中断的闸门是零状态的

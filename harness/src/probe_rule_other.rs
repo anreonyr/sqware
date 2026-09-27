@@ -36,7 +36,7 @@
 //! `foreign` 那一格也是 `probe-rule` 落的——本台只负责"换一台客人再去撞一次"。
 
 // 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-rule-other`），**不进 lib**
-// ——与 `echo` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
+// ——与 `canonical` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
 //
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了
 // 用它里面的东西，而是为了把 `libprograms` 链进来——**panic handler 与 `_start` 都住那份

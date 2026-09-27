@@ -168,7 +168,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 /// 找那面服务：`FIND /device/rtc`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"，
-/// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它（次序见 `programs/src/user/echo/mod.rs` 头注）。
+/// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它。
 fn find_face(session: &Session) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
@@ -178,7 +178,7 @@ fn find_face(session: &Session) -> Option<PieToken> {
     operator::entry_of(session, &[dir, want], Wait::AtMost(MS)).ok()
 }
 
-/// 上板报到（与 `passer` / `echo` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
+/// 上板报到（与 `passer` / `canonical` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
 fn register() -> u8 {
     let sire = utask::sire();
     let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {

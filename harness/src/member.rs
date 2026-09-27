@@ -31,7 +31,7 @@
 //! # 为什么不上板
 //!
 //! 本域只做一件事——结盟；生死那本账与本域无关（同 `subject` / `lodger` 那一档）。它也不是
-//! 装配表的最后一条：**收场由 `echo` 那一条给**。
+//! 装配表的最后一条：**收场由 `canonical` 那一条给**。
 
 extern crate alloc;
 extern crate programs;

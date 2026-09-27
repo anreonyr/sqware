@@ -49,7 +49,8 @@ pub enum Spot {
     Domain,
     /// **常驻服务**：三台驱动 ＋ 三枚服务（持树者 / 名册 / 盟册）。
     Service,
-    /// **调试回显**（`echo`）：只走 `env` 调试面的那一条；产品镜像里排**最后**，编排域等它退场。
+    /// **控制台那一台**（`canonical`）：本域扮**终端那一侧的行规程**（ECHO / ERASE / KILL / EOF）；
+    /// 产品镜像里排**最后**，编排域等它退场才收场。
     Console,
     /// **常客**：产品侧的客人——量服务用的；去掉它，机器照转。
     Guest,
@@ -125,8 +126,8 @@ pub mod operator;
 pub mod principal;
 #[path = "system/coalition/program.rs"]
 pub mod coalition;
-#[path = "user/echo/program.rs"]
-pub mod echo;
+#[path = "user/canonical/program.rs"]
+pub mod canonical;
 #[path = "driver/router/program.rs"]
 pub mod router;
 #[path = "driver/uart/program.rs"]
@@ -154,7 +155,7 @@ pub const PROGRAMS: &[&Program] = &[
     &operator::PROGRAM,
     &principal::PROGRAM,
     &coalition::PROGRAM,
-    &echo::PROGRAM,
+    &canonical::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &harness::GUEST,
     &harness::PASSER,

@@ -1,0 +1,54 @@
+#![no_std]
+#![no_main]
+
+//! canonical — **控制台那一台**：把控制台当 UNIX 那一套 stdin / stdout，并在本域里扮
+//! **终端那一侧的行规程**（canonical mode；**U 态**）。
+//!
+//! ```text
+//!   1  上板报到：挂不上照旧干活（这一格只让板看得见本域的死）
+//!   2  树那条路：`FIND /device/uart/{rx,tx}` ⇒ 两枚孔经会话授进本域表
+//!   3  那一圈：轮转（`adapt/terminal.rs`）＋ 行规程（`core/discipline.rs`）
+//!   4  `exit` 或 `^D` 收场（域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机；本机没有真正的 EOF）
+//! ```
+//!
+//! **本文件只剩流程**：**纯功能**（行规程：ICRNL / ECHO / ECHOCTL / ERASE / KILL / EOF）在
+//! `core/discipline.rs`，**适配**（找控制台 / 轮转那一圈）在 `adapt/`；判据与三条照实记在
+//! `user/canonical/mod.rs`。行为一句话：**本域就是一台终端**——ECHO 把敲的字显出来、行规程做行
+//! 编辑，交付的行没有下游（不写出去）。
+
+extern crate alloc;
+extern crate programs;
+
+/// 适配（壳）：找控制台 / 轮转那一圈——由 bin 自己 `mod`。
+mod adapt;
+
+/// 纯功能：行规程（字节流 → 终端认的行）。
+mod core;
+
+use crate::adapt::{E_NO_CONSOLE, ME, MS};
+use env::Wait;
+use protocol::communication::session::Session;
+use protocol::system::board::client as board;
+use protocol::system::operator::client as operator;
+use runtime::env::unit as utask;
+
+/// 本 bin 的 `main`：**返回类型就是它的退出账**——本域只有一种失败，故直接用 `Reason`。
+#[programs::entry]
+fn main() -> Result<(), env::Reason> {
+    let sire = utask::sire();
+    // 1：上板——这一景最后一条是它，板据此看出它死了。**挂不上照旧干活**，故不 `?`。
+    let _ = Session::open(sire, board::BERTH, Wait::AtMost(MS))
+        .map(|seat| board::enroll(&seat, ME, Wait::AtMost(MS)));
+
+    // 2：树那条路：本域只开一条会话（`Session::open`）——找控制台要它。
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
+        return Err(E_NO_CONSOLE);
+    };
+    let Some(console) = adapt::console::find(&session, Wait::AtMost(MS)) else {
+        return Err(E_NO_CONSOLE);
+    };
+
+    // 3/4：行规程那一圈，直到收场词 / EOF。
+    adapt::terminal::run(&console);
+    Ok(())
+}

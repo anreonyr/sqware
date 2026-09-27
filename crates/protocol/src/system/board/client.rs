@@ -31,11 +31,11 @@ pub const BERTH: Berth = Berth {
 /// **报到**：本域那枚服务入口挂上板（板据此按名字分人，也据此看得见本域的死）。
 ///
 /// 返**板的答码**（[`bcall::OK`] = 板收下了）与**那一枚入口**（读数要那一格：`passer` 把它
-/// 打出来）。挂不上**不是**本域的失败：回显照旧，只是"本域死了"那条信号缺席
-/// （见 `programs/src/user/echo/mod.rs`）——故返码、不返 `Result`。
+/// 打出来）。挂不上**不是**本域的失败：终端照旧干活，只是"本域死了"那条信号缺席
+/// （见 `programs/src/user/canonical/main.rs`）——故返码、不返 `Result`。
 ///
 /// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`Name`]、经 [`register`]
-/// 交出去。四处调用点原先各写一遍（`echo` / `passer` / `guest` / `sleeper`）。
+/// 交出去。四处调用点原先各写一遍（`canonical` / `passer` / `guest` / `sleeper`）。
 pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         return (bcall::BAD, PieToken::NONE);

@@ -24,7 +24,7 @@
 //! 它原先挂在 `trap/mod.rs` 的 `SupervisorTimer` 那一支里，而那一格抢的是"**当时恰好在这颗核
 //! 上的任务**"——实测：装配者起 guest 的两条握手（各 1000 ms 预算）被它吃掉，guest 报
 //! `no tree link`、装配者报 `operator:hand` / `operator:claim`、`system: assemble` 当场收场，
-//! 其后几条（含末条 `echo`）都不起。dev 档 root 景、同一份字节，连跑 6 次：
+//! 其后几条（含末条 `canonical`）都不起。dev 档 root 景、同一份字节，连跑 6 次：
 //!
 //! ```text
 //! 挂陷阱里（原样）                    折 5 / 成 6

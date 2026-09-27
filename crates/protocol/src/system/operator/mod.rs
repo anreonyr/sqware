@@ -183,7 +183,7 @@
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
 // **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上树"。**今天的客人**：六台域
-// （`echo`（自问自答一趟：分 → 落 → 寻 → 收 → 剪）、`router` / `rtc` / `uart`（各把门牌挂上
+// （`canonical`（找控制台那两枚门牌 `/device/uart/{rx,tx}`）、`router` / `rtc` / `uart`（各把门牌挂上
 // 树）、`principal` / `coalition`（上树那条 `/sys` 路））与测具一串（`harness` 的 `subject` /
 // `member` / `guest` / `lodger` / `sleeper` / `probe_*`）。**实现侧**（持树者）
 // 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/system/operator/{server,bridge}.rs`。

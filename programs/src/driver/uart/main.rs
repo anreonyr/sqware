@@ -113,7 +113,7 @@ fn main() -> Result<(), Fail> {
         while desk.line.receive(Wait::POLL).is_ok() {
             let n = device::drain(view, &mut raw);
             // 交给读行的人（读口那枚孔）。**这一手要阻塞**：字节是内容，丢了补不回来；读行的
-            // 人（`echo`）总会回到"取一行"那一格，故等它是有界的。
+            // 人（`canonical`）总会回到"取一行"那一格，故等它是有界的。
             //
             // **`n == 0` 那一趟不推**：[`Batch::of`] 把那一格做进了类型（内核只收 `1..=一页`）。
             if let Some(batch) = Batch::of(&raw, n) {

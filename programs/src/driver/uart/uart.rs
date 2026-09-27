@@ -7,7 +7,7 @@
 //! 对称地，**写也只有本域**（[`put`] 塞 `THR`）——域里要写字，经服务台那条写口来。
 //!
 //! 不碰 FIFO 配置、不管行、不解释字节：FIFO 是固件初始化时开好的（`uart8250_device_init`），
-//! "一行"是**终端**的约定（在客人那侧，见 `programs/src/user/echo/mod.rs`）。
+//! "一行"是**终端**的约定（在客人那侧，见 `programs/src/user/canonical/main.rs`）。
 
 use runtime::core::dock::View;
 

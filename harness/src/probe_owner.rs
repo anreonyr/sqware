@@ -77,7 +77,7 @@ const OK_NOTE: &str = "probe-owner: owner rule held";
 fn main() -> Report<'static> {
     let sire = utask::sire();
 
-    // 一、与树开会话（同 `echo` / `probe-denied`）。
+    // 一、与树开会话（同 `canonical` / `probe-denied`）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-owner: no tree link");
     };
