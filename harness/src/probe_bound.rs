@@ -220,7 +220,7 @@ fn junk_trip(
     let junk = junk();
     let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();
 
-    // 树路那一枚（本端的读口）：`ask_out` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
+    // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
     let said = mail::HolePie::from_token(tree.rx())
         .pull_timeout(&mut back, Wait::AtMost(MS))

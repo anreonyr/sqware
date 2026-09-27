@@ -4,8 +4,13 @@
 //!   Face::of(门牌)              门牌那一枚是树上查回来的（开者 = 对端）
 //!   Face::mint(name)            造一条 ⇒ 答一面 Service（名字绑进柄）
 //!   Face::service(name)         认已有的一条（不铸、不验）
-//!   Service::start / stop / state   一问一答：替这一趟铸一枚回信孔借过去，答完丢掉
+//!   Service::start(wait)        放行 ⇒ 答一枚 Started（**身子在这里固定下来**）
+//!   Service::stop / state       一问一答：替这一趟铸一枚回信孔借过去，答完丢掉
 //! ```
+//!
+//! **两枚柄，不是一枚带可变状态**：`start` 之前身子还不存在，`start` 之后才有——把"起没起"
+//! 做成 `Service` 上的可变状态，会让同一个柄时而有一枚号时而没有。故 `start` 进一枚柄、出
+//! 另一枚（[`Started`]），与树那一族的 `Face::pane -> Pane` / `Pane::tile -> Tile` 同形。
 //!
 //! **问话走门牌、答话走这一趟自带的那一枚孔**：报文里没有"往哪回"这一格——号只在持有它的
 //! 那张表里念得动（[`communication`](crate::communication) 事实 8），故每一趟借一枚新的回信孔
@@ -63,9 +68,12 @@ impl Face {
     /// **造一个 Service**：建域 + 产它的代表线程（恒产未放行）。
     ///
     /// 镜像由**对端**从清单里取——本端只给名字（见 [`super`] 的"`build` 不拷字节"那一节）。
+    ///
+    /// **这一步还没有身子**：`Mint` 只把域与线程造出来、还压在对端手里等放行；身子是
+    /// [`Service::start`] 那一趟交回来的（[`Started::id`]）。
     pub fn mint(&self, name: Name, wait: Wait) -> Result<Service<'_>, Fail> {
         let said = self.call(frame::Req::Mint(name), wait)?;
-        say(said)?;
+        read(said)?;
         Ok(Service { face: self, name })
     }
 
@@ -118,36 +126,76 @@ impl Service<'_> {
         &self.name
     }
 
-    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）。
-    pub fn start(&self, wait: Wait) -> Result<(), Fail> {
-        say(self.face.call(frame::Req::Start(self.name), wait)?)
+    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 [`Started`]。
+    ///
+    /// **身子在这一趟里到手**：子域的代表线程在放行之前就已经产好（`service::mint` 的口径），
+    /// 故这一答非成即败，不存在"起来了但没有号"这一格。
+    pub fn start(&self, wait: Wait) -> Result<Started<'_>, Fail> {
+        let said = self.face.call(frame::Req::Start(self.name), wait)?;
+        Ok(Started {
+            face: self.face,
+            name: self.name,
+            task: read(said)?.task,
+        })
     }
 
     /// **下令收掉**（下令即回，不等它收完）。
     pub fn stop(&self, wait: Wait) -> Result<(), Fail> {
-        say(self.face.call(frame::Req::Stop(self.name), wait)?)
+        let said = self.face.call(frame::Req::Stop(self.name), wait)?;
+        read(said).map(|_| ())
     }
 
     /// 这一条此刻处于哪个生命阶段。
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
-        let (_, at) = split(self.face.call(frame::Req::State(self.name), wait)?)?;
-        State::of_code(at).ok_or(Fail::Bad)
+        let said = self.face.call(frame::Req::State(self.name), wait)?;
+        // **先过码表**（`read`），再看第二格；表外的判别值不猜。
+        State::of_code(read(said)?.a).ok_or(Fail::Bad)
     }
 }
 
-/// 一句答拆两格：状态先过码表，`OK` 才交出答案那一格。
+/// **一条起好的服务**：`Service::start` 的产物——**身子（那一枚线程）在这里固定下来**。
 ///
-/// 它不用 `self`（纯解码）⇒ 自由函数，不是一个为了"看起来属于 Face"而写成方法的手。
-fn split(said: frame::Said) -> Result<(u8, u8), Fail> {
+/// 它不重抄 [`Service`] 那几手（照树那一族的先例：`Tile` 不抄 `Pane` 的手，只给一条回头的路）：
+/// 要 `stop` / `state` 就 [`Started::service`] 拿回那一柄。
+pub struct Started<'a> {
+    face: &'a Face,
+    name: Name,
+    task: TaskId,
+}
+
+impl Started<'_> {
+    /// 这一条叫什么（读数用）。
+    pub fn name(&self) -> &Name {
+        &self.name
+    }
+
+    /// **它此刻是哪一枚线程**（子域的代表线程）。
+    ///
+    /// 这是本协议**唯一**交得出域外的那一格身子：`Endpoint` 的孔不行（见 [`super`] 的
+    /// "通道副本不能跨域"那一节），而 `TaskId` 跨域有意义。
+    pub fn id(&self) -> TaskId {
+        self.task
+    }
+
+    /// 回到那一柄（`stop` / `state` 的入口）。
+    pub fn service(&self) -> Service<'_> {
+        Service {
+            face: self.face,
+            name: self.name,
+        }
+    }
+}
+
+/// 一句答拆开：**状态先过码表**，`OK` 才把整个答话交出来。
+///
+/// 四手共用这一手——三手只要"成没成"（`read(said).map(|_| ())`），[`Service::state`] 取第二格，
+/// [`Service::start`] 取第三格。**答话的解码只有这一条路**（`Said::fetch` 那张表 ＋ 这里这一次
+/// 状态过码表），不留第二个入口。
+fn read(said: frame::Said) -> Result<frame::Said, Fail> {
     match frame::code_to_fail(said.status) {
-        None if said.status == frame::OK => Ok((said.status, said.a)),
+        None if said.status == frame::OK => Ok(said),
         Some(fail) => Err(fail),
         // 表外那一格（连 `OK` 都没读成）⇒ 与"没走到"同一格。
         None => Err(Fail::Bad),
     }
-}
-
-/// 三手写只关心"成没成"：拆开、丢掉答案那一格。
-fn say(said: frame::Said) -> Result<(), Fail> {
-    split(said).map(|_| ())
 }

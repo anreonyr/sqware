@@ -18,7 +18,7 @@
 //! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
 //! 不该各起一套词（同 board / operator 那两族的纪律）。
 
-use env::{Mark, Name, PieToken};
+use env::{Mark, Name, PieToken, TaskId};
 
 use crate::message::Message;
 
@@ -106,18 +106,37 @@ pub struct Ask {
     pub back: PieToken,
 }
 
-/// 答话那一格：状态 ＋ 答案那一格（`state` 那一问用它装 [`State`] 的判别值）。
+/// 答话那一格：状态 ＋ 答案那一格 ＋ **那一条的身子**。
 ///
-/// 定长 2 字节：**每一问都只需要这两格**——`mint` / `start` / `stop` 只看状态，`state` 再看
-/// 第二格。故不需要一变多形（operator 那一族才有"一答多形"的麻烦）。
+/// 定长一形（**不改多变**）：`mint` / `stop` 只看状态，`state` 再看第二格，`start` 看第三格——
+/// 每一问都只需要这三格里属于它的那一格，故不需要 operator 那一族那种"一答多形"。
+///
+/// # `task` 那一格：身子的 `TaskId` 能跨域，通道副本不能
+///
+/// `Start` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续：
+/// 内核按 `TaskId` 认一枚线程，与它在哪个域无关，故这个号**跨域有意义**。而 `Endpoint`
+/// 的两枚孔是"持有它的那张表里才念得动"的号（[`communication`](crate::communication)
+/// 事实 8）⇒ control 铸出来的是**它自己那一侧**的孔，交不到客人手里。故：
+///
+/// ```text
+///   无通道的服务（Setup 里没有 Channel）   线上 mint + start 完整可用
+///   有通道的服务                           start 会等不到就绪 ⇒ 答 NotReady（既有口径）
+/// ```
+///
+/// [`TaskId::new(0)`] 在这三格是**占位**：内核语义里 0 = 当前域，本协议**不**把这一格
+/// 解释成"域"，也没有任何一种答话把"零号"当答案（真答案不可能是它：`mint` 一成功就已经
+/// 有了身子）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Said {
     pub status: u8,
+    /// [`State`] 的判别值（只有 `state` 那一答用它；其余答话是 0）。
     pub a: u8,
+    /// **那一条的身子**（只有 `start` 那一答填它；其余答话是 [`TaskId::new(0)`]）。
+    pub task: TaskId,
 }
 
 impl Message for Said {
-    /// **写法与读法是同一个**：这一形两格俱全，读的人不必再问"我问的是哪一条"。
+    /// **写法与读法是同一个**：这一形三格俱全，读的人不必再问"我问的是哪一条"。
     type In = Said;
     /// 定长一答（[`Said::LEN`]）。
     type Buf = [u8; Said::LEN];
@@ -129,7 +148,7 @@ impl Message for Said {
         Said::store_in(self, out)
     }
 
-    /// **恰好 2 字节**：长一字节、短一字节都是读不懂（同板、树那两族那条照实记）。
+    /// **恰好 [`Said::LEN`]**：长一字节、短一字节都是读不懂（同板、树那两族那条照实记）。
     fn fetch(bytes: &[u8]) -> Option<Said> {
         if bytes.len() != Said::LEN {
             return None;
@@ -252,7 +271,11 @@ impl Wire {
 
 /// 编一答：只有状态那一格（失败，或读不懂）。
 pub const fn said_status(status: u8) -> Said {
-    Said { status, a: 0 }
+    Said {
+        status,
+        a: 0,
+        task: TaskId::new(0),
+    }
 }
 
 /// 编一答：`OK` ＋ 一个 [`State`]（只有 `state` 那一问用）。
@@ -260,14 +283,26 @@ pub const fn said_state(state: State) -> Said {
     Said {
         status: OK,
         a: state.code(),
+        task: TaskId::new(0),
     }
 }
 
-/// 解一答：`Ok((状态, 答案那一格))`；**长度不对 ⇒ `None`**（读不动的答话）。
-pub fn said_read(bytes: &[u8]) -> Option<(u8, u8)> {
-    let said = Said::fetch(bytes)?;
-    Some((said.status, said.a))
+/// 编一答：`OK` ＋ **那一条的身子**（只有 `start` 那一问用）。
+///
+/// 身子就是子域那一枚代表线程——`service::mint` 在放行前就把它交回来了，故这一格**不会**
+/// 是"零号"（真答案不可能是 [`TaskId::new(0)`]）。
+pub const fn said_task(task: TaskId) -> Said {
+    Said {
+        status: OK,
+        a: 0,
+        task,
+    }
 }
+
+// **照实记（`said_read` 那一手退场）**：本文件原先还有一枚 `pub fn said_read(&[u8]) ->
+// Option<(u8, u8)>`——它把答话解成"状态 ＋ 那一格"两格返回，而**全仓零消费者**（客侧走的是
+// [`crate::system::control::client`] 的 `call` ＋ 它自己那次解码）。按"没有读者的格不留在面上"
+// 删掉：答话的解码只有一条路（`Said::fetch` 那张表 ＋ 客侧那一次状态过码表），不留第二个入口。
 
 // ── 载体两侧共用的坐标 ─────────────────────────────────────
 
@@ -296,3 +331,9 @@ const _: () = assert!(ASK_MARK.get() != BACK.get());
 const _: () = assert!(ASK_MARK.get() != Mark::of(LINK).get());
 const _: () = assert!(BACK.get() != Mark::NONE.get());
 const _: () = assert!(BACK.get() != Mark::of(LINK).get());
+
+// **答话那一形的宽度钉在编译期**：三格之和（状态 1 ＋ 答案 1 ＋ 身子那一格）。
+// 这一条是"改表要动这一格"的报警器——加了格却不在这里改数，就当场编不过。
+// 宽度用**全路径**取（同 `operator/frame.rs` 里 `<EntryId as env::wire::Field>::WIDTH` 那一处），
+// 本文件不为一个常量把 `Field` 引进作用域。
+const _: () = assert!(Said::LEN == 2 + <TaskId as env::wire::Field>::WIDTH);

@@ -346,7 +346,9 @@ fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::fram
             Err(fail) => ccall::frame::said_status(code(fail)),
         },
         ccall::frame::Wire::Start(name) => match control.release(name) {
-            Ok(()) => ccall::frame::said_status(ccall::frame::OK),
+            // **答的是那一枚身子**（第三格）：`TaskId` 跨域有意义，故它是这一族唯一交得出域外
+            // 的东西。通道那本账留在 [`Control`] 里——`Endpoint` 的孔交不出去（见 `frame` 那一节）。
+            Ok(service) => ccall::frame::said_task(service.0),
             Err(fail) => ccall::frame::said_status(code(fail)),
         },
         ccall::frame::Wire::Stop(name) => match control.stop(name) {

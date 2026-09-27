@@ -179,7 +179,7 @@ impl<'a> Pane<'a> {
     /// **它是"把一个已有的号读成窗格"那一格**：[`Face::pane`] 与 [`Pane::tile`] 的落点；
     /// [`Pane::open`] 不走它（`part` 那一问自己就答"这一格是不是窗格"，不必再多问一趟）。
     fn at(face: &'a Face, id: EntryId, wait: Wait) -> Result<Pane<'a>, Fail> {
-        ask_out(
+        call(
             face.session.talk,
             &face.session.link,
             ocall::Req::List(Where::At(id)),
@@ -210,7 +210,7 @@ impl<'a> Pane<'a> {
     /// 多一次往返（而多出来那一问的失败会把已经成的 `part` 说成失败——持树者一枚线程，这一格
     /// 是量得出来的代价）。
     pub fn open(&self, name: Name, wait: Wait) -> Result<Pane<'_>, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Part {
@@ -247,7 +247,7 @@ impl<'a> Pane<'a> {
         let shipped = port::ship(&pie, self.face.session.host, Access::FETCH | Access::STORE, Policy::VEST)
             .map(|to| to.seed())
             .map_err(|_| Fail::Unknown)?;
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Land {
@@ -271,7 +271,7 @@ impl<'a> Pane<'a> {
     ///
     /// 答的是那一串号（[`Listing`] 是定长值、不是借来的迭代器——它自带 `iter`）。
     pub fn list(&self, wait: Wait) -> Result<Listing, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::List(self.at),
@@ -282,7 +282,7 @@ impl<'a> Pane<'a> {
 
     /// **剪**：把 `e` 那一号剪掉。
     pub fn trim(&self, e: EntryId, wait: Wait) -> Result<(), Fail> {
-        ask_out(
+        call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Trim(e),
@@ -293,7 +293,7 @@ impl<'a> Pane<'a> {
 
     /// **名**：`e` 那一号此刻叫什么。
     pub fn name(&self, e: EntryId, wait: Wait) -> Result<Name, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Name(e),
@@ -315,7 +315,7 @@ impl<'a> Pane<'a> {
     /// 这里刻意不补那一问：补了既多一次往返，又会把"这一格是砖"这一件正常的事说成失败
     /// （一枚 `Tile` 对 `list` 答 [`Fail::NotAPane`]）。
     pub fn tile(&self, road: &[Name], wait: Wait) -> Result<Tile<'_>, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Road(road),
@@ -346,7 +346,7 @@ impl Tile<'_> {
 
     /// 这一格此刻叫什么。
     pub fn name(&self, wait: Wait) -> Result<Name, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Name(self.id),
@@ -365,7 +365,7 @@ impl Tile<'_> {
     /// 那一枚**经会话授进本端表**，而**它在本端表里的号随这条答话回来**（[`ocall::Union::Seed`]），
     /// 故客人不必再扫表。寻到头是窗格 ⇒ [`Fail::NotATile`]。
     pub fn token(self, wait: Wait) -> Result<PieToken, Fail> {
-        let said = ask_out(
+        let said = call(
             self.face.session.talk,
             &self.face.session.link,
             ocall::Req::Find(self.id),
@@ -389,7 +389,14 @@ const RETRY_MS: usize = 1;
 /// 问话推 `say`（开会话那一手铸的问话孔，持树者读），答话从本端这条树路读（持树者写）。
 /// 返**收进来的那一答**（[`ocall::Said`]）——**形状由问的人自己读**（答的四种形状在线上分不开，
 /// 见 `Said` 的照实记：他问的是哪一条，他自己知道）。
-fn ask_out(
+///
+/// **它叫 `call`**（照实记：它原先叫 `ask_out`）：四家客侧的"一问一答那一手"共用一个名——
+/// 这一手在另外三家是 `Face` 上的方法（它们把入口 ＋ 对端收在面里，那一趟还要**借一枚回信孔**
+/// 过去），而树这一族的答话走**会话自带的那条路**（不是每趟借一枚新孔），故它是本模块的自由
+/// 函数、收 `say` 与 `link` 两枚：手里有会话的调用点（[`Pane`] / [`Tile`] 那几个方法的实现体，
+/// 以及 `programs/src/driver/context.rs::line` 那类"有会话、拿不出 `Face` 所有权"的地方）
+/// 直接叫它。**同一步，同一个名**。
+fn call(
     say: PieToken,
     link: &Endpoint,
     ask: ocall::Req<'_>,
@@ -448,7 +455,7 @@ fn id_of(session: &Session, road: &[Name], wait: Wait) -> Result<EntryId, Fail> 
 ///
 /// - **这一格修掉的是"多跑一趟"**：译号用掉多少额度，取门闩就只有剩下的那些——不是又拿满一份；
 /// - **但它仍不是"整趟时限"**：额度不是时限（见 [`road_to_id`]）；连"推得进去"都不保证
-///   ——`ask_out` 那一步是 `Sender::send(ask, Wait::Forever)`，孔是单槽，槽里压着未读问话就
+///   ——`call` 那一步是 `Sender::send(ask, Wait::Forever)`，孔是单槽，槽里压着未读问话就
 ///   **等在门外**。故这一族的 `Wait` 只承诺"**本端愿意等多久**"。
 ///
 /// 两条腿今天各自只由一个读者走：[`road_to_id`] 由 [`Face::room`] / [`Face::entry`] 走，
@@ -463,7 +470,7 @@ fn route(
     road: &[Name],
     wait: Wait,
 ) -> Result<EntryId, Fail> {
-    let said = ask_out(say, link, ocall::Req::Road(road), wait)?;
+    let said = call(say, link, ocall::Req::Road(road), wait)?;
     said.entry().map_err(map_code)
 }
 

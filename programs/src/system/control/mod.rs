@@ -242,7 +242,13 @@ impl Control {
     ///
     /// **复核一格**：这一手只认**自己刚造的那一枚**（`pending` 里有它）；没有 ⇒ [`Fail::NotReady`]
     /// （"此刻不该起"与"半路死了"在这一格是同一句话：本端下一步相同）。
-    pub fn release(&mut self, name: Name) -> Result<(), Fail> {
+    ///
+    /// **答的是那一枚身子**（照实记：这一手原先答 `()`）：`(TaskId, Vec<Endpoint>)` 里那枚
+    /// `TaskId` 是**这一族唯一交得出域外的东西**——线上 `Start` 那一答第三格就是它
+    /// （[`protocol::system::control::frame::said_task`]），而通道那本账留在本域（`Endpoint`
+    /// 的两枚孔是"持有它的那张表里才念得动"的号，交不到客人手里，见协议那一份的照实记）。
+    /// 故这一手的返回值**两头都用**：装配面拿它做后续（挂树 / 眼睛），线上那一侧只取第一格。
+    pub fn release(&mut self, name: Name) -> Result<Service, Fail> {
         let at = self
             .pending
             .iter()
@@ -267,7 +273,7 @@ impl Control {
             .map_err(|_| Fail::NotReady)?;
         self.wire(method, &pending.service, program.demand.setup)
             .map_err(|_| Fail::NotReady)?;
-        Ok(())
+        Ok(pending.service)
     }
 
     /// **这一条此刻处于哪个生命阶段**（线上 `State` 那一问）。
