@@ -234,8 +234,10 @@ fn main() -> Report<'static> {
     let _ = plate(&at, OPEN, Rule::Opens(door_id), Mine::No);
     // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
     //
-    // **照实记（旧 `id_of` = `seek`，故这里走 `Pane::tile`）**：旧面那一手只译号、不要门闩；
-    // `Face::tile` 会顺带 `find` 一趟（授一枚副本，且对死格惰性剔死）——不是这一格要的。
+    // **照实记（旧 `id_of` 只译号，故这里走 `Pane::tile`）**：两手的差别是**重试**，不是飞不飞
+    // 门闩——`Pane::tile` 就地问一次（不重试），`Face::tile` 带额度重试。本格用前者：这一台
+    // **不重试**是因为紧跟着那一问（`Opens` 判据）本身要的是"此刻拒"——重试会把"立刻拒"这一格
+    // 变松（见 [`denied`](probe_rule_other.rs) 那边量同一件事的那一台）。
     if let Some(principal) = Name::new(pcall::NAME)
         .ok()
         .and_then(|p| root.tile(&[dir, p], Wait::AtMost(MS)).map(|e| e.id()).ok())
