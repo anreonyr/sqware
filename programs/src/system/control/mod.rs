@@ -20,9 +20,9 @@
 //! **两问**（`mint` / `start`），两问各是一趟消息 ⇒ "已造未放行"必须有个安放处。
 //!
 //! **内核那一侧的手住 [`service`]**；**立账与递单住 [`assemble`]**；**监督相住 [`supervise`]**；
-//! **上树那一趟住 [`mount`]**。
+//! **挂上树那三件住 [`mount`]**（铸入口 / 递出去；"落"由持树者做）。
 //!
-//! # 这一面今天外面也到得了（照实记：边沿面换成了长命线程）
+//! # 这一面今天外面也到得了（照实记：谁把那一格落上树，换过三次）
 //!
 //! [`protocol::system::control::Face`] 的形状是定稿的（四手 ＋ 帧 ＋ 记号）。task-4 把它挂上树
 //! 那条路**撤过一次**——那时挂树要一枚**一次性**边沿线程去落门牌，而它一收尾，持树者表里那枚
@@ -32,11 +32,12 @@
 //! `kernel/src/work/unit/gate/cull.rs::doom`）与"**前置 = 铸入口那一枚线程必须长命**"写在
 //! [`crate::system::Assembly::supervise`] 的照实记里。
 //!
-//! **那一格今天满足了**：铸入口的是编排域主线程，它此后就进监督那一趟
-//! （[`crate::system::Assembly::mount_control`] 调 [`mount::mount`]），**本域活多久它活多久**。
-//! 于是 `/sys/control` 与 `/sys/principal` / `/sys/coalition` 逐字同形：任何走到树的任务
-//! `operator::Face::tile` 一查就有，[`protocol::system::control::Face::of`] 直接成立——那位真客人
-//! 是 `harness/src/probe_control.rs`。
+//! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
+//! **本域活多久它活多久**），而"把这一格落到 `/sys/control`"由**持树者在自己核里做**
+//! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::land_plate`] 递过去 →
+//! 持树者 `part` ＋ `land`）。于是 `/sys/control` 与 `/sys/principal` / `/sys/coalition`
+//! 逐字同形：任何走到树的任务 `operator::Face::tile` 一查就有，
+//! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
 //!
 //! **代价照实说**：挂上之后，**任何已绑身份**的域都能按 `Rule::Public` 取回那一枚入口，进而
 //! `mint` / `start` / `stop` 装配表里的任意一台程序。这不是新开的口子——`doom`（收掉一个域）

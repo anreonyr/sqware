@@ -1,8 +1,11 @@
-//! operator::bridge — **装配侧**：把持树者接上一位客人（三步），并认下它那条提示之路
+//! operator::bridge — **装配侧**：把持树者接上一位客人（三步），认下它那条提示之路，
+//! 并请它替本域落一格（[`Tree::land_plate`]）。
 //!
-//! **两种客人**：别的域（[`attach`]，装配者替它接）与**装配者本人**（
-//! [`Tree::self_session`]——`control` 那一面要挂上树，而挂载者就是本域；它没有别的装配者，
-//! 故那三步自己走）。两档的交孔次序逐句同源，差别写在各自那一手上面。
+//! **客人只有别的域**（[`attach`]）：装配者替每一位客人把孔转给持树者、再把它的号推上提示路。
+//! 而"往树上挂一格"（`control` 那一面挂到 `/sys/control`）**不由本域上树**——本域只把那一枚与
+//! 两段名字递过去，**落由持树者在自己核里做**（[`Tree::land_plate`] 与
+//! `programs/src/system/operator/server.rs::land_plate`）：树是那一格的权威，而它当不了自己的
+//! 客人（自指 ⇒ 环）。
 //!
 //! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
@@ -16,9 +19,7 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::communication::establish;
-use protocol::communication::session::Session;
-use protocol::system::operator::client::BERTH;
-use protocol::system::operator::frame::CoordFrame;
+use protocol::system::operator::frame::{CoordFrame, PlateFrame};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
@@ -82,45 +83,45 @@ impl Tree {
         Ok(())
     }
 
-    /// **本域自己上树**：装配者本人也要当这棵树的客人——`control` 那一面要挂到 `/sys/control`，
-    /// 而"挂"这件事只有一条路（走树、要一条会话）。
+    /// **请持树者替本域落一格**：把那一枚交给它，再把"落哪一块、叫什么"推上提示之路。
     ///
-    /// 与 [`Self::attach`] 的差别只有**谁替谁做那三件事**：别位客人有装配者替它接，装配者自己
-    /// 没有 ⇒ 三件都自己做。次序仍是契约的一半，一条都不能挪：
+    /// 次序是契约：**先交那一枚、再推帧**——持树者一见帧就要落，而落要那一枚已经在它表里
+    /// （帧里带的是它在**树表里**的号，见 [`PlateFrame`]）。
     ///
-    /// ```text
-    ///   ① 本端那一枚读孔（记号 = 这条路的名字）：铸 ＋ 交给持树者（它往这里写答话）
-    ///   ② 问话孔：铸一枚交给持树者，本端自窄到只写
-    ///   ③ 提示：把**本域的号**推上提示之路
-    /// ```
-    ///
-    /// **三步的形状与 [`attach`] 逐句同源**，只有两点是这一档特有的：
-    ///
-    /// - **① 不走 `establish::endpoint`**：那一手的 `claim` 按"开者 = 本域 ＋ 记号 `operator`"
-    ///   扫本域这张表，而本域替**每一位客人**垫过一枚同记号的孔（[`attach`] 第一步）⇒ 认到的是
-    ///   最后那一位客人的那一枚。故这里只铸、只交，不认（见 `Endpoint::own`）；
-    /// - **③ 自己推**：对别位客人，那一推在 [`attach`] 末尾由装配者代劳；本域自己这一位没人代劳。
-    ///   次序照旧**先交孔、后推提示**——持树者一见提示就 `reply_of(client)`，认不到就报
-    ///   `operator: no reply` 且**不把这位收进账**（此后它的问话孔永远没人读）。
+    /// **本域不上树**：落这一格由持树者在自己核里做（[`crate::system::operator::server`] 的
+    /// `land_plate`），本域只是递东西的那一侧 ⇒ 这里不要会话、也不要名册上的身份（`land` 那道
+    /// 门是给**客人**的，本域不是客人）。
     ///
     /// `host` / `tip` 都还没在（这一景没有持树者）⇒ `Err`：那是景的事，不是本手的失败。
-    pub fn self_session(&mut self) -> Result<Session, &'static str> {
+    pub fn land_plate(
+        &mut self,
+        entry: PieToken,
+        dir: Name,
+        name: Name,
+    ) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         let tip = self.tip.ok_or("no tip")?;
-        // ① 本端那一枚读孔：铸 ＋ 交给持树者（同 `attach` 的 `hand`：`R|W`、不加 `VEST`）。
-        let rx = mail::unseal_hole(Mark::of(LINK)).map_err(|_| "operator:link")?;
-        port::ship(
-            &mail::HolePie::from_token(rx),
+        // ① 那一枚交过去：`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST` ⇒ 客人那次
+        //    `find` 里的转授答 `Denied`）。**号随帧走**——本仓那条"号随交接一起走"的口径。
+        let seed = port::ship(
+            &mail::HolePie::from_token(entry),
             host,
             Access::FETCH | Access::STORE,
-            Policy::NONE,
+            Policy::VEST,
         )
-        .map_err(|_| "operator:link")?;
-        // ② 问话孔：`Session::own` 里那一手铸（与每一位客人同一句）。
-        let session = Session::own(rx, BERTH, host).map_err(|_| "operator:ask")?;
-        // ③ 提示：本域自己那一位客人。
-        tell(runtime::env::unit::self_id(), tip).map_err(|_| "operator:tell")?;
-        Ok(session)
+        .map_err(|_| "operator:plate")?
+        .seed();
+        // ② 推帧：落哪一块、叫什么、挂哪一枚（持树者不认识任何一族的名字）。
+        let mut rec = [0u8; PlateFrame::LEN];
+        PlateFrame {
+            dir,
+            name,
+            entry: seed,
+        }
+        .store(&mut rec);
+        mail::HolePie::from_token(tip)
+            .push(&rec)
+            .map_err(|_| "operator:plate")
     }
 
     /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。

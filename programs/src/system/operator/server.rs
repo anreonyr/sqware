@@ -210,6 +210,9 @@ const MS: usize = 1000;
 
 /// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**。
 ///
+/// 装配者要本域做的三件事都从**提示孔**那一条路进来（落一格 / 协调两格 / 一位客人，见
+/// [`settle`]）：它是"装配侧 → 持树者"的唯一一条路，故**不必另开一条到自己的会话**。
+///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（[`attach`] 的 `host_of`），
 /// 而提示一到它就认为"答话路必已在本表里"（转授在前、提示在后）。
 pub fn serve() -> Result<(), Start> {
@@ -228,7 +231,8 @@ pub fn serve() -> Result<(), Start> {
         Ok(seat) => seat,
         Err(_) => return Err(Start::Board),
     };
-    // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
+    // 提示孔：本线程铸的那一枚（**装配者要它做的三件事都从这里进来**：落一格 / 协调两格 /
+    // 一位客人），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
         return Err(Start::Tree);
     };
@@ -272,8 +276,16 @@ pub fn serve() -> Result<(), Start> {
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。
-        let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut session);
+        // 一、补齐三件事（收提示：落格 / 协调 / 客人号；认领答话路；认出问话孔并挂组）。
+        let settling = settle(
+            &mut desk,
+            &pile,
+            &tip_hole,
+            &mut coord,
+            &mut session,
+            &mut tree,
+            &mut book,
+        );
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling {
             Wait::AtMost(SETTLE_MS)
@@ -295,15 +307,18 @@ pub fn serve() -> Result<(), Start> {
     }
 }
 
-/// 补齐两件事，返"还有没有没补齐的"。
+/// 补齐三件事，返"还有没有没补齐的"。
 ///
-/// - **提示**：装配者推来的客人号（一个号，8 字节）。**非阻塞地拉**——必须在这里拉，
-///   不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把提示孔挂进组**（那一条推
-///   落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
-/// - **协调那一帧**（16 字节）：装配者把"**哪一位域** + **它是哪一双眼睛**"直接递过来
-///   （见 [`ocall::CoordFrame`]）。两帧、次序不定：名册那一
-///   枚到了才开闸（门禁从此判得了身份），盟册那一枚到了 [`Rule::In`] 才判得了。
-///   **长度即语义**：8 = 一位客人，16 = 这一帧；
+/// - **提示**：装配者推来的三种帧，**靠长度分派**（见 [`ocall::PlateFrame`] 的照实记）：
+///   - **落一格**（[`ocall::PlateFrame`]）：装配者要本域把某一枚挂到某一点上——
+///     **本域自己落**（[`land_plate`]），不经会话、不当自己的客人；
+///   - **协调那一帧**（[`ocall::CoordFrame`]）：装配者把"**哪一位域** + **它是哪一双眼睛**"
+///     直接递过来。两帧、次序不定：名册那一枚到了才开闸（门禁从此判得了身份），盟册那一枚
+///     到了 [`Rule::In`] 才判得了；
+///   - **一位客人**（8 字节，[`TaskId`]，见 `operator::bridge::tell`）：`admit` 收进来。
+///
+///   **非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把
+///   提示孔挂进组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
 /// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(
@@ -312,15 +327,26 @@ fn settle(
     tip: &mail::HolePie,
     coord: &mut Coord,
     session: &mut Option<Session>,
+    tree: &mut Operator,
+    book: &mut Book,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
-    // 缓冲按**最大的那一帧**备（16），故协调那一帧也吃得下——小缓冲会把长帧读成"读不懂"。
-    let mut frame = [0u8; ocall::CoordFrame::LEN];
+    // 缓冲按**最大的那一帧**备（落格那一形），故另两形也吃得下——小缓冲会把长帧读成"读不懂"。
+    let mut frame = [0u8; ocall::PlateFrame::LEN];
     let mut pending = false;
     loop {
         let Ok(n) = tip.pull_timeout(&mut frame, Wait::POLL) else {
             break;
         };
+        if n == ocall::PlateFrame::LEN {
+            // **装配者要本域落一格**：读不懂 ⇒ 报一句（那一格此后查不到，原因要看得见）。
+            let Some(rec) = ocall::PlateFrame::fetch(&frame[..n]) else {
+                debug!("operator: plate unreadable");
+                continue;
+            };
+            land_plate(tree, book, rec);
+            continue;
+        }
         if n == ocall::CoordFrame::LEN {
             // **开闸**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交进来
             // （装配者只递号）；从这里往后，门外那一问（[`gate`](protocol::system::operator::core::gate)）
@@ -376,6 +402,42 @@ fn settle(
         },
     );
     pending
+}
+
+/// **装配者要本域落的那一格**（提示之路第三种帧）：`part` 那一段目录 → `land` 那一枚 → 记账。
+///
+/// **不是"树当自己的客人"**：那要一条到自己的会话，而本域的生我者是**替客人转授**的那一侧
+/// （它替不了自己，自指 ⇒ 环）。本域手里有**核**（[`Operator::part`] / [`Operator::land`]）
+/// 与**账**（[`Book`]），落一格是本职——**故这里不过门禁**：门禁判的是"**客人**许不许动这一格"
+/// （`part` / `list` / `seek` / `name` 那四条本来也不判），而本域是这一格的权威。
+///
+/// 挂上去的是**装配者交来的那一枚**（帧里带的是它在**本域表里**的号）⇒ 此后客人 `find` 得回
+/// 它，而 `Face::of` 认出的"对端"仍是**铸那一枚的那一位**（装配者：它是那一面的服务端）。
+///
+/// [`Rule::Public`] ＋ **不留主人**（`mine = false`）：与 `/sys/principal` / `/sys/coalition`
+/// 两处门牌同一格——**任何已绑身份都取得回**，而"改这一格"不归谁（[`Ledger::land`] 那条
+/// 「`mine = false` ⇒ 不留主人」）。
+///
+/// 失败（读不懂 / `part` / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"。
+fn land_plate(tree: &mut Operator, book: &mut Book, rec: ocall::PlateFrame) {
+    let at = match tree.part(Where::Root, rec.dir) {
+        Ok(id) => Where::At(id),
+        Err(fail) => return debug!("operator: plate part {:?}", fail),
+    };
+    // `who` 那一格只在 `mine = true` 时进账（见 `Line::new`）——这里仍写"谁要的"（生我者），
+    // 好让这一行的来历在读数里对得上"装配者递来的那一帧"。
+    let who = runtime::env::unit::sire();
+    match book.land(at, rec.name, rec.entry, Rule::Public, false, who, || {
+        tree.land(at, rec.name, rec.entry)
+    }) {
+        Ok(id) => debug!(
+            "operator: plate landed {} / {} id={}",
+            rec.dir.as_str(),
+            rec.name.as_str(),
+            id.get()
+        ),
+        Err(fail) => debug!("operator: plate land {:?}", fail),
+    }
 }
 
 /// **那本账**：一格一条，记着两轴（谁许用 / 归谁改）。

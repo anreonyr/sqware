@@ -37,7 +37,6 @@ use env::TaskId;
 use env::wire::Eyes;
 use env::{Name, PieToken, Wait};
 use protocol::debug;
-use protocol::communication::session::Session;
 
 use runtime::env::unit as utask;
 
@@ -101,7 +100,7 @@ impl Assembly {
 
     /// 交棒给监督相之前，**先把 `control` 那一面挂上树**；道表与那只组都在 [`Sensor`] 手里。
     ///
-    /// **照实记（这一刀：`control` 的边沿面挂回来了，换的是"谁在铸"）**：task-4 那条挂载路
+    /// **照实记（这一刀：`control` 那一面挂回来了，两格一起换）**：task-4 那条挂载路
     /// （`control::edge::mount`：起一枚**一次性**边沿线程去落门牌）**挂不出真正的门牌**，被撤过
     /// 一次。它坏在"铸入口的是谁"，证据链在内核三处：
     ///
@@ -113,46 +112,47 @@ impl Assembly {
     ///   任务**摘掉全部后代。
     ///
     /// 于是"铸入口那一枚线程"一收尾，**持树者表里那枚入口副本被连带摘掉**；plate 那一格还留着
-    /// 那个号 ⇒ `operator::Face::tile(["sys","control"])` 查得到、门闩却拿不回来 ⇒ 客人永远拿不到
-    /// 可用入口。**这一次铸入口的是编排域主线程**（[`Assembly::mount_control`]），它此后就进
-    /// [`Sensor::run`] 那一趟——**本域活多久它活多久**：那三处内核事实一条都没变，变的正是它们
-    /// 要的那一格（"铸入口那一枚必须长命"）。
+    /// 那个号 ⇒ 查得到、门闩却拿不回来 ⇒ 客人永远拿不到可用入口。
     ///
-    /// 面的形状（[`protocol::system::control::Face`] 与帧）一个字节没动；今天它**外面也到得了**
-    /// （`/sys/control` ＋ `harness/src/probe_control.rs` 那位真客人）。
+    /// **这一版把两格一起换**：铸入口的是编排域主线程（它此后就进 [`Sensor::run`] 那一趟——
+    /// **本域活多久它活多久**），而**落那一格由持树者在自己核里做**（本域只递：那一枚 ＋ 两段
+    /// 名字，见 [`Naming::land_plate`]）⇒ 那三处内核事实要的那一格（"铸入口那一枚必须长命"）
+    /// 满足了，而**没有第三方上树**。
+    ///
+    /// **照实记（这条路经裁定：挂上树合设计）**：更早有一版判断是"`operator` 上树是坏事"——
+    /// **那条判断不作准**：树就是"名字 → 资源"那本目录，谁要挂谁自己上来（今天就由树自己落）。
+    /// 故 `control` 那一面**挂进树**（不是只靠装配期直授），取面方式与 `principal` / `coalition`
+    /// 逐字同形；真客人是 `harness/src/probe_control.rs`。
     pub fn supervise(&mut self, last: Name) {
         self.mount_control();
         self.sensor.run(&mut self.life, last);
     }
 
-    /// **把 `control` 这一面挂上树**（`/sys/control`）：本域那一枚**长命线程**自己铸入口、自己待客。
+    /// **把 `control` 那一面挂上树**（`/sys/control`）：本域铸那一枚入口、**持树者落那一格**、
+    /// 本域当场待客。
     ///
     /// 三步，次序即契约：
     ///
-    /// 1. **补绑本域自己的身份**：`land` 那一问要求来的人是**已绑身份**（`core/judge.rs::judge`
-    ///    第一段：`who` 答不出就当场 `Deny`），而装配那一趟只绑**子域**——本域主线程从没上过
-    ///    名册（同 [`Roster::adopt`] 补绑"它自己与树"那一笔）；
-    /// 2. **本域自己上树**：那三趟要走一条会话才动得了（[`Naming::self_session`]）；
-    /// 3. **挂**：分目录 / 落门牌 / 回查（[`control::mount::mount`]），入口随即接进监督那一趟
-    ///    那只组（[`Sensor::attach_face`]）——**本域当场开始待客**（面 ＋ 道表两源同一个等待）。
+    /// 1. **铸入口**（[`control::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的服务端
+    ///    （入口的"开者"就是本域，客人 `Face::of` 据此知道往哪答话）；
+    /// 2. **请持树者落**（[`Naming::land_plate`]）：把那一枚交过去，再把两段名字推上提示之路；
+    /// 3. **接上监督那一趟**（[`Sensor::attach_face`]）：入口挂进同一只组，**本域当场开始待客**。
+    ///
+    /// **本域不进名册、也不开会话**：`land` 那道门是给**客人**的（本域不是客人），而"落"这一手
+    /// 由树自己完成（它是那一格的权威）。
     ///
     /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
     /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
     fn mount_control(&mut self) {
-        if let Err(why) = self.identity.bind(utask::self_id(), true) {
-            return debug!("system: control mount: bind self ({why})");
-        }
-        let session = match self.naming.self_session() {
-            Ok(session) => session,
-            Err(why) => return debug!("system: control mount: {why}"),
+        let (entry, dir, name) = match control::mount::entry() {
+            Ok(plate) => plate,
+            Err(why) => return debug!("system: control not mounted ({why})"),
         };
-        match control::mount::mount(&session) {
-            Ok(entry) => {
-                self.sensor.attach_face(entry);
-                debug!("system: control mounted at /sys/control");
-            }
-            Err(why) => debug!("system: control not mounted ({why})"),
+        if let Err(why) = self.naming.land_plate(entry, dir, name) {
+            return debug!("system: control not mounted ({why})");
         }
+        self.sensor.attach_face(entry);
+        debug!("system: control mounted at /sys/control");
     }
 
     /// **起一条**——这一台自己的装配，按它自己的声明走：
@@ -294,12 +294,12 @@ impl Naming {
         self.0.adopt(host, Wait::AtMost(READY_MS))
     }
 
-    /// **本域自己上树**（挂 `control` 那一面要一条会话）：装配者本人也是这棵树的客人。
+    /// **要持树者替本域落一格**（`control` 那一面那一格）：那一枚 ＋ 两段名字。
     ///
-    /// 与 [`Naming::attach`] 的差别在"谁替谁接"，正文在
-    /// [`Tree::self_session`](crate::system::operator::bridge::Tree::self_session)。
-    fn self_session(&mut self) -> Result<Session, &'static str> {
-        self.0.self_session()
+    /// 正文在 [`Tree::land_plate`](crate::system::operator::bridge::Tree::land_plate)：
+    /// 本域**不上树**——落由持树者在自己核里做。
+    fn land_plate(&mut self, entry: PieToken, dir: Name, name: Name) -> Result<(), &'static str> {
+        self.0.land_plate(entry, dir, name)
     }
 
     /// 它是哪一双眼睛：那一格记进给持树者的协调帧（重复推是幂等的）。

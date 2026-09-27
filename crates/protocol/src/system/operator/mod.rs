@@ -191,7 +191,11 @@
 // **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上树"。**今天的客人**：六台域
 // （`canonical`（找控制台那两枚门牌 `/device/uart/{rx,tx}`）、`router` / `rtc` / `uart`（各把门牌挂上
 // 树）、`principal` / `coalition`（上树那条 `/sys` 路））与测具一串（`harness` 的 `subject` /
-// `member` / `guest` / `lodger` / `sleeper` / `probe_*`）。**实现侧**（持树者）
+// `member` / `guest` / `lodger` / `sleeper` / `probe_*`）——**装配者不在客人之列**：它替每一位客人
+// 递孔，自己不上树（"往树上挂一格"那件事由**持树者在自己核里落**，装配者只递那一枚与两段名字，
+// 见 [`PlateFrame`] 与 `programs/src/system/operator/server.rs::land_plate`）。
+// **挂上树这件事合设计**：树是"名字 → 资源"那本目录，谁要挂谁自己上来（真客人是
+// `harness/src/probe_control.rs`）。**实现侧**（持树者）
 // 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/system/operator/{server,bridge}.rs`。
 // 下面这段是那一台的说明——它讲的是"怎么跑"。
 //
@@ -257,8 +261,8 @@ pub mod client;
 
 pub use frame::{Id, Rule, Ruling};
 pub use frame::{
-    ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,
-    UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
+    ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, PlateFrame, Req, Said,
+    TIP_MARK, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 
 // ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────

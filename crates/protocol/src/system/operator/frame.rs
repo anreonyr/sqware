@@ -1025,6 +1025,40 @@ pub struct CoordFrame {
     pub eyes: Eyes,
 }
 
+/// **装配者要持树者落的那一格**（提示之路上的第三种帧）：落哪一块 `Pane` 里、叫什么、挂哪一枚。
+///
+/// 它与 [`CoordFrame`] 走**同一个洞、同一个读者**（提示之路 = 装配侧 → 持树者），报文里既没有
+/// 客人也没有动作码——**落这一格由持树者在自己核里做**。
+///
+/// # 为什么不是"树当自己的客人"（照实记）
+///
+/// "把一格挂上树"在别处都是**客人**那一趟（`part` ＋ `land` 两问走一条会话），而树自己没有那条
+/// 会话：它的生我者（编排域）是**替每一位客人转授**的那一侧，而它替不了自己（自指 ⇒ 环，见
+/// `programs/src/system/operator/server.rs::settle`）。而树手里本来就握着**核**
+/// （`Operator::land`）与**账**（`Ledger::land`）——落一格是它的本职。故这一形是
+/// "**装配者递东西、持树者自己落**"：递的就是这一帧 ＋ 那一枚。
+///
+/// # 两段名字为什么随帧来
+///
+/// `dir` / `name` 是**递帧那一侧**的事实（`control::frame::DIR` / `NAME`）：持树者不认识任何
+/// 一族的名字，也不该认识——它只答"把这一枚挂在这一点上"。
+///
+/// **长度即形**：提示之路上今天三种帧（这一形 / [`CoordFrame`] / 一位客人的号），靠长度分派
+/// （见 `programs/src/system/operator/server.rs::settle`）⇒ 三条**不许等长**，下面那两条断言
+/// 把这件事钉在编译期。
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PlateFrame {
+    /// 挂在哪一块窗格下的一段目录名（从 `Where::Root` 起，如 `sys`）。
+    pub dir: Name,
+    /// 那一格叫什么（如 `control`）。
+    pub name: Name,
+    /// 要挂的那一枚**在持树者表里**的号（`port::ship` 换回来的那一格）。
+    pub entry: PieToken,
+}
+
+const _: () = assert!(PlateFrame::LEN != CoordFrame::LEN);
+const _: () = assert!(PlateFrame::LEN != <TaskId as env::wire::Field>::WIDTH);
+
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────
 
 crate::fail_codes! {

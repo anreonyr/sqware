@@ -1,81 +1,46 @@
 //! control::mount — **把这一面挂上树**：`/sys/control` 那一格。
 //!
+//! 三件事，而**只有第一件在本域手里落下**：
+//!
 //! ```text
-//!   ① 铸入口：本线程自己那一枚（记号 = 服务入口那一格，与三枚服务同一格）
-//!   ② 上树：分 `/sys` → 落 `/sys/control` → 查回来验一遍（同 principal / coalition 那一趟）
+//!   ① 铸入口   本域主线程自己铸（记号 = 服务入口那一格，与三枚服务同一格）
+//!   ② 递出去   交给持树者（`R|W ＋ VEST`），再把"落哪一块、叫什么"推上提示之路
+//!   ③ 落       持树者在自己核里 `part /sys` ＋ `land /sys/control`（`Rule::Public`）
 //! ```
 //!
-//! **这一趟与 principal / coalition 那两趟逐句同源**，只有两点是这一档特有的，两点都在
-//! "谁在铸"上：
+//! ① 在本文件里（那一枚的记号与两段名字是**这份协议自己的事实**）；②③ 分别在
+//! [`Tree::land_plate`](crate::system::operator::bridge::Tree::land_plate) 与持树者的 `settle`
+//! 那一支（`programs/src/system/operator/server.rs::land_plate`）。
 //!
-//! - **入口由这一枚线程自己铸**（不是由一枚一边铸一边死的边沿线程）——树表里那份副本的派生边
-//!   指着**铸它的那一枚线程**（`kernel/src/work/unit/gate/accord.rs` 的 `sire`），而每个 reaped
-//!   任务都跑 `gate::doom`、`cull` 又沿 `snap::heirs` **跨任务**摘后代（`kernel/src/boot.rs` 的
-//!   `EXIT_HOOKS` ＋ `kernel/src/work/unit/gate/cull.rs`）⇒ **铸入口的那一枚必须长命**。本手
-//!   的调用者是编排域主线程，它此后就进监督那一趟（本域活多久它活多久）——这一条就是原先
-//!   那条挂载路死掉的原因，也是这一刀成立的原因。原委写在 [`crate::system::Assembly::supervise`]
-//!   的照实记里。
-//! - **会话是自己给自己开的**（本域既是装配者、又是这棵树的客人）：见
-//!   [`Tree::self_session`](crate::system::operator::bridge::Tree::self_session)。
+//! # 照实记（"谁上树"这一格换过三次）
 //!
-//! **本手不自问自答**：这里那一趟只到"树上查得回那一枚"为止（读数是 `got`）；"它指不指得回
-//! 原物"由**真客人**证——`harness/src/probe_control.rs` 照同一条路找上门、问一句 control 的话。
+//! | 那一版 | 谁把这一格落上树 | 死在哪 |
+//! |---|---|---|
+//! | task-4 | 一枚**一次性**边沿线程 | 它一收尾，持树者表里那枚入口副本被内核的派生链级联摘掉（三处证据见 [`crate::system::Assembly::supervise`]） |
+//! | 上一版 | **装配者本人**当客人（要会话、要名册上那一行） | 能跑，但"客人"这份名单里多了一位不是域的东西，且装配者为此进了名册 |
+//! | 这一版 | **持树者自己**（在自己核里落） | —— |
+//!
+//! 今天这一版里**没有第三方上树**：装配者递东西（那一枚 ＋ 两段名字），持树者落格——树是
+//! 那一格的权威，而它当不了自己的客人（自指 ⇒ 环）。
+//!
+//! **本手不自问自答**：那一格落成没有、指不指得回原物，由**真客人**证——
+//! `harness/src/probe_control.rs` 照 principal / coalition 同形的路找上门、问一句 control 的话。
 
-use env::Wait;
 use env::{Name, PieToken};
-use protocol::debug;
-use protocol::communication::session::Session;
 use protocol::system::board::ENTRY_MARK;
 use protocol::system::control as ccall;
-use protocol::system::operator::client::{Face, Mine};
-use protocol::system::operator::Rule;
 use runtime::env::mail;
 
-/// 挂载那几趟的额度（毫秒）。**必须有界**：持树者死在头几步时本域不能陪着挂死。
+/// **铸本域那一枚待客入口**，并交出它要落的两段名字（`dir` / `name`）。
 ///
-/// 第一趟（`part`）还要额外留出"持树者刚把本域认成客人"那一点时间：提示是本域自己在
-/// [`Tree::self_session`] 里推的，而持树者按 ≤1 ms 的节拍补齐两本账
-/// （`programs/src/system/operator/server.rs` 的 `SETTLE_MS`）——本域那一问**等在门外**，
-/// 它一到就醒。
-const MOUNT_MS: usize = 1000;
-
-/// **把这一面挂到 `/sys/control`**，答那一枚待客的入口。
+/// 返 `Err(哪一步)`：记号铸不出 / 名字非法。对调用方是同一件事（这一面没挂上），但"死在哪一步"
+/// 正是诊断要的那一格。
 ///
-/// 返 `Err(哪一步)`：名字非法 / 树那边四趟任一没成。对调用方是同一件事（这一面没挂上），
-/// 但"死在哪一步"正是诊断要的那一格。
-pub fn mount(session: &Session) -> Result<PieToken, &'static str> {
-    let tree = Face::from(session);
-    // 一、**本线程自己那一枚入口**：与三枚服务同一格记号（`entry`）。
-    //
-    // **只铸一次**：这一枚此后是本域的表里那一枚待客的孔（`Watch::face`），铸第二枚就会有
-    // 一枚永远没人读它的推（同 `operator/server.rs::claim` 那条"一个域只铸一枚"）。
+/// **只铸一次**：这一枚此后就是监督那一趟那只组里的待客入口（`Watch` 的 `face` 那一格）；
+/// 铸第二枚，就会有一枚永远没人读它的推。
+pub fn entry() -> Result<(PieToken, Name, Name), &'static str> {
     let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| "control:entry")?;
     let dir = Name::new(ccall::frame::DIR).map_err(|_| "control:name")?;
-    let me = Name::new(ccall::frame::NAME).map_err(|_| "control:name")?;
-    // 二、分目录 → 落门牌 → 查回来验一遍：分与落各自**答出那一格的号**（"号出门"那一手）。
-    //
-    // **分目录**：`open` 是**幂等**的——`/sys` 早已由 principal / coalition 立起来（它们排在
-    // 前头），重复 `part` 只答同一个号。
-    let root = tree.root();
-    let at = root
-        .open(dir, Wait::AtMost(MOUNT_MS))
-        .map_err(|_| "control:part")?;
-    // **落门牌**：`e` 是客人手里那一枚；`bind` 顺手把它经会话交给持树者（`R|W ＋ VEST`——
-    // 客人此后从树上取回自己那一份时要能再授出，见 `Pane::bind`）。`Rule::Public` 与
-    // principal / coalition 那两块门牌同一格：**任何已绑身份都取得回**。
-    let plate = at
-        .bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MOUNT_MS))
-        .map_err(|_| "control:land")?;
-    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）——把那一枚要回来。
-    let got = match tree.tile(&[dir, me], Wait::AtMost(MOUNT_MS)) {
-        Ok(tile) => tile.token(Wait::AtMost(MOUNT_MS)).is_ok(),
-        Err(_) => false,
-    };
-    debug!(
-        "control: mount dir={} plate={} entry={} find={got}",
-        dir.as_str(),
-        plate.id().get(),
-        entry.get(),
-    );
-    Ok(entry)
+    let name = Name::new(ccall::frame::NAME).map_err(|_| "control:name")?;
+    Ok((entry, dir, name))
 }
