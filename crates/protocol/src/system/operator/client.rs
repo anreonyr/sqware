@@ -14,12 +14,11 @@ use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::communication::establish::{self, Endpoint};
+use crate::communication::establish::{self, Endpoint, EstablishFail};
 use crate::communication::sender::Sender;
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
-use crate::system::operator::core::judge::Id;
-use crate::system::operator::core::judge::Rule;
+use crate::system::operator::frame::{Id, Rule};
 pub use crate::system::operator::{ASK_MARK, LINK};
 use crate::system::operator::{EntryId, Listing, Where};
 
@@ -32,7 +31,7 @@ use crate::system::operator::{EntryId, Listing, Where};
 /// 持树者：客人交出来的孔都落在生我者表里，故"持树者是谁"得由装配者告诉（见文件头）。
 pub fn open(holder: TaskId, millis: Wait) -> Result<(Endpoint, TaskId), Fail> {
     let pair =
-        establish::endpoint(holder, Mark::of(LINK), millis).map_err(ocall::core::map_establish)?;
+        establish::endpoint(holder, Mark::of(LINK), millis).map_err(map_establish)?;
     // **认不到对端那一枚 = 这条树路没接上**（原 `map_claim` 那一格）：两侧各装一条、
     // 凑齐才算通。
     if pair.tx().is_none() {
@@ -239,4 +238,19 @@ pub(crate) fn hear(pair: &Endpoint, millis: Wait) -> Option<TaskId> {
         Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }
+}
+
+// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
+//
+// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
+// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
+// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
+
+/// 建立那一手的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字
+/// （[`Fail::Unknown`]）。
+///
+/// 铸不出孔 / 交不出去在这一层是同一件事（"这一手没做成"）：树这一侧只有一格答话码，
+/// 问的人按它决定要不要重问。
+pub fn map_establish(_fail: EstablishFail) -> Fail {
+    Fail::Unknown
 }

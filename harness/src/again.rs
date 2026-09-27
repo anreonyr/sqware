@@ -61,8 +61,8 @@ use programs::root::boot;
 use env::Name;
 use programs::system::control::service as service;
 use protocol::debug;
-use protocol::system::core::{Ready, probe_ready};
-use protocol::system::desk::{Announce, Slot, State, Table};
+use programs::system::core::{Ready, probe_ready};
+use programs::system::desk::{Announce, Slot, State, Table};
 use runtime::env::unit;
 
 /// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）。

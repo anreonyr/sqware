@@ -7,4 +7,7 @@
 //! 怎么站住、怎么记账是实现。
 
 pub mod bridge;
+// **照实记（`core` 是残枝那一刀从 protocol 搬来的）**：板那本账原先住
+// `crates/protocol/src/system/board/core.rs`——读者只有本域的持板线程，故回这里。
+pub mod core;
 pub mod server;

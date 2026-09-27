@@ -10,7 +10,7 @@ use env::wire::Field;
 use env::{MailFail, PieToken, TaskId};
 use env::{Key, PAIR_LEN, Pair};
 
-use crate::system::supply::core::Fail;
+use crate::system::supply::frame::Fail;
 use crate::system::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
 use crate::communication::establish::Endpoint;
 use crate::communication::receiver::RecvFail;

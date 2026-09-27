@@ -23,7 +23,24 @@ use env::{PAIR_LEN, Pair};
 
 use crate::message::Message;
 
-use super::core::Fail;
+// ── 失败域（原先住 `core.rs`：残枝那一刀并进来）────────────────
+
+/// 领不到（或供不成）的**五种**，对应"调用方接下来该干什么"。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 本地失败：单子装不下 / 这条泊位没有写端 / 期限内没等到。
+    Local,
+    /// 账里没这个名字。
+    Unknown,
+    /// 授不出（越权 / 对端不在 / 对端表满）。
+    Denied,
+    /// 备不下（条数越界 / 缓冲不够）。
+    Full,
+    /// 帧读不懂。
+    Bad,
+}
+
+
 
 /// 引导域↔编排域那条泊位的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const BOOT: &str = "boot";

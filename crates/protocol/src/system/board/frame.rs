@@ -1,7 +1,7 @@
 //! board 的**帧那一半** —— 帧、码、记号（内核那几只手的别名与两张会话失败域的映射
 //! 在 `protocol` 那一侧的 `mod.rs`）。
 //!
-//! 本文件**不做裁决**：板上的规矩（谁能挂、挂哪儿、什么时候扫）全在 [`core`](super::core)。
+//! 本文件**不做裁决**：板上的规矩（谁能挂、挂哪儿、什么时候扫）全在实现侧那一本账里（`programs/src/system/board/core.rs`）。
 //! 这里只有**编一帧 / 解一帧**与两张对照表（失败域 ↔ 答话码）。
 //!
 //! **照实记（这一份为什么拆出来）**：帧形今天只有机器在跑，而机器只走**顺路**——边角
@@ -12,7 +12,27 @@
 use env::Mark;
 use env::{PieToken, TaskId};
 
-use super::core::Fail;
+/// 挂一枚牌子上板时，坏在哪一步。
+///
+/// 四个变体各对应**一个不同的下一步**：换个名字 / 摘掉旧牌 / 找持板者要入口 / 扩容。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 板上没这一枚：查不到（[`Board::lookup`]）/ 那一位已经不在了
+    /// （[`Board::unregister`]）。**"板满"不是这一格**——那是 [`Fail::Full`]。
+    Unknown,
+    /// 这一枚已经有人挂着了（摘牌或换名，别抢）。
+    Taken,
+    /// 这枚入口不是你亲手交给持板者的。
+    Denied,
+    /// 板挂了（条数是策略，容器有界——与 `Service` 表同款：按需 `try_reserve`、备不下如实报）。
+    Full,
+}
+
+// **照实记（"放下"那一枚函数指针已经退场，末了那一具壳也退了）**：它从前是一个注入的别名
+// （`pub type Unship = fn(PieToken) -> Result<(), ()>`），由 `board()` 接上身体；身体只有
+// 一个（`mail::release`）⇒ 这里直接叫，别名与构造点一并撤掉。中间那一版还剩一具
+// `establish::unship` 的转发壳，它也与 `establish` 那六具一起删了（见那个文件的照实记）。
+
 
 use crate::message::Message;
 

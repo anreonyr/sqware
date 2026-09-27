@@ -95,7 +95,7 @@ use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::core::judge::Rule;
+use protocol::system::operator::Rule;
 use protocol::system::operator::{EntryId, Where};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;

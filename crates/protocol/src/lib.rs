@@ -52,8 +52,8 @@
 //! 一起撤掉。它唯二还成立的两条落到别处：
 //!
 //! - `system/{board,operator}/mod.rs` **不碰 `runtime`**，但它 `pub use` 的三手
-//!   （`marked_as` / `opened_by` / `vested_by`）由 `reserve_reads!` 包着 `mail::reserve`
-//!   ——**是内核读**。这三手的身体如今只住 [`communication::establish`]（一处分身，谁要谁直接叫；
+//!   （`marked_as` / `opened_by` / `vested_by`）直接叫 `mail::reserve`
+//!   ——**是内核读**（那支 `reserve_reads!` 宏已随残枝退场，三具身体住 `establish.rs` 本体）。这三手的身体如今只住 [`communication::establish`]（一处分身，谁要谁直接叫；
 //!   "两处取名"那一层别名也已经撤了）；
 //! - **客侧那几手与碰内核的那几手另开一份**（`client.rs` / [`communication`]），与判定、账
 //!   分开摆——这是本 crate 内部的分家依据，与 crate 边界不是一回事。
@@ -80,17 +80,23 @@
 //!
 //! ```text
 //!   communication    地板    会话怎么建起来（其余每一份都建在它上面）
-//!   system           系统    编排（core / desk / grant）
+//!   system           系统    编排（grant：配给记录的解码）＋ 运行期命名
 //!                     └ 容纳  board      运行期的公示板 ＋ 待客账
 //!                             operator   命名寻址：一棵树，名字 → Pie
 //!                             principal  策略身份：这个 Task 此刻代表谁、从谁而来
 //!                             coalition  策略结盟：身份的横向那半（principal 的客人）
-//!   driver           轴      物料到手（supply）／线（line）
+//!                             supply     配给：一张单子换一段记录（引导域 ↔ 编排域）
+//!   driver           轴      线（line）——**只有这一半**（见下）
 //!   （根上三件共享件：`frame` 帧骨架 · `id` 号的规则 · `fail_codes` 负码表）
 //! ```
 //!
-//! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**。`driver` 那
-//! 两半（[`system::supply`] / [`driver::line`]）的帧整份编得动 ⇒ 没有分家的需要。
+//! **照实记（这一层的边界在残枝那一刀收窄了）**：`system::core`（四条判定）、
+//! `system::desk`（服务表 ＋ 待客账）、`driver::supply`（→ `system::supply`）、
+//! `driver::line::core`（→ 路由者自己的 `core/lines.rs`）都已搬出——判据是
+//! **"只有实现方读得到它"**。`protocol::driver` 因此只剩 [`driver::DIR`] ＋ [`driver::line`]。
+//!
+//! **`frame.rs` 只在"帧那一半要能被单独编"时才单开**。`driver::line` 的帧整份编得动
+//! ⇒ 没有分家的需要。
 //! **照实记（`call.rs` 那一格已经收掉）**：
 //! 系统那四份 `system/*/call.rs` 是**薄封装**（文件里除 `pub use` 外没有一个自己的 `fn`），已并进
 //! 各自的 `mod.rs` ⇒ **协议树上不再有 `call.rs`**。实现树上最后一个也走了：`programs/src/system/call.rs`
@@ -124,16 +130,15 @@
 //!   无关；装配期那一步在**装配机器**手里（单子上的 `name` ＋ 起手时交出去的入口）。
 //!   它的载体是内核 ABI（`env::fid` 的 `UnitCall` 整类 + `RoomCall` 的 `Reap`/`Doom`），
 //!   那份载体叙述整体降级为该模块的**附录**——载体不等于协议。**它的 Server 是一个独立域**
-//!   （`prog-system`）：`system/desk.rs` 是那张服务表，`programs/.../system/`
-//!   是它落地的那一台。起它的那一枚（引导域 `root`）只做**固件那一层**的事：读 boot 的
-//!   两块账、把字节与门闩按单子交出去、退出即停机——它不认识服务名，也不记账。
+//!   （`prog-system`）：服务表与判定已回实现侧（`programs/src/system/{desk,core}.rs`），
+//!   `programs/.../system/` 是它落地的那一台。起它的那一枚（引导域 `root`）只做**固件那一层**
+//!   的事：读 boot 的两块账、把字节与门闩按单子交出去、退出即停机——它不认识服务名，也不记账。
 //! - [`driver`] = **设备轴**：一台设备从"交到某个域手里"到"它的线有人领"这一整段。
-//!   **两半**：**物料到手**（`supply`——引导域向上层露的那一面，"一张单子换一段记录"，
-//!   按坐标发货、原件与 `VEST` 都留在引导域手里；两个角色：`server`（引导域的发货循环）、
-//!   `client`（编排域去领））与**线**（权威 / 属主 / 登记 / 投递 / 排空 / 收线——**四格都落在
-//!   机器上**，见 [`driver::line`]）。
+//!   本层只剩**线**（权威 / 属主 / 登记 / 投递 / 排空 / 收线——**四格都落在机器上**，
+//!   见 [`driver::line`]）：**物料**那一半是配给（[`system::supply`]，递单的是编排域、
+//!   发货的是引导域，驱动只是收方），**线那本账**住路由者自己那一侧。
 //!   它不是驱动框架：设备语义各驱动自带（`programs/src/driver/<域>/`），装配样板住程序侧
-//!   （`programs/src/driver/assemble.rs`），本层只管**跨域约定**。
+//!   （`programs/src/driver/{assemble,device,context}.rs`），本层只管**跨域约定**。
 //! - [`system::principal`] = **策略身份**：**名册**（TID → 此刻代表的 PrincipalId）与**谱系**
 //!   （PrincipalId 的一棵只增不改的树）。两条轴都不定义权限——收到它的服务自己解释那条号。
 //!   载体建在会话之上：门牌落在树上 `/sys/principal`，一问一答替这一趟借一枚回信孔过去。

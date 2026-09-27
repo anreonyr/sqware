@@ -6,7 +6,7 @@
 //! `core`——**一处例外**：末尾那条"面不相撞"的编译期断言看得见 `crate::system::coalition`
 //! （常量对，不进机器）；适配那半（`opened_by` 那种内核手的别名）留在 `protocol` 那一侧的 `mod.rs`。
 //!
-//! 本文件**不做裁决**：名册与谱系的规矩全在 [`core`](super::core)。这里只有三件事——
+//! 本文件**不做裁决**：名册与谱系的规矩全在实现侧那一本账里（`programs/src/system/principal/core.rs`）。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码与记号。
 //!
 //! # 帧（两族同形，故只有一份）
@@ -34,8 +34,64 @@
 //! **`flag` 那一格不能省**：`PrincipalId(0)` 是**根**，不是"没有"——`a` 那一格里的 0 是一个
 //! 合法答案，故"有没有"只能另占一格。
 
-use super::core::{Fail, PrincipalId};
+use crate::id::Id;
 use env::{Mark, PieToken, TaskId};
+
+// ── 上线的类型（原先住 `core.rs`：残枝那一刀并进来）──────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct PrincipalId(usize);
+
+impl PrincipalId {
+    /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
+    ///
+    /// **照实记（它今天没有代码读者，留着是有意的）**：`clan` 是它唯一的使用者，那一具已按
+    /// 残枝删掉 ⇒ 这一格只剩"号空间的事实"这一重身份。**不删**：盟册与树那一侧有六处正文
+    /// 拿它当锚（"零号是真格子"——`CoalitionId(0)` / `EntryId` 的对照都指着这里），删了那些
+    /// 说法就没有落点。它不是机制，是一个**被引用的事实常量**。
+    pub const ROOT: PrincipalId = PrincipalId(0);
+
+    /// 由裸号造一个（线上解码面；树外的号从这里进来）。
+    pub const fn new(raw: usize) -> PrincipalId {
+        PrincipalId(raw)
+    }
+
+    /// 裸号。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Id for PrincipalId {
+    fn new(raw: usize) -> PrincipalId {
+        PrincipalId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        PrincipalId::get(self)
+    }
+}
+
+// ── 失败域 ──────────────────────────────────────────────────
+
+/// 失败域：三格，每格一个**不同的下一步**。
+///
+/// **`Resolve` 与三条谱系读没有失败域**——读是公开的（答案不是秘密，Principal 不授予任何
+/// 东西）；这里三格只被写的那两条与"查无此节点"用。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 你不是那一个：不是写名册的那一枚（`Bind`/`Unbind`）、不是"当前正好代表 `p`"的那一枚
+    /// （`derive`）、或目标不在**你自己那一支**里（`adopt`）。调用方要改的是：**该请谁来做**
+    /// 或**换一个目标**。
+    Denied,
+    /// 这条 PrincipalId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
+    Unknown,
+    /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
+    ///
+    /// **两条转换原语到不了这一格**（它们不分配）：到得了的是 `new`（立根）、`bind`、`derive`。
+    Full,
+}
+
 
 // ── 码 ──────────────────────────────────────────────────────
 

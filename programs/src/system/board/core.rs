@@ -1,17 +1,17 @@
-//! board 的核心 —— **公示板、牌子、失败域，与那四个动作**。
+//! board::core — **板那一本账**：定长的一叠牌子 ＋ 按名字 / 按主人的几条读。
 //!
-//! 本文件**不装载体**：立孔 / 推 / 收那一层不在这里（住 `client.rs` 与
-//! [`crate::communication::establish`]）；它只**读**内核查得到的两格事实（谁授的 / 还答不答
-//! 得出）并**放下一手**——那几具身体只有一处，故这里直接叫。
+//! **照实记（它原先住 `protocol::system::board::core`）**：那一份的读者只有本域的持板线程
+//! （`prog-board` 那一段）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧只留
+//! **失败域**（`Fail`）与几具客手。
 //!
-//! **照实记（这一句原先写的是"本文件不碰内核"）**：那时这几手是**注入**的（两枚函数指针
-//! ＋ `board()` 那个构造点），本文件手里只有指针、确实不碰内核。注入撤了（身体只有一处，
-//! "接上去"只是换个名字传一圈），这句话跟着改真：碰内核的是
-//! [`crate::communication::establish`] 那两具身体，本文件只是**叫**它们。
+//! 本文件只讲牌子与那五条动作；**板为什么就一枚线程、惰性剔除的口径**写在协议那一边
+//! （`protocol::system::board` 的正文）。
 
 use env::{Name, PieToken, TaskId};
 
-use crate::communication::establish::{EstablishFail, vested_by};
+use protocol::communication::establish::vested_by;
+use protocol::system::board::Fail;
+use runtime::env::mail;
 
 // ── 结构 ────────────────────────────────────────────────────
 
@@ -49,22 +49,6 @@ impl Sign {
         self.entry = None;
         self.owner = None;
     }
-}
-
-/// 挂一枚牌子上板时，坏在哪一步。
-///
-/// 四个变体各对应**一个不同的下一步**：换个名字 / 摘掉旧牌 / 找持板者要入口 / 扩容。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 板上没这一枚：查不到（[`Board::lookup`]）/ 那一位已经不在了
-    /// （[`Board::unregister`]）。**"板满"不是这一格**——那是 [`Fail::Full`]。
-    Unknown,
-    /// 这一枚已经有人挂着了（摘牌或换名，别抢）。
-    Taken,
-    /// 这枚入口不是你亲手交给持板者的。
-    Denied,
-    /// 板挂了（条数是策略，容器有界——与 `Service` 表同款：按需 `try_reserve`、备不下如实报）。
-    Full,
 }
 
 // **照实记（"放下"那一枚函数指针已经退场，末了那一具壳也退了）**：它从前是一个注入的别名
@@ -234,7 +218,7 @@ impl Board {
     /// 摘实例、清主人，**牌子留着**。
     fn unship_at(&mut self, at: usize) {
         if let Some(entry) = self.signs[at].entry {
-            let _ = runtime::env::mail::release(entry);
+            let _ = mail::release(entry);
         }
         self.signs[at].lift();
     }
@@ -253,20 +237,3 @@ impl Board {
 //   - [`Board::unregister`] 里那次 `sweep_at`：撤牌子也**先扫后判**。
 //
 // 全部外部依赖只有两处：`vested_by`（探入口）与 `mail::release`（放下）——直接叫的那两具身体。
-
-// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
-//
-// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
-// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
-// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
-
-/// 建立那一手的失败域 → 板的失败域。
-///
-/// **铸不出孔** ⇒ `Denied`（本端这一手没做成）；**交不出去** ⇒ `Unknown`
-/// （它最常见的那一支是"对端已不在"）。
-pub fn map_establish(fail: EstablishFail) -> Fail {
-    match fail {
-        EstablishFail::NoHole => Fail::Denied,
-        EstablishFail::NoSeed => Fail::Unknown,
-    }
-}

@@ -236,10 +236,9 @@
 // `prog-coalition` 域里跑的那枚线程）住 `programs/src/system/coalition/`。
 // 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/service.rs`。
 
-pub mod core;
 pub mod frame;
 
-pub use crate::system::coalition::core::{Coalition, CoalitionId, Fail, WINDOW_CAP, Window};
+pub use frame::{CoalitionId, Fail, WINDOW_CAP, Window};
 
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`）。

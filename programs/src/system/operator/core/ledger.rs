@@ -1,7 +1,7 @@
 //! operator::core::ledger —— **那一本账**：一格的两轴事实（谁许用 / 归谁改）。**不带载体。**
 //!
 //! 本文件与 [`judge`](super::judge) / [`gate`](super::gate) 同一站位：只判、只记，**不发消息**——
-//! 它唯一的"问"是那一问活性（[`crate::communication::establish::vested_by`]：主人还在场吗），
+//! 它唯一的"问"是那一问活性（[`protocol::communication::establish::vested_by`]：主人还在场吗），
 //! 那是**读**内核盖的那一格，不推不收。
 //! 唯一一处动树的手是 [`Ledger::land`]——它把"要位 → 落树 → 记账"收成一条动词，而**落树
 //! 那一手仍由调用方注入**（理由见那里）。
@@ -53,8 +53,7 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
-use super::judge::Rule;
-use super::{EntryId, Fail, Where};
+use protocol::system::operator::{EntryId, Fail, Rule, Where};
 
 // ── 两把钥匙 ────────────────────────────────────────────────
 
@@ -135,7 +134,7 @@ impl<P, C> Line<P, C> {
 /// **那一本账**：一格一条，按两种钥匙查。
 ///
 /// 它的"活着"那一问与树要的是**同一句**（[`vested_by`]：那一枚还答得出吗），故两边叫的是
-/// **同一个身体**（[`crate::communication::establish::vested_by`]），不另开一个 trait、
+/// **同一个身体**（[`protocol::communication::establish::vested_by`]），不另开一个 trait、
 /// 也不接一枚函数指针进来。
 pub struct Ledger<P, C> {
     lines: Vec<Line<P, C>>,
@@ -176,7 +175,7 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
         match self.lines[at].owner {
             None => true,
             Some(owner) if owner.who == who => true,
-            Some(owner) => crate::communication::establish::vested_by(owner.pie).is_none(),
+            Some(owner) => protocol::communication::establish::vested_by(owner.pie).is_none(),
         }
     }
 

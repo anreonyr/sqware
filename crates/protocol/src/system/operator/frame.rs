@@ -6,9 +6,9 @@
 //! `env` 与同层 `core`/`judge`（[`CoordFrame`] 的后半是装配表上的 [`Eyes`]），而那些
 //! 边角今天**没有判据**；适配那半留在 `protocol` 那一侧的 `mod.rs`（今天的形状：**只有身体、
 //! 没有壳**——要哪一手直接叫 [`crate::communication::establish`]），建立那一手的失败域映射
-//! 随本层 [`core`](super::core) 同住。
+//! 与判据、账同一份屋顶（**裁决与账已回实现侧**：见 `programs/src/system/operator/core/`）。
 //!
-//! 本文件**不做裁决**：树上的规矩（谁能落、什么时候剔死）全在 [`core`](super::core)。
+//! 本文件**不做裁决**：树上的规矩（谁能落、什么时候剔死）全在实现侧那一本账里。
 //! 这里只有三件事——**编一帧 / 解一帧**、把"不在我表里"翻成 `None`、把失败域翻成答话码。
 //!
 //! 判据只有一条可机械检查的纪律——
@@ -39,7 +39,7 @@
 //!
 //! **问话一个动作一条形状**（不再是"一帧定长、尾格含义由 op 定"）：荷载收什么，帧里就写什么
 //! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `Road` 那一条
-//! （[`REQ_LEN`]，路封顶 [`Operator::ROAD_MAX`] 段），其余都落在十到五十字节。
+//! （[`REQ_LEN`]，路封顶 [`ROAD_MAX`] 段），其余都落在十到五十字节。
 //!
 //! **每一张形状一张字段表**（[`RoadHead`] / [`List`] / [`Part`] / [`Land`] / [`Entry`]）：
 //! 偏移一处都不写。**照实记（表名的口径收窄了一次）**：板那一族的表按**荷载**起名（那一族
@@ -60,13 +60,304 @@ use env::Mark;
 use env::wire::Eyes;
 use env::{Name, PieToken, TaskId};
 
-use super::core::judge::Id;
-use super::core::{EntryId, Fail, Operator, Where};
 // **照实记（同一个词的第二件事）**：本文件里的 `Id` 是 `judge` 的**宽度别名**（u64），
 // 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
 // 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
 use crate::id::Id as _;
 use crate::message::Message;
+
+// ── 两条容量（原先挂在 `Operator` 上）────────────────────────
+//
+// **照实记**：它们原先是 `Operator` 的关联常量（`Operator::PANE_CAP` / `Operator::ROAD_MAX`）。
+// 账搬回实现侧之后，**帧长要按它们算**——故容量归协议（线格式的一部分），账去读它。
+
+/// 一枚条目的**号**：机器用的那一个。
+///
+/// **裸号**：与 [`PrincipalId`](crate::system::principal::PrincipalId) / [`CoalitionId`](crate::system::coalition::CoalitionId)
+/// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
+/// "这枚号还在不在"由每条读**查一次表**答出来。
+///
+/// **没有 `ROOT`**（对照另两种号：那两处的 `ROOT` 都在，这里特意没有）：根不是谁条目里的
+/// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
+/// "没有这个号"由 [`Fail::Unknown`] 答，别拿 0 当空。根要当坐标时走 [`Where::Root`]。
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct EntryId(usize);
+
+impl EntryId {
+    /// 由裸号造一个（线上解码面；已失效的号从这里进来）。
+    pub const fn new(raw: usize) -> EntryId {
+        EntryId(raw)
+    }
+
+    /// 裸号。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl crate::id::Id for EntryId {
+    fn new(raw: usize) -> EntryId {
+        EntryId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        EntryId::get(self)
+    }
+}
+
+/// **号那一格线上是 8 字节小端**——与 [`Id`] 给三条号空间定的同一条规则（那一条 trait 的
+/// `to_bytes` / `from_bytes` 就是这一格的正文）。
+///
+/// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
+/// [`EntryId`]（依赖是单向的 `protocol → env`），故宽度与字节序只能由定义它的这一处给。
+/// 口径与 `env::wire::Eyes` 那一处相同（`Field` 那一族的正文记着）。
+///
+/// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
+/// （[`Fail::Unknown`]）。
+impl env::wire::Field for EntryId {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes());
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(Self::from_bytes(bytes.get(..8)?.try_into().ok()?))
+    }
+}
+
+/// 一块 `Pane` 里最多几条。条数是策略，容器要有界。
+pub const PANE_CAP: usize = 16;
+
+/// 一条**路**最多几段——只有 `seek` 用得上它（名字只到那一格，往下一律按号）。
+///
+/// 注意：**树的深度不受这条路的长短约束**（`land` / `part` 收的是号，层层往下立与路无关）。
+pub const ROAD_MAX: usize = 8;
+
+// ── 号在模型里的宽度 ────────────────────────────────────────
+
+/// 号在模型里的宽度 —— **与它在自己号空间里的宽度一致**（riscv64：`usize` = 8 字节）。
+///
+/// 本文件与 [`gate`](super::gate) 只认识这一格别名，不认识 `PrincipalId` / `CoalitionId`
+/// （那两个号是泛型的 `P` / `C`，见文件头注）。定死宽度是为了让**上帧的那一格**与这里的
+/// 那一格同宽。
+///
+/// 照实记：这一格原先写的是 `u32`，而适配层接的是 `usize`——`Session::who` 那一处写着
+/// `p.get() as u32`，一次**静默截断**。号不上帧的时候看不出来（装配期的号都是小号）；
+/// 这一刀之后号要上帧（8 字节），故一并提宽。
+pub type Id = u64;
+
+/// **容器坐标**：要动的那一块 `Pane` 在哪。
+///
+/// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 [`EntryId`]），
+/// 所以它既不是"0 号"，也不能拿 `Option` 的空位代替：那两样都会被读成"某个真格子"。
+///
+/// 它的对立面是 [`Operator::find`] / [`Operator::trim`] / [`Operator::name`] 的形参：
+/// 那三条要的是**条目**的号，**根根本递不进来**——这是类型义务，不是运行期检查。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Where {
+    /// 根那一层：[`Operator::list`] 列的就是它，`land` / `part` 在它下面立一格。
+    Root,
+    /// 某一号那一块 `Pane` 里。
+    At(EntryId),
+}
+
+/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（[`Where`] 两种报法在线上的样子）。
+///
+/// **照实记（它们为什么从 `frame.rs` 搬到这儿）**：这两个数是**这一格自己的编码**
+/// （"根"与"某一号"怎么落在字节上），与"哪一帧用得上它"无关——`Field` 那一族的口径是
+/// **impl 跟着类型走**，故记也跟着类型走。
+const AT_ROOT: u8 = 0;
+const AT_ID: u8 = 1;
+
+/// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号。
+///
+/// **根为什么占一格、而不是省掉**：字段表要的是"这一格占多宽"（定长），省了就得再想"读到哪儿
+/// 算数"；而根**没有号**（见 [`EntryId`]），不能拿零号代替——那会被读成"某个真格子"。
+///
+/// **表外的记 ⇒ 整帧读不懂**：`0` / `1` 之外的记不是任何一种坐标，`fetch` 答 `None`
+/// （与从前那一手 `unpack_at` 同款：不猜、不崩）。
+impl env::wire::Field for Where {
+    const WIDTH: usize = 1 + <EntryId as env::wire::Field>::WIDTH;
+
+    fn store(&self, out: &mut [u8]) {
+        let (tag, id) = match *self {
+            Where::Root => (AT_ROOT, EntryId::new(0)),
+            Where::At(id) => (AT_ID, id),
+        };
+        out[0] = tag;
+        // 长度恰是 `WIDTH`（`Field::store` 的契约）⇒ 记之后那一段正好是号那一格。
+        id.store(&mut out[1..]);
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        match *bytes.first()? {
+            AT_ROOT => Some(Where::Root),
+            AT_ID => Some(Where::At(EntryId::fetch(bytes.get(1..)?)?)),
+            _ => None,
+        }
+    }
+}
+
+/// 八条原语会失败在哪一格。**一格对应一个不同的下一步**。
+///
+/// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
+/// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
+/// "自己 / 别人"，所以"已占即拒"在这里无处落脚。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
+    ///
+    /// 三条路都走这一格：**没铸过**、`trim` **剪掉了**、[`Operator::find`] **剔死了**
+    /// ——表里留着一个墓碑（`None`），但墓碑**不对外答"我这儿死过"**：三条路长得一样。
+    /// 空路（根）走 [`Operator::seek`] 时也是这一格。
+    Unknown,
+    /// 那块 `Pane` 里还有东西，而这一手会**毁掉**里面的 ⇒ 先清空。
+    ///
+    /// 今天只有两条原语走得到它：[`Operator::land`] 的换绑（要把那块非空 `Pane` 换成砖）与
+    /// [`Operator::trim`]（要拿走它）。**`part` 不走这一格**——它要的正是那块 `Pane`，
+    /// 已经在就是成了（照实记见 [`Operator::part`] 的注）。
+    NonEmpty,
+    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
+    NotATile,
+    /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"。
+    NotAPane,
+    /// 那一块 `Pane` 已经 [`PANE_CAP`] 条，装不下；或者一条路超过 [`ROAD_MAX`]
+    /// 段（只有 [`Operator::seek`] 走得到这一格）⇒ 拆层 / 扩容量 / 把路缩短。
+    Full,
+    /// 那枚 Pie 后面的人没了（探不到）⇒ 重落 / 重寻。**剔掉那一条的同时**答这一格。
+    Dead,
+}// ── 一格规则 ────────────────────────────────────────────────
+
+/// **这一格谁许用**。五格覆盖"公开 / 就是某一位 / 在某一位那一支里 / 在某枚盟里 /
+/// 就是开着某一格的那一位"。
+///
+/// `By`（落牌那一位）**不进这一格**：规则改不改由它说了算（判据在适配层），而"谁能改规则"
+/// 与"谁能用这一格"是两个问题——混成一格就会得出"能改的人自然能用"。
+///
+/// **`Opens` 那一格是"点名那一手"**：前四格只能指到"自己人"（自己的号、自己那一支、自己在的
+/// 盟），而 `Opens` 指的是一格**门牌**——客人用 [`seek`](super::Operator::seek) 把一条路
+/// 译成号，再把那个号写进规矩，于是「把这一格许给 `/device/uart` 那位」写得出来。名字由树
+/// 提供（**树就是名录**），故规矩里存的是**格号**，不是身份号：判的那一刻才去问"此刻谁占着
+/// 那一格"（晚绑定，与 [`Rule::In`] 同一形状——存一枚盟号，成员现场问）。
+///
+/// 照实记：**号不重用**（`core.rs` 只增水位）⇒ 那一格被剪/被顶之后，这一条规矩**永久判不了**
+/// （重挂是**新号**）。这是"此刻占着这一格的那位"的题中之义，不是缺陷；要"换载体规矩不变"
+/// 就得给身份起名字（那是另一条路，今天没有客人要它）。
+///
+/// ⇒ **这一格的寿命 = 那一格的寿命**：与 [`Rule::Is`] / [`Rule::Under`]（绑在**身份**上、
+/// 活到会话结束）不同，它绑在**一次挂载**上。作废之后判出来的是 [`Ruling::Unjudged`]
+/// （"好不了"的那一类）——要修的是**写这条规矩的主人**（重 `land` 一次），客人换目标没用。
+///
+/// **这一格是从四条路里挑的**（要补的那句话是「许给 `/device/uart` 那位」）：① 名册带名字
+/// （仓里从此**两套名字**，要对齐重名 / 改名 / 谁有权命名）；② **树当名录**（本格——客人
+/// `seek` 出号、写进规矩，线上仍是 8 字节）；③ 装配表 args（只到装配期，且号是 `derive(ROOT)`
+/// 的顺序产物 ⇒ 加一条服务全表错位）；④ 不造机制（那句话仍然说不出来）。**被否的第五条路**
+/// 是"规矩里直接写一条路"——线上装不下（`REQ_LEN` 258 减 `land` 用掉的 60 只剩 198，而一条路
+/// 最多 8 × 32 = 256），且它违反已定的「号是唯一的直接坐标」。
+///
+/// # 这一轴**封顶**（用户裁定）
+///
+/// 上面五格是这一轴的**完备集**：没有组合（合取 / 析取 / 否定），也没有「这一位是什么」
+/// 这一族谓词。三条理由，前两条是数不是偏好：
+///
+/// - **装不下**：线上这一段是 `tag(1) + 号(8)`，而**号那一格只有一格**（[`Rule`] 的 `Field`
+///   那一格）。任何"两句合起来"立刻要第二格号，而 51 → 60 是**纯追加**换来的兼容性
+///   （老帧读不到那两格 ⇒ 逐字回到 [`Rule::Public`]）。
+/// - **问次数长在串行的持树者身上**：今天最坏 [`Rule::Opens`] = **三问**（名册 → 树 → 名册），
+///   其中两次跨域、各带 1s 期限；而持树者是一枚线程——真机量过：一位客人连打约 1030 手同步
+///   往返，别人的三手（`name` / `trim` / `list`）连着 1 秒过期。组合让每一次 `find` 的嵌套
+///   问答**随深度增长**。
+/// - **组合要的不是新变体，是一套三值代数**：[`judge`] 里 `Ok(false)`（"不是" ⇒ 终态拒）与
+///   `Err`（"问不到" ⇒ 判不了）是**两件事**；合取得先定义谁压过谁、要不要短路。那是新维度。
+///
+/// **要加第六格，得同时有三样**：一位真客人 + 一句它说得出的原话（不是"将来可能"）+
+/// 那三问的答案（装在哪一格 / 判一次问几次 / 写完谁读得回）。三样缺一 ⇒ 不加。
+///
+/// **封顶不等于五格都好判**：[`Rule::In`] 与 [`Rule::Opens`] 都是"引用 + 现场求解"，而**只有
+/// `Opens` 的引用对象会死**（上一段）⇒ 这个封闭集里**存在"永远判不了"的一格**——它与"对面
+/// 暂时不答"同落 [`Ruling::Unjudged`]（两类同格是那一格自己的口径：客人那一侧同一步，差别由
+/// 持树者各说一行读数分开，见 [`Ruling::Unjudged`] 与 [`Facts::opens`]）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rule<P, C> {
+    /// 任何**已绑身份**都可以（这就是"公开入口"）。没绑的仍然不行（见 [`judge`] 的第一格）。
+    Public,
+    /// 就是这一位。
+    Is(P),
+    /// 这一位在 `p` 那一支里（`p ≼ 本人`，含相等）——纵向那条轴。
+    Under(P),
+    /// 这一位在这枚盟里——横向那条轴。
+    In(C),
+    /// **就是开着第 `e` 格的那一位**（那一格的坐标是 [`EntryId`]，不是身份号）。
+    Opens(EntryId),
+}
+
+/// 「用那一轴」在帧里的标记。`0` 是公开，也是**兜底**（读不懂那一格都走它）。
+const RULE_PUBLIC: u8 = 0;
+const RULE_IS: u8 = 1;
+const RULE_UNDER: u8 = 2;
+const RULE_IN: u8 = 3;
+/// `4` 之后的号装的是**格号**（[`Rule::Opens`]），不是身份号——同一个 8 字节那一格。
+const RULE_OPENS: u8 = 4;
+
+/// 「**用**」那一轴在线上是"**标记 ＋ 8 字节号**"（9 字节）。
+///
+/// **照实记（它为什么住这一处，不住 `frame.rs`）**：这是 [`Rule`] 自己的编码（哪一格是什么
+/// 规矩），而 `Field` 那一族的口径是 **impl 跟着类型走**——`frame.rs` 只管"这一格排在整帧的
+/// 第几格"，不管这一格自己怎么落字节。
+///
+/// **装不下组合的理由与数**写在 [`Rule`] 的注里（号那一格只有一格，51 → 60 是纯追加换来的）。
+impl env::wire::Field for Rule<Id, Id> {
+    const WIDTH: usize = 1 + 8;
+
+    fn store(&self, out: &mut [u8]) {
+        let (tag, id) = match *self {
+            Rule::Public => (RULE_PUBLIC, 0),
+            Rule::Is(p) => (RULE_IS, p),
+            Rule::Under(p) => (RULE_UNDER, p),
+            Rule::In(c) => (RULE_IN, c),
+            // 格号与身份号同宽（都是 8 字节）⇒ 帧长一个字节都不动。
+            Rule::Opens(e) => (RULE_OPENS, e.get() as Id),
+        };
+        out[0] = tag;
+        out[1..].copy_from_slice(&id.to_le_bytes());
+    }
+
+    /// **陌生的标记 ⇒ [`Rule::Public`]**：读不懂那一格就不认这条规矩，而不是把整帧判成坏
+    /// （一个陌生 / 缺失的规矩不该让一句问话变成"读不懂"）。
+    ///
+    /// **照实记（"老帧读不到这两格"那一句兜底退了）**：从前那一手对**缺失**的两格也答
+    /// `Public`（51 字节的老帧照旧解得出来）。字段表把长度变成**契约**之后（`land` 那一帧就是
+    /// 60 字节，短一字节整帧读不懂），那条兜底**够不到**了——这一手只剩"标记陌生"这一格，
+    /// 而仓里也没有"还没写这两轴"的调用方（编那一侧一律写全）。
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        let tag = *bytes.first()?;
+        let raw: [u8; 8] = bytes.get(1..9)?.try_into().ok()?;
+        let id = Id::from_le_bytes(raw);
+        Some(match tag {
+            RULE_IS => Rule::Is(id),
+            RULE_UNDER => Rule::Under(id),
+            RULE_IN => Rule::In(id),
+            RULE_OPENS => Rule::Opens(EntryId::new(id as usize)),
+            _ => Rule::Public,
+        })
+    }
+}
+
+/// **门外那一问的答案**。三格；`Allow` / `Deny` 各一个不同的下一步，`Unjudged` 是"判不了"。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Ruling {
+    /// 过。
+    Allow,
+    /// 不过——**终态**：换人 / 换目标 / 别重试。
+    Deny,
+    /// **判不了**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），或那一号是碑 /
+    /// 那一格是块窗格 / 开者那扇门封印了（**好不了**）。
+    ///
+    /// 两类在这里**同格**：客人的下一步是同一个（当趟放弃），差别在"为什么"⇒ 那是读数
+    /// （[`Facts::opens`] 那一侧的三因分得开）。**重试是客人的策略**，本格不作承诺。
+    Unjudged,
+}
+
+
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -94,7 +385,7 @@ pub use crate::fail_codes::OK;
 
 /// 答话那一格。**前六格与 [`Fail`] 一一对应**，第七格不是失败域
 /// 的：这一问读不懂（帧坏了 ⇒ 不猜、不崩）。**第八、九格也不是 [`Fail`]**——那是门外那一问
-/// （[`judge`](crate::system::operator::core::judge)）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
+/// （判据那一半住 `programs/src/system/operator/core/judge.rs`）的两格答案，见 [`DENIED`] / [`UNJUDGED`]。
 ///
 /// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
 /// 一份（持树者那一侧编、客人那一侧读）。
@@ -108,7 +399,7 @@ pub const BAD: u8 = 7;
 /// **门外那一问答"不"**：这一位不许动这一格。**终态**——换人 / 换目标，别重试。
 ///
 /// **第八格起不再是 [`Fail`] 的对照表**（[`Fail`] 只有六格）：这两格来自适配层的裁决
-/// （[`judge`](crate::system::operator::core::judge)），核心一个字节都不知道它们。分开的理由与
+/// （判据那一半住实现侧），核心一个字节都不知道它们。分开的理由与
 /// [`UNJUDGED`] 同款——"你不许"的下一步与"没铸过 / 剪掉了"不同。
 pub const DENIED: u8 = 8;
 /// **门外那一问答"判不了"**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），
@@ -129,7 +420,7 @@ pub const UNJUDGED: u8 = 9;
 ///
 /// **两轴是两件事**，故各占各的格：
 ///
-/// - **用**那一轴 = [`Rule<Id, Id>`]（[`judge`](super::core::judge) 那一套四格：公开 / 就是某一位 /
+/// - **用**那一轴 = [`Rule<Id, Id>`]（`judge` 那一套四格：公开 / 就是某一位 /
 ///   在某一位那一支里 / 在某枚盟里）；
 /// - **改**那一轴 = 今天原来那一格（"归落牌的那一位"），**它本来就只是 0/1**，故退成一个
 ///   `bool`——线上值逐字同义（`Owner` 原是 1、`Public` 原是 0）。
@@ -142,24 +433,23 @@ pub const UNJUDGED: u8 = 9;
 /// `use` 了两个——再加一轴就会写出"这个 `Rule` 不是那个 `Rule`"的代码。这一刀把它拆开：
 /// 线上一侧只剩 [`Rule`] 这一个名字（**再出口**自模型那一侧），"改"退成 `bool`。
 ///
-/// **方向也是挑过的**：本文件反向依赖 [`judge`](super::core::judge)（同一模块树内），而后者从不
-/// 依赖本文件——故 [`gate`](super::core::gate) 那条"不与 `protocol` 那一侧沾边"的纪律一字不破（那一侧
+/// **方向也是挑过的**：本文件反向依赖判据那一半（`judge`，住实现侧），而后者从不
+/// 依赖本文件——故 `gate` 那条"不与 `protocol` 那一侧沾边"的纪律一字不破（那一侧
 /// 拖着 `runtime`，`judge.rs` 不拖）。
-pub use super::core::judge::Rule;
 
-/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ 段数 ＋ [`Operator::ROAD_MAX`] 段名字）。
+/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ 段数 ＋ [`ROAD_MAX`] 段名字）。
 ///
 /// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
 /// 是字段表求和（`LEN`），`Road` 那一格是 [`env::wire::store_tail`] 交回的游标。
-pub const REQ_LEN: usize = RoadHead::LEN + Operator::ROAD_MAX * env::wire::NAME_LEN;
+pub const REQ_LEN: usize = RoadHead::LEN + ROAD_MAX * env::wire::NAME_LEN;
 
 /// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
-/// [`Operator::PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
+/// [`PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
 /// 没有上限，故那里必须带一格"未完"）。
 ///
 /// 本族那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
 /// 状态 ＋ `NAME_LEN - 1` 个字节，`号` 那一形是状态 ＋ 8）。
-pub const UNION_LEN: usize = 2 + Operator::PANE_CAP * 8;
+pub const UNION_LEN: usize = 2 + PANE_CAP * 8;
 
 const _: () = assert!(Status::LEN + (env::wire::NAME_LEN - 1) <= UNION_LEN);
 const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNION_LEN);
@@ -176,7 +466,7 @@ const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNIO
 
 /// `Road` 那一问的**头两格**：动作码 ＋ **段数**。
 ///
-/// **段数写的是真实条数**（哪怕超过 [`Operator::ROAD_MAX`]）：那样"路太长"由持树者按
+/// **段数写的是真实条数**（哪怕超过 [`ROAD_MAX`]）：那样"路太长"由持树者按
 /// [`Fail::Full`] 答出来，而不是在这里被悄悄截断成另一条路。故这一格**允许大于实际带的
 /// 项数**——它是**声明**，不是长度（"尾巴"那一族里只有它这样）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
@@ -271,8 +561,8 @@ pub enum Req<'a> {
 /// `None`（见 [`Message::fetch`] 那一段）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
-    /// `seek`：路（最多 [`Operator::ROAD_MAX`] 段）+ **真实段数**（可能超过上限，那一格答 [`FULL`]）。
-    Road([Name; Operator::ROAD_MAX], usize),
+    /// `seek`：路（最多 [`ROAD_MAX`] 段）+ **真实段数**（可能超过上限，那一格答 [`FULL`]）。
+    Road([Name; ROAD_MAX], usize),
     /// `list`：容器坐标。
     List(Where),
     /// `part`：容器坐标 + 新名。
@@ -308,7 +598,7 @@ impl Message for Req<'_> {
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
             Req::Road(road) => {
-                let filled = road.len().min(Operator::ROAD_MAX);
+                let filled = road.len().min(ROAD_MAX);
                 let head = RoadHead {
                     op: SEEK,
                     count: road.len().min(u8::MAX as usize) as u8,
@@ -360,11 +650,11 @@ impl Message for Req<'_> {
                 // **只解前 `ROAD_MAX` 段**：编的那一侧只填了那么多，剩下的段位是零填充——空段
                 // 不是名字，拿它去解会把一整帧判成"读不懂"（真机实测：四格全答 `BAD` 就栽在
                 // 这里）。**长度也是形状的一部分**：`2 ＋ 填进去的段数 × 32`。
-                let filled = count.min(Operator::ROAD_MAX);
+                let filled = count.min(ROAD_MAX);
                 if bytes.len() != RoadHead::LEN + filled * env::wire::NAME_LEN {
                     return None;
                 }
-                let mut road = [Name::EMPTY; Operator::ROAD_MAX];
+                let mut road = [Name::EMPTY; ROAD_MAX];
                 env::wire::fetch_tail(bytes, RoadHead::LEN, &mut road[..filled])?;
                 Wire::Road(road, count)
             }
@@ -410,17 +700,17 @@ impl Message for Req<'_> {
 
 // ── 答：一格状态 / 一串号 / 一枚名字 / 一枚号 ─────────────────
 
-/// 一帧「列」的读数：号最多 [`Operator::PANE_CAP`] 枚。
+/// 一帧「列」的读数：号最多 [`PANE_CAP`] 枚。
 ///
-/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::system::coalition::core::Window) 并成一个容器）**：
+/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::system::coalition::Window) 并成一个容器）**：
 /// 两者都在搬"一串号"，差的正是**"未完"那一格**——盟籍**没有上限**（一格盟可以很多人）⇒ 那边
 /// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
-/// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`Operator::PANE_CAP`]）⇒
+/// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`PANE_CAP`]）⇒
 /// "还没完"这件事在这一族**不存在**，带 `more` 就是一格**恒假**的字段。故两处各留一个，
 /// **帧形也跟着**（[`Tally`] 无"未完"、coalition 的 `SeqHead` 有）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
-    ids: [EntryId; Operator::PANE_CAP],
+    ids: [EntryId; PANE_CAP],
     n: usize,
 }
 
@@ -428,18 +718,18 @@ impl Listing {
     /// 空的那一串。
     pub const fn new() -> Listing {
         Listing {
-            ids: [EntryId::new(0); Operator::PANE_CAP],
+            ids: [EntryId::new(0); PANE_CAP],
             n: 0,
         }
     }
 
-    /// 收一串（**收够 [`Operator::PANE_CAP`] 枚就停**：一条 pane 本来就不超过它）。
+    /// 收一串（**收够 [`PANE_CAP`] 枚就停**：一条 pane 本来就不超过它）。
     ///
     /// **照实记（它替掉了 `pack_list` 那一手）**：从前编那一侧直接往缓冲里写（`2 + n * 8`
     /// 那几个偏移）；现在编的是**这一枚容器**，落字节归 [`Tally`] 与 [`env::wire::store_tail`]。
     pub fn of(ids: impl Iterator<Item = EntryId>) -> Listing {
         let mut listing = Listing::new();
-        for id in ids.take(Operator::PANE_CAP) {
+        for id in ids.take(PANE_CAP) {
             listing.push(id);
         }
         listing
@@ -460,7 +750,7 @@ impl Listing {
         &self.ids[..self.n]
     }
 
-    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 [`Operator::PANE_CAP`] 枚。
+    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 [`PANE_CAP`] 枚。
     fn push(&mut self, id: EntryId) {
         if let Some(slot) = self.ids.get_mut(self.n) {
             *slot = id;
@@ -595,7 +885,7 @@ impl Said {
 
     /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号。
     ///
-    /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`Operator::PANE_CAP`]）⇒
+    /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`PANE_CAP`]）⇒
     /// `Err(BAD)`——短一字节也是它。
     pub fn list(&self) -> Result<Listing, u8> {
         let code = self.code();
@@ -605,11 +895,11 @@ impl Said {
         let bytes = self.bytes();
         let head = Tally::fetch(bytes).ok_or(BAD)?;
         let count = head.count as usize;
-        if count > Operator::PANE_CAP {
+        if count > PANE_CAP {
             return Err(BAD);
         }
         let body = bytes.get(Tally::LEN..).ok_or(BAD)?;
-        let mut ids = [EntryId::new(0); Operator::PANE_CAP];
+        let mut ids = [EntryId::new(0); PANE_CAP];
         let end = env::wire::fetch_tail(body, 0, &mut ids[..count]).ok_or(BAD)?;
         if end != body.len() {
             return Err(BAD);

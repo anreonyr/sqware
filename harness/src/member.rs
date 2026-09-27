@@ -49,13 +49,13 @@ use protocol::id::Id;
 use protocol::communication::establish::Endpoint;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
-use protocol::system::coalition::core::{CoalitionId, Fail, Window};
+use protocol::system::coalition::{CoalitionId, Fail, Window};
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PolicyFace;
-use protocol::system::principal::core::Fail as PolicyFail;
-use protocol::system::principal::core::PrincipalId;
+use protocol::system::principal::Fail as PolicyFail;
+use protocol::system::principal::PrincipalId;
 use runtime::env::room;
 use runtime::env::unit as utask;
 

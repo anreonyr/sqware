@@ -1,136 +1,26 @@
-//! operator 的核心 —— **树、八条原语（落 / 分 / 寻 / 剪 / 列 / 译 / 名 / 开）、失败域**。
+//! operator::core — **树那一本账**：一张按号排的表 ＋ 八条原语。
 //!
-//! 本文件**不装载体**：立孔 / 推 / 收那一层不在这里（住 `client.rs` 与
-//! [`crate::communication::establish`]）；它只**问**内核查得到的三格事实（这一枚还答不答得出 /
-//! 这扇门是谁开的）并**放下一手**——那三具身体只有一处，故这里直接叫。
+//! **照实记（它原先住 `protocol::system::operator::core`）**：那一份的读者只有本域的持树者
+//! （`prog-operator` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
+//! 只留**上线的类型**（`EntryId` / `Where` / `Fail` / `Id` / `Rule` / `Ruling` 与两条容量）
+//! 与客侧几手。
 //!
-//! **照实记（这一句原先写的是"本文件不碰内核"）**：那时这三手是**注入**的（三枚函数指针、
-//! 一格 `Stamps` 组、`tree()` 那个构造点），本文件手里只有指针、确实不碰内核。注入撤了
-//! （一处身体，"接上去"只是换个名字传一圈），这句话跟着改真：碰内核的是
-//! [`crate::communication::establish`] 那三具身体，本文件只是**叫**它们。
-//! 树的规矩与那三格事实**分开摆**这条没变——八条原语仍只认号与名字。
-//!
-//! 照实记：**第八条（[`Operator::opens`]）不上线**——它没有动作码，是持树者自己判
-//! [`Rule::Opens`](judge::Rule::Opens) 时问的一句（"这一格是谁的门牌"）。对外那一族
-//! 仍是七条（见 `super::mod` 那两张表）。
-//!
-//! # 这批判据住在哪
-//!
-//! **今天哪也不住。** 本文件**不放** `#[cfg(test)]`：`protocol` 是 `[lib] test = false`（riscv
-//! 目标上编不出 libtest），故这里的 `cfg(test)` 一行都不会被主工作区那几道门编到。原先有一台
-//! 编外宿主靶（`protocol-case` 的 `operator` 靶，把**本文件逐字**编进去）——**那台已删**
-//! （用户裁定"protocol-case 没必要"）。⇒ 改核心之前**先想清楚判据在哪**：今天没有。
-//!
-//! # 坐标：号是唯一的直接坐标
-//!
-//! **名字是间接的**：一条路（`&[Name]`）全系统只有一处用处——[`Operator::seek`] 把路**译成号**。
-//! 译完就按号走：`find` / `trim` / `name` 收号，`land` / `part` / `list` 收**容器坐标**
-//! [`Where`]（根，或某一号）。名字在答话那一侧还留着一条（[`Operator::name`] 按号答名）。
-//!
-//! # 树：**号就是下标**（照实记：那一案原来记着"留到读数说话"，读数说话了）
-//!
-//! 本文件原来是一棵**嵌套树**（`Entry { 号, 名字, 去处 }`，`Node::Pane(Vec<Entry>)`），
-//! 号 → 那一格走**按深度递归**的一趟扫（`look` / `holds` / `take` 三个私有助手）。头注当时
-//! 就把"按号排的一张表"那一案记成**留到读数说话**，而读数来了：
-//!
-//! > `prog-probe-deep` 一层层往下 `part`，**持树者自己死在第 117 层**——四条助手按深度递归，
-//! > 而一台域的栈是 `TASK_STACK_SIZE`（16 KiB）；广度有闸（[`Operator::PANE_CAP`]）、一条路
-//! > 有闸（[`Operator::ROAD_MAX`]）、**深度一个闸都没有**。死法不是"答一格负码"，是
-//! > `user fault killed`：**命名空间整个消失**。
-//! >
-//! > **照实记（那台探针按用户裁定删了，这四行读数留着）**：`probe-deep` 连同 `SQWARE_ROOT=fair`
-//! > 那一景一并删了——它作为**深度**那一格的证客，职责原先由宿主靶那条
-//! > `a_deep_chain_does_not_need_the_call_stack` 承担（**那条判据随宿主靶一并删了**，用户裁定
-//! > "protocol-case 没必要"——**深度这一格今天没有替身**）；而它作为**公平**那一格的客人，
-//! > 本来就是它被删的理由（见 `crates/gate/src/lib.rs`（已删）里 `Scenario` 那段照实记）。这一段是这一刀
-//! > 改法的依据，故不从注里撤。
-//!
-//! 于是这一版把**号做成表里的下标**：
-//!
-//! ```text
-//!   slots: Vec<Option<Slot>>     号 i ↔ slots[i]；None = 墓碑（剪掉 / 剔死留下的坑）
-//!   root:  Vec<EntryId>          根仍然**没有号**（它不是一个槽）
-//!   Slot::Pane(Vec<EntryId>)     窗格里装的是**孩子的号**，按登记序
-//! ```
-//!
-//! 四条递归助手一并消失，换成三个平函数（[`Operator::slot`] / [`Operator::kids`] /
-//! [`Operator::unlink`]）：**取一格是一趟查表，去一格是从父的 children 里摘一号**。深度不再是
-//! 调用栈上的东西——它只决定"你建了多少格"，而那是**容量**问题（与 `PANE_CAP` / `try_reserve`
-//! / [`Fail::Full`] 同一条线），与 seL4 的"能力地址是一个整数"、DNS 的"整名 ≤ 255 字节"
-//! 同一格。
-//!
-//! **代价照实记**：`trim` 只把那一槽标成 `None`（**不能** `Vec::remove`——号是下标，一移后面
-//! 全错位），故铸过的号永远占一格坑。这一格**不给手拍的上限**：分配失败如实答 [`Fail::Full`]
-//! （上一刀在宿主靶上量过那条判据有牙——**那台靶已删**，这句读数照旧），而"`part` + `trim` 循环能把槽表单调整长"是本文件的
-//! 一条**已知边界**（不给手拍的上限，失败答 [`Fail::Full`]）。另一笔：`children ↔ 槽` 从此是**两条真相**（谁的孩子
-//! 里有我 / 我在哪个槽），"一格只有一个父"由每条写原语维护，不再是构造性事实。
-
-pub mod gate;
-pub mod judge;
-pub mod ledger;
+//! 本目录四份：`mod.rs` 账 ＋ `ledger.rs` 归属与规矩 ＋ `judge.rs` 门外那一问 ＋
+//! `gate.rs` 裁决折成线上一格。**判定与账同住这一侧**，故 `gate` 那三格线上码与
+//! `frame` 的同步断言也搬到这里（见本文件末尾）。
 
 use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
-use crate::id::Id;
+use protocol::communication::establish::{opened_by, vested_by};
+use protocol::system::operator::frame::{PANE_CAP, ROAD_MAX};
+use protocol::system::operator::{EntryId, Fail, Where};
 
-use crate::communication::establish::{EstablishFail, opened_by, vested_by};
-
-// ── 结构 ────────────────────────────────────────────────────
-
-/// 一枚条目的**号**：机器用的那一个。
-///
-/// **裸号**：与 [`PrincipalId`](crate::system::principal::core::PrincipalId) / [`CoalitionId`](crate::system::coalition::core::CoalitionId)
-/// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
-/// "这枚号还在不在"由每条读**查一次表**答出来。
-///
-/// **没有 `ROOT`**（对照另两种号：那两处的 `ROOT` 都在，这里特意没有）：根不是谁条目里的
-/// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
-/// "没有这个号"由 [`Fail::Unknown`] 答，别拿 0 当空。根要当坐标时走 [`Where::Root`]。
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct EntryId(usize);
-
-impl EntryId {
-    /// 由裸号造一个（线上解码面；已失效的号从这里进来）。
-    pub const fn new(raw: usize) -> EntryId {
-        EntryId(raw)
-    }
-
-    /// 裸号。
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Id for EntryId {
-    fn new(raw: usize) -> EntryId {
-        EntryId::new(raw)
-    }
-
-    fn get(self) -> usize {
-        EntryId::get(self)
-    }
-}
-
-/// **号那一格线上是 8 字节小端**——与 [`Id`] 给三条号空间定的同一条规则（那一条 trait 的
-/// `to_bytes` / `from_bytes` 就是这一格的正文）。
-///
-/// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
-/// [`EntryId`]（依赖是单向的 `protocol → env`），故宽度与字节序只能由定义它的这一处给。
-/// 口径与 `env::wire::Eyes` 那一处相同（`Field` 那一族的正文记着）。
-///
-/// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
-/// （[`Fail::Unknown`]）。
-impl env::wire::Field for EntryId {
-    const WIDTH: usize = 8;
-    fn store(&self, out: &mut [u8]) {
-        out.copy_from_slice(&self.to_bytes());
-    }
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        Some(Self::from_bytes(bytes.get(..8)?.try_into().ok()?))
-    }
-}
+// ── 三个子模块 ──────────────────────────────────────────────
+pub mod gate;
+pub mod judge;
+pub mod ledger;
 
 /// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
@@ -147,88 +37,6 @@ enum Node {
     Pane(Vec<EntryId>),
     /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄。
     Tile(PieToken),
-}
-
-/// **容器坐标**：要动的那一块 `Pane` 在哪。
-///
-/// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 [`EntryId`]），
-/// 所以它既不是"0 号"，也不能拿 `Option` 的空位代替：那两样都会被读成"某个真格子"。
-///
-/// 它的对立面是 [`Operator::find`] / [`Operator::trim`] / [`Operator::name`] 的形参：
-/// 那三条要的是**条目**的号，**根根本递不进来**——这是类型义务，不是运行期检查。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Where {
-    /// 根那一层：[`Operator::list`] 列的就是它，`land` / `part` 在它下面立一格。
-    Root,
-    /// 某一号那一块 `Pane` 里。
-    At(EntryId),
-}
-
-/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（[`Where`] 两种报法在线上的样子）。
-///
-/// **照实记（它们为什么从 `frame.rs` 搬到这儿）**：这两个数是**这一格自己的编码**
-/// （"根"与"某一号"怎么落在字节上），与"哪一帧用得上它"无关——`Field` 那一族的口径是
-/// **impl 跟着类型走**，故记也跟着类型走。
-const AT_ROOT: u8 = 0;
-const AT_ID: u8 = 1;
-
-/// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号。
-///
-/// **根为什么占一格、而不是省掉**：字段表要的是"这一格占多宽"（定长），省了就得再想"读到哪儿
-/// 算数"；而根**没有号**（见 [`EntryId`]），不能拿零号代替——那会被读成"某个真格子"。
-///
-/// **表外的记 ⇒ 整帧读不懂**：`0` / `1` 之外的记不是任何一种坐标，`fetch` 答 `None`
-/// （与从前那一手 `unpack_at` 同款：不猜、不崩）。
-impl env::wire::Field for Where {
-    const WIDTH: usize = 1 + <EntryId as env::wire::Field>::WIDTH;
-
-    fn store(&self, out: &mut [u8]) {
-        let (tag, id) = match *self {
-            Where::Root => (AT_ROOT, EntryId::new(0)),
-            Where::At(id) => (AT_ID, id),
-        };
-        out[0] = tag;
-        // 长度恰是 `WIDTH`（`Field::store` 的契约）⇒ 记之后那一段正好是号那一格。
-        id.store(&mut out[1..]);
-    }
-
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        match *bytes.first()? {
-            AT_ROOT => Some(Where::Root),
-            AT_ID => Some(Where::At(EntryId::fetch(bytes.get(1..)?)?)),
-            _ => None,
-        }
-    }
-}
-
-/// 八条原语会失败在哪一格。**一格对应一个不同的下一步**。
-///
-/// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
-/// （见 [`Operator::land`] / [`Operator::part`]）；而 owner 归 Principal，Operator 分不出
-/// "自己 / 别人"，所以"已占即拒"在这里无处落脚。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
-    ///
-    /// 三条路都走这一格：**没铸过**、`trim` **剪掉了**、[`Operator::find`] **剔死了**
-    /// ——表里留着一个墓碑（`None`），但墓碑**不对外答"我这儿死过"**：三条路长得一样。
-    /// 空路（根）走 [`Operator::seek`] 时也是这一格。
-    Unknown,
-    /// 那块 `Pane` 里还有东西，而这一手会**毁掉**里面的 ⇒ 先清空。
-    ///
-    /// 今天只有两条原语走得到它：[`Operator::land`] 的换绑（要把那块非空 `Pane` 换成砖）与
-    /// [`Operator::trim`]（要拿走它）。**`part` 不走这一格**——它要的正是那块 `Pane`，
-    /// 已经在就是成了（照实记见 [`Operator::part`] 的注）。
-    NonEmpty,
-    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
-    NotATile,
-    /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"。
-    NotAPane,
-    /// 那一块 `Pane` 已经 [`Operator::PANE_CAP`] 条，装不下；或者一条路超过 [`Operator::ROAD_MAX`]
-    /// 段（只有 [`Operator::seek`] 走得到这一格）⇒ 拆层 / 扩容量 / 把路缩短。
-    Full,
-    /// 那枚 Pie 后面的人没了（探不到）⇒ 重落 / 重寻。**剔掉那一条的同时**答这一格。
-    Dead,
 }
 
 // **照实记（三枚注入的函数指针退场）**：这里从前有 `VestedBy`（那一枚还答得出吗）、
@@ -269,13 +77,6 @@ pub struct Operator {
 }
 
 impl Operator {
-    /// 一块 `Pane` 里最多几条。条数是策略，容器要有界。
-    pub const PANE_CAP: usize = 16;
-    /// 一条**路**最多几段——只有 [`Operator::seek`] 用得上它（名字只到那一格，往下一律按号）。
-    ///
-    /// 注意：**树的深度不受这条路的长短约束**（`land` / `part` 收的是号，层层往下立与路无关）；
-    /// 而自从号成了表里的下标，**深度也不再吃调用栈**（见文件头那一节）。
-    pub const ROAD_MAX: usize = 8;
 
     /// 立一棵树。**机制不进这里**（照实记见文件头）：要探活 / 要开者 / 要放下，
     /// 直接叫 [`crate::communication::establish`] 那三具身体。
@@ -294,7 +95,7 @@ impl Operator {
     /// - `name` 那一格空着 ⇒ **铸一枚新号**放上去；
     /// - `name` 那一格已占 ⇒ **换绑**：旧的那一枚放下（`mail::release`）、**号不动**，答原来那一枚号
     ///   ——除非它是一块**非空** `Pane`（⇒ [`Fail::NonEmpty`]：要动它先清空）；
-    /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
+    /// - 那一块 `Pane` 已经有 [`PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
     /// **答的是号**（不是一格状态）：这是"号出门"那一手——立的人自己知道它立成了几号。
     pub fn land(&mut self, at: Where, name: Name, pie: PieToken) -> Result<EntryId, Fail> {
@@ -309,7 +110,7 @@ impl Operator {
     /// - 那一格已经是 `Pane` ⇒ **无事**，答它那个号（**幂等**：它要的正是"这儿是一块 `Pane`"，
     ///   里面有没有东西不管——**非空也是成了**，故 `NonEmpty` 不在它这一列）；
     /// - 那一格是一枚 `Tile` ⇒ 换掉它（旧的那一枚放下），号不动；
-    /// - 那一块 `Pane` 已经有 [`Operator::PANE_CAP`] 条 ⇒ [`Fail::Full`]。
+    /// - 那一块 `Pane` 已经有 [`PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
     /// 照实记：这一格原来答 `NonEmpty`（"那块非空 Pane 不许动"）。靶上读数把它顶掉了——
     /// 门牌那五处要的是**父格的号**，而它们的父格（`/device`、`/sys`）第二次上来时本来就非空，
@@ -412,7 +213,7 @@ impl Operator {
     /// **译**：把一条路**译成那一枚号**——名字只能走到这一格，往下一律按号。
     ///
     /// 从根起按名字一段段走：缺一段 ⇒ [`Fail::Unknown`]；中途那一段是一枚 `Tile` ⇒
-    /// [`Fail::NotAPane`]；路超过 [`Operator::ROAD_MAX`] 段 ⇒ [`Fail::Full`]。
+    /// [`Fail::NotAPane`]；路超过 [`ROAD_MAX`] 段 ⇒ [`Fail::Full`]。
     /// 走到头答**那一格自己的号**——故**最后一段是一枚 `Tile` 也行**（那正是门牌那一格：
     /// `/device/uart` 到头就是一枚砖）。
     ///
@@ -421,7 +222,7 @@ impl Operator {
     ///
     /// 与 `list` 一样**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
     pub fn seek(&self, road: &[Name]) -> Result<EntryId, Fail> {
-        if road.len() > Self::ROAD_MAX {
+        if road.len() > ROAD_MAX {
             return Err(Fail::Full);
         }
         // 空路 ⇒ 根 ⇒ 没有号（`split_last` 那一步就把它挡在这一格）。
@@ -487,7 +288,7 @@ impl Operator {
                 Ok(id)
             }
             None => {
-                if self.kids(at)?.len() >= Self::PANE_CAP {
+                if self.kids(at)?.len() >= PANE_CAP {
                     return Err(Fail::Full);
                 }
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
@@ -588,17 +389,14 @@ impl Operator {
     }
 }
 
-// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/operator/call.rs`）──
+// ── 同步义务：`gate` 那三格线上码与 `frame` 的对照表 ──────────────
 //
-// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
-// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
-// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
-
-/// 建立那一手的失败域 → 树的失败域：**"它不在"是一条判据**，故两边只留一个名字
-/// （[`Fail::Unknown`]）。
-///
-/// 铸不出孔 / 交不出去在这一层是同一件事（"这一手没做成"）：树这一侧只有一格答话码，
-/// 问的人按它决定要不要重问。
-pub fn map_establish(_fail: EstablishFail) -> Fail {
-    Fail::Unknown
-}
+// 真正的对照表只有一份（`protocol::system::operator::frame`）；`gate` 为了"不带载体"自己
+// 拿了一份，故在这里**编译期**把两者钉住——一漂就编不过。**这一条住这里**：只有这一层同时
+// 看得见 `gate` 与 `frame`。
+const _: () = {
+    use protocol::system::operator::frame;
+    assert!(gate::WIRE_OK == frame::OK);
+    assert!(gate::WIRE_DENIED == frame::DENIED);
+    assert!(gate::WIRE_UNJUDGED == frame::UNJUDGED);
+};

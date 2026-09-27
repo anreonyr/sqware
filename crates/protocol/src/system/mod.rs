@@ -15,9 +15,15 @@
 //! # 本份有两半：编排 + 运行期命名
 //!
 //! ```text
-//!   编排（core / desk / grant）  起停 / 判就绪 / 放下 / 配给（静态那一步：grant）
-//!   运行期命名（board）          "这个名字此刻指向哪个入口"（运行期那一步：板）
+//!   编排（grant）    配给那一段静态的记录解码（"单子上的形状"）
+//!   运行期命名（board）  "这个名字此刻指向哪个入口"（运行期那一步：板）
 //! ```
+//!
+//! **照实记（`core` / `desk` 已回实现侧）**：编排那一半原先在本层还有两格——账（`desk`：
+//! 服务表 ＋ 待客账）与判定（`core`：起不起 / 起没起 / 收没收）。它们的读者**只有编排域**
+//! （`programs/src/system/{board,operator}/server.rs`），故那一刀把它们搬回
+//! `programs/src/system/{desk,core}.rs`。**上线的形状（本份的正文、`grant` 的字节、
+//! 四套协议的帧与客手）一个字没动**——搬走的是"how"，留下的是"what"。
 //!
 //! **两半为什么同住一份**：板线程**就住在编排域里**（`root` 那张单上没有板那一格，
 //! 起板的只有 `system`），而它干的正是编排的另一半——`grant` 是装配期把名字对上入口，
@@ -481,8 +487,7 @@
 //! **它容纳那四套协议**（[`board`] / [`operator`] / [`principal`] / [`coalition`]——用户裁定）：
 //! 判据是"**谁住编排域**"。iii 之后这四套的落地都是**编排域里的线程**（板线程 ＋ 持树者 /
 //! 名册 / 盟册），而"**要找服务得先有目录**——今天那本目录就是 `board`"这句也写在本正文里。
-//! 故协议树与实现树（`programs/src/system/`）**同形**：编排那三件
-//! （[`core`] / [`desk`] / [`grant`]）与这四套同一份屋顶。
+//! 故协议树与实现树（`programs/src/system/`）**同形**：本层这一件 [`grant`] 与那四套同一份屋顶。
 //!
 //! **照实记（原先它们住顶层）**：`operator` / `principal` / `coalition` 曾与 [`crate::system`]
 //! 平级（`crates/protocol/src/{operator,principal,coalition}/`）。**被否的那条读法**是
@@ -490,8 +495,6 @@
 
 pub mod board;
 pub mod coalition;
-pub mod core;
-pub mod desk;
 pub mod grant;
 pub mod operator;
 pub mod principal;
@@ -501,9 +504,9 @@ pub mod principal;
 // （"单子上的每一格都是设备这一件事的词汇，而递单的人不是驱动"）。
 pub mod supply;
 
-// **照实记（那两条 `pub use` 已撤）**：这里从前把 `core` 的五件（`Fail` / `Ready` /
-// `Reaped` / `Watch`）与 `desk` 的五件（`Announce` / `Service` / `Slot` / `State` / `Table`）
-// **转出一遍**，好让调用点写 `crate::system::X`。那是**薄封装**——那些东西本来就住
-// `system::core` / `system::desk` 这两个模块里（同一个 crate），转出只多一层名字，
-// 而且**今天一个调用点都没用到**（全仓叫的是 `system::core::X` / `system::desk::X`）。
-// 故两条一起撤：要看那一件，去它住的模块看。
+// **照实记（`core` / `desk` 已搬去实现侧）**：本层原先还有这两个模块——`core` 是四条判定
+// （`admit_start` / `probe_ready` / `probe_watch` / `Reaped`），`desk` 是服务表与待客账。
+// 它们的读者只有编排域（`board` / `operator` 两枚线程），按"协议 = 共享语言"的判据回
+// `programs/src/system/{core,desk}.rs`（见那一份 `mod.rs` 的照实记）。同理，这里从前还把
+// 它们各自那几件 `pub use` 转出一遍——那是薄封装，早已撤。
+

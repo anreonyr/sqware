@@ -35,20 +35,22 @@
 //! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
 //! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
 
-use super::judge::{Facts, Id, Rule, Ruling, judge};
 use env::TaskId;
+
+use protocol::system::operator::{Id, Rule, Ruling};
+
+use super::judge::{Facts, judge};
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
 //
-// 照实记：这里**不 `use` 上面那一份**。转发表那一份住同 crate 的
-// `system/operator/frame.rs`（它拖着 `message` 与 `env::wire::Eyes`），而本文件**不带载体**、
-// 只认 `env`——两条依赖面有意不同，故这一份不伸手过去拿。
-// 故这三格在本文件里各留一个常量，**同步义务由 `protocol` 的 `system/operator/mod.rs` 末尾
-// 那条 `const _: () = assert!(…)` 在编译期钉住**：真正的对照表只有一份（`frame.rs`），
-// 这里这一份只要一漂就编不过。
+// 照实记：这里**不 `use` frame 那一份**。转发表住 `protocol::system::operator::frame`
+// （它拖着 `message` 与 `env::wire::Eyes`），而本文件**不带载体**、只认 `env` 与 `judge`
+// ——两条依赖面有意不同，故这一份不伸手过去拿。
 //
-// 这三格是 **`pub` 而不是 `pub(crate)`**：那条同步断言住在搬运之后的**另一侧**
-// （`protocol` 的 `system/operator/mod.rs`——它同时看得见本文件与 `frame.rs`），跨 crate 才够得着。
+// **照实记（同步断言搬到本侧了）**：这三格与 `frame` 那三格的同步义务由
+// [`super`](crate::system::operator::core) 末尾那条 `const _: () = assert!(…)` 在编译期钉住
+// ——三份文件原先分住两个 crate（断言只能在 protocol 那一侧做），搬回同一侧之后
+// **同 crate 同见**，比原先更紧。
 pub const WIRE_OK: u8 = 0;
 pub const WIRE_DENIED: u8 = 8;
 pub const WIRE_UNJUDGED: u8 = 9;

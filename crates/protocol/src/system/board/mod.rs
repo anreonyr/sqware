@@ -113,7 +113,7 @@
 //!
 //! ```text
 //!   core.rs  板 / 牌子 / 失败域 / 三个动作 + 扫牌      —— 不碰内核（判据可机械检查）
-//!   （客人账不在这一层了：两本并成一本，住 `system::desk`）
+//!   （客人账不在这一层了：两本并成一本，住 `programs/src/system/desk.rs`）
 //!   `protocol` 的 system/board/mod.rs  盖章 / 探活 / 授出 / 放下 / 一问一答  —— 一处裁决都没有（见那一段）
 //! ```
 //!
@@ -124,7 +124,7 @@
 //!
 //! **三侧分家住**：**客侧**（`client`：`open` / `ask` / `take`，从外面找上板的那些手）
 //! 在本文这一侧；**板那一台**（`server`，就一枚线程招待所有客人）、它那本客人账（客人在
-//! `crate::system::desk`，两本并一本）与**装配侧**（`bridge`：谁给谁转授、什么时候起板线程）
+//! `programs::system::desk`，两本并一本）与**装配侧**（`bridge`：谁给谁转授、什么时候起板线程）
 //! 住 `programs/src/system/board/`。今天有七位客人（`lodger` 不上板：它喂的是线那本账）：
 //!
 //! ```text
@@ -233,10 +233,10 @@
 //!
 //! 三步都在 [`bridge::attach`] 里，**次序即契约**。
 
-pub mod core;
+
 pub mod frame;
 
-pub use crate::system::board::core::{Board, Fail};
+pub use frame::Fail;
 
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`），不再有“转出”那一层。

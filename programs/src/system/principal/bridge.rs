@@ -13,7 +13,7 @@ use protocol::debug;
 use protocol::communication::establish;
 use protocol::system::board as bcall;
 use protocol::system::principal::client::Face;
-use protocol::system::principal::core::PrincipalId;
+use protocol::system::principal::PrincipalId;
 use runtime::env::room;
 
 use crate::system::control::{READY_MS, RETRY_MS};

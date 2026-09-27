@@ -232,10 +232,9 @@
 //!  持树者做的（板那一台也是这么交入口的）。
 //!
 
-pub mod core;
 pub mod frame;
 
-pub use crate::system::operator::core::{EntryId, Fail, Operator, Where};
+pub use frame::{EntryId, Fail, Where};
 
 pub mod client;
 // 形、据、账就在本模块树下（`core` / `frame`）。
@@ -249,9 +248,7 @@ pub mod client;
 // 产出的 [`Fail`] 落进同层的 `core`（`system/operator/core/mod.rs` 末尾）——`map_claim` 与
 // `map_seat` 两张表在会话那一刀里并成这一张。
 
-pub use crate::system::operator::core::gate::{Code, verdict};
-pub use crate::system::operator::core::judge::{Facts, Id, Rule, Ruling, judge};
-pub use crate::system::operator::core::ledger::{Key, Ledger, Line, Owner};
+pub use frame::{Id, Rule, Ruling};
 pub use frame::{
     ASK_MARK, BAD, CoordFrame, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_MARK,
     UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
@@ -272,11 +269,6 @@ pub use frame::{
 // 失败域那一格**在调用点上**了：谁用它、谁按自己那一头折（树这一头是 `Unknown`），
 // 于是"同一个身体、两处不同的话"不靠两层函数说，靠两个调用点说。
 
-/// **同步义务**：`gate.rs` 自己留了那三格线上码（它只认 `env` 与同层 `core`，`frame.rs` 拖着帧
-/// 那一族 ⇒ 它看不见）。这里在编译期把两份钉在一起——真正的对照表只有 [`frame`] 那一份，
-/// `gate` 那一份一漂就编不过。**这一条必须住在这里**：只有这一层同时看得见 `frame` 与 `core::gate`。
-const _: () = {
-    assert!(core::gate::WIRE_OK == frame::OK);
-    assert!(core::gate::WIRE_DENIED == frame::DENIED);
-    assert!(core::gate::WIRE_UNJUDGED == frame::UNJUDGED);
-};
+// **照实记（那几条 `pub use` 与那条同步断言都走了）**：`gate` / `judge` / `ledger` 三份
+// （裁决、判据、账）已回实现侧 `programs/src/system/operator/core/`；`WIRE_*` 与 `frame` 码的
+// 编译期同步断言随它们一起搬去了那一侧——那里同时看得见两者，比原先跨 crate 更紧。

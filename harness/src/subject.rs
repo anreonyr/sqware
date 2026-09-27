@@ -47,7 +47,7 @@ use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
-use protocol::system::principal::core::{Fail, PrincipalId};
+use protocol::system::principal::{Fail, PrincipalId};
 use runtime::env::room;
 use runtime::env::unit as utask;
 

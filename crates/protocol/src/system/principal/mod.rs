@@ -211,10 +211,9 @@
 // `prog-principal` 域里跑的那枚线程）住 `programs/src/system/principal/`。
 // 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/service.rs`。
 
-pub mod core;
 pub mod frame;
 
-pub use crate::system::principal::core::{Fail, Principal, PrincipalId};
+pub use frame::{Fail, PrincipalId};
 
 pub mod client;
 // 形与据就在本模块树下（`core` / `frame`）。

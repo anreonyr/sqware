@@ -1,82 +1,17 @@
-//! principal::core — **名册与谱系**：两张表、九条原语。
+//! principal::core — **名册 ＋ 谱系那本账**：两张表与一把钥匙。
 //!
-//! 本文件**不 `use` 内核**：喂一串假 TID 就能把九条规矩推理干净。
+//! **照实记（它原先住 `protocol::system::principal::core`）**：那一份的读者只有本域的持有者
+//! （`prog-principal` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
+//! 只留**上线的两样**：号（`PrincipalId`）与失败域（`Fail`）。
 //!
-//! ```text
-//!   名册   TID ──→ 当前 PrincipalId      按内核盖的章查；可增可删；一 TID 一格
-//!   谱系   PrincipalId ──父──→ PrincipalId   只增不删；下标即号；零号节点是根
-//! ```
-//!
-//! 两条轴的分工见正文（[`super`]）：**名册**答"这个 Task 此刻代表谁"，**谱系**答
-//! "这条身份从谁而来"。九条原语里只有**五条**动数据（`bind` / `unbind` / `derive` /
-//! `adopt` / `waive`）——其中前三条动**结构**（行与节点），后两条只改写 `current`。
-//! 照实记：这一句原写"七条原语里只有三条动数据"，那是转换那两条还没落地时的口径。
+//! 本文件只讲两张表的形状与九条原语；**身份的含义、门牌、帧那一层**写在协议那一边
+//! （`protocol::system::principal`）。
 
 use alloc::vec::Vec;
 
 use env::TaskId;
 
-use crate::id::Id;
-
-// ── 号 ──────────────────────────────────────────────────────
-
-/// 谱系上的一个节点。
-///
-/// **裸号**：与 [`TaskId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
-/// 旧树栽过的那一格。故"这条号在不在树里"不是类型义务，是每条读操作查一次表答出来的
-/// [`Fail::Unknown`]；[`PrincipalId::new`] 造得出任何号，那正是探针验第三态的路子。
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct PrincipalId(usize);
-
-impl PrincipalId {
-    /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
-    ///
-    /// **照实记（它今天没有代码读者，留着是有意的）**：`clan` 是它唯一的使用者，那一具已按
-    /// 残枝删掉 ⇒ 这一格只剩"号空间的事实"这一重身份。**不删**：盟册与树那一侧有六处正文
-    /// 拿它当锚（"零号是真格子"——`CoalitionId(0)` / `EntryId` 的对照都指着这里），删了那些
-    /// 说法就没有落点。它不是机制，是一个**被引用的事实常量**。
-    pub const ROOT: PrincipalId = PrincipalId(0);
-
-    /// 由裸号造一个（线上解码面；树外的号从这里进来）。
-    pub const fn new(raw: usize) -> PrincipalId {
-        PrincipalId(raw)
-    }
-
-    /// 裸号。
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Id for PrincipalId {
-    fn new(raw: usize) -> PrincipalId {
-        PrincipalId::new(raw)
-    }
-
-    fn get(self) -> usize {
-        PrincipalId::get(self)
-    }
-}
-
-// ── 失败域 ──────────────────────────────────────────────────
-
-/// 失败域：三格，每格一个**不同的下一步**。
-///
-/// **`Resolve` 与三条谱系读没有失败域**——读是公开的（答案不是秘密，Principal 不授予任何
-/// 东西）；这里三格只被写的那两条与"查无此节点"用。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 你不是那一个：不是写名册的那一枚（`Bind`/`Unbind`）、不是"当前正好代表 `p`"的那一枚
-    /// （`derive`）、或目标不在**你自己那一支**里（`adopt`）。调用方要改的是：**该请谁来做**
-    /// 或**换一个目标**。
-    Denied,
-    /// 这条 PrincipalId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
-    Unknown,
-    /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
-    ///
-    /// **两条转换原语到不了这一格**（它们不分配）：到得了的是 `new`（立根）、`bind`、`derive`。
-    Full,
-}
+use protocol::system::principal::{Fail, PrincipalId};
 
 // ── 两张表 ──────────────────────────────────────────────────
 
@@ -185,7 +120,7 @@ impl Principal {
             return Err(Fail::Unknown);
         }
         self.tree.try_reserve(1).map_err(|_| Fail::Full)?;
-        let id = PrincipalId(self.tree.len());
+        let id = PrincipalId::new(self.tree.len());
         self.tree.push(Node { parent: Some(p) });
         Ok(id)
     }
@@ -270,10 +205,3 @@ impl Principal {
         self.tree.get(p.get())
     }
 }
-
-// ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
-//
-// 那台编外宿主靶（`roster` 靶里 `principal_core` 那一格）连同 `crates/gate`（已删）的 `host` 那一门
-// 已删。原先那七条用例本来就是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`，
-// riscv 上编不出 libtest）——它们**短暂地**被跑起来过（从宿主靶开始），如今又回到只有写着的
-// 规格。真机上另有探针那几条（`harness/src/subject.rs`）。

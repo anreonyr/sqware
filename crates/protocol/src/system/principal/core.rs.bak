@@ -1,0 +1,70 @@
+//! principal::core — **上线的两样**：号与失败域。
+//!
+//! **照实记（账已回实现侧）**：本文件原先还有名册与谱系那两张表（`Principal` ＋ `Node` /
+//! `Bound` ＋ 九条原语）——它们的读者只有 `prog-principal` 那一枚线程，故按"只有实现方
+//! 读得到它"搬回 `programs/src/system/principal/core.rs`。本文件因此只剩两侧共用的两样：
+//! **号**（[`PrincipalId`]）与**失败域**（[`Fail`]）。
+//!
+//! 身份的语义、门牌、帧那一层写在正文（[`super`]）与 `frame` 那一层。
+
+use crate::id::Id;
+
+// ── 号 ──────────────────────────────────────────────────────
+
+/// 谱系上的一个节点。
+///
+/// **裸号**：与 [`TaskId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
+/// 旧树栽过的那一格。故"这条号在不在树里"不是类型义务，是每条读操作查一次表答出来的
+/// [`Fail::Unknown`]；[`PrincipalId::new`] 造得出任何号，那正是探针验第三态的路子。
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct PrincipalId(usize);
+
+impl PrincipalId {
+    /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
+    ///
+    /// **照实记（它今天没有代码读者，留着是有意的）**：`clan` 是它唯一的使用者，那一具已按
+    /// 残枝删掉 ⇒ 这一格只剩"号空间的事实"这一重身份。**不删**：盟册与树那一侧有六处正文
+    /// 拿它当锚（"零号是真格子"——`CoalitionId(0)` / `EntryId` 的对照都指着这里），删了那些
+    /// 说法就没有落点。它不是机制，是一个**被引用的事实常量**。
+    pub const ROOT: PrincipalId = PrincipalId(0);
+
+    /// 由裸号造一个（线上解码面；树外的号从这里进来）。
+    pub const fn new(raw: usize) -> PrincipalId {
+        PrincipalId(raw)
+    }
+
+    /// 裸号。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Id for PrincipalId {
+    fn new(raw: usize) -> PrincipalId {
+        PrincipalId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        PrincipalId::get(self)
+    }
+}
+
+// ── 失败域 ──────────────────────────────────────────────────
+
+/// 失败域：三格，每格一个**不同的下一步**。
+///
+/// **`Resolve` 与三条谱系读没有失败域**——读是公开的（答案不是秘密，Principal 不授予任何
+/// 东西）；这里三格只被写的那两条与"查无此节点"用。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 你不是那一个：不是写名册的那一枚（`Bind`/`Unbind`）、不是"当前正好代表 `p`"的那一枚
+    /// （`derive`）、或目标不在**你自己那一支**里（`adopt`）。调用方要改的是：**该请谁来做**
+    /// 或**换一个目标**。
+    Denied,
+    /// 这条 PrincipalId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
+    Unknown,
+    /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
+    ///
+    /// **两条转换原语到不了这一格**（它们不分配）：到得了的是 `new`（立根）、`bind`、`derive`。
+    Full,
+}

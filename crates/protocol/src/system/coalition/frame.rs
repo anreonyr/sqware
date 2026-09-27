@@ -1,6 +1,6 @@
 //! coalition 的**帧那一半** —— 帧与码（内核那一只手的别名在 `protocol` 那一侧的 `mod.rs`）。
 //!
-//! 本文件**不做裁决**：盟册的规矩全在 [`core`](super::core)。这里只有三件事——
+//! 本文件**不做裁决**：盟册的规矩全在实现侧那一本账里（`programs/src/system/coalition/core.rs`）。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码 / 记号 / **窗**那一档。
 //!
 //! **照实记（这一份为什么拆出来）**：见 `principal/frame.rs` 的同一条——帧形的边角机器走不到，
@@ -43,11 +43,166 @@
 //! 的顺序**排、`BAD` 收尾。故本族按自己的两格排（见 `fail_codes!` 那张表）：照抄别家只会
 //! 让自己表里空出一个号。
 
-use super::core::{CoalitionId, Fail, WINDOW_CAP, Window};
 use crate::id::Id;
 use crate::message::Message;
-use crate::system::principal::core::PrincipalId;
+use crate::system::principal::PrincipalId;
 use env::{Mark, PieToken};
+
+// ── 上线的类型（原先住 `core.rs`：残枝那一刀并进来）──────────────
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct CoalitionId(usize);
+
+impl CoalitionId {
+    /// 由裸号造一个（线上解码面；没铸过的号从这里进来）。
+    pub const fn new(raw: usize) -> CoalitionId {
+        CoalitionId(raw)
+    }
+
+    /// 裸号。
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Id for CoalitionId {
+    fn new(raw: usize) -> CoalitionId {
+        CoalitionId::new(raw)
+    }
+
+    fn get(self) -> usize {
+        CoalitionId::get(self)
+    }
+}
+
+// ── 失败域 ──────────────────────────────────────────────────
+
+/// 失败域：**两格**，每格一个**不同的下一步**。
+///
+/// **没有 `Denied`**——本族没有一处"你得请谁来做"的判断：盟无主，三条写里的门要么是
+/// "这条号是假的"，要么是"备不下"。这是横向那条轴与纵向那条轴（[`system::principal`](crate::system::principal)
+/// 有 `Denied`）在失败域上的分野。
+///
+/// **三条读里只有 `bloc` 没有失败域**：`amid` / `band` 问的是**本册自己的**号空间，故都会答
+/// "查无此盟"；`bloc` 问的是**别人的**号空间——`p` 是别人给的标签，本册不去问身份服务，
+/// 不在任何盟里就是空串。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fail {
+    /// 这枚盟不存在（从来没铸过），或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**
+    /// 或**我还没有身份**。
+    Unknown,
+    /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
+    ///
+    /// **只有 [`Coalition::enter`] 到得了这一格**：`found` 不分配（只动计数器），
+    /// `leave` 与三条读也不分配。
+    Full,
+}
+
+// ── 一窗号 ──────────────────────────────────────────────────
+
+/// 一窗最多几枚号。条数是策略、容器要有界 ⇒ 窗口有顶，**"还有没有"由 `more` 说**。
+pub const WINDOW_CAP: usize = 16;
+
+/// 一窗号：**一趟读的读数**（最多 [`WINDOW_CAP`] 枚，**号序升序**）。
+///
+/// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（`PrincipalId::ROOT` 就是 0），
+/// 拿它当"这一格空着"正是要避开的那件事。
+///
+/// **与 operator 那个 [`Listing`](crate::system::operator::frame::Listing) 不合并**：那一边一条 pane
+/// **有顶**，故没有"未完"这一格；本族靠 `more` 分页。两处各留一个的理由（连帧形那一半）
+/// 写在那边。
+///
+/// **取窗落在核心**（[`Coalition::band`] / [`Coalition::bloc`] 扫一遍表就填出来）：服务那一层
+/// 只把它编成帧，不做选择。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Window<T: Id> {
+    items: [Option<T>; WINDOW_CAP],
+    n: usize,
+    more: bool,
+}
+
+impl<T: Id> Window<T> {
+    /// 空的那一串（`more = false`）。
+    pub const fn new() -> Window<T> {
+        Window {
+            items: [None; WINDOW_CAP],
+            n: 0,
+            more: false,
+        }
+    }
+
+    /// 由一串号凑一窗（`more` = 窗外还有）——**解码面**：线上收来的那一窗由这里成形。
+    ///
+    /// 收够 [`WINDOW_CAP`] 枚就停：帧长了是帧的毛病，读的人只认窗前这些（帧长与条数对不对
+    /// 由 `protocol` 那一侧的 `frame` 那一层先挡掉）。
+    pub fn gather(more: bool, ids: impl Iterator<Item = T>) -> Window<T> {
+        let mut out = Window::new();
+        for id in ids.take(WINDOW_CAP) {
+            out.push(id);
+        }
+        out.more = more;
+        out
+    }
+
+    /// 几枚。
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    /// 窗外还有没有（这一趟没答完的那些）。
+    pub fn more(&self) -> bool {
+        self.more
+    }
+
+    /// 第 `at` 枚（号序；越界 ⇒ `None`）。
+    pub fn get(&self, at: usize) -> Option<T> {
+        if at < self.n {
+            self.items.get(at).copied().flatten()
+        } else {
+            None
+        }
+    }
+
+    /// 号序走一遍。
+    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        self.items[..self.n].iter().filter_map(|slot| *slot)
+    }
+
+    /// 末一枚——**它就是下一页的游标**（空窗 ⇒ `None`）。
+    pub fn last(&self) -> Option<T> {
+        self.n.checked_sub(1).and_then(|at| self.get(at))
+    }
+
+    /// **取窗那一侧用**：收一枚。收下了 ⇒ `true`；**已经满了** ⇒ `false` 并点亮
+    /// [`Window::more`]（"这一趟没答完"）。
+    ///
+    /// **照实记（它替掉了三格半成品）**：账那一侧从前与 `Window` 同住一个模块，于是它直接
+    /// 读写 `push` / `full` / 那个私有字段 `more`；账搬回实现侧之后跨了 crate，那三样不该
+    /// 变成公开的可变面 ⇒ 收成这一手：**"塞不下了"就是"还有"**，一格判定、一处写。
+    pub fn put(&mut self, id: T) -> bool {
+        if self.full() {
+            self.more = true;
+            return false;
+        }
+        self.push(id);
+        true
+    }
+
+    /// 收一枚（再满就丢：取窗那边收了 [`WINDOW_CAP`] 枚就停）。
+    fn push(&mut self, id: T) {
+        if let Some(slot) = self.items.get_mut(self.n) {
+            *slot = Some(id);
+            self.n += 1;
+        }
+    }
+
+    /// 装满了。
+    fn full(&self) -> bool {
+        self.n == WINDOW_CAP
+    }
+}
+
+
 
 // ── 码 ──────────────────────────────────────────────────────
 

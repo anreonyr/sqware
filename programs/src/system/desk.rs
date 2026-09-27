@@ -1,6 +1,6 @@
 //! system::desk — **账**：一张定长表与一行的形状（名字、身子、生命阶段、怎么算起来）
 //!
-//! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
+//! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
 use alloc::vec::Vec;
 
@@ -250,7 +250,7 @@ impl Desk {
     ///
     /// **探活那一手不在这里注入**（照实记）：从前它跟账走（`Desk { vested_by }`），
     /// 于是多出一个构造点、多一个类型别名、多一层"谁来接"；而它只有一个身体
-    /// （[`vested_by`](crate::communication::establish::vested_by)）——直接叫就是。
+    /// （[`vested_by`](protocol::communication::establish::vested_by)）——直接叫就是。
     pub const fn new() -> Desk {
         Desk { guests: Vec::new() }
     }
@@ -421,7 +421,7 @@ impl Desk {
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && crate::communication::establish::vested_by(guest.reply).is_none()
+                && protocol::communication::establish::vested_by(guest.reply).is_none()
             {
                 f(guest.who(), guest.lane.take());
                 *cell = None;

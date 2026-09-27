@@ -85,11 +85,10 @@
 //! - **上限是本侧选择**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），
 //!   `ORDER_CAP`/`REPLY_CAP` 是"一帧一单、不流式"这个选择的尺寸，不是线格式的约束。
 
-pub mod core;
 pub mod frame;
 
 pub mod client;
 
 // 形、据**转出**（`crate::system::supply::{frame,core}` 照旧解析）。
-pub use crate::system::supply::core::Fail;
+pub use frame::Fail;
 pub use crate::system::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};

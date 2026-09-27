@@ -40,6 +40,12 @@ pub mod board;
 pub mod bootstrap;
 pub mod coalition;
 pub mod control;
+// **照实记（`core` / `desk` 是残枝那一刀从 protocol 搬来的）**：它们原住
+// `crates/protocol/src/system/{desk,core}.rs`。判据：那份账与那几条判定**只有编排域读**
+// （两个消费者都在本目录：`board/server.rs` 与 `operator/server.rs`），按
+// `protocol::driver` 那条"多个域都用 ≠ 该进 protocol"的反面——**只有一个域用** ⇒ 回实现侧。
+pub mod core;
+pub mod desk;
 pub mod machine;
 pub mod operator;
 pub mod principal;

@@ -1,170 +1,18 @@
-//! coalition::core — **盟册**：一条关系、一枚计数器、六条原语。
+//! coalition::core — **盟册那一本账**：一条关系 ＋ 一枚计数器。
 //!
-//! 本文件**不 `use` 内核**——连 `TaskId` 都不认识（喂两个假号就能把六条规矩推理干净）。
-//! 这不是风格：身份那一侧归 [`system::principal`](crate::system::principal)（名册把内核盖的章翻成一条号），
-//! 本册只收**一条已经解析好的身份**；故"这条请求是不是发送者本人"不在这一层——它在适配层
-//! （见正文"已知边界"）。
+//! **照实记（它原先住 `protocol::system::coalition::core`）**：那一份的读者只有本域的持有者
+//! （`prog-coalition` 那一枚线程）——按"协议 = 共享语言"的判据（"只有实现方读得到它"），
+//! 它属于实现侧。协议那一侧只留**上线的类型**：号（`CoalitionId`）、失败域（`Fail`）、
+//! 一窗号（`Window` / `WINDOW_CAP`）。
 //!
-//! ```text
-//!   盟籍   PrincipalId ──→ CoalitionId     这条身份在哪些盟里     bloc(p)   核心
-//!          CoalitionId ──→ PrincipalId     这枚盟里有谁           band(c)   核心
-//!   号     0 .. next                    铸过就一直在（没有墓碑、没有 id 表）
-//! ```
-//!
-//! 两条轴的分工见正文（[`super`]）：**横向的盟籍**只有一张表，反着念就是第二个方向。
-//! 六条原语里只有三条动数据（`found` / `enter` / `leave`）。
+//! 本文件只讲账的形状与那六条原语；**盟籍的含义、钥匙那一格、帧那一层**都写在协议那一边
+//! （`protocol::system::coalition`）。
 
 use alloc::vec::Vec;
 
-use crate::id::Id;
-use crate::system::principal::core::PrincipalId;
-
-// ── 号 ──────────────────────────────────────────────────────
-
-/// 盟册上的一枚号。
-///
-/// **裸号**：与 [`PrincipalId`] 同形（8 字节、小端上线），但**不同源**——两个号空间互相拿错正是
-/// 旧树栽过的那一格。故"这枚号铸过没有"不是类型义务，是每条读查一次计数答出来的
-/// [`Fail::Unknown`]；[`CoalitionId::new`] 造得出任何号，那正是探针验第三态的路子。
-///
-/// **没有 `ROOT`**：盟无根、无主——零号是一枚**普通的盟**（对照 [`PrincipalId::ROOT`]：
-/// 那是身份那一侧"唯一没有父的节点"）。
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct CoalitionId(usize);
-
-impl CoalitionId {
-    /// 由裸号造一个（线上解码面；没铸过的号从这里进来）。
-    pub const fn new(raw: usize) -> CoalitionId {
-        CoalitionId(raw)
-    }
-
-    /// 裸号。
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Id for CoalitionId {
-    fn new(raw: usize) -> CoalitionId {
-        CoalitionId::new(raw)
-    }
-
-    fn get(self) -> usize {
-        CoalitionId::get(self)
-    }
-}
-
-// ── 失败域 ──────────────────────────────────────────────────
-
-/// 失败域：**两格**，每格一个**不同的下一步**。
-///
-/// **没有 `Denied`**——本族没有一处"你得请谁来做"的判断：盟无主，三条写里的门要么是
-/// "这条号是假的"，要么是"备不下"。这是横向那条轴与纵向那条轴（[`system::principal`](crate::system::principal)
-/// 有 `Denied`）在失败域上的分野。
-///
-/// **三条读里只有 `bloc` 没有失败域**：`amid` / `band` 问的是**本册自己的**号空间，故都会答
-/// "查无此盟"；`bloc` 问的是**别人的**号空间——`p` 是别人给的标签，本册不去问身份服务，
-/// 不在任何盟里就是空串。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 这枚盟不存在（从来没铸过），或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**
-    /// 或**我还没有身份**。
-    Unknown,
-    /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
-    ///
-    /// **只有 [`Coalition::enter`] 到得了这一格**：`found` 不分配（只动计数器），
-    /// `leave` 与三条读也不分配。
-    Full,
-}
-
-// ── 一窗号 ──────────────────────────────────────────────────
-
-/// 一窗最多几枚号。条数是策略、容器要有界 ⇒ 窗口有顶，**"还有没有"由 `more` 说**。
-pub const WINDOW_CAP: usize = 16;
-
-/// 一窗号：**一趟读的读数**（最多 [`WINDOW_CAP`] 枚，**号序升序**）。
-///
-/// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（[`PrincipalId::ROOT`] 就是 0），
-/// 拿它当"这一格空着"正是要避开的那件事。
-///
-/// **与 operator 那个 [`Listing`](crate::system::operator::frame::Listing) 不合并**：那一边一条 pane
-/// **有顶**，故没有"未完"这一格；本族靠 `more` 分页。两处各留一个的理由（连帧形那一半）
-/// 写在那边。
-///
-/// **取窗落在核心**（[`Coalition::band`] / [`Coalition::bloc`] 扫一遍表就填出来）：服务那一层
-/// 只把它编成帧，不做选择。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Window<T: Id> {
-    items: [Option<T>; WINDOW_CAP],
-    n: usize,
-    more: bool,
-}
-
-impl<T: Id> Window<T> {
-    /// 空的那一串（`more = false`）。
-    pub const fn new() -> Window<T> {
-        Window {
-            items: [None; WINDOW_CAP],
-            n: 0,
-            more: false,
-        }
-    }
-
-    /// 由一串号凑一窗（`more` = 窗外还有）——**解码面**：线上收来的那一窗由这里成形。
-    ///
-    /// 收够 [`WINDOW_CAP`] 枚就停：帧长了是帧的毛病，读的人只认窗前这些（帧长与条数对不对
-    /// 由 `protocol` 那一侧的 `frame` 那一层先挡掉）。
-    pub fn gather(more: bool, ids: impl Iterator<Item = T>) -> Window<T> {
-        let mut out = Window::new();
-        for id in ids.take(WINDOW_CAP) {
-            out.push(id);
-        }
-        out.more = more;
-        out
-    }
-
-    /// 几枚。
-    pub fn len(&self) -> usize {
-        self.n
-    }
-
-    /// 窗外还有没有（这一趟没答完的那些）。
-    pub fn more(&self) -> bool {
-        self.more
-    }
-
-    /// 第 `at` 枚（号序；越界 ⇒ `None`）。
-    pub fn get(&self, at: usize) -> Option<T> {
-        if at < self.n {
-            self.items.get(at).copied().flatten()
-        } else {
-            None
-        }
-    }
-
-    /// 号序走一遍。
-    pub fn iter(&self) -> impl Iterator<Item = T> + '_ {
-        self.items[..self.n].iter().filter_map(|slot| *slot)
-    }
-
-    /// 末一枚——**它就是下一页的游标**（空窗 ⇒ `None`）。
-    pub fn last(&self) -> Option<T> {
-        self.n.checked_sub(1).and_then(|at| self.get(at))
-    }
-
-    /// 收一枚（再满就丢：取窗那边收了 [`WINDOW_CAP`] 枚就停）。
-    fn push(&mut self, id: T) {
-        if let Some(slot) = self.items.get_mut(self.n) {
-            *slot = Some(id);
-            self.n += 1;
-        }
-    }
-
-    /// 装满了。
-    fn full(&self) -> bool {
-        self.n == WINDOW_CAP
-    }
-}
+use protocol::id::Id;
+use protocol::system::coalition::{CoalitionId, Fail, Window};
+use protocol::system::principal::PrincipalId;
 
 // ── 一格盟籍 ────────────────────────────────────────────────
 
@@ -215,7 +63,7 @@ impl Coalition {
     ///
     /// 号因此单调、稠密、"铸过就一直在"；空盟合法且免费（没有墓碑，也没有 id 表）。
     pub fn found(&mut self) -> CoalitionId {
-        let id = CoalitionId(self.next);
+        let id = CoalitionId::new(self.next);
         self.next += 1;
         id
     }
@@ -332,15 +180,11 @@ impl Coalition {
                 }
             }
             match best {
-                Some(at) if !out.full() => {
-                    out.push(at);
+                // **`put` 就是那一格判定**："塞得下"继续取，"塞不下"当场记下"还有"。
+                Some(at) if out.put(at) => {
                     last = Some(at);
                 }
-                // 窗外还有 ⇒ 这一趟到此为止，"未完"是读数的一部分。
-                Some(_) => {
-                    out.more = true;
-                    break;
-                }
+                Some(_) => break,
                 None => break,
             }
         }
@@ -353,9 +197,3 @@ impl Coalition {
     }
 }
 
-// ── 本文件没有一行测试（用户裁定"protocol-case 没必要"）────────────────
-//
-// 那台编外宿主靶（`roster` 靶里 `coalition_core` 那一格——盟籍要
-// `crate::system::principal::core` 的号，故与名册同住一个靶）连同 `crates/gate`（已删）的 `host` 那一门
-// 已删。原先那六条用例本来就是"编不到、也跑不到"的规格（`protocol` 是 `[lib] test = false`）。
-// 真机上另有探针那几条（`harness/src/member.rs`）。

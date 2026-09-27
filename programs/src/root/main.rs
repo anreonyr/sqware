@@ -49,8 +49,8 @@ use protocol::communication::establish;
 // 协议侧那三档（判定 / 账 / 适配）与那台装配机器**同名不同物**，故逐个取名进来。
 use programs::system::control::service::{self as core, until};
 use programs::system::control::{Catalog, Died, E_MANIFEST, READY_MS};
-use protocol::system::core::Reaped;
-use protocol::system::desk::{Announce, Table};
+use programs::system::core::Reaped;
+use programs::system::desk::{Announce, Table};
 
 use protocol::system::supply;
 

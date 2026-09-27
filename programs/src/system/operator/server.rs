@@ -18,19 +18,21 @@ use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
-use protocol::system::operator::core::gate::{Code, verdict};
-use protocol::system::operator::core::judge::{Facts, Id, Rule};
-use protocol::system::operator::core::ledger::{Key, Ledger};
+use crate::system::operator::core::gate::{Code, verdict};
+use crate::system::operator::core::judge::Facts;
+use protocol::system::operator::{Id, Rule};
+use crate::system::operator::core::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
-use protocol::system::operator::{EntryId, Fail, Listing, Operator, Where};
+use crate::system::operator::core::Operator;
+use protocol::system::operator::{EntryId, Fail, Listing, Where};
 
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::principal::client::Face as PrincipalFace;
-use protocol::system::principal::core::PrincipalId;
+use protocol::system::principal::PrincipalId;
 
 use super::bridge::Coord;
 use crate::system::control::service::Start;
-use protocol::system::desk::{Desk, DeskFail, Guest};
+use crate::system::desk::{Desk, DeskFail, Guest};
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -416,7 +418,7 @@ fn answer(
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。
     if let ocall::Wire::Road(_, count) = ask {
-        if count > Operator::ROAD_MAX {
+        if count > ocall::frame::ROAD_MAX {
             return ocall::Union::Status(ocall::FULL);
         }
     }
@@ -555,7 +557,7 @@ fn answer(
         }
         // **译号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
         ocall::Wire::Road(road, count) => {
-            return match tree.seek(&road[..count.min(Operator::ROAD_MAX)]) {
+            return match tree.seek(&road[..count.min(ocall::frame::ROAD_MAX)]) {
                 Ok(id) => ocall::Union::Entry(id),
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };

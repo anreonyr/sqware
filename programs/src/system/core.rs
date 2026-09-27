@@ -1,6 +1,6 @@
 //! system::core — **判定（纯）**：起不起、起来了没有、收尾完了没有——只读表，不碰内核
 //!
-//! 正文见 [`super`]；三档（判定 / 账 / 适配）分家的理由见 `system` 模块头注。
+//! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
 use env::Name;
 
@@ -95,7 +95,7 @@ pub enum Fail {
 // **照实记（`VestedBy` 那枚函数指针已经退场）**：从前这里有一格"探活"的**注入类型**
 // （`pub type VestedBy = fn(PieToken) -> Option<TaskId>`）——板与树各 `pub use` 一份回去，
 // 由各自的构造点（`board()` / `tree()`）接上身体。判据一字没改，**注入这一层撤了**：
-// 它只有一个身体（[`crate::communication::establish::vested_by`]），
+// 它只有一个身体（[`protocol::communication::establish::vested_by`]），
 // 而"接上"这件事只是把同一个函数换个名字传一圈（薄封装）。今天要用它的地方**直接叫**。
 // 那一条"活性"的口径（答不出 = 不在我表里 **或** 那扇门已经封印）写在
-// [`vested_by`](crate::communication::establish::vested_by) 上。
+// [`vested_by`](protocol::communication::establish::vested_by) 上。

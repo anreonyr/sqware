@@ -100,7 +100,7 @@ use core::time::Duration;
 use env::Name;
 use programs::system::control::service as service;
 use protocol::debug;
-use protocol::system::desk::{Announce, Table};
+use programs::system::desk::{Announce, Table};
 use runtime::env::room;
 
 /// 占核者与打点者的**清单名**（`programs::program::PROGRAMS` 里 `scenes` 含 `load` 的那两行）。

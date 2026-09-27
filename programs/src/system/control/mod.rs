@@ -23,8 +23,8 @@ use alloc::vec::Vec;
 use env::manifest;
 use env::{Mark, Name, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
-use protocol::system::core::{Fail, Reaped};
-use protocol::system::desk::Table;
+use crate::system::core::{Fail, Reaped};
+use crate::system::desk::Table;
 
 use crate::program::Setup;
 use crate::root::boot;

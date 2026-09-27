@@ -14,7 +14,7 @@
 
 use env::{Name, Wait};
 use protocol::debug;
-use protocol::system::desk::Announce;
+use crate::system::desk::Announce;
 use runtime::env::mail;
 
 use protocol::system::supply::frame::{WANT_MAX, Want};

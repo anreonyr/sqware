@@ -11,5 +11,9 @@
 //! **照实记（`bridge` 回来了）**：装配侧那两面（放行前 `bind`、名册起来之后 `adopt` 补绑）
 //! 原先散在装配那一趟（`Program::assemble`）里；它们问的是名册的语义，故收进 [`bridge`] 那一间。
 
+//! **照实记（`core` 是残枝那一刀从 protocol 搬来的）**：名册与谱系那两张表原先住
+//! `crates/protocol/src/system/principal/core.rs`——读者只有本域那一枚线程，故回这里。
+
 pub mod bridge;
+pub mod core;
 pub mod server;

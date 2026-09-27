@@ -8,7 +8,7 @@ use runtime::core::port::{self, Policy};
 use runtime::env::mail::{NolePie, PolePie};
 
 use protocol::system::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
-use protocol::system::supply::core::Fail;
+use protocol::system::supply::Fail;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;

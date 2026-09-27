@@ -11,4 +11,10 @@
 //! `/sys/principal`，每条**写**原语嵌一次 `Resolve(发送者)`。"self"那一格因此不在核心，
 //! 在这一层（正文"已知边界"里写着这一条的确切含义）。
 
+//! **照实记（`core` 是残枝那一刀从 protocol 搬来的）**：盟册那本账原先住
+//! `crates/protocol/src/system/coalition/core.rs`——读者只有本域那一枚线程，故回这里；
+//! 协议那一边只剩号 / 失败域 / 一窗号。
+
+pub mod core;
 pub mod server;
+

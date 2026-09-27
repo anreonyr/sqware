@@ -12,7 +12,7 @@ use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::communication::establish::{self, Endpoint};
+use crate::communication::establish::{self, Endpoint, EstablishFail};
 use crate::communication::sender::Sender;
 use crate::system::board as bcall;
 use crate::system::board::Fail;
@@ -28,7 +28,7 @@ pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 /// 交入口才叫得出板。
 pub fn open(holder: TaskId, millis: Wait) -> Result<(Endpoint, TaskId), Fail> {
     let pair =
-        establish::endpoint(holder, Mark::of(LINK), millis).map_err(bcall::core::map_establish)?;
+        establish::endpoint(holder, Mark::of(LINK), millis).map_err(map_establish)?;
     // **认不到对端那一枚 = 这条板路没接上**（原 `map_claim` 那一格）：本端这一侧虽然只读答话，
     // 但"两侧各装一条、凑齐才算通"那条不变量仍在——没齐就是没接上，不必等到第一次收帧。
     if pair.tx().is_none() {
@@ -134,5 +134,22 @@ pub(crate) fn hear(pair: &Endpoint, millis: Wait) -> Option<TaskId> {
     match mail::HolePie::from_token(pair.rx()).pull_timeout(&mut buf, millis) {
         Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
+    }
+}
+
+// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
+//
+// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
+// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
+// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
+
+/// 建立那一手的失败域 → 板的失败域。
+///
+/// **铸不出孔** ⇒ `Denied`（本端这一手没做成）；**交不出去** ⇒ `Unknown`
+/// （它最常见的那一支是"对端已不在"）。
+pub fn map_establish(fail: EstablishFail) -> Fail {
+    match fail {
+        EstablishFail::NoHole => Fail::Denied,
+        EstablishFail::NoSeed => Fail::Unknown,
     }
 }

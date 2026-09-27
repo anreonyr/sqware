@@ -22,14 +22,14 @@ use env::Wait;
 use env::{PieToken, TaskId};
 use runtime::env::mail;
 
-use super::core::{CoalitionId, Fail, Window};
+use super::frame::{CoalitionId, Fail, Window};
 use super::frame::{self, BACK};
 use crate::id::Id;
 use crate::communication::establish;
 use crate::communication::receiver::Receiver;
 
 
-use crate::system::principal::core::PrincipalId;
+use crate::system::principal::PrincipalId;
 
 /// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
