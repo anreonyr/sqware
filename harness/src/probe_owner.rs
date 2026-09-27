@@ -8,9 +8,9 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  SEEK  /device/uart            ⇒ 记下 uart 那一格**原来的号**
-//!   3  LAND  /device/uart（自己的孔）⇒ 期望 DENIED（那一格是 uart 的：它声明了归属）
-//!   4  SEEK  /device/uart            ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
+//!   2  SEEK  /device/uart/rx         ⇒ 记下 uart 那枚砖**原来的号**
+//!   3  LAND  /device/uart/rx（自己的孔）⇒ 期望 DENIED（那枚砖是 uart 的：它声明了归属）
+//!   4  SEEK  /device/uart/rx         ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
 //!   5  **等** `/sys/lease` 那一格的主人退场（`probe-lease` 落完就走）⇒ 再落一次
 //!      ⇒ 期望**接得上**（主人不在场 ⇒ 那一格重新可落）
 //!   6  报读数就退场
@@ -43,16 +43,23 @@ use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{EntryId, Where};
 
-
 use env::{Name, PieToken, TaskId};
-use protocol::driver;
 use protocol::communication::establish::Endpoint;
+use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 本域要顶的那一格：`/device/uart`——`uart` 把"读行"那枚孔挂在它下面，并声明**归自己**。
+/// 本域要顶的那**一枚砖**：`/device/uart/rx`——`uart` 把"读行"那枚孔挂在它下面，并声明
+/// **归自己**。
+///
+/// **照实记（为什么不是 `/device/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
+/// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
+/// （它不是谁的服务格）。这一趟顶的是读口那一枚。
 const DIR: &str = driver::DIR;
-const ME: &str = "uart";
+/// 服务那一格（Pane）。
+const SERVICE: &str = "uart";
+/// 砖那一格（`uart` 声明的归属落在这一枚上）：读口。
+const ME: &str = "rx";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
@@ -76,21 +83,21 @@ fn main() -> Report<'static> {
     };
     let (tree, hedge, host) = (&session.link, session.talk, session.host);
 
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
+    let (Ok(dir), Ok(service), Ok(me)) = (Name::new(DIR), Name::new(SERVICE), Name::new(ME)) else {
         return bail("probe-owner: bad name");
     };
-    let road = [dir, me];
+    let road = [dir, service, me];
 
-    // 二、那一格**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
+    // 二、那枚砖**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
     let Some(before) = wait_id(hedge, &tree, &road) else {
-        return bail("probe-owner: no /device/uart");
+        return bail("probe-owner: no /device/uart/rx");
     };
 
     // 三、铸一枚自己的孔，去顶那一格——**这一手该被拒**。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
-    let at = Where::At(wait_dir(hedge, &tree, dir).unwrap_or(EntryId::new(0)));
+    let at = Where::At(wait_pane(hedge, &tree, dir, service).unwrap_or(EntryId::new(0)));
     let land = operator::land(
         hedge,
         &tree,
@@ -204,10 +211,14 @@ fn take_over(hedge: PieToken, link: &Endpoint, host: TaskId) -> Result<EntryId, 
     }
 }
 
-/// `/device` 那一格的号（分目录幂等 + 译号）。
-fn wait_dir(say_hole: PieToken, link: &Endpoint, dir: Name) -> Option<EntryId> {
+/// `/device/uart` 那块 Pane 的号（分目录**幂等两趟** + 译号）：要顶的那枚砖落在它下面。
+fn wait_pane(say_hole: PieToken, link: &Endpoint, dir: Name, service: Name) -> Option<EntryId> {
+    // 第一趟：`/device`（幂等——别的驱动也在它下面）。
     operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
-    operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
+    let at = operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()?;
+    // 第二趟：`/device/uart`（幂等——`uart` 自己已经分出来那块）。
+    operator::part(say_hole, link, Where::At(at), service, Wait::AtMost(MS)).ok()?;
+    operator::seek(say_hole, link, &[dir, service], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
@@ -230,4 +241,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
-

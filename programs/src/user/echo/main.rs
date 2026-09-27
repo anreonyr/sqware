@@ -6,10 +6,10 @@
 //! ```text
 //!   1  上板报到：`REGISTER "echo"`（板因此看得见本域的死；挂不上照旧回显）
 //!   2  树那条路：开会话 + 另铸一枚问话孔给持树者
-//!   3  先找控制台：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表（找不到就有界重问）
+//!   3  先找控制台：`FIND /device/uart/{rx,tx}` ⇒ 两枚孔经会话授进本域表（缺一枚就有界重问）
 //!   4  上树一趟：`PART / LAND / FIND / NAME / TRIM`（本域是第一位真客人）
 //!   5  上树第二趟：**一串**——`LIST` 列根、`NAME` 按号翻名、`LIST /device`、`NAME` 一枚没铸过的号
-//!   6  回显：**一条消息 = 一次排空**（字节流，边界无意义）⇒ 攒够一行写一行；读到 `exit` 退场
+//!   6  回显：**一条消息 = 一次排空**（字节流，边界无意义）⇒ 攒够一行推给写口；读到 `exit` 退场
 //!            （域退场 ⇒ 编排域收场 ⇒ 引导域退 ⇒ 停机）
 //! ```
 //!
@@ -59,7 +59,7 @@ fn main() -> Result<(), env::Reason> {
         return Err(E_NO_CONSOLE);
     };
 
-    // 3：**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
+    // 3：**先找控制台**：`FIND /device/uart/{rx,tx}` ⇒ 两枚孔经会话授进本域表里（缺一枚即未找到）。
     let console = adapt::console::find(&session);
     debug!("echo: console={}", console.is_some());
 

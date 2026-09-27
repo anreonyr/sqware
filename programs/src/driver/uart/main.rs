@@ -8,15 +8,17 @@
 //!
 //! ```text
 //! 设备   领配给 → 开图 → 把"收到字节就拉线"打开（IER.RX，线的闸门归设备持有者）
-//! 入系统 解门牌 → 上板（板因此看得见本域的死）→ 上树（/device/uart）
+//! 入系统 铸两枚孔（读口 / 写口）→ 上板（板因此看得见本域的死）→ 上树落两枚门牌
 //!         → 从树上找到线路由者、登记本域那条线（报那一段区，不说线号）
-//! 核心   那条线一响 ⇒ 排空设备（读走 RBR）⇒ 把这一批字节推给读行的人
-//!         ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
+//! 核心   两个源：写口上有客人交来的一条字 ⇒ 原样写进设备
+//!               那条线一响 ⇒ 排空设备（读走 RBR）⇒ 把这一批字节推给读行的人
+//!               ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
 //! ```
 //!
-//! **适配那几段不在这里**：`Device` / `Context` 住 [`programs::driver`]（三台逐字同构的那些
-//! 步骤）；设备面在 [`uart`](self)；"这一批能不能交"那条纪律在 `core::batch`。服务面的判据与
-//! 照实记（读口归谁、一条消息是什么、为什么它不退场、特权级）在 `driver/uart/mod.rs`。
+//! **适配那几段不在这里**：`Device` / `Context` 住 [`programs::driver`]（各台共用的那些步骤）；
+//! 设备面在 [`uart`](self)；服务台（两枚门牌那一趟 ＋ 把一条字写出去）在 [`desk`](self)；
+//! "这一批能不能交"那条纪律在 `core::batch`。服务面的判据与照实记（读口归谁、一条消息是什么、
+//! 为什么它不退场、特权级）在 `driver/uart/mod.rs`。
 
 extern crate alloc;
 extern crate programs;
@@ -24,20 +26,25 @@ extern crate programs;
 /// 纯功能：交出去的那一批（非空不可表达）。
 mod core;
 
+/// 服务台：两枚门牌那一趟 ＋ 从写口取一条字写出去。
+mod desk;
+
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod uart;
 
 use crate::core::batch::Batch;
 use crate::uart as device;
-use env::Wait;
-use programs::driver::context::Context;
+use env::{HoleDir, Wait};
 use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::program::uart::{E_UART, UART_WANTS as WANTS};
-use protocol::system::operator::client::Mine;
 use protocol::debug;
+use runtime::PAGE_SIZE;
+use runtime::core::pile::Pile;
+use runtime::env::mail::HolePie;
 
 /// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
+/// 它是一块 **Pane**：两枚门牌 `rx` / `tx` 在它下面。
 const ME: &str = "uart";
 
 /// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -58,30 +65,62 @@ fn main() -> Result<(), Fail> {
     let dev = Device::open(serial).map_err(|_| Fail::at(E_UART, "device open failed"))?;
     device::arm_rx(dev.view());
     // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
-    let base = dev.key().base().ok_or(Fail::at(E_UART, "device open failed"))?;
+    let base = dev
+        .key()
+        .base()
+        .ok_or(Fail::at(E_UART, "device open failed"))?;
     debug!("uart: ier=rx at={base:#x}");
 
     // ── 入系统 ─────────────────────────────────────────────
-    // 解门牌 → 上板 ＋ 开会话 → 上树 → 占线：那一趟的壳在 [`Context::enter`]（两台逐字同构，
-    // 失败那几格说**步名**）。报的是**发下来的那一段区**——"线 = 区的函数"那条权威在路由者
-    // 那边解。
-    let (ctx, line) = Context::enter(dev.key(), ME, Mine::Yes, E_UART, Wait::AtMost(MS))?;
+    // 铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌 → 占线：那一趟在 [`desk::start`]。本台是唯一
+    // 双向的一台，故它不走 `Context::enter` 那一形（"一枚门牌"那一形）。报的是**发下来的那一段
+    // 区**——"线 = 区的函数"那条权威在路由者那边解。
+    let desk = desk::start(dev.key(), Wait::AtMost(MS))?;
 
     // ── 核心 ───────────────────────────────────────────────
+    // **两个源**：写口上有客人交来的一条字、线上有"设备收来了字节"——组等任意一格
+    // （与 `rtc` 那一台同一条判据）。
+    let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
+    let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
+    if pile.attach(&desk.tx, HoleDir::Pull).is_err()
+        || pile
+            .attach(&HolePie::from_token(lane), HoleDir::Pull)
+            .is_err()
+    {
+        return Err(Fail::at(E_UART, "desk"));
+    }
+    let view = dev.view();
+    // 写口那一页：**载体的界**——任何一条消息一趟都取得出来（与 `rtc` 备缓冲同一手）。
+    let mut word: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+    if word.try_reserve_exact(PAGE_SIZE).is_err() {
+        return Err(Fail::at(E_UART, "desk"));
+    }
+    word.resize(PAGE_SIZE, 0);
     let mut raw = [0u8; DRAIN_MAX];
+
     loop {
-        if line.receive(Wait::Forever).is_err() {
+        if pile.await_(Wait::Forever).is_err() {
             return Err(Fail::at(E_UART, "line gone"));
         }
-        let n = device::drain(dev.view(), &mut raw);
-        // 交给读行的人（门牌那枚孔＝读行的那一枚）。**这一手要阻塞**：字节是内容，丢了补不回来；
-        // 读行的人（`echo`）总会回到"取一行"那一格，故等它是有界的。
+        // **先写口后设备**：写口那一头是客人正阻塞等着的（`push` 满了就睡），而设备里的字节在
+        // FIFO 里排着，多等这一瞬不丢。
         //
-        // **`n == 0` 那一趟不推**：[`Batch::of`] 把那一格做进了类型（内核只收 `1..=一页`）。
-        if let Some(batch) = Batch::of(&raw, n) {
-            ctx.publish(batch.bytes()).unwrap();
+        // **一次写 = 一条完整的字**：这一条消息就是要写出去的全部字节，本域不拆不并。
+        while let Ok((len, _)) = desk.tx.pull_timeout_from(&mut word, Wait::POLL) {
+            device::put(view, &word[..len]);
         }
-        // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 + 把线放回去。
-        line.exhaust().unwrap();
+        // 设备那一趟（次序不动）：`receive` 吃的是路由者那一枚"线响了"的通知。
+        while desk.line.receive(Wait::POLL).is_ok() {
+            let n = device::drain(view, &mut raw);
+            // 交给读行的人（读口那枚孔）。**这一手要阻塞**：字节是内容，丢了补不回来；读行的
+            // 人（`echo`）总会回到"取一行"那一格，故等它是有界的。
+            //
+            // **`n == 0` 那一趟不推**：[`Batch::of`] 把那一格做进了类型（内核只收 `1..=一页`）。
+            if let Some(batch) = Batch::of(&raw, n) {
+                desk.ctx.publish(batch.bytes()).unwrap();
+            }
+            // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 + 把线放回去。
+            desk.line.exhaust().unwrap();
+        }
     }
 }

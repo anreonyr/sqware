@@ -1,8 +1,10 @@
-//! uart — NS16550 的**最小设备面**：够三件事——开"收到字节就拉线"、问"有没有字节"、把字节取走。
+//! uart — NS16550 的**最小设备面**：够四件事——开"收到字节就拉线"、问"有没有字节"、把字节取走、
+//! 把一条字塞出去。
 //!
 //! 它是**本域（串口驱动）的设备面**：`IER` 只控制**中断线**、不控制数据通路，故"开这一位"
 //! 不会把字符从谁手里抢走；而**读**（[`drain`]）才是"把字节从设备里取走"那一手——它从前在
-//! 内核的调试面（固件代读 `RBR`），今天在持有设备的本域。**一台设备只有一个读者**。
+//! 内核的调试面（固件代读 `RBR`），今天在持有设备的本域。**一台设备只有一个读者**；
+//! 对称地，**写也只有本域**（[`put`] 塞 `THR`）——域里要写字，经服务台那条写口来。
 //!
 //! 不碰 FIFO 配置、不管行、不解释字节：FIFO 是固件初始化时开好的（`uart8250_device_init`），
 //! "一行"是**终端**的约定（在客人那侧，见 `programs/src/user/echo/mod.rs`）。
@@ -11,6 +13,9 @@ use runtime::core::dock::View;
 
 /// `RBR` = 接收缓冲：**读它就是取走一个字节**（`LSR.DR` 随之落）。
 const RBR: usize = 0;
+
+/// `THR` = 发送保持寄存器：**写它就是塞一个字节出去**（与 `RBR` 同一个偏移的写侧）。
+const THR: usize = 0;
 
 /// `IER` = 中断使能寄存器（NS16550 的寄存器偏移 1）。
 ///
@@ -26,6 +31,9 @@ const IER_RX: u8 = 0x01;
 
 /// `LSR.DR`：收一个字节到了。
 const LSR_DR: u8 = 0x01;
+
+/// `LSR.THRE`：发送保持寄存器空了（可以塞下一个字节）。
+const LSR_THRE: u8 = 0x20;
 
 /// 打开"收到字节就拉线"——**读改写**：只置 `RX` 这一位。
 ///
@@ -53,6 +61,28 @@ pub fn drain(view: View, out: &mut [u8]) -> usize {
     unsafe {
         while n < out.len() && core::ptr::read_volatile(at.add(LSR)) & LSR_DR != 0 {
             out[n] = core::ptr::read_volatile(at.add(RBR));
+            n += 1;
+        }
+    }
+    n
+}
+
+/// 塞出去：`LSR.THRE` 置着就写一个字节进 `THR`，返塞出去的字节数（= `bytes.len()`）。
+///
+/// **一次写 = 一条完整的字**由服务台那一侧保证（一条消息就是全部字节）；本手只负责**照原样**
+/// 把这几个字节塞进设备，不拆、不并、不添字。
+///
+/// **这一圈等的是有界的东西**（不是"空转的红线"那一档）：等的是我们自己要塞的这几个字节，
+/// 而 `put` 的用家（`desk`）一条字 ≤ `LINE_MAX + 1` ⇒ 115200 波特下最坏约 11 ms。设备里的字节
+/// 印出来这件事只能由持有者做——固件那一侧 `Dbcn::ConsoleWrite` 也是这么等的。
+pub fn put(view: View, bytes: &[u8]) -> usize {
+    let at = view.base() as *const u8;
+    let mut n = 0;
+    // SAFETY: 同 `arm_rx`/`drain`；只读写 `LSR` / `THR` 两格（写 `THR` 即塞出一个字节）。
+    unsafe {
+        while n < bytes.len() {
+            while core::ptr::read_volatile(at.add(LSR)) & LSR_THRE == 0 {}
+            core::ptr::write_volatile(at.add(THR) as *mut u8, bytes[n]);
             n += 1;
         }
     }

@@ -1,9 +1,9 @@
 //! echo::adapt — **适配（壳）**：碰内核、碰树、碰孔的那一半。
 //!
 //! ```text
-//!   console.rs  2–3：找控制台 `/device/uart`（"再问一次"那一圈在 `operator::entry_of`）
+//!   console.rs  2–3：找控制台 `/device/uart/{rx,tx}`（"再问一次"那一圈在 `operator::entry_of`）
 //!   tree.rs     4–5：上树两趟——落自己那块牌子（五步）＋ 一串（列号 / 翻名 / 列目录 / 问空号）
-//!   echo.rs     6  ：回显那一圈——`pull` 一批 → 交给 `core::line` → 逐行写回（**壳**）
+//!   echo.rs     6  ：回显那一圈——`rx` 读一批 → 交给 `core::line` → 每条字推给 `tx`（**壳**）
 //! ```
 //!
 //! **照实记（第 1 步与开局那两手已不住本目录）**：上板报到只剩 `main` 里那三行
@@ -25,8 +25,13 @@ pub mod tree;
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
 pub const ME: &str = "echo";
 
-/// 要找的那位服务在树上的名字：**控制台**（`/device/uart`——名字用服务名）。
+/// 要找的那位服务在树上的名字：**控制台**（`/device/uart`——名字用服务名；它是一块 Pane）。
 pub const WANT: &str = "uart";
+
+/// 那块 Pane 下的两枚门牌：[`RX`] = **读口**（控制台排空出来的一批，本域取），
+/// [`TX`] = **写口**（本域推"一条完整的字"，控制台写进设备）。
+pub const RX: &str = "rx";
+pub const TX: &str = "tx";
 
 /// 等板 / 等树 / 找一趟控制台的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 pub const MS: usize = 1000;

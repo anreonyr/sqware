@@ -77,7 +77,6 @@ pub struct Operator {
 }
 
 impl Operator {
-
     /// 立一棵树。**机制不进这里**（照实记见文件头）：要探活 / 要开者 / 要放下，
     /// 直接叫 [`crate::communication::establish`] 那三具身体。
     pub const fn new() -> Operator {
@@ -215,7 +214,7 @@ impl Operator {
     /// 从根起按名字一段段走：缺一段 ⇒ [`Fail::Unknown`]；中途那一段是一枚 `Tile` ⇒
     /// [`Fail::NotAPane`]；路超过 [`ROAD_MAX`] 段 ⇒ [`Fail::Full`]。
     /// 走到头答**那一格自己的号**——故**最后一段是一枚 `Tile` 也行**（那正是门牌那一格：
-    /// `/device/uart` 到头就是一枚砖）。
+    /// `/device/uart/rx` 到头就是一枚砖）。
     ///
     /// **空路 ⇒ [`Fail::Unknown`]**（对照 [`Operator::list`]：它空路却能列——列的是根那一层，
     /// 不需要根有号）：**根没有号**，没什么可译。
