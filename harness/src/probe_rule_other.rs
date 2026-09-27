@@ -47,14 +47,11 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use core::time::Duration;
-
 use env::{Name, PieToken};
-use protocol::debug;
 use protocol::communication::establish::Endpoint;
+use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 const DIR: &str = "sys";
@@ -66,9 +63,6 @@ const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 那一格可能落得比本域晚：找不到就再问一次的间隔（毫秒）。
-const RETRY_MS: usize = 1;
 
 /// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
@@ -129,23 +123,15 @@ fn main() -> Report<'static> {
 ///
 /// **带一轮有界重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
 fn denied(talk: PieToken, link: &Endpoint, road: &[Name]) -> u8 {
-    let mut left = MS;
-    let id = loop {
-        match operator::seek(talk, link, road, Wait::AtMost(MS)) {
-            Ok(id) => break id,
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(code) => return code,
-        }
-    };
-    // `find` 的失败域是 `Fail`（六格），答话码是另一张表——这里只关心"拒没拒"，
-    // 故译不出号/推不动都按 [`ocall::BAD`] 记（读数上分得开）。
-    // （`find` 的第二格 = 那一枚入口在本域表里的号：这一支不看它，只要状态。）
-    operator::find(talk, link, id, Wait::AtMost(MS))
-        .map(|(code, _entry)| code)
-        .unwrap_or(ocall::BAD)
+    // 名字 → 号（**译不出就重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚）
+    // → 入口：那一趟在 [`programs::session`]（本域从前自己抄了一遍，八份同形里的一份）。
+    //
+    // 答话码原样往外带；`find` 那一族的失败由 [`programs::session::entry_of`] 折成
+    // [`ocall::BAD`]（"译不出号 / 推不动"在这里本就分不开，见 `ocall` 那张表）。
+    match programs::session::lookup(link, talk, road, Wait::AtMost(MS)) {
+        Ok(_) => ocall::OK,
+        Err(code) => code,
+    }
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

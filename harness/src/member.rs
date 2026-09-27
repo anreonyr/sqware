@@ -40,30 +40,24 @@ use env::Wait;
 use programs::Report;
 
 use alloc::string::String;
-use core::time::Duration;
 
-use env::{Name, PieToken};
 use alloc::format;
+use env::{Name, PieToken};
+use protocol::communication::establish::Endpoint;
 use protocol::debug;
 use protocol::id::Id;
-use protocol::communication::establish::Endpoint;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::{CoalitionId, Fail, Window};
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PolicyFace;
 use protocol::system::principal::Fail as PolicyFail;
 use protocol::system::principal::PrincipalId;
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 门牌可能落得比本域晚：找不到就再问一次的间隔（毫秒）。
-const RETRY_MS: usize = 1;
 
 /// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
@@ -284,23 +278,9 @@ fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<P
     let (Ok(dir), Ok(name)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
-    let road = [dir, name];
-    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
-    let mut left = MS;
-    let id = loop {
-        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
-            Ok(id) => break id,
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(_) => return None,
-        }
-    };
-    match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
+    // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：那一趟在
+    // [`programs::session`]（本域从前自己抄了一遍）。
+    programs::session::lookup(link, talk, &[dir, name], Wait::AtMost(MS)).ok()
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

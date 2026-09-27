@@ -86,11 +86,9 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use core::time::Duration;
-
 use env::{Name, PieToken, TaskId};
-use protocol::debug;
 use protocol::communication::establish::Endpoint;
+use protocol::debug;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::operator as ocall;
@@ -100,7 +98,6 @@ use protocol::system::operator::{EntryId, Where};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;
 use runtime::env::mail;
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域分出来的那一块：`/sys/rule`。
@@ -130,9 +127,6 @@ const MINE: &str = "mine";
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 门牌可能落得比本域晚：找不到就再问一次的间隔（毫秒）。
-const RETRY_MS: usize = 1;
 
 /// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
@@ -260,7 +254,7 @@ fn main() -> Report<'static> {
     // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
     let foreign_id = match Name::new(pcall::NAME)
         .ok()
-        .and_then(|p| seek_id(&tree, talk, &[dir, p]))
+        .and_then(|p| programs::session::id_of(&tree, talk, &[dir, p], Wait::AtMost(MS)).ok())
     {
         Some(principal) => plate(
             talk,
@@ -280,7 +274,7 @@ fn main() -> Report<'static> {
     //                而**号不重用** ⇒ 那一格永久没有开者。
     // 照实记：`UNJUDGED` 这一格此前**只在宿主靶上有过读数**（那台靶已删；身份服务不答那一版在
     // 真机上要拆整机）。这两格与它同格不同因：判据不需要"那一格为什么没人"，只需要"**有没有那一位**"。
-    let at_pane_id = match seek_id(&tree, talk, &[dir]) {
+    let at_pane_id = match programs::session::id_of(&tree, talk, &[dir], Wait::AtMost(MS)).ok() {
         Some(sys) => plate(talk, &tree, host, pane_id, AT_PANE, Rule::Opens(sys), false),
         None => EntryId::new(0),
     };
@@ -480,34 +474,13 @@ fn look(talk: PieToken, link: &Endpoint, id: EntryId, millis: Wait) -> u8 {
 
 /// 按名字找一面服务门牌（`seek` 译号 + `find` 取回）——与 `subject` / `member` 那两台同形。
 ///
-/// **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
+/// **间接寻址那一手**（名字 → 号：译不出就重试）与 `find` 都在 [`programs::session`] 里；
 /// `find` 把那一枚授过来（持树者 `ship`），**它在本域表里的号随答话回来** ⇒ 不必认领。
 fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
-    let id = seek_id(link, talk, &[dir, one])?;
-    match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
-}
-
-/// **点名那一手**：把一条路译成号（名字 → 号），"还没挂上"那一格在那里重试。
-///
-/// 这是这一刀唯一新用到的读：规矩里那个号的来路从"别人告诉我"变成"**树上换来**"。
-fn seek_id(link: &Endpoint, talk: PieToken, road: &[Name]) -> Option<EntryId> {
-    let mut left = MS;
-    loop {
-        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
-            Ok(id) => return Some(id),
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(_) => return None,
-        }
-    }
+    programs::session::lookup(link, talk, &[dir, one], Wait::AtMost(MS)).ok()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

@@ -127,9 +127,14 @@
 //!
 //! **入库判据**：一个 API 进 `driver::` **当且仅当两台以上逐字同构**（今天最宽的一件是
 //! [`context::Context::enter`]：`uart` / `rtc` 走，`router` 起手不同形）。设备长什么样、服务协议
-//! 长什么样，永远在域里。**照实记（`tree` / `register` 两份已并进 [`context`]）**：那两份
+//! 长什么样，永远在域里。**照实记（`tree` / `register` 两份已并进 `context`）**：那两份
 //! 加 `harness/lodger.rs` 的 `find_router` 抄的是同一趟路（开会话 → 要问话孔 → 名字译成号 →
-//! 按号取入口），参数表 7 / 4 / 0 参而只要同一条会话 ⇒ 并成 [`context::Session`]。
+//! 按号取入口），参数表 7 / 4 / 0 参而只要同一条会话 ⇒ 并成一条 `Session`。
+//!
+//! **照实记（那条 `Session` 又抬出了本目录）**："客人开局"那一半的用户里一半不是驱动
+//! （房客 `lodger`、客人 `echo`、内件 `coalition`），一个 `user` 档的程序引 `driver::` 是名字
+//! 越界 ⇒ 它今天住 [`crate::session`]，本目录只留**设备面那一半**（`Context` 的门牌 / 线 /
+//! 推一批字节）。判据没变，变的是它落哪一间。
 
 pub mod assemble;
 pub mod context;

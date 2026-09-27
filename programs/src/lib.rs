@@ -21,9 +21,11 @@
 //! 摆出来，故与它同层：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
 //! **引导域**（`root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
-//! 内含之后**共用件只剩三枚**：`entry`（`_start` + panic 处理，每个程序共用）、
-//! [`system::control`]（那台装配与生命周期的机器，两个装配者 `root` / `system` 共用）与
-//! [`driver::assemble`]（**客侧**那台机器，三台驱动与房客共用）。**"打一行"那一句不在本 crate**
+//! 内含之后**共用件只剩四枚**：`entry`（`_start` + panic 处理，每个程序共用）、
+//! [`system::control`]（那台装配与生命周期的机器，两个装配者 `root` / `system` 共用）、
+//! [`driver::assemble`]（**收配给**那台机器：按本域那张单子把记录归位，三台驱动与房客共用）
+//! 与 [`session`]（**客人开局**：开会话 / 名字→号→入口 / 落门牌——驱动、房客、客人、内件
+//! **四档都走它**，故它不住 `driver::` 之下）。**"打一行"那一句不在本 crate**
 //! ——各域原先各写一份 `fn say(msg: &str)`（二十六份逐字相同），今天只有一处：
 //! `protocol::debug!`（**只在 debug 构建下有效**，见那个模块的头注）。
 //!
@@ -88,6 +90,7 @@ pub mod driver;
 pub mod entry;
 pub mod program;
 pub mod root;
+pub mod session;
 pub mod system;
 pub mod user;
 

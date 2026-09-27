@@ -37,25 +37,19 @@ use env::Wait;
 use programs::Report;
 
 use alloc::string::String;
-use core::time::Duration;
 
-use env::{Name, PieToken};
 use alloc::format;
-use protocol::debug;
+use env::{Name, PieToken};
 use protocol::communication::establish::Endpoint;
-use protocol::system::operator as ocall;
+use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::{Fail, PrincipalId};
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 门牌可能落得比本域晚：找不到就再问一次的间隔（毫秒）。
-const RETRY_MS: usize = 1;
 
 /// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
@@ -202,30 +196,15 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "subject: done");
 }
 
-/// 找那面服务：`FIND "/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
+/// 找那面服务：`"/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
+/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`programs::session`]（本域从前自己抄了一遍）。
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
 fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    let road = [dir, me];
-    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
-    let mut left = MS;
-    let id = loop {
-        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
-            Ok(id) => break id,
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(_) => return None,
-        }
-    };
-    match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
+    programs::session::lookup(link, talk, &[dir, me], Wait::AtMost(MS)).ok()
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

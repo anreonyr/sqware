@@ -7,9 +7,9 @@
 use super::{ME, MS};
 use alloc::format;
 use alloc::string::String;
-use env::{Name, PieToken, TaskId, Wait};
+use env::{Name, Wait};
+use programs::session::Session;
 use protocol::debug;
-use protocol::communication::establish::Endpoint;
 use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
@@ -24,7 +24,8 @@ use runtime::env::mail;
 /// 为什么这五步都要走：树上那四支判据各有各的门（分出第二层、落一枚真 Pie、寻回来把 Pie
 /// 经会话授出、剪掉一块空 `Pane`），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
 /// 入口（与上板那一枚同一个记号），故它在树上是一枚普通 `Tile`，不是特权。
-pub fn trip(link: &Endpoint, talk: PieToken, host: TaskId) -> u8 {
+pub fn trip(session: &Session) -> u8 {
+    let (link, talk, host) = session.parts();
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         return ocall::BAD;
     };
@@ -101,7 +102,8 @@ pub fn trip(link: &Endpoint, talk: PieToken, host: TaskId) -> u8 {
 /// **名与号分开**那一刀的四格读数就落在这里：`list` 答号、`name` 按号答名（名字在答话那一侧，
 /// 长短由那一帧说）。返这一趟的答码（`ocall::OK` = 全成）——每一格自己打一行，故中途断了也
 /// 看得出断在哪一条。
-pub fn serial(link: &Endpoint, talk: PieToken) -> u8 {
+pub fn serial(session: &Session) -> u8 {
+    let (link, talk, _) = session.parts();
     // 根那一层：**`Where::Root` 就是根**（根没有号，故它占的是坐标那一格，不是一个号）。
     let Ok(root) = operator::list(talk, link, Where::Root, Wait::AtMost(MS)) else {
         return ocall::UNKNOWN;

@@ -29,9 +29,9 @@ mod core;
 
 use crate::adapt::{E_NO_CONSOLE, MS};
 use env::Wait;
+use programs::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 /// 本域开口那一声（第一行读数）。
@@ -47,24 +47,22 @@ fn main() -> Result<(), env::Reason> {
     debug!("echo: reg={reg}");
 
     let sire = utask::sire();
-    // 2：树那条路：本域只开一条会话——**先找控制台，再落自己那块牌子**（次序见 `user/echo/mod.rs`）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
-        return Err(E_NO_CONSOLE);
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
+    // 2：树那条路：本域只开一条会话（[`Session::open`]）——**先找控制台，再落自己那块牌子**
+    //    （次序见 `user/echo/mod.rs`）。
+    let Ok(session) = Session::open(sire, Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
     };
 
     // 3：**先找控制台**：`FIND /device/uart` ⇒ 那枚孔经会话授进本域表里。
-    let console = adapt::console::find(&tree, talk);
+    let console = adapt::console::find(&session);
     debug!("echo: console={}", console.is_some());
 
     // 4：上树一趟：**本域是第一位真客人**——把入口挂到树上、再查回来取一枚、剪掉一块空 Pane。
-    let op = adapt::tree::trip(&tree, talk, host);
+    let op = adapt::tree::trip(&session);
     debug!("echo: op={op}");
 
     // 5：上树第二趟：**一串**（列号 → 按号翻名 → 列 `/device` → 问一枚没铸过的号）。
-    let seq = adapt::tree::serial(&tree, talk);
+    let seq = adapt::tree::serial(&session);
     debug!("echo: seq={seq}");
 
     // **返回值那一格判在消耗它的这一层**：`serial` 内部看不见自己那一趟被改坏。

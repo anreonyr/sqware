@@ -63,7 +63,7 @@ use programs::program::harness::LODGER_WANTS as WANTS;
 use programs::driver::assemble;
 
 // 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
-use programs::driver::context::Session;
+use programs::session::Session;
 use protocol::debug;
 
 use env::{PieToken};

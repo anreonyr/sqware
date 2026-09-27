@@ -17,7 +17,6 @@
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
 
 use crate::system::control::service::Start;
-use core::time::Duration;
 use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
@@ -39,13 +38,9 @@ use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
-use runtime::env::room;
 
 /// 等板 / 等树 / 问名册的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 身份服务那份门牌可能落得比本域晚：找不到就再问一次的间隔（毫秒）。
-const RETRY_MS: usize = 1;
 
 /// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**。
 ///
@@ -209,33 +204,17 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
         .ok_or(Fail::Unknown)
 }
 
-/// 找**身份服务**那份门牌：`FIND "/sys/principal"`，**找不到就再问**（有界）。
+/// 找**身份服务**那份门牌：`"/sys/principal"`，**译不出就再问**（有界）。
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
-/// ——故这一趟**必须有重试**：撞 `UNKNOWN` 就睡 `RETRY_MS` 再来，总预算 [`MS`]。
-///
-/// 把剩下的预算当这一趟的期限递下去：总账 ≤ `MS` + 一趟。
+/// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，总预算 [`MS`]）→ 入口。
+/// 这一趟与另外七处（`echo` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，已并进
+/// [`programs::session`]。
 fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    let road = [dir, name];
-    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
-    let mut left = MS;
-    let id = loop {
-        match operator::seek(talk, link, &road, Wait::AtMost(left)) {
-            Ok(id) => break id,
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(_) => return None,
-        }
-    };
-    match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
+    crate::session::lookup(link, talk, &[dir, name], Wait::AtMost(MS)).ok()
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。

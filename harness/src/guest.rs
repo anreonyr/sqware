@@ -51,17 +51,13 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
+use env::{Name, PieToken};
 use protocol::debug;
+use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-
-use core::time::Duration;
-
-use env::{Name, PieToken};
-use protocol::system::board as bcall;
 use runtime::env::mail;
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -70,9 +66,6 @@ const WANT: &str = "router";
 
 /// 等板 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 找不到就再问一次的间隔（毫秒）：板是**运行期**的账，本域可能比 `router` 先起。
-const RETRY_MS: usize = 1;
 
 /// 本地失败写进读数的那一格（与 `board::BAD` 同值：没走到 / 读不懂）。
 const BAD: u8 = bcall::BAD;
@@ -131,20 +124,12 @@ fn main() -> Report<'static> {
     // **照实记（乙′：这一格从"两趟"并成"一趟"）**：`find` 从前只答一格状态，查到的那一枚要
     // 另叫一手 `operator::take` 扫本域表按"谁给的"认回来。今天那一枚号**随答话回来**，故
     // 这一趟连号带状态一起破出去；`at` 就是本域表里那一枚（读数里的 `entry`）。
-    let mut left = MS;
-    let (find, at) = loop {
-        match operator::seek(hedge, &tree, &path, Wait::AtMost(MS)) {
-            // **树那一问用树自己的码**（`ocall::BAD` = 7；`BAD` 那一格是板那一面的，值 5）。
-            Ok(id) => match operator::find(hedge, &tree, id, Wait::AtMost(MS)) {
-                Ok((code, entry)) => break (code, entry.unwrap_or(none)),
-                Err(_) => break (ocall::BAD, none),
-            },
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(code) => break (code, none),
-        }
+    //
+    // 那一趟（含"译不出就重试"）今天在 [`programs::session`]（本域从前自己抄了一遍）：
+    // 答话码原样往外带，`find` 那一族的失败折成 `BAD`。
+    let (find, at) = match programs::session::lookup(&tree, hedge, &path, Wait::AtMost(MS)) {
+        Ok(entry) => (ocall::OK, entry),
+        Err(code) => (code, none),
     };
 
     // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）

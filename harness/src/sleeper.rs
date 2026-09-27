@@ -42,19 +42,15 @@ use programs::Report;
 use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
-use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-
-use core::time::Duration;
 
 use env::{Name, PieToken};
 use protocol::communication::establish::Endpoint;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
-use programs::driver::rtc::core::frame as rcall;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
+use programs::driver::rtc::core::frame as rcall;
 use runtime::env::mail;
-use runtime::env::room;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
@@ -65,9 +61,6 @@ const WANT: &str = "rtc";
 
 /// 等板 / 等树 / 找一趟服务 / 办一趟往返的总上限（毫秒）。**必须有界**。
 const MS: usize = 1000;
-
-/// 找不到就再问一次的间隔（毫秒）：门牌是驱动落的，本域可能比它先起。
-const RETRY_MS: usize = 1;
 
 /// 这一槽的**周期**（纳秒）："再过这么久叫我"。`Wire::Arm` 收了相对量之后，这个数就是
 /// **想要的那段距离本身**，不再是"要罩住一趟往返的提前量"——延迟由收帧的驱动承担
@@ -182,23 +175,9 @@ fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
-    let road = [dir, want];
-    // **间接寻址那一手**：名字先经 `seek` 译成号（"还没挂上"那一格也在这里重试），此后按号。
-    let mut left = MS;
-    let id = loop {
-        match operator::seek(talk, link, &road, Wait::AtMost(MS)) {
-            Ok(id) => break id,
-            Err(ocall::UNKNOWN) if left > 0 => {
-                let _ = room::sleep(Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(_) => return None,
-        }
-    };
-    match operator::find(talk, link, id, Wait::AtMost(MS)) {
-        Ok((ocall::OK, Some(entry))) => Some(entry),
-        _ => None,
-    }
+    // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：那一趟在
+    // [`programs::session`]（本域从前自己抄了一遍，八份同形里的一份）。
+    programs::session::lookup(link, talk, &[dir, want], Wait::AtMost(MS)).ok()
 }
 
 /// 上板报到（与 `passer` / `echo` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
