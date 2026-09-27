@@ -22,7 +22,7 @@
 // │
 // └─ [用户半区] 0x0000_0000 .. upper（upper = 1 << split_bit）
 //    ├─ 任务栈窗口 1 GiB       upper − STACK_WINDOW_SIZE ← 顶锚
-//    │  └─ 任务栈 slot         TASK_STACK_GUARD(4 KiB) + TASK_STACK_SIZE(16 KiB)
+//    │  └─ 任务栈 slot         TASK_STACK_GUARD(4 KiB) + TASK_STACK_SIZE(32 KiB)
 //    │
 //    ├─ 用户堆                 [image_end, upper − 1 GiB)
 //    │
@@ -42,8 +42,19 @@ use crate::memory::manager::mode;
 
 // ── 栈尺寸 ─────────────────────────────────────────────────
 
-/// 单任务栈 16 KiB。
-pub(crate) const TASK_STACK_SIZE: usize = 16384;
+/// 单任务栈 32 KiB。
+///
+/// **照实记（为什么从 16 KiB 抬上来）**：16 KiB 在 debug 档不够——编排域（`system`）的起手
+/// 调用链实测用到 **16488 B**：出错那条 `store` 落在守护页上（`pc=0x38a92`、`VA(0x4efd0)`），
+/// 超 104 字节 ⇒ 守护页当场杀域 ⇒ 引导域随之收场 ⇒ 整机停机、一个程序都起不来。
+/// 链上没有哪一帧写错（最大的单帧 2032 B，`Machine::site_of`），是 debug 档的帧比 release
+/// 肥、八层叠起来的结果。取 **32 KiB = 一倍余量**：帧体随代码漂移，16 KiB 那一格已经没有
+/// 余量可谈（差 104 字节 ≈ 0.6%）。
+///
+/// 代价照实：栈体是 **Eager** 物化（`StackWindow::claim` 逐页分配物理帧），故每个任务多
+/// 16 KiB 常驻；今天二十来个任务 ⇒ 半 MB 量级，256 MiB 的机器无感；VA 在 1 GiB 的任务栈
+/// 窗口里也只占一格。
+pub(crate) const TASK_STACK_SIZE: usize = 32768;
 /// 任务栈守护页大小（= 一页）。
 pub(crate) const TASK_STACK_GUARD: usize = PAGE_SIZE;
 /// ROOT 栈 64 KiB（`_kernel_edge` 顶锚向下；boot 期主栈，panic 时作救援栈）。
