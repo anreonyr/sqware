@@ -18,9 +18,9 @@ use env::Wait;
 
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
-use protocol::communication::establish::Endpoint;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
+use protocol::communication::session::Session;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
@@ -54,9 +54,8 @@ pub fn serve() -> Result<(), Start> {
         let assembler = runtime::env::unit::sire();
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
-        let (_link, board_link) =
-            board::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Board)?;
-        board::ask_hole(board_link).map_err(|_| Start::Board)?;
+        let _board = Session::open(assembler, board::BERTH, Wait::AtMost(MS))
+            .map_err(|_| Start::Board)?;
 
         // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
         let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
@@ -75,17 +74,17 @@ pub fn serve() -> Result<(), Start> {
         .map_err(|_| Start::Tree)?;
 
         // 四、上树：分 `/sys`、落 `/sys/principal`、再查回来验一遍（同 router / rtc 那一趟）。
-        let (tree, host) = operator::open(assembler, Wait::AtMost(MS)).map_err(|_| Start::Tree)?;
-        let talk = operator::ask_hole(host).map_err(|_| Start::Tree)?;
-        serve_tree(&tree, talk, host, entry);
+        let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
+            .map_err(|_| Start::Tree)?;
+        serve_tree(&session, entry);
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
-        // `operator::open` 交回来的那一格）。它据此才判得了"这一位此刻代表谁"。
+        // `Session::open` 收下的那一格）。它据此才判得了"这一位此刻代表谁"。
         //
         // 这一枚在手时权限是 `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。
         port::ship(
             &HolePie::from_token(entry),
-            host,
+            session.host,
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
@@ -197,7 +196,8 @@ fn answer(book: &mut Principal, from: TaskId, ask: Option<pcall::Wire>) -> pcall
 ///
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/subject.rs`）证——它照同一条路
 /// 找上门、问一句、拿回一条号。故本域不自问自答。
-fn serve_tree(link: &Endpoint, talk: PieToken, host: TaskId, entry: PieToken) {
+fn serve_tree(session: &Session, entry: PieToken) {
+    let (link, talk, host) = (&session.link, session.talk, session.host);
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         debug!("principal: tree: bad name");
         return;

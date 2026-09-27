@@ -37,6 +37,7 @@ use env::Wait;
 use programs::Report;
 
 use alloc::format;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
@@ -70,12 +71,10 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话（同 `echo` / `probe-denied`）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-owner: no tree link");
     };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        return bail("probe-owner: no tree ask");
-    };
+    let (tree, hedge, host) = (&session.link, session.talk, session.host);
 
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
         return bail("probe-owner: bad name");

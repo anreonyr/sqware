@@ -63,10 +63,11 @@ use programs::program::harness::LODGER_WANTS as WANTS;
 use programs::driver::assemble;
 
 // 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
-use programs::session::Session;
+use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::operator::client as operator;
 
-use env::{PieToken};
+use env::{Name, PieToken};
 use env::Key;
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
@@ -152,12 +153,15 @@ fn main() -> Report<'static> {
 ///
 /// **照实记（这一份复制已并进 `driver::context`）**：本域从前自己写了一遍"开会话 → 要问话孔
 /// → 名字译成号 → 按号取入口"——与驱动那两份（旧 `tree` / `register`）逐字同构。今天只用
-/// [`Session::open`] ＋ [`Session::service`]：房客**没有门牌**，故只要那条会话这一半。
+/// [`Session::open`]（`Session::open(sire, operator::BERTH, …)`）＋ [`operator::entry_of`]：
+/// 房客**没有门牌**，故只要那条会话这一半。
 fn find_router() -> Option<PieToken> {
-    let session = Session::open(utask::sire(), Wait::AtMost(MS)).ok()?;
-    session
-        .service(protocol::driver::DIR, SERVICE, Wait::AtMost(MS))
-        .ok()
+    let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)).ok()?;
+    // 先拼路（`/device/router` 两格名字），再沿那条路取入口。
+    let (Ok(dir), Ok(name)) = (Name::new(protocol::driver::DIR), Name::new(SERVICE)) else {
+        return None;
+    };
+    operator::entry_of(&session, &[dir, name], Wait::AtMost(MS)).ok()
 }
 
 /// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。

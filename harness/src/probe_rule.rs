@@ -87,6 +87,7 @@ use env::Wait;
 use programs::Report;
 
 use env::{Name, PieToken, TaskId};
+use protocol::communication::session::Session;
 use protocol::communication::establish::Endpoint;
 use protocol::debug;
 use protocol::system::coalition as ccall;
@@ -140,27 +141,21 @@ fn main() -> Report<'static> {
     let me = utask::self_id();
 
     // 一、上树：本域开一条会话，走两趟按名字找（盟册那一面 + 名册那一面）——与 `member` 同形。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-rule: no tree link");
     };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return bail("probe-rule: no tree ask");
-    };
-    // 一点五、**再要一次问话孔**：一个域只该铸一枚 ⇒ 第二次叫回来的是**同一枚**（客侧先找后铸），
-    // 故下面每一问都改用**第二枚**那个号——它要是另一枚孔，持树者认的还是第一枚，
-    // 这些话就全石沉大海（`communication` 事实 9 那个症状）。两件事一次量：`ask_same` 与后面所有读数。
-    let Ok(again) = operator::ask_hole(host) else {
-        return bail("probe-rule: no second tree ask");
-    };
-    let ask_same = again == talk;
-    let talk = again;
-    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else {
+    // 照实记（"再要一次问话孔"那一格**读数退场**）：从前这里再叫一次 `operator::ask_hole`，
+    // 量"第二次叫回来的是同一枚"（客侧先找后铸）。开会话那一手抬进
+    // [`protocol::communication::session`] 之后，"只铸一枚"从**纪律**变成**构造**（`ask` 先找
+    // 后铸，见那边）——从外面叫不出第二次 ⇒ 这条判据与它的读数（`ask2` / `ask_same`）一起退。
+    let (tree, talk, host) = (&session.link, session.talk, session.host);
+    let Some(entry) = find_face(&session, ccall::DIR, ccall::NAME) else {
         return bail("probe-rule: no coalition");
     };
     let Ok(coal) = CoalitionFace::of(entry) else {
         return bail("probe-rule: bad coalition face");
     };
-    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else {
+    let Some(entry) = find_face(&session, pcall::DIR, pcall::NAME) else {
         return bail("probe-rule: no identity");
     };
     let Ok(policy) = PrincipalFace::of(entry) else {
@@ -254,7 +249,7 @@ fn main() -> Report<'static> {
     // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
     let foreign_id = match Name::new(pcall::NAME)
         .ok()
-        .and_then(|p| programs::session::id_of(&tree, talk, &[dir, p], Wait::AtMost(MS)).ok())
+        .and_then(|p| operator::id_of(&session, &[dir, p], Wait::AtMost(MS)).ok())
     {
         Some(principal) => plate(
             talk,
@@ -274,7 +269,7 @@ fn main() -> Report<'static> {
     //                而**号不重用** ⇒ 那一格永久没有开者。
     // 照实记：`UNJUDGED` 这一格此前**只在宿主靶上有过读数**（那台靶已删；身份服务不答那一版在
     // 真机上要拆整机）。这两格与它同格不同因：判据不需要"那一格为什么没人"，只需要"**有没有那一位**"。
-    let at_pane_id = match programs::session::id_of(&tree, talk, &[dir], Wait::AtMost(MS)).ok() {
+    let at_pane_id = match operator::id_of(&session, &[dir], Wait::AtMost(MS)).ok() {
         Some(sys) => plate(talk, &tree, host, pane_id, AT_PANE, Rule::Opens(sys), false),
         None => EntryId::new(0),
     };
@@ -342,15 +337,13 @@ fn main() -> Report<'static> {
          is_sub={is_sub} under_sub={under_sub} in_sub={in_sub} \
          door={} open={open} foreign={foreign} open_sub={open_sub} \
          trim={} at_pane={on_pane} gone_door={on_gone} mine={} keep={keep} \
-         ask2={} ask_same={}",
+        ",
         pane_id.get(),
         p.get(),
         adopt as u8,
         door_id.get(),
         trimmed as u8,
         mine_id.get(),
-        again.get(),
-        ask_same as u8,
     );
 
     // 十、判据：**一例一条**（用户裁定"程序侧 pilot"）。
@@ -369,16 +362,6 @@ fn main() -> Report<'static> {
     }
     {
         assert_eq!(inside, ocall::OK)
-    }
-    // 每一问用的都是**第二枚**孔那个号：它要是另一枚，持树者认的是第一枚，这些话全石沉大海。
-    {
-        {
-            assert!(
-                ask_same,
-                "先找后铸叫回来的不是同一枚孔：ask2={}",
-                again.get()
-            )
-        }
     }
     // —— `Opens` 的正负两面。
     {
@@ -474,13 +457,13 @@ fn look(talk: PieToken, link: &Endpoint, id: EntryId, millis: Wait) -> u8 {
 
 /// 按名字找一面服务门牌（`seek` 译号 + `find` 取回）——与 `subject` / `member` 那两台同形。
 ///
-/// **间接寻址那一手**（名字 → 号：译不出就重试）与 `find` 都在 [`programs::session`] 里；
+/// **间接寻址那一手**（名字 → 号：译不出就重试）与 `find` 都在 [`operator::entry_of`] 里；
 /// `find` 把那一枚授过来（持树者 `ship`），**它在本域表里的号随答话回来** ⇒ 不必认领。
-fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
+fn find_face(session: &Session, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
-    programs::session::lookup(link, talk, &[dir, one], Wait::AtMost(MS)).ok()
+    operator::entry_of(session, &[dir, one], Wait::AtMost(MS)).ok()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

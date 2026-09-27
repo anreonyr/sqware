@@ -34,7 +34,7 @@ use programs::driver::context::Context;
 use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::program::uart::{E_UART, UART_WANTS as WANTS};
-use programs::session::Mine;
+use protocol::system::operator::client::Mine;
 use protocol::debug;
 
 /// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。

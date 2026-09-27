@@ -47,8 +47,8 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::{Name, PieToken};
-use protocol::communication::establish::Endpoint;
+use env::Name;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
@@ -79,11 +79,8 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-other: no tree link");
-    };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return bail("probe-other: no tree ask");
     };
     let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
         Name::new(DIR),
@@ -96,9 +93,9 @@ fn main() -> Report<'static> {
     };
 
     // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
-    let is = denied(talk, &tree, &[dir, pane, is_name]);
-    let under = denied(talk, &tree, &[dir, pane, under_name]);
-    let foreign = denied(talk, &tree, &[dir, pane, foreign_name]);
+    let is = denied(&session, &[dir, pane, is_name]);
+    let under = denied(&session, &[dir, pane, under_name]);
+    let foreign = denied(&session, &[dir, pane, foreign_name]);
 
     // 三、一行读数。
     debug!(
@@ -122,13 +119,13 @@ fn main() -> Report<'static> {
 /// 沿一条路译成号再 `find`：答线上那一格码（译不出号 ⇒ `UNKNOWN`）。
 ///
 /// **带一轮有界重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
-fn denied(talk: PieToken, link: &Endpoint, road: &[Name]) -> u8 {
+fn denied(session: &Session, road: &[Name]) -> u8 {
     // 名字 → 号（**译不出就重试**：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚）
-    // → 入口：那一趟在 [`programs::session`]（本域从前自己抄了一遍，八份同形里的一份）。
+    // → 入口：那一趟在 [`operator::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
     //
-    // 答话码原样往外带；`find` 那一族的失败由 [`programs::session::entry_of`] 折成
+    // 答话码原样往外带；`find` 那一族的失败由 [`operator::entry_of`] 折成
     // [`ocall::BAD`]（"译不出号 / 推不动"在这里本就分不开，见 `ocall` 那张表）。
-    match programs::session::lookup(link, talk, road, Wait::AtMost(MS)) {
+    match operator::entry_of(session, road, Wait::AtMost(MS)) {
         Ok(_) => ocall::OK,
         Err(code) => code,
     }

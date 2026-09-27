@@ -20,9 +20,10 @@ use programs::driver::context::Context;
 use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::program::router::{E_ROUTER, ROUTER_WANTS as WANTS};
-use programs::session::Mine;
 use protocol::debug;
 use protocol::system::board::client as board;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Mine;
 use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
 use runtime::core::pile::Pile;
@@ -102,7 +103,14 @@ pub fn up() -> Result<Up, Fail> {
     // **尽力**：任一件没成都只报一行读数、不拦主循环——这一台起来就得收（见文件头那一条照实记）。
     let sire = utask::sire();
     match Context::join(entry, sire, Wait::AtMost(QUAY_MS)) {
-        Ok(ctx) => ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS)),
+        Ok(ctx) => operator::plate(
+            &ctx.session,
+            protocol::driver::DIR,
+            SERVICE,
+            Mine::No,
+            ctx.entry,
+            Wait::AtMost(QUAY_MS),
+        ),
         Err(_) => debug!("router: board/tree: no link"),
     }
 

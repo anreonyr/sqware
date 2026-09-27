@@ -33,13 +33,10 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂一个名字）。
+use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::board::client as board;
-
-
-use env::Name;
 use protocol::system::board as bcall;
-use runtime::env::mail;
+use protocol::system::board::client as board;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字 —— 本域知道的全部。
@@ -47,9 +44,6 @@ const ME: &str = "passer";
 
 /// 等板 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
-
-/// 本地失败写进读数的那一格（与 `board::BAD` 同值：没走到 / 读不懂）。
-const BAD: u8 = bcall::BAD;
 
 /// 两种退场：挂上了 / 没挂上（都**不是 panic**；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
@@ -62,24 +56,15 @@ fn main() -> Report<'static> {
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子那一格只认得 `entry` 那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
+    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
         return bail("passer: no board link");
     };
-    // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
-    let Ok(talk) = board::ask_hole(board) else {
-        return bail("passer: no ask hole");
-    };
-    // 本域的服务入口：别人按名字找到本域之后往它说话。它也是要交给板的那一枚——记号
-    // `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        return bail("passer: no entry");
-    };
-    let Ok(me) = Name::new(ME) else {
-        return bail("passer: bad name");
-    };
-
-    // 一、挂上自己：服务入口经会话交给板（板因此答得出"passer 在哪"）。
-    let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
+    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
+    // 合成一格（装泊位 / 认对端 / 铸问话孔，任一没成都答 `Fail`），故这里只剩一句。
+    //
+    // 一、挂上自己：服务入口（记号 `entry`，板那侧按它把入口与问话孔分开）经会话交给板，
+    // 板因此答得出"passer 在哪"——解入口、编名字、`register` 三手由 `enroll` 收成一手。
+    let (reg, entry) = board::enroll(&seat, ME, Wait::AtMost(MS));
     debug!("passer: reg={reg} entry={} say={ME}", entry.get());
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"

@@ -43,7 +43,7 @@ use alloc::string::String;
 
 use alloc::format;
 use env::{Name, PieToken};
-use protocol::communication::establish::Endpoint;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::id::Id;
 use protocol::system::coalition as ccall;
@@ -72,14 +72,10 @@ fn main() -> Report<'static> {
     let me = utask::self_id();
 
     // 上树：本域只开一条链，走两趟按名字找（结盟服务那一面 + 身份服务那一面）。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("member: no tree link");
     };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return bail("member: no tree ask");
-    };
-
-    let Some(entry) = find_face(&tree, talk, ccall::DIR, ccall::NAME) else {
+    let Some(entry) = find_face(&session, ccall::DIR, ccall::NAME) else {
         return bail("member: no coalition");
     };
     let Ok(coal) = CoalitionFace::of(entry) else {
@@ -87,7 +83,7 @@ fn main() -> Report<'static> {
     };
 
     // 身份那一面：**本域自己也要用它**（派生第二条身份、领、弃）。
-    let Some(entry) = find_face(&tree, talk, pcall::DIR, pcall::NAME) else {
+    let Some(entry) = find_face(&session, pcall::DIR, pcall::NAME) else {
         return bail("member: no identity");
     };
     let Ok(policy) = PolicyFace::of(entry) else {
@@ -274,13 +270,13 @@ fn main() -> Report<'static> {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：按"谁给的"认，取**最后**那一枚
 /// （一次一问一答只授一枚，故最后那一枚就是这一趟的）。
-fn find_face(link: &Endpoint, talk: PieToken, dir: &str, name: &str) -> Option<PieToken> {
+fn find_face(session: &Session, dir: &str, name: &str) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(dir), Name::new(name)) else {
         return None;
     };
     // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：那一趟在
-    // [`programs::session`]（本域从前自己抄了一遍）。
-    programs::session::lookup(link, talk, &[dir, name], Wait::AtMost(MS)).ok()
+    // [`operator::entry_of`]（本域从前自己抄了一遍）。
+    operator::entry_of(session, &[dir, name], Wait::AtMost(MS)).ok()
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

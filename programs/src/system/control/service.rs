@@ -56,7 +56,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 /// 不需要再有一层 `said` / `exit` 的转发。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// 上板那一步（`board::open` / `ask_hole`）。
+    /// 上板那一步（`Session::open(sire, board::BERTH, …)`：装路 ＋ 认对端 ＋ 要问话孔，一手）。
     Board,
     /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
     Tree,

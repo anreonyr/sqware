@@ -21,17 +21,20 @@
 extern crate alloc;
 extern crate programs;
 
-/// 适配（壳）：上板 / 找控制台 / 上树两趟 / 回显——由 bin 自己 `mod`。
+/// 适配（壳）：找控制台 / 上树两趟 / 回显——由 bin 自己 `mod`。
 mod adapt;
 
 /// 纯功能：字节流 → 终端认的行。
 mod core;
 
-use crate::adapt::{E_NO_CONSOLE, MS};
+use crate::adapt::{E_NO_CONSOLE, ME, MS};
 use env::Wait;
-use programs::session::Session;
+use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::board as bcall;
+use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 /// 本域开口那一声（第一行读数）。
@@ -42,14 +45,17 @@ const READY: &str = "echo: ready";
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     debug!("{}", READY);
-    // 1：上板——**注册在回显之前**（板要能看见本域）。挂不上照旧回显。
-    let reg = adapt::board::register();
+    let sire = utask::sire();
+    // 1：上板——**报到在回显之前**（板因此看得见本域的死）。**挂不上照旧回显**：这一格不 `?`。
+    let (reg, _) = match Session::open(sire, board::BERTH, Wait::AtMost(MS)) {
+        Ok(seat) => board::enroll(&seat, ME, Wait::AtMost(MS)),
+        Err(_) => (bcall::BAD, env::PieToken::NONE),
+    };
     debug!("echo: reg={reg}");
 
-    let sire = utask::sire();
-    // 2：树那条路：本域只开一条会话（[`Session::open`]）——**先找控制台，再落自己那块牌子**
+    // 2：树那条路：本域只开一条会话（`Session::open`）——**先找控制台，再落自己那块牌子**
     //    （次序见 `user/echo/mod.rs`）。
-    let Ok(session) = Session::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
     };
 

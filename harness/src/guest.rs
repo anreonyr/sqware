@@ -52,12 +52,12 @@ use programs::Report;
 
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
 use env::{Name, PieToken};
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -81,37 +81,24 @@ fn main() -> Report<'static> {
     //
     // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
     // ——牌子这一格只认得"entry"那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
+    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
         return bail("guest: no board link");
     };
-    // 问话孔：本端铸、给板读（本端自窄到只写）——问话从它走，答话走上面那条板路。
-    // `board` = 板路上先到的那一格（**答话的是谁**）：孔只在铸它的表里念得出来，故这个号
-    // 是"板收得到问话"的前提。
-    let Ok(talk) = board::ask_hole(board) else {
-        return bail("guest: no ask hole");
-    };
-    // 本域的服务入口：别人按名字找到本域之后往它说话，本域从它读。它也是要交给板的那一枚
-    // ——记号 `entry`：板那侧按它把入口与问话孔分开（两枚都是本端铸、本端交）。
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        return bail("guest: no entry");
-    };
-    let Ok(me) = Name::new(ME) else {
-        return bail("guest: bad name");
-    };
+    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
+    // 合成一格，故这里只剩一句。问话从 `talk` 走，答话走上面那条板路。
+    let (link, talk) = (&seat.link, seat.talk);
     let Ok(want) = Name::new(WANT) else {
         return bail("guest: bad name");
     };
     let none = PieToken::NONE;
 
-    // 一、挂上自己：服务入口经会话交给板（板因此答得出"guest 在哪"）。
-    let reg = board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(BAD);
+    // 一、挂上自己：解入口 ＋ 编名字 ＋ `register` 三手由 `enroll` 收成一手——板因此答得出
+    // "guest 在哪"。
+    let (reg, _) = board::enroll(&seat, ME, Wait::AtMost(MS));
 
     // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("guest: no tree link");
-    };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        return bail("guest: no tree ask");
     };
     let Ok(dir) = Name::new(protocol::driver::DIR) else {
         return bail("guest: bad name");
@@ -125,9 +112,9 @@ fn main() -> Report<'static> {
     // 另叫一手 `operator::take` 扫本域表按"谁给的"认回来。今天那一枚号**随答话回来**，故
     // 这一趟连号带状态一起破出去；`at` 就是本域表里那一枚（读数里的 `entry`）。
     //
-    // 那一趟（含"译不出就重试"）今天在 [`programs::session`]（本域从前自己抄了一遍）：
+    // 那一趟（含"译不出就重试"）今天在 [`operator::entry_of`]（本域从前自己抄了一遍）：
     // 答话码原样往外带，`find` 那一族的失败折成 `BAD`。
-    let (find, at) = match programs::session::lookup(&tree, hedge, &path, Wait::AtMost(MS)) {
+    let (find, at) = match operator::entry_of(&session, &path, Wait::AtMost(MS)) {
         Ok(entry) => (ocall::OK, entry),
         Err(code) => (code, none),
     };

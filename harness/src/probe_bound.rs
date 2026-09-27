@@ -8,7 +8,7 @@
 //! 真机上：**一位故意的坏客人**。
 //!
 //! ```text
-//!   1  与**两道门**开会话（`board::open` ＋ `operator::open`，各自一枚 `ask_hole`）——两条路
+//!   1  与**两道门**开会话（`Session::open(sire, board::BERTH, …)` ＋ `… operator::BERTH …`）——两条路
 //!      都要赶在装配那一步的期限之内装上（次序＝装配者那一侧：板在前，树在后）
 //!   2  自铸一枚孔，推 **一页 + 1** 字节            ⇒ 期望 `Denied`
 //!   3  那一枚孔照旧空着（`peek` 答 `Busy`）；再推一条 8 字节的 ⇒ 期望成（拒的是**长度**，
@@ -60,6 +60,7 @@ use programs::Report;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::communication::establish::Endpoint;
 use protocol::system::board as bcall;
@@ -113,18 +114,14 @@ fn main() -> Report<'static> {
     // 之内**：装配者按行装完就把这一位的路 `claim` 下来（有期限），故这一台**不能先做别的
     // 手脚再装路**——照实记：第一版把树那一条腿（含 junk 那一趟的两个有界等）排在装路之前，
     // 装配那一侧当场报 `board:claim`（`步骤` 读数），这一台连树路都没拿到。
-    let Ok((deck, seat)) = board::open(sire, Wait::AtMost(MS)) else {
+    let Ok(door) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no board link");
     };
-    let Ok(bolt) = board::ask_hole(seat) else {
-        return bail("probe-bound: no board ask");
-    };
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let (deck, bolt, _) = (&door.link, door.talk, door.host);
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        return bail("probe-bound: no tree ask");
-    };
+    let (tree, hedge, _) = (&session.link, session.talk, session.host);
     let Ok(dir) = Name::new("sys") else {
         return bail("probe-bound: bad name");
     };

@@ -46,6 +46,7 @@ use env::Wait;
 use programs::Report;
 
 use alloc::format;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
@@ -78,12 +79,10 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-denied: no tree link");
     };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        return bail("probe-denied: no tree ask");
-    };
+    let (tree, hedge, host) = (&session.link, session.talk, session.host);
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `echo` 上树那一趟同一形状）。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {

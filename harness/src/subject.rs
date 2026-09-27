@@ -40,7 +40,7 @@ use alloc::string::String;
 
 use alloc::format;
 use env::{Name, PieToken};
-use protocol::communication::establish::Endpoint;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::principal as pcall;
@@ -64,13 +64,12 @@ fn main() -> Report<'static> {
     let me = utask::self_id();
 
     // 上树：本域只开一条会话——按名字找那面身份服务。
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("subject: no tree link");
     };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return bail("subject: no tree ask");
-    };
-    let Some(entry) = find_face(&tree, talk) else {
+    // 照实记：从前"树路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
+    // 合成一格，故这里只剩一句。
+    let Some(entry) = find_face(&session) else {
         return bail("subject: no face");
     };
     let Ok(face) = Face::of(entry) else {
@@ -198,13 +197,13 @@ fn main() -> Report<'static> {
 
 /// 找那面服务：`"/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
-/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`programs::session`]（本域从前自己抄了一遍）。
+/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`operator::entry_of`]（本域从前自己抄了一遍）。
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
-fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
+fn find_face(session: &Session) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    programs::session::lookup(link, talk, &[dir, me], Wait::AtMost(MS)).ok()
+    operator::entry_of(session, &[dir, me], Wait::AtMost(MS)).ok()
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

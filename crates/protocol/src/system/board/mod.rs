@@ -246,9 +246,10 @@ pub mod client;
 // board 的**适配那一半** —— 内核那几只手的别名、立板、交出。
 //
 // 帧与码见 [`frame`]；本模块把那一整片**点名转出** ⇒ 调用点只在路径那一处改过
-// （原 `board::call::X`、今 `board::X`）。建立那一手的失败域对照表（`map_establish`）随它产出的
-// [`Fail`] 落进同层的 `core`（`system/board/core.rs` 末尾）——`map_claim` 与 `map_seat` 两张表在
-// 会话那一刀里并成这一张。
+// （原 `board::call::X`、今 `board::X`）。**开会话那一手已抬进
+// [`crate::communication::session`]**（它两侧逐字同构，见那边的照实记）——`map_claim` /
+// `map_seat` / `map_establish` 那三张失败域对照表随之整片退场（`EstablishFail` 那一层不再
+// 出现在这一族：本族只报"这一手没做成"那一格）。
 //
 // 判据只有一条可机械检查的纪律——
 //

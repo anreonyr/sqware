@@ -21,13 +21,15 @@
 //! 摆出来，故与它同层：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
 //! **引导域**（`root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
-//! 内含之后**共用件只剩四枚**：`entry`（`_start` + panic 处理，每个程序共用）、
-//! [`system::control`]（那台装配与生命周期的机器，两个装配者 `root` / `system` 共用）、
-//! [`driver::assemble`]（**收配给**那台机器：按本域那张单子把记录归位，三台驱动与房客共用）
-//! 与 [`session`]（**客人开局**：开会话 / 名字→号→入口 / 落门牌——驱动、房客、客人、内件
-//! **四档都走它**，故它不住 `driver::` 之下）。**"打一行"那一句不在本 crate**
-//! ——各域原先各写一份 `fn say(msg: &str)`（二十六份逐字相同），今天只有一处：
-//! `protocol::debug!`（**只在 debug 构建下有效**，见那个模块的头注）。
+//! 内含之后**共用件只剩三枚**：`entry`（`_start` + panic 处理，每个程序共用）、
+//! [`system::control`]（那台装配与生命周期的机器，两个装配者 `root` / `system` 共用）
+//! 与 [`driver::assemble`]（**收配给**那台机器：按本域那张单子把记录归位，三台驱动与房客共用）。
+//! **照实记（第四枚搬走了）**：这一刀之前本 crate 还有一枚"客人开局"（开会话 / 名字→号→入口 /
+//! 落门牌，四档都走它）——它两边都不算本 crate 的东西（**开会话**是地板，**树上那几手**是
+//! `operator` 的客手），故按用户裁定搬回 `crates/protocol`（见 [`crate::lib`] 之外那一条：
+//! `protocol::communication::session` / `system::operator::client::*`）。
+//! **"打一行"那一句不在本 crate**——各域原先各写一份 `fn say(msg: &str)`（二十六份逐字相同），
+//! 今天只有一处：`protocol::debug!`（**只在 debug 构建下有效**，见那个模块的头注）。
 //!
 //! **判据是「谁在说话」**：从外面找上某份协议的人用的一切（正文、判定、帧、**客侧那几手**）
 //! 住 `crates/protocol`；那位协议的**实现方**（谁循环、谁记账、谁起线程、谁调内核）跟着
@@ -90,7 +92,6 @@ pub mod driver;
 pub mod entry;
 pub mod program;
 pub mod root;
-pub mod session;
 pub mod system;
 pub mod user;
 

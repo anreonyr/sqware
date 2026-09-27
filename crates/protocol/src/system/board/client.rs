@@ -1,71 +1,62 @@
-//! board::client — **客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）
+//! board::client — **客侧**：一条会话 ＋ 一问一答（说「我走了」也在这一侧）
 //!
-//! 三侧分家之后本文件只放**客侧三手**：装上板路、铸问话孔、一问一答（说「我走了」也在这一侧）；
-//! 两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`crate::system::board`]。
+//! 三侧分家之后本文件只放**客侧**：**装板路 / 铸问话孔那两手不在这里**——它们与
+//! `operator::client` 那两手逐字同构，已按"两台以上逐字同构 ⇒ 收"抬进
+//! [`crate::communication::session`]；本文件只声明**这条路叫什么**（[`BERTH`]）＋ **报到**
+//! （[`enroll`]）与一问一答（[`register`] / [`evict`]）。两侧共用的图与次序说明见 [`super`]
+//! 的"载体"那一节，帧与记号见 [`crate::system::board`]。
 
 use crate::message::Message;
 use env::Mark;
 use env::Wait;
-use env::wire::Field;
 use env::{Name, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::communication::establish::{self, Endpoint, EstablishFail};
+use crate::communication::establish::Endpoint;
 use crate::communication::sender::Sender;
+use crate::communication::session::{Berth, Session};
 use crate::system::board as bcall;
 use crate::system::board::Fail;
 pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 
-/// 客侧第一步：装上板那条路（**记号就是这条路的名字**），认下对端那一枚，并收下
-/// "**答话的是谁**"（[`hear`] 那一格）。
+/// **这条路叫什么**：泊位那一格（`LINK` = `board`）＋ 问话孔那一格（`ASK_MARK`）。
 ///
-/// 返本端这一对孔（**答话**从 `rx` 读，问话走 [`ask_hole`]）与**板线程的号**。
+/// 开会话那一手（[`Session::open`]）要它；本层只把这两格交出去，不替调用方开会话。
+pub const BERTH: Berth = Berth {
+    link: Mark::of(crate::system::board::LINK),
+    ask: crate::system::board::ASK_MARK,
+};
+
+/// **报到**：本域那枚服务入口挂上板（板据此按名字分人，也据此看得见本域的死）。
 ///
-/// `holder` = 客人认的对端 = **它的生我者**（孔交给它，它再转授给板线程）——注意它不是板：
-/// 客人交出来的孔都落在生我者表里，故"板是谁"得由装配者告诉（见文件头），此后客人交孔、
-/// 交入口才叫得出板。
-pub fn open(holder: TaskId, millis: Wait) -> Result<(Endpoint, TaskId), Fail> {
-    let pair =
-        establish::endpoint(holder, Mark::of(LINK), millis).map_err(map_establish)?;
-    // **认不到对端那一枚 = 这条板路没接上**（原 `map_claim` 那一格）：本端这一侧虽然只读答话，
-    // 但"两侧各装一条、凑齐才算通"那条不变量仍在——没齐就是没接上，不必等到第一次收帧。
-    if pair.tx().is_none() {
-        return Err(Fail::Unknown);
+/// 返**板的答码**（[`bcall::OK`] = 板收下了）与**那一枚入口**（读数要那一格：`passer` 把它
+/// 打出来）。挂不上**不是**本域的失败：回显照旧，只是"本域死了"那条信号缺席
+/// （见 `programs/src/user/echo/mod.rs`）——故返码、不返 `Result`。
+///
+/// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`Name`]、经 [`register`]
+/// 交出去。四处调用点原先各写一遍（`echo` / `passer` / `guest` / `sleeper`）。
+pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
+    let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
+        return (bcall::BAD, PieToken::NONE);
+    };
+    let Ok(name) = Name::new(me) else {
+        return (bcall::BAD, entry);
+    };
+    match register(session.talk, &session.link, session.host, name, entry, millis) {
+        Ok(code) => (code, entry),
+        Err(_) => (bcall::BAD, entry),
     }
-    let board = hear(&pair, millis).ok_or(Fail::Unknown)?;
-    Ok((pair, board))
 }
 
-/// 客侧第一步半：铸**问话孔**并交到板手里（本端随即自窄到只写）。
-///
-/// `board` = [`open`] 收下的那个号。交出去的是可读可写，随后本端 `narrow` 到 `STORE`：
-/// 一条路上只有一个读者（`Receiver::recv` 的照实记），故**板读、本端写**。
-///
-/// 记号 = [`ASK_MARK`]：板那侧就是按它把这枚孔与**入口**分开的（两枚都由本端铸、本端交）。
-pub fn ask_hole(board: TaskId) -> Result<PieToken, Fail> {
-    // **一个域只铸一枚问话孔**：与我这一面同一句（见 `operator::client::ask_hole` 的照实记）
-    // ——先找我表里那一枚，有就不铸第二枚。板那一侧按 `(开者, 记号)` 两格认孔，故第二枚的
-    // 症状是"多出来的那枚永远没人读它的推"。
-    if let Some(have) = establish::find(me(), ASK_MARK) {
-        return Ok(have);
-    }
-    // 铸 + 交出读端 + 本端窄到只写：一手就是 `establish::give`。
-    establish::give(board, ASK_MARK).map_err(|_| Fail::Denied)
-}
-
-/// **本端是哪一枚线程**（"这一枚孔是谁开的"那一问要它；同 `operator` 那一面）。
-///
-/// 不返 `Result`：`SelfId` 那一格恒写 id（生成的入口标了 `#[infallible]`）。
-fn me() -> TaskId {
-    runtime::env::unit::self_id()
-}
+// 照实记（原先这里的三手 `open` / `ask_hole` / `me`）：它们与 `operator::client` 那三手
+// **逐字同构**（只差两个记号与各自的失败域），已抬进 [`crate::communication::session`]
+// ——开会话那一手归地板。本文件因此只剩**这条路的名字**（[`BERTH`]）与这一族那几手。
 
 /// 客侧第二步（**登记那一句**）：报上名字 ＋ 把入口交出去，取一句答。
 /// 返答话那一格（[`bcall::OK`] = 板收下了）。
 ///
-/// 问话推 `say`（[`ask_hole`] 铸的那一枚，板读），答话从本端这条板路读（板写）。
+/// 问话推 `say`（开会话那一手铸的问话孔，板读），答话从本端这条板路读（板写）。
 ///
 /// **入口要捎上**：它经会话交给板（`Accord` 一份），故写进帧里的是"种在板表里的那个号"
 /// ——那个号才是板认得的坐标（两个编号空间不同源，互相拿错正是旧树 `[33..41]` 那一格的病）。
@@ -108,7 +99,7 @@ pub fn evict(say: PieToken, link: &Endpoint, millis: Wait) -> Result<u8, Fail> {
     hear_rep(link, millis)
 }
 
-/// 收下板路上那一格：**一句答**（登记与退场共用）——[`hear`] 的答话侧对偶。
+/// 收下板路上那一格：**一句答**（登记与退场共用）。
 ///
 /// 返答话那一格码（[`bcall::OK`] = 板收下了），或 `Unknown`：`recv` 那个失败盖着
 /// "期限到了 / 读不懂 / 孔空了"，问的人拿这一个码决定要不要重问。
@@ -122,34 +113,7 @@ fn hear_rep(link: &Endpoint, millis: Wait) -> Result<u8, Fail> {
         .map_err(|_| Fail::Unknown)
 }
 
-/// 收下板路上那一格：**答话的是谁**（装配侧 `programs/src/system/board/bridge.rs` 的 `tell`
-/// 的对偶）。宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对
-/// `store` / `fetch`——这一格从前在五处各写一遍（那一对里记着）。
-///
-/// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上板（客人报它自己的超时，不猜）。
-///
-/// **这一格是裸字节**（8 字节的那个号），不是这一族那两种报 ⇒ 走裸孔，不套手柄。
-pub(crate) fn hear(pair: &Endpoint, millis: Wait) -> Option<TaskId> {
-    let mut buf = [0u8; TaskId::WIDTH];
-    match mail::HolePie::from_token(pair.rx()).pull_timeout(&mut buf, millis) {
-        Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
-        _ => None,
-    }
-}
+// 照实记（原先这里还有两件）：`hear`（收"答话的是谁"）与 `map_establish`（建立那一手的失败域
+// 对照表）。前者与 `operator::client` 那一份逐字同构 ⇒ 随开会话那一手抬进
+// [`crate::communication::session`]；后者只服务那一手 ⇒ 与它的唯一读者一起退场。
 
-// ── 建立那一手的失败域的对照表（原住 `protocol` 的 `system/board/call.rs`）────
-//
-// 入参出自 [`EstablishFail`]（`communication::establish`）、产出的又是本文件自己的
-// [`Fail`]，故它与产出的那一格同住。原先有两张（`Seat` / `Claim`）——并回一个 crate 之后
-// 只剩一手建立，`Claim` 那一张随之退场（认不到对端那一枚不再是错误，见 `establish`）。
-
-/// 建立那一手的失败域 → 板的失败域。
-///
-/// **铸不出孔** ⇒ `Denied`（本端这一手没做成）；**交不出去** ⇒ `Unknown`
-/// （它最常见的那一支是"对端已不在"）。
-pub fn map_establish(fail: EstablishFail) -> Fail {
-    match fail {
-        EstablishFail::NoHole => Fail::Denied,
-        EstablishFail::NoSeed => Fail::Unknown,
-    }
-}

@@ -209,12 +209,14 @@ pub fn serve() -> Result<(), Start> {
     // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来；
     // 这一格只管把板那条路装上（装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，
     // 故少了这一步装配当场报 `board:claim`）。
-    let Ok((_link, board_link)) = board::open(assembler, Wait::AtMost(MS)) else {
-        return Err(Start::Board);
+    let _board = match protocol::communication::session::Session::open(
+        assembler,
+        board::BERTH,
+        Wait::AtMost(MS),
+    ) {
+        Ok(seat) => seat,
+        Err(_) => return Err(Start::Board),
     };
-    if board::ask_hole(board_link).is_err() {
-        return Err(Start::Board);
-    }
     // 提示孔：本线程铸的那一枚（客人号从这里进来），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(TIP_MARK) else {
         return Err(Start::Tree);
@@ -606,7 +608,7 @@ fn ask_of(who: TaskId) -> Option<PieToken> {
 /// - **别把它做成 fail-closed**：两枚孔的出现与持树者查表之间有**天然竞态**（持树者每 1ms 查
 ///   一次，而两枚孔之间只隔两个 envcalls）⇒ "拒"是间歇的，且那位客人从此没人给它挂孔
 ///   （持树者会永远停在"还有人没挂上"那一档）；
-/// - **干净的关法**是让 `ask_hole` 与入口那一枚也走**一次 `establish::endpoint`**（那一手与
+/// - **干净的关法**是让问话孔与入口那一枚也走**一次 `establish::endpoint`**（那一手与
 ///   "只铸一枚"同形），把"只可能有一枚"从纪律变成**构造**——那是客侧形状的改动，另一刀。
 fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
     let mut hits = mail::pies().filter(|p| p.owner == who && p.mark == mark);

@@ -30,6 +30,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
@@ -60,12 +61,10 @@ const OK_NOTE: &str = "probe-lease: landed, leaving";
 #[programs::entry]
 fn main() -> Report<'static> {
     let sire = utask::sire();
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };
-    let Ok(hedge) = operator::ask_hole(host) else {
-        return bail("probe-lease: no tree ask");
-    };
+    let (tree, hedge, host) = (&session.link, session.talk, session.host);
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
         return bail("probe-lease: bad name");
     };

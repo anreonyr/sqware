@@ -3,9 +3,14 @@
 //! ```text
 //!   establish.rs  Endpoint / Held / endpoint / give / claim / find / lend_out
 //!                 关系怎么建立（＋ 借一枚回信孔，＋ `Reserve` 三格）
+//!   session.rs    Session / Berth / open            一条路怎么开起来（四手并成一手）
 //!   sender.rs     Sender<M>                       我推的那一枚（类型 = 我发的那种报）
 //!   receiver.rs   Receiver<M>                     我收的那一枚（类型 = 我收的那种报）
 //! ```
+//!
+//! **粒度分两层**：`establish` 那一手是**一枚孔**，`session` 那一手是**一条路**（一对孔 ＋
+//! 对端的号）。两者同属"关系怎么建立"——故 `session` 只坐在 `establish` 上，不碰任何协议的
+//! 正文与 RPC（见下面"本层不认识什么"）。
 //!
 //! # 一条不变量：Mail 是单向单槽
 //!
@@ -38,6 +43,7 @@ use runtime::env::chrono;
 pub mod establish;
 pub mod receiver;
 pub mod sender;
+pub mod session;
 
 /// 期限 → **那个到不了的点**（单调钟，纳秒）。
 ///

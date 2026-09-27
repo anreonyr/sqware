@@ -39,18 +39,17 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::board::client as board;
 use protocol::system::operator::client as operator;
 
 use env::{Name, PieToken};
-use protocol::communication::establish::Endpoint;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
-use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
@@ -88,13 +87,12 @@ fn main() -> Report<'static> {
     debug!("sleeper: reg={reg}");
 
     let sire = utask::sire();
-    let Ok((tree, host)) = operator::open(sire, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return no_service("sleeper: no operator");
     };
-    let Ok(talk) = operator::ask_hole(host) else {
-        return no_service("sleeper: no talk hole");
-    };
-    let Some(face) = find_face(&tree, talk) else {
+    // 照实记：从前"树路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
+    // 合成一格，故这里只剩一句。
+    let Some(face) = find_face(&session) else {
         return no_service("sleeper: no rtc plate");
     };
     debug!("sleeper: found");
@@ -171,29 +169,22 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"，
 /// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它（次序见 `programs/src/user/echo/mod.rs` 头注）。
-fn find_face(link: &Endpoint, talk: PieToken) -> Option<PieToken> {
+fn find_face(session: &Session) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
     // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：那一趟在
-    // [`programs::session`]（本域从前自己抄了一遍，八份同形里的一份）。
-    programs::session::lookup(link, talk, &[dir, want], Wait::AtMost(MS)).ok()
+    // [`operator::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
+    operator::entry_of(session, &[dir, want], Wait::AtMost(MS)).ok()
 }
 
 /// 上板报到（与 `passer` / `echo` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
 fn register() -> u8 {
     let sire = utask::sire();
-    let Ok((link, board)) = board::open(sire, Wait::AtMost(MS)) else {
+    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
         return bcall::BAD;
     };
-    let Ok(talk) = board::ask_hole(board) else {
-        return bcall::BAD;
-    };
-    let Ok(entry) = mail::unseal_hole(board::ENTRY_MARK) else {
-        return bcall::BAD;
-    };
-    let Ok(me) = Name::new(ME) else {
-        return bcall::BAD;
-    };
-    board::register(talk, &link, board, me, entry, Wait::AtMost(MS)).unwrap_or(bcall::BAD)
+    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail（这里折成同一个 `BAD`）——
+    // `Session::open` 把装路那一趟合成一格。解入口、编名字、`register` 三手由 `enroll` 收成一手。
+    board::enroll(&seat, ME, Wait::AtMost(MS)).0
 }

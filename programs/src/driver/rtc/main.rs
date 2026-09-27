@@ -36,7 +36,7 @@ use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::driver::rtc::core::Host;
 use programs::program::rtc::{E_RTC, RTC_WANTS as WANTS};
-use programs::session::Mine;
+use protocol::system::operator::client::Mine;
 use protocol::debug;
 use rtc as device;
 

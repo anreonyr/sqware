@@ -8,7 +8,7 @@ use super::{ME, MS};
 use alloc::format;
 use alloc::string::String;
 use env::{Name, Wait};
-use programs::session::Session;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
@@ -25,7 +25,7 @@ use runtime::env::mail;
 /// 经会话授出、剪掉一块空 `Pane`），少走一步就有半条路从来没被走过。挂的是本域自己那一枚
 /// 入口（与上板那一枚同一个记号），故它在树上是一枚普通 `Tile`，不是特权。
 pub fn trip(session: &Session) -> u8 {
-    let (link, talk, host) = session.parts();
+    let (link, talk, host) = (&session.link, session.talk, session.host);
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         return ocall::BAD;
     };
@@ -103,7 +103,7 @@ pub fn trip(session: &Session) -> u8 {
 /// 长短由那一帧说）。返这一趟的答码（`ocall::OK` = 全成）——每一格自己打一行，故中途断了也
 /// 看得出断在哪一条。
 pub fn serial(session: &Session) -> u8 {
-    let (link, talk, _) = session.parts();
+    let (link, talk) = (&session.link, session.talk);
     // 根那一层：**`Where::Root` 就是根**（根没有号，故它占的是坐标那一格，不是一个号）。
     let Ok(root) = operator::list(talk, link, Where::Root, Wait::AtMost(MS)) else {
         return ocall::UNKNOWN;

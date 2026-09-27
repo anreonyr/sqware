@@ -131,10 +131,11 @@
 //! 加 `harness/lodger.rs` 的 `find_router` 抄的是同一趟路（开会话 → 要问话孔 → 名字译成号 →
 //! 按号取入口），参数表 7 / 4 / 0 参而只要同一条会话 ⇒ 并成一条 `Session`。
 //!
-//! **照实记（那条 `Session` 又抬出了本目录）**："客人开局"那一半的用户里一半不是驱动
-//! （房客 `lodger`、客人 `echo`、内件 `coalition`），一个 `user` 档的程序引 `driver::` 是名字
-//! 越界 ⇒ 它今天住 [`crate::session`]，本目录只留**设备面那一半**（`Context` 的门牌 / 线 /
-//! 推一批字节）。判据没变，变的是它落哪一间。
+//! **照实记（那条 `Session` 一路搬到了 protocol）**："开会话"那一半的用户里一半不是驱动
+//! （房客 `lodger`、客人 `echo`、内件 `coalition`）⇒ 它先抬出本目录，再按用户裁定回到
+//! **它自己那一层**：[`protocol::communication::session`]（**地板**：只认孔与路）。树上那几手
+//! （名字 → 号 → 入口 / 落门牌）回 `operator` 的客手（[`protocol::system::operator::client`]）。
+//! 本目录只留**设备面那一半**（`Context` 的门牌 / 线 / 推一批字节）。
 
 pub mod assemble;
 pub mod context;
