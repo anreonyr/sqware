@@ -86,7 +86,7 @@
 //!                             principal  策略身份：这个 Task 此刻代表谁、从谁而来
 //!                             coalition  策略结盟：身份的横向那半（principal 的客人）
 //!                             supply     配给：一张单子换一段记录（引导域 ↔ 编排域）
-//!   driver           轴      线（line）——**只有这一半**（见下）
+//!   driver           轴      线（line）——**本层只剩这一件**（见下）
 //!   （根上三件共享件：`frame` 帧骨架 · `id` 号的规则 · `fail_codes` 负码表）
 //! ```
 //!
@@ -113,7 +113,7 @@
 //! **被否的那条读法**是"协议树按'谁在说话'分、不该镜像实现树"（我原先的建议）——用户裁的是前者。
 //!
 //! 落地程度不一样：**三份顶层 ＋ 容纳的四套都已经有代码跑在机器上**（[`system`]、[`driver`]
-//! （**两半都落了**：`supply` 与 `line`——见 [`driver::line`]，四格原语 + 账 + 客侧几手，
+//! （**只剩 `line` 一件**：客侧四手 ＋ 形与码——账与四原语在持有者那一侧，见 [`driver::line`]，
 //! `router` / `uart` / `rtc` 与两位客人 `lodger` / `sleeper` 都跑在机器上）、[`communication`]、
 //! [`system::operator`]、[`system::principal`]（**名册 + 谱系**：九条原语、一位真客人
 //! `subject`）与 [`system::coalition`]（**横向盟籍**：一张两列表 + 一枚计数器、六条原语、

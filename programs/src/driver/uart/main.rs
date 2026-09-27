@@ -21,26 +21,20 @@
 extern crate alloc;
 extern crate programs;
 
-/// 住持面（适配）：只剩本域的死法（一族口径在 [`programs::driver::fail`]）。
-mod adapt;
-
 /// 纯功能：交出去的那一批（非空不可表达）。
 mod core;
 
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod uart;
 
-use adapt::fail::{ASSEMBLE, DIED, Fail};
 use crate::core::batch::Batch;
 use crate::uart as device;
 use env::Wait;
-use programs::driver::context::{Context, Mine, Step};
+use programs::driver::context::{Context, Mine};
 use programs::driver::device::Device;
-use programs::program::uart::UART_WANTS as WANTS;
+use programs::driver::fail::Fail;
+use programs::program::uart::{E_UART, UART_WANTS as WANTS};
 use protocol::debug;
-use protocol::system::board::ENTRY_MARK;
-use runtime::env::mail;
-use runtime::env::unit as utask;
 
 /// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
 const ME: &str = "uart";
@@ -52,43 +46,31 @@ const MS: usize = 1000;
 /// **下一次中断（本域说"排空了" ⇒ 路由者放回线）再来**。
 const DRAIN_MAX: usize = 64;
 
-/// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(DIED, "…"))` 一路 `?` 出来，
+/// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(E_UART, "…"))` 一路 `?` 出来，
 /// `Ok(())` 是"跑完了"（常驻域走不到那一格）。**一族口径**在 [`programs::driver::fail`]
-/// （号取自装配表；本域只声明 [`adapt::fail::DIED`]）。
+/// （号取自装配表：本域用的是 [`programs::program::uart::E_UART`]，一个数都不写）。
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // ── 设备 ───────────────────────────────────────────────
-    let [serial] = Device::claim::<{ WANTS.len() }>(ASSEMBLE)?;
+    let [serial] = Device::claim::<{ WANTS.len() }>()?;
     debug!("uart: got {}", WANTS.len());
-    let dev = Device::open(serial).map_err(|_| Fail::at(DIED, "uart: device open failed"))?;
+    let dev = Device::open(serial).map_err(|_| Fail::at(E_UART, "device open failed"))?;
     device::arm_rx(dev.view());
     // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
-    let base = dev.key().base().ok_or(Fail::at(DIED, "uart: device open failed"))?;
+    let base = dev.key().base().ok_or(Fail::at(E_UART, "device open failed"))?;
     debug!("uart: ier=rx at={base:#x}");
 
     // ── 入系统 ─────────────────────────────────────────────
-    let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(DIED, "uart: tree"))?;
-    let ctx = Context::join(entry, utask::sire(), Wait::AtMost(MS)).map_err(|s| {
-        Fail::at(
-            DIED,
-            match s {
-                Step::Board => "uart: board",
-                Step::Tree => "uart: tree",
-            },
-        )
-    })?;
-    ctx.plate(ME, Mine::Yes, Wait::AtMost(MS));
-    // 报的是**发下来的那一段区**——"线 = 区的函数"那条权威在路由者那边解。
-    let line = ctx
-        .line(dev.key(), Wait::AtMost(MS))
-        .map_err(|_| Fail::at(DIED, "uart: line"))?;
-    debug!("uart: line occupied");
+    // 解门牌 → 上板 ＋ 开会话 → 上树 → 占线：那一趟的壳在 [`Context::enter`]（两台逐字同构，
+    // 失败那几格说**步名**）。报的是**发下来的那一段区**——"线 = 区的函数"那条权威在路由者
+    // 那边解。
+    let (ctx, line) = Context::enter(dev.key(), ME, Mine::Yes, E_UART, Wait::AtMost(MS))?;
 
     // ── 核心 ───────────────────────────────────────────────
     let mut raw = [0u8; DRAIN_MAX];
     loop {
         if line.receive(Wait::Forever).is_err() {
-            return Err(Fail::at(DIED, "uart: line gone"));
+            return Err(Fail::at(E_UART, "line gone"));
         }
         let n = device::drain(dev.view(), &mut raw);
         // 交给读行的人（门牌那枚孔＝读行的那一枚）。**这一手要阻塞**：字节是内容，丢了补不回来；

@@ -24,7 +24,7 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-/// 住持面（适配）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻 / 死法——由 bin 自己 `mod`。
+/// 住持面（适配）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻——由 bin 自己 `mod`。
 mod adapt;
 
 /// 纯功能：树那侧的事实与线集合（区 ↔ 线号）。
@@ -33,11 +33,11 @@ mod core;
 /// 设备面（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
 mod plic;
 
-/// 本域那一台：**返回类型就是它的死法**——一格一格都在 [`adapt::fail`] 里
-/// （**一族口径**在 [`programs::driver::fail`]：号取自装配表——本域自己那几步报 `E_ROUTER`，
+/// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(E_ROUTER, "…"))` 一路 `?` 出来
+/// （**一族口径**在 [`programs::driver::fail`]：号取自装配表——一个数都不写，
 /// "配给那一趟没成"那一格照旧带 `assemble` 那一族的小整数）。
 #[programs::entry]
-fn main() -> Result<(), adapt::fail::Fail> {
+fn main() -> Result<(), programs::driver::fail::Fail> {
     // 起手：领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。
     let mut up = adapt::boot::up()?;
     // 常驻：等三源 → 逐客 / 排空 / 登记 / 铃。

@@ -26,16 +26,16 @@ pub struct Device {
 impl Device {
     /// 收配给：`N` = 本域那张单子的长度；**"有几格"只由那张单子说**。
     ///
-    /// `assemble` 是"配给那一趟没成"时那句话（各域那份 `adapt/fail.rs` 的 `ASSEMBLE`），
-    /// 号由 [`assemble::take`] 原样带来。
-    pub fn claim<const N: usize>(assemble: &'static str) -> Result<[Pair; N], Fail> {
-        assemble::take::<N>().map_err(|c| Fail::assemble(c, assemble))
+    /// 死法那句话由本族自己说（`"assemble"`——**步名**，见 [`crate::driver::fail`]），
+    /// 号由 [`assemble::take`] 原样带来（`E_UP` / `E_GRANT`）。
+    pub fn claim<const N: usize>() -> Result<[Pair; N], Fail> {
+        assemble::take::<N>().map_err(|c| Fail::at(c, "assemble"))
     }
 
     /// 一条记录 → 一页映射 ＋ 坐标（`Pole` 那一类）。
     ///
-    /// **失败那一格由调用方命名**（`"uart: device open failed"` / `"router: docks"`）——
-    /// 本文件不认识域名，也不该认识。
+    /// **失败那一格由调用方命名**（`"device open failed"` / `"docks"`——**步名**，
+    /// 见 [`crate::driver::fail`] 那一格裁）——本文件不认识域名，也不该认识。
     pub fn open(pair: Pair) -> Result<Device, ()> {
         let key = pair.key().ok_or(())?;
         let dock = Dock::open(PolePie::from_token(pair.token())).map_err(|_| ())?;

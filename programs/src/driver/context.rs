@@ -16,17 +16,26 @@
 //! - **失败即断言**（[`Session::plate`]）：`part` / `land` / `find` 任一非 `OK`、`got` 假、
 //!   号 ↔ 名对不上 ⇒ 当场死。它不是一条错误分支，而是"这一域没登记上就不该活着"的判据。
 //!
+//! **`enter` 是 `uart` / `rtc` 两台共用的起手**（[`Context::enter`]：解门牌 / 上板 / 上树 /
+//! 占线）。`router` 不走它——路由者的起手要读设备树、建账、挂三源那只组，形状不同（见
+//! `driver/router/adapt/boot.rs`）。故本目录的入库判据是"**两台以上逐字同构**"，不是"必须三台"。
+//!
 //! **`lodger`（房客）只用 [`Session`]**：它没有服务门牌（不上树），但"从树上找到线路由者"
 //! 那一趟与驱动逐字同构——故 [`Session::service`] 单独拿得出来。
 
+use crate::driver::fail::Fail;
+use crate::program::Died;
 use env::{Key, Name, PieToken, TaskId, Wait};
 use protocol::communication::establish::Endpoint;
 use protocol::debug;
 use protocol::driver::line::client::Line;
+use protocol::system::board::ENTRY_MARK;
 use protocol::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
+use runtime::env::mail;
+use runtime::env::unit as utask;
 
 /// 要找的那位服务（线路由者）在树上的名字。
 const ROUTER: &str = "router";
@@ -180,6 +189,38 @@ impl Context {
         }
         let session = Session::open(sire, ms).map_err(|_| Step::Tree)?;
         Ok(Context { entry, session })
+    }
+
+    /// **起手那一趟**（`uart` / `rtc` 两台逐字同构）：解门牌 → 上板 ＋ 开会话 → 上树 → 占线。
+    ///
+    /// **设备那一手在调用之前**（`uart` 开 `IER.RX`、`rtc` 读两次钟自证）：闸门归设备持有者，
+    /// 而占线当场把线接上——次序倒过来，"线接上了、设备那侧还没开闸"那一瞬里的字节就没有
+    /// 中断可等。故本手只收**入系统**那一半。
+    ///
+    /// **失败读数说步名**（`board` / `tree` / `line`）：域名由号带——`died` 就是装配表里
+    /// "这一台死了"那一号（[`crate::program::uart::E_UART`] 那种），与内核出口印的同一个。
+    /// **成功那一行读数仍带域名**（`debug!("{me}: line occupied")`）。
+    pub fn enter(
+        key: Key,
+        me: &str,
+        mine: Mine,
+        died: Died,
+        ms: Wait,
+    ) -> Result<(Context, Line), Fail> {
+        let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(died, "tree"))?;
+        let ctx = Context::join(entry, utask::sire(), ms).map_err(|s| {
+            Fail::at(
+                died,
+                match s {
+                    Step::Board => "board",
+                    Step::Tree => "tree",
+                },
+            )
+        })?;
+        ctx.plate(me, mine, ms);
+        let line = ctx.line(key, ms).map_err(|_| Fail::at(died, "line"))?;
+        debug!("{me}: line occupied");
+        Ok((ctx, line))
     }
 
     /// **上树那一趟**（三台逐字同构）——见 [`Session::plate`]。

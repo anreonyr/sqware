@@ -11,7 +11,6 @@
 //! （`router: board: no link` / `router: tree: no lane` / `router: tree: no ask`）；收进
 //! [`Context::join`] 之后只剩**一行**。健康机器上那三行本来都不出现，故验收读数不受影响。
 
-use super::fail::{ASSEMBLE, DIED, Fail};
 use crate::core::lines::Lines;
 use crate::core::sources::Sources;
 use crate::plic::Plic;
@@ -19,7 +18,8 @@ use alloc::vec::Vec;
 use env::{HoleDir, Wait};
 use programs::driver::context::{Context, Mine};
 use programs::driver::device::Device;
-use programs::program::router::ROUTER_WANTS as WANTS;
+use programs::driver::fail::Fail;
+use programs::program::router::{E_ROUTER, ROUTER_WANTS as WANTS};
 use protocol::debug;
 use protocol::system::board::client as board;
 use runtime::PAGE_SIZE;
@@ -56,17 +56,16 @@ pub struct Up {
 pub fn up() -> Result<Up, Fail> {
     // 客侧装配：收配给（**编号原样带出去**——`take` 报的是"死在装配的哪一步"，折成同一个号就
     // 等于把那几个编号变成没人读得到的死码）。三枚都要在（`N` 就是那张单子的长度）。
-    let [plic_pie, dtb_pie, bell_pie] =
-        Device::claim::<{ WANTS.len() }>(ASSEMBLE)?;
+    let [plic_pie, dtb_pie, bell_pie] = Device::claim::<{ WANTS.len() }>()?;
     debug!("router: got {}", WANTS.len());
 
     // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
-    let plic_dev = Device::open(plic_pie).map_err(|_| Fail::at(DIED, "router: docks"))?;
-    let dtb_dev = Device::open(dtb_pie).map_err(|_| Fail::at(DIED, "router: docks"))?;
+    let plic_dev = Device::open(plic_pie).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
+    let dtb_dev = Device::open(dtb_pie).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
     let dtb = dtb_dev.view();
     // SAFETY: 设备树是内核只读借映进本域的整棵（保留区，终身存活）；`Sources::of` 只读它。
     let bytes = unsafe { core::slice::from_raw_parts(dtb.base() as *const u8, dtb.size()) };
-    let sources = Sources::of(bytes).ok_or(Fail::at(DIED, "router: tree"))?;
+    let sources = Sources::of(bytes).ok_or(Fail::at(E_ROUTER, "tree"))?;
     let plic = Plic::new(plic_dev.view(), &sources);
     debug!("router: docks open");
     // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
@@ -89,14 +88,14 @@ pub fn up() -> Result<Up, Fail> {
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
-    let lines = Lines::new(sources.device_count()).ok_or(Fail::at(DIED, "router: line account full"))?;
+    let lines = Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
 
     // 服务入口：本线程铸、本线程读——**它就是树上那块门牌**。
     //
     // 线那一面（账 + 各家客户的泊位）与入口同住这一张表：`PieToken` 只在铸它的那张表里
     // 念得出来，而客户往门里推、路由者往客户手里推——两端都得在同一张表里，故这里不再有
     // 第二枚线程。
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(DIED, "router: desk"))?;
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌 /device/router）。
     // **尽力**：任一件没成都只报一行读数、不拦主循环——这一台起来就得收（见文件头那一条照实记）。
@@ -109,20 +108,20 @@ pub fn up() -> Result<Up, Fail> {
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
-    let pile = Pile::unseal(false).map_err(|_| Fail::at(DIED, "router: bell"))?;
+    let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = HolePie::from_token(entry);
     if pile
         .attach(&NolePie::from_token(bell_pie.token()), HoleDir::Pull)
         .is_err()
         || pile.attach(&entry_hole, HoleDir::Pull).is_err()
     {
-        return Err(Fail::at(DIED, "router: bell"));
+        return Err(Fail::at(E_ROUTER, "bell"));
     }
 
     // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(Fail::at(DIED, "router: desk"));
+        return Err(Fail::at(E_ROUTER, "desk"));
     }
     buf.resize(PAGE_SIZE, 0);
 

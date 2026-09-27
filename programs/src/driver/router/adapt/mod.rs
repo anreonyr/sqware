@@ -7,17 +7,19 @@
 //!   exhaust.rs   排空：客人说"我排空了"——那一格回闲 + 把线放回去
 //!   bell.rs      铃：领一条 → 投一帧 → 投到了才静音 ＋ 结 → 报过没有那一行
 //!   resident.rs  常驻**壳**：等三源 → 四手各就位
-//!   fail.rs      本域的死法（**下线**那一格）
 //! ```
+//!
+//! **照实记（`fail.rs` 退场了）**：本域那份薄壳（`DIED` / `ASSEMBLE` / `type Fail`）在残枝
+//! 第二刀删掉——本域现在直接用 [`programs::program::router::E_ROUTER`] 与
+//! [`programs::driver::fail::Fail`]，见那份的文件头。
 //!
 //! 判定不在这里：账与四原语住 `crate::core::lines`，"区 ↔ 线号"住
 //! `crate::core::sources`（两者都是纯的）。本层只做"等、取、喂、执行"与碰硬件的那几下；
-//! **死法住这里**（不在 `core/`）：它实现 `programs::Exit`，是程序侧的事。
+//! **死法实现 `programs::Exit`**，是程序侧的事。
 
 pub mod bell;
 pub mod boot;
 pub mod desk;
 pub mod exhaust;
-pub mod fail;
 pub mod resident;
 pub mod sweep;

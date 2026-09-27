@@ -4,7 +4,7 @@
 //!   main.rs        入口（bin）：只剩流程
 //!   core/sources.rs **纯功能**：树那侧的事实（线数 / context）＋ 区 ↔ 线号 ＋ 五笔没进来的账
 //!   plic.rs        设备面：寄存器（接线 / 静音 / 拆线 / claim / complete）
-//!   adapt/         住持面（bin）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻壳 / 死法
+//!   adapt/         住持面（bin）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻壳
 //! ```
 //!
 //! **账与四原语在这里**：登记 / 投递 / 排空 / 收线那条权威住
@@ -79,7 +79,8 @@
 //!   故它出现一次就是一条线真的被收掉了；
 //! - `router: lane dropped line=<n>`——**登记被拒那一趟**（"这条线有人了"）：这一趟刚交上来的
 //!   泊位被放回去了（房客那趟 `TAKEN` 每次冷启动走一遍）；
-//! - 账的格数按 `device_count` 要（备不下就拒起，见 `adapt/fail.rs` 的 `Fail::Account`）
+//! - 账的格数按 `device_count` 要（备不下就拒起，见 `adapt/boot.rs` 的
+//!   `Fail::at(E_ROUTER, "line account full")`）
 //!   ——账够不够用是**装配期的判据**，不是运行期的分支。
 //!
 //! 本域**不读走设备里的字节**：`serial@10000000` 的持有者是 [`crate::driver::uart`]。不读 ⇒
