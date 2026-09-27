@@ -3,7 +3,7 @@
 //! 身份服务：答"这一位此刻代表谁"与"在不在他那一支里"。它是持树者的**第一双眼睛**
 //! （`eyes: Some(Eyes::Roster)`）——那一格不是靠名字认的。
 
-use crate::program::{Died, Program, Spot};
+use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Spot};
 use env::ProgramKind;
 use env::wire::Eyes;
 
@@ -11,17 +11,24 @@ use env::wire::Eyes;
 pub const E_PRINCIPAL: Died = 14;
 
 pub static PROGRAM: Program = Program {
-    name: "principal",
-    kind: ProgramKind::User,
-    spot: Spot::Service,
-    scenes: &["root", "product"],
-    entry: &[],
-    order: Some(1),
-    board: true,
-    operator: true,
-    bind: true,
-    holds_tree: false,
-    eyes: Some(Eyes::Roster),
-    died: E_PRINCIPAL,
-    setup: &[],
+    identity: Identity {
+        name: "principal",
+        kind: ProgramKind::User,
+        spot: Spot::Service,
+        scenes: &["root", "product"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(1),
+        presence: true,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: Some(Eyes::Roster),
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_PRINCIPAL,
+        setup: &[],
+    },
 };

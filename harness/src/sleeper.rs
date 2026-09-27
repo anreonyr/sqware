@@ -42,8 +42,9 @@ use programs::Report;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use protocol::system::board::client as board;
+use programs::system::board::client as board;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 
 use env::{Name, PieToken};
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
@@ -92,7 +93,12 @@ fn main() -> Report<'static> {
     };
     // 照实记：从前"树路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
     // 合成一格，故这里只剩一句。
-    let Some(face) = find_face(&session) else {
+    //
+    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好后本域只要树上那一趟
+    // （名字 → 号 → 入口）⇒ 交给 [`Face::of`]（吃所有权），本域那一面叫 `tree`——**避让下面
+    // 那个 `face`**（那是 rtc 的服务门牌，另一个东西）。
+    let tree = Face::of(session);
+    let Some(face) = find_face(&tree) else {
         return no_service("sleeper: no rtc plate");
     };
     debug!("sleeper: found");
@@ -169,13 +175,16 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"，
 /// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它。
-fn find_face(session: &Session) -> Option<PieToken> {
+///
+/// **照实记（收 `&Face`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀把它包出来了），
+/// 故这一手只借它——签名上不再出现那条线。
+fn find_face(tree: &Face) -> Option<PieToken> {
     let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
         return None;
     };
     // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：那一趟在
-    // [`operator::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
-    operator::entry_of(session, &[dir, want], Wait::AtMost(MS)).ok()
+    // [`Face::entry_of`]（本域从前自己抄了一遍，八份同形里的一份）。
+    tree.entry_of(&[dir, want], Wait::AtMost(MS)).ok()
 }
 
 /// 上板报到（与 `passer` / `canonical` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。

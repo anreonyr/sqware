@@ -55,9 +55,10 @@ use env::{Name, PieToken};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use protocol::system::board::client as board;
+use programs::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -97,9 +98,14 @@ fn main() -> Report<'static> {
     let (reg, _) = board::enroll(&seat, ME, Wait::AtMost(MS));
 
     // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    //
+    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好之后本域**只要**树上那一趟
+    // （名字 → 号 → 入口），那条线本身再不露面 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
+    // [`Face::of`]（吃所有权）。于是下面那一趟从"四格参数"变成"一条路 + 一份期限"。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("guest: no tree link");
     };
+    let tree = Face::of(session);
     let Ok(dir) = Name::new(protocol::driver::DIR) else {
         return bail("guest: bad name");
     };
@@ -112,9 +118,10 @@ fn main() -> Report<'static> {
     // 另叫一手 `operator::take` 扫本域表按"谁给的"认回来。今天那一枚号**随答话回来**，故
     // 这一趟连号带状态一起破出去；`at` 就是本域表里那一枚（读数里的 `entry`）。
     //
-    // 那一趟（含"译不出就重试"）今天在 [`operator::entry_of`]（本域从前自己抄了一遍）：
-    // 答话码原样往外带，`find` 那一族的失败折成 `BAD`。
-    let (find, at) = match operator::entry_of(&session, &path, Wait::AtMost(MS)) {
+    // 那一趟（含"译不出就重试"）今天在 [`Face::entry_of`]（本域从前自己抄了一遍）：
+    // 答话码原样往外带，`find` 那一族的失败折成 `BAD`。`AtMost(MS)` 是**额度不是整趟时限**
+    // （往返耗时不计账、推不进去还会等在门外，见 `operator/client.rs` 的 `entry_of` 照实记）。
+    let (find, at) = match tree.entry_of(&path, Wait::AtMost(MS)) {
         Ok(entry) => (ocall::OK, entry),
         Err(code) => (code, none),
     };

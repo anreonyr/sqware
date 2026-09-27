@@ -50,11 +50,11 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::operator::{EntryId, Where};
 
 
-use env::{Name, PieToken};
-use protocol::communication::establish::Endpoint;
+use env::Name;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -79,10 +79,14 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    //
+    // **照实记（这一台为什么整体改走 `Face`，task-2 那一刀）**：本台每一问（`part` / `seek` /
+    // `land`）都在 [`TreeFace`] 的面上，裸孔一个都不用 ⇒ 交给（吃所有权的）[`TreeFace::of`]，
+    // 帮手 `tree_dir` 一并从裸 `(say, link)` 改收 `&TreeFace`。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-denied: no tree link");
     };
-    let (tree, hedge, host) = (&session.link, session.talk, session.host);
+    let tree = TreeFace::of(session);
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `uart` / `rtc` 上树那一趟同一形状）。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
@@ -98,15 +102,12 @@ fn main() -> Report<'static> {
     // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——先分目录、
     // 再译成号。**这两手不过门禁**（`part` / `seek` 都不在闸口里），故本域虽然没有身份，
     // 这两手照旧答得出号。
-    let Some(at) = tree_dir(hedge, &tree, dir) else {
+    let Some(at) = tree_dir(&tree, dir) else {
         return bail("probe-denied: no /sys");
     };
 
     // 三、落牌——**这一手该被拒**。
-    let land = operator::land(
-        hedge,
-        &tree,
-        host,
+    let land = tree.land(
         Where::At(at),
         me,
         entry,
@@ -124,7 +125,7 @@ fn main() -> Report<'static> {
     };
 
     // 四、拒绝之后那一格**在不在**——`UNKNOWN` 才是"没被占"。
-    let after = operator::seek(hedge, &tree, &[dir, me], Wait::AtMost(MS));
+    let after = tree.seek(&[dir, me], Wait::AtMost(MS));
     let seq = match after {
         Ok(id) => format!("id={}", id.get()),
         Err(code) => format!("err:{code}"),
@@ -148,9 +149,11 @@ fn main() -> Report<'static> {
 }
 
 /// `/sys` 那一格的号：**分目录（幂等）+ 译号**。拿不到就 `None`（调用方报一句退场）。
-fn tree_dir(say_hole: PieToken, link: &Endpoint, dir: Name) -> Option<EntryId> {
-    operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
-    operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()
+///
+/// **照实记（收 `&TreeFace`，task-2 那一刀）**：两问都在面上，故不再收裸 `(say_hole, link)`。
+fn tree_dir(tree: &TreeFace, dir: Name) -> Option<EntryId> {
+    tree.part(Where::Root, dir, Wait::AtMost(MS)).ok()?;
+    tree.seek(&[dir], Wait::AtMost(MS)).ok()
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

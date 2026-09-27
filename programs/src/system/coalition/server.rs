@@ -24,13 +24,14 @@ use protocol::debug;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::communication::session::Session;
-use protocol::system::board::client as board;
+use crate::system::board::client as board;
 use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
 use protocol::system::coalition::Fail;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::PrincipalId;
@@ -63,9 +64,15 @@ pub fn serve() -> Result<(), Start> {
         let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
 
         // 四、上树：分 `/sys`、落 `/sys/coalition`、再查回来验一遍（同 router / rtc / principal）。
+        //
+        // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本域此后只要树上那几手
+        // （`part` / `land` / `find` / `name` / `entry_of`：上树那一趟 ＋ 找身份那份门牌），
+        // 那条会话的裸孔一个都不再要 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
+        // [`TreeFace::of`]（吃所有权），`serve_tree` / `find_face` 一并改收 `&TreeFace`。
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
             .map_err(|_| Start::Tree)?;
-        serve_tree(&session, entry);
+        let tree = TreeFace::of(session);
+        serve_tree(&tree, entry);
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
         // `Session::open` 收下的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Rule::In`）。
@@ -75,14 +82,14 @@ pub fn serve() -> Result<(), Start> {
         // （`Eyes::League`）递——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
         port::ship(
             &HolePie::from_token(entry),
-            session.host,
+            tree.host(),
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
         .map_err(|_| Start::Tree)?;
 
         // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
-        let face_entry = find_face(&session).ok_or(Start::Face)?;
+        let face_entry = find_face(&tree).ok_or(Start::Face)?;
         let face = Face::of(face_entry).map_err(|_| Start::Face)?;
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
@@ -206,39 +213,43 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// 找**身份服务**那份门牌：`"/sys/principal"`，**译不出就再问**（有界）。
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
-/// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，总预算 [`MS`]）→ 入口。
+/// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，额度 [`MS`]）→ 入口。
 /// 这一趟与另外七处（`canonical` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，
-/// 已并进 [`operator::entry_of`]（那一圈重试也在它里面）。
-fn find_face(session: &Session) -> Option<PieToken> {
+/// 已并进 [`TreeFace::entry_of`]（那一圈重试也在它里面）。**`MS` 是额度不是时限**——往返耗时
+/// 不计账、推不进去还会等在门外，两处照实记见 `operator/client.rs` 的 `entry_of`。
+///
+/// **照实记（收 `&TreeFace`，不再收 `&Session`）**：本域**已持**一面（上树那一趟包出来的），
+/// 故这一手只借它——`Face` 把 Session 藏在里面，签名上不再出现那条线。
+fn find_face(tree: &TreeFace) -> Option<PieToken> {
     let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    operator::entry_of(session, &[dir, name], Wait::AtMost(MS)).ok()
+    tree.entry_of(&[dir, name], Wait::AtMost(MS)).ok()
 }
 
 /// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。
 ///
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/member.rs`）证——它照同一条路
 /// 找上门、立一枚盟、进进出出。故本域不自问自答。
-fn serve_tree(session: &Session, entry: PieToken) {
-    let (link, talk, host) = (&session.link, session.talk, session.host);
+///
+/// **照实记（手上的裸孔换成了面上的五个方法）**：从前这里先 `(&session.link, session.talk,
+/// session.host)` 把那条线拆出来，再一路叫自由函数；现在调用方给的是 [`TreeFace`]，四个动作与
+/// 对端号都从它出（`host` 那一格只在门禁转授时用，见 `serve` 的"四之后"）。
+fn serve_tree(tree: &TreeFace, entry: PieToken) {
     let (Ok(dir), Ok(me)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
         debug!("coalition: tree: bad name");
         return;
     };
     // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
     // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = operator::part(talk, link, Where::Root, dir, Wait::AtMost(MS));
+    let dir_at = tree.part(Where::Root, dir, Wait::AtMost(MS));
     let (part, dir_id) = match dir_at {
         Ok(id) => (ocall::OK, id.get()),
         Err(code) => (code, 0),
     };
     // **落门牌**：答的是门牌自己那一格的号。
     let plate = match dir_at {
-        Ok(at) => operator::land(
-            talk,
-            link,
-            host,
+        Ok(at) => tree.land(
             Where::At(at),
             me,
             entry,
@@ -254,7 +265,7 @@ fn serve_tree(session: &Session, entry: PieToken) {
     };
     // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
     let (find, got) = match plate {
-        Ok(id) => match operator::find(talk, link, id, Wait::AtMost(MS)) {
+        Ok(id) => match tree.find(id, Wait::AtMost(MS)) {
             Ok((code, entry)) => (code, entry.is_some()),
             Err(_) => (ocall::BAD, false),
         },
@@ -263,7 +274,7 @@ fn serve_tree(session: &Session, entry: PieToken) {
     // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
     let pname = plate
         .ok()
-        .and_then(|id| operator::name(talk, link, id, Wait::AtMost(MS)).ok());
+        .and_then(|id| tree.name(id, Wait::AtMost(MS)).ok());
     debug!(
         "coalition: tree part={part} dir={dir_id} land={land} find={find} got={got} entry={} plate={pid} pname={}",
         entry.get(),

@@ -5,10 +5,28 @@
 //!
 //! ```text
 //! 1  启动参数 → 清单（有哪些程序）与配对块（有哪些门闩）——两块都是 boot 只读借映的
-//! 2  起一条：编排者（`system`，一条 `boot` 通道）
+//! 2  起一条：编排者（`system`，一条 `boot` 通道）——**裸三手**（建域 / 产线程 / 放行），不持表
 //! 3  发货循环：收一张单子 → 按坐标取原件、授出 → 回一张回单（[`protocol::system::supply::server::serve`]）
 //! 4  那枚孔**读不出** = 编排者没了 ⇒ 本域退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
+//!
+//! # 照实记（本域的表与清单都退场了：两套装表合一）
+//!
+//! 从前本域也持一本 `Table`（`register` ＋ `mint` ＋ `start`）与一块 `Catalog`——与编排域那本
+//! 是**两本同形的账**，而编排域起来之后本域再不碰它。按用户裁定「两套装表合一」：**表与生命
+//! 周期从此只有编排域一个持有者**（`system::Assembly`），本域只剩三件事——读固件那两块账、
+//! 起第一个域、照单发货。于是这台机器上"域"这一层只有一处记账。
+//!
+//! # 照实记（本域为什么走裸三手）
+//!
+//! 编排域那一套 `control::service::{mint, start}` 的每一步都要账（`admit_start` / `attach` /
+//! `set_state`），而账已经归编排域。故第一个域由本域**徒手**起：建域（`build`）→ 产线程
+//! （`spawn`）→ 装那条 `boot` 通道 → 放行（`hatch`）→ 等它认领那一枚。这是全树**唯一的例外**，
+//! 也正是"**装配者自己不是被装配出来的**"那句话的写法：本域没有装配者，它只有 boot。
+//!
+//! **要哪一段字节**：按名字在 boot 的清单里取（`Root::programs`）——本域**不建 `Catalog`**
+//! （那一层是编排域为"这一景有哪些台"与"来源那一格"备的），特权级也照清单那一条原样转交
+//! （唯一声明处是装配表的 `kind`，打包时写进去）。
 //!
 //! **持树者不在这里**：它是**编排域的服务**（编排域那张单的第一条）。本域不当它的装配者、
 //! 也不替它把提示之路转来转去——那是"它是引导设施"时代的形状，那一笔已经清掉。
@@ -36,23 +54,18 @@
 //! **退出即关机**，故门的两条硬判据（自行退出 + 无 panic）照旧成立，不需要外接 timeout。
 //! 常驻服务（没有"干完"这回事的那种）由本域退场时的级联收掉。
 
-extern crate alloc;
 extern crate programs;
 
-// 两块账在引导域自己那一摊里（只有它读得到）；装配机器是两个装配者共用的一台。
-use env::Mark;
-use env::Wait;
+// 两块账在引导域自己那一摊里（只有它读得到）。
+use env::{Mark, Name, Wait};
 use programs::root::boot;
 
-use env::Name;
 use protocol::communication::establish;
-// 协议侧那三档（判定 / 账 / 适配）与那台装配机器**同名不同物**，故逐个取名进来。
-use programs::system::control::service::{self as core, until};
-use programs::system::control::{Catalog, Died, E_MANIFEST, READY_MS};
-use programs::system::core::Reaped;
-use programs::system::desk::{Announce, Table};
+// 生命那一族共用的两个数（号与就绪上限）——本域只借它们，不借那一族的手（见文件头）。
+use programs::system::control::{Died, E_MANIFEST, READY_MS};
 
 use protocol::system::supply;
+use runtime::env::unit as utask;
 
 /// 编排者那一条在清单里的名字。
 const ORCH: &str = "system";
@@ -110,73 +123,52 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // （同一节点的多段 `reg` 造出两条同名记录，而按名取只够得到第一枚）——坐标换成区之后
     // 那笔账不存在了（两段各有各的基址）。
     boot.report_pairs();
-    let Some(catalog) = Catalog::of_boot(&boot) else {
-        return Err(Die::Manifest);
-    };
-    let Some(orch_name) = Name::new(ORCH).ok() else {
-        return Err(Die::Manifest);
-    };
+
     let Some(slot) = Name::new(supply::BOOT).ok() else {
         return Err(Die::Manifest);
     };
 
-    let mut table = Table::new();
+    // 2. 从清单里挑出编排者那一条：**它那一段字节 ＋ 它那个特权级**（后者是打包时按装配表的
+    //    `kind` 写进清单的，本域只原样转交）。
+    let mut list = boot.programs();
+    let entry = loop {
+        let Some(entry) = list.next() else {
+            return Err(Die::Manifest);
+        };
+        let entry = entry.map_err(|_| Die::Manifest)?;
+        if entry.name == ORCH {
+            break entry;
+        }
+    };
 
-    // 2. 起编排者：它有一条 `boot` 通道——配给从那里问、回单从那里回。
-    let orch = mint(&mut table, &catalog, ORCH, orch_name, Announce::Channel)?;
+    // 3. **裸三手**起它（没有账）：建域 → 产线程 → 装那条 `boot` 通道 → 放行。
+    let team = utask::build(entry.elf, entry.kind).map_err(|_| Die::Orch(E_ORCH))?;
+    let orch = utask::spawn(team, 0, &[], 0).map_err(|_| Die::Orch(E_ORCH))?;
     // 这条通道**两头都装**（一手就是 `establish::endpoint`：铸本端那一枚交给它、并试认它那一枚）：
     // 本域**读**自己那一枚（单子从这来），**写**对端那一枚（回单往这去）。`POLL` = 这一趟不等它
-    // 那一枚——它此刻一步都还没跑，真正的认领由 `core::start` 的 `ready` 做（判据同一个记号）。
+    // 那一枚——它此刻一步都还没跑，真正的认领由下面那一手做（判据同一个记号）。
     //
     // **持有者活到本函数结束**：这一对孔在 `channels` 里（`Endpoint` 落出作用域才放下本端那一枚）。
     let mut channels = [establish::endpoint(orch, Mark::of(slot.as_str()), Wait::POLL)
         .map_err(|_| Die::Orch(E_ORCH))?];
-    if core::start(
-        &mut table,
-        orch_name,
-        orch,
-        &[],
-        &mut channels,
-        &[Mark::of(slot.as_str())],
-        Wait::AtMost(READY_MS),
-    )
-    .is_err()
-    {
+    // 放行：**这一刀之后它就跑了**。
+    utask::hatch(orch).map_err(|_| Die::Orch(E_ORCH))?;
+    // **等它就绪 = 认下它交回的那一枚孔**（它那一条通道的凭据）。认不到 ⇒ 这条服务没起来
+    // ——本域不另做收尾：域是它生的，本域退出即级联扑杀（原 `service::ready` 那一格同一判据）。
+    if !channels[0].claim(orch, Mark::of(slot.as_str()), Wait::AtMost(READY_MS)) {
         return Err(Die::Orch(E_ORCH));
     }
 
-    // 3. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::system::supply::server::serve` 的
+    // 4. 之后只剩发货。**探出编排者没了** ⇒ 退出 ⇒ 级联 ⇒ 停机（见 `protocol::system::supply::server::serve` 的
     //    `alive`：本域读的那枚孔命随本端，故收场靠探活，不靠"读不出"）。
     // 收帧那一只由本域给（**发**那一侧的缓冲在 `Sender::send` 的栈帧上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
     let source = |key: env::Key| boot.token(key);
-    // "它还活着吗"这一问**不另立判据**：用 `until` 的非阻塞那一问（判决只该有一个实现）。
-    let alive = || !matches!(until(&table, orch_name, Wait::POLL), Ok(Reaped::Now));
+    // **"它还活着吗"这一问换了来路**（照实记）：从前它读表（`until(&table, …)` 的非阻塞那一问），
+    // 而表已经归编排域；本域手里只剩那一枚线程的号，故直接问内核：`join` 的非阻塞那一问，
+    // `true` = 已回收 ⇒ 没了。判决仍然只有一处（`join`），不另立一条判据。
+    let alive = || !utask::join(orch, Wait::POLL).unwrap_or(true);
     programs::root::supply::server::serve(&channels[0], source, alive, &mut ask);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))
-}
-
-/// 登记一行 + 建域 + 产线程 + 挂身子（此刻它一步都还没跑）。
-///
-/// 失败的**原因码走返回值**（`Err(Die::…)`）：报码那一笔账现在是 `main` 的账，这一层
-/// 只负责把"死在第几步"带上去——不再自己退场。**三格的号都一样**（`E_ORCH`）：这一族
-/// 读的是"起编排者没走通"，具体哪一格由上面那两句 `debug` 行分辨。
-fn mint(
-    table: &mut Table,
-    catalog: &Catalog<'_>,
-    what: &str,
-    name: Name,
-    announce: Announce,
-) -> Result<env::TaskId, Die> {
-    if table.register(name, announce).is_err() {
-        return Err(Die::Orch(E_ORCH));
-    }
-    let Some(entry) = catalog.find(what) else {
-        return Err(Die::Orch(E_ORCH));
-    };
-    match core::mint(table, name, entry.elf, entry.kind) {
-        Ok(task) => Ok(task),
-        Err(_) => Err(Die::Orch(E_ORCH)),
-    }
 }

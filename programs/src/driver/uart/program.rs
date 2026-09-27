@@ -2,7 +2,7 @@
 //!
 //! **U 态**：持有 `serial@10000000`（banner 里那张 PMP 是 S/U (R,W)），把"收到字节就拉线"打开。
 
-use crate::program::{Died, Program, Setup, Spot};
+use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Setup, Spot};
 use env::supply::{Kind, Need, class_block};
 use env::{Access, Policy, ProgramKind};
 
@@ -18,17 +18,24 @@ pub const UART_WANTS: &[Need] = &[Need::class(
 )];
 
 pub static PROGRAM: Program = Program {
-    name: "uart",
-    kind: ProgramKind::User,
-    spot: Spot::Service,
-    scenes: &["root", "product"],
-    entry: &[],
-    order: Some(4),
-    board: true,
-    operator: true,
-    bind: true,
-    holds_tree: false,
-    eyes: None,
-    died: E_UART,
-    setup: &[Setup::Need(UART_WANTS[0]), Setup::Channel("records")],
+    identity: Identity {
+        name: "uart",
+        kind: ProgramKind::User,
+        spot: Spot::Service,
+        scenes: &["root", "product"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(4),
+        presence: true,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_UART,
+        setup: &[Setup::Need(UART_WANTS[0]), Setup::Channel("records")],
+    },
 };

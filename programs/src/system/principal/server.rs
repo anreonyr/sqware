@@ -21,7 +21,7 @@ use protocol::debug;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use protocol::communication::session::Session;
-use protocol::system::board::client as board;
+use crate::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;

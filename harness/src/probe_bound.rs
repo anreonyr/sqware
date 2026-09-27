@@ -64,7 +64,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::communication::establish::Endpoint;
 use protocol::system::board as bcall;
-use protocol::system::board::client as board;
+use programs::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::Where;
@@ -199,6 +199,12 @@ fn main() -> Report<'static> {
 ///
 /// 正经那一问取 `part(/sys)`：**幂等**（`/sys` 是服务起手时立的那一格，重复 `part` 只答同一个
 /// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管。
+///
+/// **照实记（这一台为什么不改走 `Face`，task-2 那一刀）**：这一趟量的**不是**一个 RPC——
+/// 它要往门那一枚孔上**推一条不合族的原始字节**、再从树路那一枚孔**读回原始答字节**；那两格
+/// 在 [`operator::Face`] **下面**（那一面故意把 `Endpoint` / `Sender` / `Receiver`
+/// 藏起来，见它的正文）。故本台照旧拿裸 `(talk, link)` 走自由函数与 `mail`——**"未持（可交出去
+/// 的）`Session`"就是这一格的确切含义**。`junk_trip_board` 同理（换一道门）。
 fn junk_trip(hedge: PieToken, tree: &Endpoint, dir: Name) -> (bool, bool, bool) {
     let junk = junk();
     let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();

@@ -43,6 +43,7 @@ use env::{Name, PieToken};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::{Fail, PrincipalId};
@@ -69,7 +70,12 @@ fn main() -> Report<'static> {
     };
     // 照实记：从前"树路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
     // 合成一格，故这里只剩一句。
-    let Some(entry) = find_face(&session) else {
+    //
+    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好后本域只要树上那一趟
+    // （名字 → 号 → 入口）⇒ 交给 [`TreeFace::of`]（吃所有权）。别名 `TreeFace` 是**避让**
+    // 下一行那个 `Face`——那是身份服务的门牌，另一个东西。
+    let tree = TreeFace::of(session);
+    let Some(entry) = find_face(&tree) else {
         return bail("subject: no face");
     };
     let Ok(face) = Face::of(entry) else {
@@ -197,13 +203,16 @@ fn main() -> Report<'static> {
 
 /// 找那面服务：`"/sys/principal"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
-/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`operator::entry_of`]（本域从前自己抄了一遍）。
+/// 名字 → 号（译不出就重试）→ 入口，那一趟在 [`TreeFace::entry_of`]（本域从前自己抄了一遍）。
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"。
-fn find_face(session: &Session) -> Option<PieToken> {
+///
+/// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
+/// 故这一手只借它。
+fn find_face(tree: &TreeFace) -> Option<PieToken> {
     let (Ok(dir), Ok(me)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
         return None;
     };
-    operator::entry_of(session, &[dir, me], Wait::AtMost(MS)).ok()
+    tree.entry_of(&[dir, me], Wait::AtMost(MS)).ok()
 }
 
 /// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。

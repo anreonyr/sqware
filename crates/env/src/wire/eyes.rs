@@ -3,7 +3,7 @@
 //!
 //! **它为什么住 `env`**（照实记）：这一格的读法两侧都要——装配侧按 [`Eyes::of_wire`] 现算，
 //! 收的那一侧（`protocol::system::operator`）按 `from_le_bytes` 现翻；而**装配声明**
-//! （`programs` 的 `Program.eyes`）是**宿主安全**模块的一格，`crates/image` 也要编得到它。
+//! （`programs` 的 `Program::relation.eyes`）是**宿主安全**模块的一格，`crates/image` 也要编得到它。
 //! `protocol` 拖着 `runtime`（那两处 riscv 内联汇编在宿主上编不过）⇒ 宿主够得着的最下层
 //! 只有本 crate。故它从原先那张程序声明表里落在这里（与 [`Key`](crate::Key) 同一条理由）。
 //!

@@ -1,17 +1,21 @@
 //! canonical::adapt::console — **找控制台**：`/device/uart/{rx,tx}` 那两枚门牌。
 //!
-//! 那一趟（名字 → 号 → 入口）与它那一圈"再问一次"的重试全在 [`operator::entry_of`] 里（"门牌由
+//! 那一趟（名字 → 号 → 入口）与它那一圈"再问一次"的重试全在 [`Face::entry_of`] 里（"门牌由
 //! 别的域落下，本域可能比它先起"）；本文件只剩"往哪找"这一格：目录是驱动族那一段，再下一段是
 //! **服务名**（[`WANT`]），最后一段是**两面**（[`RX`] 读 / [`TX`] 写）。
 //!
 //! **缺任一枚都算没找到**：读得到、写不出去的那一台没有意义——本域正是靠写口把回显送回去。
 //!
 //! **`wait` 由调用方给**：等多久是**本域自己的期限**（[`super::MS`]），本文件不替它定。
+//!
+//! **照实记（这一处的 `Session` 换成了 `Face`，task-2 那一刀）**：本手原先收 `&Session`、
+//! 叫协议层的自由函数 `operator::entry_of`。调用方（`main.rs`）**正握着那条会话的所有权**、
+//! 此后不再要它 ⇒ 按"已持 `Session` 则用 `Face`"的规则，`main` 把它包成一面交进来，本文件
+//! 只认 [`Face`]（那条线怎么走不再出现在签名里）。
 
 use env::{Name, Wait};
-use protocol::communication::session::Session;
 use protocol::driver::DIR;
-use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::mail::HolePie;
 
 /// 要找的那位服务在树上的名字：**控制台**（`/device/uart`——名字用服务名；它是一块 Pane）。
@@ -30,7 +34,7 @@ pub struct Console {
 
 /// 找控制台（有界）：任一面的门牌找不到 ⇒ `None`（`main` 据此报
 /// [`E_NO_CONSOLE`](super::E_NO_CONSOLE)）。
-pub fn find(session: &Session, wait: Wait) -> Option<Console> {
+pub fn find(tree: &Face, wait: Wait) -> Option<Console> {
     let (Ok(dir), Ok(want), Ok(rx), Ok(tx)) = (
         Name::new(DIR),
         Name::new(WANT),
@@ -39,8 +43,8 @@ pub fn find(session: &Session, wait: Wait) -> Option<Console> {
     ) else {
         return None;
     };
-    let rx = operator::entry_of(session, &[dir, want, rx], wait).ok()?;
-    let tx = operator::entry_of(session, &[dir, want, tx], wait).ok()?;
+    let rx = tree.entry_of(&[dir, want, rx], wait).ok()?;
+    let tx = tree.entry_of(&[dir, want, tx], wait).ok()?;
     Some(Console {
         rx: HolePie::from_token(rx),
         tx: HolePie::from_token(tx),

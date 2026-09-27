@@ -1,31 +1,38 @@
 //! board::client — **客侧**：一条会话 ＋ 一问一答（说「我走了」也在这一侧）
 //!
+//! **照实记（它原先住 `crates/protocol/src/system/board/client.rs`）**：按裁定「board 是编排域的
+//! **死信号传感器**，不是第五轴」，这一族从 protocol 那一层退出聚合——那里只留**形与记号**
+//! （`frame.rs` / `Fail` / `LINK` / `ASK_MARK` / `TIP_MARK` / `LANE_PREFIX` / `ENTRY_MARK`），
+//! **说话的那一侧**（本文件）回到实现侧。故 use 改两处：记号与码取
+//! [`protocol::system::board`]，`Session` / `Berth` 取
+//! [`protocol::communication::session`]。
+//!
 //! 三侧分家之后本文件只放**客侧**：**装板路 / 铸问话孔那两手不在这里**——它们与
 //! `operator::client` 那两手逐字同构，已按"两台以上逐字同构 ⇒ 收"抬进
-//! [`crate::communication::session`]；本文件只声明**这条路叫什么**（[`BERTH`]）＋ **报到**
-//! （[`enroll`]）与一问一答（[`register`] / [`evict`]）。两侧共用的图与次序说明见 [`super`]
-//! 的"载体"那一节，帧与记号见 [`crate::system::board`]。
+//! [`protocol::communication::session`]；本文件只声明**这条路叫什么**（[`BERTH`]）＋ **报到**
+//! （[`enroll`]）与一问一答（[`register`] / [`evict`]）。两侧共用的图与次序说明见 [`super`]，
+//! 帧与记号见 [`protocol::system::board`]。
 
-use crate::message::Message;
 use env::Mark;
 use env::Wait;
 use env::{Name, PieToken, TaskId};
+use protocol::message::Message;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::communication::establish::Endpoint;
-use crate::communication::sender::Sender;
-use crate::communication::session::{Berth, Session};
-use crate::system::board as bcall;
-use crate::system::board::Fail;
-pub use crate::system::board::{ASK_MARK, ENTRY_MARK, LINK};
+use protocol::communication::establish::Endpoint;
+use protocol::communication::sender::Sender;
+use protocol::communication::session::{Berth, Session};
+use protocol::system::board as bcall;
+use protocol::system::board::Fail;
+pub use protocol::system::board::{ASK_MARK, ENTRY_MARK, LINK};
 
 /// **这条路叫什么**：泊位那一格（`LINK` = `board`）＋ 问话孔那一格（`ASK_MARK`）。
 ///
 /// 开会话那一手（[`Session::open`]）要它；本层只把这两格交出去，不替调用方开会话。
 pub const BERTH: Berth = Berth {
-    link: Mark::of(crate::system::board::LINK),
-    ask: crate::system::board::ASK_MARK,
+    link: Mark::of(bcall::LINK),
+    ask: bcall::ASK_MARK,
 };
 
 /// **报到**：本域那枚服务入口挂上板（板据此按名字分人，也据此看得见本域的死）。
@@ -50,7 +57,7 @@ pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
 }
 
 // 照实记（原先这里的三手 `open` / `ask_hole` / `me`）：它们与 `operator::client` 那三手
-// **逐字同构**（只差两个记号与各自的失败域），已抬进 [`crate::communication::session`]
+// **逐字同构**（只差两个记号与各自的失败域），已抬进 [`protocol::communication::session`]
 // ——开会话那一手归地板。本文件因此只剩**这条路的名字**（[`BERTH`]）与这一族那几手。
 
 /// 客侧第二步（**登记那一句**）：报上名字 ＋ 把入口交出去，取一句答。
@@ -115,5 +122,4 @@ fn hear_rep(link: &Endpoint, millis: Wait) -> Result<u8, Fail> {
 
 // 照实记（原先这里还有两件）：`hear`（收"答话的是谁"）与 `map_establish`（建立那一手的失败域
 // 对照表）。前者与 `operator::client` 那一份逐字同构 ⇒ 随开会话那一手抬进
-// [`crate::communication::session`]；后者只服务那一手 ⇒ 与它的唯一读者一起退场。
-
+// [`protocol::communication::session`]；后者只服务那一手 ⇒ 与它的唯一读者一起退场。

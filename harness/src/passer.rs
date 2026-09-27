@@ -36,7 +36,7 @@ use programs::Report;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use protocol::system::board::client as board;
+use programs::system::board::client as board;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字 —— 本域知道的全部。

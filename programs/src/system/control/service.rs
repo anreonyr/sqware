@@ -9,7 +9,16 @@
 //! **穷尽 match**，一个数字都不写。这不是转发，是"内核哪一步坏了"翻成"调用方接下来干什么"。
 //!
 //! **监督相住 [`super::supervise`]**；**立账 / 递单住 [`super::assemble`]**；**生命周期那一圈
-//! 住 [`super`]**。引导域（`root`）与本域共用本文件这几手——起一条只有一条路。
+//! 住 [`super`]**。
+//!
+//! **照实记（"引导域与本域共用本文件这几手"那一句已不成立）**：引导域（`root`）今天起那第一个
+//! 域走的是**裸几手**（`build → spawn → endpoint → hatch → claim`，见 `programs/src/root/`），
+//! 不再叫本文件这几具合成手——两条路各自要的语义不同（root 起的是"机器本身"，本域起的是
+//! "清单里的一台服务"），故"起一条只有一条路"这句话随实情撤掉。
+//!
+//! 本文件那几具**合成手**今天只有编排域一个读者（[`super::assemble`] 的立账 / 递单与
+//! [`super`] 的生命周期那一圈）；三枚内件的 `main` 只借这里那枚举 [`Start`]（它自己的死法），
+//! 不叫那几具手。
 
 use env::{Mark, Name, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 use runtime::env::mail;

@@ -3,7 +3,7 @@
 //! **U 态**：它只读 PLIC 的寄存器、claim/complete、铸孔、挂组，全都不需要 S 态；它那枚铃是
 //! **内核给的**（铸铃那一格才是 S 态，本域不铸）。
 
-use crate::program::{Died, Program, Setup, Spot};
+use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Setup, Spot};
 use env::supply::{Kind, Need, class_block};
 use env::{Access, Key, Policy, ProgramKind};
 
@@ -27,23 +27,30 @@ pub const ROUTER_WANTS: &[Need] = &[
 ];
 
 pub static PROGRAM: Program = Program {
-    name: "router",
-    kind: ProgramKind::User,
-    spot: Spot::Service,
-    scenes: &["root", "product"],
-    entry: &[],
-    order: Some(3),
-    board: true,
-    operator: true,
-    bind: true,
-    holds_tree: false,
-    eyes: None,
-    died: E_ROUTER,
-    // 单子的次序 = 回单的次序（收方按位次归位）：三枚门闩，再一条通道。
-    setup: &[
-        Setup::Need(ROUTER_WANTS[0]),
-        Setup::Need(ROUTER_WANTS[1]),
-        Setup::Need(ROUTER_WANTS[2]),
-        Setup::Channel("records"),
-    ],
+    identity: Identity {
+        name: "router",
+        kind: ProgramKind::User,
+        spot: Spot::Service,
+        scenes: &["root", "product"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(3),
+        presence: true,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_ROUTER,
+        // 单子的次序 = 回单的次序（收方按位次归位）：三枚门闩，再一条通道。
+        setup: &[
+            Setup::Need(ROUTER_WANTS[0]),
+            Setup::Need(ROUTER_WANTS[1]),
+            Setup::Need(ROUTER_WANTS[2]),
+            Setup::Channel("records"),
+        ],
+    },
 };

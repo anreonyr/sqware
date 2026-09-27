@@ -79,6 +79,13 @@ pub fn start(key: Key, ms: Wait) -> Result<Desk, Fail> {
 ///
 /// 判据与 [`Context::enter`] 那一趟同一条：**这一域没登记上就不该活着** ⇒ 不成即断言。
 /// 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
+///
+/// **照实记（这一台为什么不改走 `Face`，task-2 那一刀）**：`Context` 是驱动族**共用**的载体
+/// （`pub session: Session`），本台要的正是那条会话上的**裸** `talk` / `link` / `host`——
+/// 两枚门牌一趟落完、还要自己读回号与名。而 `Face`（[`operator::Face`]）吃一条
+/// `Session` 的所有权、且把那条线**故意藏起来**（"四面不出 Face"）。故本台照旧用协议层的
+/// 自由函数（成员那一手 `part` / `land` / `find` / `name` 一个都没变），只把 `Context` 留在
+/// 手里。同理 [`Context::line`](programs::driver::context::Context::line) 也留自由函数。
 fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     let (Ok(dev), Ok(me), Ok(rx_name), Ok(tx_name)) =
         (Name::new(DIR), Name::new(ME), Name::new(RX), Name::new(TX))

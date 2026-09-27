@@ -15,8 +15,10 @@ use alloc::vec::Vec;
 
 use crate::program::Program;
 use env::{HoleDir, Mark, Name, PieToken, Wait};
+use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::board::LANE_PREFIX;
+use protocol::system::control as ccall;
 use crate::system::core::Reaped;
 use crate::system::desk::{Slot, State, Table};
 use runtime::core::pile::Pile;
@@ -36,22 +38,40 @@ use super::service::{stop, until};
 pub struct Lane {
     /// 这一位是谁（装配表上的名字）。
     pub name: &'static str,
-    /// 那一条道。`None` 有**两条来路**：**这一位不上板**（`Program::board = false`——道是板写的，
-    /// 没有写端就不铸）或**本域铸不出孔**（交给退场级联）。
+    /// 那一条道。`None` 有**两条来路**：**这一位不要存在信号**（`Relation::presence = false`
+    /// ——道是板写的，没有写端就不铸）或**本域铸不出孔**（交给退场级联）。
     pub road: Option<PieToken>,
 }
 
-/// **监督相在编排域这一侧的状态**：死亡道表 ＋ 等任一道响的组。
+/// **监督相在编排域这一侧的状态**：死亡道表 ＋ 等任一道响的组 ＋ **control 那一面**。
 pub struct Watch {
     lanes: Vec<Lane>,
     pile: Pile,
+    /// **待客那一枚入口**（`None` = 面没接上——今天只有监督，不接客人）。
+    ///
+    /// **照实记（它为什么与道表同组）**：道那一枚枚是"某一位没了"，面那一枚是"有人来问
+    /// control"——两件事都是**本线程要醒一次**的理由，故挂进**同一只组**：多源等待，
+    /// 不是两个圈（同 `board/server.rs::host_loop` 的写法）。
+    ///
+    /// **今天恒为 `None`**：上树那条路已撤（见 [`super`] 与 `Assembly::supervise` 的照实记
+    /// ——挂树的一次性线程一收尾，入口副本会被内核的派生链级联摘掉）。这一格与下面
+    /// [`Watch::attach_face`] 留着，是因为**两源那形状是好的**；等 control 有了一枚长命线程，
+    /// 把入口接上来即可。
+    face: Option<PieToken>,
+    /// **最后一位那条道真的在吗**——决定停机那一格**等什么**。
+    ///
+    /// **照实记（这一格是构造出来的保证，不是巧合）**：停机靠"最后一条走了"，而"最后一位一定
+    /// 要存在信号、且它的孔一定铸得出"本来只是**声明上的巧合**。把它记成一格并在 `of` 里报一行
+    /// 读数之后：`true` ⇒ 主路等**道表那枚组**；`false` ⇒ 回退路等**最后一行那一枚线程**
+    /// （`Join{task, POLL}`）。两条路**共用同一个 [`sweep`] 与同一套收场**（见 [`Watch::run`]）。
+    watch_last: bool,
 }
 
 impl Watch {
-    /// **铸道 + 立组**：上板的那几位一位一条（记号 `LANE_PREFIX` ＋ 名字）。
+    /// **铸道 + 立组**：要存在信号的那几位一位一条（记号 `LANE_PREFIX` ＋ 名字）。
     ///
     /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
-    /// **不上板的那几位不铸道**：没有写端的道永远不会响。
+    /// **不要存在信号的那几位不铸道**：没有写端的道永远不会响。
     pub fn of(programs: &[&'static Program]) -> Result<Watch, ()> {
         // 组是**独占**的（`shared = false`）：本线程用它等任一道响（零轮询）。
         let pile = Pile::unseal(false).map_err(|_| ())?;
@@ -60,8 +80,12 @@ impl Watch {
         for program in programs {
             // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
             // 拼出来找它）。
-            let road = if program.board {
-                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", program.name))).ok()
+            //
+            // **照实记（这一行已交接回 task-4）**："要不要存在信号"那一格原名 `Program::board`
+            // （随板退成**一枚死信号传感器**一起改名，见 `program::Relation::presence`）；改名那一
+            // 刀由 T3（G4）落，语义一个字没动。
+            let road = if program.relation.presence {
+                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", program.name()))).ok()
             } else {
                 None
             };
@@ -69,11 +93,37 @@ impl Watch {
                 let _ = pile.attach(&HolePie::from_token(road), HoleDir::Pull);
             }
             lanes.push(Lane {
-                name: program.name,
+                name: program.name(),
                 road,
             });
         }
-        Ok(Watch { lanes, pile })
+        // **停机的前提不能是巧合**：`lanes` 与 `programs` 同序（上面按同一个次序推），故最后
+        // 一格就是"最后一位"。它没有道 ⇒ 读一行数，`run` 改用**内核那一问**当停机触发
+        // （回退路与主路共用同一个 `sweep` 与同一套收场，见 [`Watch::run`]）。
+        let watch_last = lanes.last().is_some_and(|l| l.road.is_some());
+        if !watch_last {
+            debug!("system: no lane for the last one; supervise falls back to Join");
+        }
+        Ok(Watch {
+            lanes,
+            pile,
+            face: None,
+            watch_last,
+        })
+    }
+
+    /// **认出待客那一枚入口**：把面挂进**同一只组**（多源等待的写法）。
+    ///
+    /// **今天没有调用者**（上树那条路已撤，见 [`super`] 的照实记）：本手与 [`Watch::face`]
+    /// 这一格留着，是"两源那形状"的一部分——control 有了一枚长命线程之后，入口由它铸、
+    /// 由它交到这里，本圈即同时看道表与面。
+    ///
+    /// 装孔这一步收在这里：那一枚此后归这只组管——它的到达就是"有人来问 control 了"那一格。
+    /// **装不上也认**（`face` 仍记着）：面那一侧每拍还会非阻塞地取一次（单槽的推没有丢的
+    /// 道理，本手只是把"醒来"这条快路接上）。
+    pub fn attach_face(&mut self, face: PieToken) {
+        let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
+        self.face = Some(face);
     }
 
     /// 这一位的死亡道（按名字取，不是按下标：见 [`Lane`]）。
@@ -81,43 +131,76 @@ impl Watch {
         self.lanes.iter().find(|l| l.name == name).and_then(|l| l.road)
     }
 
-    /// 监督循环：**发现死亡 + 记账 + 放下死域**。
+    /// 监督循环：**发现死亡 + 记账 + 放下死域**，外加**待客**（control 那一面）。
     ///
-    /// 事件来自**板**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来
-    /// ⇒ 往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
-    /// **哪条道响**给出——不必猜、也不会两条挤一格丢名字。
+    /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）：
     ///
-    /// 醒来做两件事：先 `until` 等它真的收尾（板报的是"门封印了"，而 `Oust` 要的前置是"域里
-    /// 没有还没收尾的线程"——这一步等的是**事件**，不是节拍）；再写 `State::Dead`（**不
-    /// `detach`**：坐标是"上一个实例"，留给重启与放下用）、`oust(team)` 放下那个死域、报一行。
+    /// - **道表**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来 ⇒
+    ///   往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
+    ///   **哪条道响**给出——不必猜、也不会两条挤一格丢名字；
+    /// - **control 那一面**（[`Watch::face`]）：别的域拿着树上那枚门牌来问四手（`mint` /
+    ///   `start` / `stop` / `state`）——本线程醒来把这一问交给 [`Control`] 那四手，从这一趟
+    ///   借来的回信孔答回去。**今天这一源是空的**：上树那条路已撤、入口没有来路（见
+    ///   [`super`] 的照实记）；形状留着，等 control 有长命线程时接上。
+    ///
+    /// 醒来先做三件事，次序即契约：**表侧惰性剔死**（内核说收尾了就落 `Dead`——没有道的那几台
+    /// 只有这一档收得到）→ **道**（`until` 等它真收尾，再 `Dead` ＋ `oust` ＋ 报一行）→
+    /// **面**（取干净这一批客人的问）；回退路下再加**第五格**（最后一行那一枚线程的 `Join`）。
+    /// 有台不要存在信号、或最后一位没有道时用**有界节拍**（[`TICK_MS`]）；两者都不需要就
+    /// **永远挂起**（事件一到就醒，零轮询）。
+    ///
     /// 最后一条没了之后，对**仍在跑的**逐个 `stop`——它们的死会再走同一条路回来；在册的每一行
     /// 都 `Dead` 之后才收场。
+    ///
+    /// **停机的触发有两个来源，收场只有一套**（照实记）：主路等**道表那枚组**（最后一位那条道
+    /// 真的响）；回退路（[`Watch::of`] 的 `watch_last = false`——最后一位不要存在信号、或它那条
+    /// 孔铸不出）等**最后一行那一枚线程**（`Join{task, POLL}`）。两条路**共用同一个 [`sweep`]
+    /// 与同一套收场**（[`stop_running`] ＋ 本圈那个 `stopping` 分支），差别只在"等什么"。
     pub fn run(&mut self, control: &mut Control, last: Name) {
-        // 死亡道那一格：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
+        // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         // 不按"这条路上平常走几个字节"备）。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
-        let mut lane_buf: Vec<u8> = Vec::new();
-        if lane_buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
+        // 道与面共用这一页（两者不同时读）。
+        let mut buf: Vec<u8> = Vec::new();
+        if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
             debug!("system: no room");
             return;
         }
-        lane_buf.resize(runtime::PAGE_SIZE, 0);
+        buf.resize(runtime::PAGE_SIZE, 0);
+        // **需不需要那格"顺便看一眼"**：两条来路——① 这一景里有**不要存在信号**的台
+        // （`road = None`：它们的死没有道来报，只有表侧那一扫收得到）；② 最后一位没有道
+        // （`!watch_last`：停机那一格得靠内核那一问看出来）。两者都没有 ⇒ 回到**永远挂起**
+        // （事件驱动，零轮询——本线程改动前的样子）。
+        //
+        // **照实记（为什么不能一律零轮询）**：`relation.presence = false` 那几台（harness 那一片
+        // 大多如此）没有任何写端会替它们叫醒本线程；不扫的话它们的死**永远没人记账**。
+        let tick = !self.watch_last || self.lanes.iter().any(|l| l.road.is_none());
         let mut stopping = false;
         loop {
-            // 等任一条道响。**`Pile` 的既定用法**：**挂起过的那一侧返回的是预置值**——内核
-            // 没有第二次执行机会，故醒来必须自己按组复核，不能靠返回值拿身份。
-            if self.pile.await_(Wait::Forever).is_err() {
+            // 一、表侧惰性剔死（G3 从板那本账搬来的那一格）。
+            if tick {
+                sweep(&mut control.table);
+            }
+            // 二、等一格有事（有台要"顺便看一眼"时用**有界节拍**，否则永远挂起）。**`Pile` 的
+            //     既定用法**：**挂起过的那一侧返回的是预置值**——内核没有第二次执行机会，故醒来
+            //     必须自己按组复核，不能靠返回值拿身份。
+            let wait = if tick {
+                Wait::AtMost(TICK_MS)
+            } else {
+                Wait::Forever
+            };
+            if self.pile.await_(wait).is_err() {
                 // 组坏了：退回"等最后一条退场"，行为与改动前一致。
                 control.wait_last(last);
                 return;
             }
-            // 复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次醒来
-            // 可能带走多条（两位前后脚死）。
+            // 三、复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次
+            //     醒来可能带走多条（两位前后脚死）。
             for lane in &self.lanes {
                 let Some(road) = lane.road else {
                     continue;
                 };
                 if HolePie::from_token(road)
-                    .pull_timeout(&mut lane_buf, Wait::POLL)
+                    .pull_timeout(&mut buf, Wait::POLL)
                     .is_err()
                 {
                     continue; // 这一条没货
@@ -132,12 +215,170 @@ impl Watch {
                     stop_running(&mut control.table, &self.lanes);
                 }
             }
+            // 四、面：有人来问 control 吗（非阻塞地取干净这一批）。
+            if let Some(face) = self.face {
+                serve_face(control, face, &mut buf);
+            }
+            // 五、**最后一位没有道时的停机触发**：内核那一问（`Join{task, POLL}`）。与上面道那
+            //     一支是**同一句"最后一条走了"**——同一个 `stopping` 分支、同一套收场
+            //     （[`stop_running`]），差别只在触发源（主路等道响，回退路等这一枚线程收尾）。
+            if !self.watch_last && !stopping && last_reaped(&control.table, last) {
+                stopping = true;
+                stop_running(&mut control.table, &self.lanes);
+            }
             if stopping {
                 // 收场：仍在跑的已经**有界地**下过一刀并等过（见 [`stop_running`]）；等不到的
                 // 那些交给本域退场时的级联——那条路是既有的可靠收场路径，不在这里等。
                 return;
             }
         }
+    }
+}
+
+/// **有界节拍**（毫秒）：有台"要顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒；
+/// 这一格只为**表侧惰性剔死**兜底（`relation.presence = false` 那几台没有道来叫醒本线程）。
+///
+/// **照实记（它为什么是 10 而不是 1）**：表侧那一扫要对每一行在册的服务问一次
+/// `Join{task, POLL}`，故节拍直接是这趟开销的倍数；10ms 够让"某位静默地没了"在监督读数里
+/// 及时落定，又不把本线程变成一台压着内核问的机器。**有道的景、且最后一位也有道时，根本不走
+/// 这一格**（见 [`Watch::run`]）。
+const TICK_MS: usize = 10;
+
+/// **表侧惰性剔死**（照实记：G3 从板那本账搬来的那一格）：内核说这一枚收尾了 ⇒ 当场落 `Dead`。
+///
+/// 与道表那一档的分工：道报的是**板看见的**死（客人开的那扇门封印），本手看的是**内核的事实**
+/// （`Join{task, POLL}`）——**不要存在信号的那几台**（`Relation::presence = false`）只有这一档
+/// 收得到。判决只认**非阻塞那一问**（与 [`service::until`] 同一条口径：挂起过的那一问读回的
+/// 是预置值，不含信息）。
+///
+/// **`Starting` 与 `Ready` 都扫**（照实记：先前只扫 `Ready`，理由不成立）：`service::mint` 把
+/// 已产未放行的身子也置成 `Starting`，故"扫 `Starting` 会误杀 Mint 之后、Start 之前那一枚"
+/// 曾是这一格的顾虑——**内核那本账把这件事分开了**：未放行是内核的 `TaskState::Held`，而 `Join`
+/// 的判据精确表示**收尾已完成**（`TaskState::Reaped`，`kernel/src/work/unit/task.rs` 的正文）。
+/// 于是 `Held` 的身子答 **"没收尾"**（不扫），而起手一段里真死掉的那一枚答"收尾了"（扫掉、
+/// 记 `Dead`）。
+///
+/// 记账与收尾都走 [`mark_dead`]（同一具身体）：落 `Dead`、放下它那个域、报一行读数。
+fn sweep(table: &mut Table) {
+    // 先把名字抄下来（表是定长的、行数有上界；拿名字再动表——与 `Desk` 那本账同一个形状）。
+    let mut gone = [Name::EMPTY; Table::CAP];
+    let mut n = 0usize;
+    for row in table.rows() {
+        if !matches!(row.state, State::Starting | State::Ready) {
+            continue;
+        }
+        let Slot::Live { task, .. } = row.slot else {
+            continue;
+        };
+        if utask::join(task, Wait::POLL).unwrap_or(true) {
+            gone[n] = row.name;
+            n += 1;
+        }
+    }
+    for name in &gone[..n] {
+        mark_dead(table, *name, Reaped::Now);
+    }
+}
+
+/// **最后一行那一枚线程收尾了吗**——回退路的停机触发（[`Watch::run`] 第五格）。
+///
+/// 判据与 [`sweep`] 同一条（`Join{task, POLL}` 只答"收尾已完成"）：**只读表**，不动它——
+/// 收场那一套仍走 [`stop_running`]（与主路同一套）。
+///
+/// 没有身子（没登记过 / 从未挂上 / 已 `detach`）也算"不用再等"：没有可等的坐标，停机不该
+/// 压在等不到的东西上。
+fn last_reaped(table: &Table, name: Name) -> bool {
+    match table.find(name) {
+        Some(row) => match row.slot {
+            Slot::Live { task, .. } => utask::join(task, Wait::POLL).unwrap_or(true),
+            Slot::None => true,
+        },
+        None => true,
+    }
+}
+
+/// 招待一位客人（面那一侧）：从**待客那一枚入口**读一帧、复核、交给四手、从这一趟借的回信孔
+/// 答回去。
+///
+/// 认那枚回信孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同 `principal/server.rs::turn`
+/// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
+/// 读出来核对，否则客人能让本域往**别人的孔**里写。
+fn serve_face(control: &mut Control, face: PieToken, buf: &mut [u8]) {
+    let entry = HolePie::from_token(face);
+    // 入口是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
+    while let Ok((len, from)) = entry.pull_timeout_from(buf, Wait::POLL) {
+        let Some((ask, back)) = ccall::frame::Wire::take(&buf[..len]) else {
+            // 长度不对 ⇒ 连"往哪回"都没有：不猜、不动表、也不回话。
+            continue;
+        };
+        if !matches!(
+            mail::reserve(back),
+            Ok((_vestor, owner, mark)) if owner == from && mark == ccall::BACK
+        ) {
+            // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
+            continue;
+        }
+        let said = answer(control, ask);
+        // 答一句走这一趟那枚孔；装不上按构造到不了（`.ok()` 与板那一台同款）。
+        let _ = Sender::<ccall::frame::Said>::from_token(back)
+            .send(said, Wait::Forever)
+            .ok();
+        let _ = mail::release(back);
+    }
+}
+
+/// 把一问交给四手，编出一格答（**读不懂也答**，答 `BAD`）。
+///
+/// **四手就是 [`Control`] 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期，
+/// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格。
+///
+/// **两格语义一个字不省**：`stop` 只到 `Stopping`（[`Control::stop`] 就是 [`service::stop`]），
+/// 落 `Dead` 的是**监督那一趟**（[`account`] 的 `until` 两相）——本层不为它抢一步。
+fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
+    let code = |fail: crate::system::core::Fail| ccall::frame::fail_to_code(Some(wire_fail(fail)));
+    let Some(ask) = ask else {
+        // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
+        return ccall::frame::said_status(ccall::frame::BAD);
+    };
+    match ask {
+        ccall::frame::Wire::Mint(name) => match control.mint(name) {
+            Ok(()) => ccall::frame::said_status(ccall::frame::OK),
+            Err(fail) => ccall::frame::said_status(code(fail)),
+        },
+        ccall::frame::Wire::Start(name) => match control.release(name) {
+            Ok(()) => ccall::frame::said_status(ccall::frame::OK),
+            Err(fail) => ccall::frame::said_status(code(fail)),
+        },
+        ccall::frame::Wire::Stop(name) => match control.stop(name) {
+            Ok(()) => ccall::frame::said_status(ccall::frame::OK),
+            Err(fail) => ccall::frame::said_status(code(fail)),
+        },
+        ccall::frame::Wire::State(name) => match control.state(name) {
+            Ok(state) => ccall::frame::said_state(wire_state(state)),
+            Err(fail) => ccall::frame::said_status(code(fail)),
+        },
+    }
+}
+
+/// 模型那一格失败 → 线上那一格失败：两套都是**四格语义格**，逐格同形（协议那一份的 `Bad`
+/// 是本端产生的，不在这一路——它由 [`answer`] 那两处"读不懂"直接落）。
+fn wire_fail(fail: crate::system::core::Fail) -> ccall::Fail {
+    use crate::system::core::Fail as Model;
+    match fail {
+        Model::Unknown => ccall::Fail::Unknown,
+        Model::BadImage => ccall::Fail::BadImage,
+        Model::Full => ccall::Fail::Full,
+        Model::NotReady => ccall::Fail::NotReady,
+    }
+}
+
+/// 表里那一格状态 → 线上那一格：两套 `State` 五格逐格同形（见协议那一份的头注）。
+fn wire_state(state: State) -> ccall::State {    match state {
+        State::NeverStarted => ccall::State::NeverStarted,
+        State::Starting => ccall::State::Starting,
+        State::Ready => ccall::State::Ready,
+        State::Stopping => ccall::State::Stopping,
+        State::Dead => ccall::State::Dead,
     }
 }
 

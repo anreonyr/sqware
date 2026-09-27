@@ -2,6 +2,11 @@
 //!
 //! 三侧分家之后本文件只放**持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
+//!
+//! **照实记（这一份没有 task-2 那一刀的迁移点）**：`operator::client` 新出那一面
+//! （[`protocol::system::operator::client::Face`]）是**客侧**用的；本文件是持树者，一处客手
+//! 都不叫（它自己那几手在 `core` 与 `bridge` 里，帧从门闩直接读）。故"已持 Session 则用 Face"
+//! 这条规则在这里落成一句"不适用"——写下来备查，免得下一刀再来找一遍。
 
 use env::Wait;
 use env::wire::Field;
@@ -16,7 +21,7 @@ use protocol::debug;
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
-use protocol::system::board::client as board;
+use crate::system::board::client as board;
 use protocol::system::operator as ocall;
 use crate::system::operator::core::gate::{Code, verdict};
 use crate::system::operator::core::judge::Facts;

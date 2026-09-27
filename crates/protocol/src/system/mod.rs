@@ -484,10 +484,27 @@
 //!
 //! 策略（该不该杀、该给什么身份）不在这里：**内核只回答"能不能"**。
 
-//! **它容纳那四套协议**（[`board`] / [`operator`] / [`principal`] / [`coalition`]——用户裁定）：
-//! 判据是"**谁住编排域**"。iii 之后这四套的落地都是**编排域里的线程**（板线程 ＋ 持树者 /
-//! 名册 / 盟册），而"**要找服务得先有目录**——今天那本目录就是 `board`"这句也写在本正文里。
-//! 故协议树与实现树（`programs/src/system/`）**同形**：本层这一件 [`grant`] 与那四套同一份屋顶。
+//! **它容纳那四套协议**（[`control`] / [`operator`] / [`principal`] / [`coalition`]——用户裁定）：
+//! 判据是"**谁住编排域**"。iii 之后这四套的落地都是**编排域里的线程**（control 那一枚线程、
+//! 持树者 / 名册 / 盟册），而"**要找服务得先有目录**——今天那本目录就是树（`operator`）"这句
+//! 也写在本正文里。故协议树与实现树（`programs/src/system/`）**同形**：本层这一件 [`grant`]
+//! 与那四套同一份屋顶。
+//!
+//! ```text
+//!   System Protocol = Control + Principal + Coalition + Operator     （四轴，平级）
+//!     Control     系统里有什么 Service，它们处于什么生命状态
+//!     Principal   一个 Task / 请求代表谁
+//!     Coalition   哪些身份形成横向关系
+//!     Operator    名字如何指向资源
+//!
+//!   System 本身没有第五种对象：不是 kernel object、不是统一 Client、不负责通信机制。
+//! ```
+//!
+//! **照实记（`board` 退出这一层）**：它曾与上面那三家平级地列在这里。按"耦合了多个部分、
+//! 功能不干净就是毒"的判据，它一条会话上焊着三件事（名字→入口 / 谁还活着 / 待客账），而
+//! 命名归 [`operator`]、生死归 [`control`] ⇒ 它**不是第五轴**，只当一枚**死信号传感器**，
+//! 客侧与语义降回实现侧（`programs/src/system/board/`）。本层只留它的帧、记号与失败域
+//! （`programs` 侧那几个域仍从这条路径取 `ENTRY_MARK` / `ASK_MARK` / `LINK` 那几格）。
 //!
 //! **照实记（原先它们住顶层）**：`operator` / `principal` / `coalition` 曾与 [`crate::system`]
 //! 平级（`crates/protocol/src/{operator,principal,coalition}/`）。**被否的那条读法**是
@@ -495,6 +512,7 @@
 
 pub mod board;
 pub mod coalition;
+pub mod control;
 pub mod grant;
 pub mod operator;
 pub mod principal;

@@ -62,10 +62,14 @@ fn root() -> PathBuf {
 mod program;
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
+///
+/// **照实记（本文件为什么只走 `Program` 上那四条窄面）**：装配声明拆成三块（身份 / 装配关系 /
+/// 需求，见 `programs/src/program.rs` 的头注）之后，宿主这一侧的读者**一个字段都不许碰**——
+/// 它只读"它是谁"那四样：`name()` / `kind()` / `scenes()` / `entry()`。块再怎么挪，这四行不动。
 fn scenes() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
     for p in program::PROGRAMS {
-        for s in p.entry {
+        for s in p.entry() {
             if !out.contains(s) {
                 out.push(s);
             }
@@ -78,16 +82,16 @@ fn scenes() -> Vec<&'static str> {
 fn entry_of(scene: &str) -> Option<&'static str> {
     program::PROGRAMS
         .iter()
-        .find(|p| p.entry.contains(&scene))
-        .map(|p| p.name)
+        .find(|p| p.entry().contains(&scene))
+        .map(|p| p.name())
 }
 
 /// 这一景要装的程序（**装配表按 `scenes` 过滤**；次序即装载次序）。
 fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
     let picked: Vec<(&'static str, env::ProgramKind)> = program::PROGRAMS
         .iter()
-        .filter(|p| p.scenes.contains(&scenario))
-        .map(|p| (p.name, p.kind))
+        .filter(|p| p.scenes().contains(&scenario))
+        .map(|p| (p.name(), p.kind()))
         .collect();
     if picked.is_empty() {
         return Err(format!(

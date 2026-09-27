@@ -139,8 +139,14 @@
 //! **照实记（那条 `Session` 一路搬到了 protocol）**："开会话"那一半的用户里一半不是驱动
 //! （房客 `lodger`、客人 `canonical`、内件 `coalition`）⇒ 它先抬出本目录，再按用户裁定回到
 //! **它自己那一层**：[`protocol::communication::session`]（**地板**：只认孔与路）。树上那几手
-//! （名字 → 号 → 入口 / 落门牌）回 `operator` 的客手（[`protocol::system::operator::client`]）。
-//! 本目录只留**设备面那一半**（`Context` 的门牌 / 线 / 推一批字节）。
+//! （名字 → 号 → 入口）回 `operator` 的客手（[`protocol::system::operator::client`]）。
+//!
+//! **照实记（"落门牌"那一手反倒回来了，task-2 那一刀）**：同一趟里的**上树组合**
+//! （`plate`：分目录 → 落门牌 → 查回来 → 按号问名）已从协议层**下移到这里**
+//! （[`context::Context::plate`]）——它是**驱动族那一段路的装配 recipe**（`dir` 恒为
+//! [`protocol::driver::DIR`]），而唯一的实现消费者是 [`context::Context::enter`]（`router`
+//! 的起手经 `Context` 走同一手）。故本目录不再只留"设备面那一半"：设备面 ＋ 这一段装配
+//! recipe 同住 `context`，协议层只剩它调的四手。
 
 pub mod assemble;
 pub mod context;

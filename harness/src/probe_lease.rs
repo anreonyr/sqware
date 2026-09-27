@@ -35,6 +35,7 @@ use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Where;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 
 
 use env::Name;
@@ -64,12 +65,15 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };
-    let (tree, hedge, host) = (&session.link, session.talk, session.host);
+    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本台只用"分一块目录 ＋ 落一枚牌"
+    // 两问，那条线上的裸孔一个都不用（从前那行 `&session.link, session.talk, session.host`
+    // 因此整行退场）⇒ 交给 [`TreeFace::of`]（吃所有权），两问从"四格参数"变成面上的方法。
+    let tree = TreeFace::of(session);
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
         return bail("probe-lease: bad name");
     };
     // `/sys` 已经在（principal / coalition 起的头）；`part` 幂等，故这里照走一遍拿号。
-    let Ok(at) = operator::part(hedge, &tree, Where::Root, dir, Wait::AtMost(MS)) else {
+    let Ok(at) = tree.part(Where::Root, dir, Wait::AtMost(MS)) else {
         return bail("probe-lease: no /sys");
     };
     let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {
@@ -77,10 +81,7 @@ fn main() -> Report<'static> {
     };
 
     // 落牌：**声明归本域**（`mine = true`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
-    let landed = operator::land(
-        hedge,
-        &tree,
-        host,
+    let landed = tree.land(
         Where::At(at),
         me,
         entry,

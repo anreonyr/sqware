@@ -28,8 +28,9 @@ mod core;
 use crate::adapt::{E_NO_CONSOLE, ME, MS};
 use env::Wait;
 use protocol::communication::session::Session;
-use protocol::system::board::client as board;
+use programs::system::board::client as board;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
 
 /// 本 bin 的 `main`：**返回类型就是它的退出账**——本域只有一种失败，故直接用 `Reason`。
@@ -41,10 +42,15 @@ fn main() -> Result<(), env::Reason> {
         .map(|seat| board::enroll(&seat, ME, Wait::AtMost(MS)));
 
     // 2：树那条路：本域只开一条会话（`Session::open`）——找控制台要它。
+    //
+    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好之后本域**只要**树上那几手
+    // （名字 → 号 → 入口），那条线本身再不露面 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
+    // [`Face::of`]（它吃所有权），此后 [`adapt::console::find`] 只认一面。这正是"四面不出
+    // `Face`"要的形状：调用方拿到的不是会话，是一面。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
     };
-    let Some(console) = adapt::console::find(&session, Wait::AtMost(MS)) else {
+    let Some(console) = adapt::console::find(&Face::of(session), Wait::AtMost(MS)) else {
         return Err(E_NO_CONSOLE);
     };
 

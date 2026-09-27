@@ -268,7 +268,8 @@ fn serve_one(
 /// 把一条问交给板，编出一句答（**一格**：读不懂也答，答 `BAD`）。
 ///
 /// **形状由 [`bcall::Wire`] 说**：退场那一句是**一字节短帧**（没有名字也没有入口），
-/// 另外三条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同）。
+/// 报到与摘下两条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同），
+/// 退场的命名那一码（`Lookup`）与它同落点。
 fn answer(
     board: &mut Board,
     desk: &mut Desk,
@@ -307,30 +308,21 @@ fn answer(
             // 两格缺一不可——它交来的**问话孔**也满足"交者是它"（那一枚也是它铸、它交的），
             // 两件事只有记号分得开。
             Some(entry) if establish::marked_as(entry) == Some(ENTRY_MARK) => {
-                // **登记只管一件事**：把"名字 → 入口"挂到板上（别人据此按名字找得到它）。
+                // **报到只管一件事**：写下本账那一格（名字 ＋ 入口 ＋ 主人），让这一位**被
+                // 本账持有**（退场时放下那枚入口）——"在哪"那一问已随命名退场（走树）。
                 // **死亡道不在这里记**——那一条在 `admit` 那一刻就记下了（名字随提示那一格来、
                 // 由装配者递；见 [`bcall::Tip::LEN`] 的照实记）。两件事从此分家：
-                // **一位客人不登记也能被监督**（反过来，登记了也不多一条道）。
+                // **一位客人不报到也能被监督**（反过来，报到了也不多一条道）。
                 board.register(name, entry, who).map(|_| ())
             }
             _ => Err(Fail::Denied),
         },
         bcall::Wire::Unregister { name } => board.unregister(name, who),
-        bcall::Wire::Lookup { name } => {
-            // 查到就**把板上那一份转授给客人**：入口不从报文里走，从会话里走。
-            // "查不到"与"授不出去"是两件事，故查的结论优先（`.and`）。
-            let mut grant = Ok(());
-            board
-                .lookup_after(name, |entry| {
-                    // **交出那一手就是 `port::ship`**（`R|W` ＋ 一格 `VEST`）：查到的入口
-                    // 要能替它再授出（`Query` 的下场），少 `VEST` ⇒ 转授那一步答 `Denied`。
-                    let pie = mail::HolePie::from_token(entry);
-                    grant = port::ship(&pie, who, Access::FETCH | Access::STORE, Policy::VEST)
-                        .map(|_| ())
-                        .map_err(|_| Fail::Denied)
-                })
-                .and(grant)
-        }
+        // **照实记（`Lookup` 这一支已退场）**：名字 → 入口那一问按裁定**不挂在板上**——
+        // board 只留**死信号**一件，按名找服务走树（`operator` 的 `/device` 与 `/sys`）。这一码
+        // 在线上还在（`frame.rs` 与它的记号一个字没动），但板上不再有动作：答法与"表外的动作码"
+        // 同一句（`Unknown`）——"这一码我不认"。
+        bcall::Wire::Lookup { .. } => Err(Fail::Unknown),
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。
         bcall::Wire::Unknown => Err(Fail::Unknown),
     };

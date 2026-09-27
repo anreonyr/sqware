@@ -2,8 +2,13 @@
 //!
 //! 三侧分家之后本文件只放**客侧**：**开会话那一手不在这里**——它两侧逐字同构，已按"两台以上
 //! 逐字同构 ⇒ 收"抬进 [`crate::communication::session`]；本文件只声明**这条路叫什么**
-//! （[`BERTH`]）＋ **这一族的几手**（[`plate`] / [`id_of`] / [`entry_of`] 与一手对一条原语）。
-//! 两侧共用的图与说明见 [`super`] 的"载体"那一节，帧与记号见 [`crate::system::operator`]。
+//! （[`BERTH`]）＋ **这一族的几手**（[`Face`] 那一面 / [`id_of`] / [`entry_of`] 与一手对一条
+//! 原语）。两侧共用的图与说明见 [`super`] 的"载体"那一节，帧与记号见 [`crate::system::operator`]。
+//!
+//! **照实记（`plate` 已下移，task-2 那一刀）**：**上树那一趟**（分目录 → 落门牌 → 查回来 →
+//! 按号问名）原先是本文件的一手，因"一个组合动作只有一个实现消费者"搬去
+//! `programs/src/driver/context.rs`（`Context::plate`）——本文件因此只剩**问到树的那些第二步**
+//! 与那一面便利壳。
 //!
 //! **一手对一条原语**（`land` / `part` / `find` / `trim` / `list` / `seek` / `name`）：线上与模型
 //! 是同一件事的两层，客侧这一层也不再拿一个 `op` 码当参数——问什么形状由函数名说。
@@ -44,106 +49,203 @@ pub enum Mine {
     No,
 }
 
+/// **一面持树者**：一条装好的会话（对端 = 持树者）。
+///
+/// # 它与下面那些自由函数不是一回事
+///
+/// ```text
+///   Face          对外那一层：调用方只拿 [`Face::of`]，不必自己开会话
+///   自由函数      内部那一层：持树者自己（`programs/src/system/operator/server.rs` 的
+///                 `Court`）与两面门牌的认领处**手里已经有 `Session`**，再包一层 `Face`
+///                 只是把同一份 Session 转一圈 —— 故它们留着，且是 `Face` 的实现体。
+/// ```
+///
+/// **包住的是 [`Session`]，不是门牌**：树不像 principal / coalition 那样"一枚门牌即可"——
+/// 它要一条装好的会话（问话孔 + 答话路 + 对端号），故 [`Face::of`] 的入参就是 [`Session`]。
+///
+/// **它不再往下漏别的**：调用方拿到的只有下面那几个方法（`Endpoint` / `Sender` / `Receiver`
+/// 一个都不出）；`Session` 本身是**入参**，不是从这一层问出来的。
+pub struct Face {
+    session: Session,
+}
+
+impl Face {
+    /// 把一条装好的会话收成一面（`Session::open(sire, BERTH, wait)` 装它）。
+    pub fn of(session: Session) -> Face {
+        Face { session }
+    }
+
+    /// 对端是谁（持树者的号；读数用）。
+    pub fn host(&self) -> TaskId {
+        self.session.host
+    }
+
+    // 照实记（删掉的一格：这里的 `pub fn session() -> &Session`）：它进 `Face` 时写的理由是
+    // "给 `operator/server.rs` 的 `find_face` 用"，而那一位的 `find_face` 只吃 `TaskId`、调
+    // `claim(ENTRY_MARK, who, None)`——**根本不构造 `Face`**。独立复核逐处查过：全仓零消费者
+    // ⇒ 按"没有读者的格不留在面上"删掉。要哪枚孔**自己在实现侧拿 `Session`**（它本来就持着）。
+
+    /// **上树那一趟**（`plate`）**不在这里**（照实记，task-2 那一刀下的移）。
+    ///
+    /// 它是**某一种程序的装配 recipe**（驱动族的 `/device` 那一段），按"一个组合动作只有
+    /// 一个实现消费者就不强升为协议"的裁定，已**下移到** `programs/src/driver/context.rs`
+    /// （那一族唯一的实现消费者是 `Context::enter`；`router` 起手经 `Context` 走同一手）。
+    /// 本面因此不再有 `plate` 这一格——它调的四手（`part` / `land` / `find` / `name`）仍是
+    /// 下面那几个方法，下移只是换了"组合"的住处。
+
+    /// **分**：在 `at` 那一块 `Pane` 里放一块空 `Pane`；答那一格自己的号。
+    pub fn part(&self, at: Where, name: Name, wait: Wait) -> Result<EntryId, u8> {
+        part(self.session.talk, &self.session.link, at, name, wait)
+    }
+
+    /// **落**：在 `at` 那一块 `Pane` 里给 `name` 贴一枚 `Tile`；答那一格自己的号。
+    pub fn land(
+        &self,
+        at: Where,
+        name: Name,
+        entry: PieToken,
+        rule: Rule<Id, Id>,
+        mine: bool,
+        wait: Wait,
+    ) -> Result<EntryId, u8> {
+        land(
+            self.session.talk,
+            &self.session.link,
+            self.session.host,
+            at,
+            name,
+            entry,
+            rule,
+            mine,
+            wait,
+        )
+    }
+
+    /// **寻**：把那一号背后那一枚 Pie 要过来（返 `(状态, 那一格)`）。
+    pub fn find(&self, id: EntryId, wait: Wait) -> Result<(u8, Option<PieToken>), Fail> {
+        find(self.session.talk, &self.session.link, id, wait)
+    }
+
+    /// **剪**：把那一号剪掉。
+    pub fn trim(&self, id: EntryId, wait: Wait) -> Result<u8, Fail> {
+        trim(self.session.talk, &self.session.link, id, wait)
+    }
+
+    /// **列**：看那一块 `Pane` 里有哪些号。
+    pub fn list(&self, at: Where, wait: Wait) -> Result<Listing, u8> {
+        list(self.session.talk, &self.session.link, at, wait)
+    }
+
+    /// **译**：把一条路译成号。
+    pub fn seek(&self, road: &[Name], wait: Wait) -> Result<EntryId, u8> {
+        seek(self.session.talk, &self.session.link, road, wait)
+    }
+
+    /// **名**：这枚号此刻叫什么。
+    pub fn name(&self, id: EntryId, wait: Wait) -> Result<Name, u8> {
+        name(self.session.talk, &self.session.link, id, wait)
+    }
+
+    /// **名字 → 号**（译不出就重试；额度怎么扣见 [`id_of`]——**不是整趟时限**）。
+    pub fn id_of(&self, road: &[Name], wait: Wait) -> Result<EntryId, u8> {
+        id_of(&self.session, road, wait)
+    }
+
+    /// **名字 → 入口**（译号 ＋ `find`；额度怎么扣见 [`entry_of`]——**不是整趟时限**）。
+    pub fn entry_of(&self, road: &[Name], wait: Wait) -> Result<PieToken, u8> {
+        entry_of(&self.session, road, wait)
+    }
+}
+
+
 /// 译号失败之后、再问之前睡多久（毫秒）。
 const RETRY_MS: usize = 1;
 
-/// 沿一条路译成号（名字 → 号），**译不出（`UNKNOWN`）就重试**——那几格可能由别的域落下，
-/// 它可能落得比本域晚。
+/// 沿一条路译成号，**答出剩下的额度**（不是"这次重试用掉了多少"）。
 ///
-/// 总预算是 `millis`：每一趟把**剩下的**当期限递下去（不是每趟都给满——那样"预算"是假的）。
-/// 答号，或答线上那一格码。**这一圈原先在八处各写一遍**（收进 `session` 那一刀，见那边的照实记）。
-pub fn id_of(session: &Session, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
-    let mut left = match millis {
-        Wait::AtMost(n) => n,
-        Wait::Forever => usize::MAX,
-    };
+/// # 照实记一：额度不是时限，它只按 `RETRY_MS` 扣账
+///
+/// 每重试一轮只扣 [`RETRY_MS`]，**单次往返自己花掉的时间不计入**——这一层量不到"上一条问了
+/// 多久"（`Receiver::recv` 只答收到没收到）。故 `left` 是**扣了账的额度**，不是"还剩多少毫秒"：
+/// 持有者若每次都恰在期限内答 `UNKNOWN`，**每一轮最长等掉当时那一刻的 `left`**，而 `left` 一轮
+/// 只减 1 ⇒ 累计 ≈ n + (n-1) + … ≈ **n²/2**（`n = 10`、每轮 ~9 ms ⇒ 实耗 ≈ 50 ms）。
+/// **这是载体层的口径**，本层不假装能给"整趟时限"。
+///
+/// # 照实记二：`Forever` 显式保 `Forever`，不落进"很大的毫秒数"
+///
+/// 从前的写法先把 `millis` 折成 `usize::MAX`、再逐轮 `saturating_sub(RETRY_MS)`：**第一轮是
+/// `Forever`，一重试就变成 [`Wait::AtMost`]`(usize::MAX - 1)`**——正是 [`Wait`] 头注要避免的
+/// 那一格（"一个很大的毫秒数"被当成永久算进期限）。这里改成**按变体扣账**：`Forever` 扣完还是
+/// `Forever`，只有 `AtMost(n)` 才减 `RETRY_MS` ⇒ 那道护栏留在类型上，不再是"实践上等价"。
+///
+/// # 照实记三：这一格原来答错了另一半
+///
+/// 从前这一圈只在 [`id_of`] 里，而它答的是**号**——额度到那儿就丢了；[`entry_of`] 于是拿
+/// **整份** `millis` 再调一次 [`find`] ⇒ 一次 `entry_of` 最坏要花 **≈ 2n**。收成一手之后答话里
+/// 多出"**还剩多少**"这一格，`find` 拿剩下的走 ⇒ **那一半（多跑一趟 `find`）没有了**，最坏从
+/// ≈ 2n 收到 ≈ n（`Forever` 那一支没有额度，见照实记一）。
+fn road_to_id(session: &Session, road: &[Name], millis: Wait) -> Result<(EntryId, Wait), u8> {
+    let mut left = millis;
     loop {
-        match seek(session.talk, &session.link, road, Wait::AtMost(left)) {
-            Ok(id) => return Ok(id),
-            Err(ocall::UNKNOWN) if left > 0 => {
+        match seek(session.talk, &session.link, road, left) {
+            Ok(id) => return Ok((id, left)),
+            // 还留着额度就睡一拍再来：`Forever` 恒真，`AtMost(0)` 是"不再等"⇒ 落到下面原样答码。
+            Err(ocall::UNKNOWN) if left != Wait::AtMost(0) => {
                 let _ = runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
+                left = match left {
+                    // **永久不扣账**（它本来没有额度），也不许被折成 `AtMost(usize::MAX - k)`。
+                    Wait::Forever => Wait::Forever,
+                    Wait::AtMost(n) => Wait::AtMost(n.saturating_sub(RETRY_MS)),
+                };
             }
             Err(code) => return Err(code),
         }
     }
 }
 
+/// 沿一条路译成号（名字 → 号），**译不出（`UNKNOWN`）就重试**——那几格可能由别的域落下，
+/// 它可能落得比本域晚。
+///
+/// `millis` 是**额度不是时限**（照实记一在 `road_to_id`）：每一趟把**剩下的**当期限递下去
+/// （不是每趟都给满——那样"预算"是假的），而扣账只按 `RETRY_MS`。答号，或答线上那一格码。
+/// **这一圈原先在八处各写一遍**（收进 `session` 那一刀，见那边的照实记）。
+pub fn id_of(session: &Session, road: &[Name], millis: Wait) -> Result<EntryId, u8> {
+    road_to_id(session, road, millis).map(|(id, _left)| id)
+}
+
 /// 沿一条路**找到那一枚入口**：译号（同上，带重试）＋ [`find`]。
 ///
 /// 答话码原样答；`find` 那一族的两格失败（没收到 / 推不动）折成 [`ocall::BAD`]。
+///
+/// **这一刀修掉的是"多跑一趟 `find`"那一半**（照实记三在 `road_to_id`）：译号用掉多少额度，
+/// `find` 就只有剩下的那些——不是又拿满一份。
+///
+/// **但它仍不是"整趟时限"，两处照实写**：
+///
+/// - **额度不是时限**（照实记一）：往返耗时不计账 ⇒ 持有者每次恰在期限内答 `UNKNOWN` 时，最坏
+///   ≈ n²/2（`n = 10`、每轮 ~9 ms ⇒ 实耗 ≈ 50 ms），不是 n；
+/// - **连"推得进去"都不保证**：`ask_out` 那一步是 `Sender::send(ask, Wait::Forever)`——孔是
+///   单槽，槽里压着未读问话就**等在门外** ⇒ 持有者单槽压着一问时，`entry_of(…, AtMost(1))` 可以
+///   在这一格上**无界**等下去。
+///
+/// 故这一族的 `Wait` 只承诺"**本端愿意等多久**"，不承诺"这一趟一定在多久内回来"。
 pub fn entry_of(session: &Session, road: &[Name], millis: Wait) -> Result<PieToken, u8> {
-    let id = id_of(session, road, millis)?;
-    match find(session.talk, &session.link, id, millis) {
+    let (id, left) = road_to_id(session, road, millis)?;
+    match find(session.talk, &session.link, id, left) {
         Ok((ocall::OK, Some(entry))) => Ok(entry),
         Ok((code, _)) => Err(code),
         Err(_) => Err(ocall::BAD),
     }
 }
 
-/// **上树那一趟**：分目录 → 落门牌 → 查回来 → 按号问名（五条判据 ＋ 一行读数）。
-///
-/// `dir` 是本域那一族在树上的那一段（驱动族是 [`crate::driver::DIR`]）；`me` 既是 `LAND` /
-/// `FIND` 的那一段，也是读数前缀——三台驱动是**同一个串**（服务名）。`entry` = 本域那枚服务入口。
-pub fn plate(session: &Session, dir: &str, me: &str, mine: Mine, entry: PieToken, millis: Wait) {
-    let (Ok(dir), Ok(who)) = (Name::new(dir), Name::new(me)) else {
-        crate::debug!("{me}: tree: bad name");
-        return;
-    };
-    // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`part` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
-    let dir_at = part(session.talk, &session.link, Where::Root, dir, millis);
-    let (part, dir_id) = match dir_at {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // **落门牌**：答的是门牌自己那一格的号。
-    let landed = match dir_at {
-        Ok(at) => land(
-            session.talk,
-            &session.link,
-            session.host,
-            Where::At(at),
-            who,
-            entry,
-            Rule::Public,
-            matches!(mine, Mine::Yes),
-            millis,
-        ),
-        Err(code) => Err(code),
-    };
-    let (laid, pid) = match landed {
-        Ok(id) => (ocall::OK, id.get()),
-        Err(code) => (code, 0),
-    };
-    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (found, got) = match landed {
-        Ok(id) => match find(session.talk, &session.link, id, millis) {
-            Ok((code, entry)) => (code, entry.is_some()),
-            Err(_) => (ocall::BAD, false),
-        },
-        Err(code) => (code, false),
-    };
-    // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = landed
-        .ok()
-        .and_then(|id| name(session.talk, &session.link, id, millis).ok());
-    crate::debug!(
-        "{me}: tree part={part} dir={dir_id} land={laid} find={found} got={got} entry={} plate={pid} pname={}",
-        entry.get(),
-        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    );
-    // **这一趟的判据**（值那几格从门那边搬进来：门只剩"这一行还在不在"）。
-    {
-        assert_eq!(part, ocall::OK)
-    }
-    assert_eq!(laid, ocall::OK);
-    {
-        assert_eq!(found, ocall::OK)
-    }
-    assert!(got);
-    assert_eq!(pname.as_ref().map(|n| n.as_str()), Some(me))
-}
+// 照实记（`plate` 那一手原先在这里）：**上树那一趟**（分目录 → 落门牌 → 查回来 → 按号问名，
+// 五条判据 ＋ 一行读数）已**下移到 `programs/src/driver/context.rs`**，落成
+// `Context::plate`（task-2 那一刀）。判据与移的理由写在那边；本层只留它调的四手
+// （`part` / `land` / `find` / `name`）与这一族其余第二步。
+//
+// 为什么搬：`plate` 是**驱动族那一段路的装配 recipe**（`dir` 恒为 `protocol::driver::DIR`），
+// 而它唯一的实现消费者是 `Context::enter`——按"一个组合动作只有一个实现消费者就不强升为
+// 协议"的裁定，它不该住在协议层；`router` 的起手于是改经 `Context` 走同一手（那边照实记）。
 
 // 照实记（原先这里的三手 `open` / `ask_hole` / `me`）：它们与 `board::client` 那三手**逐字
 // 同构**（只差两个记号与各自的失败域），已按"两台以上逐字同构 ⇒ 收"抬进

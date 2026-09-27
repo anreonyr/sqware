@@ -41,10 +41,10 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::operator::{EntryId, Where};
 
-use env::{Name, PieToken, TaskId};
-use protocol::communication::establish::Endpoint;
+use env::Name;
 use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -78,10 +78,15 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话（同 `canonical` / `probe-denied`）。
+    //
+    // **照实记（这一台为什么整体改走 `Face`，task-2 那一刀）**：本台每一问（`part` / `seek` /
+    // `land`）都在 [`TreeFace`] 的面上，那条线上的裸孔一个都不用 ⇒ 交给（吃所有权的）
+    // [`TreeFace::of`]。下面三个帮手一并从"裸 `(say, link, host)`"改收 `&TreeFace`——它们要的
+    // 每一个动作都由这一面答，故不必再把那条线拆开传。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-owner: no tree link");
     };
-    let (tree, hedge, host) = (&session.link, session.talk, session.host);
+    let tree = TreeFace::of(session);
 
     let (Ok(dir), Ok(service), Ok(me)) = (Name::new(DIR), Name::new(SERVICE), Name::new(ME)) else {
         return bail("probe-owner: bad name");
@@ -89,7 +94,7 @@ fn main() -> Report<'static> {
     let road = [dir, service, me];
 
     // 二、那枚砖**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
-    let Some(before) = wait_id(hedge, &tree, &road) else {
+    let Some(before) = wait_id(&tree, &road) else {
         return bail("probe-owner: no /device/uart/rx");
     };
 
@@ -97,18 +102,8 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
-    let at = Where::At(wait_pane(hedge, &tree, dir, service).unwrap_or(EntryId::new(0)));
-    let land = operator::land(
-        hedge,
-        &tree,
-        host,
-        at,
-        me,
-        entry,
-        ocall::Rule::Public,
-        false,
-        Wait::AtMost(MS),
-    );
+    let at = Where::At(wait_pane(&tree, dir, service).unwrap_or(EntryId::new(0)));
+    let land = tree.land(at, me, entry, ocall::Rule::Public, false, Wait::AtMost(MS));
     let land_code = match land {
         Ok(id) => {
             debug!("probe-owner: tree land=OK id={}", id.get());
@@ -118,7 +113,7 @@ fn main() -> Report<'static> {
     };
 
     // 四、那一格**还在不在**（应是原来那个号）。
-    let after = operator::seek(hedge, &tree, &road, Wait::AtMost(MS));
+    let after = tree.seek(&road, Wait::AtMost(MS));
     let seq = match after {
         Ok(id) => format!("id={}", id.get()),
         Err(code) => format!("err:{code}"),
@@ -135,7 +130,7 @@ fn main() -> Report<'static> {
     // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/sys/lease`（`mine = true`）就死，
     //     故它的资源已被退场钩子封印 ⇒ 持树者该让那一格重新可落。**有界重试**：本域可能
     //     比它先跑完那几手（提示是单槽，装配者按计划顺序推）。
-    let taken = take_over(hedge, &tree, host);
+    let taken = take_over(&tree);
 
     debug!(
         "probe-owner: lease land={} (owner gone ⇒ take-over)",
@@ -168,32 +163,25 @@ fn main() -> Report<'static> {
 /// 落 `/sys/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
 ///
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
-fn take_over(hedge: PieToken, link: &Endpoint, host: TaskId) -> Result<EntryId, u8> {
+///
+/// **照实记（收 `&TreeFace`，task-2 那一刀）**：三问全是面上的方法（`part` / `seek` / `land`），
+/// 故不再收裸 `(say, link, host)`——对端号与那条线都在 `Face` 里面。
+fn take_over(tree: &TreeFace) -> Result<EntryId, u8> {
     let (Ok(dir), Ok(me)) = (Name::new("sys"), Name::new("lease")) else {
         return Err(ocall::BAD);
     };
     let road = [dir, me];
-    let Ok(at) = operator::part(hedge, link, Where::Root, dir, Wait::AtMost(MS)) else {
+    let Ok(at) = tree.part(Where::Root, dir, Wait::AtMost(MS)) else {
         return Err(ocall::BAD);
     };
     let mut left = MS;
     loop {
         // 那一格先得**已经在树上**（`probe-lease` 落过）——否则本域量的是"落一个新名字"。
-        if operator::seek(hedge, link, &road, Wait::AtMost(MS)).is_ok() {
+        if tree.seek(&road, Wait::AtMost(MS)).is_ok() {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
                 return Err(ocall::BAD);
             };
-            match operator::land(
-                hedge,
-                link,
-                host,
-                Where::At(at),
-                me,
-                entry,
-                ocall::Rule::Public,
-                false,
-                Wait::AtMost(MS),
-            ) {
+            match tree.land(Where::At(at), me, entry, ocall::Rule::Public, false, Wait::AtMost(MS)) {
                 Ok(id) => return Ok(id),
                 Err(ocall::DENIED) if left > 0 => {
                     // 还没死透（或我们比它先到）：等一下再来。
@@ -212,20 +200,20 @@ fn take_over(hedge: PieToken, link: &Endpoint, host: TaskId) -> Result<EntryId, 
 }
 
 /// `/device/uart` 那块 Pane 的号（分目录**幂等两趟** + 译号）：要顶的那枚砖落在它下面。
-fn wait_pane(say_hole: PieToken, link: &Endpoint, dir: Name, service: Name) -> Option<EntryId> {
+fn wait_pane(tree: &TreeFace, dir: Name, service: Name) -> Option<EntryId> {
     // 第一趟：`/device`（幂等——别的驱动也在它下面）。
-    operator::part(say_hole, link, Where::Root, dir, Wait::AtMost(MS)).ok()?;
-    let at = operator::seek(say_hole, link, &[dir], Wait::AtMost(MS)).ok()?;
+    tree.part(Where::Root, dir, Wait::AtMost(MS)).ok()?;
+    let at = tree.seek(&[dir], Wait::AtMost(MS)).ok()?;
     // 第二趟：`/device/uart`（幂等——`uart` 自己已经分出来那块）。
-    operator::part(say_hole, link, Where::At(at), service, Wait::AtMost(MS)).ok()?;
-    operator::seek(say_hole, link, &[dir, service], Wait::AtMost(MS)).ok()
+    tree.part(Where::At(at), service, Wait::AtMost(MS)).ok()?;
+    tree.seek(&[dir, service], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
-fn wait_id(say_hole: PieToken, link: &Endpoint, road: &[Name]) -> Option<EntryId> {
+fn wait_id(tree: &TreeFace, road: &[Name]) -> Option<EntryId> {
     let mut left = MS;
     loop {
-        match operator::seek(say_hole, link, road, Wait::AtMost(MS)) {
+        match tree.seek(road, Wait::AtMost(MS)) {
             Ok(id) => return Some(id),
             Err(ocall::UNKNOWN) if left > 0 => {
                 let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));

@@ -116,13 +116,13 @@ fn system() -> Result<(), Fail> {
     let Some(last_program) = list.last() else {
         return Err(Fail::Assemble(E_PROGRAM));
     };
-    let last = Name::new(last_program.name).map_err(|_| Fail::Assemble(E_MANIFEST))?;
+    let last = Name::new(last_program.name()).map_err(|_| Fail::Assemble(E_MANIFEST))?;
 
-    // 死亡道跟着这张单铸：上板的那几位一位一条——在 `Assembly::new` 里。
+    // 死亡道跟着这张单铸：要存在信号的那几位一位一条——在 `Assembly::new` 里。
     let mut assembly = Assembly::new(boot, &list).map_err(|_| Fail::Group)?;
 
     // 3. 逐条起：**每一台按它自己那份声明装配**（立账 → 建域产线程 → 装通道 → 身份 → 放行等
-    //    就绪 → 递配给 → 板 → 树），失败带的是**那一台自己的号**。
+    //    就绪 → 递配给 → 存在信号 → 树），失败带的是**那一台自己的号**。
     //    `Service` 那本通道账不必抱着：孔归本域那张表（`Endpoint` 上没有"放下"这个动作，谁拿
     //    都不改变归属），起完就不指着它了——装配者往后只通过板 / 树那两条路与它说话。
     for program in &list {

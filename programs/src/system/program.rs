@@ -6,24 +6,31 @@
 //! 它是 boot 之后**唯一**起服务的地方，自己由引导域起（`order: None`）。整台机器的服务都由它
 //! 按 [`PROGRAMS`](crate::program::PROGRAMS) 里各台的 `order` 依次起。
 
-use crate::program::{Died, Program, Spot};
+use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Spot};
 use env::ProgramKind;
 
 /// 起手第一步没成：与引导域那条会话没搭上。
 pub const E_BOOT: Died = 1;
 
 pub static PROGRAM: Program = Program {
-    name: "system",
-    kind: ProgramKind::Supervisor,
-    spot: Spot::Domain,
-    scenes: &["root", "product"],
-    entry: &[],
-    order: None,
-    board: false,
-    operator: false,
-    bind: false,
-    holds_tree: false,
-    eyes: None,
-    died: env::EXIT_OK,
-    setup: &[],
+    identity: Identity {
+        name: "system",
+        kind: ProgramKind::Supervisor,
+        spot: Spot::Domain,
+        scenes: &["root", "product"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: None,
+        presence: false,
+        operator: false,
+        bind: false,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: env::EXIT_OK,
+        setup: &[],
+    },
 };

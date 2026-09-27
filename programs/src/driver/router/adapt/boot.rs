@@ -21,8 +21,7 @@ use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::program::router::{E_ROUTER, ROUTER_WANTS as WANTS};
 use protocol::debug;
-use protocol::system::board::client as board;
-use protocol::system::operator::client as operator;
+use programs::system::board::client as board;
 use protocol::system::operator::client::Mine;
 use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
@@ -101,16 +100,14 @@ pub fn up() -> Result<Up, Fail> {
 
     // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌 /device/router）。
     // **尽力**：任一件没成都只报一行读数、不拦主循环——这一台起来就得收（见文件头那一条照实记）。
+    //
+    // **照实记（上树那一手改经 `Context` 走，task-2 那一刀）**：从前这里直接叫
+    // `operator::plate(&ctx.session, …)`（协议层的自由函数）。那一手已按"一个组合动作只有一个
+    // 实现消费者就不强升为协议"的裁定下移成 [`Context::plate`]——本域与 `rtc` 走的是**同一手**，
+    // 只是本域不占线（故不能走 `Context::enter`，见文件头）。
     let sire = utask::sire();
     match Context::join(entry, sire, Wait::AtMost(QUAY_MS)) {
-        Ok(ctx) => operator::plate(
-            &ctx.session,
-            protocol::driver::DIR,
-            SERVICE,
-            Mine::No,
-            ctx.entry,
-            Wait::AtMost(QUAY_MS),
-        ),
+        Ok(ctx) => ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS)),
         Err(_) => debug!("router: board/tree: no link"),
     }
 

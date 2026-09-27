@@ -4,8 +4,9 @@
 //! 声明都在它自己那份 `program.rs` 里。本文件只做那张单子自己做不了的一件事：把"这一景真有
 //! 的"滤出来、按 `order` 排（次序即装配次序）。
 //!
-//! **它不解释任何一台的字段**：谁上板 / 谁上树 / 要什么、死在装配哪一步——那些由
-//! [`Program::assemble`] 按那一台自己的声明走。这里只剩 order / iteration / context / error。
+//! **它不解释任何一台的字段**：要不要存在信号 / 接不接树 / 要什么、死在装配哪一步——那些由
+//! [`Assembly::assemble`](crate::system::Assembly::assemble) 按那一台自己的声明走。这里只剩
+//! order / iteration / context / error。
 
 use alloc::vec::Vec;
 
@@ -22,8 +23,8 @@ pub fn programs(catalog: &Catalog) -> Vec<&'static Program> {
     let mut list: Vec<&'static Program> = crate::program::PROGRAMS
         .iter()
         .copied()
-        .filter(|p| p.order.is_some() && catalog.find(p.name).is_some())
+        .filter(|p| p.relation.order.is_some() && catalog.find(p.name()).is_some())
         .collect();
-    list.sort_by_key(|p| p.order);
+    list.sort_by_key(|p| p.relation.order);
     list
 }
