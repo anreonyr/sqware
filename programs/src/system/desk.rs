@@ -37,6 +37,12 @@ pub enum State {
 /// 而本域那一枚**没有别人的域可放下**——放下它就是扑杀本域自己（板线程那一格量过：
 /// `system: done` 在 1005 份 soak 日志里一次都没有）。把"没有别人的域"写成 `None`，
 /// 那一刀就写不出来。
+///
+/// **照实记（订正：那三枚今天不在本域了）**：同域 `spawn_here`（`TeamId(0)`）已随 `0560dd8`
+/// 退场——那三枚回普通程序、各成各的域，故 `team = None` 这一格**今天仓内没有生产者**
+/// （`service::mint` 只写 `Some(team)`）。该状态仍经 [`Table::attach`] 的 `team = None` 可表达，
+/// 故它是一格**护栏、不是活路径**（同一句也记在 `supervise.rs::stop_running` 那一支旁，两处
+/// 不许各说各的）；代价照实说：它今天编得过、走不到，没有一个用例钉着。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Slot {
     None,

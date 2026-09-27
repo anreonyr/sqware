@@ -286,6 +286,9 @@ fn answer(
                 Some(_slot) => {
                     let names = board.evict(who);
                     // 破例打一行：退场这一件事的读数只此一处（**只在这一件事上打**，不是刷屏）。
+                    // **这格只在 dev 档可见**（`crates/protocol/src/debug.rs` 的口径：`debug!`
+                    // 在 `cfg!(debug_assertions)` 为假时那一格不进）——release 的机器上这一行
+                    // 编得进、跑不出，故"读数"只在 dev 档里兑现。
                     debug!(
                         "board: bye tid={} names={names} occupied={} swept={swept}",
                         who.get(),
@@ -317,6 +320,16 @@ fn answer(
             }
             _ => Err(Fail::Denied),
         },
+        // **照实记（`Unregister` 那一支：帧形保留、没有生产者）**：与下面 `Lookup` 那一支同一格
+        // 处置——**帧 / 码 / 核心动作一字不动**，只在板上把方向说清。`Req::Unregister`（码
+        // `UNREGISTER` = 2，帧形 `[码][名字]`）与核心那一手 [`Board::unregister`] 都留着，但
+        // **仓内没有它的生产者**：客侧那几手（`client.rs`）只有 `register` / `evict`，客人退场
+        // 走的是 `Evict`（**整位**退场：撤格 ＋ 摘牌一次做完，见 [`serve_one`]）。
+        // **`Board::unregister` 的读者关系就在这里说清**：全仓只有这一处读它（这一 arm），核心
+        // 自己一处也不叫它，`client` / `frame` 那一侧各只有帧与形、没有一个调用点——故不再往那
+        // 三处各写一遍。代价照实说：这一支今天编得过、走不到（宿主靶已删，没有用例钉它），换来
+        // 的是线上那一格码与那半条**逐名对偶**不丢——删了它就要动码表与 `fail_to_code` 那张
+        // 双射，那是改契约，不在这一笔。
         bcall::Wire::Unregister { name } => board.unregister(name, who),
         // **照实记（`Lookup` 这一支已退场）**：名字 → 入口那一问按裁定**不挂在板上**——
         // board 只留**死信号**一件，按名找服务走树（`operator` 的 `/device` 与 `/sys`）。这一码

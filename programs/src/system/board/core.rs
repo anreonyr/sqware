@@ -89,7 +89,13 @@ pub struct Board {
 
 impl Board {
     /// 板上有多少枚牌子。条数是策略，容器要有界。
-    pub const CAP: usize = 16;
+    ///
+    /// **照实记（降为私有）**：它的读者只有本 impl 里那两处（上面 `signs` 的类型与下面 `new`
+    /// 的初值）——外面一处也不问"板上有几枚"。对照 `Table::CAP` 有外部读者（`supervise.rs` 拿
+    /// 它开扫描缓冲）**故那一枚照旧 `pub`、这里不动它**。**没有读者的格不留在面上**；代价照实说：
+    /// 哪天真要一个外部读数（譬如装配期断言"单子不超过 16 位客人"），那时再抬回来——抬回来之前
+    /// 板装得下多少位客人是这一本的内部事。
+    const CAP: usize = 16;
 
     /// 立一块板。**两枚机制事实不进这里**（照实记）：从前它们跟板走（`Board { vested_by,
     /// unship }`），故多出两枚类型别名、一个构造点、一层"谁接上"；而两边各只有一个身体
@@ -191,8 +197,13 @@ impl Board {
     // （[`Board::register`] / [`Board::unregister`]）留着：那是"报到 / 摘下时先扫死实例"，
     // 与读无关。
 
-    /// 名字 → 牌子号。
-    pub fn find(&self, name: Name) -> Option<usize> {
+    /// 名字 → 牌子号。**两个读者都在本 impl 里**（[`Board::register`] / [`Board::unregister`]）。
+    ///
+    /// **照实记（降为私有）**：仓内没有第三个读者——"在哪"那一问（`Board::lookup`）退场之后，
+    /// 按名找服务归树（见文件头），板这一层只剩自己那两处**写路径**上按名字定位。故同样一句
+    /// **没有读者的格不留在面上**；代价照实说：将来真有人要在板上按名定位（譬如一条逐名读数的
+    /// 调试手），那时再抬回来。
+    fn find(&self, name: Name) -> Option<usize> {
         self.signs
             .iter()
             .position(|sign| sign.named() && sign.name == name)
