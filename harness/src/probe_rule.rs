@@ -183,10 +183,11 @@ fn main() -> Report<'static> {
     };
 
     // 三、立一枚盟并**进去**（"立了不等于进了"：`found` 只发号，成员要靠 `enter`）。
+    // 这一手不收"谁"：进的是本端此刻代表的那一位。
     let Ok(c) = coal.found(Wait::AtMost(MS)) else {
         return bail("probe-rule: no coalition id");
     };
-    if c.enter(p, Wait::AtMost(MS)).is_err() {
+    if c.enter(Wait::AtMost(MS)).is_err() {
         return bail("probe-rule: enter failed");
     }
 

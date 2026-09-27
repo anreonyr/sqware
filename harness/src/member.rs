@@ -149,11 +149,12 @@ fn main() -> Report<'static> {
     }
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
-    let entered = c0.enter(p, Wait::AtMost(MS));
+    // **这一手不收"谁"**：进的是本端**此刻代表**的那一位（名册的答案）。
+    let entered = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(entered));
     let inside = c0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(inside));
-    let again = c0.enter(p, Wait::AtMost(MS));
+    let again = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(again));
     assert!(entered.is_ok());
     {
@@ -162,7 +163,7 @@ fn main() -> Report<'static> {
     assert!(again.is_ok());
 
     // 五、同一条身份可以在第二枚盟里。
-    let in_c1 = c1.enter(p, Wait::AtMost(MS));
+    let in_c1 = c1.enter(Wait::AtMost(MS));
     debug!("member: enter(c1)={}", done(in_c1));
     let amid_c1 = c1.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c1)={}", flag(amid_c1));
@@ -173,7 +174,7 @@ fn main() -> Report<'static> {
         assert_eq!(amid_c1, Ok(true))
     }
 
-    // 六、领到第二条身份，把它也放进 c0 ⇒ 这枚盟里有**两位**。
+    // 六、领到第二条身份，**并且当场换成它**（`adopt`），于是这一步进的是 `sub`。
     let sub = policy
         .principal(p)
         .derive(Wait::AtMost(MS))
@@ -184,7 +185,9 @@ fn main() -> Report<'static> {
     };
     let adopted = policy.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("member: adopt(sub)={}", done(adopted));
-    let q_in = c0.enter(q, Wait::AtMost(MS));
+    // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
+    // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
+    let q_in = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(q_in));
     let p_there = c0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(p_there));
@@ -203,8 +206,9 @@ fn main() -> Report<'static> {
         }
     }
 
-    // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行。
-    let left = c0.leave(q, Wait::AtMost(MS));
+    // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行
+    // （这一手同样不收"谁"——主体由印章说）。
+    let left = c0.leave(Wait::AtMost(MS));
     debug!("member: leave(c0)={}", done(left));
     let q_gone = c0.holds(q, Wait::AtMost(MS));
     debug!("member: amid(sub,c0)={}", flag(q_gone));
@@ -233,9 +237,9 @@ fn main() -> Report<'static> {
     let out = coal.coalition(outside);
     let out_amid = out.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,out)={}", flag(out_amid));
-    let out_enter = out.enter(p, Wait::AtMost(MS));
+    let out_enter = out.enter(Wait::AtMost(MS));
     debug!("member: enter(out)={}", done(out_enter));
-    let out_leave = out.leave(p, Wait::AtMost(MS));
+    let out_leave = out.leave(Wait::AtMost(MS));
     debug!("member: leave(out)={}", done(out_leave));
     {
         assert!(matches!(out_amid, Err(Fail::Unknown)))

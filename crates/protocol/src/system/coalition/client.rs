@@ -135,19 +135,24 @@ impl Coalition<'_> {
         self.at
     }
 
-    /// 盟 · 写：把 `p` 放进这一枚。
+    /// 盟 · 写：**我**进这一枚。
     ///
-    /// **`p` 不在报文里**：线上只有盟号那一格，收的人认的是内核盖的那枚印章——故这一格
-    /// 在**调用点**陈述意图（"这一位进这枚盟"），判据仍在服务那一侧。
-    pub fn enter(&self, _p: PrincipalId, wait: Wait) -> Result<(), Fail> {
+    /// **没有"谁"这一格**（照实记：这一手原先收一个 `_p: PrincipalId`，那个形参不参与任何判定）：
+    /// 线上只有盟号那一格（`Req::Enter(c)`），收的人认的是**内核盖的那枚印章** ⇒ 这一手能表达的
+    /// 只有"**我**进这枚盟"，而"我" = 本端此刻代表的那一位（`Face::task` / `Task::principal` 那条路）。
+    /// 传一个不是自己的号进来，既不该改变行为、也不该被静默接受——故干脆不给这一格。
+    ///
+    /// 要**替别人**入盟，就得给帧加一格身份并让服务端信它——那等于放弃"这一格的诚实性由签名给"
+    /// 这条口径（见 `Face` 头注那一节），是协议面的一刀，不在这一手。
+    pub fn enter(&self, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Enter(self.at), wait)?;
         payload(said).map(|_who| ())
     }
 
-    /// 盟 · 写：把 `p` 拿出来。撞空也成（集合运算没有"第二次"）。
+    /// 盟 · 写：**我**出这一枚。撞空也成（集合运算没有"第二次"）。
     ///
-    /// 同 [`Coalition::enter`]：宾语由印章说，`p` 只在调用点陈述意图。
-    pub fn leave(&self, _p: PrincipalId, wait: Wait) -> Result<(), Fail> {
+    /// 同 [`Coalition::enter`]：主体由印章说，故这一手不收身份那一格。
+    pub fn leave(&self, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Leave(self.at), wait)?;
         payload(said).map(|_who| ())
     }
