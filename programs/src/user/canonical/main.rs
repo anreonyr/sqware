@@ -27,8 +27,8 @@ mod core;
 
 use crate::adapt::{E_NO_CONSOLE, ME, MS};
 use env::Wait;
-use protocol::communication::session::Session;
 use programs::system::board::client as board;
+use protocol::communication::session::Session;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
@@ -47,12 +47,10 @@ fn main() -> Result<(), env::Reason> {
     // （名字 → 号 → 入口），那条线本身再不露面 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
     // [`Face::of`]（它吃所有权），此后 [`adapt::console::find`] 只认一面。这正是"四面不出
     // `Face`"要的形状：调用方拿到的不是会话，是一面。
-    let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
-        return Err(E_NO_CONSOLE);
-    };
-    let Some(console) = adapt::console::find(&Face::of(session), Wait::AtMost(MS)) else {
-        return Err(E_NO_CONSOLE);
-    };
+    let session =
+        Session::open(sire, operator::BERTH, Wait::AtMost(MS)).map_err(|_| E_NO_CONSOLE)?;
+
+    let console = adapt::console::find(&Face::of(session), Wait::AtMost(MS)).ok_or(E_NO_CONSOLE)?;
 
     // 3/4：行规程那一圈，直到收场词 / EOF。
     adapt::terminal::run(&console);
