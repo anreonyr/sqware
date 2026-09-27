@@ -15,6 +15,14 @@
 #   nu scripts/qtest.nu --package kernel --scene root --feed exit
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
+# **照实记（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
+# 机器真的起过一次"，而**镜像由 `--scene` 那一格给**（`-initrd`）；不带景就没有镜像，
+# `kernel/src/boot.rs` 在测试模式下**当场 panic** 指着这句话（宁可红，也不要"静默起一台没有
+# 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
+#
+#   nu scripts/qtest.nu --package kernel            # 健康面（九例，只在 debug 档）
+#   nu scripts/qtest.nu --package kernel --scene root --feed exit   # 整机那一例
+#
 # **一例 = 一张镜像，一次运行 = 一个景**：`cargo-qtest` 没有逐例过滤器（`--help` 里只有
 # `--test <目标名>`——那是**测试目标**名，不是用例名），而 `--qemu-arg=` 是**整次运行**的
 # ⇒ 一张镜像只能服务一轮。故整机用例只有**一例**（`tests/embedded.rs` 的 `scene`），
@@ -162,6 +170,18 @@ exec qemu-system-riscv64 "${args[@]}"'
 def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
+  # **runner 守卫**（照实记）：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
+  # `cargo-qemu-test`（对每一例起一个 QEMU，本脚本按它写）与 `cargo-qtest`（一个"挑用例的
+  # UI"包装器，**一个 qemu 字样都没有**）。装错的那一枚不认识 `--qemu-arg`，而它的报错长成
+  # `error: unexpected argument '--qemu-arg' found`——看起来像本脚本的旗标写错了（实测误判过）。
+  # 故先问一句 `--help`：那一格在 ⇒ 是对的那一枚。
+  let ok_runner = (try {
+    (^cargo qtest --help | complete | get stdout) | str contains "--qemu-arg"
+  } catch { false })
+  if not $ok_runner {
+    error make {msg: "cargo-qtest 不是 cargo-qemu-test——装成了同名的另一个包（挑用例的 UI）。装对的那一枚：`cargo install cargo-qemu-test --version 0.3.2 --target x86_64-unknown-linux-gnu --locked --force`"}
+  }
+
   let script_dir = $env.FILE_PWD
   let repo = ($script_dir | path dirname)
   let trapdir = ($env.TRACE_OUT? | default ($repo | path join "trace"))
@@ -251,6 +271,15 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 命令与重定向**必须同一行**（分行 ⇒ `nu::parser::unexpected_redirection`）。故先把 argv
   # 拼好，再一行发出去——退出码仍由 `LAST_EXIT_CODE` 拿（`try` 那两条地雷见 `runner.nu` 头注）。
   let qtest_argv = ["qtest" "--target" "riscv64gc-unknown-none-elf" ...$test_profile ...$qemu_bin ...$qemu_args ...$scene_args ...$pkg ...$rest]
+  # **工作区那三条 rustflags 要由这一侧递一遍**（照实记）：`cargo-qtest` 把 `RUSTFLAGS` 的值
+  # 当作**种子**，再拼上它自己那两枚（对我们这一景是 `-Tembedded-test.x`），最后经
+  # `cargo --config <临时 TOML>` 投下去——而那一份 config 的 `[target.'cfg(target_arch="riscv64")']`
+  # 表**优先于**根 `.cargo/config.toml` 的 `[build] rustflags` ⇒ 不递的话那三条会静默丢。
+  # **真相仍只有一处**（`.cargo/config.toml`）；这里重复的是"调用方给 runner 递种子"这一手，
+  # 不是第二处定义。已显式设过 `RUSTFLAGS` 就不动它。
+  if ($env.RUSTFLAGS? | is-empty) {
+    $env.RUSTFLAGS = "-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium"
+  }
   try { ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } } catch { }
   let code = $env.LAST_EXIT_CODE
 

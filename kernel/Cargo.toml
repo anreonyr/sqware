@@ -38,12 +38,18 @@ doctest = false
 # 交给 rustc"，故那一格**没有读者**——内核读 initrd 是**开机时**的事
 # （`src/platform/initrd.rs`），那归下面的 `[dependencies]`，不归构建脚本。本笔删掉它。
 [dependencies]
-# 提供 `embedded-test.x`（`cargo-qtest` 自己会加 `-Tembedded-test.x`，本格供出那个 `-L`）。
+# 提供 `embedded-test.x`：本 crate 的 `build.rs` 把它的**源文件**（`links` 那一格保证它在
+# registry 里可读）读出来、落到自己的 `OUT_DIR`，再用 `cargo::rustc-link-arg-tests` 的
+# **绝对路径**交给 `[[test]] embedded`（`cargo::rustc-link-arg` 只作用于 bin，交不到测试目标）。
 #
-# **照实记（为什么它在 `[dependencies]` 而不是 dev）**：实测过放 dev 的版本——`-L` **传不到
-# bin 的链接**（bin 不是测试目标，dev 依赖不在它的图里），而 `cargo-qtest` 的
-# `-Tembedded-test.x` 是加给**整次构建**的（bin 也吃）⇒ `rust-lld: cannot find linker
-# script embedded-test.x`。上游 README 也是这么写的：它那片脚本必须住 `[dependencies]`。
+# **照实记（为什么它在 `[dependencies]` 而不是 dev）**：`-L` 那条搜索路径（上游构建脚本发的
+# `cargo:rustc-link-search`）**传不到 bin 的链接**（bin 不是测试目标，dev 依赖不在它的图里），
+# 而这条路径在测试构建里要跟着走 ⇒ 它必须住 `[dependencies]`（走 dev 的版本实测红过）。
+#
+# **照实记（`cargo-qtest` 那条注入为什么指望不上）**：`cargo-qemu-test` 对 riscv 有
+# "manifest 目录里已经有 `.x` ⇒ 认为你有自己的脚本、不再注入"的分支——`kernel/link.x` 正好命中
+# ⇒ 它**两枚都不注入**；而上游这枚的构建脚本只发 `rustc-link-search`、**不发 `DEP_…_LINK`**
+# ⇒ 由本 crate 的 `build.rs` 自己交代那枚脚本（读源文件 + 哈希自检，见它的头注）。
 #
 # **照实记（它那条 `unused dependency` 警告消不掉，且不 suppress）**：这个 crate
 # `autolib = false`、没有一行 Rust 用法（只靠 `links` ＋ 构建脚本给出那个 `-L`）⇒ cargo 的
