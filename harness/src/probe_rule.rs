@@ -18,7 +18,7 @@
 //!        in      Permit::Among(c)                     （c 是本域刚立、刚入的那一枚盟）
 //!        door    ——本域自己挂的一枚门牌（一枚 Tile，**开者就是本域**）
 //!        open    Permit::Opener(door 的号)           —— 许给"开着那一格的那位"（正是本域）
-//!        foreign Permit::Opener(/sys/principal 的号) —— 许给"开着**别人**那一格的那位"（不是本域）
+//!        foreign Permit::Opener(/sys/principal/ask 的号) —— 许给"开着**别人**那一格的那位"（不是本域）
 //!        at-pane Permit::Opener(/sys 那一格)        —— 那一号是块 Pane（没有开者）
 //!        temp    先落一枚门牌，再**剪掉**它
 //!        gone-door Permit::Opener(temp 那个旧号)     —— 号不重用 ⇒ 那一格永久没有开者
@@ -36,13 +36,13 @@
 //! # `Opener` 那一格：号从**树**上来
 //!
 //! 前四格只能指"自己人"（自己的号 / 自己那一支 / 自己在的盟），而"把这一格许给
-//! `/sys/principal` 那位"这句话原先**说不出来**：规矩里那个号是裸号，客人手里只有五条窄路，
+//! `/sys/principal/ask` 那位"这句话原先**说不出来**：规矩里那个号是裸号，客人手里只有五条窄路，
 //! 没有一条是"按名字点名"。`Opener` 补的正是它——**先 `seek` 把一条路译成号**（名字 → 号，
 //! [`road_id`] 那一手），再把那个号写进规矩；判的时候持树者去问"此刻谁占着那一格"。
 //! **树就是名录**。
 //!
 //! 照实记：`door` 那一格是必要的——`Opener` 的**正证**要一位"自己开着门牌"的客人；而
-//! `foreign` 那一格指的是一枚**长命**门牌（`/sys/principal`，整轮都活着）⇒ 它的负证**不依赖
+//! `foreign` 那一格指的是一枚**长命**门牌（`/sys/principal/ask`，整轮都活着）⇒ 它的负证**不依赖
 //! 任何次序**（若改指一位用完就退场的客人，那一格会翻成 `9`（判不了）而不是 `8`）。
 //!
 //! # 两格 `UNJUDGED`：这一格里"判不了"第一次上了真机
@@ -110,7 +110,7 @@ const IN: &str = "in";
 const DOOR: &str = "door";
 /// 许给"**开着门牌那一格**的那位"的一格 ⇒ **正证**（开者正是本域）。
 const OPEN: &str = "open";
-/// 许给"**开着 `/sys/principal` 那一格**的那位"的一格 ⇒ **负证**（那位不是本域）。
+/// 许给"**开着 `/sys/principal/ask` 那一格**的那位"的一格 ⇒ **负证**（那位不是本域）。
 ///
 /// 这一格就是这一刀要补的那句话：**"把这一格许给某一位"**——号由 [`seek`] 从树上换来
 /// （名字 → 号），不靠别人把号塞给我。
@@ -154,28 +154,49 @@ fn main() -> Report<'static> {
     // [`TreeFace::of`]（吃所有权）；三个帮手 `plate` / `look` / `find_face` 一并从裸
     // `(talk, link, host)` 改收那一面 / 那块 Pane。
     let tree = TreeFace::of(session);
-    let Some(entry) = find_face(&tree, ccall::DIR, ccall::NAME) else {
+    let (Ok(cdir), Ok(cname)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
+        return bail("probe-rule: bad coalition name");
+    };
+    let Some(entry) = find_face(&tree, &[cdir, cname]) else {
         return bail("probe-rule: no coalition");
     };
     let Ok(coal) = CoalitionFace::of(entry) else {
         return bail("probe-rule: bad coalition face");
     };
-    let Some(entry) = find_face(&tree, pcall::DIR, pcall::NAME) else {
-        return bail("probe-rule: no identity");
+    // 身份那**两面**（开面那一刀）：三条"问"的（`Resolve` / `Sire` / `Heir`）在 `Grant::Ask` 上，
+    // 四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 `Grant::Set` 上。这一台**两面都要**
+    // ——它要 `Resolve` 问"我代表谁"、要 `Derive` 派生一条子身份、要 `Adopt` 换一位代表。
+    let (Ok(idir), Ok(iseg)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
+        return bail("probe-rule: bad identity name");
     };
-    let Ok(policy) = PrincipalFace::of(entry) else {
-        return bail("probe-rule: bad identity face");
+    let (Ok(iask), Ok(iset)) = (
+        Name::new(pcall::Grant::Ask.name()),
+        Name::new(pcall::Grant::Set.name()),
+    ) else {
+        return bail("probe-rule: bad identity face name");
+    };
+    let Some(entry) = find_face(&tree, &[idir, iseg, iask]) else {
+        return bail("probe-rule: no identity ask face");
+    };
+    let Ok(iask) = PrincipalFace::of(entry) else {
+        return bail("probe-rule: bad identity ask face");
+    };
+    let Some(entry) = find_face(&tree, &[idir, iseg, iset]) else {
+        return bail("probe-rule: no identity set face");
+    };
+    let Ok(iset) = PrincipalFace::of(entry) else {
+        return bail("probe-rule: bad identity set face");
     };
 
     // 二、我是谁：装配期绑的那一条（`p`），以及它底下的一条（`q`，给"换一位代表"用）。
-    let Ok(Some(p)) = policy
+    let Ok(Some(p)) = iask
         .task(me)
         .principal(Wait::AtMost(MS))
         .map(|found| found.map(|x| x.id()))
     else {
         return bail("probe-rule: unbound");
     };
-    let Ok(q) = policy
+    let Ok(q) = iset
         .principal(p)
         .derive(Wait::AtMost(MS))
         .map(|child| child.id())
@@ -224,7 +245,7 @@ fn main() -> Report<'static> {
     // 五点五、**点名那一格**（第五个规矩变体 `Opener`）：
     //   door    —— 本域自己挂的一枚门牌（一枚 `Tile`，**开者就是本域**）
     //   open    —— 规矩 = `Opener(door 的号)`：许给"开着那一格的那位" ⇒ 正是本域
-    //   foreign —— 规矩 = `Opener(/sys/principal 的号)`：许给"开着**别人**那一格的那位" ⇒ 不是本域
+    //   foreign —— 规矩 = `Opener(/sys/principal/ask 的号)`：许给"开着**别人**那一格的那位" ⇒ 不是本域
     //
     // 两个号都是**树上换来的**（`road` 把一条路译成号）——那一格的门牌在谁手里，由树说，
     // 不由别人告诉我。故这一台**没有 new 的任何机制**，只是把规矩那一格的号换了个来路。
@@ -234,16 +255,22 @@ fn main() -> Report<'static> {
     // `gone_id`）随之下岗（`plate` 仍照落，判据一条没动）。
     let door_id = plate(&at, DOOR, Permit::Unset, Mine::No);
     let _ = plate(&at, OPEN, Permit::Opener(door_id), Mine::No);
-    // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
+    // `/sys/principal/ask` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
+    //
+    // **照实记（开面那一刀：这一格从 `/sys/principal` 挪到底下那一格）**：`/sys/principal` 从前
+    // **就是**名册那枚门牌（一枚 `Tile`）；开面之后它成了那段前缀（一块 `Pane`），而这一格要的是
+    // **别人开着的一枚砖**——`Opener` 指着一块窗格只会答 `Unjudged`（"没有开者这一说"），
+    // `foreign` 那条负证当场变色。故往底下那一格去。
     //
     // **照实记（旧 `id_of` 只译号，故这里走 `Pane::tile`）**：两手的差别是**重试**，不是飞不飞
     // 门闩——`Pane::tile` 就地问一次（不重试），`Face::tile` 带额度重试。本格用前者：这一台
     // **不重试**是因为紧跟着那一问（`Opener` 判据）本身要的是"此刻拒"——重试会把"立刻拒"这一格
     // 变松（见 [`denied`](probe_rule_other.rs) 那边量同一件事的那一台）。
-    if let Some(principal) = Name::new(pcall::NAME)
+    let foreign = Name::new(pcall::NAME)
         .ok()
-        .and_then(|p| root.tile(&[dir, p], Wait::AtMost(MS)).map(|e| e.id()).ok())
-    {
+        .zip(Name::new(pcall::Grant::Ask.name()).ok())
+        .and_then(|(p, leaf)| root.tile(&[dir, p, leaf], Wait::AtMost(MS)).map(|e| e.id()).ok());
+    if let Some(principal) = foreign {
         let _ = plate(&at, FOREIGN, Permit::Opener(principal), Mine::No);
     }
 
@@ -276,7 +303,7 @@ fn main() -> Report<'static> {
     let on_gone = look(&root, dir, pane, GONE_DOOR, Wait::AtMost(MS));
 
     // 七、**换一位代表**（同一个 TID）：领到自己派生的那条号底下。
-    let adopt = policy.principal(p).adopt(q, Wait::AtMost(MS)).is_ok();
+    let adopt = iset.principal(p).adopt(q, Wait::AtMost(MS)).is_ok();
 
     // 八、以 `q` 再试——前两条**负证**、第三条仍是正证（"看支不看相等"）；
     //     `open` 那一格**照旧过**：开者与问的人是**同一条 TID**，换代表之后两边一起变成 `q`
@@ -417,7 +444,8 @@ fn look(root: &Pane<'_>, dir: Name, pane: Name, name: &str, millis: Wait) -> Res
 
 /// 按名字找一面服务门牌——与 `subject` / `member` 那两台同形。
 ///
-/// **间接寻址那一手**（名字 → 号：**译不出就重试**，那两个域可能落得比本域晚）落在
+/// **间接寻址那一手**（名字 → 号：**译不出就重试**，那两个域可能落得比本域晚。`road` 是那条路
+/// ——2 段：盟册那一面；3 段：名册那两面各一条 `/sys/principal/{ask,set}`）落在
 /// [`Pane::tile`] 上，`find`（把那枚门闩授过来）落在 [`Tile::token`] 上——**两格各一趟**，
 /// 与旧 `Face::tile` 逐格同形。
 ///
@@ -426,16 +454,12 @@ fn look(root: &Pane<'_>, dir: Name, pane: Name, name: &str, millis: Wait) -> Res
 /// `entry_of` 只有一枚，故这里也照一枚写（那一套重试圈照旧留着）。
 ///
 /// **照实记（收 `&TreeFace`，不再是 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的）。
-fn find_face(tree: &TreeFace, dir: &str, name: &str) -> Option<PieToken> {
-    let (Ok(dir), Ok(one)) = (Name::new(dir), Name::new(name)) else {
-        return None;
-    };
+fn find_face(tree: &TreeFace, road: &[Name]) -> Option<PieToken> {
     let root = tree.root();
-    let road = [dir, one];
     let mut left = MS;
     loop {
         match root
-            .tile(&road, Wait::AtMost(MS))
+            .tile(road, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Some(entry),

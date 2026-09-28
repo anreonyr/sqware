@@ -8,7 +8,7 @@
 //!   起手：读自己的 Sire（**只为上板与上树两条会话**——盟无主，之后不落任何字段）
 //!         → 上板（板看得见本域的死）→ 铸门牌那一枚
 //!           经 LAND 落到树上 `/sys/coalition`，再 FIND 回来验一遍
-//!         → FIND `/sys/principal`（**带重试**）拿一份身份服务的门牌
+//!         → FIND `/sys/principal/ask`（**带重试**）拿一份身份服务的**问面**门牌
 //!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 先过名册问"你是谁" → 交给核心 → 答回去
 //! ```
 //!
@@ -211,7 +211,7 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
         .ok_or(Fail::Unknown)
 }
 
-/// 找**身份服务**那份门牌：`"/sys/principal"`，**译不出就再问**（有界）。
+/// 找**身份服务**那份门牌（**问面**那一条）：`"/sys/principal/ask"`，**译不出就再问**（有界）。
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，额度 [`MS`]）→ 入口。
@@ -221,11 +221,18 @@ fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：本域**已持**一面（上树那一趟包出来的），
 /// 故这一手只借它——`Face` 把 Session 藏在里面，签名上不再出现那条线。
+///
+/// **要的是名册的「问面」**（开面那一刀）：本域只用 `Resolve`（"这一位此刻代表谁"），而它今天
+/// 落在 `/sys/principal/ask` 那一格上——`/sys/principal` 自己已是那段前缀（一块 `Pane`）。
 fn find_face(tree: &TreeFace) -> Option<PieToken> {
-    let (Ok(dir), Ok(name)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
+    let (Ok(dir), Ok(segment), Ok(leaf)) = (
+        Name::new(pcall::DIR),
+        Name::new(pcall::NAME),
+        Name::new(pcall::Grant::Ask.name()),
+    ) else {
         return None;
     };
-    tree.tile(&[dir, name], Wait::AtMost(MS))
+    tree.tile(&[dir, segment, leaf], Wait::AtMost(MS))
         .ok()?
         .token(Wait::AtMost(MS))
         .ok()

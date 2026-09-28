@@ -52,8 +52,8 @@ pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken) {
         };
     }
     // **末段是叶子**：没有许可（`Permit::Unset`）＋ **不留主人**（`None`）——与
-    // `/sys/principal` / `/sys/coalition` 两处门牌同一格：任何已绑身份都取得回，而"改这一格"
-    // 不归谁。
+    // `/sys/principal/{ask,set}` / `/sys/coalition` 那三处门牌同一格：任何已绑身份都取得回，
+    // 而"改这一格"不归谁。
     match tree.land(at, last, leaf, Permit::Unset, None) {
         Ok(id) => debug!("operator: plate landed {} id={}", last.as_str(), id.get()),
         Err(fail) => debug!("operator: plate land {:?}", fail),

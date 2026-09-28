@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/sys/coalition" ⇒ 结盟服务的门牌；FIND "/sys/principal" ⇒ 身份服务的门牌
+//!   2  FIND "/sys/coalition" ⇒ 结盟服务的门牌；FIND "/sys/principal/{ask,set}" ⇒ 身份服务**两面**的门牌
 //!   3  resolve(self)          ⇒ 本域此刻代表哪个号（装配期绑的那一条）
 //!   4  found() × 2            ⇒ 立两枚盟：号 0 与 1（号由服务发：单调、稠密）
 //!   5  amid(me, c0)           ⇒ **立了不等于进了**：false
@@ -82,26 +82,48 @@ fn main() -> Report<'static> {
         return bail("member: no tree link");
     };
     let tree = TreeFace::of(session);
-    let Some(entry) = find_face(&tree, ccall::DIR, ccall::NAME) else {
+    let (Ok(cdir), Ok(cname)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
+        return bail("member: bad coalition name");
+    };
+    let Some(entry) = find_face(&tree, &[cdir, cname]) else {
         return bail("member: no coalition");
     };
     let Ok(coal) = CoalitionFace::of(entry) else {
         return bail("member: bad coalition face");
     };
 
-    // 身份那一面：**本域自己也要用它**（派生第二条身份、领、弃）。
-    let Some(entry) = find_face(&tree, pcall::DIR, pcall::NAME) else {
-        return bail("member: no identity");
+    // 身份那**两面**：**本域自己也要用它们**（问"我代表谁"，派生第二条身份、领、弃）。
+    //
+    // **两面各找一次**（开面那一刀）：三条"问"的（`Resolve` / `Sire` / `Heir`）在
+    // [`Grant::Ask`] 上，四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 [`Grant::Set`]
+    // 上；下面每一处按**它问的是哪一类**挑门牌。
+    let (Ok(dir), Ok(segment)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
+        return bail("member: bad identity name");
     };
-    let Ok(policy) = PolicyFace::of(entry) else {
-        return bail("member: bad identity face");
+    let (Ok(ask), Ok(set)) = (
+        Name::new(pcall::Grant::Ask.name()),
+        Name::new(pcall::Grant::Set.name()),
+    ) else {
+        return bail("member: bad identity face name");
+    };
+    let Some(entry) = find_face(&tree, &[dir, segment, ask]) else {
+        return bail("member: no identity ask face");
+    };
+    let Ok(ask) = PolicyFace::of(entry) else {
+        return bail("member: bad identity ask face");
+    };
+    let Some(entry) = find_face(&tree, &[dir, segment, set]) else {
+        return bail("member: no identity set face");
+    };
+    let Ok(set) = PolicyFace::of(entry) else {
+        return bail("member: bad identity set face");
     };
 
     // 一、此刻代表谁——装配期绑的那一条。
     //
     // **照实记（task-2 那一刀）**：`resolve` 折进 `Task::principal`（返 `Principal` 柄）；
     // 本台只读数，故在调用点把柄投影回它那一枚号（下面每一处都这样收）。
-    let mine = policy
+    let mine = ask
         .task(me)
         .principal(Wait::AtMost(MS))
         .map(|found| found.map(|p| p.id()));
@@ -175,7 +197,7 @@ fn main() -> Report<'static> {
     }
 
     // 六、领到第二条身份，**并且当场换成它**（`adopt`），于是这一步进的是 `sub`。
-    let sub = policy
+    let sub = set
         .principal(p)
         .derive(Wait::AtMost(MS))
         .map(|child| child.id());
@@ -183,7 +205,7 @@ fn main() -> Report<'static> {
     let Some(q) = sub.ok() else {
         return bail("member: no sub identity");
     };
-    let adopted = policy.principal(p).adopt(q, Wait::AtMost(MS));
+    let adopted = set.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("member: adopt(sub)={}", done(adopted));
     // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
     // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
@@ -223,7 +245,7 @@ fn main() -> Report<'static> {
     }
 
     // 八、弃回起点：键 = 身份那条定理的另一半——第一条身份那一行照旧在。
-    let waived = policy.principal(q).waive(Wait::AtMost(MS));
+    let waived = set.principal(q).waive(Wait::AtMost(MS));
     debug!("member: waive={}", done(waived));
     let after_waive = c0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(after_waive));
@@ -287,17 +309,15 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "member: done");
 }
 
-/// 按名字找一面服务：`FIND "/<dir>/<name>"`，**找不到就再问**（有界）——门牌是本域起来之后落的。
+/// 按名字找一面服务：`FIND` 那一条路（2 段：盟册那一面；3 段：名册那两面各一条），
+/// **找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：按"谁给的"认，取**最后**那一枚
 /// （一次一问一答只授一枚，故最后那一枚就是这一趟的）。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
 /// 故这一手只借它——签名上不再出现那条链。
-fn find_face(tree: &TreeFace, dir: &str, name: &str) -> Option<PieToken> {
-    let (Ok(dir), Ok(name)) = (Name::new(dir), Name::new(name)) else {
-        return None;
-    };
+fn find_face(tree: &TreeFace, road: &[Name]) -> Option<PieToken> {
     // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：两格在
     // [`Pane::tile`] 与 [`Tile::token`] 上（旧 `entry_of` 那一趟；本域从前自己抄了一遍）。
     //
@@ -305,11 +325,10 @@ fn find_face(tree: &TreeFace, dir: &str, name: &str) -> Option<PieToken> {
     // 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有
     // 一枚，故这里也照一枚写（重试那一圈照旧留着）。
     let root = tree.root();
-    let road = [dir, name];
     let mut left = MS;
     loop {
         match root
-            .tile(&road, Wait::AtMost(MS))
+            .tile(road, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Some(entry),

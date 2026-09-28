@@ -260,7 +260,9 @@ pub const BACK: Mark = Mark::of("principal-back");
 /// 树上那块窗格的名字（门牌的第一段）：`/sys`。
 pub const DIR: &str = "sys";
 
-/// 本服务在树上的名字（门牌的第二段）：`/sys/principal`。
+/// 本服务在树上的那一段名字（门的第二段）：`/sys/principal`——**它自己不是一格**（开面那一刀：
+/// 两枚门牌是它底下那两格 `/sys/principal/{ask,set}`，末段名由
+/// [`Grant::name`](super::grant::Grant::name) 给）。
 pub const NAME: &str = "principal";
 
 // ── 面不相撞（**编译期**钉住——用户裁定"常量交给编译器"）────────────────────

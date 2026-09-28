@@ -4,12 +4,11 @@
 //! `owner == who` 且 `mark == 记号`。这一份是那条判据的唯一正文——[`super::server`]（收那三句话）
 //! 与 [`super::door`]（门外那一问要的两枚门牌）都从这里取。**它不认识树、也不认识门**：
 //! 记号那一侧是调用方给的（`protocol::system::operator` 的 `LINK` / `ASK_MARK` / 七位各一枚，
-//! 以及板的 `ENTRY_MARK`）。
+//! 以及各族交过来的门牌：名册那一族**两面各一枚**、盟册那一族仍是通用那枚 `entry`）。
 
 use env::{Mark, PieToken, TaskId};
 use protocol::communication::establish;
 use protocol::debug;
-use protocol::system::board as bcall;
 use protocol::system::operator::LINK;
 use runtime::env::mail;
 
@@ -32,7 +31,7 @@ pub(super) fn mark_of(ask: PieToken) -> Mark {
 /// | 处 | 记号 | 多枚是 |
 /// |---|---|---|
 /// | [`reply_of`] | `LINK` | **不可能**——装配者那一条路只 `endpoint` 一次（"同一位、同一记号只可能有一枚"从闸变成了构造） |
-/// | [`find_face`] | `ENTRY` | **结构性正常**（同一域交多枚：`land` 交一枚、门禁交一枚）⇒ 不说 |
+/// | [`find_face`] | **调用方给的那一枚** | **结构性正常**（同一域交多枚：一面交一枚、副本共享 `opened_by`）⇒ 不说 |
 /// | [`ask_of`] | `ASK` | **契约被破**：一个域只该铸一枚问话孔（裸 `unseal_hole`，没有同名闸），多出来的那枚永远没人读它的推 ⇒ 说一句 |
 ///
 /// 而"取第一枚"在三处都正当：命中的几枚背后是**同一扇门**（同一份 `HoleMeta`），任一枚都通。
@@ -77,10 +76,15 @@ pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
     claim(mark, who, Some("operator: two asks"))
 }
 
-/// 找**某一位域**交给本域的那枚服务门牌（`opened_by == who` 且记号是服务入口）。
+/// 找**某一位域**交给本域的那一枚门牌（`opened_by == who` 且记号 == `mark`）。
 ///
 /// 门牌那一枚走的是**裸 `unseal_hole`**，故"一个域只交一枚"同样是纪律而不是判据。
-pub(super) fn find_face(who: TaskId) -> Option<PieToken> {
+///
+/// **`mark` 由调用方给**（照实记：这一格原先硬写板的 `ENTRY_MARK`）：名册那一族开了两面
+/// （`principal::Grant::{Ask, Set}`），它交给本域的**是哪一面**只有记号说得清——门禁要的是
+/// `Ask`（它只 `Resolve` ＋ `Heir`），而装配者那一侧要的是 `Set`。盟册那一族还没有面，故它那
+/// 一枚仍是通用的 `board::ENTRY_MARK`。**"取第一枚"仍正当**：同一面命中的几枚背后是同一扇门。
+pub(super) fn find_face(who: TaskId, mark: Mark) -> Option<PieToken> {
     // 多枚**正常**（副本共享 `opened_by`：`land` 交一枚、门禁交一枚）⇒ 不说。
-    claim(bcall::ENTRY_MARK, who, None)
+    claim(mark, who, None)
 }

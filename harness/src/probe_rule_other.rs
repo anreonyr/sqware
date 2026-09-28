@@ -17,7 +17,7 @@
 //!   2  SEEK /sys/rule/is      ⇒ FIND ⇒ 期望 DENIED(8)
 //!   3  SEEK /sys/rule/under   ⇒ FIND ⇒ 期望 DENIED(8)
 //!   4  SEEK /sys/rule/foreign ⇒ FIND ⇒ 期望 DENIED(8)
-//!      —— 那一格许给的是"**开着 `/sys/principal` 那一格**的那位"（规矩由 `probe-rule` 落，
+//!      —— 那一格许给的是"**开着 `/sys/principal/ask` 那一格**的那位"（规矩由 `probe-rule` 落，
 //!         按 `seek` 换来的号写），本域不是那一位 ⇒ 同样拒。**这一格不依赖次序**：那枚门牌
 //!         的主人是常驻服务，整轮都活着。
 //!   5  报一行读数就退场
@@ -59,7 +59,7 @@ const DIR: &str = "sys";
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opener(/sys/principal 那一格)`（许给**别人**）。
+/// `probe-rule` 落的第三格：规矩 = `Opener(/sys/principal/ask 那一格)`（许给**别人**）。
 const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

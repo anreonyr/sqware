@@ -11,7 +11,7 @@ use core::time::Duration;
 use env::{TaskId, Wait};
 use protocol::debug;
 use protocol::communication::establish;
-use protocol::system::board as bcall;
+use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use runtime::env::room;
 
@@ -50,12 +50,16 @@ impl Roster {
     pub fn adopt(&mut self, task: TaskId, tree: Option<TaskId>) -> Result<TaskId, &'static str> {
         let f = face_of(task).ok_or("no identity face")?;
         let root = f.new_principal();
-        let mine = root
-            .derive(Wait::AtMost(READY_MS))
-            .map_err(|_| "derive self")?;
+        let mine = root.derive(Wait::AtMost(READY_MS)).map_err(|fail| {
+            debug!("principal: adopt derive self {:?}", fail);
+            "derive self"
+        })?;
         f.task(task)
             .bind(mine.id(), Wait::AtMost(READY_MS))
-            .map_err(|_| "bind self")?;
+            .map_err(|fail| {
+                debug!("principal: adopt bind self {:?} at={}", fail, mine.id().get());
+                "bind self"
+            })?;
         match tree {
             Some(t) => {
                 let pt = root
@@ -75,12 +79,15 @@ impl Roster {
 /// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
 ///
 /// 装配期**不必上树查自己起的那一枚**：名册起手就把门牌那一枚 `ship` 进本域表里，本域按
-/// `(开者 = 它, 记号 = entry)` 两格认出来（[`establish::find`] 的两格正判据）。它起手就交，
+/// `(开者 = 它, 记号 = 面)` 两格认出来（[`establish::find`] 的两格正判据）。它起手就交，
 /// 故这里是**短等**：还没到就隔一拍再问，问到期限为止。
+///
+/// **要的是 [`Grant::Set`]（定面）**（开面那一刀）：本间那两手是 `derive` ＋ `bind`——发身份
+/// 那一侧要的正是改的权柄，而问面给不了它。名册两面各交一枚、记号不同，故"要哪一面"得说清。
 fn face_of(host: TaskId) -> Option<Face> {
     let mut left = READY_MS;
     loop {
-        if let Some(entry) = establish::find(host, bcall::ENTRY_MARK) {
+        if let Some(entry) = establish::find(host, pcall::Grant::Set.mark()) {
             return Face::of(entry).ok();
         }
         if left == 0 {

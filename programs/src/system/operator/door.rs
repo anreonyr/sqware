@@ -23,11 +23,12 @@
 use env::{TaskId, Wait};
 
 use protocol::debug;
+use protocol::system::board::ENTRY_MARK;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::CoalitionId;
 use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::principal::client::Face as PrincipalFace;
-use protocol::system::principal::PrincipalId;
+use protocol::system::principal::{Grant as PrincipalGrant, PrincipalId};
 
 use crate::system::operator::core::Operator;
 use crate::system::operator::core::gate::{Code, verdict};
@@ -43,7 +44,7 @@ const MS: usize = 1000;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
-/// 它不去 `seek("/sys/principal")`，理由同那一笔（自指 ⇒ 环）。
+/// 它不去 `seek("/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
 ///
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Permit::Among`] 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
@@ -55,17 +56,21 @@ struct Session {
 impl Session {
     /// 认出那两枚门牌：**按"谁开的 + 记号"在本表里找**（协调那一帧只带号）。
     ///
-    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = 服务入口记号
-    /// （`bcall::ENTRY_MARK`）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接交给
-    /// 持树者。
+    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = **那一族约定的
+    /// 那枚**（名册两面各一枚、盟册一枚通用）。**不必装配者转授**——各域自己在 `serve_tree`
+    /// 之后把它直接交给持树者。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ `None`；盟册那枚认不出 ⇒ 只少
     /// [`Permit::Among`] 那一格。
+    ///
+    /// **两枚记号不同，因为两族的"面"不同**（这一刀）：名册那一族开了两面，而本域要的是
+    /// **问面**（[`PrincipalGrant::Ask`]：`Resolve` ＋ `Heir`，两条都是读）——它**做不出**
+    /// `Adopt`（把一条号领到自己底下）。盟册那一族还没有面，故仍是那枚通用的 `ENTRY_MARK`。
     fn of(coord: Coord) -> Option<Session> {
-        let roster = PrincipalFace::of(find_face(coord.roster?)?).ok()?;
+        let roster = PrincipalFace::of(find_face(coord.roster?, PrincipalGrant::Ask.mark())?).ok()?;
         let league = coord
             .league
-            .and_then(find_face)
+            .and_then(|who| find_face(who, ENTRY_MARK))
             .and_then(|token| CoalitionFace::of(token).ok());
         Some(Session { roster, league })
     }
@@ -151,9 +156,10 @@ impl Facts for Court<'_> {
 /// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
 /// （[`Operator::permit`](super::core::Operator::permit) 答出来的那一句）。
 ///
-/// **装配期根本不在门禁这条轴上**：principal 挂自己门牌那一趟（`part /sys` + `land
-/// /sys/principal`）发生在它的 `serve_tree` 里，而本域**认下它的门牌**与它**拿到身份**
-/// （`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有身份**。门禁若在
+/// **装配期根本不在门禁这条轴上**：principal 挂自己那两枚门牌那一趟（`part /sys` ＋
+/// `part /sys/principal` ＋ 两处 `land`）发生在它的 `serve_tree` 里，而本域**认下它的门牌**与
+/// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
+/// 身份**。门禁若在
 /// 那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前拿到
 /// 了身份——**挡门的是它们，不是装配这一步**。
 ///

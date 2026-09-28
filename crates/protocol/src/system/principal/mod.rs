@@ -163,10 +163,10 @@
 //!
 //! # 地址与载体
 //!
-//! Server 的门牌落在树上 **`/sys/principal`**（自己分 `/sys`、落自己那一枚、再查回来验一遍，
-//! 同 `router` / `rtc` 那一趟）。客侧一问一答**建在门牌上**：替这一趟铸一枚回信孔借过去
-//! （记号 `call::BACK`），把帧推上门牌，答话从那枚孔回来——一份报文里没有"往哪回"这一格
-//! （号只在持有它的那张表里念得动）。
+//! Server 的门牌落在树上 **`/sys/principal/{ask,set}`**（自己分 `/sys`、再分 `/sys/principal`、
+//! 落那两格、逐面查回来验一遍，同 `router` / `rtc` 那一趟）。客侧一问一答**建在门牌上**：替这
+//! 一趟铸一枚回信孔借过去（记号 `call::BACK`），把帧推上门牌，答话从那枚孔回来——一份报文里
+//! 没有"往哪回"这一格（号只在持有它的那张表里念得动）。
 //!
 //! **客侧那一面只出两个柄，四面一个都不出**（照实记）：[`client::Face`] 的面上是
 //! `of` / `host` / `task` / `principal` / `new_principal`——**那七条原语挂在它还回来的宾语上**
@@ -220,20 +220,30 @@
 //!   另一刀：条目得先有 owner 那一格）"，后写过"**归属记在持树者那本账上，不在树上**"——那本
 //!   账是树的影子（`name` / `id` / 那一枚句柄都已在树上），整本撤了；今天那一格就在砖上。
 //!   刻意的边界是"树不知道**身份 / 谱系 / 盟籍**"（那三问要发消息，树是同步纯函数）。
+//! - **与「面」**：本族有**两条权柄边界**——[`Grant::Ask`]（`Resolve` / `Sire` / `Heir`，只读）
+//!   与 [`Grant::Set`]（`Bind` / `Derive` / `Adopt` / `Waive`，改身份 / 改谱系）。面**就是那一枚
+//!   门牌**（本族没有会话）：两枚门牌、两只孔，服务端从**哪一枚**收到就是哪一面。为什么是两面
+//!   而不是七格、以及生产里三个持有者各要哪几条，见 [`grant`] 的文件头。
 //! - **与 Pie**：零交集。`System = 存在与生命周期`、`Principal = 策略身份`、
 //!   `Pie = 实际持有的 authority`、`具体协议 = authority 的语义`。
 
-// ── 载体：三份各住哪里 ─────────────────────────────────────
+// ── 载体：四份各住哪里 ─────────────────────────────────────
 //
-// **判定与接口**（正文、九条原语、帧、客侧那一面）住在这里；**实现方**（真在
+// **判定与接口**（正文、七条原语、帧、客侧那一面、两面各一枚 `Grant`）住在这里；**实现方**（真在
 // `prog-principal` 域里跑的那枚线程）住 `programs/src/system/principal/`。
-// 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/service.rs`。
+// 装配侧（谁在什么时候 `derive` + `bind`）住 `programs/src/principal/bridge.rs`。
 
 pub mod frame;
 
 pub use frame::{Fail, PrincipalId};
 
-pub mod client;
-// 形与据就在本模块树下（`core` / `frame`）。
+pub mod grant;
 
-pub use frame::{BACK, BAD, DIR, NAME, OK, Reply, Wire, code_to_fail, fail_to_code, reply_present};
+pub use grant::{Grant, grant_of};
+
+pub mod client;
+// 形与据就在本模块树下（`grant` / `frame`）。
+
+pub use frame::{
+    BACK, BAD, DENIED, DIR, NAME, OK, Reply, Wire, code_to_fail, fail_to_code, reply_present,
+};
