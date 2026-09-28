@@ -10,6 +10,7 @@
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
 //!   2  SEEK  /device/uart/rx         ⇒ 记下 uart 那枚砖**原来的号**
 //!   3  LAND  /device/uart/rx（自己的孔）⇒ 期望 DENIED（那枚砖是 uart 的：它声明了归属）
+//!   3.5 PART 同一块 Pane 里同一个名字 ⇒ **同一条「改」轴**，同样期望 DENIED（见下）
 //!   4  SEEK  /device/uart/rx         ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
 //!   5  **等** `/sys/lease` 那一格的主人退场（`probe-lease` 落完就走）⇒ 再落一次
 //!      ⇒ 期望**接得上**（主人不在场 ⇒ 那一格重新可落）
@@ -111,6 +112,18 @@ fn main() -> Report<'static> {
         Err(fail) => format!("{fail:?}"),
     };
 
+    // 三·五、**同一个名字、换一条原语**：`part` 与 `land` 同一把钥匙（`answer.rs` 的 `Part` 那一
+    //        支：动手之前按坐标问同一格 `claimable`）——不然它会把那一格**静默顶成一块 Pane**、
+    //        还顺手把 uart 那枚孔 `release` 掉。
+    //
+    // **照实记（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
+    // 走同一把钥匙，可只有一条被量过。这一格补的就是那一半。
+    let part = pane.open(me, Wait::AtMost(MS));
+    let part_code = match &part {
+        Ok(id) => format!("ok id={}", id.id().get()),
+        Err(fail) => format!("{fail:?}"),
+    };
+
     // 四、那一格**还在不在**（应是原来那个号）。
     //
     // **照实记（这一格为什么也走 `Pane::tile`）**：旧面用 `seek`（只译号、不动树）；新面若用
@@ -122,7 +135,7 @@ fn main() -> Report<'static> {
         Err(fail) => format!("err:{fail:?}"),
     };
     debug!(
-        "probe-owner: tree land={land_code} before={} after={seq}",
+        "probe-owner: tree land={land_code} part={part_code} before={} after={seq}",
         before.get()
     );
 
@@ -152,6 +165,13 @@ fn main() -> Report<'static> {
                 "那一格的主人还活着，land 本该被拒（land={land_code}）"
             )
         }
+    }
+    {
+        // **同一条「改」轴的另一半**：`part` 也走那一把钥匙。
+        assert!(
+            matches!(part, Err(Fail::Denied)),
+            "那一格的主人还活着，part 本该被拒（part={part_code}）"
+        )
     }
     {
         assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")

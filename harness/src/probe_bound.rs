@@ -15,6 +15,9 @@
 //!      不是这一枚孔坏了），`peek` 答 8
 //!   4  往树的门上推 **300 字节的不合族帧** ⇒ 门把它取出来、答一句 `BAD`；随后一句正经的问
 //!      （`part /sys`，幂等）照样答得出 —— **门没卡死**（这一格量的是一页缓冲那一刀）
+//!   4.5 往树的门上推 **60 字节、形状全对、只有许可那一格陌生**的 `LAND` 帧（`[51] = 9`）
+//!      ⇒ 同一声 `BAD`（**整帧读不懂**），随后那句正经的问照样答得出
+//!      —— 与第 4 条**不是同一件事**：那条死在**长度**那一闸，这条一路解到许可那一格才断
 //!   5  **板那一道门**同一句：推 300 字节 ⇒ 答 `BAD`；随后 `evict`（一字节短帧，空载荷）
 //!      照样答得出 —— 两道门各有一条腿（第二处的来历见下）
 //! ```
@@ -103,6 +106,33 @@ fn junk() -> [u8; JUNK] {
     junk
 }
 
+/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（60 字节）。
+///
+/// 前五格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = "x"`（定长 32 字节、尾随 NUL）、
+/// `[42..50] = 0`（入口）、`[50] = 0`（`mine` 假）；**唯一越界的是 `[51] = 9`**——许可那一张表
+/// 只有 `0..=4`。故这一条会一路解到许可那一格才断 ⇒ **整帧读不懂** ⇒ 门答 `BAD`。
+///
+/// **照实记（这一格此前全仓零断言，量它的这台客人就是这一条）**：`frame.rs` 的 `Permit::fetch`
+/// 表外那一支自己写着"要打到它得造一条 60 字节、`[51] ≥ 5` 的 `LAND` 帧，而仓里没有这样一台
+/// 客人"——上面那条 300 字节的 junk 走 `Message::fetch` 的长度那一闸，`match` 一次都到不了。
+fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
+    let mut f = [0u8; LAND_LEN];
+    f[0] = JUNK_OP; // `LAND` ＝ `1`（见 [`JUNK_OP`]）
+    f[1] = 0; // `Where::Root`
+    f[10] = b'x'; // 名字那一格的头一字节
+    f[50] = 0; // `mine = false`
+    f[51] = permit_tag; // **这一格是唯一要试的那一格**
+    f
+}
+
+/// 表外那一格（`0..=4` 之外）：整帧读不懂。
+const LAND_PERMIT_UNKNOWN: u8 = 9;
+/// 表内那一格（`0` = `Permit::Unset`）：读得懂——**同一帧只换这一格**，结论就该不同。
+const LAND_PERMIT_KNOWN: u8 = 0;
+
+/// 一条 `LAND` 帧有多长（`frame.rs` 那一格是 [`Land::LEN`](protocol::system::operator::Land)）。
+const LAND_LEN: usize = 60;
+
 #[programs::entry]
 fn main() -> Report<'static> {
     let sire = utask::sire();
@@ -155,7 +185,18 @@ fn main() -> Report<'static> {
     );
 
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
-    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir);
+    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir, &junk());
+
+    // 三·三、**形状全对、只有许可那一格陌生**的那一条：同一声 `BAD`（"整帧读不懂"），
+    //       门照旧活着。这一条与上一条**不是同一件事**：上一条死在**长度**那一闸，这一条一路
+    //       解到许可那一格才断（见 [`junk_land`] 的照实记）。
+    let (l_junk_in, l_said_bad, l_after) =
+        junk_trip(hedge, tree, &face, dir, &land_frame(LAND_PERMIT_UNKNOWN));
+    // **差分那一趟**：同一帧、只把许可那一格换成表内的 `0`。它**读得懂**（后面那一问自己答什么
+    // 不管），故门不该答"读不懂"那一句——两趟并排，才证明上一趟真的断在**许可那一格**上，
+    // 而不是断在名字 / `mine` / 长度上。
+    let (k_junk_in, k_said_bad, k_after) =
+        junk_trip(hedge, tree, &face, dir, &land_frame(LAND_PERMIT_KNOWN));
 
     // 三·五、**板那一道门**：同一条判据的另一条腿（来历见文件头那一段照实记）。
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
@@ -181,6 +222,26 @@ fn main() -> Report<'static> {
             assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");
             assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
             assert!(after, "吞了 junk 之后，门不再答正经的问了");
+        }
+    }
+    {
+        {
+            assert!(l_junk_in, "那条帧推不进门（门那一枚孔不在？）");
+            assert!(
+                l_said_bad,
+                "许可那一格表外（`[51] = 9`），门该答 `BAD`（整帧读不懂），却没答那一句"
+            );
+            assert!(l_after, "吞了那条帧之后，门不再答正经的问了");
+        }
+    }
+    {
+        {
+            assert!(k_junk_in, "差分那条帧推不进门（门那一枚孔不在？）");
+            assert!(
+                !k_said_bad,
+                "只把许可那一格换成表内的 `0`，门仍答 `BAD` ⇒ 上一趟断的不是许可那一格"
+            );
+            assert!(k_after, "吞了差分那条帧之后，门不再答正经的问了");
         }
     }
     {
@@ -216,9 +277,9 @@ fn junk_trip(
     tree: &Endpoint,
     face: &operator::Face,
     dir: Name,
+    junk: &[u8],
 ) -> (bool, bool, bool) {
-    let junk = junk();
-    let pushed = mail::HolePie::from_token(hedge).push(&junk).is_ok();
+    let pushed = mail::HolePie::from_token(hedge).push(junk).is_ok();
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
