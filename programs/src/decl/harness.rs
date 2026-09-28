@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Setup, Spot};
+use crate::program::{Demand, Died, Identity, Program, Relation, Setup, Spot};
 use env::ProgramKind;
 use env::supply::{Kind, Need, class_block};
 use env::{Access, Policy};
@@ -52,23 +52,19 @@ pub const LODGER_WANTS: &[Need] = &[Need::class(
 pub static GUEST: Program = Program {
     identity: Identity {
         name: "guest",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(8),
         presence: true,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_GUEST,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -76,23 +72,18 @@ pub static GUEST: Program = Program {
 pub static PASSER: Program = Program {
     identity: Identity {
         name: "passer",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(9),
         presence: true,
-        operator: false,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PASSER,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -100,23 +91,19 @@ pub static PASSER: Program = Program {
 pub static LODGER: Program = Program {
     identity: Identity {
         name: "lodger",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(10),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_LODGER,
         setup: &[Setup::Need(LODGER_WANTS[0]), Setup::Channel("records")],
+        ..Demand::DEFAULT
     },
 };
 
@@ -124,23 +111,19 @@ pub static LODGER: Program = Program {
 pub static SLEEPER: Program = Program {
     identity: Identity {
         name: "sleeper",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(11),
         presence: true,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_SLEEPER,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -148,23 +131,18 @@ pub static SLEEPER: Program = Program {
 pub static SUBJECT: Program = Program {
     identity: Identity {
         name: "subject",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(12),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_SUBJECT,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -172,23 +150,18 @@ pub static SUBJECT: Program = Program {
 pub static MEMBER: Program = Program {
     identity: Identity {
         name: "member",
-        kind: ProgramKind::User,
         spot: Spot::Guest,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(13),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_MEMBER,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -198,23 +171,17 @@ pub static MEMBER: Program = Program {
 pub static PROBE_DENIED: Program = Program {
     identity: Identity {
         name: "probe-denied",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(14),
-        presence: false,
         operator: true,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -222,23 +189,18 @@ pub static PROBE_DENIED: Program = Program {
 pub static PROBE_OWNER: Program = Program {
     identity: Identity {
         name: "probe-owner",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(16),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_OWNER,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -246,23 +208,18 @@ pub static PROBE_OWNER: Program = Program {
 pub static PROBE_RULE: Program = Program {
     identity: Identity {
         name: "probe-rule",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(17),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_RULE,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -270,23 +227,18 @@ pub static PROBE_RULE: Program = Program {
 pub static PROBE_RULE_OTHER: Program = Program {
     identity: Identity {
         name: "probe-rule-other",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(18),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_OTHER,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -294,23 +246,18 @@ pub static PROBE_RULE_OTHER: Program = Program {
 pub static PROBE_LEASE: Program = Program {
     identity: Identity {
         name: "probe-lease",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(15),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_LEASE,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -319,23 +266,19 @@ pub static PROBE_LEASE: Program = Program {
 pub static PROBE_BOUND: Program = Program {
     identity: Identity {
         name: "probe-bound",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(19),
         presence: true,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_BOUND,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -354,23 +297,18 @@ pub static PROBE_BOUND: Program = Program {
 pub static PROBE_CONTROL: Program = Program {
     identity: Identity {
         name: "probe-control",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(20),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_CONTROL,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -395,23 +333,18 @@ pub static PROBE_CONTROL: Program = Program {
 pub static PROBE_OPERATOR_GATE: Program = Program {
     identity: Identity {
         name: "probe-operator-gate",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(3),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_OPERATOR_GATE,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -421,23 +354,18 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
 pub static PROBE_OPERATOR_LAND: Program = Program {
     identity: Identity {
         name: "probe-operator-land",
-        kind: ProgramKind::User,
         spot: Spot::Probe,
-        scenes: &["root"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(4),
-        presence: false,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_PROBE_OPERATOR_LAND,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };
 
@@ -446,24 +374,12 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
 pub static CHURN: Program = Program {
     identity: Identity {
         name: "churn",
-        kind: ProgramKind::User,
         spot: Spot::Rig,
         scenes: &["again"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static RIG: Program = Program {
@@ -473,89 +389,43 @@ pub static RIG: Program = Program {
         spot: Spot::Rig,
         scenes: &["rig"],
         entry: &["rig"],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static BUSY: Program = Program {
     identity: Identity {
         name: "busy",
-        kind: ProgramKind::User,
         spot: Spot::Rig,
         scenes: &["load"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static PARK: Program = Program {
     identity: Identity {
         name: "park",
-        kind: ProgramKind::User,
         spot: Spot::Rig,
         scenes: &["load"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static HANG: Program = Program {
     identity: Identity {
         name: "hang",
-        kind: ProgramKind::User,
         spot: Spot::Rig,
         scenes: &["rig"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static LOAD: Program = Program {
@@ -565,20 +435,10 @@ pub static LOAD: Program = Program {
         spot: Spot::Rig,
         scenes: &["load"],
         entry: &["load"],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static BEAT: Program = Program {
@@ -588,20 +448,10 @@ pub static BEAT: Program = Program {
         spot: Spot::Rig,
         scenes: &["beat"],
         entry: &["beat"],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static AGAIN: Program = Program {
@@ -611,43 +461,21 @@ pub static AGAIN: Program = Program {
         spot: Spot::Rig,
         scenes: &["again"],
         entry: &["again"],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static WAITER: Program = Program {
     identity: Identity {
         name: "waiter",
-        kind: ProgramKind::User,
         spot: Spot::Rig,
         scenes: &["group"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };
 
 pub static GROUP: Program = Program {
@@ -657,18 +485,8 @@ pub static GROUP: Program = Program {
         spot: Spot::Rig,
         scenes: &["group"],
         entry: &["group"],
+        ..Identity::DEFAULT
     },
-    relation: Relation {
-        order: None,
-        presence: false,
-        operator: false,
-        bind: false,
-        holds_tree: false,
-        eyes: None,
-    },
-    demand: Demand {
-        origin: Origin::Initrd,
-        died: env::EXIT_OK,
-        setup: &[],
-    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
 };

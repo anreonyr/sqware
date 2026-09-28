@@ -29,7 +29,12 @@ use protocol::communication::establish::Endpoint;
 use crate::system::control::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use crate::system::control::desk::{Announce, Service, Slot, State, Table};
 
-use crate::program::{coalition::E_COALITION, operator::E_TREE, principal::E_PRINCIPAL};
+use crate::program::{
+    Died,
+    coalition::E_COALITION,
+    operator::E_TREE,
+    principal::E_PRINCIPAL,
+};
 
 /// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
 ///
@@ -63,47 +68,91 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 ///
 /// **它自己就是出口**（`impl Exit`）：三个 bin 的 `main` 直接答 `Result<(), Start>`——
 /// 不需要再有一层 `said` / `exit` 的转发。
+///
+/// # 每一格**自带它那一台的号**（回炉那一刀；照实记）
+///
+/// 从前这八格是**光秃秃的变体**，族身份由 [`Start::code`] 按**三组硬编码**反推
+/// （`Board | Tree | Room => E_TREE`、`Entry | Book => E_PRINCIPAL`、`Desk | Face | Dead =>
+/// E_COALITION`）。那是"**位置即语义**"，而且**量出来是错的**：八格里有 **8 处报错族**——
+/// 名册死在上板 / 上树时报的是**持树者的号与名**（`10` / `operator: board`）、盟册同上、
+/// 持树者死在常驻那一问时报的是**盟册**（`16` / `coalition: desk`），而 `carrier` 那三格
+/// （名册与盟册共用）在两家都报 `operator`。
+///
+/// 今天号是**造它那一刻给**的（`Start::Tree(E_PRINCIPAL)`）：谁产的与报的是谁由**构造点**
+/// 保证，不再靠分组。**代价照实记**：三个 bin 的起手步今天在生产里**一步都没走到过**
+/// （`Start` 从没爆过），故这 8 处是**潜伏的假读数**——它印在出口那一刻，不印在日志中间。
+///
+/// **照实记（`Entry` 那一格随这一刀退场）**：它从前是第 3 格（"本域自己开的那一枚孔"），
+/// 实测**零生产者**——三台的入口那一问都答 `Start::Tree`（见 `operator/principal/coalition`
+/// 三个 `server.rs` 的 `map_err`）。死格，删。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     /// 上板那一步（`Session::open(sire, board::BERTH, …)`：装路 ＋ 认对端 ＋ 要问话孔，一手）。
-    Board,
+    Board(Died),
     /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
-    Tree,
-    /// 本域自己开的那一枚孔（服务入口记号 `protocol::system::board::ENTRY_MARK`）。
-    Entry,
+    Tree(Died),
     /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）。
-    Room,
+    Room(Died),
     /// 常驻那一问：那只组没立起来，或收帧那一页备不下。
-    Desk,
+    Desk(Died),
     /// 身份服务的两张表（谱系 + 名册）没立起来；**只有名册那一台有**。
-    Book,
+    Book(Died),
     /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**。
-    Face,
+    Face(Died),
     /// **常驻期**：组坏了（`await_` 答不出）——与 [`Start::Desk`] 分开，是因为它不在"起手那
     /// 几步"里（起手已经过完了），而号同那一族。
-    Dead,
+    Dead(Died),
 }
 
 impl Start {
-    /// **号一律取自装配表**——本域自己的死法**一个数都不写**。
+    /// **号 = 造它那一台自己的 `died`**——这一格不再从变体名反推族（见类型头注那 8 处实测）。
+    ///
+    /// **照实记（"本域自己的死法一个数都不写"这句话照旧成立）**：这里一个数字都没写，
+    /// 号由构造点给；而那三个号本身住在各台的 `program.rs`（`E_TREE` / `E_PRINCIPAL` /
+    /// `E_COALITION`）——**一处一处**，不再有第二张分组表。
     pub fn code(self) -> env::Reason {
         match self {
-            Start::Board | Start::Tree | Start::Room => E_TREE,
-            Start::Entry | Start::Book => E_PRINCIPAL,
-            Start::Desk | Start::Face | Start::Dead => E_COALITION,
+            Start::Board(d)
+            | Start::Tree(d)
+            | Start::Room(d)
+            | Start::Desk(d)
+            | Start::Book(d)
+            | Start::Face(d)
+            | Start::Dead(d) => d,
         }
     }
 
+    /// **这一句话怎么念**：族名 ＋ 步名。
+    ///
+    /// **它为什么是一张平表**（照实记，两支都量过）：族名与步名都是 `&'static str`，而 `const`
+    /// 里拼不出 `&str` ⇒「（号→族名）＋ 步名」那种写法**拼不出来**，而 [`crate::Exit::report`]
+    /// 要的是一句现成的 `&'static str`。可选的只有两支：①每个（族, 步）一条字面量（**本版**，
+    /// 16 条）；②步名不带族名（8 条，而"哪一台"只剩 `reason` 那一格，`reason=14` 对人不比名字好认）。
+    /// 选 ①：这三台的起手步一旦真爆了，读数得自己说全"哪一台的哪一步"。
     pub fn text(self) -> &'static str {
         match self {
-            Start::Board => "operator: board",
-            Start::Tree => "operator: tree",
-            Start::Room => "operator: no room",
-            Start::Entry => "principal: entry",
-            Start::Book => "principal: no book",
-            Start::Desk => "coalition: desk",
-            Start::Face => "coalition: no identity plate",
-            Start::Dead => "inner: group dead",
+            // 持树者（`E_TREE`）：它会走到的那四步。
+            Start::Board(E_TREE) => "operator: board",
+            Start::Tree(E_TREE) => "operator: tree",
+            Start::Room(E_TREE) => "operator: no room",
+            Start::Desk(E_TREE) => "operator: desk",
+            // 名册（`E_PRINCIPAL`）：板 / 树 / 两张表，加上 `carrier` 那三格。
+            Start::Board(E_PRINCIPAL) => "principal: board",
+            Start::Tree(E_PRINCIPAL) => "principal: tree",
+            Start::Book(E_PRINCIPAL) => "principal: no book",
+            Start::Room(E_PRINCIPAL) => "principal: no room",
+            Start::Desk(E_PRINCIPAL) => "principal: desk",
+            Start::Dead(E_PRINCIPAL) => "inner: group dead",
+            // 盟册（`E_COALITION`）：板 / 树 / 门牌，加上 `carrier` 那三格。
+            Start::Board(E_COALITION) => "coalition: board",
+            Start::Tree(E_COALITION) => "coalition: tree",
+            Start::Face(E_COALITION) => "coalition: no identity plate",
+            Start::Room(E_COALITION) => "coalition: no room",
+            Start::Desk(E_COALITION) => "coalition: desk",
+            Start::Dead(E_COALITION) => "inner: group dead",
+            // **构造上到不了**（上面三组把三个族的全部产点摆齐了）；真到这一步就照实说"不知道"，
+            // 不顺手套一个好听的名字。
+            _ => "start: ?",
         }
     }
 }

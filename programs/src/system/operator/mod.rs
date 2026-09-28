@@ -24,9 +24,17 @@
 //! `crates/protocol/src/system/operator/core/`——读者只有本域，故回这里。**归属那一本账后来整本
 //! 退场**：它是树的影子（`name` / `id` / 那一枚句柄都已经在树上），两轴如今都住在砖上。
 
+use protocol::system::operator as ocall;
+
+/// **那一段目录的名字**（`/sys/operator` 底下那一段，也即 `/sys/operator/{面名}` 的中间那一段）。
+///
+/// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
+/// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
+/// 一条 `const` 就挣不来一个文件。名字的唯一来源在协议那一侧那一格（`ocall::NAME`），这里只引用。
+pub const SEGMENT: &str = ocall::NAME;
+
 pub mod bridge;
 pub mod core;
-pub mod mount;
 pub mod server;
 
 // 持树侧那三份 ＋ 本域表上那几枚孔的认领：只有本域这一份入口（`server`）叫它们。

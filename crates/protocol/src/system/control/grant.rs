@@ -27,8 +27,22 @@
 //!
 //! - [`Grant::State`] **公开**：`Permit::Unset`——只读"这一条此刻在哪个阶段"，谁问都一样；
 //! - [`Grant::Mint`] / [`Grant::Start`] / [`Grant::Stop`] **各带一句规矩**：落格时带
-//!   `Permit::Opener(那一格自己的号)`——"**许给开着这一格的那位**"，而四枚入口都是**装配者主线程**
-//!   铸的 ⇒ 这句话指的就是它（见 `programs/src/system/mod.rs::mount_control`）。
+//!   [`Rule::Root`](crate::system::operator::Rule::Root)——**"许给根"**（`Permit::Trunk(ROOT)`）。
+//!
+//! **照实记（这一句原先写的是"许给开着这一格的那位"——真机一量是假的）**：上一版计划写的是
+//! `Permit::Opener(那一格自己的号)`，理由是"四枚入口都是装配者主线程铸的 ⇒ 这句话指的就是它"。
+//! **一量就翻**：`operator: opens sealed n=33`——**根那批孔是引导期的设备门闩，`opened_by` 的
+//! `owner` 格是 0** ⇒ 那一格的"开者"根本答不出来 ⇒ 挂在那格上的规矩**永久判不了**
+//! （`probe-control` 读到的正是 `Err(Unjudged)`）。故规矩换成"许给根"。
+//!
+//! **诚实的一笔**：根**没有名册身份**（`bind: false`）⇒ 这一条今天对**所有人**都判拒，**包括
+//! 装配者自己**；而装配者根本不走这条路（它叫的是**进程内**的 `Control`）⇒ 效果就是"这三面谁也
+//! 取不回"。这正是 `control/mod.rs` 头注里那句"**要收，收的是那一格的 `Permit`**"——那个口子
+//! （"任何已绑身份的域都能 `mint` / `start` / `stop` 装配表里任意一台"）今天收上了。
+//!
+//! **设置那一句落在哪一行**：`programs/src/system/mod.rs::Assembly::mount_control`。**本文件只说
+//! "哪一面带"，不说"怎么带"**——那一句 `match` 与那枚 `Rule` 住正文那一格（回炉那一刀把这句话
+//! 的两份抄写收成了一份，收在这一格：面是**本协议**的词）。
 //!
 //! **拆面把"动"的代价抹掉了**：没有这一刀之前，给 `/sys/control` 带规矩只有一个后果——那台测具
 //! "另一个域**取得到** control 门牌"的正证当场翻面。四面各归各的之后：问面照旧公开（那台探针照旧
@@ -37,11 +51,10 @@
 //! **照实记（记号那一格撞了）**：这一族**有会话**——开会话那一枚问话孔是
 //! [`ASK_MARK`](crate::system::control::ASK_MARK)（`"control-ask"`，见 [`super::frame`]）⇒ 四面的
 //! **入口**记号不能也叫 `control-*`，故词根取 `"control-entry-"`：**入口是入口、会话是会话**，
-//! 两个名字都留着（`faces!` 的 `distinct` 那一格在编译期就拦住撞名）。
+//! 两个名字都留着（那一撞由 [`crate::system`] 的全族总表在编译期拦住——照实记见
+//! [`crate::faces!`]）。
 
-use env::Mark;
-
-use super::frame::{ASK_MARK, BACK, Wire};
+use super::frame::Wire;
 
 crate::faces! {
     /// **一条权柄边界**：一枚 = 一面。四位，位次 1..=4。
@@ -65,19 +78,4 @@ crate::faces! {
         Wire::Start(_) => Start,
         Wire::Stop(_) => Stop,
     }
-    distinct: [
-        // 本族自己那两枚（会话的问话孔 ＋ 回信孔）也在这里：它们与四面的**入口**记号必须不同。
-        ASK_MARK,
-        BACK,
-        // 别族的记号按**字面量**给（不跨族 `use`）：入口通用那一枚、提示那一枚、板那一枚、
-        // 树那七位里的第一位、名册那两面、盟册那两面。
-        Mark::of("entry"),
-        Mark::of("tip"),
-        Mark::of("board-ask"),
-        Mark::of("operator-ask-part"),
-        Mark::of("principal-ask"),
-        Mark::of("principal-set"),
-        Mark::of("coalition-ask"),
-        Mark::of("coalition-set"),
-    ],
 }

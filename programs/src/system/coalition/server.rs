@@ -24,6 +24,7 @@
 //! `Amid`。为什么是两面、那一个生产持有者各要哪几条，见 [`ccall::grant`] 的文件头。
 
 use crate::system::control::service::Start;
+use crate::program::coalition::E_COALITION;
 use env::Wait;
 
 use env::{Name, PieToken, TaskId};
@@ -35,7 +36,7 @@ use crate::system::carrier::carrier;
 use crate::system::operator::bridge;
 use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
-use crate::system::coalition::mount;
+use crate::system::mount;
 use protocol::system::coalition::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
@@ -63,14 +64,16 @@ pub fn serve() -> Result<(), Start> {
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let _board = Session::open(assembler, board::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Board)?;
+            .map_err(|_| Start::Board(E_COALITION))?;
 
-        // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按面给记号与末段名）。
+        // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按"记号 ＋ 面名"给那一枚孔与末段名）。
         //
         // **两面各一枚、不是一枚两面**：本族没有会话，服务端只能从**它自己表里哪一枚孔**收到来
-        // 认面（见文件头）。两枚都长命——铸它们的是本线程自己（同 `operator::mount` 那条照实记）。
-        let (ask, ask_name) = mount::entry(ccall::Grant::Ask).map_err(|_| Start::Tree)?;
-        let (set, set_name) = mount::entry(ccall::Grant::Set).map_err(|_| Start::Tree)?;
+        // 认面（见文件头）。两枚都长命——铸它们的是本线程自己（`Assembly::supervise` 那条照实记）。
+        let (ask, ask_name) = mount::entry(ccall::Grant::Ask.mark(), ccall::Grant::Ask.name())
+            .map_err(|_| Start::Tree(E_COALITION))?;
+        let (set, set_name) = mount::entry(ccall::Grant::Set.mark(), ccall::Grant::Set.name())
+            .map_err(|_| Start::Tree(E_COALITION))?;
 
         // 四、上树：分 `/sys` ＋ 分 `/sys/coalition`、逐面落那两格、再逐面查回来验一遍
         //     （同 router / rtc / principal）。
@@ -78,16 +81,21 @@ pub fn serve() -> Result<(), Start> {
         // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本域此后只要树上那几手
         // （`part` / `land` / `find` / `name` / `entry_of`：上树那一趟 ＋ 找身份那份门牌），
         // 那条会话的裸孔一个都不再要 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
-        // [`TreeFace::of`]（吃所有权），`serve_tree` / `find_face` 一并改收 `&TreeFace`。
+        // [`TreeFace::of`]（吃所有权），`find_face` 改收 `&TreeFace`。
+        //
+        // **照实记（`serve_tree` 那一枚壳随回炉退场）**：它原先包着下面这一句，而包的理由只有
+        // 一个——"给这一趟一个名字"。它没有自己的状态、没有自己的判断（`Mine::No` 与 `MS` 都是
+        // 常量），去掉之后调用点直接叫 [`bridge::land`]，读数行一字不变。
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Tree)?;
+            .map_err(|_| Start::Tree(E_COALITION))?;
         let tree = TreeFace::of(session);
-        serve_tree(
+        let _ = bridge::land(
             &tree,
-            [
-                (ccall::Grant::Ask, ask, ask_name),
-                (ccall::Grant::Set, set, set_name),
-            ],
+            "coalition",
+            &[ccall::DIR, super::SEGMENT],
+            Mine::No,
+            &[(ask_name.as_str(), ask), (set_name.as_str(), set)],
+            Wait::AtMost(MS),
         );
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
@@ -106,14 +114,14 @@ pub fn serve() -> Result<(), Start> {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| Start::Tree)?;
+        .map_err(|_| Start::Tree(E_COALITION))?;
 
         // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
         //
         // **名字叫 `roster`**（照实记：它从前叫 `face`，而这一刀之后"面"指的是本族那两枚门牌）：
         // 它是**名册的问面**，唯一用处是 `who()` 那一句"发送者此刻代表谁"。
-        let roster_entry = find_face(&tree).ok_or(Start::Face)?;
-        let roster = Face::of(roster_entry).map_err(|_| Start::Face)?;
+        let roster_entry = find_face(&tree).ok_or(Start::Face(E_COALITION))?;
+        let roster = Face::of(roster_entry).map_err(|_| Start::Face(E_COALITION))?;
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
         let book = Coalition::new();
@@ -124,6 +132,7 @@ pub fn serve() -> Result<(), Start> {
     // **从哪一枚读到就是哪一面** → 把这一批取干净 → 交给 [`turn`]）。这一族没有会话可读记号，
     // 故"面"只有这一条来路。
     carrier(
+        E_COALITION,
         &[(ask, ccall::Grant::Ask), (set, ccall::Grant::Set)],
         |face, from, frame| turn(&mut book, &roster, face, from, frame),
     )
@@ -267,28 +276,4 @@ fn find_face(tree: &TreeFace) -> Option<PieToken> {
         .ok()
 }
 
-/// 上树那一趟：**分目录 → 落门牌 → 查回来验一遍**（同 rtc / principal 那一趟）。
-///
-/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/member.rs`）证——它照同一条路
-/// 找上门、立一枚盟、进进出出。故本域不自问自答。
-///
-/// **照实记（手上的裸孔换成了面上的五个方法）**：从前这里先 `(&session.link, session.talk,
-/// session.host)` 把那条线拆出来，再一路叫自由函数；现在调用方给的是 [`TreeFace`]，四个动作与
-/// 对端号都从它出（`host` 那一格只在门禁转授时用，见 `serve` 的"四之后"）。
-fn serve_tree(tree: &TreeFace, faces: [(ccall::Grant, PieToken, Name); 2]) {
-    // **这一趟本身住在 [`bridge::land`]**（四处逐字同构、收在一处；量的行数见它自己的照实记）：
-    // 本手只剩两件本族的事实——路（`/sys` ＋ `/sys/coalition`）与那两枚门牌。
-    let list = [
-        (faces[0].2.as_str(), faces[0].1),
-        (faces[1].2.as_str(), faces[1].1),
-    ];
-    let _ = bridge::land(
-        tree,
-        "coalition",
-        &[ccall::DIR, mount::SEGMENT],
-        Mine::No,
-        &list,
-        Wait::AtMost(MS),
-    );
-}
 

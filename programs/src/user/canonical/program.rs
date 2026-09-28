@@ -24,7 +24,8 @@
 //!    （**完全不喂**的跑里也丢：30 s 窗口 2/6）。查下去是**两个真缺陷**，都已收掉：
 //!    ① 探针改成"数格子"之后当场数到 **8**——`/sys/operator` 底下**多出一格也叫 `operator` 的
 //!       自己**（那段目录也铸了一枚孔、也被落了一格），与"它自己不是一格"正相反；旧写法**按名字
-//!       数**故一直没显形。根因与那一刀见 `programs/src/system/operator/mount.rs` 的照实记。
+//!       数**故一直没显形。根因与那一刀见 `programs/src/system/mod.rs::Assembly::mount_control`
+//!       那一节（四份 `mount.rs` 已随回炉收成一处，故照实记也归了那一格）。
 //!    ② 那一族的问话**推得进去**这件事没人保（`protocol` 的 `client.rs::call`：推是
 //!       `Send(.., Wait::Forever)`，孔是单槽）⇒ 问得越多越可能等在门外、被扳机扑杀在
 //!       "绿也没有红也没有"那一格里。探针从"`list` ＋ 七问名"收成"一问数格子"，走不通就
@@ -39,8 +40,7 @@
 //! **读数走完**的下限，量法见那个文件），而攒不住 stdin（`mktemp` 失败）时**出声**，不再静默地
 //! 一个字节都不喂。
 
-use crate::program::{Demand, Died, Identity, Origin, Program, Relation, Spot};
-use env::ProgramKind;
+use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
 
 /// 它死在起手哪一步。
 pub const E_CANONICAL: Died = 24;
@@ -48,22 +48,19 @@ pub const E_CANONICAL: Died = 24;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "canonical",
-        kind: ProgramKind::User,
         spot: Spot::Console,
         scenes: &["root", "product"],
-        entry: &[],
+        ..Identity::DEFAULT
     },
     relation: Relation {
         order: Some(21),
         presence: true,
         operator: true,
         bind: true,
-        holds_tree: false,
-        eyes: None,
+        ..Relation::DEFAULT
     },
     demand: Demand {
-        origin: Origin::Initrd,
         died: E_CANONICAL,
-        setup: &[],
+        ..Demand::DEFAULT
     },
 };

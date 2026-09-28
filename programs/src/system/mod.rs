@@ -69,6 +69,7 @@ pub mod control;
 // 是两枚域共用的一本**（板线程在编排域、持树者在 operator 域）⇒ 住它们共同的那一格。
 pub mod desk;
 pub mod machine;
+pub mod mount;
 pub mod operator;
 pub mod principal;
 pub mod source;
@@ -140,8 +141,8 @@ impl Assembly {
     ///
     /// 三步，次序即契约：
     ///
-    /// 1. **铸入口**（[`control::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的服务端
-    ///    （入口的"开者"就是本域，客人 `Face::of` 据此知道往哪答话）；
+    /// 1. **铸入口**（[`crate::system::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的
+    ///    服务端（入口的"开者"就是本域，客人 `Face::of` 据此知道往哪答话）；
     /// 2. **请持树者落**（[`Tree::plate`]）：把那一枚交过去，再把那条路推上提示之路；
     /// 3. **接上监督那一趟**（[`Watch::attach_face`]）：入口挂进同一只组，**本域当场开始待客**。
     ///
@@ -150,26 +151,64 @@ impl Assembly {
     ///
     /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
     /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
+    ///
+    /// # `/sys/{族}` 自己不是一格（四族共一条，回炉那一刀从四份 `mount.rs` 收来）
+    ///
+    /// 它是那条路上的**一段前缀**（第一条路的段列表走前缀时就地把它立成一块 `Pane`）——
+    /// **没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故 `seek("/sys/operator")`
+    /// 之类答 [`Fail::NotATile`](protocol::system::operator::Fail::NotATile)：那一段是块窗格，
+    /// 到头了的是它底下那几格。
+    ///
+    /// **照实记（"第八格"是量出来的，而它现在写不出来）**：从前的帧是"两段名字 ＋ 一格
+    /// `layer`"，目录与七位共用"两帧"那一手，而目录那两段名字是同一个（`"operator"`）⇒ 第二帧
+    /// 又往它里面落了一格也叫 `operator` 的。实机读数：`/sys/operator` 底下**八格**。今天一条路
+    /// 是**段列表**、末段由 `leaf` 定，而目录**根本不由谁单独立一帧**——它是第一位那条路的
+    /// **前缀**（`part` 幂等）⇒"目录自己也是它底下的一格"**在形状上写不出来**，不必靠断言挡。
+    ///
+    /// **四族那一段名字各住自己那一格**（`control::SEGMENT` / `operator::SEGMENT` /
+    /// `principal::SEGMENT` / `coalition::SEGMENT`）——一律**引用协议侧那一枚 `NAME`**。
+    ///
+    /// **照实记（名册与盟册那两格换过一格）**：`/sys/principal` 与 `/sys/coalition` **从前就是
+    /// 那一枚门牌**（是一枚 `Tile`，谁 `seek` 到它谁就拿到整面）；开面那一刀之后它们与
+    /// `/sys/operator` 同形——都由第一位那条路的前缀就地立成一块 `Pane`。
+    ///
+    /// **铸入口那一枚必须长命**：三处内核证据与实测在 [`Assembly::supervise`] 的照实记里。
+    /// 回炉那一刀把四份 `mount.rs` 里**逐字相同的三份抄写**收掉了——那句话本来就只有那一处。
+    ///
+    /// # 照实记（"谁上树"这一格换过三次；四份 `mount.rs` 收掉时挪过来的一格）
+    ///
+    /// | 那一版 | 谁把这一格落上树 | 死在哪 |
+    /// |---|---|---|
+    /// | task-4 | 一枚**一次性**边沿线程 | 它一收尾，持树者表里那枚入口副本被内核的派生链级联摘掉（三处证据见 [`Assembly::supervise`]） |
+    /// | 上一版 | **装配者本人**当客人（要会话、要名册上那一行） | 能跑，但"客人"这份名单里多了一位**不是域的东西**，且装配者为此进了名册 |
+    /// | 这一版 | **持树者自己**（在自己核里落） | —— |
+    ///
+    /// 今天这一版里**没有第三方上树**：装配者递东西（那一枚 ＋ 两段名字），持树者落格——树是
+    /// 那一格的权威，而它当不了自己的客人（自指 ⇒ 环）。
+    ///
+    /// **本手不自问自答**：那一格落成没有、指不指得回原物，由**真客人**证——
+    /// `harness/src/probe_control.rs` 照 principal / coalition 同形的路找上门、问一句 control 的话。
     fn mount_control(&mut self) {
-        let Ok(segment) = control::mount::segment() else {
-            return debug!("system: control not mounted (control:name)");
+        let Ok(segment) = Name::new(control::SEGMENT) else {
+            return debug!("system: control not mounted (name)");
         };
         let Ok(sys) = sys_dir() else {
             return debug!("system: control not mounted (sys:name)");
         };
         // **四面各一枚入口、各一条路**（`/sys/control/{state,mint,start,stop}`）——一原语一面。
         //
-        // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"）；
-        // `mint` / `start` / `stop` 三面各带 [`Rule::Root`]——"**许给根**"（`Trunk(ROOT)`）：
-        // 那正是 `control/mod.rs` 头注里那句"**要收，收的是那一格的 `Permit`**"——这一面上了树，
-        // 而门禁原先只有"已绑身份"那一格 ⇒ 任何已绑身份的域都能 `mint` / `start` / `stop`
-        // 装配表里任意一台；今天那三格收上了。
+        // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"），
+        // `mint` / `start` / `stop` 三面各带 [`Rule::Root`]——"**许给根**"（`Trunk(ROOT)`）。
+        //
+        // **"哪一面带"那句话只此一处**（回炉那一刀收的）：它住
+        // [`ccall::grant`](protocol::system::control::grant) 的「哪一面带规矩」那一节（含"原先
+        // 写的是 `Opener`、一量是假的"那条照实记）；**本处只写"怎么带"**——下面这一行 `match`。
         for grant in protocol::system::control::Grant::ALL {
             let rule = match grant {
                 protocol::system::control::Grant::State => protocol::system::operator::Rule::None,
                 _ => protocol::system::operator::Rule::Root,
             };
-            let (entry, name) = match control::mount::entry(grant) {
+            let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
                     debug!("system: control face not mounted ({why})");
@@ -203,13 +242,13 @@ impl Assembly {
             Ok(name) => name,
             Err(why) => return debug!("system: grants not mounted ({why})"),
         };
-        let segment = match operator::mount::segment() {
+        let segment = match Name::new(operator::SEGMENT) {
             Ok(name) => name,
-            Err(why) => return debug!("system: grants not mounted ({why})"),
+            Err(_) => return debug!("system: grants not mounted (name)"),
         };
         // ② 七位：每位一条路（`/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::system::operator::Grant::ALL {
-            let (entry, name) = match operator::mount::entry(grant) {
+            let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
                     debug!("system: grant not mounted ({why})");

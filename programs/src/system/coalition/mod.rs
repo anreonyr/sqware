@@ -15,11 +15,20 @@
 //! `crates/protocol/src/system/coalition/core.rs`——读者只有本域那一枚线程，故回这里；
 //! 协议那一边只剩号 / 失败域 / 一窗号。
 
+use protocol::system::coalition as ccall;
+
+/// **那一段目录的名字**（`/sys/coalition` 底下那一段，也即 `/sys/coalition/{面名}` 的中间那一段）。
+///
+/// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
+/// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
+/// 一条 `const` 就挣不来一个文件。名字的唯一来源在协议那一侧那一格（`ccall::NAME`），这里只引用。
+pub const SEGMENT: &str = ccall::NAME;
+
 pub mod core;
-// **照实记（`mount` 是开面那一刀来的）**：这一族从前**只有一枚门牌**（`/sys/coalition` 那一格
-// 本身就是它），故"坐标与铸"只有两句、不必成文件。开面之后是**两枚门牌 ＋ 两段末名**，
-// `SEGMENT` 与 `entry` 这些本族的事实就得有个住处方——与 `crate::system::principal::mount` /
-// `crate::system::operator::mount` 同形。
-pub mod mount;
+// **照实记（`mount` 那一份是开面那一刀来的，回炉那一刀又收了它）**：这一族从前**只有一枚
+// 门牌**（`/sys/coalition` 那一格本身就是它），故"坐标与铸"只有两句、不必成文件。开面之后是
+// **两枚门牌 ＋ 两段末名**，"坐标与铸"因此成了文件（与另外三族同形）。而回炉那一刀量了一件事：
+// 四族那四份 `mount.rs` 里，"铸入口"那一手**逐字同构** ⇒ 它收进
+// [`crate::system::mount::entry`]；剩下的只有这条 `SEGMENT`（见上面那一格）。
 pub mod server;
 

@@ -181,6 +181,57 @@ pub struct Demand {
     pub setup: &'static [Setup],
 }
 
+// ── 三块各自的"什么都没声明"那一形（回炉那一刀；照实记）──────────────────
+//
+// **它是什么**：一台程序**最少要说的话**。那 34 份声明从前把 14 格一格不落地写一遍（实测
+// **476 次写**），而其中大半是每一台都一样的那几格。今天各台只写**与这一形不同的格**，其余用
+// 结构更新语法（`..Identity::DEFAULT`）收掉：实测 **476 → 231 次写（−51%）**，那 34 份的
+// 内部行数 **687 → 462**。
+//
+// **这两套值都量过，选的是第二套**（照实记）：按**多数值**取（`Spot::Rig` / `presence: false`
+// / `operator: true` …）能把那 34 台压到 **212** 次写，比下面这一套少 19 次——而那一套的
+// `DEFAULT` 说的是"**一台名叫 `guest` 的压测台**"：新加一台的人会**静默继承**"压测台"这个
+// 角色。中性这一套买的是"`DEFAULT` 这个词说得通"：**角色是常驻服务、进一段 `"root"` 景、
+// 不由编排域起、不上板 / 不上树 / 不绑身份 / 不持树 / 没有眼睛、身子从 initrd 来、没有起手
+// 那几手**。
+//
+// **为什么是关联常量而不是 `Default` trait**：那 34 份是 `pub static`，初始化器**必须是常量
+// 表达式**，而 `Default::default()` 不是 `const`。
+//
+// **`name: ""` 是占位**（零字节的名字非法）：每一台都必须自己写那一格，故它一次都没省下。
+
+impl Identity {
+    /// **什么都没声明的那一形**（中性，不是多数值——见上面那一节）。
+    pub const DEFAULT: Identity = Identity {
+        name: "",
+        kind: ProgramKind::User,
+        spot: Spot::Service,
+        scenes: &["root"],
+        entry: &[],
+    };
+}
+
+impl Relation {
+    /// **什么都没声明的那一形**：不由编排域起、不上板、不上树、不绑身份、不持树、没有眼睛。
+    pub const DEFAULT: Relation = Relation {
+        order: None,
+        presence: false,
+        operator: false,
+        bind: false,
+        holds_tree: false,
+        eyes: None,
+    };
+}
+
+impl Demand {
+    /// **什么都没声明的那一形**：身子从 initrd 来、没有起手那几手、号报"正常退场"。
+    pub const DEFAULT: Demand = Demand {
+        origin: Origin::Initrd,
+        died: env::EXIT_OK,
+        setup: &[],
+    };
+}
+
 /// **程序来源**：这一台的身子的那一段字节**从哪本账里取**。
 ///
 /// # 它为什么窄到只有一句话

@@ -2,9 +2,9 @@
 //!
 //! ```text
 //!   faces! { … }  ⇒  enum Grant { … }                              ← 变体（各自一段名字）
-//!                    impl Grant { COUNT, ALL, at, of_wire, name, mark }
+//!                    impl Grant { COUNT, ALL, at, of_wire, name, mark, MARKS }
 //!                    pub fn grant_of(mark) -> Option<Grant>
-//!                    const _: () = { … };                          ← 位次对齐 / 记号两两不相撞
+//!                    const _: () = { … };                          ← 位次对齐 / 本族记号两两不相撞
 //! ```
 //!
 //! # 这一台是**数出来**才抽的（照实记）
@@ -13,7 +13,7 @@
 //! （[`operator::grant`](crate::system::operator::grant)，七位）落地时**不抽**——一台就抽是投机。
 //! 第二台（[`principal::grant`](crate::system::principal::grant)，两面）落地之后**逐行量了一次**：
 //! 两份去掉注释是 **100 行与 80 行**，逐行比**只有 50 行不同，而那 50 行全是各家自己的事实**
-//! （哪几个变体、哪条线上码落哪一面、记号词根、与谁不相撞）；`at()` / `mark()` 那套 const-fn
+//! （哪几个变体、哪条线上码落哪一面、记号词根）；`at()` / `mark()` 那套 const-fn
 //! 拼缓冲 / `grant_of` / 断言骨架**逐字同构**。⇒ 抽的判据成立，抽走的正是那"逐字同构"的一半。
 //!
 //! # 一族要交代的只有**它自己的事实**
@@ -24,9 +24,16 @@
 //! | `stem` | 记号词根——面名拼在它后面（**面名只有一处**） |
 //! | `name_max` | 面名最长几字节（定长缓冲要多大；**逐变体断言**，写小了当场编不过） |
 //! | `wire_ty` ＋ `wire { … }` | 哪条线上码落哪一面（**穷尽 `match`**：加一条线上动作不补这里 ⇒ 编不过） |
-//! | `distinct` | 它的记号还要与哪几枚不撞（别的族的记号按**字面量**给，不跨族 `use`） |
 //!
 //! 剩下的（位次怎么算、记号怎么拼、认面怎么扫、断言怎么排）**只此一份**。
+//!
+//! # 跨族那一条**不在这里**（这一刀收了它）
+//!
+//! 从前还有第六个参数 `distinct: [...]`：这一族的记号还要与**哪几枚**不撞——而"哪几枚"写的是
+//! 别族的记号**字面量**。那是一张 **O(族数²)** 的手抄表，而且**覆盖不全**：实测三处漏——
+//! `principal-back` 与 `coalition-back` 从未两两判过，`"entry"` 与 `"tip"` 之间没有，
+//! `operator-ask` 与别族的面也没有。今天各族只吐**自己**那几枚（[`Grant::MARKS`]），
+//! 全协议那一判只有一处：[`crate::system`] 的全族总表。
 //!
 //! **照实记（`wire` 那一格一条线上码一行，不并 `|`）**：`macro_rules` 的 `:pat` 不吃顶层的
 //! `|`（那一条留给了 `$a:pat | $b:pat`），并起来就得加括号——而展开之后那对括号又是多余的
@@ -36,6 +43,15 @@
 //! **照实记（这一份注差点自己犯"同一件事说两遍"）**：初版在这里还列了一张"生成的那几格各自
 //! 一句"——而 `COUNT` / `ALL` / `at` / `of_wire` / `name` / `mark` / `grant_of` **自己就带着那几
 //! 段注**（下面那段 `macro_rules` 里逐条写着）。那张表整段删：一份注说一遍。
+//!
+//! # 展开要用到的名字由本文件自己带（照实记）
+//!
+//! 宏体里每一处都写 `$crate::system::faces::…` **全路径**（[`Mark`] 由本文件转出）。从前它写裸
+//! `Mark`，于是**每一个调用点都得先 `use env::Mark;` 而自己一处都不用**——那是一条藏在宏里的
+//! 要求：删掉那行 import 就在调用点报"找不到 `Mark`"。今天调用点一个名字都不用带。
+
+/// 宏展开要用到的记号类型——**由本文件转出**，故调用点不必 import（见上面那一份照实记）。
+pub use env::Mark;
 
 #[macro_export]
 macro_rules! faces {
@@ -54,7 +70,6 @@ macro_rules! faces {
         wire: {
             $($wpat:pat => $wvar:ident,)*
         }
-        distinct: [$($distinct:expr),* $(,)?],
     ) => {
         $(#[$meta])*
         #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -108,7 +123,7 @@ macro_rules! faces {
             /// **实际长度**交给 [`Mark::of_bytes`]（同一条 FNV-1a，两侧各算同一个数）。
             ///
             /// 缓冲够不够由下面那句 `assert!` 钉住：面名比 `name_max` 长 ⇒ **当场编不过**。
-            pub const fn mark(self) -> Mark {
+            pub const fn mark(self) -> $crate::system::faces::Mark {
                 const STEM: &[u8] = $stem.as_bytes();
                 let rest = self.name().as_bytes();
                 assert!(rest.len() <= $name_max, concat!(stringify!($Grant), ": face name too long"));
@@ -124,15 +139,24 @@ macro_rules! faces {
                     n += 1;
                     j += 1;
                 }
-                Mark::of_bytes(&buf, n)
+                $crate::system::faces::Mark::of_bytes(&buf, n)
             }
+
+            /// **本族所有面的记号**（一行一族）——"**全协议记号两两不相撞**"那一张总表读它。
+            ///
+            /// **它为什么在这里**（照实记：这一格是从各族那份手抄清单收来的）：从前那一条由各族
+            /// 自己写 `distinct: [...]`——把"别族所有的记号"抄一遍。那是一张 **O(族数²)** 的手抄
+            /// 表，且**覆盖不全**：实测 `principal-back` 与 `coalition-back` 从未两两判过，
+            /// `"entry"` 与 `"tip"` 之间也没有，`operator-ask` 与别族的面也没有。今天各族只报**自己**
+            /// 那几枚，全表那一次判在 [`crate::system`]（它说得全"全协议有哪些记号"）。
+            pub const MARKS: [$crate::system::faces::Mark; Self::COUNT] = [$( $Grant::$Variant.mark(), )*];
         }
 
         /// **认面**：这枚记号是哪一面。
         ///
         /// **答 `None` 不是"失败"**，是"这一枚不是本族的面"——故服务端据此**不判面**
         /// （各族"还有哪一种孔走到这儿"的正文归各族自己的文件头）。
-        pub fn grant_of(mark: Mark) -> Option<$Grant> {
+        pub fn grant_of(mark: $crate::system::faces::Mark) -> Option<$Grant> {
             let mut i = 0;
             while i < $Grant::ALL.len() {
                 if $Grant::ALL[i].mark().get() == mark.get() {
@@ -143,25 +167,27 @@ macro_rules! faces {
             None
         }
 
-        // ── 面不相撞 ＋ 位次对齐（**编译期**钉住）────────────────────────
+        // ── 位次对齐 ＋ 本族记号两两不相撞（**编译期**钉住）────────────────
         //
         // 那几枚记号各是一枚散列，**撞了就是那次装机塌掉**（`ASK_MARK` 的照实记里那次实测
         // 0/3 就是这么来的）。比的是 `.get()` 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，
-        // 而 `get` 是 `const fn`。别的族的记号由 `distinct` 按**字面量**给（不跨族 `use`）。
+        // 而 `get` 是 `const fn`。
+        //
+        // **跨族那一半不在这里**（照实记）：它从前靠各族手抄一份"别族的记号"，而那张表
+        // **覆盖不全**（实测三处漏，见 [`Grant::MARKS`]）。今天全协议那一判只有一处——
+        // [`crate::system`] 的全族总表，它读的是下面这一枚 `MARKS`。
         const _: () = {
             let all = $Grant::ALL;
             let mut i = 0;
             while i < all.len() {
                 // 位次必须逐位对齐（`ALL` 就是位次表）。
                 assert!(all[i].at() == (i + 1) as u8);
-                // 记号两两不相撞。
+                // 本族记号两两不相撞。
                 let mut j = i + 1;
                 while j < all.len() {
                     assert!(all[i].mark().get() != all[j].mark().get());
                     j += 1;
                 }
-                // 与另外几族的记号不相撞。
-                $(assert!(all[i].mark().get() != $distinct.get());)*
                 i += 1;
             }
         };

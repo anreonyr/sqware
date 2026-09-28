@@ -272,6 +272,19 @@ pub use grant::Grant;
 // `map_seat` / `map_establish` 那三张失败域对照表随之整片退场（`EstablishFail` 那一层不再
 // 出现在这一族：本族只报"这一手没做成"那一格）。
 
+/// **那一段目录的名字**（`/sys/operator` 底下那一段，也即 `/sys/operator/{面名}` 的中间那一段）。
+///
+/// **它为什么不住 [`frame`] 那一格**（照实记：另三家都住各自的 `frame`）：`frame` 里 `NAME`
+/// 这个名字**已经被第七个动作码占了**（`name` 那一原语，`const NAME: u8 = 6;`），而那是**线上
+/// 那一格**、改不得。故本族的这一段名字住这一格——判据是"一个名字一处"，不是"大家都在同一格"。
+///
+/// **它与 [`LINK`](frame::LINK) 是两个事实**（值今天相同是巧合，不是同一条）：`LINK` 是**那条
+/// 通道**的名字（会话两侧按它认领泊位），这一段是**树上那一段目录**的名字。另三族
+/// （`principal` / `coalition` / `control`）的目录名一直都在协议这一层，本族原先写在实现侧
+/// （原 `programs/src/system/operator/mount.rs`，回炉那一刀把四份 `mount.rs` 收了）的字面量里
+/// ——**同一件事两处写**，这一刀补齐。
+pub const NAME: &str = "operator";
+
 pub use frame::{Permit, Ruling};
 pub use frame::{
     ASK_MARK, BAD, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Rule, Said, TIP_LEN, TIP_MARK,

@@ -41,12 +41,11 @@
 //!
 //! # 机制那一半在 [`crate::faces!`]
 //!
-//! 本文件只交代**这一族自己的事实**：两面各叫什么、哪条线上码落哪一面、记号词根、还要与谁
-//! 不相撞。
+//! 本文件只交代**这一族自己的事实**：两面各叫什么、哪条线上码落哪一面、记号词根。**"与别族的
+//! 记号不相撞"那一半不在这里**：它只有一处——[`crate::system`] 的全族总表（照实记见
+//! [`crate::faces!`]）。
 
-use env::Mark;
-
-use super::frame::{BACK, Wire};
+use super::frame::Wire;
 
 crate::faces! {
     /// **一条权柄边界**：一枚 = 一面。两位，位次 1..=2。
@@ -68,16 +67,4 @@ crate::faces! {
         Wire::Enter(_) => Set,
         Wire::Leave(_) => Set,
     }
-    distinct: [
-        BACK,
-        // 另外几族的记号按**字面量**给（不跨族 `use`）：入口通用那一枚、提示那一枚、板那一枚、
-        // 控制面那一枚、树那七位里的第一位、名册那两面。
-        Mark::of("entry"),
-        Mark::of("tip"),
-        Mark::of("board-ask"),
-        Mark::of("control-ask"),
-        Mark::of("operator-ask-part"),
-        Mark::of("principal-ask"),
-        Mark::of("principal-set"),
-    ],
 }

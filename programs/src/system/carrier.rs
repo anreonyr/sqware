@@ -23,6 +23,7 @@ use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 
 use super::control::service::Start;
+use crate::program::Died;
 
 /// **守着这几枚门牌**，直到组坏掉：一场一句话地交给 `on`。
 ///
@@ -52,19 +53,20 @@ use super::control::service::Start;
 /// ——它只被这一趟用。收进来之后它落在这一层：起手的失败域从"闭包里 `Err(Start::Room)`"变成
 /// "这一手答 `Err(Start::Room)`"，**同一格、同一个号**，只是报的时点从起手挪到常驻前一句。
 pub fn carrier<G: Copy>(
+    died: Died,
     faces: &[(PieToken, G)],
     mut on: impl FnMut(G, TaskId, &[u8]),
 ) -> Result<(), Start> {
     // 一、那只组：一枚成员一枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
-    let pile = Pile::unseal(false).map_err(|_| Start::Desk)?;
+    let pile = Pile::unseal(false).map_err(|_| Start::Desk(died))?;
     for (entry, _) in faces {
         pile.attach(&HolePie::from_token(*entry), HoleDir::Pull)
-            .map_err(|_| Start::Desk)?;
+            .map_err(|_| Start::Desk(died))?;
     }
     // 二、收帧那一页：**备一次**，循环里一直用（一页 = 载体的界：任何一条消息一趟都取得出来）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(Start::Room);
+        return Err(Start::Room(died));
     }
     buf.resize(PAGE_SIZE, 0);
     // 三、常驻：这是常态，故等待没有期限。
@@ -72,7 +74,7 @@ pub fn carrier<G: Copy>(
         let (tok, _dir) = match pile.await_(Wait::Forever) {
             Ok(Some(hit)) => hit,
             Ok(None) => continue,
-            Err(_) => return Err(Start::Dead),
+            Err(_) => return Err(Start::Dead(died)),
         };
         // **余下的号**（构造上到不了：组里只挂了这几枚）⇒ 不猜，回去再等。
         let Some(face) = faces

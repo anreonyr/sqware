@@ -39,6 +39,7 @@ use protocol::system::operator::Grant;
 
 use crate::system::control::READY_MS;
 use crate::system::control::service::Start;
+use crate::program::operator::E_TREE;
 use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::system::operator::core::Operator;
 
@@ -89,12 +90,12 @@ pub fn serve() -> Result<(), Start> {
         Wait::AtMost(READY_MS),
     ) {
         Ok(seat) => seat,
-        Err(_) => return Err(Start::Board),
+        Err(_) => return Err(Start::Board(E_TREE)),
     };
     // 提示孔：本线程铸的那一枚（**装配者要它做的三件事都从这里进来**：立一条路 / 协调两格 /
     // 一位客人），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(ocall::TIP_MARK) else {
-        return Err(Start::Tree);
+        return Err(Start::Tree(E_TREE));
     };
     let tip_hole = mail::HolePie::from_token(tip);
     if port::ship(
@@ -105,15 +106,15 @@ pub fn serve() -> Result<(), Start> {
     )
     .is_err()
     {
-        return Err(Start::Tree);
+        return Err(Start::Tree(E_TREE));
     }
     // **一个组**：提示孔 + 每位客人的问话孔。提示孔也挂进来，故"来客人了"与"有人问话"
     // 是**同一个等待**。本线程独享它（`shared = false`）。
     let Ok(pile) = Pile::unseal(false) else {
-        return Err(Start::Desk);
+        return Err(Start::Desk(E_TREE));
     };
     if pile.attach(&tip_hole, HoleDir::Pull).is_err() {
-        return Err(Start::Desk);
+        return Err(Start::Desk(E_TREE));
     }
 
     let mut tree = Operator::new();
@@ -130,7 +131,7 @@ pub fn serve() -> Result<(), Start> {
     // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-        return Err(Start::Room);
+        return Err(Start::Room(E_TREE));
     }
     buf.resize(PAGE_SIZE, 0);
     loop {

@@ -20,9 +20,10 @@
 //! （对不上答 [`pcall::DENIED`]）。理由与持有者那三行见 [`pcall::grant`] 的文件头。
 
 use crate::system::control::service::Start;
+use crate::program::principal::E_PRINCIPAL;
 use env::Wait;
 
-use env::{Name, PieToken, TaskId};
+use env::TaskId;
 use protocol::debug;
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
@@ -33,7 +34,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
 use protocol::system::principal as pcall;
 use crate::system::principal::core::Principal;
-use crate::system::principal::mount;
+use crate::system::mount;
 use protocol::system::principal::PrincipalId;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
@@ -60,14 +61,16 @@ pub fn serve() -> Result<(), Start> {
 
         // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
         let _board = Session::open(assembler, board::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Board)?;
+            .map_err(|_| Start::Board(E_PRINCIPAL))?;
 
-        // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按面给记号与末段名）。
+        // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按"记号 ＋ 面名"给那一枚孔与末段名）。
         //
         // **两面各一枚、不是一枚两面**：本族没有会话，服务端只能从**它自己表里哪一枚孔**收到来
-        // 认面（见文件头）。两枚都长命——铸它们的是本线程自己（同 `operator::mount` 那条照实记）。
-        let (ask, ask_name) = mount::entry(pcall::Grant::Ask).map_err(|_| Start::Tree)?;
-        let (set, set_name) = mount::entry(pcall::Grant::Set).map_err(|_| Start::Tree)?;
+        // 认面（见文件头）。两枚都长命——铸它们的是本线程自己（`Assembly::supervise` 那条照实记）。
+        let (ask, ask_name) = mount::entry(pcall::Grant::Ask.mark(), pcall::Grant::Ask.name())
+            .map_err(|_| Start::Tree(E_PRINCIPAL))?;
+        let (set, set_name) = mount::entry(pcall::Grant::Set.mark(), pcall::Grant::Set.name())
+            .map_err(|_| Start::Tree(E_PRINCIPAL))?;
 
         // **定面先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
         //
@@ -84,17 +87,27 @@ pub fn serve() -> Result<(), Start> {
             Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| Start::Tree)?;
+        .map_err(|_| Start::Tree(E_PRINCIPAL))?;
 
         // 四、上树：分 `/sys`、分 `/sys/principal`、落那两格，再**逐面**查回来验一遍。
+        //
+        // **这一趟住在 [`bridge::land`]**（四族＋驱动四处逐字同构、收在一处）；本处只剩两件
+        // **本族的事实**——路（`/sys` ＋ `/sys/principal`）与那两枚门牌。
+        //
+        // **照实记（`serve_tree` 那一枚壳随回炉退场）**：它原先包着下面这一句，而包的理由只有
+        // 一个——"给这一趟一个名字"。它没有自己的状态、没有自己的判断（`Mine::No` 与 `MS` 都是
+        // 常量），去掉之后调用点直接叫 `land`，读数行一字不变。
+        //
+        // `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**证（`harness` 那几台）。
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Tree)?;
-        serve_tree(
-            &session,
-            [
-                (pcall::Grant::Ask, ask, ask_name),
-                (pcall::Grant::Set, set, set_name),
-            ],
+            .map_err(|_| Start::Tree(E_PRINCIPAL))?;
+        let _ = bridge::land(
+            &operator::Face::from(&session),
+            "principal",
+            &[pcall::DIR, super::SEGMENT],
+            Mine::No,
+            &[(ask_name.as_str(), ask), (set_name.as_str(), set)],
+            Wait::AtMost(MS),
         );
 
         // 四之后：**问面那一枚交给持树者**（`host` = 持树者的号，`Session::open` 收下的那一格）。
@@ -107,10 +120,10 @@ pub fn serve() -> Result<(), Start> {
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| Start::Tree)?;
+        .map_err(|_| Start::Tree(E_PRINCIPAL))?;
 
         // 五、两张表：名册空着，谱系只有根（零号节点）。
-        let book = Principal::new(assembler).map_err(|_| Start::Book)?;
+        let book = Principal::new(assembler).map_err(|_| Start::Book(E_PRINCIPAL))?;
         Ok::<_, Start>((book, ask, set))
     })()?;
 
@@ -118,6 +131,7 @@ pub fn serve() -> Result<(), Start> {
     // **从哪一枚读到就是哪一面** → 把这一批取干净 → 交给 [`turn`]）。这一族没有会话可读记号，
     // 故"面"只有这一条来路。
     carrier(
+        E_PRINCIPAL,
         &[(ask, pcall::Grant::Ask), (set, pcall::Grant::Set)],
         |face, from, frame| turn(&mut book, from, face, frame),
     )
@@ -226,32 +240,3 @@ fn answer(
         },
     }
 }
-
-/// 上树那一趟：**分目录 → 逐面落门牌 → 逐面查回来验一遍**（同 rtc 那一趟）。
-///
-/// **目录那两段各自只走一次**（`/sys` 与 `/sys/principal`）：两面共用它们，而 `open` 是**幂等**
-/// 的——那块窗格已经在就答它那个号（里面有没有东西不管）。**`/sys/principal` 自己不是一格**：
-/// 它是第一条路的前缀走出来的那块 `Pane`（同 `/sys/operator` 那一格，见 [`mount`] 的照实记）。
-///
-/// **两面各自报一行读数**："哪一面没挂上"要看得见，且一面挂不上不拦另一面（同
-/// [`Assembly::mount_grants`](crate::system::Assembly::mount_grants) 那条立场）。
-///
-/// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/subject.rs`）证——它照同一条路
-/// 找上门、问一句、拿回一条号。故本域不自问自答。
-fn serve_tree(session: &Session, faces: [(pcall::Grant, PieToken, Name); 2]) {
-    // **这一趟本身住在 [`bridge::land`]**（四处逐字同构、收在一处；量的行数见它自己的照实记）：
-    // 本手只剩两件本族的事实——路（`/sys` ＋ `/sys/principal`）与那两枚门牌。
-    let list = [
-        (faces[0].2.as_str(), faces[0].1),
-        (faces[1].2.as_str(), faces[1].1),
-    ];
-    let _ = bridge::land(
-        &operator::Face::from(session),
-        "principal",
-        &[pcall::DIR, mount::SEGMENT],
-        Mine::No,
-        &list,
-        Wait::AtMost(MS),
-    );
-}
-

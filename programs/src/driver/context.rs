@@ -112,7 +112,7 @@ impl Context {
 
     /// **上树那一趟**：分目录 → 落门牌 → 查回来 → 按号问名（**四条判据** ＋ 一行读数）。
     ///
-    /// **这一趟本身住在 `bridge::land`**（`system/operator/bridge.rs`）：两处 `serve_tree`、本手、
+    /// **这一趟本身住在 `bridge::land`**（`system/operator/bridge.rs`）：名册 / 盟册两处服务、本手、
     /// `uart::desk::plate` 四处逐字同构，量出来的行数见它的照实记。本手只剩两件**本族的事实**：
     /// 路是**一段** `["device"]`，砖的名字就是本域那一段（`me`），以及末尾那几条**判据**。
     ///

@@ -57,10 +57,18 @@ use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::{self, Source};
 
+use protocol::system::control::frame as cframe;
+
+/// **那一段目录的名字**（`/sys/control` 底下那一段，也即 `/sys/control/{面名}` 的中间那一段）。
+///
+/// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
+/// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
+/// 一条 `const` 就挣不来一个文件。名字的唯一来源在协议那一侧那一格（`cframe::NAME`），这里只引用。
+pub const SEGMENT: &str = cframe::NAME;
+
 pub mod assemble;
 pub mod core;
 pub mod desk;
-pub mod mount;
 pub mod service;
 pub mod supervise;
 

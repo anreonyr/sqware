@@ -56,8 +56,9 @@
 //! ```
 //!
 //! 上树那一条最干净：取面方式与 principal / coalition **逐字同形**——**今天走的就是它**：
-//! 编排域主线程在整表起完之后把它挂到 `/sys/control`（`programs/src/system/control/mount.rs`），
-//! 而"铸入口那一枚必须长命"那一格由它此后进监督那一趟满足（那条挂载路原先死在这里，原委见
+//! 编排域主线程在整表起完之后把它挂到 `/sys/control`（`programs/src/system/mod.rs::Assembly::mount_control`；
+//! 铸那一枚的那一手四族共用，见 `programs/src/system/mount.rs`），而"铸入口那一枚必须长命"那一格
+//! 由它此后进监督那一趟满足（那条挂载路原先死在这里，原委见
 //! `programs/src/system/Assembly::supervise` 的照实记）。真客人是 `harness/src/probe_control.rs`。
 //!
 //! # 已知边界（照实写，不是待办）

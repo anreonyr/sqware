@@ -532,3 +532,90 @@ pub mod supply;
 // `programs/src/system/{core,desk}.rs`（见那一份 `mod.rs` 的照实记）。同理，这里从前还把
 // 它们各自那几件 `pub use` 转出一遍——那是薄封装，早已撤。
 
+// ── 全协议记号：**一处一览 ＋ 一处两两判** ───────────────────────────────
+//
+// 照实记（这一格是回炉那一刀从各族收来的）：从前"记号不相撞"由**每一族自己**写
+// `distinct: [...]`——把**别族所有的记号**手抄一遍。那是一张 **O(族数²)** 的手抄表，**且覆盖
+// 不全**：实测三处一次都没判过（`principal-back` 与 `coalition-back` 之间、`"entry"` 与
+// `"tip"` 之间、`"operator-ask"` 与别族的面之间）。今天各族只吐**自己**那几枚
+// （[`Grant::MARKS`](crate::system::operator::Grant)），本文件把**全协议所有记号**摆成一张表、
+// 判一次：任两枚撞了**当场编不过**（且报在下面这一格——各族不再各自维护一张别人家的清单）。
+
+/// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）。
+///
+/// 一一对应（顺序即上面那份照实记的列举）：`"entry"`（通用入口）／`"tip"`（提示之路——板与树
+/// 两侧**同一位**，故只列一次：它们的字面量本来就同一个）／`"board-ask"`／`"control-ask"`／
+/// `"control-back"`／`"principal-back"`／`"coalition-back"`／`"operator-ask"`。
+///
+/// **它为什么在协议根上**：这几枚散在 `board` / `control` / `principal` / `coalition` 四处，
+/// 而"它们彼此不许撞"这句话不属于其中任何一家——只有说得全"全协议有哪些记号"的那一格能说。
+const LOOSE: &[env::Mark] = &[
+    board::ENTRY_MARK,
+    board::TIP_MARK,
+    board::ASK_MARK,
+    control::ASK_MARK,
+    control::BACK,
+    principal::BACK,
+    coalition::BACK,
+    operator::ASK_MARK,
+];
+
+/// **全协议任两枚记号不许撞**：四族的面 × 别族的面 × 上面那几枚散记号，逐对判一次。
+///
+/// 撞了就是那次装机塌掉（`ASK_MARK` 的照实记里那次实测 `0/3` 就是这么来的）。比的是 `.get()`
+/// 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，而 `get` 是 `const fn`——与
+/// [`faces!`](crate::faces) 里留下的那一半（位次对齐 ＋ 本族两两）同一条口径。
+const _: () = {
+    let fams: [&[env::Mark]; 4] = [
+        &coalition::Grant::MARKS,
+        &control::Grant::MARKS,
+        &operator::Grant::MARKS,
+        &principal::Grant::MARKS,
+    ];
+    let mut f = 0;
+    while f < fams.len() {
+        let a = fams[f];
+        let mut i = 0;
+        while i < a.len() {
+            // 一、与**后面**各族的面（本族内部那一条由 `faces!` 自己判）。
+            let mut g = f + 1;
+            while g < fams.len() {
+                let b = fams[g];
+                let mut j = 0;
+                while j < b.len() {
+                    assert!(
+                        a[i].get() != b[j].get(),
+                        "system: two faces share one mark"
+                    );
+                    j += 1;
+                }
+                g += 1;
+            }
+            // 二、与面之外那几枚。
+            let mut j = 0;
+            while j < LOOSE.len() {
+                assert!(
+                    a[i].get() != LOOSE[j].get(),
+                    "system: a face and a loose mark share one mark"
+                );
+                j += 1;
+            }
+            i += 1;
+        }
+        f += 1;
+    }
+    // 三、面之外那几枚彼此。
+    let mut i = 0;
+    while i < LOOSE.len() {
+        let mut j = i + 1;
+        while j < LOOSE.len() {
+            assert!(
+                LOOSE[i].get() != LOOSE[j].get(),
+                "system: two loose marks share one mark"
+            );
+            j += 1;
+        }
+        i += 1;
+    }
+};
+
