@@ -29,7 +29,9 @@
 //!      —— 前两条是**负证**（有身份、但不是那一位 / 不在那枚盟里），
 //!         第三条是"`Bough` 看的是**支**，不是相等"的正证（q 仍在 p 那一支里），
 //!         第四条是**`Opener` 与 `Trunk` 的分野**：`Opener` 比的是"开着那一格的那条 TID 此刻代表谁"，
-//!         而开者与问的人是**同一条 TID** ⇒ 换代表之后两边一起变 ⇒ 照旧过。
+//!         而开者与问的人是**同一条 TID** ⇒ 换代表之后两边一起变 ⇒ 照旧过；
+//!         第五条是**没记许可**那一格（`Permit::Unset`，见 §五点七）：判据只到"你有没有身份"
+//!         ——它**不判"是不是你"** ⇒ 换了代表那位照样过（`Trunk(p)` 与它的分野就在这一条）。
 //!   6  报一行读数就退场
 //! ```
 //!
@@ -318,6 +320,10 @@ fn main() -> Report<'static> {
     let under_sub = look(&root, dir, pane, UNDER, Wait::AtMost(MS));
     let in_sub = look(&root, dir, pane, IN, Wait::AtMost(MS));
     let open_sub = look(&root, dir, pane, OPEN, Wait::AtMost(MS));
+    // **没记许可那一格**以 `q` 再问一遍：`Unset` 的判据只到"你有没有身份"那一格，它**不判
+    // "是不是你"**——这正是它与 `Trunk(p)`（上面 `is_sub` 答拒）的分野。这一条此前**零断言**：
+    // `mine` 那一格只被用来量「改」那一轴（下面的 `keep`），"用"那一轴没人问过它。
+    let mine_sub = look(&root, dir, pane, MINE, Wait::AtMost(MS));
     // 再用一枚**新孔重落**自己那一格（换绑）：走的就是 `claimable` 那一支。
     let keep: Result<(), Fail> = match mail::unseal_hole(env::Mark::of("rule-entry")) {
         Ok(entry) if mine_id.get() != 0 => at
@@ -326,13 +332,19 @@ fn main() -> Report<'static> {
         _ => Err(Fail::Unknown),
     };
 
-    // 九、一行读数（**错误那一格从数字变成名字**：新面答的是 [`Fail`]，不是裸码）。
+    // 九、**两行**读数（**错误那一格从数字变成名字**：新面答的是 [`Fail`]，不是裸码）。
+    //
+    // **照实记（一行读数有个硬上限：256 字节，这一刀撞上了）**：`debug!` 在核里被
+    // `DBCN_MAX = 256` 截断（`kernel/src/runtime/switcher/envcall/debug.rs`；`runtime::env::debug`
+    // 的正文里也写着"超了就印前 256 字节，**这不是错误**"）。本刀往这一行加了 `mine_sub` 那一格
+    // ⇒ 长度到 **257**，尾巴当场没了：实测那一行停在 `… mine=36 mine_s`，**`keep` 那一格再也
+    // 看不见**（判据还在，读数丢了）。故按"以 `p` 那一趟 / 以 `q` 那一趟"拆两行：一格不少，
+    // 两行都在限内。
     debug!(
         "probe-rule: tree part={} made={made} p={} adopt={} \
          is={is:?} under={under:?} in={inside:?} \
-         is_sub={is_sub:?} under_sub={under_sub:?} in_sub={in_sub:?} \
-         door={} open={open:?} foreign={foreign:?} open_sub={open_sub:?} \
-         trim={} at_pane={on_pane:?} gone_door={on_gone:?} mine={} keep={keep:?} \
+         door={} open={open:?} foreign={foreign:?} \
+         trim={} at_pane={on_pane:?} gone_door={on_gone:?} mine={} \
         ",
         pane_id.get(),
         p.get(),
@@ -340,6 +352,10 @@ fn main() -> Report<'static> {
         door_id.get(),
         trimmed as u8,
         mine_id.get(),
+    );
+    debug!(
+        "probe-rule: tree(q) is_sub={is_sub:?} under_sub={under_sub:?} in_sub={in_sub:?} \
+         open_sub={open_sub:?} mine_sub={mine_sub:?} keep={keep:?}"
     );
 
     // 十、判据：**一例一条**（用户裁定"程序侧 pilot"）。
@@ -398,6 +414,14 @@ fn main() -> Report<'static> {
                 "开者与问的是同一条 TID ⇒ 两边一起变成 q"
             )
         }
+    }
+    // —— 没记许可那一格：**"用"那一轴的第一格**（"你有没有身份"）——它不判"是不是你"。
+    {
+        assert_eq!(
+            mine_sub,
+            Ok(()),
+            "没记许可 ⇒ 只判有没有身份 ⇒ 换了代表那位该照样过（与 Trunk(p) 的分野）"
+        )
     }
     // —— "改"那一轴：归属记的是**命**，换代表之后自己那一格照样改得。
     {
