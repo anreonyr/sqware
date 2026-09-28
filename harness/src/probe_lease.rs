@@ -11,7 +11,7 @@
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
 //!   2  PART  /sys（幂等）+ SEEK ⇒ 那一格的号
-//!   3  LAND  /sys/lease，规矩 = Owner（**这一格归本域**）
+//!   3  LAND  /sys/lease，归属 = 本域（砖上 `owner` 那一格）
 //!   4  **直接死**（不说再见）：本域开的那几枚孔随之封印
 //! ```
 //!
@@ -81,7 +81,7 @@ fn main() -> Report<'static> {
         return bail("probe-lease: no entry");
     };
 
-    // 落牌：**声明归本域**（`Mine::Yes`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
+    // 落牌：**声明归本域**（`Mine::Yes`，砖上 `owner` 那一格记成本域）。落完就走——留成「没主」。
     let landed = sys.bind(me, entry, Permit::Unset, Mine::Yes, Wait::AtMost(MS));
 
     // 读数那一行照旧（两种形状：落上了报号、没落上报失败域那一格的名字）——**判据**在下面那一例里。

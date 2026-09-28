@@ -121,7 +121,8 @@ const TEMP: &str = "temp";
 const AT_PANE: &str = "at-pane";
 /// 规矩 = `Opener(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
 const GONE_DOOR: &str = "gone-door";
-/// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（理由见 `operator::core::ledger` 的 `Owner`）。
+/// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（理由见 `operator::core` 的
+/// `Node::Tile` 的 `owner` 那一格）。
 const MINE: &str = "mine";
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -260,7 +261,8 @@ fn main() -> Report<'static> {
     // 五点七、**"改"那一轴那一格**：本域声明归自己（`Mine::Yes`）。
     //
     // 下面在 `adopt(q)` **之后**再落一次同一格——那是这一刀要量的那件事：**归属记的是"命"而不是
-    // "身份"**（账里那两格 `who` + `pie` 都是任务级的）⇒ 主人**换了代表照样能改自己的格子**，
+    // "身份"**（`owner` 那一格记的是任务；从前那本账里 `who` + `pie` 两格也都是任务级的）
+    // ⇒ 主人**换了代表照样能改自己的格子**，
     // 而同一次 `Trunk(p)` 已经答了 `8`（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
     let mine_id = plate(&at, MINE, Permit::Unset, Mine::Yes);
 

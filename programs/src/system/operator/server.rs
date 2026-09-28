@@ -8,7 +8,7 @@
 //! | 提示之路上的一条路（[`ocall::TipIn::Plate`]） | [`super::plate::plate`]：前缀立窗格 ＋ 末段落格 |
 //! | 提示之路上的协调两格（[`ocall::TipIn::Coord`]） | 本文件那一格 `coord`（门**问的时候**才认，见 [`super::door`]） |
 //! | 提示之路上的一位客人（[`ocall::TipIn::Guest`]） | 客人账（`Desk::admit`） |
-//! | 客人的一句问（[`ocall::Req`]） | [`super::answer::answer`]：七条原语 ＋ 账 |
+//! | 客人的一句问（[`ocall::Req`]） | [`super::answer::answer`]：七条原语 |
 //!
 //! **为什么就一枚线程**：树上那几枚是**一枚只在持它的那张表里有意义的句柄**（`PieToken` = "我这张
 //! 表里的第几个"）。"查到了要把 Pie 授出去"必须由**持有那一枚的那张表**来做——故所有条目只能住
@@ -41,7 +41,6 @@ use crate::system::control::READY_MS;
 use crate::system::control::service::Start;
 use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::system::operator::core::Operator;
-use crate::system::operator::core::ledger::Book;
 
 use super::answer::answer;
 use super::bridge::Coord;
@@ -124,11 +123,9 @@ pub fn serve() -> Result<(), Start> {
     // **本域不在这里认门牌**（照实记：这一刀换过一格）：认那一手住在门口
     // （[`super::door::may`]）——问到门上才认，于是"门那一侧的状态"不再寄在"路那一侧"身上。
     let mut coord = Coord::default();
-    // **那本账**：一格一条，两轴都记（见 [`Book`]）。
-    //
-    // "活着"那一问与树叫的是**同一具身体**（`establish::vested_by`）——账要问的"主人还在吗"
-    // 与树要问的"这一枚还答得出吗"是同一句话，故不另开一个 trait、也不接一枚指针进来。
-    let mut book = Book::new();
+    // **那本账没了**（照实记）：归属从前另住一本（`Book`），它自称"活着那一问与树叫的是同一具
+    // 身体"——正因为是同一句，它只能是树的影子：`land` 那一趟把同一个 `PieToken` 同时交给两处，
+    // 而 `Line` 那一行里另外三格（`name` / `id` / `at`）树上本来就有。影子撤掉，两轴都跟着砖走。
     // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`REQ_LEN`），
     // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
@@ -138,14 +135,7 @@ pub fn serve() -> Result<(), Start> {
     buf.resize(PAGE_SIZE, 0);
     loop {
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
-        let settling = settle(
-            &mut desk,
-            &pile,
-            &tip_hole,
-            &mut coord,
-            &mut tree,
-            &mut book,
-        );
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut tree);
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling {
             Wait::AtMost(SETTLE_MS)
@@ -160,7 +150,7 @@ pub fn serve() -> Result<(), Start> {
         if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, coord, &mut book, &mut buf);
+            serve_one(&mut tree, guest, coord, &mut buf);
         }
         // 三、**看出来的**那一档：那一枚答不出 ⇒ 剔格子（没有"他说走了"那一档）。
         let _ = desk.sweep();
@@ -186,7 +176,6 @@ fn settle(
     tip: &mail::HolePie,
     coord: &mut Coord,
     tree: &mut Operator,
-    book: &mut Book,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 缓冲按**最长那一形**备（立一条路），故另两形也吃得下——小缓冲会把长帧读成"读不懂"。
@@ -204,9 +193,7 @@ fn settle(
         };
         match rec {
             // **装配者要本域立一条路**。
-            ocall::TipIn::Plate { road, count, leaf } => {
-                plate(tree, book, &road[..count], leaf)
-            }
+            ocall::TipIn::Plate { road, count, leaf } => plate(tree, &road[..count], leaf),
             // **一双眼睛**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交
             // 进来（装配者只递号）；从这里往后门禁问得动身份（认那一手在 [`super::door`]）。
             ocall::TipIn::Coord { who, eyes } => match eyes {
@@ -258,7 +245,6 @@ fn serve_one(
     tree: &mut Operator,
     guest: Guest,
     coord: Coord,
-    book: &mut Book,
     buf: &mut [u8],
 ) {
     let Some(ask) = guest.ask() else {
@@ -271,7 +257,7 @@ fn serve_one(
         .recv(buf, Wait::POLL)
         .ok();
     let grant = grant_of(mark_of(ask));
-    let said = answer(tree, decoded, guest.who(), coord, book, grant);
+    let said = answer(tree, decoded, guest.who(), coord, grant);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）。
     let _ = Sender::<ocall::Union>::from_token(guest.reply())

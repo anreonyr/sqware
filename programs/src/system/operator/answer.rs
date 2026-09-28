@@ -1,26 +1,23 @@
-//! operator::answer — **适配**：客人的一句问 → 树那七条原语 ＋ 账，编出一句答。
-//!
-//! 它是这一族**唯一**读那本账（[`Book`]）的地方：门外那一问只判"许不许"（[`super::door`]），
-//! 落格那一支只写（[`super::plate`]）。
+//! operator::answer — **适配**：客人的一句问 → 树那七条原语，编出一句答。
 //!
 //! **三道闸，次序即契约**：
 //!
 //! 1. **这一位**（操作面那一维）：会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄
-//!    边界（`find` 会**交出能力**、`trim` 会**毁掉别人那一格**）。**它绝不替代下一道**：拿到
-//!    `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find` 任意一格"。
+//!    边界（`find` 会**交出能力**、`trim` / `part` 会**毁掉别人那一格**）。**它绝不替代下一道**：
+//!    拿到 `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find` 任意一格"。
 //! 2. **门外那一问**（[`super::door::may`]）：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁。
-//! 3. **那一格自己的两轴**：**用**那一轴由树答（[`Operator::permit`] —— 许可跟着那一枚砖走，
-//!    `find` 判它）；**改**那一轴由 [`Ledger::claimable`] 答（`land` / `trim` 判它）。两轴**分开
-//!    住**：许可在树上（它是砖的性质），归属在账上；而两轴都**不在核心**的裁决里（核心是同步
-//!    纯函数，发不出那两条问身份的消息）。
+//! 3. **那一格自己的两轴**：**用**那一轴由 [`Operator::permit`] 答（许可跟着那一枚砖走，
+//!    `find` 判它）；**改**那一轴由 [`Operator::claimable`] 答（`land` / `part` / `trim` 判它）。
+//!    两轴**都住在砖上**，而**分开住**——混成一格就会得出"能改的人自然能用"。它俩都**不问外面**：
+//!    许可是一个值，归属是树自己一次查表（唯一要问外边的那一句是"主人还在不在场"，而那是**读**
+//!    内核盖的那一格，不推不收）。
 
 use protocol::system::operator as ocall;
 use protocol::system::operator::{Grant, Permit};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::system::operator::core::Operator;
-use crate::system::operator::core::ledger::{Book, Key, fresh};
+use crate::system::operator::core::{Key, Operator};
 
 use super::bridge::Coord;
 use super::door::may;
@@ -34,7 +31,6 @@ pub(super) fn answer(
     ask: Option<ocall::Wire>,
     who: env::TaskId,
     coord: Coord,
-    book: &mut Book,
     grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
@@ -63,11 +59,12 @@ pub(super) fn answer(
     // **两轴分家**：
     //
     // - **用**那一轴（谁许用这一格）跟着那一枚砖走，由 [`Operator::permit`] 答；`find` 判它；
-    // - **改**那一轴（谁许改这一格）住在账上，由 [`Book::claimable`] 答；`land` / `trim` 判它。
+    // - **改**那一轴（谁许改这一格）住在砖上，由 [`Operator::claimable`] 答；`land` / `part` /
+    //   `trim` 判它。
     match ask {
         // **`find` 看这一格自己的"用"那一轴**。
         //
-        // **读是公开的，写才归属主**：改那一轴（`land` 那一格的 `mine`，账里记成 `Owner`）
+        // **读是公开的，写才归属主**：改那一轴（`land` 那一格的 `mine`，砖上就是 `owner` 一格）
         // 管的是**改这一格**，不是**用这一格**。
         ocall::Wire::Find(id) => {
             let permit = tree.permit(id);
@@ -77,7 +74,7 @@ pub(super) fn answer(
             }
         }
         ocall::Wire::Trim(id) => {
-            if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
+            if !tree.claimable(Key::Id(id), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
             let ruling = may(tree, coord, who, Permit::Unset);
@@ -110,28 +107,30 @@ pub(super) fn answer(
             //
             // **按坐标查**（不是按号）：`land` 那一问发生在动树之前，而 `land` 换绑**不动号**
             // ——故那一刻手里只有坐标。
-            if !book.claimable(Key::At(at, name), who, |id| fresh(tree, id)) {
+            if !tree.claimable(Key::At(at, name), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
-            // **一问一动**：要位 → 落树 → 记账全在 [`Book::land`] 里，漏不掉中间那一步。
-            // 账上记的只有归属（`mine`）；**许可与那一枚砖一起落**（`tree.land` 那一手，
-            // `permit` 进的是 `Node::Tile`）——故它与树同生，不会"树改了、许可没记上"。
-            return match book.land(at, name, entry, mine, who, || {
-                tree.land(at, name, entry, permit)
-            }) {
+            // **一问一动**：两轴与那一枚砖**一起落**（`tree.land` 那一手的 `Node::Tile`）——
+            // 故"树改了、两轴没记上"这一类**构造上不存在**，这一支没有第二步可漏。
+            // `mine` 线上那一格是裸布尔，在这里折成砖上那 `owner` 一格（`None` = 不留主人）。
+            return match tree.land(at, name, entry, permit, mine.then_some(who)) {
                 Ok(id) => ocall::Union::Entry(id),
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         ocall::Wire::Part { at, name } => {
+            // **那个窄口子也要过「改」那一轴**（照实记：`land` / `trim` 早就过它，**`part` 不过**
+            // ——而 `part` 碰到一枚 `Tile` 会静默把它顶成一块 `Pane`，还顺手把那一枚
+            // `mail::release` 掉：**权力不比 `trim` 小，门却比 `trim` 少一道**）。它与 `land`
+            // 同一把钥匙：按**坐标**问（动手之前，号还不必知道）。
+            //
+            // **落格那条路（`super::plate`）不问**：那是本域替装配者立前缀，本域是那一格的权威
+            // （同 `part` 幂等那一条的立场）。
+            if !tree.claimable(Key::At(at, name), who) {
+                return ocall::Union::Status(ocall::DENIED);
+            }
             return match tree.part(at, name) {
-                Ok(id) => {
-                    // **那个窄口子**：`part` 碰到一枚 `Tile` 会静默把它顶成一块 `Pane`
-                    // ——那一格已经不是"放 Pie 的那一格"了，故账上那一行要销掉。
-                    // （漏了也不会答错：`fresh` 那一次对真相兜着；这只是不让账留一条陈的。）
-                    book.drop(id);
-                    ocall::Union::Entry(id)
-                }
+                Ok(id) => ocall::Union::Entry(id),
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
@@ -155,10 +154,9 @@ pub(super) fn answer(
                 .map(|at| seed = Some(at.seed()))
                 .map_err(|_| ocall::Fail::Unknown);
             });
-            if said == Err(ocall::Fail::Dead) {
-                // 核心**已经**把那一格剔了（"惰性剔死"）——顺手销账，别留一条陈的。
-                book.drop(id);
-            }
+            // **照实记（这一支原先还叫一手 `Book::drop`）**：核心把那一格剔了（"惰性剔死"）
+            // 时，"这一格归谁改"随砖一起没——影子撤掉之后，没有第二本账可销。
+            //
             // 三步都成 ⇒ 答 `[OK][那一格]`；任何一步没成 ⇒ 照旧一格状态（不猜）。
             let fail = said.err().or(grant.err());
             return match (fail, seed) {
@@ -168,14 +166,9 @@ pub(super) fn answer(
                 (None, None) => ocall::Union::Status(ocall::BAD),
             };
         }
-        ocall::Wire::Trim(id) => {
-            let said = tree.trim(id);
-            if said.is_ok() {
-                // 格子从树上没了 ⇒ 那一行也走。
-                book.drop(id);
-            }
-            said
-        }
+        // **照实记（这一支原先两行：`tree.trim` ＋ 一手销账）**：格子从树上没了，那一格的主人
+        // 也就没了——同一件事不必说第二遍。
+        ocall::Wire::Trim(id) => tree.trim(id),
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
         ocall::Wire::List(at) => {
             return match tree.list(at) {

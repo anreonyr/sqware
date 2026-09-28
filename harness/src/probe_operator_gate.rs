@@ -143,7 +143,7 @@ fn main() -> Report<'static> {
     );
 
     // 六、**压住那两格**：`mine = true` 那一轴的判据是"**主人还在不在场**"
-    //    （`Ledger::claimable` → `vested_by`），主人一走那一格就重新可落——那正是 `probe-owner`
+    //    （`Operator::claimable` → `vested_by`），主人一走那一格就重新可落——那正是 `probe-owner`
     //    量过的"接手"那一档。故本台铺完**不能立刻退场**：下一位客人要顶的正是"主人还活着"那一格。
     let _ = runtime::env::room::sleep(core::time::Duration::from_millis(HOLD_MS as u64));
     return Report::note(env::EXIT_OK, OK_NOTE);

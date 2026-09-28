@@ -211,7 +211,7 @@ impl Rein<'_> {
     /// **落**：在 `at` 那一块里给 `name` 贴一枚 `Tile`；答那一格自己的号。
     ///
     /// **两件事都要**：面判（这一柄权许不许 `land`）＋ 那一格自己的 `mine` 那一轴
-    /// （`claimable`，见 `programs/src/system/operator/server.rs`）。四格条件与
+    /// （`Operator::claimable`，见 `programs/src/system/operator/core/mod.rs`）。四格条件与
     /// [`Pane::bind`] 逐格相同（那一枚经会话交给持树者、`permit` / `mine` 两轴随帧走）。
     pub fn land(
         &self,

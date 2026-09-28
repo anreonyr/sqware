@@ -1,13 +1,20 @@
-//! operator::core — **树那一本账**：一张按号排的表 ＋ 八条原语。
+//! operator::core — **树那一本账**：一张按号排的表 ＋ 七条线上原语 ＋ 三条给判据的。
 //!
 //! **照实记（它原先住 `protocol::system::operator::core`）**：那一份的读者只有本域的持树者
 //! （`prog-operator` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
 //! 只留**上线的类型**（`EntryId` / `Where` / `Fail` / `Permit` / `Ruling` 与两条容量）
 //! 与客侧几手。
 //!
-//! 本目录四份：`mod.rs` 树 ＋ `ledger.rs` 归属 ＋ `judge.rs` 门外那一问 ＋
-//! `gate.rs` 裁决折成线上一格。**判定与账同住这一侧**，故 `gate` 那三格线上码与
+//! 本目录三份：`mod.rs` 树（**两轴的事实都住在砖上**）＋ `judge.rs` 门外那一问 ＋
+//! `gate.rs` 裁决折成线上一格。**判定与树同住这一侧**，故 `gate` 那三格线上码与
 //! `frame` 的同步断言也搬到这里（见本文件末尾）。
+//!
+//! **照实记（那本账整本退场）**：归属从前另住一份 `ledger.rs`（`Ledger` / `Line` / `Key` /
+//! `fresh`，305 行），它是树的**一层影子**——`Line` 那四格里 `name` 与 `id` 就是 `Slot` 的名字
+//! 与下标、`at` 走一步就能重算，只有"谁声明了这一格"是新的；而那一格里记的 `PieToken`
+//! 更是砖上那一枚**本身**（`land` 那一趟把同一个值同时交给账与树）。影子因此得靠一次 `fresh`
+//! 对账 ＋ **五处**手写销账来维持"账 ⊆ 树"，而"**与砖同生 ⇒ 那条失效面构造上不存在**"正是上一
+//! 刀刚立过的判据（那时收掉的是许可那一轴）。影子撤掉：两轴在同一张表上一次读出来。
 
 use alloc::vec::Vec;
 
@@ -17,10 +24,9 @@ use protocol::communication::establish::{opened_by, vested_by};
 use protocol::system::operator::frame::{PANE_CAP, ROAD_MAX};
 use protocol::system::operator::{EntryId, Fail, Permit, Where};
 
-// ── 三个子模块 ──────────────────────────────────────────────
+// ── 两个子模块 ──────────────────────────────────────────────
 pub mod gate;
 pub mod judge;
-pub mod ledger;
 
 /// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
@@ -35,13 +41,37 @@ struct Slot {
 enum Node {
     /// 一块 Pane（窗格）：里面是**孩子的号**（按登记序）。**还能往里走**。
     Pane(Vec<EntryId>),
-    /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄；**许可住在它上面**。
+    /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄；**「用」与「改」两轴都住在它上面**。
     ///
-    /// **许可为什么不挂 `Slot`**：① 它只在 `find` 那一问上被读，而 `find` 只认砖 ⇒ 它本来就是
-    /// "一枚砖的性质"；② 挂 `Slot` 会造出"一块 `Pane` 也有许可"这一格，而它今天不存在
-    /// （账的 `fresh` 要求那一号还是砖）；③ `part` 把砖顶成窗格时许可**随砖自然没**，
-    /// 与从前销那一行账的结果逐字相同，不必另写清理。三条合起来：这一格**写不出来**。
-    Tile { pie: PieToken, permit: Permit },
+    /// **两轴为什么不挂 `Slot`**：① 许可只在 `find` 那一问上被读，而 `find` 只认砖 ⇒ 它本来就
+    /// 是"一枚砖的性质"；② 挂 `Slot` 会造出"一块 `Pane` 也有许可 / 也有主人"这两格，而它们
+    /// 今天不存在（`part` 分出来的窗格两样都没有）；③ `part` 把砖顶成窗格时两轴**随砖自然没**，
+    /// 与从前销那一行账的结果逐字相同，不必另写清理。三条合起来：这两格**写不出来**。
+    Tile {
+        pie: PieToken,
+        permit: Permit,
+        /// **这一格归谁改**——「改」那一轴那一句话：`Some(who)` = 当初落牌那一位声明了这一格
+        /// 归他改；`None` = 从没声明过归属 ⇒ 谁都能落（`mine = false` 那一路）。
+        ///
+        /// **为什么记的是"命"不是"身份"**（照实记：这一格从 `f4f0da9` 一直悬着，裁在后来
+        /// "两轴分家"那一刀）——三条理由，一条比一条硬：
+        ///
+        /// 1. **键与护栏必须同级**：这一轴唯一的护栏是"**主人还在不在场**"（[`vested_by`]，
+        ///    问的是砖上那一枚还答不答得出），而**封印是按任务来的**（退场钩子封印该域开的
+        ///    资源）。若键改成身份，护栏就得问"那**一条身份**还在不在场"——而身份**永不消亡**
+        ///    （`principal` 的节点只增不删）⇒ 那条护栏当场失去意义。
+        /// 2. **`mine = true` 是一个动作的产物**："**我**落牌那一刻声明这一格归我"——主语是任务。
+        /// 3. **今天没有客人要那另一种**（"另一枚 TID 代表同一条身份也能改得动"）。
+        ///
+        /// **被否**：把这一格换成身份号。代价两条：① 写那一侧要多问一次名册（`claimable` 之前
+        /// 先换身份），而"用"那一侧才刚为 [`Permit::Opener`] 破过一次"只问一次"；② 键与护栏
+        /// 不同源（理由 1）。换来的是"与用那一轴同键"这点形式上的整齐——不值。
+        ///
+        /// **它为什么不另带一枚 `PieToken`**（照实记：影子账那一版带，撤了）：护栏那一问要的
+        /// 那一枚就是**砖上那一枚**——`land` 那一趟把同一个值同时交给两轴，两者**同生同灭**
+        /// （换绑、顶成窗格、剪掉都一起走）⇒ 账上那一份是多余的拷贝。
+        owner: Option<TaskId>,
+    },
 }
 
 // **照实记（三枚注入的函数指针退场）**：这里从前有 `VestedBy`（那一枚还答得出吗）、
@@ -61,6 +91,20 @@ enum Want {
     Tile,
     /// 要一块 `Pane`（[`Operator::part`]）。
     Pane,
+}
+
+// ── 两把钥匙：「改」那一轴那两问手里各有的凭据 ────────────────
+
+/// **这一格**的两种报法——两种寻址打的是**同一格**（[`Operator::claimable`] 那两问共用它）。
+///
+/// 这不是"省一条查法"：坐标是 `land` / `part` 那一问手里唯一的凭据（那时号还不存在或不必
+/// 知道），而号是 `trim` 那一问手里唯一的凭据（那时坐标早不知道了）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Key {
+    /// 坐标：那一块 `Pane` + 那一段名字（`land` / `part` 那一问手里有的）。
+    At(Where, Name),
+    /// 号：条目自己的号（`find` / `trim` 手里有的）。
+    Id(EntryId),
 }
 
 // ── 树 ──────────────────────────────────────────────────────
@@ -93,8 +137,14 @@ impl Operator {
 
     /// **落**：在 `at` 那一块 `Pane` 里，给 `name` 这一格贴一枚 `Tile`；答**那一格自己的号**。
     ///
-    /// `permit` 是**落牌的人给这一格声明的「用」那一轴**（谁许用这一格）——它与那一枚砖一起
-    /// 落、一起没：换绑覆写它，`part` 顶成窗格时它随之消失，`trim` 剪掉时同理。
+    /// `permit` 是**落牌的人给这一格声明的「用」那一轴**（谁许用这一格），`owner` 是同一趟声明的
+    /// **「改」那一轴**（归谁改，`owner` 那一格）——**两轴都与那一枚砖一起落、一起没**：
+    /// 换绑覆写它们，`part` 顶成窗格时随之消失，`trim` 剪掉时同理。
+    ///
+    /// **`owner` 为什么是一格 `Option<TaskId>` 而不是 `mine: bool` ＋ `who`**：那两个是**一轴的
+    /// 两半**（"归我" ＋ "我是谁"），四组合里只有两个有意义——`mine = false` 时那个 `who` 谁也不
+    /// 读。收成一格之后"没记主人"是一个**值**，不是一句要自己遵守的纪律（同上一刀把三格可选收成
+    /// 一格 [`Permit`] 那一手）。线上那一格 `mine` 由适配层折过来（`answer.rs`）。
     ///
     /// 四条判据，一条不多：
     ///
@@ -105,8 +155,15 @@ impl Operator {
     /// - 那一块 `Pane` 已经有 [`PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
     /// **答的是号**（不是一格状态）：这是"号出门"那一手——立的人自己知道它立成了几号。
-    pub fn land(&mut self, at: Where, name: Name, pie: PieToken, permit: Permit) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Tile { pie, permit }, Want::Tile)
+    pub fn land(
+        &mut self,
+        at: Where,
+        name: Name,
+        pie: PieToken,
+        permit: Permit,
+        owner: Option<TaskId>,
+    ) -> Result<EntryId, Fail> {
+        self.put(at, name, Node::Tile { pie, permit, owner }, Want::Tile)
     }
 
     /// **分**：在 `at` 那一块 `Pane` 里，给 `name` 这一格放一块 `Pane`；答那一格自己的号。
@@ -271,6 +328,38 @@ impl Operator {
         }
     }
 
+    /// **这一格归不归 `who` 改**——「改」那一轴由树自己答。
+    ///
+    /// 四支，每一支一个理由：
+    ///
+    /// - 那一格**不是砖**（没铸过 / 剪掉 / 剔死 / 是一块 `Pane`）⇒ **可以**：没有砖就没有主人，
+    ///   而 `part` 分出来的窗格这一轴压根没有；
+    /// - 砖上**没记主人** ⇒ **可以**（从没声明过归属；`mine = false` 落的牌走这一支）；
+    /// - 就是他 ⇒ **可以**（主人改自己的格子，包括用 `mine = false` 重绑一次放弃）；
+    /// - 主人**不在场**（那一枚答不出）⇒ **可以**——这就是"规矩属于**活着的**主人"。
+    ///
+    /// 两个门里的那一问（一轴一件事）：
+    ///
+    /// - **不是"这一格归谁"**（答主人是谁）：没有任何客人问得出它，故那一格不落地；
+    /// - **不是"不许改"**：不许是适配层把它翻成线上一格码的事（`answer.rs` 那一侧），核只答
+    ///   "归不归"。（同 [`Operator::permit`]：核答那一句话，门前那一问由 `door.rs` 做。）
+    ///
+    /// **不在这里对账**（照实记：影子账那一版每次查都得问"那一号此刻还是砖吗"并顺手销陈账）：
+    /// 今天这一问就是 [`Operator::slot_at`] 那一次查表——**影子没有了，也就没有"对不上"这一格**。
+    pub fn claimable(&self, key: Key, who: TaskId) -> bool {
+        let Some(Slot {
+            node: Node::Tile { pie, owner, .. },
+            ..
+        }) = self.slot_at(key)
+        else {
+            return true;
+        };
+        match owner {
+            None => true,
+            Some(owner) => *owner == who || vested_by(*pie).is_none(),
+        }
+    }
+
     // ── 走路 ────────────────────────────────────────────────
 
     /// 落 / 分共用的那一手：在 `at` 那一块 `Pane` 里给 `name` 立一格（或换绑那一格）。
@@ -315,9 +404,9 @@ impl Operator {
                 }
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
-                // 如实报"在仓里另外两处都是 `try_reserve → Full`：`Desk::admit`
-                // （`crates/protocol/src/system/desk.rs`）与 `Ledger::land`
-                // （`crates/protocol/src/system/operator/core/ledger.rs`）。**同一句话，三处一个纪律。**
+                // 如实报"在仓里另外一处是 `try_reserve → Full`：`Desk::admit`
+                // （`crates/protocol/src/system/desk.rs`）。**同一句话，两处一个纪律**
+                // （照实记：原先第三处是那本影子账的 `Ledger::land`，它随影子一起退场了）。
                 //
                 // 两处都要长：一格住 `slots`，一个号进 `root` 或某个 `Pane` 的 children。
                 // 先要位再落格 ⇒ 半路失败**不留半个状态**（下面两处 `push` 都不会再分配）。
@@ -369,6 +458,17 @@ impl Operator {
     /// 这一格是"号就是下标"那一句的全部实现：**一趟查表，不递归、不扫树**。
     fn slot(&self, id: EntryId) -> Option<&Slot> {
         self.slots.get(id.get()).and_then(Option::as_ref)
+    }
+
+    /// 按 [`Key`] 那两把钥匙取那一格（只读）。两种寻址**打的是同一格**（见 [`Key`]）。
+    ///
+    /// 坐标那一路走的就是 [`Operator::put`] 头一步那一趟（[`Operator::kids`] ＋
+    /// [`Operator::child`]）：`land` / `part` 那一问发生在**动树之前**，故它得自己先走这一趟。
+    fn slot_at(&self, key: Key) -> Option<&Slot> {
+        match key {
+            Key::Id(id) => self.slot(id),
+            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name)?),
+        }
     }
 
     /// 在这一块 `Pane` 的孩子里按名字找那个号（只读一趟扫，最多 `PANE_CAP` 次查表）。
