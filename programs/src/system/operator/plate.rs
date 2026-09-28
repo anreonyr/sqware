@@ -12,7 +12,7 @@
 
 use env::{Name, PieToken};
 use protocol::debug;
-use protocol::system::operator::{Rule, Where};
+use protocol::system::operator::{Permit, Where};
 
 use crate::system::operator::core::Operator;
 use crate::system::operator::core::ledger::Book;
@@ -58,11 +58,12 @@ pub(super) fn plate(tree: &mut Operator, book: &mut Book, road: &[Name], leaf: P
             Err(fail) => debug!("operator: plate pane {:?}", fail),
         };
     }
-    // **末段是叶子**：`Rule::Public` ＋ **不留主人**（`mine = false`）——与 `/sys/principal` /
-    // `/sys/coalition` 两处门牌同一格：任何已绑身份都取得回，而"改这一格"不归谁。
+    // **末段是叶子**：没有许可（`Permit::Unset`）＋ **不留主人**（`mine = false`）——与
+    // `/sys/principal` / `/sys/coalition` 两处门牌同一格：任何已绑身份都取得回，而"改这一格"
+    // 不归谁。
     let who = runtime::env::unit::sire();
-    match book.land(at, last, leaf, Rule::Public, false, who, || {
-        tree.land(at, last, leaf)
+    match book.land(at, last, leaf, false, who, || {
+        tree.land(at, last, leaf, Permit::Unset)
     }) {
         Ok(id) => debug!("operator: plate landed {} id={}", last.as_str(), id.get()),
         Err(fail) => debug!("operator: plate land {:?}", fail),

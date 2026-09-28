@@ -25,19 +25,19 @@
 //! 整机起不来）。那条短路还在，故这一格连"模型里的一格"都不是了 ⇒ 连同它的来源 `Blind`
 //! 一起删。
 //!
-//! # 默认策略 = 公开
+//! # 默认策略 = 没有许可
 //!
-//! [`Rule::Public`] 的含义是"**任何已绑身份都可以**"——没绑的仍然不行（那是 [`judge`] 的第一格）。
-//! 它今天是**"这一格没记过规矩"那一条**的答案（逐格规矩住在 [`ledger`](super::ledger) 里，
-//! 见 [`Ledger::rule`](super::ledger::Ledger::rule)）：`part` 分出来的格子本来就没有规矩。
+//! [`Permit::Unset`] 的含义是"**这一格没记许可**"——判据只要求"有身份"（没绑的仍然不行，那是
+//! [`judge`] 的第一格）。它今天是**"这一格没记过"那一条**的答案（许可跟着那一枚砖走，
+//! 见 [`Operator::permit`](super::Operator::permit)）：`part` 分出来的格子本来就没有。
 //! **默认必须是它**，否则既有的 11 条 `tree part=0 … land=0 find=0 got=true` 会当场塌。
 //!
 //! 照实记：上一刀这里写的是"条目上还没有逐格规则（那是下一刀）"——那一刀所有条目共用这一条
-//! 常量，故 `judge` 里 `Is` / `Under` / `In` 三条判据**一次没被问过**；这一刀通了它们。
+//! 常量，故 `judge` 里 `Trunk` / `Bough` / `Among` 三条判据**一次没被问过**；后一刀通了它们。
 
 use env::TaskId;
 
-use protocol::system::operator::{Id, Rule, Ruling};
+use protocol::system::operator::{Permit, Ruling};
 
 use super::judge::{Facts, judge};
 
@@ -83,7 +83,7 @@ impl Code {
     }
 }
 
-/// 判一格：`facts` 是那几条边（[`Facts`] 的四问），`rule` 是那一格自己的规矩。
+/// 判一格：`facts` 是那几条边（[`Facts`] 的四问），`permit` 是那一格自己那一句话。
 ///
 /// **照实记（这里原先还站着一层 trait，已折平）**：从前本文件有一枚 `Control`（四问 ＋
 /// `has_face`）、一枚"还没有门牌"的假实现 `Blind`，以及一枚把 `Control` 四问逐个转发成
@@ -92,8 +92,8 @@ impl Code {
 /// **`Facts` 就是 `judge` 直接问的那四条边**（定义在 `judge.rs`），本文件只做"判 → 线上码"
 /// 这一手。`Code::Blind` 随之退场：它只可能由 `has_face() == false` 产生，而那条路
 /// （"手里还没门牌"）生产里由 `may` 在更早处短路。
-pub fn verdict(facts: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Code {
-    match judge(facts, who, rule) {
+pub fn verdict(facts: &impl Facts, who: TaskId, permit: Permit) -> Code {
+    match judge(facts, who, permit) {
         Ruling::Allow => Code::Ok,
         Ruling::Deny => Code::Denied,
         Ruling::Unjudged => Code::Unjudged,

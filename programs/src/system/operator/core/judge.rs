@@ -1,7 +1,7 @@
 //! operator::core::judge —— **门外那一问**：这一位许不许动这一格。**不带载体、不碰内核。**
 //!
 //! **照实记（它原先住 `protocol::system::operator::core::judge`）**：那一份同时养着两半——
-//! **上线的两样**（`Id` / `Rule` / `Ruling`，归 protocol）与**判据那一半**（`Facts` 四问 ＋
+//! **上线的两样**（`Permit` / `Ruling`，归 protocol）与**判据那一半**（`Facts` 四问 ＋
 //! `judge`）。判据的读者只有本域，故它回实现侧；两侧之间的缝就是那一个 [`Facts`]。
 //!
 //! 三格答案的意义（`Allow` / `Deny` / `Unjudged`）与"哪些因会好"照实记在协议那一侧
@@ -9,7 +9,9 @@
 
 use env::TaskId;
 
-use protocol::system::operator::{EntryId, Id, Rule, Ruling};
+use protocol::system::coalition::CoalitionId;
+use protocol::system::operator::{EntryId, Permit, Ruling};
+use protocol::system::principal::PrincipalId;
 
 // ── 门外那一问要问的四条边（**一个** trait）─────────────────
 
@@ -38,26 +40,33 @@ use protocol::system::operator::{EntryId, Id, Rule, Ruling};
 ///   四条边同形，缺一条就不是"四问"了）。
 ///
 /// 答的是 **TID 不是号**：树的读答"谁开的这扇门"（内核戳），名册那一边答"这个 TID 是谁"
-/// ——两件事两个落点，故 `Rule::Opens` 那一格要走两问。
+/// ——两件事两个落点，故 `Permit::Opener` 那一格要走两问。
+///
+/// **四问的荷载是真的类型**（`PrincipalId` / `CoalitionId` / `EntryId`）：两个号空间本来不同型，
+/// 混用是编译错误——故这几格的签名各自点名，不经一个裸 `u64` 中转。
 pub trait Facts {
-    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()>;
-    fn heir(&self, a: Id, b: Id) -> Result<bool, ()>;
-    fn amid(&self, me: Id, at: Id) -> Result<bool, ()>;
+    fn who(&self, tid: TaskId) -> Result<Option<PrincipalId>, ()>;
+    fn heir(&self, a: PrincipalId, b: PrincipalId) -> Result<bool, ()>;
+    fn amid(&self, me: PrincipalId, at: CoalitionId) -> Result<bool, ()>;
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()>;
 }
 
 // ── 那一问 ─────────────────────────────────────────────────
 
-/// 判一格。`who` 是内核在 `Push` 那一刻盖的章；`rule` 是那一格自己的规矩。
+/// 判一格。`who` 是内核在 `Push` 那一刻盖的章；`permit` 是那一格自己那一句话。
 ///
 /// **先问身份**——这一格是契约的一半：
 ///
 /// - 先问：`who` 答不出就当场 [`Ruling::Deny`]，后面那几条边**一次都不发**（省一次 envcalls，
 ///   也让"没身份"与"不在支里"不会混成同一个答案）；
-/// - **只问一次**——[`Rule::Opens`] 那一格是唯一的例外：它要**再问一次名册**，问的是**另一条
+/// - **只问一次**——[`Permit::Opener`] 那一格是唯一的例外：它要**再问一次名册**，问的是**另一条
 ///   TID**（那一格的开者）"此刻代表谁"。这是晚绑定的代价，写在签名边上，不藏在实现里
 ///   （照实记：这一句原来写的是"只问一次"，一个字不含糊；加第五格时它被破了，故改口径）。
-pub fn judge(f: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Ruling {
+///
+/// **`Unset` 只许住下面那一格**：它是"这一格没记许可"，判据到此为止（要的事实就是上面那一问
+/// 的答案）。**不许把它提到 `who` 之前**——那样"没绑身份"就不再是 [`Ruling::Deny`]，
+/// 那道门会静默变成放行。
+pub fn judge(f: &impl Facts, who: TaskId, permit: Permit) -> Ruling {
     // 一、谁在问。没绑 ⇒ 没资格（编排域落的正是这一格）；**问不到 ⇒ 判不了**。
     let Some(me) = (match f.who(who) {
         Ok(found) => found,
@@ -65,16 +74,16 @@ pub fn judge(f: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Ruling {
     }) else {
         return Ruling::Deny;
     };
-    // 二、照规则问那一句。**三种"答不是"都是 `Ok(false)`，不是失败**。
-    match rule {
-        Rule::Public => Ruling::Allow,
-        Rule::Is(p) => allow(me == p),
-        Rule::Under(p) => match f.heir(p, me) {
+    // 二、照那一句话问那一条边。**三种"答不是"都是 `Ok(false)`，不是失败**。
+    match permit {
+        Permit::Unset => Ruling::Allow,
+        Permit::Trunk(p) => allow(me == p),
+        Permit::Bough(p) => match f.heir(p, me) {
             Ok(true) => Ruling::Allow,
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
         },
-        Rule::In(c) => match f.amid(me, c) {
+        Permit::Among(c) => match f.amid(me, c) {
             Ok(true) => Ruling::Allow,
             Ok(false) => Ruling::Deny,
             Err(()) => Ruling::Unjudged,
@@ -82,7 +91,7 @@ pub fn judge(f: &impl Facts, who: TaskId, rule: Rule<Id, Id>) -> Ruling {
         // 三、**两问**：先问树"那一格谁开着"，再问名册"那位此刻代表谁"。两问的失败域各自落格，
         //    与上面几条同一分法：**"没有那一位"是判不了**（三因同落，其中两因永久，见 [`Facts::opens`]），
         //    **"那一位没身份"是终态拒**。
-        Rule::Opens(at) => match f.opens(at) {
+        Permit::Opener(at) => match f.opens(at) {
             Ok(Some(that)) => match f.who(that) {
                 Ok(Some(theirs)) => allow(me == theirs),
                 Ok(None) => Ruling::Deny,

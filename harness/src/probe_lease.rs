@@ -34,7 +34,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
-use protocol::system::operator::Rule;
+use protocol::system::operator::Permit;
 
 
 use env::Name;
@@ -82,7 +82,7 @@ fn main() -> Report<'static> {
     };
 
     // 落牌：**声明归本域**（`Mine::Yes`，账里记成 `Owner`）。落完就走——那一格留成「没主」。
-    let landed = sys.bind(me, entry, Rule::Public, Mine::Yes, Wait::AtMost(MS));
+    let landed = sys.bind(me, entry, Permit::Unset, Mine::Yes, Wait::AtMost(MS));
 
     // 读数那一行照旧（两种形状：落上了报号、没落上报失败域那一格的名字）——**判据**在下面那一例里。
     match &landed {

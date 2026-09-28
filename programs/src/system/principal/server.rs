@@ -24,7 +24,7 @@ use protocol::communication::session::Session;
 use crate::system::board::client as board;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::Rule;
+use protocol::system::operator::Permit;
 use protocol::system::principal as pcall;
 use crate::system::principal::core::Principal;
 use protocol::system::principal::PrincipalId;
@@ -213,7 +213,7 @@ fn serve_tree(session: &Session, entry: PieToken) {
     // **落门牌**：答的是门牌自己那一格的号。
     let landed = match &opened {
         Ok(at) => at
-            .bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS))
+            .bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS))
             .map(|plate| plate.id()),
         Err(fail) => Err(*fail),
     };

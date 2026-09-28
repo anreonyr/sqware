@@ -72,6 +72,21 @@ impl Id for PrincipalId {
     }
 }
 
+/// 这一枚号在线上是 **8 字节小端**——口径与 `operator::EntryId` 那一处相同（**impl 跟着类型走**，
+/// `env` 不认识 [`PrincipalId`]）。读的那一侧**不校验"还在不在"**：解出来的号在不在谱系里由
+/// 核心答。
+impl env::wire::Field for PrincipalId {
+    const WIDTH: usize = 8;
+
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes());
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(Self::from_bytes(bytes.get(..8)?.try_into().ok()?))
+    }
+}
+
 // ── 失败域 ──────────────────────────────────────────────────
 
 /// 失败域：三格，每格一个**不同的下一步**。

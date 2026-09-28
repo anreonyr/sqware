@@ -1,54 +1,54 @@
 #![no_std]
 #![no_main]
 
-//! probe-rule — **规矩那一格的证客**：一位**有身份**的任务把"这一格谁许用"落成
-//! `Rule::Is` / `Under` / `In` / `Opens`，然后**自己按身份试几遍**，最后**换一条身份再试**。
+//! probe-rule — **许可那一格的证客**：一位**有身份**的任务把"这一格许给谁"落成
+//! `Permit::Trunk` / `Bough` / `Among` / `Opener`，然后**自己按身份试几遍**，最后**换一条身份再试**。
 //!
-//! 门禁那一刀的正文里，"用"那一轴（谁许用这一格）有**五条**判据（公开 / 就是某一位 /
-//! 在某一位那一支里 / 在某枚盟里 / 就是开着某一格的那一位），而上一刀的真机上只有一条通电：
-//! `DEFAULT_RULE` 是一条全局常量，`Is` / `Under` / `In` 三条**一次没被问过**。本程序把它们搬到
-//! 真机上——一台客人演两个身份，故"规矩随**身份**走、不随 TID 走"这一条也在同一行读数里。
+//! 门禁那一刀的正文里，"用"那一轴（谁许用这一格）有**四条**判据（就是某一位 / 在某一位那一支里 /
+//! 在某枚盟里 / 就是开着某一格的那一位），外加"**没记**"那一档；而那一刀的真机上只有"没记"通电：
+//! 所有条目共用一条常量，`Trunk` / `Bough` / `Among` 三条**一次没被问过**。本程序把它们搬到
+//! 真机上——一台客人演两个身份，故"许可随**身份**走、不随 TID 走"这一条也在同一行读数里。
 //!
 //! ```text
 //!   0  上树 + 取两面门牌（名册那一枚 + **盟册那一枚**）
 //!   1  p = resolve(self)；q = derive(p)            —— 我是 p，我底下还有一个 q
 //!   2  分 /sys/rule；落六格：
-//!        is      Rule::Is(p)
-//!        under   Rule::Under(p)
-//!        in      Rule::In(c)                     （c 是本域刚立、刚入的那一枚盟）
+//!        is      Permit::Trunk(p)
+//!        under   Permit::Bough(p)
+//!        in      Permit::Among(c)                     （c 是本域刚立、刚入的那一枚盟）
 //!        door    ——本域自己挂的一枚门牌（一枚 Tile，**开者就是本域**）
-//!        open    Rule::Opens(door 的号)           —— 许给"开着那一格的那位"（正是本域）
-//!        foreign Rule::Opens(/sys/principal 的号) —— 许给"开着**别人**那一格的那位"（不是本域）
-//!        at-pane Rule::Opens(/sys 那一格)        —— 那一号是块 Pane（没有开者）
+//!        open    Permit::Opener(door 的号)           —— 许给"开着那一格的那位"（正是本域）
+//!        foreign Permit::Opener(/sys/principal 的号) —— 许给"开着**别人**那一格的那位"（不是本域）
+//!        at-pane Permit::Opener(/sys 那一格)        —— 那一号是块 Pane（没有开者）
 //!        temp    先落一枚门牌，再**剪掉**它
-//!        gone-door Rule::Opens(temp 那个旧号)     —— 号不重用 ⇒ 那一格永久没有开者
+//!        gone-door Permit::Opener(temp 那个旧号)     —— 号不重用 ⇒ 那一格永久没有开者
 //!   3  以 p 试七遍   ⇒ is / under / in / open 全答 OK(0)、foreign 答 DENIED(8)，
 //!                      而 at-pane 与 gone-door 各答 UNJUDGED(9)（**判不了**，不是拒）
 //!   4  adopt(q)      —— **同一条 TID，换了一位代表**
 //!   5  以 q 再试四遍 ⇒ is 答 DENIED(8)、in 答 DENIED(8)、under 仍答 OK(0)、**open 仍答 OK(0)**
 //!      —— 前两条是**负证**（有身份、但不是那一位 / 不在那枚盟里），
-//!         第三条是"`Under` 看的是**支**，不是相等"的正证（q 仍在 p 那一支里），
-//!         第四条是**`Opens` 与 `Is` 的分野**：`Opens` 比的是"开着那一格的那条 TID 此刻代表谁"，
+//!         第三条是"`Bough` 看的是**支**，不是相等"的正证（q 仍在 p 那一支里），
+//!         第四条是**`Opener` 与 `Trunk` 的分野**：`Opener` 比的是"开着那一格的那条 TID 此刻代表谁"，
 //!         而开者与问的人是**同一条 TID** ⇒ 换代表之后两边一起变 ⇒ 照旧过。
 //!   6  报一行读数就退场
 //! ```
 //!
-//! # `Opens` 那一格：号从**树**上来
+//! # `Opener` 那一格：号从**树**上来
 //!
 //! 前四格只能指"自己人"（自己的号 / 自己那一支 / 自己在的盟），而"把这一格许给
 //! `/sys/principal` 那位"这句话原先**说不出来**：规矩里那个号是裸号，客人手里只有五条窄路，
-//! 没有一条是"按名字点名"。`Opens` 补的正是它——**先 `seek` 把一条路译成号**（名字 → 号，
+//! 没有一条是"按名字点名"。`Opener` 补的正是它——**先 `seek` 把一条路译成号**（名字 → 号，
 //! [`road_id`] 那一手），再把那个号写进规矩；判的时候持树者去问"此刻谁占着那一格"。
 //! **树就是名录**。
 //!
-//! 照实记：`door` 那一格是必要的——`Opens` 的**正证**要一位"自己开着门牌"的客人；而
+//! 照实记：`door` 那一格是必要的——`Opener` 的**正证**要一位"自己开着门牌"的客人；而
 //! `foreign` 那一格指的是一枚**长命**门牌（`/sys/principal`，整轮都活着）⇒ 它的负证**不依赖
 //! 任何次序**（若改指一位用完就退场的客人，那一格会翻成 `9`（判不了）而不是 `8`）。
 //!
 //! # 两格 `UNJUDGED`：这一格里"判不了"第一次上了真机
 //!
 //! 门禁的三格答案里，`UNJUDGED`（判不了）此前**只在宿主靶上有过读数**（那台靶已删）——真机上要
-//! 量到它，得让身份服务**不答**，而那会把整机拆掉。`Opens` 让它可以被**确定性地**量出来，而且两条因
+//! 量到它，得让身份服务**不答**，而那会把整机拆掉。`Opener` 让它可以被**确定性地**量出来，而且两条因
 //! 各不相同：那一号是块 `Pane`（没有开者这一说）、那一格已经**剪掉**（号不重用 ⇒ 永久没有开者）。
 //! 判据里这两格必须落在 `9`：落 `8`（终态拒）会让客人白放弃，落 `0`（放行）等于门禁不存在。
 //!
@@ -56,23 +56,23 @@
 //! ——两类同格是刻意的（客人的下一步相同）。故持树者现在**各说一行读数**
 //! （`operator: opens pane|gone|sealed n=…`）："为什么判不了"从此在真机上看得见。
 //!
-//! 照实记：`gone-door` 那一格顺带把 [`Rule::Opens`] 的一条**已知边界**量成了读数——"那一格被剪
+//! 照实记：`gone-door` 那一格顺带把 [`Permit::Opener`] 的一条**已知边界**量成了读数——"那一格被剪
 //! 掉之后，指它的那条规矩永久判不了（重挂是**新号**）"。
 //!
 //! # 为什么"另一台客人"也要来（`prog-probe-rule-other`）
 //!
-//! `Under(p)` 的**负证**在同一个域里做不到：`q = derive(p)` 一定在 p 那一支里，而 `adopt`
+//! `Bough(p)` 的**负证**在同一个域里做不到：`q = derive(p)` 一定在 p 那一支里，而 `adopt`
 //! 只许**往下**领（`heir(current, q)`）。"不在那一支里"的那一位只能是**另一台**——那正是
 //! `probe-rule-other` 那一格（它顺带对 `foreign` 也量一遍：第三台同样过不去）。
 //!
 //! # 这一台为什么把盟也带上
 //!
-//! `Rule::In` 是全仓**唯一**需要第二枚门牌（盟册）的判据：盟册那一枚没到持树者手里，
+//! `Permit::Among` 是全仓**唯一**需要第二枚门牌（盟册）的判据：盟册那一枚没到持树者手里，
 //! `amid` 就答"问不到"，那一格会翻成 `UNJUDGED(9)`——而**不是** `0` / `8`。故这一台的
 //! `in` 那两格读数同时证两件事：规矩通了，**门也接上了**。
 //!
 //! 照实记：`found()` 只是**立一枚号**，"立了不等于进了"（见 `protocol::system::coalition::core`），
-//! 故本域立完还要 `enter(c)` 一次，否则 `In(c)` 的正证当场变成负证。
+//! 故本域立完还要 `enter(c)` 一次，否则 `Among(c)` 的正证当场变成负证。
 
 // 本文件是一份**独立的 bin**（`harness/Cargo.toml` 的 `prog-probe-rule`），**不进 lib**
 // ——与 `canonical` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
@@ -93,7 +93,7 @@ use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Rule};
+use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face as PrincipalFace;
 use runtime::env::mail;
@@ -106,7 +106,7 @@ const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
 const IN: &str = "in";
-/// 本域**自己挂的那一枚门牌**（一枚 `Tile`，开者就是本域）——`Opens` 要指的就是它。
+/// 本域**自己挂的那一枚门牌**（一枚 `Tile`，开者就是本域）——`Opener` 要指的就是它。
 const DOOR: &str = "door";
 /// 许给"**开着门牌那一格**的那位"的一格 ⇒ **正证**（开者正是本域）。
 const OPEN: &str = "open";
@@ -117,9 +117,9 @@ const OPEN: &str = "open";
 const FOREIGN: &str = "foreign";
 /// 先落、再**剪掉**的一枚门牌——留给下面 `gone-door` 那一格指它那个**旧号**。
 const TEMP: &str = "temp";
-/// 规矩 = `Opens(/sys 那一格)` ⇒ 那一号是块 **`Pane`**（没有开者这一说）⇒ **判不了**。
+/// 规矩 = `Opener(/sys 那一格)` ⇒ 那一号是块 **`Pane`**（没有开者这一说）⇒ **判不了**。
 const AT_PANE: &str = "at-pane";
-/// 规矩 = `Opens(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
+/// 规矩 = `Opener(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
 const GONE_DOOR: &str = "gone-door";
 /// 本域**声明归自己**（`mine = true`）的一格——"**改**"那一轴那一条（理由见 `operator::core::ledger` 的 `Owner`）。
 const MINE: &str = "mine";
@@ -212,18 +212,18 @@ fn main() -> Report<'static> {
 
     // 五、落三格，各带一条规矩。`Mine::No`：这一台证的是**"用"那一轴**，故不声明归属
     //     （那一轴由 `probe-owner` / `probe-lease` 那两台管）。
-    let is_id = plate(&at, IS, Rule::Is(p.get() as u64), Mine::No);
-    let under_id = plate(&at, UNDER, Rule::Under(p.get() as u64), Mine::No);
-    let in_id = plate(&at, IN, Rule::In(c.id().get() as u64), Mine::No);
+    let is_id = plate(&at, IS, Permit::Trunk(p), Mine::No);
+    let under_id = plate(&at, UNDER, Permit::Bough(p), Mine::No);
+    let in_id = plate(&at, IN, Permit::Among(c.id()), Mine::No);
     let made = [is_id, under_id, in_id]
         .iter()
         .filter(|id| id.get() != 0)
         .count();
 
-    // 五点五、**点名那一格**（第五个规矩变体 `Opens`）：
+    // 五点五、**点名那一格**（第五个规矩变体 `Opener`）：
     //   door    —— 本域自己挂的一枚门牌（一枚 `Tile`，**开者就是本域**）
-    //   open    —— 规矩 = `Opens(door 的号)`：许给"开着那一格的那位" ⇒ 正是本域
-    //   foreign —— 规矩 = `Opens(/sys/principal 的号)`：许给"开着**别人**那一格的那位" ⇒ 不是本域
+    //   open    —— 规矩 = `Opener(door 的号)`：许给"开着那一格的那位" ⇒ 正是本域
+    //   foreign —— 规矩 = `Opener(/sys/principal 的号)`：许给"开着**别人**那一格的那位" ⇒ 不是本域
     //
     // 两个号都是**树上换来的**（`road` 把一条路译成号）——那一格的门牌在谁手里，由树说，
     // 不由别人告诉我。故这一台**没有 new 的任何机制**，只是把规矩那一格的号换了个来路。
@@ -231,40 +231,40 @@ fn main() -> Report<'static> {
     // **照实记（这几格的号今天不用留）**：下面那几问按**名**寻（[`look`]），不再按号——
     // 故这几格只留"落上了没有"那一件事，号那一格（旧 `open_id` / `foreign_id` / `at_pane_id` /
     // `gone_id`）随之下岗（`plate` 仍照落，判据一条没动）。
-    let door_id = plate(&at, DOOR, Rule::Public, Mine::No);
-    let _ = plate(&at, OPEN, Rule::Opens(door_id), Mine::No);
+    let door_id = plate(&at, DOOR, Permit::Unset, Mine::No);
+    let _ = plate(&at, OPEN, Permit::Opener(door_id), Mine::No);
     // `/sys/principal` 那一格的号：**点名那一手**（名字 → 号），与 `find_face` 走同一条路。
     //
     // **照实记（旧 `id_of` 只译号，故这里走 `Pane::tile`）**：两手的差别是**重试**，不是飞不飞
     // 门闩——`Pane::tile` 就地问一次（不重试），`Face::tile` 带额度重试。本格用前者：这一台
-    // **不重试**是因为紧跟着那一问（`Opens` 判据）本身要的是"此刻拒"——重试会把"立刻拒"这一格
+    // **不重试**是因为紧跟着那一问（`Opener` 判据）本身要的是"此刻拒"——重试会把"立刻拒"这一格
     // 变松（见 [`denied`](probe_rule_other.rs) 那边量同一件事的那一台）。
     if let Some(principal) = Name::new(pcall::NAME)
         .ok()
         .and_then(|p| root.tile(&[dir, p], Wait::AtMost(MS)).map(|e| e.id()).ok())
     {
-        let _ = plate(&at, FOREIGN, Rule::Opens(principal), Mine::No);
+        let _ = plate(&at, FOREIGN, Permit::Opener(principal), Mine::No);
     }
 
     // 五点六、**"判不了"（`Unjudged`）那两格**——都是确定性的，不看时序：
-    //   at-pane   —— 规矩 = `Opens(/sys 那一格)`：那一号是块 `Pane`，**没有开者这一说**；
-    //   gone-door —— 规矩 = `Opens(temp 那个**旧号**)`：先把 `temp` 落上、再剪掉，
+    //   at-pane   —— 规矩 = `Opener(/sys 那一格)`：那一号是块 `Pane`，**没有开者这一说**；
+    //   gone-door —— 规矩 = `Opener(temp 那个**旧号**)`：先把 `temp` 落上、再剪掉，
     //                而**号不重用** ⇒ 那一格永久没有开者。
     // 照实记：`Unjudged` 这一格此前**只在宿主靶上有过读数**（那台靶已删；身份服务不答那一版在
     // 真机上要拆整机）。这两格与它同格不同因：判据不需要"那一格为什么没人"，只需要"**有没有那一位**"。
-    let _ = plate(&at, AT_PANE, Rule::Opens(sys.id()), Mine::No);
-    let temp_id = plate(&at, TEMP, Rule::Public, Mine::No);
+    let _ = plate(&at, AT_PANE, Permit::Opener(sys.id()), Mine::No);
+    let temp_id = plate(&at, TEMP, Permit::Unset, Mine::No);
     let trimmed = temp_id.get() != 0 && at.trim(temp_id, Wait::AtMost(MS)).is_ok();
-    let _ = plate(&at, GONE_DOOR, Rule::Opens(temp_id), Mine::No);
+    let _ = plate(&at, GONE_DOOR, Permit::Opener(temp_id), Mine::No);
 
     // 五点七、**"改"那一轴那一格**：本域声明归自己（`Mine::Yes`）。
     //
     // 下面在 `adopt(q)` **之后**再落一次同一格——那是这一刀要量的那件事：**归属记的是"命"而不是
     // "身份"**（账里那两格 `who` + `pie` 都是任务级的）⇒ 主人**换了代表照样能改自己的格子**，
-    // 而同一次 `Is(p)` 已经答了 `8`（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
-    let mine_id = plate(&at, MINE, Rule::Public, Mine::Yes);
+    // 而同一次 `Trunk(p)` 已经答了 `8`（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
+    let mine_id = plate(&at, MINE, Permit::Unset, Mine::Yes);
 
-    // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opens` 的正负两面。
+    // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opener` 的正负两面。
     let is = look(&root, dir, pane, IS, Wait::AtMost(MS));
     let under = look(&root, dir, pane, UNDER, Wait::AtMost(MS));
     let inside = look(&root, dir, pane, IN, Wait::AtMost(MS));
@@ -278,7 +278,7 @@ fn main() -> Report<'static> {
 
     // 八、以 `q` 再试——前两条**负证**、第三条仍是正证（"看支不看相等"）；
     //     `open` 那一格**照旧过**：开者与问的人是**同一条 TID**，换代表之后两边一起变成 `q`
-    //     ——这正是"规矩随**身份**走、不随 TID 走"与 `Is` 那一格（拒）的分野。
+    //     ——这正是"规矩随**身份**走、不随 TID 走"与 `Trunk` 那一格（拒）的分野。
     let is_sub = look(&root, dir, pane, IS, Wait::AtMost(MS));
     let under_sub = look(&root, dir, pane, UNDER, Wait::AtMost(MS));
     let in_sub = look(&root, dir, pane, IN, Wait::AtMost(MS));
@@ -286,7 +286,7 @@ fn main() -> Report<'static> {
     // 再用一枚**新孔重落**自己那一格（换绑）：走的就是 `claimable` 那一支。
     let keep: Result<(), Fail> = match mail::unseal_hole(env::Mark::of("rule-entry")) {
         Ok(entry) if mine_id.get() != 0 => at
-            .bind(mine, entry, Rule::Public, Mine::Yes, Wait::AtMost(MS))
+            .bind(mine, entry, Permit::Unset, Mine::Yes, Wait::AtMost(MS))
             .map(|_| ()),
         _ => Err(Fail::Unknown),
     };
@@ -309,7 +309,7 @@ fn main() -> Report<'static> {
 
     // 十、判据：**一例一条**（用户裁定"程序侧 pilot"）。
     //
-    // 照实记：原先这十三条被 `&&` 成**一个** `held`，红了只知道 `probe-rule: a rule did NOT
+    // 照实记：原先这十几条被 `&&` 成**一个** `held`，红了只知道 `probe-rule: a rule did NOT
     // hold`——还得回头看上面那 19 个计数器才认得出是哪一条。现在一例一个名字，而**名字就是
     // 结论**（每一例后面那句"为什么"，与头注里那几条同源）。
     // —— 装配：一条规矩没落上，后面全没意义。故它排第一：红了不会被后面的假红淹没。
@@ -324,7 +324,7 @@ fn main() -> Report<'static> {
     {
         assert_eq!(inside, Ok(()))
     }
-    // —— `Opens` 的正负两面。
+    // —— `Opener` 的正负两面。
     {
         assert_eq!(open, Ok(()))
     }
@@ -347,13 +347,13 @@ fn main() -> Report<'static> {
         assert!(adopt, "adopt(q) 没成功")
     }
     {
-        assert_eq!(is_sub, Err(Fail::Denied), "换代表之后 Is(p) 该拒")
+        assert_eq!(is_sub, Err(Fail::Denied), "换代表之后 Trunk(p) 该拒")
     }
     {
         assert_eq!(in_sub, Err(Fail::Denied), "换代表之后不在那枚盟里了")
     }
     {
-        assert_eq!(under_sub, Ok(()), "q 仍在 p 那一支里 ⇒ Under(p) 照旧过")
+        assert_eq!(under_sub, Ok(()), "q 仍在 p 那一支里 ⇒ Bough(p) 照旧过")
     }
     {
         {
@@ -380,14 +380,14 @@ fn main() -> Report<'static> {
 /// **照实记（收 `&Pane`，task-2 那一刀）**：落那一手在 [`Pane::bind`] 上（宾语 = 那一块窗格），
 /// 故不再收裸 `(talk, link, host)` + 坐标——对端号与那条线都在那一面里面；
 /// `Mine` 那一格也不再中途降成裸布尔。
-fn plate(pane: &Pane<'_>, name: &str, rule: Rule<u64, u64>, mine: Mine) -> EntryId {
+fn plate(pane: &Pane<'_>, name: &str, permit: Permit, mine: Mine) -> EntryId {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("rule-entry")) else {
         return EntryId::new(0);
     };
     let Ok(one) = Name::new(name) else {
         return EntryId::new(0);
     };
-    pane.bind(one, entry, rule, mine, Wait::AtMost(MS))
+    pane.bind(one, entry, permit, mine, Wait::AtMost(MS))
         .map(|landed| landed.id())
         .unwrap_or(EntryId::new(0))
 }

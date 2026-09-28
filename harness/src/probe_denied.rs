@@ -50,7 +50,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
-use protocol::system::operator::{Fail, Rule};
+use protocol::system::operator::{Fail, Permit};
 
 
 use env::Name;
@@ -107,7 +107,7 @@ fn main() -> Report<'static> {
     };
 
     // 三、落牌——**这一手该被拒**。
-    let land = sys.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS));
+    let land = sys.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
     let land_code = match &land {
         // 居然成了：把号也报出来（读数要能指认"哪一格被占了"）。
         Ok(id) => format!("ok id={}", id.id().get()),

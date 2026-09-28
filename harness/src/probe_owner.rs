@@ -41,7 +41,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Rule};
+use protocol::system::operator::{EntryId, Fail, Permit};
 
 use env::Name;
 use protocol::driver;
@@ -105,7 +105,7 @@ fn main() -> Report<'static> {
     let Some(pane) = wait_pane(&tree, dir, service) else {
         return bail("probe-owner: no /device/uart");
     };
-    let land = pane.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS));
+    let land = pane.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
     let land_code = match &land {
         Ok(id) => format!("ok id={}", id.id().get()),
         Err(fail) => format!("{fail:?}"),
@@ -194,7 +194,7 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
                 return Err(Fail::Unknown);
             };
-            match sys.bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS)) {
+            match sys.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS)) {
                 Ok(id) => return Ok(id.id()),
                 Err(Fail::Denied) if left > 0 => {
                     // 还没死透（或我们比它先到）：等一下再来。

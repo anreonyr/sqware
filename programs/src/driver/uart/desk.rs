@@ -26,7 +26,7 @@ use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::{EntryId, Rule};
+use protocol::system::operator::{EntryId, Permit};
 use runtime::env::mail;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -109,13 +109,13 @@ fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     // 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
     let laid_rx = match &opened_pane {
         Ok(pane) => pane
-            .bind(rx_name, rx, Rule::Public, Mine::Yes, ms)
+            .bind(rx_name, rx, Permit::Unset, Mine::Yes, ms)
             .map(|e| e.id()),
         Err(fail) => Err(*fail),
     };
     let laid_tx = match &opened_pane {
         Ok(pane) => pane
-            .bind(tx_name, tx, Rule::Public, Mine::Yes, ms)
+            .bind(tx_name, tx, Permit::Unset, Mine::Yes, ms)
             .map(|e| e.id()),
         Err(fail) => Err(*fail),
     };

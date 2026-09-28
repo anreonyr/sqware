@@ -32,8 +32,8 @@
 //! | `part` **顶掉**一枚 `Tile`（[`Operator::part`](super::Operator::part) 那条照实记） | 客人 |
 //!
 //! 想把"账 ⊆ 树"当不变量，就得给树装三个回调——而**"树不知道规矩"是已定的边界**。
-//! 故这里换一条：**查的时候对一次真相**（[`Ledger::rule`] / [`Ledger::claimable`] 收的那个
-//! `fresh` 闭包），对不上就**顺手销账**。
+//! 故这里换一条：**查的时候对一次真相**（[`Ledger::claimable`] 收的那个 `fresh` 闭包），
+//! 对不上就**顺手销账**。
 //!
 //! 这与仓里已经跑通的**两条判据形状相同**：`find` 的惰性剔死、`claimable` 的"主人不在场"
 //! ——都是"**不问就不动，问了才发现**"。这里是第三处。
@@ -54,7 +54,7 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
-use protocol::system::operator::{EntryId, Fail, Id, Rule, Where};
+use protocol::system::operator::{EntryId, Fail, Where};
 
 use super::Operator;
 
@@ -88,7 +88,7 @@ pub enum Key {
 /// 3. **今天没有客人要那另一种**（"另一枚 TID 代表同一条身份也能改得动"）。
 ///
 /// **被否**：把 `who` 换成身份号。代价两条：① 写那一侧要多问一次名册（`claimable` 之前先换
-/// 身份），而"用"那一侧才刚为 [`Rule::Opens`] 破过一次"只问一次"；② 键与护栏不同源（理由 1）。
+/// 身份），而"用"那一侧才刚为 [`Permit::Opener`] 破过一次"只问一次"；② 键与护栏不同源（理由 1）。
 /// 换来的是"与用那一轴同键"这点形式上的整齐——不值。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Owner {
@@ -96,28 +96,27 @@ pub struct Owner {
     pie: PieToken,
 }
 
-/// 账上的一行：**一格的两轴事实**。
+/// 账上的一行：**这一格归谁改**，以及它的两个键。
 ///
-/// - `rule` = **用**那一轴（谁许用这一格）；
-/// - `owner` = **改**那一轴（谁许改这一格；`None` = 从没声明过归属 ⇒ 谁都能落）。
+/// **「用」那一轴不在这里**——它跟着那一枚砖走（`Node::Tile { pie, permit }`）：许可只在
+/// `find` 那一问上被读，而 `find` 只认砖，故它是砖的性质，不是账的性质。账这一本因此只剩
+/// **归属**那一轴：`owner = None` = 从没声明过归属 ⇒ 谁都能落。
 ///
-/// 两格都必要：把它们混成一格，就会得出"能改的人自然能用"（而反过来才是常见的那一种）。
+/// 两轴仍**必要地分开**：混成一格就会得出"能改的人自然能用"（而反过来才是常见的那一种）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Line<P, C> {
+pub struct Line {
     at: Where,
     name: Name,
     id: EntryId,
-    rule: Rule<P, C>,
     owner: Option<Owner>,
 }
 
-impl<P, C> Line<P, C> {
+impl Line {
     /// 记一行。`mine = false` ⇒ **不留主人**（连"放弃"也走这一条：重绑一次就换人了）。
     pub const fn new(
         at: Where,
         name: Name,
         id: EntryId,
-        rule: Rule<P, C>,
         mine: bool,
         who: TaskId,
         pie: PieToken,
@@ -126,7 +125,6 @@ impl<P, C> Line<P, C> {
             at,
             name,
             id,
-            rule,
             owner: if mine { Some(Owner { who, pie }) } else { None },
         }
     }
@@ -139,27 +137,15 @@ impl<P, C> Line<P, C> {
 /// 它的"活着"那一问与树要的是**同一句**（[`vested_by`]：那一枚还答得出吗），故两边叫的是
 /// **同一个身体**（[`protocol::communication::establish::vested_by`]），不另开一个 trait、
 /// 也不接一枚函数指针进来。
-pub struct Ledger<P, C> {
-    lines: Vec<Line<P, C>>,
+pub struct Ledger {
+    lines: Vec<Line>,
 }
 
-impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
+impl Ledger {
     /// 起一本空账。
     pub const fn new() -> Self {
         Self {
             lines: Vec::new(),
-        }
-    }
-
-    /// 这一格**谁许用**。
-    ///
-    /// 账上没有 ⇒ [`Rule::Public`]（`part` 出来的格子本来就没有规矩）；那一行已陈旧 ⇒ 同上，
-    /// 且**顺手销掉**。**两条都不是失败**——门口那一问没有"我判不了"的余地：判不了要留给
-    /// 问身份那两条边的失败（[`Ruling::Unjudged`](super::judge::Ruling::Unjudged)）。
-    pub fn rule(&mut self, key: Key, fresh: impl Fn(EntryId) -> bool) -> Rule<P, C> {
-        match self.look(key, &fresh) {
-            Some(at) => self.lines[at].rule,
-            None => Rule::Public,
         }
     }
 
@@ -184,8 +170,8 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
 
     /// 找那一行；**陈旧的那一行顺手销掉**（账是缓存，树才是真相）。
     ///
-    /// `fresh` 只会在这一处被叫——而这一处只在"要拒"的支上真的紧（`rule` 那一支是纯查，
-    /// 但同一个 `look` 走两条路，故代价合在一处说）。
+    /// `fresh` 只会在这一处被叫——而它的唯一读者是 [`Ledger::claimable`]（那一问只在"要拒"的
+    /// 支上真的紧）。
     fn look(&mut self, key: Key, fresh: &impl Fn(EntryId) -> bool) -> Option<usize> {
         let at = self.lines.iter().position(|line| match key {
             Key::At(at, name) => line.at == at && line.name == name,
@@ -208,11 +194,11 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
     ///   记账（Ledger::write）     不可能失败（位已经要到了）
     /// ```
     ///
-    /// 反过来（先落树后要位）一旦要位失败，就是"树改了、账没记上" ⇒ 那一格从**私名**回落成
-    /// **公名**（[`Ledger::rule`] 答 [`Rule::Public`]、[`Ledger::claimable`] 答"谁都能落"）
-    /// ——**fail-open**。**照实记**：前身（`Publishers`）在这里是 fail-soft
-    /// （`if try_reserve(1).is_ok()`）；同一个 fail-soft 在两轴上后果不同：改那一轴记不上只是
-    /// 少一条归属账，用那一轴记不上是**开的**。这就是这一格从"顺手修"升成"必需"的原因。
+    /// 反过来（先落树后要位）一旦要位失败，就是"树改了、账没记上" ⇒ 那一格的归属回落成
+    /// **公名**（[`Ledger::claimable`] 答"谁都能落"）——**fail-open，但只在归属那一轴**。
+    /// **照实记（许可那一轴已不在此列）**：许可跟着砖走（`Node::Tile { pie, permit }`），
+    /// 它与落树那一手**同生**（都在 `plant()` 里）⇒ "树改了、许可没记上"这一类**构造上不存在**。
+    /// 剩下的 fail-soft 只值一条归属账，客人重试即自愈。
     ///
     /// **照实记（上一版是一个 `Blank` 令牌，为什么撤了）**：上一版把次序拆成两个办法
     /// （`grow() -> Result<Blank, Fail>` ＋ `write(Blank, Line)`），靠 `Blank` 这个类型逼着
@@ -239,14 +225,13 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule<P, C>,
         mine: bool,
         who: TaskId,
         plant: impl FnOnce() -> Result<EntryId, Fail>,
     ) -> Result<EntryId, Fail> {
         self.lines.try_reserve(1).map_err(|_| Fail::Full)?;
         let id = plant()?;
-        self.write(Line::new(at, name, id, rule, mine, who, entry));
+        self.write(Line::new(at, name, id, mine, who, entry));
         Ok(id)
     }
 
@@ -268,7 +253,7 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
     /// 照实记（`mine = false` 重绑 = 放弃归属）：前身只在 `mine` 为真时才记，旧记录会**永久
     /// 留着**——"改那一轴"因此没有"放弃"这一手。这一刀让它有：主人用一次 `mine = false` 重绑
     /// 就是声明"这一格不归我了"。走得到这一支的只有主人本人或接手者（前面拦着 `claimable`）。
-    fn write(&mut self, line: Line<P, C>) {
+    fn write(&mut self, line: Line) {
         match self
             .lines
             .iter_mut()
@@ -290,23 +275,21 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
 
     /// 账上有几行。
     ///
-    /// **照实记（这一格今天没有读者）**：生产路径不用它（持树者问的是 `rule` / `claimable`：
-    /// "这一格什么规矩、归谁改"）；原先读它的是那台宿主靶（拿它数"重绑不该多出一条"/"失败不留
+    /// **照实记（这一格今天没有读者）**：生产路径不用它（持树者问的是 `claimable`：
+    /// "这一格归谁改"）；原先读它的是那台宿主靶（拿它数"重绑不该多出一条"/"失败不留
     /// 半个状态"）——**那台靶已删**（用户裁定"protocol-case 没必要"）。留着它是因为"账上几行"
-    /// 没有别的门问得出来（另一条读 `rule` 答的是规矩，不是行数）。
+    /// 没有别的门问得出来。
     pub fn len(&self) -> usize {
         self.lines.len()
     }
 }
 
-// ── 本族那一枚具体化：账 ＋ "那一格还是不是那一格"那一问 ────────────
+// ── 本族的账 ＋ "那一格还是不是那一格"那一问 ────────────────────
 
-/// **本族的账**：一格一条，两轴都记（谁许用 / 归谁改）。两轴的号都是**线上那一格号的宽度**
-/// （[`Id`]）：「用」那一轴存身份号或格号，「改」那一轴存落牌那一位的号。
-///
-/// 它是 [`Ledger`] 在**这一族**那一枚具体化。本域另外两册表各有各的正文：本域表上那几枚孔的
-/// 认领在 `operator::claim`，客人那一册在 `crate::system::desk`——**三册不相干**。
-pub type Book = Ledger<Id, Id>;
+/// **本族的账**：一格一条，记**归属**那一轴（谁许改这一格）。「用」那一轴不在这里——它跟着
+/// 那一枚砖走。本域另外两册表各有各的正文：本域表上那几枚孔的认领在 `operator::claim`，
+/// 客人那一册在 `crate::system::desk`——**三册不相干**。
+pub type Book = Ledger;
 
 /// **账对真相的那一问**：那一号此刻还是**一枚 `Tile`** 吗。
 ///

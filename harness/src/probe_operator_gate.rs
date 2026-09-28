@@ -49,7 +49,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Grant, Rule};
+use protocol::system::operator::{EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -233,7 +233,7 @@ fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId 
     loop {
         match tree
             .root()
-            .bind(spot, entry, Rule::Public, mine, Wait::AtMost(MS))
+            .bind(spot, entry, Permit::Unset, mine, Wait::AtMost(MS))
         {
             Ok(id) => return id.id(),
             Err(Fail::Unknown) if left > 0 => {

@@ -48,7 +48,7 @@ use crate::communication::sender::Sender;
 use crate::communication::session::{Berth, Session};
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
-use crate::system::operator::frame::{Id, Rule};
+use crate::system::operator::frame::Permit;
 use crate::system::operator::{EntryId, Grant, Listing, Where};
 
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）。
@@ -72,7 +72,7 @@ pub const fn granted_berth(grant: Grant) -> Berth {
 
 /// 门牌那一格声不声明归属（[`Pane::bind`] 的最后一格）。
 ///
-/// 三台驱动今天都是**公开可查**（[`Rule::Public`]），只在这一格上分家：`uart` 说"这枚读行的
+/// 三台驱动今天都是**公开可查**（没有许可那一档），只在这一格上分家：`uart` 说"这枚读行的
 /// 孔是我的"（[`Mine::Yes`]），`rtc` / `router` 不说（[`Mine::No`]）。
 #[derive(Clone, Copy)]
 pub enum Mine {
@@ -212,13 +212,13 @@ impl Rein<'_> {
     ///
     /// **两件事都要**：面判（这一柄权许不许 `land`）＋ 那一格自己的 `mine` 那一轴
     /// （`claimable`，见 `programs/src/system/operator/server.rs`）。四格条件与
-    /// [`Pane::bind`] 逐格相同（那一枚经会话交给持树者、`rule` / `mine` 两轴随帧走）。
+    /// [`Pane::bind`] 逐格相同（那一枚经会话交给持树者、`permit` / `mine` 两轴随帧走）。
     pub fn land(
         &self,
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule<Id, Id>,
+        permit: Permit,
         mine: Mine,
         wait: Wait,
     ) -> Result<EntryId, Fail> {
@@ -236,7 +236,7 @@ impl Rein<'_> {
                 at,
                 name,
                 entry: shipped,
-                rule,
+                permit,
                 mine: matches!(mine, Mine::Yes),
             },
             wait,
@@ -354,7 +354,7 @@ impl<'a> Pane<'a> {
     /// **落**：在这一块里给 `name` 贴一枚 `Tile`；答那一格自己的号。
     ///
     /// 五格各是这一格的值：**哪一块窗格**（柄）＋ **叫什么**（`name`）＋ **那一枚**（`e`）＋
-    /// **两轴条件**（[`Rule`] 用 / [`Mine`] 改）。不另立一个 struct——那不是语义，是线上那一
+    /// **两轴条件**（[`Permit`] 用 / [`Mine`] 改）。不另立一个 struct——那不是语义，是线上那一
     /// 帧的别名。
     ///
     /// `e` 是客人手里那一枚：它**经会话交给持树者**（`Accord` 一份）后才进帧——报文里走的是
@@ -367,7 +367,7 @@ impl<'a> Pane<'a> {
         &self,
         name: Name,
         e: PieToken,
-        rule: Rule<Id, Id>,
+        permit: Permit,
         mine: Mine,
         wait: Wait,
     ) -> Result<Tile<'_>, Fail> {
@@ -380,7 +380,7 @@ impl<'a> Pane<'a> {
                 at: self.at,
                 name,
                 entry: shipped,
-                rule,
+                permit,
                 // **归不归自己**是语义；编成那一格 bit 只在这一句（`Mine` 不中途降成 `bool`）。
                 mine: matches!(mine, Mine::Yes),
             },

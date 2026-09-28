@@ -75,6 +75,21 @@ impl Id for CoalitionId {
     }
 }
 
+/// 这一枚号在线上是 **8 字节小端**——口径与 `operator::EntryId` 那一处相同（**impl 跟着类型走**，
+/// `env` 不认识 [`CoalitionId`]）。读的那一侧**不校验"铸过没有"**：解出来的号在不在盟册里由
+/// 核心答（`Fail::Unknown`）。
+impl env::wire::Field for CoalitionId {
+    const WIDTH: usize = 8;
+
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes());
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(Self::from_bytes(bytes.get(..8)?.try_into().ok()?))
+    }
+}
+
 // ── 失败域 ──────────────────────────────────────────────────
 
 /// 失败域：**两格**，每格一个**不同的下一步**。

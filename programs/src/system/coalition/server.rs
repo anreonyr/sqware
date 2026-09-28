@@ -30,7 +30,7 @@ use crate::system::coalition::core::Coalition;
 use protocol::system::coalition::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
-use protocol::system::operator::Rule;
+use protocol::system::operator::Permit;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::PrincipalId;
@@ -74,7 +74,7 @@ pub fn serve() -> Result<(), Start> {
         serve_tree(&tree, entry);
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
-        // `Session::open` 收下的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Rule::In`）。
+        // `Session::open` 收下的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Permit::Among`）。
         //
         // 与 principal 那一格同一形状。这一枚在手时权限是
         // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按装配表上那一格
@@ -255,7 +255,7 @@ fn serve_tree(tree: &TreeFace, entry: PieToken) {
     // **落门牌**：答的是门牌自己那一格的号。
     let landed = match &opened {
         Ok(at) => at
-            .bind(me, entry, Rule::Public, Mine::No, Wait::AtMost(MS))
+            .bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS))
             .map(|plate| plate.id()),
         Err(fail) => Err(*fail),
     };

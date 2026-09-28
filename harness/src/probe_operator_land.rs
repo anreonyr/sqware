@@ -52,7 +52,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::{EntryId, Fail, Grant, Rule, Where};
+use protocol::system::operator::{EntryId, Fail, Grant, Permit, Where};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -144,7 +144,7 @@ fn main() -> Report<'static> {
         Where::Root,
         free,
         mint("probe-land-got"),
-        Rule::Public,
+        Permit::Unset,
         operator::Mine::No,
         Wait::AtMost(MS),
     );
@@ -159,7 +159,7 @@ fn main() -> Report<'static> {
         Where::Root,
         own,
         mint("probe-land-mine"),
-        Rule::Public,
+        Permit::Unset,
         operator::Mine::No,
         Wait::AtMost(MS),
     );
@@ -173,7 +173,7 @@ fn main() -> Report<'static> {
         Where::Root,
         own,
         mint("probe-land-again"),
-        Rule::Public,
+        Permit::Unset,
         operator::Mine::No,
         Wait::AtMost(MS),
     );

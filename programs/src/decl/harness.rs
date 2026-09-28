@@ -218,7 +218,7 @@ pub static PROBE_DENIED: Program = Program {
     },
 };
 
-/// **有身份**、但那一格归别人（`Rule::Owner`）⇒ 也拒。
+/// **有身份**、但那一格归别人（声明过归属）⇒ 也拒。
 pub static PROBE_OWNER: Program = Program {
     identity: Identity {
         name: "probe-owner",
@@ -242,7 +242,7 @@ pub static PROBE_OWNER: Program = Program {
     },
 };
 
-/// 有身份的一台把 `Is` / `Under` / `In` 三条规矩落下去（先正证、再负证）。
+/// 有身份的一台把 `Permit::Trunk` / `Bough` / `Among` 三条许可落下去（先正证、再负证）。
 pub static PROBE_RULE: Program = Program {
     identity: Identity {
         name: "probe-rule",

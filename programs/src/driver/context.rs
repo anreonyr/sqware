@@ -35,7 +35,7 @@ use protocol::system::board::ENTRY_MARK;
 use crate::system::board::client as board;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::Rule;
+use protocol::system::operator::Permit;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -134,7 +134,7 @@ impl Context {
         // **落门牌**：答的是门牌自己那一格的号。
         let landed = match &opened {
             Ok(at) => at
-                .bind(who, entry, Rule::Public, mine, ms)
+                .bind(who, entry, Permit::Unset, mine, ms)
                 .map(|plate| plate.id()),
             Err(fail) => Err(*fail),
         };

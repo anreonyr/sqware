@@ -25,7 +25,7 @@ use env::{TaskId, Wait};
 use protocol::debug;
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::CoalitionId;
-use protocol::system::operator::{EntryId, Fail, Id, Rule};
+use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::PrincipalId;
 
@@ -45,7 +45,7 @@ const MS: usize = 1000;
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
 /// 它不去 `seek("/sys/principal")`，理由同那一笔（自指 ⇒ 环）。
 ///
-/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Rule::In`] 那一格答"判不了"
+/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Permit::Among`] 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
 struct Session {
     roster: PrincipalFace,
@@ -60,7 +60,7 @@ impl Session {
     /// 持树者。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ `None`；盟册那枚认不出 ⇒ 只少
-    /// [`Rule::In`] 那一格。
+    /// [`Permit::Among`] 那一格。
     fn of(coord: Coord) -> Option<Session> {
         let roster = PrincipalFace::of(find_face(coord.roster?)?).ok()?;
         let league = coord
@@ -82,34 +82,33 @@ struct Court<'a> {
 }
 
 impl Facts for Court<'_> {
-    fn who(&self, tid: TaskId) -> Result<Option<Id>, ()> {
+    fn who(&self, tid: TaskId) -> Result<Option<PrincipalId>, ()> {
         match self.session.roster.task(tid).principal(Wait::AtMost(MS)) {
-            // **不截断**：号在模型里的宽度就是 8 字节（`judge::Id`）。
-            Ok(found) => Ok(found.map(|p| p.id().get() as Id)),
+            Ok(found) => Ok(found.map(|p| p.id())),
             Err(_) => Err(()),
         }
     }
 
-    fn heir(&self, a: Id, b: Id) -> Result<bool, ()> {
+    fn heir(&self, a: PrincipalId, b: PrincipalId) -> Result<bool, ()> {
         // **柄与参数的方向**：`contains` 发的是 `heir(参数, self)`，故要问 `heir(a, b)`
         // （`a ≼ b`，就是这一条判据的语义）得把 `b` 当柄、`a` 当参数；
         // `principal(a).contains(b)` 问的是 `b ≼ a`——那是另一条判据，不是这一格。
         self.session
             .roster
-            .principal(PrincipalId::new(b as usize))
-            .contains(PrincipalId::new(a as usize), Wait::AtMost(MS))
+            .principal(b)
+            .contains(a, Wait::AtMost(MS))
             .map_err(|_| ())
     }
 
-    fn amid(&self, me: Id, at: Id) -> Result<bool, ()> {
+    fn amid(&self, me: PrincipalId, at: CoalitionId) -> Result<bool, ()> {
         // 盟册那一枚没在手里 ⇒ 答"问不到"，而不是答"否"——**判不了**与"不在那枚盟里"是
         // 两件事，后者会让客人当场放弃。
         let Some(league) = self.session.league.as_ref() else {
             return Err(());
         };
         league
-            .coalition(CoalitionId::new(at as usize))
-            .holds(PrincipalId::new(me as usize), Wait::AtMost(MS))
+            .coalition(at)
+            .holds(me, Wait::AtMost(MS))
             .map_err(|_| ())
     }
 
@@ -149,8 +148,8 @@ impl Facts for Court<'_> {
     }
 }
 
-/// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的规矩判
-/// （[`Ledger::rule`](super::core::ledger::Ledger::rule) 答出来的那一条）。
+/// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
+/// （[`Operator::permit`](super::core::Operator::permit) 答出来的那一句）。
 ///
 /// **装配期根本不在门禁这条轴上**：principal 挂自己门牌那一趟（`part /sys` + `land
 /// /sys/principal`）发生在它的 `serve_tree` 里，而本域**认下它的门牌**与它**拿到身份**
@@ -164,7 +163,7 @@ pub(super) fn may(
     tree: &Operator,
     coord: Coord,
     who: TaskId,
-    rule: Rule<Id, Id>,
+    permit: Permit,
 ) -> Code {
     if coord.roster.is_none() {
         return Code::Ok;
@@ -173,5 +172,5 @@ pub(super) fn may(
         debug!("operator: door has no face");
         return Code::Ok;
     };
-    verdict(&Court { session: &session, tree }, who, rule)
+    verdict(&Court { session: &session, tree }, who, permit)
 }

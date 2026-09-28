@@ -9,12 +9,13 @@
 //!    边界（`find` 会**交出能力**、`trim` 会**毁掉别人那一格**）。**它绝不替代下一道**：拿到
 //!    `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find` 任意一格"。
 //! 2. **门外那一问**（[`super::door::may`]）：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁。
-//! 3. **那一格自己的两轴**：**用**那一轴由 [`Ledger::rule`] 答（`find` 判它）；**改**那一轴由
-//!    [`Ledger::claimable`] 答（`land` / `trim` 判它）。两轴都**不在树里**（树至今不知道"规矩"
-//!    这个词），也**不在核心**（核心是同步纯函数，发不出那两条问身份的消息）。
+//! 3. **那一格自己的两轴**：**用**那一轴由树答（[`Operator::permit`] —— 许可跟着那一枚砖走，
+//!    `find` 判它）；**改**那一轴由 [`Ledger::claimable`] 答（`land` / `trim` 判它）。两轴**分开
+//!    住**：许可在树上（它是砖的性质），归属在账上；而两轴都**不在核心**的裁决里（核心是同步
+//!    纯函数，发不出那两条问身份的消息）。
 
 use protocol::system::operator as ocall;
-use protocol::system::operator::{Grant, Rule};
+use protocol::system::operator::{Grant, Permit};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -61,16 +62,16 @@ pub(super) fn answer(
     //
     // **两轴分家**：
     //
-    // - **用**那一轴（谁许用这一格）住在那一格的账上，由 [`Book::rule`] 答；`find` 判它；
-    // - **改**那一轴（谁许改这一格）同样住在账上，由 [`Book::claimable`] 答；`land` / `trim` 判它。
+    // - **用**那一轴（谁许用这一格）跟着那一枚砖走，由 [`Operator::permit`] 答；`find` 判它；
+    // - **改**那一轴（谁许改这一格）住在账上，由 [`Book::claimable`] 答；`land` / `trim` 判它。
     match ask {
         // **`find` 看这一格自己的"用"那一轴**。
         //
         // **读是公开的，写才归属主**：改那一轴（`land` 那一格的 `mine`，账里记成 `Owner`）
         // 管的是**改这一格**，不是**用这一格**。
         ocall::Wire::Find(id) => {
-            let rule = book.rule(Key::Id(id), |id| fresh(tree, id));
-            let ruling = may(tree, coord, who, rule);
+            let permit = tree.permit(id);
+            let ruling = may(tree, coord, who, permit);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -79,7 +80,7 @@ pub(super) fn answer(
             if !book.claimable(Key::Id(id), who, |id| fresh(tree, id)) {
                 return ocall::Union::Status(ocall::DENIED);
             }
-            let ruling = may(tree, coord, who, Rule::Public);
+            let ruling = may(tree, coord, who, Permit::Unset);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -88,7 +89,7 @@ pub(super) fn answer(
         // 但"往树上挂东西"这件事本身要求来的人是个**已绑身份**——否则没身份的任务就能往命名
         // 空间里塞条目。
         ocall::Wire::Land { .. } => {
-            let ruling = may(tree, coord, who, Rule::Public);
+            let ruling = may(tree, coord, who, Permit::Unset);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -101,7 +102,7 @@ pub(super) fn answer(
             at,
             name,
             entry,
-            rule,
+            permit,
             mine,
         } => {
             // **"改这一格"那一轴**：落之前先看这一格现在归谁——不是我就拒。占了的位置由
@@ -113,9 +114,10 @@ pub(super) fn answer(
                 return ocall::Union::Status(ocall::DENIED);
             }
             // **一问一动**：要位 → 落树 → 记账全在 [`Book::land`] 里，漏不掉中间那一步。
-            // 账上记的那一枚是**落树那一刻挂上去的**（`entry`）：`mine = false` 是**放弃归属**。
-            return match book.land(at, name, entry, rule, mine, who, || {
-                tree.land(at, name, entry)
+            // 账上记的只有归属（`mine`）；**许可与那一枚砖一起落**（`tree.land` 那一手，
+            // `permit` 进的是 `Node::Tile`）——故它与树同生，不会"树改了、许可没记上"。
+            return match book.land(at, name, entry, mine, who, || {
+                tree.land(at, name, entry, permit)
             }) {
                 Ok(id) => ocall::Union::Entry(id),
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),

@@ -4,12 +4,12 @@
 //! probe-rule-other — **另一位客人**：**有身份**地去用别人立了规矩的那几格，期望被拒。
 //!
 //! `probe-rule` 那一台证的是"**规矩随身份走**"（同一个 TID 换一位代表，答案就变了）。
-//! 而 `Rule::Is` 与 `Rule::Under` 各还有一格**只有另一台客人量得到**：
+//! 而 `Permit::Trunk` 与 `Permit::Bough` 各还有一格**只有另一台客人量得到**：
 //!
-//! - `Under(p)` 的负证要一位**不在 p 那一支里**的——同一台客人做不到：`q = derive(p)` 一定
+//! - `Bough(p)` 的负证要一位**不在 p 那一支里**的——同一台客人做不到：`q = derive(p)` 一定
 //!   在 p 那一支里，而 `adopt` 只许**往下**领（`heir(current, q)`，见
 //!   `protocol::system::principal::core` 的 `Principal::adopt` 三格前置）；
-//! - `Is(p)` 的负证要一位**不是 p** 的——`probe-rule` 用 adopt 演过一次，本台再换**一台客人**
+//! - `Trunk(p)` 的负证要一位**不是 p** 的——`probe-rule` 用 adopt 演过一次，本台再换**一台客人**
 //!   演一次：装配期每位都是 `derive(ROOT)` 的**兄弟**，故彼此都不在对方那一支里。
 //!
 //! ```text
@@ -59,7 +59,7 @@ const DIR: &str = "sys";
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opens(/sys/principal 那一格)`（许给**别人**）。
+/// `probe-rule` 落的第三格：规矩 = `Opener(/sys/principal 那一格)`（许给**别人**）。
 const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

@@ -60,9 +60,12 @@ use env::Mark;
 use env::wire::Eyes;
 use env::{Name, PieToken, TaskId};
 
-// **照实记（同一个词的第二件事）**：本文件里的 `Id` 是 `judge` 的**宽度别名**（u64），
-// 与 [`crate::id::Id`]（号的字节面那一枚 trait）同名不同事；trait 只要在作用域里就够用，
-// 故按 `_` 引入——不让两个 `Id` 在同一个文件里争一个名字。
+use crate::system::coalition::CoalitionId;
+use crate::system::principal::PrincipalId;
+
+// **照实记（宽度别名 `Id` 已退场）**：从前本文件有一条 `pub type Id = u64`，给判据那一侧当
+// `PrincipalId` / `CoalitionId` 的**宽度替身**——那时帧不认识那两个号。今天 [`Permit`] 的各格
+// 直接带**真类型**（`PrincipalId` / `CoalitionId` / `EntryId`），那条别名一个读者都没有了，故删。
 use crate::id::Id as _;
 use crate::message::Message;
 
@@ -105,15 +108,15 @@ impl crate::id::Id for EntryId {
     }
 }
 
-/// **号那一格线上是 8 字节小端**——与 [`Id`] 给三条号空间定的同一条规则（那一条 trait 的
-/// `to_bytes` / `from_bytes` 就是这一格的正文）。
+/// **号那一格线上是 8 字节小端**——与 [`crate::id::Id`] 给三条号空间定的同一条规则（那一条 trait
+/// 的 `to_bytes` / `from_bytes` 就是这一格的正文）。
 ///
 /// **照实记（impl 为什么住这一处，不住 `env::wire`）**：impl 跟着类型走——`env` 不认识
 /// [`EntryId`]（依赖是单向的 `protocol → env`），故宽度与字节序只能由定义它的这一处给。
 /// 口径与 `env::wire::Eyes` 那一处相同（`Field` 那一族的正文记着）。
 ///
-/// 读的那一侧**不校验"还在不在"**（[`Id::from_bytes`] 的注）：解出来的号在不在表里由核心答
-/// （[`Fail::Unknown`]）。
+/// 读的那一侧**不校验"还在不在"**（[`crate::id::Id::from_bytes`] 的注）：解出来的号在不在表里
+/// 由核心答（[`Fail::Unknown`]）。
 impl env::wire::Field for EntryId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -133,17 +136,11 @@ pub const PANE_CAP: usize = 16;
 pub const ROAD_MAX: usize = 8;
 
 // ── 号在模型里的宽度 ────────────────────────────────────────
-
-/// 号在模型里的宽度 —— **与它在自己号空间里的宽度一致**（riscv64：`usize` = 8 字节）。
-///
-/// 本文件与 [`gate`](super::gate) 只认识这一格别名，不认识 `PrincipalId` / `CoalitionId`
-/// （那两个号是泛型的 `P` / `C`，见文件头注）。定死宽度是为了让**上帧的那一格**与这里的
-/// 那一格同宽。
-///
-/// 照实记：这一格原先写的是 `u32`，而适配层接的是 `usize`——`Session::who` 那一处写着
-/// `p.get() as u32`，一次**静默截断**。号不上帧的时候看不出来（装配期的号都是小号）；
-/// 这一刀之后号要上帧（8 字节），故一并提宽。
-pub type Id = u64;
+//
+// **照实记（`pub type Id = u64` 已删）**：这一格原先是一条宽度别名，理由是"帧与判据只认识这一
+// 格、不认识 `PrincipalId` / `CoalitionId`（那两个号是泛型的 `P` / `C`）"。`Permit` 带真类型之后
+// 那条理由作废，别名随之一个读者都不剩。宽度本身仍写在 [`crate::id::Id`] 那三条 `to_bytes` /
+// `from_bytes` 里（8 字节小端，就是各号自己的 `Field` 那一格）。
 
 /// **容器坐标**：要动的那一块 `Pane` 在哪。
 ///
@@ -240,23 +237,23 @@ pub enum Fail {
 
 // ── 一格规则 ────────────────────────────────────────────────
 
-/// **这一格谁许用**。五格覆盖"公开 / 就是某一位 / 在某一位那一支里 / 在某枚盟里 /
-/// 就是开着某一格的那一位"。
+/// **这一格谁许用**。四格覆盖"就是某一位 / 在某一位那一支里 / 在某枚盟里 /
+/// 就是开着某一格的那一位"；[`Permit::Unset`] = 没有许可（那一格没记过）。
 ///
 /// `By`（落牌那一位）**不进这一格**：规则改不改由它说了算（判据在适配层），而"谁能改规则"
 /// 与"谁能用这一格"是两个问题——混成一格就会得出"能改的人自然能用"。
 ///
-/// **`Opens` 那一格是"点名那一手"**：前四格只能指到"自己人"（自己的号、自己那一支、自己在的
-/// 盟），而 `Opens` 指的是一格**门牌**——客人用 [`seek`](super::Operator::seek) 把一条路
+/// **`Opener` 那一格是"点名那一手"**：前三格只能指到"自己人"（自己的号、自己那一支、自己在的
+/// 盟），而 `Opener` 指的是一格**门牌**——客人用 [`seek`](super::Operator::seek) 把一条路
 /// 译成号，再把那个号写进规矩，于是「把这一格许给 `/device/uart` 那位」写得出来。名字由树
 /// 提供（**树就是名录**），故规矩里存的是**格号**，不是身份号：判的那一刻才去问"此刻谁占着
-/// 那一格"（晚绑定，与 [`Rule::In`] 同一形状——存一枚盟号，成员现场问）。
+/// 那一格"（晚绑定，与 [`Permit::Among`] 同一形状——存一枚盟号，成员现场问）。
 ///
 /// 照实记：**号不重用**（`core.rs` 只增水位）⇒ 那一格被剪/被顶之后，这一条规矩**永久判不了**
 /// （重挂是**新号**）。这是"此刻占着这一格的那位"的题中之义，不是缺陷；要"换载体规矩不变"
 /// 就得给身份起名字（那是另一条路，今天没有客人要它）。
 ///
-/// ⇒ **这一格的寿命 = 那一格的寿命**：与 [`Rule::Is`] / [`Rule::Under`]（绑在**身份**上、
+/// ⇒ **这一格的寿命 = 那一格的寿命**：与 [`Permit::Trunk`] / [`Permit::Bough`]（绑在**身份**上、
 /// 活到会话结束）不同，它绑在**一次挂载**上。作废之后判出来的是 [`Ruling::Unjudged`]
 /// （"好不了"的那一类）——要修的是**写这条规矩的主人**（重 `land` 一次），客人换目标没用。
 ///
@@ -269,88 +266,94 @@ pub enum Fail {
 ///
 /// # 这一轴**封顶**（用户裁定）
 ///
-/// 上面五格是这一轴的**完备集**：没有组合（合取 / 析取 / 否定），也没有「这一位是什么」
+/// 上面四格是这一轴的**完备集**：没有组合（合取 / 析取 / 否定），也没有「这一位是什么」
 /// 这一族谓词。三条理由，前两条是数不是偏好：
 ///
-/// - **装不下**：线上这一段是 `tag(1) + 号(8)`，而**号那一格只有一格**（[`Rule`] 的 `Field`
-///   那一格）。任何"两句合起来"立刻要第二格号，而 51 → 60 是**纯追加**换来的兼容性
-///   （老帧读不到那两格 ⇒ 逐字回到 [`Rule::Public`]）。
-/// - **问次数长在串行的持树者身上**：今天最坏 [`Rule::Opens`] = **三问**（名册 → 树 → 名册），
+/// - **装不下**：线上这一段是 `tag(1) + 号(8)`，而**号那一格只有一格**（[`Permit`] 的 `Field`
+///   那一格）。任何"两句合起来"立刻要第二格号，而 51 → 60 是**纯追加**换来的兼容性。
+/// - **问次数长在串行的持树者身上**：今天最坏 [`Permit::Opener`] = **三问**（名册 → 树 → 名册），
 ///   其中两次跨域、各带 1s 期限；而持树者是一枚线程——真机量过：一位客人连打约 1030 手同步
 ///   往返，别人的三手（`name` / `trim` / `list`）连着 1 秒过期。组合让每一次 `find` 的嵌套
 ///   问答**随深度增长**。
 /// - **组合要的不是新变体，是一套三值代数**：[`judge`] 里 `Ok(false)`（"不是" ⇒ 终态拒）与
 ///   `Err`（"问不到" ⇒ 判不了）是**两件事**；合取得先定义谁压过谁、要不要短路。那是新维度。
 ///
-/// **要加第六格，得同时有三样**：一位真客人 + 一句它说得出的原话（不是"将来可能"）+
+/// **要加第五格，得同时有三样**：一位真客人 + 一句它说得出的原话（不是"将来可能"）+
 /// 那三问的答案（装在哪一格 / 判一次问几次 / 写完谁读得回）。三样缺一 ⇒ 不加。
 ///
-/// **封顶不等于五格都好判**：[`Rule::In`] 与 [`Rule::Opens`] 都是"引用 + 现场求解"，而**只有
-/// `Opens` 的引用对象会死**（上一段）⇒ 这个封闭集里**存在"永远判不了"的一格**——它与"对面
+/// **封顶不等于四格都好判**：[`Permit::Among`] 与 [`Permit::Opener`] 都是"引用 + 现场求解"，而**只有
+/// `Opener` 的引用对象会死**（上一段）⇒ 这个封闭集里**存在"永远判不了"的一格**——它与"对面
 /// 暂时不答"同落 [`Ruling::Unjudged`]（两类同格是那一格自己的口径：客人那一侧同一步，差别由
 /// 持树者各说一行读数分开，见 [`Ruling::Unjudged`] 与 [`Facts::opens`]）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rule<P, C> {
-    /// 任何**已绑身份**都可以（这就是"公开入口"）。没绑的仍然不行（见 [`judge`] 的第一格）。
-    Public,
+pub enum Permit {
+    /// **这一格没记许可**：判据只到 [`judge`] 的第一格（"你有没有身份"），此后一条边都不问。
+    ///
+    /// **照实记（它为什么是一格，而不是 `Option` 的 `None`）**：帧里这一格要在**同一枚 9 字节**
+    /// 里编出五个状态，而 `env::wire::Field` 只能实现在**本 crate** 的类型上——`Option` 是外来的
+    /// （孤儿规则），而给 `Option` 另加一格 tag 会让 `Land` 从 60 变 61 字节、破线上契约。
+    /// 故"没有"住在这一格里；它与旧 `Rule::Public` 的差别是**它只说一件事**（没记许可），
+    /// 不兼"公开入口 / 陌生标记兜底"那两义。
+    Unset,
     /// 就是这一位。
-    Is(P),
+    Trunk(PrincipalId),
     /// 这一位在 `p` 那一支里（`p ≼ 本人`，含相等）——纵向那条轴。
-    Under(P),
+    Bough(PrincipalId),
     /// 这一位在这枚盟里——横向那条轴。
-    In(C),
+    Among(CoalitionId),
     /// **就是开着第 `e` 格的那一位**（那一格的坐标是 [`EntryId`]，不是身份号）。
-    Opens(EntryId),
+    Opener(EntryId),
 }
 
-/// 「用那一轴」在帧里的标记。`0` 是公开，也是**兜底**（读不懂那一格都走它）。
-const RULE_PUBLIC: u8 = 0;
-const RULE_IS: u8 = 1;
-const RULE_UNDER: u8 = 2;
-const RULE_IN: u8 = 3;
-/// `4` 之后的号装的是**格号**（[`Rule::Opens`]），不是身份号——同一个 8 字节那一格。
-const RULE_OPENS: u8 = 4;
+/// 「用那一轴」在帧里的标记。**没有许可**那一档是 `0`。
+const PERMIT_NONE: u8 = 0;
+const PERMIT_TRUNK: u8 = 1;
+const PERMIT_BOUGH: u8 = 2;
+const PERMIT_AMONG: u8 = 3;
+/// `4` 之后的号装的是**格号**（[`Permit::Opener`]），不是身份号——同一个 8 字节那一格。
+const PERMIT_OPENER: u8 = 4;
 
 /// 「**用**」那一轴在线上是"**标记 ＋ 8 字节号**"（9 字节）。
 ///
-/// **照实记（它为什么住这一处，不住 `frame.rs`）**：这是 [`Rule`] 自己的编码（哪一格是什么
-/// 规矩），而 `Field` 那一族的口径是 **impl 跟着类型走**——`frame.rs` 只管"这一格排在整帧的
-/// 第几格"，不管这一格自己怎么落字节。
+/// 口径与 [`EntryId`] 那一处相同：**impl 跟着类型走**——这是 [`Permit`] 自己的编码，
+/// `frame.rs` 只管"这一格排在整帧的第几格"。
 ///
-/// **装不下组合的理由与数**写在 [`Rule`] 的注里（号那一格只有一格，51 → 60 是纯追加换来的）。
-impl env::wire::Field for Rule<Id, Id> {
+/// **陌生的标记 ⇒ 整帧读不懂**（`fetch` 答 `None`）：它与同一帧里 [`Where`] 那一格
+/// （表外的记 ⇒ 整帧读不懂）和 `mine`（非 `0/1` ⇒ 整帧读不懂）同一条口径。
+/// **这一格不是裁决面**：许可本身怎么判在实现侧的门外那一问里。
+impl env::wire::Field for Permit {
     const WIDTH: usize = 1 + 8;
 
     fn store(&self, out: &mut [u8]) {
         let (tag, id) = match *self {
-            Rule::Public => (RULE_PUBLIC, 0),
-            Rule::Is(p) => (RULE_IS, p),
-            Rule::Under(p) => (RULE_UNDER, p),
-            Rule::In(c) => (RULE_IN, c),
+            Permit::Unset => (PERMIT_NONE, 0),
+            Permit::Trunk(p) => (PERMIT_TRUNK, p.get() as u64),
+            Permit::Bough(p) => (PERMIT_BOUGH, p.get() as u64),
+            Permit::Among(c) => (PERMIT_AMONG, c.get() as u64),
             // 格号与身份号同宽（都是 8 字节）⇒ 帧长一个字节都不动。
-            Rule::Opens(e) => (RULE_OPENS, e.get() as Id),
+            Permit::Opener(e) => (PERMIT_OPENER, e.get() as u64),
         };
         out[0] = tag;
         out[1..].copy_from_slice(&id.to_le_bytes());
     }
 
-    /// **陌生的标记 ⇒ [`Rule::Public`]**：读不懂那一格就不认这条规矩，而不是把整帧判成坏
-    /// （一个陌生 / 缺失的规矩不该让一句问话变成"读不懂"）。
-    ///
-    /// **照实记（"老帧读不到这两格"那一句兜底退了）**：从前那一手对**缺失**的两格也答
-    /// `Public`（51 字节的老帧照旧解得出来）。字段表把长度变成**契约**之后（`land` 那一帧就是
-    /// 60 字节，短一字节整帧读不懂），那条兜底**够不到**了——这一手只剩"标记陌生"这一格，
-    /// 而仓里也没有"还没写这两轴"的调用方（编那一侧一律写全）。
     fn fetch(bytes: &[u8]) -> Option<Self> {
         let tag = *bytes.first()?;
         let raw: [u8; 8] = bytes.get(1..9)?.try_into().ok()?;
-        let id = Id::from_le_bytes(raw);
+        let id = u64::from_le_bytes(raw);
         Some(match tag {
-            RULE_IS => Rule::Is(id),
-            RULE_UNDER => Rule::Under(id),
-            RULE_IN => Rule::In(id),
-            RULE_OPENS => Rule::Opens(EntryId::new(id as usize)),
-            _ => Rule::Public,
+            PERMIT_NONE => Permit::Unset,
+            PERMIT_TRUNK => Permit::Trunk(PrincipalId::new(id as usize)),
+            PERMIT_BOUGH => Permit::Bough(PrincipalId::new(id as usize)),
+            PERMIT_AMONG => Permit::Among(CoalitionId::new(id as usize)),
+            PERMIT_OPENER => Permit::Opener(EntryId::new(id as usize)),
+            // 表外的标记：这一格读不懂 ⇒ 整条问话读不懂。
+            //
+            // **照实记（这一格今天全仓零断言）**：要打到它得造一条 60 字节、`[51] ≥ 5` 的
+            // `LAND` 帧，而仓里没有这样一台客人（`probe-bound` 那台推的垃圾帧长度就不对，
+            // 走 `Message::fetch` 里 `bytes.len() == Land::LEN` 那一闸，`match` 一次都到不了）。
+            // 旧版那条 `_ => Permit::Unset`（放行）同样零断言——故这是**换口径、不是补判据**。
+            _ => return None,
         })
     }
 }
@@ -428,24 +431,28 @@ pub const UNJUDGED: u8 = 9;
 ///
 /// ```text
 ///   [50] 改那一轴   mine: bool        —— 归不归落牌的那一位
-///   [51] 用那一轴   标记（0..3）
-///   [52 .. 60]      号（8 字节 LE）    —— 只有 1/2/3 那三格用得上
+///   [51] 用那一轴   标记（0..=4，共五档）
+///   [52 .. 60]      号（8 字节 LE）
 /// ```
 ///
 /// **两轴是两件事**，故各占各的格：
 ///
-/// - **用**那一轴 = [`Rule<Id, Id>`]（`judge` 那一套四格：公开 / 就是某一位 /
-///   在某一位那一支里 / 在某枚盟里）；
+/// - **用**那一轴 = [`Permit`]（四格：就是某一位 / 在某一位那一支里 / 在某枚盟里 /
+///   就是开着某一格的那一位；`Unset` = 没有许可）；
 /// - **改**那一轴 = 今天原来那一格（"归落牌的那一位"），**它本来就只是 0/1**，故退成一个
-///   `bool`——线上值逐字同义（`Owner` 原是 1、`Public` 原是 0）。
+///   `bool`——线上值逐字同义（`Owner` 原是 1、没有许可原是 0）。
 ///
 /// 两轴混成一格就会得出"能改的人自然能用"（而反过来才是常见的那一种）。
 ///
 /// # 这一格原来是一个叫 `Rule` 的两格枚举（照实记：撞名）
 ///
-/// 仓里因此有两个同名的 `Rule`（模型那一侧四格、线上这一侧两格），而持树者那一侧同时
-/// `use` 了两个——再加一轴就会写出"这个 `Rule` 不是那个 `Rule`"的代码。这一刀把它拆开：
-/// 线上一侧只剩 [`Rule`] 这一个名字（**再出口**自模型那一侧），"改"退成 `bool`。
+/// 仓里因此有两个同名的 `Rule`（模型那一侧五格、线上这一侧两格），而持树者那一侧同时
+/// `use` 了两个——再加一轴就会写出"这个 `Rule` 不是那个 `Rule`"的代码。那一刀把它们拆开：
+/// 线上一侧只剩模型那一侧那一个名字（**再出口**），"改"退成 `bool`。
+///
+/// **照实记（模型那一侧改叫 `Permit`）**：两格枚举退场之后，"规矩"这个词在这一轴上已经不贴了
+/// ——它装的是"**许给谁**"（一位 / 一支 / 一盟 / 一格的开者），故模型那一侧叫 [`Permit`]；
+/// 答话那一侧仍叫 [`Ruling`]（它答的是"许不许"）。**`Rule` ↔ `Ruling` 那一对由此拆开**。
 ///
 /// **方向也是挑过的**：本文件反向依赖判据那一半（`judge`，住实现侧），而后者从不
 /// 依赖本文件——故 `gate` 那条"不与 `protocol` 那一侧沾边"的纪律一字不破（那一侧
@@ -473,7 +480,7 @@ const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNIO
 // 得出（`Land::LEN` = 60、`Part::LEN` = 42 …），而 `LAND_FRAME` 那个名字没有读者了。
 //
 // **照实记（`land` 的长度契约收紧了）**：从前 50 字节起就收——最后那两轴读不到就按
-// [`Rule::Public`] 走（那是给"还没写这两轴的调用方"留的兜底）。字段表把长度变成**契约**：
+// 没有许可走（那是给"还没写这两轴的调用方"留的兜底）。字段表把长度变成**契约**：
 // `Land` 就是 60 字节，短一字节整帧读不懂。仓里没有第二种长度（编那一侧一律写全）。
 
 // ── 问话：一个动作一条形状，一张形状一张字段表 ──────────────
@@ -505,7 +512,7 @@ pub struct Part {
 }
 
 /// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
-/// （改那一轴 `mine` / 用那一轴 `rule`）。
+/// （改那一轴 `mine` / 用那一轴 `permit`）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Land {
     pub op: u8,
@@ -513,7 +520,7 @@ pub struct Land {
     pub name: Name,
     pub entry: PieToken,
     pub mine: bool,
-    pub rule: Rule<Id, Id>,
+    pub permit: Permit,
 }
 
 /// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号。
@@ -547,13 +554,13 @@ pub enum Req<'a> {
     /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（`ship` 换回来的），
     /// 不是"客人的 Pie 是几号"——两个编号空间不同源。
     ///
-    /// `rule` 是**落牌的人给这一格声明的"用"那一轴**（[`Rule`]），`mine` 是**"改"那一轴**
+    /// `permit` 是**落牌的人给这一格声明的"用"那一轴**（[`Permit`]），`mine` 是**"改"那一轴**
     /// （声明归自己之后，别人接手这一格会被拒）。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule<Id, Id>,
+        permit: Permit,
         mine: bool,
     },
     /// `find`：那一号后面那一枚 Pie。
@@ -585,12 +592,12 @@ pub enum Wire {
         name: Name,
     },
     /// `land`：容器坐标 + 新名 + 入口那一枚 + **这一格的两轴条件**
-    /// （用那一轴 [`Rule`] / 改那一轴 `mine`）。
+    /// （用那一轴 [`Permit`] / 改那一轴 `mine`）。
     Land {
         at: Where,
         name: Name,
         entry: PieToken,
-        rule: Rule<Id, Id>,
+        permit: Permit,
         mine: bool,
     },
     /// `find` / `trim` / `name`：一枚号（三者的形状一样，故解出来仍是三格）。
@@ -626,7 +633,7 @@ impl Message for Req<'_> {
                 at,
                 name,
                 entry,
-                rule,
+                permit,
                 mine,
             } => Land {
                 op: LAND,
@@ -634,7 +641,7 @@ impl Message for Req<'_> {
                 name,
                 entry,
                 mine,
-                rule,
+                permit,
             }
             .store_in(out),
             Req::Find(id) => Entry { op: FIND, id }.store_in(out),
@@ -686,7 +693,7 @@ impl Message for Req<'_> {
                     at: at.at,
                     name: at.name,
                     entry: at.entry,
-                    rule: at.rule,
+                    permit: at.permit,
                     mine: at.mine,
                 }
             }
@@ -710,7 +717,7 @@ impl Message for Req<'_> {
 // **照实记（那六手都是"同一件事的第二处"）**：`unpack_at` 与 `pack_at` 各写一遍"记 ＋ 号"、
 // `unpack_name` 与 `pack_name_in` 各写一遍"名字那一格怎么切"、`pack_rule` 与 `unpack_rule` 各
 // 写一遍那九个字节——写者与读者分居文件两头，**错一处编得过**，症状要等那一帧被读成"读不懂"
-// 才显形。今天这三件事各只有一处：`Where` / `Name` / `Rule` 各自的 `Field`。
+// 才显形。今天这三件事各只有一处：`Where` / `Name` / `Permit` 各自的 `Field`。
 
 // ── 答：一格状态 / 一串号 / 一枚名字 / 一枚号 ─────────────────
 

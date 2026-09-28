@@ -2,10 +2,10 @@
 //!
 //! **照实记（它原先住 `protocol::system::operator::core`）**：那一份的读者只有本域的持树者
 //! （`prog-operator` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
-//! 只留**上线的类型**（`EntryId` / `Where` / `Fail` / `Id` / `Rule` / `Ruling` 与两条容量）
+//! 只留**上线的类型**（`EntryId` / `Where` / `Fail` / `Permit` / `Ruling` 与两条容量）
 //! 与客侧几手。
 //!
-//! 本目录四份：`mod.rs` 账 ＋ `ledger.rs` 归属与规矩 ＋ `judge.rs` 门外那一问 ＋
+//! 本目录四份：`mod.rs` 树 ＋ `ledger.rs` 归属 ＋ `judge.rs` 门外那一问 ＋
 //! `gate.rs` 裁决折成线上一格。**判定与账同住这一侧**，故 `gate` 那三格线上码与
 //! `frame` 的同步断言也搬到这里（见本文件末尾）。
 
@@ -15,7 +15,7 @@ use env::{Name, PieToken, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
 use protocol::system::operator::frame::{PANE_CAP, ROAD_MAX};
-use protocol::system::operator::{EntryId, Fail, Where};
+use protocol::system::operator::{EntryId, Fail, Permit, Where};
 
 // ── 三个子模块 ──────────────────────────────────────────────
 pub mod gate;
@@ -35,8 +35,13 @@ struct Slot {
 enum Node {
     /// 一块 Pane（窗格）：里面是**孩子的号**（按登记序）。**还能往里走**。
     Pane(Vec<EntryId>),
-    /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄。
-    Tile(PieToken),
+    /// 一枚 Tile（砖）：到头了，就是内核给的那一枚句柄；**许可住在它上面**。
+    ///
+    /// **许可为什么不挂 `Slot`**：① 它只在 `find` 那一问上被读，而 `find` 只认砖 ⇒ 它本来就是
+    /// "一枚砖的性质"；② 挂 `Slot` 会造出"一块 `Pane` 也有许可"这一格，而它今天不存在
+    /// （账的 `fresh` 要求那一号还是砖）；③ `part` 把砖顶成窗格时许可**随砖自然没**，
+    /// 与从前销那一行账的结果逐字相同，不必另写清理。三条合起来：这一格**写不出来**。
+    Tile { pie: PieToken, permit: Permit },
 }
 
 // **照实记（三枚注入的函数指针退场）**：这里从前有 `VestedBy`（那一枚还答得出吗）、
@@ -88,6 +93,9 @@ impl Operator {
 
     /// **落**：在 `at` 那一块 `Pane` 里，给 `name` 这一格贴一枚 `Tile`；答**那一格自己的号**。
     ///
+    /// `permit` 是**落牌的人给这一格声明的「用」那一轴**（谁许用这一格）——它与那一枚砖一起
+    /// 落、一起没：换绑覆写它，`part` 顶成窗格时它随之消失，`trim` 剪掉时同理。
+    ///
     /// 四条判据，一条不多：
     ///
     /// - `at` 那块 `Pane` 得在（号不在 ⇒ [`Fail::Unknown`]）；它是一枚 `Tile` ⇒ [`Fail::NotAPane`]；
@@ -97,8 +105,8 @@ impl Operator {
     /// - 那一块 `Pane` 已经有 [`PANE_CAP`] 条 ⇒ [`Fail::Full`]。
     ///
     /// **答的是号**（不是一格状态）：这是"号出门"那一手——立的人自己知道它立成了几号。
-    pub fn land(&mut self, at: Where, name: Name, pie: PieToken) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Tile(pie), Want::Tile)
+    pub fn land(&mut self, at: Where, name: Name, pie: PieToken, permit: Permit) -> Result<EntryId, Fail> {
+        self.put(at, name, Node::Tile { pie, permit }, Want::Tile)
     }
 
     /// **分**：在 `at` 那一块 `Pane` 里，给 `name` 这一格放一块 `Pane`；答那一格自己的号。
@@ -135,7 +143,7 @@ impl Operator {
             None => return Err(Fail::Unknown),
             Some(slot) => match &slot.node {
                 Node::Pane(_) => return Err(Fail::NotATile),
-                Node::Tile(pie) => *pie,
+                Node::Tile { pie, .. } => *pie,
             },
         };
         if vested_by(pie).is_none() {
@@ -162,14 +170,14 @@ impl Operator {
     /// 照实记：`Dead` 那一格是**三因一码**（不是孔 / 不在我表里 / 已封印），与 [`vested_by`] 的
     /// 口径同一句。**不许拆它**——今天没有一位客人分得开这三因，分开就是造三个没人读的格。
     ///
-    /// 谁问它：持树者判 [`Rule::Opens`](judge::Rule::Opens) 时，把这一格翻成开者，再拿
+    /// 谁问它：持树者判 [`Permit::Opener`](judge::Permit::Opener) 时，把这一格翻成开者，再拿
     /// 开者去问名册"这一刻代表谁"。故它答的是 **TID**，不是身份号——两件事两个落点。
     pub fn opens(&self, id: EntryId) -> Result<TaskId, Fail> {
         let pie = match self.slot(id) {
             None => return Err(Fail::Unknown),
             Some(slot) => match &slot.node {
                 Node::Pane(_) => return Err(Fail::NotATile),
-                Node::Tile(pie) => *pie,
+                Node::Tile { pie, .. } => *pie,
             },
         };
         opened_by(pie).ok_or(Fail::Dead)
@@ -188,7 +196,7 @@ impl Operator {
             Some(slot) => match &slot.node {
                 Node::Pane(inner) if inner.is_empty() => None,
                 Node::Pane(_) => return Err(Fail::NonEmpty),
-                Node::Tile(pie) => Some(*pie),
+                Node::Tile { pie, .. } => Some(*pie),
             },
         };
         let _ = self.unlink(id);
@@ -231,7 +239,7 @@ impl Operator {
             let child = self.child(level, *step).ok_or(Fail::Unknown)?;
             level = match &self.slot(child).ok_or(Fail::Unknown)?.node {
                 Node::Pane(inner) => inner,
-                Node::Tile(_) => return Err(Fail::NotAPane),
+                Node::Tile { .. } => return Err(Fail::NotAPane),
             };
         }
         self.child(level, *last).ok_or(Fail::Unknown)
@@ -246,6 +254,21 @@ impl Operator {
     /// [`Fail::Unknown`]：表里那一槽是个墓碑，而墓碑不对外说话。
     pub fn name(&self, id: EntryId) -> Result<Name, Fail> {
         self.slot(id).map(|slot| slot.name).ok_or(Fail::Unknown)
+    }
+
+    /// **这一格许给谁**——「用」那一轴上那一句话。
+    ///
+    /// [`Permit::Unset`] 盖三种"没有"，而判据只需要"有没有那一句话"这一件事：号不在树上
+    /// （墓碑 / 从没铸过）、那一号是一块 `Pane`、以及砖上没记许可。**不是失败**——门外那一问
+    /// 没有"我判不了"的余地（判不了要留给问身份那两条边）。
+    pub fn permit(&self, id: EntryId) -> Permit {
+        match self.slot(id) {
+            Some(Slot {
+                node: Node::Tile { permit, .. },
+                ..
+            }) => *permit,
+            _ => Permit::Unset,
+        }
     }
 
     // ── 走路 ────────────────────────────────────────────────
@@ -275,7 +298,7 @@ impl Operator {
                     return Ok(id);
                 }
                 let old = match &slot.node {
-                    Node::Tile(old) => Some(*old),
+                    Node::Tile { pie: old, .. } => Some(*old),
                     Node::Pane(inner) if inner.is_empty() => None,
                     // 落到这里只可能是 `Want::Tile`：换绑会毁掉那块非空 `Pane` 里的东西。
                     Node::Pane(_) => return Err(Fail::NonEmpty),
@@ -321,7 +344,7 @@ impl Operator {
                 None => Err(Fail::Unknown),
                 Some(slot) => match &slot.node {
                     Node::Pane(inner) => Ok(inner),
-                    Node::Tile(_) => Err(Fail::NotAPane),
+                    Node::Tile { .. } => Err(Fail::NotAPane),
                 },
             },
         }
@@ -335,7 +358,7 @@ impl Operator {
                 None => Err(Fail::Unknown),
                 Some(slot) => match &mut slot.node {
                     Node::Pane(inner) => Ok(inner),
-                    Node::Tile(_) => Err(Fail::NotAPane),
+                    Node::Tile { .. } => Err(Fail::NotAPane),
                 },
             },
         }
