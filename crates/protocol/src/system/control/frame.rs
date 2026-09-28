@@ -322,7 +322,7 @@ pub const fn said_task(task: TaskId) -> Said {
 /// 这条路叫什么（泊位那一格）：**两侧同一个**。
 pub const LINK: &str = "control";
 
-/// 这一面在树上的名字（挂到 `/sys/control`）：**与 [`LINK`] 同一个串**——"泊位叫 `control`"
+/// 这一面在树上的名字（挂到 `/svc/control`）：**与 [`LINK`] 同一个串**——"泊位叫 `control`"
 /// 与"它挂在哪一格"是同一件事的两层，重名不是重名。
 pub const NAME: &str = "control";
 
@@ -334,8 +334,9 @@ pub const ASK_MARK: Mark = Mark::of("control-ask");
 /// 回信孔的记号：客人**每趟**铸一枚、借给对端（这一趟的答话从它回来）。
 pub const BACK: Mark = Mark::of("control-back");
 
-/// 树上的目录名（门牌的第一段）：`/sys`——与 principal / coalition 共用同一块窗格。
-pub const DIR: &str = "sys";
+/// 树上的目录名（门牌的第一段）：`/svc`（[`crate::system::SVC`]——一处给）——与 principal /
+/// coalition 共用同一块窗格。
+pub const DIR: &str = crate::system::SVC;
 
 // ── 面不相撞（**编译期**钉住——照 principal / coalition 那两族的先例）─────────────
 

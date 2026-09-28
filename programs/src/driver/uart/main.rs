@@ -35,15 +35,13 @@ mod uart;
 use crate::core::batch::Batch;
 use crate::uart as device;
 use env::{HoleDir, Wait};
-use programs::driver::device::Device;
 use programs::driver::fail::Fail;
-use programs::program::uart::{E_UART, UART_WANTS as WANTS};
-use protocol::debug;
+use programs::program::uart::E_UART;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 
-/// 本域挂在树上的名字：`/device/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
+/// 本域挂在树上的名字：`/svc/drv/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
 /// 它是一块 **Pane**：两枚门牌 `rx` / `tx` 在它下面。
 const ME: &str = "uart";
 
@@ -59,23 +57,11 @@ const DRAIN_MAX: usize = 64;
 /// （号取自装配表：本域用的是 [`programs::program::uart::E_UART`]，一个数都不写）。
 #[programs::entry]
 fn main() -> Result<(), Fail> {
-    // ── 设备 ───────────────────────────────────────────────
-    let [serial] = Device::claim::<{ WANTS.len() }>()?;
-    debug!("uart: got {}", WANTS.len());
-    let dev = Device::open(serial).map_err(|_| Fail::at(E_UART, "device open failed"))?;
-    device::arm_rx(dev.view());
-    // 坐标**随记录发下来**（内核按 `reg` 段造的门闩；本域既不写死名字、也不写死地址）。
-    let base = dev
-        .key()
-        .base()
-        .ok_or(Fail::at(E_UART, "device open failed"))?;
-    debug!("uart: ier=rx at={base:#x}");
-
-    // ── 入系统 ─────────────────────────────────────────────
-    // 铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌 → 占线：那一趟在 [`desk::start`]。本台是唯一
-    // 双向的一台，故它不走 `Context::enter` 那一形（"一枚门牌"那一形）。报的是**发下来的那一段
-    // 区**——"线 = 区的函数"那条权威在路由者那边解。
-    let desk = desk::start(dev.key(), Wait::AtMost(MS))?;
+    // ── 起手 ───────────────────────────────────────────────
+    // 铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌 → **认领设备** → 开闸 → 占线：那一趟全在
+    // [`desk::start`]（本台是唯一双向的一台，故它的路长一段、牌两枚）。本域既不写死设备名、
+    // 也不写死地址："哪一台是串口"由设备账回答（类 `ns16550a`）。
+    let desk = desk::start(Wait::AtMost(MS))?;
 
     // ── 核心 ───────────────────────────────────────────────
     // **两个源**：写口上有客人交来的一条字、线上有"设备收来了字节"——组等任意一格
@@ -89,7 +75,7 @@ fn main() -> Result<(), Fail> {
     {
         return Err(Fail::at(E_UART, "desk"));
     }
-    let view = dev.view();
+    let view = desk.dev.view();
     // 写口那一页：**载体的界**——任何一条消息一趟都取得出来（与 `rtc` 备缓冲同一手）。
     let mut word: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if word.try_reserve_exact(PAGE_SIZE).is_err() {

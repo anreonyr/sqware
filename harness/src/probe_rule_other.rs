@@ -14,10 +14,10 @@
 //!
 //! ```text
 //!   1  上树、开一条问话孔（本域不需要门牌：只 `seek` + `find`，不问身份服务）
-//!   2  SEEK /sys/rule/is      ⇒ FIND ⇒ 期望 DENIED(8)
-//!   3  SEEK /sys/rule/under   ⇒ FIND ⇒ 期望 DENIED(8)
-//!   4  SEEK /sys/rule/foreign ⇒ FIND ⇒ 期望 DENIED(8)
-//!      —— 那一格许给的是"**开着 `/sys/principal/ask` 那一格**的那位"（规矩由 `probe-rule` 落，
+//!   2  SEEK /svc/rule/is      ⇒ FIND ⇒ 期望 DENIED(8)
+//!   3  SEEK /svc/rule/under   ⇒ FIND ⇒ 期望 DENIED(8)
+//!   4  SEEK /svc/rule/foreign ⇒ FIND ⇒ 期望 DENIED(8)
+//!      —— 那一格许给的是"**开着 `/svc/principal/ask` 那一格**的那位"（规矩由 `probe-rule` 落，
 //!         按 `seek` 换来的号写），本域不是那一位 ⇒ 同样拒。**这一格不依赖次序**：那枚门牌
 //!         的主人是常驻服务，整轮都活着。
 //!   5  报一行读数就退场
@@ -55,11 +55,11 @@ use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::operator::Fail;
 use runtime::env::unit as utask;
 
-const DIR: &str = "sys";
+const DIR: &str = protocol::system::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opener(/sys/principal/ask 那一格)`（许给**别人**）。
+/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/principal/ask 那一格)`（许给**别人**）。
 const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -123,7 +123,7 @@ fn main() -> Report<'static> {
 
 /// 沿一条路译成号再 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 [`Fail`]。
 ///
-/// **译不出就重试**（有界）：`/sys/rule` 那几格由另一台客人落下，它可能落得比本域晚。
+/// **译不出就重试**（有界）：`/svc/rule` 那几格由另一台客人落下，它可能落得比本域晚。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的）。
 ///

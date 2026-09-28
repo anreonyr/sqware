@@ -4,7 +4,7 @@
 //! guest — **第一位真客人**：按名字找到一个服务，走完一趟就退场。
 //!
 //! 本域手里只有一样东西：**名字**。`router` 在哪个域、哪一枚孔、谁建的——那三样由**树**回答
-//! （`FIND /device/router` 把入口**经会话**授进本域表里，不从报文里来）；**板**那边本域只用
+//! （`FIND /svc/drv/router` 把入口**经会话**授进本域表里，不从报文里来）；**板**那边本域只用
 //! 两格：挂上自己的牌子（`REGISTER`）与退场那句 `EVICT`。
 //!
 //! ```text
@@ -12,14 +12,14 @@
 //!      另铸一枚**问话孔**给板
 //!   2  REGISTER "guest"：本域的服务入口经会话交给板（于是本域也能被按名字找到）
 //!   3  树那条路：seat(树) + claim(生我者, 树)，另铸一枚问话孔给持树者
-//!   4  FIND "/device/router"：树上问一句，入口从会话里进本域表（找不到就再问，有界）
+//!   4  FIND "/svc/drv/router"：树上问一句，入口从会话里进本域表（找不到就再问，有界）
 //!   5  说一句 EVICT（**一字节帧**）——"我走了"：板据此撤格 + 摘掉本域挂在板上的牌子
 //!   6  报一行读数就退场 —— 一次往返，不留常驻
 //! ```
 //!
 //! # 为什么两条路都走
 //!
-//! **按名找服务归树，板管生死**（用户裁定：驱动挂 `/device`）。故"找 `router`"走树
+//! **按名找服务归树，板管生死**（用户裁定：驱动挂 `/svc/drv`）。故"找 `router`"走树
 //! （[`protocol::driver::DIR`] 那段目录），而自己那块牌子仍挂板：板那一侧的 `EVICT`
 //! （客人自己说走）只有本域在用。**照实记**：板上的 `LOOKUP` 从此**不会有真客人**——命名归树
 //! （见 `protocol::system::board` 那一格照实记）。
@@ -107,10 +107,10 @@ fn main() -> Report<'static> {
         return bail("guest: no tree link");
     };
     let tree = Face::of(session);
-    let Ok(dir) = Name::new(protocol::driver::DIR) else {
+    let Some([svc, drv]) = protocol::driver::road() else {
         return bail("guest: bad name");
     };
-    let path = [dir, want];
+    let path = [svc, drv, want];
 
     // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
     // **间接寻址那一手**：名字先译成号（那一格才谈得上"挂上了没有"），拿到号再按号寻。

@@ -46,7 +46,7 @@
 use crate::id::Id;
 use crate::message::Message;
 use crate::system::principal::PrincipalId;
-use env::{Mark, PieToken};
+use env::{Mark, PieToken, TaskId};
 
 // ── 上线的类型（原先住 `core.rs`：残枝那一刀并进来）──────────────
 
@@ -111,8 +111,9 @@ pub enum Fail {
     Unknown,
     /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
     ///
-    /// **只有 [`Coalition::enter`] 到得了这一格**：`found` 不分配（只动计数器），
-    /// `leave` 与三条读也不分配。
+    /// **照实记（这一格的产出者从一条变成两条）**：K2 翻案之前只有 [`Coalition::enter`] 到得了
+    /// 这一格（`found` 不分配、只动计数器）；翻案之后 `found` 要多记一行**盟主** ⇒ 它也到得了
+    /// 这一格。`leave` 与三条读照旧不分配。
     Full,
     /// 你手里那一枚门牌给不了这一条：**换一枚**（或换一位客人），别重试。
     ///
@@ -122,6 +123,18 @@ pub enum Fail {
     /// 的事：**会话说的是哪一枚门牌**（[`Grant`](super::grant::Grant)：问面 / 定面），而"哪一枚"
     /// 与"你是谁"是两件事。加面之前它一个字都用不上；加面之后它是**判面那一句的出口**。
     Denied,
+    /// **你不是这一枚盟的盟主** ⇒ 别拿它来代报名（要改的是"换一条路"，不是"再试一次"）。
+    ///
+    /// **照实记（这一格是 K2 翻案那一刀加的）**：这一族本来的裁定是"**盟无主**"——立盟那位
+    /// 不留名，故谁都不比谁大，"替别人入盟"这件事在模型里说不出来。翻案翻的就是**这一格不存在**：
+    /// 设备账那一台要替四位驱动报名（`hub::bond` ⇒ `admit`），而"入"的钥匙是**发送者那一格**
+    /// （`Coalition::enter` 只表达"**我**进这枚盟"）⇒ 没有主就没有一条路说得通。
+    ///
+    /// **翻的是哪一格、没翻哪一格**：盟籍那一格照旧**只是一对号**（没有角色、没有权重）；
+    /// 多出来的是一格**盟主**（立盟那位），而它只答一句话——"代报名这件事，归不归你"。
+    /// 于是 [`Coalition::enter`] 那条"诚实性由签名给"的口径**照旧成立**（它仍旧只做得了"我进"），
+    /// 而"替别人进"从此有了**一条带名字的路**：盟主点名，服务端过名册把名点实。
+    NotChief,
 }
 
 // ── 一窗号 ──────────────────────────────────────────────────
@@ -232,13 +245,15 @@ impl<T: Id> Window<T> {
 
 // ── 码 ──────────────────────────────────────────────────────
 
-/// 六条线上动作——**与核心那六条原语同名**：线上与模型是同一件事的两层，不该各起一套词。
+/// 七条线上动作——**与核心那七条原语同名**：线上与模型是同一件事的两层，不该各起一套词。
 pub const FOUND: u8 = 1;
 pub const ENTER: u8 = 2;
 pub const LEAVE: u8 = 3;
 pub const AMID: u8 = 4;
 pub const BAND: u8 = 5;
 pub const BLOC: u8 = 6;
+/// **代报名**：把**另一位**放进盟主自己立的那一枚盟（K2 翻案那一刀添的，见 [`Fail::NotChief`]）。
+pub const ADMIT: u8 = 7;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -256,6 +271,8 @@ pub const UNKNOWN: u8 = 1;
 pub const FULL: u8 = 2;
 pub const BAD: u8 = 3;
 pub const DENIED: u8 = 4;
+/// 你不是这一枚盟的盟主（K2 翻案那一刀添的）：代报名只有**立它那位**做得成。
+pub const NOT_CHIEF: u8 = 5;
 
 // ── 帧骨架（两族同形的那一份）───────────────────────────────
 //
@@ -283,6 +300,12 @@ pub enum Req {
     Band(CoalitionId, Option<PrincipalId>),
     /// `BLOC`：读 `a` 那一位在哪些盟里；`b` = **游标**。
     Bloc(PrincipalId, Option<CoalitionId>),
+    /// `ADMIT`：把 `b` 那位放进 `a` 那一枚盟（**只有盟主叫得动**，见 [`Fail::NotChief`]）。
+    ///
+    /// **`b` 是 TID 不是身份号**（照实记）：这一格问的是"哪一位"，而运行期说得出口的"哪一位"
+    /// 只有内核盖的那枚印章给得出（TID）——**解名**那一手在服务端（它本就有名册问面，见
+    /// `programs/src/system/coalition/server.rs` 的 `who`）。线上因此不必先问一次名册再编帧。
+    Admit(CoalitionId, TaskId),
 }
 
 impl Req {
@@ -295,6 +318,7 @@ impl Req {
             Req::Amid(p, c) => (AMID, p.get() as u64, c.get() as u64),
             Req::Band(c, after) => (BAND, c.get() as u64, cursor_of(after)),
             Req::Bloc(p, after) => (BLOC, p.get() as u64, cursor_of(after)),
+            Req::Admit(c, target) => (ADMIT, c.get() as u64, target.get() as u64),
         };
         Query { op, a, b, back }
     }
@@ -309,6 +333,8 @@ pub enum Wire {
     Amid(PrincipalId, CoalitionId),
     Band(CoalitionId, Option<PrincipalId>),
     Bloc(PrincipalId, Option<CoalitionId>),
+    /// 代报名：盟号 ＋ **目标那一枚 TID**（解名在服务端）。
+    Admit(CoalitionId, TaskId),
 }
 
 impl Wire {
@@ -335,6 +361,10 @@ impl Wire {
             BLOC => Some(Wire::Bloc(
                 PrincipalId::new(q.a as usize),
                 cursor_in(q.b).map(|raw| CoalitionId::new(raw)),
+            )),
+            ADMIT => Some(Wire::Admit(
+                CoalitionId::new(q.a as usize),
+                TaskId::new(q.b as usize),
             )),
             // 表外的动作码：这一码不是我的（但"往哪回"读得出来）。
             _ => None,
@@ -522,13 +552,13 @@ impl Message for Union {
 crate::fail_codes! {
     /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
     ///
-    /// 三格，**`Denied` 是开面那一刀添的**（见 [`Fail::Denied`] 那一格）：盟无主说的是**核心**，
-    /// 而"这一枚门牌给不给这一条"是**载体**的事。数字按本族失败域的顺序排（`BAD` 收尾且在表外）
-    /// ——别家同一个概念排的是别的号，那不是约定。
+    /// 四格：`Denied` 是开面那一刀添的、`NotChief` 是 K2 翻案那一刀添的（见那两格自己的注）。
+    /// 数字按本族失败域的顺序排（`BAD` 收尾且在表外）——别家同一个概念排的是别的号，那不是约定。
     bijective Fail; OK;
     Fail::Unknown => UNKNOWN,
     Fail::Full => FULL,
     Fail::Denied => DENIED,
+    Fail::NotChief => NOT_CHIEF,
 }
 
 // ── 载体两侧共用的坐标 ─────────────────────────────────────
@@ -539,11 +569,11 @@ crate::fail_codes! {
 /// 就分不出这一枚是哪一面的。
 pub const BACK: Mark = Mark::of("coalition-back");
 
-/// 树上那块窗格的名字（门牌的第一段）：`/sys`。
-pub const DIR: &str = "sys";
+/// 树上那块窗格的名字（门牌的第一段）：`/svc`（[`crate::system::SVC`]——一处给）。
+pub const DIR: &str = crate::system::SVC;
 
-/// 本服务在树上的那一段名字（门的第二段）：`/sys/coalition`——**它自己不是一格**（开面那一刀：
-/// 两枚门牌是它底下那两格 `/sys/coalition/{ask,set}`，末段名由
+/// 本服务在树上的那一段名字（门的第二段）：`/svc/coalition`——**它自己不是一格**（开面那一刀：
+/// 两枚门牌是它底下那两格 `/svc/coalition/{ask,set}`，末段名由
 /// [`Grant::name`](super::grant::Grant::name) 给）。
 pub const NAME: &str = "coalition";
 

@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! probe-control — **control 那一族的真客人**：从树上找 **`/sys/control/state`**（问面），问一句它的话；
+//! probe-control — **control 那一族的真客人**：从树上找 **`/svc/control/state`**（问面），问一句它的话；
 //! 另取 `mint` / `start` / `stop` 三面（各带规矩）期望被拒，并拿问面发写、期望判面拒。
 //!
 //! task-4 那条挂载路（`control::edge::mount`）**挂出过一块查得到、取不回的门牌**：铸入口的是
@@ -12,7 +12,7 @@
 //! ```text
 //!   1  与树开会话（`Session::open(sire, operator::BERTH, …)`）——**必须先装路**（见下）
 //!   2  `tile(["sys", "control", "state"])` → `token()`：名字 → 号 → **问面那一枚门牌**
-//!      （取不回来就红；开面这一刀之后 `/sys/control` 自己是一段前缀，不是一格）
+//!      （取不回来就红；开面这一刀之后 `/svc/control` 自己是一段前缀，不是一格）
 //!   3  `control::Face::of(门牌)`：收成那一面（对端 = 门牌的开者）
 //!   4  问 `state` 一个**表里没有**的名字 ⇒ 期望 `Fail::Unknown`（对面答了**一句语义码**，
 //!      不是"这一趟没走到"——两件事在失败域里分得开，`Bad` 才是没走到）
@@ -77,7 +77,7 @@ fn main() -> Report<'static> {
 
     // 二、树上那**一格**：名字（`seek`）→ 号 → **门牌那一枚**（`find` 会把它授进本表）。
     //
-    // **开面那一刀之后这一格是问面**（`/sys/control/state`）：`/sys/control` 自己成了那段前缀
+    // **开面那一刀之后这一格是问面**（`/svc/control/state`）：`/svc/control` 自己成了那段前缀
     // （一块 `Pane`，没有门牌可授）。
     let (Ok(dir), Ok(segment), Ok(ask_leaf)) = (
         Name::new(ccall::frame::DIR),
@@ -90,7 +90,7 @@ fn main() -> Report<'static> {
         .tile(&[dir, segment, ask_leaf], Wait::AtMost(MS))
         .and_then(|tile| tile.token(Wait::AtMost(MS)));
     let Ok(entry) = plate else {
-        panic!("probe-control: /sys/control/state is not on the tree");
+        panic!("probe-control: /svc/control/state is not on the tree");
     };
 
     // 三、把门牌收成那一面：对端（= 门牌的开者 = 铸入口那一枚线程）由门牌自己问出来。

@@ -2,20 +2,14 @@
 //!
 //! **U 态**：持有 `serial@10000000`（banner 里那张 PMP 是 S/U (R,W)），把"收到字节就拉线"打开。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Setup};
-use env::supply::{Kind, Need, class_block};
-use env::{Access, Policy};
+use crate::program::{Demand, Died, Identity, Program, Relation};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_UART: Died = 9;
 
-/// 串口驱动要的那一枚：**那一台 `ns16550a`**。
-pub const UART_WANTS: &[Need] = &[Need::class(
-    class_block("ns16550a"),
-    Kind::Pole,
-    Access::FETCH_STORE,
-    Policy::ONLY,
-)];
+// **照实记（"要的那一枚"搬回本域）**：这一份原先还开着本域那张需求单（`UART_WANTS`），而装配者
+// 按同一张单替本域领设备。那一整条路退了（设备由本域自己走一趟设备账认领）⇒ **单子回了它自己的
+// 域**（`driver/uart/desk.rs` 的 `ASK`），装配表上这一份只剩"它是谁、跟谁有边"。
 
 pub static PROGRAM: Program = Program {
     identity: Identity {
@@ -24,7 +18,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(6),
+        order: Some(7),
         presence: true,
         operator: true,
         bind: true,
@@ -32,7 +26,6 @@ pub static PROGRAM: Program = Program {
     },
     demand: Demand {
         died: E_UART,
-        setup: &[Setup::Need(UART_WANTS[0]), Setup::Channel("records")],
         ..Demand::DEFAULT
     },
 };

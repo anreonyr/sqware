@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/sys/principal/{ask,set}" ⇒ 两枚门牌**经会话**授进本域表里（报文里没有号）
+//!   2  FIND "/svc/principal/{ask,set}" ⇒ 两枚门牌**经会话**授进本域表里（报文里没有号）
 //!   3  resolve(self)      ⇒ 本域此刻代表哪个号（**装配期**绑的那一条）
 //!   4  sire(root) / sire(me)  ⇒ 三态的头两格：**根答"没有"，不是"Unknown"**
 //!   5  heir(me, me)       ⇒ 自反
@@ -257,7 +257,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "subject: done");
 }
 
-/// 找**某一面**：`/sys/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
+/// 找**某一面**：`/svc/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 名字 → 号（译不出就重试）落在 [`Pane::tile`] 上，`find` 落在 [`Tile::token`] 上——**两格各
 /// 一趟**，与旧 `Face::tile` 逐格同形（那一手本域从前自己抄了一遍）。

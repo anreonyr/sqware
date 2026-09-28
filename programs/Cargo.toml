@@ -94,6 +94,15 @@ test = false
 bench = false
 doctest = false
 
+# 设备账（U 态，独立域）：收整机物料、立账、落 `/svc/hub` 与 `/dev/<类>/<名>`、答三面
+# （报名 / 列册 / 认领）。起手位次 3（驱动之前——驱动起手第一件事是向它认领）。
+[[bin]]
+name = "prog-hub"
+path = "src/system/hub/main.rs"
+test = false
+bench = false
+doctest = false
+
 # 引导域（S 态，boot 引入的唯一顶层域）：读 boot 的两块账、把持树者与编排者起起来，
 # 之后只做一件事——照单发货。
 [[bin]]

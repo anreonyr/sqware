@@ -11,7 +11,7 @@
 //! 本域 [`core::lines`]——它是**路由者的内部管理表**，故在残枝那一刀从 `protocol::driver::line::core` 搬了回来；协议那一侧只留**形与码**（`protocol::driver::line::frame`）与**客侧几手**（`…::client`）。
 //!
 //! **它为什么叫 router**：它管的是**线**（哪条线、谁领走、领完怎么结），不是某一台设备。
-//! 需求单在 [`programs::program::router::ROUTER_WANTS`]。
+//! 要认的那三样在 `adapt/boot.rs` 的三条 `Ask` 里。
 //!
 //! **起域时一条线都不接**：接线是登记的直接后果——没登记的线根本不进本 context，本域不再
 //! 替所有人刹车（今天树里那 10 条里 9 条没主，全接上就是替它们吞中断）。
@@ -35,14 +35,14 @@
 //!
 //! # 配给怎么到手（"坐标跟着门闩走"）
 //!
-//! 见 [`crate::driver::assemble`]：本域按会话协议装一条叫 `records` 的泊位，父域按需求单把
+//! 见 [`crate::driver::device`]：本域自己走一趟设备账（报名 → 列册 → 找门 → 认领），
 //! 「坐标 + 号」的记录推进来，本域**按位次归位**（单子第 i 条就是回单第 i 条）。**字节长什么样
 //! 不在这里**（那是 [`protocol::system::grant`]，与父域同一份）；本域只说"我要哪几格"。
 //!
 //! # 门牌挂树上，板只管生死
 //!
 //! 两台目录原本都挂着本域的名字，今天分家了（用户裁定）：**按名找服务走树**（本域是
-//! `/device/router`，名字用**服务名**，见 [`protocol::driver::DIR`]），**板**留着看生死——
+//! `/svc/drv/router`，名字用**服务名**，见 [`protocol::driver::DIR`]），**板**留着看生死——
 //! 编排域监督的事件源就是板那条死亡道。故本域**不再向板挂牌**，只装板路 + 交问话孔。
 //!
 //! # 投递与排空：两件都由事件推动
@@ -96,6 +96,6 @@
 //! `adapt/sweep.rs` 收掉（探活答不出 ⇒ `vacate` + 拆线），`router: deliver failed line=` 是它的读数。
 //!
 //! **照实记（一行转发不该撑起一个文件）**：本模块原先还挂一格 `pub mod needs;`——装两样：一行转发
-//! （[`programs::program::router::ROUTER_WANTS`]）与一个 `PLIC` 常量。前者删掉、bin 直接从定义处取；后者归到
+//! （`ROUTER_WANTS`）与一个 `PLIC` 常量。前者删掉、bin 直接从定义处取；后者归到
 //! **定义处**（[`programs::program::router::PLIC_CLASS`]）。与 `harness/src/lodger.rs`、`driver/uart`、
 //! `driver/rtc` 同一条规矩。本模块留下是因为它是**这条路的锚**。

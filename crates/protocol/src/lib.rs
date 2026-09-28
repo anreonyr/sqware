@@ -141,7 +141,7 @@
 //!   （`programs/src/driver/{assemble,device,context}.rs`），本层只管**跨域约定**。
 //! - [`system::principal`] = **策略身份**：**名册**（TID → 此刻代表的 PrincipalId）与**谱系**
 //!   （PrincipalId 的一棵只增不改的树）。两条轴都不定义权限——收到它的服务自己解释那条号。
-//!   载体建在会话之上：两枚门牌落在树上 `/sys/principal/{ask,set}`，一问一答替这一趟借一枚
+//!   载体建在会话之上：两枚门牌落在树上 `/svc/principal/{ask,set}`，一问一答替这一趟借一枚
 //!   回信孔过去。
 //! - [`system::coalition`] = **策略结盟**（策略身份那一条轴的**横向**那半）：**一张两列表**——哪条身份
 //!   在哪些盟里、哪枚盟里有谁，反着念是同一个关系的两个方向。号由服务铸（铸过就一直在），
@@ -179,7 +179,7 @@
 //! 待客账），而命名归 [`system::operator`]、生死归 [`system::control`] ⇒ 客侧与语义降回实现侧，
 //! 本层不再有那个模块（故这条指路也改指实现侧）。
 //!
-//! [`system::principal`] 的**地址**走树（`/sys/principal/{ask,set}`）：板那一侧已经"照实记"把命名交给树
+//! [`system::principal`] 的**地址**走树（`/svc/principal/{ask,set}`）：板那一侧已经"照实记"把命名交给树
 //! （板只管生死与牌子）。装配者不必查——身份服务起手就把门牌那一枚交给它的生我者，故装配期
 //! 每一条服务的 `derive` + `bind` 都在放行之前做完（`service::assemble`）。
 //!

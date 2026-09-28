@@ -1,7 +1,7 @@
 //! canonical::adapt — **适配（壳）**：碰内核、碰树、碰孔的那一半。
 //!
 //! ```text
-//!   console.rs   找控制台 `/device/uart/{rx,tx}`（"再问一次"那一圈在 `Face::entry_of`）
+//!   console.rs   找控制台 `/svc/drv/uart/{rx,tx}`（"再问一次"那一圈在 `Face::entry_of`）
 //!   terminal.rs  那一圈：轮转（读口收干净 → 写口就绪才推）＋ 把行规程的回显推给写口
 //! ```
 //!

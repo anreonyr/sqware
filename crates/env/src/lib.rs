@@ -57,7 +57,7 @@ pub use mold::Frame;
 pub use key::{KEY_LEN, Key};
 pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
-pub use supply::{At, Kind, Need, WANT_LEN, Want, class_block};
+pub use supply::{Kind, WANT_LEN, Want};
 pub use wait::Wait;
 pub use wire::{
     Decode, Eyes, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,

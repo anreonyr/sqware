@@ -1,23 +1,29 @@
-//! supply — 供给那一族的**词汇**：收方那张 `const` 表里的一格（[`Need`]）与线上那一条
-//! （[`Want`]），外加把 `compatible` 串补成定长块的 [`class_block`]。
+//! supply — 供给那一族的**词汇**：线上那一条（[`Want`]）与它那两格判别号（[`Kind`]）。
 //!
 //! # 为什么它住 `env`
 //!
-//! 装配表（[`crate::assembly`]）要**两侧读**——内核的 `build.rs`（宿主）与编排域（riscv）——
-//! 而 `programs` / `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是
-//! "装配表要摆出来的东西"，定义都得住 `env`。
+//! 装配那一侧要**两侧读**——内核的 `build.rs`（宿主）与编排域（riscv）——而 `programs` /
+//! `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是"装配那一侧要摆出来的
+//! 东西"，定义都得住 `env`。
 //!
-//! **照实记（这几样是从 `protocol::system::supply::frame` 搬下来的）**：那一处现在是
-//! `pub use` 转发，**调用点一行没改**（与 `Access`/`Policy`、`Announce`/`Grant`/`Died` 同一条
-//! 先例）。搬的时候把 [`Want`] **连同它的 `impl` 一起带走**——`impl` 是 inherent 的，必须与
-//! 类型同住一个 crate，劈开就要改 API；`Need::settle` 正是这么依赖它的。
+//! # 照实记（`Need` / `At` / `class_block` 三样**退场了**）
 //!
-//! **照实记（`Need` 不是线格式）**：它没有 `repr(C)`、尺寸不参与任何断言，唯一的义务是能被
-//! `const` 造出来；线上那一条是 [`Want`]（`repr(C)` + 定长字段，尺寸即线格式）。
+//! 这一族原先还有**收方那张 `const` 单**：`Need`（坐标未定："凭什么认它"，`At::Class` /
+//! `At::Known`）＋ `class_block`（把 `compatible` 串补成定长块）＋ `Need::settle`（读树那一侧
+//! 把类翻成坐标）。它们服务的是一条**装配者替所有驱动认设备**的路：装配表摆出每一台要哪几样，
+//! 编排域逐条 settle、向引导域领、再按位次递下去。
+//!
+//! 那一条路整个退了（设备那一轴今天由**设备账**那一台在运行期回答，取法是驱动自己跑一趟）——
+//! 于是"坐标未定的单子"没有读者了：**装配者只替一台领全机**（`Setup::Machine`），而它领什么
+//! 由**设备树**说了算（`system::machine::Machine::devices`），不由哪张 `const` 表说。
+//! **机制退了，格也退**。
+//!
+//! 留下的是**线上那一形**：`Want`（坐标已定的一条）＋ `Kind`（那一格的判别号）——递单那一趟
+//! 仍要走（引导域那一侧一个字没动）。
 
 use crate::key::Key;
 use crate::wire::Field;
-use crate::{Access, NAME_LEN, Name, Policy};
+use crate::{Access, Policy};
 
 const KIND_POLE: u8 = Kind::Pole as u8;
 const KIND_NOLE: u8 = Kind::Nole as u8;
@@ -39,34 +45,25 @@ pub enum Kind {
     Nole,
 }
 
-/// 那一格写的是什么：**树里认的类**，还是**已经知道的坐标**。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum At {
-    /// **树里认**：`compatible` 串（`ns16550a`、`virtio,mmio`…）——要读树才定得下来。
-    Class([u8; NAME_LEN]),
-    /// **已经知道**：boot 造的那两件（设备树本体 / 门铃）——它们不在树里，没有"哪一台"可翻。
-    Known(Key),
-}
-
-/// 收方开的单上那一格：**坐标还没定下来**——写的是"凭什么认它"。
-///
-/// 它与 [`Want`] 是**两个东西**：`Want` 是线上那一条（坐标已定），`Need` 是收方那张 `const`
-/// 表里的一格（坐标未定）。故 `Need` **不是线格式**：没有 `repr(C)`、尺寸不参与任何断言，
-/// 唯一的义务是能被 `const` 造出来。
-///
-/// 坐标怎么定见 [`Need::settle`]：按类要的那几条在**编排域**读树定（设备树只有它读了），
-/// 已经知道坐标的那几条原样落下。
-#[derive(Clone, Copy)]
-pub struct Need {
-    at: At,
-    kind: Kind,
-    access: Access,
-    policy: Policy,
+impl Kind {
+    /// 线上那一格解回（**判别号不认识 ⇒ `None`**——同 [`Want::key`] 那条口径：读的人按
+    /// "这一帧读不懂"处置，不猜）。
+    ///
+    /// **它为什么住类型自己身上**（照实记：impl 跟着类型走）：这一格的读者从一条变成两条
+    /// （`Want::kind` 与设备账那一族认领那一帧的 `kind`）——两处各写一遍 `match 0/1/…` 就是
+    /// 两份判别号表。
+    pub const fn of(raw: u8) -> Option<Kind> {
+        match raw {
+            KIND_POLE => Some(Kind::Pole),
+            KIND_NOLE => Some(Kind::Nole),
+            _ => None,
+        }
+    }
 }
 
 /// 单子上的一条：**要哪一枚**（坐标已定）、什么种类、多少权、什么形态。
 ///
-/// 它是**线上形**：坐标已经落定（收方那张表里那一格 [`Need`] 经 [`Need::settle`] 定过）。
+/// 它是**线上形**：坐标已经落定。
 /// 故这一条**不带 `slot`**——**位置即格**（回单与单子同序同长），收方按位次归位
 /// （`protocol::system::grant::each`）。
 ///
@@ -95,7 +92,8 @@ impl Want {
         pad: [0u8; 7],
     };
 
-    /// 线上那一条：坐标已定（由 [`Need::settle`] 定出来，或编排域自己按坐标要）。
+    /// 线上那一条：坐标已定（装配者按**设备树**定出来——`system::machine` 那张表，或
+    /// boot 那两件按已知坐标）。
     pub fn new(key: Key, kind: Kind, access: Access, policy: Policy) -> Want {
         Want {
             key,
@@ -112,18 +110,15 @@ impl Want {
     }
 
     pub fn kind(&self) -> Option<Kind> {
-        match self.kind {
-            KIND_POLE => Some(Kind::Pole),
-            KIND_NOLE => Some(Kind::Nole),
-            _ => None,
-        }
+        Kind::of(self.kind)
     }
 
     pub fn access(&self) -> Option<Access> {
         Access::from_bits(self.access)
     }
 
-    /// 形态**原样**读出；"剔掉 `VEST`"是发货那一侧（`protocol::system::supply`）的事。
+    /// 形态**原样**读出（发货那一侧照它授出：`VEST` / `ONLY` 都是**请求方说**的，固件不替它挑
+    /// ——见 `programs/src/root/supply/server.rs` 那条照实记）。
     pub fn policy(&self) -> Option<Policy> {
         Policy::from_bits(self.policy)
     }
@@ -163,65 +158,5 @@ impl Field for Want {
             );
         }
         Some(want)
-    }
-}
-
-/// 编译期把 `compatible` 串补零成定长块——与 [`Name::new`] 运行期做的是同一件事。
-///
-/// **不做** `Name::new` 那套校验（非空 / UTF-8 / ≤ `NAME_LEN` - 1）：它是给 `const` 表用的，
-/// 字面量写错会在 [`Name::from_bytes`] 读出时当场暴露（表是编译期常量，读的人就在旁边）。
-pub const fn class_block(s: &str) -> [u8; NAME_LEN] {
-    let src = s.as_bytes();
-    let mut out = [0u8; NAME_LEN];
-    let mut i = 0;
-    while i < src.len() && i < NAME_LEN - 1 {
-        out[i] = src[i];
-        i += 1;
-    }
-    out
-}
-
-impl Need {
-    /// 按类要一条（用 [`class_block`] 写）。
-    pub const fn class(class: [u8; NAME_LEN], kind: Kind, access: Access, policy: Policy) -> Need {
-        Need {
-            at: At::Class(class),
-            kind,
-            access,
-            policy,
-        }
-    }
-
-    /// 按**已知坐标**要一条（boot 造的那两件：`Key::dtb()` / `Key::irq()`）。
-    pub const fn known(key: Key, kind: Kind, access: Access, policy: Policy) -> Need {
-        Need {
-            at: At::Known(key),
-            kind,
-            access,
-            policy,
-        }
-    }
-
-    /// 这一格写的是哪一类（**只有类支有**；读数"类 → 坐标"那一行要它当左半）。
-    pub fn class_name(&self) -> Option<Name> {
-        match self.at {
-            At::Class(class) => Name::from_bytes(class).ok(),
-            At::Known(_) => None,
-        }
-    }
-
-    /// 定坐标：`Class` 交给 `of`（读树的那一侧），已经知道的原样落进 [`Want`]。
-    ///
-    /// 返 `None` = **这台机器上没有这一类**（本层的失败域，不是引导域的答话——那一格是
-    /// `Fail::Unknown`）。
-    pub fn settle(self, of: impl Fn(&str) -> Option<Key>) -> Option<Want> {
-        let key = match self.at {
-            At::Class(class) => {
-                let class = Name::from_bytes(class).ok()?;
-                of(class.as_str())?
-            }
-            At::Known(key) => key,
-        };
-        Some(Want::new(key, self.kind, self.access, self.policy))
     }
 }

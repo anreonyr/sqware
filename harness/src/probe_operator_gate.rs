@@ -6,9 +6,9 @@
 //!
 //! ```text
 //!   1  与树开会话（`Session::open(sire, operator::BERTH, …)`）——控制面那一枚记号
-//!   2  SEEK /sys/operator        ⇒ 号（它是 `mount_grants` 立出的那块 Pane）
+//!   2  SEEK /svc/operator        ⇒ 号（它是 `mount_grants` 立出的那块 Pane）
 //!   3  LIST 那一号一次        ⇒ 数得出 `Grant::ALL.len()` 格（名字那七问归树自己那七行读数）
-//!   4  SEEK /sys/operator/land ⇒ 号，再 FIND ⇒ **那一枚入口**（能力在树上的等价物）
+//!   4  SEEK /svc/operator/land ⇒ 号，再 FIND ⇒ **那一枚入口**（能力在树上的等价物）
 //!   5  LAND /probe-op-own（`mine = true`）  ⇒ 下一位顶它时要被拒的那一格
 //!   6  LAND /probe-op-free（`mine = false`）⇒ 无主那一格
 //! ```
@@ -19,7 +19,7 @@
 //! 故它认路的坐标只能自己报得出。**根是唯一不需要号的那一格**（[`Where::Root`]：根没有号，
 //! 见 `operator::frame` 那一节）——于是那两格必须落在根底下，下一位才报得出坐标。
 //!
-//! 这一条是**量出来的**：第一版把两格铺在 `/sys/operator/zone` 底下，而那位客人只能列号问名，
+//! 这一条是**量出来的**：第一版把两格铺在 `/svc/operator/zone` 底下，而那位客人只能列号问名，
 //! 于是它每一次 `list` 都被面判拒掉、当场卡死——这正是这一维在按设计生效。
 //!
 //! # 为什么第 1 步必须在最前
@@ -64,7 +64,7 @@ const MS: usize = 1000;
 /// 收紧到 3 s 之后：健康那一档（实测走完全程、含 [`HOLD_MS`]，只要 1~3 s）毫发无伤，
 /// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
 ///
-/// 这个数不是猜的：七行 `system: grant mounted at /sys/operator/{…}` 在 **t<500 ms** 就打完
+/// 这个数不是猜的：七行 `system: grant mounted at /svc/operator/{…}` 在 **t<500 ms** 就打完
 /// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计。
 const WAIT_MS: usize = 3_000;
 
@@ -99,9 +99,9 @@ fn main() -> Report<'static> {
     let own = spot(&tree, OWN, "probe-gate-own", Mine::Yes);
     let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
 
-    // 二、`/sys/operator` 那块 Pane：由持树者一就位那一趟立出（`Assembly::mount_grants`）。
+    // 二、`/svc/operator` 那块 Pane：由持树者一就位那一趟立出（`Assembly::mount_grants`）。
     let Some(operator_id) = walk(&tree, "operator") else {
-        panic!("probe-operator-gate: /sys/operator is not a pane");
+        panic!("probe-operator-gate: /svc/operator is not a pane");
     };
     let operator_pane = Pane::of(&tree, operator_id);
 
@@ -109,23 +109,23 @@ fn main() -> Report<'static> {
     let seen = count_under(&operator_pane);
     assert!(
         seen == Grant::ALL.len(),
-        "/sys/operator 底下没有七格（数到的只有 {seen} 格）"
+        "/svc/operator 底下没有七格（数到的只有 {seen} 格）"
     );
 
-    // 四、`/sys/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
+    // 四、`/svc/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
     //
     //    `Face::tile` 收的是**从根写起**的那条路（见 `client.rs` 的 `Pane::tile` 那一节）
     //    ——"名字只到 `seek` 这一格"的本义：三段一段不落。
-    let (Ok(sys), Ok(op), Ok(land)) = (Name::new("sys"), Name::new("operator"), Name::new("land"))
+    let (Ok(sys), Ok(op), Ok(land)) = (Name::new(protocol::system::SVC), Name::new("operator"), Name::new("land"))
     else {
         panic!("probe-operator-gate: bad name");
     };
     let Ok(tile) = tree.tile(&[sys, op, land], Wait::AtMost(MS)) else {
-        panic!("probe-operator-gate: /sys/operator/land is not on the tree");
+        panic!("probe-operator-gate: /svc/operator/land is not on the tree");
     };
     let land_id = tile.id();
     let Ok(cap) = tile.token(Wait::AtMost(MS)) else {
-        panic!("probe-operator-gate: find /sys/operator/land was refused");
+        panic!("probe-operator-gate: find /svc/operator/land was refused");
     };
     // 那一枚是**入口**（孔），不是随便一枚号：它答得出开者（铸它的就是编排域主线程）。
     assert!(
@@ -149,12 +149,12 @@ fn main() -> Report<'static> {
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
-/// `/sys/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）。
+/// `/svc/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）。
 ///
 /// 三手都是 [`TreeFace`] 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
 /// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"。
 fn walk(tree: &TreeFace, name: &str) -> Option<EntryId> {
-    let Ok(sys) = Name::new("sys") else {
+    let Ok(sys) = Name::new(protocol::system::SVC) else {
         return None;
     };
     let Ok(want) = Name::new(name) else {
@@ -178,14 +178,14 @@ fn walk(tree: &TreeFace, name: &str) -> Option<EntryId> {
     }
 }
 
-/// 数 `/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试。
+/// 数 `/svc/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试。
 ///
 /// **照实记（为什么不再逐个问名）**：那七段名字的读数归**树自己**——`mount_grants` 每落一位就抬
-/// 一行 `system: grant mounted at /sys/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
+/// 一行 `system: grant mounted at /svc/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
 /// ＋ 七次 `name` 是八趟往返，而那条路每一趟都可能**等在门外**（`client.rs::call` 那一推是
 /// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿。
 ///
-/// **照实记（它第一跑就撞上一个真缺陷）**：改成"数格子"之后，实机读数 `seen=8`——`/sys/operator`
+/// **照实记（它第一跑就撞上一个真缺陷）**：改成"数格子"之后，实机读数 `seen=8`——`/svc/operator`
 /// 底下是**八格**：七位 ＋ 一格**也叫 `operator` 的自己**（那段目录铸的那枚孔就挂在那儿）。
 /// 旧写法**按名字数**，多出来的一格不进账，故这个缺陷一直没显形；而新写法数不满就重试到额度
 /// 尽头 ⇒ 本台**整趟卡死**、被扳机扑杀（正是上面那条"既不绿也不红"）。根因与那一刀见

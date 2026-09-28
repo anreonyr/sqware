@@ -3,9 +3,7 @@
 //! **U 态**：它只读 PLIC 的寄存器、claim/complete、铸孔、挂组，全都不需要 S 态；它那枚铃是
 //! **内核给的**（铸铃那一格才是 S 态，本域不铸）。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Setup};
-use env::supply::{Kind, Need, class_block};
-use env::{Access, Key, Policy};
+use crate::program::{Demand, Died, Identity, Program, Relation};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_ROUTER: Died = 5;
@@ -14,17 +12,10 @@ pub const E_ROUTER: Died = 5;
 /// 时读它（`driver/router/core/sources.rs`），下面这张单子要的也是它。
 pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
-/// 线路由者要的那三样：**中断控制器**（按类要）＋ **设备树本体 / 门铃**（boot 造的，按已知坐标）。
-pub const ROUTER_WANTS: &[Need] = &[
-    Need::class(
-        class_block(PLIC_CLASS),
-        Kind::Pole,
-        Access::FETCH_STORE,
-        Policy::ONLY,
-    ),
-    Need::known(Key::dtb(), Kind::Pole, Access::FETCH, Policy::NONE),
-    Need::known(Key::irq(), Kind::Nole, Access::FETCH, Policy::NONE),
-];
+// **照实记（"要的那三样"搬回本域）**：这一份原先还开着本域那张需求单（`ROUTER_WANTS`），而装配者
+// 按同一张单替本域领三样（控制器 / 设备树 / 门铃）。那一整条路退了 ⇒ 三张单回了本域自己
+// （`driver/router/adapt/boot.rs` 的三条 `Ask`）；**留下的 `PLIC_CLASS` 仍是本域的事实**——
+// 它同时是"我是哪台控制器"那句断言（读树那一侧也用同一枚常量，见 `system/machine.rs`）。
 
 pub static PROGRAM: Program = Program {
     identity: Identity {
@@ -33,7 +24,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(5),
+        order: Some(6),
         presence: true,
         operator: true,
         bind: true,
@@ -41,13 +32,6 @@ pub static PROGRAM: Program = Program {
     },
     demand: Demand {
         died: E_ROUTER,
-        // 单子的次序 = 回单的次序（收方按位次归位）：三枚门闩，再一条通道。
-        setup: &[
-            Setup::Need(ROUTER_WANTS[0]),
-            Setup::Need(ROUTER_WANTS[1]),
-            Setup::Need(ROUTER_WANTS[2]),
-            Setup::Channel("records"),
-        ],
         ..Demand::DEFAULT
     },
 };

@@ -8,7 +8,7 @@
 //!   2  LAND /probe-op-free（无主）  ⇒ **通**，且答的就是那一格自己的号
 //!   3  LAND /probe-op-own（别人有主）⇒ **Denied**（面 ✓、归属 ✗ ⇒ **两条轴正交**）
 //!   4  LAND /probe-op-own（拿真号再顶一次）⇒ 仍 **Denied**，且那一格**一字未动**
-//!   5  SEEK /sys/operator  ⇒ **Denied**（`seek` 是另一柄权）
+//!   5  SEEK /svc/operator  ⇒ **Denied**（`seek` 是另一柄权）
 //!   6  PART /             ⇒ **Denied**（`part` 是另一柄权；**根**那一格够不着它）
 //!   7  FIND  某号          ⇒ **Denied**（`find` 会**交出能力**，自成一位，不与只读那几条合并）
 //!   8  TRIM  某号          ⇒ **Denied**
@@ -22,7 +22,7 @@
 //! 只能自己报得出——**根是唯一不需要号的那一格**（根没有号，见 `operator::frame`），于是
 //! 那两格由 `probe-operator-gate` 落在**根**底下，本台照名字报坐标。
 //!
-//! 这一条是**量出来的**：第一版拿 `list` ＋ `name` 去走 `/sys/operator/zone`，于是每一次
+//! 这一条是**量出来的**：第一版拿 `list` ＋ `name` 去走 `/svc/operator/zone`，于是每一次
 //! `list` 都被面判拒掉、当场卡死——本台当时量到的不是"读树读不到"，而是"**没资格读**"。
 //!
 //! # 第 2/3 条合起来是两件不同的事

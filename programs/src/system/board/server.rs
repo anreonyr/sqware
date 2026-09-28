@@ -335,7 +335,7 @@ fn answer(
         // 双射，那是改契约，不在这一笔。
         bcall::Wire::Unregister { name } => board.unregister(name, who),
         // **照实记（`Lookup` 这一支已退场）**：名字 → 入口那一问按裁定**不挂在板上**——
-        // board 只留**死信号**一件，按名找服务走树（`operator` 的 `/device` 与 `/sys`）。这一码
+        // board 只留**死信号**一件，按名找服务走树（`operator` 的 `/svc/drv` 与 `/svc`）。这一码
         // 在线上还在（`frame.rs` 与它的记号一个字没动），但板上不再有动作：答法与"表外的动作码"
         // 同一句（`Unknown`）——"这一码我不认"。
         bcall::Wire::Lookup { .. } => Err(Fail::Unknown),

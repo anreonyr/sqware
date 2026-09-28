@@ -6,12 +6,12 @@
 //! 它与 `probe-owner` 是**一对**：
 //!
 //! - `probe-owner` 顶的是 `uart` 的牌子（主人**活着**）⇒ 应被拒；
-//! - 本台留下 `/sys/lease` 然后退场（主人**死了**）⇒ `probe-owner` 随后应能**接手**。
+//! - 本台留下 `/svc/lease` 然后退场（主人**死了**）⇒ `probe-owner` 随后应能**接手**。
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  PART  /sys（幂等）+ SEEK ⇒ 那一格的号
-//!   3  LAND  /sys/lease，归属 = 本域（砖上 `owner` 那一格）
+//!   2  PART  /svc（幂等）+ SEEK ⇒ 那一格的号
+//!   3  LAND  /svc/lease，归属 = 本域（砖上 `owner` 那一格）
 //!   4  **直接死**（不说再见）：本域开的那几枚孔随之封印
 //! ```
 //!
@@ -41,8 +41,8 @@ use env::Name;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 本域要落的那一格：`/sys/lease`——**声明归自己**，随后本域就死。
-const DIR: &str = "sys";
+/// 本域要落的那一格：`/svc/lease`——**声明归自己**，随后本域就死。
+const DIR: &str = protocol::system::SVC;
 const ME: &str = "lease";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -71,11 +71,11 @@ fn main() -> Report<'static> {
     let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
         return bail("probe-lease: bad name");
     };
-    // `/sys` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——
+    // `/svc` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——
     // 拿到的就是那块 Pane（"分"与"落"现在都挂在那块 Pane 上）。
     let root = tree.root();
     let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
-        return bail("probe-lease: no /sys");
+        return bail("probe-lease: no /svc");
     };
     let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {
         return bail("probe-lease: no entry");

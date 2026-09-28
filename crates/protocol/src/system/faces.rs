@@ -109,7 +109,7 @@ macro_rules! faces {
                 }
             }
 
-            /// 这一面叫什么（**树上那一段名字**：`/sys/<族>/{name}`）。
+            /// 这一面叫什么（**树上那一段名字**：`/svc/<族>/{name}`）。
             pub const fn name(self) -> &'static str {
                 match self {
                     $($Grant::$Variant => $name,)*

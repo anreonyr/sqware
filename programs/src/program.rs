@@ -34,7 +34,6 @@
 //! **那是报警器，不是隐患**——`Assembly::assemble` 故意不住这里（它住 `system/mod.rs`）。
 
 use env::ProgramKind;
-use env::supply::Need;
 use env::wire::Eyes;
 
 // ── 声明本身 ─────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ pub type Died = env::Reason;
 pub enum Spot {
     /// 两个**域**：引导域（`root`）与编排域（`system`）——机器本身的骨架。
     Domain,
-    /// **常驻服务**：三台驱动 ＋ 三枚服务（持树者 / 名册 / 盟册）。
+    /// **常驻服务**：三台驱动 ＋ 四枚服务（持树者 / 名册 / 盟册 / 设备账）。
     Service,
     /// **控制台那一台**（`canonical`）：本域扮**终端那一侧的行规程**（ECHO / ERASE / KILL / EOF）；
     /// 产品镜像里排**最后**，编排域等它退场才收场。
@@ -254,17 +253,71 @@ pub enum Origin {
 
 /// 实例化一台要多做的一手。
 ///
-/// **它不负责 start**：`Channel` 在手（`service::mint` 之后）装泊位；`Need` 要等服务起来
-/// 之后才递（`service::wire`）。两件都由编排域装配那一趟按次序落到 `Control` 那两手上。
+/// **它不负责 start**：两种都在装配那一趟里按次序落到具体那几手上（见
+/// [`crate::system::control`] 的 `connect_all` / `enroll`）。
 ///
-/// **"怎么算它起来了"由这一格推**（有 `Channel` ⇒ `Announce::Channel`）——故不给它另立一格。
+/// **"怎么算它起来了"由这一格推**（有通道 ⇒ `Announce::Channel`）——故不给它另立一格。
 #[derive(Clone, Copy)]
 pub enum Setup {
-    /// **资源**：这一台要一枚门闩（今天 = 收方那张需求单里的一条）。
-    Need(Need),
-    /// **通信**：这一台要开一条通道（今天只有 `records`）。放行前 `connect`，放行后按同一个
-    /// 记号 `claim`——它交回那一枚就是"它起来了"的证据。
+    /// **通信**：这一台要开一条通道。放行前 `connect`，放行后按同一个记号 `claim`——它交回
+    /// 那一枚就是"它起来了"的证据。
     Channel(&'static str),
+    /// **整机物料**：这一台起手要**这台机器的全部可领之物**（设备树本体 / 门铃 / 每一台设备
+    /// 那一段区）。
+    ///
+    /// 与 [`Setup::Channel`] 是**同一手 ＋ 一件事**：放行前照样 `connect`（它交回那一枚照样是
+    /// "我起来了"），放行之后装配者多走一趟——**照 [`crate::system::machine::Machine::devices`]
+    /// 枚举全机**、逐段向引导域领、再把那一段记录从这条通道推给它。
+    ///
+    /// **为什么这条通道由装配者填、而不是收方自己去领**（照实记）：与引导域搭那条问答路的
+    /// 泊位（`protocol::system::supply` 的 `BOOT`）**在装配者手里**——它是唯一持它的那一方。
+    /// 收方（设备账那一台）拿不到它，也拿不到"我该领哪几样"（那要读一遍设备树，而树本身也在
+    /// 那一份物料里）。⇒ 领那一段只能发生在装配者这一侧；**这一段记录**因此是"机器 → 那一台"
+    /// 的单向一次交接。
+    ///
+    /// **今天只有一台要它**（设备账 `hub`），而这一格是**声明**：加第二台时不用动装配者一个字。
+    ///
+    /// **它是两条通道，不是一条**（照实记，量出来的）：第一条收物料（`load`），第二条报
+    /// "**我把这一台机器的格都落完了**"（`ready`——它由收方在起手末尾铸一枚孔交回来）。
+    ///
+    /// 为什么非有第二条：收方的起手很长（读一遍树、逐类立盟、逐类逐台落格 ＋ 每格查回来验一遍
+    /// ——实测**这台机器上最慢的一次起手**），而**放行之后装配者就往下起下一位了**。只凭第一条
+    /// 通道，"我起来了"说的是"我刚收到物料"——那一刻它一颗设备格都还没落，后面那几位客人
+    /// （驱动）来认领只会撞空。两条通道分开，`ready` 那一格才说得清"**能答了**"。
+    ///
+    /// **两条都在 [`Setup::channels`] 里**：装配者按同一只手把它们都 `connect` 上，`ready`
+    /// 那条由 `service::ready` 一起等（"逐条凑齐了才算起来"那条口径原样成立）。
+    Machine {
+        /// 收物料那条通道的名字。
+        load: &'static str,
+        /// **"我起完了"那条通道**的名字（收方在起手末尾铸一枚刻它的孔）。
+        ready: &'static str,
+    },
+}
+
+impl Setup {
+    /// 这一格要开的**第一条**通道（恒有一条）：`Channel` 那一格就是它，`Machine` 那一格是
+    /// **收物料**那条。
+    pub const fn channel(&self) -> &'static str {
+        match self {
+            Setup::Channel(ch) => ch,
+            Setup::Machine { load, .. } => load,
+        }
+    }
+
+    /// **还有第二条吗**——`Machine` 那一格多一条（"**我起完了**"那条，见它自己的注）；
+    /// `None` = 这一格只开一条通道。
+    pub const fn ready(&self) -> Option<&'static str> {
+        match self {
+            Setup::Channel(_) => None,
+            Setup::Machine { ready, .. } => Some(ready),
+        }
+    }
+
+    /// 这一格是不是"整机物料"那一类（装配者据此在放行之后多走一趟入册）。
+    pub const fn machine(&self) -> bool {
+        matches!(self, Setup::Machine { .. })
+    }
 }
 
 // ── 每台自己的声明 ───────────────────────────────────────────────────
@@ -283,6 +336,8 @@ pub mod operator;
 pub mod principal;
 #[path = "system/coalition/program.rs"]
 pub mod coalition;
+#[path = "system/hub/program.rs"]
+pub mod hub;
 #[path = "user/canonical/program.rs"]
 pub mod canonical;
 #[path = "driver/router/program.rs"]
@@ -308,10 +363,11 @@ pub mod harness;
 #[rustfmt::skip]
 pub const PROGRAMS: &[&Program] = &[
     &root::PROGRAM,
-    // 三枚服务（持树者 / 名册 / 盟册）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
+    // 四枚服务（持树者 / 名册 / 盟册 / 设备账）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
     &operator::PROGRAM,
     &principal::PROGRAM,
     &coalition::PROGRAM,
+    &hub::PROGRAM,
     &canonical::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &harness::GUEST,
@@ -331,9 +387,9 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::PROBE_RULE_OTHER,
     &harness::PROBE_LEASE,
     &harness::PROBE_BOUND,
-    // 控制面那位真客人（`/sys/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
+    // 控制面那位真客人（`/svc/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
     &harness::PROBE_CONTROL,
-    // 操作面那一族（`/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
+    // 操作面那一族（`/svc/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。
     &harness::PROBE_OPERATOR_GATE,
     &harness::PROBE_OPERATOR_LAND,

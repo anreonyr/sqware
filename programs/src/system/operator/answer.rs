@@ -12,6 +12,7 @@
 //!    许可是一个值，归属是树自己一次查表（唯一要问外边的那一句是"主人还在不在场"，而那是**读**
 //!    内核盖的那一格，不推不收）。
 
+use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::{Grant, Permit};
 use runtime::core::port::{self, Access, Policy};
@@ -34,7 +35,13 @@ pub(super) fn answer(
     grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
+    //
+    // **照实记（这一行读数原来没有）**：那两条路从前**静默答一句 `BAD`**——而客侧把它折成
+    // "这一位那一格没找到"（`map_code`：`BAD` 不在双射表里 ⇒ `Unknown`），于是"读不懂"与
+    // "查无此格"在读数上分不开（设备账那一刀对着一次真的失手debug 了半天）。补这一行：
+    // **谁推的、读不懂**——`BAD` 那一格本来就没有"往哪回"可猜。
     let Some(ask) = ask else {
+        debug!("operator: unreadable frame from={}", who.get());
         return ocall::Union::Status(ocall::BAD);
     };
     // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。

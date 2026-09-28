@@ -193,8 +193,8 @@
 // ── 载体：三侧分别住在哪 ───────────────────────────────────
 //
 // **使用侧** [`client`]（客侧三手）住这里——那是"别的任务怎么找上树"。**今天的客人**：六台域
-// （`canonical`（找控制台那两枚门牌 `/device/uart/{rx,tx}`）、`router` / `rtc` / `uart`（各把门牌挂上
-// 树）、`principal` / `coalition`（上树那条 `/sys` 路））与测具一串（`harness` 的 `subject` /
+// （`canonical`（找控制台那两枚门牌 `/svc/drv/uart/{rx,tx}`）、`router` / `rtc` / `uart`（各把门牌挂上
+// 树）、`principal` / `coalition`（上树那条 `/svc` 路））与测具一串（`harness` 的 `subject` /
 // `member` / `guest` / `lodger` / `sleeper` / `probe_*`）——**装配者不在客人之列**：它替每一位客人
 // 递孔，自己不上树（"往树上立一格"那件事由**持树者在自己核里落**，装配者只递那一枚与一条路，
 // 见 [`Tip`] 与 `programs/src/system/operator/plate.rs::plate`）。
@@ -272,7 +272,7 @@ pub use grant::Grant;
 // `map_seat` / `map_establish` 那三张失败域对照表随之整片退场（`EstablishFail` 那一层不再
 // 出现在这一族：本族只报"这一手没做成"那一格）。
 
-/// **那一段目录的名字**（`/sys/operator` 底下那一段，也即 `/sys/operator/{面名}` 的中间那一段）。
+/// **那一段目录的名字**（`/svc/operator` 底下那一段，也即 `/svc/operator/{面名}` 的中间那一段）。
 ///
 /// **它为什么不住 [`frame`] 那一格**（照实记：另三家都住各自的 `frame`）：`frame` 里 `NAME`
 /// 这个名字**已经被第七个动作码占了**（`name` 那一原语，`const NAME: u8 = 6;`），而那是**线上

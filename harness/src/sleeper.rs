@@ -3,12 +3,12 @@
 
 //! sleeper — **客人**：问一声现在几点、约一个时刻、**睡到那一声**、走人。
 //!
-//! 它是 `rtc` 那台驱动的**真客人**（`/device/rtc` 那块门牌第一位用家）：那台时钟只有持有它的域
+//! 它是 `rtc` 那台驱动的**真客人**（`/svc/drv/rtc` 那块门牌第一位用家）：那台时钟只有持有它的域
 //! 读得动（`ONLY`），故"报时 / 定闹钟"这两件事只能由驱动替它做——本域说两句话、收两句话。
 //!
 //! ```text
 //!   1  上板（reg）：只为让板看得见本域的死
-//!   2  上树 FIND "/device/rtc"：**找不到就再问**（门牌是驱动落的，本域可能比它先起）
+//!   2  上树 FIND "/svc/drv/rtc"：**找不到就再问**（门牌是驱动落的，本域可能比它先起）
 //!   3  now()               → sleeper: now=<t>         一问一答，自带一枚回信孔
 //!   4  （**已退场**：那一格是"约一个过去的时刻"，相对量表达不出过去——见下面那条照实记）
 //!   5  arm(now + 50ms)     → sleeper: armed=0         真约；被答 `Past` 就**重问重算**（有界）
@@ -57,7 +57,7 @@ use runtime::env::unit as utask;
 /// 本域挂在板上的名字（板按它分人；编排域表里那一条也叫这个）。
 const ME: &str = "sleeper";
 
-/// 要找的那位服务在树上的名字：**实时钟**（`/device/rtc`——名字用服务名）。
+/// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）。
 const WANT: &str = "rtc";
 
 /// 等板 / 等树 / 找一趟服务 / 办一趟往返的总上限（毫秒）。**必须有界**。
@@ -172,7 +172,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
     }
 }
 
-/// 找那面服务：`FIND /device/rtc`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
+/// 找那面服务：`FIND /svc/drv/rtc`，**找不到就再问**（有界）——门牌是驱动落的，本域可能比它先起。
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：认的是"持树者刚授进来的那一份"，
 /// 而本域此刻只查了这一趟 ⇒ 这一趟拿走的一定是它。
@@ -180,7 +180,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 /// **照实记（收 `&Face`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀把它包出来了），
 /// 故这一手只借它——签名上不再出现那条线。
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let (Ok(dir), Ok(want)) = (Name::new(protocol::driver::DIR), Name::new(WANT)) else {
+    let (Some([svc, drv]), Ok(want)) = (protocol::driver::road(), Name::new(WANT)) else {
         return None;
     };
     // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：两格在
@@ -190,7 +190,7 @@ fn find_face(tree: &Face) -> Option<PieToken> {
     // 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有
     // 一枚，故这里也照一枚写（重试那一圈照旧留着）。
     let root = tree.root();
-    let road = [dir, want];
+    let road = [svc, drv, want];
     let mut left = MS;
     loop {
         match root

@@ -16,10 +16,8 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Setup, Spot};
+use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
 use env::ProgramKind;
-use env::supply::{Kind, Need, class_block};
-use env::{Access, Policy};
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
 
@@ -39,13 +37,6 @@ pub const E_PROBE_CONTROL: Died = 25;
 pub const E_PROBE_OPERATOR_GATE: Died = 26;
 pub const E_PROBE_OPERATOR_LAND: Died = 27;
 
-/// 房客要的那一枚：**一条没人要的线**（`virtio,mmio`），领上就死。
-pub const LODGER_WANTS: &[Need] = &[Need::class(
-    class_block("virtio,mmio"),
-    Kind::Pole,
-    Access::FETCH,
-    Policy::ONLY,
-)];
 
 // ── 常客（进验收镜像当客人跑，量的是服务）────────────────────────────────
 
@@ -56,7 +47,7 @@ pub static GUEST: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(8),
+        order: Some(9),
         presence: true,
         operator: true,
         bind: true,
@@ -76,7 +67,7 @@ pub static PASSER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(9),
+        order: Some(10),
         presence: true,
         bind: true,
         ..Relation::DEFAULT
@@ -95,19 +86,18 @@ pub static LODGER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(10),
+        order: Some(11),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
         died: E_LODGER,
-        setup: &[Setup::Need(LODGER_WANTS[0]), Setup::Channel("records")],
         ..Demand::DEFAULT
     },
 };
 
-/// 客人：`/device/rtc` 那面服务的第一位用家。
+/// 客人：`/svc/drv/rtc` 那面服务的第一位用家。
 pub static SLEEPER: Program = Program {
     identity: Identity {
         name: "sleeper",
@@ -115,7 +105,7 @@ pub static SLEEPER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(11),
+        order: Some(12),
         presence: true,
         operator: true,
         bind: true,
@@ -135,7 +125,7 @@ pub static SUBJECT: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(12),
+        order: Some(13),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -154,7 +144,7 @@ pub static MEMBER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(13),
+        order: Some(14),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -175,7 +165,7 @@ pub static PROBE_DENIED: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(14),
+        order: Some(15),
         operator: true,
         ..Relation::DEFAULT
     },
@@ -193,7 +183,7 @@ pub static PROBE_OWNER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(16),
+        order: Some(17),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -212,7 +202,7 @@ pub static PROBE_RULE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(17),
+        order: Some(18),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -231,7 +221,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(18),
+        order: Some(19),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -250,7 +240,7 @@ pub static PROBE_LEASE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(15),
+        order: Some(16),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -270,7 +260,7 @@ pub static PROBE_BOUND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(19),
+        order: Some(20),
         presence: true,
         operator: true,
         bind: true,
@@ -282,7 +272,7 @@ pub static PROBE_BOUND: Program = Program {
     },
 };
 
-/// **控制面的真客人**：从树上找 **`/sys/control/state`**（问面），问一句 control 的话；
+/// **控制面的真客人**：从树上找 **`/svc/control/state`**（问面），问一句 control 的话；
 /// 另取那三面各期望被拒（带规矩），并拿问面发写、期望判面拒。
 ///
 /// task-4 那条挂载路挂出过一块**查得到、取不回**的门牌（铸入口的是一枚一次性边沿线程，
@@ -291,7 +281,7 @@ pub static PROBE_BOUND: Program = Program {
 /// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 ///
-/// **它排在 `canonical` 之前**（`order: Some(20)`，`canonical` 让到最后）：那一面是在**整表起完
+/// **它排在 `canonical` 之前**（`order: Some(21)`，`canonical` 让到最后）：那一面是在**整表起完
 /// 之后**才挂上树的（`Assembly::supervise`），故这一台头几拍那一问会等在门外（`Face::tile`
 /// 按额度重试）；而 `canonical` 必须是最后一条（编排域等它退场才收场）⇒ 让位的只能是这一台。
 pub static PROBE_CONTROL: Program = Program {
@@ -301,7 +291,7 @@ pub static PROBE_CONTROL: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(20),
+        order: Some(21),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -312,10 +302,10 @@ pub static PROBE_CONTROL: Program = Program {
     },
 };
 
-// ── 操作面那一族（`/sys/operator/{part,land,…}`）─────────────────────
+// ── 操作面那一族（`/svc/operator/{part,land,…}`）─────────────────────
 
-/// **操作面的正证客人（全操作面那一半）**：拿控制面会话把 `/sys/operator` 与它底下那几格看
-/// 一眼、取回 `/sys/operator/land` 那一枚入口、再把试验场（**根**底下两格归属不同的砖）铺好
+/// **操作面的正证客人（全操作面那一半）**：拿控制面会话把 `/svc/operator` 与它底下那几格看
+/// 一眼、取回 `/svc/operator/land` 那一枚入口、再把试验场（**根**底下两格归属不同的砖）铺好
 /// 给下一位客人。
 ///
 /// **它读的不是"整表起完"那一趟**：那七格挂在**持树者一就位**那一趟（`Assembly::mount_grants`），
@@ -337,7 +327,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(3),
+        order: Some(4),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -358,7 +348,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(4),
+        order: Some(5),
         operator: true,
         bind: true,
         ..Relation::DEFAULT

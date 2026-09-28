@@ -68,6 +68,7 @@ pub mod control;
 // 各归了域（`control/core.rs` / `control/desk.rs`：它们只有生命轴一枚域读）；而**这一册待客账
 // 是两枚域共用的一本**（板线程在编排域、持树者在 operator 域）⇒ 住它们共同的那一格。
 pub mod desk;
+pub mod hub;
 pub mod machine;
 pub mod mount;
 pub mod operator;
@@ -136,7 +137,7 @@ impl Assembly {
         self.watch.run(&mut self.control, last);
     }
 
-    /// **把 `control` 那一族挂上树**（`/sys/control/{state,mint,start,stop}` 四面，一原语一面）：
+    /// **把 `control` 那一族挂上树**（`/svc/control/{state,mint,start,stop}` 四面，一原语一面）：
     /// 本域逐面铸入口、**持树者逐面落那一格**、本域当场待客。
     ///
     /// 三步，次序即契约：
@@ -152,16 +153,16 @@ impl Assembly {
     /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
     /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
     ///
-    /// # `/sys/{族}` 自己不是一格（四族共一条，回炉那一刀从四份 `mount.rs` 收来）
+    /// # `/svc/{族}` 自己不是一格（四族共一条，回炉那一刀从四份 `mount.rs` 收来）
     ///
     /// 它是那条路上的**一段前缀**（第一条路的段列表走前缀时就地把它立成一块 `Pane`）——
-    /// **没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故 `seek("/sys/operator")`
+    /// **没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故 `seek("/svc/operator")`
     /// 之类答 [`Fail::NotATile`](protocol::system::operator::Fail::NotATile)：那一段是块窗格，
     /// 到头了的是它底下那几格。
     ///
     /// **照实记（"第八格"是量出来的，而它现在写不出来）**：从前的帧是"两段名字 ＋ 一格
     /// `layer`"，目录与七位共用"两帧"那一手，而目录那两段名字是同一个（`"operator"`）⇒ 第二帧
-    /// 又往它里面落了一格也叫 `operator` 的。实机读数：`/sys/operator` 底下**八格**。今天一条路
+    /// 又往它里面落了一格也叫 `operator` 的。实机读数：`/svc/operator` 底下**八格**。今天一条路
     /// 是**段列表**、末段由 `leaf` 定，而目录**根本不由谁单独立一帧**——它是第一位那条路的
     /// **前缀**（`part` 幂等）⇒"目录自己也是它底下的一格"**在形状上写不出来**，不必靠断言挡。
     ///
@@ -170,7 +171,7 @@ impl Assembly {
     ///
     /// **照实记（名册与盟册那两格换过一格）**：`/sys/principal` 与 `/sys/coalition` **从前就是
     /// 那一枚门牌**（是一枚 `Tile`，谁 `seek` 到它谁就拿到整面）；开面那一刀之后它们与
-    /// `/sys/operator` 同形——都由第一位那条路的前缀就地立成一块 `Pane`。
+    /// `/svc/operator` 同形——都由第一位那条路的前缀就地立成一块 `Pane`。
     ///
     /// **铸入口那一枚必须长命**：三处内核证据与实测在 [`Assembly::supervise`] 的照实记里。
     /// 回炉那一刀把四份 `mount.rs` 里**逐字相同的三份抄写**收掉了——那句话本来就只有那一处。
@@ -195,7 +196,7 @@ impl Assembly {
         let Ok(sys) = sys_dir() else {
             return debug!("system: control not mounted (sys:name)");
         };
-        // **四面各一枚入口、各一条路**（`/sys/control/{state,mint,start,stop}`）——一原语一面。
+        // **四面各一枚入口、各一条路**（`/svc/control/{state,mint,start,stop}`）——一原语一面。
         //
         // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"），
         // `mint` / `start` / `stop` 三面各带 [`Rule::Root`]——"**许给根**"（`Trunk(ROOT)`）。
@@ -221,15 +222,15 @@ impl Assembly {
                 continue;
             }
             self.watch.attach_face(grant, entry);
-            debug!("system: control mounted at /sys/control/{}", grant.name());
+            debug!("system: control mounted at /svc/control/{}", grant.name());
         }
     }
 
-    /// **把七位操作面挂上树**（`/sys/operator/{part,land,find,trim,list,seek,name}`）。
+    /// **把七位操作面挂上树**（`/svc/operator/{part,land,find,trim,list,seek,name}`）。
     ///
     /// 与 [`Assembly::mount_control`] 同一趟、同一只手（本域铸入口 → 持树者落格），但**一路三
-    /// 段**：`/sys` → `/sys/operator`（**只是一段目录，不是任何能力的别名**：没有入口、没有
-    /// Pie）→ `/sys/operator/{name}`。前两段由持树者**就地立出来**（`part` 幂等：缺的就地造，
+    /// 段**：`/svc` → `/svc/operator`（**只是一段目录，不是任何能力的别名**：没有入口、没有
+    /// Pie）→ `/svc/operator/{name}`。前两段由持树者**就地立出来**（`part` 幂等：缺的就地造，
     /// 已在就是成了）——故**目录不单独占一帧**，它由第一位那条路的前缀走出来。
     ///
     /// **七格各自独立**：一位挂不上只少一位（各报一行读数、不拦整机），其余六位照挂。
@@ -246,7 +247,7 @@ impl Assembly {
             Ok(name) => name,
             Err(_) => return debug!("system: grants not mounted (name)"),
         };
-        // ② 七位：每位一条路（`/sys/operator/{name}`），前缀由持树者就地立出来。
+        // ② 七位：每位一条路（`/svc/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::system::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
@@ -260,7 +261,7 @@ impl Assembly {
                 debug!("system: grant not mounted ({why})");
                 continue;
             }
-            debug!("system: grant mounted at /sys/operator/{}", grant.name());
+            debug!("system: grant mounted at /svc/operator/{}", grant.name());
         }
     }
 
@@ -314,6 +315,16 @@ impl Assembly {
                 .map_err(|why| fail(program, Error::Step(why)))?;
         }
 
+        // **等就绪**：这一台那几条通道逐条认齐（`Setup::Machine` 那两条里第二条就是"我起完了"）。
+        //
+        // **照实记（这一格为什么在挂板 / 挂树之后）**：这一刀之前"等就绪"住在
+        // `Control::launch` 里（放行之后紧接着）——那时就绪的凭据只有"它交回了一枚通道孔"，
+        // 而那一刻与"它答得了"是同一件事。`Machine` 那一格把两件事分开了：它的"起完了"要到
+        // **挂上树、拿到物料、把每一台落完格**之后才说得出口 ⇒ 等它必须排在那两手之后。
+        self.control
+            .ready(name, &mut service, program.demand.setup)
+            .map_err(|e| fail(program, e))?;
+
         // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
         if program.relation.holds_tree {
             self.tree
@@ -347,7 +358,7 @@ impl Assembly {
     }
 }
 
-/// **树那一层那一格**（`/sys`）：`control` 与 `operator` 两族的路都从它起。
+/// **树那一层那一格**（`/svc`）：`control` 与 `operator` 两族的路都从它起。
 ///
 /// 正文是 [`ccall::frame::DIR`]（"各族挂在 `/sys` 底下"那一条的原文）——持树者那一侧从前还有一份
 /// 私有副本（`CONTROL_DIR`），两份字符串互不相识、各写各的；这一刀起只有这一处给。

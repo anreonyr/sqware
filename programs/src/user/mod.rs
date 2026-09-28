@@ -24,7 +24,7 @@
 //! 同屋——那一屋的定义就是"**不进产品镜像的一切**"）。留在这屋的是**产品**。
 //!
 //! **本文件今天没有一行代码**：这一档只剩一份 bin（`canonical/main.rs`），而 bin **不进 lib**
-//! （`programs` 的共享件仍只有那三枚：`entry` / `service` / `driver::assemble`）。留这一份是为了
+//! （`programs` 的共享件仍只有那三枚：`entry` / `service` / `driver::device`）。留这一份是为了
 //! 上面那条判据有地方住——`programs/src/lib.rs` 的 `pub mod user;` 认的就是它，与
 //! `driver/uart/mod.rs` 同一条判据：**锚留给链接与判据**。
 

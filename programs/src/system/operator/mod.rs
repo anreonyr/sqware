@@ -26,7 +26,7 @@
 
 use protocol::system::operator as ocall;
 
-/// **那一段目录的名字**（`/sys/operator` 底下那一段，也即 `/sys/operator/{面名}` 的中间那一段）。
+/// **那一段目录的名字**（`/svc/operator` 底下那一段，也即 `/svc/operator/{面名}` 的中间那一段）。
 ///
 /// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
 /// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩

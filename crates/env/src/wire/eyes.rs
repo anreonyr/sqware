@@ -18,9 +18,9 @@ use crate::wire::Field;
 /// **这一台是持树者的哪一双眼睛**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Eyes {
-    /// 名册（`/sys/principal`）：答"这一位此刻代表谁"与"在不在他那一支里"。
+    /// 名册（`/svc/principal`）：答"这一位此刻代表谁"与"在不在他那一支里"。
     Roster = 0,
-    /// 盟册（`/sys/coalition`）：答"这一位在那枚盟里吗"。
+    /// 盟册（`/svc/coalition`）：答"这一位在那枚盟里吗"。
     League = 1,
 }
 

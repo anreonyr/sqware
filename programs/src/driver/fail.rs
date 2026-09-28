@@ -23,7 +23,7 @@
 //!
 //! # 裁（用户）：读数说**步名**，域名由号带
 //!
-//! 起手那一趟收进 [`Context::enter`](crate::driver::context::Context::enter) 之后，有一格必须裁：
+//! 起手那一趟收进 [`Context`](crate::driver::context::Context) 之后，有一格必须裁：
 //! 那句"死在哪一步"的话由**谁**说。共用的那一层不认识域名，而 `Report` 的 note 是一句
 //! `&str`（要拼 `"uart: tree"` 就得给 `Fail` 带 alloc，或给出口类型加第二格）。裁定：
 //!
@@ -46,7 +46,7 @@
 //!
 //! - 号回**它自己的名字**（各域 `main` / `boot` / `resident` 直接写 `E_UART` / `E_RTC` /
 //!   `E_ROUTER`——与装配表同一处）；
-//! - 那句话回**死处**（`Device::claim::<N>()` 里本族自己说 `"assemble"`）；
+//! - 那句话回**死处**（`Hub::claim` 那一趟自己说 `"bond"` / `"list"` / `"claim"` 那种步名）；
 //! - 一枚结构只留 [`Fail::at`] 一手。
 //!
 //! 一族因此只剩本文件。**留档**：`uart/adapt/` 随这一刀整个消失（它此后只剩那一份 fail）。
@@ -57,8 +57,8 @@
 //! [E_UART](programs::program::uart::E_UART) /
 //! [E_RTC](programs::program::rtc::E_RTC) 取自 [programs::program] 那张装配表
 //! （"**这一台**死了"，见那份 `program` 的 `died`）。唯一自己带号的是"配给那一趟没成"
-//! ——它带装配那一族的号（`assemble::E_UP` / `E_GRANT`），**原样往外带**（折成同一个号就
-//! 等于把那几个编号变成没人读得到的死码）。
+//! ——**照实记（那一族随"收配给"那条路一起退了）**：设备那一轴改由本域自己走一趟设备账之后，
+//! "配给那一趟没成"不再存在（本域的死法只剩它自己那一号 ＋ 步名）。
 //!
 //! # 两枚 `fail` 是两件事
 //!
@@ -77,7 +77,7 @@ pub struct Fail {
 
 impl Fail {
     /// 死在**某一步**：号是装配表里那一号（[E_UART](programs::program::uart::E_UART) 那种，
-    /// 或 `assemble::E_UP` / `E_GRANT`），那句话是**步名**（`"tree"` / `"desk"` 那种，
+    /// 或本域自己那几条步名），那句话是**步名**（`"tree"` / `"desk"` 那种，
     /// 见上面那一格裁）。
     pub const fn at(code: Died, text: &'static str) -> Self {
         Self { code, text }

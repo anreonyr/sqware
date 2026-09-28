@@ -75,6 +75,22 @@ impl Field for bool {
     }
 }
 
+/// **`u32` 那一格是 4 字节小端**：游标 / 线号 / 权的位数那几格就是它。
+///
+/// **照实记（它为什么迟来）**：这一族原先只有 [`u8`] / [`bool`] / [`[u8; 8]`] / [`u64`] 与两枚号
+/// ——供给那一族要带 4 字节的数时，是把整枚 `Want` 手写了一份 `Field`（`repr(C)` 那一路，见
+/// [`crate::supply`]），"这一格多宽、怎么落字节"于是又在那边写了一遍。hub 那一族有三处 4 字节
+/// （取窗的游标 / 线号 / 权那两位的位数），这一格补上之后那几处不必再手写。
+impl Field for u32 {
+    const WIDTH: usize = 4;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_le_bytes());
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
+    }
+}
+
 /// **8 个裸字节也算一格**：写什么读什么，**含义归族说**（树那一族答话里"那一格号"就是它
 /// ——`part` / `seek` 读成**坐标**、`find` 读成**门闩**，线上逐字同形）。
 ///

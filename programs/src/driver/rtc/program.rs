@@ -3,20 +3,13 @@
 //! **U 态**：持有 `rtc@101000`（11 号线），武装闹钟、到点自己拉线；客人定的闹钟到点就清掉
 //! 那一格、把"那一声"推回去。它是"抽象等第二个实例"的那个第二例。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Setup};
-use env::supply::{Kind, Need, class_block};
-use env::{Access, Policy};
+use crate::program::{Demand, Died, Identity, Program, Relation};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_RTC: Died = 12;
 
-/// 实时钟驱动要的那一枚：**那一台 `google,goldfish-rtc`**。
-pub const RTC_WANTS: &[Need] = &[Need::class(
-    class_block("google,goldfish-rtc"),
-    Kind::Pole,
-    Access::FETCH_STORE,
-    Policy::ONLY,
-)];
+// **照实记（"要的那一枚"搬回本域）**：同 `uart` 那一份——需求单回了本域自己的模块
+// （`driver/rtc/main.rs` 的 `ASK`）。
 
 pub static PROGRAM: Program = Program {
     identity: Identity {
@@ -25,7 +18,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(7),
+        order: Some(8),
         presence: true,
         operator: true,
         bind: true,
@@ -33,7 +26,6 @@ pub static PROGRAM: Program = Program {
     },
     demand: Demand {
         died: E_RTC,
-        setup: &[Setup::Need(RTC_WANTS[0]), Setup::Channel("records")],
         ..Demand::DEFAULT
     },
 };

@@ -32,6 +32,7 @@ use crate::system::control::desk::{Announce, Service, Slot, State, Table};
 use crate::program::{
     Died,
     coalition::E_COALITION,
+    hub::E_HUB,
     operator::E_TREE,
     principal::E_PRINCIPAL,
 };
@@ -60,7 +61,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     }
 }
 
-/// **三枚服务起手失败**（持树者 / 名册 / 盟册各一个 bin，共用这一枚词表）。
+/// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）。
 ///
 /// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::system::operator::{…,
 /// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
@@ -99,6 +100,9 @@ pub enum Start {
     Book(Died),
     /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**。
     Face(Died),
+    /// **起手那一段物料没收到**（整机物料那条通道上没来东西 / 来的东西解不动）；
+    /// **只有设备账那一台有**（`Setup::Machine` 那一格）。
+    Load(Died),
     /// **常驻期**：组坏了（`await_` 答不出）——与 [`Start::Desk`] 分开，是因为它不在"起手那
     /// 几步"里（起手已经过完了），而号同那一族。
     Dead(Died),
@@ -118,6 +122,7 @@ impl Start {
             | Start::Desk(d)
             | Start::Book(d)
             | Start::Face(d)
+            | Start::Load(d)
             | Start::Dead(d) => d,
         }
     }
@@ -150,6 +155,14 @@ impl Start {
             Start::Room(E_COALITION) => "coalition: no room",
             Start::Desk(E_COALITION) => "coalition: desk",
             Start::Dead(E_COALITION) => "inner: group dead",
+            // 设备账（`E_HUB`）：树 / 物料 / 盟册那面 / 自带的常驻圈（它不用 `carrier`：
+            // 两个来路——那只组 ＋ 探活那一拍，见 `system/hub/server.rs`）。
+            Start::Tree(E_HUB) => "hub: tree",
+            Start::Load(E_HUB) => "hub: no machine",
+            Start::Face(E_HUB) => "hub: no league plate",
+            Start::Room(E_HUB) => "hub: no room",
+            Start::Desk(E_HUB) => "hub: desk",
+            Start::Dead(E_HUB) => "inner: group dead",
             // **构造上到不了**（上面三组把三个族的全部产点摆齐了）；真到这一步就照实说"不知道"，
             // 不顺手套一个好听的名字。
             _ => "start: ?",

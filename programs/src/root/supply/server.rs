@@ -4,7 +4,7 @@
 
 use env::{MailFail, PieToken, Wait};
 use env::{Key, Pair};
-use runtime::core::port::{self, Policy};
+use runtime::core::port;
 use runtime::env::mail::{NolePie, PolePie};
 
 use protocol::system::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
@@ -20,7 +20,18 @@ use protocol::communication::sender::Sender;
 /// 契约：
 /// - **逐条进行**：第 i 条不成即停（`Err`）。前面已经授出的**留在对端**——它们已经归
 ///   对端了，本层不回滚（回滚要 `Revoke`，那是另一个动作；调用方按 `code` 处置）。
-/// - **形态照请求，唯独 `VEST` 一律剔掉**：固件不发"再授出的权"。
+/// - **形态照请求**（`VEST` / `ONLY` 都是**请求方说**的，固件不替它挑）。
+///
+/// **照实记（"唯独 `VEST` 一律剔掉"那条规矩退了）**：这一句从前是 `& !Policy::VEST`，理由
+/// 写的是"**固件不发'再授出的权'**"——它说得通的前提是**每一台驱动各自向固件领自己那一份**：
+/// 那种世界里"把一枚设备再授给别人"没有客人，只有多一层转手的风险。
+///
+/// 这一刀把那个前提换掉了：整台机器**只经一条路**领出去——装配者领给**设备账那一台**
+/// （`Setup::Machine`），而那一位的**全部工作就是把每一台再授给它认领的那台驱动**。它手里那
+/// 一份不带 `VEST` 就一台都交不出去（`accord` 一句"源枚不持 `VEST`"当场拒）。故那一句删掉：
+/// **"这一枚能不能再授出"从此是请求方那一格说了算**，而**独占**那一半并没有放开——
+/// 设备 `reg` 段那一枚带 `ONLY`，内核按"`ONLY` 必须一致 ＋ 一枚至多一个 heir"执行：
+/// 设备账一次只能把一台交给一位（见 `protocol::driver::hub` 那一条照实记）。
 ///
 /// **照实记（"记录缓冲装不下"那一格退场）**：那一格从前是
 /// `records.len() < n × PAIR_LEN ⇒ Full`——今天 `records` 恰好是 [`WANT_MAX`] 条，而条数不越界
@@ -37,8 +48,8 @@ pub fn supply(
         let key = want.key().ok_or(Fail::Bad)?;
         let src = src_of(key).ok_or(Fail::Unknown)?;
         let access = want.access().ok_or(Fail::Bad)?;
-        // 形态照请求，**唯独 `VEST` 一律剔掉**（见本函数的契约）。
-        let form = want.policy().ok_or(Fail::Bad)? & !Policy::VEST;
+        // 形态**照请求**（见本函数的契约那一节）。
+        let form = want.policy().ok_or(Fail::Bad)?;
         let at = match want.kind().ok_or(Fail::Bad)? {
             Kind::Pole => port::ship(&PolePie::from_token(src), who, access, form),
             Kind::Nole => port::ship(&NolePie::from_token(src), who, access, form),

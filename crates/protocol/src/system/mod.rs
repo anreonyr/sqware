@@ -510,6 +510,18 @@
 //! 平级（`crates/protocol/src/{operator,principal,coalition}/`）。**被否的那条读法**是
 //! "协议树按'谁在说话'分、不该镜像实现树"——用户裁的是前者，故搬进来了。
 
+/// **服务那一层在树上的那一段名字**：`svc`——各族那一段路都从它起。
+///
+/// **照实记（这一格是 `/sys` → `/svc` 那一刀立的）**：它从前在四个地方各写了一遍
+/// （`principal` / `coalition` / `control` 三族的 `DIR`，加编排域 `sys_dir()` 里那句
+/// "引 `ccall::frame::DIR`"）——同一个词四处给，改一处就得记得另外三处。今天的口径是：
+/// **这一段名字只有这一处说**，三族的 `DIR` 都指向它（`const` 引 `const`，一处改全跟着改），
+/// 驱动那一族在自己的 `DIR` 旁边也引同一枚（`/svc/drv` 两段里的头一段）。
+///
+/// **为什么是 `svc` 而不是 `sys`**（用户裁定）：这一层底下收的不只是"系统服务"——驱动那一族
+/// （`/svc/drv`）与设备账（`/svc/hub`）也挂上来了，而 `/dev` 留给**设备那一轴**（hub 落的账）。
+pub const SVC: &str = "svc";
+
 pub mod board;
 pub mod coalition;
 pub mod control;

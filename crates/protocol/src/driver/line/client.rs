@@ -1,10 +1,10 @@
 //! line::client — **客侧几手**：占住一条线泊位、说一声登记、收投递、说一句排空。
 //!
-//! 客户是**持有那台设备的人**：它从不读线号（泊位就是坐标），只报**那一段区**。
+//! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
+//! （[`Deed`](crate::driver::hub::Deed)，区→线的权威在设备账那一台），本层只把它原样报上来。
 
 use env::Wait;
 use env::{Mark, PieToken};
-use env::Key;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -25,7 +25,7 @@ pub struct Line {
 impl Line {
     /// 占住这一格（记号 [`frame::LANE`]）并把登记推给门牌那扇入口，等一格答话。
     ///
-    /// `entry` = 树上查来的那扇门（`/device/router` 下驱动族那一块）；对端 = **那扇门的主人**
+    /// `entry` = 树上查来的那扇门（`/svc/drv/router` 下驱动族那一块）；对端 = **那扇门的主人**
     /// （`owner`：副本共享同一事实、转手不变）。
     ///
     /// **失败那一趟两边都收干净**：本端铸出去的那一枚（`pair` 是 [`Held`]，三条 `return` 上
@@ -33,7 +33,10 @@ impl Line {
     /// 故此后没人会替它收，而路由者那侧**收不了别人的表**（它只放得下自己表里的那一枚），
     /// 故这一侧自己收干净。不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，
     /// 直到它退场（读数见 `programs/src/driver/router/adapt/desk.rs` 那一格 `pies=`）。
-    pub fn occupy(entry: PieToken, key: Key, millis: Wait) -> Result<Line, Fail> {
+    ///
+    /// **荷载是线号不是坐标**（照实记，见 [`frame::Occupy`]）：区 → 线那条权威在**设备账**
+    /// 那一台（认领那一答的契里带着线号），本手只是把那个数原样报上去。
+    pub fn occupy(entry: PieToken, line: u32, millis: Wait) -> Result<Line, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Denied)?;
         // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
@@ -56,10 +59,10 @@ impl Line {
         )
         .map_err(|_| ())
         .and_then(|_| {
-            // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 坐标）——装与发都不在这一
+            // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
             // 层写字节（缓冲在这一帧的栈上：这一形定长 [`frame::Occupy::LEN`]）。
             Sender::<frame::Occupy>::from_token(entry)
-                .send(frame::Occupy::of(key), Wait::Forever)
+                .send(frame::Occupy::of(line), Wait::Forever)
                 .map_err(|_| ())
         });
         if sent.is_err() {

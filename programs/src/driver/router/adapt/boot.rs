@@ -15,22 +15,52 @@ use crate::core::lines::Lines;
 use crate::core::sources::Sources;
 use crate::plic::Plic;
 use alloc::vec::Vec;
-use env::{HoleDir, Wait};
-use programs::driver::context::Context;
-use programs::driver::device::Device;
+use env::{Access, HoleDir, Kind, Policy, Wait};
+use programs::driver::context::{Context, Step};
+use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
-use programs::program::router::{E_ROUTER, ROUTER_WANTS as WANTS};
+use programs::program::router::{E_ROUTER, PLIC_CLASS};
 use protocol::debug;
 use programs::system::board::client as board;
+use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
+use protocol::driver::hub as hcall;
 use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie, NolePie};
 use runtime::env::unit as utask;
 
-/// 本域挂在树上的名字（`/device/router`，[`protocol::driver::DIR`] 之下的那一段）。
+/// 本域挂在树上的名字（`/svc/drv/router`，[`protocol::driver::DIR`] 之下的那一段）。
 const SERVICE: &str = "router";
+
+/// 本域要认的三样：**中断控制器**（按类）＋ **设备树本体 / 门铃**（点名——那两件的名字是常量，
+/// 它们不是树里的设备）。
+///
+/// **照实记（这三条从前住装配表）**：它们是本域那张需求单（`ROUTER_WANTS`）里那三格——装配者按
+/// 同一张单替本域领三样。那一整条路退了 ⇒ 单子回了它自己的域（类那一格仍是同一枚
+/// [`PLIC_CLASS`]，读树那一侧也用同一枚）。
+const PLIC_ASK: Ask = Ask {
+    class: PLIC_CLASS,
+    name: None,
+    kind: Kind::Pole,
+    access: Access::FETCH_STORE,
+    policy: Policy::ONLY,
+};
+const DTB_ASK: Ask = Ask {
+    class: hcall::BOOT,
+    name: Some(hcall::DTB),
+    kind: Kind::Pole,
+    access: Access::FETCH,
+    policy: Policy::NONE,
+};
+const IRQ_ASK: Ask = Ask {
+    class: hcall::BOOT,
+    name: Some(hcall::IRQ),
+    kind: Kind::Nole,
+    access: Access::FETCH,
+    policy: Policy::NONE,
+};
 
 /// 装泊位 / 等配给 / 办一趟登记 / 上树的期限（毫秒）。
 const QUAY_MS: usize = 1000;
@@ -39,8 +69,6 @@ const QUAY_MS: usize = 1000;
 pub struct Up {
     /// 控制器寄存器面（设备侧）。
     pub plic: Plic,
-    /// 树那侧解出来的事实与线集合（纯核心）。
-    pub sources: Sources,
     /// 账：线号 = 下标（容量按 `device_count` 校验 ⇒ 越界不可表达）。
     pub lines: Lines,
     /// 门铃（内核给的那一枚；它只 `hush`，不铸）。
@@ -55,61 +83,62 @@ pub struct Up {
 
 /// 起手。
 pub fn up() -> Result<Up, Fail> {
-    // 客侧装配：收配给（**编号原样带出去**——`take` 报的是"死在装配的哪一步"，折成同一个号就
-    // 等于把那几个编号变成没人读得到的死码）。三枚都要在（`N` 就是那张单子的长度）。
-    let [plic_pie, dtb_pie, bell_pie] = Device::claim::<{ WANTS.len() }>()?;
-    debug!("router: got {}", WANTS.len());
+    // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
+    //
+    // **照实记（"上板 / 上树仍然尽力"那条口径在这一刀上翻了面）**：从前这两件任一件没成都只报
+    // 一行读数、不拦主循环——因为本域起来就得收（铃一响就要 `claim`），而设备那三样是装配期直授
+    // 的。这一刀之后**设备要从树上找**（`/dev/<类>/<名>`），而"这台归谁"由设备账（也住树那一
+    // 层）回答 ⇒ 这条会话没了就没有设备，故它是**硬前置**（两格各报自己的步名）。
+    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
+    let sire = utask::sire();
+    let ctx = Context::join(entry, sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
+        Fail::at(
+            E_ROUTER,
+            match s {
+                Step::Board => "board",
+                Step::Tree => "tree",
+            },
+        )
+    })?;
+    // 设备那一趟：找设备账那两枚面 → 认三样（控制器 / 设备树 / 门铃）。
+    let tree = operator::Face::from(&ctx.session);
+    let hub = Hub::find(&tree, E_ROUTER, Wait::AtMost(QUAY_MS))?;
+    let plic_deed = hub.claim(&tree, &PLIC_ASK, E_ROUTER, Wait::AtMost(QUAY_MS))?;
+    let dtb_deed = hub.claim(&tree, &DTB_ASK, E_ROUTER, Wait::AtMost(QUAY_MS))?;
+    let irq_deed = hub.claim(&tree, &IRQ_ASK, E_ROUTER, Wait::AtMost(QUAY_MS))?;
+    debug!(
+        "router: claimed {} {} {}",
+        plic_deed.name.as_str(),
+        dtb_deed.name.as_str(),
+        irq_deed.name.as_str()
+    );
 
-    // 开图 + 读树：控制器、本域的 context、要接的线（与"没进来的账"）。
-    let plic_dev = Device::open(plic_pie).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
-    let dtb_dev = Device::open(dtb_pie).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
+    // 开图 + 读树：控制器、本域的 context（线那一半——"这台是哪条线"——已随设备账走，
+    // 见 `core/sources.rs` 的照实记）。
+    let plic_dev = Device::open(plic_deed.token).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
+    let dtb_dev = Device::open(dtb_deed.token).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
     let dtb = dtb_dev.view();
     // SAFETY: 设备树是内核只读借映进本域的整棵（保留区，终身存活）；`Sources::of` 只读它。
     let bytes = unsafe { core::slice::from_raw_parts(dtb.base() as *const u8, dtb.size()) };
     let sources = Sources::of(bytes).ok_or(Fail::at(E_ROUTER, "tree"))?;
     let plic = Plic::new(plic_dev.view(), &sources);
     debug!("router: docks open");
-    // 线集合与五笔"没进来的账"——这台机器上有哪些中断源，唯一一次陈述。
+    // 这台控制器那两个数——本域自己的事实，唯一一次陈述。
     debug!(
-        "router: device_count={} ctx={} lines={:?} unparented={} beyond={} mapped={} unparsed={} unregion={}",
+        "router: device_count={} ctx={}",
         sources.device_count(),
-        sources.context(),
-        sources
-            .lines
-            .iter()
-            .map(|s| s.line)
-            .collect::<alloc::vec::Vec<u32>>(),
-        sources.unparented,
-        sources.beyond,
-        sources.mapped,
-        sources.unparsed,
-        sources.unregion
+        sources.context()
     );
-    let bell = Bell::new(NolePie::from_token(bell_pie.token()));
+    let bell = Bell::new(NolePie::from_token(irq_deed.token));
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
     let lines = Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
 
-    // 服务入口：本线程铸、本线程读——**它就是树上那块门牌**。
-    //
-    // 线那一面（账 + 各家客户的泊位）与入口同住这一张表：`PieToken` 只在铸它的那张表里
-    // 念得出来，而客户往门里推、路由者往客户手里推——两端都得在同一张表里，故这里不再有
-    // 第二枚线程。
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
-
-    // 板那趟（装上板路、交上问话孔——只为让板看得见本域的死）+ 上树那趟（门牌 /device/router）。
-    // **尽力**：任一件没成都只报一行读数、不拦主循环——这一台起来就得收（见文件头那一条照实记）。
-    //
-    // **照实记（上树那一手改经 `Context` 走，task-2 那一刀）**：从前这里直接叫
-    // `operator::plate(&ctx.session, …)`（协议层的自由函数）。那一手已按"一个组合动作只有一个
-    // 实现消费者就不强升为协议"的裁定下移成 [`Context::plate`]——本域与 `rtc` 走的是**同一手**，
-    // 只是本域不占线（故不能走 `Context::enter`，见文件头）。
-    let sire = utask::sire();
-    match Context::join(entry, sire, Wait::AtMost(QUAY_MS)) {
-        Ok(ctx) => ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS)),
-        Err(_) => debug!("router: board/tree: no link"),
-    }
+    // **牌子最后落**（照实记，量出来的）：与 `rtc` / `uart` 两台同一条——牌子一落客人就找得到
+    // 它，而本域此前还在认三样设备、开图、读树。**本台尤其要紧**：它的牌子是"线那本账"的入口，
+    // 客人登记扑空一次就会放下它那条泊位（线那本账上因此会短暂地少一位客人）。
+    ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS));
 
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
@@ -117,7 +146,7 @@ pub fn up() -> Result<Up, Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = HolePie::from_token(entry);
     if pile
-        .attach(&NolePie::from_token(bell_pie.token()), HoleDir::Pull)
+        .attach(&NolePie::from_token(irq_deed.token), HoleDir::Pull)
         .is_err()
         || pile.attach(&entry_hole, HoleDir::Pull).is_err()
     {
@@ -133,7 +162,6 @@ pub fn up() -> Result<Up, Fail> {
 
     Ok(Up {
         plic,
-        sources,
         lines,
         bell,
         pile,

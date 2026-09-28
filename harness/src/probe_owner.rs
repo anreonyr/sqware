@@ -8,11 +8,11 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  SEEK  /device/uart/rx         ⇒ 记下 uart 那枚砖**原来的号**
-//!   3  LAND  /device/uart/rx（自己的孔）⇒ 期望 DENIED（那枚砖是 uart 的：它声明了归属）
+//!   2  SEEK  /svc/drv/uart/rx         ⇒ 记下 uart 那枚砖**原来的号**
+//!   3  LAND  /svc/drv/uart/rx（自己的孔）⇒ 期望 DENIED（那枚砖是 uart 的：它声明了归属）
 //!   3.5 PART 同一块 Pane 里同一个名字 ⇒ **同一条「改」轴**，同样期望 DENIED（见下）
-//!   4  SEEK  /device/uart/rx         ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
-//!   5  **等** `/sys/lease` 那一格的主人退场（`probe-lease` 落完就走）⇒ 再落一次
+//!   4  SEEK  /svc/drv/uart/rx         ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
+//!   5  **等** `/svc/lease` 那一格的主人退场（`probe-lease` 落完就走）⇒ 再落一次
 //!      ⇒ 期望**接得上**（主人不在场 ⇒ 那一格重新可落）
 //!   6  报读数就退场
 //! ```
@@ -49,13 +49,17 @@ use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 本域要顶的那**一枚砖**：`/device/uart/rx`——`uart` 把"读行"那枚孔挂在它下面，并声明
+/// 本域要顶的那**一枚砖**：`/svc/drv/uart/rx`——`uart` 把"读行"那枚孔挂在它下面，并声明
 /// **归自己**。
 ///
-/// **照实记（为什么不是 `/device/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
+/// **照实记（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
 /// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
 /// （它不是谁的服务格）。这一趟顶的是读口那一枚。
-const DIR: &str = driver::DIR;
+///
+/// **照实记（`/sys` → `/svc`、`/device` → `/svc/drv` 那一刀）**：那一段目录从前由
+/// [`driver::DIR`] 一处给（一段路）；今天它是两段（[`driver::SVC`] ＋ [`driver::DIR`]），
+/// 故本台那一条路也从三段变四段。
+///
 /// 服务那一格（Pane）。
 const SERVICE: &str = "uart";
 /// 砖那一格（`uart` 声明的归属落在这一枚上）：读口。
@@ -88,23 +92,27 @@ fn main() -> Report<'static> {
     };
     let tree = TreeFace::of(session);
 
-    let (Ok(dir), Ok(service), Ok(me)) = (Name::new(DIR), Name::new(SERVICE), Name::new(ME)) else {
+    let (Some([svc, dir]), Ok(service), Ok(me)) = (
+        driver::road(),
+        Name::new(SERVICE),
+        Name::new(ME),
+    ) else {
         return bail("probe-owner: bad name");
     };
-    let road = [dir, service, me];
+    let road = [svc, dir, service, me];
 
     // 二、那枚砖**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
     let Some(before) = wait_id(&tree, &road) else {
-        return bail("probe-owner: no /device/uart/rx");
+        return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
     // 三、铸一枚自己的孔，去顶那一格——**这一手该被拒**。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
-    // `/device/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
-    let Some(pane) = wait_pane(&tree, dir, service) else {
-        return bail("probe-owner: no /device/uart");
+    // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
+    let Some(pane) = wait_pane(&tree, svc, dir, service) else {
+        return bail("probe-owner: no /svc/drv/uart");
     };
     let land = pane.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
     let land_code = match &land {
@@ -143,7 +151,7 @@ fn main() -> Report<'static> {
     let denied = matches!(land, Err(Fail::Denied));
     let untouched = matches!(after, Ok(entry) if entry.id() == before);
 
-    // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/sys/lease`（`mine = true`）就死，
+    // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/svc/lease`（`mine = true`）就死，
     //     故它的资源已被退场钩子封印 ⇒ 持树者该让那一格重新可落。**有界重试**：本域可能
     //     比它先跑完那几手（提示是单槽，装配者按计划顺序推）。
     let taken = take_over(&tree);
@@ -183,7 +191,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 落 `/sys/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
+/// 落 `/svc/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
 ///
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
 ///
@@ -197,11 +205,11 @@ fn main() -> Report<'static> {
 /// 于是这一格的判据（"那一格还在，只是主人不在场 ⇒ 可接手"）当场翻面：存在性答假、格子还被删了。
 /// `Pane::tile` 才是旧 `seek` 的同形（只译号），故这一手用它。
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
-    let (Ok(dir), Ok(me)) = (Name::new("sys"), Name::new("lease")) else {
+    let (Ok(dir), Ok(me)) = (Name::new(protocol::system::SVC), Name::new("lease")) else {
         return Err(Fail::Unknown);
     };
     let road = [dir, me];
-    // `/sys` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
+    // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
     let root = tree.root();
     let _ = root.open(dir, Wait::AtMost(MS));
     let Some(sys) = tree.pane(&[dir], Wait::AtMost(MS)).ok() else {
@@ -232,14 +240,23 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     }
 }
 
-/// `/device/uart` 那块 Pane（分目录**幂等两趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
-fn wait_pane<'a>(tree: &'a TreeFace, dir: Name, service: Name) -> Option<Pane<'a>> {
-    // 第一趟：`/device`（幂等——别的驱动也在它下面）。
-    let _ = tree.root().open(dir, Wait::AtMost(MS));
-    let dev = tree.pane(&[dir], Wait::AtMost(MS)).ok()?;
-    // 第二趟：`/device/uart`（幂等——`uart` 自己已经分出来那块）。
-    let _ = dev.open(service, Wait::AtMost(MS));
-    tree.pane(&[dir, service], Wait::AtMost(MS)).ok()
+/// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
+///
+/// **照实记（两段 → 三段那一刀）**：驱动那一段路从 `/device`（顶上一层）变成 `/svc/drv`
+/// （`/svc` 底下的一段）⇒ 容器链从两段变三段，本手跟着多一趟。**这一格当场栽过**（实测）：
+/// 只把 `dir`（`driver::DIR`）换成新名字、忘了它上面还有 `driver::SVC`，于是本手在
+/// `/drv/uart` 那**另一块** Pane 上落砖——落在一块**没有主人**的新格上，当然不被拒，
+/// `probe-owner` 当场红（`land=ok id=26`，而基线是 `owner rule held`）。
+fn wait_pane<'a>(tree: &'a TreeFace, svc: Name, dir: Name, service: Name) -> Option<Pane<'a>> {
+    // 第一趟：`/svc`（幂等——各族都挂在它下面）。
+    let _ = tree.root().open(svc, Wait::AtMost(MS));
+    let at = tree.pane(&[svc], Wait::AtMost(MS)).ok()?;
+    // 第二趟：`/svc/drv`（幂等——别的驱动也在它下面）。
+    let _ = at.open(dir, Wait::AtMost(MS));
+    let drv = tree.pane(&[svc, dir], Wait::AtMost(MS)).ok()?;
+    // 第三趟：`/svc/drv/uart`（幂等——`uart` 自己已经分出来那块）。
+    let _ = drv.open(service, Wait::AtMost(MS));
+    tree.pane(&[svc, dir, service], Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。

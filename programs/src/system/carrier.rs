@@ -35,8 +35,8 @@ use crate::program::Died;
 /// # 照实记（收进来的这一趟是量出来的：两台逐字同构）
 ///
 /// ```text
-///   名册 server 的常驻段   31 码行   /sys/principal/{ask,set}   两枚门牌 → 两处 turn
-///   盟册 server 的常驻段   31 码行   /sys/coalition/{ask,set}   同上
+///   名册 server 的常驻段   31 码行   /svc/principal/{ask,set}   两枚门牌 → 两处 turn
+///   盟册 server 的常驻段   31 码行   /svc/coalition/{ask,set}   同上
 /// ```
 ///
 /// 逐行 diff 出来的差异只有三处，都不是结构：族名（`pcall` / `ccall`）、返回的元组里多装一样

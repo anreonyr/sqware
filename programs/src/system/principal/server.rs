@@ -10,7 +10,7 @@
 //!         → 上板（板看得见本域的死）→ 铸门牌**两枚**（两面各一枚）
 //!           定面（Set）一份交给生我者（装配期用它 derive + bind，不必上树查自己）
 //!           问面（Ask）一份直接交给持树者（门禁只问"这一位代表谁"）
-//!           两枚都经 LAND 落到树上 `/sys/principal/{ask,set}`（别的客人按名字找上门）
+//!           两枚都经 LAND 落到树上 `/svc/principal/{ask,set}`（别的客人按名字找上门）
 //!   常驻：一只组等那两枚 —— **从哪一枚读到**就是哪一面 → 交给核心 → 从这一趟的回信孔答回去
 //! ```
 //!
@@ -32,6 +32,7 @@ use crate::system::carrier::carrier;
 use crate::system::operator::bridge;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
+use protocol::system::operator::Permit;
 use protocol::system::principal as pcall;
 use crate::system::principal::core::Principal;
 use crate::system::mount;
@@ -89,10 +90,10 @@ pub fn serve() -> Result<(), Start> {
         )
         .map_err(|_| Start::Tree(E_PRINCIPAL))?;
 
-        // 四、上树：分 `/sys`、分 `/sys/principal`、落那两格，再**逐面**查回来验一遍。
+        // 四、上树：分 `/svc`、分 `/svc/principal`、落那两格，再**逐面**查回来验一遍。
         //
         // **这一趟住在 [`bridge::land`]**（四族＋驱动四处逐字同构、收在一处）；本处只剩两件
-        // **本族的事实**——路（`/sys` ＋ `/sys/principal`）与那两枚门牌。
+        // **本族的事实**——路（`/svc` ＋ `/svc/principal`）与那两枚门牌。
         //
         // **照实记（`serve_tree` 那一枚壳随回炉退场）**：它原先包着下面这一句，而包的理由只有
         // 一个——"给这一趟一个名字"。它没有自己的状态、没有自己的判断（`Mine::No` 与 `MS` 都是
@@ -106,6 +107,7 @@ pub fn serve() -> Result<(), Start> {
             "principal",
             &[pcall::DIR, super::SEGMENT],
             Mine::No,
+            Permit::Unset,
             &[(ask_name.as_str(), ask), (set_name.as_str(), set)],
             Wait::AtMost(MS),
         );

@@ -53,7 +53,7 @@ pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken, rule: Ru
         };
     }
     // **末段是叶子**：没有许可（`Permit::Unset`）＋ **不留主人**（`None`）——与
-    // `/sys/principal/{ask,set}` 与 `/sys/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
+    // `/svc/principal/{ask,set}` 与 `/svc/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
     // 都取得回，而"改这一格"不归谁。
     match tree.land(at, last, leaf, Permit::Unset, None) {
         Ok(id) => {

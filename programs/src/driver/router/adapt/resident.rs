@@ -38,14 +38,7 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
         // 门上：非阻塞地把槽里的都取走（登记）。缓冲是**一页**（载体的界，见 `Push` 的前置
         // 条件）——于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
         while let Ok((n, from)) = up.entry.pull_timeout_from(&mut up.buf, Wait::POLL) {
-            desk::serve(
-                &mut up.lines,
-                &up.plic,
-                &up.sources,
-                from,
-                &up.buf[..n],
-                &up.pile,
-            );
+            desk::serve(&mut up.lines, &up.plic, from, &up.buf[..n], &up.pile);
         }
         // 铃：领干净这一趟（`bell` 那一份里写着"为什么不按铃的返回值判"）。
         bell::ring(&mut up.lines, &up.plic);

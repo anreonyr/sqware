@@ -96,6 +96,11 @@ pub fn init() {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(hart::hart_count()).expect("depend init failed");
 
+    // **照实记（这一格是 release 档编不过的当场修复）**：健康面那九例整体 gate 进了
+    // `debug_assertions`（`kernel/src/health/mod.rs` 头上那一句），而这一句**没跟着 gate**
+    // ——于是 `cargo build -p kernel --release`（以及 `cargo qtest --scene` 那条 release 路）
+    // 当场 E0433：`cannot find health in the crate root`。两侧同一个闸：这里补上。
+    #[cfg(debug_assertions)]
     crate::health::run();
 
     if crate::testing() && machine::info().initrd().is_none() {

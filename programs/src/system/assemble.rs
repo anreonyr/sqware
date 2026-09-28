@@ -16,7 +16,7 @@ use crate::system::control::Catalog;
 /// 这一景要起的台：**按 `order` 排**（小的先起）。先起的先就绪，后面的就能向它要东西。
 ///
 /// 只认两件事：`order: Some`（**由编排域起**——引导域 / 编排域自己 / 压测台那几台不是）与
-/// **清单里真有它**（`catalog` 是 initrd 那本账：没装进这一景的镜像就起不出来）。三枚服务
+/// **清单里真有它**（`catalog` 是 initrd 那本账：没装进这一景的镜像就起不出来）。四枚服务
 /// （`operator` / `principal` / `coalition`）也在这张单里（order 0/1/2）——与其他每一台同一条
 /// 路，不是"与编排者共一份字节"的那三行。
 pub fn programs(catalog: &Catalog) -> Vec<&'static Program> {

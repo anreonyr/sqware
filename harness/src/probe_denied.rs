@@ -9,8 +9,8 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  LAND 一枚自己的孔到 /sys/probe  ⇒ 期望 DENIED（本域没身份）
-//!   3  SEEK /sys/probe                ⇒ 期望 UNKNOWN（**拒绝不是换绑**：那一格没被占）
+//!   2  LAND 一枚自己的孔到 /svc/probe  ⇒ 期望 DENIED（本域没身份）
+//!   3  SEEK /svc/probe                ⇒ 期望 UNKNOWN（**拒绝不是换绑**：那一格没被占）
 //!   4  报一行读数就退场
 //! ```
 //!
@@ -57,7 +57,7 @@ use env::Name;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 本域要落的那一格的名字（在根下，**不进 `/device`**：本域不是设备）。
+/// 本域要落的那一格的名字（在根下，**不进 `/svc/drv`**：本域不是设备）。
 const ME: &str = "probe";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -91,19 +91,25 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-denied: no entry");
     };
-    let Ok(dir) = Name::new("sys") else {
+    let Ok(dir) = Name::new(protocol::system::SVC) else {
         return bail("probe-denied: bad name");
     };
     let Ok(me) = Name::new(ME) else {
         return bail("probe-denied: bad name");
     };
 
-    // 二·二、它要落进 `/sys`（**已经在**：principal / coalition 起的头）——分那一块目录
+    // 二·二、它要落进 `/svc`（**已经在**：principal / coalition 起的头）——分那一块目录
     // （**幂等**），拿到的就是那块 Pane。**这一手不过门禁**（`part` 不在闸口里），故本域虽然
     // 没有身份，它照旧答得出。
     let root = tree.root();
-    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
-        return bail("probe-denied: no /sys");
+    let sys = match root.open(dir, Wait::AtMost(MS)) {
+        Ok(sys) => sys,
+        Err(fail) => {
+            // **读数带那一格码**：`bail` 那句话只说"没拿到"（旧注里那句 `/svc` 也是历史），
+            // 而"为什么"——门禁判"不"还是"判不了"、还是根本没走到——只有这行说得清。
+            debug!("probe-denied: open {} {fail:?}", dir.as_str());
+            return bail("probe-denied: no /svc");
+        }
     };
 
     // 三、落牌——**这一手该被拒**。

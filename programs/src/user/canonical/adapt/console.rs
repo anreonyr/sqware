@@ -1,4 +1,4 @@
-//! canonical::adapt::console — **找控制台**：`/device/uart/{rx,tx}` 那两枚门牌。
+//! canonical::adapt::console — **找控制台**：`/svc/drv/uart/{rx,tx}` 那两枚门牌。
 //!
 //! 那一趟（名字 → 号 → 入口）与它那一圈"再问一次"的重试全在 [`Face::tile_of`] 里（"门牌由
 //! 别的域落下，本域可能比它先起"）；本文件只剩"往哪找"这一格：目录是驱动族那一段，再下一段是
@@ -13,11 +13,11 @@
 //! 签名里）。"名字 → 号 → 入口"那一趟落在 [`Face::tile`] ＋ [`Tile::token`] 上。
 
 use env::{Name, Wait};
-use protocol::driver::DIR;
+use protocol::driver;
 use protocol::system::operator::client::Face;
 use runtime::env::mail::HolePie;
 
-/// 要找的那位服务在树上的名字：**控制台**（`/device/uart`——名字用服务名；它是一块 Pane）。
+/// 要找的那位服务在树上的名字：**控制台**（`/svc/drv/uart`——名字用服务名；它是一块 Pane）。
 const WANT: &str = "uart";
 
 /// 那块 Pane 下的两枚门牌：[`RX`] = **读口**（控制台排空出来的一批，本域取），
@@ -34,17 +34,15 @@ pub struct Console {
 /// 找控制台（有界）：任一面的门牌找不到 ⇒ `None`（`main` 据此报
 /// [`E_NO_CONSOLE`](super::E_NO_CONSOLE)）。
 pub fn find(tree: &Face, wait: Wait) -> Option<Console> {
-    let (Ok(dir), Ok(want), Ok(rx), Ok(tx)) = (
-        Name::new(DIR),
-        Name::new(WANT),
-        Name::new(RX),
-        Name::new(TX),
-    ) else {
+    let Some([svc, drv]) = driver::road() else {
+        return None;
+    };
+    let (Ok(want), Ok(rx), Ok(tx)) = (Name::new(WANT), Name::new(RX), Name::new(TX)) else {
         return None;
     };
     // 两条路各走一趟（译号带重试 ＋ 取那一枚），坐标只在这两句里。
-    let rx_entry = tree.tile(&[dir, want, rx], wait).ok()?;
-    let tx_entry = tree.tile(&[dir, want, tx], wait).ok()?;
+    let rx_entry = tree.tile(&[svc, drv, want, rx], wait).ok()?;
+    let tx_entry = tree.tile(&[svc, drv, want, tx], wait).ok()?;
     let rx = rx_entry.token(wait).ok()?;
     let tx = tx_entry.token(wait).ok()?;
     Some(Console {

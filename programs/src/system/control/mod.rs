@@ -33,9 +33,9 @@
 //! [`crate::system::Assembly::supervise`] 的照实记里。
 //!
 //! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
-//! **本域活多久它活多久**），而"把这一格落到 `/sys/control`"由**持树者在自己核里做**
+//! **本域活多久它活多久**），而"把这一格落到 `/svc/control`"由**持树者在自己核里做**
 //! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::plate`] 递过去 →
-//! 持树者 `part` ＋ `land`）。于是 `/sys/control` 与名册 / 盟册那两族那**四格**逐字同形：
+//! 持树者 `part` ＋ `land`）。于是 `/svc/control` 与名册 / 盟册那两族那**四格**逐字同形：
 //! 任何走到树的任务 `operator::Face::tile` 一查就有，
 //! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
 //!
@@ -59,7 +59,7 @@ use crate::system::source::{self, Source};
 
 use protocol::system::control::frame as cframe;
 
-/// **那一段目录的名字**（`/sys/control` 底下那一段，也即 `/sys/control/{面名}` 的中间那一段）。
+/// **那一段目录的名字**（`/svc/control` 底下那一段，也即 `/svc/control/{面名}` 的中间那一段）。
 ///
 /// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
 /// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
@@ -80,6 +80,18 @@ pub const RETRY_MS: usize = 1;
 
 /// 等子域就绪/交通道的上限（毫秒）。**必须有界**：子域要是死在头几步，本域不能陪着挂死。
 pub const READY_MS: usize = 1000;
+
+/// **等"它起完了"那一条通道的上限**（毫秒）——比 [`READY_MS`] 宽得多。
+///
+/// **照实记（这个数是量出来的）**：`Setup::Machine` 那一格把"我交回了一枚孔"与"我答得了了"
+/// 拆成两条通道之后，等后面那一条要等的是**一台机器最慢的一次起手**：读一遍设备树、逐类立盟
+/// （每类两趟盟册）、逐类逐台落格、**每格查回来验一遍**（`bridge::land` 那条口径）。实测
+/// （debug 档、qemu `-smp 4`）：那一整段落在 **2.5 s 上下**——[`READY_MS`] 那一秒装不下，
+/// 于是装配者会在它落完之前就判"没起来"。
+///
+/// **它仍然有界**：那是 [`READY_MS`] 那一句的全部意义（子域死在头几步时本域不能陪着挂死）。
+/// 只等那**一条**通道用这个宽额度；其余几条（通道 / 板 / 树）照旧 [`READY_MS`]。
+pub const BOOT_MS: usize = 5000;
 
 /// 装配失败的编号（通用的那几个；按服务分的编号住在装配表旁边）。
 pub const E_MANIFEST: Died = 2;
@@ -278,8 +290,12 @@ impl Control {
         // 通道：放行前逐条装（记号 = 通道名，放行后逐条认领——与装配那一趟**同一手**）。
         assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
         let method = Name::new(pending.name).map_err(|_| Fail::Unknown)?;
-        // 放行 + 等就绪 + 递单（次序是硬的：配给要落到它交回的那条路上）。
+        // 放行 + 递单（次序是硬的：物料要落到它交回的那条路上）。
         self.launch(program, method, &mut pending.service)
+            .map_err(|_| Fail::NotReady)?;
+        // **再等就绪**（线上这条路上没有挂板 / 挂树那两手——那两件是装配期的事，
+        // 见 [`crate::system::control::assemble`] 里 `launch` 那一格的注）。
+        self.ready(method, &mut pending.service, program.demand.setup)
             .map_err(|_| Fail::NotReady)?;
         Ok(pending.service)
     }
@@ -322,35 +338,59 @@ impl Control {
         Ok((task, Vec::new()))
     }
 
-    /// **放行 + 等就绪 + 认领通道**（有通道的那一条顺带逐条认领）。
+    /// **放行**（**不等就绪**）：门闩、通道都在放行前定下（"两相之间的窗口就是它一步都还没跑"）。
     ///
-    /// **这一刀之后它就跑了**：门闩、通道都在放行前定下（两相之间的窗口就是"它一步都还没跑"）。
-    /// `setup` 里那几条 `Channel` 就是放行后要逐条认领的记号（记号即通道名）。
-    pub fn start(
-        &mut self,
-        name: Name,
-        service: &mut Service,
-        setup: &'static [Setup],
-    ) -> Result<(), Error> {
+    /// **为什么从"放行 ＋ 等就绪"拆成一手**（照实记）：等就绪要等的那几条通道里，`Machine`
+    /// 那一格的**第一条（收物料）递在放行之后、第二条（"我起完了"）之前**——而递物料又必须
+    /// 等本域放行（它第一件事就是铸那一枚孔）。三件事的次序是
+    /// **放行 → 递物料 → 等就绪**，拧成一相就死锁（见 [`Control::launch`] 的那一段）。
+    ///
+    /// 返 `Err` = 放行那一步没成（本相失败时实例与状态如实留在表里，调用方用 [`Control::stop`]
+    /// 收尾）。
+    pub fn start(&mut self, name: Name, service: &mut Service) -> Result<(), Error> {
         let (task, channels) = service;
-        let mut marks: Vec<Mark> = Vec::new();
-        for s in setup {
-            if let Setup::Channel(ch) = s {
-                marks
-                    .try_reserve(1)
-                    .map_err(|_| Error::Step("no room for marks"))?;
-                marks.push(Mark::of(ch));
-            }
-        }
+        // `marks` 空 ⇒ 这一手**只放行**（`service::start` 那条"还活着、只是没宣布"的分支）。
         service::start(
             &mut self.table,
             name,
             *task,
             &[],
             channels.as_mut_slice(),
-            &marks,
-            Wait::AtMost(READY_MS),
+            &[],
+            Wait::POLL,
         )
+        .map_err(|_| Error::Step("start failed"))
+    }
+
+    /// **等就绪**：`setup` 里那几条通道逐条认齐（记号即通道名）——**两条都认齐**才算起来。
+    ///
+    /// **`Machine` 那两条的意义不同**（见 [`Setup::Machine`]）：第一条（收物料）说明"它开始跑了"，
+    /// 第二条（"我起完了"）说明"**它答得了了**"——而后者才是后面那几台要等的。
+    pub fn ready(
+        &mut self,
+        name: Name,
+        service: &mut Service,
+        setup: &'static [Setup],
+    ) -> Result<(), Error> {
+        let mut marks: Vec<Mark> = Vec::new();
+        for s in setup {
+            for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {
+                marks
+                    .try_reserve(1)
+                    .map_err(|_| Error::Step("no room for marks"))?;
+                marks.push(Mark::of(ch));
+            }
+        }
+        // **额度按这一格最宽的那一条算**（`Machine` 那两条里的"我起完了"，见 [`BOOT_MS`]）：
+        // 窄的那几条早在额度之内（多等的那几毫秒只在真死时才花得出去）。
+        service::ready(
+            &mut self.table,
+            name,
+            service.1.as_mut_slice(),
+            &marks,
+            Wait::AtMost(if marks.len() > 1 { BOOT_MS } else { READY_MS }),
+        )
+        .map(|_| ())
         .map_err(|_| Error::Step("start failed"))
     }
 

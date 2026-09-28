@@ -1,7 +1,7 @@
 //! line::frame — **形与码**：两句话、两份形状，加一张失败域与状态码的双射表。
 //!
 //! ```text
-//!   登记（门牌那条路上一问一答）  [OCCUPY][坐标 16B]   →  [状态码 1B]
+//!   登记（门牌那条路上一问一答）  [OCCUPY][线号 4B]    →  [状态码 1B]
 //!   线泊位（路由者 ↔ 客户）       [记号 1B]           两个方向同一份形状
 //! ```
 //!
@@ -19,7 +19,6 @@
 //! 1 字节，换来"任何恰好 17 字节推上来的东西都算一次登记"。
 
 use env::Mark;
-use env::Key;
 
 use crate::message::Message;
 
@@ -74,7 +73,7 @@ crate::fail_codes! {
     Fail::Denied => DENIED,
 }
 
-/// 登记那一帧：动作码 ＋ 坐标。
+/// 登记那一帧：动作码 ＋ **线号**。
 ///
 /// **照实记（这一份从前是什么样）**：它从前是一对**自由函数**（`pack_occupy` /
 /// `unpack_occupy`）＋ 一处手算的长度（`OCCUPY_LEN = 1 + KEY_LEN`）。今天收成报那一层那两样：
@@ -82,23 +81,30 @@ crate::fail_codes! {
 ///
 /// **`op` 那一格留着**（用户裁定，见文件头）：[`Message::fetch`] 真的读它——形状不对就答
 /// `None`，路由器不动账。
+///
+/// **照实记（坐标那一格换成线号那一刀：17 → 5 字节）**：这一帧原先荷载的是**那一段区**
+/// （`key: Key`，16 字节），而路由者收下之后要自己把区翻成线号（`Sources::line_of`——
+/// 一份它在设备树上另解一遍的东西）。**区→线那条权威这一刀搬进了设备账那一台**
+/// （`hub`：它读一次树就把名 / 类 / 线一起算好，认领那一答的 [`Deed`](crate::driver::hub::Deed)
+/// 里带着线号）⇒ 客户报的就是**线号本身**，路由者那一趟翻译没有了。两个后果照实记：
+/// ① 帧小了（16 → 4 字节荷载）；② `Fail::Unknown` 那一格换了问法（"本控制器上没有这一段区"
+/// → "没有这条线"），判据仍是路由者自己的（线号越界 / 零号）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Occupy {
     pub op: u8,
-    pub key: Key,
+    pub line: u32,
 }
 
 impl Occupy {
-    /// 编一句登记：动作码固定 [`OCCUPY`]，荷载是那一段区。
-    pub fn of(key: Key) -> Occupy {
-        Occupy { op: OCCUPY, key }
+    /// 编一句登记：动作码固定 [`OCCUPY`]，荷载是那条线的号。
+    pub fn of(line: u32) -> Occupy {
+        Occupy { op: OCCUPY, line }
     }
 }
 
 impl Message for Occupy {
-    /// **读出来就是那个坐标**：动作码是形状的一部分（`fetch` 里认），读的人要的就是它
-    /// （从前 `unpack_occupy` 答的也是它）。
-    type In = Key;
+    /// **读出来就是那个号**：动作码是形状的一部分（`fetch` 里认），读的人要的就是它。
+    type In = u32;
     type Buf = [u8; Occupy::LEN];
     const EMPTY: Self::Buf = [0u8; Occupy::LEN];
 
@@ -108,16 +114,16 @@ impl Message for Occupy {
 
     /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
     ///
-    /// **照实记（"恰好 17"那一格）**：表那一手只要求"够长"，而这一形的判据是**恰好**
-    /// `Occupy::LEN`——长短都不认，故这里补回这一格（同从前 `unpack_occupy` 的第一句）。
+    /// **"恰好 `Occupy::LEN`"**：表那一手只要求"够长"，而这一形的判据是**恰好**——长短都不认。
     ///
-    /// 坐标那一格的判别号不认识也答 `None`（[`Key`] 那一手判废）；**认识、但不是"区"的那两形
-    /// 照收**——路由者按坐标查表查不到，自然答 `UNKNOWN`（线挂在设备上，那是它的账）。
-    fn fetch(bytes: &[u8]) -> Option<Key> {
+    /// **线号这一格不再判废**（照实记）：从前坐标那一格的判别号不认识就答 `None`；今天这一格
+    /// 是枚裸的 `u32`，"这条线有没有"由路由者那本账答（零号 / 越界 ⇒ `UNKNOWN`）——**形状的
+    /// 判据只到"长对不对"这一格**。
+    fn fetch(bytes: &[u8]) -> Option<u32> {
         if bytes.len() != Occupy::LEN {
             return None;
         }
         let occupy = Occupy::fetch(bytes)?;
-        (occupy.op == OCCUPY).then_some(occupy.key)
+        (occupy.op == OCCUPY).then_some(occupy.line)
     }
 }

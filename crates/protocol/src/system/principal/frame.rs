@@ -257,11 +257,14 @@ crate::fail_codes! {
 /// 同一张表里就分不出这一枚是哪一面的。
 pub const BACK: Mark = Mark::of("principal-back");
 
-/// 树上那块窗格的名字（门牌的第一段）：`/sys`。
-pub const DIR: &str = "sys";
+/// 树上那块窗格的名字（门牌的第一段）：`/svc`。
+///
+/// **照实记（`sys` → `svc` 那一刀）**：这一段名字搬进了 [`crate::system::SVC`]——三族各写
+/// 一遍同一个字符串，改一处要记得另外两处。
+pub const DIR: &str = crate::system::SVC;
 
-/// 本服务在树上的那一段名字（门的第二段）：`/sys/principal`——**它自己不是一格**（开面那一刀：
-/// 两枚门牌是它底下那两格 `/sys/principal/{ask,set}`，末段名由
+/// 本服务在树上的那一段名字（门的第二段）：`/svc/principal`——**它自己不是一格**（开面那一刀：
+/// 两枚门牌是它底下那两格 `/svc/principal/{ask,set}`，末段名由
 /// [`Grant::name`](super::grant::Grant::name) 给）。
 pub const NAME: &str = "principal";
 

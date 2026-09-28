@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/sys/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/sys/principal/{ask,set}"
+//!   2  FIND "/svc/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/svc/principal/{ask,set}"
 //!      ⇒ 身份服务**两面**的门牌（本台**四面都要**：两侧都要读、都要写）
 //!   3  resolve(self)          ⇒ 本域此刻代表哪个号（装配期绑的那一条）
 //!   4  found() × 2            ⇒ 立两枚盟：号 0 与 1（号由服务发：单调、稠密）
@@ -230,6 +230,19 @@ fn main() -> Report<'static> {
     };
     let adopted = set.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("member: adopt(sub)={}", done(adopted));
+    // 六·五、**代报名那一格**（K2 翻案那一刀）的**负证**：此刻我代表 `sub`，而 `c0` 的盟主是
+    // `p` ⇒ 我**不是**它的盟主 ⇒ 这一问该被拒（[`Fail::NotChief`]，不是 `Unknown`：盟在、
+    // 我也在册上，缺的只是"这一枚盟归不归你代报名"）。
+    //
+    // **正证在设备账那一台手里**（生产里唯一的持有者）：`hub` 每类立一枚盟、再替四位驱动
+    // `admit`（`protocol::driver::hub` 的 `bond`）。本台不抢那一份读数。
+    let not_chief = c0.admit(me, Wait::AtMost(MS));
+    debug!("member: admit(c0)={}", done(not_chief.clone()));
+    {
+        {
+            assert!(matches!(not_chief, Err(Fail::NotChief)))
+        }
+    }
     // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
     // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
     let q_in = c0.enter(Wait::AtMost(MS));
@@ -485,6 +498,9 @@ impl Why for Fail {
             Fail::Full => "full",
             // 开面那一刀添的那一格（"你手里那一枚门牌给不了这一条"）。
             Fail::Denied => "denied",
+            // K2 翻案那一刀添的那一格（"你不是这一枚盟的盟主"）——本探针叫不动它
+            // （它不代报名），故这一格在这儿只为**match 穷尽**，不是一条读数。
+            Fail::NotChief => "not-chief",
         }
     }
 }

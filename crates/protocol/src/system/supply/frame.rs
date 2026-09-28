@@ -47,7 +47,7 @@ pub const BOOT: &str = "boot";
 
 // **词汇住 `env::supply`**（装配表要宿主侧也读得到，见那一处头注）：本处只转发，
 // **调用点一行没改**。
-pub use env::supply::{At, Kind, Need, WANT_LEN, Want, class_block};
+pub use env::supply::{Kind, WANT_LEN, Want};
 
 /// 单子的操作码。今天只有"供"这一枚——留着这一格，是为加动作时不必改帧的布局。
 pub const OP_SUPPLY: u8 = 1;
