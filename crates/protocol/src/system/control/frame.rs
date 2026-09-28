@@ -89,6 +89,12 @@ pub enum Fail {
     /// 它在**失败表外**（同板、树那两族的先例）：它不是"持表那一侧说的事"，是**这一问没走到**。
     /// 对本端而言与"这条路别指望了"同一个下一步，故不往 [`Fail`] 的语义格里塞。
     Bad,
+    /// **判面拒**：这一问不属于它进来的那一面——**终态**（换一面 / 别重试）。
+    ///
+    /// 与 [`Fail::Bad`] 相反的那一头：那说的是"这一问没走到"，这一格是**对端说得清清楚楚**的
+    /// "我不给你办这一条"。两件事在失败域里分得开，客人的下一步也不同（同 principal / coalition
+    /// 那两族 `DENIED` 那一格的口径）。
+    Denied,
 }
 
 // ── 帧 ──────────────────────────────────────────────────────
@@ -167,7 +173,9 @@ const STATE: u8 = 4;
 /// 成功那一格：**全协议同一个号**——定义在 `crate::fail_codes`，本族只把它转出来。
 pub use crate::fail_codes::OK;
 
-/// 答话那一格。**前四格与 [`Fail`] 的语义格一一对应**，第五格不是失败域的：这一问读不懂。
+/// 答话那一格。**前四格与 [`Fail`] 的调度侧四格一一对应**；后两格各有各的来路：
+/// [`DENIED`] 是**判面拒**（持表那一侧判的：这一问不属于它进来的那一面），[`BAD`] 不是对端说的事
+/// ——**这一问读不懂**。
 ///
 /// 数字是**线上的**；[`Fail`] 是模型那一侧的名字，两者的对照表只此一份（持表那一侧编、
 /// 客人那一侧读）。
@@ -176,6 +184,9 @@ pub const BADIMAGE: u8 = 2;
 pub const FULL: u8 = 3;
 pub const NOTREADY: u8 = 4;
 pub const BAD: u8 = 5;
+/// **判面拒**：这一问不属于它进来的那一面（读面发不出写）。**终态**——换一面或别指望，
+/// 与调度侧那几格（名册本来就认得的事）分开。
+pub const DENIED: u8 = 6;
 
 /// 失败域 → 答话那一格。`None`（没失败）⇒ [`OK`]。
 ///
@@ -183,7 +194,7 @@ pub const BAD: u8 = 5;
 /// （推不动 / 读不到 / 解不动）——对端从来说不出这句话。若把它也列进宏那张双射表，宏会为
 /// `BAD` 生成一个反向支，而**反向读到的任何表外码本来就要落回 [`Fail::Bad`]** ⇒ 那一支要么
 /// 永远不可达、要么把"读不懂"说成"对端答了 Bad"。两句话都假，故这一对由人写全：
-/// 正向五格齐全（模型 → 线上只有一处映射），反向把表外一律折成 [`Fail::Bad`]。
+/// 正向六格齐全（模型 → 线上只有一处映射），反向把表外一律折成 [`Fail::Bad`]。
 pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
     match fail {
         None => OK,
@@ -192,6 +203,7 @@ pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
         Some(Fail::Full) => FULL,
         Some(Fail::NotReady) => NOTREADY,
         Some(Fail::Bad) => BAD,
+        Some(Fail::Denied) => DENIED,
     }
 }
 
@@ -206,6 +218,7 @@ pub const fn code_to_fail(code: u8) -> Option<Fail> {
         BADIMAGE => Some(Fail::BadImage),
         FULL => Some(Fail::Full),
         NOTREADY => Some(Fail::NotReady),
+        DENIED => Some(Fail::Denied),
         _ => Some(Fail::Bad),
     }
 }

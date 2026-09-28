@@ -13,7 +13,8 @@
 
 use env::{Name, PieToken};
 use protocol::debug;
-use protocol::system::operator::{Permit, Where};
+use protocol::system::operator::{Permit, Rule, Where};
+use protocol::system::principal::PrincipalId;
 
 use crate::system::operator::core::Operator;
 
@@ -38,7 +39,7 @@ fn walk(tree: &mut Operator, road: &[Name]) -> Option<Where> {
 /// **装配者要本域立的那一条路**：前缀逐段立窗格（缺的就地造），末段按 `leaf` 落叶子或立窗格。
 ///
 /// 失败（路空 / 某一层立不出来 / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"。
-pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken) {
+pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken, rule: Rule) {
     let Some(last) = road.last().copied() else {
         return debug!("operator: plate empty road");
     };
@@ -55,7 +56,19 @@ pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken) {
     // `/sys/principal/{ask,set}` 与 `/sys/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
     // 都取得回，而"改这一格"不归谁。
     match tree.land(at, last, leaf, Permit::Unset, None) {
-        Ok(id) => debug!("operator: plate landed {} id={}", last.as_str(), id.get()),
+        Ok(id) => {
+            // **带规矩那一轴**（[`Rule::Root`]）：那句规矩是"**许给根**"（`Trunk(ROOT)`）——
+            // 它不带号（根那一枚号在这一族的正文里是一枚常量）⇒ 这里**再落一次**把规矩补上
+            // （换绑不动号，故号仍是刚铸出来的那个）。**不成只报一行、不中止**：那一格退回
+            // "没记许可"，即这一刀之前的行为。
+            if let Rule::Root = rule {
+                match tree.land(at, last, leaf, Permit::Trunk(PrincipalId::ROOT), None) {
+                    Ok(_) => debug!("operator: plate rule root {} id={}", last.as_str(), id.get()),
+                    Err(fail) => debug!("operator: plate rule failed {fail:?}"),
+                }
+            }
+            debug!("operator: plate landed {} id={}", last.as_str(), id.get())
+        }
         Err(fail) => debug!("operator: plate land {:?}", fail),
     }
 }

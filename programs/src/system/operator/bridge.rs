@@ -31,7 +31,7 @@ use runtime::env::mail;
 use protocol::communication::establish;
 use protocol::debug;
 use protocol::system::operator::client::{Face, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Permit, TIP_LEN, Tip};
+use protocol::system::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
@@ -121,7 +121,15 @@ impl Tree {
     /// 一侧 ⇒ 这里不要会话、也不要名册上的身份（`land` 那道门是给**客人**的，本域不是客人）。
     ///
     /// `host` / `tip` 有一格没在（这一景没有持树者）⇒ `Err`：那是景的事，不是本手的失败。
-    pub fn plate(&mut self, road: &[Name], leaf: Option<PieToken>) -> Result<(), &'static str> {
+    /// `rule` = **这一趟要不要在这一格上带一句规矩**。装配者**报不出任何号**（没有名录面、
+    /// 也没有读格的手）⇒ 它在这条路上说得出的只有 [`Rule::Root`] 那一句（"许给根"），
+    /// 而"带哪一条"由**持树者**落格时写进那一格（见 `programs/src/system/operator/plate.rs`）。
+    pub fn plate(
+        &mut self,
+        road: &[Name],
+        leaf: Option<PieToken>,
+        rule: Rule,
+    ) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         let leaf = match leaf {
             // 有叶子：那一枚先交过去——`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST`
@@ -139,7 +147,7 @@ impl Tree {
             None => PieToken::NONE,
         };
         let tip = self.tip.ok_or("no tip")?;
-        push(tip, Tip::Plate { road, leaf }).map_err(|()| "operator:plate")
+        push(tip, Tip::Plate { road, leaf, rule }).map_err(|()| "operator:plate")
     }
 
     /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。

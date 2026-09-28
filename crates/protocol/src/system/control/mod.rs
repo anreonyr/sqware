@@ -75,11 +75,15 @@
 //! - **这一面上了树，但门禁只有"已绑身份"那一格**：`/sys/control` 那一格是 `Permit::Unset`
 //!   （与 `/sys/principal/{ask,set}` / `/sys/coalition/{ask,set}` 同一格），故**任何已绑身份的域**都取得回
 //!   入口，进而 `mint` / `start` / `stop` 装配表里任意一台。这不是新开的口子（`doom` 同样没有门禁），
-//!   但它是这一面今天的口径，照实写在这里。要收，收的是那一格的 `Permit`（`operator` 那一侧），
-//!   不是本协议的形状。
+//!   但它是这一面**原先**的口径，照实写在这里。**这一刀把它收了**：`/sys/control` 拆成四面
+//!   （`state` / `mint` / `start` / `stop`），规矩落在定面那三格上（`Permit::Trunk(ROOT)`，
+//!   见 `system/mod.rs::mount_control`），**问面照旧公开**；服务端另加一道判面，读面发不出写。
+//!   收的正是那一格的 `Permit`（`operator` 那一侧），不是本协议的形状——与这句当初写的一样。
 
 pub mod client;
 pub mod frame;
+pub mod grant;
 
 pub use client::{Face, BERTH};
-pub use frame::{Fail, State, ASK_MARK, BACK, LINK};
+pub use frame::{Fail, State, ASK_MARK, BACK, DENIED, LINK};
+pub use grant::{Grant, grant_of};

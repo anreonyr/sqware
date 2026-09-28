@@ -193,7 +193,12 @@ fn settle(
         };
         match rec {
             // **装配者要本域立一条路**。
-            ocall::TipIn::Plate { road, count, leaf } => plate(tree, &road[..count], leaf),
+            ocall::TipIn::Plate {
+                road,
+                count,
+                leaf,
+                rule,
+            } => plate(tree, &road[..count], leaf, rule),
             // **一双眼睛**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交
             // 进来（装配者只递号）；从这里往后门禁问得动身份（认那一手在 [`super::door`]）。
             ocall::TipIn::Coord { who, eyes } => match eyes {

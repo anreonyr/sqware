@@ -274,8 +274,8 @@ pub use grant::Grant;
 
 pub use frame::{Permit, Ruling};
 pub use frame::{
-    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Said, TIP_LEN, TIP_MARK, Tip,
-    TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
+    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Rule, Said, TIP_LEN, TIP_MARK,
+    Tip, TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 
 // ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────

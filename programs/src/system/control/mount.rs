@@ -1,11 +1,13 @@
-//! control::mount — **把这一面挂上树**：`/sys/control` 那一格。
+//! control::mount — **把这一族挂上树**：`/sys/control/{state,mint,start,stop}` 四面（一原语一面）。
 //!
 //! 三件事，而**只有第一件在本域手里落下**：
 //!
 //! ```text
 //!   ① 铸入口   本域主线程自己铸（记号 = 服务入口那一格，与三枚服务同一格）
 //!   ② 递出去   交给持树者（`R|W ＋ VEST`），再把"落哪一块、叫什么"推上提示之路
-//!   ③ 落       持树者在自己核里 `part /sys` ＋ `land /sys/control`（`Permit::Unset`）
+//!   ③ 落       持树者在自己核里 `part /sys` ＋ `part /sys/control` ＋ 逐面 `land`
+//!              （问面 `Permit::Unset`；`mint` / `start` / `stop` 三面各带
+//!               `Rule::Root`＝"许给根"）
 //! ```
 //!
 //! ① 在本文件里（那一枚的记号与它那一段名字是**这份协议自己的事实**）；②③ 分别在
@@ -27,7 +29,6 @@
 //! `harness/src/probe_control.rs` 照 principal / coalition 同形的路找上门、问一句 control 的话。
 
 use env::{Name, PieToken};
-use protocol::system::board::ENTRY_MARK;
 use protocol::system::control as ccall;
 use runtime::env::mail;
 
@@ -41,8 +42,19 @@ use runtime::env::mail;
 ///
 /// **只铸一次**：这一枚此后就是监督那一趟那只组里的待客入口（`Watch` 的 `face` 那一格）；
 /// 铸第二枚，就会有一枚永远没人读它的推。
-pub fn entry() -> Result<(PieToken, Name), &'static str> {
-    let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| "control:entry")?;
-    let name = Name::new(ccall::frame::NAME).map_err(|_| "control:name")?;
+pub const SEGMENT: &str = ccall::frame::NAME;
+
+/// 那段目录的名字那一枚 [`Name`]（`/sys/control` 自己**不是一格**，故只有名字，没有孔）。
+pub fn segment() -> Result<Name, &'static str> {
+    Name::new(SEGMENT).map_err(|_| "control:name")
+}
+
+/// **铸某一面的待客入口**，并交出它**自己那一段**名字（`/sys/control/{name}` 的 `name`）。
+///
+/// **每一面只铸一枚**：它此后就是那一格背后那一枚，也是交给监督那一趟的那一枚
+/// （按面查回来）；铸第二枚就会有一枚永远没人读它的推（同另外三家）。
+pub fn entry(grant: ccall::Grant) -> Result<(PieToken, Name), &'static str> {
+    let entry = mail::unseal_hole(grant.mark()).map_err(|_| "control:entry")?;
+    let name = Name::new(grant.name()).map_err(|_| "control:name")?;
     Ok((entry, name))
 }

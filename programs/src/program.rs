@@ -280,7 +280,7 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::PROBE_RULE_OTHER,
     &harness::PROBE_LEASE,
     &harness::PROBE_BOUND,
-    // 控制面那位真客人（`/sys/control`）：**排在 `canonical` 之前**，见它自己那份声明。
+    // 控制面那位真客人（`/sys/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
     &harness::PROBE_CONTROL,
     // 操作面那一族（`/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。

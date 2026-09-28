@@ -135,8 +135,8 @@ impl Assembly {
         self.watch.run(&mut self.control, last);
     }
 
-    /// **把 `control` 那一面挂上树**（`/sys/control`）：本域铸那一枚入口、**持树者落那一格**、
-    /// 本域当场待客。
+    /// **把 `control` 那一族挂上树**（`/sys/control/{state,mint,start,stop}` 四面，一原语一面）：
+    /// 本域逐面铸入口、**持树者逐面落那一格**、本域当场待客。
     ///
     /// 三步，次序即契约：
     ///
@@ -151,19 +151,39 @@ impl Assembly {
     /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
     /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
     fn mount_control(&mut self) {
-        let (entry, name) = match control::mount::entry() {
-            Ok(plate) => plate,
-            Err(why) => return debug!("system: control not mounted ({why})"),
+        let Ok(segment) = control::mount::segment() else {
+            return debug!("system: control not mounted (control:name)");
         };
-        let road = match sys_dir() {
-            Ok(sys) => [sys, name],
-            Err(why) => return debug!("system: control not mounted ({why})"),
+        let Ok(sys) = sys_dir() else {
+            return debug!("system: control not mounted (sys:name)");
         };
-        if let Err(why) = self.tree.plate(&road, Some(entry)) {
-            return debug!("system: control not mounted ({why})");
+        // **四面各一枚入口、各一条路**（`/sys/control/{state,mint,start,stop}`）——一原语一面。
+        //
+        // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"）；
+        // `mint` / `start` / `stop` 三面各带 [`Rule::Root`]——"**许给根**"（`Trunk(ROOT)`）：
+        // 那正是 `control/mod.rs` 头注里那句"**要收，收的是那一格的 `Permit`**"——这一面上了树，
+        // 而门禁原先只有"已绑身份"那一格 ⇒ 任何已绑身份的域都能 `mint` / `start` / `stop`
+        // 装配表里任意一台；今天那三格收上了。
+        for grant in protocol::system::control::Grant::ALL {
+            let rule = match grant {
+                protocol::system::control::Grant::State => protocol::system::operator::Rule::None,
+                _ => protocol::system::operator::Rule::Root,
+            };
+            let (entry, name) = match control::mount::entry(grant) {
+                Ok(plate) => plate,
+                Err(why) => {
+                    debug!("system: control face not mounted ({why})");
+                    continue;
+                }
+            };
+            let road = [sys, segment, name];
+            if let Err(why) = self.tree.plate(&road, Some(entry), rule) {
+                debug!("system: control face not mounted ({why})");
+                continue;
+            }
+            self.watch.attach_face(grant, entry);
+            debug!("system: control mounted at /sys/control/{}", grant.name());
         }
-        self.watch.attach_face(entry);
-        debug!("system: control mounted at /sys/control");
     }
 
     /// **把七位操作面挂上树**（`/sys/operator/{part,land,find,trim,list,seek,name}`）。
@@ -197,7 +217,7 @@ impl Assembly {
                 }
             };
             let road = [sys, segment, name];
-            if let Err(why) = self.tree.plate(&road, Some(entry)) {
+            if let Err(why) = self.tree.plate(&road, Some(entry), protocol::system::operator::Rule::None) {
                 debug!("system: grant not mounted ({why})");
                 continue;
             }

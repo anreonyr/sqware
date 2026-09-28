@@ -293,21 +293,26 @@ pub enum Fail {
 /// 身份——`Trunk` / `Bough` / `Among` / `Opener` 各一正一负，第一格（`Unset`，"只判有没有身份"）
 /// 也有正证（换了代表那位照样过）；`harness/src/probe_rule_other.rs` 量同四格在**别人**手里那一侧。
 ///
-/// **生产里一位选择者都没有**：全仓每一处落格都递 `Permit::Unset`（`operator::bridge::land` 就是
-/// 它唯一的生产出口）。两次普查量到：
+/// **生产里的选择者：先是零，今天三位**——`/sys/control/{mint,start,stop}` 三格各带一句
+/// `Permit::Trunk(PrincipalId::ROOT)`（"许给根"）：`/sys/control` 拆成四面之后，规矩落在**定面**
+/// 那三格上，**问面**（`state`）照旧公开（读数见 `harness/src/probe_control.rs`）。
+/// 其余各处落格仍递 `Permit::Unset`。两次普查量到：
 ///
 /// - 门禁在生产里**确实生效**（盟册与三台驱动的落格、登记都过了判定，不是只对测具）；
-/// - 可**"运行时才去取"的格只剩两类**：设备格（每格 2～5 位客人，**没有一位名字写得出来**）与
-///   `/sys/control`（唯一客人 `probe-control` 恰恰是"这一格**取得到**"那条正证本身）；其余各域的
-///   入口都是**在门禁架起之前**由装配者随 `Hatch` 交到手里的（"装配次序即契约"）⇒ 给它们写许可，
-///   读数**一条都不会变**（量过：给 `/sys/principal/set` 写"谁都不许"，`derive(set,p)` 照旧成）。
+/// - 可**"运行时才去取"的格只有两类**：设备格（每格 2～5 位客人，**没有一位名字写得出来**）与
+///   `/sys/control`——后者**已经收上了**（拆成四面：问面公开、`mint` / `start` / `stop` 三面各带
+///   `Trunk(ROOT)`）；其余各域的入口都是**在门禁架起之前**由装配者随 `Hatch` 交到手里的
+///   （"装配次序即契约"）⇒ 给它们写许可，读数**一条都不会变**（量过：给 `/sys/principal/set`
+///   写"谁都不许"，`derive(set,p)` 照旧成）。
 ///
 /// **要它活，缺的是客人，不是格**：格（连它那句规矩）装配期就立好了，而客人**运行时才出生**；
 /// 唯一能事后改写的是**格的主人**（`claimable` 只放它），而它手里**没有名录面**——装配者的
 /// `Roster` 只有 `bind` / `adopt`，各驱动的 `Context` 只有**入口 ＋ 树会话**。两条出路都是
 /// **新能力**：让客人自己那一格带上它的身份，**或**给格的主人一具"谁此刻代表谁"。
 ///
-/// 故这一轴的账是：**判据与读数齐、生产里零客人**——不是欠账，是"还没有客人说得出一句真话"。
+/// 故这一轴的账是：**判据与读数齐，而生产里今天有三格真规矩**（control 那三面）；"给哪一格写
+/// 哪一句"仍要**先有客人**——control 那一句写得出来，是因为"这一面谁也取不回"正是
+/// `programs/src/system/control/mod.rs` 头注里记着的那个口子。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Permit {
     /// **这一格没记许可**：判据只到 [`judge`] 的第一格（"你有没有身份"），此后一条边都不问。
@@ -1097,9 +1102,58 @@ pub struct GuestFrame {
     pub who: TaskId,
 }
 
-/// 提示之路上**最长那一形**的宽度（立一条路：头两格 ＋ [`ROAD_MAX`] 段 ＋ 末段那一格）
+/// **这一趟落格要带的那句规矩**（"立一条路"那一形上的第二轴）。
+///
+/// # 为什么只有两格，且没有"填一枚 `Permit`"这一路
+///
+/// 这条路上装的是**装配者**（它请持树者替它落格）。装配者**报不出任何号**——它没有名录面
+/// （`Roster` 只有 `bind` / `adopt`），也没有读格的那几手（`Tree` 只有"递上去"）⇒ 一枚
+/// `Permit` 里的号它一个都填不了。故这一轴说的是**要不要带规矩**，而不是"带哪一条"；
+/// 而"带哪一条"由 [`Rule::Root`] 自己钉死——那是这一族今天**说得出口**的唯一一句真话
+/// （理由与实测见它自己的照实记）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Rule {
+    /// **不记许可**：与 `/sys/operator/{…}` 那七格同一条口径——任何已绑身份都取得回。
+    None,
+    /// **许给根**（`Permit::Trunk(PrincipalId::ROOT)`）：这一格只有根能取。
+    ///
+    /// **照实记（原先写的是"许给开着这一格的那位"，真机上是一条假规矩）**：装配者铸的那几枚入口
+    /// 其开者**答不出来**——根那批孔是"引导期那批设备门闩"（`opened_by` 的 `owner` 格是 0），
+    /// 故 `Permit::Opener(这一格)` 判出来是 [`Ruling::Unjudged`] 里"**永久**判不了"那一类
+    /// （实测读数：`operator: opens sealed n=33`），而这一族的正文写着那条规矩"要修的是写它的人"。
+    /// ⇒ 这条路改用"**许给根**"：它是这一族今天**说得出口**的那一句真话。
+    Root,
+}
+
+impl Rule {
+    /// 这一格在帧里有多宽（与 [`Rule::store`] / [`Rule::fetch`] 那一对同源）。
+    pub const WIDTH: usize = 1;
+}
+
+impl env::wire::Field for Rule {
+    const WIDTH: usize = Rule::WIDTH;
+
+    fn store(&self, out: &mut [u8]) {
+        out[0] = match *self {
+            Rule::None => 0,
+            Rule::Root => 1,
+        };
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        match *bytes.first()? {
+            0 => Some(Rule::None),
+            1 => Some(Rule::Root),
+            // 表外的记 ⇒ 整帧读不懂（同 `Permit` / `Where` 那一格的口径）。
+            _ => None,
+        }
+    }
+}
+
+/// 提示之路上**最长那一形**的宽度（立一条路：头两格 ＋ [`ROAD_MAX`] 段 ＋ 末段那一格 ＋ 规矩一格）
 /// ——两侧各备一只这么大的缓冲，收的那一侧按它拉。
-pub const TIP_LEN: usize = PlateHead::LEN + ROAD_MAX * env::wire::NAME_LEN + PieToken::WIDTH;
+pub const TIP_LEN: usize =
+    PlateHead::LEN + ROAD_MAX * env::wire::NAME_LEN + PieToken::WIDTH + Rule::WIDTH;
 
 /// **装配者推给持树者的一句话**（提示之路那一帧）。
 ///
@@ -1126,12 +1180,19 @@ pub enum Tip<'a> {
     /// `leaf` 填 [`PieToken::NONE`] 说的是"**末段是窗格**"（没有可落的叶子）——它在整帧里只有
     /// 这一个意思，不按别的格改读法（目录不是叶子：没有入口、没有 Pie）。
     ///
-    /// **照实记（`NONE` 那一格今天没有生产者）**：两条挂载路（`/sys/control` 与七位）都是
-    /// **落叶子**，而目录那一格由前缀走出来（不单独占一帧）——故 `NONE` 今天一次也发不出去。
+    /// **照实记（`NONE` 那一格原先没有生产者；开面那一刀之后有了）**：那两条挂载路（`/sys/control`
+    /// 与七位）从前都是**落叶子**，而目录那一格由前缀走出来（不单独占一帧）——故 `NONE` 一次也
+    /// 发不出去。**`/sys/control` 拆面之后**：它自己变成一段前缀，而"前缀立成一块窗格"正是
+    /// `leaf = NONE` 那一形（见 `programs/src/system/mod.rs::mount_control`）⇒
+    /// **这一格的第一位生产者就是它**。
     /// 它留着是因为它是这一形的**第二轴**：把 `leaf` 收成必填，"**立一段空窗格**"这句话就再也
     /// 说不出来（将来别的模块搬上树时，第一句常是它）。这与 `Req::Land` 那一格"每一格都还要有
     /// 意思"同一条：宁可多一格**说得出口**的话，也不让一个动作只许一种理解。
-    Plate { road: &'a [Name], leaf: PieToken },
+    Plate {
+        road: &'a [Name],
+        leaf: PieToken,
+        rule: Rule,
+    },
     /// **哪一位域 ＋ 它是哪一双眼睛**（两枚可以分两帧、次序不定）。
     Coord { who: TaskId, eyes: Eyes },
     /// **这一位是客人**。
@@ -1142,7 +1203,7 @@ impl Tip<'_> {
     /// 编进 `out`，返写完的游标；装不下 / 路空 / 路超过 [`ROAD_MAX`] ⇒ `None`。
     pub fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Tip::Plate { road, leaf } => {
+            Tip::Plate { road, leaf, rule } => {
                 if road.is_empty() || road.len() > ROAD_MAX {
                     return None;
                 }
@@ -1154,7 +1215,10 @@ impl Tip<'_> {
                 // 路那一截是**尾巴**：一处偏移都不写（同 `Road` 那一形）。
                 let at = env::wire::store_tail(out, PlateHead::LEN, road)?;
                 <PieToken as env::wire::Field>::store(&leaf, out.get_mut(at..at + PieToken::WIDTH)?);
-                Some(at + PieToken::WIDTH)
+                // 规矩那一格排在末段之后（它说的是"这一趟要不要带规矩"，不是路上的一段）。
+                let at = at + PieToken::WIDTH;
+                env::wire::Field::store(&rule, out.get_mut(at..at + Rule::WIDTH)?);
+                Some(at + Rule::WIDTH)
             }
             Tip::Coord { who, eyes } => CoordFrame {
                 kind: TIP_COORD,
@@ -1173,11 +1237,12 @@ impl Tip<'_> {
 
 /// **解开的一句**：路已经收进自己那一份（`[Name; ROAD_MAX]` ＋ 真实段数）。
 pub enum TipIn {
-    /// 立一条路（前缀逐段立窗格，末段按 `leaf`）。
+    /// 立一条路（前缀逐段立窗格，末段按 `leaf`），并按 `rule` 决定要不要带一句规矩。
     Plate {
         road: [Name; ROAD_MAX],
         count: usize,
         leaf: PieToken,
+        rule: Rule,
     },
     /// 哪一位域 ＋ 哪一双眼睛。
     Coord { who: TaskId, eyes: Eyes },
@@ -1197,15 +1262,21 @@ impl TipIn {
                 if count == 0 || count > ROAD_MAX {
                     return None;
                 }
-                // 长度也是形状的一部分：`2 ＋ 段数 × 32 ＋ 8`。
+                // 长度也是形状的一部分：`2 ＋ 段数 × 32 ＋ 8 ＋ 1`。
                 let at = PlateHead::LEN + count * env::wire::NAME_LEN;
-                if bytes.len() != at + PieToken::WIDTH {
+                if bytes.len() != at + PieToken::WIDTH + Rule::WIDTH {
                     return None;
                 }
                 let mut road = [Name::EMPTY; ROAD_MAX];
                 env::wire::fetch_tail(bytes, PlateHead::LEN, &mut road[..count])?;
                 let leaf = <PieToken as env::wire::Field>::fetch(bytes.get(at..)?)?;
-                Some(TipIn::Plate { road, count, leaf })
+                let rule = env::wire::Field::fetch(bytes.get(at + PieToken::WIDTH..)?)?;
+                Some(TipIn::Plate {
+                    road,
+                    count,
+                    leaf,
+                    rule,
+                })
             }
             TIP_COORD if bytes.len() == CoordFrame::LEN => {
                 let rec = CoordFrame::fetch(bytes)?;

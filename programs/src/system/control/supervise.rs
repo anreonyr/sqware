@@ -47,16 +47,21 @@ pub struct Lane {
 pub struct Watch {
     lanes: Vec<Lane>,
     pile: Pile,
-    /// **待客那一枚入口**（`None` = 面没接上：这一景没有持树者 / 那三趟没成）。
+    /// **待客那四枚入口**（一原语一面，位次即 `Grant` 那四位；`None` = 那一面没接上：
+    /// 这一景没有持树者 / 那几趟没成）。
     ///
     /// **照实记（它为什么与道表同组）**：道那一枚枚是"某一位没了"，面那一枚是"有人来问
     /// control"——两件事都是**本线程要醒一次**的理由，故挂进**同一只组**：多源等待，
     /// 不是两个圈（同 `board/server.rs::host_loop` 的写法）。
     ///
-    /// **它由 [`Watch::attach_face`] 接上**：编排域主线程把 `/sys/control` 那一格挂上树之后，
-    /// 当场把本线程铸的那一枚入口交到这里（`Assembly::mount_control`）——铸入口与待客是
-    /// **同一枚线程**，故那一枚副本不会被内核的派生链摘掉（见 `Assembly::supervise` 的照实记）。
-    face: Option<PieToken>,
+    /// **它们由 [`Watch::attach_face`] 逐面接上**：编排域主线程把
+    /// `/sys/control/{state,mint,start,stop}` 四格挂上树之后，当场把本线程铸的那四枚入口交到这里
+    /// （`Assembly::mount_control`）——铸入口与待客是**同一枚线程**，故那几枚副本不会被内核的
+    /// 派生链摘掉（见 `Assembly::supervise` 的照实记）。
+    ///
+    /// **位次即面**（`Grant::at()` 1..=COUNT）：醒来的是哪一枚孔，就用哪一位判面——名册 / 盟册
+    /// 那两处同一条口径。
+    faces: [Option<PieToken>; ccall::Grant::ALL.len()],
     /// **最后一位那条道真的在吗**——决定停机那一格**等什么**。
     ///
     /// **照实记（这一格是构造出来的保证，不是巧合）**：停机靠"最后一条走了"，而"最后一位一定
@@ -106,21 +111,21 @@ impl Watch {
         Ok(Watch {
             lanes,
             pile,
-            face: None,
+            faces: [None; ccall::Grant::ALL.len()],
             watch_last,
         })
     }
 
-    /// **认出待客那一枚入口**：把面挂进**同一只组**（多源等待的写法）。
+    /// **认出某一面的待客入口**：把那一枚挂进**同一只组**（多源等待的写法）。
     ///
     /// 调用者只有一处：`Assembly::mount_control`——**铸入口那一枚线程**（编排域主线程）在
-    /// `/sys/control` 落定之后，把它自己铸的那一枚交到这里。那一枚此后归这只组管：它的到达
-    /// 就是"有人来问 control 了"那一格。
-    /// **装不上也认**（`face` 仍记着）：面那一侧每拍还会非阻塞地取一次（单槽的推没有丢的
+    /// `/sys/control/{…}` 落定之后，把它自己铸的那几枚**逐面**交到这里。那一枚此后归这只组管：
+    /// 它的到达就是"有人来问 control 这一面了"那一格。
+    /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单槽的推没有丢的
     /// 道理，本手只是把"醒来"这条快路接上）。
-    pub fn attach_face(&mut self, face: PieToken) {
+    pub fn attach_face(&mut self, grant: ccall::Grant, face: PieToken) {
         let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
-        self.face = Some(face);
+        self.faces[(grant.at() - 1) as usize] = Some(face);
     }
 
     /// 这一位的死亡道（按名字取，不是按下标：见 [`Lane`]）。
@@ -212,9 +217,13 @@ impl Watch {
                     stop_running(&mut control.table, &self.lanes);
                 }
             }
-            // 四、面：有人来问 control 吗（非阻塞地取干净这一批）。
-            if let Some(face) = self.face {
-                serve_face(control, face, &mut buf);
+            // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单槽，
+            //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
+            for i in 0..ccall::Grant::ALL.len() {
+                let Some(face) = self.faces[i] else {
+                    continue;
+                };
+                serve_face(control, ccall::Grant::ALL[i], face, &mut buf);
             }
             // 五、**最后一位没有道时的停机触发**：内核那一问（`Join{task, POLL}`）。与上面道那
             //     一支是**同一句"最后一条走了"**——同一个 `stopping` 分支、同一套收场
@@ -300,7 +309,7 @@ fn last_reaped(table: &Table, name: Name) -> bool {
 /// 认那枚回信孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同 `principal/server.rs::turn`
 /// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
 /// 读出来核对，否则客人能让本域往**别人的孔**里写。
-fn serve_face(control: &mut Control, face: PieToken, buf: &mut [u8]) {
+fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
     // 入口是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
     while let Ok((len, from)) = entry.pull_timeout_from(buf, Wait::POLL) {
@@ -314,6 +323,30 @@ fn serve_face(control: &mut Control, face: PieToken, buf: &mut [u8]) {
         ) {
             // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
             continue;
+        }
+        // **面这一道在交给四手之前**：这一帧是从哪一面进来的，与它问的那一条属不属于那一面
+        // ——只有这一句说得清。对不上答 [`DENIED`](ccall::frame::DENIED)（**终态**：换一面 /
+        // 别重试），与 kernel 那几格失败分开。**它是"问面公开"的安全阀**：手里只有问面那一枚
+        // 入口的人，发不出 `Mint` / `Start` / `Stop`（同 principal / coalition 那两族那一格）。
+        //
+        // 表外的动作码（`ask = None`）**不在这里判**：连面都判不出来，交给下面那一趟答 `BAD`。
+        if let Some(wire) = &ask {
+            let asked = ccall::Grant::of_wire(wire);
+            if asked != grant.at() {
+                debug!(
+                    "control: face={} denied as={}",
+                    grant.name(),
+                    ccall::Grant::ALL[(asked - 1) as usize].name()
+                );
+                let _ = Sender::<ccall::frame::Said>::from_token(back)
+                    .send(
+                        ccall::frame::said_status(ccall::frame::DENIED),
+                        Wait::Forever,
+                    )
+                    .ok();
+                let _ = mail::release(back);
+                continue;
+            }
         }
         let said = answer(control, ask);
         // 答一句走这一趟那枚孔；装不上按构造到不了（`.ok()` 与板那一台同款）。
