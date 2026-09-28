@@ -35,7 +35,7 @@ pub static PROGRAM: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(3),
+        order: Some(5),
         presence: true,
         operator: true,
         bind: true,

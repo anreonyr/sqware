@@ -221,9 +221,21 @@ impl Mark {
     /// 由**名字**算出来（源码里仍写着名字）：64 位 FNV-1a，两侧各算同一个数。
     pub const fn of(name: &str) -> Mark {
         let bytes = name.as_bytes();
+        Mark::of_bytes(bytes, bytes.len())
+    }
+
+    /// 由**一段字节**算出来——同一条 FNV-1a，只是名字是**拼出来的**（`const fn` 里拼不出
+    /// `&str`、也切不出 `&[u8]`，故给出一条按字节收的口）。
+    ///
+    /// `len` 是**要算的那一段**有多长：调用方那块缓冲可以比它宽（末尾留着零是常态）。
+    ///
+    /// **照实记（谁要它）**：`system::operator::grant::Grant::mark` 那七枚记号是
+    /// `"operator-ask-" ＋ 面名`——面名只有一处（`Grant::name`），记号不该再抄一遍字面量。
+    /// 算法本身仍只有一处（[`Mark::of`] 就叫它），故"两侧各算同一个数"这条口径不变。
+    pub const fn of_bytes(bytes: &[u8], len: usize) -> Mark {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         let mut i = 0;
-        while i < bytes.len() {
+        while i < len {
             h ^= bytes[i] as u64;
             h = h.wrapping_mul(0x0000_0100_0000_01b3);
             i += 1;

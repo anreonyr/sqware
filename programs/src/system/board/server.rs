@@ -165,8 +165,11 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
 
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
     // 调用方这一侧因此不必先抄一份到自己的栈上，那一张按常数开的数组就此退场。
+    //
+    // **记号那一列只有一枚**（板这一族不带操作面）：`&[ASK_MARK]`。
     pending |= desk.arm_pending(
-        |who| ask_of(who),
+        &[ASK_MARK],
+        |who, mark| ask_of(who, mark),
         |ask| {
             pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                 .is_ok()
@@ -216,11 +219,11 @@ fn tell_gone(desk: &mut Desk) -> usize {
 /// 判据两格，缺一不可：
 ///
 /// - `owner == who` —— 那扇门是它开的（副本共享同一事实）；
-/// - **记号 == `ask`** —— 它亲手铸的那一枚问话孔（[`ASK_MARK`] 刻的）。
-fn ask_of(who: TaskId) -> Option<PieToken> {
-    let ask = ASK_MARK;
+/// - **记号 == `mark`** —— 它亲手铸的那一枚问话孔（板这一族传的就是 [`ASK_MARK`]；那一格
+///   由调用方给，因为"记号不止一枚"这件事是别族的面带来的，见 [`Desk::arm_pending`]）。
+fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
     mail::pies()
-        .find(|p| p.owner == who && p.mark == ask)
+        .find(|p| p.owner == who && p.mark == mark)
         .map(|p| p.token)
 }
 

@@ -10,7 +10,7 @@
 
 use env::Wait;
 use env::wire::Field;
-use env::{HoleDir, Mark, PieToken, TaskId};
+use env::{HoleDir, Mark, Name, PieToken, TaskId};
 use env::wire::Eyes;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
@@ -18,18 +18,21 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::debug;
+use protocol::communication::establish;
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
 use protocol::system::board as bcall;
 use crate::system::board::client as board;
 use protocol::system::operator as ocall;
+use protocol::system::operator::frame::Layer;
 use crate::system::operator::core::gate::{Code, verdict};
 use crate::system::operator::core::judge::Facts;
 use protocol::system::operator::{Id, Rule};
 use crate::system::operator::core::ledger::{Key, Ledger};
 pub use protocol::system::operator::{ASK_MARK, LINK, TIP_MARK};
 use crate::system::operator::core::Operator;
-use protocol::system::operator::{EntryId, Fail, Listing, Where};
+use protocol::system::operator::{EntryId, Fail, Grant, Listing, Where};
+use protocol::system::operator::grant::grant_of;
 
 use protocol::system::coalition::client::Face as CoalitionFace;
 use protocol::system::coalition::CoalitionId;
@@ -394,8 +397,11 @@ fn settle(
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 [`Desk::arm_pending`]）——
     // 调用方这一侧因此既不必按常数开数组（"一本账的容量渗到别人的栈上"那一格），
     // 也不必为"抄一份"再分配一次。
+    // **记号那一列**（`marks`）：控制面那一枚（`ASK_MARK`）＋ 七位操作面各一枚（[`Grant`]）。
+    // 逐枚试是硬的——客人开在哪一位上，只有它自己那枚孔的记号说得清（见 [`grant_of`]）。
     pending |= desk.arm_pending(
-        |who| ask_of(who),
+        &MARKS,
+        |who, mark| ask_of(who, mark),
         |ask| {
             pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
                 .is_ok()
@@ -403,6 +409,28 @@ fn settle(
     );
     pending
 }
+
+/// **本族唯一认得的树上一段名字**：`/sys`（`control` 那一面与 `/sys/operator` 那一族都挂在它底下）。
+///
+/// 其余名字**一概由递帧那一侧给**（见 [`ocall::PlateFrame`]：持树者不认识任何一族的名字）——
+/// 这一段是唯一的例外，因为它是**两族共用**的那一格坐标（`control` 自己那一段名字由它的
+/// `dir` 给，而它落在 `/sys` 底下这件事得由本侧知道）。
+const CONTROL_DIR: &str = "sys";
+
+/// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 七位操作面各一枚。
+///
+/// **一处给**：[`Desk::arm_pending`] 逐枚试、[`ask_of`] 逐枚比——两处读的都只有这一个数组。
+/// 位次与记号的对照本体在 [`Grant`]（`Grant::mark`），这里只是把它摊平。
+const MARKS: [Mark; 8] = [
+    ASK_MARK,
+    Grant::Part.mark(),
+    Grant::Land.mark(),
+    Grant::Find.mark(),
+    Grant::Trim.mark(),
+    Grant::List.mark(),
+    Grant::Seek.mark(),
+    Grant::Name.mark(),
+];
 
 /// **装配者要本域落的那一格**（提示之路第三种帧）：`part` 那一段目录 → `land` 那一枚 → 记账。
 ///
@@ -420,9 +448,30 @@ fn settle(
 ///
 /// 失败（读不懂 / `part` / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"。
 fn land_plate(tree: &mut Operator, book: &mut Book, rec: ocall::PlateFrame) {
-    let at = match tree.part(Where::Root, rec.dir) {
-        Ok(id) => Where::At(id),
-        Err(fail) => return debug!("operator: plate part {:?}", fail),
+    // ① `sys` 那一格（`principal` 先落过；`part` 幂等 ⇒ 重推无事）。
+    let Ok(sys_name) = Name::new(CONTROL_DIR) else {
+        return debug!("operator: plate sys");
+    };
+    let Ok(sys) = tree.part(Where::Root, sys_name) else {
+        return debug!("operator: plate sys");
+    };
+    // ② **落在哪一层**（[`ocall::Layer`]，三态；一格一义，收帧这一侧不猜）：
+    //
+    //    - `Segment`：把 `/sys/{name}` 立成一块 `Pane` **就完事**（这一帧不落叶子）；
+    //    - `Under`  ：落在 `/sys/{dir}` 那一块里（七位操作面：`dir = "operator"`）；
+    //    - `Sys`    ：落在 `/sys` 底下（`control` 那一面：一层）。
+    let at = match rec.layer {
+        Layer::Segment => {
+            return match tree.part(Where::At(sys), rec.name) {
+                Ok(_) => debug!("operator: plate segment {}", rec.name.as_str()),
+                Err(fail) => debug!("operator: plate segment {:?}", fail),
+            };
+        }
+        Layer::Under => match tree.part(Where::At(sys), rec.dir) {
+            Ok(parent) => Where::At(parent),
+            Err(fail) => return debug!("operator: plate under {:?}", fail),
+        },
+        Layer::Sys => Where::At(sys),
     };
     // `who` 那一格只在 `mine = true` 时进账（见 `Line::new`）——这里仍写"谁要的"（生我者），
     // 好让这一行的来历在读数里对得上"装配者递来的那一帧"。
@@ -468,12 +517,23 @@ fn serve_one(
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
     let decoded = Receiver::<ocall::Req<'_>>::from_token(ask).recv(buf, Wait::POLL).ok();
-    let said = answer(tree, decoded, guest.who(), session, book);
+    // **这一位是几**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见 [`grant_of`]）。
+    // 认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面（行为与加这一维之前同）。
+    let grant = grant_of(mark_of(ask));
+    let said = answer(tree, decoded, guest.who(), session, book, grant);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）。
     let _ = Sender::<ocall::Union>::from_token(guest.reply())
         .send(said, Wait::Forever)
         .ok();
+}
+
+/// 这一枚孔刻的是哪一枚记号（**本域表里那一枚的第三格**）。
+///
+/// 读不出（不在本表里 / 不是孔 / 已封印）⇒ [`Mark::NONE`]——它不是任何一面，故 [`grant_of`]
+/// 答 `None`、[`ask_of`] 也认不回它（两处同一句）。
+fn mark_of(ask: PieToken) -> Mark {
+    establish::marked_as(ask).unwrap_or(Mark::NONE)
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
@@ -486,6 +546,7 @@ fn answer(
     who: TaskId,
     session: Option<&Session>,
     book: &mut Book,
+    grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
     let Some(ask) = ask else {
@@ -495,6 +556,17 @@ fn answer(
     if let ocall::Wire::Road(_, count) = ask {
         if count > ocall::frame::ROAD_MAX {
             return ocall::Union::Status(ocall::FULL);
+        }
+    }
+    // **第一道：这一位。** 会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄边界
+    // （`find` 会**交出能力**、`trim` 会**毁掉别人那一格**，故它们不与只读那几条合成一位）。
+    // `None`（控制面那条路 / 表外记号）⇒ 不判面 ⇒ 今天那几台客人一字不变。
+    //
+    // **它绝不替代下一道**：拿到 `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find`
+    // 任意一格"——具体那一格仍走 `Book::rule` / `may`（`land` 同理：面 ✓ ＋ 那一格 `mine` ✓）。
+    if let Some(grant) = grant {
+        if grant.at() != Grant::of_wire(&ask) {
+            return ocall::Union::Status(ocall::DENIED);
         }
     }
     // **门外那一问**：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁——`find`（把那一枚
@@ -654,11 +726,14 @@ fn reply_of(who: TaskId) -> Option<PieToken> {
 
 /// 这一位客人**自己**交来的那一枚问话孔。
 ///
-/// 判据两格，缺一不可：`owner == who`（那扇门是它开的）**且** 记号 == `ask`（它亲手铸的
+/// 判据两格，缺一不可：`owner == who`（那扇门是它开的）**且** 记号 == `mark`（它亲手铸的
 /// 那一枚）——客人交来的**入口**也满足前两格（都是它铸、它交的），两件事只有记号分得开。
-fn ask_of(who: TaskId) -> Option<PieToken> {
-    // 多枚**是契约被破**（一个域只该铸一枚问话孔）⇒ 说一句。
-    claim(ASK_MARK, who, Some("operator: two asks"))
+///
+/// **`mark` 那一格由调用方逐枚给**（[`MARKS`]）：控制面那一枚 ＋ 七位操作面各一枚——客人开在
+/// 哪一位上，只有它那枚孔的记号说得清（见 [`grant_of`]）。
+fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
+    // 多枚**是契约被破**（一位客人只该在一位上铸一枚问话孔）⇒ 说一句。
+    claim(mark, who, Some("operator: two asks"))
 }
 
 /// **认领恰好一枚**：按「谁开的 + 记号」扫全表，答**第一枚**。

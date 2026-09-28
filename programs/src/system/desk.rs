@@ -4,7 +4,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Name, PieToken, TaskId, TeamId};
+use env::{Mark, Name, PieToken, TaskId, TeamId};
 
 use super::core::Fail;
 
@@ -366,6 +366,11 @@ impl Desk {
     /// 还没挂上问话孔的那几格——**改得动**那一半：每格叫一次 `ask_of`，挂得上就 arm 并
     /// `attach`；返"**还有没有没补齐的**"。
     ///
+    /// **`ask_of` 逐枚记号试**（`marks` = 本族认得的所有记号）：问话孔是按"**谁开的 ＋ 刻的
+    /// 什么记号**"认的，而记号**不止一枚**——Operator 那一侧七枚操作面各刻一枚（见
+    /// `protocol::system::operator::grant`）。故记号**不由本账写死**（本账不认识任何一族的面），
+    /// 由调用方按自己那一族给；板那边只有一枚，传 `&[ASK_MARK]` 即可。
+    ///
     /// **为什么这两手（`ask_of` / `attach`）要收进来**：调用方今天得先"抄一份'还没挂上的'"
     /// 到自己的栈上（`unarmed()` 借住这本账，而循环里要改它）；那一抄就是**一份按客人数的
     /// 分配**，或者**按一个常数开的数组**——后者正是这本账放弃的那件事（见上面的并本记）。
@@ -375,18 +380,21 @@ impl Desk {
     /// 并报"还没补齐"。
     pub fn arm_pending(
         &mut self,
-        mut ask_of: impl FnMut(TaskId) -> Option<PieToken>,
+        marks: &[Mark],
+        ask_of: impl Fn(TaskId, Mark) -> Option<PieToken>,
         mut attach: impl FnMut(PieToken) -> bool,
     ) -> bool {
         let mut pending = false;
         for slot in 0..self.guests.len() {
-            let Some((who, armed)) = self.guests[slot].as_ref().map(|g| (g.who, g.armed())) else {
+            let Some(who) = self.guests[slot].as_ref().map(|g| g.who) else {
                 continue;
             };
-            if armed {
+            if self.guests[slot].as_ref().is_some_and(|g| g.armed()) {
                 continue;
             }
-            match ask_of(who) {
+            // 逐枚记号试：**只有一枚**（板那一侧）时这一趟就一次扫表。
+            let found = marks.iter().find_map(|mark| ask_of(who, *mark));
+            match found {
                 Some(ask) => {
                     let hung = self.arm(slot, ask) && attach(ask);
                     if !hung {

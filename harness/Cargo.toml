@@ -94,6 +94,25 @@ test = false
 bench = false
 doctest = false
 
+# ── 操作面那一族（`/sys/operator/{part,land,…}`）─────────────────────
+#
+# 两台一对，**各只开一条会话**：一位客人一条会话是本仓既有的形状（`reply_of` 的认领键是
+# "谁开的 ＋ 树路记号"，一位只认最后一枚），故"全操作面"与"只有 land 一位"这**两柄权**要
+# 两位客人各持一条——`gate` 那位走控制面（`operator::BERTH`），替 `land` 那位把试验场铺好。
+[[bin]]
+name = "prog-probe-operator-gate"
+path = "src/probe_operator_gate.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-operator-land"
+path = "src/probe_operator_land.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "prog-probe-rule"
 path = "src/probe_rule.rs"

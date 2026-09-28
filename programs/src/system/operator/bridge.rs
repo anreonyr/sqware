@@ -19,7 +19,7 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::communication::establish;
-use protocol::system::operator::frame::{CoordFrame, PlateFrame};
+use protocol::system::operator::frame::{CoordFrame, Layer, PlateFrame};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
@@ -99,6 +99,51 @@ impl Tree {
         dir: Name,
         name: Name,
     ) -> Result<(), &'static str> {
+        self.plate(entry, dir, name, Layer::Sys)
+    }
+
+    /// **落两层**：`/sys` 底下的 `segment` 那一段先立成一块 `Pane`，再把 `name` 落在它底下。
+    ///
+    /// 与 [`Tree::land_plate`] 是**同一手**（同一帧、同一门闩的规矩），差别只有一格：**两帧、
+    /// 次序即契约**。`token` 是**那一段自己的那一枚孔**（调用方铸：目录那一格也要有名字、
+    /// 有门闩，故它照样是"一枚孔 → 一个名字"）。
+    ///
+    /// 两帧的两个名字都写在**同一格**（`name`）里，故上面的 `segment` / `name` 就是那两帧各自
+    /// 要立、要落的那一段——**收帧那一侧只看 `name`**：
+    ///
+    /// ```text
+    ///   ① token ＋ name = segment   deep = true     ⇒ part(At(sys), segment)   立那一段
+    ///   ② entry ＋ name = name      deep = false    ⇒ land(At(sys), name)      落进那一段
+    /// ```
+    ///
+    /// **为什么不是"多带一段路径"**：这条路落的是**一格**，不是一条路；两层就是**两格**。故
+    /// `/sys/operator` 在树上是一块**真的** `Pane`（`part` 出来的），不是路径上假装的一段。
+    /// 这正是 `control` 那一格的同形——它只落一层，故只叫 [`Tree::land_plate`]。
+    pub fn land_deep(
+        &mut self,
+        entry: PieToken,
+        token: PieToken,
+        segment: Name,
+        name: Name,
+    ) -> Result<(), &'static str> {
+        let sys = Name::new("sys").map_err(|_| "operator:name")?;
+        // ① 先把那一段立成一块 `Pane`（`/sys/operator`）。
+        self.plate(token, sys, segment, Layer::Segment)?;
+        // ② 再把那一格落进那一段（`/sys/operator/{name}`）。
+        self.plate(entry, segment, name, Layer::Under)
+    }
+
+    /// **递一格上去**：交那一枚 ＋ 推那一帧（两手都是契约的一半，次序见 [`Tree::land_plate`]）。
+    ///
+    /// 它是 [`Tree::land_plate`] 与 [`Tree::land_deep`] 共用的那一具——两处只差"推几次、每次
+    /// 叫什么"，"怎么推"只有一处。
+    fn plate(
+        &mut self,
+        entry: PieToken,
+        dir: Name,
+        name: Name,
+        layer: Layer,
+    ) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         let tip = self.tip.ok_or("no tip")?;
         // ① 那一枚交过去：`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST` ⇒ 客人那次
@@ -117,6 +162,7 @@ impl Tree {
             dir,
             name,
             entry: seed,
+            layer,
         }
         .store(&mut rec);
         mail::HolePie::from_token(tip)

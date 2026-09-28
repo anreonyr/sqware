@@ -49,7 +49,7 @@ use crate::communication::session::{Berth, Session};
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
 use crate::system::operator::frame::{Id, Rule};
-use crate::system::operator::{EntryId, Listing, Where};
+use crate::system::operator::{EntryId, Grant, Listing, Where};
 
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）。
 ///
@@ -58,6 +58,17 @@ pub const BERTH: Berth = Berth {
     link: Mark::of(crate::system::operator::LINK),
     ask: crate::system::operator::ASK_MARK,
 };
+
+/// **一条授面的会话**：与 [`BERTH`] 同一条树路，只有问话孔那一格换成**那一面的记号**。
+///
+/// 对偶：服务端判面那一句是 [`Grant::at`]（从**它自己表里那枚问话孔**的记号读回面）。
+/// 故"客人开哪一面"就是"它手里那一枚问话孔刻的是哪一位"——**请求里没有可填的格**。
+pub const fn granted_berth(grant: Grant) -> Berth {
+    Berth {
+        link: Mark::of(crate::system::operator::LINK),
+        ask: grant.mark(),
+    }
+}
 
 /// 门牌那一格声不声明归属（[`Pane::bind`] 的最后一格）。
 ///
@@ -151,6 +162,126 @@ impl Face {
         let id = id_of(&self.session, road, wait)?;
         Ok(Tile { face: self, id })
     }
+
+    /// **把这一面收成某一柄权**：会话必须**开在那一面的记号上**
+    /// （[`granted_berth`] 就是那一手）；开在别的位上的会话，服务端判面时答拒。
+    ///
+    /// 它**借**这一面，不收走：同一条会话上还留着 [`Face::pane`] / [`Face::tile`] 那些全操作面
+    /// 的手（要哪一个，由调用点的处境说）。
+    pub const fn rein(&self, grant: Grant) -> Rein<'_> {
+        Rein { face: self, grant }
+    }
+
+    /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。**一处实现**：`Pane` / `Rein` 都走它。
+    fn call(&self, ask: ocall::Req<'_>, wait: Wait) -> Result<ocall::Said, Fail> {
+        call(self.session.talk, &self.session.link, ask, wait)
+    }
+}
+
+/// **一柄授面的权**：一枚 = 一枚操作。只见那一位的手，**没有**别的 wire 可发。
+///
+/// 与会话同形（[`Face`] / [`Pane`] / [`Tile`] 那一族）：柄里存的是**那一面**与**哪一位**，
+/// 那几手因此不再重复传面。它**借** [`Face`]，故同一条会话上两面都留着。
+///
+/// **一手对一条原语**（与 [`Pane`] / [`Tile`] 同一句正文）：本层不拿一个 `op` 码当参数——
+/// 发哪一条由函数名说，故 `call(Wire)` 那种"把安全边界交回调用者"的口**根本不存在**。
+///
+/// **失败域只有一格出口**：`Result<_, Fail>`（与其余两手同款）。
+pub struct Rein<'a> {
+    face: &'a Face,
+    grant: Grant,
+}
+
+impl Rein<'_> {
+    /// 这是哪一位（读数用）。
+    pub const fn grant(&self) -> Grant {
+        self.grant
+    }
+
+    /// **分**：在 `at` 那一块 `Pane` 里给 `name` 放一块空窗格；答那一格自己的号。
+    ///
+    /// 判据与 [`Pane::open`] 同一句（幂等 / 是一枚砖 ⇒ [`Fail::NotAPane`] / 装不下 ⇒
+    /// [`Fail::Full`]）；多出来的那一格是**面判**：会话不在 `part` 那一位上 ⇒
+    /// [`Fail::Denied`]。
+    pub fn part(&self, at: Where, name: Name, wait: Wait) -> Result<EntryId, Fail> {
+        let said = self.face.call(ocall::Req::Part { at, name }, wait)?;
+        said.entry().map_err(map_code)
+    }
+
+    /// **落**：在 `at` 那一块里给 `name` 贴一枚 `Tile`；答那一格自己的号。
+    ///
+    /// **两件事都要**：面判（这一柄权许不许 `land`）＋ 那一格自己的 `mine` 那一轴
+    /// （`claimable`，见 `programs/src/system/operator/server.rs`）。四格条件与
+    /// [`Pane::bind`] 逐格相同（那一枚经会话交给持树者、`rule` / `mine` 两轴随帧走）。
+    pub fn land(
+        &self,
+        at: Where,
+        name: Name,
+        entry: PieToken,
+        rule: Rule<Id, Id>,
+        mine: Mine,
+        wait: Wait,
+    ) -> Result<EntryId, Fail> {
+        let pie = mail::HolePie::from_token(entry);
+        let shipped = port::ship(
+            &pie,
+            self.face.session.host,
+            Access::FETCH | Access::STORE,
+            Policy::VEST,
+        )
+        .map(|to| to.seed())
+        .map_err(|_| Fail::Unknown)?;
+        let said = self.face.call(
+            ocall::Req::Land {
+                at,
+                name,
+                entry: shipped,
+                rule,
+                mine: matches!(mine, Mine::Yes),
+            },
+            wait,
+        )?;
+        said.entry().map_err(map_code)
+    }
+
+    /// **寻**：把 `id` 那一号后面那一枚 Pie 要过来（经会话授进本端表，号随答话回来）。
+    ///
+    /// **它是最敏感的一格**：这一步会**转移能力**（`find` 那一枚带 `VEST`，见
+    /// [`operator`](super) 的"交出去的权柄收不回来"）。故 `find` 自成一位，不与
+    /// [`Rein::list`] / [`Rein::name`] / [`Rein::seek`] 合并。
+    pub fn find(&self, id: EntryId, wait: Wait) -> Result<PieToken, Fail> {
+        let said = self.face.call(ocall::Req::Find(id), wait)?;
+        said.seed().map_err(map_code)
+    }
+
+    /// **剪**：把 `id` 那一号剪掉。
+    ///
+    /// 与 [`Pane::trim`] 同一句（那一格状态**要读**，见那边的照实记）。
+    pub fn trim(&self, id: EntryId, wait: Wait) -> Result<(), Fail> {
+        let said = self.face.call(ocall::Req::Trim(id), wait)?;
+        match said.code() {
+            ocall::OK => Ok(()),
+            code => Err(map_code(code)),
+        }
+    }
+
+    /// **列**：`at` 那一块里有哪些号。
+    pub fn list(&self, at: Where, wait: Wait) -> Result<Listing, Fail> {
+        let said = self.face.call(ocall::Req::List(at), wait)?;
+        said.list().map_err(map_code)
+    }
+
+    /// **译**：一条路（**从根写起**）译成号。与 [`Pane::tile`] 同一条腿，只是面不同。
+    pub fn seek(&self, road: &[Name], wait: Wait) -> Result<EntryId, Fail> {
+        let said = self.face.call(ocall::Req::Road(road), wait)?;
+        said.entry().map_err(map_code)
+    }
+
+    /// **名**：`id` 那一号此刻叫什么。
+    pub fn name(&self, id: EntryId, wait: Wait) -> Result<Name, Fail> {
+        let said = self.face.call(ocall::Req::Name(id), wait)?;
+        said.name().map_err(map_code)
+    }
 }
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它。
@@ -165,8 +296,12 @@ pub struct Pane<'a> {
 }
 
 impl<'a> Pane<'a> {
-    /// 由一格造柄（帧那一侧答出来的号）。
-    fn of(face: &'a Face, id: EntryId) -> Pane<'a> {
+    /// **由一格造柄**（帧那一侧答出来的号）。
+    ///
+    /// 两处来路：本模块内部按答话里那一枚号造（[`Pane::open`] / [`Pane::at`]），以及**已经拿
+    /// 着一枚号**的调用点——它们（`harness/src/probe_operator_*.rs` 那两位）要的正是"手里有号、
+    /// 不再问路"，故这一手是 **`pub`**：向另一条手（[`Face::pane`] 收一条路）取柄是同一件事。
+    pub fn of(face: &'a Face, id: EntryId) -> Pane<'a> {
         Pane {
             face,
             at: Where::At(id),
@@ -179,13 +314,8 @@ impl<'a> Pane<'a> {
     /// **它是"把一个已有的号读成窗格"那一格**：[`Face::pane`] 与 [`Pane::tile`] 的落点；
     /// [`Pane::open`] 不走它（`part` 那一问自己就答"这一格是不是窗格"，不必再多问一趟）。
     fn at(face: &'a Face, id: EntryId, wait: Wait) -> Result<Pane<'a>, Fail> {
-        call(
-            face.session.talk,
-            &face.session.link,
-            ocall::Req::List(Where::At(id)),
-            wait,
-        )?
-        .list()
+        face.call(ocall::Req::List(Where::At(id)), wait)?
+            .list()
         .map_err(map_code)?;
         Ok(Pane::of(face, id))
     }
@@ -210,9 +340,7 @@ impl<'a> Pane<'a> {
     /// 多一次往返（而多出来那一问的失败会把已经成的 `part` 说成失败——持树者一枚线程，这一格
     /// 是量得出来的代价）。
     pub fn open(&self, name: Name, wait: Wait) -> Result<Pane<'_>, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
+        let said = self.face.call(
             ocall::Req::Part {
                 at: self.at,
                 name,
@@ -247,9 +375,7 @@ impl<'a> Pane<'a> {
         let shipped = port::ship(&pie, self.face.session.host, Access::FETCH | Access::STORE, Policy::VEST)
             .map(|to| to.seed())
             .map_err(|_| Fail::Unknown)?;
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
+        let said = self.face.call(
             ocall::Req::Land {
                 at: self.at,
                 name,
@@ -271,34 +397,31 @@ impl<'a> Pane<'a> {
     ///
     /// 答的是那一串号（[`Listing`] 是定长值、不是借来的迭代器——它自带 `iter`）。
     pub fn list(&self, wait: Wait) -> Result<Listing, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::List(self.at),
-            wait,
-        )?;
+        let said = self.face.call(ocall::Req::List(self.at), wait)?;
         said.list().map_err(map_code)
     }
 
     /// **剪**：把 `e` 那一号剪掉。
+    ///
+    /// **照实记（这一手从前不读那一格状态）**：它原先是 `call(..).map(|_said| ())`——把答话
+    /// 里那一格状态**扔了**，于是持树者答 `DENIED` 时本端照样答 `Ok(())`：**一次被拒的剪被报成
+    /// 剪成了**。同一句话在 [`Rein::trim`] 里也有（两支同源），一并改直——面判那一维要靠它才量
+    /// 得准（实测：`probe-operator-land` 拿一柄只许 `land` 的权去 `trim`，持树者答 `DENIED`，
+    /// 而本端答了 `Ok(())`，探针当场红）。
+    ///
+    /// 余下几手（`part` / `land` / `seek` / `find` / `name` / `list`）都经各自那一形的读法
+    /// （`entry()` / `seed()` / `name()` / `list()`）**第一格就是状态** ⇒ 它们本来就报得对。
     pub fn trim(&self, e: EntryId, wait: Wait) -> Result<(), Fail> {
-        call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::Trim(e),
-            wait,
-        )
-        .map(|_said| ())
+        let said = self.face.call(ocall::Req::Trim(e), wait)?;
+        match said.code() {
+            ocall::OK => Ok(()),
+            code => Err(map_code(code)),
+        }
     }
 
     /// **名**：`e` 那一号此刻叫什么。
     pub fn name(&self, e: EntryId, wait: Wait) -> Result<Name, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::Name(e),
-            wait,
-        )?;
+        let said = self.face.call(ocall::Req::Name(e), wait)?;
         said.name().map_err(map_code)
     }
 
@@ -315,12 +438,7 @@ impl<'a> Pane<'a> {
     /// 这里刻意不补那一问：补了既多一次往返，又会把"这一格是砖"这一件正常的事说成失败
     /// （一枚 `Tile` 对 `list` 答 [`Fail::NotAPane`]）。
     pub fn tile(&self, road: &[Name], wait: Wait) -> Result<Tile<'_>, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::Road(road),
-            wait,
-        )?;
+        let said = self.face.call(ocall::Req::Road(road), wait)?;
         let id = said.entry().map_err(map_code)?;
         Ok(Tile {
             face: self.face,
@@ -346,12 +464,7 @@ impl Tile<'_> {
 
     /// 这一格此刻叫什么。
     pub fn name(&self, wait: Wait) -> Result<Name, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::Name(self.id),
-            wait,
-        )?;
+        let said = self.face.call(ocall::Req::Name(self.id), wait)?;
         said.name().map_err(map_code)
     }
 
@@ -365,12 +478,7 @@ impl Tile<'_> {
     /// 那一枚**经会话授进本端表**，而**它在本端表里的号随这条答话回来**（[`ocall::Union::Seed`]），
     /// 故客人不必再扫表。寻到头是窗格 ⇒ [`Fail::NotATile`]。
     pub fn token(self, wait: Wait) -> Result<PieToken, Fail> {
-        let said = call(
-            self.face.session.talk,
-            &self.face.session.link,
-            ocall::Req::Find(self.id),
-            wait,
-        )?;
+        let said = self.face.call(ocall::Req::Find(self.id), wait)?;
         said.seed().map_err(map_code)
     }
 }

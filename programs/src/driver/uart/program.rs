@@ -26,7 +26,7 @@ pub static PROGRAM: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(4),
+        order: Some(6),
         presence: true,
         operator: true,
         bind: true,

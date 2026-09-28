@@ -247,6 +247,15 @@ pub mod frame;
 pub use frame::{EntryId, Fail, Where};
 
 pub mod client;
+
+/// **操作面那一维**：一枚 `Grant` = 一枚操作（`part` / `land` / …）。
+///
+/// 它与「用」那一轴（[`Rule`]）与「改」那一轴（账上的主人）**正交**：这一维只答"这一位
+/// 许不许这一类"，判别落在**会话说的是哪一位**（会话入口的记号）上，故请求里没有可填的格。
+pub mod grant;
+
+pub use grant::Grant;
+
 // 形、据、账就在本模块树下（`core` / `frame`）。
 
 // ── 适配那一半（原 `call.rs`；文件并进本模块）────────────────────────

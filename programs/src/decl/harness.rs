@@ -36,6 +36,8 @@ pub const E_PROBE_RULE: Died = 21;
 pub const E_PROBE_OTHER: Died = 22;
 pub const E_PROBE_BOUND: Died = 23;
 pub const E_PROBE_CONTROL: Died = 25;
+pub const E_PROBE_OPERATOR_GATE: Died = 26;
+pub const E_PROBE_OPERATOR_LAND: Died = 27;
 
 /// 房客要的那一枚：**一条没人要的线**（`virtio,mmio`），领上就死。
 pub const LODGER_WANTS: &[Need] = &[Need::class(
@@ -56,7 +58,7 @@ pub static GUEST: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(6),
+        order: Some(8),
         presence: true,
         operator: true,
         bind: true,
@@ -80,7 +82,7 @@ pub static PASSER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(7),
+        order: Some(9),
         presence: true,
         operator: false,
         bind: true,
@@ -104,7 +106,7 @@ pub static LODGER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(8),
+        order: Some(10),
         presence: false,
         operator: true,
         bind: true,
@@ -128,7 +130,7 @@ pub static SLEEPER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(9),
+        order: Some(11),
         presence: true,
         operator: true,
         bind: true,
@@ -152,7 +154,7 @@ pub static SUBJECT: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(10),
+        order: Some(12),
         presence: false,
         operator: true,
         bind: true,
@@ -176,7 +178,7 @@ pub static MEMBER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(11),
+        order: Some(13),
         presence: false,
         operator: true,
         bind: true,
@@ -202,7 +204,7 @@ pub static PROBE_DENIED: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(12),
+        order: Some(14),
         presence: false,
         operator: true,
         bind: false,
@@ -226,7 +228,7 @@ pub static PROBE_OWNER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(14),
+        order: Some(16),
         presence: false,
         operator: true,
         bind: true,
@@ -250,7 +252,7 @@ pub static PROBE_RULE: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(15),
+        order: Some(17),
         presence: false,
         operator: true,
         bind: true,
@@ -274,7 +276,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(16),
+        order: Some(18),
         presence: false,
         operator: true,
         bind: true,
@@ -298,7 +300,7 @@ pub static PROBE_LEASE: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(13),
+        order: Some(15),
         presence: false,
         operator: true,
         bind: true,
@@ -323,7 +325,7 @@ pub static PROBE_BOUND: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(17),
+        order: Some(19),
         presence: true,
         operator: true,
         bind: true,
@@ -345,7 +347,7 @@ pub static PROBE_BOUND: Program = Program {
 /// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 ///
-/// **它排在 `canonical` 之前**（`order: Some(18)`，`canonical` 让到 19）：那一面是在**整表起完
+/// **它排在 `canonical` 之前**（`order: Some(20)`，`canonical` 让到最后）：那一面是在**整表起完
 /// 之后**才挂上树的（`Assembly::supervise`），故这一台头几拍那一问会等在门外（`Face::tile`
 /// 按额度重试）；而 `canonical` 必须是最后一条（编排域等它退场才收场）⇒ 让位的只能是这一台。
 pub static PROBE_CONTROL: Program = Program {
@@ -357,7 +359,7 @@ pub static PROBE_CONTROL: Program = Program {
         entry: &[],
     },
     relation: Relation {
-        order: Some(18),
+        order: Some(20),
         presence: false,
         operator: true,
         bind: true,
@@ -367,6 +369,70 @@ pub static PROBE_CONTROL: Program = Program {
     demand: Demand {
         origin: Origin::Initrd,
         died: E_PROBE_CONTROL,
+        setup: &[],
+    },
+};
+
+// ── 操作面那一族（`/sys/operator/{part,land,…}`）─────────────────────
+
+/// **操作面的正证客人（全操作面那一半）**：拿控制面会话把七格验一遍、取回
+/// `/sys/operator/land` 那一枚入口、再把试验场（`/sys/operator/zone` 下两格归属不同的砖）
+/// 铺好给下一位客人。
+///
+/// 它是**铺场者**：七格是**整表起完之后**才挂上树的（`Assembly::supervise` 的那一趟），故这一台
+/// 头几拍那几问会等在门外（`Face::tile` 按额度重试）——与 [`PROBE_CONTROL`] 同一条口径。
+/// 它排在 `some(3)`（**身份服务之后、三台驱动之前**）：它只跟树说话，不需要任何驱动；而"要读
+/// 那七格"的客人**离停机扳机越近，窗口越窄**——七位是逐位落上去的，而扳机是那张单上最大
+/// `order` 那一条（见 `canonical/program.rs` 的照实记）。实测把它排在 `canonical` 前两位时，
+/// 它拿到那块 `Pane` 都来不及问完那七段名字就被扑杀。
+///
+/// 它铺的那两格落在**根**底下：下一位只持 `land` 一位 ⇒ 它**问不得** `list` / `seek` / `name`，
+/// 故那两格必须落在**唯一不需要号的那一格**上（见 `harness/src/probe_operator_gate.rs` 文件头）。
+pub static PROBE_OPERATOR_GATE: Program = Program {
+    identity: Identity {
+        name: "probe-operator-gate",
+        kind: ProgramKind::User,
+        spot: Spot::Probe,
+        scenes: &["root"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(3),
+        presence: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_PROBE_OPERATOR_GATE,
+        setup: &[],
+    },
+};
+
+/// **操作面的正证客人（只有 `land` 一位那一半）**：会话开在 `granted_berth(Land)` 上，
+/// 于是 `seek` / `part` / `find` / `trim` 全答 `Denied`，而 `land` 在**无主**那一格上通、
+/// 在**别人有主**那一格上拒——后者证的是"面判与归属那一条轴**正交**"。
+pub static PROBE_OPERATOR_LAND: Program = Program {
+    identity: Identity {
+        name: "probe-operator-land",
+        kind: ProgramKind::User,
+        spot: Spot::Probe,
+        scenes: &["root"],
+        entry: &[],
+    },
+    relation: Relation {
+        order: Some(4),
+        presence: false,
+        operator: true,
+        bind: true,
+        holds_tree: false,
+        eyes: None,
+    },
+    demand: Demand {
+        origin: Origin::Initrd,
+        died: E_PROBE_OPERATOR_LAND,
         setup: &[],
     },
 };

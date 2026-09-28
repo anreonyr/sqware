@@ -1043,6 +1043,24 @@ pub struct CoordFrame {
 /// `dir` / `name` 是**递帧那一侧**的事实（`control::frame::DIR` / `NAME`）：持树者不认识任何
 /// 一族的名字，也不该认识——它只答"把这一枚挂在这一点上"。
 ///
+/// # `layer` 那一格：这一枚落在**哪一层**
+///
+/// 树上那一格**先得当一块 `Pane`** 才接得住下一格，故"落"这件事分三层，[`Layer`] 一格说清：
+///
+/// - [`Layer::Sys`]：落在 **`/sys` 底下**（`control` 那一面：一层）⇒ 那一段就是 `name`；
+/// - [`Layer::Segment`]：**先把 `/sys/{name}` 立成一块 `Pane`**（`/sys/operator` 那段目录自己）；
+/// - [`Layer::Under`]：落在 **`/sys/{dir}` 那一块里**（七位操作面：`dir = "operator"`，
+///   `name = "part"`）。
+///
+/// **照实记（它为什么不是一个 `bool`）**：这一格原先写的是 `deep: bool`——"深一层 / 不深一层"。
+/// 那样**落不出第三层**：`/sys/operator/{op}` 既不是"落在 `/sys` 底下"、也不是"把某一段立成
+/// `Pane`"，而是"落在**已立好的那一段里面**"。两态硬凑的结果是七位落到了 `/sys/{op}`
+/// （`/sys/operator` 空着）——实测：探针拿到 `/sys/operator` 那块 `Pane` 之后，列出来只有一位。
+/// 故按"一个动作不许有两种理解"改成三态，**一格一义**。
+///
+/// 它是**递帧那一侧的事实**（本域知道 `/sys` 早有、`operator` 是这一段新立的），不该由收帧那一侧
+/// 按"路径长短"猜。
+///
 /// **长度即形**：提示之路上今天三种帧（这一形 / [`CoordFrame`] / 一位客人的号），靠长度分派
 /// （见 `programs/src/system/operator/server.rs::settle`）⇒ 三条**不许等长**，下面那两条断言
 /// 把这件事钉在编译期。
@@ -1054,6 +1072,44 @@ pub struct PlateFrame {
     pub name: Name,
     /// 要挂的那一枚**在持树者表里**的号（`port::ship` 换回来的那一格）。
     pub entry: PieToken,
+    /// 这一枚落在**哪一层**（三态，见 [`Layer`]）。
+    pub layer: Layer,
+}
+
+/// 落一格时的**那一层**（[`PlateFrame`] 的第四格）。
+///
+/// 一格一义：收帧那一侧照它选"把哪一块 `Pane` 当父"，不猜、不推。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Layer {
+    /// 落在 `/sys` 底下（一层：`control` 那一面）。
+    Sys,
+    /// 把 `/sys/{name}` 立成一块 `Pane`（两层的第一帧：那段目录自己）。
+    Segment,
+    /// 落在 `/sys/{dir}` 那一块里（两层的第二帧：七位操作面）。
+    Under,
+}
+
+// **这一格自己的编码**（与 `Where` / `Rule` 同一口径：impl 跟着类型走）。
+// 表外的记 ⇒ **整帧读不懂**（`fetch` 答 `None`）——两侧同源，不存在"旧帧"那一档。
+impl env::wire::Field for Layer {
+    const WIDTH: usize = 1;
+
+    fn store(&self, out: &mut [u8]) {
+        out[0] = match self {
+            Layer::Sys => 0,
+            Layer::Segment => 1,
+            Layer::Under => 2,
+        };
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        match *bytes.first()? {
+            0 => Some(Layer::Sys),
+            1 => Some(Layer::Segment),
+            2 => Some(Layer::Under),
+            _ => None,
+        }
+    }
 }
 
 const _: () = assert!(PlateFrame::LEN != CoordFrame::LEN);

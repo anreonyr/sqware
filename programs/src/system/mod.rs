@@ -155,6 +155,47 @@ impl Assembly {
         debug!("system: control mounted at /sys/control");
     }
 
+    /// **把七位操作面挂上树**（`/sys/operator/{part,land,find,trim,list,seek,name}`）。
+    ///
+    /// 与 [`Assembly::mount_control`] 同一趟、同一只手（本域铸入口 → 持树者落格），但**两层**：
+    /// 先把 `/sys/operator` 那一段立成一块 `Pane`（**它只是目录，不是任何能力的别名**），七位再
+    /// 落在它底下（[`Naming::land_deep`]）。
+    ///
+    /// **七格各自独立**：一位挂不上只少一位（各报一行读数、不拦整机），其余六位照挂。目录那一段
+    /// 挂不上 ⇒ 七位都挂不上（各报它自己的那一行）；那一步失败就地收工，不逐位重试。
+    ///
+    /// **本域不为任何一位开门待客**：这七格挂上去是给**别的域**用的——它们 `find` 回那一枚
+    /// 入口，开在那一枚记号上的会话就是说给持树者的"我持这一柄权"。服务端判面那一句见
+    /// `programs/src/system/operator/server.rs::answer`（第一道闸）。
+    fn mount_grants(&mut self) {
+        // ① 目录那一段：`/sys/operator`（自己也是一格——有名字、有门闩）。
+        let (segment, _dir, segment_name) = match operator::mount::pane() {
+            Ok(plate) => plate,
+            Err(why) => return debug!("system: grants not mounted ({why})"),
+        };
+        //    **目录那一格也是一层"深处"**：它落在 `/sys` 底下，故走同一手（`land_deep`）——
+        //    只是这位面的名字就是这段目录自己，故两段名字**同一个**（`land_deep` 要的那个
+        //    等式，见那边）。
+        if let Err(why) = self.naming.land_deep(segment, segment, segment_name, segment_name) {
+            return debug!("system: grants not mounted ({why})");
+        }
+        // ② 七位：`operator` 底下那七段。
+        for grant in protocol::system::operator::Grant::ALL {
+            let (entry, mid, name) = match operator::mount::entry(grant) {
+                Ok(plate) => plate,
+                Err(why) => {
+                    debug!("system: grant not mounted ({why})");
+                    continue;
+                }
+            };
+            if let Err(why) = self.naming.land_deep(entry, segment, mid, name) {
+                debug!("system: grant not mounted ({why})");
+                continue;
+            }
+            debug!("system: grant mounted at /sys/operator/{}", grant.name());
+        }
+    }
+
     /// **起一条**——这一台自己的装配，按它自己的声明走：
     ///
     /// 立账 → 建域产线程 → 装通道（放行前）→ 绑身份（放行前）→ 放行等就绪 → 递配给 → 存在信号 →
@@ -211,6 +252,11 @@ impl Assembly {
             self.naming
                 .adopt(service.0)
                 .map_err(|why| fail(program, Error::Step(why)))?;
+            // **持树者一就位就把七位挂上**（不是等整表起完）：
+            // 那七格只是"树 + 本域递东西"两件事的函数，与后面起哪几台无关；而**等整表起完**会把
+            // 它挤到最后——那正是停机扳机（`supervise` 的 `last`）响的前一刻 ⇒ 任何"要读那七格"
+            // 的客人只剩几毫秒窗口（实测：那一档里连既有的 `probe-control` 都会被扑杀）。
+            self.mount_grants();
         }
 
         // **哪一双眼睛**：声明上那一格说了算（不是拿名字认的——`p.name == "principal"`
@@ -300,6 +346,19 @@ impl Naming {
     /// 本域**不上树**——落由持树者在自己核里做。
     fn land_plate(&mut self, entry: PieToken, dir: Name, name: Name) -> Result<(), &'static str> {
         self.0.land_plate(entry, dir, name)
+    }
+
+    /// **落两层**（`/sys/operator/{op}` 那一族）：`dir` 那一段先立成 `Pane`，`name` 落在它底下。
+    ///
+    /// 正文在 [`Tree::land_deep`](crate::system::operator::bridge::Tree::land_deep)。
+    fn land_deep(
+        &mut self,
+        entry: PieToken,
+        segment: PieToken,
+        dir: Name,
+        name: Name,
+    ) -> Result<(), &'static str> {
+        self.0.land_deep(entry, segment, dir, name)
     }
 
     /// 它是哪一双眼睛：那一格记进给持树者的协调帧（重复推是幂等的）。
