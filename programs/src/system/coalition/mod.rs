@@ -16,5 +16,10 @@
 //! 协议那一边只剩号 / 失败域 / 一窗号。
 
 pub mod core;
+// **照实记（`mount` 是开面那一刀来的）**：这一族从前**只有一枚门牌**（`/sys/coalition` 那一格
+// 本身就是它），故"坐标与铸"只有两句、不必成文件。开面之后是**两枚门牌 ＋ 两段末名**，
+// `SEGMENT` 与 `entry` 这些本族的事实就得有个住处方——与 `crate::system::principal::mount` /
+// `crate::system::operator::mount` 同形。
+pub mod mount;
 pub mod server;
 

@@ -5,7 +5,8 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/sys/coalition" ⇒ 结盟服务的门牌；FIND "/sys/principal/{ask,set}" ⇒ 身份服务**两面**的门牌
+//!   2  FIND "/sys/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/sys/principal/{ask,set}"
+//!      ⇒ 身份服务**两面**的门牌（本台**四面都要**：两侧都要读、都要写）
 //!   3  resolve(self)          ⇒ 本域此刻代表哪个号（装配期绑的那一条）
 //!   4  found() × 2            ⇒ 立两枚盟：号 0 与 1（号由服务发：单调、稠密）
 //!   5  amid(me, c0)           ⇒ **立了不等于进了**：false
@@ -82,14 +83,33 @@ fn main() -> Report<'static> {
         return bail("member: no tree link");
     };
     let tree = TreeFace::of(session);
-    let (Ok(cdir), Ok(cname)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
+    // 盟册那**两面**（开面那一刀）：三条"问"的（`Amid` / `Band` / `Bloc`）在 `Grant::Ask` 上，
+    // 三条"定"的（`Found` / `Enter` / `Leave`）在 `Grant::Set` 上。这一台**两面都要**——它立盟、
+    // 入、出，也问盟籍、点名册。
+    //
+    // **同一枚盟要两枚柄**（照实记：这是两面分开的代价）：`Coalition` 那个柄**绑在它来自的那一
+    // 面上**（`Face::coalition(id)` 只是把一个宾语固定下来），故 `cset.found()` 拿到的柄
+    // `enter` / `leave` 得动，而 `holds` / `members` 要走 `cask.coalition(id)` 那一枚。
+    let (Ok(cdir), Ok(cseg)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
         return bail("member: bad coalition name");
     };
-    let Some(entry) = find_face(&tree, &[cdir, cname]) else {
-        return bail("member: no coalition");
+    let (Ok(cask), Ok(cset)) = (
+        Name::new(ccall::Grant::Ask.name()),
+        Name::new(ccall::Grant::Set.name()),
+    ) else {
+        return bail("member: bad coalition face name");
     };
-    let Ok(coal) = CoalitionFace::of(entry) else {
-        return bail("member: bad coalition face");
+    let Some(entry) = find_face(&tree, &[cdir, cseg, cask]) else {
+        return bail("member: no coalition ask face");
+    };
+    let Ok(cask) = CoalitionFace::of(entry) else {
+        return bail("member: bad coalition ask face");
+    };
+    let Some(entry) = find_face(&tree, &[cdir, cseg, cset]) else {
+        return bail("member: no coalition set face");
+    };
+    let Ok(cset) = CoalitionFace::of(entry) else {
+        return bail("member: bad coalition set face");
     };
 
     // 身份那**两面**：**本域自己也要用它们**（问"我代表谁"，派生第二条身份、领、弃）。
@@ -152,19 +172,22 @@ fn main() -> Report<'static> {
     // （稠密）同理——两次 `found` 之间**谁都可以插一脚**。故那一对换成唯一可证的那条：
     // **号只增**。至于号**能用**（进得去、查得着、放得下），由后面那一整串
     // （`enter` / `leave` / `waive` / `band` / `bloc`）证，不靠这两格。
-    let c0 = coal.found(Wait::AtMost(MS));
+    let c0 = cset.found(Wait::AtMost(MS));
     debug!("member: found={}", one_id(&c0));
-    let c1 = coal.found(Wait::AtMost(MS));
+    let c1 = cset.found(Wait::AtMost(MS));
     debug!("member: found={}", one_id(&c1));
     let (Ok(c0), Ok(c1)) = (c0, c1) else {
         return bail("member: no coalition id");
     };
+    // 读那一侧的两枚柄：**同一枚盟，换一枚门牌**（见上面那条照实记）。
+    let r0 = cask.coalition(c0.id());
+    let r1 = cask.coalition(c1.id());
     {
         assert!(c1.id().get() > c0.id().get())
     }
 
     // 三、立了不等于进了。
-    let apart = c0.holds(p, Wait::AtMost(MS));
+    let apart = r0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(apart));
     {
         assert_eq!(apart, Ok(false))
@@ -174,7 +197,7 @@ fn main() -> Report<'static> {
     // **这一手不收"谁"**：进的是本端**此刻代表**的那一位（名册的答案）。
     let entered = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(entered));
-    let inside = c0.holds(p, Wait::AtMost(MS));
+    let inside = r0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(inside));
     let again = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(again));
@@ -187,7 +210,7 @@ fn main() -> Report<'static> {
     // 五、同一条身份可以在第二枚盟里。
     let in_c1 = c1.enter(Wait::AtMost(MS));
     debug!("member: enter(c1)={}", done(in_c1));
-    let amid_c1 = c1.holds(p, Wait::AtMost(MS));
+    let amid_c1 = r1.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c1)={}", flag(amid_c1));
     {
         assert!(in_c1.is_ok())
@@ -211,9 +234,9 @@ fn main() -> Report<'static> {
     // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
     let q_in = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(q_in));
-    let p_there = c0.holds(p, Wait::AtMost(MS));
+    let p_there = r0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(p_there));
-    let q_there = c0.holds(q, Wait::AtMost(MS));
+    let q_there = r0.holds(q, Wait::AtMost(MS));
     debug!("member: amid(sub,c0)={}", flag(q_there));
     {
         assert!(adopted.is_ok())
@@ -232,9 +255,9 @@ fn main() -> Report<'static> {
     // （这一手同样不收"谁"——主体由印章说）。
     let left = c0.leave(Wait::AtMost(MS));
     debug!("member: leave(c0)={}", done(left));
-    let q_gone = c0.holds(q, Wait::AtMost(MS));
+    let q_gone = r0.holds(q, Wait::AtMost(MS));
     debug!("member: amid(sub,c0)={}", flag(q_gone));
-    let p_still = c0.holds(p, Wait::AtMost(MS));
+    let p_still = r0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(p_still));
     assert!(left.is_ok());
     {
@@ -247,7 +270,7 @@ fn main() -> Report<'static> {
     // 八、弃回起点：键 = 身份那条定理的另一半——第一条身份那一行照旧在。
     let waived = set.principal(q).waive(Wait::AtMost(MS));
     debug!("member: waive={}", done(waived));
-    let after_waive = c0.holds(p, Wait::AtMost(MS));
+    let after_waive = r0.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,c0)={}", flag(after_waive));
     assert!(waived.is_ok());
     {
@@ -256,12 +279,16 @@ fn main() -> Report<'static> {
 
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
     let outside = CoalitionId::new(OUTSIDE);
-    let out = coal.coalition(outside);
-    let out_amid = out.holds(p, Wait::AtMost(MS));
+    // **两枚柄都要**（读走问面、写走定面）：这一格量的正是"没铸过的那枚盟 ⇒ `Unknown`"，
+    // 故两枚柄**都得是"面过了、核心拒"**那一条——若拿问面去 `enter`，量到的是 `Denied`
+    // （面那一格），把这一格要证的"核心里那枚盟不存在"顶掉了。
+    let rout = cask.coalition(outside);
+    let wout = cset.coalition(outside);
+    let out_amid = rout.holds(p, Wait::AtMost(MS));
     debug!("member: amid(me,out)={}", flag(out_amid));
-    let out_enter = out.enter(Wait::AtMost(MS));
+    let out_enter = wout.enter(Wait::AtMost(MS));
     debug!("member: enter(out)={}", done(out_enter));
-    let out_leave = out.leave(Wait::AtMost(MS));
+    let out_leave = wout.leave(Wait::AtMost(MS));
     debug!("member: leave(out)={}", done(out_leave));
     {
         assert!(matches!(out_amid, Err(Fail::Unknown)))
@@ -274,24 +301,24 @@ fn main() -> Report<'static> {
     }
 
     // 十、伪造的**身份**号：答 false，**不是失败**——`p` 是标签，本册不去问名册。
-    let forged = c1.holds(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
+    let forged = r1.holds(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     debug!("member: amid(out,me)={}", flag(forged));
     {
         assert_eq!(forged, Ok(false))
     }
 
     // 十一、**一串**（取窗两条）：`band` 答成员、`bloc` 答盟籍（序都是号序）。
-    let band = c0.members(None, Wait::AtMost(MS));
+    let band = r0.members(None, Wait::AtMost(MS));
     debug!("member: band(c0)={}", band_ids(&band));
     // 拿末一枚当游标接着取：**阈值**语义下再往后没有了 ⇒ 空窗，**不是错**（也不是"过期游标"）。
     let after = band.as_ref().ok().and_then(|w| w.iter().last());
-    let empty = c0.members(after, Wait::AtMost(MS));
+    let empty = r0.members(after, Wait::AtMost(MS));
     debug!("member: band(c0,next)={}", band_ids(&empty));
     // 没铸过的那枚盟：取窗这一条**有失败域**（同 amid）。
-    let out_band = out.members(None, Wait::AtMost(MS));
+    let out_band = rout.members(None, Wait::AtMost(MS));
     debug!("member: band(out)={}", band_ids(&out_band));
     // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
-    let bloc = coal.bloc(p, None, Wait::AtMost(MS));
+    let bloc = cask.bloc(p, None, Wait::AtMost(MS));
     debug!("member: bloc(me)={}", bloc_ids(&bloc));
     {
         assert_eq!(band.as_ref().ok().map(|w| w.iter().count()), Some(1))
@@ -304,6 +331,23 @@ fn main() -> Report<'static> {
     }
     {
         assert_eq!(bloc.as_ref().ok().map(|w| w.iter().count()), Some(2))
+    }
+
+    // 十二、**面那一格**（开面那一刀）：同一条问、同一个发送者，**只换门牌**——定面成、问面拒。
+    // 这一对量得出来的正是"面"这件事本身；而"面不对"在**门外**就拦下了（连盟册都没看）。
+    //
+    // **照实记（它与核心那几格同码，分开它们的是读数）**：这一格答的 `Denied` 与别的因同码
+    // （客人的下一步一样：换一枚门牌 / 换目标、别重试）。分得开它们的是服务那一行读数
+    // `coalition: face=… asked=… denied`。
+    let set_ok = cset.found(Wait::AtMost(MS));
+    debug!("member: found(set)={}", one_id(&set_ok));
+    let ask_no = cask.found(Wait::AtMost(MS));
+    debug!("member: found(ask)={}", one_id(&ask_no));
+    {
+        assert!(set_ok.is_ok())
+    }
+    {
+        assert!(matches!(ask_no, Err(Fail::Denied)))
     }
 
     return Report::note(E_OK, "member: done");
@@ -439,6 +483,8 @@ impl Why for Fail {
         match self {
             Fail::Unknown => "unknown",
             Fail::Full => "full",
+            // 开面那一刀添的那一格（"你手里那一枚门牌给不了这一条"）。
+            Fail::Denied => "denied",
         }
     }
 }

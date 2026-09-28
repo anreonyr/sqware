@@ -154,14 +154,20 @@ fn main() -> Report<'static> {
     // [`TreeFace::of`]（吃所有权）；三个帮手 `plate` / `look` / `find_face` 一并从裸
     // `(talk, link, host)` 改收那一面 / 那块 Pane。
     let tree = TreeFace::of(session);
-    let (Ok(cdir), Ok(cname)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
+    // 盟册那面**只要"定面"**（开面那一刀）：这一台立一枚盟、把本域入进去——两条都在 `Set` 上
+    // （`Found` / `Enter`）；它不查盟籍、不点名册。
+    let (Ok(cdir), Ok(cseg), Ok(cset)) = (
+        Name::new(ccall::DIR),
+        Name::new(ccall::NAME),
+        Name::new(ccall::Grant::Set.name()),
+    ) else {
         return bail("probe-rule: bad coalition name");
     };
-    let Some(entry) = find_face(&tree, &[cdir, cname]) else {
-        return bail("probe-rule: no coalition");
+    let Some(entry) = find_face(&tree, &[cdir, cseg, cset]) else {
+        return bail("probe-rule: no coalition set face");
     };
     let Ok(coal) = CoalitionFace::of(entry) else {
-        return bail("probe-rule: bad coalition face");
+        return bail("probe-rule: bad coalition set face");
     };
     // 身份那**两面**（开面那一刀）：三条"问"的（`Resolve` / `Sire` / `Heir`）在 `Grant::Ask` 上，
     // 四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 `Grant::Set` 上。这一台**两面都要**

@@ -51,7 +51,7 @@
 //! ```text
 //!   装配期直授   装配者把 control 那枚入口随配给/转授给指定域
 //!   上树         control 把入口挂到 /sys/control（树里已有 /sys/principal/{ask,set} 与
-//!                /sys/coalition 三处先例）
+//!                /sys/coalition/{ask,set} 四处先例）
 //!                ⇒ 任何走到树的任务 `operator::Face::entry` 一查就有 ⇒ [`Face::of`] 直接成立
 //! ```
 //!
@@ -73,7 +73,7 @@
 //! - **状态与实例坐标是两件事**：`State::Dead` 与"上一个实例的坐标还在"并存是合法的
 //!   （"起过、现在死了"）——本协议的 `state()` 只读前者。
 //! - **这一面上了树，但门禁只有"已绑身份"那一格**：`/sys/control` 那一格是 `Permit::Unset`
-//!   （与 `/sys/principal/{ask,set}` / `/sys/coalition` 同一格），故**任何已绑身份的域**都取得回
+//!   （与 `/sys/principal/{ask,set}` / `/sys/coalition/{ask,set}` 同一格），故**任何已绑身份的域**都取得回
 //!   入口，进而 `mint` / `start` / `stop` 装配表里任意一台。这不是新开的口子（`doom` 同样没有门禁），
 //!   但它是这一面今天的口径，照实写在这里。要收，收的是那一格的 `Permit`（`operator` 那一侧），
 //!   不是本协议的形状。

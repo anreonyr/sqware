@@ -35,8 +35,8 @@
 //! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
 //! **本域活多久它活多久**），而"把这一格落到 `/sys/control`"由**持树者在自己核里做**
 //! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::plate`] 递过去 →
-//! 持树者 `part` ＋ `land`）。于是 `/sys/control` 与 `/sys/principal` / `/sys/coalition`
-//! 逐字同形：任何走到树的任务 `operator::Face::tile` 一查就有，
+//! 持树者 `part` ＋ `land`）。于是 `/sys/control` 与名册 / 盟册那两族那**四格**逐字同形：
+//! 任何走到树的任务 `operator::Face::tile` 一查就有，
 //! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
 //!
 //! **代价照实说**：挂上之后，**任何已绑身份**的域都能按 `Permit::Unset` 取回那一枚入口，进而

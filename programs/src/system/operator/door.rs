@@ -23,9 +23,8 @@
 use env::{TaskId, Wait};
 
 use protocol::debug;
-use protocol::system::board::ENTRY_MARK;
 use protocol::system::coalition::client::Face as CoalitionFace;
-use protocol::system::coalition::CoalitionId;
+use protocol::system::coalition::{CoalitionId, Grant as CoalitionGrant};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::{Grant as PrincipalGrant, PrincipalId};
@@ -56,21 +55,23 @@ struct Session {
 impl Session {
     /// 认出那两枚门牌：**按"谁开的 + 记号"在本表里找**（协调那一帧只带号）。
     ///
-    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = **那一族约定的
-    /// 那枚**（名册两面各一枚、盟册一枚通用）。**不必装配者转授**——各域自己在 `serve_tree`
-    /// 之后把它直接交给持树者。
+    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = **那一族某一面的
+    /// 那枚**（今天要的都是问面）。**不必装配者转授**——各域自己在 `serve_tree` 之后把它直接
+    /// 交给持树者。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ `None`；盟册那枚认不出 ⇒ 只少
     /// [`Permit::Among`] 那一格。
     ///
-    /// **两枚记号不同，因为两族的"面"不同**（这一刀）：名册那一族开了两面，而本域要的是
-    /// **问面**（[`PrincipalGrant::Ask`]：`Resolve` ＋ `Heir`，两条都是读）——它**做不出**
-    /// `Adopt`（把一条号领到自己底下）。盟册那一族还没有面，故仍是那枚通用的 `ENTRY_MARK`。
+    /// **两枚记号都要的是"问面"**（开面那两刀）：名册那一族本域要 [`PrincipalGrant::Ask`]
+    /// （`Resolve` ＋ `Heir`，两条都是读）——它**做不出** `Adopt`（把一条号领到自己底下）；
+    /// 盟册那一族同理要 [`CoalitionGrant::Ask`]（`Amid` ＋ `Band` ＋ `Bloc`）——那枚门牌
+    /// **做不出** `Found`（立一枚盟）。两族各交两枚、记号不同，故"要哪一面"必须说清。
     fn of(coord: Coord) -> Option<Session> {
-        let roster = PrincipalFace::of(find_face(coord.roster?, PrincipalGrant::Ask.mark())?).ok()?;
+        let roster =
+            PrincipalFace::of(find_face(coord.roster?, PrincipalGrant::Ask.mark())?).ok()?;
         let league = coord
             .league
-            .and_then(|who| find_face(who, ENTRY_MARK))
+            .and_then(|who| find_face(who, CoalitionGrant::Ask.mark()))
             .and_then(|token| CoalitionFace::of(token).ok());
         Some(Session { roster, league })
     }

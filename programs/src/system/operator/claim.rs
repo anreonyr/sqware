@@ -82,8 +82,9 @@ pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
 ///
 /// **`mark` 由调用方给**（照实记：这一格原先硬写板的 `ENTRY_MARK`）：名册那一族开了两面
 /// （`principal::Grant::{Ask, Set}`），它交给本域的**是哪一面**只有记号说得清——门禁要的是
-/// `Ask`（它只 `Resolve` ＋ `Heir`），而装配者那一侧要的是 `Set`。盟册那一族还没有面，故它那
-/// 一枚仍是通用的 `board::ENTRY_MARK`。**"取第一枚"仍正当**：同一面命中的几枚背后是同一扇门。
+/// `Ask`（它只 `Resolve` ＋ `Heir`），而装配者那一侧要的是 `Set`；盟册那一族同形（两族各开
+/// `Ask` / `Set`），本域要的也是 `Ask`（它只 `Amid` ＋ `Band` ＋ `Bloc`）。**"取第一枚"仍正当**：
+/// 同一面命中的几枚背后是同一扇门。
 pub(super) fn find_face(who: TaskId, mark: Mark) -> Option<PieToken> {
     // 多枚**正常**（副本共享 `opened_by`：`land` 交一枚、门禁交一枚）⇒ 不说。
     claim(mark, who, None)

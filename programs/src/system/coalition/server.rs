@@ -6,15 +6,22 @@
 //!
 //! ```text
 //!   起手：读自己的 Sire（**只为上板与上树两条会话**——盟无主，之后不落任何字段）
-//!         → 上板（板看得见本域的死）→ 铸门牌那一枚
-//!           经 LAND 落到树上 `/sys/coalition`，再 FIND 回来验一遍
+//!         → 上板（板看得见本域的死）→ 铸门牌**两枚**（两面各一枚）
+//!           两枚都经 LAND 落到树上 `/sys/coalition/{ask,set}`，再逐面 FIND 回来验一遍
+//!           **只把问面那枚交给持树者**（它只叫 `Amid`；定面留在树上给客人）
 //!         → FIND `/sys/principal/ask`（**带重试**）拿一份身份服务的**问面**门牌
-//!   常驻：一只组等门牌那一枚 —— 读一帧（连发送者）→ 先过名册问"你是谁" → 交给核心 → 答回去
+//!   常驻：一只组等那两枚 —— **从哪一枚读到**就是哪一面 → 先过名册问"你是谁" → 交给核心 → 答回去
 //! ```
 //!
 //! **两条锚为什么都在这儿**：`Sire` 是内核盖的（比任何自报都硬，且是弱引用：装配者一退它
 //! 就答 0），树那条路是"按名找人"的现成一步；而身份那一份门牌**只能按名字找**——本域不是
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
+//!
+//! **面为什么长在门牌上**（开面那一刀，同 principal）：本族**没有会话**——门牌自己就是那条路，
+//! 所有人往同一枚孔推帧，故服务端原先**分不出面**。今天两枚门牌、两只孔：**从哪一枚读到**就是
+//! 哪一面，而"这一问属不属于这一面"由 [`Grant::of_wire`] 当场对一次（对不上答
+//! [`ccall::DENIED`]）。⇒ **交给持树者的那枚门牌做不出 `Found`**（立一枚盟）——它一辈子只叫
+//! `Amid`。为什么是两面、那一个生产持有者各要哪几条，见 [`ccall::grant`] 的文件头。
 
 use crate::system::control::service::Start;
 use env::Wait;
@@ -22,11 +29,11 @@ use env::Wait;
 use env::{HoleDir, Name, PieToken, TaskId};
 use protocol::debug;
 use protocol::communication::sender::Sender;
-use protocol::system::board as bcall;
 use protocol::communication::session::Session;
 use crate::system::board::client as board;
 use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
+use crate::system::coalition::mount;
 use protocol::system::coalition::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
@@ -48,8 +55,8 @@ const MS: usize = 1000;
 /// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
 /// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
 pub fn serve() -> Result<(), Start> {
-    // 一～七：起手（读锚 → 上板 → 铸门牌 → 上树 → 找身份那一份 → 空册 → 常驻那只组）。
-    let (mut book, face, pile, entry_hole, mut buf) = (|| {
+    // 一～七：起手（读锚 → 上板 → 铸两枚门牌 → 上树 → 找身份那一份 → 空册 → 常驻那只组）。
+    let (mut book, roster, pile, ask, set, mut buf) = (|| {
         // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
         // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——只有这一条来源。
@@ -59,10 +66,15 @@ pub fn serve() -> Result<(), Start> {
         let _board = Session::open(assembler, board::BERTH, Wait::AtMost(MS))
             .map_err(|_| Start::Board)?;
 
-        // 三、门牌那一枚：本域自己开（`entry` 是服务入口的通用记号）。
-        let entry = mail::unseal_hole(bcall::ENTRY_MARK).map_err(|_| Start::Tree)?;
+        // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按面给记号与末段名）。
+        //
+        // **两面各一枚、不是一枚两面**：本族没有会话，服务端只能从**它自己表里哪一枚孔**收到来
+        // 认面（见文件头）。两枚都长命——铸它们的是本线程自己（同 `operator::mount` 那条照实记）。
+        let (ask, ask_name) = mount::entry(ccall::Grant::Ask).map_err(|_| Start::Tree)?;
+        let (set, set_name) = mount::entry(ccall::Grant::Set).map_err(|_| Start::Tree)?;
 
-        // 四、上树：分 `/sys`、落 `/sys/coalition`、再查回来验一遍（同 router / rtc / principal）。
+        // 四、上树：分 `/sys` ＋ 分 `/sys/coalition`、逐面落那两格、再逐面查回来验一遍
+        //     （同 router / rtc / principal）。
         //
         // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本域此后只要树上那几手
         // （`part` / `land` / `find` / `name` / `entry_of`：上树那一趟 ＋ 找身份那份门牌），
@@ -71,7 +83,13 @@ pub fn serve() -> Result<(), Start> {
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
             .map_err(|_| Start::Tree)?;
         let tree = TreeFace::of(session);
-        serve_tree(&tree, entry);
+        serve_tree(
+            &tree,
+            [
+                (ccall::Grant::Ask, ask, ask_name),
+                (ccall::Grant::Set, set, set_name),
+            ],
+        );
 
         // 四之后：**门禁那一枚**——把这一枚门牌**直接交给持树者**（`host` = 持树者的号，
         // `Session::open` 收下的那一格）。它据此才判得了"这一位在那枚盟里吗"（`Permit::Among`）。
@@ -79,8 +97,12 @@ pub fn serve() -> Result<(), Start> {
         // 与 principal 那一格同一形状。这一枚在手时权限是
         // `FETCH|STORE|VEST`，故子集 `FETCH|STORE` 不越界。装配者那一侧按装配表上那一格
         // （`Eyes::League`）递——两枚门牌**分两帧、次序不定**，持树者收到哪一枚补哪一枚。
+        //
+        // **只交问面那一枚**（照实记：从前这一份就是唯一那一枚，两面都在里面）：持树者只叫
+        // `Amid`（判 [`Permit::Among`](protocol::system::operator::Permit::Among)），而
+        // "立盟 / 入 / 出"那三条在定面上——它拿不到，也就做不出。
         port::ship(
-            &HolePie::from_token(entry),
+            &HolePie::from_token(ask),
             tree.host(),
             Access::FETCH | Access::STORE,
             Policy::NONE,
@@ -88,32 +110,53 @@ pub fn serve() -> Result<(), Start> {
         .map_err(|_| Start::Tree)?;
 
         // 五、**身份那一份门牌**：本域是它的客人（K7）。带重试——它可能落得比本域晚。
-        let face_entry = find_face(&tree).ok_or(Start::Face)?;
-        let face = Face::of(face_entry).map_err(|_| Start::Face)?;
+        //
+        // **名字叫 `roster`**（照实记：它从前叫 `face`，而这一刀之后"面"指的是本族那两枚门牌）：
+        // 它是**名册的问面**，唯一用处是 `who()` 那一句"发送者此刻代表谁"。
+        let roster_entry = find_face(&tree).ok_or(Start::Face)?;
+        let roster = Face::of(roster_entry).map_err(|_| Start::Face)?;
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
         let book = Coalition::new();
 
-        // 七、常驻：**一只组等门牌那一枚**。这是常态，故等待没有期限；那一页缓冲只备一次。
+        // 七、常驻：**一只组等那两枚门牌**。这是常态，故等待没有期限；那一页缓冲只备一次。
         let pile = Pile::unseal(false).map_err(|_| Start::Desk)?;
-        let entry_hole = HolePie::from_token(entry);
-        pile.attach(&entry_hole, HoleDir::Pull)
-            .map_err(|_| Start::Desk)?;
+        let ask_hole = HolePie::from_token(ask);
+        let set_hole = HolePie::from_token(set);
+        for hole in [&ask_hole, &set_hole] {
+            pile.attach(hole, HoleDir::Pull).map_err(|_| Start::Desk)?;
+        }
         let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
         if buf.try_reserve_exact(PAGE_SIZE).is_err() {
             return Err(Start::Room);
         }
         buf.resize(PAGE_SIZE, 0);
-        Ok::<_, Start>((book, face, pile, entry_hole, buf))
+        Ok::<_, Start>((book, roster, pile, ask, set, buf))
     })()?;
 
     loop {
-        if pile.await_(Wait::Forever).is_err() {
-            return Err(Start::Dead);
-        }
+        // **`Ok(None)` 不是终局**（[`Pile::await_`] 自己的照实记：挂起过、或期限到，都会给
+        // `None`——继续等就再叫一次）；只有 `Err` 才是这一组死了。名册那一台在这一格栽过
+        // （照实记在它 `serve` 的同一处）：折叠 `None` 与 `Err`，就是把"这一轮没事"读成"这一组死了"。
+        let (tok, _dir) = match pile.await_(Wait::Forever) {
+            Ok(Some(hit)) => hit,
+            Ok(None) => continue,
+            Err(_) => return Err(Start::Dead),
+        };
+        // **从哪一枚读到就是哪一面**——本族的"面"就是它（没有会话可读记号）。
+        //
+        // 余下的号（构造上到不了：组里只挂了这两枚）⇒ 不猜，回去再等。
+        let mine = if tok == ask {
+            ccall::Grant::Ask
+        } else if tok == set {
+            ccall::Grant::Set
+        } else {
+            continue;
+        };
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
-            turn(&mut book, &face, from, &buf[..len]);
+        let hole = HolePie::from_token(tok);
+        while let Ok((len, from)) = hole.pull_timeout_from(&mut buf, Wait::POLL) {
+            turn(&mut book, &roster, mine, from, &buf[..len]);
         }
     }
 }
@@ -122,7 +165,9 @@ pub fn serve() -> Result<(), Start> {
 ///
 /// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同 `principal` 那一面）；
 /// `from` 是**内核盖的发送者**。
-fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
+/// `roster` = 名册**问面**（`who()` 那一句用）；`mine` = **这一帧从本族哪一枚门牌进来**
+/// （[`serve`] 那只组说的事实）。
+fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, frame: &[u8]) {
     let Some((ask, back)) = ccall::Wire::take(frame) else {
         // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
@@ -139,7 +184,7 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
     // 真到了那里，这一答就发不出去。
     let _ = Sender::<ccall::Union>::from_token(back)
-        .send(answer(book, face, from, ask), Wait::Forever)
+        .send(answer(book, roster, mine, from, ask), Wait::Forever)
         .ok();
     let _ = mail::release(back);
 }
@@ -151,7 +196,8 @@ fn turn(book: &mut Coalition, face: &Face, from: TaskId, frame: &[u8]) {
 /// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
 fn answer(
     book: &mut Coalition,
-    face: &Face,
+    roster: &Face,
+    mine: ccall::Grant,
     from: TaskId,
     ask: Option<ccall::Wire>,
 ) -> ccall::Union {
@@ -159,21 +205,36 @@ fn answer(
     let Some(ask) = ask else {
         return ccall::Union::Status(ccall::BAD);
     };
+    // **面这一道在交给核心之前**（[`Grant::of_wire`] 对那一条线上一码）：这一帧从 `mine` 那枚
+    // 门牌进来，而它问的那件事属不属于那一面，只有这一句说得清。对不上答 [`ccall::DENIED`]
+    // ——**终态**（换一枚门牌 / 别重试），与核心那两格失败分开。
+    //
+    // **照实记（`DENIED` 这一码是这一刀添的）**：本族原先"没有 `Denied` 可落"（盟无主）——
+    // 那说的是**核心**；这一句问的是**载体**。**这一行读数不是装饰**：与它同码的还有别的因，
+    // 分得开它们的只有这一行。
+    if ccall::Grant::of_wire(&ask) != mine.at() {
+        debug!(
+            "coalition: face={} asked={} denied",
+            mine.name(),
+            ccall::Grant::of_wire(&ask)
+        );
+        return ccall::Union::Status(ccall::DENIED);
+    }
     match ask {
         // `found` 的钥匙是"你得是个已绑定的身份"（K3），**解析出来的那条号只当门卫**：
         // 盟无主（K2），不记铸造者——全族唯一一处。
-        ccall::Wire::Found => match who(face, from) {
+        ccall::Wire::Found => match who(roster, from) {
             Ok(_) => ccall::Union::One(ccall::Reply::value(book.found())),
             Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
-        ccall::Wire::Enter(c) => match who(face, from) {
+        ccall::Wire::Enter(c) => match who(roster, from) {
             Ok(w) => match book.enter(w, c) {
                 Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
                 Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
             },
             Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
         },
-        ccall::Wire::Leave(c) => match who(face, from) {
+        ccall::Wire::Leave(c) => match who(roster, from) {
             Ok(w) => match book.leave(w, c) {
                 Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
                 Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
@@ -203,8 +264,8 @@ fn answer(
 /// 两条失败压成一格——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"：
 /// **调用方的下一步在两种情况下相同**（别指望这条路）；principal 那枚 `Denied` 翻不过来，
 /// 因为本族的 `Denied` 是空的（盟无主）。
-fn who(face: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
-    let task = face.task(from);
+fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
+    let task = roster.task(from);
     task.principal(Wait::AtMost(MS))
         .map_err(|_| Fail::Unknown)?
         .map(|p| p.id())
@@ -246,50 +307,54 @@ fn find_face(tree: &TreeFace) -> Option<PieToken> {
 /// **照实记（手上的裸孔换成了面上的五个方法）**：从前这里先 `(&session.link, session.talk,
 /// session.host)` 把那条线拆出来，再一路叫自由函数；现在调用方给的是 [`TreeFace`]，四个动作与
 /// 对端号都从它出（`host` 那一格只在门禁转授时用，见 `serve` 的"四之后"）。
-fn serve_tree(tree: &TreeFace, entry: PieToken) {
-    let (Ok(dir), Ok(me)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
+fn serve_tree(tree: &TreeFace, faces: [(ccall::Grant, PieToken, Name); 2]) {
+    let (Ok(dir), Ok(segment)) = (Name::new(ccall::DIR), Name::new(mount::SEGMENT)) else {
         debug!("coalition: tree: bad name");
         return;
     };
-    // **分目录 → 落门牌 → 查回来验一遍**：分与落各自**答出那一格的号**（"号出门"那一手）。
-    // **分目录**：`open` 是**幂等**的——那块目录已经在就答它那个号（里面有没有东西不管）。
     let root = tree.root();
-    let opened = root.open(dir, Wait::AtMost(MS));
-    let (part, dir_id) = match &opened {
-        Ok(at) => (Ok(()), at.id().get()),
-        Err(fail) => (Err(*fail), 0),
+    // **分目录**：`/sys`（两族共用那一格坐标）。
+    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
+        debug!("coalition: tree part /sys failed");
+        return;
     };
-    // **落门牌**：答的是门牌自己那一格的号。
-    let landed = match &opened {
-        Ok(at) => at
-            .bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS))
-            .map(|plate| plate.id()),
-        Err(fail) => Err(*fail),
+    // **再分一段**：`/sys/coalition`——两面共用那段前缀，**它自己不落任何叶子**（同
+    // `/sys/operator` 与 `/sys/principal` 那两格）。
+    let Ok(seg) = sys.open(segment, Wait::AtMost(MS)) else {
+        debug!("coalition: tree part /sys/coalition failed");
+        return;
     };
-    let (land, pid) = match &landed {
-        Ok(id) => (Ok(()), id.get()),
-        Err(fail) => (Err(*fail), 0),
-    };
-    // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-    let (find, got) = match &landed {
-        Ok(_) => match tree.tile(&[dir, me], Wait::AtMost(MS)) {
-            Ok(e) => match e.token(Wait::AtMost(MS)) {
-                Ok(_) => (Ok(()), true),
+    for (grant, entry, name) in faces {
+        // **落门牌**：答的是门牌自己那一格的号。
+        let landed = seg
+            .bind(name, entry, Permit::Unset, Mine::No, Wait::AtMost(MS))
+            .map(|plate| plate.id());
+        let (land, pid) = match &landed {
+            Ok(id) => (Ok(()), id.get()),
+            Err(fail) => (Err(*fail), 0),
+        };
+        // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
+        let (find, got) = match &landed {
+            Ok(_) => match tree.tile(&[dir, segment, name], Wait::AtMost(MS)) {
+                Ok(e) => match e.token(Wait::AtMost(MS)) {
+                    Ok(_) => (Ok(()), true),
+                    Err(fail) => (Err(fail), false),
+                },
                 Err(fail) => (Err(fail), false),
             },
-            Err(fail) => (Err(fail), false),
-        },
-        Err(fail) => (Err(*fail), false),
-    };
-    // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-    let pname = match landed {
-        Ok(id) => root.name(id, Wait::AtMost(MS)).ok(),
-        Err(_) => None,
-    };
-    debug!(
-        "coalition: tree part={part:?} dir={dir_id} land={land:?} find={find:?} got={got} entry={} plate={pid} pname={}",
-        entry.get(),
-        pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-    );
+            Err(fail) => (Err(*fail), false),
+        };
+        // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
+        let pname = match landed {
+            Ok(id) => root.name(id, Wait::AtMost(MS)).ok(),
+            Err(_) => None,
+        };
+        debug!(
+            "coalition: tree face={} land={land:?} find={find:?} got={got} entry={} plate={pid} pname={}",
+            grant.name(),
+            entry.get(),
+            pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
+        );
+    }
 }
 

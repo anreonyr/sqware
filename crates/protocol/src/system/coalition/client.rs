@@ -85,8 +85,9 @@ impl Face {
     ///
     /// **传输失败折进 [`Fail::Unknown`]**：借不出回信孔 / 超时 / 收不下一答（空帧、长度不落在
     /// 三形里）——三件事都答 [`Fail::Unknown`]，与"**这枚盟没铸过**"同一格。压它的理由与
-    /// principal 那一面同：**对本端是同一个下一步**（这一趟别指望了），而这一族**没有 `Denied`**
-    /// 可落（盟无主）。
+    /// principal 那一面同：**对本端是同一个下一步**（这一趟别指望了）。**照实记（补一句）**：
+    /// 这只是说**传输**那三件事落在哪一格；答话那一形里的码照读——开面那一刀添的
+    /// [`Fail::Denied`] 就走它（见 `payload` / `flag` / [`Face::window`] 那三处同一口径）。
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Union, Fail> {
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）。
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
@@ -241,15 +242,23 @@ impl Bloc<'_> {
 /// 读一格答：**不是那一形 ⇒ 读不懂**，是那一形再看状态那一格。
 ///
 /// 一格答那一形在与窗那两问上是"失败"（成功的那两问答的是窗）。
+///
+/// **三处读者同一个口径**（照实记：这一处原先只认 `One` 那一形，把裸 `Status` 整个折成
+/// `Unknown`——那条捷径在"本族只有一格失败"时对得上，因为那时 `found` 那几条唯一收得到的裸
+/// 状态就是 `UNKNOWN`。开面那一刀添了 [`Fail::Denied`] 之后它就不对了：**面不对**答的是裸
+/// `Status(DENIED)`，被折成 `Unknown` 会把"换一枚门牌"读成"这枚盟不存在"。今天与
+/// [`Face::window`] 那一处逐字同形：裸状态照读它的码，**形状不对**才是"读不懂"。
 fn payload(said: frame::Union) -> Result<u64, Fail> {
     match said {
         frame::Union::One(reply) => match frame::code_to_fail(reply.status) {
             None if reply.status == frame::OK => Ok(reply.a),
             Some(fail) => Err(fail),
-            // 读不懂在这一侧与"没走到"同一格（本族没有 `Denied` 可落）。
             None => Err(Fail::Unknown),
         },
-        _ => Err(Fail::Unknown),
+        // 失败那一形（裸状态）：码照读。
+        frame::Union::Status(code) => Err(code_to_fail(code)),
+        // 形状不对（问"入盟"却答了一窗号之类）⇒ 读不懂。
+        frame::Union::Seq(_) => Err(Fail::Unknown),
     }
 }
 
@@ -261,11 +270,16 @@ fn flag(said: frame::Union) -> Result<bool, Fail> {
             Some(fail) => Err(fail),
             None => Err(Fail::Unknown),
         },
-        _ => Err(Fail::Unknown),
+        // 同上：裸状态照读它的码。
+        frame::Union::Status(code) => Err(code_to_fail(code)),
+        frame::Union::Seq(_) => Err(Fail::Unknown),
     }
 }
 
 /// 线上那一格码 → 失败域；表外（含 `BAD`）折 [`Fail::Unknown`]。
+///
+/// **它现在读得出 `Denied`**（开面那一刀把那一格添进了双射表）：[`Face::window`] / `payload` /
+/// `flag` 三处都走它。"表外"仍是 `BAD` 那一类——`None` 与"没走到"同格（传输失败那一节）。
 fn code_to_fail(code: u8) -> Fail {
     frame::code_to_fail(code).unwrap_or(Fail::Unknown)
 }
