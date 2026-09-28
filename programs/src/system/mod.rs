@@ -56,6 +56,7 @@ use crate::system::principal::bridge::Roster;
 pub mod assemble;
 pub mod board;
 pub mod bootstrap;
+pub mod carrier;
 pub mod coalition;
 pub mod control;
 // **照实记（这一册账是残枝那一刀从 protocol 搬来的）**：它原住

@@ -26,11 +26,12 @@
 use crate::system::control::service::Start;
 use env::Wait;
 
-use env::{HoleDir, Name, PieToken, TaskId};
+use env::{Name, PieToken, TaskId};
 use protocol::debug;
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
 use crate::system::board::client as board;
+use crate::system::carrier::carrier;
 use crate::system::operator::bridge;
 use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
@@ -41,8 +42,6 @@ use protocol::system::operator::client::{Face as TreeFace, Mine};
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::PrincipalId;
-use runtime::PAGE_SIZE;
-use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -55,8 +54,8 @@ const MS: usize = 1000;
 /// 起不来"的早退步，从前每步一段 `let Ok(..) = .. else { return Err(..) }`——报的是同一个死法、
 /// 写的是七段岔口，主脉络因此被岔口切碎。收进闭包之后全走 `?`、失败域在末尾**折一次**。
 pub fn serve() -> Result<(), Start> {
-    // 一～七：起手（读锚 → 上板 → 铸两枚门牌 → 上树 → 找身份那一份 → 空册 → 常驻那只组）。
-    let (mut book, roster, pile, ask, set, mut buf) = (|| {
+    // 一～六：起手（读锚 → 上板 → 铸两枚门牌 → 上树 → 找身份那一份 → 空册）。
+    let (mut book, roster, ask, set) = (|| {
         // 一、锚：`Sire` = 装配者。**只为上板与上树两条会话**——盟无主，核心不需要它
         //     （对照 principal：那边把它当名册钥匙，注入核心那一格）。
         // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——只有这一条来源。
@@ -118,47 +117,16 @@ pub fn serve() -> Result<(), Start> {
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
         let book = Coalition::new();
-
-        // 七、常驻：**一只组等那两枚门牌**。这是常态，故等待没有期限；那一页缓冲只备一次。
-        let pile = Pile::unseal(false).map_err(|_| Start::Desk)?;
-        let ask_hole = HolePie::from_token(ask);
-        let set_hole = HolePie::from_token(set);
-        for hole in [&ask_hole, &set_hole] {
-            pile.attach(hole, HoleDir::Pull).map_err(|_| Start::Desk)?;
-        }
-        let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-        if buf.try_reserve_exact(PAGE_SIZE).is_err() {
-            return Err(Start::Room);
-        }
-        buf.resize(PAGE_SIZE, 0);
-        Ok::<_, Start>((book, roster, pile, ask, set, buf))
+        Ok::<_, Start>((book, roster, ask, set))
     })()?;
 
-    loop {
-        // **`Ok(None)` 不是终局**（[`Pile::await_`] 自己的照实记：挂起过、或期限到，都会给
-        // `None`——继续等就再叫一次）；只有 `Err` 才是这一组死了。名册那一台在这一格栽过
-        // （照实记在它 `serve` 的同一处）：折叠 `None` 与 `Err`，就是把"这一轮没事"读成"这一组死了"。
-        let (tok, _dir) = match pile.await_(Wait::Forever) {
-            Ok(Some(hit)) => hit,
-            Ok(None) => continue,
-            Err(_) => return Err(Start::Dead),
-        };
-        // **从哪一枚读到就是哪一面**——本族的"面"就是它（没有会话可读记号）。
-        //
-        // 余下的号（构造上到不了：组里只挂了这两枚）⇒ 不猜，回去再等。
-        let mine = if tok == ask {
-            ccall::Grant::Ask
-        } else if tok == set {
-            ccall::Grant::Set
-        } else {
-            continue;
-        };
-        // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-        let hole = HolePie::from_token(tok);
-        while let Ok((len, from)) = hole.pull_timeout_from(&mut buf, Wait::POLL) {
-            turn(&mut book, &roster, mine, from, &buf[..len]);
-        }
-    }
+    // 七、常驻：**一只组等那两枚门牌**（[`carrier`] 那一趟：立组 → 挂两枚 → 备一页 → 等 →
+    // **从哪一枚读到就是哪一面** → 把这一批取干净 → 交给 [`turn`]）。这一族没有会话可读记号，
+    // 故"面"只有这一条来路。
+    carrier(
+        &[(ask, ccall::Grant::Ask), (set, ccall::Grant::Set)],
+        |face, from, frame| turn(&mut book, &roster, face, from, frame),
+    )
 }
 
 /// 门上一句话：解帧 → 先过名册 → 交给核心 → **从这一趟自带的那枚孔答回去**。
