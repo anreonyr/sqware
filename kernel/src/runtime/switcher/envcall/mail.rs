@@ -10,7 +10,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{MailFail, HoleDir, MailCall, PieToken, TaskId, Wait};
+use env::{HoleDir, MailCall, MailFail, PieToken, TaskId, Wait};
 
 use riscv::register::sie;
 
@@ -160,7 +160,7 @@ fn pull(
                     } else {
                         // 整条消息**移出**槽：零拷贝、锁外无分配（对照旧版按 `max` 预分配
                         // 暂存再拷一遍）。消息的 Vec 就是拷给用户之前的落点。
-                        match mail::hole::try_take(&meta, max) {
+                        match mail::hole::try_pull(&meta, max) {
                             Ok((msg, from)) => {
                                 if mail::copy_out(&ident.team.space, &msg, buf.as_usize()) {
                                     Ok((msg.len(), from))

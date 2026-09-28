@@ -11,7 +11,7 @@
 // - `try_push(meta, msg, from)`：槽空则**把 `msg` 那个 Vec 移进槽**（零拷贝）并唤醒
 //   对侧 Pull。`msg.len() ≥ 1`；上限由**分配器**回答，不由常量回答。
 // - `peek(meta) -> (len, from)`：只看一眼（长度 + 发送者），**一个字节都不动**。
-// - `try_take(meta, max) -> (Vec<u8>, from)`：把整条消息**移出**槽（零拷贝）并唤醒对侧
+// - `try_pull(meta, max) -> (Vec<u8>, from)`：把整条消息**移出**槽（零拷贝）并唤醒对侧
 //   Push；装不下（`len > max`）→ `Denied` 且**槽原样**。
 // - `ready(dir)`：该方向现在可用吗。
 // - `wait(meta, dir, dur)`：唯一挂起入口——先探、后挂；死则报 Dead。
@@ -234,7 +234,7 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), MailFail> {
 /// 移动的方向是"槽 → 收方"：消息整条出去，槽里留下一个空 Vec（零分配）。
 /// 锁序同 try_push：调用方持返回的 `Vec` 时不持 slot 锁——它是**拷贝给用户之前**
 /// 的落点，`copy_out` 必须在锁外、且在 `space.segments`(L2) 那一侧。
-pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId), MailFail> {
+pub(crate) fn try_pull(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
@@ -262,7 +262,11 @@ pub(crate) fn try_take(meta: &HoleMeta, max: usize) -> Result<(Vec<u8>, TaskId),
 /// 「先探」在此处不可省：对侧可能已经写入并正等我们取，此时若我们 park 在"等写入"
 /// 上就永远等不到下一次唤醒。先探与登记之间的窗口由 messenger 的 pend 双检封住
 /// （窗口内的 wake 置 pend，登记时被消费 ⇒ 不挂起）。
-pub(crate) fn wait(meta: &HoleMeta, dir: HoleDir, dur: Duration) -> Result<Handoff<bool>, MailFail> {
+pub(crate) fn wait(
+    meta: &HoleMeta,
+    dir: HoleDir,
+    dur: Duration,
+) -> Result<Handoff<bool>, MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
