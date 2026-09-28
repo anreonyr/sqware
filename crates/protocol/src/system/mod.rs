@@ -513,6 +513,10 @@
 pub mod board;
 pub mod coalition;
 pub mod control;
+// **照实记（这一格与下面 `grant` 是两个东西）**：`faces!` 是"**一族的面**"那台宏（`Grant` 那
+// 一族：枚举 ＋ `ALL` ＋ 位次 ＋ 记号 ＋ 认面 ＋ 那组编译期断言）；而 `grant` 是**配给**那一半
+// （装配者把门闩交到子域手里的那段记录）。名字撞了，故这一格叫 `faces`——宏名与文件同名。
+pub mod faces;
 pub mod grant;
 pub mod operator;
 pub mod principal;
