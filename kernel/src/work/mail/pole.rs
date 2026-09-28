@@ -1,7 +1,7 @@
 // Pole — 页级安全内存。
 //
 // PoleMeta 是内核侧"地基"：物理页块 + 各 pie 的视图登记（键 = token）。
-// 用户态 Pie<PoleMeta>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
+// 用户态 Pie<Pole>（含 Weak<PoleMeta>）只持门闩；map 后用户直接读写页。
 //
 // 数据面原语：`open` / `shut` / `narrow` / `seal`。创建：`unseal(size)`。
 // PoleMeta 拥有物理帧；Arc 归零时 `Drop` 链逐视图 unmap + 还帧。

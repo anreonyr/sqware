@@ -1,7 +1,7 @@
 // 健康检查 · permit —— 权柄代数的**形态位**（`ONLY`）、组的**成员投影**、
-// **转发容量**与**取用顺序**。
+// **转发容量**、**取用顺序**与**记号（badge）**。
 //
-// 四件事在这里被证（都只经公开接口，不碰内部字段）：
+// 五件事在这里被证（都只经公开接口，不碰内部字段）：
 //
 //   · **形态位不是选择，是一致性**（`gate::form_ok`）+ **`ONLY` 不可撤**
 //     （`gate::narrow`，**自持枚也不例外**）——这两条是"独占资源复制不出去"的两条腿；
@@ -12,8 +12,11 @@
 //     不留"挂着却叫不醒"的半截状态（`permit::fanout`）。
 //   · **取用顺序**：死活先于权限——同一个已封印的 token 不因动词换答案
 //     （`permit::order`）。
+//   · **记号是 Pie 的事实**：同一份资源的两份副本可带不同记号；`Accord` 不给就照源枚
+//     （`permit::badge`）。
 #![cfg(debug_assertions)]
 
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use env::{HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
@@ -50,10 +53,10 @@ pub fn form() {
     );
 
     // `ONLY` 不可撤：**自持枚（sire = None）也不例外**。
-    let name = Mark::of("permit");
-    let meta = hole::meta(TaskId::new(0), name);
+    let mark = Mark::of("permit");
+    let meta = hole::meta(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
-        let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), sole, sire));
+        let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), mark, sole, sire));
         crate::expect!(
             gate::narrow(&mut pie, sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
@@ -94,8 +97,7 @@ pub fn form() {
 /// 成员那一侧不该再记得它"那条契约的落点。
 pub fn members() {
     let group = tole::meta(TaskId::new(0));
-    let mark = Mark::of("mate");
-    let hole = hole::meta(TaskId::new(0), mark);
+    let hole = hole::meta(TaskId::new(0));
     let bell = nole::NoleMeta::new(TaskId::new(0));
 
     let hole_mate = Mate::Hole(hole.id(), HoleDir::Pull);
@@ -154,8 +156,7 @@ pub fn members() {
 /// 组用 `Vec` **持着**：`ToleMeta::drop` 会撤掉自己那格转发登记，松了手容量就白测。
 /// 「满」是**容量**账（同一枚成员被多少个组关心），不是内存不足——见 `FWD_MAX` 定义处。
 pub fn fanout() {
-    let mark = Mark::of("member");
-    let hole = hole::meta(TaskId::new(0), mark);
+    let hole = hole::meta(TaskId::new(0));
     let mate = Mate::Hole(hole.id(), HoleDir::Pull);
 
     let mut groups = Vec::new();
@@ -204,12 +205,13 @@ pub fn order() {
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
     let task = team.task().hold().expect("order: hold task");
 
-    let dead_meta = hole::meta(TaskId::new(0), Mark::of("sealed"));
+    let dead_meta = hole::meta(TaskId::new(0));
     hole::seal(&dead_meta);
-    let dead = gate::new_pie(dead_meta, Permission::FETCH, None);
+    let dead = gate::new_pie(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
     let dead_token = dead.token;
     let live = gate::new_pie(
-        hole::meta(TaskId::new(0), Mark::of("live")),
+        hole::meta(TaskId::new(0)),
+        Mark::of("live"),
         Permission::FETCH,
         None,
     );
@@ -254,6 +256,108 @@ pub fn order() {
     crate::expect!(released, "order: 摘出未放行任务失败");
     team.prune_tasks(&task);
     drop(task);
+    drop(team);
+    prune_dead();
+}
+
+/// 记号（badge）：**它是每一枚 Pie 的事实，不是资源的字段**。
+///
+/// 两半各证一件事：
+///
+///   ① **结构**：同一份资源（同一个 `Arc<HoleMeta>`）的两枚 Pie 可以带**不同**记号——
+///      这是这一刀新长出来的能力，此前"同一枚孔的两份副本记号不同"**写不出来**
+///      （`accord` 只克隆 `Arc`，记号只能跟着资源走）；非孔（铃）也一样带记号。
+///   ② **`Accord` 那一格**（真过一遍核心，故要两张真表，造法照 `order`）：
+///      `Mark::NONE` ⇒ **照源枚**（今天全部调用点走这一支，行为与记号还在资源上时逐字
+///      相同）；给了记号 ⇒ 子枚刻那一枚。同源枚两次授出、两份副本带不同记号，
+///      就是 badge 语义的牙。
+///
+/// 钉住一条**不对称**：`AnyPie::owner()` 答的是**资源**来历（四种 Mail 都答得出），
+/// 故 `Collect` 的 owner 那一格必须自己再过一道"是不是孔"——记号统一之后，
+/// **那是发现路径排掉"页/组"的唯一凭据**（见 `envcall/pie.rs::collect`）。
+pub fn badge() {
+    let owner = TaskId::new(7);
+    let ask = Mark::of("badge-ask");
+    let reply = Mark::of("badge-reply");
+    let hole = hole::meta(owner);
+
+    // ① 同一份资源、两枚 Pie、两枚记号。
+    let src: gate::Pie<gate::Hole> = gate::new_pie(hole.clone(), ask, Permission::FETCH, None);
+    let kid: gate::Pie<gate::Hole> =
+        gate::new_pie(hole.clone(), reply, Permission::FETCH, Some(src.token));
+    crate::expect!(src.mark == ask, "源枚刻的是它自己那一枚");
+    crate::expect!(
+        kid.mark == reply,
+        "子枚刻的是**自己**那一枚——同一份资源的两枚 Pie 带不同记号"
+    );
+    crate::expect!(src.token != kid.token, "两枚各自一号");
+    crate::expect!(
+        hole.owner() == owner,
+        "owner 是**资源**的事实：同一份资源只有一格"
+    );
+
+    // 非孔（铃）照样带记号：记号不在"孔"这条轴上。
+    let bell_meta = nole::NoleMeta::new(owner);
+    let bell: AnyPie = AnyPie::Nole(gate::new_pie(
+        bell_meta.clone(),
+        reply,
+        Permission::FETCH,
+        None,
+    ));
+    crate::expect!(bell.mark() == reply, "非孔也带记号");
+    crate::expect!(
+        bell.owner() == Some(owner),
+        "`AnyPie::owner` 答**资源**来历（四种 Mail 都答）⇒ 孔那道闸在 `Collect` 里"
+    );
+
+    // ② `Accord` 那一格：照源枚 / 另刻一枚。
+    const USER_BASE: usize = 0x4000_0000;
+    let space = SpaceBuilder::user().build().expect("badge: build space");
+    space.with_flush(|inner| inner.dynamic(USER_BASE));
+    let team = TeamBuilder::new(space).spawn().expect("badge: spawn team");
+    let caller = team.task().hold().expect("badge: hold caller");
+    let dst = team.task().hold().expect("badge: hold dst");
+
+    let src_token = {
+        let pie = gate::new_pie(
+            hole::meta(owner),
+            ask,
+            Permission::FETCH | Permission::VEST,
+            None,
+        );
+        let token = pie.token;
+        caller.pies.lock().push(AnyPie::Hole(pie));
+        token
+    };
+    let dst_weak = Arc::downgrade(&dst);
+    let inherited = gate::accord(&caller, src_token, &dst_weak, Permission::FETCH, Mark::NONE)
+        .expect("badge: accord (照源枚)");
+    let remade = gate::accord(&caller, src_token, &dst_weak, Permission::FETCH, reply)
+        .expect("badge: accord (另刻一枚)");
+    crate::expect!(inherited != remade, "两次授出各落一枚");
+
+    let kids = dst.pies.lock();
+    let mark_of = |token: usize| {
+        kids.iter()
+            .find(|p| p.token().get() == token)
+            .map(|p| p.mark())
+    };
+    crate::expect!(
+        mark_of(inherited) == Some(ask),
+        "`Accord` 不给记号（`NONE`）⇒ 子枚照源枚"
+    );
+    crate::expect!(
+        mark_of(remade) == Some(reply),
+        "`Accord` 给了记号 ⇒ 子枚刻那一枚"
+    );
+    drop(kids);
+
+    let _ = team.release_held(&caller);
+    let _ = team.release_held(&dst);
+    team.prune_tasks(&caller);
+    team.prune_tasks(&dst);
+    drop(caller);
+    drop(dst);
     drop(team);
     prune_dead();
 }

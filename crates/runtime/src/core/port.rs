@@ -17,7 +17,7 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
 use env::Wait;
-use env::{MailFail, MailResult, PieFail, PieResult, PieToken, TaskId, make_fail};
+use env::{MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 
@@ -91,7 +91,9 @@ pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) ->
     if subset.is_empty() {
         return Err(denied_pie());
     }
-    let seed = pie.accord(peer, subset)?;
+    // 记号**照源枚**（`Mark::NONE`）：授出这一手不改记号——记号是"哪条路"，
+    // 两端认的就是同一枚（`PieCall::Accord` 那一格是给"另刻一枚"留的口）。
+    let seed = pie.accord(peer, subset, Mark::NONE)?;
     Ok(To::new(peer, seed))
 }
 

@@ -61,7 +61,7 @@ pub struct Join<T> {
 }
 
 impl<T> Join<T> {
-    /// 子任务句柄——直接可喂 `pie.accord(join.id(), subset)`。
+    /// 子任务句柄——直接可喂 `pie.accord(join.id(), subset, Mark::NONE)`（记号照源枚）。
     pub fn id(&self) -> TaskId {
         self.id
     }

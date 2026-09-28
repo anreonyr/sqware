@@ -1,12 +1,23 @@
-// Pie<M> — 能力门闩，泛型直指资源 Meta 类型（mail 的 HoleMeta | PoleMeta）。
+// 门闩（Pie）—— **类型面**（[`PieType`]）＋ **实例面**。
 //
-// 编译期类型安全：M = HoleMeta | PoleMeta，`meta: Arc<M>` 精确指资源 Meta，
-// 拿 Hole pie 当 Pole 用在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担
-// ——variant 即 tag，不再需要 marker 类型 / ResourceKind trait / PieKind 枚举。
+// # 类型面
 //
-// 运行时身份：每 Pie 持 permission + sire（派生来源：父门闩的号；None = 原始
-// 自持）+ heir（我交出的那一枚的坐标；None = 没交出过）+ token（这枚门闩的号，
-// 全局唯一；用户态收到的句柄是同一个 `PieToken`）+ meta（**资源实体的唯一强引用**）。
+// `Hole` / `Pole` / `Nole` / `Tole` 是四种**能力类型**（零尺寸标记），各在**自己的
+// 定义处**声明两件事：
+//
+//     PieType
+//     ├── type Mail   —— 它承载什么资源形态（HoleMeta | PoleMeta | NoleMeta | ToleMeta）
+//     └── type Mark   —— 它的记号是什么**值类型**（记号的**值**是运行期给的）
+//
+// `Pie<T>` 由它参数化 ⇒ `Pie<Hole>` 与 `Pie<Pole>` 是**不同类型**，拿孔的 Pie 当页用
+// 在编译期即被拦。运行时擦除由 [`AnyPie`] 的 variant 承担——variant 即 tag，四种各一个。
+//
+// # 实例面
+//
+// `permission` 控授权、`sire` 是派生来源（父门闩的号；None = 原始自持）、`heir` 是我
+// 交出的那一枚（交出时写、判据清）、`token` 是这枚门闩的号（全局唯一；用户态收到的
+// 句柄是同一个 `PieToken`）、`mark` 是**这一枚**在协议上算哪条路（badge）、`meta` 是
+// **资源实体的唯一强引用**。
 //
 // **资源寿命 = 能力寿命**：没有全局资源表，最后一份门闩消失即回收。
 //
@@ -19,12 +30,94 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::Arc;
 
-use env::{PieToken, TaskId};
+use env::{Mark, PieToken, TaskId};
 
 use super::GateFail;
 
+use crate::work::mail::nole::NoleMeta;
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
+
+// ── 类型面：Mail（资源形态）与 PieType（能力类型）──
+
+/// **资源形态（Mail）**：能被门闩承载的东西——四种，各一族数据面。
+///
+/// 契约里**只放泛型那一侧真正读得到的那几手**：`Pie<T>` 里 `meta: Arc<T::Mail>` 对泛型
+/// 代码是不透明的，`narrow::set_perm` 只能经它读资源——那是 `alive`。
+/// **`owner` 不在这份契约里**：它的读者（[`AnyPie::owner`] / [`AnyPie::owner_task`]）
+/// 每一臂的 `T` 都是具体类型、走四个 Meta 的**固有**方法，契约那一份没有读者
+/// ——按"没有读者的格不留在台面上"不加（出现泛型侧读者时再加回来）。
+///
+/// 固有方法本身必须留着：`mail` 不引 `gate`（单向边 `gate → mail`），
+/// `mail/hole.rs` 里那些 `meta.alive()` 只能走固有那一份。
+pub(crate) trait Mail: Send + Sync + 'static {
+    /// 资源可用（已封印 → false）。
+    fn alive(&self) -> bool;
+}
+
+// 四份委托写**显式路径**：`self.alive()` 会解析到固有方法（同效但绕一层），
+// `Self::alive` 会解析回本契约（递归）——两个坑都别踩。
+impl Mail for HoleMeta {
+    fn alive(&self) -> bool {
+        HoleMeta::alive(self)
+    }
+}
+
+impl Mail for PoleMeta {
+    fn alive(&self) -> bool {
+        PoleMeta::alive(self)
+    }
+}
+
+impl Mail for NoleMeta {
+    fn alive(&self) -> bool {
+        NoleMeta::alive(self)
+    }
+}
+
+impl Mail for ToleMeta {
+    fn alive(&self) -> bool {
+        ToleMeta::alive(self)
+    }
+}
+
+/// **能力类型（PieType）**：一种门闩在**自己的定义处**声明它承载什么、记号是什么值类型。
+pub(crate) trait PieType {
+    /// 它承载的资源形态。
+    type Mail: Mail;
+    /// 它的记号是什么**值类型**——记号的**值**是运行期给的（`Unseal*` 刻的、`Accord`
+    /// 可另刻的），故这一格是"记号长什么样"，不是"哪条路"。今天四种都是 `env::Mark`。
+    type Mark;
+}
+
+/// 孔的那一种门闩（有槽：消息穿孔）。
+pub(crate) struct Hole;
+/// 页的那一种门闩（有页：借映视图）。
+pub(crate) struct Pole;
+/// 无数据面权柄载体的那一种门闩（门铃）。
+pub(crate) struct Nole;
+/// 多路等待载体的那一种门闩（组）。
+pub(crate) struct Tole;
+
+impl PieType for Hole {
+    type Mail = HoleMeta;
+    type Mark = Mark;
+}
+
+impl PieType for Pole {
+    type Mail = PoleMeta;
+    type Mark = Mark;
+}
+
+impl PieType for Nole {
+    type Mail = NoleMeta;
+    type Mark = Mark;
+}
+
+impl PieType for Tole {
+    type Mail = ToleMeta;
+    type Mark = Mark;
+}
 
 // ── 权限位（bitflags）──
 //
@@ -64,9 +157,9 @@ fn alloc_id() -> PieToken {
 }
 
 /// 单个门闩：`permission` 控授权、`sire` 是派生来源（父门闩的号；None = 原始
-/// 自持）、`heir` 是我交出的那一枚（交出时写、判据清）、`token` 是这枚门闩的号、`meta`
-/// 是资源实体（唯一的强引用）。
-pub struct Pie<M> {
+/// 自持）、`heir` 是我交出的那一枚（交出时写、判据清）、`token` 是这枚门闩的号、
+/// `mark` 是这一枚的记号（badge）、`meta` 是资源实体（唯一的强引用）。
+pub struct Pie<T: PieType> {
     pub(crate) permission: Permission,
     /// 我从哪一枚派生（父门闩的号）：None = 原始自持；Some = 经 accord 得到。
     /// 构造期定型，无 setter。
@@ -75,36 +168,46 @@ pub struct Pie<M> {
     /// "已交出"既是"我不可用"的理由，也是"我不能再交出"的理由。
     pub(crate) heir: Option<Heir>,
     pub(crate) token: PieToken,
+    /// **记号（badge）**：这一枚在协议上算哪条路。
+    ///
+    /// 与 `meta` 的分工：`meta` 是**资源**（同一扇门的所有副本共享同一份 `Arc`）；
+    /// 记号是**这一枚**的（`Accord` 可给子枚另刻一枚；`Mark::NONE` = 照源枚）。
+    /// 内核只保管、只递回，**从不解释、从不比较**。
+    pub(crate) mark: T::Mark,
     /// 资源实体：**唯一强引用**——资源随最后一份门闩一起消亡。
     ///
     /// 纪律：门闩必须在**锁外** drop（最后一份 drop 会跑 `Meta::drop`，它唤醒
     /// 等待者 / 撤映射 / 还帧，全是 L3 或更外层的活）。
-    pub(crate) meta: Arc<M>,
+    pub(crate) meta: Arc<T::Mail>,
 }
 
 // SAFETY: 本类型唯一的 `!Send` 字段是 `token`——`PieToken` 的 `!Send + !Sync` 说的是
 // **号只在它那张表里成立**（用户态怕的是句柄被线程 / 闭包捕获出去）。内核这一侧的表就是
 // `Task.pies`，而核际迁移是**连着表一起走**的：号没有离开它的表，作数据随表迁移没有内存
-// 安全含义。故此处只否掉"跨对象搬运"那一层禁令（`M` 一侧照旧由 `Arc<M>` 的
+// 安全含义。故此处只否掉"跨对象搬运"那一层禁令（`Mail` 一侧照旧由 `Arc<T::Mail>` 的
 // `Send + Sync` 约束管）。
-unsafe impl<M: Send + Sync> Send for Pie<M> {}
+unsafe impl<T: PieType> Send for Pie<T> where T::Mark: Send {}
 
 // 手动 Clone：显式写清字段复制（Arc 强计数 +1）。
-impl<M> Clone for Pie<M> {
+impl<T: PieType> Clone for Pie<T>
+where
+    T::Mark: Copy,
+{
     fn clone(&self) -> Self {
         Self {
             permission: self.permission,
             sire: self.sire,
             heir: self.heir,
             token: self.token,
+            mark: self.mark,
             meta: self.meta.clone(),
         }
     }
 }
 
-impl<M> Pie<M> {
+impl<T: PieType> Pie<T> {
     /// 资源实体（唯一强引用）。
-    pub(crate) fn meta(&self) -> &Arc<M> {
+    pub(crate) fn meta(&self) -> &Arc<T::Mail> {
         &self.meta
     }
 
@@ -135,16 +238,16 @@ pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
 
 // ── AnyPie ──
 
-/// `Vec<AnyPie>` 元素：variant 即运行时 tag。
+/// `Vec<AnyPie>` 元素：variant 即运行时 tag——四种 PieType 各一个。
 #[derive(Clone)]
 pub enum AnyPie {
-    Hole(Pie<HoleMeta>),
-    Pole(Pie<PoleMeta>),
+    Hole(Pie<Hole>),
+    Pole(Pie<Pole>),
     /// 无数据面的权柄载体（见 `work::mail::nole`）：只有身份与存活，
     /// 故它承载**无载荷通信**（门铃）——消息要走 Hole，页要走 Pole。
-    Nole(Pie<crate::work::mail::nole::NoleMeta>),
+    Nole(Pie<Nole>),
     /// 多路等待的载体（见 `work::mail::tole`）：自己不装载荷，只记着"哪几枚孔"。
-    Tole(Pie<ToleMeta>),
+    Tole(Pie<Tole>),
 }
 
 impl AnyPie {
@@ -225,6 +328,21 @@ impl AnyPie {
         }
     }
 
+    /// **记号**（`Collect` / `Reserve` 的第三格）：这一枚在协议上算哪条路。
+    ///
+    /// **每一枚都答得出**——记号是 Pie 的事实，不是孔的事实（`Mark::NONE` = 没刻过）。
+    /// 与 [`AnyPie::owner`] 分工：那一手答**资源**的来历（四种 Mail 都答得出），
+    /// 而 `Collect` 的 owner 那一格只对**活着的孔**有意义——那道闸在 ABI 那一层
+    /// （见 `envcall/pie.rs::collect`），不在这里。
+    pub fn mark(&self) -> Mark {
+        match self {
+            AnyPie::Hole(p) => p.mark,
+            AnyPie::Pole(p) => p.mark,
+            AnyPie::Nole(p) => p.mark,
+            AnyPie::Tole(p) => p.mark,
+        }
+    }
+
     /// 资源可用：`Live`（**已封印 → false**；已回收的资源根本无门闩可查）。
     pub fn alive(&self) -> bool {
         match self {
@@ -257,12 +375,18 @@ impl AnyPie {
 }
 
 /// 造 pie（accord / envcall 创建共用）：号在此分配。
-pub(crate) fn new_pie<M>(meta: Arc<M>, permission: Permission, sire: Option<PieToken>) -> Pie<M> {
+pub(crate) fn new_pie<T: PieType>(
+    meta: Arc<T::Mail>,
+    mark: T::Mark,
+    permission: Permission,
+    sire: Option<PieToken>,
+) -> Pie<T> {
     Pie {
         permission,
         sire,
         heir: None,
         token: alloc_id(),
+        mark,
         meta,
     }
 }

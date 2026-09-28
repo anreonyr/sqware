@@ -2,8 +2,9 @@
 //
 // 与 `mail` 的分工：gate 只持**能力模型**（门闩 Pie、权限、授权原语），不碰资源
 // 实体（HoleMeta/PoleMeta 在 mail）与 IPC 数据面（push/pull/map/unmap 在 mail）。
-// `Pie<M>` 泛型直指 `mail` 的 Meta 类型，并持其**唯一强引用**（`Arc<M>`，资源寿命
-// = 能力寿命）。
+// **类型面**：`PieType`（`Hole`/`Pole`/`Nole`/`Tole` 四种标记）各声明自己的 `Mail`
+// 与 `Mark`；`Pie<T>` 由它参数化，持资源的**唯一强引用**（`Arc<T::Mail>`，资源寿命
+// = 能力寿命）。`Mail` 把 `alive` 给泛型那一侧——没有它，`narrow::set_perm` 读不到 meta。
 //
 // **依赖是单向的**（gate → mail）：唯一的反向边是错误码，而它已在"失败词汇"那一刀搬到
 // `env::Fail`——两层从**共同的外部**引它，模块层不再有环。（旧注写"单向依赖 mail，成
@@ -20,7 +21,7 @@
 // （这枚资源允不许多个使用者），`accord` 只**校验** `subset` 与源枚一致，一致时写锚
 // （那次是移交）。envcall 适配层只「取本核 → 转发」，不在壳内重写规则。
 //
-//   pie.rs     — 门闩（Pie<M>, AnyPie）+ 权限（Permission）+ 操作授权
+//   pie.rs     — 门闩（PieType/Mail/Pie<T>, AnyPie）+ 权限（Permission）+ 操作授权
 //                 （Need/allows/covers）+ 错误（Fail）
 //   snap.rs    — 全世界任务快照 + 沿 sire 的查询（heirs/vestor/find）
 //   accord.rs  — 转授 / 交出给其他 Task（写派生边 + 写锚）+ `clear_heir`
@@ -43,7 +44,9 @@ mod revoke;
 pub(crate) use fail::GateFail;
 mod snap;
 
-pub(crate) use pie::{AnyPie, Need, Permission, Pie, accede, locate, new_pie};
+pub(crate) use pie::{
+    AnyPie, Hole, Need, Nole, Permission, Pie, Pole, Tole, accede, locate, new_pie,
+};
 // `form_ok` 只有 `accord`（走 `super::pie::` 直呼）与 `health::permit` 两条读者，而后者
 // 在 `debug_assertions` 之外不编 ⇒ 无条件重导出会在 release 档报
 // `unused import`。门控它，而不是让 release 背一条假警告。

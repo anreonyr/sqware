@@ -62,10 +62,14 @@ pub fn seal(token: PieToken) -> PieResult<()> {
 
 /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）。
 ///
+/// `mark` = 给**子枚**刻的那一枚记号（badge）；`Mark::NONE` = **照源枚**
+/// （与记号还在资源上时的行为逐字相同——今天全部调用点走这一支）。
+/// 解析在核里一处（`gate::accord`）。
+///
 /// 返回的是句柄而非裸数：它要经线形送到对方、再由对方 `from_token` 重建——
 /// 全程一个 `PieToken`，中途不化成 `usize` 便不会与别的 id 混。
-pub fn accord(src: PieToken, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
-    env::pie::accord(src, dst, subset)
+pub fn accord(src: PieToken, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
+    env::pie::accord(src, dst, subset, mark)
 }
 
 /// 收窄本 pie 权限（就地改写；Pole 同步降页表）。
@@ -241,8 +245,8 @@ pub trait AnyPie {
     fn narrow(&self, subset: Permission) -> PieResult<()>;
 
     /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）——
-    /// 对方用 `from_token(at_dst)` 重建。
-    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken>;
+    /// 对方用 `from_token(at_dst)` 重建。`mark` = 子枚的记号（`NONE` = 照源枚）。
+    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken>;
 
     /// 收回我授给 `dst` 的副本（含其全部后代，幂等）。
     ///
@@ -271,8 +275,8 @@ impl AnyPie for HolePie {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
-        accord(self.token(), dst, subset)
+    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
+        accord(self.token(), dst, subset, mark)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
@@ -293,8 +297,8 @@ impl AnyPie for NolePie {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
-        accord(self.token(), dst, subset)
+    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
+        accord(self.token(), dst, subset, mark)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
@@ -315,8 +319,8 @@ impl AnyPie for PolePie {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
-        accord(self.token(), dst, subset)
+    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
+        accord(self.token(), dst, subset, mark)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
@@ -345,8 +349,8 @@ impl AnyPie for TolePie {
         narrow(self.token(), subset)
     }
 
-    fn accord(&self, dst: TaskId, subset: Permission) -> PieResult<PieToken> {
-        accord(self.token(), dst, subset)
+    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
+        accord(self.token(), dst, subset, mark)
     }
 
     fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {

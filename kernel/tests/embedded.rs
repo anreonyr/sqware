@@ -62,7 +62,7 @@ mod tests {
         kernel::init(BOOT_DTP.load(Ordering::Relaxed));
     }
 
-    // 用例：**健康面那九例只在 debug 档存在**——它们的身体是 `kernel::health::*`，而那些
+    // 用例：**健康面那十例只在 debug 档存在**——它们的身体是 `kernel::health::*`，而那些
     // 模块本身 `#![cfg(debug_assertions)]`。不 gate 的话 **release 档的测试目标编不过**
     // （`cannot find `spare` in `health``），而整机用例恰恰要在 **release** 下才稳：
     // 同一个 `root` 景，release 产品路 **6/6 稳、14 笔结局**；debug 产品路结局笔数
@@ -115,6 +115,12 @@ mod tests {
     #[test]
     fn permit_order() {
         kernel::health::permit::order();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn permit_badge() {
+        kernel::health::permit::badge();
     }
 
     // 第九例（后补）：钉住参数表那颗 `-smp` 默认——见 `kernel/src/health/hart.rs` 的头注。

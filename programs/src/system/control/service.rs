@@ -174,7 +174,8 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            mail::accord(g.token, task, g.perm).map_err(pie_fail)?;
+            // 记号照源枚（`Mark::NONE`）：授下去的这几柄带的是它们原本那条路的名字。
+            mail::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
         }
         utask::hatch(task).map_err(unit_fail)
     })();

@@ -15,13 +15,16 @@
 // - `Denied` — 空子集 / 非单调 / 撤 `ONLY`
 // - `Dead`   — 资源已封印
 
-use super::pie::{AnyPie, Permission, Pie};
+use super::pie::{AnyPie, Mail, Permission, Pie, PieType};
 use env::PieFail;
 
-/// 就地改写一张 pie 的权限为 `subset`（含单调校验）。`alive` 由调用方按 variant
-/// 取（`Pie<M>` 是泛型，不认识具体 Meta 的 `alive`）。
-fn set_perm<M>(pie: &mut Pie<M>, subset: Permission, alive: bool) -> Result<(), PieFail> {
-    if !alive {
+/// 就地改写一张 pie 的权限为 `subset`（含单调校验）。
+///
+/// **死活由这一手自己问得到**：`Mail` 契约把 `alive` 给了泛型那一侧。此前它读不到，
+/// 于是四个调用点各取一次、当参数递进来（那具 `alive` 参数与"泛型读不到 meta"的注释
+/// 随之退场）。
+fn set_perm<T: PieType>(pie: &mut Pie<T>, subset: Permission) -> Result<(), PieFail> {
+    if !pie.meta.alive() {
         return Err(PieFail::Dead);
     }
     if subset.is_empty() || (subset & pie.permission) != subset {
@@ -39,24 +42,12 @@ fn set_perm<M>(pie: &mut Pie<M>, subset: Permission, alive: bool) -> Result<(), 
 /// Narrow 数据面原语：按 variant 分派改写。
 pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail> {
     match src {
-        AnyPie::Hole(p) => {
-            let alive = p.meta().alive();
-            set_perm(p, subset, alive)
-        }
-        AnyPie::Pole(p) => {
-            let alive = p.meta().alive();
-            set_perm(p, subset, alive)
-        }
+        AnyPie::Hole(p) => set_perm(p, subset),
+        AnyPie::Pole(p) => set_perm(p, subset),
         // Nole 同款：收窄只改权限位——它的数据面为空，故 envcall 层没有第二步
         // （Pole 要同步降页表，Hole 与 Nole 都不用）。
-        AnyPie::Nole(p) => {
-            let alive = p.meta().alive();
-            set_perm(p, subset, alive)
-        }
+        AnyPie::Nole(p) => set_perm(p, subset),
         // Tole 同款：它的数据面只有一张格子表，故 envcall 层也没有第二步。
-        AnyPie::Tole(p) => {
-            let alive = p.meta().alive();
-            set_perm(p, subset, alive)
-        }
+        AnyPie::Tole(p) => set_perm(p, subset),
     }
 }

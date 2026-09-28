@@ -32,7 +32,9 @@ use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, AnyPie, GateFail, Need, Permission, Pie, clear_heir};
+use crate::work::unit::gate::{
+    self, AnyPie, GateFail, Hole, Need, Nole, Permission, Pie, Pole, clear_heir,
+};
 use crate::work::unit::task::TaskIdent;
 
 /// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
@@ -79,7 +81,12 @@ pub(crate) fn dispatch(
         PieCall::Open { token } => open(frame, ident, token),
         PieCall::Shut { token } => shut(frame, ident, token),
         PieCall::Seal { token } => seal(frame, token),
-        PieCall::Accord { src, dst, subset } => accord(frame, src, dst, subset),
+        PieCall::Accord {
+            src,
+            dst,
+            subset,
+            mark,
+        } => accord(frame, src, dst, subset, mark),
         PieCall::Narrow { token, subset } => narrow(frame, token, subset),
         PieCall::Revoke { dst, token } => revoke(frame, dst, token),
         PieCall::Collect { index } => collect(frame, index),
@@ -159,16 +166,18 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
 /// **不带 `ONLY`**——用户态铸的资源都是共享的；"只允许一个使用者"是内核决定的事实
 /// （设备 `reg` 段、组），只有那些创建点才给这一位。
 ///
-/// 记号 = **这枚孔是干什么用的**（`UnsealHole { mark }`）：一枚 [`Mark`]。
-/// **内核不解释它**——不校验、不比较、不显示；它随副本过线、转手不变。
+/// 记号 = **这一枚门闩在协议上算哪条路**（`UnsealHole { mark }`）：一枚 [`Mark`]，刻在
+/// **门闩**上（不是资源上——`Accord` 可给子枚另刻一枚）。**内核不解释它**——不校验、
+/// 不比较、不显示；它随副本过线。
 /// 故这一步**不再读调用方的内存**（原先要拷 32 字节并校验 UTF-8/非空/NUL，那段连同
 /// "必须在持 `pies` 锁之前拷"的锁序注记一起消失）。
 fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        let meta = mail::hole::meta(task.ident.id, mark);
-        let pie: Pie<mail::hole::HoleMeta> = gate::new_pie(
+        let meta = mail::hole::meta(task.ident.id);
+        let pie: Pie<Hole> = gate::new_pie(
             meta,
+            mark,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
@@ -198,8 +207,9 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
         }
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::nole::NoleMeta::new(task.ident.id);
-        let pie: Pie<mail::nole::NoleMeta> = gate::new_pie(
+        let pie: Pie<Nole> = gate::new_pie(
             meta,
+            Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
@@ -220,8 +230,9 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::pole::meta(size, task.ident.id)?;
         let task_space = task.ident.team.space.clone();
-        let pie: Pie<mail::pole::PoleMeta> = gate::new_pie(
+        let pie: Pie<Pole> = gate::new_pie(
             meta.clone(),
+            Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         );
@@ -334,6 +345,7 @@ fn accord(
     src_token: PieToken,
     dst_id: TaskId,
     subset: Permission,
+    mark: Mark,
 ) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
@@ -342,7 +354,7 @@ fn accord(
         let src = gate::locate(&caller, src_token).ok_or(PieFail::Denied)?;
         usable::<PieFail>(&src)?;
         let dst = muster(dst_id).ok_or(PieFail::Denied)?;
-        gate::accord(&caller, src_token, &dst, subset)
+        gate::accord(&caller, src_token, &dst, subset, mark)
     })();
     answer(frame, r);
     Outcome::Resume
@@ -413,10 +425,18 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
 /// **四格一起答，是为了省掉"每扫一枚再问一次 `Reserve`"**：那一问是一次 envcall，
 /// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/adapt/desk.rs`）。
 ///
-/// **owner 与记号只对"活着的孔"有意义，判据与 [`reserve`] 逐条对齐**（顺序也一样：
-/// 先问死活，再问"是不是孔"）。两处差别只有一格：`Reserve` 用 `Dead` / `Denied`
-/// 把两类答不出的情形分开，而本函数**从不报错**（`Collect` 的契约），故那两类在这里
-/// 一律落成哨兵——"答不出"与"没有"同形，读的人只须知道"这一条候选不成立"。
+/// **两格的判据不同源，各有各的理由**：
+///
+/// - **记号**（`a2`）：**每一枚都答**——记号是 Pie 的事实（`gate::Pie.mark`），
+///   不是孔的事实。没刻过 = `NONE`。
+/// - **owner**（`a1`）：**只对活着的孔有意义**。`AnyPie::owner()` 答的是**资源**的来历
+///   （四种 Mail 都答得出），而这一格要的是"**这扇门**谁开的"⇒ 再过一道"是不是孔"，
+///   别的资源一律答 0。**记号统一之后，这一格成了发现路径排掉"页/组"的唯一凭据**
+///   （`establish::find` / `operator::claim` / `board::ask_of` 都按 `owner == who` 认）。
+///
+/// 与 [`reserve`] 的差别只有一格：`Reserve` 用 `Dead` / `Denied` 把两类答不出的情形
+/// 分开，而本函数**从不报错**（`Collect` 的契约），故那两类在这里一律落成哨兵
+/// ——"答不出"与"没有"同形，读的人只须知道"这一条候选不成立"。
 fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     let pie = current()
         .running_task()
@@ -424,11 +444,11 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     let (token, owner_id, mark) = match &pie {
         Some(p) => {
             // `AnyPie::owner()` 自带存活闸（封印 ⇒ `None`）；再过一道"是不是孔"。
-            let (owner, mark) = match (p.owner(), p) {
-                (Some(o), AnyPie::Hole(h)) => (o, h.meta().mark()),
-                _ => (TaskId::new(0), Mark::NONE),
+            let owner = match p {
+                AnyPie::Hole(_) => p.owner().unwrap_or(TaskId::new(0)),
+                _ => TaskId::new(0),
             };
-            (p.token(), owner, mark)
+            (p.token(), owner, p.mark())
         }
         None => (PieToken::NONE, TaskId::new(0), Mark::NONE),
     };
@@ -438,9 +458,9 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 查这枚门闩的来历：`vestor`（谁授的，转手即改写）+ `owner`（资源谁开的，任何
-/// 副本共享同一事实）+ **记号**（随副本过线的那一枚数）。**不过存活闸**：`owner` 随资源
-/// 不变，封印不使它消失。
+/// 查这枚门闩的来历：`vestor`（谁授的，转手即改写）+ `owner`（这扇门谁开的，任何
+/// 副本共享同一事实）+ **记号**（这一枚在协议上算哪条路）。**这一手不另判死活**；
+/// `owner` 那一格自带存活闸 ⇒ **已封印答 `Dead`**（与 [`collect`] 同一条口径）。
 ///
 /// **打包**（与用户侧 `runtime::env::mail::reserve` 逐位对齐，口径的唯一真相在
 /// `env::fid` 的 `Reserve`）：`a0` = owner（高 32 位）| vestor（低 32 位）、`a1` = **整一枚
@@ -452,19 +472,20 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
 /// 记号改成随返回值一格交出之后，`buf`/`cap` 两个参数整个没了，而旧正文的末句
 /// （"记号一格返回"）与它上面那句自相矛盾，正是那一刀没改全留下的痕迹。
 ///
-/// 表里无此 token → `Denied`。**记号只长在孔上**：别的资源（Pole/Nole/Tole）问不到它
-/// ⇒ `Denied`——问不到就是"这一条候选不成立"，不假装有一格空记号。
+/// 表里无此 token → `Denied`。**这一手只对孔答**：别的资源（Pole/Nole/Tole）问不到它
+/// ⇒ `Denied`——问不到就是"这一条候选不成立"。它们的记号要读就走 [`collect`]
+/// （按位置枚举；本格只答"这扇门"的那一族事实）。
 fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outcome {
     let r = (|| -> Result<(TaskId, TaskId, usize), PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        // **只定位**：`owner` 是资源来历，封印不使它消失（见函数头注）——这里刻意不过
-        // 死活闸，`owner()` 自己用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
+        // **只定位**（`locate` 不过死活闸）：死活由 `owner` 那一格自带——`AnyPie::owner()`
+        // 用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
         let p = gate::locate(&task, token).ok_or(PieFail::Denied)?;
         let owner = p.owner().ok_or(PieFail::Dead)?;
-        let AnyPie::Hole(h) = &p else {
+        if !matches!(p, AnyPie::Hole(_)) {
             return Err(PieFail::Denied);
-        };
-        let mark = h.meta().mark().get() as usize;
+        }
+        let mark = p.mark().get() as usize;
         Ok((
             gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
             owner,

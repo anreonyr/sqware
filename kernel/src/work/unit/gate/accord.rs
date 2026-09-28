@@ -33,15 +33,21 @@
 
 use alloc::sync::Weak;
 
-use env::{PieFail, PieToken};
+use env::{Mark, PieFail, PieToken};
 
 use super::pie::{AnyPie, Heir, Need, Permission, new_pie};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
-/// 授出 / 交出：以 `caller` 表里的 `src` 为源，造一枚 `subset` 的子枚给 `dst`。
+/// 授出 / 交出：以 `caller` 表里的 `src` 为源，造一枚 `subset`、刻 `mark` 的子枚给 `dst`。
 ///
 /// 返：子枚在**对端**的 token（撤回句柄）。
+///
+/// # 记号（badge）
+///
+/// `mark` = 给子枚刻的那一枚；**`Mark::NONE` = 照源枚**。这一格是**全仓唯一的解析处**：
+/// 于是"授出时不给记号"（今天全部调用点）与"授出时另刻一枚"共用一个入口，而前者
+/// 的行为与记号还在资源上时逐字相同。
 ///
 /// # Errors
 /// 见模块头。
@@ -50,6 +56,7 @@ pub(crate) fn accord(
     src: PieToken,
     dst: &Weak<Task>,
     subset: Permission,
+    mark: Mark,
 ) -> Result<usize, PieFail> {
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
     // ① 锁内：定位 + 四道闸 + 造子枚（尚未入表）+ 先关。放开锁再做 ②。
@@ -78,12 +85,14 @@ pub(crate) fn accord(
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
+        // 子枚的记号：`NONE` ⇒ 照源枚（见函数头注——全仓唯一的解析处）。
+        let badge = if mark == Mark::NONE { pie.mark() } else { mark };
         // 派生 = 复制资源实体的强引用（资源寿命随之延长一份）。
         let granted = match &*pie {
-            AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), subset, Some(src))),
-            AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), subset, Some(src))),
-            AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), subset, Some(src))),
-            AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), subset, Some(src))),
+            AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
+            AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), badge, subset, Some(src))),
+            AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), badge, subset, Some(src))),
+            AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), badge, subset, Some(src))),
         };
         // 独占资源 ⇒ 这次是**移交**：写锚（源枚在子枚存活期间不可用，子枚消亡自动复原）。
         // 共享资源 ⇒ 不写锚，这次是**复制**。形态由源枚决定，不由 `subset` 决定。

@@ -39,8 +39,8 @@ use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use env::{Key, Mark, PAIR_LEN, Pair};
 use env::{MailFail, TaskId};
-use env::{Key, PAIR_LEN, Pair};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -130,6 +130,7 @@ fn supply_initrd() -> Option<(Key, AnyPie)> {
     let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0)).ok()?;
     let pie = gate::new_pie(
         meta,
+        Mark::NONE,
         // 多读者（清单与每一颗镜像都在里头，收方各自借映）⇒ 共享、授出即复制。
         Permission::FETCH | Permission::VEST,
         None,
@@ -147,6 +148,7 @@ fn supply_dtb() -> (Key, AnyPie) {
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0)).expect("devicetree region");
     let pie = gate::new_pie(
         meta,
+        Mark::NONE,
         // 自描述**天然多读者**：共享（不带 `ONLY`），授出即复制。
         Permission::FETCH | Permission::VEST,
         None,
@@ -167,7 +169,7 @@ fn supply_dtb() -> (Key, AnyPie) {
 fn supply_irq() -> (Key, AnyPie) {
     let meta = NoleMeta::new(TaskId::new(0));
     assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
-    let pie = gate::new_pie(meta, Permission::FETCH | Permission::VEST, None);
+    let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
     (Key::irq(), AnyPie::Nole(pie))
 }
 
@@ -241,6 +243,7 @@ pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
             };
             let pie = gate::new_pie(
                 meta,
+                Mark::NONE,
                 // `ONLY` = **同一时刻只该有一个使用者**（寄存器页）：授出即移交，
                 // 复制不出来。这条判断住在造门闩这一处——内核知道谁是 MMIO。
                 Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,

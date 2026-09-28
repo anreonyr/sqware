@@ -649,12 +649,17 @@ pub enum PieCall {
     /// 调用方自己那张 PTE"）。
     #[ret(())]
     Seal { token: PieToken },
-    /// 转授子集给其他 Task：src_token + dst_id + subset → 新 pie 的 token（撤销句柄）。
+    /// 转授子集给其他 Task：src_token + dst_id + subset + **记号** → 新 pie 的 token（撤销句柄）。
+    ///
+    /// `mark` = 给**子枚**刻的那一枚记号（badge）；**`Mark::NONE` = 照源枚**。
+    /// 于是"授出时不给记号"（今天全部调用点）与"授出时另刻一枚"共用一个入口，
+    /// 而前者与记号还在资源上时的行为逐字相同。解析只在 `gate::accord` 一处。
     #[ret(PieToken)]
     Accord {
         src: PieToken,
         dst: TaskId,
         subset: Permission,
+        mark: Mark,
     },
     /// 收窄本 pie 权限（就地改写；Pole 同步降页表）：token + subset。
     ///

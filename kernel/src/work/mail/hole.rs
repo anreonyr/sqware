@@ -1,9 +1,11 @@
 // hole — 数据过内核的管道。
 //
 // `HoleMeta` 是内核侧"门洞"：**单槽消息**（一个 `Vec<u8>`，长度随消息——**没有 mtu**）
-// + 状态 + **记号**（开门那一刻刻上的那个名字，构造期定型）。消息长度由 Push 时显式
-// 声明、Pull 时显式声明 max——长度是参数不是约定。
-// 用户态 Pie<HoleMeta>（含 Weak<HoleMeta>）只持门闩，不参与数据。
+// + 状态。消息长度由 Push 时显式声明、Pull 时显式声明 max——长度是参数不是约定。
+// 用户态 Pie<Hole>（含 Weak<HoleMeta>）只持门闩，不参与数据。
+//
+// **记号不在这里**：它是**每一枚 Pie** 的事实（`gate::Pie.mark`，`Accord` 可另刻），
+// 不是资源的字段——所以同一位铸的两枚孔、同一位授出的两份副本，各按自己那枚门闩答。
 //
 // 数据面原语（全部非阻塞）：
 // - `try_push(meta, msg, from)`：槽空则**把 `msg` 那个 Vec 移进槽**（零拷贝）并唤醒
@@ -29,7 +31,7 @@ use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 
-use env::{HoleDir, Mark, TaskId};
+use env::{HoleDir, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
@@ -84,16 +86,10 @@ pub struct HoleMeta {
     /// 与门闩的 `sire` 分工：`sire` = **这枚门闩**从哪来（派生边）；`owner` =
     /// **这扇门**谁开的（任意副本共享同一事实）。
     owner: TaskId,
-    /// 记号：开门那一刻刻上的那个名字（构造期定型，无 setter）。
-    ///
-    /// 与 `owner` 分工：`owner` = **谁开的这扇门**；`mark` = **这条路叫什么**——铸者
-    /// 那张表里这条路的名字。两者都随副本过线、转手不变，故"同一位开的哪一枚孔"由
-    /// 这两格一起答（`Reserve` 读它，见 `env::fid::PieCall::Reserve`）。
-    mark: Mark,
 }
 
 impl HoleMeta {
-    pub(super) fn new(id: HoleId, owner: TaskId, mark: Mark) -> Arc<Self> {
+    pub(super) fn new(id: HoleId, owner: TaskId) -> Arc<Self> {
         Arc::new(Self {
             state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
@@ -107,7 +103,6 @@ impl HoleMeta {
                 },
             ),
             owner,
-            mark,
         })
     }
 
@@ -122,11 +117,6 @@ impl HoleMeta {
     /// 资源开辟者（见字段 `owner`）。
     pub(crate) fn owner(&self) -> TaskId {
         self.owner
-    }
-
-    /// 这条路上刻的记号（见字段 `mark`）。
-    pub(crate) fn mark(&self) -> Mark {
-        self.mark
     }
 
     /// 本 hole 的全局身份（`Tole` 的格子按它认目标——格子记资源身份，不记句柄）。
@@ -311,11 +301,10 @@ pub(crate) fn seal(meta: &HoleMeta) {
 /// envcall 编排（gate::new_pie + pies.push）。返 `Arc`：它既是资源实体，也是
 /// 门闩持有的**唯一强引用**（资源寿命 = 能力寿命）。
 ///
-/// **槽无参数可校验**（对照 `pole::region` 的物理区、`HoleMeta::new` 的空槽）：
-/// 解封一枚孔的代价仍是零字节——槽里没有缓冲，第一条消息由推者带进来。多出来的一格是
-/// **记号**：`owner` = 开辟者任务 id（envcall 入口传当前任务），`mark` = 这条路的名字
-/// （同一入口先按 `Name` 的解码面校验过，非法到不了这里）。
-pub(crate) fn meta(owner: TaskId, mark: Mark) -> Arc<HoleMeta> {
+/// **无参数可校验**（对照 `pole::region` 的物理区）：解封一枚孔的代价仍是零字节
+/// ——槽里没有缓冲，第一条消息由推者带进来。造门闩那一侧多刻的一格是**记号**，
+/// 它住 `gate::Pie.mark`（不在这份资源里）。
+pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
     // 先分配 id 再建 Meta：id 同时是等待键的身份（见 `key`），必须随 Meta 定型。
-    HoleMeta::new(alloc_id(), owner, mark)
+    HoleMeta::new(alloc_id(), owner)
 }

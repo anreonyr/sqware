@@ -27,7 +27,8 @@ pub mod nole;
 pub mod pole;
 pub mod tole;
 
-// 资源实体类型 re-export：`unit::gate` 的 Pie<M> 泛型直指它们（单向，见上头注）。
+// 资源实体类型 re-export：`unit::gate` 的四种 PieType 各自把 `Mail` 指向它们
+// （单向，见上头注）。
 pub(crate) use hole::HoleMeta;
 pub(crate) use pole::PoleMeta;
 pub(crate) use tole::ToleMeta;

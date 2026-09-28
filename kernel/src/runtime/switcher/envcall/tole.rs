@@ -18,7 +18,7 @@
 
 use alloc::sync::{Arc, Weak};
 
-use env::{HoleDir, ToleCall};
+use env::{HoleDir, Mark, ToleCall};
 
 use env::{PieToken, ToleFail, Wait};
 
@@ -75,7 +75,7 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
         if !shared {
             latch |= Permission::ONLY;
         }
-        let pie: Pie<ToleMeta> = gate::new_pie(meta, latch, None);
+        let pie: Pie<gate::Tole> = gate::new_pie(meta, Mark::NONE, latch, None);
         let token = pie.token;
         // **紧贴 push**：`pie` 是最后一步造的，drop 它即回收资源实体 ⇒ 失败就地退回。
         let mut pies = task.pies.lock();
