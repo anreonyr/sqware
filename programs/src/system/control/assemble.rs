@@ -14,13 +14,13 @@
 
 use env::{Name, Wait};
 use protocol::debug;
-use crate::system::desk::Announce;
+use crate::system::control::desk::Announce;
 use runtime::env::mail;
 
 use protocol::system::supply::frame::{WANT_MAX, Want};
 use protocol::system::supply;
 
-use crate::program::Setup;
+use crate::program::{Program, Setup};
 
 use super::{Control, Error, READY_MS, Service};
 
@@ -31,11 +31,27 @@ impl Control {
     /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配表上那
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
-    pub fn enlist(&mut self, name: &'static str, setup: &'static [Setup]) -> Result<(), Error> {
-        let name = Name::new(name).map_err(|_| Error::Manifest)?;
+    pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
+        let name = Name::new(program.name()).map_err(|_| Error::Manifest)?;
         self.table
-            .register(name, announce_of(setup))
+            .register(name, announce_of(program.demand.setup))
             .map_err(|_| Error::Table)
+    }
+
+    /// **放行 + 等就绪 + 递单**（装配那一相的后半）：**次序是硬的**——配给要落到它交回的那条
+    /// 路上，故递单只能在放行之后（[`Control::start`] 之后才 [`Control::wire`]）。
+    ///
+    /// 两相拧成一手，是为了让"起一条"那条次序（**装通道 → 放行 → 递单**）在**一处**读得出来：
+    /// 装配那一趟（[`crate::system::Assembly::assemble`]）与线上那条路
+    /// （[`Control::release`]）叫的是同一手。
+    pub fn launch(
+        &mut self,
+        program: &Program,
+        name: Name,
+        service: &mut Service,
+    ) -> Result<(), Error> {
+        self.start(name, service, program.demand.setup)?;
+        self.wire(name, service, program.demand.setup)
     }
 
     /// **递单**：只对"要资源"的那几台动手（`Need` 一条都没有 ⇒ 立即返回）。
@@ -120,4 +136,24 @@ fn announce_of(setup: &[Setup]) -> Announce {
     } else {
         Announce::None
     }
+}
+
+/// **装通道**（"配"那一相）：按这一台 `setup` 里那几条 `Channel` 逐条装上——**记号 = 通道名**，
+/// 放行后按同一个记号逐条认领（[`service::ready`](super::service::ready)）。
+///
+/// **自由函数**：它只碰通道，不碰 `Control` 的任何一格（与 [`connect`](super::connect) 那一手
+/// 同一句正文——"只碰通道"的那一层做成方法就是白加的壳）。两处叫它：装配那一趟
+/// （[`crate::system::Assembly::assemble`]）与线上那条 [`Control::release`]。
+pub fn connect_all(program: &Program, service: &mut Service) -> Result<(), Error> {
+    for s in program.demand.setup {
+        if let Setup::Channel(ch) = s {
+            service
+                .1
+                .try_reserve(1)
+                .map_err(|_| Error::Step("no room for channels"))?;
+            let channel = super::connect(service.0, ch)?;
+            service.1.push(channel);
+        }
+    }
+    Ok(())
 }

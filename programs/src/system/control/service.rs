@@ -26,8 +26,8 @@ use runtime::env::room;
 use runtime::env::unit as utask;
 
 use protocol::communication::establish::Endpoint;
-use crate::system::core::{Fail, Ready, Reaped, admit_start, probe_ready};
-use crate::system::desk::{Announce, Service, Slot, State, Table};
+use crate::system::control::core::{Fail, Ready, Reaped, admit_start, probe_ready};
+use crate::system::control::desk::{Announce, Service, Slot, State, Table};
 
 use crate::program::{coalition::E_COALITION, operator::E_TREE, principal::E_PRINCIPAL};
 

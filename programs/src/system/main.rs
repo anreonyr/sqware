@@ -9,7 +9,7 @@
 //! ```text
 //! 1  起手：与引导域搭会话 + 领机器自述 + 领载荷区清单（`bootstrap::take`）
 //! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按 order 排**，就这一件事）
-//! 3  逐条起：`Program::assemble`——每一台按**它自己那份声明**装配
+//! 3  逐条起：`Assembly::assemble`——每一台按**它自己那份声明**装配
 //! 4  监督（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下那个死域
 //! 5  最后一条没了 ⇒ 对仍在跑的显式 `stop` ⇒ 全部记完 ⇒ 收场
 //! 6  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
@@ -20,7 +20,7 @@
 //! 用与其他每一台相同的 `mint` 起起来——**没有 `Role` 那种"同一份字节按 args 分派"的特例**。
 //!
 //! **这里不再有 `Program { … }` 那样的投影**：声明是各台自己那份 `program.rs`，本文件只把
-//! `&list` 交给 [`Program::assemble`](programs::program::Program::assemble)。
+//! `&list` 交给 [`Assembly::assemble`](crate::system::Assembly::assemble)。
 
 extern crate alloc;
 extern crate programs;
@@ -44,7 +44,7 @@ pub enum Fail {
     Manifest,
     /// 死亡道那只组。
     Group,
-    /// 整表装配那一趟带来的号（**按服务分的号取自那一台自己的 `died`**，由 `Program::assemble` 折出）。
+    /// 整表装配那一趟带来的号（**按服务分的号取自那一台自己的 `died`**，由 `Assembly::assemble` 折出）。
     Assemble(env::Reason),
     /// 监督那一趟。
     Supervise,
@@ -126,7 +126,7 @@ fn system() -> Result<(), Fail> {
     //    `Service` 那本通道账不必抱着：孔归本域那张表（`Endpoint` 上没有"放下"这个动作，谁拿
     //    都不改变归属），起完就不指着它了——装配者往后只通过板 / 树那两条路与它说话。
     for program in &list {
-        program.assemble(&mut assembly).map_err(Fail::Assemble)?;
+        assembly.assemble(program).map_err(Fail::Assemble)?;
     }
 
     // 4/5. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。

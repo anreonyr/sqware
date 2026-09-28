@@ -54,7 +54,9 @@ use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
 
-use protocol::system::operator::{EntryId, Fail, Rule, Where};
+use protocol::system::operator::{EntryId, Fail, Id, Rule, Where};
+
+use super::Operator;
 
 // ── 两把钥匙 ────────────────────────────────────────────────
 
@@ -295,4 +297,26 @@ impl<P: Copy + PartialEq, C: Copy> Ledger<P, C> {
     pub fn len(&self) -> usize {
         self.lines.len()
     }
+}
+
+// ── 本族那一枚具体化：账 ＋ "那一格还是不是那一格"那一问 ────────────
+
+/// **本族的账**：一格一条，两轴都记（谁许用 / 归谁改）。两轴的号都是**线上那一格号的宽度**
+/// （[`Id`]）：「用」那一轴存身份号或格号，「改」那一轴存落牌那一位的号。
+///
+/// 它是 [`Ledger`] 在**这一族**那一枚具体化。本域另外两册表各有各的正文：本域表上那几枚孔的
+/// 认领在 `operator::claim`，客人那一册在 `crate::system::desk`——**三册不相干**。
+pub type Book = Ledger<Id, Id>;
+
+/// **账对真相的那一问**：那一号此刻还是**一枚 `Tile`** 吗。
+///
+/// 陈旧的三种样子一次答完（见上面那张表）：
+///
+/// - 还在、还是 `Tile` ⇒ 真；
+/// - `trim` 剪掉 / `find` 剔死 ⇒ `name` 答 [`Fail::Unknown`] ⇒ 假；
+/// - `part` 把它顶成一块 `Pane` ⇒ `list` 答得出 ⇒ 假。
+///
+/// 它只在"账要拒"的那一支被叫（账是缓存），故这一趟读不落在热路上。
+pub fn fresh(tree: &Operator, id: EntryId) -> bool {
+    tree.name(id).is_ok() && tree.list(Where::At(id)).is_err()
 }

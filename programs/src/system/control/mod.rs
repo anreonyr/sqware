@@ -34,7 +34,7 @@
 //!
 //! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
 //! **本域活多久它活多久**），而"把这一格落到 `/sys/control`"由**持树者在自己核里做**
-//! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::land_plate`] 递过去 →
+//! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::plate`] 递过去 →
 //! 持树者 `part` ＋ `land`）。于是 `/sys/control` 与 `/sys/principal` / `/sys/coalition`
 //! 逐字同形：任何走到树的任务 `operator::Face::tile` 一查就有，
 //! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
@@ -49,8 +49,8 @@ use alloc::vec::Vec;
 use env::manifest;
 use env::{Mark, Name, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
-use crate::system::core::Fail;
-use crate::system::desk::{State, Table};
+use crate::system::control::core::Fail;
+use crate::system::control::desk::{State, Table};
 
 use crate::program::{Origin, Program, Setup, PROGRAMS};
 use crate::root::boot;
@@ -58,6 +58,8 @@ use crate::system::machine::Machine;
 use crate::system::source::{self, Source};
 
 pub mod assemble;
+pub mod core;
+pub mod desk;
 pub mod mount;
 pub mod service;
 pub mod supervise;
@@ -114,7 +116,7 @@ impl Error {
 ///
 /// **一条通道一件持有者**（[`Endpoint`]）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
 /// 在这里就是**几个 `Endpoint`**，不是一个能装的容器类型。**这本账归装配者拿着**：那几枚孔是
-/// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Program::assemble`](crate::program::Program::assemble)）。
+/// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Assembly::assemble`](crate::system::Assembly::assemble)）。
 /// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `Program`。
 pub type Service = (TaskId, Vec<Endpoint>);
 
@@ -203,7 +205,7 @@ impl Control {
     /// → 建域产线程。
     ///
     /// **复核两格**：名字得在装配声明里（`PROGRAMS`——字节与 `kind` 的声明处，帧里没有镜像），
-    /// 且这一行**此刻能起**——判据与 [`crate::system::core::admit_start`] 同一条
+    /// 且这一行**此刻能起**——判据与 [`crate::system::control::core::admit_start`] 同一条
     /// （`NeverStarted | Dead` 才起；表里还没这一行就先立一行）。已经在跑 / 正在起的答
     /// [`Fail::NotReady`]。造出来**恒为未放行**（`service::mint` 的口径），身子收进
     /// [`Control::pending`] 等 [`Control::release`]。
@@ -213,7 +215,7 @@ impl Control {
     pub fn mint(&mut self, name: Name) -> Result<(), Fail> {
         let program = program_of(name.as_str()).ok_or(Fail::Unknown)?;
         let method = Name::new(program.name()).map_err(|_| Fail::Unknown)?;
-        // **复核那一格**：这一行此刻能不能起——判据就是 [`crate::system::core::admit_start`]
+        // **复核那一格**：这一行此刻能不能起——判据就是 [`crate::system::control::core::admit_start`]
         // 那一条（`NeverStarted | Dead` 才起）。已经在跑 / 正在起的答 [`Fail::NotReady`]
         // （"此刻不该起"与"半路死了"在本端是同一个下一步）。
         match self.table.find(method) {
@@ -224,11 +226,10 @@ impl Control {
             }
             // 表里还没有这一行：立一行（与装配那一趟同一手）。
             None => {
-                self.enlist(program.name(), program.demand.setup)
-                    .map_err(|_| Fail::Unknown)?;
+                self.enlist(program).map_err(|_| Fail::Unknown)?;
             }
         }
-        let service = match self.spawn(program.name(), program.demand.origin) {
+        let service = match self.spawn(program) {
             Ok(service) => service,
             // 清单里没有这一台 / 来源那一档取不到字节：都是"这一段字节没有"。
             Err(Error::Missing | Error::Step(_)) => return Err(Fail::BadImage),
@@ -247,8 +248,8 @@ impl Control {
 
     /// **放行一枚已经造好的 Service**（线上 `Start` 那一问）：认领通道 → 放行等就绪 → 递单。
     ///
-    /// 次序与装配那一趟逐字同源（`Life::connect` / `Life::launch`）：**通道在放行之前装**，
-    /// 配给在放行之后递——两相之间的窗口就是"它一步都还没跑"。
+    /// 次序与装配那一趟逐字同源（`assemble::connect_all` / [`Control::launch`]）：**通道在放行
+    /// 之前装**，配给在放行之后递——两相之间的窗口就是"它一步都还没跑"。
     ///
     /// **复核一格**：这一手只认**自己刚造的那一枚**（`pending` 里有它）；没有 ⇒ [`Fail::NotReady`]
     /// （"此刻不该起"与"半路死了"在这一格是同一句话：本端下一步相同）。
@@ -266,22 +267,11 @@ impl Control {
             .ok_or(Fail::NotReady)?;
         let mut pending = self.pending.remove(at);
         let program = program_of(pending.name).ok_or(Fail::Unknown)?;
-        // 通道：放行前逐条装（记号 = 通道名，放行后逐条认领——与装配那一趟同一手）。
-        for s in program.demand.setup {
-            if let Setup::Channel(ch) = s {
-                pending
-                    .service
-                    .1
-                    .try_reserve(1)
-                    .map_err(|_| Fail::Full)?;
-                let channel = connect(pending.service.0, ch).map_err(|_| Fail::NotReady)?;
-                pending.service.1.push(channel);
-            }
-        }
+        // 通道：放行前逐条装（记号 = 通道名，放行后逐条认领——与装配那一趟**同一手**）。
+        assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
         let method = Name::new(pending.name).map_err(|_| Fail::Unknown)?;
-        self.start(method, &mut pending.service, program.demand.setup)
-            .map_err(|_| Fail::NotReady)?;
-        self.wire(method, &pending.service, program.demand.setup)
+        // 放行 + 等就绪 + 递单（次序是硬的：配给要落到它交回的那条路上）。
+        self.launch(program, method, &mut pending.service)
             .map_err(|_| Fail::NotReady)?;
         Ok(pending.service)
     }
@@ -305,12 +295,12 @@ impl Control {
     /// 特权级仍从清单那一条取（"唯一声明处是装配表"，打包时写进去），而"字节在哪儿"本层不问。
     ///
     /// 通道账起手是空的：`setup` 里那几条由 [`connect`] 逐条装上（放行之前）。
-    pub fn spawn(&mut self, name: &'static str, origin: Origin) -> Result<Service, Error> {
-        let name = Name::new(name).map_err(|_| Error::Manifest)?;
+    pub fn spawn(&mut self, program: &Program) -> Result<Service, Error> {
+        let name = Name::new(program.name()).map_err(|_| Error::Manifest)?;
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         // **来源那一格的唯一消费者**：按声明上那一档取那一段 `&[u8]`（今天 initrd 是真的一档；
         // `Storage` 那一台不存在 ⇒ 只答 `NoSource`）。
-        let source = match origin {
+        let source = match program.demand.origin {
             Origin::Initrd => Source::initrd(self.catalog),
             Origin::Storage => Source::storage(),
         };

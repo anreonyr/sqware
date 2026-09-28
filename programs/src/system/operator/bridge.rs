@@ -1,33 +1,50 @@
-//! operator::bridge — **装配侧**：把持树者接上一位客人（三步），认下它那条提示之路，
-//! 并请它替本域落一格（[`Tree::land_plate`]）。
+//! operator::bridge — **装配侧**：本域手里的持树者（那一枚号 ＋ 提示之路 ＋ 协调帧两格），
+//! 以及本域请它做的两件事——**接一位客人上树**（[`Tree::attach`]）与**递一条路上去**
+//! （[`Tree::plate`]）。
 //!
-//! **客人只有别的域**（[`attach`]）：装配者替每一位客人把孔转给持树者、再把它的号推上提示路。
-//! 而"往树上挂一格"（`control` 那一面挂到 `/sys/control`）**不由本域上树**——本域只把那一枚与
-//! 两段名字递过去，**落由持树者在自己核里做**（[`Tree::land_plate`] 与
-//! `programs/src/system/operator/server.rs::land_plate`）：树是那一格的权威，而它当不了自己的
-//! 客人（自指 ⇒ 环）。
+//! **客人只有别的域**：装配者替每一位客人把孔转给持树者、再把它的号推上提示路。而"往树上立
+//! 一格"**不由本域上树**——本域只把那一枚与那一条路递过去，**立由持树者在自己核里做**
+//! （[`Tree::plate`] 与 `programs/src/system/operator/plate.rs`）：树是那一格的权威，而它当不了
+//! 自己的客人（自指 ⇒ 环）。
 //!
 //! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
 
 use env::Mark;
 use env::Wait;
+use env::wire::Eyes;
 use env::wire::Field;
 use env::{Name, PieToken, TaskId};
-use env::wire::Eyes;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::communication::establish;
-use protocol::system::operator::frame::{CoordFrame, Layer, PlateFrame};
+use protocol::system::operator::{TIP_LEN, Tip};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
 
-/// 把协调那一帧推给持树者（**每一位递门牌的域各调一次**）。
-fn coord_frame(into: PieToken, who: TaskId, eyes: Eyes) -> Result<(), ()> {
-    let mut rec = [0u8; CoordFrame::LEN];
-    CoordFrame { who, eyes }.store(&mut rec);
+/// **推一句话过去**（提示之路那三形共用这一手：`Tip` 自己知道自己多长）。
+///
+/// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）。
+fn push(into: PieToken, tip: Tip<'_>) -> Result<(), ()> {
+    let mut rec = [0u8; TIP_LEN];
+    let n = tip.store(&mut rec).ok_or(())?;
+    mail::HolePie::from_token(into).push(&rec[..n]).map_err(|_| ())
+}
+
+/// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"。
+///
+/// **这一条不走 [`Tip`]**（照实记：这一刀在这里栽过一次）：读它的是
+/// [`communication::session`](protocol::communication::session) 的 `hear`——那条路由**板**与**树**
+/// 两族共用，它认的是**恰好 8 字节的裸号**。给这一帧套上提示之路那种 `kind` 头，`hear` 当场读
+/// 不成（`n == 8` 不成立）⇒ `Fail::Link` ⇒ 名册一上树就起不来（实测：`exit tid=5 reason=0xa`）。
+/// 故**两条路两种帧形**：提示之路带 `kind`（三形一张表），这条路只有一枚号。
+///
+/// **帧形只有一处**：宽度与字节序归 [`Field`] 给 [`TaskId`] 那一对 `store` / `fetch`。
+pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
+    let mut rec = [0u8; TaskId::WIDTH];
+    who.store(&mut rec);
     mail::HolePie::from_token(into).push(&rec).map_err(|_| ())
 }
 
@@ -50,8 +67,7 @@ impl Coord {
 
 /// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路 ＋ 协调帧那两格。
 ///
-/// 原先这三样是 `System` 上的三个裸字段（`tree` / `otip` / `coord`）。它们问的是**树的语义**
-/// ——客人怎么接、提示怎么认、哪一双眼睛往哪记——故收进树这一间。
+/// 它们问的是**树的语义**——客人怎么接、提示怎么认、哪一双眼睛往哪记——故收进树这一间。
 #[derive(Default)]
 pub struct Tree {
     host: Option<TaskId>,
@@ -66,11 +82,7 @@ impl Tree {
     }
 
     /// **把这位客人接上树**（三步见 [`attach`]）。持树者还没起就没得接。
-    pub fn attach(
-        &mut self,
-        client: TaskId,
-        millis: Wait,
-    ) -> Result<(), &'static str> {
+    pub fn attach(&mut self, client: TaskId, millis: Wait) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         attach(client, host, millis, &mut self.tip, self.coord)
     }
@@ -83,120 +95,39 @@ impl Tree {
         Ok(())
     }
 
-    /// **请持树者替本域落一格**：把那一枚交给它，再把"落哪一块、叫什么"推上提示之路。
+    /// **递一条路上去**：请持树者把这条路上的窗格逐段立出来（缺的就地造），末段按 `leaf`
+    /// 落叶子，或立窗格（`leaf = None` ⇒ 末段是**窗格**）。
     ///
-    /// 次序是契约：**先交那一枚、再推帧**——持树者一见帧就要落，而落要那一枚已经在它表里
-    /// （帧里带的是它在**树表里**的号，见 [`PlateFrame`]）。
+    /// 路是**绝对坐标**（从根起数）：`["sys","control"]`、`["sys","operator"]`、
+    /// `["sys","operator","part"]` 三种落法**同一个形状**——连"父底下立一块窗格"、再深一层
+    /// 也说得出来（从前那一版"两段名字 ＋ 一格 layer"说不出第四种）。
     ///
-    /// **本域不上树**：落这一格由持树者在自己核里做（[`crate::system::operator::server`] 的
-    /// `land_plate`），本域只是递东西的那一侧 ⇒ 这里不要会话、也不要名册上的身份（`land` 那道
-    /// 门是给**客人**的，本域不是客人）。
+    /// **次序是契约**：**先交那一枚、再推帧**——持树者一见帧就要立，而立要那一枚已经在它表里
+    /// （帧里带的是它在**树表里**的号）。
     ///
-    /// `host` / `tip` 都还没在（这一景没有持树者）⇒ `Err`：那是景的事，不是本手的失败。
-    pub fn land_plate(
-        &mut self,
-        entry: PieToken,
-        dir: Name,
-        name: Name,
-    ) -> Result<(), &'static str> {
-        self.plate(entry, dir, name, Layer::Sys)
-    }
-
-    /// **只立那一段目录**（`/sys/{segment}` 那块 `Pane`）：**一帧，且不递任何孔**。
+    /// **本域不上树**：立由持树者在自己核里做（`operator::plate::plate`），本域只是递东西的那
+    /// 一侧 ⇒ 这里不要会话、也不要名册上的身份（`land` 那道门是给**客人**的，本域不是客人）。
     ///
-    /// 目录那一段**不是叶子**——没有入口、没有 Pie（[`crate::system::operator::mount`] 的文件头
-    /// 就是这句话），收帧那一侧 `Layer::Segment` 那一支**只看名字**
-    /// （`server.rs::land_plate` 的 ①）。故这一帧里那一格填 [`PieToken::NONE`]（无效哨兵），
-    /// 也**不递孔过去**：目录没有可递的东西，而递一枚没人落的孔只是让持树者表里多一枚死副本。
-    ///
-    /// **照实记（"第八格"是量出来的）**：从前没有这一手——目录与七位**共用** [`Tree::land_deep`]
-    /// 的"两帧"，而目录那一趟的两段名字是同一个（`"operator"`）：第一帧 `part /sys/operator`
-    /// 立出那块 `Pane`，第二帧 `Under` 于是**又往它里面落了一格也叫 `operator` 的**。实机读数：
-    /// `/sys/operator` 底下**八格**（七位 ＋ 一格自己，且那一格上挂着目录那枚孔）——与"那一段
-    /// 自己不是一格"正相反。旧探针**按名字数**（只数那七段名字）故一直没显形；改成"数格子"
-    /// （`harness/src/probe_operator_gate.rs::count_under`）第一跑就撞上。
-    pub fn land_segment(&mut self, segment: Name) -> Result<(), &'static str> {
-        self.host.ok_or("no tree yet")?;
-        let sys = Name::new("sys").map_err(|_| "operator:name")?;
-        self.frame(PieToken::NONE, sys, segment, Layer::Segment)
-    }
-
-    /// **落两层**：`/sys` 底下的 `segment` 那一段先立成一块 `Pane`，再把 `name` 落在它底下。
-    ///
-    /// 与 [`Tree::land_plate`] 是**同一手**（同一门闩的规矩），差别只有一格：**两帧、次序即
-    /// 契约**，而**第一帧不落叶子**（正文与理由在 [`Tree::land_segment`]——目录没有入口，
-    /// 故那一帧不递孔）。两帧各立什么、各落什么：
-    ///
-    /// ```text
-    ///   ① name = segment  Segment ⇒ part(At(sys), segment)   立那一段（不落叶子）
-    ///   ② name = name     Under   ⇒ land(At(segment), name)  落进那一段
-    /// ```
-    ///
-    /// **为什么不是"多带一段路径"**：这条路落的是**一格**，不是一条路；两层就是**两格**。故
-    /// `/sys/operator` 在树上是一块**真的** `Pane`（`part` 出来的），不是路径上假装的一段。
-    /// 这正是 `control` 那一格的同形——它只落一层，故只叫 [`Tree::land_plate`]。
-    pub fn land_deep(
-        &mut self,
-        entry: PieToken,
-        segment: Name,
-        name: Name,
-    ) -> Result<(), &'static str> {
-        // ① 先把那一段立成一块 `Pane`（`/sys/operator`）——**同一具身体**：七位各走一遍这一帧，
-        //    而 `part` 幂等（已经在就是成了），故目录先立、其后逐位重推都无事。
-        self.land_segment(segment)?;
-        // ② 再把那一格落进那一段（`/sys/operator/{name}`）。
-        self.plate(entry, segment, name, Layer::Under)
-    }
-
-    /// **递一格上去**：交那一枚 ＋ 推那一帧（两手都是契约的一半，次序见 [`Tree::land_plate`]）。
-    ///
-    /// 它是 [`Tree::land_plate`] 与 [`Tree::land_deep`] 共用的那一具——两处只差"推几次、每次
-    /// 叫什么"，"怎么推"只有一处。
-    fn plate(
-        &mut self,
-        entry: PieToken,
-        dir: Name,
-        name: Name,
-        layer: Layer,
-    ) -> Result<(), &'static str> {
+    /// `host` / `tip` 有一格没在（这一景没有持树者）⇒ `Err`：那是景的事，不是本手的失败。
+    pub fn plate(&mut self, road: &[Name], leaf: Option<PieToken>) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
-        // ① 那一枚交过去：`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST` ⇒ 客人那次
-        //    `find` 里的转授答 `Denied`）。**号随帧走**——本仓那条"号随交接一起走"的口径。
-        let seed = port::ship(
-            &mail::HolePie::from_token(entry),
-            host,
-            Access::FETCH | Access::STORE,
-            Policy::VEST,
-        )
-        .map_err(|_| "operator:plate")?
-        .seed();
-        self.frame(seed, dir, name, layer)
-    }
-
-    /// **推一帧上去**（[`Tree::plate`] 与 [`Tree::land_segment`] 共用的下半截）：落哪一块、
-    /// 叫什么、挂哪一枚。
-    ///
-    /// 持树者不认识任何一族的名字，也不认识任何一枚孔——**它只按帧里的两段名字与那一格号办**
-    /// （`entry` 填 [`PieToken::NONE`] 的那几帧是"这一帧不挂东西"：见 [`Tree::land_segment`]）。
-    fn frame(
-        &mut self,
-        entry: PieToken,
-        dir: Name,
-        name: Name,
-        layer: Layer,
-    ) -> Result<(), &'static str> {
+        let leaf = match leaf {
+            // 有叶子：那一枚先交过去——`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST`
+            // ⇒ 客人那次 `find` 里的转授答 `Denied`）。**号随帧走**——本仓那条"号随交接一起走"。
+            Some(entry) => port::ship(
+                &mail::HolePie::from_token(entry),
+                host,
+                Access::FETCH | Access::STORE,
+                Policy::VEST,
+            )
+            .map_err(|_| "operator:plate")?
+            .seed(),
+            // 末段是窗格：**没有可交的东西**（目录不是叶子——没有入口、没有 Pie，故不递孔；
+            // 而递一枚没人立的孔只是让持树者表里多一枚死副本）。
+            None => PieToken::NONE,
+        };
         let tip = self.tip.ok_or("no tip")?;
-        let mut rec = [0u8; PlateFrame::LEN];
-        PlateFrame {
-            dir,
-            name,
-            entry,
-            layer,
-        }
-        .store(&mut rec);
-        mail::HolePie::from_token(tip)
-            .push(&rec)
-            .map_err(|_| "operator:plate")
+        push(tip, Tip::Plate { road, leaf }).map_err(|()| "operator:plate")
     }
 
     /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。
@@ -208,7 +139,7 @@ impl Tree {
     }
 }
 
-/// 把持树者接上一位客人（装配者调用）：**三步**（见文件头那张图）。
+/// 把持树者接上一位客人（装配者调用）：**三步**。
 ///
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。
 /// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）。
@@ -245,25 +176,26 @@ pub fn attach(
     // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
     for (who, eyes) in coord.pairs() {
         if let Some(who) = who {
-            coord_frame(tip_at, who, eyes).map_err(|_| "operator:coord")?;
+            push(tip_at, Tip::Coord { who, eyes }).map_err(|()| "operator:coord")?;
         }
     }
     // 树路上本端手里那一枚 = **客人答话路的写端**（认下来时进 `link.tx()`）。
     let reply = link.tx().ok_or("operator:hand")?;
     hand(reply, host).map_err(|()| "operator:hand")?;
-    // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节）。
-    tell(host, reply).map_err(|_| "operator:who")?;
+    // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节**裸号**——那条路的读者是
+    // `communication::session::hear`，见 [`tell`]）。
+    tell(host, reply).map_err(|()| "operator:who")?;
     // 提示在**转授之后**：持树者据此可以按"提示一到，答话路必已在本表里"办事。
     // **这一对孔本函数不必拿着、也放不下**：本端那一枚（`link.rx()`）是垫的（本端从不读它），
     // 可它得**一直活着**——客人那一侧要有人认它（`operator::client::open` 的 `claim` 扫的就是
     // 本域铸出去那一枚的副本），而认下之后持树者那一路也一直指着它写。它归**本域那张表**
     // （`Endpoint` 上只有 `claim`，没有"放下"这个动作）⇒ 本域退场时一并回收。
-    tell(client, (*tip).ok_or("operator:tip")?).map_err(|_| "operator:tell")
+    push((*tip).ok_or("operator:tip")?, Tip::Guest(client)).map_err(|()| "operator:tell")
 }
 
 /// 认下持树者交回来的那一枚提示孔（**只认一次**）：判据两格——`owner == 持树者`
 /// （那一枚是它铸的）**且** 记号 = [`TIP_MARK`]。认下来之后本线程拿着的就是
-/// "往提示之路推客人号 / 推协调帧"那一枚。
+/// "往提示之路推客人号 / 协调帧 / 一条路"那一枚。
 ///
 /// **只认、不铸**：本端这一侧在这条路上不需要自己那一枚。**照实记（这一格原先还多装了一条）**：
 /// 从前这里先 `seat` 一次——本端另铸一枚、刻的是另一个记号（`TIP_NAME = "operator-tip"`）——
@@ -279,26 +211,12 @@ pub fn host_of(
     if tip.is_some() {
         return Ok(host);
     }
-    // 交给调用方拿着：同一条路上以后每次都往里推客人号 / 协调帧（**同一枚线程**用它）。
+    // 交给调用方拿着：同一条路上以后每次都往里推客人号 / 协调帧 / 一条路（**同一枚线程**用）。
     *tip = establish::claim(host, TIP_MARK, millis);
     if tip.is_none() {
         return Err("operator:tip");
     }
     Ok(host)
-}
-
-/// 把一个号推过去（8 字节，小端）。
-///
-/// **两处共用这一句**：提示孔那一格（告持树者"客人是谁"）与树路那一格（告客人"答话的是谁"）。
-/// 两处都是"装配者知道、对方叫不出"的那个号——故 `tell` 只认"推给哪一枚孔"，不认语义。
-///
-/// **帧形只有一处**：宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对
-/// `store` / `fetch`。
-pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
-    let mut rec = [0u8; TaskId::WIDTH];
-    who.store(&mut rec);
-    let into = mail::HolePie::from_token(into);
-    into.push(&rec).map_err(|_| ())
 }
 
 /// 把**客人交出来的那一枚**转授给持树者。

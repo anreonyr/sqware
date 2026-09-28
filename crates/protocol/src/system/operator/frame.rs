@@ -974,15 +974,15 @@ impl Message for Union {
     }
 }
 
-// ── 协调那一帧（**装配者 → 持树者**，不是门外那一问）──────────
+// ── 提示之路（**装配者 → 持树者**，不是门外那一问）：三形 ──────
 //
-// 它不在上面那张图里：上面那几帧是**客人 ↔ 持树者**的一问一答，这一条是**装配者递过来的
-// 一格号**（装完那一位域之后一次）。两族同住本文件，因为"帧形只有一处"这一条不分装配期与
-// 运行期——它是同一棵树的两半。
+// 它不在上面那张图里：上面那几帧是**客人 ↔ 持树者**的一问一答，这几条是**装配者递过来
+// 的东西**（立一条路 / 一格号 / 一位客人）。两族同住本文件，因为"帧形只有一处"这一条不分
+// 装配期与运行期——它是同一棵树的两半。三形的总说明与 `Tip` / `TipIn` 在下面。
 
 /// **协调那一帧**——装配者告诉持树者"哪一位域把门牌交过来了、它是哪一双眼睛"。
 ///
-/// 布局（由字段表求和得出，**这里不再写数**）：那一位域自己的号（`TaskId`）｜[`Eyes`]。
+/// 布局（由字段表求和得出，**这里不再写数**）：首格 `kind` ｜那一位域自己的号（`TaskId`）｜[`Eyes`]。
 ///
 /// **照实记（后 8 字节的对齐方式换过一次）**：原先这一枚枚举（`Role`）与持树者那一侧的
 /// `ROLE_ROSTER` / `ROLE_LEAGUE` 常量**各写一遍** 0/1，靠两边注释说"必须同值"。现在两侧共读
@@ -1021,103 +1021,172 @@ impl Message for Union {
 /// - 各域本来就与树有一条会话（挂门牌那一趟），这一笔是它的近邻。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CoordFrame {
+    pub kind: u8,
     pub who: TaskId,
     pub eyes: Eyes,
 }
 
-/// **装配者要持树者落的那一格**（提示之路上的第三种帧）：落哪一块 `Pane` 里、叫什么、挂哪一枚。
+// ── 提示之路那三形：一条路 / 一双眼睛 / 一位客人 ──────────────
+//
+// 三形走**同一个洞、同一个读者**（提示之路 = 装配侧 → 持树者）：既不经过会话、也没有客人
+// ——"往树上立一路"由持树者在自己核里做（`programs/src/system/operator/plate.rs::plate`）。
+//
+// **首格 `kind` 说这一帧是哪一形**——与客人那一族的动作码同一条纪律：一个动作一条形状，
+// 一张形状一张表。**照实记（从前靠长度分派）**：那三形原先按长度认（`n == 73` / `16` / 其余），
+// 于是"三形不许等长"得靠两条 `const _: () = assert!` 兜着；而**一条路有几段会让长度变**
+// ——今天认出哪一形只看第一格，长度回到它本来的意思（这一帧有多长）。
+
+/// 提示之路上的三个 `kind`（首格；表外 ⇒ 这一帧读不懂）。
+const TIP_PLATE: u8 = 1;
+const TIP_COORD: u8 = 2;
+const TIP_GUEST: u8 = 3;
+
+/// 「一条路」那一形的**头两格**：`kind` ＋ **段数**。
 ///
-/// 它与 [`CoordFrame`] 走**同一个洞、同一个读者**（提示之路 = 装配侧 → 持树者），报文里既没有
-/// 客人也没有动作码——**落这一格由持树者在自己核里做**。
-///
-/// # 为什么不是"树当自己的客人"（照实记）
-///
-/// "把一格挂上树"在别处都是**客人**那一趟（`part` ＋ `land` 两问走一条会话），而树自己没有那条
-/// 会话：它的生我者（编排域）是**替每一位客人转授**的那一侧，而它替不了自己（自指 ⇒ 环，见
-/// `programs/src/system/operator/server.rs::settle`）。而树手里本来就握着**核**
-/// （`Operator::land`）与**账**（`Ledger::land`）——落一格是它的本职。故这一形是
-/// "**装配者递东西、持树者自己落**"：递的就是这一帧 ＋ 那一枚。
-///
-/// # 两段名字为什么随帧来
-///
-/// `dir` / `name` 是**递帧那一侧**的事实（`control::frame::DIR` / `NAME`）：持树者不认识任何
-/// 一族的名字，也不该认识——它只答"把这一枚挂在这一点上"。
-///
-/// # `layer` 那一格：这一枚落在**哪一层**
-///
-/// 树上那一格**先得当一块 `Pane`** 才接得住下一格，故"落"这件事分三层，[`Layer`] 一格说清：
-///
-/// - [`Layer::Sys`]：落在 **`/sys` 底下**（`control` 那一面：一层）⇒ 那一段就是 `name`；
-/// - [`Layer::Segment`]：**先把 `/sys/{name}` 立成一块 `Pane`**（`/sys/operator` 那段目录自己）；
-/// - [`Layer::Under`]：落在 **`/sys/{dir}` 那一块里**（七位操作面：`dir = "operator"`，
-///   `name = "part"`）。
-///
-/// **照实记（它为什么不是一个 `bool`）**：这一格原先写的是 `deep: bool`——"深一层 / 不深一层"。
-/// 那样**落不出第三层**：`/sys/operator/{op}` 既不是"落在 `/sys` 底下"、也不是"把某一段立成
-/// `Pane`"，而是"落在**已立好的那一段里面**"。两态硬凑的结果是七位落到了 `/sys/{op}`
-/// （`/sys/operator` 空着）——实测：探针拿到 `/sys/operator` 那块 `Pane` 之后，列出来只有一位。
-/// 故按"一个动作不许有两种理解"改成三态，**一格一义**。
-///
-/// 它是**递帧那一侧的事实**（本域知道 `/sys` 早有、`operator` 是这一段新立的），不该由收帧那一侧
-/// 按"路径长短"猜。
-///
-/// **长度即形**：提示之路上今天三种帧（这一形 / [`CoordFrame`] / 一位客人的号），靠长度分派
-/// （见 `programs/src/system/operator/server.rs::settle`）⇒ 三条**不许等长**，下面那两条断言
-/// 把这件事钉在编译期。
+/// 段数写的是**真实条数**；**容量就是 [`ROAD_MAX`]**，超了**装都不装**（编的那一侧答 `None`）。
+/// 与客人那一族 [`RoadHead`] 的差别只有一处：那边把"路太长"当成一句**要答的话**（持树者答
+/// [`Fail::Full`]），这条路上**没有答话那一格** ⇒ 读的那一侧当场判读不懂，由持树者报一行读数。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct PlateFrame {
-    /// 挂在哪一块窗格下的一段目录名（从 `Where::Root` 起，如 `sys`）。
-    pub dir: Name,
-    /// 那一格叫什么（如 `control`）。
-    pub name: Name,
-    /// 要挂的那一枚**在持树者表里**的号（`port::ship` 换回来的那一格）。
-    ///
-    /// **`Layer::Segment` 那一帧没有可挂的**（目录不是叶子：没有入口、没有 Pie，故递帧那一侧
-    /// 也不递孔）——那一格填 [`PieToken::NONE`]（无效哨兵），收帧那一侧在那一支里**只读
-    /// `name`**，一格都不落（`server.rs::land_plate` 的 ①）。
-    pub entry: PieToken,
-    /// 这一枚落在**哪一层**（三态，见 [`Layer`]）。
-    pub layer: Layer,
+pub struct PlateHead {
+    pub kind: u8,
+    pub count: u8,
 }
 
-/// 落一格时的**那一层**（[`PlateFrame`] 的第四格）。
+/// 「一位客人」那一形：`kind` ＋ 它的号。
 ///
-/// 一格一义：收帧那一侧照它选"把哪一块 `Pane` 当父"，不猜、不推。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Layer {
-    /// 落在 `/sys` 底下（一层：`control` 那一面）。
-    Sys,
-    /// 把 `/sys/{name}` 立成一块 `Pane`（两层的第一帧：那段目录自己）。
-    Segment,
-    /// 落在 `/sys/{dir}` 那一块里（两层的第二帧：七位操作面）。
-    Under,
+/// 与 [`CoordFrame`] 分成两形而**不复用一格可选的语义**：一个是**这一位域**（它把门牌交过来了、
+/// 它是哪一双眼睛），一个是**这位客人**（持树者按"它开的 ＋ 记号"在本表里认它那条答话路）
+/// ——两件事，两个形状。
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct GuestFrame {
+    pub kind: u8,
+    pub who: TaskId,
 }
 
-// **这一格自己的编码**（与 `Where` / `Rule` 同一口径：impl 跟着类型走）。
-// 表外的记 ⇒ **整帧读不懂**（`fetch` 答 `None`）——两侧同源，不存在"旧帧"那一档。
-impl env::wire::Field for Layer {
-    const WIDTH: usize = 1;
+/// 提示之路上**最长那一形**的宽度（立一条路：头两格 ＋ [`ROAD_MAX`] 段 ＋ 末段那一格）
+/// ——两侧各备一只这么大的缓冲，收的那一侧按它拉。
+pub const TIP_LEN: usize = PlateHead::LEN + ROAD_MAX * env::wire::NAME_LEN + PieToken::WIDTH;
 
-    fn store(&self, out: &mut [u8]) {
-        out[0] = match self {
-            Layer::Sys => 0,
-            Layer::Segment => 1,
-            Layer::Under => 2,
-        };
-    }
+/// **装配者推给持树者的一句话**（提示之路那一帧）。
+///
+/// 三形，各自的正文在变体上；共用的两句话：
+///
+/// - **树不能当自己的客人**：把一格挂上树在别处都是**客人**那一趟（`part` ＋ `land` 两问走一条
+///   会话），而树没有那条会话——它的生我者（编排域）是**替每一位客人转授**的那一侧，替不了
+///   自己（自指 ⇒ 环）。树手里本来就握着**核**（`Operator::land`）与**账**（`Ledger::land`）
+///   ⇒ "装配者递东西、持树者自己落"。
+/// - **名字随帧来**：持树者不认识任何一族的名字（`control::frame::DIR` / `NAME` 都是递帧那一侧
+///   的事实），它只答"把这一条路立出来"。
+///
+/// **编与解是两个类型**（同 [`Req`] / [`Wire`]）：[`Tip::Plate`] 编的时候借一条路，解出来是
+/// 自己那一份（[`TipIn`]）。
+pub enum Tip<'a> {
+    /// **在树上立一条路**：前缀逐段立成窗格（缺的就地造），末段按 `leaf` 落叶子或立窗格。
+    ///
+    /// 路是**绝对坐标**（从根起数），故 `/sys/control`、`/sys/operator`、`/sys/operator/part`
+    /// 三种落法**同一个形状**说得出来；再深一层、或"父底下立一块窗格"也不需要新格
+    /// ——**照实记（从前说不出第四种）**：那一版是"两段名字 ＋ 一格 `layer`"（`Sys` / `Segment` /
+    /// `Under`），而"父是 `/sys/{dir}`、末段却是窗格"这一格**说不出来**；今天它就是
+    /// `Plate { road: [.., dir, name], leaf: NONE }`。
+    ///
+    /// `leaf` 填 [`PieToken::NONE`] 说的是"**末段是窗格**"（没有可落的叶子）——它在整帧里只有
+    /// 这一个意思，不按别的格改读法（目录不是叶子：没有入口、没有 Pie）。
+    ///
+    /// **照实记（`NONE` 那一格今天没有生产者）**：两条挂载路（`/sys/control` 与七位）都是
+    /// **落叶子**，而目录那一格由前缀走出来（不单独占一帧）——故 `NONE` 今天一次也发不出去。
+    /// 它留着是因为它是这一形的**第二轴**：把 `leaf` 收成必填，"**立一段空窗格**"这句话就再也
+    /// 说不出来（将来别的模块搬上树时，第一句常是它）。这与 `Req::Land` 那一格"每一格都还要有
+    /// 意思"同一条：宁可多一格**说得出口**的话，也不让一个动作只许一种理解。
+    Plate { road: &'a [Name], leaf: PieToken },
+    /// **哪一位域 ＋ 它是哪一双眼睛**（两枚可以分两帧、次序不定）。
+    Coord { who: TaskId, eyes: Eyes },
+    /// **这一位是客人**。
+    Guest(TaskId),
+}
 
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        match *bytes.first()? {
-            0 => Some(Layer::Sys),
-            1 => Some(Layer::Segment),
-            2 => Some(Layer::Under),
-            _ => None,
+impl Tip<'_> {
+    /// 编进 `out`，返写完的游标；装不下 / 路空 / 路超过 [`ROAD_MAX`] ⇒ `None`。
+    pub fn store(&self, out: &mut [u8]) -> Option<usize> {
+        match *self {
+            Tip::Plate { road, leaf } => {
+                if road.is_empty() || road.len() > ROAD_MAX {
+                    return None;
+                }
+                let head = PlateHead {
+                    kind: TIP_PLATE,
+                    count: road.len() as u8,
+                };
+                head.store_in(out)?;
+                // 路那一截是**尾巴**：一处偏移都不写（同 `Road` 那一形）。
+                let at = env::wire::store_tail(out, PlateHead::LEN, road)?;
+                <PieToken as env::wire::Field>::store(&leaf, out.get_mut(at..at + PieToken::WIDTH)?);
+                Some(at + PieToken::WIDTH)
+            }
+            Tip::Coord { who, eyes } => CoordFrame {
+                kind: TIP_COORD,
+                who,
+                eyes,
+            }
+            .store_in(out),
+            Tip::Guest(who) => GuestFrame {
+                kind: TIP_GUEST,
+                who,
+            }
+            .store_in(out),
         }
     }
 }
 
-const _: () = assert!(PlateFrame::LEN != CoordFrame::LEN);
-const _: () = assert!(PlateFrame::LEN != <TaskId as env::wire::Field>::WIDTH);
+/// **解开的一句**：路已经收进自己那一份（`[Name; ROAD_MAX]` ＋ 真实段数）。
+pub enum TipIn {
+    /// 立一条路（前缀逐段立窗格，末段按 `leaf`）。
+    Plate {
+        road: [Name; ROAD_MAX],
+        count: usize,
+        leaf: PieToken,
+    },
+    /// 哪一位域 ＋ 哪一双眼睛。
+    Coord { who: TaskId, eyes: Eyes },
+    /// 这一位是客人。
+    Guest(TaskId),
+}
+
+impl TipIn {
+    /// 解开一句：**首格 `kind` 决定形状**，长度必须是那一形该有的长度。
+    ///
+    /// 读不懂（表外的 `kind` / 段数是 0 或超过 [`ROAD_MAX`] / 长度不对）⇒ `None`：持树者据此
+    /// 报一行读数——这条路上没有答话那一格，**别静默丢**。
+    pub fn fetch(bytes: &[u8]) -> Option<TipIn> {
+        match *bytes.first()? {
+            TIP_PLATE => {
+                let count = PlateHead::fetch(bytes)?.count as usize;
+                if count == 0 || count > ROAD_MAX {
+                    return None;
+                }
+                // 长度也是形状的一部分：`2 ＋ 段数 × 32 ＋ 8`。
+                let at = PlateHead::LEN + count * env::wire::NAME_LEN;
+                if bytes.len() != at + PieToken::WIDTH {
+                    return None;
+                }
+                let mut road = [Name::EMPTY; ROAD_MAX];
+                env::wire::fetch_tail(bytes, PlateHead::LEN, &mut road[..count])?;
+                let leaf = <PieToken as env::wire::Field>::fetch(bytes.get(at..)?)?;
+                Some(TipIn::Plate { road, count, leaf })
+            }
+            TIP_COORD if bytes.len() == CoordFrame::LEN => {
+                let rec = CoordFrame::fetch(bytes)?;
+                Some(TipIn::Coord {
+                    who: rec.who,
+                    eyes: rec.eyes,
+                })
+            }
+            TIP_GUEST if bytes.len() == GuestFrame::LEN => {
+                Some(TipIn::Guest(GuestFrame::fetch(bytes)?.who))
+            }
+            _ => None,
+        }
+    }
+}
 
 // ── 失败域 ↔ 答话码 ─────────────────────────────────────────
 

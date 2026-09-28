@@ -8,9 +8,9 @@
 //!   ③ 落       持树者在自己核里 `part /sys` ＋ `land /sys/control`（`Rule::Public`）
 //! ```
 //!
-//! ① 在本文件里（那一枚的记号与两段名字是**这份协议自己的事实**）；②③ 分别在
-//! [`Tree::land_plate`](crate::system::operator::bridge::Tree::land_plate) 与持树者的 `settle`
-//! 那一支（`programs/src/system/operator/server.rs::land_plate`）。
+//! ① 在本文件里（那一枚的记号与它那一段名字是**这份协议自己的事实**）；②③ 分别在
+//! [`Tree::plate`](crate::system::operator::bridge::Tree::plate) 与持树者那一支
+//! （`programs/src/system/operator/plate.rs::plate`）。
 //!
 //! # 照实记（"谁上树"这一格换过三次）
 //!
@@ -31,16 +31,18 @@ use protocol::system::board::ENTRY_MARK;
 use protocol::system::control as ccall;
 use runtime::env::mail;
 
-/// **铸本域那一枚待客入口**，并交出它要落的两段名字（`dir` / `name`）。
+/// **铸本域那一枚待客入口**，并交出它**自己那一段**名字（`/sys/{name}` 的 `name`）。
+///
+/// 路的第一段（`sys`）不由本文件给：那是**两族共用**的那一格坐标（[`ccall::frame::DIR`]），
+/// 由装配者组路时给——本文件从前把它也交出去（一格 `dir`），而收帧那一侧**从来不读它**。
 ///
 /// 返 `Err(哪一步)`：记号铸不出 / 名字非法。对调用方是同一件事（这一面没挂上），但"死在哪一步"
 /// 正是诊断要的那一格。
 ///
 /// **只铸一次**：这一枚此后就是监督那一趟那只组里的待客入口（`Watch` 的 `face` 那一格）；
 /// 铸第二枚，就会有一枚永远没人读它的推。
-pub fn entry() -> Result<(PieToken, Name, Name), &'static str> {
+pub fn entry() -> Result<(PieToken, Name), &'static str> {
     let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| "control:entry")?;
-    let dir = Name::new(ccall::frame::DIR).map_err(|_| "control:name")?;
     let name = Name::new(ccall::frame::NAME).map_err(|_| "control:name")?;
-    Ok((entry, dir, name))
+    Ok((entry, name))
 }
