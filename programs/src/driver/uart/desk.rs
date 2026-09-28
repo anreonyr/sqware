@@ -10,23 +10,23 @@
 //! 控制台是**双向**的：读（本域排空出来的一批，交给 `canonical`）与写（客人交来的一条字）。
 //! 树上一枚 Tile 只挂一枚 Pie，故本域那一格从一枚砖变成**一块 Pane**，两枚门牌各占一枚
 //! （用户裁定 `/device/uart/{rx,tx}`）。`Context::enter` 那一趟是"一枚门牌"那一形，故本域
-//! 自己走一趟（`rtc` 仍走 `enter`）。
+//! 交的路长一段、牌两枚；**那一趟的机制与 `enter` 同住 [`bridge::land`]**（`rtc` 仍走 `enter`）。
 //!
 //! 写的判据与读同一条：**一次写 = 一条完整的字**——客人推来的**一条消息**就是要写出去的
 //! 全部字节；本域不拆、不并、不添字（换行由客人补，见 `programs/src/user/canonical/main.rs`）。
 
 use super::ME;
-use env::{Key, Mark, Name, PieToken, Wait};
+use env::{Key, Mark, PieToken, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::fail::Fail;
 use programs::program::uart::E_UART;
+use programs::system::operator::bridge;
 use protocol::debug;
 use protocol::driver::DIR;
 use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::{EntryId, Permit};
 use runtime::env::mail;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
@@ -77,74 +77,31 @@ pub fn start(key: Key, ms: Wait) -> Result<Desk, Fail> {
 /// 落两枚门牌并自证：`/device`（幂等——别的驱动也在它下面）→ `/device/uart`（本域那块 Pane）
 /// → `rx` / `tx` 各一枚 Tile → 各查回来一遍（号 ↔ 名对得上才算那枚号是真坐标）。
 ///
-/// 判据与 [`Context::enter`] 那一趟同一条：**这一域没登记上就不该活着** ⇒ 不成即断言。
+/// **这一趟本身住在 `bridge::land`**：与 `Context::plate` 同一趟，只是**路长一段、牌两枚**
+/// （[`Context::enter`] 那一形是"一枚门牌"，而控制台是双向的 ⇒ 两枚砖同挂一块窗格下）。
+///
+/// **照实记（自证口径跟着四家统一，多两趟往返）**：原先这里只问一句 `name`（"一次问完两格"：
+/// 既答名、也证明那一号还在），收进 `land` 之后四家同一条口径——`token`（路译得回 ＋ 那一枚门闩
+/// 取得回来）**再加** `name`。故两枚门牌各多两问（`tile` ＋ `token`），boot 期四问、不在稳态。
+/// 落在这：**一处口径**比**两趟往返**值。
+///
+/// 判据与 [`Context::plate`] 同一条：**这一域没登记上就不该活着** ⇒ 不成即断言。
 /// 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
 ///
 /// **本台借一面 `Face` 的视图**（[`operator::Face::from`]）：它要在**同一条会话**上落两枚门牌，
-/// 而会话本身仍归 [`Context`]。两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
+/// 而会话本身仍归 [`Context`]。
 fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
-    let (Ok(dev), Ok(me), Ok(rx_name), Ok(tx_name)) =
-        (Name::new(DIR), Name::new(ME), Name::new(RX), Name::new(TX))
-    else {
-        debug!("{ME}: tree: bad name");
-        return;
-    };
     let tree = operator::Face::from(&ctx.session);
-    let root = tree.root();
-    // 分目录两趟：第一趟 `/device`（幂等），第二趟本域那块 `/device/uart`。
-    let opened_dir = root.open(dev, ms);
-    let (part, _dir) = match &opened_dir {
-        Ok(at) => (Ok(()), at.id()),
-        Err(fail) => (Err(*fail), EntryId::new(0)),
-    };
-    let opened_pane = match &opened_dir {
-        Ok(at) => at.open(me, ms),
-        Err(fail) => Err(*fail),
-    };
-    let (pane, at) = match &opened_pane {
-        Ok(pane) => (Ok(()), pane.id()),
-        Err(fail) => (Err(*fail), EntryId::new(0)),
-    };
-    let _ = at;
-    // 两枚砖**都声明归本域**（`probe-owner` 顶的就是这一格）。
-    let laid_rx = match &opened_pane {
-        Ok(pane) => pane
-            .bind(rx_name, rx, Permit::Unset, Mine::Yes, ms)
-            .map(|e| e.id()),
-        Err(fail) => Err(*fail),
-    };
-    let laid_tx = match &opened_pane {
-        Ok(pane) => pane
-            .bind(tx_name, tx, Permit::Unset, Mine::Yes, ms)
-            .map(|e| e.id()),
-        Err(fail) => Err(*fail),
-    };
-    // 自证：按号问名——**一次问完两格**（`name` 那一手既答名、也证明那一号还在）。
-    let found_rx = match &laid_rx {
-        Ok(id) => root.name(*id, ms),
-        Err(fail) => Err(*fail),
-    };
-    let found_tx = match &laid_tx {
-        Ok(id) => root.name(*id, ms),
-        Err(fail) => Err(*fail),
-    };
-    let named_rx = found_rx.as_ref().ok();
-    let named_tx = found_tx.as_ref().ok();
-    let (got_rx, got_tx) = (found_rx.is_ok(), found_tx.is_ok());
-    debug!(
-        "{ME}: tree part={part:?} pane={pane:?} rx={:?} tx={:?} find_rx={found_rx:?} find_tx={found_tx:?} got={got_rx},{got_tx} pname={},{}",
-        laid_rx.as_ref().map(|id| id.get()),
-        laid_tx.as_ref().map(|id| id.get()),
-        named_rx.map(|n| n.as_str()).unwrap_or("-"),
-        named_tx.map(|n| n.as_str()).unwrap_or("-"),
-    );
-    assert!(part.is_ok());
-    assert!(pane.is_ok());
-    assert!(laid_rx.is_ok());
-    assert!(laid_tx.is_ok());
-    assert!(found_rx.is_ok());
-    assert!(found_tx.is_ok());
-    assert!(got_rx && got_tx);
-    assert_eq!(named_rx.map(|n| n.as_str()), Some(RX));
-    assert_eq!(named_tx.map(|n| n.as_str()), Some(TX));
+    let list = [(RX, rx), (TX, tx)];
+    let plated = bridge::land(&tree, ME, &[DIR, ME], Mine::Yes, &list, ms);
+    assert_eq!(plated.len(), 2, "{ME}: tree: road");
+    for (one, want) in plated.iter().zip([RX, TX]) {
+        assert!(one.land.is_ok(), "{ME}: tree: land {want}");
+        assert!(one.find.is_ok(), "{ME}: tree: find {want}");
+        assert_eq!(
+            one.named.as_ref().map(|name| name.as_str()),
+            Some(want),
+            "{ME}: tree: name {want}"
+        );
+    }
 }

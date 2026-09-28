@@ -1,14 +1,24 @@
-//! operator::bridge — **装配侧**：本域手里的持树者（那一枚号 ＋ 提示之路 ＋ 协调帧两格），
-//! 以及本域请它做的两件事——**接一位客人上树**（[`Tree::attach`]）与**递一条路上去**
-//! （[`Tree::plate`]）。
+//! operator::bridge — **上树那一趟在实现侧的两手**：装配者手里的持树者（那一枚号 ＋ 提示之路 ＋
+//! 协调帧两格）请它做的两件事——**接一位客人上树**（[`Tree::attach`]）与**递一条路上去**
+//! （[`Tree::plate`]）；以及**各域自己落门牌并自证**那一趟（[`land`]）。
+//!
+//! **同一趟的两侧**：[`Tree::plate`] 是**递上去**——本域不上树，立由持树者在自己核里做
+//! （`programs/src/system/operator/plate.rs`）；[`land`] 是**自己落**——各域开一条树会话、逐段
+//! 分路、按名字把门牌贴上去、再查回来验一遍。两侧共用一个坐标（`["sys","principal"]` 那种路）。
 //!
 //! **客人只有别的域**：装配者替每一位客人把孔转给持树者、再把它的号推上提示路。而"往树上立
-//! 一格"**不由本域上树**——本域只把那一枚与那一条路递过去，**立由持树者在自己核里做**
-//! （[`Tree::plate`] 与 `programs/src/system/operator/plate.rs`）：树是那一格的权威，而它当不了
-//! 自己的客人（自指 ⇒ 环）。
+//! 一格"**不由本域上树**——本域只把那一枚与那一条路递过去，**立由持树者在自己核里做**：树是
+//! 那一格的权威，而它当不了自己的客人（自指 ⇒ 环）。
 //!
-//! 三侧分家之后本文件只放**装配侧**；两侧共用的图与说明见 [`super`] 的"载体"那一节，
+//! **照实记（本文件从前只放装配侧）**：这一刀把四处逐字同构的"落门牌并自证"收成 [`land`]——
+//! 两处 `serve_tree`（名册 / 盟册）、`driver::context::Context::plate`（三台驱动共用）、
+//! `uart::desk::plate`（两枚门牌落在一块窗格里）；量出来的行数见 [`land`] 自己的照实记。故本
+//! 文件从"只放装配侧"改成"放上树那一趟的两侧"。
+//!
+//! 三侧分家之后两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
+
+use alloc::vec::Vec;
 
 use env::Mark;
 use env::Wait;
@@ -19,7 +29,9 @@ use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::communication::establish;
-use protocol::system::operator::{TIP_LEN, Tip};
+use protocol::debug;
+use protocol::system::operator::client::{Face, Mine, Pane};
+use protocol::system::operator::{EntryId, Fail, Permit, TIP_LEN, Tip};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
@@ -229,4 +241,163 @@ pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())
+}
+
+// ── 上树那一趟（客人侧：各域自己落门牌并自证）─────────────────
+
+/// **一枚门牌落下去之后那三条读数**（[`land`] 每枚门牌返一行）。
+///
+/// **三格就是那一趟的三步**：落（`bind`）、查回来（`token`，旧 `find`）、拿号问名（`name`）。
+/// 读数行里另两格是这两个 `Result` 的第二说法，故**不另存**：`plate` 就是 `land` 答出来的那枚号，
+/// `got` 就是 `find` 成没成——**一格写两遍是 §3 那个死格**（原来的四处各写了一遍）。
+pub struct Landed {
+    /// 落门牌那一步（`bind`）：答那一格自己的号。
+    pub land: Result<(), Fail>,
+    /// 那一格自己的号（`land` 不成时是零号）。
+    pub plate: EntryId,
+    /// 查回来验一遍（`token`）：**路译得回、那一枚门闩取得回来**。
+    pub find: Result<(), Fail>,
+    /// 拿号问名：**号 ↔ 名对得上**，才算那枚号是真坐标。
+    pub named: Option<Name>,
+}
+
+/// **上树落门牌那一趟**：名字先全验 → 逐段分路（`part` 幂等）→ 逐枚落（`bind`）→ 逐枚查回来
+/// （`token`）→ 逐枚拿号问名（`name`）→ **每枚一行读数**。
+///
+/// `tree` = 拿谁的会话；`family` = 哪一族（读数行前缀）；`road` = **绝对坐标的段列表**
+/// （`["sys","principal"]`、`["device"]`、`["device","uart"]`）；`mine` = 那一格声不声明归属；
+/// `faces` = 要落的那几枚（**末段名 ＋ 入口，次序即返回次序**）。
+///
+/// **`road` 是"容器链"，不含那一枚自己的名字**：`/sys/principal` 那块窗格底下才放 `ask` / `set`，
+/// 故 `road = ["sys","principal"]` 而 `faces = [("ask",…),("set",…)]`；驱动那一家只有一段
+/// `["device"]`（砖就叫 `/device/router`）。把砖的名字也塞进 `road` 会**先立一块同名的窗格、
+/// 再把砖落在它底下**——这一格栽过，照实记在 `Context::plate` 那一处（一处路的写法，五台程序
+/// 的读数一起变）。
+///
+/// **返落到的那几枚**：名字非法、或路在某一段断了 ⇒ **空表**（那时读数已印一行）。故"路这一趟
+/// 断没断"与"某一枚落没落上"分得开，不由一个 `Result` 折成同一格。
+///
+/// # 照实记（这一趟是量出来的：四处逐字同构）
+///
+/// ```text
+///   两处 serve_tree（名册 / 盟册）   50 行 / 45 码行 / 2 枚    tile+token → name
+///   Context::plate（三台驱动共用）   59 行 / 52 码行 / 1 枚    同上（含末尾六条断言）
+///   uart::desk::plate               66 行 / 63 码行 / 2 枚    只有 name（两枚落在一块窗格里）
+/// ```
+///
+/// 前两处的 50 行里有 **44 行逐字相同**——差的 6 行：4 行是 `debug!` 里那个族名前缀、1 行多一句
+/// 注释、1 行是签名（一家由 `Session` 现取 `Face`、一家收 `&TreeFace`）。四处合计 225 行 /
+/// 204 码行，步骤一字不差；故"两台以上逐字同构 ⇒ 收"在这里成立。
+///
+/// **照实记（uart 那一处换了自证口径：多两趟往返）**：uart 原来只问一句 `name`（"一次问完两格"：
+/// 既答名、也证明那一号还在），收进来之后**四家同一条口径**——`token`（路译得回 ＋ 那一枚门闩
+/// 取得回来）**再加** `name`（号 ↔ 名）。故 uart 那两枚门牌各多两问（`tile` ＋ `token`）：boot 期
+/// 四问，不在稳态。这是本刀唯一一处**拿往返换口径**，记在这（**一处口径**比**两趟往返**值）。
+///
+/// **照实记（许可那一格不设形参）**：四处的 `bind` 今天全是 [`Permit::Unset`]——**用那一轴还没有
+/// 选择者**（"装配者算不算一位"那一裁未落）。设一个形参就是 §3 那个**报法字段**（各点各硬编码
+/// 一个值 ⇒ 它不是数据，是把若干特例塞进签名）；真开那一轴时它跟 `TipIn::Plate` 那一格一起来。
+///
+/// **照实记（收源码不等于减镜像：一笔要分开记的逆数）**：四处 204 码行 ⇒ 本手 83 行 ＋ 四个薄
+/// 调用点，同构从 4 份收到 1 份；可**每台摸得到它的程序各静态链一份**，量出来是：
+///
+/// ```text
+///   .text（llvm-size，去掉页对齐）  rtc +3484   router +3118   coalition +3290   uart +1374 B
+///   剥符号后的 ELF **按页对齐**     ⇒ 每台顶出一整页 / 两页
+///   initrd                        1238469 → 1271237 B（+32768，+2.65%）
+/// ```
+///
+/// 故这一刀的账分开记：**同构 −3 份、口径一处**（收成）；**镜像 +32 KB**（付的）。真实码增约
+/// 11 KB，页对齐把它放大成 32 KB 的台阶——"收"买的是同构只留一份，不是省下镜像。
+///
+/// **走的是号、不是柄**：`Pane::open` 借出来的下一块窗格活不过这一轮（自指的借用），故这一趟只把
+/// "到哪儿了"记成一枚 [`EntryId`]，每段就地从 `tree` 造一块柄。
+pub fn land(
+    tree: &Face,
+    family: &str,
+    road: &[&str],
+    mine: Mine,
+    faces: &[(&str, PieToken)],
+    millis: Wait,
+) -> Vec<Landed> {
+    // 一、名字**先全验**：一个不合法就一趟都不上路（与"路上哪一段没分出来"分开报）。
+    let mut names: Vec<Name> = Vec::with_capacity(road.len());
+    for seg in road {
+        match Name::new(seg) {
+            Ok(name) => names.push(name),
+            Err(_) => {
+                debug!("{family}: tree: bad name");
+                return Vec::new();
+            }
+        }
+    }
+    // 二、逐段分路（`open` 幂等：那一格已经在就答它那个号；"是不是窗格"由 `part` 自己判）。
+    let mut at: Option<EntryId> = None;
+    for (seg, name) in road.iter().zip(&names) {
+        let here = match at {
+            Some(id) => Pane::of(tree, id),
+            None => tree.root(),
+        };
+        match here.open(*name, millis) {
+            Ok(next) => at = Some(next.id()),
+            Err(fail) => {
+                debug!("{family}: tree road={road:?} open at={seg} failed={fail:?}");
+                return Vec::new();
+            }
+        }
+    }
+    let pane = match at {
+        Some(id) => Pane::of(tree, id),
+        None => tree.root(),
+    };
+    let root = tree.root();
+    // 三、逐枚：落 → 查回来 → 拿号问名 → 一行读数。
+    let mut out = Vec::with_capacity(faces.len());
+    for (face_name, entry) in faces {
+        let face_name = *face_name;
+        let Ok(name) = Name::new(face_name) else {
+            debug!("{family}: tree: bad name");
+            return out;
+        };
+        // **落门牌**：答的是门牌自己那一格的号。
+        let landed = pane
+            .bind(name, *entry, Permit::Unset, mine, millis)
+            .map(|plate| plate.id());
+        let (land, plate) = match &landed {
+            Ok(id) => (Ok(()), *id),
+            Err(fail) => (Err(*fail), EntryId::new(0)),
+        };
+        // **查回来验一遍**：按路（这一段名字只在这里再用一次，此后一律按号）。
+        let find = match &landed {
+            Ok(_) => {
+                names.push(name);
+                let found = tree
+                    .tile(&names, millis)
+                    .and_then(|tile| tile.token(millis))
+                    .map(|_| ());
+                names.pop();
+                found
+            }
+            Err(fail) => Err(*fail),
+        };
+        // **拿号问名**：号 ↔ 名这一对对得起来，才算那枚号是真坐标。
+        let named = match &landed {
+            Ok(id) => root.name(*id, millis).ok(),
+            Err(_) => None,
+        };
+        debug!(
+            "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={}",
+            find.is_ok(),
+            entry.get(),
+            plate.get(),
+            named.as_ref().map(|name| name.as_str()).unwrap_or("-"),
+        );
+        out.push(Landed {
+            land,
+            plate,
+            find,
+            named,
+        });
+    }
+    out
 }

@@ -27,9 +27,9 @@ use protocol::debug;
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
 use crate::system::board::client as board;
+use crate::system::operator::bridge;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::Permit;
 use protocol::system::principal as pcall;
 use crate::system::principal::core::Principal;
 use crate::system::principal::mount;
@@ -276,53 +276,19 @@ fn answer(
 /// `got` 只是"认出了那一枚"；它指不指得回原物，由**真客人**（`harness/src/subject.rs`）证——它照同一条路
 /// 找上门、问一句、拿回一条号。故本域不自问自答。
 fn serve_tree(session: &Session, faces: [(pcall::Grant, PieToken, Name); 2]) {
-    let tree = operator::Face::from(session);
-    let (Ok(dir), Ok(segment)) = (Name::new(pcall::DIR), Name::new(mount::SEGMENT)) else {
-        debug!("principal: tree: bad name");
-        return;
-    };
-    let root = tree.root();
-    // **分目录**：`/sys`（两族共用那一格坐标）。
-    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
-        debug!("principal: tree part /sys failed");
-        return;
-    };
-    // **再分一段**：`/sys/principal`——两面共用那段前缀，**它自己不落任何叶子**。
-    let Ok(seg) = sys.open(segment, Wait::AtMost(MS)) else {
-        debug!("principal: tree part /sys/principal failed");
-        return;
-    };
-    for (grant, entry, name) in faces {
-        // **落门牌**：答的是门牌自己那一格的号。
-        let landed = seg
-            .bind(name, entry, Permit::Unset, Mine::No, Wait::AtMost(MS))
-            .map(|plate| plate.id());
-        let (land, pid) = match &landed {
-            Ok(id) => (Ok(()), id.get()),
-            Err(fail) => (Err(*fail), 0),
-        };
-        // 查回来验一遍：**按号**（名字只在上面那两格用过，此后一律按号）。
-        let (find, got) = match &landed {
-            Ok(_) => match tree.tile(&[dir, segment, name], Wait::AtMost(MS)) {
-                Ok(e) => match e.token(Wait::AtMost(MS)) {
-                    Ok(_) => (Ok(()), true),
-                    Err(fail) => (Err(fail), false),
-                },
-                Err(fail) => (Err(fail), false),
-            },
-            Err(fail) => (Err(*fail), false),
-        };
-        // 拿号问名：**号 ↔ 名**这一对对得起来，才算那枚号是真坐标。
-        let pname = match landed {
-            Ok(id) => root.name(id, Wait::AtMost(MS)).ok(),
-            Err(_) => None,
-        };
-        debug!(
-            "principal: tree face={} land={land:?} find={find:?} got={got} entry={} plate={pid} pname={}",
-            grant.name(),
-            entry.get(),
-            pname.as_ref().map(|n| n.as_str()).unwrap_or("-"),
-        );
-    }
+    // **这一趟本身住在 [`bridge::land`]**（四处逐字同构、收在一处；量的行数见它自己的照实记）：
+    // 本手只剩两件本族的事实——路（`/sys` ＋ `/sys/principal`）与那两枚门牌。
+    let list = [
+        (faces[0].2.as_str(), faces[0].1),
+        (faces[1].2.as_str(), faces[1].1),
+    ];
+    let _ = bridge::land(
+        &operator::Face::from(session),
+        "principal",
+        &[pcall::DIR, mount::SEGMENT],
+        Mine::No,
+        &list,
+        Wait::AtMost(MS),
+    );
 }
 
