@@ -21,27 +21,42 @@
 #
 # 这一格是**量出来的**，不是洁癖：`echo exit | cargo run --release` 把命令在**起机那一
 # 瞬**灌进去，guest 当场吃掉一个字节——日志里逐字留下一个孤立的 `xit`。而整机收场的
-# 扳机是 `canonical`（装配单位次 19，最后一条）：它读不到 `exit` 就永不退场，编排域的
+# 扳机是 `canonical`（装配单位次 21，最后一条）：它读不到 `exit` 就永不退场，编排域的
 # `server::supervise` 于是等一条**永远不响的道**，引导域不退、机器不停机。
 #
-#   立刻喂      11~12 笔结局 · 停机行 0 · 退出码 124
-#   起机后 3 s  14 笔结局 · 停机行 1 · 退出码 0
+# **照实记（重量的那一遍：同一份提交镜像、直接起 QEMU、绕开本脚本）**：
 #
-# 也就是说：**门删掉时被一并带走的，除了判定，还有 stdin 的日程**——门当年是"等机器
-# 起来再逐条喂"。这里补回来，但**不赌"等多久"**：
+#   单发一行 · t=0    3/4 **不停机**（rc=124、无停机行，而 14~16 条读数都在）＋ 1 次装配折
+#   单发一行 · t≥1 s  28/28 停机          ← "等多久"的下限是**一秒**，不是二十秒
+#   完全不喂          0/10 停机（本来就不该停）—— 不喂时机器不会自己停，读数会全部到齐
 #
-#   单行（`exit` 那一档）→ **反复喂**（立刻一次、之后每 2 s 一次）直到写不进去（机器没了）。
-#                          重喂一条幂等的口令没有任何代价，而"起稳"这件事由机器自己说
-#                          ——连"第一次要等多久"都不必猜：第一次被吃掉是**预期之内**的。
+# 两档都**先起稳再喂**：起机那一瞬喂进去的那一发落不进去（第一行）；而"装配期折一条"
+# （`system: assemble`；一折之后**其后台全部没有读数**）**只在起机那一瞬有输入的跑里
+# 出现过**（2/6 对 0/38）。故单行档与多行档**共用同一个 `QEMU_SETTLE`**（默认 6 s）：
+#
+#   单行（`exit` 那一档）→ 起稳后喂一次，之后**每 2 s 重喂**直到写不进去（机器没了）。
+#                          重喂一条幂等的口令没有任何代价 ⇒ 那一发到底被吃掉没有**不必判**。
 #   多行（一整份日程）  → **只喂一次**（重放会重复执行命令），首喂前等 `QEMU_SETTLE` 秒。
 #
-# 为什么单行那一档不能也靠"固定停顿"：那个秒数一旦猜短，症状与原缺陷**逐字相同**
-# （结局笔数变少、没有停机行、退出码 124）——最难查的失败模式。
+# **为什么是 6 而不是 3**：让机器**停机**只要 1 s 就够（第二行），但**读数**要等它自己走完——
+# 那一行口令一到，`canonical`（那张单上最后一条 = 停机扳机）就退场，编排域当场扑杀还在跑的台。
+# 实测同一份镜像：t=3 s 那一档 `probe-operator-gate` 那条读数丢 2/2；t=4 / 5 / 6 s 六跑全在
+# （0/6）；而"完全不喂"那十跑读数全在。故这一格取的是**读数走完的下限**，不是"能停机的最小值"。
+#
+# 为什么重喂那一格不能退成"就喂一次、赌一个停顿"：那个秒数一旦猜短，症状与原缺陷**逐字
+# 相同**（没有停机行、退出码 124）——最难查的失败模式。起稳那一下给的是**下限**，不是
+# "猜准某一刻"。
+#
+# **照实记（攒不住就出声）**：`mktemp` 一失败（/tmp 只读、TMPDIR 不可写），`$tmp` 就是
+# 空串，其后的 `cat` / `wc` 全落空 ⇒ **一个字节都不喂**，而脚本仍以 0 退出：症状与
+# "喂得太早"逐字相同（rc=124、无停机行），只有一行 `cat: '': 没有那个文件或目录` 可查。
+# 故 mktemp / 写不进 / 数不出三处一律**当场报一句到 stderr 并退出**——退路是既有的
+# `QEMU_SETTLE=0`（stdin 原样继承）。
 #
 # 用法：nu scripts/boot.nu <elf>
 # 环境变量：
-#   QEMU_SETTLE  秒；**多行**输入首喂前的等待（默认 3）。置空或 0 = **完全不攒**，
-#                stdin 原样继承（旧行为，留作对照）。
+#   QEMU_SETTLE  秒；**两档**输入首喂前的等待（默认 6）——单行档也先起稳再喂（见上）。
+#                置空或 0 = **完全不攒**，stdin 原样继承（旧行为，留作对照）。
 #   其余（QEMU_TIMEOUT / QEMU_SEED / QEMU_ICOUNT / QEMU_MEM / QEMU_SMP / QEMU_EXTRA_ARGS /
 #   QEMU_GDB / QEMU_SEMI / QEMU_FEATURES）见 [`qemu-args.nu`](qemu-args.nu) 的头注。
 
@@ -49,12 +64,24 @@ use ./qemu-args.nu args
 
 # 上游：把 stdin 攒进临时文件再喂（见头注那两档）。
 # **单引号**——这段归 bash 解释，nu 一个字都不插值（`$"…"` 里的 `$(` 会被 nu 当成变量）。
-const FEED = 'tmp=$(mktemp)
-cat > "$tmp"
-if [ "$(wc -l < "$tmp")" -le 1 ]; then
+const FEED = 'tmp=$(mktemp) || {
+  echo "boot.nu: 攒不住 stdin（mktemp 失败）——QEMU_SETTLE=0 可退回 stdin 原样继承" >&2
+  exit 1
+}
+if ! cat > "$tmp"; then
+  echo "boot.nu: 攒不住 stdin（写不进 $tmp）" >&2
+  rm -f "$tmp"
+  exit 1
+fi
+lines=$(wc -l < "$tmp") || {
+  echo "boot.nu: 攒不住 stdin（读不出 $tmp）" >&2
+  rm -f "$tmp"
+  exit 1
+}
+sleep "${QEMU_BOOT_SETTLE:-6}"
+if [ "$lines" -le 1 ]; then
   while :; do cat "$tmp" || break; sleep 2; done
 else
-  sleep "${QEMU_BOOT_SETTLE:-3}"
   cat "$tmp"
 fi
 rm -f "$tmp"'
@@ -69,7 +96,7 @@ def main [elf: path] {
   let cmd = if $wrap { "timeout" } else { "qemu-system-riscv64" }
   let head = if $wrap { [$t "qemu-system-riscv64"] } else { [] }
 
-  let settle = ($env.QEMU_SETTLE? | default "3")
+  let settle = ($env.QEMU_SETTLE? | default "6")
   let staged = (not (is_tty)) and (not ($settle | is-empty)) and ($settle != "0")
   $env.QEMU_BOOT_SETTLE = $settle
 

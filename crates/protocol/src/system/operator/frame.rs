@@ -1071,6 +1071,10 @@ pub struct PlateFrame {
     /// 那一格叫什么（如 `control`）。
     pub name: Name,
     /// 要挂的那一枚**在持树者表里**的号（`port::ship` 换回来的那一格）。
+    ///
+    /// **`Layer::Segment` 那一帧没有可挂的**（目录不是叶子：没有入口、没有 Pie，故递帧那一侧
+    /// 也不递孔）——那一格填 [`PieToken::NONE`]（无效哨兵），收帧那一侧在那一支里**只读
+    /// `name`**，一格都不落（`server.rs::land_plate` 的 ①）。
     pub entry: PieToken,
     /// 这一枚落在**哪一层**（三态，见 [`Layer`]）。
     pub layer: Layer,

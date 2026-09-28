@@ -102,18 +102,34 @@ impl Tree {
         self.plate(entry, dir, name, Layer::Sys)
     }
 
+    /// **只立那一段目录**（`/sys/{segment}` 那块 `Pane`）：**一帧，且不递任何孔**。
+    ///
+    /// 目录那一段**不是叶子**——没有入口、没有 Pie（[`crate::system::operator::mount`] 的文件头
+    /// 就是这句话），收帧那一侧 `Layer::Segment` 那一支**只看名字**
+    /// （`server.rs::land_plate` 的 ①）。故这一帧里那一格填 [`PieToken::NONE`]（无效哨兵），
+    /// 也**不递孔过去**：目录没有可递的东西，而递一枚没人落的孔只是让持树者表里多一枚死副本。
+    ///
+    /// **照实记（"第八格"是量出来的）**：从前没有这一手——目录与七位**共用** [`Tree::land_deep`]
+    /// 的"两帧"，而目录那一趟的两段名字是同一个（`"operator"`）：第一帧 `part /sys/operator`
+    /// 立出那块 `Pane`，第二帧 `Under` 于是**又往它里面落了一格也叫 `operator` 的**。实机读数：
+    /// `/sys/operator` 底下**八格**（七位 ＋ 一格自己，且那一格上挂着目录那枚孔）——与"那一段
+    /// 自己不是一格"正相反。旧探针**按名字数**（只数那七段名字）故一直没显形；改成"数格子"
+    /// （`harness/src/probe_operator_gate.rs::count_under`）第一跑就撞上。
+    pub fn land_segment(&mut self, segment: Name) -> Result<(), &'static str> {
+        self.host.ok_or("no tree yet")?;
+        let sys = Name::new("sys").map_err(|_| "operator:name")?;
+        self.frame(PieToken::NONE, sys, segment, Layer::Segment)
+    }
+
     /// **落两层**：`/sys` 底下的 `segment` 那一段先立成一块 `Pane`，再把 `name` 落在它底下。
     ///
-    /// 与 [`Tree::land_plate`] 是**同一手**（同一帧、同一门闩的规矩），差别只有一格：**两帧、
-    /// 次序即契约**。`token` 是**那一段自己的那一枚孔**（调用方铸：目录那一格也要有名字、
-    /// 有门闩，故它照样是"一枚孔 → 一个名字"）。
-    ///
-    /// 两帧的两个名字都写在**同一格**（`name`）里，故上面的 `segment` / `name` 就是那两帧各自
-    /// 要立、要落的那一段——**收帧那一侧只看 `name`**：
+    /// 与 [`Tree::land_plate`] 是**同一手**（同一门闩的规矩），差别只有一格：**两帧、次序即
+    /// 契约**，而**第一帧不落叶子**（正文与理由在 [`Tree::land_segment`]——目录没有入口，
+    /// 故那一帧不递孔）。两帧各立什么、各落什么：
     ///
     /// ```text
-    ///   ① token ＋ name = segment   deep = true     ⇒ part(At(sys), segment)   立那一段
-    ///   ② entry ＋ name = name      deep = false    ⇒ land(At(sys), name)      落进那一段
+    ///   ① name = segment  Segment ⇒ part(At(sys), segment)   立那一段（不落叶子）
+    ///   ② name = name     Under   ⇒ land(At(segment), name)  落进那一段
     /// ```
     ///
     /// **为什么不是"多带一段路径"**：这条路落的是**一格**，不是一条路；两层就是**两格**。故
@@ -122,13 +138,12 @@ impl Tree {
     pub fn land_deep(
         &mut self,
         entry: PieToken,
-        token: PieToken,
         segment: Name,
         name: Name,
     ) -> Result<(), &'static str> {
-        let sys = Name::new("sys").map_err(|_| "operator:name")?;
-        // ① 先把那一段立成一块 `Pane`（`/sys/operator`）。
-        self.plate(token, sys, segment, Layer::Segment)?;
+        // ① 先把那一段立成一块 `Pane`（`/sys/operator`）——**同一具身体**：七位各走一遍这一帧，
+        //    而 `part` 幂等（已经在就是成了），故目录先立、其后逐位重推都无事。
+        self.land_segment(segment)?;
         // ② 再把那一格落进那一段（`/sys/operator/{name}`）。
         self.plate(entry, segment, name, Layer::Under)
     }
@@ -145,7 +160,6 @@ impl Tree {
         layer: Layer,
     ) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
-        let tip = self.tip.ok_or("no tip")?;
         // ① 那一枚交过去：`R|W ＋ VEST`（持树者要把它再授给来查的客人；少 `VEST` ⇒ 客人那次
         //    `find` 里的转授答 `Denied`）。**号随帧走**——本仓那条"号随交接一起走"的口径。
         let seed = port::ship(
@@ -156,12 +170,27 @@ impl Tree {
         )
         .map_err(|_| "operator:plate")?
         .seed();
-        // ② 推帧：落哪一块、叫什么、挂哪一枚（持树者不认识任何一族的名字）。
+        self.frame(seed, dir, name, layer)
+    }
+
+    /// **推一帧上去**（[`Tree::plate`] 与 [`Tree::land_segment`] 共用的下半截）：落哪一块、
+    /// 叫什么、挂哪一枚。
+    ///
+    /// 持树者不认识任何一族的名字，也不认识任何一枚孔——**它只按帧里的两段名字与那一格号办**
+    /// （`entry` 填 [`PieToken::NONE`] 的那几帧是"这一帧不挂东西"：见 [`Tree::land_segment`]）。
+    fn frame(
+        &mut self,
+        entry: PieToken,
+        dir: Name,
+        name: Name,
+        layer: Layer,
+    ) -> Result<(), &'static str> {
+        let tip = self.tip.ok_or("no tip")?;
         let mut rec = [0u8; PlateFrame::LEN];
         PlateFrame {
             dir,
             name,
-            entry: seed,
+            entry,
             layer,
         }
         .store(&mut rec);

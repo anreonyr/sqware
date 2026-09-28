@@ -158,8 +158,8 @@ impl Assembly {
     /// **把七位操作面挂上树**（`/sys/operator/{part,land,find,trim,list,seek,name}`）。
     ///
     /// 与 [`Assembly::mount_control`] 同一趟、同一只手（本域铸入口 → 持树者落格），但**两层**：
-    /// 先把 `/sys/operator` 那一段立成一块 `Pane`（**它只是目录，不是任何能力的别名**），七位再
-    /// 落在它底下（[`Naming::land_deep`]）。
+    /// 先把 `/sys/operator` 那一段立成一块 `Pane`（**它只是目录，不是任何能力的别名**：没有入口、
+    /// 没有 Pie），七位再落在它底下（[`Naming::land_deep`]）。
     ///
     /// **七格各自独立**：一位挂不上只少一位（各报一行读数、不拦整机），其余六位照挂。目录那一段
     /// 挂不上 ⇒ 七位都挂不上（各报它自己的那一行）；那一步失败就地收工，不逐位重试。
@@ -168,18 +168,16 @@ impl Assembly {
     /// 入口，开在那一枚记号上的会话就是说给持树者的"我持这一柄权"。服务端判面那一句见
     /// `programs/src/system/operator/server.rs::answer`（第一道闸）。
     fn mount_grants(&mut self) {
-        // ① 目录那一段：`/sys/operator`（自己也是一格——有名字、有门闩）。
-        let (segment, _dir, segment_name) = match operator::mount::pane() {
-            Ok(plate) => plate,
+        // ① 目录那一段：`/sys/operator`——**只立这一块 `Pane`，不落任何叶子**（它自己不是一格，
+        //    见 `operator::mount` 的文件头与 [`Naming::land_segment`] 的照实记）。
+        let segment = match operator::mount::segment() {
+            Ok(name) => name,
             Err(why) => return debug!("system: grants not mounted ({why})"),
         };
-        //    **目录那一格也是一层"深处"**：它落在 `/sys` 底下，故走同一手（`land_deep`）——
-        //    只是这位面的名字就是这段目录自己，故两段名字**同一个**（`land_deep` 要的那个
-        //    等式，见那边）。
-        if let Err(why) = self.naming.land_deep(segment, segment, segment_name, segment_name) {
+        if let Err(why) = self.naming.land_segment(segment) {
             return debug!("system: grants not mounted ({why})");
         }
-        // ② 七位：`operator` 底下那七段。
+        // ② 七位：`operator` 底下那七段（`entry` 交出那一枚孔，`mid` 就是上面那一段的名字）。
         for grant in protocol::system::operator::Grant::ALL {
             let (entry, mid, name) = match operator::mount::entry(grant) {
                 Ok(plate) => plate,
@@ -188,7 +186,7 @@ impl Assembly {
                     continue;
                 }
             };
-            if let Err(why) = self.naming.land_deep(entry, segment, mid, name) {
+            if let Err(why) = self.naming.land_deep(entry, mid, name) {
                 debug!("system: grant not mounted ({why})");
                 continue;
             }
@@ -348,17 +346,24 @@ impl Naming {
         self.0.land_plate(entry, dir, name)
     }
 
-    /// **落两层**（`/sys/operator/{op}` 那一族）：`dir` 那一段先立成 `Pane`，`name` 落在它底下。
+    /// **只立那一段目录**（`/sys/{segment}` 那块 `Pane`）：一帧，不递任何孔。
+    ///
+    /// 正文在 [`Tree::land_segment`](crate::system::operator::bridge::Tree::land_segment)：
+    /// 目录不是叶子（没有入口、没有 Pie），故它与七位走**不同**的递帧路。
+    fn land_segment(&mut self, segment: Name) -> Result<(), &'static str> {
+        self.0.land_segment(segment)
+    }
+
+    /// **落两层**（`/sys/operator/{op}` 那一族）：`segment` 那一段先立成 `Pane`，`name` 落在它底下。
     ///
     /// 正文在 [`Tree::land_deep`](crate::system::operator::bridge::Tree::land_deep)。
     fn land_deep(
         &mut self,
         entry: PieToken,
-        segment: PieToken,
-        dir: Name,
+        segment: Name,
         name: Name,
     ) -> Result<(), &'static str> {
-        self.0.land_deep(entry, segment, dir, name)
+        self.0.land_deep(entry, segment, name)
     }
 
     /// 它是哪一双眼睛：那一格记进给持树者的协调帧（重复推是幂等的）。

@@ -5,19 +5,29 @@
 //! ```text
 //!   ① 铸入口   本域主线程自己铸（记号 = 那一位的记号，见 grant）
 //!   ② 递出去   交给持树者（`R|W ＋ VEST`），再把"落哪一块、叫什么"推上提示之路
-//!   ③ 落       持树者在自己核里 `part /sys` ＋ `land /sys/operator/{name}`
+//!   ③ 落       持树者在自己核里 `part /sys/operator` ＋ `land /sys/operator/{name}`
 //! ```
 //!
-//! ① 在本文件里（**那一位的记号与那一段名字只有一处**：`Grant`）；②③ 分别在
-//! [`Tree::land_plate`](crate::system::operator::bridge::Tree::land_plate) 与持树者的 `settle`
+//! ① 在本文件里（**那一位的记号与那一段名字只有一处**：`Grant` 与 [`SEGMENT`]）；②③ 分别在
+//! [`Tree::land_plate`](crate::system::operator::bridge::Tree::land_plate) /
+//! [`Tree::land_deep`](crate::system::operator::bridge::Tree::land_deep) 与持树者的 `settle`
 //! 那一支（`programs/src/system/operator/server.rs::land_plate`）。
 //!
 //! # `/sys/operator` 自己不是一格
 //!
-//! 它是这条路上**顺手造出来的目录**（第一面 `part sys` 时就地立出 `/sys/operator` 那块 `Pane`，
-//! 其后六面幂等取回）——**没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故
+//! 它是这条路上**顺手造出来的目录**（第一帧 `Layer::Segment` 时就地立出 `/sys/operator` 那块
+//! `Pane`，其后每面幂等取回）——**没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故
 //! `seek("/sys/operator")` 对客人答 [`Fail::NotATile`](protocol::system::operator::Fail::NotATile)：
 //! 那一段是块窗格，到头了的是它底下那七格。
+//!
+//! **照实记（"第八格"是量出来的）**：这一版之前，那段目录**也铸了一枚自己的孔**，并走
+//! `land_deep(segment, segment, "operator", "operator")` 挂上去——两帧里第二帧是 `Under`，
+//! 于是持树者 `part /sys/operator` 之后**又往那一段里落了一格也叫 `operator` 的**。实机读数：
+//! `/sys/operator` 底下**八格**（七位 ＋ 一格自己，且那一格上挂着目录那枚孔），与上面这段话
+//! 正相反。它一直没显形，是因为旧探针**按名字数**（只数那七段名字，多出来的一格不进账）；
+//! 改成"数格子"（`harness/src/probe_operator_gate.rs` 的 `count_under`）第一跑就撞上。
+//! 今天目录**不铸孔、不落叶子**：一帧 [`Tree::land_segment`](crate::system::operator::bridge::Tree::land_segment)
+//! 只说"把这一段立成 `Pane`"。
 //!
 //! # 入口为什么要长命
 //!
@@ -30,26 +40,13 @@ use env::{Name, PieToken};
 use protocol::system::operator as ocall;
 use runtime::env::mail;
 
-/// `/sys/operator` 那一格背后的孔的记号——**本族自己的坐标**（与七位面名都不相同，见下面
-/// 那条编译期断言）。
-pub const PANE_MARK: env::Mark = env::Mark::of("operator-pane");
+/// **那一段目录的名字**（`/sys/operator` 底下那一段）：七位各自的 `dir` 与目录自己那一段是
+/// **同一个**——故只有这一处写它。
+pub const SEGMENT: &str = "operator";
 
-/// **铸那段目录自己的那一格**（`/sys/operator`）：两段名字 ＋ 一枚本域自己的孔。
-///
-/// **它不是任何能力的别名**：它是一块**实打实的 `Pane`**（由本域铸一枚自己的孔当它的去处，
-/// 由持树者落格，七位落在它底下）。故 `seek("/sys/operator")` 对客人答
-/// [`Fail::NotATile`](protocol::system::operator::Fail::NotATile)——那是一块窗格，到头了的是
-/// 它底下那七格；而 `/sys/operator/land` 是一条**普通**的名字 → 号。
-///
-/// **为什么它也要一枚自己的孔**：`land_deep` 那一手与 [`Self::entry`] 同形——它落的是
-/// "一枚 -> 一个名字"，而树上那一格是哪一种（`Pane` 还是 `Tile`）由落的时候给。给一枚孔，
-/// 这一段目录此后就在树上**有个名称、有枚门闩**，与 `/sys/control` 那一格同形（不是路径上的
-/// 一段假层）。
-pub fn pane() -> Result<(PieToken, Name, Name), &'static str> {
-    let hole = mail::unseal_hole(PANE_MARK).map_err(|_| "operator:grant")?;
-    let dir = Name::new("sys").map_err(|_| "operator:name")?;
-    let name = Name::new("operator").map_err(|_| "operator:name")?;
-    Ok((hole, dir, name))
+/// 那段目录的名字那一枚 [`Name`]（`/sys/operator` 自己**不是一格**，故只有名字，没有孔）。
+pub fn segment() -> Result<Name, &'static str> {
+    Name::new(SEGMENT).map_err(|_| "operator:name")
 }
 
 /// **铸某一位的待客入口**，并交出它要落的两段名字（`dir` / `name`）。
@@ -67,11 +64,7 @@ pub fn pane() -> Result<(PieToken, Name, Name), &'static str> {
 pub fn entry(grant: ocall::Grant) -> Result<(PieToken, Name, Name), &'static str> {
     let entry = mail::unseal_hole(grant.mark()).map_err(|_| "operator:grant")?;
     // **这一段名字说的是 `/sys/operator` 底下**（`land_deep` 那一手先走 `/sys/operator`）。
-    let dir = Name::new("operator").map_err(|_| "operator:name")?;
+    let dir = segment()?;
     let name = Name::new(grant.name()).map_err(|_| "operator:name")?;
     Ok((entry, dir, name))
 }
-
-// **不相撞**：这一枚记号与七位面名（`Grant::mark`）都不同——与 `grant.rs` 那一条同一句正文。
-const _: () = assert!(PANE_MARK.get() != env::Mark::of("operator-ask-land").get());
-const _: () = assert!(PANE_MARK.get() != env::Mark::of("operator-ask").get());

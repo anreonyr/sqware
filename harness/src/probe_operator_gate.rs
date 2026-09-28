@@ -7,7 +7,7 @@
 //! ```text
 //!   1  与树开会话（`Session::open(sire, operator::BERTH, …)`）——控制面那一枚记号
 //!   2  SEEK /sys/operator        ⇒ 号（它是 `mount_grants` 立出的那块 Pane）
-//!   3  LIST 那一号 ＋ NAME 逐个  ⇒ 七位一个不少（与 `Grant::ALL` 对得上）
+//!   3  LIST 那一号一次        ⇒ 数得出 `Grant::ALL.len()` 格（名字那七问归树自己那七行读数）
 //!   4  SEEK /sys/operator/land ⇒ 号，再 FIND ⇒ **那一枚入口**（能力在树上的等价物）
 //!   5  LAND /probe-op-own（`mine = true`）  ⇒ 下一位顶它时要被拒的那一格
 //!   6  LAND /probe-op-free（`mine = false`）⇒ 无主那一格
@@ -28,11 +28,14 @@
 //! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**（照实记见
 //! `harness/src/probe_bound.rs`）。
 //!
-//! # 为什么它要排在整张单的**最前面**（`order: Some(6)`）
+//! # 为什么它排在整张单的**最前**（`order: Some(3)`）
 //!
-//! 七位是**逐位**落上去的；而停机扳机是 `canonical`（那张单上最大 `order` 那一条）。故本台
-//! 离扳机越近，可用的窗口越窄——实测把它排在 `canonical` 前两位时，它拿到那块 `Pane` 之后
-//! 来不及问完那七段名字就被扑杀。「要读那七格」的客人一律排在最前，见 `canonical/program.rs`。
+//! 停机扳机是 `canonical`（那张单上最大 `order` 那一条），而本台问的是**树**（不需要任何驱动）
+//! ⇒ 排在身份服务之后、三台驱动之前。**但"窗口"这件事不能靠排队次治**：实测本台自己会走到那两处
+//! 重试额度的尽头（旧版是 20 s ＋ 20 s），于是"扳机早于它走完"就变成丢读数——**绿也没有、红
+//! 也没有**（喂了输入的 39 跑里丢 20 次；完全不喂的跑里也丢过）。故额度收小到 [`WAIT_MS`]、
+//! 那七段名字的读数交还给树自己（见 [`count_under`]）：数不到就**当场红**。「要读树」的客人
+//! 一律排在最前，见 `canonical/program.rs`。
 
 extern crate alloc;
 extern crate programs;
@@ -53,8 +56,17 @@ use runtime::env::unit as utask;
 /// 一趟一问的期限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// **等那一段目录长出来**的额度（毫秒；每次重试睡 [`TICK_MS`]）。
-const WAIT_MS: usize = 20_000;
+/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 [`TICK_MS`]）。
+///
+/// **照实记（20 s → 3 s）**：本台是**铺场者**，而它"走不完"的代价不是红——停机扳机一来就把它
+/// **扑杀**（`ousted=true`、一行不打），那条读数于是**既不绿也不红**（第三种结局）。旧版给的是
+/// 20 s，而这样的额度本台有**两处**（[`walk`] 与 [`count_under`]），走满就是几十秒的窗口。
+/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 [`HOLD_MS`]，只要 1~3 s）毫发无伤，
+/// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
+///
+/// 这个数不是猜的：七行 `system: grant mounted at /sys/operator/{…}` 在 **t<500 ms** 就打完
+/// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计。
+const WAIT_MS: usize = 3_000;
 
 /// 每一次重试之间睡多久（毫秒）。
 const TICK_MS: usize = 20;
@@ -93,11 +105,11 @@ fn main() -> Report<'static> {
     };
     let operator_pane = Pane::of(&tree, operator_id);
 
-    // 三、七位一个不少：列号 ＋ 逐个问名。
-    let seen = wait_seven(&operator_pane);
+    // 三、那几格到齐：**数一次就够**（名字那七问归树自己那七行读数，见 [`count_under`]）。
+    let seen = count_under(&operator_pane);
     assert!(
         seen == Grant::ALL.len(),
-        "/sys/operator 底下没有七位（数到的只有 {seen} 位）"
+        "/sys/operator 底下没有七格（数到的只有 {seen} 格）"
     );
 
     // 四、`/sys/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
@@ -166,24 +178,39 @@ fn walk(tree: &TreeFace, name: &str) -> Option<EntryId> {
     }
 }
 
-/// 数 `/sys/operator` 底下**认得出是那一族**的几位，**有界重试**到七位到齐或额度用尽。
+/// 数 `/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试。
 ///
-/// 判据就是 [`Grant::name`] 那七段名字（本台不认识任何别的东西）。**它等的是"那七位到齐"**：
-/// 七位是逐位落上去的，本台可能比它先起。
-fn wait_seven(operator_pane: &Pane<'_>) -> usize {
+/// **照实记（为什么不再逐个问名）**：那七段名字的读数归**树自己**——`mount_grants` 每落一位就抬
+/// 一行 `system: grant mounted at /sys/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
+/// ＋ 七次 `name` 是八趟往返，而那条路每一趟都可能**等在门外**（`client.rs::call` 那一推是
+/// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿。
+///
+/// **照实记（它第一跑就撞上一个真缺陷）**：改成"数格子"之后，实机读数 `seen=8`——`/sys/operator`
+/// 底下是**八格**：七位 ＋ 一格**也叫 `operator` 的自己**（那段目录铸的那枚孔就挂在那儿）。
+/// 旧写法**按名字数**，多出来的一格不进账，故这个缺陷一直没显形；而新写法数不满就重试到额度
+/// 尽头 ⇒ 本台**整趟卡死**、被扳机扑杀（正是上面那条"既不绿也不红"）。根因与那一刀见
+/// `programs/src/system/operator/mount.rs` 的照实记（目录不再铸孔、不再落叶子）。
+/// **这一条读数因此比旧写法更硬**：它数的是"那一块窗格里真有七格"，不是"认得出七段名字"。
+///
+/// 那一格是**逐位**落上去的（目录先立、七位一位一位落），故"数不满"那一刻是**预期之内**的
+/// ——重试到 [`WAIT_MS`] 为止；到点仍不齐就把数到的几格交回给调用方，由它 `assert` 当场红。
+fn count_under(pane: &Pane<'_>) -> usize {
     let mut left = WAIT_MS;
     loop {
         let mut seen = 0usize;
-        if let Ok(listing) = operator_pane.list(Wait::AtMost(MS)) {
-            for id in listing.iter() {
-                if let Ok(name) = operator_pane.name(id, Wait::AtMost(MS))
-                    && Grant::ALL.iter().any(|g| g.name() == name.as_str())
-                {
-                    seen += 1;
+        match pane.list(Wait::AtMost(MS)) {
+            Ok(listing) => {
+                seen = listing.iter().count();
+                if seen == Grant::ALL.len() {
+                    return seen;
                 }
             }
+            // 一问没走到（对面这趟没答）⇒ 还留着额度就再来一拍；这**不是**"那一格不在"
+            // （那一格不在会答 `NotAPane`，落在同一个 `Err` 里也无妨：走到额度尽头就由上层
+            // 那句 `assert` 当场红）。
+            Err(_) => {}
         }
-        if seen == Grant::ALL.len() || left == 0 {
+        if left == 0 {
             return seen;
         }
         let _ = runtime::env::room::sleep(core::time::Duration::from_millis(TICK_MS as u64));
