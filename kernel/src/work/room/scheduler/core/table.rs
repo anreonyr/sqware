@@ -1,12 +1,3 @@
-// 全局表（core::table）— per-hart 调度器数组 + 名册 + 全机扫描 + 关机终末释放。
-//
-// 每核调度器表：boot 时按 DTB 实际核数从 frame 分配，Box::leak 进 OnceLock
-// （MAX_HART_SLOTS=4096 仅为编译期 VA 窗口上限，不固定静态数组）。长度镜像随结构体共生。
-//
-// 名册与全机扫描都建在这张表上：`remove_from_starved` / `running_hart` 逐 hart 顺序
-// 取放锁（只持 L1，不嵌套）、`rip` 关机时逐 hart 收队——三者都需要「全世界的核」，
-// 故与表同居一处，而不是散进各入口面。
-
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
@@ -27,39 +18,13 @@ use super::hart::Scheduler;
 
 pub(in super::super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
-/// 终末释放：halt 路径的关闭钩子——释放 scheduler 在**就绪队列**里持有的全部
-/// task 引用，触发 MailHolds::drop 链透传 mail Arcs 归零（`PoleMeta::drop` → 物理帧还）。
-///
-/// 关闭顺序（conductor::halt → conductor::hooked）：
-///   1. scheduler::core::rip      ← 本函数：就绪队列强制释放 → mail 透传
-///   2. block::flush                 ← block 池冲洗
-///
-/// 注：本函数清 scheduler 持有的 Arc<Task>（就绪队列）。messenger 簿记
-/// （sites / holders / husks）由 [`messenger::rip`] 清——本函数连调之。
-///
-/// **身份槽有意不碰**：末次那一态压在一格字里、不持计数，无物可还；在跑那一态那份计数
-/// 则被 `running` 槽的 `Arc<Task>` 保着（而 `running` 下面有意不清），放与不放都不改变
-/// 账面。于是这里既没有"清槽"这一步，也**没有**跨核写别核槽这回事
-/// （见 [`ident`](mod@super::ident) 的头注）。
-///
-/// **`running` 槽有意不清**（旧头注写「全部 task 引用」，与代码不符，此处改正为事实）：
-/// 关机屏障（`conductor::halt` 等 `HALT_ARRIVED == hart_count`）保证的是**各核已到达**
-/// halt，不保证没有核还在任务上下文里（已记账的旁枝：败者核继续跑任务，实测报
-/// `user page fault without running task`）。此刻释放 running 的最后一个 Arc，等于在别人
-/// 脚下的内核栈/trap 帧上归还内存。代价是：**真有核停在任务上下文**时，那一个任务的帧会
-/// 留在类别账上——那是旁枝的账，不是本函数该擅自抹掉的。名册只存 `Weak`，不构成持有
-/// （它的条目在最后一步统一放掉）。
 pub(crate) fn rip() {
-    // 清各 hart 的就绪队列（`running` 不动——理由见上）
     let Some(cs) = SCHEDULERS.get() else { return };
     for c in cs.iter() {
         let mut i = c.inner.lock();
         c.starved_clear(&mut i);
     }
-    // 清 messenger 簿记（sites / holders / husks）
     messenger::rip();
-    // 名册**放最后**：强引用先全放掉（就绪队列 / 站点 / 躯壳 / 槽），名册里的弱引用才是
-    // `ArcInner` 的最后一道门——放早了也白放（强引用还在，块归还不掉）。
     if let Some(r) = ROSTER.get() {
         r.lock().clear();
     }
@@ -69,47 +34,15 @@ pub(super) fn schedulers() -> &'static [Scheduler] {
     SCHEDULERS.get().expect("schedulers not initialized")
 }
 
-/// debug 档自检用：`schedulers()[i]` 的地址——与 `current()`（tp 直达）对得上，
-/// 才说明"投活的那颗核"与"读队列的那颗核"是同一个对象。见 `runtime::diagnose::ipi`。
 #[cfg(debug_assertions)]
 pub(crate) fn scheduler_addr(i: HartId) -> usize {
     core::ptr::addr_of!(schedulers()[i.get()]) as usize
 }
 
-/// 放行一枚新任务（放行路径不分配；`kick` 的链式入队不算分配）。
-///
-/// 放行入队（`Task::release` 收尾）：**挑一颗核，把这枚活踢给它**（甲案：唤醒不再靠偷）。
-/// 簿记（`Team.tasks`）、未放行容器（`Team.held`）、产生计数（PUSHED）与 trace 都在
-/// `TaskBuilder::hold` 完成——**计数挂在产生处**，Held 被父域 kill 时
-/// REAPED/PUSHED 仍配平（否则 `done()` 恒假，系统永不停机）。
-///
-/// 旧形状是"推本核队列 + 叫醒一枚等待核来偷"，而它的兜底（"源核下次 yield 自取"）
-/// 在"源核不 yield"时是死的：**S 态域任务空转不吃定时器陷阱**（实测：单核 6 s 纯空转，
-/// `traps` 一次不涨）⇒ 空转的台主永不 yield ⇒ 新任务躺在它的队列里直到被杀（rig A
-/// 实测 `starved=318/328`）。改成挑核直投之后，被挑中的核就是**唯一**能拿到这枚活的核，
-/// 且它若正等着就顺手被叫醒。
 pub(crate) fn launch(task: Arc<Task>) {
     kick(conductor::pick(), task);
 }
 
-/// **唯一的入队路径**：把 `task` 接到 `schedulers()[hart]` 就绪队列的**尾**（含长度
-/// 镜像 +1），落点核此刻仍在等（[`conductor::waiting`]）就给它一记定向 IPI。
-///
-/// 「唯一」是"入队者 = 被叫醒者"这条不变量的执行手段：`Scheduler::push` 只留给本函数
-/// （`rise` / 轮转 / `swap` 取下一枚都不是"产生活"），故**没有任何路径能把活塞进一颗
-/// 核的队列却不告诉它**。核以后要新开入队口，走这里。
-///
-/// **前置：调用方不持任何锁**——本函数要取**别核**的 `Level::Scheduler` 锁，一次一把、
-/// 不嵌套（与 `redeem` 那句"绝不持堆锁取调度锁"同纪律；`rise` / `launch` 的调用点都在
-/// 放锁之后）。
-///
-/// **叫醒是提示，不是正确性依赖**：`waiting` 读到 `false` 只是"省一记 IPI"——活已经进了
-/// 落点核的队列，它下次进 `fetch` 自取（`fetch::fetch` 第一句就是 `current().pull()`）。
-/// 反之 `waiting` 读到 `true` 后目标立刻醒/立刻清位也只是多一记无害的 SSIP（它在 `wait`
-/// 里清一次残留位）。这就是去掉"源核 yield"那一环之后的新兜底：**落点核自己**。
-///
-/// 落点由 [`conductor::pick`] 选；`hart` 越界不是可表达的状态（`pick` 只从"已启动 hart"
-/// 的位图或 `% hart_count` 出值），故本函数**没有失败域**：链式入队零分配。
 pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
     schedulers()[hart.get()].push(task);
     if conductor::waiting(hart) {
@@ -127,69 +60,22 @@ pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
     }
 }
 
-// ── 名册（全世界任务的 id → Weak<Task> 索引）──
-//
-// **一张表，不是每 hart 一张**：原先 by_id 是 `Scheduler` 的字段，而每张表都插全量
-// 副本（入册要遍历所有 hart 各插一遍、没有第二条插入路径）⇒ 每张都是全世界的完整
-// 拷贝：查表要遍历、快照把每个任务返回 H 份、每条查询成本随 hart 数放大。名册是
-// 全局事实，故只有一张。
-//
-// 名字（用户裁决）：`enlist` 入册 / `muster` 点名 / `roster` 名册。对偶 `delist`（除名）
-// 是**保留名、暂不实现**——名册里「条目在」这件事本身就是「这个 id 存在过」的唯一事实
-// 源：「已回收」与「从未分配」靠它分开（`muster` 为 `None` ⇔ 从未入册）。除名会把这两态
-// 重新糊在一起（A2 已在站点表上教过一遍：删掉承载事实的东西，就只剩墓碑）。
-//
-// 名册条目**不是只增的**：除名（`delist`）不实现，但 [`prune_dead`] 每回收一具躯壳清一次
-// （`messenger::bury` 的调用点），把 `strong_count == 0` 的死条目摘掉 ⇒ 名册装的是**在世
-// 任务**，不是"开机以来产生过的任务"；条目是 `Weak`，不钉住对象本体（`ArcInner` 的归还等
-// 关机时的 [`rip`] 一次性放掉全部条目）。锁 = Level::L3，只经下面三个函数触及。
-//
-// **照实记（后补）**：这里原先写的是"表只增不删 ⇒ 名册随运行增长"——`prune_dead` 落地之后那句
-// 不成立了；而这次清理**恰恰**磨掉上面那句话的一角：一个**已经回收干净**的 id 被 prune 之后，
-// `muster` 对它答 `None`，与"从未分配"同形 —— `Join` 因此由 `Ok(true)` 降级成 `Denied`
-// （`crates/runtime` 的 `doom` 与 `programs/.../stress/group.rs` 两处都照实记了这条边界）。
-
 static ROSTER: OnceLock<SpinLock<HashMap<TaskId, TaskWeak>>> = OnceLock::new();
 
 fn roster_table() -> &'static SpinLock<HashMap<TaskId, TaskWeak>> {
     ROSTER.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
 }
 
-/// 入册：任务产生处一次性（`Task::hold` 末尾）。`Weak` 升级失败 = 任务已消失 =
-/// 自动失效，无需显式清理。
 pub(crate) fn enlist(id: TaskId, task: &Arc<Task>) {
     roster_table()
         .lock()
         .insert(id, TaskWeak::stored(Arc::downgrade(task), Site::Roster));
 }
 
-/// 为即将入册的**一条**预留名册容量。
-///
-/// # Errors
-///
-/// 容量扩不出来（内存耗尽）→ `Err(())`。
-///
-/// **为什么在产生处预留而不是让 `enlist` 失败**：名册插入是 `Spawn` 落库的中间
-/// 一步，那里已经没有可返回的错误通道（任务对象已建、计数已记）。把唯一会分配
-/// 的那一步提到**装配之前**——失败时干干净净地退回已领的栈/帧，`Spawn` 照旧答
-/// `-4 OoM`。`try_reserve` 的语义正合此用：容量不够就报错，不做部分改动。
-///
-/// **不按 `id` 预留**：名册是 `HashMap<TaskId, Weak<Task>>`，容量是**元素数**的
-/// 函数，与键的大小无关——而 `id` 来自全局 `NEXT_ID`，**只增不减**。先前用
-/// `try_reserve(slot + 1)` 是把 `HashMap` 当 `Vec` 的按索引预留用：每产生一个
-/// 任务就要求"再装得下 `id` 个"，于是预留量**随时间线性增长**，把一条恒定的
-/// `O(1)` 需求变成随运行时长膨胀的开销，失败域被自己提前（实测：64M 下
-/// `churn` 约 2220 轮即报 `-4 OoM`，而当时池里还有一万余帧）。
-///
-/// `try_reserve(1)` 才是这里真实的语义："马上要再插一个元素"。
 pub(crate) fn try_reserve_roster() -> Result<(), ()> {
     roster_table().lock().try_reserve(1).map_err(|_| ())
 }
 
-/// 点名：按 id 取一个，**只出弱引用**——要强引用由调用方当场短升（于是「谁短暂持了
-/// 强引用」摆在调用点上，而不是藏在查询函数里）。
-///
-/// `None` = **从未入册**（非法 id）；`Some` 升不起来 = 已消失（对象已回收）。
 pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {
     roster_table()
         .lock()
@@ -197,19 +83,6 @@ pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {
         .map(|w| w.copy_at(Site::Muster))
 }
 
-/// **清掉已消失任务的条目**，返回摘掉的条数。
-///
-/// # 为什么必须清（这不是"顺手优化"）
-///
-/// `enlist` 在任务产生时插一条 `Weak<Task>`，而名册的条目此前**只由 `rip` 清空** ——
-/// 于是"开机以来活过的每个任务"都会把它那份 `ArcInner<Task>`（152 B）的外壳扣到关机：
-/// 会话越长、churn 越猛，扣住的越多（churn 下与**任务总数**成正比）。而名册里**死条目
-/// 是纯垃圾**：`muster` 的契约本就是"`Some` 升不起来 = 已消失"，摘掉它不改变任何读取
-/// 方的语义（`Join`/`Hatch` 一律照旧拒绝，`descends` 一律返回 false，快照照旧跳过）。
-///
-/// 调用点：[`messenger::bury`](crate::work::room::messenger) —— 每回收一个躯壳一次。
-/// 代价 `O(在世条数)`：清理后名册只装**在世**任务，条数是"同时在跑的任务数"，不再是
-/// "开机以来产生过的任务数"。
 pub(crate) fn prune_dead() -> usize {
     let mut g = roster_table().lock();
     let before = g.len();
@@ -217,11 +90,6 @@ pub(crate) fn prune_dead() -> usize {
     before - g.len()
 }
 
-/// **在世任务的 id**（`strong_count > 0`），至多取 8 个：信标用它点名"谁还没走"。
-///
-/// 为什么返回定长数组而不是 `Vec`：本函数在**停机挂住**的现场被调用，而它要在
-/// **持名册锁（L3）**时取数 —— 那时**不能分配**（分配会取 L2，L3→L2 嵌套即 lockdep
-/// 违规，且在挂住的机器上分配未必成功）。故锁内只写定长数组，出锁后由调用方打印。
 #[cfg(debug_assertions)]
 pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
     let g = roster_table().lock();
@@ -242,26 +110,6 @@ pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
     (more, out)
 }
 
-/// 名册：全世界任务的弱引用，**每个任务恰好一次**（`gate` 的快照来源，boot 注入）。
-///
-/// # 不 panic 的分配（本函数是**唯一**的快照来源，就在 `Spawn` 的路径上）
-///
-/// 旧版 `values().map(Weak::clone).collect()` 是一次**不可失败**的 `collect`：
-/// 名册随任务数增长，`Vec` 扩容失败时 std 走 `handle_alloc_error` → `panic`
-/// → **整机 halt**。实测现场（64M，`churn` 约 2260 轮）：
-///
-/// ```text
-/// IllegalInstruction at sepc=<Vec<Weak<Task>>::from_iter> , stval=0x0
-///   team 'shell' / task #4537 'u-thread'
-/// ```
-///
-/// ——崩在**快照构建**里，而快照是 `Spawn` 必经的一步（`gate` 靠它认亲/级联）。
-/// 与 `TaskBuilder::hold` 的簿记、`SpaceInner::maps` 同类：**簿记分配不得 panic**。
-///
-/// 失败时返回**空快照**而不是 `Err`：本函数在 `gate` 的查询面里（无错误通道），
-/// 而空快照的语义是现成的、安全的——见 [`super::super::gate::snap`] 的头注：
-/// 「未注入 ⇒ 空 ⇒ 查询退化为『找不到』，即**不级联、不认亲**」。即：内存耗尽
-/// 时**放弃级联**，而不是停摆整机。
 pub(crate) fn roster() -> Vec<TaskWeak> {
     let g = roster_table().lock();
     let mut out: Vec<TaskWeak> = Vec::new();
@@ -272,13 +120,6 @@ pub(crate) fn roster() -> Vec<TaskWeak> {
     out
 }
 
-/// 从全部 hart 的 starved 队列摘除指定任务（kill 的 Starved 分支）。返回是否
-/// 摘到。只持本 hart 的 inner(L1)，逐 hart 顺序取、不嵌套其它锁。
-///
-/// 注：`state` 的读取与容器动作不在一把锁里（读来自调用方），窗口内被别核 seat 走
-/// ⇒ 这里返 false。**调用方（`messenger::doom::suspend`）据此重来**，重试耗尽按
-/// `Running` 兜底（记 doomed + 定向 IPI）——所以「读到 Starved 却摘不到」不会静默
-/// 丢掉这次 kill。
 pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
     for s in schedulers() {
         let mut i = s.inner.lock();
@@ -290,8 +131,6 @@ pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
     false
 }
 
-/// 定位指定任务当前 running 于哪个 hart（kill 的 Running 分支）。None = 不在
-/// 任何核 running 槽。逐 hart 锁内 ptr_eq 比较（短暂持 L1）。
 pub(crate) fn running_hart(target: &Arc<Task>) -> Option<HartId> {
     for s in schedulers() {
         let i = s.inner.lock();
@@ -304,16 +143,7 @@ pub(crate) fn running_hart(target: &Arc<Task>) -> Option<HartId> {
     None
 }
 
-/// 执行核调度器（`tp → PerHart.scheduler` 直达，零索引——替代
-/// `&schedulers()[hart_id()]` 的「读 id → 数组索引 → 取元素」三步）。
-/// 取本核身份槽（[`super::ident::ident`]）也走这里：`boot::init` 先填每核直达指针、
-/// 再发布本表 ⇒ **表在即指针在**，于是「取本核」只有一条路径。
-///
-/// # Safety
-/// 仅内核态调用；boot 期 `scheduler::boot::init` 已 `set_scheduler` 填充
-/// （`hart::scheduler()` 的 Acquire 配对 Release store）。指向 SCHEDULERS
-/// 数组元素，'static。
 pub(crate) fn current() -> &'static Scheduler {
-    // SAFETY: tp 直达读出的指针非空（boot 后恒填充）且指向 SCHEDULERS 元素。
+    // SAFETY: tp 直达读出的指针非空
     unsafe { &*(crate::hart::scheduler() as *const Scheduler) }
 }

@@ -1,17 +1,3 @@
-// 多级页表结构 — 页表遍历、映射、取消映射、中间表回收（层级随运行模式）。
-//
-// 地址分解（层级 L = 模式几何；每级 9 位 VPN，页内偏移 12 位）：
-//   VA[12+9·L−1 : 12+9·(L−1)] → VPN[L−1] — 根页表索引（顶层随模式：Sv39=2 / Sv48=3 / Sv57=4）
-//   ...                               → 中间页表索引
-//   VA[20:12]                        → VPN[0] — 叶子页表索引
-//   VA[11:0]                         → 页内偏移
-//
-// 所有权模型（TableNode）：每级页表恰好一帧（4096 B，对齐 4096），
-// PageTable 装不下任何元数据——树状所有权因此放在**帧外**的 TableNode 上：
-// `page` 是硬件页（根/中间表），`children` 是子树（槽位 → 节点）。树与 PTE
-// 经同一入口维护：walk_mut 建表时同步写 PTE + push 子节点，reclaim 拆表时
-// 先清 PTE 再摘子节点——构造上一致，无第二份待同步状态。
-
 use alloc::vec::Vec;
 use alloc::{alloc::Allocator, boxed::Box};
 use fack::prelude::Error;
@@ -23,51 +9,28 @@ use super::{
     entry::{PageTableEntry, PteFlags},
 };
 
-/// 4 KiB 物理帧 — `Box` 指向分配器管理的页面，Drop 归还 frame 池。
-///
-/// 仅用于**数据页**；页表页用 `TableNode::page`（`Box<PageTable>`，同为
-/// 4096 B / 4096 对齐）——类型即语义，两种帧各归其位。
 pub(crate) type Frame = Box<[u8; PAGE_SIZE], &'static dyn Allocator>;
 
-/// 页表操作错误。
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
-    /// 物理页帧分配器耗尽。
     #[error("physical frame allocator exhausted")]
     OutOfMemory,
-    /// 该虚拟地址已被映射。
     #[error("virtual address already mapped")]
     AlreadyMapped,
-    /// 地址未按页对齐。
     #[error("address not page-aligned")]
     NotAligned,
-    /// 页表项/中间表不存在。
     #[error("page table entry not mapped")]
     NotMapped,
-    /// 虚拟地址不在任何已注册的 Map 内。
     #[error("virtual address not in any declared map")]
     NoRegion,
-    /// DRAM 恒等映射越过用户栈窗口（内存配置非法）。
     #[error("DRAM identity map overlaps the user stack window")]
     DramOverlap,
-    /// Span 与段状态不一致（释放时 VA/size 不匹配——调用方 bug）。
     #[error("span does not match segment state")]
     SegmentMismatch,
-    /// 试图给**借入页**加权限（加宽被所有权挡住）。
-    ///
-    /// 借入页（Pole 视图等）的物理帧归外部所有、其映射的帧表为空——那份映射是
-    /// 别人所有权的**只读借用**。故它只能收紧、不能加宽：加宽 = 单方面扩大自己对
-    /// 他人资源的权限，而 `narrow` 的 `cap ⊆ 页表` 契约正是靠"加宽无路可走"成立的。
-    /// 自有的页（懒区 / 满帧）不受此限——那是调用方自己的内存。
     #[error("cannot widen a borrowed mapping")]
     WidenDenied,
 }
 
-/// 页表页 — 512 条目 × 8 字节 = 4 KiB，对齐到页边界（三类模式同宽）。
-///
-/// 硬件结构，恰好一帧：不承载任何所有权元数据（见 [`TableNode`]）。
-/// 不实现 `Clone` / `Copy`：4 KiB 的隐式复制是错误源。
-/// `entries` 字段公开（`pub(crate)`），数组自带 `Index`/slice 操作。
 #[repr(C, align(4096))]
 #[derive(Debug)]
 pub(crate) struct PageTable {
@@ -83,17 +46,7 @@ impl Default for PageTable {
 }
 
 impl PageTable {
-    /// 分配一个零页表帧（根或中间表通用）。
-    ///
-    /// # Errors
-    ///
-    /// 物理帧耗尽时返回 [`MapError::OutOfMemory`]。
     pub(crate) fn new() -> Result<Box<PageTable, &'static dyn Allocator>, MapError> {
-        // 同 [u8;4096] 教训：PageTable::default() 按值 4 KiB 会在调用栈上物化约
-        // 16 KiB 栈帧——任务栈上建中间表同样击穿（风暴 UAF 同源）。走标准原语
-        // Box::try_new_zeroed_in（allocate_zeroed，栈上不物化）。
-        // 类别 = Table：页表页（root 与 walk_mut 子表）——框架档用例的逐类读数与
-        // `Space::audit()` 的簿记↔页表核对都靠这个标注认得出它们。
         let page = crate::tag!(Table, unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
                 .map_err(|_| MapError::OutOfMemory)?
@@ -104,20 +57,9 @@ impl PageTable {
     }
 }
 
-/// 活页表帧数（页表分配的净存量）——**泄漏探针**用。
-///
-/// 判据：`Space` 树随任务死亡递归 drop，故任务稳态下这个数应当**回到基线**；
-/// 单调上涨即「页表帧没随任务回收」，是 `Plain` 帧线性流失的头号嫌疑。
 pub(crate) static TABLE_LIVE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
-/// 页表所有权节点 — 硬件页 + 子树所有权（堆上，不进帧）。
-///
-/// - `page`：硬件页表帧（根或中间表；恰好一帧，`repr(C, align(4096))`）
-/// - `children`：本表有效子表 `(槽位, 子树)`——槽位 = 对应 VPN 索引
-///
-/// 树与 PTE 同源：walk_mut 建（写 PTE + push）、reclaim 拆（清 PTE + 摘除），
-/// children 恒与 PTE 指向一致。Drop 递归释放全部子树帧（深度 = 模式层级 ≤ 5）。
 #[derive(Debug)]
 pub(crate) struct TableNode {
     pub(crate) page: Box<PageTable, &'static dyn Allocator>,
@@ -125,16 +67,12 @@ pub(crate) struct TableNode {
 }
 
 impl Drop for TableNode {
-    /// 节点消亡 ⇒ 本节点的页表帧随 `Box<PageTable>` 归还帧池；探针计数同步减一。
-    /// **回收是递归的**（子树在 `children` 里，随本结构一并 drop），故这个数在
-    /// 任务稳态下必然回到基线——单调上涨即「页表帧没随任务回收」。
     fn drop(&mut self) {
         TABLE_LIVE.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
 impl TableNode {
-    /// 新根节点（根页表帧；satp 写入见 [`Self::ppn`]）。
     pub(crate) fn root() -> Result<Self, MapError> {
         Ok(Self {
             page: PageTable::new()?,
@@ -142,25 +80,15 @@ impl TableNode {
         })
     }
 
-    /// 本节点页表物理页号（根节点写入 satp 用）。
     pub(crate) fn ppn(&self) -> usize {
         Box::as_ptr(&self.page) as usize >> PAGE_SHIFT
     }
 
-    /// 树中节点总数（根 + 全部子孙；health/自测用——非审计链）。
-    ///
-    /// 门跟着**调用方**走（`Space::table_count`）：两处都是 `#[cfg(debug_assertions)]`
-    /// ——它们必须一起改，不一致的代价是那一档**编不过**（照实记）。
     #[cfg(debug_assertions)]
     pub(crate) fn count(&self) -> usize {
         1 + self.children.iter().map(|(_, c)| c.count()).sum::<usize>()
     }
 
-    /// 枚举本树全部已装叶的页 VA（审计反向核对用：PTE ⇒ 有簿记）。
-    ///
-    /// `level` = 本节点层号（根传 `levels - 1`）；`node_va` = 本节点覆盖区间的起始
-    /// 地址（掩码空间——叶 VA 经 `VirtAddr::from_raw` 规范化回符号扩展形式）。
-    /// 只走**存在的**子节点：代价 O(树中节点数)，与地址空间大小无关。
     #[cfg(debug_assertions)]
     pub(crate) fn mapped(&self, level: usize, node_va: usize, visit: &mut impl FnMut(VirtAddr)) {
         if level == 0 {
@@ -177,13 +105,6 @@ impl TableNode {
         }
     }
 
-    /// 创建一个零页表子节点（非叶，非超页）。**只建表，不碰 PTE**。
-    ///
-    /// 装 PTE 的时点由调用方（`walk_mut`）推到子节点**入树之后**：此前"建表即
-    /// 写 PTE"在 `try_reserve` 失败时会留下 V 表项，指向随 `Drop` 已归还帧池的
-    /// 帧。先把失败路径走完再写，PTE 才恒是树的函数。
-    ///
-    /// 命名"leaf"——PTE 视角看这是叶子表节点（被 PTE 指向的下一层表）。
     fn leaf() -> Result<Self, MapError> {
         Ok(Self {
             page: PageTable::new()?,
@@ -191,20 +112,6 @@ impl TableNode {
         })
     }
 
-    /// Walk to the leaf PTE (mutable)，沿所有权树下钻。
-    ///
-    /// `alloc`：缺中间表时是否新建（map/缺页用 true；mprotect 等只读遍历用
-    /// false → [`MapError::NotMapped`]）。新建子表**先入树再写 PTE**——建表与
-    /// 清单预留都可能失败，失败路径上父表不留任何表项；PTE 永不指向未登记
-    /// （乃至已归还）的表。树与 PTE 同源，无第二份待同步状态。
-    ///
-    /// `levels`：下钻层数。正常路径传当前模式层级（[`super::mode::levels`]）；
-    /// 模式探测等显式场景传候选层级。
-    ///
-    /// # Errors
-    ///
-    /// - `OutOfMemory` — `alloc` 为 true 且物理帧耗尽
-    /// - `NotMapped` — `alloc` 为 false 且中间表缺失
     pub(crate) fn walk_mut(
         &mut self,
         vaddr: VirtAddr,
@@ -224,13 +131,9 @@ impl TableNode {
                 }
                 let child = Self::leaf()?;
                 let ppn = child.ppn() as u64;
-                // **紧贴预留**：子表清单的扩容此前是不可失败的（落在缺页建中间表
-                // 这条路上）；现在它答 `OutOfMemory`，与页表帧的取用同一个失败域。
                 node.children
                     .try_reserve(1)
                     .map_err(|_| MapError::OutOfMemory)?;
-                // **入树之后才写 PTE**：上面两步任一失败都会 `?` 走人且 child 随
-                // Drop 还帧——若 PTE 已 V，父表就永久指向一帧已归还的帧。
                 node.children.push((idx, child));
                 node.page.entries[idx].set(ppn, PteFlags::V);
             }
@@ -244,12 +147,6 @@ impl TableNode {
         unreachable!("loop covers 0..levels")
     }
 
-    /// 树外裸路径：沿 PTE 链从根帧遍历到 leaf 页（**不依赖本树元数据**——
-    /// 入口为根页表物理地址；现场/诊断专用，守卫由调用方提供）。
-    ///
-    /// 根、每级中间表与 leaf 的 PA 都经 `ok`（守卫）校验后才访问/返回，坏地址的
-    /// 裸读 fault 在此拦下。逐级读 PTE：V=0 未映射 → None；R|W|X 置位 = leaf
-    /// （返回页基 + flags，支持任意级超页）；否则沿 PTE.PPN 下钻。
     pub(crate) fn walk_raw(
         root: PhysAddr,
         page_va: VirtAddr,
@@ -261,7 +158,7 @@ impl TableNode {
             return None;
         }
         for level in (0..levels).rev() {
-            // SAFETY: tbl 已过 ok 校验（合法可读物理区）；调用方保证只读、无并发写。
+            // SAFETY: tbl 已过 ok 校验；调用方保证只读、无并发写
             let pte = unsafe {
                 *((tbl.as_usize() + page_va.vpn(level as u8) * 8) as *const PageTableEntry)
             };
@@ -280,16 +177,6 @@ impl TableNode {
         None
     }
 
-    /// Walk to the leaf PTE read-only，沿所有权树下钻（无裸指针解引用）。
-    ///
-    /// 可信任路径（树内）：children 引用链由 Box 持有、借用检查保护——即使
-    /// PTE 被软件写坏，也不会裸解引用 PPN（正常路径的内存安全不依赖「树与
-    /// PTE 同源」不变量）。树外裸路径（现场/诊断，无树可用）走
-    /// [`Self::walk_raw`]（裸 PPN + 调用方守卫）——按依赖分工，互不外包。
-    ///
-    /// # Errors
-    ///
-    /// 中间表或叶 PTE 无效（含中间级 leaf 超页）时返回 [`MapError::NotMapped`]。
     pub(crate) fn walk_ref(&self, vaddr: VirtAddr) -> Result<(PhysAddr, PteFlags), MapError> {
         let levels = super::mode::levels();
         let mut node = self;
@@ -316,21 +203,6 @@ impl TableNode {
         unreachable!("loop covers 0..levels")
     }
 
-    /// 映射 `size` 字节（n 页）从 `vaddr` 到 `paddr` 的连续区域。
-    ///
-    /// 按需分配中间表（树 + PTE 同源维护）。
-    ///
-    /// # 调用约定
-    ///
-    /// - `vaddr` 必须按 4 KiB 页对齐（`offset() == 0`）
-    /// - `paddr` 必须按 4 KiB 页对齐（`is_aligned() == true`）
-    /// - `size` 必须是 `PAGE_SIZE` 的整数倍
-    ///
-    /// # Errors
-    ///
-    /// - `NotAligned` — 地址或大小未按 4 KiB 对齐。
-    /// - `AlreadyMapped` — 任一虚拟地址已被映射。
-    /// - `OutOfMemory` — 物理帧耗尽。
     pub(crate) fn map(
         &mut self,
         vaddr: VirtAddr,
@@ -356,13 +228,6 @@ impl TableNode {
         Ok(())
     }
 
-    /// 改 `[vaddr, vaddr+size)` 内每页的叶 PTE flags（不动中间表结构）。
-    ///
-    /// 已触页 / Eager 全物化页：walk 到叶 PTE 翻 flags。
-    /// 中间表缺失：walk_mut(false) 返回 NotMapped（错误传播）。
-    ///
-    /// 簿记同步（Lazy 区未触页改 map.flags）由 `SpaceInner::protect` 处理——本函数
-    /// 只动页表。
     pub(crate) fn protect(
         &mut self,
         vaddr: VirtAddr,
@@ -381,23 +246,16 @@ impl TableNode {
         Ok(())
     }
 
-    /// 清理 `[vaddr, vaddr+size)` 范围内的叶 PTE + 回收变空的中间表。
-    ///
-    /// 多页版：逐页 `walk_mut(false)` 清叶（中间表缺失返回 NotMapped = 与无映射
-    /// 一致，直接跳过），再自底向上回收变空中间表。一次调用完成完整清理——
-    /// 不再需要单独的 `reclaim`。
     pub(crate) fn unmap(&mut self, vaddr: VirtAddr, size: usize) {
         if size == 0 || vaddr.offset() != 0 || size & (PAGE_SIZE - 1) != 0 {
             return;
         }
         let pages = size / PAGE_SIZE;
-        // 1. 清叶 PTE
         for i in 0..pages {
             if let Ok(leaf) = self.walk_mut(vaddr + i * PAGE_SIZE, false, super::mode::levels()) {
                 leaf.clear();
             }
         }
-        // 2. 拆空中间表（自底向上）
         let geo = super::mode::geometry(super::mode::mode());
         let mask = (1usize << geo.va_bits) - 1;
         Self::recycle(
@@ -409,19 +267,12 @@ impl TableNode {
         );
     }
 
-    /// 自底向上回收 `[start, end)` 范围内变空的中间表，返回本节点是否全空。
-    ///
-    /// 只下钻与范围相交的槽位；子节点全空时**先清本层 PTE 再摘除**（drop 归还
-    /// 帧）。范围不相交的子树不会被触及（树中节点只在创建时带有效项、只在变空
-    /// 时被摘除——未触及即非空）。root 永不摘——调用方忽略返回值。
-    ///
-    /// 仅 [`Self::unmap`] 内部调用——不对外暴露。
     fn recycle(&mut self, level: usize, node_va: usize, start: usize, end: usize) -> bool {
         if level > 0 {
             let span = 1usize << (12 + 9 * level);
             let node_end = node_va.saturating_add(span << 9);
             if end <= node_va || start >= node_end {
-                return false; // 范围不相交：本节点未被触及，非空
+                return false;
             }
             let shift = 12 + 9 * level;
             let first = if start > node_va {
@@ -434,7 +285,6 @@ impl TableNode {
             } else {
                 511
             };
-            // 先收集待摘槽位（借用：迭代 children 时不能同时移除）
             let mut remove: Vec<usize> = Vec::new();
             for (i, (slot, child)) in self.children.iter_mut().enumerate() {
                 if *slot < first || *slot > last {
@@ -446,7 +296,6 @@ impl TableNode {
                     remove.push(i);
                 }
             }
-            // 倒序 swap_remove：先摘高索引，低索引不受移位影响
             for i in remove.into_iter().rev() {
                 self.children.swap_remove(i);
             }

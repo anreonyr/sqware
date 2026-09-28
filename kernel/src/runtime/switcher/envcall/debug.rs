@@ -1,38 +1,13 @@
-// debug — 调试面（class 8）：域直接借内核的 DBCN 打印/读入。
-//
-// 为什么内核要有这一格：**引导期服务全都不存在**——root 起 operator / system 的那一段
-// （更早以前是 dir / plic / uart / console）里，"哪一步算不下去"只有域自己知道，而它连
-// 一句 `say` 都递不出去（编排域还没上线）。内核自己的打印（`crate::putln!`）走 SBI DBCN，这一格就是把它**借给域**。
-//
-// 它与「设备不再是内核的事」不冲突：这里不碰设备、不认 UART，
-// 走的是固件的调试控制台（内核自己的出口）。设备写仍归持设备者。
-//
-// 不设构建门：见 `env::fid::DebugCall` 那条理由（嵌套构建的 `debug_assertions` 会分叉）。
-//
-// **探针不许在锁里打**：`putln!` 最终要过 `console → translate_kernel → Space`（L2），而
-// 内核那些分片锁是 L3 ⇒ 持着站点表、门闩表一类的锁打印，会以"4→2 反向嵌套"的名义当场
-// panic（层级校验不认"这一句只是调试"）。探针要打，就放到**放锁之后**打。
-
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::putln;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::unit::task::TaskIdent;
 use env::DebugFail;
 
-/// 报文对账开关：`DebugCall::SetTrace` 写（每域各自一份静态——域是独立地址空间，
-/// 开关不跨域）。**今天没有读者**：原先读它的是 `Port::call`，那一层已随 Port 那轮
-/// 搬去各协议；用户侧那份 `env::debug::tracing()` 因此闲置。
-/// 只在调试时打开——布局错位这类病只有真实字节能证。
 pub static TRACE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// 一次能搬的字节数上限（与 `env::DBCN_MAX` 同值：栈上定长，不分配）。
 const DBCN_MAX: usize = 256;
 
-/// 域 → 调试控制台。
-///
-/// 逐字节 `read_volatile`：域那段地址可能不在恒等区（用户窗口），而 `putln!` 只认
-/// 内核自己的地址（非恒等区走页表译，用户地址一律静默丢）。故先把字节**搬进内核的
-/// 栈缓冲**，再交给既有出口打印。至多 [`DBCN_MAX`] 字节，多出的截断。
 pub(super) fn put(
     frame: &mut TrapContext,
     ident: &TaskIdent,
@@ -50,7 +25,7 @@ pub(super) fn put(
         let Some((pa, _)) = space.translate(at) else {
             return err(frame, DebugFail::Denied);
         };
-        // SAFETY: `translate` 已把该 VA 落到一个有效物理页；恒等映射区 PA 可直读。
+        // SAFETY: translate 已把该 VA 落到一个有效物理页
         *slot = unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) };
     }
     let text = core::str::from_utf8(&text[..n]).unwrap_or("<non-utf8>");
@@ -59,12 +34,6 @@ pub(super) fn put(
     frame
 }
 
-/// 调试控制台 → 域：内核栈暂存接一次 DBCN 读，再把结果写进域。
-///
-/// **不阻塞**：实测（OpenSBI v1.9 / QEMU virt）没数据时立刻返 0 字节，**不是**"等到读到
-/// 一个字节"。这条注释原先写反了——代价是旧回显那台照着它写成了一条空转的紧循环（宿主
-/// 99%——那条"空转的红线"随它一起退场）。调用方拿到 0 必须睡一拍
-/// 或等中断，不能立刻再问。
 pub(super) fn get(
     frame: &mut TrapContext,
     ident: &TaskIdent,
@@ -77,7 +46,6 @@ pub(super) fn get(
     let mut stage = [0u8; DBCN_MAX];
     let n = match crate::console::read(&mut stage[..len]) {
         Some(n) if n <= len => n,
-        // 固件给不出这一格（非 DBCN / 短读）：如实拒，不假装成功。
         _ => return err(frame, DebugFail::Denied),
     };
     if n == 0 {
@@ -92,7 +60,6 @@ pub(super) fn get(
     frame
 }
 
-/// 开关报文对账（开关住在**发起那一域的静态**里——域是独立地址空间，故每域一份）。
 pub(super) fn set_trace(on: usize) -> usize {
     let v = on != 0;
     TRACE.store(v, core::sync::atomic::Ordering::Relaxed);

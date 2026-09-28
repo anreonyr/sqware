@@ -1,16 +1,3 @@
-// 团队（进程容器）— 持有地址空间 + 成员簿记 + 血缘（sire）。
-//
-// 生命周期：最后一个线程退出 → Arc<Team> 归零 → 团队回收；内核团队为
-// 'static 单例，唯一拥有内核地址空间，永不回收。
-//
-// 血缘：`sire`（生我者）在构造期定型；`heir`（我生）挂在 **Task** 上（见
-// task.rs）——强持有子域，既是撑命源，也是 `spawn` 的授权凭证，还是
-// `doom` 级联的遍历源。三者合一，无独立全局表。
-//
-// **闭合在构造期**（K1）：`TeamBuilder::spawn` 在 sire 非空时立即把新域推进
-// sire.heir——「sire 已记 ⇒ 必在 heir 里」是构造义务，不留第二个入口
-//（原 `Task::adopt` 独立调用面已并入）。
-
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -23,77 +10,32 @@ use crate::work::unit::space::Space;
 use super::task::{Task, TaskBuilder, TaskTag};
 use super::weak::{Site, TaskWeak};
 
-/// 团队（进程）— 共享地址空间的线程容器。
-///
-/// tasks 为成员簿记（弱引用，无强环），生命周期仍由引用计数决定。
-///
-/// space 为 Arc 共享：用户团队独占一份；内核团队由 [`init_kernel`] 注入。
-///
-/// tasks / held 自带 SpinLock（level 3）。**不变量：持本锁时绝不调用任何
-/// space 方法**——与 Space.inner（level 2）只顺序获取、永不嵌套。
 pub struct Team {
-    /// 地址空间（窗口簿记持有全部分配的页）。Arc 共享：用户团队独占；
-    /// 内核团队独占内核 Space。
     pub(crate) space: Arc<Space>,
-    /// 成员簿记（弱引用条目；死条目在下次清理时摘除）。
     pub(crate) tasks: SpinLock<Vec<TaskWeak>>,
-    /// 未放行的引导线程（`Held`）——`spawn` 填入、`Hatch` 摘出、`kill` 摘出。
-    ///
-    /// **不是"至多一个"**（曾经是 `Option<Arc<Task>>`）：`Spawn` 可以来自**同域的任何
-    /// 线程**，两个线程各自 `Spawn`→`Hatch` 时，单槽会被后一个 `Spawn` **覆盖**——
-    /// 被覆盖的那个任务外壳当场掉、`Hatch` 拿不到它只能答 `Denied(-1)`，而它的
-    /// `PUSHED` 已经记过、`REAPED` 永远不会记 ⇒ `done()` 恒假 ⇒ **全机在空闲里再也
-    /// 停不下来**（实测：32 M、`churn 16 4 4` 稳定卡死，信标报 `PUSHED=66 REAPED=62`）。
-    /// 故这里是**一张表**，摘除按身份（`Arc::ptr_eq`）而不是"拿走那一个"。
     pub(crate) held: SpinLock<Vec<Arc<Task>>>,
-    /// 本域全局唯一标识（0 = 无效哨兵）。纯身份标识：诊断 + heir 内匹配，不承担
-    /// 全局反查（授权走父 task 的 `heir` 表）。
     pub(crate) id: TeamId,
-    /// 生我者的 task（弱引用，溯源；构造期定型，boot 顶级域 / 内核域 = 空 Weak）。
-    /// 保持 Weak 是防环唯一边：`Task →(heir 强)→ Team →(sire 弱)→ Task`。
     pub(crate) sire: TaskWeak,
-    /// 本域默认执行入口（= 装载 ELF 的 `e_entry`，即镜像 `_start` VA）。
-    /// `spawn` 的 `entry=0` 时用它。`OnceLock` 单次写，由 `Build` 写入。
     default_entry: OnceLock<usize>,
 }
 
 impl Team {
-    /// 成员入簿。
     pub(crate) fn push_task(&self, task: &Arc<Task>) {
         self.tasks
             .lock()
             .push(TaskWeak::stored(Arc::downgrade(task), Site::TeamTasks));
     }
 
-    /// 清理簿记：摘除已退出线程与全部死条目。
-    ///
-    /// **不 upgrade**：弱引用提升会让存活条目的强计数瞬时 +1，与「强计数唯一
-    /// （==1）」不变量撞车。改为纯指针比较：本线程条目按 Arc 数据指针摘除，
-    /// 死条目按强计数为 0 摘除——全程不触碰强计数。
     pub(crate) fn prune_tasks(&self, exited: &Arc<Task>) {
         let exited_ptr = Arc::as_ptr(exited);
         self.tasks.lock().retain(|t| {
-            // 死条目（strong == 0）：摘除（弱引用随条目 drop，底层分配随之释放）。
-            // 注意此处读 Weak::strong_count 不做任何计数变更（纯 load）。
             if Weak::strong_count(t) == 0 {
                 return false;
             }
-            // 本线程条目：按数据指针摘除（不用 `upgrade` + `ptr_eq`——那会造成
-            // 瞬时强计数提升）。
             !(Weak::as_ptr(t) == exited_ptr)
         });
     }
 
-    /// **域里没有还没收尾的线程了吗**（`Oust` 的前置判据）。
-    ///
-    /// 判据是 `Reaped`（**收尾**），不是"回收完了"——后者按 `messenger::bury` 自述
-    /// "对调用方不可观测"：一具正在埋的壳不算在世，它自己会把域对象带到归零。
-    ///
-    /// 两格一起看：`held`（未放行的引导线程）与 `tasks`。其实只读 `tasks` 已经覆盖
-    /// `held`（引导线程也在册，tag 是 `Held` 而非 `Reaped`），多看一格是双保险。
-    ///
-    /// 读法同 [`Self::prune_tasks`]：先用 `Weak::strong_count`（纯 load）滤掉死条目，
-    /// 只对"升得起"的那几枚 `upgrade` 一次读 tag、读完即放（同 `Join` 的活体支）。
     pub(crate) fn all_reaped(&self) -> bool {
         {
             let held = self.held.lock();
@@ -108,15 +50,10 @@ impl Team {
                 drop(task);
                 reaped
             }
-            // 升不起来 = 条目已死（strong == 0）；与 bury 竞态时刚死也算死。
             None => true,
         })
     }
 
-    /// 成员簿记快照（cull 遍历用：快照后放锁，锁外逐条处理）。
-    ///
-    /// 抄件（`Site::Snapshot`）：**不实现 `Clone`** 是刻意的——这条注释就是编译器
-    /// 逼出来的"这一枚抄件从哪儿出去"的答案（见 `work::unit::weak`）。
     pub(crate) fn tasks_snapshot(&self) -> Vec<TaskWeak> {
         let g = self.tasks.lock();
         let mut out: Vec<TaskWeak> = Vec::new();
@@ -127,25 +64,14 @@ impl Team {
         out
     }
 
-    /// 本团队产出任务 builder（后续 `.entry/.args/.stack/.hold` 链式构造
-    /// 任务；放行是另一枚动词，不在 builder 上）。
     pub fn task(self: &Arc<Self>) -> TaskBuilder {
         TaskBuilder::new(self.clone())
     }
 
-    /// 记下引导线程（未放行）。`Spawn` 产 Held 时调用。**追加**，不覆盖。
-    ///
-    /// 前置：那一格的容量已经备好——本方法没有失败通道，而**它的调用点在领帧之后**
-    /// （栈与 trap 帧那时已经领了、不可撤回），故预留只能由 `TaskBuilder::hold` 在领帧
-    /// 之前做（`TaskBuilder::hold` 里与 `tasks` 那一格并排，各配一次 push）。
     pub(crate) fn hold(&self, task: &Arc<Task>) {
         self.held.lock().push(task.clone());
     }
 
-    /// **按身份**摘出引导线程（`Hatch` / `kill` 用）：摘到返回 true。
-    ///
-    /// 前置即"是不是它"：调用方拿着的 `Arc` 与表里的逐址比较，故**别人放行过的
-    /// 不会被我摘走**（旧版"拿走唯一那一个、不是它再放回去"的舞蹈在并发下必然出错）。
     pub(crate) fn release_held(&self, task: &Arc<Task>) -> bool {
         let mut g = self.held.lock();
         match g.iter().position(|t| Arc::ptr_eq(t, task)) {
@@ -157,31 +83,25 @@ impl Team {
         }
     }
 
-    /// 本域默认执行入口（`spawn` 的 `entry=0` 时取）。未设（内核域）→ 0。
     pub(crate) fn default_entry(&self) -> usize {
         self.default_entry.get().copied().unwrap_or(0)
     }
 
-    /// 写入默认执行入口（`Build` 装载后调用；单次写）。
     pub(crate) fn set_default_entry(&self, va: usize) {
         let _ = self.default_entry.set(va);
     }
 
-    /// 溯源：生我者的 task id（boot 顶级域 / 内核域 → None）。
-    /// 这是「不可伪造的父身份源」——由内核在建域时强制，非父自愿告知。
     pub(crate) fn sire(&self) -> Option<TaskId> {
         self.sire.upgrade().map(|t| t.ident.id)
     }
 }
 
-/// 团队构建器：把已装载程序的地址空间容器化为团队。
 pub struct TeamBuilder {
     space: Space,
     sire: TaskWeak,
 }
 
 impl TeamBuilder {
-    /// 接收已装载程序的 Space（owned；此后 Space 归团队）。
     pub fn new(space: Space) -> TeamBuilder {
         TeamBuilder {
             space,
@@ -189,21 +109,11 @@ impl TeamBuilder {
         }
     }
 
-    /// 定生我者（boot 顶级域 / 内核域默认空 Weak）。构造期定型：sire 不可后改。
     pub fn sire(mut self, sire: TaskWeak) -> TeamBuilder {
         self.sire = sire;
         self
     }
 
-    /// 容器化：包 Arc<Space> + 建空簿记，返回团队句柄。
-    ///
-    /// **血缘闭合**：sire 非空 ⇒ 立即推进 sire.heir（强持有）。见文件头 K1。
-    /// # Errors
-    ///
-    /// 父域血缘表扩不出来（内存耗尽）→ [`MapError::OutOfMemory`]。此时那个刚建好的
-    /// `Team` 随作用域 drop：`Space` 归调用方（`Build` 失败时自己 drop）、`id` 单调
-    /// 不复用、`tasks`/`held` 都空 ⇒ **退回是干净的**，所以预留可以紧贴 push，
-    /// 不必在造 `Team` 之前预判。
     pub fn spawn(self) -> Result<Arc<Team>, crate::memory::manager::MapError> {
         let id = alloc_team_id();
         let team = crate::tag!(
@@ -225,10 +135,8 @@ impl TeamBuilder {
     }
 }
 
-/// 内核团队单例（拥有内核地址空间；内核任务挂此团队）。
 pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
 
-/// 把内核地址空间封包进内核团队单例（恰好一次）。
 pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     KERNEL_TEAM.get_or_init(|| {
         let id = alloc_team_id();
@@ -246,38 +154,19 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
     })
 }
 
-/// 内核团队访问器（宽容形）：未注入 → None，调用方自行降级。
 pub fn kernel() -> Option<&'static Arc<Team>> {
     KERNEL_TEAM.get()
 }
 
-/// 全局团队 id 序列（自 1；0 = 无效哨兵）。
 static NEXT_TEAM_ID: AtomicUsize = AtomicUsize::new(1);
 
-/// 分配一个新 TeamId（自 1 递增；0 = 无效哨兵）。
 pub(crate) fn alloc_team_id() -> TeamId {
     TeamId::new(NEXT_TEAM_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-// ── 装载错误（UnitError）──────────────────────────────────────
-
-/// 镜像拼装结果错误（取头 / parse / build / load 任一步失败）。
-///
-/// **三格各说一件事**：
-/// - `Load` = 这份镜像不认（parse / 装载不成）⇒ 用户态 `-6 BadImage`；
-/// - `Unreadable` = **源读不到**（头窗口或某一段实体那几页没映射；本域另一枚线程可以
-///   并发 `munmap`，故它消不掉）⇒ `-1 Denied`——与从前"暂存拷不进来"同一个负码；
-/// - `OoM` = **内存不够**（头窗口那一页 / 装载帧 / 簿记）⇒ `-4`。
-///
-/// **照实记（为什么要分三格）**：原先三步失败坍缩成一个 `Load`，于是装载期帧耗尽也
-/// 答 `-6 BadImage`——内存吃紧会被报成"镜像不认"，是个假诊断。而编排者那一侧
-/// `-4` 早就有格子接（`protocol::system::core::Fail::Full`），`-6` 没有。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitError {
-    /// parser / SpaceBuilder / loader 任一步失败（不落，无脏域）。
     Load,
-    /// 源读不到：头窗口或段实体那一段区间未映射。
     Unreadable,
-    /// 内存不够：头窗口那一页、装载帧或簿记分配。
     OoM,
 }

@@ -1,14 +1,3 @@
-// 收割（reap）——「离核 → 收尾 → 埋掉」这条链与钩子注入面。
-//
-// 三个动词成因果串（都是 4 字母），入口是 `quit`：
-//   `quit` 退场并交班 = 离核退出 → `reap` 收尾（钩子 → Reaped → 入躯壳队列）
-//                     → `bury` 埋掉归还 → `scheduler::trap::run` 交下一帧
-// 延迟的是**回收**（栈 / trap 帧 / 团队空间），不是收尾：不能在自己正在用的栈上
-// 回收自己。故收尾在 `reap` 里就做完，`bury` 只管归还。
-//
-// `bury` 是 `quit` 的**内部一步**（私有）：排空必须发生在再次取活之前，把这条
-// 不变量做进结构，就不必指望每个调用点记得按顺序写两行。
-
 use alloc::sync::Arc;
 
 use env::{NOTE_MAX, TaskId};
@@ -23,14 +12,8 @@ use crate::work::unit::task::{Task, TaskState};
 
 use super::{WakeKey, wipe, wipe_space};
 
-/// 全局躯壳队列（Level::L3，与 Team.tasks 同级）：延迟回收——不能在
-/// 自己正在用的栈上回收自己；bury 统一回收。
 pub(super) static HUSKS: SpinLock<Husks> = SpinLock::new_level(Level::L3, Husks::new());
 
-/// 躯壳队列 = **一条穿在任务 `Reaped` 载荷里的链**（与就绪队列同一手法）。
-///
-/// 入队在退出路径（`reap`）上，那里没有任何可以答错的入口 ⇒ 这条队列不许分配：
-/// 链的节点就是躯壳自己，"交给别人排空"这条需求因此不需要容器。
 #[derive(Default)]
 pub(super) struct Husks {
     head: Option<Arc<Task>>,
@@ -45,7 +28,6 @@ impl Husks {
         }
     }
 
-    /// 入壳（纯指针写）。前置同就绪链：`Reaped { next: None }`。
     fn push(&mut self, mut task: Arc<Task>) {
         debug_assert!(
             matches!(
@@ -61,7 +43,6 @@ impl Husks {
         self.tail = Some(task);
     }
 
-    /// 出壳（摘链 + 清空离开者的 `next`）。
     fn pop(&mut self) -> Option<Arc<Task>> {
         let mut head = self.head.take()?;
         self.head = Task::reaped_next(&mut head).take();
@@ -71,7 +52,6 @@ impl Husks {
         Some(head)
     }
 
-    /// 链长（只在挂住现场的信标里读 ⇒ 走一遍，O(n) 无妨；门跟着读者走）。
     #[cfg(debug_assertions)]
     pub(super) fn len(&self) -> usize {
         let mut n = 0usize;
@@ -83,24 +63,12 @@ impl Husks {
         n
     }
 
-    /// 整体摘走（关机终末释放）：交出链头，队列就地清空。
     pub(super) fn take(&mut self) -> Option<Arc<Task>> {
         self.tail = None;
         self.head.take()
     }
 }
 
-/// 死亡唯一入口：**收尾**（退出钩子：通道级联 + 能力级联）→ 置 `Reaped` → 入躯壳队列。
-///
-/// 不变量：`TaskState::Reaped` ⇔ 退出钩子已跑完——本函数是通往 `Reaped` 的**唯一**
-/// 路径，也是躯壳队列的**唯一**入队点。`Join` 的判据（入口当场读 `TaskState::Reaped`）
-/// 因此精确：它为真即「收尾已完成」。
-///
-/// 前置：任务已停摆（`Doomed`）；或从自退路径来（此刻已离核、状态仍是 `Running`，
-/// 本函数就地补一次停摆）。已 `Reaped` 的直接返回。
-///
-/// 锁纪律：无锁调用。钩子只逐任务取放 L3（`Task.pies` / 通道注册表），且 [`cull`]
-/// 已把整棵子树的受害者停摆在前——故钩子内再扑杀子域，也不会唤醒「还能跑」的人。
 pub(super) fn reap(mut task: Arc<Task>) {
     match Task::exclusive(&mut task).state() {
         TaskState::Reaped { .. } => return,
@@ -109,32 +77,11 @@ pub(super) fn reap(mut task: Arc<Task>) {
     }
     hooked(task.ident.id);
     Task::exclusive(&mut task).transform(TaskState::Reaped { next: None });
-    // L3 单独锁，1 → 3 顺序、不嵌套。入壳是**纯指针写**（链在 `Reaped` 载荷里）——
-    // 退出路径没有失败域，这条队列因此不再有"扩容即 halt"的可能。
     HUSKS.lock().push(task);
 }
 
-/// quit：**退场并交班**——离核装槽 → [`reap`]（收尾 + 入壳）→ [`bury`]（排空躯壳）
-/// → 交出下一个要恢复的帧。
-///
-/// 延迟回收的理由是**回收**而非收尾：不能在自己正在用的栈上回收自己，故栈/trap
-/// 帧/团队空间留到 `bury`；收尾（钩子）在此刻就做完了。
-///
-/// 「排空躯壳」是本函数的一部分，**不是调用方的义务**：它必须发生在再次取活之前
-/// ——最后退出的任务若带着栈/trap 帧/团队空间滞留到关机断言，就是帧泄漏。`quit` 的
-/// 六个调用点（`trap` 的 `Reap` 退场、两处 `doomed` 自退兜底、两处故障隔离杀点，以及
-/// `wait` 的离核前自查）因此各自只写一行退出原因。
-///
-/// 落点由 `scheduler::trap::run` 决定（续跑 / 轮转 / 取活 / 停机）——它只会循环到
-/// 有帧或停机，故恒有帧可交。
-///
-/// 注：`swap` 其实已经在装槽时给出了后继帧 PA，这里仍走 `run()`
-/// 取活——两条路落到**同一个后继**，差别只在 `run()` 会替后继再扣 1 个量子（8 → 7）。为与改前
-/// 保持**逐字相同的调度行为**，本轮不动它（记一笔，待单独裁决）。
 pub fn quit() -> usize {
     let cond = current();
-    // 离核且无后继装槽 → 槽已 settled（`swap` 内 shed 或
-    // 装下一）；团队 Arc 归零即回收——地址空间随释放。
     let (mut exited, _next_pa) = cond.swap();
     debug_assert!(
         matches!(
@@ -143,14 +90,9 @@ pub fn quit() -> usize {
         ),
         "running 容器里不是 Running 任务"
     );
-    // 原因码与那句话都取自逐核暂存槽（`Reap` / 故障隔离杀在调 `quit` 前写下，见
-    // `messenger::EXIT_REASON` / `messenger::EXIT_NOTE`）——取即清零，下一次退场重新写。
     let reason = super::take_exit_reason();
     let (note_va, note_len) = super::take_exit_note();
     let tid = exited.ident.id;
-    // 那句话**读在这里**：此刻团队空间还在（`bury` 才归还），故一次 `copy_in` 就够。
-    // 打印与入账同在一处——账因此是**全**的（故障隔离 / 他杀 / 级联三路没有话，
-    // `note_out` 对 `len == 0` 一个字都不打）。
     let mut buf = [0u8; NOTE_MAX];
     let text = note_out(
         &exited.ident.team.space,
@@ -170,12 +112,6 @@ pub fn quit() -> usize {
     crate::work::room::scheduler::trap::run()
 }
 
-/// 读域退场时带来的那句话（`Reap { note, len }`）：**打印它，并交出那句可入账的文本**。
-///
-/// 三条纪律（原样：读的时点从 `Reap` 挪到 `quit`，为的是让打印与入账同一处）：
-/// ①缓冲由调用方给（**退场路径不分配**）；②读失败就如实说读不到（诊断是**加成**，
-/// 不是退场的前提——指针非法不该让"它已经走了"这件事多一个失败模式）；③打印走内核
-/// 自己的出口（SBI DBCN），**不经过任何服务**：控制台可能正是那个死掉的域。
 fn note_out<'a>(
     space: &Space,
     tid: TaskId,
@@ -210,21 +146,8 @@ fn note_out<'a>(
     }
 }
 
-/// 回收全部躯壳任务：簿记清理 + 栈 slot/trap 帧归还 + drop。安全：躯壳不在任何核
-/// 运行（running/starved 均无引用）。锁纪律：只持 reaped 锁出队，放锁后再取
-/// Team.tasks / Space.inner（顺序获取、不嵌套）。
-///
-/// **入队的任务已经收尾**（退出钩子见 [`reap`]），本函数只做回收——「等收尾」与
-/// 「等回收」因此分开：前者是 `Join` 的语义，后者对调用方不可观测。
-///
-/// 唯一调用者是 [`quit`]（排空必须发生在再次取活之前，故是它的一部分）。回收计数
-/// （`conductor::exit`）在归还完成之后才递增：否则最后任务退出时另一核见
-/// `REAPED == PUSHED` 立即 halt，本核 bury 未及回收 → 关机断言误报帧泄漏。
 fn bury() {
     loop {
-        // 显式作用域取 z：if-let 的临时 guard 会存活到整个循环体（Rust 语义），
-        // 导致 husks(L3) 锁跨 Team.tasks 等 L3 表——同层嵌套 lockdep 违规。
-        // 块结束即释放 husks 锁。
         let z = {
             let mut husks = HUSKS.lock();
             let Some(z) = husks.pop() else {
@@ -235,28 +158,13 @@ fn bury() {
         trace::note(EventKind::Room(RoomEvent::Reap {
             tid: z.ident.id.get(),
         }));
-        // 目标已收尾 → 叫醒它的全部 join 等待者（内核驱动，覆盖 fault 死亡）。
-        // 站点当场删掉：`WakeKey::Task{id}` 的寿命是目标任务的存活单元，而本站点在
-        // 键还在世的最后一次入口上——删掉它，站点表就不随任务回收增长（见 `wipe`）。
         wipe(WakeKey::Task { id: z.ident.id });
-        // `Pies{task}` 的寿命也是这枚任务的存活单元（`prune` 同样会收），显式 wipe 是顺手。
         wipe(WakeKey::Pies { task: z.ident.id });
-        // 空间键的退役面：**空间死掉时没有任何入口会再碰它的键**（hole / task 键各有自己
-        // 的退役调用点，空间键没有），而 `prune` 只在"键再被碰到"时才跑 ⇒ 站点永留。
-        // 判据用**唯一强持有**：这个壳是最后一份持有者时，`drop(z)` 之后空间才真死——
-        // 故趁 asid 还在手上先把它名下的空间键站点一起退役。
         if Arc::strong_count(&z.ident.team.space) == 1 {
             wipe_space(z.ident.team.space.asid());
         }
-        // 簿记清理（Team.tasks 锁；纯 Vec 操作——不变量：锁内不调 space 方法）
         z.ident.team.prune_tasks(&z);
-        // 名册里的**死条目**：不清就会把每个"活过的任务"的 `ArcInner<Task>`（152 B）
-        // 外壳一路扣到关机（churn 下与任务总数成正比）。详见 `roster::prune_dead`。
         let _pruned = crate::work::room::scheduler::core::prune_dead();
-        // 锁外回收（Team.tasks 已放 → Space.inner=2 合法）：栈 slot + trap 帧
-        // 一次 with_flush 经 `Space::release(Span)` 收回——段归还 + PTE 清理 +
-        // 刷 TLB；帧随 map drop 归还 frame 池。Span 是 claim 时存进 TaskIdent 的
-        // 区间身份（类型同一，不 re-find）。
         z.ident
             .team
             .space
@@ -268,26 +176,18 @@ fn bury() {
             .release(z.ident.frame)
             .expect("release: span mismatch");
         drop(z);
-        // 回收完成（栈/帧/团队空间已归还）才计数：done() 成立 ⇔ 全部回收完毕，
-        // halt 的关机断言无滞留可验。
         conductor::exit();
     }
 }
 
-// ── 退出钩子注册面 ──
-//
-// 钩子由 `boot::init` 挂上来（结构面 `messenger::doom` + 能力面 `gate::doom`）。每条收尾的
-// 任务按注册顺序跑一次——本域不命名任何子系统，故不知道挂上来的是谁。
 type Hook = fn(TaskId);
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
-/// 挂上退出钩子（一次性；由 `boot::init` 调用）。
 pub(crate) fn hook(hooks: &'static [Hook]) {
     let _ = HOOKS.set(hooks);
 }
 
-/// 对 `tid` 跑一遍挂上的钩子（未挂 = 无事）。
 fn hooked(tid: TaskId) {
     if let Some(hooks) = HOOKS.get() {
         for h in hooks.iter() {

@@ -1,11 +1,3 @@
-// 混合路由分配器：按大小委派给 block 或 frame 后端。
-//
-//   layout.size() <= PAGE_SIZE/2 → block（多块页）
-//   layout.size() >  PAGE_SIZE/2 → frame（order0 及以上）
-//
-// hybrid 自身不管理任何内存，仅检查大小并路由。block 内部缺页时
-// 直接调用 frame::allocator() 取页（锁序：block→frame，从不反向）。
-
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
@@ -21,18 +13,9 @@ impl HybridAllocator {
         Self
     }
 
-    /// 初始化 block + frame 后端。
-    ///
-    /// # Errors
-    ///
-    /// 任一后端初始化失败，错误原样传播。
     pub fn init(&self) -> InitResult<()> {
         block::init()?;
         frame::init()?;
-        // 出厂指纹探针（`pool init: frames=… entries=… step=… sum=…`）**已删**：
-        // 它要回答的是"运行期看到的表自相矛盾有多少是**先天**的"，而那个问题已由
-        // 守恒口径在用例起点直接回答 —— 且口径自洽（`conserve` 已撤，这条理由留着）。
-        // 不像旧探针那样"求和"与"步进"两把尺子各说一套。
         Ok(())
     }
 }
@@ -42,12 +25,7 @@ unsafe impl Allocator for HybridAllocator {
         if layout.size() <= PAGE_SIZE / 2 {
             block::allocator().allocate(layout)
         } else {
-            // 帧级不标注（= Plain）：本处是分配器内部分流，装饰器面向业务
-            // 分配点；全局容器缓冲 / 健康检查 / spare 仓大块走这条路。帧种类表
-            // 里 0 就是 Plain，故**不需要**任何标注动作（旧版这里是标 Persistent
-            // 的一次空转：relabel(Persistent, Persistent) 成对抵消）。
-            let p = frame::allocator().allocate(layout)?;
-            Ok(p)
+            frame::allocator().allocate(layout)
         }
     }
 
@@ -69,7 +47,6 @@ pub fn allocator() -> &'static dyn Allocator {
     &HYBRID_ALLOCATOR
 }
 
-/// 初始化混合分配器（block + frame 后端）：在任何堆分配之前调用恰好一次。
 pub fn init() -> InitResult<()> {
     HYBRID_ALLOCATOR.init()
 }

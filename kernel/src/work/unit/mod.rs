@@ -1,18 +1,3 @@
-// 任务执行单元（unit）— 地址空间 + 团队 + 线程 + 装载。
-//
-// 一个 Team 持有唯一 Space（共享地址空间），多个 Task 共享之；每个 Task 持有
-// 自己的 trap 帧（Frame 窗口分配）。
-//
-//   space     — 地址空间（Space/SpaceBuilder、SpaceInner 映射簿记、window 窗口策略）
-//   gate      — 能力门闩（Pie/AnyPie/授权；单向依赖 mail 的资源实体）
-//   team      — 团队容器（Team/TeamBuilder/kernel 单例 + 运行期装载）
-//   task      — 线程单元（Task/TaskBuilder）
-//   life      — 存活单元（键的寿命 = 资源的寿命；A2 的后半）
-//   weak      — 任务弱引用的出身账（生/亡各记一笔；挂起自检的判据）
-//   loader    — 程序装载（ELF → Space durable）
-//   parser    — ELF 解析（段配方）
-//   source    — 镜像源（一份字节从哪来：内核直读的一块 / 别处空间的一段）
-
 pub(crate) mod gate;
 pub(crate) mod life;
 pub(crate) mod loader;
@@ -45,40 +30,17 @@ use crate::platform::machine;
 use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
 use space::SpaceBuilder;
 
-// 链接脚本 `.rodata` 起始（镜像尾部只读段）——内核映射时将其置为只读，
-// 兼作 ROOT 栈下方的写保护 guard（栈下溢踩 .rodata 即写保护缺页）。
 unsafe extern "C" {
     static _rodata_start: u8;
 }
 
-/// 页表/MMU 操作结果 — `erra::Error<MapError>` 附加调用点上下文。
 pub type MapResult<T> = erra::Result<T, MapError>;
 
-/// 装域（`Build` 的唯一核心入口）：取头 → parse → SpaceBuilder → loader::load →
-/// TeamBuilder::spawn。产**域**（Space + Team），**不产线程**——线程由 `spawn`
-/// 单独产（`Held`），授权后 `Hatch` 放行。
-///
-/// `source` = 镜像字节从哪来（见 [`source::Source`]）：boot 给内核直读的一块，envcall
-/// 给调用方空间里的一段。**不把整份镜像先拷进内核**——一份 ELF 里 97% 是符号表与调试
-/// 信息（实测 18 台 debug 镜像：78.2 MiB 文件、2.13 MiB 段实体），先搬进来再丢掉是白搬。
-/// 头窗口按 [`source::HEAD`] 取，段实体由 loader 逐段现取。
-///
-/// `kind` 决定页表特权级与 U 位：`User` 出 U 态团队，`Supervisor` 出 S 态域。
-/// `sire` 在 `TeamBuilder::spawn` 里闭合血缘（非空 ⇒ 立即入 sire.heir）。
-/// `default_entry` 由装载所得 `e_entry` 写入。
-///
-/// # Errors
-///
-/// - [`team::UnitError::Load`] — parse / SpaceBuilder / loader 任一步失败（原子不落）。
-/// - [`team::UnitError::Unreadable`] — 头窗口读不出来（区间未映射）。
-/// - [`team::UnitError::OoM`] — 头窗口那一页或装载帧备不下。
 pub(crate) fn build(
     source: &source::Source,
     kind: space::SpaceKind,
     sire: weak::TaskWeak,
 ) -> Result<Arc<team::Team>, team::UnitError> {
-    // 头窗口：一页，**堆上取**（trap 栈宝贵，不放 4 KiB）。备不下 = 内存不够，
-    // 不是"镜像不认"——这一格透 `-4`（协议层已认）。
     let mut head: Box<[u8; source::HEAD], &'static dyn Allocator> = unsafe {
         Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
             .map_err(|_| team::UnitError::OoM)?
@@ -108,54 +70,25 @@ pub(crate) fn build(
     Ok(team)
 }
 
-/// 初始化 MMU：**先探测 satp 模式**（P1：最小恒等临时根，候选 57→48→39），
-/// 再创建内核地址空间，identity-map DRAM 和 MMIO，启用探测所得分页模式，
-/// 并把内核空间封包进 KERNEL_TEAM。
-///
-/// 必须在分配器初始化之后调用（探测临时根表取帧）。
-///
-/// # Safety
-///
-/// 写入 `satp` 后会立即启用分页。调用者需确保此时所有存活的指针
-/// （栈、代码、数据段）都已 identity-mapped。
-///
-/// # Errors
-///
-/// - [`MapError::DramOverlap`] — DRAM 末端越过用户栈窗口（内存配置非法）。
-/// - [`MapError::OutOfMemory`] — 物理帧不足以分配根/中间页表或内核 trap-context 帧。
-/// - [`MapError::NotAligned`] / [`MapError::AlreadyMapped`] — 映射参数非法。
-/// - satp 模式探测失败（全不支持/帧耗尽）→ panic（boot 级致命）。
 pub fn init() -> MapResult<()> {
     (|| -> Result<(), MapError> {
         unsafe {
             let m = machine::info();
 
-            // 0. 探测 satp 模式并部署（此后 mode()/几何按它派生）。失败 = 无
-            //    S 态分页或帧耗尽——boot 级致命。
             mode::detect().unwrap_or_else(|e| panic!("satp mode detect failed: {e:?}"));
 
-            // 任务栈窗口顶锚于用户半区顶（mode::upper 起）：恒等映射的 DRAM
-            // 必须落在其下方，否则任务栈窗口覆盖真实内存而非专用窗口。
             if VirtAddr::from_raw(m.dram.base + m.dram.size) > mode::upper() {
                 return Err(MapError::DramOverlap);
             }
 
-            // 1. 创建内核地址空间
             let kernel_space = SpaceBuilder::kernel().build()?;
 
-            // 1.5 设置内核空间 user 段：从低区起覆盖整个用户半区（段 lowest
-            //     first-fit——内核心任务栈与用户栈同池自低端起排槽）。段边界 =
-            //     [base, upper)：base = 内核镜像基址，upper = 用户半区顶（可见
-            //     space::inner::SpaceInner::dynamic）；与诊断侧 scene 无耦合。
             {
                 let this = &kernel_space;
                 let base = crate::layout::IMAGE_BASE.as_usize();
                 this.with(|inner| inner.dynamic(base));
             };
 
-            // 2. Identity-map 整个 DRAM —— 内核镜像（含镜像内 ROOT 栈区，位于
-            //    `_kernel_edge` 之上）都在 DRAM 内。只 map free 会在启用分页后
-            //    让内核栈/内核镜像变成未映射，下一次栈访问或取指即缺页。
             let ram_flags = PteFlags::V
                 | PteFlags::R
                 | PteFlags::W
@@ -171,8 +104,6 @@ pub fn init() -> MapResult<()> {
                 ram_flags,
             )?;
 
-            // 3. 内核高半区映射（同样覆盖整个 DRAM，为 S-mode 切换做准备；
-            //    高半区起点 = 探测模式的 lower()，随模式）
             kernel_space.borrow(
                 mode::lower() + m.dram.base,
                 PhysAddr::from_raw(m.dram.base),
@@ -180,26 +111,16 @@ pub fn init() -> MapResult<()> {
                 ram_flags,
             )?;
 
-            // 3.5 内核 .rodata 段只读化：镜像尾部 .rodata 经恒等与高半区两处都已
-            //    RWX 映射，此处用 protect 降为只读（去 W）。作用有二：
-            //      a) ROOT 栈位于 _kernel_edge 之上、向下生长，越界第一脚即踩 .rodata
-            //         → 写保护缺页（天然 ROOT 栈 guard，省 unmap/预留帧）；
-            //      b) 内核只读数据获得 RO 防护（BUG 改写 .rodata 立即缺页暴露）。
-            //    protect 只改已映射叶子 PTE，不影响中间表与 free 区；两处都要降。
             let rodata_start = (&raw const _rodata_start).addr();
             let rodata_size = kernel_edge() - rodata_start;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
             kernel_space.protect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
             kernel_space.protect(mode::lower() + rodata_start, rodata_size, ro_flags)?;
 
-            // 4. 映射 trap trampoline 页（内核自有帧）：所有空间以 TRAMPOLINE VA
-            //    映射同一物理页，`stvec` 指向它。G 位：内容不可变，不被 ASID 局部
-            //    sfence 刷掉也安全。
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
             kernel_space.borrow(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
 
-            // 5. hart trap-context 帧：HART_FRAME_BASE 起 N 页
             let n = hart::hart_count();
             for h in 0..n {
                 let page: crate::memory::manager::table::Frame = crate::tag!(HartFrame, {
@@ -214,15 +135,12 @@ pub fn init() -> MapResult<()> {
                 )?;
             }
 
-            // 6. 启用探测所得模式的分页（satp MODE 字段随模式；ASID = 内核身份 0）
             satp::set(mode::mode(), kernel_space.asid().get(), kernel_space.root());
 
-            // 7. 刷新 TLB + 运行期布局校验（debug：违例 fail-fast）
             flush_asid(kernel_space.asid());
             #[cfg(debug_assertions)]
             crate::layout::validate();
 
-            // 8. 内核空间封包进内核团队。
             team::init_kernel(Arc::new(kernel_space));
 
             Ok(())

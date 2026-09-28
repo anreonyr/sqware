@@ -1,18 +1,3 @@
-// 窗口 — 映射之上的领域策略适配层（薄：只组合 Space 原语，不持有状态）。
-//
-// 每种窗口一个类型：分配/映射/回收的**领域语义**（栈 slot 的 guard+body 两 map、
-// 帧的立即物化、堆的立即分配、mmap 的懒映射）。方法都取 `&Space`，锁内经
-// `SpaceInner` 原语（`map`/`claim`/`attach`/`borrow`/`unmap`）拼装，产物统一
-// [`Span`](super::salvage::Span)（分配动作的产物 = 回收的输入，类型同一）。
-// `Space` 只提供通用映射原语，不知道栈/帧/堆/mmap 是什么。
-//
-// 窗口 = 零状态（策略命名空间 + 文档锚点）。新增窗口种类 = 加一个类型 + 一组方法，
-// `Space` 的 impl、`SpaceInner` 字段零改动。
-//
-// 共享页视图（`mail/pole.rs` 的 `PoleMeta::open_into`）与栈/帧/堆是**同一种拼法**（取段 +
-// 借帧装配），但它要在 `PoleMeta` 上登记视图（回收身份）、且同一个 Space 里 per-pie
-// 各一条 PTE，故没收回窗口类型——共用 inner 原语，结构同型。
-
 mod frame;
 mod heap;
 mod share;

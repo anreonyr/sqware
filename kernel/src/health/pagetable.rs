@@ -1,10 +1,3 @@
-// 健康检查 · pt_reclaim — PT 回收自测：map/unmap 循环验证中间表回收，
-// 无孤儿表、无 double-free。
-//
-// 每轮：map 4 MiB（4 KiB 页）→ 表数 +levels（随模式 3/4/5；Sv39 即
-// 2×L0 + 1×L1，根槽 = 1）；unmap → 回落；32 轮后「在途帧块 − 堆支撑页」回到轮前。
-// 断言用 `expect!`：失败统一报告 + fail-fast。
-
 #![cfg(debug_assertions)]
 
 use alloc::boxed::Box;
@@ -15,15 +8,11 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::work::unit::space::SpaceBuilder;
 
-/// PT 回收自测：map/unmap 循环验证中间表当场归还。
 pub fn pagetable() {
-    // 表数期望随模式层级（4 MiB = 2×L0 + 每层一个中间表 = 共 levels 张表）。
     let levels = crate::memory::manager::mode::geometry(crate::memory::manager::mode::mode()).levels
         as usize;
-    // 根槽随模式：Sv39 的高位 VPN 为 1，落槽 1；Sv48/57 高位 VPN 为 0，落槽 0。
-    // 地址本身在堆窗口之后、栈窗口之前的空地。
     const BASE: usize = 0x4000_0000;
-    const SIZE: usize = 4 * 1024 * 1024; // 4 MiB → 2×L0 + (levels−2) 中间表
+    const SIZE: usize = 4 * 1024 * 1024;
     const ROUNDS: usize = 32;
 
     let space = SpaceBuilder::user()
@@ -32,12 +21,10 @@ pub fn pagetable() {
     let flags =
         space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
     let base_count = space.table_count();
-    // 全动态下块池页已计入 frame.occupied,剔除块池持页得"非块池用途在途帧块"。
     let held_before = crate::memory::allocator::statistics::frame_occupied()
         - crate::memory::allocator::statistics::block_occupied();
 
     for round in 0..ROUNDS {
-        // map：分配数据帧 + 中间表
         let mut frames: Vec<crate::memory::manager::table::Frame> = Vec::new();
         for _ in 0..(SIZE / PAGE_SIZE) {
             frames.push(crate::tag!(Probe, unsafe {
@@ -61,8 +48,6 @@ pub fn pagetable() {
             "round {round}: map hit"
         );
 
-        // 拆除：回收中间表 + 数据帧（树自底向上判空摘除；double-free 由分配器检测）。
-        // 这里拆的是**完整区间**（与 attach 的区间逐字相等）⇒ 不需要分裂 ⇒ 不会分配。
         space
             .unmap(VirtAddr::from_raw(BASE), SIZE)
             .expect("pagetable case: unmap");
@@ -76,15 +61,11 @@ pub fn pagetable() {
             space.translate(VirtAddr::from_raw(BASE)).is_none(),
             "round {round}: unmap hit"
         );
-        // 双向核对：拆除只碰「簿记说有 PTE」的页，反向审计正是守这条不变量——
-        // 装/拆之后立刻验，不留到 boot 一次性快照。
         space.audit();
     }
 
     let held_after = crate::memory::allocator::statistics::frame_occupied()
         - crate::memory::allocator::statistics::block_occupied();
-    // 失败时把**逐类**读数一并打出来：净漏帧只说"少了多少"，逐类读数直接说
-    // "漏的是哪一类"（判据的把手，不是又一条判据）。
     crate::expect!(
         held_before == held_after,
         "net frames leaked: {held_before} → {held_after}（逐类 {}）",

@@ -1,27 +1,3 @@
-// 地址空间 — MMU 子系统的核心抽象
-//
-// Space 拥有一个**随运行模式**的根页表与全部自有物理帧，提供虚拟→物理映射、
-// 权限管理、地址翻译等高层操作。空间种类由 [`SpaceKind`] 显式区分（S 态页表 /
-// U 态页表），空间身份由独立字段 `Asid` 承载（0 = 内核空间），构造统一走
-// [`SpaceBuilder`]。布局几何随模式（lower/upper，见 `memory::manager::mode`）。
-//
-// 文件夹结构（同一把锁的两半 + 段/图/料箱 + 窗口适配层）：
-//   outer     — 外的这一半：[`Space`] / [`SpaceBuilder`] / `Segments`；`RelLock` 门
-//                 （`with` / `with_flush`）+ 逐操作 ≤3 行转发 + 锁外按 ASID 刷 TLB
-//   inner     — 内的这一半：`SpaceInner`（root 页表树 + 两段 + 唯一 maps 表）+
-//                 全部映射原语，**无锁无刷**（只出现在事务闭包内）
-//   map       — VA→PA 簿记的原子单元（[`Map`] / [`Pending`]）
-//   segment   — 段实体（`Segment`，几何 + 已分配块表）+ 选段枚举（[`SegmentKind`]）
-//   salvage   — 回收侧的词汇（[`Span`] / `Salvage`）
-//   window    — 窗口适配层（[`StackWindow`] / [`FrameWindow`] / [`HeapWindow`] /
-//                 [`ShareWindow`]，操作 `Space` 的领域策略，产物统一 [`Span`]）
-//
-// 簿记模型（三层语义）：
-//   Segment — 一段 VA（user 半区 / kernel 帧区），lowest first-fit 出块
-//   Span    — 分配/映射的产物（段 + VA + size + 物化帧 PA），回收的输入
-//   Map     — VA→PA 原子单元（区间 + 访问属性 + 物化态 + 帧所有权）
-//   SpaceInner 持 root 页表树 + 两段 + 唯一 maps 表；窗口方法操作它。
-
 mod inner;
 mod map;
 mod outer;
@@ -34,31 +10,18 @@ pub use outer::{Space, SpaceBuilder};
 pub(crate) use salvage::Span;
 pub(crate) use segment::SegmentKind;
 
-/// 空间种类 — 页表被哪个特权级使用（单一事实源）。
-///
-/// `Supervisor` = S 态运行所用的页表（内核空间与 supervisor 域空间同属此类）；
-/// `User` = U 态运行所用的页表。**不表达 ASID**——ASID 是空间身份，独立字段
-/// （[`Asid`](crate::memory::manager::asid::Asid)）；「是不是内核空间」由
-/// `Asid::is_kernel()` 判定，不是本枚举的职责。
-///
-/// 布局几何常量见 `crate::layout`；堆窗口由装载期按 image_end 派生。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceKind {
-    /// S 态页表（内核空间 / supervisor 域空间）。
     Supervisor,
-    /// U 态页表。
     User,
 }
 
 impl SpaceKind {
-    /// 是否 S 态页表（SPP / tp / 窗口 U 位的单一判据）。
     pub fn is_supervisor(self) -> bool {
         matches!(self, SpaceKind::Supervisor)
     }
 }
 
-/// 清单携带的特权级（`env::ProgramKind`）→ 空间种类。`Build` 的唯一映射点：
-/// 程序不自称特权级，kind 由内核打包表决定、root 原样转交。
 impl From<env::ProgramKind> for SpaceKind {
     fn from(k: env::ProgramKind) -> Self {
         match k {

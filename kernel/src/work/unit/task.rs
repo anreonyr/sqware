@@ -1,13 +1,3 @@
-// 线程（可调度单元）— 类型 + 构造。
-//
-// Task = 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
-// TaskBuilder 在团队容器内生成任务：栈 + trap 帧 + 填帧 + 入队。
-//
-// **两段式构造**（D3=B 的顺序要求）：`hold` 产 `Held`（未放行、已入簿记与计数），
-// 放行是**单独一步**（`Task::release`，即 ABI 的 `Hatch`）——本层不设"产并放行"的
-// 别名：`UnitCall::Spawn` 只有"产 Held"一个意思。跨域产线程必须走 `hold`，父方
-// `Accord` 之后再放行——新线程的权限表起步为空，「先授权、后运行」是安全的一侧。
-
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
@@ -33,90 +23,27 @@ use crate::work::room::messenger::{Ticket, WakeKey};
 use crate::work::room::scheduler;
 use env::TeamId;
 
-/// 全局任务号（跨 hart 唯一）。自 1 起：0 保留作「无任务」哨兵——`SelfId`/
-/// `sire()` 等以 0 表「无上下文 / 无父」，真实 task id 恒 ≥ 1，哨兵无歧义。
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
-/// 启动参数上限（字）。栈顶 args 区 ≤ 512 B；超出由适配层拒（`-1 Denied`）。
 pub(crate) const MAX_ARGS: usize = 64;
 
-/// 任务状态：任务现在在哪 +（Running/Blocked 时）该状态特有的数据。
-///
-/// **不是 `Copy`/`Clone`**：`Starved` / `Reaped` 的载荷里挂着容器链的下一环（`Arc`），
-/// 复制一份状态就等于复制一条链的持有——链只能有一份所有者。读状态经
-/// [`Task::state`]（借出），改状态只经 [`Task::transform`]。
 pub enum TaskState {
-    /// 正在执行（恒为某 hart 的 running，不在任何队列）：预算随 run 递减。
-    /// 不变量：预算恒 ≥ 1（耗尽即转 Starved，不落盘 Running{0}）。
     Running { ticks_left: u32 },
-    /// 已阻塞（在站点队列里；不在任何就绪队列，不可被 steal）：等待点在载荷。
-    ///
-    /// **等待点 = 键 + 票**：键指向站点（唤醒侧按它找人），票指向到点登记（到期侧
-    /// 凭它认领）。两者都在这里，故「谁在等、等什么、等到何时」不散在全局表里。
     Blocked {
         key: WakeKey,
         ticket: Ticket,
-        /// 站点等待链的下一环（`None` = 链尾）——与 `Starved::next` 同一手法，第三条链。
-        ///
-        /// **链在载荷里**：站点只存链头与链尾，"下一个是谁"跟着等待者自己走。挂起路径
-        /// ④ 落在 `swap()` **之后**——那一侧没有失败域可挂（离核之后想返回只能让核上空转，
-        /// 实测见 `block` 头注），故任何"要么扩容要么 halt"的入队容器都是地雷。
-        ///
-        /// 互斥由**分片锁 + 容器唯一性**保证（见 [`Task::exclusive`]）：同一条链只有一个
-        /// hart 的锁能碰。纪律与另两条链相同——入链前必须为空，离开 `Blocked` 之前必须
-        /// 先摘链（`transform` 整块换掉载荷，两处都有断言兜底）。
         next: Option<Arc<Task>>,
     },
-    /// 在就绪容器里等选（被选中时重置满额预算）。四条进入路径：放行
-    /// （`Held → Starved`）、预算耗尽轮转、主动让出、唤醒（`Blocked → Starved`）。
-    ///
-    /// 名字只说了其中一条（预算耗尽 = 真的饿过）——放行的新生儿从未跑过。名字保留
-    /// （用户裁决），故四条路径记在这里而不是靠名字暗示。
     Starved {
-        /// 就绪链的下一环（`None` = 链尾）。
-        ///
-        /// **链在载荷里**，不在容器里：容器（某核的 `SchedulerInner`）只存链头与链尾，
-        /// 而"下一个是谁"跟着任务自己走。这样入队/出队/偷取/摘除全是**指针写**——
-        /// 唤醒路径（`rise`）与时钟路径（`redeem`）上没有失败域，任何"要么扩容要么
-        /// halt"的容器在这两条路上都是地雷。互斥由**容器那把锁 + 容器唯一性**保证
-        /// （见 [`Task::exclusive`]）：同一条链只有一个 hart 的锁能碰。
-        ///
-        /// 纪律：离开 `Starved` 之前必须先摘链（`transform` 会整块换掉载荷）；
-        /// 入队时 `next` 必须为空——两处都有断言兜底。
         next: Option<Arc<Task>>,
     },
-    /// **未放行**（在 `Team.held` 里；不在任何队列，不可被 steal）：`Spawn` 的初始态，
-    /// 只能经 `Hatch` 转 Starved（或随父域被扑杀转 `Doomed`）。
     Held,
-    /// **已停摆**（摘出了全部调度/等待容器，退出钩子未跑；不在任何调度队列）。
-    ///
-    /// 只由 `messenger::suspend` 置位，是「判死」与「收尾」之间的过渡态：扑杀整棵
-    /// 血缘子树时**先让全部受害者停摆、再逐个跑钩子**——钩子会摘门闩、唤醒等待者，
-    /// 若此时还有受害者能被唤醒后运行，它就会在注定要死的状态下看到已死资源。
     Doomed,
-    /// 已收割（躯壳，在 reaped 容器等延迟回收；不在任何调度队列，任何核可回收）。
-    ///
-    /// 不变量：**退出钩子已跑完**——唯一置位路径是 `messenger::reap`（钩子 → 本态 →
-    /// 入躯壳队列），故「`state == Reaped`」精确表示**收尾已完成**，`Join` 的判据
-    /// 因此不含竞态。延迟的是**回收**（栈/trap 帧/团队空间），不是收尾。
     Reaped {
-        /// 躯壳链的下一环（`None` = 链尾）——与 `Starved::next` 同一手法、另一条链。
-        ///
-        /// 为什么要这条链：任务的栈/帧/团队空间**不能在自己还在用的栈上回收**，故
-        /// 收尾之后要把躯壳交给别人排空（`bury`）。那条队列的入队在退出路径上，没有
-        /// 任何可以答错的入口 ⇒ 同样不许分配。
         next: Option<Arc<Task>>,
     },
 }
 
-/// 状态的**判别式**（无载荷投影）——给「观察者」读的那一半。
-///
-/// 本仓有两类读状态的人，能力不同（这是 B′ 的核心）：
-///   - **持有者**：任务在自己手上的容器里（或本核刚把它摘出来）⇒ 经 [`Task::exclusive`]
-///     拿 `&mut`，读得到 [`TaskState`] 的全部载荷，也是唯一能改状态的路径；
-///   - **观察者**：他核判死（`messenger::doom::suspend`）、`Join` 的边界、定时到点
-///     （`messenger::redeem`）⇒ 只读本枚举。判别式是唯一的**原子发布点**，payload 在
-///     类型上够不着 ⇒ 「读状态再摘容器」这件事做不出来了，只能**问容器**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TaskTag {
@@ -129,8 +56,6 @@ pub enum TaskTag {
 }
 
 impl TaskTag {
-    /// 字节 → 判别式。写侧只有一处（`Task::transform` 存 `TaskState::tag()`），故不合法
-    /// 字节只可能来自内存损坏——报错而不是猜。
     fn of(byte: u8) -> TaskTag {
         match byte {
             b if b == TaskTag::Held as u8 => TaskTag::Held,
@@ -145,14 +70,10 @@ impl TaskTag {
 }
 
 impl core::fmt::Debug for TaskState {
-    /// 手写而不是 derive：载荷里是 `Arc<Task>`，而 `Task` 不实现 `Debug`（任务是活对象，
-    /// 打印它没有意义）。这里只印判别式 + "还挂在链上吗"——排障要看的正是这两样。
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TaskState::Starved { next } => write!(f, "Starved {{ next: {} }}", next.is_some()),
             TaskState::Reaped { next } => write!(f, "Reaped {{ next: {} }}", next.is_some()),
-            // 「等什么、等到何时」的载荷在这里被读出来：排障看挂住现场时，
-            // 一个阻塞任务在哪个键上等是最要紧的一行。
             TaskState::Blocked { key, ticket, next } => write!(
                 f,
                 "Blocked {{ key: {:?}, ticket: {:?}, next: {} }}",
@@ -166,7 +87,6 @@ impl core::fmt::Debug for TaskState {
 }
 
 impl TaskState {
-    /// 判别式投影。**穷尽 match**：将来加状态时编译器会在这里逼你补一行。
     pub fn tag(&self) -> TaskTag {
         match self {
             TaskState::Held => TaskTag::Held,
@@ -179,63 +99,23 @@ impl TaskState {
     }
 }
 
-/// 线程 — 可调度单元：共享所属 Team 的地址空间，持有自己的 trap 帧。
-///
-/// 栈 / 帧全部归 Team.space 的映射簿记，Task 只持不可变身份（TaskIdent，含
-/// 栈/帧的 [`Span`] 区间）与状态——无任何页所有权。身份可自由 clone（不影响
-/// `Arc<Task>` 的 strong_count，exclusive 纪律见下）；状态唯一可变。
 pub struct Task {
-    /// 不可变身份（spawn 时定型；clone 它不影响本 Task 的强持有计数）。
     pub(crate) ident: Arc<TaskIdent>,
-    /// 本任务的**存活单元**（键 `WakeKey::Task{me}` 的寿命来源；见
-    /// [`life`](crate::work::unit::life)）。强持有者是本 `Task` 自己 ⇒ 任务
-    /// 真正消失（`Arc<Task>` 归零）时它自然归零，站点侧 `upgrade` 失败。
     pub(crate) life: Arc<Life>,
-    /// 状态（含载荷）。唯一可变字段：只有经 [`Task::exclusive`] 的 &mut 能改（唯一
-    /// 强持有语义见 exclusive）。**字段私有**——持有者经 [`Task::state`]（要 `&mut`）
-    /// 读，观察者只能读 [`Task::tag`]。
     state: TaskState,
-    /// 状态的判别式（原子发布）。`transform` 先写 `state`，再 Release store 本字段
-    /// ⇒ Acquire 读到新判别式的观察者「看见」了那次变换（观察者拿不到 payload，
-    /// 也不需要）。观察者与 `transform` 之间因此有正式的 happens-before 边——此前
-    /// 三处观察者读的是被独占写的裸字段，按内存模型是未同步读。
     tag: AtomicU8,
-    /// mail 门闩集合（每个门闩持 Arc<Meta>）。envcall 适配 push/pull，
-    /// Task::drop 时 Arc 递减——最后 Arc drop 时 Meta 自然析构。锁级 = L3
-    ///（与 messenger 簿记同级，绝不嵌套）。
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
-    /// 我生的子域（强持有，血缘清单）。三合一角色：撑命（无线程子域靠它活）、
-    /// `spawn` 授权凭证（能在我 heir 里查到 = 我是 sire）、`doom` 级联遍历源。
-    /// 锁级 = L3（与 pies 同级）。强持有与 `Team.sire`（弱）配对断环。
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
 
-/// 不可变身份：spawn 时定型；任何人自由 clone，无需任何锁。
-///
-/// 资源存活不变量：持 `Arc<TaskIdent>` **不保** `stack`/`frame` 指向的映射存活
-/// （映射归 Space，退役由 `clear` 经 [`Space::release`] 按 Span 归还）。仅两个
-/// 安全窗口使用 `frame.pa`：同 hart trap 内（顺序执行，帧必活）；崩溃现场
-/// （全核冻结，无并发回收）。
 pub(crate) struct TaskIdent {
     pub(crate) id: TaskId,
     pub(crate) team: Arc<Team>,
-    /// 栈 slot 区间（user 段，pa=None）——回收经 [`Space::release`]。
     pub(crate) stack: crate::work::unit::space::Span,
-    /// 帧（kernel 段，pa=Some）——restore 取帧、回收经 [`Space::release`]。
     pub(crate) frame: crate::work::unit::space::Span,
 }
 
 impl Task {
-    /// 状态变换（状态机不变量）：非法变换直接 panic。
-    ///
-    /// 合法变换：
-    ///   Held → Starved（放行）
-    ///   Starved → Running（调度器选上 / steal 迁移后运行）
-    ///   Running → Starved（预算耗尽轮转 / 主动让出）
-    ///   Running → Blocked(原因)（阻塞：如睡眠）
-    ///   Blocked(_) → Starved（唤醒：回到就绪容器）
-    ///   {Held, Starved, Blocked, Running} → Doomed（停摆：判死，钩子未跑）
-    ///   Doomed → Reaped（收尾：退出钩子已跑完，入躯壳队列）
     pub(crate) fn transform(&mut self, next: TaskState) {
         let legal = matches!(
             (&self.state, &next),
@@ -255,36 +135,25 @@ impl Task {
             "illegal task state transform: {:?} -> {:?}",
             self.state, next
         );
-        // 入链载荷必须为空：不为空说明这个任务还挂在某条链上（有人漏摘链），
-        // 放进来就是"一个任务挂在两条链上"。
         let unlinked = match &next {
             TaskState::Starved { next } | TaskState::Reaped { next } => next.is_none(),
             TaskState::Blocked { next, .. } => next.is_none(),
             _ => true,
         };
         debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
-        // 判别式先从 `next` 取出来（`next` 随后按值移进 `state`）。
         let tag = next.tag() as u8;
         self.state = next;
-        // 发布判别式（Release 与 `Task::tag` 的 Acquire 配对）：观察者据此分派。
         self.tag.store(tag, Ordering::Release);
     }
 
-    /// 状态（含载荷）：**只有持有者读得到**——`&mut self` 只能经 [`Task::exclusive`]
-    /// 拿到，而 `exclusive` 的前提正是「容器独占」。观察者读 [`Task::tag`]。
     pub(crate) fn state(&mut self) -> &TaskState {
         &self.state
     }
 
-    /// 状态的可变借用（**唯一改字段的路径是 [`Self::transform`] 与下面两条链访问**）。
     fn state_mut(&mut self) -> &mut TaskState {
         &mut self.state
     }
 
-    /// 就绪链的下一环——**只在持该就绪容器的锁（`Level::Scheduler`）时调用**。
-    ///
-    /// 互斥不靠引用计数而靠那把锁（见 [`Task::exclusive`]）：同一条链只有一个
-    /// hart 能碰，`Arc` 的临时持有者不解引用 Task 字段。
     pub(crate) fn starved_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
         match Self::exclusive(t).state_mut() {
             TaskState::Starved { next } => next,
@@ -292,7 +161,6 @@ impl Task {
         }
     }
 
-    /// 躯壳链的下一环——**只在持 `HUSKS` 锁时调用**（理由同上）。
     pub(crate) fn reaped_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
         match Self::exclusive(t).state_mut() {
             TaskState::Reaped { next } => next,
@@ -300,7 +168,6 @@ impl Task {
         }
     }
 
-    /// 站点等待链的下一环——**只在持该键所在分片锁（`Level::L3`）时调用**（理由同上）。
     pub(crate) fn blocked_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
         match Self::exclusive(t).state_mut() {
             TaskState::Blocked { next, .. } => next,
@@ -308,12 +175,6 @@ impl Task {
         }
     }
 
-    /// 本环的票——摘链/比对时读（作废到点登记要用）。
-    ///
-    /// 与 [`Self::blocked_next`] 同一前提（持分片锁）：读的人就是容器（链的强持有者
-    /// ＋那把锁），故读得到。**观察者不这么用**——`redeem` 从票根拿「键 + 持票人」
-    /// （那份持有人的 `Arc` 是临时的，任务随时可能被别核放行），进容器后只按票号比对
-    /// （`Site::remove_if` 里那一比），不去看「持票人现在什么状态」。
     pub(crate) fn blocked_ticket(t: &mut Arc<Self>) -> Ticket {
         match Self::exclusive(t).state_mut() {
             TaskState::Blocked { ticket, .. } => *ticket,
@@ -321,12 +182,10 @@ impl Task {
         }
     }
 
-    /// 判别式（观察者读；Acquire 与 `transform` 的 Release store 配对）。
     pub fn tag(&self) -> TaskTag {
         TaskTag::of(self.tag.load(Ordering::Acquire))
     }
 
-    /// 续跑：预算递减（Running → Running 仅载荷更新，不经状态机变换表）。
     pub(crate) fn dec_ticks_left(&mut self) {
         match self.state {
             TaskState::Running { ticks_left } => {
@@ -339,16 +198,6 @@ impl Task {
         }
     }
 
-    /// 唯一强持有下取 &mut（`Arc::get_mut` 的 weak ≥ 1 变体：每个任务 spawn 时
-    /// 即被 `Team::push_task` 记入簿记（`Arc::downgrade`），weak_count ≥ 1 永不
-    /// 归零，`Arc::get_mut` 恒失败。簿记弱引用**从不读 Task 字段**（只 downgrade /
-    /// `ptr_eq` 比较），不构成可变访问冲突）。
-    ///
-    /// 调用方义务：任务**至少**被一个容器强持有（running / starved / blocked /
-    /// reaped / held 之一）→ strong ≥ 1。envcall 路径（vest / 未来远程操作）可短暂持额
-    /// 外强引用，**但不解引用 Task 字段**——只 `Arc::ptr_eq` / 借用 pies 锁 /
-    /// drop；唯一改 Task 字段的路径是 `transform`，由本函数串起。
-    /// 互斥仍由调度器锁 + 容器唯一性保证；debug 断言只兜底"无主"漏 ref。
     pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
         #[cfg(debug_assertions)]
         assert!(
@@ -356,20 +205,13 @@ impl Task {
             "task #{}: no holders (strong_count == 0)",
             t.ident.id.get()
         );
-        // SAFETY: 至少一个容器持强引用 ⇒ transform 路径独占（其他 envcall 临时
-        // 持有者不触字段）；Team 簿记弱引用不读字段。等价 Arc::get_mut（其要求
-        // weak == 0），放宽 strong_count 后允许多个容器 + 临时强引用并存。
+        // SAFETY: 至少一个容器持强引用
         unsafe { &mut *Arc::as_ptr(t).cast_mut() }
     }
 
-    /// 放行（`Held → Starved` 入队）。**不做授权**——授权在适配层（envcall）。
-    ///
-    /// 前置：目标仍在所属 `Team.held` 里且状态为 `Held`；否则 `Denied`
-    /// （放行只发生一次，不静默）。
     pub(crate) fn release(task: &Arc<Task>) -> Result<(), UnitFail> {
         let team = task.ident.team.clone();
         if !team.release_held(task) {
-            // 不在未放行表里（已放行过 / 已被他杀摘走）⇒ 报 Denied，**不动别人的**。
             return Err(UnitFail::Denied);
         }
         let mut t = task.clone();
@@ -378,33 +220,12 @@ impl Task {
         Ok(())
     }
 
-    /// **离开计数**：外壳被放掉时若**没走过 `reap`**，补上那一笔退出账。
-    ///
-    /// 为什么要它：停机判据是 `REAPED == PUSHED`（`conductor::done`），而"一个任务消失"
-    /// 的路径**不止** `reap → bury` 一条 —— 未放行的引导线程被并发 `Spawn` 覆盖、
-    /// 被判死后外壳先掉、级联摘下的空壳……都到不了 `bury`。少一笔，全机就在空闲里
-    /// 等到天荒地老（实测：32 M、`churn 16 4 4` 稳定卡死，信标报 `PUSHED=66
-    /// REAPED=62`，四个核全睡在 WFI、永不 `system halted`）。
-    ///
-    /// 判据用 `tag() != Reaped`：正规路径（`bury` 已计过一笔）**恒为 `Reaped`**，
-    /// 故这里不会重复计数；其余形态都还没记过账。
     fn count_vanished(&self) {
         if self.tag() != TaskTag::Reaped {
             crate::work::room::conductor::exit();
         }
     }
 
-    /// 记我生的子域（强持有）。由 `TeamBuilder::spawn` 调用——**唯一入口**
-    /// （K1 血缘闭合；`spawn` 之外不得再调）。
-    ///
-    /// **同名反义**：用户态 `principal` 那一族的 `adopt` 是"把**自己**换到下面"（沿自己那一支
-    /// 往下走）——与本条"把一枚子域**收进来**"方向正好相反。两处名字都照旧，各自正文里有一张
-    /// 跨层的表。
-    /// # Errors
-    ///
-    /// 表扩不出来（内存耗尽）→ `Err(())`（与 `try_reserve_*` 一族同一口径）。
-    /// **预留紧贴 push**：调用方（`TeamBuilder::spawn`）手里那个刚建好的 `Team`
-    /// 可以靠 drop 干净退回，故不需要在它之前预判。
     pub(crate) fn adopt(&self, child: Arc<Team>) -> Result<(), ()> {
         let mut g = self.heir.lock();
         g.try_reserve(1).map_err(|_| ())?;
@@ -412,59 +233,33 @@ impl Task {
         Ok(())
     }
 
-    /// **放下**一个子域：摘掉我 `heir` 里 `team` 那一格，把它**交回**调用方。
-    ///
-    /// 与 [`Self::adopt`] 对偶：那个把一格推进来，这个把一格还出去。摘除在锁内完成、
-    /// 锁随即释放；交回的那一份 `Arc<Team>` **由调用方在锁外落地**——`Team` 的析构要
-    /// 碰 `Space`（`asid::deallocate`）与帧池，不能在 L3 锁里做。
-    ///
-    /// 用 `remove` 而非 `swap_remove`：`heir` 有一个**按索引读的面**（`Heir { index }`），
-    /// 别让放下一次就把剩下的次序洗牌。
-    ///
-    /// 返 `None` = 表里没有这一格（没生过 / 已放下过 ⇒ 调用方按 `Denied` 回）。
-    /// 前置判据（"这域还有没有没收尾的线程"）**不在本函数**：这里只做 −1，条件由
-    /// envcall 臂用 [`Team::all_reaped`] 判，两种失败因此不搅进一个返回值。
-    ///
-    /// [`Team::all_reaped`]: super::team::Team::all_reaped
     pub(crate) fn oust(&self, team: TeamId) -> Option<Arc<Team>> {
         let mut g = self.heir.lock();
         let at = g.iter().position(|t| t.id == team)?;
         Some(g.remove(at))
     }
 
-    /// 快照我的全部子域（doom 级联遍历用：快照后放锁，锁外逐条处理）。
     pub(crate) fn heirs(&self) -> Vec<Arc<Team>> {
         self.heir.lock().clone()
     }
 
-    /// 在我生的子域里按 id 查（`spawn` 授权：查到 = 我是 sire）。
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
         self.heir.lock().iter().find(|t| t.id == id).cloned()
     }
 
-    /// 我生的子域数量（heir 枚举 first pass）。
     pub(crate) fn heir_count(&self) -> usize {
         self.heir.lock().len()
     }
 
-    /// 按索引取子域 TeamId（heir 枚举 second pass；越界 → None）。
     pub(crate) fn heir_at(&self, index: usize) -> Option<TeamId> {
         self.heir.lock().get(index).map(|t| t.id)
     }
 
-    /// 本任务的存活单元（弱引用）。**消费方 = 等待机**：`park` 自取（`Alarm` 键
-    /// 就是它自己）、`Join` 入口交给等待者（`WakeKey::Task{id}` 的寿命来源）。
-    ///
-    /// 一次 `Arc::downgrade`（一个弱计数 +1），不是每次等待一次的搜索。
     pub(crate) fn life(&self) -> Weak<Life> {
         Arc::downgrade(&self.life)
     }
 }
 
-/// 启动参数写入新任务栈顶（`at` 起 `args.len()` 个字）。
-///
-/// 栈体在 `StackWindow::claim` 时已逐页物化，故 `translate` 必成——不成即内核
-/// 不变量破裂，直接 panic（同 `frame span has pa` 的纪律）。跨页按页写。
 fn write_args(space: &crate::work::unit::space::Space, at: VirtAddr, args: &[usize]) {
     let mut done = 0usize;
     while done < args.len() {
@@ -477,31 +272,21 @@ fn write_args(space: &crate::work::unit::space::Space, at: VirtAddr, args: &[usi
             / size_of::<usize>();
         let dst = pa.as_usize() as *mut usize;
         for i in 0..n {
-            // SAFETY: 帧由本空间独占持有（新任务尚未入队）；恒等映射下 PA 可写。
+            // SAFETY: 帧由本空间独占持有
             unsafe { core::ptr::write_volatile(dst.add(i), args[done + i]) };
         }
         done += n;
     }
 }
 
-/// 任务构建器：在团队容器内生成线程（栈 + trap 帧 + 填帧 + 入队）。
-///
-/// 入口参数 `args` 写入新任务栈顶，寄存器约定 `a0 = args VA`、`a1 = count`。
-///
-/// # Errors
-///
-/// 栈/帧分配失败（MapError 原样传播）；失败时已分配资源随 Space drop 回滚。
 pub struct TaskBuilder {
     team: Arc<Team>,
     entry: VirtAddr,
     args: Vec<usize>,
-    /// 栈体大小（页对齐；缺省 `TASK_STACK_SIZE`）。
     stack: usize,
 }
 
 impl TaskBuilder {
-    /// 在指定团队内生成任务。入口默认 = **域的默认入口**（`Build` 装载所得
-    /// `e_entry`）；域未设（内核团队）时退回 `IMAGE_BASE`。
     pub fn new(team: Arc<Team>) -> TaskBuilder {
         let entry = match team.default_entry() {
             0 => IMAGE_BASE,
@@ -515,46 +300,25 @@ impl TaskBuilder {
         }
     }
 
-    /// 启动参数（写入新任务栈顶；`a0 = args VA`、`a1 = count`）。
     pub fn args(mut self, args: Vec<usize>) -> TaskBuilder {
         debug_assert!(args.len() <= MAX_ARGS, "args 超过 MAX_ARGS");
         self.args = args;
         self
     }
 
-    /// 线程入口（绝对 entry；默认 IMAGE_BASE）。
     pub fn entry(mut self, entry: VirtAddr) -> TaskBuilder {
         self.entry = entry;
         self
     }
 
-    /// 自定义栈体大小（页对齐向上取整；缺省 `TASK_STACK_SIZE`）。栈窗 slot
-    /// 按此大小 fall 取段（自窗口顶向下排）。
     pub fn stack(mut self, size: usize) -> TaskBuilder {
         self.stack = size.max(1).next_multiple_of(PAGE_SIZE);
         self
     }
 
-    /// 产**未放行**线程：栈 slot + trap 帧（入团队空间窗口簿记）→ 写 args →
-    /// 填帧 → 入簿记（`Team.tasks`）+ 进 `Team.held` + 计数（PUSHED）。
-    ///
-    /// 计数在**产生**处而非入队处：Held 线程若被父域 `kill`，`REAPED` 与 `PUSHED`
-    /// 必须仍然配平——否则 `done()` 恒假，系统永不停机。
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
         let id = TaskId::new(NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
-        // **先备好索引容量，再动帧**（顺序即「失败域最小」）：名册 / 成员簿记 /
-        // 未放行容器这三张表都在装配尾部 `insert`/`push`，那时已无错误通道——它们一
-        // panic 就是整机 halt。故把唯一会分配的一步提到最前：容量不够就当场
-        // `Err(OutOfMemory)`，此时**一帧未领**，退回成本为零。
-        //
-        // 三张表**各备一格**（不按 `id` 预留——`id` 只增不减，按它预留会让开销随运行时
-        // 长线性膨胀）；名册走它自己的入口，另两张就在这里、锁内直接备。就绪队列不用备：
-        // 它的节点是任务自己的 `Starved` 载荷（零分配入队）。
-        //
-        // 后两张的预留为什么隔着这么远（备在这儿、push 在装配尾部）：`push_task` 与
-        // `hold` 都落在**领帧之后**——栈与 trap 帧那时已经领了、不可撤回，故那两格只能
-        // 在这里备。判据即「预留与 push 的距离 = 二者之间有没有不可撤回的步骤」。
         scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
         self.team
             .tasks
@@ -567,18 +331,14 @@ impl TaskBuilder {
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
 
-        // 栈：StackWindow::claim 取 slot（user 段 + guard，立即物化；U 位随空间模式）
         let stack_size = self.stack;
         let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
-        // 栈体基址（供填帧算 stack_top）= slot 基址 + guard
         let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
         let stack_body_top = stack_body.as_usize() + stack_size;
 
-        // trap 帧：FrameWindow::claim（kernel 段，立即物化）
         let frame_span = match FrameWindow::claim(&self.team.space) {
             Ok(s) => s,
             Err(e) => {
-                // 栈已领——用局部 Span 回滚（不读 TaskIdent，此时未构造）
                 self.team
                     .space
                     .release(stack_span)
@@ -589,7 +349,6 @@ impl TaskBuilder {
         let frame_pa = frame_span.pa.expect("frame span has pa");
         let frame_va = frame_span.va;
 
-        // args 区：栈顶之下 count 个字；初始 sp = 16 对齐后的 args 区下界。
         let count = self.args.len();
         let args_at = stack_body_top - count * size_of::<usize>();
         if count > 0 {
@@ -597,7 +356,6 @@ impl TaskBuilder {
         }
         let sp = VirtAddr::from_raw(args_at & !0xF);
 
-        // 填帧：`TrapContext::init` 从 per-hart 帧模板拷元数据 + 用户上下文
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
@@ -618,16 +376,7 @@ impl TaskBuilder {
             );
         }
 
-        // 入队收尾（**不入调度队列**——等 `Hatch`）
-        // 分配器 = 内核主堆（hybrid 当前后端）。`Arc::new_in` 产
-        // `Arc<T, &'static dyn Allocator>`，经 into_raw_with_allocator/from_raw 转回
-        // 默认分配器型 `Arc<T>`（同布局：释放路径按地址路由，不依赖分配器类型）。
         let alloc = crate::memory::allocator::hybrid::allocator();
-        // **可失败装配**：这里的两笔 `Arc` 是任务自身的簿记，内存吃紧时旧版
-        // `Arc::new_in` 直接走 std 默认 `handle_alloc_error` → 内核 panic →
-        // 整机 halt（一个任务生不出来，全体陪葬）。改走 `try_new_in` 把失败
-        // 变成返回值；已领的栈/trap 帧按 `FrameWindow::claim` 失败时的同一套
-        // 回滚归还，从此这条路径的 OOM 与 `Spawn` 的其它失败同形（`-4 OoM`）。
         let ident: Arc<TaskIdent> = unsafe {
             let ident = crate::tag!(
                 Task,
@@ -642,7 +391,6 @@ impl TaskBuilder {
                 )
             )
             .map_err(|_| {
-                // 回滚：两段都还回本域空间（顺序与占用相反，先帧后栈）。
                 self.team
                     .space
                     .release(frame_span)
@@ -656,8 +404,6 @@ impl TaskBuilder {
             let (ptr, _alloc) = Arc::into_raw_with_allocator(ident);
             Arc::from_raw(ptr)
         };
-        // `Life` 的可失败版本：失败时 `ident` 随作用域 drop（未入任何册子），
-        // 两段 Span 随之归还——故这里**不用闭包**捕获 `ident`。
         let life = match Life::try_new() {
             Ok(l) => l,
             Err(_) => {
@@ -685,7 +431,6 @@ impl TaskBuilder {
             Arc::from_raw(ptr)
         };
         scheduler::core::enlist(id, &task);
-        // 簿记 + 未放行容器 + 产生计数（配对见函数头）
         self.team.push_task(&task);
         self.team.hold(&task);
         conductor::push();

@@ -1,7 +1,3 @@
-//! trap 分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧，兼内核态现场持久化。
-//!
-//! 陷阱栈的窗口与反解在 `stack` 子模块；本文件只用它的符号，公开路径经此处转出。
-
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
@@ -17,28 +13,13 @@ use crate::work::room::scheduler::trap::run;
 
 mod stack;
 
-// trap 栈的公开符号经此处转出 —— 对外的 `switcher::trap::trap_stack_*` 路径不变。
 pub(crate) use stack::{TRAP_STACK_CANARY, trap_stack_guard_hart, trap_stack_hart};
 pub use stack::{arm_hart, init, trap_stack, trap_stack_base, trap_stack_edge};
 
-/// 内核态被打断的现场持久化：把 hart 帧（仅一份）的被中断现场
-/// （gpr/sstatus/sepc）拷入当前 running 任务的专属帧。否则抢占切走后再来
-/// 陷阱会覆写 hart 帧——被抢占内核任务的现场将丢失。
-///
-/// 判定源（与调度域的 D2-1 收敛一致）：「running 任务是内核任务」由任务所属
-/// 空间的 kind 决定（不再读 sstatus.spp）。硬件抢占与自愿切换（S 态域任务发
-/// envcall 切走）共用本搬移。
-///
-/// 自查询形态：身份经 `ident()` 无锁读槽（软陷阱那套汇编入口已随内核任务面删除，
-/// 现在唯一调用点也传不了参——槽读廉价、崩溃现场安全）。只搬三个现场字段；
-/// 任务帧其余元数据（kernel_satp/kernel_sp/trap_handler/user_satp/self_va/…）由
-/// spawn/prepare 维护，不得改动。
 pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(i) = ident() else {
         return false;
     };
-    // Live 轴才有地址空间与 trap 帧：S 态空闲（末次身份）时不得写入——帧可能
-    // 已被 clear 归还重分配，写即覆写他人帧（评审漏掉的第二个悬垂点，写侧）。
     let Some(task) = i.live() else {
         return false;
     };
@@ -49,8 +30,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
         return false;
     };
     let dst = pa.as_usize() as *mut TrapContext;
-    // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占；此后不再使用
-    // hart 帧（run() 切换返回下一任务帧，由 __restore 消耗）。
+    // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占
     unsafe {
         (*dst).gpr = frame.gpr;
         (*dst).sstatus = frame.sstatus;
@@ -59,13 +39,8 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     true
 }
 
-/// 本 hart 帧的**物理**地址——`from_task` 判据的右侧。
-///
-/// 帧内 `user_pa` 由 `trap::init` 装配 per-hart 帧时写入（对 `HART_FRAME_BASE +
-/// h·PAGE` 的翻译结果），与汇编两个入口交上来的口径一致。内核 satp 下
-/// `HART_FRAME_BASE` 恒映射、帧常驻不迁移，故此处直读安全。
 fn hart_frame_pa() -> usize {
-    // SAFETY: kernel satp 下本 hart 帧恒映射；只读帧头一个字段，不改任何状态。
+    // SAFETY: kernel satp 下本 hart 帧恒映射
     unsafe {
         (*(hart::hart_frame().as_usize() as *const TrapContext))
             .user_pa
@@ -73,40 +48,22 @@ fn hart_frame_pa() -> usize {
     }
 }
 
-/// 陷阱分发 — 汇编入口（`jalr trap_handler`）的唯一 Rust 侧。
-///
-/// 入参 `frame` = 被中断上下文的帧（汇编以 a0 = 帧物理地址调用，恒等映射下
-/// 引用即物理地址）；返回值 = 待恢复帧（当前任务续跑时恒为入参帧；切换时
-/// 返回下一任务帧）。
-///
-/// # Safety
-///
-/// 仅由 trampoline 汇编调用：入参必须指向有效且独占的 `TrapContext`（帧独占性
-/// 由汇编入口/出口顺序保证——每次陷阱新建引用，无并发别名），且当前处于陷阱
-/// 上下文（中断屏蔽、CSR 已由硬件保存）。
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
-    // 0. 重建内核 tp（= 本 hart PerHart 指针）：用户态可能改写过 tp；一切
-    //    hart_id() 依赖它。由当前 sp（trap 栈体内）反解段号（trap_stack_hart）。
     let sp: usize;
-    // SAFETY: 读当前栈指针，纯读无副作用。
+    // SAFETY: 读当前栈指针
     unsafe {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
     let hart = trap_stack_hart(sp).unwrap_or(HartId::new(0));
     let tp = crate::hart::per_hart_ptr(hart);
-    // SAFETY: 写线程指针寄存器（仅 trap 入口调用一次，重建本 hart PerHart 指针）。
+    // SAFETY: 写线程指针
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 
-    // 0.1 复位 **sscratch 约定**：非陷阱态恒有 `sscratch` = 该上下文的帧 VA
-    //     （内核 = 本 hart 帧，任务 = 线程帧 self_va）。入口已把被中断 sp 存进帧，
-    //     此处立刻把 sscratch 换回本 hart 帧 VA——处理期间若再次陷入（内核缺页 /
-    //     抢占后回内核态），入口读到的仍是真帧址。这是「陷阱入口不再依赖 tp
-    //     定位帧」的另一半（另一半是 `arm_hart` 与 `__restore` 的既有接线）。
     let frame_va = crate::hart::hart_frame().as_usize();
-    // SAFETY: 写 sscratch（内核态约定 = 本 hart 帧 VA），无内存副作用。
+    // SAFETY: 写 sscratch（内核态约定 = 本 hart 帧 VA）
     unsafe {
         core::arch::asm!(
             "csrw sscratch, {}",
@@ -115,33 +72,14 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         );
     }
 
-    // 0.4 入场入册：本核转为内核租户（内核空间身份 ASID 0）。此处只写本核 lease 槽
-    //     （`occupy`），**不刷 TLB**：表已由陷阱入口切好——`__task_trap` 走
-    //     `csrw satp` + `sfence.vma`，`__core_trap` 路径 satp 未动、本就一致。
     asid::occupy(Asid::kernel());
 
-    // 0.45 陷阱来源：`__core_trap` 传本 hart 帧、`__task_trap` 传任务帧。这是
-    //     「被中断者是内核还是任务」的**唯一判据**——S 态 supervisor 域任务的
-    //     SPP 也是 Supervisor，不能靠 SPP 区分（域任务必须能抢占、能缺页自愈、
-    //     能 ecall）。
-    //
-    //     两个来源必须**同口径**：汇编两个入口交上来的都是帧的**物理**地址
-    //     （`ld a0, 0x20(sp)` 取的 `user_pa`），故本 hart 帧也用它的 `user_pa` 比。
-    //     曾经直接与 `hart::hart_frame()`（`HART_FRAME_BASE + id·PAGE` 的**高 VA**）
-    //     比——口径不同源 ⇒ 恒不相等 ⇒ 判据恒为「来自任务」：内核侧同步异常会被当成
-    //     任务故障（误杀无辜任务），`persist` 与「S 态空闲恢复原上下文」两条支路
-    //     一起成死代码。
     let from_task = (frame as *const TrapContext as usize) != hart_frame_pa();
 
-    // 0.5 本核当前任务身份（None = 空闲/boot/早期 panic——各分支自行降级）。
     let ident = ident();
 
-    // 0.6 多核 panic：警报已拉响且本 hart 非报警源 → 就地卧倒（不返回）；
-    //    正常运行时恒 no-op。
     crate::runtime::diagnose::halt::hush();
 
-    // 1. trap 栈 guard 溢出特判（先于 canary：溢出可能已破坏 canary 字）。
-    //    仅缺页类 scause 才读 stval（其余陷阱 stval 无意义，可能残留旧值）。
     let cause = scause::read();
     if cause.is_exception() && matches!(cause.code(), 12 | 13 | 15) {
         let stv = stval::read();
@@ -150,8 +88,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         }
     }
 
-    // 1. 入口校验：per-hart trap 栈 canary 与 hart 帧标记（上一次处理器若溢出，
-    //    此处立即暴露——canary 由 init 写在每段栈底）
     let me = hart::hart_id();
     let canary = unsafe { (trap_stack_base(me).as_usize() as *const usize).read() };
     assert_eq!(
@@ -162,14 +98,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         frame.trap_stack_corrupt, TRAP_STACK_CANARY,
         "kernel trap frame corrupted"
     );
-    // 2. debug：任务（U 态 / S 态域任务）陷阱必须运行在当前 hart 的 trap 栈上
-    //    （kernel_sp 每次切换写入的正确性——任务迁移后写漏即在此暴露）。
     #[cfg(debug_assertions)]
     if let Some(i) = ident.as_ref()
         && from_task
     {
         let sp: usize;
-        // SAFETY: 读当前栈指针，纯读无副作用。
         unsafe {
             core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
         }
@@ -182,40 +115,17 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         );
     }
 
-    // 类型化分发：裸码 → riscv::interrupt 枚举（try_into 对标准集外码返回 Err，
-    // 不会 panic；Err 分支给出诊断）。变体即规范语义：SupervisorTimer=5、
-    // UserEnvCall=8、InstructionPageFault=12、LoadPageFault=13、StorePageFault=15。
     let trap: Trap<Interrupt, Exception> = scause::read().cause().try_into().unwrap_or_else(|e| {
         panic!("unknown trap cause: {e:?}");
     });
     let next: *mut TrapContext = match trap {
-        // S-timer：重武装 + 抢占。用户态陷阱直接切换（现场本就在任务帧）；
-        // 内核态陷阱（可抢占内核）先把现场持久化到任务专属帧再切换——per-hart
-        // 帧仅一份，不搬即被下一次 trap 覆写，被抢占内核任务现场丢失。
         Trap::Interrupt(Interrupt::SupervisorTimer) => {
             timer::tick();
-            // **照实记（IPI 自检的负载期采样点从这里搬走了）**：它原先就挂在这一格，而这一片
-            // 地方抢的是"**当时恰好在这颗核上的任务**"——装配者起 guest 的两条握手（各
-            // 1000 ms 预算）被它吃掉过：guest 报 `no tree link`、装配者报 `operator:hand` /
-            // `operator:claim`、`system: assemble` 当场收场，其后几条（含末条 `canonical`）都不起。
-            // 今天它住**空闲路**（`fetch::wait`，见 `runtime::diagnose::ipi::idle_hook`）——占的
-            // 是本来就要睡的核。dev 档同一景、同一份字节：挂这里折 5 / 成 6，搬走之后折 0 / 成 6。
-            // 闸门重开：外部中断的闸门是零状态的
-            // ——槽满时关掉本 hart 的 SEIE，下一个 timer tick **无条件**重开。病态情形
-            // （消费者不取）退化为每 hart 10 Hz 的探测，自愈；健康情形这一句是空转。
             unsafe {
                 sie::set_sext();
             }
-            // 重武装：**武装点 = min(本核上限, 最近到点)**。上限是**失明上限**
-            // （`timer::BLIND_MS`），不是"量子"——旧写法把它叫"抢占量子"，让量子与失明
-            // 上限混成一个数（正名见 `scheduler::core::hart` 的 `QUANTUM_TICKS`）。
-            // 到点比它更近就按到点（否则登记在别核上的到点要等一整拍才被兑现：这正是
-            // `Park{millis}` 在忙机上"晚一拍"的病根）。
             timer::beat_until(timer::blind_ceiling());
             redeem();
-            // **兜底**：本核当前 running 任务若被点名（他杀 / 级联的跨核分支），一个 tick
-            // 之内自退。这一处**不依赖任何投递**——投那一记 SSIP 可能被别的上下文取走，
-            // 而"它还在台上跑"这件事每 100 ms 必被本核看见一次（见 `doom::doomed_nudge`）。
             if let Some(running) = ident.as_ref().and_then(Identity::live)
                 && let Some(reason) = crate::work::room::messenger::take_doomed(running.id)
             {
@@ -223,51 +133,28 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
-            // 兜底之二：表里那些**没有任何核在跑**的笔（点名时它正走在挂起路上 ⇒ 那一记
-            // IPI 没人接）——按**表**办事，一个 tick 之内收掉（表空时只花一次原子读）。
             crate::work::room::messenger::sweep_doomed();
             if from_task {
-                // 任务（U 态或 S 态域任务）被抢占：现场已在任务帧 → 直接切换
                 run() as *mut TrapContext
             } else if persist(frame) {
-                // 内核态被打断且确有 running 内核任务：现场已持久化 → 抢占
                 run() as *mut TrapContext
             } else {
-                // S 态空闲（无 running：取活/WFI 被 timer 打断）→ 恢复原上下文
                 frame as *mut TrapContext
             }
         }
         Trap::Interrupt(Interrupt::SupervisorSoft) => {
-            // IPI 唤醒信号（SSIP）：清挂起位（不清则 sret 后立即再取 → 中断
-            // 风暴）。若本核当前 running 任务被 `doomed` 点名（他杀 / 级联的跨核分支），
-            // 在此自退：quit + bury，再取下一任务。
             unsafe {
                 sip::clear_ssoft();
             }
             if let Some(running) = ident.as_ref().and_then(Identity::live)
                 && let Some(reason) = crate::work::room::messenger::take_doomed(running.id)
             {
-                // 原因码写进**本核**的槽（杀者写不进：它在别的核上）——那个码随杀令
-                // 一起躺在 `doomed` 里被送过来，见 `messenger::doom::doomed`。
                 messenger::set_exit_reason(reason);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
             frame as *mut TrapContext
         }
-        // 外部中断：**内核只知道"有外部中断"这一件事**。
-        // 记一声铃进 `irq` 门铃就走人——claim/complete、线号、哪个客户端，
-        // 全在 PLIC 驱动那个域里；内核侧只有这三件（分支、闸门、门铃）。
-        //
-        // 铃还响着（消费者还没应）⇒ 关**本 hart** 的 SEIE：这就是闸门，也是内核
-        // 侧唯一的"状态"（零状态：这个决定不落任何账，靠 timer tick 无条件重开；
-        // 用户应铃（`envcall::mail::hush`）时也立即重开一次）。
-        //
-        // **闸门是按 hart 记的**：上面关的是**取到这次 trap 的** hart，而应铃的消费者
-        // 可能在别的 hart 上、`hush` 重开的是它自己那一格。故空闲核在
-        // `scheduler::core::fetch` 的循环里**每轮无条件**重开自己这一格，并在 SEIP
-        // 还挂着时替控制器振一次铃——这两处**振铃点**（外加 timer tick 与 `hush` 两处
-        // **开闸门**）合起来，"关过闸门的那颗核"没有开不回来的路。
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
             if crate::platform::devices::raise_irq().is_err() {
                 unsafe {
@@ -276,15 +163,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }
             frame as *mut TrapContext
         }
-        // 三类中断至此**全部有名有姓**（S 软 / S 定时 / S 外部）——原先那条
-        // 「unhandled interrupt」兜底在这次接入外部中断后成了死分支：`Interrupt`
-        // 只有这三个变体，兜底既是死码、也再没有一个"没处理的中断"可言。
-        // 任务环境调用（`ebreak`，scause=3）：U 态任务与 S 态 supervisor 域任务
-        // 共用同一入口（`ecall` 不行——S 态 ecall 是 SBI 调用，进 M 态）。内核
-        // 自身 ebreak 不应出现（semihosting 由 QEMU 拦截，不经本路径）→ 内核 bug。
-        // 身份 Arc **移交**给 dispatch：其内部在可能触发 halt（run）的分支（Reap/
-        // Park/Wait）先 drop——否则 halt 时本核 trap_handler 仍持最后任务的
-        // Arc<TaskIdent> → team → space 被钉住不 drop，关机审计误报帧泄漏。
         Trap::Exception(
             Exception::Breakpoint | Exception::UserEnvCall | Exception::SupervisorEnvCall,
         ) => {
@@ -296,13 +174,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             };
             match crate::runtime::switcher::envcall::dispatch(frame, ident_arc) {
                 Some(next) => next,
-                // **退场窄尾**：dispatch 的帧此刻已归还（它的局部量照常 drop），
-                // 退场发生在本帧——本帧手里只有 frame 与几个标量，`ident` 已移交。
                 None => crate::work::room::messenger::quit() as *mut TrapContext,
             }
         }
-        // 任务缺页：解析成功 → 续跑；解析失败 → fault isolation 杀 task。
-        // 内核自身缺页 = 内核 bug → 仍 panic。
         Trap::Exception(
             Exception::InstructionPageFault | Exception::LoadPageFault | Exception::StorePageFault,
         ) => {
@@ -326,11 +200,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 resolved: ok,
             }));
             if ok {
-                // 不打印：上一行的 `trace::note` 已经记下这件事（`va` / `fault` / `resolved`），
-                // 而缺页是懒分配的**正常**路径。**失败**那条（下面的 `putln!`）照打。
                 return frame as *mut TrapContext;
             }
-            // 不可解析 → 杀 task（不复用 frame：reap 取下一任务的 frame PA）。
             let tid = running.id.get();
             let cause_bits = scause::read().bits();
             let stval_bits = stval::read();
@@ -344,7 +215,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             drop(ident);
             return crate::work::room::messenger::quit() as *mut TrapContext;
         }
-        // 异常：任务（U 态 / S 态域任务）→ fault isolation 杀 task；内核自身 → fatal。
         Trap::Exception(other) => {
             if from_task {
                 let running = ident
@@ -375,7 +245,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         }
     };
 
-    // 出口再校验一次 canary（处理器自身栈用量引发的溢出）
     let me = hart::hart_id();
     let canary = unsafe { (trap_stack_base(me).as_usize() as *const usize).read() };
     assert_eq!(
@@ -383,16 +252,8 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         "trap stack corrupted on hart {me} after handler"
     );
 
-    // 出场登记：本核将驻留**下一帧**的空间（`run()` 可能已换任务），且必须在
-    // 返回之前——`__restore` 的 sfence 后本核就带新 ASID 的 TLB，RFENCE 清退
-    // 需能在该时刻正确发现本核驻留该 ASID。
-    // SAFETY: next 恒指向本核有效帧（分发各分支的产物），恒等映射下可解引用。
+    // SAFETY: next 恒指向本核有效帧
     asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
 
     next
 }
-
-// ── 退出原因码 ──
-//
-// 取值与它们的账都在 `work::room::messenger`（码住在那口槽旁边：一个事实一份账）。
-// 本文件是它们的**一个**写者（故障隔离那条路），不是它们的主人。

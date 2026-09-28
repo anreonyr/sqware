@@ -1,29 +1,3 @@
-//! envcall 权柄轴（class 7 `PieCall`）—— 许可的生死与流动，十二个操作。
-//!
-//! 与数据轴（`envcall/mail.rs`）的分界：本模块**不搬运载荷**——传的是许可，
-//! 内容走 class 5。三条轴（资源 / 持有 / 转授）见 `crates/env/src/fid.rs`。
-//!
-//! # 按 token 取用：判据在核心，只有一处
-//!
-//! 两条路住在 `work::unit::gate::pie`，本轴与数据轴**共用**：
-//!
-//! - [`gate::locate`]：**只定位**（表里没有 → `Denied`），死活与权限都不看。给"要那一枚
-//!   **本身**"的动词：`Release`（封印后仍须能收尾）、`Reserve`（`owner` 随资源不变）、
-//!   `Accord` 的源枚（它自己的四道闸在 `gate::accord`）、`Shut`（撤的是自己那张 PTE，
-//!   封印也得撤得掉）、`Seal` 与 `Narrow` 的头一步。
-//! - [`gate::accede`]：**定位 + 死活 + 权限**（已封印 → `Dead`；权不够 → `Denied`）。
-//!   给真要用它的动词：`Open` 与数据轴的 `Push`/`Pull`/`Wait`/`Hush`/`Ring`。
-//!
-//! **顺序只有 `accede` 那一份**——同一个已封印的 token 不因动词换一个答案。这条曾是每个
-//! 动词各自的纪律，于是漏成了两处：`Narrow` 把"覆盖子集"排在死活之前，数据轴四个动词把
-//! "权限"排在死活之前（同一个已封印的 token，在两个轴、五个动词上答 `Denied`，别处答
-//! `Dead`）。判据下沉之后，**"按动词分叉"在结构上写不出来了**——要分叉就得再手写一遍查找。
-//!
-//! [`usable`]（"被关住"那一维）仍住本层：它要摸**别人**的表，必须在放开本任务 `pies`
-//! 之后判。故调用点的形状统一是"先 `accede`/`locate` 拿抄件 → 放锁 → 问 `usable`"。
-//!
-//! `ident` 的所有权移交与门面一致；本轴的操作都不换帧（无挂起）。
-
 use alloc::sync::Arc;
 
 use env::{PieFail, Mark, PieCall, PieToken, TaskId};
@@ -37,15 +11,6 @@ use crate::work::unit::gate::{
 };
 use crate::work::unit::task::TaskIdent;
 
-/// Permission 子集 → PteFlags（cap ⊆ 页表的翻译：subset 决定页表实际权限）。
-///
-/// | subset                  | PteFlags                |
-/// |-------------------------|-------------------------|
-/// | FETCH                    | V\|R\|A\|D              |
-/// | FETCH \| STORE           | V\|R\|W\|A\|D           |
-/// | other（含空 / 仅 STORE）| Denied                  |
-///
-/// U 位不在此处决定——由目标空间的 `Space::pte_policy` 加。
 fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
     if !subset.contains(Permission::FETCH) {
         return Err(PieFail::Denied);
@@ -58,16 +23,10 @@ fn subset_to_pte(subset: Permission) -> Result<PteFlags, PieFail> {
     Ok(f)
 }
 
-/// 一次权柄 envcall 的落点：本轴从不换帧，故只有一个变体。
-///
-/// 与数据轴的 `Outcome` 同名同形——门面按 `Park` 的有无便可判定「本操作是否可能
-/// 换帧」。本轴**没有** `Park` 分支，这不是遗漏：权柄操作不挂起。
 pub(crate) enum Outcome {
-    /// 续跑当前任务，返回值已写入 a0/a1。
     Resume,
 }
 
-/// 权柄轴的十二个操作。返回 `None` = 本次调用不属于本轴（交还门面继续匹配）。
 pub(crate) fn dispatch(
     frame: &mut TrapContext,
     call: PieCall,
@@ -95,7 +54,6 @@ pub(crate) fn dispatch(
     })
 }
 
-/// 写回 a0（权柄操作的成功值：0 = 成功，负 = `Fail` 码）。
 fn answer(frame: &mut TrapContext, r: Result<usize, PieFail>) {
     frame.gpr.set_x(
         Gprs::A0,
@@ -106,7 +64,6 @@ fn answer(frame: &mut TrapContext, r: Result<usize, PieFail>) {
     );
 }
 
-/// 写回 a0 + a1（两件返回；契约见 `crates/env` 的 `FromPair`）。错误路径只写 a0。
 fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
     match r {
         Ok((v0, v1)) => {
@@ -117,30 +74,6 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
     }
 }
 
-// 按 token 取用的两条路已下沉到核心：`gate::locate`（只定位）与 `gate::accede`
-// （定位 + 死活 + 权限）。**判据顺序只有那一处**，本层只把**当前任务**递进去。
-//
-// 「被关住」闸（[`usable`]）仍住本层：它要摸**别人**的表，必须在放开本任务 `pies` 之后
-// 判。故调用点的形状统一是"先 `accede`/`locate` 拿抄件 → 放锁 → 问 `usable`"。
-
-/// 「被关住」闸——位与存活之外的**第三个判据维度**。
-///
-/// 读本地锚：锚空 ⇒ 放行；锚指向的那一枚**还在** ⇒ `HandedOver`（我把使用权交出去了，
-/// 而接收方还活着）；已不在 ⇒ **清锚** ⇒ 放行。清锚是唯一的"解关"动作（没有独立
-/// 动词）——交回、撤销、接收方死亡都只是让那一枚消失，而"消失"由这里读出来，
-/// 故它必须回到**本任务表**里写（判据拿到的是抄件）。
-///
-/// 锚只有**独占资源**（源枚带 `ONLY`）的授出才写（见 `gate::accord`），故这道闸
-/// 只在独占资源上生效——共享资源没有锚，永远放行。
-///
-/// 挂点（十个动词、九个调用点）：数据轴五个（`Push`/`Pull`/`Wait`/`Hush`/`Ring`——后两个
-/// 共用 `with_bell` 那一处，故四格）、Pole 的两个（`open` 借映 / `shut` 撤映）、
-/// `Accord` 的**源枚**、`Tole` 的两个（`Attach` 的成员枚 / `Await` 接组时的等待权）。
-/// **不挂**查询与收场（`Reserve`/`Collect`/`Release`/`Revoke`/`Narrow`/`Seal`）；三个
-/// `Unseal*` 也没有源枚可查——它们造的是新的一枚。
-///
-/// 锁序：核对要摸**别人**的表（L3），故必须**在放开本任务 `pies` 之后**调用；本函数
-/// 自己逐任务取放，绝不嵌套。
 pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     let Some(h) = pie.heir().copied() else {
         return Ok(());
@@ -157,20 +90,6 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     Ok(())
 }
 
-/// 解封 Hole：**先收记号**（一枚 [`Mark`]，从寄存器收下即定型）→ 建资源实体 → 建门闩
-/// （原始自持：无 sire）→ 落表。
-///
-/// 门闩持资源实体的强引用——**寿命即能力寿命**：最后一份消失时资源随之回收。
-///
-/// 原始自持枚带 `FETCH | STORE | VEST`：读写两支（能收能发）＋ 目标位（能再授出）。
-/// **不带 `ONLY`**——用户态铸的资源都是共享的；"只允许一个使用者"是内核决定的事实
-/// （设备 `reg` 段、组），只有那些创建点才给这一位。
-///
-/// 记号 = **这一枚门闩在协议上算哪条路**（`UnsealHole { mark }`）：一枚 [`Mark`]，刻在
-/// **门闩**上（不是资源上——`Accord` 可给子枚另刻一枚）。**内核不解释它**——不校验、
-/// 不比较、不显示；它随副本过线。
-/// 故这一步**不再读调用方的内存**（原先要拷 32 字节并校验 UTF-8/非空/NUL，那段连同
-/// "必须在持 `pies` 锁之前拷"的锁序注记一起消失）。
 fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
@@ -182,7 +101,6 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
             None,
         );
         let token = pie.token;
-        // **紧贴 push**：`pie` 是最后一步造的，drop 它即回收资源实体 ⇒ 失败就地退回。
         let mut pies = task.pies.lock();
         pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
         pies.push(AnyPie::Hole(pie));
@@ -192,16 +110,8 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
     Outcome::Resume
 }
 
-/// 解封 Nole：建一枚**无载荷**的权柄载体 → 建门闩（全权）→ 返 token。
-///
-/// 与另两者的差别就是"没有第二步"：Pole 要分配物理帧并 auto-map 创建者视图，
-/// Hole 要建槽（但**不预分配**——第一条消息由推者带进来）；Nole 建完 meta 就结束了
-/// ——这正是"无数据面"的含义。
 fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
-        // **铸币权收在 S 态**：这是一条**政策**，不是能力代数的推论——铃靠 `Accord`
-        // 从父域流下去，不靠子域自铸。铸出来的那枚能转授给谁，仍由能力代数回答
-        // （accord/narrow/revoke）。要加严或放开，动的就是这一行。
         if !ident.team.space.kind().is_supervisor() {
             return Err(PieFail::Denied);
         }
@@ -214,7 +124,6 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
             None,
         );
         let token = pie.token;
-        // 同上：紧贴 push。
         let mut pies = task.pies.lock();
         pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
         pies.push(AnyPie::Nole(pie));
@@ -224,7 +133,6 @@ fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
     Outcome::Resume
 }
 
-/// 解封 Pole：建实体 → 建门闩 → **auto-map 创建者视图**（创建者全权 → R|W）。
 fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
@@ -237,9 +145,6 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
             None,
         );
         let token = pie.token;
-        // 创建者自留 pie 全权 → 开闩走 R|W（U 位由空间策略决定）。
-        // **预留贴在这里**：`open` 会落下创作者视图（映射），那才是不可撤回的一步；
-        // 贴它之前而不是函数最前面，是因为前面的东西都能靠 drop 退回。
         task.pies.lock().try_reserve(1).map_err(|_| PieFail::OoM)?;
         let creator_flags = task_space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
@@ -251,8 +156,6 @@ fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 开闩：借映 Pole 页进当前任务空间 → `(VA, 这一段多大)`（同 token 幂等复用）。
-/// 仅对 Pole 成立。
 fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
     let looked = current()
         .running_task()
@@ -269,23 +172,14 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
                 ident.team.space.pte_policy(flags),
             ),
         },
-        // Hole 没有「开闩」这回事：它的开闩就是 Push/Pull。
         Ok(AnyPie::Hole(_)) => Err(PieFail::Denied),
-        // Nole 更没有：它没有载荷可以借映进任何空间。
         Ok(AnyPie::Nole(_)) => Err(PieFail::Denied),
-        // Tole 也没有：它只有一张「我记着哪几枚孔」的格子表。
         Ok(AnyPie::Tole(_)) => Err(PieFail::Denied),
     };
     answer_pair(frame, r);
     Outcome::Resume
 }
 
-/// 关闩：撤该 token 的映射（幂等）。仅对 Pole 成立。
-///
-/// **不过存活闸**：撤的是**调用方自己那张 PTE**，资源已封印也得撤得掉——否则
-/// "封印后借入映射撤不掉"。故这里不走 [`gate::accede`]
-/// （它含存活闸），只 `locate` + 判权 + 判「被关住」；`pole::shut` 里同样没有存活闸，
-/// 两处是同一条语义，与 `Release`「你总得能放下手里的东西」对齐。权限要 `R`。
 fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outcome {
     let _ = &ident;
     let r = (|| -> Result<usize, PieFail> {
@@ -297,7 +191,6 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         usable::<PieFail>(&pie)?;
         match pie {
             AnyPie::Pole(p) => mail::pole::shut(p.meta(), token).map(|()| 0),
-            // Hole / Nole / Tole 都没有「关闩」这回事（无映射可撤）。
             AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => Err(PieFail::Denied),
         }
     })();
@@ -305,16 +198,9 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
     Outcome::Resume
 }
 
-/// 封印资源（generic）：**只有资源开辟者**可做（`owner` 是 Meta 字段，O(1) 判定）。
-///
-/// 只置死 + 唤醒等待者，**不摘表项**——持有者仍须 `Release` 收尾。故 `Release`
-/// 与 `Shut` 是**仅有的两处**不过存活闸的操作（理由各异：否则封印即泄漏表项 /
-/// 封印之后自己那张 PTE 撤不掉）。
 fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let me = current().running_task().ok_or(PieFail::Denied)?;
-        // `locate` 只定位；**死活先判、再判"是不是我开的"**——与 `accede` 同一条顺序，
-        // 判据本身不同（`Seal` 要的是 `owner`，不是某一位权）。
         let pie = gate::locate(&me, token).ok_or(PieFail::Denied)?;
         if !pie.alive() {
             return Err(PieFail::Dead);
@@ -334,12 +220,6 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// 转授 / 交出一枚给另一个任务 → **对端侧**那枚的 token（撤回句柄）。
-///
-/// 四道闸（在表内 / 存活 / 持 `VEST` / 覆盖子集 / 未被关住）已下沉到核心
-/// （`gate::accord`）——"交出"要在调用方表内就地写锚，抄件做不到。本层只补两件核心
-/// 做不到的事：**① 过「被关住」闸**（陈旧锚在此自愈；核心不依赖 scheduler，核不了），
-/// **② 把目标解析成 `Weak`**。
 fn accord(
     frame: &mut TrapContext,
     src_token: PieToken,
@@ -349,8 +229,6 @@ fn accord(
 ) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
-        // 源枚**只定位**：存活/持 `VEST`/覆盖子集/形态一致这四道闸在 `gate::accord` 里
-        // （"交出"要在调用方表内就地写锚，抄件做不到）。
         let src = gate::locate(&caller, src_token).ok_or(PieFail::Denied)?;
         usable::<PieFail>(&src)?;
         let dst = muster(dst_id).ok_or(PieFail::Denied)?;
@@ -360,12 +238,6 @@ fn accord(
     Outcome::Resume
 }
 
-/// 收窄本 pie 权限（就地改写，单调）：Pole 同步降页表段权限。
-///
-/// **死活先于覆盖子集**（与 [`gate::accede`] 同一条顺序）：已封印的 token 一律答 `Dead`，
-/// 不因"子集越权"这个恰好排在更前的判据换成 `Denied`——同一个 token 的答案不该按动词变。
-/// `Narrow` 本身不要求任何权利位（它只会把权限收小），故这里不用 `accede`，只
-/// `locate` + 判死活。
 fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
@@ -376,7 +248,6 @@ fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outco
         if !pie.covers(subset) {
             return Err(PieFail::Denied);
         }
-        // Pole 的第二步（降页表段权限）要在改写权限位**之前**成功；其余三种只有一步。
         let pole_meta = match &pie {
             AnyPie::Pole(p) => Some(p.meta().clone()),
             AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => None,
@@ -394,10 +265,6 @@ fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outco
     Outcome::Resume
 }
 
-/// 收回授与 `dst` 的副本（含其全部后代，幂等）。
-///
-/// `token` = 该副本在**对端表里**的句柄（`Accord` 的返回值，经线形送达）——
-/// 不是我这边的 token。鉴权 = 「这枚的 `sire` 在我表里」。
 fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
@@ -408,42 +275,12 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// 收拢：报出本任务权限表第 `index` 份——**唯一的枚举手段**（对偶是 `Reserve`：一个按
-/// 位置问、一个按句柄问）。
-///
-/// 越界 → 三格全哨兵（token `NONE` / owner 0 / 记号 `NONE`），**不报错**。
-/// `a0` = token；`a1` = **owner**（这扇门谁开的；查不出答 0）；`a2` = **整一枚记号**（64 位）。
-/// 锁序：只取一次 `pies` 锁、取完即放——**不再有快照那一半**。
-///
-/// **照实记（`vestor` 从这一格退场，乙′ 的末环）**：它从前还报"谁授的"，而那一格要算
-/// `gate::vestor(&p, &gate::snap())`——**一次全世界名册快照 ＋ 一次分配**，而扫表的人**每一枚**
-/// 都要算一次。这正是 `gate/pie.rs` 的 `Heir` 头注里那句"热路径不这么干"（反向查询吃全世界
-/// 快照）。扫表的三处读者（板那一面、树那一面、两处客户端的 `take`）先后改成"**号随交接一起
-/// 走**"，这一格遂没有读者，按"没有读者的格不留在 ABI 上"撤掉。要问"谁授的"仍走 [`reserve`]
-/// ——那一手按句柄问、一次一枚，不在扫表里。
-///
-/// **四格一起答，是为了省掉"每扫一枚再问一次 `Reserve`"**：那一问是一次 envcall，
-/// 表 16 枚 ⇒ 一趟扫描 6.5 ms（读数见 `programs/src/driver/rtc/adapt/desk.rs`）。
-///
-/// **两格的判据不同源，各有各的理由**：
-///
-/// - **记号**（`a2`）：**每一枚都答**——记号是 Pie 的事实（`gate::Pie.mark`），
-///   不是孔的事实。没刻过 = `NONE`。
-/// - **owner**（`a1`）：**只对活着的孔有意义**。`AnyPie::owner()` 答的是**资源**的来历
-///   （四种 Mail 都答得出），而这一格要的是"**这扇门**谁开的"⇒ 再过一道"是不是孔"，
-///   别的资源一律答 0。**记号统一之后，这一格成了发现路径排掉"页/组"的唯一凭据**
-///   （`establish::find` / `operator::claim` / `board::ask_of` 都按 `owner == who` 认）。
-///
-/// 与 [`reserve`] 的差别只有一格：`Reserve` 用 `Dead` / `Denied` 把两类答不出的情形
-/// 分开，而本函数**从不报错**（`Collect` 的契约），故那两类在这里一律落成哨兵
-/// ——"答不出"与"没有"同形，读的人只须知道"这一条候选不成立"。
 fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     let pie = current()
         .running_task()
         .and_then(|t| t.pies.lock().get(index).cloned());
     let (token, owner_id, mark) = match &pie {
         Some(p) => {
-            // `AnyPie::owner()` 自带存活闸（封印 ⇒ `None`）；再过一道"是不是孔"。
             let owner = match p {
                 AnyPie::Hole(_) => p.owner().unwrap_or(TaskId::new(0)),
                 _ => TaskId::new(0),
@@ -458,28 +295,9 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     Outcome::Resume
 }
 
-/// 查这枚门闩的来历：`vestor`（谁授的，转手即改写）+ `owner`（这扇门谁开的，任何
-/// 副本共享同一事实）+ **记号**（这一枚在协议上算哪条路）。**这一手不另判死活**；
-/// `owner` 那一格自带存活闸 ⇒ **已封印答 `Dead`**（与 [`collect`] 同一条口径）。
-///
-/// **打包**（与用户侧 `runtime::env::mail::reserve` 逐位对齐，口径的唯一真相在
-/// `env::fid` 的 `Reserve`）：`a0` = owner（高 32 位）| vestor（低 32 位）、`a1` = **整一枚
-/// 记号**。`a0` 是"成 / 不成"那一格（用户态按它的**符号**读 `EnvError`），故它只放两枚
-/// 小号；记号整枚放 `a1`。
-///
-/// **照实记（这两段正文过期过）**：这里从前写着"`a0` = vestor、`a1` = 记号长度（高 32）|
-/// owner（低 32），记号经 `buf`/`cap` 那一段拷出"——那是记号还要**另一趟拷贝**的时代；
-/// 记号改成随返回值一格交出之后，`buf`/`cap` 两个参数整个没了，而旧正文的末句
-/// （"记号一格返回"）与它上面那句自相矛盾，正是那一刀没改全留下的痕迹。
-///
-/// 表里无此 token → `Denied`。**这一手只对孔答**：别的资源（Pole/Nole/Tole）问不到它
-/// ⇒ `Denied`——问不到就是"这一条候选不成立"。它们的记号要读就走 [`collect`]
-/// （按位置枚举；本格只答"这扇门"的那一族事实）。
 fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outcome {
     let r = (|| -> Result<(TaskId, TaskId, usize), PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        // **只定位**（`locate` 不过死活闸）：死活由 `owner` 那一格自带——`AnyPie::owner()`
-        // 用 `alive()` 把"已封印 ⇒ `Dead`"答出来。
         let p = gate::locate(&task, token).ok_or(PieFail::Denied)?;
         let owner = p.owner().ok_or(PieFail::Dead)?;
         if !matches!(p, AnyPie::Hole(_)) {
@@ -494,9 +312,6 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outc
     })();
     match r {
         Ok((vestor_id, owner_id, mark)) => {
-            // **`a0` 是"成 / 不成"那一格**（用户态按它的符号读 `EnvError`）⇒ 它只能放两枚
-            // 小号（都远小于 2^32）；**整一枚记号放 `a1`**（打包见 `env::fid` 的 `Reserve`）。
-            // 真机栽过一次：记号放 `a0` ⇒ 一半的记号最高位是 1 ⇒ 每次查询都被读成"出错"。
             frame.gpr.set_x(
                 Gprs::A0,
                 (owner_id.get() << 32) | (vestor_id.get() & 0xffff_ffff),
@@ -508,11 +323,6 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outc
     Outcome::Resume
 }
 
-/// 自释：放下我持有的一份（含其全部后代；Pole 同步撤映射）。
-///
-/// **不判存活**——与 `shut` 并列，是**仅有的两处例外**：`Seal` 不摘表项，若本操作
-/// 也判存活，封印后的表项就永远摘不掉。语义 =「你总得能放下手里的东西」。不需要
-/// 任何权限位。
 fn release(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = match current().running_task() {
         Some(task) => gate::release(&task, token, &gate::snap()).map(|_| 0),

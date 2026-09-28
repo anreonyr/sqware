@@ -1,19 +1,3 @@
-//! scene — 崩溃现场（可诊断的执行现场快照）+ 执行历史投影（backtrace）。
-//!
-//! 领域意象（单一隐喻贯穿）：**场景**。一次 [`Scene`] 是一次可诊断的现场快照，
-//! 它的 [`Backtrace`] 是 Scene 对执行历史的一次投影。Scene 是「现场」，Backtrace
-//! 是「投影」——两者是拥有关系，不是并列关系。
-//!
-//! 职责分离（核心/适配）：
-//! - 核心（本模块下半部）：[`Backtrace`] / [`Frame`] / [`FrameResolver`]——
-//!   回答「执行链是什么」与「这个地址是什么」，**零分配、不拥有 Space**。
-//! - 适配（上半部）：[`Scene`] / `dump`——取本 hart/world 现场，转发核心回溯，
-//!   组稿进 [`Report`]。可独立推理核心，不知道 report/panic 是什么。
-//!
-//! 现场语义：GPR 是处理器已压栈损坏的现场；真正可定位的是 CSR 的 sepc/scause/stval
-//! （trap 进入后持续有效）与栈回溯。回溯 = 无帧指针启发式：`chain`（fp 链）+ `scan`
-//! （无表时对断点附近扫描候选 ra，去重、深度封顶）。
-
 use core::arch::asm;
 
 use alloc::format;
@@ -34,20 +18,13 @@ use crate::work::unit::space::SpaceKind;
 
 use super::backtrace::{backtrace_rows, symbol};
 
-// 门的类型经 scene 转出，对外路径（`diagnose::scene::{Backtrace, FrameKind}`）不变。
 #[allow(unused_imports)]
 pub use super::backtrace::{Backtrace, FrameKind, FrameResolver};
 
-/// 符号化已移除（Team 不再挂符号表）：统一渲染裸地址。
-/// 定宽 hex 文本（{:#018x}）——值列的通用形态。
 fn hex(x: usize) -> String {
     format!("{x:#018x}")
 }
 
-/// 读全部 31 个非零 GPR（x0 恒 0；ra/sp/gp/tp 首页）。
-///
-/// 注：tp 原值转储（内核态 = PerHart 指针，非裸 hartid；hart 号经
-/// `hart::hart_id()` 读取）。
 fn gprs() -> [usize; 32] {
     let mut r = [0usize; 32];
     unsafe {
@@ -86,13 +63,6 @@ fn gprs() -> [usize; 32] {
     r
 }
 
-// ── 地址语义（FrameKind）与现场寄存器 ───────────────────────────────
-
-/// 现场寄存器三元组（当前点 pc/sp/fp）。
-///
-/// **地址语义不在这里**：`Frame`（与本结构）只存裸地址、不携带任何地址语义——语义由
-/// [`FrameResolver::classify`] 产出、属独立通道，`Kind` 与 `Frame` 的解耦是「walk 与
-/// resolve 分离」的类型化。
 #[derive(Debug, Clone, Copy)]
 pub struct Registers {
     pub pc: VirtAddr,
@@ -100,35 +70,22 @@ pub struct Registers {
     pub fp: VirtAddr,
 }
 
-/// 一次可诊断的执行现场快照。
-///
-/// `Scene` 是「现场」，`Backtrace` 是现场对执行历史的一次投影。`Scene` 拥有
-/// Backtrace（而非 Backtrace 去反推整个内核）；`space` 是 `SpaceKind`，不是
-/// `&Space`——`Scene` 不拥有任何内存管理权。
 #[derive(Debug)]
 pub struct Scene {
-    /// 现场所属 hart。
     pub hart: crate::hart::HartId,
-    /// 现场任务（idle/启动期无任务 → None，不 panic）。
     pub task: Option<usize>,
-    /// 现场地址空间（按域归属分类，非 &Space）。
     pub space: SpaceKind,
-    /// 现场寄存器（当前点 pc/sp/fp）。
     pub reg: Registers,
-    /// 现场回溯投影（`pub(crate)`：`super::backtrace` 的行渲染要读它）。
     pub(crate) backtrace: Backtrace,
-    /// trap 现场（内核态可由 CSR 重建；用户态由 TrapContext 采读）。
     cause: Option<Trap<Interrupt, Exception>>,
 }
 
 impl Scene {
-    /// 内核现场采集：经 per-hart 帧（`hart::hart_frame()`）或归巢落盘值取 sp/fp。
     fn capture_kernel() -> Option<Scene> {
-        // 内核现场起点：归巢落盘 [sp,fp]（`halt::scene()`；(0,0)=未归巢）。
         let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
             (0, 0) => {
                 let (sp, fp): (usize, usize);
-                // SAFETY: 只读本 hart 当前 sp/s0，无副作用。
+                // SAFETY: 只读本 hart 当前 sp/s0
                 unsafe {
                     asm!("mv {0}, sp", out(reg) sp);
                     asm!("mv {0}, s0", out(reg) fp);
@@ -137,7 +94,6 @@ impl Scene {
             }
             s => s,
         };
-        // 内核现场：根表 = 当前 satp；扫描上界 = per-hart trap 栈边钳制（sp 落 trap 栈内）。
         let ceiling = match crate::runtime::switcher::trap::trap_stack_hart(sp)
             .map(crate::runtime::switcher::trap::trap_stack_edge)
         {
@@ -163,16 +119,11 @@ impl Scene {
         })
     }
 
-    /// Normal 现场采集：running 的 **Normal 团队**任务的 trap 帧（`ident().trap()`）。
     fn capture_normal() -> Option<Scene> {
         let info = ident()?;
         let pa = info.trap()?;
-        // SAFETY: Live 轴 = 本核在跑任务，帧未回收；帧 PA 在用户 Frame 窗口（DRAM
-        // 恒等映射）；崩溃现场只读，其余核已冻结。
+        // SAFETY: Live 轴上本核任务帧未回收，PA 在用户 Frame 窗口（DRAM 恒等映射）
         let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
-        // 门 = **团队种类**（现成的 `team.space.kind()`）：Kernel 团队没有"Normal 现场"这
-        // 回事——它那叠帧是内核帧。此前这里是地址判据（`frame.sepc.is_kernel()`），那是同一
-        // 件事的地址视图；一个事实只留一份账，故这里问种类、下面复用这一次读数。
         let world = info
             .live()
             .map(|t| t.team.space.kind())
@@ -185,7 +136,6 @@ impl Scene {
             return None;
         }
         let fp = frame.gpr.x(Gprs::S0);
-        // 根表 = Normal 侧根表（`user_satp`）；域 = 该任务空间（上面问过一次）；上界 = sp+SPAN。
         let mut reader = StackReader::new(frame.user_satp.ppn());
         let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
         let code = |w: usize| VirtAddr::from_raw(w).is_user();
@@ -206,10 +156,6 @@ impl Scene {
     }
 }
 
-// ── 组稿（适配层）────────────────────────────────────────────────────
-
-/// stval 解码：按 scause 的语义注解（fault 地址 / 指令位 / 断点地址）；
-/// 无有价值语义时输出 Unknown（中断 / ecall / 保留码 stval 均无定义）。
 fn stval_note(int: bool, code: usize) -> &'static str {
     if int {
         return "Unknown";
@@ -222,9 +168,6 @@ fn stval_note(int: bool, code: usize) -> &'static str {
     }
 }
 
-/// CSR 段行集（**第二行**才是表头；首行是运行中任务行）：sepc/stval/scause = 崩点；stvec/sscratch = 陷阱
-/// 入口/暂存；sstatus/satp = 特权/地址空间域。task 行 = 运行中任务（若有；
-/// try_lock 拿不到则跳过）。注解列 = 符号化 + 解码。
 fn csr_rows() -> Vec<Vec<Option<String>>> {
     let mut rows: Vec<Vec<Option<String>>> = vec![
         if let Some(i) = ident() {
@@ -236,7 +179,7 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         } else {
             vec![None, Some("failed to get task info".into()), None]
         },
-        vec![None, Some("hex".into()), Some("note".into())], // 表头（第二行）
+        vec![None, Some("hex".into()), Some("note".into())],
     ];
     let sc = scause::read();
     let (int, code) = (sc.is_interrupt(), sc.code());
@@ -246,13 +189,11 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(symbol(VirtAddr::from_raw(sepc::read()))),
     ]);
     {
-        // 符号命中 → 「sym note」单空格衔接；未命中 → 仅 stval 语义。
         let a = stval::read();
         let n = stval_note(int, code).to_string();
         rows.push(vec![Some("stval".into()), Some(hex(a)), Some(n)]);
     }
     {
-        // 类型化枚举：变体名自解释；非法码回退 Unknown。
         let trap: Option<Trap<Interrupt, Exception>> = sc.cause().try_into().ok();
         let note = match trap {
             Some(Trap::Interrupt(i)) => format!("{i:?}"),
@@ -271,9 +212,6 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         Some(symbol(VirtAddr::from_raw(stvec::read().address()))),
     ]);
     {
-        // sscratch 约定：内核态 = 本 hart trap 帧 VA（HART_FRAME_BASE +
-        // hart·PAGE，可反推 hart）；用户态 = 当前线程帧 self_va（team 帧区）。
-        // 值域判定：hart 帧区 → 内核态帧（可推 hart）；team 帧区 → 用户帧。
         let scr = sscratch::read();
         let kfb = crate::layout::HART_FRAME_BASE.as_usize();
         let n = if scr == 0 {
@@ -290,8 +228,6 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
         rows.push(vec![Some("sscratch".into()), Some(hex(scr)), Some(n)]);
     }
     {
-        // 注解只列非默认态：前特权模式恒打；布尔位置位才打缩写（SIE/SPIE/
-        // SUM/MXR/SD）；FS/VS/XS 非 Off 才打短码。
         let ss = sstatus::read();
         let mut note = format!("{:?}", ss.spp());
         if ss.sie() {
@@ -347,7 +283,6 @@ fn csr_rows() -> Vec<Vec<Option<String>>> {
     rows
 }
 
-/// GPR 段行集（首行表头，其后只打非零）：label/hex 两槽。
 fn gpr_rows() -> Vec<Vec<Option<String>>> {
     const NAMES: [&str; 32] = [
         "x0", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", "a3", "a4",
@@ -355,7 +290,7 @@ fn gpr_rows() -> Vec<Vec<Option<String>>> {
         "t5", "t6",
     ];
     let mut rows: Vec<Vec<Option<String>>> = vec![
-        vec![None, Some("hex".into())], // 首行表头
+        vec![None, Some("hex".into())],
     ];
     let r = gprs();
     for (i, name) in NAMES.iter().enumerate().skip(1) {
@@ -367,10 +302,6 @@ fn gpr_rows() -> Vec<Vec<Option<String>>> {
     rows
 }
 
-/// Scene 快照行集（首行表头）：hart / task / pc / sp / fp / cause。
-///
-/// 让 `Scene` 的快照字段（`hart`/`task`/`reg`/`cause`）真正落列——`Scene` 是
-/// 「现场」，此处就是现场身份与当前点的渲染（`csr` 段首行的现场戳源头）。
 fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
     let mut rows: Vec<Vec<Option<String>>> = vec![vec![
         Some("scene".into()),
@@ -402,9 +333,7 @@ fn scene_rows(scene: &Scene) -> Vec<Vec<Option<String>>> {
     rows
 }
 
-/// 末尾倒出每 hart 最近事件窗口。
 pub fn dump(r: &mut Report) {
-    // 投稿：CSR/GPR/回溯段入报告（[scene] 标题挂首段，其余段空标题同段落）。
     let kernel_scene = Scene::capture_kernel();
     let hart = kernel_scene
         .as_ref()
@@ -420,7 +349,6 @@ pub fn dump(r: &mut Report) {
     r.paragraph("csr", Some(scene_head))
         .items
         .extend(csr_rows());
-    // Scene 快照行（hart/task/pc/sp/fp/cause）自成一个 `scene` 段，排在 csr 段**之后**。
     if let Some(scene) = kernel_scene.as_ref() {
         r.paragraph("scene", None).items.extend(scene_rows(scene));
     }
@@ -437,12 +365,9 @@ pub fn dump(r: &mut Report) {
             .extend(backtrace_rows(&scene, "nbt"));
     }
 
-    // 每 hart 最近事件窗口（人读对照）。
     crate::runtime::diagnose::trace::panic_dump(r);
 }
 
-/// 统一崩溃现场宏：空调用即完整转储（自建报告、成册、印发——可在任意点
-/// drop-in 调试）；带参则先写一行消息再转储。
 #[macro_export]
 macro_rules! crash_scene {
     () => {{
@@ -455,8 +380,6 @@ macro_rules! crash_scene {
         $crate::runtime::diagnose::export::export(__sealed);
     }};
     ($($arg:tt)*) => {{
-        // **一次写**：`putln!` 把换行并进同一次 ecall。分两次写的话，这条消息与它后面那个
-        // `[scene]` 标题之间就留了一个窗口（见 `crate::console::_write` 的照实记）。
         $crate::putln!($($arg)*);
         $crate::crash_scene!();
     }};

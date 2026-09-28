@@ -84,20 +84,12 @@ pub fn frontier() -> usize {
     inner.base + inner.used
 }
 
-/// Bump 分配器实例。
 pub(crate) static BUMP_ALLOCATOR: BumpAllocator = BumpAllocator::new();
 
 pub fn allocator() -> &'static dyn Allocator {
     &BUMP_ALLOCATOR
 }
 
-/// 初始化 bump 分配器的内存区域。
-///
-/// 必须在任何堆分配之前调用恰好一次。
-///
-/// # Errors
-///
-/// 机器未配置空闲内存区 → [`InitError::NoFreeMemory`]。
 pub fn init() -> InitResult<()> {
     BUMP_ALLOCATOR
         .init()

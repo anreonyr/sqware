@@ -1,30 +1,3 @@
-// 任务弱引用的**出身标注 + 挂起自检**。
-//
-// 问题的形状：关机偶发报任务外壳（`ArcInner<Task>`，152 B）归还不掉，读数形态是
-// `strong 0 weak 1` ——载荷已析构，外壳却因**一枚存活的弱引用**扣着。把全仓的
-// `Weak<Task>` 容器逐个点名排除（名册 / 票根 / 躯壳由 `rip` 清空，`Team.tasks` 由
-// 团队析构带走）之后，泄漏**仍然复现** ⇒ 持有者不在"我列举出来的容器"里。
-//
-// 换一条路问内存也不行：**清空但未清零的缓冲里留着陈旧指针字节**，与一枚存活弱引用在
-// 字节层面无法区分。只要"存活"这件事只能从字节去猜，就永远分不清"扣着"与"曾经扣过"。
-//
-// 故本模块把这件事从**内存里**搬到**账上**：仓内一切 `Weak<Task>` 只经 [`TaskWeak`]
-// 产生 ⇒ 每一次**生**（构造 / 抄件）与每一次**亡**（析构）各记一笔，生的时候记下
-// **出身**（住哪张表，还是只是抄件）与**出生核**。于是本核在**挂起点**上就能问一句
-// 总是可判的话：*此刻我栈上还压着抄件吗？*
-//
-// # 为什么"抄件"这一项非分不可
-//
-// 内核**不展开栈**（`panic = abort`，任务退场是"离核不返回"，`bury` 直接 `release`
-// 掉那段栈 span —— 见 `messenger::reap` 头注）。于是**被弃帧上的 RAII 值永不析构**：
-// 一枚活在"退场任务残留帧"里的 `Weak`，其 `Drop` 从此不会执行，弱计数永远挂着。
-// 存进容器的那种弱引用随容器清空而死（`rip` 那一刀）；**抄出去临时用的那种**却随帧
-// 一起被弃 —— 二者在观测量上长得一模一样（都表现为"外壳归还不掉"），只差一个出身。
-// 这就是 [`check_block_heldout`] 每次挂起都要问的那一句：**容器里的不算，抄件算**。
-//
-// 代价与纪律：全程**原子、无锁**（定长数组 + CAS）。`TaskWeak` 的生/死发生在任意持锁
-// 上下文里（名册锁内、团队锁内、站点锁内），这里再加一把锁就是给自己造同层嵌套。
-
 use alloc::sync::Weak;
 use core::ops::Deref;
 #[cfg(debug_assertions)]
@@ -32,32 +5,17 @@ use core::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 use super::task::Task;
 
-// ── 出身 ──────────────────────────────────────────────
-
-/// 一枚弱引用的出身：**住哪张表**，还是**只是抄件**。
-///
-/// 加一个容器就往这里加一项 —— 账要说得出具名，说不出的那一项会把人重新推回
-/// "读代码猜"。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Site {
-    /// 名册（`ROSTER`：全世界任务的 id → 弱引用；`rip` **最后**清空）
     Roster,
-    /// 票根（`HOLDERS`：票 → 持票人；`rip` 清空）
     Holder,
-    /// 团队簿记（`Team.tasks`：随团队析构才消失）
     TeamTasks,
-    /// 血缘（`Team.sire`：随团队析构才消失）
     Sire,
-    /// **抄件**：`muster` 从名册抄出去给调用方临时用（`Join` / `Hatch` 的局部）
     Muster,
-    /// **抄件**：快照（`gate::snap` 每次退场钩子抄一份全世界；团队簿记快照同理）
     Snapshot,
-    /// 空弱引用（`Weak::new()`：**不占任何分配**，故不记账 —— 见 `counted`）
     Empty,
 }
 
-/// 全部出身（下标即 `Site::ix`）。消费者只有框架档的挂起自检（它要把槽位里
-/// 记下的出身下标还原成 `Site`）。
 #[cfg(debug_assertions)]
 const ALL: [Site; NSITE] = [
     Site::Roster,
@@ -72,8 +30,6 @@ const ALL: [Site; NSITE] = [
 #[cfg(debug_assertions)]
 const NSITE: usize = 7;
 
-/// 编译期锁：`ALL` 手写的序必须与 `Site` 的**枚举序**逐格对齐（`ix()` 即枚举序）。
-/// 加一个出身漏改一处，读侧就会把出身认成另一个容器——账只在消息里报个错名字。
 #[cfg(debug_assertions)]
 const _: () = {
     let mut i = 0;
@@ -85,14 +41,10 @@ const _: () = {
 
 #[cfg(debug_assertions)]
 impl Site {
-    /// 出身下标 = **枚举序**（不是另一段手写 match：那会让"下标"与"枚举"各有一份事实）。
     fn ix(self) -> usize {
         self as usize
     }
 
-    /// 记不记账：空弱引用（`Weak::new()`）**不指向任何 `ArcInner`**，既不扣住谁、
-    /// 也就没有"析构没跑"这回事。把它排除在账外，`存 == 0` 才是一条干净的判据
-    /// （否则内核团队那枚永生的空 `sire` 会让账恒差 1）。
     fn counted(self) -> bool {
         self != Site::Empty
     }
@@ -100,7 +52,6 @@ impl Site {
 
 #[cfg(debug_assertions)]
 impl Site {
-    /// 出身的人话名字（挂起自检的失败消息里点名用；消费者只有那一处）。
     fn name(self) -> &'static str {
         match self {
             Site::Roster => "名册",
@@ -114,36 +65,17 @@ impl Site {
     }
 }
 
-// ── 账 ────────────────────────────────────────────────
-//
-// 门 = `debug_assertions`：这整段的**唯一读者**是挂起自检（[`check_block_heldout`]），
-// 而自检只在 debug 产物里在场。账与判据同门，release 档里连这笔原子开销都不存在
-// （`TaskWeak` 在那里退化成"只是 `Weak<Task>` 的一层出身标注"）。
-
-/// 存活清单的槽位数。存活弱引用的量级 = 在册任务/团队数（个位到几十）。
 #[cfg(debug_assertions)]
 const SLOTS: usize = 48;
 
-/// 槽位占用标志（0 = 空）；非 0 即已占。
 #[cfg(debug_assertions)]
 static SLOT_ID: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
-/// 槽位元数据：**出身 + 出生核** 两枚小整数打包成一个字（编码见 [`SlotMeta`]）——
-/// 挂起自检按"是不是**本核**出生的抄件"筛，故出生核必须记下来。
 #[cfg(debug_assertions)]
 static SLOT_META: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
-/// 槽位身份序列（0 = 无效哨兵，故自 1 起）。
 #[cfg(debug_assertions)]
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
-/// 位打包的唯一一扇门：出身在低 `SITE_BITS` 位，出生核占其余高位。
-///
-/// **为什么是一个字而不是两格**：销账是"先撤身份再清元数据"，读侧在 `SLOT_ID != 0`
-/// 之后读这一对；一个字能**原子读**出完整的一对，两格会读到半新半旧的一对——那是
-/// "另一个纪元的抄件"，与本次自检要问的问题无关。
-///
-/// **照实记**：`pack(Site::Roster, HartId::new(0))` 编出来也是 `0`，与"空元数据"同字。
-/// 不冲突：`Site::Empty` 从不记账（`counted()` 为假），且读侧只在 `SLOT_ID != 0` 时读它。
 #[cfg(debug_assertions)]
 #[derive(Clone, Copy)]
 struct SlotMeta(usize);
@@ -151,16 +83,13 @@ struct SlotMeta(usize);
 #[cfg(debug_assertions)]
 const SITE_BITS: u32 = 8;
 
-/// 编译期锁：出身下标必须装得进低 `SITE_BITS` 位。
 #[cfg(debug_assertions)]
 const _: () = assert!(NSITE <= 1 << SITE_BITS);
 
 #[cfg(debug_assertions)]
 impl SlotMeta {
-    /// 空态（清槽用）。
     const EMPTY: SlotMeta = SlotMeta(0);
 
-    /// 打包（唯一的写入口；往返由 `debug_assert` 站岗）。
     fn pack(site: Site, hart: crate::hart::HartId) -> SlotMeta {
         let m = SlotMeta(site.ix() | (hart.get() << SITE_BITS));
         debug_assert!(
@@ -170,12 +99,10 @@ impl SlotMeta {
         m
     }
 
-    /// 出身（低 `SITE_BITS` 位）——本核那几格之外的位一律不看。
     fn site(self) -> Site {
         ALL[self.0 & ((1 << SITE_BITS) - 1)]
     }
 
-    /// 出生核（高位）。
     fn hart(self) -> crate::hart::HartId {
         crate::hart::HartId::new(self.0 >> SITE_BITS)
     }
@@ -189,24 +116,15 @@ impl SlotMeta {
     }
 }
 
-// ── 带账的弱引用 ────────────────────────────────────────
-
-/// 一枚 `Weak<Task>` + 它的出身与槽位 id。
-///
-/// **`Clone` 有意不实现**：每一次抄件都得在调用点写明"这枚抄件是从哪儿出去的"
-/// （`Muster` 还是 `Snapshot`）—— 编译器因此替这条纪律站岗，漏一处就编不过。
 #[repr(C)]
 pub(crate) struct TaskWeak {
     w: Weak<Task>,
-    /// 存活清单里的槽位身份（0 = 没抢到/不计账）。
     id: usize,
     site: Site,
 }
 
 impl TaskWeak {
-    /// **住进容器**：`site` 说明是哪张表（名册 / 票根 / 团队簿记 / 血亲）。
     pub(crate) fn stored(w: Weak<Task>, site: Site) -> TaskWeak {
-        // 记账只在框架档：账的读者是挂起自检（同门）。
         #[cfg(debug_assertions)]
         let id = if site.counted() { record(site) } else { 0 };
         #[cfg(not(debug_assertions))]
@@ -214,15 +132,10 @@ impl TaskWeak {
         TaskWeak { w, id, site }
     }
 
-    /// **抄件**：从容器里抄一枚出去给调用方临时用。`site` 说明抄它的那个点。
-    ///
-    /// 抄件是"弃帧"泄漏的**唯一**候选形态：容器里的那些随容器清空而死，抄出去的
-    /// 那些活在调用方的栈帧里。
     pub(crate) fn copy_at(&self, site: Site) -> TaskWeak {
         TaskWeak::stored(self.w.clone(), site)
     }
 
-    /// 空弱引用（`Weak::new()`：不占分配、不扣任何外壳）。
     pub(crate) fn empty() -> TaskWeak {
         TaskWeak {
             w: Weak::new(),
@@ -241,12 +154,10 @@ impl Deref for TaskWeak {
 
 impl Drop for TaskWeak {
     fn drop(&mut self) {
-        // 销账与记账同门（`stored`）：非框架档 `id` 恒 0，这一整段不在产物里。
         #[cfg(debug_assertions)]
         if self.id != 0 {
             for i in 0..SLOTS {
                 if SLOT_ID[i].load(Relaxed) == self.id {
-                    // 先撤身份再清元数据：别的读者要么看不到这一格，要么看到完整的一格。
                     SLOT_ID[i].store(0, Relaxed);
                     SLOT_META[i].store(SlotMeta::EMPTY.word(), Relaxed);
                     return;
@@ -256,11 +167,6 @@ impl Drop for TaskWeak {
     }
 }
 
-/// 把出身写进槽位；返回槽位身份（0 = 槽满）。
-///
-/// 抢槽用 CAS：`SLOT_ID` 为 0 是唯一空态，非 0 即已占。多核同时抢同一格只会有
-/// 一个成功（失败者继续扫下一格）。槽满只是"这一枚没记下出身"（挂起自检漏看它），
-/// 不影响任何分配语义。
 #[cfg(debug_assertions)]
 fn record(site: Site) -> usize {
     let id = NEXT_ID.fetch_add(1, Relaxed);
@@ -274,28 +180,6 @@ fn record(site: Site) -> usize {
     0
 }
 
-// ── 挂起自检：跨挂起的"抄件" ────────────────────────────
-
-/// **挂起前自检**：本核此刻还活着的**抄件**有几枚 —— 它们只可能活在**本核当前还压着
-/// 的栈帧**里（抄件不落任何容器；已经返回的帧里的抄件早就析构了）。
-///
-/// 为什么这条判据是"总是可判"的：它不依赖偶发。`block` 每次挂起都问一次，问的是
-/// **当下这个核的栈**；正常实现下答案恒为 0（要挂起的任务已把它的强引用交进队列、
-/// 把弱引用交进站点）。答案非 0 就说明有一条**引用被留在调用链的局部量里跨过了挂起**
-/// —— 而这条链一旦被弃（被别核判死 / 收尾时就地冻住），那个局部量的 `Drop` 永不执行：
-/// `Arc` 会把整棵团队/空间钉住，`Weak` 会把 `ArcInner` 外壳钉住（`strong 0 weak 1`）。
-///
-/// 与 `block` 头注里那条既有纪律（"跨挂起不得持强引用"）是**同一条**，这里把它
-/// 从"实现者记得"升级成"每次挂起都自检"，并且把**弱引用**也纳进来：弱引用不钉住
-/// 载荷、但钉住外壳，而外壳照样是一笔还不掉的账。
-///
-/// 判据是**当场断言**（不是记账供关机看）：跨挂起引用是设计上不该出现的形态，
-/// 出现即 stop-the-world —— 记账式观测在关机钩子撤掉之后就没有读者了。
-///
-/// # Panics
-///
-/// 本核栈上存在出身是抄件的存活弱引用 → panic（fail-fast，crash scene 里能看到
-/// `block` 的挂起点与这里的出身）。
 #[cfg(debug_assertions)]
 pub(crate) fn check_block_heldout() {
     let me = crate::hart::hart_id();
@@ -305,8 +189,6 @@ pub(crate) fn check_block_heldout() {
         }
         let meta = SlotMeta::from_word(SLOT_META[i].load(Relaxed));
         let site = meta.site();
-        // "抄件" = 不落容器的两种出身（`Muster` 抄出即用 / `Snapshot` 快照）。
-        // 只算**本核**出生的：别的核栈上的抄件归那次自检管。
         if matches!(site, Site::Muster | Site::Snapshot) && meta.hart() == me {
             panic!(
                 "[weak] 挂起自检：本核栈上仍有抄件（出身：{}）—— 跨挂起的弱引用会让外壳 \
@@ -316,3 +198,6 @@ pub(crate) fn check_block_heldout() {
         }
     }
 }
+
+#[cfg(not(debug_assertions))]
+pub(crate) fn check_block_heldout() {}

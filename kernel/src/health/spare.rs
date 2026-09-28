@@ -1,13 +1,3 @@
-// 健康检查 · spare — 后备仓预算验收（预算即契约）：ring 常驻 + 溢出演练。
-//
-// 断言：
-//   · ring 常驻后余量 ≥ DUMP_BUDGET（打印预算未被吃穿）；
-//   · 溢出演练：逐块拉取 1KiB 直到 AllocError（失败路径返回 Err、不 panic），
-//     再全部归还——余量须还原到演练前（分配/释放/合并闭环无泄漏）。
-// 断言用 `expect!`（health 专用宏）：失败统一报告 + fail-fast。
-
-// 用例只在 debug 档存在（与 `pagetable.rs` 同一 gate）：这一档才有
-// 消费者调用它，其余档里编进去就是一段没人跑、也没人读的代码。
 #![cfg(debug_assertions)]
 
 use core::alloc::{Allocator, Layout};
@@ -21,7 +11,6 @@ use crate::memory::allocator::spare::DUMP_BUDGET;
 use crate::memory::allocator::statistics;
 use crate::runtime::diagnose::trace;
 
-/// spare 预算验收（用例体；登记在 `mod.rs` 的 `test!` 块）。
 pub fn accept() {
     let h = hart::hart_count();
     let ring = trace::ring_bytes(h);
@@ -38,7 +27,6 @@ pub fn accept() {
     );
 
     let step = Layout::from_size_align(1024, 16).unwrap();
-    // 演练前后的 (在手段数, 余量) 快照：余量由在手段数导出，两条一起核。
     let before = (statistics::spare_occupied(), statistics::spare_available());
     let mut held: Vec<NonNull<[u8]>> = Vec::new();
     while let Ok(b) = spare::spare().allocate(step) {
