@@ -48,13 +48,20 @@ pub fn run(console: &Console) {
                 }
             }
         }
-        // 2：写——**只在写口就绪时推**。往写口推的人只有本域 ⇒ 就绪就是槽空 ⇒ 推当场成功。
+        // 2：写——**只在写口就绪时推**。往写口推的人只有本域 ⇒ 就绪就是槽空。
         if !out.is_empty() {
             match console.tx.wait(HoleDir::Push, Wait::POLL) {
                 Ok(true) => {
-                    // 借到这一条就结束（不把 `out` 的借带进下面的 `remove`）。
-                    // **只递出**：上面那一问已经把"轮到我"问过了（就绪），故这里是 `Wait::POLL`。
-                    let failed = console.tx.push(&out[0], Wait::POLL).is_err();
+                    // **两半都写出来**（旧合成 `push` 就是这两半）：**等轮到自己**（上面那一问）
+                    // ＋ **等这只手被取走**。
+                    //
+                    // **照实记（"只递出"在这一格是错的，量出来的）**：下面 `out.remove(0)` 当场
+                    // 把那一只 `Vec` 丢掉，而孔上那只手记的正是**它的堆地址** —— 只递不等 =
+                    // 让 uart 去复制一段**已经还给分配器**的内存（症状：起手那一句用法时有时无、
+                    // 有时是别人的字节）。这正是本仓栽过两次的同一类错（`Deposit` 那一格、
+                    // `Sender::Drop` 那一格的陷阱），故这一格写全：**缓冲丢之前，手必须已经被取走**。
+                    let failed = console.tx.push(&out[0], Wait::Forever).is_err()
+                        || !matches!(console.tx.wait(HoleDir::Push, Wait::Forever), Ok(true));
                     if failed {
                         return; // 写口封了 = 持设备的域没了
                     }
