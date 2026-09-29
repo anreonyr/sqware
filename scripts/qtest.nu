@@ -29,6 +29,12 @@
 # 跑七个景就是七次调用。`--scene` 给的景名由本脚本打印出来——报告里那一行只说 `scene`，
 # 景在这一行。
 #
+# **照实记（`root` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
+# `scene root` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
+# `harness/src/guest.rs` 与 `harness/src/probe_bound.rs` 两处 `assert`）。病根与量法归在
+# `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
+# 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
+#
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
 #
 # **照实记（为什么非搬不可）**：`cargo-qtest` 把 QEMU 的 stdin 钉成 `Stdio::null()`
