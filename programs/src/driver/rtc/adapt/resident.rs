@@ -46,8 +46,7 @@ pub fn run(
     }
 
     let view = dev.view();
-    // 一问最长那一形是 `Arm`（`Now` 更短，也走得进来）；缓冲给**一页**（载体的界，
-    // 见 `Push` 的前置条件）——于是任何一条消息一趟都取得出来。
+    // 一问最长那一形是 `Arm`（`Now` 更短，也走得进来）；缓冲给**一页**（余量；孔不预设长度，装不下会答 `Denied` 且手原样）。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Fail::at(E_RTC, "desk"));
@@ -73,7 +72,7 @@ pub fn run(
             if let Ring::Rang { back, now } = host.ring(now) {
                 // 那一声**走 `Sender`**（答那一形：一个时刻）——与客人收它走的是同一张表。
                 match Sender::<Time>::from_token(back)
-                    .send(Time::of(now), Wait::Forever)
+                    .send(Time::of(now))
                     .ok()
                 {
                     Some(()) => debug!("rtc: rang n={} now={now}", host.heard()),

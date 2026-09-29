@@ -93,7 +93,7 @@ pub fn register(
     // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`send` 满则挂），不是错误。
     Sender::<bcall::Req>::from_token(say)
-        .send(bcall::Req::Register { name, seed }, Wait::Forever)
+        .send(bcall::Req::Register { name, seed })
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)
 }
@@ -108,7 +108,7 @@ pub fn register(
 pub fn evict(say: PieToken, link: &Endpoint, millis: Wait) -> Result<u8, Fail> {
     // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
     Sender::<bcall::Req>::from_token(say)
-        .send(bcall::Req::Evict, Wait::Forever)
+        .send(bcall::Req::Evict)
         .map_err(|_| Fail::Unknown)?;
     hear_rep(link, millis)
 }

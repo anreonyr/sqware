@@ -239,7 +239,7 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
 /// （板 / 树各一处问话孔）。
 ///
 /// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔，
-/// 而孔是单槽，谁先读谁吃掉。
+/// 而孔是单手，谁先读谁吃掉。
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
     let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
     let pie = mail::HolePie::from_token(hole);

@@ -217,7 +217,7 @@ impl Control {
             return Err(Error::Step("too many devices"));
         };
         protocol::communication::sender::Sender::<Enroll>::from_token(tx)
-            .send(enroll, Wait::Forever)
+            .send(enroll)
             .map_err(|_| Error::Step("no channel"))?;
         debug!("system: enrolled {} supplies for {}", got, name.as_str());
         Ok(())

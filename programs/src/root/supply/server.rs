@@ -122,7 +122,7 @@ fn reply(pier: &Endpoint, code: u8, records: &[Pair]) {
         // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
         // 的照实记）：`.ok()` 显式落地一个到不了的点，不是吞错。
         let _ = Sender::<Reply>::from_token(at_peer)
-            .send(reply, Wait::Forever)
+            .send(reply)
             .ok();
     }
 }

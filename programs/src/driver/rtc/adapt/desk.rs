@@ -4,7 +4,6 @@
 //! `mail::reserve` 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备。
 
 use crate::rtc;
-use env::Wait;
 use env::{PieToken, TaskId};
 use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
@@ -88,13 +87,13 @@ fn ship_time(back: PieToken, now: u64) {
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send` 的
     // 照实记）；真到了那里，那一层是 `None`，与"推不出去"同一行读数。
     let _ = Sender::<Time>::from_token(back)
-        .send(Time::of(now), Wait::Forever)
+        .send(Time::of(now))
         .ok();
 }
 
 /// 把那一格码答出去。
 fn ship_code(back: PieToken, code: u8) {
     let _ = Sender::<Status>::from_token(back)
-        .send(Status::of(code), Wait::Forever)
+        .send(Status::of(code))
         .ok();
 }

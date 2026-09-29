@@ -1,4 +1,4 @@
-//! router::adapt::bell — **铃（适配）**：领一条 → 往主人手里投一帧 → 投到了才静音 ＋ 结 → 报一行。
+//! router::adapt::bell — **铃（适配）**：领一条 → 往主人手里响一位 → 响到了才静音 ＋ 结 → 报一行。
 //!
 //! 判定在 `crate::core::lines`（`deliver` 与 `told`）；静音/结是设备面的一手
 //! （`plic.disable` / `plic.complete`）。
@@ -12,9 +12,8 @@
 use crate::core::lines::Lines;
 use crate::plic::Plic;
 use protocol::debug;
-use protocol::driver::line::frame as lcall;
 
-/// 领干净这一趟铃：每条领到的线投一帧、静音、报过没有、结清。
+/// 领干净这一趟铃：每条领到的线响一位、静音、报过没有、结清。
 pub fn ring(lines: &mut Lines, plic: &Plic) {
     loop {
         let line = plic.claim();
@@ -25,7 +24,7 @@ pub fn ring(lines: &mut Lines, plic: &Plic) {
         // ——静音是"这一条有人接了"，而没人接的那一条不该由本域替它按下。
         // **照实记**：这一格由下一次/同一次的 `sweep` 收掉（探活答不出 ⇒ `vacate`）；
         // 报一行让它看得见。
-        if lines.deliver(line, &[lcall::NOTE]).is_ok() {
+        if lines.deliver(line).is_ok() {
             plic.disable(line);
         } else {
             debug!("router: deliver failed line={line}");

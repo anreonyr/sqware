@@ -163,7 +163,7 @@ fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, f
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
     // 真到了那里，这一答就发不出去。
     let _ = Sender::<ccall::Union>::from_token(back)
-        .send(answer(book, roster, mine, from, ask), Wait::Forever)
+        .send(answer(book, roster, mine, from, ask))
         .ok();
     let _ = mail::release(back);
 }

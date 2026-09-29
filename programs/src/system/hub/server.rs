@@ -312,7 +312,7 @@ fn bond(
 ) -> Result<(), ()> {
     let Some(coalition) = ledger.coalition_of(class) else {
         return Sender::<Said>::from_token(back)
-            .send(Said::of(hub::UNKNOWN), Wait::Forever)
+            .send(Said::of(hub::UNKNOWN))
             .map_err(|_| ());
     };
     let status = match league.coalition(coalition).admit(from, Wait::AtMost(MS)) {
@@ -320,7 +320,7 @@ fn bond(
         Err(_) => hub::DENIED,
     };
     Sender::<Said>::from_token(back)
-        .send(Said::of(status), Wait::Forever)
+        .send(Said::of(status))
         .map_err(|_| ())
 }
 
@@ -335,7 +335,7 @@ fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) -> Result<(),
         }
     };
     Sender::<Window>::from_token(back)
-        .send(window, Wait::Forever)
+        .send(window)
         .map_err(|_| ())
 }
 
@@ -357,7 +357,7 @@ fn claim(
             Policy::from_bits(policy),
         ) else {
             return Sender::<Deed>::from_token(back)
-                .send(Deed::of(hub::BAD), Wait::Forever)
+                .send(Deed::of(hub::BAD))
                 .map_err(|_| ());
         };
         let owner = Owner { task: from, sensor };
@@ -373,7 +373,7 @@ fn claim(
         }
     };
     Sender::<Deed>::from_token(back)
-        .send(deed, Wait::Forever)
+        .send(deed)
         .map_err(|_| ())
 }
 
@@ -387,19 +387,16 @@ fn send_status(
 ) -> Result<(), ()> {
     match mine {
         Grant::Bond => Sender::<Said>::from_token(back)
-            .send(Said::of(status), Wait::Forever)
+            .send(Said::of(status))
             .map_err(|_| ()),
         Grant::List => Sender::<Window>::from_token(back)
-            .send(
-                Window {
-                    status,
-                    ..Window::EMPTY
-                },
-                Wait::Forever,
-            )
+            .send(Window {
+                status,
+                ..Window::EMPTY
+            })
             .map_err(|_| ()),
         Grant::Claim => Sender::<Deed>::from_token(back)
-            .send(Deed::of(status), Wait::Forever)
+            .send(Deed::of(status))
             .map_err(|_| ()),
     }
 }

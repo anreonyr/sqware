@@ -122,7 +122,7 @@ impl Watch {
     /// 调用者只有一处：`Assembly::mount_control`——**铸入口那一枚线程**（编排域主线程）在
     /// `/svc/sys/control/{…}` 落定之后，把它自己铸的那几枚**逐面**交到这里。那一枚此后归这只组管：
     /// 它的到达就是"有人来问 control 这一面了"那一格。
-    /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单槽的推没有丢的
+    /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单手的推没有丢的
     /// 道理，本手只是把"醒来"这条快路接上）。
     pub fn attach_face(&mut self, grant: ccall::Grant, face: PieToken) {
         let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
@@ -199,17 +199,15 @@ impl Watch {
                 control.wait_last(last.as_str());
                 return;
             }
-            // 三、复核：每条道非阻塞地问一句"有货吗"。**单槽**——道上一次死亡只响一次；一次
+            // 三、复核：每条道非阻塞地问一句"响着吗"（`hush` 未响答 `Busy`）。**位只有一位**
+            //     ——道上一次死亡只响一次；一次
             //     醒来可能带走多条（两位前后脚死）。
             for lane in &self.lanes {
                 let Some(road) = lane.road else {
                     continue;
                 };
-                if HolePie::from_token(road)
-                    .pull_timeout(&mut buf, Wait::POLL)
-                    .is_err()
-                {
-                    continue; // 这一条没货
+                if mail::hush(road).is_err() {
+                    continue; // 这一条没事
                 }
                 let name = lane.name;
                 account(&mut control.table, name);
@@ -219,7 +217,7 @@ impl Watch {
                     stop_running(&mut control.table, &self.lanes);
                 }
             }
-            // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单槽，
+            // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单手，
             //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
             for i in 0..ccall::Grant::ALL.len() {
                 let Some(face) = self.faces[i] else {
@@ -313,7 +311,7 @@ fn last_reaped(table: &Table, name: &str) -> bool {
 /// 读出来核对，否则客人能让本域往**别人的孔**里写。
 fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
-    // 入口是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
+    // 入口是**单手**：一次醒来的这一批要取干净（可能不止一位客人）。
     while let Ok((len, from)) = entry.pull_timeout_from(buf, Wait::POLL) {
         let Some((ask, back)) = ccall::frame::Wire::take(&buf[..len]) else {
             // 长度不对 ⇒ 连"往哪回"都没有：不猜、不动表、也不回话。
@@ -341,10 +339,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
                     ccall::Grant::ALL[(asked - 1) as usize].name()
                 );
                 let _ = Sender::<ccall::frame::Said>::from_token(back)
-                    .send(
-                        ccall::frame::said_status(ccall::frame::DENIED),
-                        Wait::Forever,
-                    )
+                    .send(ccall::frame::said_status(ccall::frame::DENIED))
                     .ok();
                 let _ = mail::release(back);
                 continue;
@@ -353,7 +348,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
         let said = answer(control, ask);
         // 答一句走这一趟那枚孔；装不上按构造到不了（`.ok()` 与板那一台同款）。
         let _ = Sender::<ccall::frame::Said>::from_token(back)
-            .send(said, Wait::Forever)
+            .send(said)
             .ok();
         let _ = mail::release(back);
     }

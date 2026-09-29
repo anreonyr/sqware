@@ -257,6 +257,6 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) {
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）。
     let _ = Sender::<ocall::Union>::from_token(guest.reply())
-        .send(said, Wait::Forever)
+        .send(said)
         .ok();
 }

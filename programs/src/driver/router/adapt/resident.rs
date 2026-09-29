@@ -34,9 +34,9 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
         sweep::run(&mut up.lines, &up.plic, &up.pile);
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
-        exhaust::drain(&mut up.lines, &up.plic, &mut up.buf);
-        // 门上：非阻塞地把槽里的都取走（登记）。缓冲是**一页**（载体的界，见 `Push` 的前置
-        // 条件）——于是任何一条消息一趟都取得出来，"取不出也丢不掉"那个状态不存在。
+        exhaust::drain(&mut up.lines, &up.plic);
+        // 门上：非阻塞地把手上那些都取走（登记）。一份**够大**的缓冲接一条消息——
+        // 「取不出也丢不掉」（取不出的那条会留在孔上，把后面正经的问堵在门外）。
         while let Ok((n, from)) = up.entry.pull_timeout_from(&mut up.buf, Wait::POLL) {
             desk::serve(&mut up.lines, &up.plic, from, &up.buf[..n], &up.pile);
         }

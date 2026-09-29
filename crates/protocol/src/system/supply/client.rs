@@ -34,7 +34,7 @@ pub fn draw(
     // 泊位那头还没齐（`at_peer` 空）⇒ 与从前 `Pier::post` 自己那一格同一落点：`Local`。
     let order = Order::of(who, wants).ok_or(Fail::Local)?;
     let tx = pair.sender::<Order>().ok_or(Fail::Local)?;
-    tx.send(order, Wait::Forever).map_err(|_| Fail::Local)?;
+    tx.send(order).map_err(|_| Fail::Local)?;
     // 收一张回单：**三格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
     // "这一枚孔用不动了" ⇒ `Denied`（"这一手没做成"）；"收下来解不动" ⇒ `Bad`。前两句与从前
     // `pier.pull` ＋ `fetch` 那两句一字不差，第三句是"孔用不动了"那一格加进来之后才分开的

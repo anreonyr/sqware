@@ -127,7 +127,7 @@ fn push_line(out: &mut Vec<Vec<u8>>, line: &str) {
     out.push(one);
 }
 
-/// 一页缓冲（**载体的界**：`envcall` 把一条消息卡在 `1..=一页`）。
+/// 一页缓冲（**余量**：本族一行远小于它；孔不预设长度，装不下才答 `Denied`）。
 fn page() -> Option<Vec<u8>> {
     let mut v: Vec<u8> = Vec::new();
     v.try_reserve_exact(PAGE_SIZE).ok()?;

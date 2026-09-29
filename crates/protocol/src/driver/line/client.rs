@@ -4,7 +4,7 @@
 //! （[`Deed`](crate::driver::hub::Deed)，区→线的权威在设备账那一台），本层只把它原样报上来。
 
 use env::Wait;
-use env::{Mark, PieToken};
+use env::{HoleDir, Mark, PieToken};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -47,7 +47,7 @@ impl Line {
             establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL)
                 .map_err(|_| Fail::Denied)?,
         );
-        // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单槽的孔只够一个方向）。
+        // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单手的孔只够一个方向）。
         let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
@@ -62,7 +62,7 @@ impl Line {
             // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
             // 层写字节（缓冲在这一帧的栈上：这一形定长 [`frame::Occupy::LEN`]）。
             Sender::<frame::Occupy>::from_token(entry)
-                .send(frame::Occupy::of(line), Wait::Forever)
+                .send(frame::Occupy::of(line))
                 .map_err(|_| ())
         });
         if sent.is_err() {
@@ -95,29 +95,35 @@ impl Line {
     ///
     /// **帧里没有线号**（线在泊位里，见 [`super`]）：这一手对客户就是"我那一格有事"。
     ///
-    /// **这一格是裸字节**（投递那一帧只有一个动作码），不是一族那种报 ⇒ 走裸孔，不套手柄。
+    /// **这一格是孔上那一位**（不是一族那种报）⇒ 走裸孔，不套手柄。两拍与旧孔时代的
+    /// `pull_timeout` 同形：**等**（`wait`）＋ **应**（`hush`）——`Wait::POLL` 就是
+    /// "只看一眼"，一次也不挂起。
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
-        let mut one = [0u8; 1];
-        match HolePie::from_token(self.pair.rx()).pull_timeout(&mut one, millis) {
-            Ok(_) => Ok(()),
-            Err(_) => Err(()),
+        let rx = self.pair.rx();
+        if mail::wait(rx, HoleDir::Pull, millis).map_err(|_| ())? {
+            mail::hush(rx).map_err(|_| ())
+        } else {
+            Err(())
         }
     }
 
-    /// 说一句"这一条我处理完了"。**不阻塞**：路由者那一格还压着上一条没取时，就当已经
-    /// 说过——它迟早会取到那一条，而这句话说的是**状态**（那一格回闲 + 把线放回），幂等。
+    /// 说一句"这一条我处理完了"。**不阻塞**：已经在响就当也说了——它迟早会应掉那一位，
+    /// 而这句话说的是**状态**（那一格回闲 + 把线放回），幂等。
     ///
-    /// 为什么不能阻塞：路由者投递、客户说排空，两边都是"往对方的单槽里推"。两边都等 ⇒
-    /// 谁也回不去取自己那一格，机器当场不动（实测）。堵死的那一条只能是**通知**，
-    /// 不能是**移交**——真需要送达的那一路（投递）留在 投递那一手（`Lines::deliver`，住路由者那一侧） 上，
-    /// 它阻塞，且客户**总会**回到收投递那一格（客户从不堵在说排空上）。
+    /// **为什么不能阻塞**：路由者投递、客户说排空，两边都是"往对方那一格上说一句"。两边都等 ⇒
+    /// 谁也回不去取自己那一格，机器当场不动（**实测**——旧孔时代它真的发生过）。堵死的那一条
+    /// 只能是**通知**，不能是**移交**；本刀把这两条通知都换成**位**（`ring` 置位即返，
+    /// 从不睡），那条互锁于是**结构上不可能**。
     pub fn exhaust(&self) -> Result<(), ()> {
         let Some(tx) = self.pair.tx() else {
             return Err(());
         };
-        // 单次尝试（`mail::push` 不挂起）：槽满当场答 `Err`——原 `try_post` 的那一格。
-        let note = [frame::NOTE];
-        mail::push(tx, note.as_ptr(), note.len()).map_err(|_| ())
+        // 置位即返：已响 = "这一条我处理完了"这件**状态**已经有了 ⇒ 也算说过。
+        match mail::ring(tx) {
+            Ok(()) => Ok(()),
+            Err(e) if e.source.is_busy() => Ok(()),
+            Err(_) => Err(()),
+        }
     }
 
     /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。

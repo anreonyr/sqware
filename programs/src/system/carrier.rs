@@ -63,7 +63,7 @@ pub fn carrier<G: Copy>(
         pile.attach(&HolePie::from_token(*entry), HoleDir::Pull)
             .map_err(|_| Start::Desk(died))?;
     }
-    // 二、收帧那一页：**备一次**，循环里一直用（一页 = 载体的界：任何一条消息一趟都取得出来）。
+    // 二、收帧那一页：**备一次**，循环里一直用（一页 = 余量：本仓的帧都在几十到几百字节）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Start::Room(died));

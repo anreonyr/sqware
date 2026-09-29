@@ -1,33 +1,34 @@
 //! Sender — **我推的那一枚孔**：这一路流的那一种报由类型参数说。
 //!
 //! ```text
-//!   Sender::send(报, 期限)    编进本族的缓冲（**在这一帧的栈上**）→ 推上这一枚孔
+//!   Sender::send(报)    编进本族的缓冲（**在这一帧的栈上**）→ 递上这一枚孔 → 送到
 //! ```
 //!
 //! # 三条照实记
 //!
-//! **① 一枚孔一个方向。** Mail 是单向单槽 ⇒ "收发"不是一枚孔上的两件事，而是**两枚孔、
+//! **① 一枚孔一个方向。** Mail 是单向单手 ⇒ "收发"不是一枚孔上的两件事，而是**两枚孔、
 //! 两个对象**（本文件与 [`Receiver`](super::receiver)）。这一枚孔是谁铸的、谁读的，由
 //! **建立那一步**说（[`super::establish`]），本文件不问。
 //!
-//! **② 期限在每次调用上**（与 `std::sync::mpsc` 的 `recv_timeout` 同构）：`Wait` 一个参数
-//! 说尽三态——`POLL`（= `AtMost(0)`）**就是** `try_send`：单次尝试、槽满当场答 `Busy`，
-//! 一次也不挂起。
+//! **② 期限不在这里**（照实记：本刀之前这里有一个 `wait: Wait` 参数，与一圈手写的三态循环）。
+//! 孔上那一格是**一只手**，不是一只槽：递出去只有一个下场——**送到**。仓里 24 处调用点
+//! **全都传 `Wait::Forever`** ⇒ 那一格没有选择者，它不是参数、是常量，整格退场。要非阻塞
+//! 投递（`try_send`）得先有"撤手"那一格（见 `MailCall::Push` 的契约），那是另一单。
 //!
-//! **③ 缓冲在这一帧的栈上，且循环要自己写。** 发出去的报是**自己编的**，超不出本族最长
-//! 那一枚（`M::Buf` 就是它）⇒ 既不占调用方的缓冲、也不占结构体的字段。而
-//! **`HolePie::push` 把等待写死成 `Wait::Forever`**（`runtime/src/env/mail.rs` 那一圈）⇒
-//! `POLL` 与 `AtMost` 在它那里落不下来；故下面这一手用 `env::mail::push` ＋
-//! `HolePie::wait(HoleDir::Push, …)` 把那一圈重写一遍（原 `communication::establish` 那具
-//! `push_to` 壳已经删了，现在收成同一条路上的三态）。
+//! **送的"等"有一个兜底期限**（`runtime::env::mail` 的 `HANDOFF_MS`）：对面不在（走了、或没在
+//! 收）⇒ 到点撤手、答 `Busy`，**不永久挂着**。"不给人答话"那一半由内核的**主人还在吗**判据
+//! 先挡（`MailCall::Push` 的 `Dead`）——两层合起来，"答给一位已经走了的客人"既不挂、也不丢。
+//!
+//! **③ 缓冲在这一帧的栈上，且借用期覆盖"递出 → 送到"两段。** 发出去的报是**自己编的**，
+//! 超不出本族最长那一枚（`M::Buf` 就是它）⇒ 既不占调用方的缓冲、也不占结构体的字段；
+//! 而孔上那只手指的就是这片栈——`send` 不返回，它就悬不了。
 
 use core::marker::PhantomData;
 
-use env::{HoleDir, MailFail, PieToken, Wait};
+use env::{MailFail, PieToken};
 
-use super::{deadline, remain};
 use crate::message::Message;
-use runtime::env::mail;
+use runtime::env::mail::HolePie;
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）。
 pub struct Sender<M: Message> {
@@ -48,11 +49,11 @@ impl<M: Message> Sender<M> {
         }
     }
 
-    /// 编 ＋ 推。`wait` = 槽满等多久（**三态**，见文件头 ②）。
+    /// 编 ＋ 递。**送到才算完**（阻塞；见文件头 ②）。
     ///
-    /// 失败三层**分得开**（[`SendFail`]）：编不下（`TooLong`）/ 没有写端（`Unbound`）/
-    /// 搬不动（`Mail`）。
-    pub fn send(&self, msg: M, wait: Wait) -> Result<(), SendFail> {
+    /// 失败两层**分得开**（[`SendFail`]）：编不下（`TooLong`）/ 没有写端（`Unbound`）/
+    /// 递不动（`Mail`）。
+    pub fn send(&self, msg: M) -> Result<(), SendFail> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);
         };
@@ -61,9 +62,11 @@ impl<M: Message> Sender<M> {
             return Err(SendFail::TooLong);
         };
         // **长度也归这一格管**：`store` 报的比 `Buf` 还大时不能拿它去切——那是"编出来的字节
-        // 说了谎"，与"装不下"同一条下场（原 `Sender::send` 的 `debug_assert` 在这里落成返回值）。
+        // 说了谎"，与"装不下"同一条下场。
         let bytes = buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
-        push(hole, bytes, wait).map_err(SendFail::Mail)
+        HolePie::from_token(hole)
+            .push(bytes)
+            .map_err(|e| SendFail::Mail(e.source))
     }
 
     /// 这一枚孔（诊断、挂进组、转授都从这里取）。**没有写端时答 `None`**。
@@ -72,42 +75,16 @@ impl<M: Message> Sender<M> {
     }
 }
 
-/// 推不出去：三层**分得开**。
+/// 递不出去：两层**分得开**。
 ///
 /// - [`SendFail::TooLong`] = **编不进本族的缓冲**（`M::Buf` 就是本族最长那一枚，故这一支只在
 ///   类型被写错时才到得了——不 `panic`、如实报）；
 /// - [`SendFail::Unbound`] = **没有写端**（对端那一枚还没认到）；
-/// - [`SendFail::Mail`] = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / …）。
+/// - [`SendFail::Mail`] = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）。
 ///
 /// **不另造一套码**：Mail 域的词表是它的失败域，这一层只把"哪一步失败"说清，不换词。
 pub enum SendFail {
     Unbound,
     TooLong,
     Mail(MailFail),
-}
-
-/// 推一串字节，按 `wait` 的重试。
-fn push(hole: PieToken, bytes: &[u8], wait: Wait) -> Result<(), MailFail> {
-    // **`POLL` = 单次尝试**（`try_send`）：一次也不挂起。
-    if wait == Wait::POLL {
-        return mail::push(hole, bytes.as_ptr(), bytes.len()).map_err(|e| e.source);
-    }
-
-    let until = deadline(wait);
-    let pie = mail::HolePie::from_token(hole);
-    loop {
-        match mail::push(hole, bytes.as_ptr(), bytes.len()) {
-            Ok(()) => return Ok(()),
-            // 槽满：睡到有空间再来（下面那一手）。
-            Err(e) if e.source.is_busy() => {}
-            Err(e) => return Err(e.source),
-        }
-        let remain = remain(until);
-        if remain == Wait::POLL {
-            // 期限内没腾出槽位：这一格答**忙**，不是"孔坏了"。
-            return Err(MailFail::Busy);
-        }
-        // **醒来自己再推一次**：这一手只是提示（真醒还是期限到，由下一轮那一推说了算）。
-        let _ = pie.wait(HoleDir::Push, remain);
-    }
 }

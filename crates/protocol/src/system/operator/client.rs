@@ -511,7 +511,7 @@ fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<o
     // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
     Sender::<ocall::Req>::from_token(say)
-        .send(ask, Wait::Forever)
+        .send(ask)
         .map_err(|_| Fail::Unknown)?;
     // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
     let mut buf = ocall::Union::EMPTY;

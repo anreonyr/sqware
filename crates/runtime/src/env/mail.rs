@@ -5,7 +5,7 @@
 //! `env::fid` 文件头把 `PieCall`（class 7）与 `MailCall`（class 5）立成两条正交的轴
 //! （权柄 / 数据）。本层按轴分文件：
 //!
-//!   - **通信面（本文件）**：class 5 的 `Push` / `Pull` / `Wait` / `Hush` / `Ring`，加
+//!   - **通信面（本文件）**：class 5 的 `Push` / `Pull` / `Peek` / `Wait` / `Hush` / `Ring`，加
 //!     class 9（`ToleCall`：一枚"组"的造 / 挂 / 摘 / 等）。组是**多路等待**——成员是孔的
 //!     一个方向或一枚铃，故它接着本文件那一族的等待语义（分界见 `env::fid`：
 //!     "本类不搬载荷"）；
@@ -26,17 +26,37 @@
 //! `harness` 里十几处调用点）**一行没改**：下面把 `pie.rs` 的每一项按名字转出去。
 //! 这是本仓搬家的既有先例（`Access`/`Policy`、`Announce`/`Grant`/`Died` 都是这么转的）。
 //!
-//! push/pull 的阻塞：内核 Push/Pull 槽满/槽空返 `-3 Busy`；本层转 `Wait` 原语
-//! 挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
+//! push/pull 的阻塞：内核 `Push`／`Pull` 是**一次尝试**（孔上已有手／手上没东西 ⇒ `-3 Busy`）；
+//! 本层转 `Wait` 原语挂起（让出 CPU），被对侧唤醒后重试——真阻塞，不占核。
+//! **递出之后还要等**：`Push` 的 `Ok` 只说"内核收下了这只手"，送达要等 `Wait { dir: Push }`
+//! 报"手下线了"（见 [`HolePie::push`]）。
 
 use env::Wait;
-use env::{HoleDir, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
+use env::{HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
+use env::make_fail;
 
 /// 单调时钟读数（纳秒）——`pull_timeout` 的 deadline 用（机器无关，不依赖
 /// timebase 频率）。内核那一格没有失败支，故跟着 [`clock`](crate::env::chrono::clock)
 /// 一起不返 `Result`。
 fn now_ns() -> u64 {
     crate::env::chrono::clock()
+}
+
+/// **递出之后等"对面来取"的兜底期限**（毫秒）。
+///
+/// **不是期限策略，是兜底**：对面已经不在时（走了、或压根没在收），不能让发送方永久挂着——
+/// 到点 [`withdraw`] 撤手并答 `Busy`。锁步问答远在它之内；1 秒与本仓各处的 `MS` 同族。
+///
+/// **照实记（为什么非有不可）**：只手不载字节之后，"答给一位已经走了的客人"这件事没人吸收了
+/// （旧语义里寄放把它吸收掉）。真机上量到过：整机起得来、`scene root` 收不了场——一位发送方
+/// 永久等一只没人取的手。这一格把那类挂死降成一次可诊断的失败；"不给人答话"那一半由内核的
+/// **主人还在吗** 判据先挡（见 `hole::give`）。
+const HANDOFF_MS: usize = 1000;
+
+/// 距期限还剩几毫秒；到点了答 `None`。
+fn left(deadline: u64) -> Option<usize> {
+    let now = now_ns();
+    (now < deadline).then(|| ((deadline - now) / 1_000_000).max(1) as usize)
 }
 
 // ── 权柄轴（class 7）搬去 `pie.rs` 之后的名字照旧 ──────────────────────────
@@ -50,31 +70,45 @@ pub use super::pie::{
 
 // ── 裸函数层（envcall 转发，零业务逻辑）：class 5（数据轴）──
 
-/// push 一条消息（`msg[..len]` 进 hole 槽）。`len ∈ 1..=一页`（破了界答 `Denied`）。
+/// 递出一条消息：把 `msg[..len]` 那只手登记到 `token` 上（`len ≥ 1`；**不搬字节、不分配**）。
+///
+/// **`Ok` = 内核收下了这只手**，不是送达——送达要等它下线（见 [`HolePie::push`]）。
 pub fn push(token: PieToken, msg: *const u8, len: usize) -> MailResult<()> {
     env::mail::push(token, VirtAddr::new(msg as usize), len)
 }
 
-/// pull 一条消息（最多装 `buf[..max]`）。返实际长度（≤ max）；发送者丢弃。
-/// 装不下返 `Denied` 且槽原样；**给一页就装得下任何一条消息**（载体封顶一页）。
-/// 要问长度用 [`pull_len`]。
+/// 取走一只手：把发送方那段复制**一次**进 `buf[..max]`，返实际长度与发送者。
+///
+/// 装不下（`len > max`）返 `Denied`，**手原样留在孔上**——换够大的缓冲再来取，不丢消息。
+/// 发送方那段已经没了（或它那个空间已回收）返 `Gone`。要问长度用 [`pull_len`]。
 pub fn pull(token: PieToken, buf: *mut u8, max: usize) -> MailResult<usize> {
     pull_from(token, buf, max).map(|(n, _)| n)
 }
 
-/// 只问长度（**不动槽**）：返槽里那条消息的长度与发送者，一个字节都不取。
+/// 只看一眼（**不动孔**）：孔上那只手的长度与发送者，一个字节都不取。
 ///
-/// 走 `Pull { max: 0 }`——与 `Wait::POLL`「只探测不挂起」同一形状的"只问"。
-/// **不是取消息的前一步**（那一步由载体的界接手：一页缓冲一趟取走）；它的读者是
+/// 走 `Peek`——与 `Wait::POLL`「只探测不挂起」同一形状的"只问"。
+/// **不是取消息的前一步**：取走就是一次 [`pull`]，够不够由 `max` 判；它的读者是
 /// "等之前先看一眼"那一格（`harness` 的 waiter）。
 pub fn pull_len(token: PieToken) -> MailResult<(usize, TaskId)> {
-    pull_from(token, core::ptr::null_mut(), 0)
+    peek(token)
 }
 
-/// pull 一条消息并取回**发送者**（`(长度, 发送者 TaskId)`）。
+/// 只看一眼（`Peek` 的转发）。不动孔的状态（取用中的那只也照报），也不唤醒任何人。
+pub fn peek(token: PieToken) -> MailResult<(usize, TaskId)> {
+    env::mail::peek(token)
+}
+
+/// **撤手**（`Withdraw` 的转发）：把**我自己**伸出、还没被取走的那只收回来。
+///
+/// 见 [`HolePie::push`] 的兜底期限——它是那一段借用期的收口。
+pub fn withdraw(token: PieToken) -> MailResult<()> {
+    env::mail::withdraw(token)
+}
+
+/// 取走一只手并取回**发送者**（`(长度, 发送者 TaskId)`）。
 ///
 /// 发送者由内核在 `Push` 时盖章——身份不可伪造，不必再从报文里猜。
-/// `max == 0` ⇒ 只报长度、不动槽（收方缓冲不参与）。
 pub fn pull_from(token: PieToken, buf: *mut u8, max: usize) -> MailResult<(usize, TaskId)> {
     env::mail::pull(token, VirtAddr::new(buf as usize), max)
 }
@@ -156,24 +190,65 @@ impl HolePie {
         wait(self.token, dir, millis)
     }
 
-    /// 写消息（**`1..=一页`**）：槽满则睡到有空间（让出 CPU）。
+    /// 递出一条消息（`len ≥ 1`）：**送给对面才算完**。
+    ///
+    /// 两段：先 `push` 一次把手递出去（孔上已有别人的手 ⇒ 等孔空再来）；递出之后等它下线——
+    /// `Ok` 只说"内核收下了这只手"，落进对面缓冲是取的那一刻的事。借用期覆盖这两段，故
+    /// "登记完就走"在这里写不出来（见 `MailCall::Push` 的契约）。
+    ///
+    /// **两段都带 [`HANDOFF_MS`] 那个兜底期限**：对面不在（走了、或没在收）⇒ 到点
+    /// [`withdraw`] 撤手、答 `Busy`，**不永久挂着**。"不给人答话"那一半由内核的**主人还在吗**
+    /// 判据先挡（`hole::give`），这一格只兜"判完到推到之间那一下"。
     pub fn push(&self, msg: &[u8]) -> MailResult<()> {
+        let deadline = now_ns().saturating_add((HANDOFF_MS as u64).saturating_mul(1_000_000));
         loop {
             match push(self.token, msg.as_ptr(), msg.len()) {
-                Ok(()) => return Ok(()),
-                Err(e) if e.source.is_busy() => {
-                    self.wait(HoleDir::Push, Wait::Forever)?;
-                }
+                // 手递出去了 ⇒ 等它下线（`true` = 孔上那只手没了 = 已被取走；
+                // 孔封印则这里是 `Err(Dead)`）。
+                Ok(()) => loop {
+                    match left(deadline) {
+                        None => return self.settle(),
+                        Some(ms) => {
+                            if self.wait(HoleDir::Push, Wait::AtMost(ms))? {
+                                return Ok(());
+                            }
+                        }
+                    }
+                },
+                Err(e) if e.source.is_busy() => match left(deadline) {
+                    None => return Err(make_fail(MailFail::Busy)),
+                    Some(ms) => {
+                        let _ = self.wait(HoleDir::Push, Wait::AtMost(ms));
+                    }
+                },
                 Err(e) => return Err(e),
             }
         }
     }
 
-    /// 取消息：槽空则睡到有信（让出 CPU）。返实际收到字节数（≤ `buf.len()`）。
+    /// 期限到了的收场：**撤手**。
     ///
-    /// **装不下（消息比 `buf` 长）返 `Denied`，且槽原样**——给一页就装得下任何一条消息
-    /// （载体封顶一页），故这一支只会发生在**你自己给得更小**的时候；真给了小缓冲又不想丢，
-    /// 先问 [`HolePie::peek`] 再备够。这里不替调用方把槽丢掉：丢一条消息是不可逆的。
+    /// 撤掉 ⇒ `Busy`（对面没来取，这一条没送到）。撤不掉的那个 `Busy` 来自"正被取用中"——
+    /// 那一刻复制在对面进行，给它一小拍收尾再复核：成了就是送达。
+    fn settle(&self) -> MailResult<()> {
+        match withdraw(self.token) {
+            Ok(()) => Err(make_fail(MailFail::Busy)),
+            Err(e) if e.source.is_busy() => {
+                let _ = self.wait(HoleDir::Push, Wait::AtMost(1));
+                if self.wait(HoleDir::Push, Wait::POLL)? {
+                    Ok(())
+                } else {
+                    Err(make_fail(MailFail::Busy))
+                }
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 取走一只手：手上没东西则睡到有信（让出 CPU）。返实际收到字节数（≤ `buf.len()`）。
+    ///
+    /// **装不下（消息比 `buf` 长）返 `Denied`，且手原样**——先问 [`HolePie::peek`]
+    /// 再备够，或换一只更大的缓冲再来。这里不替调用方把消息丢掉：丢一条是不可逆的。
     pub fn pull(&self, buf: &mut [u8]) -> MailResult<usize> {
         loop {
             match pull(self.token, buf.as_mut_ptr(), buf.len()) {
@@ -199,19 +274,19 @@ impl HolePie {
         }
     }
 
-    /// 只看一眼：槽里那条消息的**长度与发送者**，**一个字节都不取**（槽留原样）。
+    /// 只看一眼：孔上那只手的**长度与发送者**，**一个字节都不取**（孔留原样）。
     ///
-    /// **不是取消息的前一步**：载体封顶一页 ⇒ 一座一页缓冲一趟取走任何一条消息。
+    /// **不是取消息的前一步**：取走就是一次 `pull`，够不够由 `max` 判。
     /// 它的读者是"等之前先看一眼"那一格（`harness` 的 waiter）。
-    /// 槽空 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
+    /// 手上没东西 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
     pub fn peek(&self) -> MailResult<(usize, TaskId)> {
         pull_len(self.token)
     }
 
-    /// 有界 pull：槽空则最多等 `millis`；仍无消息 → `Err(Busy)`（码 -3）。
+    /// 有界 pull：手上没东西则最多等 `millis`；仍无消息 → `Err(Busy)`（码 -3）。
     /// 用于「等对端回复」这类必须有上界的往返：无限等会把协议错误（回复被丢弃、
     /// 对端漏回）变成不可诊断的挂起。**超时后该 hole 不再"干净"**——迟到的回复
-    /// 仍可能落进槽里，使下一次 pull 取到上一条；调用方应弃用该会话。
+    /// 仍可能落进孔里（对面那一推会把手递上来），使下一次 pull 取到上一条；调用方应弃用该会话。
     ///
     /// 实现要点：`wait` 返 false **不等于**超时——它可能是「唤醒闩（pend）被消费」
     /// 或一次无关唤醒（见 `messenger::wake`：无等待者时置 pend，而成功裸 pull 不会

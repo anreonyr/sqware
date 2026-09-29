@@ -77,9 +77,9 @@ pub(crate) fn host_loop(me: TaskId) {
     // **照实记**：这里从前还有一本 `Lanes = Vec<(TaskId, PieToken)>`，与 `Desk` 同键——
     // 同一把键两本账，已并进 `Guest`（见 `Desk::note_lane` / `Desk::take_lane`）。
     let mut swept = 0usize;
-    // **收帧的那一页**：在循环外备一次。门的缓冲是**载体的一页**，不是家族帧那么大——
-    // 见 `Receiver::recv`：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
-    // （读不懂就答 `BAD`），否则它永远留在槽里（取不出 ⇒ 槽原样），这道门从此卡死且空转。
+    // **收帧的那一页**：在循环外备一次。门的缓冲**备得比家族帧大**——理由见
+    // `Receiver::recv`：客人推得进来、比这一族最长那一枚更长的一条也得**取得出来**
+    // （读不懂就答 `BAD`），否则它永远留在孔上（装不下 ⇒ 手原样），这道门从此卡死且空转。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
         debug!("board: no room");
@@ -126,7 +126,7 @@ pub(crate) fn host_loop(me: TaskId) {
 ///   一字不差（开者 = 这位客人 ＋ 记号 = 板路），只是不再扫自己的表；
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
-    // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
+    // 提示：拉干净（单手，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 长度不对的那一条**不猜**：`fetch` 解不出的当场丢（缓冲按最长那一形备，短的那几形也吃得下）。
     let mut rec = [0u8; bcall::Tip::LEN];
     let mut pending = false;
@@ -144,11 +144,11 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
                 match desk.admit(client, tip.reply) {
                     // 收了。
                     Ok(_) => {}
-                    // **重放**（提示是单槽，可能重放）：一位客人只占一格，旧的那一格**原样留着**
+                    // **重放**（提示是单手，可能重放）：一位客人只占一格，旧的那一格**原样留着**
                     // ——这一趟不动账，也不打行（重放是常态）。
                     Err(DeskFail::Already) => {}
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
-                    // 问话会堵在单槽上。故这一格**报一句，别静默丢一位客人**（与树那一台同款）。
+                    // 问话会堵在单手上。故这一格**报一句，别静默丢一位客人**（与树那一台同款）。
                     Err(DeskFail::Full) => debug!("board: desk full"),
                 }
                 // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
@@ -203,7 +203,7 @@ fn lane_for(name: String) -> Option<PieToken> {
 fn tell_gone(desk: &mut Desk) -> usize {
     let n = desk.sweep_each(|_who, lane| {
         if let Some(lane) = lane {
-            let _ = mail::HolePie::from_token(lane).push(&[0u8]);
+            let _ = mail::ring(lane);
         }
     });
     if n > 0 {
@@ -231,7 +231,7 @@ fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
 /// 招待一位客人：从**它的问话孔**读一帧、交给板、把答话推进**它的答话路**。
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询
-/// （单槽的路上不会有两句排队：一位客人一次只问一句）。
+/// （单手的路上不会有两句排队：一位客人一次只问一句）。
 ///
 /// `pile` 只为一件事进来：客人说了"我走了"之后，**它的问话孔要从组里摘掉**——退场是客人
 /// 说的一句，而"不再等这一格"落在组上，故摘孔这一步只能在拿得到组的地方做（`Desk` 那层
@@ -248,7 +248,7 @@ fn serve_one(
     let Some(ask) = guest.ask() else {
         return;
     };
-    // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单槽）。
+    // 一问一答：读不懂也答（答 `BAD`），答话走**这位客人的答话路**（一客一路，单手）。
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
     let decoded = Receiver::<bcall::Req>::from_token(ask).recv(buf, Wait::POLL);
     let said = match decoded {
@@ -260,7 +260,7 @@ fn serve_one(
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
     // 的照实记）；真到了那里，这一答就发不出去。
     let _ = Sender::<bcall::Union>::from_token(guest.reply())
-        .send(bcall::Union::of(said), Wait::Forever)
+        .send(bcall::Union::of(said))
         .ok();
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
@@ -298,7 +298,7 @@ fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swe
             };
             // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
             if let Some(lane) = lane {
-                let _ = mail::HolePie::from_token(lane).push(&[0u8]);
+                let _ = mail::ring(lane);
             }
             return bcall::fail_to_code(said.err());
         }

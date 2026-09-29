@@ -173,8 +173,13 @@ fn main() -> Reason {
     let control = sole_refused(tasks[0]);
 
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
+    //
+    // **照实记（这一手为什么走裸 `mail::push`）**：这一格的读者**只有台主自己**（两位等待者
+    // 只 `peek`，取走是下面第 ⑧ 步台主做的）。孔上的那一格现在是一只**递出的手**：`HolePie::push`
+    // 要等到手被取走才返回，而台主此刻正站在这里 ⇒ **自己等自己**。故这一手用一次性那一格
+    // （`Ok` = 内核收下了这只手），正好也是这一刀要量的事：**递出即返，交付由取的一方做**。
     let _ = room::sleep(core::time::Duration::from_millis(SETTLE));
-    let _ = member.push(b"x");
+    let _ = mail::push(member.token(), b"x".as_ptr(), 1);
 
     let mut woke = 0usize;
     for i in 0..WAITERS {
@@ -186,7 +191,7 @@ fn main() -> Reason {
         }
     }
 
-    // ⑧ 交付只归一人：**台主自己取**。醒来的人只看不取（`peek`），故槽此刻还是满的——
+    // ⑧ 交付只归一人：**台主自己取**。醒来的人只看不取（`peek`），故那只手此刻还在孔上——
     //    取一次该成功，再取一次该答 `Busy`。这一格与"整链放行"是两件事：共享的是**唤醒**，
     //    不是**交付**。
     let mut buf = [0u8; 1];

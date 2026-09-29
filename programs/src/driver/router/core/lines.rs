@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   occupy   占住这一格 + （适配层紧随其后）接线
-//!   deliver  往这一格的泊位推一帧 + 置忙
+//!   deliver  往这一格的泊位响一位 + 置忙
 //!   exhaust  排空：这一格回闲 + （适配层）放回
 //!   vacate   主人没了：空出这一格 + （适配层）拆线
 //! ```
@@ -15,7 +15,7 @@
 //! **两侧之间的约定**（"权威与属主"、"静音还是压着不结"、"线 = 区的函数"）仍写在
 //! `protocol::driver::line` 那一份正文里——那几节讲的是约定，不是这本账的形状。
 //!
-//! **它碰内核的地方只有一处**：`deliver` 推那一帧（`mail::HolePie::from_token(..).push(..)`）。
+//! **它碰内核的地方只有一处**：`deliver` 响一位（`mail::ring(..)`）。
 //! **设备侧的动作**（接线 / 静音 / 拆线）一律不在这里：它们由适配层紧随原语之后做（那几手要动
 //! 硬件），故账仍可独立推理。
 
@@ -87,16 +87,22 @@ impl Lines {
         }
     }
 
-    /// **deliver**：往这一格的泊位推一帧、**置忙**。推不出去 ⇒ 不置忙（那一帧没送到）。
-    pub fn deliver(&mut self, line: u32, frame: &[u8]) -> Result<(), Fail> {
+    /// **deliver**：往这一格的泊位响一位、**置忙**。响不了 ⇒ 不置忙（那一句没送到）。
+    ///
+    /// **位不睡**：`ring` 置位即返（已响答 `Busy`）。已响就是"这一条线有事"这件**状态**
+    /// 已经有了，故 `Busy` 也算送到了——照实记：旧孔时代这里是一枚单槽的孔，排在后面那一位
+    /// 会**等到**客户取走；而这一手跑在中断里，等不得。
+    pub fn deliver(&mut self, line: u32) -> Result<(), Fail> {
         match self.cells.get_mut(line as usize) {
             Some(Cell::Owned { lane, busy }) => {
-                // 推的是**对端那一枚**（我写、对端读）；还没认到 ⇒ 与从前 `Pier::post`
-                // 自己那一格同一落点：没写端就发不出去。
+                // 响的是**对端那一枚**（我响、对端应）；还没认到 ⇒ 与从前 `Pier::post`
+                // 自己那一格同一落点：没写端就响不出去。
                 let at_peer = lane.tx().ok_or(Fail::Denied)?;
-                mail::HolePie::from_token(at_peer)
-                    .push(frame)
-                    .map_err(|_| Fail::Denied)?;
+                match mail::ring(at_peer) {
+                    Ok(()) => {}
+                    Err(e) if e.source.is_busy() => {}
+                    Err(_) => return Err(Fail::Denied),
+                }
                 *busy = true;
                 Ok(())
             }

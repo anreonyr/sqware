@@ -1,17 +1,17 @@
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 
 use env::{HoleDir, MailCall, MailFail, PieToken, TaskId, Wait};
 
 use riscv::register::sie;
 
-use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::VirtAddr as KVirt;
+use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::gate::{self, AnyPie, Need};
+use crate::work::unit::space::Space;
 
 use super::pie::usable;
 use crate::work::unit::task::TaskIdent;
@@ -33,6 +33,8 @@ pub(crate) fn dispatch(
         MailCall::Pull { token, buf, max } => {
             pull(frame, ident, token, KVirt::from_raw(buf.get()), max)
         }
+        MailCall::Peek { token } => peek(frame, token),
+        MailCall::Withdraw { token } => withdraw(frame, token),
         MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
         MailCall::Hush { token } => hush(frame, token),
         MailCall::Ring { token } => ring(frame, token),
@@ -59,22 +61,16 @@ fn push(
         Ok(pie) => match usable::<MailFail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
+                // **只手不搬字节**：登记 `(发送者, 那段, 长度)`，复制由取的一方做（一处）。
+                // 段表在这里先走一遍（不合答 `Denied`——那是**你自己的错**）；取的那一刻
+                // `Pull` 再验一遍，那时不合答 `Gone`（"递出之后它变了"）。
                 AnyPie::Hole(p) => {
-                    let meta = p.meta().clone();
-                    if !(1..=PAGE_SIZE).contains(&len) {
+                    if len == 0 {
+                        Err(MailFail::Denied)
+                    } else if !mail::whole(&ident.team.space, msg.as_usize(), len, PteFlags::R) {
                         Err(MailFail::Denied)
                     } else {
-                        let mut staging: Vec<u8> = Vec::new();
-                        if staging.try_reserve(len).is_err() {
-                            Err(MailFail::OoM)
-                        } else {
-                            staging.resize(len, 0);
-                            if mail::copy_in(&ident.team.space, &mut staging, msg.as_usize()) {
-                                mail::hole::try_push(&meta, &mut staging, me)
-                            } else {
-                                Err(MailFail::Denied)
-                            }
-                        }
+                        mail::hole::give(p.meta(), &ident.team.space, msg.as_usize(), len, me)
                     }
                 }
                 _ => Err(MailFail::Denied),
@@ -107,23 +103,7 @@ fn pull(
         Ok(pie) => match usable::<MailFail>(&pie) {
             Err(e) => Err(e),
             Ok(()) => match &pie {
-                AnyPie::Hole(p) => {
-                    let meta = p.meta().clone();
-                    if max == 0 {
-                        mail::hole::peek(&meta)
-                    } else {
-                        match mail::hole::try_pull(&meta, max) {
-                            Ok((msg, from)) => {
-                                if mail::copy_out(&ident.team.space, &msg, buf.as_usize()) {
-                                    Ok((msg.len(), from))
-                                } else {
-                                    Err(MailFail::Denied)
-                                }
-                            }
-                            Err(e) => Err(e),
-                        }
-                    }
-                }
+                AnyPie::Hole(p) => hand_over(p.meta(), &ident.team.space, buf, max),
                 _ => Err(MailFail::Denied),
             },
         },
@@ -135,6 +115,76 @@ fn pull(
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }
+    Outcome::Resume
+}
+
+/// **取走一只手**：认下它（`take`：置"正被取用"）→ 复制**一次** → 收尾（`taken`）。
+///
+/// 四条不过的路**都不消费那只手**（`back` 放回原处）：装不下、收方缓冲不可写 ⇒ `Denied`；
+/// 发送方那段已不可读、它那个空间已回收 ⇒ `Gone`。
+///
+/// **复制在孔锁之外做**：`Space` 的锁是 `Level::Space`（2）、孔那一格是 `Level::L3`（4），
+/// 持孔锁再取空间锁是倒序（debug 档 lockdep 当场报），而复制每页都要过一遍 `translate`。
+fn hand_over(
+    meta: &Arc<mail::HoleMeta>,
+    space: &Arc<Space>,
+    buf: KVirt,
+    max: usize,
+) -> Result<(usize, TaskId), MailFail> {
+    mail::hole::take(meta)?;
+    let Some((from, src, va, len)) = mail::hole::source(meta) else {
+        mail::hole::back(meta);
+        return Err(MailFail::Busy);
+    };
+    if len > max || !mail::whole(space, buf.as_usize(), len, PteFlags::W) {
+        mail::hole::back(meta);
+        return Err(MailFail::Denied);
+    }
+    if !mail::whole(&src, va, len, PteFlags::R) || !mail::copy(&src, va, space, buf.as_usize(), len)
+    {
+        mail::hole::back(meta);
+        return Err(MailFail::Gone);
+    }
+    mail::hole::taken(meta);
+    Ok((len, from))
+}
+
+/// 只看那只手：`(长度, 发送者)`。不动状态、不唤醒、不复制。
+fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
+    let r = with_pie(token, Need::Fetch, |pie| match pie {
+        AnyPie::Hole(p) => mail::hole::peek(p.meta()),
+        _ => Err(MailFail::Denied),
+    });
+    match r {
+        Ok((n, from)) => {
+            frame.gpr.set_x(Gprs::A0, n);
+            frame.gpr.set_x(Gprs::A1, from.get());
+        }
+        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
+    }
+    Outcome::Resume
+}
+
+/// **撤手**：把**我自己**伸出、还没被取走的那只收回来（内核按调用者的 task id 认人）。
+///
+/// 它的用家只有 `HolePie::push` 的兜底期限：那一段借用期在这儿收口——不撤，"递出之后不等"
+/// 就成了悬着的借条。
+fn withdraw(frame: &mut TrapContext, token: PieToken) -> Outcome {
+    let me = current()
+        .running_task()
+        .map(|t| t.ident.id)
+        .unwrap_or(TaskId::new(0));
+    let r = with_pie(token, Need::Store, |pie| match pie {
+        AnyPie::Hole(p) => mail::hole::withdraw(p.meta(), me),
+        _ => Err(MailFail::Denied),
+    });
+    frame.gpr.set_x(
+        Gprs::A0,
+        match r {
+            Ok(()) => 0,
+            Err(e) => e.code() as usize,
+        },
+    );
     Outcome::Resume
 }
 
@@ -189,13 +239,21 @@ fn wait_dir(
 }
 
 fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
-    let r = with_bell(token, Need::Fetch, mail::nole::hush);
-    if r.is_ok() {
-        // SAFETY: 仅置本 hart SEIE 位
-        unsafe {
-            sie::set_sext();
+    let r = with_pie(token, Need::Fetch, |pie| match pie {
+        AnyPie::Nole(p) => {
+            let r = mail::nole::hush(p.meta());
+            if r.is_ok() {
+                // SAFETY: 仅置本 hart SEIE 位
+                unsafe {
+                    sie::set_sext();
+                }
+            }
+            r
         }
-    }
+        // 孔上那一位不是中断响的：**不碰闸门**。
+        AnyPie::Hole(p) => mail::hole::hush(p.meta()),
+        _ => Err(MailFail::Denied),
+    });
     frame.gpr.set_x(
         Gprs::A0,
         match r {
@@ -207,7 +265,11 @@ fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
 }
 
 fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
-    let r = with_bell(token, Need::Store, mail::nole::ring);
+    let r = with_pie(token, Need::Store, |pie| match pie {
+        AnyPie::Nole(p) => mail::nole::ring(p.meta()),
+        AnyPie::Hole(p) => mail::hole::ring(p.meta()),
+        _ => Err(MailFail::Denied),
+    });
     frame.gpr.set_x(
         Gprs::A0,
         match r {
@@ -218,11 +280,12 @@ fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-fn with_bell(
+/// 认一枚门闩、验权、把 `op` 作用上去——门铃与孔上那一位共用这两手。
+fn with_pie<T>(
     token: PieToken,
     need: Need,
-    op: fn(&mail::nole::NoleMeta) -> Result<(), MailFail>,
-) -> Result<(), MailFail> {
+    op: impl FnOnce(&AnyPie) -> Result<T, MailFail>,
+) -> Result<T, MailFail> {
     let found = current()
         .running_task()
         .ok_or(MailFail::Denied)
@@ -231,10 +294,7 @@ fn with_bell(
         Err(e) => Err(e),
         Ok(pie) => match usable::<MailFail>(&pie) {
             Err(e) => Err(e),
-            Ok(()) => match &pie {
-                AnyPie::Nole(p) => op(p.meta()),
-                _ => Err(MailFail::Denied),
-            },
+            Ok(()) => op(&pie),
         },
     }
 }

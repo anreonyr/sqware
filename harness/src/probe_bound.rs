@@ -1,18 +1,20 @@
 #![no_std]
 #![no_main]
 
-//! probe-bound — **上界的证客**：一页 + 1 推不进去；不合族的帧不把门卡死。
+//! probe-bound — **坏帧的证客**：不合族的帧不把门卡死。
 //!
-//! A 那一刀（消息孔一页封顶）落地时**没有真机读数**——本仓没有一位越界的推者（最大的帧是
-//! `operator::REQ_LEN = 258`），故"超页被拒"当时只有契约与实现两个读者。本程序把那条判据搬到
-//! 真机上：**一位故意的坏客人**。
+//! **照实记（"上界"那两条腿随封顶一起退场）**：本仓原先有一条"一条消息 ≤ 一页"的界，
+//! 这台探针就是它的证客——自铸一枚**没有读者**的孔、推一页 + 1 字节，期望 `Denied`。
+//! 孔改成"只手不载字节"之后：① 那条界删了，它量的判据无从量起；② 拿"没有读者的孔"
+//! 当量具这件事本身也不成立了——旧孔时代推了就存下（平安），今天 `HolePie::push` 要等到
+//! **手被取走**为止，没有读者就是等到天荒地老。故前两条腿连同 `OVER` 常量一起退场；
+//! 留在这里的是与界**无关**的那几条：坏帧进得了门、门答 `BAD`、门之后还活着。
 //!
 //! ```text
 //!   1  与**两道门**开会话（`Session::open(sire, board::BERTH, …)` ＋ `… operator::BERTH …`）——两条路
 //!      都要赶在装配那一步的期限之内装上（次序＝装配者那一侧：板在前，树在后）
-//!   2  自铸一枚孔，推 **一页 + 1** 字节            ⇒ 期望 `Denied`
-//!   3  那一枚孔照旧空着（`peek` 答 `Busy`）；再推一条 8 字节的 ⇒ 期望成（拒的是**长度**，
-//!      不是这一枚孔坏了），`peek` 答 8
+//!   2  （**退场**）自铸一枚孔，推 **一页 + 1** 字节 ⇒ 那量的是"一条消息 ≤ 一页"
+//!   3  （**退场**）那一枚孔照旧空着（`peek` 答 `Busy`）；再推一条 8 字节的 ⇒ 同上
 //!   4  往树的门上推 **300 字节的不合族帧** ⇒ 门把它取出来、答一句 `BAD`；随后一句正经的问
 //!      （`part /svc`，幂等）照样答得出 —— **门没卡死**（这一格量的是一页缓冲那一刀）
 //!   4.5 往树的门上推 **60 字节、形状全对、只有许可那一格陌生**的 `LAND` 帧（`[51] = 9`）
@@ -62,9 +64,7 @@ use alloc::string::ToString;
 use env::Wait;
 use programs::Report;
 
-use alloc::vec::Vec;
-
-use env::{Mark, PieToken};
+use env::PieToken;
 use programs::system::board::client as board;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
@@ -72,7 +72,6 @@ use protocol::debug;
 use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use runtime::PAGE_SIZE;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -84,10 +83,7 @@ const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
-const OK_NOTE: &str = "probe-bound: bound held";
-
-/// **一页 + 1**：刚好越界。再大也是同一个码（界是**一个区间**），但最小反例最读得清。
-const OVER: usize = PAGE_SIZE + 1;
+const OK_NOTE: &str = "probe-bound: doors held against junk";
 
 /// 不合族的帧有多长：**在一页之内**，又不是这一族任何一条的形状。
 const JUNK: usize = 300;
@@ -189,30 +185,6 @@ fn main() -> Report<'static> {
         return bail("probe-bound: bad name");
     };
 
-    // 二、自铸一枚孔（**本域自己那一枚，没有读者**）——界那一格就在这里量。
-    let Ok(hole) = mail::unseal_hole(Mark::of("probe-bound")) else {
-        return bail("probe-bound: no hole");
-    };
-    let mine = mail::HolePie::from_token(hole);
-
-    // 二·一、一页 + 1 ⇒ 期望拒。**那一页自己在堆上备**（一页这一档不住栈，与门那一侧同一句）。
-    let mut big: Vec<u8> = Vec::new();
-    if big.try_reserve_exact(OVER).is_err() {
-        return bail("probe-bound: no room");
-    }
-    big.resize(OVER, 7);
-    let over_code = match mine.push(&big) {
-        Ok(()) => 0,
-        Err(e) => e.source.code(),
-    };
-    drop(big);
-
-    // 二·二、那一枚孔照旧空着；再推一条小的 ⇒ 该成。
-    let empty = matches!(mine.peek(), Err(ref e) if e.source.is_busy());
-    let small = mine.push(&[0u8; 8]).is_ok();
-    let len = mine.peek().map(|(n, _)| n).unwrap_or(0);
-    debug!("probe-bound: push={over_code} empty={empty} small={small} len={len}");
-
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
     let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir.to_string(), &junk());
 
@@ -251,21 +223,6 @@ fn main() -> Report<'static> {
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
 
     // 四、判据：**一例一条**，名字即结论。
-    {
-        {
-            assert_eq!(over_code, -1, "一页 + 1 本该被拒（`Denied` = -1）");
-        }
-    }
-    {
-        {
-            assert!(empty, "拒是拒了，可那一枚孔的槽里已经有东西了");
-            assert!(
-                small,
-                "拒完之后再推一条 8 字节的也推不进去（这一枚孔坏了？）"
-            );
-            assert_eq!(len, 8, "槽里那条不是刚推的那一条（长度 {len}）");
-        }
-    }
     {
         {
             assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");

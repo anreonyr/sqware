@@ -164,7 +164,7 @@ fn turn(book: &mut Principal, from: TaskId, face: pcall::Grant, frame: &[u8]) {
     // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
     // 真到了那里，这一答就发不出去。
     let _ = Sender::<pcall::Reply>::from_token(back)
-        .send(answer(book, from, ask, face), Wait::Forever)
+        .send(answer(book, from, ask, face))
         .ok();
     let _ = mail::release(back);
 }

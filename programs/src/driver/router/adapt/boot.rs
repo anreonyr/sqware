@@ -75,7 +75,7 @@ pub struct Up {
     pub bell: Bell,
     /// 等三源的组。
     pub pile: Pile,
-    /// 门外那一页缓冲（取消息用；**按载体备**，见 `resident`）。
+    /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）。
     pub buf: Vec<u8>,
     /// 本域的服务入口（门牌那枚孔，本线程铸、本线程读）。
     pub entry: HolePie,
@@ -154,7 +154,7 @@ pub fn up() -> Result<Up, Fail> {
         return Err(Fail::at(E_ROUTER, "bell"));
     }
 
-    // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（载体的界，见 `Push` 的前置条件）。
+    // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（余量；孔不预设长度，装不下会答 `Denied` 且手原样）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Fail::at(E_ROUTER, "desk"));

@@ -76,7 +76,7 @@ fn main() -> Result<(), Fail> {
         return Err(Fail::at(E_UART, "desk"));
     }
     let view = desk.dev.view();
-    // 写口那一页：**载体的界**——任何一条消息一趟都取得出来（与 `rtc` 备缓冲同一手）。
+    // 写口那一页：**余量**——本族一条消息远小于它（与 `rtc` 备缓冲同一手）。
     let mut word: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if word.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Fail::at(E_UART, "desk"));
