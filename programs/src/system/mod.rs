@@ -248,23 +248,23 @@ impl Assembly {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
-                    debug::put(&protocol::__format!("system: grant not mounted ({why})"));
+                    debug!("system: grant not mounted ({why})");
                     continue;
                 }
             };
             // 路：**本族那一族的常量**（`/svc/sys/operator`）接上这一面的名。
             let Some(road) = protocol::system::operator::DIR.try_join(name.as_str()) else {
-                debug::put("system: grant not mounted (name)");
+                debug!("system: grant not mounted (name)");
                 continue;
             };
             if let Err(why) =
                 self.tree
                     .plate(&road, Some(entry), protocol::system::operator::Rule::None)
             {
-                debug::put(&protocol::__format!("system: grant not mounted ({why})"));
+                debug!("system: grant not mounted ({why})");
                 continue;
             }
-            debug::put(&protocol::__format!("system: grant mounted at {road}"));
+            debug!("system: grant mounted at {road}");
         }
     }
 
@@ -382,7 +382,7 @@ fn fail(program: &Program, e: Error) -> Died {
     // 那一支宏在 `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）
     // ⇒ release 的机器上只留下一个 `system: assemble`，**上面那句最要紧的话一个字没有**。
     // 这一刀改走不设门的那一手（`e.said()` 本来就是 `&'static str`，连格式化都不必）。
-    debug::put(program.name());
-    debug::put(e.said());
+    debug!("{}", program.name());
+    debug!("{}", e.said());
     program.demand.died
 }

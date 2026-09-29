@@ -54,7 +54,7 @@ pub(super) fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieTo
             // 验收跑的全是 release ⇒ "一位客人铸了两枚问话孔"这件事从来没人听见。而下一行正好
             // **取第一枚**：认错一枚的后果是**另一位客人的问话永远没人读**（见 [`ask_of`] 的注）。
             // 故这一句改走不设构建门的那一手。
-            debug::put(note);
+            debug!("{}", note);
         }
     }
     Some(first.token)

@@ -111,20 +111,25 @@ impl<M: Message> Sender<M> {
     /// **等这只手下线**：送到（孔回到空）或孔封印（`Err(Dead)`）或孔不见了（`Gone`）。
     /// **没有期限**——见文件头②。已经空着 ⇒ 当场 `Ok`（零代价）。
     ///
-    /// **照实记（"孔已不在本表"那一格是正常终局，但要看得见）**：对面把那一枚收了（`seal` ＋
+    /// **照实记（"孔已不在本表"那一格是正常终局，不是故障）**：对面把那一枚收了（`seal` ＋
     /// `release`，见 `programs/src/system/desk.rs` 那一族）⇒ **级联**把我这份副本一起摘了，
     /// 于是这一等答 `Denied`。按构造它安全：对面收摊之前**必然已经取走那只手**（或它 `seal` 了，
-    /// 那一只手就地抹掉）。**但陷阱长着同一张脸**——**我自己**先 `release` 再收口时，孔还活着，
-    /// 那只手**还指着我这段缓冲**（症状：客侧 `recv-unread`，内核 `hand_over` 读数一切正常）。
-    /// 故这一格留一行读数，**报头一回就够**（正常终局每跑几百回，逐回报会把日志淹掉；这一行按
-    /// 编译单元算，实测多单元下会印几遍——它是"有没有"，不是计数器）。
+    /// 那一只手就地抹掉）。
+    ///
+    /// **但陷阱长着同一张脸**——**我自己**先 `release` 再收口时，孔还活着，那只手**还指着这段
+    /// 缓冲**（症状：客侧 `recv-unread`，内核 `hand_over` 读数一切正常）。故这一格留一行**调试面**
+    /// 读数（`debug!`：**release 下不打** —— 这一格每跑几百回，正常终局不该占 release 的串口）。
     pub fn reclaim(&mut self) -> MailResult<()> {
         let Some(hole) = self.hand.take() else {
             return Ok(());
         };
         let r = HolePie::from_token(hole).wait(HoleDir::Push, Wait::Forever);
         if let Err(e) = &r {
-            note_reclaim_miss(hole, e.source.code());
+            crate::debug!(
+                "mail: reclaim miss hole={} code={}",
+                hole.get(),
+                e.source.code()
+            );
         }
         r.map(|_| ())
     }
@@ -166,22 +171,6 @@ impl<M: Message> Drop for Sender<M> {
         if self.hand.is_some() {
             let _ = self.reclaim();
         }
-    }
-}
-
-/// 收口"没等到"那一次只报一次（见 [`Sender::reclaim`] 的照实记）。
-///
-/// **静态住非泛型函数里**：写进 `reclaim` 体内会随 `M` 各实例化一份，一台机器上就报出好几行；
-/// 而这一格要问的是"**有没有**"，不是"几次"。
-fn note_reclaim_miss(hole: PieToken, code: isize) {
-    use core::sync::atomic::{AtomicBool, Ordering};
-    static SAID: AtomicBool = AtomicBool::new(false);
-    if !SAID.swap(true, Ordering::Relaxed) {
-        crate::debug::put(&crate::__format!(
-            "mail: reclaim 没等到（孔已不在本表 ⇒ 对面收摊了）hole={} code={}",
-            hole.get(),
-            code
-        ));
     }
 }
 

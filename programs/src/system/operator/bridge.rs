@@ -382,9 +382,9 @@ pub fn land(
             Err(fail) => {
                 // **"哪一台没走到树上"的唯一正身**（照实记：它从前走 `debug!`，而那一支宏在
                 // release 下是空操作 ⇒ 验收跑的机器只留下"服务一片缺席"，一个成因都没有）。
-                debug::put(&protocol::__format!(
+                debug!(
                     "{family}: tree road={road} open at={seg:?} failed={fail:?}"
-                ));
+                );
                 return Vec::new();
             }
         }
@@ -426,13 +426,13 @@ pub fn land(
             Ok(id) => root.name(*id, millis).ok(),
             Err(_) => None,
         };
-        debug::put(&protocol::__format!(
+        debug!(
             "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={}",
             find.is_ok(),
             entry.get(),
             plate.get(),
             named.as_ref().map(|name| name.as_str()).unwrap_or("-"),
-        ));
+        );
         out.push(Landed {
             land,
             plate,

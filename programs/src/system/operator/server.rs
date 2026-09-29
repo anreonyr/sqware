@@ -177,7 +177,7 @@ pub fn serve() -> Result<(), Start> {
         if wakes <= 40 || wakes % 500 == 0 {
             let mut unarmed = 0usize;
             desk.unarmed_each(|_| unarmed += 1);
-            debug::put(&protocol::__format!(
+            debug!(
                 "operator: woke n={} tok={} tip={} known={} read={} guests={} unarmed={}",
                 wakes,
                 tok.get(),
@@ -186,7 +186,7 @@ pub fn serve() -> Result<(), Start> {
                 read,
                 desk.occupied(),
                 unarmed,
-            ));
+            );
         }
         // 三、**看出来的**那一档：那一枚答不出 ⇒ 剔格子（没有"他说走了"那一档）。
         // **读者结清（B-a）**：剔的同时把它挂进组的那一枚问话孔**摘掉**——不摘就是一格再也醒不
@@ -230,10 +230,10 @@ fn settle(
         // **首格 `kind` 决定形状**：表外的 kind / 长度不对 ⇒ 读不懂。这条路上没有答话那一格，
         // 故只能**报一句**（把那一格 kind 一起报出来，"读不懂的是哪一形"要看得见）。
         let Some(rec) = ocall::TipIn::fetch(&frame[..n]) else {
-            debug::put(&protocol::__format!(
+            debug!(
                 "operator: tip unreadable (kind={})",
                 frame[0]
-            ));
+            );
             continue;
         };
         match rec {
@@ -255,10 +255,10 @@ fn settle(
                     Err(DeskFail::Already) => {}
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                     // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
-                    Err(DeskFail::Full) => debug::put("operator: desk full"),
+                    Err(DeskFail::Full) => debug!("operator: desk full"),
                 },
                 // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-                None => debug::put("operator: no reply"),
+                None => debug!("operator: no reply"),
             },
         }
     }
@@ -298,12 +298,12 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
     if unarmed == 0 {
         return;
     }
-    debug::put(&protocol::__format!(
+    debug!(
         "operator: settle guests={} unarmed={} ~{}ms",
         desk.occupied(),
         unarmed,
         rounds,
-    ));
+    );
     // 逐位点名：**每位一行、每次至多四位**（病态时这是每 ~2 s 五行的量，不淹日志）。
     let mut said = 0usize;
     desk.unarmed_each(|who| {
@@ -312,11 +312,11 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
         }
         said += 1;
         let hit = MARKS.iter().any(|mark| ask_of(who, *mark).is_some());
-        debug::put(&protocol::__format!(
+        debug!(
             "operator: unarmed who={} ask={}",
             who.get(),
             if hit { "some" } else { "none" },
-        ));
+        );
     });
 }
 

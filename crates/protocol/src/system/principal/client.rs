@@ -80,7 +80,7 @@ impl Face {
         /// 而"装配期 `derive` 折了"那一趟**只看得出这一格**——查了很久才缩到"是哪一步"。故每一步
         /// 各留一行读数（release 也看得见：`debug!` 在 release 是空的）。
         fn deny(step: &str) -> Fail {
-            crate::debug::put(&crate::__format!("principal: call deny={step}"));
+            crate::debug!("principal: call deny={step}");
             Fail::Denied
         }
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）：那一枚
@@ -98,7 +98,7 @@ impl Face {
         // **不等自己那只手**：递出之后等它下线压到这一趟收完（见下 `door.wait`），因为"名册 ⇄
         // 盟册互等对方取走"那条死锁就是这么量出来的（`communication::sender` 文件头②）。
         if let Err(e) = door.push(&frame[..n], Wait::Forever) {
-            crate::debug::put(&crate::__format!("principal: call deny=push:{}", e.source.code()));
+            crate::debug!("principal: call deny=push:{}", e.source.code());
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
             // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
@@ -114,10 +114,10 @@ impl Face {
             .map_err(|e| match e {
                 RecvFail::Unread => deny("recv-unread"),
                 RecvFail::Mail(m) => {
-                    crate::debug::put(&crate::__format!(
+                    crate::debug!(
                         "principal: call deny=recv:{}",
                         m.code()
-                    ));
+                    );
                     Fail::Denied
                 }
             });
