@@ -89,13 +89,15 @@ pub(crate) fn doom(tid: TaskId) {
     let Some(task) = snap::find(tid, &snap) else {
         return;
     };
+    // **封印先做，且不依赖分配**（照实记）：这里原先"快照分不出来就 `return`"——于是内存最紧
+    // 的那一趟恰好把"主人走了、资源还活着"漏出去。现在是：**封印**先走（`seal_owned` 那条链上
+    // 没有一处无保护的分配），**摘副本**（`cull`，它自己也要分配）尽力而为。
     let tokens: Vec<PieToken> = {
         let pies = task.pies.lock();
         let mut v: Vec<PieToken> = Vec::new();
-        if v.try_reserve(pies.len()).is_err() {
-            return;
+        if v.try_reserve(pies.len()).is_ok() {
+            v.extend(pies.iter().map(|p| p.token()));
         }
-        v.extend(pies.iter().map(|p| p.token()));
         v
     };
     seal_owned(tid, &task);
@@ -104,53 +106,45 @@ pub(crate) fn doom(tid: TaskId) {
     }
 }
 
+/// 退场者铸的那些资源，**就地封印**（四族一起）。返封了几枚。
+///
+/// **不分配，也不在表锁里取别的锁**（照实记：这里原先先收一份 token 快照，`try_reserve` 一失败
+/// 就整趟跳过——而"内存紧"与"主人走了、资源还活着"恰好是同一刻）。改成逐枚扫：每轮在表锁里
+/// 只做"读主人那一格 ＋ 克隆一枚 `Arc`"（两样都不碰别的锁），**锁外**封印，游标前进一格。
+///
+/// 两条凭据：`seal` 只置状态、不摘表项 ⇒ 表在整趟里是稳的，游标因此安全；"归它的枚数"在开扫
+/// 之前就定了、每轮封掉一枚 ⇒ 循环必收敛。**代价照实记**：每轮重扫到第 `seen` 枚，O(n²)，而
+/// `n` 是一个 task 的表长（几十枚量级）——换来的是这条路上一次分配都不需要。
 fn seal_owned(tid: TaskId, task: &Arc<Task>) -> usize {
     if tid.get() == 0 {
         return 0;
     }
-    let owned: Vec<PieToken> = {
-        let pies = task.pies.lock();
-        let mut v: Vec<PieToken> = Vec::new();
-        if v.try_reserve(pies.len()).is_err() {
-            return 0;
-        }
-        v.extend(
+    let mut sealed = 0;
+    let mut seen = 0usize;
+    loop {
+        let hit = {
+            let pies = task.pies.lock();
             pies.iter()
                 .filter(|p| p.owner_task() == tid)
-                .map(|p| p.token()),
-        );
-        v
-    };
-    let mut sealed = 0;
-    for token in owned {
-        let meta = {
-            let pies = task.pies.lock();
-            pies.iter().find(|p| p.token() == token).map(|p| match p {
-                AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
-                AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
-                AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
-                AnyPie::Tole(t) => Resource::Tole(t.meta().clone()),
-            })
+                .nth(seen)
+                .map(|p| match p {
+                    AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
+                    AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
+                    AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
+                    AnyPie::Tole(t) => Resource::Tole(t.meta().clone()),
+                })
         };
-        match meta {
-            Some(Resource::Hole(m)) => {
-                hole::seal(&m);
-                sealed += 1;
-            }
-            Some(Resource::Pole(m)) => {
-                pole::seal(&m);
-                sealed += 1;
-            }
-            Some(Resource::Nole(m)) => {
-                nole::seal(&m);
-                sealed += 1;
-            }
-            Some(Resource::Tole(m)) => {
-                tole::seal(&m);
-                sealed += 1;
-            }
-            None => {}
+        let Some(res) = hit else {
+            break;
+        };
+        match res {
+            Resource::Hole(m) => hole::seal(&m),
+            Resource::Pole(m) => pole::seal(&m),
+            Resource::Nole(m) => nole::seal(&m),
+            Resource::Tole(m) => tole::seal(&m),
         }
+        sealed += 1;
+        seen += 1;
     }
     sealed
 }
