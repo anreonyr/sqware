@@ -14,13 +14,13 @@
 use alloc::vec::Vec;
 
 use crate::program::Program;
+use crate::system::control::core::Reaped;
+use crate::system::control::desk::{Slot, State, Table};
 use env::{HoleDir, Mark, Name, PieToken, Wait};
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::control as ccall;
-use crate::system::control::core::Reaped;
-use crate::system::control::desk::{Slot, State, Table};
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
@@ -55,7 +55,7 @@ pub struct Watch {
     /// 不是两个圈（同 `board/server.rs::host_loop` 的写法）。
     ///
     /// **它们由 [`Watch::attach_face`] 逐面接上**：编排域主线程把
-    /// `/svc/control/{state,mint,start,stop}` 四格挂上树之后，当场把本线程铸的那四枚入口交到这里
+    /// `/svc/sys/control/{state,mint,start,stop}` 四格挂上树之后，当场把本线程铸的那四枚入口交到这里
     /// （`Assembly::mount_control`）——铸入口与待客是**同一枚线程**，故那几枚副本不会被内核的
     /// 派生链摘掉（见 `Assembly::supervise` 的照实记）。
     ///
@@ -119,7 +119,7 @@ impl Watch {
     /// **认出某一面的待客入口**：把那一枚挂进**同一只组**（多源等待的写法）。
     ///
     /// 调用者只有一处：`Assembly::mount_control`——**铸入口那一枚线程**（编排域主线程）在
-    /// `/svc/control/{…}` 落定之后，把它自己铸的那几枚**逐面**交到这里。那一枚此后归这只组管：
+    /// `/svc/sys/control/{…}` 落定之后，把它自己铸的那几枚**逐面**交到这里。那一枚此后归这只组管：
     /// 它的到达就是"有人来问 control 这一面了"那一格。
     /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单槽的推没有丢的
     /// 道理，本手只是把"醒来"这条快路接上）。
@@ -130,7 +130,10 @@ impl Watch {
 
     /// 这一位的死亡道（按名字取，不是按下标：见 [`Lane`]）。
     pub fn lane_of(&self, name: &str) -> Option<PieToken> {
-        self.lanes.iter().find(|l| l.name == name).and_then(|l| l.road)
+        self.lanes
+            .iter()
+            .find(|l| l.name == name)
+            .and_then(|l| l.road)
     }
 
     /// 监督循环：**发现死亡 + 记账 + 放下死域**，外加**待客**（control 那一面）。
@@ -142,7 +145,7 @@ impl Watch {
     ///   **哪条道响**给出——不必猜、也不会两条挤一格丢名字；
     /// - **control 那一面**（[`Watch::face`]）：别的域拿着树上那枚门牌来问四手（`mint` /
     ///   `start` / `stop` / `state`）——本线程醒来把这一问交给 [`Control`] 那四手，从这一趟
-    ///   借来的回信孔答回去。**这一源今天有来路**：编排域主线程把 `/svc/control` 挂上树之后
+    ///   借来的回信孔答回去。**这一源今天有来路**：编排域主线程把 `/svc/sys/control` 挂上树之后
     ///   就把入口交给了本线程（[`Watch::attach_face`]）；哪一景没有持树者，它就空着。
     ///
     /// 醒来先做三件事，次序即契约：**表侧惰性剔死**（内核说收尾了就落 `Dead`——没有道的那几台
@@ -365,7 +368,9 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
 /// **两格语义一个字不省**：`stop` 只到 `Stopping`（[`Control::stop`] 就是 [`service::stop`]），
 /// 落 `Dead` 的是**监督那一趟**（[`account`] 的 `until` 两相）——本层不为它抢一步。
 fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
-    let code = |fail: crate::system::control::core::Fail| ccall::frame::fail_to_code(Some(wire_fail(fail)));
+    let code = |fail: crate::system::control::core::Fail| {
+        ccall::frame::fail_to_code(Some(wire_fail(fail)))
+    };
     let Some(ask) = ask else {
         // 表外的动作码：这一问有回信的路，只是这一码我不认（与"读不懂"同一格）。
         return ccall::frame::said_status(ccall::frame::BAD);
@@ -405,7 +410,8 @@ fn wire_fail(fail: crate::system::control::core::Fail) -> ccall::Fail {
 }
 
 /// 表里那一格状态 → 线上那一格：两套 `State` 五格逐格同形（见协议那一份的头注）。
-fn wire_state(state: State) -> ccall::State {    match state {
+fn wire_state(state: State) -> ccall::State {
+    match state {
         State::NeverStarted => ccall::State::NeverStarted,
         State::Starting => ccall::State::Starting,
         State::Ready => ccall::State::Ready,

@@ -20,18 +20,18 @@ use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
 use programs::program::router::{E_ROUTER, PLIC_CLASS};
-use protocol::debug;
 use programs::system::board::client as board;
+use protocol::debug;
+use protocol::driver::hub as hcall;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::driver::hub as hcall;
 use runtime::PAGE_SIZE;
 use runtime::core::bell::Bell;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie, NolePie};
 use runtime::env::unit as utask;
 
-/// 本域挂在树上的名字（`/svc/drv/router`，[`protocol::driver::DIR`] 之下的那一段）。
+/// 本域挂在树上的名字（`/svc/drv/router`，[`protocol::driver::ROAD`] 之下的那一段）。
 const SERVICE: &str = "router";
 
 /// 本域要认的三样：**中断控制器**（按类）＋ **设备树本体 / 门铃**（点名——那两件的名字是常量，
@@ -133,7 +133,8 @@ pub fn up() -> Result<Up, Fail> {
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
-    let lines = Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
+    let lines =
+        Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
 
     // **牌子最后落**（照实记，量出来的）：与 `rtc` / `uart` 两台同一条——牌子一落客人就找得到
     // 它，而本域此前还在认三样设备、开图、读树。**本台尤其要紧**：它的牌子是"线那本账"的入口，

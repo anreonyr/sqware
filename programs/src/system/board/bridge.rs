@@ -73,8 +73,8 @@ pub fn attach(
     //      铸的也是它）。判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源
     //      ——本域给每个孩子各开一条路，故认的是"它给我的"，不然会把别的客人的孔配到它头上。
     //      **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了。
-    let link = establish::endpoint(client, Mark::of(link.as_str()), millis)
-        .map_err(|_| "board:seat")?;
+    let link =
+        establish::endpoint(client, Mark::of(link.as_str()), millis).map_err(|_| "board:seat")?;
     // **认不到对端那一枚 = 这条板路没接上**（原 `claim` 那一格）：本端这一侧虽然只读答话，
     // 但"两侧各装一条、凑齐才算通"那条不变量仍在——没齐就是没接上，不必等到第一次收帧。
     if link.tx().is_none() {

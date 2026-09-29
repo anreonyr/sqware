@@ -17,7 +17,7 @@
 //!   2  SEEK /svc/rule/is      ⇒ FIND ⇒ 期望 DENIED(8)
 //!   3  SEEK /svc/rule/under   ⇒ FIND ⇒ 期望 DENIED(8)
 //!   4  SEEK /svc/rule/foreign ⇒ FIND ⇒ 期望 DENIED(8)
-//!      —— 那一格许给的是"**开着 `/svc/principal/ask` 那一格**的那位"（规矩由 `probe-rule` 落，
+//!      —— 那一格许给的是"**开着 `/svc/sys/principal/ask` 那一格**的那位"（规矩由 `probe-rule` 落，
 //!         按 `seek` 换来的号写），本域不是那一位 ⇒ 同样拒。**这一格不依赖次序**：那枚门牌
 //!         的主人是常驻服务，整轮都活着。
 //!   5  报一行读数就退场
@@ -47,19 +47,20 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::Name;
 use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::Fail;
+use protocol::system::operator::path::Path;
 use runtime::env::unit as utask;
 
-const DIR: &str = protocol::system::SVC;
+/// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）。
+const DIR: protocol::system::operator::Path = protocol::system::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/principal/ask 那一格)`（许给**别人**）。
+/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/principal/ask 那一格)`（许给**别人**）。
 const FOREIGN: &str = "foreign";
 
 /// 等树 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -87,25 +88,16 @@ fn main() -> Report<'static> {
         return bail("probe-other: no tree link");
     };
     let tree = TreeFace::of(session);
-    let (Ok(dir), Ok(pane), Ok(is_name), Ok(under_name), Ok(foreign_name)) = (
-        Name::new(DIR),
-        Name::new(PANE),
-        Name::new(IS),
-        Name::new(UNDER),
-        Name::new(FOREIGN),
-    ) else {
-        return bail("probe-other: bad name");
-    };
+    // 本台那三格都挂在本域那一块下面（`/svc/rule`）——故先拼出那一条路。
+    let base = DIR.join(PANE);
 
     // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
-    let is = denied(&tree, &[dir, pane, is_name]);
-    let under = denied(&tree, &[dir, pane, under_name]);
-    let foreign = denied(&tree, &[dir, pane, foreign_name]);
+    let is = denied(&tree, &base, IS);
+    let under = denied(&tree, &base, UNDER);
+    let foreign = denied(&tree, &base, FOREIGN);
 
     // 三、一行读数。
-    debug!(
-        "probe-other: tree is={is:?} under={under:?} foreign={foreign:?}"
-    );
+    debug!("probe-other: tree is={is:?} under={under:?} foreign={foreign:?}");
 
     // 四、判据：**一例一条**——三格都恰是 `DENIED`（不是放行，也不是"判不了"）。
     {
@@ -134,12 +126,13 @@ fn main() -> Report<'static> {
 /// **照实记（重试在这一格里）**：`Pane::tile` 自己**不带重试**（就地问一次）；"译不出就再问"
 /// 由下面这一圈承担。要带额度的那一形是 [`Face::tile`]——它同样只译号（不飞门闩），差别只有
 /// 重试那一层。
-fn denied(tree: &TreeFace, road: &[Name]) -> Result<(), Fail> {
+fn denied(tree: &TreeFace, base: &Path, leaf: &str) -> Result<(), Fail> {
+    let road = base.try_join(leaf).ok_or(Fail::Unknown)?;
     let root = tree.root();
     let mut left = MS;
     loop {
         match root
-            .tile(road, Wait::AtMost(MS))
+            .tile(&road, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
             .map(|_| ())
         {
@@ -158,4 +151,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
-

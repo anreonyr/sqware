@@ -58,7 +58,10 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
     };
 
     // 每格一个精确签名的入口（住本类自己的模块）：`#[derive(Envcall)]` 的另一半产出。
-    let mod_name = Ident::new(&class_module(&name.to_string()), proc_macro2::Span::call_site());
+    let mod_name = Ident::new(
+        &class_module(&name.to_string()),
+        proc_macro2::Span::call_site(),
+    );
     let gen_fns: Vec<TokenStream2> = vols
         .iter()
         .filter(|v| !v.manual)
@@ -474,14 +477,14 @@ fn gen_fn(owner: &Ident, v: &Variant, fail: Option<&Type>) -> TokenStream2 {
     } else {
         quote! { <#ret as crate::wire::FromPair>::from_pair(v0, v1) }
     };
-    let v2_bind = if v.wide {
-        quote!(v2)
-    } else {
-        quote!(_v2)
-    };
+    let v2_bind = if v.wide { quote!(v2) } else { quote!(_v2) };
 
     let (sig_ret, tail) = if v.infallible {
-        let sig = if is_unit { quote! {} } else { quote! { -> #ret } };
+        let sig = if is_unit {
+            quote! {}
+        } else {
+            quote! { -> #ret }
+        };
         (
             sig,
             quote! {
@@ -530,7 +533,8 @@ fn snake_case(name: &str) -> String {
     let mut out = String::new();
     for (i, c) in cs.iter().enumerate() {
         if c.is_ascii_uppercase() {
-            let prev_small = i > 0 && (cs[i - 1].is_ascii_lowercase() || cs[i - 1].is_ascii_digit());
+            let prev_small =
+                i > 0 && (cs[i - 1].is_ascii_lowercase() || cs[i - 1].is_ascii_digit());
             let next_small = i + 1 < cs.len() && cs[i + 1].is_ascii_lowercase();
             if i > 0 && (prev_small || next_small) {
                 out.push('_');
@@ -554,5 +558,7 @@ const KEYWORDS: [&str; 12] = [
 /// `RoomCall` → `room`：**每类一个生成模块**，跨类的同名变体（`Wait` 在 Room/Mail/Unit）
 /// 靠它隔离。
 fn class_module(name: &str) -> String {
-    name.strip_suffix("Call").unwrap_or(name).to_ascii_lowercase()
+    name.strip_suffix("Call")
+        .unwrap_or(name)
+        .to_ascii_lowercase()
 }

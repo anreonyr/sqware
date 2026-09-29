@@ -250,6 +250,12 @@ pub mod frame;
 
 pub use frame::{EntryId, Fail, Where};
 
+/// **树上的坐标**（一条最多 [`Path::MAX`] 段的路）：装配者落格、客人译号、线上那一格，
+/// 三处同一个形状（见 [`path`] 头注那一张 std 对照表）。
+pub mod path;
+
+pub use path::Path;
+
 pub mod client;
 
 /// **操作面那一维**：一枚 `Grant` = 一枚操作（`part` / `land` / …）。
@@ -272,7 +278,7 @@ pub use grant::Grant;
 // `map_seat` / `map_establish` 那三张失败域对照表随之整片退场（`EstablishFail` 那一层不再
 // 出现在这一族：本族只报"这一手没做成"那一格）。
 
-/// **那一段目录的名字**（`/svc/operator` 底下那一段，也即 `/svc/operator/{面名}` 的中间那一段）。
+/// **那一段目录的名字**（`/svc/sys/operator` 底下那一段，也即 `/svc/sys/operator/{面名}` 的中间那一段）。
 ///
 /// **它为什么不住 [`frame`] 那一格**（照实记：另三家都住各自的 `frame`）：`frame` 里 `NAME`
 /// 这个名字**已经被第七个动作码占了**（`name` 那一原语，`const NAME: u8 = 6;`），而那是**线上
@@ -285,11 +291,19 @@ pub use grant::Grant;
 /// ——**同一件事两处写**，这一刀补齐。
 pub const NAME: &str = "operator";
 
-pub use frame::{Permit, Ruling};
+/// **本族那块窗格在树上的路**：`/svc/sys/operator`（头两段是四族共用的
+/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**。
+///
+/// **照实记（这一族从前没有自己那一枚 `DIR`）**：它挂在哪，写的是**别族**的名
+/// （`programs/src/system/mod.rs` 那个 `sys_dir()` 引 `ccall::frame::DIR`——control 那族的）
+/// ——两族的路靠巧合一致。这一刀把它收进自己这一族：四族各有一枚 `DIR`，前缀共用一处。
+pub const DIR: Path = crate::system::DIR.join(NAME);
+
 pub use frame::{
     ASK_MARK, BAD, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Rule, Said, TIP_LEN, TIP_MARK,
     Tip, TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
+pub use frame::{Permit, Ruling};
 
 // ── 一个调用的三个事实与那一记"交出"：**只有身体，没有壳** ────────────────
 //

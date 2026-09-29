@@ -57,12 +57,11 @@ use programs::Reason;
 
 use programs::root::boot;
 
-
 use env::Name;
-use programs::system::control::service as service;
-use protocol::debug;
 use programs::system::control::core::{Ready, probe_ready};
 use programs::system::control::desk::{Announce, Slot, State, Table};
+use programs::system::control::service;
+use protocol::debug;
 use runtime::env::unit;
 
 /// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）。
@@ -101,9 +100,7 @@ fn main() -> Reason {
         } else {
             match table.register(name, Announce::None) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
-                Err(_) => debug!(
-                    "again: r={round} step=register refused (expected)"
-                ),
+                Err(_) => debug!("again: r={round} step=register refused (expected)"),
                 Ok(()) => {
                     failures += 1;
                     debug!("again: r={round} step=register ACCEPTED (bug)");
@@ -233,9 +230,7 @@ fn trace(table: &Table, name: Name, round: usize, step: &str) {
         State::Stopping => "Stopping",
         State::Dead => "Dead",
     };
-    debug!(
-        "again: r={round} step={step} state={state} slot={slot} ready={ready}"
-    );
+    debug!("again: r={round} step={step} state={state} slot={slot} ready={ready}");
 }
 
 /// 清单里按名字取镜像（只认这一条，与各台主同款）。

@@ -80,16 +80,15 @@ use programs::Reason;
 use env::Mark;
 use programs::root::boot;
 
-
 use env::PieToken;
 use env::ProgramKind;
 use env::TaskId;
+use protocol::debug;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie, TolePie};
 use runtime::env::room;
 use runtime::env::unit;
-use protocol::debug;
 
 /// 清单里等待者的名字（`programs::program::PROGRAMS` 里 `scenes` 含 `group` 的那一行）。
 const WAITER: &str = "waiter";
@@ -206,9 +205,7 @@ fn main() -> Reason {
     }
 
     let pass = hung == WAITERS && woke == WAITERS && deliver && control;
-    debug!(
-        "group: hung={hung} woke={woke} deliver={deliver} control={control}"
-    );
+    debug!("group: hung={hung} woke={woke} deliver={deliver} control={control}");
     debug!("{}", if pass { "group: PASS" } else { "group: FAIL" });
     return if pass { 0 } else { 1 };
 }

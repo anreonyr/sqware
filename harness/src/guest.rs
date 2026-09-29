@@ -20,7 +20,7 @@
 //! # 为什么两条路都走
 //!
 //! **按名找服务归树，板管生死**（用户裁定：驱动挂 `/svc/drv`）。故"找 `router`"走树
-//! （[`protocol::driver::DIR`] 那段目录），而自己那块牌子仍挂板：板那一侧的 `EVICT`
+//! （[`protocol::driver::ROAD`] 那段目录），而自己那块牌子仍挂板：板那一侧的 `EVICT`
 //! （客人自己说走）只有本域在用。**照实记**：板上的 `LOOKUP` 从此**不会有真客人**——命名归树
 //! （见 `protocol::system::board` 那一格照实记）。
 //!
@@ -51,15 +51,15 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
-use env::{Name, PieToken};
+use env::PieToken;
+use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use programs::system::board::client as board;
 use protocol::system::operator as ocall;
+use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
-use protocol::system::operator::Fail;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -89,9 +89,6 @@ fn main() -> Report<'static> {
     // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
     // 合成一格，故这里只剩一句。问话从 `talk` 走，答话走上面那条板路。
     let (link, talk) = (&seat.link, seat.talk);
-    let Ok(want) = Name::new(WANT) else {
-        return bail("guest: bad name");
-    };
     let none = PieToken::NONE;
 
     // 一、挂上自己：解入口 ＋ 编名字 ＋ `register` 三手由 `enroll` 收成一手——板因此答得出
@@ -107,10 +104,9 @@ fn main() -> Report<'static> {
         return bail("guest: no tree link");
     };
     let tree = Face::of(session);
-    let Some([svc, drv]) = protocol::driver::road() else {
+    let Some(road) = protocol::driver::ROAD.try_join(WANT) else {
         return bail("guest: bad name");
     };
-    let path = [svc, drv, want];
 
     // 三、问一句名字。**找不到就再问**，有界：本域可能比 `router` 先起（树上没有"装配期"）。
     // **间接寻址那一手**：名字先译成号（那一格才谈得上"挂上了没有"），拿到号再按号寻。
@@ -123,7 +119,7 @@ fn main() -> Report<'static> {
     // 抄了一遍）：答话码原样往外带，`find` 那一族的失败折成失败域那一格（按本族那张表折回数：
     // **`BAD` / `UNKNOWN` / 没走到现在是同一格** `Fail::Unknown`）。
     // `AtMost(MS)` 是**额度不是整趟时限**（往返耗时不计账、推不进去还会等在门外）。
-    let (find, at) = match find_face(&tree, &path) {
+    let (find, at) = match find_face(&tree, &road) {
         Ok(entry) => (ocall::OK, entry),
         Err(fail) => (ocall::fail_to_code(Some(fail)), none),
     };
@@ -134,10 +130,7 @@ fn main() -> Report<'static> {
     //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
     let bye = board::evict(talk, &link, Wait::AtMost(MS)).unwrap_or(BAD);
 
-    debug!(
-        "guest: reg={reg} find={find} entry={} bye={bye}",
-        at.get()
-    );
+    debug!("guest: reg={reg} find={find} entry={} bye={bye}", at.get());
 
     // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那三样都是本站
     // 此刻就知道的期望（旧宿主靶上 `guest: reg=0 find=0` 那一行钉的就是它们）。
@@ -172,7 +165,7 @@ fn main() -> Report<'static> {
 /// 新面的 `Face::tile` 已经译号一次 + `find` 一次，随后 `Tile::token` 又 `find` 一次 ⇒
 /// **每趟多授一枚没人接的副本**进本域表（树上 `find` 还带"惰性剔死"那一笔）。故照旧面的
 /// 两格写：[`Pane::tile`]（只译号，不动树）＋ [`Tile::token`]（这一趟 `find`）。
-fn find_face(tree: &Face, road: &[Name]) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {
@@ -194,4 +187,3 @@ fn find_face(tree: &Face, road: &[Name]) -> Result<PieToken, Fail> {
 fn bail<'a>(note: &'a str) -> Report<'a> {
     return Report::note(E_TRIP, note);
 }
-

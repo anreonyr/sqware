@@ -8,7 +8,7 @@
 //!   2  LAND /probe-op-free（无主）  ⇒ **通**，且答的就是那一格自己的号
 //!   3  LAND /probe-op-own（别人有主）⇒ **Denied**（面 ✓、归属 ✗ ⇒ **两条轴正交**）
 //!   4  LAND /probe-op-own（拿真号再顶一次）⇒ 仍 **Denied**，且那一格**一字未动**
-//!   5  SEEK /svc/operator  ⇒ **Denied**（`seek` 是另一柄权）
+//!   5  SEEK /svc/sys/operator  ⇒ **Denied**（`seek` 是另一柄权）
 //!   6  PART /             ⇒ **Denied**（`part` 是另一柄权；**根**那一格够不着它）
 //!   7  FIND  某号          ⇒ **Denied**（`find` 会**交出能力**，自成一位，不与只读那几条合并）
 //!   8  TRIM  某号          ⇒ **Denied**
@@ -22,7 +22,7 @@
 //! 只能自己报得出——**根是唯一不需要号的那一格**（根没有号，见 `operator::frame`），于是
 //! 那两格由 `probe-operator-gate` 落在**根**底下，本台照名字报坐标。
 //!
-//! 这一条是**量出来的**：第一版拿 `list` ＋ `name` 去走 `/svc/operator/zone`，于是每一次
+//! 这一条是**量出来的**：第一版拿 `list` ＋ `name` 去走 `/svc/sys/operator/zone`，于是每一次
 //! `list` 都被面判拒掉、当场卡死——本台当时量到的不是"读树读不到"，而是"**没资格读**"。
 //!
 //! # 第 2/3 条合起来是两件不同的事
@@ -93,10 +93,7 @@ fn main() -> Report<'static> {
     };
     let face = TreeFace::of(session);
     let rein = face.rein(Grant::Land);
-    assert!(
-        rein.grant() == Grant::Land,
-        "本台这一柄权不是 land 那一位"
-    );
+    assert!(rein.grant() == Grant::Land, "本台这一柄权不是 land 那一位");
     // **等铺场者把两格摆完**（见 [`SETTLE_MS`]）。
     let _ = runtime::env::room::sleep(core::time::Duration::from_millis(SETTLE_MS as u64));
 
@@ -104,10 +101,11 @@ fn main() -> Report<'static> {
     //
     //    这六条**一律到不了树**（面判在第一道就把它挡了），故参数拿哪一枚都不改变结论：
     //    它们量的是"这一位许不许这一类"，不是"那一格在不在"。
-    let (Ok(op), Ok(part)) = (Name::new("operator"), Name::new("probe-op-part")) else {
+    let Ok(part) = Name::new("probe-op-part") else {
         panic!("probe-operator-land: bad name");
     };
-    let sought = rein.seek(&[op], Wait::AtMost(MS));
+    // 这一问的**参数是哪条路都不改变结论**（面判在第一道就挡了）——照旧拿本族那一块。
+    let sought = rein.seek(&protocol::system::operator::DIR, Wait::AtMost(MS));
     assert!(
         matches!(sought, Err(Fail::Denied)),
         "这一柄权不许 seek，却答了 {sought:?}"

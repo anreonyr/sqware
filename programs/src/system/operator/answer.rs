@@ -44,12 +44,10 @@ pub(super) fn answer(
         debug!("operator: unreadable frame from={}", who.get());
         return ocall::Union::Status(ocall::BAD);
     };
-    // 路太长：**先按上限挡掉**，别把一条被截断的路当成真的（核心那几条原语也各有这条判据）。
-    if let ocall::Wire::Road(_, count) = ask {
-        if count > ocall::frame::ROAD_MAX {
-            return ocall::Union::Status(ocall::FULL);
-        }
-    }
+    // **照实记（"路太长 ⇒ FULL"那一格退了）**：它从前在这里先按上限挡掉（段数那一格写得下
+    // 9，而路只带得回 8 段）。今天一条路是 [`ocall::Path`]——**超长根本造不出来**：那一刻
+    // 在 `Wire::fetch` 里就判成"读不懂"，本门答 `BAD`（见 `Path::fetch` 的照实记）。
+    // 于是 [`ocall::Fail::Full`] 只剩"那一块 `Pane` 满"一个来源。
     // **第一道：这一位。** 会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄边界
     // （`find` 会**交出能力**、`trim` 会**毁掉别人那一格**，故它们不与只读那几条合成一位）。
     // `None`（控制面那条路 / 表外记号）⇒ 不判面 ⇒ 今天那几台客人一字不变。
@@ -152,14 +150,9 @@ pub(super) fn answer(
                 // **交出那一手就是 `port::ship`**（`R|W` ＋ 一格 `VEST`）：捡到的那一枚砖
                 // 要能替客人再授出，少 `VEST` ⇒ 转授那一步答 `Denied`。
                 let grant_pie = mail::HolePie::from_token(pie);
-                grant = port::ship(
-                    &grant_pie,
-                    who,
-                    Access::FETCH | Access::STORE,
-                    Policy::VEST,
-                )
-                .map(|at| seed = Some(at.seed()))
-                .map_err(|_| ocall::Fail::Unknown);
+                grant = port::ship(&grant_pie, who, Access::FETCH | Access::STORE, Policy::VEST)
+                    .map(|at| seed = Some(at.seed()))
+                    .map_err(|_| ocall::Fail::Unknown);
             });
             // **照实记（这一支原先还叫一手 `Book::drop`）**：核心把那一格剔了（"惰性剔死"）
             // 时，"这一格归谁改"随砖一起没——影子撤掉之后，没有第二本账可销。
@@ -190,8 +183,8 @@ pub(super) fn answer(
             };
         }
         // **译号那一档**：名字只能走到这里——拿到号之后，其余原语一律按号走。
-        ocall::Wire::Road(road, count) => {
-            return match tree.seek(&road[..count.min(ocall::frame::ROAD_MAX)]) {
+        ocall::Wire::Road(road) => {
+            return match tree.seek(&road) {
                 Ok(id) => ocall::Union::Entry(id),
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };

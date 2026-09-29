@@ -35,6 +35,7 @@ use runtime::env::mail;
 use protocol::communication::establish;
 use protocol::debug;
 use protocol::system::operator::client::{Face, Mine, Pane};
+use protocol::system::operator::path::Path;
 use protocol::system::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
@@ -43,10 +44,12 @@ pub use protocol::system::operator::{LINK, TIP_MARK};
 /// **推一句话过去**（提示之路那三形共用这一手：`Tip` 自己知道自己多长）。
 ///
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）。
-fn push(into: PieToken, tip: Tip<'_>) -> Result<(), ()> {
+fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
     let mut rec = [0u8; TIP_LEN];
     let n = tip.store(&mut rec).ok_or(())?;
-    mail::HolePie::from_token(into).push(&rec[..n]).map_err(|_| ())
+    mail::HolePie::from_token(into)
+        .push(&rec[..n])
+        .map_err(|_| ())
 }
 
 /// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"。
@@ -130,7 +133,7 @@ impl Tree {
     /// 而"带哪一条"由**持树者**落格时写进那一格（见 `programs/src/system/operator/plate.rs`）。
     pub fn plate(
         &mut self,
-        road: &[Name],
+        road: &Path,
         leaf: Option<PieToken>,
         rule: Rule,
     ) -> Result<(), &'static str> {
@@ -151,7 +154,15 @@ impl Tree {
             None => PieToken::NONE,
         };
         let tip = self.tip.ok_or("no tip")?;
-        push(tip, Tip::Plate { road, leaf, rule }).map_err(|()| "operator:plate")
+        push(
+            tip,
+            Tip::Plate {
+                road: *road,
+                leaf,
+                rule,
+            },
+        )
+        .map_err(|()| "operator:plate")
     }
 
     /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。
@@ -183,8 +194,8 @@ pub fn attach(
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
     //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
-    let link =
-        establish::endpoint(client, Mark::of(link.as_str()), millis).map_err(|_| "operator:seat")?;
+    let link = establish::endpoint(client, Mark::of(link.as_str()), millis)
+        .map_err(|_| "operator:seat")?;
     // **认不到对端那一枚 = 这条路没接上**（原 `claim` 那一格）。
     if link.tx().is_none() {
         return Err("operator:claim");
@@ -281,7 +292,7 @@ pub struct Landed {
 /// `permit` = **这一趟落的每一格带哪一句许可**；`faces` = 要落的那几枚（**末段名 ＋ 入口，次序
 /// 即返回次序**）。
 ///
-/// **`road` 是"容器链"，不含那一枚自己的名字**：`/svc/principal` 那块窗格底下才放 `ask` / `set`，
+/// **`road` 是"容器链"，不含那一枚自己的名字**：`/svc/sys/principal` 那块窗格底下才放 `ask` / `set`，
 /// 故 `road = ["svc","principal"]` 而 `faces = [("ask",…),("set",…)]`；驱动那一家是两段
 /// `["svc","drv"]`（砖就叫 `/svc/drv/router`）。把砖的名字也塞进 `road` 会**先立一块同名的
 /// 窗格、再把砖落在它底下**——这一格栽过，照实记在 `Context::plate` 那一处（一处路的写法，五台程序
@@ -339,34 +350,28 @@ pub struct Landed {
 pub fn land(
     tree: &Face,
     family: &str,
-    road: &[&str],
+    road: &Path,
     mine: Mine,
     permit: Permit,
     faces: &[(&str, PieToken)],
     millis: Wait,
 ) -> Vec<Landed> {
-    // 一、名字**先全验**：一个不合法就一趟都不上路（与"路上哪一段没分出来"分开报）。
-    let mut names: Vec<Name> = Vec::with_capacity(road.len());
-    for seg in road {
-        match Name::new(seg) {
-            Ok(name) => names.push(name),
-            Err(_) => {
-                debug!("{family}: tree: bad name");
-                return Vec::new();
-            }
-        }
-    }
-    // 二、逐段分路（`open` 幂等：那一格已经在就答它那个号；"是不是窗格"由 `part` 自己判）。
+    // **照实记（"名字先全验"那一趟退了）**：它从前在这里把每一段过一遍 `Name::new`（一声
+    // `{family}: tree: bad name` 就是它报的）。今天一条路是 [`Path`]——**造出来的时候每一段
+    // 都过了那一关**（常量那一手非法即编不过，运行期那一手答 `None`，见 `Path::new` 的照实记）
+    // ⇒ 这一趟与那声读数一起退场，`Vec` 也不必开。
+    //
+    // 一、逐段分路（`open` 幂等：那一格已经在就答它那个号；"是不是窗格"由 `part` 自己判）。
     let mut at: Option<EntryId> = None;
-    for (seg, name) in road.iter().zip(&names) {
+    for seg in road.iter() {
         let here = match at {
             Some(id) => Pane::of(tree, id),
             None => tree.root(),
         };
-        match here.open(*name, millis) {
+        match here.open(*seg, millis) {
             Ok(next) => at = Some(next.id()),
             Err(fail) => {
-                debug!("{family}: tree road={road:?} open at={seg} failed={fail:?}");
+                debug!("{family}: tree road={road} open at={seg:?} failed={fail:?}");
                 return Vec::new();
             }
         }
@@ -392,17 +397,18 @@ pub fn land(
             Ok(id) => (Ok(()), *id),
             Err(fail) => (Err(*fail), EntryId::new(0)),
         };
-        // **查回来验一遍**：按路（这一段名字只在这里再用一次，此后一律按号）。
+        // **查回来验一遍**：按路（那一条路在这里再拼一次，此后一律按号）。
+        //
+        // `try_join` 答 `None` 只可能是"那一条路满了"（名字那一关上面已过）⇒ 折成
+        // [`Fail::Full`]——与"装不下"是同一句话。
         let find = match &landed {
-            Ok(_) => {
-                names.push(name);
-                let found = tree
-                    .tile(&names, millis)
+            Ok(_) => match road.try_join(face_name) {
+                Some(full) => tree
+                    .tile(&full, millis)
                     .and_then(|tile| tile.token(millis))
-                    .map(|_| ());
-                names.pop();
-                found
-            }
+                    .map(|_| ()),
+                None => Err(Fail::Full),
+            },
             Err(fail) => Err(*fail),
         };
         // **拿号问名**：号 ↔ 名这一对对得起来，才算那枚号是真坐标。

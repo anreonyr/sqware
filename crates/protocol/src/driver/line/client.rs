@@ -8,8 +8,8 @@ use env::{Mark, PieToken};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
-use super::frame::Fail;
 use super::frame;
+use super::frame::Fail;
 use crate::communication::establish::{self, Held};
 use crate::communication::sender::Sender;
 

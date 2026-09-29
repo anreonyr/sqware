@@ -272,9 +272,7 @@ pub fn hart_rows() -> usize {
 
 pub fn panic_dump(r: &mut Report) {
     for h in 0..hart::hart_count() {
-        let mut rows: Vec<Vec<Option<String>>> = vec![
-            vec![Some("t".into()), Some("event".into())],
-        ];
+        let mut rows: Vec<Vec<Option<String>>> = vec![vec![Some("t".into()), Some("event".into())]];
         dump(h, hart_rows(), |e| {
             let mut d = String::new();
             let _ = fmt_description(e, &mut d);

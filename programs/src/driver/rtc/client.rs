@@ -17,15 +17,15 @@
 //!
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use protocol::message::Message;
 use env::PieToken;
 use env::Wait;
 use protocol::communication::establish;
 use protocol::communication::receiver::Receiver;
+use protocol::message::Message;
 use runtime::env::mail::{self, HolePie};
 
-use super::core::frame::{self, Arm, Now, Status, Time};
 use super::core::Fail;
+use super::core::frame::{self, Arm, Now, Status, Time};
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
 ///

@@ -11,13 +11,13 @@
 //! 线号（它从认领那一答的契里拿的，见 [`lcall::Occupy`]）。⇒ 本文件今天**一眼看得完**：
 //! 解帧 → 拿号 → 占格 → 接线 → 答码。
 
-use crate::plic::{LINE_PRIORITY, Plic};
-use protocol::message::Message;
-use env::{HoleDir, Mark, TaskId, Wait};
-use protocol::debug;
 use crate::core::lines::Lines;
-use protocol::driver::line::frame as lcall;
+use crate::plic::{LINE_PRIORITY, Plic};
+use env::{HoleDir, Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Held};
+use protocol::debug;
+use protocol::driver::line::frame as lcall;
+use protocol::message::Message;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
@@ -63,7 +63,10 @@ pub fn serve(lines: &mut Lines, plic: &Plic, from: TaskId, frame: &[u8], pile: &
                 // **拒了不再另递一句话**：客人从**回信孔**读到的那个非 `OK` 码就是这一
                 // 句（旧 `unseat` 那次过线通知的是一件已经说过的事）。
                 Err(fail) => {
-                    debug!("router: lane dropped line={line} pies={}", mail::table_size());
+                    debug!(
+                        "router: lane dropped line={line} pies={}",
+                        mail::table_size()
+                    );
                     lcall::fail_to_code(Some(fail))
                 }
             },

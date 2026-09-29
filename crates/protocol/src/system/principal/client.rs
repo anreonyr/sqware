@@ -27,7 +27,7 @@ use env::Wait;
 use env::{PieToken, TaskId};
 use runtime::env::mail;
 
-use super::frame::{self, Fail, PrincipalId, BACK};
+use super::frame::{self, BACK, Fail, PrincipalId};
 use crate::communication::establish;
 use crate::communication::receiver::Receiver;
 

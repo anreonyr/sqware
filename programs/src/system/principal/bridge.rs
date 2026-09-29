@@ -9,8 +9,8 @@
 use core::time::Duration;
 
 use env::{TaskId, Wait};
-use protocol::debug;
 use protocol::communication::establish;
+use protocol::debug;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use runtime::env::room;
@@ -57,7 +57,11 @@ impl Roster {
         f.task(task)
             .bind(mine.id(), Wait::AtMost(READY_MS))
             .map_err(|fail| {
-                debug!("principal: adopt bind self {:?} at={}", fail, mine.id().get());
+                debug!(
+                    "principal: adopt bind self {:?} at={}",
+                    fail,
+                    mine.id().get()
+                );
                 "bind self"
             })?;
         match tree {

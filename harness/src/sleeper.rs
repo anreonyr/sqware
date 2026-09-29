@@ -39,15 +39,15 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
+use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use programs::system::board::client as board;
+use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
-use protocol::system::operator::Fail;
 
-use env::{Name, PieToken};
+use env::PieToken;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
@@ -124,10 +124,7 @@ fn main() -> Report<'static> {
             // 码本在 `programs/src/driver/rtc/core/fail.rs`：**1 = `Taken`**（那一格有人了）/
             // **2 = `Past`**（相对量下只剩 `after_ns == 0` 到得了）/ **3 = `Denied`**（这一趟
             // 自己没走到：孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）。
-            debug!(
-                "sleeper: alarm err={}",
-                rcall::fail_to_code(Some(fail))
-            );
+            debug!("sleeper: alarm err={}", rcall::fail_to_code(Some(fail)));
             return no_service("sleeper: no alarm");
         }
     };
@@ -180,9 +177,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 /// **照实记（收 `&Face`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀把它包出来了），
 /// 故这一手只借它——签名上不再出现那条线。
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let (Some([svc, drv]), Ok(want)) = (protocol::driver::road(), Name::new(WANT)) else {
-        return None;
-    };
+    let road = protocol::driver::ROAD.try_join(WANT)?;
     // 名字 → 号（**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）→ 入口：两格在
     // [`Pane::tile`] 与 [`Tile::token`] 上（旧 `Face::tile` 那一趟；本域从前自己抄了一遍）。
     //
@@ -190,7 +185,6 @@ fn find_face(tree: &Face) -> Option<PieToken> {
     // 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有
     // 一枚，故这里也照一枚写（重试那一圈照旧留着）。
     let root = tree.root();
-    let road = [svc, drv, want];
     let mut left = MS;
     loop {
         match root

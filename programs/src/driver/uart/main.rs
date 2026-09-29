@@ -41,7 +41,7 @@ use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 
-/// 本域挂在树上的名字：`/svc/drv/uart`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
+/// 本域挂在树上的名字：`/svc/drv/uart`（[`protocol::driver::ROAD`] 之下的那一段，**服务名**）。
 /// 它是一块 **Pane**：两枚门牌 `rx` / `tx` 在它下面。
 const ME: &str = "uart";
 

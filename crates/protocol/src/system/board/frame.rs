@@ -37,7 +37,6 @@ pub enum Fail {
 // 一个（`mail::release`）⇒ 这里直接叫，别名与构造点一并撤掉。中间那一版还剩一具
 // `establish::unship` 的转发壳，它也与 `establish` 那六具一起删了（见那个文件的照实记）。
 
-
 use crate::message::Message;
 
 // 名字那一格用的是 `env::Name`（**定长名字那个类型**）——本模块另有一个 `Name`（只报名字

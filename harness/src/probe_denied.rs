@@ -52,7 +52,6 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 use protocol::system::operator::{Fail, Permit};
 
-
 use env::Name;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -91,7 +90,7 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-denied: no entry");
     };
-    let Ok(dir) = Name::new(protocol::system::SVC) else {
+    let Some(dir) = protocol::system::SVC.file_name().copied() else {
         return bail("probe-denied: bad name");
     };
     let Ok(me) = Name::new(ME) else {
@@ -126,7 +125,10 @@ fn main() -> Report<'static> {
     // （只译号，**不动树**）；新面若用 `entry`，它内部会 `find`——而 `find` 对"主人没了"的
     // 那一格答 `Dead` **并顺手剔掉那一格**（`operator::core` 的 `find`），那是读取之外的一笔账。
     // `Pane::tile` 是旧 `seek` 的同形。
-    let after = root.tile(&[dir, me], Wait::AtMost(MS));
+    let Some(road) = protocol::system::SVC.try_join(ME) else {
+        return bail("probe-denied: bad name");
+    };
+    let after = root.tile(&road, Wait::AtMost(MS));
     let seq = match &after {
         Ok(entry) => format!("id={}", entry.id().get()),
         Err(fail) => format!("err:{fail:?}"),
@@ -154,4 +156,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
-

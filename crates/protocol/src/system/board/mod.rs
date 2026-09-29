@@ -242,7 +242,6 @@
 //!
 //! 三步都在 [`bridge::attach`] 里，**次序即契约**。
 
-
 pub mod frame;
 
 pub use frame::Fail;

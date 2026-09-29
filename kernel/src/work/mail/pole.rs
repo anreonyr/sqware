@@ -46,11 +46,13 @@ impl PoleMeta {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(PieFail::NotAligned);
         }
-        let layout =
-            core::alloc::Layout::from_size_align(size, PAGE_SIZE).map_err(|_| PieFail::NotAligned)?;
+        let layout = core::alloc::Layout::from_size_align(size, PAGE_SIZE)
+            .map_err(|_| PieFail::NotAligned)?;
         let ptr = crate::tag!(
             Pole,
-            frame::allocator().allocate(layout).map_err(|_| PieFail::OoM)?
+            frame::allocator()
+                .allocate(layout)
+                .map_err(|_| PieFail::OoM)?
         );
         // SAFETY: 分配返回非空
         let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };

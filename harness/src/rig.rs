@@ -219,11 +219,11 @@ use programs::root::boot;
 use core::time::Duration;
 
 use env::Name;
-use programs::system::control::service as service;
-use protocol::debug;
-use protocol::communication::establish::{self, Endpoint, Held};
 use programs::system::control::core::Reaped;
 use programs::system::control::desk::{Announce, Slot, Table};
+use programs::system::control::service;
+use protocol::communication::establish::{self, Endpoint, Held};
+use protocol::debug;
 use runtime::env::mail::HolePie;
 use runtime::env::room;
 use runtime::env::unit;
@@ -313,9 +313,7 @@ fn main() -> Reason {
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
-    debug!(
-        "rig: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}"
-    );
+    debug!("rig: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}");
 
     let mut total = Tally::default();
     let mut d_us = 0usize;
@@ -438,13 +436,20 @@ fn trial(
     // **有主地建**（`Held(..)`：那一格"有主"由类型说出来，不再有一手 `hold`）：这一轮的
     // 关系是**真·作用域寿命**（一轮一条、这一轮结束就还回去），
     // 故它由 `Held` 的 `Drop` 收——一台子跑几百轮，这一格必须自己回基线（读数见头注那张表）。
-    let held = Held(
-        establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?,
-    );
+    let held =
+        Held(establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?);
     // `start` 收的是这本账（`&mut [Endpoint]`）；`Endpoint` 是 `Copy` 的号束，故从 `held` 里
     // 取一份出来用，所有权仍在 `held` 手里（放下时放的是同一枚孔）。
     let mut channels = [*held];
-    let verdict = body(name, task, delay_us, iters_per_ms, &mut table, &mut channels, link);
+    let verdict = body(
+        name,
+        task,
+        delay_us,
+        iters_per_ms,
+        &mut table,
+        &mut channels,
+        link,
+    );
 
     // ── 收场（**不论这一轮成没成**）────────────────────────
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。

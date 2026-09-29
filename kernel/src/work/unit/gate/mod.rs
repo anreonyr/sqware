@@ -9,11 +9,11 @@ mod revoke;
 pub(crate) use fail::GateFail;
 mod snap;
 
+#[cfg(debug_assertions)]
+pub(crate) use pie::form_ok;
 pub(crate) use pie::{
     AnyPie, Hole, Need, Nole, Permission, Pie, Pole, Tole, accede, locate, new_pie,
 };
-#[cfg(debug_assertions)]
-pub(crate) use pie::form_ok;
 
 pub(crate) use accord::{accord, clear_heir};
 pub(crate) use cull::{cull, doom};

@@ -28,7 +28,9 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) const MAX_ARGS: usize = 64;
 
 pub enum TaskState {
-    Running { ticks_left: u32 },
+    Running {
+        ticks_left: u32,
+    },
     Blocked {
         key: WakeKey,
         ticket: Ticket,

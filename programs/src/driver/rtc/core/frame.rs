@@ -60,8 +60,8 @@
 //! （`protocol::OK`）——各家的失败码仍按自己失败域的顺序排。
 
 use super::fail::Fail;
-use protocol::message::Message;
 use env::{Mark, PieToken};
+use protocol::message::Message;
 
 // ── 码 ──────────────────────────────────────────────────────
 

@@ -45,10 +45,10 @@ pub mod grant;
 
 pub use client::Face;
 pub use frame::{
-    Deed, Enroll, Fail, Window, ALIVE_MARK, BACK_MARK, BAD, BOND, BOOT, CLAIM, DEAD,
-    DENIED, DEV, DTB, ENROLL_CAP, ENROLL_MAX, IRQ, LIST, LIST_MAX, OK, TAKEN, UNKNOWN,
+    ALIVE_MARK, BACK_MARK, BAD, BOND, BOOT, CLAIM, DEAD, DENIED, DEV_ROAD, DTB, Deed, ENROLL_CAP,
+    ENROLL_MAX, Enroll, Fail, IRQ, LIST, LIST_MAX, OK, TAKEN, UNKNOWN, Window,
 };
-pub use grant::{grant_of, Grant};
+pub use grant::{Grant, grant_of};
 
 /// 这一族在树上的那一段名字：**`hub`**（`/svc/hub`）。
 ///

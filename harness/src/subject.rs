@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/svc/principal/{ask,set}" ⇒ 两枚门牌**经会话**授进本域表里（报文里没有号）
+//!   2  FIND "/svc/sys/principal/{ask,set}" ⇒ 两枚门牌**经会话**授进本域表里（报文里没有号）
 //!   3  resolve(self)      ⇒ 本域此刻代表哪个号（**装配期**绑的那一条）
 //!   4  sire(root) / sire(me)  ⇒ 三态的头两格：**根答"没有"，不是"Unknown"**
 //!   5  heir(me, me)       ⇒ 自反
@@ -39,12 +39,12 @@ use programs::Report;
 use alloc::string::String;
 
 use alloc::format;
-use env::{Name, PieToken};
+use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::operator::Fail as TreeFail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::Fail as TreeFail;
 use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use protocol::system::principal::{Fail, PrincipalId};
@@ -206,7 +206,9 @@ fn main() -> Report<'static> {
     }
 
     // 十二、树外。
-    let outside = set.principal(q).adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
+    let outside = set
+        .principal(q)
+        .adopt(PrincipalId::new(OUTSIDE), Wait::AtMost(MS));
     debug!("policy: adopt(out)={}", done(outside));
     {
         assert!(matches!(outside, Err(Fail::Unknown)))
@@ -243,9 +245,15 @@ fn main() -> Report<'static> {
     // **照实记（它与"你不是装配者"同码，分开它们的是读数）**：核那一条拒（本域不是写名册的
     // 那一枚）也答 `Fail::Denied`——两个因落在同一格码上（客人的下一步一样：换人 / 换门牌、
     // 别重试）。分得开它们的是持册者那一行读数 `principal: face=… asked=… denied`。
-    let set_ok = set.principal(p).derive(Wait::AtMost(MS)).map(|child| child.id());
+    let set_ok = set
+        .principal(p)
+        .derive(Wait::AtMost(MS))
+        .map(|child| child.id());
     debug!("policy: derive(set,p)={}", one(set_ok));
-    let ask_no = ask.principal(p).derive(Wait::AtMost(MS)).map(|child| child.id());
+    let ask_no = ask
+        .principal(p)
+        .derive(Wait::AtMost(MS))
+        .map(|child| child.id());
     debug!("policy: derive(ask,p)={}", one(ask_no));
     {
         assert!(set_ok.is_ok())
@@ -257,7 +265,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "subject: done");
 }
 
-/// 找**某一面**：`/svc/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
+/// 找**某一面**：`/svc/sys/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 名字 → 号（译不出就重试）落在 [`Pane::tile`] 上，`find` 落在 [`Tile::token`] 上——**两格各
 /// 一趟**，与旧 `Face::tile` 逐格同形（那一手本域从前自己抄了一遍）。
@@ -269,15 +277,9 @@ fn main() -> Report<'static> {
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
 /// 故这一手只借它。
 fn find_face(tree: &TreeFace, grant: pcall::Grant) -> Option<PieToken> {
-    let (Ok(dir), Ok(segment), Ok(leaf)) = (
-        Name::new(pcall::DIR),
-        Name::new(pcall::NAME),
-        Name::new(grant.name()),
-    ) else {
-        return None;
-    };
+    // 路是**名册那一族的常量**接上那一面的名——一处都不自己拼。
+    let road = pcall::DIR.try_join(grant.name())?;
     let root = tree.root();
-    let road = [dir, segment, leaf];
     let mut left = MS;
     loop {
         match root
@@ -341,4 +343,3 @@ fn why(fail: Fail) -> &'static str {
 fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }
-

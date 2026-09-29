@@ -4,7 +4,6 @@
 //! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::system::supply`]；要哪几样由
 //! **收方**自己开单（三张都在 [`programs::program`]，开口的形态就是 `Need`）。
 
-
 use env::PieToken;
 use env::key::{DTB, IRQ, REGION};
 use env::{Key, PAIR_LEN, Pair};
@@ -77,9 +76,7 @@ impl Root {
                 _ => bad += 1,
             }
         }
-        debug!(
-            "root: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}"
-        );
+        debug!("root: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}");
     }
 
     /// 第 `i` 条的坐标（定长记录，块只保证页对齐 ⇒ `read_unaligned`）。

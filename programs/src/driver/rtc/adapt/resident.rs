@@ -12,9 +12,9 @@ use programs::driver::fail::Fail;
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use programs::program::rtc::E_RTC;
+use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::driver::line;
-use protocol::communication::sender::Sender;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
@@ -28,7 +28,12 @@ use runtime::env::mail::{self, HolePie};
 /// `driver::`——见 [`programs::driver::mod`] 那条入库判据。
 ///
 /// 失败：组坏了 ⇒ `Err(Fail::at(E_RTC, "desk"))`——本域没有可继续的状态。
-pub fn run(ctx: &Context, dev: &Device, held: line::client::Line, host: &mut Host) -> Result<(), Fail> {
+pub fn run(
+    ctx: &Context,
+    dev: &Device,
+    held: line::client::Line,
+    host: &mut Host,
+) -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
     let entry_hole = HolePie::from_token(ctx.entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;

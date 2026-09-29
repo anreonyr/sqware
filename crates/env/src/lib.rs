@@ -51,14 +51,15 @@ pub use fid::{
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
 pub use fid::{chrono, control, debug, mail, memory, pie, room, tole, unit};
+pub use key::{KEY_LEN, Key};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
-pub use key::{KEY_LEN, Key};
 pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
 pub use supply::{Kind, WANT_LEN, Want};
 pub use wait::Wait;
 pub use wire::{
-    Decode, Eyes, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr, Wire,
+    Decode, Eyes, FromPair, Mark, NAME_LEN, Name, NameError, PieToken, TaskId, TeamId, VirtAddr,
+    Wire,
 };

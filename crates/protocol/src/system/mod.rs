@@ -510,17 +510,38 @@
 //! 平级（`crates/protocol/src/{operator,principal,coalition}/`）。**被否的那条读法**是
 //! "协议树按'谁在说话'分、不该镜像实现树"——用户裁的是前者，故搬进来了。
 
-/// **服务那一层在树上的那一段名字**：`svc`——各族那一段路都从它起。
+/// **服务那一层那一段路**（一条路：`/svc`）——挂在树上的服务都从它起。
 ///
 /// **照实记（这一格是 `/sys` → `/svc` 那一刀立的）**：它从前在四个地方各写了一遍
 /// （`principal` / `coalition` / `control` 三族的 `DIR`，加编排域 `sys_dir()` 里那句
 /// "引 `ccall::frame::DIR`"）——同一个词四处给，改一处就得记得另外三处。今天的口径是：
-/// **这一段名字只有这一处说**，三族的 `DIR` 都指向它（`const` 引 `const`，一处改全跟着改），
-/// 驱动那一族在自己的 `DIR` 旁边也引同一枚（`/svc/drv` 两段里的头一段）。
+/// **这一段名字只有这一处说**（它今天是一条 [`Path`]：别的族按 [`SVC`]`.join(…)` 往下接，
+/// 各族自己那一段住自己那一族，见 [`crate::system::principal::DIR`]）。
 ///
 /// **为什么是 `svc` 而不是 `sys`**（用户裁定）：这一层底下收的不只是"系统服务"——驱动那一族
 /// （`/svc/drv`）与设备账（`/svc/hub`）也挂上来了，而 `/dev` 留给**设备那一轴**（hub 落的账）。
-pub const SVC: &str = "svc";
+pub const SVC: Path = Path::new("svc");
+
+/// **平台自己那几枚在容器底下那一段**（`sys`）：持树者（`operator`）与三枚内件
+/// （名册 / 盟册 / 控制面）都从它起 —— `/svc/sys/{operator,principal,coalition,control}`。
+///
+/// **照实记（这一层补上那一刀，用户裁定）**：`/svc` 是"**所有的服务**"那个容器，它底下收着
+/// 驱动（`/svc/drv`）与设备账（`/svc/hub`）这些**某一族的服务**；平台自己那几枚（树 ＋
+/// 三枚内件）另占一段 ⇒ 容器底下只有三类：`sys` / `drv` / `hub`——"这是平台内件、还是某一位
+/// 服务"，读路径就分得开。`/dev` 与这三级平行，仍是设备那一轴。
+pub const SYS: &str = "sys";
+
+/// **那四族共用那段前缀**（`/svc/sys`）：`operator` / `principal` / `coalition` / `control`
+/// 各自那一段路（各族自己的 `DIR`）都从它起 —— **只此一处**。
+///
+/// **照实记（"路"为什么是一条拼出来的 [`Path`]）**：这四族在树上平级、只差末段，而末段
+/// （`operator` / `principal` / …）各住在**自己那一族**的协议模块里
+/// （见 [`crate::system::principal::DIR`] 那一条）。头两段是四族共同的，故它只说在这里：
+/// 改一层名字（比如再插一段）只动这一处，四族跟着走。驱动那一族取 [`SVC`] 接自己那一段
+/// （`/svc/drv`），设备账同（`/svc/hub`）。
+pub const DIR: Path = SVC.join(SYS);
+
+use crate::system::operator::path::Path;
 
 pub mod board;
 pub mod coalition;
@@ -595,10 +616,7 @@ const _: () = {
                 let b = fams[g];
                 let mut j = 0;
                 while j < b.len() {
-                    assert!(
-                        a[i].get() != b[j].get(),
-                        "system: two faces share one mark"
-                    );
+                    assert!(a[i].get() != b[j].get(), "system: two faces share one mark");
                     j += 1;
                 }
                 g += 1;
@@ -630,4 +648,3 @@ const _: () = {
         i += 1;
     }
 };
-

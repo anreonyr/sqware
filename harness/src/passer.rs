@@ -33,10 +33,10 @@ use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂一个名字）。
+use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
-use programs::system::board::client as board;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字 —— 本域知道的全部。
@@ -90,4 +90,3 @@ fn main() -> Report<'static> {
 fn bail<'a>(note: &'a str) -> Report<'a> {
     return Report::note(E_TRIP, note);
 }
-

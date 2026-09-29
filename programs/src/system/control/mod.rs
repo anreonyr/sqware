@@ -33,9 +33,9 @@
 //! [`crate::system::Assembly::supervise`] 的照实记里。
 //!
 //! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
-//! **本域活多久它活多久**），而"把这一格落到 `/svc/control`"由**持树者在自己核里做**
+//! **本域活多久它活多久**），而"把这一格落到 `/svc/sys/control`"由**持树者在自己核里做**
 //! （[`mount::entry`] 铸那一枚 → [`crate::system::operator::bridge::Tree::plate`] 递过去 →
-//! 持树者 `part` ＋ `land`）。于是 `/svc/control` 与名册 / 盟册那两族那**四格**逐字同形：
+//! 持树者 `part` ＋ `land`）。于是 `/svc/sys/control` 与名册 / 盟册那两族那**四格**逐字同形：
 //! 任何走到树的任务 `operator::Face::tile` 一查就有，
 //! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
 //!
@@ -46,25 +46,16 @@
 
 use alloc::vec::Vec;
 
+use crate::system::control::core::Fail;
+use crate::system::control::desk::{State, Table};
 use env::manifest;
 use env::{Mark, Name, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
-use crate::system::control::core::Fail;
-use crate::system::control::desk::{State, Table};
 
-use crate::program::{Origin, Program, Setup, PROGRAMS};
+use crate::program::{Origin, PROGRAMS, Program, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::{self, Source};
-
-use protocol::system::control::frame as cframe;
-
-/// **那一段目录的名字**（`/svc/control` 底下那一段，也即 `/svc/control/{面名}` 的中间那一段）。
-///
-/// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
-/// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
-/// 一条 `const` 就挣不来一个文件。名字的唯一来源在协议那一侧那一格（`cframe::NAME`），这里只引用。
-pub const SEGMENT: &str = cframe::NAME;
 
 pub mod assemble;
 pub mod core;
@@ -256,9 +247,7 @@ impl Control {
             Err(Error::Spawn) => return Err(Fail::Full),
             Err(_) => return Err(Fail::Unknown),
         };
-        self.pending
-            .try_reserve(1)
-            .map_err(|_| Fail::Full)?;
+        self.pending.try_reserve(1).map_err(|_| Fail::Full)?;
         self.pending.push(Pending {
             name: program.name(),
             service,
@@ -304,10 +293,7 @@ impl Control {
     ///
     /// **只读表里那一格**：实例坐标是另一件事（"起过、现在死了"时它仍在）——见协议那一节。
     pub fn state(&self, name: Name) -> Result<State, Fail> {
-        self.table
-            .find(name)
-            .map(|s| s.state)
-            .ok_or(Fail::Unknown)
+        self.table.find(name).map(|s| s.state).ok_or(Fail::Unknown)
     }
 
     /// **起一个 Service**：按名字取那一段字节 → 建域 → 产线程 → 备通道账。
@@ -333,8 +319,8 @@ impl Control {
             // 来源那一格的其他失败（今天只有 `NoSource`）按"那一段字节取不到"报，读数带它自己的说法。
             other => Error::Step(other.said()),
         })?;
-        let task = service::mint(&mut self.table, name, image, entry.kind)
-            .map_err(|_| Error::Spawn)?;
+        let task =
+            service::mint(&mut self.table, name, image, entry.kind).map_err(|_| Error::Spawn)?;
         Ok((task, Vec::new()))
     }
 

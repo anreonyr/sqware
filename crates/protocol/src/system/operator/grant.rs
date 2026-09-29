@@ -67,7 +67,7 @@ crate::faces! {
         Wire::Trim(_) => Trim,
         Wire::List(_) => List,
         // `Road` 就是 `seek`（路那一形只到这一格，见 [`Req`](super::Req)）。
-        Wire::Road(_, _) => Seek,
+        Wire::Road(_) => Seek,
         Wire::Name(_) => Name,
     }
 }

@@ -40,8 +40,6 @@ pub enum Fail {
     Bad,
 }
 
-
-
 /// 引导域↔编排域那条泊位的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const BOOT: &str = "boot";
 

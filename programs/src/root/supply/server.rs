@@ -2,16 +2,16 @@
 //!
 //! 正文见 [`super`]；记号、帧与上限见 [`protocol::system::supply::frame`]。
 
-use env::{MailFail, PieToken, Wait};
 use env::{Key, Pair};
+use env::{MailFail, PieToken, Wait};
 use runtime::core::port;
 use runtime::env::mail::{NolePie, PolePie};
 
-use protocol::system::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
-use protocol::system::supply::Fail;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
+use protocol::system::supply::Fail;
+use protocol::system::supply::frame::{BAD, Kind, OK, Order, Reply, WANT_MAX, fail_to_code};
 
 /// 供：照单取源、授出、把记录写进 `records`。返**条数**。
 ///

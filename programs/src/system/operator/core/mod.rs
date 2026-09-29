@@ -21,7 +21,8 @@ use alloc::vec::Vec;
 use env::{Name, PieToken, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
-use protocol::system::operator::frame::{PANE_CAP, ROAD_MAX};
+use protocol::system::operator::frame::PANE_CAP;
+use protocol::system::operator::path::Path;
 use protocol::system::operator::{EntryId, Fail, Permit, Where};
 
 // ── 两个子模块 ──────────────────────────────────────────────
@@ -277,7 +278,7 @@ impl Operator {
     /// **译**：把一条路**译成那一枚号**——名字只能走到这一格，往下一律按号。
     ///
     /// 从根起按名字一段段走：缺一段 ⇒ [`Fail::Unknown`]；中途那一段是一枚 `Tile` ⇒
-    /// [`Fail::NotAPane`]；路超过 [`ROAD_MAX`] 段 ⇒ [`Fail::Full`]。
+    /// [`Fail::NotAPane`]。
     /// 走到头答**那一格自己的号**——故**最后一段是一枚 `Tile` 也行**（那正是门牌那一格：
     /// `/svc/drv/uart/rx` 到头就是一枚砖）。
     ///
@@ -285,14 +286,16 @@ impl Operator {
     /// 不需要根有号）：**根没有号**，没什么可译。
     ///
     /// 与 `list` 一样**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
-    pub fn seek(&self, road: &[Name]) -> Result<EntryId, Fail> {
-        if road.len() > ROAD_MAX {
-            return Err(Fail::Full);
-        }
-        // 空路 ⇒ 根 ⇒ 没有号（`split_last` 那一步就把它挡在这一格）。
-        let (last, rest) = road.split_last().ok_or(Fail::Unknown)?;
+    /// **"路太长"那一格退了**（照实记）：它从前在这里答 [`Fail::Full`]（段数那一格写得下
+    /// 9），而今天一条路是 [`Path`]——最多 [`Path::MAX`] 段，超长根本造不出来 ⇒ 那一格由
+    /// [`Path::fetch`] 在上游判成"读不懂"（门答 `BAD`）。这条判据因此删掉，
+    /// [`Fail::Full`] 只剩"那一块 `Pane` 满"一个来源。
+    pub fn seek(&self, road: &Path) -> Result<EntryId, Fail> {
+        // 空路 ⇒ 根 ⇒ 没有号（`parent()` 在根上答 `None`，这一步就把它挡在这一格）。
+        let prefix = road.parent().ok_or(Fail::Unknown)?;
+        let last = road.file_name().ok_or(Fail::Unknown)?;
         let mut level: &[EntryId] = &self.root;
-        for step in rest {
+        for step in prefix.iter() {
             let child = self.child(level, *step).ok_or(Fail::Unknown)?;
             level = match &self.slot(child).ok_or(Fail::Unknown)?.node {
                 Node::Pane(inner) => inner,

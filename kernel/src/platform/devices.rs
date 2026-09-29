@@ -57,24 +57,14 @@ pub(crate) fn irq_stats() -> (usize, usize, usize, usize) {
 fn supply_initrd() -> Option<(Key, AnyPie)> {
     let initrd = machine::info().initrd()?;
     let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0)).ok()?;
-    let pie = gate::new_pie(
-        meta,
-        Mark::NONE,
-        Permission::FETCH | Permission::VEST,
-        None,
-    );
+    let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
     Some((Key::region(initrd.base as u64), AnyPie::Pole(pie)))
 }
 
 fn supply_dtb() -> (Key, AnyPie) {
     let dtb = machine::info().dtb();
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0)).expect("devicetree region");
-    let pie = gate::new_pie(
-        meta,
-        Mark::NONE,
-        Permission::FETCH | Permission::VEST,
-        None,
-    );
+    let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
     (Key::dtb(), AnyPie::Pole(pie))
 }
 

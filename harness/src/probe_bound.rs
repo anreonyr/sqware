@@ -63,11 +63,11 @@ use programs::Report;
 use alloc::vec::Vec;
 
 use env::{Mark, Name, PieToken};
+use programs::system::board::client as board;
+use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::communication::establish::Endpoint;
 use protocol::system::board as bcall;
-use programs::system::board::client as board;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use runtime::PAGE_SIZE;
@@ -125,6 +125,25 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     f
 }
 
+/// `seek` 那一问的动作码：`SEEK = 7`（与 [`JUNK_OP`] 同一条：这一台**故意手写裸帧**，故它按
+/// 线上那一格写数——`crates/protocol/src/system/operator/frame.rs` 那一枚私有常量才是正文；
+/// 那个码要是挪了位，这一条当场红）。
+const SEEK_OP: u8 = 7;
+
+/// **一条 9 段的路**（`[op][9]`，两字节）——这一台量的是"路太长"那一格挪了家。
+///
+/// **照实记（本刀唯一一处语义变化就在这里）**：从前段数那一格写得下 9，而路只带得回 8 段
+/// ⇒ 持树者按 `Fail::Full` 答一句"路太长"。今天一条路是 `Path`（最多 `Path::MAX` 段），
+/// **超长根本表达不出来** ⇒ 这一帧在 `Path::fetch` 里就判"读不懂"，门答 `BAD`。
+/// 故这一条钉的是：**同一件事的答码从 `FULL` 变成 `BAD`**（照实记住
+/// `crates/protocol/src/system/operator/path.rs` 头注那一节）。
+fn oversize_road() -> [u8; JUNK] {
+    let mut road = [0u8; JUNK];
+    road[0] = SEEK_OP;
+    road[1] = 9;
+    road
+}
+
 /// 表外那一格（`0..=4` 之外）：整帧读不懂。
 const LAND_PERMIT_UNKNOWN: u8 = 9;
 /// 表内那一格（`0` = `Permit::Unset`）：读得懂——**同一帧只换这一格**，结论就该不同。
@@ -154,7 +173,7 @@ fn main() -> Report<'static> {
     // **正经那一问要一面 `Face`**（自由函数那一层已随新面退场），而它是**借**一条会话：
     // [`operator::Face::from`]（树那三格是 `Copy`）——junk 那一趟照旧走裸孔，见 `junk_trip`。
     let face = operator::Face::from(&session);
-    let Ok(dir) = Name::new(protocol::system::SVC) else {
+    let Some(dir) = protocol::system::SVC.file_name().copied() else {
         return bail("probe-bound: bad name");
     };
 
@@ -180,12 +199,19 @@ fn main() -> Report<'static> {
     let empty = matches!(mine.peek(), Err(ref e) if e.source.is_busy());
     let small = mine.push(&[0u8; 8]).is_ok();
     let len = mine.peek().map(|(n, _)| n).unwrap_or(0);
-    debug!(
-        "probe-bound: push={over_code} empty={empty} small={small} len={len}"
-    );
+    debug!("probe-bound: push={over_code} empty={empty} small={small} len={len}");
 
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
     let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir, &junk());
+
+    // 三·二、**一条 9 段的路**：从前答 `FULL`（"路太长"），今天答 `BAD`（"这条坐标根本
+    //        表达不出来"）——两种"不"各有各的下一步，见 [`oversize_road`] 的照实记。
+    //
+    //        **它排在那两趟"许可"之前**（照实记，量出来的）：那两趟里"读得懂"的那一趟走完，
+    //        本台那条树路**就再也不答了**——实测第三次 `pull` 起答 `Err(MailFail::Denied)`
+    //        （那一枚孔用不动了）。那一格与这一条要量的事无关，但会把它的读数污染成同样的
+    //        `None`（照实记：本手第一版就栽在这里，红的不是门，是这一条排错了队）。
+    let (o_junk_in, o_said_bad, o_after) = junk_trip(hedge, tree, &face, dir, &oversize_road());
 
     // 三·三、**形状全对、只有许可那一格陌生**的那一条：同一声 `BAD`（"整帧读不懂"），
     //       门照旧活着。这一条与上一条**不是同一件事**：上一条死在**长度**那一闸，这一条一路
@@ -246,6 +272,16 @@ fn main() -> Report<'static> {
     }
     {
         {
+            assert!(o_junk_in, "那条 9 段的路推不进门（门那一枚孔不在？）");
+            assert!(
+                o_said_bad,
+                "9 段的路该答 `BAD`（`Path` 里超长根本表达不出来），却没答那一句"
+            );
+            assert!(o_after, "吞了那条帧之后，门不再答正经的问了");
+        }
+    }
+    {
+        {
             assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
             assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
             assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
@@ -283,9 +319,14 @@ fn junk_trip(
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let said = mail::HolePie::from_token(tree.rx())
-        .pull_timeout(&mut back, Wait::AtMost(MS))
-        .ok();
+    let pulled = mail::HolePie::from_token(tree.rx()).pull_timeout(&mut back, Wait::AtMost(MS));
+    debug!(
+        "probe-bound: junk len={} pull={:?} code={}",
+        junk.len(),
+        pulled.as_ref().map(|n| *n).map_err(|e| e.source),
+        back[0]
+    );
+    let said = pulled.ok();
     let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
 
     // 正经的一问：**门还在答**。
@@ -320,4 +361,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
-

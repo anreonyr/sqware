@@ -18,8 +18,8 @@
 //! **传输失败折进 [`Fail::Bad`]**：借不出回信孔 / 推不出去 / 超时 / 答话形状不对——四件事对
 //! 本端是同一个下一步（这一趟别指望了）。分得开它们的那一格在对端。
 
-use env::{Kind, Name, PieToken, TaskId, Wait};
 use env::{Access, Policy};
+use env::{Kind, Name, PieToken, TaskId, Wait};
 use runtime::core::port;
 use runtime::env::mail;
 
@@ -27,8 +27,8 @@ use crate::communication::establish;
 use crate::communication::receiver::{Receiver, RecvFail};
 use crate::message::Message;
 
-use super::frame::{self, BACK_MARK};
 use super::Fail;
+use super::frame::{self, BACK_MARK};
 
 /// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）。
 pub struct Face {
@@ -63,7 +63,8 @@ impl Face {
 
     /// **列册**：从 `from` 起取一窗（越界答空窗——是答案，不是错误）。
     pub fn list(&self, class: Name, from: u32, wait: Wait) -> Result<frame::Window, Fail> {
-        let window = self.call::<_, frame::Window>(|back| frame::ListReq::of(class, from, back), wait)?;
+        let window =
+            self.call::<_, frame::Window>(|back| frame::ListReq::of(class, from, back), wait)?;
         read(window.status)?;
         Ok(window)
     }

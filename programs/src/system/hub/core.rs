@@ -22,7 +22,7 @@
 use alloc::vec::Vec;
 
 use env::{Name, PieToken, TaskId};
-use protocol::driver::hub::{Fail, Window, LIST_MAX};
+use protocol::driver::hub::{Fail, LIST_MAX, Window};
 use protocol::system::coalition::CoalitionId;
 
 // ── 一台与它的主人 ──────────────────────────────────────────

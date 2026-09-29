@@ -32,8 +32,8 @@ use programs::Reason;
 
 use harness::tick;
 
-use protocol::debug;
 use protocol::communication::establish;
+use protocol::debug;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;
 

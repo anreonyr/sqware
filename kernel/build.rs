@@ -76,7 +76,10 @@ fn upstream_source() -> Option<PathBuf> {
     let cargo_home = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cargo")))?;
-    for index in fs::read_dir(cargo_home.join("registry/src")).ok()?.flatten() {
+    for index in fs::read_dir(cargo_home.join("registry/src"))
+        .ok()?
+        .flatten()
+    {
         let at = index
             .path()
             .join("embedded-test-linker-script-0.1.0/embedded-test.x");
@@ -121,17 +124,15 @@ fn main() {
             UPSTREAM_HASH,
             upstream_source()
                 .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "<CARGO_HOME>/registry/src/*/embedded-test-linker-script-0.1.0/embedded-test.x".into()),
+                .unwrap_or_else(|| {
+                    "<CARGO_HOME>/registry/src/*/embedded-test-linker-script-0.1.0/embedded-test.x"
+                        .into()
+                }),
         );
     }
     if let Some(src) = upstream_source() {
         println!("cargo::rerun-if-changed={}", src.display());
-        match fs::read(&src).and_then(|real| {
-            Ok((
-                sha256(&real),
-                real == UPSTREAM.as_bytes(),
-            ))
-        }) {
+        match fs::read(&src).and_then(|real| Ok((sha256(&real), real == UPSTREAM.as_bytes()))) {
             Ok((Some(real_hash), true)) => {}
             Ok((Some(real_hash), false)) => panic!(
                 "上游那份 `embedded-test.x` 与本地抄件不同（上游 {real_hash} / 本地 {hash}）。\

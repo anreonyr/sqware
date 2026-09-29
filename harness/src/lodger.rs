@@ -69,11 +69,11 @@ use programs::program::harness::E_LODGER;
 // 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
 use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
-use protocol::system::operator::Fail;
 
-use env::{Access, Kind, Name, PieToken, Policy};
+use env::{Access, Kind, PieToken, Policy};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
 use runtime::env::mail;
@@ -195,13 +195,10 @@ fn main() -> Report<'static> {
 /// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须照旧面 `entry_of` 的**一枚**写：
 /// [`Pane::tile`]（译号）＋ [`Tile::token`]（这一趟 `find`）。
 fn find_router(tree: &Face) -> Option<PieToken> {
-    // 先拼路（`/svc/drv/router` 三段名字），再沿那条路取入口（**译不出就重试**：门牌是驱动落的，
-    // 它可能落得比本域晚）。
-    let (Some([svc, drv]), Ok(name)) = (protocol::driver::road(), Name::new(SERVICE)) else {
-        return None;
-    };
+    // 先拼路（`/svc/drv/router`：驱动那一族的常量接上服务名），再沿那条路取入口
+    // （**译不出就重试**：门牌是驱动落的，它可能落得比本域晚）。
+    let road = protocol::driver::ROAD.try_join(SERVICE)?;
     let root = tree.root();
-    let road = [svc, drv, name];
     let mut left = MS;
     loop {
         match root
@@ -227,4 +224,3 @@ fn attempt(entry: PieToken, line: u32) -> (u8, Option<line::client::Line>) {
         Err(fail) => (lcall::fail_to_code(Some(fail)), None),
     }
 }
-

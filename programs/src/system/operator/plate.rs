@@ -11,8 +11,9 @@
 //! **挂上去的是装配者交来的那一枚**（帧里带的是它在**本域表里**的号）⇒ 此后客人 `find` 得回
 //! 它，而 `Face::of` 认出的"对端"仍是**铸那一枚的那一位**（装配者：它是那一面的服务端）。
 
-use env::{Name, PieToken};
+use env::PieToken;
 use protocol::debug;
+use protocol::system::operator::path::Path;
 use protocol::system::operator::{Permit, Rule, Where};
 use protocol::system::principal::PrincipalId;
 
@@ -22,9 +23,12 @@ use crate::system::operator::core::Operator;
 ///
 /// **照实记（这一手从前还收一本账、还逐段销一次账）**：「归谁改」现在住在那一枚砖上，
 /// `part` 把砖顶成窗格时**随砖自然没**——没有第二本账要对齐。
-fn walk(tree: &mut Operator, road: &[Name]) -> Option<Where> {
+fn walk(tree: &mut Operator, road: &Path) -> Option<Where> {
     let mut at = Where::Root;
-    for seg in &road[..road.len() - 1] {
+    // **前缀那几段**：`parent()` 就是"去掉末段"那一句（std 同形），空路（根）走不到这里
+    // ——末段一定有（`plate` 先取了 `file_name()`）。
+    let prefix = road.parent()?;
+    for seg in prefix.iter() {
         match tree.part(at, *seg) {
             Ok(id) => at = Where::At(id),
             Err(fail) => {
@@ -39,8 +43,8 @@ fn walk(tree: &mut Operator, road: &[Name]) -> Option<Where> {
 /// **装配者要本域立的那一条路**：前缀逐段立窗格（缺的就地造），末段按 `leaf` 落叶子或立窗格。
 ///
 /// 失败（路空 / 某一层立不出来 / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"。
-pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken, rule: Rule) {
-    let Some(last) = road.last().copied() else {
+pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule) {
+    let Some(last) = road.file_name().copied() else {
         return debug!("operator: plate empty road");
     };
     let Some(at) = walk(tree, road) else { return };
@@ -53,7 +57,7 @@ pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken, rule: Ru
         };
     }
     // **末段是叶子**：没有许可（`Permit::Unset`）＋ **不留主人**（`None`）——与
-    // `/svc/principal/{ask,set}` 与 `/svc/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
+    // `/svc/sys/principal/{ask,set}` 与 `/svc/sys/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
     // 都取得回，而"改这一格"不归谁。
     match tree.land(at, last, leaf, Permit::Unset, None) {
         Ok(id) => {
@@ -63,7 +67,11 @@ pub(super) fn plate(tree: &mut Operator, road: &[Name], leaf: PieToken, rule: Ru
             // "没记许可"，即这一刀之前的行为。
             if let Rule::Root = rule {
                 match tree.land(at, last, leaf, Permit::Trunk(PrincipalId::ROOT), None) {
-                    Ok(_) => debug!("operator: plate rule root {} id={}", last.as_str(), id.get()),
+                    Ok(_) => debug!(
+                        "operator: plate rule root {} id={}",
+                        last.as_str(),
+                        id.get()
+                    ),
                     Err(fail) => debug!("operator: plate rule failed {fail:?}"),
                 }
             }

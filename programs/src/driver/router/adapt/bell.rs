@@ -9,9 +9,9 @@
 //! 置着，而本域睡到天荒地老）。故这里直接领：领到空就什么也不做，领到就投递 + 结，
 //! 应铃那一手在 `resident` 里**无条件**做。
 
+use crate::core::lines::Lines;
 use crate::plic::Plic;
 use protocol::debug;
-use crate::core::lines::Lines;
 use protocol::driver::line::frame as lcall;
 
 /// 领干净这一趟铃：每条领到的线投一帧、静音、报过没有、结清。

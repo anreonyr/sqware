@@ -30,15 +30,15 @@
 
 use crate::driver::fail::Fail;
 use crate::program::Died;
-use env::{Name, PieToken, TaskId, Wait};
+use crate::system::board::client as board;
+use crate::system::operator::bridge;
+use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
-use crate::system::board::client as board;
-use crate::system::operator::bridge;
-use protocol::system::operator::client as operator;
 use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -119,7 +119,7 @@ impl Context {
     ///
     /// **这一趟本身住在 `bridge::land`**（`system/operator/bridge.rs`）：名册 / 盟册两处服务、本手、
     /// `uart::desk::plate` 四处逐字同构，量出来的行数见它的照实记。本手只剩两件**本族的事实**：
-    /// 路是**两段** `["svc","drv"]`（[`protocol::driver::SVC`] ＋ [`protocol::driver::DIR`]），
+    /// 路是**一条常量** [`protocol::driver::ROAD`]（`/svc/drv`，三段那一刀之后仍是两段），
     /// 砖的名字就是本域那一段（`me`），以及末尾那几条**判据**。
     ///
     /// **照实记（这一格栽过：把砖的名字也写成了路的一段）**：路是**容器链**，不含那一枚自己的
@@ -148,7 +148,7 @@ impl Context {
         let plated = bridge::land(
             &tree,
             me,
-            &[protocol::driver::SVC, protocol::driver::DIR],
+            &protocol::driver::ROAD,
             mine,
             Permit::Unset,
             &list,
@@ -176,14 +176,11 @@ impl Context {
     /// **它拿一面借来的视图**而不是收走会话：`Context` 持着这条会话（`uart` 那一台还要从它
     /// 编自己那两枚门牌），故 [`operator::Face::from`] 按值取一份视图（树那三格是 `Copy`）。
     pub fn line(&self, line: u32, ms: Wait) -> Result<Line, ()> {
-        let Some([svc, drv]) = protocol::driver::road() else {
-            return Err(());
-        };
-        let Ok(router) = Name::new(ROUTER) else {
-            return Err(());
-        };
+        // 路是**驱动那一族的常量**（`/svc/drv`）接上服务名——一处都不自己拼。
+        let road = protocol::driver::ROAD.try_join(ROUTER).ok_or(());
+        let Ok(road) = road else { return Err(()) };
         let tree = operator::Face::from(&self.session);
-        let entry = tree.tile(&[svc, drv, router], ms).map_err(|_| ())?;
+        let entry = tree.tile(&road, ms).map_err(|_| ())?;
         let entry = entry.token(ms).map_err(|_| ())?;
         Line::occupy(entry, line, ms).map_err(|_| ())
     }

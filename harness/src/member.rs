@@ -5,7 +5,7 @@
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/svc/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/svc/principal/{ask,set}"
+//!   2  FIND "/svc/sys/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/svc/sys/principal/{ask,set}"
 //!      ⇒ 身份服务**两面**的门牌（本台**四面都要**：两侧都要读、都要写）
 //!   3  resolve(self)          ⇒ 本域此刻代表哪个号（装配期绑的那一条）
 //!   4  found() × 2            ⇒ 立两枚盟：号 0 与 1（号由服务发：单调、稠密）
@@ -43,20 +43,21 @@ use programs::Report;
 use alloc::string::String;
 
 use alloc::format;
-use env::{Name, PieToken};
+use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::id::Id;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::{Band, Bloc, Coalition, Face as CoalitionFace};
 use protocol::system::coalition::{CoalitionId, Fail};
+use protocol::system::operator::Fail as TreeFail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::Fail as TreeFail;
+use protocol::system::operator::path::Path;
 use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face as PolicyFace;
 use protocol::system::principal::Fail as PolicyFail;
 use protocol::system::principal::PrincipalId;
+use protocol::system::principal::client::Face as PolicyFace;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -90,22 +91,20 @@ fn main() -> Report<'static> {
     // **同一枚盟要两枚柄**（照实记：这是两面分开的代价）：`Coalition` 那个柄**绑在它来自的那一
     // 面上**（`Face::coalition(id)` 只是把一个宾语固定下来），故 `cset.found()` 拿到的柄
     // `enter` / `leave` 得动，而 `holds` / `members` 要走 `cask.coalition(id)` 那一枚。
-    let (Ok(cdir), Ok(cseg)) = (Name::new(ccall::DIR), Name::new(ccall::NAME)) else {
-        return bail("member: bad coalition name");
-    };
-    let (Ok(cask), Ok(cset)) = (
-        Name::new(ccall::Grant::Ask.name()),
-        Name::new(ccall::Grant::Set.name()),
+    // 盟册那两面的路：**本族常量**接上那一面（问面 / 定面）的名——一处都不自己拼。
+    let (Some(cask), Some(cset)) = (
+        ccall::DIR.try_join(ccall::Grant::Ask.name()),
+        ccall::DIR.try_join(ccall::Grant::Set.name()),
     ) else {
         return bail("member: bad coalition face name");
     };
-    let Some(entry) = find_face(&tree, &[cdir, cseg, cask]) else {
+    let Some(entry) = find_face(&tree, &cask) else {
         return bail("member: no coalition ask face");
     };
     let Ok(cask) = CoalitionFace::of(entry) else {
         return bail("member: bad coalition ask face");
     };
-    let Some(entry) = find_face(&tree, &[cdir, cseg, cset]) else {
+    let Some(entry) = find_face(&tree, &cset) else {
         return bail("member: no coalition set face");
     };
     let Ok(cset) = CoalitionFace::of(entry) else {
@@ -117,22 +116,20 @@ fn main() -> Report<'static> {
     // **两面各找一次**（开面那一刀）：三条"问"的（`Resolve` / `Sire` / `Heir`）在
     // [`Grant::Ask`] 上，四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 [`Grant::Set`]
     // 上；下面每一处按**它问的是哪一类**挑门牌。
-    let (Ok(dir), Ok(segment)) = (Name::new(pcall::DIR), Name::new(pcall::NAME)) else {
-        return bail("member: bad identity name");
-    };
-    let (Ok(ask), Ok(set)) = (
-        Name::new(pcall::Grant::Ask.name()),
-        Name::new(pcall::Grant::Set.name()),
+    // 名册那两面的路：**本族常量**接上那一面（问面 / 定面）的名。
+    let (Some(ask), Some(set)) = (
+        pcall::DIR.try_join(pcall::Grant::Ask.name()),
+        pcall::DIR.try_join(pcall::Grant::Set.name()),
     ) else {
         return bail("member: bad identity face name");
     };
-    let Some(entry) = find_face(&tree, &[dir, segment, ask]) else {
+    let Some(entry) = find_face(&tree, &ask) else {
         return bail("member: no identity ask face");
     };
     let Ok(ask) = PolicyFace::of(entry) else {
         return bail("member: bad identity ask face");
     };
-    let Some(entry) = find_face(&tree, &[dir, segment, set]) else {
+    let Some(entry) = find_face(&tree, &set) else {
         return bail("member: no identity set face");
     };
     let Ok(set) = PolicyFace::of(entry) else {
@@ -238,11 +235,7 @@ fn main() -> Report<'static> {
     // `admit`（`protocol::driver::hub` 的 `bond`）。本台不抢那一份读数。
     let not_chief = c0.admit(me, Wait::AtMost(MS));
     debug!("member: admit(c0)={}", done(not_chief.clone()));
-    {
-        {
-            assert!(matches!(not_chief, Err(Fail::NotChief)))
-        }
-    }
+    assert!(matches!(not_chief, Err(Fail::NotChief)));
     // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
     // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
     let q_in = c0.enter(Wait::AtMost(MS));
@@ -374,7 +367,7 @@ fn main() -> Report<'static> {
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
 /// 故这一手只借它——签名上不再出现那条链。
-fn find_face(tree: &TreeFace, road: &[Name]) -> Option<PieToken> {
+fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
     // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：两格在
     // [`Pane::tile`] 与 [`Tile::token`] 上（旧 `entry_of` 那一趟；本域从前自己抄了一遍）。
     //
@@ -519,4 +512,3 @@ impl Why for PolicyFail {
 fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }
-

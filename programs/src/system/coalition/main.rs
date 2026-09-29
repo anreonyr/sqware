@@ -11,8 +11,8 @@
 
 extern crate programs;
 
-use programs::system::control::service as core;
 use programs::system::coalition;
+use programs::system::control::service as core;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {

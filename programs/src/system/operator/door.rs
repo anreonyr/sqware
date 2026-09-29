@@ -43,7 +43,7 @@ const MS: usize = 1000;
 /// （答"这一位在那枚盟里吗"）。
 ///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
-/// 它不去 `seek("/svc/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
+/// 它不去 `seek("/svc/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
 ///
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Permit::Among`] 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
@@ -158,7 +158,7 @@ impl Facts for Court<'_> {
 /// （[`Operator::permit`](super::core::Operator::permit) 答出来的那一句）。
 ///
 /// **装配期根本不在门禁这条轴上**：principal 挂自己那两枚门牌那一趟（`part /svc` ＋
-/// `part /svc/principal` ＋ 两处 `land`）发生在它自己的 `serve()` 里，而本域**认下它的门牌**与
+/// `part /svc/sys/principal` ＋ 两处 `land`）发生在它自己的 `serve()` 里，而本域**认下它的门牌**与
 /// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
 /// 身份**。门禁若在
 /// 那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前拿到
@@ -176,22 +176,22 @@ impl Facts for Court<'_> {
 ///   /svc/drv/router   被 5 位客人取（三台驱动 ＋ guest ＋ lodger）   ⇒ 每格都是"谁都能取"
 ///   /svc/drv/uart/rx  被 2 位（uart 自己那一趟自证 ＋ 控制台那位）
 ///   /svc/drv/rtc      被 2 位（rtc 自己那一趟自证 ＋ sleeper）
-///   /svc/control     被 **1 位**：probe-control
+///   /svc/sys/control     被 **1 位**：probe-control
 ///   其余都是 probe_rule 自己那几格（四条变体的正负证）
 /// ```
 ///
-/// **第二次普查（许可写进生产，读数一条都不变）**：给 `/svc/principal/set` 临时写上"谁都不许"
+/// **第二次普查（许可写进生产，读数一条都不变）**：给 `/svc/sys/principal/set` 临时写上"谁都不许"
 /// （`Permit::Trunk(PrincipalId::new(usize::MAX))`）⇒ `derive(set,p)=19` 与 `found(set)=3` 照旧
 /// `Ok`、6/6 boot 照旧过。原因：门禁护的是**从树上取这一格**（`find` / `land` / `trim`），而各域
 /// 那几枚入口是**在门禁架起之前**由装配者随 `Hatch` 交到手里的（"装配次序即契约"的题中之义）。
 ///
-/// 于是"运行时才取"的格只剩两类——第二类**后来有了一段真规矩**（`/svc/control` 拆面那一刀，
+/// 于是"运行时才取"的格只剩两类——第二类**后来有了一段真规矩**（`/svc/sys/control` 拆面那一刀，
 /// 见下表那一行）：
 ///
 /// | 那一格 | 谁在取 | 为什么写不了 |
 /// |---|---|---|
 /// | 设备格（`/svc/drv/*`） | 每格 2～5 位（三台驱动 ＋ 控制台 / 房客 / 客） | **没有一位名字可写**——见下表 |
-/// | `/svc/control` | 唯一一位：`probe-control` | ——**已了**：`/svc/control` 拆成四面（`state` / `mint` / `start` / `stop`）之后，规矩只落在**定面**那三格上（`Trunk(ROOT)`），**问面照旧公开** ⇒ 那台探针的正证保住，而它取那三面各答 `Denied`（实测）|
+/// | `/svc/sys/control` | 唯一一位：`probe-control` | ——**已了**：`/svc/sys/control` 拆成四面（`state` / `mint` / `start` / `stop`）之后，规矩只落在**定面**那三格上（`Trunk(ROOT)`），**问面照旧公开** ⇒ 那台探针的正证保住，而它取那三面各答 `Denied`（实测）|
 ///
 /// **四种规矩各自要什么号、今天谁生得出**（这一张是全仓读出来的，不是猜的）：
 ///
@@ -208,17 +208,12 @@ impl Facts for Court<'_> {
 ///
 /// 故这一轴今天**在探针上四条正负证齐全**（`harness/src/probe_rule.rs` 与
 /// `probe_rule_other.rs`：`Trunk` / `Bough` / `Among` / `Opener` 各一正一负），而**生产里的第一位
-/// 选择者是 control 那三面**（`/svc/control/{mint,start,stop}` 各带 `Permit::Trunk(ROOT)`：
+/// 选择者是 control 那三面**（`/svc/sys/control/{mint,start,stop}` 各带 `Permit::Trunk(ROOT)`：
 /// 拆面之后规矩落在定面、问面照旧公开；实测见 `harness/src/probe_control.rs`）。
 ///
 /// **照实记（`part` 不过这一关）**：`part` 收的是**坐标**，那一格可能刚存在、可能是一块 `Pane`
 /// （[`Permit::Opener`] 对 `Pane` 答"判不了"）——它该过的是「改」那一轴，那一轴已经过了。
-pub(super) fn may(
-    tree: &Operator,
-    coord: Coord,
-    who: TaskId,
-    permit: Permit,
-) -> Code {
+pub(super) fn may(tree: &Operator, coord: Coord, who: TaskId, permit: Permit) -> Code {
     if coord.roster.is_none() {
         return Code::Ok;
     }
@@ -226,5 +221,12 @@ pub(super) fn may(
         debug!("operator: door has no face");
         return Code::Ok;
     };
-    verdict(&Court { session: &session, tree }, who, permit)
+    verdict(
+        &Court {
+            session: &session,
+            tree,
+        },
+        who,
+        permit,
+    )
 }

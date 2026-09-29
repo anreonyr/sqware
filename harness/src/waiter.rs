@@ -41,9 +41,9 @@ use programs::Reason;
 use env::HoleDir;
 use env::Mark;
 use env::PieToken;
+use protocol::debug;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie, TolePie};
-use protocol::debug;
 
 #[programs::entry]
 fn main() -> Reason {

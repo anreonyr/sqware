@@ -47,10 +47,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 
     // 域名词：`MemoryFail` → `memory`。
     let full = name.to_string();
-    let domain = full
-        .strip_suffix("Fail")
-        .unwrap_or(&full)
-        .to_lowercase();
+    let domain = full.strip_suffix("Fail").unwrap_or(&full).to_lowercase();
 
     let mut idents = Vec::new();
     let mut codes = Vec::new();

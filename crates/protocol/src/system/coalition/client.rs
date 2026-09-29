@@ -29,7 +29,7 @@ use env::Wait;
 use env::{PieToken, TaskId};
 use runtime::env::mail;
 
-use super::frame::{self, CoalitionId, Fail, Window, BACK};
+use super::frame::{self, BACK, CoalitionId, Fail, Window};
 use crate::communication::establish;
 use crate::communication::receiver::Receiver;
 

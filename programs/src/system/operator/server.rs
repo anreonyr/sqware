@@ -34,12 +34,12 @@ use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::operator as ocall;
-use protocol::system::operator::grant::grant_of;
 use protocol::system::operator::Grant;
+use protocol::system::operator::grant::grant_of;
 
+use crate::program::operator::E_TREE;
 use crate::system::control::READY_MS;
 use crate::system::control::service::Start;
-use crate::program::operator::E_TREE;
 use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::system::operator::core::Operator;
 
@@ -194,12 +194,7 @@ fn settle(
         };
         match rec {
             // **装配者要本域立一条路**。
-            ocall::TipIn::Plate {
-                road,
-                count,
-                leaf,
-                rule,
-            } => plate(tree, &road[..count], leaf, rule),
+            ocall::TipIn::Plate { road, leaf, rule } => plate(tree, &road, leaf, rule),
             // **一双眼睛**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交
             // 进来（装配者只递号）；从这里往后门禁问得动身份（认那一手在 [`super::door`]）。
             ocall::TipIn::Coord { who, eyes } => match eyes {
@@ -247,19 +242,14 @@ fn settle(
 ///
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
-fn serve_one(
-    tree: &mut Operator,
-    guest: Guest,
-    coord: Coord,
-    buf: &mut [u8],
-) {
+fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) {
     let Some(ask) = guest.ask() else {
         return;
     };
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
-    let decoded = Receiver::<ocall::Req<'_>>::from_token(ask)
+    let decoded = Receiver::<ocall::Req>::from_token(ask)
         .recv(buf, Wait::POLL)
         .ok();
     let grant = grant_of(mark_of(ask));

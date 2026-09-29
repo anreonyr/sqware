@@ -97,5 +97,5 @@ pub mod frame;
 pub mod client;
 
 // 形、据**转出**（`crate::system::supply::{frame,core}` 照旧解析）。
-pub use frame::Fail;
 pub use crate::system::supply::frame::{BOOT, OP_SUPPLY, ORDER_CAP, REPLY_CAP, WANT_MAX};
+pub use frame::Fail;

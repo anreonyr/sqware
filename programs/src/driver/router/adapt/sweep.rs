@@ -11,11 +11,11 @@
 //! ⇒ 本域被叫醒、`alive` 答不出 ⇒ `router: vacate line=1`。链条本身是
 //! `cull::seal_owned` → `messenger::wipe` → 组键。
 
+use crate::core::lines::Lines;
 use crate::plic::Plic;
 use env::HoleDir;
-use protocol::debug;
-use crate::core::lines::Lines;
 use protocol::communication::establish::Endpoint;
+use protocol::debug;
 use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 

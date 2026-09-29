@@ -12,22 +12,13 @@
 //! 原先散在装配那一趟里；它们问的是名册的语义，故收进 [`bridge`] 那一间。
 //!
 //! **照实记（`mount` 那一份是开面那一刀来的，回炉那一刀又收了它）**：这一族从前**只有一枚
-//! 门牌**（`/svc/principal` 那一格本身就是它），故"坐标与铸"只有两句、不必成文件。开面之后是
+//! 门牌**（`/svc/sys/principal` 那一格本身就是它），故"坐标与铸"只有两句、不必成文件。开面之后是
 //! **两枚门牌 ＋ 两段末名**，"坐标与铸"因此成了文件（与另外三族同形）。而回炉那一刀量了一件事：
 //! 四族那四份 `mount.rs` 里，"铸入口"那一手**逐字同构**（差族型与错误字面量）⇒ 它收进
-//! [`crate::system::mount::entry`]；剩下的只有这条 `SEGMENT`（见下面那一格）。
+//! [`crate::system::mount::entry`]；本族那一段路住协议侧（`pcall::DIR`），本处不再留 `SEGMENT`。
 
 //! **照实记（`core` 是残枝那一刀从 protocol 搬来的）**：名册与谱系那两张表原先住
 //! `crates/protocol/src/system/principal/core.rs`——读者只有本域那一枚线程，故回这里。
-
-use protocol::system::principal as pcall;
-
-/// **那一段目录的名字**（`/svc/principal` 底下那一段，也即 `/svc/principal/{面名}` 的中间那一段）。
-///
-/// **它为什么住这里**（照实记：回炉那一刀把 `mount.rs` 整份收了）：那一段名字是**这一族自己的
-/// 事实**，而"铸入口"那一手四族逐字同构、已收进 [`crate::system::mount::entry`]；一份文件只剩
-/// 一条 `const` 就挣不来一个文件。名字的唯一来源在协议那一侧那一格（`pcall::NAME`），这里只引用。
-pub const SEGMENT: &str = pcall::NAME;
 
 pub mod bridge;
 pub mod core;

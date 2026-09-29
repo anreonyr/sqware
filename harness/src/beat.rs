@@ -42,9 +42,9 @@ extern crate programs;
 
 use core::time::Duration;
 
+use protocol::debug;
 use runtime::env::chrono;
 use runtime::env::room;
-use protocol::debug;
 
 /// 每轮要的周期（毫秒）。
 const PERIOD_MS: u64 = 5;
@@ -117,4 +117,3 @@ fn main() {
 fn now_ns() -> u64 {
     chrono::clock()
 }
-

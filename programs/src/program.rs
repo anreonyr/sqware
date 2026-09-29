@@ -326,32 +326,32 @@ impl Setup {
 // runtime / protocol 代码，`crates/image` 进不去。故只由 [`PROGRAMS`] 这一处按 `#[path]` 拉
 // 进来一次——**唯一的声明点**。
 
-#[path = "root/program.rs"]
-pub mod root;
-#[path = "system/program.rs"]
-pub mod system;
-#[path = "system/operator/program.rs"]
-pub mod operator;
-#[path = "system/principal/program.rs"]
-pub mod principal;
-#[path = "system/coalition/program.rs"]
-pub mod coalition;
-#[path = "system/hub/program.rs"]
-pub mod hub;
 #[path = "user/canonical/program.rs"]
 pub mod canonical;
-#[path = "driver/router/program.rs"]
-pub mod router;
-#[path = "driver/uart/program.rs"]
-pub mod uart;
-#[path = "driver/rtc/program.rs"]
-pub mod rtc;
+#[path = "system/coalition/program.rs"]
+pub mod coalition;
 /// harness 那 23 台（**测具**）：它们的身子住隔壁那个 crate，而其中 13 台**由编排域起**
 /// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。
 /// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 23 份：
 /// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
 #[path = "decl/harness.rs"]
 pub mod harness;
+#[path = "system/hub/program.rs"]
+pub mod hub;
+#[path = "system/operator/program.rs"]
+pub mod operator;
+#[path = "system/principal/program.rs"]
+pub mod principal;
+#[path = "root/program.rs"]
+pub mod root;
+#[path = "driver/router/program.rs"]
+pub mod router;
+#[path = "driver/rtc/program.rs"]
+pub mod rtc;
+#[path = "system/program.rs"]
+pub mod system;
+#[path = "driver/uart/program.rs"]
+pub mod uart;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`
 /// 按位次算），且各景按 [`Program::scenes`] 过滤 ⇒ 加一台要想清楚放哪。
@@ -387,9 +387,9 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::PROBE_RULE_OTHER,
     &harness::PROBE_LEASE,
     &harness::PROBE_BOUND,
-    // 控制面那位真客人（`/svc/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
+    // 控制面那位真客人（`/svc/sys/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
     &harness::PROBE_CONTROL,
-    // 操作面那一族（`/svc/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
+    // 操作面那一族（`/svc/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。
     &harness::PROBE_OPERATOR_GATE,
     &harness::PROBE_OPERATOR_LAND,

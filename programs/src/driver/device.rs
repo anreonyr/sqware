@@ -19,11 +19,12 @@
 //! **`Nole`（门铃）不走 [`Device`]**：它没有寄存器页，只有一枚号——要它的那一位直接把契里
 //! 那一枚包成 [`NolePie`](runtime::env::mail::NolePie)（见 `driver/router/adapt/boot.rs`）。
 
-use env::{Kind, Name, PieToken, Wait};
 use env::{Access, Policy};
+use env::{Kind, Name, PieToken, Wait};
 use protocol::driver::hub;
 use protocol::driver::hub::Deed;
 use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::path::Path;
 use runtime::core::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 
@@ -74,18 +75,28 @@ impl Hub {
     ///
     /// 失败读数说步名（`"hub"`），号由调用方带（[`Died`]）。
     pub fn find(tree: &TreeFace, died: Died, ms: Wait) -> Result<Hub, Fail> {
-        // **路是 `/svc/hub/<面>`**（两段容器链 ＋ 末段那一枚面）——**不是 `/svc/drv/...`**：
-        // hub 是**服务那一层**里的一位（与驱动平级），故头一段是 `SVC` 而不是驱动那一家两段。
-        let (Ok(svc), Ok(segment), Ok(bond), Ok(list)) = (
-            Name::new(protocol::system::SVC),
-            Name::new(hub::NAME),
-            Name::new(hub::Grant::Bond.name()),
-            Name::new(hub::Grant::List.name()),
-        ) else {
-            return Err(Fail::at(died, "name"));
-        };
-        let bond = face_of(tree, &[svc, segment, bond], died, ms)?;
-        let list = face_of(tree, &[svc, segment, list], died, ms)?;
+        // **路是 `/svc/hub/<面>`**（容器那一段接 `hub` 那一段，末段是那一枚面）——**不是
+        // `/svc/drv/...`**：hub 是**服务那一层**里的一位（与驱动平级），故头一段是 `SVC`
+        // 而不是驱动那一家两段。
+        let hub_road = protocol::system::SVC
+            .try_join(hub::NAME)
+            .ok_or(Fail::at(died, "name"))?;
+        let bond = face_of(
+            tree,
+            &hub_road
+                .try_join(hub::Grant::Bond.name())
+                .ok_or(Fail::at(died, "name"))?,
+            died,
+            ms,
+        )?;
+        let list = face_of(
+            tree,
+            &hub_road
+                .try_join(hub::Grant::List.name())
+                .ok_or(Fail::at(died, "name"))?,
+            died,
+            ms,
+        )?;
         let sensor = mail::unseal_hole(hub::ALIVE_MARK).map_err(|_| Fail::at(died, "hub"))?;
         Ok(Hub { bond, list, sensor })
     }
@@ -119,11 +130,13 @@ impl Hub {
             }
         };
         // 设备那一轴是 `/dev/<类>/<名>`（**顶层那一层**——与 `/svc` 平级，见 `hub::DEV`）。
-        let Ok(axis) = Name::new(hub::DEV) else {
-            return Err(Fail::at(died, "name"));
-        };
+        // 轴那一段是常量（`DEV_ROAD`），类与名来自报文 ⇒ 走运行期那一手（答 `None` 就报步名）。
+        let road = hub::DEV_ROAD
+            .try_join(class.as_str())
+            .and_then(|road| road.try_join(name.as_str()))
+            .ok_or(Fail::at(died, "name"))?;
         let door = tree
-            .tile(&[axis, class, name], ms)
+            .tile(&road, ms)
             .and_then(|tile| tile.token(ms))
             .map_err(|_| Fail::at(died, "tree"))?;
         // **认领打的是那一格上挂着的那一枚**（不是 hub 的门面）：hub 据"哪一枚孔响了"认台。
@@ -139,7 +152,7 @@ impl Hub {
 /// 的那一趟：`tile`（带重试）＋ `token`。
 ///
 /// **它不吞错**：失败一律折 `Fail::at(died, "hub")`（"设备账那两枚面没找着"），由调用方给号。
-fn face_of(tree: &TreeFace, road: &[Name], died: Died, ms: Wait) -> Result<hub::Face, Fail> {
+fn face_of(tree: &TreeFace, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
     let door = tree
         .tile(road, ms)
         .and_then(|entry| entry.token(ms))

@@ -24,6 +24,7 @@
 use env::{NAME_LEN, Name, PAIR_LEN, Pair, PieToken};
 
 use crate::message::Message;
+use crate::system::operator::path::Path;
 
 // ── 三个动作码 ──────────────────────────────────────────────
 
@@ -49,12 +50,12 @@ pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
 
 // ── 设备那一轴在树上的坐标（hub 落、驱动按它找）──────────────────
 
-/// 设备那一轴在树上的头一段：**`dev`**（`/dev/<类>/<名>`）。
+/// **设备那一轴在树上的路**：`/dev`（`/dev/<类>/<名>` 的头一段）。
 ///
 /// **照实记（它为什么不与 `/svc` 同一层）**：`/svc` 底下是**常驻的东西**（各族服务 ＋ 驱动 ＋
 /// 设备账那一台），而 `/dev` 底下是**设备那一本账**（hub 按机器自述落的格）——两者一件件对不上
 /// （一台设备不对应一个域），故各占一层。
-pub const DEV: &str = "dev";
+pub const DEV_ROAD: Path = Path::new("dev");
 
 /// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
 /// （`/dev/boot/{dtb,irq}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的。
@@ -525,7 +526,9 @@ impl Window {
     /// 读它的是**发现那一面**（DSH 那种"现在谁占了什么"），今天还没有那位客人 ⇒ 这一格与
     /// 其它"机制在、客人不在"的格子同类：留在这里，是因为**去掉它掩码就成了读不出来的字段**。
     pub fn held(&self, i: usize) -> bool {
-        self.held.get(i / 8).is_some_and(|b| (b >> (i % 8)) & 1 == 1)
+        self.held
+            .get(i / 8)
+            .is_some_and(|b| (b >> (i % 8)) & 1 == 1)
     }
 }
 

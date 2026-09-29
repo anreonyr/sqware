@@ -22,7 +22,7 @@
 //! 写的判据与读同一条：**一次写 = 一条完整的字**——客人推来的**一条消息**就是要写出去的
 //! 全部字节；本域不拆、不并、不添字（换行由客人补，见 `programs/src/user/canonical/main.rs`）。
 
-use super::{device, ME};
+use super::{ME, device};
 use env::{Access, Kind, Mark, PieToken, Policy, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
@@ -33,8 +33,8 @@ use protocol::debug;
 use protocol::driver;
 use protocol::driver::line::client::Line;
 use protocol::system::board::ENTRY_MARK;
-use protocol::system::operator::client as operator;
 use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
 use runtime::env::mail;
 use runtime::env::mail::HolePie;
@@ -95,7 +95,9 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     debug!("{ME}: claimed {}", deed.name.as_str());
     let dev = Device::open(deed.token).map_err(|_| Fail::at(E_UART, "device open failed"))?;
     device::arm_rx(dev.view());
-    let line = ctx.line(deed.line, ms).map_err(|_| Fail::at(E_UART, "line"))?;
+    let line = ctx
+        .line(deed.line, ms)
+        .map_err(|_| Fail::at(E_UART, "line"))?;
     debug!("{ME}: line occupied");
 
     // **牌子最后落**（照实记，量出来的）：牌子一落，客人就找得到它——而本域此前还在起手
@@ -132,7 +134,7 @@ fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     let plated = bridge::land(
         &tree,
         ME,
-        &[driver::SVC, driver::DIR, ME],
+        &driver::ROAD.join(ME),
         Mine::Yes,
         Permit::Unset,
         &list,

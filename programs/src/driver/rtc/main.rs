@@ -46,9 +46,9 @@ use protocol::debug;
 use protocol::system::board::ENTRY_MARK;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
+use rtc as device;
 use runtime::env::mail;
 use runtime::env::unit as utask;
-use rtc as device;
 
 /// 本域要认的那一台：**那一台 `google,goldfish-rtc`**（类 ＋ 独占的读写真）。
 ///
@@ -62,7 +62,7 @@ const ASK: Ask = Ask {
     policy: Policy::ONLY,
 };
 
-/// 本域挂在树上的名字：`/svc/drv/rtc`（[`protocol::driver::DIR`] 之下的那一段，**服务名**）。
+/// 本域挂在树上的名字：`/svc/drv/rtc`（[`protocol::driver::ROAD`] 之下的那一段，**服务名**）。
 const ME: &str = "rtc";
 
 /// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**。

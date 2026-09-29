@@ -8,21 +8,21 @@ use env::Wait;
 
 use alloc::format;
 use env::{HoleDir, Name, PieToken, TaskId};
-use protocol::debug;
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
+use protocol::debug;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
+use crate::system::board::core::Board;
 use protocol::system::board as bcall;
 use protocol::system::board::ENTRY_MARK;
-pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
-use crate::system::board::core::Board;
 use protocol::system::board::Fail;
+pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
 
-use protocol::communication::establish;
 use crate::system::desk::{Desk, DeskFail, Guest};
+use protocol::communication::establish;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 ///
@@ -273,13 +273,7 @@ fn serve_one(
 /// **形状由 [`bcall::Wire`] 说**：退场那一句是**一字节短帧**（没有名字也没有入口），
 /// 报到与摘下两条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同），
 /// 退场的命名那一码（`Lookup`）与它同落点。
-fn answer(
-    board: &mut Board,
-    desk: &mut Desk,
-    ask: bcall::Wire,
-    who: TaskId,
-    swept: usize,
-) -> u8 {
+fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swept: usize) -> u8 {
     let said = match ask {
         bcall::Wire::Evict => {
             // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。

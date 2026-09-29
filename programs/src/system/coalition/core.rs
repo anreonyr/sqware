@@ -266,4 +266,3 @@ impl Coalition {
         c.get() < self.next
     }
 }
-

@@ -18,14 +18,14 @@
 //! **本域不碰原件**：门闩在引导域手里，它直接授进 `target` 那张表，回一段"坐标 + 号"的记录；
 //! 本域只做一次转投（一整段原样推过去）。
 
-use env::{Name, Pair, PAIR_LEN, Wait};
+use env::{Name, PAIR_LEN, Pair, Wait};
 use protocol::debug;
 
-use protocol::system::supply::frame::{WANT_MAX, Want};
-use protocol::system::supply::frame::Kind;
-use protocol::system::supply;
 use env::{Access, Key, Mark, Policy};
-use protocol::driver::hub::{Enroll, ENROLL_MAX};
+use protocol::driver::hub::{ENROLL_MAX, Enroll};
+use protocol::system::supply;
+use protocol::system::supply::frame::Kind;
+use protocol::system::supply::frame::{WANT_MAX, Want};
 
 use crate::system::control::desk::Announce;
 

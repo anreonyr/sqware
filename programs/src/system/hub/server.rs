@@ -8,7 +8,7 @@
 //! ```text
 //!   起手：收**整机物料**（装配者从 `hub` 那条通道推来的一段记录）
 //!         → 开设备树那一页（那一段的第一条就是它）→ 立账（名 / 类 / 线不在这段里，在树里）
-//!         → 开树那条会话 → 找盟册的**定面**（`/svc/coalition/set`）
+//!         → 开树那条会话 → 找盟册的**定面**（`/svc/sys/coalition/set`）
 //!         → 逐类立一枚盟（盟册 `found`）→ 铸三枚面 ＋ 落 `/svc/hub/{bond,list,claim}`
 //!         → 逐类落 `/dev/<类>/<名>`（`permit = Among(c_类)`——"许驱这一类"那条规矩的落点）
 //!   常驻：三枚面 ＋ 每一台那一枚门，一只组等它们——**从哪一枚读到**就是哪一面；
@@ -33,6 +33,7 @@
 
 use alloc::vec::Vec;
 
+use env::HoleDir;
 use env::{Access, Key, Kind, MailFail, Mark, Name, Pair, PieToken, Policy, TaskId, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::{Receiver, RecvFail};
@@ -42,20 +43,19 @@ use protocol::debug;
 use protocol::driver::hub::frame::Wire;
 use protocol::driver::hub::frame::{Said, Window};
 use protocol::driver::hub::{self, Deed, Enroll, Grant};
+use protocol::message::Message;
 use protocol::system::coalition as ccall;
 use protocol::system::coalition::client::Face as League;
+use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::operator::client::Mine;
-use protocol::system::operator::Permit;
+use runtime::PAGE_SIZE;
 use runtime::core::dock::Dock;
 use runtime::core::pile::Pile;
 use runtime::core::port;
-use env::HoleDir;
-use protocol::message::Message;
 use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
-use runtime::PAGE_SIZE;
 
 use crate::program::hub::{CHANNEL, E_HUB, READY};
 use crate::system::control::service::Start;
@@ -129,19 +129,20 @@ pub fn serve() -> Result<(), Start> {
         // **`claim` 那一枚是"正本"**（照实记）：认领真正打的是**每一台那一格**上的孔
         // （`/dev/<类>/<名>`），而这一枚是**发现入口与权柄边界**——它响的时候本域答 `Unknown`
         // （这一枚孔不指任何一台，见 [`turn`]）。它照样要落：这一族三面一条路。
-        let (bond, bond_name) = mount::entry(Grant::Bond.mark(), Grant::Bond.name())
-            .map_err(|_| Start::Tree(E_HUB))?;
-        let (list, list_name) = mount::entry(Grant::List.mark(), Grant::List.name())
-            .map_err(|_| Start::Tree(E_HUB))?;
+        let (bond, bond_name) =
+            mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
+        let (list, list_name) =
+            mount::entry(Grant::List.mark(), Grant::List.name()).map_err(|_| Start::Tree(E_HUB))?;
         let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
             .map_err(|_| Start::Tree(E_HUB))?;
-        let (Ok(svc), Ok(segment)) = (Name::new(protocol::system::SVC), Name::new(hub::NAME)) else {
-            return Err(Start::Tree(E_HUB));
-        };
+        // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
+        let hub_road = protocol::system::SVC
+            .try_join(hub::NAME)
+            .ok_or(Start::Tree(E_HUB))?;
         let plated = bridge::land(
             &tree,
             "hub",
-            &[svc.as_str(), segment.as_str()],
+            &hub_road,
             Mine::No,
             Permit::Unset,
             &[
@@ -151,15 +152,16 @@ pub fn serve() -> Result<(), Start> {
             ],
             Wait::AtMost(MS),
         );
-        if plated.len() != 3 || plated.iter().any(|one| one.land.is_err() || one.find.is_err()) {
+        if plated.len() != 3
+            || plated
+                .iter()
+                .any(|one| one.land.is_err() || one.find.is_err())
+        {
             return Err(Start::Tree(E_HUB));
         }
 
         // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 `Among(c_类)`——"许驱这一类"那条规矩的落点。
         //     名字取自册（`doors`），故"这一类落哪几台"与账是同一份事实。
-        let Ok(axis) = Name::new(hub::DEV) else {
-            return Err(Start::Tree(E_HUB));
-        };
         for class in &classes {
             let Some(coalition) = ledger.coalition_of(*class) else {
                 return Err(Start::Tree(E_HUB));
@@ -168,20 +170,22 @@ pub fn serve() -> Result<(), Start> {
                 .doors(*class)
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
-            let Ok(segment) = Name::new(class.as_str()) else {
-                return Err(Start::Tree(E_HUB));
-            };
+            let road = hub::DEV_ROAD
+                .try_join(class.as_str())
+                .ok_or(Start::Tree(E_HUB))?;
             let plated = bridge::land(
                 &tree,
                 "hub",
-                &[axis.as_str(), segment.as_str()],
+                &road,
                 Mine::No,
                 Permit::Among(coalition),
                 &doors,
                 Wait::AtMost(MS),
             );
             if plated.len() != doors.len()
-                || plated.iter().any(|one| one.land.is_err() || one.find.is_err())
+                || plated
+                    .iter()
+                    .any(|one| one.land.is_err() || one.find.is_err())
             {
                 return Err(Start::Tree(E_HUB));
             }
@@ -265,7 +269,6 @@ fn turn(
         mail::reserve(back),
         Ok((_vestor, owner, mark)) if owner == from && mark == hub::BACK_MARK
     ) {
-
         // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
@@ -278,9 +281,15 @@ fn turn(
     let _ = match (mine, ask) {
         (Grant::Bond, Wire::Bond(class)) => bond(ledger, league, class, from, back),
         (Grant::List, Wire::List(class, from_index)) => list(ledger, class, from_index, back),
-        (Grant::Claim, Wire::Claim { kind, access, policy, sensor }) => {
-            claim(ledger, token, from, sensor, kind, access, policy, back)
-        }
+        (
+            Grant::Claim,
+            Wire::Claim {
+                kind,
+                access,
+                policy,
+                sensor,
+            },
+        ) => claim(ledger, token, from, sensor, kind, access, policy, back),
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
         _ => send_status(plates, token, mine, hub::BAD, back),
     };
@@ -518,20 +527,15 @@ fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
         .find(|pair| pair.key() == Some(key))
 }
 
-/// 找**盟册的定面**（`/svc/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着。
+/// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着。
 ///
 /// **带重试**：盟册排在前面，但"先起"与"上树"不是同一步。那一趟（译号带重试 ＋ 取那一枚）在
 /// [`TreeFace::tile`] 上。
 fn find_league(tree: &TreeFace) -> Option<League> {
-    let (Ok(dir), Ok(segment), Ok(leaf)) = (
-        Name::new(ccall::DIR),
-        Name::new(ccall::NAME),
-        Name::new(ccall::Grant::Set.name()),
-    ) else {
-        return None;
-    };
+    // 路是**盟册那一族的常量**（`/svc/sys/coalition`）＋ 那一面（定面）的名——一处都不自己拼。
+    let road = ccall::DIR.try_join(ccall::Grant::Set.name())?;
     let door = tree
-        .tile(&[dir, segment, leaf], Wait::AtMost(MS))
+        .tile(&road, Wait::AtMost(MS))
         .ok()?
         .token(Wait::AtMost(MS))
         .ok()?;

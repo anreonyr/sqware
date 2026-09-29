@@ -18,7 +18,7 @@
 //!
 //! # 门牌（三块都落）
 //!
-//! 驱动的门牌挂 `protocol::system::operator` 的 **`/svc/drv`**（`protocol::driver::DIR`）：名字用
+//! 驱动的门牌挂 `protocol::system::operator` 的 **`/svc/drv`**（[`protocol::driver::ROAD`]）：名字用
 //! **服务名**（`router` / `uart` / `rtc`，与装配表、日志同一个名），**按名找服务走树**；板留着
 //! 管生死（编排域监督的唯一事件源是板那条死亡道）。
 //!
@@ -143,7 +143,7 @@
 //! **照实记（"落门牌"那一手反倒回来了，task-2 那一刀）**：同一趟里的**上树组合**
 //! （`plate`：分目录 → 落门牌 → 查回来 → 按号问名）已从协议层**下移到这里**
 //! （[`context::Context::plate`]）——它是**驱动族那一段路的装配 recipe**（`dir` 恒为
-//! [`protocol::driver::DIR`]），而唯一的实现消费者是 [`context::Context::join`]（`router`
+//! [`protocol::driver::ROAD`]），而唯一的实现消费者是 [`context::Context::join`]（`router`
 //! 的起手经 `Context` 走同一手）。故本目录不再只留"设备面那一半"：设备面 ＋ 这一段装配
 //! recipe 同住 `context`，协议层只剩它调的四手。
 

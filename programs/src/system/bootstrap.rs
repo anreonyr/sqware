@@ -18,8 +18,8 @@ use env::Mark;
 use env::Wait;
 use protocol::communication::establish::{self, Endpoint};
 
-use protocol::system::supply::frame::{Kind, Want};
 use protocol::system::supply;
+use protocol::system::supply::frame::{Kind, Want};
 use runtime::core::dock::Dock;
 use runtime::core::port::{Access, Policy};
 use runtime::env::mail::PolePie;

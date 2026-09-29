@@ -74,7 +74,9 @@ pub fn run(console: &Console) {
         if got {
             continue;
         }
-        let Ok(n) = console.rx.pull(&mut buf) else { return };
+        let Ok(n) = console.rx.pull(&mut buf) else {
+            return;
+        };
         if !eat(&mut d, &buf[..n], &mut out) {
             quit = true;
         }

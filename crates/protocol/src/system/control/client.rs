@@ -19,7 +19,7 @@
 //!
 //! **没有会话可选装**：这一面不另铸一条路、不定泊位——门牌自己就是那条路（同 rtc / principal
 //! 那两面）。**照实记（泊位那一格今天没有消费者）**：从前挂载者要"自己给自己那棵树上树"，
-//! 故要一条会话（第一个消费者就是那一版）；今天"挂到 `/svc/control`"由**持树者在自己核里落**
+//! 故要一条会话（第一个消费者就是那一版）；今天"挂到 `/svc/sys/control`"由**持树者在自己核里落**
 //! （装配者只递入口与两段名字，见 `programs/src/system/mod.rs::Assembly::mount_control`），
 //! 这一面**一处会话都
 //! 不开**。故 [`BERTH`] 连同它那两格记号（[`frame::LINK`] / [`frame::ASK_MARK`]）今天只剩
@@ -35,8 +35,8 @@ use crate::communication::establish;
 use crate::communication::receiver::Receiver;
 use crate::communication::session::Berth;
 
-use super::frame::{self, State, BACK};
 use super::Fail;
+use super::frame::{self, BACK, State};
 
 /// **这条路叫什么**：泊位那一格（[`frame::LINK`] = `control`）＋ 问话孔那一格
 /// （[`frame::ASK_MARK`]）。

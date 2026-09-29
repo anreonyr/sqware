@@ -20,10 +20,10 @@
 //!
 //! **本文件不管往树上立路**：那是装配者那一趟的事（组路在 `Assembly::mount_control` /
 //! `mount_grants`，递上去在 [`Tree::plate`](crate::system::operator::bridge::Tree::plate)，
-//! 落由持树者自己走）。各族那一段目录名（`SEGMENT`）归各族自己的 `mod.rs`——它是**那一族的事实**。
+//! 落由持树者自己走）。各族那一段路归**协议侧那一族的 `DIR`**（`/svc/sys/<族>`）——装配侧只引它。
 
-use env::{Name, PieToken};
 use env::Mark;
+use env::{Name, PieToken};
 use runtime::env::mail;
 
 /// **铸某一面的待客入口**，并交出它**自己那一段名字**（`/svc/{族}/{面名}` 的末段）。

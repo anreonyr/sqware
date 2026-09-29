@@ -50,7 +50,14 @@ pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
     let Ok(name) = Name::new(me) else {
         return (bcall::BAD, entry);
     };
-    match register(session.talk, &session.link, session.host, name, entry, millis) {
+    match register(
+        session.talk,
+        &session.link,
+        session.host,
+        name,
+        entry,
+        millis,
+    ) {
         Ok(code) => (code, entry),
         Err(_) => (bcall::BAD, entry),
     }

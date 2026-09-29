@@ -55,7 +55,12 @@ impl Name {
     };
 
     /// 由字符串构造（校验失败即拒绝，不截断）。
-    pub fn new(s: &str) -> Result<Name, NameError> {
+    ///
+    /// **`const`**（照实记：树上的"路"从这一格起）：一条路（`protocol::system::operator::Path`）
+    /// 是**常量**——`/svc/sys/principal` 那种坐标要在 `const` 里造出来，故这一手必须是
+    /// `const fn`。代价是那两个容器方法（`contains` /
+    /// `copy_from_slice`）不能用（它们不是 `const`）：改成手写循环，等价、无分配。
+    pub const fn new(s: &str) -> Result<Name, NameError> {
         let b = s.as_bytes();
         if b.is_empty() {
             return Err(NameError::Empty);
@@ -63,11 +68,15 @@ impl Name {
         if b.len() >= NAME_LEN {
             return Err(NameError::TooLong);
         }
-        if b.contains(&0) {
-            return Err(NameError::Nul);
-        }
         let mut bytes = [0u8; NAME_LEN];
-        bytes[..b.len()].copy_from_slice(b);
+        let mut i = 0;
+        while i < b.len() {
+            if b[i] == 0 {
+                return Err(NameError::Nul);
+            }
+            bytes[i] = b[i];
+            i += 1;
+        }
         Ok(Name { bytes })
     }
 
@@ -113,21 +122,30 @@ impl Name {
     ///
     /// 判据与 [`Name::from_bytes`] 逐条相同（非空、`< NAME_LEN`、无 NUL、UTF-8），
     /// 只是"NUL 之后必须全零"这一条没有了——帧里没有 NUL 之后。
-    pub fn from_slice(s: &[u8]) -> Result<Name, NameError> {
+    ///
+    /// **`const`**（与 [`Name::new`] 同一句照实记）：`operator::Path::new` 在 `const` 里按 `/`
+    /// 切段，
+    /// 切出来的每一段都经这一手校验（`from_utf8` 自 1.63 起就是 `const`，故 UTF-8 那一问不动）。
+    pub const fn from_slice(s: &[u8]) -> Result<Name, NameError> {
         if s.is_empty() {
             return Err(NameError::Empty);
         }
         if s.len() >= NAME_LEN {
             return Err(NameError::TooLong);
         }
-        if s.contains(&0) {
-            return Err(NameError::Nul);
-        }
-        if core::str::from_utf8(s).is_err() {
-            return Err(NameError::BadUtf8);
-        }
         let mut bytes = [0u8; NAME_LEN];
-        bytes[..s.len()].copy_from_slice(s);
+        let mut i = 0;
+        while i < s.len() {
+            if s[i] == 0 {
+                return Err(NameError::Nul);
+            }
+            bytes[i] = s[i];
+            i += 1;
+        }
+        match core::str::from_utf8(s) {
+            Ok(_) => {}
+            Err(_) => return Err(NameError::BadUtf8),
+        }
         Ok(Name { bytes })
     }
 

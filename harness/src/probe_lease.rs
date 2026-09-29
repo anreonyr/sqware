@@ -32,17 +32,18 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
-use protocol::system::operator::Permit;
-
 
 use env::Name;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域要落的那一格：`/svc/lease`——**声明归自己**，随后本域就死。
-const DIR: &str = protocol::system::SVC;
+/// **容器那一段那一条路**（`/svc`）——那一段名字**只在协议那一侧说**；本台只用它一个末段
+/// （`file_name()`，std 同形），故取名字那一手在运行期做（`file_name` 不是 `const`）。
+const DIR: protocol::system::operator::Path = protocol::system::SVC;
 const ME: &str = "lease";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -68,7 +69,7 @@ fn main() -> Report<'static> {
     // 两问，那条线上的裸孔一个都不用（从前那行 `&session.link, session.talk, session.host`
     // 因此整行退场）⇒ 交给 [`TreeFace::of`]（吃所有权），两问从"四格参数"变成面上的方法。
     let tree = TreeFace::of(session);
-    let (Ok(dir), Ok(me)) = (Name::new(DIR), Name::new(ME)) else {
+    let (Some(dir), Ok(me)) = (DIR.file_name().copied(), Name::new(ME)) else {
         return bail("probe-lease: bad name");
     };
     // `/svc` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——
@@ -108,4 +109,3 @@ fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
 }
-

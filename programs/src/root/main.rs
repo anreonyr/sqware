@@ -150,8 +150,10 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 那一枚——它此刻一步都还没跑，真正的认领由下面那一手做（判据同一个记号）。
     //
     // **持有者活到本函数结束**：这一对孔在 `channels` 里（`Endpoint` 落出作用域才放下本端那一枚）。
-    let mut channels = [establish::endpoint(orch, Mark::of(slot.as_str()), Wait::POLL)
-        .map_err(|_| Die::Orch(E_ORCH))?];
+    let mut channels = [
+        establish::endpoint(orch, Mark::of(slot.as_str()), Wait::POLL)
+            .map_err(|_| Die::Orch(E_ORCH))?,
+    ];
     // 放行：**这一刀之后它就跑了**。
     utask::hatch(orch).map_err(|_| Die::Orch(E_ORCH))?;
     // **等它就绪 = 认下它交回的那一枚孔**（它那一条通道的凭据）。认不到 ⇒ 这条服务没起来

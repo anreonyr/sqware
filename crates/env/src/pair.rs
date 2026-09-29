@@ -16,9 +16,9 @@
 //! `token = 0` 是无效哨兵（`PieToken` 的约定），故有效记录恒有非零 token；坐标的判别号
 //! 不认识 ⇒ [`Pair::key`] 答 `None`（记录判废）。
 
+use crate::PieToken;
 use crate::key::{KEY_LEN, Key};
 use crate::wire::Field;
-use crate::PieToken;
 
 /// 一条记录的字面字节数（`KEY_LEN` + 8）。
 pub const PAIR_LEN: usize = KEY_LEN + size_of::<usize>();

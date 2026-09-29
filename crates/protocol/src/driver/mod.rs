@@ -82,18 +82,17 @@
 pub mod hub;
 pub mod line;
 
-use env::Name;
+use crate::system::operator::path::Path;
 
 /// 驱动族那条路在树上的**头一段**：`/svc`（[`crate::system::SVC`]——一处给）。
 ///
 /// **照实记（`/device` → `/svc/drv` 那一刀）**：驱动那一族原先自占一块顶层的 Pane
 /// （`/svc/drv`），而"服务那一层"（`/svc`，含设备账那一台）与它平级。用户裁定的是：
-/// **常驻的东西都挂在 `/svc` 底下**（`/svc/{operator,principal,coalition,control,drv,hub}`），
-/// 而 `/dev` 留给**设备那一轴**（hub 落的那本账）。故这一段从"顶层一格"变成"`/svc` 底下的
-/// 一段"，路也从一段变两段（[`DIR`] 与它合起来用）。
-pub const SVC: &str = crate::system::SVC;
+/// **常驻的东西都挂在 `/svc` 底下**（`/svc/{sys/{…},drv,hub}`），而 `/dev` 留给**设备那一轴**
+/// （hub 落的那本账）。故这一段从"顶层一格"变成"`/svc` 底下的一段"。
+pub const SVC: Path = crate::system::SVC;
 
-/// 驱动族在命名树上的那一段：**`/svc/drv`**（路 = `[SVC, DIR]`）。
+/// 驱动族在命名树上的那一段名：**`drv`**（整条路是 [`ROAD`]）。
 ///
 /// 驱动把自己的**服务入口**落在 `/svc/drv/<服务名>` 上（`router` ⇒ `/svc/drv/router`），名字用
 /// **服务名**——与装配表、日志、板上的名字同一个。
@@ -102,13 +101,12 @@ pub const SVC: &str = crate::system::SVC;
 /// ⇒ 只有一次创建机会，故"已经在了"必须当成**要的结果**（不是错误）。
 pub const DIR: &str = "drv";
 
-/// 驱动那一族那两段名字（`/svc` → `/svc/drv`），**按次序**给出来。
+/// **驱动那一族那块窗格在树上的路**（`/svc/drv`）——**一处说全**。
 ///
-/// **它为什么是一手而不是两枚常量**：四个客人都要把这两段拼进一条路
-/// （`guest` / `sleeper` / `lodger` / `probe-owner`），而"次序 ＋ 两段名字合法"每处都要
-/// 判一次——收在这里，客人只写 `let Some([svc, drv]) = driver::road() else { … };`。
+/// **照实记（这一格从前是一手 `road()`）**：四个客人都要把那两段拼进一条路
+/// （`guest` / `sleeper` / `lodger` / `probe-owner`），故它从前是一枚返回 `Option<[Name; 2]>`
+/// 的函数（"次序 ＋ 两段名字合法"每处都要判一次）。今天那件事由 [`Path`] 说：一条常量路，
+/// 客人写 `driver::ROAD.join(ME)`——判据一格都不必再写。
 ///
 /// **路是"容器链"，不含那一枚自己的名字**（`/svc/drv/uart` 那最后一段归客人自己拼）。
-pub fn road() -> Option<[Name; 2]> {
-    Some([Name::new(SVC).ok()?, Name::new(DIR).ok()?])
-}
+pub const ROAD: Path = SVC.join(DIR);

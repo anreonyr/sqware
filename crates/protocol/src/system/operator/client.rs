@@ -49,6 +49,7 @@ use crate::communication::session::{Berth, Session};
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
 use crate::system::operator::frame::Permit;
+use crate::system::operator::path::Path;
 use crate::system::operator::{EntryId, Grant, Listing, Where};
 
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）。
@@ -133,7 +134,7 @@ impl Face {
     /// 一条**从根出发**的路 → 一块窗格（带重试与额度：路那几格可能由别的域落下）。
     ///
     /// 那一格是一枚砖 ⇒ [`Fail::NotAPane`]（`list` 自己那一问就判了）。
-    pub fn pane(&self, road: &[Name], wait: Wait) -> Result<Pane<'_>, Fail> {
+    pub fn pane(&self, road: &Path, wait: Wait) -> Result<Pane<'_>, Fail> {
         let (id, _left) = road_to_id(&self.session, road, wait)?;
         Pane::at(self, id, wait)
     }
@@ -158,7 +159,7 @@ impl Face {
     ///
     /// 带重试那两格是"门牌/格子由别的域落下、本域可能比它先起"那一形；不带那两格是
     /// "我手里已经有一条好路"那一形。要哪一形由调用点的处境说，不由默认值兜。
-    pub fn tile(&self, road: &[Name], wait: Wait) -> Result<Tile<'_>, Fail> {
+    pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'_>, Fail> {
         let id = id_of(&self.session, road, wait)?;
         Ok(Tile { face: self, id })
     }
@@ -173,7 +174,7 @@ impl Face {
     }
 
     /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。**一处实现**：`Pane` / `Rein` 都走它。
-    fn call(&self, ask: ocall::Req<'_>, wait: Wait) -> Result<ocall::Said, Fail> {
+    fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
         call(self.session.talk, &self.session.link, ask, wait)
     }
 }
@@ -272,8 +273,8 @@ impl Rein<'_> {
     }
 
     /// **译**：一条路（**从根写起**）译成号。与 [`Pane::tile`] 同一条腿，只是面不同。
-    pub fn seek(&self, road: &[Name], wait: Wait) -> Result<EntryId, Fail> {
-        let said = self.face.call(ocall::Req::Road(road), wait)?;
+    pub fn seek(&self, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
+        let said = self.face.call(ocall::Req::Road(*road), wait)?;
         said.entry().map_err(map_code)
     }
 
@@ -316,7 +317,7 @@ impl<'a> Pane<'a> {
     fn at(face: &'a Face, id: EntryId, wait: Wait) -> Result<Pane<'a>, Fail> {
         face.call(ocall::Req::List(Where::At(id)), wait)?
             .list()
-        .map_err(map_code)?;
+            .map_err(map_code)?;
         Ok(Pane::of(face, id))
     }
 
@@ -340,13 +341,9 @@ impl<'a> Pane<'a> {
     /// 多一次往返（而多出来那一问的失败会把已经成的 `part` 说成失败——持树者一枚线程，这一格
     /// 是量得出来的代价）。
     pub fn open(&self, name: Name, wait: Wait) -> Result<Pane<'_>, Fail> {
-        let said = self.face.call(
-            ocall::Req::Part {
-                at: self.at,
-                name,
-            },
-            wait,
-        )?;
+        let said = self
+            .face
+            .call(ocall::Req::Part { at: self.at, name }, wait)?;
         let id = said.entry().map_err(map_code)?;
         Ok(Pane::of(self.face, id))
     }
@@ -372,9 +369,14 @@ impl<'a> Pane<'a> {
         wait: Wait,
     ) -> Result<Tile<'_>, Fail> {
         let pie = mail::HolePie::from_token(e);
-        let shipped = port::ship(&pie, self.face.session.host, Access::FETCH | Access::STORE, Policy::VEST)
-            .map(|to| to.seed())
-            .map_err(|_| Fail::Unknown)?;
+        let shipped = port::ship(
+            &pie,
+            self.face.session.host,
+            Access::FETCH | Access::STORE,
+            Policy::VEST,
+        )
+        .map(|to| to.seed())
+        .map_err(|_| Fail::Unknown)?;
         let said = self.face.call(
             ocall::Req::Land {
                 at: self.at,
@@ -437,8 +439,8 @@ impl<'a> Pane<'a> {
     /// **它不做窗格那一判**：要窗格走 [`Face::pane`] / [`Pane::open`]——**判据就是 `list`**。
     /// 这里刻意不补那一问：补了既多一次往返，又会把"这一格是砖"这一件正常的事说成失败
     /// （一枚 `Tile` 对 `list` 答 [`Fail::NotAPane`]）。
-    pub fn tile(&self, road: &[Name], wait: Wait) -> Result<Tile<'_>, Fail> {
-        let said = self.face.call(ocall::Req::Road(road), wait)?;
+    pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'_>, Fail> {
+        let said = self.face.call(ocall::Req::Road(*road), wait)?;
         let id = said.entry().map_err(map_code)?;
         Ok(Tile {
             face: self.face,
@@ -504,15 +506,10 @@ const RETRY_MS: usize = 1;
 /// 函数、收 `say` 与 `link` 两枚：手里有会话的调用点（[`Pane`] / [`Tile`] 那几个方法的实现体，
 /// 以及 `programs/src/driver/context.rs::line` 那类"有会话、拿不出 `Face` 所有权"的地方）
 /// 直接叫它。**同一步，同一个名**。
-fn call(
-    say: PieToken,
-    link: &Endpoint,
-    ask: ocall::Req<'_>,
-    wait: Wait,
-) -> Result<ocall::Said, Fail> {
+fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
     // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    Sender::<ocall::Req<'_>>::from_token(say)
+    Sender::<ocall::Req>::from_token(say)
         .send(ask, Wait::Forever)
         .map_err(|_| Fail::Unknown)?;
     // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
@@ -533,14 +530,15 @@ fn call(
 ///
 /// **`Forever` 扣完还是 `Forever`**（按变体扣账，不折成"很大的毫秒数"）：那道护栏留在类型上，
 /// 不是"实践上等价"。
-fn road_to_id(session: &Session, road: &[Name], wait: Wait) -> Result<(EntryId, Wait), Fail> {
+fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<(EntryId, Wait), Fail> {
     let mut left = wait;
     loop {
         match route(session.talk, &session.link, road, left) {
             Ok(id) => return Ok((id, left)),
             // 还留着额度就睡一拍再来：`Forever` 恒真，`AtMost(0)` 是"不再等"⇒ 落下面原样答码。
             Err(Fail::Unknown) if left != Wait::AtMost(0) => {
-                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
+                let _ =
+                    runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
                 left = match left {
                     // **永久不扣账**（它本来没有额度），也不许被折成 `AtMost(usize::MAX - k)`。
                     Wait::Forever => Wait::Forever,
@@ -554,7 +552,7 @@ fn road_to_id(session: &Session, road: &[Name], wait: Wait) -> Result<(EntryId, 
 
 /// 沿一条路译成号（名字 → 号），**译不出（`UNKNOWN`）就重试**——那几格可能由别的域落下，
 /// 它可能落得比本域晚。答号，或答线上那一格折出来的失败。
-fn id_of(session: &Session, road: &[Name], wait: Wait) -> Result<EntryId, Fail> {
+fn id_of(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
     road_to_id(session, road, wait).map(|(id, _left)| id)
 }
 
@@ -572,13 +570,8 @@ fn id_of(session: &Session, road: &[Name], wait: Wait) -> Result<EntryId, Fail> 
 /// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**。
 ///
 /// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
-fn route(
-    say: PieToken,
-    link: &Endpoint,
-    road: &[Name],
-    wait: Wait,
-) -> Result<EntryId, Fail> {
-    let said = call(say, link, ocall::Req::Road(road), wait)?;
+fn route(say: PieToken, link: &Endpoint, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
+    let said = call(say, link, ocall::Req::Road(*road), wait)?;
     said.entry().map_err(map_code)
 }
 

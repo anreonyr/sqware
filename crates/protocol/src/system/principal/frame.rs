@@ -37,6 +37,8 @@
 use crate::id::Id;
 use env::{Mark, PieToken, TaskId};
 
+use crate::system::operator::path::Path;
+
 // ── 上线的类型（原先住 `core.rs`：残枝那一刀并进来）──────────────
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -106,7 +108,6 @@ pub enum Fail {
     /// **两条转换原语到不了这一格**（它们不分配）：到得了的是 `new`（立根）、`bind`、`derive`。
     Full,
 }
-
 
 // ── 码 ──────────────────────────────────────────────────────
 
@@ -257,14 +258,16 @@ crate::fail_codes! {
 /// 同一张表里就分不出这一枚是哪一面的。
 pub const BACK: Mark = Mark::of("principal-back");
 
-/// 树上那块窗格的名字（门牌的第一段）：`/svc`。
+/// **本族那块窗格在树上的路**：`/svc/sys/principal`（头两段是四族共用的
+/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）。
 ///
-/// **照实记（`sys` → `svc` 那一刀）**：这一段名字搬进了 [`crate::system::SVC`]——三族各写
-/// 一遍同一个字符串，改一处要记得另外两处。
-pub const DIR: &str = crate::system::SVC;
+/// **一处说全**（照实记，用户裁定）：这一族挂在树上哪里，读这一枚就够——装配侧与客侧都引它，
+/// 谁也不自己拼那几段。它从前是"`/svc` 那一段"（三族各写一遍同一个字符串），而"本族那一
+/// 段"要另配 [`NAME`] 才拼得出来 ⇒ 路散在两处。
+pub const DIR: Path = crate::system::DIR.join(NAME);
 
-/// 本服务在树上的那一段名字（门的第二段）：`/svc/principal`——**它自己不是一格**（开面那一刀：
-/// 两枚门牌是它底下那两格 `/svc/principal/{ask,set}`，末段名由
+/// 本服务在树上的那一段名字（门的第二段）：`/svc/sys/principal`——**它自己不是一格**（开面那一刀：
+/// 两枚门牌是它底下那两格 `/svc/sys/principal/{ask,set}`，末段名由
 /// [`Grant::name`](super::grant::Grant::name) 给）。
 pub const NAME: &str = "principal";
 

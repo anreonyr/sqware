@@ -98,9 +98,9 @@ use programs::root::boot;
 use core::time::Duration;
 
 use env::Name;
-use programs::system::control::service as service;
-use protocol::debug;
 use programs::system::control::desk::{Announce, Table};
+use programs::system::control::service;
+use protocol::debug;
 use runtime::env::room;
 
 /// 占核者与打点者的**清单名**（`programs::program::PROGRAMS` 里 `scenes` 含 `load` 的那两行）。
@@ -150,9 +150,7 @@ fn main() -> Reason {
 
     // 校准在铺负荷**之前**：此刻机器是静的，量出来的是"空载那把尺"（只用来定放行间隔）。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
-    debug!(
-        "load: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}"
-    );
+    debug!("load: calib iters_per_ms={iters_per_ms} ms_per_tick={ms_per_tick}");
     let gap = (iters_per_ms.saturating_mul(GAP_US) / 1_000).max(1);
 
     let mut table = Table::new();
@@ -171,9 +169,7 @@ fn main() -> Reason {
         rows += 1;
         tick::spin_iters(gap);
     }
-    debug!(
-        "load: spawned rows={rows} hogs={HOGS} parkers={PARKERS} rounds={ROUNDS}"
-    );
+    debug!("load: spawned rows={rows} hogs={HOGS} parkers={PARKERS} rounds={ROUNDS}");
 
     // 台主自己：每 1 ms 让出一次核（**不许纯空转**，见头注坑 2）。
     let t0 = runtime::env::chrono::ticks();

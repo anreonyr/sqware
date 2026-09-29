@@ -41,10 +41,7 @@ pub fn derive_frame(input: TokenStream) -> TokenStream {
 /// 变体级 `#[ret(T)]` / `#[ret3(T)]` / `#[infallible]` / `#[manual]`）。
 ///
 /// 详见 [`envcall`]。
-#[proc_macro_derive(
-    Envcall,
-    attributes(call, ret, ret3, infallible, manual)
-)]
+#[proc_macro_derive(Envcall, attributes(call, ret, ret3, infallible, manual))]
 pub fn derive_envcall(input: TokenStream) -> TokenStream {
     envcall::expand(input.into()).into()
 }

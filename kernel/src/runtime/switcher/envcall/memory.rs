@@ -45,7 +45,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<Ta
             let ok = HeapWindow::deallocate(&ident.team.space, KVirt::from_raw(addr), size);
             frame.gpr.set_x(
                 Gprs::A0,
-                if ok { 0 } else { MemoryFail::Denied.code() as usize },
+                if ok {
+                    0
+                } else {
+                    MemoryFail::Denied.code() as usize
+                },
             );
         }
         MemoryCall::Mmap { size, at } => {
@@ -83,7 +87,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<Ta
             };
             frame.gpr.set_x(
                 Gprs::A0,
-                if ok { 0 } else { MemoryFail::Denied.code() as usize },
+                if ok {
+                    0
+                } else {
+                    MemoryFail::Denied.code() as usize
+                },
             );
         }
         MemoryCall::Mprotect { addr, size, flags } => {
@@ -95,7 +103,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<Ta
             };
             frame.gpr.set_x(
                 Gprs::A0,
-                if ok { 0 } else { MemoryFail::Denied.code() as usize },
+                if ok {
+                    0
+                } else {
+                    MemoryFail::Denied.code() as usize
+                },
             );
         }
     }

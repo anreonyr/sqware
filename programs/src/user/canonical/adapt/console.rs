@@ -12,7 +12,7 @@
 //! ⇒ 按"已持 `Session` 则用 `Face`"的规则，`main` 把它包成一面交进来（那条线怎么走不再出现在
 //! 签名里）。"名字 → 号 → 入口"那一趟落在 [`Face::tile`] ＋ [`Tile::token`] 上。
 
-use env::{Name, Wait};
+use env::Wait;
 use protocol::driver;
 use protocol::system::operator::client::Face;
 use runtime::env::mail::HolePie;
@@ -34,15 +34,12 @@ pub struct Console {
 /// 找控制台（有界）：任一面的门牌找不到 ⇒ `None`（`main` 据此报
 /// [`E_NO_CONSOLE`](super::E_NO_CONSOLE)）。
 pub fn find(tree: &Face, wait: Wait) -> Option<Console> {
-    let Some([svc, drv]) = driver::road() else {
-        return None;
-    };
-    let (Ok(want), Ok(rx), Ok(tx)) = (Name::new(WANT), Name::new(RX), Name::new(TX)) else {
-        return None;
-    };
+    // 路是**驱动那一族的常量**（`/svc/drv`）接上控制台那一段（`uart`）——一处都不自己拼。
+    let want = driver::ROAD.try_join(WANT)?;
+    let (rx, tx) = (want.try_join(RX)?, want.try_join(TX)?);
     // 两条路各走一趟（译号带重试 ＋ 取那一枚），坐标只在这两句里。
-    let rx_entry = tree.tile(&[svc, drv, want, rx], wait).ok()?;
-    let tx_entry = tree.tile(&[svc, drv, want, tx], wait).ok()?;
+    let rx_entry = tree.tile(&rx, wait).ok()?;
+    let tx_entry = tree.tile(&tx, wait).ok()?;
     let rx = rx_entry.token(wait).ok()?;
     let tx = tx_entry.token(wait).ok()?;
     Some(Console {

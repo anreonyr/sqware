@@ -25,16 +25,12 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
-use protocol::communication::establish::Endpoint;
 use crate::system::control::core::{Fail, Ready, Reaped, admit_start, probe_ready};
 use crate::system::control::desk::{Announce, Service, Slot, State, Table};
+use protocol::communication::establish::Endpoint;
 
 use crate::program::{
-    Died,
-    coalition::E_COALITION,
-    hub::E_HUB,
-    operator::E_TREE,
-    principal::E_PRINCIPAL,
+    Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,
 };
 
 /// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。

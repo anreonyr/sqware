@@ -42,9 +42,9 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::system::operator::path::Path;
 use protocol::system::operator::{EntryId, Fail, Permit};
 
-use env::Name;
 use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -57,8 +57,8 @@ use runtime::env::unit as utask;
 /// （它不是谁的服务格）。这一趟顶的是读口那一枚。
 ///
 /// **照实记（`/sys` → `/svc`、`/device` → `/svc/drv` 那一刀）**：那一段目录从前由
-/// [`driver::DIR`] 一处给（一段路）；今天它是两段（[`driver::SVC`] ＋ [`driver::DIR`]），
-/// 故本台那一条路也从三段变四段。
+/// [`driver::DIR`] 一处给（一段路）；后来它是两段（`/svc` ＋ `/svc/drv`），
+/// 故本台那一条路也从三段变四段；今天那两段收成**一条常量** [`driver::ROAD`]。
 ///
 /// 服务那一格（Pane）。
 const SERVICE: &str = "uart";
@@ -92,14 +92,13 @@ fn main() -> Report<'static> {
     };
     let tree = TreeFace::of(session);
 
-    let (Some([svc, dir]), Ok(service), Ok(me)) = (
-        driver::road(),
-        Name::new(SERVICE),
-        Name::new(ME),
-    ) else {
+    // 路：驱动那一族的常量（`/svc/drv`）接上服务名与砖名——一处都不自己拼。
+    let Some(road) = driver::ROAD
+        .try_join(SERVICE)
+        .and_then(|road| road.try_join(ME))
+    else {
         return bail("probe-owner: bad name");
     };
-    let road = [svc, dir, service, me];
 
     // 二、那枚砖**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
     let Some(before) = wait_id(&tree, &road) else {
@@ -111,8 +110,16 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no entry");
     };
     // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
-    let Some(pane) = wait_pane(&tree, svc, dir, service) else {
+    // 它是**那条路去掉末段**（`parent()`，std 同形）：本手因此不必再念一遍那几段。
+    let Some(pane_road) = road.parent() else {
         return bail("probe-owner: no /svc/drv/uart");
+    };
+    let Some(pane) = wait_pane(&tree, &pane_road) else {
+        return bail("probe-owner: no /svc/drv/uart");
+    };
+    // 那枚砖的名就是**那条路的末段**（`file_name()`，std 同形）——不再单独持一格。
+    let Some(me) = road.file_name().copied() else {
+        return bail("probe-owner: no /svc/drv/uart/rx");
     };
     let land = pane.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
     let land_code = match &land {
@@ -205,14 +212,18 @@ fn main() -> Report<'static> {
 /// 于是这一格的判据（"那一格还在，只是主人不在场 ⇒ 可接手"）当场翻面：存在性答假、格子还被删了。
 /// `Pane::tile` 才是旧 `seek` 的同形（只译号），故这一手用它。
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
-    let (Ok(dir), Ok(me)) = (Name::new(protocol::system::SVC), Name::new("lease")) else {
+    // 路：容器那一段（`/svc`，只在协议那一侧说）接上那一格的名（`lease`）。
+    let road = protocol::system::SVC
+        .try_join("lease")
+        .ok_or(Fail::Unknown)?;
+    let me = *road.file_name().ok_or(Fail::Unknown)?;
+    let Some(dir) = protocol::system::SVC.file_name().copied() else {
         return Err(Fail::Unknown);
     };
-    let road = [dir, me];
     // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
     let root = tree.root();
     let _ = root.open(dir, Wait::AtMost(MS));
-    let Some(sys) = tree.pane(&[dir], Wait::AtMost(MS)).ok() else {
+    let Some(sys) = tree.pane(&protocol::system::SVC, Wait::AtMost(MS)).ok() else {
         return Err(Fail::Unknown);
     };
     let mut left = MS;
@@ -242,28 +253,33 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
 
 /// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
 ///
-/// **照实记（两段 → 三段那一刀）**：驱动那一段路从 `/device`（顶上一层）变成 `/svc/drv`
-/// （`/svc` 底下的一段）⇒ 容器链从两段变三段，本手跟着多一趟。**这一格当场栽过**（实测）：
+/// **照实记（两段 → 三段那一刀，以及"趟数"这件事）**：驱动那一段路从 `/device`（顶上一层）
+/// 变成 `/svc/drv` ⇒ 容器链从两段变三段，那一版的本手要跟着多一趟。**这一格当场栽过**（实测）：
 /// 只把 `dir`（`driver::DIR`）换成新名字、忘了它上面还有 `driver::SVC`，于是本手在
 /// `/drv/uart` 那**另一块** Pane 上落砖——落在一块**没有主人**的新格上，当然不被拒，
 /// `probe-owner` 当场红（`land=ok id=26`，而基线是 `owner rule held`）。
-fn wait_pane<'a>(tree: &'a TreeFace, svc: Name, dir: Name, service: Name) -> Option<Pane<'a>> {
-    // 第一趟：`/svc`（幂等——各族都挂在它下面）。
-    let _ = tree.root().open(svc, Wait::AtMost(MS));
-    let at = tree.pane(&[svc], Wait::AtMost(MS)).ok()?;
-    // 第二趟：`/svc/drv`（幂等——别的驱动也在它下面）。
-    let _ = at.open(dir, Wait::AtMost(MS));
-    let drv = tree.pane(&[svc, dir], Wait::AtMost(MS)).ok()?;
-    // 第三趟：`/svc/drv/uart`（幂等——`uart` 自己已经分出来那块）。
-    let _ = drv.open(service, Wait::AtMost(MS));
-    tree.pane(&[svc, dir, service], Wait::AtMost(MS)).ok()
+///
+/// 今天这一手**不再自己数趟数**：一趟一条路（[`Path`] 自带段数），逐段 `open`（幂等）＋ 最后
+/// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了。
+fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
+    let mut at: Option<EntryId> = None;
+    for seg in road.iter() {
+        let here = match at {
+            Some(id) => Pane::of(tree, id),
+            None => tree.root(),
+        };
+        if let Ok(next) = here.open(*seg, Wait::AtMost(MS)) {
+            at = Some(next.id());
+        }
+    }
+    tree.pane(road, Wait::AtMost(MS)).ok()
 }
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
 ///
 /// **照实记（同上：`Pane::tile` 是旧 `seek` 的同形）**：这一格只要那一枚**号**，不要那一枚
 /// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 `Face::tile`。
-fn wait_id(tree: &TreeFace, road: &[Name]) -> Option<EntryId> {
+fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();
     let mut left = MS;
     loop {

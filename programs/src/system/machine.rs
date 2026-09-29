@@ -191,11 +191,7 @@ impl Plic {
         if !matches!(self.cells, 1 | 2) {
             return None;
         }
-        if node
-            .property("interrupt-parent")
-            .and_then(|p| p.as_usize())
-            != Some(self.phandle)
-        {
+        if node.property("interrupt-parent").and_then(|p| p.as_usize()) != Some(self.phandle) {
             return None;
         }
         let value = node.property("interrupts")?.value;

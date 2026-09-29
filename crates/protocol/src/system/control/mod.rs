@@ -50,8 +50,8 @@
 //!
 //! ```text
 //!   装配期直授   装配者把 control 那枚入口随配给/转授给指定域
-//!   上树         control 把入口挂到 /svc/control（树里已有 /svc/principal/{ask,set} 与
-//!                /svc/coalition/{ask,set} 四处先例）
+//!   上树         control 把入口挂到 /svc/sys/control（树里已有 /svc/sys/principal/{ask,set} 与
+//!                /svc/sys/coalition/{ask,set} 四处先例）
 //!                ⇒ 任何走到树的任务 `operator::Face::entry` 一查就有 ⇒ [`Face::of`] 直接成立
 //! ```
 //!
@@ -73,8 +73,8 @@
 //!   风险落在 `operator::Face::entry` / `Face::room` 那一族（它们的照实记写了同一句）。
 //! - **状态与实例坐标是两件事**：`State::Dead` 与"上一个实例的坐标还在"并存是合法的
 //!   （"起过、现在死了"）——本协议的 `state()` 只读前者。
-//! - **这一面上了树，但门禁只有"已绑身份"那一格**：`/svc/control` 那一格是 `Permit::Unset`
-//!   （与 `/svc/principal/{ask,set}` / `/svc/coalition/{ask,set}` 同一格），故**任何已绑身份的域**都取得回
+//! - **这一面上了树，但门禁只有"已绑身份"那一格**：`/svc/sys/control` 那一格是 `Permit::Unset`
+//!   （与 `/svc/sys/principal/{ask,set}` / `/svc/sys/coalition/{ask,set}` 同一格），故**任何已绑身份的域**都取得回
 //!   入口，进而 `mint` / `start` / `stop` 装配表里任意一台。这不是新开的口子（`doom` 同样没有门禁），
 //!   但它是这一面**原先**的口径，照实写在这里。**这一刀把它收了**：`/sys/control` 拆成四面
 //!   （`state` / `mint` / `start` / `stop`），规矩落在定面那三格上（`Permit::Trunk(ROOT)`，
@@ -85,6 +85,6 @@ pub mod client;
 pub mod frame;
 pub mod grant;
 
-pub use client::{Face, BERTH};
-pub use frame::{Fail, State, ASK_MARK, BACK, DENIED, LINK};
+pub use client::{BERTH, Face};
+pub use frame::{ASK_MARK, BACK, DENIED, DIR, Fail, LINK, NAME, State};
 pub use grant::{Grant, grant_of};

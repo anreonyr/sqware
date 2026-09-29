@@ -7,9 +7,9 @@
 //! ```text
 //!   起手：读自己的 Sire（**只为上板与上树两条会话**——盟无主，之后不落任何字段）
 //!         → 上板（板看得见本域的死）→ 铸门牌**两枚**（两面各一枚）
-//!           两枚都经 LAND 落到树上 `/svc/coalition/{ask,set}`，再逐面 FIND 回来验一遍
+//!           两枚都经 LAND 落到树上 `/svc/sys/coalition/{ask,set}`，再逐面 FIND 回来验一遍
 //!           **只把问面那枚交给持树者**（它只叫 `Amid`；定面留在树上给客人）
-//!         → FIND `/svc/principal/ask`（**带重试**）拿一份身份服务的**问面**门牌
+//!         → FIND `/svc/sys/principal/ask`（**带重试**）拿一份身份服务的**问面**门牌
 //!   常驻：一只组等那两枚 —— **从哪一枚读到**就是哪一面 → 先过名册问"你是谁" → 交给核心 → 答回去
 //! ```
 //!
@@ -23,27 +23,27 @@
 //! [`ccall::DENIED`]）。⇒ **交给持树者的那枚门牌做不出 `Found`**（立一枚盟）——它一辈子只叫
 //! `Amid`。为什么是两面、那一个生产持有者各要哪几条，见 [`ccall::grant`] 的文件头。
 
-use crate::system::control::service::Start;
 use crate::program::coalition::E_COALITION;
+use crate::system::control::service::Start;
 use env::Wait;
 
-use env::{Name, PieToken, TaskId};
-use protocol::debug;
-use protocol::communication::sender::Sender;
-use protocol::communication::session::Session;
 use crate::system::board::client as board;
 use crate::system::carrier::carrier;
-use crate::system::operator::bridge;
-use protocol::system::coalition as ccall;
 use crate::system::coalition::core::Coalition;
 use crate::system::mount;
+use crate::system::operator::bridge;
+use env::{PieToken, TaskId};
+use protocol::communication::sender::Sender;
+use protocol::communication::session::Session;
+use protocol::debug;
+use protocol::system::coalition as ccall;
 use protocol::system::coalition::Fail;
-use protocol::system::operator::client as operator;
 use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face;
 use protocol::system::principal::PrincipalId;
+use protocol::system::principal::client::Face;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
@@ -76,7 +76,7 @@ pub fn serve() -> Result<(), Start> {
         let (set, set_name) = mount::entry(ccall::Grant::Set.mark(), ccall::Grant::Set.name())
             .map_err(|_| Start::Tree(E_COALITION))?;
 
-        // 四、上树：分 `/svc` ＋ 分 `/svc/coalition`、逐面落那两格、再逐面查回来验一遍
+        // 四、上树：分 `/svc` ＋ 分 `/svc/sys/coalition`、逐面落那两格、再逐面查回来验一遍
         //     （同 router / rtc / principal）。
         //
         // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本域此后只要树上那几手
@@ -93,7 +93,7 @@ pub fn serve() -> Result<(), Start> {
         let _ = bridge::land(
             &tree,
             "coalition",
-            &[ccall::DIR, super::SEGMENT],
+            &ccall::DIR,
             Mine::No,
             Permit::Unset,
             &[(ask_name.as_str(), ask), (set_name.as_str(), set)],
@@ -226,15 +226,15 @@ fn answer(
         // **代报名**：两个人要解——发送者（得是盟主）与**这一问点名的那位**（`target` 是 TID，
         // 解名只有本域做得了：它持着名册问面）。两解任一不成 ⇒ 同一格 [`Fail::Unknown`]
         // （"这个 TID 没绑过"就是那一格的原文）。
-        ccall::Wire::Admit(c, target) => match who(roster, from).and_then(|chief| {
-            who(roster, target).map(|t| (chief, t))
-        }) {
-            Ok((chief, t)) => match book.admit(chief, c, t) {
-                Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
+        ccall::Wire::Admit(c, target) => {
+            match who(roster, from).and_then(|chief| who(roster, target).map(|t| (chief, t))) {
+                Ok((chief, t)) => match book.admit(chief, c, t) {
+                    Ok(()) => ccall::Union::One(ccall::Reply::status(ccall::OK)),
+                    Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
+                },
                 Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
-            },
-            Err(fail) => ccall::Union::Status(ccall::fail_to_code(Some(fail))),
-        },
+            }
+        }
         ccall::Wire::Amid(p, c) => {
             match book.amid(p, c) {
                 // "不在"是一句答（`Ok(false)`），"查无此盟"才是这一格。
@@ -266,7 +266,7 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
         .ok_or(Fail::Unknown)
 }
 
-/// 找**身份服务**那份门牌（**问面**那一条）：`"/svc/principal/ask"`，**译不出就再问**（有界）。
+/// 找**身份服务**那份门牌（**问面**那一条）：`"/svc/sys/principal/ask"`，**译不出就再问**（有界）。
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
 /// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，额度 [`MS`]）→ 入口。
@@ -278,19 +278,12 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// 故这一手只借它——`Face` 把 Session 藏在里面，签名上不再出现那条线。
 ///
 /// **要的是名册的「问面」**（开面那一刀）：本域只用 `Resolve`（"这一位此刻代表谁"），而它今天
-/// 落在 `/svc/principal/ask` 那一格上——`/svc/principal` 自己已是那段前缀（一块 `Pane`）。
+/// 落在 `/svc/sys/principal/ask` 那一格上——`/svc/sys/principal` 自己已是那段前缀（一块 `Pane`）。
 fn find_face(tree: &TreeFace) -> Option<PieToken> {
-    let (Ok(dir), Ok(segment), Ok(leaf)) = (
-        Name::new(pcall::DIR),
-        Name::new(pcall::NAME),
-        Name::new(pcall::Grant::Ask.name()),
-    ) else {
-        return None;
-    };
-    tree.tile(&[dir, segment, leaf], Wait::AtMost(MS))
+    // 路是**本族那一族的常量**（`/svc/sys/principal`）＋ 那一面的名——一处都不自己拼。
+    let road = pcall::DIR.try_join(pcall::Grant::Ask.name())?;
+    tree.tile(&road, Wait::AtMost(MS))
         .ok()?
         .token(Wait::AtMost(MS))
         .ok()
 }
-
-
