@@ -9,7 +9,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
@@ -40,7 +40,7 @@ impl Bridge {
         &mut self,
         me: TaskId,
         client: TaskId,
-        name: Name,
+        name: Tag,
         millis: Wait,
         lane: Option<PieToken>,
     ) -> Result<(), &'static str> {
@@ -62,12 +62,12 @@ impl Bridge {
 pub fn attach(
     me: TaskId,
     client: TaskId,
-    name: Name,
+    name: Tag,
     millis: Wait,
     tip: &mut Option<PieToken>,
     lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
-    let link = Name::new(LINK).map_err(|_| "board:name")?;
+    let link = Tag::new(LINK).ok_or("board:name")?;
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 板路的名字，客侧
     //      铸的也是它）。判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源
@@ -167,7 +167,7 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 /// **帧形只有一处**：三项怎么排、各占多宽，全在 `bcall::Tip` 那一对 `store` / `fetch` 里。
 pub(crate) fn tell_guest(
     who: TaskId,
-    name: Name,
+    name: Tag,
     seed: PieToken,
     into: PieToken,
 ) -> Result<(), ()> {

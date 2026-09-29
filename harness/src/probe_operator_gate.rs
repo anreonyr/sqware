@@ -43,7 +43,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::Name;
+use env::Tag;
 use protocol::communication::establish;
 use protocol::communication::session::Session;
 use protocol::debug;
@@ -216,7 +216,7 @@ fn count_under(pane: &Pane<'_>) -> usize {
 
 /// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）。
 fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId {
-    let Ok(spot) = Name::new(name) else {
+    let Some(spot) = Tag::new(name) else {
         panic!("probe-operator-gate: bad spot name");
     };
     let Ok(entry) = mail::unseal_hole(env::Mark::of(mark)) else {

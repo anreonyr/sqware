@@ -97,7 +97,7 @@ use programs::root::boot;
 
 use core::time::Duration;
 
-use env::Name;
+use env::Tag;
 use programs::system::control::desk::{Announce, Table};
 use programs::system::control::service;
 use protocol::debug;
@@ -180,7 +180,7 @@ fn main() -> Reason {
     debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");
 
     for name in PARKER_NAMES.iter().chain(HOG_NAMES.iter()) {
-        if let Ok(name) = Name::new(name) {
+        if let Some(name) = Tag::new(name) {
             let _ = service::stop(&mut table, name);
         }
     }
@@ -197,7 +197,7 @@ fn spawn_one(
     elf: &'static [u8],
     kind: env::ProgramKind,
 ) -> bool {
-    let Ok(name) = Name::new(name) else {
+    let Some(name) = Tag::new(name) else {
         return false;
     };
     if table.register(name, Announce::None).is_err() {

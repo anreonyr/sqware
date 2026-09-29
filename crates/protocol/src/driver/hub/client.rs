@@ -19,7 +19,7 @@
 //! 本端是同一个下一步（这一趟别指望了）。分得开它们的那一格在对端。
 
 use env::{Access, Policy};
-use env::{Kind, Name, PieToken, TaskId, Wait};
+use env::{Kind, PieToken, Tag, TaskId, Wait};
 use runtime::core::port;
 use runtime::env::mail;
 
@@ -56,13 +56,13 @@ impl Face {
     }
 
     /// **报名**：许我驱这一类。**幂等**（已在那一类里答成）。
-    pub fn bond(&self, class: Name, wait: Wait) -> Result<(), Fail> {
+    pub fn bond(&self, class: Tag, wait: Wait) -> Result<(), Fail> {
         let said = self.call::<_, frame::Said>(|back| frame::Bond::of(class, back), wait)?;
         read(said.status)
     }
 
     /// **列册**：从 `from` 起取一窗（越界答空窗——是答案，不是错误）。
-    pub fn list(&self, class: Name, from: u32, wait: Wait) -> Result<frame::Window, Fail> {
+    pub fn list(&self, class: Tag, from: u32, wait: Wait) -> Result<frame::Window, Fail> {
         let window =
             self.call::<_, frame::Window>(|back| frame::ListReq::of(class, from, back), wait)?;
         read(window.status)?;

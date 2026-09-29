@@ -15,7 +15,7 @@
 
 use env::Mark;
 use env::Wait;
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use protocol::message::Message;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -41,13 +41,13 @@ pub const BERTH: Berth = Berth {
 /// 打出来）。挂不上**不是**本域的失败：终端照旧干活，只是"本域死了"那条信号缺席
 /// （见 `programs/src/user/canonical/main.rs`）——故返码、不返 `Result`。
 ///
-/// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`Name`]、经 [`register`]
+/// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`Tag`]、经 [`register`]
 /// 交出去。四处调用点原先各写一遍（`canonical` / `passer` / `guest` / `sleeper`）。
 pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         return (bcall::BAD, PieToken::NONE);
     };
-    let Ok(name) = Name::new(me) else {
+    let Some(name) = Tag::new(me) else {
         return (bcall::BAD, entry);
     };
     match register(
@@ -78,7 +78,7 @@ pub fn register(
     say: PieToken,
     link: &Endpoint,
     board: TaskId,
-    name: Name,
+    name: Tag,
     entry: PieToken,
     millis: Wait,
 ) -> Result<u8, Fail> {

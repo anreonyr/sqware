@@ -21,7 +21,7 @@
 //! **`Deed` 里没有坐标**（`Key`）：区是 hub 自己的账据（它要与树对位），驱动拿到的是"哪一枚门闩
 //! ＋ 哪条线 ＋ 它叫什么"——驱动这一侧一处都不用坐标。
 
-use env::{NAME_LEN, Name, PAIR_LEN, Pair, PieToken};
+use env::{Pair, PieToken, Tag};
 
 use crate::message::Message;
 use crate::system::operator::path::Path;
@@ -128,13 +128,13 @@ crate::fail_codes! {
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Bond {
     pub op: u8,
-    pub class: Name,
+    pub class: Tag,
     pub back: PieToken,
 }
 
 impl Bond {
     /// 编一问（动作码固定 [`BOND`]）。
-    pub fn of(class: Name, back: PieToken) -> Bond {
+    pub fn of(class: Tag, back: PieToken) -> Bond {
         Bond {
             op: BOND,
             class,
@@ -149,7 +149,7 @@ impl Message for Bond {
     const EMPTY: Self::Buf = [0u8; Bond::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     /// 恰好 [`Bond::LEN`] 且动作码是 [`BOND`]，否则读不懂。
@@ -166,14 +166,14 @@ impl Message for Bond {
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ListReq {
     pub op: u8,
-    pub class: Name,
+    pub class: Tag,
     pub from: u32,
     pub back: PieToken,
 }
 
 impl ListReq {
     /// 编一问（动作码固定 [`LIST`]）。
-    pub fn of(class: Name, from: u32, back: PieToken) -> ListReq {
+    pub fn of(class: Tag, from: u32, back: PieToken) -> ListReq {
         ListReq {
             op: LIST,
             class,
@@ -189,7 +189,7 @@ impl Message for ListReq {
     const EMPTY: Self::Buf = [0u8; ListReq::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     fn fetch(bytes: &[u8]) -> Option<ListReq> {
@@ -239,7 +239,7 @@ impl Message for Claim {
     const EMPTY: Self::Buf = [0u8; Claim::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     fn fetch(bytes: &[u8]) -> Option<Claim> {
@@ -254,8 +254,8 @@ impl Message for Claim {
 /// **收进来的一问**（与 control 那一族的 `Wire` 同形）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
-    Bond(Name),
-    List(Name, u32),
+    Bond(Tag),
+    List(Tag, u32),
     Claim {
         kind: u8,
         access: u32,
@@ -311,14 +311,8 @@ impl Wire {
 /// 取同一个数 ⇒ "装不下"这件事在装配者那一步就现形（不是到了 hub 手里才发现少了几台）。
 pub const ENROLL_MAX: usize = 64;
 
-/// 入册那一帧的头：**条数**。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct EnrollHead {
-    pub n: u8,
-}
-
-/// 这一段的定长缓冲：**头 ＋ 上界那么多条记录**（一处求和，同 `supply` 那一族的两个 `_CAP`）。
-pub const ENROLL_CAP: usize = EnrollHead::LEN + PAIR_LEN * ENROLL_MAX;
+/// 这一段的定长缓冲：**最长那一形**（条数那一格 ＋ 上界那么多条记录，同一张表求和）。
+pub const ENROLL_CAP: usize = Enroll::LEN;
 
 /// **入册那一段**：条数 ＋ 那几条记录（[`Pair`] = 坐标 ＋ 那枚门闩**在收方表里**的号）。
 ///
@@ -327,11 +321,18 @@ pub const ENROLL_CAP: usize = EnrollHead::LEN + PAIR_LEN * ENROLL_MAX;
 ///
 /// 段尾那一条恒是"设备树本体"：hub 要先把树读一遍才知道**哪一条是哪一台**（名 / 类 / 线），
 /// 故装配者**先**领树、**先**把它编进这一段（次序即契约，见 `hub/server.rs` 的起手）。
-#[derive(Clone, Copy)]
+///
+/// **照实记（条数那一格是线上那一格）**：它从前分成两处——内存里 `n: usize`、线上另立一枚
+/// `EnrollHead { n: u8 }`；derive 认"一段重复"之后合成一格，那个数在内存与线上是**同一个**。
+#[derive(env::Frame, Clone, Copy)]
 pub struct Enroll {
-    n: usize,
+    n: u8,
+    #[frame(count = n, fill = Pair::NONE)]
     records: [Pair; ENROLL_MAX],
 }
+
+/// **线上一个字节都不许动**：这一段那一形照上一句钉住（`[条数 1B][记录 40B × n]`）。
+const _: () = assert!(Enroll::LEN == 1 + env::PAIR_LEN * ENROLL_MAX);
 
 impl Enroll {
     /// 编一段入册。**条数越界 ⇒ `None`**（调用方按本地失败处置——那是"这台机器比内核那一侧
@@ -343,17 +344,20 @@ impl Enroll {
         }
         let mut held = [Pair::NONE; ENROLL_MAX];
         held.get_mut(..n)?.copy_from_slice(records);
-        Some(Enroll { n, records: held })
+        Some(Enroll {
+            n: n as u8,
+            records: held,
+        })
     }
 
     /// 几条。
     pub fn len(&self) -> usize {
-        self.n
+        self.n as usize
     }
 
     /// 这一段的第 `i` 条（越界 ⇒ `None`）。
     pub fn record(&self, i: usize) -> Option<Pair> {
-        (i < self.n).then(|| self.records[i])
+        (i < self.len()).then(|| self.records[i])
     }
 }
 
@@ -364,24 +368,15 @@ impl Message for Enroll {
     const EMPTY: Self::Buf = [0u8; ENROLL_CAP];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        let at = EnrollHead { n: self.n as u8 }.store_in(out)?;
-        env::wire::store_tail(out, at, &self.records[..self.n])
+        self.store_at(out, 0)
     }
 
     /// 解一段：**条数越界 / 不够长 ⇒ `None`**（不猜、不崩）。
+    ///
+    /// **"够长即可"**（多出来的那几字节不算读不懂）：这条判据是**本族的**，derive 不替它判。
     fn fetch(bytes: &[u8]) -> Option<Enroll> {
-        let head = EnrollHead::fetch(bytes)?;
-        let n = head.n as usize;
-        if n > ENROLL_MAX {
-            return None;
-        }
-        let body = bytes.get(EnrollHead::LEN..)?;
-        if body.len() < n * PAIR_LEN {
-            return None;
-        }
-        let mut records = [Pair::NONE; ENROLL_MAX];
-        env::wire::fetch_tail(body, 0, &mut records[..n])?;
-        Some(Enroll { n, records })
+        let (enroll, _) = Enroll::fetch_at(bytes, 0)?;
+        Some(enroll)
     }
 }
 
@@ -406,7 +401,7 @@ impl Message for Said {
     const EMPTY: Self::Buf = [0u8; Said::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     /// 恰好 [`Said::LEN`]（长短都不认）。
@@ -426,7 +421,7 @@ impl Message for Said {
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Deed {
     pub status: u8,
-    pub name: Name,
+    pub name: Tag,
     pub line: u32,
     pub token: PieToken,
 }
@@ -435,7 +430,7 @@ impl Deed {
     /// 空的一张：失败时那一答用它（`token` 是 [`PieToken::NONE`]）。
     pub const NONE: Deed = Deed {
         status: 0,
-        name: Name::EMPTY,
+        name: Tag::EMPTY,
         line: 0,
         token: PieToken::NONE,
     };
@@ -444,14 +439,14 @@ impl Deed {
     pub const fn of(status: u8) -> Deed {
         Deed {
             status,
-            name: Name::EMPTY,
+            name: Tag::EMPTY,
             line: 0,
             token: PieToken::NONE,
         }
     }
 
     /// 编一答：成了 ＋ 那张契。
-    pub const fn granted(name: Name, line: u32, token: PieToken) -> Deed {
+    pub const fn granted(name: Tag, line: u32, token: PieToken) -> Deed {
         Deed {
             status: OK,
             name,
@@ -467,7 +462,7 @@ impl Message for Deed {
     const EMPTY: Self::Buf = [0u8; Deed::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     /// 恰好 [`Deed::LEN`]（长短都不认）。
@@ -479,30 +474,35 @@ impl Message for Deed {
     }
 }
 
-/// 列册那一窗的**头**（名字那一段是尾巴，见 [`Window`]）。
-///
-/// 它自己只用一次：给尾巴算出**偏移**（[`WindowHead::LEN`]）——"一段重复"不归 `#[derive]`，
-/// 故头用表求长、尾巴手写（本仓有言在先）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-struct WindowHead {
-    status: u8,
-    from: u32,
-    n: u8,
-    held: [u8; 8],
-}
-
 /// **一窗**：状态 ＋ 游标 ＋ 条数 ＋ 有主那一位掩码 ＋ 至多 [`LIST_MAX`] 段名字。
 ///
 /// **两条一次说清**：`names[..n]` 是这一窗真正答出来的那些；`held` 的第 `i` 位对应 `names[i]`
-/// （`1` = 这一台此刻有主）。名字那一段是"重复"那一类，故这一形**手写** `store` / `fetch`。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// （`1` = 这一台此刻有主）。
+///
+/// **照实记（这一格栽过：满窗那一版把空位也写出去）**：从前编解那两手是把 [`LIST_MAX`] 段
+/// **全写**（空位写 `Tag::EMPTY`，即一整块零字节），而 `Tag` 的 `fetch` 判非空 —— 于是**读回来
+/// 当场解不动**（`n < LIST_MAX` 的每一窗都是这样）。症状是**客侧 `Unread`**、而服务端那一边
+/// 一路"发得好好的"（读数：`hub: list sent n=1 err=false` ＋ `hub-c: recv unread`）。**修法**
+/// 是"尾巴的长度由条数说、空位不上线"——今天这一句就是下面那条属性，由 `#[derive(env::Frame)]`
+/// **一处**生成。
+///
+/// **照实记（这一形为什么曾经是"头 ＋ 手写尾巴"）**：这一格的"重复"从前不归 `#[derive]`，
+/// 故另立了一枚 `WindowHead` 专门给尾巴算偏移、`store` / `fetch` 手写；derive 认"一段重复"
+/// 之后那一枚并回本表（偏移与长度一处求和）。
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Window {
     pub status: u8,
     pub from: u32,
     pub n: u8,
     pub held: [u8; 8],
-    pub names: [Name; LIST_MAX],
+    #[frame(count = n, fill = Tag::EMPTY)]
+    pub names: [Tag; LIST_MAX],
 }
+
+/// **线上一个字节都不许动**：这一窗那一形照文件头那张表钉住
+/// （`[状态 1B][游标 4B][条数 1B][位 8B][名字 32B × n]`）。属性换成手写也好、`MAX` 求和出错也好，
+/// 这一句先红。
+const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + env::NAME_LEN * LIST_MAX);
 
 impl Window {
     /// 空的一窗（失败，或这一类里一台都没有）。
@@ -511,11 +511,11 @@ impl Window {
         from: 0,
         n: 0,
         held: [0u8; 8],
-        names: [Name::EMPTY; LIST_MAX],
+        names: [Tag::EMPTY; LIST_MAX],
     };
 
     /// 第 `i` 条（`i < n` 才有）。
-    pub fn name(&self, i: usize) -> Option<&Name> {
+    pub fn name(&self, i: usize) -> Option<&Tag> {
         (i < self.n as usize).then(|| &self.names[i])
     }
 
@@ -532,54 +532,25 @@ impl Window {
     }
 }
 
-/// **这一窗的缓冲那一格**：头 ＋ **满窗**的名字（线上那一形按 `n` 长，见 [`Window::store`]）。
+/// **这一窗的缓冲那一格**：**最长那一形**（头 ＋ 满窗的名字，同一张表求和）。
 ///
 /// 它是 `Buf` 的容量（收的那一侧备一只满的，装得下最宽那一窗），**不是线格式的长度**。
-pub const WINDOW_LEN: usize = WindowHead::LEN + NAME_LEN * LIST_MAX;
+pub const WINDOW_LEN: usize = Window::LEN;
 
 impl Message for Window {
     type In = Window;
     type Buf = [u8; WINDOW_LEN];
     const EMPTY: Self::Buf = [0u8; WINDOW_LEN];
 
-    /// **尾巴只写前 `n` 段**（`条数即长度`：同 `Reply` 那一族"记录那段就是原样交给客人的那段"）。
-    ///
-    /// **照实记（这一格栽过：满窗那一版把空位也写出去）**：从前这一手把 [`LIST_MAX`] 段**全写**
-    /// （空位写 `Name::EMPTY`，即一整块零字节），而 `Name` 的 `fetch` 判非空 —— 于是**读回来
-    /// 当场解不动**（`n < LIST_MAX` 的每一窗都是这样）。症状是**客侧 `Unread`**、而服务端那一边
-    /// 一路"发得好好的"：设备账起手与三位驱动的头两问都过不去（读数：
-    /// `hub: list sent n=1 err=false` ＋ `hub-c: recv unread`）。**修法就是这一句**：尾巴的长度
-    /// 由条数说，空位不上线。
+    /// **尾巴只写前 `n` 段**（"条数即长度"）：那一句现在是属性，见 [`Window`] 的照实记。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        let head = WindowHead {
-            status: self.status,
-            from: self.from,
-            n: self.n,
-            held: self.held,
-        };
-        let at = head.store_in(out)?;
-        env::wire::store_tail(out, at, &self.names[..self.n as usize])
+        self.store_at(out, 0)
     }
 
-    /// **恰好** 头 ＋ `n` 段名字（条数越界 / 长度与条数对不上都答 `None`）。
+    /// **恰好** 头 ＋ `n` 段名字（条数越界由那一格自己拦；长度与条数对不上答 `None`——
+    /// 这条判据是**本族的**，derive 不替它判）。
     fn fetch(bytes: &[u8]) -> Option<Window> {
-        let head = WindowHead::fetch(bytes)?;
-        let n = head.n as usize;
-        if n > LIST_MAX {
-            return None;
-        }
-        let body = bytes.get(WindowHead::LEN..)?;
-        if body.len() != n * NAME_LEN {
-            return None;
-        }
-        let mut names = [Name::EMPTY; LIST_MAX];
-        env::wire::fetch_tail(bytes, WindowHead::LEN, &mut names[..n])?;
-        Some(Window {
-            status: head.status,
-            from: head.from,
-            n: head.n,
-            held: head.held,
-            names,
-        })
+        let (window, at) = Window::fetch_at(bytes, 0)?;
+        (at == bytes.len()).then_some(window)
     }
 }

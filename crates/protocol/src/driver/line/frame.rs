@@ -109,7 +109,7 @@ impl Message for Occupy {
     const EMPTY: Self::Buf = [0u8; Occupy::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_in(out)
+        self.store_at(out, 0)
     }
 
     /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。

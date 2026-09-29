@@ -18,7 +18,7 @@
 //! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
 //! 不该各起一套词（同 board / operator 那两族的纪律）。
 
-use env::{Mark, Name, PieToken, TaskId};
+use env::{Mark, PieToken, Tag, TaskId};
 
 use crate::system::operator::path::Path;
 
@@ -110,7 +110,7 @@ pub enum Fail {
 pub struct Ask {
     pub op: u8,
     /// 这一条服务的名字（清单名，≤ 31 字节）。
-    pub name: Name,
+    pub name: Tag,
     pub back: PieToken,
 }
 
@@ -150,10 +150,10 @@ impl Message for Said {
     type Buf = [u8; Said::LEN];
     const EMPTY: Self::Buf = [0u8; Said::LEN];
 
-    /// 表那一手 `store_in`（写更大的缓冲、返长度）——正是这一手要的；表上那枚**同名**的 `store`
+    /// 表那一手 `store_at`（从游标写、返实际长度）——正是这一手要的；表上那枚**同名**的 `store`
     /// 要的是定长数组、返 `()`，两回事（同 `crate::frame::Reply` 那一格）。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        Said::store_in(self, out)
+        Said::store_at(self, out, 0)
     }
 
     /// **恰好 [`Said::LEN`]**：长一字节、短一字节都是读不懂（同板、树那两族那条照实记）。
@@ -231,13 +231,13 @@ pub const fn code_to_fail(code: u8) -> Option<Fail> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
     /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）。
-    Mint(Name),
+    Mint(Tag),
     /// `START`：放行 ＋ 等就绪。
-    Start(Name),
+    Start(Tag),
     /// `STOP`：下令收掉（下令即回）。
-    Stop(Name),
+    Stop(Tag),
     /// `STATE`：这一条此刻处于哪个阶段。
-    State(Name),
+    State(Tag),
 }
 
 impl Req {
@@ -260,10 +260,10 @@ impl Req {
 /// 我不认 ⇒ 回一句 [`BAD`]）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
-    Mint(Name),
-    Start(Name),
-    Stop(Name),
-    State(Name),
+    Mint(Tag),
+    Start(Tag),
+    Stop(Tag),
+    State(Tag),
 }
 
 impl Wire {

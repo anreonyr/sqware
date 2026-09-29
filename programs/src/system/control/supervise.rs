@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use crate::program::Program;
 use crate::system::control::core::Reaped;
 use crate::system::control::desk::{Slot, State, Table};
-use env::{HoleDir, Mark, Name, PieToken, Wait};
+use env::{HoleDir, Mark, PieToken, Tag, Wait};
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::board::LANE_PREFIX;
@@ -161,7 +161,7 @@ impl Watch {
     /// 真的响）；回退路（[`Watch::of`] 的 `watch_last = false`——最后一位不要存在信号、或它那条
     /// 孔铸不出）等**最后一行那一枚线程**（`Join{task, POLL}`）。两条路**共用同一个 [`sweep`]
     /// 与同一套收场**（[`stop_running`] ＋ 本圈那个 `stopping` 分支），差别只在"等什么"。
-    pub fn run(&mut self, control: &mut Control, last: Name) {
+    pub fn run(&mut self, control: &mut Control, last: Tag) {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         // 不按"这条路上平常走几个字节"备）。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
         // 道与面共用这一页（两者不同时读）。
@@ -210,7 +210,7 @@ impl Watch {
                 {
                     continue; // 这一条没货
                 }
-                let Ok(name) = Name::new(lane.name) else {
+                let Some(name) = Tag::new(lane.name) else {
                     continue;
                 };
                 account(&mut control.table, name);
@@ -270,7 +270,7 @@ const TICK_MS: usize = 10;
 /// 记账与收尾都走 [`mark_dead`]（同一具身体）：落 `Dead`、放下它那个域、报一行读数。
 fn sweep(table: &mut Table) {
     // 先把名字抄下来（表是定长的、行数有上界；拿名字再动表——与 `Desk` 那本账同一个形状）。
-    let mut gone = [Name::EMPTY; Table::CAP];
+    let mut gone = [Tag::EMPTY; Table::CAP];
     let mut n = 0usize;
     for row in table.rows() {
         if !matches!(row.state, State::Starting | State::Ready) {
@@ -296,7 +296,7 @@ fn sweep(table: &mut Table) {
 ///
 /// 没有身子（没登记过 / 从未挂上 / 已 `detach`）也算"不用再等"：没有可等的坐标，停机不该
 /// 压在等不到的东西上。
-fn last_reaped(table: &Table, name: Name) -> bool {
+fn last_reaped(table: &Table, name: Tag) -> bool {
     match table.find(name) {
         Some(row) => match row.slot {
             Slot::Live { task, .. } => utask::join(task, Wait::POLL).unwrap_or(true),
@@ -426,7 +426,7 @@ fn wire_state(state: State) -> ccall::State {
 /// 为什么有界：`stop` 是"送到即回"（`kill` 的口径），收场不能被一个收不掉的域拖住。
 pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
     for lane in lanes {
-        let Some(name) = Name::new(lane.name).ok() else {
+        let Some(name) = Tag::new(lane.name) else {
             continue;
         };
         // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己。它随本域退场
@@ -477,7 +477,7 @@ const STOP_MS: usize = 300;
 /// 线程"，故这一步等的是收尾事件，不是节拍），再写 `Dead`、放下它那个域、报一行。
 ///
 /// **幂等**：已经记过（`Dead`）就什么都不做——板报的道与我们自己杀的那一位可能都指到它。
-fn account(table: &mut Table, name: Name) {
+fn account(table: &mut Table, name: Tag) {
     let Some(row) = table.find(name) else {
         return;
     };
@@ -496,7 +496,7 @@ fn account(table: &mut Table, name: Name) {
 /// `reaped` = 这一位的收尾判决**及它的来路**。读数里那一格是给验收用的：`wait=now` 说明收尾
 /// 早在问之前就完了，`wait=waited` 说明这一次是**等到**的；`wait=unsettled` 则是"没被确认
 /// 收尾"，那时 `ousted=false` 会一起把真相摆出来。
-fn mark_dead(table: &mut Table, name: Name, reaped: Reaped) {
+fn mark_dead(table: &mut Table, name: Tag, reaped: Reaped) {
     let Some(row) = table.find(name) else {
         return;
     };

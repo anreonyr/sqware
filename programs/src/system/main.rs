@@ -25,7 +25,7 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Name;
+use env::Tag;
 use programs::system::Assembly;
 use programs::system::assemble;
 use programs::system::bootstrap;
@@ -116,7 +116,7 @@ fn system() -> Result<(), Fail> {
     let Some(last_program) = list.last() else {
         return Err(Fail::Assemble(E_PROGRAM));
     };
-    let last = Name::new(last_program.name()).map_err(|_| Fail::Assemble(E_MANIFEST))?;
+    let last = Tag::new(last_program.name()).ok_or(Fail::Assemble(E_MANIFEST))?;
 
     // 死亡道跟着这张单铸：要存在信号的那几位一位一条——在 `Assembly::new` 里。
     let mut assembly = Assembly::new(boot, &list).map_err(|_| Fail::Group)?;

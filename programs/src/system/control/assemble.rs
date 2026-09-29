@@ -18,7 +18,7 @@
 //! **本域不碰原件**：门闩在引导域手里，它直接授进 `target` 那张表，回一段"坐标 + 号"的记录；
 //! 本域只做一次转投（一整段原样推过去）。
 
-use env::{Name, PAIR_LEN, Pair, Wait};
+use env::{Pair, Tag, Wait};
 use protocol::debug;
 
 use env::{Access, Key, Mark, Policy};
@@ -40,7 +40,7 @@ impl Control {
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
     pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
-        let name = Name::new(program.name()).map_err(|_| Error::Manifest)?;
+        let name = Tag::new(program.name()).ok_or(Error::Manifest)?;
         self.table
             .register(name, announce_of(program.demand.setup))
             .map_err(|_| Error::Table)
@@ -62,7 +62,7 @@ impl Control {
     pub fn launch(
         &mut self,
         program: &Program,
-        name: Name,
+        name: Tag,
         service: &mut Service,
     ) -> Result<(), Error> {
         // **一、放行**（不等就绪）。
@@ -100,7 +100,7 @@ impl Control {
     /// 读数、那一台就不在收方账上（缺一台不影响别的台）。
     pub fn enroll(
         &mut self,
-        name: Name,
+        name: Tag,
         service: &mut Service,
         load: &'static str,
     ) -> Result<(), Error> {
@@ -174,9 +174,9 @@ impl Control {
                 &mut reply,
                 Wait::AtMost(READY_MS),
             ) {
-                Ok(segment) => {
-                    for pair in pairs_of(segment) {
-                        records[got] = pair;
+                Ok(said) => {
+                    for pair in said.records() {
+                        records[got] = *pair;
                         got += 1;
                     }
                 }
@@ -191,9 +191,9 @@ impl Control {
                             &mut reply,
                             Wait::AtMost(READY_MS),
                         ) {
-                            Ok(segment) => {
-                                if let Some(pair) = pairs_of(segment).next() {
-                                    records[got] = pair;
+                            Ok(said) => {
+                                if let Some(pair) = said.records().first() {
+                                    records[got] = *pair;
                                     got += 1;
                                 }
                             }
@@ -222,15 +222,9 @@ impl Control {
     }
 }
 
-/// 一段记录（裸字节）→ 那几条 `Pair`（**一处解**：`Pair` 自己那一对 `Field` 手）。
-///
-/// 解不动的那些条**跳过**（判别号不认识 —— 引导域不会发那种，故这是"万一"那一格：跳过它
-/// 比把整段判废更像这一台机器的失败法）。
-fn pairs_of(segment: &[u8]) -> impl Iterator<Item = Pair> + '_ {
-    segment
-        .chunks_exact(PAIR_LEN)
-        .filter_map(<Pair as env::wire::Field>::fetch)
-}
+// **照实记（`pairs_of` 那一手退场了）**：它从前把"回单里那段裸字节"按 `PAIR_LEN` 步长解成
+// `Pair`（解不动的跳过）；`draw` 改成返 `Reply`（解码本来就已经把那几条收进表里了）之后，
+// 那一段裸字节在调用点已经不存在 ⇒ 那一手与它那条"跳过"的判据一并退场。
 
 /// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 [`Control::enlist`]）。
 fn announce_of(setup: &[Setup]) -> Announce {

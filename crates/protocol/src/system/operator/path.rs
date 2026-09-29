@@ -1,8 +1,8 @@
-//! path — **树上的坐标**：一条最多 [`Path::MAX`] 段的路（每段一枚 [`Name`]）。
+//! path — **树上的坐标**：一条最多 [`Path::MAX`] 段的路（每段一枚 [`Tag`]）。
 //!
 //! 它是"路"这件事在**两侧**的同一个形状：装配者按它落格（`operator/bridge.rs` 的 `land`）、
 //! 客人按它译号（`operator/client.rs` 的 `pane` / `tile` / `seek`）、线上那一格就是它自己
-//! （`[段数][段…]`，见 [`Path::store_in`]）。
+//! （`[段数][段…]`，见下面 `impl env::wire::Span for Path` 那两只手）。
 //!
 //! # 照实记（它为什么迟来；"路太长"那一格因此挪了家）
 //!
@@ -13,7 +13,8 @@
 //!
 //! 随之**退掉一处失败域**（语义变化只此一处）：从前"路太长"是**说得出来的**（段数那一格能
 //! 写 9，持树者据此答 `Full`）；`Path` 里最多 [`Path::MAX`] 段，超长**根本表达不出来** ⇒
-//! [`Path::fetch`] 答 `None`、门答 `BAD`（"读不懂"）。`Fail::Full` 于是只剩"那一块 `Pane`
+//! 带它的那一帧（[`RoadFrame`](crate::system::operator::frame::RoadFrame) / `PlateFrame`）答
+//! `None`、门答 `BAD`（"读不懂"）。`Fail::Full` 于是只剩"那一块 `Pane`
 //! 满"一个来源（那两条判据删了，见 `programs/src/system/operator/{answer,core}`）。
 //!
 //! # 接口照 `std::path::Path` 定形（差异逐条写在这儿）
@@ -24,10 +25,12 @@
 //!   join(x) -> PathBuf        join / try_join          定容 ⇒ 长大可能失败（多一枚 try_join）；
 //!                                                      也没有"绝对段"那回事 ⇒ 恒是接上，不替换
 //!   parent() -> Option<&Path> parent() -> Option<Path>  同形；我们给一份（Copy，无第二枚 PathBuf）
-//!   file_name()               file_name()              同形（末段）
-//!   iter() / components()     iter()                   没有 `.` / `..` 要归一 ⇒ 两枚合一
-//!   display() / to_str()      impl Display            段必是合法 UTF-8 ⇒ 直接 Display
-//!   PathBuf::{push,pop}       ——                       join / parent 是同一件事的值版本
+//!   file_name() -> &OsStr     file_name() -> Tag        **按值**：我们那一格是 `Copy` 的值
+//!   iter() -> &OsStr          iter() -> &Tag           一条路存的是**格**，不是打包的串 ⇒ 借出来
+//!                                                      的就是格；没有 `.` / `..` 要归一 ⇒ 与
+//!                                                      components() 合成一枚
+//!   display() / to_str()      impl Display             段必是合法 UTF-8 ⇒ 直接 Display
+//!   PathBuf::{push,pop}       ——                        join / parent 是同一件事的值版本
 //!   is_absolute / has_root    ——                       树上的路都从根数起 ⇒ 恒真/恒假的两格不立
 //!   extension / file_stem     ——                       段不是文件名
 //!   starts_with / strip_prefix ——                      今天一个读者都没有 ⇒ 不立
@@ -38,13 +41,13 @@
 
 use core::fmt;
 
-use env::wire::{NAME_LEN, Name, fetch_tail, store_tail};
+use env::wire::{NAME_LEN, Tag, fetch_tail, store_tail};
 
 /// 树上的坐标：`n` 段名字（`n == 0` 就是**根**）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Path {
     n: u8,
-    segs: [Name; Path::MAX],
+    segs: [Tag; Path::MAX],
 }
 
 impl Path {
@@ -54,15 +57,15 @@ impl Path {
     /// **这一格最长占几字节**（段数那一格 ＋ 满路的名字）——缓冲与线上那一形都按它。
     ///
     /// **它为什么不叫 `WIDTH`**（照实记）：[`Field`] 那一族是**定长**的（"帧的偏移全部由它
-    /// 求和得出"），而一条路按段数**变长**（只写 `n` 段）。故本格自己给 [`Path::store_in`] /
-    /// [`Path::fetch`] 两只手（与 `#[derive(env::Frame)]` 那两只同形），`LEN` 是**最长那一形**
+    /// 求和得出"），而一条路按段数**变长**（只写 `n` 段）。故它实现的是**要游标那一格**
+    /// （[`env::wire::Span`]：`MAX` 就是本格，正文在下面那个 impl 里），`LEN` 是**最长那一形**
     /// （缓冲那一边按它开）。
     pub const LEN: usize = 1 + NAME_LEN * Path::MAX;
 
     /// **根**（零段）：整棵树那一层。
     pub const ROOT: Path = Path {
         n: 0,
-        segs: [Name::EMPTY; Path::MAX],
+        segs: [Tag::EMPTY; Path::MAX],
     };
 
     /// **一条路**：按 `/` 分段的一张坐标（`"/svc/sys"` 与 `"svc/sys"` 是同一件事）。
@@ -110,12 +113,21 @@ impl Path {
     }
 
     /// **末段**（那一格自己的名字）。
-    pub fn file_name(&self) -> Option<&Name> {
-        self.used().last()
+    ///
+    /// **照实记（按值给，std 是借）**：std 的 `Path::file_name()` 答 `&OsStr`——它那一段是
+    /// unsized 的视图，非借出来不可；我们这一段是 **`Copy` 的值**（[`Tag`]，32 字节），按值给
+    /// 更短，而六处读者要的正是"把末段交出去"（`part` / `bind` / `open`）。
+    pub fn file_name(&self) -> Option<Tag> {
+        self.used().last().copied()
     }
 
     /// **逐段**（从根那一头起）。
-    pub fn iter(&self) -> core::slice::Iter<'_, Name> {
+    ///
+    /// **照实记（吐 `&Tag` 而不是 std 那样的 `&OsStr`）**：一条路**存的就是格**（`[Tag; MAX]`），
+    /// 不是一条打包的串——std 那边一段是整串上的一个子切片，故只能借出 `&OsStr`；我们这一段
+    /// 本来就是一格。而读者要的也正是那一格（`Pane::open` 要把名字**发上线**，`Operator::child`
+    /// 要拿它比对）：借成 `&CStr` 就丢掉了"它已经是一枚合法格"这件事，读者还得再验一遍。
+    pub fn iter(&self) -> core::slice::Iter<'_, Tag> {
         self.used().iter()
     }
 
@@ -129,41 +141,43 @@ impl Path {
         self.n == 0
     }
 
-    /// 那几段（线格式那两只手与 [`Path::iter`] 都用它；对外只有后者）。
-    fn used(&self) -> &[Name] {
+    /// 那几段（线格式那一双手与 [`Path::iter`] 都用它；对外只有后者）。
+    fn used(&self) -> &[Tag] {
         &self.segs[..self.n as usize]
     }
+}
 
-    /// **编**：段数那一格 ＋ 那几段（`1 + n × 32` 字节）——**只写 `n` 段**，空位不上线。
-    pub fn store_in(&self, out: &mut [u8]) -> Option<usize> {
-        *out.first_mut()? = self.n;
-        store_tail(out, 1, self.used())
+/// **本格是"要游标那一格"**（[`env::wire::Span`]）：段数不定 ⇒ 宽度不定 ⇒ 定长那一格
+/// （[`env::wire::Field`]）装不下它。
+///
+/// **照实记（`MAX` 为什么是 [`Path::LEN`]）**：`LEN` 是**最长那一形**（满路的名字），
+/// 帧的缓冲按它开；线上实际只写 `n` 段（游标就是长度）。
+///
+/// **照实记（`fetch_at` 只读一段，不判长度对不对）**：它给"路之后还有别的格"那几形用
+/// （`PlateFrame`：路 ＋ 末段那一枚 ＋ 规矩一格）——长度与段数对不对由**调用方**按它自己
+/// 那张表判，与 [`fetch_tail`] 交回游标同一条口径。
+impl env::wire::Span for Path {
+    const MAX: usize = Path::LEN;
+
+    /// 段数那一格 ＋ 那几段（`1 + n × 32` 字节）——**只写 `n` 段**，空位不上线。
+    fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
+        *out.get_mut(at)? = self.n;
+        store_tail(out, at.checked_add(1)?, self.used())
     }
 
-    /// **从一段字节的头上读一条路**，返"这一条路 ＋ 读完之后的游标"。
-    ///
-    /// 给"路之后还有别的格"那几形用（`Tip::Plate`：路 ＋ 末段那一枚 ＋ 规矩一格）——它只管读
-    /// 一段，长度对不对**由调用方按它自己那张表判**（与 [`fetch_tail`] 交回游标同一条口径）。
-    ///
-    /// 段数越界（> [`Path::MAX`]）或那几段读不齐 ⇒ `None`（这一帧读不懂）。
-    pub fn take(bytes: &[u8]) -> Option<(Path, usize)> {
-        let n = *bytes.first()? as usize;
+    /// 读一段：返"这一条路 ＋ 读完之后的游标"（长度对不对不在这里判）。
+    fn fetch_at(bytes: &[u8], at: usize) -> Option<(Path, usize)> {
+        let n = *bytes.get(at)? as usize;
         if n > Path::MAX {
             return None;
         }
-        let end = 1 + n * NAME_LEN;
+        let end = at.checked_add(1 + n * NAME_LEN)?;
         if bytes.len() < end {
             return None;
         }
-        let mut segs = [Name::EMPTY; Path::MAX];
-        fetch_tail(bytes, 1, &mut segs[..n])?;
+        let mut segs = [Tag::EMPTY; Path::MAX];
+        fetch_tail(bytes, at + 1, &mut segs[..n])?;
         Some((Path { n: n as u8, segs }, end))
-    }
-
-    /// **解**：这一整段字节就是一条路（`Req::Road` 那一形）——多一字节少一字节都读不懂。
-    pub fn fetch(bytes: &[u8]) -> Option<Path> {
-        let (path, end) = Path::take(bytes)?;
-        (bytes.len() == end).then_some(path)
     }
 }
 
@@ -174,7 +188,7 @@ impl fmt::Display for Path {
         if self.is_empty() {
             return f.write_str("/");
         }
-        for seg in self.iter() {
+        for seg in self.used() {
             write!(f, "/{seg}")?;
         }
         Ok(())
@@ -205,9 +219,9 @@ const fn walk(mut from: Path, road: &str) -> Option<Path> {
             if i > start {
                 let (_, from_start) = bytes.split_at(start);
                 let (seg_bytes, _) = from_start.split_at(i - start);
-                let seg = match Name::from_slice(seg_bytes) {
-                    Ok(seg) => seg,
-                    Err(_) => return None,
+                let seg = match Tag::from_slice(seg_bytes) {
+                    Some(seg) => seg,
+                    None => return None,
                 };
                 if from.n as usize >= Path::MAX {
                     return None;

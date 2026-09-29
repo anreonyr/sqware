@@ -62,7 +62,7 @@ use programs::Report;
 
 use alloc::vec::Vec;
 
-use env::{Mark, Name, PieToken};
+use env::{Mark, PieToken, Tag};
 use programs::system::board::client as board;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
@@ -134,7 +134,7 @@ const SEEK_OP: u8 = 7;
 ///
 /// **照实记（本刀唯一一处语义变化就在这里）**：从前段数那一格写得下 9，而路只带得回 8 段
 /// ⇒ 持树者按 `Fail::Full` 答一句"路太长"。今天一条路是 `Path`（最多 `Path::MAX` 段），
-/// **超长根本表达不出来** ⇒ 这一帧在 `Path::fetch` 里就判"读不懂"，门答 `BAD`。
+/// **超长根本表达不出来** ⇒ 这一帧在带路的那张表（`RoadFrame`）里就判"读不懂"，门答 `BAD`。
 /// 故这一条钉的是：**同一件事的答码从 `FULL` 变成 `BAD`**（照实记住
 /// `crates/protocol/src/system/operator/path.rs` 头注那一节）。
 fn oversize_road() -> [u8; JUNK] {
@@ -173,7 +173,7 @@ fn main() -> Report<'static> {
     // **正经那一问要一面 `Face`**（自由函数那一层已随新面退场），而它是**借**一条会话：
     // [`operator::Face::from`]（树那三格是 `Copy`）——junk 那一趟照旧走裸孔，见 `junk_trip`。
     let face = operator::Face::from(&session);
-    let Some(dir) = protocol::system::SVC.file_name().copied() else {
+    let Some(dir) = protocol::system::SVC.file_name() else {
         return bail("probe-bound: bad name");
     };
 
@@ -312,7 +312,7 @@ fn junk_trip(
     hedge: PieToken,
     tree: &Endpoint,
     face: &operator::Face,
-    dir: Name,
+    dir: Tag,
     junk: &[u8],
 ) -> (bool, bool, bool) {
     let pushed = mail::HolePie::from_token(hedge).push(junk).is_ok();

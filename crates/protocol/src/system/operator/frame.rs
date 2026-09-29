@@ -42,14 +42,15 @@
 //! ——没有一个"报法"字段可以填错，也没有第二个意思可读。最长的仍是 `Road` 那一条
 //! （[`REQ_LEN`]，路封顶 [`Path::MAX`] 段），其余都落在十到五十字节。
 //!
-//! **每一张形状一张字段表**（[`List`] / [`Part`] / [`Land`] / [`Entry`]）：
+//! **每一张形状一张字段表**（[`RoadFrame`] / [`List`] / [`Part`] / [`Land`] / [`Entry`]）：
 //! 偏移一处都不写。**照实记（表名的口径收窄了一次）**：板那一族的表按**荷载**起名（那一族
 //! 有两个动作共用一张）；这一族**一条问一张表**，只有那三条只报号的（`find` / `trim` /
 //! `name`）共用——那一张按荷载叫 [`Entry`]（它是唯一一处"两个名字落在同一张表上"）。
 //!
-//! **变长那一条只有 `Road`**：它那一截由 [`Path`] 自己给（[`Path::store_in`] /
-//! [`Path::fetch`]：段数那一格 ＋ 那几段）——**族里没有 `2 + i * 32` 这种句子**（用户裁定：
-//! 尾巴不许手写），**段数那一格也不再住本文件**（它随 [`Path`] 走）。
+//! **变长那一条只有 `Road`**：它那一截由 [`Path`] 自己给（`env::wire::Span` 那两只手：
+//! 段数那一格 ＋ 那几段），回表之后 [`RoadFrame`] 就是"动作码 ＋ 路"一张表——**族里没有
+//! `2 + i * 32` 这种句子**（用户裁定：尾巴不许手写），**段数那一格也不再住本文件**（它随
+//! [`Path`] 走）。
 //!
 //! **尾格只剩 `land` 用**：入口那一枚经会话交出去（`ship` 换回来的那个号，不是"客人的 Pie
 //! 是几号"），报文里走的只是"种在持树者表里的号"。两个编号空间不同源，互相拿错正是旧树
@@ -59,7 +60,7 @@
 
 use env::Mark;
 use env::wire::Eyes;
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 
 use super::path::Path;
 use crate::system::coalition::CoalitionId;
@@ -134,7 +135,8 @@ pub const PANE_CAP: usize = 16;
 
 // **照实记（`ROAD_MAX` 这一格退了）**：那条"最多几段"从前是这一族的一枚自由常量，而它的
 // 三个读者（段数那一格、`seek` 的上限判据、提示之路那一形）今天都归 [`Path`]：上限住
-// [`Path::MAX`]，段数住 [`Path`] 自己，判据由 [`Path::fetch`] 一次说完（超长 ⇒ 读不懂）。
+// [`Path::MAX`]，段数住 [`Path`] 自己，判据由带它的那张表（[`RoadFrame`] / [`PlateFrame`]）
+// 一次说完（超长 ⇒ 读不懂）。
 // **树的深度不受这条路的长短约束**（`land` / `part` 收的是号，层层往下立与路无关）。
 
 // ── 号在模型里的宽度 ────────────────────────────────────────
@@ -495,8 +497,8 @@ pub const UNJUDGED: u8 = 9;
 /// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ [`Path::LEN`]）。
 ///
 /// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
-/// 是字段表求和（`LEN`），`Road` 那一格是 [`Path::store_in`] 交回的游标。
-pub const REQ_LEN: usize = 1 + Path::LEN;
+/// 是字段表求和（`LEN`），`Road` 那一格是 [`RoadFrame::store_at`] 交回的游标。
+pub const REQ_LEN: usize = RoadFrame::LEN;
 
 /// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
 /// [`PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
@@ -519,10 +521,24 @@ const _: () = assert!(Status::LEN + <[u8; 8] as env::wire::Field>::WIDTH <= UNIO
 
 // ── 问话：一个动作一条形状，一张形状一张字段表 ──────────────
 
-// **照实记（`RoadHead` 这一张表退了）**：它从前是"动作码 ＋ 段数"两格，而第二格从今天起住
-// [`Path`]（`store_in` 的第一字节就是它）⇒ 这一形的头只剩动作码那一格，由 `Req::store` 亲手写
-// （同 `op` 那一格的口径：**动作码由形状给**）。那格"段数可以大于实际带的项数"的声明也随之
-// 收窄：`Path` 里段数**恒等于**带的段数（超上限根本造不出来 ⇒ 读不懂）。
+// **照实记（`RoadHead` 那一张表退了；今天它以一条表的形状回来了）**：它从前是"动作码 ＋ 段数"
+// 两格，而第二格从今天起住 [`Path`]（那一格的第一字节就是它）⇒ 那一版的这一形头只剩动作码，
+// 由 `Req::store` 亲手写。`Path` 实现 [`env::wire::Span`] 之后这一形**回表**：[`RoadFrame`]
+// 的第一格是动作码、第二格是路（`[op][段数][段…]`，逐字节同形）。
+/// `Road` 那一问：动作码 ＋ 一条**绝对坐标**的路。
+///
+/// **照实记（本族唯一变长的形状）**：[`Path`] 是"要游标那一格"（[`env::wire::Span`]），
+/// 故它与动作码并排住同一张表；`LEN` 是**最长那一形**（满路），实际长度由游标说。
+/// 那格"段数可以大于实际带的项数"的旧声明照旧收窄：`Path` 里段数**恒等于**带的段数
+/// （超上限根本造不出来 ⇒ 读不懂）。
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct RoadFrame {
+    pub op: u8,
+    pub road: Path,
+}
+
+const _: () = assert!(RoadFrame::LEN == 1 + Path::LEN);
+
 /// `List` 那一问：动作码 ＋ 容器坐标。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct List {
@@ -535,7 +551,7 @@ pub struct List {
 pub struct Part {
     pub op: u8,
     pub at: Where,
-    pub name: Name,
+    pub name: Tag,
 }
 
 /// `Land` 那一问：动作码 ＋ 容器坐标 ＋ 新名 ＋ 入口那一枚 ＋ **这一格的两轴条件**
@@ -544,7 +560,7 @@ pub struct Part {
 pub struct Land {
     pub op: u8,
     pub at: Where,
-    pub name: Name,
+    pub name: Tag,
     pub entry: PieToken,
     pub mine: bool,
     pub permit: Permit,
@@ -569,7 +585,7 @@ pub struct Entry {
 /// **照实记（名字）**：这一族从前叫 `Ask`（收的那一面叫 `AskIn`）。用户裁定 `Ask` / `Reply`
 /// 那一套不要，用 **`Req` / `Wire` / `Union`**——故这里是新生的名字，不是改名。
 ///
-/// **它没有生命周期**（照实记）：从前那是为 [`Req::Road`] 借来的那一段 `&[Name]` 而设，今天那
+/// **它没有生命周期**（照实记）：从前那是为 [`Req::Road`] 借来的那一段 `&[旧 Name]` 而设，今天那
 /// 一格拿的是**自有**的 [`Path`]（`Copy`，自带段数）⇒ 整个枚举里再没有一处借用。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
@@ -578,7 +594,7 @@ pub enum Req {
     /// `list`：列那一块 `Pane` 里的号。
     List(Where),
     /// `part`：在那一块 `Pane` 下，给这个新名分一格。
-    Part { at: Where, name: Name },
+    Part { at: Where, name: Tag },
     /// `land`：在那一块 `Pane` 下，给这个新名落一枚。
     ///
     /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（`ship` 换回来的），
@@ -588,7 +604,7 @@ pub enum Req {
     /// （声明归自己之后，别人接手这一格会被拒）。
     Land {
         at: Where,
-        name: Name,
+        name: Tag,
         entry: PieToken,
         permit: Permit,
         mine: bool,
@@ -601,7 +617,7 @@ pub enum Req {
     Name(EntryId),
 }
 
-/// **解开的一问**（名字已经是 `Name`，故不是借用）。
+/// **解开的一问**（名字已经是 [`Tag`]，故不是借用）。
 ///
 /// 与 [`Req`] 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
 /// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 [`BAD`]。
@@ -622,13 +638,13 @@ pub enum Wire {
     /// `part`：容器坐标 + 新名。
     Part {
         at: Where,
-        name: Name,
+        name: Tag,
     },
     /// `land`：容器坐标 + 新名 + 入口那一枚 + **这一格的两轴条件**
     /// （用那一轴 [`Permit`] / 改那一轴 `mine`）。
     Land {
         at: Where,
-        name: Name,
+        name: Tag,
         entry: PieToken,
         permit: Permit,
         mine: bool,
@@ -647,18 +663,12 @@ impl Message for Req {
 
     /// 编进 `out`：**动作码由形状给**（不在别处再写一遍），偏移与长度由字段表求和。
     ///
-    /// 唯一的例外是 `Road` 那一格的**正文**（路）：它由 [`Path::store_in`] 一次写完
-    /// （段数那一格也在里面）——偏移一处都不写。
+    /// `Road` 那一格的正文（路）也回表了（[`RoadFrame`]：动作码 ＋ 路）——偏移一处都不写。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Req::Road(road) => {
-                *out.first_mut()? = SEEK;
-                let (_, rest) = out.split_at_mut(1);
-                // **长度要带上动作码那一格**（`store_in` 只算它自己那一截，从 `rest` 起数）。
-                Some(road.store_in(rest)? + 1)
-            }
-            Req::List(at) => List { op: LIST, at }.store_in(out),
-            Req::Part { at, name } => Part { op: PART, at, name }.store_in(out),
+            Req::Road(road) => RoadFrame { op: SEEK, road }.store_at(out, 0),
+            Req::List(at) => List { op: LIST, at }.store_at(out, 0),
+            Req::Part { at, name } => Part { op: PART, at, name }.store_at(out, 0),
             Req::Land {
                 at,
                 name,
@@ -673,10 +683,10 @@ impl Message for Req {
                 mine,
                 permit,
             }
-            .store_in(out),
-            Req::Find(id) => Entry { op: FIND, id }.store_in(out),
-            Req::Trim(id) => Entry { op: TRIM, id }.store_in(out),
-            Req::Name(id) => Entry { op: NAME, id }.store_in(out),
+            .store_at(out, 0),
+            Req::Find(id) => Entry { op: FIND, id }.store_at(out, 0),
+            Req::Trim(id) => Entry { op: TRIM, id }.store_at(out, 0),
+            Req::Name(id) => Entry { op: NAME, id }.store_at(out, 0),
         }
     }
 
@@ -696,11 +706,14 @@ impl Message for Req {
     fn fetch(bytes: &[u8]) -> Option<Wire> {
         let op = *bytes.first()?;
         Some(match op {
-            // **长度即形状**：`1 ＋ 1 ＋ 段数 × 32`（段数那一格在 [`Path`] 里，`fetch` 自己判
-            // 段数越界与长度对不上——两件都答"读不懂"）。
+            // **长度即形状**：`1 ＋ 1 ＋ 段数 × 32`（段数那一格在 [`Path`] 里；条数与长度对不对
+            // 由下面那一句判——短一字节、长一字节都答"读不懂"）。
             SEEK => {
-                let (_, rest) = bytes.split_at(1);
-                Wire::Road(Path::fetch(rest)?)
+                let (frame, at) = RoadFrame::fetch_at(bytes, 0)?;
+                if at != bytes.len() {
+                    return None;
+                }
+                Wire::Road(frame.road)
             }
             LIST if bytes.len() == List::LEN => Wire::List(List::fetch(bytes)?.at),
             PART if bytes.len() == Part::LEN => {
@@ -740,7 +753,7 @@ impl Message for Req {
 // **照实记（那六手都是"同一件事的第二处"）**：`unpack_at` 与 `pack_at` 各写一遍"记 ＋ 号"、
 // `unpack_name` 与 `pack_name_in` 各写一遍"名字那一格怎么切"、`pack_rule` 与 `unpack_rule` 各
 // 写一遍那九个字节——写者与读者分居文件两头，**错一处编得过**，症状要等那一帧被读成"读不懂"
-// 才显形。今天这三件事各只有一处：`Where` / `Name` / `Permit` 各自的 `Field`。
+// 才显形。今天这三件事各只有一处：`Where` / `Tag` / `Permit` 各自的 `Field`。
 
 // ── 答：一格状态 / 一串号 / 一枚名字 / 一枚号 ─────────────────
 
@@ -846,7 +859,7 @@ pub enum Union {
     /// `list` 的下场：一串号。
     List(Listing),
     /// `name` 的下场：一枚名字（**长度即名长**）。
-    Name(Name),
+    Name(Tag),
     /// `part` / `seek` 的下场：那一格**坐标**。
     Entry(EntryId),
     /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（[`PieToken`]）。
@@ -915,16 +928,16 @@ impl Said {
 
     /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字。
     ///
-    /// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：`Name` 那一侧的四格失败域
+    /// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：那一侧旧日的四格失败域
     /// 在这里**归一格**——问的人能做的补救是同一件（这一帧坏了，重问）。
-    pub fn name(&self) -> Result<Name, u8> {
+    pub fn name(&self) -> Result<Tag, u8> {
         let code = self.code();
         if code != OK {
             return Err(code);
         }
         let bytes = self.bytes();
         let text = env::wire::fetch_bytes(bytes, Status::LEN).ok_or(BAD)?;
-        Name::from_slice(text).map_err(|_| BAD)
+        Tag::from_slice(text).ok_or(BAD)
     }
 
     /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号。
@@ -962,30 +975,31 @@ impl Message for Union {
     /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 `env::wire` 的两个尾巴。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Union::Status(code) => Status { status: code }.store_in(out),
+            Union::Status(code) => Status { status: code }.store_at(out, 0),
             Union::List(list) => {
                 let ids = list.as_slice();
                 let head = Tally {
                     status: OK,
                     count: ids.len() as u8,
                 };
-                head.store_in(out)?;
+                head.store_at(out, 0)?;
                 env::wire::store_tail(out, Tally::LEN, ids)
             }
             Union::Name(name) => {
-                let at = Status { status: OK }.store_in(out)?;
-                env::wire::store_bytes(out, at, name.text())
+                let at = Status { status: OK }.store_at(out, 0)?;
+                // 名长即这一帧剩下的那些字节：内容那一手经 `Deref` 从 `CStr` 来（旧 `text()` 退休）。
+                env::wire::store_bytes(out, at, name.to_bytes())
             }
             Union::Entry(id) => Word {
                 status: OK,
                 word: id.to_bytes(),
             }
-            .store_in(out),
+            .store_at(out, 0),
             Union::Seed(seed) => Word {
                 status: OK,
                 word: seed.to_bytes(),
             }
-            .store_in(out),
+            .store_at(out, 0),
         }
     }
 
@@ -1071,10 +1085,10 @@ const TIP_PLATE: u8 = 1;
 const TIP_COORD: u8 = 2;
 const TIP_GUEST: u8 = 3;
 
-// **照实记（`PlateHead` 这一张表退了）**：它从前是"`kind` ＋ 段数"两格。段数那一格今天住
-// [`Path`]，故这一形与 [`Tip`] 的另外两形一样，首格就是 `kind`——那一格由 `Tip::store` 亲手写。
+// **照实记（`PlateHead` 这一张表退了；今天它以 [`PlateFrame`] 回表）**：它从前是"`kind` ＋
+// 段数"两格。段数那一格今天住 [`Path`]，故那一版的这一形首格就是 `kind`——由 `Tip::store` 亲手写。
 // 从前它与客人那一族 `RoadHead` 的差别（"这条路没有答话那一格 ⇒ 超长当场读不懂"）今天同归
-// [`Path::fetch`] 那一句。
+// 带它的那张表（[`RoadFrame`] / [`PlateFrame`]：**恰好**那一句）。
 /// 「一位客人」那一形：`kind` ＋ 它的号。
 ///
 /// 与 [`CoordFrame`] 分成两形而**不复用一格可选的语义**：一个是**这一位域**（它把门牌交过来了、
@@ -1134,9 +1148,24 @@ impl env::wire::Field for Rule {
     }
 }
 
-/// 提示之路上**最长那一形**的宽度（立一条路：`kind` ＋ [`Path::LEN`] ＋ 末段那一格 ＋ 规矩一格）
-/// ——两侧各备一只这么大的缓冲，收的那一侧按它拉。
-pub const TIP_LEN: usize = 1 + Path::LEN + PieToken::WIDTH + Rule::WIDTH;
+/// `Plate` 那一句：首格 `kind` ＋ 一条路 ＋ 末段那一枚 ＋ 规矩一格。
+///
+/// **照实记（本族的第二种变长形状）**：中间那一格是 [`Path`]（"要游标那一格"），而它**之后还有
+/// 两格定长**——从前这一形的两手全是手写偏移（`+ 1` / `+ PieToken::WIDTH` / `+ Rule::WIDTH`），
+/// 回表之后偏移一处都不写（`LEN` 是最长那一形）。
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct PlateFrame {
+    pub kind: u8,
+    pub road: Path,
+    pub leaf: PieToken,
+    pub rule: Rule,
+}
+
+const _: () = assert!(PlateFrame::LEN == 1 + Path::LEN + PieToken::WIDTH + Rule::WIDTH);
+
+/// 提示之路上**最长那一形**的宽度（立一条路：[`PlateFrame`]）——两侧各备一只这么大的缓冲，
+/// 收的那一侧按它拉。
+pub const TIP_LEN: usize = PlateFrame::LEN;
 
 /// **装配者推给持树者的一句话**（提示之路那一帧）。
 ///
@@ -1190,31 +1219,25 @@ impl Tip {
                 if road.is_empty() {
                     return None;
                 }
-                *out.first_mut()? = TIP_PLATE;
-                let (_, rest) = out.split_at_mut(1);
-                // 路那一截是**尾巴**：一处偏移都不写（同 `Road` 那一形）。
-                let at = road.store_in(rest)?;
-                let at = at + 1;
-                <PieToken as env::wire::Field>::store(
-                    &leaf,
-                    out.get_mut(at..at + PieToken::WIDTH)?,
-                );
-                // 规矩那一格排在末段之后（它说的是"这一趟要不要带规矩"，不是路上的一段）。
-                let at = at + PieToken::WIDTH;
-                env::wire::Field::store(&rule, out.get_mut(at..at + Rule::WIDTH)?);
-                Some(at + Rule::WIDTH)
+                PlateFrame {
+                    kind: TIP_PLATE,
+                    road,
+                    leaf,
+                    rule,
+                }
+                .store_at(out, 0)
             }
             Tip::Coord { who, eyes } => CoordFrame {
                 kind: TIP_COORD,
                 who,
                 eyes,
             }
-            .store_in(out),
+            .store_at(out, 0),
             Tip::Guest(who) => GuestFrame {
                 kind: TIP_GUEST,
                 who,
             }
-            .store_in(out),
+            .store_at(out, 0),
         }
     }
 }
@@ -1241,20 +1264,17 @@ impl TipIn {
     pub fn fetch(bytes: &[u8]) -> Option<TipIn> {
         match *bytes.first()? {
             TIP_PLATE => {
-                // **路那一段之后还有格**（末段那一枚 ＋ 规矩）：故按 [`Path::take`] 读一段、
-                // 拿回游标，长度是不是正好由下面这一句按本表判。
-                let (road, end) = Path::take(bytes.get(1..)?)?;
-                if road.is_empty() {
+                let (frame, at) = PlateFrame::fetch_at(bytes, 0)?;
+                // **路空**是这一族的规矩（"末段"必须有）；**长度**也是形状的一部分
+                // （`1 ＋ 1 ＋ 段数 × 32 ＋ 8 ＋ 1`：长短都不认）。两句都是本族的，derive 不替它判。
+                if frame.road.is_empty() || at != bytes.len() {
                     return None;
                 }
-                // 长度也是形状的一部分：`1 ＋ 1 ＋ 段数 × 32 ＋ 8 ＋ 1`。
-                let at = 1 + end;
-                if bytes.len() != at + PieToken::WIDTH + Rule::WIDTH {
-                    return None;
-                }
-                let leaf = <PieToken as env::wire::Field>::fetch(bytes.get(at..)?)?;
-                let rule = env::wire::Field::fetch(bytes.get(at + PieToken::WIDTH..)?)?;
-                Some(TipIn::Plate { road, leaf, rule })
+                Some(TipIn::Plate {
+                    road: frame.road,
+                    leaf: frame.leaf,
+                    rule: frame.rule,
+                })
             }
             TIP_COORD if bytes.len() == CoordFrame::LEN => {
                 let rec = CoordFrame::fetch(bytes)?;

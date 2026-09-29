@@ -6,23 +6,27 @@
 //! 尤其"`Local` 与 `Bad` 分得开"那一条（见 [`draw`]）。
 
 use env::Wait;
-use env::wire::Field;
-use env::{Key, PAIR_LEN, Pair};
+use env::{Key, Pair};
 use env::{MailFail, PieToken, TaskId};
 
 use crate::communication::establish::Endpoint;
 use crate::communication::receiver::RecvFail;
 use crate::system::supply::frame::Fail;
-use crate::system::supply::frame::{OK, Order, Reply, ReplyHead, WANT_MAX, Want, code_to_fail};
+use crate::system::supply::frame::{OK, Order, Reply, WANT_MAX, Want, code_to_fail};
 
-/// 递一张单子、取回那一段记录。返**记录那一段**（`PAIR_LEN` 步长；借着调用方那只收帧缓冲）。
-pub fn draw<'r>(
+/// 递一张单子、取回那一张回单（几条记录由那一帧自己说）。
+///
+/// **照实记（返回那一形为什么从"一段裸字节"改成 [`Reply`]）**：从前它返的是"调用方那只缓冲里
+/// 切出来的记录段"——切的那一刀要用 `ReplyHead::LEN` 那个偏移，而头那两格已经并进本表（偏移
+/// 不再另有一处）。解码本来就已经把那几条 [`Pair`] 收进 `Reply` 里了（`recv` 里的 `fetch`），
+/// 故这里返 `Reply`（`Copy`）**不多一次拷贝**，只是不再第二次解释同一段字节。
+pub fn draw(
     pair: &Endpoint,
     who: TaskId,
     wants: &[Want],
-    reply: &'r mut [u8],
+    reply: &mut [u8],
     millis: Wait,
-) -> Result<&'r [u8], Fail> {
+) -> Result<Reply, Fail> {
     if wants.is_empty() || wants.len() > WANT_MAX {
         return Err(Fail::Local);
     }
@@ -47,11 +51,7 @@ pub fn draw<'r>(
         Err(RecvFail::Unread) => return Err(Fail::Bad),
     };
     match said.code() {
-        // **记录那一段就是原样交给客人的那一段**：从**调用方那只缓冲**里切——帧长由解出来的
-        // 条数定（`fetch` 已判过恰好），故切出来正好。
-        OK => reply
-            .get(ReplyHead::LEN..ReplyHead::LEN + said.records().len() * PAIR_LEN)
-            .ok_or(Fail::Bad),
+        OK => Ok(said),
         code => Err(code_to_fail(code).unwrap_or(Fail::Bad)),
     }
 }
@@ -60,11 +60,10 @@ pub fn draw<'r>(
 ///
 /// **照实记（这一手的 `unsafe` 退场）**：它从前自己算步长、`read_unaligned` 一条条读
 /// （缓冲只保证 1 字节对齐）——今天按 [`Pair`] 那一格解（`Field` 那一对就是为这件事立的），
-/// 于是这里只剩一句"切、读、比"。
-pub fn pick(records: &[u8], key: Key) -> Option<PieToken> {
+/// 于是这里只剩一句"读、比"。
+pub fn pick(records: &[Pair], key: Key) -> Option<PieToken> {
     records
-        .chunks_exact(PAIR_LEN)
-        .filter_map(<Pair as Field>::fetch)
+        .iter()
         .find(|pair| pair.key() == Some(key))
         .map(|pair| pair.token())
 }

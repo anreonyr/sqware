@@ -58,7 +58,7 @@
 extern crate programs;
 
 // 两块账在引导域自己那一摊里（只有它读得到）。
-use env::{Mark, Name, Wait};
+use env::{Mark, Tag, Wait};
 use programs::root::boot;
 
 use protocol::communication::establish;
@@ -125,7 +125,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 那笔账不存在了（两段各有各的基址）。
     boot.report_pairs();
 
-    let Some(slot) = Name::new(supply::BOOT).ok() else {
+    let Some(slot) = Tag::new(supply::BOOT) else {
         return Err(Die::Manifest);
     };
 

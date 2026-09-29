@@ -118,7 +118,7 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart");
     };
     // 那枚砖的名就是**那条路的末段**（`file_name()`，std 同形）——不再单独持一格。
-    let Some(me) = road.file_name().copied() else {
+    let Some(me) = road.file_name() else {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
     let land = pane.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
@@ -216,8 +216,8 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     let road = protocol::system::SVC
         .try_join("lease")
         .ok_or(Fail::Unknown)?;
-    let me = *road.file_name().ok_or(Fail::Unknown)?;
-    let Some(dir) = protocol::system::SVC.file_name().copied() else {
+    let me = road.file_name().ok_or(Fail::Unknown)?;
+    let Some(dir) = protocol::system::SVC.file_name() else {
         return Err(Fail::Unknown);
     };
     // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。

@@ -496,15 +496,15 @@ impl Message for Union {
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match *self {
-            Union::Status(code) => Status { status: code }.store_in(out),
-            Union::One(reply) => reply.store_in(out),
+            Union::Status(code) => Status { status: code }.store_at(out, 0),
+            Union::One(reply) => reply.store_at(out, 0),
             Union::Seq(seq) => {
                 let head = SeqHead {
                     status: OK,
                     more: seq.more,
                     count: seq.len as u8,
                 };
-                let at = head.store_in(out)?;
+                let at = head.store_at(out, 0)?;
                 env::wire::store_tail(out, at, seq.ids())
             }
         }

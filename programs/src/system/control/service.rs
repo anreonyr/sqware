@@ -20,7 +20,7 @@
 //! [`super`] 的生命周期那一圈）；三枚内件的 `main` 只借这里那枚举 [`Start`]（它自己的死法），
 //! 不叫那几具手。
 
-use env::{Mark, Name, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
+use env::{Mark, Permission, PieFail, PieToken, ProgramKind, Tag, TaskId, UnitFail, Wait};
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -196,7 +196,7 @@ pub struct Grant {
 /// 状态都如实留在表里（它确实在跑），调用方用 [`stop`] 收尾。
 pub fn mint(
     table: &mut Table,
-    name: Name,
+    name: Tag,
     image: &[u8],
     kind: ProgramKind,
 ) -> Result<TaskId, Fail> {
@@ -223,7 +223,7 @@ pub fn mint(
 /// [`stop`] 收尾。
 pub fn start(
     table: &mut Table,
-    name: Name,
+    name: Tag,
     task: TaskId,
     grants: &[Grant],
     channels: &mut [Endpoint],
@@ -254,7 +254,7 @@ pub fn start(
 /// **归建立那一手**：通道在对方交回孔并归位（`claim`）时成立，本函数只去问那句"成立了没有"。
 pub fn ready(
     table: &mut Table,
-    name: Name,
+    name: Tag,
     channels: &mut [Endpoint],
     marks: &[Mark],
     millis: Wait,
@@ -311,7 +311,7 @@ pub fn ready(
 }
 
 /// 收掉一个 Service。**下令即回，不等它收完**。
-pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
+pub fn stop(table: &mut Table, name: Tag) -> Result<(), Fail> {
     let Some(Service {
         slot: Slot::Live { task, .. },
         ..
@@ -331,7 +331,7 @@ pub fn stop(table: &mut Table, name: Name) -> Result<(), Fail> {
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
 /// 已入土 / 从未入册）按"收尾了"处理。
-pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
+pub fn until(table: &Table, name: Tag, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
@@ -351,7 +351,7 @@ pub fn until(table: &Table, name: Name, millis: Wait) -> Result<Reaped, Fail> {
 }
 
 /// 这一行身子那一枚线程（没有身子 = 没有可等的坐标）。
-fn live_task(table: &Table, name: Name) -> Option<TaskId> {
+fn live_task(table: &Table, name: Tag) -> Option<TaskId> {
     match table.find(name) {
         Some(Service {
             slot: Slot::Live { task, .. },
@@ -366,7 +366,7 @@ fn live_task(table: &Table, name: Name) -> Option<TaskId> {
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（清了就没得放下、
 /// 也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：那是"还没收干净"，
 /// 不是"收了"。
-pub fn watch(table: &mut Table, name: Name, millis: Wait) -> Result<bool, Fail> {
+pub fn watch(table: &mut Table, name: Tag, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {
             table.set_state(name, State::Dead);

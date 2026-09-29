@@ -20,7 +20,7 @@
 //! [`Control::spawn`](crate::system::control::Control::spawn) 里 `service::mint` 那一行**。
 //! 特权级不从这里走（它在清单那一条里，声明处是装配表的 `kind`），"怎么起"更不从这里走。
 
-use env::Name;
+use env::Tag;
 
 use crate::program::Origin;
 use crate::system::control::Catalog;
@@ -87,7 +87,7 @@ impl Source {
     ///
     /// 唯一消费者是装配时那一行 `service::mint`——它要的正是"一段 `&[u8]`"，别的（名字怎么解析、
     /// 装成哪种空间、谁来放行）一概不从这里走。
-    pub fn image(&self, name: Name) -> Result<&'static [u8], Error> {
+    pub fn image(&self, name: Tag) -> Result<&'static [u8], Error> {
         match self.origin {
             // initrd 档：按名字在那块账里取那一段（零拷贝：它就是那块字节的一个切片）。
             Origin::Initrd => match self.catalog {

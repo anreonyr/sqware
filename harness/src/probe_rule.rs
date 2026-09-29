@@ -88,7 +88,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::{Name, PieToken};
+use env::{PieToken, Tag};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::coalition as ccall;
@@ -218,15 +218,15 @@ fn main() -> Report<'static> {
     }
 
     // 四、分 `/svc/rule`（"分"是幂等的，故重来一次也无事）。
-    let Some(dir) = DIR.file_name().copied() else {
+    let Some(dir) = DIR.file_name() else {
         return bail("probe-rule: bad name");
     };
-    let Ok(pane) = Name::new(PANE) else {
+    let Some(pane) = Tag::new(PANE) else {
         return bail("probe-rule: bad name");
     };
     // 本台那几问都从这一条路起（`/svc/rule`）——一处都不自己拼。
     let rule_road = DIR.join(PANE);
-    let Ok(mine) = Name::new(MINE) else {
+    let Some(mine) = Tag::new(MINE) else {
         return bail("probe-rule: bad name");
     };
     let root = tree.root();
@@ -437,7 +437,7 @@ fn plate(pane: &Pane<'_>, name: &str, permit: Permit, mine: Mine) -> EntryId {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("rule-entry")) else {
         return EntryId::new(0);
     };
-    let Ok(one) = Name::new(name) else {
+    let Some(one) = Tag::new(name) else {
         return EntryId::new(0);
     };
     pane.bind(one, entry, permit, mine, Wait::AtMost(MS))

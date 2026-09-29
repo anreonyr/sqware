@@ -20,7 +20,7 @@
 //! 那一枚包成 [`NolePie`](runtime::env::mail::NolePie)（见 `driver/router/adapt/boot.rs`）。
 
 use env::{Access, Policy};
-use env::{Kind, Name, PieToken, Wait};
+use env::{Kind, PieToken, Tag, Wait};
 use protocol::driver::hub;
 use protocol::driver::hub::Deed;
 use protocol::system::operator::client::Face as TreeFace;
@@ -113,12 +113,12 @@ impl Hub {
     ///
     /// 失败读数说步名（`"bond"` / `"list"` / `"tree"` / `"claim"`）。
     pub fn claim(&self, tree: &TreeFace, ask: &Ask, died: Died, ms: Wait) -> Result<Deed, Fail> {
-        let class = Name::new(ask.class).map_err(|_| Fail::at(died, "class"))?;
+        let class = Tag::new(ask.class).ok_or(Fail::at(died, "class"))?;
         self.bond
             .bond(class, ms)
             .map_err(|_| Fail::at(died, "bond"))?;
         let name = match ask.name {
-            Some(want) => Name::new(want).map_err(|_| Fail::at(died, "class"))?,
+            Some(want) => Tag::new(want).ok_or(Fail::at(died, "class"))?,
             None => {
                 let window = self
                     .list

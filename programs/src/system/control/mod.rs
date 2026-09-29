@@ -49,7 +49,7 @@ use alloc::vec::Vec;
 use crate::system::control::core::Fail;
 use crate::system::control::desk::{State, Table};
 use env::manifest;
-use env::{Mark, Name, TaskId, Wait};
+use env::{Mark, Tag, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
 use crate::program::{Origin, PROGRAMS, Program, Setup};
@@ -95,7 +95,7 @@ pub const E_TABLE: Died = 4;
 /// ——按服务分的号归装配表那一格 `died`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Error {
-    /// 名字非法 / 读不懂（`Name::new` 那一关）。
+    /// 名字非法 / 读不懂（`Tag::new` 那一关）。
     Manifest,
     /// 清单里没有这一台。
     Missing,
@@ -223,9 +223,9 @@ impl Control {
     ///
     /// **它不碰镜像**：取字节那一面（[`crate::system::source`]）是 `spawn` 的唯一消费者，
     /// 本手只把这一台声明上的**来源档**转交过去。
-    pub fn mint(&mut self, name: Name) -> Result<(), Fail> {
+    pub fn mint(&mut self, name: Tag) -> Result<(), Fail> {
         let program = program_of(name.as_str()).ok_or(Fail::Unknown)?;
-        let method = Name::new(program.name()).map_err(|_| Fail::Unknown)?;
+        let method = Tag::new(program.name()).ok_or(Fail::Unknown)?;
         // **复核那一格**：这一行此刻能不能起——判据就是 [`crate::system::control::core::admit_start`]
         // 那一条（`NeverStarted | Dead` 才起）。已经在跑 / 正在起的答 [`Fail::NotReady`]
         // （"此刻不该起"与"半路死了"在本端是同一个下一步）。
@@ -268,7 +268,7 @@ impl Control {
     /// （[`protocol::system::control::frame::said_task`]），而通道那本账留在本域（`Endpoint`
     /// 的两枚孔是"持有它的那张表里才念得动"的号，交不到客人手里，见协议那一份的照实记）。
     /// 故这一手的返回值**两头都用**：装配面拿它做后续（挂树 / 眼睛），线上那一侧只取第一格。
-    pub fn release(&mut self, name: Name) -> Result<Service, Fail> {
+    pub fn release(&mut self, name: Tag) -> Result<Service, Fail> {
         let at = self
             .pending
             .iter()
@@ -278,7 +278,7 @@ impl Control {
         let program = program_of(pending.name).ok_or(Fail::Unknown)?;
         // 通道：放行前逐条装（记号 = 通道名，放行后逐条认领——与装配那一趟**同一手**）。
         assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
-        let method = Name::new(pending.name).map_err(|_| Fail::Unknown)?;
+        let method = Tag::new(pending.name).ok_or(Fail::Unknown)?;
         // 放行 + 递单（次序是硬的：物料要落到它交回的那条路上）。
         self.launch(program, method, &mut pending.service)
             .map_err(|_| Fail::NotReady)?;
@@ -292,7 +292,7 @@ impl Control {
     /// **这一条此刻处于哪个生命阶段**（线上 `State` 那一问）。
     ///
     /// **只读表里那一格**：实例坐标是另一件事（"起过、现在死了"时它仍在）——见协议那一节。
-    pub fn state(&self, name: Name) -> Result<State, Fail> {
+    pub fn state(&self, name: Tag) -> Result<State, Fail> {
         self.table.find(name).map(|s| s.state).ok_or(Fail::Unknown)
     }
 
@@ -306,7 +306,7 @@ impl Control {
     ///
     /// 通道账起手是空的：`setup` 里那几条由 [`connect`] 逐条装上（放行之前）。
     pub fn spawn(&mut self, program: &Program) -> Result<Service, Error> {
-        let name = Name::new(program.name()).map_err(|_| Error::Manifest)?;
+        let name = Tag::new(program.name()).ok_or(Error::Manifest)?;
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         // **来源那一格的唯一消费者**：按声明上那一档取那一段 `&[u8]`（今天 initrd 是真的一档；
         // `Storage` 那一台不存在 ⇒ 只答 `NoSource`）。
@@ -333,7 +333,7 @@ impl Control {
     ///
     /// 返 `Err` = 放行那一步没成（本相失败时实例与状态如实留在表里，调用方用 [`Control::stop`]
     /// 收尾）。
-    pub fn start(&mut self, name: Name, service: &mut Service) -> Result<(), Error> {
+    pub fn start(&mut self, name: Tag, service: &mut Service) -> Result<(), Error> {
         let (task, channels) = service;
         // `marks` 空 ⇒ 这一手**只放行**（`service::start` 那条"还活着、只是没宣布"的分支）。
         service::start(
@@ -354,7 +354,7 @@ impl Control {
     /// 第二条（"我起完了"）说明"**它答得了了**"——而后者才是后面那几台要等的。
     pub fn ready(
         &mut self,
-        name: Name,
+        name: Tag,
         service: &mut Service,
         setup: &'static [Setup],
     ) -> Result<(), Error> {
@@ -384,7 +384,7 @@ impl Control {
     ///
     /// **两格语义一个字不省**：这一手只把状态推到 `Stopping`（`service::stop` 的口径）；
     /// 落 `Dead` 的是**监督那一趟**（[`supervise`] 的 `until` 两相）。
-    pub fn stop(&mut self, name: Name) -> Result<(), Fail> {
+    pub fn stop(&mut self, name: Tag) -> Result<(), Fail> {
         service::stop(&mut self.table, name)
     }
 
@@ -394,7 +394,7 @@ impl Control {
     // （[`Control::wait_last`]）留着：它是监督那一趟的收场路（有读者）。
 
     /// 等一条服务退场（本域等它 = 等这次会话结束）。
-    pub fn wait_last(&mut self, name: Name) {
+    pub fn wait_last(&mut self, name: Tag) {
         while let Ok(false) = service::watch(&mut self.table, name, Wait::Forever) {}
     }
 }
@@ -405,7 +405,7 @@ impl Control {
 ///
 /// 只碰通道、不碰 `Control` 的任何一格，故是自由函数（`Control::connect` 那一层是白加的壳）。
 pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
-    let name = Name::new(ch).map_err(|_| Error::Manifest)?;
+    let name = Tag::new(ch).ok_or(Error::Manifest)?;
     establish::endpoint(to, Mark::of(name.as_str()), Wait::POLL)
         .map_err(|_| Error::Step("connect failed"))
 }

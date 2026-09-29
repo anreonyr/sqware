@@ -44,7 +44,7 @@ fn walk(tree: &mut Operator, road: &Path) -> Option<Where> {
 ///
 /// 失败（路空 / 某一层立不出来 / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"。
 pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule) {
-    let Some(last) = road.file_name().copied() else {
+    let Some(last) = road.file_name() else {
         return debug!("operator: plate empty road");
     };
     let Some(at) = walk(tree, road) else { return };

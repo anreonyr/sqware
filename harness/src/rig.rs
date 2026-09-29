@@ -218,7 +218,7 @@ use programs::root::boot;
 
 use core::time::Duration;
 
-use env::Name;
+use env::Tag;
 use programs::system::control::core::Reaped;
 use programs::system::control::desk::{Announce, Slot, Table};
 use programs::system::control::service;
@@ -302,12 +302,12 @@ fn main() -> Reason {
     let Some((elf, kind)) = find(&boot, VICTIM) else {
         return die("rig: victim not in manifest");
     };
-    let Ok(name) = Name::new(ROW) else {
+    let Some(name) = Tag::new(ROW) else {
         return die("rig: bad row name");
     };
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
     // 一条早退的来路，见 `trial` 头注）。
-    let Ok(link) = Name::new(LINK) else {
+    let Some(link) = Tag::new(LINK) else {
         return die("rig: bad link name");
     };
 
@@ -415,8 +415,8 @@ enum Verdict {
 ///
 /// 只有 `register` / `spawn` 两条仍不收场：那时域还没造出来（表是纯值），没什么可收。
 fn trial(
-    name: Name,
-    link: Name,
+    name: Tag,
+    link: Tag,
     elf: &'static [u8],
     kind: env::ProgramKind,
     delay_us: usize,
@@ -467,13 +467,13 @@ fn trial(
 
 /// 一轮的正文：起通道之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
 fn body(
-    name: Name,
+    name: Tag,
     task: env::TaskId,
     delay_us: usize,
     iters_per_ms: usize,
     table: &mut Table,
     channels: &mut [Endpoint],
-    link: Name,
+    link: Tag,
 ) -> Result<Verdict, &'static str> {
     service::start(
         table,

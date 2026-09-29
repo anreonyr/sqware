@@ -18,7 +18,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
 use protocol::system::operator::frame::PANE_CAP;
@@ -31,10 +31,10 @@ pub mod judge;
 
 /// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
-/// 名字只是一段（`Name`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
+/// 名字只是一段（`Tag`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
 /// [`Operator::seek`] 在用。
 struct Slot {
-    name: Name,
+    name: Tag,
     node: Node,
 }
 
@@ -103,7 +103,7 @@ enum Want {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Key {
     /// 坐标：那一块 `Pane` + 那一段名字（`land` / `part` 那一问手里有的）。
-    At(Where, Name),
+    At(Where, Tag),
     /// 号：条目自己的号（`find` / `trim` 手里有的）。
     Id(EntryId),
 }
@@ -159,7 +159,7 @@ impl Operator {
     pub fn land(
         &mut self,
         at: Where,
-        name: Name,
+        name: Tag,
         pie: PieToken,
         permit: Permit,
         owner: Option<TaskId>,
@@ -181,7 +181,7 @@ impl Operator {
     /// 门牌那五处要的是**父格的号**，而它们的父格（`/svc/drv`、`/svc`）第二次上来时本来就非空，
     /// 于是"分"答不了号、落门牌跟着塌（`soak-1790097748-1`）。"非空不许动"那条规矩的正当去处
     /// 是**会毁掉内容**的那两条：`land` 的换绑与 `trim`，它们照旧答 [`Fail::NonEmpty`]。
-    pub fn part(&mut self, at: Where, name: Name) -> Result<EntryId, Fail> {
+    pub fn part(&mut self, at: Where, name: Tag) -> Result<EntryId, Fail> {
         self.put(at, name, Node::Pane(Vec::new()), Want::Pane)
     }
 
@@ -288,7 +288,7 @@ impl Operator {
     /// 与 `list` 一样**不过问死活**：剔死是 [`Operator::find`] 那一路上的事。
     /// **"路太长"那一格退了**（照实记）：它从前在这里答 [`Fail::Full`]（段数那一格写得下
     /// 9），而今天一条路是 [`Path`]——最多 [`Path::MAX`] 段，超长根本造不出来 ⇒ 那一格由
-    /// [`Path::fetch`] 在上游判成"读不懂"（门答 `BAD`）。这条判据因此删掉，
+    /// `RoadFrame`（`env::wire::Span` 那一手）在上游判成"读不懂"（门答 `BAD`）。这条判据因此删掉，
     /// [`Fail::Full`] 只剩"那一块 `Pane` 满"一个来源。
     pub fn seek(&self, road: &Path) -> Result<EntryId, Fail> {
         // 空路 ⇒ 根 ⇒ 没有号（`parent()` 在根上答 `None`，这一步就把它挡在这一格）。
@@ -302,7 +302,7 @@ impl Operator {
                 Node::Tile { .. } => return Err(Fail::NotAPane),
             };
         }
-        self.child(level, *last).ok_or(Fail::Unknown)
+        self.child(level, last).ok_or(Fail::Unknown)
     }
 
     /// **名**：这枚号此刻叫什么。
@@ -312,7 +312,7 @@ impl Operator {
     ///
     /// 号失效（`trim` 剪掉、[`Operator::find`] 剔死）与从来没铸过**长得一样** ⇒ 都答
     /// [`Fail::Unknown`]：表里那一槽是个墓碑，而墓碑不对外说话。
-    pub fn name(&self, id: EntryId) -> Result<Name, Fail> {
+    pub fn name(&self, id: EntryId) -> Result<Tag, Fail> {
         self.slot(id).map(|slot| slot.name).ok_or(Fail::Unknown)
     }
 
@@ -372,7 +372,7 @@ impl Operator {
     ///
     /// **先只读地问一遍**（那一格叫什么号），再动手：这样动手那一段只需要一次
     /// `slots[i]` 的可变借用，不必在 children 里穿一层 `&mut`（那正是老一版递归的由头）。
-    fn put(&mut self, at: Where, name: Name, node: Node, want: Want) -> Result<EntryId, Fail> {
+    fn put(&mut self, at: Where, name: Tag, node: Node, want: Want) -> Result<EntryId, Fail> {
         let existing = self
             .kids(at)?
             .iter()
@@ -475,7 +475,7 @@ impl Operator {
     }
 
     /// 在这一块 `Pane` 的孩子里按名字找那个号（只读一趟扫，最多 `PANE_CAP` 次查表）。
-    fn child(&self, level: &[EntryId], name: Name) -> Option<EntryId> {
+    fn child(&self, level: &[EntryId], name: Tag) -> Option<EntryId> {
         level
             .iter()
             .copied()

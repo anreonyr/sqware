@@ -10,7 +10,7 @@
 //!
 //! ```text
 //!   一张字段表（#[derive(env::Frame)] 那枚结构体）   偏移与长度一处求和得出
-//!   一个 impl Message           这一族会编会解（变长那几枚在这里手写字节算术）
+//!   一个 impl Message           这一族会编会解（多形分派住这里；一格与"一段重复"归字段表）
 //!   用 Sender / Receiver 收发    communication 那一层的手柄
 //! ```
 //!

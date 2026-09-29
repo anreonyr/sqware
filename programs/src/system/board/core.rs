@@ -13,7 +13,7 @@
 //! 本文件只讲牌子与那几条动作；**板为什么就一枚线程、惰性剔除的口径**写在协议那一边
 //! （`protocol::system::board` 的正文）。
 
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 
 use protocol::communication::establish::vested_by;
 use protocol::system::board::Fail;
@@ -35,7 +35,7 @@ use runtime::env::mail;
 /// [`Board::evict`] 三手动它。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Sign {
-    name: Name,
+    name: Tag,
     entry: Option<PieToken>,
     owner: Option<TaskId>,
 }
@@ -43,7 +43,7 @@ struct Sign {
 impl Sign {
     /// 空牌子：板子的初值。
     const VACANT: Sign = Sign {
-        name: Name::EMPTY,
+        name: Tag::EMPTY,
         entry: None,
         owner: None,
     };
@@ -119,7 +119,7 @@ impl Board {
     ///   先 [`Board::unregister`] 再登）；
     /// - 已有**别人**挂着的实例 ⇒ [`Fail::Taken`]；**自己**挂着的 ⇒ 覆盖（重登 / 换绑）；
     /// - 都没占 ⇒ 找一枚空牌子立上，板满则 [`Fail::Full`]。
-    pub fn register(&mut self, name: Name, entry: PieToken, who: TaskId) -> Result<PieToken, Fail> {
+    pub fn register(&mut self, name: Tag, entry: PieToken, who: TaskId) -> Result<PieToken, Fail> {
         if vested_by(entry) != Some(who) {
             return Err(Fail::Denied);
         }
@@ -157,7 +157,7 @@ impl Board {
     ///
     /// **空牌子 = `Unknown`**：没有实例的牌子（从未登记 / 已注销 / 已死）答不出主人是谁，
     /// 故"这名字没人挂着"与"你挂的不是它"是两件事，`Denied` 只留给后者。
-    pub fn unregister(&mut self, name: Name, who: TaskId) -> Result<(), Fail> {
+    pub fn unregister(&mut self, name: Tag, who: TaskId) -> Result<(), Fail> {
         let at = self.find(name).ok_or(Fail::Unknown)?;
         self.sweep_at(at);
         if self.signs[at].entry.is_none() {
@@ -203,7 +203,7 @@ impl Board {
     /// 按名找服务归树（见文件头），板这一层只剩自己那两处**写路径**上按名字定位。故同样一句
     /// **没有读者的格不留在面上**；代价照实说：将来真有人要在板上按名定位（譬如一条逐名读数的
     /// 调试手），那时再抬回来。
-    fn find(&self, name: Name) -> Option<usize> {
+    fn find(&self, name: Tag) -> Option<usize> {
         self.signs
             .iter()
             .position(|sign| sign.named() && sign.name == name)

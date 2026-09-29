@@ -1,4 +1,4 @@
-//! mold —— 四个过程宏：`#[derive(Frame)]`（**定长帧**）、`#[derive(Envcall)]`（**环境调用
+//! mold —— 四个过程宏：`#[derive(Frame)]`（**帧**）、`#[derive(Envcall)]`（**环境调用
 //! 枚举**）、`#[derive(Fail)]`（**域失败词汇**）、`#[entry]`（**入口那一手**）。
 //!
 //! 四者互不相干，**各占一个文件**（[`frame`] / [`envcall`] / [`fail`] / [`entry`]）——本文件
@@ -17,8 +17,9 @@ mod frame;
 
 use proc_macro::TokenStream;
 
-/// **定长帧**：给一枚具名字段的结构体生成 `LEN` ＋ `store` / `store_in` / `fetch`
-/// （**结构体归你写**——它本就是那张字段表）。
+/// **帧**：给一枚具名字段的结构体生成 `LEN` ＋ `store` / `store_at` /
+/// `fetch` / `fetch_at`（**结构体归你写**——它本就是那张字段表）；一格上一段重复写
+/// `#[frame(count = <条数那一格>, fill = <空位那一枚>)]`。
 ///
 /// ```ignore
 /// #[derive(env::Frame)]
@@ -31,7 +32,7 @@ use proc_macro::TokenStream;
 /// ```
 ///
 /// 详见 [`frame`]。
-#[proc_macro_derive(Frame)]
+#[proc_macro_derive(Frame, attributes(frame))]
 pub fn derive_frame(input: TokenStream) -> TokenStream {
     frame::expand(input.into()).into()
 }

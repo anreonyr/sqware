@@ -19,7 +19,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Key, Name};
+use env::{Key, Tag};
 use runtime::core::dock::View;
 
 use crate::program::router::PLIC_CLASS;
@@ -35,8 +35,8 @@ use crate::program::router::PLIC_CLASS;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Device {
     pub key: Key,
-    pub name: Name,
-    pub class: Name,
+    pub name: Tag,
+    pub class: Tag,
     pub line: u32,
 }
 
@@ -96,13 +96,13 @@ impl Machine {
             let Some(class) = node
                 .compatible()
                 .and_then(|c| c.all().next())
-                .and_then(|c| Name::new(c).ok())
+                .and_then(|c| Tag::new(c))
             else {
                 continue;
             };
             // 名字装不下（> 31 字节）⇒ 这一台**落不了格**（`/dev/<类>/<名>` 那一段就是它）。
             // 不猜一个截短的名字：那会让两台不同的设备撞成同一格。
-            let Some(name) = Name::new(node.name).ok() else {
+            let Some(name) = Tag::new(node.name) else {
                 continue;
             };
             let Some(base) = first_region(node) else {

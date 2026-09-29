@@ -38,7 +38,7 @@
 //! - [`machine`]：本域手里那台机器的自述（设备树）
 
 use env::wire::Eyes;
-use env::{Name, Wait};
+use env::{Tag, Wait};
 use protocol::debug;
 
 use runtime::env::unit as utask;
@@ -130,7 +130,7 @@ impl Assembly {
     /// **那条判断不作准**：树就是"名字 → 资源"那本目录，谁要挂谁自己上来（今天就由树自己落）。
     /// 故 `control` 那一面**挂进树**（不是只靠装配期直授），取面方式与 `principal` / `coalition`
     /// 逐字同形；真客人是 `harness/src/probe_control.rs`。
-    pub fn supervise(&mut self, last: Name) {
+    pub fn supervise(&mut self, last: Tag) {
         self.mount_control();
         self.watch.run(&mut self.control, last);
     }
@@ -274,7 +274,7 @@ impl Assembly {
         // 登记：**"怎么算它起来了"由这一台的 `setup` 推出**。席满 / 名字非法 ⇒ 装配表那一格。
         self.control.enlist(program).map_err(|_| E_TABLE)?;
 
-        let name = Name::new(program.name()).map_err(|_| fail(program, Error::Manifest))?;
+        let name = Tag::new(program.name()).ok_or(fail(program, Error::Manifest))?;
         let mut service = self.control.spawn(program).map_err(|e| fail(program, e))?;
 
         // 通信：放行前把 `setup` 里那几条通道逐条装上（记号 = 通道名，放行后逐条认领）。

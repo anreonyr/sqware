@@ -47,7 +47,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::Name;
+use env::Tag;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::control as ccall;
@@ -97,13 +97,13 @@ fn main() -> Report<'static> {
 
     // 四、**表里没有的名字** ⇒ 期望那一格语义码（`Unknown`）。这一条量的正是"这一问走到了对面、
     //     对面解开了它、并把账上的结论答了回来"——`Bad`（本端这一趟没走到）在这一格是红。
-    let nobody = Name::new(NOBODY).expect("probe-control: bad probe name");
+    let nobody = Tag::new(NOBODY).expect("probe-control: bad probe name");
     let missing = control.service(nobody).state(Wait::AtMost(MS));
     debug!("probe-control: missing={missing:?}");
 
     // 五、**本台自己**：装配表里有这一行、而本台此刻活着 ⇒ 答得出一个生命阶段。
     //     （真值由装配那一趟给 `Ready`；`Starting` 也在"这一行还在、这一面看得见它"之内。）
-    let mine = Name::new("probe-control").expect("probe-control: bad own name");
+    let mine = Tag::new("probe-control").expect("probe-control: bad own name");
     let alive = control.service(mine).state(Wait::AtMost(MS));
     debug!("probe-control: self={alive:?}");
 

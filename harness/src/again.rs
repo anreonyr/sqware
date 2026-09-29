@@ -57,7 +57,7 @@ use programs::Reason;
 
 use programs::root::boot;
 
-use env::Name;
+use env::Tag;
 use programs::system::control::core::{Ready, probe_ready};
 use programs::system::control::desk::{Announce, Slot, State, Table};
 use programs::system::control::service;
@@ -81,7 +81,7 @@ fn main() -> Reason {
     let Some((elf, kind)) = find(&boot, VICTIM) else {
         return die("again: victim not in manifest");
     };
-    let Ok(name) = Name::new(ROW) else {
+    let Some(name) = Tag::new(ROW) else {
         return die("again: bad row name");
     };
 
@@ -209,7 +209,7 @@ fn main() -> Reason {
 }
 
 /// 打这一步的表内事实（`state` / `slot` / `Ready` 探针）。
-fn trace(table: &Table, name: Name, round: usize, step: &str) {
+fn trace(table: &Table, name: Tag, round: usize, step: &str) {
     let (state, slot) = match table.find(name) {
         Some(s) => (s.state, s.slot),
         None => (State::NeverStarted, Slot::None),

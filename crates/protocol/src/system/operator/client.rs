@@ -39,7 +39,7 @@
 use crate::message::Message;
 use env::Mark;
 use env::Wait;
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -204,7 +204,7 @@ impl Rein<'_> {
     /// 判据与 [`Pane::open`] 同一句（幂等 / 是一枚砖 ⇒ [`Fail::NotAPane`] / 装不下 ⇒
     /// [`Fail::Full`]）；多出来的那一格是**面判**：会话不在 `part` 那一位上 ⇒
     /// [`Fail::Denied`]。
-    pub fn part(&self, at: Where, name: Name, wait: Wait) -> Result<EntryId, Fail> {
+    pub fn part(&self, at: Where, name: Tag, wait: Wait) -> Result<EntryId, Fail> {
         let said = self.face.call(ocall::Req::Part { at, name }, wait)?;
         said.entry().map_err(map_code)
     }
@@ -217,7 +217,7 @@ impl Rein<'_> {
     pub fn land(
         &self,
         at: Where,
-        name: Name,
+        name: Tag,
         entry: PieToken,
         permit: Permit,
         mine: Mine,
@@ -279,7 +279,7 @@ impl Rein<'_> {
     }
 
     /// **名**：`id` 那一号此刻叫什么。
-    pub fn name(&self, id: EntryId, wait: Wait) -> Result<Name, Fail> {
+    pub fn name(&self, id: EntryId, wait: Wait) -> Result<Tag, Fail> {
         let said = self.face.call(ocall::Req::Name(id), wait)?;
         said.name().map_err(map_code)
     }
@@ -340,7 +340,7 @@ impl<'a> Pane<'a> {
     /// **它不再补问一趟**：`part` 那一问自己就答"这一格是不是窗格"，再多发一次 `list` 只会
     /// 多一次往返（而多出来那一问的失败会把已经成的 `part` 说成失败——持树者一枚线程，这一格
     /// 是量得出来的代价）。
-    pub fn open(&self, name: Name, wait: Wait) -> Result<Pane<'_>, Fail> {
+    pub fn open(&self, name: Tag, wait: Wait) -> Result<Pane<'_>, Fail> {
         let said = self
             .face
             .call(ocall::Req::Part { at: self.at, name }, wait)?;
@@ -362,7 +362,7 @@ impl<'a> Pane<'a> {
     /// 就得再问一次（[`Pane::name`] 查得到就是落上了）。
     pub fn bind(
         &self,
-        name: Name,
+        name: Tag,
         e: PieToken,
         permit: Permit,
         mine: Mine,
@@ -422,7 +422,7 @@ impl<'a> Pane<'a> {
     }
 
     /// **名**：`e` 那一号此刻叫什么。
-    pub fn name(&self, e: EntryId, wait: Wait) -> Result<Name, Fail> {
+    pub fn name(&self, e: EntryId, wait: Wait) -> Result<Tag, Fail> {
         let said = self.face.call(ocall::Req::Name(e), wait)?;
         said.name().map_err(map_code)
     }
@@ -465,7 +465,7 @@ impl Tile<'_> {
     }
 
     /// 这一格此刻叫什么。
-    pub fn name(&self, wait: Wait) -> Result<Name, Fail> {
+    pub fn name(&self, wait: Wait) -> Result<Tag, Fail> {
         let said = self.face.call(ocall::Req::Name(self.id), wait)?;
         said.name().map_err(map_code)
     }

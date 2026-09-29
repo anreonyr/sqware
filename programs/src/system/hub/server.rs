@@ -34,7 +34,7 @@
 use alloc::vec::Vec;
 
 use env::HoleDir;
-use env::{Access, Key, Kind, MailFail, Mark, Name, Pair, PieToken, Policy, TaskId, Wait};
+use env::{Access, Key, Kind, MailFail, Mark, Pair, PieToken, Policy, Tag, TaskId, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
@@ -304,7 +304,7 @@ fn turn(
 fn bond(
     ledger: &mut Ledger,
     league: &League,
-    class: Name,
+    class: Tag,
     from: TaskId,
     back: PieToken,
 ) -> Result<(), ()> {
@@ -323,7 +323,7 @@ fn bond(
 }
 
 /// **列册**：这一类此刻有哪几台、哪几台有主（越界答空窗——是答案，不是错误）。
-fn list(ledger: &Ledger, class: Name, from: u32, back: PieToken) -> Result<(), ()> {
+fn list(ledger: &Ledger, class: Tag, from: u32, back: PieToken) -> Result<(), ()> {
     let window = if ledger.coalition_of(class).is_some() {
         ledger.list(class, from)
     } else {
@@ -500,7 +500,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
                 None => continue,
             },
         };
-        let (Ok(name), Ok(class)) = (Name::new(name), Name::new(class)) else {
+        let (Some(name), Some(class)) = (Tag::new(name), Tag::new(class)) else {
             continue;
         };
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。

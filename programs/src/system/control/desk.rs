@@ -9,7 +9,7 @@
 //! 头注只描述了这一本（"一张定长表与一行的形状"）——**文件头说不全的，就是放错了地方**。
 //! 判定那四条（起不起 / 起来了没有 / 收尾完了没有）跟着这本账走：住 [`core`](super::core)。
 
-use env::{Name, TaskId, TeamId};
+use env::{Tag, TaskId, TeamId};
 
 use super::core::Fail;
 
@@ -76,7 +76,7 @@ pub enum Announce {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Service {
     /// 服务名（清单名，≤ 31 字节）。**表内的唯一坐标**。
-    pub name: Name,
+    pub name: Tag,
     /// 这一次运行的载体。
     pub slot: Slot,
     /// 生命阶段。
@@ -87,7 +87,7 @@ pub struct Service {
 
 /// 一行的初值（表是定长数组，故要一个可复制的空行）。
 const EMPTY: Service = Service {
-    name: Name::EMPTY,
+    name: Tag::EMPTY,
     slot: Slot::None,
     state: State::NeverStarted,
     announce: Announce::None,
@@ -115,7 +115,7 @@ impl Table {
     /// **登记一行**：只知道名字与它"怎么算起来"——此刻还没有身子。
     ///
     /// 这是"起之前"唯一的入口；身子由 [`Table::attach`] 在真的起了之后挂上。
-    pub fn register(&mut self, name: Name, announce: Announce) -> Result<(), Fail> {
+    pub fn register(&mut self, name: Tag, announce: Announce) -> Result<(), Fail> {
         if self.find(name).is_some() {
             return Err(Fail::Unknown);
         }
@@ -128,7 +128,7 @@ impl Table {
     }
 
     /// 按名字找那一行（没名字的行不算）。
-    pub fn find(&self, name: Name) -> Option<&Service> {
+    pub fn find(&self, name: Tag) -> Option<&Service> {
         self.rows.iter().find(|s| s.name == name)
     }
 
@@ -138,7 +138,7 @@ impl Table {
     }
 
     /// 改状态。找不到 = 名字不对 ⇒ 不动任何东西。
-    pub fn set_state(&mut self, name: Name, state: State) {
+    pub fn set_state(&mut self, name: Tag, state: State) {
         if let Some(s) = self.row_mut(name) {
             s.state = state;
         }
@@ -147,7 +147,7 @@ impl Table {
     /// 挂上身子：**一次给全**（域 + 线程）。没登记过 ⇒ `Unknown`。
     ///
     /// `team = None` = 那一枚线程**住本域**（见 [`Slot`]）。
-    pub fn attach(&mut self, name: Name, team: Option<TeamId>, task: TaskId) -> Result<(), Fail> {
+    pub fn attach(&mut self, name: Tag, team: Option<TeamId>, task: TaskId) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);
         };
@@ -157,13 +157,13 @@ impl Table {
     }
 
     /// 摘掉身子（行留着：状态要能说出"起过、现在死了"）。
-    pub fn detach(&mut self, name: Name) {
+    pub fn detach(&mut self, name: Tag) {
         if let Some(s) = self.row_mut(name) {
             s.slot = Slot::None;
         }
     }
 
-    fn row_mut(&mut self, name: Name) -> Option<&mut Service> {
+    fn row_mut(&mut self, name: Tag) -> Option<&mut Service> {
         self.rows.iter_mut().find(|s| s.name == name)
     }
 }

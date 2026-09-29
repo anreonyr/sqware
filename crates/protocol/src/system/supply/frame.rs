@@ -3,8 +3,11 @@
 //! **照实记（这一份从前是什么样）**：单子与回单各有一对**自由函数**（`pack_order` /
 //! `unpack_order`、`pack_reply` / `unpack_reply`）、两个**借字节的视图**（`Order<'a>` /
 //! `Reply<'a>`）、一处手算的帧头（`HEAD_LEN`）——"多长、怎么写、怎么读"散在三处。今天收成报那一层
-//! 那两样：**一张头表**（`#[derive(env::Frame)]` 求长）＋ **一个 `impl Message`**（编解一处）；尾巴那两段走
-//! `env::wire::{store_tail, fetch_tail}`。
+//! 那两样：**一张字段表**（`#[derive(env::Frame)]` 求长）＋ **一个 `impl Message`**（编解一处）；
+//! 那一段重复走 `#[frame(count = n, fill = …)]`（`store_tail` / `fetch_tail` 由宏接线）。
+//!
+//! **照实记（`OrderHead` / `ReplyHead` 并回本表）**：那两枚头从前只为给尾巴算偏移而单立，
+//! 而条数在内存里又是同一个数（`usize`）——今天一格就是那一帧，条数那一格是线上那一格。
 //!
 //! **照实记（这一族两端都上类型化手柄——上一版这里写反了）**：
 //!
@@ -19,7 +22,7 @@
 //! 正文见 `protocol` 那一侧的 `system/supply/mod.rs`（**分批搬家的中途**：正文还没过来）。
 
 use env::TaskId;
-use env::{PAIR_LEN, Pair};
+use env::Pair;
 
 use crate::message::Message;
 
@@ -53,12 +56,12 @@ pub const OP_SUPPLY: u8 = 1;
 /// 一条单子最多要五样（今天的单子四样）。
 pub const WANT_MAX: usize = 5;
 
-/// 单子 / 回单的定长缓冲：**头 ＋ 上界那么多条**（一处求和）。
+/// 单子 / 回单的定长缓冲：**最长那一形**（头 ＋ 上界那么多条，同一张表求和）。
 ///
 /// **不是线格式的上限**：孔不预设上限（见 `env::fid::PieCall::UnsealHole`），这两个数是本侧选
 /// "一帧一单、不流式"的结果。
-pub const ORDER_CAP: usize = OrderHead::LEN + WANT_LEN * WANT_MAX;
-pub const REPLY_CAP: usize = ReplyHead::LEN + PAIR_LEN * WANT_MAX;
+pub const ORDER_CAP: usize = Order::LEN;
+pub const REPLY_CAP: usize = Reply::LEN;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -72,24 +75,29 @@ pub const BAD: u8 = 4;
 
 // ── 一单（问）───────────────────────────────────────────────
 
-/// 单子那三格头：**哪一动作**（今天只有 [`OP_SUPPLY`]）＋ 条数 ＋ **给谁**。
+/// **一张单子**：哪一动作（今天只有 [`OP_SUPPLY`]）＋ 条数 ＋ **给谁** ＋ 至多 [`WANT_MAX`] 条。
 ///
 /// 条数是**声明**：与后面那一段绑死（读的人两边对不上就是读不懂）。这一族一问只有这一形，
 /// 故不留"未完"那一格（对照 coalition 那扇窗：盟籍没有上限）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct OrderHead {
-    pub op: u8,
-    pub count: u8,
-    pub who: TaskId,
-}
-
-/// **一张单子**：给谁 ＋ 至多 [`WANT_MAX`] 条（尾巴走 [`env::wire::store_tail`]）。
-#[derive(Clone, Copy)]
+///
+/// **照实记（头那一枚并进来了）**：它从前分成两处——内存里没有 `op`，另立一枚
+/// `OrderHead { op, count, who }` 在编的那一手现拼；derive 认"一段重复"之后**一格就是那一帧**，
+/// `op` 由 [`Order::of`] 写、由解码那一手校。
+#[derive(env::Frame, Clone, Copy)]
 pub struct Order {
+    op: u8,
+    n: u8,
     who: TaskId,
-    len: usize,
+    #[frame(count = n, fill = Want::NONE)]
     wants: [Want; WANT_MAX],
 }
+
+/// **线上一个字节都不许动**：这两形照本节那两张表钉住（`[码 1B][条数 1B][…条]`）。
+const _: () = assert!(
+    Order::LEN
+        == 1 + 1 + <TaskId as env::wire::Field>::WIDTH + WANT_LEN * WANT_MAX
+);
+const _: () = assert!(Reply::LEN == 1 + 1 + env::PAIR_LEN * WANT_MAX);
 
 impl Order {
     /// 起一张单子。**条数越界 ⇒ `None`**（调用方按本地失败处置）。
@@ -97,15 +105,16 @@ impl Order {
     /// **照实记（"缓冲不够"那一格退场）**：从前 `pack_order` 还答一格"给的那只缓冲装不下"——
     /// 今天缓冲就是这一族最长那一只（[`Message::Buf`]），装不下**不可表达**，故那一格没了。
     pub fn of(who: TaskId, wants: &[Want]) -> Option<Order> {
-        let len = wants.len();
-        if len > WANT_MAX {
+        let n = wants.len();
+        if n > WANT_MAX {
             return None;
         }
         let mut held = [Want::NONE; WANT_MAX];
-        held.get_mut(..len)?.copy_from_slice(wants);
+        held.get_mut(..n)?.copy_from_slice(wants);
         Some(Order {
+            op: OP_SUPPLY,
+            n: n as u8,
             who,
-            len,
             wants: held,
         })
     }
@@ -117,12 +126,12 @@ impl Order {
 
     /// 几条。
     pub fn len(&self) -> usize {
-        self.len
+        self.n as usize
     }
 
     /// 第 `i` 条（越界 ⇒ `None`）。
     pub fn want(&self, i: usize) -> Option<Want> {
-        (i < self.len).then(|| self.wants[i])
+        (i < self.len()).then(|| self.wants[i])
     }
 }
 
@@ -133,77 +142,51 @@ impl Message for Order {
     const EMPTY: Self::Buf = [0u8; ORDER_CAP];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        let head = OrderHead {
-            op: OP_SUPPLY,
-            count: self.len as u8,
-            who: self.who,
-        };
-        let at = head.store_in(out)?;
-        env::wire::store_tail(out, at, &self.wants[..self.len])
+        self.store_at(out, 0)
     }
 
     /// 解一张单子：`op` 不对 / 条数越界 / **不够长** ⇒ `None`（不猜、不崩）。
     ///
     /// **照实记（"够长"就是问那一形的判据）**：从前 `unpack_order` 只要求
     /// `len >= 头 ＋ n × 32`——长出来那几字节**不算**读不懂；而**回单**那一形要求**恰好**
-    /// （见 [`Reply`] 的 `fetch`）。两条都是旧判据，照抄，没改。
+    /// （见 [`Reply`] 的 `fetch`）。两条都是旧判据，照抄，没改；这两句是**本族的**，derive 不替它判。
     fn fetch(bytes: &[u8]) -> Option<Order> {
-        let head = OrderHead::fetch(bytes)?;
-        if head.op != OP_SUPPLY {
-            return None;
-        }
-        let len = head.count as usize;
-        if len > WANT_MAX {
-            return None;
-        }
-        let body = bytes.get(OrderHead::LEN..)?;
-        if body.len() < len * WANT_LEN {
-            return None;
-        }
-        let mut wants = [Want::NONE; WANT_MAX];
-        env::wire::fetch_tail(body, 0, &mut wants[..len])?;
-        Some(Order {
-            who: head.who,
-            len,
-            wants,
-        })
+        let (order, _) = Order::fetch_at(bytes, 0)?;
+        (order.op == OP_SUPPLY).then_some(order)
     }
 }
 
 // ── 一答（回单）─────────────────────────────────────────────
 
-/// 回单那头两格：**答话那一格**（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）
-/// ＋ 条数。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct ReplyHead {
-    pub code: u8,
-    pub count: u8,
-}
-
-/// **一张回单**：答话那一格 ＋ 至多 [`WANT_MAX`] 条记录（坐标 ＋ 号）。
+/// **一张回单**：答话那一格（[`OK`] / [`UNKNOWN`] / [`DENIED`] / [`FULL`] / [`BAD`]）＋ 条数
+/// ＋ 至多 [`WANT_MAX`] 条记录（坐标 ＋ 号）。
 ///
 /// **照实记（记录为什么是 [`Pair`] 而不是字节）**：编那一侧手上就是 `Pair`（`port::ship` 交回
 /// 一枚号，见发货那一侧），读那一侧手上是字节——`Pair` 的那两个 `Field` 手是两者之间**唯一**
 /// 那一处（`repr(C)`、尺寸编译期锁死）。
-#[derive(Clone, Copy)]
+///
+/// **照实记（头那一枚并进来了）**：它从前分成两处——内存里 `len: usize`、线上另立一枚
+/// `ReplyHead { code, count }`；derive 认"一段重复"之后一格就是那一帧。
+#[derive(env::Frame, Clone, Copy)]
 pub struct Reply {
     code: u8,
-    len: usize,
+    n: u8,
+    #[frame(count = n, fill = Pair::NONE)]
     pairs: [Pair; WANT_MAX],
 }
 
 impl Reply {
     /// 编一张回单。**条数越界 ⇒ `None`**。
     pub fn of(code: u8, records: &[Pair]) -> Option<Reply> {
-        let len = records.len();
-        if len > WANT_MAX {
+        let n = records.len();
+        if n > WANT_MAX {
             return None;
         }
         let mut held = [Pair::NONE; WANT_MAX];
-        held.get_mut(..len)?.copy_from_slice(records);
+        held.get_mut(..n)?.copy_from_slice(records);
         Some(Reply {
             code,
-            len,
+            n: n as u8,
             pairs: held,
         })
     }
@@ -215,7 +198,7 @@ impl Reply {
 
     /// 记录那一段（整条记录，`PAIR_LEN` 步长）。
     pub fn records(&self) -> &[Pair] {
-        self.pairs.get(..self.len).unwrap_or(&[])
+        self.pairs.get(..self.n as usize).unwrap_or(&[])
     }
 }
 
@@ -226,35 +209,17 @@ impl Message for Reply {
     const EMPTY: Self::Buf = [0u8; REPLY_CAP];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        let head = ReplyHead {
-            code: self.code,
-            count: self.len as u8,
-        };
-        let at = head.store_in(out)?;
-        env::wire::store_tail(out, at, self.records())
+        self.store_at(out, 0)
     }
 
     /// 解一张回单：条数越界 / **帧长与条数对不上** ⇒ `None`（不猜、不崩）。
     ///
     /// **照实记（"恰好"就是答那一形的判据）**：从前 `unpack_reply` 要的是
     /// `len == 2 ＋ n × PAIR_LEN`——**多一字节也是读不懂**（与问那一形的"够长"相对，见上）。
+    /// 这条判据是**本族的**，derive 不替它判。
     fn fetch(bytes: &[u8]) -> Option<Reply> {
-        let head = ReplyHead::fetch(bytes)?;
-        let len = head.count as usize;
-        if len > WANT_MAX {
-            return None;
-        }
-        let body = bytes.get(ReplyHead::LEN..)?;
-        if body.len() != len * PAIR_LEN {
-            return None;
-        }
-        let mut pairs = [Pair::NONE; WANT_MAX];
-        env::wire::fetch_tail(body, 0, &mut pairs[..len])?;
-        Some(Reply {
-            code: head.code,
-            len,
-            pairs,
-        })
+        let (reply, at) = Reply::fetch_at(bytes, 0)?;
+        (at == bytes.len()).then_some(reply)
     }
 }
 

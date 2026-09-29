@@ -39,15 +39,14 @@ pub enum Fail {
 
 use crate::message::Message;
 
-// 名字那一格用的是 `env::Name`（**定长名字那个类型**）——本模块另有一个 `Name`（只报名字
-// 那一问的字段表），故这里一路写全路径：两个 `Name` 是同一件事的两层（值与帧），
-// 谁都不该改名。
+// 名字那一格用的是 `env::Tag`（**线上那一格定长名字**）——本模块另有一个 `Name`（只报名字
+// 那一问的字段表），故这里一路写全路径：两个名字是同一件事的两层（格与帧），谁都不该改名。
 
-pub fn name_of(bytes: &[u8]) -> Option<env::Name> {
+pub fn name_of(bytes: &[u8]) -> Option<env::Tag> {
     let at = bytes.get(..env::wire::NAME_LEN)?;
     let mut raw = [0u8; env::wire::NAME_LEN];
     raw.copy_from_slice(&at[..]);
-    env::Name::from_bytes(raw).ok()
+    env::Tag::from_block(raw)
 }
 
 // ── 四张字段表（**偏移一处都不写**）─────────────────────────
@@ -70,7 +69,7 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Name> {
 // 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
 //
 // 名字按 `NAME_LEN`(env::wire::NAME_LEN) 定长写（尾随 NUL 是填充）——**与牌子同
-// 一个解码面**，故 `env::Name` 的读法全树只有一处。
+// 一个解码面**，故 `env::Tag` 的读法全树只有一处。
 //
 // 那一格入口号是**客人把入口交出去之后、换回来的"种在板表里"的号**
 // （`ship` 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
@@ -81,7 +80,7 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Name> {
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Seed {
     pub op: u8,
-    pub name: env::Name,
+    pub name: env::Tag,
     pub seed: PieToken,
 }
 
@@ -89,7 +88,7 @@ pub struct Seed {
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Name {
     pub op: u8,
-    pub name: env::Name,
+    pub name: env::Tag,
 }
 
 /// 空载荷那一问（退场）：整帧只有动作码这一格。
@@ -163,11 +162,11 @@ crate::fail_codes! {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
     /// 登记：名字 ＋ **板上那个入口号**（`ship` 换回来的那一枚——不是"客人的 Pie 是几号"）。
-    Register { name: env::Name, seed: PieToken },
+    Register { name: env::Tag, seed: PieToken },
     /// 注销：只报名字（板按"开者 = 它"认领）。
-    Unregister { name: env::Name },
+    Unregister { name: env::Tag },
     /// 查：只报名字。查到的那枚入口**经会话转授**，不从报文里走。
-    Lookup { name: env::Name },
+    Lookup { name: env::Tag },
     /// 退场：**空载荷**，整帧一字节。
     Evict,
 }
@@ -188,14 +187,14 @@ pub enum Req {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
     Register {
-        name: env::Name,
+        name: env::Tag,
         seed: PieToken,
     },
     Unregister {
-        name: env::Name,
+        name: env::Tag,
     },
     Lookup {
-        name: env::Name,
+        name: env::Tag,
     },
     Evict,
     /// 表外的动作码：**这一帧读得懂（`[码][名字]`），但那一码不是这四枚之一**。
@@ -216,14 +215,14 @@ impl Message for Req {
                 name,
                 seed,
             }
-            .store_in(out),
+            .store_at(out, 0),
             Req::Unregister { name } => Name {
                 op: UNREGISTER,
                 name,
             }
-            .store_in(out),
-            Req::Lookup { name } => Name { op: LOOKUP, name }.store_in(out),
-            Req::Evict => Evict { op: EVICT }.store_in(out),
+            .store_at(out, 0),
+            Req::Lookup { name } => Name { op: LOOKUP, name }.store_at(out, 0),
+            Req::Evict => Evict { op: EVICT }.store_at(out, 0),
         }
     }
 
@@ -297,7 +296,7 @@ impl Message for Union {
         Status {
             status: self.status,
         }
-        .store_in(out)
+        .store_at(out, 0)
     }
 
     /// 解一句答：**长度也是一格**（[`Status::LEN`]）——多一字节、少一字节都 ⇒ `None`
@@ -360,7 +359,7 @@ pub const TIP_MARK: Mark = Mark::of("tip");
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tip {
     pub who: TaskId,
-    pub name: env::Name,
+    pub name: env::Tag,
     pub reply: PieToken,
 }
 

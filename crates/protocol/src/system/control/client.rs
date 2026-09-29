@@ -28,7 +28,7 @@
 
 use crate::message::Message;
 use env::Wait;
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use runtime::env::mail;
 
 use crate::communication::establish;
@@ -76,7 +76,7 @@ impl Face {
     ///
     /// **这一步还没有身子**：`Mint` 只把域与线程造出来、还压在对端手里等放行；身子是
     /// [`Service::start`] 那一趟交回来的（[`Started::id`]）。
-    pub fn mint(&self, name: Name, wait: Wait) -> Result<Service<'_>, Fail> {
+    pub fn mint(&self, name: Tag, wait: Wait) -> Result<Service<'_>, Fail> {
         let said = self.call(frame::Req::Mint(name), wait)?;
         read(said)?;
         Ok(Service { face: self, name })
@@ -85,7 +85,7 @@ impl Face {
     /// **认已有的一条**：不铸、不验——名字只是这一面以后叫它的坐标。
     ///
     /// 它成不成立由 [四手](Service) 各自的第一趟答出来（表里没有 ⇒ `Fail::Unknown`）。
-    pub fn service(&self, name: Name) -> Service<'_> {
+    pub fn service(&self, name: Tag) -> Service<'_> {
         Service { face: self, name }
     }
 
@@ -122,12 +122,12 @@ impl Face {
 /// 名字不变、对端不变，故柄里只有这两格；四手各带自己的 `Wait`（**预算不是柄的状态**）。
 pub struct Service<'a> {
     face: &'a Face,
-    name: Name,
+    name: Tag,
 }
 
 impl Service<'_> {
     /// 这一条叫什么（读数用）。
-    pub fn name(&self) -> &Name {
+    pub fn name(&self) -> &Tag {
         &self.name
     }
 
@@ -164,13 +164,13 @@ impl Service<'_> {
 /// 要 `stop` / `state` 就 [`Started::service`] 拿回那一柄。
 pub struct Started<'a> {
     face: &'a Face,
-    name: Name,
+    name: Tag,
     task: TaskId,
 }
 
 impl Started<'_> {
     /// 这一条叫什么（读数用）。
-    pub fn name(&self) -> &Name {
+    pub fn name(&self) -> &Tag {
         &self.name
     }
 

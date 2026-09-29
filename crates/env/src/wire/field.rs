@@ -4,12 +4,12 @@
 //! 这一层是**报文帧**那一层（`&[u8]` / `&mut [u8]`）。两层都在 `env`：过线的那些东西住一处。
 //!
 //! **`fetch` 的 `None` 说的是"这一帧读不懂"**，不是"这个字段的值不合规矩"——值那一层各有各的
-//! 失败域（如 [`NameError`](crate::wire::NameError)），故这里只答 `Option`。
+//! 失败域（如 [`Tag`](crate::wire::Tag) 的"非空 / 装得下 / 无 NUL / UTF-8"），故这里只答 `Option`。
 //!
 //! **定长帧**（`#[derive(Frame)]`，实现住 `mold`）的底座就是这里：帧的偏移全部由
 //! [`Field::WIDTH`] 求和得出，从而两头不可能各写一份。
 
-use crate::wire::{NAME_LEN, Name, PieToken, TaskId};
+use crate::wire::{NAME_LEN, PieToken, Tag, TaskId};
 
 /// **过线的一格**：定宽 ＋ 会写会读。
 pub trait Field: Sized {
@@ -19,6 +19,44 @@ pub trait Field: Sized {
     fn store(&self, out: &mut [u8]);
     /// 从 `bytes` 读回来；**长度不足或那一格读不成** ⇒ `None`（不猜、不崩）。
     fn fetch(bytes: &[u8]) -> Option<Self>;
+}
+
+/// **要游标那一格**：宽度由值自己说（一条路几段、一段名字几字节），读写都从游标起。
+///
+/// 与 [`Field`] 的分工：[`Field`] 说"这一格多宽、怎么写"（**定长**——帧的偏移由它求和）；
+/// 这一枚说"最长多少、从哪写起、写完到哪"。**定长那一格自动也是 `Span`**（下面那条 blanket
+/// impl，`MAX = WIDTH`）——故一张字段表里两种格子可以并排，`#[derive(Frame)]` 只认 `Span`。
+///
+/// **照实记（为什么不给 `Field` 加两格、而要另立一枚）**：`Field::WIDTH` 那句"线上占几字节"
+/// 在本仓是立得住的（帧的偏移全部由它求和）；变长要的是**另一句话**——"最长那一形"与"带游标
+/// 的两只手"。改 `Field` 会把那一句弄松；而树上那条变长的路（`protocol` 的 `Path`）至今
+/// **不实现** `Field`，它自己那两只手与「它为什么不叫 `WIDTH`」那条照实记正是这一层分工的现状。
+pub trait Span: Sized {
+    /// 这一格**最长**占几字节（定长那一形就是它自己）。
+    const MAX: usize;
+    /// 从 `at` 写起，返写完之后的游标。
+    fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize>;
+    /// 从 `at` 读一格，返**值与读完之后的游标**。
+    fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)>;
+}
+
+/// **定长那一格就是"不长的那一枚 `Span`"**：`MAX` 取 [`Field::WIDTH`]，两只手就是那两只。
+///
+/// 于是 `#[derive(Frame)]` 的正文只有一条路（一律经 [`Span`]），而 [`Field`] 的 14 处 impl
+/// （`env` 8 ＋ `protocol` 6）一行不改。
+impl<T: Field> Span for T {
+    const MAX: usize = <T as Field>::WIDTH;
+
+    fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
+        let end = at.checked_add(<T as Field>::WIDTH)?;
+        Field::store(self, out.get_mut(at..end)?);
+        Some(end)
+    }
+
+    fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
+        let end = at.checked_add(<T as Field>::WIDTH)?;
+        Some((Field::fetch(bytes.get(at..end)?)?, end))
+    }
 }
 
 /// **`TaskId` 那一格是 8 字节小端**。
@@ -145,15 +183,25 @@ impl Field for PieToken {
     }
 }
 
-impl Field for Name {
-    /// **定长、带填充**：`Name::bytes()` 是那 32 字节的整个数组（内容之后的填充也上线）。
+/// **线上那一格定长名字**（[`Tag`]）：整块 32 字节搬进搬出。
+///
+/// **照实记（`Tag::block` 为什么只给本 crate）**：这一格今天**只有这一处读者**（旧 `Name::bytes()`
+/// 也是同一处境）——线上要的是"整块（含零填充）"，而 [`CStr::to_bytes_with_nul`] 只到终止 NUL
+/// 为止，两件事不同。故不发一扇没有外人的门。
+///
+/// [`CStr::to_bytes_with_nul`]: crate::text::CStr::to_bytes_with_nul
+impl Field for Tag {
+    /// **定长、带填充**：`Tag::block()` 是那 32 字节的整个数组（内容之后的填充也上线）。
     /// 帧的偏移要的是"这一格占多宽"，故取 `NAME_LEN`，不是内容的长度。
     const WIDTH: usize = NAME_LEN;
+
     fn store(&self, out: &mut [u8]) {
-        out.copy_from_slice(self.bytes());
+        out.copy_from_slice(self.block());
     }
+
+    /// 读回来那一格：**没有终止 NUL 的块一律读不懂**（见 [`Tag`] 的照实记）。
     fn fetch(bytes: &[u8]) -> Option<Self> {
-        Name::from_bytes(bytes.get(..NAME_LEN)?.try_into().ok()?).ok()
+        Tag::from_block(bytes.get(..NAME_LEN)?.try_into().ok()?)
     }
 }
 
@@ -185,7 +233,7 @@ pub fn store_tail<T: Field>(out: &mut [u8], at: usize, items: &[T]) -> Option<us
 
 /// 从 `at` 起读一段**等宽项**，装进调用方给的容器；返读完之后的游标。
 ///
-/// **容器由调用方给**（`&mut [Name]` / `&mut [EntryId]` / …）：`env` 不认识 `alloc`，也不替族
+/// **容器由调用方给**（`&mut [Tag]` / `&mut [EntryId]` / …）：`env` 不认识 `alloc`，也不替族
 /// 决定"装不下时丢哪一头"——**有几格位置就读几条**，游标交回去，于是"到这儿就是底"
 /// （如 `at == bytes.len()`）也由族自己判。
 ///
@@ -209,7 +257,7 @@ pub fn store_bytes(out: &mut [u8], at: usize, bytes: &[u8]) -> Option<usize> {
 /// 从 `at` 起读**到末尾**那一段裸字节（`None` = 起点越界）。
 ///
 /// 长度即内容 ⇒ 读的人拿到的就是"这一帧还剩下的那些字节"；**这些字节算不算一段合法的内容由族
-/// 判**（如 `Name::from_slice` 那四格）。
+/// 判**（如 [`Tag::from_slice`](crate::Tag::from_slice) 那四格）。
 pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
     bytes.get(at..)
 }
@@ -223,4 +271,5 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
 // 三件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再是
 // `env` 的 crate 根上一条"与模块同名的宏"（第一刀与 `protocol::frame` 撞的正是那一次）；
 // 结构体现在**写在调用点**——各格的 `pub` 与字段上的文档都在用户那一边看得见，而生成的
-// `LEN` / `store` / `store_in` / `fetch` 一个字没变（展开物逐字节比对过）。
+// `LEN` / `store` / `fetch` 一个字没变（展开物逐字节比对过；`store_in` 那一形后来退了——它
+// 与 `store_at(out, 0)` 逐字同签名，不另立）。

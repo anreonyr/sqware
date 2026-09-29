@@ -52,7 +52,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 use protocol::system::operator::{Fail, Permit};
 
-use env::Name;
+use env::Tag;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -90,10 +90,10 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-denied: no entry");
     };
-    let Some(dir) = protocol::system::SVC.file_name().copied() else {
+    let Some(dir) = protocol::system::SVC.file_name() else {
         return bail("probe-denied: bad name");
     };
-    let Ok(me) = Name::new(ME) else {
+    let Some(me) = Tag::new(ME) else {
         return bail("probe-denied: bad name");
     };
 

@@ -141,7 +141,6 @@ fn draw_one(pier: &Endpoint, want: Want) -> Option<env::PieToken> {
     let me = utask::self_id();
     let key = want.key()?;
     let mut reply = [0u8; supply::REPLY_CAP];
-    let records =
-        supply::client::draw(pier, me, &[want], &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
-    supply::client::pick(records, key)
+    let said = supply::client::draw(pier, me, &[want], &mut reply, Wait::AtMost(BOOT_MS)).ok()?;
+    supply::client::pick(said.records(), key)
 }

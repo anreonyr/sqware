@@ -21,7 +21,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use protocol::driver::hub::{Fail, LIST_MAX, Window};
 use protocol::system::coalition::CoalitionId;
 
@@ -37,8 +37,8 @@ use protocol::system::coalition::CoalitionId;
 /// `Key` 就是死格。**机制退了，格也退**。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Entry {
-    pub name: Name,
-    pub class: Name,
+    pub name: Tag,
+    pub class: Tag,
     pub line: u32,
     /// 那一页（引导域交过来的设备门闩）——认领成功时授给主人的就是它。
     pub page: PieToken,
@@ -84,7 +84,7 @@ impl Cell {
 /// 一类 → 它那枚盟。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct League {
-    class: Name,
+    class: Tag,
     coalition: CoalitionId,
 }
 
@@ -125,7 +125,7 @@ impl Ledger {
     /// 册 · 写：这一类那枚盟；没铸过就铸（`mint` 由适配层给——核心不叫盟册）。
     ///
     /// **一处定义**：写 permit 与"代报名"都从这里取，故同一类不会有两枚盟。
-    pub fn league(&mut self, class: Name, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
+    pub fn league(&mut self, class: Tag, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
         if let Some(league) = self.leagues.iter().find(|l| l.class == class) {
             return league.coalition;
         }
@@ -139,7 +139,7 @@ impl Ledger {
     }
 
     /// 册 · 读：这一类那枚盟（没铸过 ⇒ `None`）。
-    pub fn coalition_of(&self, class: Name) -> Option<CoalitionId> {
+    pub fn coalition_of(&self, class: Tag) -> Option<CoalitionId> {
         self.leagues
             .iter()
             .find(|l| l.class == class)
@@ -198,7 +198,7 @@ impl Ledger {
     /// 册 · 读：这一类从 `from` 起的一窗（名字 ＋ 有主那一位掩码）。
     ///
     /// **越界答空窗**（诚实的答案，不是错误——与盟册 `bloc` 同一条口径）。
-    pub fn list(&self, class: Name, from: u32) -> Window {
+    pub fn list(&self, class: Tag, from: u32) -> Window {
         let mut window = Window::EMPTY;
         window.from = from;
         let mut slot = 0usize;
@@ -233,7 +233,7 @@ impl Ledger {
     /// 而这一手给的是**孔**——落格与挂组要的正是"哪一枚孔是这一台的"。
     ///
     /// [`bridge::land`]: crate::system::operator::bridge::land
-    pub fn doors(&self, class: Name) -> impl Iterator<Item = (&Name, PieToken)> + '_ {
+    pub fn doors(&self, class: Tag) -> impl Iterator<Item = (&Tag, PieToken)> + '_ {
         self.cells
             .iter()
             .filter(move |c| c.entry().class == class)
@@ -243,8 +243,8 @@ impl Ledger {
     /// 册 · 读：册上出现过的**类**（入册序，去重）——hub 逐类立盟、逐类落 `/dev` 要它。
     ///
     /// 返 `None` = 备不下（调用方按"这一台起不来"处置：它是起手那一步）。
-    pub fn classes(&self) -> Option<Vec<Name>> {
-        let mut out: Vec<Name> = Vec::new();
+    pub fn classes(&self) -> Option<Vec<Tag>> {
+        let mut out: Vec<Tag> = Vec::new();
         for cell in &self.cells {
             let class = cell.entry().class;
             if out.contains(&class) {

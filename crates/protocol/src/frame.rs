@@ -133,10 +133,10 @@ impl Message for Reply {
     type Buf = [u8; Reply::LEN];
     const EMPTY: Self::Buf = [0u8; Reply::LEN];
 
-    /// 表那一手 `store_in`（写更大的缓冲、返长度）——正是这一手要的；表上那枚**同名**的 `store`
+    /// 表那一手 `store_at`（从游标写、返实际长度）——正是这一手要的；表上那枚**同名**的 `store`
     /// 要的是定长数组、返 `()`，两回事。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        Reply::store_in(self, out)
+        Reply::store_at(self, out, 0)
     }
 
     /// **恰好 10 字节**：表那一手只要求"够长"，而这一形今天的判据是"长短都不认"——长一字节也是

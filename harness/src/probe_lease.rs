@@ -36,7 +36,7 @@ use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 
-use env::Name;
+use env::Tag;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -69,7 +69,7 @@ fn main() -> Report<'static> {
     // 两问，那条线上的裸孔一个都不用（从前那行 `&session.link, session.talk, session.host`
     // 因此整行退场）⇒ 交给 [`TreeFace::of`]（吃所有权），两问从"四格参数"变成面上的方法。
     let tree = TreeFace::of(session);
-    let (Some(dir), Ok(me)) = (DIR.file_name().copied(), Name::new(ME)) else {
+    let (Some(dir), Some(me)) = (DIR.file_name(), Tag::new(ME)) else {
         return bail("probe-lease: bad name");
     };
     // `/svc` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——

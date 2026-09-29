@@ -7,7 +7,7 @@ use env::Mark;
 use env::Wait;
 
 use alloc::format;
-use env::{HoleDir, Name, PieToken, TaskId};
+use env::{HoleDir, PieToken, Tag, TaskId};
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
 use protocol::debug;
@@ -183,7 +183,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
 /// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::Tip::LEN`]），而牌子会被惰性
 /// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
 /// 过来）⇒ `None`：**这一位死了就没有读数**。
-fn lane_for(name: Name) -> Option<PieToken> {
+fn lane_for(name: Tag) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     mail::pies().find(|p| p.mark == want).map(|p| p.token)
 }

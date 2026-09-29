@@ -47,7 +47,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use env::{Name, PieToken};
+use env::{PieToken, Tag};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
@@ -101,7 +101,7 @@ fn main() -> Report<'static> {
     //
     //    这六条**一律到不了树**（面判在第一道就把它挡了），故参数拿哪一枚都不改变结论：
     //    它们量的是"这一位许不许这一类"，不是"那一格在不在"。
-    let Ok(part) = Name::new("probe-op-part") else {
+    let Some(part) = Tag::new("probe-op-part") else {
         panic!("probe-operator-land: bad name");
     };
     // 这一问的**参数是哪条路都不改变结论**（面判在第一道就挡了）——照旧拿本族那一块。
@@ -137,7 +137,7 @@ fn main() -> Report<'static> {
     );
 
     // 三、**无主那一格**：面 ✓ ＋ 归属 ✓ ⇒ 通，且答的就是那一格自己的号。
-    let free = Name::new(FREE).expect("bad name");
+    let free = Tag::new(FREE).expect("bad name");
     let got = rein.land(
         Where::Root,
         free,
@@ -152,7 +152,7 @@ fn main() -> Report<'static> {
     };
 
     // 四、**别人有主那一格**：面 ✓（`land` 正是这一位）、归属 ✗ ⇒ 拒。
-    let own = Name::new(OWN).expect("bad name");
+    let own = Tag::new(OWN).expect("bad name");
     let denied = rein.land(
         Where::Root,
         own,

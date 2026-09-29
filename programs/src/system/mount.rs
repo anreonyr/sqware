@@ -1,4 +1,4 @@
-//! system::mount — **挂面那一趟的两件共同的事**：把一枚记号取成孔、把一段面名取成 [`Name`]。
+//! system::mount — **挂面那一趟的两件共同的事**：把一枚记号取成孔、把一段面名取成 [`Tag`]。
 //!
 //! ```text
 //!   entry(mark, name) → (那一枚孔, 那一段面名)     一原语一面，两面各一枚
@@ -23,20 +23,20 @@
 //! 落由持树者自己走）。各族那一段路归**协议侧那一族的 `DIR`**（`/svc/sys/<族>`）——装配侧只引它。
 
 use env::Mark;
-use env::{Name, PieToken};
+use env::{PieToken, Tag};
 use runtime::env::mail;
 
 /// **铸某一面的待客入口**，并交出它**自己那一段名字**（`/svc/{族}/{面名}` 的末段）。
 ///
-/// 两步：记号 → 那一枚孔（`mail::unseal_hole`），面名 → 一枚 [`Name`]。
+/// 两步：记号 → 那一枚孔（`mail::unseal_hole`），面名 → 一枚 [`Tag`]。
 ///
 /// 返 `Err(哪一步)`：`"grant"`（记号铸不出）或 `"name"`（面名非法）。对调用方是同一件事
 /// （这一面没挂上），但"死在哪一步"正是诊断要的那一格。
 ///
 /// **每一面只铸一枚**：这一枚此后就是 `/svc/{族}/{面名}` 那一格背后那一枚；铸第二枚就会有一枚
 /// 永远没人读它的推（与"入口为什么要长命"同一条照实记，见 `Assembly::mount_control`）。
-pub fn entry(mark: Mark, name: &'static str) -> Result<(PieToken, Name), &'static str> {
+pub fn entry(mark: Mark, name: &'static str) -> Result<(PieToken, Tag), &'static str> {
     let entry = mail::unseal_hole(mark).map_err(|_| "grant")?;
-    let name = Name::new(name).map_err(|_| "name")?;
+    let name = Tag::new(name).ok_or("name")?;
     Ok((entry, name))
 }

@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
-use env::Name;
+use env::Tag;
 
 use super::desk::{Announce, Slot, State, Table};
 
@@ -17,7 +17,7 @@ use super::desk::{Announce, Slot, State, Table};
 /// ——但注意 **`stop` 之后状态是 `Stopping`，把 `Dead` 落地的是 `watch`**
 /// （`until` 只读不写）。完整序列（stop → watch → Oust → spawn → start）与被踩过的
 /// 两处暗礁见 `crate::system` 的 §六。
-pub fn admit_start(table: &Table, name: Name) -> Result<(), Fail> {
+pub fn admit_start(table: &Table, name: Tag) -> Result<(), Fail> {
     let Some(s) = table.find(name) else {
         return Err(Fail::Unknown);
     };
@@ -40,7 +40,7 @@ pub enum Ready {
 }
 
 /// 就绪判定（纯）：按**这一行自己声明的**说法解读。
-pub fn probe_ready(table: &Table, name: Name) -> Ready {
+pub fn probe_ready(table: &Table, name: Tag) -> Ready {
     let Some(s) = table.find(name) else {
         return Ready::Gone;
     };

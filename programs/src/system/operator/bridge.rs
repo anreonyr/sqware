@@ -28,7 +28,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Eyes;
 use env::wire::Field;
-use env::{Name, PieToken, TaskId};
+use env::{PieToken, Tag, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -190,7 +190,7 @@ pub fn attach(
     tip: &mut Option<PieToken>,
     coord: Coord,
 ) -> Result<(), &'static str> {
-    let link = Name::new(LINK).map_err(|_| "operator:name")?;
+    let link = Tag::new(LINK).ok_or("operator:name")?;
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
     //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
@@ -281,7 +281,7 @@ pub struct Landed {
     /// 查回来验一遍（`token`）：**路译得回、那一枚门闩取得回来**。
     pub find: Result<(), Fail>,
     /// 拿号问名：**号 ↔ 名对得上**，才算那枚号是真坐标。
-    pub named: Option<Name>,
+    pub named: Option<Tag>,
 }
 
 /// **上树落门牌那一趟**：名字先全验 → 逐段分路（`part` 幂等）→ 逐枚落（`bind`）→ 逐枚查回来
@@ -320,7 +320,7 @@ pub struct Landed {
 /// 前两处的 50 行里有 **44 行逐字相同**——差的 6 行：4 行是 `debug!` 里那个族名前缀、1 行多一句
 /// 注释、1 行是签名（一家由 `Session` 现取 `Face`、一家收 `&TreeFace`）。四处合计 225 行 /
 /// 204 码行，步骤一字不差；故"两台以上逐字同构 ⇒ 收"在这里成立。**那 44 行相同里还有一层**：
-/// 两处服务那一对连"把 `[(Grant, PieToken, Name); 2]` 摊成 `[(str, PieToken)]`"都逐字同构——
+/// 两处服务那一对连"把 `[(Grant, PieToken, Tag); 2]` 摊成 `[(str, PieToken)]`"都逐字同构——
 /// 那一对壳撤掉之后，摊开那两行并进了各处的调用点，`land` 的签名一个字没动。
 ///
 /// **照实记（uart 那一处换了自证口径：多两趟往返）**：uart 原来只问一句 `name`（"一次问完两格"：
@@ -356,7 +356,7 @@ pub fn land(
     faces: &[(&str, PieToken)],
     millis: Wait,
 ) -> Vec<Landed> {
-    // **照实记（"名字先全验"那一趟退了）**：它从前在这里把每一段过一遍 `Name::new`（一声
+    // **照实记（"名字先全验"那一趟退了）**：它从前在这里把每一段过一遍 `Tag::new`（一声
     // `{family}: tree: bad name` 就是它报的）。今天一条路是 [`Path`]——**造出来的时候每一段
     // 都过了那一关**（常量那一手非法即编不过，运行期那一手答 `None`，见 `Path::new` 的照实记）
     // ⇒ 这一趟与那声读数一起退场，`Vec` 也不必开。
@@ -385,7 +385,7 @@ pub fn land(
     let mut out = Vec::with_capacity(faces.len());
     for (face_name, entry) in faces {
         let face_name = *face_name;
-        let Ok(name) = Name::new(face_name) else {
+        let Some(name) = Tag::new(face_name) else {
             debug!("{family}: tree: bad name");
             return out;
         };
