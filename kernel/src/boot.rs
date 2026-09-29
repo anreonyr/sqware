@@ -139,7 +139,9 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    static EXIT_HOOKS: &[fn(env::TaskId)] = &[
+    /// 退场那两位的签名：**收 `&Arc<Task>`**（原话见 `messenger::Hook`——号那一格
+    /// 逼得封印去问清册快照，而快照会分配）。
+    static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::work::unit::task::Task>)] = &[
         crate::work::room::messenger::doom,
         crate::work::unit::gate::doom,
     ];

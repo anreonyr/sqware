@@ -84,14 +84,18 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> usize {
     removed
 }
 
-pub(crate) fn doom(tid: TaskId) {
-    let snap = snap::snap();
-    let Some(task) = snap::find(tid, &snap) else {
-        return;
-    };
-    // **封印先做，且不依赖分配**（照实记）：这里原先"快照分不出来就 `return`"——于是内存最紧
-    // 的那一趟恰好把"主人走了、资源还活着"漏出去。现在是：**封印**先走（`seal_owned` 那条链上
-    // 没有一处无保护的分配），**摘副本**（`cull`，它自己也要分配）尽力而为。
+/// 退场那一趟：**先封印，再看快照摘副本**。
+///
+/// **封印不看快照**（照实记）：退场钩子递过来的就是这一具 `Task`，`seal_owned` 只需要它
+/// 与自己那张 `pies` 表。从前这里先 `snap::snap()` ＋ `snap::find(tid)` 才动手——而
+/// `roster()` **自己要分配**，备不出容量就返回空表（见 `scheduler::core::table::roster`）
+/// ⇒ 那一趟一枚都不封，"主人走了、资源还活着"恰好落在内存最紧的一刻。这条缝现在堵死：
+/// 快照只用来**摘副本**（`cull` 要沿 `sire` 边找跨表的接续，它自己也要分配 ⇒ 尽力而为）。
+pub(crate) fn doom(task: &Arc<Task>) {
+    let tid = task.ident.id;
+    let _ = seal_owned(tid, task);
+    // **摘副本尽力而为**：它要分配（token 快照、frontier、unmaps），备不出就只少摘几枚
+    // 副本——副本被摘是清账，不是判死（判死已经在上面做完了）。
     let tokens: Vec<PieToken> = {
         let pies = task.pies.lock();
         let mut v: Vec<PieToken> = Vec::new();
@@ -100,7 +104,10 @@ pub(crate) fn doom(tid: TaskId) {
         }
         v
     };
-    seal_owned(tid, &task);
+    if tokens.is_empty() {
+        return;
+    }
+    let snap = snap::snap();
     for token in tokens {
         cull((task.clone(), token), &snap);
     }

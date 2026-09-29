@@ -180,10 +180,9 @@ pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
     }
 }
 
-pub(crate) fn doom(tid: TaskId) {
-    if let Some(task) = muster(tid).and_then(|w| w.upgrade()) {
-        cull(&task.heirs(), super::EXIT_CASCADE);
-    }
+/// 退场钩子（连坐那一趟）：**照手上的这一具**，不再拿号回清册里找人。
+pub(crate) fn doom(task: &Arc<Task>) {
+    cull(&task.heirs(), super::EXIT_CASCADE);
 }
 
 pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {

@@ -7,7 +7,6 @@ use crate::lock::{Level, SpinLock};
 use env::{HoleDir, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
-use crate::work::room::scheduler::core::muster;
 use crate::work::unit::life::Life;
 use crate::work::unit::space::Space;
 use env::MailFail;
@@ -118,24 +117,20 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
     }
 }
 
-/// **这枚孔的主人还在吗**：孔的主人就是**等着读它的那一位**（本仓的规矩：谁读谁铸——服务入口
-/// 由服务铸、回信孔由客人铸）。它走了，这只手就没人来取。
-///
-/// **照实记（这一格不是状态轴的重复——量出来的）**：退场那一趟（`gate::doom` → `seal_owned`）
-/// 会把主人铸的资源就地封印，但那只覆盖"**主人的表还扫得到**"的情形；**表本身已经不在了**
-/// （`Task` 已被 bury，或 `doom` 的 `snap::find` 找不到它）时，副本还留在别的表里、资源仍是
-/// `Live`——那时只有这一格挡得住。少了它，发送方会在那只手上等到期限：**实测过**（把这一格
-/// 删掉跑整机景，root／product 当场红，hub／bond／几个探针一串有界等齐超）。
-fn owner_alive(meta: &HoleMeta) -> bool {
-    muster(meta.owner()).and_then(|w| w.upgrade()).is_some()
-}
-
 /// 递出一只手：孔空着就登记并唤醒等取的人。
 ///
 /// **不搬字节、不分配**：登记的就是发送方那一段（`va`/`len`），复制由取的一方做（一处）。
 /// 孔上已有手／正被取用／位已响 ⇒ `Busy`。
 ///
-/// **主人不在 ⇒ 不收**（`Dead`）：判据见 [`owner_alive`]（状态轴与名册轴各管一半，不是重复）。
+/// **判死只有一格：`meta.alive()`**。这里原先还问一句"主人还在吗"（`muster` 直查清册）
+/// ——**照实记（已经退场了，附判决）**：那一问补的是"封印那一趟没走到"的漏，而漏的根因
+/// 不在名册轴，在**封印当时要先把人找回来**（`gate::doom` 走 `snap::snap()` ＋ `snap::find`，
+/// 而 `roster()` 自己要分配、备不出容量就返回空表 ⇒ 那趟一枚都不封，"主人走了、资源还活着"
+/// 恰好落在内存最紧的一刻）。把退场钩子的签名从 `fn(TaskId)` 改成 `fn(&Arc<Task>)`
+/// （`reap` 手上本来就握着那一具）之后，封印不再看快照，缝就没了：
+/// **摘掉这一格，七景两趟全绿**（判决那一趟 root／product 2.22 s、rig 3.13 s、group 0.37 s；
+/// 收尾那一趟 product 量到 4.23 s——收场由喂入帮手每 2 s 重喂驱动，读数是量化过的，
+/// **判据是红绿**）。留着它等于在热路上多取一次清册锁，却只答一个状态轴已经答过的问题。
 pub(crate) fn give(
     meta: &HoleMeta,
     space: &Arc<Space>,
@@ -148,9 +143,6 @@ pub(crate) fn give(
     }
     if len == 0 {
         return Err(MailFail::Denied);
-    }
-    if !owner_alive(meta) {
-        return Err(MailFail::Dead);
     }
     let mut pending = meta.pending.lock();
     if !matches!(*pending, Pending::Idle) {

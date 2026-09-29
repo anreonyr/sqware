@@ -75,7 +75,7 @@ pub(super) fn reap(mut task: Arc<Task>) {
         TaskState::Doomed => {}
         _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
     }
-    hooked(task.ident.id);
+    hooked(&task);
     Task::exclusive(&mut task).transform(TaskState::Reaped { next: None });
     HUSKS.lock().push(task);
 }
@@ -180,7 +180,14 @@ fn bury() {
     }
 }
 
-type Hook = fn(TaskId);
+/// 退场那一趟的钩子：**给的是这一具任务本身，不是它的号**。
+///
+/// **照实记（号那一格不够用——量出来的）**：从前传的是 `TaskId`，于是收钩子的一方
+/// （`gate::doom`）要先把人找回来才能动手——而"找人"走的是清册快照（`snap`），
+/// 那条路**自己要分配**，备不出容量就返回空表 ⇒ 那趟一枚资源都不封，"主人走了、
+/// 资源还活着"恰好发生在内存最紧的一刻。这里 `reap` 手上本来就握着 `Arc`，
+/// 传下去即可：封印从此**不看快照**（摘副本仍要看，见 `gate::doom`）。
+type Hook = fn(&Arc<Task>);
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
@@ -188,10 +195,10 @@ pub(crate) fn hook(hooks: &'static [Hook]) {
     let _ = HOOKS.set(hooks);
 }
 
-fn hooked(tid: TaskId) {
+fn hooked(task: &Arc<Task>) {
     if let Some(hooks) = HOOKS.get() {
         for h in hooks.iter() {
-            h(tid);
+            h(task);
         }
     }
 }

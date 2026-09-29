@@ -1,4 +1,4 @@
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
@@ -24,35 +24,9 @@ pub(crate) fn snap() -> Vec<TaskWeak> {
     provider().get().copied().map(|f| f()).unwrap_or_default()
 }
 
-#[cfg(debug_assertions)]
-fn plausible(w: &Weak<Task>) -> bool {
-    (Weak::as_ptr(w) as usize) >= 0x1000
-}
-
-#[cfg(not(debug_assertions))]
-fn plausible(_w: &Weak<Task>) -> bool {
-    true
-}
-
-pub(crate) fn find(tid: TaskId, snap: &Snap) -> Option<Arc<Task>> {
-    for w in snap {
-        if !plausible(w) {
-            static BAD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
-            let n = BAD.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
-            if n <= 8 {
-                crate::putln!("snap::find: skip implausible weak ({n}) tid={}", tid.get());
-            }
-            continue;
-        }
-        if let Some(t) = w.upgrade()
-            && t.ident.id == tid
-        {
-            return Some(t);
-        }
-    }
-    None
-}
-
+/// 快照这一层**只剩"沿边找"这一件事**：找人（`find`）那一格退了——退场那一趟现在
+/// 由钩子直接递来 `&Arc<Task>`，不必再从清册快照里把号找回来（原话见 `messenger::Hook`、
+/// `gate::doom`）。留着它只会给"封印要先分配"那条路留个入口。
 pub(crate) fn vestor(pie: &AnyPie, snap: &Snap) -> Option<TaskId> {
     holder(pie.sire()?, snap)
 }
