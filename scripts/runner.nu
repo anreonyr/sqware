@@ -43,7 +43,7 @@ def main [elf: path] {
   let initrd = ($elf | path dirname | path join "initrd.img")
   if not ($initrd | path exists) {
     error make {msg: $"没有镜像：($initrd)
-  先造它：cargo image <场景> <档>   （默认 root release；场景见 crates/image/src/lib.rs）"}
+  先造它：cargo image <场景> <档>   （默认 product release；验收景 `root` 要写明——它多带 15 台测具。场景见 crates/image/src/lib.rs）"}
   }
   let cfg = config $elf
 

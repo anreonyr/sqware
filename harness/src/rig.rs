@@ -20,7 +20,7 @@
 //! # 怎么跑它
 //!
 //! `cargo image rig && cargo run --release`（**场景在造镜像那一刻定**；内核那一份与场景无关，
-//! 见 `crates/image`）。默认那一景是 `root`。`crates/gate/tests/stress.rs`（已删）是它的壳。
+//! 见 `crates/image`）。**默认那一景现在是 `product`**（验收景 `root` 要写明）。`crates/gate/tests/stress.rs`（已删）是它的壳。
 //!
 //! **`--release` 不是偏好，是这一台跑得动的前提**（照实记，量于这一轮）：debug 档下
 //! `iters_per_ms=3522`、release 是 `24576`（差 7 倍），而"台主空转 `delay_us`"与"受害者上台
