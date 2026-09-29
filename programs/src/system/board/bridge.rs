@@ -10,7 +10,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 
-use env::{PieToken, TaskId};
+use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
@@ -155,7 +155,10 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);
     let into = mail::HolePie::from_token(into);
-    into.push(&rec).map_err(|_| ())
+    // **两半都写出来**（旧 `push` 是合一的）：等轮到自己 ＋ 等这只手被取走——`rec` 是栈。
+    into.push(&rec, Wait::Forever).map_err(|_| ())?;
+    into.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
+    Ok(())
 }
 
 /// 把**一位新客人**推给板：**号（8 字节）＋ 定长名字 ＋ 答话路那一格**（[`bcall::Tip::LEN`]），小端。
@@ -180,7 +183,9 @@ pub(crate) fn tell_guest(
     .store_at(&mut rec, 0)
     .ok_or(())?;
     let into = mail::HolePie::from_token(into);
-    into.push(&rec[..n]).map_err(|_| ())
+    into.push(&rec[..n], Wait::Forever).map_err(|_| ())?;
+    into.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
+    Ok(())
 }
 
 /// 把**客人交出来的那一枚**转授给板线程，返**它在板表里的号**（`port::ship` 的 `to.seed()`）。

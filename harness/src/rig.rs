@@ -490,8 +490,12 @@ fn body(
     // 推的是**对端那一枚**（我写、受害者读），且是**裸字节**（那句轮数不是一族那种报）
     // ⇒ 走裸孔，不套手柄。
     let burst = iters_per_ms.saturating_mul(STAGE_MS);
-    HolePie::from_token(at_peer)
-        .push(&burst.to_le_bytes())
+    // **两半都写出来**（旧 `push` 是合一的）：递出 ＋ 等它被取走——`to_le_bytes()` 是这一帧的
+    // 临时值，不等它下线就返回，受害者会复制到一段死栈。
+    let bytes = burst.to_le_bytes();
+    let door = HolePie::from_token(at_peer);
+    door.push(&bytes, Wait::Forever).map_err(|_| "post")?;
+    door.wait(env::HoleDir::Push, Wait::Forever)
         .map_err(|_| "post")?;
 
     // 诊断（默认关）：push 之后**先让出一拍**再空转。判据是 `doom: nudged` 会不会从个位数

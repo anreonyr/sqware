@@ -30,7 +30,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Eyes;
 use env::wire::Field;
-use env::{PieToken, TaskId};
+use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -46,12 +46,17 @@ pub use protocol::system::operator::{LINK, TIP_MARK};
 /// **推一句话过去**（提示之路那三形共用这一手：`Tip` 自己知道自己多长）。
 ///
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）。
+///
+/// **两半都写出来**（旧 `push` 是合一的）：递出那一半在孔上站着别人的手时等到孔空（"轮到我"），
+/// 之后那一半等**自己**那只手被取走——`rec` 是这一帧的栈，不等它下线就返回，读者可能复制到
+/// 一段已经死掉的栈（照实记见 `protocol::communication::sender` 文件头③）。
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
     let mut rec = [0u8; TIP_LEN];
     let n = tip.store(&mut rec).ok_or(())?;
-    mail::HolePie::from_token(into)
-        .push(&rec[..n])
-        .map_err(|_| ())
+    let road = mail::HolePie::from_token(into);
+    road.push(&rec[..n], Wait::Forever).map_err(|_| ())?;
+    road.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
+    Ok(())
 }
 
 /// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"。
@@ -66,7 +71,10 @@ fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);
-    mail::HolePie::from_token(into).push(&rec).map_err(|_| ())
+    let road = mail::HolePie::from_token(into);
+    road.push(&rec, Wait::Forever).map_err(|_| ())?;
+    road.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
+    Ok(())
 }
 
 /// **协调那一帧要带的两格**：名册那一位域的号 / 盟册那一位域的号（`None` = 还没到）。
@@ -372,7 +380,11 @@ pub fn land(
         match here.open(seg.to_string(), millis) {
             Ok(next) => at = Some(next.id()),
             Err(fail) => {
-                debug!("{family}: tree road={road} open at={seg:?} failed={fail:?}");
+                // **"哪一台没走到树上"的唯一正身**（照实记：它从前走 `debug!`，而那一支宏在
+                // release 下是空操作 ⇒ 验收跑的机器只留下"服务一片缺席"，一个成因都没有）。
+                debug::put(&protocol::__format!(
+                    "{family}: tree road={road} open at={seg:?} failed={fail:?}"
+                ));
                 return Vec::new();
             }
         }
@@ -414,13 +426,13 @@ pub fn land(
             Ok(id) => root.name(*id, millis).ok(),
             Err(_) => None,
         };
-        debug!(
+        debug::put(&protocol::__format!(
             "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={}",
             find.is_ok(),
             entry.get(),
             plate.get(),
             named.as_ref().map(|name| name.as_str()).unwrap_or("-"),
-        );
+        ));
         out.push(Landed {
             land,
             plate,

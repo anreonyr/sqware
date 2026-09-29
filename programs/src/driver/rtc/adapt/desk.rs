@@ -21,6 +21,10 @@ use runtime::env::mail;
 ///
 /// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。这与线那一刀 `drop_lane` 是同一条纪律、同一个理由。
+/// **照实记（那两格共用的答话存根退场了）**：从前这里住着 `Out { time, status }` 两枚 `Outbox`
+/// （缓冲 ＋ 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台 rtc**按在下一位
+/// 客人的 `send` 里。今天答话那一格跟着**那一趟**走（下面 `ship_time` / `ship_code` 各自一枚
+/// `Sender`）：一位客人一处写端，"一格招待所有客人"编不出来了。
 pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     let Some((back, ask)) = frame::Wire::take(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
@@ -84,16 +88,14 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
 
 /// 把那一声答出去（一个时刻）。
 fn ship_time(back: PieToken, now: u64) {
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send` 的
-    // 照实记）；真到了那里，那一层是 `None`，与"推不出去"同一行读数。
-    let _ = Sender::<Time>::from_token(back)
-        .send(Time::of(now))
-        .ok();
+    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那位客人不来取，卡的是
+    // 他自己那一趟。
+    let mut tx = Sender::<Time>::from_token(back);
+    let _ = tx.send(Time::of(now));
 }
 
 /// 把那一格码答出去。
 fn ship_code(back: PieToken, code: u8) {
-    let _ = Sender::<Status>::from_token(back)
-        .send(Status::of(code))
-        .ok();
+    let mut tx = Sender::<Status>::from_token(back);
+    let _ = tx.send(Status::of(code));
 }

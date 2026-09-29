@@ -174,12 +174,13 @@ fn main() -> Reason {
 
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     //
-    // **照实记（这一手为什么走裸 `mail::push`）**：这一格的读者**只有台主自己**（两位等待者
-    // 只 `peek`，取走是下面第 ⑧ 步台主做的）。孔上的那一格现在是一只**递出的手**：`HolePie::push`
-    // 要等到手被取走才返回，而台主此刻正站在这里 ⇒ **自己等自己**。故这一手用一次性那一格
-    // （`Ok` = 内核收下了这只手），正好也是这一刀要量的事：**递出即返，交付由取的一方做**。
+    // **照实记（这一手为什么走一次性那一格）**：这一格的读者**只有台主自己**（两位等待者只
+    // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：`HolePie::push`
+    // 只在预算内等到"轮到我"，而"等它被取走"要另写 `wait`——台主此刻正站在这里 ⇒ **自己等自己**。
+    // 故这一手写 `Wait::POLL`（一个 envcall，`Ok` = 内核收下了这只手），正好也是这一刀要量的事：
+    // **递出即返，交付由取的一方做**。
     let _ = room::sleep(core::time::Duration::from_millis(SETTLE));
-    let _ = mail::push(member.token(), b"x".as_ptr(), 1);
+    let _ = HolePie::from_token(member.token()).push(b"x", Wait::POLL);
 
     let mut woke = 0usize;
     for i in 0..WAITERS {
@@ -195,8 +196,8 @@ fn main() -> Reason {
     //    取一次该成功，再取一次该答 `Busy`。这一格与"整链放行"是两件事：共享的是**唤醒**，
     //    不是**交付**。
     let mut buf = [0u8; 1];
-    let deliver = member.pull_timeout(&mut buf, Wait::POLL).is_ok()
-        && member.pull_timeout(&mut buf, Wait::POLL).is_err();
+    let deliver = member.pull(&mut buf, Wait::POLL).is_ok()
+        && member.pull(&mut buf, Wait::POLL).is_err();
 
     // ⑨ 收尾：两个等待者都得退场（**没醒的那个还在永久等** ⇒ 收掉它；这也是"少醒一人"
     //    那一格能被观察到收场的原因）。**这一步不设判据**：「都退场了」由机器那一句
@@ -219,8 +220,8 @@ fn main() -> Reason {
 fn pull_byte(tok: PieToken) -> Option<u8> {
     let pie = HolePie::from_token(tok);
     let mut buf = [0u8; 1];
-    match pie.pull_timeout(&mut buf, Wait::AtMost(MS)) {
-        Ok(1) => Some(buf[0]),
+    match pie.pull(&mut buf, Wait::AtMost(MS)) {
+        Ok((1, _)) => Some(buf[0]),
         _ => None,
     }
 }

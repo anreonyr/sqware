@@ -134,9 +134,27 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Room(E_TREE));
     }
     buf.resize(PAGE_SIZE, 0);
+    // **照实记（那一格共用的答话存根退场了）**：从前这里住着一枚 `Outbox<Union>`（缓冲 ＋
+    // 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台服务**按在下一趟的
+    // `send` 里（一位不回头的客人就能卡住所有客人）。今天答话那一格跟着**那一趟**走
+    // （`serve_one` 里的 `Sender`），一位客人一处写端 —— "一格招待所有客人"编不出来了。
+    // **"还有人没挂上"那一档持续了多久**：`settle` 那一档是 1 ms 一轮（[`SETTLE_MS`]），
+    // 故这一格≈毫秒。每约 2 s 说一句"是哪几位、`ask_of` 认不认得"——见 [`unarmed_report`]。
+    let mut settle_rounds: usize = 0;
+    // **招待活动的读数**（封顶 40 行 ＋ 每 500 行留一行）：醒来这一次，是"认得的客人"还是
+    // "唤醒却认不出"——后者正是"手递上来了、却永远没人读"那一档（见 [`unarmed_report`] 同段照实记）。
+    let mut wakes: usize = 0;
     loop {
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut tree);
+        settle_rounds = if settling {
+            settle_rounds.saturating_add(1)
+        } else {
+            0
+        };
+        if settling && settle_rounds % 2000 == 0 {
+            unarmed_report(&desk, settle_rounds);
+        }
         // 二、等一格有事。**一个等待**：提示孔或任意一位客人的问话孔。
         let millis = if settling {
             Wait::AtMost(SETTLE_MS)
@@ -147,14 +165,37 @@ pub fn serve() -> Result<(), Start> {
             let _ = desk.sweep();
             continue;
         };
+        wakes = wakes.saturating_add(1);
         // 提示孔那一格由下一轮的 `settle` 收（它非阻塞地拉）；这里只管"是哪位客人的问话孔"。
-        if tok != tip
+        let read = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, coord, &mut buf);
+            serve_one(&mut tree, guest, coord, &mut buf)
+        } else {
+            false
+        };
+        if wakes <= 40 || wakes % 500 == 0 {
+            let mut unarmed = 0usize;
+            desk.unarmed_each(|_| unarmed += 1);
+            debug::put(&protocol::__format!(
+                "operator: woke n={} tok={} tip={} known={} read={} guests={} unarmed={}",
+                wakes,
+                tok.get(),
+                tok == tip,
+                tok == tip || desk.guest(tok).is_some(),
+                read,
+                desk.occupied(),
+                unarmed,
+            ));
         }
         // 三、**看出来的**那一档：那一枚答不出 ⇒ 剔格子（没有"他说走了"那一档）。
-        let _ = desk.sweep();
+        // **读者结清（B-a）**：剔的同时把它挂进组的那一枚问话孔**摘掉**——不摘就是一格再也醒不
+        // 来的成员（且每剔一位多留一格）。**不封印**：那一枚是**客人铸的**，本域只持副本。
+        let _ = desk.sweep_each(|gone| {
+            if let Some(ask) = gone.ask {
+                let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
+            }
+        });
     }
 }
 
@@ -183,13 +224,16 @@ fn settle(
     let mut frame = [0u8; ocall::TIP_LEN];
     let mut pending = false;
     loop {
-        let Ok(n) = tip.pull_timeout(&mut frame, Wait::POLL) else {
+        let Ok((n, _)) = tip.pull(&mut frame, Wait::POLL) else {
             break;
         };
         // **首格 `kind` 决定形状**：表外的 kind / 长度不对 ⇒ 读不懂。这条路上没有答话那一格，
         // 故只能**报一句**（把那一格 kind 一起报出来，"读不懂的是哪一形"要看得见）。
         let Some(rec) = ocall::TipIn::fetch(&frame[..n]) else {
-            debug!("operator: tip unreadable (kind={})", frame[0]);
+            debug::put(&protocol::__format!(
+                "operator: tip unreadable (kind={})",
+                frame[0]
+            ));
             continue;
         };
         match rec {
@@ -211,10 +255,10 @@ fn settle(
                     Err(DeskFail::Already) => {}
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                     // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
-                    Err(DeskFail::Full) => debug!("operator: desk full"),
+                    Err(DeskFail::Full) => debug::put("operator: desk full"),
                 },
                 // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-                None => debug!("operator: no reply"),
+                None => debug::put("operator: no reply"),
             },
         }
     }
@@ -233,6 +277,49 @@ fn settle(
     pending
 }
 
+/// **诊断（release 也看得见）**：把"还有人没挂上"那一档拆开——**是哪几位、`ask_of` 认不认得**。
+///
+/// **为什么不用 `debug!`**：那一支宏在 release 下**是空操作**（`crates/protocol/src/debug.rs`
+/// 明写 `cfg!(debug_assertions)` 为假时那一格不进），而验收跑的全是 release ⇒ 这件事**从前
+/// 一次都没落过盘**——"服务一片缺席却没有一行线索"就是这么来的。这里直接用
+/// [`debug::put`](protocol::debug::put)（那一手不设构建门）。
+///
+/// **三格怎么读**：
+/// - 这一位**不在账上**（连名字都没进过 [`Desk`]）⇒ 提示那条单槽路上那一帧没到，或撞了
+///   `desk full` / `no reply`（那两句也在本刀里改成 release 可见）；
+/// - 在账上、八枚记号**一枚都不中**（`ask=none`）⇒ 它那枚问话孔**不在本表里**；
+/// - 在账上、`ask=some` 却一直挂着 ⇒ [`crate::system::operator::server::settle`] 里
+///   `pile.attach` 那一手没成（`arm_pending` 会 `unarm` 回退）。
+///
+/// **这一手只读**：它不 arm、不 attach、不动账——诊断不许变成副作用。
+fn unarmed_report(desk: &Desk, rounds: usize) {
+    let mut unarmed = 0usize;
+    desk.unarmed_each(|_| unarmed += 1);
+    if unarmed == 0 {
+        return;
+    }
+    debug::put(&protocol::__format!(
+        "operator: settle guests={} unarmed={} ~{}ms",
+        desk.occupied(),
+        unarmed,
+        rounds,
+    ));
+    // 逐位点名：**每位一行、每次至多四位**（病态时这是每 ~2 s 五行的量，不淹日志）。
+    let mut said = 0usize;
+    desk.unarmed_each(|who| {
+        if said >= 4 {
+            return;
+        }
+        said += 1;
+        let hit = MARKS.iter().any(|mark| ask_of(who, *mark).is_some());
+        debug::put(&protocol::__format!(
+            "operator: unarmed who={} ask={}",
+            who.get(),
+            if hit { "some" } else { "none" },
+        ));
+    });
+}
+
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
@@ -242,9 +329,9 @@ fn settle(
 ///
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
-fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) {
+fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) -> bool {
     let Some(ask) = guest.ask() else {
-        return;
+        return false;
     };
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
@@ -252,11 +339,16 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) {
     let decoded = Receiver::<ocall::Req>::from_token(ask)
         .recv(buf, Wait::POLL)
         .ok();
+    // 诊断（release 也看得见，见 `serve` 那一段照实记）：**这一醒到底读到了没有**。
+    let read = decoded.is_some();
     let grant = grant_of(mark_of(ask));
     let said = answer(tree, decoded, guest.who(), coord, grant);
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）。
-    let _ = Sender::<ocall::Union>::from_token(guest.reply())
-        .send(said)
-        .ok();
+    // **写端跟着这一趟走**：编在本族那只缓冲里（在这一帧的栈上）、递出去（一个 envcall），
+    // 落出作用域时等这只手被取走——**那一位客人不来取，卡的是他自己那一趟**，不是整台服务
+    // （照实记见 `serve` 里那一段）。**孔是客人铸的**：`release` 那一手不在本域做（放下别人的
+    // 孔不是本端的事），故这一格只等，不 `seal`。
+    let mut tx = Sender::<ocall::Union>::from_token(guest.reply());
+    let _ = tx.send(said);
+    read
 }

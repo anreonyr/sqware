@@ -508,17 +508,22 @@ const RETRY_MS: usize = 1;
 /// 以及 `programs/src/driver/context.rs::line` 那类"有会话、拿不出 `Face` 所有权"的地方）
 /// 直接叫它。**同一步，同一个名**。
 fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
-    // 发：装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
-    // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`push` 满则挂），不是错误。
-    Sender::<ocall::Req>::from_token(say)
-        .send(ask)
-        .map_err(|_| Fail::Unknown)?;
+    // 发：装上、递出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
+    // **递出即返回**（一个 envcall）：等它下线由这一格 `Sender` 的 `reclaim`／`Drop` 担着，压到
+    // 这一趟收完再落地。**不能推完就落地**：那等于"等对面来取"，而对面可能正忙着自己的那一趟
+    // ——两个服务互等对方取走就是死锁（量到过：名册 ⇄ 盟册）。
+    let mut tx = Sender::<ocall::Req>::from_token(say);
+    tx.send(ask).map_err(|_| Fail::Unknown)?;
     // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
     let mut buf = ocall::Union::EMPTY;
-    link.receiver::<ocall::Union>()
+    let said = link
+        .receiver::<ocall::Union>()
         .recv(buf.as_mut(), wait)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
-        .map_err(|_| Fail::Unknown)
+        .map_err(|_| Fail::Unknown);
+    // 答话回来了 ⇒ 对面早把那一只手取走 ⇒ 这一收口是零代价；没回来也得收口（那条报不许悬）。
+    let _ = tx.reclaim();
+    said
 }
 
 /// 沿一条路译成号，**答出剩下的额度**（不是"这次重试用掉了多少"）。

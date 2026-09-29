@@ -90,12 +90,15 @@ pub fn register(
     let seed = port::ship(&pie, board, Access::FETCH | Access::STORE, Policy::VEST)
         .map(|to| to.seed())
         .map_err(|_| Fail::Denied)?;
-    // 装上、发出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
-    // 孔是单槽：槽里还压着上一条时这一推会**等在门外**（`send` 满则挂），不是错误。
-    Sender::<bcall::Req>::from_token(say)
-        .send(bcall::Req::Register { name, seed })
+    // 装上、递出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
+    // **递出即返回**（一个 envcall）：等它下线压到这一趟收完（`reclaim`／`Drop`）。
+    let mut tx = Sender::<bcall::Req>::from_token(say);
+    tx.send(bcall::Req::Register { name, seed })
         .map_err(|_| Fail::Unknown)?;
-    hear_rep(link, millis)
+    let rep = hear_rep(link, millis);
+    // 答话回来了 ⇒ 板早把那一只手取走 ⇒ 这一收口是零代价。
+    let _ = tx.reclaim();
+    rep
 }
 
 /// 客侧第四步：说一句"**我走了**"，收一格答话。
@@ -106,11 +109,12 @@ pub fn register(
 /// 板那侧据此撤格 + 摘掉这一位挂在板上的**全部**牌子；它不在账上则答
 /// [`UNKNOWN`](bcall::UNKNOWN)。
 pub fn evict(say: PieToken, link: &Endpoint, millis: Wait) -> Result<u8, Fail> {
-    // 孔是单槽：与 [`register`] 同一条路，只是这一条报短（长度由形状说）。
-    Sender::<bcall::Req>::from_token(say)
-        .send(bcall::Req::Evict)
-        .map_err(|_| Fail::Unknown)?;
-    hear_rep(link, millis)
+    // 与 [`register`] 同一条路，只是这一条报短（长度由形状说）：**递出即返回**，落地压到收完。
+    let mut tx = Sender::<bcall::Req>::from_token(say);
+    tx.send(bcall::Req::Evict).map_err(|_| Fail::Unknown)?;
+    let rep = hear_rep(link, millis);
+    let _ = tx.reclaim();
+    rep
 }
 
 /// 收下板路上那一格：**一句答**（登记与退场共用）。

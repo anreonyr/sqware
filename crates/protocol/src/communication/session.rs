@@ -80,8 +80,8 @@ impl Session {
 /// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上（客人报它自己的超时，不猜）。
 fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
     let mut buf = [0u8; TaskId::WIDTH];
-    match mail::HolePie::from_token(link.rx()).pull_timeout(&mut buf, millis) {
-        Ok(n) if n == TaskId::WIDTH => TaskId::fetch(&buf),
+    match mail::HolePie::from_token(link.rx()).pull(&mut buf, millis) {
+        Ok((n, _)) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }
 }

@@ -51,31 +51,43 @@ impl Line {
         let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
-        let sent = port::ship(
+        if port::ship(
             &HolePie::from_token(back),
             host,
             Access::FETCH | Access::STORE,
             Policy::NONE,
         )
-        .map_err(|_| ())
-        .and_then(|_| {
-            // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
-            // 层写字节（缓冲在这一帧的栈上：这一形定长 [`frame::Occupy::LEN`]）。
-            Sender::<frame::Occupy>::from_token(entry)
-                .send(frame::Occupy::of(line))
-                .map_err(|_| ())
-        });
-        if sent.is_err() {
+        .is_err()
+        {
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
+            let _ = mail::release(back);
+            return Err(Fail::Denied);
+        }
+        // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
+        // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
+        // 推完就落地等于"等对面来取"，会卡住回话。
+        let mut out = Sender::<frame::Occupy>::from_token(entry);
+        if out.send(frame::Occupy::of(line)).is_err() {
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
         let mut one = [0u8; 1];
-        let code = match HolePie::from_token(back).pull_timeout(&mut one, millis) {
-            Ok(1) => one[0],
+        let code = match HolePie::from_token(back).pull(&mut one, millis) {
+            Ok((1, _)) => one[0],
             _ => frame::BAD,
         };
+        // 答话到手（或这一趟判了失败）⇒ 把那一手收口：对面取走了是零代价，没取走就等它取。
+        let _ = out.reclaim();
         // 答话到手 ⇒ 这一枚回信孔这一趟就用完了：**当场放下**（一问一答一个往返）。放下的是本端
         // 这一份，路由者那一份由它自己放。
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         if code != frame::OK {
             return Err(match code {
@@ -95,13 +107,15 @@ impl Line {
     ///
     /// **帧里没有线号**（线在泊位里，见 [`super`]）：这一手对客户就是"我那一格有事"。
     ///
-    /// **这一格是孔上那一位**（不是一族那种报）⇒ 走裸孔，不套手柄。两拍与旧孔时代的
-    /// `pull_timeout` 同形：**等**（`wait`）＋ **应**（`hush`）——`Wait::POLL` 就是
-    /// "只看一眼"，一次也不挂起。
+    /// **这一格是孔上那一位**（不是一族那种报）⇒ 走裸孔，不套手柄。两拍与旧孔时代同形：
+    /// **等**（`wait`）＋ **应**（`hush`）——`Wait::POLL` 就是"只看一眼"，一次也不挂起。
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
-        if mail::wait(rx, HoleDir::Pull, millis).map_err(|_| ())? {
-            mail::hush(rx).map_err(|_| ())
+        if HolePie::from_token(rx)
+            .wait(HoleDir::Pull, millis)
+            .map_err(|_| ())?
+        {
+            HolePie::from_token(rx).hush().map_err(|_| ())
         } else {
             Err(())
         }
@@ -119,7 +133,7 @@ impl Line {
             return Err(());
         };
         // 置位即返：已响 = "这一条我处理完了"这件**状态**已经有了 ⇒ 也算说过。
-        match mail::ring(tx) {
+        match HolePie::from_token(tx).ring() {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(()),

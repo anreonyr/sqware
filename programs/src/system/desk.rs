@@ -257,6 +257,18 @@ impl Desk {
         pending
     }
 
+    /// 还没挂上问话孔的那几位——**只读**（诊断用；判据与 [`Desk::arm_pending`] 的"跳过"那一格同）。
+    ///
+    /// **为什么要有它**：`arm_pending` 把"是哪几位还没挂上"收在自己肚子里（那是它的判据），
+    /// 而"**一直**挂不上"是另一件事——它得看得见，见 `operator::server::unarmed_report`。
+    pub fn unarmed_each(&self, mut f: impl FnMut(TaskId)) {
+        for guest in self.guests.iter().flatten() {
+            if !guest.armed() {
+                f(guest.who());
+            }
+        }
+    }
+
     /// 账上还有几位。
     pub fn occupied(&self) -> usize {
         self.guests.iter().flatten().count()
@@ -269,28 +281,48 @@ impl Desk {
     /// **听来的**那一档是 [`Desk::evict`]（客人自己说了走，账当场撤，不等它的门封印）。
     /// 两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
-        self.sweep_each(|_, _| {})
+        self.sweep_each(|_| {})
     }
 
-    /// 与 [`Desk::sweep`] **同判据**，但每剔一位叫一次 `f`（**趁它还认得出**），
-    /// 交给它的两样是**这一格的两件事**：**谁**（推道要按名字认）与**它那条道**（`take_lane`
-    /// 取走，取走即清）。
+    /// 与 [`Desk::sweep`] **同判据**，但每剔一位叫一次 `f`（**趁它还认得出**），交给它的是**这一格
+    /// 的三件事**：**谁**（推道要按名字认）、**它那条道**（`take_lane` 取走，取走即清）、
+    /// **它的问话孔**（**读者结清／B-a**：那一枚还挂在组里 ⇒ 不摘就是一格永远醒不来的成员）。
     ///
     /// 板要用这个号去做第二件事：**推那一位的死亡道**。号只在这里拿得到——客人一旦退场，
     /// 它挂在板上的牌子随时会被摘掉，摘了就认不出"这一位叫什么"（道的记号是名字）。
     /// **道与号一起交出去**（照实记）：从前这一手只交号，板得拿号去**旁边那本同键的
     /// `Lanes`** 反查——那一本已并进 [`Guest`]，反查随它一起没了。
-    pub fn sweep_each(&mut self, mut f: impl FnMut(TaskId, Option<PieToken>)) -> usize {
+    ///
+    /// **问话孔那一格是这一刀加的**（照实记）：被剔的客人从前只从**账**里消失，它挂进组的那
+    /// 一枚仍在组里——每剔一位就多留一格再也醒不来的成员，而摘它需要那个号，只有这里拿得到。
+    pub fn sweep_each(&mut self, mut f: impl FnMut(Gone)) -> usize {
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
                 && protocol::communication::establish::vested_by(guest.reply).is_none()
             {
-                f(guest.who(), guest.lane.take());
+                f(Gone {
+                    who: guest.who(),
+                    lane: guest.lane,
+                    ask: guest.ask,
+                });
                 *cell = None;
                 gone += 1;
             }
         }
         gone
     }
+}
+
+/// **被剔走那一格的三样**（趁它还在账上）：谁 / 它那条死亡道 / 它的问话孔。
+///
+/// 三格各有各的下一步（推道 / 摘组 / 都没有），故**一起交出去**而不是只交号——`Guest` 那本账
+/// 剔完就把这一格清了，事后再反查就查不到"它叫什么、它挂的是哪一枚"。
+pub struct Gone {
+    /// 哪位客人。
+    pub who: TaskId,
+    /// 它那条死亡道（`None` = 没认下来）。
+    pub lane: Option<PieToken>,
+    /// 它交进来的问话孔（`None` = 还没挂上）。
+    pub ask: Option<PieToken>,
 }

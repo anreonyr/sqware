@@ -206,7 +206,7 @@ impl Watch {
                 let Some(road) = lane.road else {
                     continue;
                 };
-                if mail::hush(road).is_err() {
+                if HolePie::from_token(road).hush().is_err() {
                     continue; // 这一条没事
                 }
                 let name = lane.name;
@@ -312,7 +312,7 @@ fn last_reaped(table: &Table, name: &str) -> bool {
 fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
     // 入口是**单手**：一次醒来的这一批要取干净（可能不止一位客人）。
-    while let Ok((len, from)) = entry.pull_timeout_from(buf, Wait::POLL) {
+    while let Ok((len, from)) = entry.pull(buf, Wait::POLL) {
         let Some((ask, back)) = ccall::frame::Wire::take(&buf[..len]) else {
             // 长度不对 ⇒ 连"往哪回"都没有：不猜、不动表、也不回话。
             continue;
@@ -338,18 +338,28 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
                     grant.name(),
                     ccall::Grant::ALL[(asked - 1) as usize].name()
                 );
-                let _ = Sender::<ccall::frame::Said>::from_token(back)
-                    .send(ccall::frame::said_status(ccall::frame::DENIED))
-                    .ok();
+                // **递出去就回去待客**：答话那一格由这一枚 `Sender` 自己担着（落出作用域时
+                // 等那只手被取走）。**没有"共用一格存根"了**：一位客人一枚写端，一格招待所有
+                // 客人那种错因此编不出来。**收口在 `release` 之前**（见下面那一格的照实记）：
+                {
+                    let mut tx = Sender::<ccall::frame::Said>::from_token(back);
+                    let _ = tx.send(ccall::frame::said_status(ccall::frame::DENIED));
+                }
                 let _ = mail::release(back);
                 continue;
             }
         }
         let said = answer(control, ask);
         // 答一句走这一趟那枚孔；装不上按构造到不了（`.ok()` 与板那一台同款）。
-        let _ = Sender::<ccall::frame::Said>::from_token(back)
-            .send(said)
-            .ok();
+        // **写端跟着这一趟走**（`tx` 落出作用域时等这只手被取走）——不再有一格共用的存根。
+        // **照实记（收口为什么必须在 `release` 之前）**：那一等要用**本域表里这一枚**（`wait`
+        // 要走权限那一关）；先放下它再等 ⇒ `Denied` 当场返回，而孔上那只手还指着**这一帧的
+        // 栈**——下一趟复用同一片栈，取的人复制到的就是别人的字节。量到的症状：客侧
+        // `recv-unread`，而内核 `hand_over` 那一行一切正常（长度、发送者都对）。
+        {
+            let mut tx = Sender::<ccall::frame::Said>::from_token(back);
+            let _ = tx.send(said);
+        }
         let _ = mail::release(back);
     }
 }

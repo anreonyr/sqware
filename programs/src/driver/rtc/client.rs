@@ -18,7 +18,7 @@
 //! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
 use env::PieToken;
-use env::Wait;
+use env::{HoleDir, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::Receiver;
 use protocol::message::Message;
@@ -38,10 +38,21 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
     let mut frame = [0u8; Now::LEN];
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
     };
-    if HolePie::from_token(entry).push(&frame[..n]).is_err() {
+    // **两半都写出来**（旧 `push` 是合一的）：等轮到自己（单槽门面上撞车是常事）＋ 等这只手
+    // 被取走（`frame` 是这一帧的栈，不等它下线就返回，驱动可能复制到一段死栈）。
+    let door = HolePie::from_token(entry);
+    if door.push(&frame[..n], Wait::Forever).is_err()
+        || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
+    {
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -51,6 +62,9 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let answer = Receiver::<Time>::from_token(back)
         .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
+    // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+    // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+    let _ = mail::seal(back);
     let _ = mail::release(back);
     answer
 }
@@ -68,10 +82,19 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     let mut frame = [0u8; Arm::LEN];
     let Some(n) = Arm::of(seed, after_ns).store_at(&mut frame, 0) else {
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
     };
-    if HolePie::from_token(entry).push(&frame[..n]).is_err() {
+    let door = HolePie::from_token(entry);
+    if door.push(&frame[..n], Wait::Forever).is_err()
+        || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
+    {
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -80,6 +103,9 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let code = match Receiver::<Status>::from_token(back).recv(one.as_mut(), millis) {
         Ok(code) => code,
         Err(_) => {
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
@@ -90,6 +116,9 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             back: HolePie::from_token(back),
         });
     }
+    // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+    // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+    let _ = mail::seal(back);
     let _ = mail::release(back);
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }
@@ -106,9 +135,9 @@ impl Alarm {
     /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）。
     ///
     /// **照实记（这一格从裸 `pull` 换成 `Receiver::recv` 的"永久"那一档）**：判据一字不改（没到 ⇒ 等、
-    /// 孔封印 ⇒ 当场错），变的是内核那一侧的等法——`Wait::Forever` 在 `pull_timeout` 里落成一个
+    /// 孔封印 ⇒ 当场错），变的是内核那一侧的等法——`Wait::Forever` 在 `pull` 里落成一个
     /// **到不了的点**（`u64::MAX`），于是这一等每 ~100 ms 被叫醒一次、自己复探（理由与实测见
-    /// `HolePie::pull_timeout_from`）。
+    /// `HolePie::wait`）。
     pub fn receive(&self) -> Result<u64, ()> {
         let mut buf = Time::EMPTY;
         Receiver::<Time>::from_token(self.back.token())

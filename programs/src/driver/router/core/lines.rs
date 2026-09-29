@@ -23,7 +23,7 @@ use alloc::vec::Vec;
 
 use protocol::communication::establish::Held;
 use protocol::driver::line::Fail;
-use runtime::env::mail;
+use runtime::env::mail::HolePie;
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）。
 ///
@@ -98,7 +98,7 @@ impl Lines {
                 // 响的是**对端那一枚**（我响、对端应）；还没认到 ⇒ 与从前 `Pier::post`
                 // 自己那一格同一落点：没写端就响不出去。
                 let at_peer = lane.tx().ok_or(Fail::Denied)?;
-                match mail::ring(at_peer) {
+                match HolePie::from_token(at_peer).ring() {
                     Ok(()) => {}
                     Err(e) if e.source.is_busy() => {}
                     Err(_) => return Err(Fail::Denied),

@@ -14,7 +14,7 @@ use protocol::communication::sender::Sender;
 use protocol::debug;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
-use runtime::env::mail;
+use runtime::env::mail::{self, HolePie};
 
 use crate::system::board::core::Board;
 use protocol::system::board as bcall;
@@ -86,6 +86,9 @@ pub(crate) fn host_loop(me: TaskId) {
         return;
     }
     buf.resize(runtime::PAGE_SIZE, 0);
+    // **照实记（那一格共用的答话存根退场了）**：与 `operator/server.rs` 同一处改动——答话那一格
+    // 从前是循环外一枚 `Outbox`（缓冲 ＋ 那只手），一位不回头的客人就能把整台板按在下一趟的
+    // `send` 里。今天它跟着**那一趟**走（`serve_one` 里的 `Sender`）。
     loop {
         // 一、补齐两件事（收提示 + 认领答话路、认出问话孔并挂组）。还有没补齐的就只等一小段。
         let settling = settle(&mut desk, &pile, &tip_hole);
@@ -96,7 +99,7 @@ pub(crate) fn host_loop(me: TaskId) {
             Wait::Forever
         };
         let Ok(Some((tok, _dir))) = pile.await_(millis) else {
-            swept += tell_gone(&mut desk);
+            swept += tell_gone(&mut desk, &pile);
             continue;
         };
         // 提示孔那一格由下一轮的 `settle` 收（它非阻塞地拉）；这里只管"是哪位客人的问话孔"。
@@ -108,7 +111,7 @@ pub(crate) fn host_loop(me: TaskId) {
         // 三、客人**死了**（没道别就没了）⇒ 惰性剔：**那一枚入口答不出**（`VestedBy` 答 `None`
         //     ——不在我表里，**或**它那扇门已经封印）即当场扫空，并推它那条死亡道。
         //     **说了走**的那一位在 `serve_one` 那一支里已经撤干净（撤格 + 摘牌 + 摘孔）。
-        swept += tell_gone(&mut desk);
+        swept += tell_gone(&mut desk, &pile);
     }
 }
 
@@ -131,7 +134,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
     let mut rec = [0u8; bcall::Tip::LEN];
     let mut pending = false;
     let board = Mark::of(LINK);
-    while let Ok(n) = tip.pull_timeout(&mut rec, Wait::POLL) {
+    while let Ok((n, _)) = tip.pull(&mut rec, Wait::POLL) {
         // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。
         let Some(tip) = bcall::Tip::fetch(&rec[..n]) else {
             debug!("board: no reply");
@@ -200,10 +203,16 @@ fn lane_for(name: String) -> Option<PieToken> {
 ///
 /// 判据全在 [`Desk::sweep_each`] 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
 /// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
-fn tell_gone(desk: &mut Desk) -> usize {
-    let n = desk.sweep_each(|_who, lane| {
-        if let Some(lane) = lane {
-            let _ = mail::ring(lane);
+fn tell_gone(desk: &mut Desk, pile: &Pile) -> usize {
+    let n = desk.sweep_each(|gone| {
+        if let Some(lane) = gone.lane {
+            let _ = HolePie::from_token(lane).ring();
+        }
+        // **读者结清（B-a）**：这一位已经答不出了 ⇒ 它挂进组的那一枚问话孔从组里**摘掉**
+        // （不摘就是一格再也醒不来的成员，且每剔一位多留一格）。**不封印**：那一枚是**客人铸的**，
+        // 本域只持副本——收它是它自己（或内核的寿命边）的事，本域动手会答 `Denied`。
+        if let Some(ask) = gone.ask {
+            let _ = pile.detach(&HolePie::from_token(ask), HoleDir::Pull);
         }
     });
     if n > 0 {
@@ -257,11 +266,10 @@ fn serve_one(
         Err(_) => bcall::BAD,
     };
     // 答一句：**一格**（[`bcall::Union`] 那一张形状）——装与发都不在这一层写字节。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
-    // 的照实记）；真到了那里，这一答就发不出去。
-    let _ = Sender::<bcall::Union>::from_token(guest.reply())
-        .send(bcall::Union::of(said))
-        .ok();
+    // **写端跟着这一趟走**：编在本族那只缓冲里（这一帧的栈上）、递出去（一个 envcall），
+    // 落出作用域时等这只手被取走——那位客人不来取，卡的是他自己那一趟。
+    let mut tx = Sender::<bcall::Union>::from_token(guest.reply());
+    let _ = tx.send(bcall::Union::of(said));
     // 退场那一句之后：这位客人不会再问了 ⇒ 它的问话孔从组里摘掉（摘完再进下一轮）。
     // **答话先推、摘孔在后**：答话走的是它那条板路（与组无关），次序反了它就收不到 `OK`。
     if matches!(decoded, Ok(bcall::Wire::Evict)) {
@@ -298,7 +306,7 @@ fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swe
             };
             // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
             if let Some(lane) = lane {
-                let _ = mail::ring(lane);
+                let _ = HolePie::from_token(lane).ring();
             }
             return bcall::fail_to_code(said.err());
         }

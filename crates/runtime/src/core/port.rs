@@ -17,7 +17,7 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
 use env::Wait;
-use env::{MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail};
+use env::{HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 
@@ -138,18 +138,22 @@ impl Port {
         self.to.seed()
     }
 
-    /// 推一帧：**已编好的整帧**，本层不看内容。满则等（背压），没有上界。
+    /// 推一帧：**已编好的整帧**，本层不看内容。满则等（背压），没有上界；**递出去之后也等它被
+    /// 取走**——`frame` 是调用方那一帧的字节，等到那只手下线才算收口（照实记：从前这两半合一
+    /// 住 `HolePie::push` 里，今天由这一层写出来）。
     ///
-    /// 成功 ≠ 对端收到：`entry` 是本端持有的一份副本，对端死了这扇门也不死。
+    /// **`Ok` = 那一手被取走了，不是"对端读懂了"**：`entry` 是本端持有的一份副本，对端死了这扇
+    /// 门也不死（它的封印只会让这一等当场答 `Dead`）。
     pub fn push(&self, frame: &[u8]) -> MailResult<()> {
-        self.entry.push(frame)
+        self.entry.push(frame, Wait::Forever)?;
+        self.entry.wait(HoleDir::Push, Wait::Forever).map(|_| ())
     }
 
     /// 收一帧：有界等 → **核对推者是不是对端** → 返恰好那一帧。
     ///
     /// 推者不符 ⇒ `Denied`，该会话应弃用（迟到的真回复仍可能落槽、污染下一次）。
     pub fn pull<'a>(&self, buf: &'a mut [u8], within: Wait) -> MailResult<&'a [u8]> {
-        let (len, from) = self.reply.pull_timeout_from(buf, within)?;
+        let (len, from) = self.reply.pull(buf, within)?;
         if from != self.to.peer() {
             return Err(denied_mail());
         }

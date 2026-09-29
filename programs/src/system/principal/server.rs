@@ -132,6 +132,9 @@ pub fn serve() -> Result<(), Start> {
     // 六、常驻：**一只组等那两枚门牌**（[`carrier`] 那一趟：立组 → 挂两枚 → 备一页 → 等 →
     // **从哪一枚读到就是哪一面** → 把这一批取干净 → 交给 [`turn`]）。这一族没有会话可读记号，
     // 故"面"只有这一条来路。
+    // **照实记（那一格共用的答话存根退场了）**：从前这里住着一枚 `Outbox<pcall::Reply>`，
+    // 孔另由每一趟现给 ⇒ 一位不回头的客人就能把整台名册按在下一趟的 `send` 里。今天答话那一格
+    // 跟着**那一趟**走（`turn` 里的 `Sender`）。
     carrier(
         E_PRINCIPAL,
         &[(ask, pcall::Grant::Ask), (set, pcall::Grant::Set)],
@@ -161,11 +164,18 @@ fn turn(book: &mut Principal, from: TaskId, face: pcall::Grant, frame: &[u8]) {
     }
     // 答一句：**一格**（[`pcall::Reply`] 那一形）——走这一趟那枚回信孔，装与发都不在这一层
     // 写字节（缓冲在这一帧的栈上：这一形定长 10）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
-    // 真到了那里，这一答就发不出去。
-    let _ = Sender::<pcall::Reply>::from_token(back)
-        .send(answer(book, from, ask, face))
-        .ok();
+    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那一位客人不来取，
+    // 卡的是他自己那一趟：**一枚孔一枚写端，"一格招待所有客人"编不出来**。
+    //
+    // **收口必须在 `release` 之前**（照实记，量出来的）：那一等用的是**本域表里这一枚**
+    // （`wait(HoleDir::Push)` 要走权限那一关），先放下它、再等 ⇒ `Denied` 当场返回，
+    // 而孔上那只手还指着这一帧的栈——下一个 `turn` 复用同一片栈，取的人复制到的就是**别人的
+    // 字节**（症状：客侧 `recv-unread`，而驱动的 `hand_over` 读数一切正常）。故这里用一层
+    // 作用域把"收口"钉在"放下"之前。
+    {
+        let mut tx = Sender::<pcall::Reply>::from_token(back);
+        let _ = tx.send(answer(book, from, ask, face));
+    }
     let _ = mail::release(back);
 }
 

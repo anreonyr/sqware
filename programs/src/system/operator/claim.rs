@@ -49,7 +49,12 @@ pub(super) fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieTo
     // **第二枚 ⇒ "只可能有一枚"那条纪律破了**：说话（`more` 那一格就是这句话）。
     if hits.next().is_some() {
         if let Some(note) = more {
-            debug!("{}", note);
+            // **照实记（这一句从前在 release 下是哑的）**：它原先走 `debug!`，而那一支宏在
+            // `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）——
+            // 验收跑的全是 release ⇒ "一位客人铸了两枚问话孔"这件事从来没人听见。而下一行正好
+            // **取第一枚**：认错一枚的后果是**另一位客人的问话永远没人读**（见 [`ask_of`] 的注）。
+            // 故这一句改走不设构建门的那一手。
+            debug::put(note);
         }
     }
     Some(first.token)

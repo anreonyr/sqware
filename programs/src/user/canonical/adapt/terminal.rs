@@ -1,7 +1,7 @@
 //! canonical::adapt::terminal — **那一圈（壳）**：读口与写口两边轮转，中间过一遍行规程。
 //!
 //! ```text
-//!   1  收：`rx.pull_timeout(POLL)` 把读口收干净（**这一手同时放 uart 走出"把一批推给我们"那一格**）
+//!   1  收：`rx.pull(buf, POLL)` 把读口收干净（**这一手同时放 uart 走出"把一批推给我们"那一格**）
 //!   2  喂：逐字节进 [`Discipline::feed`]，它把要回显的字节写进本批的 `echo` 缓冲里
 //!   3  写：**只在写口就绪时推**（就绪＝槽空＝当场成功）；槽满就短等一拍、再回去收
 //!   4  都没事：阻塞等读口（此刻写口是空的，uart 不在等我们）
@@ -40,7 +40,7 @@ pub fn run(console: &Console) {
         // 1：收——非阻塞地把读口收干净。**这一手同时放 uart 走出"把一批推给我们"那一格**。
         let mut got = false;
         if !quit {
-            while let Ok(n) = console.rx.pull_timeout(&mut buf, Wait::POLL) {
+            while let Ok((n, _)) = console.rx.pull(&mut buf, Wait::POLL) {
                 got = true;
                 if !eat(&mut d, &buf[..n], &mut out) {
                     quit = true; // 收场词到了：**先把待写的放完**，再走
@@ -53,7 +53,8 @@ pub fn run(console: &Console) {
             match console.tx.wait(HoleDir::Push, Wait::POLL) {
                 Ok(true) => {
                     // 借到这一条就结束（不把 `out` 的借带进下面的 `remove`）。
-                    let failed = console.tx.push(&out[0]).is_err();
+                    // **只递出**：上面那一问已经把"轮到我"问过了（就绪），故这里是 `Wait::POLL`。
+                    let failed = console.tx.push(&out[0], Wait::POLL).is_err();
                     if failed {
                         return; // 写口封了 = 持设备的域没了
                     }
@@ -74,7 +75,8 @@ pub fn run(console: &Console) {
         if got {
             continue;
         }
-        let Ok(n) = console.rx.pull(&mut buf) else {
+        // **永久等**（这一格从前是丢 `Wait` 的那一版 `pull`）：`Wait::Forever` 就是"一直等"。
+        let Ok((n, _)) = console.rx.pull(&mut buf, Wait::Forever) else {
             return;
         };
         if !eat(&mut d, &buf[..n], &mut out) {

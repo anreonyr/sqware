@@ -34,7 +34,6 @@ pub(crate) fn dispatch(
             pull(frame, ident, token, KVirt::from_raw(buf.get()), max)
         }
         MailCall::Peek { token } => peek(frame, token),
-        MailCall::Withdraw { token } => withdraw(frame, token),
         MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
         MailCall::Hush { token } => hush(frame, token),
         MailCall::Ring { token } => ring(frame, token),
@@ -137,12 +136,18 @@ fn hand_over(
         return Err(MailFail::Busy);
     };
     if len > max || !mail::whole(space, buf.as_usize(), len, PteFlags::W) {
+        // **"读不成、手放回"这一条要看得见**（诊断）：孔会因此**一直报就绪**——等在这一组上的
+        // 读的人每一轮都啃同一格（读不成 ⇒ 手还在 ⇒ 下一轮又报就绪），而**别的客人的手就被饿在
+        // 后面**；递手的那一方还在等它下线（`wait(HoleDir::Push, …)` 没有期限）⇒ 两边一起卡住。
+        mail::hole::note_back(len, max);
         mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
     if !mail::whole(&src, va, len, PteFlags::R) || !mail::copy(&src, va, space, buf.as_usize(), len)
     {
-        mail::hole::back(meta);
+        // **发送方那段没了 ⇒ 那只手就地收掉**（不是放回）：那条报再也送不到，放回只会把孔
+        // 永远占住。照实记（量出来的）见 `work/mail/hole.rs` 的 `taken`／`back`。
+        mail::hole::taken(meta);
         return Err(MailFail::Gone);
     }
     mail::hole::taken(meta);
@@ -165,29 +170,13 @@ fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// **撤手**：把**我自己**伸出、还没被取走的那只收回来（内核按调用者的 task id 认人）。
+/// 等某一方向就绪（`Pull` 有可取之事／`Push` 孔空着），`millis` 是上限族。
 ///
-/// 它的用家只有 `HolePie::push` 的兜底期限：那一段借用期在这儿收口——不撤，"递出之后不等"
-/// 就成了悬着的借条。
-fn withdraw(frame: &mut TrapContext, token: PieToken) -> Outcome {
-    let me = current()
-        .running_task()
-        .map(|t| t.ident.id)
-        .unwrap_or(TaskId::new(0));
-    let r = with_pie(token, Need::Store, |pie| match pie {
-        AnyPie::Hole(p) => mail::hole::withdraw(p.meta(), me),
-        _ => Err(MailFail::Denied),
-    });
-    frame.gpr.set_x(
-        Gprs::A0,
-        match r {
-            Ok(()) => 0,
-            Err(e) => e.code() as usize,
-        },
-    );
-    Outcome::Resume
-}
-
+/// **照实记（这里原先那一格是"撤手"）**：本函数之上原写着
+/// `fn withdraw(frame, token)`——"把**我自己**伸出、还没被取走的那只收回来"，用家只有载体那层
+/// `HolePie::push` 的兜底期限（`HANDOFF_MS`）。那一格期限随"不许把已经递出的报作废"一起退了场
+/// （凭据三条，见 `work/mail/hole.rs` 与 `crates/runtime/src/env/mail.rs` 的照实记），故这一手
+/// 也一并删除。今天那只手只有两个下场：**被取走**，或**随孔封印一起没**。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,

@@ -86,7 +86,7 @@ pub fn carrier<G: Copy>(
         };
         // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
         let hole = HolePie::from_token(tok);
-        while let Ok((len, from)) = hole.pull_timeout_from(&mut buf, Wait::POLL) {
+        while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
             on(face, from, &buf[..len]);
         }
     }

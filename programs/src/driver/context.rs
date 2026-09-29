@@ -187,10 +187,16 @@ impl Context {
 
     /// **把一批字节推给本域服务门的客人**（设备持有者那一侧的服务面）。
     ///
-    /// 单次尝试：槽满 / 口封 ⇒ `Err`（调用方按自己的读数处置）。
+    /// **两半都写出来**（旧合成 `push` 就是这两半）：**等轮到自己** ＋ **等这只手被取走**。
+    /// **照实记（"单次尝试"这一句是假的，已改真）**：本注从前写着"单次尝试：槽满 / 口封 ⇒ `Err`"，
+    /// 而代码一直是合成那一手（递出 ＋ 等它下线）——**那一等不是多余的**：`bytes` 是**调用方
+    /// 那一帧**的字节（`uart` 那个批），不等它下线就返回，客人复制到的就是一片被复用的栈。
+    /// 故这一手保留"不等手取走不返回"，只把两半写明白。
     pub fn publish(&self, bytes: &[u8]) -> Result<(), ()> {
-        runtime::env::mail::HolePie::from_token(self.entry)
-            .push(bytes)
+        let door = runtime::env::mail::HolePie::from_token(self.entry);
+        door.push(bytes, Wait::Forever).map_err(|_| ())?;
+        door.wait(env::HoleDir::Push, Wait::Forever)
+            .map(|_| ())
             .map_err(|_| ())
     }
 }

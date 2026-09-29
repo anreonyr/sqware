@@ -92,7 +92,7 @@ fn main() -> Result<(), Fail> {
         // FIFO 里排着，多等这一瞬不丢。
         //
         // **一次写 = 一条完整的字**：这一条消息就是要写出去的全部字节，本域不拆不并。
-        while let Ok((len, _)) = desk.tx.pull_timeout_from(&mut word, Wait::POLL) {
+        while let Ok((len, _)) = desk.tx.pull(&mut word, Wait::POLL) {
             device::put(view, &word[..len]);
         }
         // 设备那一趟（次序不动）：`receive` 吃的是路由者那一枚"线响了"的通知。

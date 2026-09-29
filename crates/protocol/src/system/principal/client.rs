@@ -24,12 +24,12 @@
 
 use crate::message::Message;
 use env::Wait;
-use env::{PieToken, TaskId};
+use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
 
 use super::frame::{self, BACK, Fail, PrincipalId};
 use crate::communication::establish;
-use crate::communication::receiver::Receiver;
+use crate::communication::receiver::{Receiver, RecvFail};
 
 /// 一面身份服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
@@ -76,14 +76,33 @@ impl Face {
     /// **双射表**（加变体 = 加一个线上码）——那是动协议面的事。分得开它们的那一格在**对面**：
     /// `Denied` 是服务真会答的码，"没走到"是本端自己在码表之外判的。
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Reply, Fail> {
+        /// **四步分开报**（照实记）：`Fail::Denied` 盖着四件事（借孔 / 编帧 / 递出 / 收回信），
+        /// 而"装配期 `derive` 折了"那一趟**只看得出这一格**——查了很久才缩到"是哪一步"。故每一步
+        /// 各留一行读数（release 也看得见：`debug!` 在 release 是空的）。
+        fn deny(step: &str) -> Fail {
+            crate::debug::put(&crate::__format!("principal: call deny={step}"));
+            Fail::Denied
+        }
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）：那一枚
         // "种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫自己的表。
-        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Denied)?;
+        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
-        let n = act.query(seed).store_at(&mut frame, 0).ok_or(Fail::Denied)?;
-        if mail::HolePie::from_token(self.entry).push(&frame[..n]).is_err() {
+        let n = act
+            .query(seed)
+            .store_at(&mut frame, 0)
+            .ok_or_else(|| deny("encode"))?;
+        let door = mail::HolePie::from_token(self.entry);
+        // **递出，且等到轮到自己**：孔上站着**别人**的手时按预算等它走（照实记见 `HolePie::push`
+        // ——丢了这一等，装配期的 `derive` 会与树的门禁撞在同一个面上、当场折成 `Denied`）。
+        // **不等自己那只手**：递出之后等它下线压到这一趟收完（见下 `door.wait`），因为"名册 ⇄
+        // 盟册互等对方取走"那条死锁就是这么量出来的（`communication::sender` 文件头②）。
+        if let Err(e) = door.push(&frame[..n], Wait::Forever) {
+            crate::debug::put(&crate::__format!("principal: call deny=push:{}", e.source.code()));
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Denied);
         }
@@ -91,9 +110,23 @@ impl Face {
         let mut buf = frame::Reply::EMPTY;
         let got = Receiver::<frame::Reply>::from_token(back)
             .recv(buf.as_mut(), wait)
-            // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`。
-            .map_err(|_| Fail::Denied);
+            // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`——**但哪一格要报得出来**。
+            .map_err(|e| match e {
+                RecvFail::Unread => deny("recv-unread"),
+                RecvFail::Mail(m) => {
+                    crate::debug::put(&crate::__format!(
+                        "principal: call deny=recv:{}",
+                        m.code()
+                    ));
+                    Fail::Denied
+                }
+            });
+        // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
+        let _ = door.wait(HoleDir::Push, Wait::Forever);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         got
     }

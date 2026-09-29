@@ -60,7 +60,12 @@ fn main() -> Reason {
         return bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。
-    if report.push(b"H").is_err() {
+    // **两半都写出来**（旧 `push` 是合一的）：递出 ＋ 等这只手被取走——`b"H"` 是静态字节，
+    // 但这一格是**状态**：手上悬着一条没被看见的回报，判据就假红。
+    if report.push(b"H", Wait::Forever).is_err() {
+        return bail("waiter: report");
+    }
+    if !matches!(report.wait(HoleDir::Push, Wait::Forever), Ok(true)) {
         return bail("waiter: report");
     }
     debug!("waiter: hung");
@@ -83,13 +88,18 @@ fn main() -> Reason {
         match member.peek() {
             Ok(_) => {
                 debug!("waiter: woke");
-                let _ = report.push(b"T");
+                // **递出 ＋ 等它被取走**：字节是这一帧的局部，不等它下线就返回，台主可能复制到死栈。
+                let word = [b'T'];
+                let _ = report.push(&word, Wait::Forever);
+                let _ = report.wait(HoleDir::Push, Wait::Forever);
                 break;
             }
             Err(e) if e.source.is_busy() => continue,
             Err(e) => {
                 debug!("waiter: err={}", e.source.code());
-                let _ = report.push(b"E");
+                let word = [b'E'];
+                let _ = report.push(&word, Wait::Forever);
+                let _ = report.wait(HoleDir::Push, Wait::Forever);
                 break;
             }
         }

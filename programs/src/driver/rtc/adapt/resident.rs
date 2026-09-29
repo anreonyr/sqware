@@ -52,6 +52,9 @@ pub fn run(
         return Err(Fail::at(E_RTC, "desk"));
     }
     buf.resize(PAGE_SIZE, 0);
+    // **照实记（那两格共用的答话存根退场了）**：答话那一格从前是循环外一枚 `desk::Out`
+    // （两形各一枚 `Outbox`）——一位不回头的客人就能把整台 rtc 按在下一位的 `send` 里。
+    // 今天它跟着**那一趟**走（`desk::serve` 与下面线那一趟各自一枚 `Sender`）。
     loop {
         // 等到有事件。非阻塞地把两个源各取干净——**先门后线**：门上的问要就地答，而线那一趟
         // 到点才有的说（次序不承担语义，只省一次绕回）。
@@ -61,7 +64,7 @@ pub fn run(
         }
         // 门牌是**单槽**：一趟把槽里的都取走。缓冲是一页（见上），故"取不出也丢不掉"
         // 那个状态不存在。
-        while let Ok((len, from)) = entry_hole.pull_timeout_from(&mut buf, Wait::POLL) {
+        while let Ok((len, from)) = entry_hole.pull(&mut buf, Wait::POLL) {
             desk::serve(host, view, from, &buf[..len]);
         }
         while held.receive(Wait::POLL).is_ok() {
@@ -71,14 +74,17 @@ pub fn run(
             rtc::clear(view);
             if let Ring::Rang { back, now } = host.ring(now) {
                 // 那一声**走 `Sender`**（答那一形：一个时刻）——与客人收它走的是同一张表。
-                match Sender::<Time>::from_token(back)
-                    .send(Time::of(now))
-                    .ok()
+                // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）。
+                // **收口必须在 `release` 之前**（照实记，与三处服务面同一条）：那一等要用**本域
+                // 表里这一枚**，先放下它再等 ⇒ `Denied` 当场返回，而孔上那只手还指着这一帧的栈。
                 {
-                    Some(()) => debug!("rtc: rang n={} now={now}", host.heard()),
-                    // **推不出去 = 那位客人没了**（它开的那枚孔随它退场封印）。那一格已经空着
-                    // （取走就是兑现），故这里只报一行，不重试、不补发——**读数也不加一**。
-                    _ => debug!("rtc: notify failed"),
+                    let mut tx = Sender::<Time>::from_token(back);
+                    match tx.send(Time::of(now)) {
+                        Ok(()) => debug!("rtc: rang n={} now={now}", host.heard()),
+                        // **推不出去 = 那位客人没了**（它开的那枚孔随它退场封印）。那一格已经空着
+                        // （取走就是兑现），故这里只报一行，不重试、不补发——**读数也不加一**。
+                        Err(_) => debug!("rtc: notify failed"),
+                    }
                 }
                 let _ = mail::release(back);
             }

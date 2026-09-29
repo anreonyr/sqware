@@ -230,12 +230,16 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Room(E_HUB));
     }
     buf.resize(PAGE_SIZE, 0);
+    // **照实记（那三格共用的答话存根退场了）**：从前这一格是三代答话形各一枚 `Outbox`
+    // （缓冲 ＋ 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台设备账**按在
+    // 下一位客人的 `send` 里。今天答话那一格跟着**那一趟**走（`put_said` / `put_deed` /
+    // `list` 各自一枚 `Sender`）：一位客人一处写端，"一格招待所有客人"编不出来了。
     loop {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
             Ok(Some((token, _))) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                 let hole = HolePie::from_token(token);
-                while let Ok((len, from)) = hole.pull_timeout_from(&mut buf, Wait::POLL) {
+                while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
                     turn(&mut ledger, &league, plates, token, from, &buf[..len]);
                 }
             }
@@ -277,12 +281,14 @@ fn turn(
     let mine = face_of(plates, token);
     // 面与码对不上、或这一码我不认：**按那一面那一形**答一句失败（形状必须对得上，回声孔才用得上）。
     let Some(ask) = ask.filter(|ask| Grant::of_wire(ask) == mine.at()) else {
-        let _ = send_status(plates, token, mine, hub::DENIED, back);
+        send_status(mine, hub::DENIED, back);
         return;
     };
-    let _ = match (mine, ask) {
+    match (mine, ask) {
         (Grant::Bond, Wire::Bond(class)) => bond(ledger, league, class, from, back),
-        (Grant::List, Wire::List(class, from_index)) => list(ledger, class, from_index, back),
+        (Grant::List, Wire::List(class, from_index)) => {
+            list(ledger, class, from_index, back)
+        }
         (
             Grant::Claim,
             Wire::Claim {
@@ -293,8 +299,8 @@ fn turn(
             },
         ) => claim(ledger, token, from, sensor, kind, access, policy, back),
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
-        _ => send_status(plates, token, mine, hub::BAD, back),
-    };
+        _ => send_status(mine, hub::BAD, back),
+    }
     let _ = mail::release(back);
 }
 
@@ -309,23 +315,20 @@ fn bond(
     class: String,
     from: TaskId,
     back: PieToken,
-) -> Result<(), ()> {
+) {
     let Some(coalition) = ledger.coalition_of(class) else {
-        return Sender::<Said>::from_token(back)
-            .send(Said::of(hub::UNKNOWN))
-            .map_err(|_| ());
+        put_said(back, hub::UNKNOWN);
+        return;
     };
     let status = match league.coalition(coalition).admit(from, Wait::AtMost(MS)) {
         Ok(()) => hub::OK,
         Err(_) => hub::DENIED,
     };
-    Sender::<Said>::from_token(back)
-        .send(Said::of(status))
-        .map_err(|_| ())
+    put_said(back, status);
 }
 
 /// **列册**：这一类此刻有哪几台、哪几台有主（越界答空窗——是答案，不是错误）。
-fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) -> Result<(), ()> {
+fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) {
     let window = if ledger.coalition_of(class.clone()).is_some() {
         ledger.list(class, from)
     } else {
@@ -334,9 +337,10 @@ fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) -> Result<(),
             ..Window::EMPTY
         }
     };
-    Sender::<Window>::from_token(back)
-        .send(window)
-        .map_err(|_| ())
+    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那一位客人不来取，卡的是
+    // 他自己那一趟。**一枚孔一枚写端**，共用一格那种错编不出来。
+    let mut tx = Sender::<Window>::from_token(back);
+    let _ = tx.send(window);
 }
 
 /// **认领**：那一台由"哪一枚孔响了"回答（`door`）；主人是发送者 ＋ 它交来的那枚报活孔。
@@ -349,16 +353,15 @@ fn claim(
     access: u32,
     policy: u32,
     back: PieToken,
-) -> Result<(), ()> {
+) {
     let deed = {
         let (Some(kind), Some(access), Some(policy)) = (
             Kind::of(kind),
             Access::from_bits(access),
             Policy::from_bits(policy),
         ) else {
-            return Sender::<Deed>::from_token(back)
-                .send(Deed::of(hub::BAD))
-                .map_err(|_| ());
+            put_deed(back, Deed::of(hub::BAD));
+            return;
         };
         let owner = Owner { task: from, sensor };
         match ledger.claim(door, owner, alive) {
@@ -372,32 +375,33 @@ fn claim(
             Err(_) => Deed::of(hub::UNKNOWN),
         }
     };
-    Sender::<Deed>::from_token(back)
-        .send(deed)
-        .map_err(|_| ())
+    put_deed(back, deed);
+}
+
+/// 递一句 `Said`（**写端跟着这一趟走**：落出作用域时等这只手被取走）。
+fn put_said(back: PieToken, status: u8) {
+    let mut tx = Sender::<Said>::from_token(back);
+    let _ = tx.send(Said::of(status));
+}
+
+/// 递一句 `Deed`（同上）。
+fn put_deed(back: PieToken, deed: Deed) {
+    let mut tx = Sender::<Deed>::from_token(back);
+    let _ = tx.send(deed);
 }
 
 /// 按那一面的那一形答一句状态（面与码对不上、或这一码我不认时用）。
-fn send_status(
-    _plates: (PieToken, PieToken, PieToken),
-    _token: PieToken,
-    mine: Grant,
-    status: u8,
-    back: PieToken,
-) -> Result<(), ()> {
+fn send_status(mine: Grant, status: u8, back: PieToken) {
     match mine {
-        Grant::Bond => Sender::<Said>::from_token(back)
-            .send(Said::of(status))
-            .map_err(|_| ()),
-        Grant::List => Sender::<Window>::from_token(back)
-            .send(Window {
+        Grant::Bond => put_said(back, status),
+        Grant::List => {
+            let mut tx = Sender::<Window>::from_token(back);
+            let _ = tx.send(Window {
                 status,
                 ..Window::EMPTY
-            })
-            .map_err(|_| ()),
-        Grant::Claim => Sender::<Deed>::from_token(back)
-            .send(Deed::of(status))
-            .map_err(|_| ()),
+            });
+        }
+        Grant::Claim => put_deed(back, Deed::of(status)),
     }
 }
 

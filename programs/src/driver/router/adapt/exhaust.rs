@@ -11,7 +11,7 @@
 
 use crate::core::lines::Lines;
 use crate::plic::{LINE_PRIORITY, Plic};
-use runtime::env::mail;
+use runtime::env::mail::HolePie;
 
 /// 排空：取"忙"的那些，把响着的那一位应掉，每条回闲 + 放线。
 ///
@@ -28,7 +28,7 @@ pub fn drain(lines: &mut Lines, plic: &Plic) {
         };
         // 应**本端那一枚**（客人往它响"我排空了"）；号先取出来，下面那一手要改账（借不动）。
         let rx = lane.rx();
-        while mail::hush(rx).is_ok() {
+        while HolePie::from_token(rx).hush().is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
         }

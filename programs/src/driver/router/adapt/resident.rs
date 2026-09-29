@@ -37,7 +37,7 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
         exhaust::drain(&mut up.lines, &up.plic);
         // 门上：非阻塞地把手上那些都取走（登记）。一份**够大**的缓冲接一条消息——
         // 「取不出也丢不掉」（取不出的那条会留在孔上，把后面正经的问堵在门外）。
-        while let Ok((n, from)) = up.entry.pull_timeout_from(&mut up.buf, Wait::POLL) {
+        while let Ok((n, from)) = up.entry.pull(&mut up.buf, Wait::POLL) {
             desk::serve(&mut up.lines, &up.plic, from, &up.buf[..n], &up.pile);
         }
         // 铃：领干净这一趟（`bell` 那一份里写着"为什么不按铃的返回值判"）。

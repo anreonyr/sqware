@@ -26,7 +26,7 @@
 use crate::message::Message;
 use crate::system::principal::PrincipalId;
 use env::Wait;
-use env::{PieToken, TaskId};
+use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
 
 use super::frame::{self, BACK, CoalitionId, Fail, Window};
@@ -94,7 +94,13 @@ impl Face {
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
         let n = act.query(seed).store_at(&mut frame, 0).ok_or(Fail::Unknown)?;
-        if mail::HolePie::from_token(self.entry).push(&frame[..n]).is_err() {
+        let door = mail::HolePie::from_token(self.entry);
+        // **递出，且等到轮到自己**（照实记见 `HolePie::push`）：不丢那一等，单槽门面上的两位
+        // 客人就只会**排队**，不会把后到的那一趟当场折成失败。**不等自己那只手**——见下 `wait`。
+        if door.push(&frame[..n], Wait::Forever).is_err() {
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Unknown);
         }
@@ -104,7 +110,12 @@ impl Face {
         let got = Receiver::<frame::Union>::from_token(back)
             .recv(buf.as_mut(), wait)
             .map_err(|_| Fail::Unknown);
+        // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
+        let _ = door.wait(HoleDir::Push, Wait::Forever);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         got
     }

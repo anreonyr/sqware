@@ -11,7 +11,7 @@ use crate::work::unit::task::TaskIdent;
 mod chrono;
 mod control;
 mod debug;
-mod mail;
+pub(crate) mod mail;
 mod memory;
 mod pie;
 mod room;

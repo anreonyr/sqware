@@ -99,6 +99,9 @@ pub(super) fn halt() -> ! {
             putln!("sched: kicks={kicks} fallback={fallback}");
             let (ring, busy, idle_ring, idle_busy) = crate::platform::devices::irq_stats();
             putln!("irq: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}");
+            // 一只手有没有人取（`Push` 方向等超过 1 秒的账）——原 `HANDOFF_MS` 那格作废退场
+            // 之后，这件事由这一行接着看得见（见 `work/mail/hole.rs` 的 `hold_line`）。
+            crate::work::mail::hole::hold_line();
         }
         crate::runtime::diagnose::trace::note(crate::runtime::diagnose::trace::EventKind::Halt(
             crate::runtime::diagnose::trace::HaltEvent::Halt,

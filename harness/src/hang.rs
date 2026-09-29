@@ -66,7 +66,7 @@ fn main() -> Reason {
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。
     let mut buf = [0u8; 8];
     let mut burst = 0usize;
-    if let Ok(n) = pie.pull_timeout(&mut buf, Wait::Forever)
+    if let Ok((n, _)) = pie.pull(&mut buf, Wait::Forever)
         && n >= 4
     {
         burst = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
@@ -80,7 +80,7 @@ fn main() -> Reason {
         // ★ 在台上：跑一小段（台主扫的 `d` 就落在这一段的时序上）。
         tick::spin(burst);
         // ★ 离核：无限挂在自己的孔上——`Wait::Forever` = 永久等，被 push 才醒。
-        let _ = pie.pull_timeout(&mut buf, Wait::Forever);
+        let _ = pie.pull(&mut buf, Wait::Forever);
     }
 }
 

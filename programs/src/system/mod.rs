@@ -236,29 +236,35 @@ impl Assembly {
     ///
     /// **本域不为任何一位开门待客**：这七格挂上去是给**别的域**用的——它们 `find` 回那一枚
     /// 入口，开在那一枚记号上的会话就是说给持树者的"我持这一柄权"。
+    ///
+    /// **照实记（这几行改成 release 也看得见）**：它们从前走 `debug!`（release 下是空操作），
+    /// 而验收跑的机器全在 release 档 ⇒ "哪一位没挂上"这件事**一个成因都没有**
+    /// （`probe-operator-gate` 那一台的读数正是拿这七行当判据，见
+    /// `harness/src/probe_operator_gate.rs::count_under`）。与 `fail()`／`bridge::land` 那两处
+    /// 同一条理由：**缺一位服务是一档需要成因的读数**。
     fn mount_grants(&mut self) {
         // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::system::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
-                    debug!("system: grant not mounted ({why})");
+                    debug::put(&protocol::__format!("system: grant not mounted ({why})"));
                     continue;
                 }
             };
             // 路：**本族那一族的常量**（`/svc/sys/operator`）接上这一面的名。
             let Some(road) = protocol::system::operator::DIR.try_join(name.as_str()) else {
-                debug!("system: grant not mounted (name)");
+                debug::put("system: grant not mounted (name)");
                 continue;
             };
             if let Err(why) =
                 self.tree
                     .plate(&road, Some(entry), protocol::system::operator::Rule::None)
             {
-                debug!("system: grant not mounted ({why})");
+                debug::put(&protocol::__format!("system: grant not mounted ({why})"));
                 continue;
             }
-            debug!("system: grant mounted at {road}");
+            debug::put(&protocol::__format!("system: grant mounted at {road}"));
         }
     }
 
@@ -371,7 +377,12 @@ impl Assembly {
 /// 只在失败路径上调：**成功不说话**（装配正常的机器不该刷屏），而失败时这两行决定还得读几遍
 /// 代码——所以它报"程序名"与"步骤"两格。
 fn fail(program: &Program, e: Error) -> Died {
-    debug!("{}", program.name());
-    debug!("{}", e.said());
+    // **照实记（这两句从前在 release 下是哑的）**：装配失败那一刻要说的就两件事——**哪一台**、
+    // **死在哪一步**（`Error::Step` 里那句就是上树/挂板那一路的步名）。而它原先走 `debug!`，
+    // 那一支宏在 `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）
+    // ⇒ release 的机器上只留下一个 `system: assemble`，**上面那句最要紧的话一个字没有**。
+    // 这一刀改走不设门的那一手（`e.said()` 本来就是 `&'static str`，连格式化都不必）。
+    debug::put(program.name());
+    debug::put(e.said());
     program.demand.died
 }

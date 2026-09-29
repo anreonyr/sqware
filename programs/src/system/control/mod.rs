@@ -185,6 +185,16 @@ pub struct Control {
     catalog: Catalog<'static>,
     machine: Machine,
     boot: Endpoint,
+    /// **上一手入册那一单的写端**（`Setup::Machine` 那一格）。
+    ///
+    /// **为什么住在这里**：那一单是**递完就完**的（没有回话），而递出去的字节要活到对面取走
+    /// ——所以它必须住在比调用帧更长的地方。装配者正是比它长的那一位：一本 `Control` 活到
+    /// 装配完。下一台入册前先收口那一手在 `send` 里（那一刻上一台必然已经取走了）。
+    ///
+    /// **照实记（`Outbox` 并进 `Sender`）**：从前这一格只是"缓冲 ＋ 那只手"，孔另由
+    /// `Sender::from_token(tx)` 每一趟现给 ⇒ 同一个孔上站着两个写端（一个持孔、一个持字节），
+    /// "这一段字节活在谁手里"两处都能答。今天写端只有一枚：孔、字节、那只手都在它身上。
+    out: protocol::communication::sender::Sender<protocol::driver::hub::Enroll>,
 }
 
 /// 一枚**已造未放行**的身子（[`Control::pending`] 那一格）。
@@ -204,6 +214,7 @@ impl Control {
             catalog,
             machine,
             boot,
+            out: protocol::communication::sender::Sender::new(),
         }
     }
 

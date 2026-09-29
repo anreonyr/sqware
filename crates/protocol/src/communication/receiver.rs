@@ -49,8 +49,8 @@ impl<M: Message> Receiver<M> {
     /// 失败三格**分得开**（[`RecvFail`]）：搬不动（`Mail`）/ 收到了解不动（`Unread`）——
     /// 而 `Mail` 里 `Busy`（期限内没等到）与 `Dead` / `Denied`（这一枚孔用不动了）也分得开。
     pub fn recv(&self, buffer: &mut [u8], wait: Wait) -> Result<M::In, RecvFail> {
-        let n = mail::HolePie::from_token(self.hole)
-            .pull_timeout(buffer, wait)
+        let (n, _from) = mail::HolePie::from_token(self.hole)
+            .pull(buffer, wait)
             .map_err(|e| RecvFail::Mail(e.source))?;
         // 短一字节即读不懂；缓冲比帧还短也落这一格（那一格按本族最长给时到不了）。
         let bytes = buffer.get(..n).ok_or(RecvFail::Unread)?;

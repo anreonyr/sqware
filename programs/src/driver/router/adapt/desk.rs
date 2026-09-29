@@ -72,7 +72,11 @@ pub fn serve(lines: &mut Lines, plic: &Plic, from: TaskId, frame: &[u8], pile: &
             },
         };
         if let Some(back) = establish::find(from, lcall::BACK_MARK) {
-            let _ = HolePie::from_token(back).push(&[code]);
+            let reply = HolePie::from_token(back);
+            // **两半都写出来**（旧 `push` 是合一的）：等轮到自己 ＋ 等这一格被取走——`[code]`
+            // 是这一帧的临时值，不等它下线就返回，客人可能复制到一段死栈。
+            let _ = reply.push(&[code], Wait::Forever);
+            let _ = reply.wait(HoleDir::Push, Wait::Forever);
             // **答完就放下**：这一枚是这一趟借过来的（一问一答一个往返），它不在本域的账里
             // ——账里根本没有它，此后没人会替它收。不放的话，每有一次登记就在本域表里多留
             // 一枚，直到本域退场；读数就带在 `pies=` 那一格上（见上面那一支）。

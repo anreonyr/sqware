@@ -20,7 +20,7 @@
 
 use alloc::string::String;
 use env::{Access, Policy};
-use env::{Kind, PieToken, TaskId, Wait};
+use env::{HoleDir, Kind, PieToken, TaskId, Wait};
 use runtime::core::port;
 use runtime::env::mail;
 
@@ -138,14 +138,20 @@ impl Face {
         // 一枚字节都没收到**（读数：hub 那一侧连"醒了"都没印过）。今天两条形状各走各的缓冲。）
         let mut ask = S::EMPTY;
         let Some(n) = with(seed).store(ask.as_mut()) else {
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Bad);
         };
-        if mail::HolePie::from_token(self.entry)
-            .push(&ask.as_ref()[..n])
-            .is_err()
-        {
+        let door = mail::HolePie::from_token(self.entry);
+        // **递出，且等到轮到自己**（照实记见 `HolePie::push`）——设备账那一面是**所有驱动**
+        // 共用的单槽门面，撞车在这里比哪一处都常见。**不等自己那只手**——见下 `wait`。
+        if door.push(&ask.as_ref()[..n], Wait::Forever).is_err() {
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
+            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Dead);
         }
@@ -158,7 +164,12 @@ impl Face {
             Err(RecvFail::Mail(_)) => Err(Fail::Dead),
             Err(RecvFail::Unread) => Err(Fail::Bad),
         };
+        // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
+        let _ = door.wait(HoleDir::Push, Wait::Forever);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
+        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
+        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        let _ = mail::seal(back);
         let _ = mail::release(back);
         got
     }

@@ -33,7 +33,8 @@ pub fn draw(
     // 编一张单子、推过去：**编在本族那只缓冲里**（＝本族最长那一只，在这一帧的栈上）。
     // 泊位那头还没齐（`at_peer` 空）⇒ 与从前 `Pier::post` 自己那一格同一落点：`Local`。
     let order = Order::of(who, wants).ok_or(Fail::Local)?;
-    let tx = pair.sender::<Order>().ok_or(Fail::Local)?;
+    let mut tx = pair.sender::<Order>().ok_or(Fail::Local)?;
+    // **递出即返回**：一个 envcall（`Wait::POLL`）；等它下线压到这一趟收完（`reclaim`／`Drop`）。
     tx.send(order).map_err(|_| Fail::Local)?;
     // 收一张回单：**三格失败分得开**（[`Land`] 就是为这一格立的）——"期限内没等到" ⇒ `Local`；
     // "这一枚孔用不动了" ⇒ `Denied`（"这一手没做成"）；"收下来解不动" ⇒ `Bad`。前两句与从前
@@ -50,6 +51,9 @@ pub fn draw(
         },
         Err(RecvFail::Unread) => return Err(Fail::Bad),
     };
+    // 回单回来了（或这一趟判了失败）⇒ 把那一手收口：对面取走了是零代价，没取走就等它取
+    // （**那条报不许悬**）。
+    let _ = tx.reclaim();
     match said.code() {
         OK => Ok(said),
         code => Err(code_to_fail(code).unwrap_or(Fail::Bad)),

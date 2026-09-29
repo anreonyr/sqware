@@ -80,6 +80,9 @@ pub fn serve(
     // 记录那一格：至多 [`WANT_MAX`] 条（条数不越界由 `Order` 那一侧保证）。
     let mut records = [Pair::NONE; WANT_MAX];
     let rx = Receiver::<Order>::from_token(pier.rx());
+    // **照实记（那一格共用的回单存根退场了）**：从前这里住着一枚 `Outbox<Reply>`（缓冲 ＋
+    // 那只手）——一位不回头的客人就能把发货循环按在下一次的 `send` 里。今天回单那一格跟着
+    // **那一趟**走（`reply` 里一枚 `Sender`，落出作用域时等它被取走）。
     loop {
         // **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 去探活；孔用不动了 ⇒ 收摊；解不动 ⇒ 答 `BAD`。
         let order = match rx.recv(ask, Wait::AtMost(WAIT_MS)) {
@@ -119,10 +122,9 @@ fn reply(pier: &Endpoint, code: u8, records: &[Pair]) {
         return;
     };
     if let Some(reply) = Reply::of(code, records) {
-        // **装不上那一格按构造到不了**（`Buf` 由本族 `Message` 自己给，见 `Sender::send`
-        // 的照实记）：`.ok()` 显式落地一个到不了的点，不是吞错。
-        let _ = Sender::<Reply>::from_token(at_peer)
-            .send(reply)
-            .ok();
+        // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那位客人不来取，
+        // 卡的是他自己那一趟。
+        let mut tx = Sender::<Reply>::from_token(at_peer);
+        let _ = tx.send(reply);
     }
 }

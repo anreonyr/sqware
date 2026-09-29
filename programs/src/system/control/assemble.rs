@@ -216,9 +216,12 @@ impl Control {
         let Some(enroll) = Enroll::of(&records[..got]) else {
             return Err(Error::Step("too many devices"));
         };
-        protocol::communication::sender::Sender::<Enroll>::from_token(tx)
-            .send(enroll)
-            .map_err(|_| Error::Step("no channel"))?;
+        // **递出即返回**：等它下线由 `Control` 那一格写端担着（见它的注；`send` 里先收口上一手）。
+        // **写端的孔在这一趟才知道**（`tx`），故先把它换过来。
+        self.out = protocol::communication::sender::Sender::<Enroll>::from_token(tx);
+        if self.out.send(enroll).is_err() {
+            return Err(Error::Step("no channel"));
+        }
         debug!("system: enrolled {} supplies for {}", got, name.as_str());
         Ok(())
     }

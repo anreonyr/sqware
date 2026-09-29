@@ -133,6 +133,9 @@ pub fn serve() -> Result<(), Start> {
     // 七、常驻：**一只组等那两枚门牌**（[`carrier`] 那一趟：立组 → 挂两枚 → 备一页 → 等 →
     // **从哪一枚读到就是哪一面** → 把这一批取干净 → 交给 [`turn`]）。这一族没有会话可读记号，
     // 故"面"只有这一条来路。
+    // **照实记（那一格共用的答话存根退场了）**：同 `principal` 那一面——答话那一格从前是循环外
+    // 一枚 `Outbox<ccall::Union>`，一位不回头的客人就能把整台盟册按在下一趟的 `send` 里。
+    // 今天它跟着**那一趟**走（`turn` 里的 `Sender`）。
     carrier(
         E_COALITION,
         &[(ask, ccall::Grant::Ask), (set, ccall::Grant::Set)],
@@ -146,7 +149,13 @@ pub fn serve() -> Result<(), Start> {
 /// `from` 是**内核盖的发送者**。
 /// `roster` = 名册**问面**（`who()` 那一句用）；`mine` = **这一帧从本族哪一枚门牌进来**
 /// （[`serve`] 那只组说的事实）。
-fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, frame: &[u8]) {
+fn turn(
+    book: &mut Coalition,
+    roster: &Face,
+    mine: ccall::Grant,
+    from: TaskId,
+    frame: &[u8],
+) {
     let Some((ask, back)) = ccall::Wire::take(frame) else {
         // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
         return;
@@ -160,11 +169,16 @@ fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, f
     }
     // 答一句：**形由 [`ccall::Union`] 说**（三种答形合一：格状态 / 一格答 / 一窗号）——装与发
     // 都不在这一层写字节（缓冲在这一帧的栈上＝本族最大那一形）。
-    // `.ok()`：装不上那一格按构造到不了（`Buf` 由本族 `Message` 自己给，见 `Sender::send`）；
-    // 真到了那里，这一答就发不出去。
-    let _ = Sender::<ccall::Union>::from_token(back)
-        .send(answer(book, roster, mine, from, ask))
-        .ok();
+    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那一位客人不来取，卡的是
+    // 他自己那一趟：**一枚孔一枚写端，"一格招待所有客人"编不出来**。
+    //
+    // **收口必须在 `release` 之前**（照实记，与 `principal` 那一面同一条，量出来的）：那一等要用
+    // 本域表里这一枚（走权限那一关），先放下它再等 ⇒ `Denied` 当场返回，而孔上那只手还指着
+    // 这一帧的栈——下一个 `turn` 复用同一片栈，取的人复制到的是**别人的字节**。
+    {
+        let mut tx = Sender::<ccall::Union>::from_token(back);
+        let _ = tx.send(answer(book, roster, mine, from, ask));
+    }
     let _ = mail::release(back);
 }
 

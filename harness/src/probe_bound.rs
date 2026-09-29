@@ -62,6 +62,7 @@ extern crate programs;
 use alloc::string::String;
 use alloc::string::ToString;
 use env::Wait;
+use env::HoleDir;
 use programs::Report;
 
 use env::PieToken;
@@ -295,11 +296,16 @@ fn junk_trip(
     dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
-    let pushed = mail::HolePie::from_token(hedge).push(junk).is_ok();
+    // 推的人那两半：**递出**（孔上有人就等）＋ **等它被取走**——旧 `push` 是这两半合一的。
+    let door = mail::HolePie::from_token(hedge);
+    let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
+        && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let pulled = mail::HolePie::from_token(tree.rx()).pull_timeout(&mut back, Wait::AtMost(MS));
+    let pulled = mail::HolePie::from_token(tree.rx())
+        .pull(&mut back, Wait::AtMost(MS))
+        .map(|(n, _)| n);
     debug!(
         "probe-bound: junk len={} pull={:?} code={}",
         junk.len(),
@@ -322,12 +328,15 @@ fn junk_trip(
 /// 故这一条量的是**门**，不是账。
 fn junk_trip_board(bolt: PieToken, deck: &Endpoint) -> (bool, bool, bool) {
     let junk = junk();
-    let pushed = mail::HolePie::from_token(bolt).push(&junk).is_ok();
+    let door = mail::HolePie::from_token(bolt);
+    let pushed = door.push(&junk, Wait::AtMost(MS)).is_ok()
+        && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
 
     // 板那一路那一枚（本端的读口）：junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
     let said = mail::HolePie::from_token(deck.rx())
-        .pull_timeout(&mut back, Wait::AtMost(MS))
+        .pull(&mut back, Wait::AtMost(MS))
+        .map(|(n, _)| n)
         .ok();
     let bad = matches!(said, Some(1) if back[0] == bcall::BAD);
 
