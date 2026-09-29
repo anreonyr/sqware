@@ -21,7 +21,8 @@
 //! **`Deed` 里没有坐标**（`Key`）：区是 hub 自己的账据（它要与树对位），驱动拿到的是"哪一枚门闩
 //! ＋ 哪条线 ＋ 它叫什么"——驱动这一侧一处都不用坐标。
 
-use env::{Pair, PieToken, Tag};
+use alloc::string::String;
+use env::{Pair, PieToken};
 
 use crate::message::Message;
 use crate::system::operator::path::Path;
@@ -55,7 +56,7 @@ pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
 /// **照实记（它为什么不与 `/svc` 同一层）**：`/svc` 底下是**常驻的东西**（各族服务 ＋ 驱动 ＋
 /// 设备账那一台），而 `/dev` 底下是**设备那一本账**（hub 按机器自述落的格）——两者一件件对不上
 /// （一台设备不对应一个域），故各占一层。
-pub const DEV_ROAD: Path = Path::new("dev");
+pub const DEV_ROAD: &Path = Path::new("dev");
 
 /// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
 /// （`/dev/boot/{dtb,irq}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的。
@@ -125,16 +126,17 @@ crate::fail_codes! {
 // ── 三条问 ──────────────────────────────────────────────────
 
 /// 报名：**只有类**（驱动不需要知道盟号）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 41)]
 pub struct Bond {
     pub op: u8,
-    pub class: Tag,
+    pub class: String,
     pub back: PieToken,
 }
 
 impl Bond {
     /// 编一问（动作码固定 [`BOND`]）。
-    pub fn of(class: Tag, back: PieToken) -> Bond {
+    pub fn of(class: String, back: PieToken) -> Bond {
         Bond {
             op: BOND,
             class,
@@ -152,28 +154,26 @@ impl Message for Bond {
         self.store_at(out, 0)
     }
 
-    /// 恰好 [`Bond::LEN`] 且动作码是 [`BOND`]，否则读不懂。
+    /// **恰好**（按游标判：名字变长，帧长不再等于 [`Bond::LEN`]——那是上界）且动作码是 [`BOND`]。
     fn fetch(bytes: &[u8]) -> Option<Bond> {
-        if bytes.len() != Bond::LEN {
-            return None;
-        }
-        let q = Bond::fetch(bytes)?;
-        (q.op == BOND).then_some(q)
+        let (q, at) = Bond::fetch_at(bytes, 0)?;
+        (at == bytes.len() && q.op == BOND).then_some(q)
     }
 }
 
 /// 列册：类 ＋ **游标**（从哪一条起取窗）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 45)]
 pub struct ListReq {
     pub op: u8,
-    pub class: Tag,
+    pub class: String,
     pub from: u32,
     pub back: PieToken,
 }
 
 impl ListReq {
     /// 编一问（动作码固定 [`LIST`]）。
-    pub fn of(class: Tag, from: u32, back: PieToken) -> ListReq {
+    pub fn of(class: String, from: u32, back: PieToken) -> ListReq {
         ListReq {
             op: LIST,
             class,
@@ -192,12 +192,10 @@ impl Message for ListReq {
         self.store_at(out, 0)
     }
 
+    /// **恰好**（按游标判：`class` 变长）。
     fn fetch(bytes: &[u8]) -> Option<ListReq> {
-        if bytes.len() != ListReq::LEN {
-            return None;
-        }
-        let q = ListReq::fetch(bytes)?;
-        (q.op == LIST).then_some(q)
+        let (q, at) = ListReq::fetch_at(bytes, 0)?;
+        (at == bytes.len() && q.op == LIST).then_some(q)
     }
 }
 
@@ -252,10 +250,10 @@ impl Message for Claim {
 }
 
 /// **收进来的一问**（与 control 那一族的 `Wire` 同形）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
-    Bond(Tag),
-    List(Tag, u32),
+    Bond(String),
+    List(String, u32),
     Claim {
         kind: u8,
         access: u32,
@@ -418,10 +416,11 @@ impl Message for Said {
 ///
 /// 三格各有各的消费者：`token` → `Device::open`（那一页在这一域表里是几号）；`line` →
 /// 报给线路由者（**区→线那条权威在 hub**）；`name` → 本域那行读数。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 45)]
 pub struct Deed {
     pub status: u8,
-    pub name: Tag,
+    pub name: String,
     pub line: u32,
     pub token: PieToken,
 }
@@ -430,7 +429,7 @@ impl Deed {
     /// 空的一张：失败时那一答用它（`token` 是 [`PieToken::NONE`]）。
     pub const NONE: Deed = Deed {
         status: 0,
-        name: Tag::EMPTY,
+        name: String::new(),
         line: 0,
         token: PieToken::NONE,
     };
@@ -439,14 +438,14 @@ impl Deed {
     pub const fn of(status: u8) -> Deed {
         Deed {
             status,
-            name: Tag::EMPTY,
+            name: String::new(),
             line: 0,
             token: PieToken::NONE,
         }
     }
 
     /// 编一答：成了 ＋ 那张契。
-    pub const fn granted(name: Tag, line: u32, token: PieToken) -> Deed {
+    pub const fn granted(name: String, line: u32, token: PieToken) -> Deed {
         Deed {
             status: OK,
             name,
@@ -465,12 +464,10 @@ impl Message for Deed {
         self.store_at(out, 0)
     }
 
-    /// 恰好 [`Deed::LEN`]（长短都不认）。
+    /// **恰好**（按游标判：`name` 变长；长短都不认）。
     fn fetch(bytes: &[u8]) -> Option<Deed> {
-        if bytes.len() != Deed::LEN {
-            return None;
-        }
-        Deed::fetch(bytes)
+        let (q, at) = Deed::fetch_at(bytes, 0)?;
+        (at == bytes.len()).then_some(q)
     }
 }
 
@@ -480,7 +477,7 @@ impl Message for Deed {
 /// （`1` = 这一台此刻有主）。
 ///
 /// **照实记（这一格栽过：满窗那一版把空位也写出去）**：从前编解那两手是把 [`LIST_MAX`] 段
-/// **全写**（空位写 `Tag::EMPTY`，即一整块零字节），而 `Tag` 的 `fetch` 判非空 —— 于是**读回来
+/// **全写**（空位写**旧那一枚定宽名字**的空值，即一整块零字节），而它读回来判非空 —— 于是**读回来
 /// 当场解不动**（`n < LIST_MAX` 的每一窗都是这样）。症状是**客侧 `Unread`**、而服务端那一边
 /// 一路"发得好好的"（读数：`hub: list sent n=1 err=false` ＋ `hub-c: recv unread`）。**修法**
 /// 是"尾巴的长度由条数说、空位不上线"——今天这一句就是下面那条属性，由 `#[derive(env::Frame)]`
@@ -489,20 +486,22 @@ impl Message for Deed {
 /// **照实记（这一形为什么曾经是"头 ＋ 手写尾巴"）**：这一格的"重复"从前不归 `#[derive]`，
 /// 故另立了一枚 `WindowHead` 专门给尾巴算偏移、`store` / `fetch` 手写；derive 认"一段重复"
 /// 之后那一枚并回本表（偏移与长度一处求和）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 142)]
 pub struct Window {
     pub status: u8,
     pub from: u32,
     pub n: u8,
     pub held: [u8; 8],
-    #[frame(count = n, fill = Tag::EMPTY)]
-    pub names: [Tag; LIST_MAX],
+    #[frame(count = n, fill = String::new())]
+    pub names: [String; LIST_MAX],
 }
 
 /// **线上一个字节都不许动**：这一窗那一形照文件头那张表钉住
 /// （`[状态 1B][游标 4B][条数 1B][位 8B][名字 32B × n]`）。属性换成手写也好、`MAX` 求和出错也好，
 /// 这一句先红。
-const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + env::NAME_LEN * LIST_MAX);
+// 32 = 一枚名在**这一族**里的上界（长度那一字节 ＋ 至多 31 字节的内容）。
+const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + 32 * LIST_MAX);
 
 impl Window {
     /// 空的一窗（失败，或这一类里一台都没有）。
@@ -511,11 +510,11 @@ impl Window {
         from: 0,
         n: 0,
         held: [0u8; 8],
-        names: [Tag::EMPTY; LIST_MAX],
+        names: [const { String::new() }; LIST_MAX],
     };
 
     /// 第 `i` 条（`i < n` 才有）。
-    pub fn name(&self, i: usize) -> Option<&Tag> {
+    pub fn name(&self, i: usize) -> Option<&String> {
         (i < self.n as usize).then(|| &self.names[i])
     }
 

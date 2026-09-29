@@ -1,26 +1,41 @@
 //! `#[derive(Frame)]` —— **帧**那一族的一处定义：给一枚具名字段的结构体，生成 `LEN` ＋
-//! `store` / `store_at` / `fetch` / `fetch_at`（**结构体归你写**——它本就是那张字段表）。
+//! `store_at` / `fetch` / `fetch_at`（**结构体归你写**——它本就是那张字段表）。
 //!
 //! ```ignore
 //! #[derive(env::Frame)]
 //! #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 //! pub struct Tip {
 //!     pub who: TaskId,
-//!     pub name: Tag,
+//!     pub name: Slot<31>,
 //!     pub reply: PieToken,
 //! }
 //! ```
 //!
 //! 生成的东西**一眼看得完**（没有隐藏机制）：`pub const LEN`（**最长那一形**：各格的
-//! [`env::wire::Span::MAX`] 求和）、`store(&self, &mut [u8; LEN])`（**只有全定长那一形才有**）、
+//! [`env::wire::Span::MAX`] 求和，一段重复按 `MAX × 条数`；**有格不报上界时**由族写
+//! `#[frame(len = …)]` 给）、
 //! `store_at(&self, &mut [u8], at) -> Option<usize>`、
 //! `fetch(&[u8]) -> Option<Self>`、`fetch_at(&[u8], at) -> Option<(Self, usize)>`。
+//!
+//! **照实记（`store(&mut [u8; LEN])` 那一形退场）**：它只在"**实际长度恰好等于上界**"时成立
+//! ——调用点（如 `principal::client::call`）写完就把整个 `LEN` 推上孔。名改成"只写有效字节"
+//! 之后那个前提没了，而派生在展开期**看不出**一格是定长还是变长（`Span` 是 blanket impl），
+//! 也就无从判"该不该给这一手"。故它整枚退掉：**要长度走 `store_at` 的返回值**，缓冲按 `LEN`
+//! （上界）备。
 //!
 //! **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
 //! **编得过**"那个病**写不出来**（协调那一帧栽的正是它：那边的照实记写着"靠注释说必须同值"）。
 //! **变长那一形也一样**：`#[frame(count = <条数那一格>, fill = <空位初值>)]` 标在 `[T; CAP]`
-//! 那一格上，它按 [`env::wire::store_tail`] / [`env::wire::fetch_tail`] 走游标——族里不再手写
+//! 那一格上，它按 [`env::wire::store_tail`] / [`env::wire::fetch_tail`] 走游标——那两个函数认
+//! [`env::wire::Span`]，故**定长项与变长项同一条路**，族里不再手写
 //! `2 + i * WIDTH` 这种句子（用户裁定的"尾巴不许手写"，到这一手才成为机制）。
+//!
+//! **照实记（留后：帧的界）**：帧今天仍是**栈上的定长缓冲**——`LEN` 是编译期数字（各格求和，
+//! 或族用 `#[frame(len = …)]` 给），各族的 `Message::Buf` 就是 `[u8; LEN]`，而 `store_at` 吃
+//! `&mut [u8]`。**用户裁定"之后不限制帧的大小"** ⇒ 那一刀要把这一层一起换（只受**载体**约束：
+//! 一条消息 ≤ 一页），届时 `LEN` / `Buf` 这一对数字退场。顺带要定的一件事：`String` 线上那一格
+//! 的长度是**一个字节**（单枚名封顶 255）——它与"帧不设限"不一致，是否放宽（`u16`／变长整数）
+//! 也在那一刀里裁。
 //!
 //! **它只管"一张字段表"与"一段重复"**：多形分派（按动作码 / 长度 / 首格选形）**不归它**，
 //! 那几族各有各的手（`Req` / `Union` / `Tip`），derive 只管每一形**内部**的顺序与偏移。
@@ -55,6 +70,10 @@ pub fn expand(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error(),
     };
     let name = &ast.ident;
+    let len = match frame_len(&ast.attrs) {
+        Ok(len) => len,
+        Err(e) => return e.to_compile_error(),
+    };
     let Data::Struct(data) = &ast.data else {
         return syn::Error::new_spanned(&ast, "`Frame` 只吃结构体（一张帧的字段表）")
             .to_compile_error();
@@ -80,9 +99,6 @@ pub fn expand(input: TokenStream) -> TokenStream {
     let mut stores = Vec::new();
     let mut fetches = Vec::new();
     let mut seen: Vec<Ident> = Vec::new();
-    // "一段重复"那一格：它在 ⇒ 这一表是**变长**的，`store` 那一手不给（它给不出长度）。
-    // 一处两处都行——每一处只要求它自己的条数格**声明得更靠前**（下面逐格判）。
-    let mut tailed = false;
 
     // **游标与那几只局部要**卫生**（`Span::mixed_site`）**：生成的 `let at = …` 与调用方
     // 那几格字段是**两个不同的标识符**。照实记：这一条是"树那一族"那一刀当场撞出来的——
@@ -143,8 +159,9 @@ pub fn expand(input: TokenStream) -> TokenStream {
                     .to_compile_error();
                 }
                 let (elem, cap) = (&array.elem, &array.len);
-                tailed = true;
-                maxes.push(quote!(#cap * <#elem as ::env::wire::Field>::WIDTH));
+                // **上界**：一段重复最长就是"每一项都是最长那一形"（定长项的 `MAX` 就是它的宽）；
+                // 元素不报上界 ⇒ 这一段也不报（`times` 交回 `None`）。
+                maxes.push(quote!(::env::wire::times(#cap, <#elem as ::env::wire::Span>::MAX)));
                 stores.push(quote! {
                     {
                         let #k = self.#count as usize;
@@ -160,9 +177,8 @@ pub fn expand(input: TokenStream) -> TokenStream {
                         if #k > #cap {
                             return None;
                         }
-                        let mut #arr = [#fill; #cap];
-                        ::env::wire::fetch_tail(bytes, #at, &mut #arr[..#k])?;
-                        #at += #k * <#elem as ::env::wire::Field>::WIDTH;
+                        let mut #arr = [const { #fill }; #cap];
+                        #at = ::env::wire::fetch_tail(bytes, #at, &mut #arr[..#k])?;
                         #arr
                     };
                 });
@@ -172,33 +188,37 @@ pub fn expand(input: TokenStream) -> TokenStream {
         idents.push(ident);
     }
 
-    // 变长那一形**不给 `store`**：写进一只定长数组之后"这一帧几字节"就丢了——留着它会变成
-    // 一把静默的短刀（族里要长度，走 `store_at`）。
-    let store = if tailed {
-        quote!()
-    } else {
-        quote! {
-            /// 写进 `out`（**缓冲刚好这么大**——静态成立，故这一手不可能失败）。
-            pub fn store(&self, out: &mut [u8; Self::LEN]) {
-                // 恒 `Some`：`out` 恰好 `LEN` 字节。不是吞失败。
-                let _ = self.store_at(out, 0);
-            }
-        }
+    // `LEN` 两形：**族给了**就直接用它；**没给**就各格求和——求和时遇到"不报上界"的那一格
+    // （名字是 `String`，`MAX = None`）当场编不过，报的就是该写什么。
+    let len_def = match &len {
+        Some(expr) => quote! {
+            /// 这一帧**最长那一形**占几字节：**由族说**（`#[frame(len = …)]`）——因为这一表里有格
+            /// 不报上界（名字那一格是 `String`），各格求和求不出来。
+            pub const LEN: usize = #expr;
+        },
+        None => quote! {
+            /// 这一帧**最长那一形**占几字节：各格的 `env::wire::Span::MAX` 求和、一段重复按
+            /// `MAX × 条数`（一处定义）。
+            pub const LEN: usize = match ::env::wire::total(&[#(#maxes),*]) {
+                Some(total) => total,
+                None => panic!(
+                    "这一帧有格不报上界（名字是 String，MAX = None）：给这一帧写 #[frame(len = …)]"
+                ),
+            };
+        },
     };
 
     quote! {
         impl #name {
-            /// 这一帧**最长那一形**占几字节：各格的 `env::wire::Span::MAX` 求和（一处定义）。
-            pub const LEN: usize = 0 #(+ #maxes)*;
-
-            #store
+            #len_def
 
             /// 从游标 `at` 写起，返**实际长度**（装不下 ⇒ `None`）。
             ///
-            /// **照实记（为什么有这一手，而不是只有 `store`）**：`store` 要的是定长数组
-            /// （`&mut [u8; LEN]`），而一族常常**只有一只缓冲、形状各有长短**（板那族是
-            /// 41 / 33 / 1）——从大缓冲里切出来的 `&mut [u8]` 转不回定长数组；变长那一形更给不出
-            /// "刚好"那个长度。这一手就是那一格：不 `expect`、不拷贝一次。
+            /// **实际长度不等于 `LEN`**：变长那一格只写有效字节，`LEN` 是**上界**（缓冲按它备）。
+            ///
+            /// **照实记（为什么只有这一手，没有 `store(&mut [u8; LEN])`）**：那一手要的是"缓冲
+            /// 刚好这么大 ⇒ 静态不可能失败"，而它一回长度都交不出来——调用点写完只能把整个 `LEN`
+            /// 推出去。变长那一格进来之后这个前提就没了（见文件头），故那一手退场，长度归这一手的返回值。
             ///
             /// **照实记（装不下时前面几格可能已经写了）**：逐格写、边写边判，故 `None` 不保证
             /// "一支笔都没落"。写不进去本来不是正常路径（各族的缓冲按 `LEN` 开）。
@@ -231,6 +251,33 @@ pub fn expand(input: TokenStream) -> TokenStream {
 struct Tail {
     count: Ident,
     fill: syn::Expr,
+}
+
+/// 结构体上的 `#[frame(len = <这一帧的上界>)]`。
+///
+/// **什么时候要它**：这一表里有格**不报上界**（名字那一格是 `String`，`MAX = None`）——那时各格
+/// 求和不出来，界由**族**说（协议事实：这一族最长多少）。全定长／定容的帧不必写，求和自动。
+fn frame_len(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Expr>> {
+    let mut len: Option<syn::Expr> = None;
+    for attr in attrs {
+        if !attr.path().is_ident("frame") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("len") {
+                if len.is_some() {
+                    return Err(meta.error("`len` 给了两次"));
+                }
+                len = Some(meta.value()?.parse()?);
+                Ok(())
+            } else {
+                Err(meta.error(
+                    "结构体上的 `#[frame(...)]` 只认 `len = <这一帧的上界>`（`count` / `fill` 标在字段上）",
+                ))
+            }
+        })?;
+    }
+    Ok(len)
 }
 
 /// 读一格自己的形状：`#[frame(...)]` 有 ⇒ 这一段是"重复"，没有 ⇒ 定长。

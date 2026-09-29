@@ -3,11 +3,12 @@
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
+use alloc::string::String;
 use env::Mark;
 use env::Wait;
 
 use alloc::format;
-use env::{HoleDir, PieToken, Tag, TaskId};
+use env::{HoleDir, PieToken, TaskId};
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
 use protocol::debug;
@@ -126,13 +127,13 @@ pub(crate) fn host_loop(me: TaskId) {
 /// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
-    // 长度不对的那一条**不猜**：`while let` 取不出那一条就收工（与从前那 8 字节的写法同款）。
+    // 长度不对的那一条**不猜**：`fetch` 解不出的当场丢（缓冲按最长那一形备，短的那几形也吃得下）。
     let mut rec = [0u8; bcall::Tip::LEN];
     let mut pending = false;
     let board = Mark::of(LINK);
-    while let Ok(bcall::Tip::LEN) = tip.pull_timeout(&mut rec, Wait::POLL) {
+    while let Ok(n) = tip.pull_timeout(&mut rec, Wait::POLL) {
         // **帧形只有一处**：三格怎么切全在 [`bcall::Tip`] 那一对里。
-        let Some(tip) = bcall::Tip::fetch(&rec) else {
+        let Some(tip) = bcall::Tip::fetch(&rec[..n]) else {
             debug!("board: no reply");
             continue;
         };
@@ -183,7 +184,7 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
 /// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::Tip::LEN`]），而牌子会被惰性
 /// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
 /// 过来）⇒ `None`：**这一位死了就没有读数**。
-fn lane_for(name: Tag) -> Option<PieToken> {
+fn lane_for(name: String) -> Option<PieToken> {
     let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
     mail::pies().find(|p| p.mark == want).map(|p| p.token)
 }
@@ -251,7 +252,7 @@ fn serve_one(
     // **解码只做一次**：答哪一句由它定，下面"要不要摘掉它那枚问话孔"也由它定。
     let decoded = Receiver::<bcall::Req>::from_token(ask).recv(buf, Wait::POLL);
     let said = match decoded {
-        Ok(ask) => answer(board, desk, ask, guest.who(), swept),
+        Ok(ref ask) => answer(board, desk, ask.clone(), guest.who(), swept),
         // 空帧 / 长度不对 / 期限到了：**两格失败同一落点**——读不懂就答 `BAD`，不猜、不崩。
         Err(_) => bcall::BAD,
     };

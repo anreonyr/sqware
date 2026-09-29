@@ -9,6 +9,7 @@
 //! 让那些边角在**宿主靶**上编得动；**那台靶已删**（用户裁定"protocol-case 没必要"）⇒ 这一份照旧
 //! 只认 `env` 与同层 `core`，但那些边角今天**没有判据**。
 
+use alloc::string::String;
 use env::Mark;
 use env::{PieToken, TaskId};
 
@@ -39,16 +40,6 @@ pub enum Fail {
 
 use crate::message::Message;
 
-// 名字那一格用的是 `env::Tag`（**线上那一格定长名字**）——本模块另有一个 `Name`（只报名字
-// 那一问的字段表），故这里一路写全路径：两个名字是同一件事的两层（格与帧），谁都不该改名。
-
-pub fn name_of(bytes: &[u8]) -> Option<env::Tag> {
-    let at = bytes.get(..env::wire::NAME_LEN)?;
-    let mut raw = [0u8; env::wire::NAME_LEN];
-    raw.copy_from_slice(&at[..]);
-    env::Tag::from_block(raw)
-}
-
 // ── 四张字段表（**偏移一处都不写**）─────────────────────────
 //
 // ```text
@@ -68,8 +59,8 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Tag> {
 //
 // 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
 //
-// 名字按 `NAME_LEN`(env::wire::NAME_LEN) 定长写（尾随 NUL 是填充）——**与牌子同
-// 一个解码面**，故 `env::Tag` 的读法全树只有一处。
+// 名字按线上那一格写（`[长度那一字节][字节]`，见 `env::wire` 里 `String` 的 `Span` impl）
+// ——**与板其它几问同一个解码面**，故名字的读法全树只有一处。
 //
 // 那一格入口号是**客人把入口交出去之后、换回来的"种在板表里"的号**
 // （`ship` 的返回值）——不是"客人的入口是几号"。两个编号空间不同源，互相拿错
@@ -77,18 +68,20 @@ pub fn name_of(bytes: &[u8]) -> Option<env::Tag> {
 // 会话交进客人的表，报文里再放一个号只会多出一份两边都得认的约定。
 
 /// 登记那一问：动作码 ＋ 名字 ＋ 入口那 8 字节。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 41)]
 pub struct Seed {
     pub op: u8,
-    pub name: env::Tag,
+    pub name: String,
     pub seed: PieToken,
 }
 
 /// 只报名字那两问（注销 / 查）共用的形状。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 33)]
 pub struct Name {
     pub op: u8,
-    pub name: env::Tag,
+    pub name: String,
 }
 
 /// 空载荷那一问（退场）：整帧只有动作码这一格。
@@ -159,14 +152,14 @@ crate::fail_codes! {
 /// **照实记（名字）**：这一族从前叫 `Ask` / `AskIn` / `Reply`。用户裁定 `Ask` / `Reply`
 /// 这一对不要，用 **`Req` / `Wire` / `Union`**——故这里是新生的名字，不是改名；收的那一面
 /// 是 [`Wire`]（它比这里多一格：表外的动作码）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
     /// 登记：名字 ＋ **板上那个入口号**（`ship` 换回来的那一枚——不是"客人的 Pie 是几号"）。
-    Register { name: env::Tag, seed: PieToken },
+    Register { name: String, seed: PieToken },
     /// 注销：只报名字（板按"开者 = 它"认领）。
-    Unregister { name: env::Tag },
+    Unregister { name: String },
     /// 查：只报名字。查到的那枚入口**经会话转授**，不从报文里走。
-    Lookup { name: env::Tag },
+    Lookup { name: String },
     /// 退场：**空载荷**，整帧一字节。
     Evict,
 }
@@ -184,17 +177,17 @@ pub enum Req {
 ///
 /// **照实记（名字）**：它从前叫 `AskIn`（`Ask` 的被动态），刀一里叫 `ReqIn`（`Req` 加尾巴）
 /// ——那一个尾巴说不了它与 [`Req`] 的分别。用户裁定的第三个词是 `Wire`。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
     Register {
-        name: env::Tag,
+        name: String,
         seed: PieToken,
     },
     Unregister {
-        name: env::Tag,
+        name: String,
     },
     Lookup {
-        name: env::Tag,
+        name: String,
     },
     Evict,
     /// 表外的动作码：**这一帧读得懂（`[码][名字]`），但那一码不是这四枚之一**。
@@ -209,19 +202,19 @@ impl Message for Req {
 
     /// 编进 `out`：**动作码由形状给**（不在别处再写一遍），偏移与长度由字段表求和。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        match *self {
+        match self {
             Req::Register { name, seed } => Seed {
                 op: REGISTER,
-                name,
-                seed,
+                name: name.clone(),
+                seed: *seed,
             }
             .store_at(out, 0),
             Req::Unregister { name } => Name {
                 op: UNREGISTER,
-                name,
+                name: name.clone(),
             }
             .store_at(out, 0),
-            Req::Lookup { name } => Name { op: LOOKUP, name }.store_at(out, 0),
+            Req::Lookup { name } => Name { op: LOOKUP, name: name.clone() }.store_at(out, 0),
             Req::Evict => Evict { op: EVICT }.store_at(out, 0),
         }
     }
@@ -238,19 +231,32 @@ impl Message for Req {
         let op = *bytes.first()?;
         Some(match op {
             EVICT if bytes.len() == Evict::LEN => Wire::Evict,
-            REGISTER if bytes.len() == Seed::LEN => {
-                let frame = Seed::fetch(bytes)?;
+            // **"恰好"要按游标判**：名字那一格是变长的（`[长度那一字节][字节]`），故帧长不再
+            // 等于那一张表的 `LEN`（`LEN` 是**上界**）。短一字节、长一字节都 ⇒ 读不懂。
+            REGISTER => {
+                let (frame, at) = Seed::fetch_at(bytes, 0)?;
+                if at != bytes.len() {
+                    return None;
+                }
                 Wire::Register {
                     name: frame.name,
                     seed: frame.seed,
                 }
             }
-            UNREGISTER if bytes.len() == Name::LEN => Wire::Unregister {
-                name: Name::fetch(bytes)?.name,
-            },
-            LOOKUP if bytes.len() == Name::LEN => Wire::Lookup {
-                name: Name::fetch(bytes)?.name,
-            },
+            UNREGISTER => {
+                let (frame, at) = Name::fetch_at(bytes, 0)?;
+                if at != bytes.len() {
+                    return None;
+                }
+                Wire::Unregister { name: frame.name }
+            }
+            LOOKUP => {
+                let (frame, at) = Name::fetch_at(bytes, 0)?;
+                if at != bytes.len() {
+                    return None;
+                }
+                Wire::Lookup { name: frame.name }
+            }
             _ if !matches!(op, REGISTER | UNREGISTER | LOOKUP | EVICT) => Wire::Unknown,
             // 这四枚之一，长度却不是它该有的那个 ⇒ 读不懂。
             _ => return None,
@@ -338,7 +344,7 @@ pub const ASK_MARK: Mark = Mark::of("board-ask");
 /// 另一个名字随之退场（`programs/src/system/board/bridge.rs::host`）。
 pub const TIP_MARK: Mark = Mark::of("tip");
 
-/// 提示那一格的载荷：**客人号（8 字节）＋ 定长名字 `NAME_LEN` ＋ 答话路那一格
+/// 提示那一格的载荷：**客人号（8 字节）＋ 一枚名字（线上那一格：长度 ＋ 字节）＋ 答话路那一格
 /// `PieToken::WIDTH`**——装配者往那条路上推的就是这一条记录（一句话：**来客人了，它是谁**，
 /// 以及**它的答话路在我表里是几号**）。
 ///
@@ -356,10 +362,11 @@ pub const TIP_MARK: Mark = Mark::of("tip");
 /// `board: swept n=1` 有、**`system: gone coalition` 一条都没有**——三枚内件与三台驱动都
 /// 不登记。名字搭提示这一格过来之后，板在 `admit` 那一刻就把"谁 → 道"记下，
 /// **与客人登不登记无关**；`REGISTER` 从此只管"名字 → 入口"那一件事。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 48)]
 pub struct Tip {
     pub who: TaskId,
-    pub name: env::Tag,
+    pub name: String,
     pub reply: PieToken,
 }
 

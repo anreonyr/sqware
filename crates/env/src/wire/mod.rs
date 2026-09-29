@@ -1,14 +1,16 @@
 //! envcall·wire — 环境调用载荷的字段 ↔ usize 契约（pack 与校验式 unpack）。
 //!
 //! 本文件 = **契约核心**：[`Wire`] trait、[`Decode`] 失败域、基元与权限位的 impl。
-//! 字段**词汇表**按语义分居三个子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
+//! 字段**词汇表**按语义分居子模块（**声明次序即下表次序**，与下面的 `pub use` 同名）：
 //!   - [`frompair`] —— 内核回写的 `(a0, a1)`（宽那一格 `a0..a2`）→ 域 Ret 载荷蒸馏；
 //!   - [`handle`] —— 语义句柄（[`PieToken`] / [`TaskId`] / [`TeamId`] / [`VirtAddr`]）＋ 记号 [`Mark`]；
-//!   - [`tag`] —— 线上那一格定长名字（[`NAME_LEN`] / [`Tag`]）。
+//!   - [`field`] —— 字节那一层：[`Wire`](crate::wire::Wire) 之外，过线的每一格怎么落字节。
 //!
-//! **照实记（`name` 那一格改成 `tag`；名字不再是"从这一格起的字符串类型"）**：本仓的串面照
-//! std 原样住 [`crate::text`]（[`CStr`](crate::text::CStr) 借、`CString` 拥有）；这一枚只管
-//! **线的形状**（32 字节、内容 ＋ 终止 NUL ＋ 零填充），读面经 `Deref` 整块交给 `CStr`。
+//! **照实记（串面不再转出；名字那一格不是一枚类型）**：本仓的串面**就是 std 的那两枚**——借
+//! `&str`、拥有 `String`（其一字不新写，且 `no_std` 里也没有第三枚可转：C 那一族是 C ABI 的
+//! 形状，不是名字的）。故**线上那一格名字就是 `String` 自己的 [`Span`] impl**：写的形状是
+//! **长度那一字节 ＋ 那几字节**；定宽、终止 NUL、零填充三件一起退场——那三件里没有一件是名字
+//! 的义务。**名字不报上界**（`MAX = None`）：它多长由族说，带它的帧要写 `#[frame(len = …)]`。
 //!
 //! **照实记（原先九个子模块，五个搬走、一个并掉）**：`args` / `key` / `manifest` / `pair` /
 //! `supply` 从前也住这里，理由只是"都是两边要读的字节布局"。但**过线的东西**与**装机的账**
@@ -18,8 +20,8 @@
 //! 是本文件头两段讲的那两个族（读写 / 传递）的视图类型，同一个故事没有理由分两处讲。
 //! [`Eyes`] 是**线上一格**（协调帧后 8 字节），故住这里。
 //!
-//! **re-export 的口径**：可命名的类型一律在下面 re-export，故 `env::wire::Tag` 与
-//! `env::wire::tag::Tag` 两条路都在。
+//! **re-export 的口径**：可命名的类型一律在下面 re-export，故 `env::wire::Field` 与
+//! `env::wire::field::Field` 两条路都在。
 //!
 //! 这是方案 3（typed payload）的**唯一类型擦除点**：每个字段类型都实现 [`Wire`]，
 //! 由 [`derive(Envcall)`](mold) 生成的 codec 自动接线，用户侧与内核侧不再手写
@@ -37,17 +39,15 @@
 pub mod eyes;
 pub mod frompair;
 pub mod handle;
-pub mod tag;
 
 pub use eyes::Eyes;
 pub use frompair::{FromPair, FromTriple};
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
-pub use tag::{NAME_LEN, Tag};
 
 /// 字段 ↔ usize 的契约。
 pub mod field;
 
-pub use field::{Field, Span, fetch_bytes, fetch_tail, store_bytes, store_tail};
+pub use field::{Field, Span, fetch_bytes, fetch_tail, store_bytes, store_tail, times, total};
 
 pub trait Wire: Sized {
     /// 把自身 pack 进 `s`，游标 `i` 前进一格。

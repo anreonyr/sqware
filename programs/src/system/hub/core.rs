@@ -19,9 +19,10 @@
 //! **哪一台是"哪一枚孔响了"**回答的（[`Ledger::claim`] 收的是那一枚的号，不是名字）——这正是
 //! "驱动自己去 `/dev` 拿"在核心这一侧的落点：请求里没有"哪一件"这一格。
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use protocol::driver::hub::{Fail, LIST_MAX, Window};
 use protocol::system::coalition::CoalitionId;
 
@@ -35,10 +36,10 @@ use protocol::system::coalition::CoalitionId;
 /// 起手那一趟"**把装配者推来的记录对上台**"（记录给的是坐标 ＋ 号，而名 / 类 / 线只有树说得
 /// 清）。那一趟在**造出这一行之前**就用完了它（对上了才造这一行）⇒ 账里再留一枚没人读的
 /// `Key` 就是死格。**机制退了，格也退**。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Entry {
-    pub name: Tag,
-    pub class: Tag,
+    pub name: String,
+    pub class: String,
     pub line: u32,
     /// 那一页（引导域交过来的设备门闩）——认领成功时授给主人的就是它。
     pub page: PieToken,
@@ -58,7 +59,7 @@ pub struct Owner {
 }
 
 /// **一格**：空着，或有主。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Cell {
     /// 没主（随时可认）。
     Vacant(Entry),
@@ -82,9 +83,9 @@ impl Cell {
 }
 
 /// 一类 → 它那枚盟。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct League {
-    class: Tag,
+    class: String,
     coalition: CoalitionId,
 }
 
@@ -125,7 +126,7 @@ impl Ledger {
     /// 册 · 写：这一类那枚盟；没铸过就铸（`mint` 由适配层给——核心不叫盟册）。
     ///
     /// **一处定义**：写 permit 与"代报名"都从这里取，故同一类不会有两枚盟。
-    pub fn league(&mut self, class: Tag, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
+    pub fn league(&mut self, class: String, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
         if let Some(league) = self.leagues.iter().find(|l| l.class == class) {
             return league.coalition;
         }
@@ -139,7 +140,7 @@ impl Ledger {
     }
 
     /// 册 · 读：这一类那枚盟（没铸过 ⇒ `None`）。
-    pub fn coalition_of(&self, class: Tag) -> Option<CoalitionId> {
+    pub fn coalition_of(&self, class: String) -> Option<CoalitionId> {
         self.leagues
             .iter()
             .find(|l| l.class == class)
@@ -170,8 +171,11 @@ impl Ledger {
                 return Err(Fail::Taken);
             }
         }
-        let entry = *self.cells[at].entry();
-        self.cells[at] = Cell::Held { entry, owner };
+        let entry = self.cells[at].entry().clone();
+        self.cells[at] = Cell::Held {
+            entry: entry.clone(),
+            owner,
+        };
         Ok(entry)
     }
 
@@ -187,7 +191,7 @@ impl Ledger {
             if alive(owner.sensor) {
                 continue;
             }
-            *cell = Cell::Vacant(*entry);
+            *cell = Cell::Vacant(entry.clone());
             freed += 1;
         }
         freed
@@ -198,7 +202,7 @@ impl Ledger {
     /// 册 · 读：这一类从 `from` 起的一窗（名字 ＋ 有主那一位掩码）。
     ///
     /// **越界答空窗**（诚实的答案，不是错误——与盟册 `bloc` 同一条口径）。
-    pub fn list(&self, class: Tag, from: u32) -> Window {
+    pub fn list(&self, class: String, from: u32) -> Window {
         let mut window = Window::EMPTY;
         window.from = from;
         let mut slot = 0usize;
@@ -214,7 +218,7 @@ impl Ledger {
             if slot >= LIST_MAX {
                 break;
             }
-            window.names[slot] = cell.entry().name;
+            window.names[slot] = cell.entry().name.clone();
             if cell.held() {
                 window.held[slot / 8] |= 1 << (slot % 8);
             }
@@ -233,7 +237,7 @@ impl Ledger {
     /// 而这一手给的是**孔**——落格与挂组要的正是"哪一枚孔是这一台的"。
     ///
     /// [`bridge::land`]: crate::system::operator::bridge::land
-    pub fn doors(&self, class: Tag) -> impl Iterator<Item = (&Tag, PieToken)> + '_ {
+    pub fn doors(&self, class: String) -> impl Iterator<Item = (&String, PieToken)> + '_ {
         self.cells
             .iter()
             .filter(move |c| c.entry().class == class)
@@ -243,10 +247,10 @@ impl Ledger {
     /// 册 · 读：册上出现过的**类**（入册序，去重）——hub 逐类立盟、逐类落 `/dev` 要它。
     ///
     /// 返 `None` = 备不下（调用方按"这一台起不来"处置：它是起手那一步）。
-    pub fn classes(&self) -> Option<Vec<Tag>> {
-        let mut out: Vec<Tag> = Vec::new();
+    pub fn classes(&self) -> Option<Vec<String>> {
+        let mut out: Vec<String> = Vec::new();
         for cell in &self.cells {
-            let class = cell.entry().class;
+            let class = cell.entry().class.clone();
             if out.contains(&class) {
                 continue;
             }

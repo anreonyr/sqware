@@ -88,6 +88,8 @@
 extern crate alloc;
 extern crate programs;
 
+use alloc::string::ToString;
+
 use env::Wait;
 use programs::Reason;
 
@@ -97,7 +99,6 @@ use programs::root::boot;
 
 use core::time::Duration;
 
-use env::Tag;
 use programs::system::control::desk::{Announce, Table};
 use programs::system::control::service;
 use protocol::debug;
@@ -180,9 +181,7 @@ fn main() -> Reason {
     debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");
 
     for name in PARKER_NAMES.iter().chain(HOG_NAMES.iter()) {
-        if let Some(name) = Tag::new(name) {
-            let _ = service::stop(&mut table, name);
-        }
+        let _ = service::stop(&mut table, name);
     }
     debug!("load: stopped all rows");
     // 退场：本域的那些行随级联一起收干净，最后一枚任务退出时内核打停机行 + 读数。
@@ -197,16 +196,14 @@ fn spawn_one(
     elf: &'static [u8],
     kind: env::ProgramKind,
 ) -> bool {
-    let Some(name) = Tag::new(name) else {
-        return false;
-    };
-    if table.register(name, Announce::None).is_err() {
+    let name = name.to_string();
+    if table.register(name.clone(), Announce::None).is_err() {
         return false;
     }
-    let Ok(task) = service::mint(table, name, elf, kind) else {
+    let Ok(task) = service::mint(table, name.as_str(), elf, kind) else {
         return false;
     };
-    service::start(table, name, task, &[], &mut [], &[], Wait::POLL).is_ok()
+    service::start(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
 }
 
 /// 清单里按名字取镜像（台主只认这两条）。

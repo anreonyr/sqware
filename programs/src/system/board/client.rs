@@ -13,9 +13,11 @@
 //! （[`enroll`]）与一问一答（[`register`] / [`evict`]）。两侧共用的图与次序说明见 [`super`]，
 //! 帧与记号见 [`protocol::system::board`]。
 
+use alloc::string::String;
+use alloc::string::ToString;
 use env::Mark;
 use env::Wait;
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use protocol::message::Message;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
@@ -41,15 +43,13 @@ pub const BERTH: Berth = Berth {
 /// 打出来）。挂不上**不是**本域的失败：终端照旧干活，只是"本域死了"那条信号缺席
 /// （见 `programs/src/user/canonical/main.rs`）——故返码、不返 `Result`。
 ///
-/// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`Tag`]、经 [`register`]
+/// **它把三件事收成一手**：解本域那枚入口（`ENTRY_MARK`）、把名字编成 [`String`]、经 [`register`]
 /// 交出去。四处调用点原先各写一遍（`canonical` / `passer` / `guest` / `sleeper`）。
 pub fn enroll(session: &Session, me: &str, millis: Wait) -> (u8, PieToken) {
     let Ok(entry) = mail::unseal_hole(bcall::ENTRY_MARK) else {
         return (bcall::BAD, PieToken::NONE);
     };
-    let Some(name) = Tag::new(me) else {
-        return (bcall::BAD, entry);
-    };
+    let name = me.to_string();
     match register(
         session.talk,
         &session.link,
@@ -78,7 +78,7 @@ pub fn register(
     say: PieToken,
     link: &Endpoint,
     board: TaskId,
-    name: Tag,
+    name: String,
     entry: PieToken,
     millis: Wait,
 ) -> Result<u8, Fail> {

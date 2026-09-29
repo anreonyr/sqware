@@ -55,10 +55,12 @@
 //! **退出即关机**，故门的两条硬判据（自行退出 + 无 panic）照旧成立，不需要外接 timeout。
 //! 常驻服务（没有"干完"这回事的那种）由本域退场时的级联收掉。
 
+extern crate alloc;
 extern crate programs;
 
+
 // 两块账在引导域自己那一摊里（只有它读得到）。
-use env::{Mark, Tag, Wait};
+use env::{Mark, Wait};
 use programs::root::boot;
 
 use protocol::communication::establish;
@@ -125,9 +127,6 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 那笔账不存在了（两段各有各的基址）。
     boot.report_pairs();
 
-    let Some(slot) = Tag::new(supply::BOOT) else {
-        return Err(Die::Manifest);
-    };
 
     // 2. 从清单里挑出编排者那一条：**它那一段字节 ＋ 它那个特权级**（后者是打包时按装配表的
     //    `kind` 写进清单的，本域只原样转交）。
@@ -151,14 +150,14 @@ fn main() -> Result<programs::Report<'static>, Die> {
     //
     // **持有者活到本函数结束**：这一对孔在 `channels` 里（`Endpoint` 落出作用域才放下本端那一枚）。
     let mut channels = [
-        establish::endpoint(orch, Mark::of(slot.as_str()), Wait::POLL)
+        establish::endpoint(orch, Mark::of(supply::BOOT), Wait::POLL)
             .map_err(|_| Die::Orch(E_ORCH))?,
     ];
     // 放行：**这一刀之后它就跑了**。
     utask::hatch(orch).map_err(|_| Die::Orch(E_ORCH))?;
     // **等它就绪 = 认下它交回的那一枚孔**（它那一条通道的凭据）。认不到 ⇒ 这条服务没起来
     // ——本域不另做收尾：域是它生的，本域退出即级联扑杀（原 `service::ready` 那一格同一判据）。
-    if !channels[0].claim(orch, Mark::of(slot.as_str()), Wait::AtMost(READY_MS)) {
+    if !channels[0].claim(orch, Mark::of(supply::BOOT), Wait::AtMost(READY_MS)) {
         return Err(Die::Orch(E_ORCH));
     }
 

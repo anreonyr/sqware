@@ -56,7 +56,7 @@ use protocol::system::operator::path::Path;
 use runtime::env::unit as utask;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）。
-const DIR: protocol::system::operator::Path = protocol::system::SVC;
+const DIR: &protocol::system::operator::Path = protocol::system::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
@@ -89,7 +89,9 @@ fn main() -> Report<'static> {
     };
     let tree = TreeFace::of(session);
     // 本台那三格都挂在本域那一块下面（`/svc/rule`）——故先拼出那一条路。
-    let base = DIR.join(PANE);
+    let Some(base) = DIR.try_join(PANE) else {
+        return bail("probe-other: bad name");
+    };
 
     // 二、按名字取号（**这一手不过门禁**：`seek` 不在闸口里），再 `find`——那几手该被拒。
     let is = denied(&tree, &base, IS);

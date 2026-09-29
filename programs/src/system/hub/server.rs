@@ -31,10 +31,12 @@
 //! "持树者那一处不在这里，因为它等的是两个不同来路"——本域加入那张名单，形状照着抄，
 //! **另一条多出来的**是"从哪一枚孔读到"要交到门上（`claim` 那一面靠它认台，见文件头）。
 
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use env::HoleDir;
-use env::{Access, Key, Kind, MailFail, Mark, Pair, PieToken, Policy, Tag, TaskId, Wait};
+use env::{Access, Key, Kind, MailFail, Mark, Pair, PieToken, Policy, TaskId, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
@@ -121,7 +123,7 @@ pub fn serve() -> Result<(), Start> {
             if coalition.admit(me, Wait::AtMost(MS)).is_err() {
                 return Err(Start::Face(E_HUB));
             }
-            ledger.league(*class, || id);
+            ledger.league(class.clone(), || id);
         }
 
         // 六、三枚面：本域铸、本域落（`/svc/hub/{bond,list,claim}`）。
@@ -163,11 +165,11 @@ pub fn serve() -> Result<(), Start> {
         // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 `Among(c_类)`——"许驱这一类"那条规矩的落点。
         //     名字取自册（`doors`），故"这一类落哪几台"与账是同一份事实。
         for class in &classes {
-            let Some(coalition) = ledger.coalition_of(*class) else {
+            let Some(coalition) = ledger.coalition_of(class.clone()) else {
                 return Err(Start::Tree(E_HUB));
             };
             let doors: Vec<(&str, PieToken)> = ledger
-                .doors(*class)
+                .doors(class.clone())
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
             let road = hub::DEV_ROAD
@@ -211,7 +213,7 @@ pub fn serve() -> Result<(), Start> {
             .map_err(|_| Start::Desk(E_HUB))?;
         doors.extend([bond, list, claim]);
         for class in &classes {
-            doors.extend(ledger.doors(*class).map(|(_, door)| door));
+            doors.extend(ledger.doors(class.clone()).map(|(_, door)| door));
         }
         Ok::<_, Start>((ledger, league, (bond, list, claim), doors, dtb))
     })()?;
@@ -304,7 +306,7 @@ fn turn(
 fn bond(
     ledger: &mut Ledger,
     league: &League,
-    class: Tag,
+    class: String,
     from: TaskId,
     back: PieToken,
 ) -> Result<(), ()> {
@@ -323,8 +325,8 @@ fn bond(
 }
 
 /// **列册**：这一类此刻有哪几台、哪几台有主（越界答空窗——是答案，不是错误）。
-fn list(ledger: &Ledger, class: Tag, from: u32, back: PieToken) -> Result<(), ()> {
-    let window = if ledger.coalition_of(class).is_some() {
+fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) -> Result<(), ()> {
+    let window = if ledger.coalition_of(class.clone()).is_some() {
         ledger.list(class, from)
     } else {
         Window {
@@ -360,7 +362,7 @@ fn claim(
         };
         let owner = Owner { task: from, sensor };
         match ledger.claim(door, owner, alive) {
-            Ok(entry) => match ship(entry, from, kind, access, policy) {
+            Ok(entry) => match ship(entry.clone(), from, kind, access, policy) {
                 Ok(page) => Deed::granted(entry.name, entry.line, page),
                 // 授不出 ⇒ `Denied`（"装配错"那一格）。**账照记**：认领者拿到这一格就退场，
                 // 它一死探活那一拍把这一格空出来（照实记，见 `hub::core::Ledger::claim`）。
@@ -500,9 +502,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
                 None => continue,
             },
         };
-        let (Some(name), Some(class)) = (Tag::new(name), Tag::new(class)) else {
-            continue;
-        };
+        let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 引导域交来那一份（认领时授出去），
         // `door` = 本域为这一台铸的那一枚（落在 `/dev/<类>/<名>` 上）。

@@ -57,12 +57,14 @@
 extern crate alloc;
 extern crate programs;
 
+use alloc::string::String;
+use alloc::string::ToString;
 use env::Wait;
 use programs::Report;
 
 use alloc::vec::Vec;
 
-use env::{Mark, PieToken, Tag};
+use env::{Mark, PieToken};
 use programs::system::board::client as board;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
@@ -106,22 +108,28 @@ fn junk() -> [u8; JUNK] {
     junk
 }
 
-/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（60 字节）。
+/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（[`LAND_LEN`] 字节）。
 ///
-/// 前五格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = "x"`（定长 32 字节、尾随 NUL）、
-/// `[42..50] = 0`（入口）、`[50] = 0`（`mine` 假）；**唯一越界的是 `[51] = 9`**——许可那一张表
-/// 只有 `0..=4`。故这一条会一路解到许可那一格才断 ⇒ **整帧读不懂** ⇒ 门答 `BAD`。
+/// 前几格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = 1`（名字**长度那一字节**）、
+/// `[11] = "x"`、`[12..20] = 0`（入口）、`[20] = 0`（`mine` 假）；**唯一越界的是
+/// `[21] = 9`**——许可那一张表只有 `0..=4`。故这一条会一路解到许可那一格才断 ⇒
+/// **整帧读不懂** ⇒ 门答 `BAD`。
+///
+/// **照实记（名字那一格改成变长之后，这里的偏移也跟着动）**：名字现在是
+/// `[长度那一字节][字节]`（见 `env::wire` 里 `String` 的 `Span` impl），故许可那一格落在
+/// `1 ＋ 9 ＋ (1 ＋ 名长) ＋ 8 ＋ 1`——**这一台手写裸帧，偏移只能自己数**。
 ///
 /// **照实记（这一格此前全仓零断言，量它的这台客人就是这一条）**：`frame.rs` 的 `Permit::fetch`
-/// 表外那一支自己写着"要打到它得造一条 60 字节、`[51] ≥ 5` 的 `LAND` 帧，而仓里没有这样一台
-/// 客人"——上面那条 300 字节的 junk 走 `Message::fetch` 的长度那一闸，`match` 一次都到不了。
+/// 表外那一支自己写着"要打到它得造一条这样的 `LAND` 帧，而仓里没有这样一台客人"——上面那条
+/// 300 字节的 junk 走 `Message::fetch` 的长度那一闸，`match` 一次都到不了。
 fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     let mut f = [0u8; LAND_LEN];
     f[0] = JUNK_OP; // `LAND` ＝ `1`（见 [`JUNK_OP`]）
     f[1] = 0; // `Where::Root`
-    f[10] = b'x'; // 名字那一格的头一字节
-    f[50] = 0; // `mine = false`
-    f[51] = permit_tag; // **这一格是唯一要试的那一格**
+    f[10] = 1; // 名字长度那一字节
+    f[11] = b'x'; // 名字那一个字节
+    f[20] = 0; // `mine = false`
+    f[21] = permit_tag; // **这一格是唯一要试的那一格**
     f
 }
 
@@ -130,17 +138,20 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
 /// 那个码要是挪了位，这一条当场红）。
 const SEEK_OP: u8 = 7;
 
-/// **一条 9 段的路**（`[op][9]`，两字节）——这一台量的是"路太长"那一格挪了家。
+/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::system::operator::path::Path) 是 8）。
 ///
-/// **照实记（本刀唯一一处语义变化就在这里）**：从前段数那一格写得下 9，而路只带得回 8 段
-/// ⇒ 持树者按 `Fail::Full` 答一句"路太长"。今天一条路是 `Path`（最多 `Path::MAX` 段），
-/// **超长根本表达不出来** ⇒ 这一帧在带路的那张表（`RoadFrame`）里就判"读不懂"，门答 `BAD`。
-/// 故这一条钉的是：**同一件事的答码从 `FULL` 变成 `BAD`**（照实记住
-/// `crates/protocol/src/system/operator/path.rs` 头注那一节）。
+/// **照实记（这一刀把界从"段数那一格"挪进了路自己）**：从前段数那一格写得下 9，而路只带得回
+/// 8 段 ⇒ 持树者按 `Fail::Full` 答一句"路太长"。今天一条路是一个 `PathBuf`（`/` 分开的串，
+/// 最多 8 段、最多 255 字节），**9 段造不出来** ⇒ 这一帧在带路的那张表（`RoadFrame`）里就判
+/// "读不懂"，门答 `BAD`。故这一条钉的是：**同一件事的答码从 `FULL` 变成 `BAD`**。
+const ROAD_9: &[u8] = b"a/b/c/d/e/f/g/h/i";
+
+/// **一条 9 段的路**（`[op][长度][那些字节]`＝19 字节）——这一台量的是"路太长"那一格挪了家。
 fn oversize_road() -> [u8; JUNK] {
     let mut road = [0u8; JUNK];
     road[0] = SEEK_OP;
-    road[1] = 9;
+    road[1] = ROAD_9.len() as u8;
+    road[2..2 + ROAD_9.len()].copy_from_slice(ROAD_9);
     road
 }
 
@@ -149,8 +160,9 @@ const LAND_PERMIT_UNKNOWN: u8 = 9;
 /// 表内那一格（`0` = `Permit::Unset`）：读得懂——**同一帧只换这一格**，结论就该不同。
 const LAND_PERMIT_KNOWN: u8 = 0;
 
-/// 一条 `LAND` 帧有多长（`frame.rs` 那一格是 [`Land::LEN`](protocol::system::operator::Land)）。
-const LAND_LEN: usize = 60;
+/// 这一条 `LAND` 帧有多长：`1 ＋ 9 ＋ (1 ＋ 1) ＋ 8 ＋ 1 ＋ 9`——**这一台手写裸帧**，故按线上
+/// 那一格数（名字 `"x"` 一个字节；许可那一格是 `tag ＋ 8`）。
+const LAND_LEN: usize = 30;
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -202,7 +214,7 @@ fn main() -> Report<'static> {
     debug!("probe-bound: push={over_code} empty={empty} small={small} len={len}");
 
     // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
-    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir, &junk());
+    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir.to_string(), &junk());
 
     // 三·二、**一条 9 段的路**：从前答 `FULL`（"路太长"），今天答 `BAD`（"这条坐标根本
     //        表达不出来"）——两种"不"各有各的下一步，见 [`oversize_road`] 的照实记。
@@ -211,18 +223,29 @@ fn main() -> Report<'static> {
     //        本台那条树路**就再也不答了**——实测第三次 `pull` 起答 `Err(MailFail::Denied)`
     //        （那一枚孔用不动了）。那一格与这一条要量的事无关，但会把它的读数污染成同样的
     //        `None`（照实记：本手第一版就栽在这里，红的不是门，是这一条排错了队）。
-    let (o_junk_in, o_said_bad, o_after) = junk_trip(hedge, tree, &face, dir, &oversize_road());
+    let (o_junk_in, o_said_bad, o_after) =
+        junk_trip(hedge, tree, &face, dir.to_string(), &oversize_road());
 
     // 三·三、**形状全对、只有许可那一格陌生**的那一条：同一声 `BAD`（"整帧读不懂"），
     //       门照旧活着。这一条与上一条**不是同一件事**：上一条死在**长度**那一闸，这一条一路
     //       解到许可那一格才断（见 [`junk_land`] 的照实记）。
-    let (l_junk_in, l_said_bad, l_after) =
-        junk_trip(hedge, tree, &face, dir, &land_frame(LAND_PERMIT_UNKNOWN));
+    let (l_junk_in, l_said_bad, l_after) = junk_trip(
+        hedge,
+        tree,
+        &face,
+        dir.to_string(),
+        &land_frame(LAND_PERMIT_UNKNOWN),
+    );
     // **差分那一趟**：同一帧、只把许可那一格换成表内的 `0`。它**读得懂**（后面那一问自己答什么
     // 不管），故门不该答"读不懂"那一句——两趟并排，才证明上一趟真的断在**许可那一格**上，
     // 而不是断在名字 / `mine` / 长度上。
-    let (k_junk_in, k_said_bad, k_after) =
-        junk_trip(hedge, tree, &face, dir, &land_frame(LAND_PERMIT_KNOWN));
+    let (k_junk_in, k_said_bad, k_after) = junk_trip(
+        hedge,
+        tree,
+        &face,
+        dir.to_string(),
+        &land_frame(LAND_PERMIT_KNOWN),
+    );
 
     // 三·五、**板那一道门**：同一条判据的另一条腿（来历见文件头那一段照实记）。
     let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
@@ -312,7 +335,7 @@ fn junk_trip(
     hedge: PieToken,
     tree: &Endpoint,
     face: &operator::Face,
-    dir: Tag,
+    dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
     let pushed = mail::HolePie::from_token(hedge).push(junk).is_ok();

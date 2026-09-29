@@ -36,10 +36,11 @@
 //! **失败域只有一格出口**：`Result<_, Fail>`。裸 `u8` 只活在 [`ocall::Said`] 那几个读法里
 //! （wire 那一层），由本文件折成 [`Fail`]——"client → Fail，wire → u8"。
 
+use alloc::string::String;
 use crate::message::Message;
 use env::Mark;
 use env::Wait;
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -204,7 +205,7 @@ impl Rein<'_> {
     /// 判据与 [`Pane::open`] 同一句（幂等 / 是一枚砖 ⇒ [`Fail::NotAPane`] / 装不下 ⇒
     /// [`Fail::Full`]）；多出来的那一格是**面判**：会话不在 `part` 那一位上 ⇒
     /// [`Fail::Denied`]。
-    pub fn part(&self, at: Where, name: Tag, wait: Wait) -> Result<EntryId, Fail> {
+    pub fn part(&self, at: Where, name: String, wait: Wait) -> Result<EntryId, Fail> {
         let said = self.face.call(ocall::Req::Part { at, name }, wait)?;
         said.entry().map_err(map_code)
     }
@@ -217,7 +218,7 @@ impl Rein<'_> {
     pub fn land(
         &self,
         at: Where,
-        name: Tag,
+        name: String,
         entry: PieToken,
         permit: Permit,
         mine: Mine,
@@ -274,12 +275,12 @@ impl Rein<'_> {
 
     /// **译**：一条路（**从根写起**）译成号。与 [`Pane::tile`] 同一条腿，只是面不同。
     pub fn seek(&self, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-        let said = self.face.call(ocall::Req::Road(*road), wait)?;
+        let said = self.face.call(ocall::Req::Road(road.to_path_buf()), wait)?;
         said.entry().map_err(map_code)
     }
 
     /// **名**：`id` 那一号此刻叫什么。
-    pub fn name(&self, id: EntryId, wait: Wait) -> Result<Tag, Fail> {
+    pub fn name(&self, id: EntryId, wait: Wait) -> Result<String, Fail> {
         let said = self.face.call(ocall::Req::Name(id), wait)?;
         said.name().map_err(map_code)
     }
@@ -340,7 +341,7 @@ impl<'a> Pane<'a> {
     /// **它不再补问一趟**：`part` 那一问自己就答"这一格是不是窗格"，再多发一次 `list` 只会
     /// 多一次往返（而多出来那一问的失败会把已经成的 `part` 说成失败——持树者一枚线程，这一格
     /// 是量得出来的代价）。
-    pub fn open(&self, name: Tag, wait: Wait) -> Result<Pane<'_>, Fail> {
+    pub fn open(&self, name: String, wait: Wait) -> Result<Pane<'_>, Fail> {
         let said = self
             .face
             .call(ocall::Req::Part { at: self.at, name }, wait)?;
@@ -362,7 +363,7 @@ impl<'a> Pane<'a> {
     /// 就得再问一次（[`Pane::name`] 查得到就是落上了）。
     pub fn bind(
         &self,
-        name: Tag,
+        name: String,
         e: PieToken,
         permit: Permit,
         mine: Mine,
@@ -422,7 +423,7 @@ impl<'a> Pane<'a> {
     }
 
     /// **名**：`e` 那一号此刻叫什么。
-    pub fn name(&self, e: EntryId, wait: Wait) -> Result<Tag, Fail> {
+    pub fn name(&self, e: EntryId, wait: Wait) -> Result<String, Fail> {
         let said = self.face.call(ocall::Req::Name(e), wait)?;
         said.name().map_err(map_code)
     }
@@ -440,7 +441,7 @@ impl<'a> Pane<'a> {
     /// 这里刻意不补那一问：补了既多一次往返，又会把"这一格是砖"这一件正常的事说成失败
     /// （一枚 `Tile` 对 `list` 答 [`Fail::NotAPane`]）。
     pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'_>, Fail> {
-        let said = self.face.call(ocall::Req::Road(*road), wait)?;
+        let said = self.face.call(ocall::Req::Road(road.to_path_buf()), wait)?;
         let id = said.entry().map_err(map_code)?;
         Ok(Tile {
             face: self.face,
@@ -465,7 +466,7 @@ impl Tile<'_> {
     }
 
     /// 这一格此刻叫什么。
-    pub fn name(&self, wait: Wait) -> Result<Tag, Fail> {
+    pub fn name(&self, wait: Wait) -> Result<String, Fail> {
         let said = self.face.call(ocall::Req::Name(self.id), wait)?;
         said.name().map_err(map_code)
     }
@@ -571,7 +572,7 @@ fn id_of(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
 ///
 /// 拿到号之后同一条路就不必再念了——其余那几条一律按号走（名字只到这一格为止）。
 fn route(say: PieToken, link: &Endpoint, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-    let said = call(say, link, ocall::Req::Road(*road), wait)?;
+    let said = call(say, link, ocall::Req::Road(road.to_path_buf()), wait)?;
     said.entry().map_err(map_code)
 }
 

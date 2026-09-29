@@ -37,8 +37,11 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
     let mut frame = [0u8; Now::LEN];
-    Now::of(seed).store(&mut frame);
-    if HolePie::from_token(entry).push(&frame).is_err() {
+    let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    };
+    if HolePie::from_token(entry).push(&frame[..n]).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
@@ -64,8 +67,11 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     // ——后者写进帧，收的人一次 `reserve` 就用，不必扫全表。
     let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     let mut frame = [0u8; Arm::LEN];
-    Arm::of(seed, after_ns).store(&mut frame);
-    if HolePie::from_token(entry).push(&frame).is_err() {
+    let Some(n) = Arm::of(seed, after_ns).store_at(&mut frame, 0) else {
+        let _ = mail::release(back);
+        return Err(Fail::Denied);
+    };
+    if HolePie::from_token(entry).push(&frame[..n]).is_err() {
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }

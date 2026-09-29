@@ -57,7 +57,8 @@ use programs::Reason;
 
 use programs::root::boot;
 
-use env::Tag;
+use alloc::string::String;
+use alloc::string::ToString;
 use programs::system::control::core::{Ready, probe_ready};
 use programs::system::control::desk::{Announce, Slot, State, Table};
 use programs::system::control::service;
@@ -81,9 +82,7 @@ fn main() -> Reason {
     let Some((elf, kind)) = find(&boot, VICTIM) else {
         return die("again: victim not in manifest");
     };
-    let Some(name) = Tag::new(ROW) else {
-        return die("again: bad row name");
-    };
+    let name = ROW.to_string();
 
     // 一整场只用这一张表：**这就是本台子与 rig 的关键差别**（那个每轮造新表）。
     let mut table = Table::new();
@@ -93,12 +92,12 @@ fn main() -> Reason {
     for round in 1..=ROUNDS {
         // 首启唯一的一次 register；重发**不许**再 register（重名即 Unknown，见 §六）。
         if round == 1 {
-            match table.register(name, Announce::None) {
+            match table.register(name.clone(), Announce::None) {
                 Ok(()) => debug!("again: r={round} step=register ok"),
                 Err(_) => return die("again: register"),
             }
         } else {
-            match table.register(name, Announce::None) {
+            match table.register(name.clone(), Announce::None) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
                 Err(_) => debug!("again: r={round} step=register refused (expected)"),
                 Ok(()) => {
@@ -109,7 +108,7 @@ fn main() -> Reason {
         }
 
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
-        let task = match service::mint(&mut table, name, elf, kind) {
+        let task = match service::mint(&mut table, name.as_str(), elf, kind) {
             Ok(task) => task,
             Err(_) => {
                 failures += 1;
@@ -120,7 +119,17 @@ fn main() -> Reason {
         debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(&mut table, name, task, &[], &mut [], &[], Wait::AtMost(MS)).is_err() {
+        if service::start(
+            &mut table,
+            name.as_str(),
+            task,
+            &[],
+            &mut [],
+            &[],
+            Wait::AtMost(MS),
+        )
+        .is_err()
+        {
             failures += 1;
             debug!("again: r={round} step=start REFUSED");
             break;
@@ -129,38 +138,38 @@ fn main() -> Reason {
             restarts += 1;
         }
         // 重发之后"从没起过"这个状态不该再出现：表要说出真相。
-        trace(&table, name, round, "started");
-        if table.find(name).map(|s| s.state) == Some(State::NeverStarted) {
+        trace(&table, name.clone(), round, "started");
+        if table.find(name.as_str()).map(|s| s.state) == Some(State::NeverStarted) {
             failures += 1;
             debug!("again: r={round} step=state NEVERSTARTED (bug)");
         }
 
         // 让旧实例退场：stop（下令）→ watch（等它收干净、并把 `Dead` 落地）→ Oust（父方
         // 放下那一格）。**这里等的是 `watch` 不是 `until`**：`until` 只读，状态归 `watch` 写。
-        if service::stop(&mut table, name).is_err() {
+        if service::stop(&mut table, name.as_str()).is_err() {
             failures += 1;
             debug!("again: r={round} step=stop REFUSED");
             break;
         }
         // **落地 `Dead`**：`until` 只读，写表的是 `watch`（见头注的照实记）。
-        match service::watch(&mut table, name, Wait::AtMost(MS)) {
+        match service::watch(&mut table, name.as_str(), Wait::AtMost(MS)) {
             Ok(true) => {}
             _ => {
                 failures += 1;
                 debug!("again: r={round} step=watch UNSETTLED");
             }
         }
-        trace(&table, name, round, "stopped");
+        trace(&table, name.clone(), round, "stopped");
         // `Slot` 是"最近一次实例的坐标"、死亡不清它 ⇒ 这里读得出来，Oust 正好要用它。
         // `team = None` 是**住本域**的那一枚（iii）：它没有别人的域可放下（放下了就是
         // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
         if let Some(Slot::Live {
             team: Some(team), ..
-        }) = table.find(name).map(|s| s.slot)
+        }) = table.find(name.as_str()).map(|s| s.slot)
         {
             let _ = unit::oust(team);
         }
-        trace(&table, name, round, "ousted");
+        trace(&table, name.clone(), round, "ousted");
     }
 
     // ── 收尾：有界预算 + 放弃（§六 的 Server 侧配方；预算记在**本 Server 自己手里**）──
@@ -169,7 +178,7 @@ fn main() -> Reason {
     let mut gave_up = 0usize;
     loop {
         // `watch`：死了就把 `Dead` 落地（只读的 `until` 不算）。
-        let dead = service::watch(&mut table, name, Wait::AtMost(MS)).unwrap_or(false);
+        let dead = service::watch(&mut table, name.as_str(), Wait::AtMost(MS)).unwrap_or(false);
         if !dead {
             break;
         }
@@ -181,22 +190,32 @@ fn main() -> Reason {
         // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
         if let Some(Slot::Live {
             team: Some(team), ..
-        }) = table.find(name).map(|s| s.slot)
+        }) = table.find(name.as_str()).map(|s| s.slot)
         {
             let _ = unit::oust(team);
         }
-        let Ok(task) = service::mint(&mut table, name, elf, kind) else {
+        let Ok(task) = service::mint(&mut table, name.as_str(), elf, kind) else {
             failures += 1;
             break;
         };
-        if service::start(&mut table, name, task, &[], &mut [], &[], Wait::AtMost(MS)).is_err() {
+        if service::start(
+            &mut table,
+            name.as_str(),
+            task,
+            &[],
+            &mut [],
+            &[],
+            Wait::AtMost(MS),
+        )
+        .is_err()
+        {
             failures += 1;
             break;
         }
         tries += 1;
         restarts += 1;
-        let _ = service::stop(&mut table, name);
-        let _ = service::watch(&mut table, name, Wait::AtMost(MS));
+        let _ = service::stop(&mut table, name.as_str());
+        let _ = service::watch(&mut table, name.as_str(), Wait::AtMost(MS));
     }
     // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
     trace(&table, name, ROUNDS + 1, "gave-up");
@@ -209,8 +228,8 @@ fn main() -> Reason {
 }
 
 /// 打这一步的表内事实（`state` / `slot` / `Ready` 探针）。
-fn trace(table: &Table, name: Tag, round: usize, step: &str) {
-    let (state, slot) = match table.find(name) {
+fn trace(table: &Table, name: String, round: usize, step: &str) {
+    let (state, slot) = match table.find(name.as_str()) {
         Some(s) => (s.state, s.slot),
         None => (State::NeverStarted, Slot::None),
     };
@@ -218,7 +237,7 @@ fn trace(table: &Table, name: Tag, round: usize, step: &str) {
         Slot::Live { .. } => "live",
         Slot::None => "none",
     };
-    let ready = match probe_ready(table, name) {
+    let ready = match probe_ready(table, name.as_str()) {
         Ready::Up => "Up",
         Ready::Gone => "Gone",
         Ready::Pending => "Pending",

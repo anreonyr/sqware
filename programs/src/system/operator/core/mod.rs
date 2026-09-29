@@ -16,9 +16,10 @@
 //! 对账 ＋ **五处**手写销账来维持"账 ⊆ 树"，而"**与砖同生 ⇒ 那条失效面构造上不存在**"正是上一
 //! 刀刚立过的判据（那时收掉的是许可那一轴）。影子撤掉：两轴在同一张表上一次读出来。
 
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
 use protocol::system::operator::frame::PANE_CAP;
@@ -31,10 +32,10 @@ pub mod judge;
 
 /// **一格**：名字 + 去处。它住在 [`Operator::slots`] 里，**下标就是它的号**。
 ///
-/// 名字只是一段（`Tag`：定长 32 字节、构造即校验），不是整条路——路那一层只剩
+/// 名字只是一段（[`String`]：不长于 255 字节那一格由**编帧**那一刻判），不是整条路——路那一层只剩
 /// [`Operator::seek`] 在用。
 struct Slot {
-    name: Tag,
+    name: String,
     node: Node,
 }
 
@@ -100,10 +101,10 @@ enum Want {
 ///
 /// 这不是"省一条查法"：坐标是 `land` / `part` 那一问手里唯一的凭据（那时号还不存在或不必
 /// 知道），而号是 `trim` 那一问手里唯一的凭据（那时坐标早不知道了）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Key {
     /// 坐标：那一块 `Pane` + 那一段名字（`land` / `part` 那一问手里有的）。
-    At(Where, Tag),
+    At(Where, String),
     /// 号：条目自己的号（`find` / `trim` 手里有的）。
     Id(EntryId),
 }
@@ -159,7 +160,7 @@ impl Operator {
     pub fn land(
         &mut self,
         at: Where,
-        name: Tag,
+        name: String,
         pie: PieToken,
         permit: Permit,
         owner: Option<TaskId>,
@@ -181,7 +182,7 @@ impl Operator {
     /// 门牌那五处要的是**父格的号**，而它们的父格（`/svc/drv`、`/svc`）第二次上来时本来就非空，
     /// 于是"分"答不了号、落门牌跟着塌（`soak-1790097748-1`）。"非空不许动"那条规矩的正当去处
     /// 是**会毁掉内容**的那两条：`land` 的换绑与 `trim`，它们照旧答 [`Fail::NonEmpty`]。
-    pub fn part(&mut self, at: Where, name: Tag) -> Result<EntryId, Fail> {
+    pub fn part(&mut self, at: Where, name: String) -> Result<EntryId, Fail> {
         self.put(at, name, Node::Pane(Vec::new()), Want::Pane)
     }
 
@@ -296,7 +297,7 @@ impl Operator {
         let last = road.file_name().ok_or(Fail::Unknown)?;
         let mut level: &[EntryId] = &self.root;
         for step in prefix.iter() {
-            let child = self.child(level, *step).ok_or(Fail::Unknown)?;
+            let child = self.child(level, step).ok_or(Fail::Unknown)?;
             level = match &self.slot(child).ok_or(Fail::Unknown)?.node {
                 Node::Pane(inner) => inner,
                 Node::Tile { .. } => return Err(Fail::NotAPane),
@@ -312,8 +313,10 @@ impl Operator {
     ///
     /// 号失效（`trim` 剪掉、[`Operator::find`] 剔死）与从来没铸过**长得一样** ⇒ 都答
     /// [`Fail::Unknown`]：表里那一槽是个墓碑，而墓碑不对外说话。
-    pub fn name(&self, id: EntryId) -> Result<Tag, Fail> {
-        self.slot(id).map(|slot| slot.name).ok_or(Fail::Unknown)
+    pub fn name(&self, id: EntryId) -> Result<String, Fail> {
+        self.slot(id)
+            .map(|slot| slot.name.clone())
+            .ok_or(Fail::Unknown)
     }
 
     /// **这一格许给谁**——「用」那一轴上那一句话。
@@ -372,7 +375,7 @@ impl Operator {
     ///
     /// **先只读地问一遍**（那一格叫什么号），再动手：这样动手那一段只需要一次
     /// `slots[i]` 的可变借用，不必在 children 里穿一层 `&mut`（那正是老一版递归的由头）。
-    fn put(&mut self, at: Where, name: Tag, node: Node, want: Want) -> Result<EntryId, Fail> {
+    fn put(&mut self, at: Where, name: String, node: Node, want: Want) -> Result<EntryId, Fail> {
         let existing = self
             .kids(at)?
             .iter()
@@ -470,12 +473,12 @@ impl Operator {
     fn slot_at(&self, key: Key) -> Option<&Slot> {
         match key {
             Key::Id(id) => self.slot(id),
-            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name)?),
+            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name.as_str())?),
         }
     }
 
     /// 在这一块 `Pane` 的孩子里按名字找那个号（只读一趟扫，最多 `PANE_CAP` 次查表）。
-    fn child(&self, level: &[EntryId], name: Tag) -> Option<EntryId> {
+    fn child(&self, level: &[EntryId], name: &str) -> Option<EntryId> {
         level
             .iter()
             .copied()

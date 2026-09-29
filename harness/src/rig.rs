@@ -218,7 +218,8 @@ use programs::root::boot;
 
 use core::time::Duration;
 
-use env::Tag;
+use alloc::string::String;
+use alloc::string::ToString;
 use programs::system::control::core::Reaped;
 use programs::system::control::desk::{Announce, Slot, Table};
 use programs::system::control::service;
@@ -302,14 +303,10 @@ fn main() -> Reason {
     let Some((elf, kind)) = find(&boot, VICTIM) else {
         return die("rig: victim not in manifest");
     };
-    let Some(name) = Tag::new(ROW) else {
-        return die("rig: bad row name");
-    };
+    let name = ROW.to_string();
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
     // 一条早退的来路，见 `trial` 头注）。
-    let Some(link) = Tag::new(LINK) else {
-        return die("rig: bad link name");
-    };
+    let link = LINK.to_string();
 
     // 校准：本机"一毫秒 = 多少轮空转"。受害者那边量的是同一把尺。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -320,7 +317,7 @@ fn main() -> Reason {
     while d_us <= DELAY_MAX_US {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(name, link, elf, kind, d_us, iters_per_ms) {
+            match trial(name.clone(), link.clone(), elf, kind, d_us, iters_per_ms) {
                 Ok(verdict) => {
                     t.n += 1;
                     match verdict {
@@ -360,7 +357,7 @@ fn main() -> Reason {
     while b_us <= 20_500 {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(name, link, elf, kind, b_us, iters_per_ms) {
+            match trial(name.clone(), link.clone(), elf, kind, b_us, iters_per_ms) {
                 Ok(v) => {
                     t.n += 1;
                     match v {
@@ -415,8 +412,8 @@ enum Verdict {
 ///
 /// 只有 `register` / `spawn` 两条仍不收场：那时域还没造出来（表是纯值），没什么可收。
 fn trial(
-    name: Tag,
-    link: Tag,
+    name: String,
+    link: String,
     elf: &'static [u8],
     kind: env::ProgramKind,
     delay_us: usize,
@@ -426,9 +423,9 @@ fn trial(
     // （表是纯值，`Table::new()` 不碰全局）。
     let mut table = Table::new();
     table
-        .register(name, Announce::Channel)
+        .register(name.clone(), Announce::Channel)
         .map_err(|_| "register")?;
-    let task = service::mint(&mut table, name, elf, kind).map_err(|_| "spawn")?;
+    let task = service::mint(&mut table, name.as_str(), elf, kind).map_err(|_| "spawn")?;
     // **rig A：握手**。台主这一侧先铸一条（`endpoint`：本端那一枚交出去，顺带试认它那一枚），
     // 放行时把通道交给受害者；它铸出自己那一枚交给台主、随即挂在自己那枚孔上 ⇒ 台主 `claim`
     // 到它就等于**"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
@@ -442,7 +439,7 @@ fn trial(
     // 取一份出来用，所有权仍在 `held` 手里（放下时放的是同一枚孔）。
     let mut channels = [*held];
     let verdict = body(
-        name,
+        name.clone(),
         task,
         delay_us,
         iters_per_ms,
@@ -455,7 +452,7 @@ fn trial(
     // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
     if let Some(Slot::Live {
         team: Some(team), ..
-    }) = table.find(name).map(|s| s.slot)
+    }) = table.find(name.as_str()).map(|s| s.slot)
     {
         let _ = unit::oust(team);
     }
@@ -467,17 +464,17 @@ fn trial(
 
 /// 一轮的正文：起通道之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
 fn body(
-    name: Tag,
+    name: String,
     task: env::TaskId,
     delay_us: usize,
     iters_per_ms: usize,
     table: &mut Table,
     channels: &mut [Endpoint],
-    link: Tag,
+    link: String,
 ) -> Result<Verdict, &'static str> {
     service::start(
         table,
-        name,
+        name.as_str(),
         task,
         &[],
         channels,
@@ -508,16 +505,18 @@ fn body(
     tick::spin_iters(delay_us.saturating_mul(iters_per_ms) / 1_000);
 
     // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 `service::until`）。
-    let _ = service::stop(table, name);
-    Ok(match service::until(table, name, Wait::AtMost(MS)) {
-        Ok(Reaped::Now) => Verdict::Now,
-        Ok(Reaped::Waited) => Verdict::Waited,
-        // 判定窗口内没结论 ⇒ 再看一眼宽限：迟到 vs 没了。
-        _ => match service::until(table, name, Wait::AtMost(LATE_MS)) {
-            Ok(Reaped::Now) | Ok(Reaped::Waited) => Verdict::Late,
-            _ => Verdict::Lost,
+    let _ = service::stop(table, name.as_str());
+    Ok(
+        match service::until(table, name.as_str(), Wait::AtMost(MS)) {
+            Ok(Reaped::Now) => Verdict::Now,
+            Ok(Reaped::Waited) => Verdict::Waited,
+            // 判定窗口内没结论 ⇒ 再看一眼宽限：迟到 vs 没了。
+            _ => match service::until(table, name.as_str(), Wait::AtMost(LATE_MS)) {
+                Ok(Reaped::Now) | Ok(Reaped::Waited) => Verdict::Late,
+                _ => Verdict::Lost,
+            },
         },
-    })
+    )
 }
 
 /// 清单里按名字取镜像（台主只认这一条）。

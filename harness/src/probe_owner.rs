@@ -38,6 +38,7 @@ use env::Wait;
 use programs::Report;
 
 use alloc::format;
+use alloc::string::ToString;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
@@ -121,7 +122,13 @@ fn main() -> Report<'static> {
     let Some(me) = road.file_name() else {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
-    let land = pane.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS));
+    let land = pane.bind(
+        me.to_string(),
+        entry,
+        Permit::Unset,
+        Mine::No,
+        Wait::AtMost(MS),
+    );
     let land_code = match &land {
         Ok(id) => format!("ok id={}", id.id().get()),
         Err(fail) => format!("{fail:?}"),
@@ -133,7 +140,7 @@ fn main() -> Report<'static> {
     //
     // **照实记（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
     // 走同一把钥匙，可只有一条被量过。这一格补的就是那一半。
-    let part = pane.open(me, Wait::AtMost(MS));
+    let part = pane.open(me.to_string(), Wait::AtMost(MS));
     let part_code = match &part {
         Ok(id) => format!("ok id={}", id.id().get()),
         Err(fail) => format!("{fail:?}"),
@@ -222,7 +229,7 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     };
     // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
     let root = tree.root();
-    let _ = root.open(dir, Wait::AtMost(MS));
+    let _ = root.open(dir.to_string(), Wait::AtMost(MS));
     let Some(sys) = tree.pane(&protocol::system::SVC, Wait::AtMost(MS)).ok() else {
         return Err(Fail::Unknown);
     };
@@ -233,7 +240,13 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
                 return Err(Fail::Unknown);
             };
-            match sys.bind(me, entry, Permit::Unset, Mine::No, Wait::AtMost(MS)) {
+            match sys.bind(
+                me.to_string(),
+                entry,
+                Permit::Unset,
+                Mine::No,
+                Wait::AtMost(MS),
+            ) {
                 Ok(id) => return Ok(id.id()),
                 Err(Fail::Denied) if left > 0 => {
                     // 还没死透（或我们比它先到）：等一下再来。
@@ -268,7 +281,7 @@ fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
             Some(id) => Pane::of(tree, id),
             None => tree.root(),
         };
-        if let Ok(next) = here.open(*seg, Wait::AtMost(MS)) {
+        if let Ok(next) = here.open(seg.to_string(), Wait::AtMost(MS)) {
             at = Some(next.id());
         }
     }

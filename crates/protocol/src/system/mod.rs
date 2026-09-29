@@ -520,7 +520,7 @@
 ///
 /// **为什么是 `svc` 而不是 `sys`**（用户裁定）：这一层底下收的不只是"系统服务"——驱动那一族
 /// （`/svc/drv`）与设备账（`/svc/hub`）也挂上来了，而 `/dev` 留给**设备那一轴**（hub 落的账）。
-pub const SVC: Path = Path::new("svc");
+pub const SVC: &Path = Path::new("svc");
 
 /// **平台自己那几枚在容器底下那一段**（`sys`）：持树者（`operator`）与三枚内件
 /// （名册 / 盟册 / 控制面）都从它起 —— `/svc/sys/{operator,principal,coalition,control}`。
@@ -539,7 +539,7 @@ pub const SYS: &str = "sys";
 /// （见 [`crate::system::principal::DIR`] 那一条）。头两段是四族共同的，故它只说在这里：
 /// 改一层名字（比如再插一段）只动这一处，四族跟着走。驱动那一族取 [`SVC`] 接自己那一段
 /// （`/svc/drv`），设备账同（`/svc/hub`）。
-pub const DIR: Path = SVC.join(SYS);
+pub const DIR: &Path = Path::new("svc/sys");
 
 use crate::system::operator::path::Path;
 

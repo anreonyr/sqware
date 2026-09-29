@@ -19,8 +19,10 @@
 //! **`Nole`（门铃）不走 [`Device`]**：它没有寄存器页，只有一枚号——要它的那一位直接把契里
 //! 那一枚包成 [`NolePie`](runtime::env::mail::NolePie)（见 `driver/router/adapt/boot.rs`）。
 
+use alloc::string::ToString;
+
 use env::{Access, Policy};
-use env::{Kind, PieToken, Tag, Wait};
+use env::{Kind, PieToken, Wait};
 use protocol::driver::hub;
 use protocol::driver::hub::Deed;
 use protocol::system::operator::client::Face as TreeFace;
@@ -113,20 +115,20 @@ impl Hub {
     ///
     /// 失败读数说步名（`"bond"` / `"list"` / `"tree"` / `"claim"`）。
     pub fn claim(&self, tree: &TreeFace, ask: &Ask, died: Died, ms: Wait) -> Result<Deed, Fail> {
-        let class = Tag::new(ask.class).ok_or(Fail::at(died, "class"))?;
+        let class = ask.class.to_string();
         self.bond
-            .bond(class, ms)
+            .bond(class.clone(), ms)
             .map_err(|_| Fail::at(died, "bond"))?;
         let name = match ask.name {
-            Some(want) => Tag::new(want).ok_or(Fail::at(died, "class"))?,
+            Some(want) => want.to_string(),
             None => {
                 let window = self
                     .list
-                    .list(class, 0, ms)
+                    .list(class.clone(), 0, ms)
                     .map_err(|_| Fail::at(died, "list"))?;
                 // **这一类里一台都没有** ⇒ 这一步与"树里没这台"是同一句话的两半（本域拿不到
                 // 那一台，下一步相同）。
-                *window.name(0).ok_or(Fail::at(died, "list"))?
+                window.name(0).ok_or(Fail::at(died, "list"))?.clone()
             }
         };
         // 设备那一轴是 `/dev/<类>/<名>`（**顶层那一层**——与 `/svc` 平级，见 `hub::DEV`）。

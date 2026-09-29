@@ -69,7 +69,7 @@ pub unsafe fn trap(slot: usize, args: [usize; 6]) -> (usize, usize, usize) {
 
 /// 非 RISC-V 构建（**只可能是宿主侧测试**）：`ebreak` 入口在这里没有对应物。
 ///
-/// 本 crate 除这一个函数外**全部可移植**（`Wire`/`FromPair`/`Permission`/`Tag`/各域
+/// 本 crate 除这一个函数外**全部可移植**（`Wire`/`FromPair`/`Permission`/各域
 /// 枚举的 `slot`/`pack`/`from_wire` 都不碰架构），故门控这一个函数就把 1300 行 ABI
 /// 面变成宿主可测的；`call()` 那条路（唯一会走到这里的）在宿主上必然 panic —— 这是
 /// 有意的：**没有汇编就没有调用**，不许静默返回假值。

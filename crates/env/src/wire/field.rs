@@ -4,12 +4,14 @@
 //! 这一层是**报文帧**那一层（`&[u8]` / `&mut [u8]`）。两层都在 `env`：过线的那些东西住一处。
 //!
 //! **`fetch` 的 `None` 说的是"这一帧读不懂"**，不是"这个字段的值不合规矩"——值那一层各有各的
-//! 失败域（如 [`Tag`](crate::wire::Tag) 的"非空 / 装得下 / 无 NUL / UTF-8"），故这里只答 `Option`。
+//! 失败域（如 [`Slot`](crate::wire::Slot) 的"装得下 / UTF-8"），故这里只答 `Option`。
 //!
-//! **定长帧**（`#[derive(Frame)]`，实现住 `mold`）的底座就是这里：帧的偏移全部由
-//! [`Field::WIDTH`] 求和得出，从而两头不可能各写一份。
+//! **帧**（`#[derive(Frame)]`，实现住 `mold`）的底座就是这里：**定长那一格**由 [`Field::WIDTH`]
+//! 说宽度，**变长那一格**由 [`Span`] 的游标走出，从而两头不可能各写一份。
 
-use crate::wire::{NAME_LEN, PieToken, Tag, TaskId};
+use alloc::string::String;
+
+use crate::wire::{PieToken, TaskId};
 
 /// **过线的一格**：定宽 ＋ 会写会读。
 pub trait Field: Sized {
@@ -24,16 +26,15 @@ pub trait Field: Sized {
 /// **要游标那一格**：宽度由值自己说（一条路几段、一段名字几字节），读写都从游标起。
 ///
 /// 与 [`Field`] 的分工：[`Field`] 说"这一格多宽、怎么写"（**定长**——帧的偏移由它求和）；
-/// 这一枚说"最长多少、从哪写起、写完到哪"。**定长那一格自动也是 `Span`**（下面那条 blanket
-/// impl，`MAX = WIDTH`）——故一张字段表里两种格子可以并排，`#[derive(Frame)]` 只认 `Span`。
+/// 这一枚说"**最长**多少、从哪写起、写完到哪"。**定长那一格自动也是 `Span`**（下面那条 blanket
+/// impl，`MAX = Some(WIDTH)`）——故一张字段表里两种格子可以并排，`#[derive(Frame)]` 只认 `Span`。
 ///
-/// **照实记（为什么不给 `Field` 加两格、而要另立一枚）**：`Field::WIDTH` 那句"线上占几字节"
-/// 在本仓是立得住的（帧的偏移全部由它求和）；变长要的是**另一句话**——"最长那一形"与"带游标
-/// 的两只手"。改 `Field` 会把那一句弄松；而树上那条变长的路（`protocol` 的 `Path`）至今
-/// **不实现** `Field`，它自己那两只手与「它为什么不叫 `WIDTH`」那条照实记正是这一层分工的现状。
+/// **照实记（`MAX` 为什么是 `Option`）**：名字那一格（[`String`]）**不报上界**——它多长由**族**
+/// 说（那一族的缓冲多大），不由类型说。于是"这一格最长几字节"变成一格**说得出来/说不出**的事实：
+/// 说不出（`None`）的帧，`LEN` 就得由族显式给（`#[frame(len = …)]`），而不是各格求和。
 pub trait Span: Sized {
-    /// 这一格**最长**占几字节（定长那一形就是它自己）。
-    const MAX: usize;
+    /// 这一格**最长**占几字节；**`None` = 这一格不报上界**（帧的界由族给）。
+    const MAX: Option<usize>;
     /// 从 `at` 写起，返写完之后的游标。
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize>;
     /// 从 `at` 读一格，返**值与读完之后的游标**。
@@ -42,10 +43,10 @@ pub trait Span: Sized {
 
 /// **定长那一格就是"不长的那一枚 `Span`"**：`MAX` 取 [`Field::WIDTH`]，两只手就是那两只。
 ///
-/// 于是 `#[derive(Frame)]` 的正文只有一条路（一律经 [`Span`]），而 [`Field`] 的 14 处 impl
-/// （`env` 8 ＋ `protocol` 6）一行不改。
+/// 于是 `#[derive(Frame)]` 的正文只有一条路（一律经 [`Span`]），而 [`Field`] 的 13 处 impl
+/// （`env` 7 ＋ `protocol` 6）一行不改。
 impl<T: Field> Span for T {
-    const MAX: usize = <T as Field>::WIDTH;
+    const MAX: Option<usize> = Some(<T as Field>::WIDTH);
 
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
         let end = at.checked_add(<T as Field>::WIDTH)?;
@@ -56,6 +57,72 @@ impl<T: Field> Span for T {
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let end = at.checked_add(<T as Field>::WIDTH)?;
         Some((Field::fetch(bytes.get(at..end)?)?, end))
+    }
+}
+
+/// **求和**：各格的上界相加；**有一格不报上界 ⇒ `None`**（那一帧的 `LEN` 就得由族给）。
+///
+/// `const`：派生用它算 `LEN`（一处定义），故这两只手住在 `env` 而不是宏里。
+pub const fn total(parts: &[Option<usize>]) -> Option<usize> {
+    let mut sum = 0usize;
+    let mut i = 0;
+    while i < parts.len() {
+        match parts[i] {
+            Some(n) => sum += n,
+            None => return None,
+        }
+        i += 1;
+    }
+    Some(sum)
+}
+
+/// **按条数放大**：一段重复最长就是"每一项都最长"；**元素不报上界 ⇒ `None`**。
+pub const fn times(count: usize, one: Option<usize>) -> Option<usize> {
+    match one {
+        Some(one) => Some(count * one),
+        None => None,
+    }
+}
+
+/// **一枚名（`String`）就是线上那一格**：`[长度那一字节][UTF-8 字节]`。
+///
+/// **照实记（上界那一格为什么是 `None`）**：名字多长由**族**说（那一族的缓冲多大），不由这一枚
+/// 类型说——故它不报上界，带它的帧要写 `#[frame(len = …)]`。真到落笔时有两个界、各管一头：
+/// 长度那一字节（≤255，说得出多长）与那一帧的缓冲（族给的 `LEN`）。**任一条过不去 ⇒ `None`**
+/// （不截断、不猜）。
+///
+/// **照实记（它与「长度即内容」那一形的分工）**：这一手写的是**带长度**的形——名字在帧中间
+/// （后面还有别的格）时非它不可；名字在**帧尾**时走 [`store_bytes`]／[`fetch_bytes`]（长度即内容，
+/// 少一个字节）。
+///
+/// **照实记（空是合法的值，不是错误）**：定长表要一个 `fill`，“空位”必须有值——那个值就是
+/// `String::new()`。故这一格**不拒空**（拒空会让“合法类型的值”同时是“构造面拒绝的值”，
+/// 又回到旧那一枚定宽名字的账上）。**“这一格有没有名字”是族读的时候用 `as_str().is_empty()` 判的**。
+///
+/// **照实记（名字的长度不由这一层判）**：这一格的界只有两条，都在落笔那一刻：**长度那一字节
+/// 放得下**（≤ 255）与**那一帧的缓冲装得下**（族给的 `LEN`）。故这里没有一枚“构造一枚名”的手——
+/// 名就是 `String`，超界在编帧那一刻以“装不下”出现（用户裁定：界只由族那一处说）。
+impl Span for String {
+    /// **不报上界**：见上面那条照实记。
+    const MAX: Option<usize> = None;
+
+    fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
+        let bytes = self.as_bytes();
+        if bytes.len() > u8::MAX as usize {
+            return None;
+        }
+        let end = at.checked_add(1 + bytes.len())?;
+        let span = out.get_mut(at..end)?;
+        span[0] = bytes.len() as u8;
+        span[1..].copy_from_slice(bytes);
+        Some(end)
+    }
+
+    fn fetch_at(bytes: &[u8], at: usize) -> Option<(String, usize)> {
+        let len = *bytes.get(at)? as usize;
+        let end = at.checked_add(1 + len)?;
+        let text = core::str::from_utf8(bytes.get(at + 1..end)?).ok()?;
+        Some((String::from(text), end))
     }
 }
 
@@ -183,66 +250,44 @@ impl Field for PieToken {
     }
 }
 
-/// **线上那一格定长名字**（[`Tag`]）：整块 32 字节搬进搬出。
-///
-/// **照实记（`Tag::block` 为什么只给本 crate）**：这一格今天**只有这一处读者**（旧 `Name::bytes()`
-/// 也是同一处境）——线上要的是"整块（含零填充）"，而 [`CStr::to_bytes_with_nul`] 只到终止 NUL
-/// 为止，两件事不同。故不发一扇没有外人的门。
-///
-/// [`CStr::to_bytes_with_nul`]: crate::text::CStr::to_bytes_with_nul
-impl Field for Tag {
-    /// **定长、带填充**：`Tag::block()` 是那 32 字节的整个数组（内容之后的填充也上线）。
-    /// 帧的偏移要的是"这一格占多宽"，故取 `NAME_LEN`，不是内容的长度。
-    const WIDTH: usize = NAME_LEN;
-
-    fn store(&self, out: &mut [u8]) {
-        out.copy_from_slice(self.block());
-    }
-
-    /// 读回来那一格：**没有终止 NUL 的块一律读不懂**（见 [`Tag`] 的照实记）。
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        Tag::from_block(bytes.get(..NAME_LEN)?.try_into().ok()?)
-    }
-}
-
 // ── 尾巴：**变长那一段**（两种）──────────────────────────────
 //
-// 定长那一支由 `#[derive(Frame)]` 的字段表接手（`LEN` = 宽度之和，偏移一处都不写）；**变长**那一支在
-// 本仓只有两种形状：
+// 定长那一支由 `#[derive(Frame)]` 的字段表接手（`LEN` = 最长那一形之和，偏移一处都不写）；**变长**
+// 那一支在本仓只有两种形状：
 //
-//   数得出来的   `[条数][条 × 等宽项]`   树那一族的 `seek` 路、它的「列」答，供单的 `n × 32`
-//   长度即内容   `[…… 那些字节]`          树那一族的「名」答（名字多长，这一帧就多长）
+//   数得出来的   `[条数][条 × 一格]`   树那一族的 `seek` 路、它的「列」答、供单的名字表
+//   长度即内容   `[…… 那些字节]`        树那一族的「名」答（名字多长，这一帧就多长）
 //
 // 下面两对就是这两处定义——**用户裁定：尾巴不许手写**（族里写 `2 + i * WIDTH` 或
 // `out[1..1 + text.len()]` 这种句子，一条形状一处，四处就会漂）。
 //
-// 宽度仍归 [`Field::WIDTH`] 说：`store_tail` / `fetch_tail` 里出现的每一个偏移都是**跑出来的
-// 游标**，没有字面量。
+// 每一项的宽归它自己的 [`Span`] 说：`store_tail` / `fetch_tail` 里出现的每一个偏移都是**跑出来的
+// 游标**，没有字面量——故这两只手**定长项与变长项同一条路**（定长项 `MAX` 就是它的 `WIDTH`）。
 
-/// 从 `at` 起写下一段**等宽项**，返写完之后的游标（一项都不写 ⇒ 原样返 `at`）。
+/// 从 `at` 起写下一段**同族的项**（定长那一形步长即它的宽），返写完之后的游标（一项都不写 ⇒ 原样返 `at`）。
 ///
-/// `None` = `out` 装不下——与 [`Field::store`] 那一族同一条口径（不猜、不截断）。
-pub fn store_tail<T: Field>(out: &mut [u8], at: usize, items: &[T]) -> Option<usize> {
+/// `None` = `out` 装不下——与 [`Span::store_at`] 同一条口径（不猜、不截断）。
+pub fn store_tail<T: Span>(out: &mut [u8], at: usize, items: &[T]) -> Option<usize> {
     let mut at = at;
     for item in items {
-        item.store(out.get_mut(at..at + T::WIDTH)?);
-        at += T::WIDTH;
+        at = item.store_at(out, at)?;
     }
     Some(at)
 }
 
-/// 从 `at` 起读一段**等宽项**，装进调用方给的容器；返读完之后的游标。
+/// 从 `at` 起读一段**同族的项**，装进调用方给的容器；返读完之后的游标。
 ///
-/// **容器由调用方给**（`&mut [Tag]` / `&mut [EntryId]` / …）：`env` 不认识 `alloc`，也不替族
+/// **容器由调用方给**（`&mut [Slot<31>]` / `&mut [EntryId]` / …）：`env` 不认识 `alloc`，也不替族
 /// 决定"装不下时丢哪一头"——**有几格位置就读几条**，游标交回去，于是"到这儿就是底"
 /// （如 `at == bytes.len()`）也由族自己判。
 ///
-/// 短一字节、或某一格读不成 ⇒ `None`（与 [`Field::fetch`] 同一句话：这一帧读不懂）。
-pub fn fetch_tail<T: Field>(bytes: &[u8], at: usize, into: &mut [T]) -> Option<usize> {
+/// 短一字节、或某一格读不成 ⇒ `None`（与 [`Span::fetch_at`] 同一句话：这一帧读不懂）。
+pub fn fetch_tail<T: Span>(bytes: &[u8], at: usize, into: &mut [T]) -> Option<usize> {
     let mut at = at;
     for slot in into.iter_mut() {
-        *slot = T::fetch(bytes.get(at..at + T::WIDTH)?)?;
-        at += T::WIDTH;
+        let one = T::fetch_at(bytes, at)?;
+        *slot = one.0;
+        at = one.1;
     }
     Some(at)
 }
@@ -257,7 +302,7 @@ pub fn store_bytes(out: &mut [u8], at: usize, bytes: &[u8]) -> Option<usize> {
 /// 从 `at` 起读**到末尾**那一段裸字节（`None` = 起点越界）。
 ///
 /// 长度即内容 ⇒ 读的人拿到的就是"这一帧还剩下的那些字节"；**这些字节算不算一段合法的内容由族
-/// 判**（如 [`Tag::from_slice`](crate::Tag::from_slice) 那四格）。
+/// 判**（如「名」那一答：先按 UTF-8 解，再进 [`Slot::new`](crate::wire::Slot::new)）。
 pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
     bytes.get(at..)
 }
@@ -271,5 +316,8 @@ pub fn fetch_bytes(bytes: &[u8], at: usize) -> Option<&[u8]> {
 // 三件事因此变好：诊断指到**那一格字段**（`macro_rules` 只能报在展开体里）；名字不再是
 // `env` 的 crate 根上一条"与模块同名的宏"（第一刀与 `protocol::frame` 撞的正是那一次）；
 // 结构体现在**写在调用点**——各格的 `pub` 与字段上的文档都在用户那一边看得见，而生成的
-// `LEN` / `store` / `fetch` 一个字没变（展开物逐字节比对过；`store_in` 那一形后来退了——它
-// 与 `store_at(out, 0)` 逐字同签名，不另立）。
+// `LEN` / `fetch` / `store_at` 一个字没变（展开物逐字节比对过）。两形后来退了：
+//   · `store_in` —— 它与 `store_at(out, 0)` 逐字同签名，不另立；
+//   · `store(&mut [u8; LEN])` —— 它只在"**实际长度恰好等于上界**"时成立（调用点写完就把整个
+//     `LEN` 推出去）。名一变长（线上只写有效字节），那个前提就没了，故那一手退场：要长度走
+//     `store_at` 的返回值。

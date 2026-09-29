@@ -3,13 +3,14 @@
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
+use alloc::string::String;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Mark;
 use env::Wait;
 use env::wire::Field;
 
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
@@ -40,7 +41,7 @@ impl Bridge {
         &mut self,
         me: TaskId,
         client: TaskId,
-        name: Tag,
+        name: String,
         millis: Wait,
         lane: Option<PieToken>,
     ) -> Result<(), &'static str> {
@@ -62,19 +63,18 @@ impl Bridge {
 pub fn attach(
     me: TaskId,
     client: TaskId,
-    name: Tag,
+    name: String,
     millis: Wait,
     tip: &mut Option<PieToken>,
     lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
-    let link = Tag::new(LINK).ok_or("board:name")?;
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 板路的名字，客侧
     //      铸的也是它）。判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源
     //      ——本域给每个孩子各开一条路，故认的是"它给我的"，不然会把别的客人的孔配到它头上。
     //      **次序**：板那条比 `records` 后到，而 `records` 的写端已经用掉了。
     let link =
-        establish::endpoint(client, Mark::of(link.as_str()), millis).map_err(|_| "board:seat")?;
+        establish::endpoint(client, Mark::of(LINK), millis).map_err(|_| "board:seat")?;
     // **认不到对端那一枚 = 这条板路没接上**（原 `claim` 那一格）：本端这一侧虽然只读答话，
     // 但"两侧各装一条、凑齐才算通"那条不变量仍在——没齐就是没接上，不必等到第一次收帧。
     if link.tx().is_none() {
@@ -167,19 +167,20 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 /// **帧形只有一处**：三项怎么排、各占多宽，全在 `bcall::Tip` 那一对 `store` / `fetch` 里。
 pub(crate) fn tell_guest(
     who: TaskId,
-    name: Tag,
+    name: String,
     seed: PieToken,
     into: PieToken,
 ) -> Result<(), ()> {
     let mut rec = [0u8; bcall::Tip::LEN];
-    bcall::Tip {
+    let n = bcall::Tip {
         who,
         name,
         reply: seed,
     }
-    .store(&mut rec);
+    .store_at(&mut rec, 0)
+    .ok_or(())?;
     let into = mail::HolePie::from_token(into);
-    into.push(&rec).map_err(|_| ())
+    into.push(&rec[..n]).map_err(|_| ())
 }
 
 /// 把**客人交出来的那一枚**转授给板线程，返**它在板表里的号**（`port::ship` 的 `to.seed()`）。

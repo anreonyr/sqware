@@ -18,7 +18,8 @@
 //! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
 //! 不该各起一套词（同 board / operator 那两族的纪律）。
 
-use env::{Mark, PieToken, Tag, TaskId};
+use alloc::string::String;
+use env::{Mark, PieToken, TaskId};
 
 use crate::system::operator::path::Path;
 
@@ -106,11 +107,12 @@ pub enum Fail {
 /// `back` 是**运输**那一格（往哪回），不是动作的荷载——它排最后，谁都不许把它当第二个名字使。
 /// 这一格是"我给你的那一枚在你表里是几号"：对端据此一次 `Reserve` 就认出回信的路，不必扫表
 /// （理由与实测见 [`crate::frame::Query`] 那条照实记）。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 41)]
 pub struct Ask {
     pub op: u8,
     /// 这一条服务的名字（清单名，≤ 31 字节）。
-    pub name: Tag,
+    pub name: String,
     pub back: PieToken,
 }
 
@@ -228,16 +230,16 @@ pub const fn code_to_fail(code: u8) -> Option<Fail> {
 /// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 [`Ask::back`] 带。
 /// 照实记（它替掉了什么）：从前那种 `pack_ask(op, name, …)` 里**任何一枚码都能配上任何一份
 /// 荷载**，错配编得过；今天形状由类型说，编解码由表生成（同 board / principal 那两族的刀）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
     /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）。
-    Mint(Tag),
+    Mint(String),
     /// `START`：放行 ＋ 等就绪。
-    Start(Tag),
+    Start(String),
     /// `STOP`：下令收掉（下令即回）。
-    Stop(Tag),
+    Stop(String),
     /// `STATE`：这一条此刻处于哪个阶段。
-    State(Tag),
+    State(String),
 }
 
 impl Req {
@@ -258,21 +260,22 @@ impl Req {
 /// 两格失败分得开（同 [`crate::frame::Query`] 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
 /// 都没有 ⇒ 不动表、也不回话）；**动作码不认得** ⇒ 内层 `None`（这一问有回信的路，只是这一码
 /// 我不认 ⇒ 回一句 [`BAD`]）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
-    Mint(Tag),
-    Start(Tag),
-    Stop(Tag),
-    State(Tag),
+    Mint(String),
+    Start(String),
+    Stop(String),
+    State(String),
 }
 
 impl Wire {
     /// 解一问：`(读出来的动作, 回信孔那一格)`。
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
-        if bytes.len() != Ask::LEN {
+        // **"恰好"按游标判**：名字那一格是变长的，帧长不再等于 `Ask::LEN`（那是上界）。
+        let (q, at) = Ask::fetch_at(bytes, 0)?;
+        if at != bytes.len() {
             return None;
         }
-        let q = Ask::fetch(bytes)?;
         let ask = match q.op {
             MINT => Some(Wire::Mint(q.name)),
             START => Some(Wire::Start(q.name)),
@@ -339,7 +342,7 @@ pub const BACK: Mark = Mark::of("control-back");
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
 /// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal /
 /// coalition）。
-pub const DIR: Path = crate::system::DIR.join(NAME);
+pub const DIR: &Path = Path::new("svc/sys/control");
 
 // ── 面不相撞（**编译期**钉住——照 principal / coalition 那两族的先例）─────────────
 

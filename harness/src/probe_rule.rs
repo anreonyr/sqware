@@ -85,10 +85,12 @@
 extern crate alloc;
 extern crate programs;
 
+use alloc::string::ToString;
+
 use env::Wait;
 use programs::Report;
 
-use env::{PieToken, Tag};
+use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::coalition as ccall;
@@ -103,7 +105,7 @@ use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域分出来的那一块那一条路：`/svc/rule`（容器那一段只在协议那一侧说，末段在运行期取）。
-const DIR: protocol::system::operator::Path = protocol::system::SVC;
+const DIR: &protocol::system::operator::Path = protocol::system::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）。
 const IS: &str = "is";
@@ -221,16 +223,14 @@ fn main() -> Report<'static> {
     let Some(dir) = DIR.file_name() else {
         return bail("probe-rule: bad name");
     };
-    let Some(pane) = Tag::new(PANE) else {
-        return bail("probe-rule: bad name");
-    };
+    let pane = PANE.to_string();
     // 本台那几问都从这一条路起（`/svc/rule`）——一处都不自己拼。
-    let rule_road = DIR.join(PANE);
-    let Some(mine) = Tag::new(MINE) else {
+    let Some(rule_road) = DIR.try_join(PANE) else {
         return bail("probe-rule: bad name");
     };
+    let mine = MINE.to_string();
     let root = tree.root();
-    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
+    let Ok(sys) = root.open(dir.to_string(), Wait::AtMost(MS)) else {
         return bail("probe-rule: no /svc");
     };
     let Ok(at) = sys.open(pane, Wait::AtMost(MS)) else {
@@ -437,9 +437,7 @@ fn plate(pane: &Pane<'_>, name: &str, permit: Permit, mine: Mine) -> EntryId {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("rule-entry")) else {
         return EntryId::new(0);
     };
-    let Some(one) = Tag::new(name) else {
-        return EntryId::new(0);
-    };
+    let one = name.to_string();
     pane.bind(one, entry, permit, mine, Wait::AtMost(MS))
         .map(|landed| landed.id())
         .unwrap_or(EntryId::new(0))

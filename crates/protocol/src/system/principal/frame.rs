@@ -264,7 +264,7 @@ pub const BACK: Mark = Mark::of("principal-back");
 /// **一处说全**（照实记，用户裁定）：这一族挂在树上哪里，读这一枚就够——装配侧与客侧都引它，
 /// 谁也不自己拼那几段。它从前是"`/svc` 那一段"（三族各写一遍同一个字符串），而"本族那一
 /// 段"要另配 [`NAME`] 才拼得出来 ⇒ 路散在两处。
-pub const DIR: Path = crate::system::DIR.join(NAME);
+pub const DIR: &Path = Path::new("svc/sys/principal");
 
 /// 本服务在树上的那一段名字（门的第二段）：`/svc/sys/principal`——**它自己不是一格**（开面那一刀：
 /// 两枚门牌是它底下那两格 `/svc/sys/principal/{ask,set}`，末段名由

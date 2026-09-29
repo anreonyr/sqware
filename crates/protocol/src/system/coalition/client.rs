@@ -93,8 +93,8 @@ impl Face {
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
-        act.query(seed).store(&mut frame);
-        if mail::HolePie::from_token(self.entry).push(&frame).is_err() {
+        let n = act.query(seed).store_at(&mut frame, 0).ok_or(Fail::Unknown)?;
+        if mail::HolePie::from_token(self.entry).push(&frame[..n]).is_err() {
             let _ = mail::release(back);
             return Err(Fail::Unknown);
         }

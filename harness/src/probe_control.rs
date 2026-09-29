@@ -44,10 +44,11 @@
 extern crate alloc;
 extern crate programs;
 
+use alloc::string::ToString;
+
 use env::Wait;
 use programs::Report;
 
-use env::Tag;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::control as ccall;
@@ -97,13 +98,13 @@ fn main() -> Report<'static> {
 
     // 四、**表里没有的名字** ⇒ 期望那一格语义码（`Unknown`）。这一条量的正是"这一问走到了对面、
     //     对面解开了它、并把账上的结论答了回来"——`Bad`（本端这一趟没走到）在这一格是红。
-    let nobody = Tag::new(NOBODY).expect("probe-control: bad probe name");
-    let missing = control.service(nobody).state(Wait::AtMost(MS));
+    let nobody = NOBODY.to_string();
+    let missing = control.service(nobody.clone()).state(Wait::AtMost(MS));
     debug!("probe-control: missing={missing:?}");
 
     // 五、**本台自己**：装配表里有这一行、而本台此刻活着 ⇒ 答得出一个生命阶段。
     //     （真值由装配那一趟给 `Ready`；`Starting` 也在"这一行还在、这一面看得见它"之内。）
-    let mine = Tag::new("probe-control").expect("probe-control: bad own name");
+    let mine = "probe-control".to_string();
     let alive = control.service(mine).state(Wait::AtMost(MS));
     debug!("probe-control: self={alive:?}");
 
@@ -126,8 +127,11 @@ fn main() -> Report<'static> {
 
     // 七、**判面**：本台手里只有**问面**那一枚入口——发写要各答 `Denied`（不是 `Bad`：那一趟
     //     走到了对面，是对面**说得清清楚楚**地拒的）。
-    let write_mint = control.mint(nobody, Wait::AtMost(MS)).err();
-    let write_start = control.service(nobody).start(Wait::AtMost(MS)).err();
+    let write_mint = control.mint(nobody.clone(), Wait::AtMost(MS)).err();
+    let write_start = control
+        .service(nobody.clone())
+        .start(Wait::AtMost(MS))
+        .err();
     let write_stop = control.service(nobody).stop(Wait::AtMost(MS)).err();
     debug!(
         "probe-control: mint(ask)={write_mint:?} start(ask)={write_start:?} stop(ask)={write_stop:?}"

@@ -90,7 +90,7 @@ use crate::system::operator::path::Path;
 /// （`/svc/drv`），而"服务那一层"（`/svc`，含设备账那一台）与它平级。用户裁定的是：
 /// **常驻的东西都挂在 `/svc` 底下**（`/svc/{sys/{…},drv,hub}`），而 `/dev` 留给**设备那一轴**
 /// （hub 落的那本账）。故这一段从"顶层一格"变成"`/svc` 底下的一段"。
-pub const SVC: Path = crate::system::SVC;
+pub const SVC: &Path = crate::system::SVC;
 
 /// 驱动族在命名树上的那一段名：**`drv`**（整条路是 [`ROAD`]）。
 ///
@@ -109,4 +109,4 @@ pub const DIR: &str = "drv";
 /// 客人写 `driver::ROAD.join(ME)`——判据一格都不必再写。
 ///
 /// **路是"容器链"，不含那一枚自己的名字**（`/svc/drv/uart` 那最后一段归客人自己拼）。
-pub const ROAD: Path = SVC.join(DIR);
+pub const ROAD: &Path = Path::new("svc/drv");

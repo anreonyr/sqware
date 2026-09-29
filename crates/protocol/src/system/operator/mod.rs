@@ -33,13 +33,12 @@
 //!
 //! **号就是下标**（照实记：原来是一棵嵌套树，按深度递归 ⇒ 持树者死在第 117 层）。
 //!
-//! 一条路是**段列表**（`&[Tag]`），不是一个字符串：一段就是现成的 [`Tag`]（定长 32 字节、
-//! 构造即校验）——于是"名字不合法"在类型上不存在，也没有分隔符 / 转义 / `..` 这些边界。
-//! **路只有一处用处**：[`Operator::seek`] 把它译成号（见下一节）。
+//! 一条路是**一条 `/` 分开的串**（`Path` 视图 ／ `PathBuf` 拥有）：段就是这条串上的子切片，
+//! 没有转义 / `..` 这些边界（空段归一）。**路只有一处用处**：[`Operator::seek`] 把它译成号。
 //!
 //! # 名与号分开
 //!
-//! 机器用**号**（[`EntryId`]），人用**名**（[`Tag`]）。号在 `part` / `land` 时铸、**换绑不动号**、
+//! 机器用**号**（[`EntryId`]），人用**名**（`String`）。号在 `part` / `land` 时铸、**换绑不动号**、
 //! `trim` 与 `find` 剔死则号失效（水位只上不下 ⇒ 号不重用）；**根没有号**，故 0 是第一个真格子。
 //!
 //! 名字是**间接**的坐标：一条路（段列表）全系统只有一处用处——[`Operator::seek`] 把路**译成号**。
@@ -297,7 +296,7 @@ pub const NAME: &str = "operator";
 /// **照实记（这一族从前没有自己那一枚 `DIR`）**：它挂在哪，写的是**别族**的名
 /// （`programs/src/system/mod.rs` 那个 `sys_dir()` 引 `ccall::frame::DIR`——control 那族的）
 /// ——两族的路靠巧合一致。这一刀把它收进自己这一族：四族各有一枚 `DIR`，前缀共用一处。
-pub const DIR: Path = crate::system::DIR.join(NAME);
+pub const DIR: &Path = Path::new("svc/sys/operator");
 
 pub use frame::{
     ASK_MARK, BAD, DENIED, FULL, LINK, Listing, NONEMPTY, OK, Req, Rule, Said, TIP_LEN, TIP_MARK,

@@ -571,7 +571,7 @@ pub const BACK: Mark = Mark::of("coalition-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/coalition`（头两段是四族共用的
 /// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal）。
-pub const DIR: Path = crate::system::DIR.join(NAME);
+pub const DIR: &Path = Path::new("svc/sys/coalition");
 
 /// 本服务在树上的那一段名字（门的第二段）：`/svc/sys/coalition`——**它自己不是一格**（开面那一刀：
 /// 两枚门牌是它底下那两格 `/svc/sys/coalition/{ask,set}`，末段名由

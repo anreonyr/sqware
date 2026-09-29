@@ -27,6 +27,8 @@
 extern crate alloc;
 extern crate programs;
 
+use alloc::string::ToString;
+
 use env::Wait;
 use programs::Report;
 
@@ -36,14 +38,13 @@ use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 
-use env::Tag;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域要落的那一格：`/svc/lease`——**声明归自己**，随后本域就死。
 /// **容器那一段那一条路**（`/svc`）——那一段名字**只在协议那一侧说**；本台只用它一个末段
 /// （`file_name()`，std 同形），故取名字那一手在运行期做（`file_name` 不是 `const`）。
-const DIR: protocol::system::operator::Path = protocol::system::SVC;
+const DIR: &protocol::system::operator::Path = protocol::system::SVC;
 const ME: &str = "lease";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
@@ -69,13 +70,14 @@ fn main() -> Report<'static> {
     // 两问，那条线上的裸孔一个都不用（从前那行 `&session.link, session.talk, session.host`
     // 因此整行退场）⇒ 交给 [`TreeFace::of`]（吃所有权），两问从"四格参数"变成面上的方法。
     let tree = TreeFace::of(session);
-    let (Some(dir), Some(me)) = (DIR.file_name(), Tag::new(ME)) else {
+    let Some(dir) = DIR.file_name() else {
         return bail("probe-lease: bad name");
     };
+    let me = ME.to_string();
     // `/svc` 已经在（principal / coalition 起的头）；分目录是**幂等**的，故这里照走一遍——
     // 拿到的就是那块 Pane（"分"与"落"现在都挂在那块 Pane 上）。
     let root = tree.root();
-    let Ok(sys) = root.open(dir, Wait::AtMost(MS)) else {
+    let Ok(sys) = root.open(dir.to_string(), Wait::AtMost(MS)) else {
         return bail("probe-lease: no /svc");
     };
     let Ok(entry) = mail::unseal_hole(env::Mark::of("lease-entry")) else {

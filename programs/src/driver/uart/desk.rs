@@ -131,15 +131,8 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
 fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     let tree = operator::Face::from(&ctx.session);
     let list = [(RX, rx), (TX, tx)];
-    let plated = bridge::land(
-        &tree,
-        ME,
-        &driver::ROAD.join(ME),
-        Mine::Yes,
-        Permit::Unset,
-        &list,
-        ms,
-    );
+    let road = driver::ROAD.try_join(ME).expect("uart: tree: road");
+    let plated = bridge::land(&tree, ME, &road, Mine::Yes, Permit::Unset, &list, ms);
     assert_eq!(plated.len(), 2, "{ME}: tree: road");
     for (one, want) in plated.iter().zip([RX, TX]) {
         assert!(one.land.is_ok(), "{ME}: tree: land {want}");

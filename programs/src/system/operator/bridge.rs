@@ -22,13 +22,15 @@
 //! 三侧分家之后两侧共用的图与说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::operator`]。
 
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use env::Mark;
 use env::Wait;
 use env::wire::Eyes;
 use env::wire::Field;
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
@@ -157,7 +159,7 @@ impl Tree {
         push(
             tip,
             Tip::Plate {
-                road: *road,
+                road: road.to_path_buf(),
                 leaf,
                 rule,
             },
@@ -190,11 +192,10 @@ pub fn attach(
     tip: &mut Option<PieToken>,
     coord: Coord,
 ) -> Result<(), &'static str> {
-    let link = Tag::new(LINK).ok_or("operator:name")?;
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
     //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
-    let link = establish::endpoint(client, Mark::of(link.as_str()), millis)
+    let link = establish::endpoint(client, Mark::of(LINK), millis)
         .map_err(|_| "operator:seat")?;
     // **认不到对端那一枚 = 这条路没接上**（原 `claim` 那一格）。
     if link.tx().is_none() {
@@ -281,7 +282,7 @@ pub struct Landed {
     /// 查回来验一遍（`token`）：**路译得回、那一枚门闩取得回来**。
     pub find: Result<(), Fail>,
     /// 拿号问名：**号 ↔ 名对得上**，才算那枚号是真坐标。
-    pub named: Option<Tag>,
+    pub named: Option<String>,
 }
 
 /// **上树落门牌那一趟**：名字先全验 → 逐段分路（`part` 幂等）→ 逐枚落（`bind`）→ 逐枚查回来
@@ -368,7 +369,7 @@ pub fn land(
             Some(id) => Pane::of(tree, id),
             None => tree.root(),
         };
-        match here.open(*seg, millis) {
+        match here.open(seg.to_string(), millis) {
             Ok(next) => at = Some(next.id()),
             Err(fail) => {
                 debug!("{family}: tree road={road} open at={seg:?} failed={fail:?}");
@@ -385,10 +386,7 @@ pub fn land(
     let mut out = Vec::with_capacity(faces.len());
     for (face_name, entry) in faces {
         let face_name = *face_name;
-        let Some(name) = Tag::new(face_name) else {
-            debug!("{family}: tree: bad name");
-            return out;
-        };
+        let name = face_name.to_string();
         // **落门牌**：答的是门牌自己那一格的号。
         let landed = pane
             .bind(name, *entry, permit, mine, millis)

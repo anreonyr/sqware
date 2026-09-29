@@ -17,9 +17,11 @@
 //!
 //! 这里全是**核心**：视图进来、坐标出去，没有会话、没有门闩、没有失败策略。
 
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use env::{Key, Tag};
+use env::Key;
 use runtime::core::dock::View;
 
 use crate::program::router::PLIC_CLASS;
@@ -32,11 +34,11 @@ use crate::program::router::PLIC_CLASS;
 ///
 /// **`line == 0` 是一句诚实的答话**（不是"没算出来"）：这台设备不是本控制器的中断源
 /// （控制器自己、以及那些没写 `interrupt-parent` 的节点）。要占线的驱动拿到 0 就知道"这台没有线"。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Device {
     pub key: Key,
-    pub name: Tag,
-    pub class: Tag,
+    pub name: String,
+    pub class: String,
     pub line: u32,
 }
 
@@ -96,15 +98,14 @@ impl Machine {
             let Some(class) = node
                 .compatible()
                 .and_then(|c| c.all().next())
-                .and_then(|c| Tag::new(c))
+                .map(|c| c.to_string())
             else {
                 continue;
             };
-            // 名字装不下（> 31 字节）⇒ 这一台**落不了格**（`/dev/<类>/<名>` 那一段就是它）。
+            // 名字装不下（长度那一字节放不下 / 那一帧的缓冲装不下）⇒ 这一台**落不了格**
+            // （`/dev/<类>/<名>` 那一段就是它）——那一判今天只在**编帧**那一刻，构造面不判。
             // 不猜一个截短的名字：那会让两台不同的设备撞成同一格。
-            let Some(name) = Tag::new(node.name) else {
-                continue;
-            };
+            let name = node.name.to_string();
             let Some(base) = first_region(node) else {
                 continue;
             };

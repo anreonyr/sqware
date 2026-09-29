@@ -112,7 +112,7 @@ pub(super) fn answer(
             //
             // **按坐标查**（不是按号）：`land` 那一问发生在动树之前，而 `land` 换绑**不动号**
             // ——故那一刻手里只有坐标。
-            if !tree.claimable(Key::At(at, name), who) {
+            if !tree.claimable(Key::At(at, name.clone()), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
             // **一问一动**：两轴与那一枚砖**一起落**（`tree.land` 那一手的 `Node::Tile`）——
@@ -131,7 +131,7 @@ pub(super) fn answer(
             //
             // **落格那条路（`super::plate`）不问**：那是本域替装配者立前缀，本域是那一格的权威
             // （同 `part` 幂等那一条的立场）。
-            if !tree.claimable(Key::At(at, name), who) {
+            if !tree.claimable(Key::At(at, name.clone()), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
             return match tree.part(at, name) {

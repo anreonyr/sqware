@@ -25,11 +25,12 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Tag;
+use alloc::string::ToString;
+
 use programs::system::Assembly;
 use programs::system::assemble;
 use programs::system::bootstrap;
-use programs::system::control::{self, E_MANIFEST, E_PROGRAM};
+use programs::system::control::{self, E_PROGRAM};
 
 /// 本域的死法：**一格 = 死在起手的哪一步**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -116,7 +117,7 @@ fn system() -> Result<(), Fail> {
     let Some(last_program) = list.last() else {
         return Err(Fail::Assemble(E_PROGRAM));
     };
-    let last = Tag::new(last_program.name()).ok_or(Fail::Assemble(E_MANIFEST))?;
+    let last = last_program.name().to_string();
 
     // 死亡道跟着这张单铸：要存在信号的那几位一位一条——在 `Assembly::new` 里。
     let mut assembly = Assembly::new(boot, &list).map_err(|_| Fail::Group)?;

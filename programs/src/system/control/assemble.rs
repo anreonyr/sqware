@@ -18,7 +18,9 @@
 //! **本域不碰原件**：门闩在引导域手里，它直接授进 `target` 那张表，回一段"坐标 + 号"的记录；
 //! 本域只做一次转投（一整段原样推过去）。
 
-use env::{Pair, Tag, Wait};
+use alloc::string::String;
+use alloc::string::ToString;
+use env::{Pair, Wait};
 use protocol::debug;
 
 use env::{Access, Key, Mark, Policy};
@@ -40,7 +42,7 @@ impl Control {
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
     pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
-        let name = Tag::new(program.name()).ok_or(Error::Manifest)?;
+        let name = program.name().to_string();
         self.table
             .register(name, announce_of(program.demand.setup))
             .map_err(|_| Error::Table)
@@ -62,11 +64,11 @@ impl Control {
     pub fn launch(
         &mut self,
         program: &Program,
-        name: Tag,
+        name: String,
         service: &mut Service,
     ) -> Result<(), Error> {
         // **一、放行**（不等就绪）。
-        self.start(name, service)?;
+        self.start(name.as_str(), service)?;
         // **二、递物料**（只对声明了 `Setup::Machine` 的那一台；别的台这一步是空转）。
         // **等就绪**由调用方接在它该在的位置（见本手的注）。
         if let Some(load) = program
@@ -100,7 +102,7 @@ impl Control {
     /// 读数、那一台就不在收方账上（缺一台不影响别的台）。
     pub fn enroll(
         &mut self,
-        name: Tag,
+        name: String,
         service: &mut Service,
         load: &'static str,
     ) -> Result<(), Error> {

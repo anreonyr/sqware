@@ -20,9 +20,10 @@
 //! **面的两层**：`pub mod` 是**全部**，下面的 `pub use` 是**便利层**——收的是"调用点当词汇
 //! 用"的那些名字（各调用域枚举、句柄、错误词汇、权限、名字、坐标、供给词汇…）。
 //!
-//! **串面照 std 原样住在 [`text`]**（照实记）：借 [`CStr`](text::CStr)、拥有
-//! [`CString`](text::CString)——本仓**一个字都不新写**。线上那一格定长名字是 [`wire::Tag`]，
-//! 它只管线的形状，读面经 `Deref` 交给 `CStr`。
+//! **串面就是 std 的那两枚**（照实记）：借 `&str`、拥有 `String`——本仓**一个字都不新写**，
+//! 也没有第三个可转的名字（C 那一族是 C ABI 的形状，不是名字的）。线上那一格名字就是
+//! `String` 自己的 `Span` impl：**长度那一字节 ＋ 那几字节**；定宽、终止 NUL、零填充都不在了。
+//! **名字不报上界**（那一格 `MAX = None`）：它多长由**族**说——带它的帧写 `#[frame(len = …)]`。
 //!
 //! **本 crate 引 `alloc`**（照实记）：只为 [`manifest::pack`] 那段可增长的字节缓冲
 //! （清单的写侧）。它随 plan 退场时一起回来；`entries` 那一侧（读侧）一个字节都不分配。
@@ -38,7 +39,6 @@ pub mod manifest;
 pub mod pair;
 pub mod permission;
 pub mod supply;
-pub mod text;
 pub mod wait;
 pub mod wire;
 
@@ -63,9 +63,5 @@ pub use mold::Frame;
 pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
 pub use supply::{Kind, WANT_LEN, Want};
-/// **串面**：照 std 原样转出（见 [`text`] 的口径：上层不许回头改这一层）。
-pub use text::{CStr, CString};
 pub use wait::Wait;
-pub use wire::{
-    Decode, Eyes, FromPair, Mark, NAME_LEN, PieToken, Tag, TaskId, TeamId, VirtAddr, Wire,
-};
+pub use wire::{Decode, Eyes, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

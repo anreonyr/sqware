@@ -26,9 +26,10 @@
 //! "这条路若要走，叫什么"这一句声明——留着是因为它们是**这份协议的坐标**（`frame.rs` 那两条
 //! 防撞断言读的就是它们），而不是因为有客人。
 
+use alloc::string::String;
 use crate::message::Message;
 use env::Wait;
-use env::{PieToken, Tag, TaskId};
+use env::{PieToken, TaskId};
 use runtime::env::mail;
 
 use crate::communication::establish;
@@ -76,8 +77,8 @@ impl Face {
     ///
     /// **这一步还没有身子**：`Mint` 只把域与线程造出来、还压在对端手里等放行；身子是
     /// [`Service::start`] 那一趟交回来的（[`Started::id`]）。
-    pub fn mint(&self, name: Tag, wait: Wait) -> Result<Service<'_>, Fail> {
-        let said = self.call(frame::Req::Mint(name), wait)?;
+    pub fn mint(&self, name: String, wait: Wait) -> Result<Service<'_>, Fail> {
+        let said = self.call(frame::Req::Mint(name.clone()), wait)?;
         read(said)?;
         Ok(Service { face: self, name })
     }
@@ -85,7 +86,7 @@ impl Face {
     /// **认已有的一条**：不铸、不验——名字只是这一面以后叫它的坐标。
     ///
     /// 它成不成立由 [四手](Service) 各自的第一趟答出来（表里没有 ⇒ `Fail::Unknown`）。
-    pub fn service(&self, name: Tag) -> Service<'_> {
+    pub fn service(&self, name: String) -> Service<'_> {
         Service { face: self, name }
     }
 
@@ -100,8 +101,8 @@ impl Face {
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Bad)?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Ask::LEN];
-        act.ask(seed).store(&mut frame);
-        if mail::HolePie::from_token(self.entry).push(&frame).is_err() {
+        let n = act.ask(seed).store_at(&mut frame, 0).ok_or(Fail::Bad)?;
+        if mail::HolePie::from_token(self.entry).push(&frame[..n]).is_err() {
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
             let _ = mail::release(back);
             return Err(Fail::Bad);
@@ -122,12 +123,12 @@ impl Face {
 /// 名字不变、对端不变，故柄里只有这两格；四手各带自己的 `Wait`（**预算不是柄的状态**）。
 pub struct Service<'a> {
     face: &'a Face,
-    name: Tag,
+    name: String,
 }
 
 impl Service<'_> {
     /// 这一条叫什么（读数用）。
-    pub fn name(&self) -> &Tag {
+    pub fn name(&self) -> &String {
         &self.name
     }
 
@@ -136,23 +137,23 @@ impl Service<'_> {
     /// **身子在这一趟里到手**：子域的代表线程在放行之前就已经产好（`service::mint` 的口径），
     /// 故这一答非成即败，不存在"起来了但没有号"这一格。
     pub fn start(&self, wait: Wait) -> Result<Started<'_>, Fail> {
-        let said = self.face.call(frame::Req::Start(self.name), wait)?;
+        let said = self.face.call(frame::Req::Start(self.name.clone()), wait)?;
         Ok(Started {
             face: self.face,
-            name: self.name,
+            name: self.name.clone(),
             task: read(said)?.task,
         })
     }
 
     /// **下令收掉**（下令即回，不等它收完）。
     pub fn stop(&self, wait: Wait) -> Result<(), Fail> {
-        let said = self.face.call(frame::Req::Stop(self.name), wait)?;
+        let said = self.face.call(frame::Req::Stop(self.name.clone()), wait)?;
         read(said).map(|_| ())
     }
 
     /// 这一条此刻处于哪个生命阶段。
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
-        let said = self.face.call(frame::Req::State(self.name), wait)?;
+        let said = self.face.call(frame::Req::State(self.name.clone()), wait)?;
         // **先过码表**（`read`），再看第二格；表外的判别值不猜。
         State::of_code(read(said)?.a).ok_or(Fail::Bad)
     }
@@ -164,13 +165,13 @@ impl Service<'_> {
 /// 要 `stop` / `state` 就 [`Started::service`] 拿回那一柄。
 pub struct Started<'a> {
     face: &'a Face,
-    name: Tag,
+    name: String,
     task: TaskId,
 }
 
 impl Started<'_> {
     /// 这一条叫什么（读数用）。
-    pub fn name(&self) -> &Tag {
+    pub fn name(&self) -> &String {
         &self.name
     }
 
@@ -186,7 +187,7 @@ impl Started<'_> {
     pub fn service(&self) -> Service<'_> {
         Service {
             face: self.face,
-            name: self.name,
+            name: self.name.clone(),
         }
     }
 }

@@ -46,13 +46,13 @@ use env::Wait;
 use programs::Report;
 
 use alloc::format;
+use alloc::string::ToString;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
 use protocol::system::operator::{Fail, Permit};
 
-use env::Tag;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -93,20 +93,18 @@ fn main() -> Report<'static> {
     let Some(dir) = protocol::system::SVC.file_name() else {
         return bail("probe-denied: bad name");
     };
-    let Some(me) = Tag::new(ME) else {
-        return bail("probe-denied: bad name");
-    };
+    let me = ME.to_string();
 
     // 二·二、它要落进 `/svc`（**已经在**：principal / coalition 起的头）——分那一块目录
     // （**幂等**），拿到的就是那块 Pane。**这一手不过门禁**（`part` 不在闸口里），故本域虽然
     // 没有身份，它照旧答得出。
     let root = tree.root();
-    let sys = match root.open(dir, Wait::AtMost(MS)) {
+    let sys = match root.open(dir.to_string(), Wait::AtMost(MS)) {
         Ok(sys) => sys,
         Err(fail) => {
             // **读数带那一格码**：`bail` 那句话只说"没拿到"（旧注里那句 `/svc` 也是历史），
             // 而"为什么"——门禁判"不"还是"判不了"、还是根本没走到——只有这行说得清。
-            debug!("probe-denied: open {} {fail:?}", dir.as_str());
+            debug!("probe-denied: open {} {fail:?}", dir);
             return bail("probe-denied: no /svc");
         }
     };
