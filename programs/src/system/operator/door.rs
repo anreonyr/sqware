@@ -221,6 +221,10 @@ pub(super) fn may(tree: &Operator, coord: Coord, who: TaskId, permit: Permit) ->
         debug!("operator: door has no face");
         return Code::Ok;
     };
+    // **如实记（量过：这一问不是那一秒的病根）**：它几问句各带 `Wait::AtMost(MS = 1000)`，故一度
+    // 是"装配期那位客人等了 1.1~1.2 s"的头号嫌疑。debug 档 11 跑里挂了 `operator: door ms=` 一
+    // 行去量它——**一行都没落**（五跑出现 stall 的那些跑里，这一问每一趟都在 200 ms 门槛之下）
+    // ⇒ 排除。病根见 `work/mail/tole.rs` 的游标照实记（组每轮都从第 0 格扫）。
     verdict(
         &Court {
             session: &session,

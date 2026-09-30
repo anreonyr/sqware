@@ -454,7 +454,10 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
     //
     // **照实记（"卡的是他自己那一趟"这句话与本域的形状不符，量出来的）**：那一等（`Sender::Drop` →
     // `reclaim` → `wait(Push, Forever)`）**就在本域这条循环里**跑 ⇒ 客人不来取，卡住的是
-    // **整台树**（此后所有人的手都不被取）。
+    // **整台树**（此后所有人的手都不被取）。**如实记**：量"装配期那位客人等了 1.1~1.2 s"那一轮
+    // 时挂了三段计时（`wait`/`core`/`reply`），**这一格一次都没超过 200 ms** —— 故它不是那一秒的
+    // 病根（病根是组的"每轮都从第 0 格扫"，见 `work/mail/tole.rs` 的游标照实记）；这一句留在这里
+    // 是因为它仍是**形状上的事实**：这一等确实在循环里。
     let mut tx = Sender::<ocall::Union>::from_token(guest.reply());
     let _ = tx.send(said);
     code

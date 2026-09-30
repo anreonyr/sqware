@@ -64,6 +64,17 @@ pub struct ToleMeta {
     life: Arc<Life>,
     cells: SpinLock<Vec<Cell>>,
     owner: TaskId,
+    /// **轮转游标**：`ready()` 下一次**从第几格起扫**。
+    ///
+    /// **照实记（这一格是量出来的）**：`ready()` 原先每轮都从第 0 格扫起、取第一枚就绪的——
+    /// 于是装配期"最后挂上组"的那一位（`tid=20`）**一直排在后面**：它的手在孔上活了
+    /// 1141~1228 ms（11 跑 5 跑），而那一秒里树**没有一趟**超过 200 ms、它那一格自
+    /// `operator: arm late` 起就一直"是成员、有手"。⇒ 病根是**先看谁**，不是"谁算有事"。
+    /// 今天命中一格之后把游标推到**它的下一格**：一格一格地公平。
+    ///
+    /// **只影响次序**：`await` 的契约仍是"等到**任意**一格有事"；游标只决定**先看谁**。
+    /// `Relaxed` 就够（它是公平用的偏好，不是同步点；共享组上两个取用者抢它也不会错）。
+    cursor: AtomicUsize,
 }
 
 pub(crate) fn key(meta: &ToleMeta) -> WakeKey {
@@ -83,7 +94,18 @@ impl ToleMeta {
             life: Life::new(),
             cells: SpinLock::new_level(Level::L3, Vec::new()),
             owner,
+            cursor: AtomicUsize::new(0),
         })
+    }
+
+    /// 轮转起点（`ready()` 从这一格起扫）。
+    pub(crate) fn cursor(&self) -> usize {
+        self.cursor.load(Ordering::Relaxed)
+    }
+
+    /// 记下"下一轮从这一格起扫"（命中项的下一格）。
+    pub(crate) fn seek_cursor(&self, at: usize) {
+        self.cursor.store(at, Ordering::Relaxed);
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {
