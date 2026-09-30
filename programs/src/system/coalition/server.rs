@@ -125,9 +125,9 @@ pub fn serve() -> Result<(), Start> {
         //
         // **照实记（这一处拆成两句话，量"折在哪一步"）**：这一格从前两处共用一个
         // `Start::Face(E_COALITION)`（= `coalition: no identity plate`），而那是**两件事**：
-        // ①[`find_face`] 空手（两条腿各留了一行读数，见那边）；②**门牌拿回来了、却用不动**
+        // ①[`find_face`] 空手（它两条腿各有 `deny=` 一行，见那边）；②**门牌拿回来了、却用不动**
         // （[`Face::of`] 问不出开者）。前一件在**树那一侧**，后一件在**本端表里**——下一步不同，
-        // 读数也不该合成一句。
+        // 读数也不该合成一句。（①那一侧**成功**的那条读数按判决退了场，见 [`find_face`]。）
         let roster_entry = match find_face(&tree) {
             Some(entry) => entry,
             None => {
@@ -139,8 +139,9 @@ pub fn serve() -> Result<(), Start> {
             Ok(roster) => roster,
             Err(fail) => {
                 // 问不出开者 = `Reserve` 答不上来：那一枚**不在本表里 / 不是孔 / 已封印**
-                // （见 `establish::opened_by` 的照实记）——把本端读得到的三格一起报出来，
-                // 与 [`find_face`] 那一行 `ok …` 对得上对不上，一眼可判。
+                // （见 `establish::opened_by` 的照实记）——把本端读得到的三格一起报出来。这条路
+                // 至今走不到（`find_face` 那一侧量过：`mark` 与 `want` 逐字节相同），故这一句是
+                // "它真出了"时的第一手现场。
                 match mail::reserve(roster_entry) {
                     Ok((vestor, owner, mark)) => debug!(
                         "coalition: roster plate unusable entry={} vestor={} owner={} mark={:#x} fail={fail:?}",
@@ -331,7 +332,7 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// **要的是名册的「问面」**（开面那一刀）：本域只用 `Resolve`（"这一位此刻代表谁"），而它今天
 /// 落在 `/svc/sys/principal/ask` 那一格上——`/svc/sys/principal` 自己已是那段前缀（一块 `Pane`）。
 ///
-/// # 读数：**两条腿各报一行**（量"折在哪一条腿上"）
+/// # 照实记（**"两条腿各报一行"这条读数退了场，两条 `deny=` 留下**）
 ///
 /// 起手那一句 `coalition: no identity plate` 从前只说"没拿到"，而"没拿到"在这条路上是**两件
 /// 事**，下一步完全不同：
@@ -341,14 +342,15 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 ///   - **`token` 那条腿**（号 → 那一枚门牌）：号有了、`Find` 答不回来（那一号是块窗格、
 ///     或它后面那一位没了）—— 这是"名册上树了但那一格不对"。
 ///
-/// 故两腿各留一行，且 **`ok` 那一行把拿回来的那枚的号 ＋ `Reserve` 三格一起报出来**：与
-/// "问面"该有的记号（`want=`）对一眼，就能分出"拿到的那一枚**根本不是它**"这一形
-/// ——那正是本域起不来时要问的第一个问题。
+/// 曾为它每条腿各挂一行读数，且**成功那一行**把拿回来的那枚的号 ＋ `Reserve` 三格一起报出来
+/// （用来判"拿到的那一枚**根本不是它**"）。**判决：无罪**——debug 档 `product` 景里本域起手
+/// **每一趟都是 `ok`**、`mark` 与 `want` **逐字节相同**（`entry=193 vestor=12 owner=14
+/// mark=0xc388b8d828255205 want=0xc388b8d828255205`），那一形**没发生过**；那几趟红的病根在
+/// **内核复制**（`mail::copy` 把两侧段表锁步走却各推一整段，见 `operator/client.rs` 的 `call`）。
 ///
-/// **照实记（这一条腿的判决：无罪）**：debug 档 `product` 景里那几趟红，本域起手这一趟**每一趟
-/// 都是 `ok`**、且 `mark` 与 `want` **逐字节相同**（`entry=193 vestor=12 owner=14
-/// mark=0xc388b8d828255205 want=0xc388b8d828255205`）——"拿错了门牌"这一形**没发生过**。
-/// 那几趟红的病根在别处（内核复制，见 `operator/client.rs` 的 `call` 与 `mail::copy` 的照实记）。
+/// 故**成功那一行连同它那一枚 `Reserve` 退场**（证伪即收：它在每台机器都要走的那条起手路上，
+/// debug 档每趟多一次 envcall），而两条腿的 `deny=` 留在**失败那一路**上——"折在哪条腿上"正是
+/// 下一次本域起不来时要问的第一件事。读数与命令见提交 `3c366ef`。
 fn find_face(tree: &TreeFace) -> Option<PieToken> {
     // 路是**本族那一族的常量**（`/svc/sys/principal`）＋ 那一面的名——一处都不自己拼。
     let Some(road) = pcall::DIR.try_join(pcall::Grant::Ask.name()) else {
@@ -363,26 +365,7 @@ fn find_face(tree: &TreeFace) -> Option<PieToken> {
         }
     };
     match tile.token(Wait::AtMost(MS)) {
-        Ok(entry) => {
-            match mail::reserve(entry) {
-                Ok((vestor, owner, mark)) => debug!(
-                    "coalition: find_face ok road={road} entry={} vestor={} owner={} mark={:#x} want={:#x}",
-                    entry.get(),
-                    vestor.get(),
-                    owner.get(),
-                    mark.get(),
-                    pcall::Grant::Ask.mark().get()
-                ),
-                // 号拿回来了、可本表里查不出这一枚（`Reserve` 答 `None`）——**这一格正是**
-                // 调用点那个 `Face::of` 会折的地方，先在这里报一句（它自己也报，两行对得上）。
-                Err(_) => debug!(
-                    "coalition: find_face ok road={road} entry={} reserve=no want={:#x}",
-                    entry.get(),
-                    pcall::Grant::Ask.mark().get()
-                ),
-            }
-            Some(entry)
-        }
+        Ok(entry) => Some(entry),
         Err(fail) => {
             debug!("coalition: find_face deny=token road={road} fail={fail:?}");
             None
