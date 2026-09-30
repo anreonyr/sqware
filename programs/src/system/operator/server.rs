@@ -24,7 +24,7 @@
 //! 一刀再来找一遍。
 
 use env::wire::Eyes;
-use env::{HoleDir, Mark, Wait};
+use env::{HoleDir, Mark, PieToken, Wait};
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
@@ -144,6 +144,15 @@ pub fn serve() -> Result<(), Start> {
     // **招待活动的读数**（封顶 40 行 ＋ 每 500 行留一行）：醒来这一次，是"认得的客人"还是
     // "唤醒却认不出"——后者正是"手递上来了、却永远没人读"那一档（见 [`unarmed_report`] 同段照实记）。
     let mut wakes: usize = 0;
+    // **风暴的形状**：连着几次是"同一枚孔 ＋ 同一个动作码"。
+    //
+    // **照实记（这一格是量出来的）**：一条注定译不出的路被客侧重试时，症状就是"同一枚孔、同一个
+    // 码、连着几百次"——实测 `operator: woke n=500…2000 tok=501 known=true read=true`：每次都
+    // **读得到**、整机却不再前进。只看"醒了多少次"分不出"忙"与"打转"，故把**是哪一枚孔、要什么
+    // 动作、连了几次**一起报出来（客侧那一头同因的读数见 `road_to_id` 的照实记）。
+    let mut last_tok = PieToken::NONE;
+    let mut last_code: u8 = 0xff;
+    let mut streak: usize = 0;
     loop {
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut tree);
@@ -167,23 +176,36 @@ pub fn serve() -> Result<(), Start> {
         };
         wakes = wakes.saturating_add(1);
         // 提示孔那一格由下一轮的 `settle` 收（它非阻塞地拉）；这里只管"是哪位客人的问话孔"。
-        let read = if tok != tip
+        // `serve_one` 返的是**这一问的动作码**（首格，`None` = 什么也没读到）——"读到没有"与
+        // "要的是什么"是同一趟的两个事实，故一处交出来（见它那一节）。
+        let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
             serve_one(&mut tree, guest, coord, &mut buf)
         } else {
-            false
+            None
         };
+        let read = code.is_some();
+        let code = code.unwrap_or(0xff);
+        if tok == last_tok && code == last_code {
+            streak = streak.saturating_add(1);
+        } else {
+            streak = 1;
+            last_tok = tok;
+            last_code = code;
+        }
         if wakes <= 40 || wakes % 500 == 0 {
             let mut unarmed = 0usize;
             desk.unarmed_each(|_| unarmed += 1);
             debug!(
-                "operator: woke n={} tok={} tip={} known={} read={} guests={} unarmed={}",
+                "operator: woke n={} tok={} tip={} known={} read={} code={} streak={} guests={} unarmed={}",
                 wakes,
                 tok.get(),
                 tok == tip,
                 tok == tip || desk.guest(tok).is_some(),
                 read,
+                code,
+                streak,
                 desk.occupied(),
                 unarmed,
             );
@@ -329,20 +351,31 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
 ///
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
-fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) -> bool {
-    let Some(ask) = guest.ask() else {
-        return false;
-    };
+fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) -> Option<u8> {
+    let ask = guest.ask()?;
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
     let decoded = Receiver::<ocall::Req>::from_token(ask)
         .recv(buf, Wait::POLL)
         .ok();
-    // 诊断（release 也看得见，见 `serve` 那一段照实记）：**这一醒到底读到了没有**。
-    let read = decoded.is_some();
+    // 这一问的动作码（首格）——**读到了才有可信的首格**；它同时就是"这一醒读到了没有"。
+    let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));
     let said = answer(tree, decoded, guest.who(), coord, grant);
+    // **答的是什么**：客侧把"忙 / 没有 / 读不懂"折成同一格（`Unknown`），故这一侧要把**本域答出去
+    // 的那一格码**报出来——"哪一位客人、问什么（首格码）、答什么"三样齐了，才谈得上说得清。
+    // **只在非 OK 时报**（正常一条答话不占串口）：`BAD` 与那六格各是一个成因。
+    if let ocall::Union::Status(status) = said
+        && status != ocall::OK
+    {
+        debug!(
+            "operator: answered code={} ask={} who={}",
+            status,
+            code.unwrap_or(0xff),
+            guest.who().get()
+        );
+    }
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
     // **写端跟着这一趟走**：编在本族那只缓冲里（在这一帧的栈上）、递出去（一个 envcall），
     // 落出作用域时等这只手被取走——**那一位客人不来取，卡的是他自己那一趟**，不是整台服务
@@ -350,5 +383,5 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
     // 孔不是本端的事），故这一格只等，不 `seal`。
     let mut tx = Sender::<ocall::Union>::from_token(guest.reply());
     let _ = tx.send(said);
-    read
+    code
 }

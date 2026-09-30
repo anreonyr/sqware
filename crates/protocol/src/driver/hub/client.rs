@@ -131,7 +131,18 @@ impl Face {
         with: impl FnOnce(PieToken) -> S,
         wait: Wait,
     ) -> Result<R::In, Fail> {
-        let (back, seed) = establish::lend_out(self.entry, BACK_MARK).map_err(|()| Fail::Dead)?;
+        /// **四步分开报**（照实记，与 `principal` / `coalition` 两面同一条）：借孔 / 编帧 / 递出 /
+        /// 收答各留一行读数——这一面是**所有驱动共用的单槽门面**，撞车在这里比哪一处都常见。
+        fn report(step: &str) {
+            crate::debug!("hub: call deny={step}");
+        }
+        let (back, seed) = match establish::lend_out(self.entry, BACK_MARK) {
+            Ok(pair) => pair,
+            Err(()) => {
+                report("borrow");
+                return Err(Fail::Dead);
+            }
+        };
         // **两只缓冲：问的与答的各一只**（照实记：这一格栽过——这一手原先只有一只 `R::EMPTY`，
         // 于是"问那一形比答那一形长"的那几条当场编不下：`bond` 问 41 字节、答 1 字节
         // （`Said`）⇒ `store` 一句话没写就返回 `None`，客户端折成 [`Fail::Bad`]，而**对端
@@ -142,6 +153,7 @@ impl Face {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
+            report("encode");
             return Err(Fail::Bad);
         };
         let door = mail::HolePie::from_token(self.entry);
@@ -153,16 +165,24 @@ impl Face {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
+            report("push");
             return Err(Fail::Dead);
         }
         let mut said = R::EMPTY;
         let got = match Receiver::<R>::from_token(back).recv(said.as_mut(), wait) {
             Ok(one) => Ok(one),
             Err(RecvFail::Mail(e)) if !matches!(e, env::MailFail::Dead | env::MailFail::Denied) => {
+                report("recv");
                 Err(Fail::Bad)
             }
-            Err(RecvFail::Mail(_)) => Err(Fail::Dead),
-            Err(RecvFail::Unread) => Err(Fail::Bad),
+            Err(RecvFail::Mail(_)) => {
+                report("recv-dead");
+                Err(Fail::Dead)
+            }
+            Err(RecvFail::Unread) => {
+                report("recv-unread");
+                Err(Fail::Bad)
+            }
         };
         // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
         let _ = door.wait(HoleDir::Push, Wait::Forever);

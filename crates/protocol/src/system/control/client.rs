@@ -33,7 +33,7 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
 
 use crate::communication::establish;
-use crate::communication::receiver::Receiver;
+use crate::communication::receiver::{Receiver, RecvFail};
 use crate::communication::session::Berth;
 
 use super::Fail;
@@ -96,12 +96,21 @@ impl Face {
     /// [`Fail::Bad`]。压它的理由：**对本端是同一个下一步**（这一趟别指望了）。分得开它们的那一格
     /// 在**对面**：语义格是持表那一侧真会答的码，"没走到"是本端自己在码表之外判的。
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Said, Fail> {
+        /// **四步分开报**（照实记，与 `principal` 那一面同一条）：这一格盖着四件事——借回信孔 /
+        /// 编帧 / 递出 / 收答——而"装配期折一趟"从前只看得出这一格。故每一步各留一行读数。
+        fn deny(step: &str) -> Fail {
+            crate::debug!("control: call deny={step}");
+            Fail::Bad
+        }
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）：
         // 那一枚"种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫表。
-        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Bad)?;
+        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Ask::LEN];
-        let n = act.ask(seed).store_at(&mut frame, 0).ok_or(Fail::Bad)?;
+        let n = act
+            .ask(seed)
+            .store_at(&mut frame, 0)
+            .ok_or_else(|| deny("encode"))?;
         let door = mail::HolePie::from_token(self.entry);
         // **递出，且等到轮到自己**（照实记见 `HolePie::push`）。**不等自己那只手**——见下 `wait`。
         if door.push(&frame[..n], Wait::Forever).is_err() {
@@ -110,13 +119,19 @@ impl Face {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
-            return Err(Fail::Bad);
+            return Err(deny("push"));
         }
         // 收：答话走**这一趟借出去的那一枚孔**（缓冲由调用方给——这一形 2 字节）。
         let mut buf = frame::Said::EMPTY;
         let got = Receiver::<frame::Said>::from_token(back)
             .recv(buf.as_mut(), wait)
-            .map_err(|_| Fail::Bad);
+            .map_err(|e| match e {
+                RecvFail::Unread => deny("recv-unread"),
+                RecvFail::Mail(m) => {
+                    crate::debug!("control: call deny=recv:{}", m.code());
+                    Fail::Bad
+                }
+            });
         // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
         let _ = door.wait(HoleDir::Push, Wait::Forever);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。

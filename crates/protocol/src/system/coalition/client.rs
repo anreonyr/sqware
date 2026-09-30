@@ -31,7 +31,7 @@ use runtime::env::mail;
 
 use super::frame::{self, BACK, CoalitionId, Fail, Window};
 use crate::communication::establish;
-use crate::communication::receiver::Receiver;
+use crate::communication::receiver::{Receiver, RecvFail};
 
 /// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）。
 pub struct Face {
@@ -89,11 +89,20 @@ impl Face {
     /// 这只是说**传输**那三件事落在哪一格；答话那一形里的码照读——开面那一刀添的
     /// [`Fail::Denied`] 就走它（见 `payload` / `flag` / [`Face::window`] 那三处同一口径）。
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Union, Fail> {
+        /// **四步分开报**（照实记，与 `principal` 那一面同一条）：这一格盖着四件事——借回信孔 /
+        /// 编帧 / 递出 / 收答——而"装配期折一趟"从前只看得出这一格。故每一步各留一行读数。
+        fn deny(step: &str) -> Fail {
+            crate::debug!("coalition: call deny={step}");
+            Fail::Unknown
+        }
         // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）。
-        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| Fail::Unknown)?;
+        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
-        let n = act.query(seed).store_at(&mut frame, 0).ok_or(Fail::Unknown)?;
+        let n = act
+            .query(seed)
+            .store_at(&mut frame, 0)
+            .ok_or_else(|| deny("encode"))?;
         let door = mail::HolePie::from_token(self.entry);
         // **递出，且等到轮到自己**（照实记见 `HolePie::push`）：不丢那一等，单槽门面上的两位
         // 客人就只会**排队**，不会把后到的那一趟当场折成失败。**不等自己那只手**——见下 `wait`。
@@ -102,14 +111,20 @@ impl Face {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
-            return Err(Fail::Unknown);
+            return Err(deny("push"));
         }
         // 收：答话走**这一趟借出去的那一枚孔**（缓冲由调用方给＝本族最大那一形）。
-        // 两格失败（没收到 / 解不动）在这一侧落同一格：`Unknown`。
+        // 两格失败（没收到 / 解不动）在这一侧落同一格：`Unknown`——**但哪一格要报得出来**。
         let mut buf = frame::Union::EMPTY;
         let got = Receiver::<frame::Union>::from_token(back)
             .recv(buf.as_mut(), wait)
-            .map_err(|_| Fail::Unknown);
+            .map_err(|e| match e {
+                RecvFail::Unread => deny("recv-unread"),
+                RecvFail::Mail(m) => {
+                    crate::debug!("coalition: call deny=recv:{}", m.code());
+                    Fail::Unknown
+                }
+            });
         // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
         let _ = door.wait(HoleDir::Push, Wait::Forever);
         // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。

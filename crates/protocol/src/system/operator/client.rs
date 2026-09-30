@@ -3,7 +3,7 @@
 //! ```text
 //!   Face::of(会话)                session: Session（持有）或 Face::from(&Session)（借用）
 //!   Face::root()                  树的根
-//!   Face::pane(路) / tile(路)      一条路 → 一块窗格 / 一枚砖（都带重试与额度）
+//!   Face::pane(路) / tile(路)      一条路 → 一块窗格 / 一枚砖（都带退避重试）
 //!   Pane::open / bind / list / trim / name    这一块窗格自己那几手
 //!   Pane::tile(路)                            这一块底下的路 → 一枚砖（就地问一次）
 //!   Tile::name / pane / token                 这一格自己的读数、另一种读法与那一枚门闩
@@ -47,6 +47,7 @@ use runtime::env::mail;
 use crate::communication::establish::Endpoint;
 use crate::communication::sender::Sender;
 use crate::communication::session::{Berth, Session};
+use crate::communication::{deadline, remain};
 use crate::system::operator as ocall;
 use crate::system::operator::Fail;
 use crate::system::operator::frame::Permit;
@@ -132,15 +133,15 @@ impl Face {
         }
     }
 
-    /// 一条**从根出发**的路 → 一块窗格（带重试与额度：路那几格可能由别的域落下）。
+    /// 一条**从根出发**的路 → 一块窗格（带退避重试：路那几格可能由别的域落下）。
     ///
     /// 那一格是一枚砖 ⇒ [`Fail::NotAPane`]（`list` 自己那一问就判了）。
     pub fn pane(&self, road: &Path, wait: Wait) -> Result<Pane<'_>, Fail> {
-        let (id, _left) = road_to_id(&self.session, road, wait)?;
+        let id = road_to_id(&self.session, road, wait)?;
         Pane::at(self, id, wait)
     }
 
-    /// 一条**从根出发**的路 → 一格（带重试与额度：路那几格可能由别的域落下）。
+    /// 一条**从根出发**的路 → 一格（带退避重试：路那几格可能由别的域落下）。
     ///
     /// **它只译号，不顺手取那一枚门闩**：要门闩的是 [`Tile::token`]，那是另一问
     /// （`find` 会动树、还会把那一枚授进来）。多问一趟既费一次往返、又会让"路译得出"这一件
@@ -155,13 +156,13 @@ impl Face {
     ///
     /// | 入口 | 起点 | 重试 |
     /// |---|---|---|
-    /// | [`Face::pane`] / [`Face::tile`] | 根 | **有**（译不出就睡一拍再问，额度 [`RETRY_MS`]） |
+    /// | [`Face::pane`] / [`Face::tile`] | 根 | **有**（译不出就退避一拍再问，见 [`road_to_id`]） |
     /// | [`Pane::open`] / [`Pane::tile`] | 一块窗格 / 就地问一次 | 无（译不出就答那一格失败） |
     ///
     /// 带重试那两格是"门牌/格子由别的域落下、本域可能比它先起"那一形；不带那两格是
     /// "我手里已经有一条好路"那一形。要哪一形由调用点的处境说，不由默认值兜。
     pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'_>, Fail> {
-        let id = id_of(&self.session, road, wait)?;
+        let id = road_to_id(&self.session, road, wait)?;
         Ok(Tile { face: self, id })
     }
 
@@ -434,7 +435,7 @@ impl<'a> Pane<'a> {
     /// "名字只到 `seek` 这一格"）。故这一手在哪一块窗格上叫都一样——它收 `&self` 只为不另造一
     /// 个自由入口；柄与这条路无关。
     ///
-    /// **它不带重试**（译不出就答那一格失败）：要"译不出就再问"的额度语义走 [`Face::tile`]。
+    /// **它不带重试**（译不出就答那一格失败）：要"译不出就再问"的退避重试走 [`Face::tile`]。
     /// 这一手是"就地问一次"的那一形。
     ///
     /// **它不做窗格那一判**：要窗格走 [`Face::pane`] / [`Pane::open`]——**判据就是 `list`**。
@@ -492,8 +493,17 @@ impl Tile<'_> {
 // 只借 `&Session`（不是 `&Face`）的那几处调用点（`programs/src/driver/context.rs::line` 那类
 // 手里有会话、又拿不出 `Face` 所有权的地方）直接叫它们。
 
-/// 译号失败之后、再问之前睡多久（毫秒）。
-const RETRY_MS: usize = 1;
+/// 译号失败之后**再问之前**等的节拍（毫秒）：起这个数、每轮翻倍、封顶 [`RETRY_MAX_MS`]。
+///
+/// **照实记（1 ms 那一版把"等一会再来"做成了风暴）**：原先两轮之间只睡 `RETRY_MS = 1`，而额度
+/// 又按"每轮只扣 1 ms"算 ⇒ `Wait::AtMost(1000)` 可以走**上千趟往返**。实测（debug 档 `product`
+/// 景）：`operator: woke n=500…2000 tok=501 known=true read=true guests=6 unarmed=0` ——**同一枚孔
+/// 被反复问、每次都读得到**，而整机不再前进：一条**注定译不出的路**就这么把树那一台按在往返里。
+/// 今天两件一起改：**额度按真时限算**（[`deadline`]／[`remain`]，与 `establish::claim` 同一条
+/// 口径）＋ **节拍退避** —— 故一趟注定失败的查找最多十来次往返，不再以次数换时间。
+const RETRY_MIN_MS: usize = 10;
+/// 退避的封顶（毫秒）。
+const RETRY_MAX_MS: usize = 100;
 
 /// 客侧第二步（内里那一手）：**编好的一问推上去，收一句答**。
 ///
@@ -526,52 +536,45 @@ fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<o
     said
 }
 
-/// 沿一条路译成号，**答出剩下的额度**（不是"这次重试用掉了多少"）。
+/// 沿一条路译成号：**译不出（`UNKNOWN`）就等一拍再来**——那几格可能由别的域落下，它可能落得比
+/// 本域晚。`wait` 是**真时限**（上限族，见文件头定式）：到点把最后一次的失败原样交出去。
 ///
-/// **额度不是时限**：每重试一轮只扣 [`RETRY_MS`]，**单次往返自己花掉的时间不计入**——这一层
-/// 量不到"上一条问了多久"（`Receiver::recv` 只答收到没收到）。故 `left` 是**扣了账的额度**：
-/// 持有者若每次都恰在期限内答 `UNKNOWN`，每一轮最长等掉当时那一刻的 `left`，而 `left` 一轮只
-/// 减 1 ⇒ 累计最坏 ≈ n²/2（`n = 10`、每轮 ~9 ms ⇒ 实耗 ≈ 50 ms）。这是载体层的口径，本层
-/// 不假装能给"整趟时限"。
+/// **`Forever` 就是一直等**（那道护栏留在类型上，不折成"很大的毫秒数"）；`AtMost(0)` = "不再等"
+/// ⇒ 就地问一次；**节拍退避**（见 [`RETRY_MIN_MS`]）——故一趟注定译不出的路最多十来次往返。
 ///
-/// **`Forever` 扣完还是 `Forever`**（按变体扣账，不折成"很大的毫秒数"）：那道护栏留在类型上，
-/// 不是"实践上等价"。
-fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<(EntryId, Wait), Fail> {
-    let mut left = wait;
+/// **放弃时留一行读数**：哪条路、重试了几轮、退避到多少。一条"译不出的路"过去在读数上是不存在
+/// 的那一档（成因见 [`RETRY_MIN_MS`] 的照实记）。
+fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
+    let until = deadline(wait);
+    let mut backoff = RETRY_MIN_MS;
+    let mut rounds: usize = 0;
     loop {
-        match route(session.talk, &session.link, road, left) {
-            Ok(id) => return Ok((id, left)),
-            // 还留着额度就睡一拍再来：`Forever` 恒真，`AtMost(0)` 是"不再等"⇒ 落下面原样答码。
-            Err(Fail::Unknown) if left != Wait::AtMost(0) => {
+        match route(session.talk, &session.link, road, remain(until)) {
+            Ok(id) => return Ok(id),
+            Err(Fail::Unknown) => {
+                // 到点（或本就是"不再等"）⇒ 原样交回最后一次的答案。
+                if remain(until) == Wait::POLL {
+                    crate::debug!(
+                        "operator: road retry gave up rounds={rounds} backoff={backoff}ms road={road}"
+                    );
+                    return Err(Fail::Unknown);
+                }
+                rounds += 1;
                 let _ =
-                    runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
-                left = match left {
-                    // **永久不扣账**（它本来没有额度），也不许被折成 `AtMost(usize::MAX - k)`。
-                    Wait::Forever => Wait::Forever,
-                    Wait::AtMost(n) => Wait::AtMost(n.saturating_sub(RETRY_MS)),
-                };
+                    runtime::env::room::sleep(core::time::Duration::from_millis(backoff as u64));
+                backoff = (backoff * 2).min(RETRY_MAX_MS);
             }
             Err(fail) => return Err(fail),
         }
     }
 }
 
-/// 沿一条路译成号（名字 → 号），**译不出（`UNKNOWN`）就重试**——那几格可能由别的域落下，
-/// 它可能落得比本域晚。答号，或答线上那一格折出来的失败。
-fn id_of(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-    road_to_id(session, road, wait).map(|(id, _left)| id)
-}
-
-/// 沿一条路**找到那一枚入口**那条腿的额度口径，两句照实写在这一处（[`Tile::token`] 走的是
-/// 同一条腿）：
+/// **一条路上两条腿的口径**，一处照实写：译号这一腿带退避重试（[`road_to_id`]），取门闩那一问
+/// （[`Tile::token`]）就地问一次——两条腿各管自己那一问，没有"合起来算额度"的函数。
 ///
-/// - **这一格修掉的是"多跑一趟"**：译号用掉多少额度，取门闩就只有剩下的那些——不是又拿满一份；
-/// - **但它仍不是"整趟时限"**：额度不是时限（见 [`road_to_id`]）；连"推得进去"都不保证
-///   ——`call` 那一步是 `Sender::send(ask, Wait::Forever)`，孔是单槽，槽里压着未读问话就
-///   **等在门外**。故这一族的 `Wait` 只承诺"**本端愿意等多久**"。
-///
-/// 两条腿今天各自只由一个读者走：[`road_to_id`] 由 [`Face::room`] / [`Face::entry`] 走，
-/// 取门闩那一问由 [`Tile::token`] 走——故没有一处"合起来算额度"的函数再留在这一层。
+/// **它仍不是"整趟时限"**：连"推得进去"都不保证——`call` 那一步是 `Sender::send(ask)`
+/// （**一次尝试**，`Wait::POLL`），孔是单槽，槽里压着未读问话就答 `Busy`（那一位可能正被别的
+/// 域问着）。故这一族的 `Wait` 只承诺"**本端愿意等多久**"。
 
 /// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**。
 ///
@@ -588,3 +591,4 @@ fn route(say: PieToken, link: &Endpoint, road: &Path, wait: Wait) -> Result<Entr
 fn map_code(code: u8) -> Fail {
     ocall::code_to_fail(code).unwrap_or(Fail::Unknown)
 }
+
