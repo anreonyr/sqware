@@ -49,7 +49,12 @@ pub fn draw(
             MailFail::Dead | MailFail::Denied => return Err(Fail::Denied),
             _ => return Err(Fail::Local),
         },
-        Err(RecvFail::Unread) => return Err(Fail::Bad),
+        // **"收下来解不动"那一格带上读到了几字节**（照实记见 `RecvFail::Unread`）：从前的空变体
+        // 说不出"帧坏了"与"缓冲短了"是哪一件。
+        Err(RecvFail::Unread(len)) => {
+            crate::debug!("supply: recv unread len={len}");
+            return Err(Fail::Bad);
+        }
     };
     // 回单回来了（或这一趟判了失败）⇒ 把那一手收口：对面取走了是零代价，没取走就等它取
     // （**那条报不许悬**）。

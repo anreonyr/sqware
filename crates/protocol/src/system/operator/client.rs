@@ -37,6 +37,8 @@
 //! （wire 那一层），由本文件折成 [`Fail`]——"client → Fail，wire → u8"。
 
 use alloc::string::String;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use crate::message::Message;
 use env::Mark;
 use env::Wait;
@@ -517,24 +519,98 @@ const RETRY_MAX_MS: usize = 100;
 /// 函数、收 `say` 与 `link` 两枚：手里有会话的调用点（[`Pane`] / [`Tile`] 那几个方法的实现体，
 /// 以及 `programs/src/driver/context.rs::line` 那类"有会话、拿不出 `Face` 所有权"的地方）
 /// 直接叫它。**同一步，同一个名**。
+///
+/// # 读数：**这条答话路上"有没有没人读的答复"**（量"错位"那一条假设）
+///
+/// **要证的那件事**：这一族的答话走**每条会话一条、无序号**的孔（与另外三家"每趟借一枚新回信
+/// 孔"正相反）——问与答按序配对，答话那一侧只认"这条路上下一句"。若本端**放弃过一趟**（超时）
+/// 而那一句答复**还是来了**，它就顶在这条路上，被**下一趟**当成它自己的答复读走：此后每一趟的
+/// 问答都**错开一位**（症状可以是"拿到一枚用不动的种子"，也可以是路那一问连着答不对而重试）。
+///
+/// **两条探子（都不动孔，`peek` 只看长度与发送者）**：
+///
+///   - `lane ahead`：**问之前**先看一眼——路上**已经**压着一句 ⇒ 上一次放弃的那句到了（错位在
+///     这里**当场看得见**，不必等它把后面几趟带歪）；
+///   - `lane late`：**放弃之后再一眼**（`recv` 没回来那一格）——答复是在本端到点**之后**才落的；
+///   - `call gave up` 那一行把四笔账一起报（`asked` / `answered` / `ahead` / `late`）：
+///     `asked - answered` 就是"放弃过几趟"，而 `ahead > 0` 是"错位真发生过"的**唯一**硬证据。
+///
+/// **只在 debug 档探**（`peek` 是一次 envcall，而这一手是装配期最热的调用之一：一块格 4 趟、
+/// hub 二十块格 80+ 趟）——**release 的时序读数不许被读数自己挪动**（本仓栽过一次"绿寄生在
+/// 打印挪动的 ~7 ms 上"）。故这里与 `debug!` 同一道门：release 一个数都不增、一次也不探。
+///
+/// **照实记（这一条假设的判决：没被证实）**：debug 档 `product` 景跑了十来趟，**每一趟都是
+/// `ahead=0 late=0`**——这条答话路上**从来没有**压着一句没人读的答复，`asked - answered` 最多
+/// 差 1（就是那一趟自己放弃的那一句）。也就是说：**这条会话路上问与答一直对得上号**，"错位"
+/// 不是那几台红的原因。真正那条病根在**内核**：`mail::copy` 把两侧段表锁步走、两侧 `va` 在一页
+/// 里的偏移一不同就把字节搬错位（长度对、发送者对的 "内容不对" 与 `MailFail::Gone` 都是它，
+/// 判据与实测见 `kernel/src/work/mail/mod.rs` 的 `copy`）。**这四笔账留着**：它现在是"这条路上
+/// 对号入座"的**正面证据**（ahead 一直为 0），而不是一次待证的猜测。
 fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
+    // **问之前第一眼**：这条路上已经有一只手了 = 上一趟的答复没人读走。
+    if let Some((len, from)) = lane_hand(link) {
+        let n = AHEAD.fetch_add(1, Ordering::Relaxed) + 1;
+        crate::debug!("operator: lane ahead n={n} len={len} from={}", from.get());
+    }
     // 发：装上、递出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
     // **递出即返回**（一个 envcall）：等它下线由这一格 `Sender` 的 `reclaim`／`Drop` 担着，压到
     // 这一趟收完再落地。**不能推完就落地**：那等于"等对面来取"，而对面可能正忙着自己的那一趟
     // ——两个服务互等对方取走就是死锁（量到过：名册 ⇄ 盟册）。
     let mut tx = Sender::<ocall::Req>::from_token(say);
     tx.send(ask).map_err(|_| Fail::Unknown)?;
+    ASKED.fetch_add(1, Ordering::Relaxed);
     // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
     let mut buf = ocall::Union::EMPTY;
     let said = link
         .receiver::<ocall::Union>()
         .recv(buf.as_mut(), wait)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
-        .map_err(|_| Fail::Unknown);
+        .map_err(|_| {
+            // **放弃之后第二眼**：答复是不是刚到（或已经在了）？
+            if let Some((len, from)) = lane_hand(link) {
+                let n = LATE.fetch_add(1, Ordering::Relaxed) + 1;
+                crate::debug!("operator: lane late n={n} len={len} from={}", from.get());
+            }
+            crate::debug!(
+                "operator: call gave up asked={} answered={} ahead={} late={}",
+                ASKED.load(Ordering::Relaxed),
+                ANSWERED.load(Ordering::Relaxed),
+                AHEAD.load(Ordering::Relaxed),
+                LATE.load(Ordering::Relaxed)
+            );
+            Fail::Unknown
+        });
+    if said.is_ok() {
+        ANSWERED.fetch_add(1, Ordering::Relaxed);
+    }
     // 答话回来了 ⇒ 对面早把那一只手取走 ⇒ 这一收口是零代价；没回来也得收口（那条报不许悬）。
     let _ = tx.reclaim();
     said
 }
+
+/// 这条答话路上此刻**有没有一只手**（长度 ＋ 发送者）——**一个字节都不取**。
+///
+/// **只在 debug 档问**（理由见 [`call`] 的读数那一节）：release 直接答"没有"，
+/// 于是调用点那一支不进（`peek` 那次 envcall 也不发）。
+fn lane_hand(link: &Endpoint) -> Option<(usize, TaskId)> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    match mail::HolePie::from_token(link.rx()).peek() {
+        Ok((len, from)) => Some((len, from)),
+        // `Busy` = 路上空的（那是常态）；别的格（封印 / 用不动）在这一层不必分——
+        // 它们是"这一枚孔没了"，下一趟 `recv` 自己会答出来。
+        Err(_) => None,
+    }
+}
+
+/// **这一条树路上答话的四笔账**（只在 debug 档动，见 [`call`]）：
+/// 推出去几问（`ASKED`）／收回来几答（`ANSWERED`）／问之前就压着一句的次数（`AHEAD`）／
+/// 放弃之后答复才到的次数（`LATE`）。
+static ASKED: AtomicUsize = AtomicUsize::new(0);
+static ANSWERED: AtomicUsize = AtomicUsize::new(0);
+static AHEAD: AtomicUsize = AtomicUsize::new(0);
+static LATE: AtomicUsize = AtomicUsize::new(0);
 
 /// 沿一条路译成号：**译不出（`UNKNOWN`）就等一拍再来**——那几格可能由别的域落下，它可能落得比
 /// 本域晚。`wait` 是**真时限**（上限族，见文件头定式）：到点把最后一次的失败原样交出去。

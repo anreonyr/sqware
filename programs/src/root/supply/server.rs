@@ -97,7 +97,10 @@ pub fn serve(
             // **内核当场说"这一枚孔用不动了"**——不必再问 `alive()`（那是"没消息"时的替代判据，
             // 见上面 `alive` 那一段）：端点没了，这条循环没有下一步可走。
             Err(RecvFail::Mail(_)) => return,
-            Err(RecvFail::Unread) => {
+            Err(RecvFail::Unread(len)) => {
+                // **读到了几字节**（这一格从前是个空变体，说不出"帧坏了"与"我读少了"）：
+                // 照实记见 `protocol::communication::receiver::RecvFail`。
+                protocol::debug!("supply: recv unread len={len}");
                 reply(pier, BAD, &[]);
                 continue;
             }

@@ -30,7 +30,7 @@ use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use protocol::communication::receiver::Receiver;
+use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::operator as ocall;
@@ -356,9 +356,56 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
-    let decoded = Receiver::<ocall::Req>::from_token(ask)
-        .recv(buf, Wait::POLL)
-        .ok();
+    //
+    // **照实记（这一格为什么要分开报：量出来的）**：debug 档 `product` 景里量到一位客人被**连着
+    // 答八次 `BAD`**（`operator: unreadable frame from=17` ＋ `answered code=7 ask=255 who=17`，
+    // 客侧同因那一行是 `road retry gave up rounds=7`）——而 `BAD` 这一句**三个成因**：
+    // ①**这一枚孔上根本没有手**（假醒：组说这一格有事、取的时候却没有）；②**有手、可我读不懂**
+    // （长度 / 形状不在本族的表里）；③搬不动（孔用不动了）。今天三格**各自报得出来**：
+    // `Mail` 那一支带域码，`Unread` 那一支带**读到了几字节**（`pull` 已经把那一段写进这只缓冲，
+    // 故连**前 8 字节也照得出来**——"帧坏了 / 段里混进了非 UTF-8 / 我读少了"三种从此分得开）。
+    //
+    // **照实记（后来查到了哪一支：搬过来的字节本来就错位）**：同一条线继续量的结果是
+    // **"字节错了"而不是"帧坏了"**——内核 `mail::copy` 把两侧段表锁步走、每个片段各推进一整段，
+    // 两侧 `va` 在一页里的偏移一不同就错位（症状：长度对、发送者对、内容不对）。修法与两处实测
+    // 见 `kernel/src/work/mail/mod.rs` 的 `copy`；这三行读数留着——它们是下一次再出这一形时
+    // **第一眼**要看的东西。
+    let decoded = match Receiver::<ocall::Req>::from_token(ask).recv(buf, Wait::POLL) {
+        Ok(wire) => Some(wire),
+        // ①③：没有手 / 孔用不动了。**域码原样报**（`Busy` 与 `Dead` / `Denied` 是两件事）。
+        Err(RecvFail::Mail(e)) => {
+            debug!(
+                "operator: ask empty who={} tok={} code={}",
+                guest.who().get(),
+                ask.get(),
+                e.code()
+            );
+            None
+        }
+        // ②：有手、读不懂——**报读到了多少，并把头 8 字节照出来**（照实记见上）。
+        Err(RecvFail::Unread(len)) => {
+            let show = len.min(8);
+            let mut head = [0u8; 8];
+            if let Some(src) = buf.get(..show) {
+                head[..show].copy_from_slice(src);
+            }
+            debug!(
+                "operator: ask unreadable who={} tok={} len={} head={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
+                guest.who().get(),
+                ask.get(),
+                len,
+                head[0],
+                head[1],
+                head[2],
+                head[3],
+                head[4],
+                head[5],
+                head[6],
+                head[7]
+            );
+            None
+        }
+    };
     // 这一问的动作码（首格）——**读到了才有可信的首格**；它同时就是"这一醒读到了没有"。
     let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));

@@ -112,7 +112,10 @@ impl Face {
             .recv(buf.as_mut(), wait)
             // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`——**但哪一格要报得出来**。
             .map_err(|e| match e {
-                RecvFail::Unread => deny("recv-unread"),
+                RecvFail::Unread(len) => {
+                    crate::debug!("principal: call deny=recv-unread len={len}");
+                    Fail::Denied
+                }
                 RecvFail::Mail(m) => {
                     crate::debug!(
                         "principal: call deny=recv:{}",

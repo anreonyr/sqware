@@ -212,7 +212,9 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
             }
             None => {
                 let from = hand.from;
+                let (va, len) = (hand.va, hand.len);
                 drop(pending);
+                note_gone(meta, from, va, len, 0, "space");
                 note_hand_off(meta, from);
                 let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
                 Err(MailFail::Gone)
@@ -457,9 +459,11 @@ fn note_hand_off(meta: &HoleMeta, from: TaskId) {
 ///
 /// `live` = 收场时**还压在孔上、没人取**的手数（>0 = 有手永远没人取）。
 /// `back_n` / `back_max_len` = **读不成、手原样放回**的次数与最长那一趟（见 [`note_back`]）。
+/// `gone_n` = **这只手送不到**（`Gone`，三格成因见 [`note_gone`]）的次数——**正常应当为 0**：
+/// 它数的是"有一条报被内核当场扔掉了"（收方读到的是 `MailFail::Gone`）。
 pub(crate) fn hold_line() {
     crate::putln!(
-        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={}",
+        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={} gone_n={}",
         HOLD_N.load(Ordering::Relaxed),
         HOLD_MAX_MS.load(Ordering::Relaxed),
         HOLD_WORST.load(Ordering::Relaxed),
@@ -468,6 +472,7 @@ pub(crate) fn hold_line() {
         HANDS_LIVE.load(Ordering::Relaxed),
         BACK_N.load(Ordering::Relaxed),
         BACK_MAX_LEN.load(Ordering::Relaxed),
+        GONE_N.load(Ordering::Relaxed),
     );
 }
 
@@ -487,6 +492,45 @@ pub(crate) fn note_back(len: usize, max: usize) {
     BACK_MAX_LEN.fetch_max(len, Ordering::Relaxed);
     if !BACK_ALARMED.swap(true, Ordering::Relaxed) {
         crate::putln!("mail: hand returned len={} max={}", len, max);
+    }
+}
+
+// ── 诊断：**这只手送不到了**（`Gone`）──────────────────────────────────────
+//
+// **照实记（这一行要证的那件事：`Gone` 有两个成因，而它们下一步完全不同）**：
+//
+//   · **`why=space`**——登记时那个**空间**已经回收（`Weak` 升不上来，"消息随人走"）：说明递手的
+//     那一位**已经退场**，或它的那一叠（team）已经没了；
+//   · **`why=range`**——空间还在，可**那段 VA 今天不可读**（`whole(.., R)` 不过，复制没敢做）：
+//     说明那只手**指着一段已经不在了的内存**（栈被人复用、或那段页被收走）——那正是本仓栽过
+//     两次的那一类（"递出去的那一段"没活到被取走）；
+//   · **`why=copy`**——过得了检查、复制却失败了：`copy` 那一段自己再验一遍两面（源可读、收可写）
+//   并逐片段搬；它答 `false` 的那一格**正是两面片段边界对不齐**（照实记见 `work/mail/mod.rs`
+//   的 `copy`）。
+//
+// 三格都折成同一个 `MailFail::Gone`，而"人走了"与"内存没了"要修的地方**不在同一层**。
+// 故第一次当场报一行（被 host 杀掉的跑走不到收场块），把 `from` / `va` / `len` / `dst` 四格一起
+// 报出来——验收与调试两边都能拿它对上"是哪一位、哪两段"。
+static GONE_N: AtomicUsize = AtomicUsize::new(0);
+static GONE_ALARMED: AtomicBool = AtomicBool::new(false);
+
+/// 报一笔"这只手送不到了"（成因见上，`why` 就是那一句话）。
+///
+/// `dst` = 收方那一段的 VA（0 = 这一格与收方缓冲区无关）——**两边在一页里的偏移不同**正是
+/// `why=copy` 那一格要看的东西。
+pub(crate) fn note_gone(meta: &HoleMeta, from: TaskId, va: usize, len: usize, dst: usize, why: &str) {
+    GONE_N.fetch_add(1, Ordering::Relaxed);
+    if !GONE_ALARMED.swap(true, Ordering::Relaxed) {
+        crate::putln!(
+            "mail: hand gone hole#{} from={} owner={} va={:#x} len={} dst={:#x} why={}",
+            meta.id.0,
+            from.get(),
+            meta.owner.get(),
+            va,
+            len,
+            dst,
+            why,
+        );
     }
 }
 

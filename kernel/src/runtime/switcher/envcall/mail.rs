@@ -143,8 +143,15 @@ fn hand_over(
         mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
-    if !mail::whole(&src, va, len, PteFlags::R) || !mail::copy(&src, va, space, buf.as_usize(), len)
-    {
+    if !mail::whole(&src, va, len, PteFlags::R) {
+        // **"空间还在、可那段 VA 今天不可读"**（三格成因见 `hole::note_gone`）：那只手指着一段
+        // 已经不在了的内存——照实记与判据写在那一边，这一行只把"是哪一段"报出来。
+        mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "range");
+        mail::hole::taken(meta);
+        return Err(MailFail::Gone);
+    }
+    if !mail::copy(&src, va, space, buf.as_usize(), len) {
+        mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "copy");
         // **发送方那段没了 ⇒ 那只手就地收掉**（不是放回）：那条报再也送不到，放回只会把孔
         // 永远占住。照实记（量出来的）见 `work/mail/hole.rs` 的 `taken`／`back`。
         mail::hole::taken(meta);

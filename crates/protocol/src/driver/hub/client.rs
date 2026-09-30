@@ -179,8 +179,8 @@ impl Face {
                 report("recv-dead");
                 Err(Fail::Dead)
             }
-            Err(RecvFail::Unread) => {
-                report("recv-unread");
+            Err(RecvFail::Unread(len)) => {
+                crate::debug!("hub: call deny=recv-unread len={len}");
                 Err(Fail::Bad)
             }
         };

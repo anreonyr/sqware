@@ -122,8 +122,41 @@ pub fn serve() -> Result<(), Start> {
         //
         // **名字叫 `roster`**（照实记：它从前叫 `face`，而这一刀之后"面"指的是本族那两枚门牌）：
         // 它是**名册的问面**，唯一用处是 `who()` 那一句"发送者此刻代表谁"。
-        let roster_entry = find_face(&tree).ok_or(Start::Face(E_COALITION))?;
-        let roster = Face::of(roster_entry).map_err(|_| Start::Face(E_COALITION))?;
+        //
+        // **照实记（这一处拆成两句话，量"折在哪一步"）**：这一格从前两处共用一个
+        // `Start::Face(E_COALITION)`（= `coalition: no identity plate`），而那是**两件事**：
+        // ①[`find_face`] 空手（两条腿各留了一行读数，见那边）；②**门牌拿回来了、却用不动**
+        // （[`Face::of`] 问不出开者）。前一件在**树那一侧**，后一件在**本端表里**——下一步不同，
+        // 读数也不该合成一句。
+        let roster_entry = match find_face(&tree) {
+            Some(entry) => entry,
+            None => {
+                debug!("coalition: roster plate not found");
+                return Err(Start::Face(E_COALITION));
+            }
+        };
+        let roster = match Face::of(roster_entry) {
+            Ok(roster) => roster,
+            Err(fail) => {
+                // 问不出开者 = `Reserve` 答不上来：那一枚**不在本表里 / 不是孔 / 已封印**
+                // （见 `establish::opened_by` 的照实记）——把本端读得到的三格一起报出来，
+                // 与 [`find_face`] 那一行 `ok …` 对得上对不上，一眼可判。
+                match mail::reserve(roster_entry) {
+                    Ok((vestor, owner, mark)) => debug!(
+                        "coalition: roster plate unusable entry={} vestor={} owner={} mark={:#x} fail={fail:?}",
+                        roster_entry.get(),
+                        vestor.get(),
+                        owner.get(),
+                        mark.get()
+                    ),
+                    Err(_) => debug!(
+                        "coalition: roster plate unusable entry={} reserve=no fail={fail:?}",
+                        roster_entry.get()
+                    ),
+                }
+                return Err(Start::Face(E_COALITION));
+            }
+        };
 
         // 六、一本空册：一枚号都还没铸（**起手不失败**——空册不分配）。
         let book = Coalition::new();
@@ -283,21 +316,76 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
 /// 找**身份服务**那份门牌（**问面**那一条）：`"/svc/sys/principal/ask"`，**译不出就再问**（有界）。
 ///
 /// 门牌是 principal 自己跑完它那一段才落下的（它比本域先起来，但"就绪"与"上树"不是同一步）
-/// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就睡一拍再来，额度 [`MS`]）→ 入口。
+/// ——故那一趟**必须带重试**：名字 → 号（撞 `UNKNOWN` 就退避一拍再来）→ 入口。
 /// 这一趟与另外七处（`canonical` / `sleeper` / `probe-rule-other` / `subject` / `member` / `probe-rule` / `guest`）逐字同构，
-/// 已并进 [`TreeFace::tile`] ＋ [`Tile::token`] 那一趟（重试与额度都在里面）。**`MS` 是额度不是时限**——往返耗时
-/// 不计账、推不进去还会等在门外，两处照实记见 `operator/client.rs` 的 `entry_of`。
+/// 已并进 [`TreeFace::tile`] ＋ [`Tile::token`] 那一趟。
+///
+/// **照实记（"额度"那句随退避那一刀改口径）**：译号那条腿今天是**真时限 ＋ 节拍退避**
+/// （`operator/client.rs` 的 `road_to_id`），取门闩那一问仍是"就地问一次"——两腿各管自己那一问，
+/// 没有"合起来算额度"的函数。**而它仍不是"整趟时限"**：推不进去会当场答 `Busy`（门是单槽，
+/// 那一位可能正被别的域问着），故这一族的 `Wait` 只承诺"**本端愿意等多久**"。
 ///
 /// **照实记（收 `&TreeFace`，不再收 `&Session`）**：本域**已持**一面（上树那一趟包出来的），
 /// 故这一手只借它——`Face` 把 Session 藏在里面，签名上不再出现那条线。
 ///
 /// **要的是名册的「问面」**（开面那一刀）：本域只用 `Resolve`（"这一位此刻代表谁"），而它今天
 /// 落在 `/svc/sys/principal/ask` 那一格上——`/svc/sys/principal` 自己已是那段前缀（一块 `Pane`）。
+///
+/// # 读数：**两条腿各报一行**（量"折在哪一条腿上"）
+///
+/// 起手那一句 `coalition: no identity plate` 从前只说"没拿到"，而"没拿到"在这条路上是**两件
+/// 事**，下一步完全不同：
+///
+///   - **`tile` 那条腿**（路 → 号）：路还没落下 / 树那边答不上来 —— 折在**树那一侧**，
+///     且它带的退避重试已经在 [`TreeFace::tile`] 里跑尽（放弃那一行读数在那边）；
+///   - **`token` 那条腿**（号 → 那一枚门牌）：号有了、`Find` 答不回来（那一号是块窗格、
+///     或它后面那一位没了）—— 这是"名册上树了但那一格不对"。
+///
+/// 故两腿各留一行，且 **`ok` 那一行把拿回来的那枚的号 ＋ `Reserve` 三格一起报出来**：与
+/// "问面"该有的记号（`want=`）对一眼，就能分出"拿到的那一枚**根本不是它**"这一形
+/// ——那正是本域起不来时要问的第一个问题。
+///
+/// **照实记（这一条腿的判决：无罪）**：debug 档 `product` 景里那几趟红，本域起手这一趟**每一趟
+/// 都是 `ok`**、且 `mark` 与 `want` **逐字节相同**（`entry=193 vestor=12 owner=14
+/// mark=0xc388b8d828255205 want=0xc388b8d828255205`）——"拿错了门牌"这一形**没发生过**。
+/// 那几趟红的病根在别处（内核复制，见 `operator/client.rs` 的 `call` 与 `mail::copy` 的照实记）。
 fn find_face(tree: &TreeFace) -> Option<PieToken> {
     // 路是**本族那一族的常量**（`/svc/sys/principal`）＋ 那一面的名——一处都不自己拼。
-    let road = pcall::DIR.try_join(pcall::Grant::Ask.name())?;
-    tree.tile(&road, Wait::AtMost(MS))
-        .ok()?
-        .token(Wait::AtMost(MS))
-        .ok()
+    let Some(road) = pcall::DIR.try_join(pcall::Grant::Ask.name()) else {
+        debug!("coalition: find_face deny=join");
+        return None;
+    };
+    let tile = match tree.tile(&road, Wait::AtMost(MS)) {
+        Ok(tile) => tile,
+        Err(fail) => {
+            debug!("coalition: find_face deny=tile road={road} fail={fail:?}");
+            return None;
+        }
+    };
+    match tile.token(Wait::AtMost(MS)) {
+        Ok(entry) => {
+            match mail::reserve(entry) {
+                Ok((vestor, owner, mark)) => debug!(
+                    "coalition: find_face ok road={road} entry={} vestor={} owner={} mark={:#x} want={:#x}",
+                    entry.get(),
+                    vestor.get(),
+                    owner.get(),
+                    mark.get(),
+                    pcall::Grant::Ask.mark().get()
+                ),
+                // 号拿回来了、可本表里查不出这一枚（`Reserve` 答 `None`）——**这一格正是**
+                // 调用点那个 `Face::of` 会折的地方，先在这里报一句（它自己也报，两行对得上）。
+                Err(_) => debug!(
+                    "coalition: find_face ok road={road} entry={} reserve=no want={:#x}",
+                    entry.get(),
+                    pcall::Grant::Ask.mark().get()
+                ),
+            }
+            Some(entry)
+        }
+        Err(fail) => {
+            debug!("coalition: find_face deny=token road={road} fail={fail:?}");
+            None
+        }
+    }
 }

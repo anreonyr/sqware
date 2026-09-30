@@ -126,7 +126,10 @@ impl Face {
         let got = Receiver::<frame::Said>::from_token(back)
             .recv(buf.as_mut(), wait)
             .map_err(|e| match e {
-                RecvFail::Unread => deny("recv-unread"),
+                RecvFail::Unread(len) => {
+                    crate::debug!("control: call deny=recv-unread len={len}");
+                    Fail::Bad
+                }
                 RecvFail::Mail(m) => {
                     crate::debug!("control: call deny=recv:{}", m.code());
                     Fail::Bad
