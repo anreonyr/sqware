@@ -3,7 +3,38 @@ use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 #[cfg(debug_assertions)]
 use crate::memory::manager::mode;
 
-pub(crate) const TASK_STACK_SIZE: usize = 32768;
+/// **每一个任务那一叠用户栈的大小**（栈体，不含下面那一页保护页 —— 见
+/// [`TASK_STACK_GUARD`]）。
+///
+/// **照实记（32 KB → 64 KB：debug 档量出来的）**：debug 档的帧比 release 大好几倍（不内联、
+/// 每个临时各占一格），编排域那条链
+/// `main → system → Assembly::assemble → Control::enroll → Machine::devices`
+/// 在 debug 档深到 32 KB 装不下。**实测**（`product` 景、debug 档、tid=11 = 编排域）：
+///
+///   · 折点：`Machine::devices` 第一句 `addi sp, sp, -0x6f0` 落下时 sp 已经在栈底以下
+///     `0x408`（那台程序的 `image_end` = `0x56000` ⇒ 保护页 `[0x56000,0x57000)`、栈体
+///     `[0x57000,0x5f000)`、起初 sp = `0x5f000`，此刻 sp = `0x56bf8`）；
+///   · 下一句 `sd a1, 0x18(sp)` 存到 `0x56c10`，那正是保护页 ⇒ 内核按规矩报
+///     `reserved region access: Store at VA(0x56c10), pc=0x25118` 并杀掉这一台。
+///     **故障地址与"是哪一台"对得死**：`prog-system` 的 `image_end` 恰好是保护页的起点。
+///   · 也就是说：这一条**不是内核的错** —— 保护页把 debug 档的栈饥饿照出来了。release 档
+///     同一条链远在 32 KB 之内，故这一格一直没露。
+///
+/// **取值：两档同一个数（64 KB）**。按档分两值（debug 大 / release 小）会把"同一份代码两种
+/// 内存布局"这种岔子引进来，而这一格只值 32 KB × 活着的任务数（本机峰值 ~20 台 ≈ 1.3 MB /
+/// 256 MB）。64 KB 也与内核自己那叠启动栈（[`ROOT_STACK_SIZE`]）同数。
+///
+/// **改完量到的界**：64 KB 下 debug 档**不再折在保护页上**（一路走到装配后半：hub 落完
+/// 二十格、router / uart / rtc 上树、`canonical` 印出用法行、`hole: live=0`）；release 档
+/// `product` 景照旧全绿（用法行在、`exit tid=… root: done`、`hole: live=0`）。
+///
+/// **如实记（这一格修的不是 debug 档的全部）**：折掉保护页那一折之后，debug 档的 `product`
+/// 景**仍会折**——折在装配期的树操作上，而且**victim 随镜像布局变**（实测三种构建各折一处：
+/// `coalition: no identity plate` / `hub: no league plate` / `hub: tree`；另有一跑根本不折而在
+/// `router: tree: road` 断言、随后 `mail: hand stuck hole#252 … age=2037ms` 卡住）。那一串与
+/// release 档在案的残余同族（树那台单线程、客人有界等待被排在别人后头），**不是这一格能治的**
+/// ——本条只保证"栈不是那一串的原因"。
+pub(crate) const TASK_STACK_SIZE: usize = 64 * 1024;
 pub(crate) const TASK_STACK_GUARD: usize = PAGE_SIZE;
 pub(crate) const ROOT_STACK_SIZE: usize = 0x1_0000;
 
