@@ -108,13 +108,14 @@ impl HoleMeta {
         }
     }
 
-    /// 孔上那只手是谁递的；孔上没手（或只是个响着的位）⇒ `None`。**只读**。
+    /// 孔上那只手：**谁递的 ＋ 有多长**；孔上没手（或只是个响着的位）⇒ `None`。**只读**。
     ///
     /// `Taking`（正被取用）**也算在手上**——那一瞬复制在另一颗 hart 上做，手还没下线。
-    fn held_from(&self) -> Option<TaskId> {
+    /// 长度只服务诊断（[`alarm_stuck`] 那一行认"在哪一步"靠它）。
+    fn held(&self) -> Option<(TaskId, usize)> {
         let pending = self.pending.lock();
         match &*pending {
-            Pending::Hand(hand) | Pending::Taking(hand) => Some(hand.from),
+            Pending::Hand(hand) | Pending::Taking(hand) => Some((hand.from, hand.len)),
             _ => None,
         }
     }
@@ -125,7 +126,7 @@ impl Drop for HoleMeta {
         *self.state.lock() = HoleState::Dead;
         // 孔都没了、手还在 ⇒ 也算"没人取"。**这里只记账、不打印**（`Drop` 可能在别的锁底下跑，
         // 打印要取控制台锁）；结账那一路见 [`note_hand_off`]。
-        if let Some(from) = self.held_from() {
+        if let Some((from, _len)) = self.held() {
             let at = self.hand_at.swap(0, Ordering::Relaxed);
             if at != 0 {
                 HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
@@ -215,7 +216,7 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
                 let (va, len) = (hand.va, hand.len);
                 drop(pending);
                 note_gone(meta, from, va, len, 0, "space");
-                note_hand_off(meta, from);
+                note_hand_off(meta, from, len);
                 let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
                 Err(MailFail::Gone)
             }
@@ -253,14 +254,14 @@ pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Space>, usize, usiz
 /// 这一格是"**东西没了**"。前者还能拿更大的缓冲再来，后者没有下一趟。
 pub(crate) fn taken(meta: &HoleMeta) {
     let mut pending = meta.pending.lock();
-    let mut from = None;
+    let mut held = None;
     if let Pending::Taking(hand) = &*pending {
-        from = Some(hand.from);
+        held = Some((hand.from, hand.len));
         *pending = Pending::Idle;
     }
     drop(pending);
-    if let Some(from) = from {
-        note_hand_off(meta, from);
+    if let Some((from, len)) = held {
+        note_hand_off(meta, from, len);
     }
     let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
 }
@@ -352,10 +353,10 @@ pub(crate) fn wait(
     // **量的是这只手在孔上压了多久，不是这一次 `wait` 睡了多久**——照实记见 [`hold_line`] 那一节。
     // `Push` 方向 = 递出手的那一方在等它下线；`Pull` 方向等的是"有信来"，不记（等信是常态）。
     if dir == HoleDir::Push
-        && let Some((from, ms)) = hand_age(meta)
+        && let Some((from, len, ms)) = hand_age(meta)
     {
         note_hold(meta, from, ms);
-        alarm_stuck(meta, from, ms);
+        alarm_stuck(meta, from, len, ms);
     }
     Ok(match out {
         Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(dir)),
@@ -387,9 +388,8 @@ static HOLD_FROM: AtomicUsize = AtomicUsize::new(0);
 static HOLD_OWNER: AtomicUsize = AtomicUsize::new(0);
 static HANDS_LIVE: AtomicUsize = AtomicUsize::new(0);
 static ALARM_N: AtomicUsize = AtomicUsize::new(0);
+/// **一秒钟**：这只手压了这么久还没人取，就**记账 ＋ 当场报一行**（同一条线，见 [`hold_line`]）。
 const HOLD_MS: usize = 1000;
-/// 中段告警的门槛（毫秒）：**被 host 杀掉的那一档走不到收场块**，那只手必须当场看得见。
-const ALARM_MS: usize = 2000;
 /// 中段告警最多打几行（防洪水：一枚孔一行 ＋ 总量封顶）。
 const ALARM_MAX: usize = 8;
 
@@ -397,14 +397,22 @@ fn elapsed_ms(at: u64) -> usize {
     clock::ticks_to_duration(clock::uptime_ticks().wrapping_sub(at)).as_millis() as usize
 }
 
-/// 孔上那只手压了多久（毫秒）＋ 谁递的；孔上没手 ⇒ `None`。
-fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize)> {
-    let from = meta.held_from()?;
+/// 孔上那只手压了多久（毫秒）＋ 谁递的 ＋ **有多长**；孔上没手 ⇒ `None`。
+///
+/// **长度是这一格最认得出"在哪一步"的那一格数**（本仓各族的帧长各不相同：`Said` 那种一格状态
+/// 是 2、一枚号是 9、一族 `Reply` 是 10、一条 `land` 两位数是 41/60、一条路是几十……）——故它
+/// 跟着 `age` 一起报出来。
+fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
+    let pending = meta.pending.lock();
+    let (from, len) = match &*pending {
+        Pending::Hand(hand) | Pending::Taking(hand) => (hand.from, hand.len),
+        _ => return None,
+    };
     let at = meta.hand_at.load(Ordering::Relaxed);
     if at == 0 {
         return None;
     }
-    Some((from, elapsed_ms(at)))
+    Some((from, len, elapsed_ms(at)))
 }
 
 /// 记一笔"这一只手压了 `ms` 毫秒还没人取"。**只记账：不取锁、不打印**（`Drop` 也叫它）。
@@ -425,18 +433,30 @@ fn note_hold(meta: &HoleMeta, from: TaskId, ms: usize) {
 }
 
 /// 中段告警：一枚孔只打一行、全局封顶 [`ALARM_MAX`] 行。**在孔锁之外叫**（里面有打印）。
-fn alarm_stuck(meta: &HoleMeta, from: TaskId, ms: usize) {
-    if ms < ALARM_MS || meta.alarmed.swap(true, Ordering::Relaxed) {
+///
+/// # 照实记（**门槛从 2000 ms 收到 [`HOLD_MS`]：这一格从前是哑的**）
+///
+/// 它原先是**另一个数**（2000 ms），而 [`note_hold`] 记的是 ≥1000 ms——**两把尺子量同一件事**，
+/// 于是出现这一形：debug 档 `product` 景收场那一行写着
+/// `push_hold_n=1..6 push_hold_max_ms≈1117~1732 worst=hole#24x from=20 owner=20`
+/// ——**账上记着，却一行也没报**（最久 1732 ms < 2000 ms 的门槛），"是哪一枚孔、压在哪一步"
+/// 一个字都读不到。今天并成一条线：**记了账的就报得出一行**（同一枚孔仍最多一行、全局封顶）。
+/// **它是在"还压着"的时候打的**（调用点在 [`wait`] 的复探上，不是下线时）——故那一行在串口上
+/// 的**位置**就是"当时机器在忙什么"。
+/// `len` 一并报出来：各族帧长不同，它是这一格最认得出"在哪一步"的那一格数（见 [`hand_age`]）。
+fn alarm_stuck(meta: &HoleMeta, from: TaskId, len: usize, ms: usize) {
+    if ms < HOLD_MS || meta.alarmed.swap(true, Ordering::Relaxed) {
         return;
     }
     if ALARM_N.fetch_add(1, Ordering::Relaxed) >= ALARM_MAX {
         return;
     }
     crate::putln!(
-        "mail: hand stuck hole#{} from={} owner={} age={}ms",
+        "mail: hand stuck hole#{} from={} owner={} len={} age={}ms",
         meta.id.0,
         from.get(),
         meta.owner.get(),
+        len,
         ms,
     );
 }
@@ -444,7 +464,7 @@ fn alarm_stuck(meta: &HoleMeta, from: TaskId, ms: usize) {
 /// 这只手**下线了**：把"压了多久"结一次账，清掉时间戳（`swap` 保证同一只手只结一次）。
 ///
 /// **不取锁**：调用方必须已经放下孔锁（里面有打印）。
-fn note_hand_off(meta: &HoleMeta, from: TaskId) {
+fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize) {
     let at = meta.hand_at.swap(0, Ordering::Relaxed);
     if at == 0 {
         return;
@@ -452,7 +472,7 @@ fn note_hand_off(meta: &HoleMeta, from: TaskId) {
     let ms = elapsed_ms(at);
     HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
     note_hold(meta, from, ms);
-    alarm_stuck(meta, from, ms);
+    alarm_stuck(meta, from, len, ms);
 }
 
 /// 收场那一行（`conductor` 叫；与 `timer:`/`doom:` 同处）。
@@ -538,8 +558,8 @@ pub(crate) fn note_gone(meta: &HoleMeta, from: TaskId, va: usize, len: usize, ds
 pub(crate) fn seal(meta: &HoleMeta) {
     *meta.state.lock() = HoleState::Dead;
     // 手随孔作废 —— 也是一种"没人取"（结账在放下孔锁之后：`note_hand_off` 里有打印）。
-    if let Some(from) = meta.held_from() {
-        note_hand_off(meta, from);
+    if let Some((from, len)) = meta.held() {
+        note_hand_off(meta, from, len);
     }
     messenger::wipe(key(meta, HoleDir::Pull));
     messenger::wipe(key(meta, HoleDir::Push));

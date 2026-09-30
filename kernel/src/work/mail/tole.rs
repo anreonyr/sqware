@@ -70,6 +70,11 @@ pub(crate) fn key(meta: &ToleMeta) -> WakeKey {
     WakeKey::Tole { id: meta.id().0 }
 }
 
+/// **`cells()` 备不下**的次数（>0 = 有一次"组里明明有成员、却被报成空表"）。
+static CELLS_SHORT: AtomicUsize = AtomicUsize::new(0);
+/// **成员认不出对应 Pie**（`ready()` 里那一格 `continue`）的次数。**从前的静默格**。
+pub(crate) static MATE_SKIP: AtomicUsize = AtomicUsize::new(0);
+
 impl ToleMeta {
     fn new(id: ToleId, owner: TaskId) -> Arc<Self> {
         Arc::new(Self {
@@ -101,6 +106,15 @@ impl ToleMeta {
         let cells = self.cells.lock();
         let mut out = Vec::new();
         if out.try_reserve(cells.len()).is_err() {
+            let n = cells.len();
+            drop(cells);
+            // **照实记（这一格从前是静默的）**：备不下就返回**空表**，而 [`ready`] 拿到空表就答
+            // "没有一格就绪" ⇒ **组里明明有就绪的成员、读的人却被支去睡**（症状：debug 档量到的
+            // `operator: await miss waiting=1`——`peek` 说手在孔上、组说没事）。这一格要看得见：
+            // 第一次当场报一行（`n` = 那一刻组里有几格）。
+            if n > 0 && CELLS_SHORT.fetch_add(1, Ordering::Relaxed) == 0 {
+                crate::putln!("tole: cells short n={}", n);
+            }
             return Vec::new();
         }
         out.extend(cells.iter().filter(|c| c.live()).cloned());

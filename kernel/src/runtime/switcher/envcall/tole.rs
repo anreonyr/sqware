@@ -1,3 +1,4 @@
+use core::sync::atomic::Ordering;
 use alloc::sync::{Arc, Weak};
 
 use env::{HoleDir, Mark, ToleCall};
@@ -5,7 +6,7 @@ use env::{HoleDir, Mark, ToleCall};
 use env::{PieToken, ToleFail, Wait};
 
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail::tole::Mate;
+use crate::work::mail::tole::{MATE_SKIP, Mate};
 use crate::work::mail::{ToleMeta, tole};
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
@@ -93,14 +94,24 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
             return Outcome::Resume;
         }
     };
-    if let Some((token, dir)) = ready(&meta) {
+    let (hit, skipped) = ready(&meta);
+    // **组里有人、却没人认得出来**：这一格从前是**静默**的（`continue`），而它的后果是"读的人
+    // 一直睡"（见 [`ready`]）。第一次当场报一行。
+    if hit.is_none() && skipped > 0 && MATE_SKIP.fetch_add(skipped, Ordering::Relaxed) == 0 {
+        crate::putln!("tole: mate skipped n={}", skipped);
+    }
+    if let Some((token, dir)) = hit {
         answer_pair(frame, token, dir);
         return Outcome::Resume;
     }
     answer_pair(frame, PieToken::NONE, HoleDir::Pull);
     match tole::wait(&meta, dur) {
         Ok(Handoff::Resume(())) => {
-            if let Some((token, dir)) = ready(&meta) {
+            let (hit, skipped) = ready(&meta);
+            if hit.is_none() && skipped > 0 && MATE_SKIP.fetch_add(skipped, Ordering::Relaxed) == 0 {
+                crate::putln!("tole: mate skipped n={}", skipped);
+            }
+            if let Some((token, dir)) = hit {
                 answer_pair(frame, token, dir);
             }
             Outcome::Resume
@@ -113,8 +124,11 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
     }
 }
 
-fn ready(meta: &ToleMeta) -> Option<(PieToken, HoleDir)> {
-    let task = current().running_task()?;
+fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
+    let mut skipped = 0usize;
+    let Some(task) = current().running_task() else {
+        return (None, 0);
+    };
     let cells = meta.cells();
     let pies = task.pies.lock();
     for cell in cells {
@@ -124,11 +138,15 @@ fn ready(meta: &ToleMeta) -> Option<(PieToken, HoleDir)> {
                     .iter()
                     .find(|p| matches!(p, AnyPie::Hole(h) if h.meta().id() == id))
                 else {
+                    // **成员还在组里、可本域表里已经没有那一枚了** ⇒ 这一格**永远报不出就绪**。
+                    // 从前这一格是**静默**的（`continue`），故"组里有人、读的人却一直睡"这件事
+                    // 在读数上不存在。数下来，第一次当场报一行（见 [`await_`]）。
+                    skipped += 1;
                     continue;
                 };
                 let AnyPie::Hole(h) = pie else { continue };
                 if h.meta().ready(dir) {
-                    return Some((pie.token(), dir));
+                    return (Some((pie.token(), dir)), skipped);
                 }
             }
             Mate::Nole(id) => {
@@ -136,16 +154,17 @@ fn ready(meta: &ToleMeta) -> Option<(PieToken, HoleDir)> {
                     .iter()
                     .find(|p| matches!(p, AnyPie::Nole(n) if n.meta().id() == id))
                 else {
+                    skipped += 1;
                     continue;
                 };
                 let AnyPie::Nole(n) = pie else { continue };
                 if n.meta().ready() {
-                    return Some((pie.token(), HoleDir::Pull));
+                    return (Some((pie.token(), HoleDir::Pull)), skipped);
                 }
             }
         }
     }
-    None
+    (None, skipped)
 }
 
 fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, ToleFail> {

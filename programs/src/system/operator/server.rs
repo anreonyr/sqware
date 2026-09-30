@@ -170,7 +170,7 @@ pub fn serve() -> Result<(), Start> {
         } else {
             Wait::Forever
         };
-        let Ok(Some((tok, _dir))) = pile.await_(millis) else {
+        let Ok(Some((tok, dir))) = pile.await_(millis) else {
             let _ = desk.sweep();
             continue;
         };
@@ -183,6 +183,19 @@ pub fn serve() -> Result<(), Start> {
         {
             serve_one(&mut tree, guest, coord, &mut buf)
         } else {
+            // **醒在一枚账上没有的号上**（读数）：提示孔是常态（它的帧由下一轮的 `settle` 收），
+            // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔，而组的
+            // `await` 是"从头扫、取第一枚就绪的"，后面的客人就被**饿在后面**。
+            // **如实记（这一格到现在没落过一行）**：查那 1.0~1.7 s 时立了它，而量下来的病根不是
+            // 这一形（是"那位客人还没被挂进组"，见 [`settle`] 里 `arm late` 那一行）——故它仍是
+            // 一条**没被证实**的读数，留着是因为"组里有人却认不出来"这一档真出了就是硬故障。
+            if tok != tip {
+                debug!(
+                    "operator: wake unknown tok={} push={}",
+                    tok.get(),
+                    matches!(dir, HoleDir::Push)
+                );
+            }
             None
         };
         let read = code.is_some();
@@ -292,8 +305,18 @@ fn settle(
         &MARKS,
         |who, mark| ask_of(who, mark),
         |ask| {
-            pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
-                .is_ok()
+            let ok = pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull).is_ok();
+            if ok && mail::HolePie::from_token(ask).peek().is_ok() {
+                // **照实记（这一格量的是"客人推上来了、本域才挂上那一格"）**：挂上**之后**
+                // 这一枚孔上**已经有手** ⇒ 这位客人的手**在本域把它挂进组之前就压上了**——
+                // 而挂上之前，组的 `ready` 里没有它，本域就一直在别处等（客人那头看到的就是
+                // "我推上去了、一秒钟没人理"）。**owner** = 那一枚孔是谁开的（= 哪一位客人）。
+                let owner = mail::reserve(ask)
+                    .map(|(_, owner, _)| owner.get())
+                    .unwrap_or(0);
+                debug!("operator: arm late owner={} ask={}", owner, ask.get());
+            }
+            ok
         },
     );
     pending
@@ -351,6 +374,7 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
 ///
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
+///
 fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) -> Option<u8> {
     let ask = guest.ask()?;
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
@@ -425,9 +449,12 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
     }
     // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
     // **写端跟着这一趟走**：编在本族那只缓冲里（在这一帧的栈上）、递出去（一个 envcall），
-    // 落出作用域时等这只手被取走——**那一位客人不来取，卡的是他自己那一趟**，不是整台服务
-    // （照实记见 `serve` 里那一段）。**孔是客人铸的**：`release` 那一手不在本域做（放下别人的
+    // 落出作用域时等这只手被取走。**孔是客人铸的**：`release` 那一手不在本域做（放下别人的
     // 孔不是本端的事），故这一格只等，不 `seal`。
+    //
+    // **照实记（"卡的是他自己那一趟"这句话与本域的形状不符，量出来的）**：那一等（`Sender::Drop` →
+    // `reclaim` → `wait(Push, Forever)`）**就在本域这条循环里**跑 ⇒ 客人不来取，卡住的是
+    // **整台树**（此后所有人的手都不被取）。
     let mut tx = Sender::<ocall::Union>::from_token(guest.reply());
     let _ = tx.send(said);
     code

@@ -43,6 +43,7 @@ use env::wire::Eyes;
 use env::Wait;
 use protocol::debug;
 
+use runtime::env::chrono;
 use runtime::env::unit as utask;
 
 use crate::program::{Died, Program};
@@ -279,6 +280,10 @@ impl Assembly {
     /// 失败一律折成这一台自己的 `died`（`Program::demand.died`），读数靠那两行 debug
     /// （先印程序名、再印哪一步）。
     pub fn assemble(&mut self, program: &Program) -> Result<(), Died> {
+        // **这一趟的四段计时**（读数，见文件尾的 [`SLOW_STEP_MS`] 照实记）：debug 档量到过
+        // "客人的手在孔上压了一秒多、而树那一侧要到挂上之后才看得见它"——那一秒在本域这一趟里
+        // （**放行在先、介绍在后**），故四段分开报：配给 / 放行 / 挂板 / 挂树 / 等就绪。
+        let t0 = chrono::clock();
         // 登记：**"怎么算它起来了"由这一台的 `setup` 推出**。席满 / 名字非法 ⇒ 装配表那一格。
         self.control.enlist(program).map_err(|_| E_TABLE)?;
 
@@ -294,11 +299,13 @@ impl Assembly {
         self.roster
             .bind(service.0, program.relation.bind)
             .map_err(|why| fail(program, Error::Step(why)))?;
+        let t_supply = chrono::clock();
 
         // 放行 + 等就绪 + 递门闩单（次序是硬的：配给要落到它交回的那条路上）。
         self.control
             .launch(program, name.clone(), &mut service)
             .map_err(|e| fail(program, e))?;
+        let t_launch = chrono::clock();
 
         // 存在信号：**板在装配者这一侧那条路**——把这位客人交出来的那一枚转授过去（板据此
         // 看得见它的死）。**在通道之后**：那条路由客人在起来之后自己装（它是问的那一侧），而它
@@ -315,6 +322,7 @@ impl Assembly {
                 )
                 .map_err(|why| fail(program, Error::Step(why)))?;
         }
+        let t_board = chrono::clock();
 
         // 命名轴：**按需**把这条服务接到持树者那棵树上。**在存在信号之后**：两者各一条路、
         // 互不影响。持树者必须先于这位客人起：提示之路还没认下就没得接。
@@ -323,6 +331,7 @@ impl Assembly {
                 .attach(service.0, Wait::AtMost(READY_MS))
                 .map_err(|why| fail(program, Error::Step(why)))?;
         }
+        let t_tree = chrono::clock();
 
         // **等就绪**：这一台那几条通道逐条认齐（`Setup::Machine` 那两条里第二条就是"我起完了"）。
         //
@@ -363,9 +372,37 @@ impl Assembly {
             None => {}
         }
 
+        let t_ready = chrono::clock();
+        // **四段报一行**（只在整趟 ≥ [`SLOW_STEP_MS`] 时）：`supply` = 登记/铸/配给/绑身份、
+        // `launch` = 放行、`board` = 挂板、`tree` = **把这位客人介绍给树**（提示那一帧在这里推）、
+        // `ready` = 等它自报就绪。**放行在先、介绍在后**——故 `tree` 那一段就是"客人已经在跑、
+        // 而树还不认识它"的那段窗口（症状：`operator: arm late owner=…` ＋ 客人的手在孔上干等）。
+        let ms = |a: u64, b: u64| ((b.saturating_sub(a)) / 1_000_000) as usize;
+        let (supply_ms, launch_ms, board_ms, tree_ms) = (
+            ms(t0, t_supply),
+            ms(t_supply, t_launch),
+            ms(t_launch, t_board),
+            ms(t_board, t_tree),
+        );
+        let ready_ms = ms(t_tree, t_ready);
+        if supply_ms + launch_ms + board_ms + tree_ms + ready_ms >= SLOW_STEP_MS {
+            debug!(
+                "system: slow who={} supply={}ms launch={}ms board={}ms tree={}ms ready={}ms",
+                program.name(),
+                supply_ms, launch_ms, board_ms, tree_ms, ready_ms
+            );
+        }
+
         Ok(())
     }
 }
+
+/// **装配一趟里"慢"的门槛**（毫秒）：超过就报一行，带上五段各花了多久（见
+/// [`Assembly::assemble`] 里那一段照实记）。**它要证的那一件事**：debug 档 `product` 景收场
+/// 那行写着 `push_hold_n=1..6 push_hold_max_ms≈1.0~1.7s`，而树那一侧量到的是
+/// `operator: arm late owner=20`——**客人推上来了、本域才把它挂进组**。那一段窗口在本域这一趟里
+/// 只有"放行之后、挂树之前"那几格，故把这一趟拆开计时，看那一秒落在哪一格。
+const SLOW_STEP_MS: usize = 200;
 
 // **照实记（`sys_dir()` 这一格退了）**：它从前是"树那一层那一格"的**私有副本**——正文引的是
 // `ccall::frame::DIR`（**control 那族**的常量，而 `operator` 那族的路也借它拼）。今天四族各有
