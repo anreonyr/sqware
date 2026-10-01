@@ -35,16 +35,22 @@ use super::{Control, Error, READY_MS, Service};
 use crate::program::{Program, Setup};
 
 impl Control {
-    /// **登记一行**：只知道名字与它"怎么算起来"——此刻还没有身子（`spawn` 才挂）。
+    /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子（`spawn` 才挂）。
     ///
     /// **"怎么算起来"由 `setup` 推出**：有通道 ⇒ [`Announce::Channel`]（它起来时会交回
     /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配表上那
     /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
     /// `Announce::Channel` 的四台。
+    ///
+    /// **"谁结束它"是写出来的，不是推出来的**（照实记）：它由那一台自己那份 `program.rs` 给
+    /// （`Relation::ending`）——**由编排域起的台不写就当场拒**（`Step("no ending")`，读数带出
+    /// 是这一台的哪一步）。这不是苛求：收场的闸与兜底两条判定都压在这一格上，静默给个默认值
+    /// 正是"以后会变"时最贵的那种错。
     pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
         let name = program.name().to_string();
+        let ending = program.relation.ending.ok_or(Error::Step("no ending"))?;
         self.table
-            .register(name, announce_of(program.demand.setup))
+            .register(name, announce_of(program.demand.setup), ending)
             .map_err(|_| Error::Table)
     }
 

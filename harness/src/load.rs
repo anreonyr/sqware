@@ -99,6 +99,7 @@ use programs::root::boot;
 
 use core::time::Duration;
 
+use programs::program::Ending;
 use programs::system::control::desk::{Announce, Table};
 use programs::system::control::service;
 use protocol::debug;
@@ -197,7 +198,7 @@ fn spawn_one(
     kind: env::ProgramKind,
 ) -> bool {
     let name = name.to_string();
-    if table.register(name.clone(), Announce::None).is_err() {
+    if table.register(name.clone(), Announce::None, Ending::Transient).is_err() {
         return false;
     }
     let Ok(task) = service::mint(table, name.as_str(), elf, kind) else {

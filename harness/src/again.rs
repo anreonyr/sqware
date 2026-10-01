@@ -60,6 +60,7 @@ use programs::root::boot;
 use alloc::string::String;
 use alloc::string::ToString;
 use programs::system::control::core::{Ready, probe_ready};
+use programs::program::Ending;
 use programs::system::control::desk::{Announce, Slot, State, Table};
 use programs::system::control::service;
 use protocol::debug;
@@ -92,12 +93,12 @@ fn main() -> Reason {
     for round in 1..=ROUNDS {
         // 首启唯一的一次 register；重发**不许**再 register（重名即 Unknown，见 §六）。
         if round == 1 {
-            match table.register(name.clone(), Announce::None) {
+            match table.register(name.clone(), Announce::None, Ending::Transient) {
                 Ok(()) => debug!("again: r={round} step=register ok"),
                 Err(_) => return die("again: register"),
             }
         } else {
-            match table.register(name.clone(), Announce::None) {
+            match table.register(name.clone(), Announce::None, Ending::Transient) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
                 Err(_) => debug!("again: r={round} step=register refused (expected)"),
                 Ok(()) => {

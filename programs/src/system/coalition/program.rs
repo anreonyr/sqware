@@ -2,7 +2,7 @@
 //!
 //! 结盟服务：答"这一位在那枚盟里吗"。它是持树者的**第二双眼睛**（`eyes: Some(Eyes::League)`）。
 
-use crate::program::{Demand, Died, Identity, Program, Relation};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation};
 use env::wire::Eyes;
 
 /// 它死在起手哪一步（那只组 / 找名册那份门牌）。
@@ -16,6 +16,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         order: Some(2),
+        ending: Some(Ending::Resident),
         presence: true,
         operator: true,
         bind: true,

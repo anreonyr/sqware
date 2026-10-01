@@ -52,8 +52,23 @@
 //!    （单跑有 ~1/7 概率把这份残余当成回归——本仓栽过一次），验收要重复跑看红率；反过来，
 //!    跑红一次也先别当回归，去看签名对不对得上上面这一串。
 //!    **仍未做**：根治仍是第 3 条点名的那一刀（让扳机等读数，或给树多一枚线程），不在这轮。
+//!
+//! **照实记（这一条点名的那一刀落下来了：扳机改读账）**："让扳机等读数"从"再猜一个秒数"改成
+//! **一个判决**——`Control::due()`（账上活着的都是常驻台）+ `Control::done()`（一个不剩），
+//! 见 `programs/src/system/control/supervise.rs` 的头注。于是本台**不再是扳机**：它只是单上
+//! "会走的"其中一台（`ending: Some(Ending::Told)`——听令才走），`order: 22` 那个数不再承重，
+//! 下面"一路让给真客人"的让位史随这一刀作废。
+//!
+//! **量到的（同一份 release 镜像、同一台机器、喂 `exit` 落在 1 s；A 面 = 本刀之前）**：
+//!
+//! | | 会走的十五位里报到的 | panic |
+//! |---|---|---|
+//! | A 面 | **14 / 15**（`probe-control` 整条丢） | 两处：`probe-owner.rs:202`（"probe-lease 已经死了，那一格该重新可落"——**正是被扑杀造成的**）、`probe-operator-land.rs:178` |
+//! | B 面（本刀） | **15 / 15** | 0 |
+//!
+//! 快喂那一档原先正是"扳机不等读数"的现场：`exit` 一落，控制台退场，仍在跑的读数台被逐位扑杀。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Spot};
 
 /// 它死在起手哪一步。
 pub const E_CANONICAL: Died = 24;
@@ -67,6 +82,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         order: Some(22),
+        ending: Some(Ending::Told),
         presence: true,
         operator: true,
         bind: true,

@@ -37,8 +37,8 @@
 //! - [`board`] / [`operator`] / [`principal`] / [`coalition`]：四枚服务的实现
 //! - [`machine`]：本域手里那台机器的自述（设备树）
 
-use alloc::string::String;
 use alloc::string::ToString;
+
 use env::wire::Eyes;
 use env::Wait;
 use protocol::debug;
@@ -132,9 +132,13 @@ impl Assembly {
     /// **那条判断不作准**：树就是"名字 → 资源"那本目录，谁要挂谁自己上来（今天就由树自己落）。
     /// 故 `control` 那一面**挂进树**（不是只靠装配期直授），取面方式与 `principal` / `coalition`
     /// 逐字同形；真客人是 `harness/src/probe_control.rs`。
-    pub fn supervise(&mut self, last: String) {
+    /// 交棒给监督相：**先把 `control` 那一面挂上树**，然后进那一趟循环。
+    ///
+    /// 返 `true` = **全收讫**（那一批收干净了，本域可以退了）；`false` = 有人没收讫——
+    /// 调用方按"收尾那一趟没走完"报（余下交退场级联，那条路是既有的可靠收场路径）。
+    pub fn supervise(&mut self) -> bool {
         self.mount_control();
-        self.watch.run(&mut self.control, last);
+        self.watch.run(&mut self.control)
     }
 
     /// **把 `control` 那一族挂上树**（`/svc/sys/control/{state,mint,start,stop}` 四面，一原语一面）：

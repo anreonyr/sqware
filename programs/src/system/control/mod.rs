@@ -49,7 +49,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use crate::system::control::core::Fail;
-use crate::system::control::desk::{State, Table};
+use crate::system::control::desk::{Slot, State, Table};
 use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
@@ -407,12 +407,48 @@ impl Control {
 
     // **照实记（`until` / `observe` 两具读手已退场）**：它们从前是 `Control` 面上的读口
     // （"等它收尾"／"盯它一眼"），而协议那四手（`mint` / `start` / `stop` / `state`）都不需要
-    // 它们——**全仓零消费者**。按"没有读者的格不留在面上"删掉两具；"等一条退场"那一手
-    // （[`Control::wait_last`]）留着：它是监督那一趟的收场路（有读者）。
+    // 它们——**全仓零消费者**。按"没有读者的格不留在面上"删掉两具。
 
-    /// 等一条服务退场（本域等它 = 等这次会话结束）。
-    pub fn wait_last(&mut self, name: &str) {
-        while let Ok(false) = service::watch(&mut self.table, name, Wait::Forever) {}
+    // ── 一张单（收场那一相的三手）────────────────────────────────────
+    //
+    // **照实记（这一列原先没有名字）**：整机什么时候收、收干净没有，原先是 `Watch::run` 里的
+    // 一句"最后一位退场"＋一句裸 `return`——判据是**位次**，而且没人读账。这三手把那一列
+    // 收成与 `mint` / `release` / `stop` / `state` 并列的形状：**判在 `core`，手在本层**。
+
+    /// **该收了**：账上活着的都是常驻台——会走的都走了、听令的已经发过话。
+    pub fn due(&self) -> bool {
+        core::due(&self.table)
+    }
+
+    /// **收讫了**：账上一个不剩。与内核 `conductor::done()`（`PUSHED == REAPED`）同名同形。
+    pub fn done(&self) -> bool {
+        core::done(&self.table)
+    }
+
+    /// **收掉其余还活着的**：只对**还没下过刀**的那些（`Stopping` = 已下刀）逐位下令——故每一轮
+    /// 都叫它是安全的，不会把 `doom` 刷成一场风暴。
+    ///
+    /// **下令即回**：等它们收讫是收场那一相自己的事（`core::done` 每拍读账），本手不逐行等。
+    pub fn stop_rest(&mut self) {
+        // 先把名字抄下来再动表（表是定长的、行数有上界——与 `sweep` 同一个形状）。
+        let mut names = [const { String::new() }; Table::CAP];
+        let mut n = 0usize;
+        for row in self.table.living() {
+            if !matches!(row.state, State::Starting | State::Ready) {
+                continue;
+            }
+            // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己——它随本域
+            // 退场时的"域亡＝成员清零"一起走（同 [`crate::system::control::supervise`] 里
+            // `mark_dead` 那一格的对照）。
+            if matches!(row.slot, Slot::Live { team: None, .. }) {
+                continue;
+            }
+            names[n] = row.name.clone();
+            n += 1;
+        }
+        for name in &names[..n] {
+            let _ = service::stop(&mut self.table, name.as_str());
+        }
     }
 }
 

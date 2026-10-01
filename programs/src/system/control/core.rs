@@ -2,6 +2,8 @@
 //!
 //! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
+use crate::program::Ending;
+
 use super::desk::{Announce, Slot, State, Table};
 
 // ── 核心：判定（纯函数，只读表）─────────────────────────────
@@ -59,6 +61,31 @@ pub fn probe_ready(table: &Table, name: &str) -> Ready {
 // 而 [`Slot`] 的裁决是**死亡记账不清坐标**（留给重启与放下）⇒ 一位已经收尾的 Service 在那里
 // 仍答 `Alive`——名不副实，生死该看 [`State`]。全仓零调用者（`watch` 收尾时不再 `detach`），
 // 故按"没有读者的格不留在面上"删掉整对：要用"它还在不在"，问 [`probe_ready`]。
+
+// ── 核心：整机那两条判定（只读账）─────────────────────────
+//
+// **照实记（它们为什么住这里）**：与上面三条同类——都是"由账算出来的判决"，签名里只有表，
+// 不碰内核（本模块头注那条口径原样成立）。**与上面三条的分别只有量词**：上面答"这一行"，
+// 下面两条答"这一批"。账里已经有"谁结束它"那一格（登记时定死，见 [`Service::ending`]），
+// 故这两条**不必回头查那一份声明**——"只读表"这句话仍然是字面意义上的真。
+
+/// **该收了**：账上活着的都是常驻台——会走的都走了、听令的已经发过话。
+///
+/// **穷尽 `match`**：`Ending` 多一种结束方式，这里就编译不过（不至于静默归成某一类）。
+pub fn due(table: &Table) -> bool {
+    table.living().all(|r| match r.ending {
+        Ending::Resident => true,
+        Ending::Transient | Ending::Told => false,
+    })
+}
+
+/// **收讫了**：账上一个不剩。
+///
+/// 与内核那一层的收场判决（`conductor::done`：`PUSHED == REAPED`）**同名同形**——四个量词
+/// （一台 / 一张单 / 一个域 / 全部任务）共用一个形状，缺的只是这一处。
+pub fn done(table: &Table) -> bool {
+    table.living().next().is_none()
+}
 
 /// "收尾完了没有"的三态判定 —— 与 [`Ready`] 同形：**判决 + 判决的来路**。
 ///

@@ -366,6 +366,11 @@ fn live_task(table: &Table, name: &str) -> Option<TaskId> {
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（清了就没得放下、
 /// 也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：那是"还没收干净"，
 /// 不是"收了"。
+///
+/// **照实记（这一具的读者不在编排域，在压测台那一侧）**：`Control::wait_last` 随"收场那一相"
+/// 退场之后，本手的读者只剩 `harness` 那几台压测台（`rig` / `again` / `load`——它们自己扮
+/// 编排者，"等一位收尾"那一问轮到它们用）。故它留着；**订正**："本仓唯一读者是 `wait_last`"
+/// 那句只查了 `programs/` 一棵树，是错的（编译期当场抓出来）。
 pub fn watch(table: &mut Table, name: &str, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {

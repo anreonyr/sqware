@@ -8,11 +8,11 @@
 //!
 //! ```text
 //! 1  起手：与引导域搭会话 + 领机器自述 + 领载荷区清单（`bootstrap::take`）
-//! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按 order 排**，就这一件事）
+//! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按 `order` 排**，就这一件事）
 //! 3  逐条起：`Assembly::assemble`——每一台按**它自己那份声明**装配
-//! 4  监督（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下那个死域
-//! 5  最后一条没了 ⇒ 对仍在跑的显式 `stop` ⇒ 全部记完 ⇒ 收场
-//! 6  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
+//! 4  监督（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下那个死域；**该收了**就逐位下刀，
+//!    **收讫了**才收场（判据在 `Control::{due, done}` 上，不再看"最后一位是谁"）
+//! 5  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
 //! **本文件只剩流程**，而且只有编排者这一条：四枚服务（持树者 / 名册 / 盟册 / 设备账）各自是一个
@@ -24,8 +24,6 @@
 
 extern crate alloc;
 extern crate programs;
-
-use alloc::string::ToString;
 
 use programs::system::Assembly;
 use programs::system::assemble;
@@ -114,10 +112,10 @@ fn system() -> Result<(), Fail> {
 
     // 2. 这一景起哪些台（**按 `order` 排**：先起的先就绪，后面的就能向它要东西）。
     let list = assemble::programs(&boot.catalog);
-    let Some(last_program) = list.last() else {
+    // **空单**：这一景一台可装配的都没有 ⇒ 报那一格（"有单可装"是下面每一趟的前提）。
+    if list.is_empty() {
         return Err(Fail::Assemble(E_PROGRAM));
-    };
-    let last = last_program.name().to_string();
+    }
 
     // 死亡道跟着这张单铸：要存在信号的那几位一位一条——在 `Assembly::new` 里。
     let mut assembly = Assembly::new(boot, &list).map_err(|_| Fail::Group)?;
@@ -130,8 +128,12 @@ fn system() -> Result<(), Fail> {
         assembly.assemble(program).map_err(Fail::Assemble)?;
     }
 
-    // 4/5. 监督：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；最后一条没了 ⇒ 显式收掉仍在跑的。
-    assembly.supervise(last);
-    // 6. 本域退出 ⇒ 引导域那枚孔封印 ⇒ 它退出 ⇒ 级联 ⇒ 停机。
+    // 4. 监督那一趟：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；**该收了**就下刀，**收讫了**才收场
+    //    （判据都在 `Control` 上：`due` / `done`，见 `control/supervise.rs` 的头注）。
+    //    返 `false` = 有人没收讫 ⇒ 报"收尾那一趟没走完"，余下交退场级联。
+    if !assembly.supervise() {
+        return Err(Fail::Doom);
+    }
+    // 5. 本域退出 ⇒ 引导域那枚孔封印 ⇒ 它退出 ⇒ 级联 ⇒ 停机。
     Ok(())
 }

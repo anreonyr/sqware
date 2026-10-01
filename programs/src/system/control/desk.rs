@@ -12,6 +12,8 @@
 use alloc::string::String;
 use env::{TaskId, TeamId};
 
+use crate::program::Ending;
+
 use super::core::Fail;
 
 // ── 核心：类型 ──────────────────────────────────────────────
@@ -84,14 +86,20 @@ pub struct Service {
     pub state: State,
     /// 怎么算"起来了"。
     pub announce: Announce,
+    /// **谁结束它**——登记时定死（与 [`Announce`] 同款：两格都是声明里推出的事实，落在行上之后
+    /// 账就自足——收场那三条判定（`core::{due, done, walking}`）只读账，不必回头查声明）。
+    pub ending: Ending,
 }
 
 /// 一行的初值（表是定长数组，故要一个可复制的空行）。
+///
+/// `ending` 那一格对空行**没有意义**：[`Table::rows`] 把没名字的行滤掉，判定看不到它。
 const EMPTY: Service = Service {
     name: String::new(),
     slot: Slot::None,
     state: State::NeverStarted,
     announce: Announce::None,
+    ending: Ending::Resident,
 };
 
 /// Service 表：**定长、线性查**。
@@ -113,10 +121,15 @@ impl Table {
         }
     }
 
-    /// **登记一行**：只知道名字与它"怎么算起来"——此刻还没有身子。
+    /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子。
     ///
     /// 这是"起之前"唯一的入口；身子由 [`Table::attach`] 在真的起了之后挂上。
-    pub fn register(&mut self, name: String, announce: Announce) -> Result<(), Fail> {
+    pub fn register(
+        &mut self,
+        name: String,
+        announce: Announce,
+        ending: Ending,
+    ) -> Result<(), Fail> {
         if self.find(name.as_str()).is_some() {
             return Err(Fail::Unknown);
         }
@@ -125,6 +138,7 @@ impl Table {
         };
         row.name = name;
         row.announce = announce;
+        row.ending = ending;
         Ok(())
     }
 
@@ -136,6 +150,14 @@ impl Table {
     /// 全部有名字的行（含没起过的）——枚举的读面。
     pub fn rows(&self) -> impl Iterator<Item = &Service> {
         self.rows.iter().filter(|s| !s.name.is_empty())
+    }
+
+    /// **还活着的行**——`Dead` 之外的一切。
+    ///
+    /// **"活着"只有这一句**：`Stopping`（已下令收、还没确认收干净）**算活着**——收场那三条判定
+    /// 的前提正是它；少了它，被线上 `Stop` 推入 `Stopping` 而道又不响的行会永远不落 `Dead`。
+    pub fn living(&self) -> impl Iterator<Item = &Service> {
+        self.rows().filter(|s| !matches!(s.state, State::Dead))
     }
 
     /// 改状态。找不到 = 名字不对 ⇒ 不动任何东西。

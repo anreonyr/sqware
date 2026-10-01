@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Spot};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
@@ -47,6 +47,7 @@ pub static GUEST: Program = Program {
     },
     relation: Relation {
         order: Some(9),
+        ending: Some(Ending::Transient),
         presence: true,
         operator: true,
         bind: true,
@@ -67,6 +68,7 @@ pub static PASSER: Program = Program {
     },
     relation: Relation {
         order: Some(10),
+        ending: Some(Ending::Transient),
         presence: true,
         bind: true,
         ..Relation::DEFAULT
@@ -86,6 +88,7 @@ pub static LODGER: Program = Program {
     },
     relation: Relation {
         order: Some(11),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -105,6 +108,7 @@ pub static SLEEPER: Program = Program {
     },
     relation: Relation {
         order: Some(12),
+        ending: Some(Ending::Transient),
         presence: true,
         operator: true,
         bind: true,
@@ -125,6 +129,7 @@ pub static SUBJECT: Program = Program {
     },
     relation: Relation {
         order: Some(13),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -144,6 +149,7 @@ pub static MEMBER: Program = Program {
     },
     relation: Relation {
         order: Some(14),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -165,6 +171,7 @@ pub static PROBE_DENIED: Program = Program {
     },
     relation: Relation {
         order: Some(15),
+        ending: Some(Ending::Transient),
         operator: true,
         ..Relation::DEFAULT
     },
@@ -183,6 +190,7 @@ pub static PROBE_OWNER: Program = Program {
     },
     relation: Relation {
         order: Some(17),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -202,6 +210,7 @@ pub static PROBE_RULE: Program = Program {
     },
     relation: Relation {
         order: Some(18),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -221,6 +230,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
     },
     relation: Relation {
         order: Some(19),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -240,6 +250,7 @@ pub static PROBE_LEASE: Program = Program {
     },
     relation: Relation {
         order: Some(16),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -260,6 +271,7 @@ pub static PROBE_BOUND: Program = Program {
     },
     relation: Relation {
         order: Some(20),
+        ending: Some(Ending::Transient),
         presence: true,
         operator: true,
         bind: true,
@@ -291,6 +303,7 @@ pub static PROBE_CONTROL: Program = Program {
     },
     relation: Relation {
         order: Some(21),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -327,6 +340,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
     },
     relation: Relation {
         order: Some(4),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT
@@ -348,6 +362,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
     },
     relation: Relation {
         order: Some(5),
+        ending: Some(Ending::Transient),
         operator: true,
         bind: true,
         ..Relation::DEFAULT

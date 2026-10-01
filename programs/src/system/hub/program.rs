@@ -20,7 +20,7 @@
 //! [`crate::program`] 的头注），故那个词只能在这儿写第二遍。对不上时 hub 收不到物料
 //! （当场 `hub: no machine`），不会静默跑起来。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Setup};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
 
 /// 它死在起手哪一步（读完机器自述、立账那一趟）。
 pub const E_HUB: Died = 28;
@@ -50,6 +50,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         order: Some(3),
+        ending: Some(Ending::Resident),
         operator: true,
         bind: true,
         ..Relation::DEFAULT

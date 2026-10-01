@@ -1,15 +1,26 @@
-//! control::supervise — **监督相**：哪一位没了、怎么记账、怎么收场。
+//! control::supervise — **监督相**：哪一位没了、怎么记账、什么时候收场。
 //!
 //! 本文件管**起完之后一直看**：板把"某位的门封印了"变成它那条死亡道上的一格，本线程从
-//! 组上醒来、按道上的名字认人、等它真收尾、写 `Dead`、放下它的域、报一行读数；最后一条
-//! 走了之后，把仍在跑的**有界地**收掉，然后收场。
+//! 组上醒来、按道上的名字认人、等它真收尾、写 `Dead`、放下它的域、报一行读数。
+//!
+//! **收场只有两句话**（照实记：这一刀把"扳机"从位次里拿出来）：
+//!
+//! ```text
+//!   if control.due()  { control.stop_rest(); }   // 该收了：活着的都是常驻，没人还在等
+//!   if control.done() { return true; }           // 收讫了：账上一个不剩
+//! ```
+//!
+//! 原先"该收了"读的是**位次**——单上 `order` 最大的那一台（控制台）退场。那是"位置即语义"，
+//! 而且它**不等读数**：读数台（客人 / 探针）还没退场就被扑杀，验收上那片 `no /svc*` 正是这个
+//! 形状。今天那一格读账：**会走的没走完，闸就不成立**——"扳机等读数"于是成了推论。
 //!
 //! **装配那一半不在这里**（[`super`] 与 [`super::service`]）：建域 / 放行 / 等就绪 / 收一枚都是
-//! **装配期**的事。两半之间只有两处来往——表里那几格状态（`State` / `Slot`），与那两枚原语
-//! [`service::stop`] / [`service::until`]（本文件只读它们，不重写）。
+//! **装配期**的事。两半之间只有两处来往——表里那几格状态（`State` / `Slot`），与那一枚原语
+//! [`service::until`]（本文件只读它，不重写）；**下刀那一手**（`Control::stop_rest`）在收场
+//! 那两句里叫，不在本文件的循环里各写一遍。
 //!
 //! **道与组是这一相自己的状态**（[`Watch`]）：装配期铸、起完之后一直看——一枚孔一条道，
-//! 读者只有本文件。原先它们是 `System` 上的两个裸字段，现收进这一间。
+//! 读者只有本文件。
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -26,9 +37,9 @@ use runtime::core::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
-// 表那一侧的两手（本文件只读、不重写）。
+// 表那一侧的那一手（本文件只读、不重写）。
 use super::Control;
-use super::service::{stop, until};
+use super::service::until;
 
 /// **一条死亡道**：哪一位 + 那一条路（装配期铸的孔，记号 `gone-<名字>`）。
 ///
@@ -63,13 +74,6 @@ pub struct Watch {
     /// **位次即面**（`Grant::at()` 1..=COUNT）：醒来的是哪一枚孔，就用哪一位判面——名册 / 盟册
     /// 那两处同一条口径。
     faces: [Option<PieToken>; ccall::Grant::ALL.len()],
-    /// **最后一位那条道真的在吗**——决定停机那一格**等什么**。
-    ///
-    /// **照实记（这一格是构造出来的保证，不是巧合）**：停机靠"最后一条走了"，而"最后一位一定
-    /// 要存在信号、且它的孔一定铸得出"本来只是**声明上的巧合**。把它记成一格并在 `of` 里报一行
-    /// 读数之后：`true` ⇒ 主路等**道表那枚组**；`false` ⇒ 回退路等**最后一行那一枚线程**
-    /// （`Join{task, POLL}`）。两条路**共用同一个 [`sweep`] 与同一套收场**（见 [`Watch::run`]）。
-    watch_last: bool,
 }
 
 impl Watch {
@@ -102,18 +106,14 @@ impl Watch {
                 road,
             });
         }
-        // **停机的前提不能是巧合**：`lanes` 与 `programs` 同序（上面按同一个次序推），故最后
-        // 一格就是"最后一位"。它没有道 ⇒ 读一行数，`run` 改用**内核那一问**当停机触发
-        // （回退路与主路共用同一个 `sweep` 与同一套收场，见 [`Watch::run`]）。
-        let watch_last = lanes.last().is_some_and(|l| l.road.is_some());
-        if !watch_last {
-            debug!("system: no lane for the last one; supervise falls back to Join");
-        }
+        // **照实记（"最后一位那条道真的在吗"那一格随位次一起退场）**：它原是停机的前提
+        // （停机靠"最后一条走了"），故要先担保最后一位一定有道、还得为"没有"留一条回退路
+        // （`watch_last` ＋ `last_reaped` ＋ 那一圈 10 ms 节拍的理由之一）。闸改读账之后这两样
+        // 都没有读者：**道只需要"响的时候叫醒我"这一件事**。
         Ok(Watch {
             lanes,
             pile,
             faces: [None; ccall::Grant::ALL.len()],
-            watch_last,
         })
     }
 
@@ -137,56 +137,51 @@ impl Watch {
             .and_then(|l| l.road)
     }
 
-    /// 监督循环：**发现死亡 + 记账 + 放下死域**，外加**待客**（control 那一面）。
+    /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**。
     ///
     /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）：
     ///
     /// - **道表**：客人一死，它开的孔随退出钩子封印（或它自己说了退场）⇒ 板当场看出来 ⇒
     ///   往**那一位的死亡道**里推一格 ⇒ 本线程从组上醒来。**一服务一道**，故"是哪一位"由
     ///   **哪条道响**给出——不必猜、也不会两条挤一格丢名字；
-    /// - **control 那一面**（[`Watch::face`]）：别的域拿着树上那枚门牌来问四手（`mint` /
+    /// - **control 那一面**（[`serve_face`]）：别的域拿着树上那枚门牌来问四手（`mint` /
     ///   `start` / `stop` / `state`）——本线程醒来把这一问交给 [`Control`] 那四手，从这一趟
     ///   借来的回信孔答回去。**这一源今天有来路**：编排域主线程把 `/svc/sys/control` 挂上树之后
     ///   就把入口交给了本线程（[`Watch::attach_face`]）；哪一景没有持树者，它就空着。
     ///
     /// 醒来先做三件事，次序即契约：**表侧惰性剔死**（内核说收尾了就落 `Dead`——没有道的那几台
     /// 只有这一档收得到）→ **道**（`until` 等它真收尾，再 `Dead` ＋ `oust` ＋ 报一行）→
-    /// **面**（取干净这一批客人的问）；回退路下再加**第五格**（最后一行那一枚线程的 `Join`）。
-    /// 有台不要存在信号、或最后一位没有道时用**有界节拍**（[`TICK_MS`]）；两者都不需要就
-    /// **永远挂起**（事件一到就醒，零轮询）。
+    /// **面**（取干净这一批客人的问）；然后是收场那两句（见本文件头注）。
     ///
-    /// 最后一条没了之后，对**仍在跑的**逐个 `stop`——它们的死会再走同一条路回来；在册的每一行
-    /// 都 `Dead` 之后才收场。
+    /// **有界节拍只服务两件事**（照实记：理由归位）：① `Relation::presence` 为假的那几台
+    /// **没有道**——它们的死只有表侧那一扫收得到；② **收场期间**判决要反复读账（它不是一次
+    /// 事件，是一个不动点）。两者都不需要 ⇒ **永远挂起**（事件一到就醒，零轮询）。
     ///
-    /// **停机的触发有两个来源，收场只有一套**（照实记）：主路等**道表那枚组**（最后一位那条道
-    /// 真的响）；回退路（[`Watch::of`] 的 `watch_last = false`——最后一位不要存在信号、或它那条
-    /// 孔铸不出）等**最后一行那一枚线程**（`Join{task, POLL}`）。两条路**共用同一个 [`sweep`]
-    /// 与同一套收场**（[`stop_running`] ＋ 本圈那个 `stopping` 分支），差别只在"等什么"。
-    pub fn run(&mut self, control: &mut Control, last: String) {
+    /// 返 `true` = **全收讫**（这一趟的结局）；`false` = 有人没收讫，交本域退场时的级联。
+    pub fn run(&mut self, control: &mut Control) -> bool {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         // 不按"这条路上平常走几个字节"备）。备不下 ⇒ 报一句就交给退场时的级联，不在这里赌。
         // 道与面共用这一页（两者不同时读）。
         let mut buf: Vec<u8> = Vec::new();
         if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
             debug!("system: no room");
-            return;
+            return true;
         }
         buf.resize(runtime::PAGE_SIZE, 0);
-        // **需不需要那格"顺便看一眼"**：两条来路——① 这一景里有**不要存在信号**的台
-        // （`road = None`：它们的死没有道来报，只有表侧那一扫收得到）；② 最后一位没有道
-        // （`!watch_last`：停机那一格得靠内核那一问看出来）。两者都没有 ⇒ 回到**永远挂起**
-        // （事件驱动，零轮询——本线程改动前的样子）。
-        //
-        // **照实记（为什么不能一律零轮询）**：`relation.presence = false` 那几台（harness 那一片
-        // 大多如此）没有任何写端会替它们叫醒本线程；不扫的话它们的死**永远没人记账**。
-        let tick = !self.watch_last || self.lanes.iter().any(|l| l.road.is_none());
-        let mut stopping = false;
+        // **组坏了 ⇒ 退化成有界节拍**（照实记：这一支原先的写法是"等最后一条退场、然后返回"
+        // ——那是位次时代的回退路）。丢掉的是"谁没了"的**来路**，不是判据：账仍然读得到，
+        // `hush` 也还能逐条问。
+        let mut blind = false;
+        // **收场那一相的闩**（不是判据）：闸一旦成立就一直成立（会走的只会更少），拍下它只是
+        // 为了知道"此刻在收场"——判决那一句要等，`tick` 也要跟着它开。
+        let mut settling = false;
         loop {
+            let tick = blind || settling || self.lanes.iter().any(|l| l.road.is_none());
             // 一、表侧惰性剔死（G3 从板那本账搬来的那一格）。
             if tick {
                 sweep(&mut control.table);
             }
-            // 二、等一格有事（有台要"顺便看一眼"时用**有界节拍**，否则永远挂起）。**`Pile` 的
+            // 二、等一格有事（要"顺便看一眼"时用**有界节拍**，否则永远挂起）。**`Pile` 的
             //     既定用法**：**挂起过的那一侧返回的是预置值**——内核没有第二次执行机会，故醒来
             //     必须自己按组复核，不能靠返回值拿身份。
             let wait = if tick {
@@ -195,13 +190,10 @@ impl Watch {
                 Wait::Forever
             };
             if self.pile.await_(wait).is_err() {
-                // 组坏了：退回"等最后一条退场"，行为与改动前一致。
-                control.wait_last(last.as_str());
-                return;
+                blind = true;
             }
             // 三、复核：每条道非阻塞地问一句"响着吗"（`hush` 未响答 `Busy`）。**位只有一位**
-            //     ——道上一次死亡只响一次；一次
-            //     醒来可能带走多条（两位前后脚死）。
+            //     ——道上一次死亡只响一次；一次醒来可能带走多条（两位前后脚死）。
             for lane in &self.lanes {
                 let Some(road) = lane.road else {
                     continue;
@@ -209,13 +201,7 @@ impl Watch {
                 if HolePie::from_token(road).hush().is_err() {
                     continue; // 这一条没事
                 }
-                let name = lane.name;
-                account(&mut control.table, name);
-                // 最后一条走了 ⇒ 会话结束：把仍在跑的显式收掉（只下一次）。
-                if name == last.as_str() && !stopping {
-                    stopping = true;
-                    stop_running(&mut control.table, &self.lanes);
-                }
+                account(&mut control.table, lane.name);
             }
             // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单手，
             //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
@@ -225,29 +211,29 @@ impl Watch {
                 };
                 serve_face(control, ccall::Grant::ALL[i], face, &mut buf);
             }
-            // 五、**最后一位没有道时的停机触发**：内核那一问（`Join{task, POLL}`）。与上面道那
-            //     一支是**同一句"最后一条走了"**——同一个 `stopping` 分支、同一套收场
-            //     （[`stop_running`]），差别只在触发源（主路等道响，回退路等这一枚线程收尾）。
-            if !self.watch_last && !stopping && last_reaped(&control.table, last.as_str()) {
-                stopping = true;
-                stop_running(&mut control.table, &self.lanes);
+            // 五、收场那两句。**闸**读账（会走的都走了、听令的已经发过话）⇒ 下刀；**判决**读账
+            //     （一个不剩）⇒ 收场。两者都在 `Control` 那一列上，本相只负责"什么时候问"。
+            if !settling && control.due() {
+                control.stop_rest();
+                settling = true;
             }
-            if stopping {
-                // 收场：仍在跑的已经**有界地**下过一刀并等过（见 [`stop_running`]）；等不到的
-                // 那些交给本域退场时的级联——那条路是既有的可靠收场路径，不在这里等。
-                return;
+            if settling && control.done() {
+                return true;
             }
         }
     }
 }
 
-/// **有界节拍**（毫秒）：有台"要顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒；
-/// 这一格只为**表侧惰性剔死**兜底（`relation.presence = false` 那几台没有道来叫醒本线程）。
+/// **有界节拍**（毫秒）：要"顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒。
 ///
-/// **照实记（它为什么是 10 而不是 1）**：表侧那一扫要对每一行在册的服务问一次
-/// `Join{task, POLL}`，故节拍直接是这趟开销的倍数；10ms 够让"某位静默地没了"在监督读数里
-/// 及时落定，又不把本线程变成一台压着内核问的机器。**有道的景、且最后一位也有道时，根本不走
-/// 这一格**（见 [`Watch::run`]）。
+/// **照实记（这一格的理由归了位）**：从前它的理由写成"只为表侧惰性剔死兜底"，还夹着"最后一位
+/// 没有道"那半条（位次时代）。今天它只服务两件事：① `Relation::presence` 为假的那几台
+/// **没有道**——它们的死只有表侧那一扫收得到；② **收场期间**判决要反复读账（`core::done` 是
+/// 一个不动点，不是一次事件）。两者都不需要 ⇒ **永远挂起**（见 [`Watch::run`]）。
+///
+/// **它为什么是 10 而不是 1**：表侧那一扫要对每一行在册的服务问一次 `Join{task, POLL}`，
+/// 故节拍直接是这趟开销的倍数；10 ms 够让"某位静默地没了"在监督读数里及时落定，又不把本线程
+/// 变成一台压着内核问的机器。
 const TICK_MS: usize = 10;
 
 /// **表侧惰性剔死**（照实记：G3 从板那本账搬来的那一格）：内核说这一枚收尾了 ⇒ 当场落 `Dead`。
@@ -257,22 +243,22 @@ const TICK_MS: usize = 10;
 /// 收得到。判决只认**非阻塞那一问**（与 [`service::until`] 同一条口径：挂起过的那一问读回的
 /// 是预置值，不含信息）。
 ///
-/// **`Starting` 与 `Ready` 都扫**（照实记：先前只扫 `Ready`，理由不成立）：`service::mint` 把
-/// 已产未放行的身子也置成 `Starting`，故"扫 `Starting` 会误杀 Mint 之后、Start 之前那一枚"
-/// 曾是这一格的顾虑——**内核那本账把这件事分开了**：未放行是内核的 `TaskState::Held`，而 `Join`
-/// 的判据精确表示**收尾已完成**（`TaskState::Reaped`，`kernel/src/work/unit/task.rs` 的正文）。
-/// 于是 `Held` 的身子答 **"没收尾"**（不扫），而起手一段里真死掉的那一枚答"收尾了"（扫掉、
-/// 记 `Dead`）。
+/// **`Starting` / `Ready` / `Stopping` 都扫**（照实记：这一格的相集换过两次）：
+///
+/// - 先前只扫 `Ready`——`service::mint` 把已产未放行的身子也置成 `Starting`，故"扫 `Starting`
+///   会误杀 Mint 之后、Start 之前那一枚"曾是顾虑；**内核那本账把这件事分开了**：未放行是内核的
+///   `TaskState::Held`，而 `Join` 的判据精确表示**收尾已完成**（`TaskState::Reaped`，
+///   `kernel/src/work/unit/task.rs` 的正文），于是 `Held` 的身子答"没收尾"（不扫）。
+/// - 这一刀改成 [`Table::living`]：**`Stopping` 也算活着**——被线上 `Stop` 推入 `Stopping`、
+///   而它那条道又不响的行（`presence = false` 那几台）只有这一扫收得到；少了它，判决
+///   （`core::done`）永远不会成立。
 ///
 /// 记账与收尾都走 [`mark_dead`]（同一具身体）：落 `Dead`、放下它那个域、报一行读数。
 fn sweep(table: &mut Table) {
     // 先把名字抄下来（表是定长的、行数有上界；拿名字再动表——与 `Desk` 那本账同一个形状）。
     let mut gone = [const { String::new() }; Table::CAP];
     let mut n = 0usize;
-    for row in table.rows() {
-        if !matches!(row.state, State::Starting | State::Ready) {
-            continue;
-        }
+    for row in table.living() {
         let Slot::Live { task, .. } = row.slot else {
             continue;
         };
@@ -283,23 +269,6 @@ fn sweep(table: &mut Table) {
     }
     for name in &gone[..n] {
         mark_dead(table, name.as_str(), Reaped::Now);
-    }
-}
-
-/// **最后一行那一枚线程收尾了吗**——回退路的停机触发（[`Watch::run`] 第五格）。
-///
-/// 判据与 [`sweep`] 同一条（`Join{task, POLL}` 只答"收尾已完成"）：**只读表**，不动它——
-/// 收场那一套仍走 [`stop_running`]（与主路同一套）。
-///
-/// 没有身子（没登记过 / 从未挂上 / 已 `detach`）也算"不用再等"：没有可等的坐标，停机不该
-/// 压在等不到的东西上。
-fn last_reaped(table: &Table, name: &str) -> bool {
-    match table.find(name) {
-        Some(row) => match row.slot {
-            Slot::Live { task, .. } => utask::join(task, Wait::POLL).unwrap_or(true),
-            Slot::None => true,
-        },
-        None => true,
     }
 }
 
@@ -424,59 +393,12 @@ fn wire_state(state: State) -> ccall::State {
     }
 }
 
-/// 收场那一刀：给**仍在跑的**每一位 `stop`（`doom` = 域粒度 `Doom`），**有界地**等它
-/// 收尾并记账；等不到就报一行，交给本域退场时的级联。
-///
-/// 为什么有界：`stop` 是"送到即回"（`kill` 的口径），收场不能被一个收不掉的域拖住。
-pub fn stop_running(table: &mut Table, lanes: &[Lane]) {
-    for lane in lanes {
-        let name = lane.name;
-        // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己。它随本域退场
-        // 时的"域亡＝成员清零"一起走。
-        //
-        // **照实记（订正：这一格今天仓内没有生产者）**：这一支接的从前是"三枚内件住编排域
-        // 自己的域"那条路（同域 `spawn_here`，`TeamId(0)`）——那三枚已随 `0560dd8` 回普通程序、
-        // 各成各的域，而 `service::mint` 今天只写 `Table::attach(_, Some(team), _)` ⇒ `team = None`
-        // 这半格**一处也产不出来**。该状态仍经 `Table::attach(_, None, _)` 可表达，故此支是
-        // **护栏、不是活路径**：它护的是"别扑杀本域自己"这条规矩（`mark_dead` 那一格另有
-        // `team = None ⇒ ousted = false` 的对照），删了它，将来谁再起一枚同域线程，收场这一刀
-        // 会当场扑杀本域。代价照实说：这一支今天编得过、走不到，**没有用例钉它**（表侧那七条
-        // 宿主靶已随靶删）——留着它，是把"为什么不能收"留在代码里，而不是留一句只在人脑里的规矩。
-        if matches!(
-            table.find(name).map(|s| s.slot),
-            Some(Slot::Live { team: None, .. })
-        ) {
-            continue;
-        }
-        let running = matches!(
-            table.find(name),
-            Some(s) if matches!(s.state, State::Ready | State::Starting)
-        );
-        if !running {
-            continue;
-        }
-        let _ = stop(table, name);
-        // 表里没有可等的坐标（`stop` 也答了 `Unknown`）：没得等，也不算"卡住"。
-        if !matches!(
-            table.find(name).map(|s| s.slot),
-            Some(Slot::Live { .. })
-        ) {
-            continue;
-        }
-        match until(table, name, Wait::AtMost(STOP_MS)) {
-            Ok(Reaped::Now) => mark_dead(table, name, Reaped::Now),
-            Ok(Reaped::Waited) => mark_dead(table, name, Reaped::Waited),
-            // 有界期内没等出来：照实报，交出这一位。**不是"没收到"**——判决只认非阻塞
-            // 那一问，这里说的是"还没收干净"。
-            Ok(Reaped::Unsettled) | Err(_) => {
-                debug!("system: stuck {} （退场级联接管）", lane.name);
-            }
-        }
-    }
-}
+// **照实记（`stop_running` 与 `STOP_MS` 那一对退了）**：那两样是"扳机响 ⇒ 有界地逐位收、
+// 逐位等"那一式收场。这一刀把收场拆成两件事——**下刀**（`Control::stop_rest`，下令即回）
+// 与**等账空**（`core::done`，每一拍读一次）——于是"有界"这一格不再属于某一位，而属于
+// 收场那一相自己。它留下的两样东西搬去了别处：**"别收本域那一枚"**那条护栏与它的照实记
+// 住 `Control::stop_rest`；**"等不到就报一行"**住那一相的判决（`Watch::run`）。
 
-/// 收场那一刀的等待上限（毫秒）。**必须有界**：收场不能被一个收不掉的域拖住。
-const STOP_MS: usize = 300;
 
 /// 记一位：**先等它收尾**（板报的是"门封印了"，而 `Oust` 要的前置是"域里没有还没收尾的
 /// 线程"，故这一步等的是收尾事件，不是节拍），再写 `Dead`、放下它那个域、报一行。

@@ -221,6 +221,7 @@ use core::time::Duration;
 use alloc::string::String;
 use alloc::string::ToString;
 use programs::system::control::core::Reaped;
+use programs::program::Ending;
 use programs::system::control::desk::{Announce, Slot, Table};
 use programs::system::control::service;
 use protocol::communication::establish::{self, Endpoint, Held};
@@ -423,7 +424,7 @@ fn trial(
     // （表是纯值，`Table::new()` 不碰全局）。
     let mut table = Table::new();
     table
-        .register(name.clone(), Announce::Channel)
+        .register(name.clone(), Announce::Channel, Ending::Transient)
         .map_err(|_| "register")?;
     let task = service::mint(&mut table, name.as_str(), elf, kind).map_err(|_| "spawn")?;
     // **rig A：握手**。台主这一侧先铸一条（`endpoint`：本端那一枚交出去，顺带试认它那一枚），
