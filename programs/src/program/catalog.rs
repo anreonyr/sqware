@@ -25,7 +25,7 @@ pub mod coalition;
 /// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
 #[path = "../decl/harness.rs"]
 pub mod harness;
-#[path = "../system/hub/program.rs"]
+#[path = "../service/hub/program.rs"]
 pub mod hub;
 #[path = "../system/operator/program.rs"]
 pub mod operator;

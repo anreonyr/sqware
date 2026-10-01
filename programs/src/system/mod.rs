@@ -70,7 +70,6 @@ pub mod control;
 // 各归了域（`control/core.rs` / `control/desk.rs`：它们只有生命轴一枚域读）；而**这一册待客账
 // 是两枚域共用的一本**（板线程在编排域、持树者在 operator 域）⇒ 住它们共同的那一格。
 pub mod desk;
-pub mod hub;
 pub mod machine;
 pub mod mount;
 pub mod operator;

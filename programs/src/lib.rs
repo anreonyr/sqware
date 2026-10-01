@@ -92,6 +92,7 @@ pub mod driver;
 pub mod entry;
 pub mod program;
 pub mod root;
+pub mod service;
 pub mod system;
 pub mod user;
 

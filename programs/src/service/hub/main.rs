@@ -13,7 +13,7 @@
 extern crate programs;
 
 use programs::system::control::service as core;
-use programs::system::hub;
+use programs::service::hub;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {
