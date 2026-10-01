@@ -108,7 +108,27 @@ impl Line {
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
         // 推完就落地等于"等对面来取"，会卡住回话。
         let mut out = Sender::<frame::Occupy>::from_token(entry);
-        if out.send(frame::Occupy::of(line)).is_err() {
+        // **"轮到我"要有界地等**（照实记：这一句从前只递一次）。`Sender::send` 内部是
+        // `push(bytes, Wait::POLL)`——**一个 envcall、不等**：那扇门（`/svc/drv/router` 那一格）
+        // 是**一枚单手的孔、被多家客户端共用**（rtc 请占线、uart 也请占线、guest / lodger /
+        // sleeper 与几台探针都 `find` 它），**别人手上还站着一条时它当场失败**。
+        // **实测**（手工 release、喂 `exit`）：`rtc` 起手那一步 **5 跑 4 红**（另一轮 4 跑 3 红），
+        // 每一次都落在这一句（`cause=5`）⇒ 按那扇门的口径补一次**有界重试**：
+        // **孔空了就进去，到点仍进不去才认输**（预算 = 调用方给的那一份，rtc 给 1 s）。
+        let budget = match millis {
+            Wait::POLL => 1,
+            Wait::AtMost(ms) => ms,
+            Wait::Forever => 1000,
+        };
+        let mut spent = 0usize;
+        while out.send(frame::Occupy::of(line)).is_err() {
+            spent += 1;
+            if spent >= budget {
+                break;
+            }
+            let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+        }
+        if spent >= budget {
             // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
