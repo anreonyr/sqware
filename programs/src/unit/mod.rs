@@ -14,7 +14,7 @@ pub type Died = env::Reason;
 ///   Demand     它起手要什么（死在第几步 / 那几手 setup）
 /// ```
 /// **它没有"代码在哪儿"那一格，也没有"从哪本账来"那一格**：那一段字节由**这一景那本账**给
-/// （[`crate::system::source`] 取字节那一面——内核按 ELF 段现读，镜像一个字节都不被拷走）。
+/// （[`crate::system::run::source`] 取字节那一面——内核按 ELF 段现读，镜像一个字节都不被拷走）。
 #[derive(Clone, Copy)]
 pub struct UnitFile {
     /// **身份**：它是谁（宿主那侧只读这一块）。
@@ -201,7 +201,7 @@ pub enum Setup {
     /// **整机物料**：这一台起手要**这台机器的全部可领之物**（设备树本体 / 门铃 / 每一台设备
     /// 那一段区）。
     /// 与 [`Setup::Ready`] 是**同一手 ＋ 一件事**：放行前照样 `connect`（它交回那一枚照样是
-    /// "我起来了"），放行之后装配者多走一趟——**照 [`crate::system::machine::Machine::devices`]
+    /// "我起来了"），放行之后装配者多走一趟——**照 [`crate::system::common::machine::Machine::devices`]
     /// 枚举全机**、逐条授出、再把那一段记录从这条通道推给它。
     Machine {
         /// 收物料那条通道的名字。

@@ -10,4 +10,5 @@
 //! `View`、不叫盟册；"主人还答得出吗"是喂进去的一个闭包（`mail::reserve` 那一手在适配层）。
 
 pub mod core;
-pub mod server;
+/// 那一枚线程（服务侧 / 持树侧）与它叫的那几手住这里。
+pub mod serve;

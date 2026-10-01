@@ -14,8 +14,8 @@
 //!   → 每醒一次先**逐客**（`sweep`）：主人没了的那些线——拆线 + 空出格子（探活）
 //! ```
 //! **本文件只剩流程**：起手在 `adapt/boot.rs`；醒来的四手各一份
-//! （`adapt/{sweep,exhaust,desk,bell}.rs`），那一圈的**壳**在 `adapt/resident.rs`；
-//! 树那侧的事实与线集合在 `core/sources.rs`（纯），寄存器面在 `plic.rs`（设备）。
+//! （`adapt/{sweep,resident}.rs ＋ adapt/event/{bell,desk,exhaust}.rs`），那一圈的**壳**在 `adapt/resident.rs`；
+//! 树那侧的事实与线集合在 `core/sources.rs`（纯），寄存器面在 `dev/plic.rs`（设备）。
 //! 判据、裁法与那一张读数表在 `driver/router/mod.rs`。
 
 extern crate alloc;
@@ -29,7 +29,7 @@ mod adapt;
 mod core;
 
 /// 设备面（本域私有，同 `lib.rs` 的纪律：谁的设备谁自己带）。
-mod plic;
+mod dev;
 
 /// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(E_ROUTER, "…"))` 一路 `?` 出来
 /// （**一族口径**在 [`programs::driver::shared::fail`]：号取自装配表——一个数都不写，

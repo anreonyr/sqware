@@ -1,4 +1,4 @@
-//! system::assemble — **这一景起哪些台**：过滤 ＋ 按 `after` 算次序。
+//! system::run::scene — **这一景起哪些台**：过滤 ＋ 按 `after` 算次序。
 //! **没有投影**：权威是那唯一一张装配表 [`PROGRAMS`](crate::unit::PROGRAMS)——每一台的
 //! 声明都在它自己那份 `program.rs` 里。本文件只做那张单子自己做不了的一件事：把"这一景真有
 //! 的"滤出来。

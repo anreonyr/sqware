@@ -9,4 +9,5 @@
 //! `Resolve(发送者)`。"self"那一格因此不在核心，在这一层（正文"已知边界"里写着这一条的确切含义）。
 
 pub mod core;
-pub mod server;
+/// 那一枚线程（服务侧 / 持树侧）与它叫的那几手住这里。
+pub mod serve;

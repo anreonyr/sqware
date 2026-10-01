@@ -1,4 +1,5 @@
-//! system::control — **Service 的生命周期**：建 / 配 / 起 / 停。
+//! system::control — **Service 的生命周期**：建 / 配 / 起 / 停（本域那一本账与四相）。
+//! 判定 / 账 / 合成手住公共件 [`crate::system::common::life`]；本模块只说"怎么走"。
 //! 它只答一件事：**这一条服务在不在、怎么被创建 / 配置 / 启动 / 停止。**
 //! 四套协议的语义（命名 / 身份 / 横向关系 / 存在信号）**不在这一层**：那些是程序声明上的
 //! **边**，由 [`Assembly::assemble`](crate::system::Assembly) 在装配那一趟里按次序落到四轴
@@ -14,20 +15,20 @@ use alloc::vec::Vec;
 
 use ::core::time::Duration;
 
-use crate::system::control::core::Fail;
-use crate::system::control::desk::{Slot, State, Table};
+use crate::system::common::life::verdict::Fail;
+use crate::system::common::life::table::{Slot, State, Table};
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
 use crate::boot::{Accounts, Catalog};
-use crate::system::machine::Machine;
-use crate::system::source::Source;
+use crate::system::common::machine::Machine;
+use crate::system::run::source::Source;
 use crate::unit::{PROGRAMS, Setup, UnitFile};
 
-pub mod assemble;
-pub mod core;
-pub mod desk;
-pub mod service;
+use self::enroll as assemble;
+use crate::system::common::life::{service,  verdict as core};
+
+pub mod enroll;
 pub mod supervise;
 
 /// 装配失败的编号——定义见 [`crate::unit::Died`]（本处只是转发）。
@@ -128,16 +129,16 @@ impl Control {
     /// **造一个 Service**（线上 `Mint` 那一问）：复核 → （没有行就立账）→ 按声明上的来源取字节
     /// → 建域产线程。
     /// **复核两格**：名字得在装配声明里（`PROGRAMS`——字节与 `kind` 的声明处，帧里没有镜像），
-    /// 且这一行**此刻能起**——判据与 [`crate::system::control::core::admit_start`] 同一条
+    /// 且这一行**此刻能起**——判据与 [`crate::system::common::life::verdict::admit_start`] 同一条
     /// （`NeverStarted | Dead` 才起；表里还没这一行就先立一行）。已经在跑 / 正在起的答
     /// [`Fail::NotReady`]。造出来**恒为未放行**（`service::mint` 的口径），身子收进
     /// [`Control::pending`] 等 [`Control::release`]。
-    /// **它不碰镜像**：取字节那一面（[`crate::system::source`]）是 `spawn` 的唯一消费者，
+    /// **它不碰镜像**：取字节那一面（[`crate::system::run::source`]）是 `spawn` 的唯一消费者，
     /// 本手只把这一台声明上的**来源档**转交过去。
     pub fn mint(&mut self, name: String) -> Result<(), Fail> {
         let program = program_of(name.as_str()).ok_or(Fail::Unknown)?;
         let method = program.name();
-        // **复核那一格**：这一行此刻能不能起——判据就是 [`crate::system::control::core::admit_start`]
+        // **复核那一格**：这一行此刻能不能起——判据就是 [`crate::system::common::life::verdict::admit_start`]
         // 那一条（`NeverStarted | Dead` 才起）。已经在跑 / 正在起的答 [`Fail::NotReady`]
         // （"此刻不该起"与"半路死了"在本端是同一个下一步）。
         match self.table.find(method) {
@@ -183,7 +184,7 @@ impl Control {
         self.launch(program, method.clone(), &mut pending.service)
             .map_err(|_| Fail::NotReady)?;
         // **再等就绪**（线上这条路上没有挂板 / 挂树那两手——那两件是装配期的事，
-        // 见 [`crate::system::control::assemble`] 里 `launch` 那一格的注）。
+        // 见 [`crate::system::control::enroll`] 里 `launch` 那一格的注）。
         self.ready(method, &mut pending.service, program.supply())
             .map_err(|_| Fail::NotReady)?;
         Ok(pending.service)
@@ -201,7 +202,7 @@ impl Control {
     /// **起一个 Service**：按名字取那一段字节 → 建域 → 产线程 → 备通道账。
     /// 前置：这一行**已经登记过**（[`Control::enlist`]）——没登记过由 `admit_start` 拦下。
     /// **那一段字节从哪儿来**：由这一台声明上的**来源档**（`origin`）定，取字节那一面住
-    /// [`crate::system::source`]——**这里就是那一面的唯一消费者**（下面 `service::mint` 那一行）。
+    /// [`crate::system::run::source`]——**这里就是那一面的唯一消费者**（下面 `service::mint` 那一行）。
     /// 特权级仍从清单那一条取（"唯一声明处是装配表"，打包时写进去），而"字节在哪儿"本层不问。
     pub fn spawn(&mut self, program: &UnitFile) -> Result<Service, Error> {
         let name = program.name().to_string();
@@ -349,7 +350,7 @@ pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
 /// 找不到 ⇒ `None`：这个名字不在这一景的装配声明里（`PROGRAMS` 是唯一声明处；帧里没有镜像，
 /// 故"起哪一台"这件事只认本表）。
 /// **只认"由编排域起"的那几台**（`relation.after.is_some()`）：`root` / `system` 自己不在
-/// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::assemble`]
+/// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::run::scene`]
 /// 的过滤同一句。
 fn program_of(name: &str) -> Option<&'static UnitFile> {
     PROGRAMS

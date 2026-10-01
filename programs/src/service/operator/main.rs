@@ -11,9 +11,9 @@
 extern crate programs;
 
 use programs::service::operator;
-use programs::system::control::service as core;
+use programs::system::common::life::service as core;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {
-    operator::server::serve()
+    operator::serve::serve()
 }

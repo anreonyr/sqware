@@ -3,7 +3,7 @@
 //! 设备的读与清是设备面的。[`Host::ask`] / [`Host::ring`] 吐什么，这里就执行什么。
 
 use super::desk;
-use crate::rtc;
+use crate::dev::rtc;
 use env::{HoleDir, Wait};
 use programs::driver::shared::context::Context;
 use programs::driver::shared::device::Device;

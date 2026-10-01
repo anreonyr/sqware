@@ -16,10 +16,9 @@
 
 pub mod bridge;
 pub mod core;
-pub mod server;
 
-// 持树侧那三份 ＋ 本域表上那几枚孔的认领：只有本域这一份入口（`server`）叫它们。
-mod answer;
+// 持树侧那一侧（本域的一枚线程 ＋ 它叫的那三手）住在 `serve/`；载体 `claim.rs`
+// 在它们下面（只认本域那张表与记号）。
 mod claim;
-mod door;
-mod plate;
+/// 那一枚线程（服务侧 / 持树侧）与它叫的那几手住这里。
+pub mod serve;

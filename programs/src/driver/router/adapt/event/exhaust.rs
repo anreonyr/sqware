@@ -5,7 +5,7 @@
 //! 对账，响着就是那一条。
 
 use crate::core::lines::Lines;
-use crate::plic::{LINE_PRIORITY, Plic};
+use crate::dev::plic::{LINE_PRIORITY, Plic};
 use runtime::env::mail::HolePie;
 
 /// 排空：取"忙"的那些，把响着的那一位应掉，每条回闲 + 放线。

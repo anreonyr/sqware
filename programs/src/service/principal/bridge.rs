@@ -12,7 +12,7 @@ use protocol::service::principal::client::Face;
 use runtime::env::room;
 
 use crate::system::Assembly;
-use crate::system::control::{BOOT_MS, READY_MS, RETRY_MS, Service};
+use crate::system::control::{BOOT_MS,  RETRY_MS, Service};
 use crate::unit::UnitFile;
 
 /// **名册在装配者这一侧的状态**：那一面（`None` = 名册还没起来）。

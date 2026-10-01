@@ -3,8 +3,8 @@
 //! 三件事分居三处，本文件是**接线那一处**：
 //! | 处 | 是什么 |
 //! |---|---|
-//! | [`core::judge`](super::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::service::operator::Ruling) 三格 |
-//! | [`core::gate`](super::core::gate) | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
+//! | [`core::judge`](crate::service::operator::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::service::operator::Ruling) 三格 |
+//! | [`core::gate`](crate::service::operator::core::gate) | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
 //! | 本文件 | **接线**：那两枚门牌（[`Session`]）与"树 → 判据"的那一具（[`Court`]） |
 
 use env::{TaskId, Wait};
@@ -20,7 +20,7 @@ use crate::service::operator::core::Operator;
 use crate::service::operator::core::gate::{Code, verdict};
 use crate::service::operator::core::judge::Facts;
 
-use super::claim::face_of_mark;
+use crate::service::operator::claim::face_of_mark;
 
 /// 问身份那两条边要用的期限（毫秒）。**必须有界**：协调服务不在时不能把树挂死。
 const MS: usize = 1000;
@@ -121,14 +121,14 @@ impl Facts for Court<'_> {
 }
 
 /// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
-/// （[`Operator::permit`](super::core::Operator::permit) 答出来的那一句）。
+/// （[`Operator::permit`](crate::service::operator::core::Operator::permit) 答出来的那一句）。
 /// **装配期根本不在门禁这条轴上**：principal 挂自己那两枚门牌那一趟（`part /svc` ＋
 /// `part /svc/sys/principal` ＋ 两处 `land`）发生在它自己的 `serve()` 里，而本域**认下它的门牌**与
 /// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
 /// 身份**。门禁若在
 pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> Code {
     // **门禁先决两格**：
-    // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（[`super::bridge::Tree::wire`]
+    // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（[`crate::service::operator::bridge::Tree::wire`]
     if !wired {
         return Code::Ok;
     }

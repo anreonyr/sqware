@@ -67,9 +67,9 @@ use core::time::Duration;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::control::core::Reaped;
-use programs::system::control::desk::{Announce, Slot, Table};
-use programs::system::control::service;
+use programs::system::common::life::verdict::Reaped;
+use programs::system::common::life::table::{Announce, Slot, Table};
+use programs::system::common::life::service;
 use programs::unit::Ending;
 use protocol::communication::establish::{self, Endpoint, Held};
 use protocol::debug;

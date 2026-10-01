@@ -1,4 +1,4 @@
-//! system::carrier — **一只组守着 N 枚门牌**：从哪一枚收到就是哪一面。
+//! system::common::face::carrier — **一只组守着 N 枚门牌**：从哪一枚收到就是哪一面。
 //! ```text
 //!   carrier(那几枚孔，各自代表哪一面) → 组里那几枚就绪 ⇒ 收到哪一枚孔 = 哪一面
 //!   on(面, 发送者, 帧)                每一句话交给谁（那一族自己的门）
@@ -14,7 +14,7 @@ use runtime::PAGE_SIZE;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::HolePie;
 
-use super::control::service::Start;
+use crate::system::common::life::service::Start;
 use crate::unit::Died;
 
 /// **守着这几枚门牌**，直到组坏掉：一场一句话地交给 `on`。

@@ -1,11 +1,11 @@
-//! operator::server — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）。
+//! operator::serve — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）。
 //! 本文件只放**那一枚线程**：起手（上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人）与它收进来
 //! 的四句话。每句话各自的正文在隔壁——**本文件不做裁决、也不动树**，它只"收一句、交给谁"：
 //! | 收的是什么 | 交给谁 |
 //! |---|---|
-//! | 提示之路上的一条路（[`ocall::TipIn::Plate`]） | [`super::plate::plate`]：前缀立窗格 ＋ 末段落格 |
+//! | 提示之路上的一条路（[`ocall::TipIn::Plate`]） | [`self::plate::plate`]：前缀立窗格 ＋ 末段落格 |
 //! | 提示之路上的一位客人（[`ocall::TipIn::Guest`]） | 客人账（`Desk::admit`） |
-//! | 客人的一句问（[`ocall::Req`]） | [`super::answer::answer`]：七条原语 |
+//! | 客人的一句问（[`ocall::Req`]） | [`self::answer::answer`]：七条原语 |
 //! **为什么就一枚线程**：树上那几枚是**一枚只在持它的那张表里有意义的句柄**（`PieToken` = "我这张
 //! 表里的第几个"）。"查到了要把 Pie 授出去"必须由**持有那一枚的那张表**来做——故所有条目只能住
 //! 同一张表，也就是同一枚线程。板那一台栽过这条（每位客人一枚待客线程 ⇒ 甲的条目在甲的表里，
@@ -28,13 +28,18 @@ use protocol::service::operator::Grant;
 use protocol::service::operator::grant::grant_of;
 
 use crate::service::operator::core::Operator;
-use crate::system::control::service::Start;
-use crate::system::desk::{Desk, DeskFail, Guest};
+use crate::system::common::life::service::Start;
+use crate::system::common::face::desk::{Desk, DeskFail, Guest};
 use crate::unit::operator::E_TREE;
 
-use super::answer::answer;
-use super::claim::{ask_of, mark_of, reply_of};
-use super::plate::plate;
+use self::answer::answer;
+use crate::service::operator::claim::{ask_of, mark_of, reply_of};
+use self::plate::plate;
+
+// 持树侧那三手：只有本域这一份入口（本文件那一枚线程）叫它们。
+mod answer;
+mod door;
+mod plate;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
 /// **不是轮询**：账补齐之后这一等就变成 `Wait::Forever`（由组唤醒）；这个短期限只在装配窗口
@@ -200,7 +205,7 @@ pub fn serve() -> Result<(), Start> {
 ///     （[`plate`]），不经会话、不当自己的客人；
 ///   - **一位客人**（[`ocall::TipIn::Guest`]）：`admit` 收进来；
 ///   - **门禁接线**（[`ocall::TipIn::Wired`]）：**一句话、不带号**——装配者已认下名册，门从此
-///     问得动身份（那一格由 [`super::door::may`] 读）。
+///     问得动身份（那一格由 [`self::door::may`] 读）。
 fn settle(
     desk: &mut Desk,
     pile: &Pile,

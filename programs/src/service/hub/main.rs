@@ -11,9 +11,9 @@
 extern crate programs;
 
 use programs::service::hub;
-use programs::system::control::service as core;
+use programs::system::common::life::service as core;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {
-    hub::server::serve()
+    hub::serve::serve()
 }

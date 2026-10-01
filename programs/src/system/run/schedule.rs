@@ -1,13 +1,14 @@
-//! schedule — **装配的相**：一台服务从"立了账、造了身子"到"在树上答得动"，分几相走、每相谁动手。
+//! system::run::schedule — **装配的相**：一台服务从"立了账、造了身子"到"在树上答得动"，分几相走、每相谁动手。
 //! ```text
 //!   立账 → 造身子 → 装通道        ← 不是手：这三件对整张单逐条做（`control/{assemble,mod}.rs`）
 
 use crate::service::operator::bridge as operator;
 use crate::service::principal::bridge as principal;
 use crate::system::Assembly;
-use crate::system::control::assemble as control;
+use crate::system::control::enroll as control;
 use crate::system::control::{Error, Service};
 use crate::unit::{Died, UnitFile};
+
 
 /// **一手**：某一轴在某一相里对某一台做的一件事。
 /// 签名里只有"这一台"（[`UnitFile`]）与"它的身子"（[`Service`]，起手那两样）：**读哪一格由这一手
@@ -35,7 +36,7 @@ pub fn advance(
     service: &mut Service,
 ) -> Result<(), Died> {
     for &act in phase {
-        act(assembly, program, service).map_err(|why| super::fail(program, Error::Step(why)))?;
+        act(assembly, program, service).map_err(|why| crate::system::fail(program, Error::Step(why)))?;
     }
     Ok(())
 }

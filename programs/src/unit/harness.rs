@@ -12,7 +12,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::unit::{Demand, Died, Ending, Identity, Relation, SCENE, Setup, UnitFile};
+use crate::unit::{Demand, Died, Ending, Identity, Relation, SCENE,  UnitFile};
 use env::ProgramKind;
 
 pub const E_GUEST: Died = 7;

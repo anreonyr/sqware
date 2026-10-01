@@ -1,4 +1,4 @@
-//! hub::server — **设备账那一台**：一枚线程守着一本账（这一台机器上有哪些设备、谁在驱它们）。
+//! hub::serve — **设备账那一台**：一枚线程守着一本账（这一台机器上有哪些设备、谁在驱它们）。
 //! 载体是 rtc / principal / 盟册那几面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚
 //! 回信孔借过来、把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），
 //! 办完事从那枚孔答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西
@@ -46,9 +46,9 @@ use runtime::env::unit as utask;
 
 use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::service::operator::bridge;
-use crate::system::control::service::Start;
-use crate::system::machine::Machine;
-use crate::system::mount;
+use crate::system::common::life::service::Start;
+use crate::system::common::machine::Machine;
+use crate::system::common::face::mount;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
 
 /// 等树 / 等盟册 / 收物料的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

@@ -6,6 +6,13 @@
 //!   ├── roster    身份轴：名册那一面——门牌怎么认、谁补绑
 //!   └── watch     存在信号·那一头：死亡道表 ＋ 等任一道响的那只组
 //! ```
+//! 三格的住法：
+//! ```text
+//!   run/      本域那一趟：起手 → 这一景起哪些台 → 装配的相 → 程序来源
+//!   control/  生命轴：本域那一本账（`Control`）＋ 登记/入册 ＋ 收场
+//!   common/   **公共件**（服务与驱动也读，住它们共同的父）：
+//!             life/  判定 / 账 / 合成那几手     face/  挂面 / 组 / 待客账     machine.rs 机器自述
+//! ```
 
 use alloc::string::ToString;
 
@@ -14,20 +21,17 @@ use protocol::debug;
 
 use crate::service::operator::bridge::Tree;
 use crate::service::principal::bridge::Roster;
-use crate::system::bootstrap::Boot;
+use crate::system::run::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
 use crate::unit::{Died, UnitFile};
 
-pub mod assemble;
-pub mod bootstrap;
-pub mod carrier;
+use crate::system::common::face::mount;
+use crate::system::run::schedule;
+
+pub mod common;
 pub mod control;
-pub mod desk;
-pub mod machine;
-pub mod mount;
-pub mod schedule;
-pub mod source;
+pub mod run;
 
 /// **运行时装配上下文**：这台机器**已经装配到了什么**——四轴各一块，加存在信号的两头。
 /// 它不是"配置表"：配置在 `UnitFile` 上；这里只有**跑起来的东西**（已起的域与线程、已铸的孔、
@@ -61,7 +65,7 @@ impl Assembly {
     /// **把 `control` 那一族挂上树**（`/svc/sys/control/{state,mint,start,stop}` 四面，一原语一面）：
     /// 本域逐面铸入口、**持树者逐面落那一格**、本域当场待客。
     /// 三步，次序即契约：
-    /// 1. **铸入口**（[`crate::system::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的
+    /// 1. **铸入口**（[`crate::system::common::face::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的
     ///    服务端（入口的"开者"就是本域，客人 `Face::of` 据此知道往哪答话）；
     /// 2. **请持树者落**（[`Tree::plate`]）：把那一枚交过去，再把那条路推上提示之路；
     /// 3. **接上监督那一趟**（[`Watch::attach_face`]）：入口挂进同一只组，**本域当场开始待客**。
@@ -142,7 +146,7 @@ impl Assembly {
 
     /// **起一条**——这一台自己的装配：**立账 → 造身子 → 装通道 → 走那三相**。
     /// 前三件与"这一台是谁"无关（账上那一行 / 它那枚身子 / 它那几条通道），由
-    /// [`Control`] 与 [`crate::system::control::assemble`] 做；三相各自动哪几手写在 [`schedule`]
+    /// [`Control`] 与 [`crate::system::control::enroll`] 做；三相各自动哪几手写在 [`schedule`]
     /// 那张表里，而**放行那一手夹在相与相之间**——它不是某一轴的手，是这一条自己的生命那一步。
     /// **次序即契约**：先起的先就绪，后面的就能向它要东西；持树者必须先于客人（客人上树要它
     /// 在），名册必须先于其余（其后的身份都从它来）。
@@ -171,7 +175,7 @@ impl Assembly {
 
         // 通信：放行前把 `setup` 里那几条通道逐条装上（记号 = 通道名，放行后逐条认领）。
         // 一件一件来：`connect` 返的是**那条通道的持有者**（一次一手、一手一对孔）。
-        control::assemble::connect_all(program, &mut service).map_err(|e| fail(program, e))?;
+        control::enroll::connect_all(program, &mut service).map_err(|e| fail(program, e))?;
 
         // **三相**（表在 [`schedule`]）：放行那一手夹在相与相之间——它不是某一轴的手，是这一条
         // 自己的生命那一步（`launch` = 起步 ＋ 递整机物料，次序是硬的：物料要落到它交回的那条

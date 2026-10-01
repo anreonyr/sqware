@@ -3,7 +3,7 @@ use runtime::core::res::dock::Dock;
 use runtime::env::mail::PolePie;
 
 use crate::boot::{Accounts, Catalog};
-use crate::system::machine::Machine;
+use crate::system::common::machine::Machine;
 
 /// **起手那一族的死法**：一格 = 死在起手的哪一步。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

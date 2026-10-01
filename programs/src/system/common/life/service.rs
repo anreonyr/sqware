@@ -1,4 +1,4 @@
-//! control::service — **把内核答的事实写回表**：建域 / 放行 / 等就绪 / 收 / 盯。
+//! common::life::service — **把内核答的事实写回表**：建域 / 放行 / 等就绪 / 收 / 盯。
 //! 这里只放**合成**的几手（一步里既问内核又改账的那几件）：[`mint`] / [`start`] /
 //! [`ready`] / [`stop`] / [`until`] / [`watch`]。**纯转发那一层没有了**——`build` / `spawn` /
 
@@ -7,8 +7,8 @@ use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
-use crate::system::control::core::{Fail, Ready, Reaped, admit_start, probe_ready};
-use crate::system::control::desk::{Announce, Service, Slot, State, Table};
+use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
+use crate::system::common::life::table::{Announce, Service, Slot, State, Table};
 use protocol::communication::establish::Endpoint;
 
 use crate::unit::{

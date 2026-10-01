@@ -1,7 +1,7 @@
 //! principal::program — **名册**（`prog-principal`）的装配声明。
 //! 身份服务：答"这一位此刻代表谁"与"在不在他那一支里"。它是持树者的**第一双眼睛**：它起手把
 
-use crate::unit::{Demand, Died, Ending, Identity, Relation, Setup, UnitFile};
+use crate::unit::{Demand, Died, Ending, Identity, Relation,  UnitFile};
 
 /// 它死在起手哪一步（落门牌 / 立两张表 / 回查）。
 pub const E_PRINCIPAL: Died = 14;

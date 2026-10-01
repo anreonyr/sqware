@@ -5,10 +5,10 @@
 //! 本文件剩下的是**路由者自己的起手**：读设备树（只有它读）、建账、铸入口、挂三源那只组。
 //! **上板 / 上树仍然尽力**：这一台起来就得收（铃一响就要 claim），故两件任一件没成都只报一行
 
-use super::desk::Replies;
+use super::event::desk::Replies;
 use crate::core::lines::Lines;
 use crate::core::sources::Sources;
-use crate::plic::Plic;
+use crate::dev::plic::Plic;
 use alloc::vec::Vec;
 use env::{Access, HoleDir, PieKind, Policy, Wait};
 use programs::driver::shared::context::{Context, Step};

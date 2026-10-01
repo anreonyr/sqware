@@ -52,9 +52,9 @@ use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::control::core::{Ready, probe_ready};
-use programs::system::control::desk::{Announce, Slot, State, Table};
-use programs::system::control::service;
+use programs::system::common::life::verdict::{Ready, probe_ready};
+use programs::system::common::life::table::{Announce, Slot, State, Table};
+use programs::system::common::life::service;
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;

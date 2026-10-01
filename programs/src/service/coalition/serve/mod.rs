@@ -1,4 +1,4 @@
-//! coalition::server — **结盟服务那一台**：一枚线程守着盟册（一条关系 + 一枚计数器）。
+//! coalition::serve — **结盟服务那一台**：一枚线程守着盟册（一条关系 + 一枚计数器）。
 //! 载体是 rtc / principal 那一面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚回信
 //! 孔借过来、把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），办完事
 //! 从那枚孔答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西。
@@ -15,14 +15,14 @@
 //! 装配者，拿不到它手里那一份副本（正文 K7 的被否项：转授要新装配机制）。
 //! **面为什么长在门牌上**：本族**没有会话**——门牌自己就是那条路，
 
-use crate::system::control::service::Start;
+use crate::system::common::life::service::Start;
 use crate::unit::coalition::E_COALITION;
 use env::Wait;
 
 use crate::service::coalition::core::Coalition;
 use crate::service::operator::bridge;
-use crate::system::carrier::carrier;
-use crate::system::mount;
+use crate::system::common::face::carrier::carrier;
+use crate::system::common::face::mount;
 use env::{PieToken, TaskId};
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;

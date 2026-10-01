@@ -1,9 +1,9 @@
-//! control::core — **判定（纯）**：起不起、起来了没有、收尾完了没有——只读表，不碰内核
+//! common::life::verdict — **判定（纯）**：起不起、起来了没有、收尾完了没有——只读表，不碰内核
 //! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
 use crate::unit::Ending;
 
-use super::desk::{Announce, Slot, State, Table};
+use super::table::{Announce, Slot, State, Table};
 
 /// 起一个 Service 的**准许**：只有它没在跑、也不在停，才准起。
 /// 两种拒绝的理由不同，故不压成一个：名字不在表里 = 调用方写错了；

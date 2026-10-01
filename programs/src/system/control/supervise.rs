@@ -5,8 +5,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::system::control::core::{self, Reaped};
-use crate::system::control::desk::{Slot, State, Table};
+use crate::system::common::life::verdict::{ Reaped};
+use crate::system::common::life::table::{Slot, State, Table};
 use env::{HoleDir, PieToken, Wait};
 use protocol::communication::sender::Sender;
 use protocol::debug;
@@ -18,6 +18,8 @@ use runtime::env::unit as utask;
 
 // 表那一侧的那一手（本文件只读、不重写）。
 use super::Control;
+
+use crate::system::common::life::verdict as core;
 
 /// **监督相在编排域这一侧的状态**：等"有事"的组 ＋ **control 那一面**。
 pub struct Watch {
@@ -207,7 +209,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
 /// **两格语义一个字不省**：`stop` 只到 `Stopping`（[`Control::stop`] 就是 [`service::stop`]），
 /// 落 `Dead` 的是**监督那一趟**（[`account`] 的 `until` 两相）——本层不为它抢一步。
 fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
-    let code = |fail: crate::system::control::core::Fail| {
+    let code = |fail: crate::system::common::life::verdict::Fail| {
         ccall::frame::fail_to_code(Some(wire_fail(fail)))
     };
     let Some(ask) = ask else {
@@ -238,8 +240,8 @@ fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::fram
 
 /// 模型那一格失败 → 线上那一格失败：两套都是**四格语义格**，逐格同形（协议那一份的 `Bad`
 /// 是本端产生的，不在这一路——它由 [`answer`] 那两处"读不懂"直接落）。
-fn wire_fail(fail: crate::system::control::core::Fail) -> ccall::Fail {
-    use crate::system::control::core::Fail as Model;
+fn wire_fail(fail: crate::system::common::life::verdict::Fail) -> ccall::Fail {
+    use crate::system::common::life::verdict::Fail as Model;
     match fail {
         Model::Unknown => ccall::Fail::Unknown,
         Model::BadImage => ccall::Fail::BadImage,

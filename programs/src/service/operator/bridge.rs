@@ -20,7 +20,7 @@ use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::system::Assembly;
-use crate::system::control::{BOOT_MS, READY_MS, Service};
+use crate::system::control::{BOOT_MS,  Service};
 use crate::unit::UnitFile;
 
 use protocol::communication::establish;

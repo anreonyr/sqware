@@ -9,7 +9,7 @@
 //! `cull::seal_owned` → `messenger::wipe` → 组键。
 
 use crate::core::lines::Lines;
-use crate::plic::Plic;
+use crate::dev::plic::Plic;
 use env::HoleDir;
 use protocol::communication::establish::Endpoint;
 use protocol::debug;

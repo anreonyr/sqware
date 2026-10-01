@@ -3,7 +3,8 @@
 //! 每一次醒来的四件事各有一份（`sweep` / `exhaust` / `desk` / `bell`）——本文件只做"等、取、喂"。
 
 use super::boot::Up;
-use super::{bell, desk, exhaust, sweep};
+use super::event::{bell, desk, exhaust};
+use super::sweep;
 use env::Wait;
 use programs::driver::shared::fail::Fail;
 use programs::unit::router::E_ROUTER;

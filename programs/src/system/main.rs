@@ -6,8 +6,8 @@ extern crate alloc;
 extern crate programs;
 
 use programs::system::Assembly;
-use programs::system::assemble;
-use programs::system::bootstrap;
+use programs::system::run::scene;
+use programs::system::run::bootstrap;
 use programs::system::control::{self, E_PROGRAM};
 
 /// 本域的死法：**一格 = 死在起手的哪一步**。
@@ -81,7 +81,7 @@ fn system() -> Result<(), Fail> {
     let boot = bootstrap::take().map_err(Fail::from)?;
 
     // 2. 这一景起哪些台（**次序由各台声明里的 `after` 算出来**：先起的先就绪，后面的就能向它要东西）。
-    let list = assemble::programs(&boot.catalog).map_err(|_| Fail::Assemble(E_PROGRAM))?;
+    let list = scene::programs(&boot.catalog).map_err(|_| Fail::Assemble(E_PROGRAM))?;
     // **空单**：这一景一台可装配的都没有 ⇒ 报那一格（"有单可装"是下面每一趟的前提）。
     if list.is_empty() {
         return Err(Fail::Assemble(E_PROGRAM));

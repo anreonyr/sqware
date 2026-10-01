@@ -1,4 +1,4 @@
-//! system::desk — **两枚域共用的一本账**：待客账（谁在跟我说话 / 它的问话孔 / 它的答话路）。
+//! system::common::face::desk — **两枚域共用的一本账**：待客账（谁在跟我说话 / 它的问话孔 / 它的答话路）。
 
 use alloc::vec::Vec;
 
@@ -182,7 +182,7 @@ impl Desk {
 
     /// 还没挂上问话孔的那几位——**只读**。
     /// **为什么要有它**：`arm_pending` 把"是哪几位还没挂上"收在自己肚子里，
-    /// 而"**一直**挂不上"是另一件事——它得看得见，见 `operator::server::unarmed_report`。
+    /// 而"**一直**挂不上"是另一件事——它得看得见，见 `operator::serve::unarmed_report`。
     pub fn unarmed_each(&self, mut f: impl FnMut(TaskId)) {
         for guest in self.guests.iter().flatten() {
             if !guest.armed() {

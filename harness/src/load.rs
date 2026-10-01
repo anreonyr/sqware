@@ -60,8 +60,8 @@ use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
-use programs::system::control::desk::{Announce, Table};
-use programs::system::control::service;
+use programs::system::common::life::table::{Announce, Table};
+use programs::system::common::life::service;
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::room;

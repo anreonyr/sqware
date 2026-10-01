@@ -25,7 +25,7 @@ extern crate programs;
 mod adapt;
 
 /// 设备面（本域私有：谁的设备谁自己带）。
-mod rtc;
+mod dev;
 
 use env::{Access, PieKind, Policy, Wait};
 use programs::driver::shared::context::{Context, Step};
@@ -37,7 +37,7 @@ use protocol::debug;
 use protocol::driver::ENTRY_MARK;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Mine;
-use rtc as device;
+use dev::rtc as device;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 

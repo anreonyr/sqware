@@ -2,10 +2,10 @@
 //! ```text
 //!   起手  铸两枚孔 → 上板 ＋ 开会话 → `/svc/drv/uart` 那块 Pane 下落两枚 Tile
 //!         → **认领设备**（设备账那一台）→ 开闸 → 占线
-//!   常驻  从 `tx` 取一条字 ⇒ 原样写进设备（[`put`](crate::uart::put)）
+//!   常驻  从 `tx` 取一条字 ⇒ 原样写进设备（[`put`](crate::dev::uart::put)）
 //! ```
 
-use super::{ME, device};
+use crate::{ME, device};
 use env::{Access, PieKind, Mark, PieToken, Policy, Wait};
 use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};

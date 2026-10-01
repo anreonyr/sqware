@@ -8,7 +8,7 @@
 //! 应铃那一手在 `resident` 里**无条件**做。
 
 use crate::core::lines::Lines;
-use crate::plic::Plic;
+use crate::dev::plic::Plic;
 use protocol::debug;
 
 /// 领干净这一趟铃：每条领到的线响一位、静音、报过没有、结清。

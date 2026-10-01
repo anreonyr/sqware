@@ -1,15 +1,15 @@
-//! control::desk — **生命轴那一本账**：一张定长表（`Service`）与一行的形状（名字 / 身子 /
+//! common::life::table — **生命轴那一本账**：一张定长表（`Service`）与一行的形状（名字 / 身子 /
 //! 生命阶段 / 怎么算起来）。
 //! 它只服务**生命轴**（[`Control`](super::Control) 与它那四相）与几处读口（板与服务那一侧的
 //! "它还在不在"、`harness` 那几台测具）。**那一册待客账不在这里**：它是**两枚域共用**的一本
-//! （板线程在编排域、持树者在 operator 域），故住它们共同的那一格 `crate::system::desk`。
+//! （板线程在编排域、持树者在 operator 域），故住它们共同的那一格 `crate::system::common::face::desk`。
 
 use alloc::string::String;
 use env::{TaskId, TeamId};
 
 use crate::unit::Ending;
 
-use super::core::Fail;
+use super::verdict::Fail;
 
 /// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

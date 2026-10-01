@@ -7,7 +7,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::core::lines::Lines;
-use crate::plic::{LINE_PRIORITY, Plic};
+use crate::dev::plic::{LINE_PRIORITY, Plic};
 use env::{HoleDir, Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Held};
 use protocol::debug;

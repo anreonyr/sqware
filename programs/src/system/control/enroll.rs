@@ -1,4 +1,4 @@
-//! control::assemble — **装配那一半**：先立账（`enlist`），后入册（`enroll`）。
+//! control::enroll — **装配那一半**：先立账（`enlist`），后入册（`enroll`）。
 //! 两条都是"机器对整张单做的事"，与具体是哪一台无关：
 //!   - [`Control::enlist`]：登记一行——**怎么算起来了**由这一行的 `setup` 推出
 //!     （有通道 ⇒ `Announce::Channel`；否则放行即起来）。**先立整张账，再逐条起**。
@@ -15,9 +15,9 @@ use protocol::service::hub::{ENROLL_MAX, Enroll};
 use runtime::core::res::port;
 use runtime::env::mail::{NolePie, PolePie};
 
-use crate::system::control::desk::Announce;
+use crate::system::common::life::table::Announce;
 
-use super::{BOOT_MS, Control, Error, READY_MS, Service};
+use super::{BOOT_MS, Control, Error,  Service};
 use crate::system::Assembly;
 use crate::unit::{Setup, UnitFile};
 
@@ -59,7 +59,7 @@ impl Control {
     /// **入册**：把**这台机器的全部可领之物**交进收方（那一条声明了 `Setup::Machine` 的通道）。
     /// 前置：它**已经起来**（[`Control::start`] 之后）——通道那一头才认得上，记录也才落得进去。
     /// 三步：
-    /// 1. **枚举全机**（[`crate::system::machine::Machine::devices`]）＋ 那两件按**已知坐标**的
+    /// 1. **枚举全机**（[`crate::system::common::machine::Machine::devices`]）＋ 那两件按**已知坐标**的
     ///    （设备树本体 / 门铃——它们不在树里，没有"哪一类"可判）；
     /// 2. **逐条授出**（门闩在本域手里，直接 `port::ship` 给**它**）；
     /// 3. **一整段推过去**（[`Enroll`]：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）。

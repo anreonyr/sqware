@@ -21,14 +21,14 @@ extern crate programs;
 /// 纯功能：交出去的那一批（非空不可表达）。
 mod core;
 
-/// 服务台：两枚门牌那一趟 ＋ 从写口取一条字写出去。
-mod desk;
+/// 住持面（适配）：服务台（两枚门牌那一趟 ＋ 从写口取一条字写出去）。
+mod adapt;
 
 /// 设备面（本域私有：谁的设备谁自己带）。
-mod uart;
+mod dev;
 
 use crate::core::batch::Batch;
-use crate::uart as device;
+use crate::dev::uart as device;
 use env::{HoleDir, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::unit::uart::E_UART;
@@ -53,9 +53,9 @@ const DRAIN_MAX: usize = 64;
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // 铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌 → **认领设备** → 开闸 → 占线：那一趟全在
-    // [`desk::start`]（本台是唯一双向的一台，故它的路长一段、牌两枚）。本域既不写死设备名、
+    // [`adapt::desk::start`]（本台是唯一双向的一台，故它的路长一段、牌两枚）。本域既不写死设备名、
     // 也不写死地址："哪一台是串口"由设备账回答（类 `ns16550a`）。
-    let desk = desk::start(Wait::AtMost(MS))?;
+    let desk = adapt::desk::start(Wait::AtMost(MS))?;
 
     // **两个源**：写口上有客人交来的一条字、线上有"设备收来了字节"——组等任意一格
     // 。

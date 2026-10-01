@@ -1,4 +1,4 @@
-//! principal::server — **身份服务那一台**：一枚线程守着两张表（名册与谱系）。
+//! principal::serve — **身份服务那一台**：一枚线程守着两张表（名册与谱系）。
 //! 载体是 rtc 那一面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚回信孔借过来、
 //! 把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），办完事从那枚孔
 //! 答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西，"往哪回"那一格
@@ -13,14 +13,14 @@
 //! ```
 //! **面为什么长在门牌上**：本族**没有会话**——门牌自己
 
-use crate::system::control::service::Start;
+use crate::system::common::life::service::Start;
 use crate::unit::principal::E_PRINCIPAL;
 use env::Wait;
 
 use crate::service::operator::bridge;
 use crate::service::principal::core::Principal;
-use crate::system::carrier::carrier;
-use crate::system::mount;
+use crate::system::common::face::carrier::carrier;
+use crate::system::common::face::mount;
 use env::TaskId;
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
