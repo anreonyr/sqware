@@ -180,9 +180,39 @@ impl Context {
         let road = protocol::driver::ROAD.try_join(ROUTER).ok_or(());
         let Ok(road) = road else { return Err(()) };
         let tree = operator::Face::from(&self.session);
-        let entry = tree.tile(&road, ms).map_err(|_| ())?;
-        let entry = entry.token(ms).map_err(|_| ())?;
-        Line::occupy(entry, line, ms).map_err(|_| ())
+        // **这一手三条出口都折成调用方那一句 `line`** ⇒ 红的时候看不出是哪一格，故这里各印一行。
+        // **照实记（它量到的那条抖，红率与定位都在）**：`rtc` ＋ `line` 那一红（手工 release、喂
+        // `exit`）实测 **5 跑 4 红**（另一轮 **4 跑 3 红**），而每一次都落在**第三格**
+        // （`Line::occupy`，往下见它自己记的 `cause`）：`cause=5`——**"把那一枚回信孔交给那扇门的
+        // 主人"那一步被拒**。故这一条读数**留着**（它一响就写明是哪一格；查清之后随那一刀退场）。
+        let entry = match tree.tile(&road, ms) {
+            Ok(entry) => entry,
+            Err(fail) => {
+                debug::put(&alloc::format!("line: tile failed {fail:?}"));
+                return Err(());
+            }
+        };
+        let entry = match entry.token(ms) {
+            Ok(entry) => entry,
+            Err(fail) => {
+                debug::put(&alloc::format!("line: token failed {fail:?}"));
+                return Err(());
+            }
+        };
+        let held = Line::occupy(entry, line, ms);
+        if held.is_err() {
+            // **那一手自己记了"死在哪一格"**（`deny(cause, code)` 两个静态）：它把七个出口折成
+            // 同一个 `Fail::Denied`，而那两个数就是这七格的钥匙——探子把它们印出来。
+            use core::sync::atomic::Ordering;
+            use protocol::driver::line::client::{OCCUPY_CODE, OCCUPY_DENY};
+            debug::put(&alloc::format!(
+                "line: occupy failed line={line} entry={} cause={} code={}",
+                entry.get(),
+                OCCUPY_DENY.load(Ordering::Relaxed),
+                OCCUPY_CODE.load(Ordering::Relaxed),
+            ));
+        }
+        held.map_err(|_| ())
     }
 
     /// **把一批字节推给本域服务门的客人**（设备持有者那一侧的服务面）。
