@@ -1,11 +1,9 @@
-//! operator::door — **门外那一问**（接线那一处）：持树者替树问身份、问谱系、问盟籍，
+//! 持树者替树问身份、问谱系、问盟籍，
 //! 以及问"第 `n` 格是谁的门牌"。
-//! 三件事分居三处，本文件是**接线那一处**：
 //! | 处 | 是什么 |
 //! |---|---|
-//! | [`core::judge`](crate::service::operator::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::service::operator::Ruling) 三格 |
-//! | [`core::gate`](crate::service::operator::core::gate) | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
-//! | 本文件 | **接线**：那两枚门牌（[`Session`]）与"树 → 判据"的那一具（[`Court`]） |
+//! | core::judge | **判据**：`Facts` 那四个问句、Ruling 三格 |
+//! | core::gate | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
 
 use env::{TaskId, Wait};
 
@@ -29,7 +27,7 @@ const MS: usize = 1000;
 /// （答"这一位在那枚盟里吗"）。
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
 /// 它不去 `seek("/svc/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
-/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Permit::Among`] 那一格答"判不了"
+/// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 Permit::Among 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
 struct Session {
     roster: PrincipalFace,
@@ -38,7 +36,6 @@ struct Session {
 
 impl Session {
     /// 认出那两枚门牌：**按记号在本表里找**（那两枚由各自那一域自己交进来）。
-    /// 记号 = **那一族某一面那一枚**（今天要的都是问面）；那一族**只有一家生产者**，故记号
     fn of() -> Option<Session> {
         let roster = PrincipalFace::of(face_of_mark(PrincipalGrant::Ask.mark())?).ok()?;
         let league = face_of_mark(CoalitionGrant::Ask.mark())
@@ -85,7 +82,7 @@ impl Facts for Court<'_> {
     }
 
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()> {
-        // **判据要的只有"有没有那一位"**（见 `Facts::opens`），故三种"没有"在裁决那一侧同落
+        // **判据要的只有"有没有那一位"**（见 Facts::opens），故三种"没有"在裁决那一侧同落
         // `Ok(None)`。这一条**不动树**：剔死是 `find` 的活儿。
         match self.tree.opens(at) {
             Ok(tid) => Ok(Some(tid)),
@@ -109,10 +106,10 @@ impl Facts for Court<'_> {
             // 将来 `Fail` 多一格时**编不过**，而不是悄悄落进一个 `_`。
             Err(Fail::NonEmpty | Fail::NotAPane | Fail::Full) => Ok(None),
             // **门外那一问答"不"**（终态）：这一位不许。它与上面那三条一样**到不了**
-            // （`core::opens` 不过门禁），也**不去** `Unjudged` 那一格：那句话是**确定**的，
+            // （core::opens 不过门禁），也**不去** `Unjudged` 那一格：那句话是**确定**的，
             // 而 `Err(())` 是"连有没有都问不到"。故落在 `Ok(None)`（"没有那一位"那一句确定的话）。
             Err(Fail::Denied) => Ok(None),
-            // **问不到**：树自己答不出这一问 ⇒ `Err(())`——正是 `Facts::opens` 契约里
+            // **问不到**：树自己答不出这一问 ⇒ `Err(())`——正是 Facts::opens 契约里
             // "树自己问不到"那一格。同样到不了；两格分开列，
             // 是为了这句话（"不许"与"问不到"不是同一件事）在形状上就分得开。
             Err(Fail::Unjudged) => Err(()),
@@ -121,14 +118,12 @@ impl Facts for Court<'_> {
 }
 
 /// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
-/// （[`Operator::permit`](crate::service::operator::core::Operator::permit) 答出来的那一句）。
-/// **装配期根本不在门禁这条轴上**：principal 挂自己那两枚门牌那一趟（`part /svc` ＋
-/// `part /svc/sys/principal` ＋ 两处 `land`）发生在它自己的 `serve()` 里，而本域**认下它的门牌**与
+/// （Operator::permit 答出来的那一句）。
 /// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
 /// 身份**。门禁若在
 pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> Code {
     // **门禁先决两格**：
-    // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（[`crate::service::operator::bridge::Tree::wire`]
+    // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（crate::service::operator::bridge::Tree::wire
     if !wired {
         return Code::Ok;
     }

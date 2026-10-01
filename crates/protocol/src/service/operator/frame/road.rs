@@ -1,8 +1,7 @@
-//! operator::frame 的**客人那一面**：`RoadFrame` 一轮七手 · `Req` 那一形 · 回话（`Listing`/
-//! `Status`/`Tally`/`Word`）与应答聚合 `Union`、`Said`。
+//! Status/Tally/Word）与应答聚合 Union、Said。
 
 use alloc::string::String;
-use env::{PieToken };
+use env::PieToken;
 
 use crate::common::path::{Path, PathBuf};
 
@@ -12,19 +11,17 @@ use crate::wire::message::Message;
 use super::vocab::{BAD, EntryId, PANE_CAP, Permit, Where};
 use crate::wire::OK;
 
-/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ [`Path::LEN`]）。
+/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）。
 /// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
-/// 是字段表求和（`LEN`），`Road` 那一格是 [`RoadFrame::store_at`] 交回的游标。
+/// 是字段表求和（`LEN`），`Road` 那一格是 RoadFrame::store_at 交回的游标。
 pub const REQ_LEN: usize = RoadFrame::LEN;
 
 /// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
-/// [`PANE_CAP`] 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
+/// PANE_CAP 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
 /// 没有上限，故那里必须带一格"未完"）。
-/// 本族那只缓冲就是它（[`Message::Buf`]）；另两形都短于它——编译期钉住（`名` 那一形最长是
+/// 本族那只缓冲就是它（Message::Buf）；另两形都短于它——编译期钉住（`名` 那一形最长是
 /// 状态 ＋ 名字那一格的上界（31 字节），`号` 那一形是状态 ＋ 8）。
 pub const UNION_LEN: usize = 2 + PANE_CAP * 8;
-
-// 31 = 名字那一格在**这一族**里的上界（长度那一字节不在这一形里：长度即内容）。
 
 const _: () = assert!(Status::LEN + 31 <= UNION_LEN);
 
@@ -73,7 +70,7 @@ pub struct Entry {
 }
 
 /// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错。
-/// 号那一侧全按 [`EntryId`] 走；名字只出现在两条路上：[`Req::Road`]（`seek` 收的那条路）
+/// 号那一侧全按 EntryId 走；名字只出现在两条路上：Req::Road（`seek` 收的那条路）
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
     Road(PathBuf),
@@ -102,7 +99,7 @@ pub enum Req {
     Name(EntryId),
 }
 
-/// 一帧「列」的读数：号最多 [`PANE_CAP`] 枚。
+/// 一帧「列」的读数：号最多 PANE_CAP 枚。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     ids: [EntryId; PANE_CAP],
@@ -118,7 +115,7 @@ impl Listing {
         }
     }
 
-    /// 收一串（**收够 [`PANE_CAP`] 枚就停**：一条 pane 本来就不超过它）。
+    /// 收一串（**收够 PANE_CAP 枚就停**：一条 pane 本来就不超过它）。
     pub fn of(ids: impl Iterator<Item = EntryId>) -> Listing {
         let mut listing = Listing::new();
         for id in ids.take(PANE_CAP) {
@@ -137,7 +134,7 @@ impl Listing {
         &self.ids[..self.n]
     }
 
-    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 [`PANE_CAP`] 枚。
+    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 PANE_CAP 枚。
     fn push(&mut self, id: EntryId) {
         if let Some(slot) = self.ids.get_mut(self.n) {
             *slot = id;
@@ -154,7 +151,7 @@ pub struct Status {
 }
 
 /// 「列」那一形的**头两格**：状态 ＋ **条数**（后面跟着那么多个号——那是尾巴，走
-/// [`env::wire::store_tail`]）。
+/// env::wire::store_tail）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tally {
     pub status: u8,
@@ -180,8 +177,8 @@ pub enum Union {
     Name(String),
     /// `part` / `seek` 的下场：那一格**坐标**。
     Entry(EntryId),
-    /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（[`PieToken`]）。
-    /// **与 [`Union::Entry`] 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
+    /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（PieToken）。
+    /// **与 Union::Entry 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
     /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事。
     Seed(PieToken),
 }
@@ -205,7 +202,7 @@ impl Said {
     }
 
     /// 按「号」那一形读（`land` / `part` / `seek` 的下场）：`[status][8 字节]` → **坐标**。
-    /// 状态不是 [`OK`] ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`。
+    /// 状态不是 OK ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`。
     pub fn entry(&self) -> Result<EntryId, u8> {
         Ok(EntryId::from_bytes(self.word()?))
     }
@@ -230,7 +227,6 @@ impl Said {
 
     /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字。
     /// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：那一侧旧日的四格失败域
-    /// 在这里**归一格**——问的人能做的补救是同一件（这一帧坏了，重问）。
     pub fn name(&self) -> Result<String, u8> {
         let code = self.code();
         if code != OK {
@@ -242,7 +238,7 @@ impl Said {
     }
 
     /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号。
-    /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 [`PANE_CAP`]）⇒
+    /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 PANE_CAP）⇒
     /// `Err(BAD)`——短一字节也是它。
     pub fn list(&self) -> Result<Listing, u8> {
         let code = self.code();
@@ -267,11 +263,10 @@ impl Said {
 
 impl Message for Union {
     type In = Said;
-    /// 这一族的缓冲：**最大那一形**（[`UNION_LEN`]）。
     type Buf = [u8; UNION_LEN];
     const EMPTY: Self::Buf = [0u8; UNION_LEN];
 
-    /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 `env::wire` 的两个尾巴。
+    /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 env::wire 的两个尾巴。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match self {
             Union::Status(code) => Status { status: *code }.store_at(out, 0),
@@ -302,7 +297,6 @@ impl Message for Union {
         }
     }
 
-    /// 收一条：**原样收下**（空帧、或长过这一族的缓冲 ⇒ `None`）。形状不在这里判——
     fn fetch(bytes: &[u8]) -> Option<Said> {
         if bytes.is_empty() {
             return None;
@@ -317,7 +311,6 @@ impl Message for Union {
 }
 
 // 它不在上面那张图里：上面那几帧是**客人 ↔ 持树者**的一问一答，这几条是**装配者递过来
-// 的东西**（立一条路 / 一位客人）。两族同住本文件，因为"帧形只有一处"这一条不分装配期与
 // 运行期——它是同一棵树的两半。两形的总说明与 `Tip` / `TipIn` 在下面。（"一格号"那一形
 
 // 两形走**同一个洞、同一个读者**（提示之路 = 装配侧 → 持树者）：既不经过会话、也没有客人

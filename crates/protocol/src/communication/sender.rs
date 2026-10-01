@@ -1,4 +1,4 @@
-//! Sender — **我推的那一枚孔**：这一路流的那一种报由类型参数说。
+//! 这一路流的那一种报由类型参数说。
 //! ```text
 
 use core::marker::PhantomData;
@@ -20,7 +20,7 @@ pub struct Sender<M: Message> {
 }
 
 impl<M: Message> Sender<M> {
-    /// 空格：**没有写端**（`send` 会答 [`SendFail::Unbound`]）。`const` 是给"放进结构体里当一格"
+    /// 空格：**没有写端**（`send` 会答 SendFail::Unbound）。`const` 是给"放进结构体里当一格"
     /// 那些用到上的（`Guest` 那一格）。
     pub const fn new() -> Self {
         Self {
@@ -32,8 +32,6 @@ impl<M: Message> Sender<M> {
     }
 
     /// 认下一枚**别人给的**号（服务端那一侧：孔是对方铸的、交给我的）。
-    /// **本文件不分辨"这枚是谁的"**——归属归建立那一手返的那一对（[`super::establish::Endpoint`]）：
-    /// 那一对里两枚都是本端铸的，收尾时放下；这一手拿到的**不归本端**，放下它不是本端的事
     pub fn from_token(hole: PieToken) -> Self {
         Self {
             hole: Some(hole),
@@ -77,7 +75,7 @@ impl<M: Message> Sender<M> {
     }
 
     /// **非阻塞收口**：上一只手**已经被取走** ⇒ 放下那一格、答 `true`；还压着 ⇒ 答 `false`。
-    /// **它与 [`reclaim`] 只差一个字：期限。** `reclaim` 等 `Forever`——写端**必须**替这段缓冲收尾
+    /// **它与 reclaim 只差一个字：期限。** `reclaim` 等 `Forever`——写端**必须**替这段缓冲收尾
     pub fn settle(&mut self) -> bool {
         let Some(hole) = self.hand else {
             return true;
@@ -94,7 +92,6 @@ impl<M: Message> Sender<M> {
         self.hand.is_some()
     }
 
-    /// 这一枚孔（诊断、挂进组、转授都从这里取）。**没有写端时答 `None`**。
     pub fn hole(&self) -> Option<PieToken> {
         self.hole
     }
@@ -117,10 +114,10 @@ impl<M: Message> Drop for Sender<M> {
 }
 
 /// 递不出去：两层**分得开**。
-/// - [`SendFail::TooLong`] = **编不进本族的缓冲**（`M::Buf` 就是本族最长那一枚，故这一支只在
+/// - SendFail::TooLong = **编不进本族的缓冲**（M::Buf 就是本族最长那一枚，故这一支只在
 ///   类型被写错时才到得了——不 `panic`、如实报）；
-/// - [`SendFail::Unbound`] = **没有写端**（对端那一枚还没认到）；
-/// - [`SendFail::Mail`] = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）。
+/// - SendFail::Unbound = **没有写端**（对端那一枚还没认到）；
+/// - SendFail::Mail = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）。
 /// **不另造一套码**：Mail 域的词表是它的失败域，这一层只把"哪一步失败"说清，不换词。
 pub enum SendFail {
     Unbound,

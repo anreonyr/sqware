@@ -1,4 +1,4 @@
-//! system::common::face::desk — **两枚域共用的一本账**：待客账（谁在跟我说话 / 它的问话孔 / 它的答话路）。
+//! 待客账（谁在跟我说话 / 它的问话孔 / 它的答话路）。
 
 use alloc::vec::Vec;
 
@@ -15,7 +15,7 @@ pub enum DeskFail {
 }
 
 /// 一位客人：**谁 / 问 / 答**。
-/// `ask` 是 [`Option`]：客人"到了"（答话路到手）与"能问话了"（问话孔挂进来）是两步，
+/// `ask` 是 Option：客人"到了"（答话路到手）与"能问话了"（问话孔挂进来）是两步，
 /// 中间隔着装配者转授与客人自己交孔那两段路——故 `None` 是**一个状态**（还没挂上问话孔），
 /// 不是错误。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -47,14 +47,7 @@ impl Guest {
 }
 
 /// 客人账：一叠格子，每格写着「谁 | 问在哪 | 答往哪」。
-/// ```text
-///   Admit        收一位客人（答话路到手）      —— 来客人了
-///   Evict        客人说了"我走了"，撤它那一格  —— 与 admit 成对；只有板用（听来的那一档）
-///   Arm          记下它的问话孔在本表里的号    —— 先 arm 才 attach
-///   Guest        由问话孔的号直达那一格        —— 醒来时唯一要问的一句
-///   Sweep        剔走已经答不出的格子          —— 惰性，不是轮询（看出来的那一档）
-/// ```
-/// **可增长**：不是定长数组——按需 `try_reserve`，备不下如实报 [`DeskFail::Full`]，不 `abort`。
+/// **可增长**：不是定长数组——按需 `try_reserve`，备不下如实报 DeskFail::Full，不 `abort`。
 /// 条数是策略、容器要有界，那一格落在**分配**上，不落在常数上。
 pub struct Desk {
     guests: Vec<Option<Guest>>,
@@ -62,13 +55,12 @@ pub struct Desk {
 
 impl Desk {
     /// 立一本账。**不预分配**（`Vec::new()`）：这本账起手时只装几位客人——让
-    /// [`Desk::admit`] 按需 `try_reserve` 那一格去报 `Full`，比这里先按一个猜的数占一片更诚实。
     pub const fn new() -> Desk {
         Desk { guests: Vec::new() }
     }
 
     /// 收一位客人（答话路到手时叫）。返它的格子号。
-    /// 两种不成见 [`DeskFail`]：**满**与**这一位已经在账上**（后者是提示那条单槽路上的重放：
+    /// 两种不成见 DeskFail：**满**与**这一位已经在账上**（后者是提示那条单槽路上的重放：
     /// 一位客人只能占一格，重来的那位要**报出来**，不能静默换掉原来那位——换掉就把它的
     /// 问话孔丢了）。
     pub fn admit(&mut self, who: TaskId, reply: PieToken) -> Result<usize, DeskFail> {
@@ -98,9 +90,9 @@ impl Desk {
     }
 
     /// 撤这一位客人的格子，返**撤掉的格子号**；不在账上 ⇒ `None`。
-    /// 与 [`Desk::admit`] 成对：一位客人一格，进来一格、走了一格。**只动账**——把它的问话孔
+    /// 与 Desk::admit 成对：一位客人一格，进来一格、走了一格。**只动账**——把它的问话孔
     /// 从组里摘掉那一手不归它（组不在这一层）。
-    /// 与 [`Desk::sweep`] 的分工：这一句撤的是**客人自己说了走**的那一格（听来的），
+    /// 与 Desk::sweep 的分工：这一句撤的是**客人自己说了走**的那一格（听来的），
     /// `sweep` 剔的是**那一枚答不出**的那一格（看出来的）——故两句都在。
     pub fn evict(&mut self, who: TaskId) -> Option<usize> {
         let (slot, cell) = self
@@ -142,9 +134,8 @@ impl Desk {
     /// `attach`；返"**还有没有没补齐的**"。
     /// **`ask_of` 逐枚记号试**（`marks` = 本族认得的所有记号）：问话孔是按"**谁开的 ＋ 刻的
     /// 什么记号**"认的，而记号**不止一枚**——Operator 那一侧七枚操作面各刻一枚（见
-    /// `protocol::service::operator::grant`）。故记号**不由本账写死**（本账不认识任何一族的面），
+    /// protocol::service::operator::grant）。故记号**不由本账写死**（本账不认识任何一族的面），
     /// 由调用方按自己那一族给；板那边只有一枚，传 `&[ASK_MARK]` 即可。
-    /// **为什么这两手（`ask_of` / `attach`）要收进来**：调用方今天得先"抄一份'还没挂上的'"
     /// 到自己的栈上（`unarmed()` 借住这本账，而循环里要改它）；那一抄就是**一份按客人数的
     /// 分配**，或者**按一个常数开的数组**——后者正是这本账放弃的那件事（见上面的并本记）。
     /// 收进来之后调用方一格缓冲都不需要：遍历按**格子号**走，`arm` / `unarm` 都在本账里。
@@ -164,7 +155,6 @@ impl Desk {
             if self.guests[slot].as_ref().is_some_and(|g| g.armed()) {
                 continue;
             }
-            // 逐枚记号试：**只有一枚**（板那一侧）时这一趟就一次扫表。
             let found = marks.iter().find_map(|mark| ask_of(who, *mark));
             match found {
                 Some(ask) => {
@@ -182,7 +172,7 @@ impl Desk {
 
     /// 还没挂上问话孔的那几位——**只读**。
     /// **为什么要有它**：`arm_pending` 把"是哪几位还没挂上"收在自己肚子里，
-    /// 而"**一直**挂不上"是另一件事——它得看得见，见 `operator::serve::unarmed_report`。
+    /// 而"**一直**挂不上"是另一件事——它得看得见，见 operator::serve::unarmed_report。
     pub fn unarmed_each(&self, mut f: impl FnMut(TaskId)) {
         for guest in self.guests.iter().flatten() {
             if !guest.armed() {
@@ -197,9 +187,9 @@ impl Desk {
     }
 
     /// 剔走**已经答不出**的客人，返剔了几格；幂等。
-    /// 判据是注入的那一格（在这两棵树里 = [`VestedBy`]：**客人答话路那一枚还答得出吗**）——
+    /// 判据是注入的那一格（在这两棵树里 = VestedBy：**客人答话路那一枚还答得出吗**）——
     /// 那一枚答 `None`（不在我表里，**或**它那扇门已经封印）就剔。**看出来的**那一档；
-    /// **听来的**那一档是 [`Desk::evict`]（客人自己说了走，账当场撤，不等它的门封印）。
+    /// **听来的**那一档是 Desk::evict（客人自己说了走，账当场撤，不等它的门封印）。
     /// 两档都在，因为没说就走的那种也得有人收。
     pub fn sweep(&mut self) -> usize {
         self.sweep_each(|_| {})

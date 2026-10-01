@@ -1,33 +1,13 @@
 #![no_std]
 #![no_main]
 
-//! probe-owner — **负证客人（第二种）**：一位**有身份**的任务去顶别人声明归自己的那一格。
-//!
-//! [`probe_denied`](super::probe_denied) 证的是"**没身份** ⇒ 拒绝"；本程序证的是另一半：
+//! probe_denied 证的是"没身份 ⇒ 拒绝"；本程序证的是另一半：
 //! **有身份、但那一格不是你的** ⇒ 也拒绝。两条合起来，`land` 的两条支路才算在真机上钉住。
-//!
-//! ```text
-//!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  SEEK  /svc/drv/uart/rx         ⇒ 记下 uart 那枚砖**原来的号**
-//!   3  LAND  /svc/drv/uart/rx（自己的孔）⇒ 期望 DENIED（那枚砖是 uart 的：它声明了归属）
-//!   3.5 PART 同一块 Pane 里同一个名字 ⇒ **同一条「改」轴**，同样期望 DENIED（见下）
-//!   4  SEEK  /svc/drv/uart/rx         ⇒ 期望**还是原来那个号**（拒绝没有动那一格）
-//!   5  **等** `/svc/lease` 那一格的主人退场（`probe-lease` 落完就走）⇒ 再落一次
-//!      ⇒ 期望**接得上**（主人不在场 ⇒ 那一格重新可落）
-//!   6  报读数就退场
-//! ```
-//!
 //! 第 5 步是"规矩属于**活着的**主人"那一格的正证：`probe-lease` 声明归属之后直接死，
-//! 内核退场钩子把它开的资源封印 ⇒ 持树者一问就知道主人不在场 ⇒ 那一格不该变成墓碑。
-//!
 //! # 两格读数为什么与 `probe-denied` 不同
-//!
 //! `probe-denied` 撞的是**一个从没铸过的名字**，故它的第二格是 `UNKNOWN`（"没被占"）。
-//! 本域撞的是**已经在的名字**，故第二格必须是**同一个号**——"拒绝"不能把原来的格子弄坏，
 //! 也不能把它变成"剪掉"。两台的第二格形状**故意不一样**，各自钉一支。
-//!
 //! # 为什么它必须有身份（`bind: true`）
-//!
 //! 这一台要证的正是"身份**对不上**"，故它自己得是个**已绑身份**——否则它撞到的是第一道
 //! 门（没身份），量到的就不是归属那一条了。装配表上它与别的客人一样（`bind` 缺省即 `true`）。
 
@@ -39,30 +19,25 @@ use programs::Report;
 
 use alloc::format;
 use alloc::string::ToString;
+use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Permit};
 
 use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 本域要顶的那**一枚砖**：`/svc/drv/uart/rx`——`uart` 把"读行"那枚孔挂在它下面，并声明
 /// **归自己**。
-///
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
 /// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
-/// （它不是谁的服务格）。这一趟顶的是读口那一枚。
-///
 /// 服务那一格（Pane）。
 const SERVICE: &str = "uart";
 /// 砖那一格（`uart` 声明的归属落在这一枚上）：读口。
 const ME: &str = "rx";
 
-/// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
 const E_OK: usize = 0;
@@ -89,12 +64,10 @@ fn main() -> Report<'static> {
         return bail("probe-owner: bad name");
     };
 
-    // 二、那枚砖**原来**的号（`uart` 落的）。**有界重试**：本域可能比 `uart` 先起。
     let Some(before) = wait_id(&tree, &road) else {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    // 三、铸一枚自己的孔，去顶那一格——**这一手该被拒**。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
@@ -123,11 +96,8 @@ fn main() -> Report<'static> {
     };
 
     // 三·五、**同一个名字、换一条原语**：`part` 与 `land` 同一把钥匙（`answer.rs` 的 `Part` 那一
-    //        支：动手之前按坐标问同一格 `claimable`）——不然它会把那一格**静默顶成一块 Pane**、
     //        还顺手把 uart 那枚孔 `release` 掉。
-    //
     // **（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
-    // 走同一把钥匙，可只有一条被量过。这一格补的就是那一半。
     let part = pane.open(me.to_string(), Wait::AtMost(MS));
     let part_code = match &part {
         Ok(id) => format!("ok id={}", id.id().get()),
@@ -135,9 +105,6 @@ fn main() -> Report<'static> {
     };
 
     // 四、那一格**还在不在**（应是原来那个号）。
-    //
-    // **（这一格为什么也走 `Pane::tile`）**：新面若用
-    // `Face::tile`，它内部那一趟 `find` 会**授一枚副本**进来——而这一格只要号。
     let root = tree.root();
     let after = root.tile(&road, Wait::AtMost(MS));
     let seq = match &after {
@@ -154,7 +121,6 @@ fn main() -> Report<'static> {
     let untouched = matches!(after, Ok(entry) if entry.id() == before);
 
     // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/svc/lease`（`mine = true`）就死，
-    //     故它的资源已被退场钩子封印 ⇒ 持树者该让那一格重新可落。**有界重试**：本域可能
     //     比它先跑完那几手（提示是单槽，装配者按计划顺序推）。
     let taken = take_over(&tree);
 
@@ -193,9 +159,6 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 落 `/svc/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
-///
-/// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     // 路：容器那一段（`/svc`，只在协议那一侧说）接上那一格的名（`lease`）。
     let road = protocol::common::svc::SVC
@@ -208,12 +171,14 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
     let root = tree.root();
     let _ = root.open(dir.to_string(), Wait::AtMost(MS));
-    let Some(sys) = tree.pane(&protocol::common::svc::SVC, Wait::AtMost(MS)).ok() else {
+    let Some(sys) = tree
+        .pane(&protocol::common::svc::SVC, Wait::AtMost(MS))
+        .ok()
+    else {
         return Err(Fail::Unknown);
     };
     let mut left = MS;
     loop {
-        // 那一格先得**已经在树上**（`probe-lease` 落过）——否则本域量的是"落一个新名字"。
         if root.tile(&road, Wait::AtMost(MS)).is_ok() {
             let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
                 return Err(Fail::Unknown);
@@ -243,8 +208,6 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
 }
 
 /// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
-///
-/// 今天这一手**不再自己数趟数**：一趟一条路（[`Path`] 自带段数），逐段 `open`（幂等）＋ 最后
 /// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了。
 fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
     let mut at: Option<EntryId> = None;
@@ -260,10 +223,7 @@ fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
     tree.pane(road, Wait::AtMost(MS)).ok()
 }
 
-/// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
-///
-/// **（同上：`Pane::tile` 是旧 `seek` 的同形）**：这一格只要那一枚**号**，不要那一枚
-/// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 `Face::tile`。
+/// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile。
 fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();
     let mut left = MS;

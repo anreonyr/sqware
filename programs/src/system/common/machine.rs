@@ -1,8 +1,7 @@
-//! system::common::machine — **编排域手里那台机器的自述**：设备树读一次，此后只读。
+//! 设备树读一次，此后只读。
 //! 判据：单子上那一格写的是**类**（`compatible` 串，收方的专业），而"这一类是哪一段区"是**树**说的
 //! 事。两半合起来才是一条要得出去的坐标，于是"读树"必须发生在**造单子的那一域**。
-//! 故本模块只做三件事：**枚举全机的可领之物**（[`Machine::devices`]——名 / 类 / 区 / 线四格一次
-//! 说齐）、**读 `/chosen` 拿载荷区的坐标**（[`Machine::payload`]）、以及按**已知坐标**要那两件
+//! 说齐）、**读 `/chosen` 拿载荷区的坐标**（Machine::payload）、以及按**已知坐标**要那两件
 //! （它不解释设备语义：类串是收方给的；也不持有任何设备——它只是把机器自己写的那份自述读出来）。
 
 use alloc::string::String;
@@ -29,9 +28,7 @@ pub struct Device {
 }
 
 /// **引导期那两件不按类认的东西**的坐标由它们自己说（`Key::dtb()` / `Key::irq()`）——
-/// 它们不进 [`Machine::devices`] 那张表（树里没有"哪一类"可判），由装配者按**已知坐标**要
-/// （见 `system/control/enroll.rs` 的入册那一趟）。
-/// 本域手里那台机器的自述。
+/// 它们不进 Machine::devices 那张表（树里没有"哪一类"可判），由装配者按**已知坐标**要
 pub struct Machine {
     fdt: fdt::Fdt<'static>,
 }
@@ -39,11 +36,7 @@ pub struct Machine {
 impl Machine {
     /// 把一段**已借映的只读区**解释成设备树。
     /// 前置：`view` 指向终身存活、只读、形状合法的 FDT（`Key::dtb()` 那一枚门闩的视图）。
-    /// 失败：`Err` = 头读不懂（那条路在 `main` 里印出来，本模块不印）。
     pub fn of(view: View) -> Result<Machine, &'static str> {
-        // SAFETY: `view` 是设备树本体那一枚门闩借映进来的整段保留区——它在**本域存活期间**
-        // 一直有效（门闩在本域表里，本域到收场才退出），只读（授权不含 `STORE`），
-        // 故借出来的树和它里面的字节活一样久；本域只解析、不写。
         let fdt = unsafe { fdt::Fdt::from_ptr(view.base() as *const u8) }
             .map_err(|_| "system: tree parse")?;
         Ok(Machine { fdt })
@@ -51,19 +44,16 @@ impl Machine {
 
     /// **这台机器上每一台可领的设备**（按**区升序**）——读一次树，四格一起给。
     /// # 三条判据（一条不落地对着内核那一侧写）
-    /// 1. **有 `compatible`**：类串是这一轴的钥匙（没有它的节点——`/memory`、`/chosen`、
     ///    `/cpus`——不是"某一类设备"，它们要么另有坐标（`Key::dtb()` 那两件），要么压根不发）。
-    /// 2. **`exempt` 那两族不要**（`memory` / `clint`）：[`exempt`] 抄的是**内核那一侧**的同一条
+    /// 2. **`exempt` 那两族不要**（`memory` / `clint`）：exempt 抄的是**内核那一侧**的同一条
     ///    规矩（`kernel/src/platform/devices.rs::exempt`）——那里跳过它们、**不给门闩**。抄漏了
     ///    的后果是**两头对不上**：装配者以为能领，账上却没有那一条（`enroll` 当场跳过并记一行读数）；
     ///    更要紧的是**定时器那一台**（`clint@2000000`：它有 `compatible`、内核不给门闩）会以
     ///    `/dev/sifive,clint0/…` 的身份落进设备账——**那一段是内核的滴答**。
     /// 3. **取首段有效的 `reg`**（零址 / 零长不算一段区）：内核就是按 `reg` 段造门闩的，
-    ///    多段 `reg` 的设备只认首段（今天 virt 上无人要那种设备）。
     /// 类取**第一个** `compatible`（绑定里写得最具体的那一个）：一台设备只落一格 `/dev/<类>/<名>`
-    /// 才说得通"名在册里唯一"。今天三台驱动的类都写在节点头一位。
-    /// 线号：指到**本控制器**（`interrupt-controller` ＋ [`PLIC_CLASS`]）的那些，取
-    /// `interrupts` 首格、且落在 `[1, riscv,ndev]`；其余一律 `0`（见 [`Device::line`]）。
+    /// 线号：指到**本控制器**（`interrupt-controller` ＋ PLIC_CLASS）的那些，取
+    /// `interrupts` 首格、且落在 `[1, riscv,ndev]`；其余一律 `0`（见 Device::line）。
     /// **只认节点自己写的 `interrupt-parent`**（不沿父链继承）、`#interrupt-cells` 不是 1 / 2
     pub fn devices(&self) -> Option<Vec<Device>> {
         let plic = Plic::of(&self.fdt);
@@ -80,7 +70,6 @@ impl Machine {
                 continue;
             };
             // 名字装不下（长度那一字节放不下 / 那一帧的缓冲装不下）⇒ 这一台**落不了格**
-            // （`/dev/<类>/<名>` 那一段就是它）——那一判今天只在**编帧**那一刻，构造面不判。
             // 不猜一个截短的名字：那会让两台不同的设备撞成同一格。
             let name = node.name.to_string();
             let Some(base) = first_region(node) else {
@@ -156,7 +145,7 @@ impl Plic {
         })
     }
 
-    /// 这一台指不指到本控制器（以及是哪条线）。**答 `0` 的情形与写法**见 [`Machine::devices`]。
+    /// 这一台指不指到本控制器（以及是哪条线）。**答 `0` 的情形与写法**见 Machine::devices。
     fn line_of(&self, node: fdt::node::FdtNode) -> Option<u32> {
         if node.property("interrupt-map").is_some() {
             return None;

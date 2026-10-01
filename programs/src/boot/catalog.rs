@@ -1,4 +1,4 @@
-//! boot::catalog — **清单的读面**：按名字挑一台，取它那段字节与特权级。
+//! 按名字挑一台，取它那段字节与特权级。
 
 use env::ledger::manifest;
 
@@ -18,7 +18,6 @@ impl<'a> Catalog<'a> {
         Some(Catalog { view })
     }
 
-    /// boot 交来的那一块（今天**唯一**的构造路）。
     pub fn of_boot(accounts: &Accounts) -> Option<Catalog<'static>> {
         Catalog::new(accounts.view())
     }

@@ -1,9 +1,9 @@
-//! path — **树上的坐标**：一条 `/` 分开的路（每段一枚名字）。
+//! 一条 / 分开的路（每段一枚名字）。
 //! 它是"路"这件事在**两侧**的同一个形状：装配者按它落格（`operator/bridge.rs` 的 `land`）、
 //! 客人按它译号（`operator/client.rs` 的 `pane` / `tile` / `seek`）、线上那一格就是它自己
 //! （`[长度那一字节][路]`，见下面 `impl env::wire::Span for PathBuf` 那两只手）。
 //! # 一对：`Path`（借）＋ `PathBuf`（有）
-//! 照 `std::path` 那一对定形：**`Path` 是视图**（unsized，包着一条 `str`——名字已定必须 UTF-8，
+//! 照 std::path 那一对定形：**`Path` 是视图**（unsized，包着一条 `str`——名字已定必须 UTF-8，
 //! 故串面就是 `str`／`String`）、**`PathBuf` 是拥有面**（堆上一条串，长大长得了）。
 //! `PathBuf: Deref<Target = Path>`，故 `Path` 上的每一手在两半上都叫得出来。
 
@@ -14,8 +14,8 @@ use core::ops::Deref;
 use env::wire::Span;
 
 /// 树上的坐标（**借的那一半**）：一条 `/` 分开的路，**零段就是根**。
-/// 规范形：没有开头的 `/`、没有末尾的 `/`、没有空段（`Path::new` 收的那一形）；整条
-/// [`Path::MAX_LEN`] 字节以内、段数 [`Path::MAX`] 段以内。
+/// 规范形：没有开头的 `/`、没有末尾的 `/`、没有空段（Path::new 收的那一形）；整条
+/// Path::MAX_LEN 字节以内、段数 Path::MAX 段以内。
 #[repr(transparent)]
 pub struct Path(str);
 
@@ -38,8 +38,8 @@ impl Path {
     pub const ROOT: &'static Path = Path::new("");
 
     /// **一条路**：只收**规范形**的常量（开头那个 `/` 可有可无；末尾或中间的空段一律不许）。
-    /// `const`：装配期那几处（[`crate::common::svc::DIR`] 等）要在 `const` 里造出来。**非法 ⇒ 当场
-    /// 编不过**（`const` 求值里 panic）；运行期那一路走 [`PathBuf::try_new`] / [`Path::try_join`]。
+    /// `const`：装配期那几处（crate::common::svc::DIR 等）要在 `const` 里造出来。**非法 ⇒ 当场
+    /// 编不过**（`const` 求值里 panic）；运行期那一路走 PathBuf::try_new / Path::try_join。
     pub const fn new(road: &'static str) -> &'static Path {
         let b = road.as_bytes();
         let skip = match b.first() {
@@ -63,15 +63,14 @@ impl Path {
         Path::from_str(rest)
     }
 
-    /// 从一段已有的字节借出视图（**规范形由调用方保证**——它是本模块私有的那一手）。
     const fn from_str(road: &str) -> &Path {
         // SAFETY: `Path` 是 `str` 的透明包（`repr(transparent)`），两边同一个布局与同一个元数据。
         unsafe { core::mem::transmute::<&str, &Path>(road) }
     }
 
-    /// **拥有化**：视图 → [`PathBuf`]。**不可失败**——视图一定是规范形、一定在两条界内
-    /// （三条入口 [`Path::new`] / [`PathBuf::try_new`] / [`Span`](env::wire::Span) 解码都判过），
-    /// 故它不必像 [`PathBuf::try_new`] 那样答 `Option`。
+    /// **拥有化**：视图 → PathBuf。**不可失败**——视图一定是规范形、一定在两条界内
+    /// （三条入口 Path::new / PathBuf::try_new / Span 解码都判过），
+    /// 故它不必像 PathBuf::try_new 那样答 `Option`。
     pub fn to_path_buf(&self) -> PathBuf {
         PathBuf {
             road: String::from(self.as_str()),
@@ -84,8 +83,8 @@ impl Path {
     }
 
     /// **接一段（或几段）**：`self` 后面接上 `leaf`，答一条新路。
-    /// 与 [`Path::new`] 同一套切分口径（`leaf` 可以是 `"principal"`，也可以是 `"principal/ask"`）。
-    /// **装不下**（超过 [`Path::MAX`] 段 / [`Path::MAX_LEN`] 字节）⇒ `None`。
+    /// 与 Path::new 同一套切分口径（`leaf` 可以是 `"principal"`，也可以是 `"principal/ask"`）。
+    /// **装不下**（超过 Path::MAX 段 / Path::MAX_LEN 字节）⇒ `None`。
     pub fn try_join(&self, leaf: &str) -> Option<PathBuf> {
         let mut road = String::from(self.as_str());
         let mut n = if road.is_empty() {
@@ -132,7 +131,6 @@ impl Path {
         self.iter().last()
     }
 
-    /// **逐段**（从根那一头起；空段不产出）。
     pub fn iter(&self) -> impl Iterator<Item = &str> {
         self.as_str().split('/').filter(|seg| !seg.is_empty())
     }
@@ -150,7 +148,7 @@ impl Path {
 
 impl PathBuf {
     /// 一条路（**任意写法进，规范形出**：开头的 `/`、重复的 `/`、末尾的 `/` 都归一）。
-    /// 装不下（段数 / 字节数过界）⇒ `None`——与 [`Path::try_join`] 同一条判据、同一处定义。
+    /// 装不下（段数 / 字节数过界）⇒ `None`——与 Path::try_join 同一条判据、同一处定义。
     pub fn try_new(road: &str) -> Option<PathBuf> {
         let mut out = String::new();
         let mut n = 0usize;
@@ -191,7 +189,7 @@ impl PathBuf {
     }
 }
 
-/// **std 那一对的三条接口面**：`&Path → PathBuf` 的拥有化（[`Path::to_path_buf`]）＋ 它底下那两条
+/// **std 那一对的三条接口面**：`&Path → PathBuf` 的拥有化（Path::to_path_buf）＋ 它底下那两条
 /// （`ToOwned` 要 `Owned: Borrow<Self>`，`From` 是 std 也有的便利形）。三处都是同一件事。
 impl core::borrow::Borrow<Path> for PathBuf {
     fn borrow(&self) -> &Path {
@@ -221,8 +219,8 @@ impl Deref for PathBuf {
     }
 }
 
-/// 规范形：没有末尾的 `/`、没有连续的两个 `/`（开头的那个已由 [`Path::new`] 摘掉）。
-/// **`const`**：`Path::new` 要在常量那一手上当场判——与运行期那一路（[`PathBuf::try_new`] 归一）
+/// 规范形：没有末尾的 `/`、没有连续的两个 `/`（开头的那个已由 Path::new 摘掉）。
+/// **`const`**：Path::new 要在常量那一手上当场判——与运行期那一路（PathBuf::try_new 归一）
 /// 的差别只在"失败怎么办"。
 const fn canonical(road: &[u8]) -> bool {
     if let Some(&b'/') = road.last() {
@@ -243,8 +241,8 @@ const fn canonical(road: &[u8]) -> bool {
 }
 
 /// 一条规范形的路里有几个分隔符（**段数 ＝ 它 ＋ 1**；空的规范形不是一条路，故调用方先判空）。
-/// **`const`**：`Path::new` 要在常量那一手上把"≤ 8 段"也判掉——`Path` 型自己的义务，
-/// 三条入口（常量 / `try_new` / [`Span`] 解码）一处口径。
+/// **`const`**：Path::new 要在常量那一手上把"≤ 8 段"也判掉——`Path` 型自己的义务，
+/// 三条入口（常量 / `try_new` / Span 解码）一处口径。
 const fn slashes(road: &[u8]) -> usize {
     let mut n = 0;
     let mut i = 0;
@@ -258,7 +256,7 @@ const fn slashes(road: &[u8]) -> usize {
     n
 }
 
-/// **本格是"要游标那一格"**（[`env::wire::Span`]）：路的长短由内容说。
+/// **本格是"要游标那一格"**（env::wire::Span）：路的长短由内容说。
 impl Span for PathBuf {
     const MAX: Option<usize> = Some(Path::LEN);
 

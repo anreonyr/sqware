@@ -1,4 +1,4 @@
-//! principal 的**帧那一半** —— 帧与码（内核那两只手的别名在 `protocol` 那一侧的 `mod.rs`）。
+//! principal 的帧那一半 —— 帧与码（内核那两只手的别名在 protocol 那一侧的 mod.rs）。
 
 use crate::wire::id::Id;
 use env::{Mark, PieToken, TaskId};
@@ -16,8 +16,8 @@ impl Id for PrincipalId {
     }
 }
 
-/// 这一枚号在线上是 **8 字节小端**——口径与 `operator::EntryId` 那一处相同（**impl 跟着类型走**，
-/// `env` 不认识 [`PrincipalId`]）。读的那一侧**不校验"还在不在"**：解出来的号在不在谱系里由
+/// 这一枚号在线上是 **8 字节小端**——口径与 operator::EntryId 那一处相同（**impl 跟着类型走**，
+/// `env` 不认识 PrincipalId）。读的那一侧**不校验"还在不在"**：解出来的号在不在谱系里由
 /// 核心答。
 impl env::wire::Field for PrincipalId {
     const WIDTH: usize = 8;
@@ -31,8 +31,8 @@ impl env::wire::Field for PrincipalId {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
-/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+/// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
+/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）。
 pub use crate::wire::OK;
 
 pub use crate::wire::frame::{Query, Reply};
@@ -60,7 +60,6 @@ pub enum Req {
 }
 
 impl Req {
-    /// 编成线上那一形；`back` = **这一趟的回信孔在对端表里的号**（运输那一格，不是荷载）。
     pub fn query(self, back: PieToken) -> Query {
         let (op, a, b) = match self {
             Req::Bind(tid, p) => (BIND, tid.get() as u64, p.get() as u64),

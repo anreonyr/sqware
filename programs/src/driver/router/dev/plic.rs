@@ -1,16 +1,11 @@
-//! plic — PLIC（中断控制器）的**寄存器面**（设备侧）：只认识这台控制器的寄存器布局。
-//! 线数与 context **不是这里读出来的**——那是设备树给的事实（`core/sources.rs`，纯）；
-//! 本文件只按它们算地址。它**不认识任何设备**：不知道 `serial@10000000` 后面是串口还是网卡；
+//! 寄存器面（设备侧）：只认识这台控制器的寄存器布局。
 //! 也不含服务循环、不含配给、不含投递（那些在 `adapt/` 与 `programs/src/driver/`）。
-//! 要哪几样、多少权、以什么形态出去，写在**本域自己**那三条 `Ask` 里
-//! （`adapt/boot.rs` 的 `PLIC_ASK` / `DTB_ASK` / `IRQ_ASK`）：本域**自己**走一趟设备账把它们认下来
 //! ——**控制器按类**（`compatible`：设备账读树把类定成那一段区），**设备树本体与门铃按名字点名**
-//! （`/dev/boot/{dtb,irq}`：它们不是树里的设备）。名字不在本文件里第二遍。
 
 use crate::core::sources::Sources;
 use runtime::core::res::dock::View;
 
-/// 一条线的优先级：恒 1。**0 是"静音"**（见 [`Plic::disable`]），故本值不能是 0。
+/// 一条线的优先级：恒 1。**0 是"静音"**（见 Plic::disable），故本值不能是 0。
 pub const LINE_PRIORITY: u32 = 1;
 
 // PLIC 寄存器偏移（SiFive 布局；`reg` 给的是整块）。
@@ -31,7 +26,6 @@ pub struct Plic {
 }
 
 impl Plic {
-    /// 按树给的事实建寄存器面：视图是本域借映进来的那一页，两个数从 [`Sources`] 来
     /// （**树是那两个数的唯一来路**，本层不自己读树）。
     pub fn new(view: View, facts: &Sources) -> Plic {
         Plic {
@@ -57,17 +51,15 @@ impl Plic {
     }
 
     /// 静音一条线：**`priority = 0`**。
-    /// 这是**可逆静音**，不是把线拆掉：`pending` 照旧置位，但 `claim` 恒 0 ⇒ 本域不再接它；
-    /// 把优先级写回 [`LINE_PRIORITY`] 即复原。enable 位留着——线号与设备的绑定没变，
+    /// 把优先级写回 LINE_PRIORITY 即复原。enable 位留着——线号与设备的绑定没变，
     /// 变的只是"现在有没有人接"。
-    /// 它当刹车的作用是**不白叫醒客户**（实测：临时去掉这一手，短跑里就多出两次
     /// `uart: rang n=0`——设备那一格已经空了，客户被叫起来排到 0 字节）。**"空转成风暴"那
     /// 句话的来源是另一格**：设备里那一格没清（`rtc` 实测：把 `CLEAR_INTERRUPT` 那一手去掉，
     /// 同一段运行里投递从 5 次变 3093 次）。
     /// **为什么不是"压着不结"**（`deliver` 之后不 `complete`、押到客户排空）：它同样防得住
-    /// 白叫醒，但**结是那一格的再武装**——见 [`Plic::complete`]。实测：故意不结 line 10 ⇒
+    /// 白叫醒，但**结是那一格的再武装**——见 Plic::complete。实测：故意不结 line 10 ⇒
     /// 只投递一次，之后第二次输入再也进不来（回显与停机都没了）。那一格裁在
-    /// `protocol::driver::line` 的"静音还是压着不结"一节里。
+    /// protocol::driver::line 的"静音还是压着不结"一节里。
     pub fn disable(&self, line: u32) {
         if line < 1 || line > self.device_count {
             return;
@@ -75,10 +67,9 @@ impl Plic {
         self.write(PRIORITY + 4 * line as usize, 0);
     }
 
-    /// 拆线：**把这一条从本 context 摘出去**——优先级归零 + 清掉 enable 位（[`Plic::enable`]
+    /// 拆线：**把这一条从本 context 摘出去**——优先级归零 + 清掉 enable 位（Plic::enable
     /// 的反面）。
-    /// 与 [`Plic::disable`] 不是一回事：静音留着 enable 位（复原走 `enable`，那一格的账没动），
-    /// 拆线是"这条线不归本域管了"——主人没了才做，要再接上只能重新登记一次（`occupy`）。
+    /// 与 Plic::disable 不是一回事：静音留着 enable 位（复原走 `enable`，那一格的账没动），
     pub fn unwire(&self, line: u32) {
         if line < 1 || line > self.device_count {
             return;
@@ -105,7 +96,6 @@ impl Plic {
     }
 
     fn read(&self, off: usize) -> u32 {
-        // SAFETY: `view` 是 `Dock::open` 的产物——这段已借映进本域；偏移落在 `reg` 区间内。
         unsafe { core::ptr::read_volatile((self.view.base() + off) as *const u32) }
     }
 

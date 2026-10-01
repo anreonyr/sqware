@@ -1,5 +1,4 @@
-//! operator::core::judge — **判据**（纯，不碰账）：`Facts` 那四个问句 ＋ 判一格 `judge`
-//! （谁在问 / 这一支里吗 / 这一盟里吗 / 这一格谁开着）。裁决与翻码在 [`super::gate`]。
+//! Facts 那四个问句 ＋ 判一格 judge
 
 use env::TaskId;
 
@@ -38,7 +37,7 @@ pub fn judge(f: &impl Facts, who: TaskId, permit: Permit) -> Ruling {
             Err(()) => Ruling::Unjudged,
         },
         // 三、**两问**：先问树"那一格谁开着"，再问名册"那位此刻代表谁"。两问的失败域各自落格，
-        //    与上面几条同一分法：**"没有那一位"是判不了**（三因同落，其中两因永久，见 [`Facts::opens`]），
+        //    与上面几条同一分法：**"没有那一位"是判不了**（三因同落，其中两因永久，见 Facts::opens），
         //    **"那一位没身份"是终态拒**。
         Permit::Opener(at) => match f.opens(at) {
             Ok(Some(that)) => match f.who(that) {

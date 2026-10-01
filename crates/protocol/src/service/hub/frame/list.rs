@@ -1,8 +1,5 @@
-//! hub::frame 的**列册那一面**（`ListReq`）：问这一格有哪些设备。
-
 use alloc::string::String;
-use env::{ PieToken};
-
+use env::PieToken;
 
 use super::vocab::LIST;
 
@@ -17,7 +14,7 @@ pub struct ListReq {
 }
 
 impl ListReq {
-    /// 编一问（动作码固定 [`LIST`]）。
+    /// 编一问（动作码固定 LIST）。
     pub fn of(class: String, from: u32, back: PieToken) -> ListReq {
         ListReq {
             op: LIST,

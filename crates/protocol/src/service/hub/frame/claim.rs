@@ -1,7 +1,4 @@
-//! hub::frame 的**认领那一面**（`Claim`）：把一格的设备认成自己的。
-
-use env::{ PieToken};
-
+use env::PieToken;
 
 use super::vocab::CLAIM;
 
@@ -18,7 +15,7 @@ pub struct Claim {
 }
 
 impl Claim {
-    /// 编一问（动作码固定 [`CLAIM`]）。
+    /// 编一问（动作码固定 CLAIM）。
     pub fn of(kind: u8, access: u32, policy: u32, sensor: PieToken, back: PieToken) -> Claim {
         Claim {
             op: CLAIM,

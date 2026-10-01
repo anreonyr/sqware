@@ -1,6 +1,5 @@
-//! system::run::scene — **这一景起哪些台**：过滤 ＋ 按 `after` 算次序。
-//! **没有投影**：权威是那唯一一张装配表 [`PROGRAMS`](crate::unit::PROGRAMS)——每一台的
-//! 声明都在它自己那份 `program.rs` 里。本文件只做那张单子自己做不了的一件事：把"这一景真有
+//! 过滤 ＋ 按 after 算次序。
+//! **没有投影**：权威是那唯一一张装配表 PROGRAMS——每一台的
 //! 的"滤出来。
 
 use alloc::vec::Vec;
@@ -16,7 +15,6 @@ use crate::unit::UnitFile;
 /// **清单里真有它**（`catalog` 是 initrd 那本账：没装进这一景的镜像就起不出来）。四枚服务
 /// （`operator` / `principal` / `coalition`）也在这张单里——与其他每一台同一条路，不是"与编排
 /// 者共一份字节"的那三行。
-/// **坏图在这里是"防御"**：打包那一趟已经校验过（宿主上还报得出名字），故本处只折成一格读数。
 pub fn programs(catalog: &Catalog) -> Result<Vec<&'static UnitFile>, Error> {
     let mut list: Vec<&'static UnitFile> = crate::unit::PROGRAMS
         .iter()

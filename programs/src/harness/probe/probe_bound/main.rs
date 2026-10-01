@@ -1,15 +1,10 @@
 #![no_std]
 #![no_main]
 
-//! probe-bound — **坏帧的证客**：不合族的帧不把门卡死。
-//!
+//! probe-bound — 坏帧的证客：不合族的帧不把门卡死。
 //! # 为什么"坏客人"必须是一位真域
-//!
 //! 判据在核里（`Push` 的长度前置条件），而它的**执行**要一次真 envcall：宿主上没有内核，
-//! 喂假帧只能验用户侧的读法。故这一格只能由一台真域来撞——与 `probe-denied` 同一条路。
-//!
 //! # 第四条为什么先把它那声 `BAD` 读掉
-//!
 //! 树的门对**每一条取出来的帧都答一句**（读不懂答 `BAD`）——推了 junk 之后，那声 `BAD` 就落在
 //! 本端的树路上。故这一条先把它读掉，再问正经的：留着不清，下一句问会读到上一句的答。
 //! **板那一道门同款**（第五条的 `evict` 也先读掉 junk 那一声）。
@@ -32,7 +27,6 @@ use protocol::service::operator::client as operator;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
 /// 本地失败编号（读数用）。
@@ -42,34 +36,28 @@ const E_TRIP: usize = 1;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 const OK_NOTE: &str = "probe-bound: doors held against junk";
 
-/// 不合族的帧有多长：**在一页之内**，又不是这一族任何一条的形状。
 const JUNK: usize = 300;
 
 /// 那一条的首格：**第一条动作码**（树那一族的 `LAND` ＝ `1`），其余全零——于是那道门走到
 /// "动作认得、形状不对"那一支 ⇒ 答一句 `BAD`。
 const JUNK_OP: u8 = 1;
 
-/// 编那一条 junk（点数在 [`JUNK`]，首格在 [`JUNK_OP`]）。
+/// 编那一条 junk（点数在 JUNK，首格在 JUNK_OP）。
 fn junk() -> [u8; JUNK] {
     let mut junk = [0u8; JUNK];
     junk[0] = JUNK_OP;
     junk
 }
 
-/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（[`LAND_LEN`] 字节）。
-///
+/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（LAND_LEN 字节）。
 /// 前几格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = 1`（名字**长度那一字节**）、
 /// `[11] = "x"`、`[12..20] = 0`（入口）、`[20] = 0`（`mine` 假）；**唯一越界的是
 /// `[21] = 9`**——许可那一张表只有 `0..=4`。故这一条会一路解到许可那一格才断 ⇒
 /// **整帧读不懂** ⇒ 门答 `BAD`。
-///
-/// **（名字那一格改成变长之后，这里的偏移也跟着动）**：名字现在是
-/// `[长度那一字节][字节]`（见 `env::wire` 里 `String` 的 `Span` impl），故许可那一格落在
+/// `[长度那一字节][字节]`（见 env::wire 里 `String` 的 `Span` impl），故许可那一格落在
 /// `1 ＋ 9 ＋ (1 ＋ 名长) ＋ 8 ＋ 1`——**这一台手写裸帧，偏移只能自己数**。
-///
-/// **（这一格此前全仓零断言，量它的这台客人就是这一条）**：`frame.rs` 的 `Permit::fetch`
 /// 表外那一支自己写着"要打到它得造一条这样的 `LAND` 帧，而仓里没有这样一台客人"——上面那条
-/// 300 字节的 junk 走 `Message::fetch` 的长度那一闸，`match` 一次都到不了。
+/// 300 字节的 junk 走 Message::fetch 的长度那一闸，`match` 一次都到不了。
 fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     let mut f = [0u8; LAND_LEN];
     f[0] = JUNK_OP; // `LAND` ＝ `1`（见 [`JUNK_OP`]）
@@ -81,12 +69,12 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     f
 }
 
-/// `seek` 那一问的动作码：`SEEK = 7`（与 [`JUNK_OP`] 同一条：这一台**故意手写裸帧**，故它按
+/// `seek` 那一问的动作码：`SEEK = 7`（与 JUNK_OP 同一条：这一台**故意手写裸帧**，故它按
 /// 线上那一格写数——`crates/protocol/src/service/operator/frame/vocab.rs` 那一枚私有常量才是正文；
 /// 那个码要是挪了位，这一条当场红）。
 const SEEK_OP: u8 = 7;
 
-/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::common::path::Path) 是 8）。
+/// 那一条超长的路：**9 段**（Path::MAX 是 8）。
 const ROAD_9: &[u8] = b"a/b/c/d/e/f/g/h/i";
 
 /// **一条 9 段的路**（`[op][长度][那些字节]`＝19 字节）——这一台量的是"路太长"那一格挪了家。
@@ -100,7 +88,6 @@ fn oversize_road() -> [u8; JUNK] {
 
 /// 表外那一格（`0..=4` 之外）：整帧读不懂。
 const LAND_PERMIT_UNKNOWN: u8 = 9;
-/// 表内那一格（`0` = `Permit::Unset`）：读得懂——**同一帧只换这一格**，结论就该不同。
 const LAND_PERMIT_KNOWN: u8 = 0;
 
 /// 这一条 `LAND` 帧有多长：`1 ＋ 9 ＋ (1 ＋ 1) ＋ 8 ＋ 1 ＋ 9`——**这一台手写裸帧**，故按线上
@@ -117,7 +104,6 @@ fn main() -> Report<'static> {
     };
     let (tree, hedge, _) = (&session.link, session.talk, session.host);
     // **正经那一问要一面 `Face`**，而它是**借**一条会话：
-    // [`operator::Face::from`]（树那三格是 `Copy`）——junk 那一趟照旧走裸孔，见 `junk_trip`。
     let face = operator::Face::from(&session);
     let Some(dir) = protocol::common::svc::SVC.file_name() else {
         return bail("probe-bound: bad name");
@@ -131,7 +117,7 @@ fn main() -> Report<'static> {
 
     // 三·三、**形状全对、只有许可那一格陌生**的那一条：同一声 `BAD`（"整帧读不懂"），
     //       门照旧活着。这一条与上一条**不是同一件事**：上一条死在**长度**那一闸，这一条一路
-    //       解到许可那一格才断（见 [`junk_land`] ）。
+    //       解到许可那一格才断（见 junk_land ）。
     let (l_junk_in, l_said_bad, l_after) = junk_trip(
         hedge,
         tree,
@@ -139,7 +125,6 @@ fn main() -> Report<'static> {
         dir.to_string(),
         &land_frame(LAND_PERMIT_UNKNOWN),
     );
-    // **差分那一趟**：同一帧、只把许可那一格换成表内的 `0`。它**读得懂**（后面那一问自己答什么
     // 不管），故门不该答"读不懂"那一句——两趟并排，才证明上一趟真的断在**许可那一格**上，
     // 而不是断在名字 / `mine` / 长度上。
     let (k_junk_in, k_said_bad, k_after) = junk_trip(
@@ -191,16 +176,11 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 第三条那一趟：**推 junk → 读掉它那声 `BAD` → 再问一句正经的**。
-///
 /// 返 `(推成了没有, 读到 BAD 没有, 正经的那一问答得出来没有)`——三格各是一件事，由调用方凑成
 /// 一条判据（"这道门没卡死"）。
-///
 /// 正经那一问取 `part(/sys)`：**幂等**（`/svc` 是服务起手时立的那一格，重复 `part` 只答同一个
 /// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管。
-///
 /// 只有**紧跟其后那句正经的问**（`part /svc`，幂等）走 `Face`：新面已没有那条自由函数那一层，
-/// 而这一面正好**借**同一枚问话孔与同一条答话路（[`operator::Face::from`]）——门上那一趟
 /// 一个字没变。
 fn junk_trip(
     hedge: PieToken,
@@ -209,7 +189,6 @@ fn junk_trip(
     dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
-    // 推的人那两半：**递出**（孔上有人就等）＋ **等它被取走**——旧 `push` 是这两半合一的。
     let door = mail::HolePie::from_token(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
         && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));

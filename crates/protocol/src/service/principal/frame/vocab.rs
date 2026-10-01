@@ -1,10 +1,10 @@
-//! principal::frame 的**词汇那一半**：身份号（`PrincipalId`）· 失败词汇（`Fail`）· 动作码与
+//! :frame 的词汇那一半：身份号（PrincipalId）· 失败词汇（Fail）· 动作码与
 //! 状态码 · 记号与那一段路（`BACK`/`DIR`/`NAME`）。
 
-use env::{Mark };
+use env::Mark;
 
 use crate::common::path::Path;
-use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PrincipalId(usize);
@@ -13,7 +13,6 @@ impl PrincipalId {
     /// 根：Server 启动时自带的那一枚，**唯一没有父的节点**。
     pub const ROOT: PrincipalId = PrincipalId(0);
 
-    /// 由裸号造一个（线上解码面；树外的号从这里进来）。
     pub const fn new(raw: usize) -> PrincipalId {
         PrincipalId(raw)
     }
@@ -26,7 +25,6 @@ impl PrincipalId {
 
 /// 失败域：三格，每格一个**不同的下一步**。
 /// **`Resolve` 与三条谱系读没有失败域**——读是公开的（答案不是秘密，Principal 不授予任何
-/// 东西）；这里三格只被写的那两条与"查无此节点"用。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
 #[wire(also(BAD = 4))]
 pub enum Fail {
@@ -63,20 +61,17 @@ pub const WAIVE: u8 = 7;
 
 pub const DROP: u8 = 8;
 
-// 长度、编 / 解、答话那几手**本体在 [`crate::frame`]**——principal 与 coalition 同形，故只有
-// 一份；这里只按本族的名字转出来（`mod.rs` 那一句点名转出照旧，调用点一处
+// 长度、编 / 解、答话那几手**本体在 crate::frame**——principal 与 coalition 同形，故只有
 // 都不用改）。**本族自己的**是下面那些：码、`reply_present`、失败表、记号。
 
-/// 回信孔的记号：客人**每趟**铸一枚、借给 Server（这一趟的答话从它回来）。
-/// 与 rtc 那一面的 `rtc-back` 同一个形状、不同的记号：两块门牌的回信孔若刻同一个记号，
 /// 同一张表里就分不出这一枚是哪一面的。
 pub const BACK: Mark = Mark::of("principal-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/principal`（头两段是四族共用的
-/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）。
+/// crate::common::svc::DIR，末段是本族自己的名字 NAME）。
 pub const DIR: &Path = Path::new("svc/sys/principal");
 
 /// 本服务在树上的那一段名字：`/svc/sys/principal`——**它不是一格**（
 /// 两枚门牌是它底下那两格 `/svc/sys/principal/{ask,set}`，末段名由
-/// [`Grant::name`](super::grant::Grant::name) 给）。
+/// Grant::name 给）。
 pub const NAME: &str = "principal";

@@ -1,14 +1,13 @@
-//! rtc::core::fail — **两个原语会失败在哪一格**（一格对应一个不同的下一步）。
+//! 两个原语会失败在哪一格（一格对应一个不同的下一步）。
 //! 它是**上线**那一格：**服务面**的失败域（`Taken` / `Past` / `Denied`），与
-//! [`programs::driver::shared::fail::Fail`](programs::driver::shared::fail)（那一域**死在起手/常驻的哪一步**、
+//! programs::driver::shared::fail::Fail（那一域**死在起手/常驻的哪一步**、
 //! 报给内核出口）是两件事——这一枚讲"客人那一问怎么了"。
 //! 前两格是**驱动说的话**（那一格有人了 / 那个时刻已经过去了），第三格 `Denied` 是**客侧
 //! 自己判的**（孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）；它与线上那一格的对照在
-//! [`super::frame`] 那张表里——今天它由 [`protocol::WireCodes`] 从本枚举派生（**一处编**：
 //! 客人那一侧与驱动那一侧读同一份）。
 
 /// 两个原语会失败在哪一格。**一格对应一个不同的下一步**。
-use protocol::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use protocol::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, protocol::WireCodes)]
 pub enum Fail {
@@ -18,7 +17,6 @@ pub enum Fail {
     /// 那个时刻已经过去了 ⇒ 重新问一次现在几点、再算一个。
     #[code(2)]
     Past,
-    /// 这一趟没走到（孔借不出去 / 帧推不动 / 等到期 / 答话读不懂）——**不是驱动说的话**，
     #[code(3, BAD)]
     Denied,
 }

@@ -1,4 +1,4 @@
-//! principal::core::roster — **名册那一张表**：一格（[`Bound`]：一 TID 一格，必有起点、必有当前）
+//! 一格（Bound：一 TID 一格，必有起点、必有当前）
 //! 与它的写读（绑定 / 问"此刻代表谁" / 弃回起点 / 删格）。
 
 use env::TaskId;
@@ -6,8 +6,7 @@ use protocol::service::principal::{Fail, PrincipalId};
 
 use super::Principal;
 
-/// 名册一格：**一 TID 一格，且必有起点、必有当前**（两格都不是 [`Option`]）。
-/// - `origin` = 装配者把它定在哪条号上；`waive` 回到这里，于是"放弃"不是一个无底洞；
+/// 名册一格：**一 TID 一格，且必有起点、必有当前**（两格都不是 Option）。
 pub(super) struct Bound {
     pub(super) tid: TaskId,
     pub(super) origin: PrincipalId,

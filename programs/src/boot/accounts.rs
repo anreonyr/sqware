@@ -1,9 +1,9 @@
-//! boot::accounts — **两块账**：清单那一块（程序表）与配对块（门闩表）＋它的逐条读法。
+//! 清单那一块（程序表）与配对块（门闩表）＋它的逐条读法。
 
 use env::PieToken;
 use env::ledger::key::{DTB, IRQ, REGION};
-use env::{Key, PAIR_LEN, Pair};
 use env::ledger::{args as boot_args, manifest};
+use env::{Key, PAIR_LEN, Pair};
 use protocol::debug;
 
 /// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
@@ -20,9 +20,8 @@ impl Accounts {
             return None;
         }
         let (view, len) = (a[boot_args::VIEW] as *const u8, a[boot_args::VIEW_LEN]);
-        // `COUNT` 是**条数**，不是字节数（布局见 `env::ledger::args`）。
+        // `COUNT` 是**条数**，不是字节数（布局见 env::ledger::args）。
         let (pairs, count) = (a[boot_args::PAIRS] as *const u8, a[boot_args::COUNT]);
-        // SAFETY: boot 把这两区只读映射进本域，长度即启动参数给的字节数；本域只读。
         let view = unsafe { core::slice::from_raw_parts(view, len) };
         let pairs = unsafe { core::slice::from_raw_parts(pairs, count * PAIR_LEN) };
         // 清单头先验一遍：非法即装配不成立。
@@ -30,7 +29,7 @@ impl Accounts {
         Some(Accounts { view, pairs })
     }
 
-    /// 清单那块字节（[`Catalog::of_boot`] 的输入）。
+    /// 清单那块字节（Catalog::of_boot 的输入）。
     pub fn view(&self) -> &'static [u8] {
         self.view
     }

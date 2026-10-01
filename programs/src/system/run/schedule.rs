@@ -1,4 +1,4 @@
-//! system::run::schedule — **装配的相**：一台服务从"立了账、造了身子"到"在树上答得动"，分几相走、每相谁动手。
+//! 一台服务从"立了账、造了身子"到"在树上答得动"，分几相走、每相谁动手。
 //! ```text
 //!   立账 → 造身子 → 装通道        ← 不是手：这三件对整张单逐条做（`control/{assemble,mod}.rs`）
 
@@ -9,12 +9,9 @@ use crate::system::control::enroll as control;
 use crate::system::control::{Error, Service};
 use crate::unit::{Died, UnitFile};
 
-
 /// **一手**：某一轴在某一相里对某一台做的一件事。
-/// 签名里只有"这一台"（[`UnitFile`]）与"它的身子"（[`Service`]，起手那两样）：**读哪一格由这一手
-/// 自己定** ⇒ 那一格的读者与写它的那份声明住得开（见本文件头注）。
 /// **它返的是一句话，不是一个号**：装配失败的号是按**这一台**分的（`UnitFile::demand.died`），
-/// 由 [`advance`] 折出来；手只报"死在装配哪一步"（与 `service::step` 同款）。
+/// 由 advance 折出来；手只报"死在装配哪一步"（与 service::step 同款）。
 pub type Act = fn(&mut Assembly, &UnitFile, &mut Service) -> Result<(), &'static str>;
 
 /// **一相**：这一相里那几只手，**次序即契约**。
@@ -36,7 +33,8 @@ pub fn advance(
     service: &mut Service,
 ) -> Result<(), Died> {
     for &act in phase {
-        act(assembly, program, service).map_err(|why| crate::system::fail(program, Error::Step(why)))?;
+        act(assembly, program, service)
+            .map_err(|why| crate::system::fail(program, Error::Step(why)))?;
     }
     Ok(())
 }

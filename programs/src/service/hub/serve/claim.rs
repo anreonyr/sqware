@@ -1,7 +1,5 @@
-//! hub::serve::claim — **认领那一面**：把一格的设备认成自己的（认台靠门牌记号，不靠自报）。
-
-use super::*;
 use super::sweep::alive;
+use super::*;
 
 /// **认领**：那一台由"哪一枚孔响了"回答（`door`）；主人是发送者 ＋ 它交来的那枚报活孔。
 pub(super) fn claim(

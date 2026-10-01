@@ -1,24 +1,22 @@
-//! common::life::service — **把内核答的事实写回表**：建域 / 放行 / 等就绪 / 收 / 盯。
-//! 这里只放**合成**的几手（一步里既问内核又改账的那几件）：[`mint`] / [`start`] /
-//! [`ready`] / [`stop`] / [`until`] / [`watch`]。**纯转发那一层没有了**——`build` / `spawn` /
+//! 建域 / 放行 / 等就绪 / 收 / 盯。
+//! ready / stop / until / watch。**纯转发那一层没有了**——`build` / `spawn` /
 
 use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
 
-use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
 use crate::system::common::life::table::{Announce, Service, Slot, State, Table};
+use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::communication::establish::Endpoint;
 
 use crate::unit::{
     Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,
 };
 
-/// **Unit 域**的失败 → 本协议的失败域（按"调用方接下来干什么"分，不按内核哪一步坏了）。
-/// **穷尽 match 在域词表上**（`env::UnitFail`）：装不上 = [`UnitFail::BadImage`]；
-/// 内存不够 / 产不出来 = [`UnitFail::OoM`]（本协议名 [`Fail::Full`]）；其余
-/// （`Denied` 不在我 heir 里 / 启动参数读不出来；`Busy` 条件未就绪）落 [`Fail::Unknown`]
+/// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage；
+/// 内存不够 / 产不出来 = UnitFail::OoM（本协议名 Fail::Full）；其余
+/// （`Denied` 不在我 heir 里 / 启动参数读不出来；`Busy` 条件未就绪）落 Fail::Unknown
 /// ——"不认识的失败"不该猜成某一种。**没有表外那一格**：域词表是穷尽的。
 fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
     match e.source {
@@ -28,7 +26,6 @@ fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
     }
 }
 
-/// **Pie 域**的失败 → 本协议的失败域（今天只有 `accord` 一处用它）。
 fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     match e.source {
         PieFail::OoM => Fail::Full,
@@ -41,7 +38,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 /// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）。
 /// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::service::operator::{…,
 /// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
-/// 不是一回事，故按"死在起手的哪一步"取名 [`Start`]。
+/// 不是一回事，故按"死在起手的哪一步"取名 Start。
 /// **它自己就是出口**（`impl Exit`）：三个 bin 的 `main` 直接答 `Result<(), Start>`——
 /// 不需要再有一层 `said` / `exit` 的转发。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -56,9 +53,9 @@ pub enum Start {
     /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**。
     Face(Died),
     /// **起手那一段物料没收到**（整机物料那条通道上没来东西 / 来的东西解不动）；
-    /// **只有设备账那一台有**（`Setup::Machine` 那一格）。
+    /// **只有设备账那一台有**（Setup::Machine 那一格）。
     Load(Died),
-    /// **常驻期**：组坏了（`await_` 答不出）——与 [`Start::Desk`] 分开，是因为它不在"起手那
+    /// **常驻期**：组坏了（`await_` 答不出）——与 Start::Desk 分开，是因为它不在"起手那
     /// 几步"里（起手已经过完了），而号同那一族。
     Dead(Died),
 }
@@ -147,11 +144,10 @@ pub fn mint(
 
 /// 第二相：**放行**，并在放行前塞门闩、备通道。
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`channels` = 与它的那几条通道
-/// （`Announce::Channel` 那一种要用：它就绪的凭据长在这里）；`marks` = 放行后要逐条认领的
 /// **记号**（记号即通道名）；`millis` = 就绪等待（上限族，`Wait`）。
 /// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、备通道都发生在这段窗口里。
 /// **失败时不留下半行**：本相失败 ⇒ 实例与状态如实留在表里（它确实在跑），调用方用
-/// [`stop`] 收尾。
+/// stop 收尾。
 pub fn start(
     table: &mut Table,
     name: &str,
@@ -163,7 +159,7 @@ pub fn start(
 ) -> Result<(), Fail> {
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
-            // 记号照源枚（`Mark::NONE`）：授下去的这几柄带的是它们原本那条路的名字。
+            // 记号照源枚（Mark::NONE）：授下去的这几柄带的是它们原本那条路的名字。
             mail::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
         }
         utask::hatch(task).map_err(unit_fail)
@@ -179,8 +175,7 @@ pub fn start(
 }
 
 /// 等它就绪。`true` = **调用开始时就已就绪**（挂起过的一律 `false`）。
-/// 唯一会改表的地方就是这个函数：确认它的宣布之后置 [`State::Ready`]，确认它死了之后
-/// 落 [`State::Dead`]——**内核的事实在这里变成表里的事实**。而"它宣布了"那件事本身
+/// 唯一会改表的地方就是这个函数：确认它的宣布之后置 State::Ready，确认它死了之后
 /// **归建立那一手**：通道在对方交回孔并归位（`claim`）时成立，本函数只去问那句"成立了没有"。
 pub fn ready(
     table: &mut Table,
@@ -253,7 +248,7 @@ pub fn stop(table: &mut Table, name: &str) -> Result<(), Fail> {
     Ok(())
 }
 
-/// 等它收尾：`millis` 与 [`ready`] 同款（上限族，`Wait`）。
+/// 等它收尾：`millis` 与 ready 同款（上限族，`Wait`）。
 /// **只读：不动表**。
 /// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =

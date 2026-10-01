@@ -1,6 +1,5 @@
-//! uart — NS16550 的**最小设备面**：够四件事——开"收到字节就拉线"、问"有没有字节"、把字节取走、
+//! 最小设备面：够四件事——开"收到字节就拉线"、问"有没有字节"、把字节取走、
 //! 把一条字塞出去。
-//! 它是**本域（串口驱动）的设备面**：`IER` 只控制**中断线**、不控制数据通路，故"开这一位"
 
 use runtime::core::res::dock::View;
 
@@ -28,7 +27,6 @@ const LSR_THRE: u8 = 0x20;
 /// 打开"收到字节就拉线"——**读改写**：只置 `RX` 这一位。
 pub fn arm_rx(view: View) {
     let at = (view.base() + IER) as *mut u8;
-    // SAFETY: `view` 是 `Dock::open` 的产物——UART 那段已借映进本域；只读写该寄存器。
     unsafe {
         let bits = core::ptr::read_volatile(at);
         core::ptr::write_volatile(at, bits | IER_RX);
@@ -36,8 +34,6 @@ pub fn arm_rx(view: View) {
 }
 
 /// 排空：`LSR.DR` 还置着就把 `RBR` 读走，返读到的字节数（**0 也是读数**：这一批没有内容）。
-/// 一次读到一个字节**就是**"从设备里取走它"——连着的那些字节 FIFO 里排着，故这里循环到
-/// `DR` 落为止。装满 `out` 就停：剩下的还在设备里，**下一次中断再来**（本域说一句"排空了"
 /// 之后，路由者把线放回去，电平还高 ⇒ 立刻再报）。
 pub fn drain(view: View, out: &mut [u8]) -> usize {
     let at = view.base() as *const u8;
@@ -57,7 +53,7 @@ pub fn drain(view: View, out: &mut [u8]) -> usize {
 /// 把这几个字节塞进设备，不拆、不并、不添字。
 /// **这一圈等的是有界的东西**（不是"空转的红线"那一档）：等的是我们自己要塞的这几个字节，
 /// 而 `put` 的用家（`desk`）一条字 ≤ `LINE_MAX + 1` ⇒ 115200 波特下最坏约 11 ms。设备里的字节
-/// 印出来这件事只能由持有者做——固件那一侧 `Dbcn::ConsoleWrite` 也是这么等的。
+/// 印出来这件事只能由持有者做——固件那一侧 Dbcn::ConsoleWrite 也是这么等的。
 pub fn put(view: View, bytes: &[u8]) -> usize {
     let at = view.base() as *const u8;
     let mut n = 0;

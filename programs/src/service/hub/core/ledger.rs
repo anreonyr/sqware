@@ -1,5 +1,5 @@
-//! hub::core::ledger — **册上那一本账**：一台（[`Entry`]）· 它的主人（[`Owner`]）· 一格（[`Cell`]）·
-//! 册本身（[`Ledger`]）与册上那几手（收 / 认领 / 空出 / 取窗 / 落格要的那几件）。
+//! 一台（Entry）· 它的主人（Owner）· 一格（Cell）·
+//! 册本身（Ledger）与册上那几手（收 / 认领 / 空出 / 取窗 / 落格要的那几件）。
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -20,13 +20,13 @@ pub struct Entry {
     /// 那一页（装配者交过来的设备门闩）——认领成功时授给主人的就是它。
     pub page: PieToken,
     /// hub 为这一台铸的那一枚孔——**就是你 `find` 到的那一格上挂的那一份**。
-    /// 「哪一台」由"哪一枚孔响了"回答（[`Ledger::claim`] 收的正是它）。
+    /// 「哪一台」由"哪一枚孔响了"回答（Ledger::claim 收的正是它）。
     pub door: PieToken,
 }
 
 /// **这台的主人**：号 ＋ **主人那一枚**（他铸的报活孔）。
-/// 内核那一问（`UnitCall::Join`）只许同队或父域，hub 与驱动是兄弟 ⇒ 探活只能问主人自己交来的
-/// 那一枚（`mail::reserve`，与线路由者那条同一手）。
+/// 内核那一问（UnitCall::Join）只许同队或父域，hub 与驱动是兄弟 ⇒ 探活只能问主人自己交来的
+/// 那一枚（mail::reserve，与线路由者那条同一手）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Owner {
     pub task: TaskId,
@@ -71,7 +71,6 @@ impl Ledger {
     }
 
     /// 册 · 写：收一台。**撞名即拒**（名是这一台的坐标，两处写同一个名＝自述坏了）。
-    /// 备不下那一行也答 `Err`：装配期那一趟把它折成"入册没成"，与撞名同一个下一步
     /// （这一台机器起不来，而不是"少收一台"）。
     pub fn enroll(&mut self, entry: Entry) -> Result<(), ()> {
         if self.cells.iter().any(|c| c.entry().name == entry.name) {
@@ -148,12 +147,9 @@ impl Ledger {
         window
     }
 
-    /// 册 · 读：**这一类怎么落**——那几台的（名 ＋ 那枚孔），序 = 入册序（同 [`Ledger::list`]）。
-    /// **它有一个读者**：hub 落 `/dev/<类>` 那一趟（[`bridge::land`] 收的是切片，故调用方
-    /// 自己收一下）——以及挂组那一趟（把每一枚孔挂进那只组）。
-    /// **为什么不是从 [`Ledger::list`] 推**：那一窗给的是名字 ＋ 有主掩码（客人的读数），
-    /// 而这一手给的是**孔**——落格与挂组要的正是"哪一枚孔是这一台的"。
-    /// [`bridge::land`]: crate::service::operator::bridge::land
+    /// 册 · 读：**这一类怎么落**——那几台的（名 ＋ 那枚孔），序 = 入册序（同 Ledger::list）。
+    /// **为什么不是从 Ledger::list 推**：那一窗给的是名字 ＋ 有主掩码（客人的读数），
+    /// bridge::land: crate::service::operator::bridge::land
     pub fn doors(&self, class: String) -> impl Iterator<Item = (&String, PieToken)> + '_ {
         self.cells
             .iter()

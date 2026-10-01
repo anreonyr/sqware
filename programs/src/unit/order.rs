@@ -1,4 +1,4 @@
-//! order — **这一张单自己算不了的那一件事：次序**。
+//! 这一张单自己算不了的那一件事：次序。
 
 use super::{Setup, UnitFile, is_target};
 
@@ -13,21 +13,18 @@ pub enum DepsFail {
     Cycle(&'static str),
 }
 
-/// **按 `after` 把这一张单排成次序**（拓扑，原地重排）：每条边都在前面；等 [`SCENE`]（这一趟走完）
 /// 的排**最后**。
-/// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（[`DepsFail`]）。
+/// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（DepsFail）。
 pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
     // 一、每条边都要落得下：指得到本单里的台，且那一台说得出"我答得动"。
-    //     **[`SCENE`] 那一条除外**：它指的是这一趟自己，不是本单里的台，也没有"答得动"可言
-    //     （见 [`SCENE`] 的头注）。
+    //     （见 SCENE 的头注）。
     let mut i = 0;
     while i < list.len() {
         if let Some(deps) = list[i].relation.after {
             let mut d = 0;
             while d < deps.len() {
                 let name = deps[d];
-                // **[目标单元](Kind::Target)那一条除外**：它指的是这一趟自己，不是本单里的台，
-                // 也没有"答得动"可言（见 [`SCENE_UNIT`] 与 [`is_target`]）。
+                // 也没有"答得动"可言（见 SCENE_UNIT 与 is_target）。
                 if !is_target(name) {
                     match find(list, name) {
                         None => return Err(DepsFail::Unknown(name)),
@@ -85,9 +82,7 @@ pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
     Ok(())
 }
 
-/// **这一台等的是"这一趟走完"吗**——`after` 里有一条边指着[目标单元](Kind::Target)就是。
-/// 它有两个读者，判的是同一句话：[`order_scene`] 据它把这一台排到最后（那一格要到那时才到点），
-/// 而装配那一趟据它跳过那一条边（`Assembly::assemble`：等一个"这一趟"没有可等的对象）。
+/// 它有两个读者，判的是同一句话：order_scene 据它把这一台排到最后（那一格要到那时才到点），
 fn waits_scene(program: &UnitFile) -> bool {
     program
         .relation

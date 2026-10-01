@@ -1,4 +1,4 @@
-//! hub::frame 的**词汇那一半**：三面码（`BOND`/`LIST`/`CLAIM`）· 上限（`LIST_MAX`）·
+//! :frame 的词汇那一半：三面码（BOND/LIST/CLAIM）· 上限（LIST_MAX）·
 //! 记号（`BACK_MARK`/`ALIVE_MARK`）· 设备路与三枚键名（`DEV_ROAD`/`BOOT`/`DTB`/`IRQ`）· 失败词汇（`Fail`）。
 
 use crate::common::path::Path;
@@ -20,8 +20,8 @@ pub const LIST_MAX: usize = 4;
 pub const BACK_MARK: env::Mark = env::Mark::of("hub-back");
 
 /// **报活孔**那一枚上的记号：主人（认领那一台的那位）铸一枚、**交一份给 hub**、此后一直开着。
-/// hub 扫账时按它问"主人还在不在"（`mail::reserve`——与线路由者那条探活同一手）。内核那一问
-/// （`UnitCall::Join`）只许**同队或父域**，而 hub 与驱动是**兄弟** ⇒ 主人那一枚只能由主人
+/// hub 扫账时按它问"主人还在不在"（mail::reserve——与线路由者那条探活同一手）。内核那一问
+/// （UnitCall::Join）只许**同队或父域**，而 hub 与驱动是**兄弟** ⇒ 主人那一枚只能由主人
 /// 自己交过来。
 pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
 
@@ -39,7 +39,7 @@ pub const DTB: &str = "dtb";
 /// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）。
 pub const IRQ: &str = "irq";
 
-/// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；[`Fail::Bad`] 是本端那一格。
+/// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；Fail::Bad 是本端那一格。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
 pub enum Fail {
     /// 没这件 / 这一类不在册。
@@ -54,8 +54,6 @@ pub enum Fail {
     /// 那一枚孔用不动（**本端判的**：这一枚的资源没了 / 权限不够 / 已交出去）。
     #[code(4)]
     Dead,
-    /// 这一趟没走到 / 读不懂（**本端判的**）。
     #[code(5)]
     Bad,
 }
-

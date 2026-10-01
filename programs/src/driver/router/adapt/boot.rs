@@ -1,8 +1,7 @@
-//! router::adapt::boot — **起手**：领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。
+//! 领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。
 //! 起手的产物是**同一条命**（控制器的事实 / 账 / 门铃 / 组 / 门外那一页缓冲），故合成一个
-//! 类型 [`Up`]：常驻那一圈每醒一次用到的就是它。
-//! **三段里的前两段已住 [`programs::driver`]**（领配给、开图、上板、上树那几步三台同构）。
-//! 本文件剩下的是**路由者自己的起手**：读设备树（只有它读）、建账、铸入口、挂三源那只组。
+//! 类型 Up：常驻那一圈每醒一次用到的就是它。
+//! **三段里的前两段已住 programs::driver**（领配给、开图、上板、上树那几步三台同构）。
 //! **上板 / 上树仍然尽力**：这一台起来就得收（铃一响就要 claim），故两件任一件没成都只报一行
 
 use super::event::desk::Replies;
@@ -25,10 +24,8 @@ use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie, NolePie};
 use runtime::env::unit as utask;
 
-/// 本域挂在树上的名字（`/svc/drv/router`，[`protocol::driver::ROAD`] 之下的那一段）。
 const SERVICE: &str = "router";
 
-/// 本域要认的三样：**中断控制器**（按类）＋ **设备树本体 / 门铃**（点名——那两件的名字是常量，
 /// 它们不是树里的设备）。
 const PLIC_ASK: Ask = Ask {
     class: PLIC_CLASS,
@@ -55,7 +52,6 @@ const IRQ_ASK: Ask = Ask {
 /// 装泊位 / 等配给 / 办一趟登记 / 上树的期限（毫秒）。
 const QUAY_MS: usize = 1000;
 
-/// 起手那几步的产物：本域要活下去的全部凭据。
 pub struct Up {
     /// 控制器寄存器面（设备侧）。
     pub plic: Plic,
@@ -67,9 +63,7 @@ pub struct Up {
     pub pile: Pile,
     /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）。
     pub buf: Vec<u8>,
-    /// 本域的服务入口（门牌那枚孔，本线程铸、本线程读）。
     pub entry: HolePie,
-    /// 一格一格的**答话存根**（见 [`desk::Reply`]）：那一等不许落在本域这条循环里。
     pub replies: Replies,
 }
 
@@ -87,7 +81,6 @@ pub fn up() -> Result<Up, Fail> {
             },
         )
     })?;
-    // 设备那一趟：找设备账那两枚面 → 认三样（控制器 / 设备树 / 门铃）。
     let tree = operator::Face::from(&ctx.session);
     let hub = Hub::find(&tree, E_ROUTER, Wait::AtMost(QUAY_MS))?;
     let plic_deed = hub.claim(&tree, &PLIC_ASK, E_ROUTER, Wait::AtMost(QUAY_MS))?;
@@ -100,16 +93,13 @@ pub fn up() -> Result<Up, Fail> {
         irq_deed.name.as_str()
     );
 
-    // 开图 + 读树：控制器、本域的 context（线那一半——"这台是哪条线"——已随设备账走，
     let plic_dev = Device::open(plic_deed.token).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
     let dtb_dev = Device::open(dtb_deed.token).map_err(|_| Fail::at(E_ROUTER, "docks"))?;
     let dtb = dtb_dev.view();
-    // SAFETY: 设备树是内核只读借映进本域的整棵（保留区，终身存活）；`Sources::of` 只读它。
     let bytes = unsafe { core::slice::from_raw_parts(dtb.base() as *const u8, dtb.size()) };
     let sources = Sources::of(bytes).ok_or(Fail::at(E_ROUTER, "tree"))?;
     let plic = Plic::new(plic_dev.view(), &sources);
     debug!("router: docks open");
-    // 这台控制器那两个数——本域自己的事实，唯一一次陈述。
     debug!(
         "router: device_count={} ctx={}",
         sources.device_count(),
@@ -124,7 +114,7 @@ pub fn up() -> Result<Up, Fail> {
 
     ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS));
 
-    // **报"答得动了"**（`Setup::Ready`）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
+    // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::establish::endpoint(
         runtime::env::unit::sire(),
         env::Mark::of(programs::unit::READY),
@@ -144,7 +134,7 @@ pub fn up() -> Result<Up, Fail> {
         return Err(Fail::at(E_ROUTER, "bell"));
     }
 
-    // 一问的形状是 `lcall::Occupy::LEN`；缓冲给**一页**（余量；孔不预设长度，装不下会答 `Denied` 且手原样）。
+    // 一问的形状是 lcall::Occupy::LEN；缓冲给**一页**（余量；孔不预设长度，装不下会答 `Denied` 且手原样）。
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Fail::at(E_ROUTER, "desk"));

@@ -1,4 +1,4 @@
-//! operator::frame 的**提示之路**（`Tip`）：`GuestFrame`（提示）· `WiredFrame`（线交接）·
+//! :frame 的提示之路（Tip）：GuestFrame（提示）· WiredFrame（线交接）·
 //! `PlateFrame`（门牌）· 三枚码（`TIP_PLATE`/`TIP_GUEST`/`TIP_WIRED`）与入口 `TipIn`。
 
 use env::{PieToken, TaskId};
@@ -20,18 +20,15 @@ pub struct GuestFrame {
 
 /// 「门禁接线」那一形：**只有一个字节**（`kind`）——一句话，不带号。
 /// **它说的是什么**：装配者已经把**名册**认下来了（补绑它自己与树），从那以后持树者那道门
-/// **问得动身份**（`operator::door::may`）。
+/// **问得动身份**（operator::door::may）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WiredFrame {
     pub kind: u8,
 }
 
-/// **这一趟落格要带的那句规矩**（"立一条路"那一形上的第二轴）。
 /// # 为什么只有两格，且没有"填一枚 `Permit`"这一路
 /// 这条路上装的是**装配者**（它请持树者替它落格）。装配者**报不出任何号**——它没有名录面
 /// （`Roster` 只有 `bind` / `adopt`），也没有读格的那几手（`Tree` 只有"递上去"）⇒ 一枚
-/// `Permit` 里的号它一个都填不了。故这一轴说的是**要不要带规矩**，而不是"带哪一条"；
-/// 而"带哪一条"由 [`Rule::Root`] 自己钉死——那是这一族今天**说得出口**的唯一一句真话
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Rule {
     /// **不记许可**：与 `/svc/sys/operator/{…}` 那七格同一条口径——任何已绑身份都取得回。
@@ -54,17 +51,16 @@ pub struct PlateFrame {
 
 const _: () = assert!(PlateFrame::LEN == 1 + Path::LEN + PieToken::WIDTH + Rule::WIDTH);
 
-/// 提示之路上**最长那一形**的宽度（立一条路：[`PlateFrame`]）——两侧各备一只这么大的缓冲，
+/// 提示之路上**最长那一形**的宽度（立一条路：PlateFrame）——两侧各备一只这么大的缓冲，
 /// 收的那一侧按它拉。
 pub const TIP_LEN: usize = PlateFrame::LEN;
 
 /// **装配者推给持树者的一句话**（提示之路那一帧）。
 /// 三形，各自的正文在变体上；共用的两句话：
-/// - **树不能当自己的客人**：把一格挂上树在别处都是**客人**那一趟（`part` ＋ `land` 两问走一条
 ///   会话），而树没有那条会话——它的生我者（编排域）是**替每一位客人转授**的那一侧，替不了
-///   自己（自指 ⇒ 环）。树手里本来就握着**核**（`Operator::land` / `part`）
+///   自己（自指 ⇒ 环）。树手里本来就握着**核**（Operator::land / `part`）
 ///   ⇒ "装配者递东西、持树者自己落"。
-/// - **名字随帧来**：持树者不认识任何一族的名字（`control::frame::DIR` / `NAME` 都是递帧那一侧
+/// - **名字随帧来**：持树者不认识任何一族的名字（control::frame::DIR / `NAME` 都是递帧那一侧
 ///   的事实），它只答"把这一条路立出来"。
 pub enum Tip {
     /// **在树上立一条路**：前缀逐段立成窗格（缺的就地造），末段按 `leaf` 落叶子或立窗格。
@@ -82,7 +78,7 @@ pub enum Tip {
 }
 
 impl Tip {
-    /// 编进 `out`，返写完的游标；装不下 / **路空** ⇒ `None`（路本身合法由 [`Path`] 保证）。
+    /// 编进 `out`，返写完的游标；装不下 / **路空** ⇒ `None`（路本身合法由 Path 保证）。
     pub fn store(&self, out: &mut [u8]) -> Option<usize> {
         match self {
             Tip::Plate { road, leaf, rule } => {
@@ -107,7 +103,7 @@ impl Tip {
     }
 }
 
-/// **解开的一句**：路已经收进自己那一份（[`Path`]）。
+/// **解开的一句**：路已经收进自己那一份（Path）。
 pub enum TipIn {
     /// 立一条路（前缀逐段立窗格，末段按 `leaf`），并按 `rule` 决定要不要带一句规矩。
     Plate {
@@ -129,7 +125,6 @@ impl TipIn {
         match *bytes.first()? {
             TIP_PLATE => {
                 let (frame, at) = PlateFrame::fetch_at(bytes, 0)?;
-                // **路空**是这一族的规矩（"末段"必须有）；**长度**也是形状的一部分
                 // （`1 ＋ 1 ＋ 段数 × 32 ＋ 8 ＋ 1`：长短都不认）。两句都是本族的，derive 不替它判。
                 if frame.road.is_empty() || at != bytes.len() {
                     return None;

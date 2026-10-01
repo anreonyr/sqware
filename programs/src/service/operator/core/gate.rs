@@ -1,6 +1,5 @@
-//! operator::core::gate —— **裁决 → 线上那一格**：怎么问（[`Facts`]）、怎么翻（[`verdict`]）。
-//! 本文件与 [`judge`](super::judge) 同一站位：**不带载体**。它只做一件事——
-//! 把 [`judge`] 那三格答案翻成线上那一格码（[`Code`]）。判据要问的那几条边由树域那一侧
+//! 裁决 → 线上那一格：怎么问（Facts）、怎么翻（verdict）。
+//! 把 judge 那三格答案翻成线上那一格码（Code）。判据要问的那几条边由树域那一侧
 
 use env::TaskId;
 
@@ -40,7 +39,7 @@ impl Code {
     }
 }
 
-/// 判一格：`facts` 是那几条边（[`Facts`] 的四问），`permit` 是那一格自己那一句话。
+/// 判一格：`facts` 是那几条边（Facts 的四问），`permit` 是那一格自己那一句话。
 pub fn verdict(facts: &impl Facts, who: TaskId, permit: Permit) -> Code {
     match judge(facts, who, permit) {
         Ruling::Allow => Code::Ok,

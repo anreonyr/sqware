@@ -1,9 +1,8 @@
-//! probe_rule — **这一台**的装配声明（身子在本目录的 `main.rs`；"哪几台进哪张镜像"见
-//! [`crate::unit::catalog`] 的 `PROGRAMS`）。
+//! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
+//! crate::unit::catalog 的 `PROGRAMS`）。
 
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
-/// 有身份的一台把 `Permit::Trunk` / `Bough` / `Among` 三条许可落下去（先正证、再负证）。
 pub static PROBE_RULE: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-rule",

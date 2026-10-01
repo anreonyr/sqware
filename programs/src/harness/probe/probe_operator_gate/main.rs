@@ -1,40 +1,21 @@
 #![no_std]
 #![no_main]
 
-//! probe-operator-gate — **操作面那一位持全权柄的真客人**：把七格验一遍、取回那一枚入口，
+//! probe-operator-gate — 操作面那一位持全权柄的真客人：把七格验一遍、取回那一枚入口，
 //! 再替下一位（**只有 `land` 一位、读不了树**）把两格铺在**根**底下。
-//!
-//! ```text
-//!   1  与树开会话（`Session::open(sire, operator::BERTH, …)`）——控制面那一枚记号
-//!   2  SEEK /svc/sys/operator        ⇒ 号（它是 `mount_grants` 立出的那块 Pane）
-//!   3  LIST 那一号一次        ⇒ 数得出 `Grant::ALL.len()` 格（名字那七问归树自己那七行读数）
-//!   4  SEEK /svc/sys/operator/land ⇒ 号，再 FIND ⇒ **那一枚入口**（能力在树上的等价物）
-//!   5  LAND /probe-op-own（`mine = true`）  ⇒ 下一位顶它时要被拒的那一格
-//!   6  LAND /probe-op-free（`mine = false`）⇒ 无主那一格
-//! ```
-//!
 //! # 为什么第 5/6 步落在**根**底下
-//!
 //! 下一位客人只持 `land` 一位 ⇒ 它**问不得** `list` / `seek` / `name`（那三条各是另一柄权），
-//! 故它认路的坐标只能自己报得出。**根是唯一不需要号的那一格**（[`Where::Root`]：根没有号，
-//! 见 `operator::frame` 那一节）——于是那两格必须落在根底下，下一位才报得出坐标。
-//!
+//! 故它认路的坐标只能自己报得出。**根是唯一不需要号的那一格**（Where::Root：根没有号，
+//! 见 operator::frame 那一节）——于是那两格必须落在根底下，下一位才报得出坐标。
 //! 这一条是**量出来的**：把两格铺在 `/svc/sys/operator/zone` 底下，那位客人只能列号问名，
 //! 于是它每一次 `list` 都被面判拒掉、当场卡死——这正是这一维在按设计生效。
-//!
 //! # 为什么第 1 步必须在最前
-//!
-//! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
 //! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**（见
 //! `programs/src/harness/probe/probe_bound/main.rs`）。
-//!
 //! # 为什么它排在整张单的**最前**（`order: Some(3)`）
-//!
 //! 停机扳机是 `canonical`（那张单上最大 `order` 那一条），而本台问的是**树**（不需要任何驱动）
-//! ⇒ 排在身份服务之后、三台驱动之前。**但"窗口"这件事不能靠排队次治**：实测本台自己会走到那两处
-//! 重试额度的尽头（旧版是 20 s ＋ 20 s），于是"扳机早于它走完"就变成丢读数——**绿也没有、红
-//! 也没有**（喂了输入的 39 跑里丢 20 次；完全不喂的跑里也丢过）。故额度收小到 [`WAIT_MS`]、
-//! 那七段名字的读数交还给树自己（见 [`count_under`]）：数不到就**当场红**。「要读树」的客人
+//! 也没有**（喂了输入的 39 跑里丢 20 次；完全不喂的跑里也丢过）。故额度收小到 WAIT_MS、
+//! 那七段名字的读数交还给树自己（见 count_under）：数不到就**当场红**。「要读树」的客人
 //! 一律排在最前，见 `canonical/program.rs`。
 
 extern crate alloc;
@@ -45,27 +26,23 @@ use alloc::string::ToString;
 use env::Wait;
 use programs::Report;
 
+use protocol::common::path::Path;
 use protocol::communication::establish;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 一趟一问的期限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 [`TICK_MS`]）。
-///
+/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 TICK_MS）。
 /// **（20 s → 3 s）**：本台是**铺场者**，而它"走不完"的代价不是红——停机扳机一来就把它
-/// **扑杀**（`ousted=true`、一行不打），那条读数于是**既不绿也不红**（第三种结局）。旧版给的是
-/// 20 s，而这样的额度本台有**两处**（[`walk`] 与 [`count_under`]），走满就是几十秒的窗口。
-/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 [`HOLD_MS`]，只要 1~3 s）毫发无伤，
+/// 20 s，而这样的额度本台有**两处**（walk 与 count_under），走满就是几十秒的窗口。
+/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 HOLD_MS，只要 1~3 s）毫发无伤，
 /// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
-///
 /// 这个数不是猜的：七行 `system: grant mounted at /svc/sys/operator/{…}` 在 **t<500 ms** 就打完
 /// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计。
 const WAIT_MS: usize = 3_000;
@@ -74,7 +51,6 @@ const WAIT_MS: usize = 3_000;
 const TICK_MS: usize = 20;
 
 /// **铺完之后还压多久**（毫秒）——见 `main` 末尾那一节（"主人还在不在场"那条轴）。
-///
 /// **两头顶着**：短了，下一位走到"顶那一格"时主人已经走了（那一格重新可落 ⇒ 它测得的是
 /// "接手"而不是"拒"）；长了，本台自己被停机扳机扑杀、读数反倒丢了。下一位那一串只有**七八趟
 /// 往返**（实测都在百毫秒内），故取刚够它走完的那一档。
@@ -101,13 +77,12 @@ fn main() -> Report<'static> {
     let own = spot(&tree, OWN, "probe-gate-own", Mine::Yes);
     let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
 
-    // 二、`/svc/sys/operator` 那块 Pane：由持树者一就位那一趟立出（`Assembly::mount_grants`）。
     let Some(operator_id) = walk(&tree, &protocol::service::operator::DIR) else {
         panic!("probe-operator-gate: /svc/sys/operator is not a pane");
     };
     let operator_pane = Pane::of(&tree, operator_id);
 
-    // 三、那几格到齐：**数一次就够**（名字那七问归树自己那七行读数，见 [`count_under`]）。
+    // 三、那几格到齐：**数一次就够**（名字那七问归树自己那七行读数，见 count_under）。
     let seen = count_under(&operator_pane);
     assert!(
         seen == Grant::ALL.len(),
@@ -115,10 +90,7 @@ fn main() -> Report<'static> {
     );
 
     // 四、`/svc/sys/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
-    //
-    //    `Face::tile` 收的是**从根写起**的那条路（见 `client.rs` 的 `Pane::tile` 那一节）
-    //    ——"名字只到 `seek` 这一格"的本义：三段一段不落。
-    // 路是**本族那一族的常量**（`/svc/sys/operator`）接上那一面的名——一处都不自己拼。
+    //    Face::tile 收的是**从根写起**的那条路（见 `client.rs` 的 Pane::tile 那一节）
     let road = protocol::service::operator::DIR
         .try_join("land")
         .expect("probe-operator-gate: bad name");
@@ -145,15 +117,13 @@ fn main() -> Report<'static> {
     );
 
     // 六、**压住那两格**：`mine = true` 那一轴的判据是"**主人还在不在场**"
-    //    （`Operator::claimable` → `vested_by`），主人一走那一格就重新可落——那正是 `probe-owner`
-    //    量过的"接手"那一档。故本台铺完**不能立刻退场**：下一位客人要顶的正是"主人还活着"那一格。
+    //    （Operator::claimable → `vested_by`），主人一走那一格就重新可落——那正是 `probe-owner`
     let _ = runtime::env::room::sleep(core::time::Duration::from_millis(HOLD_MS as u64));
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
 /// `/svc/sys/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）。
-///
-/// 三手都是 [`TreeFace`] 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
+/// 三手都是 TreeFace 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
 /// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"。
 fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();
@@ -175,14 +145,12 @@ fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
 }
 
 /// 数 `/svc/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试。
-///
 /// **（为什么不再逐个问名）**：那七段名字的读数归**树自己**——`mount_grants` 每落一位就抬
 /// 一行 `system: grant mounted at /svc/sys/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
 /// ＋ 七次 `name` 是八趟往返，而那条路每一趟都可能**等在门外**（`client.rs::call` 那一推是
 /// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿。
-///
 /// 那一格是**逐位**落上去的（目录先立、七位一位一位落），故"数不满"那一刻是**预期之内**的
-/// ——重试到 [`WAIT_MS`] 为止；到点仍不齐就把数到的几格交回给调用方，由它 `assert` 当场红。
+/// ——重试到 WAIT_MS 为止；到点仍不齐就把数到的几格交回给调用方，由它 `assert` 当场红。
 fn count_under(pane: &Pane<'_>) -> usize {
     let mut left = WAIT_MS;
     loop {
@@ -214,8 +182,6 @@ fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId 
         panic!("probe-operator-gate: no entry");
     };
     // **`Unknown` 重试**（与 `client.rs` 的 `road_to_id` 同一条口径）：那一格由本台与下一位
-    // 客人**并发**动，而这一手是"一问一动"——`Unknown` 在这条路上说的是"这一趟没走到"，
-    // 不是"这一格不许"。除它以外的失败都是确定的下一步（当场塌）。
     let mut left = WAIT_MS;
     loop {
         match tree

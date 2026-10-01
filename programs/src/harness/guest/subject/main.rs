@@ -1,32 +1,8 @@
 #![no_std]
 #![no_main]
 
-//! subject — **主体**：问身份服务"我是谁"，把这一刀要验的读数打出来。
-//!
-//! ```text
-//!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/svc/sys/principal/{ask,set}" ⇒ 两枚门牌**经会话**授进本域表里（报文里没有号）
-//!   3  resolve(self)      ⇒ 本域此刻代表哪个号（**装配期**绑的那一条）
-//!   4  sire(root) / sire(me)  ⇒ 三态的头两格：**根答"没有"，不是"Unknown"**
-//!   5  heir(me, me)       ⇒ 自反
-//!   6  derive(me)         ⇒ 向下派生一条自己的子身份（钥匙 = 当前正好代表 p）
-//!   7  heir(sub, me)      ⇒ 否定：子代不是祖先
-//!   8  heir(树外号, me)    ⇒ **第三态**：Unknown（与"不是祖先"分得开）
-//!   9  bind(self)         ⇒ Denied：名册只有装配者能写
-//!  10  adopt(sub)         ⇒ **领**：换到自己派生出来的那一支里
-//!  11  resolve(self)      ⇒ 名册真的改了（不是打个印记）
-//!  12  derive(旧起点)      ⇒ **钥匙反证**：已不代表起点 ⇒ Denied
-//!  13  adopt(向上) / adopt(树外) ⇒ Denied / Unknown
-//!  14  waive()            ⇒ **弃**：回到装配给我的那一条（不删格）
-//! ```
-//!
 //! # 为什么不上板
-//!
-//! 本域只做一件事——问身份；生死那本账与本域无关（同 `lodger` 那一档）。它也不是装配表的
-//! 最后一条：**收场由 `canonical` 那一条给**（编排域等的是它退场）。
-//!
 //! # 树外那个号是**故意伪造的**
-//!
 //! 树只增不删 ⇒ 号不会失效，"树外"只能由伪造或损坏的帧产生——这正是三态第三格存在的理由
 //! （内核那两条身份凭证都答不出"这条号住不住在树上"；只有 Server 那张表答得出）。
 
@@ -50,10 +26,8 @@ use protocol::service::principal::client::Face;
 use protocol::service::principal::{Fail, PrincipalId};
 use runtime::env::unit as utask;
 
-/// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
 const E_NO_SERVICE: usize = 1;
 
@@ -65,7 +39,6 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
     let me = utask::self_id();
 
-    // 上树：本域只开一条会话——按名字找那面身份服务。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("subject: no tree link");
     };
@@ -94,10 +67,6 @@ fn main() -> Report<'static> {
     let Ok(Some(p)) = mine else {
         return bail("subject: unbound");
     };
-
-    // 判据就地登记：**只搬本域已经在判的东西**——下面每一例的期望，
-    // 都是本域头注那 14 步里写着的那一句。
-    // 台名 = 本域打的那个前缀，门按它钉逐台基线。
 
     // 二、三态的头两格。
     let no_sire = ask
@@ -151,14 +120,12 @@ fn main() -> Report<'static> {
         assert!(matches!(out_heir, Err(Fail::Unknown)))
     }
 
-    // 七、越权一趟：名册只有装配者能写，本域不是它。
     let bound = set.task(me).bind(p, Wait::AtMost(MS));
     debug!("policy: bind(self)={}", done(bound));
     {
         assert!(matches!(bound, Err(Fail::Denied)))
     }
 
-    // ── 转换那两条（刀 2）────────────────────────────────────
     let Some(q) = child else {
         return bail("subject: no sub identity");
     };
@@ -225,9 +192,7 @@ fn main() -> Report<'static> {
     // 十五、**面那一格**：同一条问、同一个发送者、同一把钥匙，**只换门牌**——
     // 定面成、问面拒。两面各一枚门牌，而"面不对"在**门外**
     // 就拦下了（连账都没看）。
-    //
-    // **（它与"你不是装配者"同码，分开它们的是读数）**：核那一条拒（本域不是写名册的
-    // 那一枚）也答 `Fail::Denied`——两个因落在同一格码上（客人的下一步一样：换人 / 换门牌、
+    // 那一枚）也答 Fail::Denied——两个因落在同一格码上（客人的下一步一样：换人 / 换门牌、
     // 别重试）。分得开它们的是持册者那一行读数 `principal: face=… asked=… denied`。
     let set_ok = set
         .principal(p)
@@ -249,12 +214,9 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "subject: done");
 }
 
-/// 找**某一面**：`/svc/sys/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
-///
-/// 名字 → 号（译不出就重试）落在 [`Pane::tile`] 上，`find` 落在 [`Tile::token`] 上——**两格各
+/// 名字 → 号（译不出就重试）落在 Pane::tile 上，`find` 落在 Tile::token 上——**两格各
 /// 一趟**。
 fn find_face(tree: &TreeFace, grant: pcall::Grant) -> Option<PieToken> {
-    // 路是**名册那一族的常量**接上那一面的名——一处都不自己拼。
     let road = pcall::DIR.try_join(grant.name())?;
     let root = tree.root();
     let mut left = MS;
@@ -316,7 +278,6 @@ fn why(fail: Fail) -> &'static str {
     }
 }
 
-/// 报一行就走（本域没有控制台，调试面是唯一能说话的地方）。
 fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }

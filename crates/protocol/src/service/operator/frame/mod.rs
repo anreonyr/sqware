@@ -1,9 +1,9 @@
-//! operator 的**帧那一半** —— 帧、码、记号（内核那几只手的别名与适配在 `protocol` 那一侧的 `mod.rs`）。
+//! operator 的帧那一半 —— 帧、码、记号（内核那几只手的别名与适配在 protocol 那一侧的 mod.rs）。
 
 use alloc::string::String;
-use env::{PieToken };
+use env::PieToken;
 
-use crate::common::path::{ PathBuf};
+use crate::common::path::PathBuf;
 
 use crate::wire::id::Id as _;
 use crate::wire::message::Message;
@@ -25,7 +25,7 @@ impl crate::wire::id::Id for EntryId {
     }
 }
 
-/// **号那一格线上是 8 字节小端**——与 [`crate::wire::id::Id`] 给三条号空间定的同一条规则（那一条 trait
+/// **号那一格线上是 8 字节小端**——与 crate::wire::id::Id 给三条号空间定的同一条规则（那一条 trait
 impl env::wire::Field for EntryId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -36,18 +36,18 @@ impl env::wire::Field for EntryId {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
-/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+/// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
+/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）。
 pub use crate::wire::OK;
 
 use self::vocab::{FIND, LAND, LIST, NAME, PART, SEEK, TRIM};
 
-/// **解开的一问**（名字已经是 [`String`]，故不是借用）。
-/// 与 [`Req`] 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
-/// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 [`BAD`]。
+/// **解开的一问**（名字已经是 String，故不是借用）。
+/// 与 Req 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
+/// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 BAD。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
-    /// `seek`：一条路（段数与段都在 [`Path`] 里；超上限根本造不出来，故 [`FULL`] 不再来自它）。
+    /// `seek`：一条路（段数与段都在 Path 里；超上限根本造不出来，故 FULL 不再来自它）。
     Road(PathBuf),
     /// `list`：容器坐标。
     List(Where),
@@ -71,12 +71,11 @@ pub enum Wire {
 
 impl Message for Req {
     type In = Wire;
-    /// 这一族的缓冲：**最长那一条**（[`REQ_LEN`]）。
     type Buf = [u8; REQ_LEN];
     const EMPTY: Self::Buf = [0u8; REQ_LEN];
 
     /// 编进 `out`：**动作码由形状给**（不在别处再写一遍），偏移与长度由字段表求和。
-    /// `Road` 那一格的正文（路）也回表了（[`RoadFrame`]：动作码 ＋ 路）——偏移一处都不写。
+    /// `Road` 那一格的正文（路）也回表了（RoadFrame：动作码 ＋ 路）——偏移一处都不写。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match self {
             Req::Road(road) => RoadFrame {
@@ -113,13 +112,13 @@ impl Message for Req {
     }
 
     /// 解开一问：**`op` 决定形状**（见文件头那张表）。**读不懂返 `None`**（持树者据此答
-    /// [`BAD`]）。
+    /// BAD）。
     /// **长度为该形状该有的长度是帧的契约**（各张表的 `LEN`，`store` 产出的就是那个长度），
     /// 故短一字节、长一字节都读不懂。
     fn fetch(bytes: &[u8]) -> Option<Wire> {
         let op = *bytes.first()?;
         Some(match op {
-            // **长度即形状**：`1 ＋ 1 ＋ 段数 × 32`（段数那一格在 [`Path`] 里；条数与长度对不对
+            // **长度即形状**：`1 ＋ 1 ＋ 段数 × 32`（段数那一格在 Path 里；条数与长度对不对
             // 由下面那一句判——短一字节、长一字节都答"读不懂"）。
             SEEK => {
                 let (frame, at) = RoadFrame::fetch_at(bytes, 0)?;

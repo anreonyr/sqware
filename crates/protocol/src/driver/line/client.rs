@@ -1,6 +1,6 @@
-//! line::client — **客侧几手**：占住一条线泊位、说一声登记、收投递、说一句排空。
+//! 占住一条线泊位、说一声登记、收投递、说一句排空。
 //! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
-//! （[`Deed`](crate::service::hub::Deed)，区→线的权威在设备账那一台），本层只把它原样报上来。
+//! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
 use env::Wait;
 use env::{HoleDir, Mark, PieToken};
@@ -13,14 +13,13 @@ use crate::communication::establish::{self, Held};
 use crate::communication::sender::Sender;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）。
-/// **归本端持有**（[`Held`]）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
-/// 放下，**一处也不用记**。这一段关系的寿命就是"我拿着这条 Line"，故它不走
-/// [`Endpoint`](crate::communication::establish::Endpoint)（那一类归域、放不下）。
+/// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
+/// Endpoint（那一类归域、放不下）。
 pub struct Line {
     pair: Held,
 }
 
-// `Line::occupy` 把**七条完全不同的成因**折成同一个 `Fail::Denied`（线上那张表里 `DENIED` 也是
+// Line::occupy 把**七条完全不同的成因**折成同一个 Fail::Denied（线上那张表里 `DENIED` 也是
 // 3）⇒ 只看客侧那一格码，分不出"门忙/没答"与"孔不够/认不下对端"。这两格记下**最后一条出口的
 pub static OCCUPY_DENY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 pub static OCCUPY_CODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
@@ -37,7 +36,6 @@ impl Line {
         let Some(host) = establish::opened_by(entry) else {
             return Err(deny(1, 0));
         };
-        // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
         // **有主地建**：那一格"有主"由类型说出来——`Held(endpoint(..)?)`（没有 `hold` 那一手：
         // 它只是这一个字面量）。这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
@@ -51,7 +49,6 @@ impl Line {
             Ok(back) => back,
             Err(_) => return Err(deny(3, 0)),
         };
-        // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
         if port::ship(
             &HolePie::from_token(back),
@@ -61,13 +58,11 @@ impl Line {
         )
         .is_err()
         {
-            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(deny(4, 0));
         }
-        // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
         // 推完就落地等于"等对面来取"，会卡住回话。
         let mut out = Sender::<frame::Occupy>::from_token(entry);
@@ -85,8 +80,7 @@ impl Line {
             let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
         }
         if spent >= budget {
-            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(deny(5, 0));
@@ -96,12 +90,9 @@ impl Line {
             Ok((1, _)) => one[0],
             _ => frame::BAD,
         };
-        // 答话到手（或这一趟判了失败）⇒ 把那一手收口：对面取走了是零代价，没取走就等它取。
         let _ = out.reclaim();
-        // 答话到手 ⇒ 这一枚回信孔这一趟就用完了：**当场放下**（一问一答一个往返）。放下的是本端
         // 这一份，路由者那一份由它自己放。
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         if code != frame::OK {
@@ -120,7 +111,6 @@ impl Line {
     }
 
     /// 收一帧投递。`Err(())` = 期限内没等到。
-    /// **帧里没有线号**（线在泊位里，见 [`super`]）：这一手对客户就是"我那一格有事"。
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
         if HolePie::from_token(rx)
@@ -149,7 +139,7 @@ impl Line {
     }
 
     /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。
-    /// 与 [`Line::receive`] 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`。
+    /// 与 Line::receive 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`。
     pub fn hole(&self) -> Result<PieToken, ()> {
         Ok(self.pair.rx())
     }

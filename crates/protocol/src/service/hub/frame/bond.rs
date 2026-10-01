@@ -1,8 +1,5 @@
-//! hub::frame 的**报名那一面**（`Bond`）：一台设备把自己的格与契报进来。
-
 use alloc::string::String;
-use env::{ PieToken};
-
+use env::PieToken;
 
 use super::vocab::BOND;
 
@@ -16,7 +13,7 @@ pub struct Bond {
 }
 
 impl Bond {
-    /// 编一问（动作码固定 [`BOND`]）。
+    /// 编一问（动作码固定 BOND）。
     pub fn of(class: String, back: PieToken) -> Bond {
         Bond {
             op: BOND,

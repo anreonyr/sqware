@@ -1,4 +1,4 @@
-//! control::grant —— **面那一维**：一枚 `Grant` = 一条权柄边界。
+//! 面那一维：一枚 Grant = 一条权柄边界。
 //! ```text
 
 use super::frame::Wire;
@@ -18,7 +18,6 @@ crate::faces! {
     name_max: 5,
     wire_ty: Wire,
     wire: {
-        // 四条线上码逐条说它落哪一面——**一码一面，不并 `|`，也不并面**（用户裁定）。
         Wire::State(_) => State,
         Wire::Mint(_) => Mint,
         Wire::Start(_) => Start,

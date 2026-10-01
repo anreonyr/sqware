@@ -1,9 +1,4 @@
-//! hub::frame — **形与码**：三面各一形，加一张失败域与状态码的双射表。
-//! ```text
-//!   bond   面   [码 1B][类 32B][回信 8B]                 → [状态 1B]
-//!   list   面   [码 1B][类 32B][游标 4B][回信 8B]         → [状态 1B][游标 4B][条数 1B][位 8B][名字 32B × n]
-//!   claim  面   [码 1B][种 1B][取用 4B][形态 4B][主人 8B][回信 8B] → [状态 1B][名字 32B][线号 4B][号 8B]
-//! ```
+//! 三面各一形，加一张失败域与状态码的双射表。
 //! **一原语一面**：三条问各有自己的门（`bond` / `list` 挂在 `/svc/hub` 下，`claim` 挂在**每台
 //! 设备那一格**上），故**没有"一答多形"的 `Union`**——每一面的答各是一个定形。这与 operator
 //! 那一族正相反：那边七条原语共用一扇门，答话才要四种形状。
@@ -33,7 +28,7 @@ impl Message for Bond {
         self.store_at(out, 0)
     }
 
-    /// **恰好**（按游标判：名字变长，帧长不再等于 [`Bond::LEN`]——那是上界）且动作码是 [`BOND`]。
+    /// **恰好**（按游标判：名字变长，帧长不再等于 Bond::LEN——那是上界）且动作码是 BOND。
     fn fetch(bytes: &[u8]) -> Option<Bond> {
         let (q, at) = Bond::fetch_at(bytes, 0)?;
         (at == bytes.len() && q.op == BOND).then_some(q)
@@ -117,22 +112,17 @@ impl Wire {
     }
 }
 
-// 它**不是一面**：没有动作码、没有客侧那一套（"面"是能面朝客人的权柄边界，而这一段只在起手
 // 那一次出现）。可它必须说得出形状——条数就在帧里，因为**收的那一侧数不出"还有没有下一条"**。
 
 /// 一段入册最多几台。**它是个旋钮，不是契约**——上界对着**内核那一侧的配对块**：
 /// `kernel/src/platform/devices.rs::MAX_PAIRS = 64`（那里一张门闩一行，装不下更多）；
-/// 取同一个数 ⇒ "装不下"这件事在装配者那一步就现形（不是到了 hub 手里才发现少了几台）。
 pub const ENROLL_MAX: usize = 64;
 
-/// 这一段的定长缓冲：**最长那一形**（条数那一格 ＋ 上界那么多条记录，同一张表求和）。
 pub const ENROLL_CAP: usize = Enroll::LEN;
 
-/// **入册那一段**：条数 ＋ 那几条记录（[`Pair`] = 坐标 ＋ 那枚门闩**在收方表里**的号）。
+/// **入册那一段**：条数 ＋ 那几条记录（Pair = 坐标 ＋ 那枚门闩**在收方表里**的号）。
 /// **为什么是 `Pair` 而不是本族自己那一形**：装配者手里拿到的就是它——它按坐标从自己那本账
 /// 取源、授出一枚、当场记一条 `Pair`（见 `programs/src/system/control/enroll.rs` 的
-/// `enroll`），本段一个字节都不用翻译。
-/// **这一段里必有"设备树本体"那一条**：hub 要先把树读一遍才知道**哪一条是哪一台**（名 / 类 / 线），
 /// 故装配者一并把它授出（本族起手按坐标取它，见 `hub/serve/mod.rs`）。
 #[derive(env::Frame, Clone, Copy)]
 pub struct Enroll {
@@ -141,7 +131,6 @@ pub struct Enroll {
     records: [Pair; ENROLL_MAX],
 }
 
-/// **线上一个字节都不许动**：这一段那一形照上一句钉住（`[条数 1B][记录 40B × n]`）。
 const _: () = assert!(Enroll::LEN == 1 + env::PAIR_LEN * ENROLL_MAX);
 
 impl Enroll {
@@ -165,7 +154,6 @@ impl Enroll {
         self.n as usize
     }
 
-    /// 这一段的第 `i` 条（越界 ⇒ `None`）。
     pub fn record(&self, i: usize) -> Option<Pair> {
         (i < self.len()).then(|| self.records[i])
     }
@@ -211,7 +199,7 @@ impl Message for Said {
         self.store_at(out, 0)
     }
 
-    /// 恰好 [`Said::LEN`]（长短都不认）。
+    /// 恰好 Said::LEN（长短都不认）。
     fn fetch(bytes: &[u8]) -> Option<Said> {
         if bytes.len() != Said::LEN {
             return None;
@@ -222,8 +210,7 @@ impl Message for Said {
 
 /// **契**：认领那一答。**是扁平的一形**（状态 ＋ 名字 ＋ 线号 ＋ 号）——本仓的答话都不嵌套
 /// 另一枚帧（`Field` 只管一格多宽，不认复合），故"契"与"状态"同住这一枚。
-/// 三格各有各的消费者：`token` → `Device::open`（那一页在这一域表里是几号）；`line` →
-/// 报给线路由者（**区→线那条权威在 hub**）；`name` → 本域那行读数。
+/// 三格各有各的消费者：`token` → Device::open（那一页在这一域表里是几号）；`line` →
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 #[frame(len = 45)]
 pub struct Deed {
@@ -234,7 +221,7 @@ pub struct Deed {
 }
 
 impl Deed {
-    /// 空的一张：失败时那一答用它（`token` 是 [`PieToken::NONE`]）。
+    /// 空的一张：失败时那一答用它（`token` 是 PieToken::NONE）。
     pub const NONE: Deed = Deed {
         status: 0,
         name: String::new(),
@@ -279,7 +266,7 @@ impl Message for Deed {
     }
 }
 
-/// **一窗**：状态 ＋ 游标 ＋ 条数 ＋ 有主那一位掩码 ＋ 至多 [`LIST_MAX`] 段名字。
+/// **一窗**：状态 ＋ 游标 ＋ 条数 ＋ 有主那一位掩码 ＋ 至多 LIST_MAX 段名字。
 /// **两条一次说清**：`names[..n]` 是这一窗真正答出来的那些；`held` 的第 `i` 位对应 `names[i]`
 /// （`1` = 这一台此刻有主）。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
@@ -294,9 +281,7 @@ pub struct Window {
 }
 
 /// **线上一个字节都不许动**：这一窗那一形照文件头那张表钉住
-/// （`[状态 1B][游标 4B][条数 1B][位 8B][名字 32B × n]`）。属性换成手写也好、`MAX` 求和出错也好，
 /// 这一句先红。
-// 32 = 一枚名在**这一族**里的上界（长度那一字节 ＋ 至多 31 字节的内容）。
 
 const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + 32 * LIST_MAX);
 

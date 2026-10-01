@@ -1,56 +1,33 @@
 #![no_std]
 #![no_main]
 
-//! rig — 压测台：把「杀下去多久收干净」这一格**做成可测的**。
-//!
-//! 今天这一格只能靠"每个 boot 在收尾那一刀试一次"去猜（~1% 量级），几十轮一批也说明不了
-//! 问题。本程序把它换成**每 boot 数百次试验**，而且**时序可控**：
-//!
-//! ```text
-//!   每一轮（同一个受害者 `churn`，反复造/杀）：
-//!     造（Build + Spawn，一张新表一行）→ 放行（Hatch）→ 空转 d 轮（扫"点名落在哪一段"）
-//!     → 杀（Doom = 域粒度收令）→ 判（`service::until`：now / waited / unsettled）
-//!     → 没判出来再看一眼宽限（late / lost）→ 放下那一格（Oust，域干净才放得下）
-//! ```
-//!
-//! 为什么要扫 `d`：那道缝是**时序**的——受害者"在台上"那一段很短，点名落在它的**尾巴**上
-//! 才会出现"IPI 打在别处、而它已经挂起"。逐档扫过它的尾巴，才能把这一格从"偶发"变成
+//! 为什么要扫 d：那道缝是时序的——受害者"在台上"那一段很短，点名落在它的尾巴上
 //! "哪一档会中"。
-//!
 //! # 怎么跑它
-//!
 //! `cargo image rig && cargo run --release`（**场景在造镜像那一刻定**；内核那一份与场景无关，
 //! 见 `crates/image`）。**默认那一景现在是 `product`**（验收景 `root` 要写明）。
-//!
 //! **`--release` 不是偏好，是这一台跑得动的前提**（量于这一轮）：debug 档下
 //! `iters_per_ms=3522`、release 是 `24576`（差 7 倍），而"台主空转 `delay_us`"与"受害者上台
 //! 20 ms"那两把尺都由这同一个数换算 ⇒ debug 下**每轮都挂在 20 ms 那一缝上**：39 档打完
 //! （末行 `rig: d_us=19000 …`）之后**没有汇总行、也没有停机行**，被 `timeout 300` 杀掉。
 //! release 下当场绿：
-//!
 //! ```text
 //! rig: total n=328 now=1 waited=327 late=0 lost=0
 //! task: all tasks exited, system halted
 //! ```
 
 //! # 台子真正的缺口在**错路**上（读到 → 已补）
-//!
 //! 查台子用法时读到：`trial()` 里 `register` / `spawn` / `铸那一枚` / `start` / `post` /
 //! `handshake unpaired` 那几条早退**都不收场**（不 `oust`、不放本端那一枚）⇒ 真出错时会留下一个
 //! 没起或没杀的受害者域、外加本端那枚孔。实测各场**没有一条 `trial failed`**（早退没发生过），
 //! 故它一直只是"错路上的账"。
-//!
 //! **已补，做法是"收场与正文分开"**：一轮一个 `trial`（造 → **不论成没成都收场**）套一段
 //! `body`（正文），另把 `LINK` 这条编译期常量提到 `main` 里解一次。于是正文里任何一条早退
 //! 都经过同一段收场；剩下不收场的只有 `register` / `spawn`——那时域还没造出来（表是纯值），
 //! 没什么可收。**只动台子，不碰内核面。**
-//!
 //! # 读数
-//!
 //! 一行一档：`rig: d=<空转轮数> n=.. now=.. waited=.. late=.. lost=..`
 //! 末行汇总：`rig: total n=.. now=.. waited=.. late=.. lost=..`
-//!
-//! `lost` = **300 ms + 宽限 1 s 都没收掉**——那才是"他杀没生效"；`late` = 迟到了但收到。
 
 extern crate alloc;
 extern crate programs;
@@ -67,9 +44,9 @@ use core::time::Duration;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::common::life::verdict::Reaped;
-use programs::system::common::life::table::{Announce, Slot, Table};
 use programs::system::common::life::service;
+use programs::system::common::life::table::{Announce, Slot, Table};
+use programs::system::common::life::verdict::Reaped;
 use programs::unit::Ending;
 use protocol::communication::establish::{self, Endpoint, Held};
 use protocol::debug;
@@ -77,22 +54,19 @@ use runtime::env::mail::HolePie;
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 受害者的清单名（`programs::unit::PROGRAMS` 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
+/// 受害者的清单名（programs::unit::PROGRAMS 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
-/// （见 `hang.rs` 头注）。旧版 `churn` 仍在清单里（留档），本台子不再用它。
 const VICTIM: &str = "hang";
 
 /// 握手那条路的记号：**两侧同一个**（台主铸一枚、受害者也铸一枚，刻的都是它才配得齐）。
 const LINK: &str = "wake";
 
-/// 等它把手伸出来（铸出它那一枚）的上限。它是 `Announce::Channel` 的就绪证据：认领成功 ⇒ 它已经挂好、
+/// 等它把手伸出来（铸出它那一枚）的上限。它是 Announce::Channel 的就绪证据：认领成功 ⇒ 它已经挂好、
 /// 可以被唤醒了。
 const HANDSHAKE_MS: usize = 1_000;
 
 /// 台主在 push 之后**先让出一拍**再空转（**默认关**）。
-///
 /// # 这一拍是甲案落地前的绕行，现在不需要了
-///
 /// 唤醒**直接落到被挑中那颗核的队列**（`pick` + `kick`），不再等源核 yield ⇒
 /// 这一拍没有存在的理由：留着它反而把 `d` 扫的时序交给调度器（`d` 不再是
 /// "相对它上台那一刻"的精确偏移）。故默认 **false**；置 `true` 可复现那一拍存在时
@@ -101,21 +75,17 @@ const YIELD_AFTER_PUSH: bool = false;
 
 /// 边界细扫开关（**默认关**，见 `main` 里那一段）：把 `d_us` 在 20 ms 附近按 25 µs
 /// 细分再扫一遍。开着一轮 656 次试验。
-///
 /// 留着的理由：`lost`（"他杀不生效"）**只在"点名落在受害者离核那一瞬"那一格出现**，
 /// 粗扫（500 µs 一档、每档 8 次）抓不到几个样本；细扫之后它变成每轮 0~3 次的可测事件
-/// ——修那条缝之前/之后的对照读数（11 次 / 8 轮 → 0 次 / 8 轮）就是这么攒的。
 /// 根因、修法与见 `kernel/.../messenger/doom.rs`。
 const EDGE_SWEEP: bool = false;
 
-/// 本域给它起的服务名（每轮一张**新表**，故名字可以复用）。
 const ROW: &str = "victim";
 
 /// 每一档延迟做几轮。
 const PER_DELAY: usize = 8;
 
 /// 受害者在台上空转多久（毫秒）：台主把它换算成"多少轮"随第一条消息发过去（见 `hang.rs`）。
-///
 /// 20 ms 是**扫得动**的台面：档距 500 µs ⇒ 40 档覆盖一整个"在台上"。
 const STAGE_MS: usize = 20;
 
@@ -188,8 +158,6 @@ fn main() -> Reason {
         d_us += DELAY_STEP_US;
     }
 
-    // ── 边界细扫（**诊断开关，默认关**）──────────────────────────
-    //
     // 为什么留着它：`他杀偶发不生效`（点名落在受害者**离核那一瞬**）那一格只在
     // `d_us ≈ 20 ms` 出现——粗扫一档 8 轮抓不到几个样本。把 20 ms 附近按 25 µs 细分
     // 之后，它从"每 2~3 轮一次"变成"每轮 0~3 次"（修前 11 次 / 8 轮的读数就是这么
@@ -235,23 +203,18 @@ fn main() -> Reason {
 
 /// 一轮的判决。
 enum Verdict {
-    /// 杀令之前就收尾了（同步摘掉）。
     Now,
     /// 问时还没收，**等到收尾事件**后复探确认。
     Waited,
-    /// 判定窗口内没收掉，宽限期内收了。
     Late,
-    /// 判定窗口 + 宽限都没收掉 —— "他杀没生效"。
     Lost,
 }
 
 /// 造一个受害者、放行、空转 `delay` 轮、杀、判、放下。
-///
-/// **收场与正文分开**：`trial` 只管"造 + 收"，一轮的正文在 [`body`]。这样造不出来的早退
+/// **收场与正文分开**：`trial` 只管"造 + 收"，一轮的正文在 body。这样造不出来的早退
 /// （铸那一枚 / `start` / `no pier` / `handshake unpaired` / `post`）**也照样收场**——否则它们
 /// 会留下一个没起或没杀的受害者域，外加本端那枚孔。（这条缺口是查台子用法时读到的，
 /// 实测各场没有一条 `trial failed`；现在收场不看这一轮成没成。）
-///
 /// 只有 `register` / `spawn` 两条仍不收场：那时域还没造出来（表是纯值），没什么可收。
 fn trial(
     name: String,
@@ -261,7 +224,7 @@ fn trial(
     delay_us: usize,
     iters_per_ms: usize,
 ) -> Result<Verdict, &'static str> {
-    // 每轮**一张新表**：`Table::register` 一名一行、撤名没有入口，故表本身用完即弃
+    // 每轮**一张新表**：Table::register 一名一行、撤名没有入口，故表本身用完即弃
     // （表是纯值，`Table::new()` 不碰全局）。
     let mut table = Table::new();
     table
@@ -274,7 +237,6 @@ fn trial(
     // `start` 丢弃 `ready` 的 bool，故正文里显式查写端在不在。
     // **有主地建**（`Held(..)`：那一格"有主"由类型说出来）：这一轮的
     // 关系是**真·作用域寿命**（一轮一条、这一轮结束就还回去），
-    // 故它由 `Held` 的 `Drop` 收——一台子跑几百轮，这一格必须自己回基线（读数见头注那张表）。
     let held =
         Held(establish::endpoint(task, Mark::of(link.as_str()), Wait::POLL).map_err(|_| "seat")?);
     // `start` 收的是这本账（`&mut [Endpoint]`）；`Endpoint` 是 `Copy` 的号束，故从 `held` 里
@@ -290,8 +252,6 @@ fn trial(
         link,
     );
 
-    // ── 收场（**不论这一轮成没成**）────────────────────────
-    // 放下那一格（域干净才放得下；没收干净就留着——它随本域退场时的级联一起走）。
     if let Some(Slot::Live {
         team: Some(team), ..
     }) = table.find(name.as_str()).map(|s| s.slot)
@@ -304,7 +264,7 @@ fn trial(
     verdict
 }
 
-/// 一轮的正文：起通道之后到判决那一段（**早退也不收场**——收场归 [`trial`]）。
+/// 一轮的正文：起通道之后到判决那一段（**早退也不收场**——收场归 trial）。
 fn body(
     name: String,
     task: env::TaskId,
@@ -326,13 +286,10 @@ fn body(
     .map_err(|_| "start")?;
     let at_peer = channels.first().and_then(Endpoint::tx).ok_or("no pier")?;
     // ★ 唤醒，并顺手把"在台上跑多少轮"告诉它（**第一句即第一次唤醒**；此后每句都只是唤醒）。
-    // 那个轮数由台主**空载校准一次**（`main` 里，铺负荷之前），受害者不自己校准——它每轮都是
     // 一枚新任务，自己校准等于每轮白扔 0.4 s（睡 200 ms + 忙等两格刻度）。
-    //
     // 推的是**对端那一枚**（我写、受害者读），且是**裸字节**（那句轮数不是一族那种报）
     // ⇒ 走裸孔，不套手柄。
     let burst = iters_per_ms.saturating_mul(STAGE_MS);
-    // **两半都写出来**（旧 `push` 是合一的）：递出 ＋ 等它被取走——`to_le_bytes()` 是这一帧的
     // 临时值，不等它下线就返回，受害者会复制到一段死栈。
     let bytes = burst.to_le_bytes();
     let door = HolePie::from_token(at_peer);
@@ -350,7 +307,7 @@ fn body(
     // 扫时序：空转 `delay_us` 微秒再下令（受害者此刻在它"在台上"那一段的某一点上）。
     tick::spin_iters(delay_us.saturating_mul(iters_per_ms) / 1_000);
 
-    // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 `service::until`）。
+    // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 service::until）。
     let _ = service::stop(table, name.as_str());
     Ok(
         match service::until(table, name.as_str(), Wait::AtMost(MS)) {

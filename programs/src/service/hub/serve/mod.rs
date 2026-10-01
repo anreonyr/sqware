@@ -1,42 +1,28 @@
-//! hub::serve — **设备账那一台**：一枚线程守着一本账（这一台机器上有哪些设备、谁在驱它们）。
-//! 载体是 rtc / principal / 盟册那几面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚
-//! 回信孔借过来、把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），
-//! 办完事从那枚孔答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西
+//! 一枚线程守着一本账（这一台机器上有哪些设备、谁在驱它们）。
 //! （记的是**设备**那一本账）。
-//! ```text
-//!   起手：收**整机物料**（装配者从 `hub` 那条通道推来的一段记录）
-//!         → 开设备树那一页（那一段的第一条就是它）→ 立账（名 / 类 / 线不在这段里，在树里）
-//!         → 开树那条会话 → 找盟册的**定面**（`/svc/sys/coalition/set`）
-//!         → 逐类立一枚盟（盟册 `found`）→ 铸三枚面 ＋ 落 `/svc/hub/{bond,list,claim}`
-//!         → 逐类落 `/dev/<类>/<名>`（`permit = Among(c_类)`——"许驱这一类"那条规矩的落点）
-//!   常驻：三枚面 ＋ 每一台那一枚门，一只组等它们——**从哪一枚读到**就是哪一面；
-//!         `claim` 那一面**靠"哪一枚孔响了"认台**；钟到就扫一遍账（探活 ⇒ 空出主人没了的格）
-//! ```
 //! # 三个为什么
-//! - **为什么先收物料、后开树**：物料那一段是本域**唯一**的来路（装配者是唯一持那些门闩的域），而"哪一条是哪一台"只有树说得清 ⇒ 树那一页在物料里、树那条路在物料之后。
-//! - **为什么认领那一面长在设备格上**（不在本域会客室里）：见 [`protocol::service::hub`] 的头注
 
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use env::HoleDir;
-use env::{Access, Key, PieKind, MailFail, Mark, Pair, PieToken, Policy, TaskId, Wait};
+use env::{Access, Key, MailFail, Mark, Pair, PieKind, PieToken, Policy, TaskId, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::service::coalition as ccall;
+use protocol::service::coalition::client::Face as League;
 use protocol::service::hub::frame::Wire;
 use protocol::service::hub::frame::{Said, Window};
 use protocol::service::hub::{self, Deed, Enroll, Grant};
-use protocol::wire::message::Message;
-use protocol::service::coalition as ccall;
-use protocol::service::coalition::client::Face as League;
 use protocol::service::operator::Permit;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
 use protocol::service::operator::client::Mine;
+use protocol::wire::message::Message;
 use runtime::PAGE_SIZE;
 use runtime::core::res::dock::Dock;
 use runtime::core::res::pile::Pile;
@@ -46,20 +32,17 @@ use runtime::env::unit as utask;
 
 use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::service::operator::bridge;
+use crate::system::common::face::mount;
 use crate::system::common::life::service::Start;
 use crate::system::common::machine::Machine;
-use crate::system::common::face::mount;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
 
 use self::sweep::alive;
 
-/// 等树 / 等盟册 / 收物料的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 收物料那一趟的重试次数（**它是额度不是时限**：装配者要逐条授出，那一段不在一瞬间）。
 const LOAD_TRIES: usize = 20;
 
-/// 探活那一拍的周期（毫秒）。**它是本域唯一的钟**：`vacate` 只在它响时扫一遍。
 const PROBE_MS: usize = 1000;
 
 pub mod bond;
@@ -76,8 +59,6 @@ pub fn serve() -> Result<(), Start> {
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = utask::sire();
 
-        // 一、**整机物料**：这一手（`establish::endpoint`）就同时是"我起来了"那一句——
-        //     装配者据此放行，随后才授出那一段（故这里**有界重试**地收）。
         let up = establish::endpoint(sire, Mark::of(CHANNEL), Wait::POLL)
             .map_err(|_| Start::Load(E_HUB))?;
         let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
@@ -107,7 +88,6 @@ pub fn serve() -> Result<(), Start> {
             ledger.league(class.clone(), || id);
         }
 
-        // 六、三枚面：本域铸、本域落（`/svc/hub/{bond,list,claim}`）。
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
         let (list, list_name) =
@@ -170,11 +150,9 @@ pub fn serve() -> Result<(), Start> {
             }
             debug!("hub: /dev/{} has {} devices", class.as_str(), doors.len());
         }
-        // **本域那一行总读数**：几台、几类（"这台机器上有哪些设备"唯一一次陈述）。
         debug!("hub: {} devices, {} classes", ledger.count(), classes.len());
 
-        // **八、报"我起完了"**（`Setup::Machine` 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
-        // 装配者**——它等齐了才往下起别人。**它必须是起手最后一件**：此后本域才真的答得了
+        // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // （设备格都在树上、盟都立好了）。
         establish::endpoint(sire, Mark::of(READY), Wait::POLL).map_err(|_| Start::Desk(E_HUB))?;
 
@@ -223,9 +201,6 @@ pub fn serve() -> Result<(), Start> {
     }
 }
 
-/// 门上一句话：解帧 → 先认那枚回信孔 → 交给账 → **从这一趟自带的那枚孔答回去**。
-/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同盟册那一面）；`from` 是**内核
-/// 盖的发送者**。`token` = **这一帧从本域哪一枚孔进来**（哪一面、哪一台，全靠它）。
 fn turn(
     ledger: &mut Ledger,
     league: &League,
@@ -242,11 +217,9 @@ fn turn(
         mail::reserve(back),
         Ok((_vestor, owner, mark)) if owner == from && mark == hub::BACK_MARK
     ) {
-        // 这一趟没把回信孔交进来、或那一格指的是别人的孔：没有可回的路，账一动不动。
         return;
     }
     let mine = face_of(plates, token);
-    // 面与码对不上、或这一码我不认：**按那一面那一形**答一句失败（形状必须对得上，回声孔才用得上）。
     let Some(ask) = ask.filter(|ask| Grant::of_wire(ask) == mine.at()) else {
         send_status(mine, hub::DENIED, back);
         return;
@@ -269,7 +242,6 @@ fn turn(
     let _ = mail::release(back);
 }
 
-/// 递一句 `Said`（**写端跟着这一趟走**：落出作用域时等这只手被取走）。
 pub(super) fn put_said(back: PieToken, status: u8) {
     let mut tx = Sender::<Said>::from_token(back);
     let _ = tx.send(Said::of(status));
@@ -281,7 +253,6 @@ pub(super) fn put_deed(back: PieToken, deed: Deed) {
     let _ = tx.send(deed);
 }
 
-/// 按那一面的那一形答一句状态（面与码对不上、或这一码我不认时用）。
 pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
     match mine {
         Grant::Bond => put_said(back, status),
@@ -306,13 +277,12 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
     } else if token == claim {
         Grant::Claim
     } else {
-        // 每一台那一枚门的面**也是 `Claim`**——而"认的是哪一台"靠这一枚孔自己（见 [`turn`]）。
+        // 每一台那一枚门的面**也是 `Claim`**——而"认的是哪一台"靠这一枚孔自己（见 turn）。
         Grant::Claim
     }
 }
 
 /// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号。
-/// 形态**照客人要的**：本域不替它挑（内核校验"`ONLY` 与源枚一致"）。故"这台能不能独占、
 /// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格。
 pub(super) fn ship(
     entry: Entry,
@@ -328,9 +298,7 @@ pub(super) fn ship(
     shipped.map(|seat| seat.seed()).map_err(|_| ())
 }
 
-/// 收物料那一趟：**有界重试**地从那条通道上取一段。
-/// **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
-/// 了 ⇒ 收摊；解不动 ⇒ 真就是"这一段读不懂"（与"没收到"同一落点：这一台起不来）。
+/// **三格失败分得开**（RecvFail）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
 fn take(rx: PieToken) -> Option<Enroll> {
     let receiver = Receiver::<Enroll>::from_token(rx);
     let mut buf = Enroll::EMPTY;
@@ -348,16 +316,14 @@ fn take(rx: PieToken) -> Option<Enroll> {
 
 /// 把装配者推来那一段读成一本账：**树那一页 ＋ 每一条记录对上一台**。
 /// 两步都是硬的：
-/// 1. **先开设备树那一页**（段里的 `Key::dtb()` 那一条）：名 / 类 / 线只有树说得清，而本域要落
 ///    的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去；
 /// 2. **逐条对**：段里那几条记录给的是**坐标 ＋ 号**，而"这一条是哪一台"由坐标对树
-///    （[`Machine::devices`] 那张表就是那个对照）。
-/// 那两件**不按类认**的东西（设备树本体 / 门铃）在段里也各占一条：它们的类不是树给的，故本域
-/// 按坐标认出来、按 [`hub::BOOT`] 那一类入册（`/dev/boot/{dtb,irq}`）——于是"取法"只有一条
+///    （Machine::devices 那张表就是那个对照）。
+/// 按坐标认出来、按 hub::BOOT 那一类入册（`/dev/boot/{dtb,irq}`）——于是"取法"只有一条
 /// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案。
 fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     let mut ledger = Ledger::new();
-    // 一、树那一页（**留着不掉**：`Machine::of` 借的就是它映射进来的那段字节）。
+    // 一、树那一页（**留着不掉**：Machine::of 借的就是它映射进来的那段字节）。
     let Some(dtb) = record(enroll, Key::dtb()) else {
         return Err(Start::Load(E_HUB));
     };
@@ -365,7 +331,6 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     let machine = Machine::of(dock.view()).map_err(|_| Start::Load(E_HUB))?;
     let devices = machine.devices().ok_or(Start::Load(E_HUB))?;
     // 二、逐条对：坐标 → 那一台（**对不上的跳过**：装配者按同一张表枚举，对不上说明那一条
-    //     不是本域读得懂的那一条——那一台不入册，别的照入）。
     for i in 0..enroll.len() {
         let Some(pair) = enroll.record(i) else {
             break;
@@ -384,7 +349,6 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
-        // `door` = 本域为这一台铸的那一枚（落在 `/dev/<类>/<名>` 上）。
         let door = mail::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
         ledger
             .enroll(Entry {
@@ -407,10 +371,8 @@ fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
 }
 
 /// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着。
-/// **带重试**：盟册排在前面，但"先起"与"上树"不是同一步。那一趟（译号带重试 ＋ 取那一枚）在
-/// [`TreeFace::tile`] 上。
+/// TreeFace::tile 上。
 fn find_league(tree: &TreeFace) -> Option<League> {
-    // 路是**盟册那一族的常量**（`/svc/sys/coalition`）＋ 那一面（定面）的名——一处都不自己拼。
     let road = ccall::DIR.try_join(ccall::Grant::Set.name())?;
     let door = tree
         .tile(&road, Wait::AtMost(MS))

@@ -1,4 +1,4 @@
-//! principal::core::lineage — **谱系那一张表**：一格（[`Node`]：只有父，树只 `push` ⇒ 无环、恰好一个根）
+//! 一格（Node：只有父，树只 push ⇒ 无环、恰好一个根）
 //! 与它的读法（派生 / 问父 / 判"在这一支里"）。
 
 use env::TaskId;
@@ -31,7 +31,6 @@ impl Principal {
     }
 
     /// 谱系 · 读：直接父。**三态**——`Ok(Some)` 有父 / `Ok(None)` 只有根 / `Err(Unknown)` 树外。
-    /// 三格不许塌成一格：头注第 5 条在这里的落点就是它。
     pub fn sire(&self, p: PrincipalId) -> Result<Option<PrincipalId>, Fail> {
         self.node(p).map(|n| n.parent).ok_or(Fail::Unknown)
     }

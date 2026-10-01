@@ -1,9 +1,4 @@
-//! session — **一条会话**：装一条路 → 认对端 → 要一枚问话孔。
-//! ```text
-//!   Berth    一条路的名字：泊位那一格（`link`）＋ 问话孔那一格（`ask`）——由各协议自己声明
-//!   Session  装好的那条路：本端那一对孔（答话 / 问话）＋ **对端的号**
-//!   open     装路 → 认下对端那一枚 → 收下"答话的是谁" → 铸问话孔交给它
-//! ```
+//! 装一条路 → 认对端 → 要一枚问话孔。
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
@@ -30,7 +25,7 @@ pub struct Session {
     pub host: TaskId,
 }
 
-/// [`Session::open`] 失败在哪一格（两格各一个不同的下一步）。
+/// Session::open 失败在哪一格（两格各一个不同的下一步）。
 pub enum Fail {
     /// 这条路没接上：装泊位 / 认对端那一枚 / 收"答话的是谁"——三步任一没成。
     Link,
@@ -55,7 +50,7 @@ impl Session {
 }
 
 /// 收下路上那一格：**答话的是谁**（装配侧 `bridge.rs` 的 `tell` 的对偶）。
-/// 宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对 `store` / `fetch`
+/// 宽度与字节序归 Field 给 TaskId 那一对 `store` / `fetch`
 fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
     let mut buf = [0u8; TaskId::WIDTH];
     match mail::HolePie::from_token(link.rx()).pull(&mut buf, millis) {
@@ -72,7 +67,7 @@ fn ask(host: TaskId, mark: Mark) -> Result<PieToken, ()> {
     if let Some(have) = establish::find(me(), mark) {
         return Ok(have);
     }
-    // 铸 + 交出读端 + 本端窄到只写：一手就是 `establish::give`。
+    // 铸 + 交出读端 + 本端窄到只写：一手就是 establish::give。
     establish::give(host, mark).map_err(|_| ())
 }
 

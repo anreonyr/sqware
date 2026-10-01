@@ -1,6 +1,4 @@
-//! router::adapt::resident — **常驻· 壳**：等三源 → 四手各就位。
-//! 判定不在这里：账与四原语住 `crate::core::lines`，"区 ↔ 线号"住 `crate::core::sources`，
-//! 每一次醒来的四件事各有一份（`sweep` / `exhaust` / `desk` / `bell`）——本文件只做"等、取、喂"。
+//! 等三源 → 四手各就位。
 
 use super::boot::Up;
 use super::event::{bell, desk, exhaust};
@@ -10,12 +8,11 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::router::E_ROUTER;
 
 /// 常驻：**一只组等两个源**（加上门牌，共三个）。
-/// 失败：组坏了 ⇒ `Err(Fail::at(E_ROUTER, "bell"))`——本域没有可继续的状态（铃那一格今天不可达：它的资源实体
 /// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）。
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
-        // **纯事件（`Wait::Forever`），没有兜底的一拍**：铃的根在铃那一侧——空闲核不进外部 trap，
+        // **纯事件（Wait::Forever），没有兜底的一拍**：铃的根在铃那一侧——空闲核不进外部 trap，
         // `raise_irq` 在它身上没有调用点（见 `kernel/src/work/room/scheduler/core/fetch.rs`
         // 的空闲循环）。根修在那里，`SEIP` 能挂的那两条长驻态各有振铃点之后这一拍就是多余的：
         // 铃一定响，醒来 `claim`+`hush` 即到。
@@ -42,7 +39,6 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
                 &mut up.replies,
             );
         }
-        // 铃：领干净这一趟（`bell` 那一份里写着"为什么不按铃的返回值判"）。
         bell::ring(&mut up.lines, &up.plic);
         // 应铃：清掉那一位并让内核**立即**重开本 hart 的闸门。**无条件**做——
         // 没响时它答 `Busy`（幂等），而少做一次就是闸门永久关着。

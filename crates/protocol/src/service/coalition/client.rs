@@ -1,15 +1,7 @@
-//! coalition::client — **客侧**：一面结盟服务，以及它的三个结果形状。
-//! ```text
-//!   Face::of(门牌)           门牌那一枚是树上查回来的（开者 = 对端）
-//!   Face::found()            立一枚新盟 ⇒ 答一面 Coalition（号绑进柄）
-//!   Face::coalition(c)       认已有的一枚（号是别人给的标签，本手不去问它对不对）
-//!   Face::bloc(p, ..)        这一位在哪些盟里（一趟取窗）
-//!   Coalition::enter / leave / holds / members   这一枚盟自己那几手
-//!   Band / Bloc              一次取窗的结果值（一页 + 游标 + `next`）
-//! ```
+//! 一面结盟服务，以及它的三个结果形状。
 
-use crate::wire::message::Message;
 use crate::service::principal::PrincipalId;
+use crate::wire::message::Message;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
@@ -26,7 +18,7 @@ pub struct Face {
 
 impl Face {
     /// 把一枚门牌收成一面。
-    /// 对端从**这一枚门闩自己**问出来（[`establish::opened_by`]）——门牌是 Server 挂的，不是本端开的。
+    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是 Server 挂的，不是本端开的。
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Unknown)?;
         Ok(Face { entry, host })
@@ -44,12 +36,12 @@ impl Face {
         Ok(self.coalition(CoalitionId::new(payload(said)? as usize)))
     }
 
-    /// 把一枚盟号收成 [`Coalition`]（读面：号是别人给的标签，本手不去问它对不对）。
+    /// 把一枚盟号收成 Coalition（读面：号是别人给的标签，本手不去问它对不对）。
     pub fn coalition(&self, c: CoalitionId) -> Coalition<'_> {
         Coalition { face: self, at: c }
     }
 
-    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序 = 号序升序；游标是阈值，见 [`Bloc::next`]）。
+    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序 = 号序升序；游标是阈值，见 Bloc::next）。
     pub fn bloc(
         &self,
         p: PrincipalId,
@@ -64,15 +56,14 @@ impl Face {
         })
     }
 
-    /// 问一句、取一答（**形状由长度分**：这一族三形在线上分得开，见 [`frame::Union`]）。
-    /// **传输失败折进 [`Fail::Unknown`]**：借不出回信孔 / 超时 / 收不下一答（空帧、长度不落在
-    /// 三形里）——三件事都答 [`Fail::Unknown`]，与"**这枚盟没铸过**"同一格。压它的理由与
+    /// **传输失败折进 Fail::Unknown**：借不出回信孔 / 超时 / 收不下一答（空帧、长度不落在
+    /// 三形里）——三件事都答 Fail::Unknown，与"**这枚盟没铸过**"同一格。压它的理由与
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Union, Fail> {
         fn deny(step: &str) -> Fail {
             crate::debug!("coalition: call deny={step}");
             Fail::Unknown
         }
-        // **先铸、先交，再推**（次序是契约的一半，见 `communication::establish::lend_out`）。
+        // **先铸、先交，再推**（次序是契约的一半，见 communication::establish::lend_out）。
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];
@@ -82,13 +73,11 @@ impl Face {
             .ok_or_else(|| deny("encode"))?;
         let door = mail::HolePie::from_token(self.entry);
         if door.push(&frame[..n], Wait::Forever).is_err() {
-            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(deny("push"));
         }
-        // 收：答话走**这一趟借出去的那一枚孔**（缓冲由调用方给＝本族最大那一形）。
         // 两格失败（没收到 / 解不动）在这一侧落同一格：`Unknown`——**但哪一格要报得出来**。
         let mut buf = frame::Union::EMPTY;
         let got = Receiver::<frame::Union>::from_token(back)
@@ -103,11 +92,8 @@ impl Face {
                     Fail::Unknown
                 }
             });
-        // 答话回来了 ⇒ 对面早取走了；没回来也得把这一手收口（那条报不许悬）：推的人等"孔空"。
         let _ = door.wait(HoleDir::Push, Wait::Forever);
-        // 这一趟的回信孔只活到这句话答完：收走就放下（不管成没成）。
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         got
@@ -115,7 +101,11 @@ impl Face {
 
     /// 取一窗：**先看状态那一格**（失败域 + 读不懂），再认窗那一形。
     /// 一格答那一形不是窗，它那一格码照样交出来（`band` / `bloc` 那一问的失败走它）。
-    fn window<T: crate::wire::id::Id>(&self, act: frame::Req, wait: Wait) -> Result<Window<T>, Fail> {
+    fn window<T: crate::wire::id::Id>(
+        &self,
+        act: frame::Req,
+        wait: Wait,
+    ) -> Result<Window<T>, Fail> {
         match self.call(act, wait)? {
             frame::Union::Seq(seq) => Ok(seq.window()),
             frame::Union::Status(code) | frame::Union::One(frame::Reply { status: code, .. }) => {
@@ -153,7 +143,6 @@ impl Coalition<'_> {
     }
 
     /// 盟 · 写：**我**出这一枚。撞空也成（集合运算没有"第二次"）。
-    /// 同 [`Coalition::enter`]：主体由印章说，故这一手不收身份那一格。
     pub fn leave(&self, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Leave(self.at), wait)?;
         payload(said).map(|_who| ())
@@ -178,7 +167,7 @@ impl Coalition<'_> {
     }
 }
 
-/// **一次取窗的结果值**：一页成员 ＋ 游标规则（[`Band::next`]）。
+/// **一次取窗的结果值**：一页成员 ＋ 游标规则（Band::next）。
 /// 它不是长期存在的资源对象：只带这一页与"这一位在问什么"，故只有读数、续取、遍历三手。
 pub struct Band<'a> {
     face: &'a Face,
@@ -269,8 +258,8 @@ fn flag(said: frame::Union) -> Result<bool, Fail> {
     }
 }
 
-/// 线上那一格码 → 失败域；表外（含 `BAD`）折 [`Fail::Unknown`]。
-/// **它现在读得出 `Denied`**：[`Face::window`] / `payload` /
+/// 线上那一格码 → 失败域；表外（含 `BAD`）折 Fail::Unknown。
+/// **它现在读得出 `Denied`**：Face::window / `payload` /
 /// `flag` 三处都走它。"表外"仍是 `BAD` 那一类——`None` 与"没走到"同格（传输失败那一节）。
 fn code_to_fail(code: u8) -> Fail {
     frame::code_to_fail(code).unwrap_or(Fail::Unknown)

@@ -1,22 +1,20 @@
-//! coalition::core — **盟册那一本账**：一条关系 ＋ 一条主子 ＋ 一枚计数器。
+//! 一条关系 ＋ 一条主子 ＋ 一枚计数器。
 
 use alloc::vec::Vec;
 
-use protocol::wire::id::Id;
 use protocol::service::coalition::{CoalitionId, Fail, Window};
 use protocol::service::principal::PrincipalId;
+use protocol::wire::id::Id;
 
 /// 盟籍一格：**一对号，没有第三格**（K2 没翻的那一半）。
-/// 没有角色、没有权重、没有序位——"盟只是一组身份"这句话就落在这里：**类型里写不出别的**。
-/// 唯一性（同一对不许出现两次）类型表达不了，落在 [`Coalition::enter`] 的**先查后推**上
-/// （与 `Principal::bind` 覆盖那一趟同一形状）：**一次线性扫，换掉"两张表要同步"那条义务**。
+/// 唯一性（同一对不许出现两次）类型表达不了，落在 Coalition::enter 的**先查后推**上
 struct Ally {
     who: PrincipalId,
     of: CoalitionId,
 }
 
 /// **一格盟主**：这一枚盟是谁立的。
-/// 它只有一个读者——[`Coalition::admit`] 那一句"代报名这件事归不归你"。
+/// 它只有一个读者——Coalition::admit 那一句"代报名这件事归不归你"。
 struct Chief {
     of: CoalitionId,
     chief: PrincipalId,
@@ -36,7 +34,7 @@ pub struct Coalition {
 
 impl Coalition {
     /// 立一份空册：**一枚号都还没铸**（零号也还没有）。
-    /// 不分配 ⇒ 不失败（对照 `Principal::new`：它要为根 `try_reserve`）。
+    /// 不分配 ⇒ 不失败（对照 Principal::new：它要为根 `try_reserve`）。
     pub const fn new() -> Coalition {
         Coalition {
             next: 0,
@@ -55,7 +53,7 @@ impl Coalition {
     }
 
     /// 盟 · 写：把 `who` 放进 `c`。**幂等**：已在里面答 `Ok(())`、表不动——集合没有"第二次"。
-    /// 两格前置各问一件事：`c` 铸过没有（[`Fail::Unknown`]）、备得下那一行吗（[`Fail::Full`]）。
+    /// 两格前置各问一件事：`c` 铸过没有（Fail::Unknown）、备得下那一行吗（Fail::Full）。
     pub fn enter(&mut self, who: PrincipalId, c: CoalitionId) -> Result<(), Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
@@ -70,7 +68,7 @@ impl Coalition {
     }
 
     /// 盟 · 写：把 `who` 从 `c` 拿出来。**撞空也成**（`Ok(())`）——集合运算没有"第二次"，
-    /// 与 [`Coalition::enter`] 同一条幂等律。
+    /// 与 Coalition::enter 同一条幂等律。
     pub fn leave(&mut self, who: PrincipalId, c: CoalitionId) -> Result<(), Fail> {
         if !self.stands(c) {
             return Err(Fail::Unknown);
@@ -82,8 +80,8 @@ impl Coalition {
     /// 盟 · 写：把 `target` 放进 `c`——**只有这一枚盟的盟主叫得动**。
     /// 这就是"替别人入盟"唯一那条路：`enter` 的钥匙是
     /// **发送者那一格**（只表达得了"我进"），故"许某一位进这一类"只能由立盟那位说。
-    /// 三格前置：`c` 铸过没有（[`Fail::Unknown`]）、**你是不是这一枚的盟主**
-    /// （[`Fail::NotChief`]）、备得下那一行吗（[`Fail::Full`]，由 [`Coalition::enter`] 答）。
+    /// 三格前置：`c` 铸过没有（Fail::Unknown）、**你是不是这一枚的盟主**
+    /// （Fail::NotChief）、备得下那一行吗（Fail::Full，由 Coalition::enter 答）。
     /// **`chief` 由适配层解**（同 `found`：核心收的是已经解析好的身份）；**`target` 也是**
     /// ——帧里那一格是 TID，名是服务端过名册点的。
     pub fn admit(
@@ -101,7 +99,7 @@ impl Coalition {
         self.enter(target, c)
     }
 
-    /// 这一枚盟是谁立的（没铸过 ⇒ `None`）。**只有 [`Coalition::admit`] 读它。**
+    /// 这一枚盟是谁立的（没铸过 ⇒ `None`）。**只有 Coalition::admit 读它。**
     fn chief_of(&self, c: CoalitionId) -> Option<PrincipalId> {
         self.chiefs
             .iter()
@@ -110,7 +108,7 @@ impl Coalition {
     }
 
     /// 盟 · 读：`p` 在不在 `c` 里。**两件事两个落点**——`Ok(false)` 是诚实的答案（不在），
-    /// [`Fail::Unknown`] 是"这枚盟不存在"。
+    /// Fail::Unknown 是"这枚盟不存在"。
     /// `p` 是不是真身份与它无关：`p` 是标签。故这条读**不过名册**（线上唯一那条读也不需要
     /// 依赖身份服务），第三态只有"查无此盟"一格。
     pub fn amid(&self, p: PrincipalId, c: CoalitionId) -> Result<bool, Fail> {
@@ -122,9 +120,9 @@ impl Coalition {
 
     /// 盟 · 读：`c` 里此刻有谁（**一趟取窗**）。
     /// 序 = **号序升序**（不是登记序）；`after` 是**阈值**——取号 > 它的那些，`None` = 从头取。
-    /// 零号是真格子（[`PrincipalId::ROOT`] 就是 0），故**不能用 0 当"没有游标"**：有没有由
+    /// 零号是真格子（PrincipalId::ROOT 就是 0），故**不能用 0 当"没有游标"**：有没有由
     /// `Option` 说。
-    /// 窗装不下 ⇒ [`Window::more`] 为真，要接着取就把**末一枚**当下一趟的 `after`。
+    /// 窗装不下 ⇒ Window::more 为真，要接着取就把**末一枚**当下一趟的 `after`。
     pub fn band(
         &self,
         c: CoalitionId,
@@ -136,17 +134,17 @@ impl Coalition {
         Ok(self.window(|a| a.of == c, |a| a.who, after))
     }
 
-    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 [`Coalition::band`]）。
+    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序与游标同 Coalition::band）。
     /// **没有失败域**——`p` 是标签，不在任何盟里就是空窗。
-    /// 这一条的不对称写进了签名：[`Coalition::band`] 答 `Result`（它问的是**本册自己的**
+    /// 这一条的不对称写进了签名：Coalition::band 答 `Result`（它问的是**本册自己的**
     /// 号空间，故有"查无此盟"），`bloc` 不答（它问的是**别人的**号空间，本册不去问）。
     pub fn bloc(&self, p: PrincipalId, after: Option<CoalitionId>) -> Window<CoalitionId> {
         self.window(|a| a.who == p, |a| a.of, after)
     }
 
-    /// 一趟取窗：从 `book` 里挑相符的那些，按**号序**取「大于 `after` 的前 [`WINDOW_CAP`] 枚」。
+    /// 一趟取窗：从 `book` 里挑相符的那些，按**号序**取「大于 `after` 的前 WINDOW_CAP 枚」。
     /// **零分配的选择扫**：表是登记序，每取一枚都要重扫一遍挑"比上一枚大的里头最小的那个"
-    /// （`O(条数 × 窗宽)`，窗宽封顶 16）。要它成对：多扫一趟就为答 [`Window::more`]——
+    /// （`O(条数 × 窗宽)`，窗宽封顶 16）。要它成对：多扫一趟就为答 Window::more——
     /// 那正是"还有没有"的读数，不能靠"表里还有几行"猜。
     fn window<K: Id>(
         &self,

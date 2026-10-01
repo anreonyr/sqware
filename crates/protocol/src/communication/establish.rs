@@ -1,20 +1,14 @@
-//! establish — **关系怎么建立**：那两枚孔从"谁也没有"到"两头都在各自手里"。
+//! 那两枚孔从"谁也没有"到"两头都在各自手里"。
 //! # 为什么是"一手"
 //! Mail 是单向的 ⇒ 一段关系的两半是同一件事的两面：**我铸一枚**（我读、对方往它推）＋
 //! **认下对方铸的那一枚**（我写、往它推）。两件都对着同一个对端、同一条路，故是**一个动作**，
 //! 不是一个流程。三种用法差别只在**要哪一半**：
-//! ```text
-//!   endpoint(to, mark, claim_for)   两半都要：我铸我读 ＋ 认对方那枚（认不到就只有收的方向）
-//!   Held(endpoint(..))              同上，但这一段关系**归本端持有**（落出作用域即放下）
-//!   give(to, mark)                  只要前一半，且**把读端交出去**：本端留写端
-//!   claim / find(of, mark)          只要后一半：别人交来的那一枚，按 owner ＋ mark 找回来
-//! ```
 //! **判据两格**（`owner` ＋ `mark`），都读内核查得到的事实。编号分不开"同一位开的多枚孔"
 //! ——同一个域里两枚线程各有一张表、同一个号在别人表里解析不动——记号才分得开（铸孔那一刻
-//! 刻上去，随副本过线、转手不变）。这一条是原 `Quay::claim` 的正文，判据一字未改；**一律按
+//! 刻上去，随副本过线、转手不变）。这一条是原 Quay::claim 的正文，判据一字未改；**一律按
 //! 两格问**：只按记号扫表会把"同一张表里另一枚同记号的孔"认进来。
 //! # 归属：两个寿命，**两个类型**——错的那个动作在 API 上不存在
-//! 孔的活命跟着它所在那张表（内核的规矩：`mail::release` 放下**并连派生边一起摘下**，
+//! 孔的活命跟着它所在那张表（内核的规矩：mail::release 放下**并连派生边一起摘下**，
 
 use core::ops::{Deref, DerefMut};
 
@@ -37,11 +31,10 @@ pub enum EstablishFail {
 }
 
 /// **归域的一对号**：我收的那一枚 ＋ （认到之后）我推的那一枚。
-/// 它自己没有 `send` / `recv`——收发在 [`Sender`] / [`Receiver`] 上（`sender()` / `receiver()`
+/// 它自己没有 `send` / `recv`——收发在 Sender / Receiver 上（`sender()` / `receiver()`
 /// 现取）。它做三件事：**记着本端那一枚是几号**、**交出 seed**（"我给你的那一枚在你表里是几号"，
 /// 一问一答里它随帧过去，服务端一次 `Reserve` 就验得完）、以及**延迟认领**（`claim`：先铸、
 /// 先说话、后认的那一档）。
-/// **它是 `Copy` 的、也没有 `Drop`**：这几枚号归**本域那张表**，故复制一个不改变归属，
 /// 放下一个**什么也不会发生**——"提前放"这件事因此不是"要记得别做"，而是**没有可做的动作**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Endpoint {
@@ -61,7 +54,7 @@ impl Endpoint {
         self.tx
     }
 
-    /// **我交给对方的那一枚，在对方表里是几号**（`port::ship` 的 `to.seed()`）。
+    /// **我交给对方的那一枚，在对方表里是几号**（port::ship 的 `to.seed()`）。
     /// 一声不响地扔掉它是老毛病：收的人于是只能**扫自己的整张表**按"谁给的 ＋ 记号"把这一枚
     /// 认回来（每趟一遍全表）。随帧带过去之后，那边一次 `Reserve` 就验完——判据一字没改。
     pub fn seed(&self) -> PieToken {
@@ -79,7 +72,7 @@ impl Endpoint {
     }
 
     /// **延迟认领**：先把这一枚铸出去、说上话，之后再认对端那一枚（`null` 那一档的次序是契约）。
-    /// 返 `true` = 到手了。**认不到不是错误**（与 [`endpoint`] 同一条口径）。
+    /// 返 `true` = 到手了。**认不到不是错误**（与 endpoint 同一条口径）。
     pub fn claim(&mut self, of: TaskId, mark: Mark, wait: Wait) -> bool {
         match claim(of, mark, wait) {
             Some(token) => {
@@ -92,8 +85,6 @@ impl Endpoint {
 }
 
 /// **有主的一对号**：**作用域寿命**——落出作用域就放下本端那一枚。
-/// 与 [`Endpoint`] 的差别只有一条：**谁负责放**。这里的答案是"编译器"：`Drop` 跑
-/// `mail::release`（放下本端铸的那一枚）。对端交进来的那一枚不在这里放——它归对端
 pub struct Held(pub Endpoint);
 
 impl Deref for Held {
@@ -119,10 +110,10 @@ impl Drop for Held {
 
 /// **对称建立**：我铸一枚（刻 `mark`）交给 `to`，并认下 `to` 铸的、刻着同一个 `mark` 的那一枚。
 /// `claim_for` = **等对方那一枚等多久**（不是收发期限；收发期限在 `send` / `recv` 上，每次调用
-/// 各给一格）。`Wait::POLL` = 只扫一遍、不等——那一档的 `tx` 因此没有写端。
+/// 各给一格）。Wait::POLL = 只扫一遍、不等——那一档的 `tx` 因此没有写端。
 /// **认不到不是失败**：一段关系可以只有收的方向（单向那一档就是这么用的），故 `tx` 只是没有
-/// 写端（`send` 答 `SendFail::Unbound`），而 `Err` 只留给"铸不出 / 交不出去"。
-/// **它不"持有"什么**：返的 [`Endpoint`] 只是把本端铸的那一枚记下来（[`Copy`] 的号束）。
+/// 写端（`send` 答 SendFail::Unbound），而 `Err` 只留给"铸不出 / 交不出去"。
+/// **它不"持有"什么**：返的 Endpoint 只是把本端铸的那一枚记下来（Copy 的号束）。
 pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, EstablishFail> {
     let (rx, seed) = seal_and_ship(to, mark)?;
     Ok(Endpoint {
@@ -133,7 +124,7 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
 }
 
 /// **单向赠予**：我铸一枚（刻 `mark`），把**读端**交给 `to`，本端 `narrow(STORE)` 留写端。
-/// 与 [`endpoint`] 正好相反：那边交出去的是"我读的那一枚"（对端写），这边交出去的是
+/// 与 endpoint 正好相反：那边交出去的是"我读的那一枚"（对端写），这边交出去的是
 /// "对端读的那一枚"（本端写）。用家是"我有一位常驻的收信人、我只有话要说"那一档
 /// （板 / 树各一处问话孔）。
 /// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔，
@@ -150,7 +141,6 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
 
 /// **扫表认领**：按 `owner` ＋ `mark` 两格找回别人交来的那一枚，**只扫一遍、不等**。
 /// 它答的是我表里**这位开的、刻着那个记号的那一枚**。**多枚时给最后那一枚**——表内次序是
-/// "什么时候进来的"，而交孔与推帧是两趟、且**孔先到** ⇒ 最后那一枚就是这一趟那一枚。这条
 /// 次序是契约的一半，不是实现细节。
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
@@ -172,7 +162,6 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
         if remain == Wait::POLL {
             return None;
         }
-        // 有界等（`Wait::Forever` = 永久）。返回**只是提示**：真醒还是期限到，由下一轮说了算。
         let _ = runtime::env::unit::fall(remain);
     }
 }
@@ -196,7 +185,6 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 }
 
 // 上面那三个动词踩着的原语。**一个调用一处转发，不做裁决**——全层的规矩（谁的孔归谁、
-// 认领按哪两格）在上面那几节里；这里一格裁决都没有。
 
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`。
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
@@ -226,7 +214,7 @@ pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
 }
 
 /// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变。
-/// 回答"这一位客人自己交来的那一枚"就靠它；与 [`marked_as`] 合起来才分得开
+/// 回答"这一位客人自己交来的那一枚"就靠它；与 marked_as 合起来才分得开
 /// "同一位开的多枚孔"（那一格答"这是哪条路上的"）。
 /// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立。
 pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
@@ -237,7 +225,7 @@ pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
 }
 
 /// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变。
-/// **为什么另开一手、而不是折进 [`opened_by`] 那一格**：`opened_by` 在 `owner == 0`
+/// **为什么另开一手、而不是折进 opened_by 那一格**：`opened_by` 在 `owner == 0`
 /// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
 /// `entry`"在 owner 0 的那批门闩上照样要答得出。
 pub fn marked_as(hole: env::PieToken) -> Option<env::Mark> {

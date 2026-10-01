@@ -1,12 +1,5 @@
-//! rtc::core::frame — **形与记号**：两句话、两种答形（**一张字段表就是一处定义**）。
-//! ```text
-//!   问（客人 → 驱动）   Now  [ASK][那一格 8B]                →  Time    [时刻 8B]   「现在几点」
-//!                       Arm  [ARM][那一格 8B][after 8B]      →  Status  [答码 1B]   「再过多 long 叫我」
-//!                                                            … 到点那一声 Time [时刻 8B]
-//!   回信孔（客人 ↔ 驱动）  记号 `rtc-back` —— 客人**每趟**铸一枚、借给驱动，
-//!                          并把"它**在驱动表里**是几号"写进帧
-//! ```
-//! **四张表、两个方向**：[`Now`] / [`Arm`] 是问的两形，[`Time`] / [`Status`] 是答的两形——偏移与
+//! 两句话、两种答形（一张字段表就是一处定义）。
+//! **四张表、两个方向**：Now / Arm 是问的两形，Time / Status 是答的两形——偏移与
 //! 长度全部由字段宽度求和得出（`#[derive(env::Frame)]` 那一处定义），手写的那五枚自由函数
 //! （`pack_ask` / `pack_arm` / `unpack_ask` / `pack_time` / `unpack_time`）与那四个长度常量
 
@@ -22,14 +15,13 @@ pub const ARM: u8 = 2;
 /// 回信孔的记号：客人每趟铸一枚、借给驱动（**收方按它验那一格**）。
 pub const BACK: Mark = Mark::of("rtc-back");
 
-/// 答话那一格：收下了——**全协议那一个"没失败"**（`protocol::OK`），本族不再写第二遍。
-pub use protocol::OK;
-/// 失败域与答话那一格**一处编**：三个码与两向读法由 [`protocol::WireCodes`] 从
-/// [`super::fail::Fail`] 派生（住 `fail.rs`），本文件只把它们转出来给这一族的调用点用。
+/// 失败域与答话那一格**一处编**：三个码与两向读法由 protocol::WireCodes 从
 pub use super::fail::{BAD, PAST, TAKEN, code_to_fail, fail_to_code};
+/// 答话那一格：收下了——**全协议那一个"没失败"**（protocol::OK），本族不再写第二遍。
+pub use protocol::OK;
 
 /// **问那一形 · 「现在几点」**：动作码 ＋ 那一格。
-/// 动作码由 [`Now::of`] 钉进来（表那一格是裸字节，是构造那一手保证的）。
+/// 动作码由 Now::of 钉进来（表那一格是裸字节，是构造那一手保证的）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Now {
     pub op: u8,
@@ -52,7 +44,7 @@ impl Now {
 }
 
 impl Arm {
-    /// 编一问：`after_ns` 是**相对量**（纳秒）——绝对时刻由收帧的人算（见 [`Wire::Arm`]）。
+    /// 编一问：`after_ns` 是**相对量**（纳秒）——绝对时刻由收帧的人算（见 Wire::Arm）。
     pub fn of(back: PieToken, after_ns: u64) -> Arm {
         Arm {
             op: ARM,
@@ -101,7 +93,7 @@ pub struct Time {
     pub ns: u64,
 }
 
-/// **答那一形 · 一个答码**：收下了没有（[`OK`] / [`TAKEN`] / [`PAST`] / [`BAD`]）。
+/// **答那一形 · 一个答码**：收下了没有（OK / TAKEN / PAST / BAD）。
 /// 与板 / 树那两族的 1 字节答**同名同位**（`Status`）：一格状态、没有荷载。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
@@ -125,17 +117,15 @@ impl Status {
 impl Message for Time {
     /// 解开之后就是**那个时刻**——读的人不必再念一遍"它叫 `ns`"。
     type In = u64;
-    /// 定长一答（[`Time::LEN`]）。
+    /// 定长一答（Time::LEN）。
     type Buf = [u8; Time::LEN];
     const EMPTY: Self::Buf = [0u8; Time::LEN];
 
-    /// 表那一手 `store_at`（从游标写、返实际长度）——正是这一手要的；表上那枚**同名**的 `store`
     /// 要的是定长数组、返 `()`，两回事。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         Time::store_at(self, out, 0)
     }
 
-    /// **恰好 8 字节**：表那一手只要求"够长"，而这一形今天的判据是"长短都不认"——长一字节也是
     fn fetch(bytes: &[u8]) -> Option<u64> {
         if bytes.len() != Time::LEN {
             return None;

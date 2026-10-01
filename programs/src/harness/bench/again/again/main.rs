@@ -1,43 +1,26 @@
 #![no_std]
 #![no_main]
 
-//! again — **重启台**：在**同一张表、同一行**上把"起 → 停 → 放下 → 再起"走三遍。
-//!
+//! 在同一张表、同一行上把"起 → 停 → 放下 → 再起"走三遍。
 //! # 为什么要有它
-//!
 //! 协议 §六 写着 restart 的"重发那一半未落地"。读代码却是另一回事：`admit_start`
-//! 早就允许 `State::Dead`、`Table::attach` 本来就支持"同一行换身子"、`register` 只管
+//! 早就允许 State::Dead、Table::attach 本来就支持"同一行换身子"、`register` 只管
 //! **首启**（重名即 `Unknown`）——也就是说**机制面已经齐了，缺的只是"真走一遍"的证据**
 //! （树内没有任何程序在同一行上重起过：`rig` 每轮 `Table::new()` 造新表）。
-//!
 //! 本台子就是那一步证据，而且是**可证伪的**：只要"重发"这条路上有任何一处把第二次
 //! 判死（`admit_start` 拒、`attach` 拒、`start` 拒、`ready` 探不出来），读数就会当场
 //! 变红——那时才轮到来补机制。
-//!
-//! ```text
-//!   第 1 轮：register（首启唯一的一次）→ spawn → start → 读数
-//!   每 轮：stop → watch（**落地 `Dead`**）→ Oust（父方放下旧域）→ 读数
-//!   第 2/3 轮：**不再 register**，直接 spawn → start → 读数
-//!
-//! # 怎么跑它
-//!
-//! ```text
 //!   cargo image again && QEMU_ICOUNT= cargo run --release   # 与验收门同环境
-//!
 //! （**场景在造镜像那一刻定**——`cargo run` 只管编内核、起旁边那份 `initrd.img`；
 //! 见 `crates/image`。下面那几台同理。）
 //! ```
-//!
 //! # 读数
-//!
 //! 每步一行：`again: r=<轮> step=<步> state=<State> slot=<live/none> ready=<Up/Gone/Pending>`
 //! 末行汇总：`again: total restarts=<成功重起的次数> failures=<被拒的次数>`
 //! 判据：**`restarts=4` 且 `failures=0`**，并且末轮 `slot=live`。**4 是两段相加**：
 //! 三轮回用里第 2、3 轮各一次（2 次），加收尾那段有界预算的 2 次（`budget_tries=2`）——
 //! 同一个计数器记两段，故汇总行报的是 4 不是 2。
-//!
 //! # 收尾那一格：预算与放弃（协议 §六 的 Server 侧配方）
-//!
 //! 走满 `ROUNDS` 之后，本台子再按配方走一遍**有界预算**：预算 2 次、用尽即**放弃**，
 //! 然后印出"放弃之后表里是什么"——判据是 **`state=Dead` 且 `slot=live`**（`Dead` 与
 //! 坐标并存合法 ⇒ "它是什么"读得出来；"要不要再试"只有 Server 知道）。
@@ -52,9 +35,9 @@ use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::common::life::verdict::{Ready, probe_ready};
-use programs::system::common::life::table::{Announce, Slot, State, Table};
 use programs::system::common::life::service;
+use programs::system::common::life::table::{Announce, Slot, State, Table};
+use programs::system::common::life::verdict::{Ready, probe_ready};
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;
@@ -139,8 +122,6 @@ fn main() -> Reason {
             debug!("again: r={round} step=state NEVERSTARTED (bug)");
         }
 
-        // 让旧实例退场：stop（下令）→ watch（等它收干净、并把 `Dead` 落地）→ Oust（父方
-        // 放下那一格）。**这里等的是 `watch` 不是 `until`**：`until` 只读，状态归 `watch` 写。
         if service::stop(&mut table, name.as_str()).is_err() {
             failures += 1;
             debug!("again: r={round} step=stop REFUSED");
@@ -155,9 +136,6 @@ fn main() -> Reason {
             }
         }
         trace(&table, name.clone(), round, "stopped");
-        // `Slot` 是"最近一次实例的坐标"、死亡不清它 ⇒ 这里读得出来，Oust 正好要用它。
-        // `team = None` 是**住本域**的那一枚（iii）：它没有别人的域可放下（放下了就是
-        // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
         if let Some(Slot::Live {
             team: Some(team), ..
         }) = table.find(name.as_str()).map(|s| s.slot)
@@ -167,7 +145,6 @@ fn main() -> Reason {
         trace(&table, name.clone(), round, "ousted");
     }
 
-    // ── 收尾：有界预算 + 放弃（§六 的 Server 侧配方；预算记在**本 Server 自己手里**）──
     const BUDGET: usize = 2;
     let mut tries = 0usize;
     let mut gave_up = 0usize;
@@ -181,8 +158,6 @@ fn main() -> Reason {
             gave_up += 1;
             break;
         }
-        // `team = None` 是**住本域**的那一枚（iii）：它没有别人的域可放下（放下了就是
-        // 扑杀本域自己）。压测台起的两台都是镜像里的程序，故这里只会见到 `Some`。
         if let Some(Slot::Live {
             team: Some(team), ..
         }) = table.find(name.as_str()).map(|s| s.slot)

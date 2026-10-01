@@ -1,14 +1,12 @@
-//! control::frame 的**词汇那一半**：状态（`State`）· 失败词汇（`Fail`）与两向换算 · 四手码 ·
+//! :frame 的词汇那一半：状态（State）· 失败词汇（Fail）与两向换算 · 四手码 ·
 //! 状态码 · 记号与那一段路（`LINK`/`NAME`/`ASK_MARK`/`BACK`/`DIR`）。
 
-use env::{Mark };
+use env::Mark;
 
 use crate::common::path::Path;
-use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
-/// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
 /// 五格与 `programs/src/system/common/face/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
-/// "有界预算试几次"、"放弃之后算什么"都是 Server 的策略，不在这里另立一格（那一笔账见
 /// `crates/protocol/src/system/mod.rs` 的"预算与放弃"）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum State {
@@ -50,17 +48,16 @@ impl State {
 
 /// 失败域：五格，**前四格各对应一个不同的下一步**（照实抄 `programs/src/system/core.rs` 那四格）。
 /// 它是**协议这一侧**的名字：调度侧那四格是 `Unknown` / `BadImage` / `Full` / `NotReady`，
-/// 与这里逐格同形——两份不是"抄一遍"，是同一件事的两层（模型那一份不碰 `runtime`）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
 #[wire(fallback = Bad)]
 pub enum Fail {
     /// 表里没这个名字，或它已经登记过。
     #[code(1)]
     Unknown,
-    /// 镜像装不上（内核 `UnitFail::BadImage`）。
+    /// 镜像装不上（内核 UnitFail::BadImage）。
     #[code(2)]
     BadImage,
-    /// 表满，或线程 / 帧产不出来（内核 `UnitFail::OoM`）。
+    /// 表满，或线程 / 帧产不出来（内核 UnitFail::OoM）。
     #[code(3)]
     Full,
     /// 没就绪：等到期还没起来、半路死了、或此刻不该起（已在跑）。
@@ -68,10 +65,9 @@ pub enum Fail {
     NotReady,
     /// **本端读不懂那一句**（帧坏了 / 答话那一格解不动 / 期限到了还没答）。
     /// 它在**失败表外**（同板、树那两族的先例）：它不是"持表那一侧说的事"，是**这一问没走到**。
-    /// 对本端而言与"这条路别指望了"同一个下一步，故不往 [`Fail`] 的语义格里塞。
+    /// 对本端而言与"这条路别指望了"同一个下一步，故不往 Fail 的语义格里塞。
     #[code(5)]
     Bad,
-    /// **判面拒**：这一问不属于它进来的那一面——**终态**（换一面 / 别重试）。
     #[code(6)]
     Denied,
 }
@@ -87,19 +83,18 @@ pub const STATE: u8 = 4;
 /// 这条路叫什么（泊位那一格）：**两侧同一个**。
 pub const LINK: &str = "control";
 
-/// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 [`LINK`] 同一个串**——"泊位叫 `control`"
+/// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 LINK 同一个串**——"泊位叫 `control`"
 /// 与"它挂在哪一格"是同一件事的两层，重名不是重名。
 pub const NAME: &str = "control";
 
 /// 问话孔那一枚上的记号。**带面名**（`control-ask`）：认领键是"谁开的 + 记号"，而同一枚任务
 /// 可能同时是两面的客人——两枚孔都铸在它自己那张表里，记号再一样就分不开（理由与实测见
-/// `system::operator::frame::ASK_MARK`）。
+/// system::operator::frame::ASK_MARK）。
 pub const ASK_MARK: Mark = Mark::of("control-ask");
 
-/// 回信孔的记号：客人**每趟**铸一枚、借给对端（这一趟的答话从它回来）。
 pub const BACK: Mark = Mark::of("control-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
-/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal /
+/// crate::common::svc::DIR，末段是本族自己的名字 NAME）——**一处说全**（同 principal /
 /// coalition）。
 pub const DIR: &Path = Path::new("svc/sys/control");

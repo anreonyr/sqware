@@ -1,13 +1,7 @@
-//! control 的**帧那一半** —— 帧、码、记号、状态。
-//! ```text
-//!   Ask    [0] op  [1..33] name  [33..41] back      41（表求和：`Ask::LEN`）
-//!   Said   [0] status  [1] state                     2（表求和：`Said::LEN`）
-//! ```
-//! **帧里没有镜像**（见 [`super`] 的"`build` 不拷字节"那一节）：`mint` 那一问只带名字，
+//! control 的帧那一半 —— 帧、码、记号、状态。
+//! **帧里没有镜像**（见 super 的"`build` 不拷字节"那一节）：`mint` 那一问只带名字，
 //! 持表那一侧自己去清单里取那段 `&[u8]`。**帧里也没有"几格通道"/"要什么资源"**：那是
 //! `start` / `wire` 的装配细节，归实现侧按那一台的 `setup` 推。
-//! 本文件**不做裁决**：生命周期的规矩在那张表里（`programs/src/system/common/face/desk.rs` 与
-//! `programs/src/system/control/`）。这里只有：失败域 ↔ 答话码、状态 ↔ 那一格数、
 //! 一问一答两张表、以及本族那几格记号。
 //! # 四个动作在报文里的码
 //! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
@@ -38,16 +32,12 @@ pub struct Ask {
 /// # `task` 那一格：身子的 `TaskId` 能跨域，通道副本不能
 /// `Start` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续：
 /// 内核按 `TaskId` 认一枚线程，与它在哪个域无关，故这个号**跨域有意义**。而 `Endpoint`
-/// 的两枚孔是"持有它的那张表里才念得动"的号（[`communication`](crate::communication)
+/// 的两枚孔是"持有它的那张表里才念得动"的号（communication
 /// 事实 8）⇒ control 铸出来的是**它自己那一侧**的孔，交不到客人手里。故：
-/// ```text
-///   无通道的服务（Setup 里没有 Channel）   线上 mint + start 完整可用
-///   有通道的服务                           start 会等不到就绪 ⇒ 答 NotReady（既有口径）
-/// ```
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Said {
     pub status: u8,
-    /// [`State`] 的判别值（只有 `state` 那一答用它；其余答话是 0）。
+    /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）。
     pub a: u8,
     /// **那一条的身子**（只有 `start` 那一答填它；其余答话是 [`TaskId::new(0)`]）。
     pub task: TaskId,
@@ -56,12 +46,11 @@ pub struct Said {
 impl Message for Said {
     /// **写法与读法是同一个**：这一形三格俱全，读的人不必再问"我问的是哪一条"。
     type In = Said;
-    /// 定长一答（[`Said::LEN`]）。
+    /// 定长一答（Said::LEN）。
     type Buf = [u8; Said::LEN];
     const EMPTY: Self::Buf = [0u8; Said::LEN];
 
-    /// 表那一手 `store_at`（从游标写、返实际长度）——正是这一手要的；表上那枚**同名**的 `store`
-    /// 要的是定长数组、返 `()`，两回事（同 `crate::wire::frame::Reply` 那一格）。
+    /// 要的是定长数组、返 `()`，两回事（同 crate::wire::frame::Reply 那一格）。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         Said::store_at(self, out, 0)
     }
@@ -74,13 +63,13 @@ impl Message for Said {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
-/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+/// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
+/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）。
 pub use crate::wire::OK;
 
 use self::vocab::{MINT, START, STATE, STOP};
 
-/// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 [`Ask::back`] 带。
+/// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 Ask::back 带。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
     /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）。
@@ -93,7 +82,6 @@ pub enum Req {
 }
 
 impl Req {
-    /// 编成线上那一形；`back` = **这一趟的回信孔在对端表里的号**（运输那一格，不是荷载）。
     pub fn ask(self, back: PieToken) -> Ask {
         let (op, name) = match self {
             Req::Mint(name) => (MINT, name),
@@ -106,9 +94,9 @@ impl Req {
 }
 
 /// **收进来的一问**。
-/// 两格失败分得开（同 [`crate::wire::frame::Query`] 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
+/// 两格失败分得开（同 crate::wire::frame::Query 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
 /// 都没有 ⇒ 不动表、也不回话）；**动作码不认得** ⇒ 内层 `None`（这一问有回信的路，只是这一码
-/// 我不认 ⇒ 回一句 [`BAD`]）。
+/// 我不认 ⇒ 回一句 BAD）。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
     Mint(String),
@@ -120,7 +108,7 @@ pub enum Wire {
 impl Wire {
     /// 解一问：`(读出来的动作, 回信孔那一格)`。
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
-        // **"恰好"按游标判**：名字那一格是变长的，帧长不再等于 `Ask::LEN`（那是上界）。
+        // **"恰好"按游标判**：名字那一格是变长的，帧长不再等于 Ask::LEN（那是上界）。
         let (q, at) = Ask::fetch_at(bytes, 0)?;
         if at != bytes.len() {
             return None;
@@ -145,7 +133,7 @@ pub const fn said_status(status: u8) -> Said {
     }
 }
 
-/// 编一答：`OK` ＋ 一个 [`State`]（只有 `state` 那一问用）。
+/// 编一答：`OK` ＋ 一个 State（只有 `state` 那一问用）。
 pub const fn said_state(state: State) -> Said {
     Said {
         status: OK,

@@ -1,6 +1,5 @@
-//! rtc::adapt::desk — **门面（适配）**：解帧 → 认孔 → 喂会话核 → 执行它吐的答形。
-//! 判定在 [`Host::ask`]（纯，见 `core/host.rs`）；本文件只做碰内核与设备的那几手：
-//! `mail::reserve` 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备。
+//! 解帧 → 认孔 → 喂会话核 → 执行它吐的答形。
+//! mail::reserve 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备。
 
 use crate::dev::rtc;
 use env::{PieToken, TaskId};
@@ -11,11 +10,8 @@ use protocol::debug;
 use runtime::core::res::dock::View;
 use runtime::env::mail;
 
-/// 门上那一句话：**解帧 → 认孔 → 喂核 → 从这一趟自带的那枚孔答回去**。
-/// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**：那一格是"客人
+/// 认那枚孔靠**帧里那一格** ＋ **一次 mail::reserve 验**：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
-/// 能让本域往**别人的孔**里写。`reserve` 一次代替全表扫。
-/// **拒了的那一趟也要收尾**：那一枚孔不在任何账上（那一格根本没占上），此后没人会替它收
 /// ⇒ 答完当场放下。
 pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     let Some((back, ask)) = frame::Wire::take(frame) else {
@@ -32,7 +28,6 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     }
     let now = rtc::now(view);
     match host.ask(ask, back, now) {
-        // 一问一答：答话**走 `Sender`**，这一枚孔这一趟就用完了（一问一答一个往返）。
         Answer::Time(now) => {
             ship_time(back, now);
             let _ = mail::release(back);
@@ -65,8 +60,6 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
 
 /// 把那一声答出去（一个时刻）。
 fn ship_time(back: PieToken, now: u64) {
-    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那位客人不来取，卡的是
-    // 他自己那一趟。
     let mut tx = Sender::<Time>::from_token(back);
     let _ = tx.send(Time::of(now));
 }

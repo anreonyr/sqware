@@ -1,9 +1,8 @@
-//! rtc::core::host — **常驻会话核**：吃"发生了什么"，吐"该做什么"。
-//! 本文件**不碰内核、不碰设备**：它只认事实与决定——`now` 由适配层从设备读出来交给它，
-//! 事件由适配层从内核取出来交给它，它吐回的 [`Answer`] / [`Ring`] 是**数据**。等事件、取干净、
+//! 吃"发生了什么"，吐"该做什么"。
+//! 事件由适配层从内核取出来交给它，它吐回的 Answer / Ring 是**数据**。等事件、取干净、
 //! 收发、读表、武装、清那一格、说排空，全在适配层（`src/driver/rtc/adapt/`）——那一层只做
 //! "等、取、喂、执行"，不再有自己的判定。
-//! 这一层是**纯的**：不出现 `runtime::`、不出现 `View`，故可独立推理；"两位客人一个闹钟"
+//! 这一层是**纯的**：不出现 runtime::、不出现 `View`，故可独立推理；"两位客人一个闹钟"
 //! 写不出来——那一格只有两个变体（见 `slot.rs`）。
 
 use super::frame::{self, Wire};
@@ -13,11 +12,14 @@ use env::PieToken;
 pub enum Answer {
     /// 「现在几点」：答一个时刻。
     Time(u64),
-    /// 「再过多 long 叫我」收下了：那一格占上，设备要武装到 `at`；答码是 [`frame::OK`]。
-    Armed { at: u64 },
-    /// 拒了：那一格有人 / 那个时刻已经过去 / 这一趟读不懂。
-    /// 带 `at` 是因为**拒了的那一趟要报它**（`late_ns = now - at`，见 `adapt/desk.rs`）。
-    Refused { code: u8, at: u64 },
+    /// 「再过多 long 叫我」收下了：那一格占上，设备要武装到 `at`；答码是 frame::OK。
+    Armed {
+        at: u64,
+    },
+    Refused {
+        code: u8,
+        at: u64,
+    },
 }
 
 /// 一次投递：清掉设备那一格（电平源）之后，那一格到点没有。
@@ -43,7 +45,6 @@ impl Host {
         }
     }
 
-    /// 门上一问 → 这一趟的答形。
     /// `back` = 客人借来的那枚孔（在本端表里的号）；`now` = 收到这一帧时设备的钟。
     pub fn ask(&mut self, wire: Wire, back: PieToken, now: u64) -> Answer {
         match wire {
@@ -53,7 +54,7 @@ impl Host {
                 let at = now.saturating_add(after_ns);
                 match self.slot.arm(at, back, now) {
                     Ok(()) => Answer::Armed { at },
-                    // `Past` 是本面的策略、不是设备的事实（见 `slot.rs` 的 `Slot::arm`）。
+                    // `Past` 是本面的策略、不是设备的事实（见 `slot.rs` 的 Slot::arm）。
                     Err(fail) => Answer::Refused {
                         code: frame::fail_to_code(Some(fail)),
                         at,

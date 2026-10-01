@@ -1,38 +1,20 @@
 #![no_std]
 #![no_main]
 
-//! beat — **到点台的打点者**：量「睡到某个**绝对时刻**」到底漂不漂。
-//!
+//! 量「睡到某个绝对时刻」到底漂不漂。
 //! # 为什么要有它
-//!
-//! ABI 里 `RoomCall::Park`（相对毫秒，**下限族**）与 `RoomCall::ParkUntil`（绝对纳秒，
+//! ABI 里 RoomCall::Park（相对毫秒，**下限族**）与 RoomCall::ParkUntil（绝对纳秒，
 //! 同族）一起定了下来，但 `ParkUntil` 没有消费方 ⇒ "到点不漂"
 //! 这件事只有签名、没有数字。本程序就是那个消费方：同一台机器上、同一段循环里，
 //! **两段各跑 N 次**，把"累计漂移"分别量出来。
-//!
-//! ```text
-//!   A 相对：loop { t0 = clock(); sleep(period); t1 = clock(); drift += (t1-t0) - period; }
-//!   B 绝对：next = clock() + period; loop { next += period; sleep_until(next); drift += clock() - next; }
-//! ```
-//!
-//! 判据只有一条：**A 的累计漂移随轮数线性涨**（每轮把"上一轮的迟到"吃进下一轮）；而
 //! **B 的迟到不累积**——它每一轮的目标都是绝对时刻，晚到只落在那一轮里。
 //! "不累积"读的是 **`span_ms` 与 `n × period` 的差**（B 的差 ≈ 初值多出的那一个
 //! `period` + 最后一轮迟到），**不是** `drift_sum_us`（两个轴都是 `sum += drift`、
 //! 逐轮累加，B 也涨）。
-//!
 //! # 怎么跑它
-//!
-//! ```text
-//!   cargo image beat && QEMU_ICOUNT= cargo run --release    # 与验收门同环境（必须）
-//!                       QEMU_ICOUNT= cargo run --release    # 对照：icount 开（唤醒被节流）
-//! ```
-//!
 //! 两档都值得跑：icount 开时"一记唤醒"是毫秒级（见 `scripts/boot.nu` 的注释与 rig 的
 //! ），A 会漂得更凶；B 不该被它带跑——**这正是"绝对到点"买下的东西**。
-//!
 //! # 读数
-//!
 //! 每档一行：`beat: rel n=… period_ms=… drift_sum_us=… drift_max_us=… drift_min_us=… span_ms=…`
 //! `span_ms` = 第一轮到最后一轮的**真实跨度**（与 `n × period` 比：差得越多越漂）。
 
@@ -55,7 +37,6 @@ const N: usize = 200;
 fn main() {
     let period_ns = PERIOD_MS * 1_000_000;
 
-    // ── A 相对：每轮"至少睡 period" ⇒ 上一轮的迟到被下一轮吃进累计漂移 ──
     let start = now_ns();
     let mut sum: i64 = 0;
     let mut max: i64 = i64::MIN;
@@ -78,7 +59,6 @@ fn main() {
         span_rel / 1_000_000
     );
 
-    // ── B 绝对：到点是绝对的 ⇒ 迟到**不落进下一轮**（`drift_sum_us` 仍是逐轮累加，
     //    真正体现"不累积"的是 `span_ms`：它 ≈ n × period + 初值那一个 period + 末轮迟到）──
     let start = now_ns();
     let mut sum: i64 = 0;

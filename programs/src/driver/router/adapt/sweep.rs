@@ -1,12 +1,10 @@
-//! router::adapt::sweep — **逐客（适配）**：`alive` 答不出的那几条线——**拆线 + 空出格子**。
-//! 判定在 `crate::core::lines`（`vacate` 那一手，连它的两个后果）；探活是内核的一问
-//! （`mail::reserve`），拆线是设备面的一手（`plic.unwire`）。
+//! alive 答不出的那几条线——拆线 + 空出格子。
+//! 判定在 crate::core::lines（`vacate` 那一手，连它的两个后果）；探活是内核的一问
+//! （mail::reserve），拆线是设备面的一手（`plic.unwire`）。
 //! 时机是**每一次醒**（组那一次等待回来就扫一遍）：主人一没，它铸的那一枚孔就封印，而那一格
-//! 正挂在本域这只组上（`seal` 走 `wipe` 敲到组键）⇒ 那一次敲键就是把本域叫起来的那一件事。
 //! 故"收线"不靠板、也不靠一拍。
 //! **这一跳有读数了**：`programs/src/harness/guest/lodger/main.rs`（房客）每次冷启动都占住 1 号线、然后一句话不说就走
-//! ⇒ 本域被叫醒、`alive` 答不出 ⇒ `router: vacate line=1`。链条本身是
-//! `cull::seal_owned` → `messenger::wipe` → 组键。
+//! cull::seal_owned → messenger::wipe → 组键。
 
 use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
@@ -35,8 +33,7 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
     }
 }
 
-/// 客人还答得出来吗：**问它铸的那一枚**（`mail::reserve` 走存活闸：封印之后答不出）。
-/// 问的是对端的写端（`Endpoint::tx`）而不是本端读的那一枚：本端那一枚的活命随本域，问它恒活。
+/// 客人还答得出来吗：**问它铸的那一枚**（mail::reserve 走存活闸：封印之后答不出）。
 fn alive(lane: &Endpoint) -> bool {
     match lane.tx() {
         Some(at_peer) => mail::reserve(at_peer).is_ok(),

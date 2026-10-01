@@ -1,11 +1,14 @@
-//! hub::serve::bond — **报名那一面**：一台设备把自己的格与契报进来（收物料 → 立账 → 上树）。
-
 use super::*;
 
 /// **报名**：这个类不在册上 ⇒ `Unknown`（这台机器没有这一类）；否则**代报名**——把发送者放进
 /// 这一类那枚盟（盟册 `admit`，钥匙 = "你是不是立盟那位"）。
-/// 驱动不需要知道盟号：它只说"我要驱这一类"。**这一位不是盟主就答 `Denied`**（本域总是盟主，
-pub(super) fn bond(ledger: &mut Ledger, league: &League, class: String, from: TaskId, back: PieToken) {
+pub(super) fn bond(
+    ledger: &mut Ledger,
+    league: &League,
+    class: String,
+    from: TaskId,
+    back: PieToken,
+) {
     let Some(coalition) = ledger.coalition_of(class) else {
         put_said(back, hub::UNKNOWN);
         return;

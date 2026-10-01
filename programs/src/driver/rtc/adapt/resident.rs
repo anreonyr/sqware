@@ -1,15 +1,13 @@
-//! rtc::adapt::resident — **常驻（起手 5）· 壳**：一只组等两个源，喂事件、执行动作。
-//! 判定在 [`Host`]（纯，见 `core/host.rs`）：本文件只做"等、取、喂、执行"——组与泊位是内核的，
-//! 设备的读与清是设备面的。[`Host::ask`] / [`Host::ring`] 吐什么，这里就执行什么。
+//! 一只组等两个源，喂事件、执行动作。
 
 use super::desk;
 use crate::dev::rtc;
 use env::{HoleDir, Wait};
+use programs::driver::rtc::core::frame::Time;
+use programs::driver::rtc::core::host::{Host, Ring};
 use programs::driver::shared::context::Context;
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
-use programs::driver::rtc::core::frame::Time;
-use programs::driver::rtc::core::host::{Host, Ring};
 use programs::unit::rtc::E_RTC;
 use protocol::communication::sender::Sender;
 use protocol::debug;
@@ -22,8 +20,7 @@ use runtime::env::mail::{self, HolePie};
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限。
 /// 那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）。
 /// **这两个源是 rtc 自己的形状**（`uart` 只有一个源、`router` 有三个），故它不收进
-/// `driver::`——见 [`programs::driver::mod`] 那条入库判据。
-/// 失败：组坏了 ⇒ `Err(Fail::at(E_RTC, "desk"))`——本域没有可继续的状态。
+/// driver::——见 programs::driver::mod 那条入库判据。
 pub fn run(
     ctx: &Context,
     dev: &Device,
@@ -49,7 +46,6 @@ pub fn run(
     }
     buf.resize(PAGE_SIZE, 0);
     loop {
-        // 等到有事件。非阻塞地把两个源各取干净——**先门后线**：门上的问要就地答，而线那一趟
         // 到点才有的说（次序不承担语义，只省一次绕回）。
         match pile.await_(Wait::Forever) {
             Ok(_) => {}
@@ -67,7 +63,6 @@ pub fn run(
             rtc::clear(view);
             if let Ring::Rang { back, now } = host.ring(now) {
                 // 那一声**走 `Sender`**（答那一形：一个时刻）——与客人收它走的是同一张表。
-                // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）。
                 {
                     let mut tx = Sender::<Time>::from_token(back);
                     match tx.send(Time::of(now)) {

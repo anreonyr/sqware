@@ -1,17 +1,10 @@
-//! communication — **通信**：关系怎么建立、一枚孔上怎么收发。
-//! ```text
-//!   establish.rs  Endpoint / Held / endpoint / give / claim / find / lend_out
-//!                 关系怎么建立（＋ 借一枚回信孔，＋ `Reserve` 三格）
-//!   session.rs    Session / Berth / open            一条路怎么开起来（四手并成一手）
-//!   sender.rs     Sender<M>                       我推的那一枚（类型 = 我发的那种报）
-//!   receiver.rs   Receiver<M>                     我收的那一枚（类型 = 我收的那种报）
-//! ```
+//! 关系怎么建立、一枚孔上怎么收发。
 //! **粒度分两层**：`establish` 那一手是**一枚孔**，`session` 那一手是**一条路**（一对孔 ＋
 //! 对端的号）。两者同属"关系怎么建立"——故 `session` 只坐在 `establish` 上，不碰任何协议的
 //! 正文与 RPC（见下面"本层不认识什么"）。
 //! # 一条不变量：Mail 是单向单手
 //! 一枚 `PieToken` 一个方向。故"收发"**不是**一个双向端点上的两件事，而是**两枚孔、
-//! 两个对象**——与 `std::sync::mpsc` 的 `Sender<T>` / `Receiver<T>` 同构（那边也是两个类型、
+//! 两个对象**——与 std::sync::mpsc 的 `Sender<T>` / `Receiver<T>` 同构（那边也是两个类型、
 //! 两个方向）。**类型挂在方向上**：`Sender<M>` 里 `M` = 我发的那种报，`Receiver<M>` 里
 //! `M` = 我收的那种报，两者可以不同族（问话与答话本来就是两种）。
 //! # 期限在**每次调用**上
@@ -19,7 +12,7 @@
 //! `try_send` / `try_recv`：单次尝试、一次也不挂起。**只有建立那一手例外**：它收一格
 //! `claim_for`，因为"等对方那一枚孔"与"等对方的字节"是两件事（前者是关系，后者是数据）。
 //! # 两个手柄都不持缓冲
-//! 发的那只在**这一帧的栈上**借本族那只（`Message::EMPTY`）——那条报是自己编的，超不出本族
+//! 发的那只在**这一帧的栈上**借本族那只（Message::EMPTY）——那条报是自己编的，超不出本族
 //! 最长；收的那只由**调用方**给——推得进来什么由载体定界（一页），门 / 服务那一侧要给
 //! **载体那一页**。
 //! # 本层不认识什么
@@ -36,7 +29,7 @@ pub mod sender;
 pub mod session;
 
 /// 期限 → **那个到不了的点**（单调钟，纳秒）。
-/// **永久落成 `u64::MAX`，不落成 `Wait::Forever`**：唤醒那一手要的是一格期限，而
+/// **永久落成 u64::MAX，不落成 Wait::Forever**：唤醒那一手要的是一格期限，而
 pub(crate) fn deadline(wait: Wait) -> u64 {
     match wait {
         Wait::Forever => u64::MAX,

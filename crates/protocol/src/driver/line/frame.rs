@@ -1,15 +1,10 @@
-//! line::frame — **形与码**：两句话、两份形状，加一张失败域与状态码的双射表。
-//! ```text
-//!   登记（门牌那条路上一问一答）  [OCCUPY][线号 4B]    →  [状态码 1B]
-//!   线泊位（路由者 ↔ 客户）       [记号 1B]           两个方向同一份形状
-//! ```
+//! 两句话、两份形状，加一张失败域与状态码的双射表。
 
 use env::Mark;
 
 use crate::wire::message::Message;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
-/// 它住本文件（与那四个状态码同一处）：码由 [`crate::WireCodes`] 从本枚举派生
 /// （`UNKNOWN`/`TAKEN`/`DENIED` ＋ 只有码的 `BAD`，加两向读法）。账那一边（`Lines` 的四原语）
 /// 按它折，客侧那一侧也按它认。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
@@ -39,7 +34,7 @@ const _: () = assert!(BACK_MARK.get() != Mark::of(LANE).get());
 const _: () = assert!(BACK_MARK.get() != Mark::of("line-tip").get());
 const _: () = assert!(BACK_MARK.get() != Mark::NONE.get());
 
-/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
 /// （`WireCodes` 派生的两向读法就是拿它当"没失败"那一格）。
 pub use crate::wire::OK;
 
@@ -51,7 +46,7 @@ pub struct Occupy {
 }
 
 impl Occupy {
-    /// 编一句登记：动作码固定 [`OCCUPY`]，荷载是那条线的号。
+    /// 编一句登记：动作码固定 OCCUPY，荷载是那条线的号。
     pub fn of(line: u32) -> Occupy {
         Occupy { op: OCCUPY, line }
     }
@@ -68,7 +63,7 @@ impl Message for Occupy {
     }
 
     /// 拆一帧登记：**不是那个形状就答 `None`**（别人往这扇门推别的东西时，不猜）。
-    /// **"恰好 `Occupy::LEN`"**：表那一手只要求"够长"，而这一形的判据是**恰好**——长短都不认。
+    /// **"恰好 Occupy::LEN"**：表那一手只要求"够长"，而这一形的判据是**恰好**——长短都不认。
     fn fetch(bytes: &[u8]) -> Option<u32> {
         if bytes.len() != Occupy::LEN {
             return None;

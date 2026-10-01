@@ -1,6 +1,4 @@
-//! principal::bridge — **装配侧**：名册那一面（身份面）与"认下它交给生我者的门牌"。
-//! 装配期每一条服务的身份都从这条路上来：**放行前** `derive(ROOT)` + `bind`（负证客人除外）；
-//! **名册自己放行之后**装配者才认下面，并补绑它自己与树（它们起来时名册还没在）。
+//! 名册自己放行之后装配者才认下面，并补绑它自己与树（它们起来时名册还没在）。
 
 use core::time::Duration;
 
@@ -12,10 +10,9 @@ use protocol::service::principal::client::Face;
 use runtime::env::room;
 
 use crate::system::Assembly;
-use crate::system::control::{BOOT_MS,  RETRY_MS, Service};
+use crate::system::control::{BOOT_MS, RETRY_MS, Service};
 use crate::unit::UnitFile;
 
-/// **名册在装配者这一侧的状态**：那一面（`None` = 名册还没起来）。
 #[derive(Default)]
 pub struct Roster {
     face: Option<Face>,
@@ -23,8 +20,7 @@ pub struct Roster {
 
 impl Roster {
     /// **放行前**给这一条服务派一条号、绑到它那一枚线程上。
-    /// `on` = 装配表上 `bind` 那一格（`false` 是负证客人：不绑，它自己 `resolve(self)` 答
-    /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 [`Roster::adopt`] 补绑。
+    /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 Roster::adopt 补绑。
     pub fn bind(&self, task: TaskId) -> Result<(), &'static str> {
         let Some(face) = self.face.as_ref() else {
             debug!("principal: bind skip(no face) task={}", task.get());
@@ -44,8 +40,6 @@ impl Roster {
         Ok(())
     }
 
-    /// **名册自己放行之后**：认下它交给生我者的那一面，补绑它自己与树，返它的号。
-    /// 走到这里时树**必已就位**（持树者排第一）；`tree = None` 只报一句读数（那是唯一的响声
     /// ——原来它静默跳过）。
     pub fn adopt(&mut self, task: TaskId, tree: Option<TaskId>) -> Result<TaskId, &'static str> {
         let f = face_of(task).ok_or("no identity face")?;
@@ -80,7 +74,6 @@ impl Roster {
     }
 }
 
-/// **身份轴在装配那一趟里的那一手**：读这一台声明上 `bind` 那一格。
 pub fn bind(
     assembly: &mut Assembly,
     program: &UnitFile,
@@ -90,7 +83,7 @@ pub fn bind(
 }
 
 /// **名册这一位要认下面 ＋ 补绑自己与树** —— 判据是**它自己交上来的那一枚门牌**
-/// （[`Grant::Set`](protocol::service::principal::Grant)：定面那一枚；只有名册那一族交得出它）。
+/// （Grant::Set：定面那一枚；只有名册那一族交得出它）。
 pub fn adopt_roster(
     assembly: &mut Assembly,
     _program: &UnitFile,
@@ -105,10 +98,8 @@ pub fn adopt_roster(
 }
 
 /// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
-/// 装配期**不必上树查自己起的那一枚**：名册起手就把门牌那一枚 `ship` 进本域表里，本域按
 /// `(开者 = 它, 记号 = 面)` 两格认出来。它起手就交，
-/// 故这里是**短等**：还没到就隔一拍再问，问到期限为止。
-/// **要的是 [`Grant::Set`]（定面）**：本间那两手是 `derive` ＋ `bind`——发身份
+/// **要的是 Grant::Set（定面）**：本间那两手是 `derive` ＋ `bind`——发身份
 /// 那一侧要的正是改的权柄，而问面给不了它。名册两面各交一枚、记号不同，故"要哪一面"得说清。
 fn face_of(host: TaskId) -> Option<Face> {
     let mut left = BOOT_MS;

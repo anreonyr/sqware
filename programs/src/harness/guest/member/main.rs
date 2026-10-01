@@ -1,37 +1,10 @@
 #![no_std]
 #![no_main]
 
-//! member — **盟友**：立盟、进出、问在不在，把这一族要验的读数打出来。
-//!
-//! ```text
-//!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  FIND "/svc/sys/coalition/{ask,set}" ⇒ 结盟服务**两面**的门牌；FIND "/svc/sys/principal/{ask,set}"
-//!      ⇒ 身份服务**两面**的门牌（本台**四面都要**：两侧都要读、都要写）
-//!   3  resolve(self)          ⇒ 本域此刻代表哪个号（装配期绑的那一条）
-//!   4  found() × 2            ⇒ 立两枚盟：号 0 与 1（号由服务发：单调、稠密）
-//!   5  amid(me, c0)           ⇒ **立了不等于进了**：false
-//!   6  enter(c0) → amid → enter(c0)  ⇒ 入、真的改了、**再入一遍答 ok（幂等）**
-//!   7  enter(c1)              ⇒ 同一条身份可以在第二枚盟里
-//!   8  derive(me) + adopt(sub) ⇒ 领到第二条身份
-//!   9  enter(c0)              ⇒ 此刻代表的是 sub ⇒ 这枚盟里**有两位**
-//!  10  amid(me,c0) / amid(sub,c0) ⇒ 两条都在（**出的是那一对，不是那个人**）
-//!  11  leave(c0)             ⇒ 出；amid(sub,c0)=false、amid(me,c0) 照旧 true
-//!  12  waive()               ⇒ 弃回起点，盟籍照旧（键 = 身份那条定理）
-//!  13  没铸过的号             ⇒ amid / enter / leave 都答 Unknown（**第三态**）
-//!  14  伪造的身份号            ⇒ amid 答 false（**不是失败**——`p` 是标签，本册不问名册）
-//!  15  取窗：band(c0) ⇒ 一位；band(c0, 末一枚) ⇒ **空窗**（游标是阈值）；band(out) ⇒ Unknown
-//!  16  bloc(me)               ⇒ 反向：两条盟籍
-//! ```
-//!
 //! # 为什么读数是"一位客人两枚身份"
-//!
-//! 号由服务铸（正文 K3）⇒ 要有第二方进同一枚盟，得先有人把号交到它手里；本仓今天没有那条
 //! 路（树上的条目是"名字 → 一枚 Pie"，**存不了号**；装配表的 args 没接）。故真机读数用**派生
 //! 出来的第二条身份**：它一样是名册里真有的一格，盟册看得见"同一枚盟里有两位"。
-//!
 //! # 为什么不上板
-//!
-//! 本域只做一件事——结盟；生死那本账与本域无关（同 `subject` / `lodger` 那一档）。它也不是
 //! 装配表的最后一条：**收场由 `canonical` 那一条给**。
 
 extern crate alloc;
@@ -44,26 +17,24 @@ use alloc::string::String;
 
 use alloc::format;
 use env::PieToken;
+use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::wire::id::Id;
 use protocol::service::coalition as ccall;
 use protocol::service::coalition::client::{Band, Bloc, Coalition, Face as CoalitionFace};
 use protocol::service::coalition::{CoalitionId, Fail};
 use protocol::service::operator::Fail as TreeFail;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
-use protocol::common::path::Path;
 use protocol::service::principal as pcall;
 use protocol::service::principal::Fail as PolicyFail;
 use protocol::service::principal::PrincipalId;
 use protocol::service::principal::client::Face as PolicyFace;
+use protocol::wire::id::Id;
 use runtime::env::unit as utask;
 
-/// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 退场码：走通了 / 没走通（都不是 panic；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
 const E_NO_SERVICE: usize = 1;
 
@@ -75,19 +46,16 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
     let me = utask::self_id();
 
-    // 上树：本域只开一条链，走两趟按名字找（结盟服务那一面 + 身份服务那一面）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("member: no tree link");
     };
     let tree = TreeFace::of(session);
-    // 盟册那**两面**：三条"问"的（`Amid` / `Band` / `Bloc`）在 `Grant::Ask` 上，
-    // 三条"定"的（`Found` / `Enter` / `Leave`）在 `Grant::Set` 上。这一台**两面都要**——它立盟、
+    // 盟册那**两面**：三条"问"的（`Amid` / `Band` / `Bloc`）在 Grant::Ask 上，
+    // 三条"定"的（`Found` / `Enter` / `Leave`）在 Grant::Set 上。这一台**两面都要**——它立盟、
     // 入、出，也问盟籍、点名册。
-    //
     // **同一枚盟要两枚柄**（这是两面分开的代价）：`Coalition` 那个柄**绑在它来自的那一
     // 面上**（`Face::coalition(id)` 只是把一个宾语固定下来），故 `cset.found()` 拿到的柄
     // `enter` / `leave` 得动，而 `holds` / `members` 要走 `cask.coalition(id)` 那一枚。
-    // 盟册那两面的路：**本族常量**接上那一面（问面 / 定面）的名——一处都不自己拼。
     let (Some(cask), Some(cset)) = (
         ccall::DIR.try_join(ccall::Grant::Ask.name()),
         ccall::DIR.try_join(ccall::Grant::Set.name()),
@@ -107,12 +75,9 @@ fn main() -> Report<'static> {
         return bail("member: bad coalition set face");
     };
 
-    // 身份那**两面**：**本域自己也要用它们**（问"我代表谁"，派生第二条身份、领、弃）。
-    //
     // **两面各找一次**：三条"问"的（`Resolve` / `Sire` / `Heir`）在
-    // [`Grant::Ask`] 上，四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 [`Grant::Set`]
+    // Grant::Ask 上，四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 Grant::Set
     // 上；下面每一处按**它问的是哪一类**挑门牌。
-    // 名册那两面的路：**本族常量**接上那一面（问面 / 定面）的名。
     let (Some(ask), Some(set)) = (
         pcall::DIR.try_join(pcall::Grant::Ask.name()),
         pcall::DIR.try_join(pcall::Grant::Set.name()),
@@ -142,16 +107,8 @@ fn main() -> Report<'static> {
         return bail("member: unbound");
     };
 
-    // 判据就地登记：**只搬本域已经在判的东西**——下面每一例的期望，都是本域头注那
-    // 16 步里写着的那一句。台名 = 本域打的前缀，门按它钉逐台基线。
-    //
-    // `amid(me,c0)` 这一形在本域脚本里出现**四趟**（立了之后 / 入之后 / 领了之后 / 弃了之后）
-    // ——这里每一趟各判一次，四趟答错任何一处都会点名。
-
     // 二、立两枚盟：号由服务发——**全局单一序列，只增**。
-    //
     // 更要紧的是：**"第一枚是零号"没有并发客人能证**（要证它得保证自己是第一枚），"号不跳"
-    // （稠密）同理——两次 `found` 之间**谁都可以插一脚**。故那一对换成唯一可证的那条：
     // **号只增**。至于号**能用**（进得去、查得着、放得下），由后面那一整串
     // （`enter` / `leave` / `waive` / `band` / `bloc`）证，不靠这两格。
     let c0 = cset.found(Wait::AtMost(MS));
@@ -176,7 +133,6 @@ fn main() -> Report<'static> {
     }
 
     // 四、入：名册真的改了，而且**再入一遍还是 ok**（集合没有"第二次"）。
-    // **这一手不收"谁"**：进的是本端**此刻代表**的那一位（名册的答案）。
     let entered = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(entered));
     let inside = r0.holds(p, Wait::AtMost(MS));
@@ -201,7 +157,6 @@ fn main() -> Report<'static> {
         assert_eq!(amid_c1, Ok(true))
     }
 
-    // 六、领到第二条身份，**并且当场换成它**（`adopt`），于是这一步进的是 `sub`。
     let sub = set
         .principal(p)
         .derive(Wait::AtMost(MS))
@@ -212,16 +167,13 @@ fn main() -> Report<'static> {
     };
     let adopted = set.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("member: adopt(sub)={}", done(adopted));
-    // 六·五、**代报名那一格的负证**：此刻我代表 `sub`，而 `c0` 的盟主是
-    // `p` ⇒ 我**不是**它的盟主 ⇒ 这一问该被拒（[`Fail::NotChief`]，不是 `Unknown`：盟在、
+    // `p` ⇒ 我**不是**它的盟主 ⇒ 这一问该被拒（Fail::NotChief，不是 `Unknown`：盟在、
     // 我也在册上，缺的只是"这一枚盟归不归你代报名"）。
-    //
     // **正证在设备账那一台手里**（生产里唯一的持有者）：`hub` 每类立一枚盟、再替四位驱动
-    // `admit`（`protocol::service::hub` 的 `bond`）。本台不抢那一份读数。
+    // `admit`（protocol::service::hub 的 `bond`）。本台不抢那一份读数。
     let not_chief = c0.admit(me, Wait::AtMost(MS));
     debug!("member: admit(c0)={}", done(not_chief.clone()));
     assert!(matches!(not_chief, Err(Fail::NotChief)));
-    // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
     // 客侧没有"我是谁"那一格）。
     let q_in = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(q_in));
@@ -243,7 +195,6 @@ fn main() -> Report<'static> {
     }
 
     // 七、**出的是那一对，不是那个人**：此刻代表 `sub`，故出掉的是 `sub` 那一行
-    // （这一手同样不收"谁"——主体由印章说）。
     let left = c0.leave(Wait::AtMost(MS));
     debug!("member: leave(c0)={}", done(left));
     let q_gone = r0.holds(q, Wait::AtMost(MS));
@@ -270,9 +221,7 @@ fn main() -> Report<'static> {
 
     // 九、第三态：没铸过的盟（号是伪造的线上值）。
     let outside = CoalitionId::new(OUTSIDE);
-    // **两枚柄都要**（读走问面、写走定面）：这一格量的正是"没铸过的那枚盟 ⇒ `Unknown`"，
     // 故两枚柄**都得是"面过了、核心拒"**那一条——若拿问面去 `enter`，量到的是 `Denied`
-    // （面那一格），把这一格要证的"核心里那枚盟不存在"顶掉了。
     let rout = cask.coalition(outside);
     let wout = cset.coalition(outside);
     let out_amid = rout.holds(p, Wait::AtMost(MS));
@@ -308,7 +257,6 @@ fn main() -> Report<'static> {
     // 没铸过的那枚盟：取窗这一条**有失败域**（同 amid）。
     let out_band = rout.members(None, Wait::AtMost(MS));
     debug!("member: band(out)={}", band_ids(&out_band));
-    // 反向那一趟：这条身份在哪些盟里（**没有失败域**：不在任何盟里就是空窗）。
     let bloc = cask.bloc(p, None, Wait::AtMost(MS));
     debug!("member: bloc(me)={}", bloc_ids(&bloc));
     {
@@ -326,8 +274,6 @@ fn main() -> Report<'static> {
 
     // 十二、**面那一格**：同一条问、同一个发送者，**只换门牌**——定面成、问面拒。
     // 这一对量得出来的正是"面"这件事本身；而"面不对"在**门外**就拦下了（连盟册都没看）。
-    //
-    // **（它与核心那几格同码，分开它们的是读数）**：这一格答的 `Denied` 与别的因同码
     // （客人的下一步一样：换一枚门牌 / 换目标、别重试）。分得开它们的是服务那一行读数
     // `coalition: face=… asked=… denied`。
     let set_ok = cset.found(Wait::AtMost(MS));
@@ -344,14 +290,8 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, "member: done");
 }
 
-/// 按名字找一面服务：`FIND` 那一条路（2 段：盟册那一面；3 段：名册那两面各一条），
-/// **找不到就再问**（有界）——门牌是本域起来之后落的。
-///
-/// 找到之后那一枚**从会话里**进本域表（报文里没有号）：按"谁给的"认，取**最后**那一枚
-/// （一次一问一答只授一枚，故最后那一枚就是这一趟的）。
 fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
-    // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：两格在
-    // [`Pane::tile`] 与 [`Tile::token`] 上。
+    // Pane::tile 与 Tile::token 上。
     let root = tree.root();
     let mut left = MS;
     loop {
@@ -395,7 +335,6 @@ fn one_id(r: &Result<Coalition<'_>, Fail>) -> String {
 }
 
 /// 同一行读数：一窗的**三格事实**——几枚、窗外还有没有、是哪些号。
-///
 /// 三格分开写，是因为**只有前两格是判据**：号那一段跟着装配期铸出来的身份号走（同一份镜像、
 /// 不同的启动次序就会差一位），拿它钉判据等于把一条与取窗无关的数钉进门里。
 fn window_ids<T: Id>(more: bool, ids: impl Iterator<Item = T>) -> String {
@@ -448,8 +387,6 @@ fn done<E: Why>(r: Result<(), E>) -> String {
 }
 
 /// 两个协议、两张失败表，但**读数要的是同一个形状**：一行字。
-///
-/// 本探针是这一族里第一个**同时问两家服务**的客人（结盟 + 身份），故这条小小的桥只此一处
 /// ——每家的格子名照它们自己那张线上表说，不另起词。
 trait Why {
     fn why(&self) -> &'static str;
@@ -463,7 +400,6 @@ impl Why for Fail {
             // 面那一格拒的码："你手里那一枚门牌给不了这一条"。
             Fail::Denied => "denied",
             // 代报名那一格拒的码："你不是这一枚盟的盟主"——本探针不代报名，
-            // 故这一格在这儿只为**match 穷尽**，不是一条读数。
             Fail::NotChief => "not-chief",
         }
     }
@@ -479,7 +415,6 @@ impl Why for PolicyFail {
     }
 }
 
-/// 报一行就走（本域没有控制台，调试面是唯一能说话的地方）。
 fn bail<'a>(msg: &'a str) -> Report<'a> {
     return Report::note(E_NO_SERVICE, msg);
 }

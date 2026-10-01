@@ -1,16 +1,9 @@
-//! rtc::client — **客侧两手**：问一声现在几点、约一个时刻（约成之后从它等那一声）。
+//! 问一声现在几点、约一个时刻（约成之后从它等那一声）。
 //! 客人不碰设备——那台时钟归驱动持有（`ONLY`）；客人只说两句话、收两句话。
-//! ```text
-//!   now(门牌, ms)        一问一答，自带一枚回信孔，答完就放掉
-//!   arm(门牌, after, ms) 约；**那一枚回信孔留下来**——驱动把它收在那一格里，
-//!                        到点从那枚孔把"那一声"推回来
-//! ```
-//! **借孔那一趟的次序是契约的一半**：先铸、先交（`port::ship`），**再**推帧。收的那一侧按
-//! "谁给的 + 记号"两格认，多枚时取**最后那一枚**——故最后那一枚一定就是这一趟那一枚。
 //! **问走门、答走发送端**：问那一侧推的是那扇**门**（`HolePie::from_token(..).push(..)`，同 `principal`
 //! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
-//! 两形各是一张实现了报文约定的表，见 [`super::core::frame`]）。
-//! [`Alarm`] 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
+//! 两形各是一张实现了报文约定的表，见 super::core::frame）。
+//! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
 use env::PieToken;
 use env::{HoleDir, Wait};
@@ -23,7 +16,6 @@ use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
-/// 一问一答——这一趟的回信孔只活到这句话答完（同一次往返借一枚，见 [`protocol::communication`]
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
 pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     // **借一枚回信孔**（铸 ＋ 交，记号 = 本面自己的 `BACK`）：返 `(本端那一枚, 驱动表里那一枚)`
@@ -32,8 +24,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     // 编一问：**表上那一手**（定长缓冲，故它不可能失败；`back` 是运输那一格，随动作一起进帧）。
     let mut frame = [0u8; Now::LEN];
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
@@ -42,20 +33,17 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     if door.push(&frame[..n], Wait::Forever).is_err()
         || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
     {
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
     }
-    // 收：答话走**这一趟借出去的那一枚孔**（`Receiver::recv`；缓冲由调用方给——这一形 8 字节）。
     // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
     let mut buf = Time::EMPTY;
     let answer = Receiver::<Time>::from_token(back)
         .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
-    // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-    // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+    // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = mail::seal(back);
     let _ = mail::release(back);
     answer
@@ -68,8 +56,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let (back, seed) = establish::lend_out(entry, frame::BACK).map_err(|()| Fail::Denied)?;
     let mut frame = [0u8; Arm::LEN];
     let Some(n) = Arm::of(seed, after_ns).store_at(&mut frame, 0) else {
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
@@ -78,8 +65,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     if door.push(&frame[..n], Wait::Forever).is_err()
         || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
     {
-        // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-        // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = mail::seal(back);
         let _ = mail::release(back);
         return Err(Fail::Denied);
@@ -89,8 +75,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let code = match Receiver::<Status>::from_token(back).recv(one.as_mut(), millis) {
         Ok(code) => code,
         Err(_) => {
-            // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-            // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
             return Err(Fail::Denied);
@@ -102,8 +87,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             back: HolePie::from_token(back),
         });
     }
-    // **读者结清（B-a）**：这一枚是本端铸的、只活这一趟 ⇒ **先封印、再放下**——另一头若还在等
-    // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
+    // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = mail::seal(back);
     let _ = mail::release(back);
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))

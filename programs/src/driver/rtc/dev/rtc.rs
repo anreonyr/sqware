@@ -1,16 +1,4 @@
-//! rtc — `goldfish-rtc` 的**最小设备面**：够三件事——读一次时间、武装下一次闹钟、把到点那一格清掉。
-//! 布局与语义照这台设备的约定（QEMU `hw/rtc/goldfish_rtc.c`），本域只碰其中七格：
-//! ```text
-//!   0x00 TIME_LOW        读它 = 当前计数低 32 位，**同时把高 32 位锁存起来**
-//!   0x04 TIME_HIGH       读它 = 上面锁存的那一半 ⇒ **读时间必须先低后高**
-//!   0x08 ALARM_LOW       写它 = 闹钟低半格，**并且当场比较一次**（到点就立刻报）
-//!   0x0c ALARM_HIGH      写它 = 闹钟高半格（**它自己不比**）
-//!   0x10 IRQ_ENABLED     = 1 才许它拉线
-//!   0x14 CLEAR_ALARM     撤闹钟
-//!   0x18 ALARM_STATUS    读它 = "**闹钟武装着**"（`alarm_running`），**不是**"到点了"
-//!   0x1c CLEAR_INTERRUPT 清 `irq_pending`（**电平源**：不清，线就一直挂着）
-//! ```
-//! **两条量出来的规矩**（都是先按想当然写、被读数打回来才改的，见本域头注）：
+//! 最小设备面：够三件事——读一次时间、武装下一次闹钟、把到点那一格清掉。
 //! - **读时间先低后高**：低半格那一次读把高半格锁存起来——先读高会拿到上一次的锁存值；
 //! - **写闹钟先高后低**：低半格那一次写会**当场比较**，先写低半格时高半格还是旧值（首次为 0）
 
@@ -34,7 +22,6 @@ const ALARM_STATUS: usize = 0x18;
 const CLEAR_INTERRUPT: usize = 0x1c;
 
 fn read(view: View, off: usize) -> u32 {
-    // SAFETY: `view` 是 `Dock::open` 的产物——这一段已借映进本域；偏移落在 `reg` 区间内。
     unsafe { core::ptr::read_volatile((view.base() + off) as *const u32) }
 }
 
