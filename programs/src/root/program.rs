@@ -10,7 +10,7 @@ pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "root",
         space: ProgramKind::Supervisor,
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         // **同一个引导域起两景**：`root` 是验收镜像、`product` 是"真正要发出去的那一台"。
         entry: &["root", "product"],
         ..Identity::DEFAULT

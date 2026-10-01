@@ -15,7 +15,7 @@
 //! **测具不在这里**（照实记：用户裁定"测试和程序分开"）：探针（`probe-*`）与压测台
 //! （`rig` / `load` / `beat` / `again` / `group` 与它们的受害者）整体搬去了隔壁那个 crate
 //! **`harness`**——它们只借这里的一件共享入口（`extern crate programs;` ⇒ [`entry`] 的
-//! `_start`）。哪几台进哪张镜像，仍只在 `programs::program::PROGRAMS` 每行的 `scenes` 里声明。
+//! `_start`）。哪几台进哪张镜像，仍只在 `programs::program::PROGRAMS` 每行的 `wanted_by` 里声明。
 //!
 //! **表归主人**：四张硬件需求单在**收方**（今天住 `programs::program`——装配表本就要把那一格
 //! 摆出来，故与它同层：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在

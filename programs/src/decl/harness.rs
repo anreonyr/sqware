@@ -339,7 +339,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
 pub static CHURN: Program = Program {
     identity: Identity {
         name: "churn",
-        scenes: &["again"],
+        wanted_by: &["again"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -350,7 +350,7 @@ pub static RIG: Program = Program {
     identity: Identity {
         name: "rig",
         space: ProgramKind::Supervisor,
-        scenes: &["rig"],
+        wanted_by: &["rig"],
         entry: &["rig"],
         ..Identity::DEFAULT
     },
@@ -361,7 +361,7 @@ pub static RIG: Program = Program {
 pub static BUSY: Program = Program {
     identity: Identity {
         name: "busy",
-        scenes: &["load"],
+        wanted_by: &["load"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -371,7 +371,7 @@ pub static BUSY: Program = Program {
 pub static PARK: Program = Program {
     identity: Identity {
         name: "park",
-        scenes: &["load"],
+        wanted_by: &["load"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -381,7 +381,7 @@ pub static PARK: Program = Program {
 pub static HANG: Program = Program {
     identity: Identity {
         name: "hang",
-        scenes: &["rig"],
+        wanted_by: &["rig"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -392,7 +392,7 @@ pub static LOAD: Program = Program {
     identity: Identity {
         name: "load",
         space: ProgramKind::Supervisor,
-        scenes: &["load"],
+        wanted_by: &["load"],
         entry: &["load"],
         ..Identity::DEFAULT
     },
@@ -404,7 +404,7 @@ pub static BEAT: Program = Program {
     identity: Identity {
         name: "beat",
         space: ProgramKind::Supervisor,
-        scenes: &["beat"],
+        wanted_by: &["beat"],
         entry: &["beat"],
         ..Identity::DEFAULT
     },
@@ -416,7 +416,7 @@ pub static AGAIN: Program = Program {
     identity: Identity {
         name: "again",
         space: ProgramKind::Supervisor,
-        scenes: &["again"],
+        wanted_by: &["again"],
         entry: &["again"],
         ..Identity::DEFAULT
     },
@@ -427,7 +427,7 @@ pub static AGAIN: Program = Program {
 pub static WAITER: Program = Program {
     identity: Identity {
         name: "waiter",
-        scenes: &["group"],
+        wanted_by: &["group"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -438,7 +438,7 @@ pub static GROUP: Program = Program {
     identity: Identity {
         name: "group",
         space: ProgramKind::Supervisor,
-        scenes: &["group"],
+        wanted_by: &["group"],
         entry: &["group"],
         ..Identity::DEFAULT
     },

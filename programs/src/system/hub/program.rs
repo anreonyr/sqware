@@ -46,7 +46,7 @@ pub const READY: &str = "hub-ready";
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "hub",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

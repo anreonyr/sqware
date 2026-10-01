@@ -14,7 +14,7 @@ pub const E_RTC: Died = 12;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "rtc",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

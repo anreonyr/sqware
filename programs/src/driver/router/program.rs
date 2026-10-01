@@ -20,7 +20,7 @@ pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "router",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

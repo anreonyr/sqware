@@ -79,7 +79,7 @@ pub const E_CANONICAL: Died = 24;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "canonical",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

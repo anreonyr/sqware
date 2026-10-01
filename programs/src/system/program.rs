@@ -16,7 +16,7 @@ pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "system",
         space: ProgramKind::Supervisor,
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,

@@ -65,7 +65,7 @@ mod program;
 ///
 /// **照实记（本文件为什么只走 `Program` 上那四条窄面）**：装配声明拆成三块（身份 / 装配关系 /
 /// 需求，见 `programs/src/program.rs` 的头注）之后，宿主这一侧的读者**一个字段都不许碰**——
-/// 它只读"它是谁"那四样：`name()` / `space()` / `scenes()` / `entry()`。块再怎么挪，这四行不动。
+/// 它只读"它是谁"那四样：`name()` / `space()` / `wanted_by()` / `entry()`。块再怎么挪，这四行不动。
 /// （那四样里第三样从前叫 `kind()`——**它答的是空间（S/U）**，与"单元类型"同名不同事，改名见
 /// `programs/src/program.rs` 的照实记。）
 fn scenes() -> Vec<&'static str> {
@@ -88,15 +88,15 @@ fn entry_of(scene: &str) -> Option<&'static str> {
         .map(|p| p.name())
 }
 
-/// 这一景要装的程序（**装配表按 `scenes` 过滤**；次序即装载次序）。
+/// 这一景要装的程序（**装配表按 `wanted_by` 过滤**；次序即装载次序）。
 fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
     let picked: Vec<(&'static str, env::ProgramKind)> = program::PROGRAMS
         .iter()
-        // **两格滤**：进这一景（`scenes`）**且**是要起的服务（[`program::Kind::Service`]）。
-        // 两格判的不是同一句话：`scenes` 说"这一景要不要它"，`kind` 说"**它有没有身子**"——
+        // **两格滤**：进这一景（`wanted_by`）**且**是要起的服务（[`program::Kind::Service`]）。
+        // 两格判的不是同一句话：`wanted_by` 说"这一景要不要它"，`kind` 说"**它有没有身子**"——
         // 名单里那个[目标单元](program::Kind::Target)（这一趟装配自己）没有身子，**不许去找
         // `prog-scene` 那样的 bin**；即使它将来写上了自己的景，这一格也照旧不装它。
-        .filter(|p| p.scenes().contains(&scenario) && p.kind() == program::Kind::Service)
+        .filter(|p| p.wanted_by().contains(&scenario) && p.kind() == program::Kind::Service)
         .map(|p| (p.name(), p.space()))
         .collect();
     if picked.is_empty() {
@@ -116,7 +116,7 @@ fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
     let mut list: Vec<&'static program::Program> = program::PROGRAMS
         .iter()
         .copied()
-        .filter(|p| p.scenes().contains(&scenario) && p.listed())
+        .filter(|p| p.wanted_by().contains(&scenario) && p.listed())
         .collect();
     program::order_scene(&mut list).map_err(|why| match why {
         program::DepsFail::Unknown(name) => {

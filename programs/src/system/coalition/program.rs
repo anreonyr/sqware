@@ -11,7 +11,7 @@ pub const E_COALITION: Died = 16;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "coalition",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

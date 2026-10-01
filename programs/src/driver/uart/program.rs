@@ -14,7 +14,7 @@ pub const E_UART: Died = 9;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "uart",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

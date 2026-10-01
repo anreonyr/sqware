@@ -12,7 +12,7 @@ pub const E_TREE: Died = 10;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "operator",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

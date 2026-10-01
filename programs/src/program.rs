@@ -3,7 +3,7 @@
 //! ```text
 //!   每台自己的声明（pub static PROGRAM）──┐
 //!                                        ├─▶ PROGRAMS（只有引用，没有第二份定义）
-//!   image 按 scenes/entry 挑镜像 ─────────┘
+//!   image 按 wanted_by/entry 挑镜像 ─────────┘
 //!   编排域按 order 起、按 Assembly::assemble 装配
 //! ```
 //!
@@ -18,7 +18,8 @@
 //! | `Identity::name` | 35 | unit 名 | 不动 |
 //! | `Identity::kind` | 35 | **文件后缀**（`.service` / `.target`） | 不动（`SCENE` 那一台已经是 `Target`） |
 //! | `Identity::space` | 35 | （无对应：域这一层） | 不动 |
-//! | `Identity::scenes` ＋ `Identity::entry` | 35 ＋ 35 | **`WantedBy=`** ＋"在哪一相的第几手" | **合成一格 `wanted_by`** |
+//! | `Identity::wanted_by` | 22 | **`WantedBy=`**（景名即 target 名） | **已落**（原名 `scenes`） |
+//! | `Identity::entry` | **7** | （领头那一台：systemd 没有对应） | **不合**（量出来是两件事，见下） |
 //! | `Relation::after` | 23 | **`After=`** | **已落**（原名 `deps`） |
 //! | `Relation::restart` | 23 | **`Restart=`**（寿命那一档） | **已落**（原名 `ending`） |
 //! | `Relation::bind` | 23（22 `true` / 1 `false`） | （无对应） | **待裁** |
@@ -37,7 +38,7 @@
 //!
 //! ## 落法（一刀一格，每刀同一套验收）
 //!
-//! ① `deps → after`（纯改名）；② `restart → restart`（纯改名）；③ `scenes ＋ entry → wanted_by`（合，
+//! ① `deps → after`（纯改名）；② `restart → restart`（纯改名）；③ `wanted_by ＋ entry → wanted_by`（合，
 //! 动 `crates/image` 那两处读者）；④ `setup → supply`（`Ready` 推得出来、`Machine` 只有设备账那一台）；
 //! ⑤ 两处待裁按裁定落。**每刀都走**：`cargo check --workspace` ＋ release/debug 起 ＋ `scene root`
 //! qtest ＋ 读数 A/B（16 条 ＋ `system: gone` 23 行 ＋ 装配次序逐字）。
@@ -80,14 +81,14 @@ pub type Died = env::Reason;
 
 // **照实记（`Spot` 那一格退场：29 处写、0 处读）**：它叫"角色"，答"这一台是什么"
 // （域 / 常驻服务 / 控制台 / 常客 / 探针 / 压测台）——而**全仓没有一个读者**：打包那一侧按
-// `scenes` / `entry` 挑镜像，装配那一侧按 `Relation` 那几条边走，`Spot` 一次都没被问过。
+// `wanted_by` / `entry` 挑镜像，装配那一侧按 `Relation` 那几条边走，`Spot` 一次都没被问过。
 //
 // **它从前不是死格，而是一格"按角色推事实"的钩子**——那正是最贵的那种格：`Start::code`
 // 那三组硬编码就是按角色推出来的（量与代价见 `crates/env/src/fail.rs` 那一族的照实记），
 // 而它自己的注释里也早写着"**不许拿它当'装不装'用**"。**原话留档**：这一格最早有一个变体叫
 // `Product`，注释写着"去掉它，机器不成机器"——`product` 那一景一到，当场把这句话证伪（六位
 // 常客全去掉，机器照起照停）。⇒ 按那条纪律办：**事实放在产生它的那一点**——"进哪几张镜像"住
-// `scenes`、"先起谁"住 `after`、"它走了谁等"住 `restart`；角色这一句，谁都不读，故不写。
+// `wanted_by`、"先起谁"住 `after`、"它走了谁等"住 `restart`；角色这一句，谁都不读，故不写。
 
 /// **一台程序**：它的身份、它在装配图里的边、它起手要什么——**三块分开**。
 ///
@@ -114,7 +115,7 @@ impl Program {
     // ── 身份那四样只读面：宿主那侧（`crates/image`）与装配者都不伸手进块里 ──
     //
     // **照实记（为什么开这四扇门）**：`crates/image` 原先直接读 `p.name` / `p.kind` /
-    // `p.scenes` / `p.entry`——拆块那一刀一到，那四处就会**跟着块的形状碎**，而它不是本仓的
+    // `p.wanted_by` / `p.entry`——拆块那一刀一到，那四处就会**跟着块的形状碎**，而它不是本仓的
     // 装配方（宿主只打包），不该被卷进"三块怎么分"这件事。故给 `Program` 留这四条窄面：
     // 宿主读的永远是"它是谁"，块再怎么挪，这四行不动。
 
@@ -134,8 +135,8 @@ impl Program {
     }
 
     /// 进哪几张引导镜像（景名）。
-    pub fn scenes(&self) -> &'static [&'static str] {
-        self.identity.scenes
+    pub fn wanted_by(&self) -> &'static [&'static str] {
+        self.identity.wanted_by
     }
 
     /// 它是哪几张景的引导镜像。
@@ -178,7 +179,7 @@ pub enum Kind {
 /// 进哪几张景、是不是引导镜像。
 ///
 /// **它是谁与它怎么被接进来是两件事**：`crates/image` 那台宿主只读这一块（且只走
-/// [`Program::name`] 那**四**条窄面：`name` / `space` / `scenes` / `entry`），装配关系与需求
+/// [`Program::name`] 那**四**条窄面：`name` / `space` / `wanted_by` / `entry`），装配关系与需求
 /// 一概与打包无关。
 ///
 /// **照实记（这块里为什么有"单元类型"）**：`kind` 那一格（[`Kind`]）答的是"它是哪一种单元"
@@ -197,10 +198,24 @@ pub struct Identity {
     /// 一个说"它跑在哪个特权空间"，一个说"它是哪一种单元"，两件事。故按它真正答的那句话改名
     /// （与 `env::ProgramKind` 那两个变体 `Supervisor` / `User` 对应的是"空间"，不是"种类"）。
     pub space: ProgramKind,
-    /// 进哪几张引导镜像（**景名**）——**次序即装载次序**。
-    pub scenes: &'static [&'static str],
-    /// **它是哪几张景的引导镜像**（多数为空）。一个景存在 ⇔ 它有一条引导镜像，故这张表
-    /// 也是"有哪些景"的唯一一览（从前那格 `ENTRY` 并进了这里）。
+    /// **`WantedBy=`**（systemd 同名那一格）：**哪几张景要我**（景名即 target 名——`SCENE` 那一台
+    /// 就是 `.target`，见 [`Kind::Target`]）——**次序即装载次序**。
+    ///
+    /// **照实记（它原名 `scenes`，这一刀改成 `wanted_by`）**：`scenes` 说的是"我在哪几张景里"，
+    /// 读起来像一句**关于自己的描述**；而这一格在装配那一侧说的是**别的东西**：**那几张景把我列进
+    /// 它们的单子**（`crates/image` 按它挑镜像、装配者按它起台）。借 systemd 同名那一格说死：
+    /// **谁要我**，不是"我在哪"。
+    pub wanted_by: &'static [&'static str],
+    /// **它是哪几张景的领头那一台**（**多数为空：全仓只有 7 处写它**）。一个景存在 ⇔ 它有一条
+    /// 领头台，故这张表也是"有哪些景"的唯一一览（从前那格 `ENTRY` 并进了这里）。
+    ///
+    /// **照实记（它与 [`Identity::wanted_by`] 是两件事，故这一刀没有合它们）**：层四的施工图
+    /// 里我原先写着"合 `scenes ＋ entry → wanted_by`"——**量了一遍就推翻了**：全仓写 `wanted_by`
+    /// 的 **22** 处（哪几张景要我）、写 `entry` 的只有 **7** 处（`root` 那一台要 `root` 与
+    /// `product` 两张、其余六处是压测台各自的景 `rig` / `load` / `beat` / `again` …）。一张是
+    /// **"谁把我列进单子"**（22 台都答），一张是 **"我替哪张景拿主意"**（只有领头那几台答）
+    /// ⇒ 合起来会把"绝大多数台不领头"这件事**藏进一个看起来人人都有写的字段里**。
+    /// **故只改 `wanted_by` 那个名，`entry` 原样留着。**
     pub entry: &'static [&'static str],
 }
 
@@ -248,7 +263,7 @@ pub enum Ending {
 pub const SCENE: &str = "scene";
 
 /// **这一趟装配本身**——名单里的那个[目标单元](Kind::Target)：**没有身子、不进任何镜像**（宿主
-/// 那一侧按 `scenes` 与 `kind` 两格把它滤掉），它对这张单的贡献只有一件事：**给"这一趟走完"
+/// 那一侧按 `wanted_by` 与 `kind` 两格把它滤掉），它对这张单的贡献只有一件事：**给"这一趟走完"
 /// 一个落点**（[`SCENE`] 那条边指着它）。
 ///
 /// **它为什么住本文件**（照实记）：各台自己那份 `program.rs` 的判据是"声明紧挨着它的身子"
@@ -258,7 +273,7 @@ pub static SCENE_UNIT: Program = Program {
     identity: Identity {
         name: SCENE,
         kind: Kind::Target,
-        scenes: &[],
+        wanted_by: &[],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
@@ -415,7 +430,7 @@ impl Identity {
         name: "",
         kind: Kind::Service,
         space: ProgramKind::User,
-        scenes: &["root"],
+        wanted_by: &["root"],
         entry: &[],
     };
 }
@@ -453,7 +468,7 @@ impl Demand {
 // 里多出来的是一条**构造上到不了**的分支（唯一消费者是 [`Control::spawn`] 那一行）。
 //
 // **它要回来的话，回来的是一本账**（[`crate::system::source`] 那种读面），不是声明上一个变体：
-// 打包那一侧按 `scenes` / `entry` 决定镜像进哪本账，装配那一侧只问"那一段字节在哪"。
+// 打包那一侧按 `wanted_by` / `entry` 决定镜像进哪本账，装配那一侧只问"那一段字节在哪"。
 
 /// 实例化一台要多做的一手。
 ///
@@ -579,7 +594,7 @@ pub mod system;
 pub mod uart;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`
-/// 按位次算），且各景按 [`Program::scenes`] 过滤 ⇒ 加一台要想清楚放哪。
+/// 按位次算），且各景按 [`Program::wanted_by`] 过滤 ⇒ 加一台要想清楚放哪。
 ///
 /// **本表只有引用**：每一台的声明都在它自己那份 `program.rs` 里，这里不再写第二遍。
 ///
@@ -630,7 +645,7 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::WAITER,
     &harness::GROUP,
     // **这一趟装配本身**（[`SCENE_UNIT`]）：一个[目标单元](Kind::Target)——没有身子、不进任何
-    // 镜像（宿主那一侧按 `scenes` 与 `kind` 两格滤掉），它在这张表里只为"这一趟走完"给一个落点。
+    // 镜像（宿主那一侧按 `wanted_by` 与 `kind` 两格滤掉），它在这张表里只为"这一趟走完"给一个落点。
     &SCENE_UNIT,
 ];
 

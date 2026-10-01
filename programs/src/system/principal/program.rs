@@ -13,7 +13,7 @@ pub const E_PRINCIPAL: Died = 14;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "principal",
-        scenes: &["root", "product"],
+        wanted_by: &["root", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {
