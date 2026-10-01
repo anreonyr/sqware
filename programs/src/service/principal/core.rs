@@ -200,6 +200,17 @@ impl Principal {
         Ok(())
     }
 
+    /// 转换 · **丢**：把这一格**从册里去掉**——**不再代表任何人**（与 `bind` 相对）。
+    /// **"没有身份"就是"册里没有那一行"**（`resolve` 的定义）⇒ 不设哨兵值、不动 `resolve` 的语义。
+    pub fn drop(&mut self, from: TaskId) -> Result<(), Fail> {
+        let before = self.roster.len();
+        self.roster.retain(|r| r.tid != from);
+        if self.roster.len() == before {
+            return Err(Fail::Unknown);
+        }
+        Ok(())
+    }
+
     /// 树上一格（树外答 `None`）。
     fn node(&self, p: PrincipalId) -> Option<&Node> {
         self.tree.get(p.get())

@@ -72,5 +72,6 @@ crate::faces! {
         Wire::Derive(_) => Set,
         Wire::Adopt(_) => Set,
         Wire::Waive => Set,
+        Wire::Drop => Set,
     }
 }

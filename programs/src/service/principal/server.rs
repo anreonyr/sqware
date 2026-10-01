@@ -256,5 +256,9 @@ fn answer(
             Ok(()) => pcall::Reply::status(pcall::OK),
             Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
         },
+        pcall::Wire::Drop => match book.drop(from) {
+            Ok(()) => pcall::Reply::status(pcall::OK),
+            Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))),
+        },
     }
 }

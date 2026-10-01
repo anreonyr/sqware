@@ -202,6 +202,15 @@ impl Principal<'_> {
         decode(reply).map(|_| ())
     }
 
+    /// 转换 · **丢**：把这一格的当前号**置空**——**不再代表任何人**（与 [`Principal::waive`] 相对：
+    /// `waive` 是"写回起点"、身份还在）。此后 `resolve` 答 `None` ⇒ 门禁第一条判据
+    /// （"没绑身份 ⇒ 拒绝"）对它是真的。见 `harness/src/probe_denied.rs` 的头注。
+    /// **走写面**（`Grant::Set`）：读手问在写面上会被门拒（第 69 轮那条账）。
+    pub fn drop(&self, wait: Wait) -> Result<(), Fail> {
+        let reply = self.face.call(frame::Req::Drop, wait)?;
+        decode(reply).map(|_| ())
+    }
+
     /// 谱系 · 读：直接父。**三态**——`Some` / `None`（它是根）/ `Err(Unknown)`（树外）。
     pub fn sire(&self, wait: Wait) -> Result<Option<Principal<'_>>, Fail> {
         let reply = self.face.call(frame::Req::Sire(self.at), wait)?;

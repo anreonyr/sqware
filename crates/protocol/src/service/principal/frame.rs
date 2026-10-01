@@ -122,6 +122,8 @@ pub const HEIR: u8 = 5;
 pub const ADOPT: u8 = 6;
 /// 转换 · 弃：两格都空——它只认"发送者是谁"。
 pub const WAIVE: u8 = 7;
+/// `DROP`：**丢**——把这一格当前号置空（"不再代表任何人"），与 `WAIVE`（写回起点）相对。
+pub const DROP: u8 = 8;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -163,6 +165,8 @@ pub enum Req {
     Adopt(PrincipalId),
     /// `WAIVE`：转换 · 弃——**两格都空**（它只认"发送者是谁"）。
     Waive,
+    /// `DROP`：转换 · 丢——把当前号置空（也只认"发送者是谁"）。
+    Drop,
     /// `SIRE`：`a` 的父是谁。
     Sire(PrincipalId),
     /// `HEIR`：`a` 在 `b` 那一支里吗（**两格都用**）。
@@ -178,6 +182,7 @@ impl Req {
             Req::Derive(p) => (DERIVE, p.get() as u64, 0),
             Req::Adopt(p) => (ADOPT, p.get() as u64, 0),
             Req::Waive => (WAIVE, 0, 0),
+            Req::Drop => (DROP, 0, 0),
             Req::Sire(p) => (SIRE, p.get() as u64, 0),
             Req::Heir(a2, b2) => (HEIR, a2.get() as u64, b2.get() as u64),
         };
@@ -193,6 +198,7 @@ pub enum Wire {
     Derive(PrincipalId),
     Adopt(PrincipalId),
     Waive,
+    Drop,
     Sire(PrincipalId),
     Heir(PrincipalId, PrincipalId),
 }
@@ -215,6 +221,7 @@ impl Wire {
             DERIVE => Some(Wire::Derive(PrincipalId::new(q.a as usize))),
             ADOPT => Some(Wire::Adopt(PrincipalId::new(q.a as usize))),
             WAIVE => Some(Wire::Waive),
+            DROP => Some(Wire::Drop),
             SIRE => Some(Wire::Sire(PrincipalId::new(q.a as usize))),
             HEIR => Some(Wire::Heir(
                 PrincipalId::new(q.a as usize),

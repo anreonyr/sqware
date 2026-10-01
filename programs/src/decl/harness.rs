@@ -148,7 +148,6 @@ pub static PROBE_DENIED: UnitFile = UnitFile {
     },
     relation: Relation {
         after: Some(&["operator"]),
-        bind: false,
         restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },

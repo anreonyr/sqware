@@ -141,6 +141,8 @@ extern crate alloc;
 extern crate programs;
 
 use env::Wait;
+use protocol::service::operator::path::Path;
+use env::PieToken;
 use programs::Report;
 
 use alloc::format;
@@ -149,6 +151,8 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine};
+use protocol::service::principal as pcall;
+use protocol::service::principal::client::Face as PrincipalFace;
 use protocol::service::operator::{Fail, Permit};
 
 use runtime::env::mail;
@@ -183,6 +187,34 @@ fn main() -> Report<'static> {
         return bail("probe-denied: no tree link");
     };
     let tree = TreeFace::of(session);
+    // **丢掉自己的身份**（"撤 `Relation::bind`"的落法）：本域照旧被装配者绑过，这里主动丢掉。
+    // **读走 `Ask` 面、写走 `Set` 面**——第 69 轮量到：把读手（`Resolve`）问在写面上会被门拒。
+    let Some(aroad) = pcall::DIR.try_join(pcall::Grant::Ask.name()) else {
+        return bail("probe-denied: bad principal ask name");
+    };
+    let Some(aentry) = find_face(&tree, &aroad) else {
+        return bail("probe-denied: no principal ask face");
+    };
+    let Ok(aread) = PrincipalFace::of(aentry) else {
+        return bail("probe-denied: bad principal ask face");
+    };
+    let ask_view = aread.task(utask::self_id());
+    let Ok(Some(who)) = ask_view.principal(Wait::AtMost(MS)) else {
+        return bail("probe-denied: no identity to drop");
+    };
+    let Some(sroad) = pcall::DIR.try_join(pcall::Grant::Set.name()) else {
+        return bail("probe-denied: bad principal set name");
+    };
+    let Some(sentry) = find_face(&tree, &sroad) else {
+        return bail("probe-denied: no principal set face");
+    };
+    let Ok(awrite) = PrincipalFace::of(sentry) else {
+        return bail("probe-denied: bad principal set face");
+    };
+    if awrite.principal(who.id()).drop(Wait::AtMost(MS)).is_err() {
+        return bail("probe-denied: cannot drop its own identity");
+    }
+
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `uart` / `rtc` 上树那一趟同一形状）。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
@@ -251,4 +283,22 @@ fn main() -> Report<'static> {
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);
+}
+
+fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
+    let root = tree.root();
+    let mut left = MS;
+    loop {
+        match root
+            .tile(road, Wait::AtMost(MS))
+            .and_then(|entry| entry.token(Wait::AtMost(MS)))
+        {
+            Ok(entry) => return Some(entry),
+            Err(Fail::Unknown) if left > 0 => {
+                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                left = left.saturating_sub(1);
+            }
+            Err(_) => return None,
+        }
+    }
 }
