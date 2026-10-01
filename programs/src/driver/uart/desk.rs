@@ -28,7 +28,7 @@ use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
 use programs::program::uart::E_UART;
-use programs::system::operator::bridge;
+use programs::service::operator::bridge;
 use protocol::debug;
 use protocol::driver;
 use protocol::driver::line::client::Line;

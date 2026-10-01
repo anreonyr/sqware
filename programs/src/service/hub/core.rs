@@ -236,7 +236,7 @@ impl Ledger {
     /// **为什么不是从 [`Ledger::list`] 推**：那一窗给的是名字 ＋ 有主掩码（客人的读数），
     /// 而这一手给的是**孔**——落格与挂组要的正是"哪一枚孔是这一台的"。
     ///
-    /// [`bridge::land`]: crate::system::operator::bridge::land
+    /// [`bridge::land`]: crate::service::operator::bridge::land
     pub fn doors(&self, class: String) -> impl Iterator<Item = (&String, PieToken)> + '_ {
         self.cells
             .iter()

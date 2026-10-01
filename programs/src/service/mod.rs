@@ -7,8 +7,9 @@
 //! ⇒ 先搬最小的那一个，其余逐个来）。
 //!
 //! **搬过的**：`hub`（设备账那一台）·`coalition`（盟册那一台）·`principal`（名册那一台）。
-//! **`system/` 里还剩 `operator`**（178 处引用）——最后一刀（量过的数见它自己那份头注）。
+//! **四台域搬完**（`hub` / `coalition` / `principal` / `operator`）——实现侧这一半到此为止。
 
 pub mod coalition;
+pub mod operator;
 pub mod principal;
 pub mod hub;

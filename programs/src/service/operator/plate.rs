@@ -19,7 +19,7 @@ use protocol::service::operator::path::Path;
 use protocol::service::operator::{Permit, Rule, Where};
 use protocol::service::principal::PrincipalId;
 
-use crate::system::operator::core::Operator;
+use crate::service::operator::core::Operator;
 
 /// **走前缀**：从根起逐段把窗格立出来（`part` 幂等），返**末段该落在的那一块**。
 ///

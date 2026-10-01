@@ -53,7 +53,7 @@ use crate::program::{Died, Program};
 use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
-use crate::system::operator::bridge::Tree;
+use crate::service::operator::bridge::Tree;
 use crate::service::principal::bridge::Roster;
 
 pub mod assemble;
@@ -71,7 +71,6 @@ pub mod control;
 pub mod desk;
 pub mod machine;
 pub mod mount;
-pub mod operator;
 pub mod schedule;
 pub mod source;
 
@@ -256,10 +255,14 @@ impl Assembly {
     /// 一直是设门的 `debug!`。实测（同一份 release `root` 景、喂 `exit`）：
     /// `grep -c 'grant mounted at'` **0**、`'control mounted at'` **0**（本刀之前）；
     /// **7 ＋ 4**（本刀之后）。本刀把那 11 句（四面 ＋ 七位）连同 [`fail`] 那两句、
-    /// `operator::bridge::land` 那一句、`operator::claim` 那一句、持树者那四句一并改成
+    /// `crate::service::operator::bridge::land` 那一句、`crate::service::operator::claim` 那一句、持树者那四句一并改成
     /// [`debug::put`](protocol::debug::put)（不设构建门的那一手）：**只拼需要拼的**
     /// （`&'static str` 直接递，其余才 `format!`）。
-    fn mount_grants(&mut self) {
+    // **照实记（与那四格同一条：层六·3 搬域时露出来的第二处）**：这一手原先私有于 `system`——
+    // 各域的 `bridge.rs` 住在 `system/` 底下时看得见；`operator` 那台搬到 `service/` 之后，编译
+    // 当场报 `method mount_grants is private`。改成 **`pub(crate)`**：它本来就只给本 crate 里的人用
+    // （装配者与持树者那一手），改的是把"原本靠父子关系才成立的可见性"写明。
+    pub(crate) fn mount_grants(&mut self) {
         // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::service::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {

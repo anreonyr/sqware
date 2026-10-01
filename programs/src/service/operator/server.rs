@@ -39,7 +39,7 @@ use protocol::service::operator::grant::grant_of;
 use crate::program::operator::E_TREE;
 use crate::system::control::service::Start;
 use crate::system::desk::{Desk, DeskFail, Guest};
-use crate::system::operator::core::Operator;
+use crate::service::operator::core::Operator;
 
 use super::answer::answer;
 use super::claim::{ask_of, mark_of, reply_of};
@@ -340,7 +340,7 @@ fn settle(
 /// - 这一位**不在账上**（连名字都没进过 [`Desk`]）⇒ 提示那条单槽路上那一帧没到，或撞了
 ///   `desk full` / `no reply`（那两句也在本刀里改成 release 可见）；
 /// - 在账上、八枚记号**一枚都不中**（`ask=none`）⇒ 它那枚问话孔**不在本表里**；
-/// - 在账上、`ask=some` 却一直挂着 ⇒ [`crate::system::operator::server::settle`] 里
+/// - 在账上、`ask=some` 却一直挂着 ⇒ [`crate::service::operator::server::settle`] 里
 ///   `pile.attach` 那一手没成（`arm_pending` 会 `unarm` 回退）。
 ///
 /// **这一手只读**：它不 arm、不 attach、不动账——诊断不许变成副作用。

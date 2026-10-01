@@ -31,9 +31,9 @@ use protocol::service::operator::{EntryId, Fail, Permit};
 use protocol::service::principal::client::Face as PrincipalFace;
 use protocol::service::principal::{Grant as PrincipalGrant, PrincipalId};
 
-use crate::system::operator::core::Operator;
-use crate::system::operator::core::gate::{Code, verdict};
-use crate::system::operator::core::judge::Facts;
+use crate::service::operator::core::Operator;
+use crate::service::operator::core::gate::{Code, verdict};
+use crate::service::operator::core::judge::Facts;
 
 use super::claim::face_of_mark;
 

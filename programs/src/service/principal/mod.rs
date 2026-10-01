@@ -1,6 +1,6 @@
 //! principal::实现侧 — **身份服务那一台**。
 //!
-//! 判据与 [`crate::system::operator`] 同款：**判定与接口**（正文、七条原语、帧、客侧那一面、
+//! 判据与 [`crate::service::operator`] 同款：**判定与接口**（正文、七条原语、帧、客侧那一面、
 //! 两面各一枚 `Grant`）住 `crates/protocol/src/system/principal/`；**实现方**（**独立域**，
 //! `prog-principal` 那一台）住这里。
 //!

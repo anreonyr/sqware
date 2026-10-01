@@ -19,7 +19,7 @@
 //! "死在哪一步"：`"grant"`（记号取不回）或 `"name"`（面名非法）。
 //!
 //! **本文件不管往树上立路**：那是装配者那一趟的事（组路在 `Assembly::mount_control` /
-//! `mount_grants`，递上去在 [`Tree::plate`](crate::system::operator::bridge::Tree::plate)，
+//! `mount_grants`，递上去在 [`Tree::plate`](crate::service::operator::bridge::Tree::plate)，
 //! 落由持树者自己走）。各族那一段路归**协议侧那一族的 `DIR`**（`/svc/sys/<族>`）——装配侧只引它。
 
 use alloc::string::String;

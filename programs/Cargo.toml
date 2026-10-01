@@ -75,7 +75,7 @@ doctest = false
 # 起手位次 0/1/2（持树者第一、名册第二、盟册第三），与 iii 之前逐字相同。
 [[bin]]
 name = "prog-operator"
-path = "src/system/operator/main.rs"
+path = "src/service/operator/main.rs"
 test = false
 bench = false
 doctest = false

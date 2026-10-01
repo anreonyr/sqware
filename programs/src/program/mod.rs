@@ -316,8 +316,8 @@ pub fn is_target(name: &str) -> bool {
 /// 而"是"这件事**要等它起来之后才成立**（它起手把提示之路交给生我者）——声明里写一句 `true`
 /// 只是**断言**：断言与实情分家的那一天，没有一处读得出来哪一边对。今天判据是**那一枚孔**：
 /// 本域表里有没有一枚**挂在它名下的 `TIP_MARK` 孔**（
-/// [`Tree::holds`](crate::system::operator::bridge::Tree::holds)，只看不铸），判它的那一手是
-/// [`hold`](crate::system::operator::bridge::hold)。**代价照实说**：从前"持树者没交出提示之路"
+/// [`Tree::holds`](crate::service::operator::bridge::Tree::holds)，只看不铸），判它的那一手是
+/// [`hold`](crate::service::operator::bridge::hold)。**代价照实说**：从前"持树者没交出提示之路"
 /// 报在**它**头上（`operator:tip`），今天报在**第一个要树的客人**头上（`Tree::attach` 的
 /// `no tree yet`）——同一景里读得出来，但那一条读数换了个人。
 ///
@@ -336,7 +336,7 @@ pub fn is_target(name: &str) -> bool {
 /// 份核）：写 `operator: true` 的正是 `after` 含 `"operator"` 的那 **21** 台，写 `false` 的 **0** 台；
 /// 余下 14 份里 12 份**没写** `after`（默认 `None`）、2 份写 `after: Some(&[])`（`passer` 与持树者
 /// 自己）——两处都空。今天那一手住在树那一轴自己那里
-/// （[`bridge::attach_client`](crate::system::operator::bridge::attach_client)），判据从这一台
+/// （[`bridge::attach_client`](crate::service::operator::bridge::attach_client)），判据从这一台
 /// 自己的 `after` 推——**同一句话只有一处**。
 #[derive(Clone, Copy)]
 pub struct Relation {

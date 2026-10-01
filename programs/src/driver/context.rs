@@ -30,7 +30,7 @@
 
 use crate::driver::fail::Fail;
 use crate::program::Died;
-use crate::system::operator::bridge;
+use crate::service::operator::bridge;
 use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
 use protocol::debug;

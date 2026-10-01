@@ -27,7 +27,7 @@ pub mod coalition;
 pub mod harness;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
-#[path = "../system/operator/program.rs"]
+#[path = "../service/operator/program.rs"]
 pub mod operator;
 #[path = "../service/principal/program.rs"]
 pub mod principal;

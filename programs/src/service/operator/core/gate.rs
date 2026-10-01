@@ -48,7 +48,7 @@ use super::judge::{Facts, judge};
 // ——两条依赖面有意不同，故这一份不伸手过去拿。
 //
 // **照实记（同步断言搬到本侧了）**：这三格与 `frame` 那三格的同步义务由
-// [`super`](crate::system::operator::core) 末尾那条 `const _: () = assert!(…)` 在编译期钉住
+// [`super`](crate::service::operator::core) 末尾那条 `const _: () = assert!(…)` 在编译期钉住
 // ——三份文件原先分住两个 crate（断言只能在 protocol 那一侧做），搬回同一侧之后
 // **同 crate 同见**，比原先更紧。
 pub const WIRE_OK: u8 = 0;

@@ -30,7 +30,7 @@ use env::Wait;
 use crate::system::carrier::carrier;
 use crate::service::coalition::core::Coalition;
 use crate::system::mount;
-use crate::system::operator::bridge;
+use crate::service::operator::bridge;
 use env::{PieToken, TaskId};
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
