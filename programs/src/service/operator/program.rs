@@ -4,7 +4,7 @@
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 
-/// 它死在起手哪一步（板 / 树 / 收帧那一页）；名册与盟册的起手号同族不同格。
+/// 它死在起手哪一步（板 / 树 / 收帧那一页）；名册与盟册的起手号同族不同格
 pub const E_TREE: Died = 10;
 
 pub static PROGRAM: UnitFile = UnitFile {

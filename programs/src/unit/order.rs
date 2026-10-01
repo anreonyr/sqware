@@ -2,19 +2,19 @@
 
 use super::{Setup, UnitFile, is_target};
 
-/// 图上说不通的那三种——每一种都报出**名字**。
+/// 图上说不通的那三种——每一种都报出**名字**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DepsFail {
-    /// 一条边指着本单里没有的台（名字）。
+    /// 一条边指着本单里没有的台（名字）
     Unknown(&'static str),
-    /// 被指着的那一台**没有凭据**（`demand.supply` 空 ⇒ 它交不出"我答得动"）。
+    /// 被指着的那一台**没有凭据**（`demand.supply` 空 ⇒ 它交不出"我答得动"）
     NoEvidence(&'static str),
-    /// 取不出可排的台 ⇒ 环（名字 = 卡住的那一个）。
+    /// 取不出可排的台 ⇒ 环（名字 = 卡住的那一个）
     Cycle(&'static str),
 }
 
-/// 的排**最后**。
-/// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（DepsFail）。
+/// 的排**最后**
+/// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（DepsFail）
 pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
     // 一、每条边都要落得下：指得到本单里的台，且那一台说得出"我答得动"。
     //     （见 SCENE 的头注）。
@@ -82,7 +82,7 @@ pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
     Ok(())
 }
 
-/// 它有两个读者，判的是同一句话：order_scene 据它把这一台排到最后（那一格要到那时才到点），
+/// 它有两个读者，判的是同一句话：order_scene 据它把这一台排到最后（那一格要到那时才到点）
 fn waits_scene(program: &UnitFile) -> bool {
     program
         .relation
@@ -90,7 +90,7 @@ fn waits_scene(program: &UnitFile) -> bool {
         .is_some_and(|deps| deps.iter().any(|name| is_target(name)))
 }
 
-/// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）。
+/// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）
 fn ready(list: &[&'static UnitFile], i: usize, placed: usize) -> bool {
     let Some(deps) = list[i].relation.after else {
         return true;
@@ -114,7 +114,7 @@ fn ready(list: &[&'static UnitFile], i: usize, placed: usize) -> bool {
     true
 }
 
-/// 本单里按名字找那一台（**只查不比存** ⇒ 借 `&str`）。
+/// 本单里按名字找那一台（**只查不比存** ⇒ 借 `&str`）
 fn find<'a>(list: &[&'a UnitFile], name: &str) -> Option<&'a UnitFile> {
     let mut i = 0;
     while i < list.len() {
@@ -126,7 +126,7 @@ fn find<'a>(list: &[&'a UnitFile], name: &str) -> Option<&'a UnitFile> {
     None
 }
 
-/// **这一台必须交"答得动"那条凭据吗**。
+/// **这一台必须交"答得动"那条凭据吗**
 pub fn needs_evidence(name: &str) -> bool {
     if is_target(name) {
         return false;

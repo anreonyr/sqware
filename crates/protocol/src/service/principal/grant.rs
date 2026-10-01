@@ -14,11 +14,11 @@
 use super::frame::Wire;
 
 crate::faces! {
-    /// **一条权柄边界**：一枚 = 一面。两位，位次 1..=2。
+/// **一条权柄边界**：一枚 = 一面。两位，位次 1..=2
     pub enum Grant {
-        /// **问面**：`Resolve` / `Sire` / `Heir`——只读，不改任何一个字。
+/// **问面**：`Resolve` / `Sire` / `Heir`——只读，不改任何一个字
         Ask => "ask",
-        /// **定面**：`Bind` / `Derive` / `Adopt` / `Waive`——改身份或改谱系。
+/// **定面**：`Bind` / `Derive` / `Adopt` / `Waive`——改身份或改谱系
         Set => "set",
     }
     stem: "principal-",

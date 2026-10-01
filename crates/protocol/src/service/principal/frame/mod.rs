@@ -1,4 +1,4 @@
-//! principal 的帧那一半 —— 帧与码（内核那两只手的别名在 protocol 那一侧的 mod.rs）。
+//! 帧与码
 
 use crate::wire::id::Id;
 use env::{Mark, PieToken, TaskId};
@@ -16,9 +16,9 @@ impl Id for PrincipalId {
     }
 }
 
-/// 这一枚号在线上是 **8 字节小端**——口径与 operator::EntryId 那一处相同（**impl 跟着类型走**，
+/// 这一枚号在线上是 **8 字节小端**——口径与 operator::EntryId 那一处相同（**impl 跟着类型走**
 /// `env` 不认识 PrincipalId）。读的那一侧**不校验"还在不在"**：解出来的号在不在谱系里由
-/// 核心答。
+/// 核心答
 impl env::wire::Field for PrincipalId {
     const WIDTH: usize = 8;
 
@@ -32,30 +32,30 @@ impl env::wire::Field for PrincipalId {
 }
 
 /// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
-/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）。
+/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）
 pub use crate::wire::OK;
 
 pub use crate::wire::frame::{Query, Reply};
 
 /// **一问的形状**——一条动作一格：`a` / `b` 两格在该动作里有几个就有几个（"只填 a"那几条
-/// **再没有第二个号可填**）。
+/// **再没有第二个号可填**）
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
-    /// `BIND`：`a` = 哪一枚线程、`b` = 绑成谁。
+    /// `BIND`：`a` = 哪一枚线程、`b` = 绑成谁
     Bind(TaskId, PrincipalId),
-    /// `RESOLVE`：这一枚线程此刻代表谁（`a` 一格）。
+    /// `RESOLVE`：这一枚线程此刻代表谁（`a` 一格）
     Resolve(TaskId),
-    /// `DERIVE`：从 `a` 派生一条新号。
+    /// `DERIVE`：从 `a` 派生一条新号
     Derive(PrincipalId),
-    /// `ADOPT`：转换 · 领——认 `a` 为父。
+    /// `ADOPT`：转换 · 领——认 `a` 为父
     Adopt(PrincipalId),
-    /// `WAIVE`：转换 · 弃——**两格都空**（它只认"发送者是谁"）。
+    /// `WAIVE`：转换 · 弃——**两格都空**（它只认"发送者是谁"）
     Waive,
-    /// `DROP`：转换 · 丢——把当前号置空（也只认"发送者是谁"）。
+    /// `DROP`：转换 · 丢——把当前号置空（也只认"发送者是谁"）
     Drop,
-    /// `SIRE`：`a` 的父是谁。
+    /// `SIRE`：`a` 的父是谁
     Sire(PrincipalId),
-    /// `HEIR`：`a` 在 `b` 那一支里吗（**两格都用**）。
+    /// `HEIR`：`a` 在 `b` 那一支里吗（**两格都用**）
     Heir(PrincipalId, PrincipalId),
 }
 
@@ -75,7 +75,7 @@ impl Req {
     }
 }
 
-/// **收进来的一问**（那两格号已经解成两个模型类型——线上只有数字，意义在动作码那一格）。
+/// **收进来的一问**（那两格号已经解成两个模型类型——线上只有数字，意义在动作码那一格）
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wire {
     Bind(TaskId, PrincipalId),
@@ -89,9 +89,9 @@ pub enum Wire {
 }
 
 impl Wire {
-    /// 解一问：`(读出来的动作, 回信孔那一格)`——**动作读不出来给内层那个 `None`**（表外的动作码：
+    /// 解一问：`(读出来的动作, 回信孔那一格)`——**动作读不出来给内层那个 `None`**（表外的动作码
     /// 这一问**有回信的路**，只是这一码我不认 ⇒ 持册者答一句 `BAD`）；**长度不对给外层那个
-    /// `None`**（连"往哪回"都没有 ⇒ 不动账、也不回话）。
+    /// `None`**（连"往哪回"都没有 ⇒ 不动账、也不回话）
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
         if bytes.len() != Query::LEN {
             return None;
@@ -119,7 +119,7 @@ impl Wire {
     }
 }
 
-/// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）。
+/// 编一答：`OK` + **有没有** + 一个号（`RESOLVE` 的"绑没绑"、`SIRE` 的"有没有父"）
 pub fn reply_present(present: bool, at: PrincipalId) -> Reply {
     Reply {
         flag: present,

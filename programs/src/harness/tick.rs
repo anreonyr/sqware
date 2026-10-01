@@ -1,7 +1,7 @@
 //! 各程序共用的测时与空转（见 crate::tick：这些程序互不依赖，
 //! 共享的只有这一份"怎么量时间"）。
 //! # 域能读到的钟只有一格
-//! Chrono::Ticks 数是**内核的定时器中断**（`timer::tick()`），不是时基——实测它的间隔就是
+//! :Ticks 数是**内核的定时器中断**（`timer::tick()`），不是时基——实测它的间隔就是
 //! `iters_per_tick` 由空转一段数出来（**等一次完整的刻度间隔**，不是半格）。
 //! 这些程序量的是同一把尺：受害者据此把"在台上"做成 1 ms，台主据此把"点名时刻"扫到微秒。
 
@@ -10,16 +10,16 @@ use core::time::Duration;
 use runtime::env::chrono;
 use runtime::env::room;
 
-/// 一段"在台上"的目标时长（毫秒）：与 `churn` 的睡眠段一样长 ⇒ 一半在台上、一半离核。
+/// 一段"在台上"的目标时长（毫秒）：与 `churn` 的睡眠段一样长 ⇒ 一半在台上、一半离核
 pub const BURST_MS: usize = 1;
 
-/// 量刻度换换算时，一次空转的块大小。
+/// 量刻度换换算时，一次空转的块大小
 const CHUNK: usize = 4_096;
 
-/// 量 `iters_per_tick` 时最多数多少块（刻度要是一直不动也不至于挂住）。
+/// 量 `iters_per_tick` 时最多数多少块（刻度要是一直不动也不至于挂住）
 const MAX_CHUNKS: usize = 4_096;
 
-/// 空转 `n` 轮。读一个从不改的量再 `black_box` 掉——不然整段会被优化没。
+/// 空转 `n` 轮。读一个从不改的量再 `black_box` 掉——不然整段会被优化没
 pub fn spin(n: usize) {
     static SEED: usize = 11;
     let mut acc = SEED;
@@ -30,7 +30,7 @@ pub fn spin(n: usize) {
     core::hint::black_box(acc);
 }
 
-/// 空转**约** `iters` 轮。
+/// 空转**约** `iters` 轮
 pub fn spin_iters(iters: usize) {
     spin(iters);
 }
@@ -39,9 +39,9 @@ fn now() -> usize {
     chrono::ticks()
 }
 
-/// 量本机两件事：`(每毫秒的空转轮数, 每刻度多少毫秒)`。
-/// 刻度 = 定时器中断计数：先量它一格有多久（用 `sleep` 当基准，**不假设**它是 100 ms），
-/// 再空转着数满**一整格**（等计数从 `a` 走到 `a+1`），于是 `iters_per_tick` 是真的整格。
+/// 量本机两件事：`(每毫秒的空转轮数, 每刻度多少毫秒)`
+/// 刻度 = 定时器中断计数：先量它一格有多久（用 `sleep` 当基准，**不假设**它是 100 ms）
+/// 再空转着数满**一整格**（等计数从 `a` 走到 `a+1`），于是 `iters_per_tick` 是真的整格
 pub fn calibrate() -> (usize, usize) {
     // 一格多少毫秒：睡 200 ms，看计数动了几格。
     let t0 = now();
@@ -65,7 +65,7 @@ pub fn calibrate() -> (usize, usize) {
     (iters_per_tick / ms_per_tick, ms_per_tick)
 }
 
-/// 等到刻度计数**大于** `from`，返那一刻的计数。
+/// 等到刻度计数**大于** `from`，返那一刻的计数
 fn wait_tick(from: usize) -> usize {
     for _ in 0..MAX_CHUNKS {
         let t = now();

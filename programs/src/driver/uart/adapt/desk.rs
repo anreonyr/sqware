@@ -30,16 +30,16 @@ const TX: &str = "tx";
 const TX_MARK: &str = "uart-tx";
 
 pub struct Desk {
-    /// 位置；`ctx.entry` = 读口（`publish` 往它推）。
+    /// 位置；`ctx.entry` = 读口（`publish` 往它推）
     pub ctx: Context,
     pub line: Line,
     pub tx: HolePie,
-    /// **那一台**（寄存器页的映射）——常驻那一圈每醒一次读它。
+    /// **那一台**（寄存器页的映射）——常驻那一圈每醒一次读它
     pub dev: Device,
 }
 
-/// 起手：铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌（**自证**）→ 认领设备 → 开闸 → 占线。
-/// 失败那几格说**步名**（`tree` / `hub` / `bond` / `list` / `claim` / `name`）。
+/// 起手：铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌（**自证**）→ 认领设备 → 开闸 → 占线
+/// 失败那几格说**步名**（`tree` / `hub` / `bond` / `list` / `claim` / `name`）
 pub fn start(ms: Wait) -> Result<Desk, Fail> {
     let rx = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(E_UART, "tree"))?;
     let tx = mail::unseal_hole(Mark::of(TX_MARK)).map_err(|_| Fail::at(E_UART, "tree"))?;
@@ -79,8 +79,8 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     })
 }
 
-/// → `rx` / `tx` 各一枚 Tile → 各查回来一遍（号 ↔ 名对得上才算那枚号是真坐标）。
-/// （`plate` 那一形是"一枚门牌"，而控制台是双向的 ⇒ 两枚砖同挂一块窗格下）。
+/// → `rx` / `tx` 各一枚 Tile → 各查回来一遍（号 ↔ 名对得上才算那枚号是真坐标）
+/// （`plate` 那一形是"一枚门牌"，而控制台是双向的 ⇒ 两枚砖同挂一块窗格下）
 fn plate(ctx: &Context, rx: PieToken, tx: PieToken, ms: Wait) {
     let tree = operator::Face::from(&ctx.session);
     let list = [(RX, rx), (TX, tx)];

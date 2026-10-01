@@ -42,13 +42,13 @@ use runtime::env::mail::{self, HolePie, TolePie};
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）。
+/// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）
 const WAITER: &str = "waiter";
-/// 几名等待者（共享组的重点就是**不止一个**）。
+/// 几名等待者（共享组的重点就是**不止一个**）
 const WAITERS: usize = 2;
-/// 回报/收尾的上限（毫秒，**上限族**）。
+/// 回报/收尾的上限（毫秒，**上限族**）
 const MS: usize = 2_000;
-/// 投信前的稳压（毫秒；理由见头注）。
+/// 投信前的稳压（毫秒；理由见头注）
 const SETTLE: u64 = 200;
 
 #[programs::entry]
@@ -153,7 +153,7 @@ fn main() -> Reason {
     return if pass { 0 } else { 1 };
 }
 
-/// 从一枚回报孔取一字节（有界等待；槽空即超时 ⇒ `None`）。
+/// 从一枚回报孔取一字节（有界等待；槽空即超时 ⇒ `None`）
 fn pull_byte(tok: PieToken) -> Option<u8> {
     let pie = HolePie::from_token(tok);
     let mut buf = [0u8; 1];
@@ -163,7 +163,7 @@ fn pull_byte(tok: PieToken) -> Option<u8> {
     }
 }
 
-/// 对照：**独占组**的两次 accord——第一次移交成功，第二次必须被拒。
+/// 对照：**独占组**的两次 accord——第一次移交成功，第二次必须被拒
 /// 目标用**已经开始等的那个子域**：它早已认领完自己的三枚（表不再变），多收一枚不带
 fn sole_refused(dst: TaskId) -> bool {
     let Ok(sole) = Pile::unseal(false) else {
@@ -177,7 +177,7 @@ fn sole_refused(dst: TaskId) -> bool {
     first.is_ok() && second.is_err()
 }
 
-/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
+/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）
 fn die(msg: &str) -> Reason {
     debug!("{}", msg);
     1

@@ -18,33 +18,33 @@ use crate::wire::message::Message;
 use super::Fail;
 use super::frame::{self, BACK_MARK};
 
-/// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）。
+/// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）
 pub struct Face {
     entry: PieToken,
     host: TaskId,
 }
 
 impl Face {
-    /// 把一枚门牌收成一面。
-    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是持表那一侧挂的，
-    /// 不是本端开的。
+    /// 把一枚门牌收成一面
+    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是持表那一侧挂的
+    /// 不是本端开的
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Bad)?;
         Ok(Face { entry, host })
     }
 
-    /// 对端是谁（读数用）。
+    /// 对端是谁（读数用）
     pub fn host(&self) -> TaskId {
         self.host
     }
 
-    /// **报名**：许我驱这一类。**幂等**（已在那一类里答成）。
+    /// **报名**：许我驱这一类。**幂等**（已在那一类里答成）
     pub fn bond(&self, class: String, wait: Wait) -> Result<(), Fail> {
         let said = self.call::<_, frame::Said>(|back| frame::Bond::of(class, back), wait)?;
         read(said.status)
     }
 
-    /// **列册**：从 `from` 起取一窗（越界答空窗——是答案，不是错误）。
+    /// **列册**：从 `from` 起取一窗（越界答空窗——是答案，不是错误）
     pub fn list(&self, class: String, from: u32, wait: Wait) -> Result<frame::Window, Fail> {
         let window =
             self.call::<_, frame::Window>(|back| frame::ListReq::of(class, from, back), wait)?;
@@ -52,9 +52,9 @@ impl Face {
         Ok(window)
     }
 
-    /// **认领**：这一台归我 ⇒ 答一张契。
+    /// **认领**：这一台归我 ⇒ 答一张契
     /// **先交一份过去**、此后一直开着——hub 扫账时问它"主人还在不在"（内核那一问 `Join`
-    /// 只许同队或父域，hub 与驱动是兄弟，问不动）。
+    /// 只许同队或父域，hub 与驱动是兄弟，问不动）
     pub fn claim(
         &self,
         kind: PieKind,
@@ -84,15 +84,15 @@ impl Face {
         Ok(deed)
     }
 
-    /// 问一句、取一句答（三手共用）。
+    /// 问一句、取一句答（三手共用）
     /// **先铸、先交，再推**（次序是契约的一半）：那一枚"种在对端表里的号"随帧一起过去
-    /// **一枚构造函数**，不是一枚编好的帧。
-    /// **两个型参各管一头**：`S` 是问那一形（只用来编），`R` 是答那一形（收那一侧要它，
-    /// 故答话的解码只有一条路）。答那一形只能由调用点写出来——问的那一枚闭包推不出它。
-    /// **传输失败两格分得开**：
+    /// **一枚构造函数**，不是一枚编好的帧
+    /// **两个型参各管一头**：`S` 是问那一形（只用来编），`R` 是答那一形（收那一侧要它
+    /// 故答话的解码只有一条路）。答那一形只能由调用点写出来——问的那一枚闭包推不出它
+    /// **传输失败两格分得开**
     /// ```text
-    ///   孔用不动了（Dead / Denied：权限不够 / 资源封印 / 那一枚已交出去）⇒ Fail::Dead
-    ///   没消息 / 备不下 / 收下来解不动                            ⇒ Fail::Bad
+    /// 孔用不动了（Dead / Denied：权限不够 / 资源封印 / 那一枚已交出去）⇒ Fail::Dead
+    /// 没消息 / 备不下 / 收下来解不动 ⇒ Fail::Bad
     /// ```
     fn call<S: Message, R: Message>(
         &self,
@@ -149,9 +149,9 @@ impl Face {
     }
 }
 
-/// 一句答拆开：**状态先过码表**。
+/// 一句答拆开：**状态先过码表**
 /// `OK` ⇒ 成；对端答的那几格 ⇒ 它们自己那个失败；**表外那一格**（连 `OK` 都没读成）⇒
-/// 与"没走到"同落 Fail::Bad（同 control 的 `read`）。
+/// 与"没走到"同落 Fail::Bad（同 control 的 `read`）
 fn read(status: u8) -> Result<(), Fail> {
     match frame::code_to_fail(status) {
         None if status == frame::OK => Ok(()),

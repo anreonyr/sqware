@@ -3,7 +3,7 @@ use env::PieToken;
 
 use super::vocab::BOND;
 
-/// 报名：**只有类**（驱动不需要知道盟号）。
+/// 报名：**只有类**（驱动不需要知道盟号）
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 #[frame(len = 41)]
 pub struct Bond {
@@ -13,7 +13,7 @@ pub struct Bond {
 }
 
 impl Bond {
-    /// 编一问（动作码固定 BOND）。
+    /// 编一问（动作码固定 BOND）
     pub fn of(class: String, back: PieToken) -> Bond {
         Bond {
             op: BOND,

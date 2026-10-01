@@ -1,7 +1,7 @@
 use super::*;
 
 /// **报名**：这个类不在册上 ⇒ `Unknown`（这台机器没有这一类）；否则**代报名**——把发送者放进
-/// 这一类那枚盟（盟册 `admit`，钥匙 = "你是不是立盟那位"）。
+/// 这一类那枚盟（盟册 `admit`，钥匙 = "你是不是立盟那位"）
 pub(super) fn bond(
     ledger: &mut Ledger,
     league: &League,

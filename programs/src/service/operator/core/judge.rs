@@ -6,7 +6,7 @@ use protocol::service::coalition::CoalitionId;
 use protocol::service::operator::{EntryId, Permit, Ruling};
 use protocol::service::principal::PrincipalId;
 
-/// 名册 / 谱系 / 盟册 / 树——**判一格要问的全部事实**，四条边一个出口。
+/// 名册 / 谱系 / 盟册 / 树——**判一格要问的全部事实**，四条边一个出口
 pub trait Facts {
     fn who(&self, tid: TaskId) -> Result<Option<PrincipalId>, ()>;
     fn heir(&self, a: PrincipalId, b: PrincipalId) -> Result<bool, ()>;
@@ -14,7 +14,7 @@ pub trait Facts {
     fn opens(&self, at: EntryId) -> Result<Option<TaskId>, ()>;
 }
 
-/// 判一格。`who` 是内核在 `Push` 那一刻盖的章；`permit` 是那一格自己那一句话。
+/// 判一格。`who` 是内核在 `Push` 那一刻盖的章；`permit` 是那一格自己那一句话
 pub fn judge(f: &impl Facts, who: TaskId, permit: Permit) -> Ruling {
     let Some(me) = (match f.who(who) {
         Ok(found) => found,

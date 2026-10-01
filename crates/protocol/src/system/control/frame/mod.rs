@@ -1,4 +1,4 @@
-//! control 的帧那一半 —— 帧、码、记号、状态。
+//! 帧、码、记号、状态
 //! **帧里没有镜像**（见 super 的"`build` 不拷字节"那一节）：`mint` 那一问只带名字，
 //! 持表那一侧自己去清单里取那段 `&[u8]`。**帧里也没有"几格通道"/"要什么资源"**：那是
 //! `start` / `wire` 的装配细节，归实现侧按那一台的 `setup` 推。
@@ -15,42 +15,42 @@ use crate::wire::message::Message;
 pub mod vocab;
 
 pub use self::vocab::*;
-/// 一问：动作码 ＋ 名字 ＋ **回信孔那一格**。
-/// `back` 是**运输**那一格（往哪回），不是动作的荷载——它排最后，谁都不许把它当第二个名字使。
+/// 一问：动作码 ＋ 名字 ＋ **回信孔那一格**
+/// `back` 是**运输**那一格（往哪回），不是动作的荷载——它排最后，谁都不许把它当第二个名字使
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 #[frame(len = 41)]
 pub struct Ask {
     pub op: u8,
-    /// 这一条服务的名字（清单名，≤ 31 字节）。
+    /// 这一条服务的名字（清单名，≤ 31 字节）
     pub name: String,
     pub back: PieToken,
 }
 
-/// 答话那一格：状态 ＋ 答案那一格 ＋ **那一条的身子**。
+/// 答话那一格：状态 ＋ 答案那一格 ＋ **那一条的身子**
 /// 定长一形（**不改多变**）：`mint` / `stop` 只看状态，`state` 再看第二格，`start` 看第三格——
-/// 每一问都只需要这三格里属于它的那一格，故不需要 operator 那一族那种"一答多形"。
+/// 每一问都只需要这三格里属于它的那一格，故不需要 operator 那一族那种"一答多形"
 /// # `task` 那一格：身子的 `TaskId` 能跨域，通道副本不能
-/// `Start` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续：
+/// `Start` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续
 /// 内核按 `TaskId` 认一枚线程，与它在哪个域无关，故这个号**跨域有意义**。而 `Endpoint`
 /// 的两枚孔是"持有它的那张表里才念得动"的号（communication
-/// 事实 8）⇒ control 铸出来的是**它自己那一侧**的孔，交不到客人手里。故：
+/// 事实 8）⇒ control 铸出来的是**它自己那一侧**的孔，交不到客人手里。故
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Said {
     pub status: u8,
-    /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）。
+    /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）
     pub a: u8,
-    /// **那一条的身子**（只有 `start` 那一答填它；其余答话是 [`TaskId::new(0)`]）。
+    /// **那一条的身子**（只有 `start` 那一答填它；其余答话是 [`TaskId::new(0)`]）
     pub task: TaskId,
 }
 
 impl Message for Said {
-    /// **写法与读法是同一个**：这一形三格俱全，读的人不必再问"我问的是哪一条"。
+    /// **写法与读法是同一个**：这一形三格俱全，读的人不必再问"我问的是哪一条"
     type In = Said;
-    /// 定长一答（Said::LEN）。
+    /// 定长一答（Said::LEN）
     type Buf = [u8; Said::LEN];
     const EMPTY: Self::Buf = [0u8; Said::LEN];
 
-    /// 要的是定长数组、返 `()`，两回事（同 crate::wire::frame::Reply 那一格）。
+    /// 要的是定长数组、返 `()`，两回事
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         Said::store_at(self, out, 0)
     }
@@ -64,20 +64,20 @@ impl Message for Said {
 }
 
 /// 成功那一格：**全协议同一个号**——定义在 crate::wire::OK，本族只把它转出来
-/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）。
+/// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）
 pub use crate::wire::OK;
 
 use self::vocab::{MINT, START, STATE, STOP};
 
-/// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 Ask::back 带。
+/// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 Ask::back 带
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
-    /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）。
+    /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）
     Mint(String),
-    /// `START`：放行 ＋ 等就绪。
+    /// `START`：放行 ＋ 等就绪
     Start(String),
     Stop(String),
-    /// `STATE`：这一条此刻处于哪个阶段。
+    /// `STATE`：这一条此刻处于哪个阶段
     State(String),
 }
 
@@ -93,10 +93,10 @@ impl Req {
     }
 }
 
-/// **收进来的一问**。
-/// 两格失败分得开（同 crate::wire::frame::Query 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
+/// **收进来的一问**
+/// 两格失败分得开：**长度不对** ⇒ 外层 `None`（连"往哪回"
 /// 都没有 ⇒ 不动表、也不回话）；**动作码不认得** ⇒ 内层 `None`（这一问有回信的路，只是这一码
-/// 我不认 ⇒ 回一句 BAD）。
+/// 我不认 ⇒ 回一句 BAD）
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
     Mint(String),
@@ -106,7 +106,7 @@ pub enum Wire {
 }
 
 impl Wire {
-    /// 解一问：`(读出来的动作, 回信孔那一格)`。
+    /// 解一问：`(读出来的动作, 回信孔那一格)`
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
         // **"恰好"按游标判**：名字那一格是变长的，帧长不再等于 Ask::LEN（那是上界）。
         let (q, at) = Ask::fetch_at(bytes, 0)?;
@@ -124,7 +124,7 @@ impl Wire {
     }
 }
 
-/// 编一答：只有状态那一格（失败，或读不懂）。
+/// 编一答：只有状态那一格（失败，或读不懂）
 pub const fn said_status(status: u8) -> Said {
     Said {
         status,
@@ -133,7 +133,7 @@ pub const fn said_status(status: u8) -> Said {
     }
 }
 
-/// 编一答：`OK` ＋ 一个 State（只有 `state` 那一问用）。
+/// 编一答：`OK` ＋ 一个 State（只有 `state` 那一问用）
 pub const fn said_state(state: State) -> Said {
     Said {
         status: OK,
@@ -142,7 +142,7 @@ pub const fn said_state(state: State) -> Said {
     }
 }
 
-/// 编一答：`OK` ＋ **那一条的身子**（只有 `start` 那一问用）。
+/// 编一答：`OK` ＋ **那一条的身子**（只有 `start` 那一问用）
 pub const fn said_task(task: TaskId) -> Said {
     Said {
         status: OK,

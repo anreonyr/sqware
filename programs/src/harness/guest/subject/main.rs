@@ -31,7 +31,7 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_NO_SERVICE: usize = 1;
 
-/// 树外那个号（伪造的线上值）。
+/// 树外那个号（伪造的线上值）
 const OUTSIDE: usize = 4095;
 
 #[programs::entry]
@@ -215,7 +215,7 @@ fn main() -> Report<'static> {
 }
 
 /// 名字 → 号（译不出就重试）落在 Pane::tile 上，`find` 落在 Tile::token 上——**两格各
-/// 一趟**。
+/// 一趟**
 fn find_face(tree: &TreeFace, grant: pcall::Grant) -> Option<PieToken> {
     let road = pcall::DIR.try_join(grant.name())?;
     let root = tree.root();
@@ -235,7 +235,7 @@ fn find_face(tree: &TreeFace, grant: pcall::Grant) -> Option<PieToken> {
     }
 }
 
-/// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。
+/// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）
 fn one_opt(r: Result<Option<PrincipalId>, Fail>) -> String {
     match r {
         Ok(Some(p)) => format!("{}", p.get()),
@@ -244,7 +244,7 @@ fn one_opt(r: Result<Option<PrincipalId>, Fail>) -> String {
     }
 }
 
-/// 同一行读数：只答一条号的那几条（`derive`）。
+/// 同一行读数：只答一条号的那几条（`derive`）
 fn one(r: Result<PrincipalId, Fail>) -> String {
     match r {
         Ok(p) => format!("{}", p.get()),
@@ -252,7 +252,7 @@ fn one(r: Result<PrincipalId, Fail>) -> String {
     }
 }
 
-/// 同一行读数：是 / 不是 / 哪一格失败。
+/// 同一行读数：是 / 不是 / 哪一格失败
 fn flag(r: Result<bool, Fail>) -> String {
     match r {
         Ok(true) => String::from("true"),
@@ -261,7 +261,7 @@ fn flag(r: Result<bool, Fail>) -> String {
     }
 }
 
-/// 同一行读数：成了没有。
+/// 同一行读数：成了没有
 fn done(r: Result<(), Fail>) -> String {
     match r {
         Ok(()) => String::from("ok"),
@@ -269,7 +269,7 @@ fn done(r: Result<(), Fail>) -> String {
     }
 }
 
-/// 失败域那三格的名字（**照线上那张表说**，不另起词）。
+/// 失败域那三格的名字（**照线上那张表说**，不另起词）
 fn why(fail: Fail) -> &'static str {
     match fail {
         Fail::Denied => "denied",

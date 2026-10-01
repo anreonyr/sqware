@@ -4,7 +4,7 @@
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 
-/// 它死在起手 / 常驻哪一步。
+/// 它死在起手 / 常驻哪一步
 pub const E_RTC: Died = 12;
 
 pub static PROGRAM: UnitFile = UnitFile {

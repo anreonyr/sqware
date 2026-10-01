@@ -11,16 +11,16 @@
 //! **病与名册那一族同款，且更刺**：那枚交给持树者的门牌**做得出 `Found`**（立一枚盟）、
 //! **做得出 `Enter` / `Leave`**（改盟籍）——而它一辈子只叫 `Amid`（"这一位在那枚盟里吗"）。
 //! 名册那一族是同一刀（`Ask` / `Set`），那一族的正证与量法见
-//! principal::grant。
+//! :grant
 
 use super::frame::Wire;
 
 crate::faces! {
-    /// **一条权柄边界**：一枚 = 一面。两位，位次 1..=2。
+/// **一条权柄边界**：一枚 = 一面。两位，位次 1..=2
     pub enum Grant {
-        /// **问面**：`Amid` / `Band` / `Bloc`——只读，不改盟册一个字。
+/// **问面**：`Amid` / `Band` / `Bloc`——只读，不改盟册一个字
         Ask => "ask",
-        /// **定面**：`Found` / `Enter` / `Leave` / `Admit`——立盟、入、出、代报名。
+/// **定面**：`Found` / `Enter` / `Leave` / `Admit`——立盟、入、出、代报名
         Set => "set",
     }
     stem: "coalition-",

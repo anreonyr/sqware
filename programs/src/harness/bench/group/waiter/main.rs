@@ -78,8 +78,8 @@ fn main() -> Reason {
     return 0;
 }
 
-/// 认领本端那三枚：记号认孔，剩下那一枚是组。
-/// 或它已封印）——内核在 `Collect` 里先问死活、再问是不是孔，两类情形落同一格。
+/// 认领本端那三枚：记号认孔，剩下那一枚是组
+/// 或它已封印）——内核在 `Collect` 里先问死活、再问是不是孔，两类情形落同一格
 fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     let (mut group, mut member, mut report) = (None, None, None);
     for p in mail::pies() {
@@ -95,7 +95,7 @@ fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     (group, member, report)
 }
 
-/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
+/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）
 fn bail(msg: &str) -> Reason {
     debug!("{}", msg);
     1

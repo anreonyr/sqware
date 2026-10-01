@@ -15,8 +15,8 @@ use runtime::env::mail::{self, HolePie};
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
 
-/// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数。
-/// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）。
+/// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数
+/// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）
 pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     // **借一枚回信孔**（铸 ＋ 交，记号 = 本面自己的 `BACK`）：返 `(本端那一枚, 驱动表里那一枚)`
     // ——后者写进帧，收的人一次 `reserve` 就用，不必扫全表。
@@ -49,7 +49,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     answer
 }
 
-/// 约一段**时间**：`after_ns`（相对纳秒，"再过多 long"）。成 ⇒ 返那一次约；到点从那枚孔收那一声。
+/// 约一段**时间**：`after_ns`（相对纳秒，"再过多 long"）。成 ⇒ 返那一次约；到点从那枚孔收那一声
 pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> {
     // **借一枚回信孔**（铸 ＋ 交，记号 = 本面自己的 `BACK`）：返 `(本端那一枚, 驱动表里那一枚)`
     // ——后者写进帧，收的人一次 `reserve` 就用，不必扫全表。
@@ -93,15 +93,15 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }
 
-/// 一次**约**：那一格里收着的，就是它。
+/// 一次**约**：那一格里收着的，就是它
 pub struct Alarm {
     back: HolePie,
 }
 
 impl Alarm {
-    /// 等那一声。返**响的那一刻**（驱动听见闹钟时读到的计数）。
-    /// **无界等**：客人只有这一件事，而对面一没，这一枚孔就封印 ⇒ 当场答 `Err(())`，
-    /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）。
+    /// 等那一声。返**响的那一刻**（驱动听见闹钟时读到的计数）
+    /// **无界等**：客人只有这一件事，而对面一没，这一枚孔就封印 ⇒ 当场答 `Err(())`
+    /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）
     pub fn receive(&self) -> Result<u64, ()> {
         let mut buf = Time::EMPTY;
         Receiver::<Time>::from_token(self.back.token())

@@ -6,7 +6,7 @@
 use crate::unit::{Demand, Died, Identity, Relation, UnitFile};
 use env::ProgramKind;
 
-/// 起手第一步没成：两块账读不出来。
+/// 起手第一步没成：两块账读不出来
 pub const E_BOOT: Died = 1;
 
 pub static PROGRAM: UnitFile = UnitFile {

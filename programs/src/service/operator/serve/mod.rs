@@ -9,7 +9,7 @@
 //! 同一张表，也就是同一枚线程。板那一台栽过这条（每位客人一枚待客线程 ⇒ 甲的条目在甲的表里，
 //! 乙来查时判它"已死"、也授不出去，症状是"刚挂上的名字，别人一查就是 `Unknown`"）。
 //! **三侧分家**：两侧共用的图与说明见 super 的"载体"那一节，帧与记号见
-//! protocol::service::operator。
+//! :operator
 
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
@@ -38,13 +38,13 @@ mod answer;
 mod door;
 mod plate;
 
-/// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
+/// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）
 /// **不是轮询**：账补齐之后这一等就变成 Wait::Forever（由组唤醒）；这个短期限只在装配窗口
-/// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）。
+/// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）
 const SETTLE_MS: usize = 1;
 
-/// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 七位操作面各一枚。
-/// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组。
+/// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 七位操作面各一枚
+/// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组
 const MARKS: [Mark; 8] = [
     ocall::ASK_MARK,
     Grant::Part.mark(),
@@ -56,9 +56,9 @@ const MARKS: [Mark; 8] = [
     Grant::Name.mark(),
 ];
 
-/// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**。
-/// settle）：它是"装配侧 → 持树者"的唯一一条路，故**不必另开一条到自己的会话**。
-/// "答话路必已在本表里"（转授在前、提示在后）。
+/// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**
+/// settle）：它是"装配侧 → 持树者"的唯一一条路，故**不必另开一条到自己的会话**
+/// "答话路必已在本表里"（转授在前、提示在后）
 pub fn serve() -> Result<(), Start> {
     // （从 `args` 里掏一格那条绕路已退：它存在只因为 iii 让三枚与编排者同域）。
     let assembler = runtime::env::unit::sire();
@@ -188,12 +188,12 @@ pub fn serve() -> Result<(), Start> {
     }
 }
 
-/// 补齐那几件事，返"还有没有没补齐的"。
-/// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 ocall::TipIn）：
-///     （plate），不经会话、不当自己的客人；
-///   - **一位客人**（ocall::TipIn::Guest）：`admit` 收进来；
-///   - **门禁接线**（ocall::TipIn::Wired）：**一句话、不带号**——装配者已认下名册，门从此
-///     问得动身份（那一格由 self::door::may 读）。
+/// 补齐那几件事，返"还有没有没补齐的"
+/// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 ocall::TipIn）
+/// （plate），不经会话、不当自己的客人
+/// - **一位客人**（ocall::TipIn::Guest）：`admit` 收进来
+/// - **门禁接线**（ocall::TipIn::Wired）：**一句话、不带号**——装配者已认下名册，门从此
+/// 问得动身份（那一格由 self::door::may 读）
 fn settle(
     desk: &mut Desk,
     pile: &Pile,
@@ -256,7 +256,7 @@ fn settle(
     pending
 }
 
-/// **诊断（release 也看得见）**：把"还有人没挂上"那一档拆开——**是哪几位、`ask_of` 认不认得**。
+/// **诊断（release 也看得见）**：把"还有人没挂上"那一档拆开——**是哪几位、`ask_of` 认不认得**
 /// **为什么不用 `debug!`**：那一支宏在 release 下**是空操作**（`crates/protocol/src/debug.rs`
 fn unarmed_report(desk: &Desk, rounds: usize) {
     let mut unarmed = 0usize;
@@ -303,10 +303,8 @@ fn outbox<'a>(outs: &'a mut Vec<Outbox>, guest: Guest) -> Option<&'a mut Outbox>
     outs.last_mut()
 }
 
-/// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
-/// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
-/// ——客人的最长帧由载体定（一页），门就得有一页才接得住。
-/// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
+/// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**
+/// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询
 fn serve_one(
     tree: &mut Operator,
     guest: Guest,

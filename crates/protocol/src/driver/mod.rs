@@ -15,18 +15,18 @@ pub mod line;
 
 use crate::common::path::Path;
 
-/// 驱动族那条路在树上的**头一段**：`/svc`（crate::common::svc::SVC——一处给）。
+/// 驱动族那条路在树上的**头一段**：`/svc`（crate::common::svc::SVC——一处给）
 pub const SVC: &Path = crate::common::svc::SVC;
 
-/// 驱动族在命名树上的那一段名：**`drv`**（整条路是 ROAD）。
+/// 驱动族在命名树上的那一段名：**`drv`**（整条路是 ROAD）
 /// 驱动把自己的**服务入口**落在 `/svc/drv/<服务名>` 上（`router` ⇒ `/svc/drv/router`），名字用
-/// **服务名**——与装配表、日志、板上的名字同一个。
+/// **服务名**——与装配表、日志、板上的名字同一个
 /// 那块 Pane 归**第一个上树的驱动**建：树上 `part` 落到一块非空 Pane 上答 `NonEmpty`
-/// ⇒ 只有一次创建机会，故"已经在了"必须当成**要的结果**（不是错误）。
+/// ⇒ 只有一次创建机会，故"已经在了"必须当成**要的结果**（不是错误）
 pub const DIR: &str = "drv";
 
-/// **驱动那一族那块窗格在树上的路**（`/svc/drv`）——**一处说全**。
+/// **驱动那一族那块窗格在树上的路**（`/svc/drv`）——**一处说全**
 pub const ROAD: &Path = Path::new("svc/drv");
 
-/// **域的服务入口那一枚孔的记号**（`"entry"`）。
+/// **域的服务入口那一枚孔的记号**（`"entry"`）
 pub const ENTRY_MARK: env::Mark = env::Mark::of("entry");

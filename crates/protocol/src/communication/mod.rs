@@ -28,7 +28,7 @@ pub mod receiver;
 pub mod sender;
 pub mod session;
 
-/// 期限 → **那个到不了的点**（单调钟，纳秒）。
+/// 期限 → **那个到不了的点**（单调钟，纳秒）
 /// **永久落成 u64::MAX，不落成 Wait::Forever**：唤醒那一手要的是一格期限，而
 pub(crate) fn deadline(wait: Wait) -> u64 {
     match wait {
@@ -37,7 +37,7 @@ pub(crate) fn deadline(wait: Wait) -> u64 {
     }
 }
 
-/// 那个点还剩多久（`POLL` = 已经不剩）。**单调钟按纳秒读**，不依赖 timebase 频率。
+/// 那个点还剩多久（`POLL` = 已经不剩）。**单调钟按纳秒读**，不依赖 timebase 频率
 pub(crate) fn remain(deadline: u64) -> Wait {
     if deadline == u64::MAX {
         return Wait::Forever;

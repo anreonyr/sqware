@@ -33,7 +33,7 @@ use protocol::driver::line::frame as lcall;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// 领上就死。
+/// 领上就死
 const ASK: Ask = Ask {
     class: "virtio,mmio",
     name: None,
@@ -123,9 +123,8 @@ fn main() -> Report<'static> {
     );
 }
 
-/// 上树一趟：`FIND /svc/drv/router` ⇒ 那扇门（登记从它走）。
+/// 上树一趟：`FIND /svc/drv/router` ⇒ 那扇门（登记从它走）
 /// **（为什么不用 Face::tile）**：`entry` 自己已经译号一次 + `find` 一次，随后
-/// Tile::token 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本。本台**末尾那一格读数**
 /// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须按
 fn find_router(tree: &Face) -> Option<PieToken> {
     // 先拼路（`/svc/drv/router`：驱动那一族的常量接上服务名），再沿那条路取入口
@@ -147,8 +146,8 @@ fn find_router(tree: &Face) -> Option<PieToken> {
     }
 }
 
-/// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）。
-/// 答码用 lcall::fail_to_code——**与线上同一张表**（客户端不从失败域另编一套号）。
+/// 占一趟：报**那一段区**、收一格答码。返的第二件是那条线本身（占上了才有）
+/// 答码用 lcall::fail_to_code——**与线上同一张表**（客户端不从失败域另编一套号）
 fn attempt(entry: PieToken, line: u32) -> (u8, Option<line::client::Line>) {
     match line::client::Line::occupy(entry, line, Wait::AtMost(MS)) {
         Ok(held) => (lcall::OK, Some(held)),

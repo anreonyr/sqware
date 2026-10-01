@@ -14,36 +14,36 @@ use super::Fail;
 use super::frame::{self, BACK, State};
 
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
-/// （frame::ASK_MARK）。
-/// 开会话那一手（Session::open）要它——control 那一侧上树 / 装配者转授时用同一格。
+/// （frame::ASK_MARK）
+/// 开会话那一手（Session::open）要它——control 那一侧上树 / 装配者转授时用同一格
 pub const BERTH: Berth = Berth {
     link: env::Mark::of(frame::LINK),
     ask: frame::ASK_MARK,
 };
 
-/// 一面生命周期服务：**树上查回来的门牌** + 它的开者（对端）。
-/// **它不出编排域**：外面那几枚 `Session` / `Endpoint` / `Receiver` 一个都不露。
+/// 一面生命周期服务：**树上查回来的门牌** + 它的开者（对端）
+/// **它不出编排域**：外面那几枚 `Session` / `Endpoint` / `Receiver` 一个都不露
 pub struct Face {
     entry: PieToken,
     host: TaskId,
 }
 
 impl Face {
-    /// 把一枚门牌收成一面。
-    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是持表那一侧挂的，
-    /// 不是本端开的。
+    /// 把一枚门牌收成一面
+    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是持表那一侧挂的
+    /// 不是本端开的
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Bad)?;
         Ok(Face { entry, host })
     }
 
-    /// 对端是谁（读数用）。
+    /// 对端是谁（读数用）
     pub fn host(&self) -> TaskId {
         self.host
     }
 
-    /// **造一个 Service**：建域 + 产它的代表线程（恒产未放行）。
-    /// 镜像由**对端**从清单里取——本端只给名字（见 super 的"`build` 不拷字节"那一节）。
+    /// **造一个 Service**：建域 + 产它的代表线程（恒产未放行）
+    /// 镜像由**对端**从清单里取——本端只给名字（见 super 的"`build` 不拷字节"那一节）
     /// **这一步还没有身子**：`Mint` 只把域与线程造出来、还压在对端手里等放行；身子是
     pub fn mint(&self, name: String, wait: Wait) -> Result<Service<'_>, Fail> {
         let said = self.call(frame::Req::Mint(name.clone()), wait)?;
@@ -51,15 +51,15 @@ impl Face {
         Ok(Service { face: self, name })
     }
 
-    /// **认已有的一条**：不铸、不验——名字只是这一面以后叫它的坐标。
-    /// 它成不成立由 [四手](Service) 各自的第一趟答出来（表里没有 ⇒ Fail::Unknown）。
+    /// **认已有的一条**：不铸、不验——名字只是这一面以后叫它的坐标
+    /// 它成不成立由 [四手](Service) 各自的第一趟答出来（表里没有 ⇒ Fail::Unknown）
     pub fn service(&self, name: String) -> Service<'_> {
         Service { face: self, name }
     }
 
-    /// 问一句、取一句答。
+    /// 问一句、取一句答
     /// **传输失败折进 Fail::Bad**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
-    /// 在**对面**：语义格是持表那一侧真会答的码，"没走到"是本端自己在码表之外判的。
+    /// 在**对面**：语义格是持表那一侧真会答的码，"没走到"是本端自己在码表之外判的
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Said, Fail> {
         fn deny(step: &str) -> Fail {
             crate::debug!("control: call deny={step}");
@@ -102,20 +102,20 @@ impl Face {
     }
 }
 
-/// **一条服务**：`mint` 那一下把名字绑进柄 ⇒ 此后那几手不再重复传名字。
-/// 名字不变、对端不变，故柄里只有这两格；四手各带自己的 `Wait`（**预算不是柄的状态**）。
+/// **一条服务**：`mint` 那一下把名字绑进柄 ⇒ 此后那几手不再重复传名字
+/// 名字不变、对端不变，故柄里只有这两格；四手各带自己的 `Wait`（**预算不是柄的状态**）
 pub struct Service<'a> {
     face: &'a Face,
     name: String,
 }
 
 impl Service<'_> {
-    /// 这一条叫什么（读数用）。
+    /// 这一条叫什么（读数用）
     pub fn name(&self) -> &String {
         &self.name
     }
 
-    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 Started。
+    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 Started
     pub fn start(&self, wait: Wait) -> Result<Started<'_>, Fail> {
         let said = self.face.call(frame::Req::Start(self.name.clone()), wait)?;
         Ok(Started {
@@ -130,7 +130,7 @@ impl Service<'_> {
         read(said).map(|_| ())
     }
 
-    /// 这一条此刻处于哪个生命阶段。
+    /// 这一条此刻处于哪个生命阶段
     pub fn state(&self, wait: Wait) -> Result<State, Fail> {
         let said = self.face.call(frame::Req::State(self.name.clone()), wait)?;
         // **先过码表**（`read`），再看第二格；表外的判别值不猜。
@@ -138,8 +138,8 @@ impl Service<'_> {
     }
 }
 
-/// 它不重抄 Service 那几手（照树那一族的先例：`Tile` 不抄 `Pane` 的手，只给一条回头的路）：
-/// 要 `stop` / `state` 就 Started::service 拿回那一柄。
+/// 它不重抄 Service 那几手（照树那一族的先例：`Tile` 不抄 `Pane` 的手，只给一条回头的路）
+/// 要 `stop` / `state` 就 Started::service 拿回那一柄
 pub struct Started<'a> {
     face: &'a Face,
     name: String,
@@ -147,19 +147,19 @@ pub struct Started<'a> {
 }
 
 impl Started<'_> {
-    /// 这一条叫什么（读数用）。
+    /// 这一条叫什么（读数用）
     pub fn name(&self) -> &String {
         &self.name
     }
 
-    /// **它此刻是哪一枚线程**（子域的代表线程）。
+    /// **它此刻是哪一枚线程**（子域的代表线程）
     /// 这是本协议**唯一**交得出域外的那一格身子：`Endpoint` 的孔不行（见 super 的
-    /// "通道副本不能跨域"那一节），而 `TaskId` 跨域有意义。
+    /// "通道副本不能跨域"那一节），而 `TaskId` 跨域有意义
     pub fn id(&self) -> TaskId {
         self.task
     }
 
-    /// 回到那一柄（`stop` / `state` 的入口）。
+    /// 回到那一柄（`stop` / `state` 的入口）
     pub fn service(&self) -> Service<'_> {
         Service {
             face: self.face,
@@ -168,8 +168,8 @@ impl Started<'_> {
     }
 }
 
-/// 一句答拆开：**状态先过码表**，`OK` 才把整个答话交出来。
-/// 状态过码表），不留第二个入口。
+/// 一句答拆开：**状态先过码表**，`OK` 才把整个答话交出来
+/// 状态过码表），不留第二个入口
 fn read(said: frame::Said) -> Result<frame::Said, Fail> {
     match frame::code_to_fail(said.status) {
         None if said.status == frame::OK => Ok(said),

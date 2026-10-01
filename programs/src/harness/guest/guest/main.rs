@@ -94,7 +94,7 @@ fn find_face(tree: &Face, road: &protocol::service::operator::Path) -> Result<Pi
     }
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     return Report::note(E_TRIP, note);
 }

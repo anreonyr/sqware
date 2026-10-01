@@ -6,7 +6,7 @@ use protocol::service::coalition::CoalitionId;
 
 use super::Ledger;
 
-/// 一类 → 它那枚盟。
+/// 一类 → 它那枚盟
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(super) struct League {
     class: String,
@@ -14,7 +14,7 @@ pub(super) struct League {
 }
 
 impl Ledger {
-    /// 册 · 写：这一类那枚盟；没铸过就铸（`mint` 由适配层给——核心不叫盟册）。
+    /// 册 · 写：这一类那枚盟；没铸过就铸（`mint` 由适配层给——核心不叫盟册）
     pub fn league(&mut self, class: String, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
         if let Some(league) = self.leagues.iter().find(|l| l.class == class) {
             return league.coalition;
@@ -26,7 +26,7 @@ impl Ledger {
         coalition
     }
 
-    /// 册 · 读：这一类那枚盟（没铸过 ⇒ `None`）。
+    /// 册 · 读：这一类那枚盟（没铸过 ⇒ `None`）
     pub fn coalition_of(&self, class: String) -> Option<CoalitionId> {
         self.leagues
             .iter()

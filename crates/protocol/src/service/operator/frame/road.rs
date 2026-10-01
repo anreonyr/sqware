@@ -11,16 +11,16 @@ use crate::wire::message::Message;
 use super::vocab::{BAD, EntryId, PANE_CAP, Permit, Where};
 use crate::wire::OK;
 
-/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）。
+/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）
 /// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
-/// 是字段表求和（`LEN`），`Road` 那一格是 RoadFrame::store_at 交回的游标。
+/// 是字段表求和（`LEN`），`Road` 那一格是 RoadFrame::store_at 交回的游标
 pub const REQ_LEN: usize = RoadFrame::LEN;
 
 /// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
 /// PANE_CAP 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
-/// 没有上限，故那里必须带一格"未完"）。
+/// 没有上限，故那里必须带一格"未完"）
 /// 本族那只缓冲就是它（Message::Buf）；另两形都短于它——编译期钉住（`名` 那一形最长是
-/// 状态 ＋ 名字那一格的上界（31 字节），`号` 那一形是状态 ＋ 8）。
+/// 状态 ＋ 名字那一格的上界（31 字节），`号` 那一形是状态 ＋ 8）
 pub const UNION_LEN: usize = 2 + PANE_CAP * 8;
 
 const _: () = assert!(Status::LEN + 31 <= UNION_LEN);
@@ -35,14 +35,14 @@ pub struct RoadFrame {
 
 const _: () = assert!(RoadFrame::LEN == 1 + Path::LEN);
 
-/// `List` 那一问：动作码 ＋ 容器坐标。
+/// `List` 那一问：动作码 ＋ 容器坐标
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct List {
     pub op: u8,
     pub at: Where,
 }
 
-/// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名。
+/// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 #[frame(len = 42)]
 pub struct Part {
@@ -62,28 +62,28 @@ pub struct Land {
     pub permit: Permit,
 }
 
-/// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号。
+/// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Entry {
     pub op: u8,
     pub id: EntryId,
 }
 
-/// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错。
+/// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错
 /// 号那一侧全按 EntryId 走；名字只出现在两条路上：Req::Road（`seek` 收的那条路）
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {
     Road(PathBuf),
-    /// `list`：列那一块 `Pane` 里的号。
+    /// `list`：列那一块 `Pane` 里的号
     List(Where),
-    /// `part`：在那一块 `Pane` 下，给这个新名分一格。
+    /// `part`：在那一块 `Pane` 下，给这个新名分一格
     Part {
         at: Where,
         name: String,
     },
-    /// `land`：在那一块 `Pane` 下，给这个新名落一枚。
-    /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（`ship` 换回来的），
-    /// 不是"客人的 Pie 是几号"——两个编号空间不同源。
+    /// `land`：在那一块 `Pane` 下，给这个新名落一枚
+    /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（`ship` 换回来的）
+    /// 不是"客人的 Pie 是几号"——两个编号空间不同源
     Land {
         at: Where,
         name: String,
@@ -91,15 +91,15 @@ pub enum Req {
         permit: Permit,
         mine: bool,
     },
-    /// `find`：那一号后面那一枚 Pie。
+    /// `find`：那一号后面那一枚 Pie
     Find(EntryId),
-    /// `trim`：把那一号剪掉。
+    /// `trim`：把那一号剪掉
     Trim(EntryId),
-    /// `name`：那一号此刻叫什么。
+    /// `name`：那一号此刻叫什么
     Name(EntryId),
 }
 
-/// 一帧「列」的读数：号最多 PANE_CAP 枚。
+/// 一帧「列」的读数：号最多 PANE_CAP 枚
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Listing {
     ids: [EntryId; PANE_CAP],
@@ -107,7 +107,7 @@ pub struct Listing {
 }
 
 impl Listing {
-    /// 空的那一串。
+    /// 空的那一串
     pub const fn new() -> Listing {
         Listing {
             ids: [EntryId::new(0); PANE_CAP],
@@ -115,7 +115,7 @@ impl Listing {
         }
     }
 
-    /// 收一串（**收够 PANE_CAP 枚就停**：一条 pane 本来就不超过它）。
+    /// 收一串（**收够 PANE_CAP 枚就停**：一条 pane 本来就不超过它）
     pub fn of(ids: impl Iterator<Item = EntryId>) -> Listing {
         let mut listing = Listing::new();
         for id in ids.take(PANE_CAP) {
@@ -124,17 +124,17 @@ impl Listing {
         listing
     }
 
-    /// 按号序（就是帧里的次序）走一遍。
+    /// 按号序（就是帧里的次序）走一遍
     pub fn iter(&self) -> impl Iterator<Item = EntryId> + '_ {
         self.ids[..self.n].iter().copied()
     }
 
-    /// 那一段号——**编那一侧要它**（`store_tail` 走的是一条切片，不是一个迭代器）。
+    /// 那一段号——**编那一侧要它**（`store_tail` 走的是一条切片，不是一个迭代器）
     pub fn as_slice(&self) -> &[EntryId] {
         &self.ids[..self.n]
     }
 
-    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 PANE_CAP 枚。
+    /// 收一枚。**满了就丢**：一条 pane 本来就不超过 PANE_CAP 枚
     fn push(&mut self, id: EntryId) {
         if let Some(slot) = self.ids.get_mut(self.n) {
             *slot = id;
@@ -144,46 +144,45 @@ impl Listing {
 }
 
 /// **头一格**：状态。它自己就是"一格状态"那一形（六格失败与"门外那两格"都走它），也是另外
-/// 三形的起头。
+/// 三形的起头
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Status {
     pub status: u8,
 }
 
 /// 「列」那一形的**头两格**：状态 ＋ **条数**（后面跟着那么多个号——那是尾巴，走
-/// env::wire::store_tail）。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Tally {
     pub status: u8,
     pub count: u8,
 }
 
-/// 「号」那一形：`[status][8 字节]`——**定长 9**（`part` / `seek` 答坐标、`find` 答门闩，
-/// 线上逐字同形）。
+/// 「号」那一形：`[status][8 字节]`——**定长 9**（`part` / `seek` 答坐标、`find` 答门闩
+/// 线上逐字同形）
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Word {
     pub status: u8,
     pub word: [u8; 8],
 }
 
-/// **一答的形状**——答有四种：一格状态 / 一串号 / 一枚名字 / 一枚号。
+/// **一答的形状**——答有四种：一格状态 / 一串号 / 一枚名字 / 一枚号
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Union {
-    /// 一格状态（成功 / 六格失败 / 门外那两格）——**没有任何荷载**。
+    /// 一格状态（成功 / 六格失败 / 门外那两格）——**没有任何荷载**
     Status(u8),
-    /// `list` 的下场：一串号。
+    /// `list` 的下场：一串号
     List(Listing),
-    /// `name` 的下场：一枚名字（**长度即名长**）。
+    /// `name` 的下场：一枚名字（**长度即名长**）
     Name(String),
-    /// `part` / `seek` 的下场：那一格**坐标**。
+    /// `part` / `seek` 的下场：那一格**坐标**
     Entry(EntryId),
-    /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（PieToken）。
+    /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（PieToken）
     /// **与 Union::Entry 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
-    /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事。
+    /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事
     Seed(PieToken),
 }
 
-/// **收进来的一答**：**原样的字节** ＋ 四个读法。
+/// **收进来的一答**：**原样的字节** ＋ 四个读法
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Said {
     buf: [u8; UNION_LEN],
@@ -191,28 +190,28 @@ pub struct Said {
 }
 
 impl Said {
-    /// 这一条答的字节。
+    /// 这一条答的字节
     fn bytes(&self) -> &[u8] {
         self.buf.get(..self.len).unwrap_or(&[])
     }
 
-    /// 那一格状态（四种答形的头一格都是它）。
+    /// 那一格状态（四种答形的头一格都是它）
     pub fn code(&self) -> u8 {
         self.bytes().first().copied().unwrap_or(BAD)
     }
 
-    /// 按「号」那一形读（`land` / `part` / `seek` 的下场）：`[status][8 字节]` → **坐标**。
-    /// 状态不是 OK ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`。
+    /// 按「号」那一形读（`land` / `part` / `seek` 的下场）：`[status][8 字节]` → **坐标**
+    /// 状态不是 OK ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`
     pub fn entry(&self) -> Result<EntryId, u8> {
         Ok(EntryId::from_bytes(self.word()?))
     }
 
-    /// 按「门闩」那一形读（`find` 的下场）：同一形状 → **你表里的那一枚号**。
+    /// 按「门闩」那一形读（`find` 的下场）：同一形状 → **你表里的那一枚号**
     pub fn seed(&self) -> Result<PieToken, u8> {
         PieToken::from_bytes(&self.word()?).ok_or(BAD)
     }
 
-    /// 「号」那一形里的那 8 字节（上面两个读法共用的那一格）。
+    /// 「号」那一形里的那 8 字节（上面两个读法共用的那一格）
     fn word(&self) -> Result<[u8; 8], u8> {
         let code = self.code();
         if code != OK {
@@ -225,7 +224,7 @@ impl Said {
         Ok(Word::fetch(bytes).ok_or(BAD)?.word)
     }
 
-    /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字。
+    /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字
     /// 名字读不懂（空 / 太长 / 含 NUL / 不是 UTF-8）⇒ `Err(BAD)`：那一侧旧日的四格失败域
     pub fn name(&self) -> Result<String, u8> {
         let code = self.code();
@@ -237,9 +236,9 @@ impl Said {
         Ok(String::from(core::str::from_utf8(text).map_err(|_| BAD)?))
     }
 
-    /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号。
+    /// 按「列」那一形读（`list` 的下场）：`[status][条数][号…]` → 一串号
     /// **帧长即条数**：条数与剩下那些字节对不上（或条数超过 PANE_CAP）⇒
-    /// `Err(BAD)`——短一字节也是它。
+    /// `Err(BAD)`——短一字节也是它
     pub fn list(&self) -> Result<Listing, u8> {
         let code = self.code();
         if code != OK {
@@ -266,7 +265,7 @@ impl Message for Union {
     type Buf = [u8; UNION_LEN];
     const EMPTY: Self::Buf = [0u8; UNION_LEN];
 
-    /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 env::wire 的两个尾巴。
+    /// 编进 `out`：状态由形状给（不在别处再写一遍），变长那两段交给 env::wire 的两个尾巴
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         match self {
             Union::Status(code) => Status { status: *code }.store_at(out, 0),

@@ -42,11 +42,11 @@ const ME: &str = "probe";
 
 const MS: usize = 1000;
 
-/// 本地失败编号（读数用）。
+/// 本地失败编号（读数用）
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-denied: denied";
 
 #[programs::entry]
@@ -142,7 +142,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);

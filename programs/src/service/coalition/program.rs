@@ -3,7 +3,7 @@
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 
-/// 它死在起手哪一步（那只组 / 找名册那份门牌）。
+/// 它死在起手哪一步（那只组 / 找名册那份门牌）
 pub const E_COALITION: Died = 16;
 
 pub static PROGRAM: UnitFile = UnitFile {

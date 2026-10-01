@@ -20,22 +20,22 @@ use crate::service::operator::core::judge::Facts;
 
 use crate::service::operator::claim::face_of_mark;
 
-/// 问身份那两条边要用的期限（毫秒）。**必须有界**：协调服务不在时不能把树挂死。
+/// 问身份那两条边要用的期限（毫秒）。**必须有界**：协调服务不在时不能把树挂死
 const MS: usize = 1000;
 
 /// **两枚门牌**：身份服务那一枚（答"这一位此刻代表谁"与"在不在他那一支里"）与盟册服务那一枚
-/// （答"这一位在那枚盟里吗"）。
-/// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
-/// 它不去 `seek("/svc/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
+/// （答"这一位在那枚盟里吗"）
+/// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**
+/// 它不去 `seek("/svc/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 Permit::Among 那一格答"判不了"
-/// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
+/// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**
 struct Session {
     roster: PrincipalFace,
     league: Option<CoalitionFace>,
 }
 
 impl Session {
-    /// 认出那两枚门牌：**按记号在本表里找**（那两枚由各自那一域自己交进来）。
+    /// 认出那两枚门牌：**按记号在本表里找**（那两枚由各自那一域自己交进来）
     fn of() -> Option<Session> {
         let roster = PrincipalFace::of(face_of_mark(PrincipalGrant::Ask.mark())?).ok()?;
         let league = face_of_mark(CoalitionGrant::Ask.mark())
@@ -44,8 +44,8 @@ impl Session {
     }
 }
 
-/// 门禁要的那几条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`），
-/// 外加**树自己**那一问（第 `n` 格是谁的门牌）。
+/// 门禁要的那几条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`）
+/// 外加**树自己**那一问（第 `n` 格是谁的门牌）
 struct Court<'a> {
     session: &'a Session,
     tree: &'a Operator,
@@ -118,7 +118,7 @@ impl Facts for Court<'_> {
 }
 
 /// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
-/// （Operator::permit 答出来的那一句）。
+/// （Operator::permit 答出来的那一句）
 /// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
 /// 身份**。门禁若在
 pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> Code {

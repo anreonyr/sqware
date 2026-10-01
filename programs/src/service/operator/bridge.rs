@@ -26,7 +26,7 @@ use protocol::service::operator::client::{Face, Mine, Pane};
 use protocol::service::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
 pub use protocol::service::operator::{LINK, TIP_MARK};
 
-/// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）。
+/// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
     let mut rec = [0u8; TIP_LEN];
     let n = tip.store(&mut rec).ok_or(())?;
@@ -36,7 +36,7 @@ fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
     Ok(())
 }
 
-/// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"。
+/// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);
@@ -46,8 +46,8 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     Ok(())
 }
 
-/// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路。
-/// 它们问的是**树的语义**——客人怎么接、提示怎么认——故收进树这一间。
+/// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路
+/// 它们问的是**树的语义**——客人怎么接、提示怎么认——故收进树这一间
 #[derive(Default)]
 pub struct Tree {
     host: Option<TaskId>,
@@ -55,12 +55,12 @@ pub struct Tree {
 }
 
 impl Tree {
-    /// 持树者那一枚的号（`None` = 还没起）。
+    /// 持树者那一枚的号（`None` = 还没起）
     pub fn host(&self) -> Option<TaskId> {
         self.host
     }
 
-    /// **把这位客人接上树**（三步见 attach）。持树者还没起就没得接。
+    /// **把这位客人接上树**（三步见 attach）。持树者还没起就没得接
     pub fn attach(&mut self, client: TaskId, millis: Wait) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         attach(client, host, millis, &mut self.tip)
@@ -73,7 +73,7 @@ impl Tree {
         push(tip, Tip::Wired).map_err(|()| "operator:wire")
     }
 
-    /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走。
+    /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走
     pub fn adopt(&mut self, host: TaskId, millis: Wait) -> Result<(), &'static str> {
         self.host = Some(host);
         self.tip = None;
@@ -82,13 +82,13 @@ impl Tree {
     }
 
     /// **这一台是不是持树者**——判据是**它自己交出来的那一件东西**：提示之路上那枚挂在它名下的
-    /// `TIP_MARK` 孔（establish::find **只看**，不另铸一枚新的）。
+    /// `TIP_MARK` 孔（establish::find **只看**，不另铸一枚新的）
     pub fn holds(&self, host: TaskId) -> bool {
         establish::find(host, TIP_MARK).is_some()
     }
 
     /// **递一条路上去**：请持树者把这条路上的窗格逐段立出来（缺的就地造），末段按 `leaf`
-    /// 落叶子，或立窗格（`leaf = None` ⇒ 末段是**窗格**）。
+    /// 落叶子，或立窗格（`leaf = None` ⇒ 末段是**窗格**）
     /// 路是**绝对坐标**（从根起数）：`["sys","control"]`、`["sys","operator"]`、
     /// `["sys","operator","part"]` 三种落法**同一个形状**——连"父底下立一块窗格"、再深一层
     pub fn plate(
@@ -157,11 +157,11 @@ pub fn hold(
     Ok(())
 }
 
-/// 把持树者接上一位客人（装配者调用）：**三步**。
-/// `host` = 持树者的号（service::spawn 交回来的那个，装配者本来就知道它）。
-/// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）。
+/// 把持树者接上一位客人（装配者调用）：**三步**
+/// `host` = 持树者的号（service::spawn 交回来的那个，装配者本来就知道它）
+/// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
-/// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格。
+/// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格
 pub fn attach(
     client: TaskId,
     host: TaskId,
@@ -191,7 +191,7 @@ pub fn attach(
 
 /// 认下持树者交回来的那一枚提示孔（**只认一次**）：判据两格——`owner == 持树者`
 /// （那一枚是它铸的）**且** 记号 = TIP_MARK。认下来之后本线程拿着的就是
-/// "往提示之路推客人号 / 协调帧 / 一条路"那一枚。
+/// "往提示之路推客人号 / 协调帧 / 一条路"那一枚
 pub fn host_of(
     host: TaskId,
     millis: Wait,
@@ -208,9 +208,9 @@ pub fn host_of(
     Ok(host)
 }
 
-/// 把**客人交出来的那一枚**转授给持树者。
-/// 转授的是"客人开的那扇门"（`owner` 是客人），持树者那侧认领时认的正是它。
-/// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多。
+/// 把**客人交出来的那一枚**转授给持树者
+/// 转授的是"客人开的那扇门"（`owner` 是客人），持树者那侧认领时认的正是它
+/// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
     let hole = mail::HolePie::from_token(reply);
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
@@ -218,23 +218,23 @@ pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
-/// **一枚门牌落下去之后那三条读数**（land 每枚门牌返一行）。
+/// **一枚门牌落下去之后那三条读数**（land 每枚门牌返一行）
 pub struct Landed {
-    /// 落门牌那一步（`bind`）：答那一格自己的号。
+    /// 落门牌那一步（`bind`）：答那一格自己的号
     pub land: Result<(), Fail>,
-    /// 那一格自己的号（`land` 不成时是零号）。
+    /// 那一格自己的号（`land` 不成时是零号）
     pub plate: EntryId,
-    /// 查回来验一遍（`token`）：**路译得回、那一枚门闩取得回来**。
+    /// 查回来验一遍（`token`）：**路译得回、那一枚门闩取得回来**
     pub find: Result<(), Fail>,
-    /// 拿号问名：**号 ↔ 名对得上**，才算那枚号是真坐标。
+    /// 拿号问名：**号 ↔ 名对得上**，才算那枚号是真坐标
     pub named: Option<String>,
 }
 
-/// （`token`）→ 逐枚拿号问名（`name`）→ **每枚一行读数**。
+/// （`token`）→ 逐枚拿号问名（`name`）→ **每枚一行读数**
 /// `tree` = 拿谁的会话；`family` = 哪一族（读数行前缀）；`road` = **绝对坐标的段列表**
-/// （`["svc","principal"]`、`["svc","drv"]`、`["dev", 类]`）；`mine` = 那一格声不声明归属；
-/// 即返回次序**）。
-/// **`road` 是"容器链"，不含那一枚自己的名字**：`/svc/sys/principal` 那块窗格底下才放 `ask` / `set`，
+/// （`["svc","principal"]`、`["svc","drv"]`、`["dev", 类]`）；`mine` = 那一格声不声明归属
+/// 即返回次序**）
+/// **`road` 是"容器链"，不含那一枚自己的名字**：`/svc/sys/principal` 那块窗格底下才放 `ask` / `set`
 /// 故 `road = ["svc","principal"]` 而 `faces = [("ask",…),("set",…)]`；驱动那一家是两段
 /// `["svc","drv"]`（砖就叫 `/svc/drv/router`）。把砖的名字也塞进 `road` 会**先立一块同名的
 pub fn land(

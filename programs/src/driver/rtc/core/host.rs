@@ -10,9 +10,9 @@ use super::slot::Slot;
 use env::PieToken;
 
 pub enum Answer {
-    /// 「现在几点」：答一个时刻。
+    /// 「现在几点」：答一个时刻
     Time(u64),
-    /// 「再过多 long 叫我」收下了：那一格占上，设备要武装到 `at`；答码是 frame::OK。
+    /// 「再过多 long 叫我」收下了：那一格占上，设备要武装到 `at`；答码是 frame::OK
     Armed {
         at: u64,
     },
@@ -22,22 +22,22 @@ pub enum Answer {
     },
 }
 
-/// 一次投递：清掉设备那一格（电平源）之后，那一格到点没有。
+/// 一次投递：清掉设备那一格（电平源）之后，那一格到点没有
 pub enum Ring {
-    /// 还没到点（或者是空响）。
+    /// 还没到点（或者是空响）
     Quiet,
-    /// 到点了：往这一枚孔推"那一声"。
+    /// 到点了：往这一枚孔推"那一声"
     Rang { back: PieToken, now: u64 },
 }
 
-/// 常驻会话核：那一格 ＋ "报了几声"那一格读数。
+/// 常驻会话核：那一格 ＋ "报了几声"那一格读数
 pub struct Host {
     slot: Slot,
     rang: usize,
 }
 
 impl Host {
-    /// 起一枚空会话。
+    /// 起一枚空会话
     pub const fn new() -> Host {
         Host {
             slot: Slot::new(),
@@ -45,7 +45,7 @@ impl Host {
         }
     }
 
-    /// `back` = 客人借来的那枚孔（在本端表里的号）；`now` = 收到这一帧时设备的钟。
+    /// `back` = 客人借来的那枚孔（在本端表里的号）；`now` = 收到这一帧时设备的钟
     pub fn ask(&mut self, wire: Wire, back: PieToken, now: u64) -> Answer {
         match wire {
             Wire::Now => Answer::Time(now),
@@ -64,7 +64,7 @@ impl Host {
         }
     }
 
-    /// 线上一趟投递 → 那一格到点没有（**取走就是兑现**：`Rang` 那一刻那一格已经回空）。
+    /// 线上一趟投递 → 那一格到点没有（**取走就是兑现**：`Rang` 那一刻那一格已经回空）
     pub fn ring(&mut self, now: u64) -> Ring {
         match self.slot.fire(now) {
             Some(back) => Ring::Rang { back, now },
@@ -72,8 +72,8 @@ impl Host {
         }
     }
 
-    /// 那一声**推出去了**（有人收下）：读数那一格加一，返加过之后的数。
-    /// 推不出去时**不调用**——它数的是兑现了的那几声（与旧读数逐字同）。
+    /// 那一声**推出去了**（有人收下）：读数那一格加一，返加过之后的数
+    /// 推不出去时**不调用**——它数的是兑现了的那几声（与旧读数逐字同）
     pub fn heard(&mut self) -> usize {
         self.rang += 1;
         self.rang

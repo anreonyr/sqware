@@ -21,7 +21,7 @@ use crate::system::Assembly;
 use crate::unit::{Setup, UnitFile};
 
 impl Control {
-    /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子（`spawn` 才挂）。
+    /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子（`spawn` 才挂）
     /// **"怎么算起来"由 `setup` 推出**：有通道 ⇒ Announce::Channel（它起来时会交回
     pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
         let name = program.name().to_string();
@@ -31,8 +31,8 @@ impl Control {
             .map_err(|_| Error::Table)
     }
 
-    /// **放行 + 入册**（装配那一相的后半）：**次序是硬的**——物料要落到它交回的那条路上，
-    /// 故入册只能在放行之后（Control::start 之后才 Control::enroll）。
+    /// **放行 + 入册**（装配那一相的后半）：**次序是硬的**——物料要落到它交回的那条路上
+    /// 故入册只能在放行之后（Control::start 之后才 Control::enroll）
     pub fn launch(
         &mut self,
         program: &UnitFile,
@@ -55,13 +55,13 @@ impl Control {
         Ok(())
     }
 
-    /// **入册**：把**这台机器的全部可领之物**交进收方（那一条声明了 Setup::Machine 的通道）。
-    /// 三步：
+    /// **入册**：把**这台机器的全部可领之物**交进收方（那一条声明了 Setup::Machine 的通道）
+    /// 三步
     /// 1. **枚举全机**（crate::system::common::machine::Machine::devices）＋ 那两件按**已知坐标**的
-    ///    （设备树本体 / 门铃——它们不在树里，没有"哪一类"可判）；
-    /// 3. **一整段推过去**（Enroll：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）。
+    /// （设备树本体 / 门铃——它们不在树里，没有"哪一类"可判）
+    /// 3. **一整段推过去**（Enroll：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）
     /// **第一条恒是设备树本体**：收方要**先**把树读一遍，才知道哪一条记录是哪一台
-    /// （名 / 类 / 线）。次序即契约。
+    /// （名 / 类 / 线）。次序即契约
     pub fn enroll(
         &mut self,
         name: String,
@@ -153,7 +153,7 @@ pub fn await_ready(
         .map_err(|e| e.said())
 }
 
-/// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 Control::enlist）。
+/// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 Control::enlist）
 fn announce_of(supply: &[Setup]) -> Announce {
     if supply.is_empty() {
         Announce::None
@@ -162,10 +162,10 @@ fn announce_of(supply: &[Setup]) -> Announce {
     }
 }
 
-/// **装通道**（"配"那一相）：按这一台 `setup` 里那几格逐条装上——**记号 = 通道名**，
-/// 放行后按同一个记号逐条认领（service::ready）。
+/// **装通道**（"配"那一相）：按这一台 `setup` 里那几格逐条装上——**记号 = 通道名**
+/// 放行后按同一个记号逐条认领（service::ready）
 /// **自由函数**：它只碰通道，不碰 `Control` 的任何一格（与 connect 那一手
-/// （crate::system::Assembly::assemble）与线上那条 Control::release。
+/// （crate::system::Assembly::assemble）与线上那条 Control::release
 pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Error> {
     for s in program.supply() {
         for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {

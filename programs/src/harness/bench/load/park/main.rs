@@ -15,7 +15,7 @@ use core::time::Duration;
 
 use runtime::env::room;
 
-/// 每轮睡多久（毫秒）——就是被测的那个 `millis`。
+/// 每轮睡多久（毫秒）——就是被测的那个 `millis`
 const MS: u64 = 1;
 
 #[programs::entry]

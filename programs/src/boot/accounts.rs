@@ -6,14 +6,14 @@ use env::ledger::{args as boot_args, manifest};
 use env::{Key, PAIR_LEN, Pair};
 use protocol::debug;
 
-/// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
+/// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）
 pub struct Accounts {
     view: &'static [u8],
     pairs: &'static [u8],
 }
 
 impl Accounts {
-    /// 从启动参数取出两块账。`None` = 参数不足 / 清单头非法（不该发生）。
+    /// 从启动参数取出两块账。`None` = 参数不足 / 清单头非法（不该发生）
     pub fn take() -> Option<Accounts> {
         let a = runtime::core::task::args::args();
         if a.len() < boot_args::LEN {
@@ -29,14 +29,14 @@ impl Accounts {
         Some(Accounts { view, pairs })
     }
 
-    /// 清单那块字节（Catalog::of_boot 的输入）。
+    /// 清单那块字节（Catalog::of_boot 的输入）
     pub fn view(&self) -> &'static [u8] {
         self.view
     }
 
-    /// 配对块里按**坐标**取一枚门闩。
+    /// 配对块里按**坐标**取一枚门闩
     /// **坐标唯一**：区不重叠（设备 `reg` 段与载荷区各有各的基址），`dtb` / `irq` 各自只有
-    /// 一件——故不再有"同名取第一枚"这回事。判别号读不懂的记录当场跳过。
+    /// 一件——故不再有"同名取第一枚"这回事。判别号读不懂的记录当场跳过
     pub fn token(&self, key: Key) -> Option<PieToken> {
         for i in 0..self.pairs.len() / PAIR_LEN {
             if self.key(i) == Some(key) {
@@ -46,7 +46,7 @@ impl Accounts {
         None
     }
 
-    /// 两块账的自述（一行）：按判别号数它有什么。
+    /// 两块账的自述（一行）：按判别号数它有什么
     pub fn report(&self) {
         let n = self.pairs.len() / PAIR_LEN;
         let (mut region, mut dtb, mut irq, mut bad) = (0, 0, 0, 0);
@@ -61,12 +61,12 @@ impl Accounts {
         debug!("boot: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}");
     }
 
-    /// 第 `i` 条的坐标（定长记录，块只保证页对齐 ⇒ `read_unaligned`）。
+    /// 第 `i` 条的坐标（定长记录，块只保证页对齐 ⇒ `read_unaligned`）
     fn key(&self, i: usize) -> Option<Key> {
         self.record(i).key()
     }
 
-    /// 第 `i` 条记录。
+    /// 第 `i` 条记录
     fn record(&self, i: usize) -> Pair {
         // SAFETY: 块是 boot 只读借映的一段，逐条定长（`i` 由调用方按条数界内给出）；
         // 步长 24 字节而块只保证页对齐，故 `read_unaligned`。

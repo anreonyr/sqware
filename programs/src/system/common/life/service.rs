@@ -14,10 +14,9 @@ use crate::unit::{
     Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,
 };
 
-/// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage；
+/// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage
 /// 内存不够 / 产不出来 = UnitFail::OoM（本协议名 Fail::Full）；其余
 /// （`Denied` 不在我 heir 里 / 启动参数读不出来；`Busy` 条件未就绪）落 Fail::Unknown
-/// ——"不认识的失败"不该猜成某一种。**没有表外那一格**：域词表是穷尽的。
 fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
     match e.source {
         UnitFail::BadImage => Fail::BadImage,
@@ -35,28 +34,28 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     }
 }
 
-/// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）。
-/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::service::operator::{…,
+/// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）
+/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::service::operator::{…
 /// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
-/// 不是一回事，故按"死在起手的哪一步"取名 Start。
+/// 不是一回事，故按"死在起手的哪一步"取名 Start
 /// **它自己就是出口**（`impl Exit`）：三个 bin 的 `main` 直接答 `Result<(), Start>`——
-/// 不需要再有一层 `said` / `exit` 的转发。
+/// 不需要再有一层 `said` / `exit` 的转发
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
     Tree(Died),
-    /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）。
+    /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）
     Room(Died),
-    /// 常驻那一问：那只组没立起来，或收帧那一页备不下。
+    /// 常驻那一问：那只组没立起来，或收帧那一页备不下
     Desk(Died),
-    /// 身份服务的两张表（谱系 + 名册）没立起来；**只有名册那一台有**。
+    /// 身份服务的两张表（谱系 + 名册）没立起来；**只有名册那一台有**
     Book(Died),
-    /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**。
+    /// 身份服务那份门牌找不到（盟册是它的客人，**按名字找**）；**只有盟册有**
     Face(Died),
-    /// **起手那一段物料没收到**（整机物料那条通道上没来东西 / 来的东西解不动）；
-    /// **只有设备账那一台有**（Setup::Machine 那一格）。
+    /// **起手那一段物料没收到**（整机物料那条通道上没来东西 / 来的东西解不动）
+    /// **只有设备账那一台有**（Setup::Machine 那一格）
     Load(Died),
     /// **常驻期**：组坏了（`await_` 答不出）——与 Start::Desk 分开，是因为它不在"起手那
-    /// 几步"里（起手已经过完了），而号同那一族。
+    /// 几步"里（起手已经过完了），而号同那一族
     Dead(Died),
 }
 
@@ -73,7 +72,7 @@ impl Start {
         }
     }
 
-    /// **这一句话怎么念**：族名 ＋ 步名。
+    /// **这一句话怎么念**：族名 ＋ 步名
     pub fn text(self) -> &'static str {
         match self {
             // 持树者（`E_TREE`）：它会走到的那三步。
@@ -113,17 +112,17 @@ impl crate::Exit for Start {
     }
 }
 
-/// 起跑前要交出去的一枚门闩：给哪一枚、多大权。
+/// 起跑前要交出去的一枚门闩：给哪一枚、多大权
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Grant {
-    /// 要交出去的那一枚（**在我表里**的句柄）。
+    /// 要交出去的那一枚（**在我表里**的句柄）
     pub token: PieToken,
-    /// 交出去的权限子集。
+    /// 交出去的权限子集
     pub perm: Permission,
 }
 
-/// 起一个 Service：**建域 → 产线程 → 挂身子**。
-/// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）。
+/// 起一个 Service：**建域 → 产线程 → 挂身子**
+/// `image` = 镜像字节（v1 口径）；`kind` = 特权级（**由清单决定**，调用方转交）
 pub fn mint(
     table: &mut Table,
     name: &str,
@@ -142,12 +141,12 @@ pub fn mint(
     Ok(task)
 }
 
-/// 第二相：**放行**，并在放行前塞门闩、备通道。
+/// 第二相：**放行**，并在放行前塞门闩、备通道
 /// `grants` = 放行前要交到它手里的门闩（空 = 什么都不预先给）；`channels` = 与它的那几条通道
-/// **记号**（记号即通道名）；`millis` = 就绪等待（上限族，`Wait`）。
-/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、备通道都发生在这段窗口里。
+/// **记号**（记号即通道名）；`millis` = 就绪等待（上限族，`Wait`）
+/// **两相之间的窗口就是"它一步都还没跑"**——塞门闩、备通道都发生在这段窗口里
 /// **失败时不留下半行**：本相失败 ⇒ 实例与状态如实留在表里（它确实在跑），调用方用
-/// stop 收尾。
+/// stop 收尾
 pub fn start(
     table: &mut Table,
     name: &str,
@@ -174,9 +173,9 @@ pub fn start(
     Ok(())
 }
 
-/// 等它就绪。`true` = **调用开始时就已就绪**（挂起过的一律 `false`）。
+/// 等它就绪。`true` = **调用开始时就已就绪**（挂起过的一律 `false`）
 /// 唯一会改表的地方就是这个函数：确认它的宣布之后置 State::Ready，确认它死了之后
-/// **归建立那一手**：通道在对方交回孔并归位（`claim`）时成立，本函数只去问那句"成立了没有"。
+/// **归建立那一手**：通道在对方交回孔并归位（`claim`）时成立，本函数只去问那句"成立了没有"
 pub fn ready(
     table: &mut Table,
     name: &str,
@@ -248,11 +247,11 @@ pub fn stop(table: &mut Table, name: &str) -> Result<(), Fail> {
     Ok(())
 }
 
-/// 等它收尾：`millis` 与 ready 同款（上限族，`Wait`）。
-/// **只读：不动表**。
-/// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次。
+/// 等它收尾：`millis` 与 ready 同款（上限族，`Wait`）
+/// **只读：不动表**
+/// 形状是 **问 → 等 → 问**，判决只认两次**非阻塞问**（`Join{task, 0}`）；等只是为了少问几次
 /// `Err(Fail::Unknown)` = 表里没这一行、或这一行还没有身子的坐标。问不出（`Denied` =
-/// 已入土 / 从未入册）按"收尾了"处理。
+/// 已入土 / 从未入册）按"收尾了"处理
 pub fn until(table: &Table, name: &str, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
@@ -272,7 +271,7 @@ pub fn until(table: &Table, name: &str, millis: Wait) -> Result<Reaped, Fail> {
     }
 }
 
-/// 这一行身子那一枚线程（没有身子 = 没有可等的坐标）。
+/// 这一行身子那一枚线程（没有身子 = 没有可等的坐标）
 fn live_task(table: &Table, name: &str) -> Option<TaskId> {
     match table.find(name) {
         Some(Service {
@@ -283,10 +282,10 @@ fn live_task(table: &Table, name: &str) -> Option<TaskId> {
     }
 }
 
-/// 盯着它：`true` = 它收尾了（`Now` / `Waited`）。
+/// 盯着它：`true` = 它收尾了（`Now` / `Waited`）
 /// 内核的事实优先：它说收了就是收了，表随之落定 `Dead`——**坐标留着**（清了就没得放下、
-/// 也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：那是"还没收干净"，
-/// 不是"收了"。
+/// 也没得重启）。`Unsettled`（有界期内没等出来）**一个字都不写**：那是"还没收干净"
+/// 不是"收了"
 pub fn watch(table: &mut Table, name: &str, millis: Wait) -> Result<bool, Fail> {
     match until(table, name, millis)? {
         Reaped::Now | Reaped::Waited => {

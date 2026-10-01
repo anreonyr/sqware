@@ -3,7 +3,7 @@
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 
-/// 它死在起手哪一步（落门牌 / 立两张表 / 回查）。
+/// 它死在起手哪一步（落门牌 / 立两张表 / 回查）
 pub const E_PRINCIPAL: Died = 14;
 
 pub static PROGRAM: UnitFile = UnitFile {

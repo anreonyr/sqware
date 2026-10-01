@@ -20,9 +20,9 @@ use crate::service::operator::core::{Key, Operator};
 
 use super::door::may;
 
-/// 把一句问交给树，编出一句答（**答话有四种形状**，见 ocall 的帧那一节）。
-/// **形状由 ocall::Wire 说**（收帧那一侧已经按动作解好了），**答由 ocall::Union 说**：
-/// 解不出来就是一句读不懂的帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。
+/// 把一句问交给树，编出一句答（**答话有四种形状**，见 ocall 的帧那一节）
+/// **形状由 ocall::Wire 说**（收帧那一侧已经按动作解好了），**答由 ocall::Union 说**
+/// 解不出来就是一句读不懂的帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）
 pub(super) fn answer(
     tree: &mut Operator,
     ask: Option<ocall::Wire>,

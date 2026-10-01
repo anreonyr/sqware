@@ -10,15 +10,14 @@ extern crate alloc;
 // 本包 lib 提供 `_start` + panic_handler；必须真的链接它，`use` 只带符号不算。
 extern crate programs;
 
-/// 住持面（适配）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻——由 bin 自己 `mod`。
+/// 住持面（适配）：起手 / 门面 / 逐客 / 排空 / 铃 / 常驻——由 bin 自己 `mod`
 mod adapt;
 
-/// 纯功能：树那侧的事实与线集合（区 ↔ 线号）。
+/// 纯功能：树那侧的事实与线集合（区 ↔ 线号）
 mod core;
 
 mod dev;
 
-/// （**一族口径**在 programs::driver::shared::fail：号取自装配表——一个数都不写，
 #[programs::entry]
 fn main() -> Result<(), programs::driver::shared::fail::Fail> {
     // 起手：领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。

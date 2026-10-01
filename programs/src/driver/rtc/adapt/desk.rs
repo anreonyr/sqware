@@ -1,5 +1,5 @@
 //! 解帧 → 认孔 → 喂会话核 → 执行它吐的答形。
-//! mail::reserve 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备。
+//! :reserve 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备
 
 use crate::dev::rtc;
 use env::{PieToken, TaskId};
@@ -12,7 +12,7 @@ use runtime::env::mail;
 
 /// 认那枚孔靠**帧里那一格** ＋ **一次 mail::reserve 验**：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
-/// ⇒ 答完当场放下。
+/// ⇒ 答完当场放下
 pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     let Some((back, ask)) = frame::Wire::take(frame) else {
         // 不是那个形状：不猜、不动账、也不回话——没有可信的"往哪回"。
@@ -58,13 +58,13 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     }
 }
 
-/// 把那一声答出去（一个时刻）。
+/// 把那一声答出去（一个时刻）
 fn ship_time(back: PieToken, now: u64) {
     let mut tx = Sender::<Time>::from_token(back);
     let _ = tx.send(Time::of(now));
 }
 
-/// 把那一格码答出去。
+/// 把那一格码答出去
 fn ship_code(back: PieToken, code: u8) {
     let mut tx = Sender::<Status>::from_token(back);
     let _ = tx.send(Status::of(code));

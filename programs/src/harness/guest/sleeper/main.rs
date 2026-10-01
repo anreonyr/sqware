@@ -28,20 +28,20 @@ use runtime::env::unit as utask;
 
 const ME: &str = "sleeper";
 
-/// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）。
+/// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
 const WANT: &str = "rtc";
 
-/// 等板 / 等树 / 找一趟服务 / 办一趟往返的总上限（毫秒）。**必须有界**。
+/// 等板 / 等树 / 找一趟服务 / 办一趟往返的总上限（毫秒）。**必须有界**
 const MS: usize = 1000;
 
 /// 这一槽的**周期**（纳秒）："再过这么久叫我"。Wire::Arm 收了相对量之后，这个数就是
 /// **想要的那段距离本身**，不再是"要罩住一趟往返的提前量"——延迟由收帧的驱动承担
-/// （见 `programs/src/driver/rtc/core/frame.rs` 那格），故它不必再留 4× 余量。
+/// （见 `programs/src/driver/rtc/core/frame.rs` 那格），故它不必再留 4× 余量
 const SLOT_NS: u64 = 50_000_000;
 
 const E_NO_SERVICE: usize = 1;
 
-/// 没搭上：**报码 ＋ 指名是哪一步**。
+/// 没搭上：**报码 ＋ 指名是哪一步**
 fn no_service(step: &'static str) -> Report<'static> {
     Report::note(E_NO_SERVICE, step)
 }

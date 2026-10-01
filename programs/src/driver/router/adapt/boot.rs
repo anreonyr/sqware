@@ -26,7 +26,7 @@ use runtime::env::unit as utask;
 
 const SERVICE: &str = "router";
 
-/// 它们不是树里的设备）。
+/// 它们不是树里的设备）
 const PLIC_ASK: Ask = Ask {
     class: PLIC_CLASS,
     name: None,
@@ -49,25 +49,25 @@ const IRQ_ASK: Ask = Ask {
     policy: Policy::NONE,
 };
 
-/// 装泊位 / 等配给 / 办一趟登记 / 上树的期限（毫秒）。
+/// 装泊位 / 等配给 / 办一趟登记 / 上树的期限（毫秒）
 const QUAY_MS: usize = 1000;
 
 pub struct Up {
-    /// 控制器寄存器面（设备侧）。
+    /// 控制器寄存器面（设备侧）
     pub plic: Plic,
-    /// 账：线号 = 下标（容量按 `device_count` 校验 ⇒ 越界不可表达）。
+    /// 账：线号 = 下标（容量按 `device_count` 校验 ⇒ 越界不可表达）
     pub lines: Lines,
-    /// 门铃（内核给的那一枚；它只 `hush`，不铸）。
+    /// 门铃（内核给的那一枚；它只 `hush`，不铸）
     pub bell: Bell,
-    /// 等三源的组。
+    /// 等三源的组
     pub pile: Pile,
-    /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）。
+    /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）
     pub buf: Vec<u8>,
     pub entry: HolePie,
     pub replies: Replies,
 }
 
-/// 起手。
+/// 起手
 pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
     let entry =

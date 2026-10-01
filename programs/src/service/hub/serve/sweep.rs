@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// 与线路由者那条探活同一手。
+/// 与线路由者那条探活同一手
 pub(super) fn alive(sensor: PieToken) -> bool {
     mail::reserve(sensor).is_ok()
 }

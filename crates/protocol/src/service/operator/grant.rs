@@ -4,21 +4,21 @@
 use super::frame::Wire;
 
 crate::faces! {
-    /// **一柄授面的权**：一枚 = 一枚操作。七位，位次 1..=7。
+/// **一柄授面的权**：一枚 = 一枚操作。七位，位次 1..=7
     pub enum Grant {
-        /// `part` 分。
+/// `part` 分
         Part => "part",
-        /// `land` 落。
+/// `land` 落
         Land => "land",
-        /// `find` 寻。
+/// `find` 寻
         Find => "find",
-        /// `trim` 剪。
+/// `trim` 剪
         Trim => "trim",
-        /// `list` 列。
+/// `list` 列
         List => "list",
-        /// `seek` 译。
+/// `seek` 译
         Seek => "seek",
-        /// `name` 名。
+/// `name` 名
         Name => "name",
     }
     stem: "operator-ask-",

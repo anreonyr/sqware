@@ -12,9 +12,9 @@ use crate::service::operator::Fail;
 use super::pane::Pane;
 use super::{Face, map_code};
 
-/// **一枚砖**：`EntryId` 是固定下来的宾语，那一枚门闩是它背后的东西（到头了）。
+/// **一枚砖**：`EntryId` 是固定下来的宾语，那一枚门闩是它背后的东西（到头了）
 /// 它与 Pane 是**同一格的两个方向**，不是一个"二选一"的包装：想往里走就 Tile::pane
-/// （`list` 判），想拿那一枚就 Tile::token（`find` 判）。
+/// （`list` 判），想拿那一枚就 Tile::token（`find` 判）
 pub struct Tile<'a> {
     pub(super) face: &'a Face,
     pub(super) id: EntryId,
@@ -30,14 +30,14 @@ impl Tile<'_> {
         said.name().map_err(map_code)
     }
 
-    /// 按**窗格**读它：是窗格 ⇒ 继续往里走；是一枚砖 ⇒ Fail::NotAPane。
+    /// 按**窗格**读它：是窗格 ⇒ 继续往里走；是一枚砖 ⇒ Fail::NotAPane
     pub fn pane(&self, wait: Wait) -> Result<Pane<'_>, Fail> {
         Pane::at(self.face, self.id, wait)
     }
 
-    /// 按**砖**读它：把那一号背后那一枚 Pie 要过来。
-    /// 那一枚**经会话授进本端表**，而**它在本端表里的号随这条答话回来**（ocall::Union::Seed），
-    /// 故客人不必再扫表。寻到头是窗格 ⇒ Fail::NotATile。
+    /// 按**砖**读它：把那一号背后那一枚 Pie 要过来
+    /// 那一枚**经会话授进本端表**，而**它在本端表里的号随这条答话回来**（ocall::Union::Seed）
+    /// 故客人不必再扫表。寻到头是窗格 ⇒ Fail::NotATile
     pub fn token(self, wait: Wait) -> Result<PieToken, Fail> {
         let said = self.face.call(ocall::Req::Find(self.id), wait)?;
         said.seed().map_err(map_code)

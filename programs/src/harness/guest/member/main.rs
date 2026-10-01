@@ -38,7 +38,7 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_NO_SERVICE: usize = 1;
 
-/// 册外那个号（伪造的线上值）。铸过的号是 `0..next`，故这个一定在册外。
+/// 册外那个号（伪造的线上值）。铸过的号是 `0..next`，故这个一定在册外
 const OUTSIDE: usize = 4095;
 
 #[programs::entry]
@@ -309,7 +309,7 @@ fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
     }
 }
 
-/// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）。
+/// 一条号 / 没绑 / 哪一格失败——**一行里说全**（读数靠这一行，不靠再跑一遍）
 fn one_opt<E: Why>(r: Result<Option<PrincipalId>, E>) -> String {
     match r {
         Ok(Some(p)) => format!("{}", p.get()),
@@ -318,7 +318,7 @@ fn one_opt<E: Why>(r: Result<Option<PrincipalId>, E>) -> String {
     }
 }
 
-/// 同一行读数：只答一条身份号的那几条（`derive`）。
+/// 同一行读数：只答一条身份号的那几条（`derive`）
 fn one_policy<E: Why>(r: Result<PrincipalId, E>) -> String {
     match r {
         Ok(p) => format!("{}", p.get()),
@@ -326,7 +326,7 @@ fn one_policy<E: Why>(r: Result<PrincipalId, E>) -> String {
     }
 }
 
-/// 同一行读数：只答一枚盟号的那几条（`found`）。
+/// 同一行读数：只答一枚盟号的那几条（`found`）
 fn one_id(r: &Result<Coalition<'_>, Fail>) -> String {
     match r {
         Ok(c) => format!("{}", c.id().get()),
@@ -334,9 +334,9 @@ fn one_id(r: &Result<Coalition<'_>, Fail>) -> String {
     }
 }
 
-/// 同一行读数：一窗的**三格事实**——几枚、窗外还有没有、是哪些号。
+/// 同一行读数：一窗的**三格事实**——几枚、窗外还有没有、是哪些号
 /// 三格分开写，是因为**只有前两格是判据**：号那一段跟着装配期铸出来的身份号走（同一份镜像、
-/// 不同的启动次序就会差一位），拿它钉判据等于把一条与取窗无关的数钉进门里。
+/// 不同的启动次序就会差一位），拿它钉判据等于把一条与取窗无关的数钉进门里
 fn window_ids<T: Id>(more: bool, ids: impl Iterator<Item = T>) -> String {
     let mut out = String::new();
     let mut n = 0usize;
@@ -353,7 +353,7 @@ fn window_ids<T: Id>(more: bool, ids: impl Iterator<Item = T>) -> String {
     format!("n{n} more={more} ids={out}")
 }
 
-/// 同一行读数：`band`（成员那一窗）答的那三格。
+/// 同一行读数：`band`（成员那一窗）答的那三格
 fn band_ids(r: &Result<Band<'_>, Fail>) -> String {
     match r {
         Ok(w) => window_ids(w.more(), w.iter()),
@@ -361,7 +361,7 @@ fn band_ids(r: &Result<Band<'_>, Fail>) -> String {
     }
 }
 
-/// 同一行读数：`bloc`（盟籍那一窗）答的那三格。
+/// 同一行读数：`bloc`（盟籍那一窗）答的那三格
 fn bloc_ids(r: &Result<Bloc<'_>, Fail>) -> String {
     match r {
         Ok(w) => window_ids(w.more(), w.iter()),
@@ -369,7 +369,7 @@ fn bloc_ids(r: &Result<Bloc<'_>, Fail>) -> String {
     }
 }
 
-/// 同一行读数：是 / 不是 / 哪一格失败。
+/// 同一行读数：是 / 不是 / 哪一格失败
 fn flag<E: Why>(r: Result<bool, E>) -> String {
     match r {
         Ok(true) => String::from("true"),
@@ -378,7 +378,7 @@ fn flag<E: Why>(r: Result<bool, E>) -> String {
     }
 }
 
-/// 同一行读数：成了没有。
+/// 同一行读数：成了没有
 fn done<E: Why>(r: Result<(), E>) -> String {
     match r {
         Ok(()) => String::from("ok"),
@@ -386,8 +386,7 @@ fn done<E: Why>(r: Result<(), E>) -> String {
     }
 }
 
-/// 两个协议、两张失败表，但**读数要的是同一个形状**：一行字。
-/// ——每家的格子名照它们自己那张线上表说，不另起词。
+/// 两个协议、两张失败表，但**读数要的是同一个形状**：一行字
 trait Why {
     fn why(&self) -> &'static str;
 }

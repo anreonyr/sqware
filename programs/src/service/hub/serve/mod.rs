@@ -50,9 +50,9 @@ pub mod claim;
 pub mod list;
 pub mod sweep;
 
-/// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**。
+/// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
-/// 的早退步，失败域在末尾**折一次**。
+/// 的早退步，失败域在末尾**折一次**
 pub fn serve() -> Result<(), Start> {
     protocol::debug::put("hub: serve enter");
     // 一～七：起手。
@@ -247,7 +247,7 @@ pub(super) fn put_said(back: PieToken, status: u8) {
     let _ = tx.send(Said::of(status));
 }
 
-/// 递一句 `Deed`（同上）。
+/// 递一句 `Deed`（同上）
 pub(super) fn put_deed(back: PieToken, deed: Deed) {
     let mut tx = Sender::<Deed>::from_token(back);
     let _ = tx.send(deed);
@@ -267,7 +267,7 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
     }
 }
 
-/// **这一帧从哪一枚孔进来**：三枚面各是各的，**其余的孔都是某一台那一枚门**。
+/// **这一帧从哪一枚孔进来**：三枚面各是各的，**其余的孔都是某一台那一枚门**
 pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
     let (bond, list, claim) = plates;
     if token == bond {
@@ -282,8 +282,8 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
     }
 }
 
-/// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号。
-/// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格。
+/// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号
+/// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格
 pub(super) fn ship(
     entry: Entry,
     to: TaskId,
@@ -314,13 +314,13 @@ fn take(rx: PieToken) -> Option<Enroll> {
     }
 }
 
-/// 把装配者推来那一段读成一本账：**树那一页 ＋ 每一条记录对上一台**。
-/// 两步都是硬的：
-///    的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去；
+/// 把装配者推来那一段读成一本账：**树那一页 ＋ 每一条记录对上一台**
+/// 两步都是硬的
+/// 的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去
 /// 2. **逐条对**：段里那几条记录给的是**坐标 ＋ 号**，而"这一条是哪一台"由坐标对树
-///    （Machine::devices 那张表就是那个对照）。
+/// （Machine::devices 那张表就是那个对照）
 /// 按坐标认出来、按 hub::BOOT 那一类入册（`/dev/boot/{dtb,irq}`）——于是"取法"只有一条
-/// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案。
+/// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案
 fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     let mut ledger = Ledger::new();
     // 一、树那一页（**留着不掉**：Machine::of 借的就是它映射进来的那段字节）。
@@ -363,15 +363,14 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     Ok((ledger, dock))
 }
 
-/// 段里按坐标取那一条（照单取源那一套的读侧：坐标唯一）。
+/// 段里按坐标取那一条（照单取源那一套的读侧：坐标唯一）
 fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
     (0..enroll.len())
         .filter_map(|i| enroll.record(i))
         .find(|pair| pair.key() == Some(key))
 }
 
-/// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着。
-/// TreeFace::tile 上。
+/// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着
 fn find_league(tree: &TreeFace) -> Option<League> {
     let road = ccall::DIR.try_join(ccall::Grant::Set.name())?;
     let door = tree

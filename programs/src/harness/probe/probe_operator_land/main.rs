@@ -35,22 +35,22 @@ use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// **起步那一等**（毫秒）：等 `probe-operator-gate` 把它那两格摆好。
+/// **起步那一等**（毫秒）：等 `probe-operator-gate` 把它那两格摆好
 /// 本台**读不了树**（`list` / `name` / `seek` 各是另一柄权，全被面判拒），故"那两格摆好了没有"
 /// 这一问它问不出来。装配者只保证**起手装路的先后**（本台排在那位之后），不保证"那位把场摆完"
-/// 落了它、自己成了主人（实测：`Ok(EntryId(13))`，判据当场红，而对面那一格本该是别人的）。
-/// 它是**有界的**：过量只是白等，不改变判据。
+/// 落了它、自己成了主人（实测：`Ok(EntryId(13))`，判据当场红，而对面那一格本该是别人的）
+/// 它是**有界的**：过量只是白等，不改变判据
 const SETTLE_MS: usize = 300;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-operator-land: land only";
 
-/// 由 `probe-operator-gate` 声明归它自己的那一格（本台顶它 ⇒ 该拒）。
+/// 由 `probe-operator-gate` 声明归它自己的那一格（本台顶它 ⇒ 该拒）
 const OWN: &str = "probe-op-own";
-/// 由它留下的**无主**那一格（本台落得下去）。
+/// 由它留下的**无主**那一格（本台落得下去）
 const FREE: &str = "probe-op-free";
 
-/// **不等于任何真格子**的一枚号：第 7–10 条只量"面判"，故拿哪一枚都一样（那几条**到不了树**）。
+/// **不等于任何真格子**的一枚号：第 7–10 条只量"面判"，故拿哪一枚都一样（那几条**到不了树**）
 const NOBODY: EntryId = EntryId::new(usize::MAX);
 
 #[programs::entry]

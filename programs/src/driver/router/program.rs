@@ -3,11 +3,11 @@
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 
-/// 它死在起手 / 常驻哪一步。
+/// 它死在起手 / 常驻哪一步
 pub const E_ROUTER: Died = 5;
 
 /// 中断控制器那一类（`compatible`）——**"我是哪台控制器"这个断言只有一处**：线路由域认设备树
-/// 时读它（`driver/router/core/sources.rs`），下面这张单子要的也是它。
+/// 时读它（`driver/router/core/sources.rs`），下面这张单子要的也是它
 pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 pub static PROGRAM: UnitFile = UnitFile {

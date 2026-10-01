@@ -28,7 +28,7 @@ use runtime::env::mail::{self, HolePie};
 
 const MS: usize = 1000;
 
-/// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**。
+/// 起服务：**读锚 → 上板 → 铸门牌上树 → 找身份那一份门牌 → 一枚线程招待所有客人**
 /// **起手那几步收在一个闭包**（与持树者 / 名册那两台同形）：它们清一色是"不成 ⇒ 这域
 pub fn serve() -> Result<(), Start> {
     // 一～六：起手（读锚 → 上板 → 铸两枚门牌 → 上树 → 找身份那一份 → 空册）。
@@ -118,9 +118,9 @@ pub fn serve() -> Result<(), Start> {
     )
 }
 
-/// `from` 是**内核盖的发送者**。
+/// `from` 是**内核盖的发送者**
 /// `roster` = 名册**问面**（`who()` 那一句用）；`mine` = **这一帧从本族哪一枚门牌进来**
-/// （serve 那只组说的事实）。
+/// （serve 那只组说的事实）
 fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, frame: &[u8]) {
     let Some((ask, back)) = ccall::Wire::take(frame) else {
         // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
@@ -141,10 +141,9 @@ fn turn(book: &mut Coalition, roster: &Face, mine: ccall::Grant, from: TaskId, f
     let _ = mail::release(back);
 }
 
-/// 把一句问交给核心，编出一句答（**三种答形**：格状态 / 一格答 / 一窗号）。
+/// 把一句问交给核心，编出一句答（**三种答形**：格状态 / 一格答 / 一窗号）
 /// **形状由 ccall::Wire 说**（收帧那一侧已按动作解好：两格载荷的意义随之定，不再是一枚裸码
 /// ＋ 两个裸数）。三条**写**原语同一个起手：**先拿发送者过名册**（who）。三条读不过名册
-/// ——`amid` 的 `p` 与两条取窗的键都是问的人给的标签（K6）。
 fn answer(
     book: &mut Coalition,
     roster: &Face,
@@ -213,10 +212,10 @@ fn answer(
     }
 }
 
-/// 发送者此刻代表谁——**"self"的全部护栏就是这一句**（正文"已知边界"）。
-/// 两条失败压成一格——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"：
-/// **调用方的下一步在两种情况下相同**（别指望这条路）；principal 那枚 `Denied` 翻不过来，
-/// 因为本族的 `Denied` 是空的（盟无主）。
+/// 发送者此刻代表谁——**"self"的全部护栏就是这一句**（正文"已知边界"）
+/// 两条失败压成一格——"这条 TID 没绑"与"身份服务答不上来（超时 / 对面没了）"
+/// **调用方的下一步在两种情况下相同**（别指望这条路）；principal 那枚 `Denied` 翻不过来
+/// 因为本族的 `Denied` 是空的（盟无主）
 fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
     let task = roster.task(from);
     task.principal(Wait::AtMost(MS))
@@ -225,7 +224,7 @@ fn who(roster: &Face, from: TaskId) -> Result<PrincipalId, Fail> {
         .ok_or(Fail::Unknown)
 }
 
-/// 找**身份服务**那份门牌（**问面**那一条）：`"/svc/sys/principal/ask"`，**译不出就再问**（有界）。
+/// 找**身份服务**那份门牌（**问面**那一条）：`"/svc/sys/principal/ask"`，**译不出就再问**（有界）
 fn find_face(tree: &TreeFace) -> Option<PieToken> {
     let Some(road) = pcall::DIR.try_join(pcall::Grant::Ask.name()) else {
         debug!("coalition: find_face deny=join");

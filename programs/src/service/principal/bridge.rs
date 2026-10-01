@@ -19,8 +19,8 @@ pub struct Roster {
 }
 
 impl Roster {
-    /// **放行前**给这一条服务派一条号、绑到它那一枚线程上。
-    /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 Roster::adopt 补绑。
+    /// **放行前**给这一条服务派一条号、绑到它那一枚线程上
+    /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 Roster::adopt 补绑
     pub fn bind(&self, task: TaskId) -> Result<(), &'static str> {
         let Some(face) = self.face.as_ref() else {
             debug!("principal: bind skip(no face) task={}", task.get());
@@ -40,7 +40,6 @@ impl Roster {
         Ok(())
     }
 
-    /// ——原来它静默跳过）。
     pub fn adopt(&mut self, task: TaskId, tree: Option<TaskId>) -> Result<TaskId, &'static str> {
         let f = face_of(task).ok_or("no identity face")?;
         let root = f.new_principal();
@@ -83,7 +82,7 @@ pub fn bind(
 }
 
 /// **名册这一位要认下面 ＋ 补绑自己与树** —— 判据是**它自己交上来的那一枚门牌**
-/// （Grant::Set：定面那一枚；只有名册那一族交得出它）。
+/// （Grant::Set：定面那一枚；只有名册那一族交得出它）
 pub fn adopt_roster(
     assembly: &mut Assembly,
     _program: &UnitFile,
@@ -97,10 +96,10 @@ pub fn adopt_roster(
     Ok(())
 }
 
-/// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
-/// `(开者 = 它, 记号 = 面)` 两格认出来。它起手就交，
+/// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）
+/// `(开者 = 它, 记号 = 面)` 两格认出来。它起手就交
 /// **要的是 Grant::Set（定面）**：本间那两手是 `derive` ＋ `bind`——发身份
-/// 那一侧要的正是改的权柄，而问面给不了它。名册两面各交一枚、记号不同，故"要哪一面"得说清。
+/// 那一侧要的正是改的权柄，而问面给不了它。名册两面各交一枚、记号不同，故"要哪一面"得说清
 fn face_of(host: TaskId) -> Option<Face> {
     let mut left = BOOT_MS;
     loop {

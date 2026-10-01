@@ -5,19 +5,19 @@
 //! 它只把设备树原样搬给域（`platform/devices.rs::pie_dtb`）。
 //! 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**（`PLIC_CLASS`）。
 
-/// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。
-/// **认 9 不认 11**（11 = M 模式）——认错就是把中断线交给固件。也**不硬算 `2h+1`**：
-/// 项序是绑定的定义，算术不是。
+/// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项
+/// **认 9 不认 11**（11 = M 模式）——认错就是把中断线交给固件。也**不硬算 `2h+1`**
+/// 项序是绑定的定义，算术不是
 const EXT_S: u32 = 9;
 
 use programs::unit::router::PLIC_CLASS;
 
 pub struct Sources {
-    /// 本控制器有多少条线（`riscv,ndev`）——线账按它校验（越界不可表达），也按它拒线号。
+    /// 本控制器有多少条线（`riscv,ndev`）——线账按它校验（越界不可表达），也按它拒线号
     device_count: u32,
-    /// `claim` / `complete` 是 **per-context** 的：一条线若在多个 context 上使能，
-    /// 下一次还会再报，于是空转。故**线接在哪个 context 上，就从哪个 context 领**：
-    /// 两件事同一个数，没有第二个数可以不一致。
+    /// `claim` / `complete` 是 **per-context** 的：一条线若在多个 context 上使能
+    /// 下一次还会再报，于是空转。故**线接在哪个 context 上，就从哪个 context 领**
+    /// 两件事同一个数，没有第二个数可以不一致
     ctx: u32,
 }
 
@@ -53,7 +53,7 @@ impl Sources {
         self.ctx
     }
 
-    /// 本控制器自报的线数（`riscv,ndev`）。**账的容量按它校验**（见 `adapt/boot.rs`）。
+    /// 本控制器自报的线数（`riscv,ndev`）。**账的容量按它校验**（见 `adapt/boot.rs`）
     pub fn device_count(&self) -> u32 {
         self.device_count
     }

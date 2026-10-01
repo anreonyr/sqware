@@ -11,11 +11,11 @@ use programs::system::run::scene;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
-    /// 两块账读不出来（启动参数不足 / 清单头非法）。
+    /// 两块账读不出来（启动参数不足 / 清单头非法）
     BootArgs,
-    /// 那台机器的自述（Key::dtb）没领到 / 读不懂。
+    /// 那台机器的自述（Key::dtb）没领到 / 读不懂
     Machine,
-    /// 死亡道那只组。
+    /// 死亡道那只组
     Group,
     Assemble(env::Reason),
     Supervise,
@@ -69,7 +69,7 @@ fn main() -> programs::Report<'static> {
     }
 }
 
-/// **编排域那一枚的身子**：这台机器上有哪些服务、怎么起、谁死了怎么办。
+/// **编排域那一枚的身子**：这台机器上有哪些服务、怎么起、谁死了怎么办
 fn system() -> Result<(), Fail> {
     let boot = bootstrap::take().map_err(Fail::from)?;
 

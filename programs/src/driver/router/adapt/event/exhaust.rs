@@ -7,7 +7,7 @@ use crate::core::lines::Lines;
 use crate::dev::plic::{LINE_PRIORITY, Plic};
 use runtime::env::mail::HolePie;
 
-/// 排空：取"忙"的那些，把响着的那一位应掉，每条回闲 + 放线。
+/// 排空：取"忙"的那些，把响着的那一位应掉，每条回闲 + 放线
 /// **位只有一位**：一条线上"我排空了"是**状态**不是事件——两次排空合成一次（`lines.exhaust`
 pub fn drain(lines: &mut Lines, plic: &Plic) {
     // **取"忙"的那些**（不是"有主"的那些）：只有"响过、还没回闲"的那一格才欠一句

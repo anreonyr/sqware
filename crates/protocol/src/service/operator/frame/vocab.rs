@@ -7,12 +7,12 @@ use crate::service::coalition::CoalitionId;
 use crate::service::principal::PrincipalId;
 use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
-/// 一枚条目的**号**：机器用的那一个。
+/// 一枚条目的**号**：机器用的那一个
 /// **裸号**：与 PrincipalId / CoalitionId
-/// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（EntryId::new），
-/// "这枚号还在不在"由每条读**查一次表**答出来。
-/// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"。
-/// "没有这个号"由 Fail::Unknown 答，别拿 0 当空。根要当坐标时走 Where::Root。
+/// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（EntryId::new）
+/// "这枚号还在不在"由每条读**查一次表**答出来
+/// 一条，故**根没有号**——`EntryId(0)` 是第一个**真格子**（`sys`），不是"没有"
+/// "没有这个号"由 Fail::Unknown 答，别拿 0 当空。根要当坐标时走 Where::Root
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EntryId(usize);
 
@@ -21,56 +21,56 @@ impl EntryId {
         EntryId(raw)
     }
 
-    /// 裸号。
+    /// 裸号
     pub const fn get(self) -> usize {
         self.0
     }
 }
 
-/// 一块 `Pane` 里最多几条。条数是策略，容器要有界。
+/// 一块 `Pane` 里最多几条。条数是策略，容器要有界
 pub const PANE_CAP: usize = 16;
 
-/// **容器坐标**：要动的那一块 `Pane` 在哪。
-/// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 EntryId），
-/// 所以它既不是"0 号"，也不能拿 `Option` 的空位代替：那两样都会被读成"某个真格子"。
-/// 它的对立面是 Operator::find / Operator::trim / Operator::name 的形参：
-/// 那三条要的是**条目**的号，**根根本递不进来**——这是类型义务，不是运行期检查。
+/// **容器坐标**：要动的那一块 `Pane` 在哪
+/// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 EntryId）
+/// 所以它既不是"0 号"，也不能拿 `Option` 的空位代替：那两样都会被读成"某个真格子"
+/// 它的对立面是 Operator::find / Operator::trim / Operator::name 的形参
+/// 那三条要的是**条目**的号，**根根本递不进来**——这是类型义务，不是运行期检查
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Where {
-    /// 根那一层：Operator::list 列的就是它，`land` / `part` 在它下面立一格。
+    /// 根那一层：Operator::list 列的就是它，`land` / `part` 在它下面立一格
     Root,
-    /// 某一号那一块 `Pane` 里。
+    /// 某一号那一块 `Pane` 里
     At(EntryId),
 }
 
-/// 八条原语会失败在哪一格。**一格对应一个不同的下一步**。
+/// 八条原语会失败在哪一格。**一格对应一个不同的下一步**
 /// **没有"名字已被占"那一格**：同名接手一枚 `Tile`、或一块**空的** `Pane`，都是换绑
-/// （见 Operator::land / Operator::part）；而 owner 归 Principal，Operator 分不出
+/// （ / Operator::part）；而 owner 归 Principal，Operator 分不出
 /// **后两格（Fail::Denied / Fail::Unjudged）来自门外那一问**：核心一个字节都不知道
 /// 它们，但它们同样是**客侧要按下一步区分**的
-/// 答案 ⇒ 与前面六格同住这一枚类型。
+/// 答案 ⇒ 与前面六格同住这一枚类型
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
 #[wire(also(BAD = 7))]
 pub enum Fail {
-    /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
+    /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来
     #[code(1)]
     Unknown,
     #[code(2)]
     NonEmpty,
-    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
+    /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走
     #[code(3)]
     NotATile,
-    /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"。
+    /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"
     #[code(4)]
     NotAPane,
-    /// 那一块 `Pane` 已经 PANE_CAP 条，装不下 ⇒ 拆层 / 扩容量。
+    /// 那一块 `Pane` 已经 PANE_CAP 条，装不下 ⇒ 拆层 / 扩容量
     #[code(5)]
     Full,
     #[code(6)]
     Dead,
     #[code(8)]
     Denied,
-    /// 门外那一问答"判不了"：UNJUDGED ——要问的那条事实问不到。
+    /// 门外那一问答"判不了"：UNJUDGED ——要问的那条事实问不到
     /// **它不承诺"等一会儿会好"**：对面不答 / 超时（会好），与那一号是碑 / 那一格是块窗格 /
     #[code(9)]
     Unjudged,
@@ -79,26 +79,26 @@ pub enum Fail {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Permit {
     Unset,
-    /// 就是这一位。
+    /// 就是这一位
     Trunk(PrincipalId),
-    /// 这一位在 `p` 那一支里（`p ≼ 本人`，含相等）——纵向那条轴。
+    /// 这一位在 `p` 那一支里（`p ≼ 本人`，含相等）——纵向那条轴
     Bough(PrincipalId),
-    /// 这一位在这枚盟里——横向那条轴。
+    /// 这一位在这枚盟里——横向那条轴
     Among(CoalitionId),
-    /// **就是开着第 `e` 格的那一位**（那一格的坐标是 EntryId，不是身份号）。
+    /// **就是开着第 `e` 格的那一位**（那一格的坐标是 EntryId，不是身份号）
     Opener(EntryId),
 }
 
-/// **门外那一问的答案**。三格；`Allow` / `Deny` 各一个不同的下一步，`Unjudged` 是"判不了"。
+/// **门外那一问的答案**。三格；`Allow` / `Deny` 各一个不同的下一步，`Unjudged` 是"判不了"
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Ruling {
-    /// 过。
+    /// 过
     Allow,
-    /// 不过——**终态**：换人 / 换目标 / 别重试。
+    /// 不过——**终态**：换人 / 换目标 / 别重试
     Deny,
     /// **判不了**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），或那一号是碑 /
-    /// 那一格是块窗格 / 开者那扇门封印了（**好不了**）。
-    /// （Facts::opens 那一侧的三因分得开）。**重试是客人的策略**，本格不作承诺。
+    /// 那一格是块窗格 / 开者那扇门封印了（**好不了**）
+    /// （Facts::opens 那一侧的三因分得开）。**重试是客人的策略**，本格不作承诺
     Unjudged,
 }
 
@@ -122,25 +122,25 @@ pub const NAME: u8 = 6;
 
 pub const SEEK: u8 = 7;
 
-/// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
+/// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）
 pub const LINK: &str = "operator";
 
-/// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）。
+/// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）
 /// **带面名**（本族那一枚是 `operator-ask`，提示那一枚是 `*-tip`）：问话孔的认领键是
 /// "**谁开的 + 记号**"，而**同一枚任务可能同时是两族的客人**（`canonical` / `guest` / `principal`
-/// …都是）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了。
+/// …都是）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了
 pub const ASK_MARK: Mark = Mark::of("operator-ask");
 
-/// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）。
+/// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）
 pub const TIP_MARK: Mark = Mark::of("tip");
 
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 
 const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
 
-/// `4` 之后的号装的是**格号**（Permit::Opener），不是身份号——同一个 8 字节那一格。
-/// 「用那一轴」在帧里的标记。**没有许可**那一档是 `0`。
-/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（Where 两种报法在线上的样子）。
+/// `4` 之后的号装的是**格号**（Permit::Opener），不是身份号——同一个 8 字节那一格
+/// 「用那一轴」在帧里的标记。**没有许可**那一档是 `0`
+/// 容器坐标那一格的"记"：`0` = 根、`1` = 号（Where 两种报法在线上的样子）
 const AT_ROOT: u8 = 0;
 
 const AT_ID: u8 = 1;
@@ -155,7 +155,7 @@ const PERMIT_AMONG: u8 = 3;
 
 const PERMIT_OPENER: u8 = 4;
 
-/// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号。
+/// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号
 impl env::wire::Field for Where {
     const WIDTH: usize = 1 + <EntryId as env::wire::Field>::WIDTH;
 
@@ -177,8 +177,8 @@ impl env::wire::Field for Where {
         }
     }
 }
-/// 「**用**」那一轴在线上是"**标记 ＋ 8 字节号**"（9 字节）。
-/// 口径与 EntryId 那一处相同：**impl 跟着类型走**——这是 Permit 自己的编码，
+/// 「**用**」那一轴在线上是"**标记 ＋ 8 字节号**"（9 字节）
+/// 口径与 EntryId 那一处相同：**impl 跟着类型走**——这是 Permit 自己的编码
 impl env::wire::Field for Permit {
     const WIDTH: usize = 1 + 8;
 

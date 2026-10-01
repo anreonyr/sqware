@@ -50,30 +50,30 @@ use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::room;
 
-/// 占核者与打点者的**清单名**（programs::unit::PROGRAMS 里 `wanted_by` 含 `load` 的那两行）。
+/// 占核者与打点者的**清单名**（programs::unit::PROGRAMS 里 `wanted_by` 含 `load` 的那两行）
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 
-/// 占核者枚数。**单核隔离档**下它把唯一那颗核钉住（一枚就够，第二枚算冗余）。
+/// 占核者枚数。**单核隔离档**下它把唯一那颗核钉住（一枚就够，第二枚算冗余）
 /// **多核档（`QEMU_SMP=4`）故意不钉满**：那一档是**对照**——只要还剩一颗空闲核，它就会
 const HOGS: usize = 2;
 
-/// 打点者枚数：**只留一枚**——这是决定性的设计点。
+/// 打点者枚数：**只留一枚**——这是决定性的设计点
 /// 到点密的台子量不出这条债：多枚 1 ms 打点者会让"最近到点"永远存在，于是**光靠陷阱路径
 /// 那一句 `beat_until` 就已经自洽**（实测 6 枚打点者档：毫秒那几格 `0/0`，亚毫秒那格只差
 /// 744 µs / 396 µs——见下④）。要让"武装式子"这件事**可判**，到点必须**稀疏**：打点者两次
-/// 登记之间堆是空的 ⇒ 上一次武装只能按失明上限（100 ms）⇒ 式子不对就必然晚到量子量级。
+/// 登记之间堆是空的 ⇒ 上一次武装只能按失明上限（100 ms）⇒ 式子不对就必然晚到量子量级
 const PARKERS: usize = 1;
 
-/// 台主自己睡多少次（每次 1 ms）。台主也是打点者之一（头注坑 2），故它的到点同样被测。
+/// 台主自己睡多少次（每次 1 ms）。台主也是打点者之一（头注坑 2），故它的到点同样被测
 /// **不能开大**：满负荷下台主每 ~(任务数 × 量子) 才轮到一次，3000 次要跑几十分钟。40 次
-/// ≈ 半分钟墙钟，其余样本由打点者出。
+/// ≈ 半分钟墙钟，其余样本由打点者出
 const ROUNDS: usize = 40;
 
-/// 放行之间的空转（微秒）：让刚放行的那一枚**先跑起来**，再放下一个。
+/// 放行之间的空转（微秒）：让刚放行的那一枚**先跑起来**，再放下一个
 const GAP_US: usize = 200;
 
-/// 表里一名一行而 `register` 重名即失败，故名字静态列死（`Table::CAP = 16`，够）。
+/// 表里一名一行而 `register` 重名即失败，故名字静态列死（`Table::CAP = 16`，够）
 const HOG_NAMES: [&str; HOGS] = ["hog0", "hog1"];
 const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
@@ -128,8 +128,8 @@ fn main() -> Reason {
     return 0;
 }
 
-/// 造一行：注册名 → 造（`spawn`）→ 放行（`start`，门闩空、无会话、不认记号、不等待）。
-/// 任何一步失败都返回 `false`（台主自己报 `die`）。
+/// 造一行：注册名 → 造（`spawn`）→ 放行（`start`，门闩空、无会话、不认记号、不等待）
+/// 任何一步失败都返回 `false`（台主自己报 `die`）
 fn spawn_one(
     table: &mut Table,
     name: &'static str,
@@ -149,7 +149,7 @@ fn spawn_one(
     service::start(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
 }
 
-/// 铺不满就没得量。
+/// 铺不满就没得量
 fn die(msg: &str) -> Reason {
     debug!("{}", msg);
     1

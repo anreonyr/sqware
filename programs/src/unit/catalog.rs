@@ -20,8 +20,8 @@ pub mod churn;
 pub mod coalition;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
-/// 测具那 25 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起，
-/// 而"哪几台进哪张镜像"这张表在宿主侧（`crates/image`）也要看得见 ⇒ 声明与身子同住、由本表拉进来。
+/// 测具那 25 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
+/// 而"哪几台进哪张镜像"这张表在宿主侧（`crates/image`）也要看得见 ⇒ 声明与身子同住、由本表拉进来
 #[path = "../harness/guest/guest/program.rs"]
 pub mod guest;
 #[path = "../harness/bench/rig/hang/program.rs"]
@@ -79,9 +79,9 @@ pub mod waiter;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它同时是**装载次序**与打包时的条目
 /// 次序（`crates/image` 按这张表的位次把镜像挨个写进清单），且各景按 UnitFile::wanted_by
-/// 过滤 ⇒ 加一台要想清楚放哪。
+/// 过滤 ⇒ 加一台要想清楚放哪
 /// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行，于是"哪几台进哪张镜像"
-/// 就没法一眼扫完——而这张表**就是**给人扫的。
+/// 就没法一眼扫完——而这张表**就是**给人扫的
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
     // 四枚服务（持树者 / 名册 / 盟册 / 设备账）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
@@ -127,5 +127,5 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &SCENE_UNIT,
 ];
 
-/// 清单条数上界与注册表条数必须相容（见 env::ledger::manifest::MAX_PROGRAMS 的头注）。
+/// 清单条数上界与注册表条数必须相容（见 env::ledger::manifest::MAX_PROGRAMS 的头注）
 const _: () = assert!(PROGRAMS.len() <= env::ledger::manifest::MAX_PROGRAMS);

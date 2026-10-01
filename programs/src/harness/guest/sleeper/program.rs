@@ -1,9 +1,9 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
-//! crate::unit::catalog 的 `PROGRAMS`）。
+//! :catalog 的 `PROGRAMS`
 
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
-/// 客人：`/svc/drv/rtc` 那面服务的第一位用家。
+/// 客人：`/svc/drv/rtc` 那面服务的第一位用家
 pub static SLEEPER: UnitFile = UnitFile {
     identity: Identity {
         name: "sleeper",

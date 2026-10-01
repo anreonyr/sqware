@@ -6,12 +6,12 @@ pub struct Batch<'a> {
 }
 
 impl<'a> Batch<'a> {
-    /// 排空读到 `n` 字节的那一批：`n == 0` ⇒ `None`（这一批没有内容可交）。
+    /// 排空读到 `n` 字节的那一批：`n == 0` ⇒ `None`（这一批没有内容可交）
     pub fn of(raw: &'a [u8], n: usize) -> Option<Batch<'a>> {
         (n > 0).then(|| Batch { bytes: &raw[..n] })
     }
 
-    /// 这一批的内容（非空由构造保证）。
+    /// 这一批的内容（非空由构造保证）
     pub fn bytes(&self) -> &'a [u8] {
         self.bytes
     }

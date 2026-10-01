@@ -4,12 +4,12 @@ use runtime::env::mail::PolePie;
 use crate::boot::{Accounts, Catalog};
 use crate::system::common::machine::Machine;
 
-/// **起手那一族的死法**：一格 = 死在起手的哪一步。
+/// **起手那一族的死法**：一格 = 死在起手的哪一步
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
-    /// 两块账读不出来（启动参数不足 / 清单头非法）。
+    /// 两块账读不出来（启动参数不足 / 清单头非法）
     BootArgs,
-    /// 那台机器的自述（Key::dtb）没领到 / 读不懂。
+    /// 那台机器的自述（Key::dtb）没领到 / 读不懂
     Machine,
 }
 
@@ -29,10 +29,10 @@ impl Fail {
     }
 }
 
-/// 引导那一族共用的号（"两块账读不出来"那一格）。
+/// 引导那一族共用的号（"两块账读不出来"那一格）
 use crate::unit::system::E_BOOT;
 
-/// **起手要的三样东西**：两块账、那台机器的自述、那块清单。
+/// **起手要的三样东西**：两块账、那台机器的自述、那块清单
 pub struct Boot {
     pub accounts: Accounts,
     pub machine: Machine,

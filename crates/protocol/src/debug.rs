@@ -9,7 +9,7 @@
 //! **它住 `protocol`**：那是**唯一同时被 `programs` 与 `harness` 依赖、又已经拖着 `runtime`**
 //! 的一层。
 
-/// 宏的身子。不导出：调用点一律走 [`debug!`]。
+/// 宏的身子。不导出：调用点一律走 [`debug!`]
 #[doc(hidden)]
 pub fn put(msg: &str) {
     let _ = runtime::env::debug::put(msg);

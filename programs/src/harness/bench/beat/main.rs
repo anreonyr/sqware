@@ -27,12 +27,12 @@ use protocol::debug;
 use runtime::env::chrono;
 use runtime::env::room;
 
-/// 每轮要的周期（毫秒）。
+/// 每轮要的周期（毫秒）
 const PERIOD_MS: u64 = 5;
-/// 每档跑多少轮。
+/// 每档跑多少轮
 const N: usize = 200;
 
-/// `()` = "没有失败要报"（`Exit for ()` ⇒ `EXIT_OK`）——本台子跑完就是结论。
+/// `()` = "没有失败要报"（`Exit for ()` ⇒ `EXIT_OK`）——本台子跑完就是结论
 #[programs::entry]
 fn main() {
     let period_ns = PERIOD_MS * 1_000_000;
@@ -92,7 +92,7 @@ fn main() {
     // 跑完 = 报 `EXIT_OK`（`()` 折出来的那个码），不必再写一遍。
 }
 
-/// 自启动基准的纳秒标量（与 `sleep_until` 的 `at` 同基准同单位）。
+/// 自启动基准的纳秒标量（与 `sleep_until` 的 `at` 同基准同单位）
 fn now_ns() -> u64 {
     chrono::clock()
 }

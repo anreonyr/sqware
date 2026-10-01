@@ -9,7 +9,7 @@
 extern crate alloc;
 extern crate programs;
 
-/// 住持面（适配）：门面 / 常驻——**只属于这一台**，故由 bin 自己 `mod`。
+/// 住持面（适配）：门面 / 常驻——**只属于这一台**，故由 bin 自己 `mod`
 mod adapt;
 
 mod dev;
@@ -38,10 +38,10 @@ const ASK: Ask = Ask {
 
 const ME: &str = "rtc";
 
-/// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**。
+/// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**
 const MS: usize = 1000;
 
-/// （**一族口径**在 programs::driver::shared::fail：号取自装配表——一个数都不写）。
+/// （**一族口径**在 programs::driver::shared::fail：号取自装配表——一个数都不写）
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // 解门牌 → 上板 ＋ 开会话 → 上树落门牌。门牌**公开可查**（Mine::No）：谁都能查、谁都能用。

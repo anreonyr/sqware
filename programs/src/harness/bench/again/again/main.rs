@@ -42,13 +42,13 @@ use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;
 
-/// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）。
+/// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）
 const VICTIM: &str = "churn";
-/// 这一行在表里的名字（三轮回用同一个）。
+/// 这一行在表里的名字（三轮回用同一个）
 const ROW: &str = "again";
-/// 走几轮（1 次首启 + N-1 次重发）。
+/// 走几轮（1 次首启 + N-1 次重发）
 const ROUNDS: usize = 3;
-/// 就绪/收尾的等待上限（毫秒，**上限族**）。
+/// 就绪/收尾的等待上限（毫秒，**上限族**）
 const MS: usize = 1_000;
 
 #[programs::entry]
@@ -197,7 +197,7 @@ fn main() -> Reason {
     return 0;
 }
 
-/// 打这一步的表内事实（`state` / `slot` / `Ready` 探针）。
+/// 打这一步的表内事实（`state` / `slot` / `Ready` 探针）
 fn trace(table: &Table, name: String, round: usize, step: &str) {
     let (state, slot) = match table.find(name.as_str()) {
         Some(s) => (s.state, s.slot),
@@ -222,7 +222,7 @@ fn trace(table: &Table, name: String, round: usize, step: &str) {
     debug!("again: r={round} step={step} state={state} slot={slot} ready={ready}");
 }
 
-/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。
+/// 起不来就报哪一句（内核收场时把这一句连同域号打出来）
 fn die(msg: &str) -> Reason {
     debug!("{}", msg);
     1

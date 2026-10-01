@@ -17,5 +17,5 @@ pub use frame::{
 };
 pub use grant::{Grant, grant_of};
 
-/// 的门牌（那是 hub 落的账）。
+/// 的门牌（那是 hub 落的账）
 pub const NAME: &str = "hub";

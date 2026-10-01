@@ -28,17 +28,17 @@ use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字**只在协议那一侧说**；本台只用它一个末段
-/// （`file_name()`，std 同形），故取名字那一手在运行期做（`file_name` 不是 `const`）。
+/// （`file_name()`，std 同形），故取名字那一手在运行期做（`file_name` 不是 `const`）
 const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
 const ME: &str = "lease";
 
 const MS: usize = 1000;
 
 const E_OK: usize = 0;
-/// 走不下去（`bail`）那一档：**与"判据没过"是两回事**——判据没过走 panic 通道。
+/// 走不下去（`bail`）那一档：**与"判据没过"是两回事**——判据没过走 panic 通道
 const E_TRIP: usize = 1;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
 #[programs::entry]
@@ -81,7 +81,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);

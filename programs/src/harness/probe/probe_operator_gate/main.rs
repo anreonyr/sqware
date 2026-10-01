@@ -38,30 +38,30 @@ use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 TICK_MS）。
+/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 TICK_MS）
 /// **（20 s → 3 s）**：本台是**铺场者**，而它"走不完"的代价不是红——停机扳机一来就把它
-/// 20 s，而这样的额度本台有**两处**（walk 与 count_under），走满就是几十秒的窗口。
-/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 HOLD_MS，只要 1~3 s）毫发无伤，
-/// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
+/// 20 s，而这样的额度本台有**两处**（walk 与 count_under），走满就是几十秒的窗口
+/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 HOLD_MS，只要 1~3 s）毫发无伤
+/// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）
 /// 这个数不是猜的：七行 `system: grant mounted at /svc/sys/operator/{…}` 在 **t<500 ms** 就打完
-/// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计。
+/// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计
 const WAIT_MS: usize = 3_000;
 
-/// 每一次重试之间睡多久（毫秒）。
+/// 每一次重试之间睡多久（毫秒）
 const TICK_MS: usize = 20;
 
-/// **铺完之后还压多久**（毫秒）——见 `main` 末尾那一节（"主人还在不在场"那条轴）。
+/// **铺完之后还压多久**（毫秒）——见 `main` 末尾那一节（"主人还在不在场"那条轴）
 /// **两头顶着**：短了，下一位走到"顶那一格"时主人已经走了（那一格重新可落 ⇒ 它测得的是
 /// "接手"而不是"拒"）；长了，本台自己被停机扳机扑杀、读数反倒丢了。下一位那一串只有**七八趟
-/// 往返**（实测都在百毫秒内），故取刚够它走完的那一档。
+/// 往返**（实测都在百毫秒内），故取刚够它走完的那一档
 const HOLD_MS: usize = 1_200;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-operator-gate: seven grants mounted";
 
-/// 声明归本台的那一格（下一位顶它 ⇒ 该拒）。**落在根底下**，见文件头。
+/// 声明归本台的那一格（下一位顶它 ⇒ 该拒）。**落在根底下**，见文件头
 const OWN: &str = "probe-op-own";
-/// 无主的那一格（谁都能落）。
+/// 无主的那一格（谁都能落）
 const FREE: &str = "probe-op-free";
 
 #[programs::entry]
@@ -122,9 +122,9 @@ fn main() -> Report<'static> {
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
-/// `/svc/sys/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）。
+/// `/svc/sys/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）
 /// 三手都是 TreeFace 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
-/// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"。
+/// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"
 fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();
     let mut left = WAIT_MS;
@@ -144,13 +144,12 @@ fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     }
 }
 
-/// 数 `/svc/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试。
+/// 数 `/svc/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试
 /// **（为什么不再逐个问名）**：那七段名字的读数归**树自己**——`mount_grants` 每落一位就抬
 /// 一行 `system: grant mounted at /svc/sys/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
 /// ＋ 七次 `name` 是八趟往返，而那条路每一趟都可能**等在门外**（`client.rs::call` 那一推是
-/// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿。
+/// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿
 /// 那一格是**逐位**落上去的（目录先立、七位一位一位落），故"数不满"那一刻是**预期之内**的
-/// ——重试到 WAIT_MS 为止；到点仍不齐就把数到的几格交回给调用方，由它 `assert` 当场红。
 fn count_under(pane: &Pane<'_>) -> usize {
     let mut left = WAIT_MS;
     loop {
@@ -175,7 +174,7 @@ fn count_under(pane: &Pane<'_>) -> usize {
     }
 }
 
-/// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）。
+/// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）
 fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId {
     let spot = name.to_string();
     let Ok(entry) = mail::unseal_hole(env::Mark::of(mark)) else {

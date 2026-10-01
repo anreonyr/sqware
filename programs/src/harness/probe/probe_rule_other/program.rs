@@ -1,9 +1,9 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
-//! crate::unit::catalog 的 `PROGRAMS`）。
+//! :catalog 的 `PROGRAMS`
 
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
-/// 有身份地去用别人立了规矩的那两格 ⇒ 都该拒（第二道门的反例）。
+/// 有身份地去用别人立了规矩的那两格 ⇒ 都该拒（第二道门的反例）
 pub static PROBE_RULE_OTHER: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-rule-other",

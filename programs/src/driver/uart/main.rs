@@ -7,7 +7,7 @@
 extern crate alloc;
 extern crate programs;
 
-/// 纯功能：交出去的那一批（非空不可表达）。
+/// 纯功能：交出去的那一批（非空不可表达）
 mod core;
 
 mod adapt;
@@ -23,12 +23,12 @@ use runtime::PAGE_SIZE;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::HolePie;
 
-/// 它是一块 **Pane**：两枚门牌 `rx` / `tx` 在它下面。
+/// 它是一块 **Pane**：两枚门牌 `rx` / `tx` 在它下面
 const ME: &str = "uart";
 
 const MS: usize = 1000;
 
-/// 一次排空最多搬走多少字节。FIFO 只有 16 字节，取四倍宽；满了剩下的还在设备里，
+/// 一次排空最多搬走多少字节。FIFO 只有 16 字节，取四倍宽；满了剩下的还在设备里
 const DRAIN_MAX: usize = 64;
 
 /// `Ok(())` 是"跑完了"（常驻域走不到那一格）。**一族口径**在 programs::driver::shared::fail

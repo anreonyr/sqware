@@ -21,7 +21,7 @@ use crate::system::common::life::verdict as core;
 
 pub struct Watch {
     pile: Pile,
-    /// 这一景没有持树者 / 那几趟没成）。
+    /// 这一景没有持树者 / 那几趟没成）
     faces: [Option<PieToken>; ccall::Grant::ALL.len()],
 }
 
@@ -35,18 +35,18 @@ impl Watch {
         })
     }
 
-    /// **认出某一面的待客入口**：把那一枚挂进**同一只组**（多源等待的写法）。
+    /// **认出某一面的待客入口**：把那一枚挂进**同一只组**（多源等待的写法）
     /// 调用者只有一处：Assembly::mount_control——**铸入口那一枚线程**（编排域主线程）在
-    /// 它的到达就是"有人来问 control 这一面了"那一格。
+    /// 它的到达就是"有人来问 control 这一面了"那一格
     /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单手的推没有丢的
-    /// 道理，本手只是把"醒来"这条快路接上）。
+    /// 道理，本手只是把"醒来"这条快路接上）
     pub fn attach_face(&mut self, grant: ccall::Grant, face: PieToken) {
         let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
         self.faces[(grant.at() - 1) as usize] = Some(face);
     }
 
-    /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**。
-    /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）：
+    /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**
+    /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）
     pub fn run(&mut self, control: &mut Control) -> bool {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         let mut buf: Vec<u8> = Vec::new();
@@ -119,14 +119,14 @@ impl Watch {
     }
 }
 
-/// **有界节拍**（毫秒）：要"顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒。
+/// **有界节拍**（毫秒）：要"顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒
 const TICK_MS: usize = 10;
 
-/// **静默上限**（毫秒）：账上一位都没少的时长上限——超过它而闸还没成立（或收场还没收讫），
-/// 就**出声并收场**。
+/// **静默上限**（毫秒）：账上一位都没少的时长上限——超过它而闸还没成立（或收场还没收讫）
+/// 就**出声并收场**
 const IDLE_MS: usize = 10_000;
 
-/// 静默上限的纳秒形（clock 那一族的标量）。
+/// 静默上限的纳秒形（clock 那一族的标量）
 const IDLE_NS: u64 = IDLE_MS as u64 * 1_000_000;
 
 fn sweep(table: &mut Table) {
@@ -147,7 +147,7 @@ fn sweep(table: &mut Table) {
     }
 }
 
-/// 答回去。
+/// 答回去
 /// 认那枚回信孔靠**帧里那一格** ＋ **一次 mail::reserve 验**（同 `principal/server.rs::turn`
 /// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
 fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
@@ -191,10 +191,10 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
     }
 }
 
-/// 把一问交给四手，编出一格答（**读不懂也答**，答 `BAD`）。
-/// **四手就是 Control 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期，
-/// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格。
-/// **两格语义一个字不省**：`stop` 只到 `Stopping`（Control::stop 就是 service::stop），
+/// 把一问交给四手，编出一格答（**读不懂也答**，答 `BAD`）
+/// **四手就是 Control 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期
+/// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格
+/// **两格语义一个字不省**：`stop` 只到 `Stopping`（Control::stop 就是 service::stop）
 fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
     let code = |fail: crate::system::common::life::verdict::Fail| {
         ccall::frame::fail_to_code(Some(wire_fail(fail)))
@@ -225,7 +225,7 @@ fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::fram
 }
 
 /// 模型那一格失败 → 线上那一格失败：两套都是**四格语义格**，逐格同形（协议那一份的 `Bad`
-/// 是本端产生的，不在这一路——它由 answer 那两处"读不懂"直接落）。
+/// 是本端产生的，不在这一路——它由 answer 那两处"读不懂"直接落）
 fn wire_fail(fail: crate::system::common::life::verdict::Fail) -> ccall::Fail {
     use crate::system::common::life::verdict::Fail as Model;
     match fail {
@@ -236,7 +236,7 @@ fn wire_fail(fail: crate::system::common::life::verdict::Fail) -> ccall::Fail {
     }
 }
 
-/// 表里那一格状态 → 线上那一格：两套 `State` 五格逐格同形（见协议那一份的头注）。
+/// 表里那一格状态 → 线上那一格：两套 `State` 五格逐格同形（见协议那一份的头注）
 fn wire_state(state: State) -> ccall::State {
     match state {
         State::NeverStarted => ccall::State::NeverStarted,
@@ -247,7 +247,7 @@ fn wire_state(state: State) -> ccall::State {
     }
 }
 
-/// 记一位：`Dead` ＋ 放下它那个域 ＋ 报一行。
+/// 记一位：`Dead` ＋ 放下它那个域 ＋ 报一行
 fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
     let Some(row) = table.find(name) else {
         return;

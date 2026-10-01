@@ -8,7 +8,7 @@ pub const E_HUB: Died = 28;
 
 pub const CHANNEL: &str = "hub";
 
-/// **末尾**铸一枚刻它的孔交回装配者，那一刻它才继续往下起别人。
+/// **末尾**铸一枚刻它的孔交回装配者，那一刻它才继续往下起别人
 pub const READY: &str = "hub-ready";
 
 pub static PROGRAM: UnitFile = UnitFile {

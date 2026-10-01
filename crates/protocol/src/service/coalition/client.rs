@@ -10,38 +10,38 @@ use super::frame::{self, BACK, CoalitionId, Fail, Window};
 use crate::communication::establish;
 use crate::communication::receiver::{Receiver, RecvFail};
 
-/// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）。
+/// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）
 pub struct Face {
     entry: PieToken,
     host: TaskId,
 }
 
 impl Face {
-    /// 把一枚门牌收成一面。
-    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是 Server 挂的，不是本端开的。
+    /// 把一枚门牌收成一面
+    /// 对端从**这一枚门闩自己**问出来（establish::opened_by）——门牌是 Server 挂的，不是本端开的
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Unknown)?;
         Ok(Face { entry, host })
     }
 
-    /// 对端是谁。**这是这一面唯一的读数，不出线**（不在那七条原语里）。
-    /// 全树无生产消费者，留着只为"这一面在跟谁说话"答得出来——它是诊断读数，不是协议面。
+    /// 对端是谁。**这是这一面唯一的读数，不出线**（不在那七条原语里）
+    /// 全树无生产消费者，留着只为"这一面在跟谁说话"答得出来——它是诊断读数，不是协议面
     pub fn host(&self) -> TaskId {
         self.host
     }
 
-    /// 盟 · 写：立一枚新号（空盟）——**自己是哪一位**由内核盖的印章说。
+    /// 盟 · 写：立一枚新号（空盟）——**自己是哪一位**由内核盖的印章说
     pub fn found(&self, wait: Wait) -> Result<Coalition<'_>, Fail> {
         let said = self.call(frame::Req::Found, wait)?;
         Ok(self.coalition(CoalitionId::new(payload(said)? as usize)))
     }
 
-    /// 把一枚盟号收成 Coalition（读面：号是别人给的标签，本手不去问它对不对）。
+    /// 把一枚盟号收成 Coalition（读面：号是别人给的标签，本手不去问它对不对）
     pub fn coalition(&self, c: CoalitionId) -> Coalition<'_> {
         Coalition { face: self, at: c }
     }
 
-    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序 = 号序升序；游标是阈值，见 Bloc::next）。
+    /// 盟 · 读：`p` 此刻在哪些盟里（**一趟取窗**，序 = 号序升序；游标是阈值，见 Bloc::next）
     pub fn bloc(
         &self,
         p: PrincipalId,
@@ -99,8 +99,8 @@ impl Face {
         got
     }
 
-    /// 取一窗：**先看状态那一格**（失败域 + 读不懂），再认窗那一形。
-    /// 一格答那一形不是窗，它那一格码照样交出来（`band` / `bloc` 那一问的失败走它）。
+    /// 取一窗：**先看状态那一格**（失败域 + 读不懂），再认窗那一形
+    /// 一格答那一形不是窗，它那一格码照样交出来（`band` / `bloc` 那一问的失败走它）
     fn window<T: crate::wire::id::Id>(
         &self,
         act: frame::Req,
@@ -115,48 +115,48 @@ impl Face {
     }
 }
 
-/// **一枚盟**：`CoalitionId` 是固定下来的宾语，那几手不再重复传它。
+/// **一枚盟**：`CoalitionId` 是固定下来的宾语，那几手不再重复传它
 pub struct Coalition<'a> {
     face: &'a Face,
     at: CoalitionId,
 }
 
 impl Coalition<'_> {
-    /// 这一枚是几（读数用；**跨协议交接的只有这个值**）。
+    /// 这一枚是几（读数用；**跨协议交接的只有这个值**）
     pub fn id(&self) -> CoalitionId {
         self.at
     }
 
-    /// 盟 · 写：**我**进这一枚。
+    /// 盟 · 写：**我**进这一枚
     pub fn enter(&self, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Enter(self.at), wait)?;
         payload(said).map(|_who| ())
     }
 
-    /// 盟 · 写：把**另一位**（`target` = 它那一枚 TID）放进这一枚——**只有盟主叫得动**。
+    /// 盟 · 写：把**另一位**（`target` = 它那一枚 TID）放进这一枚——**只有盟主叫得动**
     /// **这就是"驱动自己入不了别人的名"那条路的另一半**（设备账那一族的 `bond`）：`enter`
     /// 的钥匙是发送者那一格，故"许某一位进这一类"只能由**立盟那位**替它说；本手就是那一位
-    /// 代报名者手里的那一手。
+    /// 代报名者手里的那一手
     pub fn admit(&self, target: TaskId, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Admit(self.at, target), wait)?;
         payload(said).map(|_who| ())
     }
 
-    /// 盟 · 写：**我**出这一枚。撞空也成（集合运算没有"第二次"）。
+    /// 盟 · 写：**我**出这一枚。撞空也成（集合运算没有"第二次"）
     pub fn leave(&self, wait: Wait) -> Result<(), Fail> {
         let said = self.face.call(frame::Req::Leave(self.at), wait)?;
         payload(said).map(|_who| ())
     }
 
-    /// 盟 · 读：`p` 在不在这一枚里。**两件事两个落点**——`Ok(false)` 是不在，
-    /// `Err(Unknown)` 是这枚盟不存在。
+    /// 盟 · 读：`p` 在不在这一枚里。**两件事两个落点**——`Ok(false)` 是不在
+    /// `Err(Unknown)` 是这枚盟不存在
     pub fn holds(&self, p: PrincipalId, wait: Wait) -> Result<bool, Fail> {
         let said = self.face.call(frame::Req::Amid(p, self.at), wait)?;
         // `AMID` 的答案在**有没有**那一格（在 / 不在），8 字节那一格留空。
         flag(said)
     }
 
-    /// 盟 · 读：这一枚里此刻有谁（**一趟取窗**；`after` 是阈值，`None` = 从头取）。
+    /// 盟 · 读：这一枚里此刻有谁（**一趟取窗**；`after` 是阈值，`None` = 从头取）
     pub fn members(&self, after: Option<PrincipalId>, wait: Wait) -> Result<Band<'_>, Fail> {
         let page = self.face.window(frame::Req::Band(self.at, after), wait)?;
         Ok(Band {
@@ -167,8 +167,8 @@ impl Coalition<'_> {
     }
 }
 
-/// **一次取窗的结果值**：一页成员 ＋ 游标规则（Band::next）。
-/// 它不是长期存在的资源对象：只带这一页与"这一位在问什么"，故只有读数、续取、遍历三手。
+/// **一次取窗的结果值**：一页成员 ＋ 游标规则（Band::next）
+/// 它不是长期存在的资源对象：只带这一页与"这一位在问什么"，故只有读数、续取、遍历三手
 pub struct Band<'a> {
     face: &'a Face,
     at: CoalitionId,
@@ -176,17 +176,17 @@ pub struct Band<'a> {
 }
 
 impl Band<'_> {
-    /// 窗外**还有**（接着取还会答出东西）。
+    /// 窗外**还有**（接着取还会答出东西）
     pub fn more(&self) -> bool {
         self.page.more()
     }
 
-    /// 这一页的号（序 = 号序升序）。
+    /// 这一页的号（序 = 号序升序）
     pub fn iter(&self) -> impl Iterator<Item = PrincipalId> + '_ {
         self.page.iter()
     }
 
-    /// 接着取下一窗：**拿末一枚当阈值**（空页 ⇒ 再取也只有空）。
+    /// 接着取下一窗：**拿末一枚当阈值**（空页 ⇒ 再取也只有空）
     pub fn next(&self, wait: Wait) -> Result<Band<'_>, Fail> {
         let after = self.page.last();
         let page = self.face.window(frame::Req::Band(self.at, after), wait)?;
@@ -198,7 +198,7 @@ impl Band<'_> {
     }
 }
 
-/// **一次取窗的结果值**（反向：这一位在哪些盟里）。
+/// **一次取窗的结果值**（反向：这一位在哪些盟里）
 pub struct Bloc<'a> {
     face: &'a Face,
     p: PrincipalId,
@@ -206,17 +206,17 @@ pub struct Bloc<'a> {
 }
 
 impl Bloc<'_> {
-    /// 窗外**还有**。
+    /// 窗外**还有**
     pub fn more(&self) -> bool {
         self.page.more()
     }
 
-    /// 这一页的号（序 = 号序升序）。
+    /// 这一页的号（序 = 号序升序）
     pub fn iter(&self) -> impl Iterator<Item = CoalitionId> + '_ {
         self.page.iter()
     }
 
-    /// 接着取下一窗：**拿末一枚当阈值**。
+    /// 接着取下一窗：**拿末一枚当阈值**
     pub fn next(&self, wait: Wait) -> Result<Bloc<'_>, Fail> {
         let after = self.page.last();
         let page = self.face.window(frame::Req::Bloc(self.p, after), wait)?;
@@ -228,8 +228,8 @@ impl Bloc<'_> {
     }
 }
 
-/// 读一格答：**不是那一形 ⇒ 读不懂**，是那一形再看状态那一格。
-/// 一格答那一形在与窗那两问上是"失败"（成功的那两问答的是窗）。
+/// 读一格答：**不是那一形 ⇒ 读不懂**，是那一形再看状态那一格
+/// 一格答那一形在与窗那两问上是"失败"（成功的那两问答的是窗）
 fn payload(said: frame::Union) -> Result<u64, Fail> {
     match said {
         frame::Union::One(reply) => match frame::code_to_fail(reply.status) {
@@ -244,7 +244,7 @@ fn payload(said: frame::Union) -> Result<u64, Fail> {
     }
 }
 
-/// 读一格答里那一格"是 / 不是"。
+/// 读一格答里那一格"是 / 不是"
 fn flag(said: frame::Union) -> Result<bool, Fail> {
     match said {
         frame::Union::One(reply) => match frame::code_to_fail(reply.status) {
@@ -258,9 +258,9 @@ fn flag(said: frame::Union) -> Result<bool, Fail> {
     }
 }
 
-/// 线上那一格码 → 失败域；表外（含 `BAD`）折 Fail::Unknown。
+/// 线上那一格码 → 失败域；表外（含 `BAD`）折 Fail::Unknown
 /// **它现在读得出 `Denied`**：Face::window / `payload` /
-/// `flag` 三处都走它。"表外"仍是 `BAD` 那一类——`None` 与"没走到"同格（传输失败那一节）。
+/// `flag` 三处都走它。"表外"仍是 `BAD` 那一类——`None` 与"没走到"同格（传输失败那一节）
 fn code_to_fail(code: u8) -> Fail {
     frame::code_to_fail(code).unwrap_or(Fail::Unknown)
 }

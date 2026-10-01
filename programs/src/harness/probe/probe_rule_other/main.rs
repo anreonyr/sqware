@@ -5,7 +5,7 @@
 //! `probe-rule` 那一台证的是"**规矩随身份走**"（同一个 TID 换一位代表，答案就变了）。
 //! 而 Permit::Trunk 与 Permit::Bough 各还有一格**只有另一台客人量得到**：
 //!   在 p 那一支里，而 `adopt` 只许**往下**领（`heir(current, q)`，见
-//!   protocol::service::principal::core 的 Principal::adopt 三格前置）；
+//! :core 的 Principal::adopt 三格前置）；
 //!   演一次：装配期每位都是 `derive(ROOT)` 的**兄弟**，故彼此都不在对方那一支里。
 //! # 为什么这两格也是必要的（`8` 与 `9` 与 `0` 三里必须落在 `8`）
 //! 门禁的答案有**三格**：`OK`（放行）/ `DENIED`（终态：换人、换目标，别重试）/
@@ -32,12 +32,12 @@ use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
 use runtime::env::unit as utask;
 
-/// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）。
+/// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
 const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/principal/ask 那一格)`（许给**别人**）。
+/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/principal/ask 那一格)`（许给**别人**）
 const FOREIGN: &str = "foreign";
 
 const MS: usize = 1000;
@@ -45,7 +45,7 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
 #[programs::entry]
@@ -81,10 +81,10 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 沿一条路译成号再 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 Fail。
+/// 沿一条路译成号再 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 Fail
 /// **（两格为什么分开写）**：新面把这两件分在
-/// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的。
-/// 重试那一层。
+/// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的
+/// 重试那一层
 fn denied(tree: &TreeFace, base: &Path, leaf: &str) -> Result<(), Fail> {
     let road = base.try_join(leaf).ok_or(Fail::Unknown)?;
     let root = tree.root();
@@ -105,7 +105,7 @@ fn denied(tree: &TreeFace, base: &Path, leaf: &str) -> Result<(), Fail> {
     }
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);

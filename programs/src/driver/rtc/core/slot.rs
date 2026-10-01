@@ -11,28 +11,28 @@
 use super::Fail;
 use env::PieToken;
 
-/// 那一格：空着，或者武装着（到点时刻 + **往哪回**）。
+/// 那一格：空着，或者武装着（到点时刻 + **往哪回**）
 enum Cell {
     Idle,
     Armed { at: u64, back: PieToken },
 }
 
-/// 那一格（一台设备一格）。
+/// 那一格（一台设备一格）
 pub struct Slot {
     cell: Cell,
 }
 
 impl Slot {
-    /// 起一格空的。
+    /// 起一格空的
     pub const fn new() -> Slot {
         Slot { cell: Cell::Idle }
     }
 
-    /// **约**：占住那一格。
+    /// **约**：占住那一格
     /// 格非空 ⇒ `Taken`；`at` 已经过去 ⇒ `Past`。**成与不成都不动已有一格的内容**——
     /// **`Past` 是本面的策略，不是设备的事实**：设备对过去的时刻是**当场就报**（低半格那次写
     /// 会立刻比较一次，见 `dev/rtc.rs` 头注）；本面选择当场答 `Past`，因为"你约的时刻已经过去了"
-    /// 而 `now` 由适配层从设备读出来交给它（核心不碰设备）。
+    /// 而 `now` 由适配层从设备读出来交给它（核心不碰设备）
     pub fn arm(&mut self, at: u64, back: PieToken, now: u64) -> Result<(), Fail> {
         if matches!(self.cell, Cell::Armed { .. }) {
             return Err(Fail::Taken);
@@ -44,7 +44,7 @@ impl Slot {
         Ok(())
     }
 
-    /// **到点**：把那一格取出来（**格因此回空**）、交出"往哪回"；没到点 / 空着 ⇒ `None`。
+    /// **到点**：把那一格取出来（**格因此回空**）、交出"往哪回"；没到点 / 空着 ⇒ `None`
     pub fn fire(&mut self, now: u64) -> Option<PieToken> {
         match self.cell {
             Cell::Armed { at, back } if now >= at => {

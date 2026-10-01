@@ -21,7 +21,7 @@
 //! 只许**往下**领（`heir(current, q)`）。"不在那一支里"的那一位只能是**另一台**——那正是
 //! `probe-rule-other` 那一格（它顺带对 `foreign` 也量一遍：第三台同样过不去）。
 //! # 这一台为什么把盟也带上
-//! Permit::Among 是全仓**唯一**需要第二枚门牌（盟册）的判据：盟册那一枚没到持树者手里，
+//! :Among 是全仓**唯一**需要第二枚门牌（盟册）的判据：盟册那一枚没到持树者手里
 //! `amid` 就答"问不到"，那一格会翻成 `UNJUDGED(9)`——而**不是** `0` / `8`。故这一台的
 //! `in` 那两格读数同时证两件事：规矩通了，**门也接上了**。
 //! `found()` 只是**立一枚号**，"立了不等于进了"（见 protocol::service::coalition::core），
@@ -54,21 +54,20 @@ use runtime::env::unit as utask;
 
 const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
-/// 三格的名字（各挂一条规矩）。
+/// 三格的名字（各挂一条规矩）
 const IS: &str = "is";
 const UNDER: &str = "under";
 const IN: &str = "in";
 const DOOR: &str = "door";
 const OPEN: &str = "open";
-/// （名字 → 号），不靠别人把号塞给我。
+/// （名字 → 号），不靠别人把号塞给我
 const FOREIGN: &str = "foreign";
-/// 先落、再**剪掉**的一枚门牌——留给下面 `gone-door` 那一格指它那个**旧号**。
+/// 先落、再**剪掉**的一枚门牌——留给下面 `gone-door` 那一格指它那个**旧号**
 const TEMP: &str = "temp";
-/// 规矩 = `Opener(/svc 那一格)` ⇒ 那一号是块 **`Pane`**（没有开者这一说）⇒ **判不了**。
+/// 规矩 = `Opener(/svc 那一格)` ⇒ 那一号是块 **`Pane`**（没有开者这一说）⇒ **判不了**
 const AT_PANE: &str = "at-pane";
-/// 规矩 = `Opener(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**。
+/// 规矩 = `Opener(剪掉的那一枚门牌号)` ⇒ 号**不重用** ⇒ 那一格永远没有开者 ⇒ **判不了**
 const GONE_DOOR: &str = "gone-door";
-/// Node::Tile 的 `owner` 那一格）。
 const MINE: &str = "mine";
 
 const MS: usize = 1000;
@@ -317,8 +316,8 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-/// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）。
-/// / `coalition` 起头就分了它，见装配表），故这时落出来的号不可能是 `0`。
+/// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）
+/// / `coalition` 起头就分了它，见装配表），故这时落出来的号不可能是 `0`
 fn plate(pane: &Pane<'_>, name: &str, permit: Permit, mine: Mine) -> EntryId {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("rule-entry")) else {
         return EntryId::new(0);
@@ -330,17 +329,16 @@ fn plate(pane: &Pane<'_>, name: &str, permit: Permit, mine: Mine) -> EntryId {
 }
 
 /// 拿那一格去 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 Fail（本程序只看那一格，不看
-/// 要回来的那一枚）。
+/// 要回来的那一枚）
 /// **不走 Face::tile**：它会先 `find` 一次（授一枚没人接的副本），随后 Tile::token 再
-/// `find` 一次——这两格是自己刚落的，故译号不必重试。
-/// 同一条路照样答 Fail::Unknown。
+/// `find` 一次——这两格是自己刚落的，故译号不必重试
+/// 同一条路照样答 Fail::Unknown
 fn look(root: &Pane<'_>, base: &Path, name: &str, millis: Wait) -> Result<(), Fail> {
     let road = base.try_join(name).ok_or(Fail::Unknown)?;
     root.tile(&road, millis)?.token(millis).map(|_| ())
 }
 
-/// 按名字找一面服务门牌——与 `subject` / `member` 那两台同形。
-/// Pane::tile 上，`find`（把那枚门闩授过来）落在 Tile::token 上——**两格各一趟**，
+/// 按名字找一面服务门牌——与 `subject` / `member` 那两台同形
 fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
     let root = tree.root();
     let mut left = MS;
@@ -359,7 +357,7 @@ fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
     }
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);

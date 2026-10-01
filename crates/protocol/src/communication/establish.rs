@@ -21,20 +21,20 @@ use super::sender::Sender;
 use super::{deadline, remain};
 use crate::wire::message::Message;
 
-/// 两枚孔**还没要齐**：坏在哪一步，两格分得开。
+/// 两枚孔**还没要齐**：坏在哪一步，两格分得开
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EstablishFail {
-    /// 铸不出孔（资源）。
+    /// 铸不出孔（资源）
     NoHole,
-    /// 这枚交不出去（没资格交 / 子集越界 / 对端已不在）。
+    /// 这枚交不出去（没资格交 / 子集越界 / 对端已不在）
     NoSeed,
 }
 
-/// **归域的一对号**：我收的那一枚 ＋ （认到之后）我推的那一枚。
+/// **归域的一对号**：我收的那一枚 ＋ （认到之后）我推的那一枚
 /// 它自己没有 `send` / `recv`——收发在 Sender / Receiver 上（`sender()` / `receiver()`
-/// 现取）。它做三件事：**记着本端那一枚是几号**、**交出 seed**（"我给你的那一枚在你表里是几号"，
+/// 现取）。它做三件事：**记着本端那一枚是几号**、**交出 seed**（"我给你的那一枚在你表里是几号"
 /// 一问一答里它随帧过去，服务端一次 `Reserve` 就验得完）、以及**延迟认领**（`claim`：先铸、
-/// 先说话、后认的那一档）。
+/// 先说话、后认的那一档）
 /// 放下一个**什么也不会发生**——"提前放"这件事因此不是"要记得别做"，而是**没有可做的动作**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Endpoint {
@@ -44,35 +44,35 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// 我收的那一枚（本端铸的、交给对端的那一枚）。
+    /// 我收的那一枚（本端铸的、交给对端的那一枚）
     pub fn rx(&self) -> PieToken {
         self.rx
     }
 
-    /// 我推的那一枚（对端铸的、交给我的那一枚）；**还没认到 = `None`**。
+    /// 我推的那一枚（对端铸的、交给我的那一枚）；**还没认到 = `None`**
     pub fn tx(&self) -> Option<PieToken> {
         self.tx
     }
 
-    /// **我交给对方的那一枚，在对方表里是几号**（port::ship 的 `to.seed()`）。
+    /// **我交给对方的那一枚，在对方表里是几号**（port::ship 的 `to.seed()`）
     /// 一声不响地扔掉它是老毛病：收的人于是只能**扫自己的整张表**按"谁给的 ＋ 记号"把这一枚
-    /// 认回来（每趟一遍全表）。随帧带过去之后，那边一次 `Reserve` 就验完——判据一字没改。
+    /// 认回来（每趟一遍全表）。随帧带过去之后，那边一次 `Reserve` 就验完——判据一字没改
     pub fn seed(&self) -> PieToken {
         self.seed
     }
 
-    /// 类型化的收端（读面）。
+    /// 类型化的收端（读面）
     pub fn receiver<M: Message>(&self) -> Receiver<M> {
         Receiver::from_token(self.rx)
     }
 
-    /// 类型化的发端（写面）；**还没认到 = `None`**。
+    /// 类型化的发端（写面）；**还没认到 = `None`**
     pub fn sender<M: Message>(&self) -> Option<Sender<M>> {
         self.tx.map(Sender::from_token)
     }
 
-    /// **延迟认领**：先把这一枚铸出去、说上话，之后再认对端那一枚（`null` 那一档的次序是契约）。
-    /// 返 `true` = 到手了。**认不到不是错误**（与 endpoint 同一条口径）。
+    /// **延迟认领**：先把这一枚铸出去、说上话，之后再认对端那一枚（`null` 那一档的次序是契约）
+    /// 返 `true` = 到手了。**认不到不是错误**（与 endpoint 同一条口径）
     pub fn claim(&mut self, of: TaskId, mark: Mark, wait: Wait) -> bool {
         match claim(of, mark, wait) {
             Some(token) => {
@@ -84,7 +84,7 @@ impl Endpoint {
     }
 }
 
-/// **有主的一对号**：**作用域寿命**——落出作用域就放下本端那一枚。
+/// **有主的一对号**：**作用域寿命**——落出作用域就放下本端那一枚
 pub struct Held(pub Endpoint);
 
 impl Deref for Held {
@@ -108,12 +108,12 @@ impl Drop for Held {
     }
 }
 
-/// **对称建立**：我铸一枚（刻 `mark`）交给 `to`，并认下 `to` 铸的、刻着同一个 `mark` 的那一枚。
+/// **对称建立**：我铸一枚（刻 `mark`）交给 `to`，并认下 `to` 铸的、刻着同一个 `mark` 的那一枚
 /// `claim_for` = **等对方那一枚等多久**（不是收发期限；收发期限在 `send` / `recv` 上，每次调用
-/// 各给一格）。Wait::POLL = 只扫一遍、不等——那一档的 `tx` 因此没有写端。
+/// 各给一格）。Wait::POLL = 只扫一遍、不等——那一档的 `tx` 因此没有写端
 /// **认不到不是失败**：一段关系可以只有收的方向（单向那一档就是这么用的），故 `tx` 只是没有
-/// 写端（`send` 答 SendFail::Unbound），而 `Err` 只留给"铸不出 / 交不出去"。
-/// **它不"持有"什么**：返的 Endpoint 只是把本端铸的那一枚记下来（Copy 的号束）。
+/// 写端（`send` 答 SendFail::Unbound），而 `Err` 只留给"铸不出 / 交不出去"
+/// **它不"持有"什么**：返的 Endpoint 只是把本端铸的那一枚记下来（Copy 的号束）
 pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, EstablishFail> {
     let (rx, seed) = seal_and_ship(to, mark)?;
     Ok(Endpoint {
@@ -123,12 +123,12 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
     })
 }
 
-/// **单向赠予**：我铸一枚（刻 `mark`），把**读端**交给 `to`，本端 `narrow(STORE)` 留写端。
+/// **单向赠予**：我铸一枚（刻 `mark`），把**读端**交给 `to`，本端 `narrow(STORE)` 留写端
 /// 与 endpoint 正好相反：那边交出去的是"我读的那一枚"（对端写），这边交出去的是
 /// "对端读的那一枚"（本端写）。用家是"我有一位常驻的收信人、我只有话要说"那一档
-/// （板 / 树各一处问话孔）。
-/// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔，
-/// 而孔是单手，谁先读谁吃掉。
+/// （板 / 树各一处问话孔）
+/// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔
+/// 而孔是单手，谁先读谁吃掉
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
     let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
     let pie = mail::HolePie::from_token(hole);
@@ -139,9 +139,9 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
     Ok(hole)
 }
 
-/// **扫表认领**：按 `owner` ＋ `mark` 两格找回别人交来的那一枚，**只扫一遍、不等**。
+/// **扫表认领**：按 `owner` ＋ `mark` 两格找回别人交来的那一枚，**只扫一遍、不等**
 /// 它答的是我表里**这位开的、刻着那个记号的那一枚**。**多枚时给最后那一枚**——表内次序是
-/// 次序是契约的一半，不是实现细节。
+/// 次序是契约的一半，不是实现细节
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
     for p in mail::pies() {
@@ -166,11 +166,11 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
     }
 }
 
-/// 铸一枚（刻 `mark`）交给 `to`。返 `(本端那一枚, 它在对方表里的号)`。
+/// 铸一枚（刻 `mark`）交给 `to`。返 `(本端那一枚, 它在对方表里的号)`
 /// 权限给满（`R|W`）**加一格 `VEST`**：对端因此可以再授出。那一格不是客气——内核那道闸是
 /// "持 `VEST` 才交得出去"，而"对端把这一枚转给第三方"是**必然**发生的一步（子方只认得它的
-/// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）。
-/// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"。
+/// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）
+/// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
     let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
     let pie = mail::HolePie::from_token(hole);
@@ -186,7 +186,7 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 
 // 上面那三个动词踩着的原语。**一个调用一处转发，不做裁决**——全层的规矩（谁的孔归谁、
 
-/// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`。
+/// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
     let back = mail::unseal_hole(mark).map_err(|_| ())?;
@@ -206,17 +206,17 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
 
 // 三格是一**组**：三个名字读成同一句式的被动式事实（*这枚是谁授的 / 这扇门是谁开的 /
 
-/// **这枚是谁授的**（`Reserve` 第一格）。
+/// **这枚是谁授的**（`Reserve` 第一格）
 pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
     runtime::env::mail::reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
 }
 
-/// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变。
+/// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变
 /// 回答"这一位客人自己交来的那一枚"就靠它；与 marked_as 合起来才分得开
-/// "同一位开的多枚孔"（那一格答"这是哪条路上的"）。
-/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立。
+/// "同一位开的多枚孔"（那一格答"这是哪条路上的"）
+/// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立
 pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
     match runtime::env::mail::reserve(hole) {
         Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
@@ -224,10 +224,10 @@ pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
     }
 }
 
-/// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变。
+/// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变
 /// **为什么另开一手、而不是折进 opened_by 那一格**：`opened_by` 在 `owner == 0`
 /// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
-/// `entry`"在 owner 0 的那批门闩上照样要答得出。
+/// `entry`"在 owner 0 的那批门闩上照样要答得出
 pub fn marked_as(hole: env::PieToken) -> Option<env::Mark> {
     match runtime::env::mail::reserve(hole) {
         Ok((_vestor, _owner, mark)) => Some(mark),

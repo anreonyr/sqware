@@ -12,9 +12,9 @@ use super::frame::Fail;
 use crate::communication::establish::{self, Held};
 use crate::communication::sender::Sender;
 
-/// 客户手里那一条线：一对孔（本端读投递、写排空）。
+/// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
-/// Endpoint（那一类归域、放不下）。
+/// Endpoint（那一类归域、放不下）
 pub struct Line {
     pair: Held,
 }
@@ -110,7 +110,7 @@ impl Line {
         Ok(Line { pair })
     }
 
-    /// 收一帧投递。`Err(())` = 期限内没等到。
+    /// 收一帧投递。`Err(())` = 期限内没等到
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
         if HolePie::from_token(rx)
@@ -123,8 +123,8 @@ impl Line {
         }
     }
 
-    /// 说一句"这一条我处理完了"。**不阻塞**：已经在响就当也说了——它迟早会应掉那一位，
-    /// 而这句话说的是**状态**（那一格回闲 + 把线放回），幂等。
+    /// 说一句"这一条我处理完了"。**不阻塞**：已经在响就当也说了——它迟早会应掉那一位
+    /// 而这句话说的是**状态**（那一格回闲 + 把线放回），幂等
     /// **为什么不能阻塞**：路由者投递、客户说排空，两边都是"往对方那一格上说一句"。两边都等 ⇒
     pub fn exhaust(&self) -> Result<(), ()> {
         let Some(tx) = self.pair.tx() else {
@@ -138,8 +138,8 @@ impl Line {
         }
     }
 
-    /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。
-    /// 与 Line::receive 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`。
+    /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）
+    /// 与 Line::receive 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`
     pub fn hole(&self) -> Result<PieToken, ()> {
         Ok(self.pair.rx())
     }

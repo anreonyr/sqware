@@ -23,7 +23,7 @@ use runtime::env::mail::{self, HolePie};
 
 const MS: usize = 1000;
 
-/// 起服务：**读锚 → 上板 → 铸门牌两枚 → 一枚线程招待所有客人**。
+/// 起服务：**读锚 → 上板 → 铸门牌两枚 → 一枚线程招待所有客人**
 /// **起手那几步收在一个闭包**（与持树者 / 盟册那两台同形）：它们清一色是"不成 ⇒ 这域
 pub fn serve() -> Result<(), Start> {
     // 一～六：起手（读锚 → 上板 → 铸两枚门牌 → 上树 → 两张表 → 常驻那只组）。
@@ -96,8 +96,8 @@ pub fn serve() -> Result<(), Start> {
 
 /// 认那枚孔靠**帧里那一格** ＋ **一次 mail::reserve 验**：那一格是
 /// "客人借来的那枚回信孔**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——
-/// `from` 是**内核盖的发送者**，名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它。
-/// `face` 是**这一帧从哪一枚门牌进来的**（serve 那只组说的事实）。
+/// `from` 是**内核盖的发送者**，名册与谱系的钥匙判据（装配者 / 当前正好代表 `p`）用的就是它
+/// `face` 是**这一帧从哪一枚门牌进来的**（serve 那只组说的事实）
 fn turn(book: &mut Principal, from: TaskId, face: pcall::Grant, frame: &[u8]) {
     let Some((ask, back)) = pcall::Wire::take(frame) else {
         // 不是那个形状（长度不对）：不猜、不动账、也不回话——没有可信的"往哪回"。
@@ -117,9 +117,9 @@ fn turn(book: &mut Principal, from: TaskId, face: pcall::Grant, frame: &[u8]) {
     let _ = mail::release(back);
 }
 
-/// 把一句问交给核心，编出一句答（**一格**：读不懂也答，答 `BAD`）。
+/// 把一句问交给核心，编出一句答（**一格**：读不懂也答，答 `BAD`）
 /// **形状由 pcall::Wire 说**（收帧那一侧已按动作解好了——两格载荷的意义随之定，不再是一枚
-/// 裸码 ＋ 两个裸数）。答案与失败分开放（见 pcall：`OK` + `flag` 是答案，负码表只装失败）。
+/// 裸码 ＋ 两个裸数）。答案与失败分开放（见 pcall：`OK` + `flag` 是答案，负码表只装失败）
 fn answer(
     book: &mut Principal,
     from: TaskId,

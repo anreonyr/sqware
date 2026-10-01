@@ -30,12 +30,12 @@ use protocol::driver;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-/// **归自己**。
+/// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
 /// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
-/// 服务那一格（Pane）。
+/// 服务那一格（Pane）
 const SERVICE: &str = "uart";
-/// 砖那一格（`uart` 声明的归属落在这一枚上）：读口。
+/// 砖那一格（`uart` 声明的归属落在这一枚上）：读口
 const ME: &str = "rx";
 
 const MS: usize = 1000;
@@ -43,7 +43,7 @@ const MS: usize = 1000;
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
+/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-owner: owner rule held";
 
 #[programs::entry]
@@ -207,8 +207,8 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     }
 }
 
-/// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
-/// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了。
+/// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面
+/// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了
 fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
     let mut at: Option<EntryId> = None;
     for seg in road.iter() {
@@ -223,7 +223,7 @@ fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
     tree.pane(road, Wait::AtMost(MS)).ok()
 }
 
-/// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile。
+/// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile
 fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();
     let mut left = MS;
@@ -239,7 +239,7 @@ fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     }
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
+/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
     return Report::note(E_TRIP, note);

@@ -6,12 +6,12 @@ use alloc::string::String;
 use crate::boot::Catalog;
 
 pub struct Source {
-    /// 这一本账的读面。
+    /// 这一本账的读面
     catalog: Catalog<'static>,
 }
 
 impl Source {
-    /// **那一本账**：boot 给的那块（两块账）（清单与全部镜像都在里面，零拷贝借映）。
+    /// **那一本账**：boot 给的那块（两块账）（清单与全部镜像都在里面，零拷贝借映）
     pub const fn initrd(catalog: Catalog<'static>) -> Source {
         Source { catalog }
     }

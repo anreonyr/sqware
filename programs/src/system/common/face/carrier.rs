@@ -13,10 +13,10 @@ use runtime::env::mail::HolePie;
 use crate::system::common::life::service::Start;
 use crate::unit::Died;
 
-/// **守着这几枚门牌**，直到组坏掉：一场一句话地交给 `on`。
+/// **守着这几枚门牌**，直到组坏掉：一场一句话地交给 `on`
 /// `faces` = （那一枚孔，它代表哪一面）——**面只有这一条来路**；`on` = 一条帧怎么办
-/// （哪一面进来的、内核盖的发送者、帧本身）。
-/// 返 `Err`：起手那两样备不下（`Desk`：那只组；`Room`：收帧那一页）或**组坏了**（`Dead`）。
+/// （哪一面进来的、内核盖的发送者、帧本身）
+/// 返 `Err`：起手那两样备不下（`Desk`：那只组；`Room`：收帧那一页）或**组坏了**（`Dead`）
 pub fn carrier<G: Copy>(
     died: Died,
     faces: &[(PieToken, G)],

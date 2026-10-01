@@ -7,7 +7,7 @@
 extern crate alloc;
 
 pub mod common;
-/// `#[derive(crate::WireCodes)]`（驱动那一侧 `#[derive(protocol::WireCodes)]`）。
+/// `#[derive(crate::WireCodes)]`（驱动那一侧 `#[derive(protocol::WireCodes)]`）
 pub use env::WireCodes;
 
 pub mod communication;
@@ -19,7 +19,7 @@ pub mod system;
 pub mod wire;
 
 /// **答话那一格的"没失败"**（0）——全协议**一个号**：那几族（principal / coalition / operator
-/// / control / 设备账）与驱动各自那几族（如 programs::driver::rtc）共用。
+/// / control / 设备账）与驱动各自那几族（如 programs::driver::rtc）共用
 pub use wire::OK;
 
 // 调试面那一支宏（`debug!`）住 `debug.rs`——**只在 debug 构建下有效**（见那个文件的头注）。

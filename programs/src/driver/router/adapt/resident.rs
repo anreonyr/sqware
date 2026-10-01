@@ -7,8 +7,8 @@ use env::Wait;
 use programs::driver::shared::fail::Fail;
 use programs::unit::router::E_ROUTER;
 
-/// 常驻：**一只组等两个源**（加上门牌，共三个）。
-/// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）。
+/// 常驻：**一只组等两个源**（加上门牌，共三个）
+/// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
