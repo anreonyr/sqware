@@ -4,8 +4,7 @@
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/.cargo/config.toml` 里那十条别名跑。
 #
 # **照实记（用户裁定"protocol-case 没必要，删了"）**：这里原先还编外着一台 `crates/protocol-case`
-# ——八个宿主靶、120 例，把那八处纯核心（operator / line / judge / roster / board / quay /
-# judgement / supply）的规矩在宿主上真跑一遍；门口是 `crates/gate` 的 `host` 那一门。整台连同那
+# ——八个宿主靶、120 例，把那八处纯核心的规矩在宿主上真跑一遍；门口是 `crates/gate` 的 `host` 那一门。整台连同那
 # 一门一并删了，故那个纯核 crate（今 `crates/protocol`）里"用例住 X 靶"的话也一并清掉——那八处纯核心今天**没有判据**，
 # 只剩真机那几门间接覆盖。它的来由（八台收成一台、`#[path]` 换真依赖）随它一起撤。
 exclude = [
@@ -28,7 +27,7 @@ exclude = [
 # `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
 # ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
 # 搬家那一刀的缘由、以及"哪几台进哪张镜像"，见 `harness/Cargo.toml` 与
-# `programs/src/program.rs`（**程序装配声明的唯一来源**）。
+# `programs/src/unit/`（**程序装配声明的唯一来源**）。
 members = [
     "kernel",
     "programs",
@@ -62,14 +61,13 @@ resolver = "3"
 #
 # **照实记（"这一仓的排版是刻意的"不是这 207 处的解释）**：我上一条提议里把现状说成"排版是
 # 刻意的：成对的表、和代码对齐的注释"——读数不支持那个说法，收回来：里面既有**从没被 rustfmt
-# 碰过的漂移**，也有**报文层那一程我自己写下的行**（`protocol/src/session/slip.rs`、
-# `protocol/src/system/board/frame.rs`、`protocol/src/driver/{line,supply}/client.rs` …）——
+# 碰过的漂移**，也有**报文层那一程我自己写下的行**（那几份帧与客户端当时的文件）——
 # 那几刀的判据里没有 fmt，故没有一处拦得住它。这一条是**口径**，规矩两条：
 #
 #   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；
 #   · **不许为了让它变绿而全树重排**——207 处里没有一处改变判据，而重排会把成对的对齐、
 #     与代码对齐的注释一起打散。需要单独钉住的表写 `#[rustfmt::skip]`
-#     （例见 `programs/src/program.rs` 的 `PROGRAMS` 那张表），不是"跑一遍 fmt 再从 diff 里补回来"。
+#     （例见 `programs/src/unit/catalog.rs` 的 `PROGRAMS` 那张表），不是"跑一遍 fmt 再从 diff 里补回来"。
 
 [workspace.package]
 version = "0.1.0"

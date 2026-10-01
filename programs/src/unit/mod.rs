@@ -87,7 +87,7 @@ pub struct Identity {
     /// **`WantedBy=`**（systemd 同名那一格）：**哪几张景要我**（景名即 target 名——`SCENE` 那一台
     /// 就是 `.target`，见 [`Kind::Target`]）——**次序即装载次序**。
     pub wanted_by: &'static [&'static str],
-    /// **它是哪几张景的领头那一台**（**多数为空：全仓只有 7 处写它**）。一个景存在 ⇔ 它有一条
+    /// **它是哪几张景的领头那一台**（**多数为空：全仓只有 6 处写它**）。一个景存在 ⇔ 它有一条
     pub entry: &'static [&'static str],
 }
 
@@ -202,7 +202,7 @@ pub enum Setup {
     /// 那一段区）。
     /// 与 [`Setup::Ready`] 是**同一手 ＋ 一件事**：放行前照样 `connect`（它交回那一枚照样是
     /// "我起来了"），放行之后装配者多走一趟——**照 [`crate::system::machine::Machine::devices`]
-    /// 枚举全机**、逐段向引导域领、再把那一段记录从这条通道推给它。
+    /// 枚举全机**、逐条授出、再把那一段记录从这条通道推给它。
     Machine {
         /// 收物料那条通道的名字。
         load: &'static str,

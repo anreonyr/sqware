@@ -79,7 +79,7 @@ pub fn serve() -> Result<(), Start> {
         );
 
         // **报"答得动了"**（`Setup::Ready`）：上面那一趟落完面、查回来验过才算——被 `after` 指着的台
-        // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
+        // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/unit/catalog.rs` 那一格）。
         let _ = protocol::communication::establish::endpoint(
             runtime::env::unit::sire(),
             env::Mark::of(crate::unit::READY),

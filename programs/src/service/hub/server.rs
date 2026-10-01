@@ -13,8 +13,7 @@
 //!         `claim` 那一面**靠"哪一枚孔响了"认台**；钟到就扫一遍账（探活 ⇒ 空出主人没了的格）
 //! ```
 //! # 三个为什么
-//! - **为什么先收物料、后开树**：物料那一段是本域**唯一**的来路（装配者是唯一持引导域那个
-//!   泊位的域），而"哪一条是哪一台"只有树说得清 ⇒ 树那一页在物料里、树那条路在物料之后。
+//! - **为什么先收物料、后开树**：物料那一段是本域**唯一**的来路（装配者是唯一持那些门闩的域），而"哪一条是哪一台"只有树说得清 ⇒ 树那一页在物料里、树那条路在物料之后。
 //! - **为什么认领那一面长在设备格上**（不在本域会客室里）：见 [`protocol::driver::hub`] 的头注
 
 use alloc::string::String;
@@ -55,7 +54,7 @@ use crate::unit::hub::{CHANNEL, E_HUB, READY};
 /// 等树 / 等盟册 / 收物料的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 收物料那一趟的重试次数（**它是额度不是时限**：装配者要向引导域逐段领，那一段不在一瞬间）。
+/// 收物料那一趟的重试次数（**它是额度不是时限**：装配者要逐条授出，那一段不在一瞬间）。
 const LOAD_TRIES: usize = 20;
 
 /// 探活那一拍的周期（毫秒）。**它是本域唯一的钟**：`vacate` 只在它响时扫一遍。
@@ -71,7 +70,7 @@ pub fn serve() -> Result<(), Start> {
         let sire = utask::sire();
 
         // 一、**整机物料**：这一手（`establish::endpoint`）就同时是"我起来了"那一句——
-        //     装配者据此放行，随后才向引导域领那一段（故这里**有界重试**地收）。
+        //     装配者据此放行，随后才授出那一段（故这里**有界重试**地收）。
         let up = establish::endpoint(sire, Mark::of(CHANNEL), Wait::POLL)
             .map_err(|_| Start::Load(E_HUB))?;
         let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
@@ -394,7 +393,7 @@ fn alive(sensor: PieToken) -> bool {
 }
 
 /// 收物料那一趟：**有界重试**地从那条通道上取一段。
-/// **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 再试（装配者还在向引导域领）；那一枚孔用不动
+/// **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
 /// 了 ⇒ 收摊；解不动 ⇒ 真就是"这一段读不懂"（与"没收到"同一落点：这一台起不来）。
 fn take(rx: PieToken) -> Option<Enroll> {
     let receiver = Receiver::<Enroll>::from_token(rx);
@@ -448,7 +447,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         };
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
-        // 门与页是同一个词的两面：`page` = 引导域交来那一份（认领时授出去），
+        // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
         // `door` = 本域为这一台铸的那一枚（落在 `/dev/<类>/<名>` 上）。
         let door = mail::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
         ledger

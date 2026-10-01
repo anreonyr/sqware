@@ -52,7 +52,7 @@ pub struct Desk {
 }
 
 /// 起手：铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌（**自证**）→ 认领设备 → 开闸 → 占线。
-/// 失败那几格说**步名**（`board` / `tree` / `hub` / `bond` / `list` / `claim` / `line`）。
+/// 失败那几格说**步名**（`tree` / `hub` / `bond` / `list` / `claim` / `name`）。
 pub fn start(ms: Wait) -> Result<Desk, Fail> {
     // 门牌**先解**：读口用板那枚统一记号，写口是本域自己的一枚。
     let rx = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(E_UART, "tree"))?;

@@ -12,7 +12,7 @@ pub struct Source {
 }
 
 impl Source {
-    /// **那一本账**：boot / 固件给的那块（清单与全部镜像都在里面，零拷贝借映）。
+    /// **那一本账**：boot 给的那块（两块账）（清单与全部镜像都在里面，零拷贝借映）。
     pub const fn initrd(catalog: Catalog<'static>) -> Source {
         Source { catalog }
     }

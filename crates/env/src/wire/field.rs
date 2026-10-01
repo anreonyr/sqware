@@ -130,7 +130,7 @@ impl Span for String {
 ///
 /// **照实记（这一对 impl 替掉了什么）**：系统那一层有**一条**"一个号过线"的帧（装配者告诉
 /// 对面"以后答话的是这一位"），而它在**五处**各写了一遍——两处写
-/// `(who.get() as u64).to_le_bytes()`（`programs/src/system/{board,operator}/bridge.rs` 的
+/// `(who.get() as u64).to_le_bytes()`（`programs/src/system/operator/bridge.rs` 的
 /// `tell`），三处各按自己的读法现翻（两侧客人的 `hear` 与 `operator/server.rs` 的 `settle`：
 /// `[0u8; 8]` ＋ `Ok(8)`、`get(..8)` ＋ `from_le_bytes`）。宽度与字节序写五遍 ⇒ 改一处漏一处
 /// **编得过**，症状要等帧被读成"读不懂"才显形。故这一格**不另立一个只有一格字段的结构体**：

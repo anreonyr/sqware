@@ -82,7 +82,7 @@ fn no_service(step: &'static str) -> Report<'static> {
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    // **照实记（"上板报到"那一步退场：撤板那一刀）**：本域从前先开一条 `board::BERTH` 会话报到
+    // **照实记（"上板报到"那一步退场：撤板那一刀）**：本域从前先开一条"报到"会话报到
     // （`reg` 那一格就是它的答码，进读数也进 assert）。板那一族的死信号已整片退场（监督那一趟
     // 改读内核那一格）⇒ 那一步连同 `register()` 与那两处用法一起退场。
 

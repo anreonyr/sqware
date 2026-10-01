@@ -1,6 +1,6 @@
-//! decl::harness — **测具那 23 台**的装配声明。
+//! decl::harness — **测具那 25 台**的装配声明。
 //! # 它为什么住本 crate（而不是隔壁 `harness`）
-//! 这 23 台的身子住 `harness`，但其中 **13 台由编排域起**（`guest` / `passer` / `lodger` /
+//! 这 25 台的身子住 `harness`，但其中 **15 台由编排域起**（`guest` / `passer` / `lodger` /
 //! `sleeper` / `subject` / `member` 与七台 `probe-*`）——编排域要按 `order` / 存在信号
 //! （`Relation::presence`）/ `bind` / `died` 起它们，故这几格必须由 `programs` 编译得出来。而 `harness` 依赖
 //! `programs`，反向建依赖是环 ⇒ **声明只能住这一侧**。
@@ -187,8 +187,7 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
     demand: Demand { ..Demand::DEFAULT },
 };
 
-/// **上界的证客**：推一页 + 1、再推一枚不合族的帧到**两道门**（树与板）上。
-/// 两道门各一条腿，故这一台要两条路（`operator` ＋ `board`）。
+/// **上界的证客**：推一页 + 1、再推一枚不合族的帧到**持树者那几面**上。
 pub static PROBE_BOUND: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-bound",

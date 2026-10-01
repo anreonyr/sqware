@@ -169,7 +169,7 @@ fn main() -> Report<'static> {
     // **次序＝装配者那一侧的次序**（板在前、树在后），而两条都**必须赶在装配那一步的期限
     // 之内**：装配者按行装完就把这一位的路 `claim` 下来（有期限），故这一台**不能先做别的
     // 手脚再装路**——照实记：第一版把树那一条腿（含 junk 那一趟的两个有界等）排在装路之前，
-    // 装配那一侧当场报 `board:claim`（`步骤` 读数），这一台连树路都没拿到。
+    // 装配那一侧当场把这一位的路收了回去（`claim` 有期限），这一台连树路都没拿到。
     // **照实记（"板那一道门"那一条腿退场：撤板那一刀）**：本域从前开两道路（板 ＋ 树）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
@@ -273,7 +273,7 @@ fn main() -> Report<'static> {
 ///
 /// 只有**紧跟其后那句正经的问**（`part /svc`，幂等）走 `Face`：新面已没有那条自由函数那一层，
 /// 而这一面正好**借**同一枚问话孔与同一条答话路（[`operator::Face::from`]）——门上那一趟
-/// 一个字没变。`junk_trip_board` 同理（换一道门，板那一面不在本刀范围内，照旧自由函数）。
+/// 一个字没变。
 fn junk_trip(
     hedge: PieToken,
     tree: &Endpoint,
@@ -305,12 +305,6 @@ fn junk_trip(
     let after = root.open(dir, Wait::AtMost(MS)).is_ok();
     (pushed, bad, after)
 }
-
-/// 第五条那一趟（**板那一道门**）：与 [`junk_trip`] 逐字同一句判据，换一道门、换一句正经的问。
-///
-/// 正经那一问取 `evict`（**一字节短帧、空载荷**）：这一位没在板上登记过 ⇒ 板答 `UNKNOWN`
-/// ——"答得出"就是这一条要的全部（答得对不对由别的证客管），而它**不铸孔、不交入口**，
-/// 故这一条量的是**门**，不是账。
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {

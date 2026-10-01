@@ -23,7 +23,7 @@ pub struct Entry {
     pub name: String,
     pub class: String,
     pub line: u32,
-    /// 那一页（引导域交过来的设备门闩）——认领成功时授给主人的就是它。
+    /// 那一页（装配者交过来的设备门闩）——认领成功时授给主人的就是它。
     pub page: PieToken,
     /// hub 为这一台铸的那一枚孔——**就是你 `find` 到的那一格上挂的那一份**。
     /// 「哪一台」由"哪一枚孔响了"回答（[`Ledger::claim`] 收的正是它）。

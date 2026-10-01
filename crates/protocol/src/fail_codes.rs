@@ -20,8 +20,8 @@ macro_rules! fail_codes {
         }
 
         /// 线上答话那一格 → 失败域。`OK`（没失败）那一格一定答 `None`——读的人靠动作码先分流。
-        /// **`BAD`（这一问读不懂）在不在表里，由各家自己的表说**：板那一侧它独立一格、留在
-        /// 表外（`system::board::frame`），`driver::rtc` 那一侧它与"没走到"（`Fail::Denied`）
+        /// **`BAD`（这一问读不懂）在不在表里，由各家自己的表说**：各族那一份 `fail_codes!` 里有没有它，
+        /// 就是判据；`driver::rtc` 那一侧它与"没走到"（`Fail::Denied`）
         /// 合流——那边的持有者从来不说"我没接住"这句话（接不住就是没有孔可回）。
         /// 表外那一格与读不懂的码一律答 `None`：两个 `None` 不是同一件事，读的人靠动作码先分流。
         pub const fn code_to_fail(code: u8) -> Option<$fail> {

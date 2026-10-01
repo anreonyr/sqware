@@ -11,7 +11,7 @@
 //! 一问一答两张表、以及本族那几格记号。
 //! # 四个动作在报文里的码
 //! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
-//! 不该各起一套词（同 board / operator 那两族的纪律）。
+//! 不该各起一套词（同 operator 那一族的纪律）。
 
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
