@@ -122,6 +122,9 @@ pub const NAME: u8 = 6;
 
 pub const SEEK: u8 = 7;
 
+/// `watch` 那一问：订一条子树（路 ＋ 订阅者那一页 ＋ 那一枚铃）
+pub const WATCH: u8 = 8;
+
 /// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）
 pub const LINK: &str = "operator";
 

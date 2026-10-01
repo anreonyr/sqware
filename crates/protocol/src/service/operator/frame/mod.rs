@@ -11,10 +11,12 @@ use crate::wire::message::Message;
 pub mod road;
 pub mod tip;
 pub mod vocab;
+pub mod watch;
 
 pub use self::road::*;
 pub use self::tip::*;
 pub use self::vocab::*;
+pub use self::watch::{Event, Kind};
 impl crate::wire::id::Id for EntryId {
     fn new(raw: usize) -> EntryId {
         EntryId::new(raw)
@@ -40,7 +42,7 @@ impl env::wire::Field for EntryId {
 /// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）
 pub use crate::wire::OK;
 
-use self::vocab::{FIND, LAND, LIST, NAME, PART, SEEK, TRIM};
+use self::vocab::{FIND, LAND, LIST, NAME, PART, SEEK, TRIM, WATCH};
 
 /// **解开的一问**（名字已经是 String，故不是借用）
 /// 与 Req 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
@@ -67,6 +69,12 @@ pub enum Wire {
     Find(EntryId),
     Trim(EntryId),
     Name(EntryId),
+    /// `watch`：订 `road` 这条子树；`page` / `bell` 是订阅者自己铸的那两块（页 ＋ 铃）
+    Watch {
+        road: PathBuf,
+        page: PieToken,
+        bell: PieToken,
+    },
 }
 
 impl Message for Req {
@@ -108,6 +116,13 @@ impl Message for Req {
             Req::Find(id) => Entry { op: FIND, id: *id }.store_at(out, 0),
             Req::Trim(id) => Entry { op: TRIM, id: *id }.store_at(out, 0),
             Req::Name(id) => Entry { op: NAME, id: *id }.store_at(out, 0),
+            Req::Watch { road, page, bell } => WatchFrame {
+                op: WATCH,
+                road: road.clone(),
+                page: *page,
+                bell: *bell,
+            }
+            .store_at(out, 0),
         }
     }
 
@@ -158,6 +173,18 @@ impl Message for Req {
                     FIND => Wire::Find(id),
                     TRIM => Wire::Trim(id),
                     _ => Wire::Name(id),
+                }
+            }
+            // `watch` 含一条变长路 ⇒ 与 `PART` / `LAND` 同一处置：**"恰好"按游标判**。
+            WATCH => {
+                let (frame, end) = WatchFrame::fetch_at(bytes, 0)?;
+                if end != bytes.len() {
+                    return None;
+                }
+                Wire::Watch {
+                    road: frame.road,
+                    page: frame.page,
+                    bell: frame.bell,
                 }
             }
             // 没见过的动作码、或长度不是这张形状该有的那个 ⇒ 读不懂（不另立一格）。

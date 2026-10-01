@@ -34,24 +34,35 @@ pub mod writer;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use env::{PieToken, PieResult};
+use env::{Mark, PieToken, PieResult};
 use runtime::PAGE_SIZE;
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{NolePie, PolePie};
+use runtime::env::mail::{HolePie, PolePie};
 
 use crate::wire::message::Message;
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::writer::{SendFail, Writer};
 
+/// 那一枚铃的记号：**架自己铸的那一枚孔**（位不占字节 ⇒ 它只用来"响一下"）。
+///
+/// # 为什么铃是一枚孔，不是一枚 Nole
+/// `Nole` 今天**只由编排域解封**（实测：探针那一档 `Nole::unseal` 答 `Denied`）——而那是一件
+/// 已经成立的事实，不该为这一档去改内核。孔自带"一位"（`Ring`/`Hush`，与门铃同一口径：
+/// 置位不占字节、零复制、不阻塞发送方），故这里就用它。
+pub const BELL_MARK: &str = "rack-bell";
+
 /// 页就是架：一枚页一具架（`Pole::unseal` 要求页对齐，`PAGE_SIZE` 正好）。
 pub const SIZE: usize = PAGE_SIZE;
-/// 一页放得下几格。**取 8（2 的幂）**：下标用与取模省一条除法，且一页的格数本来就该小。
-pub const CAP: usize = 8;
-/// 头：四个 u64 计数，整 64 字节（故第一格也从 64 起）。
+/// 一页放得下几格（**2 的幂**：下标用与取模省一条除法）。**7 是这一页的上限**：
+/// `HEAD ＋ CAP × SLOT_SIZE ≤ SIZE`，而 `SLOT_SIZE` 必须是 64 的整数倍（见下）。
+pub const CAP: usize = 7;
+/// 头：四个 u64 计数（`write` / `read` / `dropped` / `lost`），**整 64 字节**——
+/// 两件事一起说：它在自己的对齐上，且**第一格也从 64 起**（槽要 64 对齐）。
 const HEAD: usize = 64;
-/// 一格的整宽（`seq` 8 ＋ `len` 4 ＋ 补齐 ⇒ 与 64 对齐的整宽）。
-const SLOT_SIZE: usize = (SIZE - HEAD) / CAP;
+/// **一格自己那一段**（`seq` 8 ＋ `len` 4 ＋ 补齐 ＋ `data`）＝ 64 的整数倍 ⇒ 每一格都落在
+/// 自己的对齐上（槽里只放字节，对齐不外露）。
+const SLOT_SIZE: usize = 512;
 /// 一格能装多少字节（`M::MAX` 的上限，编译期由 [`exact`] 那一句把关）。
 const SLOT: usize = SLOT_SIZE - 64;
 /// 格下标那一枚掩码（CAP 是 2 的幂）。
@@ -86,13 +97,14 @@ struct Ring {
     slots: [Slot; CAP],
 }
 
-/// 编译期：一页正好装下头与 CAP 格，且 `Message::MAX` 塞得进一格。
+/// 编译期：一页装得下头与 CAP 格（**不必恰好装满**），且 `Message::MAX` 塞得进一格。
 const fn exact<M: Message>() {
     let _ = assert!(
-        SIZE == HEAD + SLOT_SIZE * CAP,
-        "页容与格数对不上（改 CAP / SLOT_SIZE 时要让这两边相等）"
+        HEAD + SLOT_SIZE * CAP <= SIZE,
+        "头 ＋ CAP 格超出一页（改 CAP / SLOT_SIZE 时要么减格、要么改页）"
     );
     let _ = assert!(SLOT_SIZE % 64 == 0, "一格要与 64 对齐");
+    let _ = assert!(HEAD % 64 == 0, "头要与 64 对齐（第一格才在边界上）");
     let _ = assert!(M::MAX <= SLOT, "这一族的报比一格还长");
 }
 
@@ -104,8 +116,8 @@ const fn exact<M: Message>() {
 pub struct Rack<M: Message> {
     /// 页（借映进本域，与 `Dock` 同一条手：`open` 返视图、`shut` 撤图）。
     dock: Dock,
-    /// 铃：写者响、读者等。
-    bell: NolePie,
+    /// 铃：写者响、读者等（**架自己铸的那一枚孔**，见 [`BELL_MARK`]）。
+    bell: HolePie,
     /// 满了丢哪一头（写那一侧的规矩，读端不必知道）。
     mode: Mode,
     _m: PhantomData<M>,
@@ -118,12 +130,33 @@ impl<M: Message> Rack<M> {
     /// 页或铃解封不出来（`PieFail`）——起手那一步没材料，调用方按"这一档用不了"处置。
     pub fn open(mode: Mode) -> PieResult<Self> {
         exact::<M>();
-        let pie = PolePie::unseal(SIZE)?;
-        let dock = Dock::open(pie)?;
+        // **起手那两步各报一行（release 也看得见）**：`debug!` 在 release 是空操作，而
+        // "页解不出来"与"铃解不出来"是两条不同的下一步（一个是资源轴、一个是消息轴）。
+        let pie = match PolePie::unseal(SIZE) {
+            Ok(pie) => pie,
+            Err(fail) => {
+                crate::debug::put(&alloc::format!("rack: no page {:?}", fail));
+                return Err(fail);
+            }
+        };
+        let dock = match Dock::open(pie) {
+            Ok(dock) => dock,
+            Err(fail) => {
+                crate::debug::put(&alloc::format!("rack: no view {:?}", fail));
+                return Err(fail);
+            }
+        };
         // 页是内核清零的（`UnsealPole` 的正文），故四个计数与每格 `seq` 都从 0 起。
+        let bell = match HolePie::unseal(Mark::of(BELL_MARK)) {
+            Ok(bell) => bell,
+            Err(fail) => {
+                crate::debug::put(&alloc::format!("rack: no bell {:?}", fail));
+                return Err(fail);
+            }
+        };
         Ok(Self {
             dock,
-            bell: NolePie::unseal()?,
+            bell,
             mode,
             _m: PhantomData,
         })

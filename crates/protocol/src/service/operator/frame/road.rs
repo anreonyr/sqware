@@ -69,6 +69,19 @@ pub struct Entry {
     pub id: EntryId,
 }
 
+/// `watch` 那一问：动作码 ＋ 要订的那条路 ＋ 订阅者那两块（**页**：事件往哪写；**铃**：有事响它）
+///
+/// 两块都由订阅者**自己**铸、经这条问话交过来（与 `land` 交一枚入口同一条手）：
+/// 页是 `communication::rack` 那一具架，铃是它的"有事"。树上**只记不换**——撤订靠那一页/那一铃
+/// 作废（订阅者退场即失效），故没有第二条形状。
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+pub struct WatchFrame {
+    pub op: u8,
+    pub road: PathBuf,
+    pub page: PieToken,
+    pub bell: PieToken,
+}
+
 /// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错
 /// 号那一侧全按 EntryId 走；名字只出现在两条路上：Req::Road（`seek` 收的那条路）
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -97,6 +110,12 @@ pub enum Req {
     Trim(EntryId),
     /// `name`：那一号此刻叫什么
     Name(EntryId),
+    /// `watch`：订 `road` 这条子树；此后树上真变了就往 `page` 那一页里记、响 `bell` 那一枚
+    Watch {
+        road: PathBuf,
+        page: PieToken,
+        bell: PieToken,
+    },
 }
 
 /// 一帧「列」的读数：号最多 PANE_CAP 枚

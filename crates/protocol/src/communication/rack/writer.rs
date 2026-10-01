@@ -6,9 +6,9 @@
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
-use env::{PieToken, Wait};
+use env::{HoleDir, PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{NolePie, PolePie};
+use runtime::env::mail::{HolePie, PolePie};
 
 use super::{Mode, Ring, SLOT, exact, push, ring};
 use crate::wire::message::Message;
@@ -24,7 +24,7 @@ pub struct Writer<M: Message> {
     /// 编报那一格：地址在整个持有期里不动（`store` 写它、`push` 读它）。
     buf: M::Buf,
     mode: Mode,
-    bell: NolePie,
+    bell: HolePie,
     _m: PhantomData<M>,
 }
 
@@ -37,7 +37,7 @@ impl<M: Message> Writer<M> {
             dock: None,
             buf: M::EMPTY,
             mode,
-            bell: NolePie::from_token(bell),
+            bell: HolePie::from_token(bell),
             _m: PhantomData,
         }
     }
@@ -48,14 +48,21 @@ impl<M: Message> Writer<M> {
     /// 页映不进来 ⇒ `None`——此后 `send` 一律答 `SendFail::Mail(Denied)`，不猜地址。
     pub fn from_token(page: PieToken, bell: PieToken, mode: Mode) -> Option<Self> {
         exact::<M>();
-        let dock = Dock::open(PolePie::from_token(page)).ok()?;
+        let dock = match Dock::open(PolePie::from_token(page)) {
+            Ok(dock) => dock,
+            Err(fail) => {
+                // **release 也看得见**：写端映不进来是"订阅成了但发不出去"那一格的头号成因。
+                crate::debug::put(&alloc::format!("rack: writer no view {:?}", fail));
+                return None;
+            }
+        };
         let view = dock.view();
         Some(Self {
             ring: ring(view),
             dock: Some(dock),
             buf: M::EMPTY,
             mode,
-            bell: NolePie::from_token(bell),
+            bell: HolePie::from_token(bell),
             _m: PhantomData,
         })
     }
@@ -84,7 +91,7 @@ impl<M: Message> Writer<M> {
 
     /// 等铃（**写者不该用**：它只响、不等。留给"同一域里要等答复"的诊断口）。
     pub fn wait(&self, within: Wait) -> bool {
-        self.bell.wait(within).unwrap_or(false)
+        self.bell.wait(HoleDir::Pull, within).unwrap_or(false)
     }
 
     /// 按策略丢掉的条数（`Mode::Newest` 会加）。
@@ -111,6 +118,7 @@ impl<M: Message> Writer<M> {
 }
 
 /// 递不出去：三格**分得开**（与 `hand::SendFail` 同一套词，只多"这一格没进架"那一格）。
+#[derive(Debug)]
 pub enum SendFail {
     /// **这一格没进架**：容量满了，按 [`Mode`] 丢了（丢掉的数在 `lost` / `dropped` 上）。
     Full,

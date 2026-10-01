@@ -20,7 +20,7 @@ pub mod churn;
 pub mod coalition;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
-/// 测具那 27 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
+/// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
 /// 而"哪几台进哪张镜像"这张表在宿主侧（`crates/image`）也要看得见 ⇒ 声明与身子同住、由本表拉进来
 #[path = "../harness/guest/guest/program.rs"]
 pub mod guest;
@@ -62,6 +62,8 @@ pub mod probe_owner;
 pub mod probe_rule;
 #[path = "../harness/probe/probe_rule_other/program.rs"]
 pub mod probe_rule_other;
+#[path = "../harness/probe/probe_watch/program.rs"]
+pub mod probe_watch;
 #[path = "../harness/bench/rig/rig/program.rs"]
 pub mod rig;
 #[path = "../driver/router/program.rs"]
@@ -108,6 +110,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,
+    // 事件那条路的正证客人（订阅 ＋ 过滤 ＋ 事件内容）：自持 `watch` 与 `land` 两位，
+    // 不借别人的试验场（见它那份声明）。
+    &probe_watch::PROBE_WATCH,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
     // 那两族"没有会话"的服务（名册 / 盟册）：各该有 `Grant::ALL.len()` 枚（四族格数各归各家——

@@ -173,6 +173,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-watch"
+path = "src/harness/probe/probe_watch/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-probe-rule"
 path = "src/harness/probe/probe_rule/main.rs"
 test = false

@@ -19,12 +19,26 @@ use runtime::env::mail;
 use crate::service::operator::core::{Key, Operator};
 
 use super::door::may;
+use super::watch::{Watchers, event_at};
+
+/// **一次真改动之后**：把那条路走出来、编成一条事件、发给订得起的人。
+///
+/// 路从**号**现走（`road_to`），剪掉那一档例外——它的路在剪之前就记在 `Change` 里了。
+/// 走不出路（号不在树上）就**不发**：一条路是假的事件比没有更坏。
+fn changed(tree: &Operator, watchers: &mut Watchers, change: &crate::service::operator::core::Change) {
+    let Some(ev) = event_at(tree, change.kind, change.id, change.owner, change.road.clone()) else {
+        debug!("operator: watch event unsigned id={}", change.id.get());
+        return;
+    };
+    let _ = watchers.publish(&ev);
+}
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 ocall 的帧那一节）
 /// **形状由 ocall::Wire 说**（收帧那一侧已经按动作解好了），**答由 ocall::Union 说**
 /// 解不出来就是一句读不懂的帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）
 pub(super) fn answer(
     tree: &mut Operator,
+    watchers: &mut Watchers,
     ask: Option<ocall::Wire>,
     who: env::TaskId,
     wired: bool,
@@ -70,9 +84,17 @@ pub(super) fn answer(
                 return ocall::Union::Status(ruling.wire());
             }
         }
+        // **`watch` 也要先问身份**（与 `land` 同一道门）：订阅是"此后一直看着树"这件事，
+        // 没身份的任务不该得到它。
+        ocall::Wire::Watch { .. } => {
+            let ruling = may(tree, wired, who, Permit::Unset);
+            if !ruling.passed() {
+                return ocall::Union::Status(ruling.wire());
+            }
+        }
         _ => {}
     }
-    let said = match ask {
+    match ask {
         // **两条答号的**：立/分的人自己得知道立成了几号——答案体不是一格状态。
         ocall::Wire::Land {
             at,
@@ -86,8 +108,11 @@ pub(super) fn answer(
             }
             // **一问一动**：两轴与那一枚砖**一起落**（`tree.land` 那一手的 Node::Tile）——
             // 故"树改了、两轴没记上"这一类**构造上不存在**，这一支没有第二步可漏。
-            return match tree.land(at, name, entry, permit, mine.then_some(who)) {
-                Ok(id) => ocall::Union::Entry(id),
+            return match tree.land(at, name.clone(), entry, permit, mine.then_some(who)) {
+                Ok(change) => {
+                    changed(tree, watchers, &change);
+                    ocall::Union::Entry(change.id)
+                }
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
@@ -95,8 +120,14 @@ pub(super) fn answer(
             if !tree.claimable(Key::At(at, name.clone()), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
-            return match tree.part(at, name) {
-                Ok(id) => ocall::Union::Entry(id),
+            return match tree.part_at(at, name) {
+                Ok((id, _fresh, change)) => {
+                    // **幂等那一档没有事件**（`change = None` = 树一个字节没变），号照答。
+                    if let Some(change) = &change {
+                        changed(tree, watchers, change);
+                    }
+                    ocall::Union::Entry(id)
+                }
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
@@ -123,7 +154,16 @@ pub(super) fn answer(
                 (None, None) => ocall::Union::Status(ocall::BAD),
             };
         }
-        ocall::Wire::Trim(id) => tree.trim(id),
+        // `trim` 的两档都是"一格状态"：**各自就地成答**，不再走下面那条窄路（`said`）。
+        ocall::Wire::Trim(id) => match tree.trim(id) {
+            Ok(change) => {
+                if let Some(change) = &change {
+                    changed(tree, watchers, change);
+                }
+                return ocall::Union::Status(ocall::OK);
+            }
+            Err(fail) => return ocall::Union::Status(ocall::fail_to_code(Some(fail))),
+        },
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
         ocall::Wire::List(at) => {
             return match tree.list(at) {
@@ -143,6 +183,13 @@ pub(super) fn answer(
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
-    };
-    ocall::Union::Status(ocall::fail_to_code(said.err()))
+        // **订一条子树**：把交来的页与铃认成写端，记下"谁订了哪条路"。**答的就是成没成**
+        // （订阅者拿这一句当"此后的事件都算你的"那个点——见 `watch` 面那一节的序）。
+        ocall::Wire::Watch { road, page, bell } => {
+            return match watchers.join(who, &road, page, bell) {
+                Ok(()) => ocall::Union::Status(ocall::OK),
+                Err(()) => ocall::Union::Status(ocall::fail_to_code(Some(ocall::Fail::Denied))),
+            };
+        }
+    }
 }

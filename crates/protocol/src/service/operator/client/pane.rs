@@ -38,7 +38,9 @@ impl<'a> Pane<'a> {
     /// 按**窗格**读一格：`list` 它一下——`list` 的判据正是"这一号是一块 `Pane`"
     /// （是一枚砖 ⇒ Fail::NotAPane；号不在 ⇒ Fail::Unknown）
     /// **它是"把一个已有的号读成窗格"那一格**：Face::pane 与 Pane::tile 的落点
-    pub(super) fn at(face: &'a Face, id: EntryId, wait: Wait) -> Result<Pane<'a>, Fail> {
+    /// 也是"**手里已经有一枚号**"那一档（`Pane::of` 只是造柄、不问那一号是不是窗格；
+    /// 这一手要问）——故公开给测具那两位用（`probe-operator-gate` / `probe-watch`）。
+    pub fn at(face: &'a Face, id: EntryId, wait: Wait) -> Result<Pane<'a>, Fail> {
         face.call(ocall::Req::List(Where::At(id)), wait)?
             .list()
             .map_err(map_code)?;

@@ -27,8 +27,10 @@ use crate::service::operator::{EntryId, Grant, Listing, Where};
 
 pub mod pane;
 pub mod tile;
+pub mod watch;
 
 pub use self::pane::*;
+pub use self::watch::Watch;
 pub use self::tile::*;
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）
 /// 开会话那一手（Session::open）要它；本层只把这两格交出去，不替调用方开会话
@@ -221,6 +223,14 @@ impl Rein<'_> {
     pub fn name(&self, id: EntryId, wait: Wait) -> Result<String, Fail> {
         let said = self.face.call(ocall::Req::Name(id), wait)?;
         said.name().map_err(map_code)
+    }
+
+    /// **看**：订 `road` 这条子树，此后树上真变了就往本端那一页里记一条。
+    ///
+    /// 与另几条同一个起手（本层不拿 `op` 码当参数）：本柄是"许不许这一类"那一维上的一枚，
+    /// 而这一枚对应的原语就是 `watch`。
+    pub fn watch(&self, road: &Path, wait: Wait) -> Result<Watch<'_>, Fail> {
+        Watch::of(self.face, road, wait)
     }
 }
 

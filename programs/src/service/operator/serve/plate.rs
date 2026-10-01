@@ -47,9 +47,11 @@ pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule
     // **末段是叶子**：没有许可（Permit::Unset）＋ **不留主人**（`None`）——与
     // `/svc/sys/principal/{ask,set}` 与 `/svc/sys/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
     match tree.land(at, last.to_string(), leaf, Permit::Unset, None) {
-        Ok(id) => {
+        Ok(change) => {
+            let id = change.id;
             // **带规矩那一轴**（Rule::Root）：那句规矩是"**许给根**"（`Trunk(ROOT)`）——
             // （换绑不动号，故号仍是刚铸出来的那个）。**不成只报一行、不中止**：那一格退回
+            // 无许可那一档（这一手是"补一句规矩"，`land` 已经成了）。
             if let Rule::Root = rule {
                 match tree.land(
                     at,

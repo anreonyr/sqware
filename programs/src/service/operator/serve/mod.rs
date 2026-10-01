@@ -3,7 +3,8 @@
 //! |---|---|
 //! | 提示之路上的一条路（ocall::TipIn::Plate） | self::plate::plate：前缀立窗格 ＋ 末段落格 |
 //! | 提示之路上的一位客人（ocall::TipIn::Guest） | 客人账（Desk::admit） |
-//! | 客人的一句问（ocall::Req） | self::answer::answer：七条原语 |
+//! | 客人的一句问（ocall::Req） | self::answer::answer：八条原语 |
+//! | 订阅关系（`watch` 那一面 ＋ 每次真改了树） | 订阅册（self::watch::Watchers）：事件写进订阅者那一页 |
 //! **为什么就一枚线程**：树上那几枚是**一枚只在持它的那张表里有意义的句柄**（`PieToken` = "我这张
 //! 表里的第几个"）。"查到了要把 Pie 授出去"必须由**持有那一枚的那张表**来做——故所有条目只能住
 //! 同一张表，也就是同一枚线程。板那一台栽过这条（每位客人一枚待客线程 ⇒ 甲的条目在甲的表里，
@@ -37,15 +38,18 @@ use crate::service::operator::claim::{ask_of, mark_of, reply_of};
 mod answer;
 mod door;
 mod plate;
+mod watch;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）
 /// **不是轮询**：账补齐之后这一等就变成 Wait::Forever（由组唤醒）；这个短期限只在装配窗口
 /// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）
 const SETTLE_MS: usize = 1;
 
-/// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 七位操作面各一枚
-/// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组
-const MARKS: [Mark; 8] = [
+/// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 操作面**每一位**各一枚（`Grant::ALL` 的位数）
+/// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组。
+/// 加一位 `Grant` 就要在这里加一枚（数组长度写死是 `const` 的代价：值与 `Grant::ALL` 对齐
+/// 由 `count_under` 那一台探针在树上量——它数的就是这一族有几格）。
+const MARKS: [Mark; 9] = [
     ocall::ASK_MARK,
     Grant::Part.mark(),
     Grant::Land.mark(),
@@ -54,6 +58,7 @@ const MARKS: [Mark; 8] = [
     Grant::List.mark(),
     Grant::Seek.mark(),
     Grant::Name.mark(),
+    Grant::Watch.mark(),
 ];
 
 /// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**
@@ -93,6 +98,7 @@ pub fn serve() -> Result<(), Start> {
     );
 
     let mut tree = Operator::new();
+    let mut watchers = watch::Watchers::new();
     let mut desk = Desk::new();
     let mut wired = false;
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
@@ -135,7 +141,7 @@ pub fn serve() -> Result<(), Start> {
         let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, wired, &mut buf, &mut outs)
+            serve_one(&mut tree, &mut watchers, guest, wired, &mut buf, &mut outs)
         } else {
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
             if tok != tip {
@@ -307,6 +313,7 @@ fn outbox<'a>(outs: &'a mut Vec<Outbox>, guest: Guest) -> Option<&'a mut Outbox>
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询
 fn serve_one(
     tree: &mut Operator,
+    watchers: &mut watch::Watchers,
     guest: Guest,
     wired: bool,
     buf: &mut [u8],
@@ -355,7 +362,7 @@ fn serve_one(
     let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));
     let t_ans = runtime::env::chrono::clock();
-    let said = answer(tree, decoded, guest.who(), wired, grant);
+    let said = answer(tree, watchers, decoded, guest.who(), wired, grant);
     // 的那一格码**报出来——"哪一位客人、问什么（首格码）、答什么"三样齐了，才谈得上说得清。
     // **只在非 OK 时报**（正常一条答话不占串口）：`BAD` 与那六格各是一个成因。
     if let ocall::Union::Status(status) = said

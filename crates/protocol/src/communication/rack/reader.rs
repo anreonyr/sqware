@@ -6,9 +6,9 @@
 
 use core::marker::PhantomData;
 
-use env::{MailFail, PieToken, Wait};
+use env::{HoleDir, MailFail, PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{NolePie, PolePie};
+use runtime::env::mail::{HolePie, PolePie};
 
 use super::{Ring, SLOT, exact, pop, ring};
 use crate::wire::message::Message;
@@ -20,7 +20,7 @@ pub struct Reader<M: Message> {
     dock: Option<Dock>,
     /// **我该读的那一号**（绝对序号，从 1 起）。
     next: u64,
-    bell: NolePie,
+    bell: HolePie,
     _m: PhantomData<M>,
 }
 
@@ -32,7 +32,7 @@ impl<M: Message> Reader<M> {
             ring: ring(view),
             dock: None,
             next: 1,
-            bell: NolePie::from_token(bell),
+            bell: HolePie::from_token(bell),
             _m: PhantomData,
         }
     }
@@ -47,7 +47,7 @@ impl<M: Message> Reader<M> {
             ring: ring(view),
             dock: Some(dock),
             next: 1,
-            bell: NolePie::from_token(bell),
+            bell: HolePie::from_token(bell),
             _m: PhantomData,
         })
     }
@@ -73,7 +73,9 @@ impl<M: Message> Reader<M> {
     /// **等铃**。返 `true` = 架上有事（醒来还是要读），`false` = 期限内没等到。
     /// 铃是提示型：一次响可能对应好几条，故**读干为止**是调用方的循环。
     pub fn wait(&self, within: Wait) -> Result<bool, RecvFail> {
-        self.bell.wait(within).map_err(|e| RecvFail::Mail(e.source))
+        self.bell
+            .wait(HoleDir::Pull, within)
+            .map_err(|e| RecvFail::Mail(e.source))
     }
 
     /// **等 ＋ 读一条**（与 std 的 `recv` 同位）。
@@ -110,6 +112,7 @@ impl<M: Message> Reader<M> {
 }
 
 /// 收不回来：三格**分得开**（与 `hand::RecvFail` 同一套词，只多"这一刻没读到"那一格）。
+#[derive(Debug)]
 pub enum RecvFail {
     /// 期限内没有可取之事（`Wait::POLL` 那一档就是"探测一次"）。
     Empty,

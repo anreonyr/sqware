@@ -1,13 +1,14 @@
-//! 一张按号排的表 ＋ 七条线上原语 ＋ 三条给判据的。
+//! 一张按号排的表 ＋ 八条线上原语 ＋ 三条给判据的。
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
 
-use protocol::common::path::Path;
+use protocol::common::path::{Path, PathBuf};
 use protocol::communication::session::establish::{opened_by, vested_by};
 use protocol::service::operator::frame::PANE_CAP;
+use protocol::service::operator::frame::watch::Kind;
 use protocol::service::operator::{EntryId, Fail, Permit, Where};
 
 pub mod gate;
@@ -50,6 +51,22 @@ pub enum Key {
     Id(EntryId),
 }
 
+/// **一次改动**：树真的变了才有它（那一格自己的号 ＋ 它是哪一种 ＋ 归属）。
+///
+/// **不含"路"那一格**：路能从号现走（[`Operator::road_to`]），而 `trim` 正是"号还在、格子没了"
+/// ——那一刻才是唯一需要**先**把路记下来的地方。故这里只记那三格，路在落那条事件时现走。
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Change {
+    /// 哪一种：新铸 / 换绑 / 新立一块 / 剪掉
+    pub kind: Kind,
+    /// 那一格自己的号
+    pub id: EntryId,
+    /// 那一格的主人（无主 = 零号）
+    pub owner: TaskId,
+    /// **剪掉那一档才填**：剪完槽就空了，路只能**剪之前**记下来（其余三档由 `publish` 现走）。
+    pub road: Option<PathBuf>,
+}
+
 /// 一棵命名树：**一个 Operator 管着所有条目**
 /// 根 = `root` 那一叠**孩子的号**（Where::Root 指的就是它）；其余每一格住 `slots` 里
 /// **号就是下标**。两个容器的容量**互不牵连**：`root` 管根那一层，`slots` 管"一共铸过几格"
@@ -69,6 +86,10 @@ impl Operator {
         }
     }
 
+    /// **落**：`at` 那一块里给 `name` 贴一枚 `Tile`，并答**这一次真动了什么**。
+    ///
+    /// 新铸那一档是 [`Kind::Landed`]，换绑那一档是 [`Kind::Rebound`]（**号不动**）——
+    /// 树一个字节没变的那一档不存在：`put` 只在"造了一格"或"换掉了那一格的两轴"两种下场里返 `Ok`。
     pub fn land(
         &mut self,
         at: Where,
@@ -76,12 +97,57 @@ impl Operator {
         pie: PieToken,
         permit: Permit,
         owner: Option<TaskId>,
-    ) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Tile { pie, permit, owner }, Want::Tile)
+    ) -> Result<Change, Fail> {
+        // **归属原样带过去**：`None` = 无主（谁都能接手），`Some(w)` = 有主。**不许折成零号**——
+        // `claimable` 读的就是这一格（零号是一个"永远不在场"的主人，与"无主"不是一件事）。
+        let who = owner.unwrap_or(TaskId::new(0));
+        // **换绑还是新铸**：落之前先只读地问一遍（那一手与 `put` 开头那一趟是同一件事）。
+        let was_tile = self.kid(at, name.as_str())?.is_some();
+        let id = self.put(at, name, Node::Tile { pie, permit, owner }, Want::Tile)?;
+        Ok(Change {
+            kind: if was_tile {
+                Kind::Rebound
+            } else {
+                Kind::Landed
+            },
+            id,
+            owner: who,
+            road: None,
+        })
     }
 
+    /// **分**：`at` 那一块里立一块空窗格（幂等：已经在就是成了）。返那一格自己的号。
     pub fn part(&mut self, at: Where, name: String) -> Result<EntryId, Fail> {
-        self.put(at, name, Node::Pane(Vec::new()), Want::Pane)
+        Ok(self.part_at(at, name)?.0)
+    }
+
+    /// **分 ＋ 真动了什么**：**真造了一块**才记 [`Kind::Parted`]（已是窗格那一档 `changed = false`
+    /// ——树一个字节没变，不该报一条事件）。**两档都答那一格自己的号**（幂等那一档要把它查出来）。
+    pub fn part_at(&mut self, at: Where, name: String) -> Result<(EntryId, bool, Option<Change>), Fail> {
+        if let Some(id) = self.kid(at, name.as_str())? {
+            return Ok((id, false, None));
+        }
+        let id = self.put(at, name, Node::Pane(Vec::new()), Want::Pane)?;
+        Ok((
+            id,
+            true,
+            Some(Change {
+                kind: Kind::Parted,
+                id,
+                owner: TaskId::new(0),
+                road: None,
+            }),
+        ))
+    }
+
+    /// `at` 那一块里叫 `name` 的那一格（没有 ⇒ `None`）。`put` 那一趟"先只读地问一遍"
+    /// 就是它——故这一只手是那件事的公开发法，不是另一份实现。
+    pub fn kid(&self, at: Where, name: &str) -> Result<Option<EntryId>, Fail> {
+        Ok(self
+            .kids(at)?
+            .iter()
+            .copied()
+            .find(|child| self.slot(*child).is_some_and(|slot| slot.name == name)))
     }
 
     /// **寻**：把那一号后面那一枚 Pie 交出去
@@ -132,7 +198,10 @@ impl Operator {
     /// 剪掉一枚 `Tile` 时那一枚放下（mail::release）——它是资源实体的一份引用，不放下就漏水
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 Fail::Unknown，而**它不会被重新铸出来**（水位只增）
-    pub fn trim(&mut self, id: EntryId) -> Result<(), Fail> {
+    /// 答**真动了什么**：剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树（前者是一格没了，
+    /// 后者是一格连资源一起放下）——两档订阅者都该知道"这一号从此不在了"。剪不动的那两格
+    /// （号不在 / 那块窗格非空）是 `Err`，与"没变"不是一件事。
+    pub fn trim(&mut self, id: EntryId) -> Result<Option<Change>, Fail> {
         let dropped = match self.slot(id) {
             None => return Err(Fail::Unknown),
             Some(slot) => match &slot.node {
@@ -141,11 +210,21 @@ impl Operator {
                 Node::Tile { pie, .. } => Some(*pie),
             },
         };
+        // **路要在剪之前记**：剪完那一槽是碑，`road_to` 再也走不出来。
+        let road = self.road_to(id);
         let _ = self.unlink(id);
         if let Some(pie) = dropped {
             let _ = runtime::env::mail::release(pie);
         }
-        Ok(())
+        // 剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树：前者是一格没了，后者是一格连资源
+        // 一起放下——两档订阅者都该知道"这一号从此不在了"。**路在落那条事件时现走**（号还在，
+        // 槽已空）——故 `Change` 不存路。
+        Ok(Some(Change {
+            kind: Kind::Trimmed,
+            id,
+            owner: TaskId::new(0),
+            road,
+        }))
     }
 
     /// **列**：看那一块 `Pane` 里有哪些**号**（Where::Root = 根那一层）
@@ -321,6 +400,56 @@ impl Operator {
             }
         }
         Some(taken)
+    }
+
+    /// **从根写起的那条路**：`id` 那一格自己那一段 ＋ 一路向上的每一段。
+    ///
+    /// 表里每一格只记**自己那一段名**（路那一层不在槽上，见 `Slot` 的注），故要整条路只能
+    /// 从根走下来找它——`PANE_CAP` 与 `Path::MAX` 都是小常数，这条走法每层最多扫一趟。
+    ///
+    /// 返 `None` = 这一号不在树上（碑 / 从没铸过）：**事件里那条路拼不出来就不发**，
+    /// 比发一条路是假的强。
+    pub fn road_to(&self, id: EntryId) -> Option<PathBuf> {
+        let mut segs: Vec<String> = Vec::new();
+        let mut want = id;
+        loop {
+            // 找"哪一层的孩子里有 `want`"，把那一层的**父**继续往上带。
+            let (parent, name) = self.locate(want)?;
+            segs.try_reserve(1).ok()?;
+            segs.push(name);
+            match parent {
+                Where::Root => break,
+                Where::At(up) => want = up,
+            }
+        }
+        // 从根写起 ⇒ 反着拼。
+        let mut road = PathBuf::from(Path::ROOT);
+        for seg in segs.iter().rev() {
+            let next = road.try_join(seg.as_str())?;
+            road = next;
+        }
+        Some(road)
+    }
+
+    /// `id` 那一格住在哪：**父那一块 `Pane`（根那一层报 `Where::Root`）＋ 它自己那一段名**。
+    fn locate(&self, id: EntryId) -> Option<(Where, String)> {
+        if self.root.contains(&id) {
+            let name = self.slot(id)?.name.clone();
+            return Some((Where::Root, name));
+        }
+        for i in 0..self.slots.len() {
+            let Some(Some(one)) = self.slots.get(i) else {
+                continue;
+            };
+            let Node::Pane(inner) = &one.node else {
+                continue;
+            };
+            if inner.contains(&id) {
+                let name = self.slot(id)?.name.clone();
+                return Some((Where::At(EntryId::new(i)), name));
+            }
+        }
+        None
     }
 }
 
