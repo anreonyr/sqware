@@ -1,9 +1,3 @@
-//! system::bootstrap — **起手三样**：boot 的两块账、那台机器的自述、那块清单。
-//! 本域**就是这一景的引导镜像**（并域那一刀）：两块账由内核借映进本域，故三样都在手边——
-//! 账是启动参数指的两区，树是配对块里那枚 dtb 门闩，清单是账里那整块字节。
-//! **照实记（这一摊为什么只剩这么点）**：原 `talk_to_root` / `take_machine` /
-//! `take_catalog` / `draw_one` 四格（60 行）是"跨域领货"那一趟的利息——门闩并到本域之后，
-//! 那一趟连读者都没有了。
 
 use runtime::core::dock::Dock;
 use runtime::env::mail::PolePie;

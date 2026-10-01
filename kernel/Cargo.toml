@@ -7,19 +7,13 @@ edition.workspace = true
 default = []
 # diagnose 结构化记录经 semihosting fs 导出宿主文件（JSON Lines，自描述长度；文件
 # sqware-diagnose.jsonl 落在 qemu CWD，runner 归档）。**非默认**（`default = []`，
-# 要开须显式 `--features semihosting`）——旧注写「默认开启（default 引入）」与
-# manifest 相反。另注意 qemu 侧的 `-semihosting` 只在 `QEMU_SEMI=1` / `QEMU_FEATURES`
-# 含 semihosting 时才加（`scripts/qemu-args.nu`，**只管 QEMU 侧**），而造镜像与测试路
-# 都不带这个头文件 feature ⇒ 那些产物没有结构化导出。
+# 要开须显式 `--features semihosting`）。另注意 qemu 侧的 `-semihosting` 只在
+# `QEMU_SEMI=1` / `QEMU_FEATURES` 含 semihosting 时才加（`scripts/qemu-args.nu`，
+# **只管 QEMU 侧**），而造镜像与测试路都不带这个头文件 feature ⇒ 那些产物没有结构化导出。
 # 要有结构化导出就必须有 `serde_json` ⇒ 那一格是**可选依赖**（`dep:` 语法）。不是洁癖：
-# cargo 的 `unused_dependencies` 看不见 `cfg(feature = "semihosting")` 里的用法，依赖写成
-# 必选就永远挂着一条**假警告**（本笔之前正是如此）。
+# cargo 的 `unused_dependencies` 看不见 `cfg(feature = "semihosting")` 里的用法，
+# 依赖写成必选就永远挂着一条假警告。
 semihosting = ["dep:serde_json"]
-# **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先有一格
-# `framework = []`——自研的内核内测试框架：`.tests` 段登记 + 逐例打点，**外加**它顺带
-# 管着的自检数据源（挂起自检 / 帧取还范围 / 簿记↔页表，见 `weak.rs`、`statistics.rs`、
-# `space/*` 里那些 `cfg`）。
-#
 # 拆法：**登记与打点**搬去 `embedded-test`（`tests/embedded.rs` + `nu scripts/qtest.nu`）；
 # 那些 `cfg(any(debug_assertions, feature = "framework"))` 全部收成 `cfg(debug_assertions)`
 # ——**自检并进断言那一档**，它本来就只在 debug 里有实体。故这一格没有读者，删。
@@ -33,28 +27,19 @@ test = false
 bench = false
 doctest = false
 
-# **这里原先有一格 `[build-dependencies] env`**（照实记）：那时 `build.rs` 自己打 initrd、
-# 读清单格式。②③④ 搬去 `crates/image` 之后（见 `build.rs` 头注），本脚本只剩"把链接脚本
-# 交给 rustc"，故那一格**没有读者**——内核读 initrd 是**开机时**的事
-# （`src/platform/initrd.rs`），那归下面的 `[dependencies]`，不归构建脚本。本笔删掉它。
 [dependencies]
 # 提供 `embedded-test.x`：本 crate 的 `build.rs` 把它的**源文件**（`links` 那一格保证它在
 # registry 里可读）读出来、落到自己的 `OUT_DIR`，再用 `cargo::rustc-link-arg-tests` 的
 # **绝对路径**交给 `[[test]] embedded`（`cargo::rustc-link-arg` 只作用于 bin，交不到测试目标）。
 #
-# **照实记（为什么它在 `[dependencies]` 而不是 dev）**：`-L` 那条搜索路径（上游构建脚本发的
+# **（为什么它在 `[dependencies]` 而不是 dev）**：`-L` 那条搜索路径（上游构建脚本发的
 # `cargo:rustc-link-search`）**传不到 bin 的链接**（bin 不是测试目标，dev 依赖不在它的图里），
 # 而这条路径在测试构建里要跟着走 ⇒ 它必须住 `[dependencies]`（走 dev 的版本实测红过）。
 #
-# **照实记（`cargo-qtest` 那条注入为什么指望不上）**：`cargo-qemu-test` 对 riscv 有
+# **（`cargo-qtest` 那条注入为什么指望不上）**：`cargo-qemu-test` 对 riscv 有
 # "manifest 目录里已经有 `.x` ⇒ 认为你有自己的脚本、不再注入"的分支——`kernel/link.x` 正好命中
 # ⇒ 它**两枚都不注入**；而上游这枚的构建脚本只发 `rustc-link-search`、**不发 `DEP_…_LINK`**
 # ⇒ 由本 crate 的 `build.rs` 自己交代那枚脚本（读源文件 + 哈希自检，见它的头注）。
-#
-# **照实记（它那条 `unused dependency` 警告消不掉，且不 suppress）**：这个 crate
-# `autolib = false`、没有一行 Rust 用法（只靠 `links` ＋ 构建脚本给出那个 `-L`）⇒ cargo 的
-# `unused_dependencies` 永远报它。**留一条假警告**比把这条 lint 整片关掉划算——关掉会把
-# 真阳性（本笔刚删掉的那两条）一起藏起来。
 embedded-test-linker-script = "0.1"
 
 env = { path = "../crates/env" }
@@ -71,12 +56,6 @@ hashbrown = { version = "0.17.1", default-features = false, features = [
 ] }
 log = { version = "0.4.33" }
 riscv = { version = "0.16.1", features = ["s-mode"] }
-# **照实记（清尾账时删掉两条没有读者的依赖）**：`riscv-rt` 与 `rustc-demangle` **全仓零
-# 引用**（`grep -rn` 过，注释之外一处都没有）——入口 `_start` 与链接脚本都是本仓自己的
-# （`src/main.rs` 的 `global_asm!` ＋ `kernel/link.x`），那条 demangle 注释说的"scene 转储
-# 打印"也没有代码用它。故两格删掉。
-# 诊断报告序列化（整档 + 事件流）：serde_json 承担 JSON，derive 即形状、零手写序列化器。
-# **可选**：只有 `feature = "semihosting"` 那条导出路用得到它（见上面那格 feature）。
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "alloc",

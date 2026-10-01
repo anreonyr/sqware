@@ -26,14 +26,6 @@
 //! 取值一处也没有（全树没有 `impl FromPair for u8` 一类），故下面每一处 `from_pair`
 //! 都不校验。有契约依据的取值（如 `(PieToken, Permission)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
-//!
-//! **照实记（清掉的三处）**：本文件原先有两处 impl 自述"当前 ABI 无调用者…留着备复用"
-//! ——`(usize, usize, usize, usize)`（`merge_block` 的四格计数）与 `(TaskId, TaskId)`
-//! （`MailCall::Owned` 的两格打包）。还有第三处**连自述都写反了**：
-//! `(TaskId, TaskId, usize)` 那条注说"`Reserve` 那条才是活的那一格"，而 `Reserve`
-//! 今天标的是 `#[ret((usize, usize))]`（`a0` = owner 高 32 | vestor 低 32、`a1` = 记号），
-//! 故它同样没有调用者。三处一并删：本仓对这类格子的口径是**"机制退了，格也退"**
-//! （见 [`pie_kind`](crate::pie_kind) 头注里 `PieKind::Hole` 那一笔），"备复用"不在其中。
 
 use super::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 use crate::HoleDir;
@@ -82,8 +74,7 @@ impl FromPair for (usize, TaskId) {
 /// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::fid` 的 `Reserve` 那一格的注里）。
 ///
 /// 本层**不拆**：拆法属于调用点（`runtime::env::mail::reserve`），同一对寄存器不许有两种
-/// 解释——从前这条注写的是"`(pagemeta 在手帧数, freelist 走链帧数)` 的历史遗留"，
-/// 那是它换用途之前的读者，早已不成立。
+/// 解释——这一对寄存器只有这一种解释。
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0, v1)
@@ -142,10 +133,6 @@ impl FromPair for (PieToken, Permission) {
 ///
 /// 两条口径与内核那边逐位同形：`v0` 兼作"成 / 不成"那一格（用户态按符号读域词表），
 /// 故只装小号；记号整枚另占一格（64 位）。**`owner` 读 `0` 作哨兵**（"查不出"）。
-///
-/// **照实记（`vestor` 那一半撤了）**：`v1` 从前是 `owner << 32 | vestor`——挤一格是因为
-/// `Collect` 曾是"扫表"的唯一手段，而那时每枚都要算 `vestor`（全世界快照）。号随交接一起走
-/// 之后扫表的读者归零，这一格没有读者，遂按"没有读者的格不留在 ABI 上"撤掉。
 impl FromTriple for (PieToken, TaskId, Mark) {
     fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
         (PieToken::new(v0), TaskId(v1), Mark::new(v2 as u64))

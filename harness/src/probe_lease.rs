@@ -55,9 +55,6 @@ const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
-///
-/// **照实记（搬进用例之后）**：`BAD_NOTE` 退役了——"牌没落上"现在是**用例没过**（走 panic
-/// 通道、域当场死），再也走不到出口那一手；而 `E_TRIP` 留给 `bail` 那几手（起手没走通）。
 const OK_NOTE: &str = "probe-lease: landed, leaving";
 
 #[programs::entry]
@@ -66,9 +63,6 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };
-    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：本台只用"分一块目录 ＋ 落一枚牌"
-    // 两问，那条线上的裸孔一个都不用（从前那行 `&session.link, session.talk, session.host`
-    // 因此整行退场）⇒ 交给 [`TreeFace::of`]（吃所有权），两问从"四格参数"变成面上的方法。
     let tree = TreeFace::of(session);
     let Some(dir) = DIR.file_name() else {
         return bail("probe-lease: bad name");

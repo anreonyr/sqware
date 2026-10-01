@@ -192,7 +192,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
         }
         let said = answer(control, ask);
         // 答一句走这一趟那枚孔；装不上按构造到不了（`.ok()` 与板那一台同款）。
-        // **写端跟着这一趟走**（`tx` 落出作用域时等这只手被取走）——不再有一格共用的存根。
+        // **写端跟着这一趟走**（`tx` 落出作用域时等这只手被取走）。
         {
             let mut tx = Sender::<ccall::frame::Said>::from_token(back);
             let _ = tx.send(said);

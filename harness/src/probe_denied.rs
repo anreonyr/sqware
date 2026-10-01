@@ -3,120 +3,26 @@
 
 //! probe-denied — **负证客人**：一位**没有身份**的任务去撞树的门，期望被拒。
 //!
-//! 门禁那条判据里有一格是"**没绑身份 ⇒ 拒绝**"（`operator::core::judge` 的第一格）。在这一台之前，
-//! 真机上**没有反例**：11 台客人全都是装配期绑好的身份，全部放行——那条判据只在宿主靶上喂假事
-//! 实证过（**那台靶已删**，用户裁定"protocol-case 没必要"）。本程序就是把反例搬到真机上。
+//! 门禁那条判据里有一格是"**没绑身份 ⇒ 拒绝**"（`operator::core::judge` 的第一格）。
+//! 真机上没有反例：所有客人都是装配期绑好的身份，全部放行。本程序就是把反例搬到真机上。
 //!
 //! ```text
 //!   1  树那条路：seat(树) + claim(生我者, 树) + 另铸一枚问话孔给持树者
-//!   2  LAND 一枚自己的孔到 /svc/probe  ⇒ 期望 DENIED（本域没身份）
-//!   3  SEEK /svc/probe                ⇒ 期望 UNKNOWN（**拒绝不是换绑**：那一格没被占）
-//!   4  报一行读数就退场
+//!   2  起手照旧被装配者绑过；本域主动**问** `Grant::Ask` 面拿自己的号，再**写** `Grant::Set`
+//!      面 `drop` 把身份从名册里删掉（"丢"是 `Drop` 那手，不是 `Waive`：前者把那一行删掉，
+//!      `resolve` 答 `None` ⇒ "没身份"；后者只是把 `current` 写回 `origin`，身份仍在）。
+//!   3  LAND 一枚自己的孔到 /svc/probe  ⇒ 期望 DENIED（本域没身份）
+//!   4  SEEK /svc/probe                ⇒ 期望 UNKNOWN（**拒绝不是换绑**：那一格没被占）
+//!   5  报一行读数就退场
 //! ```
 //!
-//! # 照实记（第 60 轮：这一格的**裁定是"撤"**，以及落法为什么换成子任务）
+//! # 为什么这样落到"自己丢掉"那一档
 //!
-//! 用户裁定 `Relation::bind` **撤**。撤之前量清了两件：
-//!   · **自己"放弃身份"这条路不存在**（`service/principal/core.rs` 的 `waive`：`row.current =
-//!     row.origin`——只是回到起点，仍是已绑，与上面那段照实记一致）；
-//!   · **门禁按"发送那一枚线程"认人**（`operator/core/judge.rs`：`judge(f, who: TaskId, …)`，
-//!     `who` 来自帧的 `from`）⇒ **一位子任务往本域的 talk 孔里推，门禁认的就是那一位子任务**。
-//! ⇒ 原以为落法是"**本域生一位子任务**（装配者从没绑过它）去撞门"。**第 61 轮把这条也量掉了：
-//! 它不成立**——这机器里造任务要 `utask::build(镜像, kind)` ＋ `spawn`（`root/main.rs` 用**清单**里
-//! 那一段、装配者用 `Source` 里那一段），**单元自己手里没有镜像** ⇒ **一台程序生不出子任务**。
-//!
-//! **改道（第 61 轮的结论）**：负证要的是"**真没身份的那一位在撞门**"，那么最省的落法是让
-//! **身份的持有者自己把它丢掉**——即给名册那一族补一手"**弃**"（今天的 `waive` 是"回到起点"，
-//! 见上；"丢掉"是另一件事）。落点三处：
-//!   · 名册核心：一行"把这一格当前号置空"（与 `bind` 相对）；
-//!   · 协议：`Grant::Set` 那一面添一手（`Wire` 加一格）；
-//!   · 本域：起手照旧被绑，随后**自己丢掉**，再去撞门与 `seek`（读数仍是 `probe-denied: denied`）。
-//! **代价对照**：另一条路是(A)"**装配者不再替任何台绑**、需要身份的 ~22 台起手自己领"——不动协议，
-//! 但 22 台各加一步。**两条都兑现"撤"**；第 61 轮选"自己丢掉"（只动一处 ＋ 一手 ＋ 这一台）。
-
-//! ## 精确点位（第 62 轮量的，下一轮照这张表一次做完）
-//!
-//! | # | 那一处 | 那一行/那一格 | 怎么改 |
-//! |---|---|---|---|
-//! | 1 | 名册核心 `service/principal/core.rs` | `waive`（`row.current = row.origin`）旁边 | 加一手"**丢**"：把那一格的当前号**置空**（与 `bind` 相对；`waive` 是"回到起点"、身份还在，两件事） |
-//! | 2 | 协议 `crates/protocol/src/service/principal/grant.rs` | `Wire` 那一型 ＋ `faces!` 里那张"线上码 → 哪一面"的表 | 加一格（落 `Grant::Set`）——**连带帧长/记号表那一套要一起对**（那一套是一处不改就编不过的） |
-//! | 3 | 服务端 `service/principal/server.rs` | 分派那一串（`Wire::Bind(…)` / `Wire::Waive` 那几行旁） | 加一支：`Wire::Drop => match book.drop(from) { … }` |
-//! | 4 | 本域（这一份） | 起手那几趟（树那条路已在） | 照 `probe_rule` 那一台的写法**找名册的 `Grant::Set` 面**，再叫那一手；**然后**才去撞门与 `seek` |
-//!
-//! **为什么四件一起做**：①③④ 少一件都编不过或行为不对（一手没人叫＝死格；有格没分派＝问不通）；
-//! ②那一套（`Wire` ＋ 表的映射 ＋ 帧长）是**同一条链**，改一半编不过。
-
-//! ## 那条链的**逐字**（第 63 轮读完，下一轮照抄）
-//!
-//! `frame.rs` 的 op 码现在是 `BIND = 1 … WAIVE = 7`；客侧那一手是
-//! `self.face.call(frame::Req::Waive, wait)?` ＋ `decode(reply)`。故：
-//!
-//! | # | 文件 | 逐字加什么 |
-//! |---|---|---|
-//! | 1 | `.../principal/frame.rs` | `pub const DROP: u8 = 8;`（`WAIVE = 7` 旁）· `Wire` 加变体 `Drop` · `take` 里加一支 `DROP => Some(Wire::Drop)` · 客侧那一型加 `Req::Drop` 与它的编码 |
-//! | 2 | `.../principal/grant.rs` | 那张"线上码 → 哪一面"的表加 `Wire::Drop => Set`；头注里"七条原语"那几处改成八条 |
-//! | 3 | `.../principal/client.rs` | 照 `waive` 逐字：`pub fn drop(&self, wait: Wait) -> Result<(), Fail> { let reply = self.face.call(frame::Req::Drop, wait)?; decode(reply).map(|_| ()) }` |
-//! | 4 | `.../principal/core.rs` | `pub fn drop(&mut self, from: TaskId) -> Result<(), Fail>`：找到那一格、把它的**当前号置空**（与 `bind` 相对；`waive` 是写回 `origin`、身份还在——两件事，注释里点明） |
-//! | 5 | `.../principal/server.rs` | 分派那一串照 `Wire::Waive` 那一支逐字加一支 `pcall::Wire::Drop => match book.drop(from) { … }` |
-//! | 6 | 本域 | 照 `probe_rule` 的写法找名册 `Grant::Set` 面 → 叫 `drop` → 再去撞门与 `seek` |
-//!
-//! **①②是一条链**（`Wire` ／ `Req` ／ 映射表 ／ 帧长依次对），**④⑤各自要与其上面对齐**，
-//! **⑥必须最后**（没有它，前五件就是一组没人叫的格）。故六件**一次做完**才落。
-
-//! ## 第 64 轮：最后两处逐字 ＋ 一条**顺序上的硬约束**
-//!
-//! · 服务端那一支照抄（`Wire::Waive` 那三行同形）：
-//!   `pcall::Wire::Drop => match book.drop(from) { Ok(()) => pcall::Reply::status(pcall::OK),
-//!   Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))) },`
-//! · 本域要用的两样：`pcall::DIR`（`Path::new("svc/sys/principal")`，`frame.rs:267`）与
-//!   `find_face(tree, road)` 那一手（`probe_rule.rs:484` 有一份可直接抄的，bounded 重试那十几行）；
-//!   拿到 `entry` 之后是 `pcall::client::Face::of(entry)?.task(me)?.drop(Wait::AtMost(MS))`
-//!   （`Face::task(tid)` 那一手见 `service/principal/bridge.rs`；`drop` 就加在 `waive` 旁边）。
-//!
-//! **硬约束（这一条决定了落刀顺序）**：现有六件＋本域那一手**必须与"本域改成照旧被绑"同落**——
-//! 因为 `book.drop(from)` 找不到那一格会答 `Fail::Unknown`，而本域**今天正是没被绑的那一台**
-//! （`bind: false`）。故落法是：
-//!   1. **（A）** 六件 ＋ **把本域的 `bind: false` 去掉**（它一去掉，全仓就再没有 `false` 的写者）
-//!      ⇒ 本域照旧被绑 → 自己丢掉 → 撞门（读数仍是 `probe-denied: denied`）；
-//!
-//! ## 第 69 轮：第 67 轮那个矛盾解开了——**我读错了原因**（问错了面，不是没绑）
-//!
-//! 实验（自还原）：去掉本域的 `bind: false`、在起手印出那一问的结果 ⇒
-//!
-//! ```text
-//! probe-denied: me.principal = Err(Denied)
-//! ```
-//!
-//! ⇒ **本域当时是被绑了的**（不是 `None`）。`Denied` 来自**门**：那一问是 `Resolve`（**读**手），
-//! 而我把它问在**写面 `Grant::Set`** 上——两面两枚门牌，读手走 `Ask`、写手走 `Set`，门当然拒。
-//! 故第 67 轮那句 `probe-denied: no identity to drop` **是我把"面问错了"读成了"没有身份"**。
-//!
-//! **修法（下一刀的清单上加一条）**：本域**问两条面**——
-//!   · `pcall::Grant::Ask` 那一面上 `Task::principal(…)`（读：我此刻是谁）；
-//!   · `pcall::Grant::Set` 那一面上 `drop(…)`（写：丢掉它）。
-//! 两条面各用 `find_face` 取一次门牌（`probe_rule` 那一台就是这么取盟册那面的）。
-//!
-//! ## 第 65 轮：**"丢"最后一格怎么表示**（读准了，不必发明哨兵）
-//!
-//! · `service/principal/core.rs:104` 的 `resolve` 就是
-//!   `self.roster.iter().find(|r| r.tid == tid).map(|r| r.current)`
-//!   ⇒ **"没有身份" ≡ 册里没有那一行**；
-//! · 册是 `roster: Vec<Bound>`（`core.rs:49`，可删）；
-//! ⇒ **"丢"就是把那一行删掉**（`self.roster.retain(|r| r.tid != from)`；删不着 ⇒ `Err(Fail::Unknown)`，
-//!   与 `waive` 撞空同调）。此后 `resolve(from)` 答 `None` ⇒ 门禁第一条判据（"没绑身份 ⇒ 拒绝"）
-//!   对它是真的——**这正是负证要的那一句**。**不设哨兵值、不改 `resolve` 的语义。**
-//!   2. **（B）** 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋ 22 处 `true`）＋ 装配者照旧全绑。
-//!
-//! **落地顺序**（第 60 轮起）：① 本文件改成"生子任务、由它撞门"（读数仍是
-//! `probe-denied: denied`，两档 16 条对齐）；② 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋
-//! 23 份声明那几行），装配者那一手改成**照旧全绑**（`Roster::bind(task)`，去掉 `on`），本文件与
-//! `decl/harness.rs` 的说法跟着改；`Relation::bind` 的账改成注释留档（这层的规矩：账不随格子删）。
-//!
-//! # 为什么"没身份"这件事落在装配表上（**这一节是撤之前的原话，留档**）
-//!
-//! 装配期每一条服务的 `derive(ROOT)` + `bind` 都是装配者做的；本域要**真的没身份**，就只能
-//! 由装配者**不绑它**——`UnitFile::bind = false`（见 `programs/src/service.rs`）。
-//! 本域自己不做任何"放弃身份"的动作：若自己 `waive`，那也只是回到起点，仍是已绑。
+//! 门禁按**发送那一枚线程**认人（`operator::core::judge`：`judge(f, who: TaskId, …)`，
+//! `who` 来自帧的 `from`），故负证必须是"**真没身份的那一位在撞门**"，不是别的身份替身。
+//! 唯一能造出"真没身份"的人就是**装配者**——但本仓"该绑就绑"是装配表的默认，
+//! 那条路要 22 台起手各加一步。本域改走"**自己丢掉**"：装配者照旧全绑，本域起手后
+//! 立刻 `drop` 自己——判据"撞门答 `DENIED`、`seek` 答 `UNKNOWN`"不变。
 //!
 //! # 两条判据为什么缺一不可
 //!
@@ -125,7 +31,7 @@
 //! - 随后 `seek == UNKNOWN`：**拒绝发生在动树之前**。若被拒的那一手顺手把那一格占了，
 //!   "拒绝"与"换绑"就分不开了——那正是把裁决放在 `tree.land` 之前要买的东西。
 //!
-//! # 照实记：它为什么也挂树上（`operator: true`）
+//! # 它为什么也挂树上（`operator: true`）
 //!
 //! 没有树那条路就撞不到门。而"没身份"与"有树路"并不冲突：树路是**装配期发的一条通道**
 //! （`operator::attach`），身份是**名册里的一格**（`derive` + `bind`）——这一台正是要把这两件
@@ -169,9 +75,6 @@ const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
-///
-/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-denied: denied";
 
 #[programs::entry]
@@ -179,16 +82,12 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
-    //
-    // **照实记（这一台为什么整体改走 `Face`，task-2 那一刀）**：本台每一问（`part` / `seek` /
-    // `land`）都在 [`TreeFace`] 的面上，裸孔一个都不用 ⇒ 交给（吃所有权的）[`TreeFace::of`]；
-    // 那两问也从"坐标 + 名字 + 裸布尔"改说成"那块 Pane 上的两手"（`Pane::open` / `Pane::bind`）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-denied: no tree link");
     };
     let tree = TreeFace::of(session);
-    // **丢掉自己的身份**（"撤 `Relation::bind`"的落法）：本域照旧被装配者绑过，这里主动丢掉。
-    // **读走 `Ask` 面、写走 `Set` 面**——第 69 轮量到：把读手（`Resolve`）问在写面上会被门拒。
+    // 丢掉自己的身份：本域照旧被装配者绑过，这里主动丢掉（"丢"是 `Drop` 那手，不是 `Waive`）。
+    // 读走 `Ask` 面、写走 `Set` 面：把读手（`Resolve`）问在写面上会被门拒。
     let Some(aroad) = pcall::DIR.try_join(pcall::Grant::Ask.name()) else {
         return bail("probe-denied: bad principal ask name");
     };
@@ -231,8 +130,8 @@ fn main() -> Report<'static> {
     let sys = match root.open(dir.to_string(), Wait::AtMost(MS)) {
         Ok(sys) => sys,
         Err(fail) => {
-            // **读数带那一格码**：`bail` 那句话只说"没拿到"（旧注里那句 `/svc` 也是历史），
-            // 而"为什么"——门禁判"不"还是"判不了"、还是根本没走到——只有这行说得清。
+            // 读数带那一格码：`bail` 那句话只说"没拿到"，而"为什么"——门禁判"不"还是
+            // "判不了"、还是根本没走到——只有这行说得清。
             debug!("probe-denied: open {} {fail:?}", dir);
             return bail("probe-denied: no /svc");
         }
@@ -248,10 +147,9 @@ fn main() -> Report<'static> {
 
     // 四、拒绝之后那一格**在不在**——`Unknown` 才是"没被占"。
     //
-    // **照实记（这一格为什么走 `Pane::tile` 而不是 `Face::tile`）**：旧面用的是 `seek`
-    // （只译号，**不动树**）；新面若用 `entry`，它内部会 `find`——而 `find` 对"主人没了"的
-    // 那一格答 `Dead` **并顺手剔掉那一格**（`operator::core` 的 `find`），那是读取之外的一笔账。
-    // `Pane::tile` 是旧 `seek` 的同形。
+    // 这一格走 `Pane::tile` 而不是 `Face::tile`：`Face::tile` 内部会 `find`，
+    // 而 `find` 对"主人没了"那一格答 `Dead` 并顺手剔掉那一格（`operator::core` 的 `find`），
+    // 那不是只读——存在性答假、格子还被删了。`Pane::tile` 只译号、不动树。
     let Some(road) = protocol::system::SVC.try_join(ME) else {
         return bail("probe-denied: bad name");
     };
@@ -265,7 +163,7 @@ fn main() -> Report<'static> {
         sys.id().get()
     );
 
-    // 五、判据：**一例一条**（原先两格 `&&` 成一句）。名字即结论。
+    // 五、判据：一例一条，名字即结论。
     let denied = matches!(land, Err(Fail::Denied));
     let unplaced = matches!(after, Err(Fail::Unknown));
     {

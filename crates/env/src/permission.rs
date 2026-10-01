@@ -35,17 +35,10 @@
 //! [`Access::from_bits`] 只收读写族那两位、[`Policy::from_bits`] 只收传递族那两位。
 //! 一位不多。
 //!
-//! **同一件事的两种写法**（照实记）：`Access::FETCH_STORE` 与 `Access::FETCH | Access::STORE`
+//! **同一件事的两种写法**：`Access::FETCH_STORE` 与 `Access::FETCH | Access::STORE`
 //! 是同一个值。口径：**常量表写那个 `const`**（`|` 不是 `const fn`，而需求单
 //! （`programs::unit` 那一张）是编译期常量表），**运行期写 `|`**（与另两位同形，不必记一个
 //! 专门的名字）。两条都留着不是"多一条路"：`BitOr` 给运行期，那个 `const` 给常量表。
-//!
-//! **照实记（`Access` / `Policy` 为什么住本文件）**：它们原先住 `runtime::core::port`
-//! ——由 `ship`（授出那一手）收下；后来搬到 `env::wire::access`，理由是"只认 `Permission`
-//! 与 `core::ops`、一处也不碰内核，而 `crates/protocol` 允许依赖 `env`、不允许依赖
-//! `runtime`"。**但那一步只走了一半**：本文件的头注整段讲的就是这两个族，而两个族的**类型**
-//! 却住在 `wire/` 那边——同一个故事分两处讲。现在合成一处：**位掩码、两族的 mask、两族的
-//! 视图类型**都在本文件。
 //!
 //! `runtime::core::port` 里 `pub use env::{Access, Policy};` 把名字照旧转出去（调用点不动）。
 //!

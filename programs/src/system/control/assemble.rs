@@ -65,11 +65,6 @@ impl Control {
     /// 3. **一整段推过去**（[`Enroll`]：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）。
     /// **第一条恒是设备树本体**：收方要**先**把树读一遍，才知道哪一条记录是哪一台
     /// （名 / 类 / 线）。次序即契约。
-    ///
-    /// **照实记（并域那一刀退掉了什么）**：这一段从前是"分块递单 ＋ 块内失败退逐条"（49 行）
-    /// ——那是**跨域**与"一帧一单"的利息：门闩原不在本域手里，本域只替客人开单，还得按帧容量
-    /// 切开、失败再逐条重来。门闩并到本域之后，同域发货没有容量这回事，判据只剩一个：
-    /// "这一条成不成"。
     pub fn enroll(
         &mut self,
         name: String,
@@ -87,7 +82,7 @@ impl Control {
         if !link.claim(*task, Mark::of(load), Wait::AtMost(BOOT_MS)) {
             return Err(Error::Step("no channel"));
         }
-        // **那头齐了没有**：写端在不在（原 `wire` 那一格）。
+        // **那头齐了没有**：写端在不在。
         let Some(tx) = link.tx() else {
             return Err(Error::Step("no channel"));
         };

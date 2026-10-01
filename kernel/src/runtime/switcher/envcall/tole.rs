@@ -95,8 +95,8 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
         }
     };
     let (hit, skipped) = ready(&meta);
-    // **组里有人、却没人认得出来**：这一格从前是**静默**的（`continue`），而它的后果是"读的人
-    // 一直睡"（见 [`ready`]）。第一次当场报一行。
+    // **组里有人、却没人认得出来**：这一格**不被吞掉**（不 `continue`），
+    // 后果由"读的人一直睡"领（见 [`ready`]）。第一次当场报一行。
     if hit.is_none() && skipped > 0 && MATE_SKIP.fetch_add(skipped, Ordering::Relaxed) == 0 {
         crate::putln!("tole: mate skipped n={}", skipped);
     }
@@ -127,22 +127,6 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
 
 /// **挑"哪一格有事"**：从**轮转游标**起扫一圈，取第一枚就绪的；命中之后把游标推到命中项的
 /// 下一格。返 `(命中的那一枚, 跳过的格数)`。
-///
-/// # 照实记（这一格是量出来的：**"从头扫、取第一枚"= 后挂上的那位一直排队**）
-///
-/// 它原先**每次都从第 0 格扫起**。debug 档 `product` 景量到过这一形：装配期一位客人
-/// （`tid=20`，**最后挂上组**的那一格）的手在孔上活了 **1141~1228 ms**（11 跑里 5 跑；
-/// `mail: hand stuck hole#25x from=20 owner=20 len=17 age=…ms`），而**那一秒里树一侧没有一趟
-/// 超过 200 ms**（三段计时 `wait/core/reply` 与门外那一问的 `door` 全在 200 ms 门槛之下），
-/// 窗口里树在服侍的是**别家**：`control` 四格落牌、`uart` 的 `claimed/tree/line` 与三次
-/// `answered code=1 ask=7 who=18`、`router` 的 `claimed/docks/device/tree/line`、`rtc` 的
-/// `claimed/time/tree/line`——而那位客人那一格**自 `operator: arm late owner=20` 起就一直是
-/// 成员、且手压在孔上**。⇒ 病根不是门外那一问、不是答话收口、不是丢唤醒，是**"每轮都从第 0 格
-/// 扫"**：装配期七八位客人大多各有一问在飞，于是**排在后面的那一格永远轮不到**。
-///
-/// **修法**：游标轮转（一格一格的公平）。判据：改后同样的 11 跑里那位客人的手龄应当落到
-/// **一趟的量级**（< 200 ms），而"等到任意一格有事"这一条契约不变——游标只改**先看谁**，
-/// 不改"谁算有事"。
 fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
     let mut skipped = 0usize;
     let Some(task) = current().running_task() else {
@@ -165,8 +149,8 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                     .find(|p| matches!(p, AnyPie::Hole(h) if h.meta().id() == id))
                 else {
                     // **成员还在组里、可本域表里已经没有那一枚了** ⇒ 这一格**永远报不出就绪**。
-                    // 从前这一格是**静默**的（`continue`），故"组里有人、读的人却一直睡"这件事
-                    // 在读数上不存在。数下来，第一次当场报一行（见 [`await_`]）。
+                    // 这一格**不被吞掉**（不 `continue`）——"组里有人、读的人却一直睡"这件事
+                    // 由此落到读数上。数下来，第一次当场报一行（见 [`await_`]）。
                     skipped += 1;
                     continue;
                 };

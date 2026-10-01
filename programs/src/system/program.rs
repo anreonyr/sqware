@@ -15,7 +15,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         name: "system",
         space: ProgramKind::Supervisor,
         wanted_by: &["accept", "product"],
-        // **这两景的引导镜像**（并域那一刀：这个位子归本域）。
+        // **这两景的引导镜像**：这个位子归本域。
         entry: &["accept", "product"],
         ..Identity::DEFAULT
     },

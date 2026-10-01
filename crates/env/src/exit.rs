@@ -9,16 +9,7 @@
 //! - 高位段 = **ABI 的**（[`EXIT_PANIC`] / [`EXIT_FAULT`]），与上面两族不重叠，
 //!   读 trace 的人一眼能分出"启动没走通"与"域自己炸了"。
 //!
-//! **照实记**：`EXIT_FAULT` 原先住内核（`kernel/src/work/room/messenger/mod.rs`
-//! 的 `pub(crate) const`），`EXIT_OK` / `EXIT_PANIC` 住 `programs/src/entry.rs`，
-//! 而 `echo` / `sleeper` 还各抄了一份本地 `EXIT_OK = 0`——同一段编号空间分居四处。
-//! 这里合一张表，内核与域都只读它。
-//!
-//! **照实记（补一刀）**：上面那句"都只读它"当时只成了一半——`echo` 那份本地抄本随那次
-//! 一起删了，而 `sleeper` 那份留到了今天（`harness/src/sleeper.rs` 的 `const EXIT_OK`）。
-//! 本笔删掉它；至此这段编号空间确实只有这一处。
-//!
-//! **域侧的"出口形状"不在本文件**（照实记）：`main` 的返回类型 `Report`、那个 `Exit`
+//! **域侧的"出口形状"不在本文件**：`main` 的返回类型 `Report`、那个 `Exit`
 //! trait，加"把它送进内核"的 `finish`——三者住 `runtime::core::exit`（那边是 `runtime`，
 //! 本 crate 够不着，故这里只写路径、不做链接）。分界只有一条，而且是可 grep 的：
 //! **本文件只放内核也读的东西**。内核读 [`Reason`] 与 [`EXIT_FAULT`]

@@ -25,10 +25,6 @@
 //!
 //! # 为什么第 1 步必须在最前
 //!
-//! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
-//! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**：第一版把装路排在后面，
-//! 装配那一侧当场报 `operator:claim`（照实记见 `harness/src/probe_bound.rs`）。
-//!
 //! # 为什么第 4 / 5 步要等（本台比挂载先起）
 //!
 //! 本台排在 `canonical` 之前（`order: Some(18)`），而 `control` 那一面是在**整表起完之后**
@@ -78,7 +74,7 @@ fn main() -> Report<'static> {
 
     // 二、树上那**一格**：名字（`seek`）→ 号 → **门牌那一枚**（`find` 会把它授进本表）。
     //
-    // **开面那一刀之后这一格是问面**（`/svc/sys/control/state`）：`/svc/sys/control` 自己成了
+    // 这一格是问面（`/svc/sys/control/state`）：`/svc/sys/control` 自己成了
     // 那段前缀（一块 `Pane`，没有门牌可授）。
     // 路是**本族那一族的常量**（`/svc/sys/control`）接上那一面的名——一处都不自己拼。
     let road = ccall::DIR

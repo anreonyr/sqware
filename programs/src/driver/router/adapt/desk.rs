@@ -109,9 +109,9 @@ pub fn serve(
 /// 投递（客户读的那一枚），`exhaust` 收**它的**排空。
 /// **一手就是"两头都装"**（[`establish::endpoint`]：铸本端那一枚交给它 ＋ 认下它那一枚，判据
 fn take_lane(from: TaskId) -> Option<Held> {
-    // **有主地建**（`Held(..)`：那一格"有主"由类型说出来，不再有一手 `hold`）。
+    // **有主地建**（`Held(..)`：那一格"有主"由类型说出来）。
     let lane = Held(establish::endpoint(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?);
-    // **没有写端就投不出去**（原 `Quay::claim` 答不出来的那一格）：这条泊位不成立。
+    // **没有写端就投不出去**：这条泊位不成立。
     lane.tx()?;
     Some(lane)
 }

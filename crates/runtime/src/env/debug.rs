@@ -4,14 +4,6 @@
 //! （纪律，不是编译期的事：见 `env::fid::DebugCall` 那条"不设构建门"的理由）。
 //!
 //! 每一个函数封一次 envcall，零逻辑，与 `env::chrono`/`env::room` 同形。
-//!
-//! **照实记（删掉的本地那一半）**：本文件原先还有一个**域自己的**对账开关——`TRACE`
-//! 静态 + `tracing()` / `set_local()` 一对读写着，外加把它打出来的 `hexdump()`。
-//! 读它的那一处（`runtime::core::port::Port::call`）早已随"编帧解帧搬去各协议"而消失，
-//! 故 `tracing()` 与 `hexdump()` **零调用者**（内核侧 `envcall/mod.rs` 也记着这一句：
-//! "用户侧那份 `env::debug::tracing()` 因此闲置"），而 `set_local` 只为被它们读而活着
-//! ——整条账一并删。**`DebugCall::SetTrace` 那一格不动**：内核那一侧的对账仍由它开关，
-//! 只是域不再替自己记一份"要不要打"。
 
 use env::{DBCN_MAX, DebugResult, VirtAddr};
 

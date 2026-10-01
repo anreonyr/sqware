@@ -91,10 +91,6 @@ pub struct Control {
     pending: Vec<Pending>,
     catalog: Catalog<'static>,
     machine: Machine,
-    /// **boot 的两块账**：发货那一趟按坐标取源（全机门闩在本域表里）。
-    /// **照实记（并域那一刀）**：这一格从前是 `boot: Endpoint`——一条跨域问答路的凭据
-    /// （`establish::endpoint` ＋ 那条记号 ＋ 一问一答两只缓冲）。门闩并到本域之后，
-    /// 取源就是按坐标查这张账。
     accounts: Accounts,
     /// **上一手入册那一单的写端**（`Setup::Machine` 那一格）。
     /// **为什么住在这里**：那一单是**递完就完**的（没有回话），而递出去的字节要活到对面取走

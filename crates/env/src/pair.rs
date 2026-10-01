@@ -77,10 +77,6 @@ impl Pair {
 }
 
 /// 记录的那一格（回单那一段尾巴要 `T: Field`，见 [`Field`]）。
-///
-/// **照实记（为什么可以整条按字节搬）**：[`Pair`] 是 `repr(C)`、尺寸由上面那条编译期断言钉死、
-/// 字段全是 POD ⇒ 按字节写满、按字节读回都合法。这一手从前散在几处各自的 `read_unaligned` 里
-/// ——今天收在类型自己身上（"impl 跟着类型走"）。
 impl Field for Pair {
     const WIDTH: usize = PAIR_LEN;
 

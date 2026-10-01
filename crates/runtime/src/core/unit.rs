@@ -189,11 +189,6 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
 
 // ── 启动参数面 ────────────────────────────────────────────────────────────
 //
-// **它为什么在这一层**（照实记）：这两件原先住在 `crate::env::unit`（"Unit 域"那一份
-// 转发里），而那一处的契约是**一次调用一个函数**——它们是 `Spawn` 那两格的**读侧**，
-// 一份任务本地状态，不是 envcall。`core/mod.rs` 把"任务本地原语（heap / lock / tls /
-// unit）"划给本层，故它们搬到这里，与 `trampoline`（同一个 `_start` 时刻的邻居）并排。
-//
 // **`save_args` 只有汇编一个调用者**：`programs/src/entry.rs` 的 `_start` 用
 // `call save_args` 直接叫它（`#[unsafe(no_mangle)]` 就是为这一手——路径搬到哪儿，
 // 符号都不动）。故它必须**在任何 Rust 调用之前**就能跑：这里只写两个静态，不碰 TLS。

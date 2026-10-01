@@ -53,13 +53,9 @@ use runtime::env::unit as utask;
 /// 本域要顶的那**一枚砖**：`/svc/drv/uart/rx`——`uart` 把"读行"那枚孔挂在它下面，并声明
 /// **归自己**。
 ///
-/// **照实记（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
+/// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
 /// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
 /// （它不是谁的服务格）。这一趟顶的是读口那一枚。
-///
-/// **照实记（`/sys` → `/svc`、`/device` → `/svc/drv` 那一刀）**：那一段目录从前由
-/// [`driver::DIR`] 一处给（一段路）；后来它是两段（`/svc` ＋ `/svc/drv`），
-/// 故本台那一条路也从三段变四段；今天那两段收成**一条常量** [`driver::ROAD`]。
 ///
 /// 服务那一格（Pane）。
 const SERVICE: &str = "uart";
@@ -73,9 +69,6 @@ const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
-///
-/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-owner: owner rule held";
 
 #[programs::entry]
@@ -83,11 +76,6 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、与树开会话（同 `canonical` / `probe-denied`）。
-    //
-    // **照实记（这一台为什么整体改走 `Face`，task-2 那一刀）**：本台每一问（`part` / `seek` /
-    // `land`）都在 [`TreeFace`] 的面上，那条线上的裸孔一个都不用 ⇒ 交给（吃所有权的）
-    // [`TreeFace::of`]。下面三个帮手一并从"裸 `(say, link, host)`"改收 `&TreeFace`——它们要的
-    // 每一个动作都由这一面答，故不必再把那条线拆开传。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-owner: no tree link");
     };
@@ -138,7 +126,7 @@ fn main() -> Report<'static> {
     //        支：动手之前按坐标问同一格 `claimable`）——不然它会把那一格**静默顶成一块 Pane**、
     //        还顺手把 uart 那枚孔 `release` 掉。
     //
-    // **照实记（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
+    // **（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
     // 走同一把钥匙，可只有一条被量过。这一格补的就是那一半。
     let part = pane.open(me.to_string(), Wait::AtMost(MS));
     let part_code = match &part {
@@ -148,8 +136,8 @@ fn main() -> Report<'static> {
 
     // 四、那一格**还在不在**（应是原来那个号）。
     //
-    // **照实记（这一格为什么也走 `Pane::tile`）**：旧面用 `seek`（只译号、不动树）；新面若用
-    // `Face::tile`，它内部那一趟 `find` 会**授一枚副本**进来（旧面没有这一笔）——而这一格只要号。
+    // **（这一格为什么也走 `Pane::tile`）**：新面若用
+    // `Face::tile`，它内部那一趟 `find` 会**授一枚副本**进来——而这一格只要号。
     let root = tree.root();
     let after = root.tile(&road, Wait::AtMost(MS));
     let seq = match &after {
@@ -178,7 +166,7 @@ fn main() -> Report<'static> {
         }
     );
 
-    // 七、判据：**一例一条**（原先三格 `&&` 成一句）。
+    // 七、判据：一例一条。
     let took = taken.is_ok();
     {
         {
@@ -208,16 +196,6 @@ fn main() -> Report<'static> {
 /// 落 `/svc/lease`——**那一格的主人（`probe-lease`）已经退场**，故这一次该接得上。
 ///
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
-///
-/// **照实记（收 `&TreeFace`，task-2 那一刀）**：三问全是面上的方法（`open` / `road` / `bind`），
-/// 故不再收裸 `(say, link, host)`——对端号与那条线都在 `Face` 里面。"接不上"这一档的落点从
-/// 线上那一格码收成 [`Fail`]（`BAD` / `UNKNOWN` / 没走到同落 [`Fail::Unknown`]）。
-///
-/// **照实记（那一格的存在性为什么走 `Pane::tile` 而不是 `Face::tile`）**：旧面用 `seek`
-/// ——只译号，**不动树**。新面若用 `Face::tile`，它内部会 `find` 一次，而 `find` 对"主人没了"
-/// 的那一格答 [`Fail::Dead`] **并顺手把那一格从树上剔掉**（见 `operator::core` 的 `find`）——
-/// 于是这一格的判据（"那一格还在，只是主人不在场 ⇒ 可接手"）当场翻面：存在性答假、格子还被删了。
-/// `Pane::tile` 才是旧 `seek` 的同形（只译号），故这一手用它。
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     // 路：容器那一段（`/svc`，只在协议那一侧说）接上那一格的名（`lease`）。
     let road = protocol::system::SVC
@@ -266,12 +244,6 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
 
 /// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面。
 ///
-/// **照实记（两段 → 三段那一刀，以及"趟数"这件事）**：驱动那一段路从 `/device`（顶上一层）
-/// 变成 `/svc/drv` ⇒ 容器链从两段变三段，那一版的本手要跟着多一趟。**这一格当场栽过**（实测）：
-/// 只把 `dir`（`driver::DIR`）换成新名字、忘了它上面还有 `driver::SVC`，于是本手在
-/// `/drv/uart` 那**另一块** Pane 上落砖——落在一块**没有主人**的新格上，当然不被拒，
-/// `probe-owner` 当场红（`land=ok id=26`，而基线是 `owner rule held`）。
-///
 /// 今天这一手**不再自己数趟数**：一趟一条路（[`Path`] 自带段数），逐段 `open`（幂等）＋ 最后
 /// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了。
 fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
@@ -290,7 +262,7 @@ fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
 
 /// 等 `uart` 把门牌落上（有界）：本域可能与它并行起来。
 ///
-/// **照实记（同上：`Pane::tile` 是旧 `seek` 的同形）**：这一格只要那一枚**号**，不要那一枚
+/// **（同上：`Pane::tile` 是旧 `seek` 的同形）**：这一格只要那一枚**号**，不要那一枚
 /// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 `Face::tile`。
 fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     let root = tree.root();

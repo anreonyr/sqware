@@ -19,13 +19,6 @@
 //!   每 轮：stop → watch（**落地 `Dead`**）→ Oust（父方放下旧域）→ 读数
 //!   第 2/3 轮：**不再 register**，直接 spawn → start → 读数
 //!
-//! **照实记（本台子第一次跑出来的就是这一格）**：`stop` 只把状态推到 `Stopping`，
-//! 而 `service::until` **只读不写**（它答 `Unsettled` 时"一个字都不写"）——**把
-//! `Dead` 落地的是 `service::watch`**。少了这一步，`admit_start` 就按 `Stopping`
-//! 把重发拒掉（实测第一版：`r=2 step=spawn REFUSED`）。所以"重发"的正确序列是
-//! **stop → watch → Oust → spawn → start**，不是 stop → until。
-//! ```
-//!
 //! # 怎么跑它
 //!
 //! ```text
@@ -41,7 +34,7 @@
 //! 末行汇总：`again: total restarts=<成功重起的次数> failures=<被拒的次数>`
 //! 判据：**`restarts=4` 且 `failures=0`**，并且末轮 `slot=live`。**4 是两段相加**：
 //! 三轮回用里第 2、3 轮各一次（2 次），加收尾那段有界预算的 2 次（`budget_tries=2`）——
-//! 同一个计数器记两段，故汇总行报的是 4 不是 2（旧注只写"第 2、3 轮各一次"，与打印不符）。
+//! 同一个计数器记两段，故汇总行报的是 4 不是 2。
 //!
 //! # 收尾那一格：预算与放弃（协议 §六 的 Server 侧配方）
 //!
@@ -153,7 +146,7 @@ fn main() -> Reason {
             debug!("again: r={round} step=stop REFUSED");
             break;
         }
-        // **落地 `Dead`**：`until` 只读，写表的是 `watch`（见头注的照实记）。
+        // **落地 `Dead`**：`until` 只读，写表的是 `watch`（见头注）。
         match service::watch(&mut table, name.as_str(), Wait::AtMost(MS)) {
             Ok(true) => {}
             _ => {

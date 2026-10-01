@@ -178,7 +178,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
         .iter()
         .map(|v| {
             let binds = v.binds();
-            // 匹配与造值**同形**：同一份 `shape`，一处都不重写（从前这里写了两遍）。
+            // 匹配与造值**同形**：同一份 `shape`，一处都不重写。
             let form = v.shape(Some(&binds));
             quote! {
                 #form => {
@@ -281,8 +281,9 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 /// 一枚变体：**名字、字段、返回载荷、返回宽度、以及"这一格有没有失败面/是不是手写"**
 /// 绑在一起。
 ///
-/// 从前它们是四个并行数组（`vs` / `flds` / `rets` / `wides`），靠下标对齐——于是每一处用它的
-/// 地方都要写一遍 `&vs[i]` / `&flds[i]` / `rets[i].clone()`，下标写错一格**编得过**。
+/// 一枚变体的字段表——它们原本是四个并行数组（`vs` / `flds` / `rets` / `wides`），
+/// 靠下标对齐——每一处用它的地方都要写 `&vs[i]` / `&flds[i]` / `rets[i].clone()`，
+/// 下标写错一格**编得过**。绑成 struct 之后下标错当场编不过。
 struct Variant {
     ident: Ident,
     fields: Fields,
@@ -331,7 +332,8 @@ impl Variant {
     /// **变体那一格的唯一一处拼法**：匹配与造值**逐字同形**，故只有这一个函数。
     ///
     /// `binds = None` ⇒ 字段位写 `..`：只匹配、不绑名字（不绑就不会长出"未使用的变量"）。
-    /// 从前这件事有三个出处：`pat_for` 与 `expr_for` 是一对复制品，`slot(&self)` 里是第三份。
+    /// 这件事的拼法**只此一处**——`pat_for` / `expr_for` / `slot(&self)` 三处各写一份
+/// 的形式已收拢到这里。
     fn shape(&self, binds: Option<&[Ident]>) -> TokenStream2 {
         let v = &self.ident;
         match (&self.fields, binds) {
@@ -429,11 +431,6 @@ fn variants(ast: &DeriveInput) -> syn::Result<Vec<Variant>> {
                         "改一格载荷的返回宽度：`#[ret(T)]` 与 `#[ret3(T)]` 只能标一个",
                     ));
                 }
-                // **照实记（这一条从前不在这里报）**：`variants` 曾把"没标返回"折成 `None`
-                // 放过去，到 `rets[i].clone().expect("every variant must have #[ret(T)]")`
-                // 才炸——用户拿到的是 `error: proc macro panicked`（消息埋在 `help:` 里、
-                // **不指那一格**）。`fid.rs` 那 49 格里漏标一格，找它只能靠人眼。返回载荷是
-                // 这个宏的**不变式**（`Ret` 枚举一个变体一格载荷），故它在这里就该断。
                 (None, None) => {
                     return Err(syn::Error::new_spanned(
                         &v.ident,

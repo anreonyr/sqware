@@ -2,11 +2,6 @@
 # `crates/alloc-probe` 是**宿主**（x86_64）侧的分配器压测台：主工作区被
 # `.cargo/config.toml` 钉在 `riscv64gc-unknown-none-elf` 上，它进不来（要 std + host ABI）。
 # 它自带 Cargo.toml 与 README，用 `crates/alloc-probe/.cargo/config.toml` 里那十条别名跑。
-#
-# **照实记（用户裁定"protocol-case 没必要，删了"）**：这里原先还编外着一台 `crates/protocol-case`
-# ——八个宿主靶、120 例，把那八处纯核心的规矩在宿主上真跑一遍；门口是 `crates/gate` 的 `host` 那一门。整台连同那
-# 一门一并删了，故那个纯核 crate（今 `crates/protocol`）里"用例住 X 靶"的话也一并清掉——那八处纯核心今天**没有判据**，
-# 只剩真机那几门间接覆盖。它的来由（八台收成一台、`#[path]` 换真依赖）随它一起撤。
 exclude = [
     "crates/alloc-probe",
     # `crates/image` 是**造镜像那一步**（用户裁定"initrd 与 kernel 何干"）：与上面那台同源，
@@ -14,36 +9,18 @@ exclude = [
     "crates/image",
 ]
 
-# **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先还编外着一台
-# `crates/gate`（11 文件 2,018 行）——门那一台：`Bench`/`Transcript` 台架、`Mark`/`Reading`
-# 对账器（99 条 MARKS／30 条 READINGS）、9 扇 QEMU 门，外加 `cargo gate` 那条别名。
-# 它整个删了；内核内用例改由 `embedded-test` + `cargo-qtest` 承载，跑法见
-# `scripts/qtest.nu`（参数表仍只有 `scripts/qemu-args.nu` 一处）。
-#
-# **连带删掉的**：`[profile.framework]` 与 `[profile.harden]`——后者只服务前者，
-# 而前者只是为了让"内核内用例跑在与验收门同一套护栏下"。护栏本身（`debug_assertions`：
-# lockdep 全集、页表/空间不变量）**一个字没动**，只是不再有一个专门的测试档去开它。
+# 没有 `[profile.framework]` / `[profile.harden]`：护栏（`debug_assertions` 全集：
+# lockdep / 页表 / 空间不变量）一直在 release 档开着，没有专门的测试档去重新开它。
 
 # `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
 # ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
-# 搬家那一刀的缘由、以及"哪几台进哪张镜像"，见 `harness/Cargo.toml` 与
-# `programs/src/unit/`（**程序装配声明的唯一来源**）。
+# 哪几台进哪张镜像，见 `harness/Cargo.toml` 与 `programs/src/unit/`（**程序装配声明的
+# 唯一来源**）。
 members = [
     "kernel",
     "programs",
     "harness",
-    # **照实记（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这里原先还有一格
-    # `crates/cases`（110 行）——程序侧的用例运行器：`Suite` / `case` / `run`，加上
-    # `[case] <台名>: run/ok/cases …` 那套打点协议。整个删了。
-    # 产品与测具里 **97 处** `suite.case("名", move || …)` 按用户裁定换成**裸 `assert!`**
-    # ——保留"万一不成立就该当场死"，去掉打点协议本身（失败仍走域内 panic 通道）。
     "crates/env",
-    # **照实记（`crates/plan` 那一层已退场）**：这里原先是 `crates/plan`——"装机的账"
-    # （装配表 / 需求单 / 坐标 / 开机三笔账）。判据写着"这里只认表与字节，不碰任何运行时代码"，
-    # 而它同时养出了**程序装配的中间层**（`Row` / `Plan` / `ALL` 与 `Plan → Program` 的投影）。
-    # 那一层按用户裁定整个退场：**程序声明回到每台程序自己那份 `program.rs`**（`Program` /
-    # `PROGRAMS`，住 `programs`），线格式那几件（坐标 / 配对 / 启动参数 / 清单 / 供给词汇）
-    # 并回 `crates/env` 顶层。故这一格删掉，不再是一个独立 crate。
     "crates/protocol",
     "crates/runtime",
     "crates/sbi",
@@ -59,11 +36,6 @@ resolver = "3"
 # `crates/runtime` 2 / `kernel` 2（75 份全是被 git 跟踪的 `.rs`；全树 338 份里 263 份本来就
 # 是干净的）。故 **fmt 绿不是任何一关的判据**，`cargo fmt --all --check` 的读数只当参考。
 #
-# **照实记（"这一仓的排版是刻意的"不是这 207 处的解释）**：我上一条提议里把现状说成"排版是
-# 刻意的：成对的表、和代码对齐的注释"——读数不支持那个说法，收回来：里面既有**从没被 rustfmt
-# 碰过的漂移**，也有**报文层那一程我自己写下的行**（那几份帧与客户端当时的文件）——
-# 那几刀的判据里没有 fmt，故没有一处拦得住它。这一条是**口径**，规矩两条：
-#
 #   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；
 #   · **不许为了让它变绿而全树重排**——207 处里没有一处改变判据，而重排会把成对的对齐、
 #     与代码对齐的注释一起打散。需要单独钉住的表写 `#[rustfmt::skip]`
@@ -77,10 +49,6 @@ edition = "2024"
 debug = true
 panic = "abort"
 
-# **照实记（两条 profile 随 `crates/gate` 一起删，用户裁定"迁移到 embedded-test"）**：
-# 这里原先是 `[profile.harden]`（继承 release、只把 `debug_assertions` 打开）与
-# `[profile.framework]`（继承 harden）。
-#
 # - `framework` 档的全部用途是"让内核内用例跑在与验收门同一套护栏下"，而
 #   `--features framework` 那个 feature 已随自研框架一起删（见 `kernel/Cargo.toml`）；
 # - `harden` 没有别的消费者（只被 framework 继承）。
@@ -89,9 +57,5 @@ panic = "abort"
 # 它照旧在 `[profile.dev]` 与任何显式 `debug-assertions = true` 的档里生效。
 
 [profile.release]
-# opt-level=2 是**历史取值**：旧 `WaitKey::compose` 时代（位打包 + mask）在更高优化档
-# 下 mask 计算会被 size 优化多算一次 +1（错联到 0x1000000000000）；当时抽过一个
-# `#[inline(never)]` 的 mask helper（`low48`）并端到端跑通 5/5，故钉在 2。
-# **那套东西已经不存在**：`WakeKey` 改成枚举、没有位打包也就没有 mask（见
-# `kernel/src/work/room/messenger/wait/site.rs` 头注），`low48` 随它一起删了。
-# 今天仍留 2 是照实取舍：没有重新量过"换档会不会再犯别的错"，不擅自改。
+# opt-level=2 的取舍：这套值没有重新量过"换档会不会再犯别的错"，
+# 故不擅自改（`WakeKey` 已是枚举、没有位打包也就没有 mask——这条约束今天不成立）。

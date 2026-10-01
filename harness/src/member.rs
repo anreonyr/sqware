@@ -76,19 +76,15 @@ fn main() -> Report<'static> {
     let me = utask::self_id();
 
     // 上树：本域只开一条链，走两趟按名字找（结盟服务那一面 + 身份服务那一面）。
-    //
-    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：那条链上本域只要"名字 → 入口"
-    // 两趟，裸孔一个都不用 ⇒ 按"已持 `Session` 则用 `Face`"交给 [`TreeFace::of`]（吃所有权）。
-    // 别名 `TreeFace` 是**避让**下面两面各自的 `Face`（CoalitionFace / PolicyFace）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("member: no tree link");
     };
     let tree = TreeFace::of(session);
-    // 盟册那**两面**（开面那一刀）：三条"问"的（`Amid` / `Band` / `Bloc`）在 `Grant::Ask` 上，
+    // 盟册那**两面**：三条"问"的（`Amid` / `Band` / `Bloc`）在 `Grant::Ask` 上，
     // 三条"定"的（`Found` / `Enter` / `Leave`）在 `Grant::Set` 上。这一台**两面都要**——它立盟、
     // 入、出，也问盟籍、点名册。
     //
-    // **同一枚盟要两枚柄**（照实记：这是两面分开的代价）：`Coalition` 那个柄**绑在它来自的那一
+    // **同一枚盟要两枚柄**（这是两面分开的代价）：`Coalition` 那个柄**绑在它来自的那一
     // 面上**（`Face::coalition(id)` 只是把一个宾语固定下来），故 `cset.found()` 拿到的柄
     // `enter` / `leave` 得动，而 `holds` / `members` 要走 `cask.coalition(id)` 那一枚。
     // 盟册那两面的路：**本族常量**接上那一面（问面 / 定面）的名——一处都不自己拼。
@@ -113,7 +109,7 @@ fn main() -> Report<'static> {
 
     // 身份那**两面**：**本域自己也要用它们**（问"我代表谁"，派生第二条身份、领、弃）。
     //
-    // **两面各找一次**（开面那一刀）：三条"问"的（`Resolve` / `Sire` / `Heir`）在
+    // **两面各找一次**：三条"问"的（`Resolve` / `Sire` / `Heir`）在
     // [`Grant::Ask`] 上，四条"定"的（`Bind` / `Derive` / `Adopt` / `Waive`）在 [`Grant::Set`]
     // 上；下面每一处按**它问的是哪一类**挑门牌。
     // 名册那两面的路：**本族常量**接上那一面（问面 / 定面）的名。
@@ -137,9 +133,6 @@ fn main() -> Report<'static> {
     };
 
     // 一、此刻代表谁——装配期绑的那一条。
-    //
-    // **照实记（task-2 那一刀）**：`resolve` 折进 `Task::principal`（返 `Principal` 柄）；
-    // 本台只读数，故在调用点把柄投影回它那一枚号（下面每一处都这样收）。
     let mine = ask
         .task(me)
         .principal(Wait::AtMost(MS))
@@ -149,21 +142,13 @@ fn main() -> Report<'static> {
         return bail("member: unbound");
     };
 
-    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
-    // 都是本域头注那 16 步里写着的那一句（旧宿主靶上 `member: …` 那 21 条钉的就是它们）。
-    // 台名 = 本域打的前缀，门按它钉逐台基线。
+    // 判据就地登记：**只搬本域已经在判的东西**——下面每一例的期望，都是本域头注那
+    // 16 步里写着的那一句。台名 = 本域打的前缀，门按它钉逐台基线。
     //
-    // **照实记（这里比宿主那 21 条更强）**：宿主那边是 `need`（**存在一次**就绿），而
     // `amid(me,c0)` 这一形在本域脚本里出现**四趟**（立了之后 / 入之后 / 领了之后 / 弃了之后）
     // ——这里每一趟各判一次，四趟答错任何一处都会点名。
 
     // 二、立两枚盟：号由服务发——**全局单一序列，只增**。
-    //
-    // **照实记（这两格从前钉的是绝对值，`soak` 门因此有一张红脸）**：原来两条断言是
-    // `c0 == 0` 与 `c1 == 1`——钉的是"**我这两枚是全机器头两枚**"。可盟号是**全局**序列，
-    // 而 `harness/src/probe_rule.rs` 那台（位次 15）**也**调 `found()`（它要一枚号来挂规矩）
-    // ⇒ 谁先到谁拿 0。实测同一份 ELF：47 份现场里 **44 份 `found=0`、3 份 `found=1`**
-    // ——时序说了算，不是机器性质。
     //
     // 更要紧的是：**"第一枚是零号"没有并发客人能证**（要证它得保证自己是第一枚），"号不跳"
     // （稠密）同理——两次 `found` 之间**谁都可以插一脚**。故那一对换成唯一可证的那条：
@@ -176,7 +161,7 @@ fn main() -> Report<'static> {
     let (Ok(c0), Ok(c1)) = (c0, c1) else {
         return bail("member: no coalition id");
     };
-    // 读那一侧的两枚柄：**同一枚盟，换一枚门牌**（见上面那条照实记）。
+    // 读那一侧的两枚柄：**同一枚盟，换一枚门牌**（见上面那条）。
     let r0 = cask.coalition(c0.id());
     let r1 = cask.coalition(c1.id());
     {
@@ -227,7 +212,7 @@ fn main() -> Report<'static> {
     };
     let adopted = set.principal(p).adopt(q, Wait::AtMost(MS));
     debug!("member: adopt(sub)={}", done(adopted));
-    // 六·五、**代报名那一格**（K2 翻案那一刀）的**负证**：此刻我代表 `sub`，而 `c0` 的盟主是
+    // 六·五、**代报名那一格的负证**：此刻我代表 `sub`，而 `c0` 的盟主是
     // `p` ⇒ 我**不是**它的盟主 ⇒ 这一问该被拒（[`Fail::NotChief`]，不是 `Unknown`：盟在、
     // 我也在册上，缺的只是"这一枚盟归不归你代报名"）。
     //
@@ -237,7 +222,7 @@ fn main() -> Report<'static> {
     debug!("member: admit(c0)={}", done(not_chief.clone()));
     assert!(matches!(not_chief, Err(Fail::NotChief)));
     // **我此刻代表 `sub`** ⇒ 这一手进的是 `sub`（不小看这一步：`q` 只出现在 `holds` 那一侧，
-    // 它作为参数的日子随"客侧没有'我是谁'这一格"那条口径一起退场）。
+    // 客侧没有"我是谁"那一格）。
     let q_in = c0.enter(Wait::AtMost(MS));
     debug!("member: enter(c0)={}", done(q_in));
     let p_there = r0.holds(p, Wait::AtMost(MS));
@@ -339,10 +324,10 @@ fn main() -> Report<'static> {
         assert_eq!(bloc.as_ref().ok().map(|w| w.iter().count()), Some(2))
     }
 
-    // 十二、**面那一格**（开面那一刀）：同一条问、同一个发送者，**只换门牌**——定面成、问面拒。
+    // 十二、**面那一格**：同一条问、同一个发送者，**只换门牌**——定面成、问面拒。
     // 这一对量得出来的正是"面"这件事本身；而"面不对"在**门外**就拦下了（连盟册都没看）。
     //
-    // **照实记（它与核心那几格同码，分开它们的是读数）**：这一格答的 `Denied` 与别的因同码
+    // **（它与核心那几格同码，分开它们的是读数）**：这一格答的 `Denied` 与别的因同码
     // （客人的下一步一样：换一枚门牌 / 换目标、别重试）。分得开它们的是服务那一行读数
     // `coalition: face=… asked=… denied`。
     let set_ok = cset.found(Wait::AtMost(MS));
@@ -364,16 +349,9 @@ fn main() -> Report<'static> {
 ///
 /// 找到之后那一枚**从会话里**进本域表（报文里没有号）：按"谁给的"认，取**最后**那一枚
 /// （一次一问一答只授一枚，故最后那一枚就是这一趟的）。
-///
-/// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
-/// 故这一手只借它——签名上不再出现那条链。
 fn find_face(tree: &TreeFace, road: &Path) -> Option<PieToken> {
     // 名字 → 号（**译不出就重试**：门牌是别的域落的，它可能落得比本域晚）→ 入口：两格在
-    // [`Pane::tile`] 与 [`Tile::token`] 上（旧 `entry_of` 那一趟；本域从前自己抄了一遍）。
-    //
-    // **照实记（task-2 那一刀；为什么不用 `Face::tile`）**：`entry` 自己已经译号一次 + `find`
-    // 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有
-    // 一枚，故这里也照一枚写（重试那一圈照旧留着）。
+    // [`Pane::tile`] 与 [`Tile::token`] 上。
     let root = tree.root();
     let mut left = MS;
     loop {
@@ -409,9 +387,6 @@ fn one_policy<E: Why>(r: Result<PrincipalId, E>) -> String {
 }
 
 /// 同一行读数：只答一枚盟号的那几条（`found`）。
-///
-/// **照实记（task-2 那一刀）**：`found` 现在答一面 [`Coalition`] 柄（号绑进柄），故这里按
-/// `&Result<Coalition, Fail>` 读它那一枚 `id()`。
 fn one_id(r: &Result<Coalition<'_>, Fail>) -> String {
     match r {
         Ok(c) => format!("{}", c.id().get()),
@@ -423,10 +398,6 @@ fn one_id(r: &Result<Coalition<'_>, Fail>) -> String {
 ///
 /// 三格分开写，是因为**只有前两格是判据**：号那一段跟着装配期铸出来的身份号走（同一份镜像、
 /// 不同的启动次序就会差一位），拿它钉判据等于把一条与取窗无关的数钉进门里。
-///
-/// **照实记（task-2 那一刀）**：旧面那两问各答一枚 `Window<T>`（有 `len` / `last`），新面答
-/// [`Band`] / [`Bloc`]（只有 `more` / `iter` / `next`）——"几枚"改由 `iter().count()` 说，
-/// 游标取末一枚改由 `iter().last()` 说。
 fn window_ids<T: Id>(more: bool, ids: impl Iterator<Item = T>) -> String {
     let mut out = String::new();
     let mut n = 0usize;
@@ -489,10 +460,10 @@ impl Why for Fail {
         match self {
             Fail::Unknown => "unknown",
             Fail::Full => "full",
-            // 开面那一刀添的那一格（"你手里那一枚门牌给不了这一条"）。
+            // 面那一格拒的码："你手里那一枚门牌给不了这一条"。
             Fail::Denied => "denied",
-            // K2 翻案那一刀添的那一格（"你不是这一枚盟的盟主"）——本探针叫不动它
-            // （它不代报名），故这一格在这儿只为**match 穷尽**，不是一条读数。
+            // 代报名那一格拒的码："你不是这一枚盟的盟主"——本探针不代报名，
+            // 故这一格在这儿只为**match 穷尽**，不是一条读数。
             Fail::NotChief => "not-chief",
         }
     }

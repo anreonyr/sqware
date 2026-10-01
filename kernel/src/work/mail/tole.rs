@@ -66,12 +66,6 @@ pub struct ToleMeta {
     owner: TaskId,
     /// **轮转游标**：`ready()` 下一次**从第几格起扫**。
     ///
-    /// **照实记（这一格是量出来的）**：`ready()` 原先每轮都从第 0 格扫起、取第一枚就绪的——
-    /// 于是装配期"最后挂上组"的那一位（`tid=20`）**一直排在后面**：它的手在孔上活了
-    /// 1141~1228 ms（11 跑 5 跑），而那一秒里树**没有一趟**超过 200 ms、它那一格自
-    /// `operator: arm late` 起就一直"是成员、有手"。⇒ 病根是**先看谁**，不是"谁算有事"。
-    /// 今天命中一格之后把游标推到**它的下一格**：一格一格地公平。
-    ///
     /// **只影响次序**：`await` 的契约仍是"等到**任意**一格有事"；游标只决定**先看谁**。
     /// `Relaxed` 就够（它是公平用的偏好，不是同步点；共享组上两个取用者抢它也不会错）。
     cursor: AtomicUsize,
@@ -83,7 +77,7 @@ pub(crate) fn key(meta: &ToleMeta) -> WakeKey {
 
 /// **`cells()` 备不下**的次数（>0 = 有一次"组里明明有成员、却被报成空表"）。
 static CELLS_SHORT: AtomicUsize = AtomicUsize::new(0);
-/// **成员认不出对应 Pie**（`ready()` 里那一格 `continue`）的次数。**从前的静默格**。
+/// **成员认不出对应 Pie**（`ready()` 里那一格被吞掉）的次数。
 pub(crate) static MATE_SKIP: AtomicUsize = AtomicUsize::new(0);
 
 impl ToleMeta {
@@ -130,10 +124,6 @@ impl ToleMeta {
         if out.try_reserve(cells.len()).is_err() {
             let n = cells.len();
             drop(cells);
-            // **照实记（这一格从前是静默的）**：备不下就返回**空表**，而 [`ready`] 拿到空表就答
-            // "没有一格就绪" ⇒ **组里明明有就绪的成员、读的人却被支去睡**（症状：debug 档量到的
-            // `operator: await miss waiting=1`——`peek` 说手在孔上、组说没事）。这一格要看得见：
-            // 第一次当场报一行（`n` = 那一刻组里有几格）。
             if n > 0 && CELLS_SHORT.fetch_add(1, Ordering::Relaxed) == 0 {
                 crate::putln!("tole: cells short n={}", n);
             }

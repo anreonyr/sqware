@@ -1,32 +1,12 @@
 //! image — **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
 //!
-//! # 照实记（它为什么不在 `kernel/build.rs` 里）
-//!
-//! 它原先在那儿，那让内核的**编译单元**背上了三件不属于它的事：
-//!
-//!   ① 编全部程序（嵌套 cargo）；② 打 initrd；③ 把引导镜像的偏移/长度**回喂**内核源码
-//!   （`cargo::rustc-env`）。
-//!
-//! 用户原话：**"initrd 与 kernel 何干"**。后果是实测出来的：`watch()` 必须把 programs /
-//! harness / crates 的**每一个文件**登记成 `rerun-if-changed`（否则"改了程序、行为不变"），
-//! 于是**改一个客人的一个字节，内核 crate 就重编**（实测 1.31 s/次），`cargo build` 也永远是
-//! "编内核 + 编全部程序 + 打包"。
-//!
-//! **照实记（`watch()` 那套为什么不必跟过来）**：它存在是因为打包**寄生在 build script 里**
-//! ——build script 只由 cargo 的指纹机制驱动，"镜像新鲜不新鲜"没有任何人负责，只好把源文件
-//! 全盯上。搬出来之后**谁造镜像谁负责新鲜**：测试构建每一轮都造（`nu scripts/qtest.nu`），交互式由
-//! `scripts/runner.nu` 先查在不在。那条"逐文件盯"的纪律连同它挡过的两类假象一起消失。
-//!
-//! 造出来的东西与内核**只共享一个约定**：initrd 落在内核 ELF **同目录**（`boot.nu` 就在那儿找）。
-//! 内核也不再需要那两个数——它们写在区里前 8 字节（`env::manifest::PREAMBLE`），开机读。
-//!
 //! # 瘦身（`slim`）：为什么在**打包侧**剥符号与调试节
 //!
 //! `prog-*` 那份字节是**宿主调试用的那一份**（`gdb` 要符号），而进 initrd 的这一份只被内核
 //! 按 ELF 段读——**两个消费者，两份字节**。在这里剥，两边都不亏。实测 31 张：debug
 //! 128.2 MiB → 3.3 MiB（−97.4%），release 5.9 → 1.4 MiB（−77.2%）。省的不只是宿主读盘：
 //! initrd 是 boot 给的**持久保留区**，帧分配器永不分配它（`platform/machine.rs` 的
-//! `reserved`），debug 档那一份原先在 256 MiB 的机器上白占 78 MiB。
+//! `reserved`），debug 档那一份在 256 MiB 的机器上白占 78 MiB——故在这里剥。
 //!
 //! `llvm-objcopy` 原样保留 `p_offset` / `p_vaddr` / `p_filesz`（仍页对齐），故**内核侧一行
 //! 都不用改**——三条判据（`offset`/`vaddr` 页对齐、段落在文件内）在 93 张产物上逐张验过。
@@ -62,12 +42,6 @@ fn root() -> PathBuf {
 mod unit;
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
-///
-/// **照实记（本文件为什么只走 `UnitFile` 上那四条窄面）**：装配声明拆成三块（身份 / 装配关系 /
-/// 需求，见 `programs/src/unit/mod.rs` 的头注）之后，宿主这一侧的读者**一个字段都不许碰**——
-/// 它只读"它是谁"那四样：`name()` / `space()` / `wanted_by()` / `entry()`。块再怎么挪，这四行不动。
-/// （那四样里第三样从前叫 `kind()`——**它答的是空间（S/U）**，与"单元类型"同名不同事，改名见
-/// `programs/src/unit/mod.rs` 的照实记。）
 fn scenes() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
     for p in unit::PROGRAMS {
@@ -108,7 +82,7 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
     Ok(picked)
 }
 
-/// **校验这一景的图，并返推导出的装配次序**（照实记：次序由各台声明里的 `after` 算出来，
+/// **校验这一景的图，并返推导出的装配次序**（次序由各台声明里的 `after` 算出来，
 /// **打包这一趟是它的第一个读者**——宿主上有名字、有退出码，坏图在这里就断掉）。
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
@@ -144,7 +118,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     );
 
     // 嵌套 cargo 用**独立 target 目录**：宿主 cargo 会在 target 根持有 `.cargo-build-lock`，
-    // 同目录再起 cargo 会互锁死等（照实记：这一格是从 `kernel/build.rs` 原样搬过来的）。
+    // 同目录再起 cargo 会互锁死等（这一格是从 `kernel/build.rs` 原样搬过来的）。
     let work = root.join("target/image").join(profile);
     let mut args = vec![
         "build".to_string(),
@@ -220,10 +194,6 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
 ///
 /// `src` = `prog-<名字>`——**不动它**（宿主 `gdb` 要那份）；`out` = 那一档的工作目录
 /// （临时文件落在它下面，随 `target/` 一起清理）。产瘦好的字节。
-///
-/// 临时名带 **pid**：并行的多个构建可能同档同程序（`cargo image` 与一次测试构建同时跑）
-/// ——不带 pid 就会互相覆写。（**照实记**：这一句原先举的是 `cargo gate` 的 `examine`
-/// 与 `product` 两门——那台已删。）
 ///
 /// # Errors
 ///

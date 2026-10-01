@@ -14,9 +14,8 @@ use env::{Reason, RoomCall, RoomResult, TaskId, VirtAddr, Wait};
 /// 让出处理器。
 ///
 /// **不返 `Result`**：这一手在**内核里没有失败分支**——`RoomCall::Starve` 那一格直接就是
-/// "切走"（`envcall/mod.rs`：`return current().starve()`），没有 `ret_err` 那一支。从前它
-/// 写着 `EnvResult<()>` 而函数体 `let _ = …call(); Ok(())`：**签名许诺了一个永不到来的
-/// 失败**，读签名的人会去写 `?`，而那是死代码。
+/// "切走"（`envcall/mod.rs`：`return current().starve()`），没有 `ret_err` 那一支。
+/// 签名许诺一个永不到来的失败，会让人去写 `?`，而那是死代码——故 `starve()` 直返 `()`。
 pub fn starve() {
     env::room::starve()
 }
@@ -39,7 +38,7 @@ pub fn starve() {
 ///
 /// 名与形状照 `std::process::exit(code)`，第二个参数就是本仓加的那句话。
 ///
-/// **照实记（合并前）**：这里是三个函数（`exit` / `exit_with` / `exit_with_note`），
+/// **（合并前）**：这里是三个函数（`exit` / `exit_with` / `exit_with_note`），
 /// note 那个是前两者的下半。
 pub fn exit(reason: Reason, note: Option<&str>) -> ! {
     let note = note.unwrap_or("");
@@ -62,11 +61,9 @@ pub fn exit(reason: Reason, note: Option<&str>) -> ! {
 /// - `OoM`(-2) 等待位备料失败（**本任务没挂起**——见 `envcall/mod.rs` 的 `Park` 那一支）
 pub fn sleep(d: Duration) -> RoomResult<()> {
     // **向上取整到毫秒**：`Park{millis}` 是**下限族**（"至少这么久"），而 `Park{0}` 的
-    // 语义是**让出一拍**、不是"睡 0 毫秒"。
-    //
-    // 照实记（修掉的那个坑）：旧写法是 `d.as_millis() as usize`（**向下取整**）⇒
-    // `sleep(500µs)` 静默变成 `Park{0}` = 让出一拍；`sleep(1.5ms)` 变成 `Park{1}`，
-    // 连"至少 1.5 ms"这个下限都没守住。向上取整才与下限族口径一致：
+    // 语义是**让出一拍**、不是"睡 0 毫秒"。向下取整会破坏这一口径
+    // （`sleep(500µs)` 静默变成 `Park{0}` = 让出一拍；`sleep(1.5ms)` 变成 `Park{1}`，
+    // 连"至少 1.5 ms"这个下限都没守住）。向上取整才一致：
     // `500µs → 1`、`1.5ms → 2`、`1ms → 1`、`0 → 0`（零时长仍是"让出一拍"）。
     let mut millis = d.as_millis();
     if d.subsec_nanos() % 1_000_000 != 0 {
@@ -93,8 +90,8 @@ pub fn sleep_until(at: u64) -> RoomResult<()> {
 ///
 /// **语义是域粒度**：`task` 只是"指认域"的手柄，它所属的域连同子树一起走（同域的
 /// 线程一并，不会剩半个域）。判据只有**判活**——**没有血缘门**：收一个域是"命令"，
-/// 不是"血缘特权"。曾经那道传递门（目标域沿 `sire` 链可达本域）已随 `Build` 的 S 态门
-/// 同一次分家删掉，"该不该收"归 `protocol::system` 的编排者。
+/// 不是"血缘特权"。"该不该收"归 `protocol::system` 的编排者（沿 `sire` 链的可达性），
+/// 见同一次分家的 `Build` 那一节。
 ///
 /// 失败只有 `Dead`（本域词汇里的那一枚）：目标从未入册 / 已回收 / **它那个域里已经没有
 /// 还没收尾的线程**。
@@ -105,10 +102,6 @@ pub fn sleep_until(at: u64) -> RoomResult<()> {
 /// 的 `doom`，由 `service::stop` 与"起失败"那一支调）——**编排域**
 /// 点名收掉一个子域，而这一刀按域粒度走——与
 /// `harness/src/group.rs` 的收场那一手（台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
-///
-/// **照实记（第四处已删）**：原先还有一手——编排域**点名收掉同域那一枚线程**。它已删：按域粒度
-/// 那一刀收的正是**编排域自己**，代价是最后那句判词够不到（见 `system/main.rs` 收尾那一格的
-/// 照实记）。那一枚线程随"域亡＝成员清零"一起走，不需要点名。
 pub fn doom(task: TaskId) -> RoomResult<()> {
     env::room::doom(task)
 }

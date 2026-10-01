@@ -145,7 +145,7 @@ fn hand_over(
     }
     if !mail::whole(&src, va, len, PteFlags::R) {
         // **"空间还在、可那段 VA 今天不可读"**（三格成因见 `hole::note_gone`）：那只手指着一段
-        // 已经不在了的内存——照实记与判据写在那一边，这一行只把"是哪一段"报出来。
+        // 已经不在了的内存——与判据写在那一边，这一行只把"是哪一段"报出来。
         mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "range");
         mail::hole::taken(meta);
         return Err(MailFail::Gone);
@@ -153,7 +153,7 @@ fn hand_over(
     if !mail::copy(&src, va, space, buf.as_usize(), len) {
         mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "copy");
         // **发送方那段没了 ⇒ 那只手就地收掉**（不是放回）：那条报再也送不到，放回只会把孔
-        // 永远占住。照实记（量出来的）见 `work/mail/hole.rs` 的 `taken`／`back`。
+        // 永远占住。（量出来的）见 `work/mail/hole.rs` 的 `taken`／`back`。
         mail::hole::taken(meta);
         return Err(MailFail::Gone);
     }
@@ -178,12 +178,6 @@ fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
 }
 
 /// 等某一方向就绪（`Pull` 有可取之事／`Push` 孔空着），`millis` 是上限族。
-///
-/// **照实记（这里原先那一格是"撤手"）**：本函数之上原写着
-/// `fn withdraw(frame, token)`——"把**我自己**伸出、还没被取走的那只收回来"，用家只有载体那层
-/// `HolePie::push` 的兜底期限（`HANDOFF_MS`）。那一格期限随"不许把已经递出的报作废"一起退了场
-/// （凭据三条，见 `work/mail/hole.rs` 与 `crates/runtime/src/env/mail.rs` 的照实记），故这一手
-/// 也一并删除。今天那只手只有两个下场：**被取走**，或**随孔封印一起没**。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,

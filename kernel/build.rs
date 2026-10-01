@@ -15,16 +15,6 @@
 //! 脚本不在场 ⇒ 链接期直接 `undefined symbol:
 //! embedded_test_linker_file_not_added_to_rustflags`。
 //!
-//! # 为什么这两行要分开给（照实记，踩过）
-//!
-//! `cargo::rustc-link-arg` **只作用于 bin**：`[[test]] embedded` 是另一个目标，`cargo test`
-//! 编它时不吃这一格。故必须另用 `cargo::rustc-link-arg-tests` 把脚本交给测试目标——这一格
-//! 原先缺着，"整机门"因此在链接期就红。
-//!
-//! **同一枚脚本绝不能重复给**：两格同时命中一个目标时，链接行上会出现两枚同样的 `-T`，
-//! ld 把同一份脚本处理两遍 ⇒ 段重叠一片（实测：`.text` / `.eh_frame` / `.data` / `.rodata`
-//! 与 `.trampoline` 轮流报 overlap）。上面那一对正好**互斥**：bin 只吃前一行，test 只吃后一行。
-//!
 //! # 上游那一枚为什么不借 runner／不借 `DEP_*`
 //!
 //! - `cargo-qtest`（`cargo-qemu-test`）对 riscv 有一条"**manifest 目录里已经有 `.x` ⇒ 认为你
@@ -36,7 +26,7 @@
 //! `OUT_DIR`，再用**绝对路径**交代给测试目标。
 //!
 //! **哈希自检是故意的**：上游哪天改了那枚脚本，这里当场编不过并印出两条哈希——
-//! 逼人看一眼改了哪几行再抄过来，而不是让两份脚本**静默漂移**（那正是这枚符号当初要防的事）。
+//! 逼人看一眼改了哪几行再抄过来，而不是让两份脚本**静默漂移**。
 //! 抄的是 `embedded-test-linker-script 0.1.0`（`Cargo.lock` 钉住版本；`env` feature 为默认关，
 //! 故没有上游给 `std` 那一档追加的 `INSERT AFTER .comment;`）。
 //!
@@ -107,7 +97,7 @@ fn main() {
     // 内核链接脚本：workspace 化后不同 crate 用不同脚本（内核 `0x80200000` /
     // 用户 `0x10000`），不能放根 `.cargo/config.toml`（全局 rustflags 冲突），改由本脚本传绝对路径。
     //
-    // **照实记（后缀 `ld` → `x`，用户裁定"迁移到 embedded-test"）**：`cargo-qtest` 对 riscv
+    // **（后缀 `ld` → `x`，用户裁定"迁移到 embedded-test"）**：`cargo-qtest` 对 riscv
     // 的判据是"manifest 目录里有没有 `.x` 文件"——有就不自己生成一份 `0x80000000` 的 layout
     // （那会与 `SBI.bin` 撞 ROM 区，实测 `Some ROM regions are overlapping`）。名字保持 `link.x`。
     let ld = format!("{}/link.x", env!("CARGO_MANIFEST_DIR"));

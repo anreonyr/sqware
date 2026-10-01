@@ -24,9 +24,9 @@ pub(crate) fn snap() -> Vec<TaskWeak> {
     provider().get().copied().map(|f| f()).unwrap_or_default()
 }
 
-/// 快照这一层**只剩"沿边找"这一件事**：找人（`find`）那一格退了——退场那一趟现在
-/// 由钩子直接递来 `&Arc<Task>`，不必再从清册快照里把号找回来（原话见 `messenger::Hook`、
-/// `gate::doom`）。留着它只会给"封印要先分配"那条路留个入口。
+/// 快照这一层**只剩"沿边找"这一件事**：退场那一趟由钩子直接递来 `&Arc<Task>`，
+/// 不必再从清册快照里把号找回来（见 `messenger::Hook`、`gate::doom`）。
+/// 留着它只会给"封印要先分配"那条路留个入口。
 pub(crate) fn vestor(pie: &AnyPie, snap: &Snap) -> Option<TaskId> {
     holder(pie.sire()?, snap)
 }

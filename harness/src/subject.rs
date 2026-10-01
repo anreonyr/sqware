@@ -69,14 +69,8 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("subject: no tree link");
     };
-    // 照实记：从前"树路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
-    // 合成一格，故这里只剩一句。
-    //
-    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好后本域只要树上那一趟
-    // （名字 → 号 → 入口）⇒ 交给 [`TreeFace::of`]（吃所有权）。别名 `TreeFace` 是**避让**
-    // 下一行那个 `Face`——那是身份服务的门牌，另一个东西。
     let tree = TreeFace::of(session);
-    // **两面各找一次**（开面那一刀）：这一台**两面都要**——它证的正是名册那七条原语，而七条分住
+    // **两面各找一次**：这一台**两面都要**——它证的正是名册那七条原语，而七条分住
     // 两面（三条"问"的 `Ask` / 四条"定"的 `Set`）。下面每一处按**它问的是哪一类**挑门牌。
     let Some(entry) = find_face(&tree, pcall::Grant::Ask) else {
         return bail("subject: no ask face");
@@ -92,9 +86,6 @@ fn main() -> Report<'static> {
     };
 
     // 一、此刻代表谁——装配期绑的那一条（服务一起来就答得出）。
-    //
-    // **照实记（task-2 那一刀）**：`resolve` 那一手折进 `Task::principal`（返一条 `Principal`
-    // 柄）；本台只读数，故在调用点把柄投影回它那一枚号——下面每一处都这样收。
     let mine = ask
         .task(me)
         .principal(Wait::AtMost(MS))
@@ -104,8 +95,8 @@ fn main() -> Report<'static> {
         return bail("subject: unbound");
     };
 
-    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——下面每一例的期望，
-    // 都是本域头注那 14 步里写着的那一句（旧宿主靶上 `policy: …` 那 12 条钉的就是它们）。
+    // 判据就地登记：**只搬本域已经在判的东西**——下面每一例的期望，
+    // 都是本域头注那 14 步里写着的那一句。
     // 台名 = 本域打的那个前缀，门按它钉逐台基线。
 
     // 二、三态的头两格。
@@ -127,9 +118,6 @@ fn main() -> Report<'static> {
     }
 
     // 三、自反。
-    //
-    // **照实记（方向，task-2 那一刀）**：`contains(&self, p)` 发的是 `Heir(p, self.at)`，
-    // 故旧 `heir(a, b)`（= `a ≼ b`）要写成 `principal(b).contains(a)`——柄是**祖先那一侧**。
     let reflexive = ask.principal(p).contains(p, Wait::AtMost(MS));
     debug!("policy: heir(me,me)={}", flag(reflexive));
     {
@@ -227,10 +215,6 @@ fn main() -> Report<'static> {
     debug!("policy: me={}", one_opt(back));
 
     // 三条 `policy: me=`（装配绑的 / 领之后 / 弃之后）的关系：**绑 ≠ 领 = 弃**。
-    //
-    // **照实记（这一条原先住在宿主靶上）**：它是 `soak::verdict` 里那段 `values(...)` 比较 ——
-    // 宿主数了三行、比了两个关系；而那三行是**本域自己打的**，本域当然也知道它们该是什么关系。
-    // 搬进来之后宿主那一侧不必再数那三行（见四处那一段的改动）。
     {
         {
             assert_ne!(led, mine);
@@ -238,11 +222,11 @@ fn main() -> Report<'static> {
         }
     }
 
-    // 十五、**面那一格**（开面那一刀）：同一条问、同一个发送者、同一把钥匙，**只换门牌**——
-    // 定面成、问面拒。这一对是本刀唯一量得出来的新事实：两面各一枚门牌，而"面不对"在**门外**
+    // 十五、**面那一格**：同一条问、同一个发送者、同一把钥匙，**只换门牌**——
+    // 定面成、问面拒。两面各一枚门牌，而"面不对"在**门外**
     // 就拦下了（连账都没看）。
     //
-    // **照实记（它与"你不是装配者"同码，分开它们的是读数）**：核那一条拒（本域不是写名册的
+    // **（它与"你不是装配者"同码，分开它们的是读数）**：核那一条拒（本域不是写名册的
     // 那一枚）也答 `Fail::Denied`——两个因落在同一格码上（客人的下一步一样：换人 / 换门牌、
     // 别重试）。分得开它们的是持册者那一行读数 `principal: face=… asked=… denied`。
     let set_ok = set
@@ -268,14 +252,7 @@ fn main() -> Report<'static> {
 /// 找**某一面**：`/svc/sys/principal/{ask,set}`，**找不到就再问**（有界）——门牌是本域起来之后落的。
 ///
 /// 名字 → 号（译不出就重试）落在 [`Pane::tile`] 上，`find` 落在 [`Tile::token`] 上——**两格各
-/// 一趟**，与旧 `Face::tile` 逐格同形（那一手本域从前自己抄了一遍）。
-///
-/// **照实记（task-2 那一刀；为什么不用 `Face::tile`）**：`entry` 自己已经译号一次 + `find`
-/// 一次，随后 `Tile::token` 又 `find` 一次 ⇒ 每趟多授一枚没人接的副本进本域表。旧面只有一枚，
-/// 故这里也照一枚写（重试那一圈照旧留着）。
-///
-/// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的），
-/// 故这一手只借它。
+/// 一趟**。
 fn find_face(tree: &TreeFace, grant: pcall::Grant) -> Option<PieToken> {
     // 路是**名册那一族的常量**接上那一面的名——一处都不自己拼。
     let road = pcall::DIR.try_join(grant.name())?;

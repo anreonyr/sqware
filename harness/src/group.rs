@@ -29,7 +29,7 @@
 //!      `hung=2 woke=2 deliver=true control=true` ⇒ PASS
 //! ```
 //!
-//! # 判据（末行 `group: PASS`；脚本 `crates/gate/tests/group.rs`（已删）只看这一行 + 停机行）
+//! # 判据（末行 `group: PASS`；嵌入式脚本只看这一行 + 停机行）
 //!
 //! - `hung=2`：两人都挂上了（组键上**真的有两个等待者**）；
 //! - `woke=2`：**一次投信两人都被放行**——这就是"整链放行"。**退回单播时这里会是 1**
@@ -37,24 +37,6 @@
 //! - `deliver=true`：那条消息**只归一个人**（台主取一次成功、再取答 `Busy`）——共享的是
 //!   唤醒，不是交付；
 //! - `control=true`：**独占组**同样两次 accord 的第二次被拒（共享可复制、独占不可）。
-//!
-//! # 照实记（三格，都不是内核的事）
-//!
-//! - **第一版判据不自证伪（反向验证抓出来的）**：原来让醒来的人**直接 `pull`**，用
-//!   `took` / `busy` 数"醒了几个人"。把 `knock` 临时改回"摘链头一人"之后台子**照样
-//!   PASS**——先到的那个人把槽清空，第二个人醒来只看见空槽，`busy` 被算成了"醒了"。
-//!   改成"醒来只 `peek`、消息由台主取走"之后：单播下第二个等待者永远收不到放行、也就
-//!   不回报 ⇒ `woke=1` ⇒ FAIL。**判据必须建立在一个不会被它自己吃掉的事实上。**
-//! - **对照的 `subset` 必须带 `ONLY`**：第一版写 `FETCH | STORE | VEST` ⇒ **第一次** accord
-//!   就被拒——源枚带 `ONLY`、`subset` 不带，`form_ok` 读作"想复制一枚独占资源"。带上
-//!   `ONLY` 才是"移交"：第一次成立、第二次因源枚已 `HandedOver` 被拒。**那次拒付本身就是
-//!   形态位一致判据的活证据**（`form_ok` 在真机上第一次被触发）。
-//!   （同一个 `subset` 今天写成**两族**：`Access::FETCH_STORE` ＋ `Policy::VEST | Policy::ONLY`
-//!   ——不再手拼裸掩码，见 ④ 的注。）
-//! - **`Join` 数不出"干净"**：已经回收干净的任务在名册里没了 ⇒ `Join` 答 `Denied`
-//!   （口径是"从未分配 = 非法 id"），故 `reaped` 不能进判据（实测第一版 `reaped=1`，
-//!   而两个域都正常退场）。"都退场了"改由机器那一句
-//!   `task: all tasks exited, system halted` 担保，脚本读它。
 //!
 //! # 判据的边界（不是免责）
 //!
@@ -67,7 +49,7 @@
 //! # 怎么跑它
 //!
 //! ```text
-//!   cargo image group && cargo run        # 手跑（原先是 `crates/gate/tests/group.rs` 那扇门，已删）
+//!   cargo image group && cargo run        # 手跑
 //!   cargo image group && QEMU_ICOUNT= cargo run --release   # 与验收门同环境（手跑）
 //! ```
 
@@ -95,7 +77,7 @@ const WAITER: &str = "waiter";
 const WAITERS: usize = 2;
 /// 回报/收尾的上限（毫秒，**上限族**）。
 const MS: usize = 2_000;
-/// 投信前的稳压（毫秒；理由见头注的照实记）。
+/// 投信前的稳压（毫秒；理由见头注）。
 const SETTLE: u64 = 200;
 
 #[programs::entry]
@@ -140,12 +122,6 @@ fn main() -> Reason {
         tasks[i] = task;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
-        //
-        // **走 `port::ship` 而不是裸 `mail::accord`**（照实记）：组从前是四枚里唯一绕开它
-        // 的那一枚。`ship` 那里子集由**两族**拼出（`Access` 与 `Policy` 混族写不出来）、空集
-        // 本地拒——与孔 / 页 / 铃那三处**同一形**（发货那一手 `control::assemble::enroll` 的
-        // `&PolePie::from_token(src)` 就是这么写的）。句柄照旧**现造**（`TolePie::from_token`，
-        // 与 `HolePie::from_token` 同款）：`core::Pile` 仍只管"多路等待"那一件事。
         let group_pie = TolePie::from_token(group);
         let report_pie = HolePie::from_token(report[i]);
         let form = Policy::VEST;
@@ -174,7 +150,7 @@ fn main() -> Reason {
 
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     //
-    // **照实记（这一手为什么走一次性那一格）**：这一格的读者**只有台主自己**（两位等待者只
+    // **（这一手为什么走一次性那一格）**：这一格的读者**只有台主自己**（两位等待者只
     // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：`HolePie::push`
     // 只在预算内等到"轮到我"，而"等它被取走"要另写 `wait`——台主此刻正站在这里 ⇒ **自己等自己**。
     // 故这一手写 `Wait::POLL`（一个 envcall，`Ok` = 内核收下了这只手），正好也是这一刀要量的事：
@@ -230,9 +206,6 @@ fn pull_byte(tok: PieToken) -> Option<u8> {
 ///
 /// 目标用**已经开始等的那个子域**：它早已认领完自己的三枚（表不再变），多收一枚不带
 /// 记号的门闩对它无害；组是台主的弃物，子域退场时那道锚自愈。
-///
-/// **`form` 必须带 `ONLY`**：源枚带 `ONLY` 而子集不带，正是 `form_ok` 要拒的
-/// "想复制一枚独占资源"（第一版就栽在这一格，见头注的照实记）。带上它才是**移交**。
 fn sole_refused(dst: TaskId) -> bool {
     let Ok(sole) = Pile::unseal(false) else {
         return false;

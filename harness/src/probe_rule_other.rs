@@ -30,7 +30,7 @@
 //! **有身份、但这一格不给你**。它若答成 `9`，整机就分不出"这一格不给你"；答成 `0`，门禁
 //! 等于不存在。上一刀 `probe-denied` 量的是**第一道门**（有没有身份），本台量的是**第二道门**。
 //!
-//! 照实记：本台只 `seek` + `find`，**不 `land`**——落牌是"改这一格"那一轴（由 `probe-owner`
+//! 本台只 `seek` + `find`，**不 `land`**——落牌是"改这一格"那一轴（由 `probe-owner`
 //! 那一台管），而那几格是 `mine = false` 落下的（谁都能改）。若本台顺手落一次，就会**顶掉**
 //! `probe-rule` 那几格（改这一轴不归它管，可"落牌"本身会换绑），后面的读数就全变了。
 //! `foreign` 那一格也是 `probe-rule` 落的——本台只负责"换一台客人再去撞一次"。
@@ -71,9 +71,6 @@ const E_OK: usize = 0;
 const E_TRIP: usize = 1;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
-///
-/// **照实记（搬进用例之后）**：`BAD_NOTE`、以及"没走通"那条退场路，一起退役了——判据现在是
-/// **一例一条**（`cases::Suite`），失败走 panic 通道、域当场死，故失败再也走不到出口那一手。
 const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
 #[programs::entry]
@@ -81,9 +78,6 @@ fn main() -> Report<'static> {
     let sire = utask::sire();
 
     // 一、上树：本域只开一条会话（不找门牌——本台只 `seek` / `find`，不问身份）。
-    //
-    // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：那条会话上本域只要"名字 → 入口"
-    // 一条路 ⇒ 交给 [`TreeFace::of`]（吃所有权），下面三问从"两个参数"变成"一条路 + 一份期限"。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-other: no tree link");
     };
@@ -119,13 +113,11 @@ fn main() -> Report<'static> {
 ///
 /// **译不出就重试**（有界）：`/svc/rule` 那几格由另一台客人落下，它可能落得比本域晚。
 ///
-/// **照实记（收 `&TreeFace`，不再收 `&Session`）**：调用方**已持**一面（task-2 那一刀包出来的）。
-///
-/// **照实记（两格为什么分开写）**：旧面 `entry_of` = 译号（重试）＋一趟 `find`。新面把这两件分在
+/// **（两格为什么分开写）**：新面把这两件分在
 /// 两个柄上：`Pane::tile` 译号、[`Tile::token`] 取那一枚——**门禁那一趟发生在后面的 `find`**，
 /// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的。
 ///
-/// **照实记（重试在这一格里）**：`Pane::tile` 自己**不带重试**（就地问一次）；"译不出就再问"
+/// **（重试在这一格里）**：`Pane::tile` 自己**不带重试**（就地问一次）；"译不出就再问"
 /// 由下面这一圈承担。要带额度的那一形是 [`Face::tile`]——它同样只译号（不飞门闩），差别只有
 /// 重试那一层。
 fn denied(tree: &TreeFace, base: &Path, leaf: &str) -> Result<(), Fail> {

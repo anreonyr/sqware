@@ -3,8 +3,7 @@
 //! **每格一个精确签名的入口**（`env::memory::*`，由 `#[derive(Envcall)]` 生成）：本层只做
 //! "调用方口径 → 内核口径"的那点转换（按页取整、`Option` → 哨兵），错类型是**这一域的
 //! 词汇**（`MemoryFail`）——`Allocate` 答得出 `OoM` 与 `NoRegion`，`Deallocate` 只答
-//! `Denied`。从前这里拿 `MemoryCallRet` 再 `match` 一趟、还带一条 `unreachable!`：那一趟
-//! 是"一个 `call()` 对整张 `Ret` 联合负责"逼出来的，现在由宏按格生成，退掉了。
+//! `Denied`。每个调用按格生成签名，不再有"一个 `call()` 对整张 `Ret` 联合负责"。
 
 use env::{MemoryResult, VirtAddr};
 

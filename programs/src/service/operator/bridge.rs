@@ -178,7 +178,7 @@ pub fn attach(
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
     //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
     let link = establish::endpoint(client, Mark::of(LINK), millis).map_err(|_| "operator:seat")?;
-    // **认不到对端那一枚 = 这条路没接上**（原 `claim` 那一格）。
+    // **认不到对端那一枚 = 这条路没接上**。
     if link.tx().is_none() {
         return Err("operator:claim");
     }

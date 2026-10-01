@@ -84,8 +84,8 @@ impl To {
 /// - `HandedOver`  — 源枚**已经交出去过**（一枚门闩至多一个 heir）——不是失败，交回即复原
 /// - `OoM`    — 对端表备不出容量（锚已回滚：等于没交出过）
 ///
-/// 四个码都不折平（内核 `gate::accord` 的判决原样过线）：旧注把"已被关住"写在
-/// `Denied` 那一行——**照实记：那是错的**，关住的码是 `HandedOver`(-7)。
+/// 四个码都不折平（内核 `gate::accord` 的判决原样过线）："已被关住"的码是
+/// `HandedOver`(-7)，**不是** `Denied`——两者不要混。
 pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> PieResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() {
@@ -138,10 +138,6 @@ impl Port {
         self.to.seed()
     }
 
-    /// 推一帧：**已编好的整帧**，本层不看内容。满则等（背压），没有上界；**递出去之后也等它被
-    /// 取走**——`frame` 是调用方那一帧的字节，等到那只手下线才算收口（照实记：从前这两半合一
-    /// 住 `HolePie::push` 里，今天由这一层写出来）。
-    ///
     /// **`Ok` = 那一手被取走了，不是"对端读懂了"**：`entry` 是本端持有的一份副本，对端死了这扇
     /// 门也不死（它的封印只会让这一等当场答 `Dead`）。
     pub fn push(&self, frame: &[u8]) -> MailResult<()> {

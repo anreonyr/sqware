@@ -15,7 +15,7 @@
 #   nu scripts/qtest.nu --package kernel --scene accept --feed exit
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
-# **照实记（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
+# **（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
 # 机器真的起过一次"，而**镜像由 `--scene` 那一格给**（`-initrd`）；不带景就没有镜像，
 # `kernel/src/boot.rs` 在测试模式下**当场 panic** 指着这句话（宁可红，也不要"静默起一台没有
 # 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
@@ -29,30 +29,13 @@
 # 跑七个景就是七次调用。`--scene` 给的景名由本脚本打印出来——报告里那一行只说 `scene`，
 # 景在这一行。
 #
-# **照实记（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
+# **（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
 # `scene accept` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
 # `harness/src/guest.rs` 与 `harness/src/probe_bound.rs` 两处 `assert`）。病根与量法归在
 # `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
 # 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
 #
-# **照实记（那一刀落下来之后：扳机改读账）**：收场不再由"位次最大那一台的退场"触发，而是由
-# `Control::due()`（账上活着的都是常驻台）与 `Control::done()`（一个不剩）两条判决决定
-# （见 `programs/src/system/control/supervise.rs` 的头注）。量到的：
-#   · 喂 `exit` 落在 **1 s** 那一档（原先正是"扳机不等读数"的现场）：改前 15 位"会走的"报到 14、
-#     另有两处 panic（其中 `probe-owner.rs:202` 那条是被扑杀造成的）；改后 **15/15、panic 0**。
-#   · `scene accept` 默认档 **8 跑全绿**（每跑 5.78~5.83 s）；`product`/`again`/`load`/`group`/`beat`
-#     各 1 例全绿。**样本照实说**：8 跑全绿 ⇒ 红率低于 ~31%（n=8 的 95% 上界），不是"证明为零"。
-#   · 残留（不在这两刀里）：`probe_owner::take_over` 那一圈"有界重试"每一轮含着
-#     `Wait::AtMost(1000)` 的两问（而客户端 `push` 是 `Wait::Forever`）——它才是那个**真的挂**。
-#     静默兜底（10 s）让这一档红得**有成因**（release 印 `system: doom`），而不是 60 s 超时。
-#
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
-#
-# **照实记（为什么非搬不可）**：`cargo-qtest` 把 QEMU 的 stdin 钉成 `Stdio::null()`
-# （它源码 `qemu.rs` 那一行）⇒ 往 `cargo qtest` 里灌 stdin **一个字节也到不了 QEMU**。
-# 而整机收场的扳机是 `canonical`（装配单位次 22，最后一条）——它的退场由**控制台输入**驱动。
-# 故依赖输入日程的景（`accept` / `product`）原先在内核内判据上**判不了**：它们偶尔能收场，
-# 是因为探针先 panic、级联把 `canonical` 扑杀，那条道才响。
 #
 # 三段拼起来（都在 `<TRACE_OUT>/` 里，一次运行生成一次）：
 #
@@ -70,41 +53,18 @@
 #
 #   `--scene` 不给 ⇒ 这三段全不启用，串口还是 `stdio`。
 #
-# **照实记（第一版走不通的两条）**：
-#   ① "板子参数照旧 ＋ 末尾追加 `-serial tcp:…`"——命令行里于是有**两枚 `-serial`**
-#      （QEMU 当 serial0/serial1），十例里九例当场红。
-#   ② "经参数表只留一枚、QEMU 当 server（`server=on,wait=on`）"——第二例起
-#      `Address already in use`：QEMU 不设 `SO_REUSEADDR`，上一个用例的 TIME_WAIT
-#      挡着端口。故改成**帮手当 listener、QEMU 当 client**：监听套接字常驻，TIME_WAIT
-#      落在 client 侧，不挡 listener。
-#
-# **照实记（机侧控制台其实一直留在 dump 里——我先前写错了一半）**：曾以为"串口搬走之后
-# `cargo-qtest` 那份 dump 就没有机侧输出了"。量下来不是：QEMU 带着
-# `-semihosting-config enable=on,target=native` 时，**控制台走的是 semihosting**
-# （落在 QEMU 的 stdout，`cargo-qtest` 照旧抓得到——失败 dump 里 `system: gone …` 一行
-# 不少）。我们那条串口因此是一根**只喂不读**的输入线，捕获文件里通常只有连接标记。
-# 保留"失败时端出捕获尾"那一手只为防串口路由被改动，别指望它有机侧输出。
-#
 # **读数（量出来的）**：七个景**全绿**（release 档、每景 1 例）——
 #   accept 5.28 s · product 5.23 · again 2.17 · load 0.72 · group 0.37 · beat 2.22 · rig 3.33。
 #   `--scene product --feed list`（不喂 `exit`）→ **FAILED**：喂入是承重的，不是巧合。
 #   不给 `--scene`（debug 档）→ **9 passed · 1 failed**：健康面九例由默认那轮覆盖，
 #   整机那一例报红（无镜像哨，响得出来）。
 #
-# **照实记（整机用例为什么跑 release）**：同一个 `accept` 景，**release 产品路 6/6 稳、
-# 14 笔结局**；**debug 产品路结局笔数 5 / 11 / 6 / 11 乱跳、偶发 panic** ⇒ debug 档下
-# 这条世界本来就不可靠（`rig` 的照实记早写过"debug 下每轮都挂在 20 ms 那一缝上"）。
-# 而测试目标原先**只能在 debug 下编**（`kernel::health::*` 是 `#[cfg(debug_assertions)]`，
-# release 档 `cannot find `spare` in `health``）⇒ 那个 flaky 是**档**的问题，不是判据的
-# 问题。把健康面那九例一并 gate 进 `debug_assertions` 之后，release 档的测试目标只剩整机
-# 那一例，于是它能跑在与产品路**同一个档**上——顺带每景从十几秒降到一秒级。
-#
 # **档那一格的裁决（尾账收口）**：**整机一律 release**——`cargo image` 的 `--profile` 默认
 # release，测试目标 `--scene` 带 `-r`。这不是哪个消费者的偏好，是**世界**的性质（见上）。
 # `debug` 档留给**自检**（健康面那九例、内核启动自检）与单元级核对；整机跑 debug 今天会
 # 给出一台**起不完**的机器（结局笔数 5 / 11 / 6 而非 14）。
 #
-# **照实记（归档这一格）**：测试路**没有结构化导出**（内核那个 `semihosting` feature 不在
+# **（归档这一格）**：测试路**没有结构化导出**（内核那个 `semihosting` feature 不在
 # 测试构建里），故这一轮的现场就是 `cargo qtest` 自己的输出——机侧控制台走 semihosting
 # 落在它里面。纪律与 `runner.nu` 同款：**失败留档**到 `<TRACE_OUT>/scene-<景>-qtest.log`
 # （无 `--scene` 那轮叫 `qtest.log`），正常那轮丢掉，不留一堆绿的日志。
@@ -112,22 +72,6 @@
 # **先装那个 runner**（它是个宿主工具，不在仓里）：
 #
 #   cargo install cargo-qemu-test --target x86_64-unknown-linux-gnu   # ⇒ cargo-qtest
-#
-# **照实记（`--target` 那一格是必须的）**：本工作区的 `.cargo/config.toml` 把
-# `[build] target` 钉在 riscv 上，而 `cargo install` **也吃这一格** ⇒ 不带
-# `--target x86_64-unknown-linux-gnu` 会拿 riscv 去编这个宿主工具，编出来一堆
-# `cannot find trait PartialEq`（`std` 不在场）。实测踩过。
-# **照实记（`--smp` 那一格原本默认成 1，已撤）**：原先这里写"`-smp 4` 必炸——`_start`
-# 每颗 hart 都会跑一遍 ⇒ 4 颗一起冲进 `__embedded_test_start`、并发读 semihosting 命令行"。
-# **量下来那句是错的**：它只对 `-bios none`（M 态、所有 hart 从复位向量起跑）成立，
-# 而参数表给的是 `-bios SBI.bin`——S 态下**只有引导 hart 进内核**，副核由
-# `boot::boot_harts()` 经 HSM 拉起（**产品路本来就是 `-smp 4`**，`rig`/`soak` 的判据
-# 前提正是"空核替全局兑现到点"）。实测 `QEMU_SMP=4` 下原八例 8/8 绿、1.92 s。
-# 故这里不再改 `-smp` **默认**，跟参数表走；`QEMU_SMP` 显式设了当然也听调用方的。
-# 那条结论有钉子：`kernel/src/health/hart.rs` 的 `hart_multi` 用例。
-# **照实记（`icount` 那一格仍与"起机那条路"不同）**：这里把 `icount` 置空。旧的门
-# 统一关掉它（"按宿主时间节流会让 guest 与输入日程失步"，见 `qemu-args.nu` 的头注）；
-# 用例要在同一档下可比，故这里也关。
 
 # 喂日程的帮手（`--scene` 时落到 `<TRACE_OUT>/scene-feed.py` 再起）。
 # 参数：端口文件 / 捕获文件 / 要重喂的那一句。**listener**，QEMU 以 client 身份连上来。
@@ -187,7 +131,7 @@ exec qemu-system-riscv64 "${args[@]}"'
 def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
-  # **runner 守卫**（照实记）：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
+  # **runner 守卫**：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
   # `cargo-qemu-test`（对每一例起一个 QEMU，本脚本按它写）与 `cargo-qtest`（一个"挑用例的
   # UI"包装器，**一个 qemu 字样都没有**）。装错的那一枚不认识 `--qemu-arg`，而它的报错长成
   # `error: unexpected argument '--qemu-arg' found`——看起来像本脚本的旗标写错了（实测误判过）。
@@ -210,7 +154,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
 
   # 景：先造镜像，再把 `-initrd` 指过去（**绝对路径**——runner 的工作目录不是仓根），
   # 并把串口换到一条我们能喂输入的通道上（见头注）。
-  # 档默认 release：`cargo image` 自己也是这个默认，而 `rig` 的照实记说 release 是
+  # 档默认 release：`cargo image` 自己也是这个默认，而 `rig` 说 release 是
   # 它跑得动的前提（debug 下每轮都挂在 20 ms 那一缝上）。
   if not ($scene | is-empty) {
     let prof = if ($profile | is-empty) { "release" } else { $profile }
@@ -288,7 +232,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 命令与重定向**必须同一行**（分行 ⇒ `nu::parser::unexpected_redirection`）。故先把 argv
   # 拼好，再一行发出去——退出码仍由 `LAST_EXIT_CODE` 拿（`try` 那两条地雷见 `runner.nu` 头注）。
   let qtest_argv = ["qtest" "--target" "riscv64gc-unknown-none-elf" ...$test_profile ...$qemu_bin ...$qemu_args ...$scene_args ...$pkg ...$rest]
-  # **工作区那三条 rustflags 要由这一侧递一遍**（照实记）：`cargo-qtest` 把 `RUSTFLAGS` 的值
+  # **工作区那三条 rustflags 要由这一侧递一遍**：`cargo-qtest` 把 `RUSTFLAGS` 的值
   # 当作**种子**，再拼上它自己那两枚（对我们这一景是 `-Tembedded-test.x`），最后经
   # `cargo --config <临时 TOML>` 投下去——而那一份 config 的 `[target.'cfg(target_arch="riscv64")']`
   # 表**优先于**根 `.cargo/config.toml` 的 `[build] rustflags` ⇒ 不递的话那三条会静默丢。

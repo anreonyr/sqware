@@ -13,7 +13,7 @@ struct Node {
 }
 
 /// 名册一格：**一 TID 一格，且必有起点、必有当前**（两格都不是 [`Option`]）。
-/// - `origin` = 装配者当初把它定在哪条号上；`waive` 回到这里，于是"放弃"不是一个无底洞；
+/// - `origin` = 装配者把它定在哪条号上；`waive` 回到这里，于是"放弃"不是一个无底洞；
 struct Bound {
     tid: TaskId,
     origin: PrincipalId,

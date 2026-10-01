@@ -6,7 +6,7 @@ use crate::memory::manager::mode;
 /// **每一个任务那一叠用户栈的大小**（栈体，不含下面那一页保护页 —— 见
 /// [`TASK_STACK_GUARD`]）。
 ///
-/// **照实记（32 KB → 64 KB：debug 档量出来的）**：debug 档的帧比 release 大好几倍（不内联、
+/// **（32 KB → 64 KB：debug 档量出来的）**：debug 档的帧比 release 大好几倍（不内联、
 /// 每个临时各占一格），编排域那条链
 /// `main → system → Assembly::assemble → Control::enroll → Machine::devices`
 /// 在 debug 档深到 32 KB 装不下。**实测**（`product` 景、debug 档、tid=11 = 编排域）：

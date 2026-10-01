@@ -13,20 +13,6 @@
 //! | `report(self) -> ExitCode` | [`Exit::report`] → [`Report`]（携 [`env::Reason`]） |
 //! | lang item `#[lang_start]` + `rustc_main` | 生成物里那个 `clean_ret` + `programs::entry::entry` |
 //! | `impl Termination for ()/{!}/Result<T,E>` | 同形几条，见本文件 |
-//!
-//! # 照实记（这些为什么住 `runtime`，而不是 `env` 或 `programs`）
-//!
-//! 它们原先住 `programs/src/entry.rs`——与 `_start` 的汇编、panic 处理同处一个文件。但那
-//! 里其实是**两件事**：一半是**退场的词汇**（"`main` 想对内核说的全部" = `Reap { reason,
-//! note }` 那两格），另一半是**入口那一手**（汇编、panic、`entry`）。
-//!
-//! 词汇该住哪，只有一条判据，而且是可 grep 的：**内核读不读它**。
-//!   - [`env::Reason`] 与三枚码内核读（`EXIT_FAULT` 由故障隔离路径落账）⇒ 住 `env::exit`；
-//!   - [`Report`] / [`Exit`] / [`finish`] 内核一处也不碰，而 [`finish`] 要叫
-//!     [`crate::env::room::exit`]（`env` 不能依赖 `runtime`）⇒ **住这里**。
-//!
-//! 于是 `programs/src/entry.rs` 只剩**入口那一手**，`programs` 的 crate 根照旧转出
-//! [`Exit`] / [`Report`]——**调用点一行没改**（各 bin 的 `main` 仍写 `-> Report<'static>`）。
 
 use env::{EXIT_OK, Reason};
 

@@ -26,7 +26,7 @@ pub struct PathBuf {
 }
 
 impl Path {
-    /// 一条路最多几段（原 `frame::ROAD_MAX`）。
+    /// 一条路最多几段。
     pub const MAX: usize = 8;
 
     /// 一条路最多几字节（**线上长度那一字节**说得出的范围）。

@@ -96,7 +96,7 @@ pub fn init() {
     #[cfg(debug_assertions)]
     crate::lock::init_depend(hart::hart_count()).expect("depend init failed");
 
-    // **照实记（这一格是 release 档编不过的当场修复）**：健康面那九例整体 gate 进了
+    // **（这一格是 release 档编不过的当场修复）**：健康面那九例整体 gate 进了
     // `debug_assertions`（`kernel/src/health/mod.rs` 头上那一句），而这一句**没跟着 gate**
     // ——于是 `cargo build -p kernel --release`（以及 `cargo qtest --scene` 那条 release 路）
     // 当场 E0433：`cannot find health in the crate root`。两侧同一个闸：这里补上。
@@ -139,8 +139,8 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    /// 退场那两位的签名：**收 `&Arc<Task>`**（原话见 `messenger::Hook`——号那一格
-    /// 逼得封印去问清册快照，而快照会分配）。
+    /// 退场那两位的签名：**收 `&Arc<Task>`**（号那一格逼得封印去问清册快照，而快照会分配，
+    /// 备不出容量就空表——故直接收 `Arc`）。
     static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::work::unit::task::Task>)] = &[
         crate::work::room::messenger::doom,
         crate::work::unit::gate::doom,
