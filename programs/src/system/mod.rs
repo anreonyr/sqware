@@ -307,10 +307,10 @@ impl Assembly {
         // 已经不是这里读的了）：逐条边等那一台**到过就绪那一格**。排对了就即刻返回；排错了
         // （声明的边与实情不符）当场报出"哪一台的哪条边"——不让客人自己去撞那圈有界重试。
         for dep in program.relation.deps.unwrap_or(&[]) {
-            // **[`SCENE`](crate::program::SCENE) 那一条不等**（照实记）：它说的是"这一趟走完"，
-            // 而这一趟正是本处——等一个"这一趟"没有可等的对象，表里也没有那一行。**排到最后就是
-            // 它的全部保证**（[`order_scene`](crate::program::order_scene) 那一条）。
-            if *dep == crate::program::SCENE {
+            // **指着[目标单元](crate::program::Kind::Target)那一条不等**（照实记）：它说的是
+            // "这一趟走完"，而这一趟正是本处——等一个"这一趟"没有可等的对象，表里也没有那一行。
+            // **排到最后就是它的全部保证**（[`order_scene`](crate::program::order_scene) 那一条）。
+            if crate::program::is_target(dep) {
                 continue;
             }
             if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {

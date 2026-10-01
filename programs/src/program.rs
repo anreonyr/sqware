@@ -57,7 +57,7 @@ pub type Died = env::Reason;
 /// **一台程序**：它的身份、它在装配图里的边、它起手要什么——**三块分开**。
 ///
 /// ```text
-///   Identity   它是谁（清单名 / 特权级 / 进哪几张景 / 是不是引导镜像）
+///   Identity   它是谁（清单名 / 单元类型 / 特权空间 / 进哪几张景 / 是不是引导镜像）
 ///   Relation   它跟谁有边（依赖 / 存在信号 / 身份）
 ///   Demand     它起手要什么（死在第几步 / 那几手 setup）
 /// ```
@@ -88,9 +88,14 @@ impl Program {
         self.identity.name
     }
 
-    /// 装成哪种空间。
-    pub fn kind(&self) -> ProgramKind {
+    /// **它是哪一种单元**（[`Kind`]）。
+    pub fn kind(&self) -> Kind {
         self.identity.kind
+    }
+
+    /// 装成哪种**空间**（S / U）。**它不是"单元类型"**——单元类型见 [`Kind`]。
+    pub fn space(&self) -> ProgramKind {
+        self.identity.space
     }
 
     /// 进哪几张引导镜像（景名）。
@@ -113,16 +118,50 @@ impl Program {
     }
 }
 
-/// **身份**：这一台是谁——清单名、装成哪种空间、进哪几张景、是不是引导镜像。
+/// **单元类型**——systemd 那份模型里的 `.service` / `.target`（后缀定了型）。
+///
+/// **两个变体各有生产者与读者**（它不是枚举摆设）：
+///
+/// | 变体 | 是什么 | 生产者 | 读者 |
+/// |---|---|---|---|
+/// | [`Kind::Service`] | 要起的服务（有身子、进镜像） | 其余每一份声明（吃 [`Identity::DEFAULT`]） | 宿主打包（`crates/image` 按它滤）／装配那一趟 |
+/// | [`Kind::Target`] | **只把几条边聚在一起的目标**（没有身子、不进任何镜像） | [`SCENE_UNIT`] 一处 | [`is_target`]（`order_scene` 与装配那一趟据它认那条"等这一趟走完"的边） |
+///
+/// **照实记（`Scope` 那一档为什么还没有）**：systemd 那一侧还有 `.scope`（外部造出来的、不被
+/// 管理器起的单元）——本仓今天没有它的生产者（那 13 台"不在这一趟装配单上"的台，用
+/// `deps: None` 就说清了，而它们**仍然是一种服务**：有身子、进镜像）。**没有生产者的变体不立**
+/// （`Spot` 那 29 写 0 读是上一课）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    /// 要起的服务：有身子（进镜像），由编排域按 `deps` 起。
+    Service,
+    /// **目标**：没有身子、不进任何镜像，只把几条边聚在一起（"这一趟装配走完"就是它的内容）。
+    Target,
+}
+
+/// **身份**：这一台是谁——清单名、**单元类型**（[`Kind`]）、装成哪种**空间**、
+/// 进哪几张景、是不是引导镜像。
 ///
 /// **它是谁与它怎么被接进来是两件事**：`crates/image` 那台宿主只读这一块（且只走
-/// [`Program::name`] 那四条窄面），装配关系与需求一概与打包无关。
+/// [`Program::name`] 那**四**条窄面：`name` / `space` / `scenes` / `entry`），装配关系与需求
+/// 一概与打包无关。
+///
+/// **照实记（这块里为什么有"单元类型"）**：`kind` 那一格（[`Kind`]）答的是"它是哪一种单元"
+/// ——宿主按它决定"要不要装进镜像"（目标单元没有身子），故它与"它是谁"同块；`space` 那一格
+/// 答的是"它跑在哪个特权空间"（S/U），与 `env::ProgramKind` 那两个变体一一对应。
 #[derive(Clone, Copy)]
 pub struct Identity {
     /// 清单名（也是 cargo 的 bin 名去掉 `prog-`，见 `crates/image` 那条照实记）。
     pub name: &'static str,
-    /// 装成哪种空间。
-    pub kind: ProgramKind,
+    /// **单元类型**（[`Kind`]）：`Service` 是要起的服务，`Target` 只把几条边聚在一起——
+    /// **没有身子、不进任何镜像**（今天只有一个：本文件末尾那个 [`SCENE_UNIT`]）。
+    pub kind: Kind,
+    /// 装成哪种**空间**（S / U）。
+    ///
+    /// **照实记（它从前叫 `kind`）**：那个名字与 [`Kind`]（单元类型：服务 / 目标）撞在一起——
+    /// 一个说"它跑在哪个特权空间"，一个说"它是哪一种单元"，两件事。故按它真正答的那句话改名
+    /// （与 `env::ProgramKind` 那两个变体 `Supervisor` / `User` 对应的是"空间"，不是"种类"）。
+    pub space: ProgramKind,
     /// 进哪几张引导镜像（**景名**）——**次序即装载次序**。
     pub scenes: &'static [&'static str],
     /// **它是哪几张景的引导镜像**（多数为空）。一个景存在 ⇔ 它有一条引导镜像，故这张表
@@ -150,12 +189,13 @@ pub enum Ending {
     Told,
 }
 
-/// **这一趟装配本身**——**不是一台程序**：没有身子、不进这张单（[`PROGRAMS`] 里没有它），
-/// 图里它只是一个**节点**。
+/// **这一趟装配本身**（名单里那个目标单元的名字）：写法是 `deps: Some(&[…, SCENE])` =
+/// "**等这一趟装配走完**再起我"。今天只有 `probe-control` 一家写它：它问的
+/// `/svc/sys/control/state` 由装配者在**整表起完之后**才铸、且要等监督那一趟开始才被**服务**
+/// ——而"整表起完"不是一个台，图里本来没有它的落点。
 ///
-/// **写法**：`deps: Some(&[…, SCENE])` = "**等这一趟装配走完**再起我"。今天只有 `probe-control`
-/// 一家写它：它问的 `/svc/sys/control/state` 由装配者在**整表起完之后**才铸、且要等监督那一趟
-/// 开始才被**服务**——而"整表起完"不是一个台，图里本来没有它的落点。
+/// **它是 [`Kind::Target`] 那个单元的名字**（[`SCENE_UNIT`]）：两边写的是同一个词，一处给
+/// （静态那份声明的 `identity.name` 就是它）。
 ///
 /// **到点是什么意思**（唯一一处）：[`order_scene`] 把写它的台排到**最后**（同批按名字）；编排域
 /// 起完它们之后立刻挂上 control 那一面、进监督那一趟（`system/main.rs` 的相四）。**装配那一趟里
@@ -165,7 +205,50 @@ pub enum Ending {
 /// **照实记（它为什么从一格布尔变成一个名字）**：那一格从前是 `Relation::after_scene: bool`——
 /// `true` 说的就是这句话，而"这一趟"在图上没有落点，于是它只能是一格 flag，两个读者各自把这句话
 /// 猜一遍。今天它与别的边同一个写法（`deps` 里写名字），而"什么时候算到点"只写在这里。
+///
+/// **照实记（它从"一个名字"升成"一个单元"）**：上一刀它只是一个名字（[`is_target`] 判的就是这个
+/// 名字）。今天它是**名单里的一台**（[`PROGRAMS`] 里有 [`SCENE_UNIT`]，`Kind::Target`）：判据因此
+/// 从"名字等于 `SCENE`"变成"**那一台是目标单元**"——名字与类型的区别在那里显出来（`is_target`
+/// 不再认识字面量），而"图里的点"这一件事终于有了自己的型。
 pub const SCENE: &str = "scene";
+
+/// **这一趟装配本身**——名单里的那个[目标单元](Kind::Target)：**没有身子、不进任何镜像**（宿主
+/// 那一侧按 `scenes` 与 `kind` 两格把它滤掉），它对这张单的贡献只有一件事：**给"这一趟走完"
+/// 一个落点**（[`SCENE`] 那条边指着它）。
+///
+/// **它为什么住本文件**（照实记）：各台自己那份 `program.rs` 的判据是"声明紧挨着它的身子"
+/// （见下面那张 `#[path]` 清单）——而目标单元**没有身子**，故它没有"自己那一份"可言；它属于
+/// **图的形状**这一层，与 [`PROGRAMS`] 住同一处。
+pub static SCENE_UNIT: Program = Program {
+    identity: Identity {
+        name: SCENE,
+        kind: Kind::Target,
+        scenes: &[],
+        ..Identity::DEFAULT
+    },
+    relation: Relation::DEFAULT,
+    demand: Demand::DEFAULT,
+};
+
+/// **这一条边指着的是不是"这一趟自己"**——即那一台是不是[目标单元](Kind::Target)。
+///
+/// 图里两种点：**要起的服务**（在单上、有身子）与**目标**（不在单上：它只把几条边聚在一起，
+/// "这一趟装配走完"就是它的内容）。两个读者判的是同一句话：[`order_scene`] 据它把这一台排到
+/// 最后（那一格要到那时才到点），装配那一趟据它跳过那一条边
+/// （[`Assembly::assemble`](crate::system::Assembly::assemble)：等一个"这一趟"没有可等的对象）。
+///
+/// **判据是"类型"不是"名字"**（照实记：这一格与 [`SCENE_UNIT`] 一起改的）：从前这里写的是
+/// `name == SCENE` 那个字面量——同一个词在两处出现；今天它问的是**那一台自己的 `kind`**。
+pub fn is_target(name: &str) -> bool {
+    let mut i = 0;
+    while i < PROGRAMS.len() {
+        if PROGRAMS[i].name() == name {
+            return matches!(PROGRAMS[i].kind(), Kind::Target);
+        }
+        i += 1;
+    }
+    false
+}
 
 /// **装配关系**：编排域把它接进来时那几条边。
 ///
@@ -265,7 +348,8 @@ impl Identity {
     /// **什么都没声明的那一形**（中性，不是多数值——见上面那一节）。
     pub const DEFAULT: Identity = Identity {
         name: "",
-        kind: ProgramKind::User,
+        kind: Kind::Service,
+        space: ProgramKind::User,
         scenes: &["root"],
         entry: &[],
     };
@@ -476,6 +560,9 @@ pub const PROGRAMS: &[&Program] = &[
     &harness::AGAIN,
     &harness::WAITER,
     &harness::GROUP,
+    // **这一趟装配本身**（[`SCENE_UNIT`]）：一个[目标单元](Kind::Target)——没有身子、不进任何
+    // 镜像（宿主那一侧按 `scenes` 与 `kind` 两格滤掉），它在这张表里只为"这一趟走完"给一个落点。
+    &SCENE_UNIT,
 ];
 
 /// 清单条数上界与注册表条数必须相容（见 [`env::manifest::MAX_PROGRAMS`] 的头注）。
@@ -515,7 +602,9 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
             let mut d = 0;
             while d < deps.len() {
                 let name = deps[d];
-                if name != SCENE {
+                // **[目标单元](Kind::Target)那一条除外**：它指的是这一趟自己，不是本单里的台，
+                // 也没有"答得动"可言（见 [`SCENE_UNIT`] 与 [`is_target`]）。
+                if !is_target(name) {
                     match find(list, name) {
                         None => return Err(DepsFail::Unknown(name)),
                         Some(target) if target.demand.setup.is_empty() => {
@@ -548,7 +637,7 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
         list.swap(placed, i);
         placed += 1;
     }
-    // 三、收尾：剩下的必须全是等 [`SCENE`] 的（不是 ⇒ 环）；它们同批按名字。
+    // 三、收尾：剩下的必须全是等[目标单元](Kind::Target)的（不是 ⇒ 环）；它们同批按名字。
     let mut i = placed;
     while i < n {
         if !waits_scene(list[i]) {
@@ -572,7 +661,7 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
     Ok(())
 }
 
-/// **这一台等的是"这一趟走完"吗**——`deps` 里有 [`SCENE`] 就是。
+/// **这一台等的是"这一趟走完"吗**——`deps` 里有一条边指着[目标单元](Kind::Target)就是。
 ///
 /// 它有两个读者，判的是同一句话：[`order_scene`] 据它把这一台排到最后（那一格要到那时才到点），
 /// 而装配那一趟据它跳过那一条边（`Assembly::assemble`：等一个"这一趟"没有可等的对象）。
@@ -580,7 +669,7 @@ fn waits_scene(program: &Program) -> bool {
     program
         .relation
         .deps
-        .is_some_and(|deps| deps.contains(&SCENE))
+        .is_some_and(|deps| deps.iter().any(|name| is_target(name)))
 }
 
 /// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）。

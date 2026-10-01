@@ -353,7 +353,7 @@ pub static CHURN: Program = Program {
 pub static RIG: Program = Program {
     identity: Identity {
         name: "rig",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["rig"],
         entry: &["rig"],
         ..Identity::DEFAULT
@@ -395,7 +395,7 @@ pub static HANG: Program = Program {
 pub static LOAD: Program = Program {
     identity: Identity {
         name: "load",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["load"],
         entry: &["load"],
         ..Identity::DEFAULT
@@ -407,7 +407,7 @@ pub static LOAD: Program = Program {
 pub static BEAT: Program = Program {
     identity: Identity {
         name: "beat",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["beat"],
         entry: &["beat"],
         ..Identity::DEFAULT
@@ -419,7 +419,7 @@ pub static BEAT: Program = Program {
 pub static AGAIN: Program = Program {
     identity: Identity {
         name: "again",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["again"],
         entry: &["again"],
         ..Identity::DEFAULT
@@ -441,7 +441,7 @@ pub static WAITER: Program = Program {
 pub static GROUP: Program = Program {
     identity: Identity {
         name: "group",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["group"],
         entry: &["group"],
         ..Identity::DEFAULT

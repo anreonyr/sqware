@@ -15,7 +15,7 @@ pub const E_BOOT: Died = 1;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "system",
-        kind: ProgramKind::Supervisor,
+        space: ProgramKind::Supervisor,
         scenes: &["root", "product"],
         ..Identity::DEFAULT
     },
