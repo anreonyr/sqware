@@ -2,7 +2,7 @@
 //! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::ledger::args`），答的还是
 //! "谁被装进来了"这件事。
 //! 内核只把这两区**只读借映**进**引导镜像那一域**，故读者是每一个引导镜像：
-//! `system`，以及 harness 的 `again` / `rig` / `load` / `group`。
+//! `system`，以及测具那一档的 `again` / `rig` / `load` / `group`（`src/harness/bench/`）。
 
 pub mod accounts;
 pub mod catalog;

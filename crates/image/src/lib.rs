@@ -1,4 +1,4 @@
-//! image — **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
+//! image — **造镜像那一步**：编程序（`programs`，含测具那一档）→ 打 initrd → 放到内核 ELF 旁。
 //!
 //! # 瘦身（`slim`）：为什么在**打包侧**剥符号与调试节
 //!
@@ -28,7 +28,7 @@ fn root() -> PathBuf {
 ///
 /// # 为什么是 `#[path]` 而不是一条依赖
 ///
-/// 本 crate 是**宿主** std 程序，而 `programs` / `harness` 拖着 `protocol → runtime`
+/// 本 crate 是**宿主** std 程序，而 `programs` 拖着 `protocol → runtime`
 /// （riscv 内联汇编，宿主上不做代码生成就编不过）⇒ 它**不能**依赖 `programs`。
 /// 而装配表只有一份——每台程序自己那份 `program.rs`。故那一份源码由**两侧各编一次**：
 /// `programs` 编它给运行时用，本 crate 编它给打包用。
@@ -122,11 +122,9 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     let work = root.join("target/image").join(profile);
     let mut args = vec![
         "build".to_string(),
-        // **两个包一起编**：产品（`programs`）与测具（`harness`）——后者依赖前者的 lib。
+        // **一个包**：产品与测具同住 `programs`（`src/` 与 `src/harness/`）。
         "-p".to_string(),
         "programs".to_string(),
-        "-p".to_string(),
-        "harness".to_string(),
         "--target".to_string(),
         TARGET.to_string(),
         "--target-dir".to_string(),
@@ -144,7 +142,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .status()
         .map_err(|e| format!("起不动嵌套 cargo：{e}"))?;
     if !status.success() {
-        return Err("programs / harness 编不过（上面是它们自己的报错）".to_string());
+        return Err("programs 编不过（上面是它自己的报错）".to_string());
     }
 
     // 读产物：**bin 名是约定** `prog-<名字>`（装配表里不写第二遍）；读进来就顺手瘦一遍

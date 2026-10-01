@@ -28,7 +28,7 @@
 
 extern crate programs;
 
-use harness::tick;
+use programs::harness::tick;
 
 use core::time::Duration;
 

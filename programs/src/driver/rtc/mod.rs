@@ -2,7 +2,7 @@
 //! ```text
 //!   main.rs     入口（bin）：只剩五步流程
 //!   core/       **纯功能**：会话核（事件 → 决定）＋ 那一格 ＋ 形与记号 ＋ 失败域
-//!   client.rs   客侧两手（碰内核；与客人 `harness/src/guest/sleeper.rs` 同一份源码）
+//!   client.rs   客侧两手（碰内核；与客人 `programs/src/harness/guest/sleeper.rs` 同一份源码）
 //!   dev/rtc.rs  设备模块（bin 自己 `mod`——同一份源码不编两遍）
 //!   adapt/      住持面（bin）：门面 / 常驻——**只剩这一台自己的形状**
 //! ```

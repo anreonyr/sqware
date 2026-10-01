@@ -1,13 +1,13 @@
-//! harness — **测具那 25 台**的装配声明。
-//! # 它为什么住本 crate（而不是隔壁 `harness`）
-//! 这 25 台的身子住 `harness`，但其中 **15 台由编排域起**（`guest` / `passer` / `lodger` /
-//! `sleeper` / `subject` / `member` 与七台 `probe-*`）——编排域要按 `order` / 存在信号
-//! （`Relation::presence`）/ `bind` / `died` 起它们，故这几格必须由 `programs` 编译得出来。而 `harness` 依赖
-//! `programs`，反向建依赖是环 ⇒ **声明只能住这一侧**。
-//! **为什么不拆成 23 份**：「一台一份 `program.rs`」的判据是"声明紧挨着它的身子"；这几台的
-//! 身子**不在本 crate**，那句话对它们本来就不成立，不假装。可 grep 的那条规矩因此是：
-//! **声明跟着"起它的那一侧"走**——产品程序由编排域起（身子也在本 crate）⇒ 住各自目录；
-//! 测具由编排域起（身子在隔壁）⇒ 住本文件。
+//! harness — **测具那 25 台**的装配声明（一份）。
+//! # 它为什么住这一份（而不是一台一份 `program.rs`）
+//! 这 25 台的身子住 `programs/src/harness/`（探针 / 试客 / 压测台），其中 **15 台由编排域起**
+//! （`guest` / `passer` / `lodger` / `sleeper` / `subject` / `member` 与七台 `probe-*`）——
+//! 编排域要按 `order` / 存在信号（`Relation::presence`）/ `bind` / `died` 起它们，而
+//! "哪几台进哪张镜像"那张表在宿主侧的 `crates/image` 里也要看得见 ⇒ 声明必须能在**只引 `env`**
+//! 的前提下被编译（见 `unit/mod.rs` 那条纪律）。
+//! 那 25 份身子是**独立的 bin 目标**（各自带 `#![no_std]` / `#![no_main]` 这类 crate 级属性），
+//! **当不了模块**被 `#[path]` 拉进这棵树；要"一台一份"就得给每台开一个目录放 `program.rs`
+//! ——今天不这么做，25 台的声明就住这一份。
 //! 其余 10 台（`churn` / `rig` / `busy` / `park` / `hang` / `load` / `beat` / `again` /
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。

@@ -1,7 +1,7 @@
 //! call::memory — **Memory 域（class 2：地址空间与页）**：调用表（[`MemoryCall`]）与失败词汇（[`MemoryFail`]）。
 
 use mold::{Envcall, Fail};
-use crate::wire::{VirtAddr};
+use crate::wire::VirtAddr;
 
 /// Memory 域（class 2：用户堆与映射）的失败词汇。
 #[derive(Fail)]

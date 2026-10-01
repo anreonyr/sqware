@@ -3,7 +3,7 @@
 use mold::{Envcall, Fail};
 use super::HoleDir;
 use crate::abi::wait::Wait;
-use crate::wire::{PieToken};
+use crate::wire::PieToken;
 
 /// Tole 域（class 9：多路等待）的失败词汇。
 #[derive(Fail)]

@@ -12,14 +12,12 @@ exclude = [
 # 没有 `[profile.framework]` / `[profile.harden]`：护栏（`debug_assertions` 全集：
 # lockdep / 页表 / 空间不变量）一直在 release 档开着，没有专门的测试档去重新开它。
 
-# `harness` 是**工作区成员**，与 `programs` 同一族（同一张链接脚本、同一批"被内核装载的
-# ELF"）：它是**测具**那一档——探针（进验收镜像当客人）与压测台（整台替换引导镜像）。
-# 哪几台进哪张镜像，见 `harness/Cargo.toml` 与 `programs/src/unit/`（**程序装配声明的
-# 唯一来源**）。
+# **测具**那一档（探针 / 试客 / 压测台）住 `programs` 那一份 crate 里（`programs/src/harness/`）：
+# 同一张链接脚本、同一批"被内核装载的 ELF"、同一手 `programs::entry`；哪几台进哪张镜像只在
+# `programs/src/unit/` 声明（**程序装配声明的唯一来源**）。
 members = [
     "kernel",
     "programs",
-    "harness",
     "crates/env",
     "crates/protocol",
     "crates/runtime",
@@ -31,13 +29,12 @@ resolver = "3"
 
 # ── 排版口径（**明文声明**，用户裁定：本仓手排、`cargo fmt` 不是判据）──────────────
 #
-# **不跑 `cargo fmt --all`**：它在这棵树上一直是红的。实测（2026-09-26）**207 处、75 个文件**
-# ——`harness` 91 / `programs` 68 / `crates/protocol` 25 / `crates/contract` 16（**今已并入 `protocol`**）/ `crates/env` 3 /
-# `crates/runtime` 2 / `kernel` 2（75 份全是被 git 跟踪的 `.rs`；全树 338 份里 263 份本来就
-# 是干净的）。故 **fmt 绿不是任何一关的判据**，`cargo fmt --all --check` 的读数只当参考。
+# **不跑 `cargo fmt --all`**：它在这棵树上一直是红的。实测（2026-10-01）**107 处、71 个文件**
+# （`cargo fmt --all --check` 打出的 `Diff in <file>:<line>` 逐条数；全树 403 份被跟踪的 `.rs`
+# 里其余是干净的）。故 **fmt 绿不是任何一关的判据**，`cargo fmt --all --check` 的读数只当参考。
 #
 #   · 改哪一段，就照**那一段**的排法写（邻行即规格；新文件按同目录的排法起手）；
-#   · **不许为了让它变绿而全树重排**——207 处里没有一处改变判据，而重排会把成对的对齐、
+#   · **不许为了让它变绿而全树重排**——那些处里没有一处改变判据，而重排会把成对的对齐、
 #     与代码对齐的注释一起打散。需要单独钉住的表写 `#[rustfmt::skip]`
 #     （例见 `programs/src/unit/catalog.rs` 的 `PROGRAMS` 那张表），不是"跑一遍 fmt 再从 diff 里补回来"。
 

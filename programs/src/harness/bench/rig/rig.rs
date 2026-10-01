@@ -59,7 +59,7 @@ use env::Wait;
 use programs::Reason;
 
 use env::Mark;
-use harness::tick;
+use programs::harness::tick;
 
 use programs::boot::{Accounts, Catalog};
 

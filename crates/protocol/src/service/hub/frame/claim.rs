@@ -3,7 +3,7 @@
 use env::{ PieToken};
 
 
-use super::vocab::{CLAIM};
+use super::vocab::CLAIM;
 
 /// 认领：**要什么权**（种 / 取用 / 形态）＋ **主人那一枚**。**"哪一台"不在这帧里**——你 `find`
 /// 的是哪一格，那一格上挂的就是哪一台那一份孔。

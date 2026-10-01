@@ -2,6 +2,7 @@
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
 //! ```text
 //!   driver/ service/ system/ user/   四档程序族（每族一台一份主模块，声明写在各台 `program.rs` 里）
+//!   harness/  测具那一档（探针 / 试客 / 压测台；不进产品镜像）
 //!   unit/     声明层：一台程序的模型（`UnitFile`）＋ 注册表 ＋ 次序 ＋ 测具那 25 台的声明
 //!   boot/     每个引导镜像共用：两块账（accounts）与清单读面（catalog）
 //!   entry.rs        每个程序共用：那一手 `_start`（`crates/mold` 的 `#[entry]` 写死这条路径）
@@ -16,6 +17,7 @@ extern crate alloc;
 pub mod boot;
 pub mod driver;
 pub mod entry;
+pub mod harness;
 pub mod service;
 pub mod system;
 pub mod unit;

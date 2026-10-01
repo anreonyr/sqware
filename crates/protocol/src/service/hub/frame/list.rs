@@ -4,7 +4,7 @@ use alloc::string::String;
 use env::{ PieToken};
 
 
-use super::vocab::{LIST};
+use super::vocab::LIST;
 
 /// 列册：类 ＋ **游标**（从哪一条起取窗）。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]

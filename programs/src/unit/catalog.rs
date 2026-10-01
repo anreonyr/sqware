@@ -10,10 +10,10 @@ use super::{SCENE_UNIT, UnitFile};
 pub mod canonical;
 #[path = "../service/coalition/program.rs"]
 pub mod coalition;
-/// harness 那 25 台（**测具**）：它们的身子住隔壁那个 crate，而其中 15 台**由编排域起**
-/// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。
-/// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 23 份：
-/// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
+/// harness 那 25 台（**测具**，身子在 `programs/src/harness/`）：其中 15 台**由编排域起**
+/// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，而"哪几台进哪张镜像"这张表在宿主侧
+/// （`crates/image`）也要看得见，故声明必须能在只引 `env` 的前提下编译出来。那 25 份身子是独立
+/// bin 目标（带 crate 级属性），当不了模块拉进来 ⇒ 声明住这一份（一台一份要各开目录，今天不做）。
 #[path = "harness.rs"]
 pub mod harness;
 #[path = "../service/hub/program.rs"]

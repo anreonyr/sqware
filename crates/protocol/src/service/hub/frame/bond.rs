@@ -4,7 +4,7 @@ use alloc::string::String;
 use env::{ PieToken};
 
 
-use super::vocab::{BOND};
+use super::vocab::BOND;
 
 /// 报名：**只有类**（驱动不需要知道盟号）。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]

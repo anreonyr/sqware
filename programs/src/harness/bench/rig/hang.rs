@@ -29,7 +29,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 
-use harness::tick;
+use programs::harness::tick;
 
 use protocol::communication::establish;
 use protocol::debug;

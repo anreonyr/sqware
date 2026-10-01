@@ -1,6 +1,6 @@
 //! call::chrono — **Chrono 域（class 4：时钟与到点）**：调用表（[`ChronoCall`]）。
 
-use mold::{Envcall};
+use mold::Envcall;
 
 /// 时钟调用（class 4；域 = runtime::chrono）。
 #[derive(Envcall)]

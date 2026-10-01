@@ -14,7 +14,7 @@ use crate::common::path::Path;
 use crate::service::operator::{EntryId,  Listing, Where};
 
 use super::{Face, Mine, map_code};
-use super::tile::{Tile};
+use super::tile::Tile;
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它。
 /// 它能继续分 / 落 / 列——正是"一个值决定后续操作的宾语"那一格，故给它一个柄；一枚砖只需

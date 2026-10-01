@@ -54,7 +54,7 @@ use alloc::string::ToString;
 use env::Wait;
 use programs::Reason;
 
-use harness::tick;
+use programs::harness::tick;
 
 use programs::boot::{Accounts, Catalog};
 
