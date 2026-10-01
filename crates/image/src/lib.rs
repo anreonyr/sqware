@@ -108,7 +108,7 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
     Ok(picked)
 }
 
-/// **校验这一景的图，并返推导出的装配次序**（照实记：次序由各台声明里的 `deps` 算出来，
+/// **校验这一景的图，并返推导出的装配次序**（照实记：次序由各台声明里的 `after` 算出来，
 /// **打包这一趟是它的第一个读者**——宿主上有名字、有退出码，坏图在这里就断掉）。
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
@@ -136,7 +136,7 @@ fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
 pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     let root = root();
     let bins = bins_for(scenario)?;
-    // **图那一趟**：先把这一景的 deps 校验一遍（坏图当场断），顺手把算出来的次序打出来——
+    // **图那一趟**：先把这一景的 after 校验一遍（坏图当场断），顺手把算出来的次序打出来——
     // 验收要核对的就是这一行。
     println!(
         "initrd: 景 {scenario} 的装配次序：{}",

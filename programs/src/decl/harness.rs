@@ -45,7 +45,7 @@ pub static GUEST: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "router"]),
+        after: Some(&["operator", "router"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -62,7 +62,7 @@ pub static PASSER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&[]),
+        after: Some(&[]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -79,7 +79,7 @@ pub static LODGER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "hub", "router"]),
+        after: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -96,7 +96,7 @@ pub static SLEEPER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "rtc"]),
+        after: Some(&["operator", "rtc"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -113,7 +113,7 @@ pub static SUBJECT: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "principal"]),
+        after: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -130,7 +130,7 @@ pub static MEMBER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "coalition", "principal"]),
+        after: Some(&["operator", "coalition", "principal"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -153,7 +153,7 @@ pub static PROBE_DENIED: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
+        after: Some(&["operator"]),
         bind: false,
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
@@ -171,7 +171,7 @@ pub static PROBE_OWNER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "uart"]),
+        after: Some(&["operator", "uart"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -188,7 +188,7 @@ pub static PROBE_RULE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "principal"]),
+        after: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -207,7 +207,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "probe-rule"]),
+        after: Some(&["operator", "probe-rule"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -224,7 +224,7 @@ pub static PROBE_LEASE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
+        after: Some(&["operator"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -242,7 +242,7 @@ pub static PROBE_BOUND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
+        after: Some(&["operator"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -261,7 +261,7 @@ pub static PROBE_BOUND: Program = Program {
 /// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 ///
-/// **它排在最后**（`deps` 里那条 [`SCENE`] 边）：那一面是在**整表起完**之后才挂上树的
+/// **它排在最后**（`after` 里那条 [`SCENE`] 边）：那一面是在**整表起完**之后才挂上树的
 /// （`Assembly::mount_control`，由 `system/main.rs` 的相四叫）——那**不是一个台**，图里本来
 /// 没有它的落点，故写成"等装配那一趟走完"那条边（名字 [`SCENE`]，次序由
 /// `program::order_scene` 算；那一格从前是一格布尔 `after_scene`，照实记见 [`SCENE`] 的头注）。
@@ -271,7 +271,7 @@ pub static PROBE_CONTROL: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", SCENE]),
+        after: Some(&["operator", SCENE]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -305,7 +305,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
+        after: Some(&["operator"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -324,7 +324,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
+        after: Some(&["operator"]),
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },

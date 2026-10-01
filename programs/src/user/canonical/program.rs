@@ -6,8 +6,8 @@
 //!
 //! **照实记（那场让位（18 → 19 → 21 → 22）整条作废）**：它原先既是**停机扳机**（故必须排最大）、
 //! 又要给"要等服务起来才问得动"的真客人让位——两件事都随 `program.rs::Relation` 那两格退场：
-//! 扳机改读账（`Control::{due, done}`），次序改由 `deps` 算（`order_scene`）。今天它只是
-//! `deps: Some(&["operator", "uart"])` 那一台。下面那一段是**作废前的原话**（留档）：
+//! 扳机改读账（`Control::{due, done}`），次序改由 `after` 算（`order_scene`）。今天它只是
+//! `after: Some(&["operator", "uart"])` 那一台。下面那一段是**作废前的原话**（留档）：
 //! （`Watch::of` 的 `watch_last` ⇒ `list.last()`），故**它必须是那张单上的最大 `order`**。
 //! 每多一位"要等服务起来才问得动"的真客人，就让位一次：`probe-control` 排在 21；而操作面那两位
 //! （`probe-operator-gate` / `probe-operator-land`）排在**最前**（4 / 5，身份服务之后、驱动之前）
@@ -83,7 +83,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "uart"]),
+        after: Some(&["operator", "uart"]),
         ending: Some(Ending::Told),
         ..Relation::DEFAULT
     },

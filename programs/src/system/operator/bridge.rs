@@ -190,7 +190,7 @@ impl Tree {
 }
 
 /// **树这一轴在装配那一趟里的那一手**：**"这一台接不接那棵树"不是声明里的一格**（照实记：那一格
-/// 从声明上撤了，见 [`Relation`](crate::program::Relation) 的头注），判据从这一台自己的 `deps`
+/// 从声明上撤了，见 [`Relation`](crate::program::Relation) 的头注），判据从这一台自己的 `after`
 /// 推——见 [`needs_tree`]。
 ///
 /// **在存在信号之后**：两者各一条路、互不影响。持树者必须先于这位客人起：提示之路还没认下就
@@ -209,12 +209,12 @@ pub fn attach_client(
 /// **这一台要不要站到那棵树上**——**推出来的，不是声明的**（旧 `Relation::operator` 那一格）。
 ///
 /// 树就是持树者那一本目录（`find` 回那一枚入口、`land` 把自己那几格落上去），故"要用树的东西"
-/// 与"要问 operator 那一族"是**同一件事**——而那一件事已经写在 `deps` 里了，再单写一格就是
+/// 与"要问 operator 那一族"是**同一件事**——而那一件事已经写在 `after` 里了，再单写一格就是
 /// 同一句话的第二处（两处不一致那一天，没有一处说得清哪一处对）。
 ///
-/// **量过**（照实记，35 份声明逐份核）：写 `operator: true` 的正是 `deps` 含 `"operator"` 的那
-/// **21** 台，写 `false` 的 **0** 台；余下 14 份里 12 份没写 `deps`（默认 `None`）、2 份写
-/// `deps: Some(&[])`（`passer` 与持树者自己）——两处都空。
+/// **量过**（照实记，35 份声明逐份核）：写 `operator: true` 的正是 `after` 含 `"operator"` 的那
+/// **21** 台，写 `false` 的 **0** 台；余下 14 份里 12 份没写 `after`（默认 `None`）、2 份写
+/// `after: Some(&[])`（`passer` 与持树者自己）——两处都空。
 ///
 /// **照实记（那个数先报错了一次）**：起初按 `grep -c "operator: true"` 数出 **23**，而那一行也
 /// 出现在两处**注**里（`hub/program.rs` 与 `program.rs` 的 `DEFAULT` 那一节）——按名字逐份核
@@ -225,7 +225,7 @@ pub fn attach_client(
 fn needs_tree(program: &Program) -> bool {
     program
         .relation
-        .deps
+        .after
         .is_some_and(|deps| deps.contains(&crate::program::operator::PROGRAM.name()))
 }
 

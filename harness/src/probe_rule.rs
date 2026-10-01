@@ -300,7 +300,7 @@ fn main() -> Report<'static> {
     let mine_id = plate(&at, MINE, Permit::Unset, Mine::Yes);
 
     // **报"答得动了"**（`Setup::Ready`）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
-    // （`deps: Some(&["operator", "probe-rule"])`），故这一枚孔是装配者放行它之前要等的凭据
+    // （`after: Some(&["operator", "probe-rule"])`），故这一枚孔是装配者放行它之前要等的凭据
     // （与三台驱动、三台服务那几处**同一手**）。
     let _ = protocol::communication::establish::endpoint(
         utask::sire(),

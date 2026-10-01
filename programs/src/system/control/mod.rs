@@ -494,12 +494,12 @@ pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
 /// 找不到 ⇒ `None`：这个名字不在这一景的装配声明里（`PROGRAMS` 是唯一声明处；帧里没有镜像，
 /// 故"起哪一台"这件事只认本表）。
 ///
-/// **只认"由编排域起"的那几台**（`relation.deps.is_some()`）：`root` / `system` 自己不在
+/// **只认"由编排域起"的那几台**（`relation.after.is_some()`）：`root` / `system` 自己不在
 /// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::assemble`]
 /// 的过滤同一句。
 fn program_of(name: &str) -> Option<&'static Program> {
     PROGRAMS
         .iter()
         .copied()
-        .find(|p| p.relation.deps.is_some() && p.name() == name)
+        .find(|p| p.relation.after.is_some() && p.name() == name)
 }

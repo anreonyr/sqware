@@ -24,7 +24,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "hub"]),
+        after: Some(&["operator", "hub"]),
         ending: Some(Ending::Resident),
         ..Relation::DEFAULT
     },

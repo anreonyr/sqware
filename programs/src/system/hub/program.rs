@@ -9,7 +9,7 @@
 //!
 //! **它不上板**（`presence: false`）：hub 死了，已经认领过设备的驱动手里有副本、照跑；未认领的
 //! 没人发得出——那是一条已知边界（见 [`crate::system::hub`] 的头注），不是靠板兜的事。
-//! **它接树**（**推出来的**：`deps` 里那条指向 `operator` 的边——`operator: true` 那一格已退场，
+//! **它接树**（**推出来的**：`after` 里那条指向 `operator` 的边——`operator: true` 那一格已退场，
 //! 见 [`Relation`] 的头注）：它自己要把三枚面挂 `/svc/hub`、把设备格落 `/dev`。
 //!
 //! **它起手要"整机物料"**（[`Setup::Machine`]）：装配者按机器自述枚举全机、逐段向引导域领、
@@ -50,7 +50,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "coalition"]),
+        after: Some(&["operator", "coalition"]),
         ending: Some(Ending::Resident),
         ..Relation::DEFAULT
     },

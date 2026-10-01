@@ -1,6 +1,6 @@
 //! operator::program — **持树者**（`prog-operator`）的装配声明。
 //!
-//! 它与其他每一台走同一条路：编排域按 `deps` 算出的次序用 `mint` 起它。它**第一**起
+//! 它与其他每一台走同一条路：编排域按 `after` 算出的次序用 `mint` 起它。它**第一**起
 //! （客人上树要它在）；起手把提示之路交给生我者（编排域）——**那一件事本身就是"它是持树者"的
 //! 凭据**（`holds_tree` 那一格已退场，见 [`Relation`] 的头注）。
 
@@ -16,14 +16,14 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&[]),
+        after: Some(&[]),
         ending: Some(Ending::Resident),
         ..Relation::DEFAULT
     },
     demand: Demand {
         died: E_TREE,
         // **答得动**：落完面（上树那一趟查回来验过）之后铸一枚刻 `READY` 的孔交给装配者
-        // ——与三台驱动、设备账那两处**同一手**。被 `deps` 指着的台必须说得出这一句。
+        // ——与三台驱动、设备账那两处**同一手**。被 `after` 指着的台必须说得出这一句。
         setup: &[Setup::Ready],
         ..Demand::DEFAULT
     },
