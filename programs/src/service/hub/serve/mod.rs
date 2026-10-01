@@ -51,6 +51,8 @@ use crate::system::common::machine::Machine;
 use crate::system::common::face::mount;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
 
+use self::sweep::alive;
+
 /// 等树 / 等盟册 / 收物料的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
@@ -59,6 +61,11 @@ const LOAD_TRIES: usize = 20;
 
 /// 探活那一拍的周期（毫秒）。**它是本域唯一的钟**：`vacate` 只在它响时扫一遍。
 const PROBE_MS: usize = 1000;
+
+pub mod bond;
+pub mod claim;
+pub mod list;
+pub mod sweep;
 
 /// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**。
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
@@ -245,8 +252,8 @@ fn turn(
         return;
     };
     match (mine, ask) {
-        (Grant::Bond, Wire::Bond(class)) => bond(ledger, league, class, from, back),
-        (Grant::List, Wire::List(class, from_index)) => list(ledger, class, from_index, back),
+        (Grant::Bond, Wire::Bond(class)) => bond::bond(ledger, league, class, from, back),
+        (Grant::List, Wire::List(class, from_index)) => list::list(ledger, class, from_index, back),
         (
             Grant::Claim,
             Wire::Claim {
@@ -255,91 +262,27 @@ fn turn(
                 policy,
                 sensor,
             },
-        ) => claim(ledger, token, from, sensor, kind, access, policy, back),
+        ) => claim::claim(ledger, token, from, sensor, kind, access, policy, back),
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
         _ => send_status(mine, hub::BAD, back),
     }
     let _ = mail::release(back);
 }
 
-/// **报名**：这个类不在册上 ⇒ `Unknown`（这台机器没有这一类）；否则**代报名**——把发送者放进
-/// 这一类那枚盟（盟册 `admit`，钥匙 = "你是不是立盟那位"）。
-/// 驱动不需要知道盟号：它只说"我要驱这一类"。**这一位不是盟主就答 `Denied`**（本域总是盟主，
-fn bond(ledger: &mut Ledger, league: &League, class: String, from: TaskId, back: PieToken) {
-    let Some(coalition) = ledger.coalition_of(class) else {
-        put_said(back, hub::UNKNOWN);
-        return;
-    };
-    let status = match league.coalition(coalition).admit(from, Wait::AtMost(MS)) {
-        Ok(()) => hub::OK,
-        Err(_) => hub::DENIED,
-    };
-    put_said(back, status);
-}
-
-/// **列册**：这一类此刻有哪几台、哪几台有主（越界答空窗——是答案，不是错误）。
-fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) {
-    let window = if ledger.coalition_of(class.clone()).is_some() {
-        ledger.list(class, from)
-    } else {
-        Window {
-            status: hub::UNKNOWN,
-            ..Window::EMPTY
-        }
-    };
-    // **写端跟着这一趟走**：落出作用域时等这只手被取走（`Drop`）——那一位客人不来取，卡的是
-    // 他自己那一趟。**一枚孔一枚写端**，共用一格那种错编不出来。
-    let mut tx = Sender::<Window>::from_token(back);
-    let _ = tx.send(window);
-}
-
-/// **认领**：那一台由"哪一枚孔响了"回答（`door`）；主人是发送者 ＋ 它交来的那枚报活孔。
-fn claim(
-    ledger: &mut Ledger,
-    door: PieToken,
-    from: TaskId,
-    sensor: PieToken,
-    kind: u8,
-    access: u32,
-    policy: u32,
-    back: PieToken,
-) {
-    let deed = {
-        let (Some(kind), Some(access), Some(policy)) = (
-            PieKind::of(kind),
-            Access::from_bits(access),
-            Policy::from_bits(policy),
-        ) else {
-            put_deed(back, Deed::of(hub::BAD));
-            return;
-        };
-        let owner = Owner { task: from, sensor };
-        match ledger.claim(door, owner, alive) {
-            Ok(entry) => match ship(entry.clone(), from, kind, access, policy) {
-                Ok(page) => Deed::granted(entry.name, entry.line, page),
-                Err(_) => Deed::of(hub::DENIED),
-            },
-            Err(hub::Fail::Taken) => Deed::of(hub::TAKEN),
-            Err(_) => Deed::of(hub::UNKNOWN),
-        }
-    };
-    put_deed(back, deed);
-}
-
 /// 递一句 `Said`（**写端跟着这一趟走**：落出作用域时等这只手被取走）。
-fn put_said(back: PieToken, status: u8) {
+pub(super) fn put_said(back: PieToken, status: u8) {
     let mut tx = Sender::<Said>::from_token(back);
     let _ = tx.send(Said::of(status));
 }
 
 /// 递一句 `Deed`（同上）。
-fn put_deed(back: PieToken, deed: Deed) {
+pub(super) fn put_deed(back: PieToken, deed: Deed) {
     let mut tx = Sender::<Deed>::from_token(back);
     let _ = tx.send(deed);
 }
 
 /// 按那一面的那一形答一句状态（面与码对不上、或这一码我不认时用）。
-fn send_status(mine: Grant, status: u8, back: PieToken) {
+pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
     match mine {
         Grant::Bond => put_said(back, status),
         Grant::List => {
@@ -354,7 +297,7 @@ fn send_status(mine: Grant, status: u8, back: PieToken) {
 }
 
 /// **这一帧从哪一枚孔进来**：三枚面各是各的，**其余的孔都是某一台那一枚门**。
-fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
+pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
     let (bond, list, claim) = plates;
     if token == bond {
         Grant::Bond
@@ -371,7 +314,7 @@ fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
 /// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号。
 /// 形态**照客人要的**：本域不替它挑（内核校验"`ONLY` 与源枚一致"）。故"这台能不能独占、
 /// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格。
-fn ship(
+pub(super) fn ship(
     entry: Entry,
     to: TaskId,
     kind: PieKind,
@@ -383,13 +326,6 @@ fn ship(
         PieKind::Nole => port::ship(&NolePie::from_token(entry.page), to, access, policy),
     };
     shipped.map(|seat| seat.seed()).map_err(|_| ())
-}
-
-/// **"这一枚的主人还在吗"**——只有一条判据：那一枚还在本域表里。
-/// 主人一死，内核把它的派生边（交给本域的那一份副本）一起摘掉 ⇒ `reserve` 答不出就是"没了"。
-/// 与线路由者那条探活同一手。
-fn alive(sensor: PieToken) -> bool {
-    mail::reserve(sensor).is_ok()
 }
 
 /// 收物料那一趟：**有界重试**地从那条通道上取一段。
