@@ -56,7 +56,7 @@ pub static PROGRAM: Program = Program {
     },
     demand: Demand {
         died: E_HUB,
-        setup: &[Setup::Machine {
+        supply: &[Setup::Machine {
             load: CHANNEL,
             ready: READY,
         }],

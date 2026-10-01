@@ -51,7 +51,7 @@ impl Control {
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
-            .register(name, announce_of(program.demand.setup), restart)
+            .register(name, announce_of(program.demand.supply), restart)
             .map_err(|_| Error::Table)
     }
 
@@ -80,7 +80,7 @@ impl Control {
         // **等就绪**由调用方接在它该在的位置（见本手的注）。
         if let Some(load) = program
             .demand
-            .setup
+            .supply
             .iter()
             .find(|s| s.machine())
             .map(Setup::channel)
@@ -247,7 +247,7 @@ pub fn await_ready(
 ) -> Result<(), &'static str> {
     assembly
         .control
-        .ready(program.name().to_string(), service, program.demand.setup)
+        .ready(program.name().to_string(), service, program.demand.supply)
         .map_err(|e| e.said())
 }
 
@@ -256,8 +256,8 @@ pub fn await_ready(
 // 那一段裸字节在调用点已经不存在 ⇒ 那一手与它那条"跳过"的判据一并退场。
 
 /// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 [`Control::enlist`]）。
-fn announce_of(setup: &[Setup]) -> Announce {
-    if setup.is_empty() {
+fn announce_of(supply: &[Setup]) -> Announce {
+    if supply.is_empty() {
         Announce::None
     } else {
         Announce::Channel
@@ -271,7 +271,7 @@ fn announce_of(setup: &[Setup]) -> Announce {
 /// 同一句正文——"只碰通道"的那一层做成方法就是白加的壳）。两处叫它：装配那一趟
 /// （[`crate::system::Assembly::assemble`]）与线上那条 [`Control::release`]。
 pub fn connect_all(program: &Program, service: &mut Service) -> Result<(), Error> {
-    for s in program.demand.setup {
+    for s in program.demand.supply {
         for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {
             service
                 .1

@@ -397,11 +397,29 @@ pub struct Relation {
 pub struct Demand {
     /// 死在装配哪一步的号。`after` 为 `None` 的那几台不读这一格（写 [`env::EXIT_OK`]）。
     ///
-    /// **照实记（它为什么与 `setup` 同块）**：`died` 是**这一台 `setup` 走不通时**的读数——
+    /// **照实记（它为什么与 `supply` 同块）**：`died` 是**这一台 `supply` 走不通时**的读数——
     /// 与起手那几手是同一件事的两面，故同块。
     pub died: Died,
-    /// 实例化它要多做的那几手（资源 / 通信）。
-    pub setup: &'static [Setup],
+    /// **`Type=notify`**（systemd 同名那一格）：**它起来之后要说一句"答得动了"**——装配者在
+    /// 放行之后按这一格开通道、等那一句（[`Setup::Ready`]）或递物料（[`Setup::Machine`]）。
+    ///
+    /// **照实记（它原名 `setup`，这一刀改成 `supply`）**：`setup` 说的是"它起手要做的那几手"
+    /// （一个**动作**词，读起来像"它自己装自己"）；而这一格在装配那一侧说的是**装配者要对它做的
+    /// 那几手**（开一条通道等它报"答得动"／把整机物料递过去）⇒ 借 systemd 同名那一格说死：
+    /// **它给我什么**（`Type=notify`：它报"我能答了"，我据此往下起别人）。
+    ///
+    /// **照实记（这一格为什么是"声明"而不是"推得出来"——量过，推翻了我自己的施工图）**：
+    /// 层四施工图里我原先写着"8 处 `Ready` 推得出来"（"被 `after` 点名的台必须交凭据"）。
+    /// **量了两套集合，它们不重合**：
+    ///   · `after` 里被点名的（去重 8 台）：`coalition` / `hub` / `operator` / `principal` /
+    ///     `probe-rule` / `router` / `rtc` / `uart`；
+    ///   · 写 `Setup::Ready` 的（7 处）：`coalition` / `operator` / `principal` / `router` / `rtc` /
+    ///     `uart` ＋ 压测台那一份（`decl/harness.rs`）。
+    /// ⇒ 差在两处：**`hub` 被点名却走 [`Setup::Machine`]**（它的"答得动"搭物料那条通道一起交）、
+    /// **`probe-rule` 被点名却没写这一格**；而压测台那一份**写了却没被任何 `after` 点名**。
+    /// 三条差异各有各的理由，**推不出来** ⇒ 这一格留着（它答的是"这一台要不要那一句"，不是
+    /// "谁在等它"）。
+    pub supply: &'static [Setup],
 }
 
 // ── 三块各自的"什么都没声明"那一形（回炉那一刀；照实记）──────────────────
@@ -457,7 +475,7 @@ impl Demand {
     /// **什么都没声明的那一形**：没有起手那几手、号报"正常退场"。
     pub const DEFAULT: Demand = Demand {
         died: env::EXIT_OK,
-        setup: &[],
+        supply: &[],
     };
 }
 
@@ -661,7 +679,7 @@ const _: () = assert!(PROGRAMS.len() <= env::manifest::MAX_PROGRAMS);
 pub enum DepsFail {
     /// 一条边指着本单里没有的台（名字）。
     Unknown(&'static str),
-    /// 被指着的那一台**没有凭据**（`demand.setup` 空 ⇒ 它交不出"我答得动"）。
+    /// 被指着的那一台**没有凭据**（`demand.supply` 空 ⇒ 它交不出"我答得动"）。
     NoEvidence(&'static str),
     /// 取不出可排的台 ⇒ 环（名字 = 卡住的那一个）。
     Cycle(&'static str),
@@ -691,7 +709,7 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
                 if !is_target(name) {
                     match find(list, name) {
                         None => return Err(DepsFail::Unknown(name)),
-                        Some(target) if target.demand.setup.is_empty() => {
+                        Some(target) if target.demand.supply.is_empty() => {
                             return Err(DepsFail::NoEvidence(name))
                         }
                         Some(_) => {}
