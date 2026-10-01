@@ -18,7 +18,13 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator", "hub"]),
+        // **`router` 这一条边是补上的**（照实记：缺它的时候，本台靠**位次**站在路由者后面——
+        // 而它起手那一步 `Context::line` 恰恰**要问路由者**（`/svc/drv/router` 那一格 + 请它占线，
+        // 见 `driver/context.rs::line`）。**"位置即语义"**：两条边之间没有话，只有排序的先后，
+        // 于是那份依赖一直没有凭据。撤板那一刀把板那条会话当节拍的那点偶然先后拿掉之后，本台
+        // 当场死在 `line`（release 档实测：`rtc` ＋ `line`；debug 档不显）——那一刀**逼出了这一条**。
+        // `router` 有 `Setup::Ready` 凭据，故这一条边说得出"要它答得动"。
+        deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Resident),
         presence: true,
         ..Relation::DEFAULT
