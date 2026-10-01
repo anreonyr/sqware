@@ -137,12 +137,15 @@ impl Assembly {
     /// **那条判断不作准**：树就是"名字 → 资源"那本目录，谁要挂谁自己上来（今天就由树自己落）。
     /// 故 `control` 那一面**挂进树**（不是只靠装配期直授），取面方式与 `principal` / `coalition`
     /// 逐字同形；真客人是 `harness/src/probe_control.rs`。
-    /// 交棒给监督相：**先把 `control` 那一面挂上树**，然后进那一趟循环。
+    /// 交棒给监督相：**等任一道响 ⇒ 记账 ⇒ 该收了就下刀**（本域活多久它活多久）。
+    ///
+    /// **挂 `control` 那一面不在这里**（照实记：这一刀把两手拆开了）：那一手是**"这一趟装配走完"
+    /// 到点的那一刻**做的事（[`SCENE`](crate::program::SCENE)），而那个位置在调用方那一趟里看得见
+    /// ——故它由 `system/main.rs` 的相四显名地叫（[`Assembly::mount_control`]），本手只剩这一趟循环。
     ///
     /// 返 `true` = **全收讫**（那一批收干净了，本域可以退了）；`false` = 有人没收讫——
     /// 调用方按"收尾那一趟没走完"报（余下交退场级联，那条路是既有的可靠收场路径）。
     pub fn supervise(&mut self) -> bool {
-        self.mount_control();
         self.watch.run(&mut self.control)
     }
 
@@ -198,7 +201,7 @@ impl Assembly {
     ///
     /// **本手不自问自答**：那一格落成没有、指不指得回原物，由**真客人**证——
     /// `harness/src/probe_control.rs` 照 principal / coalition 同形的路找上门、问一句 control 的话。
-    fn mount_control(&mut self) {
+    pub fn mount_control(&mut self) {
         // **四面各一枚入口、各一条路**（`/svc/sys/control/{state,mint,start,stop}`）——一原语一面。
         //
         // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"），
@@ -304,6 +307,12 @@ impl Assembly {
         // 已经不是这里读的了）：逐条边等那一台**到过就绪那一格**。排对了就即刻返回；排错了
         // （声明的边与实情不符）当场报出"哪一台的哪条边"——不让客人自己去撞那圈有界重试。
         for dep in program.relation.deps.unwrap_or(&[]) {
+            // **[`SCENE`](crate::program::SCENE) 那一条不等**（照实记）：它说的是"这一趟走完"，
+            // 而这一趟正是本处——等一个"这一趟"没有可等的对象，表里也没有那一行。**排到最后就是
+            // 它的全部保证**（[`order_scene`](crate::program::order_scene) 那一条）。
+            if *dep == crate::program::SCENE {
+                continue;
+            }
             if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {
                 debug!("system: dep not ready ({dep})");
                 return Err(fail(program, Error::Step("dep not ready")));

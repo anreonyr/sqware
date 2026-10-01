@@ -74,7 +74,7 @@ pub enum Spot {
 ///
 /// ```text
 ///   Identity   它是谁（清单名 / 特权级 / 角色 / 进哪几张景 / 是不是引导镜像）
-///   Relation   它跟谁有边（依赖 / 排最后 / 存在信号 / 身份 / 眼睛）
+///   Relation   它跟谁有边（依赖 / 存在信号 / 身份 / 眼睛）
 ///   Demand     它起手要什么（来源 / 死在第几步 / 那几手 setup）
 /// ```
 ///
@@ -122,7 +122,7 @@ impl Program {
     ///
     /// **宿主那一侧的第二组窄面**（照实记：本表原先只开四扇门，都取 [`Identity`]）：打包那一趟
     /// 仍只读前四样，而**校验那一趟**（[`order_scene`] 的调用点）要按这一格滤出"由编排域起的
-    /// 那些台"——图的内部（`deps` 的内容、`after_scene`）一律由本文件那两具读，宿主不碰。
+    /// 那些台"——图的内部（`deps` 的内容、[`SCENE`] 那条边）一律由本文件那两具读，宿主不碰。
     pub fn listed(&self) -> bool {
         self.relation.deps.is_some()
     }
@@ -167,9 +167,26 @@ pub enum Ending {
     Told,
 }
 
+/// **这一趟装配本身**——**不是一台程序**：没有身子、不进这张单（[`PROGRAMS`] 里没有它），
+/// 图里它只是一个**节点**。
+///
+/// **写法**：`deps: Some(&[…, SCENE])` = "**等这一趟装配走完**再起我"。今天只有 `probe-control`
+/// 一家写它：它问的 `/svc/sys/control/state` 由装配者在**整表起完之后**才铸、且要等监督那一趟
+/// 开始才被**服务**——而"整表起完"不是一个台，图里本来没有它的落点。
+///
+/// **到点是什么意思**（唯一一处）：[`order_scene`] 把写它的台排到**最后**（同批按名字）；编排域
+/// 起完它们之后立刻挂上 control 那一面、进监督那一趟（`system/main.rs` 的相四）。**装配那一趟里
+/// 不等它**——[`Assembly::assemble`](crate::system::Assembly::assemble) 逐条边等"那一台答得动"时
+/// 跳过它：等一个"这一趟"没有可等的对象，**排到最后就是它的全部保证**。
+///
+/// **照实记（它为什么从一格布尔变成一个名字）**：那一格从前是 `Relation::after_scene: bool`——
+/// `true` 说的就是这句话，而"这一趟"在图上没有落点，于是它只能是一格 flag，两个读者各自把这句话
+/// 猜一遍。今天它与别的边同一个写法（`deps` 里写名字），而"什么时候算到点"只写在这里。
+pub const SCENE: &str = "scene";
+
 /// **装配关系**：编排域把它接进来时那几条边。
 ///
-/// **这一块只有装配者读**：依赖 / 排最后 / 存在信号 / 结束方式 / 身份 / 眼睛——都是
+/// **这一块只有装配者读**：依赖 / 存在信号 / 结束方式 / 身份 / 眼睛——都是
 /// "这一台与那一台之间有一条什么边"，与它自己是谁（[`Identity`]）、起手要什么（[`Demand`]）分开。
 ///
 /// **照实记（`holds_tree` 那一格退场：运行期的事实不该写进声明）**：那一格答"我是不是持树者"，
@@ -201,14 +218,6 @@ pub struct Relation {
     /// **装配者递的**（那是 [`Setup::Machine`] 那一格）；`probe-owner` 等的是"`/svc/lease`
     /// 的主人**死掉**"——图只表达"要它答得动"，"等它死"仍在它自己那圈重试里。
     pub deps: Option<&'static [&'static str]>,
-    /// **等装配那一趟走完**——只有"要问的面由装配那一趟末尾才立起来"的台才写。
-    ///
-    /// **为什么它不是位次**（照实记）：今天只有 `probe-control` 一处——它问的
-    /// `/svc/sys/control/state` 由装配者在**整表起完之后**才铸、且要等监督那一趟开始才被**服务**；
-    /// 那**不是一个台**，图里没有这条边的落点。旧写法靠 `order: Some(21)` 把它压到末尾；次序一旦
-    /// 由**边**算，它可能被排到第二（窗口反而变大）。故把"我要的那个状态"写成一条**边指向隐式
-    /// 节点**：装配那一趟走完。图里它排最后，且没有可等的边。
-    pub after_scene: bool,
     /// **谁结束它**——`None` = 没声明；**由编排域起的台必须写**（`Control::enlist` 当场拒）。
     ///
     /// **它与 [`Relation::presence`] 成对**：那一格答"它死了谁知道"，这一格答"它没走的时候
@@ -283,7 +292,6 @@ impl Relation {
     /// 没有眼睛，也**没说自己怎么结束**（`ending: None`——由编排域起的台不写它，装配那一趟当场拒）。
     pub const DEFAULT: Relation = Relation {
         deps: None,
-        after_scene: false,
         ending: None,
         presence: false,
         bind: false,
@@ -509,28 +517,33 @@ pub enum DepsFail {
     Cycle(&'static str),
 }
 
-/// **按 `deps` 把这一张单排成次序**（拓扑，原地重排）：每条边都在前面，`after_scene` 的排最后。
+/// **按 `deps` 把这一张单排成次序**（拓扑，原地重排）：每条边都在前面；等 [`SCENE`]（这一趟走完）
+/// 的排**最后**。
 /// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（[`DepsFail`]）。
 ///
 /// **两个读者共用这一份**（照实记）：宿主那一侧打包时校验（`crates/image`，报得出名字），
 /// 引导期那一趟排次序（`system::assemble`）。故它**不许分配**——本文件是宿主安全的
 /// （只许引 `env`，`crates/image` 用 `#[path]` 文本包含它），只用切片与定长栈。
 ///
-/// **它不解释任何一台的字段**：只读 [`Relation::deps`] / [`Relation::after_scene`] 两格。
+/// **它不解释任何一台的字段**：只读 [`Relation::deps`] 那一格（[`SCENE`] 只是其中一个名字）。
 pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
     // 一、每条边都要落得下：指得到本单里的台，且那一台说得出"我答得动"。
+    //     **[`SCENE`] 那一条除外**：它指的是这一趟自己，不是本单里的台，也没有"答得动"可言
+    //     （见 [`SCENE`] 的头注）。
     let mut i = 0;
     while i < list.len() {
         if let Some(deps) = list[i].relation.deps {
             let mut d = 0;
             while d < deps.len() {
                 let name = deps[d];
-                match find(list, name) {
-                    None => return Err(DepsFail::Unknown(name)),
-                    Some(target) if target.demand.setup.is_empty() => {
-                        return Err(DepsFail::NoEvidence(name))
+                if name != SCENE {
+                    match find(list, name) {
+                        None => return Err(DepsFail::Unknown(name)),
+                        Some(target) if target.demand.setup.is_empty() => {
+                            return Err(DepsFail::NoEvidence(name))
+                        }
+                        Some(_) => {}
                     }
-                    Some(_) => {}
                 }
                 d += 1;
             }
@@ -544,7 +557,7 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
         let mut pick: Option<usize> = None;
         let mut i = placed;
         while i < n {
-            if !list[i].relation.after_scene && ready(list, i, placed) {
+            if !waits_scene(list[i]) && ready(list, i, placed) {
                 match pick {
                     Some(best) if list[best].name() <= list[i].name() => {}
                     _ => pick = Some(i),
@@ -556,10 +569,10 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
         list.swap(placed, i);
         placed += 1;
     }
-    // 三、收尾：剩下的必须全是 `after_scene` 的（不是 ⇒ 环）；它们同批按名字。
+    // 三、收尾：剩下的必须全是等 [`SCENE`] 的（不是 ⇒ 环）；它们同批按名字。
     let mut i = placed;
     while i < n {
-        if !list[i].relation.after_scene {
+        if !waits_scene(list[i]) {
             return Err(DepsFail::Cycle(list[i].name()));
         }
         i += 1;
@@ -578,6 +591,17 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
         i += 1;
     }
     Ok(())
+}
+
+/// **这一台等的是"这一趟走完"吗**——`deps` 里有 [`SCENE`] 就是。
+///
+/// 它有两个读者，判的是同一句话：[`order_scene`] 据它把这一台排到最后（那一格要到那时才到点），
+/// 而装配那一趟据它跳过那一条边（`Assembly::assemble`：等一个"这一趟"没有可等的对象）。
+fn waits_scene(program: &Program) -> bool {
+    program
+        .relation
+        .deps
+        .is_some_and(|deps| deps.contains(&SCENE))
 }
 
 /// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）。

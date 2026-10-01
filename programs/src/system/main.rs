@@ -8,10 +8,11 @@
 //!
 //! ```text
 //! 1  起手：与引导域搭会话 + 领机器自述 + 领载荷区清单（`bootstrap::take`）
-//! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按 `order` 排**，就这一件事）
-//! 3  逐条起：`Assembly::assemble`——每一台按**它自己那份声明**装配
-//! 4  监督（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下那个死域；**该收了**就逐位下刀，
-//!    **收讫了**才收场（判据在 `Control::{due, done}` 上，不再看"最后一位是谁"）
+//! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按各台声明的边算次序**，就这一件事）
+//! 3  逐条起：`Assembly::assemble`——每一台按**它自己那份声明**装配（相与手见 `system::schedule`）
+//! 4  **这一趟走完**（`program::SCENE` 那一格到点）：挂 `control` 那一面
+//!    （`Assembly::mount_control`）→ 监督那一趟（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下
+//!    那个死域；**该收了**就逐位下刀，**收讫了**才收场（判据在 `Control::{due, done}` 上）
 //! 5  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
 //! ```
 //!
@@ -128,7 +129,11 @@ fn system() -> Result<(), Fail> {
         assembly.assemble(program).map_err(Fail::Assemble)?;
     }
 
-    // 4. 监督那一趟：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；**该收了**就下刀，**收讫了**才收场
+    // 4. **这一趟走完**（`programs::program::SCENE` 那一格到点）：**先把 `control` 那一面挂上树**
+    //    ——那一刻起那一面才有人待客（`probe-control` 等的就是这一件事，它靠 `deps` 里那条
+    //    `SCENE` 边排到最后一位）；然后进监督那一趟。
+    assembly.mount_control();
+    //    监督那一趟：哪条道响 ⇒ 那一位没了 ⇒ 记账 + 放下；**该收了**就下刀，**收讫了**才收场
     //    （判据都在 `Control` 上：`due` / `done`，见 `control/supervise.rs` 的头注）。
     //    返 `false` = 有人没收讫 ⇒ 报"收尾那一趟没走完"，余下交退场级联。
     if !assembly.supervise() {

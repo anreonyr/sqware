@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, SCENE, Setup, Spot};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
@@ -283,10 +283,10 @@ pub static PROBE_BOUND: Program = Program {
 /// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 ///
-/// **它排在最后**（`after_scene: true`）：那一面是在**整表起完**之后才挂上树的
-/// （`Assembly::supervise`）——它**不是一个台**，图里没有这条边的落点，故写成"等装配那一趟
-/// 走完"那一格（次序由 `program::order_scene` 算，位次那一格已退场，照实记见
-/// `programs/src/program.rs` 的 `Relation::after_scene`）。
+/// **它排在最后**（`deps` 里那条 [`SCENE`] 边）：那一面是在**整表起完**之后才挂上树的
+/// （`Assembly::mount_control`，由 `system/main.rs` 的相四叫）——那**不是一个台**，图里本来
+/// 没有它的落点，故写成"等装配那一趟走完"那条边（名字 [`SCENE`]，次序由
+/// `program::order_scene` 算；那一格从前是一格布尔 `after_scene`，照实记见 [`SCENE`] 的头注）。
 pub static PROBE_CONTROL: Program = Program {
     identity: Identity {
         name: "probe-control",
@@ -294,8 +294,7 @@ pub static PROBE_CONTROL: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        deps: Some(&["operator"]),
-        after_scene: true,
+        deps: Some(&["operator", SCENE]),
         ending: Some(Ending::Transient),
         bind: true,
         ..Relation::DEFAULT
