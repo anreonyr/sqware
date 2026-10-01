@@ -413,7 +413,12 @@ pub const READY: &str = "ready";
 
 #[derive(Clone, Copy)]
 pub enum Setup {
-    /// **答得动了**：这一台交回一枚刻着这个记号的孔 ⇒ "**我这一面已经在树上、答得动**"。
+    /// **答得动了**：这一台交回一枚刻 `READY` 的孔 ⇒ "**我这一面已经在树上、答得动**"。
+    ///
+    /// **照实记（"记号"那个参数退场：9 处里 8 处写的是同一个常量）**：它从前是
+    /// `Ready(&'static str)`，而**全仓 8 处写的是同一个** [`READY`]（第 9 处是 [`Setup::Machine`]，
+    /// 它自带两个名字）。那个参数因此是**同一句话的第二处**——一件"这一段字节"上不存在的选择。
+    /// 收掉之后这个记号只有一处（[`READY`]），`channel()` 直接答它。
     ///
     /// **它在起手哪一步交，就是这一格的全部内容**：设备账那条 `Machine.ready` 在**落完每一台
     /// 机器的格**之后交；驱动那三台（`router` / `uart` / `rtc`）在 `ctx.plate(..)` **之后**交
@@ -426,7 +431,7 @@ pub enum Setup {
     /// （`lodger` 问 `router`、`sleeper` 问 `rtc`、盟册问名册）问的都是**还没答得动的机器**，
     /// 手里只有自己那 1 s 有界重试 ⇒ 慢一点的世界里就是一片 `no /svc*`。
     /// ⇒ **次序要治的不是"排第几"，是把"起来了"的含义从"活着"改成"答得动"。**
-    Ready(&'static str),
+    Ready,
     /// **整机物料**：这一台起手要**这台机器的全部可领之物**（设备树本体 / 门铃 / 每一台设备
     /// 那一段区）。
     ///
@@ -465,7 +470,7 @@ impl Setup {
     /// **收物料**那条。
     pub const fn channel(&self) -> &'static str {
         match self {
-            Setup::Ready(ch) => ch,
+            Setup::Ready => READY,
             Setup::Machine { load, .. } => load,
         }
     }
@@ -474,7 +479,7 @@ impl Setup {
     /// `None` = 这一格只开一条通道。
     pub const fn ready(&self) -> Option<&'static str> {
         match self {
-            Setup::Ready(_) => None,
+            Setup::Ready => None,
             Setup::Machine { ready, .. } => Some(ready),
         }
     }

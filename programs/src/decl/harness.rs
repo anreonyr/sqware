@@ -198,7 +198,7 @@ pub static PROBE_RULE: Program = Program {
     demand: Demand {
         died: E_PROBE_RULE,
         // **答得动**：`probe-rule-other` 读的那几格由本台落——落完才交这一枚（与三台驱动同一手）。
-        setup: &[Setup::Ready(crate::program::READY)],
+        setup: &[Setup::Ready],
         ..Demand::DEFAULT
     },
 };

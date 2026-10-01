@@ -26,7 +26,7 @@ pub static PROGRAM: Program = Program {
         died: E_PRINCIPAL,
         // **答得动**：落完面（上树那一趟查回来验过）之后铸一枚刻 `READY` 的孔交给装配者
         // ——与三台驱动、设备账那两处**同一手**。被 `deps` 指着的台必须说得出这一句。
-        setup: &[Setup::Ready(crate::program::READY)],
+        setup: &[Setup::Ready],
         ..Demand::DEFAULT
     },
 };
