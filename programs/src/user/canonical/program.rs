@@ -88,7 +88,6 @@ pub static PROGRAM: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_CANONICAL,
         ..Demand::DEFAULT
     },
 };

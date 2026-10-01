@@ -50,7 +50,6 @@ pub static GUEST: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_GUEST,
         ..Demand::DEFAULT
     },
 };
@@ -67,7 +66,6 @@ pub static PASSER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PASSER,
         ..Demand::DEFAULT
     },
 };
@@ -84,7 +82,6 @@ pub static LODGER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_LODGER,
         ..Demand::DEFAULT
     },
 };
@@ -101,7 +98,6 @@ pub static SLEEPER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_SLEEPER,
         ..Demand::DEFAULT
     },
 };
@@ -118,7 +114,6 @@ pub static SUBJECT: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_SUBJECT,
         ..Demand::DEFAULT
     },
 };
@@ -135,7 +130,6 @@ pub static MEMBER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_MEMBER,
         ..Demand::DEFAULT
     },
 };
@@ -159,7 +153,6 @@ pub static PROBE_DENIED: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE,
         ..Demand::DEFAULT
     },
 };
@@ -176,7 +169,6 @@ pub static PROBE_OWNER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_OWNER,
         ..Demand::DEFAULT
     },
 };
@@ -193,7 +185,6 @@ pub static PROBE_RULE: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_RULE,
         // **答得动**：`probe-rule-other` 读的那几格由本台落——落完才交这一枚（与三台驱动同一手）。
         ..Demand::DEFAULT
     },
@@ -211,7 +202,6 @@ pub static PROBE_RULE_OTHER: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_OTHER,
         ..Demand::DEFAULT
     },
 };
@@ -228,7 +218,6 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_LEASE,
         ..Demand::DEFAULT
     },
 };
@@ -246,7 +235,6 @@ pub static PROBE_BOUND: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_BOUND,
         ..Demand::DEFAULT
     },
 };
@@ -275,7 +263,6 @@ pub static PROBE_CONTROL: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_CONTROL,
         ..Demand::DEFAULT
     },
 };
@@ -309,7 +296,6 @@ pub static PROBE_OPERATOR_GATE: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_OPERATOR_GATE,
         ..Demand::DEFAULT
     },
 };
@@ -328,7 +314,6 @@ pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_PROBE_OPERATOR_LAND,
         ..Demand::DEFAULT
     },
 };

@@ -372,5 +372,9 @@ fn fail(program: &UnitFile, e: Error) -> Died {
     // **这两句就是本相最要紧的读数**：哪一台、死在哪一步（见上面那条照实记）。
     debug::put(program.name());
     debug::put(e.said());
-    program.demand.died
+    // **照实记（第 57 刀：`Demand::died` 那一格退场，这里改报一个常量）**：这一句从前答
+    // **牺牲者自己那个号**（"号与域名在装配表上是同一格的两半"）。那一格按计划退了场 ⇒ 这里
+    // 报 [`crate::unit::E_PROGRAM`]（"装配表那一段"，与 `main.rs` 里那份空表的号同一个），
+    // 而**"哪一台、死在哪一步"那两行照旧在**（它们不设门、一定印）——**认出台从"号"换成了"名"**。
+    crate::system::control::E_PROGRAM
 }

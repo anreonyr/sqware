@@ -55,7 +55,6 @@ pub static PROGRAM: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_HUB,
         supply: &[Setup::Machine {
             load: CHANNEL,
             ready: READY,

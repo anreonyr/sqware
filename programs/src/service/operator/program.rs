@@ -21,7 +21,6 @@ pub static PROGRAM: UnitFile = UnitFile {
         ..Relation::DEFAULT
     },
     demand: Demand {
-        died: E_TREE,
         // **答得动**：落完面（上树那一趟查回来验过）之后铸一枚刻 `READY` 的孔交给装配者
         // ——与三台驱动、设备账那两处**同一手**。被 `after` 指着的台必须说得出这一句。
         ..Demand::DEFAULT
