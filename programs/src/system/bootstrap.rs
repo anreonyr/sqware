@@ -66,7 +66,7 @@ impl Fail {
 }
 
 /// 引导那一族共用的号（"启动参数读不出来"那一格）。
-use crate::program::system::E_BOOT;
+use crate::unit::system::E_BOOT;
 
 /// **起手要的三样东西**：与引导域的会话、那台机器的自述、那块载荷区（清单）。
 pub struct Boot {

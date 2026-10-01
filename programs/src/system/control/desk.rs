@@ -12,7 +12,7 @@
 use alloc::string::String;
 use env::{TaskId, TeamId};
 
-use crate::program::Ending;
+use crate::unit::Ending;
 
 use super::core::Fail;
 

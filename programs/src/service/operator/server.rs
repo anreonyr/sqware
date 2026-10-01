@@ -36,7 +36,7 @@ use protocol::service::operator as ocall;
 use protocol::service::operator::Grant;
 use protocol::service::operator::grant::grant_of;
 
-use crate::program::operator::E_TREE;
+use crate::unit::operator::E_TREE;
 use crate::system::control::service::Start;
 use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::service::operator::core::Operator;
@@ -109,7 +109,7 @@ pub fn serve() -> Result<(), Start> {
     // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
     let _ = protocol::communication::establish::endpoint(
         runtime::env::unit::sire(),
-        env::Mark::of(crate::program::READY),
+        env::Mark::of(crate::unit::READY),
         env::Wait::POLL,
     );
 

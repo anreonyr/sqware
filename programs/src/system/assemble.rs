@@ -1,11 +1,11 @@
 //! system::assemble — **这一景起哪些台**：过滤 ＋ 按 `after` 算次序。
 //!
-//! **没有投影**：权威是那唯一一张装配表 [`PROGRAMS`](crate::program::PROGRAMS)——每一台的
+//! **没有投影**：权威是那唯一一张装配表 [`PROGRAMS`](crate::unit::PROGRAMS)——每一台的
 //! 声明都在它自己那份 `program.rs` 里。本文件只做那张单子自己做不了的一件事：把"这一景真有
 //! 的"滤出来。
 //!
 //! **次序不是本文件定的**（照实记：位次那一格退了）：它由各台自己那份声明里的 `after` 算出来
-//! （[`crate::program::order_scene`]）——**同一份**同时服务宿主那一侧（`cargo image` 打包时校验
+//! （[`crate::unit::order_scene`]）——**同一份**同时服务宿主那一侧（`cargo image` 打包时校验
 //! 并打印次序）与这里。故本手只剩"过滤"那一半。
 //!
 //! **它不解释任何一台的字段**：要不要存在信号 / 接不接树 / 要什么、死在装配哪一步——那些由
@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 use protocol::debug;
 
-use crate::program::UnitFile;
+use crate::unit::UnitFile;
 use crate::system::control::{Catalog, Error};
 
 /// 这一景要起的台：**按 `after` 算次序**（拓扑）。先起的先就绪，后面的就能向它要东西。
@@ -27,12 +27,12 @@ use crate::system::control::{Catalog, Error};
 ///
 /// **坏图在这里是"防御"**：打包那一趟已经校验过（宿主上还报得出名字），故本处只折成一格读数。
 pub fn programs(catalog: &Catalog) -> Result<Vec<&'static UnitFile>, Error> {
-    let mut list: Vec<&'static UnitFile> = crate::program::PROGRAMS
+    let mut list: Vec<&'static UnitFile> = crate::unit::PROGRAMS
         .iter()
         .copied()
         .filter(|p| p.relation.after.is_some() && catalog.find(p.name()).is_some())
         .collect();
-    crate::program::order_scene(&mut list).map_err(|why| {
+    crate::unit::order_scene(&mut list).map_err(|why| {
         debug!("system: bad deps {why:?}");
         Error::Step("bad deps")
     })?;

@@ -27,7 +27,7 @@ use alloc::string::String;
 use crate::system::control::Catalog;
 
 // **照实记（`Error` 那一型退场：它只剩一个值）**：`Origin::Storage` 那一档退场之后（见
-// [`crate::program::Demand`] 底下那一段），这一面只剩**一种**不成——"这块账里没有这一台"。
+// [`crate::unit::Demand`] 底下那一段），这一面只剩**一种**不成——"这块账里没有这一台"。
 // 一个值的枚举就是**假装有选择**（与 `Origin` 同一课）⇒ 收成 `Option`：`None` = 没有这一台。
 
 /// **来源那一格的载体**：**那一本账**（今天只有 initrd 那一本）。

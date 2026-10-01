@@ -49,7 +49,7 @@ use alloc::string::ToString;
 use env::Wait;
 use protocol::debug;
 
-use crate::program::{Died, UnitFile};
+use crate::unit::{Died, UnitFile};
 use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
@@ -136,7 +136,7 @@ impl Assembly {
     /// 交棒给监督相：**等任一道响 ⇒ 记账 ⇒ 该收了就下刀**（本域活多久它活多久）。
     ///
     /// **挂 `control` 那一面不在这里**（照实记：这一刀把两手拆开了）：那一手是**"这一趟装配走完"
-    /// 到点的那一刻**做的事（[`SCENE`](crate::program::SCENE)），而那个位置在调用方那一趟里看得见
+    /// 到点的那一刻**做的事（[`SCENE`](crate::unit::SCENE)），而那个位置在调用方那一趟里看得见
     /// ——故它由 `system/main.rs` 的相四显名地叫（[`Assembly::mount_control`]），本手只剩这一趟循环。
     ///
     /// 返 `true` = **全收讫**（那一批收干净了，本域可以退了）；`false` = 有人没收讫——
@@ -315,10 +315,10 @@ impl Assembly {
         // 已经不是这里读的了）：逐条边等那一台**到过就绪那一格**。排对了就即刻返回；排错了
         // （声明的边与实情不符）当场报出"哪一台的哪条边"——不让客人自己去撞那圈有界重试。
         for dep in program.relation.after.unwrap_or(&[]) {
-            // **指着[目标单元](crate::program::Kind::Target)那一条不等**（照实记）：它说的是
+            // **指着[目标单元](crate::unit::Kind::Target)那一条不等**（照实记）：它说的是
             // "这一趟走完"，而这一趟正是本处——等一个"这一趟"没有可等的对象，表里也没有那一行。
-            // **排到最后就是它的全部保证**（[`order_scene`](crate::program::order_scene) 那一条）。
-            if crate::program::is_target(dep) {
+            // **排到最后就是它的全部保证**（[`order_scene`](crate::unit::order_scene) 那一条）。
+            if crate::unit::is_target(dep) {
                 continue;
             }
             if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {
@@ -355,7 +355,7 @@ impl Assembly {
 // 自己那一枚 [`DIR`](protocol::service::operator) 似的常量（前缀共用
 // `protocol::system::DIR`），故这一手没有读者：装配侧直接 `族::DIR.try_join(面名)`。
 
-/// 报"哪一条、哪一步没成"，返**这一台自己的号**（[`crate::program::Demand::died`]）。
+/// 报"哪一条、哪一步没成"，返**这一台自己的号**（[`crate::unit::Demand::died`]）。
 ///
 /// 只在失败路径上调：**成功不说话**（装配正常的机器不该刷屏），而失败时这两行决定还得读几遍
 /// 代码——所以它报"程序名"与"步骤"两格。

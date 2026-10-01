@@ -12,7 +12,7 @@
 //! ```
 //!
 //! `kind` 是 [`ProgramKind`] 的码（0 = `User`、1 = `Supervisor`）——**特权级的唯一声明
-//! 处是装配表**（`programs::program::PROGRAMS` 里那一行的 `kind`；打包那一侧是 `crates/image`），
+//! 处是装配表**（`programs::unit::PROGRAMS` 里那一行的 `kind`；打包那一侧是 `crates/image`），
 //! 域只读取并原样转交 `Build`。
 //!
 //! 内核**不解释**这份清单：它只读前 8 字节那两个数取引导镜像（`kernel/src/platform/initrd.rs`）。
@@ -24,7 +24,7 @@ use crate::ProgramKind;
 
 /// 清单条数上限——**读侧与写侧共用的一个上界**，不是"这一台的清单有几条"。
 ///
-/// **照实记（它为什么不再是数出来的）**：原先这里是 `programs::program::PROGRAMS.len()`——"往装配表加
+/// **照实记（它为什么不再是数出来的）**：原先这里是 `programs::unit::PROGRAMS.len()`——"往装配表加
 /// 一行，这个数自己长"。那一刀的前提是**装配表与清单格式住同一个 crate**；程序声明搬去
 /// `programs`（`UnitFile` / `PROGRAMS`）之后，本 crate 在它之下，**再也看不到那张表**。
 ///

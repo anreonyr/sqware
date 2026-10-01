@@ -2,7 +2,7 @@
 //!
 //! **U 态**：持有 `serial@10000000`（banner 里那张 PMP 是 S/U (R,W)），把"收到字节就拉线"打开。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_UART: Died = 9;

@@ -129,7 +129,7 @@ fn system() -> Result<(), Fail> {
         assembly.assemble(program).map_err(Fail::Assemble)?;
     }
 
-    // 4. **这一趟走完**（`programs::program::SCENE` 那一格到点）：**先把 `control` 那一面挂上树**
+    // 4. **这一趟走完**（`programs::unit::SCENE` 那一格到点）：**先把 `control` 那一面挂上树**
     //    ——那一刻起那一面才有人待客（`probe-control` 等的就是这一件事，它靠 `after` 里那条
     //    `SCENE` 边排到最后一位）；然后进监督那一趟。
     assembly.mount_control();

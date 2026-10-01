@@ -3,7 +3,7 @@
 //! **U 态**：它只读 PLIC 的寄存器、claim/complete、铸孔、挂组，全都不需要 S 态；它那枚铃是
 //! **内核给的**（铸铃那一格才是 S 态，本域不铸）。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_ROUTER: Died = 5;

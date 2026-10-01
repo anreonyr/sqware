@@ -29,7 +29,7 @@
 //!   （`got` 不再单列：它就是 `find` 成没成。）
 
 use crate::driver::fail::Fail;
-use crate::program::Died;
+use crate::unit::Died;
 use crate::service::operator::bridge;
 use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
@@ -88,7 +88,7 @@ impl Context {
     /// 中断可等。故本手只收**入系统**那一半。
     ///
     /// **失败读数说步名**（`board` / `tree` / `line`）：域名由号带——`died` 就是装配表里
-    /// "这一台死了"那一号（[`crate::program::uart::E_UART`] 那种），与内核出口印的同一个。
+    /// "这一台死了"那一号（[`crate::unit::uart::E_UART`] 那种），与内核出口印的同一个。
     /// **成功那一行读数仍带域名**（`debug!("{me}: line occupied")`）。
     pub fn enter(
         line: u32,

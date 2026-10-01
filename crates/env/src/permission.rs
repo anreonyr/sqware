@@ -37,7 +37,7 @@
 //!
 //! **同一件事的两种写法**（照实记）：`Access::FETCH_STORE` 与 `Access::FETCH | Access::STORE`
 //! 是同一个值。口径：**常量表写那个 `const`**（`|` 不是 `const fn`，而需求单
-//! （`programs::program` 那一张）是编译期常量表），**运行期写 `|`**（与另两位同形，不必记一个
+//! （`programs::unit` 那一张）是编译期常量表），**运行期写 `|`**（与另两位同形，不必记一个
 //! 专门的名字）。两条都留着不是"多一条路"：`BitOr` 给运行期，那个 `const` 给常量表。
 //!
 //! **照实记（`Access` / `Policy` 为什么住本文件）**：它们原先住 `runtime::core::port`

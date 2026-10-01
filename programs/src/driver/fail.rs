@@ -2,7 +2,7 @@
 //!
 //! ```text
 //!   Fail   { code, text }：一个号 + 那一句话 —— `main` 的返回类型
-//!   号     各域在装配表上那一号，**名字就是那个名字**（`programs::program::uart::E_UART`）；
+//!   号     各域在装配表上那一号，**名字就是那个名字**（`programs::unit::uart::E_UART`）；
 //!          "配给那一趟没成"带 `assemble` 那一族的号（原样带）
 //! ```
 //!
@@ -41,7 +41,7 @@
 //! # 照实记（三份 `adapt/fail.rs` 薄壳也退场了）
 //!
 //! 上一刀折平之后，三台还各留一份 `adapt/fail.rs`：正文三行——一个 `DIED`（转发
-//! [`programs::program`] 那一号）、一句 `ASSEMBLE`、一个 `type Fail` 别名。那是**第二个名字**
+//! [`programs::unit`] 那一号）、一句 `ASSEMBLE`、一个 `type Fail` 别名。那是**第二个名字**
 //! 加**一个转发文件**，且 `Fail::assemble` 与 [`Fail::at`] 的函数体逐字相同。故这一刀：
 //!
 //! - 号回**它自己的名字**（各域 `main` / `boot` / `resident` 直接写 `E_UART` / `E_RTC` /
@@ -53,9 +53,9 @@
 //!
 //! # 照实记（号从哪来）
 //!
-//! [E_ROUTER](programs::program::router::E_ROUTER) /
-//! [E_UART](programs::program::uart::E_UART) /
-//! [E_RTC](programs::program::rtc::E_RTC) 取自 [programs::program] 那张装配表
+//! [E_ROUTER](programs::unit::router::E_ROUTER) /
+//! [E_UART](programs::unit::uart::E_UART) /
+//! [E_RTC](programs::unit::rtc::E_RTC) 取自 [programs::unit] 那张装配表
 //! （"**这一台**死了"，见那份 `program` 的 `died`）。唯一自己带号的是"配给那一趟没成"
 //! ——**照实记（那一族随"收配给"那条路一起退了）**：设备那一轴改由本域自己走一趟设备账之后，
 //! "配给那一趟没成"不再存在（本域的死法只剩它自己那一号 ＋ 步名）。
@@ -66,7 +66,7 @@
 //! `rtc::core::Fail` 是**上线**那一格——"客人那一问怎么了"，折成答码过线（`Taken` / `Past` /
 //! `Denied`）。故本表住适配侧（[`Exit`] 是程序侧那一手），而它**不是**服务面的失败域。
 
-use crate::program::Died;
+use crate::unit::Died;
 use crate::{Exit, Report};
 
 /// 一台驱动的死法：**一个号 ＋ 那一句话**（`main` 的返回类型），`?` 一路把它带出来。
@@ -76,7 +76,7 @@ pub struct Fail {
 }
 
 impl Fail {
-    /// 死在**某一步**：号是装配表里那一号（[E_UART](programs::program::uart::E_UART) 那种，
+    /// 死在**某一步**：号是装配表里那一号（[E_UART](programs::unit::uart::E_UART) 那种，
     /// 或本域自己那几条步名），那句话是**步名**（`"tree"` / `"desk"` 那种，
     /// 见上面那一格裁）。
     pub const fn at(code: Died, text: &'static str) -> Self {

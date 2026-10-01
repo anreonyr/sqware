@@ -58,8 +58,8 @@ fn root() -> PathBuf {
 /// 的头注里——**这里就是它的报警器**：谁往声明里塞了 runtime / protocol 的引用，本 crate
 /// 当场编不过。
 #[allow(dead_code)]
-#[path = "../../../programs/src/program/mod.rs"]
-mod program;
+#[path = "../../../programs/src/unit/mod.rs"]
+mod unit;
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
 ///
@@ -70,7 +70,7 @@ mod program;
 /// `programs/src/program.rs` 的照实记。）
 fn scenes() -> Vec<&'static str> {
     let mut out: Vec<&'static str> = Vec::new();
-    for p in program::PROGRAMS {
+    for p in unit::PROGRAMS {
         for s in p.entry() {
             if !out.contains(s) {
                 out.push(s);
@@ -82,7 +82,7 @@ fn scenes() -> Vec<&'static str> {
 
 /// 这一景的引导镜像（哪一台的 `entry` 含这个景）。
 fn entry_of(scene: &str) -> Option<&'static str> {
-    program::PROGRAMS
+    unit::PROGRAMS
         .iter()
         .find(|p| p.entry().contains(&scene))
         .map(|p| p.name())
@@ -90,13 +90,13 @@ fn entry_of(scene: &str) -> Option<&'static str> {
 
 /// 这一景要装的程序（**装配表按 `wanted_by` 过滤**；次序即装载次序）。
 fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
-    let picked: Vec<(&'static str, env::ProgramKind)> = program::PROGRAMS
+    let picked: Vec<(&'static str, env::ProgramKind)> = unit::PROGRAMS
         .iter()
-        // **两格滤**：进这一景（`wanted_by`）**且**是要起的服务（[`program::Kind::Service`]）。
+        // **两格滤**：进这一景（`wanted_by`）**且**是要起的服务（[`unit::Kind::Service`]）。
         // 两格判的不是同一句话：`wanted_by` 说"这一景要不要它"，`kind` 说"**它有没有身子**"——
-        // 名单里那个[目标单元](program::Kind::Target)（这一趟装配自己）没有身子，**不许去找
+        // 名单里那个[目标单元](unit::Kind::Target)（这一趟装配自己）没有身子，**不许去找
         // `prog-scene` 那样的 bin**；即使它将来写上了自己的景，这一格也照旧不装它。
-        .filter(|p| p.wanted_by().contains(&scenario) && p.kind() == program::Kind::Service)
+        .filter(|p| p.wanted_by().contains(&scenario) && p.kind() == unit::Kind::Service)
         .map(|p| (p.name(), p.space()))
         .collect();
     if picked.is_empty() {
@@ -113,19 +113,19 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
 fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
-    let mut list: Vec<&'static program::UnitFile> = program::PROGRAMS
+    let mut list: Vec<&'static unit::UnitFile> = unit::PROGRAMS
         .iter()
         .copied()
         .filter(|p| p.wanted_by().contains(&scenario) && p.listed())
         .collect();
-    program::order_scene(&mut list).map_err(|why| match why {
-        program::DepsFail::Unknown(name) => {
+    unit::order_scene(&mut list).map_err(|why| match why {
+        unit::DepsFail::Unknown(name) => {
             format!("景 {scenario} 的 deps 里有一个名字不在本景：{name}")
         }
-        program::DepsFail::NoEvidence(name) => format!(
+        unit::DepsFail::NoEvidence(name) => format!(
             "景 {scenario} 的 deps 指着 {name}，而它没有'我答得动'的凭据（`setup` 空）"
         ),
-        program::DepsFail::Cycle(name) => {
+        unit::DepsFail::Cycle(name) => {
             format!("景 {scenario} 的 deps 有环（取不出可排的台，卡在 {name}）")
         }
     })?;

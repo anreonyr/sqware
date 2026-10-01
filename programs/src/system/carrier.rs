@@ -23,7 +23,7 @@ use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
 
 use super::control::service::Start;
-use crate::program::Died;
+use crate::unit::Died;
 
 /// **守着这几枚门牌**，直到组坏掉：一场一句话地交给 `on`。
 ///

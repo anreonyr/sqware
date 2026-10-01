@@ -23,7 +23,7 @@
 //! [`ccall::DENIED`]）。⇒ **交给持树者的那枚门牌做不出 `Found`**（立一枚盟）——它一辈子只叫
 //! `Amid`。为什么是两面、那一个生产持有者各要哪几条，见 [`ccall::grant`] 的文件头。
 
-use crate::program::coalition::E_COALITION;
+use crate::unit::coalition::E_COALITION;
 use crate::system::control::service::Start;
 use env::Wait;
 
@@ -102,7 +102,7 @@ pub fn serve() -> Result<(), Start> {
     // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
     let _ = protocol::communication::establish::endpoint(
         runtime::env::unit::sire(),
-        env::Mark::of(crate::program::READY),
+        env::Mark::of(crate::unit::READY),
         env::Wait::POLL,
     );
 

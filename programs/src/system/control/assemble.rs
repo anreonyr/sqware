@@ -32,7 +32,7 @@ use protocol::system::supply::frame::{WANT_MAX, Want};
 use crate::system::control::desk::Announce;
 
 use super::{BOOT_MS, Control, Error, READY_MS, Service};
-use crate::program::{UnitFile, Setup};
+use crate::unit::{UnitFile, Setup};
 use crate::system::Assembly;
 
 impl Control {

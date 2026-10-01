@@ -32,7 +32,7 @@
 //! **编译期定死**的（`PROGRAMS` 是 `const`），故手直接写进表里——**表就是注册表**，不必再来一枚
 //! 运行期才查得到的名字。
 
-use crate::program::{Died, UnitFile};
+use crate::unit::{Died, UnitFile};
 use crate::system::Assembly;
 use crate::system::control::assemble as control;
 use crate::system::control::{Error, Service};

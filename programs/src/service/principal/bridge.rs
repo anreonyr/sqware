@@ -15,7 +15,7 @@ use protocol::service::principal as pcall;
 use protocol::service::principal::client::Face;
 use runtime::env::room;
 
-use crate::program::UnitFile;
+use crate::unit::UnitFile;
 use crate::system::Assembly;
 use crate::system::control::{BOOT_MS, READY_MS, RETRY_MS, Service};
 

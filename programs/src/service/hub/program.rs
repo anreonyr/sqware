@@ -18,10 +18,10 @@
 //!
 //! **那一个字面量 `"hub"`**：它与 [`crate::service::hub`] 在树上的那一段名字同一个词
 //! （`protocol::driver::hub` 那一族在树上的那一段名字）——本文件**只许引 `env`**（宿主打包要读它，见
-//! [`crate::program`] 的头注），故那个词只能在这儿写第二遍。对不上时 hub 收不到物料
+//! [`crate::unit`] 的头注），故那个词只能在这儿写第二遍。对不上时 hub 收不到物料
 //! （当场 `hub: no machine`），不会静默跑起来。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手哪一步（读完机器自述、立账那一趟）。
 pub const E_HUB: Died = 28;
@@ -29,7 +29,7 @@ pub const E_HUB: Died = 28;
 /// **收物料那条通道的名字**——两端同一个（本域 `establish::endpoint` 铸的就是刻它的孔）。
 ///
 /// **照实记（那个词只能写在这儿，而它就是树上的那一段名字）**：本文件**只许引 `env`**
-/// （宿主打包要读它，见 [`crate::program`] 的头注），故它写不出
+/// （宿主打包要读它，见 [`crate::unit`] 的头注），故它写不出
 /// `protocol::driver::hub::NAME` 那条引用——而两者**本来就是同一个词**（"hub 那条路"与
 /// "hub 那条通道"是同一位的两条边，不另起名）。**装配那两端照这一格对齐**：本域铸孔用
 /// [`CHANNEL`]，装配者 [`connect`](crate::system::control::connect) 认的也是它；对不上时

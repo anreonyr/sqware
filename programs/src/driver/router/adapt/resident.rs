@@ -7,7 +7,7 @@ use super::boot::Up;
 use super::{bell, desk, exhaust, sweep};
 use env::Wait;
 use programs::driver::fail::Fail;
-use programs::program::router::E_ROUTER;
+use programs::unit::router::E_ROUTER;
 
 /// 常驻：**一只组等两个源**（加上门牌，共三个）。
 ///

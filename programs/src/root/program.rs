@@ -3,7 +3,7 @@
 //! 它由 boot 直接引入（**不在装配单上**：`after: None`），起的第一个东西是编排域，之后只做一件事
 //! ——照单发货。
 
-use crate::program::{Demand, Identity, UnitFile, Relation};
+use crate::unit::{Demand, Identity, UnitFile, Relation};
 use env::ProgramKind;
 
 pub static PROGRAM: UnitFile = UnitFile {

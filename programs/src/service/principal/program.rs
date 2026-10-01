@@ -5,7 +5,7 @@
 //! 见 [`Relation`] 的头注）；而装配者那一侧只剩一件真事——认下它交来的 `Grant::Set`
 //! （`principal::bridge::adopt_roster`）。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手哪一步（落门牌 / 立两张表 / 回查）。
 pub const E_PRINCIPAL: Died = 14;

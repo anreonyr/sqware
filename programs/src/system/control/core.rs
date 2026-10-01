@@ -2,7 +2,7 @@
 //!
 //! 正文见 [`protocol::system`]；三档（判定 / 账 / 适配）分家的理由见那一份模块头注。
 
-use crate::program::Ending;
+use crate::unit::Ending;
 
 use super::desk::{Announce, Slot, State, Table};
 

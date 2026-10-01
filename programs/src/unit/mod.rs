@@ -11,7 +11,7 @@
 //! **`program.rs → unit/`**——收"**unit file**"那一层（层四要把 13 格写成 `UnitFile` 的形状）。
 //! 我图省事用了**同名目录**（`program/mod.rs`：模块名一字不改 ⇒ 全仓引用一处都不用动），
 //! 于是这一格的目标名**还没兑现**。**量过下一刀要动的**：
-//!   · 模块名：`crate::program::…` **51** 处 ＋ `programs::program::…` **47** 处 ＋ 裸 `crate::program`
+//!   · 模块名：`crate::unit::…` **51** 处 ＋ `programs::unit::…` **47** 处 ＋ 裸 `crate::unit`
 //!     **55** 处（合计约 150 处，机械替换；`catalog.rs` 里那 **13** 条 `#[path]` 不用动——它们相对
 //!     本目录）；
 //!   · 类型名：`UnitFile` → **`UnitFile`** 出现在 **81** 处（层四那一半）。

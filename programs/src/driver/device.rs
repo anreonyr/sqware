@@ -30,7 +30,7 @@ use protocol::service::operator::path::Path;
 use runtime::core::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 
-use crate::program::Died;
+use crate::unit::Died;
 
 use crate::driver::fail::Fail;
 

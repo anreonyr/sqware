@@ -60,7 +60,7 @@ use programs::root::boot;
 use alloc::string::String;
 use alloc::string::ToString;
 use programs::system::control::core::{Ready, probe_ready};
-use programs::program::Ending;
+use programs::unit::Ending;
 use programs::system::control::desk::{Announce, Slot, State, Table};
 use programs::system::control::service;
 use protocol::debug;

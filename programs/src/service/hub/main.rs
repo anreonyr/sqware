@@ -6,7 +6,7 @@
 //! 起手一把在 [`server::serve`]：收整机物料 → 立账 → 上树 → 逐类立盟 → 落 `/svc/hub` 与 `/dev`
 //! → 一枚线程招待所有客人（三面：报名 / 列册 / 认领）。
 //!
-//! **它与其他每一台走同一条路**：编排域按装配表（`programs::program::PROGRAMS`，order 3）用
+//! **它与其他每一台走同一条路**：编排域按装配表（`programs::unit::PROGRAMS`，order 3）用
 //! `mint` 建这个域、产这一枚线程；它认"起我那一枚线程"只有一条 —— `runtime::env::unit::sire()`。
 //! **它的整机物料从装配者那条通道来**（`Setup::Machine`，见 `programs/src/system/hub/program.rs`）。
 

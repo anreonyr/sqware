@@ -99,13 +99,13 @@ use programs::root::boot;
 
 use core::time::Duration;
 
-use programs::program::Ending;
+use programs::unit::Ending;
 use programs::system::control::desk::{Announce, Table};
 use programs::system::control::service;
 use protocol::debug;
 use runtime::env::room;
 
-/// 占核者与打点者的**清单名**（`programs::program::PROGRAMS` 里 `wanted_by` 含 `load` 的那两行）。
+/// 占核者与打点者的**清单名**（`programs::unit::PROGRAMS` 里 `wanted_by` 含 `load` 的那两行）。
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 

@@ -221,7 +221,7 @@ use core::time::Duration;
 use alloc::string::String;
 use alloc::string::ToString;
 use programs::system::control::core::Reaped;
-use programs::program::Ending;
+use programs::unit::Ending;
 use programs::system::control::desk::{Announce, Slot, Table};
 use programs::system::control::service;
 use protocol::communication::establish::{self, Endpoint, Held};
@@ -230,7 +230,7 @@ use runtime::env::mail::HolePie;
 use runtime::env::room;
 use runtime::env::unit;
 
-/// 受害者的清单名（`programs::program::PROGRAMS` 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
+/// 受害者的清单名（`programs::unit::PROGRAMS` 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
 /// （见 `hang.rs` 头注）。旧版 `churn` 仍在清单里（留档），本台子不再用它。
 const VICTIM: &str = "hang";

@@ -29,7 +29,7 @@ use crate::system::control::core::{Fail, Ready, Reaped, admit_start, probe_ready
 use crate::system::control::desk::{Announce, Service, Slot, State, Table};
 use protocol::communication::establish::Endpoint;
 
-use crate::program::{
+use crate::unit::{
     Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,
 };
 

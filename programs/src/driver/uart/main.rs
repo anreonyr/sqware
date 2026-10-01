@@ -36,7 +36,7 @@ use crate::core::batch::Batch;
 use crate::uart as device;
 use env::{HoleDir, Wait};
 use programs::driver::fail::Fail;
-use programs::program::uart::E_UART;
+use programs::unit::uart::E_UART;
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::env::mail::HolePie;
@@ -54,7 +54,7 @@ const DRAIN_MAX: usize = 64;
 
 /// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(E_UART, "…"))` 一路 `?` 出来，
 /// `Ok(())` 是"跑完了"（常驻域走不到那一格）。**一族口径**在 [`programs::driver::fail`]
-/// （号取自装配表：本域用的是 [`programs::program::uart::E_UART`]，一个数都不写）。
+/// （号取自装配表：本域用的是 [`programs::unit::uart::E_UART`]，一个数都不写）。
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // ── 起手 ───────────────────────────────────────────────

@@ -10,7 +10,7 @@
 //! **留下的两份是 rtc 自己的形状**：门面（两个方向的服务面）与"等两个源"那一只组。
 //!
 //! **照实记（`fail.rs` 也退场了）**：本域那份薄壳（`DIED` / `ASSEMBLE` / `type Fail`）在残枝
-//! 第二刀删掉——本域现在直接用 [`programs::program::rtc::E_RTC`] 与
+//! 第二刀删掉——本域现在直接用 [`programs::unit::rtc::E_RTC`] 与
 //! [`programs::driver::fail::Fail`]，见那份的文件头。
 //!
 //! **这一半由 bin 自己 `mod`**（不编进 lib）：它只属于这一台——设备模块（`rtc.rs`）同理。

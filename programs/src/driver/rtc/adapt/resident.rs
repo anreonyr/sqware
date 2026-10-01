@@ -11,7 +11,7 @@ use programs::driver::device::Device;
 use programs::driver::fail::Fail;
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
-use programs::program::rtc::E_RTC;
+use programs::unit::rtc::E_RTC;
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::driver::line;

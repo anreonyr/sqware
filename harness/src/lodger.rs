@@ -45,12 +45,12 @@
 //!
 //! # 特权级由清单定
 //!
-//! 本域是 **U 态**（`programs::program::PROGRAMS` 里这一行的 `kind`）：铸孔、交出、上树找服务、领一枚门闩
+//! 本域是 **U 态**（`programs::unit::PROGRAMS` 里这一行的 `kind`）：铸孔、交出、上树找服务、领一枚门闩
 //! 都不需要 S 态。
 //!
 //! **照实记（形状归一这一刀；用户裁定"外围再收一轮"）**：本台原先住 `lodger/`——`main.rs`
 //! ＋ `mod.rs` ＋ `needs.rs`，三件里 `needs.rs` 只有**一行转发**（定义早在
-//! `programs::program`），`mod.rs` 只为把那一行交给 lib、好让 bin 经 `harness::lodger::needs`
+//! `programs::unit`），`mod.rs` 只为把那一行交给 lib、好让 bin 经 `harness::lodger::needs`
 //! 取到它。23 台测具**只有这一台成目录**，形状因此不齐。这一刀把它拉平成 `lodger.rs`
 //! （与其余 22 台同形），那张单子**直接从定义处取**（`LODGER_WANTS`——这一刀之后它回了本域
 //! 自己：`ASK` 那一格），
@@ -64,7 +64,7 @@ use programs::Report;
 
 // 设备那一族共用的客侧三手（`Ask` / `Hub` / `Device`）——本域领门闩走的是同一条路。
 use programs::driver::device::{Ask, Hub};
-use programs::program::harness::E_LODGER;
+use programs::unit::harness::E_LODGER;
 
 // 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
 use protocol::communication::session::Session;

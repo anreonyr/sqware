@@ -97,5 +97,5 @@
 //!
 //! **照实记（一行转发不该撑起一个文件）**：本模块原先还挂一格 `pub mod needs;`——装两样：一行转发
 //! （`ROUTER_WANTS`）与一个 `PLIC` 常量。前者删掉、bin 直接从定义处取；后者归到
-//! **定义处**（[`programs::program::router::PLIC_CLASS`]）。与 `harness/src/lodger.rs`、`driver/uart`、
+//! **定义处**（[`programs::unit::router::PLIC_CLASS`]）。与 `harness/src/lodger.rs`、`driver/uart`、
 //! `driver/rtc` 同一条规矩。本模块留下是因为它是**这条路的锚**。

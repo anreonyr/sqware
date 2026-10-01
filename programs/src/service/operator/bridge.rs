@@ -33,7 +33,7 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::program::UnitFile;
+use crate::unit::UnitFile;
 use crate::system::Assembly;
 use crate::system::control::{BOOT_MS, READY_MS, Service};
 
@@ -190,7 +190,7 @@ impl Tree {
 }
 
 /// **树这一轴在装配那一趟里的那一手**：**"这一台接不接那棵树"不是声明里的一格**（照实记：那一格
-/// 从声明上撤了，见 [`Relation`](crate::program::Relation) 的头注），判据从这一台自己的 `after`
+/// 从声明上撤了，见 [`Relation`](crate::unit::Relation) 的头注），判据从这一台自己的 `after`
 /// 推——见 [`needs_tree`]。
 ///
 /// **在存在信号之后**：两者各一条路、互不影响。持树者必须先于这位客人起：提示之路还没认下就
@@ -226,7 +226,7 @@ fn needs_tree(program: &UnitFile) -> bool {
     program
         .relation
         .after
-        .is_some_and(|deps| deps.contains(&crate::program::operator::PROGRAM.name()))
+        .is_some_and(|deps| deps.contains(&crate::unit::operator::PROGRAM.name()))
 }
 
 /// **认下持树者本身**：**这一手不看声明**（照实记：`holds_tree` 那一格退场了——"我是持树者"是

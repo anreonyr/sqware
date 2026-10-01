@@ -3,7 +3,7 @@
 //! 结盟服务：答"这一位在那枚盟里吗"。它是持树者的**第二双眼睛**——它起手把 `Grant::Ask` 那一枚
 //! 门牌交给持树者，持树者按记号认（`eyes` 那一格已退场，见 [`Relation`] 的头注）。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手哪一步（那只组 / 找名册那份门牌）。
 pub const E_COALITION: Died = 16;

@@ -35,7 +35,7 @@
 /// 项序是绑定的定义，算术不是。
 const EXT_S: u32 = 9;
 
-use programs::program::router::PLIC_CLASS;
+use programs::unit::router::PLIC_CLASS;
 
 /// 这台控制器的事实：**它有几条线 ＋ 本域用哪个 context**。
 pub struct Sources {

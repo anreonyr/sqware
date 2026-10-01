@@ -304,7 +304,7 @@ fn main() -> Report<'static> {
     // （与三台驱动、三台服务那几处**同一手**）。
     let _ = protocol::communication::establish::endpoint(
         utask::sire(),
-        env::Mark::of(programs::program::READY),
+        env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
     );
 

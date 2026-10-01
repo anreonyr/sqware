@@ -56,7 +56,7 @@ use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::program::{PROGRAMS, UnitFile, Setup};
+use crate::unit::{PROGRAMS, UnitFile, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::Source;
@@ -67,8 +67,8 @@ pub mod desk;
 pub mod service;
 pub mod supervise;
 
-/// 装配失败的编号——定义见 [`crate::program::Died`]（本处只是转发）。
-pub use crate::program::Died;
+/// 装配失败的编号——定义见 [`crate::unit::Died`]（本处只是转发）。
+pub use crate::unit::Died;
 
 /// 认身份门牌的短等间隔（毫秒）：门牌由名册起手交出，装配者这一侧只是短等。
 pub const RETRY_MS: usize = 1;
@@ -332,7 +332,7 @@ impl Control {
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         // **取字节那一面的唯一消费者**：这一景那本账（`self.catalog`）按名字给那一段 `&[u8]`。
         // **声明里不问来源**（照实记：`Origin` 那一格 0 个选择者，随那本账一起退场，见
-        // [`crate::program::Demand`] 底下那一段）。
+        // [`crate::unit::Demand`] 底下那一段）。
         // **这一面只剩一种不成**（照实记见 `system::source`）：这块账里没有这一台。
         let Some(image) = Source::initrd(self.catalog).image(name.clone()) else {
             return Err(Error::Missing);

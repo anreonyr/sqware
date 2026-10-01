@@ -27,7 +27,7 @@ use env::{Access, Kind, Mark, PieToken, Policy, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
-use programs::program::uart::E_UART;
+use programs::unit::uart::E_UART;
 use programs::service::operator::bridge;
 use protocol::debug;
 use protocol::driver;
@@ -108,7 +108,7 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     // 从此是"**面已经在树上**"的意思（判词与量法见 `program.rs` 那一格的照实记）。
     let _ = protocol::communication::establish::endpoint(
         runtime::env::unit::sire(),
-        env::Mark::of(programs::program::READY),
+        env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
     );
 

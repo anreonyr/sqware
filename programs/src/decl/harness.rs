@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, SCENE, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, SCENE, Setup};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────

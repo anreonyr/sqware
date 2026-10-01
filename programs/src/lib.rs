@@ -1,7 +1,7 @@
 #![no_std]
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
 //!
-//! **分档按特权级**（唯一声明处：`programs::program::PROGRAMS` 里这一行的 `kind`）：[`root`] 与 [`system`]
+//! **分档按特权级**（唯一声明处：`programs::unit::PROGRAMS` 里这一行的 `kind`）：[`root`] 与 [`system`]
 //! 是 S 态那一档（引导域 / 编排域），[`user`] 是 U 态那一档（今天**只剩 `canonical`**：控制台那一台；
 //! 六位试客搬去了 `harness`，见下面那条照实记）。
 //!
@@ -15,9 +15,9 @@
 //! **测具不在这里**（照实记：用户裁定"测试和程序分开"）：探针（`probe-*`）与压测台
 //! （`rig` / `load` / `beat` / `again` / `group` 与它们的受害者）整体搬去了隔壁那个 crate
 //! **`harness`**——它们只借这里的一件共享入口（`extern crate programs;` ⇒ [`entry`] 的
-//! `_start`）。哪几台进哪张镜像，仍只在 `programs::program::PROGRAMS` 每行的 `wanted_by` 里声明。
+//! `_start`）。哪几台进哪张镜像，仍只在 `programs::unit::PROGRAMS` 每行的 `wanted_by` 里声明。
 //!
-//! **表归主人**：四张硬件需求单在**收方**（今天住 `programs::program`——装配表本就要把那一格
+//! **表归主人**：四张硬件需求单在**收方**（今天住 `programs::unit`——装配表本就要把那一格
 //! 摆出来，故与它同层：本域要哪几枚、落到它自己那张表的第几格）；boot 的两块账在
 //! **引导域**（`root/boot.rs`：只有它读得到）——装配者只是 `use` 它们，不另抄一份。
 //!
@@ -84,13 +84,13 @@
 //! `member` 原先住这里（`user/` 那一间）——它们量的是**服务**，去掉机器照转（产品镜像实测过），
 //! 于是按用户裁定 **甲** 搬去 `harness`。这条边界因此成了一句可查的话：**本 crate 里的 6 个 bin
 //! 就是产品镜像那 6 条**。
-//! **特权级不在这里声明**——那一格在 `programs::program::PROGRAMS` 里这一行的 `kind`。
+//! **特权级不在这里声明**——那一格在 `programs::unit::PROGRAMS` 里这一行的 `kind`。
 
 extern crate alloc;
 
 pub mod driver;
 pub mod entry;
-pub mod program;
+pub mod unit;
 pub mod root;
 pub mod service;
 pub mod system;

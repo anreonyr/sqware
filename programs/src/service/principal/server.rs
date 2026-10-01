@@ -19,7 +19,7 @@
 //! 从哪一枚读到就是哪一面，而**那一问属不属于这一面**由 [`Grant::of_wire`] 当场对一次
 //! （对不上答 [`pcall::DENIED`]）。理由与持有者那三行见 [`pcall::grant`] 的文件头。
 
-use crate::program::principal::E_PRINCIPAL;
+use crate::unit::principal::E_PRINCIPAL;
 use crate::system::control::service::Start;
 use env::Wait;
 
@@ -114,7 +114,7 @@ pub fn serve() -> Result<(), Start> {
     // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
     let _ = protocol::communication::establish::endpoint(
         runtime::env::unit::sire(),
-        env::Mark::of(crate::program::READY),
+        env::Mark::of(crate::unit::READY),
         env::Wait::POLL,
     );
 

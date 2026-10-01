@@ -10,7 +10,7 @@
 //! ```
 //!
 //! **照实记（`fail.rs` 退场了）**：本域那份薄壳（`DIED` / `ASSEMBLE` / `type Fail`）在残枝
-//! 第二刀删掉——本域现在直接用 [`programs::program::router::E_ROUTER`] 与
+//! 第二刀删掉——本域现在直接用 [`programs::unit::router::E_ROUTER`] 与
 //! [`programs::driver::fail::Fail`]，见那份的文件头。
 //!
 //! 判定不在这里：账与四原语住 `crate::core::lines`，"区 ↔ 线号"住
