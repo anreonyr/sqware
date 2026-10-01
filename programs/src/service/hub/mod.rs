@@ -1,6 +1,6 @@
 //! hub — **设备账那一族的实现侧**（`prog-hub` 那一台域）。
 //! ```text
-//!   core    纯：册（Entry / Cell / League）＋ 四格判定 ＋ 取窗        【已落】
+//!   core/   纯：册（`ledger`：Entry / Cell / Owner）＋ 类 → 盟（`league`）＋ 四格判定 ＋ 取窗
 //!   server  适配：收整机物料 → 立账 → 上树 → 立盟 → 落 /svc/hub 与 /dev → 三面待客 ＋ 探活
 //!   main    入口：起手（`server::serve`）
 //! ```

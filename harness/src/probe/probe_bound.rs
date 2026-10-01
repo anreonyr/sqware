@@ -82,7 +82,7 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
 }
 
 /// `seek` 那一问的动作码：`SEEK = 7`（与 [`JUNK_OP`] 同一条：这一台**故意手写裸帧**，故它按
-/// 线上那一格写数——`crates/protocol/src/system/operator/frame.rs` 那一枚私有常量才是正文；
+/// 线上那一格写数——`crates/protocol/src/service/operator/frame/vocab.rs` 那一枚私有常量才是正文；
 /// 那个码要是挪了位，这一条当场红）。
 const SEEK_OP: u8 = 7;
 

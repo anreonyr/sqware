@@ -1,6 +1,6 @@
 //! coalition::实现侧 — **结盟服务那一台**。
 //! 判据与 [`crate::service::principal`] 同款：**判定与接口**（正文、七条原语、帧、客侧
-//! 那一面）住 `crates/protocol/src/system/coalition/`；**实现方**（**独立域**，`prog-coalition`
+//! 那一面）住 `crates/protocol/src/service/coalition/`；**实现方**（**独立域**，`prog-coalition`
 //! 那一台）住这里。
 //! **与本目录里另两位一样少文件**：载体用的是 rtc 那一面量过的"**门牌自带回信孔**"，
 //! 故**不需要**提示孔 + 转授 + 客人账——`bridge` 与 `desk` 两个文件因此没有出现。
@@ -8,6 +8,7 @@
 //! `/svc/sys/principal/ask`（**只要问面**：本域只 `Resolve`），每条**写**原语嵌一次
 //! `Resolve(发送者)`。"self"那一格因此不在核心，在这一层（正文"已知边界"里写着这一条的确切含义）。
 
+/// 核（纯）：**盟册那一本账**一件，故单文件 `core.rs`（对照另三台：核里两件以上才进一层目录）。
 pub mod core;
 /// 那一枚线程（服务侧 / 持树侧）与它叫的那几手住这里。
 pub mod serve;

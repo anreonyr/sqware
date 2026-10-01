@@ -1,19 +1,13 @@
-//! hub::core — **设备那一本账**：册上一条一条 ＋ 每类那枚盟。**纯核心**：不碰内核、不碰树、
-//! 不碰会话——喂两个假闭包（"主人还答得出吗"）就能把规矩推理干净。
-//! ```text
-//!   Entry   一台：名 ＋ 类 ＋ 区 ＋ 线 ＋ **那一枚**（hub 手里那一枚：那一台那一份孔）
-//!   Cell    格 = Vacant(Entry) | Held { entry, owner }      ← "有主没主"是一格
-//!   League  类 → 盟（hub 立的那一枚）
-//! ```
-//! # 三条不变量（做进类型，不写成注释故事）
-//! 1. **一台一主，且只认活着的主人**——`Cell` 两形说的是"有没有主"；"有主但主人没了"当场
+//! hub::core::ledger — **册上那一本账**：一台（[`Entry`]）· 它的主人（[`Owner`]）· 一格（[`Cell`]）·
+//! 册本身（[`Ledger`]）与册上那几手（收 / 认领 / 空出 / 取窗 / 落格要的那几件）。
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
 use protocol::service::hub::{Fail, LIST_MAX, Window};
-use protocol::service::coalition::CoalitionId;
+
+use super::league::League;
 
 /// **一台设备在 hub 账上是什么**：名（树上的坐标）、类（认领的口子）、线（区→线那条权威在
 /// hub）、**那一页**（认领时授出去的门闩）、**那一枚孔**（hub 为这一台铸的、挂在 `/dev` 那一
@@ -61,17 +55,10 @@ impl Cell {
     }
 }
 
-/// 一类 → 它那枚盟。
-#[derive(Clone, PartialEq, Eq, Debug)]
-struct League {
-    class: String,
-    coalition: CoalitionId,
-}
-
 /// 设备那一本账。
 pub struct Ledger {
     cells: Vec<Cell>,
-    leagues: Vec<League>,
+    pub(super) leagues: Vec<League>,
 }
 
 impl Ledger {
@@ -93,27 +80,6 @@ impl Ledger {
         self.cells.try_reserve(1).map_err(|_| ())?;
         self.cells.push(Cell::Vacant(entry));
         Ok(())
-    }
-
-    /// 册 · 写：这一类那枚盟；没铸过就铸（`mint` 由适配层给——核心不叫盟册）。
-    /// **一处定义**：写 permit 与"代报名"都从这里取，故同一类不会有两枚盟。
-    pub fn league(&mut self, class: String, mint: impl FnOnce() -> CoalitionId) -> CoalitionId {
-        if let Some(league) = self.leagues.iter().find(|l| l.class == class) {
-            return league.coalition;
-        }
-        let coalition = mint();
-        if self.leagues.try_reserve(1).is_ok() {
-            self.leagues.push(League { class, coalition });
-        }
-        coalition
-    }
-
-    /// 册 · 读：这一类那枚盟（没铸过 ⇒ `None`）。
-    pub fn coalition_of(&self, class: String) -> Option<CoalitionId> {
-        self.leagues
-            .iter()
-            .find(|l| l.class == class)
-            .map(|l| l.coalition)
     }
 
     pub fn claim(

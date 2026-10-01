@@ -1,3 +1,6 @@
+//! operator::core::judge — **判据**（纯，不碰账）：`Facts` 那四个问句 ＋ 判一格 `judge`
+//! （谁在问 / 这一支里吗 / 这一盟里吗 / 这一格谁开着）。裁决与翻码在 [`super::gate`]。
+
 use env::TaskId;
 
 use protocol::service::coalition::CoalitionId;
