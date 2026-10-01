@@ -11,7 +11,7 @@
 
 extern crate programs;
 
-use programs::system::coalition;
+use programs::service::coalition;
 use programs::system::control::service as core;
 
 #[programs::entry]

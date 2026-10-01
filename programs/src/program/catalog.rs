@@ -17,7 +17,7 @@ use super::{Program, SCENE_UNIT};
 
 #[path = "../user/canonical/program.rs"]
 pub mod canonical;
-#[path = "../system/coalition/program.rs"]
+#[path = "../service/coalition/program.rs"]
 pub mod coalition;
 /// harness 那 23 台（**测具**）：它们的身子住隔壁那个 crate，而其中 13 台**由编排域起**
 /// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。

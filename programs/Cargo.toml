@@ -89,7 +89,7 @@ doctest = false
 
 [[bin]]
 name = "prog-coalition"
-path = "src/system/coalition/main.rs"
+path = "src/service/coalition/main.rs"
 test = false
 bench = false
 doctest = false
