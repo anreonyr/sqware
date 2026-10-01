@@ -23,8 +23,9 @@
 //! 闩直接读）。故"已持 Session 则用 Face"这条规则在这里落成一句"不适用"——写下来备查，免得下
 //! 一刀再来找一遍。
 
+use alloc::vec::Vec;
 use env::wire::Eyes;
-use env::{HoleDir, Mark, PieToken, Wait};
+use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
 use runtime::core::port::{self, Access, Policy};
@@ -134,6 +135,9 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Room(E_TREE));
     }
     buf.resize(PAGE_SIZE, 0);
+    // **每位客人一格答话存根**（跟着客人走，不跟着这一趟走）：见 [`Outbox`] 的照实记——
+    // 这一格就是为了"本域不为一位客人停住"。
+    let mut outs: Vec<Outbox> = Vec::new();
     // **照实记（那一格共用的答话存根退场了）**：从前这里住着一枚 `Outbox<Union>`（缓冲 ＋
     // 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台服务**按在下一趟的
     // `send` 里（一位不回头的客人就能卡住所有客人）。今天答话那一格跟着**那一趟**走
@@ -181,7 +185,7 @@ pub fn serve() -> Result<(), Start> {
         let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, coord, &mut buf)
+            serve_one(&mut tree, guest, coord, &mut buf, &mut outs)
         } else {
             // **醒在一枚账上没有的号上**（守卫）：提示孔是常态（它的帧由下一轮的 `settle` 收），
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
@@ -229,6 +233,14 @@ pub fn serve() -> Result<(), Start> {
         let _ = desk.sweep_each(|gone| {
             if let Some(ask) = gone.ask {
                 let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
+            }
+            // **答话那一格也一起办**：先非阻塞地问一句"上一答被取走了没有"（[`Sender::settle`]）
+            // ——取走了/孔没了 ⇒ 这一格撤掉（本域不再有它的话要说）；**还压着就留着不发**：
+            // 那只手指着这一格的缓冲，撤了就是一段死字节（见 [`Outbox`]）。
+            if let Some(at) = outs.iter().position(|o| o.who == gone.who)
+                && outs[at].send.settle()
+            {
+                let _ = outs.swap_remove(at);
             }
         });
     }
@@ -367,6 +379,47 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
     });
 }
 
+/// **一位客人一格答话存根**：那一枚答话路的写端 ＋ 这一族最长那一帧的缓冲（[`Sender`] 自带）。
+///
+/// # 照实记（**这一格是量出来的：那一等从前落在服务循环里**）
+///
+/// 它从前不是一格：答一句话用的是 `serve_one` 栈上的一个临时 `Sender`（`from_token(guest.reply())`），
+/// `send` 递出去、落出作用域时那一等（`Drop` → `reclaim` → `wait(Push, Forever)`）就**扎在本域这条
+/// 循环里**。debug 档 `product` 景那几跑量到过它的样子：**这一格一次都没超过 200 ms**（故它不是
+/// `push_hold` 那一秒的病根）；而 `root` 景（25 台测具）里量到了另一头——
+/// `operator: slowone who=24 answer=0ms send=0ms reclaim=4639ms sent=true`：客人 24 不来取它的答话，
+/// **本域在那一等上停了 4.6 s**，那段时间里客人 25 / 26 推上来的手在孔上干等（各 2.1 s，
+/// 两位当场判失败，见 `mail: hand stuck hole#426/#451`）。⇒ **一位不回头的客人能停住整台树**。
+///
+/// # 修法（只改"谁等"，不改"报不报"）
+///
+/// 缓冲挪到**跟着客人走**的这一格（本域那条表里），于是"递出去"与"等它被取走"**分成两件事**：
+/// 递完就接着招待下一位；下一趟要答这同一位之前先**非阻塞地问一句**（[`Sender::settle`]）——
+/// 上一答还在孔上就**这一趟不推**（推上去既会改掉那只手指着的字节，也会让本域再一次为它停住）。
+/// **一条报也没有作废**：推出去的仍等客人来取（孔是客人的，本域不动它）；少答的那一句是**下一位
+/// 客人自己那一问**——它没取走上一答，这是它那一侧的事。
+///
+/// **它的寿命**：跟着这一格走到客人被剔走为止；剔的那一刻若上一答还挂着，这一格**留着不发**
+/// （`sweep_each` 那一手）——那只手指着这一格的缓冲，撤了就是一段死字节。
+struct Outbox {
+    who: TaskId,
+    send: Sender<ocall::Union>,
+}
+
+/// 取这位客人那一格答话存根（没有就按需立一格）。**备不下 ⇒ `None`**：那一趟不答
+/// （宁可少答一句，也不让本域为它停住）。
+fn outbox<'a>(outs: &'a mut Vec<Outbox>, guest: Guest) -> Option<&'a mut Outbox> {
+    if let Some(at) = outs.iter().position(|o| o.who == guest.who()) {
+        return outs.get_mut(at);
+    }
+    outs.try_reserve(1).ok()?;
+    outs.push(Outbox {
+        who: guest.who(),
+        send: Sender::<ocall::Union>::from_token(guest.reply()),
+    });
+    outs.last_mut()
+}
+
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
 ///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
@@ -377,7 +430,13 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
 ///
-fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) -> Option<u8> {
+fn serve_one(
+    tree: &mut Operator,
+    guest: Guest,
+    coord: Coord,
+    buf: &mut [u8],
+    outs: &mut Vec<Outbox>,
+) -> Option<u8> {
     let ask = guest.ask()?;
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
@@ -435,6 +494,7 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
     // 这一问的动作码（首格）——**读到了才有可信的首格**；它同时就是"这一醒读到了没有"。
     let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));
+    let t_ans = runtime::env::chrono::clock();
     let said = answer(tree, decoded, guest.who(), coord, grant);
     // **答的是什么**：客侧把"忙 / 没有 / 读不懂"折成同一格（`Unknown`），故这一侧要把**本域答出去
     // 的那一格码**报出来——"哪一位客人、问什么（首格码）、答什么"三样齐了，才谈得上说得清。
@@ -449,18 +509,35 @@ fn serve_one(tree: &mut Operator, guest: Guest, coord: Coord, buf: &mut [u8]) ->
             guest.who().get()
         );
     }
-    // 答一句：**形状由 [`ocall::Union`] 说**——装与发都不在这一层写字节。
-    // **写端跟着这一趟走**：编在本族那只缓冲里（在这一帧的栈上）、递出去（一个 envcall），
-    // 落出作用域时等这只手被取走。**孔是客人铸的**：`release` 那一手不在本域做（放下别人的
-    // 孔不是本端的事），故这一格只等，不 `seal`。
+    // 答一句：**形状由 [`ocall::Union`] 说**——编进**这位客人那一格**的缓冲里、递出去（一个
+    // envcall），**编完就接着招待下一位**。**孔是客人铸的**：`release` 那一手不在本域做
+    // （放下别人的孔不是本端的事），故这一格只递、不等。
     //
-    // **照实记（"卡的是他自己那一趟"这句话与本域的形状不符，量出来的）**：那一等（`Sender::Drop` →
-    // `reclaim` → `wait(Push, Forever)`）**就在本域这条循环里**跑 ⇒ 客人不来取，卡住的是
-    // **整台树**（此后所有人的手都不被取）。**如实记**：量"装配期那位客人等了 1.1~1.2 s"那一轮
-    // 时挂了三段计时（`wait`/`core`/`reply`），**这一格一次都没超过 200 ms** —— 故它不是那一秒的
-    // 病根（病根是组的"每轮都从第 0 格扫"，见 `work/mail/tole.rs` 的游标照实记）；这一句留在这里
-    // 是因为它仍是**形状上的事实**：这一等确实在循环里。
-    let mut tx = Sender::<ocall::Union>::from_token(guest.reply());
-    let _ = tx.send(said);
+    // **照实记（这一句是从"等它被取走"改过来的，量出来的）**：从前 `Sender` 是这一趟的临时量，
+    // `Drop` 里那一等（`reclaim` → `wait(Push, Forever)`）扎在本域这条循环里 ⇒ 客人不来取，
+    // **整台树**停住。debug 档 `product` 景量到的样子是"一次都没超过 200 ms"（故它不是
+    // `push_hold` 那一秒的病根）；`root` 景量到的另一头是 `reclaim=4639ms`（客人 24），
+    // 那 4.6 s 里客人 25 / 26 的手在孔上干等、两位判失败。⇒ 那一等挪出循环，见 [`Outbox`]。
+    let sent = match outbox(outs, guest) {
+        Some(out) => {
+            if out.send.settle() {
+                out.send.send(said).is_ok()
+            } else {
+                false
+            }
+        }
+        _ => false,
+    };
+    // 读数（诊断，release 也报）：这一趟整段有没有停下来 / 有没有少答一句。
+    let t_out = runtime::env::chrono::clock();
+    let ms = |a: u64, b: u64| (b.saturating_sub(a) / 1_000_000) as usize;
+    if ms(t_ans, t_out) >= 200 || !sent {
+        protocol::debug::put(&alloc::format!(
+            "operator: answer who={} answer={}ms sent={}",
+            guest.who().get(),
+            ms(t_ans, t_out),
+            sent
+        ));
+    }
     code
 }

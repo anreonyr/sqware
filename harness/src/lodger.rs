@@ -131,6 +131,20 @@ fn main() -> Report<'static> {
     // 4. 三趟登记：占上 / 同一条线再来一次 / **报一台没有线的设备**（`line = 0`）。
     let line = deed.line;
     let (ok, held) = attempt(entry, line);
+    // **读数（release 也报）：这一趟折在哪一条出口上**——`occupy` 把七条成因折成同一个
+    // `Denied`，故它自己那一格码说不清（详见 `protocol::driver::line::client` 那两格的注）。
+    //   cause: 1 门牌读不出开者 · 2 铸/交不出本端那一半 · 3 铸不出回信孔 · 4 回信孔交不出去
+    //          5 登记那句推不出去 · 6 路由者答的不是 OK（`phrase` 是它答的原码）· 7 认不下对端
+    if ok != lcall::OK {
+        protocol::debug::put(&alloc::format!(
+            "lodger: occupy deny cause={} phrase={} line={}",
+            protocol::driver::line::client::OCCUPY_DENY
+                .load(core::sync::atomic::Ordering::Relaxed),
+            protocol::driver::line::client::OCCUPY_CODE
+                .load(core::sync::atomic::Ordering::Relaxed),
+            line,
+        ));
+    }
     debug!("lodger: occupy={ok}");
     let (taken, _) = attempt(entry, line);
     debug!("lodger: taken={taken}");

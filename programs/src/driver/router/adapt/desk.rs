@@ -11,6 +11,9 @@
 //! 线号（它从认领那一答的契里拿的，见 [`lcall::Occupy`]）。⇒ 本文件今天**一眼看得完**：
 //! 解帧 → 拿号 → 占格 → 接线 → 答码。
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use crate::core::lines::Lines;
 use crate::plic::{LINE_PRIORITY, Plic};
 use env::{HoleDir, Mark, TaskId, Wait};
@@ -24,12 +27,65 @@ use runtime::env::mail::{self, HolePie};
 /// 装泊位 / 认泊位的期限（毫秒）。
 const QUAY_MS: usize = 1000;
 
+/// **一格答话存根**：那**一个字节**（登记那一答只有一格状态码）＋ 它欠着谁。
+///
+/// # 照实记（为什么要这一格：那一等从前落在本域这条循环里）
+///
+/// 那一答从前是 `reply.push(&[code], Forever)` ＋ `reply.wait(HoleDir::Push, Forever)`：字节住在
+/// [`serve`] 的栈上，于是"等客人把它取走"这一等**扎在本域这条循环里**。门是单槽、`resident` 那一趟
+/// 又是 `while let Ok(..) = up.entry.pull(..)` 连着取 ⇒ 一位客人不来取，**后面所有的登记都不再被
+/// 招待**。症状正是硬件的读数：`harness/src/lodger.rs` 那几趟登记等不到答，客侧把 1 s 期限用尽、
+/// 报 `Fail::Denied`（线上表里那个 3——它与"这条线已经有主"的 `TAKEN`（2）**不是一格**）。
+///
+/// # 修法（只改"谁等"，不改"答不答"）
+///
+/// 字节挪到**跟着客人走**的这一格（[`Replies`]），递出去就返回。**这一格安全**：回信孔是客人
+/// **每一趟新铸的**（`line::client::Line::occupy` 里 `unseal_hole(BACK_MARK)`），而它读不到就把
+/// 那一枚 `seal` ＋ `release` 掉 ⇒ 同一位客人**不可能有两只手同时挂在两枚孔上**，故后一趟改这一格
+/// 里的字节时，前一趟那只手已经不在了（或随孔一起作废）。
+pub struct Reply {
+    /// 哪一位客人（回信孔的主人）。
+    pub who: TaskId,
+    /// 那一个字节。**地址必须稳**：那只手记的是推出去那一刻的地址。
+    pub byte: u8,
+}
+
+/// 每位客人一格（见 [`Reply`] 的照实记）。**一格一分配**：`Vec` 一长就把元素搬走，而那只手记的
+/// 是搬走之前的地址（症状与"缓冲死在栈上"同一张脸：客侧复制到一段别人的字节）。
+pub struct Replies {
+    slots: Vec<Box<Reply>>,
+}
+
+impl Replies {
+    pub const fn new() -> Self {
+        Replies { slots: Vec::new() }
+    }
+
+    /// 取这位客人那一格（没有就立一格）。**备不下 ⇒ `None`**：那一趟不答（宁可少答一句，
+    /// 也不让本域为一位客人停住，更不把一段活不过这一帧的字节指给客人）。
+    fn slot(&mut self, who: TaskId) -> Option<&mut Reply> {
+        if let Some(at) = self.slots.iter().position(|s| s.who == who) {
+            return self.slots.get_mut(at).map(|b| &mut **b);
+        }
+        self.slots.try_reserve(1).ok()?;
+        self.slots.push(Box::new(Reply { who, byte: 0 }));
+        self.slots.last_mut().map(|b| &mut **b)
+    }
+}
+
 /// 门上那一句话：**登记**（带动作码）——报**线号** ⇒ 占住那一格 + 接上线 ⇒ 回一格状态码。
 ///
 /// 答话推到**客人借过来的那枚回信孔**上（按记号认：那位给的多枚孔靠记号分开）。
 /// **照实记**：这一扇门从前还兼着"招呼"（旧形状：一个名字进、一个名字回）——那条路随旧 32
 /// 字节形状一起退休了，今天只有登记一种形状（"找人"走树，见 `guest`）。
-pub fn serve(lines: &mut Lines, plic: &Plic, from: TaskId, frame: &[u8], pile: &Pile) {
+pub fn serve(
+    lines: &mut Lines,
+    plic: &Plic,
+    from: TaskId,
+    frame: &[u8],
+    pile: &Pile,
+    replies: &mut Replies,
+) {
     if let Some(line) = <lcall::Occupy as Message>::fetch(frame) {
         let code = match take_lane(from) {
             // 客户没把泊位交出来（或交不出来）。
@@ -73,13 +129,23 @@ pub fn serve(lines: &mut Lines, plic: &Plic, from: TaskId, frame: &[u8], pile: &
         };
         if let Some(back) = establish::find(from, lcall::BACK_MARK) {
             let reply = HolePie::from_token(back);
-            // **两半都写出来**（旧 `push` 是合一的）：等轮到自己 ＋ 等这一格被取走——`[code]`
-            // 是这一帧的临时值，不等它下线就返回，客人可能复制到一段死栈。
-            let _ = reply.push(&[code], Wait::Forever);
-            let _ = reply.wait(HoleDir::Push, Wait::Forever);
+            // **一个字节住进"跟着客人走"的那一格**（见 [`Reply`]），**推完就走**：
+            // 这一等从前落在本域这条循环里，一位不回头的客人就能把后面所有登记堵死（照实记在那）。
+            // `Wait::POLL` = 一次尝试（孔上站着别人的手就答 `Busy`，那一趟算没投成——不睡）。
+            match replies.slot(from) {
+                Some(slot) => {
+                    slot.byte = code;
+                    let _ = reply.push(core::slice::from_ref(&slot.byte), Wait::POLL);
+                }
+                // 备不下那一格：**这一趟不答**（客人自己的期限会叫它回头）；不拿这一帧的栈去顶。
+                None => debug!("router: no reply slot from={}", from.get()),
+            }
             // **答完就放下**：这一枚是这一趟借过来的（一问一答一个往返），它不在本域的账里
             // ——账里根本没有它，此后没人会替它收。不放的话，每有一次登记就在本域表里多留
             // 一枚，直到本域退场；读数就带在 `pies=` 那一格上（见上面那一支）。
+            //
+            // **放下这一枚不影响那只手**：那只手记的是本域这一格里的字节，而孔本身还活着
+            // （客人手里那一枚是它自己铸的）——本域只是不再留这一份副本。
             let _ = mail::release(back);
         }
     }

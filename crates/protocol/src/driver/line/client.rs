@@ -22,6 +22,29 @@ pub struct Line {
     pair: Held,
 }
 
+// ── 读数：**这一趟折在哪一条出口上**（七条折成同一个 `Denied`，那一格码分不出来）──────
+//
+// `Line::occupy` 把**七条完全不同的成因**折成同一个 `Fail::Denied`（线上那张表里 `DENIED` 也是
+// 3）⇒ 只看客侧那一格码，分不出"门忙/没答"与"孔不够/认不下对端"。这两格记下**最后一条出口的
+// 号**（**决策之前一个字节都不落**，故不改这条路的时候），由客人（`harness/src/lodger.rs`）在
+// 它那条判据上读出来。**为什么留着**：`scene root` 今天仍有约四分之一的跑红，红的签名正是
+// "房客第一趟登记拿到 `Denied`"（见 `programs/src/driver/router/adapt/desk.rs` 的照实记），
+// 下面这两格就是下一次读它的第一手。
+//
+//   1 门牌读不出开者（`opened_by`）      5 登记那一句推不出去（`Sender::send`）
+//   2 铸/交不出本端那一半（`endpoint`）  6 路由者答的不是 `OK`（第二格记它答的**原码**）
+//   3 铸不出回信孔（`unseal_hole`）      7 答话到手、可认不下对端那一半（`claim`）
+//   4 回信孔交不出去（`port::ship`）
+pub static OCCUPY_DENY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+pub static OCCUPY_CODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+fn deny(cause: u8, code: u8) -> Fail {
+    use core::sync::atomic::Ordering;
+    OCCUPY_DENY.store(cause, Ordering::Relaxed);
+    OCCUPY_CODE.store(code, Ordering::Relaxed);
+    Fail::Denied
+}
+
 impl Line {
     /// 占住这一格（记号 [`frame::LANE`]）并把登记推给门牌那扇入口，等一格答话。
     ///
@@ -37,18 +60,23 @@ impl Line {
     /// **荷载是线号不是坐标**（照实记，见 [`frame::Occupy`]）：区 → 线那条权威在**设备账**
     /// 那一台（认领那一答的契里带着线号），本手只是把那个数原样报上去。
     pub fn occupy(entry: PieToken, line: u32, millis: Wait) -> Result<Line, Fail> {
-        let host = establish::opened_by(entry).ok_or(Fail::Denied)?;
+        let Some(host) = establish::opened_by(entry) else {
+            return Err(deny(1, 0));
+        };
         // 本端那一枚先铸出来交给它（它按"谁开的 + 记号"认下来，往这里投递）。**这一步不等对端
         // 那一枚**：对端要到它读过登记那一句之后才装它那一半（次序是契约的一半，见下面 `claim`）。
         // **有主地建**：那一格"有主"由类型说出来——`Held(endpoint(..)?)`（没有 `hold` 那一手：
         // 它只是这一个字面量）。这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
         // 也由它的 `Drop` 代劳（下面三处 `return` 一个字都不用写）。
-        let mut pair = Held(
-            establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL)
-                .map_err(|_| Fail::Denied)?,
-        );
+        let mut pair = match establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL) {
+            Ok(ep) => Held(ep),
+            Err(_) => return Err(deny(2, 0)),
+        };
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单手的孔只够一个方向）。
-        let back = mail::unseal_hole(frame::BACK_MARK).map_err(|_| Fail::Denied)?;
+        let back = match mail::unseal_hole(frame::BACK_MARK) {
+            Ok(back) => back,
+            Err(_) => return Err(deny(3, 0)),
+        };
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
         if port::ship(
@@ -63,7 +91,7 @@ impl Line {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
-            return Err(Fail::Denied);
+            return Err(deny(4, 0));
         }
         // 登记那一句：**走 `Sender`**（这一族一问只有一形：动作码 ＋ 线号）——装与发都不在这一
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
@@ -74,7 +102,7 @@ impl Line {
             // "这只手被取走"（`Sender::Drop`），而它等的这一枚只有我手里这一份。
             let _ = mail::seal(back);
             let _ = mail::release(back);
-            return Err(Fail::Denied);
+            return Err(deny(5, 0));
         }
         let mut one = [0u8; 1];
         let code = match HolePie::from_token(back).pull(&mut one, millis) {
@@ -90,6 +118,7 @@ impl Line {
         let _ = mail::seal(back);
         let _ = mail::release(back);
         if code != frame::OK {
+            deny(6, code);
             return Err(match code {
                 frame::TAKEN => Fail::Taken,
                 frame::UNKNOWN => Fail::Unknown,
@@ -98,7 +127,7 @@ impl Line {
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
         if !pair.claim(host, Mark::of(frame::LANE), millis) {
-            return Err(Fail::Denied);
+            return Err(deny(7, 0));
         }
         Ok(Line { pair })
     }

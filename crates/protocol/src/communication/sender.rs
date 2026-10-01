@@ -134,6 +134,30 @@ impl<M: Message> Sender<M> {
         r.map(|_| ())
     }
 
+    /// **非阻塞收口**：上一只手**已经被取走** ⇒ 放下那一格、答 `true`；还压着 ⇒ 答 `false`。
+    ///
+    /// **它与 [`reclaim`] 只差一个字：期限。** `reclaim` 等 `Forever`——写端**必须**替这段缓冲收尾
+    /// （缓冲在这一格身上，见文件头③）；而这一手**一眼都不多等**。
+    ///
+    /// **它只对一类用家成立**：一枚线程招待所有客人那种服务（`programs/src/system/operator/
+    /// server.rs` 的 `Outbox`）。那一类里"等一位客人把答话取走"这一等**就落在服务循环里**——
+    /// 实测：客人 24 不来取，本域在那一等上停了 **4639 ms**，那段时间里客人 25 / 26 的手在孔上
+    /// 干等（各 2.1 s，两位当场判失败）。
+    ///
+    /// **用它的一侧必须把缓冲放在比这一趟长的地方**：`send` 编的是 `self.buf`，而那只手记的是
+    /// 编那一刻的地址——缓冲随这一趟的栈帧死掉，取的人就复制到别人的字节（文件头③那条洞）。
+    /// 答 `false` 时**那只手还挂着**：不许再 `send`（会把那只手指着的字节改掉），只能等下一次。
+    pub fn settle(&mut self) -> bool {
+        let Some(hole) = self.hand else {
+            return true;
+        };
+        if let Ok(true) = HolePie::from_token(hole).wait(HoleDir::Push, Wait::AtMost(0)) {
+            self.hand = None;
+            return true;
+        }
+        false
+    }
+
     /// 还挂着吗（诊断：不碰内核就能问）。
     pub const fn outstanding(&self) -> bool {
         self.hand.is_some()

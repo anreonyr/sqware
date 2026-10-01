@@ -12,6 +12,7 @@
 //! [`Context::join`] 之后只剩**一行**。健康机器上那三行本来都不出现，故验收读数不受影响。
 
 use crate::core::lines::Lines;
+use super::desk::Replies;
 use crate::core::sources::Sources;
 use crate::plic::Plic;
 use alloc::vec::Vec;
@@ -79,6 +80,8 @@ pub struct Up {
     pub buf: Vec<u8>,
     /// 本域的服务入口（门牌那枚孔，本线程铸、本线程读）。
     pub entry: HolePie,
+    /// 一格一格的**答话存根**（见 [`desk::Reply`]）：那一等不许落在本域这条循环里。
+    pub replies: Replies,
 }
 
 /// 起手。
@@ -168,5 +171,6 @@ pub fn up() -> Result<Up, Fail> {
         pile,
         buf,
         entry: entry_hole,
+        replies: Replies::new(),
     })
 }
