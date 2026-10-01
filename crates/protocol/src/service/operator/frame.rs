@@ -1335,6 +1335,9 @@ pub const TIP_MARK: Mark = Mark::of("tip");
 // 钉着——"一漂就编不过"，且不再占一条用例。
 //
 // 比的是 `.get()` 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，而 `get` 是 `const fn`。
-const _: () = assert!(ASK_MARK.get() != Mark::of("board-ask").get());
+// **照实记（这一条断言随板那一族退场）**：它本来防的是"本族的问话记号与板那一族的
+// `board-ask` 撞上"；板那一族整族退场（连带那一枚记号）⇒ 这条断言成了对着一个不存在的
+// 东西断言，故退场。**全协议"任两枚记号不许撞"那条总检查仍在**：`crate::system` 根上那张
+// `LOOSE` 表逐对判一次。
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
