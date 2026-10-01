@@ -297,6 +297,29 @@ fn announce_of(supply: &[Setup]) -> Announce {
 // 拦"边上写了个交不出凭据的台"）；7 份声明里 `supply: &[Setup::Ready]` 那一行去掉（`Setup::Ready`
 // 那一型**留着**——它成了装配者自己构造的那一格）。
 
+// **照实记（第 54 刀：实际落法比上面那条路小得多——改三处签名是白改）**
+//
+// 上面"四处读它的地方"要改签名，只因为推导要拿到**整张单**。而这件事有一个更小的落法：
+// **给 [`UnitFile`] 加一具访问器**（名字就叫 `supply`，与它读的那一格同名）——
+//
+// ```text
+// impl UnitFile {
+//     pub fn supply(&self) -> &'static [Setup] {
+//         if !self.demand.supply.is_empty() { self.demand.supply }
+//         else if needs_evidence(self.name()) { READY_ONLY }   // static READY_ONLY: &[Setup] = &[Setup::Ready];
+//         else { &[] }
+//     }
+// }
+// ```
+//
+// 于是**四个读点各改一个词**（`program.demand.supply` → `program.supply()`），而推导只发生在一处
+// ⇒ **同一件事只有一个来源**，三处签名一处都不用动。（`hub` 那一路是对的：它 `supply` 非空 ⇒
+// 直接答声明值，**不会**多出一条——那正是前提②。）
+//
+// **这一刀剩下的就三件**：① `unit/order.rs` 加 `needs_evidence` 与那处检查改用 `supply()`；
+// ② `unit/mod.rs` 加 `READY_ONLY` 与那具访问器；③ 7 份声明去掉 `supply: &[Setup::Ready]` 那一行
+// （`Setup::Ready` 那一型**留着**——[`needs_evidence`] 推出来的那一条就是它）。
+
 /// **装通道**（"配"那一相）：按这一台 `setup` 里那几格逐条装上——**记号 = 通道名**，
 /// 放行后按同一个记号逐条认领（[`service::ready`](super::service::ready)）。
 ///
