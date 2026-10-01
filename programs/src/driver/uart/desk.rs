@@ -32,7 +32,7 @@ use programs::system::operator::bridge;
 use protocol::debug;
 use protocol::driver;
 use protocol::driver::line::client::Line;
-use protocol::system::board::ENTRY_MARK;
+use protocol::driver::ENTRY_MARK;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;

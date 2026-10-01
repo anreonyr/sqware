@@ -35,7 +35,7 @@ use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::driver::line::client::Line;
-use protocol::system::board::ENTRY_MARK;
+use protocol::driver::ENTRY_MARK;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
@@ -47,7 +47,7 @@ const ROUTER: &str = "router";
 
 /// **本域在系统里的位置**：门牌（本域的服务入口）＋ 一条会话。
 pub struct Context {
-    /// 本域那枚服务入口（`board::ENTRY_MARK` 解出来的那枚孔）。
+    /// 本域那枚服务入口（`protocol::driver::ENTRY_MARK` 解出来的那枚孔）。
     pub entry: PieToken,
     /// 本域那**一条** `operator` 会话。
     pub session: Session,

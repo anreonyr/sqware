@@ -43,7 +43,7 @@ use programs::driver::fail::Fail;
 use programs::driver::rtc::core::Host;
 use programs::program::rtc::E_RTC;
 use protocol::debug;
-use protocol::system::board::ENTRY_MARK;
+use protocol::driver::ENTRY_MARK;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
 use rtc as device;

@@ -110,3 +110,12 @@ pub const DIR: &str = "drv";
 ///
 /// **路是"容器链"，不含那一枚自己的名字**（`/svc/drv/uart` 那最后一段归客人自己拼）。
 pub const ROAD: &Path = Path::new("svc/drv");
+
+/// **域的服务入口那一枚孔的记号**（`"entry"`）。
+///
+/// **照实记（它从板那一族搬来）**：这一枚原先住 `protocol::system::board`——板按它把客人交来的
+/// "入口"与"问话孔"分开认。板那一族整族退场（死信号与那条握手都撤了，见 `programs/src/system/`
+/// 那几笔照实记）之后，它在这里落户：**生产者是各域自己**（`driver::{uart,rtc}` 与
+/// `router::adapt::boot` 各有一处 `mail::unseal_hole(ENTRY_MARK)`：那是本域"服务入口"那一枚孔），
+/// 而"通用入口"这件事不属于任何一族 ⇒ 住驱动那一层。
+pub const ENTRY_MARK: env::Mark = env::Mark::of("entry");

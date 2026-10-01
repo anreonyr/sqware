@@ -57,7 +57,6 @@ use crate::system::operator::bridge::Tree;
 use crate::system::principal::bridge::Roster;
 
 pub mod assemble;
-pub mod board;
 pub mod bootstrap;
 pub mod carrier;
 pub mod coalition;

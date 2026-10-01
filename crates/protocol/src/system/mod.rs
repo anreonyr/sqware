@@ -543,7 +543,6 @@ pub const DIR: &Path = Path::new("svc/sys");
 
 use crate::system::operator::path::Path;
 
-pub mod board;
 pub mod coalition;
 pub mod control;
 // **照实记（这一格与下面 `grant` 是两个东西）**：`faces!` 是"**一族的面**"那台宏（`Grant` 那
@@ -576,16 +575,18 @@ pub mod supply;
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）。
 ///
-/// 一一对应（顺序即上面那份照实记的列举）：`"entry"`（通用入口）／`"tip"`（提示之路——板与树
-/// 两侧**同一位**，故只列一次：它们的字面量本来就同一个）／`"board-ask"`／`"control-ask"`／
-/// `"control-back"`／`"principal-back"`／`"coalition-back"`／`"operator-ask"`。
+/// 一一对应（顺序即上面那份照实记的列举）：`"entry"`（通用入口，今天住 [`crate::driver::ENTRY_MARK`]）
+/// ／`"tip"`（提示之路——**板与树两侧同一位**，板那一族退场之后只剩 [`operator::TIP_MARK`] 一处）
+/// ／`"control-ask"`／`"control-back"`／`"principal-back"`／`"coalition-back"`／`"operator-ask"`。
 ///
-/// **它为什么在协议根上**：这几枚散在 `board` / `control` / `principal` / `coalition` 四处，
+/// **照实记（`board-ask` 那一枚随板退场）**：板那一族整族退场 ⇒ 它的面记号（`"board-ask"`）跟着走：
+/// 没有生产者，也没有读者。
+///
+/// **它为什么在协议根上**：这几枚散在 `driver` / `control` / `principal` / `coalition` / `operator` 五处，
 /// 而"它们彼此不许撞"这句话不属于其中任何一家——只有说得全"全协议有哪些记号"的那一格能说。
 const LOOSE: &[env::Mark] = &[
-    board::ENTRY_MARK,
-    board::TIP_MARK,
-    board::ASK_MARK,
+    crate::driver::ENTRY_MARK,
+    operator::TIP_MARK,
     control::ASK_MARK,
     control::BACK,
     principal::BACK,

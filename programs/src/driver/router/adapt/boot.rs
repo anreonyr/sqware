@@ -21,7 +21,6 @@ use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
 use programs::program::router::{E_ROUTER, PLIC_CLASS};
-use programs::system::board::client as board;
 use protocol::debug;
 use protocol::driver::hub as hcall;
 use protocol::system::operator::client as operator;
@@ -92,7 +91,7 @@ pub fn up() -> Result<Up, Fail> {
     // 一行读数、不拦主循环——因为本域起来就得收（铃一响就要 `claim`），而设备那三样是装配期直授
     // 的。这一刀之后**设备要从树上找**（`/dev/<类>/<名>`），而"这台归谁"由设备账（也住树那一
     // 层）回答 ⇒ 这条会话没了就没有设备，故它是**硬前置**（两格各报自己的步名）。
-    let entry = mail::unseal_hole(board::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
+    let entry = mail::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = utask::sire();
     let ctx = Context::join(entry, sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(

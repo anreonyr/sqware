@@ -54,7 +54,6 @@ use programs::Report;
 use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
@@ -68,8 +67,6 @@ const WANT: &str = "router";
 /// 等板 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-/// 本地失败写进读数的那一格（与 `board::BAD` 同值：没走到 / 读不懂）。
-const BAD: u8 = bcall::BAD;
 
 /// 两种退场：走通了 / 没走通（都**不是 panic**；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
