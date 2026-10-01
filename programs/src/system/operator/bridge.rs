@@ -28,7 +28,6 @@ use alloc::vec::Vec;
 
 use env::Mark;
 use env::Wait;
-use env::wire::Eyes;
 use env::wire::Field;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
@@ -81,31 +80,18 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     Ok(())
 }
 
-/// **协调那一帧要带的两格**：名册那一位域的号 / 盟册那一位域的号（`None` = 还没到）。
+/// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路。
 ///
-/// 一格一个位、**可以分两帧到**（次序不定），故装配者收着、持树者补着，都不当"一次性解出来"。
-/// 两侧共读这一个类型（`server.rs` 原先自己写了一份同形的私有 `Coord`）。
-#[derive(Clone, Copy, Default)]
-pub struct Coord {
-    pub roster: Option<TaskId>,
-    pub league: Option<TaskId>,
-}
-
-impl Coord {
-    /// 递帧要的两对：**槽位由眼睛的名字定**，不由位置定。
-    fn pairs(self) -> [(Option<TaskId>, Eyes); 2] {
-        [(self.roster, Eyes::Roster), (self.league, Eyes::League)]
-    }
-}
-
-/// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路 ＋ 协调帧那两格。
+/// 它们问的是**树的语义**——客人怎么接、提示怎么认——故收进树这一间。
 ///
-/// 它们问的是**树的语义**——客人怎么接、提示怎么认、哪一双眼睛往哪记——故收进树这一间。
+/// **照实记（`coord` 那两格退场）**：这一格从前还收着"名册 / 盟册那两位域的号"（`Coord`），
+/// 由 `Tree::eye` 填、由 [`attach`] 推上提示之路。那一帧随 `Eyes` 整段退场（见
+/// [`protocol::system::operator::frame`](protocol::system::operator) 的照实记）：**持树者自己
+/// 按记号就找得到那两枚门牌**，那两位域的号它一次都用不着。
 #[derive(Default)]
 pub struct Tree {
     host: Option<TaskId>,
     tip: Option<PieToken>,
-    coord: Coord,
 }
 
 impl Tree {
@@ -117,7 +103,21 @@ impl Tree {
     /// **把这位客人接上树**（三步见 [`attach`]）。持树者还没起就没得接。
     pub fn attach(&mut self, client: TaskId, millis: Wait) -> Result<(), &'static str> {
         let host = self.host.ok_or("no tree yet")?;
-        attach(client, host, millis, &mut self.tip, self.coord)
+        attach(client, host, millis, &mut self.tip)
+    }
+
+    /// **门禁接线**：告诉持树者"名册那一面已经认下来了"——从那以后它那道门问得动身份。
+    ///
+    /// **照实记（这一句是量出来的，它替代了原来那两格号）**：门一旦接线就按"谁在问"判身份，
+    /// 而在装配者补绑名册**之前**，名册自己那一趟上树（`land`）会被自己那道门拒掉——实测
+    /// `principal: start failed`（名册起手走不完 ⇒ 它那道"我答得了"的孔永远不铸）。故"什么时候
+    /// 算接线完成"是**装配者手里的事实**（只有它做完那一次补绑），由它推这一句**空话**过去
+    /// （[`Tip::Wired`]：一个字节，不带号）。
+    pub fn wire(&mut self) -> Result<(), &'static str> {
+        let Some(tip) = self.tip else {
+            return Err("no tip");
+        };
+        push(tip, Tip::Wired).map_err(|()| "operator:wire")
     }
 
     /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走。
@@ -186,14 +186,6 @@ impl Tree {
             },
         )
         .map_err(|()| "operator:plate")
-    }
-
-    /// **它是哪一双眼睛**：把那一格记进给持树者的协调帧（重复推是幂等的）。
-    pub fn eye(&mut self, eyes: Eyes, who: TaskId) {
-        match eyes {
-            Eyes::Roster => self.coord.roster = Some(who),
-            Eyes::League => self.coord.league = Some(who),
-        }
     }
 }
 
@@ -269,33 +261,10 @@ pub fn hold(
     Ok(())
 }
 
-/// **认下那两双眼睛**：读这一台声明上 `eyes` 那一格——**声明说了算，不是拿名字认的**
-/// （`p.name == "principal"` 那种写法，改个名字就静默失灵）。
-///
-/// 名册那一位要认下面 ＋ 补绑自己与树；盟册只报号。**盟册那一步没有第五个字段**：那个号装配者
-/// 本来就握着（`service.0`），"报到命名轴去"只是把同一枚号记进协调帧那一格。
-pub fn eyes(
-    assembly: &mut Assembly,
-    program: &Program,
-    service: &mut Service,
-) -> Result<(), &'static str> {
-    match program.relation.eyes {
-        Some(Eyes::Roster) => {
-            let who = assembly.roster.adopt(service.0, assembly.tree.host())?;
-            assembly.tree.eye(Eyes::Roster, who);
-        }
-        Some(Eyes::League) => assembly.tree.eye(Eyes::League, service.0),
-        None => {}
-    }
-    Ok(())
-}
-
 /// 把持树者接上一位客人（装配者调用）：**三步**。
 ///
 /// `host` = 持树者的号（`service::spawn` 交回来的那个，装配者本来就知道它）。
 /// `tip` = 提示之路在**本线程表里**的那一枚（第一次用时认下来，此后逐条传下去）。
-/// `coord` = 协调那一帧要带的两格（**哪一位域** + **它是哪一双眼睛**）：那位递门牌的域那一格
-/// 才有值，其余留空——**定长两格**，因为这一族只有两双眼睛（[`Eyes`]）。
 ///
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格。
@@ -304,7 +273,6 @@ pub fn attach(
     host: TaskId,
     millis: Wait,
     tip: &mut Option<PieToken>,
-    coord: Coord,
 ) -> Result<(), &'static str> {
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
@@ -319,16 +287,9 @@ pub fn attach(
     //    `host_of` 之后 `tip` 必有值（认不到它自己就返 `Err` 了）——所以这里取的是**那一枚孔**，
     //    要推的正是它（**不是** `host`：那是持树者的号，推不动）。
     let _ = host_of(host, millis, tip)?;
-    let tip_at = (*tip).ok_or("operator:tip")?;
-    // 3.5 **协调那一帧**：把递门牌那几位域的号推过去。**门牌不由这里转授**（那是各域自己
-    // 在落完门牌之后直接交给持树者的）。
-    // 次序仍是契约：客人号来之前，持树者先认出名册那一枚门牌（它按 `owner` + 记号找）；
-    // 两帧按位递、次序不定，收到哪一枚就补上哪一枚（对齐见 `server.rs` 的 `settle`）。
-    for (who, eyes) in coord.pairs() {
-        if let Some(who) = who {
-            push(tip_at, Tip::Coord { who, eyes }).map_err(|()| "operator:coord")?;
-        }
-    }
+    // 3.5 **协调那一帧退了场**（照实记：它从前在这里把"递门牌那几位域的号"推上提示之路）。
+    // 门牌本来就由各域自己交给持树者，而"那位域是几号"持树者用不着——**它按记号认那两枚**
+    // （`operator::claim::face_of_mark`）。于是这一形整帧退场，这条路只剩"一条路 / 一位客人"。
     // 树路上本端手里那一枚 = **客人答话路的写端**（认下来时进 `link.tx()`）。
     let reply = link.tx().ok_or("operator:hand")?;
     hand(reply, host).map_err(|()| "operator:hand")?;

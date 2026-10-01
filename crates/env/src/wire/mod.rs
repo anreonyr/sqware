@@ -18,7 +18,6 @@
 //! 分了出去，又随 plan 那一层退场**并回本 crate 的顶层**（见 [`crate`] 头注）——故它们今天
 //! 不在本模块之下。**`access` 那一份并进了 [`permission`](crate::permission)**——`Access` / `Policy`
 //! 是本文件头两段讲的那两个族（读写 / 传递）的视图类型，同一个故事没有理由分两处讲。
-//! [`Eyes`] 是**线上一格**（协调帧后 8 字节），故住这里。
 //!
 //! **re-export 的口径**：可命名的类型一律在下面 re-export，故 `env::wire::Field` 与
 //! `env::wire::field::Field` 两条路都在。
@@ -36,11 +35,9 @@
 //! [`ProgramKind`](crate::ProgramKind) 在 [`fid`](crate::fid)。这是**刻意**的：本仓的
 //! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
 
-pub mod eyes;
 pub mod frompair;
 pub mod handle;
 
-pub use eyes::Eyes;
 pub use frompair::{FromPair, FromTriple};
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 

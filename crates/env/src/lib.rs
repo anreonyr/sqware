@@ -64,4 +64,4 @@ pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
 pub use supply::{Kind, WANT_LEN, Want};
 pub use wait::Wait;
-pub use wire::{Decode, Eyes, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};
+pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

@@ -6,7 +6,6 @@
 //! | 收的是什么 | 交给谁 |
 //! |---|---|
 //! | 提示之路上的一条路（[`ocall::TipIn::Plate`]） | [`super::plate::plate`]：前缀立窗格 ＋ 末段落格 |
-//! | 提示之路上的协调两格（[`ocall::TipIn::Coord`]） | 本文件那一格 `coord`（门**问的时候**才认，见 [`super::door`]） |
 //! | 提示之路上的一位客人（[`ocall::TipIn::Guest`]） | 客人账（`Desk::admit`） |
 //! | 客人的一句问（[`ocall::Req`]） | [`super::answer::answer`]：七条原语 |
 //!
@@ -24,7 +23,6 @@
 //! 一刀再来找一遍。
 
 use alloc::vec::Vec;
-use env::wire::Eyes;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use runtime::PAGE_SIZE;
 use runtime::core::pile::Pile;
@@ -45,7 +43,6 @@ use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::system::operator::core::Operator;
 
 use super::answer::answer;
-use super::bridge::Coord;
 use super::claim::{ask_of, mark_of, reply_of};
 use super::plate::plate;
 
@@ -128,11 +125,9 @@ pub fn serve() -> Result<(), Start> {
 
     let mut tree = Operator::new();
     let mut desk = Desk::new();
-    // 协调那一帧递来的两格号（名册 / 盟册，各自那一域自己把门牌交过来）。**两帧、次序不定**。
-    //
-    // **本域不在这里认门牌**（照实记：这一刀换过一格）：认那一手住在门口
-    // （[`super::door::may`]）——问到门上才认，于是"门那一侧的状态"不再寄在"路那一侧"身上。
-    let mut coord = Coord::default();
+    // **门禁接没接线**：装配者认下名册之后推一句空话过来（[`ocall::TipIn::Wired`]）——那一刻之前
+    // 那道门**一律放行**（照实记：这一格替代了原来那两格号，见 `bridge::Tree::wire` 的照实记）。
+    let mut wired = false;
     // **那本账没了**（照实记）：归属从前另住一本（`Book`），它自称"活着那一问与树叫的是同一具
     // 身体"——正因为是同一句，它只能是树的影子：`land` 那一趟把同一个 `PieToken` 同时交给两处，
     // 而 `Line` 那一行里另外三格（`name` / `id` / `at`）树上本来就有。影子撤掉，两轴都跟着砖走。
@@ -167,7 +162,7 @@ pub fn serve() -> Result<(), Start> {
     let mut streak: usize = 0;
     loop {
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
-        let settling = settle(&mut desk, &pile, &tip_hole, &mut coord, &mut tree);
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut wired, &mut tree);
         settle_rounds = if settling {
             settle_rounds.saturating_add(1)
         } else {
@@ -193,7 +188,7 @@ pub fn serve() -> Result<(), Start> {
         let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, guest, coord, &mut buf, &mut outs)
+            serve_one(&mut tree, guest, wired, &mut buf, &mut outs)
         } else {
             // **醒在一枚账上没有的号上**（守卫）：提示孔是常态（它的帧由下一轮的 `settle` 收），
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
@@ -259,9 +254,13 @@ pub fn serve() -> Result<(), Start> {
 /// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 [`ocall::TipIn`]）：
 ///   - **一条路**（[`ocall::TipIn::Plate`]）：装配者要本域在树上立一条路——**本域自己立**
 ///     （[`plate`]），不经会话、不当自己的客人；
-///   - **协调两格**（[`ocall::TipIn::Coord`]）：装配者把"**哪一位域** + **它是哪一双眼睛**"
-///     直接递过来。两帧、次序不定；**本域只记号**，认门牌那一手在门口（问的时候才认）；
-///   - **一位客人**（[`ocall::TipIn::Guest`]）：`admit` 收进来。
+///   - **一位客人**（[`ocall::TipIn::Guest`]）：`admit` 收进来；
+///   - **门禁接线**（[`ocall::TipIn::Wired`]）：**一句话、不带号**——装配者已认下名册，门从此
+///     问得动身份（那一格由 [`super::door::may`] 读）。
+///
+///   **照实记（"协调两格"那一形退场）**：它从前把"哪一位域 ＋ 它是哪一双眼睛"递过来，本域只
+///   记号、认门牌那一手在门口。那一形随 `Eyes` 整段退场：**门牌本来就由各域自己交给本域**，
+///   而"那位域是几号"本域用不着——门口按记号认（`claim::face_of_mark`）。
 ///
 ///   **非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把
 ///   提示孔挂进组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
@@ -271,7 +270,7 @@ fn settle(
     desk: &mut Desk,
     pile: &Pile,
     tip: &mail::HolePie,
-    coord: &mut Coord,
+    wired: &mut bool,
     tree: &mut Operator,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
@@ -294,12 +293,8 @@ fn settle(
         match rec {
             // **装配者要本域立一条路**。
             ocall::TipIn::Plate { road, leaf, rule } => plate(tree, &road, leaf, rule),
-            // **一双眼睛**：两格——哪一位域、它是哪一双眼睛。各自那一枚门牌由那一域**自己**交
-            // 进来（装配者只递号）；从这里往后门禁问得动身份（认那一手在 [`super::door`]）。
-            ocall::TipIn::Coord { who, eyes } => match eyes {
-                Eyes::Roster => coord.roster = Some(who),
-                Eyes::League => coord.league = Some(who),
-            },
+            // **门禁接线**：一句话——装配者已认下名册（见 `bridge::Tree::wire` 的照实记）。
+            ocall::TipIn::Wired => *wired = true,
             // **一位客人**：按"它开的 + 记号"认它那条答话路。
             ocall::TipIn::Guest(client) => match reply_of(client) {
                 Some(reply) => match desk.admit(client, reply) {
@@ -441,7 +436,7 @@ fn outbox<'a>(outs: &'a mut Vec<Outbox>, guest: Guest) -> Option<&'a mut Outbox>
 fn serve_one(
     tree: &mut Operator,
     guest: Guest,
-    coord: Coord,
+    wired: bool,
     buf: &mut [u8],
     outs: &mut Vec<Outbox>,
 ) -> Option<u8> {
@@ -503,7 +498,7 @@ fn serve_one(
     let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));
     let t_ans = runtime::env::chrono::clock();
-    let said = answer(tree, decoded, guest.who(), coord, grant);
+    let said = answer(tree, decoded, guest.who(), wired, grant);
     // **答的是什么**：客侧把"忙 / 没有 / 读不懂"折成同一格（`Unknown`），故这一侧要把**本域答出去
     // 的那一格码**报出来——"哪一位客人、问什么（首格码）、答什么"三样齐了，才谈得上说得清。
     // **只在非 OK 时报**（正常一条答话不占串口）：`BAD` 与那六格各是一个成因。

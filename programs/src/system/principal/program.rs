@@ -1,10 +1,11 @@
 //! principal::program — **名册**（`prog-principal`）的装配声明。
 //!
-//! 身份服务：答"这一位此刻代表谁"与"在不在他那一支里"。它是持树者的**第一双眼睛**
-//! （`eyes: Some(Eyes::Roster)`）——那一格不是靠名字认的。
+//! 身份服务：答"这一位此刻代表谁"与"在不在他那一支里"。它是持树者的**第一双眼睛**：它起手把
+//! `Grant::Ask` 那一枚门牌交给持树者，**持树者按记号就认得出它**（`eyes` 那一格已退场，
+//! 见 [`Relation`] 的头注）；而装配者那一侧只剩一件真事——认下它交来的 `Grant::Set`
+//! （`principal::bridge::adopt_roster`）。
 
 use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
-use env::wire::Eyes;
 
 /// 它死在起手哪一步（落门牌 / 立两张表 / 回查）。
 pub const E_PRINCIPAL: Died = 14;
@@ -20,7 +21,6 @@ pub static PROGRAM: Program = Program {
         ending: Some(Ending::Resident),
         presence: true,
         bind: true,
-        eyes: Some(Eyes::Roster),
         ..Relation::DEFAULT
     },
     demand: Demand {

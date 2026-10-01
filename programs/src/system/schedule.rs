@@ -67,8 +67,9 @@ pub const AFTER_RELEASE: Phase = &[
     control::await_ready,
 ];
 
-/// **它答得动之后**：认下"答案从哪来"那一类事实——谁持树（那一枚提示之路）、谁是那两双眼睛。
-pub const AFTER_READY: Phase = &[operator::hold, operator::eyes];
+/// **它答得动之后**：认下"答案从哪来"那一类事实——谁持树（那一枚提示之路）、谁是名册
+/// （它交上来的那一枚定面门牌）。**两件都由运行期的那一枚孔认**，不读声明。
+pub const AFTER_READY: Phase = &[operator::hold, principal::adopt_roster];
 
 /// **走一相**：逐手；哪一手不成，折成**这一台自己的号**（读数 = 程序名 ＋ 那一手自己的步名）。
 pub fn advance(

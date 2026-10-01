@@ -11,10 +11,12 @@
 //!
 //! # 门牌**问的时候现认**（这一刀）
 //!
-//! 那两枚门牌是装配者递来**一格号**、由各自那一域**自己** `ship` 进来的
-//! （`protocol::system::operator::CoordFrame`）。从前持树者一收到那一帧就**认一次、缓存下来**
-//! （`Session` 那一格状态住服务循环那一侧）；今天**认这一手就落在这里**：问到门上才认
-//! （[`Session::of`] → [`super::claim::find_face`]）。
+//! 那两枚门牌由各自那一域**自己** `ship` 进来（名册交 `PrincipalGrant::Ask`、盟册交
+//! `CoalitionGrant::Ask`）。从前装配者还要经协调帧**递一格号**过来说"是谁交的"，持树者一收到
+//! 就**认一次、缓存下来**（`Session` 那一格状态住服务循环那一侧）；**那一格号整段退场了**
+//! （照实记：那两个记号各只有一家生产者 ⇒ 记号单独就指得回那一扇门，见
+//! [`super::claim::face_of_mark`]），今天**认这一手落在本处**：问到门上才认
+//! （[`Session::of`]）。
 //!
 //! 换来的形状：**门只有一个调用者**（[`super::answer`]），"门那一侧的状态"不再寄在"路那一侧"
 //! 身上。代价（照实）：受门禁的那三条（`find` / `trim` / `land`）**每问一次多两次表扫描**
@@ -33,8 +35,7 @@ use crate::system::operator::core::Operator;
 use crate::system::operator::core::gate::{Code, verdict};
 use crate::system::operator::core::judge::Facts;
 
-use super::bridge::Coord;
-use super::claim::find_face;
+use super::claim::face_of_mark;
 
 /// 问身份那两条边要用的期限（毫秒）。**必须有界**：协调服务不在时不能把树挂死。
 const MS: usize = 1000;
@@ -53,11 +54,11 @@ struct Session {
 }
 
 impl Session {
-    /// 认出那两枚门牌：**按"谁开的 + 记号"在本表里找**（协调那一帧只带号）。
+    /// 认出那两枚门牌：**按记号在本表里找**（那两枚由各自那一域自己交进来）。
     ///
-    /// 两格都是确定的：那扇门是**各自那一域**开的（副本共享同一事实），记号 = **那一族某一面的
-    /// 那枚**（今天要的都是问面）。**不必装配者转授**——各域自己在落完门牌之后把它直接
-    /// 交给持树者。
+    /// 记号 = **那一族某一面那一枚**（今天要的都是问面）；那一族**只有一家生产者**，故记号
+    /// 单独就够（照实记见 [`super::claim::face_of_mark`]）。**不必装配者转授**、也**不必它递号**
+    /// ——各域自己在落完门牌之后把它直接交给持树者。
     ///
     /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ `None`；盟册那枚认不出 ⇒ 只少
     /// [`Permit::Among`] 那一格。
@@ -66,12 +67,9 @@ impl Session {
     /// （`Resolve` ＋ `Heir`，两条都是读）——它**做不出** `Adopt`（把一条号领到自己底下）；
     /// 盟册那一族同理要 [`CoalitionGrant::Ask`]（`Amid` ＋ `Band` ＋ `Bloc`）——那枚门牌
     /// **做不出** `Found`（立一枚盟）。两族各交两枚、记号不同，故"要哪一面"必须说清。
-    fn of(coord: Coord) -> Option<Session> {
-        let roster =
-            PrincipalFace::of(find_face(coord.roster?, PrincipalGrant::Ask.mark())?).ok()?;
-        let league = coord
-            .league
-            .and_then(|who| find_face(who, CoalitionGrant::Ask.mark()))
+    fn of() -> Option<Session> {
+        let roster = PrincipalFace::of(face_of_mark(PrincipalGrant::Ask.mark())?).ok()?;
+        let league = face_of_mark(CoalitionGrant::Ask.mark())
             .and_then(|token| CoalitionFace::of(token).ok());
         Some(Session { roster, league })
     }
@@ -213,11 +211,17 @@ impl Facts for Court<'_> {
 ///
 /// **照实记（`part` 不过这一关）**：`part` 收的是**坐标**，那一格可能刚存在、可能是一块 `Pane`
 /// （[`Permit::Opener`] 对 `Pane` 答"判不了"）——它该过的是「改」那一轴，那一轴已经过了。
-pub(super) fn may(tree: &Operator, coord: Coord, who: TaskId, permit: Permit) -> Code {
-    if coord.roster.is_none() {
+pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> Code {
+    // **门禁先决两格**：
+    //
+    // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（[`super::bridge::Tree::wire`]
+    //     的照实记里记着为什么**不能**早接：名册自己那一趟上树会在门里被自己拒掉，实测
+    //     `principal: start failed`）。没接线 ⇒ **放行**（装配期那几问不能被门卡住）。
+    // 二、**名册那一枚门牌在不在本表里**（按记号认，见 [`Session::of`]）。不在 ⇒ 也放行。
+    if !wired {
         return Code::Ok;
     }
-    let Some(session) = Session::of(coord) else {
+    let Some(session) = Session::of() else {
         debug!("operator: door has no face");
         return Code::Ok;
     };

@@ -20,7 +20,6 @@ use runtime::env::mail;
 
 use crate::system::operator::core::{Key, Operator};
 
-use super::bridge::Coord;
 use super::door::may;
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
@@ -31,7 +30,7 @@ pub(super) fn answer(
     tree: &mut Operator,
     ask: Option<ocall::Wire>,
     who: env::TaskId,
-    coord: Coord,
+    wired: bool,
     grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
@@ -73,7 +72,7 @@ pub(super) fn answer(
         // 管的是**改这一格**，不是**用这一格**。
         ocall::Wire::Find(id) => {
             let permit = tree.permit(id);
-            let ruling = may(tree, coord, who, permit);
+            let ruling = may(tree, wired, who, permit);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -82,7 +81,7 @@ pub(super) fn answer(
             if !tree.claimable(Key::Id(id), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
-            let ruling = may(tree, coord, who, Permit::Unset);
+            let ruling = may(tree, wired, who, Permit::Unset);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -91,7 +90,7 @@ pub(super) fn answer(
         // 但"往树上挂东西"这件事本身要求来的人是个**已绑身份**——否则没身份的任务就能往命名
         // 空间里塞条目。
         ocall::Wire::Land { .. } => {
-            let ruling = may(tree, coord, who, Permit::Unset);
+            let ruling = may(tree, wired, who, Permit::Unset);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }

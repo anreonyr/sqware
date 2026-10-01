@@ -94,6 +94,32 @@ pub fn bind(
     assembly.roster.bind(service.0, program.relation.bind)
 }
 
+/// **名册这一位要认下面 ＋ 补绑自己与树** —— 判据是**它自己交上来的那一枚门牌**
+/// （[`Grant::Set`](protocol::system::principal::Grant)：定面那一枚；只有名册那一族交得出它）。
+///
+/// **照实记（这一手从前读声明上 `eyes: Some(Eyes::Roster)` 那一格）**：那一格退场了——"谁是
+/// 名册"不再由**谁**说，而是名册**自己交上来的东西**（与 `holds_tree` 那一刀同一条纪律：
+/// 运行期的事实由运行时的那一枚孔认）。于是这一手不看声明（形参 `_program`），判据从
+/// `establish::find` 现问；判不出来 ⇒ 这一台不是名册，**什么都不做**。
+///
+/// **次序**：它在 [`Assembly::assemble`](crate::system::Assembly::assemble) 的 `AFTER_READY` 那一相
+/// ——那时名册已经起完（它起手就把那一枚交出来了），故 `POLL` 就够。**补绑自己与树那一手**
+/// 仍是 [`Roster::adopt`]（它同时把名册那一面认下来，此后本域问身份才有一枚门牌在手）。
+pub fn adopt_roster(
+    assembly: &mut Assembly,
+    _program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    if establish::find(service.0, pcall::Grant::Set.mark()).is_none() {
+        return Ok(());
+    }
+    assembly.roster.adopt(service.0, assembly.tree.host())?;
+    // **接线那一句推给持树者**（照实记：这一刻之前那道门必须**不接线**——名册自己还没被补绑，
+    // 而它起手那一趟要上树；门早接线就会把它自己拒掉，实测 `principal: start failed`）。
+    assembly.tree.wire()?;
+    Ok(())
+}
+
 /// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
 ///
 /// 装配期**不必上树查自己起的那一枚**：名册起手就把门牌那一枚 `ship` 进本域表里，本域按

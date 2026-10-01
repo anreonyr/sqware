@@ -31,7 +31,7 @@ pub(super) fn mark_of(ask: PieToken) -> Mark {
 /// | 处 | 记号 | 多枚是 |
 /// |---|---|---|
 /// | [`reply_of`] | `LINK` | **不可能**——装配者那一条路只 `endpoint` 一次（"同一位、同一记号只可能有一枚"从闸变成了构造） |
-/// | [`find_face`] | **调用方给的那一枚** | **结构性正常**（同一域交多枚：一面交一枚、副本共享 `opened_by`）⇒ 不说 |
+/// | [`face_of_mark`] | **调用方给的那一枚** | **结构性正常**（同一面交多枚：副本共享 `opened_by`）⇒ 不说 |
 /// | [`ask_of`] | `ASK` | **契约被破**：一个域只该铸一枚问话孔（裸 `unseal_hole`，没有同名闸），多出来的那枚永远没人读它的推 ⇒ 说一句 |
 ///
 /// 而"取第一枚"在三处都正当：命中的几枚背后是**同一扇门**（同一份 `HoleMeta`），任一枚都通。
@@ -81,16 +81,15 @@ pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
     claim(mark, who, Some("operator: two asks"))
 }
 
-/// 找**某一位域**交给本域的那一枚门牌（`opened_by == who` 且记号 == `mark`）。
+/// **认领那一扇门牌**——**按记号认，不看谁开的**（名册那一族 / 盟册那一族各一枚记号）。
 ///
-/// 门牌那一枚走的是**裸 `unseal_hole`**，故"一个域只交一枚"同样是纪律而不是判据。
+/// **照实记（原来那一格 `who` 退场了）**：从前判据是「谁开的 ＋ 记号」两格，而那一格号是
+/// **装配者**经协调帧递进来的（`CoordFrame`）。本域拿那一格号只做一件事——找这一枚门牌；而这两个
+/// 记号是**协议里各族自己的常量**（`PrincipalGrant::Ask` / `CoalitionGrant::Ask`），**各只有一家
+/// 生产者**（名册那一域 / 盟册那一域各交一枚到本域）⇒ **记号单独就指得回那一扇门**。于是那一格号
+/// 连带整帧退场（见 `protocol::system::operator::frame` 的照实记）：同一句话不再有两处。
 ///
-/// **`mark` 由调用方给**（照实记：这一格原先硬写板的 `ENTRY_MARK`）：名册那一族开了两面
-/// （`principal::Grant::{Ask, Set}`），它交给本域的**是哪一面**只有记号说得清——门禁要的是
-/// `Ask`（它只 `Resolve` ＋ `Heir`），而装配者那一侧要的是 `Set`；盟册那一族同形（两族各开
-/// `Ask` / `Set`），本域要的也是 `Ask`（它只 `Amid` ＋ `Band` ＋ `Bloc`）。**"取第一枚"仍正当**：
-/// 同一面命中的几枚背后是同一扇门。
-pub(super) fn find_face(who: TaskId, mark: Mark) -> Option<PieToken> {
-    // 多枚**正常**（副本共享 `opened_by`：`land` 交一枚、门禁交一枚）⇒ 不说。
-    claim(mark, who, None)
+/// 多枚**正常**（同一面交多枚：副本共享 `opened_by`）⇒ 取第一枚，不说（与 [`claim`] 同一口径）。
+pub(super) fn face_of_mark(mark: Mark) -> Option<PieToken> {
+    mail::pies().find(|p| p.mark == mark).map(|p| p.token)
 }
