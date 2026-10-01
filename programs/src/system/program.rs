@@ -6,7 +6,7 @@
 //! 它是 boot 之后**唯一**起服务的地方，自己由引导域起（**不在装配单上**：`deps: None`）。整台机器的服务都由它
 //! 按各台声明里的 `deps` **算出来的次序**依次起（`program::order_scene`）。
 
-use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
+use crate::program::{Demand, Died, Identity, Program, Relation};
 use env::ProgramKind;
 
 /// 起手第一步没成：与引导域那条会话没搭上。
@@ -16,7 +16,6 @@ pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "system",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Domain,
         scenes: &["root", "product"],
         ..Identity::DEFAULT
     },

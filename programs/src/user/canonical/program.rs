@@ -71,7 +71,7 @@
 //!
 //! 快喂那一档原先正是"扳机不等读数"的现场：`exit` 一落，控制台退场，仍在跑的读数台被逐位扑杀。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation};
 
 /// 它死在起手哪一步。
 pub const E_CANONICAL: Died = 24;
@@ -79,7 +79,6 @@ pub const E_CANONICAL: Died = 24;
 pub static PROGRAM: Program = Program {
     identity: Identity {
         name: "canonical",
-        spot: Spot::Console,
         scenes: &["root", "product"],
         ..Identity::DEFAULT
     },

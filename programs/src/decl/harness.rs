@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, SCENE, Setup, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, SCENE, Setup};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
@@ -42,7 +42,6 @@ pub const E_PROBE_OPERATOR_LAND: Died = 27;
 pub static GUEST: Program = Program {
     identity: Identity {
         name: "guest",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -62,7 +61,6 @@ pub static GUEST: Program = Program {
 pub static PASSER: Program = Program {
     identity: Identity {
         name: "passer",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -82,7 +80,6 @@ pub static PASSER: Program = Program {
 pub static LODGER: Program = Program {
     identity: Identity {
         name: "lodger",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -101,7 +98,6 @@ pub static LODGER: Program = Program {
 pub static SLEEPER: Program = Program {
     identity: Identity {
         name: "sleeper",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -121,7 +117,6 @@ pub static SLEEPER: Program = Program {
 pub static SUBJECT: Program = Program {
     identity: Identity {
         name: "subject",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -140,7 +135,6 @@ pub static SUBJECT: Program = Program {
 pub static MEMBER: Program = Program {
     identity: Identity {
         name: "member",
-        spot: Spot::Guest,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -161,7 +155,6 @@ pub static MEMBER: Program = Program {
 pub static PROBE_DENIED: Program = Program {
     identity: Identity {
         name: "probe-denied",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -179,7 +172,6 @@ pub static PROBE_DENIED: Program = Program {
 pub static PROBE_OWNER: Program = Program {
     identity: Identity {
         name: "probe-owner",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -198,7 +190,6 @@ pub static PROBE_OWNER: Program = Program {
 pub static PROBE_RULE: Program = Program {
     identity: Identity {
         name: "probe-rule",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -219,7 +210,6 @@ pub static PROBE_RULE: Program = Program {
 pub static PROBE_RULE_OTHER: Program = Program {
     identity: Identity {
         name: "probe-rule-other",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -238,7 +228,6 @@ pub static PROBE_RULE_OTHER: Program = Program {
 pub static PROBE_LEASE: Program = Program {
     identity: Identity {
         name: "probe-lease",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -258,7 +247,6 @@ pub static PROBE_LEASE: Program = Program {
 pub static PROBE_BOUND: Program = Program {
     identity: Identity {
         name: "probe-bound",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -290,7 +278,6 @@ pub static PROBE_BOUND: Program = Program {
 pub static PROBE_CONTROL: Program = Program {
     identity: Identity {
         name: "probe-control",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -326,7 +313,6 @@ pub static PROBE_CONTROL: Program = Program {
 pub static PROBE_OPERATOR_GATE: Program = Program {
     identity: Identity {
         name: "probe-operator-gate",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -347,7 +333,6 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
 pub static PROBE_OPERATOR_LAND: Program = Program {
     identity: Identity {
         name: "probe-operator-land",
-        spot: Spot::Probe,
         ..Identity::DEFAULT
     },
     relation: Relation {
@@ -367,7 +352,6 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
 pub static CHURN: Program = Program {
     identity: Identity {
         name: "churn",
-        spot: Spot::Rig,
         scenes: &["again"],
         ..Identity::DEFAULT
     },
@@ -379,7 +363,6 @@ pub static RIG: Program = Program {
     identity: Identity {
         name: "rig",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Rig,
         scenes: &["rig"],
         entry: &["rig"],
         ..Identity::DEFAULT
@@ -391,7 +374,6 @@ pub static RIG: Program = Program {
 pub static BUSY: Program = Program {
     identity: Identity {
         name: "busy",
-        spot: Spot::Rig,
         scenes: &["load"],
         ..Identity::DEFAULT
     },
@@ -402,7 +384,6 @@ pub static BUSY: Program = Program {
 pub static PARK: Program = Program {
     identity: Identity {
         name: "park",
-        spot: Spot::Rig,
         scenes: &["load"],
         ..Identity::DEFAULT
     },
@@ -413,7 +394,6 @@ pub static PARK: Program = Program {
 pub static HANG: Program = Program {
     identity: Identity {
         name: "hang",
-        spot: Spot::Rig,
         scenes: &["rig"],
         ..Identity::DEFAULT
     },
@@ -425,7 +405,6 @@ pub static LOAD: Program = Program {
     identity: Identity {
         name: "load",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Rig,
         scenes: &["load"],
         entry: &["load"],
         ..Identity::DEFAULT
@@ -438,7 +417,6 @@ pub static BEAT: Program = Program {
     identity: Identity {
         name: "beat",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Rig,
         scenes: &["beat"],
         entry: &["beat"],
         ..Identity::DEFAULT
@@ -451,7 +429,6 @@ pub static AGAIN: Program = Program {
     identity: Identity {
         name: "again",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Rig,
         scenes: &["again"],
         entry: &["again"],
         ..Identity::DEFAULT
@@ -463,7 +440,6 @@ pub static AGAIN: Program = Program {
 pub static WAITER: Program = Program {
     identity: Identity {
         name: "waiter",
-        spot: Spot::Rig,
         scenes: &["group"],
         ..Identity::DEFAULT
     },
@@ -475,7 +451,6 @@ pub static GROUP: Program = Program {
     identity: Identity {
         name: "group",
         kind: ProgramKind::Supervisor,
-        spot: Spot::Rig,
         scenes: &["group"],
         entry: &["group"],
         ..Identity::DEFAULT
