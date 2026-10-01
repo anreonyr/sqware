@@ -360,6 +360,18 @@ impl Control {
             &[],
             Wait::POLL,
         )
+        // **照实记（这一句把"哪一步没起来"丢掉了；debug 档那条红正卡在这里）**：
+        // `launch` 的失败有几步（`service::mint` 那四步：`admit_start` / `utask::build` /
+        // `utask::spawn`（失败即 `Fail::Full`——**一格的资源上限**）/ `table.attach`；`launch` 自己
+        // 还有放行前那几手），而这一句 `.map_err(|_| …)` 把它们**折成同一句** `start failed`。
+        // **实测（第 27/28 轮）**：debug 档 `root` 景 **2/2 复现** `probe-rule` ＋ `start failed`
+        // （装配者 `exit tid=11 reason=0x15`，0x15 = `E_PROBE_RULE`），而**同一份代码 release 档
+        // 16 条全绿**；那一跑里 `probe-rule` **一条自己的读数都没打**（连 `bail` 都没有）⇒ 它很可能
+        // **一步都没跑**（没 mint 出来，或放行前就折了）。
+        // **这一族不是今天才有**（`canonical/program.rs` 头注已经写着它）："装配期折一条
+        // （`system: assemble`，**牺牲者每次不同**：`board:claim` / `start failed`）"。
+        // **下一刀**：把这里丢掉的那一格印出来（`Fail` 的变体 ⇒ 哪一步），先量再断——
+        // 若它是 `Fail::Full`，那这一族就是**资源上限**那一档，与"谁先起"无关。
         .map_err(|_| Error::Step("start failed"))
     }
 
