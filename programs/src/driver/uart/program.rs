@@ -21,6 +21,7 @@ pub static PROGRAM: Program = Program {
         // **`router` 这一条边是补上的**（照实记：与 `rtc` 同一处成因）：本台起手也要问路由者
         // （`uart/desk.rs` 的 `ctx.line(...)`：查 `/svc/drv/router` 那一格、请它占线），
         // 而 `deps` 里从前只有 `operator` / `hub`——那条依赖靠的是**位次**。
+        // **那条红与这条边分开记**（A/B 两面都出得来、n=3 分不开，见 `rtc/program.rs` 的照实记）。
         deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Resident),
         presence: true,
