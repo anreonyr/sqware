@@ -17,7 +17,7 @@ use runtime::env::room;
 
 use crate::program::Program;
 use crate::system::Assembly;
-use crate::system::control::{READY_MS, RETRY_MS, Service};
+use crate::system::control::{BOOT_MS, READY_MS, RETRY_MS, Service};
 
 /// **名册在装配者这一侧的状态**：那一面（`None` = 名册还没起来）。
 #[derive(Default)]
@@ -38,10 +38,23 @@ impl Roster {
             return Ok(());
         };
         let root = face.new_principal();
-        let mine = root.derive(Wait::AtMost(READY_MS)).map_err(|_| "derive")?;
+        // **照实记（第 34 轮抓到的那一支红的落点就在这两手）**：debug 档偶发一条红，实测
+        // `probe-rule-other`（`reason=0x16`）折在 `bind` 这一步，而 `system: minted probe-rule-other`
+        // **在** ⇒ 它铸出来了、折在**放行前问名册**这一趟。额度从前是 `READY_MS`（1 s）——
+        // 与上一轮治好的那一族**同一个形状**（debug 档慢，1 s 装不下），故按同一条口径放大：
+        // **死已由表侧那一扫独自认**（`supervise` 的 `Watch`）⇒ 这几问的额度宽了只会慢，不会误判。
+        let mine = root
+            .derive(Wait::AtMost(BOOT_MS))
+            .map_err(|fail| {
+                debug!("principal: bind derive {:?} task={}", fail, task.get());
+                "derive"
+            })?;
         face.task(task)
-            .bind(mine.id(), Wait::AtMost(READY_MS))
-            .map_err(|_| "bind")?;
+            .bind(mine.id(), Wait::AtMost(BOOT_MS))
+            .map_err(|fail| {
+                debug!("principal: bind failed {:?} task={}", fail, task.get());
+                "bind"
+            })?;
         Ok(())
     }
 
