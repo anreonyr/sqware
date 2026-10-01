@@ -35,6 +35,17 @@
 # `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
 # 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
 #
+# **照实记（那一刀落下来之后：扳机改读账）**：收场不再由"位次最大那一台的退场"触发，而是由
+# `Control::due()`（账上活着的都是常驻台）与 `Control::done()`（一个不剩）两条判决决定
+# （见 `programs/src/system/control/supervise.rs` 的头注）。量到的：
+#   · 喂 `exit` 落在 **1 s** 那一档（原先正是"扳机不等读数"的现场）：改前 15 位"会走的"报到 14、
+#     另有两处 panic（其中 `probe-owner.rs:202` 那条是被扑杀造成的）；改后 **15/15、panic 0**。
+#   · `scene root` 默认档 **8 跑全绿**（每跑 5.78~5.83 s）；`product`/`again`/`load`/`group`/`beat`
+#     各 1 例全绿。**样本照实说**：8 跑全绿 ⇒ 红率低于 ~31%（n=8 的 95% 上界），不是"证明为零"。
+#   · 残留（不在这两刀里）：`probe_owner::take_over` 那一圈"有界重试"每一轮含着
+#     `Wait::AtMost(1000)` 的两问（而客户端 `push` 是 `Wait::Forever`）——它才是那个**真的挂**。
+#     静默兜底（10 s）让这一档红得**有成因**（release 印 `system: doom`），而不是 60 s 超时。
+#
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
 #
 # **照实记（为什么非搬不可）**：`cargo-qtest` 把 QEMU 的 stdin 钉成 `Stdio::null()`
