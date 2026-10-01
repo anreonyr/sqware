@@ -33,6 +33,7 @@ use crate::system::control::desk::Announce;
 
 use super::{Control, Error, READY_MS, Service};
 use crate::program::{Program, Setup};
+use crate::system::Assembly;
 
 impl Control {
     /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子（`spawn` 才挂）。
@@ -231,6 +232,23 @@ impl Control {
         debug!("system: enrolled {} supplies for {}", got, name.as_str());
         Ok(())
     }
+}
+
+/// **生命这一轴在装配那一趟里的那一手**：等这一台的凭据交齐（读它 `setup` 那几格）。
+///
+/// **它为什么排在板 / 树那两手之后**（照实记：这一格换过位置）：这一刀之前"等就绪"住在
+/// [`Control::launch`] 里（放行之后紧接着）——那时就绪的凭据只有"它交回了一枚通道孔"，而那一刻
+/// 与"它答得了"是同一件事。`Setup::Machine` 那一格把两件事分开了：它的"起完了"要到**挂上树、
+/// 拿到物料、把每一台落完格**之后才说得出口 ⇒ 等它必须排在那两手之后。
+pub fn await_ready(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    assembly
+        .control
+        .ready(program.name().to_string(), service, program.demand.setup)
+        .map_err(|e| e.said())
 }
 
 // **照实记（`pairs_of` 那一手退场了）**：它从前把"回单里那段裸字节"按 `PAIR_LEN` 步长解成

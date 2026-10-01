@@ -18,19 +18,26 @@
 //!
 //! **拆毒那一刀（照实记）**：从前这里平铺着 `control` / `board` / `tree` / `roster` / `watch`
 //! 五个字段，而装配那一趟（原 `Program::assemble`）直接伸手进去乱叫——"生命"与"存在信号"
-//! 两件事在同一段代码里交错，谁也说不清一次改动牵动谁。今天那一趟搬进 [`Assembly::assemble`]，
-//! 且**每一块只经它自己那几手**说话（`enlist` / `spawn` / `connect_all` / `launch`、
-//! `attach` / `adopt` / `plate` / `eye`、`bind` / `adopt`）：装配者手里没有一块是"想叫就叫"的
-//! 裸**数据**——它叫的都是那一域自己的动词。
+//! 两件事在同一段代码里交错，谁也说不清一次改动牵动谁。那一刀先把那一趟搬进
+//! [`Assembly::assemble`]，且**每一块只经它自己那几手**说话（`enlist` / `spawn` / `connect_all` /
+//! `launch`、`attach` / `adopt` / `plate` / `eye`、`bind` / `adopt`）：装配者手里没有一块是
+//! "想叫就叫"的裸**数据**——它叫的都是那一域自己的动词。
+//!
+//! **照实记（上一刀剩下的那一半：读者归位）**：搬进来之后那一段正文仍然**替每一轴读它们的格**
+//! ——88 行里 56 行说的是板 / 树 / 名册那三轴的字段 ⇒ "这一格还有谁读"依旧要通读它才答得出。
+//! 今天**三相与各相那几手搬到 [`schedule`]**，而**每一手住在它自己那一轴的文件里、那一格由它
+//! 自己读**。本处这一趟因此只剩"立账 → 造身子 → 装通道 → 走三相"——一处也不再提板 / 树 /
+//! 名册那三个名字。
 //!
 //! **`Program` = 声明，`Assembly` = 运行时上下文**：一台程序怎么起（谁接哪条轴 / 要不要存在信号 /
 //! 它是哪一双眼睛 / 装配期给不给身份）写在它自己那份 `program.rs` 里；而**装配动作**
-//! 是 [`Assembly::assemble`]。
+//! 是 [`schedule`] 那张表上各轴自己的那几手。
 //!
 //! **本文件里没有"按位分派"**：不再有一处 `if program.operator { … }` 的大 match 替所有程序
 //! 解释它们的字段；属于哪一台的语义就在那一台的声明里，这一趟只按那几格走。
 //!
-//! - [`assemble`]：这一景起哪些台（**过滤 + 按 `order` 排**，就这一件事）
+//! - [`assemble`]：这一景起哪些台（**过滤 + 按各台声明的 `deps` 算次序**，就这一件事）
+//! - [`schedule`]：装配的**相**——一台起手分几相、每相哪一轴动手（那一格由那一轴自己读）
 //! - [`bootstrap`]：启动资源获取（与引导域会话 / 机器自述 / 载荷区清单）
 //! - [`source`]：程序来源那一格（取字节那一面：`Origin` → 一段 `&[u8]`）
 //! - [`control`]：Service 的生命周期（内核那几手住 `control::service`，监督相住 `control::supervise`）
@@ -39,11 +46,8 @@
 
 use alloc::string::ToString;
 
-use env::wire::Eyes;
 use env::Wait;
 use protocol::debug;
-
-use runtime::env::unit as utask;
 
 use crate::program::{Died, Program};
 use crate::system::board::bridge::Bridge;
@@ -73,6 +77,7 @@ pub mod machine;
 pub mod mount;
 pub mod operator;
 pub mod principal;
+pub mod schedule;
 pub mod source;
 
 /// **运行时装配上下文**：这台机器**已经装配到了什么**——四轴各一块，加存在信号的两头。
@@ -272,10 +277,11 @@ impl Assembly {
         }
     }
 
-    /// **起一条**——这一台自己的装配，按它自己的声明走：
+    /// **起一条**——这一台自己的装配：**立账 → 造身子 → 装通道 → 走那三相**。
     ///
-    /// 立账 → 建域产线程 → 装通道（放行前）→ 绑身份（放行前）→ 放行等就绪 → 递配给 → 存在信号 →
-    /// 命名轴 → 认下那两双眼睛。
+    /// 前三件与"这一台是谁"无关（账上那一行 / 它那枚身子 / 它那几条通道），由
+    /// [`Control`] 与 [`crate::system::control::assemble`] 做；三相各自动哪几手写在 [`schedule`]
+    /// 那张表里，而**放行那一手夹在相与相之间**——它不是某一轴的手，是这一条自己的生命那一步。
     ///
     /// **次序即契约**：先起的先就绪，后面的就能向它要东西；持树者必须先于客人（客人上树要它
     /// 在），名册必须先于其余（其后的身份都从它来）。
@@ -314,76 +320,15 @@ impl Assembly {
         // 一件一件来：`connect` 返的是**那条通道的持有者**（一次一手、一手一对孔）。
         control::assemble::connect_all(program, &mut service).map_err(|e| fail(program, e))?;
 
-        // 身份：**放行之前**就做完——故服务一起来 `resolve(self)` 就答得出。（名册本身与树不
-        // 走这里：它们起来时名册还没在；那两条由下面的身份轴 `adopt` 在它放行之后补绑。）
-        self.roster
-            .bind(service.0, program.relation.bind)
-            .map_err(|why| fail(program, Error::Step(why)))?;
-        // 放行 + 等就绪 + 递门闩单（次序是硬的：配给要落到它交回的那条路上）。
+        // **三相**（表在 [`schedule`]）：放行那一手夹在相与相之间——它不是某一轴的手，是这一条
+        // 自己的生命那一步（`launch` = 起步 ＋ 递整机物料，次序是硬的：物料要落到它交回的那条
+        // 路上）。
+        schedule::advance(self, schedule::BEFORE_LAUNCH, program, &mut service)?;
         self.control
-            .launch(program, name.clone(), &mut service)
+            .launch(program, name, &mut service)
             .map_err(|e| fail(program, e))?;
-        // 存在信号：**板在装配者这一侧那条路**——把这位客人交出来的那一枚转授过去（板据此
-        // 看得见它的死）。**在通道之后**：那条路由客人在起来之后自己装（它是问的那一侧），而它
-        // 要先收到配给才轮得到那一问。
-        if program.relation.presence {
-            let lane = self.watch.lane_of(name.as_str());
-            self.board
-                .attach(
-                    utask::self_id(),
-                    service.0,
-                    name.clone(),
-                    Wait::AtMost(READY_MS),
-                    lane,
-                )
-                .map_err(|why| fail(program, Error::Step(why)))?;
-        }
-        // 命名轴：**按需**把这条服务接到持树者那棵树上。**在存在信号之后**：两者各一条路、
-        // 互不影响。持树者必须先于这位客人起：提示之路还没认下就没得接。
-        if program.relation.operator {
-            self.tree
-                .attach(service.0, Wait::AtMost(READY_MS))
-                .map_err(|why| fail(program, Error::Step(why)))?;
-        }
-        // **等就绪**：这一台那几条通道逐条认齐（`Setup::Machine` 那两条里第二条就是"我起完了"）。
-        //
-        // **照实记（这一格为什么在挂板 / 挂树之后）**：这一刀之前"等就绪"住在
-        // `Control::launch` 里（放行之后紧接着）——那时就绪的凭据只有"它交回了一枚通道孔"，
-        // 而那一刻与"它答得了"是同一件事。`Machine` 那一格把两件事分开了：它的"起完了"要到
-        // **挂上树、拿到物料、把每一台落完格**之后才说得出口 ⇒ 等它必须排在那两手之后。
-        self.control
-            .ready(name, &mut service, program.demand.setup)
-            .map_err(|e| fail(program, e))?;
-
-        // 它刚把提示之路交给**生我者**（= 本域）⇒ 当场认下来，此后客人上树才有路可走。
-        if program.relation.holds_tree {
-            self.tree
-                .adopt(service.0, Wait::AtMost(READY_MS))
-                .map_err(|why| fail(program, Error::Step(why)))?;
-            // **持树者一就位就把七位挂上**（不是等整表起完）：
-            // 那七格只是"树 + 本域递东西"两件事的函数，与后面起哪几台无关；而**等整表起完**会把
-            // 它挤到最后——那正是停机扳机（`supervise` 的 `last`）响的前一刻 ⇒ 任何"要读那七格"
-            // 的客人只剩几毫秒窗口（实测：那一档里连既有的 `probe-control` 都会被扑杀）。
-            self.mount_grants();
-        }
-
-        // **哪一双眼睛**：声明上那一格说了算（不是拿名字认的——`p.name == "principal"`
-        // 那种写法，改个名字就静默失灵）。名册那一位要认下面 + 补绑自己与树；盟册只报号。
-        //
-        // **盟册那一步没有第五个字段**：那个号装配者本来就握着（`service.0`），"报到命名轴去"
-        // 只是把同一枚号记进协调帧那一格——故这里就是那一句。
-        match program.relation.eyes {
-            Some(Eyes::Roster) => {
-                let who = self
-                    .roster
-                    .adopt(service.0, self.tree.host())
-                    .map_err(|why| fail(program, Error::Step(why)))?;
-                self.tree.eye(Eyes::Roster, who);
-            }
-            Some(Eyes::League) => self.tree.eye(Eyes::League, service.0),
-            None => {}
-        }
-
+        schedule::advance(self, schedule::AFTER_RELEASE, program, &mut service)?;
+        schedule::advance(self, schedule::AFTER_READY, program, &mut service)?;
         Ok(())
     }
 }

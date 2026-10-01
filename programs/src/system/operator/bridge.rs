@@ -34,6 +34,10 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
+use crate::program::Program;
+use crate::system::Assembly;
+use crate::system::control::{READY_MS, Service};
+
 use protocol::communication::establish;
 use protocol::debug;
 use protocol::system::operator::client::{Face, Mine, Pane};
@@ -182,6 +186,62 @@ impl Tree {
             Eyes::League => self.coord.league = Some(who),
         }
     }
+}
+
+/// **树这一轴在装配那一趟里的那一手**：读这一台声明上 `operator` 那一格（"接不接那棵树"）。
+///
+/// **在存在信号之后**：两者各一条路、互不影响。持树者必须先于这位客人起：提示之路还没认下就
+/// 没得接。
+pub fn attach_client(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    if !program.relation.operator {
+        return Ok(());
+    }
+    assembly.tree.attach(service.0, Wait::AtMost(READY_MS))
+}
+
+/// **认下持树者本身**：读这一台声明上 `holds_tree` 那一格——它刚把提示之路交给**生我者**
+/// （= 本域）⇒ 当场认下来，此后客人上树才有路可走；并把七位操作面挂上去。
+///
+/// **持树者一就位就把七位挂上**（不是等整表起完）：那七格只是"树 ＋ 本域递东西"两件事的函数，
+/// 与后面起哪几台无关；而**等整表起完**会把它挤到最后——那正是停机扳机（`supervise` 的 `last`）
+/// 响的前一刻 ⇒ 任何"要读那七格"的客人只剩几毫秒窗口（实测：那一档里连既有的 `probe-control`
+/// 都会被扑杀）。
+pub fn hold(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    if !program.relation.holds_tree {
+        return Ok(());
+    }
+    assembly.tree.adopt(service.0, Wait::AtMost(READY_MS))?;
+    assembly.mount_grants();
+    Ok(())
+}
+
+/// **认下那两双眼睛**：读这一台声明上 `eyes` 那一格——**声明说了算，不是拿名字认的**
+/// （`p.name == "principal"` 那种写法，改个名字就静默失灵）。
+///
+/// 名册那一位要认下面 ＋ 补绑自己与树；盟册只报号。**盟册那一步没有第五个字段**：那个号装配者
+/// 本来就握着（`service.0`），"报到命名轴去"只是把同一枚号记进协调帧那一格。
+pub fn eyes(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    match program.relation.eyes {
+        Some(Eyes::Roster) => {
+            let who = assembly.roster.adopt(service.0, assembly.tree.host())?;
+            assembly.tree.eye(Eyes::Roster, who);
+        }
+        Some(Eyes::League) => assembly.tree.eye(Eyes::League, service.0),
+        None => {}
+    }
+    Ok(())
 }
 
 /// 把持树者接上一位客人（装配者调用）：**三步**。

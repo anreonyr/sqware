@@ -4,6 +4,7 @@
 //! 帧与记号见 [`protocol::system::board`]。
 
 use alloc::string::String;
+use alloc::string::ToString;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Mark;
@@ -14,10 +15,15 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::core::unit::{self, Join};
 use runtime::env::mail;
+use runtime::env::unit as utask;
 
 use protocol::communication::establish;
 use protocol::system::board as bcall;
 pub use protocol::system::board::{LINK, TIP_MARK};
+
+use crate::program::Program;
+use crate::system::Assembly;
+use crate::system::control::{READY_MS, Service};
 
 use super::server::host_loop;
 
@@ -47,6 +53,30 @@ impl Bridge {
     ) -> Result<(), &'static str> {
         attach(me, client, name, millis, &mut self.tip, lane)
     }
+}
+
+/// **板这一轴在装配那一趟里的那一手**：读这一台声明上 `presence` 那一格（"要不要存在信号"）。
+///
+/// **在通道之后**：那条路由客人在起来之后自己装（它是问的那一侧），而它要先收到配给才轮得到
+/// 那一问。**这一手的全部内容**：把这位客人交出来的那一枚转授给板线程——板据此看得见它的死
+/// （三步见 [`attach`]，次序即契约）。
+pub fn attach_client(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    if !program.relation.presence {
+        return Ok(());
+    }
+    let name = program.name().to_string();
+    let lane = assembly.watch.lane_of(name.as_str());
+    assembly.board.attach(
+        utask::self_id(),
+        service.0,
+        name,
+        Wait::AtMost(READY_MS),
+        lane,
+    )
 }
 
 /// 把板接上一位客人（装配者调用）：**三步**（见文件头"一问一答的次序"）。

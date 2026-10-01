@@ -15,7 +15,9 @@ use protocol::system::principal as pcall;
 use protocol::system::principal::client::Face;
 use runtime::env::room;
 
-use crate::system::control::{READY_MS, RETRY_MS};
+use crate::program::Program;
+use crate::system::Assembly;
+use crate::system::control::{READY_MS, RETRY_MS, Service};
 
 /// **名册在装配者这一侧的状态**：那一面（`None` = 名册还没起来）。
 #[derive(Default)]
@@ -78,6 +80,18 @@ impl Roster {
         self.face = Some(f);
         Ok(task)
     }
+}
+
+/// **身份轴在装配那一趟里的那一手**：读这一台声明上 `bind` 那一格。
+///
+/// **放行之前**就做完——故服务一起来 `resolve(self)` 就答得出。（名册本身与树不走这里：它们起来
+/// 时名册还没在；那两条由 [`Roster::adopt`] 在它放行之后补绑。）
+pub fn bind(
+    assembly: &mut Assembly,
+    program: &Program,
+    service: &mut Service,
+) -> Result<(), &'static str> {
+    assembly.roster.bind(service.0, program.relation.bind)
 }
 
 /// 认下名册**交给生我者**的那一枚门牌（装配者自己的那一份）。
