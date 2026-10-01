@@ -8,9 +8,14 @@
 //! （`cull` 沿 `sire` 跨任务摘后代）。这一台的判据就是那一件事的**反面**：它**在另一个域里**，
 //! 走与 principal / coalition 逐字同形的路找上门，**把门牌取回来、问一句话**。
 //! # 为什么第 1 步必须在最前
+//! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
+//! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**：第一版把装路排在后面，
+//! 装配那一侧当场报 `operator:claim`（照实记见 `probe_bound` 那一台）。
 //! # 为什么第 4 / 5 步要等（本台比挂载先起）
+//! 本台排在 `canonical` 之前（`order: Some(18)`），而 `control` 那一面是在**整表起完之后**
+//! 才挂上树的（`Assembly::supervise` 那一步——挂它的是编排域主线程，它此后就进监督那一趟，
 //! **这就是"铸入口那一枚必须长命"**）。故第 2 步那一问**等在门外**：门牌的号一开始还没有，
-//! :tile 按额度重试（`RETRY_MS` 一拍问一次），持树者那边把它铺好了就答
+//! `Face::tile` 按额度重试（`RETRY_MS` 一拍问一次），持树者那边把它铺好了就答。
 //! # 判据为什么必须 **panic**
 //! 整机那一格判的是"有没有 `EXIT_PANIC`"（`kernel/src/work/room/conductor.rs` 的判据只此
 //! 一处）：返回一个非零的 `Report` **不算红**。故这一台每一步失败都当场塌。
@@ -28,6 +33,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::Fail as TreeFail;
 use protocol::service::operator::client as operator;
+use protocol::service::operator::Grant as TreeGrant;
 use protocol::system::control as ccall;
 use runtime::env::unit as utask;
 
@@ -36,11 +42,10 @@ const MS: usize = 1000;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-control: ask open, three faces denied";
 
-/// **数那一族到齐**的额度与节拍（毫秒）：那几面由装配者在相四下逐面 `plate`，本台可能比它先起
-/// （`probe-control` 的头注：第 4 / 5 步都要等）——故有界重试，到点由下面的 `assert_eq!` 落地
+/// **数那一族到齐**的**总窗口**（毫秒）：那几面由装配者在相四下逐面 `plate`，本台可能比它先起
+/// （`probe-control` 的头注：第 4 / 5 步都要等）——故有界：等的是**事件**（`Watch::next`），
+/// 到点由下面的 `assert_eq!` 落地。
 const FACES_MS: usize = 3_000;
-/// 每一次重试之间睡多久（毫秒）
-const TICK_MS: usize = 20;
 
 /// **一个一定不在装配表里的名字**：第 4 步那一问的荷载
 /// 取"表里没有"是**故意**的：那一问要的就是"对面答得出一句语义码"。若拿一个真名字去问
@@ -55,18 +60,27 @@ fn main() -> Report<'static> {
     };
     let tree = operator::Face::from(&session);
 
+    // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
+    //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。
+    //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
+    let rein = tree.rein(TreeGrant::Watch);
+    let mut watch = match rein.watch(ccall::DIR, Wait::AtMost(MS)) {
+        Ok(watch) => watch,
+        Err(fail) => panic!("probe-control: /svc/sys/control 那一族订不成：{fail:?}"),
+    };
+
     // 二、树上那**一格**：名字（`seek`）→ 号 → **门牌那一枚**（`find` 会把它授进本表）。
     // 那段前缀（一块 `Pane`，没有门牌可授）。
     let road = ccall::DIR
         .try_join(ccall::Grant::State.name())
         .expect("probe-control: bad name");
 
-    // 二之后、三之前：**那一族到齐没有**——数那一块窗格底下几枚（**该有几枚 = `Grant::ALL`**：
+    // 二之后、三之前：**那一族到齐没有**——一问 ＋ 等事件（**该有几枚 = `Grant::ALL`**：
     // 一枚 Grant = 一枚门牌 = 一格）。与 `probe_operator_gate` 数 `/svc/sys/operator` 同一把尺子。
     let parent = tree
         .pane(ccall::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len(), FACES_MS, TICK_MS);
+    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len(), &mut watch, FACES_MS);
     debug!("probe-control: faces={seen} want={}", ccall::Grant::ALL.len());
     assert_eq!(
         seen,

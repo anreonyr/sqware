@@ -35,24 +35,27 @@ use protocol::communication::session::establish;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::service::operator::client::{Face as TreeFace, Mine, Pane, Watch};
 use protocol::service::operator::{EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒；每次重试睡 TICK_MS）
+/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒）：两处（`walk` 与 `count_under`）各拿它当
+/// **总窗口**——等的是**事件**（`watch.next`），不再是"睡一拍再看"，故节拍那一格没有了。
 /// **（20 s → 3 s）**：本台是**铺场者**，而它"走不完"的代价不是红——停机扳机一来就把它
-/// 20 s，而这样的额度本台有**两处**（walk 与 count_under），走满就是几十秒的窗口
-/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 HOLD_MS，只要 1~3 s）毫发无伤
-/// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）
+/// **扑杀**（`ousted=true`、一行不打），那条读数于是**既不绿也不红**（第三种结局）。旧版给的是
+/// 20 s，而这样的额度本台有**两处**（`walk` 与 `count_under`），走满就是几十秒的窗口。
+/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 `HOLD_MS`，只要 1~3 s）毫发无伤，
+/// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
 /// 这个数不是猜的：七行 `system: grant mounted at /svc/sys/operator/{…}` 在 **t<500 ms** 就打完
 /// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计
 const WAIT_MS: usize = 3_000;
 
-/// 每一次重试之间睡多久（毫秒）
-const TICK_MS: usize = 20;
+/// **`spot` 那一处**每一拍睡多久（毫秒）：它**不在事件那条路上**——等的是"这一趟走到了"
+/// （单槽孔的信），不是树变了，故仍按拍重问（见那一手的注）。
+const RETRY_MS: usize = 20;
 
 /// **铺完之后还压多久**（毫秒）——见 `main` 末尾那一节（"主人还在不在场"那条轴）
 /// **两头顶着**：短了，下一位走到"顶那一格"时主人已经走了（那一格重新可落 ⇒ 它测得的是
@@ -76,19 +79,30 @@ fn main() -> Report<'static> {
     };
     let tree = TreeFace::of(session);
 
+    // 一·二、**先订**（序是契约）：`Watch::of` 返回就是那个序点——本台此后每一处都是
+    //       "先问一次、不满才等事件"，故订阅必须排在"等那一块长出来"之前。
+    //       `spot` 那一处不在这条路上：它等的是"这一趟**走到了**"（单槽孔的信），不是树变了。
+    //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来），
+    //       故这一步同时也在量"这一位拿得到那一柄权"。
+    let rein = tree.rein(Grant::Watch);
+    let mut watch = match rein.watch(&protocol::service::operator::DIR, Wait::AtMost(MS)) {
+        Ok(watch) => watch,
+        Err(fail) => panic!("probe-operator-gate: subscribe /svc/sys/operator failed: {fail:?}"),
+    };
+
     // 一·五、**先把那两格摆好**（摆在最前）：下一位客人与本台**并发**跑，而它读不了树
     //       （"那两格摆好了没有"它问不出来）——故本台越早铺，那一条判据越稳。
     let own = spot(&tree, OWN, "probe-gate-own", Mine::Yes);
     let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
 
-    let Some(operator_id) = walk(&tree, &protocol::service::operator::DIR) else {
+    let Some(operator_id) = walk(&tree, &protocol::service::operator::DIR, &mut watch) else {
         panic!("probe-operator-gate: /svc/sys/operator is not a pane");
     };
     let operator_pane = Pane::of(&tree, operator_id);
 
-    // 三、那几位到齐：**数一次就够**（各位名字的读数归树自己那几行 `grant mounted at`，
+    // 三、那几位到齐：**一问 ＋ 等事件**（各位名字的读数归树自己那几行 `grant mounted at`，
     //    见 `probe::count::count_under`）。**该有几枚由 `Grant::ALL` 说**——加一位就跟着动。
-    let seen = count_under(&operator_pane);
+    let seen = count_under(&operator_pane, &mut watch);
     assert_eq!(
         seen,
         Grant::ALL.len(),
@@ -129,33 +143,33 @@ fn main() -> Report<'static> {
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
-/// `/svc/sys/operator` 那一格自己的号——**有界重试**：那一块由**别的域**立（本台可能比它先起）
+/// `/svc/sys/operator` 那一格自己的号——**一问 ＋ 等事件**：那一块由**别的域**立
+/// （本台可能比它先起），"长出来了"那件事就是一条 `Landed`。
 /// 三手都是 TreeFace 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
 /// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"
-fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
+fn walk(tree: &TreeFace, road: &Path, watch: &mut Watch<'_>) -> Option<EntryId> {
     let root = tree.root();
-    let mut left = WAIT_MS;
     loop {
-        // **认得出就是认出了**：`pane` 那一问失败 ⇒ 那一格此刻还不是一块窗格 ⇒ 再等一拍。
+        // **认得出就是认出了**：`pane` 那一问失败 ⇒ 那一格此刻还不是一块窗格 ⇒ 等一条事件。
         if let Ok(tile) = root.tile(road, Wait::AtMost(MS)) {
             let id = tile.id();
             if tile.pane(Wait::AtMost(MS)).is_ok() {
                 return Some(id);
             }
         }
-        if left == 0 {
+        // 期限内没有事件（那一块始终没长出来）⇒ 答 `None`，由调用方那句 `panic!` 落地。
+        if watch.next(Wait::AtMost(WAIT_MS)).is_err() {
             return None;
         }
-        let _ = runtime::env::room::sleep(core::time::Duration::from_millis(TICK_MS as u64));
-        left = left.saturating_sub(TICK_MS);
     }
 }
 
 /// 数 `/svc/sys/operator` 底下**那几格到齐没有**——正文在 `harness::probe::count`
 /// （各台共用：一事一处）。本台只把"该有几枚"与额度交出去：**该有几枚 = `Grant::ALL.len()`**
-/// （一枚 `Grant` = 一枚门牌 = 一格），额度与重试节拍由本台那两个常数说。
-fn count_under(pane: &Pane<'_>) -> usize {
-    probe::count::count_under(pane, Grant::ALL.len(), WAIT_MS, TICK_MS)
+/// （一枚 `Grant` = 一枚门牌 = 一格）；额度是本台那一格 `WAIT_MS`（**总窗口**，节拍归量具里的
+/// "一问的期限"）。
+fn count_under(pane: &Pane<'_>, watch: &mut Watch<'_>) -> usize {
+    probe::count::count_under(pane, Grant::ALL.len(), watch, WAIT_MS)
 }
 
 /// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）
@@ -165,6 +179,9 @@ fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId 
         panic!("probe-operator-gate: no entry");
     };
     // **`Unknown` 重试**（与 `client.rs` 的 `road_to_id` 同一条口径）：那一格由本台与下一位
+    // 客人**并发**动，而这一手是"一问一动"——`Unknown` 在这条路上说的是"这一趟没走到"，
+    // 不是"这一格不许"。除它以外的失败都是确定的下一步（当场塌）。
+    // **它不在事件那条路上**：等的是"这一趟走到了"（单槽孔的信），不是树变了。
     let mut left = WAIT_MS;
     loop {
         match tree
@@ -174,8 +191,8 @@ fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId 
             Ok(id) => return id.id(),
             Err(Fail::Unknown) if left > 0 => {
                 let _ =
-                    runtime::env::room::sleep(core::time::Duration::from_millis(TICK_MS as u64));
-                left = left.saturating_sub(TICK_MS);
+                    runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
+                left = left.saturating_sub(RETRY_MS);
             }
             Err(fail) => panic!("probe-operator-gate: land {name} failed: {fail:?}"),
         }

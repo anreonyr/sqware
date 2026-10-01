@@ -10,9 +10,10 @@
 //! 2. 那四枚门牌（`ask` / `set` 各两枚）**都取得回来**（`find` 那一问会把它授进本表）。
 //!
 //! # 为什么这一台该存在
-//! 那两族落格那一侧是**静默**的：`let _ = bridge::land(…)`（`principal/serve`、`coalition/serve`）
-//! 把 `Landed { land, find }` 丢掉——**少落一格照样起**，只有树上少一格。故"到齐没有"这一问
-//! 必须由**别的域**的人来问，这正是本台。
+//! 那两族落格那一侧**不成也照样起**：`let _ = bridge::land(…)`（`principal/serve`、
+//! `coalition/serve`）把 `Landed { land, find }` 丢掉——少落一格只有树上少一格，域自己照起。
+//! 故"到齐没有"这一问必须由**别的域**的人来问，这正是本台。（那一行"为什么没落上"的读数
+//! 归 `bridge::land` 自己报，release 档也报——见那一手里的 `debug::put`。）
 //!
 //! # 判据为什么必须 **panic**
 //! 整机那一格判的是"有没有 `EXIT_PANIC`"（`kernel/src/work/room/conductor.rs` 的判据只此一处）：
@@ -30,17 +31,15 @@ use protocol::debug;
 use protocol::service::coalition as ccall;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
+use protocol::service::operator::Grant as TreeGrant;
 use protocol::service::principal as pcall;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// 数一族到齐的额度与节拍（毫秒）：那几位由各自那一域自己落（本台可能比它先起），
-/// 故有界重试，到点由 `assert_eq!` 落地。
+/// 数一族到齐的**总窗口**（毫秒）：那几位由各自那一域自己落（本台可能比它先起），
+/// 故有界——等的是**事件**（`Watch::next`），到点由 `assert_eq!` 落地。
 const FACES_MS: usize = 3_000;
-
-/// 每一次重试之间睡多久（毫秒）
-const TICK_MS: usize = 20;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 /// **量出来的那两枚数**落在这里（release 也看得见）：`debug!` 在 release 是空操作，
@@ -75,10 +74,18 @@ fn main() -> Report<'static> {
 
 /// 数一族：那一块窗格底下到齐没有（该有几枚由调用方那一族的 `Grant::ALL` 说）。
 fn step(tree: &TreeFace, family: &str, dir: &Path, want: usize) {
+    // **先订**（序是契约）：那一族此后每落一格都往本端这一页记一条，`Watch::of` 返回就是
+    // 那个序点——故订阅排在"数一次"之前，已经到齐的族则由量具第一问当场返回。
+    // 订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
+    let rein = tree.rein(TreeGrant::Watch);
+    let mut watch = match rein.watch(dir, Wait::AtMost(MS)) {
+        Ok(watch) => watch,
+        Err(fail) => panic!("probe-coalition: {family} 那一族订不成：{fail:?}"),
+    };
     let pane = tree
         .pane(dir, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-coalition: {family} 那一格不是窗格：{fail:?}"));
-    let seen = probe::count::count_under(&pane, want, FACES_MS, TICK_MS);
+    let seen = probe::count::count_under(&pane, want, &mut watch, FACES_MS);
     debug!("probe-coalition: {family} faces={seen} want={want}");
     assert_eq!(
         seen, want,
