@@ -5,7 +5,8 @@
 //! # 为什么它读不了树（这不是缺陷，是这一维在生效）
 //! 第 5–10 条**全部**答 `Denied`：这一位客人**列不了、问不了名、译不了号**。故它认路的坐标
 //! 只能自己报得出——**根是唯一不需要号的那一格**（根没有号，见 operator::frame），于是
-//! 那两格由 `probe-operator-gate` 落在**根**底下，本台照名字报坐标。
+//! `probe-op-own` 由 `probe-operator-gate` 声明归属、`probe-op-free` 无主，两格都落在**根**底下，
+//! 本台照名字报坐标。（本台先落、对面后换绑也收得住：换绑不动号，见第四步那一节。）
 //! 这一条是**量出来的**：拿 `list` ＋ `name` 去走 `/svc/sys/operator/zone`，于是每一次
 //! `list` 都被面判拒掉、当场卡死——本台量到的不是"读树读不到"，而是"**没资格读**"。
 //! # 第 2/3 条合起来是两件不同的事
@@ -15,6 +16,11 @@
 //! # 两道门的次序（本台量的是**第一道**）
 //! `find` / `trim` / `land` 那三条还要再过一道身份闸（`may`）——本台是**已绑身份**的（声明里
 //! `bind: true`），故那一道不放行也不拦；这一台量的是第 1 道与第 2 道正交。
+//! # 两台之间不靠钟（这一条是量出来的）
+//! 从前本台睡一拍（`SETTLE_MS = 300`）再去顶那一格、对面压住那一格（`HOLD_MS = 1200`）保
+//! "主人还在场"——**两个都是猜的数**，两头各塌过一次（`Ok(EntryId(13))`、`Ok(EntryId(73))`，
+//! 后者就是 80 跑那一档里那条红）。现在两侧都等**事实**：本台按自己那一问的答重试到 `Denied`
+//! （见 `WAIT_MS`），对面等本台第六步落的那一格推回来的一条事件才走（见 `DONE`）。
 
 extern crate alloc;
 extern crate programs;
@@ -35,12 +41,23 @@ use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// **起步那一等**（毫秒）：等 `probe-operator-gate` 把它那两格摆好
-/// 本台**读不了树**（`list` / `name` / `seek` 各是另一柄权，全被面判拒），故"那两格摆好了没有"
-/// 这一问它问不出来。装配者只保证**起手装路的先后**（本台排在那位之后），不保证"那位把场摆完"
-/// 落了它、自己成了主人（实测：`Ok(EntryId(13))`，判据当场红，而对面那一格本该是别人的）
-/// 它是**有界的**：过量只是白等，不改变判据
-const SETTLE_MS: usize = 300;
+/// **等那一格被声明有主**的额度（毫秒）。**本台读不了树**（`list` / `name` / `seek` 各是另一柄
+/// 权，全被面判拒），故"那一格有主了没有"这件事**只有本台自己那一问说得清**：
+///   · `land` 答 `Ok` ⇒ 那一格此刻**无主**（铺场者还没落 / 它的主人已不在场）⇒ 这一趟不算数；
+///   · 答 `Denied` ⇒ 那一格**有主且主人在场** ⇒ 判据落定。
+/// **它替掉的是从前那一格睡**（`SETTLE_MS = 300`）：睡多久只是个猜的数——短了那一格还没主，
+/// 本台自己落下去，判据当场红（实测：`Ok(EntryId(13))`、`Ok(EntryId(73))` 各一次，
+/// 都在 80 跑那一档里采到）。额度只留给**失败那条路**（铺场者没了），正常两三趟、毫秒级。
+const WAIT_MS: usize = 2_000;
+
+/// 两趟之间歇多久（毫秒）。**不是节拍**：本台每一趟本身就是一问（要一次往返），
+/// 这一歇只是不把孔上那一条队列填满。
+const RETRY_MS: usize = 10;
+
+/// **走完那一步是一件事**：本台落这一格 ⇒ 铺场者才走得掉（它等这一条事件）。
+/// 落在这里而不是"报一句"：本台**没有**给对面送信的路（它读不了树、也不该有第二条会话），
+/// 而**落一格**这件事持树者会推给订得起的人——这是本台手里唯一说得响的"我走完了"。
+const DONE: &str = "probe-op-done";
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-operator-land: land only";
@@ -66,8 +83,6 @@ fn main() -> Report<'static> {
     let face = TreeFace::of(session);
     let rein = face.rein(Grant::Land);
     assert!(rein.grant() == Grant::Land, "本台这一柄权不是 land 那一位");
-    // **等铺场者把两格摆完**（见 SETTLE_MS）。
-    let _ = runtime::env::room::sleep(core::time::Duration::from_millis(SETTLE_MS as u64));
 
     // 二、`seek` / `part` / `find` / `trim` / `list` / `name`：**一柄也不许**。
     //    这六条**一律到不了树**（面判在第一道就把它挡了），故参数拿哪一枚都不改变结论：
@@ -121,8 +136,12 @@ fn main() -> Report<'static> {
     };
 
     // 四、**别人有主那一格**：面 ✓（`land` 正是这一位）、归属 ✗ ⇒ 拒。
+    //    **这一趟等的是事实**（见 WAIT_MS）：本台读不了树，故"那一格有主了没有"只有本台自己
+    //    这一问说得清——`Ok` = 此刻无主（本台这一落没改变判据，再来），`Denied` = 有主且在
+    //    场，判据落定。对面那一手（`spot`）在已占那一格上是**换绑**，故"谁先落"两种次序都收得住。
     let own = OWN.to_string();
-    let denied = rein.land(
+    let mut left = WAIT_MS;
+    let mut denied = rein.land(
         Where::Root,
         own.clone(),
         mint("probe-land-mine"),
@@ -130,6 +149,18 @@ fn main() -> Report<'static> {
         operator::Mine::No,
         Wait::AtMost(MS),
     );
+    while denied.is_ok() && left > 0 {
+        left = left.saturating_sub(RETRY_MS);
+        let _ = runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
+        denied = rein.land(
+            Where::Root,
+            own.clone(),
+            mint("probe-land-mine"),
+            Permit::Unset,
+            operator::Mine::No,
+            Wait::AtMost(MS),
+        );
+    }
     assert!(
         matches!(denied, Err(Fail::Denied)),
         "顶别人声明归自己的那一格本该被拒，却答了 {denied:?}"
@@ -149,7 +180,22 @@ fn main() -> Report<'static> {
         "第二次顶有主那一格本该仍被拒，却答了 {again:?}"
     );
 
-    debug!("probe-operator-land: free landed={}", got.get());
+    // 六、**说一句"我走完了"**：铺场者那一台此刻正**压着那两格**（`claimable` 判的是"主人还在
+    //    不在场"），它等这一条事实才走得掉——本台落一格，持树者把它推给订着那条路的那一位。
+    //    **次序是硬的**：这一手排在第四/五步之后，故它一到，"判据已经落定"这件事就同时成立。
+    let done = DONE.to_string();
+    let Ok(at) = rein.land(
+        Where::Root,
+        done,
+        mint("probe-land-done"),
+        Permit::Unset,
+        operator::Mine::No,
+        Wait::AtMost(MS),
+    ) else {
+        panic!("probe-operator-land: 走完那一格本该落得下去");
+    };
+
+    debug!("probe-operator-land: free landed={} done={}", got.get(), at.get());
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 

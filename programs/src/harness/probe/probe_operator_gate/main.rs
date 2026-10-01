@@ -42,12 +42,13 @@ use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
-/// **等那一段目录长出来 / 那几格到齐**的额度（毫秒）：两处（`walk` 与 `count_under`）各拿它当
-/// **总窗口**——等的是**事件**（`watch.next`），不再是"睡一拍再看"，故节拍那一格没有了。
+/// **等那一段目录长出来 / 那几格到齐 / 下一位走完**的额度（毫秒）：三处（`walk`、`count_under`
+/// 与末尾那一条 `DONE_ROAD`）各拿它当**总窗口**——等的是**事件**（`watch.next`），
+/// 不再是"睡一拍再看"，故节拍那一格没有了。
 /// **（20 s → 3 s）**：本台是**铺场者**，而它"走不完"的代价不是红——停机扳机一来就把它
 /// **扑杀**（`ousted=true`、一行不打），那条读数于是**既不绿也不红**（第三种结局）。旧版给的是
 /// 20 s，而这样的额度本台有**两处**（`walk` 与 `count_under`），走满就是几十秒的窗口。
-/// 收紧到 3 s 之后：健康那一档（实测走完全程、含 `HOLD_MS`，只要 1~3 s）毫发无伤，
+/// 收紧到 3 s 之后：健康那一档（实测走完全程只要 1~3 s）毫发无伤，
 /// 而"数不到"那一档**当场红**（到点返回、由调用方那句 `assert` 落地）。
 /// 这个数不是猜的：七行 `system: grant mounted at /svc/sys/operator/{…}` 在 **t<500 ms** 就打完
 /// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计
@@ -57,11 +58,14 @@ const WAIT_MS: usize = 3_000;
 /// （单槽孔的信），不是树变了，故仍按拍重问（见那一手的注）。
 const RETRY_MS: usize = 20;
 
-/// **铺完之后还压多久**（毫秒）——见 `main` 末尾那一节（"主人还在不在场"那条轴）
-/// **两头顶着**：短了，下一位走到"顶那一格"时主人已经走了（那一格重新可落 ⇒ 它测得的是
-/// "接手"而不是"拒"）；长了，本台自己被停机扳机扑杀、读数反倒丢了。下一位那一串只有**七八趟
-/// 往返**（实测都在百毫秒内），故取刚够它走完的那一档
-const HOLD_MS: usize = 1_200;
+/// **下一位走完时落的那一格**（`probe-operator-land` 自己落，见那一份的第六步）。
+///
+/// **它替掉的是从前那一格墙钟**（`HOLD_MS = 1200`）：`claimable` 判"别人有主"那一轴用的判据
+/// 是 `vested_by(pie).is_none()`——**主人不在场，那一格就重新可落**，故本台从前必须"压住"
+/// 那两格压够下一位走到第四步。压多久是个只能猜的数：短了它测到的是"接手"而不是"拒"
+/// （实测红过：`Ok(EntryId(13))`），长了本台自己被停机扳机扑杀、连读数一起丢。
+/// 换成**事实**之后两侧都不猜：本台等这条事件才走，下一位落这一格 = "它的判据已经落定"。
+const DONE_ROAD: &str = "/probe-op-done";
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-operator-gate: seven grants mounted";
@@ -89,9 +93,23 @@ fn main() -> Report<'static> {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-operator-gate: subscribe /svc/sys/operator failed: {fail:?}"),
     };
+    // 一·三、**第二条订阅**：下一位落"我走完了"那一格时要收得到。**订在最前**——它可能比本台
+    //       走到末尾早（本台中间还有 walk / count / find 三串往返），而订阅之前的改动不在
+    //       通知义务内（见 client::Watch 的"序是契约"那一节）。
+    let Some(done_road) = protocol::common::path::PathBuf::try_new(DONE_ROAD) else {
+        panic!("probe-operator-gate: bad done road");
+    };
+    let mut done = match rein.watch(&done_road, Wait::AtMost(MS)) {
+        Ok(watch) => watch,
+        Err(fail) => panic!("probe-operator-gate: subscribe {DONE_ROAD} failed: {fail:?}"),
+    };
 
     // 一·五、**先把那两格摆好**（摆在最前）：下一位客人与本台**并发**跑，而它读不了树
     //       （"那两格摆好了没有"它问不出来）——故本台越早铺，那一条判据越稳。
+    //       **铺得比它晚也已经不要紧了**（从前那段"睡 300 ms 再顶"的窗口就是栽在这一处）：
+    //       它顶那一格时若还没主，它自己先落下来（`Mine::No` ⇒ 无主），本台这一手随后**换绑**
+    //       把归属收过来（`spot` 走的 `bind` 在已占那一格上是换绑，答同一个号）——它下一次再顶
+    //       就答 `Denied` 了（见它那一侧的第四步）。
     let own = spot(&tree, OWN, "probe-gate-own", Mine::Yes);
     let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
 
@@ -137,9 +155,37 @@ fn main() -> Report<'static> {
         free.get()
     );
 
-    // 六、**压住那两格**：`mine = true` 那一轴的判据是"**主人还在不在场**"
-    //    （Operator::claimable → `vested_by`），主人一走那一格就重新可落——那正是 `probe-owner`
-    let _ = runtime::env::room::sleep(core::time::Duration::from_millis(HOLD_MS as u64));
+    // 六、**压住那两格，直到下一位说它走完了**：`mine = true` 那一轴的判据是"**主人还在不在场**"
+    //    （Operator::claimable → `vested_by`），主人一走那一格就重新可落——下一位第四步那一问
+    //    当场变成"该通"。**等的是事实**（下一位自己落的那一格推回来的一条事件），不是墙钟：
+    //    这一条替掉了从前那一格 `HOLD_MS`（见 `DONE_ROAD` 那一节的注）。
+    let told = match done.next(Wait::AtMost(WAIT_MS)) {
+        // 收到哪一条不判：第二条订阅只订了那一条路，落在那条路上的任何一条都是"下一位走到了"。
+        Ok(ev) => {
+            debug!(
+                "probe-operator-gate: done kind={:?} id={} seq={}",
+                ev.kind,
+                ev.id.get(),
+                ev.seq
+            );
+            true
+        }
+        Err(_) => false,
+    };
+    if !told {
+        // **到点仍没有**：本台照样走完自己的判据（下一位的读数由它那一侧落），但**说一句**，
+        // 而且**问清成因**——那一格在不在，是"事件被顶掉"与"对面根本没走到"的分界
+        // （那一具架是共享的 `CAP` 格：本台读之前若另有 `CAP` 次改动，手所指的那一格已经换了
+        // 内容，订阅那一侧按"路对不上"丢掉 ⇒ 本台等不到，但那一格**在**）。
+        let at = tree.tile(&done_road, Wait::POLL);
+        protocol::debug::put(&alloc::format!(
+            "probe-operator-gate: no done event, cell={}",
+            match at {
+                Ok(tile) => alloc::format!("present id={}", tile.id().get()),
+                Err(fail) => alloc::format!("{fail:?}"),
+            }
+        ));
+    }
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
