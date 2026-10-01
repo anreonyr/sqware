@@ -45,6 +45,27 @@ mod watch;
 /// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）
 const SETTLE_MS: usize = 1;
 
+/// **一位"提示到了、答话路还没在本表里"的客人**（一位一格）。
+///
+/// 契约是"提示在转授之后"（见 `bridge::attach` 那一节：先 `hand` 把答话路交给持树者、
+/// 再推这一条提示），而**量到过这条契约被破**：全控制台 194 份里 3 份落在这一格上，
+/// 且与 `mail: hand stuck` **一一对应**（同样那 3 份、无一例外）。
+/// 从前这一格**就地丢掉**，代价是那位客人**永远进不了这本账**：它的问话孔没人挂进组，
+/// 它此后每一问都压在孔上（实测压到 16 s，直到收场）——而丢的那一下，
+/// 客人那一侧看到的是"我在等一个永远不会来的回话"。
+struct Late {
+    /// 哪位客人
+    who: TaskId,
+    /// 第一次没认到的那一刻（`chrono::clock()`，纳秒）——额度按**毫秒**算，不按轮数：
+    /// 本函数每轮都跑，而有客人问话时 `pile.await_` 可以立刻返回，轮与轮之间并不等长。
+    since: u64,
+}
+
+/// **等答话路浮出来**的额度（毫秒）。它是一条**已经发出去**的转授（`port::ship`）——
+/// 不是"还没做"，故这一格不设大：到点仍没有就不是时序问题，而是该往上一路查（那条读数会
+/// 把号与等了多久一起报出来）。
+const LATE_MS: usize = 1_000;
+
 /// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 操作面**每一位**各一枚（`Grant::ALL` 的位数）
 /// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组。
 /// 加一位 `Grant` 就要在这里加一枚（数组长度写死是 `const` 的代价：值与 `Grant::ALL` 对齐
@@ -105,6 +126,8 @@ pub fn serve() -> Result<(), Start> {
     };
     let mut desk = Desk::new();
     let mut wired = false;
+    // **提示到了、答话路还没认到的那几位**（见 `Late`）：册子小、异常才非空。
+    let mut late: Vec<Late> = Vec::new();
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Start::Room(E_TREE));
@@ -120,7 +143,7 @@ pub fn serve() -> Result<(), Start> {
     let mut streak: usize = 0;
     loop {
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
-        let settling = settle(&mut desk, &pile, &tip_hole, &mut wired, &mut tree);
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut wired, &mut tree, &mut late);
         settle_rounds = if settling {
             settle_rounds.saturating_add(1)
         } else {
@@ -201,7 +224,9 @@ pub fn serve() -> Result<(), Start> {
 /// 补齐那几件事，返"还有没有没补齐的"
 /// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 ocall::TipIn）
 /// （plate），不经会话、不当自己的客人
-/// - **一位客人**（ocall::TipIn::Guest）：`admit` 收进来
+/// - **一位客人**（ocall::TipIn::Guest）：`admit` 收进来；答话路还没在本表里 ⇒ **留在册上**
+///   逐轮重问（见 [`Late`]）——契约说"提示在转授之后"，而破约时**丢**的代价是那位客人
+///   永远进不了这本账
 /// - **门禁接线**（ocall::TipIn::Wired）：**一句话、不带号**——装配者已认下名册，门从此
 /// 问得动身份（那一格由 self::door::may 读）
 fn settle(
@@ -210,11 +235,13 @@ fn settle(
     tip: &mail::HolePie,
     wired: &mut bool,
     tree: &mut Operator,
+    late: &mut Vec<Late>,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
     // 缓冲按**最长那一形**备（立一条路），故另两形也吃得下——小缓冲会把长帧读成"读不懂"。
     let mut frame = [0u8; ocall::TIP_LEN];
     let mut pending = false;
+    let now = || runtime::env::chrono::clock();
     loop {
         let Ok((n, _)) = tip.pull(&mut frame, Wait::POLL) else {
             break;
@@ -238,16 +265,68 @@ fn settle(
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                     Err(DeskFail::Full) => debug::put("operator: desk full"),
                 },
-                // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
+                // 次序被破坏（提示先到、答话路不在本表里）：**别丢**——留在册上，下面逐轮重问。
                 //
-                // **把号一起报出来**：这一条与"某位客人的问压了几秒没人取"（`mail: hand stuck`）
-                // **一一对应**（量过：全控制台 194 份里各 3 份，同一批文件、无一例外）——那位客人
-                // 于是**永远进不了这本账**（它的问话孔没人挂进组），它的每一问都压在孔上。
-                // 号码是这两条读数对得起来的唯一凭据：只报"no reply"时，那两份现场看不出发的是谁。
-                None => debug::put(&alloc::format!("operator: no reply who={}", client.get())),
+                // 丢掉的代价是那位客人**永远进不了这本账**（它的问话孔没人挂进组），它的每一问
+                // 都压在孔上；而"没认到"与"这条路上根本没这枚孔"在结构上分得开：前者下一秒就好。
+                // **把号一起报出来**：这一条与 `mail: hand stuck` **一一对应**（量过：全控制台
+                // 194 份里各 3 份、同一批文件、无一例外），号是两条读数对得起来的唯一凭据。
+                None => {
+                    if !late.iter().any(|one| one.who == client) {
+                        if late.try_reserve(1).is_err() {
+                            // **备不下就是不收**：照实报，别把"没记"说成"记下了"。
+                            debug::put(&alloc::format!(
+                                "operator: no reply who={} kept=no",
+                                client.get()
+                            ));
+                            continue;
+                        }
+                        debug::put(&alloc::format!(
+                            "operator: no reply who={} kept=yes",
+                            client.get()
+                        ));
+                        late.push(Late {
+                            who: client,
+                            since: now(),
+                        });
+                    }
+                    pending = true;
+                }
             },
         }
     }
+    // **上一轮还没认到的那几位：逐轮重问**。认到就地收进来（与提示当场认到同一手 `admit`）；
+    // 到点仍没有才放弃——那时报的是"等了多久"，与"没记"分得开。
+    let mut at = 0;
+    while at < late.len() {
+        let who = late[at].who;
+        if let Some(reply) = reply_of(who) {
+            match desk.admit(who, reply) {
+                Ok(_) | Err(DeskFail::Already) => {}
+                Err(DeskFail::Full) => debug::put("operator: desk full"),
+            }
+            let ms = now().wrapping_sub(late[at].since) / 1_000_000;
+            debug::put(&alloc::format!(
+                "operator: late reply who={} after={}ms",
+                who.get(),
+                ms
+            ));
+            late.swap_remove(at);
+            continue;
+        }
+        let ms = now().wrapping_sub(late[at].since) / 1_000_000;
+        if ms >= LATE_MS as u64 {
+            let one = late.swap_remove(at);
+            debug::put(&alloc::format!(
+                "operator: no reply who={} gave up after={}ms",
+                one.who.get(),
+                ms
+            ));
+            continue;
+        }
+        at += 1;
+    }
+    pending |= !late.is_empty();
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 Desk::arm_pending）——
     // 调用方这一侧因此既不必按常数开数组（"一本账的容量渗到别人的栈上"那一格），
     // 也不必为"抄一份"再分配一次。
