@@ -16,7 +16,7 @@ use env::PieToken;
 use env::{HoleDir, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::Receiver;
-use protocol::message::Message;
+use protocol::wire::message::Message;
 use runtime::env::mail::{self, HolePie};
 
 use super::core::Fail;

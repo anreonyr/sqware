@@ -16,9 +16,9 @@
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
 
-use crate::service::operator::path::Path;
+use crate::common::path::Path;
 
-use crate::message::Message;
+use crate::wire::message::Message;
 
 /// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
 /// 五格与 `programs/src/system/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
@@ -123,7 +123,7 @@ impl Message for Said {
     const EMPTY: Self::Buf = [0u8; Said::LEN];
 
     /// 表那一手 `store_at`（从游标写、返实际长度）——正是这一手要的；表上那枚**同名**的 `store`
-    /// 要的是定长数组、返 `()`，两回事（同 `crate::frame::Reply` 那一格）。
+    /// 要的是定长数组、返 `()`，两回事（同 `crate::wire::frame::Reply` 那一格）。
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         Said::store_at(self, out, 0)
     }
@@ -142,7 +142,7 @@ const STOP: u8 = 3;
 const STATE: u8 = 4;
 
 /// 成功那一格：**全协议同一个号**——定义在 `crate::fail_codes`，本族只把它转出来。
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 答话那一格。**前四格与 [`Fail`] 的调度侧四格一一对应**；后两格各有各的来路：
 /// [`DENIED`] 是**判面拒**（持表那一侧判的：这一问不属于它进来的那一面），[`BAD`] 不是对端说的事
@@ -211,7 +211,7 @@ impl Req {
 }
 
 /// **收进来的一问**。
-/// 两格失败分得开（同 [`crate::frame::Query`] 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
+/// 两格失败分得开（同 [`crate::wire::frame::Query`] 那条）：**长度不对** ⇒ 外层 `None`（连"往哪回"
 /// 都没有 ⇒ 不动表、也不回话）；**动作码不认得** ⇒ 内层 `None`（这一问有回信的路，只是这一码
 /// 我不认 ⇒ 回一句 [`BAD`]）。
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -284,7 +284,7 @@ pub const ASK_MARK: Mark = Mark::of("control-ask");
 pub const BACK: Mark = Mark::of("control-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
-/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal /
+/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal /
 /// coalition）。
 pub const DIR: &Path = Path::new("svc/sys/control");
 

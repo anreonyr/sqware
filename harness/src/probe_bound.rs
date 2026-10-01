@@ -86,7 +86,7 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
 /// 那个码要是挪了位，这一条当场红）。
 const SEEK_OP: u8 = 7;
 
-/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::service::operator::path::Path) 是 8）。
+/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::common::path::Path) 是 8）。
 const ROAD_9: &[u8] = b"a/b/c/d/e/f/g/h/i";
 
 /// **一条 9 段的路**（`[op][长度][那些字节]`＝19 字节）——这一台量的是"路太长"那一格挪了家。
@@ -119,7 +119,7 @@ fn main() -> Report<'static> {
     // **正经那一问要一面 `Face`**，而它是**借**一条会话：
     // [`operator::Face::from`]（树那三格是 `Copy`）——junk 那一趟照旧走裸孔，见 `junk_trip`。
     let face = operator::Face::from(&session);
-    let Some(dir) = protocol::system::SVC.file_name() else {
+    let Some(dir) = protocol::common::svc::SVC.file_name() else {
         return bail("probe-bound: bad name");
     };
 

@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use protocol::id::Id;
+use protocol::wire::id::Id;
 use protocol::service::coalition::{CoalitionId, Fail, Window};
 use protocol::service::principal::PrincipalId;
 

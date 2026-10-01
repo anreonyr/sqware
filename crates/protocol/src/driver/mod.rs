@@ -5,10 +5,9 @@
 //! （`programs/src/driver/<域>/` 里那一片设备模块）。
 //! ```text
 //!   driver
-//!   ├── SVC    /svc —— 驱动族那条路的头一段（与各族共用；[`crate::system::SVC`]）
+//!   ├── SVC    /svc —— 驱动族那条路的头一段（与各族共用；[`crate::common::svc::SVC`]）
 //!   ├── DIR    /svc/drv —— 驱动族在命名树上的那一段（唯一一处名字约定）
-//!   ├── line   线：权威 / 属主 / 登记 / 投递 / 排空 / 收线      【已落：四格都有调用者】
-//!   └── hub    设备账：报名 / 列册 / 认领                      【已落：三面 ＋ 客侧三手】
+//!   └── line   线：权威 / 属主 / 登记 / 投递 / 排空 / 收线
 //! ```
 //! # 什么能进这一层（三个否证问题）
 //! 一件东西进 `protocol::driver`，当且仅当它**描述两个不同域之间、关于设备这件事的约定**，
@@ -19,13 +18,12 @@
 //! 3. **它只是"好几台都写一遍"的样板吗？** ⇒ 是：进 `programs/src/driver/`，**不进协议**
 //!    （"多个驱动都用" ≠ "该进 protocol"）。
 
-pub mod hub;
 pub mod line;
 
-use crate::service::operator::path::Path;
+use crate::common::path::Path;
 
-/// 驱动族那条路在树上的**头一段**：`/svc`（[`crate::system::SVC`]——一处给）。
-pub const SVC: &Path = crate::system::SVC;
+/// 驱动族那条路在树上的**头一段**：`/svc`（[`crate::common::svc::SVC`]——一处给）。
+pub const SVC: &Path = crate::common::svc::SVC;
 
 /// 驱动族在命名树上的那一段名：**`drv`**（整条路是 [`ROAD`]）。
 /// 驱动把自己的**服务入口**落在 `/svc/drv/<服务名>` 上（`router` ⇒ `/svc/drv/router`），名字用

@@ -2,12 +2,12 @@
 //! 本文件**不做裁决**：盟册的规矩全在实现侧那一本账里（`programs/src/system/coalition/core.rs`）。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码 / 记号 / **窗**那一档。
 
-use crate::id::Id;
-use crate::message::Message;
+use crate::wire::id::Id;
+use crate::wire::message::Message;
 use crate::service::principal::PrincipalId;
 use env::{Mark, PieToken, TaskId};
 
-use crate::service::operator::path::Path;
+use crate::common::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CoalitionId(usize);
@@ -163,7 +163,7 @@ pub const ADMIT: u8 = 7;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 答话那一格：失败域那三格 + "读不懂"。
 /// [`BAD`] 在失败表外（同板 / 树 / 身份服务那三家的先例）：它不是"哪个协议说的事"，
@@ -179,7 +179,7 @@ pub const NOT_CHIEF: u8 = 5;
 // 的帧就是照它立的），故只有一份；这里只按本族的名字转出来（`mod.rs` 那一句
 // 点名转出照旧，调用点一处都不用改）。
 
-pub use crate::frame::{Query, Reply};
+pub use crate::wire::frame::{Query, Reply};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Req {
@@ -419,7 +419,7 @@ crate::fail_codes! {
 pub const BACK: Mark = Mark::of("coalition-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/coalition`（头两段是四族共用的
-/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal）。
+/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal）。
 pub const DIR: &Path = Path::new("svc/sys/coalition");
 
 /// 本服务在树上的那一段名字：`/svc/sys/coalition`——**它不是一格**（

@@ -26,7 +26,7 @@ use crate::unit::UnitFile;
 use protocol::communication::establish;
 use protocol::debug;
 use protocol::service::operator::client::{Face, Mine, Pane};
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
 pub use protocol::service::operator::{LINK, TIP_MARK};
 

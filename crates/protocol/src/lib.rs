@@ -7,21 +7,23 @@
 // `env` / `runtime` 同款：这里引 `alloc`。
 extern crate alloc;
 
+pub mod common;
 pub mod communication;
 pub mod debug;
 pub mod driver;
-pub mod fail_codes;
-pub mod frame;
-pub mod id;
-pub mod message;
+
+
+
+
 pub mod service;
 pub mod system;
+pub mod wire;
 
 /// **答话那一格的"没失败"**（0）——全协议**一个号**：那几族（principal / coalition / operator
 /// / control / 设备账）与驱动各自那几族（如 `programs::driver::rtc`）共用。
 /// 定义在 [`fail_codes`] 那一份源里（`fail_codes!` 的第二个参数就是它）；这里把它**转出**
 /// crate：`fail_codes` 那个模块自己是有意不进公共面的（出 crate 的只有那个宏），而驱动那一侧
-pub use fail_codes::OK;
+pub use wire::fail_codes::OK;
 
 // 调试面那一支宏（`debug!`）住 `debug.rs`——**只在 debug 构建下有效**（见那个文件的头注）。
 // 它拿 `format!` 拼行，故把 `alloc` 那一支在这里转出：调用方（`programs` / `harness`）因此

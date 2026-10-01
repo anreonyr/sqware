@@ -43,7 +43,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Permit};
 
 use protocol::driver;
@@ -198,17 +198,17 @@ fn main() -> Report<'static> {
 /// 有界重试：对面那台与本域并行起来，"它死了没有"要看读数而不是靠猜。
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     // 路：容器那一段（`/svc`，只在协议那一侧说）接上那一格的名（`lease`）。
-    let road = protocol::system::SVC
+    let road = protocol::common::svc::SVC
         .try_join("lease")
         .ok_or(Fail::Unknown)?;
     let me = road.file_name().ok_or(Fail::Unknown)?;
-    let Some(dir) = protocol::system::SVC.file_name() else {
+    let Some(dir) = protocol::common::svc::SVC.file_name() else {
         return Err(Fail::Unknown);
     };
     // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
     let root = tree.root();
     let _ = root.open(dir.to_string(), Wait::AtMost(MS));
-    let Some(sys) = tree.pane(&protocol::system::SVC, Wait::AtMost(MS)).ok() else {
+    let Some(sys) = tree.pane(&protocol::common::svc::SVC, Wait::AtMost(MS)).ok() else {
         return Err(Fail::Unknown);
     };
     let mut left = MS;

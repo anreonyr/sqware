@@ -6,7 +6,7 @@
 
 use env::Mark;
 
-use crate::message::Message;
+use crate::wire::message::Message;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
 /// 它住本文件（与那四个状态码同一处）：**失败域与状态码是一张双射表**（见下面的
@@ -36,7 +36,7 @@ const _: () = assert!(BACK_MARK.get() != Mark::NONE.get());
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 状态码与失败域**同源**：一格对应一个不同的下一步。
 pub const UNKNOWN: u8 = 1;

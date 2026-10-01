@@ -74,7 +74,7 @@ macro_rules! faces {
             /// 字面量。`const fn` 里拼不出 `&str`、也切不出 `&[u8]`，故那两段落进一块定长缓冲、按
             /// **实际长度**交给 [`Mark::of_bytes`]（同一条 FNV-1a，两侧各算同一个数）。
             /// 缓冲够不够由下面那句 `assert!` 钉住：面名比 `name_max` 长 ⇒ **当场编不过**。
-            pub const fn mark(self) -> $crate::system::faces::Mark {
+            pub const fn mark(self) -> $crate::common::faces::Mark {
                 const STEM: &[u8] = $stem.as_bytes();
                 let rest = self.name().as_bytes();
                 assert!(rest.len() <= $name_max, concat!(stringify!($Grant), ": face name too long"));
@@ -90,17 +90,17 @@ macro_rules! faces {
                     n += 1;
                     j += 1;
                 }
-                $crate::system::faces::Mark::of_bytes(&buf, n)
+                $crate::common::faces::Mark::of_bytes(&buf, n)
             }
 
             /// **本族所有面的记号**（一行一族）——"**全协议记号两两不相撞**"那一张总表读它。
-            pub const MARKS: [$crate::system::faces::Mark; Self::COUNT] = [$( $Grant::$Variant.mark(), )*];
+            pub const MARKS: [$crate::common::faces::Mark; Self::COUNT] = [$( $Grant::$Variant.mark(), )*];
         }
 
         /// **认面**：这枚记号是哪一面。
         /// **答 `None` 不是"失败"**，是"这一枚不是本族的面"——故服务端据此**不判面**
         /// （各族"还有哪一种孔走到这儿"的正文归各族自己的文件头）。
-        pub fn grant_of(mark: $crate::system::faces::Mark) -> Option<$Grant> {
+        pub fn grant_of(mark: $crate::common::faces::Mark) -> Option<$Grant> {
             let mut i = 0;
             while i < $Grant::ALL.len() {
                 if $Grant::ALL[i].mark().get() == mark.get() {

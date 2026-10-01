@@ -1,9 +1,9 @@
 //! principal 的**帧那一半** —— 帧与码（内核那两只手的别名在 `protocol` 那一侧的 `mod.rs`）。
 
-use crate::id::Id;
+use crate::wire::id::Id;
 use env::{Mark, PieToken, TaskId};
 
-use crate::service::operator::path::Path;
+use crate::common::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PrincipalId(usize);
@@ -78,7 +78,7 @@ pub const DROP: u8 = 8;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 答话那一格：失败域那几格 + "读不懂"。
 /// [`BAD`] 在失败表外（同板/树的先例）：它不是"哪个协议说的事"，是**这一问读不懂**。
@@ -91,7 +91,7 @@ pub const BAD: u8 = 4;
 // 一份；这里只按本族的名字转出来（`mod.rs` 那一句点名转出照旧，调用点一处
 // 都不用改）。**本族自己的**是下面那些：码、`reply_present`、失败表、记号。
 
-pub use crate::frame::{Query, Reply};
+pub use crate::wire::frame::{Query, Reply};
 
 /// **一问的形状**——一条动作一格：`a` / `b` 两格在该动作里有几个就有几个（"只填 a"那几条
 /// **再没有第二个号可填**）。
@@ -200,7 +200,7 @@ crate::fail_codes! {
 pub const BACK: Mark = Mark::of("principal-back");
 
 /// **本族那块窗格在树上的路**：`/svc/sys/principal`（头两段是四族共用的
-/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）。
+/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）。
 pub const DIR: &Path = Path::new("svc/sys/principal");
 
 /// 本服务在树上的那一段名字：`/svc/sys/principal`——**它不是一格**（

@@ -12,7 +12,7 @@
 
 use super::fail::Fail;
 use env::{Mark, PieToken};
-use protocol::message::Message;
+use protocol::wire::message::Message;
 
 /// 问那一句的动作码：「现在几点」。
 pub const ASK: u8 = 1;

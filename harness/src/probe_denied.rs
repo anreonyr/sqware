@@ -49,7 +49,7 @@ extern crate programs;
 use env::PieToken;
 use env::Wait;
 use programs::Report;
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 
 use alloc::format;
 use alloc::string::ToString;
@@ -118,7 +118,7 @@ fn main() -> Report<'static> {
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-denied: no entry");
     };
-    let Some(dir) = protocol::system::SVC.file_name() else {
+    let Some(dir) = protocol::common::svc::SVC.file_name() else {
         return bail("probe-denied: bad name");
     };
     let me = ME.to_string();
@@ -150,7 +150,7 @@ fn main() -> Report<'static> {
     // 这一格走 `Pane::tile` 而不是 `Face::tile`：`Face::tile` 内部会 `find`，
     // 而 `find` 对"主人没了"那一格答 `Dead` 并顺手剔掉那一格（`operator::core` 的 `find`），
     // 那不是只读——存在性答假、格子还被删了。`Pane::tile` 只译号、不动树。
-    let Some(road) = protocol::system::SVC.try_join(ME) else {
+    let Some(road) = protocol::common::svc::SVC.try_join(ME) else {
         return bail("probe-denied: bad name");
     };
     let after = root.tile(&road, Wait::AtMost(MS));

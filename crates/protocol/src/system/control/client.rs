@@ -7,7 +7,7 @@
 //!   Service::stop / state       一问一答：替这一趟铸一枚回信孔借过去，答完丢掉
 //! ```
 
-use crate::message::Message;
+use crate::wire::message::Message;
 use alloc::string::String;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};

@@ -8,7 +8,7 @@
 //!   Band / Bloc              一次取窗的结果值（一页 + 游标 + `next`）
 //! ```
 
-use crate::message::Message;
+use crate::wire::message::Message;
 use crate::service::principal::PrincipalId;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
@@ -115,7 +115,7 @@ impl Face {
 
     /// 取一窗：**先看状态那一格**（失败域 + 读不懂），再认窗那一形。
     /// 一格答那一形不是窗，它那一格码照样交出来（`band` / `bloc` 那一问的失败走它）。
-    fn window<T: crate::id::Id>(&self, act: frame::Req, wait: Wait) -> Result<Window<T>, Fail> {
+    fn window<T: crate::wire::id::Id>(&self, act: frame::Req, wait: Wait) -> Result<Window<T>, Fail> {
         match self.call(act, wait)? {
             frame::Union::Seq(seq) => Ok(seq.window()),
             frame::Union::Status(code) | frame::Union::One(frame::Reply { status: code, .. }) => {

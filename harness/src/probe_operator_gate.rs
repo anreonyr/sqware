@@ -50,7 +50,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;

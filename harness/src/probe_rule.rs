@@ -93,7 +93,7 @@ use protocol::service::coalition as ccall;
 use protocol::service::coalition::client::Face as CoalitionFace;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Permit};
 use protocol::service::principal as pcall;
 use protocol::service::principal::client::Face as PrincipalFace;
@@ -101,7 +101,7 @@ use runtime::env::mail;
 use runtime::env::unit as utask;
 
 /// 本域分出来的那一块那一条路：`/svc/rule`（容器那一段只在协议那一侧说，末段在运行期取）。
-const DIR: &protocol::service::operator::Path = protocol::system::SVC;
+const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）。
 const IS: &str = "is";

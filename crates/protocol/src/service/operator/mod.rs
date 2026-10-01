@@ -40,11 +40,9 @@ pub mod frame;
 
 pub use frame::{EntryId, Fail, Where};
 
-/// **树上的坐标**（一条最多 [`Path::MAX`] 段的路）：装配者落格、客人译号、线上那一格，
-/// 三处同一个形状（见 [`path`] 头注那一张 std 对照表）。
-pub mod path;
-
-pub use path::Path;
+/// **树上的坐标**（[`Path`]：一条最多 `Path::MAX` 段的路）：装配者落格、客人译号、线上那一格，
+/// 三处同一个形状（见 [`crate::common::path`] 头注那一张 std 对照表）。
+pub use crate::common::path::Path;
 
 pub mod client;
 
@@ -65,7 +63,7 @@ pub use grant::Grant;
 pub const NAME: &str = "operator";
 
 /// **本族那块窗格在树上的路**：`/svc/sys/operator`（头两段是四族共用的
-/// [`crate::system::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**。
+/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**。
 pub const DIR: &Path = Path::new("svc/sys/operator");
 
 pub use frame::{

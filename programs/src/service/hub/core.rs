@@ -12,7 +12,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
-use protocol::driver::hub::{Fail, LIST_MAX, Window};
+use protocol::service::hub::{Fail, LIST_MAX, Window};
 use protocol::service::coalition::CoalitionId;
 
 /// **一台设备在 hub 账上是什么**：名（树上的坐标）、类（认领的口子）、线（区→线那条权威在

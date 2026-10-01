@@ -96,7 +96,7 @@ pub struct Control {
     /// **为什么住在这里**：那一单是**递完就完**的（没有回话），而递出去的字节要活到对面取走
     /// ——所以它必须住在比调用帧更长的地方。装配者正是比它长的那一位：一本 `Control` 活到
     /// 装配完。下一台入册前先收口那一手在 `send` 里（那一刻上一台必然已经取走了）。
-    out: protocol::communication::sender::Sender<protocol::driver::hub::Enroll>,
+    out: protocol::communication::sender::Sender<protocol::service::hub::Enroll>,
 }
 
 /// 一枚**已造未放行**的身子（[`Control::pending`] 那一格）。

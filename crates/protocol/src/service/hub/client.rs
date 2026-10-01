@@ -22,7 +22,7 @@ use runtime::env::mail;
 
 use crate::communication::establish;
 use crate::communication::receiver::{Receiver, RecvFail};
-use crate::message::Message;
+use crate::wire::message::Message;
 
 use super::Fail;
 use super::frame::{self, BACK_MARK};

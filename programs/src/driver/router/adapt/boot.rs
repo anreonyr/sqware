@@ -16,7 +16,7 @@ use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
 use programs::unit::router::{E_ROUTER, PLIC_CLASS};
 use protocol::debug;
-use protocol::driver::hub as hcall;
+use protocol::service::hub as hcall;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Mine;
 use runtime::PAGE_SIZE;

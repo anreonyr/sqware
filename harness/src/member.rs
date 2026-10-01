@@ -46,14 +46,14 @@ use alloc::format;
 use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::id::Id;
+use protocol::wire::id::Id;
 use protocol::service::coalition as ccall;
 use protocol::service::coalition::client::{Band, Bloc, Coalition, Face as CoalitionFace};
 use protocol::service::coalition::{CoalitionId, Fail};
 use protocol::service::operator::Fail as TreeFail;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::principal as pcall;
 use protocol::service::principal::Fail as PolicyFail;
 use protocol::service::principal::PrincipalId;
@@ -217,7 +217,7 @@ fn main() -> Report<'static> {
     // 我也在册上，缺的只是"这一枚盟归不归你代报名"）。
     //
     // **正证在设备账那一台手里**（生产里唯一的持有者）：`hub` 每类立一枚盟、再替四位驱动
-    // `admit`（`protocol::driver::hub` 的 `bond`）。本台不抢那一份读数。
+    // `admit`（`protocol::service::hub` 的 `bond`）。本台不抢那一份读数。
     let not_chief = c0.admit(me, Wait::AtMost(MS));
     debug!("member: admit(c0)={}", done(not_chief.clone()));
     assert!(matches!(not_chief, Err(Fail::NotChief)));

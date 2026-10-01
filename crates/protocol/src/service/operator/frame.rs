@@ -4,12 +4,12 @@ use alloc::string::String;
 use env::Mark;
 use env::{PieToken, TaskId};
 
-use super::path::{Path, PathBuf};
+use crate::common::path::{Path, PathBuf};
 use crate::service::coalition::CoalitionId;
 use crate::service::principal::PrincipalId;
 
-use crate::id::Id as _;
-use crate::message::Message;
+use crate::wire::id::Id as _;
+use crate::wire::message::Message;
 
 /// 一枚条目的**号**：机器用的那一个。
 /// **裸号**：与 [`PrincipalId`](crate::service::principal::PrincipalId) / [`CoalitionId`](crate::service::coalition::CoalitionId)
@@ -33,7 +33,7 @@ impl EntryId {
     }
 }
 
-impl crate::id::Id for EntryId {
+impl crate::wire::id::Id for EntryId {
     fn new(raw: usize) -> EntryId {
         EntryId::new(raw)
     }
@@ -43,7 +43,7 @@ impl crate::id::Id for EntryId {
     }
 }
 
-/// **号那一格线上是 8 字节小端**——与 [`crate::id::Id`] 给三条号空间定的同一条规则（那一条 trait
+/// **号那一格线上是 8 字节小端**——与 [`crate::wire::id::Id`] 给三条号空间定的同一条规则（那一条 trait
 impl env::wire::Field for EntryId {
     const WIDTH: usize = 8;
     fn store(&self, out: &mut [u8]) {
@@ -207,7 +207,7 @@ const SEEK: u8 = 7;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 答话那一格。**前六格与 [`Fail`] 的前六格一一对应**，第七格不是失败域的：这一问读不懂
 /// （帧坏了 ⇒ 不猜、不崩）。**第八、九格来自门外那一问**（判据那一半住

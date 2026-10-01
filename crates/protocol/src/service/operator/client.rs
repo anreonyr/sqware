@@ -8,7 +8,7 @@
 
 use alloc::string::String;
 
-use crate::message::Message;
+use crate::wire::message::Message;
 use env::Mark;
 use env::Wait;
 use env::{PieToken, TaskId};
@@ -22,7 +22,7 @@ use crate::communication::{deadline, remain};
 use crate::service::operator as ocall;
 use crate::service::operator::Fail;
 use crate::service::operator::frame::Permit;
-use crate::service::operator::path::Path;
+use crate::common::path::Path;
 use crate::service::operator::{EntryId, Grant, Listing, Where};
 
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）。

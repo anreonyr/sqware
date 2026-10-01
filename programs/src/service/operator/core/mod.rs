@@ -7,7 +7,7 @@ use env::{PieToken, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
 use protocol::service::operator::frame::PANE_CAP;
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use protocol::service::operator::{EntryId, Fail, Permit, Where};
 
 pub mod gate;

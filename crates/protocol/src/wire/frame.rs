@@ -8,9 +8,9 @@
 //! **`back` 那一格是"往哪回"**（末尾 8 字节）：客侧每趟铸一枚回信孔借给对端，
 //! [`Query`] 收的那一格就是**它在对端表里的号**——对端据此一次 `Reserve` 验出来，
 
-use crate::fail_codes::OK;
-use crate::id::Id;
-use crate::message::Message;
+use crate::wire::fail_codes::OK;
+use crate::wire::id::Id;
+use crate::wire::message::Message;
 use env::PieToken;
 
 /// **一问那一形**（principal 与 coalition **同形**）：动作码 ＋ 两个 8 字节的号 ＋

@@ -11,7 +11,7 @@ use env::{Pair, Wait};
 use protocol::debug;
 
 use env::{Access, Key, PieKind, Mark, Policy};
-use protocol::driver::hub::{ENROLL_MAX, Enroll};
+use protocol::service::hub::{ENROLL_MAX, Enroll};
 use runtime::core::res::port;
 use runtime::env::mail::{NolePie, PolePie};
 

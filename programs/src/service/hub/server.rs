@@ -14,7 +14,7 @@
 //! ```
 //! # 三个为什么
 //! - **为什么先收物料、后开树**：物料那一段是本域**唯一**的来路（装配者是唯一持那些门闩的域），而"哪一条是哪一台"只有树说得清 ⇒ 树那一页在物料里、树那条路在物料之后。
-//! - **为什么认领那一面长在设备格上**（不在本域会客室里）：见 [`protocol::driver::hub`] 的头注
+//! - **为什么认领那一面长在设备格上**（不在本域会客室里）：见 [`protocol::service::hub`] 的头注
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -27,10 +27,10 @@ use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::driver::hub::frame::Wire;
-use protocol::driver::hub::frame::{Said, Window};
-use protocol::driver::hub::{self, Deed, Enroll, Grant};
-use protocol::message::Message;
+use protocol::service::hub::frame::Wire;
+use protocol::service::hub::frame::{Said, Window};
+use protocol::service::hub::{self, Deed, Enroll, Grant};
+use protocol::wire::message::Message;
 use protocol::service::coalition as ccall;
 use protocol::service::coalition::client::Face as League;
 use protocol::service::operator::Permit;
@@ -108,7 +108,7 @@ pub fn serve() -> Result<(), Start> {
         let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
             .map_err(|_| Start::Tree(E_HUB))?;
         // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
-        let hub_road = protocol::system::SVC
+        let hub_road = protocol::common::svc::SVC
             .try_join(hub::NAME)
             .ok_or(Start::Tree(E_HUB))?;
         let plated = bridge::land(

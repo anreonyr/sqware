@@ -38,7 +38,7 @@ impl Path {
     pub const ROOT: &'static Path = Path::new("");
 
     /// **一条路**：只收**规范形**的常量（开头那个 `/` 可有可无；末尾或中间的空段一律不许）。
-    /// `const`：装配期那几处（[`crate::system::DIR`] 等）要在 `const` 里造出来。**非法 ⇒ 当场
+    /// `const`：装配期那几处（[`crate::common::svc::DIR`] 等）要在 `const` 里造出来。**非法 ⇒ 当场
     /// 编不过**（`const` 求值里 panic）；运行期那一路走 [`PathBuf::try_new`] / [`Path::try_join`]。
     pub const fn new(road: &'static str) -> &'static Path {
         let b = road.as_bytes();

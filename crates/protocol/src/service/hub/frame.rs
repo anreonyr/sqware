@@ -11,8 +11,8 @@
 use alloc::string::String;
 use env::{Pair, PieToken};
 
-use crate::message::Message;
-use crate::service::operator::path::Path;
+use crate::wire::message::Message;
+use crate::common::path::Path;
 
 /// 报名：许我驱这一类。
 pub const BOND: u8 = 1;
@@ -47,7 +47,7 @@ pub const DTB: &str = "dtb";
 /// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）。
 pub const IRQ: &str = "irq";
 
-pub use crate::fail_codes::OK;
+pub use crate::wire::fail_codes::OK;
 
 /// 没这件 / 这一类不在册上（这台机器没有这一类——是事实，不是错误）。
 pub const UNKNOWN: u8 = 1;

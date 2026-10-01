@@ -9,10 +9,10 @@ use alloc::string::ToString;
 
 use env::{Access, Policy};
 use env::{PieKind, PieToken, Wait};
-use protocol::driver::hub;
-use protocol::driver::hub::Deed;
+use protocol::service::hub;
+use protocol::service::hub::Deed;
 use protocol::service::operator::client::Face as TreeFace;
-use protocol::service::operator::path::Path;
+use protocol::common::path::Path;
 use runtime::core::res::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 
@@ -57,7 +57,7 @@ impl Hub {
         // **路是 `/svc/hub/<面>`**（容器那一段接 `hub` 那一段，末段是那一枚面）——**不是
         // `/svc/drv/...`**：hub 是**服务那一层**里的一位（与驱动平级），故头一段是 `SVC`
         // 而不是驱动那一家两段。
-        let hub_road = protocol::system::SVC
+        let hub_road = protocol::common::svc::SVC
             .try_join(hub::NAME)
             .ok_or(Fail::at(died, "name"))?;
         let bond = face_of(
@@ -81,7 +81,7 @@ impl Hub {
     }
 
     /// **认领一台**：报名（[`Hub::bond`]，幂等）→ 列册（取名字）→ 树上找那一格 → 认领 ⇒ 一张契。
-    /// **"哪一台"由"你找的是哪一格"定**（见 [`protocol::driver::hub`]）：`ask.name = None`
+    /// **"哪一台"由"你找的是哪一格"定**（见 [`protocol::service::hub`]）：`ask.name = None`
     pub fn claim(&self, tree: &TreeFace, ask: &Ask, died: Died, ms: Wait) -> Result<Deed, Fail> {
         let class = ask.class.to_string();
         self.bond

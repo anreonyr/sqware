@@ -12,7 +12,7 @@ use env::{HoleDir, Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Held};
 use protocol::debug;
 use protocol::driver::line::frame as lcall;
-use protocol::message::Message;
+use protocol::wire::message::Message;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 

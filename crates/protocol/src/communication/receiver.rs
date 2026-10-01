@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 
 use env::{MailFail, PieToken, Wait};
 
-use crate::message::Message;
+use crate::wire::message::Message;
 use runtime::env::mail;
 
 /// **我收的那一枚孔** ＋ 这一路流的那一种报（类型）。

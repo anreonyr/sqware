@@ -25,7 +25,7 @@ use runtime::env::mail::{self, AnyPie};
 use super::receiver::Receiver;
 use super::sender::Sender;
 use super::{deadline, remain};
-use crate::message::Message;
+use crate::wire::message::Message;
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -8,7 +8,7 @@
 //!   Principal::derive / adopt / waive / sire / contains   这一条号自己那几手
 //! ```
 
-use crate::message::Message;
+use crate::wire::message::Message;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
