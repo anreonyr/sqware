@@ -84,8 +84,10 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 /// 三个 `server.rs` 的 `map_err`）。死格，删。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Start {
-    /// 上板那一步（`Session::open(sire, board::BERTH, …)`：装路 ＋ 认对端 ＋ 要问话孔，一手）。
-    Board(Died),
+    // **照实记（`Board` 那一格退场：撤板那一刀）**：它从前是第 1 格——"上板那一步"
+    // （`Session::open(sire, board::BERTH, …)`）。板那一族整族退场（握手与客侧会话先撤、族本体后删）
+    // ⇒ 那一格的**生产者零**：三台的 `map_err` 只剩 `Start::Tree` ⇒ 死格，删。
+    // **它与上面 `Entry` 那一格同一条纪律**：没有生产者的格不留。
     /// 树那一步：持树者铸提示孔交给装配者 / 名册与盟册分目录 + 落门牌 + 回查。
     Tree(Died),
     /// 起手要备的那两样备不下：持树者**收帧那一页**（`Pile` 之外的那一样）。
@@ -112,8 +114,7 @@ impl Start {
     /// `E_COALITION`）——**一处一处**，不再有第二张分组表。
     pub fn code(self) -> env::Reason {
         match self {
-            Start::Board(d)
-            | Start::Tree(d)
+            Start::Tree(d)
             | Start::Room(d)
             | Start::Desk(d)
             | Start::Book(d)
@@ -132,20 +133,17 @@ impl Start {
     /// 选 ①：这三台的起手步一旦真爆了，读数得自己说全"哪一台的哪一步"。
     pub fn text(self) -> &'static str {
         match self {
-            // 持树者（`E_TREE`）：它会走到的那四步。
-            Start::Board(E_TREE) => "operator: board",
+            // 持树者（`E_TREE`）：它会走到的那三步。
             Start::Tree(E_TREE) => "operator: tree",
             Start::Room(E_TREE) => "operator: no room",
             Start::Desk(E_TREE) => "operator: desk",
-            // 名册（`E_PRINCIPAL`）：板 / 树 / 两张表，加上 `carrier` 那三格。
-            Start::Board(E_PRINCIPAL) => "principal: board",
+            // 名册（`E_PRINCIPAL`）：树 / 两张表，加上 `carrier` 那三格。
             Start::Tree(E_PRINCIPAL) => "principal: tree",
             Start::Book(E_PRINCIPAL) => "principal: no book",
             Start::Room(E_PRINCIPAL) => "principal: no room",
             Start::Desk(E_PRINCIPAL) => "principal: desk",
             Start::Dead(E_PRINCIPAL) => "inner: group dead",
-            // 盟册（`E_COALITION`）：板 / 树 / 门牌，加上 `carrier` 那三格。
-            Start::Board(E_COALITION) => "coalition: board",
+            // 盟册（`E_COALITION`）：树 / 门牌，加上 `carrier` 那三格。
             Start::Tree(E_COALITION) => "coalition: tree",
             Start::Face(E_COALITION) => "coalition: no identity plate",
             Start::Room(E_COALITION) => "coalition: no room",
