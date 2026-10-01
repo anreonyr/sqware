@@ -43,7 +43,7 @@ fn root() -> PathBuf {
     at.canonicalize().unwrap_or(at)
 }
 
-/// **唯一的宿主桥**：文本包含 `programs` 那份**宿主安全**的声明模块（`Program` 类型 +
+/// **唯一的宿主桥**：文本包含 `programs` 那份**宿主安全**的声明模块（`UnitFile` 类型 +
 /// `PROGRAMS` 注册表 + 各台自己的 `program.rs`）。
 ///
 /// # 为什么是 `#[path]` 而不是一条依赖
@@ -63,7 +63,7 @@ mod program;
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
 ///
-/// **照实记（本文件为什么只走 `Program` 上那四条窄面）**：装配声明拆成三块（身份 / 装配关系 /
+/// **照实记（本文件为什么只走 `UnitFile` 上那四条窄面）**：装配声明拆成三块（身份 / 装配关系 /
 /// 需求，见 `programs/src/program.rs` 的头注）之后，宿主这一侧的读者**一个字段都不许碰**——
 /// 它只读"它是谁"那四样：`name()` / `space()` / `wanted_by()` / `entry()`。块再怎么挪，这四行不动。
 /// （那四样里第三样从前叫 `kind()`——**它答的是空间（S/U）**，与"单元类型"同名不同事，改名见
@@ -113,7 +113,7 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
 fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
-    let mut list: Vec<&'static program::Program> = program::PROGRAMS
+    let mut list: Vec<&'static program::UnitFile> = program::PROGRAMS
         .iter()
         .copied()
         .filter(|p| p.wanted_by().contains(&scenario) && p.listed())

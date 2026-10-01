@@ -33,7 +33,7 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::program::Program;
+use crate::program::UnitFile;
 use crate::system::Assembly;
 use crate::system::control::{BOOT_MS, READY_MS, Service};
 
@@ -197,7 +197,7 @@ impl Tree {
 /// 没得接。
 pub fn attach_client(
     assembly: &mut Assembly,
-    program: &Program,
+    program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
     if !needs_tree(program) {
@@ -222,7 +222,7 @@ pub fn attach_client(
 ///
 /// **名字是从那一台自己那份声明取的**（`operator::PROGRAM.name()`），不写字面量：持树者改名，
 /// 这一句跟着改——"拿名字认"那种错说的是**写死**的名字，不是"问过那一份声明"。
-fn needs_tree(program: &Program) -> bool {
+fn needs_tree(program: &UnitFile) -> bool {
     program
         .relation
         .after
@@ -250,7 +250,7 @@ fn needs_tree(program: &Program) -> bool {
 /// 见 [`Tree::attach`]）——同一景里读得出来，但那一条读数换了个人。
 pub fn hold(
     assembly: &mut Assembly,
-    _program: &Program,
+    _program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
     if !assembly.tree.holds(service.0) {

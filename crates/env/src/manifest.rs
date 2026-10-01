@@ -26,7 +26,7 @@ use crate::ProgramKind;
 ///
 /// **照实记（它为什么不再是数出来的）**：原先这里是 `programs::program::PROGRAMS.len()`——"往装配表加
 /// 一行，这个数自己长"。那一刀的前提是**装配表与清单格式住同一个 crate**；程序声明搬去
-/// `programs`（`Program` / `PROGRAMS`）之后，本 crate 在它之下，**再也看不到那张表**。
+/// `programs`（`UnitFile` / `PROGRAMS`）之后，本 crate 在它之下，**再也看不到那张表**。
 ///
 /// 故它退回成一个**明文上界**，而"加一行会不会撞上它"由**上层一条编译期断言**钉住：
 /// `programs/src/program.rs` 里 `const _: () = assert!(PROGRAMS.len() <= MAX_PROGRAMS);`

@@ -10,7 +10,7 @@
 //! 共同点只有一条：**宿主与 riscv 都编得过**。这几件原先被拆去 `crates/plan`（理由写的是
 //! "env 是过线的、plan 是装机的"），而 **plan 作为程序装配中间层退场之后它们没有别处可放**
 //! ——读同一批字节的两侧（宿主侧的 `crates/image`、riscv 侧的域）都编得过的只有本 crate。
-//! 故它们回来了。**程序声明本身不在本 crate**：那是 `programs` 的 `Program` / `PROGRAMS`。
+//! 故它们回来了。**程序声明本身不在本 crate**：那是 `programs` 的 `UnitFile` / `PROGRAMS`。
 //!
 //! 方案 3（typed payload）：各调用域枚举（`RoomCall` 等）是带类型载荷的 variant，
 //! 字段类型为语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量；

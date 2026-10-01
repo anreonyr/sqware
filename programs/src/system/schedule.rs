@@ -32,7 +32,7 @@
 //! **编译期定死**的（`PROGRAMS` 是 `const`），故手直接写进表里——**表就是注册表**，不必再来一枚
 //! 运行期才查得到的名字。
 
-use crate::program::{Died, Program};
+use crate::program::{Died, UnitFile};
 use crate::system::Assembly;
 use crate::system::control::assemble as control;
 use crate::system::control::{Error, Service};
@@ -41,12 +41,12 @@ use crate::service::principal::bridge as principal;
 
 /// **一手**：某一轴在某一相里对某一台做的一件事。
 ///
-/// 签名里只有"这一台"（[`Program`]）与"它的身子"（[`Service`]，起手那两样）：**读哪一格由这一手
+/// 签名里只有"这一台"（[`UnitFile`]）与"它的身子"（[`Service`]，起手那两样）：**读哪一格由这一手
 /// 自己定** ⇒ 那一格的读者与写它的那份声明住得开（见本文件头注）。
 ///
-/// **它返的是一句话，不是一个号**：装配失败的号是按**这一台**分的（`Program::demand.died`），
+/// **它返的是一句话，不是一个号**：装配失败的号是按**这一台**分的（`UnitFile::demand.died`），
 /// 由 [`advance`] 折出来；手只报"死在装配哪一步"（与 `service::step` 同款）。
-pub type Act = fn(&mut Assembly, &Program, &mut Service) -> Result<(), &'static str>;
+pub type Act = fn(&mut Assembly, &UnitFile, &mut Service) -> Result<(), &'static str>;
 
 /// **一相**：这一相里那几只手，**次序即契约**。
 pub type Phase = &'static [Act];
@@ -70,7 +70,7 @@ pub const AFTER_READY: Phase = &[operator::hold, principal::adopt_roster];
 pub fn advance(
     assembly: &mut Assembly,
     phase: Phase,
-    program: &Program,
+    program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), Died> {
     for &act in phase {

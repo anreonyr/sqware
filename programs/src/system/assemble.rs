@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 use protocol::debug;
 
-use crate::program::Program;
+use crate::program::UnitFile;
 use crate::system::control::{Catalog, Error};
 
 /// 这一景要起的台：**按 `after` 算次序**（拓扑）。先起的先就绪，后面的就能向它要东西。
@@ -26,8 +26,8 @@ use crate::system::control::{Catalog, Error};
 /// 者共一份字节"的那三行。
 ///
 /// **坏图在这里是"防御"**：打包那一趟已经校验过（宿主上还报得出名字），故本处只折成一格读数。
-pub fn programs(catalog: &Catalog) -> Result<Vec<&'static Program>, Error> {
-    let mut list: Vec<&'static Program> = crate::program::PROGRAMS
+pub fn programs(catalog: &Catalog) -> Result<Vec<&'static UnitFile>, Error> {
+    let mut list: Vec<&'static UnitFile> = crate::program::PROGRAMS
         .iter()
         .copied()
         .filter(|p| p.relation.after.is_some() && catalog.find(p.name()).is_some())

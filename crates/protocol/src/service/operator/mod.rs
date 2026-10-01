@@ -164,7 +164,7 @@
 //! 三层都在：**核心**（[`core`]：树 + 八条原语）、**载体**（`protocol` 那一侧的帧与转发、
 //! 持树者那本客人小账 `desk`）、**服务**（[`server`](/crate::service::operator::server) 的
 //! `serve` / `attach` / 客侧三手，加 `prog-operator` 这个域；装配那一格在
-//! `programs/.../service.rs` 的 `Program::operator`）。
+//! `programs/.../service.rs` 的 `UnitFile::operator`）。
 //!
 //! **七条都在线上**（第八条 `opens` 不上线）：两条一格状态的（`find` / `trim`）与**五条答数据的**
 //! （`land` / `part` 各答一枚号、`seek` 答一枚号、`list` 答一串号、`name` 答一枚名字）。

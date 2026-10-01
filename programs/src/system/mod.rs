@@ -17,7 +17,7 @@
 //! （`control/`、`operator/bridge.rs`、`principal/bridge.rs`、`board/`、`control/supervise.rs`）。
 //!
 //! **拆毒那一刀（照实记）**：从前这里平铺着 `control` / `board` / `tree` / `roster` / `watch`
-//! 五个字段，而装配那一趟（原 `Program::assemble`）直接伸手进去乱叫——"生命"与"存在信号"
+//! 五个字段，而装配那一趟（原 `UnitFile::assemble`）直接伸手进去乱叫——"生命"与"存在信号"
 //! 两件事在同一段代码里交错，谁也说不清一次改动牵动谁。那一刀先把那一趟搬进
 //! [`Assembly::assemble`]，且**每一块只经它自己那几手**说话（`enlist` / `spawn` / `connect_all` /
 //! `launch`、`attach` / `adopt` / `plate` / `eye`、`bind` / `adopt`）：装配者手里没有一块是
@@ -29,7 +29,7 @@
 //! 自己读**。本处这一趟因此只剩"立账 → 造身子 → 装通道 → 走三相"——一处也不再提板 / 树 /
 //! 名册那三个名字。
 //!
-//! **`Program` = 声明，`Assembly` = 运行时上下文**：一台程序怎么起（谁接哪条轴 / 要不要存在信号 /
+//! **`UnitFile` = 声明，`Assembly` = 运行时上下文**：一台程序怎么起（谁接哪条轴 / 要不要存在信号 /
 //! 它是哪一双眼睛 / 装配期给不给身份）写在它自己那份 `program.rs` 里；而**装配动作**
 //! 是 [`schedule`] 那张表上各轴自己的那几手。
 //!
@@ -49,7 +49,7 @@ use alloc::string::ToString;
 use env::Wait;
 use protocol::debug;
 
-use crate::program::{Died, Program};
+use crate::program::{Died, UnitFile};
 use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
@@ -76,7 +76,7 @@ pub mod source;
 
 /// **运行时装配上下文**：这台机器**已经装配到了什么**——四轴各一块，加存在信号的两头。
 ///
-/// 它不是"配置表"：配置在 `Program` 上；这里只有**跑起来的东西**（已起的域与线程、已铸的孔、
+/// 它不是"配置表"：配置在 `UnitFile` 上；这里只有**跑起来的东西**（已起的域与线程、已铸的孔、
 /// 已成的关系）。
 /// **照实记（那四格的可见性：层六·3 搬域时露出来的一格）**：它们原先**私有于 `system`**——而那时
 /// 各域的 `bridge.rs` 都住在 `system/` 底下，看得见；`hub` / `coalition` / `principal` 一台台搬到
@@ -297,9 +297,9 @@ impl Assembly {
     /// **次序即契约**：先起的先就绪，后面的就能向它要东西；持树者必须先于客人（客人上树要它
     /// 在），名册必须先于其余（其后的身份都从它来）。
     ///
-    /// 失败一律折成这一台自己的 `died`（`Program::demand.died`），读数靠那两行 debug
+    /// 失败一律折成这一台自己的 `died`（`UnitFile::demand.died`），读数靠那两行 debug
     /// （先印程序名、再印哪一步）。
-    pub fn assemble(&mut self, program: &Program) -> Result<(), Died> {
+    pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
         // **照实记（这一趟的五段计时退了场：它的前提被收回）**：这一格曾挂过一条读数
         // （`system: slow who=… supply= launch= board= tree= ready=`，`debug!`，门槛 200 ms），
         // 用来验"那一秒是本域这一趟花掉的"。它的前提是**放行在先、介绍在后**——量到的窗口是
@@ -359,7 +359,7 @@ impl Assembly {
 ///
 /// 只在失败路径上调：**成功不说话**（装配正常的机器不该刷屏），而失败时这两行决定还得读几遍
 /// 代码——所以它报"程序名"与"步骤"两格。
-fn fail(program: &Program, e: Error) -> Died {
+fn fail(program: &UnitFile, e: Error) -> Died {
     // **照实记（这两句从前在 release 下是哑的）**：装配失败那一刻要说的就两件事——**哪一台**、
     // **死在哪一步**（`Error::Step` 里那句就是上树/挂板那一路的步名）。而它原先走 `debug!`，
     // 那一支宏在 `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）

@@ -2,7 +2,7 @@
 //!
 //! **U 态**：持有 `serial@10000000`（banner 里那张 PMP 是 S/U (R,W)），把"收到字节就拉线"打开。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
+use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_UART: Died = 9;
@@ -11,7 +11,7 @@ pub const E_UART: Died = 9;
 // 按同一张单替本域领设备。那一整条路退了（设备由本域自己走一趟设备账认领）⇒ **单子回了它自己的
 // 域**（`driver/uart/desk.rs` 的 `ASK`），装配表上这一份只剩"它是谁、跟谁有边"。
 
-pub static PROGRAM: Program = Program {
+pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "uart",
         wanted_by: &["root", "product"],

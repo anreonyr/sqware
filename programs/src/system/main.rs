@@ -20,7 +20,7 @@
 //! 程序、一个域（`src/system/{operator,principal,coalition}/main.rs`），由本域按那张装配表
 //! 用与其他每一台相同的 `mint` 起起来——**没有 `Role` 那种"同一份字节按 args 分派"的特例**。
 //!
-//! **这里不再有 `Program { … }` 那样的投影**：声明是各台自己那份 `program.rs`，本文件只把
+//! **这里不再有 `UnitFile { … }` 那样的投影**：声明是各台自己那份 `program.rs`，本文件只把
 //! `&list` 交给 [`Assembly::assemble`](crate::system::Assembly::assemble)。
 
 extern crate alloc;

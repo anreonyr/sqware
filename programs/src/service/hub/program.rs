@@ -21,7 +21,7 @@
 //! [`crate::program`] 的头注），故那个词只能在这儿写第二遍。对不上时 hub 收不到物料
 //! （当场 `hub: no machine`），不会静默跑起来。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
+use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手哪一步（读完机器自述、立账那一趟）。
 pub const E_HUB: Died = 28;
@@ -43,7 +43,7 @@ pub const CHANNEL: &str = "hub";
 /// **末尾**铸一枚刻它的孔交回装配者，那一刻它才继续往下起别人。
 pub const READY: &str = "hub-ready";
 
-pub static PROGRAM: Program = Program {
+pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "hub",
         wanted_by: &["root", "product"],

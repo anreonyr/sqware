@@ -14,7 +14,7 @@
 //!   · 模块名：`crate::program::…` **51** 处 ＋ `programs::program::…` **47** 处 ＋ 裸 `crate::program`
 //!     **55** 处（合计约 150 处，机械替换；`catalog.rs` 里那 **13** 条 `#[path]` 不用动——它们相对
 //!     本目录）；
-//!   · 类型名：`Program` → **`UnitFile`** 出现在 **81** 处（层四那一半）。
+//!   · 类型名：`UnitFile` → **`UnitFile`** 出现在 **81** 处（层四那一半）。
 //! ⇒ **两件一起做才是一条线**（目录叫 `unit/`、那份声明叫 `UnitFile`），故留给单独一刀。
 //!
 //! ```text
@@ -24,7 +24,7 @@
 //!   编排域按 order 起、按 Assembly::assemble 装配
 //! ```
 //!
-//! # 层四施工图（`Program` → `UnitFile`：**逐格说清它去 systemd 的哪一个键**）
+//! # 层四施工图（`UnitFile` → `UnitFile`：**逐格说清它去 systemd 的哪一个键**）
 //!
 //! **照实记（这一张表是量出来的，不是想出来的）**：13 格逐格点过写者与读者（数写在表里），
 //! 落法三种：**改名**（同一个东西、systemd 有现成的键）／**合**（两格答的是同一件事）／
@@ -62,7 +62,7 @@
 //!
 //! # 判据（这一层现在只有一件事）
 //!
-//! **`Program` 是程序装配声明的唯一来源。** 这里没有 `Row`、没有 `Plan`、没有"装配单 + 需求单
+//! **`UnitFile` 是程序装配声明的唯一来源。** 这里没有 `Row`、没有 `Plan`、没有"装配单 + 需求单
 //! + 关系单"三张表：一台程序的三块——**身份**（[`Identity`]）、**装配关系**（[`Relation`]）、
 //! **需求**（[`Demand`]）——全在它自己那一份 `program.rs` 里，本文件只把它们的**引用**摆成一张表
 //! （[`PROGRAMS`]）。
@@ -71,7 +71,7 @@
 //!
 //! **照实记**：从前这 13 格平铺在一个结构体上，谁都能随手读哪一格——"它是谁"、"它跟谁有边"、
 //! "它起手要什么"三件事混在同一层，于是**没有一处改动看得出会牵动谁**。拆成三块之后，每块各有
-//! 各的读者：宿主那侧（`crates/image` 打包）**只读身份**（且只走 [`Program`] 上那四个只读面）；
+//! 各的读者：宿主那侧（`crates/image` 打包）**只读身份**（且只走 [`UnitFile`] 上那四个只读面）；
 //! 编排域装配那一趟读装配关系与需求，并且**按块走各自那几手**（见 `system::Assembly` 与
 //! `system/mod.rs` 的头注）。一块里的格不再跨块乱叫。
 //!
@@ -119,7 +119,7 @@ pub type Died = env::Reason;
 /// （[`crate::system::source`] 取字节那一面——内核按 ELF 段现读，镜像一个字节都不被拷走）。
 /// 照实记（`Origin` 那一格为什么退场）见 [`Demand`] 底下那一段。
 #[derive(Clone, Copy)]
-pub struct Program {
+pub struct UnitFile {
     /// **身份**：它是谁（宿主那侧只读这一块）。
     pub identity: Identity,
     /// **装配关系**：编排域把它接进来时那几条边。
@@ -128,12 +128,12 @@ pub struct Program {
     pub demand: Demand,
 }
 
-impl Program {
+impl UnitFile {
     // ── 身份那四样只读面：宿主那侧（`crates/image`）与装配者都不伸手进块里 ──
     //
     // **照实记（为什么开这四扇门）**：`crates/image` 原先直接读 `p.name` / `p.kind` /
     // `p.wanted_by` / `p.entry`——拆块那一刀一到，那四处就会**跟着块的形状碎**，而它不是本仓的
-    // 装配方（宿主只打包），不该被卷进"三块怎么分"这件事。故给 `Program` 留这四条窄面：
+    // 装配方（宿主只打包），不该被卷进"三块怎么分"这件事。故给 `UnitFile` 留这四条窄面：
     // 宿主读的永远是"它是谁"，块再怎么挪，这四行不动。
 
     /// 清单名。
@@ -196,7 +196,7 @@ pub enum Kind {
 /// 进哪几张景、是不是引导镜像。
 ///
 /// **它是谁与它怎么被接进来是两件事**：`crates/image` 那台宿主只读这一块（且只走
-/// [`Program::name`] 那**四**条窄面：`name` / `space` / `wanted_by` / `entry`），装配关系与需求
+/// [`UnitFile::name`] 那**四**条窄面：`name` / `space` / `wanted_by` / `entry`），装配关系与需求
 /// 一概与打包无关。
 ///
 /// **照实记（这块里为什么有"单元类型"）**：`kind` 那一格（[`Kind`]）答的是"它是哪一种单元"
@@ -286,7 +286,7 @@ pub const SCENE: &str = "scene";
 /// **它为什么住本文件**（照实记）：各台自己那份 `program.rs` 的判据是"声明紧挨着它的身子"
 /// （见下面那张 `#[path]` 清单）——而目标单元**没有身子**，故它没有"自己那一份"可言；它属于
 /// **图的形状**这一层，与 [`PROGRAMS`] 住同一处。
-pub static SCENE_UNIT: Program = Program {
+pub static SCENE_UNIT: UnitFile = UnitFile {
     identity: Identity {
         name: SCENE,
         kind: Kind::Target,

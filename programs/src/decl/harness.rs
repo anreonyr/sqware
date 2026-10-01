@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, SCENE, Setup};
+use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, SCENE, Setup};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
@@ -39,7 +39,7 @@ pub const E_PROBE_OPERATOR_LAND: Died = 27;
 
 // ── 常客（进验收镜像当客人跑，量的是服务）────────────────────────────────
 
-pub static GUEST: Program = Program {
+pub static GUEST: UnitFile = UnitFile {
     identity: Identity {
         name: "guest",
         ..Identity::DEFAULT
@@ -56,7 +56,7 @@ pub static GUEST: Program = Program {
 };
 
 /// 过客：起来、挂一个名字、**直接死**（不说再见）。
-pub static PASSER: Program = Program {
+pub static PASSER: UnitFile = UnitFile {
     identity: Identity {
         name: "passer",
         ..Identity::DEFAULT
@@ -73,7 +73,7 @@ pub static PASSER: Program = Program {
 };
 
 /// 房客：占一条线、**直接死**——线路由者那本账的探活读数。
-pub static LODGER: Program = Program {
+pub static LODGER: UnitFile = UnitFile {
     identity: Identity {
         name: "lodger",
         ..Identity::DEFAULT
@@ -90,7 +90,7 @@ pub static LODGER: Program = Program {
 };
 
 /// 客人：`/svc/drv/rtc` 那面服务的第一位用家。
-pub static SLEEPER: Program = Program {
+pub static SLEEPER: UnitFile = UnitFile {
     identity: Identity {
         name: "sleeper",
         ..Identity::DEFAULT
@@ -107,7 +107,7 @@ pub static SLEEPER: Program = Program {
 };
 
 /// 主体：身份服务的第一位真客人。
-pub static SUBJECT: Program = Program {
+pub static SUBJECT: UnitFile = UnitFile {
     identity: Identity {
         name: "subject",
         ..Identity::DEFAULT
@@ -124,7 +124,7 @@ pub static SUBJECT: Program = Program {
 };
 
 /// 盟友：结盟服务的第一位真客人。
-pub static MEMBER: Program = Program {
+pub static MEMBER: UnitFile = UnitFile {
     identity: Identity {
         name: "member",
         ..Identity::DEFAULT
@@ -147,7 +147,7 @@ pub static MEMBER: Program = Program {
 /// **这一行 `bind: false` 从前是"没写"**（照实记见 `Relation::DEFAULT`）：全表唯一的反例靠
 /// **省略**那一格表达，而它自己的注释里却写着 `bind: false` ⇒ 那一格翻成"正常那一档"之后，
 /// 这里**明写**。
-pub static PROBE_DENIED: Program = Program {
+pub static PROBE_DENIED: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-denied",
         ..Identity::DEFAULT
@@ -165,7 +165,7 @@ pub static PROBE_DENIED: Program = Program {
 };
 
 /// **有身份**、但那一格归别人（声明过归属）⇒ 也拒。
-pub static PROBE_OWNER: Program = Program {
+pub static PROBE_OWNER: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-owner",
         ..Identity::DEFAULT
@@ -182,7 +182,7 @@ pub static PROBE_OWNER: Program = Program {
 };
 
 /// 有身份的一台把 `Permit::Trunk` / `Bough` / `Among` 三条许可落下去（先正证、再负证）。
-pub static PROBE_RULE: Program = Program {
+pub static PROBE_RULE: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-rule",
         ..Identity::DEFAULT
@@ -201,7 +201,7 @@ pub static PROBE_RULE: Program = Program {
 };
 
 /// 有身份地去用别人立了规矩的那两格 ⇒ 都该拒（第二道门的反例）。
-pub static PROBE_RULE_OTHER: Program = Program {
+pub static PROBE_RULE_OTHER: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-rule-other",
         ..Identity::DEFAULT
@@ -218,7 +218,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
 };
 
 /// 会死的持有者：落一块**声明归自己**的门牌然后直接死，好让下一台接手。
-pub static PROBE_LEASE: Program = Program {
+pub static PROBE_LEASE: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-lease",
         ..Identity::DEFAULT
@@ -236,7 +236,7 @@ pub static PROBE_LEASE: Program = Program {
 
 /// **上界的证客**：推一页 + 1、再推一枚不合族的帧到**两道门**（树与板）上。
 /// 两道门各一条腿，故这一台要两条路（`operator` ＋ `board`）。
-pub static PROBE_BOUND: Program = Program {
+pub static PROBE_BOUND: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-bound",
         ..Identity::DEFAULT
@@ -265,7 +265,7 @@ pub static PROBE_BOUND: Program = Program {
 /// （`Assembly::mount_control`，由 `system/main.rs` 的相四叫）——那**不是一个台**，图里本来
 /// 没有它的落点，故写成"等装配那一趟走完"那条边（名字 [`SCENE`]，次序由
 /// `program::order_scene` 算；那一格从前是一格布尔 `after_scene`，照实记见 [`SCENE`] 的头注）。
-pub static PROBE_CONTROL: Program = Program {
+pub static PROBE_CONTROL: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-control",
         ..Identity::DEFAULT
@@ -299,7 +299,7 @@ pub static PROBE_CONTROL: Program = Program {
 ///
 /// 它铺的那两格落在**根**底下：下一位只持 `land` 一位 ⇒ 它**问不得** `list` / `seek` / `name`，
 /// 故那两格必须落在**唯一不需要号的那一格**上（见 `harness/src/probe_operator_gate.rs` 文件头）。
-pub static PROBE_OPERATOR_GATE: Program = Program {
+pub static PROBE_OPERATOR_GATE: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-operator-gate",
         ..Identity::DEFAULT
@@ -318,7 +318,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
 /// **操作面的正证客人（只有 `land` 一位那一半）**：会话开在 `granted_berth(Land)` 上，
 /// 于是 `seek` / `part` / `find` / `trim` 全答 `Denied`，而 `land` 在**无主**那一格上通、
 /// 在**别人有主**那一格上拒——后者证的是"面判与归属那一条轴**正交**"。
-pub static PROBE_OPERATOR_LAND: Program = Program {
+pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-operator-land",
         ..Identity::DEFAULT
@@ -336,7 +336,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
 
 // ── 压测台与它们的受害者（整台替换引导镜像）────────────────────────────
 
-pub static CHURN: Program = Program {
+pub static CHURN: UnitFile = UnitFile {
     identity: Identity {
         name: "churn",
         wanted_by: &["again"],
@@ -346,7 +346,7 @@ pub static CHURN: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static RIG: Program = Program {
+pub static RIG: UnitFile = UnitFile {
     identity: Identity {
         name: "rig",
         space: ProgramKind::Supervisor,
@@ -358,7 +358,7 @@ pub static RIG: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static BUSY: Program = Program {
+pub static BUSY: UnitFile = UnitFile {
     identity: Identity {
         name: "busy",
         wanted_by: &["load"],
@@ -368,7 +368,7 @@ pub static BUSY: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static PARK: Program = Program {
+pub static PARK: UnitFile = UnitFile {
     identity: Identity {
         name: "park",
         wanted_by: &["load"],
@@ -378,7 +378,7 @@ pub static PARK: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static HANG: Program = Program {
+pub static HANG: UnitFile = UnitFile {
     identity: Identity {
         name: "hang",
         wanted_by: &["rig"],
@@ -388,7 +388,7 @@ pub static HANG: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static LOAD: Program = Program {
+pub static LOAD: UnitFile = UnitFile {
     identity: Identity {
         name: "load",
         space: ProgramKind::Supervisor,
@@ -400,7 +400,7 @@ pub static LOAD: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static BEAT: Program = Program {
+pub static BEAT: UnitFile = UnitFile {
     identity: Identity {
         name: "beat",
         space: ProgramKind::Supervisor,
@@ -412,7 +412,7 @@ pub static BEAT: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static AGAIN: Program = Program {
+pub static AGAIN: UnitFile = UnitFile {
     identity: Identity {
         name: "again",
         space: ProgramKind::Supervisor,
@@ -424,7 +424,7 @@ pub static AGAIN: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static WAITER: Program = Program {
+pub static WAITER: UnitFile = UnitFile {
     identity: Identity {
         name: "waiter",
         wanted_by: &["group"],
@@ -434,7 +434,7 @@ pub static WAITER: Program = Program {
     demand: Demand::DEFAULT,
 };
 
-pub static GROUP: Program = Program {
+pub static GROUP: UnitFile = UnitFile {
     identity: Identity {
         name: "group",
         space: ProgramKind::Supervisor,

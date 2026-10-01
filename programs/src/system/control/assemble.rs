@@ -32,7 +32,7 @@ use protocol::system::supply::frame::{WANT_MAX, Want};
 use crate::system::control::desk::Announce;
 
 use super::{BOOT_MS, Control, Error, READY_MS, Service};
-use crate::program::{Program, Setup};
+use crate::program::{UnitFile, Setup};
 use crate::system::Assembly;
 
 impl Control {
@@ -47,7 +47,7 @@ impl Control {
     /// （`Relation::restart`）——**由编排域起的台不写就当场拒**（`Step("no restart")`，读数带出
     /// 是这一台的哪一步）。这不是苛求：收场的闸与兜底两条判定都压在这一格上，静默给个默认值
     /// 正是"以后会变"时最贵的那种错。
-    pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
+    pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
@@ -70,7 +70,7 @@ impl Control {
     /// 这也是"起一条"那条次序**只有两处**、且两处都把[放行 → 递料]这一段从这一手取的原因。
     pub fn launch(
         &mut self,
-        program: &Program,
+        program: &UnitFile,
         name: String,
         service: &mut Service,
     ) -> Result<(), Error> {
@@ -242,7 +242,7 @@ impl Control {
 /// 拿到物料、把每一台落完格**之后才说得出口 ⇒ 等它必须排在那两手之后。
 pub fn await_ready(
     assembly: &mut Assembly,
-    program: &Program,
+    program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
     assembly
@@ -270,7 +270,7 @@ fn announce_of(supply: &[Setup]) -> Announce {
 /// **自由函数**：它只碰通道，不碰 `Control` 的任何一格（与 [`connect`](super::connect) 那一手
 /// 同一句正文——"只碰通道"的那一层做成方法就是白加的壳）。两处叫它：装配那一趟
 /// （[`crate::system::Assembly::assemble`]）与线上那条 [`Control::release`]。
-pub fn connect_all(program: &Program, service: &mut Service) -> Result<(), Error> {
+pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Error> {
     for s in program.demand.supply {
         for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {
             service

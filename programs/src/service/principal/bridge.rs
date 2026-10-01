@@ -15,7 +15,7 @@ use protocol::service::principal as pcall;
 use protocol::service::principal::client::Face;
 use runtime::env::room;
 
-use crate::program::Program;
+use crate::program::UnitFile;
 use crate::system::Assembly;
 use crate::system::control::{BOOT_MS, READY_MS, RETRY_MS, Service};
 
@@ -101,7 +101,7 @@ impl Roster {
 /// 时名册还没在；那两条由 [`Roster::adopt`] 在它放行之后补绑。）
 pub fn bind(
     assembly: &mut Assembly,
-    program: &Program,
+    program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
     assembly.roster.bind(service.0, program.relation.bind)
@@ -120,7 +120,7 @@ pub fn bind(
 /// 仍是 [`Roster::adopt`]（它同时把名册那一面认下来，此后本域问身份才有一枚门牌在手）。
 pub fn adopt_roster(
     assembly: &mut Assembly,
-    _program: &Program,
+    _program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
     if establish::find(service.0, pcall::Grant::Set.mark()).is_none() {

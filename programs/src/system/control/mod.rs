@@ -6,7 +6,7 @@
 //! 各自的手上。
 //!
 //! ```text
-//!   Program（静态声明）── spawn → connect → start → wire ──▶ Service（域 + 线程 + 通道）
+//!   UnitFile（静态声明）── spawn → connect → start → wire ──▶ Service（域 + 线程 + 通道）
 //! ```
 //!
 //! **`Service` 不另立类型**：它就是"一枚线程 ＋ 它那几条通道"（[`Service`] 是那两样的别名）。
@@ -56,7 +56,7 @@ use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::program::{PROGRAMS, Program, Setup};
+use crate::program::{PROGRAMS, UnitFile, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::Source;
@@ -136,7 +136,7 @@ impl Error {
 /// **一条通道一件持有者**（[`Endpoint`]）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
 /// 在这里就是**几个 `Endpoint`**，不是一个能装的容器类型。**这本账归装配者拿着**：那几枚孔是
 /// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Assembly::assemble`](crate::system::Assembly::assemble)）。
-/// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `Program`。
+/// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `UnitFile`。
 pub type Service = (TaskId, Vec<Endpoint>);
 
 /// 清单的读面：装配者按名字挑镜像。
@@ -327,7 +327,7 @@ impl Control {
     /// 特权级仍从清单那一条取（"唯一声明处是装配表"，打包时写进去），而"字节在哪儿"本层不问。
     ///
     /// 通道账起手是空的：`setup` 里那几条由 [`connect`] 逐条装上（放行之前）。
-    pub fn spawn(&mut self, program: &Program) -> Result<Service, Error> {
+    pub fn spawn(&mut self, program: &UnitFile) -> Result<Service, Error> {
         let name = program.name().to_string();
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         // **取字节那一面的唯一消费者**：这一景那本账（`self.catalog`）按名字给那一段 `&[u8]`。
@@ -563,7 +563,7 @@ pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
 /// **只认"由编排域起"的那几台**（`relation.after.is_some()`）：`root` / `system` 自己不在
 /// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::assemble`]
 /// 的过滤同一句。
-fn program_of(name: &str) -> Option<&'static Program> {
+fn program_of(name: &str) -> Option<&'static UnitFile> {
     PROGRAMS
         .iter()
         .copied()

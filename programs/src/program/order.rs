@@ -5,7 +5,7 @@
 //! 算装载次序），故它是「这一层的算法」那一半。**模块名不变**：`mod.rs` 里 `pub use order::*;`
 //! 把这一块原样摆回 `crate::program` 那个名字空间 ⇒ 全仓引用一处都不用动。
 
-use super::{Program, is_target};
+use super::{UnitFile, is_target};
 
 // ── 这一张单自己算不了的那一件事：**次序**（两个读者共用这一份）──────────────
 
@@ -29,7 +29,7 @@ pub enum DepsFail {
 /// （只许引 `env`，`crates/image` 用 `#[path]` 文本包含它），只用切片与定长栈。
 ///
 /// **它不解释任何一台的字段**：只读 [`Relation::after`] 那一格（[`SCENE`] 只是其中一个名字）。
-pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
+pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
     // 一、每条边都要落得下：指得到本单里的台，且那一台说得出"我答得动"。
     //     **[`SCENE`] 那一条除外**：它指的是这一趟自己，不是本单里的台，也没有"答得动"可言
     //     （见 [`SCENE`] 的头注）。
@@ -102,7 +102,7 @@ pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
 ///
 /// 它有两个读者，判的是同一句话：[`order_scene`] 据它把这一台排到最后（那一格要到那时才到点），
 /// 而装配那一趟据它跳过那一条边（`Assembly::assemble`：等一个"这一趟"没有可等的对象）。
-fn waits_scene(program: &Program) -> bool {
+fn waits_scene(program: &UnitFile) -> bool {
     program
         .relation
         .after
@@ -110,7 +110,7 @@ fn waits_scene(program: &Program) -> bool {
 }
 
 /// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）。
-fn ready(list: &[&'static Program], i: usize, placed: usize) -> bool {
+fn ready(list: &[&'static UnitFile], i: usize, placed: usize) -> bool {
     let Some(deps) = list[i].relation.after else {
         return true;
     };
@@ -134,7 +134,7 @@ fn ready(list: &[&'static Program], i: usize, placed: usize) -> bool {
 }
 
 /// 本单里按名字找那一台（**只查不比存** ⇒ 借 `&str`）。
-fn find<'a>(list: &[&'a Program], name: &str) -> Option<&'a Program> {
+fn find<'a>(list: &[&'a UnitFile], name: &str) -> Option<&'a UnitFile> {
     let mut i = 0;
     while i < list.len() {
         if list[i].name() == name {

@@ -3,7 +3,7 @@
 //! **U 态**：它只读 PLIC 的寄存器、claim/complete、铸孔、挂组，全都不需要 S 态；它那枚铃是
 //! **内核给的**（铸铃那一格才是 S 态，本域不铸）。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
+use crate::program::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
 
 /// 它死在起手 / 常驻哪一步。
 pub const E_ROUTER: Died = 5;
@@ -17,7 +17,7 @@ pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 // （`driver/router/adapt/boot.rs` 的三条 `Ask`）；**留下的 `PLIC_CLASS` 仍是本域的事实**——
 // 它同时是"我是哪台控制器"那句断言（读树那一侧也用同一枚常量，见 `system/machine.rs`）。
 
-pub static PROGRAM: Program = Program {
+pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "router",
         wanted_by: &["root", "product"],

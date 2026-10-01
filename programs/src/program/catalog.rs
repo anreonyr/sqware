@@ -5,9 +5,9 @@
 //! （`#[rustfmt::skip]` 那一张表）。模块名不变：`mod.rs` 里 `pub use catalog::*;` 把这一块**原样
 //! 摆回 `crate::program` 那个名字空间** ⇒ 全仓引用一处都不用动。
 //!
-//! **它要从上面借两样**：[`Program`] 与 [`SCENE_UNIT`]（那一台目标单元）——故一行 `use super::{…}`。
+//! **它要从上面借两样**：[`UnitFile`] 与 [`SCENE_UNIT`]（那一台目标单元）——故一行 `use super::{…}`。
 
-use super::{Program, SCENE_UNIT};
+use super::{UnitFile, SCENE_UNIT};
 
 // ── 每台自己的声明 ───────────────────────────────────────────────────
 //
@@ -43,14 +43,14 @@ pub mod system;
 pub mod uart;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`
-/// 按位次算），且各景按 [`Program::wanted_by`] 过滤 ⇒ 加一台要想清楚放哪。
+/// 按位次算），且各景按 [`UnitFile::wanted_by`] 过滤 ⇒ 加一台要想清楚放哪。
 ///
 /// **本表只有引用**：每一台的声明都在它自己那份 `program.rs` 里，这里不再写第二遍。
 ///
 /// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行，于是"哪几台进哪张镜像"
 /// 就没法一眼扫完——而这张表**就是**给人扫的。
 #[rustfmt::skip]
-pub const PROGRAMS: &[&Program] = &[
+pub const PROGRAMS: &[&UnitFile] = &[
     &root::PROGRAM,
     // 四枚服务（持树者 / 名册 / 盟册 / 设备账）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
     &operator::PROGRAM,
