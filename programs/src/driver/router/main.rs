@@ -32,10 +32,10 @@ mod core;
 mod plic;
 
 /// 本域那一台：**返回类型就是它的死法**——`Err(Fail::at(E_ROUTER, "…"))` 一路 `?` 出来
-/// （**一族口径**在 [`programs::driver::fail`]：号取自装配表——一个数都不写，
+/// （**一族口径**在 [`programs::driver::shared::fail`]：号取自装配表——一个数都不写，
 /// "配给那一趟没成"那一格照旧带 `assemble` 那一族的小整数）。
 #[programs::entry]
-fn main() -> Result<(), programs::driver::fail::Fail> {
+fn main() -> Result<(), programs::driver::shared::fail::Fail> {
     // 起手：领配给 → 开两图 → 读树 → 建账 → 铸入口 → 上板 ＋ 上树 → 挂组。
     let mut up = adapt::boot::up()?;
     // 常驻：等三源 → 逐客 / 排空 / 登记 / 铃。

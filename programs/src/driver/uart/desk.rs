@@ -7,9 +7,9 @@
 
 use super::{ME, device};
 use env::{Access, PieKind, Mark, PieToken, Policy, Wait};
-use programs::driver::context::{Context, Step};
-use programs::driver::device::{Ask, Device, Hub};
-use programs::driver::fail::Fail;
+use programs::driver::shared::context::{Context, Step};
+use programs::driver::shared::device::{Ask, Device, Hub};
+use programs::driver::shared::fail::Fail;
 use programs::service::operator::bridge;
 use programs::unit::uart::E_UART;
 use protocol::debug;

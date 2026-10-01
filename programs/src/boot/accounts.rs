@@ -1,8 +1,4 @@
-//! boot — **内核对引导镜像那一域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
-//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::ledger::args`），答的还是
-//! "谁被装进来了"这件事。
-//! 内核只把这两区**只读借映**进**引导镜像那一域**，故读者是每一个引导镜像：
-//! `system`，以及 harness 的 `again` / `rig` / `load` / `group`。
+//! boot::accounts — **两块账**：清单那一块（程序表）与配对块（门闩表）＋它的逐条读法。
 
 use env::PieToken;
 use env::ledger::key::{DTB, IRQ, REGION};
@@ -77,41 +73,5 @@ impl Accounts {
         // 步长 24 字节而块只保证页对齐，故 `read_unaligned`。
         let at = unsafe { self.pairs.as_ptr().add(i * PAIR_LEN) };
         unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) }
-    }
-}
-
-/// **清单的读面**：按名字挑一台，取它那段字节与特权级。
-/// 清单里的镜像是**相对这块字节的切片**，故换一张表、换一个 VA 都照样解析得出来。
-#[derive(Clone, Copy)]
-pub struct Catalog<'a> {
-    view: &'a [u8],
-}
-
-impl<'a> Catalog<'a> {
-    /// 拿一块字节当清单。`None` = 清单头非法（条数为零 / 超上限 / 装不下）。
-    pub fn new(view: &'a [u8]) -> Option<Catalog<'a>> {
-        manifest::Entries::new(view)?;
-        Some(Catalog { view })
-    }
-
-    /// boot 交来的那一块（今天**唯一**的构造路）。
-    pub fn of_boot(accounts: &Accounts) -> Option<Catalog<'static>> {
-        Catalog::new(accounts.view())
-    }
-
-    /// 从清单里挑出这个程序。
-    pub fn find(&self, want: &str) -> Option<manifest::Entry<'a>> {
-        let mut list = self.programs();
-        loop {
-            let entry = list.next()?;
-            let Ok(entry) = entry else { return None };
-            if entry.name == want {
-                return Some(entry);
-            }
-        }
-    }
-
-    fn programs(&self) -> manifest::Entries<'a> {
-        manifest::Entries::new(self.view).expect("清单头已在 new 时验过")
     }
 }

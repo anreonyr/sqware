@@ -5,9 +5,9 @@
 use super::desk;
 use crate::rtc;
 use env::{HoleDir, Wait};
-use programs::driver::context::Context;
-use programs::driver::device::Device;
-use programs::driver::fail::Fail;
+use programs::driver::shared::context::Context;
+use programs::driver::shared::device::Device;
+use programs::driver::shared::fail::Fail;
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use programs::unit::rtc::E_RTC;

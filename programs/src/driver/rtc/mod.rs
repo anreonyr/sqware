@@ -18,7 +18,7 @@
 //! 那一圈的**壳**留在 `adapt/resident.rs`；但它的**每一格判定**都在 [`core::Host`]——壳里因此
 //! 没有语义 `if`（核吐什么，它就执行什么）。
 //! **两份失败域**也由这条分界分开：[`core::Fail`] 是**上线**那一格（讲客人那一问，折成答码），
-//! [`programs::driver::fail::Fail`](programs::driver::fail) 是**下线**那一格（讲这一域死在
+//! [`programs::driver::shared::fail::Fail`](programs::driver::shared::fail) 是**下线**那一格（讲这一域死在
 //! 起手/常驻的哪一步，报给内核出口）。
 //! # 服务面：两个方向放进同一面
 

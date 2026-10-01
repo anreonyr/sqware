@@ -18,7 +18,7 @@ use runtime::env::mail::{self, PolePie};
 
 use crate::unit::Died;
 
-use crate::driver::fail::Fail;
+use crate::driver::shared::fail::Fail;
 
 /// **本域要认的那一台**：哪一类（树里认的 `compatible`）、要什么权、（可选）**点名**那一台。
 /// 它是**声明**（`const` 可造：三格全是字面量 / 枚举），各驱动写在**自己那一域**里——装配表
@@ -43,7 +43,7 @@ pub struct Ask {
 /// 只能问主人自己交来的那一枚（内核那一问 `Join` 只许同队或父域，而 hub 与驱动是兄弟）。
 /// **它不持树那条会话**：树上那几手每次按调用方给的 [`TreeFace`] 走（会话归 [`Context`]，
 /// 四个客人各持各的）。
-/// [`Context`]: crate::driver::context::Context
+/// [`Context`]: crate::driver::shared::context::Context
 pub struct Hub {
     bond: hub::Face,
     list: hub::Face,
@@ -137,7 +137,7 @@ pub struct Device {
 impl Device {
     /// 契里那一枚门闩 → 一页映射。
     /// **失败那一格由调用方命名**（`"device open failed"` / `"docks"`——**步名**，
-    /// 见 [`crate::driver::fail`] 那一格裁）——本文件不认识域名，也不该认识。
+    /// 见 [`crate::driver::shared::fail`] 那一格裁）——本文件不认识域名，也不该认识。
     pub fn open(page: PieToken) -> Result<Device, ()> {
         let dock = Dock::open(PolePie::from_token(page)).map_err(|_| ())?;
         Ok(Device { dock })

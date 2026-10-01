@@ -28,9 +28,9 @@ mod adapt;
 mod rtc;
 
 use env::{Access, PieKind, Policy, Wait};
-use programs::driver::context::{Context, Step};
-use programs::driver::device::{Ask, Device, Hub};
-use programs::driver::fail::Fail;
+use programs::driver::shared::context::{Context, Step};
+use programs::driver::shared::device::{Ask, Device, Hub};
+use programs::driver::shared::fail::Fail;
 use programs::driver::rtc::core::Host;
 use programs::unit::rtc::E_RTC;
 use protocol::debug;
@@ -57,7 +57,7 @@ const ME: &str = "rtc";
 const MS: usize = 1000;
 
 /// 本域那一台：**返回类型就是它的死法**——一格一格都是 `Fail::at(E_RTC, "…")`
-/// （**一族口径**在 [`programs::driver::fail`]：号取自装配表——一个数都不写）。
+/// （**一族口径**在 [`programs::driver::shared::fail`]：号取自装配表——一个数都不写）。
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // 解门牌 → 上板 ＋ 开会话 → 上树落门牌。门牌**公开可查**（`Mine::No`）：谁都能查、谁都能用。

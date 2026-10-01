@@ -1,4 +1,4 @@
-//! decl::harness — **测具那 25 台**的装配声明。
+//! harness — **测具那 25 台**的装配声明。
 //! # 它为什么住本 crate（而不是隔壁 `harness`）
 //! 这 25 台的身子住 `harness`，但其中 **15 台由编排域起**（`guest` / `passer` / `lodger` /
 //! `sleeper` / `subject` / `member` 与七台 `probe-*`）——编排域要按 `order` / 存在信号

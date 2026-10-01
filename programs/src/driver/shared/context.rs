@@ -7,7 +7,7 @@
 //!   publish   把一批字节推给本域服务门的客人
 //! ```
 
-use crate::driver::fail::Fail;
+use crate::driver::shared::fail::Fail;
 use crate::service::operator::bridge;
 use crate::unit::Died;
 use env::{PieToken, TaskId, Wait};

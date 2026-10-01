@@ -14,7 +14,7 @@ pub mod coalition;
 /// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。
 /// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 23 份：
 /// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
-#[path = "../decl/harness.rs"]
+#[path = "harness.rs"]
 pub mod harness;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
