@@ -239,7 +239,12 @@ fn settle(
                     Err(DeskFail::Full) => debug::put("operator: desk full"),
                 },
                 // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-                None => debug::put("operator: no reply"),
+                //
+                // **把号一起报出来**：这一条与"某位客人的问压了几秒没人取"（`mail: hand stuck`）
+                // **一一对应**（量过：全控制台 194 份里各 3 份，同一批文件、无一例外）——那位客人
+                // 于是**永远进不了这本账**（它的问话孔没人挂进组），它的每一问都压在孔上。
+                // 号码是这两条读数对得起来的唯一凭据：只报"no reply"时，那两份现场看不出发的是谁。
+                None => debug::put(&alloc::format!("operator: no reply who={}", client.get())),
             },
         }
     }
