@@ -30,7 +30,7 @@ pub struct Device {
 
 /// **引导期那两件不按类认的东西**的坐标由它们自己说（`Key::dtb()` / `Key::irq()`）——
 /// 它们不进 [`Machine::devices`] 那张表（树里没有"哪一类"可判），由装配者按**已知坐标**要
-/// （见 `system/control/assemble.rs` 的入册那一趟）。
+/// （见 `system/control/enroll.rs` 的入册那一趟）。
 /// 本域手里那台机器的自述。
 pub struct Machine {
     fdt: fdt::Fdt<'static>,
