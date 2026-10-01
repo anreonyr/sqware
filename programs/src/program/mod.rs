@@ -1,5 +1,12 @@
 //! program — **一台程序是什么**：它的全部装配声明，都写在它自己那份 `program.rs` 里。
 //!
+//! **照实记（层六第一步：`program.rs` → `program/mod.rs`）**：这一份从 `src/program.rs` 收进
+//! **同名目录**（`src/program/mod.rs`）——**模块名一个字没改**，故全仓引用一处都没动；动的是
+//! **两处 `#[path]` 的基准**：`crates/image` 那一行（`../../../programs/src/program/mod.rs`）
+//! 与本文件里那 **11 条**拉声明的 `#[path]`（相对本文件所在目录 ⇒ 各加一层 `../`）。
+//! **为什么先收目录再拆**：下一刀要把这一份按职责拆成 `order.rs` / `catalog.rs`（计划里那一刀），
+//! 而拆之前得先有"目录"这个位置——**先搬位置，再拆内容**，两步各验一次。
+//!
 //! ```text
 //!   每台自己的声明（pub static PROGRAM）──┐
 //!                                        ├─▶ PROGRAMS（只有引用，没有第二份定义）
@@ -584,31 +591,31 @@ impl Setup {
 // runtime / protocol 代码，`crates/image` 进不去。故只由 [`PROGRAMS`] 这一处按 `#[path]` 拉
 // 进来一次——**唯一的声明点**。
 
-#[path = "user/canonical/program.rs"]
+#[path = "../user/canonical/program.rs"]
 pub mod canonical;
-#[path = "system/coalition/program.rs"]
+#[path = "../system/coalition/program.rs"]
 pub mod coalition;
 /// harness 那 23 台（**测具**）：它们的身子住隔壁那个 crate，而其中 13 台**由编排域起**
 /// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，故声明必须由本 crate 编译。
 /// `harness` 依赖 `programs`，反向不可能。故这一族的声明住这里（一份，不拆 23 份：
 /// "紧挨着身子"对身子不在本 crate 的那几台本来就不成立，不假装）。
-#[path = "decl/harness.rs"]
+#[path = "../decl/harness.rs"]
 pub mod harness;
-#[path = "system/hub/program.rs"]
+#[path = "../system/hub/program.rs"]
 pub mod hub;
-#[path = "system/operator/program.rs"]
+#[path = "../system/operator/program.rs"]
 pub mod operator;
-#[path = "system/principal/program.rs"]
+#[path = "../system/principal/program.rs"]
 pub mod principal;
-#[path = "root/program.rs"]
+#[path = "../root/program.rs"]
 pub mod root;
-#[path = "driver/router/program.rs"]
+#[path = "../driver/router/program.rs"]
 pub mod router;
-#[path = "driver/rtc/program.rs"]
+#[path = "../driver/rtc/program.rs"]
 pub mod rtc;
-#[path = "system/program.rs"]
+#[path = "../system/program.rs"]
 pub mod system;
-#[path = "driver/uart/program.rs"]
+#[path = "../driver/uart/program.rs"]
 pub mod uart;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`

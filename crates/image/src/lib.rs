@@ -53,12 +53,12 @@ fn root() -> PathBuf {
 /// 而装配表只有一份——每台程序自己那份 `program.rs`。故那一份源码由**两侧各编一次**：
 /// `programs` 编它给运行时用，本 crate 编它给打包用。
 ///
-/// 它能成立的前提只有一条：`programs/src/program.rs` 与它 `#[path]` 拉进来的每一份声明
+/// 它能成立的前提只有一条：`programs/src/program/` 与它 `#[path]` 拉进来的每一份声明
 /// **只引 `env`**（宿主与 riscv 都编得过的那一层）。那条纪律写在 `programs/src/program.rs`
 /// 的头注里——**这里就是它的报警器**：谁往声明里塞了 runtime / protocol 的引用，本 crate
 /// 当场编不过。
 #[allow(dead_code)]
-#[path = "../../../programs/src/program.rs"]
+#[path = "../../../programs/src/program/mod.rs"]
 mod program;
 
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
