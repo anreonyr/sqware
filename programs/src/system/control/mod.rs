@@ -372,7 +372,19 @@ impl Control {
         // （`system: assemble`，**牺牲者每次不同**：`board:claim` / `start failed`）"。
         // **下一刀**：把这里丢掉的那一格印出来（`Fail` 的变体 ⇒ 哪一步），先量再断——
         // 若它是 `Fail::Full`，那这一族就是**资源上限**那一档，与"谁先起"无关。
-        .map_err(|_| Error::Step("start failed"))
+        .map_err(|fail| {
+            // **照实记（第 29 轮补的那一行）**：这一格从前是 `|_|`——四支失败（`Unknown` /
+            // `BadImage` / `Full` / `NotReady`）折成同一句 `start failed`，于是"哪一步没起来"
+            // 在读数里看不见。**它印出变体**（`debug::put` 不设门 ⇒ 两档都看得见）。
+            let why = match fail {
+                Fail::Unknown => "unknown",
+                Fail::BadImage => "bad image",
+                Fail::Full => "full",
+                Fail::NotReady => "not ready",
+            };
+            protocol::debug::put(&alloc::format!("system: start failed {name} why={why}"));
+            Error::Step("start failed")
+        })
     }
 
     /// **等就绪**：`setup` 里那几条通道逐条认齐（记号即通道名）——**两条都认齐**才算起来。
@@ -394,17 +406,47 @@ impl Control {
                 marks.push(Mark::of(ch));
             }
         }
-        // **额度按这一格最宽的那一条算**（`Machine` 那两条里的"我起完了"，见 [`BOOT_MS`]）：
-        // 窄的那几条早在额度之内（多等的那几毫秒只在真死时才花得出去）。
+        // **额度一律按最宽的那一档**（[`BOOT_MS`]，5 s）——**照实记（这一刀，量出来的）**：
+        // 从前窄的那几条用 [`READY_MS`]（1 s），而那一秒**兼着"它死了没有"**那一件事（所以要紧）。
+        // 今天**死由表侧那一扫独自认**（`supervise` 的 `Watch`，见那一段照实记）⇒ 这一等要等的
+        // 只剩"它把凭据交上来了没有"，**额度宽了只会慢，不会误判**。
+        // 实测（同一份代码）：debug 档 `root` 景的装配段落落在 2.5 s 上下，而那条红正是
+        //   `system: not ready probe-rule why=not ready marks=1`
+        // ——1 s 装不下它自己的起手；牺牲者每次不同（`probe-rule` / 另一台，见 `canonical/program.rs`
+        // 头注那一族）。**release 档同一份代码一直是绿的**（它快）。宽到 5 s 之后两档都在额度之内。
         service::ready(
             &mut self.table,
             name.as_str(),
             service.1.as_mut_slice(),
             &marks,
-            Wait::AtMost(if marks.len() > 1 { BOOT_MS } else { READY_MS }),
+            Wait::AtMost(BOOT_MS),
         )
         .map(|_| ())
-        .map_err(|_| Error::Step("start failed"))
+        .map_err(|fail| {
+            // **照实记（第 29 轮：这一族红的落点就在这一句）**：这是"start failed"的**第二个**
+            // 生产者——**"等就绪"那一手**（上面那一句 `service::ready`），不是"放行"那一手。
+            // 实测（debug 档 `root` 景，同一份代码）：
+            //   · 第 27 轮 2/2 红（牺牲者是 `probe-rule`，装配者 `reason=0x15`）；
+            //   · 第 29 轮 1/2 红（牺牲者换成 `reason=0x5` 那一台）⇒ **牺牲者每次不同**
+            //     （`canonical/program.rs` 头注里那一族）。
+            // **机制（`core.rs` 头注里早写着的那一句）**：额度是 `READY_MS`（1 s）或 `BOOT_MS`，
+            // 而**debug 档那一整段落在 2.5 s 上下**——那一秒装不下 ⇒ 到点判 `NotReady` ⇒ 装配者
+            // 报"这一台没起来"。**release 档同一份代码 16 条全绿**，正合这一条。
+            // **它该不该这么判**（下一刀的判断）：这一等从前兼着"它死了没有"那一件事（所以额度
+            // 必须紧）；而今天**死由表侧那一扫独自认**（`supervise` 的 `Watch`，见那一段照实记）
+            // ⇒ 这一等要等的只是"它有没有把凭据交上来"，**额度可以宽**（宽了只会慢，不会误判）。
+            let why = match fail {
+                Fail::Unknown => "unknown",
+                Fail::BadImage => "bad image",
+                Fail::Full => "full",
+                Fail::NotReady => "not ready",
+            };
+            protocol::debug::put(&alloc::format!(
+                "system: not ready {name} why={why} marks={}",
+                marks.len()
+            ));
+            Error::Step("start failed")
+        })
     }
 
     /// 收掉一条 Service：**下令即回，不等它收完**。
