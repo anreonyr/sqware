@@ -30,7 +30,7 @@ fn changed(tree: &Operator, watchers: &mut Watchers, change: &crate::service::op
         debug!("operator: watch event unsigned id={}", change.id.get());
         return;
     };
-    let _ = watchers.publish(&ev);
+    let _ = watchers.publish(ev);
 }
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 ocall 的帧那一节）
@@ -185,8 +185,8 @@ pub(super) fn answer(
         }
         // **订一条子树**：把交来的页与铃认成写端，记下"谁订了哪条路"。**答的就是成没成**
         // （订阅者拿这一句当"此后的事件都算你的"那个点——见 `watch` 面那一节的序）。
-        ocall::Wire::Watch { road, page, bell } => {
-            return match watchers.join(who, &road, page, bell) {
+        ocall::Wire::Watch { road, hole } => {
+            return match watchers.join(who, &road, hole) {
                 Ok(()) => ocall::Union::Status(ocall::OK),
                 Err(()) => ocall::Union::Status(ocall::fail_to_code(Some(ocall::Fail::Denied))),
             };

@@ -52,9 +52,15 @@ impl Kind {
     }
 }
 
-/// **一条事件**：改动的全坐标。
+/// **一条事件**：改动的全坐标 ＋ **它自己的号**。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Event {
+    /// **这一条事件的号**（持树者那一具架自己的计数，从 1 起，与环里的格一一对应）。
+    ///
+    /// 它为什么在载荷里（而不靠环那一格的头）：手递出去的是**那一格的载荷**，而环会绕回来
+    /// ——同一条手取到手的可能是**更新的内容**。有了这一格，读者能自己说清"中间丢了几条"
+    /// （号跳了）与"这一条我读过了"（号没前进）。
+    pub seq: u64,
     pub kind: Kind,
     /// 那一条路（**从根写起**）
     pub road: PathBuf,
@@ -70,6 +76,7 @@ pub struct Event {
 /// 是哪一种改动，也让**表外的 kind 整条读不懂**（与 `Req` 的动作码同一条纪律）。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 pub struct EventFrame {
+    pub seq: u64,
     pub kind: u8,
     pub road: PathBuf,
     pub id: EntryId,
@@ -77,8 +84,8 @@ pub struct EventFrame {
 }
 
 const _: () = assert!(
-    EventFrame::LEN == 1 + Path::LEN + 8 + TaskId::WIDTH,
-    "事件那一段的宽度：kind ＋ 路 ＋ 号 ＋ 主人"
+    EventFrame::LEN == 8 + 1 + Path::LEN + 8 + TaskId::WIDTH,
+    "事件那一段的宽度：号 ＋ kind ＋ 路 ＋ 号 ＋ 主人"
 );
 
 impl Message for EventFrame {
@@ -94,6 +101,7 @@ impl Message for EventFrame {
     fn fetch(bytes: &[u8]) -> Option<Event> {
         let (frame, _) = EventFrame::fetch_at(bytes, 0)?;
         Some(Event {
+            seq: frame.seq,
             kind: Kind::of(frame.kind)?,
             road: frame.road,
             id: frame.id,
@@ -102,8 +110,8 @@ impl Message for EventFrame {
     }
 }
 
-/// **事件就是那个元素**（`Message` 的两只手直接走 `EventFrame`）：订阅者那一页里的每一格
-/// 装的正是它——于是 `communication::rack::Writer<Event>` 这个类型自己就说清了"写的是什么"。
+/// **事件就是那个元素**（`Message` 的两只手直接走 `EventFrame`）：递出去的就是它的字节
+/// （持树者那一具架的格子里装的正是它），于是 `Event` 这个类型自己就说清了"过边界的是什么"。
 impl Message for Event {
     type In = Event;
     type Buf = [u8; EventFrame::LEN];
@@ -111,6 +119,7 @@ impl Message for Event {
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
         EventFrame {
+            seq: self.seq,
             kind: self.kind.code(),
             road: self.road.clone(),
             id: self.id,
@@ -122,6 +131,7 @@ impl Message for Event {
     fn fetch(bytes: &[u8]) -> Option<Event> {
         let (frame, _) = EventFrame::fetch_at(bytes, 0)?;
         Some(Event {
+            seq: frame.seq,
             kind: Kind::of(frame.kind)?,
             road: frame.road,
             id: frame.id,

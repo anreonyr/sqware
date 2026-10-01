@@ -64,6 +64,10 @@ pub mod probe_rule;
 pub mod probe_rule_other;
 #[path = "../harness/probe/probe_watch/program.rs"]
 pub mod probe_watch;
+#[path = "../harness/probe/probe_watch_after/program.rs"]
+pub mod probe_watch_after;
+#[path = "../harness/probe/probe_watch_gone/program.rs"]
+pub mod probe_watch_gone;
 #[path = "../harness/bench/rig/rig/program.rs"]
 pub mod rig;
 #[path = "../driver/router/program.rs"]
@@ -113,6 +117,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     // 事件那条路的正证客人（订阅 ＋ 过滤 ＋ 事件内容）：自持 `watch` 与 `land` 两位，
     // 不借别人的试验场（见它那份声明）。
     &probe_watch::PROBE_WATCH,
+    // "退场即撤订"那一对：`gone` 订一条路、停一下、退场；`after` 在同一条路上连改 6 趟。
+    // 判据是持树者那一侧的两行读数（`watch dropped who=…` 与 `watchers=` 下降），不是整机那一格
+    // ——故两台都**轻**（趟数少、间隔长），别把 `layout.rs` 在案的那族残余放大成红。
+    &probe_watch_after::PROBE_WATCH_AFTER,
+    &probe_watch_gone::PROBE_WATCH_GONE,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
     // 那两族"没有会话"的服务（名册 / 盟册）：各该有 `Grant::ALL.len()` 枚（四族格数各归各家——

@@ -55,9 +55,10 @@ impl<M: Message> Receiver<M> {
     }
 }
 
-/// 收不回来：三格**分得开**
+/// 收不回来：三格**分得开**（与 `rack::RecvFail` 同一套词）
 /// - RecvFail::Unread = **收到了、解不动**（长度不对 / 形状不对 / 缓冲比帧还短）
 /// **带那一条读到了几字节**。**它不属于载体那一层**：搬字节的那一手不做解码，故"读不懂"在
+#[derive(Debug)]
 pub enum RecvFail {
     Mail(MailFail),
     /// 收到了 `len` 字节，解不动（`buffer` 前 `len` 字节就是那一条原始帧）

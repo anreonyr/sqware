@@ -170,6 +170,19 @@ impl<M: Message> Rack<M> {
     pub fn ship(&self) -> (PieToken, PieToken) {
         (self.dock.pie_token(), self.bell.token())
     }
+
+    /// **环里第 `seq` 格此刻的载荷字节**（号从 1 起，`Writer::send` 每落一格加一）。
+    ///
+    /// 写者刚写完就把它**借出去**（交给孔上那只手：手只登记"这一段在哪"，取走那一刻内核复制
+    /// 一次）。**只在环没绕回这一格之前有效**：绕回来之后这里就是更新的内容——故载荷里带一格
+    /// 自己的号（`Event::seq`），读者自己辨"这一条我读过没有、中间丢了几条"。
+    pub fn slot(&self, seq: u64) -> &[u8] {
+        if seq == 0 {
+            return &[];
+        }
+        let ring = ring(self.dock.view());
+        payload(slot(ring, (seq - 1) as usize))
+    }
 }
 
 /// `View` 那一段就是页首：转成 `&Ring`（页由内核按页对齐造，`View::base` 是页首）。

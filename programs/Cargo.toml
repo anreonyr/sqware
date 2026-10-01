@@ -180,6 +180,20 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-watch-after"
+path = "src/harness/probe/probe_watch_after/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-watch-gone"
+path = "src/harness/probe/probe_watch_gone/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-probe-rule"
 path = "src/harness/probe/probe_rule/main.rs"
 test = false

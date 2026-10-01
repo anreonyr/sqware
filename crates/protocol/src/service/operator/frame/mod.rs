@@ -69,11 +69,10 @@ pub enum Wire {
     Find(EntryId),
     Trim(EntryId),
     Name(EntryId),
-    /// `watch`：订 `road` 这条子树；`page` / `bell` 是订阅者自己铸的那两块（页 ＋ 铃）
+    /// `watch`：订 `road` 这条子树；`hole` 是订阅者自己铸的那一枚孔（事件往那儿递）
     Watch {
         road: PathBuf,
-        page: PieToken,
-        bell: PieToken,
+        hole: PieToken,
     },
 }
 
@@ -116,11 +115,10 @@ impl Message for Req {
             Req::Find(id) => Entry { op: FIND, id: *id }.store_at(out, 0),
             Req::Trim(id) => Entry { op: TRIM, id: *id }.store_at(out, 0),
             Req::Name(id) => Entry { op: NAME, id: *id }.store_at(out, 0),
-            Req::Watch { road, page, bell } => WatchFrame {
+            Req::Watch { road, hole } => WatchFrame {
                 op: WATCH,
                 road: road.clone(),
-                page: *page,
-                bell: *bell,
+                hole: *hole,
             }
             .store_at(out, 0),
         }
@@ -183,8 +181,7 @@ impl Message for Req {
                 }
                 Wire::Watch {
                     road: frame.road,
-                    page: frame.page,
-                    bell: frame.bell,
+                    hole: frame.hole,
                 }
             }
             // 没见过的动作码、或长度不是这张形状该有的那个 ⇒ 读不懂（不另立一格）。

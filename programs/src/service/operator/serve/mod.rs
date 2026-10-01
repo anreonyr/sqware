@@ -98,7 +98,11 @@ pub fn serve() -> Result<(), Start> {
     );
 
     let mut tree = Operator::new();
-    let mut watchers = watch::Watchers::new();
+    // **持树者自己那一具架**（事件住它那一页里）：开不出来这一台就起不来（与"桌"同一条处置）。
+    let mut watchers = match watch::Watchers::open() {
+        Ok(watchers) => watchers,
+        Err(()) => return Err(Start::Desk(E_TREE)),
+    };
     let mut desk = Desk::new();
     let mut wired = false;
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();

@@ -69,17 +69,18 @@ pub struct Entry {
     pub id: EntryId,
 }
 
-/// `watch` 那一问：动作码 ＋ 要订的那条路 ＋ 订阅者那两块（**页**：事件往哪写；**铃**：有事响它）
+/// `watch` 那一问：动作码 ＋ 要订的那条路 ＋ **订阅者那一枚孔**（事件往哪儿递）
 ///
-/// 两块都由订阅者**自己**铸、经这条问话交过来（与 `land` 交一枚入口同一条手）：
-/// 页是 `communication::rack` 那一具架，铃是它的"有事"。树上**只记不换**——撤订靠那一页/那一铃
-/// 作废（订阅者退场即失效），故没有第二条形状。
+/// 孔由订阅者**自己**铸、经这条问话交过来（与 `land` 交一枚入口同一条手）。树上**只记不换**
+/// ——撤订靠那一枚孔作废（订阅者退场即失效），故没有第二条形状。
+///
+/// **它从前交两块（页 ＋ 铃）**：那时事件由持树者直接写进订阅者那一页。改成"递手"之后
+/// 跨域只剩这一枚孔（字节仍住持树者自己那一具架里，取走那一刻内核复制一次）。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 pub struct WatchFrame {
     pub op: u8,
     pub road: PathBuf,
-    pub page: PieToken,
-    pub bell: PieToken,
+    pub hole: PieToken,
 }
 
 /// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错
@@ -110,11 +111,11 @@ pub enum Req {
     Trim(EntryId),
     /// `name`：那一号此刻叫什么
     Name(EntryId),
-    /// `watch`：订 `road` 这条子树；此后树上真变了就往 `page` 那一页里记、响 `bell` 那一枚
+    /// `watch`：订 `road` 这条子树；此后树上真变了就往 `hole` 那一枚孔上**递一只手**
+    /// （字节住持树者那一具架里，取走时复制一次）
     Watch {
         road: PathBuf,
-        page: PieToken,
-        bell: PieToken,
+        hole: PieToken,
     },
 }
 
