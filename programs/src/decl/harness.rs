@@ -47,7 +47,6 @@ pub static GUEST: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "router"]),
         ending: Some(Ending::Transient),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -65,7 +64,6 @@ pub static PASSER: Program = Program {
     relation: Relation {
         deps: Some(&[]),
         ending: Some(Ending::Transient),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -100,7 +98,6 @@ pub static SLEEPER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "rtc"]),
         ending: Some(Ending::Transient),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -247,7 +244,6 @@ pub static PROBE_BOUND: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

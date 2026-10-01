@@ -85,7 +85,6 @@ pub static PROGRAM: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "uart"]),
         ending: Some(Ending::Told),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

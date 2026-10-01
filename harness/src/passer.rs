@@ -29,15 +29,9 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Wait;
 use programs::Report;
 
 // 板：本域是**客侧**（挂一个名字）。
-use programs::system::board::client as board;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::board as bcall;
-use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字 —— 本域知道的全部。
 const ME: &str = "passer";
@@ -51,39 +45,13 @@ const E_TRIP: usize = 1;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
-    // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
-    //
-    // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
-    // ——牌子那一格只认得 `entry` 那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
-        return bail("passer: no board link");
-    };
-    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
-    // 合成一格（装泊位 / 认对端 / 铸问话孔，任一没成都答 `Fail`），故这里只剩一句。
-    //
-    // 一、挂上自己：服务入口（记号 `entry`，板那侧按它把入口与问话孔分开）经会话交给板，
-    // 板因此答得出"passer 在哪"——解入口、编名字、`register` 三手由 `enroll` 收成一手。
-    let (reg, entry) = board::enroll(&seat, ME, Wait::AtMost(MS));
-    debug!("passer: reg={reg} entry={} say={ME}", entry.get());
+    // **照实记（"上板 ＋ 报到"那一步退场：撤板那一刀）**：本域从前先开一条 `board::BERTH` 会话并
+    // `enroll`——它的全部意义是"挂上自己、然后**不说退场就死**"，量的是板那一侧看得见看不见。
+    // 板那一族的死信号已整片退场（监督那一趟改读**内核那一格**认死）⇒ 那一步连同它的读数
+    // （`reg` / `entry`）与 assert 一起退场；本域今天只剩"**直接死**"这一件事。
 
-    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——"挂名字该成功"
-    // 是本站此刻就知道的期望（旧宿主靶上那一条 `passer: reg=0 entry=… say=passer` 钉的就是它）。
-    {
-        assert_eq!(reg, bcall::OK)
-    }
-
-    // 二、**直接死**：不说退场那一句、不交回、不留门闩。板上那枚牌子与板侧那一格从此是
-    //     死实例——只有"那一枚还答得出吗"（`VestedBy`）问得出来。
-    let registered = reg == bcall::OK;
-    return Report::note(
-        if registered { E_OK } else { E_TRIP },
-        if registered {
-            "passer: gone"
-        } else {
-            "passer: failed"
-        },
-    );
+    // 一、**直接死**：不说退场那一句、不交回、不留门闩。
+    return Report::note(E_OK, "passer: gone");
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。

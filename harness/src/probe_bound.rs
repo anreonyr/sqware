@@ -66,11 +66,9 @@ use env::HoleDir;
 use programs::Report;
 
 use env::PieToken;
-use programs::system::board::client as board;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::board as bcall;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use runtime::env::mail;
@@ -171,10 +169,7 @@ fn main() -> Report<'static> {
     // 之内**：装配者按行装完就把这一位的路 `claim` 下来（有期限），故这一台**不能先做别的
     // 手脚再装路**——照实记：第一版把树那一条腿（含 junk 那一趟的两个有界等）排在装路之前，
     // 装配那一侧当场报 `board:claim`（`步骤` 读数），这一台连树路都没拿到。
-    let Ok(door) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
-        return bail("probe-bound: no board link");
-    };
-    let (deck, bolt, _) = (&door.link, door.talk, door.host);
+    // **照实记（"板那一道门"那一条腿退场：撤板那一刀）**：本域从前开两道路（板 ＋ 树）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
@@ -220,9 +215,6 @@ fn main() -> Report<'static> {
         &land_frame(LAND_PERMIT_KNOWN),
     );
 
-    // 三·五、**板那一道门**：同一条判据的另一条腿（来历见文件头那一段照实记）。
-    let (b_junk_in, b_said_bad, b_after) = junk_trip_board(bolt, &deck);
-
     // 四、判据：**一例一条**，名字即结论。
     {
         {
@@ -261,14 +253,6 @@ fn main() -> Report<'static> {
             assert!(o_after, "吞了那条帧之后，门不再答正经的问了");
         }
     }
-    {
-        {
-            assert!(b_junk_in, "不合族的帧推不进板那道门（那一枚孔不在？）");
-            assert!(b_said_bad, "板没把那一条取出来 / 没答 `BAD`");
-            assert!(b_after, "吞了 junk 之后，板不再答正经的问了");
-        }
-    }
-
     return Report::note(E_OK, OK_NOTE);
 }
 
@@ -326,24 +310,6 @@ fn junk_trip(
 /// 正经那一问取 `evict`（**一字节短帧、空载荷**）：这一位没在板上登记过 ⇒ 板答 `UNKNOWN`
 /// ——"答得出"就是这一条要的全部（答得对不对由别的证客管），而它**不铸孔、不交入口**，
 /// 故这一条量的是**门**，不是账。
-fn junk_trip_board(bolt: PieToken, deck: &Endpoint) -> (bool, bool, bool) {
-    let junk = junk();
-    let door = mail::HolePie::from_token(bolt);
-    let pushed = door.push(&junk, Wait::AtMost(MS)).is_ok()
-        && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
-
-    // 板那一路那一枚（本端的读口）：junk 那一声 `BAD` 先读掉。
-    let mut back = [0u8; 8];
-    let said = mail::HolePie::from_token(deck.rx())
-        .pull(&mut back, Wait::AtMost(MS))
-        .map(|(n, _)| n)
-        .ok();
-    let bad = matches!(said, Some(1) if back[0] == bcall::BAD);
-
-    // 正经的一问：**门还在答**。
-    let after = board::evict(bolt, deck, Wait::AtMost(MS)).is_ok();
-    (pushed, bad, after)
-}
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）。
 fn bail<'a>(note: &'a str) -> Report<'a> {

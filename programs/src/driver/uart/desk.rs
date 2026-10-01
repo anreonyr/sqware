@@ -82,7 +82,6 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
         Fail::at(
             E_UART,
             match s {
-                Step::Board => "board",
                 Step::Tree => "tree",
             },
         )

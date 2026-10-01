@@ -79,7 +79,6 @@ fn main() -> Result<(), Fail> {
         Fail::at(
             E_RTC,
             match s {
-                Step::Board => "board",
                 Step::Tree => "tree",
             },
         )

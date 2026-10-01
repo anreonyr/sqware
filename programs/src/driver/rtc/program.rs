@@ -34,7 +34,6 @@ pub static PROGRAM: Program = Program {
         // 机器早就有的一种抖，成因待查（判据：本台在 `line` 那一步收到"问不动"的答）。
         deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Resident),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

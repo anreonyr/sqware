@@ -52,7 +52,6 @@ use programs::Report;
 
 // 板：本域是**客侧**（挂牌子、说一句"我走了"）；树：本域也是客侧（按名找人）。
 use env::PieToken;
-use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::board as bcall;
@@ -79,23 +78,14 @@ const E_TRIP: usize = 1;
 #[programs::entry]
 fn main() -> Report<'static> {
     let sire = utask::sire();
-    // 板那条路：本端装一条、认下生我者那一枚（孔交给生我者，它再转授给板线程）。
-    //
-    // **必须先于铸入口**：入口与问话孔都是本端铸的、都交到板手里，而板按**记号**分人
-    // ——牌子这一格只认得"entry"那一枚；两枚同来源的孔若不刻记号，板就分不出哪个是入口。
-    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
-        return bail("guest: no board link");
-    };
-    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail —— `Session::open` 把装路那一趟
-    // 合成一格，故这里只剩一句。问话从 `talk` 走，答话走上面那条板路。
-    let (link, talk) = (&seat.link, seat.talk);
     let none = PieToken::NONE;
 
-    // 一、挂上自己：解入口 ＋ 编名字 ＋ `register` 三手由 `enroll` 收成一手——板因此答得出
-    // "guest 在哪"。
-    let (reg, _) = board::enroll(&seat, ME, Wait::AtMost(MS));
+    // **照实记（"上板 ＋ 报到"那两步退场：撤板那一刀）**：本域从前先开一条 `board::BERTH` 会话
+    // 并 `enroll`（板因此答得出"guest 在哪"），走完再 `evict` 说一句"我走了"——那两步的读数
+    // （`reg` / `bye`）连同它们的 assert 一起退场。板那一族的死信号已整片退场（监督那一趟读
+    // **内核那一格**认死），故这一台今天只走树上那一趟。
 
-    // 二、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
+    // 一、与树开会话：本端那一枚交给生我者（它再转授给持树者），另铸一枚问话孔给它。
     //
     // **照实记（这一处为什么包成 `Face`，task-2 那一刀）**：会话装好之后本域**只要**树上那一趟
     // （名字 → 号 → 入口），那条线本身再不露面 ⇒ 按"已持 `Session` 则用 `Face`"把它交给
@@ -124,19 +114,12 @@ fn main() -> Report<'static> {
         Err(fail) => (ocall::fail_to_code(Some(fail)), none),
     };
 
-    // 四、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）
+    // 二、查到的那一枚（持树者经会话授进本域表里）：本域在表里认得出它吗（读数里的 `entry`）
     // ——它就是上面那一趟带回来的号。
-    // 五、走完这一趟：说一句"我走了"（一字节帧，不带名字也不带入口）。板据此撤掉本域那一格、
-    //     摘掉本域挂在板上的牌子，答一格 `OK`；本域不在板上那本账上则答 `UNKNOWN`。
-    let bye = board::evict(talk, &link, Wait::AtMost(MS)).unwrap_or(BAD);
+    debug!("guest: find={find} entry={}", at.get());
 
-    debug!("guest: reg={reg} find={find} entry={} bye={bye}", at.get());
-
-    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那三样都是本站
-    // 此刻就知道的期望（旧宿主靶上 `guest: reg=0 find=0` 那一行钉的就是它们）。
-    {
-        assert_eq!(reg, bcall::OK)
-    }
+    // 判据就地登记（用户裁定"服务台搬进 SUT"）：**只搬本域已经在判的东西**——那两样都是本站
+    // 此刻就知道的期望（旧宿主靶上 `guest: find=0` 那一行钉的就是它们）。
     {
         assert_eq!(find, ocall::OK)
     }
@@ -147,7 +130,7 @@ fn main() -> Report<'static> {
     }
 
     // 六、退场：一次往返，不留常驻（kernel 打的那一行就是这一格的读数）。
-    let walked = reg == bcall::OK && find == ocall::OK && at != none;
+    let walked = find == ocall::OK && at != none;
     return Report::note(
         if walked { E_OK } else { E_TRIP },
         if walked {

@@ -39,10 +39,8 @@ use env::Wait;
 use programs::Report;
 
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
-use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::board as bcall;
 use protocol::system::operator::Fail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
@@ -84,9 +82,9 @@ fn no_service(step: &'static str) -> Report<'static> {
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    // 上板：**注册在前面**——板要能看见本域（挂不上照样往下走，只是那条信号缺席）。
-    let reg = register();
-    debug!("sleeper: reg={reg}");
+    // **照实记（"上板报到"那一步退场：撤板那一刀）**：本域从前先开一条 `board::BERTH` 会话报到
+    // （`reg` 那一格就是它的答码，进读数也进 assert）。板那一族的死信号已整片退场（监督那一趟
+    // 改读内核那一格）⇒ 那一步连同 `register()` 与那两处用法一起退场。
 
     let sire = utask::sire();
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
@@ -149,9 +147,6 @@ fn main() -> Report<'static> {
     // 那一行就恒等于 0，所以"它是 0"是**控制流证据**，不是判据；把它写成
     // `assert_eq!(armed_code, 0)` 就是把 `bail` 改个名字（这一格是写的时候当场撞上的：
     // 第一版写了 `assert!(armed.is_ok())`，而 `armed` 根本不是 `Result`）。
-    {
-        assert_eq!(reg, bcall::OK)
-    }
     // 照实记：`arming_the_past_is_refused` 那一例随 `Wire::Arm` 收相对量而退场（"过去"
     // 不可表达）——判据数 3 → 2，`crates/gate/src/soak.rs`（已删）那张表跟着改。
     {
@@ -199,15 +194,4 @@ fn find_face(tree: &Face) -> Option<PieToken> {
             Err(_) => return None,
         }
     }
-}
-
-/// 上板报到（与 `passer` / `canonical` 同一段前奏）：返板的答码（`bcall::OK` = 挂上了）。
-fn register() -> u8 {
-    let sire = utask::sire();
-    let Ok(seat) = Session::open(sire, board::BERTH, Wait::AtMost(MS)) else {
-        return bcall::BAD;
-    };
-    // 照实记：从前"板路没接上"与"问话孔没铸出来"是两句 bail（这里折成同一个 `BAD`）——
-    // `Session::open` 把装路那一趟合成一格。解入口、编名字、`register` 三手由 `enroll` 收成一手。
-    board::enroll(&seat, ME, Wait::AtMost(MS)).0
 }

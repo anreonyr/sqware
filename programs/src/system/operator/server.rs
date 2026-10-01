@@ -37,7 +37,6 @@ use protocol::system::operator::Grant;
 use protocol::system::operator::grant::grant_of;
 
 use crate::program::operator::E_TREE;
-use crate::system::control::READY_MS;
 use crate::system::control::service::Start;
 use crate::system::desk::{Desk, DeskFail, Guest};
 use crate::system::operator::core::Operator;
@@ -78,18 +77,9 @@ pub fn serve() -> Result<(), Start> {
     // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——**只有这一条来源**
     // （从 `args` 里掏一格那条绕路已退：它存在只因为 iii 让三枚与编排者同域）。
     let assembler = runtime::env::unit::sire();
-    // **上板**：让板看得见**本域（这一枚线程）的死**——三枚内件此后同形
-    // （名册 / 盟册早就在上板）。**名字不必本域自己报名**：装配者随提示那一格递过来；
-    // 这一格只管把板那条路装上（装配者那一侧要按 `(本域, 板路)` 认领本域交出去的那一枚，
-    // 故少了这一步装配当场报 `board:claim`）。
-    let _board = match protocol::communication::session::Session::open(
-        assembler,
-        crate::system::board::client::BERTH,
-        Wait::AtMost(READY_MS),
-    ) {
-        Ok(seat) => seat,
-        Err(_) => return Err(Start::Board(E_TREE)),
-    };
+    // **照实记（"上板"那一格退场：撤板那一刀）**：本域从前要开一条 `board::BERTH` 会话，好让板
+    // 看得见它的死（三枚内件同形）。那一族的**死信号**已经整片退场（死由监督那一趟的表侧扫认），
+    // 而握手的两头一起撤（装配者不再接、客侧不再开会话）⇒ 这一格退场。
     // 提示孔：本线程铸的那一枚（**装配者要它做的三件事都从这里进来**：立一条路 / 协调两格 /
     // 一位客人），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(ocall::TIP_MARK) else {

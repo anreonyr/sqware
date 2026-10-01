@@ -25,9 +25,8 @@ mod adapt;
 /// 纯功能：行规程（字节流 → 终端认的行）。
 mod core;
 
-use crate::adapt::{E_NO_CONSOLE, ME, MS};
+use crate::adapt::{E_NO_CONSOLE, MS};
 use env::Wait;
-use programs::system::board::client as board;
 use protocol::communication::session::Session;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face;
@@ -37,9 +36,8 @@ use runtime::env::unit as utask;
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     let sire = utask::sire();
-    // 1：上板——这一景最后一条是它，板据此看出它死了。**挂不上照旧干活**，故不 `?`。
-    let _ = Session::open(sire, board::BERTH, Wait::AtMost(MS))
-        .map(|seat| board::enroll(&seat, ME, Wait::AtMost(MS)));
+    // **照实记（"上板"那一格退场：撤板那一刀）**：这一格从前开一条 `board::BERTH` 会话并报到
+    // ——板据此看出它死了。板那一族的死信号整片退场（监督那一趟改读内核那一格）⇒ 这一格退场。
 
     // 2：树那条路：本域只开一条会话（`Session::open`）——找控制台要它。
     //

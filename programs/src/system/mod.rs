@@ -50,7 +50,6 @@ use env::Wait;
 use protocol::debug;
 
 use crate::program::{Died, Program};
-use crate::system::board::bridge::Bridge;
 use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
@@ -91,8 +90,6 @@ pub struct Assembly {
     tree: Tree,
     /// 身份轴：名册那一面。
     roster: Roster,
-    /// 存在信号·这一头：板在装配者这一侧的那条路。
-    board: Bridge,
     /// 存在信号·那一头：死亡道表与等任一道响的那只组。
     watch: Watch,
 }
@@ -107,7 +104,6 @@ impl Assembly {
             control: Control::new(boot.catalog, boot.machine, boot.pier),
             tree: Tree::default(),
             roster: Roster::default(),
-            board: Bridge::default(),
             watch: Watch::new()?,
         })
     }

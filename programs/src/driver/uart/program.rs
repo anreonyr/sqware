@@ -24,7 +24,6 @@ pub static PROGRAM: Program = Program {
         // **那条红与这条边分开记**（A/B 两面都出得来、n=3 分不开，见 `rtc/program.rs` 的照实记）。
         deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Resident),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

@@ -30,7 +30,6 @@
 
 use crate::driver::fail::Fail;
 use crate::program::Died;
-use crate::system::board::client as board;
 use crate::system::operator::bridge;
 use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
@@ -56,9 +55,10 @@ pub struct Context {
 
 /// [`Context::join`] 的失败格：**死在哪一步**（两格各一个不同的下一步）。
 pub enum Step {
-    /// 上板那两步（开板路 / 要问话孔）。
-    Board,
     /// 树那条会话（开会话 / 要问话孔）。
+    ///
+    /// **照实记（`Board` 那一格退场）**：它从前是第一位——"上板那两步"。撤板那一刀把客侧那一条
+    /// 会话整片撤了 ⇒ 这一格退场。
     Tree,
 }
 
@@ -68,10 +68,8 @@ impl Context {
     /// 门牌由调用方**先**解（各域的失败格不同：两台的 `unseal` 折 `tree`，路由者折 `desk`）。
     /// 次序照旧：**板在前、树在后**（单故障读数与从前逐字相同；两件同时不成才可能换格子）。
     pub fn join(entry: PieToken, sire: TaskId, ms: Wait) -> Result<Context, Step> {
-        // 上板：**只为让板看得见本域的死**；不挂牌子——名字在树上。**问话孔照交**（开会话那一手
-        // 一并铸）：不交的那一位在板账上永远"没挂齐"，板线程会一直退化成 1 ms 节拍
-        // （`board::settle` 的 `unarmed`）。
-        let _board = Session::open(sire, board::BERTH, ms).map_err(|_| Step::Board)?;
+        // **照实记（"上板"那一格退场：撤板那一刀）**：本域从前开一条 `board::BERTH` 会话，只为让
+        // 板看得见它的死；板那一族的死信号整片退场（监督那一趟改读内核那一格）⇒ 这一格退场。
         let session = Session::open(sire, operator::BERTH, ms).map_err(|_| Step::Tree)?;
         Ok(Context { entry, session })
     }
@@ -104,7 +102,6 @@ impl Context {
             Fail::at(
                 died,
                 match s {
-                    Step::Board => "board",
                     Step::Tree => "tree",
                 },
             )

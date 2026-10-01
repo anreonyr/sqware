@@ -18,7 +18,6 @@ pub static PROGRAM: Program = Program {
     relation: Relation {
         deps: Some(&[]),
         ending: Some(Ending::Resident),
-        presence: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

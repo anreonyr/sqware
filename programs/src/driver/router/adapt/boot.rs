@@ -98,7 +98,6 @@ pub fn up() -> Result<Up, Fail> {
         Fail::at(
             E_ROUTER,
             match s {
-                Step::Board => "board",
                 Step::Tree => "tree",
             },
         )

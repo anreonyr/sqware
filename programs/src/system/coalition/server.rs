@@ -27,7 +27,6 @@ use crate::program::coalition::E_COALITION;
 use crate::system::control::service::Start;
 use env::Wait;
 
-use crate::system::board::client as board;
 use crate::system::carrier::carrier;
 use crate::system::coalition::core::Coalition;
 use crate::system::mount;
@@ -63,9 +62,8 @@ pub fn serve() -> Result<(), Start> {
         // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——只有这一条来源。
         let assembler = runtime::env::unit::sire();
 
-        // 二、上板：只为让板看得见本域的死（它常驻，编排域据此记账）。
-        let _board = Session::open(assembler, board::BERTH, Wait::AtMost(MS))
-            .map_err(|_| Start::Board(E_COALITION))?;
+        // **照实记（"上板"那一格退场：撤板那一刀）**：与名册同形——只为让板看得见它的死；板那一族
+        // 的死信号整片退场（监督那一趟改读内核那一格）⇒ 这一格退场。
 
         // 三、门牌**两枚**：**一面一枚**（[`mount::entry`] 按"记号 ＋ 面名"给那一枚孔与末段名）。
         //

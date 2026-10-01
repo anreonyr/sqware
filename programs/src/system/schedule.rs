@@ -34,7 +34,6 @@
 
 use crate::program::{Died, Program};
 use crate::system::Assembly;
-use crate::system::board::bridge as board;
 use crate::system::control::assemble as control;
 use crate::system::control::{Error, Service};
 use crate::system::operator::bridge as operator;
@@ -61,11 +60,7 @@ pub const BEFORE_LAUNCH: Phase = &[principal::bind];
 /// **次序是契约**（照实记：这一格换过位置）：等就绪要等的那一条凭据，要到**挂上树、拿到物料、
 /// 把每一台落完格**之后才铸得出来 ⇒ 它必须排在板 / 树那两手之后（理由与实测写在
 /// [`await_ready`](crate::system::control::assemble::await_ready)）。
-pub const AFTER_RELEASE: Phase = &[
-    board::attach_client,
-    operator::attach_client,
-    control::await_ready,
-];
+pub const AFTER_RELEASE: Phase = &[operator::attach_client, control::await_ready];
 
 /// **它答得动之后**：认下"答案从哪来"那一类事实——谁持树（那一枚提示之路）、谁是名册
 /// （它交上来的那一枚定面门牌）。**两件都由运行期的那一枚孔认**，不读声明。
