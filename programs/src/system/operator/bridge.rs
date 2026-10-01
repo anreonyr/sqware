@@ -449,9 +449,9 @@ pub fn land(
             Err(fail) => {
                 // **"哪一台没走到树上"的唯一正身**（照实记：它从前走 `debug!`，而那一支宏在
                 // release 下是空操作 ⇒ 验收跑的机器只留下"服务一片缺席"，一个成因都没有）。
-                debug!(
+                debug::put(&alloc::format!(
                     "{family}: tree road={road} open at={seg:?} failed={fail:?}"
-                );
+                ));
                 return Vec::new();
             }
         }

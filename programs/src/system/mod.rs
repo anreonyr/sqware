@@ -218,22 +218,22 @@ impl Assembly {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
-                    debug!("system: control face not mounted ({why})");
+                    debug::put(&alloc::format!("system: control face not mounted ({why})"));
                     continue;
                 }
             };
             // 路：**本族那一族的常量**（`/svc/sys/control`）接上这一面的名——一处都不自己拼。
             let Some(road) = protocol::system::control::DIR.try_join(name.as_str()) else {
-                debug!("system: control face not mounted (name)");
+                debug::put("system: control face not mounted (name)");
                 continue;
             };
             if let Err(why) = self.tree.plate(&road, Some(entry), rule) {
-                debug!("system: control face not mounted ({why})");
+                debug::put(&alloc::format!("system: control face not mounted ({why})"));
                 continue;
             }
             self.watch.attach_face(grant, entry);
             // 读数**从那条路自己打印**（`Path: Display`）——路径不再写第二遍。
-            debug!("system: control mounted at {road}");
+            debug::put(&alloc::format!("system: control mounted at {road}"));
         }
     }
 
@@ -254,29 +254,37 @@ impl Assembly {
     /// （`probe-operator-gate` 那一台的读数正是拿这七行当判据，见
     /// `harness/src/probe_operator_gate.rs::count_under`）。与 `fail()`／`bridge::land` 那两处
     /// 同一条理由：**缺一位服务是一档需要成因的读数**。
+    ///
+    /// **照实记（上面那条话在本刀之前与实情分家）**：它从写下那天起**没兑现**——正文走的
+    /// 一直是设门的 `debug!`。实测（同一份 release `root` 景、喂 `exit`）：
+    /// `grep -c 'grant mounted at'` **0**、`'control mounted at'` **0**（本刀之前）；
+    /// **7 ＋ 4**（本刀之后）。本刀把那 11 句（四面 ＋ 七位）连同 [`fail`] 那两句、
+    /// `operator::bridge::land` 那一句、`operator::claim` 那一句、持树者那四句一并改成
+    /// [`debug::put`](protocol::debug::put)（不设构建门的那一手）：**只拼需要拼的**
+    /// （`&'static str` 直接递，其余才 `format!`）。
     fn mount_grants(&mut self) {
         // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::system::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
-                    debug!("system: grant not mounted ({why})");
+                    debug::put(&alloc::format!("system: grant not mounted ({why})"));
                     continue;
                 }
             };
             // 路：**本族那一族的常量**（`/svc/sys/operator`）接上这一面的名。
             let Some(road) = protocol::system::operator::DIR.try_join(name.as_str()) else {
-                debug!("system: grant not mounted (name)");
+                debug::put("system: grant not mounted (name)");
                 continue;
             };
             if let Err(why) =
                 self.tree
                     .plate(&road, Some(entry), protocol::system::operator::Rule::None)
             {
-                debug!("system: grant not mounted ({why})");
+                debug::put(&alloc::format!("system: grant not mounted ({why})"));
                 continue;
             }
-            debug!("system: grant mounted at {road}");
+            debug::put(&alloc::format!("system: grant mounted at {road}"));
         }
     }
 
@@ -314,7 +322,7 @@ impl Assembly {
                 continue;
             }
             if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {
-                debug!("system: dep not ready ({dep})");
+                debug::put(&alloc::format!("system: dep not ready ({dep})"));
                 return Err(fail(program, Error::Step("dep not ready")));
             }
         }
@@ -357,7 +365,12 @@ fn fail(program: &Program, e: Error) -> Died {
     // 那一支宏在 `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）
     // ⇒ release 的机器上只留下一个 `system: assemble`，**上面那句最要紧的话一个字没有**。
     // 这一刀改走不设门的那一手（`e.said()` 本来就是 `&'static str`，连格式化都不必）。
-    debug!("{}", program.name());
-    debug!("{}", e.said());
+    //
+    // **照实记（那句话在本刀之前也没兑现）**：正文走的一直是设门的 `debug!`——实测那一跑
+    // （release `root` 景、装配失败那一档）里 release 只有 `system: assemble` 一行，
+    // **没有**程序名与步名；本刀兑现（见 [`Assembly::mount_grants`] 那条照实记里的两次数）。
+    // **这两句就是本相最要紧的读数**：哪一台、死在哪一步（见上面那条照实记）。
+    debug::put(program.name());
+    debug::put(e.said());
     program.demand.died
 }

@@ -53,8 +53,10 @@ pub(super) fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieTo
             // `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）——
             // 验收跑的全是 release ⇒ "一位客人铸了两枚问话孔"这件事从来没人听见。而下一行正好
             // **取第一枚**：认错一枚的后果是**另一位客人的问话永远没人读**（见 [`ask_of`] 的注）。
-            // 故这一句改走不设构建门的那一手。
-            debug!("{}", note);
+            // 故这一句改走不设构建门的那一手——**而这句话在本刀之前也没兑现**（正文走的还是
+            // 设门的 `debug!`）：本刀一并兑现，实测见 `programs/src/system/mod.rs` 的
+            // `mount_grants` 那条照实记（同一档、同一份景、两次数）。
+            debug::put(note);
         }
     }
     Some(first.token)

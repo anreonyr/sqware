@@ -305,10 +305,10 @@ fn settle(
                     Err(DeskFail::Already) => {}
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
                     // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
-                    Err(DeskFail::Full) => debug!("operator: desk full"),
+                    Err(DeskFail::Full) => debug::put("operator: desk full"),
                 },
                 // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
-                None => debug!("operator: no reply"),
+                None => debug::put("operator: no reply"),
             },
         }
     }
@@ -360,12 +360,12 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
     if unarmed == 0 {
         return;
     }
-    debug!(
+    debug::put(&alloc::format!(
         "operator: settle guests={} unarmed={} ~{}ms",
         desk.occupied(),
         unarmed,
         rounds,
-    );
+    ));
     // 逐位点名：**每位一行、每次至多四位**（病态时这是每 ~2 s 五行的量，不淹日志）。
     let mut said = 0usize;
     desk.unarmed_each(|who| {
@@ -374,11 +374,11 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
         }
         said += 1;
         let hit = MARKS.iter().any(|mark| ask_of(who, *mark).is_some());
-        debug!(
+        debug::put(&alloc::format!(
             "operator: unarmed who={} ask={}",
             who.get(),
             if hit { "some" } else { "none" },
-        );
+        ));
     });
 }
 
