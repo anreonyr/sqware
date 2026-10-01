@@ -1,7 +1,8 @@
-//! boot — **boot 给引导域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
-//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::args`），行的还是
-//! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::system::supply`]；要哪几样由
-//! **收方**自己开单（三张都在 [`programs::unit`]，开口的形态就是 `Need`）。
+//! boot — **内核对引导镜像那一域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
+//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::args`），答的还是
+//! "谁被装进来了"这件事。
+//! 内核只把这两区**只读借映**进**引导镜像那一域**，故读者是每一个引导镜像：
+//! `system`，以及 harness 的 `again` / `rig` / `load` / `group`。
 
 use env::PieToken;
 use env::key::{DTB, IRQ, REGION};
@@ -9,15 +10,15 @@ use env::{Key, PAIR_LEN, Pair};
 use env::{args as boot_args, manifest};
 use protocol::debug;
 
-/// boot 给引导域的两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
-pub struct Root {
+/// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
+pub struct Accounts {
     view: &'static [u8],
     pairs: &'static [u8],
 }
 
-impl Root {
+impl Accounts {
     /// 从启动参数取出两块账。`None` = 参数不足 / 清单头非法（不该发生）。
-    pub fn take() -> Option<Root> {
+    pub fn take() -> Option<Accounts> {
         let a = runtime::core::unit::args();
         if a.len() < boot_args::LEN {
             return None;
@@ -30,16 +31,10 @@ impl Root {
         let pairs = unsafe { core::slice::from_raw_parts(pairs, count * PAIR_LEN) };
         // 清单头先验一遍：非法即装配不成立。
         manifest::Entries::new(view)?;
-        Some(Root { view, pairs })
+        Some(Accounts { view, pairs })
     }
 
-    /// 清单：这台机器装了哪些程序（引导域按名字挑）。
-    /// 每次给一个**新的游标**（`Entries` 是一次性读的），故调用方可以按需重读。
-    pub fn programs(&self) -> manifest::Entries<'static> {
-        manifest::Entries::new(self.view).expect("清单头已在 take 时验过")
-    }
-
-    /// 清单那块字节的读面（`Catalog` 的两种来源之一）。
+    /// 清单那块字节（[`Catalog::of_boot`] 的输入）。
     pub fn view(&self) -> &'static [u8] {
         self.view
     }
@@ -56,8 +51,8 @@ impl Root {
         None
     }
 
-    /// 配对块的自述（一行）：按判别号数它有什么。
-    pub fn report_pairs(&self) {
+    /// 两块账的自述（一行）：按判别号数它有什么。
+    pub fn report(&self) {
         let n = self.pairs.len() / PAIR_LEN;
         let (mut region, mut dtb, mut irq, mut bad) = (0, 0, 0, 0);
         for i in 0..n {
@@ -68,7 +63,7 @@ impl Root {
                 _ => bad += 1,
             }
         }
-        debug!("root: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}");
+        debug!("boot: block n={n} region={region} dtb={dtb} irq={irq} bad={bad}");
     }
 
     /// 第 `i` 条的坐标（定长记录，块只保证页对齐 ⇒ `read_unaligned`）。
@@ -82,5 +77,41 @@ impl Root {
         // 步长 24 字节而块只保证页对齐，故 `read_unaligned`。
         let at = unsafe { self.pairs.as_ptr().add(i * PAIR_LEN) };
         unsafe { core::ptr::read_unaligned(at.cast::<Pair>()) }
+    }
+}
+
+/// **清单的读面**：按名字挑一台，取它那段字节与特权级。
+/// 清单里的镜像是**相对这块字节的切片**，故换一张表、换一个 VA 都照样解析得出来。
+#[derive(Clone, Copy)]
+pub struct Catalog<'a> {
+    view: &'a [u8],
+}
+
+impl<'a> Catalog<'a> {
+    /// 拿一块字节当清单。`None` = 清单头非法（条数为零 / 超上限 / 装不下）。
+    pub fn new(view: &'a [u8]) -> Option<Catalog<'a>> {
+        manifest::Entries::new(view)?;
+        Some(Catalog { view })
+    }
+
+    /// boot 交来的那一块（今天**唯一**的构造路）。
+    pub fn of_boot(accounts: &Accounts) -> Option<Catalog<'static>> {
+        Catalog::new(accounts.view())
+    }
+
+    /// 从清单里挑出这个程序。
+    pub fn find(&self, want: &str) -> Option<manifest::Entry<'a>> {
+        let mut list = self.programs();
+        loop {
+            let entry = list.next()?;
+            let Ok(entry) = entry else { return None };
+            if entry.name == want {
+                return Some(entry);
+            }
+        }
+    }
+
+    fn programs(&self) -> manifest::Entries<'a> {
+        manifest::Entries::new(self.view).expect("清单头已在 new 时验过")
     }
 }

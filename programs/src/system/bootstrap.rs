@@ -22,7 +22,7 @@ use runtime::core::port::{Access, Policy};
 use runtime::env::mail::PolePie;
 use runtime::env::unit as utask;
 
-use crate::system::control::Catalog;
+use crate::boot::Catalog;
 use crate::system::machine::Machine;
 
 /// 结算两条上限（毫秒）：与引导域开会话、以及领那两样。

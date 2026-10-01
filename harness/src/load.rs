@@ -95,7 +95,7 @@ use programs::Reason;
 
 use harness::tick;
 
-use programs::root::boot;
+use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
@@ -140,15 +140,17 @@ const PARKER_NAMES: [&str; PARKERS] = ["park0"];
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else {
+    let Some(accounts) = Accounts::take() else {
         return die("load: boot args unreadable");
     };
-    let Some((hog, hog_kind)) = find(&boot, HOG_ELF) else {
+    let Some(hog) = Catalog::of_boot(&accounts).and_then(|list| list.find(HOG_ELF)) else {
         return die("load: busy not in manifest");
     };
-    let Some((parker, parker_kind)) = find(&boot, PARKER_ELF) else {
+    let Some(parker) = Catalog::of_boot(&accounts).and_then(|list| list.find(PARKER_ELF)) else {
         return die("load: park not in manifest");
     };
+    let (hog, hog_kind) = (hog.elf, hog.kind);
+    let (parker, parker_kind) = (parker.elf, parker.kind);
 
     // 校准在铺负荷**之前**：此刻机器是静的，量出来的是"空载那把尺"（只用来定放行间隔）。
     let (iters_per_ms, ms_per_tick) = tick::calibrate();
@@ -208,18 +210,6 @@ fn spawn_one(
         return false;
     };
     service::start(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
-}
-
-/// 清单里按名字取镜像（台主只认这两条）。
-fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
-    let mut list = boot.programs();
-    loop {
-        let entry = list.next()?;
-        let Ok(entry) = entry else { return None };
-        if entry.name == want {
-            return Some((entry.elf, entry.kind));
-        }
-    }
 }
 
 /// 铺不满就没得量。

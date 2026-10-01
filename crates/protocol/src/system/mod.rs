@@ -9,17 +9,10 @@
 //!        │                                     （判定与账在本文这一侧）
 //!   实现方               programs/src/system/ 起一条、看/判、放下、收场
 //! ```
-//! # 本份有两半：编排 + 运行期命名
-//! ```text
-//!   编排（grant）    配给那一段静态的记录解码（"单子上的形状"）
-//!   运行期命名（board）  "这个名字此刻指向哪个入口"（运行期那一步：板）
-//! ```
-
 //! **它容纳那四套协议**（[`control`] / [`operator`] / [`principal`] / [`coalition`]——用户裁定）：
 //! 判据是"**谁住编排域**"。iii 之后这四套的落地都是**编排域里的线程**（control 那一枚线程、
 //! 持树者 / 名册 / 盟册），而"**要找服务得先有目录**——今天那本目录就是树（`operator`）"这句
-//! 也写在本正文里。故协议树与实现树（`programs/src/system/`）**同形**：本层这一件 [`grant`]
-//! 与那四套同一份屋顶。
+//! 也写在本正文里。故协议树与实现树（`programs/src/system/`）**同形**：本层与那四套同一份屋顶。
 //! ```text
 //!   System Protocol = Control + Principal + Coalition + Operator     （四轴，平级）
 //!     Control     系统里有什么 Service，它们处于什么生命状态
@@ -44,7 +37,6 @@ use crate::service::operator::path::Path;
 
 pub mod control;
 pub mod faces;
-pub mod grant;
 pub mod supply;
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）。

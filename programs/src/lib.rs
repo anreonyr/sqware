@@ -5,6 +5,8 @@
 
 extern crate alloc;
 
+/// boot 交给**引导镜像那一域**的两块账与清单读面（每个引导镜像都读得到）。
+pub mod boot;
 pub mod driver;
 pub mod entry;
 pub mod root;

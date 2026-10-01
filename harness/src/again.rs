@@ -55,7 +55,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 
-use programs::root::boot;
+use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -77,12 +77,13 @@ const MS: usize = 1_000;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else {
+    let Some(accounts) = Accounts::take() else {
         return die("again: boot args unreadable");
     };
-    let Some((elf, kind)) = find(&boot, VICTIM) else {
+    let Some(victim) = Catalog::of_boot(&accounts).and_then(|list| list.find(VICTIM)) else {
         return die("again: victim not in manifest");
     };
+    let (elf, kind) = (victim.elf, victim.kind);
     let name = ROW.to_string();
 
     // 一整场只用这一张表：**这就是本台子与 rig 的关键差别**（那个每轮造新表）。
@@ -251,18 +252,6 @@ fn trace(table: &Table, name: String, round: usize, step: &str) {
         State::Dead => "Dead",
     };
     debug!("again: r={round} step={step} state={state} slot={slot} ready={ready}");
-}
-
-/// 清单里按名字取镜像（只认这一条，与各台主同款）。
-fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
-    let mut list = boot.programs();
-    loop {
-        let entry = list.next()?;
-        let Ok(entry) = entry else { return None };
-        if entry.name == want {
-            return Some((entry.elf, entry.kind));
-        }
-    }
 }
 
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。

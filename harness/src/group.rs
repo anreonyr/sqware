@@ -78,10 +78,9 @@ use env::Wait;
 use programs::Reason;
 
 use env::Mark;
-use programs::root::boot;
+use programs::boot::{Accounts, Catalog};
 
 use env::PieToken;
-use env::ProgramKind;
 use env::TaskId;
 use protocol::debug;
 use runtime::core::pile::Pile;
@@ -101,12 +100,13 @@ const SETTLE: u64 = 200;
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else {
+    let Some(accounts) = Accounts::take() else {
         return die("group: boot args unreadable");
     };
-    let Some((elf, kind)) = find(&boot, WAITER) else {
+    let Some(waiter) = Catalog::of_boot(&accounts).and_then(|list| list.find(WAITER)) else {
         return die("group: waiter not in manifest");
     };
+    let (elf, kind) = (waiter.elf, waiter.kind);
 
     // ① 组：**共享**（不带 `ONLY` ⇒ 同一枚 accord 给两个任务都成立）。
     let Ok(pile) = Pile::unseal(true) else {
@@ -243,18 +243,6 @@ fn sole_refused(dst: TaskId) -> bool {
     let first = port::ship(&pie, dst, Access::FETCH_STORE, form);
     let second = port::ship(&pie, dst, Access::FETCH_STORE, form);
     first.is_ok() && second.is_err()
-}
-
-/// 清单里按名字取镜像（只认这一条，与各台主同款）。
-fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], ProgramKind)> {
-    let mut list = boot.programs();
-    loop {
-        let entry = list.next()?;
-        let Ok(entry) = entry else { return None };
-        if entry.name == want {
-            return Some((entry.elf, entry.kind));
-        }
-    }
 }
 
 /// 起不来就报哪一句（内核收场时把这一句连同域号打出来）。

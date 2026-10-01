@@ -11,9 +11,9 @@
 extern crate alloc;
 extern crate programs;
 
-// 两块账在引导域自己那一摊里（只有它读得到）。
+// 两块账与清单读面（每个引导镜像都读得到，两家共一份）。
 use env::{Mark, Wait};
-use programs::root::boot;
+use programs::boot::{Accounts, Catalog};
 
 use protocol::communication::establish;
 // 生命那一族共用的两个数（号与就绪上限）——本域只借它们，不借那一族的手（见文件头）。
@@ -68,23 +68,16 @@ const E_BOOT: Died = 1;
 #[programs::entry]
 fn main() -> Result<programs::Report<'static>, Die> {
     // 1. 启动参数 → 两块账（清单 + 配对块）。读不出就没得装配。
-    let Some(boot) = boot::Root::take() else {
+    let Some(accounts) = Accounts::take() else {
         return Err(Die::BootArgs);
     };
     // 配对块的自述（一行）：按坐标分账——`region` 是区段的条数（设备 + 载荷区），
-    boot.report_pairs();
+    accounts.report();
 
     // 2. 从清单里挑出编排者那一条：**它那一段字节 ＋ 它那个特权级**（后者是打包时按装配表的
     //    `kind` 写进清单的，本域只原样转交）。
-    let mut list = boot.programs();
-    let entry = loop {
-        let Some(entry) = list.next() else {
-            return Err(Die::Manifest);
-        };
-        let entry = entry.map_err(|_| Die::Manifest)?;
-        if entry.name == ORCH {
-            break entry;
-        }
+    let Some(entry) = Catalog::of_boot(&accounts).and_then(|list| list.find(ORCH)) else {
+        return Err(Die::Manifest);
     };
 
     // 3. **裸三手**起它（没有账）：建域 → 产线程 → 装那条 `boot` 通道 → 放行。
@@ -110,7 +103,7 @@ fn main() -> Result<programs::Report<'static>, Die> {
     // 收帧那一只由本域给（**发**那一侧的缓冲在 `Sender::send` 的栈帧上，见 `serve`）。
     let mut ask = [0u8; supply::ORDER_CAP];
     // 取源只有一个：boot 的配对块。持树者那条提示之路不再经过这里（见文件头）。
-    let source = |key: env::Key| boot.token(key);
+    let source = |key: env::Key| accounts.token(key);
     let alive = || !utask::join(orch, Wait::POLL).unwrap_or(true);
     programs::root::supply::server::serve(&channels[0], source, alive, &mut ask);
     Ok(programs::Report::note(env::EXIT_OK, "root: done"))

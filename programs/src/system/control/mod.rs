@@ -16,11 +16,10 @@ use ::core::time::Duration;
 
 use crate::system::control::core::Fail;
 use crate::system::control::desk::{Slot, State, Table};
-use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::root::boot;
+use crate::boot::Catalog;
 use crate::system::machine::Machine;
 use crate::system::source::Source;
 use crate::unit::{PROGRAMS, Setup, UnitFile};
@@ -85,44 +84,6 @@ impl Error {
 /// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Assembly::assemble`](crate::system::Assembly::assemble)）。
 /// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `UnitFile`。
 pub type Service = (TaskId, Vec<Endpoint>);
-
-/// 清单的读面：装配者按名字挑镜像。
-/// 两种来源**同一形状**：引导域手里是 boot 借映的那块字节，编排域手里是它从固件领来的
-/// 那段只读视图（同一批物理页、各自的 VA）。清单里的镜像是**相对 blob 的切片**，故换一张
-/// 表、换一个 VA 都照样解析得出来——这正是"零拷贝把这片区交出去"能成立的原因。
-#[derive(Clone, Copy)]
-pub struct Catalog<'a> {
-    view: &'a [u8],
-}
-
-impl<'a> Catalog<'a> {
-    /// 拿一块字节当清单。`None` = 清单头非法（条数为零 / 超上限 / 装不下）。
-    pub fn new(view: &'a [u8]) -> Option<Catalog<'a>> {
-        manifest::Entries::new(view)?;
-        Some(Catalog { view })
-    }
-
-    /// boot 借映给引导域的那块。
-    pub fn of_boot(boot: &boot::Root) -> Option<Catalog<'static>> {
-        Catalog::new(boot.view())
-    }
-
-    /// 从清单里挑出这个程序。
-    pub fn find(&self, want: &str) -> Option<manifest::Entry<'a>> {
-        let mut list = self.programs();
-        loop {
-            let entry = list.next()?;
-            let Ok(entry) = entry else { return None };
-            if entry.name == want {
-                return Some(entry);
-            }
-        }
-    }
-
-    fn programs(&self) -> manifest::Entries<'a> {
-        manifest::Entries::new(self.view).expect("清单头已在 new 时验过")
-    }
-}
 
 /// **Service 的生命周期与装配环境**。
 pub struct Control {

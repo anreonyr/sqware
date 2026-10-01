@@ -214,7 +214,7 @@ use programs::Reason;
 use env::Mark;
 use harness::tick;
 
-use programs::root::boot;
+use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
@@ -298,12 +298,13 @@ struct Tally {
 
 #[programs::entry]
 fn main() -> Reason {
-    let Some(boot) = boot::Root::take() else {
+    let Some(accounts) = Accounts::take() else {
         return die("rig: boot args unreadable");
     };
-    let Some((elf, kind)) = find(&boot, VICTIM) else {
+    let Some(victim) = Catalog::of_boot(&accounts).and_then(|list| list.find(VICTIM)) else {
         return die("rig: victim not in manifest");
     };
+    let (elf, kind) = (victim.elf, victim.kind);
     let name = ROW.to_string();
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑（它也曾经是每轮
     // 一条早退的来路，见 `trial` 头注）。
@@ -522,18 +523,6 @@ fn body(
             },
         },
     )
-}
-
-/// 清单里按名字取镜像（台主只认这一条）。
-fn find(boot: &boot::Root, want: &str) -> Option<(&'static [u8], env::ProgramKind)> {
-    let mut list = boot.programs();
-    loop {
-        let entry = list.next()?;
-        let Ok(entry) = entry else { return None };
-        if entry.name == want {
-            return Some((entry.elf, entry.kind));
-        }
-    }
 }
 
 /// 读不出启动账就没得压测。

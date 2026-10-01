@@ -3,7 +3,7 @@
 
 use alloc::string::String;
 
-use crate::system::control::Catalog;
+use crate::boot::Catalog;
 
 /// **来源那一格的载体**：**那一本账**（今天只有 initrd 那一本）。
 pub struct Source {

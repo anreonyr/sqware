@@ -7,7 +7,8 @@ use alloc::vec::Vec;
 
 use protocol::debug;
 
-use crate::system::control::{Catalog, Error};
+use crate::boot::Catalog;
+use crate::system::control::Error;
 use crate::unit::UnitFile;
 
 /// 这一景要起的台：**按 `after` 算次序**（拓扑）。先起的先就绪，后面的就能向它要东西。
