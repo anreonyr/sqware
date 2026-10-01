@@ -161,16 +161,20 @@ fn hand_over(
     Ok((len, from))
 }
 
-/// 只看那只手：`(长度, 发送者)`。不动状态、不唤醒、不复制。
+/// 只看那只手：`(长度, 发送者, 队里排着几只)`。不动状态、不唤醒、不复制。
+///
+/// 第三格（A2）此前空着：单槽时代"排着几只"恒为一件事，没有可报的。队列化之后它是写者
+/// 唯一的凭据——"我还排着几手"（`hand::Sender` 那一侧靠它把缓冲收回来）。
 fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| match pie {
         AnyPie::Hole(p) => mail::hole::peek(p.meta()),
         _ => Err(MailFail::Denied),
     });
     match r {
-        Ok((n, from)) => {
+        Ok((n, from, depth)) => {
             frame.gpr.set_x(Gprs::A0, n);
             frame.gpr.set_x(Gprs::A1, from.get());
+            frame.gpr.set_x(Gprs::A2, depth);
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }

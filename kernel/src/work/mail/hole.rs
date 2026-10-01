@@ -1,5 +1,6 @@
+use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
@@ -26,18 +27,32 @@ pub enum HoleState {
     Dead,
 }
 
-/// 孔上**待取之事**：同一时刻最多一件——一只递出的手，或一个已响的位。
+/// 孔上**待取之事**：一位写者排下的**那一列手**，或一个已响的位。
 ///
 /// 手与位写在同一个枚举里（不是两格），故"又有手又有位"写不出来。
 ///
-/// `Taking` 是复制那一瞬的公示：手仍在这一格，但正被一位取用者搬。取用中不算可取
-/// （别人见它答 `Busy`），故一只手只会被交付一次。
+/// **`Queue` 是一条有界 FIFO**（[`QUEUE_CAP`] 只手）：写者可以连推几只、不必等对侧取走一只；
+/// 读者按先进先出逐只取。`Idle` 与"队列空"是同一件事——空了就回到 `Idle`，不留空壳。
 enum Pending {
     Idle,
-    Hand(Hand),
-    Taking(Hand),
+    Queue(Queue),
     Rung,
 }
+
+/// 排着的那一列手 ＋ "队头正被取用"那一位。
+///
+/// **队头正被取用**是复制那一瞬的公示：手仍在本列里，但正被一位取用者搬。取用中不算可取
+/// （别人见它答 `Busy`），故一只手只会被交付一次。它必须活在孔锁里——复制在孔锁**之外**做
+/// （锁序 `Space`(L2) < 孔(L4)，见 [`take`] 那一节）。
+struct Queue {
+    /// 排着的那些手（先进先出）。**懒分配**：没排过队的孔一点内核堆都不占。
+    hands: VecDeque<Hand>,
+    /// 队头正被取用（复制中）。
+    taking: bool,
+}
+
+/// 一只孔上最多排几只（一处常量）。**取 1 就等于改这一形之前的行为**（单槽）。
+const QUEUE_CAP: usize = 4;
 
 /// 递出的那只手：发送方那段内存在孔上的登记。**不含字节**——字节仍躺在发送方那儿，
 /// 取走的那一刻复制**一次**。
@@ -49,6 +64,9 @@ struct Hand {
     space: Weak<Space>,
     va: usize,
     len: usize,
+    /// **这一只**落手那一刻（ticks）：队列里排着好几只时，"谁压了多久"由它各自说
+    /// （孔上那一格只记得下队头的）。
+    at: u64,
 }
 
 impl Hand {
@@ -63,9 +81,7 @@ pub struct HoleMeta {
     life: Arc<Life>,
     owner: TaskId,
     pending: SpinLock<Pending>,
-    /// 手上那一刻（ticks；`0` = 孔上没手）。**诊断用**：见 [`note_hand_off`] 那一节。
-    hand_at: AtomicU64,
-    /// 这只手的中段告警已经打过了没有（一枚孔最多一行）。
+    /// 这一只（**队头**）的中段告警已经打过了没有（一枚孔最多一行）。
     alarmed: AtomicBool,
 }
 
@@ -77,7 +93,6 @@ impl HoleMeta {
             life: Life::new(),
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Idle),
-            hand_at: AtomicU64::new(0),
             alarmed: AtomicBool::new(false),
         })
     }
@@ -98,25 +113,42 @@ impl HoleMeta {
         *self.state.lock() == HoleState::Live
     }
 
-    /// 就绪：`Pull` = 有可取之事（**一只手，或一个已响的位**）；`Push` = 孔空着（可递）。
-    /// `Taking` 不算可取——那一只手正被搬。
+    /// 就绪：`Pull` = **队头**可取（一只手，或一个已响的位）；`Push` = **队列空着**。
+    ///
+    /// 两个方向仍按"一只手"的老口径读——**"有位"不是"空"**：写者要"轮到我"时走
+    /// `push(…, Wait::POLL)` 那一档（满了答 `Busy`，见 [`give`]）；要"我的手被取走了"时等的
+    /// 正是这一格（队列空 ⟺ 单推写者的手全下线了）。把这一格改成"有位"会让四处
+    /// `door.wait(HoleDir::Push, Wait::Forever)` 当场变成空等（它们护的是"这段字节活到被取走"）。
     pub(crate) fn ready(&self, dir: HoleDir) -> bool {
         let pending = self.pending.lock();
         match dir {
-            HoleDir::Pull => matches!(*pending, Pending::Hand(_) | Pending::Rung),
+            HoleDir::Pull => match &*pending {
+                Pending::Queue(q) => !q.hands.is_empty() && !q.taking,
+                Pending::Rung => true,
+                Pending::Idle => false,
+            },
             HoleDir::Push => matches!(*pending, Pending::Idle),
         }
     }
 
-    /// 孔上那只手：**谁递的 ＋ 有多长**；孔上没手（或只是个响着的位）⇒ `None`。**只读**。
+    /// **队头**那只手：**谁递的 ＋ 有多长 ＋ 什么时候落的**；队空（或只是个响着的位）⇒ `None`。
     ///
-    /// `Taking`（正被取用）**也算在手上**——那一瞬复制在另一颗 hart 上做，手还没下线。
+    /// 正被取用也算在手上（那一瞬复制在另一颗 hart 上做，手还没下线）。
     /// 长度只服务诊断（[`alarm_stuck`] 那一行认"在哪一步"靠它）。
-    fn held(&self) -> Option<(TaskId, usize)> {
+    fn held(&self) -> Option<(TaskId, usize, u64)> {
         let pending = self.pending.lock();
         match &*pending {
-            Pending::Hand(hand) | Pending::Taking(hand) => Some((hand.from, hand.len)),
+            Pending::Queue(q) => q.hands.front().map(|hand| (hand.from, hand.len, hand.at)),
             _ => None,
+        }
+    }
+
+    /// 队里排着几只（诊断与读数用）。
+    fn queued(&self) -> usize {
+        let pending = self.pending.lock();
+        match &*pending {
+            Pending::Queue(q) => q.hands.len(),
+            _ => 0,
         }
     }
 }
@@ -126,12 +158,9 @@ impl Drop for HoleMeta {
         *self.state.lock() = HoleState::Dead;
         // 孔都没了、手还在 ⇒ 也算"没人取"。**这里只记账、不打印**（`Drop` 可能在别的锁底下跑，
         // 打印要取控制台锁）；结账那一路见 [`note_hand_off`]。
-        if let Some((from, _len)) = self.held() {
-            let at = self.hand_at.swap(0, Ordering::Relaxed);
-            if at != 0 {
-                HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
-                note_hold(self, from, elapsed_ms(at));
-            }
+        // **一列手一只不留**：`seal` 那一趟若已经结过账，这里看到的已是空的（它把队列清掉了）。
+        if let Pending::Queue(q) = &*self.pending.lock() {
+            HANDS_LIVE.fetch_sub(q.hands.len(), Ordering::Relaxed);
         }
         messenger::wipe(key(self, HoleDir::Pull));
         messenger::wipe(key(self, HoleDir::Push));
@@ -145,10 +174,14 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
     }
 }
 
-/// 递出一只手：孔空着就登记并唤醒等取的人。
+/// **递出一只手**：排进这一列（先进先出），并唤醒等取的人。
 ///
-/// **不搬字节、不分配**：登记的就是发送方那一段（`va`/`len`），复制由取的一方做（一处）。
-/// 孔上已有手／正被取用／位已响 ⇒ `Busy`。
+/// **不搬字节、不分配**（`VecDeque` 懒分配：只在真排过队之后才向堆要一格）：登记的就是发送方
+/// 那一段（`va`/`len`），复制由取的一方做（一处）。
+///
+/// **满了（[`QUEUE_CAP`]）／位已响 ⇒ `Busy`**：满不丢最旧——"丢不丢"留给写者（`Wait::POLL`
+/// 那一档正是为它准备的）。写者要"轮到我有位"就用 `POLL` 重试；`AtMost`／`Forever` 那一档
+/// 等的是**队列空**（老语义，见 [`HoleMeta::ready`] 那一节的注）。
 pub(crate) fn give(
     meta: &HoleMeta,
     space: &Arc<Space>,
@@ -162,19 +195,34 @@ pub(crate) fn give(
     if len == 0 {
         return Err(MailFail::Denied);
     }
+    let at = clock::uptime_ticks();
     let mut pending = meta.pending.lock();
-    if !matches!(*pending, Pending::Idle) {
+    if !matches!(*pending, Pending::Idle | Pending::Queue(_)) {
+        // 位已响：位与手不共存（与今天同一句）。
         return Err(MailFail::Busy);
     }
-    *pending = Pending::Hand(Hand {
+    if matches!(*pending, Pending::Idle) {
+        *pending = Pending::Queue(Queue {
+            hands: VecDeque::new(),
+            taking: false,
+        });
+    }
+    let Pending::Queue(q) = &mut *pending else {
+        return Err(MailFail::Busy);
+    };
+    if q.hands.len() >= QUEUE_CAP {
+        return Err(MailFail::Busy);
+    }
+    if q.hands.try_reserve(1).is_err() {
+        return Err(MailFail::OoM);
+    }
+    q.hands.push_back(Hand {
         from,
         space: Arc::downgrade(space),
         va,
         len,
+        at,
     });
-    // 这一只手**从这一刻起算**（诊断：见 [`note_hand_off`] 那一节）。每次 `give` 重写，
-    // 上一只手的时长不会被带过来。
-    meta.hand_at.store(clock::uptime_ticks(), Ordering::Relaxed);
     HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
     drop(pending);
     let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
@@ -194,28 +242,37 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
         return Err(MailFail::Dead);
     }
     let mut pending = meta.pending.lock();
-    let cur = core::mem::replace(&mut *pending, Pending::Idle);
-    match cur {
-        Pending::Hand(hand) => match hand.own() {
-            Some(_) => {
-                *pending = Pending::Taking(hand);
-                Ok(())
-            }
-            None => {
-                let from = hand.from;
-                let (va, len) = (hand.va, hand.len);
-                drop(pending);
-                note_gone(meta, from, va, len, 0, "space");
-                note_hand_off(meta, from, len);
-                let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
-                Err(MailFail::Gone)
-            }
-        },
-        other => {
-            *pending = other;
-            Err(MailFail::Busy)
+    let dead = {
+        let Pending::Queue(q) = &mut *pending else {
+            return Err(MailFail::Busy);
+        };
+        if q.taking || q.hands.is_empty() {
+            return Err(MailFail::Busy);
         }
+        if q.hands.front().and_then(|h| h.own()).is_some() {
+            q.taking = true;
+            return Ok(());
+        }
+        // **发送方那个空间已经回收**（弱引用升不上来）⇒ 这一只**作废**（消息随人走），
+        // 就地让它下线——不作废的话，一位退场的发送方会把这一列的头永久堵死。
+        q.hands.pop_front()
+    };
+    let empty = match &*pending {
+        Pending::Queue(q) => q.hands.is_empty(),
+        _ => false,
+    };
+    if empty {
+        *pending = Pending::Idle;
     }
+    drop(pending);
+    if let Some(hand) = dead {
+        note_gone(meta, hand.from, hand.va, hand.len, 0, "space");
+        note_hand_off(meta, hand.from, hand.len, hand.at);
+    }
+    if empty {
+        let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
+    }
+    Err(MailFail::Gone)
 }
 
 /// 取用中那只手的复制源：`(发送者, 它那段空间, 起点, 长度)`。
@@ -224,9 +281,10 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
 pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Space>, usize, usize)> {
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Taking(hand) => hand
-            .own()
-            .map(|(space, va, len)| (hand.from, space, va, len)),
+        Pending::Queue(q) if q.taking => q
+            .hands
+            .front()
+            .and_then(|hand| hand.own().map(|(space, va, len)| (hand.from, space, va, len))),
         _ => None,
     }
 }
@@ -243,29 +301,35 @@ pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Space>, usize, usiz
 /// **与 [`back`] 的分界**：`back` 是"这一趟没成，但**东西还在**"（装不下 / 缓冲不可写）；
 /// 这一格是"**东西没了**"。前者还能拿更大的缓冲再来，后者没有下一趟。
 pub(crate) fn taken(meta: &HoleMeta) {
-    let mut pending = meta.pending.lock();
-    let mut held = None;
-    if let Pending::Taking(hand) = &*pending {
-        held = Some((hand.from, hand.len));
-        *pending = Pending::Idle;
+    let mut off = None;
+    let mut empty = false;
+    {
+        let mut pending = meta.pending.lock();
+        if let Pending::Queue(q) = &mut *pending {
+            if q.taking {
+                q.taking = false;
+                off = q.hands.pop_front();
+                empty = q.hands.is_empty();
+            }
+        }
+        if empty {
+            *pending = Pending::Idle;
+        }
     }
-    drop(pending);
-    if let Some((from, len)) = held {
-        note_hand_off(meta, from, len);
+    if let Some(hand) = off {
+        note_hand_off(meta, hand.from, hand.len, hand.at);
     }
     let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
 }
 
-/// 复制没成、**东西还在**：手原样放回。
+/// 复制没成、**东西还在**：这一只手放回**原处**（它本来就是队头，`taking` 清掉即可）。
 ///
 /// 这一条与 `MailCall::Pull` 三条不消费路径是同一条口径：`max` 装不下、缓冲不可写
-/// ——**都不替调用方丢东西**（丢一条消息不可逆）。
+/// ——**都不替调用方丢东西**（丢一条消息不可逆）。放回之后这一列照旧报就绪（那只手还压着）。
 pub(crate) fn back(meta: &HoleMeta) {
     let mut pending = meta.pending.lock();
-    let cur = core::mem::replace(&mut *pending, Pending::Idle);
-    match cur {
-        Pending::Taking(hand) => *pending = Pending::Hand(hand),
-        other => *pending = other,
+    if let Pending::Queue(q) = &mut *pending {
+        q.taking = false;
     }
 }
 
@@ -278,14 +342,20 @@ pub(crate) fn back(meta: &HoleMeta) {
 // 发送方走了后来那次 `Pull` 答 `Gone`。日后要做"押下—取回"（`Held`）那一类，按它的语义
 // 重新定形再加回来。
 
-/// 只看一眼那只手：`(长度, 发送者)`。**不动状态**（取用中的那只也照报）。
-pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId), MailFail> {
+/// 只看**队头**那一只手：`(长度, 发送者, 队里排着几只)`。**不动状态**（取用中的那只也照报）。
+///
+/// 第三格是**队列深度**——写者据此知道"我还排着几手"（`hand::Sender` 那一侧就靠它把
+/// 自己那几格缓冲收回来），A2 那一格此前空着，故这是**加一格**，A0／A1 的含义一字不动。
+pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Hand(hand) | Pending::Taking(hand) => Ok((hand.len, hand.from)),
+        Pending::Queue(q) => match q.hands.front() {
+            Some(hand) => Ok((hand.len, hand.from, q.hands.len())),
+            None => Err(MailFail::Busy),
+        },
         _ => Err(MailFail::Busy),
     }
 }
@@ -349,7 +419,7 @@ pub(crate) fn wait(
 
 // ── 诊断：一只手在孔上压了多久（"递出去没人取"）────────────────────────────
 //
-// 今天量的是**一只手自己的寿命**：登记（[`give`] 盖 `hand_at`）→ 下线（[`note_hand_off`] 结账）。
+// 今天量的是**一只手自己的寿命**：登记（[`give`] 盖 [`Hand::at`]）→ 下线（[`note_hand_off`] 结账）。
 // 它与"某位递手的线程被卡了多久"同值——那一位正是一圈一圈等这只手下线的人。
 //
 // **下线只有三个点，`back` 不算**：`taken`（复制成了）、`take` 的 `Gone` 支（发送方那段没了、
@@ -381,11 +451,13 @@ fn elapsed_ms(at: u64) -> usize {
 /// 跟着 `age` 一起报出来。
 fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
     let pending = meta.pending.lock();
-    let (from, len) = match &*pending {
-        Pending::Hand(hand) | Pending::Taking(hand) => (hand.from, hand.len),
+    let (from, len, at) = match &*pending {
+        Pending::Queue(q) => match q.hands.front() {
+            Some(hand) => (hand.from, hand.len, hand.at),
+            None => return None,
+        },
         _ => return None,
     };
-    let at = meta.hand_at.load(Ordering::Relaxed);
     if at == 0 {
         return None;
     }
@@ -427,11 +499,10 @@ fn alarm_stuck(meta: &HoleMeta, from: TaskId, len: usize, ms: usize) {
     );
 }
 
-/// 这只手**下线了**：把"压了多久"结一次账，清掉时间戳（`swap` 保证同一只手只结一次）。
+/// 这只手**下线了**：把"压了多久"结一次账（**用这一只自己的落手时刻**，见 [`Hand::at`]）。
 ///
 /// **不取锁**：调用方必须已经放下孔锁（里面有打印）。
-fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize) {
-    let at = meta.hand_at.swap(0, Ordering::Relaxed);
+fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize, at: u64) {
     if at == 0 {
         return;
     }
@@ -523,9 +594,24 @@ pub(crate) fn note_gone(
 pub(crate) fn seal(meta: &HoleMeta) {
     *meta.state.lock() = HoleState::Dead;
     // 手随孔作废 —— 也是一种"没人取"（结账在放下孔锁之后：`note_hand_off` 里有打印）。
-    if let Some((from, len)) = meta.held() {
-        note_hand_off(meta, from, len);
+    // **一列手一只不留**：队头按它自己那一刻结账、余下几只各减一枚，队列就地清掉
+    // （不清的话 `Drop` 会再结一次账 ⇒ `HANDS_LIVE` 下溢——实测踩过）。
+    let (head, rest) = {
+        let mut pending = meta.pending.lock();
+        let (head, rest) = match &*pending {
+            Pending::Queue(q) => (
+                q.hands.front().map(|h| (h.from, h.len, h.at)),
+                q.hands.len().saturating_sub(1),
+            ),
+            _ => (None, 0),
+        };
+        *pending = Pending::Idle;
+        (head, rest)
+    };
+    if let Some((from, len, at)) = head {
+        note_hand_off(meta, from, len, at);
     }
+    HANDS_LIVE.fetch_sub(rest, Ordering::Relaxed);
     messenger::wipe(key(meta, HoleDir::Pull));
     messenger::wipe(key(meta, HoleDir::Push));
 }

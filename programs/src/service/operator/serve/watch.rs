@@ -105,6 +105,12 @@ impl Watchers {
         for at in dead.into_iter().rev() {
             self.list.swap_remove(at);
         }
+        // **照实量**（临时读数）：这一次改动写给几位、册里现在几位——用来判"死订户还在不在册里、
+        // 还在不在被写"。
+        protocol::debug::put(&alloc::format!(
+            "operator: watch publish watchers={} sent={sent}",
+            self.list.len()
+        ));
         sent
     }
 

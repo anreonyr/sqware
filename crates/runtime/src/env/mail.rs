@@ -92,7 +92,7 @@
 //! ——**服务侧答话的收口**（今天它就是 `Sender::reclaim` 的无界等）。
 
 use env::Wait;
-use env::{HoleDir, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
+use env::{HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。内核那一格没有
 /// 失败支，故跟着 [`clock`](crate::env::chrono::clock) 一起不返 `Result`。
@@ -269,14 +269,27 @@ impl HolePie {
         }
     }
 
-    /// **只看一眼**：孔上那只手的**长度与发送者**，**一个字节都不取**（孔留原样）。
+    /// **只看一眼**：孔上那只手的**长度、发送者、队里排着几只**，**一个字节都不取**（孔留原样）。
     ///
     /// 不动孔的状态（取用中的那只也照报），也不唤醒任何人。**不是取消息的前一步**：取走就是一次
     /// [`HolePie::pull`]，够不够由 `buf.len()` 判。它的读者是"等之前先看一眼"那一格
     /// （`harness` 的 waiter：多个等待者挂在同一只组键上，要**非破坏性**地判"有货"）。
     /// 手上没东西 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
-    pub fn peek(&self) -> MailResult<(usize, TaskId)> {
+    pub fn peek(&self) -> MailResult<(usize, TaskId, usize)> {
         env::mail::peek(self.token)
+    }
+
+    /// **队里排着几只**（`Peek` 的第三格）：写者据此知道"我还排着几手"——孔上可以排着
+    /// 至多 `QUEUE_CAP` 只手，故"我那只手被取走了没有"由这个数说（单推的一只孔上，深度就是
+    /// 我自己还压着的手数）。
+    ///
+    /// **空孔答 0**（不是错误）：一只都没排是写者要的那条事实。孔没了才答 `Dead`。
+    pub fn depth(&self) -> MailResult<usize> {
+        match env::mail::peek(self.token) {
+            Ok((_, _, depth)) => Ok(depth),
+            Err(e) if e.source == MailFail::Busy => Ok(0),
+            Err(e) => Err(e),
+        }
     }
 
     /// **响这一位**：置"有待取之事"并唤醒听者。已响 → `Busy`。

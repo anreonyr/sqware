@@ -38,6 +38,16 @@ impl<M: Message> Receiver<M> {
         M::fetch(bytes).ok_or(RecvFail::Unread(n))
     }
 
+    /// **队里还排着几手**（`Peek` 的第三格；空队答 **0**，不是错误）。
+    ///
+    /// 孔上可以排着至多 `QUEUE_CAP` 只手：读者据此知道"还有几条要取"（取干为止的那一圈
+    /// 就是拿它当上界）。
+    pub fn depth(&self) -> Result<usize, RecvFail> {
+        mail::HolePie::from_token(self.hole)
+            .depth()
+            .map_err(|e| RecvFail::Mail(e.source))
+    }
+
     /// 这一枚孔（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）
     /// 与 Receiver::recv 读的是同一枚——组等的是**就绪**，取消息仍走 `recv`
     pub fn hole(&self) -> PieToken {

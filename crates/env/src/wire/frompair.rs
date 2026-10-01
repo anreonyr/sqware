@@ -4,9 +4,9 @@
 //! 在非负路径调用 `<T as FromPair>::from_pair(v0, v1)`。错误路径由
 //! 各域的**词表读法**（生成的入口里那一格）接管，故此处只见成功值。
 //!
-//! **宽返回那一格**（`#[ret3(T)]`，今天只有 `PieCall::Collect`）走 [`FromTriple`]：
-//! 两口寄存器装不下它那四件事实，故读 `a0..a2`。两条路的分工是**线宽**，不是语义——
-//! 能用一对说完的仍走 [`FromPair`]（三十格），别为了省一次改写把两件事挤进一格。
+//! **宽返回那一格**（`#[ret3(T)]`，今天两处：`PieCall::Collect` 与 `MailCall::Peek`）走
+//! [`FromTriple`]：两格寄存器装不下它那几件事实，故读 `a0..a2`。两条路的分工是**线宽**，
+//! 不是语义——能用一对说完的仍走 [`FromPair`]（三十格），别为了省一次改写把两件事挤进一格。
 //!
 //! # 本文件的校验口径（与 [`Wire`](crate::wire::Wire) 的分工）
 //!
@@ -136,6 +136,16 @@ impl FromPair for (PieToken, Permission) {
 impl FromTriple for (PieToken, TaskId, Mark) {
     fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
         (PieToken::new(v0), TaskId(v1), Mark::new(v2 as u64))
+    }
+}
+
+/// `Peek` 的返回：`(长度, 发送者, 队里排着几只)`。
+///
+/// 第三格是**队列深度**——写者据此知道"我还排着几手"（孔上可以排着至多 `QUEUE_CAP` 只手）。
+/// 三件事实两格装不下，故与 `Collect` 走同一条宽返回的路（`#[ret3]`）。
+impl FromTriple for (usize, TaskId, usize) {
+    fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
+        (v0, TaskId(v1), v2)
     }
 }
 
