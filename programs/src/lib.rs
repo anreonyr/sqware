@@ -1,7 +1,8 @@
 #![no_std]
 //! programs — 镜像里装载的程序集合（**每个程序一份 `main.rs`**，就住在它那一片模块的目录里）。
-//! **分档按特权级**（唯一声明处：`programs::unit::PROGRAMS` 里这一行的 `kind`）：[`root`] 与 [`system`]
-//! 是 S 态那一档（引导域 / 编排域），[`user`] 是 U 态那一档（今天**只剩 `canonical`**：控制台那一台；
+//! **分档按特权级**（唯一声明处：`programs::unit::PROGRAMS` 里这一行的 `kind`）：[`system`]
+//! 是 S 态那一档（编排域——它也是引导镜像），[`user`] 是 U 态那一档（今天**只剩 `canonical`**：
+//! 控制台那一台）。
 
 extern crate alloc;
 
@@ -9,7 +10,6 @@ extern crate alloc;
 pub mod boot;
 pub mod driver;
 pub mod entry;
-pub mod root;
 pub mod service;
 pub mod system;
 pub mod unit;

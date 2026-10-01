@@ -19,7 +19,7 @@ use crate::system::control::desk::{Slot, State, Table};
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::boot::Catalog;
+use crate::boot::{Accounts, Catalog};
 use crate::system::machine::Machine;
 use crate::system::source::Source;
 use crate::unit::{PROGRAMS, Setup, UnitFile};
@@ -91,7 +91,11 @@ pub struct Control {
     pending: Vec<Pending>,
     catalog: Catalog<'static>,
     machine: Machine,
-    boot: Endpoint,
+    /// **boot 的两块账**：发货那一趟按坐标取源（全机门闩在本域表里）。
+    /// **照实记（并域那一刀）**：这一格从前是 `boot: Endpoint`——一条跨域问答路的凭据
+    /// （`establish::endpoint` ＋ 那条记号 ＋ 一问一答两只缓冲）。门闩并到本域之后，
+    /// 取源就是按坐标查这张账。
+    accounts: Accounts,
     /// **上一手入册那一单的写端**（`Setup::Machine` 那一格）。
     /// **为什么住在这里**：那一单是**递完就完**的（没有回话），而递出去的字节要活到对面取走
     /// ——所以它必须住在比调用帧更长的地方。装配者正是比它长的那一位：一本 `Control` 活到
@@ -109,13 +113,13 @@ struct Pending {
 
 impl Control {
     /// 就位（四样都由 `System` 在引导之后交进来）。
-    pub fn new(catalog: Catalog<'static>, machine: Machine, boot: Endpoint) -> Control {
+    pub fn new(catalog: Catalog<'static>, machine: Machine, accounts: Accounts) -> Control {
         Control {
             table: Table::new(),
             pending: Vec::new(),
             catalog,
             machine,
-            boot,
+            accounts,
             out: protocol::communication::sender::Sender::new(),
         }
     }

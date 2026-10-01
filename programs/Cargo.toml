@@ -3,12 +3,13 @@ name = "programs"
 version.workspace = true
 edition.workspace = true
 
-# 镜像里的**产品程序**（今天**六个** = 产品镜像那 6 条；测具那 22 台住隔壁的 `harness`）：freestanding、
+# 镜像里的**产品程序**（今天**九个** bin = 产品景那 9 条；测具住隔壁的 `harness`）：freestanding、
 # 无 std、无 main crt。链接在 IMAGE_BASE (0x10000)、静态 ET_EXEC；由内核 loader 按绝对 VMA
 # 装载，_start 即 e_entry。
 #
 # `crates/image` 按 bin 名（约定 `prog-<名字>`）打进 initrd——**哪几台进哪张镜像**看
-# `programs/src/program.rs` 的 `PROGRAMS` 每行的 `scenes`，而"装成哪种空间"（`ProgramKind`）看同一行的 `kind`。
+# `programs/src/unit/catalog.rs` 的 `PROGRAMS` 每行的 `wanted_by`，而"装成哪种空间"（`ProgramKind`）
+# 看同一行的 `space`；**哪一台是引导镜像**看 `entry`。
 [lib]
 path = "src/lib.rs"
 test = false
@@ -21,11 +22,10 @@ mold = { path = "../crates/mold" }
 # **程序侧用例那一台**（用户裁定"服务台搬进 SUT"）：服务域把自己的判据就地登记成一例一例。
 env = { path = "../crates/env" }
 runtime = { path = "../crates/runtime" }
-# 协议层：第一条协议操作出现了（root 用 `protocol::system` 的服务表起子域）。
-protocol = { path = "../crates/protocol" }
 # 协议层：**协议定义的唯一来源**（原「约」`crates/contract` 已并回 `protocol`）。取它有三处——
 # 服务表（`protocol::system`）、码表宏（`protocol::fail_codes!`）与报文那一条约定
 # （`protocol::message::Message`：rtc 那一族的答那两形要上船台）。驱动自己的协议住本 crate。
+protocol = { path = "../crates/protocol" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
@@ -62,7 +62,8 @@ test = false
 bench = false
 doctest = false
 
-# 编排域（S 态，独立域）：起整批服务、监督、把入口挂上树；配给从引导域领。
+# 编排域（S 态，顶层域——**它也是这一景的引导镜像**）：自己读 boot 的两块账、持全机门闩，
+# 起整批服务、监督、把入口挂上树、按坐标把门闩授给客人。
 [[bin]]
 name = "prog-system"
 path = "src/system/main.rs"
@@ -103,11 +104,3 @@ test = false
 bench = false
 doctest = false
 
-# 引导域（S 态，boot 引入的唯一顶层域）：读 boot 的两块账、把持树者与编排者起起来，
-# 之后只做一件事——照单发货。
-[[bin]]
-name = "prog-root"
-path = "src/root/main.rs"
-test = false
-bench = false
-doctest = false

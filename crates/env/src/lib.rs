@@ -62,6 +62,6 @@ pub use key::{KEY_LEN, Key};
 pub use mold::Frame;
 pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
-pub use supply::{Kind, WANT_LEN, Want};
+pub use supply::Kind;
 pub use wait::Wait;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

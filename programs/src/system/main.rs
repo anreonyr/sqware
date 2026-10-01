@@ -2,17 +2,21 @@
 #![no_main]
 
 //! system — **编排域**：这台机器上有哪些服务、怎么起、谁死了怎么办。
-//! 它是 boot 之后**唯一**起服务的地方。引导域（`root`）只把一样东西交给它：**这块字节**
-//! （清单 + 全部镜像，一枚只读门闩）；此外一概不给。
+//! 它也是**这一景的引导镜像**（并域那一刀）：boot 的两块账与**全机门闩**都在本域手里——起手
+//! 自己读账，装配时按坐标**直接授出**。全机只有它起服务。
 //! ```text
-//! 1  起手：与引导域搭会话 + 领机器自述 + 领载荷区清单（`bootstrap::take`）
+//! 1  起手：读 boot 的两块账 ＋ 机器自述 ＋ 那块清单（`bootstrap::take`）
 //! 2  这一景起哪些台：`assemble::programs`（**过滤 + 按各台声明的边算次序**，就这一件事）
 //! 3  逐条起：`Assembly::assemble`——每一台按**它自己那份声明**装配（相与手见 `system::schedule`）
 //! 4  **这一趟走完**（`program::SCENE` 那一格到点）：挂 `control` 那一面
 //!    （`Assembly::mount_control`）→ 监督那一趟（`Assembly::supervise`）：谁没了 ⇒ 记账 + 放下
 //!    那个死域；**该收了**就逐位下刀，**收讫了**才收场
-//! 5  本域退出 ⇒ 引导域那枚孔随之封印 ⇒ 它退出 ⇒ 级联扑杀 ⇒ 自然停机（srst）
+//! 5  本域退出 = **最后一个域退出** ⇒ 内核收场 ⇒ 自然停机（srst）
 //! ```
+//! **照实记（并域那一刀丢掉了什么）**：从前本域上面还有一个引导域——它持门闩、探活看着本域，
+//! 本域没了它就退、级联扑杀。今天本域是顶层：**"看着自己"这一格没有对应物**，收场改由
+//! "最后一个域退出"担（两者同归，但那条边界确实少了）。本域从此**自己持全机门闩**
+//! （21 枚，原先是它替客人开单、门闩在引导域手里）：这是这一刀唯一实质的代价。
 //! **本文件只剩流程**，而且只有编排者这一条：四枚服务（持树者 / 名册 / 盟册 / 设备账）各自是一个
 //! 程序、一个域（`src/system/{operator,principal,coalition}/main.rs`），由本域按那张装配表
 //! 用与其他每一台相同的 `mint` 起起来——**没有 `Role` 那种"同一份字节按 args 分派"的特例**。
@@ -30,14 +34,10 @@ use programs::system::control::{self, E_PROGRAM};
 /// 本域的死法：**一格 = 死在起手的哪一步**。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
-    /// 与引导域那条会话没搭上。
-    Firmware,
+    /// 两块账读不出来（启动参数不足 / 清单头非法）。
+    BootArgs,
     /// 那台机器的自述（`Key::dtb`）没领到 / 读不懂。
     Machine,
-    /// 那块载荷区（清单在里面）没领到 / 读不懂。
-    Payload,
-    /// 清单那一条读不懂。
-    Manifest,
     /// 死亡道那只组。
     Group,
     /// 整表装配那一趟带来的号（**按服务分的号取自那一台自己的 `died`**，由 `Assembly::assemble` 折出）。
@@ -51,10 +51,8 @@ pub enum Fail {
 impl From<bootstrap::Fail> for Fail {
     fn from(f: bootstrap::Fail) -> Fail {
         match f {
-            bootstrap::Fail::Firmware => Fail::Firmware,
+            bootstrap::Fail::BootArgs => Fail::BootArgs,
             bootstrap::Fail::Machine => Fail::Machine,
-            bootstrap::Fail::Payload => Fail::Payload,
-            bootstrap::Fail::Manifest => Fail::Manifest,
         }
     }
 }
@@ -62,10 +60,8 @@ impl From<bootstrap::Fail> for Fail {
 impl Fail {
     fn code(self) -> env::Reason {
         match self {
-            Fail::Firmware => bootstrap::Fail::Firmware.code(),
+            Fail::BootArgs => bootstrap::Fail::BootArgs.code(),
             Fail::Machine => bootstrap::Fail::Machine.code(),
-            Fail::Payload => bootstrap::Fail::Payload.code(),
-            Fail::Manifest => bootstrap::Fail::Manifest.code(),
             Fail::Assemble(code) => code,
             Fail::Group => control::E_TABLE,
             Fail::Supervise => 8,
@@ -75,10 +71,8 @@ impl Fail {
 
     const fn text(self) -> &'static str {
         match self {
-            Fail::Firmware => bootstrap::Fail::Firmware.text(),
+            Fail::BootArgs => bootstrap::Fail::BootArgs.text(),
             Fail::Machine => bootstrap::Fail::Machine.text(),
-            Fail::Payload => bootstrap::Fail::Payload.text(),
-            Fail::Manifest => bootstrap::Fail::Manifest.text(),
             Fail::Assemble(_) => "system: assemble",
             Fail::Group => "system: no group",
             Fail::Supervise => "system: supervise",
@@ -96,14 +90,15 @@ impl programs::Exit for Fail {
 #[programs::entry]
 fn main() -> programs::Report<'static> {
     match system() {
-        Ok(()) => programs::Report::new(env::EXIT_OK),
+        // **收场那一笔有话说**：本域是最后一个域，这一行就是"整机走完了"的记号。
+        Ok(()) => programs::Report::note(env::EXIT_OK, "system: done"),
         Err(f) => programs::Report::note(f.code(), f.text()),
     }
 }
 
 /// **编排域那一枚的身子**：这台机器上有哪些服务、怎么起、谁死了怎么办。
 fn system() -> Result<(), Fail> {
-    // 1. 起手三样：与引导域那条会话、机器自述、载荷区清单（配给与镜像都从它们来）。
+    // 1. 起手三样：两块账、机器自述、清单（配给与镜像都从它们来；本域就是引导镜像）。
     let boot = bootstrap::take().map_err(Fail::from)?;
 
     // 2. 这一景起哪些台（**次序由各台声明里的 `after` 算出来**：先起的先就绪，后面的就能向它要东西）。
@@ -133,6 +128,6 @@ fn system() -> Result<(), Fail> {
     if !assembly.supervise() {
         return Err(Fail::Doom);
     }
-    // 5. 本域退出 ⇒ 引导域那枚孔封印 ⇒ 它退出 ⇒ 级联 ⇒ 停机。
+    // 5. 本域退出 = **最后一个域退出** ⇒ 内核收场（shutdown 钩子）⇒ 停机。
     Ok(())
 }

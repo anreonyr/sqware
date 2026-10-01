@@ -48,7 +48,7 @@ impl Assembly {
     /// 就位：建生命轴 ＋ 铸道立组（死亡道跟着这一景的装配表铸：**要存在信号的那几位一位一条**
     pub fn new(boot: Boot) -> Result<Assembly, ()> {
         Ok(Assembly {
-            control: Control::new(boot.catalog, boot.machine, boot.pier),
+            control: Control::new(boot.catalog, boot.machine, boot.accounts),
             tree: Tree::default(),
             roster: Roster::default(),
             watch: Watch::new()?,

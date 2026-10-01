@@ -260,10 +260,11 @@ pub const ENROLL_MAX: usize = 64;
 pub const ENROLL_CAP: usize = Enroll::LEN;
 
 /// **入册那一段**：条数 ＋ 那几条记录（[`Pair`] = 坐标 ＋ 那枚门闩**在收方表里**的号）。
-/// **为什么是 `Pair` 而不是本族自己那一形**：装配者手里拿到的就是它——引导域按坐标授出、
-/// 回一张 `Pair` 记录（见 `protocol::system::supply`），本段一个字节都不用翻译。
-/// 段尾那一条恒是"设备树本体"：hub 要先把树读一遍才知道**哪一条是哪一台**（名 / 类 / 线），
-/// 故装配者**先**领树、**先**把它编进这一段（次序即契约，见 `hub/server.rs` 的起手）。
+/// **为什么是 `Pair` 而不是本族自己那一形**：装配者手里拿到的就是它——它按坐标从自己那本账
+/// 取源、授出一枚、当场记一条 `Pair`（见 `programs/src/system/control/assemble.rs` 的
+/// `enroll`），本段一个字节都不用翻译。
+/// **这一段里必有"设备树本体"那一条**：hub 要先把树读一遍才知道**哪一条是哪一台**（名 / 类 / 线），
+/// 故装配者一并把它授出（本族起手按坐标取它，见 `hub/server.rs`）。
 #[derive(env::Frame, Clone, Copy)]
 pub struct Enroll {
     n: u8,

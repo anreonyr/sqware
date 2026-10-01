@@ -37,7 +37,6 @@ use crate::service::operator::path::Path;
 
 pub mod control;
 pub mod faces;
-pub mod supply;
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）。
 const LOOSE: &[env::Mark] = &[

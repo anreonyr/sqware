@@ -22,8 +22,6 @@ pub mod hub;
 pub mod operator;
 #[path = "../service/principal/program.rs"]
 pub mod principal;
-#[path = "../root/program.rs"]
-pub mod root;
 #[path = "../driver/router/program.rs"]
 pub mod router;
 #[path = "../driver/rtc/program.rs"]
@@ -33,14 +31,14 @@ pub mod system;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
 
-/// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`
-/// 按位次算），且各景按 [`UnitFile::wanted_by`] 过滤 ⇒ 加一台要想清楚放哪。
+/// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它同时是**装载次序**与打包时的条目
+/// 次序（`crates/image` 按这张表的位次把镜像挨个写进清单），且各景按 [`UnitFile::wanted_by`]
+/// 过滤 ⇒ 加一台要想清楚放哪。
 /// **本表只有引用**：每一台的声明都在它自己那份 `program.rs` 里，这里不再写第二遍。
 /// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行，于是"哪几台进哪张镜像"
 /// 就没法一眼扫完——而这张表**就是**给人扫的。
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
-    &root::PROGRAM,
     // 四枚服务（持树者 / 名册 / 盟册 / 设备账）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
     &operator::PROGRAM,
     &principal::PROGRAM,

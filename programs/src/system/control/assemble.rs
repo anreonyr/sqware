@@ -3,18 +3,17 @@
 //!   - [`Control::enlist`]：登记一行——**怎么算起来了**由这一行的 `setup` 推出
 //!     （有通道 ⇒ `Announce::Channel`；否则放行即起来）。**先立整张账，再逐条起**。
 //!   - [`Control::enroll`]：**把这一台机器的全部可领之物交进某一台**（`Setup::Machine` 那一格
-//!     声明的）：按机器自述枚举全机 → 逐段向引导域领 → 一整段推进它那条通道。
+//!     声明的）：按机器自述枚举全机 → 逐条授出（门闩在本域手里）→ 一整段推进它那条通道。
 
 use alloc::string::String;
 use alloc::string::ToString;
 use env::{Pair, Wait};
 use protocol::debug;
 
-use env::{Access, Key, Mark, Policy};
+use env::{Access, Key, Kind, Mark, Policy};
 use protocol::driver::hub::{ENROLL_MAX, Enroll};
-use protocol::system::supply;
-use protocol::system::supply::frame::Kind;
-use protocol::system::supply::frame::{WANT_MAX, Want};
+use runtime::core::port;
+use runtime::env::mail::{NolePie, PolePie};
 
 use crate::system::control::desk::Announce;
 
@@ -62,10 +61,15 @@ impl Control {
     /// 三步：
     /// 1. **枚举全机**（[`crate::system::machine::Machine::devices`]）＋ 那两件按**已知坐标**的
     ///    （设备树本体 / 门铃——它们不在树里，没有"哪一类"可判）；
-    /// 2. **逐段向引导域领**（`WANT_MAX` 一块）：坐标由本域翻（类 → 区那一条权威仍在读树的地方）；
+    /// 2. **逐条授出**（门闩在本域手里，直接 `port::ship` 给**它**）；
     /// 3. **一整段推过去**（[`Enroll`]：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）。
-    /// **段尾那一条恒是设备树本体**（`wants[0]`）：收方要**先**把树读一遍，才知道哪一条记录是
-    /// 哪一台（名 / 类 / 线）。次序即契约。
+    /// **第一条恒是设备树本体**：收方要**先**把树读一遍，才知道哪一条记录是哪一台
+    /// （名 / 类 / 线）。次序即契约。
+    ///
+    /// **照实记（并域那一刀退掉了什么）**：这一段从前是"分块递单 ＋ 块内失败退逐条"（49 行）
+    /// ——那是**跨域**与"一帧一单"的利息：门闩原在引导域手里，本域只替客人开单，还得按帧容量
+    /// 切开、失败再逐条重来。门闩并到本域之后，同域发货没有容量这回事，判据只剩一个：
+    /// "这一条成不成"。
     pub fn enroll(
         &mut self,
         name: String,
@@ -88,7 +92,7 @@ impl Control {
             return Err(Error::Step("no channel"));
         };
 
-        // 一、这一段要有哪几样。
+        // 一、这一段要有哪几样（收方那一台要**先**把树读一遍，故第一条是树本体）。
         let devices = self
             .machine
             .devices()
@@ -97,84 +101,42 @@ impl Control {
         if total > ENROLL_MAX {
             return Err(Error::Step("too many devices"));
         }
-        let mut wants: alloc::vec::Vec<Want> = alloc::vec::Vec::new();
-        wants
-            .try_reserve(total)
-            .map_err(|_| Error::Step("no room for devices"))?;
+
+        // 二、逐条授出：本域持门闩，**直接授给客人**；取不到源 / 授不出的那一条跳过并记一行读数。
         // **形态照源枚**：设备那几段带 `ONLY`（内核就是那么发的：一枚门闩只许一个使用者），
-        // 树与门铃不带。**这四条都带 `VEST`**：收方（设备账那一台）的全部工作就是**再授出**
+        // 树与门铃不带。**四条都带 `VEST`**：收方（设备账那一台）的全部工作就是**再授出**
         // （把每一台交到它认领者手里）——不带 `VEST` 它就一台都交不出去。
         // 坐标那一格：树与门铃按**已知坐标**要（它们不在树里），设备按**区**要（那是内核造门闩
         // 的坐标）。
-        wants.push(Want::new(
-            Key::dtb(),
-            Kind::Pole,
-            Access::FETCH,
-            Policy::VEST,
-        ));
-        wants.push(Want::new(
-            Key::irq(),
-            Kind::Nole,
-            Access::FETCH,
-            Policy::VEST,
-        ));
+        let mut records = [Pair::NONE; ENROLL_MAX];
+        let mut got = 0usize;
+        let mut put = |key: Key, kind: Kind, access: Access, policy: Policy| {
+            let shipped = self.accounts.token(key).and_then(|src| match kind {
+                Kind::Pole => port::ship(&PolePie::from_token(src), *task, access, policy).ok(),
+                Kind::Nole => port::ship(&NolePie::from_token(src), *task, access, policy).ok(),
+            });
+            match shipped {
+                Some(seat) => {
+                    records[got] = Pair::new(key, seat.seed());
+                    got += 1;
+                }
+                // 授不出的那一台：**一行读数**，这一台不在册上。
+                None => debug!(
+                    "system: enroll {} skipped {:#x}",
+                    name.as_str(),
+                    key.base().unwrap_or(0)
+                ),
+            }
+        };
+        put(Key::dtb(), Kind::Pole, Access::FETCH, Policy::VEST);
+        put(Key::irq(), Kind::Nole, Access::FETCH, Policy::VEST);
         for device in &devices {
-            wants.push(Want::new(
+            put(
                 device.key,
                 Kind::Pole,
                 Access::FETCH_STORE,
                 Policy::VEST | Policy::ONLY,
-            ));
-        }
-
-        // 二、逐段领（`WANT_MAX` 一块，块内失败退成逐条）。
-        let mut records = [Pair::NONE; ENROLL_MAX];
-        let mut got = 0usize;
-        let mut at = 0usize;
-        let mut reply = [0u8; supply::REPLY_CAP];
-        while at < wants.len() {
-            let end = core::cmp::min(at + WANT_MAX, wants.len());
-            match supply::client::draw(
-                &self.boot,
-                *task,
-                &wants[at..end],
-                &mut reply,
-                Wait::AtMost(BOOT_MS),
-            ) {
-                Ok(said) => {
-                    for pair in said.records() {
-                        records[got] = *pair;
-                        got += 1;
-                    }
-                }
-                // 这一块没成 ⇒ 逐条重来（好在:领得到的照收）。
-                Err(_) => {
-                    for want in &wants[at..end] {
-                        let one = [*want];
-                        match supply::client::draw(
-                            &self.boot,
-                            *task,
-                            &one,
-                            &mut reply,
-                            Wait::AtMost(BOOT_MS),
-                        ) {
-                            Ok(said) => {
-                                if let Some(pair) = said.records().first() {
-                                    records[got] = *pair;
-                                    got += 1;
-                                }
-                            }
-                            // 领不到的那一台：**一行读数**，这一台不在册上。
-                            Err(_) => debug!(
-                                "system: enroll {} skipped {:#x}",
-                                name.as_str(),
-                                want.key().and_then(|key| key.base()).unwrap_or(0)
-                            ),
-                        }
-                    }
-                }
-            }
-            at = end;
+            );
         }
 
         // 三、一整段推过去。
