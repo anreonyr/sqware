@@ -50,7 +50,7 @@ erra = { version = "0.2.0", default-features = false }
 
 [[bin]]
 name = "prog-probe-lease"
-path = "src/probe_lease.rs"
+path = "src/probe/probe_lease.rs"
 test = false
 bench = false
 doctest = false
@@ -63,28 +63,28 @@ doctest = false
 
 [[bin]]
 name = "prog-probe-owner"
-path = "src/probe_owner.rs"
+path = "src/probe/probe_owner.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-denied"
-path = "src/probe_denied.rs"
+path = "src/probe/probe_denied.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-bound"
-path = "src/probe_bound.rs"
+path = "src/probe/probe_bound.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-control"
-path = "src/probe_control.rs"
+path = "src/probe/probe_control.rs"
 test = false
 bench = false
 doctest = false
@@ -96,28 +96,28 @@ doctest = false
 # 两位客人各持一条——`gate` 那位走控制面（`operator::BERTH`），替 `land` 那位把试验场铺好。
 [[bin]]
 name = "prog-probe-operator-gate"
-path = "src/probe_operator_gate.rs"
+path = "src/probe/probe_operator_gate.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-operator-land"
-path = "src/probe_operator_land.rs"
+path = "src/probe/probe_operator_land.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-rule"
-path = "src/probe_rule.rs"
+path = "src/probe/probe_rule.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-rule-other"
-path = "src/probe_rule_other.rs"
+path = "src/probe/probe_rule_other.rs"
 test = false
 bench = false
 doctest = false
@@ -130,14 +130,14 @@ doctest = false
 # 本 crate = 不进产品镜像的一切。
 [[bin]]
 name = "prog-guest"
-path = "src/guest.rs"
+path = "src/guest/guest.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-passer"
-path = "src/passer.rs"
+path = "src/guest/passer.rs"
 test = false
 bench = false
 doctest = false
@@ -145,7 +145,7 @@ doctest = false
 # 房客（U 态，同 `passer` 一档）：占一条线、**直接死**——线路由者那本账的探活读数。
 [[bin]]
 name = "prog-lodger"
-path = "src/lodger.rs"
+path = "src/guest/lodger.rs"
 test = false
 bench = false
 doctest = false
@@ -153,7 +153,7 @@ doctest = false
 # 客人（U 态）：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声。
 [[bin]]
 name = "prog-sleeper"
-path = "src/sleeper.rs"
+path = "src/guest/sleeper.rs"
 test = false
 bench = false
 doctest = false
@@ -161,7 +161,7 @@ doctest = false
 # 主体（U 态）：身份服务的第一位真客人——问自己是谁，把六条读数打出来。
 [[bin]]
 name = "prog-subject"
-path = "src/subject.rs"
+path = "src/guest/subject.rs"
 test = false
 bench = false
 doctest = false
@@ -169,7 +169,7 @@ doctest = false
 # 盟友（U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态。
 [[bin]]
 name = "prog-member"
-path = "src/member.rs"
+path = "src/guest/member.rs"
 test = false
 bench = false
 doctest = false
@@ -177,14 +177,14 @@ doctest = false
 # 压测台：受害者（U 态）与台主（S 态，**景 `rig` 的引导镜像**）。
 [[bin]]
 name = "prog-churn"
-path = "src/churn.rs"
+path = "src/bench/again/churn.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-rig"
-path = "src/rig.rs"
+path = "src/bench/rig.rs"
 test = false
 bench = false
 doctest = false
@@ -192,42 +192,42 @@ doctest = false
 # 忙机台：占核者（U 态）与台主（S 态，**景 `load` 的引导镜像**）。
 [[bin]]
 name = "prog-busy"
-path = "src/busy.rs"
+path = "src/bench/load/busy.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-park"
-path = "src/park.rs"
+path = "src/bench/load/park.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-hang"
-path = "src/hang.rs"
+path = "src/bench/rig/hang.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-load"
-path = "src/load.rs"
+path = "src/bench/load.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-beat"
-path = "src/beat.rs"
+path = "src/bench/beat.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-again"
-path = "src/again.rs"
+path = "src/bench/again.rs"
 test = false
 bench = false
 doctest = false
@@ -237,14 +237,14 @@ doctest = false
 # **只归一个人**——见 `harness/src/group.rs` 头注。
 [[bin]]
 name = "prog-waiter"
-path = "src/waiter.rs"
+path = "src/bench/group/waiter.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-group"
-path = "src/group.rs"
+path = "src/bench/group.rs"
 test = false
 bench = false
 doctest = false
