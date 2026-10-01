@@ -38,9 +38,9 @@ use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
 use protocol::service::operator::client::Mine;
 use runtime::PAGE_SIZE;
-use runtime::core::dock::Dock;
-use runtime::core::pile::Pile;
-use runtime::core::port;
+use runtime::core::res::dock::Dock;
+use runtime::core::res::pile::Pile;
+use runtime::core::res::port;
 use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
 

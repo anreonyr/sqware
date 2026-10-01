@@ -1,7 +1,7 @@
 //! Debug 域（class 8）：`DebugCall::*` 转发（借内核的 DBCN 打印/读入）。
 //!
 //! 它们是"服务还没起来的嘴"，不是一条新的控制台通路——生产里域打印仍归 console 服务
-//! （纪律，不是编译期的事：见 `env::fid::DebugCall` 那条"不设构建门"的理由）。
+//! （纪律，不是编译期的事：见 `env::abi::call::DebugCall` 那条"不设构建门"的理由）。
 //!
 //! 每一个函数封一次 envcall，零逻辑，与 `env::chrono`/`env::room` 同形。
 
@@ -11,7 +11,7 @@ use env::{DBCN_MAX, DebugResult, VirtAddr};
 ///
 /// **超 [`DBCN_MAX`] 的那一段被内核截断**（本层照 `s.len()` 递上去，不预截）：
 /// 一件长东西只印出前 `DBCN_MAX` 字节，返回值就是那个数。**这不是错误**——与
-/// [`get`] 的"多出即拒"不同形（两处的实测读法见 `env::fid::DebugCall`）。
+/// [`get`] 的"多出即拒"不同形（两处的实测读法见 `env::abi::call::DebugCall`）。
 ///
 /// # Errors
 /// - `Denied`(-1) `buf` 未映射 / 长度为零
@@ -23,7 +23,7 @@ pub fn put(s: &str) -> DebugResult<usize> {
 /// 从调试控制台读一段字节写进 `buf`，返**实际写入的字节数**。
 ///
 /// **可能阻塞**（SBI 的 console read 语义）：单核上会挂住整机，直到串口来字节。
-/// 敢不敢在这儿等，是调用方的判断（见 `env::fid::DebugCall::Get` 的注）。
+/// 敢不敢在这儿等，是调用方的判断（见 `env::abi::call::DebugCall::Get` 的注）。
 ///
 /// # Errors
 /// - `Denied`(-1) `buf` 非法 / 长度为零或超 `DBCN_MAX` / 固件给不出这一格

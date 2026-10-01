@@ -22,7 +22,7 @@ global_asm!(
 
 #[unsafe(no_mangle)]
 extern "C" fn tls_bootstrap() {
-    unsafe { runtime::core::tls::bootstrap() }
+    unsafe { runtime::core::task::tls::bootstrap() }
 }
 
 /// **入口那一手**：`bare` 是 bin 自己那个 `main`（当**函数项**传进来，不在这里调用——

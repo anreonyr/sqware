@@ -20,38 +20,33 @@
 
 extern crate alloc;
 
-pub mod args;
+pub mod abi;
 pub mod ecall;
-pub mod exit;
-pub mod fid;
-pub mod key;
-pub mod manifest;
-pub mod pair;
-pub mod permission;
-pub mod pie_kind;
-pub mod wait;
+pub mod ledger;
 pub mod wire;
 
 pub use ecall::{FailCode, make_fail};
-pub use exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
-pub use fid::{
+pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
+pub use abi::call::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleDir, MailCall,
     MailCallRet, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
-    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, ProgramKind, RoomCall, RoomCallRet,
+    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, RoomCall, RoomCallRet,
     RoomFail, RoomResult, ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet,
     UnitFail, UnitResult,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
-pub use fid::{chrono, control, debug, mail, memory, pie, room, tole, unit};
-pub use key::{KEY_LEN, Key};
+pub use abi::call::{chrono::chrono, control::control, debug::debug, mail::mail,
+    memory::memory, pie::pie, room::room, tole::tole, unit::unit};
+pub use ledger::key::{KEY_LEN, Key};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
-pub use pair::{PAIR_LEN, Pair};
-pub use permission::{Access, Permission, Policy};
-pub use pie_kind::PieKind;
-pub use wait::Wait;
+pub use ledger::pair::{PAIR_LEN, Pair};
+pub use abi::permission::{Access, Permission, Policy};
+pub use wire::pie_kind::PieKind;
+pub use wire::program_kind::ProgramKind;
+pub use abi::wait::Wait;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

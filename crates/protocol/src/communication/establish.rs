@@ -19,7 +19,7 @@
 use core::ops::{Deref, DerefMut};
 
 use env::{Mark, Permission, PieToken, TaskId, Wait};
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
 use super::receiver::Receiver;

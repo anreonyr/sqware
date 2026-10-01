@@ -11,7 +11,7 @@ use alloc::vec::Vec;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::PAGE_SIZE;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::HolePie;
 
 use super::control::service::Start;

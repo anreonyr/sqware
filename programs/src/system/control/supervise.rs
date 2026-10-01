@@ -11,7 +11,7 @@ use env::{HoleDir, PieToken, Wait};
 use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::system::control as ccall;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::chrono::clock;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;

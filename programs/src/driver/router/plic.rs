@@ -8,7 +8,7 @@
 //! （`/dev/boot/{dtb,irq}`：它们不是树里的设备）。名字不在本文件里第二遍。
 
 use crate::core::sources::Sources;
-use runtime::core::dock::View;
+use runtime::core::res::dock::View;
 
 /// 一条线的优先级：恒 1。**0 是"静音"**（见 [`Plic::disable`]），故本值不能是 0。
 pub const LINE_PRIORITY: u32 = 1;

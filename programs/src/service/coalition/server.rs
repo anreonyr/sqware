@@ -35,7 +35,7 @@ use protocol::service::operator::client::{Face as TreeFace, Mine};
 use protocol::service::principal as pcall;
 use protocol::service::principal::PrincipalId;
 use protocol::service::principal::client::Face;
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
 /// 等板 / 等树 / 问名册的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

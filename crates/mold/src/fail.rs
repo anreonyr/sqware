@@ -163,7 +163,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
         #busy_fn
 
         /// 逐域锁死：号自 `-1` 起连续、逐枚读得回来、表外答 `None`。
-        /// 同 `env::ecall::Fail` 那两条编译期断言的纪律——**错一枚编不过**。
+        /// 同 `env::abi::ecall::Fail` 那两条编译期断言的纪律——**错一枚编不过**。
         const _: () = {
             #(assert!(#name::#idents.code() == #codes);)*
             #(assert!(matches!(#name::of_code(#codes), Some(#name::#idents)));)*

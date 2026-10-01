@@ -4,7 +4,7 @@
 
 use env::Wait;
 use env::{HoleDir, Mark, PieToken};
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
 use super::frame;

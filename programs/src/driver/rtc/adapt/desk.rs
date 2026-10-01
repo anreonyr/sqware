@@ -8,7 +8,7 @@ use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
 use protocol::communication::sender::Sender;
 use protocol::debug;
-use runtime::core::dock::View;
+use runtime::core::res::dock::View;
 use runtime::env::mail;
 
 /// 门上那一句话：**解帧 → 认孔 → 喂核 → 从这一趟自带的那枚孔答回去**。

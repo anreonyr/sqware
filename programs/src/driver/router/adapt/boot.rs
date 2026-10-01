@@ -20,8 +20,8 @@ use protocol::driver::hub as hcall;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Mine;
 use runtime::PAGE_SIZE;
-use runtime::core::bell::Bell;
-use runtime::core::pile::Pile;
+use runtime::core::res::bell::Bell;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie, NolePie};
 use runtime::env::unit as utask;
 

@@ -13,7 +13,7 @@ use protocol::driver::hub;
 use protocol::driver::hub::Deed;
 use protocol::service::operator::client::Face as TreeFace;
 use protocol::service::operator::path::Path;
-use runtime::core::dock::{Dock, View};
+use runtime::core::res::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 
 use crate::unit::Died;

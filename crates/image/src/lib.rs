@@ -168,7 +168,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .position(|(name, _)| *name == entry)
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
-    let blob = env::manifest::pack(&items, entry_at)
+    let blob = env::ledger::manifest::pack(&items, entry_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
 
     // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。

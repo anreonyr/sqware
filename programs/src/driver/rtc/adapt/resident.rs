@@ -15,7 +15,7 @@ use protocol::communication::sender::Sender;
 use protocol::debug;
 use protocol::driver::line;
 use runtime::PAGE_SIZE;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
 /// 常驻：**一只组等两个源**——门上有请求、线上有投递。

@@ -201,11 +201,11 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
         },
     )?;
 
-    let mut args = [0usize; env::args::LEN];
-    args[env::args::VIEW] = view.as_usize();
-    args[env::args::VIEW_LEN] = region.size;
-    args[env::args::PAIRS] = pairs.as_usize();
-    args[env::args::COUNT] = devices.len();
+    let mut args = [0usize; env::ledger::args::LEN];
+    args[env::ledger::args::VIEW] = view.as_usize();
+    args[env::ledger::args::VIEW_LEN] = region.size;
+    args[env::ledger::args::PAIRS] = pairs.as_usize();
+    args[env::ledger::args::COUNT] = devices.len();
     let bootstrap = team.task().args(args.to_vec()).hold()?;
     crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");
     crate::platform::devices::install(&bootstrap, devices);

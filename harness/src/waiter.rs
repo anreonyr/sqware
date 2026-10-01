@@ -42,7 +42,7 @@ use env::HoleDir;
 use env::Mark;
 use env::PieToken;
 use protocol::debug;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie, TolePie};
 
 #[programs::entry]

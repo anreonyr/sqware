@@ -16,7 +16,7 @@ use env::Mark;
 use env::Wait;
 use env::wire::Field;
 use env::{HoleDir, PieToken, TaskId};
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::system::Assembly;

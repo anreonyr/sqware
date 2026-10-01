@@ -16,8 +16,8 @@
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use runtime::PAGE_SIZE;
-use runtime::core::pile::Pile;
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::pile::Pile;
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use protocol::communication::receiver::{Receiver, RecvFail};

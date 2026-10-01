@@ -19,11 +19,13 @@
 //!
 //! **有三个 impl 的"类型在外"**：[`Permission`](crate::Permission) 在
 //! [`permission`](crate::permission)、[`HoleDir`](crate::HoleDir) 与
-//! [`ProgramKind`](crate::ProgramKind) 在 [`fid`](crate::fid)。这是**刻意**的：本仓的
+//! [`ProgramKind`](crate::ProgramKind) 在 [`call`](crate::abi::call)。这是**刻意**的：本仓的
 //! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
 
 pub mod frompair;
 pub mod handle;
+pub mod pie_kind;
+pub mod program_kind;
 
 pub use frompair::{FromPair, FromTriple};
 pub use handle::{Mark, PieToken, TaskId, TeamId, VirtAddr};
@@ -77,7 +79,7 @@ impl Wire for u64 {
     }
 }
 
-impl Wire for crate::wait::Wait {
+impl Wire for crate::abi::wait::Wait {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = self.to_wire();
         *i += 1;
@@ -86,7 +88,7 @@ impl Wire for crate::wait::Wait {
         let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
         // 满射（每个 `usize` 都有一格）⇒ 解码这一步没有非法位可拒。
-        Ok(crate::wait::Wait::from_wire(v))
+        Ok(crate::abi::wait::Wait::from_wire(v))
     }
 }
 
@@ -106,11 +108,11 @@ impl Wire for bool {
     }
 }
 
-impl Wire for crate::fid::HoleDir {
+impl Wire for crate::abi::call::HoleDir {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = match self {
-            crate::fid::HoleDir::Pull => 0,
-            crate::fid::HoleDir::Push => 1,
+            crate::abi::call::HoleDir::Pull => 0,
+            crate::abi::call::HoleDir::Push => 1,
         };
         *i += 1;
     }
@@ -118,18 +120,18 @@ impl Wire for crate::fid::HoleDir {
         let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
         match v {
-            0 => Ok(crate::fid::HoleDir::Pull),
-            1 => Ok(crate::fid::HoleDir::Push),
+            0 => Ok(crate::abi::call::HoleDir::Pull),
+            1 => Ok(crate::abi::call::HoleDir::Push),
             _ => Err(Decode::Invalid),
         }
     }
 }
 
-impl Wire for crate::fid::ProgramKind {
+impl Wire for crate::wire::program_kind::ProgramKind {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = match self {
-            crate::fid::ProgramKind::User => 0,
-            crate::fid::ProgramKind::Supervisor => 1,
+            crate::wire::program_kind::ProgramKind::User => 0,
+            crate::wire::program_kind::ProgramKind::Supervisor => 1,
         };
         *i += 1;
     }
@@ -137,8 +139,8 @@ impl Wire for crate::fid::ProgramKind {
         let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
         match v {
-            0 => Ok(crate::fid::ProgramKind::User),
-            1 => Ok(crate::fid::ProgramKind::Supervisor),
+            0 => Ok(crate::wire::program_kind::ProgramKind::User),
+            1 => Ok(crate::wire::program_kind::ProgramKind::Supervisor),
             _ => Err(Decode::Invalid),
         }
     }
@@ -150,7 +152,7 @@ impl Wire for crate::fid::ProgramKind {
 /// **超宽值同样要拒**：`a2`/`a3` 是整寄存器（`usize`），故「先 `as u32` 再校验」等于
 /// 把 32 位以上静默丢掉后再判合法——`0x1_0000_0002` 会被解成 `STORE` 而不是 `Invalid`，
 /// 那正是本条要根除的那类静默截断，只是搬到了高位。故先判宽度、再判位。
-impl Wire for crate::permission::Permission {
+impl Wire for crate::abi::permission::Permission {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = self.bits() as usize;
         *i += 1;
@@ -159,6 +161,6 @@ impl Wire for crate::permission::Permission {
         let v = *s.get(*i).ok_or(Decode::Overflow)?;
         *i += 1;
         let bits = u32::try_from(v).map_err(|_| Decode::Invalid)?;
-        crate::permission::Permission::from_bits(bits).ok_or(Decode::Invalid)
+        crate::abi::permission::Permission::from_bits(bits).ok_or(Decode::Invalid)
     }
 }

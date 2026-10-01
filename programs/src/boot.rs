@@ -1,13 +1,13 @@
 //! boot — **内核对引导镜像那一域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
-//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::args`），答的还是
+//! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::ledger::args`），答的还是
 //! "谁被装进来了"这件事。
 //! 内核只把这两区**只读借映**进**引导镜像那一域**，故读者是每一个引导镜像：
 //! `system`，以及 harness 的 `again` / `rig` / `load` / `group`。
 
 use env::PieToken;
-use env::key::{DTB, IRQ, REGION};
+use env::ledger::key::{DTB, IRQ, REGION};
 use env::{Key, PAIR_LEN, Pair};
-use env::{args as boot_args, manifest};
+use env::ledger::{args as boot_args, manifest};
 use protocol::debug;
 
 /// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）。
@@ -19,12 +19,12 @@ pub struct Accounts {
 impl Accounts {
     /// 从启动参数取出两块账。`None` = 参数不足 / 清单头非法（不该发生）。
     pub fn take() -> Option<Accounts> {
-        let a = runtime::core::unit::args();
+        let a = runtime::core::task::args::args();
         if a.len() < boot_args::LEN {
             return None;
         }
         let (view, len) = (a[boot_args::VIEW] as *const u8, a[boot_args::VIEW_LEN]);
-        // `COUNT` 是**条数**，不是字节数（布局见 `env::args`）。
+        // `COUNT` 是**条数**，不是字节数（布局见 `env::ledger::args`）。
         let (pairs, count) = (a[boot_args::PAIRS] as *const u8, a[boot_args::COUNT]);
         // SAFETY: boot 把这两区只读映射进本域，长度即启动参数给的字节数；本域只读。
         let view = unsafe { core::slice::from_raw_parts(view, len) };

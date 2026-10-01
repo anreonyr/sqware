@@ -12,7 +12,7 @@ use crate::message::Message;
 use env::Mark;
 use env::Wait;
 use env::{PieToken, TaskId};
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::communication::establish::Endpoint;

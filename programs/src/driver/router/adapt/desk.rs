@@ -13,7 +13,7 @@ use protocol::communication::establish::{self, Held};
 use protocol::debug;
 use protocol::driver::line::frame as lcall;
 use protocol::message::Message;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
 /// 装泊位 / 认泊位的期限（毫秒）。

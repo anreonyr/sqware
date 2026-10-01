@@ -18,7 +18,7 @@
 //! | 策略 | **拒绝**：非法位 / 超宽 → `Err(Decode)` | **按契约取位**（截断是位打包的一部分） |
 //! | 依据 | 不可信输入 | §"由内核保证" |
 //!
-//! 内核侧那一条不写成 `Err`，理由是**错误域的形状**：各域词表（`fid.rs` 那一节）的
+//! 内核侧那一条不写成 `Err`，理由是**错误域的形状**：各域词表（`abi/call` 那一份）的
 //! D1 契约）说的都是**内核→用户**的答案（`Denied`/`Dead`/`Busy`/…）。把"内核自己违约"
 //! 塞进同一个域，等于让用户程序去处理内核的 bug，且每条 `call()` 都要多一个分支。
 //!
@@ -29,7 +29,7 @@
 
 use super::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 use crate::HoleDir;
-use crate::permission::Permission;
+use crate::abi::permission::Permission;
 
 /// 由内核回写的 `(a0, a1)` 还原「域 Ret 载荷」的契约（R3 蒸馏）。
 ///
@@ -71,7 +71,7 @@ impl FromPair for (usize, TaskId) {
 }
 
 /// `Reserve` 的返回：两格**原样**交出——`a0` = owner 高 32 位 | vestor 低 32 位、
-/// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::fid` 的 `Reserve` 那一格的注里）。
+/// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::abi::call` 的 `Reserve` 那一格的注里）。
 ///
 /// 本层**不拆**：拆法属于调用点（`runtime::env::mail::reserve`），同一对寄存器不许有两种
 /// 解释——这一对寄存器只有这一种解释。

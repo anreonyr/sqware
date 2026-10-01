@@ -4,17 +4,11 @@
 //!   `core::`（无前缀）      Rust 的 freestanding 核心库（`core::mem` 等）。
 //!
 //! 与 `env/` 的分工：`env/` 是 envcall 转发（薄），`core/` 是组合与封装（厚）。
-//! 例子：`env::mail::HolePie` 是「薄」门闩句柄；`core::port::Port` 是「厚」的一件——
+//! 例子：`env::mail::HolePie` 是「薄」门闩句柄；`core::res::port::Port` 是「厚」的一件——
 //! **但它厚在"配对"上，不厚在"往返"上**：`open` / `push` / `pull` / `shut` 与 `HolePie`
 //! 那一族同名同形，多出来的只有"推的是哪一枚、收的是哪一枚、收的时候校来源"。
 //! 编帧解帧、一问一答、开会话的握手都在 `crates/protocol`（它们的消费者在那里）。
 
-pub mod bell;
-pub mod dock;
 pub mod exit;
-pub mod heap;
-pub mod lock;
-pub mod pile;
-pub mod port;
-pub mod tls;
-pub mod unit;
+pub mod res;
+pub mod task;

@@ -37,7 +37,7 @@ fn denied_pie() -> erra::Error<PieFail> {
 // 它们只认 `Permission`，一处也不碰内核；过线那几格荷载（设备账认领那一帧、入册那一段）
 // 都带着它们，故住这一层（协议层看得见它）。
 // 这里把名字**转出去**：下面 `ship` 的签名与**全部调用点**（22 个文件里的
-// `runtime::core::port::{Access, Policy}`）都照旧。
+// `runtime::core::res::port::{Access, Policy}`）都照旧。
 pub use env::{Access, Policy};
 
 /// **为什么必须成对**：`seed` 是个号，号只在那一张表里有意义——离开 `peer` 就只是一

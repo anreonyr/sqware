@@ -2,7 +2,7 @@
 //!
 //! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是域（引导镜像按它挑自己那一段，
 //! 编排域按它挑各服务的镜像——同一批字节，见 `platform/devices.rs::pie_initrd`），故格式在此定义一次
-//! （与 [`pair`](crate::pair) 同一条理由：跨域的字节布局不留第二份账）。
+//! （与 [`pair`](crate::ledger::pair) 同一条理由：跨域的字节布局不留第二份账）。
 //!
 //! ```text
 //! [0..4]   entry_off u32        ← **给内核的两个数**（见 [`PREAMBLE`]）
@@ -20,7 +20,7 @@
 
 use alloc::vec::Vec;
 
-use crate::ProgramKind;
+use crate::wire::program_kind::ProgramKind;
 
 /// 清单条数上限——**读侧与写侧共用的一个上界**，不是"这一台的清单有几条"。
 ///

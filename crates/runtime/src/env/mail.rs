@@ -2,12 +2,12 @@
 //!
 //! # 两条轴，两个文件
 //!
-//! `env::fid` 文件头把 `PieCall`（class 7）与 `MailCall`（class 5）立成两条正交的轴
+//! `env::abi::call` 文件头把 `PieCall`（class 7）与 `MailCall`（class 5）立成两条正交的轴
 //! （权柄 / 数据）。本层按轴分文件：
 //!
 //!   - **通信面（本文件）**：class 5 的 `Push` / `Pull` / `Peek` / `Wait` / `Hush` / `Ring`，加
 //!     class 9（`ToleCall`：一枚"组"的造 / 挂 / 摘 / 等）。组是**多路等待**——成员是孔的
-//!     一个方向或一枚铃，故它接着本文件那一族的等待语义（分界见 `env::fid`：
+//!     一个方向或一枚铃，故它接着本文件那一族的等待语义（分界见 `env::abi::call`：
 //!     "本类不搬载荷"）；
 //!   - **权柄面**（[`pie`](super::pie)）：class 7 的转发 + [`AnyPie`] 与它的四份实现。
 //!
@@ -383,7 +383,7 @@ pub struct TolePie {
 impl TolePie {
     /// 造一个空组。
     ///
-    /// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，见 `env::fid` 的
+    /// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，见 `env::abi::call` 的
     /// `ToleCall::Unseal`）：`false` = 独占组（授出即移交、复制不出来），`true` = 共享组
     /// （可 `accord` 复制给多个任务；组键的唤醒是提示型——放行全链）。
     pub fn unseal(shared: bool) -> ToleResult<Self> {
@@ -409,7 +409,7 @@ impl TolePie {
 
     /// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 上限族，同全树。
     ///
-    /// `PieToken::NONE` = 没等到（或挂起过——见 `env::fid` 的 `ToleCall::Await`）。
+    /// `PieToken::NONE` = 没等到（或挂起过——见 `env::abi::call` 的 `ToleCall::Await`）。
     /// **这一格不循环**：组的返回是**提示**（"快照变了"），"等到没有"是调用点的循环
     /// （见 `harness/src/waiter.rs`：契约就是"别把一次返回当终局"）。
     pub fn await_(&self, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {

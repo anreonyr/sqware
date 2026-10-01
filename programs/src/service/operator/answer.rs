@@ -13,7 +13,7 @@
 use protocol::debug;
 use protocol::service::operator as ocall;
 use protocol::service::operator::{Grant, Permit};
-use runtime::core::port::{self, Access, Policy};
+use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::service::operator::core::{Key, Operator};

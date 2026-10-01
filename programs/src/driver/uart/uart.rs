@@ -2,7 +2,7 @@
 //! 把一条字塞出去。
 //! 它是**本域（串口驱动）的设备面**：`IER` 只控制**中断线**、不控制数据通路，故"开这一位"
 
-use runtime::core::dock::View;
+use runtime::core::res::dock::View;
 
 /// `RBR` = 接收缓冲：**读它就是取走一个字节**（`LSR.DR` 随之落）。
 const RBR: usize = 0;

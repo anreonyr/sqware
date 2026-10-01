@@ -84,5 +84,5 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &SCENE_UNIT,
 ];
 
-/// 清单条数上界与注册表条数必须相容（见 [`env::manifest::MAX_PROGRAMS`] 的头注）。
-const _: () = assert!(PROGRAMS.len() <= env::manifest::MAX_PROGRAMS);
+/// 清单条数上界与注册表条数必须相容（见 [`env::ledger::manifest::MAX_PROGRAMS`] 的头注）。
+const _: () = assert!(PROGRAMS.len() <= env::ledger::manifest::MAX_PROGRAMS);

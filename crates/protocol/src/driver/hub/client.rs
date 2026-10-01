@@ -17,7 +17,7 @@
 use alloc::string::String;
 use env::{Access, Policy};
 use env::{HoleDir, PieKind, PieToken, TaskId, Wait};
-use runtime::core::port;
+use runtime::core::res::port;
 use runtime::env::mail;
 
 use crate::communication::establish;

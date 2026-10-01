@@ -84,7 +84,7 @@ pub struct Table {
 }
 
 impl Table {
-    /// 行数上限（= `env::manifest::MAX_PROGRAMS`）。
+    /// 行数上限（= `env::ledger::manifest::MAX_PROGRAMS`）。
     pub const CAP: usize = 28;
 
     /// 空表：每一行都"占着位但没名字"。

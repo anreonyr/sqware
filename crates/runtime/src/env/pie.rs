@@ -1,6 +1,6 @@
 //! Pie 域（class 7）—— **权柄轴**：许可的生死与流动。
 //!
-//! 与 [`mail`](super::mail)（class 5，**数据轴**：消息穿孔）的分界就是 `env::fid` 文件头
+//! 与 [`mail`](super::mail)（class 5，**数据轴**：消息穿孔）的分界就是 `env::abi::call` 文件头
 //! 立的那两条正交轴：本类**不搬运载荷**，传的是许可；数据走那边。故两条轴一文件一条，
 //! 与其余七个 class 同形（[本层](crate::env) 的口径："每个调用域一个子模块"）。
 //!
@@ -23,7 +23,7 @@ use super::mail::{HolePie, NolePie, PolePie, TolePie};
 
 /// 解封 Hole：孔上刻**一格记号**（`mark` = 这条路的名字）。
 ///
-/// **界只有一条，落在载体上**：一条消息 ≤ **一页**（契约在 `env::fid` 的 `Push`）；孔本身
+/// **界只有一条，落在载体上**：一条消息 ≤ **一页**（契约在 `env::abi::call` 的 `Push`）；孔本身
 /// 不因此多带参数，也不预分配槽——多出来的只有记号：它随副本过线、转手不变，故"同一位开的
 /// 多枚孔"分辨得出（读它走 [`reserve`]）。
 ///
@@ -39,7 +39,7 @@ pub fn unseal_pole(size: usize) -> PieResult<PieToken> {
 /// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。
 ///
 /// **无参数**——没有 mtu、没有字节数。它承载**无载荷通信**（门铃，见
-/// [`crate::core::bell`]），与资源权（"你对这份资源能做什么"）正交。
+/// [`crate::core::res::bell`]），与资源权（"你对这份资源能做什么"）正交。
 pub fn unseal_nole() -> PieResult<PieToken> {
     env::pie::unseal_nole()
 }
@@ -178,9 +178,9 @@ pub fn table_size() -> usize {
 /// 记号收在**栈上 [`NAME_LEN`](env::NAME_LEN) 字节**的缓冲里（不分配），由同一次调用
 /// **一格返回**：不再有"先问长度、再备缓冲"那一趟。这一枚不是孔（记号只长在孔上）、
 /// 或表里没有它 ⇒ `Denied`；**资源已封印 ⇒ `Dead`(-2)**——`owner` 那一格带存活闸
-/// （见 `env::fid` 的 `Reserve`），故"这一枚答不出"有两个码，别只接 `Denied`。
+/// （见 `env::abi::call` 的 `Reserve`），故"这一枚答不出"有两个码，别只接 `Denied`。
 pub fn reserve(token: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
-    // 打包见 `env::fid` 的 `Reserve`：`a0` = owner 高半 | vestor 低半，`a1` = 记号。
+    // 打包见 `env::abi::call` 的 `Reserve`：`a0` = owner 高半 | vestor 低半，`a1` = 记号。
     env::pie::reserve(token).map(|(pair, mark)| {
         (
             TaskId::new(pair & 0xffff_ffff),
@@ -220,7 +220,7 @@ pub trait AnyPie {
     ///
     /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
     /// 收尾，否则表项泄漏。故 `release` 与 `PolePie::shut` 是**仅有的两处**不过存活闸
-    /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::fid` 的 `Release` / `Shut`）。
+    /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::abi::call` 的 `Release` / `Shut`）。
     fn seal(&self) -> PieResult<()>;
 
     /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
@@ -323,7 +323,7 @@ impl AnyPie for PolePie {
 /// 少一条，这一份就是假接口。
 ///
 /// 共享组（`ToleCall::Unseal { shared: true }`）本来就要经 `accord` 才到得了多个任务
-/// （见 `env::fid` 那一格："共享组若不可复制，'多个使用者'是空话"），故这一份不是补上
+/// （见 `env::abi::call` 那一格："共享组若不可复制，'多个使用者'是空话"），故这一份不是补上
 /// 去的摆设。
 impl AnyPie for TolePie {
     fn seal(&self) -> PieResult<()> {

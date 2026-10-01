@@ -1,18 +1,13 @@
-//! 用户 task 模块：`closure`/`Join`（域内并发 + 结果回收）+ **启动参数面**
-//! （`save_args`/`args`：`Spawn` 那两格的读侧，任务本地状态）。
-
-// 硬不变量：result 单写单取；盒子的释放由 `state` 两位仲裁——子任务完工（DONE）
-//             与父方弃权（LEFT）各置一位，**后到者**释放；fetch_or 的原子性同时
-//             排除双释放与漏释放。
-//             SendSlot 整个传给方法走（whole-struct 捕获，使 Send 生效）。
+//! task::join — **域内并发**：`closure` / `Join`（跑一个闭包、取回结果）。
+//! 生成用 `Spawn`/`Hatch`，结果经共享空间的 `Completion` 槽交回（不占权限表）。
 
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
-use env::Wait;
 
+use env::Wait;
 use env::{TaskId, TeamId, UnitResult};
 
-use crate::core::tls;
+use crate::core::task::tls;
 use crate::env::{room, unit as env_task};
 
 /// 子任务已完工（result 可取）。
@@ -185,31 +180,4 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // 不需要任何新 ABI。
     tls::deallocate();
     room::exit(env::EXIT_OK, None)
-}
-
-// ── 启动参数面 ────────────────────────────────────────────────────────────
-//
-// **`save_args` 只有汇编一个调用者**：`programs/src/entry.rs` 的 `_start` 用
-// `call save_args` 直接叫它（`#[unsafe(no_mangle)]` 就是为这一手——路径搬到哪儿，
-// 符号都不动）。故它必须**在任何 Rust 调用之前**就能跑：这里只写两个静态，不碰 TLS。
-
-/// 启动参数区 VA / 字数（`_start` 保存，见 [`args`]）。
-static ARGS: AtomicUsize = AtomicUsize::new(0);
-static ARG_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-/// `_start` 保存启动参数（a0 = args VA、a1 = count）——必须在任何调用之前。
-#[unsafe(no_mangle)]
-pub extern "C" fn save_args(args: usize, count: usize) {
-    ARGS.store(args, Ordering::Relaxed);
-    ARG_COUNT.store(count, Ordering::Relaxed);
-}
-
-/// 启动参数（`Spawn` 写入新任务栈顶的标量数组；空 = 无参数）。
-pub fn args() -> &'static [usize] {
-    let n = ARG_COUNT.load(Ordering::Relaxed);
-    if n == 0 {
-        return &[];
-    }
-    // SAFETY: 内核在 spawn 时把 n 个字写在本任务栈顶；本任务存活期间该区间有效。
-    unsafe { core::slice::from_raw_parts(ARGS.load(Ordering::Relaxed) as *const usize, n) }
 }

@@ -10,7 +10,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use env::Key;
-use runtime::core::dock::View;
+use runtime::core::res::dock::View;
 
 use crate::unit::router::PLIC_CLASS;
 

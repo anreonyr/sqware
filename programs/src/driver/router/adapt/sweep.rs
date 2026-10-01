@@ -13,7 +13,7 @@ use crate::plic::Plic;
 use env::HoleDir;
 use protocol::communication::establish::Endpoint;
 use protocol::debug;
-use runtime::core::pile::Pile;
+use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
 /// 逐客：主人没了的那几条——拆线 + 空出格子。

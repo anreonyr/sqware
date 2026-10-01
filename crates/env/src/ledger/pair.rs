@@ -17,7 +17,7 @@
 //! 不认识 ⇒ [`Pair::key`] 答 `None`（记录判废）。
 
 use crate::PieToken;
-use crate::key::{KEY_LEN, Key};
+use crate::ledger::key::{KEY_LEN, Key};
 use crate::wire::Field;
 
 /// 一条记录的字面字节数（`KEY_LEN` + 8）。
