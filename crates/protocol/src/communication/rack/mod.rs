@@ -44,11 +44,17 @@ use crate::wire::message::Message;
 pub use self::reader::{Reader, RecvFail};
 pub use self::writer::{SendFail, Writer};
 
-/// 页就是架：一枚页一具架（`Pole::unseal` 要求页对齐，`PAGE_SIZE` 正好）。
-pub const SIZE: usize = PAGE_SIZE;
-/// 一页放得下几格（**2 的幂**：下标用与取模省一条除法）。**7 是这一页的上限**：
+/// 架那一段：**连续四页**（`Pole::unseal` 只要求页对齐）。
+///
+/// **为什么不是一页**：这一具架是**跨域共享**的（手递出去的是"某一格在哪"，取回来时那一格
+/// 可能已被后来的改动顶掉）。一页只放得下 7 格，而装配期一次改动挨着一次 ⇒ 慢一点的订户
+/// 取回来时内容已是**别条路**的（实测：`got=0`，一条都认不出来）。四页给到 16 格，
+/// 把"手上的那几格还活着"这个窗口从 7 次改动拉到 16 次——它仍是**一具**（与订户数无关）。
+pub const SIZE: usize = 4 * PAGE_SIZE;
+/// 这一段放得下几格（**2 的幂**：下标用与取模省一条除法）。**16 是这一段的上限**：
 /// `HEAD ＋ CAP × SLOT_SIZE ≤ SIZE`，而 `SLOT_SIZE` 必须是 64 的整数倍（见下）。
-pub const CAP: usize = 7;
+/// （不必恰好装满：`HEAD ＋ 16 × 512 = 8256 ≤ 16384`。）
+pub const CAP: usize = 16;
 /// 头：四个 u64 计数（`write` / `read` / `dropped` / `lost`），**整 64 字节**——
 /// 两件事一起说：它在自己的对齐上，且**第一格也从 64 起**（槽要 64 对齐）。
 const HEAD: usize = 64;

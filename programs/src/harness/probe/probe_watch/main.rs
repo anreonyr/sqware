@@ -104,6 +104,42 @@ fn main() -> Report<'static> {
         "架上多出了没读过的那一条：{none:?}"
     );
 
+    // 七、**队列那一档**：另订一条路（一位订两条路是正当的），在它上面**连落 6 格、中间一条不读**
+    //    ——这条路上共 7 条事件（窗格那一下 ＋ 6 格），与环那 7 格正好齐平（**刻意不超**：绕回来就
+    //    把格子顶掉，那时读到的是后来的内容，量不到队列本身；第一版连落 8 格就栽在这，`got=0`
+    //    还让"读到的比落的少"**空过**）。孔上排得下 `QUEUE_CAP` 只（那是内核的常量，本台不抄它）：
+    //    排满之后再来的改动**推不进来**，那几条就丢了（通知不是账）。
+    //    判据两条：**读到的比落的少**且**至少读到一条**，而读到的那几条**号严格递增**。
+    const LANDED: usize = 6;
+    const EVENTS: usize = LANDED + 1;
+    let qroad = PathBuf::try_new("/probe-watch/q")
+        .unwrap_or_else(|| panic!("probe-watch: bad q road"));
+    let mut queue = rein
+        .watch(&qroad, Wait::AtMost(WAIT_MS))
+        .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
+    for i in 0..LANDED {
+        let _ = spot(&tree, &alloc::format!("/probe-watch/q/c{i}"), "probe-watch-q");
+    }
+    let mut got = 0usize;
+    let mut last = 0u64;
+    while let Ok(Some(ev)) = queue.try_next() {
+        assert!(
+            ev.seq > last,
+            "读到的号没递增（{last} → {}）：那一列手没按先进先出给",
+            ev.seq
+        );
+        last = ev.seq;
+        got += 1;
+    }
+    assert!(
+        got > 0 && got < EVENTS,
+        "队列那一条没量到：这条路上 {EVENTS} 条事件、读到 {got} 条（0 = 一条没收到，= {EVENTS} = 一条没丢）"
+    );
+    // **读数**（`debug!` 在 release 是空操作，故这一行走 `debug::put`）。
+    protocol::debug::put(&alloc::format!(
+        "probe-watch: queued got={got} of={EVENTS} last_seq={last}"
+    ));
+
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
 
