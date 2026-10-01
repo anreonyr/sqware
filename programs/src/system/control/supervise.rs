@@ -25,13 +25,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::program::Program;
 use crate::system::control::core::{self, Reaped};
 use crate::system::control::desk::{Slot, State, Table};
-use env::{HoleDir, Mark, PieToken, Wait};
+use env::{HoleDir, PieToken, Wait};
 use protocol::communication::sender::Sender;
 use protocol::debug;
-use protocol::system::board::LANE_PREFIX;
 use protocol::system::control as ccall;
 use runtime::core::pile::Pile;
 use runtime::env::chrono::clock;
@@ -40,25 +38,13 @@ use runtime::env::unit as utask;
 
 // 表那一侧的那一手（本文件只读、不重写）。
 use super::Control;
-use super::service::until;
 
-/// **一条死亡道**：哪一位 + 那一条路（装配期铸的孔，记号 `gone-<名字>`）。
+/// **监督相在编排域这一侧的状态**：等"有事"的组 ＋ **control 那一面**。
 ///
-/// **照实记（为什么按名字，不按下标）**：原先道与装配表**按下标**对齐（`lanes[i]` ↔ 旧装配表第 i 行，
-/// 本文件又按同一个下标把"哪条道响"翻回名字）——两张表必须各自自洽。装配表变成两段相接之后，
-/// 跨两段维持"位次自洽"正是那条隐患复发的地方 ⇒ 改成**按名字**（板那一侧本来就是按记号
-/// `gone-<名字>` 认领的）。
-pub struct Lane {
-    /// 这一位是谁（装配表上的名字）。
-    pub name: &'static str,
-    /// 那一条道。`None` 有**两条来路**：**这一位不要存在信号**（`Relation::presence = false`
-    /// ——道是板写的，没有写端就不铸）或**本域铸不出孔**（交给退场级联）。
-    pub road: Option<PieToken>,
-}
-
-/// **监督相在编排域这一侧的状态**：死亡道表 ＋ 等任一道响的组 ＋ **control 那一面**。
+/// **照实记（道表那一格退场）**：这一格从前还收着一张**道表**（一位一条，记号 `gone-<名字>`）——
+/// 死那条来路由板推进去。上一轮量过（见 [`Watch::new`] 那条照实记）：**表侧那一扫独自就够**，
+/// 道表那一格随"铸道"一起退场。
 pub struct Watch {
-    lanes: Vec<Lane>,
     pile: Pile,
     /// **待客那四枚入口**（一原语一面，位次即 `Grant` 那四位；`None` = 那一面没接上：
     /// 这一景没有持树者 / 那几趟没成）。
@@ -78,41 +64,28 @@ pub struct Watch {
 }
 
 impl Watch {
-    /// **铸道 + 立组**：要存在信号的那几位一位一条（记号 `LANE_PREFIX` ＋ 名字）。
+    /// **立组**：本线程独享它（`shared = false`）——等"有人来问 control 那一面"。
     ///
-    /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
-    /// **不要存在信号的那几位不铸道**：没有写端的道永远不会响。
-    pub fn of(programs: &[&'static Program]) -> Result<Watch, ()> {
-        // 组是**独占**的（`shared = false`）：本线程用它等任一道响（零轮询）。
+    /// **照实记（"铸道"那一半退场：死改由表侧那一扫认）**：这一手从前还要给每一位
+    /// `Relation::presence` 的台**铸一条道**（记号 `gone-<名字>`；板看见某位的门封印了就往里推
+    /// 一格，本线程从组上醒来）。**上一轮量过**（同一份 release `root` 景、同一喂法）：
+    ///
+    /// | 那一跑 | 表侧那一扫记上的 | 道那一档（`presence: true` 那 11 位） |
+    /// |---|---|---|
+    /// | 道与表都在 | 22 位（差 `canonical`——被道先记了） | 11 位 |
+    /// | **把道那一档关掉** | **23 位——在单上一台不落** | —— |
+    ///
+    /// 两跑都是 16 条 `exit tid=…` 逐条相同、无 `system: idle`、无异常。⇒ **道买的是"更早发现"，
+    /// 不是"别人看不见的死"**：同一条信息今天由 [`sweep`] 从**内核那一格**（"这一枚收尾了"）
+    /// 直接读到，故这里不再铸道、也不再读 [`Relation::presence`]。
+    ///
+    /// **代价照实说**（照实记，留给下一步）："门封印了、却一直没收尾"那一档（`Reaped::Unsettled`）
+    /// 只有道产得出来——本手只在**内核说收尾了**之后才落 `Dead`；真遇上那种台要等静默兜底
+    /// （10 s）出声。**上面两跑都没出现这一档**，故这条是**推的**，不是量到的。
+    pub fn new() -> Result<Watch, ()> {
+        // 组是**独占**的（`shared = false`）。
         let pile = Pile::unseal(false).map_err(|_| ())?;
-        let mut lanes: Vec<Lane> = Vec::new();
-        lanes.try_reserve(programs.len()).map_err(|_| ())?;
-        for program in programs {
-            // 记号 = `LANE_PREFIX` ＋ 名字：**前缀只有一处定义**（板那一侧按同一个常量
-            // 拼出来找它）。
-            //
-            // **照实记（这一行已交接回 task-4）**："要不要存在信号"那一格原名 `Program::board`
-            // （随板退成**一枚死信号传感器**一起改名，见 `program::Relation::presence`）；改名那一
-            // 刀由 T3（G4）落，语义一个字没动。
-            let road = if program.relation.presence {
-                mail::unseal_hole(Mark::of(&alloc::format!("{LANE_PREFIX}{}", program.name()))).ok()
-            } else {
-                None
-            };
-            if let Some(road) = road {
-                let _ = pile.attach(&HolePie::from_token(road), HoleDir::Pull);
-            }
-            lanes.push(Lane {
-                name: program.name(),
-                road,
-            });
-        }
-        // **照实记（"最后一位那条道真的在吗"那一格随位次一起退场）**：它原是停机的前提
-        // （停机靠"最后一条走了"），故要先担保最后一位一定有道、还得为"没有"留一条回退路
-        // （`watch_last` ＋ `last_reaped` ＋ 那一圈 10 ms 节拍的理由之一）。闸改读账之后这两样
-        // 都没有读者：**道只需要"响的时候叫醒我"这一件事**。
         Ok(Watch {
-            lanes,
             pile,
             faces: [None; ccall::Grant::ALL.len()],
         })
@@ -130,14 +103,6 @@ impl Watch {
         self.faces[(grant.at() - 1) as usize] = Some(face);
     }
 
-    /// 这一位的死亡道（按名字取，不是按下标：见 [`Lane`]）。
-    pub fn lane_of(&self, name: &str) -> Option<PieToken> {
-        self.lanes
-            .iter()
-            .find(|l| l.name == name)
-            .and_then(|l| l.road)
-    }
-
     /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**。
     ///
     /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）：
@@ -150,20 +115,15 @@ impl Watch {
     ///   借来的回信孔答回去。**这一源今天有来路**：编排域主线程把 `/svc/sys/control` 挂上树之后
     ///   就把入口交给了本线程（[`Watch::attach_face`]）；哪一景没有持树者，它就空着。
     ///
-    /// 醒来先做三件事，次序即契约：**表侧惰性剔死**（内核说收尾了就落 `Dead`——没有道的那几台
-    /// 只有这一档收得到）→ **道**（`until` 等它真收尾，再 `Dead` ＋ `oust` ＋ 报一行）→
-    /// **面**（取干净这一批客人的问）；然后是收场那两句（见本文件头注）。
+    /// 醒来做两件事，次序即契约：**表侧惰性剔死**（内核说"这一枚收尾了" ⇒ 落 `Dead` ＋ `oust`
+    /// ＋ 报一行——**它就是"谁没了"唯一的来路**）→ **面**（取干净这一批客人的问）；然后是收场
+    /// 那两句（见本文件头注）。
     ///
-    /// **有界节拍只服务两件事**（照实记：理由归位）：① `Relation::presence` 为假的那几台
-    /// **没有道**——它们的死只有表侧那一扫收得到；② **收场期间**判决要反复读账（它不是一次
-    /// 事件，是一个不动点）。
-    ///
-    /// **照实记（"两者都不需要 ⇒ 永远挂起（零轮询）"那一句与实情分家）**：那两件事**今天一件
-    /// 都没少**——逐份声明数：在单上的 **23 台里 11 台 `presence: true`、12 台为假** ⇒ `tick`
-    /// 那个表达式（`blind || settling || self.lanes.iter().any(|l| l.road.is_none())`）**每一拍都
-    /// 为真** ⇒ 这一趟从来不是"永远挂起"，而是 **10 ms 一拍在跑**（每拍还要 `sweep` 一次账）。
-    /// **"零轮询"要等 `presence` 撤掉那一刀**（都挂上道，`any(…)` 才为假）——故这一句留着不当
-    /// 承诺，当**那一刀的判据**：那时它才该成真。
+    /// **照实记（"永远挂起（零轮询）"那一句退了场）**：那一趟从前还等一道"道"——有界节拍只在
+    /// "有人没有道"或"正在收场"时开。逐份声明数过：在单上 **23 台里 11 台 `presence: true`、
+    /// 12 台为假** ⇒ 那个条件**每一拍都为真** ⇒ "零轮询"从来没有成立过。今天道那一档整支退场
+    /// （见 [`Watch::new`] 那条照实记里的两跑），那一扫就是唯一的来路 ⇒ **节拍是它的节拍**，
+    /// 不必再装作"挂起"：`Wait::AtMost(TICK_MS)` 写在那一行上。
     ///
     /// 返 `true` = **全收讫**（这一趟的结局）；`false` = 有人没收讫，交本域退场时的级联。
     pub fn run(&mut self, control: &mut Control) -> bool {
@@ -176,10 +136,6 @@ impl Watch {
             return true;
         }
         buf.resize(runtime::PAGE_SIZE, 0);
-        // **组坏了 ⇒ 退化成有界节拍**（照实记：这一支原先的写法是"等最后一条退场、然后返回"
-        // ——那是位次时代的回退路）。丢掉的是"谁没了"的**来路**，不是判据：账仍然读得到，
-        // `hush` 也还能逐条问。
-        let mut blind = false;
         // **收场那一相的闩**（不是判据）：闸一旦成立就一直成立（会走的只会更少），拍下它只是
         // 为了知道"此刻在收场"——判决那一句要等，`tick` 也要跟着它开。
         let mut settling = false;
@@ -193,33 +149,14 @@ impl Watch {
         let mut quiet_at = clock();
         let mut owed = control.table.living().count();
         loop {
-            let tick = blind || settling || self.lanes.iter().any(|l| l.road.is_none());
-            // 一、表侧惰性剔死（G3 从板那本账搬来的那一格）。
-            if tick {
-                sweep(&mut control.table);
-            }
-            // 二、等一格有事（要"顺便看一眼"时用**有界节拍**，否则永远挂起）。**`Pile` 的
-            //     既定用法**：**挂起过的那一侧返回的是预置值**——内核没有第二次执行机会，故醒来
-            //     必须自己按组复核，不能靠返回值拿身份。
-            let wait = if tick {
-                Wait::AtMost(TICK_MS)
-            } else {
-                Wait::Forever
-            };
-            if self.pile.await_(wait).is_err() {
-                blind = true;
-            }
-            // 三、复核：每条道非阻塞地问一句"响着吗"（`hush` 未响答 `Busy`）。**位只有一位**
-            //     ——道上一次死亡只响一次；一次醒来可能带走多条（两位前后脚死）。
-            for lane in &self.lanes {
-                let Some(road) = lane.road else {
-                    continue;
-                };
-                if HolePie::from_token(road).hush().is_err() {
-                    continue; // 这一条没事
-                }
-                account(&mut control.table, lane.name);
-            }
+            // 一、表侧惰性剔死（G3 从板那本账搬来的那一格）——**今天它是"谁没了"唯一的来路**
+            //     （照实记见 [`Watch::new`]）。
+            sweep(&mut control.table);
+            // 二、等一格有事：**有界节拍**（`TICK_MS`）。它不再是"顺便看一眼"的兜底，而是那一扫
+            //     的节拍本身 ⇒ **每一拍都要**（不再由"有没有道"决定）。**`Pile` 的既定用法**：
+            //     挂起过的那一侧返回的是预置值——内核没有第二次执行机会，故醒来必须自己按组复核，
+            //     不能靠返回值拿身份。
+            let _ = self.pile.await_(Wait::AtMost(TICK_MS));
             // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单手，
             //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
             for i in 0..ccall::Grant::ALL.len() {
@@ -299,13 +236,6 @@ const IDLE_MS: usize = 10_000;
 
 /// 静默上限的纳秒形（[`clock`] 那一族的标量）。
 const IDLE_NS: u64 = IDLE_MS as u64 * 1_000_000;
-
-/// **等一位收讫的上限**（毫秒）——道响了之后等它真收尾。
-///
-/// **为什么有界**（照实记）：这一等原先写的是 `Wait::Forever`。道响只说明"板看见那扇门封印了"，
-/// 而收尾是内核那一格的事；两者之间**可以**隔很久（域里还有没收尾的线程）。无界的那一等会把
-/// **监督那一趟整个钉住**——钉住之后连判决都读不到，兜底也轮不上。
-const ACCOUNT_MS: usize = 1_000;
 
 /// **表侧惰性剔死**（照实记：G3 从板那本账搬来的那一格）：内核说这一枚收尾了 ⇒ 当场落 `Dead`。
 ///
@@ -486,35 +416,19 @@ fn wire_state(state: State) -> ccall::State {
 // 收场那一相自己。它留下的两样东西搬去了别处：**"别收本域那一枚"**那条护栏与它的照实记
 // 住 `Control::stop_rest`；**"等不到就报一行"**住那一相的判决（`Watch::run`）。
 
-
-/// 记一位：**先等它收尾**（板报的是"门封印了"，而 `Oust` 要的前置是"域里没有还没收尾的
-/// 线程"，故这一步等的是收尾事件，不是节拍），再写 `Dead`、放下它那个域、报一行。
+/// 记一位：`Dead` ＋ 放下它那个域 ＋ 报一行。
 ///
-/// **幂等**：已经记过（`Dead`）就什么都不做——板报的道与我们自己杀的那一位可能都指到它。
+/// **"先等它收尾"那一句随道退场了**（照实记）：从前这里要等——道报的是"**门封印了**"，而
+/// `Oust` 要的前置是"域里没有还没收尾的线程"，两者之间可以隔很久。今天叫本手的那一处
+/// （[`sweep`]：**内核说这一枚已经收尾了**）已经把那个前置查过了，故这一等没有了。
 ///
-/// **照实记（这一等改成有界了）**：原先写 `Wait::Forever`；道响只说明板看见那扇门封印了，
-/// 而收尾是内核那一格的事——两者之间可以隔很久，无界的那一等会把**监督那一趟整个钉住**
-/// （钉住之后连判决都读不到）。今天有界（[`ACCOUNT_MS`]），到点照实记 `unsettled`：
-/// 那一位先不落 `Dead`，由判决/兜底接着管。
-fn account(table: &mut Table, name: &str) {
-    let Some(row) = table.find(name) else {
-        return;
-    };
-    if matches!(row.state, State::Dead) {
-        return;
-    }
-    let Slot::Live { .. } = row.slot else {
-        return;
-    };
-    let reaped = until(table, name, Wait::AtMost(ACCOUNT_MS)).unwrap_or(Reaped::Unsettled);
-    mark_dead(table, name, reaped);
-}
-
-/// 写 `Dead`（**不 `detach`**：坐标是"上一个实例"，留给重启与放下用）、放下那个死域、报一行。
+/// **幂等**：已经记过（`Dead`）就什么都不做（一位只落一次，故那一行读数一位只有一行）。
 ///
-/// `reaped` = 这一位的收尾判决**及它的来路**。读数里那一格是给验收用的：`wait=now` 说明收尾
-/// 早在问之前就完了，`wait=waited` 说明这一次是**等到**的；`wait=unsettled` 则是"没被确认
-/// 收尾"，那时 `ousted=false` 会一起把真相摆出来。
+/// **照实记（`reaped` 那一格今天只有一档）**：从前它三档——`Now` / `Waited` / `Unsettled`
+/// （有道那一档时，"门封印了但还没收尾"要等一等再报）。道退场之后，本手只在**内核说收尾了**
+/// 之后被叫到 ⇒ 送进来的恒是 [`Reaped::Now`]；另两档的**生产者**（`account`）随道一起退了场，
+/// 那一档（"封印了不收尾"）今天归静默兜底（10 s）管——代价写在 [`Watch::new`] 的照实记里。
+/// 枚举那三档留着：`until` 那一族（`service.rs`）还在用它们。
 fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
     let Some(row) = table.find(name) else {
         return;

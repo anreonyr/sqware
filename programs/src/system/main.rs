@@ -119,7 +119,7 @@ fn system() -> Result<(), Fail> {
     }
 
     // 死亡道跟着这张单铸：要存在信号的那几位一位一条——在 `Assembly::new` 里。
-    let mut assembly = Assembly::new(boot, &list).map_err(|_| Fail::Group)?;
+    let mut assembly = Assembly::new(boot).map_err(|_| Fail::Group)?;
 
     // 3. 逐条起：**每一台按它自己那份声明装配**（立账 → 建域产线程 → 装通道 → 身份 → 放行等
     //    就绪 → 递配给 → 存在信号 → 树），失败带的是**那一台自己的号**。

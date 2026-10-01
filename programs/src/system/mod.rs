@@ -102,13 +102,13 @@ impl Assembly {
     /// ——故道表在装配之前就位）；其余三轴是空的。
     ///
     /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
-    pub fn new(boot: Boot, programs: &[&'static Program]) -> Result<Assembly, ()> {
+    pub fn new(boot: Boot) -> Result<Assembly, ()> {
         Ok(Assembly {
             control: Control::new(boot.catalog, boot.machine, boot.pier),
             tree: Tree::default(),
             roster: Roster::default(),
             board: Bridge::default(),
-            watch: Watch::of(programs)?,
+            watch: Watch::new()?,
         })
     }
 

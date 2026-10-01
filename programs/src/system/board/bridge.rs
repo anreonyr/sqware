@@ -69,7 +69,9 @@ pub fn attach_client(
         return Ok(());
     }
     let name = program.name().to_string();
-    let lane = assembly.watch.lane_of(name.as_str());
+    // **道那一格退了场**（照实记：死改由监督那一趟的表侧扫认，见 `control::supervise` 的
+    // `Watch::new`）——故这一手不再取道，`lane` 那一格恒为 `None`。
+    let lane = None;
     assembly.board.attach(
         utask::self_id(),
         service.0,
