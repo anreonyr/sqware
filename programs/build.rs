@@ -11,7 +11,7 @@ fn main() {
     // （默认只盯 `src/lib.rs` 那一族），源码改了它可能不重编 ⇒ 下游（`crates/image`、门）
     // 拿到的是**旧产物**。实测栽过：`cargo image` 打出旧 initrd，量出来的东西其实不是刚改的。
     // 一条一条列（不走 `src` 目录的 `rerun-if-changed`：那是未定义行为），让 cargo 自己算指纹。
-    // **本表与 `Cargo.toml` 的 `[[bin]]` 一一对应**（34 条：产品 9 ＋ 测具 25）——改一处要同时改两处。
+    // **本表与 `Cargo.toml` 的 `[[bin]]` 一一对应**（36 条：产品 9 ＋ 测具 27）——改一处要同时改两处。
     println!("cargo::rerun-if-changed=src/lib.rs");
     println!("cargo::rerun-if-changed=src/user/canonical/main.rs");
     println!("cargo::rerun-if-changed=src/driver/router/main.rs");
@@ -26,6 +26,7 @@ fn main() {
     println!("cargo::rerun-if-changed=src/harness/probe/probe_owner/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_denied/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_bound/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/probe_coalition/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_control/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_operator_gate/main.rs");
     println!("cargo::rerun-if-changed=src/harness/probe/probe_operator_land/main.rs");

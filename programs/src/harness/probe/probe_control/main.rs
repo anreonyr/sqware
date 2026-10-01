@@ -22,6 +22,7 @@ use alloc::string::ToString;
 
 use env::Wait;
 use programs::Report;
+use programs::harness::probe;
 
 use protocol::communication::session::Session;
 use protocol::debug;
@@ -34,6 +35,12 @@ const MS: usize = 1000;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-control: ask open, three faces denied";
+
+/// **数那一族到齐**的额度与节拍（毫秒）：那几面由装配者在相四下逐面 `plate`，本台可能比它先起
+/// （`probe-control` 的头注：第 4 / 5 步都要等）——故有界重试，到点由下面的 `assert_eq!` 落地
+const FACES_MS: usize = 3_000;
+/// 每一次重试之间睡多久（毫秒）
+const TICK_MS: usize = 20;
 
 /// **一个一定不在装配表里的名字**：第 4 步那一问的荷载
 /// 取"表里没有"是**故意**的：那一问要的就是"对面答得出一句语义码"。若拿一个真名字去问
@@ -53,6 +60,20 @@ fn main() -> Report<'static> {
     let road = ccall::DIR
         .try_join(ccall::Grant::State.name())
         .expect("probe-control: bad name");
+
+    // 二之后、三之前：**那一族到齐没有**——数那一块窗格底下几枚（**该有几枚 = `Grant::ALL`**：
+    // 一枚 Grant = 一枚门牌 = 一格）。与 `probe_operator_gate` 数 `/svc/sys/operator` 同一把尺子。
+    let parent = tree
+        .pane(ccall::DIR, Wait::AtMost(MS))
+        .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
+    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len(), FACES_MS, TICK_MS);
+    debug!("probe-control: faces={seen} want={}", ccall::Grant::ALL.len());
+    assert_eq!(
+        seen,
+        ccall::Grant::ALL.len(),
+        "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
+        ccall::Grant::ALL.len()
+    );
     let plate = tree
         .tile(&road, Wait::AtMost(MS))
         .and_then(|tile| tile.token(Wait::AtMost(MS)));

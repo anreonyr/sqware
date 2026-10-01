@@ -25,6 +25,7 @@ use alloc::string::ToString;
 
 use env::Wait;
 use programs::Report;
+use programs::harness::probe;
 
 use protocol::common::path::Path;
 use protocol::communication::session::establish;
@@ -82,11 +83,14 @@ fn main() -> Report<'static> {
     };
     let operator_pane = Pane::of(&tree, operator_id);
 
-    // 三、那几格到齐：**数一次就够**（名字那七问归树自己那七行读数，见 count_under）。
+    // 三、那几位到齐：**数一次就够**（各位名字的读数归树自己那几行 `grant mounted at`，
+    //    见 `probe::count::count_under`）。**该有几枚由 `Grant::ALL` 说**——加一位就跟着动。
     let seen = count_under(&operator_pane);
-    assert!(
-        seen == Grant::ALL.len(),
-        "/svc/sys/operator 底下没有七格（数到的只有 {seen} 格）"
+    assert_eq!(
+        seen,
+        Grant::ALL.len(),
+        "/svc/sys/operator 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
+        Grant::ALL.len()
     );
 
     // 四、`/svc/sys/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
@@ -144,34 +148,11 @@ fn walk(tree: &TreeFace, road: &Path) -> Option<EntryId> {
     }
 }
 
-/// 数 `/svc/sys/operator` 底下**那几格到齐没有**——**一问**（`list`）＋ 有界重试
-/// **（为什么不再逐个问名）**：那七段名字的读数归**树自己**——`mount_grants` 每落一位就抬
-/// 一行 `system: grant mounted at /svc/sys/operator/{…}`（七行，t<500 ms 打完）。本台再 `list`
-/// ＋ 七次 `name` 是八趟往返，而那条路每一趟都可能**等在门外**（`client.rs::call` 那一推是
-/// `Send(.., Wait::Forever)`：孔是单槽，对面没取走就永远等）⇒ 越少问越不容易挂在那儿
-/// 那一格是**逐位**落上去的（目录先立、七位一位一位落），故"数不满"那一刻是**预期之内**的
+/// 数 `/svc/sys/operator` 底下**那几格到齐没有**——正文在 `harness::probe::count`
+/// （各台共用：一事一处）。本台只把"该有几枚"与额度交出去：**该有几枚 = `Grant::ALL.len()`**
+/// （一枚 `Grant` = 一枚门牌 = 一格），额度与重试节拍由本台那两个常数说。
 fn count_under(pane: &Pane<'_>) -> usize {
-    let mut left = WAIT_MS;
-    loop {
-        let mut seen = 0usize;
-        match pane.list(Wait::AtMost(MS)) {
-            Ok(listing) => {
-                seen = listing.iter().count();
-                if seen == Grant::ALL.len() {
-                    return seen;
-                }
-            }
-            // 一问没走到（对面这趟没答）⇒ 还留着额度就再来一拍；这**不是**"那一格不在"
-            // （那一格不在会答 `NotAPane`，落在同一个 `Err` 里也无妨：走到额度尽头就由上层
-            // 那句 `assert` 当场红）。
-            Err(_) => {}
-        }
-        if left == 0 {
-            return seen;
-        }
-        let _ = runtime::env::room::sleep(core::time::Duration::from_millis(TICK_MS as u64));
-        left = left.saturating_sub(TICK_MS);
-    }
+    probe::count::count_under(pane, Grant::ALL.len(), WAIT_MS, TICK_MS)
 }
 
 /// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）

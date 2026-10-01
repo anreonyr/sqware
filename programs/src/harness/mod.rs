@@ -13,3 +13,8 @@
 /// `use programs::harness::tick` 取一次。三档各一目录：`probe/`（探针：只读数）· `guest/`（试客
 /// 量服务）· `bench/`（压测台：整台替换引导镜像；每台与它的受害者同目录）
 pub mod tick;
+
+/// 探针那一档（`probe/`）各台共用的量具：**数一块窗格底下到齐没有**（各族"该有几枚"由
+/// 各自的 `Grant::ALL.len()` 说）。各台仍是独立 bin，身子在 `probe/<名>/main.rs`；
+/// 共享件住本目录顶层，由各 bin 各自 `use programs::harness::probe::count` 取一次。
+pub mod probe;

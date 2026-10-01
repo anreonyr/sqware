@@ -140,6 +140,13 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-coalition"
+path = "src/harness/probe/probe_coalition/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-probe-control"
 path = "src/harness/probe/probe_control/main.rs"
 test = false

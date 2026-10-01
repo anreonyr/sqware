@@ -20,7 +20,7 @@ pub mod churn;
 pub mod coalition;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
-/// 测具那 25 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
+/// 测具那 27 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
 /// 而"哪几台进哪张镜像"这张表在宿主侧（`crates/image`）也要看得见 ⇒ 声明与身子同住、由本表拉进来
 #[path = "../harness/guest/guest/program.rs"]
 pub mod guest;
@@ -44,6 +44,8 @@ pub mod passer;
 pub mod principal;
 #[path = "../harness/probe/probe_bound/program.rs"]
 pub mod probe_bound;
+#[path = "../harness/probe/probe_coalition/program.rs"]
+pub mod probe_coalition;
 #[path = "../harness/probe/probe_control/program.rs"]
 pub mod probe_control;
 #[path = "../harness/probe/probe_denied/program.rs"]
@@ -108,6 +110,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &probe_rule_other::PROBE_RULE_OTHER,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
+    // 那两族"没有会话"的服务（名册 / 盟册）：各该有 `Grant::ALL.len()` 枚（四族格数各归各家——
+    // operator 归 `gate`、control 归 `control`）。次序：那两族起的头 ＋ 树那条路（`operator`）。
+    &probe_coalition::PROBE_COALITION,
     &probe_control::PROBE_CONTROL,
     // 操作面那一族（`/svc/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。
