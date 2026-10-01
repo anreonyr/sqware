@@ -35,7 +35,7 @@ use runtime::env::mail;
 
 use crate::program::Program;
 use crate::system::Assembly;
-use crate::system::control::{READY_MS, Service};
+use crate::system::control::{BOOT_MS, READY_MS, Service};
 
 use protocol::communication::establish;
 use protocol::debug;
@@ -203,7 +203,7 @@ pub fn attach_client(
     if !needs_tree(program) {
         return Ok(());
     }
-    assembly.tree.attach(service.0, Wait::AtMost(READY_MS))
+    assembly.tree.attach(service.0, Wait::AtMost(BOOT_MS))
 }
 
 /// **这一台要不要站到那棵树上**——**推出来的，不是声明的**（旧 `Relation::operator` 那一格）。
@@ -256,7 +256,7 @@ pub fn hold(
     if !assembly.tree.holds(service.0) {
         return Ok(());
     }
-    assembly.tree.adopt(service.0, Wait::AtMost(READY_MS))?;
+    assembly.tree.adopt(service.0, Wait::AtMost(BOOT_MS))?;
     assembly.mount_grants();
     Ok(())
 }

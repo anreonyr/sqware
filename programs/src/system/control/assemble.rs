@@ -31,7 +31,7 @@ use protocol::system::supply::frame::{WANT_MAX, Want};
 
 use crate::system::control::desk::Announce;
 
-use super::{Control, Error, READY_MS, Service};
+use super::{BOOT_MS, Control, Error, READY_MS, Service};
 use crate::program::{Program, Setup};
 use crate::system::Assembly;
 
@@ -121,7 +121,7 @@ impl Control {
         // **先认下它交回的那一枚**（放行之后它第一件事就是铸这一枚）：`push` 要的是**它表里**
         // 那个号（`Endpoint::tx`），而那要本域先 `claim` 一次。这是"放行 → 认通道 → 递物料"
         // 那三步里的中间一步（次序见 [`Control::launch`]）。
-        if !link.claim(*task, Mark::of(load), Wait::AtMost(READY_MS)) {
+        if !link.claim(*task, Mark::of(load), Wait::AtMost(BOOT_MS)) {
             return Err(Error::Step("no channel"));
         }
         // **那头齐了没有**：写端在不在（原 `wire` 那一格）。
@@ -181,7 +181,7 @@ impl Control {
                 *task,
                 &wants[at..end],
                 &mut reply,
-                Wait::AtMost(READY_MS),
+                Wait::AtMost(BOOT_MS),
             ) {
                 Ok(said) => {
                     for pair in said.records() {
@@ -198,7 +198,7 @@ impl Control {
                             *task,
                             &one,
                             &mut reply,
-                            Wait::AtMost(READY_MS),
+                            Wait::AtMost(BOOT_MS),
                         ) {
                             Ok(said) => {
                                 if let Some(pair) = said.records().first() {

@@ -65,12 +65,12 @@ impl Roster {
     pub fn adopt(&mut self, task: TaskId, tree: Option<TaskId>) -> Result<TaskId, &'static str> {
         let f = face_of(task).ok_or("no identity face")?;
         let root = f.new_principal();
-        let mine = root.derive(Wait::AtMost(READY_MS)).map_err(|fail| {
+        let mine = root.derive(Wait::AtMost(BOOT_MS)).map_err(|fail| {
             debug!("principal: adopt derive self {:?}", fail);
             "derive self"
         })?;
         f.task(task)
-            .bind(mine.id(), Wait::AtMost(READY_MS))
+            .bind(mine.id(), Wait::AtMost(BOOT_MS))
             .map_err(|fail| {
                 debug!(
                     "principal: adopt bind self {:?} at={}",
@@ -82,10 +82,10 @@ impl Roster {
         match tree {
             Some(t) => {
                 let pt = root
-                    .derive(Wait::AtMost(READY_MS))
+                    .derive(Wait::AtMost(BOOT_MS))
                     .map_err(|_| "derive tree")?;
                 f.task(t)
-                    .bind(pt.id(), Wait::AtMost(READY_MS))
+                    .bind(pt.id(), Wait::AtMost(BOOT_MS))
                     .map_err(|_| "bind tree")?;
             }
             None => debug!("principal: no tree to bind"),
@@ -142,7 +142,7 @@ pub fn adopt_roster(
 /// **要的是 [`Grant::Set`]（定面）**（开面那一刀）：本间那两手是 `derive` ＋ `bind`——发身份
 /// 那一侧要的正是改的权柄，而问面给不了它。名册两面各交一枚、记号不同，故"要哪一面"得说清。
 fn face_of(host: TaskId) -> Option<Face> {
-    let mut left = READY_MS;
+    let mut left = BOOT_MS;
     loop {
         if let Some(entry) = establish::find(host, pcall::Grant::Set.mark()) {
             return Face::of(entry).ok();
