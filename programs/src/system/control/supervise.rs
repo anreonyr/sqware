@@ -26,7 +26,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::program::Program;
-use crate::system::control::core::Reaped;
+use crate::system::control::core::{self, Reaped};
 use crate::system::control::desk::{Slot, State, Table};
 use env::{HoleDir, Mark, PieToken, Wait};
 use protocol::communication::sender::Sender;
@@ -34,6 +34,7 @@ use protocol::debug;
 use protocol::system::board::LANE_PREFIX;
 use protocol::system::control as ccall;
 use runtime::core::pile::Pile;
+use runtime::env::chrono::clock;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
@@ -175,6 +176,15 @@ impl Watch {
         // **收场那一相的闩**（不是判据）：闸一旦成立就一直成立（会走的只会更少），拍下它只是
         // 为了知道"此刻在收场"——判决那一句要等，`tick` 也要跟着它开。
         let mut settling = false;
+        // **静默兜底**：以"有台退场"为事件，不以时钟为日程——正常跑一次都走不到。
+        //
+        // **它为什么必须有**（照实记）：闸读的是账，而账要等的那些台**可能会永远不退场**
+        // （一道门的对面一直不答、一圈"有界重试"每一轮都含着一问 `Wait::Forever`……）。
+        // 没有它，机器就钉在那里——那是比"红"更坏的结局：**红而无成因**。
+        let mut forced = false;
+        // **上一次"账上少一位"是什么时候**（纳秒标量，`chrono` 那一族的钟）。
+        let mut quiet_at = clock();
+        let mut owed = control.table.living().count();
         loop {
             let tick = blind || settling || self.lanes.iter().any(|l| l.road.is_none());
             // 一、表侧惰性剔死（G3 从板那本账搬来的那一格）。
@@ -211,14 +221,39 @@ impl Watch {
                 };
                 serve_face(control, ccall::Grant::ALL[i], face, &mut buf);
             }
-            // 五、收场那两句。**闸**读账（会走的都走了、听令的已经发过话）⇒ 下刀；**判决**读账
+            // 五、先看账有没有少一位（"有动静"是兜底唯一的复位信号）。
+            let living = control.table.living().count();
+            if living < owed {
+                owed = living;
+                quiet_at = clock();
+            }
+            // 六、收场那两句。**闸**读账（会走的都走了、听令的已经发过话）⇒ 下刀；**判决**读账
             //     （一个不剩）⇒ 收场。两者都在 `Control` 那一列上，本相只负责"什么时候问"。
             if !settling && control.due() {
                 control.stop_rest();
                 settling = true;
+                quiet_at = clock();
             }
             if settling && control.done() {
-                return true;
+                // **出了静默兜底就不算自然收讫**：那一趟的结局要留在读数上（`Fail::Doom`）。
+                return !forced;
+            }
+            // 七、静默兜底：**还有"会自己走"的台，静了 `IDLE_MS` 就出声并收场**；已经在收场而
+            //     判决还没成立，静了同样久就把余下交给退场级联（`false`）。
+            //     只剩常驻 / 听令的台时**不兜底**——听令那一台的等待归外面那一层（喂它的那个人）。
+            if clock() - quiet_at >= IDLE_NS {
+                if !settling && core::walking(&control.table) {
+                    debug!("system: idle {}ms with walkers alive; forcing shutdown", IDLE_MS);
+                    forced = true;
+                    control.stop_rest();
+                    settling = true;
+                    quiet_at = clock();
+                } else if settling {
+                    debug!("system: idle {}ms while settling; {} still alive", IDLE_MS, owed);
+                    return false;
+                } else {
+                    quiet_at = clock();
+                }
             }
         }
     }
@@ -235,6 +270,24 @@ impl Watch {
 /// 故节拍直接是这趟开销的倍数；10 ms 够让"某位静默地没了"在监督读数里及时落定，又不把本线程
 /// 变成一台压着内核问的机器。
 const TICK_MS: usize = 10;
+
+/// **静默上限**（毫秒）：账上一位都没少的时长上限——超过它而闸还没成立（或收场还没收讫），
+/// 就**出声并收场**。
+///
+/// **它是活性下限，不是日程**（照实记）：正常跑一次都走不到（有台在动就会复位）。它买的只有
+/// 一件事——**机器不会永远停不下来**；付的代价照实说：真有一台卡住时，读数可能缺，而"缺"
+/// 这件事由本相印出来（`system: doom`），不再是一片沉默。
+const IDLE_MS: usize = 10_000;
+
+/// 静默上限的纳秒形（[`clock`] 那一族的标量）。
+const IDLE_NS: u64 = IDLE_MS as u64 * 1_000_000;
+
+/// **等一位收讫的上限**（毫秒）——道响了之后等它真收尾。
+///
+/// **为什么有界**（照实记）：这一等原先写的是 `Wait::Forever`。道响只说明"板看见那扇门封印了"，
+/// 而收尾是内核那一格的事；两者之间**可以**隔很久（域里还有没收尾的线程）。无界的那一等会把
+/// **监督那一趟整个钉住**——钉住之后连判决都读不到，兜底也轮不上。
+const ACCOUNT_MS: usize = 1_000;
 
 /// **表侧惰性剔死**（照实记：G3 从板那本账搬来的那一格）：内核说这一枚收尾了 ⇒ 当场落 `Dead`。
 ///
@@ -404,6 +457,11 @@ fn wire_state(state: State) -> ccall::State {
 /// 线程"，故这一步等的是收尾事件，不是节拍），再写 `Dead`、放下它那个域、报一行。
 ///
 /// **幂等**：已经记过（`Dead`）就什么都不做——板报的道与我们自己杀的那一位可能都指到它。
+///
+/// **照实记（这一等改成有界了）**：原先写 `Wait::Forever`；道响只说明板看见那扇门封印了，
+/// 而收尾是内核那一格的事——两者之间可以隔很久，无界的那一等会把**监督那一趟整个钉住**
+/// （钉住之后连判决都读不到）。今天有界（[`ACCOUNT_MS`]），到点照实记 `unsettled`：
+/// 那一位先不落 `Dead`，由判决/兜底接着管。
 fn account(table: &mut Table, name: &str) {
     let Some(row) = table.find(name) else {
         return;
@@ -414,7 +472,7 @@ fn account(table: &mut Table, name: &str) {
     let Slot::Live { .. } = row.slot else {
         return;
     };
-    let reaped = until(table, name, Wait::Forever).unwrap_or(Reaped::Unsettled);
+    let reaped = until(table, name, Wait::AtMost(ACCOUNT_MS)).unwrap_or(Reaped::Unsettled);
     mark_dead(table, name, reaped);
 }
 

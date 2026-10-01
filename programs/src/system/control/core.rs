@@ -79,6 +79,17 @@ pub fn due(table: &Table) -> bool {
     })
 }
 
+/// **还有"会自己走"的活着吗**——收场那一相那条**静默兜底**看这一句。
+///
+/// 与 [`due`] 的分别只在主体：闸问"还剩谁在等"（常驻不算），本句问"卡住的是不是那种
+/// **会自己走**的"。**听令的那一台不算**——它的沉默是正常的，它的终止词从外面来。
+pub fn walking(table: &Table) -> bool {
+    table.living().any(|r| match r.ending {
+        Ending::Transient => true,
+        Ending::Resident | Ending::Told => false,
+    })
+}
+
 /// **收讫了**：账上一个不剩。
 ///
 /// 与内核那一层的收场判决（`conductor::done`：`PUSHED == REAPED`）**同名同形**——四个量词
