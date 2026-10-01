@@ -62,6 +62,23 @@
 //!
 //! **①②是一条链**（`Wire` ／ `Req` ／ 映射表 ／ 帧长依次对），**④⑤各自要与其上面对齐**，
 //! **⑥必须最后**（没有它，前五件就是一组没人叫的格）。故六件**一次做完**才落。
+
+//! ## 第 64 轮：最后两处逐字 ＋ 一条**顺序上的硬约束**
+//!
+//! · 服务端那一支照抄（`Wire::Waive` 那三行同形）：
+//!   `pcall::Wire::Drop => match book.drop(from) { Ok(()) => pcall::Reply::status(pcall::OK),
+//!   Err(fail) => pcall::Reply::status(pcall::fail_to_code(Some(fail))) },`
+//! · 本域要用的两样：`pcall::DIR`（`Path::new("svc/sys/principal")`，`frame.rs:267`）与
+//!   `find_face(tree, road)` 那一手（`probe_rule.rs:484` 有一份可直接抄的，bounded 重试那十几行）；
+//!   拿到 `entry` 之后是 `pcall::client::Face::of(entry)?.task(me)?.drop(Wait::AtMost(MS))`
+//!   （`Face::task(tid)` 那一手见 `service/principal/bridge.rs`；`drop` 就加在 `waive` 旁边）。
+//!
+//! **硬约束（这一条决定了落刀顺序）**：现有六件＋本域那一手**必须与"本域改成照旧被绑"同落**——
+//! 因为 `book.drop(from)` 找不到那一格会答 `Fail::Unknown`，而本域**今天正是没被绑的那一台**
+//! （`bind: false`）。故落法是：
+//!   1. **（A）** 六件 ＋ **把本域的 `bind: false` 去掉**（它一去掉，全仓就再没有 `false` 的写者）
+//!      ⇒ 本域照旧被绑 → 自己丢掉 → 撞门（读数仍是 `probe-denied: denied`）；
+//!   2. **（B）** 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋ 22 处 `true`）＋ 装配者照旧全绑。
 //!
 //! **落地顺序**（第 60 轮起）：① 本文件改成"生子任务、由它撞门"（读数仍是
 //! `probe-denied: denied`，两档 16 条对齐）；② 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋
