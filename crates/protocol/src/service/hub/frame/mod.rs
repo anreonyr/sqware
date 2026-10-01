@@ -12,101 +12,19 @@ use alloc::string::String;
 use env::{Pair, PieToken};
 
 use crate::wire::message::Message;
-use crate::common::path::Path;
-
-/// 报名：许我驱这一类。
-pub const BOND: u8 = 1;
-/// 列册：这一类里现在有哪几台、哪几台有主。
-pub const LIST: u8 = 2;
-/// 认领：这台归我。
-pub const CLAIM: u8 = 3;
-
-/// 一窗最多几条（取窗宽度）。**它是个旋钮，不是契约**——把 `Buf` 撑大就调它。
-pub const LIST_MAX: usize = 4;
-
-/// 回信孔那一枚上的记号。**三条问共用**：回信孔是每一趟自带的，与面无关。
-pub const BACK_MARK: env::Mark = env::Mark::of("hub-back");
-
-/// **报活孔**那一枚上的记号：主人（认领那一台的那位）铸一枚、**交一份给 hub**、此后一直开着。
-/// hub 扫账时按它问"主人还在不在"（`mail::reserve`——与线路由者那条探活同一手）。内核那一问
-/// （`UnitCall::Join`）只许**同队或父域**，而 hub 与驱动是**兄弟** ⇒ 主人那一枚只能由主人
-/// 自己交过来。
-pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
-
-/// **设备那一轴在树上的路**：`/dev`（`/dev/<类>/<名>` 的头一段）。
-pub const DEV_ROAD: &Path = Path::new("dev");
-
-/// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
-/// （`/dev/boot/{dtb,irq}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的。
-pub const BOOT: &str = "boot";
-
-/// boot 那一类底下那两格的名字：**设备树本体**（hub 自己也要用它读名 / 类 / 线，
-/// 但它同时是**树那一侧的客户**（`router` 要读 `riscv,ndev` 与 `interrupts-extended`））。
-pub const DTB: &str = "dtb";
-
-/// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）。
-pub const IRQ: &str = "irq";
 
 pub use crate::wire::fail_codes::OK;
 
-/// 没这件 / 这一类不在册上（这台机器没有这一类——是事实，不是错误）。
-pub const UNKNOWN: u8 = 1;
-/// 有人了（活着的不是我的主人）⇒ 换一台，或等它空出来。
-pub const TAKEN: u8 = 2;
-/// 授不出（门闩那一手没成）⇒ 装配错。
-pub const DENIED: u8 = 3;
-/// 那一枚孔用不动（对端没了 / 这一趟的路断了）⇒ 收摊。
-pub const DEAD: u8 = 4;
-/// **这一帧读不懂**（长短不对 / 形状不对）。不是对端说的事，是本端判的。
-pub const BAD: u8 = 5;
 
-/// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；[`Fail::Bad`] 是本端那一格。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 没这件 / 这一类不在册。
-    Unknown,
-    /// 有活着的主人。
-    Taken,
-    /// 授不出。
-    Denied,
-    /// 那一枚孔用不动（**本端判的**：这一枚的资源没了 / 权限不够 / 已交出去）。
-    Dead,
-    /// 这一趟没走到 / 读不懂（**本端判的**）。
-    Bad,
-}
+pub mod bond;
+pub mod claim;
+pub mod list;
+pub mod vocab;
 
-crate::fail_codes! {
-    /// 失败域 → 状态码（一处编：客侧与 hub 看同一张表）。
-    /// **五格是双射**（含 [`Fail::Bad`]）：表外那一格由客侧那一手折成 [`Fail::Bad`]
-    /// （同 control 的 `read`）。
-    bijective Fail; OK;
-    Fail::Unknown => UNKNOWN,
-    Fail::Taken => TAKEN,
-    Fail::Denied => DENIED,
-    Fail::Dead => DEAD,
-    Fail::Bad => BAD,
-}
-
-/// 报名：**只有类**（驱动不需要知道盟号）。
-#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 41)]
-pub struct Bond {
-    pub op: u8,
-    pub class: String,
-    pub back: PieToken,
-}
-
-impl Bond {
-    /// 编一问（动作码固定 [`BOND`]）。
-    pub fn of(class: String, back: PieToken) -> Bond {
-        Bond {
-            op: BOND,
-            class,
-            back,
-        }
-    }
-}
-
+pub use self::bond::*;
+pub use self::claim::*;
+pub use self::list::*;
+pub use self::vocab::*;
 impl Message for Bond {
     type In = Bond;
     type Buf = [u8; Bond::LEN];
@@ -123,28 +41,6 @@ impl Message for Bond {
     }
 }
 
-/// 列册：类 ＋ **游标**（从哪一条起取窗）。
-#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 45)]
-pub struct ListReq {
-    pub op: u8,
-    pub class: String,
-    pub from: u32,
-    pub back: PieToken,
-}
-
-impl ListReq {
-    /// 编一问（动作码固定 [`LIST`]）。
-    pub fn of(class: String, from: u32, back: PieToken) -> ListReq {
-        ListReq {
-            op: LIST,
-            class,
-            from,
-            back,
-        }
-    }
-}
-
 impl Message for ListReq {
     type In = ListReq;
     type Buf = [u8; ListReq::LEN];
@@ -158,32 +54,6 @@ impl Message for ListReq {
     fn fetch(bytes: &[u8]) -> Option<ListReq> {
         let (q, at) = ListReq::fetch_at(bytes, 0)?;
         (at == bytes.len() && q.op == LIST).then_some(q)
-    }
-}
-
-/// 认领：**要什么权**（种 / 取用 / 形态）＋ **主人那一枚**。**"哪一台"不在这帧里**——你 `find`
-/// 的是哪一格，那一格上挂的就是哪一台那一份孔。
-#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
-pub struct Claim {
-    pub op: u8,
-    pub kind: u8,
-    pub access: u32,
-    pub policy: u32,
-    pub sensor: PieToken,
-    pub back: PieToken,
-}
-
-impl Claim {
-    /// 编一问（动作码固定 [`CLAIM`]）。
-    pub fn of(kind: u8, access: u32, policy: u32, sensor: PieToken, back: PieToken) -> Claim {
-        Claim {
-            op: CLAIM,
-            kind,
-            access,
-            policy,
-            sensor,
-            back,
-        }
     }
 }
 
@@ -428,6 +298,7 @@ pub struct Window {
 /// （`[状态 1B][游标 4B][条数 1B][位 8B][名字 32B × n]`）。属性换成手写也好、`MAX` 求和出错也好，
 /// 这一句先红。
 // 32 = 一枚名在**这一族**里的上界（长度那一字节 ＋ 至多 31 字节的内容）。
+
 const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + 32 * LIST_MAX);
 
 impl Window {

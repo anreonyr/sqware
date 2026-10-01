@@ -16,73 +16,13 @@
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
 
-use crate::common::path::Path;
 
 use crate::wire::message::Message;
 
-/// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
-/// 五格与 `programs/src/system/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
-/// "有界预算试几次"、"放弃之后算什么"都是 Server 的策略，不在这里另立一格（那一笔账见
-/// `crates/protocol/src/system/mod.rs` 的"预算与放弃"）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum State {
-    /// 表里有这一行，但还没起过。
-    NeverStarted,
-    /// 起了，正在等它宣布就绪。
-    Starting,
-    /// 已就绪。
-    Ready,
-    /// 已下令收，还没确认收干净。
-    Stopping,
-    Dead,
-}
 
-impl State {
-    /// 线上那一格数（**判别值**：`State` 的码与内核无关，是本协议自己的）。
-    pub const fn code(self) -> u8 {
-        match self {
-            State::NeverStarted => 0,
-            State::Starting => 1,
-            State::Ready => 2,
-            State::Stopping => 3,
-            State::Dead => 4,
-        }
-    }
+pub mod vocab;
 
-    /// 那一格数 → 状态。表外的数 ⇒ `None`（**不猜**）。
-    pub const fn of_code(code: u8) -> Option<State> {
-        match code {
-            0 => Some(State::NeverStarted),
-            1 => Some(State::Starting),
-            2 => Some(State::Ready),
-            3 => Some(State::Stopping),
-            4 => Some(State::Dead),
-            _ => None,
-        }
-    }
-}
-
-/// 失败域：五格，**前四格各对应一个不同的下一步**（照实抄 `programs/src/system/core.rs` 那四格）。
-/// 它是**协议这一侧**的名字：调度侧那四格是 `Unknown` / `BadImage` / `Full` / `NotReady`，
-/// 与这里逐格同形——两份不是"抄一遍"，是同一件事的两层（模型那一份不碰 `runtime`）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Fail {
-    /// 表里没这个名字，或它已经登记过。
-    Unknown,
-    /// 镜像装不上（内核 `UnitFail::BadImage`）。
-    BadImage,
-    /// 表满，或线程 / 帧产不出来（内核 `UnitFail::OoM`）。
-    Full,
-    /// 没就绪：等到期还没起来、半路死了、或此刻不该起（已在跑）。
-    NotReady,
-    /// **本端读不懂那一句**（帧坏了 / 答话那一格解不动 / 期限到了还没答）。
-    /// 它在**失败表外**（同板、树那两族的先例）：它不是"持表那一侧说的事"，是**这一问没走到**。
-    /// 对本端而言与"这条路别指望了"同一个下一步，故不往 [`Fail`] 的语义格里塞。
-    Bad,
-    /// **判面拒**：这一问不属于它进来的那一面——**终态**（换一面 / 别重试）。
-    Denied,
-}
-
+pub use self::vocab::*;
 /// 一问：动作码 ＋ 名字 ＋ **回信孔那一格**。
 /// `back` 是**运输**那一格（往哪回），不是动作的荷载——它排最后，谁都不许把它当第二个名字使。
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
@@ -136,27 +76,10 @@ impl Message for Said {
     }
 }
 
-const MINT: u8 = 1;
-const START: u8 = 2;
-const STOP: u8 = 3;
-const STATE: u8 = 4;
-
 /// 成功那一格：**全协议同一个号**——定义在 `crate::fail_codes`，本族只把它转出来。
 pub use crate::wire::fail_codes::OK;
 
-/// 答话那一格。**前四格与 [`Fail`] 的调度侧四格一一对应**；后两格各有各的来路：
-/// [`DENIED`] 是**判面拒**（持表那一侧判的：这一问不属于它进来的那一面），[`BAD`] 不是对端说的事
-/// ——**这一问读不懂**。
-/// 数字是**线上的**；[`Fail`] 是模型那一侧的名字，两者的对照表只此一份（持表那一侧编、
-/// 客人那一侧读）。
-pub const UNKNOWN: u8 = 1;
-pub const BADIMAGE: u8 = 2;
-pub const FULL: u8 = 3;
-pub const NOTREADY: u8 = 4;
-pub const BAD: u8 = 5;
-/// **判面拒**：这一问不属于它进来的那一面（读面发不出写）。**终态**——换一面或别指望，
-/// 与调度侧那几格（名册本来就认得的事）分开。
-pub const DENIED: u8 = 6;
+use self::vocab::{MINT, START, STATE, STOP};
 
 /// 失败域 → 答话那一格。`None`（没失败）⇒ [`OK`]。
 pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
@@ -268,31 +191,16 @@ pub const fn said_task(task: TaskId) -> Said {
     }
 }
 
-/// 这条路叫什么（泊位那一格）：**两侧同一个**。
-pub const LINK: &str = "control";
-
-/// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 [`LINK`] 同一个串**——"泊位叫 `control`"
-/// 与"它挂在哪一格"是同一件事的两层，重名不是重名。
-pub const NAME: &str = "control";
-
-/// 问话孔那一枚上的记号。**带面名**（`control-ask`）：认领键是"谁开的 + 记号"，而同一枚任务
-/// 可能同时是两面的客人——两枚孔都铸在它自己那张表里，记号再一样就分不开（理由与实测见
-/// `system::operator::frame::ASK_MARK`）。
-pub const ASK_MARK: Mark = Mark::of("control-ask");
-
-/// 回信孔的记号：客人**每趟**铸一枚、借给对端（这一趟的答话从它回来）。
-pub const BACK: Mark = Mark::of("control-back");
-
-/// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
-/// [`crate::common::svc::DIR`]，末段是本族自己的名字 [`NAME`]）——**一处说全**（同 principal /
-/// coalition）。
-pub const DIR: &Path = Path::new("svc/sys/control");
-
 const _: () = assert!(ASK_MARK.get() != Mark::NONE.get());
+
 const _: () = assert!(ASK_MARK.get() != BACK.get());
+
 const _: () = assert!(ASK_MARK.get() != Mark::of(LINK).get());
+
 const _: () = assert!(BACK.get() != Mark::NONE.get());
+
 const _: () = assert!(BACK.get() != Mark::of(LINK).get());
 
 // **答话那一形的宽度钉在编译期**：三格之和（状态 1 ＋ 答案 1 ＋ 身子那一格）。
+
 const _: () = assert!(Said::LEN == 2 + <TaskId as env::wire::Field>::WIDTH);
