@@ -45,9 +45,9 @@ use protocol::debug;
 use protocol::system::operator::Fail as TreeFail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face;
-use protocol::system::principal::{Fail, PrincipalId};
+use protocol::service::principal as pcall;
+use protocol::service::principal::client::Face;
+use protocol::service::principal::{Fail, PrincipalId};
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

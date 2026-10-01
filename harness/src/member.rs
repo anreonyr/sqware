@@ -54,10 +54,10 @@ use protocol::system::operator::Fail as TreeFail;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
 use protocol::system::operator::path::Path;
-use protocol::system::principal as pcall;
-use protocol::system::principal::Fail as PolicyFail;
-use protocol::system::principal::PrincipalId;
-use protocol::system::principal::client::Face as PolicyFace;
+use protocol::service::principal as pcall;
+use protocol::service::principal::Fail as PolicyFail;
+use protocol::service::principal::PrincipalId;
+use protocol::service::principal::client::Face as PolicyFace;
 use runtime::env::unit as utask;
 
 /// 等树 / 等答 / 找门牌的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

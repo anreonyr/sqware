@@ -11,7 +11,7 @@ use env::TaskId;
 
 use protocol::service::coalition::CoalitionId;
 use protocol::system::operator::{EntryId, Permit, Ruling};
-use protocol::system::principal::PrincipalId;
+use protocol::service::principal::PrincipalId;
 
 // ── 门外那一问要问的四条边（**一个** trait）─────────────────
 

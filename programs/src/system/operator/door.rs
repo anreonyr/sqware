@@ -28,8 +28,8 @@ use protocol::debug;
 use protocol::service::coalition::client::Face as CoalitionFace;
 use protocol::service::coalition::{CoalitionId, Grant as CoalitionGrant};
 use protocol::system::operator::{EntryId, Fail, Permit};
-use protocol::system::principal::client::Face as PrincipalFace;
-use protocol::system::principal::{Grant as PrincipalGrant, PrincipalId};
+use protocol::service::principal::client::Face as PrincipalFace;
+use protocol::service::principal::{Grant as PrincipalGrant, PrincipalId};
 
 use crate::system::operator::core::Operator;
 use crate::system::operator::core::gate::{Code, verdict};

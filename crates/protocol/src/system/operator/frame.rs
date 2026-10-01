@@ -64,7 +64,7 @@ use env::{PieToken, TaskId};
 
 use super::path::{Path, PathBuf};
 use crate::service::coalition::CoalitionId;
-use crate::system::principal::PrincipalId;
+use crate::service::principal::PrincipalId;
 
 // **照实记（宽度别名 `Id` 已退场）**：从前本文件有一条 `pub type Id = u64`，给判据那一侧当
 // `PrincipalId` / `CoalitionId` 的**宽度替身**——那时帧不认识那两个号。今天 [`Permit`] 的各格
@@ -79,7 +79,7 @@ use crate::message::Message;
 
 /// 一枚条目的**号**：机器用的那一个。
 ///
-/// **裸号**：与 [`PrincipalId`](crate::system::principal::PrincipalId) / [`CoalitionId`](crate::service::coalition::CoalitionId)
+/// **裸号**：与 [`PrincipalId`](crate::service::principal::PrincipalId) / [`CoalitionId`](crate::service::coalition::CoalitionId)
 /// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
 /// "这枚号还在不在"由每条读**查一次表**答出来。
 ///

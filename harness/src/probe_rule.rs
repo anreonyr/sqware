@@ -99,8 +99,8 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
 use protocol::system::operator::path::Path;
 use protocol::system::operator::{EntryId, Fail, Permit};
-use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face as PrincipalFace;
+use protocol::service::principal as pcall;
+use protocol::service::principal::client::Face as PrincipalFace;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 

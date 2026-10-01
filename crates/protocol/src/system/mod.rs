@@ -516,7 +516,7 @@
 /// （`principal` / `coalition` / `control` 三族的 `DIR`，加编排域 `sys_dir()` 里那句
 /// "引 `ccall::frame::DIR`"）——同一个词四处给，改一处就得记得另外三处。今天的口径是：
 /// **这一段名字只有这一处说**（它今天是一条 [`Path`]：别的族按 [`SVC`]`.join(…)` 往下接，
-/// 各族自己那一段住自己那一族，见 [`crate::system::principal::DIR`]）。
+/// 各族自己那一段住自己那一族，见 [`crate::service::principal::DIR`]）。
 ///
 /// **为什么是 `svc` 而不是 `sys`**（用户裁定）：这一层底下收的不只是"系统服务"——驱动那一族
 /// （`/svc/drv`）与设备账（`/svc/hub`）也挂上来了，而 `/dev` 留给**设备那一轴**（hub 落的账）。
@@ -536,7 +536,7 @@ pub const SYS: &str = "sys";
 ///
 /// **照实记（"路"为什么是一条拼出来的 [`Path`]）**：这四族在树上平级、只差末段，而末段
 /// （`operator` / `principal` / …）各住在**自己那一族**的协议模块里
-/// （见 [`crate::system::principal::DIR`] 那一条）。头两段是四族共同的，故它只说在这里：
+/// （见 [`crate::service::principal::DIR`] 那一条）。头两段是四族共同的，故它只说在这里：
 /// 改一层名字（比如再插一段）只动这一处，四族跟着走。驱动那一族取 [`SVC`] 接自己那一段
 /// （`/svc/drv`），设备账同（`/svc/hub`）。
 pub const DIR: &Path = Path::new("svc/sys");
@@ -550,7 +550,6 @@ pub mod control;
 pub mod faces;
 pub mod grant;
 pub mod operator;
-pub mod principal;
 // **照实记（`supply` 是残枝那一刀搬来的）**：它原先住 [`crate::driver::supply`]——而实测
 // 它的消费者只有**引导域**（发货）与**编排域**（`bootstrap` 领设备树与载荷区、`control::assemble`
 // 领配给），`programs/src/driver/` 一处都不用 ⇒ 它不是驱动协议，是**装配/配给**这一半
@@ -588,7 +587,7 @@ const LOOSE: &[env::Mark] = &[
     operator::TIP_MARK,
     control::ASK_MARK,
     control::BACK,
-    principal::BACK,
+    crate::service::principal::BACK,
     crate::service::coalition::BACK,
     operator::ASK_MARK,
 ];
@@ -603,7 +602,7 @@ const _: () = {
         &crate::service::coalition::Grant::MARKS,
         &control::Grant::MARKS,
         &operator::Grant::MARKS,
-        &principal::Grant::MARKS,
+        &crate::service::principal::Grant::MARKS,
     ];
     let mut f = 0;
     while f < fams.len() {

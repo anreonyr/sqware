@@ -262,7 +262,7 @@ pub use alloc::format as __format;
 // 从来没有存在过**——板那条路的答话走板路那一枚（`system/board/client.rs`：问话孔只写、答话从板路
 // 读），它没有 `*-back` 记号。故换成真在的那一条。
 const _: () = assert!(
-    crate::system::principal::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
+    crate::service::principal::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
 );
 const _: () = assert!(
     crate::service::coalition::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()

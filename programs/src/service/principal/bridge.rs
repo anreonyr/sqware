@@ -11,8 +11,8 @@ use core::time::Duration;
 use env::{TaskId, Wait};
 use protocol::communication::establish;
 use protocol::debug;
-use protocol::system::principal as pcall;
-use protocol::system::principal::client::Face;
+use protocol::service::principal as pcall;
+use protocol::service::principal::client::Face;
 use runtime::env::room;
 
 use crate::program::Program;
@@ -108,7 +108,7 @@ pub fn bind(
 }
 
 /// **名册这一位要认下面 ＋ 补绑自己与树** —— 判据是**它自己交上来的那一枚门牌**
-/// （[`Grant::Set`](protocol::system::principal::Grant)：定面那一枚；只有名册那一族交得出它）。
+/// （[`Grant::Set`](protocol::service::principal::Grant)：定面那一枚；只有名册那一族交得出它）。
 ///
 /// **照实记（这一手从前读声明上 `eyes: Some(Eyes::Roster)` 那一格）**：那一格退场了——"谁是
 /// 名册"不再由**谁**说，而是名册**自己交上来的东西**（与 `holds_tree` 那一刀同一条纪律：

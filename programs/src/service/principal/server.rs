@@ -34,8 +34,8 @@ use protocol::debug;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Mine;
-use protocol::system::principal as pcall;
-use protocol::system::principal::PrincipalId;
+use protocol::service::principal as pcall;
+use protocol::service::principal::PrincipalId;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 

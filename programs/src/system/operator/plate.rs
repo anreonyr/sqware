@@ -17,7 +17,7 @@ use env::PieToken;
 use protocol::debug;
 use protocol::system::operator::path::Path;
 use protocol::system::operator::{Permit, Rule, Where};
-use protocol::system::principal::PrincipalId;
+use protocol::service::principal::PrincipalId;
 
 use crate::system::operator::core::Operator;
 

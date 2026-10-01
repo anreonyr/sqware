@@ -24,7 +24,7 @@
 //! 那两面）。
 
 use crate::message::Message;
-use crate::system::principal::PrincipalId;
+use crate::service::principal::PrincipalId;
 use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;

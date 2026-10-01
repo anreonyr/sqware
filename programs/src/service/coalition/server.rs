@@ -40,9 +40,9 @@ use protocol::service::coalition::Fail;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::{Face as TreeFace, Mine};
-use protocol::system::principal as pcall;
-use protocol::system::principal::PrincipalId;
-use protocol::system::principal::client::Face;
+use protocol::service::principal as pcall;
+use protocol::service::principal::PrincipalId;
+use protocol::service::principal::client::Face;
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 

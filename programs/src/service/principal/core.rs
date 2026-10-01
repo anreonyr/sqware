@@ -1,17 +1,17 @@
 //! principal::core — **名册 ＋ 谱系那本账**：两张表与一把钥匙。
 //!
-//! **照实记（它原先住 `protocol::system::principal::core`）**：那一份的读者只有本域的持有者
+//! **照实记（它原先住 `protocol::service::principal::core`）**：那一份的读者只有本域的持有者
 //! （`prog-principal` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
 //! 只留**上线的两样**：号（`PrincipalId`）与失败域（`Fail`）。
 //!
 //! 本文件只讲两张表的形状与九条原语；**身份的含义、门牌、帧那一层**写在协议那一边
-//! （`protocol::system::principal`）。
+//! （`protocol::service::principal`）。
 
 use alloc::vec::Vec;
 
 use env::TaskId;
 
-use protocol::system::principal::{Fail, PrincipalId};
+use protocol::service::principal::{Fail, PrincipalId};
 
 // ── 两张表 ──────────────────────────────────────────────────
 

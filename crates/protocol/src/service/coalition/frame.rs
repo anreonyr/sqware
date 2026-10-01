@@ -45,7 +45,7 @@
 
 use crate::id::Id;
 use crate::message::Message;
-use crate::system::principal::PrincipalId;
+use crate::service::principal::PrincipalId;
 use env::{Mark, PieToken, TaskId};
 
 use crate::system::operator::path::Path;
@@ -98,7 +98,7 @@ impl env::wire::Field for CoalitionId {
 ///
 /// **照实记（第三格是开面那一刀添的）**：本族原先**两格、没有 `Denied`**——那时确实没有：
 /// 盟无主，三条写里的门要么是"这条号是假的"，要么是"备不下"，故横向那条轴与纵向那条轴
-/// （[`system::principal`](crate::system::principal) 有 `Denied`）在失败域上分得开。今天多出来的
+/// （[`system::principal`](crate::service::principal) 有 `Denied`）在失败域上分得开。今天多出来的
 /// [`Fail::Denied`] 问的是**另外一件事**：不是"你得请谁来做"，是"**你手里那一枚门牌给不给这一
 /// 条**"（载体那一维，见 [`super::grant`]）。**核心那一侧的口径一字未动**——它照旧没有一处
 /// "你得请谁来做"的判断。
@@ -582,7 +582,7 @@ pub const NAME: &str = "coalition";
 //
 // 原先这是宿主台那条 `the_three_back_marks_of_the_three_doors_do_not_collide`（那条判据随宿主靶
 // 一并删了，用户裁定"protocol-case 没必要"）；**与名册那一对**钉在
-// `crate::system::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在
+// `crate::service::principal::frame`，**与线那一对**钉在 `lib.rs`——线那一枚住在
 // `driver::line::frame`，而这一份**只认得 `env` 与同层 `core`**，看不见 `driver`。
 const _: () = assert!(BACK.get() != Mark::NONE.get());
 const _: () = assert!(BACK.get() != Mark::of(NAME).get());
