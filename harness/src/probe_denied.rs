@@ -78,6 +78,16 @@
 //! （`bind: false`）。故落法是：
 //!   1. **（A）** 六件 ＋ **把本域的 `bind: false` 去掉**（它一去掉，全仓就再没有 `false` 的写者）
 //!      ⇒ 本域照旧被绑 → 自己丢掉 → 撞门（读数仍是 `probe-denied: denied`）；
+//!
+//! ## 第 65 轮：**"丢"最后一格怎么表示**（读准了，不必发明哨兵）
+//!
+//! · `service/principal/core.rs:104` 的 `resolve` 就是
+//!   `self.roster.iter().find(|r| r.tid == tid).map(|r| r.current)`
+//!   ⇒ **"没有身份" ≡ 册里没有那一行**；
+//! · 册是 `roster: Vec<Bound>`（`core.rs:49`，可删）；
+//! ⇒ **"丢"就是把那一行删掉**（`self.roster.retain(|r| r.tid != from)`；删不着 ⇒ `Err(Fail::Unknown)`，
+//!   与 `waive` 撞空同调）。此后 `resolve(from)` 答 `None` ⇒ 门禁第一条判据（"没绑身份 ⇒ 拒绝"）
+//!   对它是真的——**这正是负证要的那一句**。**不设哨兵值、不改 `resolve` 的语义。**
 //!   2. **（B）** 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋ 22 处 `true`）＋ 装配者照旧全绑。
 //!
 //! **落地顺序**（第 60 轮起）：① 本文件改成"生子任务、由它撞门"（读数仍是
