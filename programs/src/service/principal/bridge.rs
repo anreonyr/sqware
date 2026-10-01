@@ -30,12 +30,9 @@ impl Roster {
     ///
     /// `on` = 装配表上 `bind` 那一格（`false` 是负证客人：不绑，它自己 `resolve(self)` 答
     /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 [`Roster::adopt`] 补绑。
-    pub fn bind(&self, task: TaskId, on: bool) -> Result<(), &'static str> {
-        if !on {
-            // **探子（第 68 轮只量）**：声明说"不绑"那一支。
-            debug!("principal: bind off task={}", task.get());
-            return Ok(());
-        }
+    pub fn bind(&self, task: TaskId) -> Result<(), &'static str> {
+        // **照实记（第 71 刀：`Relation::bind` 那一格退场 ⇒ 这里"照旧全绑"，`on` 那个形参没了）**：
+        // 身份从那一天起由**持有者自己在运行期丢掉**（[`Principal::drop`]），声明不再说"给不给"。
         let Some(face) = self.face.as_ref() else {
             // **照实记（第 68 轮量出来的那一笔：这两条跳过路各自会跳过谁）**
             //
@@ -122,7 +119,7 @@ pub fn bind(
     program: &UnitFile,
     service: &mut Service,
 ) -> Result<(), &'static str> {
-    assembly.roster.bind(service.0, program.relation.bind)
+    assembly.roster.bind(service.0)
 }
 
 /// **名册这一位要认下面 ＋ 补绑自己与树** —— 判据是**它自己交上来的那一枚门牌**
