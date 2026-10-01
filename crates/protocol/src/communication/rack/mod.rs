@@ -34,23 +34,15 @@ pub mod writer;
 use core::marker::PhantomData;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use env::{Mark, PieToken, PieResult};
+use env::{PieToken, PieResult};
 use runtime::PAGE_SIZE;
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{HolePie, PolePie};
+use runtime::env::mail::{NolePie, PolePie};
 
 use crate::wire::message::Message;
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::writer::{SendFail, Writer};
-
-/// 那一枚铃的记号：**架自己铸的那一枚孔**（位不占字节 ⇒ 它只用来"响一下"）。
-///
-/// # 为什么铃是一枚孔，不是一枚 Nole
-/// `Nole` 今天**只由编排域解封**（实测：探针那一档 `Nole::unseal` 答 `Denied`）——而那是一件
-/// 已经成立的事实，不该为这一档去改内核。孔自带"一位"（`Ring`/`Hush`，与门铃同一口径：
-/// 置位不占字节、零复制、不阻塞发送方），故这里就用它。
-pub const BELL_MARK: &str = "rack-bell";
 
 /// 页就是架：一枚页一具架（`Pole::unseal` 要求页对齐，`PAGE_SIZE` 正好）。
 pub const SIZE: usize = PAGE_SIZE;
@@ -116,8 +108,10 @@ const fn exact<M: Message>() {
 pub struct Rack<M: Message> {
     /// 页（借映进本域，与 `Dock` 同一条手：`open` 返视图、`shut` 撤图）。
     dock: Dock,
-    /// 铃：写者响、读者等（**架自己铸的那一枚孔**，见 [`BELL_MARK`]）。
-    bell: HolePie,
+    /// 铃：写者响、读者等。**就是一枚 Nole**（`Ring`/`Wait`/`Hush` 三拍，无数据面）——
+    /// 与 `unseal_hole` / `unseal_pole` 同一口径：**谁都能铸**（凭证是"谁把它交给你"，
+    /// 不是"谁造的"；见 `env::call::pie::UnsealNole` 那一节的注）。
+    bell: NolePie,
     /// 满了丢哪一头（写那一侧的规矩，读端不必知道）。
     mode: Mode,
     _m: PhantomData<M>,
@@ -147,7 +141,7 @@ impl<M: Message> Rack<M> {
             }
         };
         // 页是内核清零的（`UnsealPole` 的正文），故四个计数与每格 `seq` 都从 0 起。
-        let bell = match HolePie::unseal(Mark::of(BELL_MARK)) {
+        let bell = match NolePie::unseal() {
             Ok(bell) => bell,
             Err(fail) => {
                 crate::debug::put(&alloc::format!("rack: no bell {:?}", fail));
@@ -204,11 +198,6 @@ pub(crate) fn slot(ring: &Ring, i: usize) -> &Slot {
 pub(crate) fn payload(slot: &Slot) -> &[u8] {
     let n = slot.len as usize;
     slot.data.get(..n.min(SLOT)).unwrap_or(&[])
-}
-
-/// 写者那一侧：读一眼读者走到哪了（诊断用：不写、不改）。
-pub(crate) fn read_cursor(ring: &Ring) -> u64 {
-    ring.read.load(Ordering::Acquire)
 }
 
 /// 写者那一侧：让 `write` 那一格可见（`Release` ⇒ 载荷与 `seq` 先于游标）。

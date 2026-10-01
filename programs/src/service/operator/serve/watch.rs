@@ -71,7 +71,7 @@ impl Watchers {
             "operator: watch joined who={} road={} watchers={}",
             who.get(),
             self.list[at].filter,
-            self.list.len()
+            self.len()
         ));
         Ok(())
     }
@@ -108,13 +108,9 @@ impl Watchers {
         sent
     }
 
-    /// 现在有几位订阅者（收场读数用）。
+    /// 现在有几位订阅者（`join` 那一行读数用它）。
     pub fn len(&self) -> usize {
         self.list.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.list.is_empty()
     }
 }
 

@@ -6,9 +6,9 @@
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
 
-use env::{HoleDir, PieToken, Wait};
+use env::{PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{HolePie, PolePie};
+use runtime::env::mail::{NolePie, PolePie};
 
 use super::{Mode, Ring, SLOT, exact, push, ring};
 use crate::wire::message::Message;
@@ -20,11 +20,13 @@ use crate::wire::message::Message;
 pub struct Writer<M: Message> {
     ring: &'static Ring,
     /// 本域里那一份映射（`Rack::writer` 现取时是 `None`：`Rack` 持着 `Dock`）。
-    dock: Option<Dock>,
+    /// **它只为"持着"而存在**：`reader`/`writer` 用的是 `view()` 那一对数，而映射要靠这一格
+    /// 活着（放了就是撤图）——故下划线起头，说明"这一格没有读点"。
+    _dock: Option<Dock>,
     /// 编报那一格：地址在整个持有期里不动（`store` 写它、`push` 读它）。
     buf: M::Buf,
     mode: Mode,
-    bell: HolePie,
+    bell: NolePie,
     _m: PhantomData<M>,
 }
 
@@ -34,10 +36,10 @@ impl<M: Message> Writer<M> {
         exact::<M>();
         Self {
             ring: ring(view),
-            dock: None,
+            _dock: None,
             buf: M::EMPTY,
             mode,
-            bell: HolePie::from_token(bell),
+            bell: NolePie::from_token(bell),
             _m: PhantomData,
         }
     }
@@ -59,10 +61,10 @@ impl<M: Message> Writer<M> {
         let view = dock.view();
         Some(Self {
             ring: ring(view),
-            dock: Some(dock),
+            _dock: Some(dock),
             buf: M::EMPTY,
             mode,
-            bell: HolePie::from_token(bell),
+            bell: NolePie::from_token(bell),
             _m: PhantomData,
         })
     }
@@ -91,7 +93,7 @@ impl<M: Message> Writer<M> {
 
     /// 等铃（**写者不该用**：它只响、不等。留给"同一域里要等答复"的诊断口）。
     pub fn wait(&self, within: Wait) -> bool {
-        self.bell.wait(HoleDir::Pull, within).unwrap_or(false)
+        self.bell.wait(within).unwrap_or(false)
     }
 
     /// 按策略丢掉的条数（`Mode::Newest` 会加）。

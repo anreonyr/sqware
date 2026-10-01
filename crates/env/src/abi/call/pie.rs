@@ -63,6 +63,10 @@ pub enum PieCall {
     /// **无参数**——没有 mtu、没有字节数、没有对齐可校验。它的全部内容就是"这一枚
     /// 存在"，故它是**无载荷通信**的载体（门铃，见 `work::mail::nole::NoleMeta`）。
     /// 与 `UnsealHole`/`UnsealPole` 并列，不是它们的特例。
+    ///
+    /// **谁都能铸**（与那两处同一口径：**没有特权级门**）：一枚 Nole 能换来的只有"一次唤醒"，
+    /// 凭证是"谁把它交给你"（[`PieCall::Accord`]），不是"谁造的"——自铸不构成提权。
+    /// 与 [`crate::call::unit::Build`] 那一格的注同一条理由。
     #[ret(PieToken)]
     UnsealNole,
     /// 开闩：借映 Pole 物理页进当前 task.space（同 token 幂等复用）→ VA + **整段多大**。

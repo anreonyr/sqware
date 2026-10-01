@@ -6,9 +6,9 @@
 
 use core::marker::PhantomData;
 
-use env::{HoleDir, MailFail, PieToken, Wait};
+use env::{MailFail, PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{HolePie, PolePie};
+use runtime::env::mail::{NolePie, PolePie};
 
 use super::{Ring, SLOT, exact, pop, ring};
 use crate::wire::message::Message;
@@ -17,10 +17,11 @@ use crate::wire::message::Message;
 pub struct Reader<M: Message> {
     ring: &'static Ring,
     /// 本域里那一份映射（`Rack::reader` 现取时是 `None`：`Rack` 持着 `Dock`）。
-    dock: Option<Dock>,
+    /// **它只为"持着"而存在**（见 `Writer` 同一格的注）。
+    _dock: Option<Dock>,
     /// **我该读的那一号**（绝对序号，从 1 起）。
     next: u64,
-    bell: HolePie,
+    bell: NolePie,
     _m: PhantomData<M>,
 }
 
@@ -30,9 +31,9 @@ impl<M: Message> Reader<M> {
         exact::<M>();
         Self {
             ring: ring(view),
-            dock: None,
+            _dock: None,
             next: 1,
-            bell: HolePie::from_token(bell),
+            bell: NolePie::from_token(bell),
             _m: PhantomData,
         }
     }
@@ -45,9 +46,9 @@ impl<M: Message> Reader<M> {
         let view = dock.view();
         Some(Self {
             ring: ring(view),
-            dock: Some(dock),
+            _dock: Some(dock),
             next: 1,
-            bell: HolePie::from_token(bell),
+            bell: NolePie::from_token(bell),
             _m: PhantomData,
         })
     }
@@ -74,7 +75,7 @@ impl<M: Message> Reader<M> {
     /// 铃是提示型：一次响可能对应好几条，故**读干为止**是调用方的循环。
     pub fn wait(&self, within: Wait) -> Result<bool, RecvFail> {
         self.bell
-            .wait(HoleDir::Pull, within)
+            .wait(within)
             .map_err(|e| RecvFail::Mail(e.source))
     }
 

@@ -36,7 +36,7 @@ pub(crate) fn dispatch(
     Some(match call {
         PieCall::UnsealHole { mark } => unseal_hole(frame, &ident, mark),
         PieCall::UnsealPole { size } => unseal_pole(frame, size),
-        PieCall::UnsealNole => unseal_nole(frame, ident),
+        PieCall::UnsealNole => unseal_nole(frame),
         PieCall::Open { token } => open(frame, ident, token),
         PieCall::Shut { token } => shut(frame, ident, token),
         PieCall::Seal { token } => seal(frame, token),
@@ -110,11 +110,16 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
     Outcome::Resume
 }
 
-fn unseal_nole(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Outcome {
+/// 解封一枚 Nole：**谁都能造**。
+///
+/// **这里曾有一道 `is_supervisor()` 的门**（`80400b2` 那次带进来的），已撤：一枚 Nole 能换来的
+/// 只有"一次唤醒"——它的全部内容是"这一枚存在 ＋ 一位"，没有数据面（见 `mail::nole::NoleMeta`）。
+/// **凭证是"谁把它交给你"（`Accord`），不是"谁造的"**：自铸一枚铃不构成提权。同一句话在
+/// `env::call::unit::Build` 那一格已经写过一次——那道以 Nole 为凭证的门被撤掉，理由正是
+/// "`UnsealNole` 无代价可自铸 ⇒ 那道门与'是 S 态'等价，白收一个载荷"。故这一道一并撤掉，
+/// 与 `unseal_hole` / `unseal_pole` 同一口径（那两处本来就没有特权级门）。
+fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
-        if !ident.team.space.kind().is_supervisor() {
-            return Err(PieFail::Denied);
-        }
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::nole::NoleMeta::new(task.ident.id);
         let pie: Pie<Nole> = gate::new_pie(
