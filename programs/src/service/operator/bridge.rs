@@ -20,7 +20,7 @@ use crate::system::control::{BOOT_MS, Service};
 use crate::unit::UnitFile;
 
 use protocol::common::path::Path;
-use protocol::communication::establish;
+use protocol::communication::session::establish;
 use protocol::debug;
 use protocol::service::operator::client::{Face, Mine, Pane};
 use protocol::service::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};

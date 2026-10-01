@@ -16,8 +16,8 @@ use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::common::path::Path;
-use crate::communication::establish::Endpoint;
-use crate::communication::sender::Sender;
+use crate::communication::session::establish::Endpoint;
+use crate::communication::hand::Sender;
 use crate::communication::session::{Berth, Session};
 use crate::communication::{deadline, remain};
 use crate::service::operator as ocall;

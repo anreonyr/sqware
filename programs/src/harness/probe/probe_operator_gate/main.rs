@@ -27,7 +27,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::common::path::Path;
-use protocol::communication::establish;
+use protocol::communication::session::establish;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;

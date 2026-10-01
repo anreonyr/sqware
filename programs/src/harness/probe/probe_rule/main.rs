@@ -200,7 +200,7 @@ fn main() -> Report<'static> {
 
     // **报"答得动了"**（Setup::Ready）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
     // （与三台驱动、三台服务那几处**同一手**）。
-    let _ = protocol::communication::establish::endpoint(
+    let _ = protocol::communication::session::establish::endpoint(
         utask::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,

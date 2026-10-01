@@ -7,8 +7,8 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
 
 use super::frame::{self, BACK, CoalitionId, Fail, Window};
-use crate::communication::establish;
-use crate::communication::receiver::{Receiver, RecvFail};
+use crate::communication::session::establish;
+use crate::communication::hand::{Receiver, RecvFail};
 
 /// 一面结盟服务：**树上查回来的门牌** + 它的开者（对端）
 pub struct Face {
@@ -63,7 +63,7 @@ impl Face {
             crate::debug!("coalition: call deny={step}");
             Fail::Unknown
         }
-        // **先铸、先交，再推**（次序是契约的一半，见 communication::establish::lend_out）。
+        // **先铸、先交，再推**（次序是契约的一半，见 communication::session::establish::lend_out）。
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Query::LEN];

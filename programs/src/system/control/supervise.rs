@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use crate::system::common::life::table::{Slot, State, Table};
 use crate::system::common::life::verdict::Reaped;
 use env::{HoleDir, PieToken, Wait};
-use protocol::communication::sender::Sender;
+use protocol::communication::hand::Sender;
 use protocol::debug;
 use protocol::system::control as ccall;
 use runtime::core::res::pile::Pile;

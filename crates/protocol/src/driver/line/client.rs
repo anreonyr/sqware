@@ -9,8 +9,8 @@ use runtime::env::mail::{self, HolePie};
 
 use super::frame;
 use super::frame::Fail;
-use crate::communication::establish::{self, Held};
-use crate::communication::sender::Sender;
+use crate::communication::session::establish::{self, Held};
+use crate::communication::hand::Sender;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`

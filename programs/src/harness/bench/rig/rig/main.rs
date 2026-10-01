@@ -48,7 +48,7 @@ use programs::system::common::life::service;
 use programs::system::common::life::table::{Announce, Slot, Table};
 use programs::system::common::life::verdict::Reaped;
 use programs::unit::Ending;
-use protocol::communication::establish::{self, Endpoint, Held};
+use protocol::communication::session::establish::{self, Endpoint, Held};
 use protocol::debug;
 use runtime::env::mail::HolePie;
 use runtime::env::room;

@@ -1,10 +1,14 @@
-//! 装一条路 → 认对端 → 要一枚问话孔。
+//! 关系那一支：**装一条路 → 认对端 → 要一枚问话孔**，以及它底下"两枚孔怎么到手"（`establish`）。
+//! 两者合成一支，是因为 `Session::open` 就是 `endpoint()` ＋ `hear` ＋ `ask` ——
+//! "两枚孔到手"与"一条路装上"是同一件事的两段（见 `establish` 头注那"一手"）。
+
+pub mod establish;
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
 use runtime::env::mail;
 
-use super::establish::{self, Endpoint};
+use self::establish::Endpoint;
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）
 #[derive(Clone, Copy)]

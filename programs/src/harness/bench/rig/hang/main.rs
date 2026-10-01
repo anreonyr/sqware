@@ -19,7 +19,7 @@ use programs::Reason;
 
 use programs::harness::tick;
 
-use protocol::communication::establish;
+use protocol::communication::session::establish;
 use protocol::debug;
 use runtime::env::mail::HolePie;
 use runtime::env::unit as utask;

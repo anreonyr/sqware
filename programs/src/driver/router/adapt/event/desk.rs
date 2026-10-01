@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use crate::core::lines::Lines;
 use crate::dev::plic::{LINE_PRIORITY, Plic};
 use env::{HoleDir, Mark, TaskId, Wait};
-use protocol::communication::establish::{self, Held};
+use protocol::communication::session::establish::{self, Held};
 use protocol::debug;
 use protocol::driver::line::frame as lcall;
 use protocol::wire::message::Message;

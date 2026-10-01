@@ -10,7 +10,7 @@ use crate::service::principal::core::Principal;
 use crate::system::common::face::carrier::carrier;
 use crate::system::common::face::mount;
 use env::TaskId;
-use protocol::communication::sender::Sender;
+use protocol::communication::hand::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::Permit;
@@ -40,7 +40,7 @@ pub fn serve() -> Result<(), Start> {
 
         // **定面先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
         // `COORD` 段）。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
-        // 答话走每一趟自己铸的那枚回信孔（communication::establish::lend_out ＋ HolePie::push：铸孔 → 交
+        // 答话走每一趟自己铸的那枚回信孔（communication::session::establish::lend_out ＋ HolePie::push：铸孔 → 交
         port::ship(
             &HolePie::from_token(set),
             assembler,
@@ -64,7 +64,7 @@ pub fn serve() -> Result<(), Start> {
         );
 
         // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/unit/catalog.rs` 那一格）。
-        let _ = protocol::communication::establish::endpoint(
+        let _ = protocol::communication::session::establish::endpoint(
             runtime::env::unit::sire(),
             env::Mark::of(crate::unit::READY),
             env::Wait::POLL,

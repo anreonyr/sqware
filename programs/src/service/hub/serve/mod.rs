@@ -8,9 +8,9 @@ use alloc::vec::Vec;
 
 use env::HoleDir;
 use env::{Access, Key, MailFail, Mark, Pair, PieKind, PieToken, Policy, TaskId, Wait};
-use protocol::communication::establish;
-use protocol::communication::receiver::{Receiver, RecvFail};
-use protocol::communication::sender::Sender;
+use protocol::communication::session::establish;
+use protocol::communication::hand::{Receiver, RecvFail};
+use protocol::communication::hand::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::coalition as ccall;

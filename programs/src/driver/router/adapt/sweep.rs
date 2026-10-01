@@ -9,7 +9,7 @@
 use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
 use env::HoleDir;
-use protocol::communication::establish::Endpoint;
+use protocol::communication::session::establish::Endpoint;
 use protocol::debug;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};

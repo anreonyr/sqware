@@ -9,7 +9,7 @@ use programs::driver::shared::context::Context;
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
-use protocol::communication::sender::Sender;
+use protocol::communication::hand::Sender;
 use protocol::debug;
 use protocol::driver::line;
 use runtime::PAGE_SIZE;

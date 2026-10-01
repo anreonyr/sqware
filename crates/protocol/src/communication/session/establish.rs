@@ -16,9 +16,8 @@ use env::{Mark, Permission, PieToken, TaskId, Wait};
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, AnyPie};
 
-use super::receiver::Receiver;
-use super::sender::Sender;
-use super::{deadline, remain};
+use super::super::hand::{Receiver, Sender};
+use super::super::{deadline, remain};
 use crate::wire::message::Message;
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 
 use protocol::common::path::Path;
-use protocol::communication::establish::{opened_by, vested_by};
+use protocol::communication::session::establish::{opened_by, vested_by};
 use protocol::service::operator::frame::PANE_CAP;
 use protocol::service::operator::{EntryId, Fail, Permit, Where};
 

@@ -8,7 +8,7 @@ use runtime::env::unit as utask;
 
 use crate::system::common::life::table::{Announce, Service, Slot, State, Table};
 use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
-use protocol::communication::establish::Endpoint;
+use protocol::communication::session::establish::Endpoint;
 
 use crate::unit::{
     Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,

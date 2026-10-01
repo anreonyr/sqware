@@ -133,7 +133,7 @@ impl Control {
             return Err(Error::Step("too many devices"));
         };
         // **递出即返回**：等它下线由 `Control` 那一格写端担着（见它的注；`send` 里先收口上一手）。
-        self.out = protocol::communication::sender::Sender::<Enroll>::from_token(tx);
+        self.out = protocol::communication::hand::Sender::<Enroll>::from_token(tx);
         if self.out.send(enroll).is_err() {
             return Err(Error::Step("no channel"));
         }

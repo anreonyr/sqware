@@ -12,7 +12,7 @@ use ::core::time::Duration;
 use crate::system::common::life::table::{Slot, State, Table};
 use crate::system::common::life::verdict::Fail;
 use env::{Mark, TaskId, Wait};
-use protocol::communication::establish::{self, Endpoint};
+use protocol::communication::session::establish::{self, Endpoint};
 
 use crate::boot::{Accounts, Catalog};
 use crate::system::common::machine::Machine;
@@ -82,7 +82,7 @@ pub struct Control {
     machine: Machine,
     accounts: Accounts,
     /// **上一手入册那一单的写端**（Setup::Machine 那一格）
-    out: protocol::communication::sender::Sender<protocol::service::hub::Enroll>,
+    out: protocol::communication::hand::Sender<protocol::service::hub::Enroll>,
 }
 
 /// 一枚**已造未放行**的身子（Control::pending 那一格）
@@ -102,7 +102,7 @@ impl Control {
             catalog,
             machine,
             accounts,
-            out: protocol::communication::sender::Sender::new(),
+            out: protocol::communication::hand::Sender::new(),
         }
     }
 

@@ -3,7 +3,7 @@
 use core::time::Duration;
 
 use env::{TaskId, Wait};
-use protocol::communication::establish;
+use protocol::communication::session::establish;
 use protocol::debug;
 use protocol::service::principal as pcall;
 use protocol::service::principal::client::Face;

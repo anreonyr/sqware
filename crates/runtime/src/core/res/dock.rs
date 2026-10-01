@@ -92,6 +92,11 @@ impl Dock {
         self.view
     }
 
+    /// 这一枚页的号（**交给别人**用：共享内存那一档要把"我们看的是同一段"说出去）。
+    pub fn pie_token(&self) -> env::PieToken {
+        self.pie.token()
+    }
+
     /// 撤图：撤掉这次映射（幂等）。**不 `release` 门闩**——它与 `self` 一起放下。
     ///
     /// # Errors

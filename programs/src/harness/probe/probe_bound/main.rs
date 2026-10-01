@@ -19,7 +19,7 @@ use env::Wait;
 use programs::Report;
 
 use env::PieToken;
-use protocol::communication::establish::Endpoint;
+use protocol::communication::session::establish::Endpoint;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator as ocall;

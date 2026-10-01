@@ -1,7 +1,13 @@
-//! 关系怎么建立、一枚孔上怎么收发。
-//! **粒度分两层**：`establish` 那一手是**一枚孔**，`session` 那一手是**一条路**（一对孔 ＋
-//! 对端的号）。两者同属"关系怎么建立"——故 `session` 只坐在 `establish` 上，不碰任何协议的
-//! 正文与 RPC（见下面"本层不认识什么"）。
+//! 关系怎么建立、字节怎么过边界。
+//! # 分两支：关系一支、缓冲两档
+//! ```text
+//! hand   一手：一枚孔上一条报，交完即走（单槽 ⇒ 满了只答 Busy）
+//! rack   一具寄存架：一枚页上 N 格，满了按策略丢（有界 ⇒ 丢几个有数）
+//! session 一条路：`establish`（两枚孔怎么到手）＋ `session`（路本身）
+//! ```
+//! **缓冲两档不共类型**：`Message` 那四样（`Buf` / `EMPTY` / `store` / `fetch`）是共用的，
+//! 但失败域与时机不同（交接对寄存：`SendFail::Unbound` 对 `SendFail::Full`），故各是一个
+//! 类型，也不抽公共"发送端"——抽出来就是"为复用造抽象"（见下面"本层不认识什么"）。
 //! # 一条不变量：Mail 是单向单手
 //! 一枚 `PieToken` 一个方向。故"收发"**不是**一个双向端点上的两件事，而是**两枚孔、
 //! 两个对象**——与 std::sync::mpsc 的 `Sender<T>` / `Receiver<T>` 同构（那边也是两个类型、
@@ -23,9 +29,8 @@
 use env::Wait;
 use runtime::env::chrono;
 
-pub mod establish;
-pub mod receiver;
-pub mod sender;
+pub mod hand;
+pub mod rack;
 pub mod session;
 
 /// 期限 → **那个到不了的点**（单调钟，纳秒）

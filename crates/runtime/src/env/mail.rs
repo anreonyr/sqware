@@ -49,7 +49,7 @@
 //!
 //! 两者是同一个条件的两面。故 [`HolePie::push`] 里那一等只管**递出之前**（轮到我），
 //! **递出之后**还要不要等它下线，是**第二件事**、由写端那一格显式说
-//! （`protocol::communication::sender` 的 `Sender::reclaim`）——载体不替调用方藏
+//! （`protocol::communication::hand` 的 `Sender::reclaim`）——载体不替调用方藏
 //! "谁等谁"这条契约。
 //!
 //! - 直接跑那一趟（boot.nu 那一路）量到：驱动起手向设备账认领时，`face_of` 的 `"hub"` 步与
@@ -61,7 +61,7 @@
 //!
 //! 今天的口径：**"撤手"这条路不存在**——`Withdraw` 这一格连同它的唯一用家一起退了场（用户
 //! 裁定"不留"）。"不等了"由**所有权**解决：递出去的字节住在写端那一格里
-//! （`protocol::communication::sender`），它的 `Drop` 负责"等手下线"；而内核那一侧
+//! （`protocol::communication::hand`），它的 `Drop` 负责"等手下线"；而内核那一侧
 //! `Hand.space` 是**弱引用**（`work/mail/hole.rs`），发送方真走了，后来那次 `Pull` 答 `Gone`
 //! ——内核从没钉住发送方那段内存，故"悬着"这件事本来就有两个正当收场，不需要第三格"撤手"。
 //!

@@ -18,8 +18,8 @@ use runtime::core::res::pile::Pile;
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use protocol::communication::receiver::{Receiver, RecvFail};
-use protocol::communication::sender::Sender;
+use protocol::communication::hand::{Receiver, RecvFail};
+use protocol::communication::hand::Sender;
 use protocol::debug;
 use protocol::service::operator as ocall;
 use protocol::service::operator::Grant;
@@ -86,7 +86,7 @@ pub fn serve() -> Result<(), Start> {
     }
 
     // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/unit/catalog.rs` 那一格）。
-    let _ = protocol::communication::establish::endpoint(
+    let _ = protocol::communication::session::establish::endpoint(
         runtime::env::unit::sire(),
         env::Mark::of(crate::unit::READY),
         env::Wait::POLL,

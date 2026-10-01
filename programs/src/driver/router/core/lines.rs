@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use protocol::communication::establish::Held;
+use protocol::communication::session::establish::Held;
 use protocol::driver::line::Fail;
 use runtime::env::mail::HolePie;
 
