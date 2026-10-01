@@ -56,7 +56,7 @@ use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::program::{Origin, PROGRAMS, Program, Setup};
+use crate::program::{PROGRAMS, Program, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::{self, Source};
@@ -326,17 +326,16 @@ impl Control {
     pub fn spawn(&mut self, program: &Program) -> Result<Service, Error> {
         let name = program.name().to_string();
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
-        // **来源那一格的唯一消费者**：按声明上那一档取那一段 `&[u8]`（今天 initrd 是真的一档；
-        // `Storage` 那一台不存在 ⇒ 只答 `NoSource`）。
-        let source = match program.demand.origin {
-            Origin::Initrd => Source::initrd(self.catalog),
-            Origin::Storage => Source::storage(),
-        };
-        let image = source.image(name.clone()).map_err(|e| match e {
-            source::Error::Missing => Error::Missing,
-            // 来源那一格的其他失败（今天只有 `NoSource`）按"那一段字节取不到"报，读数带它自己的说法。
-            other => Error::Step(other.said()),
-        })?;
+        // **取字节那一面的唯一消费者**：这一景那本账（`self.catalog`）按名字给那一段 `&[u8]`。
+        // **声明里不问来源**（照实记：`Origin` 那一格 0 个选择者，随那本账一起退场，见
+        // [`crate::program::Demand`] 底下那一段）。
+        let image = Source::initrd(self.catalog)
+            .image(name.clone())
+            .map_err(|e| match e {
+                source::Error::Missing => Error::Missing,
+                // 其余失败按"那一段字节取不到"报，读数带它自己的说法。
+                other => Error::Step(other.said()),
+            })?;
         let task =
             service::mint(&mut self.table, name.as_str(), image, entry.kind)
                 .map_err(|_| Error::Spawn)?;
@@ -493,7 +492,7 @@ pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
         .map_err(|_| Error::Step("connect failed"))
 }
 
-/// **名字 → 装配声明**：边上那四手要的那一份（`kind` / `setup` / `origin` 都在它那里）。
+/// **名字 → 装配声明**：边上那四手要的那一份（`kind` / `setup` 都在它那里）。
 ///
 /// 找不到 ⇒ `None`：这个名字不在这一景的装配声明里（`PROGRAMS` 是唯一声明处；帧里没有镜像，
 /// 故"起哪一台"这件事只认本表）。

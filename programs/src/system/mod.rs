@@ -39,7 +39,7 @@
 //! - [`assemble`]：这一景起哪些台（**过滤 + 按各台声明的 `deps` 算次序**，就这一件事）
 //! - [`schedule`]：装配的**相**——一台起手分几相、每相哪一轴动手（那一格由那一轴自己读）
 //! - [`bootstrap`]：启动资源获取（与引导域会话 / 机器自述 / 载荷区清单）
-//! - [`source`]：程序来源那一格（取字节那一面：`Origin` → 一段 `&[u8]`）
+//! - [`source`]：程序来源那一格（取字节那一面：那一本账 → 一段 `&[u8]`）
 //! - [`control`]：Service 的生命周期（内核那几手住 `control::service`，监督相住 `control::supervise`）
 //! - [`board`] / [`operator`] / [`principal`] / [`coalition`]：四枚服务的实现
 //! - [`machine`]：本域手里那台机器的自述（设备树）
