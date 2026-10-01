@@ -1,7 +1,7 @@
 //! call::debug — **Debug 域（class 8：借内核那支 DBCN 出口）**：调用表（[`DebugCall`]）与失败词汇（[`DebugFail`]）。
 
-use mold::{Envcall, Fail};
 use crate::wire::VirtAddr;
+use mold::{Envcall, Fail};
 
 /// Debug 域（class 8：调试面）的失败词汇。
 #[derive(Fail)]

@@ -1,9 +1,9 @@
 //! call::tole — **Tole 域（class 9：多路等待）**：调用表（[`ToleCall`]）与失败词汇（[`ToleFail`]）。
 
-use mold::{Envcall, Fail};
 use super::HoleDir;
 use crate::abi::wait::Wait;
 use crate::wire::PieToken;
+use mold::{Envcall, Fail};
 
 /// Tole 域（class 9：多路等待）的失败词汇。
 #[derive(Fail)]

@@ -25,31 +25,32 @@ pub mod ecall;
 pub mod ledger;
 pub mod wire;
 
-pub use ecall::{FailCode, make_fail};
-pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::call::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleDir, MailCall,
     MailCallRet, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
-    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, RoomCall, RoomCallRet,
-    RoomFail, RoomResult, ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet,
-    UnitFail, UnitResult,
+    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, RoomCall, RoomCallRet, RoomFail, RoomResult,
+    ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail, UnitResult,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
-pub use abi::call::{chrono::chrono, control::control, debug::debug, mail::mail,
-    memory::memory, pie::pie, room::room, tole::tole, unit::unit};
+pub use abi::call::{
+    chrono::chrono, control::control, debug::debug, mail::mail, memory::memory, pie::pie,
+    room::room, tole::tole, unit::unit,
+};
+pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
+pub use abi::permission::{Access, Permission, Policy};
+pub use abi::wait::Wait;
+pub use ecall::{FailCode, make_fail};
 pub use ledger::key::{KEY_LEN, Key};
+pub use ledger::pair::{PAIR_LEN, Pair};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
 /// **`WireCodes`**：失败域 ↔ 线上那一格的码表（实现在 `mold`，这里只转出来——与上面的
 /// `Frame` 同一条：`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::WireCodes;
-pub use ledger::pair::{PAIR_LEN, Pair};
-pub use abi::permission::{Access, Permission, Policy};
 pub use wire::pie_kind::PieKind;
 pub use wire::program_kind::ProgramKind;
-pub use abi::wait::Wait;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

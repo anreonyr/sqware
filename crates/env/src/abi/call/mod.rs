@@ -47,26 +47,26 @@
 
 use mold::Fail;
 
-pub mod room;
-pub mod unit;
-pub mod memory;
 pub mod chrono;
-pub mod mail;
-pub mod pie;
 pub mod control;
 pub mod debug;
+pub mod mail;
+pub mod memory;
+pub mod pie;
+pub mod room;
 pub mod tole;
+pub mod unit;
 
-pub use self::room::{RoomCall, RoomCallRet, RoomFail, RoomResult};
-pub use self::room::NOTE_MAX;
-pub use self::unit::{UnitCall, UnitCallRet, UnitFail, UnitResult};
-pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
 pub use self::chrono::{ChronoCall, ChronoCallRet};
-pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
-pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
 pub use self::control::{ControlCall, ControlCallRet, ControlFail, ControlResult};
-pub use self::debug::{DebugCall, DebugCallRet, DebugFail, DebugResult, DBCN_MAX};
+pub use self::debug::{DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult};
+pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
+pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
+pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
+pub use self::room::NOTE_MAX;
+pub use self::room::{RoomCall, RoomCallRet, RoomFail, RoomResult};
 pub use self::tole::{ToleCall, ToleCallRet, ToleFail, ToleResult};
+pub use self::unit::{UnitCall, UnitCallRet, UnitFail, UnitResult};
 
 /// **无域那一层**（dispatch）：`EnvCall::from_wire` 失败——调用号读不懂。
 ///
@@ -114,12 +114,20 @@ impl EnvCall {
         match class {
             0 => Ok(EnvCall::Room(self::room::RoomCall::from_wire(slot, regs)?)),
             1 => Ok(EnvCall::Unit(self::unit::UnitCall::from_wire(slot, regs)?)),
-            2 => Ok(EnvCall::Memory(self::memory::MemoryCall::from_wire(slot, regs)?)),
-            4 => Ok(EnvCall::Chrono(self::chrono::ChronoCall::from_wire(slot, regs)?)),
+            2 => Ok(EnvCall::Memory(self::memory::MemoryCall::from_wire(
+                slot, regs,
+            )?)),
+            4 => Ok(EnvCall::Chrono(self::chrono::ChronoCall::from_wire(
+                slot, regs,
+            )?)),
             5 => Ok(EnvCall::Mail(self::mail::MailCall::from_wire(slot, regs)?)),
-            6 => Ok(EnvCall::Control(self::control::ControlCall::from_wire(slot, regs)?)),
+            6 => Ok(EnvCall::Control(self::control::ControlCall::from_wire(
+                slot, regs,
+            )?)),
             7 => Ok(EnvCall::Pie(self::pie::PieCall::from_wire(slot, regs)?)),
-            8 => Ok(EnvCall::Debug(self::debug::DebugCall::from_wire(slot, regs)?)),
+            8 => Ok(EnvCall::Debug(self::debug::DebugCall::from_wire(
+                slot, regs,
+            )?)),
             9 => Ok(EnvCall::Tole(self::tole::ToleCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }

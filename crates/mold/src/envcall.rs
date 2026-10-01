@@ -333,7 +333,7 @@ impl Variant {
     ///
     /// `binds = None` ⇒ 字段位写 `..`：只匹配、不绑名字（不绑就不会长出"未使用的变量"）。
     /// 这件事的拼法**只此一处**——`pat_for` / `expr_for` / `slot(&self)` 三处各写一份
-/// 的形式已收拢到这里。
+    /// 的形式已收拢到这里。
     fn shape(&self, binds: Option<&[Ident]>) -> TokenStream2 {
         let v = &self.ident;
         match (&self.fields, binds) {

@@ -1,9 +1,9 @@
 //! call::unit — **Unit 域（class 1：装域 / 产线程 / 血缘）**：调用表（[`UnitCall`]）与失败词汇（[`UnitFail`]）。
 
-use mold::{Envcall, Fail};
 use crate::abi::wait::Wait;
 use crate::wire::program_kind::ProgramKind;
 use crate::wire::{TaskId, TeamId, VirtAddr};
+use mold::{Envcall, Fail};
 
 /// Unit 域（class 1：装域 / 产线程 / 血缘）的失败词汇。
 #[derive(Fail)]

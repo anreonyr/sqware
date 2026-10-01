@@ -38,7 +38,8 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
     let data = match &ast.data {
         Data::Enum(e) => e,
         _ => {
-            return syn::Error::new_spanned(&ast, "WireCodes 只用于枚举（失败词汇）").to_compile_error();
+            return syn::Error::new_spanned(&ast, "WireCodes 只用于枚举（失败词汇）")
+                .to_compile_error();
         }
     };
 
@@ -56,17 +57,21 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
         for m in metas {
             match &m {
                 Meta::List(l) if l.path.is_ident("also") => {
-                    let inner = match l.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
-                        Ok(i) => i,
-                        Err(e) => return e.to_compile_error(),
-                    };
+                    let inner =
+                        match l.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) {
+                            Ok(i) => i,
+                            Err(e) => return e.to_compile_error(),
+                        };
                     for cell in inner {
                         match cell {
                             Meta::NameValue(nv) => match int_of(&nv.value) {
                                 Some(v) => also.push((path_ident(&nv.path), v)),
                                 None => {
-                                    return syn::Error::new_spanned(&nv.value, "also 的码要是 0..=255 的整数")
-                                        .to_compile_error();
+                                    return syn::Error::new_spanned(
+                                        &nv.value,
+                                        "also 的码要是 0..=255 的整数",
+                                    )
+                                    .to_compile_error();
                                 }
                             },
                             other => {
@@ -84,8 +89,11 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
                     }
                 },
                 other => {
-                    return syn::Error::new_spanned(other, "wire 只认 `also(名 = 码, …)` 与 `fallback = 变体`")
-                        .to_compile_error();
+                    return syn::Error::new_spanned(
+                        other,
+                        "wire 只认 `also(名 = 码, …)` 与 `fallback = 变体`",
+                    )
+                    .to_compile_error();
                 }
             }
         }
@@ -115,8 +123,11 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
             match it.next().and_then(|e| int_of(&e)) {
                 Some(n) => code = Some(n),
                 None => {
-                    return syn::Error::new_spanned(a, "code 至少要给一个码：`#[code(3)]` / `#[code(3, DENIED)]`")
-                        .to_compile_error();
+                    return syn::Error::new_spanned(
+                        a,
+                        "code 至少要给一个码：`#[code(3)]` / `#[code(3, DENIED)]`",
+                    )
+                    .to_compile_error();
                 }
             }
             if let Some(e) = it.next() {
@@ -136,11 +147,17 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
             )
             .to_compile_error();
         };
-        let cname = cname.unwrap_or_else(|| Ident::new(&v.ident.to_string().to_uppercase(), v.ident.span()));
+        let cname = cname
+            .unwrap_or_else(|| Ident::new(&v.ident.to_string().to_uppercase(), v.ident.span()));
         idents.push(&v.ident);
         cnames.push(cname);
         codes.push(code);
-        docs.push(v.attrs.iter().filter(|a| a.path().is_ident("doc")).collect());
+        docs.push(
+            v.attrs
+                .iter()
+                .filter(|a| a.path().is_ident("doc"))
+                .collect(),
+        );
     }
 
     let consts = cnames.iter().zip(&codes).zip(&docs).map(|((c, n), d)| {
@@ -219,7 +236,9 @@ fn ident_of(e: &Expr) -> Option<Ident> {
 /// 0..=255 的整数（`code(…)` 与 `also(… = N)` 用）。
 fn int_of(e: &Expr) -> Option<u8> {
     match e {
-        Expr::Lit(ExprLit { lit: Lit::Int(n), .. }) => n.base10_parse::<u8>().ok(),
+        Expr::Lit(ExprLit {
+            lit: Lit::Int(n), ..
+        }) => n.base10_parse::<u8>().ok(),
         _ => None,
     }
 }

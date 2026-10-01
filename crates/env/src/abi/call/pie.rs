@@ -1,8 +1,8 @@
 //! call::pie — **Pie 域（class 7，权柄轴：许可的生死与流动）**：调用表（[`PieCall`]）与失败词汇（[`PieFail`]）。
 
-use mold::{Envcall, Fail};
 use crate::abi::permission::Permission;
 use crate::wire::{Mark, PieToken, TaskId, VirtAddr};
+use mold::{Envcall, Fail};
 
 /// Pie 域（class 7：权柄轴）的失败词汇。
 #[derive(Fail)]

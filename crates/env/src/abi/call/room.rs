@@ -1,8 +1,8 @@
 //! call::room — **Room 域（class 0：调度词族）**：调用表（[`RoomCall`]）与失败词汇（[`RoomFail`]）。
 
-use mold::{Envcall, Fail};
 use crate::abi::wait::Wait;
 use crate::wire::{TaskId, VirtAddr};
+use mold::{Envcall, Fail};
 
 /// Room 域（class 0：调度词族）的失败词汇。
 #[derive(Fail)]

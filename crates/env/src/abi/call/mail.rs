@@ -1,9 +1,9 @@
 //! call::mail — **Mail 域（class 5，数据轴：消息穿孔）**：调用表（[`MailCall`]）与失败词汇（[`MailFail`]）。
 
-use mold::{Envcall, Fail};
 use super::HoleDir;
 use crate::abi::wait::Wait;
 use crate::wire::{PieToken, TaskId, VirtAddr};
+use mold::{Envcall, Fail};
 
 /// Mail 域（class 5：数据轴）的失败词汇。
 #[derive(Fail)]
