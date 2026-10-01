@@ -234,6 +234,7 @@ pub mod fail_codes;
 pub mod frame;
 pub mod id;
 pub mod message;
+pub mod service;
 pub mod system;
 
 /// **答话那一格的"没失败"**（0）——全协议**一个号**：六家（principal / coalition / operator /
@@ -264,5 +265,5 @@ const _: () = assert!(
     crate::system::principal::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
 );
 const _: () = assert!(
-    crate::system::coalition::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
+    crate::service::coalition::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
 );

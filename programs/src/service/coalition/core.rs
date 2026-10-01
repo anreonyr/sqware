@@ -1,12 +1,12 @@
 //! coalition::core — **盟册那一本账**：一条关系 ＋ 一条主子 ＋ 一枚计数器。
 //!
-//! **照实记（它原先住 `protocol::system::coalition::core`）**：那一份的读者只有本域的持有者
+//! **照实记（它原先住 `protocol::service::coalition::core`）**：那一份的读者只有本域的持有者
 //! （`prog-coalition` 那一枚线程）——按"协议 = 共享语言"的判据（"只有实现方读得到它"），
 //! 它属于实现侧。协议那一侧只留**上线的类型**：号（`CoalitionId`）、失败域（`Fail`）、
 //! 一窗号（`Window` / `WINDOW_CAP`）。
 //!
 //! 本文件只讲账的形状与那七条原语；**盟籍的含义、钥匙那一格、帧那一层**都写在协议那一边
-//! （`protocol::system::coalition`）。
+//! （`protocol::service::coalition`）。
 //!
 //! # 照实记（"盟无主"那条裁定**翻案**了）
 //!
@@ -22,7 +22,7 @@
 use alloc::vec::Vec;
 
 use protocol::id::Id;
-use protocol::system::coalition::{CoalitionId, Fail, Window};
+use protocol::service::coalition::{CoalitionId, Fail, Window};
 use protocol::system::principal::PrincipalId;
 
 // ── 一格盟籍 ────────────────────────────────────────────────

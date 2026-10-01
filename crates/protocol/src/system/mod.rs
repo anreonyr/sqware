@@ -543,7 +543,6 @@ pub const DIR: &Path = Path::new("svc/sys");
 
 use crate::system::operator::path::Path;
 
-pub mod coalition;
 pub mod control;
 // **照实记（这一格与下面 `grant` 是两个东西）**：`faces!` 是"**一族的面**"那台宏（`Grant` 那
 // 一族：枚举 ＋ `ALL` ＋ 位次 ＋ 记号 ＋ 认面 ＋ 那组编译期断言）；而 `grant` 是**配给**那一半
@@ -590,7 +589,7 @@ const LOOSE: &[env::Mark] = &[
     control::ASK_MARK,
     control::BACK,
     principal::BACK,
-    coalition::BACK,
+    crate::service::coalition::BACK,
     operator::ASK_MARK,
 ];
 
@@ -601,7 +600,7 @@ const LOOSE: &[env::Mark] = &[
 /// [`faces!`](crate::faces) 里留下的那一半（位次对齐 ＋ 本族两两）同一条口径。
 const _: () = {
     let fams: [&[env::Mark]; 4] = [
-        &coalition::Grant::MARKS,
+        &crate::service::coalition::Grant::MARKS,
         &control::Grant::MARKS,
         &operator::Grant::MARKS,
         &principal::Grant::MARKS,

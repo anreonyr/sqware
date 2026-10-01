@@ -9,7 +9,7 @@
 
 use env::TaskId;
 
-use protocol::system::coalition::CoalitionId;
+use protocol::service::coalition::CoalitionId;
 use protocol::system::operator::{EntryId, Permit, Ruling};
 use protocol::system::principal::PrincipalId;
 

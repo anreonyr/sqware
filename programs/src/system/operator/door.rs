@@ -25,8 +25,8 @@
 use env::{TaskId, Wait};
 
 use protocol::debug;
-use protocol::system::coalition::client::Face as CoalitionFace;
-use protocol::system::coalition::{CoalitionId, Grant as CoalitionGrant};
+use protocol::service::coalition::client::Face as CoalitionFace;
+use protocol::service::coalition::{CoalitionId, Grant as CoalitionGrant};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::principal::client::Face as PrincipalFace;
 use protocol::system::principal::{Grant as PrincipalGrant, PrincipalId};

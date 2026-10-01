@@ -63,7 +63,7 @@ use env::Mark;
 use env::{PieToken, TaskId};
 
 use super::path::{Path, PathBuf};
-use crate::system::coalition::CoalitionId;
+use crate::service::coalition::CoalitionId;
 use crate::system::principal::PrincipalId;
 
 // **照实记（宽度别名 `Id` 已退场）**：从前本文件有一条 `pub type Id = u64`，给判据那一侧当
@@ -79,7 +79,7 @@ use crate::message::Message;
 
 /// 一枚条目的**号**：机器用的那一个。
 ///
-/// **裸号**：与 [`PrincipalId`](crate::system::principal::PrincipalId) / [`CoalitionId`](crate::system::coalition::CoalitionId)
+/// **裸号**：与 [`PrincipalId`](crate::system::principal::PrincipalId) / [`CoalitionId`](crate::service::coalition::CoalitionId)
 /// 同形（8 字节小端上线），不同源。线上解码面造得出任何号（[`EntryId::new`]），
 /// "这枚号还在不在"由每条读**查一次表**答出来。
 ///
@@ -778,7 +778,7 @@ impl Message for Req {
 
 /// 一帧「列」的读数：号最多 [`PANE_CAP`] 枚。
 ///
-/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::system::coalition::Window) 并成一个容器）**：
+/// **照实记（为什么不与 `coalition` 的 [`Window`](crate::service::coalition::Window) 并成一个容器）**：
 /// 两者都在搬"一串号"，差的正是**"未完"那一格**——盟籍**没有上限**（一格盟可以很多人）⇒ 那边
 /// 必须带 `more`，并因此把格子存成 `[Option<T>; CAP]`（泛型 + `const new` 造不出 `T` 的占位，
 /// 而零号是**真格子**，不能拿它当空）；**一条 pane 本来就有顶**（[`PANE_CAP`]）⇒
