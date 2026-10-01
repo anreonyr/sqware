@@ -49,6 +49,8 @@ pub fn serve() -> Result<(), Start> {
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
             .map_err(|_| Start::Tree(E_COALITION))?;
         let tree = TreeFace::of(session);
+        // **不成也照样起**（少落一格只少一格）：那两格的失败读数由 `bridge::land` 自己报，
+        // release 档也报（见那一手里的 `debug::put`）。
         let _ = bridge::land(
             &tree,
             "coalition",

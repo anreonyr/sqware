@@ -297,6 +297,17 @@ pub fn land(
             Ok(id) => root.name(*id, millis).ok(),
             Err(_) => None,
         };
+        // **落不成当场说一句**：读数不能走 `debug!`（release 档那是空）——本手是六个调用点
+        // 共用的那一处，而其中 `principal` / `coalition` 两处**不成也照样起**，从前那两个域
+        // 少落一格在 release 档里**没有出处**（树上看得出少一格，没人说得出为什么）。
+        if land.is_err() || find.is_err() {
+            debug::put(&alloc::format!(
+                "{family}: tree land failed name={face_name} land={land:?} find={find:?} entry={} plate={} pname={}",
+                entry.get(),
+                plate.get(),
+                named.as_ref().map(|name| name.as_str()).unwrap_or("-"),
+            ));
+        }
         debug!(
             "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={}",
             find.is_ok(),

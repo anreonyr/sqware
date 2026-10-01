@@ -54,6 +54,8 @@ pub fn serve() -> Result<(), Start> {
         // **本族的事实**——路（`/svc` ＋ `/svc/sys/principal`）与那两枚门牌。
         let session = Session::open(assembler, operator::BERTH, Wait::AtMost(MS))
             .map_err(|_| Start::Tree(E_PRINCIPAL))?;
+        // **不成也照样起**（少落一格只少一格）：那两格的失败读数由 `bridge::land` 自己报，
+        // release 档也报（见那一手里的 `debug::put`）。
         let _ = bridge::land(
             &operator::Face::from(&session),
             "principal",
