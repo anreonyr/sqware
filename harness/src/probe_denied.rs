@@ -45,6 +45,23 @@
 //!
 //! **为什么四件一起做**：①③④ 少一件都编不过或行为不对（一手没人叫＝死格；有格没分派＝问不通）；
 //! ②那一套（`Wire` ＋ 表的映射 ＋ 帧长）是**同一条链**，改一半编不过。
+
+//! ## 那条链的**逐字**（第 63 轮读完，下一轮照抄）
+//!
+//! `frame.rs` 的 op 码现在是 `BIND = 1 … WAIVE = 7`；客侧那一手是
+//! `self.face.call(frame::Req::Waive, wait)?` ＋ `decode(reply)`。故：
+//!
+//! | # | 文件 | 逐字加什么 |
+//! |---|---|---|
+//! | 1 | `.../principal/frame.rs` | `pub const DROP: u8 = 8;`（`WAIVE = 7` 旁）· `Wire` 加变体 `Drop` · `take` 里加一支 `DROP => Some(Wire::Drop)` · 客侧那一型加 `Req::Drop` 与它的编码 |
+//! | 2 | `.../principal/grant.rs` | 那张"线上码 → 哪一面"的表加 `Wire::Drop => Set`；头注里"七条原语"那几处改成八条 |
+//! | 3 | `.../principal/client.rs` | 照 `waive` 逐字：`pub fn drop(&self, wait: Wait) -> Result<(), Fail> { let reply = self.face.call(frame::Req::Drop, wait)?; decode(reply).map(|_| ()) }` |
+//! | 4 | `.../principal/core.rs` | `pub fn drop(&mut self, from: TaskId) -> Result<(), Fail>`：找到那一格、把它的**当前号置空**（与 `bind` 相对；`waive` 是写回 `origin`、身份还在——两件事，注释里点明） |
+//! | 5 | `.../principal/server.rs` | 分派那一串照 `Wire::Waive` 那一支逐字加一支 `pcall::Wire::Drop => match book.drop(from) { … }` |
+//! | 6 | 本域 | 照 `probe_rule` 的写法找名册 `Grant::Set` 面 → 叫 `drop` → 再去撞门与 `seek` |
+//!
+//! **①②是一条链**（`Wire` ／ `Req` ／ 映射表 ／ 帧长依次对），**④⑤各自要与其上面对齐**，
+//! **⑥必须最后**（没有它，前五件就是一组没人叫的格）。故六件**一次做完**才落。
 //!
 //! **落地顺序**（第 60 轮起）：① 本文件改成"生子任务、由它撞门"（读数仍是
 //! `probe-denied: denied`，两档 16 条对齐）；② 主刀：`Relation::bind` 退场（字段 ＋ `DEFAULT` ＋
