@@ -18,7 +18,7 @@
 //!
 //! # 门牌（三块都落）
 //!
-//! 驱动的门牌挂 `protocol::system::operator` 的 **`/svc/drv`**（[`protocol::driver::ROAD`]）：名字用
+//! 驱动的门牌挂 `protocol::service::operator` 的 **`/svc/drv`**（[`protocol::driver::ROAD`]）：名字用
 //! **服务名**（`router` / `uart` / `rtc`，与装配表、日志同一个名），**按名找服务走树**；板留着
 //! 管生死（编排域监督的唯一事件源是板那条死亡道）。
 //!
@@ -138,7 +138,7 @@
 //! **照实记（那条 `Session` 一路搬到了 protocol）**："开会话"那一半的用户里一半不是驱动
 //! （房客 `lodger`、客人 `canonical`、内件 `coalition`）⇒ 它先抬出本目录，再按用户裁定回到
 //! **它自己那一层**：[`protocol::communication::session`]（**地板**：只认孔与路）。树上那几手
-//! （名字 → 号 → 入口）回 `operator` 的客手（[`protocol::system::operator::client`]）。
+//! （名字 → 号 → 入口）回 `operator` 的客手（[`protocol::service::operator::client`]）。
 //!
 //! **照实记（"落门牌"那一手反倒回来了，task-2 那一刀）**：同一趟里的**上树组合**
 //! （`plate`：分目录 → 落门牌 → 查回来 → 按号问名）已从协议层**下移到这里**

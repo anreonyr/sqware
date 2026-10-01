@@ -14,7 +14,7 @@
 
 use env::Wait;
 use protocol::driver;
-use protocol::system::operator::client::Face;
+use protocol::service::operator::client::Face;
 use runtime::env::mail::HolePie;
 
 /// 要找的那位服务在树上的名字：**控制台**（`/svc/drv/uart`——名字用服务名；它是一块 Pane）。

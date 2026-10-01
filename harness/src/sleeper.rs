@@ -41,9 +41,9 @@ use programs::Report;
 // 树：本域是**客侧**（按名找服务）；板：也是客侧（只为让板看见本域的死）。
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Fail;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
+use protocol::service::operator::Fail;
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::Face;
 
 use env::PieToken;
 // 那一面服务：帧形与记号、客侧两手——**与驱动同一份源码**（见 `programs/src/driver/rtc/mod.rs`）。

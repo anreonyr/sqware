@@ -59,7 +59,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 
 /// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）。
 ///
-/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::system::operator::{…,
+/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::service::operator::{…,
 /// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
 /// 不是一回事，故按"死在起手的哪一步"取名 [`Start`]。
 ///

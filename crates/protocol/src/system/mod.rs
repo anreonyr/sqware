@@ -541,7 +541,7 @@ pub const SYS: &str = "sys";
 /// （`/svc/drv`），设备账同（`/svc/hub`）。
 pub const DIR: &Path = Path::new("svc/sys");
 
-use crate::system::operator::path::Path;
+use crate::service::operator::path::Path;
 
 pub mod control;
 // **照实记（这一格与下面 `grant` 是两个东西）**：`faces!` 是"**一族的面**"那台宏（`Grant` 那
@@ -549,7 +549,6 @@ pub mod control;
 // （装配者把门闩交到子域手里的那段记录）。名字撞了，故这一格叫 `faces`——宏名与文件同名。
 pub mod faces;
 pub mod grant;
-pub mod operator;
 // **照实记（`supply` 是残枝那一刀搬来的）**：它原先住 [`crate::driver::supply`]——而实测
 // 它的消费者只有**引导域**（发货）与**编排域**（`bootstrap` 领设备树与载荷区、`control::assemble`
 // 领配给），`programs/src/driver/` 一处都不用 ⇒ 它不是驱动协议，是**装配/配给**这一半
@@ -568,13 +567,13 @@ pub mod supply;
 // `distinct: [...]`——把**别族所有的记号**手抄一遍。那是一张 **O(族数²)** 的手抄表，**且覆盖
 // 不全**：实测三处一次都没判过（`principal-back` 与 `coalition-back` 之间、`"entry"` 与
 // `"tip"` 之间、`"operator-ask"` 与别族的面之间）。今天各族只吐**自己**那几枚
-// （[`Grant::MARKS`](crate::system::operator::Grant)），本文件把**全协议所有记号**摆成一张表、
+// （[`Grant::MARKS`](crate::service::operator::Grant)），本文件把**全协议所有记号**摆成一张表、
 // 判一次：任两枚撞了**当场编不过**（且报在下面这一格——各族不再各自维护一张别人家的清单）。
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）。
 ///
 /// 一一对应（顺序即上面那份照实记的列举）：`"entry"`（通用入口，今天住 [`crate::driver::ENTRY_MARK`]）
-/// ／`"tip"`（提示之路——**板与树两侧同一位**，板那一族退场之后只剩 [`operator::TIP_MARK`] 一处）
+/// ／`"tip"`（提示之路——**板与树两侧同一位**，板那一族退场之后只剩 [`crate::service::operator::TIP_MARK`] 一处）
 /// ／`"control-ask"`／`"control-back"`／`"principal-back"`／`"coalition-back"`／`"operator-ask"`。
 ///
 /// **照实记（`board-ask` 那一枚随板退场）**：板那一族整族退场 ⇒ 它的面记号（`"board-ask"`）跟着走：
@@ -584,12 +583,12 @@ pub mod supply;
 /// 而"它们彼此不许撞"这句话不属于其中任何一家——只有说得全"全协议有哪些记号"的那一格能说。
 const LOOSE: &[env::Mark] = &[
     crate::driver::ENTRY_MARK,
-    operator::TIP_MARK,
+    crate::service::operator::TIP_MARK,
     control::ASK_MARK,
     control::BACK,
     crate::service::principal::BACK,
     crate::service::coalition::BACK,
-    operator::ASK_MARK,
+    crate::service::operator::ASK_MARK,
 ];
 
 /// **全协议任两枚记号不许撞**：四族的面 × 别族的面 × 上面那几枚散记号，逐对判一次。
@@ -601,7 +600,7 @@ const _: () = {
     let fams: [&[env::Mark]; 4] = [
         &crate::service::coalition::Grant::MARKS,
         &control::Grant::MARKS,
-        &operator::Grant::MARKS,
+        &crate::service::operator::Grant::MARKS,
         &crate::service::principal::Grant::MARKS,
     ];
     let mut f = 0;

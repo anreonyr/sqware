@@ -15,8 +15,8 @@ use alloc::string::ToString;
 
 use env::PieToken;
 use protocol::debug;
-use protocol::system::operator::path::Path;
-use protocol::system::operator::{Permit, Rule, Where};
+use protocol::service::operator::path::Path;
+use protocol::service::operator::{Permit, Rule, Where};
 use protocol::service::principal::PrincipalId;
 
 use crate::system::operator::core::Operator;

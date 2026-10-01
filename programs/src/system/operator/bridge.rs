@@ -20,7 +20,7 @@
 //! 叫 `land`。故今天 `land` 的调用点是**四处三形**：名册、盟册、三台驱动共用的一处、uart 一处。
 //!
 //! 三侧分家之后两侧共用的图与说明见 [`super`] 的"载体"那一节，
-//! 帧与记号见 [`protocol::system::operator`]。
+//! 帧与记号见 [`protocol::service::operator`]。
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -39,10 +39,10 @@ use crate::system::control::{BOOT_MS, READY_MS, Service};
 
 use protocol::communication::establish;
 use protocol::debug;
-use protocol::system::operator::client::{Face, Mine, Pane};
-use protocol::system::operator::path::Path;
-use protocol::system::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
-pub use protocol::system::operator::{LINK, TIP_MARK};
+use protocol::service::operator::client::{Face, Mine, Pane};
+use protocol::service::operator::path::Path;
+use protocol::service::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
+pub use protocol::service::operator::{LINK, TIP_MARK};
 
 // ── 装配侧（装配者调用）──────────────────────────────────────
 
@@ -86,7 +86,7 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 ///
 /// **照实记（`coord` 那两格退场）**：这一格从前还收着"名册 / 盟册那两位域的号"（`Coord`），
 /// 由 `Tree::eye` 填、由 [`attach`] 推上提示之路。那一帧随 `Eyes` 整段退场（见
-/// [`protocol::system::operator::frame`](protocol::system::operator) 的照实记）：**持树者自己
+/// [`protocol::service::operator::frame`](protocol::service::operator) 的照实记）：**持树者自己
 /// 按记号就找得到那两枚门牌**，那两位域的号它一次都用不着。
 #[derive(Default)]
 pub struct Tree {

@@ -37,13 +37,13 @@
 
 use env::TaskId;
 
-use protocol::system::operator::{Permit, Ruling};
+use protocol::service::operator::{Permit, Ruling};
 
 use super::judge::{Facts, judge};
 
 // ── 线上那一格：**本文件自己拿一份** ────────────────────────
 //
-// 照实记：这里**不 `use` frame 那一份**。转发表住 `protocol::system::operator::frame`
+// 照实记：这里**不 `use` frame 那一份**。转发表住 `protocol::service::operator::frame`
 // （它拖着 `message` 与那一族的帧），而本文件**不带载体**、只认 `env` 与 `judge`
 // ——两条依赖面有意不同，故这一份不伸手过去拿。
 //

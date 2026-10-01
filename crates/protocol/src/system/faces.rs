@@ -10,7 +10,7 @@
 //! # 这一台是**数出来**才抽的（照实记）
 //!
 //! 仓里那条规矩是"**两台以上逐字同构 ⇒ 收**"（`board/client.rs` 那句原文），故第一台
-//! （[`operator::grant`](crate::system::operator::grant)，七位）落地时**不抽**——一台就抽是投机。
+//! （[`operator::grant`](crate::service::operator::grant)，七位）落地时**不抽**——一台就抽是投机。
 //! 第二台（[`principal::grant`](crate::service::principal::grant)，两面）落地之后**逐行量了一次**：
 //! 两份去掉注释是 **100 行与 80 行**，逐行比**只有 50 行不同，而那 50 行全是各家自己的事实**
 //! （哪几个变体、哪条线上码落哪一面、记号词根）；`at()` / `mark()` 那套 const-fn

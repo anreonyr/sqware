@@ -3,19 +3,19 @@
 //! 树这一侧要用到的孔各有各的记号（答话路 / 问话孔 / 门牌），而**认领的判据只有一条**：
 //! `owner == who` 且 `mark == 记号`。这一份是那条判据的唯一正文——[`super::server`]（收那三句话）
 //! 与 [`super::door`]（门外那一问要的两枚门牌）都从这里取。**它不认识树、也不认识门**：
-//! 记号那一侧是调用方给的（`protocol::system::operator` 的 `LINK` / `ASK_MARK` / 七位各一枚，
+//! 记号那一侧是调用方给的（`protocol::service::operator` 的 `LINK` / `ASK_MARK` / 七位各一枚，
 //! 以及各族交过来的门牌：名册那一族**两面各一枚**、盟册那一族仍是通用那枚 `entry`）。
 
 use env::{Mark, PieToken, TaskId};
 use protocol::communication::establish;
 use protocol::debug;
-use protocol::system::operator::LINK;
+use protocol::service::operator::LINK;
 use runtime::env::mail;
 
 /// 这一枚孔刻的是哪一枚记号（**本域表里那一枚的第三格**）。
 ///
 /// 读不出（不在本表里 / 不是孔 / 已封印）⇒ [`Mark::NONE`]——它不是任何一面，故
-/// [`grant_of`](protocol::system::operator::grant::grant_of) 答 `None`、[`ask_of`] 也认不回它
+/// [`grant_of`](protocol::service::operator::grant::grant_of) 答 `None`、[`ask_of`] 也认不回它
 /// （两处同一句）。
 pub(super) fn mark_of(ask: PieToken) -> Mark {
     establish::marked_as(ask).unwrap_or(Mark::NONE)
@@ -89,7 +89,7 @@ pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
 /// **装配者**经协调帧递进来的（`CoordFrame`）。本域拿那一格号只做一件事——找这一枚门牌；而这两个
 /// 记号是**协议里各族自己的常量**（`PrincipalGrant::Ask` / `CoalitionGrant::Ask`），**各只有一家
 /// 生产者**（名册那一域 / 盟册那一域各交一枚到本域）⇒ **记号单独就指得回那一扇门**。于是那一格号
-/// 连带整帧退场（见 `protocol::system::operator::frame` 的照实记）：同一句话不再有两处。
+/// 连带整帧退场（见 `protocol::service::operator::frame` 的照实记）：同一句话不再有两处。
 ///
 /// 多枚**正常**（同一面交多枚：副本共享 `opened_by`）⇒ 取第一枚，不说（与 [`claim`] 同一口径）。
 pub(super) fn face_of_mark(mark: Mark) -> Option<PieToken> {

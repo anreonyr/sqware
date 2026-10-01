@@ -1,16 +1,16 @@
 //! operator::core::judge —— **门外那一问**：这一位许不许动这一格。**不带载体、不碰内核。**
 //!
-//! **照实记（它原先住 `protocol::system::operator::core::judge`）**：那一份同时养着两半——
+//! **照实记（它原先住 `protocol::service::operator::core::judge`）**：那一份同时养着两半——
 //! **上线的两样**（`Permit` / `Ruling`，归 protocol）与**判据那一半**（`Facts` 四问 ＋
 //! `judge`）。判据的读者只有本域，故它回实现侧；两侧之间的缝就是那一个 [`Facts`]。
 //!
 //! 三格答案的意义（`Allow` / `Deny` / `Unjudged`）与"哪些因会好"照实记在协议那一侧
-//! （`protocol::system::operator::frame` 的 `Ruling`）。
+//! （`protocol::service::operator::frame` 的 `Ruling`）。
 
 use env::TaskId;
 
 use protocol::service::coalition::CoalitionId;
-use protocol::system::operator::{EntryId, Permit, Ruling};
+use protocol::service::operator::{EntryId, Permit, Ruling};
 use protocol::service::principal::PrincipalId;
 
 // ── 门外那一问要问的四条边（**一个** trait）─────────────────

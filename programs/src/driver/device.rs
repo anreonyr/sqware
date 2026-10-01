@@ -25,8 +25,8 @@ use env::{Access, Policy};
 use env::{Kind, PieToken, Wait};
 use protocol::driver::hub;
 use protocol::driver::hub::Deed;
-use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::path::Path;
+use protocol::service::operator::client::Face as TreeFace;
+use protocol::service::operator::path::Path;
 use runtime::core::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 

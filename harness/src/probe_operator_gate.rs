@@ -48,10 +48,10 @@ use programs::Report;
 use protocol::communication::establish;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::path::Path;
-use protocol::system::operator::{EntryId, Fail, Grant, Permit};
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::service::operator::path::Path;
+use protocol::service::operator::{EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -102,7 +102,7 @@ fn main() -> Report<'static> {
     let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
 
     // 二、`/svc/sys/operator` 那块 Pane：由持树者一就位那一趟立出（`Assembly::mount_grants`）。
-    let Some(operator_id) = walk(&tree, &protocol::system::operator::DIR) else {
+    let Some(operator_id) = walk(&tree, &protocol::service::operator::DIR) else {
         panic!("probe-operator-gate: /svc/sys/operator is not a pane");
     };
     let operator_pane = Pane::of(&tree, operator_id);
@@ -119,7 +119,7 @@ fn main() -> Report<'static> {
     //    `Face::tile` 收的是**从根写起**的那条路（见 `client.rs` 的 `Pane::tile` 那一节）
     //    ——"名字只到 `seek` 这一格"的本义：三段一段不落。
     // 路是**本族那一族的常量**（`/svc/sys/operator`）接上那一面的名——一处都不自己拼。
-    let road = protocol::system::operator::DIR
+    let road = protocol::service::operator::DIR
         .try_join("land")
         .expect("probe-operator-gate: bad name");
     let Ok(tile) = tree.tile(&road, Wait::AtMost(MS)) else {

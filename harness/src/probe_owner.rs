@@ -41,10 +41,10 @@ use alloc::format;
 use alloc::string::ToString;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::path::Path;
-use protocol::system::operator::{EntryId, Fail, Permit};
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::service::operator::path::Path;
+use protocol::service::operator::{EntryId, Fail, Permit};
 
 use protocol::driver;
 use runtime::env::mail;

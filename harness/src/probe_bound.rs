@@ -69,8 +69,8 @@ use env::PieToken;
 use protocol::communication::establish::Endpoint;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
+use protocol::service::operator as ocall;
+use protocol::service::operator::client as operator;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -134,7 +134,7 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
 /// 那个码要是挪了位，这一条当场红）。
 const SEEK_OP: u8 = 7;
 
-/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::system::operator::path::Path) 是 8）。
+/// 那一条超长的路：**9 段**（[`Path::MAX`](protocol::service::operator::path::Path) 是 8）。
 ///
 /// **照实记（这一刀把界从"段数那一格"挪进了路自己）**：从前段数那一格写得下 9，而路只带得回
 /// 8 段 ⇒ 持树者按 `Fail::Full` 答一句"路太长"。今天一条路是一个 `PathBuf`（`/` 分开的串，

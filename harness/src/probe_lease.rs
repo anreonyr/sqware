@@ -34,9 +34,9 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Permit;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine};
+use protocol::service::operator::Permit;
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::{Face as TreeFace, Mine};
 
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -44,7 +44,7 @@ use runtime::env::unit as utask;
 /// 本域要落的那一格：`/svc/lease`——**声明归自己**，随后本域就死。
 /// **容器那一段那一条路**（`/svc`）——那一段名字**只在协议那一侧说**；本台只用它一个末段
 /// （`file_name()`，std 同形），故取名字那一手在运行期做（`file_name` 不是 `const`）。
-const DIR: &protocol::system::operator::Path = protocol::system::SVC;
+const DIR: &protocol::service::operator::Path = protocol::system::SVC;
 const ME: &str = "lease";
 
 /// 等树 / 办一趟的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。

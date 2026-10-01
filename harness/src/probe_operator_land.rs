@@ -52,9 +52,9 @@ use programs::Report;
 use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::{EntryId, Fail, Grant, Permit, Where};
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::Face as TreeFace;
+use protocol::service::operator::{EntryId, Fail, Grant, Permit, Where};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -105,7 +105,7 @@ fn main() -> Report<'static> {
     //    它们量的是"这一位许不许这一类"，不是"那一格在不在"。
     let part = "probe-op-part".to_string();
     // 这一问的**参数是哪条路都不改变结论**（面判在第一道就挡了）——照旧拿本族那一块。
-    let sought = rein.seek(&protocol::system::operator::DIR, Wait::AtMost(MS));
+    let sought = rein.seek(&protocol::service::operator::DIR, Wait::AtMost(MS));
     assert!(
         matches!(sought, Err(Fail::Denied)),
         "这一柄权不许 seek，却答了 {sought:?}"

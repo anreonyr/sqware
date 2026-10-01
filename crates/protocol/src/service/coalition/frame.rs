@@ -48,7 +48,7 @@ use crate::message::Message;
 use crate::service::principal::PrincipalId;
 use env::{Mark, PieToken, TaskId};
 
-use crate::system::operator::path::Path;
+use crate::service::operator::path::Path;
 
 // ── 上线的类型（原先住 `core.rs`：残枝那一刀并进来）──────────────
 
@@ -149,7 +149,7 @@ pub const WINDOW_CAP: usize = 16;
 /// 空位是 `None` 而不是 `T::new(0)`：**零号是真格子**（`PrincipalId::ROOT` 就是 0），
 /// 拿它当"这一格空着"正是要避开的那件事。
 ///
-/// **与 operator 那个 [`Listing`](crate::system::operator::frame::Listing) 不合并**：那一边一条 pane
+/// **与 operator 那个 [`Listing`](crate::service::operator::frame::Listing) 不合并**：那一边一条 pane
 /// **有顶**，故没有"未完"这一格；本族靠 `more` 分页。两处各留一个的理由（连帧形那一半）
 /// 写在那边。
 ///

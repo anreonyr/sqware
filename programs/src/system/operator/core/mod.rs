@@ -1,6 +1,6 @@
 //! operator::core — **树那一本账**：一张按号排的表 ＋ 七条线上原语 ＋ 三条给判据的。
 //!
-//! **照实记（它原先住 `protocol::system::operator::core`）**：那一份的读者只有本域的持树者
+//! **照实记（它原先住 `protocol::service::operator::core`）**：那一份的读者只有本域的持树者
 //! （`prog-operator` 那一枚线程）——按"协议 = 共享语言"的判据，它属于实现侧。协议那一侧
 //! 只留**上线的类型**（`EntryId` / `Where` / `Fail` / `Permit` / `Ruling` 与两条容量）
 //! 与客侧几手。
@@ -22,9 +22,9 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 
 use protocol::communication::establish::{opened_by, vested_by};
-use protocol::system::operator::frame::PANE_CAP;
-use protocol::system::operator::path::Path;
-use protocol::system::operator::{EntryId, Fail, Permit, Where};
+use protocol::service::operator::frame::PANE_CAP;
+use protocol::service::operator::path::Path;
+use protocol::service::operator::{EntryId, Fail, Permit, Where};
 
 // ── 两个子模块 ──────────────────────────────────────────────
 pub mod gate;
@@ -519,11 +519,11 @@ impl Operator {
 
 // ── 同步义务：`gate` 那三格线上码与 `frame` 的对照表 ──────────────
 //
-// 真正的对照表只有一份（`protocol::system::operator::frame`）；`gate` 为了"不带载体"自己
+// 真正的对照表只有一份（`protocol::service::operator::frame`）；`gate` 为了"不带载体"自己
 // 拿了一份，故在这里**编译期**把两者钉住——一漂就编不过。**这一条住这里**：只有这一层同时
 // 看得见 `gate` 与 `frame`。
 const _: () = {
-    use protocol::system::operator::frame;
+    use protocol::service::operator::frame;
     assert!(gate::WIRE_OK == frame::OK);
     assert!(gate::WIRE_DENIED == frame::DENIED);
     assert!(gate::WIRE_UNJUDGED == frame::UNJUDGED);

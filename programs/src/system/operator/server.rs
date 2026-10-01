@@ -15,7 +15,7 @@
 //! 乙来查时判它"已死"、也授不出去，症状是"刚挂上的名字，别人一查就是 `Unknown`"）。
 //!
 //! **三侧分家**：两侧共用的图与说明见 [`super`] 的"载体"那一节，帧与记号见
-//! [`protocol::system::operator`]。
+//! [`protocol::service::operator`]。
 //!
 //! **照实记（这一份没有 task-2 那一刀的迁移点）**：`operator::client` 新出那一面是**客侧**用的；
 //! 本文件是持树者，一处客手都不叫（它自己那几手在 `core` 与 `plate`/`answer`/`door` 里，帧从门
@@ -32,9 +32,9 @@ use runtime::env::mail;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Grant;
-use protocol::system::operator::grant::grant_of;
+use protocol::service::operator as ocall;
+use protocol::service::operator::Grant;
+use protocol::service::operator::grant::grant_of;
 
 use crate::program::operator::E_TREE;
 use crate::system::control::service::Start;

@@ -42,7 +42,7 @@
 //! **代价照实说**：挂上之后，**任何已绑身份**的域都能按 `Permit::Unset` 取回那一枚入口，进而
 //! `mint` / `start` / `stop` 装配表里的任意一台程序。这不是新开的口子——`doom`（收掉一个域）
 //! 今天同样没有门禁；若将来要收，收的地方是那一格的 `Permit`（协议那一侧改一格，见
-//! `protocol::system::operator::Permit`），不是这一层。
+//! `protocol::service::operator::Permit`），不是这一层。
 
 use alloc::string::String;
 use alloc::string::ToString;

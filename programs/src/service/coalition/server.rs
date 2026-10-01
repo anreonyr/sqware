@@ -37,9 +37,9 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::coalition as ccall;
 use protocol::service::coalition::Fail;
-use protocol::system::operator::Permit;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine};
+use protocol::service::operator::Permit;
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::{Face as TreeFace, Mine};
 use protocol::service::principal as pcall;
 use protocol::service::principal::PrincipalId;
 use protocol::service::principal::client::Face;
@@ -115,7 +115,7 @@ pub fn serve() -> Result<(), Start> {
         // 整段退场了，见 `Relation` 的头注：持树者按这一枚的**记号**认，不看谁开的、也不看几号）。
         //
         // **只交问面那一枚**（照实记：从前这一份就是唯一那一枚，两面都在里面）：持树者只叫
-        // `Amid`（判 [`Permit::Among`](protocol::system::operator::Permit::Among)），而
+        // `Amid`（判 [`Permit::Among`](protocol::service::operator::Permit::Among)），而
         // "立盟 / 入 / 出"那三条在定面上——它拿不到，也就做不出。
         port::ship(
             &HolePie::from_token(ask),

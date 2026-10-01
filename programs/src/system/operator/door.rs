@@ -5,7 +5,7 @@
 //!
 //! | 处 | 是什么 |
 //! |---|---|
-//! | [`core::judge`](super::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::system::operator::Ruling) 三格 |
+//! | [`core::judge`](super::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::service::operator::Ruling) 三格 |
 //! | [`core::gate`](super::core::gate) | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
 //! | 本文件 | **接线**：那两枚门牌（[`Session`]）与"树 → 判据"的那一具（[`Court`]） |
 //!
@@ -27,7 +27,7 @@ use env::{TaskId, Wait};
 use protocol::debug;
 use protocol::service::coalition::client::Face as CoalitionFace;
 use protocol::service::coalition::{CoalitionId, Grant as CoalitionGrant};
-use protocol::system::operator::{EntryId, Fail, Permit};
+use protocol::service::operator::{EntryId, Fail, Permit};
 use protocol::service::principal::client::Face as PrincipalFace;
 use protocol::service::principal::{Grant as PrincipalGrant, PrincipalId};
 

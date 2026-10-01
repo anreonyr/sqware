@@ -13,8 +13,8 @@
 //!    内核盖的那一格，不推不收）。
 
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::{Grant, Permit};
+use protocol::service::operator as ocall;
+use protocol::service::operator::{Grant, Permit};
 use runtime::core::port::{self, Access, Policy};
 use runtime::env::mail;
 

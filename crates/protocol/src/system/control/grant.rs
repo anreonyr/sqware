@@ -27,7 +27,7 @@
 //!
 //! - [`Grant::State`] **公开**：`Permit::Unset`——只读"这一条此刻在哪个阶段"，谁问都一样；
 //! - [`Grant::Mint`] / [`Grant::Start`] / [`Grant::Stop`] **各带一句规矩**：落格时带
-//!   [`Rule::Root`](crate::system::operator::Rule::Root)——**"许给根"**（`Permit::Trunk(ROOT)`）。
+//!   [`Rule::Root`](crate::service::operator::Rule::Root)——**"许给根"**（`Permit::Trunk(ROOT)`）。
 //!
 //! **照实记（这一句原先写的是"许给开着这一格的那位"——真机一量是假的）**：上一版计划写的是
 //! `Permit::Opener(那一格自己的号)`，理由是"四枚入口都是装配者主线程铸的 ⇒ 这句话指的就是它"。

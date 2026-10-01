@@ -56,10 +56,10 @@ use programs::Report;
 use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::Fail;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
+use protocol::service::operator as ocall;
+use protocol::service::operator::Fail;
+use protocol::service::operator::client as operator;
+use protocol::service::operator::client::Face;
 use runtime::env::unit as utask;
 
 /// 本域挂在板上的名字，与要找的那个服务——**本域知道的全部**。
@@ -147,7 +147,7 @@ fn main() -> Report<'static> {
 /// 新面的 `Face::tile` 已经译号一次 + `find` 一次，随后 `Tile::token` 又 `find` 一次 ⇒
 /// **每趟多授一枚没人接的副本**进本域表（树上 `find` 还带"惰性剔死"那一笔）。故照旧面的
 /// 两格写：[`Pane::tile`]（只译号，不动树）＋ [`Tile::token`]（这一趟 `find`）。
-fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &protocol::service::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {

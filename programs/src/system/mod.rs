@@ -166,7 +166,7 @@ impl Assembly {
     ///
     /// 它是那条路上的**一段前缀**（第一条路的段列表走前缀时就地把它立成一块 `Pane`）——
     /// **没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故 `seek("/svc/sys/operator")`
-    /// 之类答 [`Fail::NotATile`](protocol::system::operator::Fail::NotATile)：那一段是块窗格，
+    /// 之类答 [`Fail::NotATile`](protocol::service::operator::Fail::NotATile)：那一段是块窗格，
     /// 到头了的是它底下那几格。
     ///
     /// **照实记（"第八格"是量出来的，而它现在写不出来）**：从前的帧是"两段名字 ＋ 一格
@@ -209,8 +209,8 @@ impl Assembly {
         // 写的是 `Opener`、一量是假的"那条照实记）；**本处只写"怎么带"**——下面这一行 `match`。
         for grant in protocol::system::control::Grant::ALL {
             let rule = match grant {
-                protocol::system::control::Grant::State => protocol::system::operator::Rule::None,
-                _ => protocol::system::operator::Rule::Root,
+                protocol::system::control::Grant::State => protocol::service::operator::Rule::None,
+                _ => protocol::service::operator::Rule::Root,
             };
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
@@ -261,7 +261,7 @@ impl Assembly {
     /// （`&'static str` 直接递，其余才 `format!`）。
     fn mount_grants(&mut self) {
         // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
-        for grant in protocol::system::operator::Grant::ALL {
+        for grant in protocol::service::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
                 Err(why) => {
@@ -270,13 +270,13 @@ impl Assembly {
                 }
             };
             // 路：**本族那一族的常量**（`/svc/sys/operator`）接上这一面的名。
-            let Some(road) = protocol::system::operator::DIR.try_join(name.as_str()) else {
+            let Some(road) = protocol::service::operator::DIR.try_join(name.as_str()) else {
                 debug::put("system: grant not mounted (name)");
                 continue;
             };
             if let Err(why) =
                 self.tree
-                    .plate(&road, Some(entry), protocol::system::operator::Rule::None)
+                    .plate(&road, Some(entry), protocol::service::operator::Rule::None)
             {
                 debug::put(&alloc::format!("system: grant not mounted ({why})"));
                 continue;
@@ -349,7 +349,7 @@ impl Assembly {
 
 // **照实记（`sys_dir()` 这一格退了）**：它从前是"树那一层那一格"的**私有副本**——正文引的是
 // `ccall::frame::DIR`（**control 那族**的常量，而 `operator` 那族的路也借它拼）。今天四族各有
-// 自己那一枚 [`DIR`](protocol::system::operator) 似的常量（前缀共用
+// 自己那一枚 [`DIR`](protocol::service::operator) 似的常量（前缀共用
 // `protocol::system::DIR`），故这一手没有读者：装配侧直接 `族::DIR.try_join(面名)`。
 
 /// 报"哪一条、哪一步没成"，返**这一台自己的号**（[`crate::program::Demand::died`]）。
