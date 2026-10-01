@@ -144,6 +144,15 @@ pub fn up() -> Result<Up, Fail> {
     // 客人登记扑空一次就会放下它那条泊位（线那本账上因此会短暂地少一位客人）。
     ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS));
 
+    // **报"答得动了"**（`Setup::Ready`）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
+    // 从此是"**面已经在树上**"的意思（判词与量法见 `program.rs` 那一格的照实记）。
+    let _ = protocol::communication::establish::endpoint(
+        runtime::env::unit::sire(),
+        env::Mark::of(programs::program::READY),
+        env::Wait::POLL,
+    );
+
+
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。

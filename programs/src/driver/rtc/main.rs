@@ -106,6 +106,15 @@ fn main() -> Result<(), Fail> {
     // 本域再读到那一问时就只剩"找不到回信孔"了（实测那一行：`rtc: no back hole from 25`）。
     ctx.plate(ME, Mine::No, Wait::AtMost(MS));
 
+    // **报"答得动了"**（`Setup::Ready`）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
+    // 从此是"**面已经在树上**"的意思（判词与量法见 `program.rs` 那一格的照实记）。
+    let _ = protocol::communication::establish::endpoint(
+        runtime::env::unit::sire(),
+        env::Mark::of(programs::program::READY),
+        env::Wait::POLL,
+    );
+
+
     // ── 核心 ───────────────────────────────────────────────
     adapt::resident::run(&ctx, &dev, line, &mut Host::new())
 }

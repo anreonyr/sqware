@@ -257,15 +257,31 @@ pub enum Origin {
 /// [`crate::system::control`] 的 `connect_all` / `enroll`）。
 ///
 /// **"怎么算它起来了"由这一格推**（有通道 ⇒ `Announce::Channel`）——故不给它另立一格。
+/// **装配者等的那一枚记号**（[`Setup::Ready`] 那一条）：驱动那三台落完面之后铸一枚刻它的孔
+/// 交给装配者。**记号可以共用**——装配者按 `owner ＋ 记号` 两格认（`Endpoint::claim`），
+/// 一台一份，不会串。
+pub const READY: &str = "ready";
+
 #[derive(Clone, Copy)]
 pub enum Setup {
-    /// **通信**：这一台要开一条通道。放行前 `connect`，放行后按同一个记号 `claim`——它交回
-    /// 那一枚就是"它起来了"的证据。
-    Channel(&'static str),
+    /// **答得动了**：这一台交回一枚刻着这个记号的孔 ⇒ "**我这一面已经在树上、答得动**"。
+    ///
+    /// **它在起手哪一步交，就是这一格的全部内容**：设备账那条 `Machine.ready` 在**落完每一台
+    /// 机器的格**之后交；驱动那三台（`router` / `uart` / `rtc`）在 `ctx.plate(..)` **之后**交
+    /// ——落面本来就是它们起手的最后一步（"**牌子的次序 = 什么时候答得了**"那条照实记写在
+    /// `driver/uart/desk.rs` 与各驱动那一侧）。
+    ///
+    /// **为什么非有这一格（量出来的）**：装配者原先判"它起来了"只有一格——**"放行之后只要还
+    /// 活着"**（`control/service.rs::ready` 的 `Announce::None` 那一支：全表 25 台里只有设备账
+    /// 声明了 `setup`）。而"面"落在起手的最后一步、装配者那时早已往下起了好几位 ⇒ 后来者
+    /// （`lodger` 问 `router`、`sleeper` 问 `rtc`、盟册问名册）问的都是**还没答得动的机器**，
+    /// 手里只有自己那 1 s 有界重试 ⇒ 慢一点的世界里就是一片 `no /svc*`。
+    /// ⇒ **次序要治的不是"排第几"，是把"起来了"的含义从"活着"改成"答得动"。**
+    Ready(&'static str),
     /// **整机物料**：这一台起手要**这台机器的全部可领之物**（设备树本体 / 门铃 / 每一台设备
     /// 那一段区）。
     ///
-    /// 与 [`Setup::Channel`] 是**同一手 ＋ 一件事**：放行前照样 `connect`（它交回那一枚照样是
+    /// 与 [`Setup::Ready`] 是**同一手 ＋ 一件事**：放行前照样 `connect`（它交回那一枚照样是
     /// "我起来了"），放行之后装配者多走一趟——**照 [`crate::system::machine::Machine::devices`]
     /// 枚举全机**、逐段向引导域领、再把那一段记录从这条通道推给它。
     ///
@@ -300,7 +316,7 @@ impl Setup {
     /// **收物料**那条。
     pub const fn channel(&self) -> &'static str {
         match self {
-            Setup::Channel(ch) => ch,
+            Setup::Ready(ch) => ch,
             Setup::Machine { load, .. } => load,
         }
     }
@@ -309,7 +325,7 @@ impl Setup {
     /// `None` = 这一格只开一条通道。
     pub const fn ready(&self) -> Option<&'static str> {
         match self {
-            Setup::Channel(_) => None,
+            Setup::Ready(_) => None,
             Setup::Machine { ready, .. } => Some(ready),
         }
     }

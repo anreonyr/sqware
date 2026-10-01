@@ -104,6 +104,15 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     // （认设备、开闸、占线）。次序反过来会让先到的客人**扑空 1 s、然后放下它那枚回信孔退场**，
     // 而本域起来读到那一问时那枚回信孔已经没了。**牌子的次序 = "什么时候答得了"那条次序。**
     plate(&ctx, rx, tx, ms);
+
+    // **报"答得动了"**（`Setup::Ready`）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
+    // 从此是"**面已经在树上**"的意思（判词与量法见 `program.rs` 那一格的照实记）。
+    let _ = protocol::communication::establish::endpoint(
+        runtime::env::unit::sire(),
+        env::Mark::of(programs::program::READY),
+        env::Wait::POLL,
+    );
+
     Ok(Desk {
         ctx,
         line,
