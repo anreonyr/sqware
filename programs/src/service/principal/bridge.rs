@@ -32,9 +32,27 @@ impl Roster {
     /// `None`）。名册还没在（名册自己与树）⇒ 什么都不做——那两条由 [`Roster::adopt`] 补绑。
     pub fn bind(&self, task: TaskId, on: bool) -> Result<(), &'static str> {
         if !on {
+            // **探子（第 68 轮只量）**：声明说"不绑"那一支。
+            debug!("principal: bind off task={}", task.get());
             return Ok(());
         }
         let Some(face) = self.face.as_ref() else {
+            // **照实记（第 68 轮量出来的那一笔：这两条跳过路各自会跳过谁）**
+            //
+            // 两条读数都留在这里（`debug!` 设门 ⇒ 不打搅 release 的串口），实测（debug 档、16 条
+            // 读数齐的那一跑）**一共只跳 4 台**：
+            //
+            // | 那一台 | 走哪条路 | 为什么 |
+            // |---|---|---|
+            // | `operator` / `passer` / `principal`（task 12/13/14） | 这一支（**名册那面还没到**） | 最早那三台——`principal` 正是"自己没法在放行前绑自己"；那两位由 [`Roster::adopt`] 补 |
+            // | `probe-denied`（task 19） | 上面 `!on` 那一支 | **声明说 `false`**（`Relation::bind` 那一格） |
+            //
+            // ⇒ **其余 19 台都真的被绑了**，故"`bind: true` 不兑现"**不是普遍的**，而是**恰好那三台**
+            // （时间上的先后：名册的面立在它们之后）。**这一笔把第 67 轮那个矛盾摆到台面上**：
+            // 那一刀**去掉** `probe-denied` 的 `bind: false` 之后，它**按这张表本该被绑**，
+            // 可它自己的读数却是 `probe-denied: no identity to drop`（`mine.principal()` 没给出
+            // 那一格）⇒ **下一刀先把那一手答的到底是 `None` 还是 `Err(哪一支)` 印出来**，再谈撤。
+            debug!("principal: bind skip(no face) task={}", task.get());
             return Ok(());
         };
         let root = face.new_principal();
