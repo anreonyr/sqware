@@ -275,8 +275,8 @@ pub use frame::Fail;
 // 那句话从写下的第一天起就是假的**。）
 
 pub use frame::{
-    ASK_MARK, BAD, ENTRY_MARK, LANE_PREFIX, LINK, OK, Req, TIP_MARK, Tip, UNKNOWN, Union, Wire,
-    code_to_fail, fail_to_code,
+    ASK_MARK, BAD, ENTRY_MARK, LINK, OK, Req, TIP_MARK, Tip, UNKNOWN, Union, Wire, code_to_fail,
+    fail_to_code,
 };
 
 // ── 一个调用的三个事实：**只有身体，没有壳** ────────────────────────────

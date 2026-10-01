@@ -26,27 +26,9 @@ use alloc::string::String;
 
 use crate::system::control::Catalog;
 
-/// **取字节那一格的失败域**。
-///
-/// 它**一句都不上线**（只有装配那一枚线程自己听得见），故不必进任何码表。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Error {
-    /// 这块账里没有这一台。
-    ///
-    /// **照实记（"那一条读不懂"为什么不另立一格）**：清单里某一条非法（越界 / 名字非法 /
-    /// 镜像为空）与"没有这一台"**在 [`Catalog::find`] 上是同一个落点**——它读不懂那一条就答
-    /// "没有"。窄面照它答，不另造一格去猜它没说的话。
-    Missing,
-}
-
-impl Error {
-    /// 一行读数的说法（诊断那一行印的就是它）。
-    pub fn said(self) -> &'static str {
-        match self {
-            Error::Missing => "not in catalog",
-        }
-    }
-}
+// **照实记（`Error` 那一型退场：它只剩一个值）**：`Origin::Storage` 那一档退场之后（见
+// [`crate::program::Demand`] 底下那一段），这一面只剩**一种**不成——"这块账里没有这一台"。
+// 一个值的枚举就是**假装有选择**（与 `Origin` 同一课）⇒ 收成 `Option`：`None` = 没有这一台。
 
 /// **来源那一格的载体**：**那一本账**（今天只有 initrd 那一本）。
 ///
@@ -63,14 +45,11 @@ impl Source {
         Source { catalog }
     }
 
-    /// **取字节那一面**：这一台身子的那一段字节在哪儿。
+    /// **取字节那一面**：这一台身子的那一段字节在哪儿（`None` = 这块账里没有这一台）。
     ///
     /// 唯一消费者是装配时那一行 `service::mint`——它要的正是"一段 `&[u8]`"，别的（名字怎么解析、
     /// 装成哪种空间、谁来放行）一概不从这里走。
-    pub fn image(&self, name: String) -> Result<&'static [u8], Error> {
-        self.catalog
-            .find(name.as_str())
-            .map(|entry| entry.elf)
-            .ok_or(Error::Missing)
+    pub fn image(&self, name: String) -> Option<&'static [u8]> {
+        self.catalog.find(name.as_str()).map(|entry| entry.elf)
     }
 }

@@ -59,7 +59,7 @@ use protocol::communication::establish::{self, Endpoint};
 use crate::program::{PROGRAMS, Program, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
-use crate::system::source::{self, Source};
+use crate::system::source::Source;
 
 pub mod assemble;
 pub mod core;
@@ -329,13 +329,10 @@ impl Control {
         // **取字节那一面的唯一消费者**：这一景那本账（`self.catalog`）按名字给那一段 `&[u8]`。
         // **声明里不问来源**（照实记：`Origin` 那一格 0 个选择者，随那本账一起退场，见
         // [`crate::program::Demand`] 底下那一段）。
-        let image = Source::initrd(self.catalog)
-            .image(name.clone())
-            .map_err(|e| match e {
-                source::Error::Missing => Error::Missing,
-                // 其余失败按"那一段字节取不到"报，读数带它自己的说法。
-                other => Error::Step(other.said()),
-            })?;
+        // **这一面只剩一种不成**（照实记见 `system::source`）：这块账里没有这一台。
+        let Some(image) = Source::initrd(self.catalog).image(name.clone()) else {
+            return Err(Error::Missing);
+        };
         let task =
             service::mint(&mut self.table, name.as_str(), image, entry.kind)
                 .map_err(|_| Error::Spawn)?;

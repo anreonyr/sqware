@@ -2,7 +2,7 @@
 //!
 //! **照实记（它原先住 `crates/protocol/src/system/board/client.rs`）**：按裁定「board 是编排域的
 //! **死信号传感器**，不是第五轴」，这一族从 protocol 那一层退出聚合——那里只留**形与记号**
-//! （`frame.rs` / `Fail` / `LINK` / `ASK_MARK` / `TIP_MARK` / `LANE_PREFIX` / `ENTRY_MARK`），
+//! （`frame.rs` / `Fail` / `LINK` / `ASK_MARK` / `TIP_MARK` / `ENTRY_MARK`），
 //! **说话的那一侧**（本文件）回到实现侧。故 use 改两处：记号与码取
 //! [`protocol::system::board`]，`Session` / `Berth` 取
 //! [`protocol::communication::session`]。

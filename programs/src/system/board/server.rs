@@ -3,11 +3,9 @@
 //! 三侧分家之后本文件只放**板那一台**：编排域里的一枚线程招待所有客人（一枚线程 + 一个组，无轮询）；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
-use alloc::string::String;
 use env::Mark;
 use env::Wait;
 
-use alloc::format;
 use env::{HoleDir, PieToken, TaskId};
 use protocol::communication::receiver::Receiver;
 use protocol::communication::sender::Sender;
@@ -20,7 +18,7 @@ use crate::system::board::core::Board;
 use protocol::system::board as bcall;
 use protocol::system::board::ENTRY_MARK;
 use protocol::system::board::Fail;
-pub use protocol::system::board::{ASK_MARK, LANE_PREFIX, LINK, TIP_MARK};
+pub use protocol::system::board::{ASK_MARK, LINK, TIP_MARK};
 
 use crate::system::desk::{Desk, DeskFail, Guest};
 use protocol::communication::establish;
@@ -154,11 +152,6 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
                     // 问话会堵在单手上。故这一格**报一句，别静默丢一位客人**（与树那一台同款）。
                     Err(DeskFail::Full) => debug!("board: desk full"),
                 }
-                // **道就在这一刻认下来**：牌子会被惰性摘掉，摘了就认不出这位叫什么——
-                // 而名字刚跟提示一起到（[`lane_for`] 找的正是记号 `gone-<名字>`）。
-                if let Some(lane) = lane_for(tip.name) {
-                    desk.note_lane(client, lane);
-                }
             }
             // 次序被破坏（提示先到、答话路不在本表里 / 那一格指的不是这一位）：报一句；
             // 客人那边会报它自己的超时。**这一格不该再有"本端提前放了"这一因**：
@@ -182,16 +175,6 @@ fn settle(desk: &mut Desk, pile: &Pile, tip: &mail::HolePie) -> bool {
     pending
 }
 
-/// 按**名字**认领这一位的死亡道（`gone-<名字>`；装配者铸、转授给本线程）。
-///
-/// **在 `admit` 那一刻就认**：名字随提示那一格一起来（[`bcall::Tip::LEN`]），而牌子会被惰性
-/// 摘掉——等到死亡那一刻再想"它叫什么"就没处问了。名字认不出（名字非法 / 那一条道没转授
-/// 过来）⇒ `None`：**这一位死了就没有读数**。
-fn lane_for(name: String) -> Option<PieToken> {
-    let want = Mark::of(&format!("{LANE_PREFIX}{}", name.as_str()));
-    mail::pies().find(|p| p.mark == want).map(|p| p.token)
-}
-
 // **照实记（`Lanes` / `remember_lane` / `take_lane` 已并进 `Desk`）**：这里从前另有一本
 // `type Lanes = Vec<(TaskId, PieToken)>` 存 `who → 死亡道`——与 `Desk` 那本账**同一把键**。
 // 两本同键的账就是"一位客人两处记"，一处漏写就分成两份真相；并进 `Guest::lane` 之后，
@@ -199,15 +182,15 @@ fn lane_for(name: String) -> Option<PieToken> {
 // 都落回同一个容器，三具搬运函数一起退场。**丢一条读数**那件事照旧（道认不出 ⇒ `lane` 是
 // `None`）：牌子由板自己扫，道只喂装配者。
 
-/// 剔掉**已经走了**的客人，并把"没了"这件事推进**它那条死亡道**；返剔了几格。
+/// 剔掉**已经走了**的客人（并把它挂进组的那一枚问话孔摘掉）；返剔了几格。
 ///
 /// 判据全在 [`Desk::sweep_each`] 那一格（`VestedBy` 答 `None`）——**看出来的**那一档。
-/// **听来的**那一档（`EVICT`）在 [`answer`] 里推；两档都推，因为装配者只认道。
+/// **听来的**那一档（`EVICT`）在 [`answer`] 里撤格。
+///
+/// **照实记（"推道"那一半退场）**：这两档从前各还要往**死亡道**里推一格（装配者从组上醒来
+/// 据此记账）。道那一族上一刀整片退场 ⇒ 本手只剩"剔"+ "摘组"两件事。
 fn tell_gone(desk: &mut Desk, pile: &Pile) -> usize {
     let n = desk.sweep_each(|gone| {
-        if let Some(lane) = gone.lane {
-            let _ = HolePie::from_token(lane).ring();
-        }
         // **读者结清（B-a）**：这一位已经答不出了 ⇒ 它挂进组的那一枚问话孔从组里**摘掉**
         // （不摘就是一格再也醒不来的成员，且每剔一位多留一格）。**不封印**：那一枚是**客人铸的**，
         // 本域只持副本——收它是它自己（或内核的寿命边）的事，本域动手会答 `Denied`。
@@ -284,8 +267,6 @@ fn serve_one(
 fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swept: usize) -> u8 {
     let said = match ask {
         bcall::Wire::Evict => {
-            // 死亡道：**先取走**（撤格/摘牌之后就只剩道这一条线索了）。
-            let lane = desk.take_lane(who);
             // 退场：撤它那一格（`None` = **它不在账上**）+ 摘掉它挂在板上的全部牌子。
             let said = match desk.evict(who) {
                 Some(_slot) => {
@@ -303,10 +284,9 @@ fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swe
                 }
                 None => Err(protocol::system::board::Fail::Unknown),
             };
-            // 听来的那一档也要推道：装配者只认道（撤格/摘牌是板自己的账，与它无关）。
-            if let Some(lane) = lane {
-                let _ = HolePie::from_token(lane).ring();
-            }
+            // **照实记（"推道"那一句退场）**：听来的与看出来的两档从前都要往**死亡道**里推一格
+            // ——装配者只认道。道那一族上一刀整片退了场（监督那一趟改读内核那一格），故这两档
+            // 今天只撤格/摘牌，不再推任何东西。
             return bcall::fail_to_code(said.err());
         }
         bcall::Wire::Register { name, seed } => match (seed.get() != 0).then_some(seed) {

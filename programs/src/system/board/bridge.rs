@@ -3,8 +3,6 @@
 //! 三侧分家之后本文件只放**装配侧**：把板接上一位客人（三步，次序即契约）与收尾点名；两侧共用的图与次序说明见 [`super`] 的"载体"那一节，
 //! 帧与记号见 [`protocol::system::board`]。
 
-use alloc::string::String;
-use alloc::string::ToString;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::Mark;
@@ -43,15 +41,8 @@ pub struct Bridge {
 
 impl Bridge {
     /// **把这位客人接上板**（三步见 [`attach`]，次序即契约）。返 `Err(哪一步)`。
-    pub fn attach(
-        &mut self,
-        me: TaskId,
-        client: TaskId,
-        name: String,
-        millis: Wait,
-        lane: Option<PieToken>,
-    ) -> Result<(), &'static str> {
-        attach(me, client, name, millis, &mut self.tip, lane)
+    pub fn attach(&mut self, me: TaskId, client: TaskId, millis: Wait) -> Result<(), &'static str> {
+        attach(me, client, millis, &mut self.tip)
     }
 }
 
@@ -68,17 +59,9 @@ pub fn attach_client(
     if !program.relation.presence {
         return Ok(());
     }
-    let name = program.name().to_string();
-    // **道那一格退了场**（照实记：死改由监督那一趟的表侧扫认，见 `control::supervise` 的
-    // `Watch::new`）——故这一手不再取道，`lane` 那一格恒为 `None`。
-    let lane = None;
-    assembly.board.attach(
-        utask::self_id(),
-        service.0,
-        name,
-        Wait::AtMost(READY_MS),
-        lane,
-    )
+    assembly
+        .board
+        .attach(utask::self_id(), service.0, Wait::AtMost(READY_MS))
 }
 
 /// 把板接上一位客人（装配者调用）：**三步**（见文件头"一问一答的次序"）。
@@ -95,10 +78,8 @@ pub fn attach_client(
 pub fn attach(
     me: TaskId,
     client: TaskId,
-    name: String,
     millis: Wait,
     tip: &mut Option<PieToken>,
-    lane: Option<PieToken>,
 ) -> Result<(), &'static str> {
     // 1+2. **一手就是"两头都装"**：本端那一枚交出去（落在本域表里——客人拿不到它，也不需要：
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 板路的名字，客侧
@@ -114,13 +95,9 @@ pub fn attach(
     }
     // 3. 板线程（只起一枚）→ 把客人那一枚转授过去 → 板路上递一格"答话的是谁" → 提示来客人了。
     let host = host(me, millis, tip)?;
-    // 死亡道：**这一位的那一条**转授给板线程（板按记号 `gone-<名字>` 在自己表里认领它）。
-    // 位置在客人那一枚转授之后：板线程这时已经起来（`host` 起过就复用）。
-    if let Some(lane) = lane {
-        let hole = mail::HolePie::from_token(lane);
-        port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
-            .map_err(|_| "board:lane")?;
-    }
+    // **照实记（"转授死亡道"那一格退场）**：这一手从前要把**装配者铸的那条道**转授给板线程
+    // （板按记号 `gone-<名字>` 在自己表里认领它，某位没了就往里推一格）。道那一族上一刀整片退场
+    // （监督那一趟改读内核那一格）⇒ 这一格与它的转授一起退场。
     let Some(tip) = *tip else {
         return Err("board:tip");
     };
@@ -139,7 +116,7 @@ pub fn attach(
     // 的 `claim` 扫的就是本域
     // 铸出去那一枚的副本），而认下之后板那一路也一直指着它写。它归**本域那张表**（`Endpoint`
     // 上只有 `claim`，没有"放下"这个动作）⇒ 本域退场时一并回收。
-    tell_guest(client, name, seed, tip).map_err(|_| "board:tell")
+    tell_guest(client, seed, tip).map_err(|_| "board:tell")
 }
 
 /// 起板线程（**就一枚**），返它的号；起过了就把那个号给回来。
@@ -200,20 +177,11 @@ pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
 ///
 /// **末格同一条理由**：那个号也只有装配者手里有（它刚转授过去），板叫不出——故随这一格一起过去。
 /// **帧形只有一处**：三项怎么排、各占多宽，全在 `bcall::Tip` 那一对 `store` / `fetch` 里。
-pub(crate) fn tell_guest(
-    who: TaskId,
-    name: String,
-    seed: PieToken,
-    into: PieToken,
-) -> Result<(), ()> {
+pub(crate) fn tell_guest(who: TaskId, seed: PieToken, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; bcall::Tip::LEN];
-    let n = bcall::Tip {
-        who,
-        name,
-        reply: seed,
-    }
-    .store_at(&mut rec, 0)
-    .ok_or(())?;
+    let n = bcall::Tip { who, reply: seed }
+        .store_at(&mut rec, 0)
+        .ok_or(())?;
     let into = mail::HolePie::from_token(into);
     into.push(&rec[..n], Wait::Forever).map_err(|_| ())?;
     into.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;

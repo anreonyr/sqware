@@ -51,14 +51,6 @@ pub struct Guest {
     who: TaskId,
     ask: Option<PieToken>,
     reply: PieToken,
-    /// 它那条**死亡道**（装配者铸、随提示那一格一起递来）。
-    ///
-    /// `None` = 还没认下来（名字认不出 / 那一条道没转授过来）⇒ **这一位死了就没有读数**。
-    /// **照实记（这一格原先另住一本账）**：板从前在自己那一侧另开一本
-    /// `Lanes = Vec<(TaskId, PieToken)>` 存 `who → 道`——与这本账**同一把键**，于是"一位客人
-    /// 一处记"变成两处记，还多出 `remember_lane` / `take_lane` 两具搬运。并进来之后
-    /// **一位客人只有一格**，两本账分成两份真相这件事从根上没了。
-    lane: Option<PieToken>,
 }
 
 impl Guest {
@@ -126,7 +118,6 @@ impl Desk {
                     who,
                     ask: None,
                     reply,
-                    lane: None,
                 });
                 Ok(slot)
             }
@@ -136,7 +127,6 @@ impl Desk {
                     who,
                     ask: None,
                     reply,
-                    lane: None,
                 }));
                 Ok(self.guests.len() - 1)
             }
@@ -158,24 +148,6 @@ impl Desk {
             .find(|(_, cell)| cell.as_ref().is_some_and(|g| g.who == who))?;
         *cell = None;
         Some(slot)
-    }
-
-    /// 记下这一位的**死亡道**（名字随提示那一格来时才知道）；重复登记 = 覆盖。
-    ///
-    /// 认不出这一位 ⇒ 什么都不做（**不是错误**：道是读数，不是判据）。
-    pub fn note_lane(&mut self, who: TaskId, lane: PieToken) {
-        if let Some(g) = self.guests.iter_mut().flatten().find(|g| g.who == who) {
-            g.lane = Some(lane);
-        }
-    }
-
-    /// 取走这一位的死亡道（**取走即清**：一条道一位客人，一次死亡一份）。
-    pub fn take_lane(&mut self, who: TaskId) -> Option<PieToken> {
-        self.guests
-            .iter_mut()
-            .flatten()
-            .find(|g| g.who == who)
-            .and_then(|g| g.lane.take())
     }
 
     /// 记下"这位客人的问话孔是**本表里的哪一枚**"。返**成不成**。
@@ -303,7 +275,6 @@ impl Desk {
             {
                 f(Gone {
                     who: guest.who(),
-                    lane: guest.lane,
                     ask: guest.ask,
                 });
                 *cell = None;
@@ -314,15 +285,17 @@ impl Desk {
     }
 }
 
-/// **被剔走那一格的三样**（趁它还在账上）：谁 / 它那条死亡道 / 它的问话孔。
+/// **被剔走那一格的两样**（趁它还在账上）：谁 / 它的问话孔。
 ///
-/// 三格各有各的下一步（推道 / 摘组 / 都没有），故**一起交出去**而不是只交号——`Guest` 那本账
-/// 剔完就把这一格清了，事后再反查就查不到"它叫什么、它挂的是哪一枚"。
+/// 两格各有各的下一步（摘组 / 都没有），故**一起交出去**而不是只交号——`Guest` 那本账剔完就
+/// 把这一格清了，事后再反查就查不到"它挂的是哪一枚"。
+///
+/// **照实记（`lane` 那一格退场）**：它从前是这三位里的第一位（"它那条死亡道"）——道那一族
+/// 上一刀在装配侧与监督侧都退了场（见 `control::supervise` 的 `Watch::new`），故板这一侧
+/// 再也没有"往道里推一格"这件事可做。
 pub struct Gone {
     /// 哪位客人。
     pub who: TaskId,
-    /// 它那条死亡道（`None` = 没认下来）。
-    pub lane: Option<PieToken>,
     /// 它交进来的问话孔（`None` = 还没挂上）。
     pub ask: Option<PieToken>,
 }
