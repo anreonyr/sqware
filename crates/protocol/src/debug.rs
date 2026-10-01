@@ -1,6 +1,6 @@
 //! debug — **一行调试面的嘴**：`debug!(...)` 就是"打一行"。
 //! 全树那二十几份逐字相同的 `fn say(msg: &str)` 与各处 `debug::put(&format!(…))` 收成这一支宏
-//! ——与 `protocol` 那支 `fail_codes!` 同一条口径：**一处定义，谁都能用**。
+//! ——与 `protocol` 的 [`WireCodes`](crate::WireCodes) 同一条口径：**一处定义，谁都能用**。
 //! **它只在 debug 构建下有效**：`cfg!(debug_assertions)` 为假时那一格不进 ⇒ release 的机器
 //! **不带解读数**（要读数就跑 dev 档，或在档里显式 `debug-assertions = true`）。
 //! **为什么是 `if cfg!(…)` 而不是两支 `#[cfg]` 宏**：这一支要在**表达式位置**也用得（今天有

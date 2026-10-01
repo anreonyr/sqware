@@ -8,7 +8,7 @@
 //! **`back` 那一格是"往哪回"**（末尾 8 字节）：客侧每趟铸一枚回信孔借给对端，
 //! [`Query`] 收的那一格就是**它在对端表里的号**——对端据此一次 `Reserve` 验出来，
 
-use crate::wire::fail_codes::OK;
+use crate::wire::OK;
 use crate::wire::id::Id;
 use crate::wire::message::Message;
 use env::PieToken;

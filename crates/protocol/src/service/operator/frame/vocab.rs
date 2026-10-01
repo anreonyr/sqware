@@ -5,7 +5,7 @@ use env::Mark;
 
 use crate::service::coalition::CoalitionId;
 use crate::service::principal::PrincipalId;
-
+use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// 一枚条目的**号**：机器用的那一个。
 /// **裸号**：与 [`PrincipalId`](crate::service::principal::PrincipalId) / [`CoalitionId`](crate::service::coalition::CoalitionId)
@@ -52,23 +52,32 @@ pub enum Where {
 /// **后两格（[`Fail::Denied`] / [`Fail::Unjudged`]）来自门外那一问**：核心一个字节都不知道
 /// 它们，但它们同样是**客侧要按下一步区分**的
 /// 答案 ⇒ 与前面六格同住这一枚类型。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[wire(also(BAD = 7))]
 pub enum Fail {
     /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来。
+    #[code(1)]
     Unknown,
     /// 那块 `Pane` 里还有东西，而这一手会**毁掉**里面的 ⇒ 先清空。
     /// 今天只有两条原语走得到它：[`Operator::land`] 的换绑（要把那块非空 `Pane` 换成砖）与
+    #[code(2)]
     NonEmpty,
     /// 寻到头是一块 `Pane`，不是一枚 `Tile` ⇒ 改用列，或者往它里面走。
+    #[code(3)]
     NotATile,
     /// 那一号不是一块 `Pane`（是一枚 `Tile`）⇒ 走不进去；列的时候则说明"那是枚 `Tile`，没什么可列"。
+    #[code(4)]
     NotAPane,
     /// 那一块 `Pane` 已经 [`PANE_CAP`] 条，装不下 ⇒ 拆层 / 扩容量。
+    #[code(5)]
     Full,
+    #[code(6)]
     Dead,
+    #[code(8)]
     Denied,
     /// 门外那一问答"判不了"：[`UNJUDGED`] ——要问的那条事实问不到。
     /// **它不承诺"等一会儿会好"**：对面不答 / 超时（会好），与那一号是碑 / 那一格是块窗格 /
+    #[code(9)]
     Unjudged,
 }
 
@@ -119,35 +128,6 @@ pub const NAME: u8 = 6;
 
 pub const SEEK: u8 = 7;
 
-/// 答话那一格。**前六格与 [`Fail`] 的前六格一一对应**，第七格不是失败域的：这一问读不懂
-/// （帧坏了 ⇒ 不猜、不崩）。**第八、九格来自门外那一问**（判据那一半住
-/// `programs/src/system/operator/core/judge.rs`），它们与 [`Fail::Denied`] / [`Fail::Unjudged`]
-/// 一一对应。
-/// 数字是**线上的**，故与动作码同住一处；[`Fail`] 是模型那一侧的名字，两者的对照表只此
-/// 一份（持树者那一侧编、客人那一侧读）。
-pub const UNKNOWN: u8 = 1;
-
-pub const NONEMPTY: u8 = 2;
-
-pub const NOTATILE: u8 = 3;
-
-pub const NOTAPANE: u8 = 4;
-
-pub const FULL: u8 = 5;
-
-pub const DEAD: u8 = 6;
-
-pub const BAD: u8 = 7;
-
-pub const DENIED: u8 = 8;
-
-/// **门外那一问答"判不了"**：这一问要的那条事实问不到——对面不答 / 超时（**会好**），
-/// 或那一号是碑 / 那一格是块窗格 / 开者那扇门封印了（**好不了**）。
-/// 与 [`DENIED`] 分家的理由只有一条，但够硬：**"没资格"与"判不了"是两件事**——混成一格，
-/// 就会把"身份服务挂了"读成"我没权限"，整机去查规矩。**它不承诺"等一会儿会好"**：
-/// 两类因在客人那一侧是同一个下一步（当趟放弃），把三因分开的是**读数**，不是第三格码。
-pub const UNJUDGED: u8 = 9;
-
 /// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）。
 pub const LINK: &str = "operator";
 
@@ -180,7 +160,6 @@ const PERMIT_BOUGH: u8 = 2;
 const PERMIT_AMONG: u8 = 3;
 
 const PERMIT_OPENER: u8 = 4;
-
 
 /// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号。
 impl env::wire::Field for Where {

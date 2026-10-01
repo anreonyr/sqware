@@ -4,7 +4,7 @@
 use env::{Mark };
 
 use crate::common::path::Path;
-
+use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
 /// 五格与 `programs/src/system/common/face/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
@@ -51,21 +51,28 @@ impl State {
 /// 失败域：五格，**前四格各对应一个不同的下一步**（照实抄 `programs/src/system/core.rs` 那四格）。
 /// 它是**协议这一侧**的名字：调度侧那四格是 `Unknown` / `BadImage` / `Full` / `NotReady`，
 /// 与这里逐格同形——两份不是"抄一遍"，是同一件事的两层（模型那一份不碰 `runtime`）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[wire(fallback = Bad)]
 pub enum Fail {
     /// 表里没这个名字，或它已经登记过。
+    #[code(1)]
     Unknown,
     /// 镜像装不上（内核 `UnitFail::BadImage`）。
+    #[code(2)]
     BadImage,
     /// 表满，或线程 / 帧产不出来（内核 `UnitFail::OoM`）。
+    #[code(3)]
     Full,
     /// 没就绪：等到期还没起来、半路死了、或此刻不该起（已在跑）。
+    #[code(4)]
     NotReady,
     /// **本端读不懂那一句**（帧坏了 / 答话那一格解不动 / 期限到了还没答）。
     /// 它在**失败表外**（同板、树那两族的先例）：它不是"持表那一侧说的事"，是**这一问没走到**。
     /// 对本端而言与"这条路别指望了"同一个下一步，故不往 [`Fail`] 的语义格里塞。
+    #[code(5)]
     Bad,
     /// **判面拒**：这一问不属于它进来的那一面——**终态**（换一面 / 别重试）。
+    #[code(6)]
     Denied,
 }
 
@@ -76,25 +83,6 @@ pub const START: u8 = 2;
 pub const STOP: u8 = 3;
 
 pub const STATE: u8 = 4;
-
-/// 答话那一格。**前四格与 [`Fail`] 的调度侧四格一一对应**；后两格各有各的来路：
-/// [`DENIED`] 是**判面拒**（持表那一侧判的：这一问不属于它进来的那一面），[`BAD`] 不是对端说的事
-/// ——**这一问读不懂**。
-/// 数字是**线上的**；[`Fail`] 是模型那一侧的名字，两者的对照表只此一份（持表那一侧编、
-/// 客人那一侧读）。
-pub const UNKNOWN: u8 = 1;
-
-pub const BADIMAGE: u8 = 2;
-
-pub const FULL: u8 = 3;
-
-pub const NOTREADY: u8 = 4;
-
-pub const BAD: u8 = 5;
-
-/// **判面拒**：这一问不属于它进来的那一面（读面发不出写）。**终态**——换一面或别指望，
-/// 与调度侧那几格（名册本来就认得的事）分开。
-pub const DENIED: u8 = 6;
 
 /// 这条路叫什么（泊位那一格）：**两侧同一个**。
 pub const LINK: &str = "control";

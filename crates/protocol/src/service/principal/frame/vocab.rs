@@ -4,6 +4,7 @@
 use env::{Mark };
 
 use crate::common::path::Path;
+use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PrincipalId(usize);
@@ -26,15 +27,19 @@ impl PrincipalId {
 /// 失败域：三格，每格一个**不同的下一步**。
 /// **`Resolve` 与三条谱系读没有失败域**——读是公开的（答案不是秘密，Principal 不授予任何
 /// 东西）；这里三格只被写的那两条与"查无此节点"用。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[wire(also(BAD = 4))]
 pub enum Fail {
     /// 你不是那一个：不是写名册的那一枚（`Bind`/`Unbind`）、不是"当前正好代表 `p`"的那一枚
     /// （`derive`）、或目标不在**你自己那一支**里（`adopt`）。调用方要改的是：**该请谁来做**
     /// 或**换一个目标**。
+    #[code(1)]
     Denied,
     /// 这条 PrincipalId 不在树里，或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**。
+    #[code(2)]
     Unknown,
     /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
+    #[code(3)]
     Full,
 }
 
@@ -57,16 +62,6 @@ pub const ADOPT: u8 = 6;
 pub const WAIVE: u8 = 7;
 
 pub const DROP: u8 = 8;
-
-/// 答话那一格：失败域那几格 + "读不懂"。
-/// [`BAD`] 在失败表外（同板/树的先例）：它不是"哪个协议说的事"，是**这一问读不懂**。
-pub const DENIED: u8 = 1;
-
-pub const UNKNOWN: u8 = 2;
-
-pub const FULL: u8 = 3;
-
-pub const BAD: u8 = 4;
 
 // 长度、编 / 解、答话那几手**本体在 [`crate::frame`]**——principal 与 coalition 同形，故只有
 // 一份；这里只按本族的名字转出来（`mod.rs` 那一句点名转出照旧，调用点一处

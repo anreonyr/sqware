@@ -5,6 +5,7 @@ use crate::wire::id::Id;
 use env::{Mark };
 
 use crate::common::path::Path;
+use crate::wire::OK;   // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct CoalitionId(usize);
@@ -22,16 +23,21 @@ impl CoalitionId {
 }
 
 /// 失败域：**三格**，每格一个**不同的下一步**。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[wire(also(BAD = 3))]
 pub enum Fail {
     /// 这枚盟不存在（从来没铸过），或这个 TID 没绑过。调用方要改的是：**我手里这个号是假的**
     /// 或**我还没有身份**。
+    #[code(1)]
     Unknown,
     /// `try_reserve` 备不下。调用方要改的是：**晚点再来**。
+    #[code(2)]
     Full,
     /// 你手里那一枚门牌给不了这一条：**换一枚**（或换一位客人），别重试。
+    #[code(4)]
     Denied,
     /// **你不是这一枚盟的盟主** ⇒ 别拿它来代报名（要改的是"换一条路"，不是"再试一次"）。
+    #[code(5, NOT_CHIEF)]
     NotChief,
 }
 
@@ -138,20 +144,6 @@ pub const BLOC: u8 = 6;
 
 /// **代报名**：把**另一位**放进盟主自己立的那一枚盟。
 pub const ADMIT: u8 = 7;
-
-/// 答话那一格：失败域那三格 + "读不懂"。
-/// [`BAD`] 在失败表外（同板 / 树 / 身份服务那三家的先例）：它不是"哪个协议说的事"，
-/// 是**这一问读不懂**。
-pub const UNKNOWN: u8 = 1;
-
-pub const FULL: u8 = 2;
-
-pub const BAD: u8 = 3;
-
-pub const DENIED: u8 = 4;
-
-/// 你不是这一枚盟的盟主：代报名只有**立它那位**做得成。
-pub const NOT_CHIEF: u8 = 5;
 
 // 长度、编 / 解、答话那几手**本体在 [`crate::frame`]**——coalition 与 principal 同形（这一族
 // 的帧就是照它立的），故只有一份；这里只按本族的名字转出来（`mod.rs` 那一句

@@ -10,7 +10,6 @@
 //! 长度全部由字段宽度求和得出（`#[derive(env::Frame)]` 那一处定义），手写的那五枚自由函数
 //! （`pack_ask` / `pack_arm` / `unpack_ask` / `pack_time` / `unpack_time`）与那四个长度常量
 
-use super::fail::Fail;
 use env::{Mark, PieToken};
 use protocol::wire::message::Message;
 
@@ -25,22 +24,9 @@ pub const BACK: Mark = Mark::of("rtc-back");
 
 /// 答话那一格：收下了——**全协议那一个"没失败"**（`protocol::OK`），本族不再写第二遍。
 pub use protocol::OK;
-/// 那一格有人了。
-pub const TAKEN: u8 = 1;
-/// 那个时刻已经过去了。
-pub const PAST: u8 = 2;
-/// 这一问读不懂 / 那一趟没走到。
-pub const BAD: u8 = 3;
-
-protocol::fail_codes! {
-    /// 失败域 → 答话那一格（**一处编**：客人那一侧与驱动那一侧看同一张表）。
-    /// `None`（没失败）⇒ `OK`；反向（[`code_to_fail`]）只在双射时生成——本表是双射
-    /// （三个失败三个码），故读的人不必另抄一份对照。
-    bijective Fail; OK;
-    Fail::Taken => TAKEN,
-    Fail::Past => PAST,
-    Fail::Denied => BAD,
-}
+/// 失败域与答话那一格**一处编**：三个码与两向读法由 [`protocol::WireCodes`] 从
+/// [`super::fail::Fail`] 派生（住 `fail.rs`），本文件只把它们转出来给这一族的调用点用。
+pub use super::fail::{BAD, PAST, TAKEN, code_to_fail, fail_to_code};
 
 /// **问那一形 · 「现在几点」**：动作码 ＋ 那一格。
 /// 动作码由 [`Now::of`] 钉进来（表那一格是裸字节，是构造那一手保证的）。

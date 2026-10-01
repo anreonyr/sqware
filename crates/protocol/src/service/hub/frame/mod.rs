@@ -13,8 +13,7 @@ use env::{Pair, PieToken};
 
 use crate::wire::message::Message;
 
-pub use crate::wire::fail_codes::OK;
-
+pub use crate::wire::OK;
 
 pub mod bond;
 pub mod claim;

@@ -3,8 +3,6 @@
 use crate::wire::id::Id;
 use env::{Mark, PieToken, TaskId};
 
-
-
 pub mod vocab;
 
 pub use self::vocab::*;
@@ -33,9 +31,9 @@ impl env::wire::Field for PrincipalId {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
-/// 本族只把它转出来。
-pub use crate::wire::fail_codes::OK;
+/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+pub use crate::wire::OK;
 
 pub use crate::wire::frame::{Query, Reply};
 
@@ -128,16 +126,6 @@ pub fn reply_present(present: bool, at: PrincipalId) -> Reply {
         flag: present,
         ..Reply::value(at)
     }
-}
-
-crate::fail_codes! {
-    /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
-    /// **本表只装写的那两条与"查无此节点"**：读的答案（没绑 / 它是根）走 `OK` + `flag`，
-    /// 不进这张表（见文件头）。
-    bijective Fail; OK;
-    Fail::Denied => DENIED,
-    Fail::Unknown => UNKNOWN,
-    Fail::Full => FULL,
 }
 
 const _: () = assert!(BACK.get() != Mark::NONE.get());

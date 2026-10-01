@@ -44,6 +44,9 @@ pub use ledger::key::{KEY_LEN, Key};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
+/// **`WireCodes`**：失败域 ↔ 线上那一格的码表（实现在 `mold`，这里只转出来——与上面的
+/// `Frame` 同一条：`protocol` 不依赖 `mold`，只能经这里取）。
+pub use mold::WireCodes;
 pub use ledger::pair::{PAIR_LEN, Pair};
 pub use abi::permission::{Access, Permission, Policy};
 pub use wire::pie_kind::PieKind;

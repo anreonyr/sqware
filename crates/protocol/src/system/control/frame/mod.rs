@@ -16,9 +16,7 @@
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
 
-
 use crate::wire::message::Message;
-
 
 pub mod vocab;
 
@@ -76,37 +74,11 @@ impl Message for Said {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 `crate::fail_codes`，本族只把它转出来。
-pub use crate::wire::fail_codes::OK;
+/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+pub use crate::wire::OK;
 
 use self::vocab::{MINT, START, STATE, STOP};
-
-/// 失败域 → 答话那一格。`None`（没失败）⇒ [`OK`]。
-pub const fn fail_to_code(fail: Option<Fail>) -> u8 {
-    match fail {
-        None => OK,
-        Some(Fail::Unknown) => UNKNOWN,
-        Some(Fail::BadImage) => BADIMAGE,
-        Some(Fail::Full) => FULL,
-        Some(Fail::NotReady) => NOTREADY,
-        Some(Fail::Bad) => BAD,
-        Some(Fail::Denied) => DENIED,
-    }
-}
-
-/// 线上答话那一格 → 失败域。`OK` ⇒ `None`；**表外与 [`BAD`] 都折成 [`Fail::Bad`]**。
-/// 那两格不是同一件事（"读不懂这一句"与"对端说它读不懂"），但对**本端**是同一个下一步：
-pub const fn code_to_fail(code: u8) -> Option<Fail> {
-    match code {
-        OK => None,
-        UNKNOWN => Some(Fail::Unknown),
-        BADIMAGE => Some(Fail::BadImage),
-        FULL => Some(Fail::Full),
-        NOTREADY => Some(Fail::NotReady),
-        DENIED => Some(Fail::Denied),
-        _ => Some(Fail::Bad),
-    }
-}
 
 /// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 [`Ask::back`] 带。
 #[derive(Clone, PartialEq, Eq, Debug)]

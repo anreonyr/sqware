@@ -7,8 +7,6 @@ use crate::wire::message::Message;
 use crate::service::principal::PrincipalId;
 use env::{Mark, PieToken, TaskId};
 
-
-
 pub mod vocab;
 
 pub use self::vocab::*;
@@ -37,9 +35,9 @@ impl env::wire::Field for CoalitionId {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
-/// 本族只把它转出来。
-pub use crate::wire::fail_codes::OK;
+/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+pub use crate::wire::OK;
 
 pub use crate::wire::frame::{Query, Reply};
 
@@ -262,17 +260,6 @@ impl Message for Union {
             _ => None,
         }
     }
-}
-
-crate::fail_codes! {
-    /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
-    /// 四格：每格语义见各自的注。
-    /// 数字按本族失败域的顺序排（`BAD` 收尾且在表外）——别家同一个概念排的是别的号，那不是约定。
-    bijective Fail; OK;
-    Fail::Unknown => UNKNOWN,
-    Fail::Full => FULL,
-    Fail::Denied => DENIED,
-    Fail::NotChief => NOT_CHIEF,
 }
 
 const _: () = assert!(BACK.get() != Mark::NONE.get());

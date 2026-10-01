@@ -9,15 +9,20 @@ use env::Mark;
 use crate::wire::message::Message;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**。
-/// 它住本文件（与那四个状态码同一处）：**失败域与状态码是一张双射表**（见下面的
-/// [`fail_codes!`](crate::fail_codes)）。账那一边（`Lines` 的四原语）按它折，客侧那一侧也按它认。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// 它住本文件（与那四个状态码同一处）：码由 [`crate::WireCodes`] 从本枚举派生
+/// （`UNKNOWN`/`TAKEN`/`DENIED` ＋ 只有码的 `BAD`，加两向读法）。账那一边（`Lines` 的四原语）
+/// 按它折，客侧那一侧也按它认。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[wire(also(BAD = 4))]
 pub enum Fail {
     /// 本控制器上没有这条线（没有主、或线号越出 `[1, device_count]`）⇒ 回头查树。
+    #[code(1)]
     Unknown,
     /// 这条线有人了 ⇒ 换个名字，或者等它 `vacate`。
+    #[code(2)]
     Taken,
     /// 那一帧推不出去（口封了 / 对端没了）⇒ 按"没投成"算，不置忙。
+    #[code(3)]
     Denied,
 }
 
@@ -34,23 +39,9 @@ const _: () = assert!(BACK_MARK.get() != Mark::of(LANE).get());
 const _: () = assert!(BACK_MARK.get() != Mark::of("line-tip").get());
 const _: () = assert!(BACK_MARK.get() != Mark::NONE.get());
 
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
-/// 本族只把它转出来。
-pub use crate::wire::fail_codes::OK;
-
-/// 状态码与失败域**同源**：一格对应一个不同的下一步。
-pub const UNKNOWN: u8 = 1;
-pub const TAKEN: u8 = 2;
-pub const DENIED: u8 = 3;
-pub const BAD: u8 = 4;
-
-crate::fail_codes! {
-    /// 失败域 → 状态码（**一处编**：客户与路由者看同一张表）。`None`（没失败）⇒ `OK`。
-    bijective Fail; OK;
-    Fail::Unknown => UNKNOWN,
-    Fail::Taken => TAKEN,
-    Fail::Denied => DENIED,
-}
+/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// （`WireCodes` 派生的两向读法就是拿它当"没失败"那一格）。
+pub use crate::wire::OK;
 
 /// 登记那一帧：动作码 ＋ **线号**。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]

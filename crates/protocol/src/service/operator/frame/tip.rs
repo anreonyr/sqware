@@ -5,10 +5,6 @@ use env::{PieToken, TaskId};
 
 use crate::common::path::{Path, PathBuf};
 
-
-use super::vocab::{DEAD, DENIED, FULL, Fail, NONEMPTY, NOTAPANE, NOTATILE, UNJUDGED, UNKNOWN};
-use crate::wire::fail_codes::OK;
-
 /// 提示之路上的两个 `kind`（首格；表外 ⇒ 这一帧读不懂）。
 const TIP_PLATE: u8 = 1;
 
@@ -151,21 +147,6 @@ impl TipIn {
             _ => None,
         }
     }
-}
-
-crate::fail_codes! {
-    /// 失败域 → 答话那一格（`None` = 一个失败都不是）。
-    /// **九格成一枚完整双射**：前六格是核心自己的失败，后两格是门外那一问的两格
-    /// ——`DENIED` / `UNJUDGED` 本来就在线上答得出来，故客侧读得回来。`BAD` 在表外。
-    bijective Fail; OK;
-    Fail::Unknown => UNKNOWN,
-    Fail::NonEmpty => NONEMPTY,
-    Fail::NotATile => NOTATILE,
-    Fail::NotAPane => NOTAPANE,
-    Fail::Full => FULL,
-    Fail::Dead => DEAD,
-    Fail::Denied => DENIED,
-    Fail::Unjudged => UNJUDGED,
 }
 
 // 这几格是**记号与名字**：两侧都要按它认领/铸孔，故只能有一份（规则 5）。

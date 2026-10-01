@@ -8,7 +8,6 @@ use crate::common::path::{ PathBuf};
 use crate::wire::id::Id as _;
 use crate::wire::message::Message;
 
-
 pub mod road;
 pub mod tip;
 pub mod vocab;
@@ -37,11 +36,9 @@ impl env::wire::Field for EntryId {
     }
 }
 
-
-
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
-/// 本族只把它转出来。
-pub use crate::wire::fail_codes::OK;
+/// 成功那一格：**全协议同一个号**——定义在 [`crate::wire::OK`]，本族只把它转出来
+/// （[`crate::WireCodes`] 派生的两向读法就是拿它当"没失败"那一格）。
+pub use crate::wire::OK;
 
 use self::vocab::{FIND, LAND, LIST, NAME, PART, SEEK, TRIM};
 

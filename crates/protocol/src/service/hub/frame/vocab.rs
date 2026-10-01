@@ -2,7 +2,7 @@
 //! 记号（`BACK_MARK`/`ALIVE_MARK`）· 设备路与三枚键名（`DEV_ROAD`/`BOOT`/`DTB`/`IRQ`）· 失败词汇（`Fail`）。
 
 use crate::common::path::Path;
-use crate::wire::fail_codes::OK;
+use crate::wire::OK;
 
 /// 报名：许我驱这一类。
 pub const BOND: u8 = 1;
@@ -39,44 +39,23 @@ pub const DTB: &str = "dtb";
 /// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）。
 pub const IRQ: &str = "irq";
 
-/// 没这件 / 这一类不在册上（这台机器没有这一类——是事实，不是错误）。
-pub const UNKNOWN: u8 = 1;
-
-/// 有人了（活着的不是我的主人）⇒ 换一台，或等它空出来。
-pub const TAKEN: u8 = 2;
-
-/// 授不出（门闩那一手没成）⇒ 装配错。
-pub const DENIED: u8 = 3;
-
-/// 那一枚孔用不动（对端没了 / 这一趟的路断了）⇒ 收摊。
-pub const DEAD: u8 = 4;
-
-/// **这一帧读不懂**（长短不对 / 形状不对）。不是对端说的事，是本端判的。
-pub const BAD: u8 = 5;
-
 /// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；[`Fail::Bad`] 是本端那一格。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
 pub enum Fail {
     /// 没这件 / 这一类不在册。
+    #[code(1)]
     Unknown,
     /// 有活着的主人。
+    #[code(2)]
     Taken,
     /// 授不出。
+    #[code(3)]
     Denied,
     /// 那一枚孔用不动（**本端判的**：这一枚的资源没了 / 权限不够 / 已交出去）。
+    #[code(4)]
     Dead,
     /// 这一趟没走到 / 读不懂（**本端判的**）。
+    #[code(5)]
     Bad,
 }
 
-crate::fail_codes! {
-    /// 失败域 → 状态码（一处编：客侧与 hub 看同一张表）。
-    /// **五格是双射**（含 [`Fail::Bad`]）：表外那一格由客侧那一手折成 [`Fail::Bad`]
-    /// （同 control 的 `read`）。
-    bijective Fail; OK;
-    Fail::Unknown => UNKNOWN,
-    Fail::Taken => TAKEN,
-    Fail::Denied => DENIED,
-    Fail::Dead => DEAD,
-    Fail::Bad => BAD,
-}
