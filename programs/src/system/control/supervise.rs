@@ -156,7 +156,14 @@ impl Watch {
     ///
     /// **有界节拍只服务两件事**（照实记：理由归位）：① `Relation::presence` 为假的那几台
     /// **没有道**——它们的死只有表侧那一扫收得到；② **收场期间**判决要反复读账（它不是一次
-    /// 事件，是一个不动点）。两者都不需要 ⇒ **永远挂起**（事件一到就醒，零轮询）。
+    /// 事件，是一个不动点）。
+    ///
+    /// **照实记（"两者都不需要 ⇒ 永远挂起（零轮询）"那一句与实情分家）**：那两件事**今天一件
+    /// 都没少**——逐份声明数：在单上的 **23 台里 11 台 `presence: true`、12 台为假** ⇒ `tick`
+    /// 那个表达式（`blind || settling || self.lanes.iter().any(|l| l.road.is_none())`）**每一拍都
+    /// 为真** ⇒ 这一趟从来不是"永远挂起"，而是 **10 ms 一拍在跑**（每拍还要 `sweep` 一次账）。
+    /// **"零轮询"要等 `presence` 撤掉那一刀**（都挂上道，`any(…)` 才为假）——故这一句留着不当
+    /// 承诺，当**那一刀的判据**：那时它才该成真。
     ///
     /// 返 `true` = **全收讫**（这一趟的结局）；`false` = 有人没收讫，交本域退场时的级联。
     pub fn run(&mut self, control: &mut Control) -> bool {
@@ -243,13 +250,23 @@ impl Watch {
             //     只剩常驻 / 听令的台时**不兜底**——听令那一台的等待归外面那一层（喂它的那个人）。
             if clock() - quiet_at >= IDLE_NS {
                 if !settling && core::walking(&control.table) {
-                    debug!("system: idle {}ms with walkers alive; forcing shutdown", IDLE_MS);
+                    // **这两句也走不设门的那一手**（照实记：与 `mount_grants` 那条同一类——
+                    // 上一刀把那一批兑现时漏了这两句；兜底"出声"若在 release 里哑掉，
+                    // 就只剩退场那一层的 `system: doom`，说的是"没走完"、没说"卡在哪一档"）。
+                    debug::put(&alloc::format!(
+                        "system: idle {}ms with walkers alive; forcing shutdown",
+                        IDLE_MS
+                    ));
                     forced = true;
                     control.stop_rest();
                     settling = true;
                     quiet_at = clock();
                 } else if settling {
-                    debug!("system: idle {}ms while settling; {} still alive", IDLE_MS, owed);
+                    debug::put(&alloc::format!(
+                        "system: idle {}ms while settling; {} still alive",
+                        IDLE_MS,
+                        owed
+                    ));
                     return false;
                 } else {
                     quiet_at = clock();
@@ -264,7 +281,8 @@ impl Watch {
 /// **照实记（这一格的理由归了位）**：从前它的理由写成"只为表侧惰性剔死兜底"，还夹着"最后一位
 /// 没有道"那半条（位次时代）。今天它只服务两件事：① `Relation::presence` 为假的那几台
 /// **没有道**——它们的死只有表侧那一扫收得到；② **收场期间**判决要反复读账（`core::done` 是
-/// 一个不动点，不是一次事件）。两者都不需要 ⇒ **永远挂起**（见 [`Watch::run`]）。
+/// 一个不动点，不是一次事件）。**两件事今天都还在**（23 台里 12 台 `presence: false`）⇒ 这一拍
+/// 是真的在跑，不是回退路——"永远挂起"那一句的照实记与判据见 [`Watch::run`]。
 ///
 /// **它为什么是 10 而不是 1**：表侧那一扫要对每一行在册的服务问一次 `Join{task, POLL}`，
 /// 故节拍直接是这趟开销的倍数；10 ms 够让"某位静默地没了"在监督读数里及时落定，又不把本线程
