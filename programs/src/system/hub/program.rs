@@ -52,7 +52,6 @@ pub static PROGRAM: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "coalition"]),
         ending: Some(Ending::Resident),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

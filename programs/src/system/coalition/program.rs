@@ -18,7 +18,6 @@ pub static PROGRAM: Program = Program {
         deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Resident),
         presence: true,
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

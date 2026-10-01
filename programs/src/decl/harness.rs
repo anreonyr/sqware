@@ -48,7 +48,6 @@ pub static GUEST: Program = Program {
         deps: Some(&["operator", "router"]),
         ending: Some(Ending::Transient),
         presence: true,
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -67,7 +66,6 @@ pub static PASSER: Program = Program {
         deps: Some(&[]),
         ending: Some(Ending::Transient),
         presence: true,
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -85,7 +83,6 @@ pub static LODGER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -104,7 +101,6 @@ pub static SLEEPER: Program = Program {
         deps: Some(&["operator", "rtc"]),
         ending: Some(Ending::Transient),
         presence: true,
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -122,7 +118,6 @@ pub static SUBJECT: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -140,7 +135,6 @@ pub static MEMBER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "coalition", "principal"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -152,6 +146,10 @@ pub static MEMBER: Program = Program {
 // ── 探针（只读数；负证那一族）────────────────────────────────────────────
 
 /// 一位**没有身份**的任务去撞树的门（`bind: false`）——"没绑身份 ⇒ 拒绝"的反例。
+///
+/// **这一行 `bind: false` 从前是"没写"**（照实记见 `Relation::DEFAULT`）：全表唯一的反例靠
+/// **省略**那一格表达，而它自己的注释里却写着 `bind: false` ⇒ 那一格翻成"正常那一档"之后，
+/// 这里**明写**。
 pub static PROBE_DENIED: Program = Program {
     identity: Identity {
         name: "probe-denied",
@@ -159,6 +157,7 @@ pub static PROBE_DENIED: Program = Program {
     },
     relation: Relation {
         deps: Some(&["operator"]),
+        bind: false,
         ending: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
@@ -177,7 +176,6 @@ pub static PROBE_OWNER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "uart"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -195,7 +193,6 @@ pub static PROBE_RULE: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -215,7 +212,6 @@ pub static PROBE_RULE_OTHER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "probe-rule"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -233,7 +229,6 @@ pub static PROBE_LEASE: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -253,7 +248,6 @@ pub static PROBE_BOUND: Program = Program {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         presence: true,
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -283,7 +277,6 @@ pub static PROBE_CONTROL: Program = Program {
     relation: Relation {
         deps: Some(&["operator", SCENE]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -318,7 +311,6 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -338,7 +330,6 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        bind: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
