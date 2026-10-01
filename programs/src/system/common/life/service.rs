@@ -96,7 +96,7 @@ impl Start {
             Start::Desk(E_COALITION) => "coalition: desk",
             Start::Dead(E_COALITION) => "inner: group dead",
             // 设备账（`E_HUB`）：树 / 物料 / 盟册那面 / 自带的常驻圈（它不用 `carrier`：
-            // 两个来路——那只组 ＋ 探活那一拍，见 `system/hub/server.rs`）。
+            // 两个来路——那只组 ＋ 探活那一拍，见 `system/hub/serve/mod.rs`）。
             Start::Tree(E_HUB) => "hub: tree",
             Start::Load(E_HUB) => "hub: no machine",
             Start::Face(E_HUB) => "hub: no league plate",

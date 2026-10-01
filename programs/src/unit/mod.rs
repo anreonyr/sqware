@@ -1,4 +1,4 @@
-//! program — **一台程序是什么**：它的全部装配声明，都写在它自己那份 `program.rs` 里。
+//! unit — **一台程序是什么**：它的全部装配声明，都写在它自己那份 `program.rs` 里。
 
 use env::ProgramKind;
 

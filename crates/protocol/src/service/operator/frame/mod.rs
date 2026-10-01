@@ -39,7 +39,7 @@ impl env::wire::Field for EntryId {
 
 
 
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::wire::fail_codes::OK;
 

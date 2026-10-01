@@ -15,7 +15,7 @@
 // 递孔，自己不上树（"往树上立一格"那件事由**持树者在自己核里落**，装配者只递那一枚与一条路，
 // 见 [`Tip`] 与 `programs/src/system/operator/plate.rs::plate`）。
 // **挂上树这件事合设计**：树是"名字 → 资源"那本目录，谁要挂谁自己上来（真客人是
-// `harness/src/probe_control.rs`）。**实现侧**（持树者）
+// `harness/src/probe/probe_control.rs`）。**实现侧**（持树者）
 // 与**装配侧**（把持树者接上客人 / 认下提示之路）住 `programs/src/system/operator/{server,bridge}.rs`。
 // 下面这段是那一台的说明——它讲的是"怎么跑"。
 //!  同一手（[`endpoint`](crate::communication::establish::endpoint)：铸本端那一枚 ＋ 认下对端那一枚），

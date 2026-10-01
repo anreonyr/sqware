@@ -1,5 +1,5 @@
 //! coalition 的**帧那一半** —— 帧与码（内核那一只手的别名在 `protocol` 那一侧的 `mod.rs`）。
-//! 本文件**不做裁决**：盟册的规矩全在实现侧那一本账里（`programs/src/system/coalition/core.rs`）。这里只有三件事——
+//! 本文件**不做裁决**：盟册的规矩全在实现侧那一本账里（`programs/src/service/coalition/core.rs`）。这里只有三件事——
 //! 把失败域翻成答话码、把答案编进答话那一格、以及**本族**那几格码 / 记号 / **窗**那一档。
 
 use crate::wire::id::Id;
@@ -37,7 +37,7 @@ impl env::wire::Field for CoalitionId {
     }
 }
 
-/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
+/// 成功那一格：**全协议同一个号**——定义在 `protocol/src/wire/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
 pub use crate::wire::fail_codes::OK;
 

@@ -234,7 +234,7 @@ doctest = false
 
 # 共享组台：等待者（U 态）与台主（S 态，**景 `group` 的引导镜像**）。
 # 台主一次投信，看**两个等待者是不是都醒**（共享组的整链放行），以及那条消息
-# **只归一个人**——见 `harness/src/group.rs` 头注。
+# **只归一个人**——见 `harness/src/bench/group.rs` 头注。
 [[bin]]
 name = "prog-waiter"
 path = "src/bench/group/waiter.rs"

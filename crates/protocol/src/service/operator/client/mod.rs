@@ -59,7 +59,7 @@ pub enum Mine {
 /// **一面持树者**：一条装好的会话（对端 = 持树者）。
 /// **包住的是 [`Session`]，不是门牌**：树不像 principal / coalition 那样"一枚门牌即可"——
 /// 它要一条装好的会话（问话孔 + 答话路 + 对端号），故 [`Face::of`] 的入参就是 [`Session`]。
-/// 已经持有 `Session`、还要在**同一条会话**上编自己那两枚门牌的地方（`driver/uart/desk.rs`、
+/// 已经持有 `Session`、还要在**同一条会话**上编自己那两枚门牌的地方（`driver/uart/adapt/desk.rs`、
 /// 两份 `serve_tree`）走 [`Face::from`]——它按值复制那三格（`Endpoint` 是 `Copy`、放下无事）。
 /// **它不再往下漏别的**：调用方拿到的只有 [`Pane`] / [`Tile`] 与 [`Face::host`]；
 /// `Endpoint` / `Sender` / `Receiver` / `Where` 一个都不出。

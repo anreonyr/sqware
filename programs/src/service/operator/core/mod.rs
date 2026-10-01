@@ -247,7 +247,7 @@ impl Operator {
                 // **先要位、再落格**：条数那一闸管的是`PANE_CAP`，这两行管**内存**。
                 // 少了它们，分配失败走的是 `handle_alloc_error`（abort）——而同一句"备不下就
                 // 如实报"在仓里另外一处是 `try_reserve → Full`：`Desk::admit`
-                // （`crates/protocol/src/system/desk.rs`）。**同一句话，两处一个纪律**
+                // （`programs/src/system/common/face/desk.rs`）。**同一句话，两处一个纪律**
                 self.slots.try_reserve(1).map_err(|_| Fail::Full)?;
                 self.kids_mut(at)?.try_reserve(1).map_err(|_| Fail::Full)?;
                 let fresh = EntryId::new(self.slots.len());

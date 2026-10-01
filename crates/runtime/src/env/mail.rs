@@ -411,7 +411,7 @@ impl TolePie {
     ///
     /// `PieToken::NONE` = 没等到（或挂起过——见 `env::abi::call` 的 `ToleCall::Await`）。
     /// **这一格不循环**：组的返回是**提示**（"快照变了"），"等到没有"是调用点的循环
-    /// （见 `harness/src/waiter.rs`：契约就是"别把一次返回当终局"）。
+    /// （见 `harness/src/bench/group/waiter.rs`：契约就是"别把一次返回当终局"）。
     pub fn await_(&self, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {
         env::tole::await_(self.token, millis)
     }

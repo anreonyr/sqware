@@ -206,7 +206,7 @@ pub static PROBE_BOUND: UnitFile = UnitFile {
 /// task-4 那条挂载路挂出过一块**查得到、取不回**的门牌（铸入口的是一枚一次性边沿线程，
 /// 它一收尾，持树者表里那枚副本就被内核的派生链级联摘掉）。这一台量的正是那件事的反面：
 /// **在另一个域里**照 principal / coalition 逐字同形的路找上门、把门牌取回来、问一句话。
-/// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
+/// 判据两条（`harness/src/probe/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 /// **它排在最后**（`after` 里那条 [`SCENE`] 边）：那一面是在**整表起完**之后才挂上树的
 /// （`Assembly::mount_control`，由 `system/main.rs` 的相四叫）——那**不是一个台**，图里本来

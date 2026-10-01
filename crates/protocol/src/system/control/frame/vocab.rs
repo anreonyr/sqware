@@ -7,7 +7,7 @@ use crate::common::path::Path;
 
 
 /// Service 的生命阶段。**失败不在这里**——失败由 [`Fail`] 承载（两者是两件事）。
-/// 五格与 `programs/src/system/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
+/// 五格与 `programs/src/system/common/face/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**：
 /// "有界预算试几次"、"放弃之后算什么"都是 Server 的策略，不在这里另立一格（那一笔账见
 /// `crates/protocol/src/system/mod.rs` 的"预算与放弃"）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
