@@ -83,6 +83,10 @@ const PROBE_MS: usize = 1000;
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
 /// 的早退步，失败域在末尾**折一次**。
 pub fn serve() -> Result<(), Start> {
+    // **照实记（第 39/40 轮那条 `marks=2` 的红）**：红跑里本域**已经铸了那两枚孔、物料也到了**
+    // （装配者那行 `system: enrolled 17 supplies for hub` 在），而本域**一句自己的读数都没打** ⇒
+    // 卡在"起手第一句读数之前"。这一行就分两件可能：**进去了**（卡在里面）／**没进去**（更前面）。
+    protocol::debug::put("hub: serve enter");
     // 一～七：起手。
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = utask::sire();
