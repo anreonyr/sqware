@@ -49,7 +49,6 @@ pub static GUEST: Program = Program {
         deps: Some(&["operator", "router"]),
         ending: Some(Ending::Transient),
         presence: true,
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -89,7 +88,6 @@ pub static LODGER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -110,7 +108,6 @@ pub static SLEEPER: Program = Program {
         deps: Some(&["operator", "rtc"]),
         ending: Some(Ending::Transient),
         presence: true,
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -130,7 +127,6 @@ pub static SUBJECT: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -150,7 +146,6 @@ pub static MEMBER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "coalition", "principal"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -172,7 +167,6 @@ pub static PROBE_DENIED: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        operator: true,
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -191,7 +185,6 @@ pub static PROBE_OWNER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "uart"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -211,7 +204,6 @@ pub static PROBE_RULE: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -233,7 +225,6 @@ pub static PROBE_RULE_OTHER: Program = Program {
     relation: Relation {
         deps: Some(&["operator", "probe-rule"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -253,7 +244,6 @@ pub static PROBE_LEASE: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -275,7 +265,6 @@ pub static PROBE_BOUND: Program = Program {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         presence: true,
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -308,7 +297,6 @@ pub static PROBE_CONTROL: Program = Program {
         deps: Some(&["operator"]),
         after_scene: true,
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -345,7 +333,6 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },
@@ -367,7 +354,6 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
     relation: Relation {
         deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },

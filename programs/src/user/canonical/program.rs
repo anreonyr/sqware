@@ -87,7 +87,6 @@ pub static PROGRAM: Program = Program {
         deps: Some(&["operator", "uart"]),
         ending: Some(Ending::Told),
         presence: true,
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },

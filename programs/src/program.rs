@@ -74,7 +74,7 @@ pub enum Spot {
 ///
 /// ```text
 ///   Identity   它是谁（清单名 / 特权级 / 角色 / 进哪几张景 / 是不是引导镜像）
-///   Relation   它跟谁有边（位次 / 存在信号 / 树 / 身份 / 持树者 / 眼睛）
+///   Relation   它跟谁有边（依赖 / 排最后 / 存在信号 / 身份 / 持树者 / 眼睛）
 ///   Demand     它起手要什么（来源 / 死在第几步 / 那几手 setup）
 /// ```
 ///
@@ -169,8 +169,17 @@ pub enum Ending {
 
 /// **装配关系**：编排域把它接进来时那几条边。
 ///
-/// **这一块只有装配者读**：依赖 / 排最后 / 存在信号 / 结束方式 / 树 / 身份 / 持树者 / 眼睛——都是
+/// **这一块只有装配者读**：依赖 / 排最后 / 存在信号 / 结束方式 / 身份 / 持树者 / 眼睛——都是
 /// "这一台与那一台之间有一条什么边"，与它自己是谁（[`Identity`]）、起手要什么（[`Demand`]）分开。
+///
+/// **照实记（`operator` 那一格退场：推得出来的事不该再写一遍）**：那一格答"接不接持树者那棵树"，
+/// 而**那件事已经写在 [`Relation::deps`] 里了**——树就是持树者那一本目录（`find` 回入口、`land`
+/// 落自己那几格），故"要用树的东西"与"要问 `operator` 那一族"是同一件事。**量过**（35 份声明逐
+/// 份核）：写 `operator: true` 的正是 `deps` 含 `"operator"` 的那 **21** 台，写 `false` 的 **0** 台；
+/// 余下 14 份里 12 份**没写** `deps`（默认 `None`）、2 份写 `deps: Some(&[])`（`passer` 与持树者
+/// 自己）——两处都空。今天那一手住在树那一轴自己那里
+/// （[`bridge::attach_client`](crate::system::operator::bridge::attach_client)），判据从这一台
+/// 自己的 `deps` 推——**同一句话只有一处**。
 #[derive(Clone, Copy)]
 pub struct Relation {
     /// **我起手要问谁**——装配那一趟的次序由它算出来（**不再手排位次**）。
@@ -203,8 +212,6 @@ pub struct Relation {
     /// [`system::board`](crate::system::board)）——"上板"这个说法只剩历史。故按它真正答的那句话
     /// 改名：**要不要存在信号**。铸道与接板都只读这一格（`Watch::of` 铸道、`Bridge::attach` 接上）。
     pub presence: bool,
-    /// 接不接**持树者那棵树**。
-    pub operator: bool,
     /// 放行前给不给**身份**（`false` = 没绑身份，撞门该被拒——负证客人就是靠它）。
     pub bind: bool,
     /// 它**是不是持树者**（起来时把提示之路交给生我者）。
@@ -241,11 +248,12 @@ pub struct Demand {
 // 内部行数 **687 → 462**。
 //
 // **这两套值都量过，选的是第二套**（照实记）：按**多数值**取（`Spot::Rig` / `presence: false`
-// / `operator: true` …）能把那 34 台压到 **212** 次写，比下面这一套少 19 次——而那一套的
+// / `operator: true`（那一格后来退了场——它推得出来，见 [`Relation`] 的头注）…）能把那 34 台
+// 压到 **212** 次写，比下面这一套少 19 次——而那一套的
 // `DEFAULT` 说的是"**一台名叫 `guest` 的压测台**"：新加一台的人会**静默继承**"压测台"这个
 // 角色。中性这一套买的是"`DEFAULT` 这个词说得通"：**角色是常驻服务、进一段 `"root"` 景、
-// 不由编排域起、不上板 / 不上树 / 不绑身份 / 不持树 / 没有眼睛、身子从 initrd 来、没有起手
-// 那几手**。
+// 不由编排域起、不上板 / 不绑身份 / 不持树 / 没有眼睛（`deps: None` ⇒ 也不接树）、身子从
+// initrd 来、没有起手那几手**。
 //
 // **为什么是关联常量而不是 `Default` trait**：那 34 份是 `pub static`，初始化器**必须是常量
 // 表达式**，而 `Default::default()` 不是 `const`。
@@ -271,7 +279,6 @@ impl Relation {
         after_scene: false,
         ending: None,
         presence: false,
-        operator: false,
         bind: false,
         holds_tree: false,
         eyes: None,

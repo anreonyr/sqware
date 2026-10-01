@@ -27,7 +27,6 @@ pub static PROGRAM: Program = Program {
         deps: Some(&["operator", "hub"]),
         ending: Some(Ending::Resident),
         presence: true,
-        operator: true,
         bind: true,
         ..Relation::DEFAULT
     },

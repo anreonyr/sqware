@@ -188,7 +188,9 @@ impl Tree {
     }
 }
 
-/// **树这一轴在装配那一趟里的那一手**：读这一台声明上 `operator` 那一格（"接不接那棵树"）。
+/// **树这一轴在装配那一趟里的那一手**：**"这一台接不接那棵树"不是声明里的一格**（照实记：那一格
+/// 从声明上撤了，见 [`Relation`](crate::program::Relation) 的头注），判据从这一台自己的 `deps`
+/// 推——见 [`needs_tree`]。
 ///
 /// **在存在信号之后**：两者各一条路、互不影响。持树者必须先于这位客人起：提示之路还没认下就
 /// 没得接。
@@ -197,10 +199,33 @@ pub fn attach_client(
     program: &Program,
     service: &mut Service,
 ) -> Result<(), &'static str> {
-    if !program.relation.operator {
+    if !needs_tree(program) {
         return Ok(());
     }
     assembly.tree.attach(service.0, Wait::AtMost(READY_MS))
+}
+
+/// **这一台要不要站到那棵树上**——**推出来的，不是声明的**（旧 `Relation::operator` 那一格）。
+///
+/// 树就是持树者那一本目录（`find` 回那一枚入口、`land` 把自己那几格落上去），故"要用树的东西"
+/// 与"要问 operator 那一族"是**同一件事**——而那一件事已经写在 `deps` 里了，再单写一格就是
+/// 同一句话的第二处（两处不一致那一天，没有一处说得清哪一处对）。
+///
+/// **量过**（照实记，35 份声明逐份核）：写 `operator: true` 的正是 `deps` 含 `"operator"` 的那
+/// **21** 台，写 `false` 的 **0** 台；余下 14 份里 12 份没写 `deps`（默认 `None`）、2 份写
+/// `deps: Some(&[])`（`passer` 与持树者自己）——两处都空。
+///
+/// **照实记（那个数先报错了一次）**：起初按 `grep -c "operator: true"` 数出 **23**，而那一行也
+/// 出现在两处**注**里（`hub/program.rs` 与 `program.rs` 的 `DEFAULT` 那一节）——按名字逐份核
+/// 之后是 **21**。读数按"数出来的"报，就得多报一句**数的是什么**。
+///
+/// **名字是从那一台自己那份声明取的**（`operator::PROGRAM.name()`），不写字面量：持树者改名，
+/// 这一句跟着改——"拿名字认"那种错说的是**写死**的名字，不是"问过那一份声明"。
+fn needs_tree(program: &Program) -> bool {
+    program
+        .relation
+        .deps
+        .is_some_and(|deps| deps.contains(&crate::program::operator::PROGRAM.name()))
 }
 
 /// **认下持树者本身**：读这一台声明上 `holds_tree` 那一格——它刚把提示之路交给**生我者**
