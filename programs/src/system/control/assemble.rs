@@ -264,6 +264,39 @@ fn announce_of(supply: &[Setup]) -> Announce {
     }
 }
 
+// **照实记（第 53 刀：收 `Ready` 那一支的落地图——量过，照着做即可）**
+//
+// 今天"这一台要不要交'答得动'那条凭据"由**声明**说（`Demand::supply` 里那 7 处
+// `Setup::Ready`）。它**推得出来**：被某一台的 `after` 点过名就得交（判据与三条前提见
+// [`crate::unit`] 里 `supply` 那一格的照实记；`hub` 的凭据搭 `Machine.ready` 一起交，目标跳过）。
+//
+// **推导的家**：`unit/order.rs` 里加一具自由函数（那一份已经有 `is_target` 与整张单在手）：
+//
+// ```text
+// pub fn needs_evidence(name: &str) -> bool {
+//     if is_target(name) { return false; }                       // 前提③
+//     let me = PROGRAMS.iter().find(|p| p.name() == name);
+//     if me.is_some_and(|p| p.demand.supply.iter().any(Setup::machine)) { return false; }  // 前提②
+//     PROGRAMS.iter().any(|p| p.relation.after.is_some_and(|d| d.iter().any(|n| *n == name)))
+// }
+// ```
+//
+// **四处读它的地方**（这一组要一起改，签名从"吃 `&[Setup]`"改成"吃 `&UnitFile`"或"吃行上
+// 那一格"）：
+//   1. 本文件这一具（`announce_of`）——`Channel` ⇔ `!supply.is_empty() || needs_evidence(name)`；
+//   2. 本文件的 [`connect_all`]（放行前装通道）：`supply` 那几格之外，**推导出 READY 时多装一条**；
+//   3. [`Control::ready`](super::Control::ready) 的两处调用（本文件 `assemble` 那一趟与
+//      `control/mod.rs`）；它要的**记号**同样从推导来；
+//   4. `control/mod.rs` 里那处装通道的线上路径（与 2 同一句正文）。
+//
+// **推导结果落在哪一格**：`Service` 行上**已经有** `announce` 那一格——它的头注写着"两格都是
+// **声明里推出的事实**，落在行上之后**账就自足**"（`core::{due,done,walking}` 只读账）⇒ 这一刀
+// 正好走那条既有的话：**推导一次、落行、后面都读行**（`connect_all` / `ready` 不必各自再推）。
+//
+// **收尾**：`unit/order.rs` 里 `DepsFail::NoEvidence` 那条检查改用 [`needs_evidence`]（它仍旧
+// 拦"边上写了个交不出凭据的台"）；7 份声明里 `supply: &[Setup::Ready]` 那一行去掉（`Setup::Ready`
+// 那一型**留着**——它成了装配者自己构造的那一格）。
+
 /// **装通道**（"配"那一相）：按这一台 `setup` 里那几格逐条装上——**记号 = 通道名**，
 /// 放行后按同一个记号逐条认领（[`service::ready`](super::service::ready)）。
 ///
