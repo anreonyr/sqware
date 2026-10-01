@@ -39,6 +39,7 @@ pub fn serve() -> Result<(), Start> {
             .map_err(|_| Start::Tree(E_PRINCIPAL))?;
 
         // **定面先交给生我者**：装配期要靠它 derive + bind，而那条路不必先上树查自己。
+        // **本域自己交、不是装配者转授**：门牌由各域自己交（见 `service/operator/bridge.rs` 的
         // `COORD` 段）。装配者用这一枚只有**一条**路：往里**推帧**（`derive` / `bind`）；
         // 答话走每一趟自己铸的那枚回信孔（communication::session::establish::lend_out ＋ HolePie::push：铸孔 → 交
         port::ship(

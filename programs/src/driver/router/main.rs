@@ -2,7 +2,7 @@
 #![no_main]
 
 //! 外部中断的收与结（U 态，一枚线程）。
-//! （`adapt/{sweep,resident}.rs ＋ adapt/event/{bell,desk,exhaust}.rs`），那一圈的**壳**在 `adapt/resident.rs`；
+//! 那一圈的文件在 `adapt/{sweep,resident}.rs ＋ adapt/event/{bell,desk,exhaust}.rs`，那一圈的**壳**在 `adapt/resident.rs`；
 //! 树那侧的事实与线集合在 `core/sources.rs`（纯），寄存器面在 `dev/plic.rs`（设备）。
 //! 判据、裁法与那一张读数表在 `driver/router/mod.rs`。
 

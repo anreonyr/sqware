@@ -38,7 +38,7 @@ fn main() -> Result<(), Fail> {
     let desk = adapt::desk::start(Wait::AtMost(MS))?;
 
     // **两个源**：写口上有客人交来的一条字、线上有"设备收来了字节"——组等任意一格
-    // 。
+    // （与 `rtc` 那一台同一条判据）。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile.attach(&desk.tx, HoleDir::Pull).is_err()
