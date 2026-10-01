@@ -25,7 +25,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "hub"]),
-        ending: Some(Ending::Resident),
+        restart: Some(Ending::Resident),
         ..Relation::DEFAULT
     },
     demand: Demand {

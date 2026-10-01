@@ -51,7 +51,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "coalition"]),
-        ending: Some(Ending::Resident),
+        restart: Some(Ending::Resident),
         ..Relation::DEFAULT
     },
     demand: Demand {

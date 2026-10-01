@@ -66,14 +66,14 @@ pub fn probe_ready(table: &Table, name: &str) -> Ready {
 //
 // **照实记（它们为什么住这里）**：与上面三条同类——都是"由账算出来的判决"，签名里只有表，
 // 不碰内核（本模块头注那条口径原样成立）。**与上面三条的分别只有量词**：上面答"这一行"，
-// 下面两条答"这一批"。账里已经有"谁结束它"那一格（登记时定死，见 [`Service::ending`]），
+// 下面两条答"这一批"。账里已经有"谁结束它"那一格（登记时定死，见 [`Service::restart`]），
 // 故这两条**不必回头查那一份声明**——"只读表"这句话仍然是字面意义上的真。
 
 /// **该收了**：账上活着的都是常驻台——会走的都走了、听令的已经发过话。
 ///
 /// **穷尽 `match`**：`Ending` 多一种结束方式，这里就编译不过（不至于静默归成某一类）。
 pub fn due(table: &Table) -> bool {
-    table.living().all(|r| match r.ending {
+    table.living().all(|r| match r.restart {
         Ending::Resident => true,
         Ending::Transient | Ending::Told => false,
     })
@@ -84,7 +84,7 @@ pub fn due(table: &Table) -> bool {
 /// 与 [`due`] 的分别只在主体：闸问"还剩谁在等"（常驻不算），本句问"卡住的是不是那种
 /// **会自己走**的"。**听令的那一台不算**——它的沉默是正常的，它的终止词从外面来。
 pub fn walking(table: &Table) -> bool {
-    table.living().any(|r| match r.ending {
+    table.living().any(|r| match r.restart {
         Ending::Transient => true,
         Ending::Resident | Ending::Told => false,
     })

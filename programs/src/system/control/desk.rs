@@ -88,18 +88,18 @@ pub struct Service {
     pub announce: Announce,
     /// **谁结束它**——登记时定死（与 [`Announce`] 同款：两格都是声明里推出的事实，落在行上之后
     /// 账就自足——收场那三条判定（`core::{due, done, walking}`）只读账，不必回头查声明）。
-    pub ending: Ending,
+    pub restart: Ending,
 }
 
 /// 一行的初值（表是定长数组，故要一个可复制的空行）。
 ///
-/// `ending` 那一格对空行**没有意义**：[`Table::rows`] 把没名字的行滤掉，判定看不到它。
+/// `restart` 那一格对空行**没有意义**：[`Table::rows`] 把没名字的行滤掉，判定看不到它。
 const EMPTY: Service = Service {
     name: String::new(),
     slot: Slot::None,
     state: State::NeverStarted,
     announce: Announce::None,
-    ending: Ending::Resident,
+    restart: Ending::Resident,
 };
 
 /// Service 表：**定长、线性查**。
@@ -128,7 +128,7 @@ impl Table {
         &mut self,
         name: String,
         announce: Announce,
-        ending: Ending,
+        restart: Ending,
     ) -> Result<(), Fail> {
         if self.find(name.as_str()).is_some() {
             return Err(Fail::Unknown);
@@ -138,7 +138,7 @@ impl Table {
         };
         row.name = name;
         row.announce = announce;
-        row.ending = ending;
+        row.restart = restart;
         Ok(())
     }
 

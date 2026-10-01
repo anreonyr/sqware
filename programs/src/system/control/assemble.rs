@@ -44,14 +44,14 @@ impl Control {
     /// `Announce::Channel` 的四台。
     ///
     /// **"谁结束它"是写出来的，不是推出来的**（照实记）：它由那一台自己那份 `program.rs` 给
-    /// （`Relation::ending`）——**由编排域起的台不写就当场拒**（`Step("no ending")`，读数带出
+    /// （`Relation::restart`）——**由编排域起的台不写就当场拒**（`Step("no restart")`，读数带出
     /// 是这一台的哪一步）。这不是苛求：收场的闸与兜底两条判定都压在这一格上，静默给个默认值
     /// 正是"以后会变"时最贵的那种错。
     pub fn enlist(&mut self, program: &Program) -> Result<(), Error> {
         let name = program.name().to_string();
-        let ending = program.relation.ending.ok_or(Error::Step("no ending"))?;
+        let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
-            .register(name, announce_of(program.demand.setup), ending)
+            .register(name, announce_of(program.demand.setup), restart)
             .map_err(|_| Error::Table)
     }
 

@@ -59,7 +59,7 @@
 //! **照实记（这一条点名的那一刀落下来了：扳机改读账）**："让扳机等读数"从"再猜一个秒数"改成
 //! **一个判决**——`Control::due()`（账上活着的都是常驻台）+ `Control::done()`（一个不剩），
 //! 见 `programs/src/system/control/supervise.rs` 的头注。于是本台**不再是扳机**：它只是单上
-//! "会走的"其中一台（`ending: Some(Ending::Told)`——听令才走），`order: 22` 那个数不再承重，
+//! "会走的"其中一台（`restart: Some(Ending::Told)`——听令才走），`order: 22` 那个数不再承重，
 //! 下面"一路让给真客人"的让位史随这一刀作废。
 //!
 //! **量到的（同一份 release 镜像、同一台机器、喂 `exit` 落在 1 s；A 面 = 本刀之前）**：
@@ -84,7 +84,7 @@ pub static PROGRAM: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "uart"]),
-        ending: Some(Ending::Told),
+        restart: Some(Ending::Told),
         ..Relation::DEFAULT
     },
     demand: Demand {

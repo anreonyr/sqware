@@ -46,7 +46,7 @@ pub static GUEST: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "router"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -63,7 +63,7 @@ pub static PASSER: Program = Program {
     },
     relation: Relation {
         after: Some(&[]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -80,7 +80,7 @@ pub static LODGER: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "hub", "router"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -97,7 +97,7 @@ pub static SLEEPER: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "rtc"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -114,7 +114,7 @@ pub static SUBJECT: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "principal"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -131,7 +131,7 @@ pub static MEMBER: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "coalition", "principal"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -155,7 +155,7 @@ pub static PROBE_DENIED: Program = Program {
     relation: Relation {
         after: Some(&["operator"]),
         bind: false,
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -172,7 +172,7 @@ pub static PROBE_OWNER: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "uart"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -189,7 +189,7 @@ pub static PROBE_RULE: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "principal"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -208,7 +208,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", "probe-rule"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -225,7 +225,7 @@ pub static PROBE_LEASE: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -243,7 +243,7 @@ pub static PROBE_BOUND: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -272,7 +272,7 @@ pub static PROBE_CONTROL: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator", SCENE]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -306,7 +306,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {
@@ -325,7 +325,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
     },
     relation: Relation {
         after: Some(&["operator"]),
-        ending: Some(Ending::Transient),
+        restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },
     demand: Demand {

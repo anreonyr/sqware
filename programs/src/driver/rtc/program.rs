@@ -33,7 +33,7 @@ pub static PROGRAM: Program = Program {
         // 那是样本不足的误判——**收回**）。**这一条边的价值与那条红分开记**：边是真缺的；红是这台
         // 机器早就有的一种抖，成因待查（判据：本台在 `line` 那一步收到"问不动"的答）。
         after: Some(&["operator", "hub", "router"]),
-        ending: Some(Ending::Resident),
+        restart: Some(Ending::Resident),
         ..Relation::DEFAULT
     },
     demand: Demand {

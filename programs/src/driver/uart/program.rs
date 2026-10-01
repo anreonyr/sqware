@@ -23,7 +23,7 @@ pub static PROGRAM: Program = Program {
         // 而 `after` 里从前只有 `operator` / `hub`——那条依赖靠的是**位次**。
         // **那条红与这条边分开记**（A/B 两面都出得来、n=3 分不开，见 `rtc/program.rs` 的照实记）。
         after: Some(&["operator", "hub", "router"]),
-        ending: Some(Ending::Resident),
+        restart: Some(Ending::Resident),
         ..Relation::DEFAULT
     },
     demand: Demand {

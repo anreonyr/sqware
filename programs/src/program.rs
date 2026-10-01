@@ -20,7 +20,7 @@
 //! | `Identity::space` | 35 | （无对应：域这一层） | 不动 |
 //! | `Identity::scenes` ＋ `Identity::entry` | 35 ＋ 35 | **`WantedBy=`** ＋"在哪一相的第几手" | **合成一格 `wanted_by`** |
 //! | `Relation::after` | 23 | **`After=`** | **已落**（原名 `deps`） |
-//! | `Relation::ending` | 23 | **`Restart=`**（寿命那一档） | 改名 `restart` |
+//! | `Relation::restart` | 23 | **`Restart=`**（寿命那一档） | **已落**（原名 `ending`） |
 //! | `Relation::bind` | 23（22 `true` / 1 `false`） | （无对应） | **待裁** |
 //! | `Demand::died` | 23（＋ 28 枚 `E_*` 常量） | （无对应） | **待裁** |
 //! | `Demand::setup` | 9 | **`Type=notify`** | 收成 **`supply`**（8 处 `Ready` 推得出来） |
@@ -37,7 +37,7 @@
 //!
 //! ## 落法（一刀一格，每刀同一套验收）
 //!
-//! ① `deps → after`（纯改名）；② `ending → restart`（纯改名）；③ `scenes ＋ entry → wanted_by`（合，
+//! ① `deps → after`（纯改名）；② `restart → restart`（纯改名）；③ `scenes ＋ entry → wanted_by`（合，
 //! 动 `crates/image` 那两处读者）；④ `setup → supply`（`Ready` 推得出来、`Machine` 只有设备账那一台）；
 //! ⑤ 两处待裁按裁定落。**每刀都走**：`cargo check --workspace` ＋ release/debug 起 ＋ `scene root`
 //! qtest ＋ 读数 A/B（16 条 ＋ `system: gone` 23 行 ＋ 装配次序逐字）。
@@ -87,7 +87,7 @@ pub type Died = env::Reason;
 // 而它自己的注释里也早写着"**不许拿它当'装不装'用**"。**原话留档**：这一格最早有一个变体叫
 // `Product`，注释写着"去掉它，机器不成机器"——`product` 那一景一到，当场把这句话证伪（六位
 // 常客全去掉，机器照起照停）。⇒ 按那条纪律办：**事实放在产生它的那一点**——"进哪几张镜像"住
-// `scenes`、"先起谁"住 `after`、"它走了谁等"住 `ending`；角色这一句，谁都不读，故不写。
+// `scenes`、"先起谁"住 `after`、"它走了谁等"住 `restart`；角色这一句，谁都不读，故不写。
 
 /// **一台程序**：它的身份、它在装配图里的边、它起手要什么——**三块分开**。
 ///
@@ -339,14 +339,22 @@ pub struct Relation {
     /// **装配者递的**（那是 [`Setup::Machine`] 那一格）；`probe-owner` 等的是"`/svc/lease`
     /// 的主人**死掉**"——图只表达"要它答得动"，"等它死"仍在它自己那圈重试里。
     pub after: Option<&'static [&'static str]>,
-    /// **谁结束它**——`None` = 没声明；**由编排域起的台必须写**（`Control::enlist` 当场拒）。
+    /// **`Restart=`**（systemd 同名那一格）：**这一台的寿命由谁定**——`None` = 没声明；
+    /// **由编排域起的台必须写**（`Control::enlist` 当场拒）。取值是 [`Ending`] 那一型
+    /// （`Resident` = 常驻、`Told` = 被叫停），故这一格的名字说的是**声明哪一个键**，
+    /// 值那一型说的是**哪一种寿命**。
+    ///
+    /// **照实记（它原名 `ending`，这一刀改成 `restart`）**：`ending` 说的是"它怎么结束"——一个
+    /// **描述**词；而这一格在 systemd 那一侧是**一条声明**（`Restart=`），且它的读者只有收场那一相
+    /// （编排域据此判"它没走的时候等不等"）。借同名那一格说死：**这一格是"编排域怎么对待它的
+    /// 寿命"**，不是"它自己怎么结束"。
     ///
     /// **收场那一相只读它**（[`crate::system::control::core`] 那三具判定）——"它没走的时候编排域
     /// 等不等"全在这一格上。**照实记（它从前与 `presence` 成对）**：那一格答"它死了谁知道"，
     /// 而它随板那一族退场了（见 [`Relation`] 底下那条照实记）⇒ 今天这一格是**孤零零**的一格，
     /// 而这正是它该在的样子：**寿命由谁定**与"死讯怎么来"是两件事，后者今天由监督那一趟的
     /// 表侧那一扫兜着。
-    pub ending: Option<Ending>,
+    pub restart: Option<Ending>,
     // **照实记（`presence` 那一格退场：它和它的对偶一起退）**：它答"要不要存在信号"——而那个
     // 信号（一条 `gone-<名字>` 的道）已经整片退场（死改由监督那一趟的表侧扫认，见
     // `system::control::supervise` 的 `Watch::new`）。它剩下的唯一读者是**装配者接板那一手**，
@@ -414,7 +422,7 @@ impl Identity {
 
 impl Relation {
     /// **什么都没声明的那一形**：不在装配单上（`after: None`）⇒ 不上板，也**没说自己怎么结束**
-    /// （`ending: None`——由编排域起的台不写它，装配那一趟当场拒）。
+    /// （`restart: None`——由编排域起的台不写它，装配那一趟当场拒）。
     ///
     /// **照实记（`bind` 这一格取的是"正常那一档"，不是中性那一档）**：这一形其余几格都是中性值，
     /// 唯独 `bind: true`。**量过**（A 面逐份核）：35 份里 **22 份写 `true`、0 份写 `false`**，而
@@ -425,7 +433,7 @@ impl Relation {
     /// 的台**叫这一手。
     pub const DEFAULT: Relation = Relation {
         after: None,
-        ending: None,
+        restart: None,
         bind: true,
     };
 }
