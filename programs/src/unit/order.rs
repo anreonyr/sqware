@@ -5,7 +5,7 @@
 //! 算装载次序），故它是「这一层的算法」那一半。**模块名不变**：`mod.rs` 里 `pub use order::*;`
 //! 把这一块原样摆回 `crate::unit` 那个名字空间 ⇒ 全仓引用一处都不用动。
 
-use super::{UnitFile, is_target};
+use super::{Setup, UnitFile, is_target};
 
 // ── 这一张单自己算不了的那一件事：**次序**（两个读者共用这一份）──────────────
 
@@ -44,7 +44,7 @@ pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
                 if !is_target(name) {
                     match find(list, name) {
                         None => return Err(DepsFail::Unknown(name)),
-                        Some(target) if target.demand.supply.is_empty() => {
+                        Some(target) if target.supply().is_empty() => {
                             return Err(DepsFail::NoEvidence(name))
                         }
                         Some(_) => {}
@@ -145,3 +145,22 @@ fn find<'a>(list: &[&'a UnitFile], name: &str) -> Option<&'a UnitFile> {
     None
 }
 
+
+/// **这一台必须交"答得动"那条凭据吗**（推导，第 55 刀）。
+///
+/// 三条前提（判据与账见 [`crate::unit`] 里 `Demand::supply` 那一格的照实记）：
+///   · 被某一台的 `after` 点过名 ⇒ 要交；
+///   · **目标单元**（[`is_target`]）不交——它没有身子、也没有"答得动"可言；
+///   · 自己走 [`Setup::Machine`] 那一支的不算——它的"答得动"搭 `ready` 那条通道一起交。
+pub fn needs_evidence(name: &str) -> bool {
+    if is_target(name) {
+        return false;
+    }
+    let me = super::catalog::PROGRAMS.iter().find(|p| p.name() == name);
+    if me.is_some_and(|p| p.demand.supply.iter().any(Setup::machine)) {
+        return false;
+    }
+    super::catalog::PROGRAMS
+        .iter()
+        .any(|p| p.relation.after.is_some_and(|d| d.iter().any(|n| *n == name)))
+}

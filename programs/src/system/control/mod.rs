@@ -303,7 +303,7 @@ impl Control {
             .map_err(|_| Fail::NotReady)?;
         // **再等就绪**（线上这条路上没有挂板 / 挂树那两手——那两件是装配期的事，
         // 见 [`crate::system::control::assemble`] 里 `launch` 那一格的注）。
-        self.ready(method, &mut pending.service, program.demand.supply)
+        self.ready(method, &mut pending.service, program.supply())
             .map_err(|_| Fail::NotReady)?;
         Ok(pending.service)
     }

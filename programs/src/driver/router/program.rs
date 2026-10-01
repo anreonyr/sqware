@@ -31,7 +31,6 @@ pub static PROGRAM: UnitFile = UnitFile {
     demand: Demand {
         died: E_ROUTER,
         // **起手最后一步（落面）之后才交**：这一格就是「答得动」的凭据。
-        supply: &[Setup::Ready],
         ..Demand::DEFAULT
     },
 };

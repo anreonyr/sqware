@@ -631,3 +631,25 @@ pub use catalog::*;
 // **次序那一块搬到 [`order`] 了**（层六·2 第二块：整块搬，名字空间原样——见那边的头注）。
 mod order;
 pub use order::*;
+
+/// **推出来的那一格**：只有一条 `Ready`（[`UnitFile::supply`] 用它）。
+static READY_ONLY: &[Setup] = &[Setup::Ready];
+
+impl UnitFile {
+    /// **这一台要交的凭据（有效值）**：声明里写的；**空了就按推导答**——被某一台的 `after`
+    /// 点过名就得交一条 [`Setup::Ready`]。判据与三条前提见 [`Demand::supply`] 那一格的照实记。
+    ///
+    /// **照实记（第 54/55 刀：为什么是"访问器"而不是"改三处签名"）**：推导要的是**整张单**，
+    /// 而只有这一处需要它 ⇒ 四个读点各改一个词（`program.supply()` → `program.supply()`），
+    /// `announce_of` / `connect_all` / `ready` 三处签名一处都不用动——**同一件事只有一个来源**。
+    /// `hub` 那一路自然对：它 `supply` 非空 ⇒ 答声明值、不会多开一条（前提②）。
+    pub fn supply(&self) -> &'static [Setup] {
+        if !self.demand.supply.is_empty() {
+            self.demand.supply
+        } else if crate::unit::order::needs_evidence(self.name()) {
+            READY_ONLY
+        } else {
+            &[]
+        }
+    }
+}

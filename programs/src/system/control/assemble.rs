@@ -51,7 +51,7 @@ impl Control {
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
-            .register(name, announce_of(program.demand.supply), restart)
+            .register(name, announce_of(program.supply()), restart)
             .map_err(|_| Error::Table)
     }
 
@@ -247,7 +247,7 @@ pub fn await_ready(
 ) -> Result<(), &'static str> {
     assembly
         .control
-        .ready(program.name().to_string(), service, program.demand.supply)
+        .ready(program.name().to_string(), service, program.supply())
         .map_err(|e| e.said())
 }
 
@@ -312,7 +312,7 @@ fn announce_of(supply: &[Setup]) -> Announce {
 // }
 // ```
 //
-// 于是**四个读点各改一个词**（`program.demand.supply` → `program.supply()`），而推导只发生在一处
+// 于是**四个读点各改一个词**（`program.supply()` → `program.supply()`），而推导只发生在一处
 // ⇒ **同一件事只有一个来源**，三处签名一处都不用动。（`hub` 那一路是对的：它 `supply` 非空 ⇒
 // 直接答声明值，**不会**多出一条——那正是前提②。）
 //
@@ -327,7 +327,7 @@ fn announce_of(supply: &[Setup]) -> Announce {
 /// 同一句正文——"只碰通道"的那一层做成方法就是白加的壳）。两处叫它：装配那一趟
 /// （[`crate::system::Assembly::assemble`]）与线上那条 [`Control::release`]。
 pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Error> {
-    for s in program.demand.supply {
+    for s in program.supply() {
         for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {
             service
                 .1
