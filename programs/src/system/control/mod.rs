@@ -48,6 +48,8 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
+use ::core::time::Duration;
+
 use crate::system::control::core::Fail;
 use crate::system::control::desk::{Slot, State, Table};
 use env::manifest;
@@ -425,6 +427,35 @@ impl Control {
         core::done(&self.table)
     }
 
+    /// 等这一台**到过就绪那一格**——`Ready`，或之后被收掉的 `Stopping` / `Dead` 都算
+    /// （**它答得动过**）。
+    ///
+    /// **有界**（照实记）：`wait` 是额度，`RETRY_MS` 一拍。它今天唯一的读者是装配那一趟
+    /// "每条边成立没有"那一句（[`crate::system::Assembly::assemble`]）——**排对了就即刻返回**；
+    /// 排错了（声明的边与实情不符）就当场报出"哪一台的哪条边"，不让客人自己去撞那圈有界重试。
+    ///
+    /// `Err(Fail::Unknown)` = 表里没这一行；`Err(Fail::NotReady)` = 到点还没到过。
+    pub fn await_ready(&self, name: &str, wait: Wait) -> Result<(), Fail> {
+        let mut left = match wait {
+            Wait::POLL => 0,
+            Wait::AtMost(ms) => ms,
+            // **不认"永远"**：这一问是装配那一趟里的一格，拿 `READY_MS` 当上限。
+            Wait::Forever => READY_MS,
+        };
+        loop {
+            match self.table.find(name).map(|s| s.state) {
+                Some(State::Ready | State::Stopping | State::Dead) => return Ok(()),
+                Some(State::NeverStarted | State::Starting) => {}
+                None => return Err(Fail::Unknown),
+            }
+            if left == 0 {
+                return Err(Fail::NotReady);
+            }
+            let _ = runtime::env::room::sleep(Duration::from_millis(RETRY_MS as u64));
+            left -= 1;
+        }
+    }
+
     /// **收掉其余还活着的**：只对**还没下过刀**的那些（`Stopping` = 已下刀）逐位下令——故每一轮
     /// 都叫它是安全的，不会把 `doom` 刷成一场风暴。
     ///
@@ -467,12 +498,12 @@ pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
 /// 找不到 ⇒ `None`：这个名字不在这一景的装配声明里（`PROGRAMS` 是唯一声明处；帧里没有镜像，
 /// 故"起哪一台"这件事只认本表）。
 ///
-/// **只认"由编排域起"的那几台**（`relation.order.is_some()`）：`root` / `system` 自己不在
+/// **只认"由编排域起"的那几台**（`relation.deps.is_some()`）：`root` / `system` 自己不在
 /// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::assemble`]
 /// 的过滤同一句。
 fn program_of(name: &str) -> Option<&'static Program> {
     PROGRAMS
         .iter()
         .copied()
-        .find(|p| p.relation.order.is_some() && p.name() == name)
+        .find(|p| p.relation.deps.is_some() && p.name() == name)
 }

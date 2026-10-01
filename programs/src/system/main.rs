@@ -110,8 +110,8 @@ fn system() -> Result<(), Fail> {
     // 1. 起手三样：与引导域那条会话、机器自述、载荷区清单（配给与镜像都从它们来）。
     let boot = bootstrap::take().map_err(Fail::from)?;
 
-    // 2. 这一景起哪些台（**按 `order` 排**：先起的先就绪，后面的就能向它要东西）。
-    let list = assemble::programs(&boot.catalog);
+    // 2. 这一景起哪些台（**次序由各台声明里的 `deps` 算出来**：先起的先就绪，后面的就能向它要东西）。
+    let list = assemble::programs(&boot.catalog).map_err(|_| Fail::Assemble(E_PROGRAM))?;
     // **空单**：这一景一台可装配的都没有 ⇒ 报那一格（"有单可装"是下面每一趟的前提）。
     if list.is_empty() {
         return Err(Fail::Assemble(E_PROGRAM));

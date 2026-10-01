@@ -299,6 +299,15 @@ fn main() -> Report<'static> {
     // 而同一次 `Trunk(p)` 已经答了 `8`（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
     let mine_id = plate(&at, MINE, Permit::Unset, Mine::Yes);
 
+    // **报"答得动了"**（`Setup::Ready`）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
+    // （`deps: Some(&["operator", "probe-rule"])`），故这一枚孔是装配者放行它之前要等的凭据
+    // （与三台驱动、三台服务那几处**同一手**）。
+    let _ = protocol::communication::establish::endpoint(
+        utask::sire(),
+        env::Mark::of(programs::program::READY),
+        env::Wait::POLL,
+    );
+
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opener` 的正负两面。
     let is = look(&root, &rule_road, IS, Wait::AtMost(MS));
     let under = look(&root, &rule_road, UNDER, Wait::AtMost(MS));

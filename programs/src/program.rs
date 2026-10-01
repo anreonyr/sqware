@@ -117,6 +117,15 @@ impl Program {
     pub fn entry(&self) -> &'static [&'static str] {
         self.identity.entry
     }
+
+    /// **它在不在这一趟装配单上**（`relation.deps: Some`）。
+    ///
+    /// **宿主那一侧的第二组窄面**（照实记：本表原先只开四扇门，都取 [`Identity`]）：打包那一趟
+    /// 仍只读前四样，而**校验那一趟**（[`order_scene`] 的调用点）要按这一格滤出"由编排域起的
+    /// 那些台"——图的内部（`deps` 的内容、`after_scene`）一律由本文件那两具读，宿主不碰。
+    pub fn listed(&self) -> bool {
+        self.relation.deps.is_some()
+    }
 }
 
 /// **身份**：这一台是谁——清单名、装成哪种空间、角色、进哪几张景、是不是引导镜像。
@@ -160,12 +169,28 @@ pub enum Ending {
 
 /// **装配关系**：编排域把它接进来时那几条边。
 ///
-/// **这一块只有装配者读**：位次 / 存在信号 / 结束方式 / 树 / 身份 / 持树者 / 眼睛——都是"这一台
-/// 与那一台之间有一条什么边"，与它自己是谁（[`Identity`]）、起手要什么（[`Demand`]）分开。
+/// **这一块只有装配者读**：依赖 / 排最后 / 存在信号 / 结束方式 / 树 / 身份 / 持树者 / 眼睛——都是
+/// "这一台与那一台之间有一条什么边"，与它自己是谁（[`Identity`]）、起手要什么（[`Demand`]）分开。
 #[derive(Clone, Copy)]
 pub struct Relation {
-    /// 编排域的起手位次；`None` = **不由编排域起**（引导域 / 编排域自己 / 压测台）。
-    pub order: Option<u8>,
+    /// **我起手要问谁**——装配那一趟的次序由它算出来（**不再手排位次**）。
+    ///
+    /// 一条边 = "我起手的一个动作要求它已经**答得动**"；成立的凭据是那一台自己交回的那枚孔
+    /// （[`Setup::Ready`] / [`Setup::Machine`] 的第二条）。`None` = **不在这一趟装配单上**
+    /// （引导镜像 / 编排域自己 / 压测台）——与旧 `order: Option<u8>` 的 `None` **同义**。
+    ///
+    /// **三条边在这里说不出口，故不写**（照实记）：板不是这一列的台（不成边）；整机物料是
+    /// **装配者递的**（那是 [`Setup::Machine`] 那一格）；`probe-owner` 等的是"`/svc/lease`
+    /// 的主人**死掉**"——图只表达"要它答得动"，"等它死"仍在它自己那圈重试里。
+    pub deps: Option<&'static [&'static str]>,
+    /// **等装配那一趟走完**——只有"要问的面由装配那一趟末尾才立起来"的台才写。
+    ///
+    /// **为什么它不是位次**（照实记）：今天只有 `probe-control` 一处——它问的
+    /// `/svc/sys/control/state` 由装配者在**整表起完之后**才铸、且要等监督那一趟开始才被**服务**；
+    /// 那**不是一个台**，图里没有这条边的落点。旧写法靠 `order: Some(21)` 把它压到末尾；次序一旦
+    /// 由**边**算，它可能被排到第二（窗口反而变大）。故把"我要的那个状态"写成一条**边指向隐式
+    /// 节点**：装配那一趟走完。图里它排最后，且没有可等的边。
+    pub after_scene: bool,
     /// **谁结束它**——`None` = 没声明；**由编排域起的台必须写**（`Control::enlist` 当场拒）。
     ///
     /// **它与 [`Relation::presence`] 成对**：那一格答"它死了谁知道"，这一格答"它没走的时候
@@ -199,7 +224,7 @@ pub struct Demand {
     /// 什么"：前者是**那一段字节**（唯一消费者是装配时 `service::mint` 那一行），后者是**门闩与
     /// 通道**；两者都不属于"它是谁"，也不属于"它跟谁有边"。
     pub origin: Origin,
-    /// 死在装配哪一步的号。`order` 为 `None` 的那几台不读这一格（写 [`env::EXIT_OK`]）。
+    /// 死在装配哪一步的号。`deps` 为 `None` 的那几台不读这一格（写 [`env::EXIT_OK`]）。
     ///
     /// **照实记（它为什么与 `setup` 同块）**：`died` 是**这一台 `setup` 走不通时**的读数——
     /// 与起手那几手是同一件事的两面，故同块。
@@ -239,10 +264,11 @@ impl Identity {
 }
 
 impl Relation {
-    /// **什么都没声明的那一形**：不由编排域起、不上板、不上树、不绑身份、不持树、没有眼睛，
-    /// 也**没说自己怎么结束**（`ending: None`——由编排域起的台不写它，装配那一趟当场拒）。
+    /// **什么都没声明的那一形**：不在装配单上（`deps: None`）⇒ 不上板、不上树、不绑身份、不持树、
+    /// 没有眼睛，也**没说自己怎么结束**（`ending: None`——由编排域起的台不写它，装配那一趟当场拒）。
     pub const DEFAULT: Relation = Relation {
-        order: None,
+        deps: None,
+        after_scene: false,
         ending: None,
         presence: false,
         operator: false,
@@ -456,3 +482,123 @@ pub const PROGRAMS: &[&Program] = &[
 ///
 /// **这一条就是从前那个"数出来的数"的替身**：加一台超过上界 ⇒ 当场编不过，不可能静默卡住。
 const _: () = assert!(PROGRAMS.len() <= env::manifest::MAX_PROGRAMS);
+
+// ── 这一张单自己算不了的那一件事：**次序**（两个读者共用这一份）──────────────
+
+/// 图上说不通的那三种——每一种都报出**名字**。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DepsFail {
+    /// 一条边指着本单里没有的台（名字）。
+    Unknown(&'static str),
+    /// 被指着的那一台**没有凭据**（`demand.setup` 空 ⇒ 它交不出"我答得动"）。
+    NoEvidence(&'static str),
+    /// 取不出可排的台 ⇒ 环（名字 = 卡住的那一个）。
+    Cycle(&'static str),
+}
+
+/// **按 `deps` 把这一张单排成次序**（拓扑，原地重排）：每条边都在前面，`after_scene` 的排最后。
+/// 同一批按**名字**排（与声明次序无关，可复现）。图上那三种说不通当场挑出来（[`DepsFail`]）。
+///
+/// **两个读者共用这一份**（照实记）：宿主那一侧打包时校验（`crates/image`，报得出名字），
+/// 引导期那一趟排次序（`system::assemble`）。故它**不许分配**——本文件是宿主安全的
+/// （只许引 `env`，`crates/image` 用 `#[path]` 文本包含它），只用切片与定长栈。
+///
+/// **它不解释任何一台的字段**：只读 [`Relation::deps`] / [`Relation::after_scene`] 两格。
+pub fn order_scene(list: &mut [&'static Program]) -> Result<(), DepsFail> {
+    // 一、每条边都要落得下：指得到本单里的台，且那一台说得出"我答得动"。
+    let mut i = 0;
+    while i < list.len() {
+        if let Some(deps) = list[i].relation.deps {
+            let mut d = 0;
+            while d < deps.len() {
+                let name = deps[d];
+                match find(list, name) {
+                    None => return Err(DepsFail::Unknown(name)),
+                    Some(target) if target.demand.setup.is_empty() => {
+                        return Err(DepsFail::NoEvidence(name))
+                    }
+                    Some(_) => {}
+                }
+                d += 1;
+            }
+        }
+        i += 1;
+    }
+    // 二、拓扑：一轮取"前置都排好了"的那一个；同批挑名字最小的（可复现）。
+    let n = list.len();
+    let mut placed = 0usize;
+    while placed < n {
+        let mut pick: Option<usize> = None;
+        let mut i = placed;
+        while i < n {
+            if !list[i].relation.after_scene && ready(list, i, placed) {
+                match pick {
+                    Some(best) if list[best].name() <= list[i].name() => {}
+                    _ => pick = Some(i),
+                }
+            }
+            i += 1;
+        }
+        let Some(i) = pick else { break };
+        list.swap(placed, i);
+        placed += 1;
+    }
+    // 三、收尾：剩下的必须全是 `after_scene` 的（不是 ⇒ 环）；它们同批按名字。
+    let mut i = placed;
+    while i < n {
+        if !list[i].relation.after_scene {
+            return Err(DepsFail::Cycle(list[i].name()));
+        }
+        i += 1;
+    }
+    let mut i = placed;
+    while i < n {
+        let mut pick = i;
+        let mut j = i + 1;
+        while j < n {
+            if list[j].name() < list[pick].name() {
+                pick = j;
+            }
+            j += 1;
+        }
+        list.swap(i, pick);
+        i += 1;
+    }
+    Ok(())
+}
+
+/// 这一台的**边都排好了吗**（`list[..placed]` 里找得到每一条边指着的那一台）。
+fn ready(list: &[&'static Program], i: usize, placed: usize) -> bool {
+    let Some(deps) = list[i].relation.deps else {
+        return true;
+    };
+    let mut d = 0;
+    while d < deps.len() {
+        let mut found = false;
+        let mut j = 0;
+        while j < placed {
+            if list[j].name() == deps[d] {
+                found = true;
+                break;
+            }
+            j += 1;
+        }
+        if !found {
+            return false;
+        }
+        d += 1;
+    }
+    true
+}
+
+/// 本单里按名字找那一台（**只查不比存** ⇒ 借 `&str`）。
+fn find<'a>(list: &[&'a Program], name: &str) -> Option<&'a Program> {
+    let mut i = 0;
+    while i < list.len() {
+        if list[i].name() == name {
+            return Some(list[i]);
+        }
+        i += 1;
+    }
+    None
+}

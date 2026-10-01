@@ -112,6 +112,14 @@ pub fn serve() -> Result<(), Start> {
             Wait::AtMost(MS),
         );
 
+    // **报"答得动了"**（`Setup::Ready`）：上面那一趟落完面、查回来验过才算——被 `deps` 指着的台
+    // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
+    let _ = protocol::communication::establish::endpoint(
+        runtime::env::unit::sire(),
+        env::Mark::of(crate::program::READY),
+        env::Wait::POLL,
+    );
+
         // 四之后：**问面那一枚交给持树者**（`host` = 持树者的号，`Session::open` 收下的那一格）。
         // 它据此才判得了"这一位此刻代表谁"；而它**做不出** `Adopt`——那条在定面上。
         //

@@ -294,6 +294,16 @@ impl Assembly {
         //
         // **探子退场**（证伪即收）：那五段各取一次钟是**每台机器都付**的（`chrono::clock()` 不看
         // 构建门，release 也付），而它要证的那件事已经答完——故连同门槛那枚常量一并退掉。
+        // **它的边成立了吗**（照实记：次序由各台声明里的 `deps` 算出来，故"谁在谁前面"这一格
+        // 已经不是这里读的了）：逐条边等那一台**到过就绪那一格**。排对了就即刻返回；排错了
+        // （声明的边与实情不符）当场报出"哪一台的哪条边"——不让客人自己去撞那圈有界重试。
+        for dep in program.relation.deps.unwrap_or(&[]) {
+            if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {
+                debug!("system: dep not ready ({dep})");
+                return Err(fail(program, Error::Step("dep not ready")));
+            }
+        }
+
         // 登记：**"怎么算它起来了"由这一台的 `setup` 推出**。席满 / 名字非法 ⇒ 装配表那一格。
         self.control.enlist(program).map_err(|_| E_TABLE)?;
 

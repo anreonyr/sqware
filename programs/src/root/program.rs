@@ -1,6 +1,6 @@
 //! root::program — **引导域**（`prog-root`）的装配声明。
 //!
-//! 它由 boot 直接引入（不由编排域起：`order: None`），起的第一个东西是编排域，之后只做一件事
+//! 它由 boot 直接引入（**不在装配单上**：`deps: None`），起的第一个东西是编排域，之后只做一件事
 //! ——照单发货。
 
 use crate::program::{Demand, Identity, Program, Relation, Spot};

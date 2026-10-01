@@ -102,10 +102,40 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
     Ok(picked)
 }
 
+/// **校验这一景的图，并返推导出的装配次序**（照实记：次序由各台声明里的 `deps` 算出来，
+/// **打包这一趟是它的第一个读者**——宿主上有名字、有退出码，坏图在这里就断掉）。
+///
+/// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
+fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
+    let mut list: Vec<&'static program::Program> = program::PROGRAMS
+        .iter()
+        .copied()
+        .filter(|p| p.scenes().contains(&scenario) && p.listed())
+        .collect();
+    program::order_scene(&mut list).map_err(|why| match why {
+        program::DepsFail::Unknown(name) => {
+            format!("景 {scenario} 的 deps 里有一个名字不在本景：{name}")
+        }
+        program::DepsFail::NoEvidence(name) => format!(
+            "景 {scenario} 的 deps 指着 {name}，而它没有'我答得动'的凭据（`setup` 空）"
+        ),
+        program::DepsFail::Cycle(name) => {
+            format!("景 {scenario} 的 deps 有环（取不出可排的台，卡在 {name}）")
+        }
+    })?;
+    Ok(list.iter().map(|p| p.name()).collect())
+}
+
 /// 造这一景这一档的镜像，返 `initrd.img` 的落点（内核 ELF 同目录）。
 pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     let root = root();
     let bins = bins_for(scenario)?;
+    // **图那一趟**：先把这一景的 deps 校验一遍（坏图当场断），顺手把算出来的次序打出来——
+    // 验收要核对的就是这一行。
+    println!(
+        "initrd: 景 {scenario} 的装配次序：{}",
+        order_of(scenario)?.join(" → ")
+    );
 
     // 嵌套 cargo 用**独立 target 目录**：宿主 cargo 会在 target 根持有 `.cargo-build-lock`，
     // 同目录再起 cargo 会互锁死等（照实记：这一格是从 `kernel/build.rs` 原样搬过来的）。

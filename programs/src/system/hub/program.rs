@@ -49,7 +49,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(3),
+        deps: Some(&["operator", "coalition"]),
         ending: Some(Ending::Resident),
         operator: true,
         bind: true,

@@ -3,8 +3,8 @@
 //! 本文件**不在 `system` 那棵模块树里**（那棵树拖着 runtime / protocol，`crates/image` 进不去）
 //! ——它由 `programs/src/program.rs` 的 `#[path]` 拉进注册表，路径是 `crate::program::system`。
 //!
-//! 它是 boot 之后**唯一**起服务的地方，自己由引导域起（`order: None`）。整台机器的服务都由它
-//! 按 [`PROGRAMS`](crate::program::PROGRAMS) 里各台的 `order` 依次起。
+//! 它是 boot 之后**唯一**起服务的地方，自己由引导域起（**不在装配单上**：`deps: None`）。整台机器的服务都由它
+//! 按各台声明里的 `deps` **算出来的次序**依次起（`program::order_scene`）。
 
 use crate::program::{Demand, Died, Identity, Program, Relation, Spot};
 use env::ProgramKind;

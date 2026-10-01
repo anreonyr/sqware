@@ -3,7 +3,7 @@
 //! 它与其他每一台走同一条路：编排域按 `order: Some(0)` 用 `mint` 起它。它**第一**起
 //! （客人上树要它在），且 `holds_tree: true`——起来时把提示之路交给生我者（编排域）。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
 
 /// 它死在起手哪一步（板 / 树 / 收帧那一页）；名册与盟册的起手号同族不同格。
 pub const E_TREE: Died = 10;
@@ -15,7 +15,7 @@ pub static PROGRAM: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(0),
+        deps: Some(&[]),
         ending: Some(Ending::Resident),
         presence: true,
         bind: true,
@@ -24,6 +24,9 @@ pub static PROGRAM: Program = Program {
     },
     demand: Demand {
         died: E_TREE,
+        // **答得动**：落完面（上树那一趟查回来验过）之后铸一枚刻 `READY` 的孔交给装配者
+        // ——与三台驱动、设备账那两处**同一手**。被 `deps` 指着的台必须说得出这一句。
+        setup: &[Setup::Ready(crate::program::READY)],
         ..Demand::DEFAULT
     },
 };

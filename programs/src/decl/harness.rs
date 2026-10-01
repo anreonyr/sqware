@@ -16,7 +16,7 @@
 //! `waiter` / `group`）**不由编排域起**（`order: None`）——它们是景的引导镜像或台主的受害者，
 //! 声明仍在这里，好让 image 那侧一张表看全。
 
-use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Spot};
+use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup, Spot};
 use env::ProgramKind;
 
 // ── 号（装配期死法的号；各台的身子里一个数都不写）────────────────────────
@@ -46,7 +46,7 @@ pub static GUEST: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(9),
+        deps: Some(&["operator", "router"]),
         ending: Some(Ending::Transient),
         presence: true,
         operator: true,
@@ -67,7 +67,7 @@ pub static PASSER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(10),
+        deps: Some(&[]),
         ending: Some(Ending::Transient),
         presence: true,
         bind: true,
@@ -87,7 +87,7 @@ pub static LODGER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(11),
+        deps: Some(&["operator", "hub", "router"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -107,7 +107,7 @@ pub static SLEEPER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(12),
+        deps: Some(&["operator", "rtc"]),
         ending: Some(Ending::Transient),
         presence: true,
         operator: true,
@@ -128,7 +128,7 @@ pub static SUBJECT: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(13),
+        deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -148,7 +148,7 @@ pub static MEMBER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(14),
+        deps: Some(&["operator", "coalition", "principal"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -170,7 +170,7 @@ pub static PROBE_DENIED: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(15),
+        deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         operator: true,
         ..Relation::DEFAULT
@@ -189,7 +189,7 @@ pub static PROBE_OWNER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(17),
+        deps: Some(&["operator", "uart"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -209,7 +209,7 @@ pub static PROBE_RULE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(18),
+        deps: Some(&["operator", "principal"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -217,6 +217,8 @@ pub static PROBE_RULE: Program = Program {
     },
     demand: Demand {
         died: E_PROBE_RULE,
+        // **答得动**：`probe-rule-other` 读的那几格由本台落——落完才交这一枚（与三台驱动同一手）。
+        setup: &[Setup::Ready(crate::program::READY)],
         ..Demand::DEFAULT
     },
 };
@@ -229,7 +231,7 @@ pub static PROBE_RULE_OTHER: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(19),
+        deps: Some(&["operator", "probe-rule"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -249,7 +251,7 @@ pub static PROBE_LEASE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(16),
+        deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -270,7 +272,7 @@ pub static PROBE_BOUND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(20),
+        deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         presence: true,
         operator: true,
@@ -292,9 +294,10 @@ pub static PROBE_BOUND: Program = Program {
 /// 判据两条（`harness/src/probe_control.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// 生命阶段——`Bad`（这一趟没走到对面）在两条里都是红。
 ///
-/// **它排在 `canonical` 之前**（`order: Some(21)`，`canonical` 让到最后）：那一面是在**整表起完
-/// 之后**才挂上树的（`Assembly::supervise`），故这一台头几拍那一问会等在门外（`Face::tile`
-/// 按额度重试）；而 `canonical` 必须是最后一条（编排域等它退场才收场）⇒ 让位的只能是这一台。
+/// **它排在最后**（`after_scene: true`）：那一面是在**整表起完**之后才挂上树的
+/// （`Assembly::supervise`）——它**不是一个台**，图里没有这条边的落点，故写成"等装配那一趟
+/// 走完"那一格（次序由 `program::order_scene` 算，位次那一格已退场，照实记见
+/// `programs/src/program.rs` 的 `Relation::after_scene`）。
 pub static PROBE_CONTROL: Program = Program {
     identity: Identity {
         name: "probe-control",
@@ -302,7 +305,8 @@ pub static PROBE_CONTROL: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(21),
+        deps: Some(&["operator"]),
+        after_scene: true,
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -339,7 +343,7 @@ pub static PROBE_OPERATOR_GATE: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(4),
+        deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,
@@ -361,7 +365,7 @@ pub static PROBE_OPERATOR_LAND: Program = Program {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        order: Some(5),
+        deps: Some(&["operator"]),
         ending: Some(Ending::Transient),
         operator: true,
         bind: true,

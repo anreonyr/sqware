@@ -118,6 +118,14 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Desk(E_TREE));
     }
 
+    // **报"答得动了"**（`Setup::Ready`）：上面那一趟落完面、查回来验过才算——被 `deps` 指着的台
+    // 必须说得出这一句（与三台驱动、设备账那两处**同一手**，见 `programs/src/program.rs` 那一格）。
+    let _ = protocol::communication::establish::endpoint(
+        runtime::env::unit::sire(),
+        env::Mark::of(crate::program::READY),
+        env::Wait::POLL,
+    );
+
     let mut tree = Operator::new();
     let mut desk = Desk::new();
     // 协调那一帧递来的两格号（名册 / 盟册，各自那一域自己把门牌交过来）。**两帧、次序不定**。
