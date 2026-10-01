@@ -131,26 +131,6 @@ impl HoleMeta {
         }
     }
 
-    /// **队头**那只手：**谁递的 ＋ 有多长 ＋ 什么时候落的**；队空（或只是个响着的位）⇒ `None`。
-    ///
-    /// 正被取用也算在手上（那一瞬复制在另一颗 hart 上做，手还没下线）。
-    /// 长度只服务诊断（[`alarm_stuck`] 那一行认"在哪一步"靠它）。
-    fn held(&self) -> Option<(TaskId, usize, u64)> {
-        let pending = self.pending.lock();
-        match &*pending {
-            Pending::Queue(q) => q.hands.front().map(|hand| (hand.from, hand.len, hand.at)),
-            _ => None,
-        }
-    }
-
-    /// 队里排着几只（诊断与读数用）。
-    fn queued(&self) -> usize {
-        let pending = self.pending.lock();
-        match &*pending {
-            Pending::Queue(q) => q.hands.len(),
-            _ => 0,
-        }
-    }
 }
 
 impl Drop for HoleMeta {
