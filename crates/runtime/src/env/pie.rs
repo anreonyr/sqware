@@ -164,7 +164,7 @@ pub fn pies() -> Pies {
 ///
 /// **给人看的读数，不是给判据用的机制**：它自己不改任何东西。用途只有一个——把"该放下的
 /// 放了没有"变成**可量**的一格（少放一枚，这一格当场大 1，见
-/// `programs/src/driver/router/adapt/desk.rs` 的 `drop_lane` 与 `harness/src/guest/lodger.rs`）。
+/// `programs/src/driver/router/adapt/desk.rs` 的 `drop_lane` 与 `programs/src/harness/guest/lodger/main.rs`）。
 pub fn table_size() -> usize {
     pies().count()
 }

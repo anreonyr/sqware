@@ -28,7 +28,7 @@ pub struct Pane<'a> {
 impl<'a> Pane<'a> {
     /// **由一格造柄**（帧那一侧答出来的号）。
     /// 两处来路：本模块内部按答话里那一枚号造（[`Pane::open`] / [`Pane::at`]），以及**已经拿
-    /// 着一枚号**的调用点——它们（`harness/src/probe_operator_*.rs` 那两位）要的正是"手里有号、
+    /// 着一枚号**的调用点——它们（`programs/src/harness/probe/probe_operator_*/main.rs` 那两位）要的正是"手里有号、
     /// 不再问路"，故这一手是 **`pub`**：向另一条手（[`Face::pane`] 收一条路）取柄是同一件事。
     pub fn of(face: &'a Face, id: EntryId) -> Pane<'a> {
         Pane {

@@ -101,7 +101,7 @@ pub fn sleep_until(at: u64) -> RoomResult<()> {
 /// **调用者**（今天三处，都不是政策服务）：`protocol::system` 的收尾路径（`system::server`
 /// 的 `doom`，由 `service::stop` 与"起失败"那一支调）——**编排域**
 /// 点名收掉一个子域，而这一刀按域粒度走——与
-/// `harness/src/bench/group/group.rs` 的收场那一手（台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
+/// `programs/src/harness/bench/group/group/main.rs` 的收场那一手（台子把没醒的等待者收掉，那是**台子自己的**客人，不是政策）。
 pub fn doom(task: TaskId) -> RoomResult<()> {
     env::room::doom(task)
 }

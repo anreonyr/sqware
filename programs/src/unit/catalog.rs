@@ -10,12 +10,58 @@ use super::{SCENE_UNIT, UnitFile};
 pub mod canonical;
 #[path = "../service/coalition/program.rs"]
 pub mod coalition;
-/// harness 那 25 台（**测具**，身子在 `programs/src/harness/`）：其中 15 台**由编排域起**
-/// ——编排域要按 `order` / 存在信号 / `bind` / `died` 起它们，而"哪几台进哪张镜像"这张表在宿主侧
-/// （`crates/image`）也要看得见，故声明必须能在只引 `env` 的前提下编译出来。那 25 份身子是独立
-/// bin 目标（带 crate 级属性），当不了模块拉进来 ⇒ 声明住这一份（一台一份要各开目录，今天不做）。
-#[path = "harness.rs"]
-pub mod harness;
+/// 测具那 25 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起，
+/// 而"哪几台进哪张镜像"这张表在宿主侧（`crates/image`）也要看得见 ⇒ 声明与身子同住、由本表拉进来。
+#[path = "../harness/guest/guest/program.rs"]
+pub mod guest;
+#[path = "../harness/guest/passer/program.rs"]
+pub mod passer;
+#[path = "../harness/guest/lodger/program.rs"]
+pub mod lodger;
+#[path = "../harness/guest/sleeper/program.rs"]
+pub mod sleeper;
+#[path = "../harness/guest/subject/program.rs"]
+pub mod subject;
+#[path = "../harness/guest/member/program.rs"]
+pub mod member;
+#[path = "../harness/probe/probe_denied/program.rs"]
+pub mod probe_denied;
+#[path = "../harness/probe/probe_owner/program.rs"]
+pub mod probe_owner;
+#[path = "../harness/probe/probe_rule/program.rs"]
+pub mod probe_rule;
+#[path = "../harness/probe/probe_rule_other/program.rs"]
+pub mod probe_rule_other;
+#[path = "../harness/probe/probe_lease/program.rs"]
+pub mod probe_lease;
+#[path = "../harness/probe/probe_bound/program.rs"]
+pub mod probe_bound;
+#[path = "../harness/probe/probe_control/program.rs"]
+pub mod probe_control;
+#[path = "../harness/probe/probe_operator_gate/program.rs"]
+pub mod probe_operator_gate;
+#[path = "../harness/probe/probe_operator_land/program.rs"]
+pub mod probe_operator_land;
+#[path = "../harness/bench/again/churn/program.rs"]
+pub mod churn;
+#[path = "../harness/bench/rig/rig/program.rs"]
+pub mod rig;
+#[path = "../harness/bench/load/busy/program.rs"]
+pub mod busy;
+#[path = "../harness/bench/load/park/program.rs"]
+pub mod park;
+#[path = "../harness/bench/rig/hang/program.rs"]
+pub mod hang;
+#[path = "../harness/bench/load/load/program.rs"]
+pub mod load;
+#[path = "../harness/bench/beat/program.rs"]
+pub mod beat;
+#[path = "../harness/bench/again/again/program.rs"]
+pub mod again;
+#[path = "../harness/bench/group/waiter/program.rs"]
+pub mod waiter;
+#[path = "../harness/bench/group/group/program.rs"]
+pub mod group;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
 #[path = "../service/operator/program.rs"]
@@ -46,39 +92,39 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &hub::PROGRAM,
     &canonical::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
-    &harness::GUEST,
-    &harness::PASSER,
-    &harness::LODGER,
+    &guest::GUEST,
+    &passer::PASSER,
+    &lodger::LODGER,
     // 三台驱动。
     &router::PROGRAM,
     &uart::PROGRAM,
     &rtc::PROGRAM,
-    &harness::SLEEPER,
-    &harness::SUBJECT,
-    &harness::MEMBER,
+    &sleeper::SLEEPER,
+    &subject::SUBJECT,
+    &member::MEMBER,
     &system::PROGRAM,
-    &harness::PROBE_DENIED,
-    &harness::PROBE_OWNER,
-    &harness::PROBE_RULE,
-    &harness::PROBE_RULE_OTHER,
-    &harness::PROBE_LEASE,
-    &harness::PROBE_BOUND,
-    &harness::PROBE_CONTROL,
+    &probe_denied::PROBE_DENIED,
+    &probe_owner::PROBE_OWNER,
+    &probe_rule::PROBE_RULE,
+    &probe_rule_other::PROBE_RULE_OTHER,
+    &probe_lease::PROBE_LEASE,
+    &probe_bound::PROBE_BOUND,
+    &probe_control::PROBE_CONTROL,
     // 操作面那一族（`/svc/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。
-    &harness::PROBE_OPERATOR_GATE,
-    &harness::PROBE_OPERATOR_LAND,
+    &probe_operator_gate::PROBE_OPERATOR_GATE,
+    &probe_operator_land::PROBE_OPERATOR_LAND,
     // 压测台与它们的受害者（整台替换引导镜像）。
-    &harness::CHURN,
-    &harness::RIG,
-    &harness::BUSY,
-    &harness::PARK,
-    &harness::HANG,
-    &harness::LOAD,
-    &harness::BEAT,
-    &harness::AGAIN,
-    &harness::WAITER,
-    &harness::GROUP,
+    &churn::CHURN,
+    &rig::RIG,
+    &busy::BUSY,
+    &park::PARK,
+    &hang::HANG,
+    &load::LOAD,
+    &beat::BEAT,
+    &again::AGAIN,
+    &waiter::WAITER,
+    &group::GROUP,
     // **这一趟装配本身**（[`SCENE_UNIT`]）：一个[目标单元](Kind::Target)——没有身子、不进任何
     // 镜像（宿主那一侧按 `wanted_by` 与 `kind` 两格滤掉），它在这张表里只为"这一趟走完"给一个落点。
     &SCENE_UNIT,

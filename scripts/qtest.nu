@@ -31,7 +31,7 @@
 #
 # **（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
 # `scene accept` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
-# `programs/src/harness/guest/guest.rs` 与 `programs/src/harness/probe/probe_bound.rs` 两处 `assert`）。病根与量法归在
+# `programs/src/harness/guest/guest/main.rs` 与 `programs/src/harness/probe/probe_bound/main.rs` 两处 `assert`）。病根与量法归在
 # `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
 # 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
 #

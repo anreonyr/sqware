@@ -85,7 +85,7 @@ const NOBODY: EntryId = EntryId::new(usize::MAX);
 #[programs::entry]
 fn main() -> Report<'static> {
     // 一、**一条授面的会话**：`granted_berth` 把问话孔那一格换成 `land` 那一位的记号。
-    //    次序是硬的（先装路）——见 `harness/src/probe/probe_operator_gate.rs` 的文件头。
+    //    次序是硬的（先装路）——见 `programs/src/harness/probe/probe_operator_gate/main.rs` 的文件头。
     let Ok(session) = Session::open(
         utask::sire(),
         operator::granted_berth(Grant::Land),

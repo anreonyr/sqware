@@ -51,7 +51,7 @@ use programs::Report;
 
 // 设备那一族共用的客侧三手（`Ask` / `Hub` / `Device`）——本域领门闩走的是同一条路。
 use programs::driver::shared::device::{Ask, Hub};
-use programs::unit::harness::E_LODGER;
+use programs::unit::lodger::E_LODGER;
 
 // 树：本域是**客侧**（按名找服务）——只用那条会话（房客没有门牌，不上树）。
 use protocol::communication::session::Session;

@@ -107,7 +107,7 @@ doctest = false
 # ── 测具那一档（`src/harness/`，25 台）──────────────────────────────────────
 [[bin]]
 name = "prog-probe-lease"
-path = "src/harness/probe/probe_lease.rs"
+path = "src/harness/probe/probe_lease/main.rs"
 test = false
 bench = false
 doctest = false
@@ -120,28 +120,28 @@ doctest = false
 
 [[bin]]
 name = "prog-probe-owner"
-path = "src/harness/probe/probe_owner.rs"
+path = "src/harness/probe/probe_owner/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-denied"
-path = "src/harness/probe/probe_denied.rs"
+path = "src/harness/probe/probe_denied/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-bound"
-path = "src/harness/probe/probe_bound.rs"
+path = "src/harness/probe/probe_bound/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-control"
-path = "src/harness/probe/probe_control.rs"
+path = "src/harness/probe/probe_control/main.rs"
 test = false
 bench = false
 doctest = false
@@ -153,28 +153,28 @@ doctest = false
 # 两位客人各持一条——`gate` 那位走控制面（`operator::BERTH`），替 `land` 那位把试验场铺好。
 [[bin]]
 name = "prog-probe-operator-gate"
-path = "src/harness/probe/probe_operator_gate.rs"
+path = "src/harness/probe/probe_operator_gate/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-operator-land"
-path = "src/harness/probe/probe_operator_land.rs"
+path = "src/harness/probe/probe_operator_land/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-rule"
-path = "src/harness/probe/probe_rule.rs"
+path = "src/harness/probe/probe_rule/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-probe-rule-other"
-path = "src/harness/probe/probe_rule_other.rs"
+path = "src/harness/probe/probe_rule_other/main.rs"
 test = false
 bench = false
 doctest = false
@@ -187,14 +187,14 @@ doctest = false
 # 本 crate = 不进产品镜像的一切。
 [[bin]]
 name = "prog-guest"
-path = "src/harness/guest/guest.rs"
+path = "src/harness/guest/guest/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-passer"
-path = "src/harness/guest/passer.rs"
+path = "src/harness/guest/passer/main.rs"
 test = false
 bench = false
 doctest = false
@@ -202,7 +202,7 @@ doctest = false
 # 房客（U 态，同 `passer` 一档）：占一条线、**直接死**——线路由者那本账的探活读数。
 [[bin]]
 name = "prog-lodger"
-path = "src/harness/guest/lodger.rs"
+path = "src/harness/guest/lodger/main.rs"
 test = false
 bench = false
 doctest = false
@@ -210,7 +210,7 @@ doctest = false
 # 客人（U 态）：`/device/rtc` 那面服务的第一位用家——问时间、约一个时刻、等到那一声。
 [[bin]]
 name = "prog-sleeper"
-path = "src/harness/guest/sleeper.rs"
+path = "src/harness/guest/sleeper/main.rs"
 test = false
 bench = false
 doctest = false
@@ -218,7 +218,7 @@ doctest = false
 # 主体（U 态）：身份服务的第一位真客人——问自己是谁，把六条读数打出来。
 [[bin]]
 name = "prog-subject"
-path = "src/harness/guest/subject.rs"
+path = "src/harness/guest/subject/main.rs"
 test = false
 bench = false
 doctest = false
@@ -226,7 +226,7 @@ doctest = false
 # 盟友（U 态）：结盟服务的第一位真客人——立两枚盟、进进出出、验幂等与第三态。
 [[bin]]
 name = "prog-member"
-path = "src/harness/guest/member.rs"
+path = "src/harness/guest/member/main.rs"
 test = false
 bench = false
 doctest = false
@@ -234,14 +234,14 @@ doctest = false
 # 压测台：受害者（U 态）与台主（S 态，**景 `rig` 的引导镜像**）。
 [[bin]]
 name = "prog-churn"
-path = "src/harness/bench/again/churn.rs"
+path = "src/harness/bench/again/churn/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-rig"
-path = "src/harness/bench/rig/rig.rs"
+path = "src/harness/bench/rig/rig/main.rs"
 test = false
 bench = false
 doctest = false
@@ -249,59 +249,59 @@ doctest = false
 # 忙机台：占核者（U 态）与台主（S 态，**景 `load` 的引导镜像**）。
 [[bin]]
 name = "prog-busy"
-path = "src/harness/bench/load/busy.rs"
+path = "src/harness/bench/load/busy/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-park"
-path = "src/harness/bench/load/park.rs"
+path = "src/harness/bench/load/park/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-hang"
-path = "src/harness/bench/rig/hang.rs"
+path = "src/harness/bench/rig/hang/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-load"
-path = "src/harness/bench/load/load.rs"
+path = "src/harness/bench/load/load/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-beat"
-path = "src/harness/bench/beat.rs"
+path = "src/harness/bench/beat/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-again"
-path = "src/harness/bench/again/again.rs"
+path = "src/harness/bench/again/again/main.rs"
 test = false
 bench = false
 doctest = false
 
 # 共享组台：等待者（U 态）与台主（S 态，**景 `group` 的引导镜像**）。
 # 台主一次投信，看**两个等待者是不是都醒**（共享组的整链放行），以及那条消息
-# **只归一个人**——见 `harness/src/bench/group/group.rs` 头注。
+# **只归一个人**——见 `programs/src/harness/bench/group/group/main.rs` 头注。
 [[bin]]
 name = "prog-waiter"
-path = "src/harness/bench/group/waiter.rs"
+path = "src/harness/bench/group/waiter/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
 name = "prog-group"
-path = "src/harness/bench/group/group.rs"
+path = "src/harness/bench/group/group/main.rs"
 test = false
 bench = false
 doctest = false

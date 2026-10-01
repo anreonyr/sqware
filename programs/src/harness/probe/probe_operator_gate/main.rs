@@ -26,7 +26,7 @@
 //!
 //! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
 //! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**（见
-//! `harness/src/probe/probe_bound.rs`）。
+//! `programs/src/harness/probe/probe_bound/main.rs`）。
 //!
 //! # 为什么它排在整张单的**最前**（`order: Some(3)`）
 //!
