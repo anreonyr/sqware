@@ -16,7 +16,7 @@
 
 use alloc::string::String;
 use env::{Access, Policy};
-use env::{HoleDir, Kind, PieToken, TaskId, Wait};
+use env::{HoleDir, PieKind, PieToken, TaskId, Wait};
 use runtime::core::port;
 use runtime::env::mail;
 
@@ -69,7 +69,7 @@ impl Face {
     /// 只许同队或父域，hub 与驱动是兄弟，问不动）。
     pub fn claim(
         &self,
-        kind: Kind,
+        kind: PieKind,
         access: Access,
         policy: Policy,
         sensor: PieToken,

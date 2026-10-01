@@ -27,7 +27,7 @@ mod adapt;
 /// 设备面（本域私有：谁的设备谁自己带）。
 mod rtc;
 
-use env::{Access, Kind, Policy, Wait};
+use env::{Access, PieKind, Policy, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
@@ -45,7 +45,7 @@ use runtime::env::unit as utask;
 const ASK: Ask = Ask {
     class: "google,goldfish-rtc",
     name: None,
-    kind: Kind::Pole,
+    kind: PieKind::Pole,
     access: Access::FETCH_STORE,
     policy: Policy::ONLY,
 };

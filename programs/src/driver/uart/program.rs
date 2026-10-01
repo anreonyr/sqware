@@ -9,7 +9,7 @@ pub const E_UART: Died = 9;
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "uart",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

@@ -13,7 +13,7 @@ runner = ["nu", "scripts/runner.nu"]
 # 造镜像那一步是**编外**的：它要 std + host ABI，而本工作区被上面那两行钉在
 # riscv 上——**编内核之外**（用户裁定"initrd 与 kernel 何干"）：
 #
-#   cargo image               默认 product / release（产品景 10 台；验收景 `root` 要写明，25 台）
+#   cargo image               默认 product / release（产品景 9 台；验收景 `accept` 要写明，24 台）
 #   cargo image rig debug     指定场景与档
 #
 # `cargo run` 只管编内核；交互式跑之前先来这一下（`scripts/runner.nu` 会查镜像在不在）。

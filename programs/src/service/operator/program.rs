@@ -10,7 +10,7 @@ pub const E_TREE: Died = 10;
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "operator",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

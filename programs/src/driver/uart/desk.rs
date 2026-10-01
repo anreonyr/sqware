@@ -6,7 +6,7 @@
 //! ```
 
 use super::{ME, device};
-use env::{Access, Kind, Mark, PieToken, Policy, Wait};
+use env::{Access, PieKind, Mark, PieToken, Policy, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
@@ -27,7 +27,7 @@ use runtime::env::unit as utask;
 const ASK: Ask = Ask {
     class: "ns16550a",
     name: None,
-    kind: Kind::Pole,
+    kind: PieKind::Pole,
     access: Access::FETCH_STORE,
     policy: Policy::ONLY,
 };

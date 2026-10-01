@@ -1,4 +1,4 @@
-//! supply — 门闩那一类的**判别号**（[`Kind`]）。
+//! pie_kind — 门闩那一类的**判别号**（[`PieKind`]）。
 //!
 //! # 为什么它住 `env`
 //!
@@ -26,8 +26,8 @@
 //! （"要哪几样"的话就地写在 `control::assemble::enroll` 里）。**留下的是两格判别号**：
 //! 驱动那几枚 `Ask` 与设备账认领那一帧都在读它。
 
-const KIND_POLE: u8 = Kind::Pole as u8;
-const KIND_NOLE: u8 = Kind::Nole as u8;
+const KIND_POLE: u8 = PieKind::Pole as u8;
+const KIND_NOLE: u8 = PieKind::Nole as u8;
 
 /// **要的是哪一种门闩**（**判别号即线格式**：`repr(u8)`）。
 ///
@@ -35,27 +35,27 @@ const KIND_NOLE: u8 = Kind::Nole as u8;
 ///
 /// **照实记（第三格为什么退了）**：从前还有一格 `Hole`（孔），它是**持树者那笔提示之路**的
 /// 格子——那一笔从前也经这条供给路发（引导域先认下来、编排域来要时才发）。树改成**编排域
-/// 自己起**的服务之后那一笔整条退了，可它占的格还留着：全仓**没有一处构造 `Kind::Hole`**，
+/// 自己起**的服务之后那一笔整条退了，可它占的格还留着：全仓**没有一处构造 `PieKind::Hole`**，
 /// 只有发货端那个 match 臂在接一个永远不会来的东西。本笔删掉它：**机制退了，格也退**。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
+pub enum PieKind {
     /// 一段内存（设备寄存器页 / 自描述区 / 载荷区）。
     Pole,
     /// 空载荷的信号（中断门铃）。
     Nole,
 }
 
-impl Kind {
+impl PieKind {
     /// 线上那一格解回（**判别号不认识 ⇒ `None`**——读的人按"这一帧读不懂"处置，不猜）。
     ///
     /// **它为什么住类型自己身上**（照实记：impl 跟着类型走）：这一格的读者有两条
     /// （驱动那几枚 `Ask` 与设备账认领那一帧的解回）——两处各写一遍 `match 0/1/…` 就是
     /// 两份判别号表。
-    pub const fn of(raw: u8) -> Option<Kind> {
+    pub const fn of(raw: u8) -> Option<PieKind> {
         match raw {
-            KIND_POLE => Some(Kind::Pole),
-            KIND_NOLE => Some(Kind::Nole),
+            KIND_POLE => Some(PieKind::Pole),
+            KIND_NOLE => Some(PieKind::Nole),
             _ => None,
         }
     }

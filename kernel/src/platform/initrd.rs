@@ -1,4 +1,4 @@
-pub(crate) fn root_image(blob: &[u8]) -> Option<&[u8]> {
+pub(crate) fn entry_image(blob: &[u8]) -> Option<&[u8]> {
     let off = u32le(blob, 0)? as usize;
     let len = u32le(blob, 4)? as usize;
     blob.get(off..off.checked_add(len)?)

@@ -5,7 +5,7 @@
 //! # 它为什么还读设备树
 //! 两个数只有树里有：**这台控制器有几条线**（`riscv,ndev`）与**本域该用哪个 context**
 //! （`interrupts-extended` 的项序，`cell == 9` 才是 S 模式外部中断）。内核不代劳——
-//! 它只把设备树原样搬给域（`platform/devices.rs::supply_dtb`）。
+//! 它只把设备树原样搬给域（`platform/devices.rs::pie_dtb`）。
 //! 认控制器用的那个类（`compatible`）与单子上那一格是**同一个常量**（`PLIC_CLASS`）。
 
 /// S 模式外部中断的中断号：`interrupts-extended` 里 `cell == 9` 的那一项。

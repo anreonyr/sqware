@@ -17,8 +17,8 @@ pub mod message;
 pub mod service;
 pub mod system;
 
-/// **答话那一格的"没失败"**（0）——全协议**一个号**：六家（principal / coalition / operator /
-/// board / line / supply）与驱动各自那几族（如 `programs::driver::rtc`）共用。
+/// **答话那一格的"没失败"**（0）——全协议**一个号**：那几族（principal / coalition / operator
+/// / control / 设备账）与驱动各自那几族（如 `programs::driver::rtc`）共用。
 /// 定义在 [`fail_codes`] 那一份源里（`fail_codes!` 的第二个参数就是它）；这里把它**转出**
 /// crate：`fail_codes` 那个模块自己是有意不进公共面的（出 crate 的只有那个宏），而驱动那一侧
 pub use fail_codes::OK;

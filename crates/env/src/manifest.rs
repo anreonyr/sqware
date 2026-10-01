@@ -1,12 +1,12 @@
-//! initrd 清单——boot 交给 root 的**程序账**（一条 = 一个可装载程序）。
+//! initrd 清单——boot 交给**引导镜像那一域**的程序账（一条 = 一个可装载程序）。
 //!
-//! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是域（引导域读它挑引导镜像，编排域
-//! 读它挑各服务的镜像——同一批字节，见 `platform/devices.rs::supply_initrd`），故格式在此定义一次
+//! 打包的一侧是内核的 `build.rs`（宿主程序），读的一侧是域（引导镜像按它挑自己那一段，
+//! 编排域按它挑各服务的镜像——同一批字节，见 `platform/devices.rs::pie_initrd`），故格式在此定义一次
 //! （与 [`pair`](crate::pair) 同一条理由：跨域的字节布局不留第二份账）。
 //!
 //! ```text
-//! [0..4]   root_off u32        ← **给内核的两个数**（见 [`PREAMBLE`]）
-//! [4..8]   root_len u32
+//! [0..4]   entry_off u32        ← **给内核的两个数**（见 [`PREAMBLE`]）
+//! [4..8]   entry_len u32
 //! [8..12]  count u32（1..=MAX_PROGRAMS）
 //! 每条：   [u32 kind][u32 name_len][name][u32 len][bytes]       （LE）
 //! ```
@@ -61,7 +61,7 @@ const HEAD: usize = PREAMBLE + 4;
 pub struct Entry<'a> {
     /// 装成哪种空间（`Build` 的特权级参数）。
     pub kind: ProgramKind,
-    /// 清单名（root 按它挑程序）。
+    /// 清单名（引导镜像按它挑程序）。
     pub name: &'a str,
     /// 镜像字节。
     pub elf: &'a [u8],
@@ -108,15 +108,15 @@ impl<'a> Iterator for Entries<'a> {
 
 /// 打包（写侧：内核的 `build.rs`）：清单区字节（**含 [`PREAMBLE`] 那 8 字节**）。
 ///
-/// `root_at` = **引导镜像**在 `items` 里的下标：前言那两格按它算（布局完了回填）。
+/// `entry_at` = **引导镜像**在 `items` 里的下标：前言那两格按它算（布局完了回填）。
 /// 判据与读侧同一份（条数 / 名字长度 / 空镜像），非法 → `None`。
-pub fn pack(items: &[(ProgramKind, &str, &[u8])], root_at: usize) -> Option<Vec<u8>> {
-    if items.is_empty() || items.len() > MAX_PROGRAMS || root_at >= items.len() {
+pub fn pack(items: &[(ProgramKind, &str, &[u8])], entry_at: usize) -> Option<Vec<u8>> {
+    if items.is_empty() || items.len() > MAX_PROGRAMS || entry_at >= items.len() {
         return None;
     }
     let mut blob = Vec::new();
-    blob.extend_from_slice(&0u32.to_le_bytes()); // root_off —— 占位，下面回填
-    blob.extend_from_slice(&0u32.to_le_bytes()); // root_len
+    blob.extend_from_slice(&0u32.to_le_bytes()); // entry_off —— 占位，下面回填
+    blob.extend_from_slice(&0u32.to_le_bytes()); // entry_len
     blob.extend_from_slice(&(items.len() as u32).to_le_bytes());
     let mut spans = Vec::with_capacity(items.len());
     for (kind, name, elf) in items {
@@ -131,8 +131,8 @@ pub fn pack(items: &[(ProgramKind, &str, &[u8])], root_at: usize) -> Option<Vec<
         blob.extend_from_slice(elf);
         spans.push(start..blob.len());
     }
-    let root = spans.get(root_at)?;
-    let (off, len) = (root.start as u32, root.len() as u32);
+    let entry = spans.get(entry_at)?;
+    let (off, len) = (entry.start as u32, entry.len() as u32);
     blob[0..4].copy_from_slice(&off.to_le_bytes());
     blob[4..8].copy_from_slice(&len.to_le_bytes());
     Some(blob)

@@ -143,7 +143,7 @@ fn main() -> Reason {
         //
         // **走 `port::ship` 而不是裸 `mail::accord`**（照实记）：组从前是四枚里唯一绕开它
         // 的那一枚。`ship` 那里子集由**两族**拼出（`Access` 与 `Policy` 混族写不出来）、空集
-        // 本地拒——与孔 / 页 / 铃那三处**同一形**（`programs/src/root/supply/server.rs` 的
+        // 本地拒——与孔 / 页 / 铃那三处**同一形**（发货那一手 `control::assemble::enroll` 的
         // `&PolePie::from_token(src)` 就是这么写的）。句柄照旧**现造**（`TolePie::from_token`，
         // 与 `HolePie::from_token` 同款）：`core::Pile` 仍只管"多路等待"那一件事。
         let group_pie = TolePie::from_token(group);

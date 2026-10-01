@@ -33,7 +33,7 @@
 //! `(TaskId, TaskId, usize)` 那条注说"`Reserve` 那条才是活的那一格"，而 `Reserve`
 //! 今天标的是 `#[ret((usize, usize))]`（`a0` = owner 高 32 | vestor 低 32、`a1` = 记号），
 //! 故它同样没有调用者。三处一并删：本仓对这类格子的口径是**"机制退了，格也退"**
-//! （见 [`supply`](crate::wire::supply) 头注里 `Kind::Hole` 那一笔），"备复用"不在其中。
+//! （见 [`pie_kind`](crate::pie_kind) 头注里 `PieKind::Hole` 那一笔），"备复用"不在其中。
 
 use super::{Mark, PieToken, TaskId, TeamId, VirtAddr};
 use crate::HoleDir;

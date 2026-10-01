@@ -9,7 +9,7 @@ pub const E_CANONICAL: Died = 24;
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "canonical",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

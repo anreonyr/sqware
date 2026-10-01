@@ -9,7 +9,7 @@ pub const E_PRINCIPAL: Died = 14;
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "principal",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

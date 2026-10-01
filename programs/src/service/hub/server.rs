@@ -22,7 +22,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use env::HoleDir;
-use env::{Access, Key, Kind, MailFail, Mark, Pair, PieToken, Policy, TaskId, Wait};
+use env::{Access, Key, PieKind, MailFail, Mark, Pair, PieToken, Policy, TaskId, Wait};
 use protocol::communication::establish;
 use protocol::communication::receiver::{Receiver, RecvFail};
 use protocol::communication::sender::Sender;
@@ -307,7 +307,7 @@ fn claim(
 ) {
     let deed = {
         let (Some(kind), Some(access), Some(policy)) = (
-            Kind::of(kind),
+            PieKind::of(kind),
             Access::from_bits(access),
             Policy::from_bits(policy),
         ) else {
@@ -375,13 +375,13 @@ fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
 fn ship(
     entry: Entry,
     to: TaskId,
-    kind: Kind,
+    kind: PieKind,
     access: Access,
     policy: Policy,
 ) -> Result<PieToken, ()> {
     let shipped = match kind {
-        Kind::Pole => port::ship(&PolePie::from_token(entry.page), to, access, policy),
-        Kind::Nole => port::ship(&NolePie::from_token(entry.page), to, access, policy),
+        PieKind::Pole => port::ship(&PolePie::from_token(entry.page), to, access, policy),
+        PieKind::Nole => port::ship(&NolePie::from_token(entry.page), to, access, policy),
     };
     shipped.map(|seat| seat.seed()).map_err(|_| ())
 }

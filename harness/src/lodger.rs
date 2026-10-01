@@ -73,7 +73,7 @@ use protocol::service::operator::Fail;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face;
 
-use env::{Access, Kind, PieToken, Policy};
+use env::{Access, PieKind, PieToken, Policy};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
 use runtime::env::mail;
@@ -88,7 +88,7 @@ use runtime::env::unit as utask;
 const ASK: Ask = Ask {
     class: "virtio,mmio",
     name: None,
-    kind: Kind::Pole,
+    kind: PieKind::Pole,
     access: Access::FETCH,
     policy: Policy::ONLY,
 };

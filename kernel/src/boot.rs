@@ -110,8 +110,8 @@ pub fn init() {
         );
     }
 
-    if let Some(root) = spawn_root().expect("boot spawn failed") {
-        crate::work::room::scheduler::core::beacon_arm(&root);
+    if let Some(entry) = spawn_entry().expect("boot spawn failed") {
+        crate::work::room::scheduler::core::beacon_arm(&entry);
     }
 
     crate::work::room::conductor::rooted();
@@ -156,13 +156,13 @@ fn register_runtime_hooks() {
     conductor::hook(SHUTDOWN_HOOKS);
 }
 
-fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {
+fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {
     let Some(region) = machine::info().initrd() else {
         return Ok(None);
     };
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
-    let elf = crate::platform::initrd::root_image(blob).expect("initrd: root image missing");
+    let elf = crate::platform::initrd::entry_image(blob).expect("initrd: entry image missing");
 
     let source = crate::work::unit::source::Source::Slice(elf);
     let team = crate::work::unit::build(
@@ -170,7 +170,7 @@ fn spawn_root() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>
         crate::work::unit::space::SpaceKind::Supervisor,
         crate::work::unit::weak::TaskWeak::empty(),
     )
-    .expect("assemble root elf");
+    .expect("assemble entry elf");
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(

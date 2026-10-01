@@ -14,9 +14,9 @@ pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "system",
         space: ProgramKind::Supervisor,
-        wanted_by: &["root", "product"],
-        // **这两景的引导镜像**（并域那一刀：这个位子原是那个叫 `root` 的域的）。
-        entry: &["root", "product"],
+        wanted_by: &["accept", "product"],
+        // **这两景的引导镜像**（并域那一刀：引导域退场，这个位子归本域）。
+        entry: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,

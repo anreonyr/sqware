@@ -14,7 +14,7 @@ pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "router",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

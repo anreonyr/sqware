@@ -171,7 +171,7 @@ impl Identity {
         name: "",
         kind: Kind::Service,
         space: ProgramKind::User,
-        wanted_by: &["root"],
+        wanted_by: &["accept"],
         entry: &[],
     };
 }

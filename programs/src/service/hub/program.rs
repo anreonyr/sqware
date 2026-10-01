@@ -17,7 +17,7 @@ pub const READY: &str = "hub-ready";
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "hub",
-        wanted_by: &["root", "product"],
+        wanted_by: &["accept", "product"],
         ..Identity::DEFAULT
     },
     relation: Relation {

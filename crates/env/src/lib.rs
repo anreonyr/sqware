@@ -6,7 +6,7 @@
 //! `crates/protocol`（内核零引用；依赖方向 `kernel → env → runtime → protocol → programs`）。
 //!
 //! **"装机的账"也在本 crate**（照实记）：坐标 / 配对块 / 启动参数 / initrd 清单 / 供给词汇
-//! （[`key`] / [`pair`] / [`args`] / [`manifest`] / [`supply`]）。它们与"过线的那些东西"的
+//! （[`key`] / [`pair`] / [`args`] / [`manifest`] / [`pie_kind`]）。它们与"过线的那些东西"的
 //! 共同点只有一条：**宿主与 riscv 都编得过**。这几件原先被拆去 `crates/plan`（理由写的是
 //! "env 是过线的、plan 是装机的"），而 **plan 作为程序装配中间层退场之后它们没有别处可放**
 //! ——读同一批字节的两侧（宿主侧的 `crates/image`、riscv 侧的域）都编得过的只有本 crate。
@@ -38,7 +38,7 @@ pub mod key;
 pub mod manifest;
 pub mod pair;
 pub mod permission;
-pub mod supply;
+pub mod pie_kind;
 pub mod wait;
 pub mod wire;
 
@@ -62,6 +62,6 @@ pub use key::{KEY_LEN, Key};
 pub use mold::Frame;
 pub use pair::{PAIR_LEN, Pair};
 pub use permission::{Access, Permission, Policy};
-pub use supply::Kind;
+pub use pie_kind::PieKind;
 pub use wait::Wait;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};

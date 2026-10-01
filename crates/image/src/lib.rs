@@ -186,16 +186,15 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
-    // 引导镜像**按声明查**（不是"跟景同名"）：`product` 那一景的引导镜像仍是 `root`
-    // （同一个引导域起两景，见 `root/program.rs` 的 `entry`）。它必须在清单里——不在就是
-    // 那张装配表写错了。
+    // 引导镜像**按声明查**（不是"跟景同名"）：两景的引导镜像都是 `system`（见
+    // `system/program.rs` 的 `entry`）。它必须在清单里——不在就是那张装配表写错了。
     let entry = entry_of(scenario)
         .ok_or_else(|| format!("initrd: 不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
-    let root_at = bins
+    let entry_at = bins
         .iter()
         .position(|(name, _)| *name == entry)
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
-    let blob = env::manifest::pack(&items, root_at)
+    let blob = env::manifest::pack(&items, entry_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
 
     // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。

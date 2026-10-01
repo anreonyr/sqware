@@ -54,21 +54,21 @@ pub(crate) fn irq_stats() -> (usize, usize, usize, usize) {
     )
 }
 
-fn supply_initrd() -> Option<(Key, AnyPie)> {
+fn pie_initrd() -> Option<(Key, AnyPie)> {
     let initrd = machine::info().initrd()?;
     let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0)).ok()?;
     let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
     Some((Key::region(initrd.base as u64), AnyPie::Pole(pie)))
 }
 
-fn supply_dtb() -> (Key, AnyPie) {
+fn pie_dtb() -> (Key, AnyPie) {
     let dtb = machine::info().dtb();
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0)).expect("devicetree region");
     let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
     (Key::dtb(), AnyPie::Pole(pie))
 }
 
-fn supply_irq() -> (Key, AnyPie) {
+fn pie_irq() -> (Key, AnyPie) {
     let meta = NoleMeta::new(TaskId::new(0));
     assert!(IRQ.set(meta.clone()).is_ok(), "irq bell built twice");
     let pie = gate::new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None);
@@ -132,19 +132,19 @@ pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
             out.push((Key::region(base as u64), pie));
         }
     }
-    let (key, pie) = supply_dtb();
+    let (key, pie) = pie_dtb();
     log_p.items.push(vec![
         Some(String::from("devicetree")),
         Some(format!("token {}", pie.token().get())),
     ]);
     out.push((key, pie));
-    let (key, pie) = supply_irq();
+    let (key, pie) = pie_irq();
     log_p.items.push(vec![
         Some(String::from("irq")),
         Some(format!("token {}", pie.token().get())),
     ]);
     out.push((key, pie));
-    if let Some((key, pie)) = supply_initrd() {
+    if let Some((key, pie)) = pie_initrd() {
         log_p.items.push(vec![
             Some(String::from("initrd")),
             Some(format!("token {}", pie.token().get())),
@@ -152,7 +152,7 @@ pub(crate) fn scan() -> Vec<(Key, AnyPie)> {
         out.push((key, pie));
     }
     log_p.items.push(vec![
-        Some(String::from("handed to root")),
+        Some(String::from("handed to entry")),
         Some(format!("{} entries", out.len())),
     ]);
     let sealed = log.seal();

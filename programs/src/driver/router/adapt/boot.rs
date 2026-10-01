@@ -10,7 +10,7 @@ use crate::core::lines::Lines;
 use crate::core::sources::Sources;
 use crate::plic::Plic;
 use alloc::vec::Vec;
-use env::{Access, HoleDir, Kind, Policy, Wait};
+use env::{Access, HoleDir, PieKind, Policy, Wait};
 use programs::driver::context::{Context, Step};
 use programs::driver::device::{Ask, Device, Hub};
 use programs::driver::fail::Fail;
@@ -33,21 +33,21 @@ const SERVICE: &str = "router";
 const PLIC_ASK: Ask = Ask {
     class: PLIC_CLASS,
     name: None,
-    kind: Kind::Pole,
+    kind: PieKind::Pole,
     access: Access::FETCH_STORE,
     policy: Policy::ONLY,
 };
 const DTB_ASK: Ask = Ask {
     class: hcall::BOOT,
     name: Some(hcall::DTB),
-    kind: Kind::Pole,
+    kind: PieKind::Pole,
     access: Access::FETCH,
     policy: Policy::NONE,
 };
 const IRQ_ASK: Ask = Ask {
     class: hcall::BOOT,
     name: Some(hcall::IRQ),
-    kind: Kind::Nole,
+    kind: PieKind::Nole,
     access: Access::FETCH,
     policy: Policy::NONE,
 };

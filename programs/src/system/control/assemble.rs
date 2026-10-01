@@ -10,7 +10,7 @@ use alloc::string::ToString;
 use env::{Pair, Wait};
 use protocol::debug;
 
-use env::{Access, Key, Kind, Mark, Policy};
+use env::{Access, Key, PieKind, Mark, Policy};
 use protocol::driver::hub::{ENROLL_MAX, Enroll};
 use runtime::core::port;
 use runtime::env::mail::{NolePie, PolePie};
@@ -110,10 +110,10 @@ impl Control {
         // 的坐标）。
         let mut records = [Pair::NONE; ENROLL_MAX];
         let mut got = 0usize;
-        let mut put = |key: Key, kind: Kind, access: Access, policy: Policy| {
+        let mut put = |key: Key, kind: PieKind, access: Access, policy: Policy| {
             let shipped = self.accounts.token(key).and_then(|src| match kind {
-                Kind::Pole => port::ship(&PolePie::from_token(src), *task, access, policy).ok(),
-                Kind::Nole => port::ship(&NolePie::from_token(src), *task, access, policy).ok(),
+                PieKind::Pole => port::ship(&PolePie::from_token(src), *task, access, policy).ok(),
+                PieKind::Nole => port::ship(&NolePie::from_token(src), *task, access, policy).ok(),
             });
             match shipped {
                 Some(seat) => {
@@ -128,12 +128,12 @@ impl Control {
                 ),
             }
         };
-        put(Key::dtb(), Kind::Pole, Access::FETCH, Policy::VEST);
-        put(Key::irq(), Kind::Nole, Access::FETCH, Policy::VEST);
+        put(Key::dtb(), PieKind::Pole, Access::FETCH, Policy::VEST);
+        put(Key::irq(), PieKind::Nole, Access::FETCH, Policy::VEST);
         for device in &devices {
             put(
                 device.key,
-                Kind::Pole,
+                PieKind::Pole,
                 Access::FETCH_STORE,
                 Policy::VEST | Policy::ONLY,
             );

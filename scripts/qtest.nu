@@ -12,7 +12,7 @@
 #   nu scripts/qtest.nu                              # 跑当前 manifest 的全部用例
 #   nu scripts/qtest.nu --package kernel             # 指定包（工作区里用）
 #   nu scripts/qtest.nu --package kernel --scene rig # 造 rig 景、带它跑整机那一例
-#   nu scripts/qtest.nu --package kernel --scene root --feed exit
+#   nu scripts/qtest.nu --package kernel --scene accept --feed exit
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
 # **照实记（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
@@ -21,7 +21,7 @@
 # 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
 #
 #   nu scripts/qtest.nu --package kernel            # 健康面（九例，只在 debug 档）
-#   nu scripts/qtest.nu --package kernel --scene root --feed exit   # 整机那一例
+#   nu scripts/qtest.nu --package kernel --scene accept --feed exit   # 整机那一例
 #
 # **一例 = 一张镜像，一次运行 = 一个景**：`cargo-qtest` 没有逐例过滤器（`--help` 里只有
 # `--test <目标名>`——那是**测试目标**名，不是用例名），而 `--qemu-arg=` 是**整次运行**的
@@ -29,8 +29,8 @@
 # 跑七个景就是七次调用。`--scene` 给的景名由本脚本打印出来——报告里那一行只说 `scene`，
 # 景在这一行。
 #
-# **照实记（`root` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
-# `scene root` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
+# **照实记（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
+# `scene accept` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
 # `harness/src/guest.rs` 与 `harness/src/probe_bound.rs` 两处 `assert`）。病根与量法归在
 # `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
 # 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
@@ -40,7 +40,7 @@
 # （见 `programs/src/system/control/supervise.rs` 的头注）。量到的：
 #   · 喂 `exit` 落在 **1 s** 那一档（原先正是"扳机不等读数"的现场）：改前 15 位"会走的"报到 14、
 #     另有两处 panic（其中 `probe-owner.rs:202` 那条是被扑杀造成的）；改后 **15/15、panic 0**。
-#   · `scene root` 默认档 **8 跑全绿**（每跑 5.78~5.83 s）；`product`/`again`/`load`/`group`/`beat`
+#   · `scene accept` 默认档 **8 跑全绿**（每跑 5.78~5.83 s）；`product`/`again`/`load`/`group`/`beat`
 #     各 1 例全绿。**样本照实说**：8 跑全绿 ⇒ 红率低于 ~31%（n=8 的 95% 上界），不是"证明为零"。
 #   · 残留（不在这两刀里）：`probe_owner::take_over` 那一圈"有界重试"每一轮含着
 #     `Wait::AtMost(1000)` 的两问（而客户端 `push` 是 `Wait::Forever`）——它才是那个**真的挂**。
@@ -51,7 +51,7 @@
 # **照实记（为什么非搬不可）**：`cargo-qtest` 把 QEMU 的 stdin 钉成 `Stdio::null()`
 # （它源码 `qemu.rs` 那一行）⇒ 往 `cargo qtest` 里灌 stdin **一个字节也到不了 QEMU**。
 # 而整机收场的扳机是 `canonical`（装配单位次 22，最后一条）——它的退场由**控制台输入**驱动。
-# 故依赖输入日程的景（`root` / `product`）原先在内核内判据上**判不了**：它们偶尔能收场，
+# 故依赖输入日程的景（`accept` / `product`）原先在内核内判据上**判不了**：它们偶尔能收场，
 # 是因为探针先 panic、级联把 `canonical` 扑杀，那条道才响。
 #
 # 三段拼起来（都在 `<TRACE_OUT>/` 里，一次运行生成一次）：
@@ -86,12 +86,12 @@
 # 保留"失败时端出捕获尾"那一手只为防串口路由被改动，别指望它有机侧输出。
 #
 # **读数（量出来的）**：七个景**全绿**（release 档、每景 1 例）——
-#   root 5.28 s · product 5.23 · again 2.17 · load 0.72 · group 0.37 · beat 2.22 · rig 3.33。
+#   accept 5.28 s · product 5.23 · again 2.17 · load 0.72 · group 0.37 · beat 2.22 · rig 3.33。
 #   `--scene product --feed list`（不喂 `exit`）→ **FAILED**：喂入是承重的，不是巧合。
 #   不给 `--scene`（debug 档）→ **9 passed · 1 failed**：健康面九例由默认那轮覆盖，
 #   整机那一例报红（无镜像哨，响得出来）。
 #
-# **照实记（整机用例为什么跑 release）**：同一个 `root` 景，**release 产品路 6/6 稳、
+# **照实记（整机用例为什么跑 release）**：同一个 `accept` 景，**release 产品路 6/6 稳、
 # 14 笔结局**；**debug 产品路结局笔数 5 / 11 / 6 / 11 乱跳、偶发 panic** ⇒ debug 档下
 # 这条世界本来就不可靠（`rig` 的照实记早写过"debug 下每轮都挂在 20 ms 那一缝上"）。
 # 而测试目标原先**只能在 debug 下编**（`kernel::health::*` 是 `#[cfg(debug_assertions)]`，
@@ -273,7 +273,7 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   let qemu_args = ($board | each { |a| $"--qemu-arg=($a)" })
   let pkg = if ($package | is-empty) { [] } else { ["--package" $package] }
   let qemu_bin = if ($wrapper | is-empty) { [] } else { ["--qemu" $wrapper] }
-  # 整机用例跑 **release**：同一个 `root` 景，release 产品路 6/6 稳（14 笔结局），debug 产品路
+  # 整机用例跑 **release**：同一个 `accept` 景，release 产品路 6/6 稳（14 笔结局），debug 产品路
   # 结局笔数 5 / 11 / 6 / 11 乱跳、偶发 panic ⇒ debug 档下这条世界本来就不可靠。健康面那九例
   # 是 `#[cfg(debug_assertions)]`（它们的身子在 `kernel::health` 里），故 release 档的测试
   # 目标只剩整机那一例——正好，也快。

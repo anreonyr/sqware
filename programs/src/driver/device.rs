@@ -8,7 +8,7 @@
 use alloc::string::ToString;
 
 use env::{Access, Policy};
-use env::{Kind, PieToken, Wait};
+use env::{PieKind, PieToken, Wait};
 use protocol::driver::hub;
 use protocol::driver::hub::Deed;
 use protocol::service::operator::client::Face as TreeFace;
@@ -31,7 +31,7 @@ pub struct Ask {
     /// 点名那一档今天只有两处用：`/dev/boot/{dtb,irq}`（那两件的名字是**常量**，不是树给的）。
     pub name: Option<&'static str>,
     /// 什么种类（`Pole` = 一段内存 / `Nole` = 空载荷的信号）。
-    pub kind: Kind,
+    pub kind: PieKind,
     /// 要多少权（`FETCH` 读、`FETCH_STORE` 读写——设备寄存器面要读写）。
     pub access: Access,
     /// **形态**（`ONLY` = 独占：设备 `reg` 段那一枚内核就是那么发的，一枚门闩只许一个使用者）。

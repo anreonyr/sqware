@@ -26,7 +26,7 @@ use crate::memory::manager::mode;
 ///
 /// **改完量到的界**：64 KB 下 debug 档**不再折在保护页上**（一路走到装配后半：hub 落完
 /// 二十格、router / uart / rtc 上树、`canonical` 印出用法行、`hole: live=0`）；release 档
-/// `product` 景照旧全绿（用法行在、`exit tid=… root: done`、`hole: live=0`）。
+/// `product` 景照旧全绿（用法行在、`exit tid=… system: done`、`hole: live=0`）。
 ///
 /// **如实记（这一格修的不是 debug 档的全部）**：折掉保护页那一折之后，debug 档的 `product`
 /// 景**仍会折**——折在装配期的树操作上，而且**victim 随镜像布局变**（实测三种构建各折一处：
@@ -121,6 +121,8 @@ pub(crate) fn validate() {
     );
 }
 
+/// **内核自己那叠启动栈**的哨兵（hart 0 起机时用的）。**它跟"引导镜像"无关**：那两个名字里的
+/// `root` 说的是"任务树 / 启动那一下的根"，不是任何一个域的名字——**别再按域去读它**。
 pub(crate) const ROOT_STACK_CANARY: usize = 0x600D_CAFE_51A7_0D1E;
 
 pub(crate) fn kernel_edge() -> usize {
