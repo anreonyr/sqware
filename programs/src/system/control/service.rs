@@ -206,6 +206,12 @@ pub fn mint(
     };
     table.attach(name, Some(team), task)?;
     table.set_state(name, State::Starting);
+    // **照实记（第 33/34 轮那条"卡住"的判据就靠这一行）**：debug 档偶发一条红——某一台
+    // （实测 `probe-rule`）**一条自己的读数都没有**、也没交凭据，装配者到点报 `not ready`。
+    // 两件可能的事分开看只有这一行能答：**它有没有拿到任务**。
+    //   · 这一行在、而它自己一句不响 ⇒ 卡在它自己起手的**第一步之前**（补本体那一侧的读数）；
+    //   · 这一行不在 ⇒ 它压根没铸出来（那要往 `admit_start` / `build` / `spawn` 那三步里看）。
+    protocol::debug::put(&alloc::format!("system: minted {name} tid={}", task.get()));
     Ok(task)
 }
 
