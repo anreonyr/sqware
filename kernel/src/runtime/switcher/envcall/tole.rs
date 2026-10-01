@@ -1,5 +1,5 @@
-use core::sync::atomic::Ordering;
 use alloc::sync::{Arc, Weak};
+use core::sync::atomic::Ordering;
 
 use env::{HoleDir, Mark, ToleCall};
 
@@ -108,7 +108,8 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
     match tole::wait(&meta, dur) {
         Ok(Handoff::Resume(())) => {
             let (hit, skipped) = ready(&meta);
-            if hit.is_none() && skipped > 0 && MATE_SKIP.fetch_add(skipped, Ordering::Relaxed) == 0 {
+            if hit.is_none() && skipped > 0 && MATE_SKIP.fetch_add(skipped, Ordering::Relaxed) == 0
+            {
                 crate::putln!("tole: mate skipped n={}", skipped);
             }
             if let Some((token, dir)) = hit {

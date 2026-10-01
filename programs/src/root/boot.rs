@@ -1,5 +1,4 @@
 //! boot — **boot 给引导域的两块账**：清单（装了哪些程序）与配对块（有哪些门闩）。
-//!
 //! 这是**这台机器的事实**，不是协议：它读的是启动参数（`env::args`），行的还是
 //! "谁被装进来了"这件事。物料面（单子与回单）住在 [`protocol::system::supply`]；要哪几样由
 //! **收方**自己开单（三张都在 [`programs::unit`]，开口的形态就是 `Need`）。
@@ -35,7 +34,6 @@ impl Root {
     }
 
     /// 清单：这台机器装了哪些程序（引导域按名字挑）。
-    ///
     /// 每次给一个**新的游标**（`Entries` 是一次性读的），故调用方可以按需重读。
     pub fn programs(&self) -> manifest::Entries<'static> {
         manifest::Entries::new(self.view).expect("清单头已在 take 时验过")
@@ -47,7 +45,6 @@ impl Root {
     }
 
     /// 配对块里按**坐标**取一枚门闩。
-    ///
     /// **坐标唯一**：区不重叠（设备 `reg` 段与载荷区各有各的基址），`dtb` / `irq` 各自只有
     /// 一件——故不再有"同名取第一枚"这回事。判别号读不懂的记录当场跳过。
     pub fn token(&self, key: Key) -> Option<PieToken> {
@@ -60,11 +57,6 @@ impl Root {
     }
 
     /// 配对块的自述（一行）：按判别号数它有什么。
-    ///
-    /// **照实记**：从前这里印的是"重名"（同一节点的多段 `reg` 造出两条同名记录，而按名取只
-    /// 够得到第一枚）。坐标换成区之后那笔账不存在了——两段各有各的基址，各是各的坐标。
-    /// 这条读数因此改报**块里有什么**：`region` 是区段的条数（设备 + 载荷区），
-    /// `dtb` / `irq` 各一件，`bad` 是读不懂的条数。
     pub fn report_pairs(&self) {
         let n = self.pairs.len() / PAIR_LEN;
         let (mut region, mut dtb, mut irq, mut bad) = (0, 0, 0, 0);

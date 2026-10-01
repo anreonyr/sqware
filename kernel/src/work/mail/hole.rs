@@ -540,7 +540,14 @@ static GONE_ALARMED: AtomicBool = AtomicBool::new(false);
 ///
 /// `dst` = 收方那一段的 VA（0 = 这一格与收方缓冲区无关）——**两边在一页里的偏移不同**正是
 /// `why=copy` 那一格要看的东西。
-pub(crate) fn note_gone(meta: &HoleMeta, from: TaskId, va: usize, len: usize, dst: usize, why: &str) {
+pub(crate) fn note_gone(
+    meta: &HoleMeta,
+    from: TaskId,
+    va: usize,
+    len: usize,
+    dst: usize,
+    why: &str,
+) {
     GONE_N.fetch_add(1, Ordering::Relaxed);
     if !GONE_ALARMED.swap(true, Ordering::Relaxed) {
         crate::putln!(
@@ -555,7 +562,6 @@ pub(crate) fn note_gone(meta: &HoleMeta, from: TaskId, va: usize, len: usize, ds
         );
     }
 }
-
 
 pub(crate) fn seal(meta: &HoleMeta) {
     *meta.state.lock() = HoleState::Dead;

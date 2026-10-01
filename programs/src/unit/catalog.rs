@@ -1,16 +1,7 @@
 //! catalog — **装配表那一块**：那一份份声明（`#[path]` 拉进来的）与 [`PROGRAMS`] 这张单。
-//!
-//! **照实记（层六·2 第一块：从 `mod.rs` 切出来）**：这一块从 `program/mod.rs` 的 588–681 行整体
-//! 搬到同名目录下的 `catalog.rs`——**它自足**（除上面的类型定义外不引别的），且**这一段是给人扫的**
-//! （`#[rustfmt::skip]` 那一张表）。模块名不变：`mod.rs` 里 `pub use catalog::*;` 把这一块**原样
-//! 摆回 `crate::unit` 那个名字空间** ⇒ 全仓引用一处都不用动。
-//!
-//! **它要从上面借两样**：[`UnitFile`] 与 [`SCENE_UNIT`]（那一台目标单元）——故一行 `use super::{…}`。
 
-use super::{UnitFile, SCENE_UNIT};
+use super::{SCENE_UNIT, UnitFile};
 
-// ── 每台自己的声明 ───────────────────────────────────────────────────
-//
 // **它们不在这份文件的自然模块树里**：那些目录（`driver/uart/`、`system/operator/`…）都拖着
 // runtime / protocol 代码，`crates/image` 进不去。故只由 [`PROGRAMS`] 这一处按 `#[path]` 拉
 // 进来一次——**唯一的声明点**。
@@ -44,9 +35,7 @@ pub mod uart;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它就是装载次序（`ROOT_OFFSET`
 /// 按位次算），且各景按 [`UnitFile::wanted_by`] 过滤 ⇒ 加一台要想清楚放哪。
-///
 /// **本表只有引用**：每一台的声明都在它自己那份 `program.rs` 里，这里不再写第二遍。
-///
 /// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行，于是"哪几台进哪张镜像"
 /// 就没法一眼扫完——而这张表**就是**给人扫的。
 #[rustfmt::skip]
@@ -76,7 +65,6 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &harness::PROBE_RULE_OTHER,
     &harness::PROBE_LEASE,
     &harness::PROBE_BOUND,
-    // 控制面那位真客人（`/svc/sys/control/state` 那一格）：**排在 `canonical` 之前**，见它自己那份声明。
     &harness::PROBE_CONTROL,
     // 操作面那一族（`/svc/sys/operator/{part,land,…}`）：**两位一对**——`gate` 拿控制面会话把七格
     // 验一遍并取回那一枚入口、铺好试验场；`land` 只持 `land` 一位（时序见各自那份声明）。
@@ -99,7 +87,4 @@ pub const PROGRAMS: &[&UnitFile] = &[
 ];
 
 /// 清单条数上界与注册表条数必须相容（见 [`env::manifest::MAX_PROGRAMS`] 的头注）。
-///
-/// **这一条就是从前那个"数出来的数"的替身**：加一台超过上界 ⇒ 当场编不过，不可能静默卡住。
 const _: () = assert!(PROGRAMS.len() <= env::manifest::MAX_PROGRAMS);
-

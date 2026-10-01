@@ -1,19 +1,11 @@
 //! canonical::adapt::terminal — **那一圈（壳）**：读口与写口两边轮转，中间过一遍行规程。
-//!
 //! ```text
 //!   1  收：`rx.pull(buf, POLL)` 把读口收干净（**这一手同时放 uart 走出"把一批推给我们"那一格**）
 //!   2  喂：逐字节进 [`Discipline::feed`]，它把要回显的字节写进本批的 `echo` 缓冲里
 //!   3  写：**只在写口就绪时推**（就绪＝槽空＝当场成功）；槽满就短等一拍、再回去收
 //!   4  都没事：阻塞等读口（此刻写口是空的，uart 不在等我们）
 //! ```
-//!
 //! **本域只有一条输出路**：行规程的回显。交付的行**不再写出去**——本域就是终端，没有下游；写一遍
-//! 只会把每一行在屏幕上显示两次（旧 `echo` 那台是"行回显"，与这一台不是一件事）。
-//!
-//! **照实记（为什么不是"收一批、写一行"）**：控制台服务那一手（uart 排空之后把一批推给读口）是
-//! **阻塞**的（`publish` → `push` 等槽空），而本域这一手（推给写口）在写口满时也阻塞 ⇒ "本域正
-//! 写着、uart 正把下一批推给我们"这一格**互相等死**。实测：喂 12 字节，机器稳定停在第 8 字节
-//! （uart 每 8 字节左右排一批）。故本域自己轮转，两边的 rendezvous 总能被本域拆开，谁也不硬等谁。
 
 use super::console::Console;
 use crate::core::discipline::{Discipline, Step};
@@ -54,12 +46,6 @@ pub fn run(console: &Console) {
                 Ok(true) => {
                     // **两半都写出来**（旧合成 `push` 就是这两半）：**等轮到自己**（上面那一问）
                     // ＋ **等这只手被取走**。
-                    //
-                    // **照实记（"只递出"在这一格是错的，量出来的）**：下面 `out.remove(0)` 当场
-                    // 把那一只 `Vec` 丢掉，而孔上那只手记的正是**它的堆地址** —— 只递不等 =
-                    // 让 uart 去复制一段**已经还给分配器**的内存（症状：起手那一句用法时有时无、
-                    // 有时是别人的字节）。这正是本仓栽过两次的同一类错（`Deposit` 那一格、
-                    // `Sender::Drop` 那一格的陷阱），故这一格写全：**缓冲丢之前，手必须已经被取走**。
                     let failed = console.tx.push(&out[0], Wait::Forever).is_err()
                         || !matches!(console.tx.wait(HoleDir::Push, Wait::Forever), Ok(true));
                     if failed {
@@ -82,7 +68,6 @@ pub fn run(console: &Console) {
         if got {
             continue;
         }
-        // **永久等**（这一格从前是丢 `Wait` 的那一版 `pull`）：`Wait::Forever` 就是"一直等"。
         let Ok((n, _)) = console.rx.pull(&mut buf, Wait::Forever) else {
             return;
         };

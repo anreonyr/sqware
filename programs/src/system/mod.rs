@@ -1,5 +1,4 @@
 //! system — **编排域的实现侧**：运行时装配上下文（[`Assembly`]）＋ 它容纳的那几件。
-//!
 //! ```text
 //!   Assembly
 //!   ├── control   生命轴：Service 的建 / 配 / 起 / 递单（不认协议）
@@ -8,66 +7,23 @@
 //!   ├── board     存在信号·这一头：板在装配者这一侧的那条路
 //!   └── watch     存在信号·那一头：死亡道表 ＋ 等任一道响的那只组
 //! ```
-//!
-//! **这些是字段，不是五枚壳**（照实记：这一刀把 `Life` / `Naming` / `Identity` / `Bloc` /
-//! `Sensor` 五枚收掉了）。那五枚每一个都只做同一件事——把 `self.0.foo(...)` 再转发一遍，
-//! 或者干脆把一个参数原样返回（`Bloc::report(who) -> who`）。**薄封装不是结构**：轴该是一个
-//! **字段名**，而型该说"它是什么"（`Tree` = 持树者那一侧那条路），不该说"它在装配表里扮演
-//! 什么"（`Naming` = 命名轴）。各轴各自的正文因此只在**它自己那一域**里
-//! （`control/`、`operator/bridge.rs`、`principal/bridge.rs`、`board/`、`control/supervise.rs`）。
-//!
-//! **拆毒那一刀（照实记）**：从前这里平铺着 `control` / `board` / `tree` / `roster` / `watch`
-//! 五个字段，而装配那一趟（原 `UnitFile::assemble`）直接伸手进去乱叫——"生命"与"存在信号"
-//! 两件事在同一段代码里交错，谁也说不清一次改动牵动谁。那一刀先把那一趟搬进
-//! [`Assembly::assemble`]，且**每一块只经它自己那几手**说话（`enlist` / `spawn` / `connect_all` /
-//! `launch`、`attach` / `adopt` / `plate` / `eye`、`bind` / `adopt`）：装配者手里没有一块是
-//! "想叫就叫"的裸**数据**——它叫的都是那一域自己的动词。
-//!
-//! **照实记（上一刀剩下的那一半：读者归位）**：搬进来之后那一段正文仍然**替每一轴读它们的格**
-//! ——88 行里 56 行说的是板 / 树 / 名册那三轴的字段 ⇒ "这一格还有谁读"依旧要通读它才答得出。
-//! 今天**三相与各相那几手搬到 [`schedule`]**，而**每一手住在它自己那一轴的文件里、那一格由它
-//! 自己读**。本处这一趟因此只剩"立账 → 造身子 → 装通道 → 走三相"——一处也不再提板 / 树 /
-//! 名册那三个名字。
-//!
-//! **`UnitFile` = 声明，`Assembly` = 运行时上下文**：一台程序怎么起（谁接哪条轴 / 要不要存在信号 /
-//! 它是哪一双眼睛 / 装配期给不给身份）写在它自己那份 `program.rs` 里；而**装配动作**
-//! 是 [`schedule`] 那张表上各轴自己的那几手。
-//!
-//! **本文件里没有"按位分派"**：不再有一处 `if program.operator { … }` 的大 match 替所有程序
-//! 解释它们的字段；属于哪一台的语义就在那一台的声明里，这一趟只按那几格走。
-//!
-//! - [`assemble`]：这一景起哪些台（**过滤 + 按各台声明的 `after` 算次序**，就这一件事）
-//! - [`schedule`]：装配的**相**——一台起手分几相、每相哪一轴动手（那一格由那一轴自己读）
-//! - [`bootstrap`]：启动资源获取（与引导域会话 / 机器自述 / 载荷区清单）
-//! - [`source`]：程序来源那一格（取字节那一面：那一本账 → 一段 `&[u8]`）
-//! - [`control`]：Service 的生命周期（内核那几手住 `control::service`，监督相住 `control::supervise`）
-//! - [`board`] / [`operator`] / [`principal`] / [`coalition`]：四枚服务的实现
-//! - [`machine`]：本域手里那台机器的自述（设备树）
 
 use alloc::string::ToString;
 
 use env::Wait;
 use protocol::debug;
 
-use crate::unit::{Died, UnitFile};
+use crate::service::operator::bridge::Tree;
+use crate::service::principal::bridge::Roster;
 use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
-use crate::service::operator::bridge::Tree;
-use crate::service::principal::bridge::Roster;
+use crate::unit::{Died, UnitFile};
 
 pub mod assemble;
 pub mod bootstrap;
 pub mod carrier;
 pub mod control;
-// **照实记（这一册账是残枝那一刀从 protocol 搬来的）**：它原住
-// `crates/protocol/src/system/desk.rs`。判据：那份账**只有编排域读**（两个消费者都在这里：
-// `board/server.rs` 与 `operator/server.rs`），按 `protocol::driver` 那条"多个域都用 ≠ 该进
-// protocol"的反面——**只有一个域用** ⇒ 回实现侧。
-//
-// **它为什么不像同来那一份那样归域**：同来的 `core.rs`（四条判定）与**服务表**那一半这一刀
-// 各归了域（`control/core.rs` / `control/desk.rs`：它们只有生命轴一枚域读）；而**这一册待客账
-// 是两枚域共用的一本**（板线程在编排域、持树者在 operator 域）⇒ 住它们共同的那一格。
 pub mod desk;
 pub mod machine;
 pub mod mount;
@@ -75,14 +31,8 @@ pub mod schedule;
 pub mod source;
 
 /// **运行时装配上下文**：这台机器**已经装配到了什么**——四轴各一块，加存在信号的两头。
-///
 /// 它不是"配置表"：配置在 `UnitFile` 上；这里只有**跑起来的东西**（已起的域与线程、已铸的孔、
 /// 已成的关系）。
-/// **照实记（那四格的可见性：层六·3 搬域时露出来的一格）**：它们原先**私有于 `system`**——而那时
-/// 各域的 `bridge.rs` 都住在 `system/` 底下，看得见；`hub` / `coalition` / `principal` 一台台搬到
-/// `service/` 之后，编译当场报 `field … is private` ⇒ 改成 **`pub(crate)`**（它本来就只给本 crate
-/// 里的人用：四轴 [`Assembly`] 只有装配者与各域那几手碰）。**这一格不是"放宽"，是把"原本靠父子关系
-/// 才成立的东西"写明**——搬域这件事正是来量它的。
 pub struct Assembly {
     /// 生命轴：Service 的建 / 配 / 起 / 递单。
     pub(crate) control: Control,
@@ -96,9 +46,6 @@ pub struct Assembly {
 
 impl Assembly {
     /// 就位：建生命轴 ＋ 铸道立组（死亡道跟着这一景的装配表铸：**要存在信号的那几位一位一条**
-    /// ——故道表在装配之前就位）；其余三轴是空的。
-    ///
-    /// 失败（那只组立不起来 / 备不下道表）由调用方折成 `system: no group`。
     pub fn new(boot: Boot) -> Result<Assembly, ()> {
         Ok(Assembly {
             control: Control::new(boot.catalog, boot.machine, boot.pier),
@@ -108,104 +55,31 @@ impl Assembly {
         })
     }
 
-    /// 交棒给监督相之前，**先把 `control` 那一面挂上树**；道表与那只组都在 [`Watch`] 手里。
-    ///
-    /// **照实记（这一刀：`control` 那一面挂回来了，两格一起换）**：task-4 那条挂载路
-    /// （`control::edge::mount`：起一枚**一次性**边沿线程去落门牌）**挂不出真正的门牌**，被撤过
-    /// 一次。它坏在"铸入口的是谁"，证据链在内核三处：
-    ///
-    /// - `kernel/src/work/unit/gate/accord.rs`：**新 pie 的 `sire = Some(src.token())`**，
-    ///   派生边只写在这里；
-    /// - `kernel/src/boot.rs` 的 `EXIT_HOOKS`：**每个** reaped 任务都跑 `gate::doom`；
-    /// - `kernel/src/work/unit/gate/cull.rs::doom`：先 `seal_owned`，再对本任务表里**每一枚
-    ///   token** 调 `cull`，而 `cull` 沿 `snap::heirs`（`p.sire() == Some(token)`）**跨所有
-    ///   任务**摘掉全部后代。
-    ///
-    /// 于是"铸入口那一枚线程"一收尾，**持树者表里那枚入口副本被连带摘掉**；plate 那一格还留着
-    /// 那个号 ⇒ 查得到、门闩却拿不回来 ⇒ 客人永远拿不到可用入口。
-    ///
-    /// **这一版把两格一起换**：铸入口的是编排域主线程（它此后就进 [`Watch::run`] 那一趟——
-    /// **本域活多久它活多久**），而**落那一格由持树者在自己核里做**（本域只递：那一枚 ＋ 一条
-    /// 路，见 [`Tree::plate`]）⇒ 那三处内核事实要的那一格（"铸入口那一枚必须长命"）满足了，
-    /// 而**没有第三方上树**。
-    ///
-    /// **照实记（这条路经裁定：挂上树合设计）**：更早有一版判断是"`operator` 上树是坏事"——
-    /// **那条判断不作准**：树就是"名字 → 资源"那本目录，谁要挂谁自己上来（今天就由树自己落）。
-    /// 故 `control` 那一面**挂进树**（不是只靠装配期直授），取面方式与 `principal` / `coalition`
-    /// 逐字同形；真客人是 `harness/src/probe_control.rs`。
-    /// 交棒给监督相：**等任一道响 ⇒ 记账 ⇒ 该收了就下刀**（本域活多久它活多久）。
-    ///
-    /// **挂 `control` 那一面不在这里**（照实记：这一刀把两手拆开了）：那一手是**"这一趟装配走完"
-    /// 到点的那一刻**做的事（[`SCENE`](crate::unit::SCENE)），而那个位置在调用方那一趟里看得见
-    /// ——故它由 `system/main.rs` 的相四显名地叫（[`Assembly::mount_control`]），本手只剩这一趟循环。
-    ///
-    /// 返 `true` = **全收讫**（那一批收干净了，本域可以退了）；`false` = 有人没收讫——
-    /// 调用方按"收尾那一趟没走完"报（余下交退场级联，那条路是既有的可靠收场路径）。
     pub fn supervise(&mut self) -> bool {
         self.watch.run(&mut self.control)
     }
 
     /// **把 `control` 那一族挂上树**（`/svc/sys/control/{state,mint,start,stop}` 四面，一原语一面）：
     /// 本域逐面铸入口、**持树者逐面落那一格**、本域当场待客。
-    ///
     /// 三步，次序即契约：
-    ///
     /// 1. **铸入口**（[`crate::system::mount::entry`]）：本域主线程自己铸那一枚——它就是这一面的
     ///    服务端（入口的"开者"就是本域，客人 `Face::of` 据此知道往哪答话）；
     /// 2. **请持树者落**（[`Tree::plate`]）：把那一枚交过去，再把那条路推上提示之路；
     /// 3. **接上监督那一趟**（[`Watch::attach_face`]）：入口挂进同一只组，**本域当场开始待客**。
-    ///
     /// **本域不进名册、也不开会话**：`land` 那道门是给**客人**的（本域不是客人），而"落"这一手
     /// 由树自己完成（它是那一格的权威）。
-    ///
     /// **失败只报一行读数、不拦整机**：挂不上是"这一面没有外面那条路"，不是"这台机器起不来"
     /// （与"某一台服务没接上板 / 树"同一口径）。三种失败各带自己的步名。
-    ///
-    /// # `/svc/{族}` 自己不是一格（四族共一条，回炉那一刀从四份 `mount.rs` 收来）
-    ///
+    /// # `/svc/{族}` 自己不是一格
     /// 它是那条路上的**一段前缀**（第一条路的段列表走前缀时就地把它立成一块 `Pane`）——
     /// **没有它自己的入口、没有它的 Pie、也不是任何能力的别名**。故 `seek("/svc/sys/operator")`
     /// 之类答 [`Fail::NotATile`](protocol::service::operator::Fail::NotATile)：那一段是块窗格，
     /// 到头了的是它底下那几格。
-    ///
-    /// **照实记（"第八格"是量出来的，而它现在写不出来）**：从前的帧是"两段名字 ＋ 一格
-    /// `layer`"，目录与七位共用"两帧"那一手，而目录那两段名字是同一个（`"operator"`）⇒ 第二帧
-    /// 又往它里面落了一格也叫 `operator` 的。实机读数：`/svc/sys/operator` 底下**八格**。今天一条路
-    /// 是**段列表**、末段由 `leaf` 定，而目录**根本不由谁单独立一帧**——它是第一位那条路的
-    /// **前缀**（`part` 幂等）⇒"目录自己也是它底下的一格"**在形状上写不出来**，不必靠断言挡。
-    ///
-    /// **四族那一段路各住自己那一族**（协议侧那四枚 `DIR`：`/svc/sys/<族>`）——装配侧只用它们，
-    /// 不再自己拼段名（照实记：四个 `SEGMENT` 常量随这一刀退场，它们的读者只有这一趟装配）。
-    ///
-    /// **照实记（名册与盟册那两格换过一格）**：`/sys/principal` 与 `/sys/coalition` **从前就是
-    /// 那一枚门牌**（是一枚 `Tile`，谁 `seek` 到它谁就拿到整面）；开面那一刀之后它们与
-    /// `/svc/sys/operator` 同形——都由第一位那条路的前缀就地立成一块 `Pane`。
-    ///
-    /// **铸入口那一枚必须长命**：三处内核证据与实测在 [`Assembly::supervise`] 的照实记里。
-    /// 回炉那一刀把四份 `mount.rs` 里**逐字相同的三份抄写**收掉了——那句话本来就只有那一处。
-    ///
-    /// # 照实记（"谁上树"这一格换过三次；四份 `mount.rs` 收掉时挪过来的一格）
-    ///
-    /// | 那一版 | 谁把这一格落上树 | 死在哪 |
-    /// |---|---|---|
-    /// | task-4 | 一枚**一次性**边沿线程 | 它一收尾，持树者表里那枚入口副本被内核的派生链级联摘掉（三处证据见 [`Assembly::supervise`]） |
-    /// | 上一版 | **装配者本人**当客人（要会话、要名册上那一行） | 能跑，但"客人"这份名单里多了一位**不是域的东西**，且装配者为此进了名册 |
-    /// | 这一版 | **持树者自己**（在自己核里落） | —— |
-    ///
-    /// 今天这一版里**没有第三方上树**：装配者递东西（那一枚 ＋ 两段名字），持树者落格——树是
-    /// 那一格的权威，而它当不了自己的客人（自指 ⇒ 环）。
-    ///
-    /// **本手不自问自答**：那一格落成没有、指不指得回原物，由**真客人**证——
-    /// `harness/src/probe_control.rs` 照 principal / coalition 同形的路找上门、问一句 control 的话。
     pub fn mount_control(&mut self) {
         // **四面各一枚入口、各一条路**（`/svc/sys/control/{state,mint,start,stop}`）——一原语一面。
-        //
         // **哪一面带规矩**：**问面公开**（`Rule::None`：谁都能问"这一条在哪个阶段"），
         // `mint` / `start` / `stop` 三面各带 [`Rule::Root`]——"**许给根**"（`Trunk(ROOT)`）。
-        //
-        // **"哪一面带"那句话只此一处**（回炉那一刀收的）：它住
-        // [`ccall::grant`](protocol::system::control::grant) 的「哪一面带规矩」那一节（含"原先
-        // 写的是 `Opener`、一量是假的"那条照实记）；**本处只写"怎么带"**——下面这一行 `match`。
+        // **"哪一面带"那句话只此一处**：它住
         for grant in protocol::system::control::Grant::ALL {
             let rule = match grant {
                 protocol::system::control::Grant::State => protocol::service::operator::Rule::None,
@@ -234,34 +108,13 @@ impl Assembly {
     }
 
     /// **把七位操作面挂上树**（`/svc/sys/operator/{part,land,find,trim,list,seek,name}`）。
-    ///
     /// 与 [`Assembly::mount_control`] 同一趟、同一只手（本域铸入口 → 持树者落格），**一路由本族
     /// 那一族的常量给出**（`/svc/sys/operator`：**只是一段目录，不是任何能力的别名**：没有入口、
     /// 没有 Pie）。目录那几段由持树者**就地立出来**（`part` 幂等：缺的就地造，已在就是成了）
     /// ——故**目录不单独占一帧**，它由第一位那条路的前缀走出来。
-    ///
     /// **七格各自独立**：一位挂不上只少一位（各报一行读数、不拦整机），其余六位照挂。
-    ///
     /// **本域不为任何一位开门待客**：这七格挂上去是给**别的域**用的——它们 `find` 回那一枚
     /// 入口，开在那一枚记号上的会话就是说给持树者的"我持这一柄权"。
-    ///
-    /// **照实记（这几行改成 release 也看得见）**：它们从前走 `debug!`（release 下是空操作），
-    /// 而验收跑的机器全在 release 档 ⇒ "哪一位没挂上"这件事**一个成因都没有**
-    /// （`probe-operator-gate` 那一台的读数正是拿这七行当判据，见
-    /// `harness/src/probe_operator_gate.rs::count_under`）。与 `fail()`／`bridge::land` 那两处
-    /// 同一条理由：**缺一位服务是一档需要成因的读数**。
-    ///
-    /// **照实记（上面那条话在本刀之前与实情分家）**：它从写下那天起**没兑现**——正文走的
-    /// 一直是设门的 `debug!`。实测（同一份 release `root` 景、喂 `exit`）：
-    /// `grep -c 'grant mounted at'` **0**、`'control mounted at'` **0**（本刀之前）；
-    /// **7 ＋ 4**（本刀之后）。本刀把那 11 句（四面 ＋ 七位）连同 [`fail`] 那两句、
-    /// `crate::service::operator::bridge::land` 那一句、`crate::service::operator::claim` 那一句、持树者那四句一并改成
-    /// [`debug::put`](protocol::debug::put)（不设构建门的那一手）：**只拼需要拼的**
-    /// （`&'static str` 直接递，其余才 `format!`）。
-    // **照实记（与那四格同一条：层六·3 搬域时露出来的第二处）**：这一手原先私有于 `system`——
-    // 各域的 `bridge.rs` 住在 `system/` 底下时看得见；`operator` 那台搬到 `service/` 之后，编译
-    // 当场报 `method mount_grants is private`。改成 **`pub(crate)`**：它本来就只给本 crate 里的人用
-    // （装配者与持树者那一手），改的是把"原本靠父子关系才成立的可见性"写明。
     pub(crate) fn mount_grants(&mut self) {
         // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::service::operator::Grant::ALL {
@@ -289,39 +142,23 @@ impl Assembly {
     }
 
     /// **起一条**——这一台自己的装配：**立账 → 造身子 → 装通道 → 走那三相**。
-    ///
     /// 前三件与"这一台是谁"无关（账上那一行 / 它那枚身子 / 它那几条通道），由
     /// [`Control`] 与 [`crate::system::control::assemble`] 做；三相各自动哪几手写在 [`schedule`]
     /// 那张表里，而**放行那一手夹在相与相之间**——它不是某一轴的手，是这一条自己的生命那一步。
-    ///
     /// **次序即契约**：先起的先就绪，后面的就能向它要东西；持树者必须先于客人（客人上树要它
     /// 在），名册必须先于其余（其后的身份都从它来）。
-    ///
     /// 失败一律折成这一台自己的 `died`（`UnitFile::demand.died`），读数靠那两行 debug
     /// （先印程序名、再印哪一步）。
     pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
-        // **照实记（这一趟的五段计时退了场：它的前提被收回）**：这一格曾挂过一条读数
-        // （`system: slow who=… supply= launch= board= tree= ready=`，`debug!`，门槛 200 ms），
-        // 用来验"那一秒是本域这一趟花掉的"。它的前提是**放行在先、介绍在后**——量到的窗口是
-        // `supply=115ms launch=23ms board=224ms tree=307ms ready=0ms`（debug 档 `product` 景一遍）。
-        // 而**那句归因已收回**：客人在 `Session::open` 里被 `hear` 挡着（等装配者 `tell`"答话的
-        // 是谁"，而那一推与 `Tip::Guest` 在 `bridge::attach` 里紧挨着）⇒ `board+tree` 那
-        // 0.24~0.48 s 是**装配者自己**花掉的，不进客人的手龄。真正的病根是**组的扫法**
-        // （见 `76ce954` 与 `kernel/src/runtime/switcher/envcall/tole.rs::ready` 的游标照实记）。
-        //
-        // **探子退场**（证伪即收）：那五段各取一次钟是**每台机器都付**的（`chrono::clock()` 不看
-        // 构建门，release 也付），而它要证的那件事已经答完——故连同门槛那枚常量一并退掉。
-        // **它的边成立了吗**（照实记：次序由各台声明里的 `after` 算出来，故"谁在谁前面"这一格
-        // 已经不是这里读的了）：逐条边等那一台**到过就绪那一格**。排对了就即刻返回；排错了
-        // （声明的边与实情不符）当场报出"哪一台的哪条边"——不让客人自己去撞那圈有界重试。
         for dep in program.relation.after.unwrap_or(&[]) {
-            // **指着[目标单元](crate::unit::Kind::Target)那一条不等**（照实记）：它说的是
-            // "这一趟走完"，而这一趟正是本处——等一个"这一趟"没有可等的对象，表里也没有那一行。
-            // **排到最后就是它的全部保证**（[`order_scene`](crate::unit::order_scene) 那一条）。
             if crate::unit::is_target(dep) {
                 continue;
             }
-            if self.control.await_ready(dep, Wait::AtMost(READY_MS)).is_err() {
+            if self
+                .control
+                .await_ready(dep, Wait::AtMost(READY_MS))
+                .is_err()
+            {
                 debug::put(&alloc::format!("system: dep not ready ({dep})"));
                 return Err(fail(program, Error::Step("dep not ready")));
             }
@@ -350,31 +187,11 @@ impl Assembly {
     }
 }
 
-// **照实记（`sys_dir()` 这一格退了）**：它从前是"树那一层那一格"的**私有副本**——正文引的是
-// `ccall::frame::DIR`（**control 那族**的常量，而 `operator` 那族的路也借它拼）。今天四族各有
-// 自己那一枚 [`DIR`](protocol::service::operator) 似的常量（前缀共用
-// `protocol::system::DIR`），故这一手没有读者：装配侧直接 `族::DIR.try_join(面名)`。
-
 /// 报"哪一条、哪一步没成"，返**这一台自己的号**（[`crate::unit::Demand::died`]）。
-///
 /// 只在失败路径上调：**成功不说话**（装配正常的机器不该刷屏），而失败时这两行决定还得读几遍
 /// 代码——所以它报"程序名"与"步骤"两格。
 fn fail(program: &UnitFile, e: Error) -> Died {
-    // **照实记（这两句从前在 release 下是哑的）**：装配失败那一刻要说的就两件事——**哪一台**、
-    // **死在哪一步**（`Error::Step` 里那句就是上树/挂板那一路的步名）。而它原先走 `debug!`，
-    // 那一支宏在 `cfg!(debug_assertions)` 为假时整格不进（见 `crates/protocol/src/debug.rs`）
-    // ⇒ release 的机器上只留下一个 `system: assemble`，**上面那句最要紧的话一个字没有**。
-    // 这一刀改走不设门的那一手（`e.said()` 本来就是 `&'static str`，连格式化都不必）。
-    //
-    // **照实记（那句话在本刀之前也没兑现）**：正文走的一直是设门的 `debug!`——实测那一跑
-    // （release `root` 景、装配失败那一档）里 release 只有 `system: assemble` 一行，
-    // **没有**程序名与步名；本刀兑现（见 [`Assembly::mount_grants`] 那条照实记里的两次数）。
-    // **这两句就是本相最要紧的读数**：哪一台、死在哪一步（见上面那条照实记）。
     debug::put(program.name());
     debug::put(e.said());
-    // **照实记（第 57 刀：`Demand::died` 那一格退场，这里改报一个常量）**：这一句从前答
-    // **牺牲者自己那个号**（"号与域名在装配表上是同一格的两半"）。那一格按计划退了场 ⇒ 这里
-    // 报 [`crate::unit::E_PROGRAM`]（"装配表那一段"，与 `main.rs` 里那份空表的号同一个），
-    // 而**"哪一台、死在哪一步"那两行照旧在**（它们不设门、一定印）——**认出台从"号"换成了"名"**。
     crate::system::control::E_PROGRAM
 }

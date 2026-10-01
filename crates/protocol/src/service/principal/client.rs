@@ -1,5 +1,4 @@
 //! principal::client — **客侧**：一面身份服务，以及它的两个柄（[`Task`] / [`Principal`]）。
-//!
 //! ```text
 //!   Face::of(门牌)           门牌那一枚是树上查回来的（开者 = 对端）
 //!   Face::task(tid)          把一个线程收成 Task（读面）
@@ -8,19 +7,6 @@
 //!   Task::principal / bind   这一条线程此刻代表谁 / 把它定到一条号上
 //!   Principal::derive / adopt / waive / sire / contains   这一条号自己那几手
 //! ```
-//!
-//! **问话走门牌、答话走这一趟自带的那一枚孔**：报文里没有"往哪回"这一格——号只在持有它的
-//! 那张表里念得动（[`communication`](crate::communication) 事实 8），故每一趟借一枚新的回信孔过去，收的人按
-//! "谁给的 + 记号"两格认出它，答完当场放下。答话是定长那一形（`[status][flag][a]`），故读的人
-//! 按**自己问的那一条**解释那两格。
-//!
-//! **没有会话可选装**：这一面不另铸一条路、不定泊位——门牌自己就是那条路（同 rtc / coalition
-//! 那两面）。**四面一个都不出这一面**：开会话那一手（`Session`）、树路那一枚（`Endpoint`）、
-//! 发话那一枚（`Sender`）在本文件里一次都不出现；收话那一枚（`Receiver`）只在 [`Face::call`]
-//! 的身体里出现一次。
-//!
-//! **柄只多"我还回得去那条服务"这一件事**：号本身仍是 [`PrincipalId`]（可比较、可打印、
-//! 可伪造，跨协议只出现这个值）；`Task` / `Principal` 只是把一个宾语固定下来。
 
 use crate::message::Message;
 use env::Wait;
@@ -39,7 +25,6 @@ pub struct Face {
 
 impl Face {
     /// 把一枚门牌收成一面。
-    ///
     /// 对端从**这一枚门闩自己**问出来（[`establish::opened_by`]）——门牌是 Server 挂的，不是本端开的。
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Unknown)?;
@@ -47,7 +32,6 @@ impl Face {
     }
 
     /// 对端是谁。**这是这一面唯一的读数，不出线**（不在那七条原语里）。
-    ///
     /// 全树无生产消费者，留着只为"这一面在跟谁说话"答得出来——它是诊断读数，不是协议面。
     pub fn host(&self) -> TaskId {
         self.host
@@ -69,16 +53,12 @@ impl Face {
     }
 
     /// 问一句、取一句答。
-    ///
     /// **传输失败折进 [`Fail::Denied`]**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
     /// [`Fail::Denied`]，与"**对端说了不**"同一格。压它的理由：**对本端是同一个下一步**（这一趟
     /// 别指望了）；要给它单开一格，就得往 [`Fail`] 里加一个变体，而那一份是 `fail_codes!` 的
     /// **双射表**（加变体 = 加一个线上码）——那是动协议面的事。分得开它们的那一格在**对面**：
     /// `Denied` 是服务真会答的码，"没走到"是本端自己在码表之外判的。
     fn call(&self, act: frame::Req, wait: Wait) -> Result<frame::Reply, Fail> {
-        /// **四步分开报**（照实记）：`Fail::Denied` 盖着四件事（借孔 / 编帧 / 递出 / 收回信），
-        /// 而"装配期 `derive` 折了"那一趟**只看得出这一格**——查了很久才缩到"是哪一步"。故每一步
-        /// 各留一行读数（release 也看得见：`debug!` 在 release 是空的）。
         fn deny(step: &str) -> Fail {
             crate::debug!("principal: call deny={step}");
             Fail::Denied
@@ -93,10 +73,6 @@ impl Face {
             .store_at(&mut frame, 0)
             .ok_or_else(|| deny("encode"))?;
         let door = mail::HolePie::from_token(self.entry);
-        // **递出，且等到轮到自己**：孔上站着**别人**的手时按预算等它走（照实记见 `HolePie::push`
-        // ——丢了这一等，装配期的 `derive` 会与树的门禁撞在同一个面上、当场折成 `Denied`）。
-        // **不等自己那只手**：递出之后等它下线压到这一趟收完（见下 `door.wait`），因为"名册 ⇄
-        // 盟册互等对方取走"那条死锁就是这么量出来的（`communication::sender` 文件头②）。
         if let Err(e) = door.push(&frame[..n], Wait::Forever) {
             crate::debug!("principal: call deny=push:{}", e.source.code());
             // 推不出去 ⇒ 这一趟根本没到对端，那一枚收回来。
@@ -117,10 +93,7 @@ impl Face {
                     Fail::Denied
                 }
                 RecvFail::Mail(m) => {
-                    crate::debug!(
-                        "principal: call deny=recv:{}",
-                        m.code()
-                    );
+                    crate::debug!("principal: call deny=recv:{}", m.code());
                     Fail::Denied
                 }
             });
@@ -188,7 +161,6 @@ impl Principal<'_> {
     }
 
     /// 转换 · 领：把**自己**当前的号换成 `q`（只许沿自己那一支向下）。
-    ///
     /// **报文里没有"我是谁"那一格**：它认的是内核盖的那枚印章，故宾语是"此刻的自己"，不是
     /// 这枚 Rust 值——柄不因此改变（`&self`）。
     pub fn adopt(&self, q: PrincipalId, wait: Wait) -> Result<(), Fail> {
@@ -202,10 +174,6 @@ impl Principal<'_> {
         decode(reply).map(|_| ())
     }
 
-    /// 转换 · **丢**：把这一格的当前号**置空**——**不再代表任何人**（与 [`Principal::waive`] 相对：
-    /// `waive` 是"写回起点"、身份还在）。此后 `resolve` 答 `None` ⇒ 门禁第一条判据
-    /// （"没绑身份 ⇒ 拒绝"）对它是真的。见 `harness/src/probe_denied.rs` 的头注。
-    /// **走写面**（`Grant::Set`）：读手问在写面上会被门拒（第 69 轮那条账）。
     pub fn drop(&self, wait: Wait) -> Result<(), Fail> {
         let reply = self.face.call(frame::Req::Drop, wait)?;
         decode(reply).map(|_| ())
@@ -219,7 +187,6 @@ impl Principal<'_> {
     }
 
     /// 谱系 · 读：`p` 在**自己**这一支里吗——即原语那一形 `heir(p, self)` = `p ≼ self`。
-    ///
     /// **方向是这一手最容易写反的一格**：线上那一问的两格是 `heir(a, b)` = `a ≼ b`（`a` 是
     /// `b` 的祖先，见 `programs/src/system/principal/core.rs` 的 `heir`），故问"`p` 是不是
     /// **自己**的祖先"要写 `principal(self).contains(p)`；反过来写就是另一个谓词。
@@ -232,7 +199,6 @@ impl Principal<'_> {
 }
 
 /// 一句答拆两格：先看状态那一格（失败域 + 读不懂），再交出 `(有没有, 号)` 那两格。
-///
 /// 它不用 `self`（纯解码）⇒ 自由函数，不是一个为了"看起来属于 Face"而写成方法的手。
 fn decode(reply: frame::Reply) -> Result<(bool, u64), Fail> {
     match frame::code_to_fail(reply.status) {

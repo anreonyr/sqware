@@ -1,26 +1,11 @@
 //! operator::door — **门外那一问**（接线那一处）：持树者替树问身份、问谱系、问盟籍，
 //! 以及问"第 `n` 格是谁的门牌"。
-//!
 //! 三件事分居三处，本文件是**接线那一处**：
-//!
 //! | 处 | 是什么 |
 //! |---|---|
 //! | [`core::judge`](super::core::judge) | **判据**：`Facts` 那四个问句、[`Ruling`](protocol::service::operator::Ruling) 三格 |
 //! | [`core::gate`](super::core::gate) | **裁决**：`verdict`——判据答什么就判成什么，它不做决定 |
 //! | 本文件 | **接线**：那两枚门牌（[`Session`]）与"树 → 判据"的那一具（[`Court`]） |
-//!
-//! # 门牌**问的时候现认**（这一刀）
-//!
-//! 那两枚门牌由各自那一域**自己** `ship` 进来（名册交 `PrincipalGrant::Ask`、盟册交
-//! `CoalitionGrant::Ask`）。从前装配者还要经协调帧**递一格号**过来说"是谁交的"，持树者一收到
-//! 就**认一次、缓存下来**（`Session` 那一格状态住服务循环那一侧）；**那一格号整段退场了**
-//! （照实记：那两个记号各只有一家生产者 ⇒ 记号单独就指得回那一扇门，见
-//! [`super::claim::face_of_mark`]），今天**认这一手落在本处**：问到门上才认
-//! （[`Session::of`]）。
-//!
-//! 换来的形状：**门只有一个调用者**（[`super::answer`]），"门那一侧的状态"不再寄在"路那一侧"
-//! 身上。代价（照实）：受门禁的那三条（`find` / `trim` / `land`）**每问一次多两次表扫描**
-//! ——与那三问本来就各带的 1s 跨域期限不在一个量级。
 
 use env::{TaskId, Wait};
 
@@ -42,10 +27,8 @@ const MS: usize = 1000;
 
 /// **两枚门牌**：身份服务那一枚（答"这一位此刻代表谁"与"在不在他那一支里"）与盟册服务那一枚
 /// （答"这一位在那枚盟里吗"）。
-///
 /// 两枚都是装配者**递一格号**、由各自那一域**自己** `ship` 进来的。树**不当自己的客人**：
 /// 它不去 `seek("/svc/sys/principal/ask")`，理由同那一笔（自指 ⇒ 环）。
-///
 /// **盟册那一枚是 `Option`**：它晚到（或压根没配上）时，只有 [`Permit::Among`] 那一格答"判不了"
 /// （`Unjudged` 的"会好"那一类——补一帧就好），其余照旧。**降级是诚实的，不是放行**。
 struct Session {
@@ -55,18 +38,7 @@ struct Session {
 
 impl Session {
     /// 认出那两枚门牌：**按记号在本表里找**（那两枚由各自那一域自己交进来）。
-    ///
     /// 记号 = **那一族某一面那一枚**（今天要的都是问面）；那一族**只有一家生产者**，故记号
-    /// 单独就够（照实记见 [`super::claim::face_of_mark`]）。**不必装配者转授**、也**不必它递号**
-    /// ——各域自己在落完门牌之后把它直接交给持树者。
-    ///
-    /// 名册那枚是契约：没有它就没有门禁，故它认不出 ⇒ `None`；盟册那枚认不出 ⇒ 只少
-    /// [`Permit::Among`] 那一格。
-    ///
-    /// **两枚记号都要的是"问面"**（开面那两刀）：名册那一族本域要 [`PrincipalGrant::Ask`]
-    /// （`Resolve` ＋ `Heir`，两条都是读）——它**做不出** `Adopt`（把一条号领到自己底下）；
-    /// 盟册那一族同理要 [`CoalitionGrant::Ask`]（`Amid` ＋ `Band` ＋ `Bloc`）——那枚门牌
-    /// **做不出** `Found`（立一枚盟）。两族各交两枚、记号不同，故"要哪一面"必须说清。
     fn of() -> Option<Session> {
         let roster = PrincipalFace::of(face_of_mark(PrincipalGrant::Ask.mark())?).ok()?;
         let league = face_of_mark(CoalitionGrant::Ask.mark())
@@ -77,9 +49,6 @@ impl Session {
 
 /// 门禁要的那几条边都从这一份出：问身份（`resolve`）、谱系（`heir`）、盟籍（`amid`），
 /// 外加**树自己**那一问（第 `n` 格是谁的门牌）。
-///
-/// `Session` 只拿两枚门牌，而树不住它里面（`&mut` 那一条借用过不去），故这一格把**两半**
-/// 凑在一起——名册/盟册（[`Session`]）＋ 树（[`Operator`]）。
 struct Court<'a> {
     session: &'a Session,
     tree: &'a Operator,
@@ -95,8 +64,7 @@ impl Facts for Court<'_> {
 
     fn heir(&self, a: PrincipalId, b: PrincipalId) -> Result<bool, ()> {
         // **柄与参数的方向**：`contains` 发的是 `heir(参数, self)`，故要问 `heir(a, b)`
-        // （`a ≼ b`，就是这一条判据的语义）得把 `b` 当柄、`a` 当参数；
-        // `principal(a).contains(b)` 问的是 `b ≼ a`——那是另一条判据，不是这一格。
+        // 得把 `b` 当柄、`a` 当参数；
         self.session
             .roster
             .principal(b)
@@ -137,7 +105,7 @@ impl Facts for Court<'_> {
                 debug!("operator: opens sealed n={}", at.get());
                 Ok(None)
             }
-            // 余下三格**到不了**（`core::opens` 的判据表只有上面三条）。一格一格列出来，是为了
+            // 余下三格**到不了**。一格一格列出来，是为了
             // 将来 `Fail` 多一格时**编不过**，而不是悄悄落进一个 `_`。
             Err(Fail::NonEmpty | Fail::NotAPane | Fail::Full) => Ok(None),
             // **门外那一问答"不"**（终态）：这一位不许。它与上面那三条一样**到不了**
@@ -145,7 +113,7 @@ impl Facts for Court<'_> {
             // 而 `Err(())` 是"连有没有都问不到"。故落在 `Ok(None)`（"没有那一位"那一句确定的话）。
             Err(Fail::Denied) => Ok(None),
             // **问不到**：树自己答不出这一问 ⇒ `Err(())`——正是 `Facts::opens` 契约里
-            // "树自己问不到"那一格（判据那一侧由它得"判不了"）。同样到不了；两格分开列，
+            // "树自己问不到"那一格。同样到不了；两格分开列，
             // 是为了这句话（"不许"与"问不到"不是同一件事）在形状上就分得开。
             Err(Fail::Unjudged) => Err(()),
         }
@@ -154,70 +122,13 @@ impl Facts for Court<'_> {
 
 /// **门禁的入口**：那两格还没到（或认不出）⇒ **放行**；否则按那一格自己的许可判
 /// （[`Operator::permit`](super::core::Operator::permit) 答出来的那一句）。
-///
 /// **装配期根本不在门禁这条轴上**：principal 挂自己那两枚门牌那一趟（`part /svc` ＋
 /// `part /svc/sys/principal` ＋ 两处 `land`）发生在它自己的 `serve()` 里，而本域**认下它的门牌**与
 /// 它**拿到身份**（`derive(ROOT)` + `bind`）都在**那之后** ⇒ 那一刻它**既没有门牌、又还没有
 /// 身份**。门禁若在
-/// 那一刻生效，它连自己的门牌都挂不上，整机起不来。运行期那些客人则都在 `Hatch` 放行之前拿到
-/// 了身份——**挡门的是它们，不是装配这一步**。
-///
-/// **认不出要报一句，别静默**：号到了而门牌认不出（那扇门不是它开的 / 记号不对）时，门禁会
-/// 一直放行，而"为什么"要看得见。
-///
-/// # 照实记（这一轴在生产里原先零客人：两次真机普查 ＋ 一张"谁生得出那个号"的表）
-///
-/// 门禁**在生产里是生效的**（不是只对测具）——临时在那两问上加了读数，把"谁在哪一格上被
-/// 门禁看见"整份量了一遍（**读数用完即撤**）：
-///
-/// ```text
-///   /svc/drv/router   被 5 位客人取（三台驱动 ＋ guest ＋ lodger）   ⇒ 每格都是"谁都能取"
-///   /svc/drv/uart/rx  被 2 位（uart 自己那一趟自证 ＋ 控制台那位）
-///   /svc/drv/rtc      被 2 位（rtc 自己那一趟自证 ＋ sleeper）
-///   /svc/sys/control     被 **1 位**：probe-control
-///   其余都是 probe_rule 自己那几格（四条变体的正负证）
-/// ```
-///
-/// **第二次普查（许可写进生产，读数一条都不变）**：给 `/svc/sys/principal/set` 临时写上"谁都不许"
-/// （`Permit::Trunk(PrincipalId::new(usize::MAX))`）⇒ `derive(set,p)=19` 与 `found(set)=3` 照旧
-/// `Ok`、6/6 boot 照旧过。原因：门禁护的是**从树上取这一格**（`find` / `land` / `trim`），而各域
-/// 那几枚入口是**在门禁架起之前**由装配者随 `Hatch` 交到手里的（"装配次序即契约"的题中之义）。
-///
-/// 于是"运行时才取"的格只剩两类——第二类**后来有了一段真规矩**（`/svc/sys/control` 拆面那一刀，
-/// 见下表那一行）：
-///
-/// | 那一格 | 谁在取 | 为什么写不了 |
-/// |---|---|---|
-/// | 设备格（`/svc/drv/*`） | 每格 2～5 位（三台驱动 ＋ 控制台 / 房客 / 客） | **没有一位名字可写**——见下表 |
-/// | `/svc/sys/control` | 唯一一位：`probe-control` | ——**已了**：`/svc/sys/control` 拆成四面（`state` / `mint` / `start` / `stop`）之后，规矩只落在**定面**那三格上（`Trunk(ROOT)`），**问面照旧公开** ⇒ 那台探针的正证保住，而它取那三面各答 `Denied`（实测）|
-///
-/// **四种规矩各自要什么号、今天谁生得出**（这一张是全仓读出来的，不是猜的）：
-///
-/// | 规矩那一格 | 要的号 | 今天谁生得出 |
-/// |---|---|---|
-/// | [`Permit::Trunk`] / [`Permit::Bough`] | 名册上的身份号 | **只有持树者**（它手里有名册问面，[`Facts::who`] 就是它）——可它**只判不落**；**落格的那几位都没有名册面**：装配者的 [`Roster`](crate::service::principal::bridge::Roster) 只有 `bind` / `adopt`，各驱动的 `Context` 只有**入口 ＋ 树会话** |
-/// | [`Permit::Among`] | 盟号 | **生产里没有**：立盟那条 `Found` 零调用者（盟册那一族开两面的普查） |
-/// | [`Permit::Opener`] | 某一格的号 | 落格那一位**能**（`bridge::land` 把号答给它）——可"许给开着某格的那位"要那一格的**开者**正好就是那位客人，而生产里没有一格是"只有开者来取"的 |
-///
-/// **两头对不上，缺的不是格，是"客人"**：格（连它那句规矩）在**装配期**就立好了，而客人**运行时
-/// 才出生**；唯一能事后改写的是**格的主人**（`claimable` 只放它），可它手里**没有名册面** ⇒ 它
-/// 写不出那位客人的号。⇒ 要这一轴活，得先有一样今天没有的东西：**让客人自己那一格带上它的身份**
-/// （把身份挂在一格上），**或**给格的主人一具"谁此刻代表谁"。两条都是新能力，不是收格。
-///
-/// 故这一轴今天**在探针上四条正负证齐全**（`harness/src/probe_rule.rs` 与
-/// `probe_rule_other.rs`：`Trunk` / `Bough` / `Among` / `Opener` 各一正一负），而**生产里的第一位
-/// 选择者是 control 那三面**（`/svc/sys/control/{mint,start,stop}` 各带 `Permit::Trunk(ROOT)`：
-/// 拆面之后规矩落在定面、问面照旧公开；实测见 `harness/src/probe_control.rs`）。
-///
-/// **照实记（`part` 不过这一关）**：`part` 收的是**坐标**，那一格可能刚存在、可能是一块 `Pane`
-/// （[`Permit::Opener`] 对 `Pane` 答"判不了"）——它该过的是「改」那一轴，那一轴已经过了。
 pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> Code {
     // **门禁先决两格**：
-    //
     // 一、**装配者有没有说"接线完成"**——它认下名册那一刻才推那一句（[`super::bridge::Tree::wire`]
-    //     的照实记里记着为什么**不能**早接：名册自己那一趟上树会在门里被自己拒掉，实测
-    //     `principal: start failed`）。没接线 ⇒ **放行**（装配期那几问不能被门卡住）。
-    // 二、**名册那一枚门牌在不在本表里**（按记号认，见 [`Session::of`]）。不在 ⇒ 也放行。
     if !wired {
         return Code::Ok;
     }
@@ -228,7 +139,6 @@ pub(super) fn may(tree: &Operator, wired: bool, who: TaskId, permit: Permit) -> 
     // **如实记（量过：这一问不是那一秒的病根）**：它几问句各带 `Wait::AtMost(MS = 1000)`，故一度
     // 是"装配期那位客人等了 1.1~1.2 s"的头号嫌疑。debug 档 11 跑里挂了 `operator: door ms=` 一
     // 行去量它——**一行都没落**（五跑出现 stall 的那些跑里，这一问每一趟都在 200 ms 门槛之下）
-    // ⇒ 排除。病根见 `work/mail/tole.rs` 的游标照实记（组每轮都从第 0 格扫）。
     verdict(
         &Court {
             session: &session,

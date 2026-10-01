@@ -3,9 +3,7 @@
 
 //! uart — **串口驱动域**：`serial@10000000` 的持有者，兼**控制台服务**（**U 态**，见
 //! `driver/uart/mod.rs`）。
-//!
 //! **主流程只有三段**（本文件就是全部）：
-//!
 //! ```text
 //! 设备   领配给 → 开图 → 把"收到字节就拉线"打开（IER.RX，线的闸门归设备持有者）
 //! 入系统 铸两枚孔（读口 / 写口）→ 上板（板因此看得见本域的死）→ 上树落两枚门牌
@@ -14,11 +12,8 @@
 //!               那条线一响 ⇒ 排空设备（读走 RBR）⇒ 把这一批字节推给读行的人
 //!               ⇒ 说一句"这一条我排空了"（路由者据此把线放回去）
 //! ```
-//!
 //! **适配那几段不在这里**：`Device` / `Context` 住 [`programs::driver`]（各台共用的那些步骤）；
 //! 设备面在 [`uart`](self)；服务台（两枚门牌那一趟 ＋ 把一条字写出去）在 [`desk`](self)；
-//! "这一批能不能交"那条纪律在 `core::batch`。服务面的判据与照实记（读口归谁、一条消息是什么、
-//! 为什么它不退场、特权级）在 `driver/uart/mod.rs`。
 
 extern crate alloc;
 extern crate programs;
@@ -57,15 +52,13 @@ const DRAIN_MAX: usize = 64;
 /// （号取自装配表：本域用的是 [`programs::unit::uart::E_UART`]，一个数都不写）。
 #[programs::entry]
 fn main() -> Result<(), Fail> {
-    // ── 起手 ───────────────────────────────────────────────
     // 铸两枚孔 → 上板 ＋ 开会话 → 上树落两枚门牌 → **认领设备** → 开闸 → 占线：那一趟全在
     // [`desk::start`]（本台是唯一双向的一台，故它的路长一段、牌两枚）。本域既不写死设备名、
     // 也不写死地址："哪一台是串口"由设备账回答（类 `ns16550a`）。
     let desk = desk::start(Wait::AtMost(MS))?;
 
-    // ── 核心 ───────────────────────────────────────────────
     // **两个源**：写口上有客人交来的一条字、线上有"设备收来了字节"——组等任意一格
-    // （与 `rtc` 那一台同一条判据）。
+    // 。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile.attach(&desk.tx, HoleDir::Pull).is_err()
@@ -90,7 +83,6 @@ fn main() -> Result<(), Fail> {
         }
         // **先写口后设备**：写口那一头是客人正阻塞等着的（`push` 满了就睡），而设备里的字节在
         // FIFO 里排着，多等这一瞬不丢。
-        //
         // **一次写 = 一条完整的字**：这一条消息就是要写出去的全部字节，本域不拆不并。
         while let Ok((len, _)) = desk.tx.pull(&mut word, Wait::POLL) {
             device::put(view, &word[..len]);
@@ -100,7 +92,6 @@ fn main() -> Result<(), Fail> {
             let n = device::drain(view, &mut raw);
             // 交给读行的人（读口那枚孔）。**这一手要阻塞**：字节是内容，丢了补不回来；读行的
             // 人（`canonical`）总会回到"取一行"那一格，故等它是有界的。
-            //
             // **`n == 0` 那一趟不推**：[`Batch::of`] 把那一格做进了类型（内核只收 `1..=一页`）。
             if let Some(batch) = Batch::of(&raw, n) {
                 desk.ctx.publish(batch.bytes()).unwrap();

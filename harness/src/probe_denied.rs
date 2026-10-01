@@ -140,10 +140,10 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Wait;
-use protocol::service::operator::path::Path;
 use env::PieToken;
+use env::Wait;
 use programs::Report;
+use protocol::service::operator::path::Path;
 
 use alloc::format;
 use alloc::string::ToString;
@@ -151,9 +151,9 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine};
+use protocol::service::operator::{Fail, Permit};
 use protocol::service::principal as pcall;
 use protocol::service::principal::client::Face as PrincipalFace;
-use protocol::service::operator::{Fail, Permit};
 
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -214,7 +214,6 @@ fn main() -> Report<'static> {
     if awrite.principal(who.id()).drop(Wait::AtMost(MS)).is_err() {
         return bail("probe-denied: cannot drop its own identity");
     }
-
 
     // 二、铸一枚自己的孔当"要落上去的那一枚"（与 `uart` / `rtc` 上树那一趟同一形状）。
     let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {

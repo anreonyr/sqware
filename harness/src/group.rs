@@ -196,8 +196,8 @@ fn main() -> Reason {
     //    取一次该成功，再取一次该答 `Busy`。这一格与"整链放行"是两件事：共享的是**唤醒**，
     //    不是**交付**。
     let mut buf = [0u8; 1];
-    let deliver = member.pull(&mut buf, Wait::POLL).is_ok()
-        && member.pull(&mut buf, Wait::POLL).is_err();
+    let deliver =
+        member.pull(&mut buf, Wait::POLL).is_ok() && member.pull(&mut buf, Wait::POLL).is_err();
 
     // ⑨ 收尾：两个等待者都得退场（**没醒的那个还在永久等** ⇒ 收掉它；这也是"少醒一人"
     //    那一格能被观察到收场的原因）。**这一步不设判据**：「都退场了」由机器那一句

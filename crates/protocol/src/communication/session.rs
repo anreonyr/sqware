@@ -1,26 +1,9 @@
 //! session — **一条会话**：装一条路 → 认对端 → 要一枚问话孔。
-//!
 //! ```text
 //!   Berth    一条路的名字：泊位那一格（`link`）＋ 问话孔那一格（`ask`）——由各协议自己声明
 //!   Session  装好的那条路：本端那一对孔（答话 / 问话）＋ **对端的号**
 //!   open     装路 → 认下对端那一枚 → 收下"答话的是谁" → 铸问话孔交给它
 //! ```
-//!
-//! # 照实记（它原先在两份客手里各写一遍）
-//!
-//! `board::client::{open, ask_hole, hear, me}` 与 `operator::client::{open, ask_hole, hear, me}`
-//! **逐字同构**，只差两格记号（泊位 / 问话孔）与各自的失败域。故按"两台以上逐字同构 ⇒ 收"
-//! 把那四手抬回**地板这一层**：本层只认孔与路（不认识服务与 RPC，见 [`super`]）。
-//!
-//! **本层因此多了一样东西**：一条**会话**。它仍是"关系怎么建立"那一件事（[`super`] 头一句），
-//! 只是粒度从"一枚孔"升到"一条路"。**它只有一手**（`open`）——三个字段直接公开：读的人要的
-//! 就是那三样，中间不再架一层 `link()` / `talk()` / `host()` / `parts()` 那样的转发。
-//!
-//! # 两个记号为什么由调用方给
-//!
-//! 一条路叫什么（`operator` / `board`）是**那份协议自己的事实**（各协议 `frame.rs` 里那两格，
-//! 经 `client.rs` 的 `BERTH` 交出来）；本层只按它把路装起来，不写死哪几条路。**问话孔按记号
-//! 分人**，故两条路的 `ask` 不能同名——它们本来就不同（`operator-ask` / `board-ask`）。
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
@@ -57,7 +40,6 @@ pub enum Fail {
 
 impl Session {
     /// 开一条到 `berth` 那条路的会话。
-    ///
     /// `holder` = 客人认的对端 = **它的生我者**：孔交给它，它再转授给那条路上真正的服务
     /// ——故"服务是谁"得由装配者告诉（见各协议 `client.rs` 的头注）。
     pub fn open(holder: TaskId, berth: Berth, millis: Wait) -> Result<Session, Fail> {
@@ -73,11 +55,7 @@ impl Session {
 }
 
 /// 收下路上那一格：**答话的是谁**（装配侧 `bridge.rs` 的 `tell` 的对偶）。
-///
 /// 宽度与字节序归 [`Field`](env::wire::Field) 给 [`TaskId`] 那一对 `store` / `fetch`
-/// ——这一格从前在五处各写一遍（那一对里记着）。
-///
-/// 返 `None` = 期限到了还没到 ⇒ 这条服务没接上（客人报它自己的超时，不猜）。
 fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
     let mut buf = [0u8; TaskId::WIDTH];
     match mail::HolePie::from_token(link.rx()).pull(&mut buf, millis) {
@@ -87,9 +65,8 @@ fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
 }
 
 /// 铸**问话孔**并交给对端（本端随即自窄到只写）。
-///
 /// **一个域一条路只铸一枚**——先找我表里那一枚，有就不铸第二枚。认的是"**本端开的** ＋ 记号"
-/// 两格（[`establish::find`]，与对端认孔那两格正判据同一句话）。于是"只铸一枚"从**纪律**变成
+/// 两格。于是"只铸一枚"从**纪律**变成
 /// **构造**：这条路上再也生不出第二枚，而第二枚的症状是"多出来的那枚永远没人读它的推"。
 fn ask(host: TaskId, mark: Mark) -> Result<PieToken, ()> {
     if let Some(have) = establish::find(me(), mark) {
@@ -100,7 +77,6 @@ fn ask(host: TaskId, mark: Mark) -> Result<PieToken, ()> {
 }
 
 /// **本端是哪一枚线程**——"这一枚孔是谁开的"那一问要它。
-///
 /// 不返 `Result`：`SelfId` 那一格恒写 id（生成的入口标了 `#[infallible]`）。
 fn me() -> TaskId {
     runtime::env::unit::self_id()

@@ -1,26 +1,17 @@
 //! operator::server — **持树者**：自己的域里的一枚线程守着那棵树（一枚线程 + 一个组，无轮询）。
-//!
 //! 本文件只放**那一枚线程**：起手（上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人）与它收进来
 //! 的四句话。每句话各自的正文在隔壁——**本文件不做裁决、也不动树**，它只"收一句、交给谁"：
-//!
 //! | 收的是什么 | 交给谁 |
 //! |---|---|
 //! | 提示之路上的一条路（[`ocall::TipIn::Plate`]） | [`super::plate::plate`]：前缀立窗格 ＋ 末段落格 |
 //! | 提示之路上的一位客人（[`ocall::TipIn::Guest`]） | 客人账（`Desk::admit`） |
 //! | 客人的一句问（[`ocall::Req`]） | [`super::answer::answer`]：七条原语 |
-//!
 //! **为什么就一枚线程**：树上那几枚是**一枚只在持它的那张表里有意义的句柄**（`PieToken` = "我这张
 //! 表里的第几个"）。"查到了要把 Pie 授出去"必须由**持有那一枚的那张表**来做——故所有条目只能住
 //! 同一张表，也就是同一枚线程。板那一台栽过这条（每位客人一枚待客线程 ⇒ 甲的条目在甲的表里，
 //! 乙来查时判它"已死"、也授不出去，症状是"刚挂上的名字，别人一查就是 `Unknown`"）。
-//!
 //! **三侧分家**：两侧共用的图与说明见 [`super`] 的"载体"那一节，帧与记号见
 //! [`protocol::service::operator`]。
-//!
-//! **照实记（这一份没有 task-2 那一刀的迁移点）**：`operator::client` 新出那一面是**客侧**用的；
-//! 本文件是持树者，一处客手都不叫（它自己那几手在 `core` 与 `plate`/`answer`/`door` 里，帧从门
-//! 闩直接读）。故"已持 Session 则用 Face"这条规则在这里落成一句"不适用"——写下来备查，免得下
-//! 一刀再来找一遍。
 
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
@@ -36,23 +27,21 @@ use protocol::service::operator as ocall;
 use protocol::service::operator::Grant;
 use protocol::service::operator::grant::grant_of;
 
-use crate::unit::operator::E_TREE;
+use crate::service::operator::core::Operator;
 use crate::system::control::service::Start;
 use crate::system::desk::{Desk, DeskFail, Guest};
-use crate::service::operator::core::Operator;
+use crate::unit::operator::E_TREE;
 
 use super::answer::answer;
 use super::claim::{ask_of, mark_of, reply_of};
 use super::plate::plate;
 
 /// 还在"补齐两本账"（答话路未认领 / 问话孔未挂上）时，一轮等多久（毫秒）。
-///
 /// **不是轮询**：账补齐之后这一等就变成 `Wait::Forever`（由组唤醒）；这个短期限只在装配窗口
 /// 里用——那几步的到达是**别人**在做（装配者转授、客人自己交孔）。
 const SETTLE_MS: usize = 1;
 
 /// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 七位操作面各一枚。
-///
 /// **一处给**：[`Desk::arm_pending`] 逐枚试、[`ask_of`] 逐枚比——两处读的都只有这一个数组。
 /// 位次与记号的对照本体在 [`Grant`]（`Grant::mark`），这里只是把它摊平。
 const MARKS: [Mark; 8] = [
@@ -67,21 +56,14 @@ const MARKS: [Mark; 8] = [
 ];
 
 /// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**。
-///
 /// 装配者要本域做的几件事都从**提示孔**那一条路进来（立一条路 / 协调两格 / 一位客人，见
 /// [`settle`]）：它是"装配侧 → 持树者"的唯一一条路，故**不必另开一条到自己的会话**。
-///
 /// 头两步是契约：装配者按 `(本域, tip)` 两格认领提示孔（`bridge::host_of`），而提示一到它就认为
 /// "答话路必已在本表里"（转授在前、提示在后）。
 pub fn serve() -> Result<(), Start> {
     // **起我那一枚线程**：本域是装配者建的，故 `Sire` 答的就是它——**只有这一条来源**
     // （从 `args` 里掏一格那条绕路已退：它存在只因为 iii 让三枚与编排者同域）。
     let assembler = runtime::env::unit::sire();
-    // **照实记（"上板"那一格退场：撤板那一刀）**：本域从前要开一条 `board::BERTH` 会话，好让板
-    // 看得见它的死（三枚内件同形）。那一族的**死信号**已经整片退场（死由监督那一趟的表侧扫认），
-    // 而握手的两头一起撤（装配者不再接、客侧不再开会话）⇒ 这一格退场。
-    // 提示孔：本线程铸的那一枚（**装配者要它做的三件事都从这里进来**：立一条路 / 协调两格 /
-    // 一位客人），副本交给生我者。**记号 = `tip`**。
     let Ok(tip) = mail::unseal_hole(ocall::TIP_MARK) else {
         return Err(Start::Tree(E_TREE));
     };
@@ -115,38 +97,17 @@ pub fn serve() -> Result<(), Start> {
 
     let mut tree = Operator::new();
     let mut desk = Desk::new();
-    // **门禁接没接线**：装配者认下名册之后推一句空话过来（[`ocall::TipIn::Wired`]）——那一刻之前
-    // 那道门**一律放行**（照实记：这一格替代了原来那两格号，见 `bridge::Tree::wire` 的照实记）。
     let mut wired = false;
-    // **那本账没了**（照实记）：归属从前另住一本（`Book`），它自称"活着那一问与树叫的是同一具
-    // 身体"——正因为是同一句，它只能是树的影子：`land` 那一趟把同一个 `PieToken` 同时交给两处，
-    // 而 `Line` 那一行里另外三格（`name` / `id` / `at`）树上本来就有。影子撤掉，两轴都跟着砖走。
-    // 收帧的那一页：**在循环外备一次**——门的缓冲不再是"这一族最大的那一帧"（`REQ_LEN`），
-    // 而是**载体的一页**：界判在 `Push`，故客人推得进来的最长就是一页。
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Start::Room(E_TREE));
     }
     buf.resize(PAGE_SIZE, 0);
-    // **每位客人一格答话存根**（跟着客人走，不跟着这一趟走）：见 [`Outbox`] 的照实记——
-    // 这一格就是为了"本域不为一位客人停住"。
     let mut outs: Vec<Outbox> = Vec::new();
-    // **照实记（那一格共用的答话存根退场了）**：从前这里住着一枚 `Outbox<Union>`（缓冲 ＋
-    // 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台服务**按在下一趟的
-    // `send` 里（一位不回头的客人就能卡住所有客人）。今天答话那一格跟着**那一趟**走
-    // （`serve_one` 里的 `Sender`），一位客人一处写端 —— "一格招待所有客人"编不出来了。
-    // **"还有人没挂上"那一档持续了多久**：`settle` 那一档是 1 ms 一轮（[`SETTLE_MS`]），
-    // 故这一格≈毫秒。每约 2 s 说一句"是哪几位、`ask_of` 认不认得"——见 [`unarmed_report`]。
     let mut settle_rounds: usize = 0;
     // **招待活动的读数**（封顶 40 行 ＋ 每 500 行留一行）：醒来这一次，是"认得的客人"还是
-    // "唤醒却认不出"——后者正是"手递上来了、却永远没人读"那一档（见 [`unarmed_report`] 同段照实记）。
     let mut wakes: usize = 0;
     // **风暴的形状**：连着几次是"同一枚孔 ＋ 同一个动作码"。
-    //
-    // **照实记（这一格是量出来的）**：一条注定译不出的路被客侧重试时，症状就是"同一枚孔、同一个
-    // 码、连着几百次"——实测 `operator: woke n=500…2000 tok=501 known=true read=true`：每次都
-    // **读得到**、整机却不再前进。只看"醒了多少次"分不出"忙"与"打转"，故把**是哪一枚孔、要什么
-    // 动作、连了几次**一起报出来（客侧那一头同因的读数见 `road_to_id` 的照实记）。
     let mut last_tok = PieToken::NONE;
     let mut last_code: u8 = 0xff;
     let mut streak: usize = 0;
@@ -182,10 +143,6 @@ pub fn serve() -> Result<(), Start> {
         } else {
             // **醒在一枚账上没有的号上**（守卫）：提示孔是常态（它的帧由下一轮的 `settle` 收），
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
-            // **如实记（这一格到现在没落过一行）**：查那 1.0~1.7 s 时立了它，而量下来的病根不是
-            // 这一形，是**组的扫法**：`ready()` 从前每轮都从第 0 格扫、取第一枚就绪的，故装配期
-            // 排在后面的那一格一直轮不到（见 `76ce954` 与 `work/mail/tole.rs` 的游标照实记）；
-            // 那一条已改成轮转。**这一行留着**——"组里有人却认不出来"这一档真出了就是硬故障。
             if tok != tip {
                 debug!(
                     "operator: wake unknown tok={} push={}",
@@ -228,8 +185,6 @@ pub fn serve() -> Result<(), Start> {
                 let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
             }
             // **答话那一格也一起办**：先非阻塞地问一句"上一答被取走了没有"（[`Sender::settle`]）
-            // ——取走了/孔没了 ⇒ 这一格撤掉（本域不再有它的话要说）；**还压着就留着不发**：
-            // 那只手指着这一格的缓冲，撤了就是一段死字节（见 [`Outbox`]）。
             if let Some(at) = outs.iter().position(|o| o.who == gone.who)
                 && outs[at].send.settle()
             {
@@ -240,22 +195,12 @@ pub fn serve() -> Result<(), Start> {
 }
 
 /// 补齐那几件事，返"还有没有没补齐的"。
-///
 /// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 [`ocall::TipIn`]）：
 ///   - **一条路**（[`ocall::TipIn::Plate`]）：装配者要本域在树上立一条路——**本域自己立**
 ///     （[`plate`]），不经会话、不当自己的客人；
 ///   - **一位客人**（[`ocall::TipIn::Guest`]）：`admit` 收进来；
 ///   - **门禁接线**（[`ocall::TipIn::Wired`]）：**一句话、不带号**——装配者已认下名册，门从此
 ///     问得动身份（那一格由 [`super::door::may`] 读）。
-///
-///   **照实记（"协调两格"那一形退场）**：它从前把"哪一位域 ＋ 它是哪一双眼睛"递过来，本域只
-///   记号、认门牌那一手在门口。那一形随 `Eyes` 整段退场：**门牌本来就由各域自己交给本域**，
-///   而"那位域是几号"本域用不着——门口按记号认（`claim::face_of_mark`）。
-///
-///   **非阻塞地拉**——必须在这里拉，不能只在"组唤醒"那一支拉：装配者的推**可能早于本线程把
-///   提示孔挂进组**（那一条推落在一个还没有转发登记的站点上），醒不来就得靠这一拉吃到它；
-/// - **答话路**：装配者转授来的那一枚 ⇒ `admit` 收一位客人；
-/// - **问话孔**：客人**自己**交来的那一枚 ⇒ 认出来就 `arm` + 挂进组。
 fn settle(
     desk: &mut Desk,
     pile: &Pile,
@@ -274,16 +219,12 @@ fn settle(
         // **首格 `kind` 决定形状**：表外的 kind / 长度不对 ⇒ 读不懂。这条路上没有答话那一格，
         // 故只能**报一句**（把那一格 kind 一起报出来，"读不懂的是哪一形"要看得见）。
         let Some(rec) = ocall::TipIn::fetch(&frame[..n]) else {
-            debug!(
-                "operator: tip unreadable (kind={})",
-                frame[0]
-            );
+            debug!("operator: tip unreadable (kind={})", frame[0]);
             continue;
         };
         match rec {
             // **装配者要本域立一条路**。
             ocall::TipIn::Plate { road, leaf, rule } => plate(tree, &road, leaf, rule),
-            // **门禁接线**：一句话——装配者已认下名册（见 `bridge::Tree::wire` 的照实记）。
             ocall::TipIn::Wired => *wired = true,
             // **一位客人**：按"它开的 + 记号"认它那条答话路。
             ocall::TipIn::Guest(client) => match reply_of(client) {
@@ -294,7 +235,6 @@ fn settle(
                     // ——这一趟不动账，也不打行（重放是常态）。
                     Err(DeskFail::Already) => {}
                     // **满了**：这位客人进不来，而**它自己不知道**——它的问话孔没人管，第二次
-                    // 问话会堵在单槽上（整台机器收不了场）。故这一格**报一句，别静默丢一位客人**。
                     Err(DeskFail::Full) => debug::put("operator: desk full"),
                 },
                 // 次序被破坏（提示先到、答话路不在本表里）：报一句；客人那边会报它自己的超时。
@@ -310,14 +250,10 @@ fn settle(
         &MARKS,
         |who, mark| ask_of(who, mark),
         |ask| {
-            let ok = pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull).is_ok();
+            let ok = pile
+                .attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
+                .is_ok();
             if ok && mail::HolePie::from_token(ask).peek().is_ok() {
-                // **照实记（这一格量的是"挂上这一刻那枚孔上已经有手"）**：⇒ 客人的第一问与
-                // "本域把它挂进组"之间只隔着**微秒**（`Session::open` 在铸问话孔之前先 `hear`，
-                // 等装配者 `tell`"答话的是谁"，而那一推与 `Tip::Guest` 在 `bridge::attach` 里紧挨
-                // 着）——故**这一行量的不是**那 1.0~1.7 s：那一段是**挂上之后**排的队（组的
-                // `ready()` 从前每轮从第 0 格扫，见 `76ce954` 与游标照实记）。**owner** = 那一枚孔
-                // 是谁开的（= 哪一位客人）。
                 let owner = mail::reserve(ask)
                     .map(|(_, owner, _)| owner.get())
                     .unwrap_or(0);
@@ -330,20 +266,7 @@ fn settle(
 }
 
 /// **诊断（release 也看得见）**：把"还有人没挂上"那一档拆开——**是哪几位、`ask_of` 认不认得**。
-///
 /// **为什么不用 `debug!`**：那一支宏在 release 下**是空操作**（`crates/protocol/src/debug.rs`
-/// 明写 `cfg!(debug_assertions)` 为假时那一格不进），而验收跑的全是 release ⇒ 这件事**从前
-/// 一次都没落过盘**——"服务一片缺席却没有一行线索"就是这么来的。这里直接用
-/// [`debug::put`](protocol::debug::put)（那一手不设构建门）。
-///
-/// **三格怎么读**：
-/// - 这一位**不在账上**（连名字都没进过 [`Desk`]）⇒ 提示那条单槽路上那一帧没到，或撞了
-///   `desk full` / `no reply`（那两句也在本刀里改成 release 可见）；
-/// - 在账上、八枚记号**一枚都不中**（`ask=none`）⇒ 它那枚问话孔**不在本表里**；
-/// - 在账上、`ask=some` 却一直挂着 ⇒ [`crate::service::operator::server::settle`] 里
-///   `pile.attach` 那一手没成（`arm_pending` 会 `unarm` 回退）。
-///
-/// **这一手只读**：它不 arm、不 attach、不动账——诊断不许变成副作用。
 fn unarmed_report(desk: &Desk, rounds: usize) {
     let mut unarmed = 0usize;
     desk.unarmed_each(|_| unarmed += 1);
@@ -373,27 +296,6 @@ fn unarmed_report(desk: &Desk, rounds: usize) {
 }
 
 /// **一位客人一格答话存根**：那一枚答话路的写端 ＋ 这一族最长那一帧的缓冲（[`Sender`] 自带）。
-///
-/// # 照实记（**这一格是量出来的：那一等从前落在服务循环里**）
-///
-/// 它从前不是一格：答一句话用的是 `serve_one` 栈上的一个临时 `Sender`（`from_token(guest.reply())`），
-/// `send` 递出去、落出作用域时那一等（`Drop` → `reclaim` → `wait(Push, Forever)`）就**扎在本域这条
-/// 循环里**。debug 档 `product` 景那几跑量到过它的样子：**这一格一次都没超过 200 ms**（故它不是
-/// `push_hold` 那一秒的病根）；而 `root` 景（25 台测具）里量到了另一头——
-/// `operator: slowone who=24 answer=0ms send=0ms reclaim=4639ms sent=true`：客人 24 不来取它的答话，
-/// **本域在那一等上停了 4.6 s**，那段时间里客人 25 / 26 推上来的手在孔上干等（各 2.1 s，
-/// 两位当场判失败，见 `mail: hand stuck hole#426/#451`）。⇒ **一位不回头的客人能停住整台树**。
-///
-/// # 修法（只改"谁等"，不改"报不报"）
-///
-/// 缓冲挪到**跟着客人走**的这一格（本域那条表里），于是"递出去"与"等它被取走"**分成两件事**：
-/// 递完就接着招待下一位；下一趟要答这同一位之前先**非阻塞地问一句**（[`Sender::settle`]）——
-/// 上一答还在孔上就**这一趟不推**（推上去既会改掉那只手指着的字节，也会让本域再一次为它停住）。
-/// **一条报也没有作废**：推出去的仍等客人来取（孔是客人的，本域不动它）；少答的那一句是**下一位
-/// 客人自己那一问**——它没取走上一答，这是它那一侧的事。
-///
-/// **它的寿命**：跟着这一格走到客人被剔走为止；剔的那一刻若上一答还挂着，这一格**留着不发**
-/// （`sweep_each` 那一手）——那只手指着这一格的缓冲，撤了就是一段死字节。
 struct Outbox {
     who: TaskId,
     send: Sender<ocall::Union>,
@@ -414,15 +316,11 @@ fn outbox<'a>(outs: &'a mut Vec<Outbox>, guest: Guest) -> Option<&'a mut Outbox>
 }
 
 /// 招待一位客人：从**它的问话孔**读一帧、交给树、把答话推进**它的答话路**。
-///
 /// 组已经说了"这一枚有话"，故这一读读得动；期限给 `0` 是**再确认**，不是轮询。
-///
 /// `buf` = **调用方那一页**（`serve` 在循环外备一次）：收帧不在这里分配，也不是家族帧那么大
 /// ——客人的最长帧由载体定（一页），门就得有一页才接得住。
-///
 /// **这一位叫的是哪一条原语**：从**本域表里那枚问话孔**的记号读回（客户端自称不了，见
 /// `grant_of`）。认不出 = 会话没说它持哪一柄权（控制面那条路）⇒ `None` ⇒ 不判面。
-///
 fn serve_one(
     tree: &mut Operator,
     guest: Guest,
@@ -434,20 +332,6 @@ fn serve_one(
     // **收帧用调用方那一页**（`Receiver::recv`）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
-    //
-    // **照实记（这一格为什么要分开报：量出来的）**：debug 档 `product` 景里量到一位客人被**连着
-    // 答八次 `BAD`**（`operator: unreadable frame from=17` ＋ `answered code=7 ask=255 who=17`，
-    // 客侧同因那一行是 `road retry gave up rounds=7`）——而 `BAD` 这一句**三个成因**：
-    // ①**这一枚孔上根本没有手**（假醒：组说这一格有事、取的时候却没有）；②**有手、可我读不懂**
-    // （长度 / 形状不在本族的表里）；③搬不动（孔用不动了）。今天三格**各自报得出来**：
-    // `Mail` 那一支带域码，`Unread` 那一支带**读到了几字节**（`pull` 已经把那一段写进这只缓冲，
-    // 故连**前 8 字节也照得出来**——"帧坏了 / 段里混进了非 UTF-8 / 我读少了"三种从此分得开）。
-    //
-    // **照实记（后来查到了哪一支：搬过来的字节本来就错位）**：同一条线继续量的结果是
-    // **"字节错了"而不是"帧坏了"**——内核 `mail::copy` 把两侧段表锁步走、每个片段各推进一整段，
-    // 两侧 `va` 在一页里的偏移一不同就错位（症状：长度对、发送者对、内容不对）。修法与两处实测
-    // 见 `kernel/src/work/mail/mod.rs` 的 `copy`；这三行读数留着——它们是下一次再出这一形时
-    // **第一眼**要看的东西。
     let decoded = match Receiver::<ocall::Req>::from_token(ask).recv(buf, Wait::POLL) {
         Ok(wire) => Some(wire),
         // ①③：没有手 / 孔用不动了。**域码原样报**（`Busy` 与 `Dead` / `Denied` 是两件事）。
@@ -460,7 +344,6 @@ fn serve_one(
             );
             None
         }
-        // ②：有手、读不懂——**报读到了多少，并把头 8 字节照出来**（照实记见上）。
         Err(RecvFail::Unread(len)) => {
             let show = len.min(8);
             let mut head = [0u8; 8];
@@ -504,13 +387,6 @@ fn serve_one(
     }
     // 答一句：**形状由 [`ocall::Union`] 说**——编进**这位客人那一格**的缓冲里、递出去（一个
     // envcall），**编完就接着招待下一位**。**孔是客人铸的**：`release` 那一手不在本域做
-    // （放下别人的孔不是本端的事），故这一格只递、不等。
-    //
-    // **照实记（这一句是从"等它被取走"改过来的，量出来的）**：从前 `Sender` 是这一趟的临时量，
-    // `Drop` 里那一等（`reclaim` → `wait(Push, Forever)`）扎在本域这条循环里 ⇒ 客人不来取，
-    // **整台树**停住。debug 档 `product` 景量到的样子是"一次都没超过 200 ms"（故它不是
-    // `push_hold` 那一秒的病根）；`root` 景量到的另一头是 `reclaim=4639ms`（客人 24），
-    // 那 4.6 s 里客人 25 / 26 的手在孔上干等、两位判失败。⇒ 那一等挪出循环，见 [`Outbox`]。
     let sent = match outbox(outs, guest) {
         Some(out) => {
             if out.send.settle() {

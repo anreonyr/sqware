@@ -1,22 +1,9 @@
 //! control::assemble — **装配那一半**：先立账（`enlist`），后入册（`enroll`）。
-//!
 //! 两条都是"机器对整张单做的事"，与具体是哪一台无关：
 //!   - [`Control::enlist`]：登记一行——**怎么算起来了**由这一行的 `setup` 推出
 //!     （有通道 ⇒ `Announce::Channel`；否则放行即起来）。**先立整张账，再逐条起**。
 //!   - [`Control::enroll`]：**把这一台机器的全部可领之物交进某一台**（`Setup::Machine` 那一格
 //!     声明的）：按机器自述枚举全机 → 逐段向引导域领 → 一整段推进它那条通道。
-//!
-//! **照实记（`wire` 那一手退场了）**：这一份从前还有第三条——`Control::wire`：按收方那张需求
-//! 单（`Setup::Need`）逐条 **settle** 坐标、向引导域领、再按位次把记录推给收方。那一条路
-//! **整个退了**：设备那一轴今天由**设备账那一台**（`service/hub`）在运行期回答"这台上哪条线"、
-//! "这一段区归谁"，而取法由驱动自己跑一趟（`bond` → 列册 → 找门 → 认领，见
-//! [`protocol::driver::hub`]）⇒ 装配者不必再替谁认设备、也不必再读树认类。
-//!
-//! **留下的是同一只手，换了收方**：递单那一半从"很多台各一张单"收成"**一台领全机**"
-//! （`enroll`），因为"谁回答'这台是哪一段区'"从装配者搬进了设备账。
-//!
-//! **本域不碰原件**：门闩在引导域手里，它直接授进 `target` 那张表，回一段"坐标 + 号"的记录；
-//! 本域只做一次转投（一整段原样推过去）。
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -32,21 +19,12 @@ use protocol::system::supply::frame::{WANT_MAX, Want};
 use crate::system::control::desk::Announce;
 
 use super::{BOOT_MS, Control, Error, READY_MS, Service};
-use crate::unit::{UnitFile, Setup};
 use crate::system::Assembly;
+use crate::unit::{Setup, UnitFile};
 
 impl Control {
     /// **登记一行**：只知道名字、它"怎么算起来"、以及**谁结束它**——此刻还没有身子（`spawn` 才挂）。
-    ///
     /// **"怎么算起来"由 `setup` 推出**：有通道 ⇒ [`Announce::Channel`]（它起来时会交回
-    /// 一枚孔，那枚到了才算起来）；否则 [`Announce::None`]（放行即起来）。这与旧装配表上那
-    /// 两格（`announce` ＋ `channels`）**逐行等价**：有通道的那四台正是旧表里唯一写
-    /// `Announce::Channel` 的四台。
-    ///
-    /// **"谁结束它"是写出来的，不是推出来的**（照实记）：它由那一台自己那份 `program.rs` 给
-    /// （`Relation::restart`）——**由编排域起的台不写就当场拒**（`Step("no restart")`，读数带出
-    /// 是这一台的哪一步）。这不是苛求：收场的闸与兜底两条判定都压在这一格上，静默给个默认值
-    /// 正是"以后会变"时最贵的那种错。
     pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
@@ -57,17 +35,6 @@ impl Control {
 
     /// **放行 + 入册**（装配那一相的后半）：**次序是硬的**——物料要落到它交回的那条路上，
     /// 故入册只能在放行之后（[`Control::start`] 之后才 [`Control::enroll`]）。
-    ///
-    /// **它不含"等就绪"那一手**（照实记：那一手从这一份里拆了出去）：等就绪要等的那几条通道里，
-    /// `Machine` 那条"我起完了"要到**本域挂了树、也拿到物料之后**才铸得出来——而挂树由装配那一趟
-    /// 在**放行之后**做。故两处的次序不同，各自把自己那一段读全：
-    ///
-    /// ```text
-    ///   装配那一趟   放行 → 递物料 → 挂板 / 挂树 → **等就绪**
-    ///   线上那条路   放行 → 递物料 →              **等就绪**（线上没有挂板 / 挂树那两手）
-    /// ```
-    ///
-    /// 这也是"起一条"那条次序**只有两处**、且两处都把[放行 → 递料]这一段从这一手取的原因。
     pub fn launch(
         &mut self,
         program: &UnitFile,
@@ -91,22 +58,14 @@ impl Control {
     }
 
     /// **入册**：把**这台机器的全部可领之物**交进收方（那一条声明了 `Setup::Machine` 的通道）。
-    ///
     /// 前置：它**已经起来**（[`Control::start`] 之后）——通道那一头才认得上，记录也才落得进去。
-    ///
     /// 三步：
-    ///
     /// 1. **枚举全机**（[`crate::system::machine::Machine::devices`]）＋ 那两件按**已知坐标**的
     ///    （设备树本体 / 门铃——它们不在树里，没有"哪一类"可判）；
     /// 2. **逐段向引导域领**（`WANT_MAX` 一块）：坐标由本域翻（类 → 区那一条权威仍在读树的地方）；
     /// 3. **一整段推过去**（[`Enroll`]：条数 ＋ 那几条 `Pair` 记录，一个字节都不翻译）。
-    ///
     /// **段尾那一条恒是设备树本体**（`wants[0]`）：收方要**先**把树读一遍，才知道哪一条记录是
     /// 哪一台（名 / 类 / 线）。次序即契约。
-    ///
-    /// **块内失败退成逐条**（照实记）：一块五条里有一条领不到（这台机器没有那一件 / 授不出），
-    /// 整块会一起失败——而其余四条是好的。故那一块**逐条重来**：领得到的照收，领不到的打一行
-    /// 读数、那一台就不在收方账上（缺一台不影响别的台）。
     pub fn enroll(
         &mut self,
         name: String,
@@ -145,7 +104,6 @@ impl Control {
         // **形态照源枚**：设备那几段带 `ONLY`（内核就是那么发的：一枚门闩只许一个使用者），
         // 树与门铃不带。**这四条都带 `VEST`**：收方（设备账那一台）的全部工作就是**再授出**
         // （把每一台交到它认领者手里）——不带 `VEST` 它就一台都交不出去。
-        //
         // 坐标那一格：树与门铃按**已知坐标**要（它们不在树里），设备按**区**要（那是内核造门闩
         // 的坐标）。
         wants.push(Want::new(
@@ -224,7 +182,6 @@ impl Control {
             return Err(Error::Step("too many devices"));
         };
         // **递出即返回**：等它下线由 `Control` 那一格写端担着（见它的注；`send` 里先收口上一手）。
-        // **写端的孔在这一趟才知道**（`tx`），故先把它换过来。
         self.out = protocol::communication::sender::Sender::<Enroll>::from_token(tx);
         if self.out.send(enroll).is_err() {
             return Err(Error::Step("no channel"));
@@ -235,11 +192,6 @@ impl Control {
 }
 
 /// **生命这一轴在装配那一趟里的那一手**：等这一台的凭据交齐（读它 `setup` 那几格）。
-///
-/// **它为什么排在板 / 树那两手之后**（照实记：这一格换过位置）：这一刀之前"等就绪"住在
-/// [`Control::launch`] 里（放行之后紧接着）——那时就绪的凭据只有"它交回了一枚通道孔"，而那一刻
-/// 与"它答得了"是同一件事。`Setup::Machine` 那一格把两件事分开了：它的"起完了"要到**挂上树、
-/// 拿到物料、把每一台落完格**之后才说得出口 ⇒ 等它必须排在那两手之后。
 pub fn await_ready(
     assembly: &mut Assembly,
     program: &UnitFile,
@@ -251,10 +203,6 @@ pub fn await_ready(
         .map_err(|e| e.said())
 }
 
-// **照实记（`pairs_of` 那一手退场了）**：它从前把"回单里那段裸字节"按 `PAIR_LEN` 步长解成
-// `Pair`（解不动的跳过）；`draw` 改成返 `Reply`（解码本来就已经把那几条收进表里了）之后，
-// 那一段裸字节在调用点已经不存在 ⇒ 那一手与它那条"跳过"的判据一并退场。
-
 /// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 [`Control::enlist`]）。
 fn announce_of(supply: &[Setup]) -> Announce {
     if supply.is_empty() {
@@ -264,65 +212,8 @@ fn announce_of(supply: &[Setup]) -> Announce {
     }
 }
 
-// **照实记（第 53 刀：收 `Ready` 那一支的落地图——量过，照着做即可）**
-//
-// 今天"这一台要不要交'答得动'那条凭据"由**声明**说（`Demand::supply` 里那 7 处
-// `Setup::Ready`）。它**推得出来**：被某一台的 `after` 点过名就得交（判据与三条前提见
-// [`crate::unit`] 里 `supply` 那一格的照实记；`hub` 的凭据搭 `Machine.ready` 一起交，目标跳过）。
-//
-// **推导的家**：`unit/order.rs` 里加一具自由函数（那一份已经有 `is_target` 与整张单在手）：
-//
-// ```text
-// pub fn needs_evidence(name: &str) -> bool {
-//     if is_target(name) { return false; }                       // 前提③
-//     let me = PROGRAMS.iter().find(|p| p.name() == name);
-//     if me.is_some_and(|p| p.demand.supply.iter().any(Setup::machine)) { return false; }  // 前提②
-//     PROGRAMS.iter().any(|p| p.relation.after.is_some_and(|d| d.iter().any(|n| *n == name)))
-// }
-// ```
-//
-// **四处读它的地方**（这一组要一起改，签名从"吃 `&[Setup]`"改成"吃 `&UnitFile`"或"吃行上
-// 那一格"）：
-//   1. 本文件这一具（`announce_of`）——`Channel` ⇔ `!supply.is_empty() || needs_evidence(name)`；
-//   2. 本文件的 [`connect_all`]（放行前装通道）：`supply` 那几格之外，**推导出 READY 时多装一条**；
-//   3. [`Control::ready`](super::Control::ready) 的两处调用（本文件 `assemble` 那一趟与
-//      `control/mod.rs`）；它要的**记号**同样从推导来；
-//   4. `control/mod.rs` 里那处装通道的线上路径（与 2 同一句正文）。
-//
-// **推导结果落在哪一格**：`Service` 行上**已经有** `announce` 那一格——它的头注写着"两格都是
-// **声明里推出的事实**，落在行上之后**账就自足**"（`core::{due,done,walking}` 只读账）⇒ 这一刀
-// 正好走那条既有的话：**推导一次、落行、后面都读行**（`connect_all` / `ready` 不必各自再推）。
-//
-// **收尾**：`unit/order.rs` 里 `DepsFail::NoEvidence` 那条检查改用 [`needs_evidence`]（它仍旧
-// 拦"边上写了个交不出凭据的台"）；7 份声明里 `supply: &[Setup::Ready]` 那一行去掉（`Setup::Ready`
-// 那一型**留着**——它成了装配者自己构造的那一格）。
-
-// **照实记（第 54 刀：实际落法比上面那条路小得多——改三处签名是白改）**
-//
-// 上面"四处读它的地方"要改签名，只因为推导要拿到**整张单**。而这件事有一个更小的落法：
-// **给 [`UnitFile`] 加一具访问器**（名字就叫 `supply`，与它读的那一格同名）——
-//
-// ```text
-// impl UnitFile {
-//     pub fn supply(&self) -> &'static [Setup] {
-//         if !self.demand.supply.is_empty() { self.demand.supply }
-//         else if needs_evidence(self.name()) { READY_ONLY }   // static READY_ONLY: &[Setup] = &[Setup::Ready];
-//         else { &[] }
-//     }
-// }
-// ```
-//
-// 于是**四个读点各改一个词**（`program.supply()` → `program.supply()`），而推导只发生在一处
-// ⇒ **同一件事只有一个来源**，三处签名一处都不用动。（`hub` 那一路是对的：它 `supply` 非空 ⇒
-// 直接答声明值，**不会**多出一条——那正是前提②。）
-//
-// **这一刀剩下的就三件**：① `unit/order.rs` 加 `needs_evidence` 与那处检查改用 `supply()`；
-// ② `unit/mod.rs` 加 `READY_ONLY` 与那具访问器；③ 7 份声明去掉 `supply: &[Setup::Ready]` 那一行
-// （`Setup::Ready` 那一型**留着**——[`needs_evidence`] 推出来的那一条就是它）。
-
 /// **装通道**（"配"那一相）：按这一台 `setup` 里那几格逐条装上——**记号 = 通道名**，
 /// 放行后按同一个记号逐条认领（[`service::ready`](super::service::ready)）。
-///
 /// **自由函数**：它只碰通道，不碰 `Control` 的任何一格（与 [`connect`](super::connect) 那一手
 /// 同一句正文——"只碰通道"的那一层做成方法就是白加的壳）。两处叫它：装配那一趟
 /// （[`crate::system::Assembly::assemble`]）与线上那条 [`Control::release`]。

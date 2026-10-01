@@ -1,48 +1,12 @@
 //! system::control — **Service 的生命周期**：建 / 配 / 起 / 停。
-//!
 //! 它只答一件事：**这一条服务在不在、怎么被创建 / 配置 / 启动 / 停止。**
 //! 四套协议的语义（命名 / 身份 / 横向关系 / 存在信号）**不在这一层**：那些是程序声明上的
 //! **边**，由 [`Assembly::assemble`](crate::system::Assembly) 在装配那一趟里按次序落到四轴
 //! 各自的手上。
-//!
 //! ```text
 //!   UnitFile（静态声明）── spawn → connect → start → wire ──▶ Service（域 + 线程 + 通道）
 //! ```
-//!
 //! **`Service` 不另立类型**：它就是"一枚线程 ＋ 它那几条通道"（[`Service`] 是那两样的别名）。
-//! 原先那个六格结构体（`name` / `task` / `quay` / `marks` / `needs` / `channel`）是"把一个
-//! 函数拆成三个调用点"逼出来的壳——后三格每次都能从 `setup` 现推，`name`/`task` 账里本来就有。
-//!
-//! 手里只有装配环境四样：账（[`Table`]）、清单（[`Catalog`]）、机器自述、与引导域的会话。
-//! 存在信号那本账（道表与那只组）住 [`supervise`] 那一相。
-//!
-//! **`mint` 到 `start` 之间那一枚身子住 [`Control::pending`]**（照实记）：协议那四手在运行期是
-//! **两问**（`mint` / `start`），两问各是一趟消息 ⇒ "已造未放行"必须有个安放处。
-//!
-//! **内核那一侧的手住 [`service`]**；**立账与递单住 [`assemble`]**；**监督相住 [`supervise`]**；
-//! **挂上树那三件住 [`mount`]**（铸入口 / 递出去；"落"由持树者做）。
-//!
-//! # 这一面今天外面也到得了（照实记：谁把那一格落上树，换过三次）
-//!
-//! [`protocol::system::control::Face`] 的形状是定稿的（四手 ＋ 帧 ＋ 记号）。task-4 把它挂上树
-//! 那条路**撤过一次**——那时挂树要一枚**一次性**边沿线程去落门牌，而它一收尾，持树者表里那枚
-//! 入口副本会被内核的派生链级联摘掉（`cull` 沿 `sire` **跨任务**摘后代），plate 那一格于是留着
-//! 一个**取不回的号**：查得到、`find` 拿不回来。证据链三处
-//! （`kernel/src/work/unit/gate/accord.rs`／`kernel/src/boot.rs` 的 `EXIT_HOOKS`／
-//! `kernel/src/work/unit/gate/cull.rs::doom`）与"**前置 = 铸入口那一枚线程必须长命**"写在
-//! [`crate::system::Assembly::supervise`] 的照实记里。
-//!
-//! **今天那一格满足了，而且没有第三方上树**：铸入口的是编排域主线程（它此后就进监督那一趟，
-//! **本域活多久它活多久**），而"把这一格落到 `/svc/sys/control`"由**持树者在自己核里做**
-//! （[`mount::entry`] 铸那一枚 → [`crate::service::operator::bridge::Tree::plate`] 递过去 →
-//! 持树者 `part` ＋ `land`）。于是 `/svc/sys/control` 与名册 / 盟册那两族那**四格**逐字同形：
-//! 任何走到树的任务 `operator::Face::tile` 一查就有，
-//! [`protocol::system::control::Face::of`] 直接成立——那位真客人是 `harness/src/probe_control.rs`。
-//!
-//! **代价照实说**：挂上之后，**任何已绑身份**的域都能按 `Permit::Unset` 取回那一枚入口，进而
-//! `mint` / `start` / `stop` 装配表里的任意一台程序。这不是新开的口子——`doom`（收掉一个域）
-//! 今天同样没有门禁；若将来要收，收的地方是那一格的 `Permit`（协议那一侧改一格，见
-//! `protocol::service::operator::Permit`），不是这一层。
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -56,10 +20,10 @@ use env::manifest;
 use env::{Mark, TaskId, Wait};
 use protocol::communication::establish::{self, Endpoint};
 
-use crate::unit::{PROGRAMS, UnitFile, Setup};
 use crate::root::boot;
 use crate::system::machine::Machine;
 use crate::system::source::Source;
+use crate::unit::{PROGRAMS, Setup, UnitFile};
 
 pub mod assemble;
 pub mod core;
@@ -77,19 +41,6 @@ pub const RETRY_MS: usize = 1;
 pub const READY_MS: usize = 1000;
 
 /// **等"它起完了"那一条通道的上限**（毫秒）——比 [`READY_MS`] 宽得多。
-///
-/// **照实记（这个数是量出来的）**：`Setup::Machine` 那一格把"我交回了一枚孔"与"我答得了了"
-/// 拆成两条通道之后，等后面那一条要等的是**一台机器最慢的一次起手**：读一遍设备树、逐类立盟
-/// （每类两趟盟册）、逐类逐台落格、**每格查回来验一遍**（`bridge::land` 那条口径）。实测
-/// （debug 档、qemu `-smp 4`）：那一整段落在 **2.5 s 上下**——[`READY_MS`] 那一秒装不下，
-/// 于是装配者会在它落完之前就判"没起来"。
-///
-/// **它仍然有界**：那是额度那一句的全部意义（子域死在头几步时本域不能陪着挂死）。
-/// **照实记（第 36/37 轮：同形状的额度清了一遍）**：原先只有"等就绪"那一条用宽额度，其余
-/// （树那一手、名册那两问、通道认领那几条）都拿 [`READY_MS`]（1 s）——而 **1 s 那一秒从前兼着
-/// "它死了没有"**（所以要紧）。今天**死由表侧那一扫独自认**（`supervise` 的 `Watch`）⇒
-/// 凡"问一趟、等一个答复"的地方都按同一个宽额度走（[`BOOT_MS`]）——**宽了只会慢，不会误判**。
-/// [`READY_MS`] 今天只剩一类读者：**本域自己起手时那几问**（与"别人起来没起来"无关）。
 pub const BOOT_MS: usize = 5000;
 
 /// 装配失败的编号（通用的那几个；按服务分的编号住在装配表旁边）。
@@ -98,12 +49,10 @@ pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
 
 /// **Control 的失败域**：一格 = 死在装配的哪一类。
-///
 /// **不是全局错误表**：它是装配那一圈的返回类型，号（`env::Reason`）由调用方在边界上折
 /// ——按服务分的号归装配表那一格 `died`。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Error {
-    /// 名字读不懂（旧 `env::wire::name` 那一关已退场：构造面不判，今天仓内没有生产者）。
     Manifest,
     /// 清单里没有这一台。
     Missing,
@@ -129,10 +78,8 @@ impl Error {
 }
 
 /// **一条运行时服务**：一枚线程 ＋ 它那几条通道（会话）。
-///
 /// 线程与通道都在这里：`spawn` 只挂线程（账是空的），放行前 `connect` 按 `setup` 逐条装
 /// （第一条是 `records`），随后板 / 树两条装配路也各往这本账里添一件。
-///
 /// **一条通道一件持有者**（[`Endpoint`]）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
 /// 在这里就是**几个 `Endpoint`**，不是一个能装的容器类型。**这本账归装配者拿着**：那几枚孔是
 /// 本域铸出去、客人将来要认的那一半，放早了客人就没得认（见 [`Assembly::assemble`](crate::system::Assembly::assemble)）。
@@ -140,7 +87,6 @@ impl Error {
 pub type Service = (TaskId, Vec<Endpoint>);
 
 /// 清单的读面：装配者按名字挑镜像。
-///
 /// 两种来源**同一形状**：引导域手里是 boot 借映的那块字节，编排域手里是它从固件领来的
 /// 那段只读视图（同一批物理页、各自的 VA）。清单里的镜像是**相对 blob 的切片**，故换一张
 /// 表、换一个 VA 都照样解析得出来——这正是"零拷贝把这片区交出去"能成立的原因。
@@ -181,25 +127,14 @@ impl<'a> Catalog<'a> {
 /// **Service 的生命周期与装配环境**。
 pub struct Control {
     table: Table,
-    /// **已造未放行的那几枚身子**（`Mint` 之后、`Start` 之前）。
-    ///
-    /// **照实记（这一格为什么在）**：线上那四手是 **mint → start** 两问，而 `Service`
-    /// （线程 ＋ 它的通道账）在那两问之间必须有处安放——装配那一趟把它拿在自己栈上就完事，
-    /// 运行期这两问却是**两趟消息**。键取装配表上的名字（`&'static str`）：
-    /// `Control::spawn` 要的正是它，而它也是这一台在 `PROGRAMS` 里的唯一坐标。
     pending: Vec<Pending>,
     catalog: Catalog<'static>,
     machine: Machine,
     boot: Endpoint,
     /// **上一手入册那一单的写端**（`Setup::Machine` 那一格）。
-    ///
     /// **为什么住在这里**：那一单是**递完就完**的（没有回话），而递出去的字节要活到对面取走
     /// ——所以它必须住在比调用帧更长的地方。装配者正是比它长的那一位：一本 `Control` 活到
     /// 装配完。下一台入册前先收口那一手在 `send` 里（那一刻上一台必然已经取走了）。
-    ///
-    /// **照实记（`Outbox` 并进 `Sender`）**：从前这一格只是"缓冲 ＋ 那只手"，孔另由
-    /// `Sender::from_token(tx)` 每一趟现给 ⇒ 同一个孔上站着两个写端（一个持孔、一个持字节），
-    /// "这一段字节活在谁手里"两处都能答。今天写端只有一枚：孔、字节、那只手都在它身上。
     out: protocol::communication::sender::Sender<protocol::driver::hub::Enroll>,
 }
 
@@ -224,8 +159,6 @@ impl Control {
         }
     }
 
-    // ── 边上那四手（`protocol::system::control::Face` 的实现体）───────────
-    //
     // 四手都叫在**一枚** `Control` 上：`mint` / `release` / `stop` / `state`。除 `stop` 用既有
     // 那一手（`service::stop`：下令即回、状态到 `Stopping`）外，其余三手只在这里加一层
     // **复核**——复核的判据一条也不新造（名字在装配声明里吗、账里立得起吗、待放行里有它吗），
@@ -233,13 +166,11 @@ impl Control {
 
     /// **造一个 Service**（线上 `Mint` 那一问）：复核 → （没有行就立账）→ 按声明上的来源取字节
     /// → 建域产线程。
-    ///
     /// **复核两格**：名字得在装配声明里（`PROGRAMS`——字节与 `kind` 的声明处，帧里没有镜像），
     /// 且这一行**此刻能起**——判据与 [`crate::system::control::core::admit_start`] 同一条
     /// （`NeverStarted | Dead` 才起；表里还没这一行就先立一行）。已经在跑 / 正在起的答
     /// [`Fail::NotReady`]。造出来**恒为未放行**（`service::mint` 的口径），身子收进
     /// [`Control::pending`] 等 [`Control::release`]。
-    ///
     /// **它不碰镜像**：取字节那一面（[`crate::system::source`]）是 `spawn` 的唯一消费者，
     /// 本手只把这一台声明上的**来源档**转交过去。
     pub fn mint(&mut self, name: String) -> Result<(), Fail> {
@@ -275,18 +206,7 @@ impl Control {
     }
 
     /// **放行一枚已经造好的 Service**（线上 `Start` 那一问）：认领通道 → 放行等就绪 → 递单。
-    ///
     /// 次序与装配那一趟逐字同源（`assemble::connect_all` / [`Control::launch`]）：**通道在放行
-    /// 之前装**，配给在放行之后递——两相之间的窗口就是"它一步都还没跑"。
-    ///
-    /// **复核一格**：这一手只认**自己刚造的那一枚**（`pending` 里有它）；没有 ⇒ [`Fail::NotReady`]
-    /// （"此刻不该起"与"半路死了"在这一格是同一句话：本端下一步相同）。
-    ///
-    /// **答的是那一枚身子**（照实记：这一手原先答 `()`）：`(TaskId, Vec<Endpoint>)` 里那枚
-    /// `TaskId` 是**这一族唯一交得出域外的东西**——线上 `Start` 那一答第三格就是它
-    /// （[`protocol::system::control::frame::said_task`]），而通道那本账留在本域（`Endpoint`
-    /// 的两枚孔是"持有它的那张表里才念得动"的号，交不到客人手里，见协议那一份的照实记）。
-    /// 故这一手的返回值**两头都用**：装配面拿它做后续（挂树 / 眼睛），线上那一侧只取第一格。
     pub fn release(&mut self, name: String) -> Result<Service, Fail> {
         let at = self
             .pending
@@ -309,7 +229,6 @@ impl Control {
     }
 
     /// **这一条此刻处于哪个生命阶段**（线上 `State` 那一问）。
-    ///
     /// **只读表里那一格**：实例坐标是另一件事（"起过、现在死了"时它仍在）——见协议那一节。
     pub fn state(&self, name: String) -> Result<State, Fail> {
         self.table
@@ -319,39 +238,23 @@ impl Control {
     }
 
     /// **起一个 Service**：按名字取那一段字节 → 建域 → 产线程 → 备通道账。
-    ///
     /// 前置：这一行**已经登记过**（[`Control::enlist`]）——没登记过由 `admit_start` 拦下。
-    ///
     /// **那一段字节从哪儿来**：由这一台声明上的**来源档**（`origin`）定，取字节那一面住
     /// [`crate::system::source`]——**这里就是那一面的唯一消费者**（下面 `service::mint` 那一行）。
     /// 特权级仍从清单那一条取（"唯一声明处是装配表"，打包时写进去），而"字节在哪儿"本层不问。
-    ///
-    /// 通道账起手是空的：`setup` 里那几条由 [`connect`] 逐条装上（放行之前）。
     pub fn spawn(&mut self, program: &UnitFile) -> Result<Service, Error> {
         let name = program.name().to_string();
         let entry = self.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         // **取字节那一面的唯一消费者**：这一景那本账（`self.catalog`）按名字给那一段 `&[u8]`。
-        // **声明里不问来源**（照实记：`Origin` 那一格 0 个选择者，随那本账一起退场，见
-        // [`crate::unit::Demand`] 底下那一段）。
-        // **这一面只剩一种不成**（照实记见 `system::source`）：这块账里没有这一台。
         let Some(image) = Source::initrd(self.catalog).image(name.clone()) else {
             return Err(Error::Missing);
         };
-        let task =
-            service::mint(&mut self.table, name.as_str(), image, entry.kind)
-                .map_err(|_| Error::Spawn)?;
+        let task = service::mint(&mut self.table, name.as_str(), image, entry.kind)
+            .map_err(|_| Error::Spawn)?;
         Ok((task, Vec::new()))
     }
 
     /// **放行**（**不等就绪**）：门闩、通道都在放行前定下（"两相之间的窗口就是它一步都还没跑"）。
-    ///
-    /// **为什么从"放行 ＋ 等就绪"拆成一手**（照实记）：等就绪要等的那几条通道里，`Machine`
-    /// 那一格的**第一条（收物料）递在放行之后、第二条（"我起完了"）之前**——而递物料又必须
-    /// 等本域放行（它第一件事就是铸那一枚孔）。三件事的次序是
-    /// **放行 → 递物料 → 等就绪**，拧成一相就死锁（见 [`Control::launch`] 的那一段）。
-    ///
-    /// 返 `Err` = 放行那一步没成（本相失败时实例与状态如实留在表里，调用方用 [`Control::stop`]
-    /// 收尾）。
     pub fn start(&mut self, name: &str, service: &mut Service) -> Result<(), Error> {
         let (task, channels) = service;
         // `marks` 空 ⇒ 这一手**只放行**（`service::start` 那条"还活着、只是没宣布"的分支）。
@@ -364,22 +267,7 @@ impl Control {
             &[],
             Wait::POLL,
         )
-        // **照实记（这一句把"哪一步没起来"丢掉了；debug 档那条红正卡在这里）**：
-        // `launch` 的失败有几步（`service::mint` 那四步：`admit_start` / `utask::build` /
-        // `utask::spawn`（失败即 `Fail::Full`——**一格的资源上限**）/ `table.attach`；`launch` 自己
-        // 还有放行前那几手），而这一句 `.map_err(|_| …)` 把它们**折成同一句** `start failed`。
-        // **实测（第 27/28 轮）**：debug 档 `root` 景 **2/2 复现** `probe-rule` ＋ `start failed`
-        // （装配者 `exit tid=11 reason=0x15`，0x15 = `E_PROBE_RULE`），而**同一份代码 release 档
-        // 16 条全绿**；那一跑里 `probe-rule` **一条自己的读数都没打**（连 `bail` 都没有）⇒ 它很可能
-        // **一步都没跑**（没 mint 出来，或放行前就折了）。
-        // **这一族不是今天才有**（`canonical/program.rs` 头注已经写着它）："装配期折一条
-        // （`system: assemble`，**牺牲者每次不同**：`board:claim` / `start failed`）"。
-        // **下一刀**：把这里丢掉的那一格印出来（`Fail` 的变体 ⇒ 哪一步），先量再断——
-        // 若它是 `Fail::Full`，那这一族就是**资源上限**那一档，与"谁先起"无关。
         .map_err(|fail| {
-            // **照实记（第 29 轮补的那一行）**：这一格从前是 `|_|`——四支失败（`Unknown` /
-            // `BadImage` / `Full` / `NotReady`）折成同一句 `start failed`，于是"哪一步没起来"
-            // 在读数里看不见。**它印出变体**（`debug::put` 不设门 ⇒ 两档都看得见）。
             let why = match fail {
                 Fail::Unknown => "unknown",
                 Fail::BadImage => "bad image",
@@ -392,7 +280,6 @@ impl Control {
     }
 
     /// **等就绪**：`setup` 里那几条通道逐条认齐（记号即通道名）——**两条都认齐**才算起来。
-    ///
     /// **`Machine` 那两条的意义不同**（见 [`Setup::Machine`]）：第一条（收物料）说明"它开始跑了"，
     /// 第二条（"我起完了"）说明"**它答得了了**"——而后者才是后面那几台要等的。
     pub fn ready(
@@ -410,14 +297,6 @@ impl Control {
                 marks.push(Mark::of(ch));
             }
         }
-        // **额度一律按最宽的那一档**（[`BOOT_MS`]，5 s）——**照实记（这一刀，量出来的）**：
-        // 从前窄的那几条用 [`READY_MS`]（1 s），而那一秒**兼着"它死了没有"**那一件事（所以要紧）。
-        // 今天**死由表侧那一扫独自认**（`supervise` 的 `Watch`，见那一段照实记）⇒ 这一等要等的
-        // 只剩"它把凭据交上来了没有"，**额度宽了只会慢，不会误判**。
-        // 实测（同一份代码）：debug 档 `root` 景的装配段落落在 2.5 s 上下，而那条红正是
-        //   `system: not ready probe-rule why=not ready marks=1`
-        // ——1 s 装不下它自己的起手；牺牲者每次不同（`probe-rule` / 另一台，见 `canonical/program.rs`
-        // 头注那一族）。**release 档同一份代码一直是绿的**（它快）。宽到 5 s 之后两档都在额度之内。
         service::ready(
             &mut self.table,
             name.as_str(),
@@ -427,26 +306,6 @@ impl Control {
         )
         .map(|_| ())
         .map_err(|fail| {
-            // **照实记（第 29 轮：这一族红的落点就在这一句）**：这是"start failed"的**第二个**
-            // 生产者——**"等就绪"那一手**（上面那一句 `service::ready`），不是"放行"那一手。
-            // 实测（debug 档 `root` 景，同一份代码）：
-            //   · 第 27 轮 2/2 红（牺牲者是 `probe-rule`，装配者 `reason=0x15`）；
-            //   · 第 29 轮 1/2 红（牺牲者换成 `reason=0x5` 那一台）⇒ **牺牲者每次不同**
-            //     （`canonical/program.rs` 头注里那一族）。
-            //
-            // **照实记（红率的账：治前 / 治后，都是手工 debug 档、同一喂法）**
-            //   · **治前**（额度还是 1 s 那几轮）：2/2 · 1/2 · 1/2 · 1/6 · 1/3 ⇒ 合计 **6/14**；
-            //   · **治后**（就绪 / 绑身份 / 那 9 处额度都放到 5 s 之后）：1/3（那一次是 `hub`
-            //     `marks=2`）· 0/6 · 0/8 ⇒ 合计 **1/17 ≈ 6%**。
-            //   · **照实说**：样本都不大（上界仍宽），但它们的方向一致；剩下那一条（`hub`）**不是
-            //     额度**（5 s 仍到点），它的判据与探子见 [`crate::service::hub::server::serve`] 顶上
-            //     那一行（`hub: serve enter`：红跑里在不在 ⇒ 卡在里面还是更前面）。
-            // **机制（`core.rs` 头注里早写着的那一句）**：额度是 `READY_MS`（1 s）或 `BOOT_MS`，
-            // 而**debug 档那一整段落在 2.5 s 上下**——那一秒装不下 ⇒ 到点判 `NotReady` ⇒ 装配者
-            // 报"这一台没起来"。**release 档同一份代码 16 条全绿**，正合这一条。
-            // **它该不该这么判**（下一刀的判断）：这一等从前兼着"它死了没有"那一件事（所以额度
-            // 必须紧）；而今天**死由表侧那一扫独自认**（`supervise` 的 `Watch`，见那一段照实记）
-            // ⇒ 这一等要等的只是"它有没有把凭据交上来"，**额度可以宽**（宽了只会慢，不会误判）。
             let why = match fail {
                 Fail::Unknown => "unknown",
                 Fail::BadImage => "bad image",
@@ -461,23 +320,9 @@ impl Control {
         })
     }
 
-    /// 收掉一条 Service：**下令即回，不等它收完**。
-    ///
-    /// **两格语义一个字不省**：这一手只把状态推到 `Stopping`（`service::stop` 的口径）；
-    /// 落 `Dead` 的是**监督那一趟**（[`supervise`] 的 `until` 两相）。
     pub fn stop(&mut self, name: String) -> Result<(), Fail> {
         service::stop(&mut self.table, name.as_str())
     }
-
-    // **照实记（`until` / `observe` 两具读手已退场）**：它们从前是 `Control` 面上的读口
-    // （"等它收尾"／"盯它一眼"），而协议那四手（`mint` / `start` / `stop` / `state`）都不需要
-    // 它们——**全仓零消费者**。按"没有读者的格不留在面上"删掉两具。
-
-    // ── 一张单（收场那一相的三手）────────────────────────────────────
-    //
-    // **照实记（这一列原先没有名字）**：整机什么时候收、收干净没有，原先是 `Watch::run` 里的
-    // 一句"最后一位退场"＋一句裸 `return`——判据是**位次**，而且没人读账。这三手把那一列
-    // 收成与 `mint` / `release` / `stop` / `state` 并列的形状：**判在 `core`，手在本层**。
 
     /// **该收了**：账上活着的都是常驻台——会走的都走了、听令的已经发过话。
     pub fn due(&self) -> bool {
@@ -489,14 +334,6 @@ impl Control {
         core::done(&self.table)
     }
 
-    /// 等这一台**到过就绪那一格**——`Ready`，或之后被收掉的 `Stopping` / `Dead` 都算
-    /// （**它答得动过**）。
-    ///
-    /// **有界**（照实记）：`wait` 是额度，`RETRY_MS` 一拍。它今天唯一的读者是装配那一趟
-    /// "每条边成立没有"那一句（[`crate::system::Assembly::assemble`]）——**排对了就即刻返回**；
-    /// 排错了（声明的边与实情不符）就当场报出"哪一台的哪条边"，不让客人自己去撞那圈有界重试。
-    ///
-    /// `Err(Fail::Unknown)` = 表里没这一行；`Err(Fail::NotReady)` = 到点还没到过。
     pub fn await_ready(&self, name: &str, wait: Wait) -> Result<(), Fail> {
         let mut left = match wait {
             Wait::POLL => 0,
@@ -518,10 +355,6 @@ impl Control {
         }
     }
 
-    /// **收掉其余还活着的**：只对**还没下过刀**的那些（`Stopping` = 已下刀）逐位下令——故每一轮
-    /// 都叫它是安全的，不会把 `doom` 刷成一场风暴。
-    ///
-    /// **下令即回**：等它们收讫是收场那一相自己的事（`core::done` 每拍读账），本手不逐行等。
     pub fn stop_rest(&mut self) {
         // 先把名字抄下来再动表（表是定长的、行数有上界——与 `sweep` 同一个形状）。
         let mut names = [const { String::new() }; Table::CAP];
@@ -531,8 +364,6 @@ impl Control {
                 continue;
             }
             // **本域那一枚不在这里收**：它的"域"就是本域，收它就是扑杀本域自己——它随本域
-            // 退场时的"域亡＝成员清零"一起走（同 [`crate::system::control::supervise`] 里
-            // `mark_dead` 那一格的对照）。
             if matches!(row.slot, Slot::Live { team: None, .. }) {
                 continue;
             }
@@ -548,18 +379,14 @@ impl Control {
 /// **装一条通道**（放行前）：铸本端那一枚（刻 `ch` 的记号）交给这条服务的域、并顺手试认它那一枚
 /// （`POLL` = 不等：放行前它一步都还没跑，认不到是常态）——放行后按同一个记号再认一次
 /// （[`service::ready`] 逐条 `claim`）。
-///
 /// 只碰通道、不碰 `Control` 的任何一格，故是自由函数（`Control::connect` 那一层是白加的壳）。
 pub fn connect(to: TaskId, ch: &'static str) -> Result<Endpoint, Error> {
-    establish::endpoint(to, Mark::of(ch), Wait::POLL)
-        .map_err(|_| Error::Step("connect failed"))
+    establish::endpoint(to, Mark::of(ch), Wait::POLL).map_err(|_| Error::Step("connect failed"))
 }
 
 /// **名字 → 装配声明**：边上那四手要的那一份（`kind` / `setup` 都在它那里）。
-///
 /// 找不到 ⇒ `None`：这个名字不在这一景的装配声明里（`PROGRAMS` 是唯一声明处；帧里没有镜像，
 /// 故"起哪一台"这件事只认本表）。
-///
 /// **只认"由编排域起"的那几台**（`relation.after.is_some()`）：`root` / `system` 自己不在
 /// 那张单里——运行期再造一枚"机器本身"不是本协议的意思。判据与 [`crate::system::assemble`]
 /// 的过滤同一句。

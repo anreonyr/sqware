@@ -141,7 +141,9 @@ pub fn expand(input: TokenStream) -> TokenStream {
                 if !seen.contains(&count) {
                     return syn::Error::new_spanned(
                         field,
-                        format!("`count = {count}`：这一格必须在它之前声明（读的时候要先把它读出来）"),
+                        format!(
+                            "`count = {count}`：这一格必须在它之前声明（读的时候要先把它读出来）"
+                        ),
                     )
                     .to_compile_error();
                 }

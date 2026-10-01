@@ -69,7 +69,6 @@ const WANT: &str = "router";
 /// 等板 / 等答的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
-
 /// 两种退场：走通了 / 没走通（都**不是 panic**；kernel 会把那一行连同域号打出来）。
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;

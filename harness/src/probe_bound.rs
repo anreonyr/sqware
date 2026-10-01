@@ -61,8 +61,8 @@ extern crate programs;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use env::Wait;
 use env::HoleDir;
+use env::Wait;
 use programs::Report;
 
 use env::PieToken;

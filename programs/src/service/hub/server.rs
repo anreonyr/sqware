@@ -1,10 +1,8 @@
 //! hub::server — **设备账那一台**：一枚线程守着一本账（这一台机器上有哪些设备、谁在驱它们）。
-//!
 //! 载体是 rtc / principal / 盟册那几面已经量过的形状——**门牌自带回信孔**：客人替这一趟铸一枚
 //! 回信孔借过来、把帧推上门牌，本域从**门牌那一枚**读（发送者由内核在 `Push` 那一刻盖章），
 //! 办完事从那枚孔答回去、当场放下。故这里**没有客人账**：一位客人不需要本域记住任何东西
 //! （记的是**设备**那一本账）。
-//!
 //! ```text
 //!   起手：收**整机物料**（装配者从 `hub` 那条通道推来的一段记录）
 //!         → 开设备树那一页（那一段的第一条就是它）→ 立账（名 / 类 / 线不在这段里，在树里）
@@ -14,22 +12,10 @@
 //!   常驻：三枚面 ＋ 每一台那一枚门，一只组等它们——**从哪一枚读到**就是哪一面；
 //!         `claim` 那一面**靠"哪一枚孔响了"认台**；钟到就扫一遍账（探活 ⇒ 空出主人没了的格）
 //! ```
-//!
 //! # 三个为什么
-//!
 //! - **为什么先收物料、后开树**：物料那一段是本域**唯一**的来路（装配者是唯一持引导域那个
 //!   泊位的域），而"哪一条是哪一台"只有树说得清 ⇒ 树那一页在物料里、树那条路在物料之后。
 //! - **为什么认领那一面长在设备格上**（不在本域会客室里）：见 [`protocol::driver::hub`] 的头注
-//!   ——"哪一台"由"你找的是哪一格"回答，请求里因此没有"哪一件"这一格。
-//! - **为什么探活要自己扫**：常驻驱动不退场，退场＝死 ⇒ "空出"那一手由本域自己看出来
-//!   （主人交来的那枚报活孔答不出）。
-//!
-//! # 照实记（本域那一圈为什么不用 `system::carrier`）
-//!
-//! `carrier` 的判据是"**从哪一枚门牌读到就是哪一面**"，而它只等一个来路（那只组）。本域有两个：
-//! **那只组**（三面 ＋ 每一台那一枚门）与**那一钟**（探活那一拍）。它自己的照实记里已经写明
-//! "持树者那一处不在这里，因为它等的是两个不同来路"——本域加入那张名单，形状照着抄，
-//! **另一条多出来的**是"从哪一枚孔读到"要交到门上（`claim` 那一面靠它认台，见文件头）。
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -59,33 +45,26 @@ use runtime::core::port;
 use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
 
-use crate::unit::hub::{CHANNEL, E_HUB, READY};
-use crate::system::control::service::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
+use crate::service::operator::bridge;
+use crate::system::control::service::Start;
 use crate::system::machine::Machine;
 use crate::system::mount;
-use crate::service::operator::bridge;
+use crate::unit::hub::{CHANNEL, E_HUB, READY};
 
 /// 等树 / 等盟册 / 收物料的总上限（毫秒）。**必须有界**：对面死在头几步时本域不能陪着挂死。
 const MS: usize = 1000;
 
 /// 收物料那一趟的重试次数（**它是额度不是时限**：装配者要向引导域逐段领，那一段不在一瞬间）。
-///
-/// **为什么必须重试**（照实记）：本域"起来了"那一手是 `establish::endpoint`（装配者据此放行），
-/// 而装配者要等本域起来**之后**才向引导域领那一段 ⇒ 两条边之间必然有一个窗口。
 const LOAD_TRIES: usize = 20;
 
 /// 探活那一拍的周期（毫秒）。**它是本域唯一的钟**：`vacate` 只在它响时扫一遍。
 const PROBE_MS: usize = 1000;
 
 /// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**。
-///
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
 /// 的早退步，失败域在末尾**折一次**。
 pub fn serve() -> Result<(), Start> {
-    // **照实记（第 39/40 轮那条 `marks=2` 的红）**：红跑里本域**已经铸了那两枚孔、物料也到了**
-    // （装配者那行 `system: enrolled 17 supplies for hub` 在），而本域**一句自己的读数都没打** ⇒
-    // 卡在"起手第一句读数之前"。这一行就分两件可能：**进去了**（卡在里面）／**没进去**（更前面）。
     protocol::debug::put("hub: serve enter");
     // 一～七：起手。
     let (mut ledger, league, plates, doors, _dtb) = (|| {
@@ -98,7 +77,6 @@ pub fn serve() -> Result<(), Start> {
         let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
 
         // 二、立账：树那一页 ＋ 每一条记录对上一台（名 / 类 / 线随树一起来）。
-        //     **树那一页要活到本域退场**（`Machine::of` 的 SAFETY 靠它）——它随返回值交出去。
         let (mut ledger, dtb) = book(&enroll)?;
 
         // 三、树那条会话。
@@ -110,8 +88,6 @@ pub fn serve() -> Result<(), Start> {
         let league = find_league(&tree).ok_or(Start::Face(E_HUB))?;
 
         // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
-        //     代报名）。**次序是硬的**：permit 要在落格之前就有，故立盟只能在这儿——不是等到
-        //     第一位报名的客人来。
         let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
         let me = utask::self_id();
         for class in &classes {
@@ -119,11 +95,6 @@ pub fn serve() -> Result<(), Start> {
                 return Err(Start::Face(E_HUB));
             };
             let id = coalition.id();
-            // **本域也在里头**（照实记）：那一格的许可写着 `Among(c_类)`，而落完格那一趟要
-            // **查回来验一遍**（`bridge::land` 那一步）——本域不在里头就当场 `Denied`。
-            // 语义上也不勉强：本域手里握着这一类每一台那一份（它正是把它们发出去的那位），
-            // "许动这一类的人"里当然有它。**它也是这一格的第一次正证**：`admit` 在生产里的
-            // 第一位客人不是别的谁，就是立盟那位自己。
             if coalition.admit(me, Wait::AtMost(MS)).is_err() {
                 return Err(Start::Face(E_HUB));
             }
@@ -131,10 +102,6 @@ pub fn serve() -> Result<(), Start> {
         }
 
         // 六、三枚面：本域铸、本域落（`/svc/hub/{bond,list,claim}`）。
-        //
-        // **`claim` 那一枚是"正本"**（照实记）：认领真正打的是**每一台那一格**上的孔
-        // （`/dev/<类>/<名>`），而这一枚是**发现入口与权柄边界**——它响的时候本域答 `Unknown`
-        // （这一枚孔不指任何一台，见 [`turn`]）。它照样要落：这一族三面一条路。
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
         let (list, list_name) =
@@ -203,11 +170,6 @@ pub fn serve() -> Result<(), Start> {
         // **八、报"我起完了"**（`Setup::Machine` 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // 装配者**——它等齐了才往下起别人。**它必须是起手最后一件**：此后本域才真的答得了
         // （设备格都在树上、盟都立好了）。
-        //
-        // **照实记（"铸一枚"不够，得"交出去"）**：装配者那一侧等的是"**我表里多了一枚你说的
-        // 那一枚**"（`Endpoint::claim` 按 `owner + 记号` 两格认）——只在本地铸、不 `ship`，
-        // 对面一枚都看不见（实测：等满 5 s 判"没起来"）。故这一手与其余几条通道同一手
-        // （[`establish::endpoint`]：铸 ＋ 交 ＋ 顺手认对面那一枚）。
         establish::endpoint(sire, Mark::of(READY), Wait::POLL).map_err(|_| Start::Desk(E_HUB))?;
 
         // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
@@ -234,10 +196,6 @@ pub fn serve() -> Result<(), Start> {
         return Err(Start::Room(E_HUB));
     }
     buf.resize(PAGE_SIZE, 0);
-    // **照实记（那三格共用的答话存根退场了）**：从前这一格是三代答话形各一枚 `Outbox`
-    // （缓冲 ＋ 那只手），孔另由每一趟现给 ⇒ "上一手还没被取走"这件事把**整台设备账**按在
-    // 下一位客人的 `send` 里。今天答话那一格跟着**那一趟**走（`put_said` / `put_deed` /
-    // `list` 各自一枚 `Sender`）：一位客人一处写端，"一格招待所有客人"编不出来了。
     loop {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
             Ok(Some((token, _))) => {
@@ -260,7 +218,6 @@ pub fn serve() -> Result<(), Start> {
 }
 
 /// 门上一句话：解帧 → 先认那枚回信孔 → 交给账 → **从这一趟自带的那枚孔答回去**。
-///
 /// 认那枚孔靠**帧里那一格** ＋ **一次 [`mail::reserve`] 验**（同盟册那一面）；`from` 是**内核
 /// 盖的发送者**。`token` = **这一帧从本域哪一枚孔进来**（哪一面、哪一台，全靠它）。
 fn turn(
@@ -290,9 +247,7 @@ fn turn(
     };
     match (mine, ask) {
         (Grant::Bond, Wire::Bond(class)) => bond(ledger, league, class, from, back),
-        (Grant::List, Wire::List(class, from_index)) => {
-            list(ledger, class, from_index, back)
-        }
+        (Grant::List, Wire::List(class, from_index)) => list(ledger, class, from_index, back),
         (
             Grant::Claim,
             Wire::Claim {
@@ -310,16 +265,8 @@ fn turn(
 
 /// **报名**：这个类不在册上 ⇒ `Unknown`（这台机器没有这一类）；否则**代报名**——把发送者放进
 /// 这一类那枚盟（盟册 `admit`，钥匙 = "你是不是立盟那位"）。
-///
 /// 驱动不需要知道盟号：它只说"我要驱这一类"。**这一位不是盟主就答 `Denied`**（本域总是盟主，
-/// 故这一格在生产里到不了——它是"本域坏了"的读数，不是客人的错）。
-fn bond(
-    ledger: &mut Ledger,
-    league: &League,
-    class: String,
-    from: TaskId,
-    back: PieToken,
-) {
+fn bond(ledger: &mut Ledger, league: &League, class: String, from: TaskId, back: PieToken) {
     let Some(coalition) = ledger.coalition_of(class) else {
         put_said(back, hub::UNKNOWN);
         return;
@@ -371,8 +318,6 @@ fn claim(
         match ledger.claim(door, owner, alive) {
             Ok(entry) => match ship(entry.clone(), from, kind, access, policy) {
                 Ok(page) => Deed::granted(entry.name, entry.line, page),
-                // 授不出 ⇒ `Denied`（"装配错"那一格）。**账照记**：认领者拿到这一格就退场，
-                // 它一死探活那一拍把这一格空出来（照实记，见 `hub::core::Ledger::claim`）。
                 Err(_) => Deed::of(hub::DENIED),
             },
             Err(hub::Fail::Taken) => Deed::of(hub::TAKEN),
@@ -425,7 +370,6 @@ fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -> Grant {
 }
 
 /// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号。
-///
 /// 形态**照客人要的**：本域不替它挑（内核校验"`ONLY` 与源枚一致"）。故"这台能不能独占、
 /// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格。
 fn ship(
@@ -443,7 +387,6 @@ fn ship(
 }
 
 /// **"这一枚的主人还在吗"**——只有一条判据：那一枚还在本域表里。
-///
 /// 主人一死，内核把它的派生边（交给本域的那一份副本）一起摘掉 ⇒ `reserve` 答不出就是"没了"。
 /// 与线路由者那条探活同一手。
 fn alive(sensor: PieToken) -> bool {
@@ -451,7 +394,6 @@ fn alive(sensor: PieToken) -> bool {
 }
 
 /// 收物料那一趟：**有界重试**地从那条通道上取一段。
-///
 /// **三格失败分得开**（[`RecvFail`]）：没收到 ⇒ 再试（装配者还在向引导域领）；那一枚孔用不动
 /// 了 ⇒ 收摊；解不动 ⇒ 真就是"这一段读不懂"（与"没收到"同一落点：这一台起不来）。
 fn take(rx: PieToken) -> Option<Enroll> {
@@ -470,14 +412,11 @@ fn take(rx: PieToken) -> Option<Enroll> {
 }
 
 /// 把装配者推来那一段读成一本账：**树那一页 ＋ 每一条记录对上一台**。
-///
 /// 两步都是硬的：
-///
 /// 1. **先开设备树那一页**（段里的 `Key::dtb()` 那一条）：名 / 类 / 线只有树说得清，而本域要落
 ///    的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去；
 /// 2. **逐条对**：段里那几条记录给的是**坐标 ＋ 号**，而"这一条是哪一台"由坐标对树
 ///    （[`Machine::devices`] 那张表就是那个对照）。
-///
 /// 那两件**不按类认**的东西（设备树本体 / 门铃）在段里也各占一条：它们的类不是树给的，故本域
 /// 按坐标认出来、按 [`hub::BOOT`] 那一类入册（`/dev/boot/{dtb,irq}`）——于是"取法"只有一条
 /// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案。
@@ -533,7 +472,6 @@ fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
 }
 
 /// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着。
-///
 /// **带重试**：盟册排在前面，但"先起"与"上树"不是同一步。那一趟（译号带重试 ＋ 取那一枚）在
 /// [`TreeFace::tile`] 上。
 fn find_league(tree: &TreeFace) -> Option<League> {

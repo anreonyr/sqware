@@ -1,14 +1,11 @@
 //! hub::grant — **面那一维**：一枚 `Grant` = 一条权柄边界。
-//!
 //! ```text
 //!   Bond 报名    List 列册    Claim 认领        ← 三条原语，一原语一面
 //!   位次 1..=3：Bond / List / Claim             → /svc/hub/{bond,list,claim}
 //! ```
-//!
 //! **`Claim` 那一面有正本与每台那一份**：正本挂在 `/svc/hub/claim`（发现入口与权柄边界），而
 //! 它的**每一台那一份**挂在 `/dev/<类>/<名>` 那一格上（`permit = Among(c_类)`）。三枚面共一个
 //! 词根、各一段名字——面名只有一处（[`Grant::name`]）。
-//!
 //! **回信孔那一枚不是面**：它每趟自带、与哪一面无关，故不在这张表里（它的记号见
 //! [`super::frame::BACK_MARK`]，与三枚面**都不相撞**——下面那三句编译期断言钉住）。
 
@@ -35,8 +32,6 @@ crate::faces! {
     }
 }
 
-// ── 回信孔 / 报活孔那两枚与三枚面**都不相撞**（编译期钉住）────────────────
-//
 // 比的是 `.get()` 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，而 `get` 是 `const fn`
 // （同 line 那一族的两句）。
 const _: () = assert!(BACK_MARK.get() != Grant::Bond.mark().get());

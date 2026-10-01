@@ -138,10 +138,8 @@ fn main() -> Report<'static> {
     if ok != lcall::OK {
         protocol::debug::put(&alloc::format!(
             "lodger: occupy deny cause={} phrase={} line={}",
-            protocol::driver::line::client::OCCUPY_DENY
-                .load(core::sync::atomic::Ordering::Relaxed),
-            protocol::driver::line::client::OCCUPY_CODE
-                .load(core::sync::atomic::Ordering::Relaxed),
+            protocol::driver::line::client::OCCUPY_DENY.load(core::sync::atomic::Ordering::Relaxed),
+            protocol::driver::line::client::OCCUPY_CODE.load(core::sync::atomic::Ordering::Relaxed),
             line,
         ));
     }

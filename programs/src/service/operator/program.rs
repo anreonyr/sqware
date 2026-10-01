@@ -1,10 +1,8 @@
 //! operator::program — **持树者**（`prog-operator`）的装配声明。
-//!
 //! 它与其他每一台走同一条路：编排域按 `after` 算出的次序用 `mint` 起它。它**第一**起
 //! （客人上树要它在）；起手把提示之路交给生我者（编排域）——**那一件事本身就是"它是持树者"的
-//! 凭据**（`holds_tree` 那一格已退场，见 [`Relation`] 的头注）。
 
-use crate::unit::{Demand, Died, Ending, Identity, UnitFile, Relation, Setup};
+use crate::unit::{Demand, Died, Ending, Identity, Relation, Setup, UnitFile};
 
 /// 它死在起手哪一步（板 / 树 / 收帧那一页）；名册与盟册的起手号同族不同格。
 pub const E_TREE: Died = 10;

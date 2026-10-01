@@ -1,7 +1,5 @@
 //! operator::answer — **适配**：客人的一句问 → 树那七条原语，编出一句答。
-//!
 //! **三道闸，次序即契约**：
-//!
 //! 1. **这一位**（操作面那一维）：会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄
 //!    边界（`find` 会**交出能力**、`trim` / `part` 会**毁掉别人那一格**）。**它绝不替代下一道**：
 //!    拿到 `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find` 任意一格"。
@@ -23,7 +21,6 @@ use crate::service::operator::core::{Key, Operator};
 use super::door::may;
 
 /// 把一句问交给树，编出一句答（**答话有四种形状**，见 [`ocall`] 的帧那一节）。
-///
 /// **形状由 [`ocall::Wire`] 说**（收帧那一侧已经按动作解好了），**答由 [`ocall::Union`] 说**：
 /// 解不出来就是一句读不懂的帧（不猜、不崩）；`land` 那一码**必须带入口号**（没带同样解不出来）。
 pub(super) fn answer(
@@ -34,22 +31,10 @@ pub(super) fn answer(
     grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
-    //
-    // **照实记（这一行读数原来没有）**：那两条路从前**静默答一句 `BAD`**——而客侧把它折成
-    // "这一位那一格没找到"（`map_code`：`BAD` 不在双射表里 ⇒ `Unknown`），于是"读不懂"与
-    // "查无此格"在读数上分不开（设备账那一刀对着一次真的失手debug 了半天）。补这一行：
-    // **谁推的、读不懂**——`BAD` 那一格本来就没有"往哪回"可猜。
     let Some(ask) = ask else {
         debug!("operator: unreadable frame from={}", who.get());
         return ocall::Union::Status(ocall::BAD);
     };
-    // **照实记（"路太长 ⇒ FULL"那一格退了）**：它从前在这里先按上限挡掉（段数那一格写得下
-    // 9，而路只带得回 8 段）。今天一条路是 [`ocall::Path`]——**超长根本造不出来**：那一刻
-    // 在 `Wire::fetch` 里就判成"读不懂"，本门答 `BAD`（见 `RoadFrame` 那条照实记）。
-    // 于是 [`ocall::Fail::Full`] 只剩"那一块 `Pane` 满"一个来源。
-    // **第一道：这一位。** 会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄边界
-    // （`find` 会**交出能力**、`trim` 会**毁掉别人那一格**，故它们不与只读那几条合成一位）。
-    // `None`（控制面那条路 / 表外记号）⇒ 不判面 ⇒ 今天那几台客人一字不变。
     if let Some(grant) = grant {
         if grant.at() != Grant::of_wire(&ask) {
             return ocall::Union::Status(ocall::DENIED);
@@ -59,17 +44,8 @@ pub(super) fn answer(
     // 那一枚授出去）与 `trim`（把别人的名字剪掉）。`land` **不在这里**判：它是"改我自己那一格"，
     // 它的准入是**那一格自己的规矩**（见下面的两支）。四条只读结构的
     // （`part` / `list` / `seek` / `name`）一律不判。
-    //
     // **两轴分家**：
-    //
-    // - **用**那一轴（谁许用这一格）跟着那一枚砖走，由 [`Operator::permit`] 答；`find` 判它；
-    // - **改**那一轴（谁许改这一格）住在砖上，由 [`Operator::claimable`] 答；`land` / `part` /
-    //   `trim` 判它。
     match ask {
-        // **`find` 看这一格自己的"用"那一轴**。
-        //
-        // **读是公开的，写才归属主**：改那一轴（`land` 那一格的 `mine`，砖上就是 `owner` 一格）
-        // 管的是**改这一格**，不是**用这一格**。
         ocall::Wire::Find(id) => {
             let permit = tree.permit(id);
             let ruling = may(tree, wired, who, permit);
@@ -106,11 +82,6 @@ pub(super) fn answer(
             permit,
             mine,
         } => {
-            // **"改这一格"那一轴**：落之前先看这一格现在归谁——不是我就拒。占了的位置由
-            // **活着的主人**说了算；空着的位置谁都能落，落了就登记成他的。
-            //
-            // **按坐标查**（不是按号）：`land` 那一问发生在动树之前，而 `land` 换绑**不动号**
-            // ——故那一刻手里只有坐标。
             if !tree.claimable(Key::At(at, name.clone()), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
@@ -123,13 +94,6 @@ pub(super) fn answer(
             };
         }
         ocall::Wire::Part { at, name } => {
-            // **那个窄口子也要过「改」那一轴**（照实记：`land` / `trim` 早就过它，**`part` 不过**
-            // ——而 `part` 碰到一枚 `Tile` 会静默把它顶成一块 `Pane`，还顺手把那一枚
-            // `mail::release` 掉：**权力不比 `trim` 小，门却比 `trim` 少一道**）。它与 `land`
-            // 同一把钥匙：按**坐标**问（动手之前，号还不必知道）。
-            //
-            // **落格那条路（`super::plate`）不问**：那是本域替装配者立前缀，本域是那一格的权威
-            // （同 `part` 幂等那一条的立场）。
             if !tree.claimable(Key::At(at, name.clone()), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
@@ -153,10 +117,6 @@ pub(super) fn answer(
                     .map(|at| seed = Some(at.seed()))
                     .map_err(|_| ocall::Fail::Unknown);
             });
-            // **照实记（这一支原先还叫一手 `Book::drop`）**：核心把那一格剔了（"惰性剔死"）
-            // 时，"这一格归谁改"随砖一起没——影子撤掉之后，没有第二本账可销。
-            //
-            // 三步都成 ⇒ 答 `[OK][那一格]`；任何一步没成 ⇒ 照旧一格状态（不猜）。
             let fail = said.err().or(grant.err());
             return match (fail, seed) {
                 (None, Some(seed)) => ocall::Union::Seed(seed),
@@ -165,8 +125,6 @@ pub(super) fn answer(
                 (None, None) => ocall::Union::Status(ocall::BAD),
             };
         }
-        // **照实记（这一支原先两行：`tree.trim` ＋ 一手销账）**：格子从树上没了，那一格的主人
-        // 也就没了——同一件事不必说第二遍。
         ocall::Wire::Trim(id) => tree.trim(id),
         // **三条答数据的**：答案体不是一格状态，故各自编各自的帧（成败都在帧里）。
         ocall::Wire::List(at) => {

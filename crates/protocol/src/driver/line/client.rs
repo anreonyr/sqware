@@ -1,5 +1,4 @@
 //! line::client — **客侧几手**：占住一条线泊位、说一声登记、收投递、说一句排空。
-//!
 //! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
 //! （[`Deed`](crate::driver::hub::Deed)，区→线的权威在设备账那一台），本层只把它原样报上来。
 
@@ -14,7 +13,6 @@ use crate::communication::establish::{self, Held};
 use crate::communication::sender::Sender;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）。
-///
 /// **归本端持有**（[`Held`]）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
 /// 放下，**一处也不用记**。这一段关系的寿命就是"我拿着这条 Line"，故它不走
 /// [`Endpoint`](crate::communication::establish::Endpoint)（那一类归域、放不下）。
@@ -22,19 +20,8 @@ pub struct Line {
     pair: Held,
 }
 
-// ── 读数：**这一趟折在哪一条出口上**（七条折成同一个 `Denied`，那一格码分不出来）──────
-//
 // `Line::occupy` 把**七条完全不同的成因**折成同一个 `Fail::Denied`（线上那张表里 `DENIED` 也是
 // 3）⇒ 只看客侧那一格码，分不出"门忙/没答"与"孔不够/认不下对端"。这两格记下**最后一条出口的
-// 号**（**决策之前一个字节都不落**，故不改这条路的时候），由客人（`harness/src/lodger.rs`）在
-// 它那条判据上读出来。**为什么留着**：`scene root` 今天仍有约四分之一的跑红，红的签名正是
-// "房客第一趟登记拿到 `Denied`"（见 `programs/src/driver/router/adapt/desk.rs` 的照实记），
-// 下面这两格就是下一次读它的第一手。
-//
-//   1 门牌读不出开者（`opened_by`）      5 登记那一句推不出去（`Sender::send`）
-//   2 铸/交不出本端那一半（`endpoint`）  6 路由者答的不是 `OK`（第二格记它答的**原码**）
-//   3 铸不出回信孔（`unseal_hole`）      7 答话到手、可认不下对端那一半（`claim`）
-//   4 回信孔交不出去（`port::ship`）
 pub static OCCUPY_DENY: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 pub static OCCUPY_CODE: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
@@ -46,19 +33,6 @@ fn deny(cause: u8, code: u8) -> Fail {
 }
 
 impl Line {
-    /// 占住这一格（记号 [`frame::LANE`]）并把登记推给门牌那扇入口，等一格答话。
-    ///
-    /// `entry` = 树上查来的那扇门（`/svc/drv/router` 下驱动族那一块）；对端 = **那扇门的主人**
-    /// （`owner`：副本共享同一事实、转手不变）。
-    ///
-    /// **失败那一趟两边都收干净**：本端铸出去的那一枚（`pair` 是 [`Held`]，三条 `return` 上
-    /// 各自放下）与本趟借出去的那枚回信孔。两枚都**不在任何账上**——账里根本没有这一格，
-    /// 故此后没人会替它收，而路由者那侧**收不了别人的表**（它只放得下自己表里的那一枚），
-    /// 故这一侧自己收干净。不这么做的话，一个会重试的客户每失败一次就在自己表里多留两枚，
-    /// 直到它退场（读数见 `programs/src/driver/router/adapt/desk.rs` 那一格 `pies=`）。
-    ///
-    /// **荷载是线号不是坐标**（照实记，见 [`frame::Occupy`]）：区 → 线那条权威在**设备账**
-    /// 那一台（认领那一答的契里带着线号），本手只是把那个数原样报上去。
     pub fn occupy(entry: PieToken, line: u32, millis: Wait) -> Result<Line, Fail> {
         let Some(host) = establish::opened_by(entry) else {
             return Err(deny(1, 0));
@@ -79,17 +53,6 @@ impl Line {
         };
         // 从这一手起，每一次失败都要收干净（那枚回信孔 + 这条线）——**线由 `pair` 的 `Drop`
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
-        // **照实记（`deny(4, 0)` 这一格：把回信孔交给那扇门的主人）**：它是"递这一枚孔"那一格
-        // ——`port::ship(back → host, FETCH|STORE, NONE)`。
-        //
-        // **照实记（那条已知的抖落的是**下一格** `deny(5, 0)`，别认错）**：`rtc` 起手那一步
-        // （`Context::line`）在手工 release 跑里 **5 跑 4 红**（另一轮 4 跑 3 红），而每一次都由
-        // **下一格**（`out.send(frame::Occupy::of(line))` 失败 → `deny(5, 0)`）打出来——即
-        // **"请它占线"那一句推不进那扇门**。本格（4）与建泊位（2）、认它那一枚（7）都过得了，
-        // 查表（`tile`）与取入口（`token`）也过得了 ⇒ 病根在**"那一推为什么不成"**
-        // （`Sender::send`：那枚孔在不在本表里、是不是孔、封没封、单手上有没有别人的手），
-        // **不在"谁先起"、也不在这一格**。**照实记（我自己认错过一次）**：`bdb6125` 的告词把这
-        // 一格写成了 `deny(5, 0)`——两个 `is_err()` 块挨着，前一个是 4、后一个是 5；下一笔改正。
         if port::ship(
             &HolePie::from_token(back),
             host,
@@ -108,13 +71,6 @@ impl Line {
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
         // 推完就落地等于"等对面来取"，会卡住回话。
         let mut out = Sender::<frame::Occupy>::from_token(entry);
-        // **"轮到我"要有界地等**（照实记：这一句从前只递一次）。`Sender::send` 内部是
-        // `push(bytes, Wait::POLL)`——**一个 envcall、不等**：那扇门（`/svc/drv/router` 那一格）
-        // 是**一枚单手的孔、被多家客户端共用**（rtc 请占线、uart 也请占线、guest / lodger /
-        // sleeper 与几台探针都 `find` 它），**别人手上还站着一条时它当场失败**。
-        // **实测**（手工 release、喂 `exit`）：`rtc` 起手那一步 **5 跑 4 红**（另一轮 4 跑 3 红），
-        // 每一次都落在这一句（`cause=5`）⇒ 按那扇门的口径补一次**有界重试**：
-        // **孔空了就进去，到点仍进不去才认输**（预算 = 调用方给的那一份，rtc 给 1 s）。
         let budget = match millis {
             Wait::POLL => 1,
             Wait::AtMost(ms) => ms,
@@ -164,11 +120,7 @@ impl Line {
     }
 
     /// 收一帧投递。`Err(())` = 期限内没等到。
-    ///
     /// **帧里没有线号**（线在泊位里，见 [`super`]）：这一手对客户就是"我那一格有事"。
-    ///
-    /// **这一格是孔上那一位**（不是一族那种报）⇒ 走裸孔，不套手柄。两拍与旧孔时代同形：
-    /// **等**（`wait`）＋ **应**（`hush`）——`Wait::POLL` 就是"只看一眼"，一次也不挂起。
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
         if HolePie::from_token(rx)
@@ -183,11 +135,7 @@ impl Line {
 
     /// 说一句"这一条我处理完了"。**不阻塞**：已经在响就当也说了——它迟早会应掉那一位，
     /// 而这句话说的是**状态**（那一格回闲 + 把线放回），幂等。
-    ///
     /// **为什么不能阻塞**：路由者投递、客户说排空，两边都是"往对方那一格上说一句"。两边都等 ⇒
-    /// 谁也回不去取自己那一格，机器当场不动（**实测**——旧孔时代它真的发生过）。堵死的那一条
-    /// 只能是**通知**，不能是**移交**；本刀把这两条通知都换成**位**（`ring` 置位即返，
-    /// 从不睡），那条互锁于是**结构上不可能**。
     pub fn exhaust(&self) -> Result<(), ()> {
         let Some(tx) = self.pair.tx() else {
             return Err(());
@@ -201,7 +149,6 @@ impl Line {
     }
 
     /// 本端读的那一枚（**挂进组**用：一台驱动要同时等"线上有投递"与"门上有人"）。
-    ///
     /// 与 [`Line::receive`] 读的是同一枚——组等的是**就绪**，取消息仍走 `receive`。
     pub fn hole(&self) -> Result<PieToken, ()> {
         Ok(self.pair.rx())

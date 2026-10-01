@@ -212,7 +212,9 @@ impl HolePie {
                 Ok(()) => return Ok(()),
                 Err(e) if e.source.is_busy() => {
                     // 到点 ⇒ 把最后一次尝试的结果原样交出去（`Busy` 也是答案）。
-                    if now_ns() >= deadline || !self.wait(HoleDir::Push, remains(within, deadline))? {
+                    if now_ns() >= deadline
+                        || !self.wait(HoleDir::Push, remains(within, deadline))?
+                    {
                         return put(self.token, msg);
                     }
                 }
@@ -243,7 +245,9 @@ impl HolePie {
             match get(self.token, buf) {
                 Ok(v) => return Ok(v),
                 Err(e) if e.source.is_busy() => {
-                    if now_ns() >= deadline || !self.wait(HoleDir::Pull, remains(within, deadline))? {
+                    if now_ns() >= deadline
+                        || !self.wait(HoleDir::Pull, remains(within, deadline))?
+                    {
                         return get(self.token, buf);
                     }
                 }

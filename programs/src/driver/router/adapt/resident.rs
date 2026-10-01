@@ -1,5 +1,4 @@
 //! router::adapt::resident — **常驻· 壳**：等三源 → 四手各就位。
-//!
 //! 判定不在这里：账与四原语住 `crate::core::lines`，"区 ↔ 线号"住 `crate::core::sources`，
 //! 每一次醒来的四件事各有一份（`sweep` / `exhaust` / `desk` / `bell`）——本文件只做"等、取、喂"。
 
@@ -10,15 +9,13 @@ use programs::driver::fail::Fail;
 use programs::unit::router::E_ROUTER;
 
 /// 常驻：**一只组等两个源**（加上门牌，共三个）。
-///
 /// 失败：组坏了 ⇒ `Err(Fail::at(E_ROUTER, "bell"))`——本域没有可继续的状态（铃那一格今天不可达：它的资源实体
 /// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）。
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
         // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
-        //
         // **纯事件（`Wait::Forever`），没有兜底的一拍**：旧写法带 20 ms 期限，为的是盖住"偶尔
-        // 一次组等待没被叫醒"（实测：PLIC 的 `pending` 置着、本域不再被叫醒，字节留在设备里）。
+        // 一次组等待没被叫醒"。
         // 那一格的根在铃那一侧——空闲核不进外部 trap，`raise_irq` 在它身上没有调用点，铃
         // 根本没响（见 `kernel/src/work/room/scheduler/core/fetch.rs` 的空闲循环）。根修在
         // 那里，`SEIP` 能挂的那两条长驻态各有振铃点之后这一拍就是多余的：铃一定响，
@@ -30,7 +27,6 @@ pub fn run(up: &mut Up) -> Result<(), Fail> {
             Err(_) => return Err(Fail::at(E_ROUTER, "bell")),
         }
         // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：
-        // 那一格收掉之后再取排空、再登记，账里就只剩还活着的客人。
         sweep::run(&mut up.lines, &up.plic, &up.pile);
         // 排空：客人说一句"这一条我排空了" ⇒ 那一格回闲 + **把线放回去**（事件，不是节拍）。
         // **先取排空，再登记**：登记会把新的一条线接上，紧接着到来的那一枚中断才不漏。
