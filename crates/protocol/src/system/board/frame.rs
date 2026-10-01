@@ -44,18 +44,20 @@ use crate::message::Message;
 //
 // ```text
 //   Seed     [0] op   [1..33] name   [33..41] 入口号     （41 字节）
-//   Name     [0] op   [1..33] name                       （33 字节）
 //   Evict    [0] op                                      （1 字节）
 //   Status   [0] status                                  （1 字节）
 // ```
 //
-// 表名按**荷载**起：`Seed` 那一张多一格入口号、`Name` 那一张只报名字、`Evict` 空载荷、
-// `Status` 是答话那一格。**不按动作、也不带 `Frame` 后缀**——它们住在本族的 `frame` 模块
+// 表名按**荷载**起：`Seed` 那一张多一格入口号、`Evict` 空载荷、`Status` 是答话那一格。**不按动作、也不带 `Frame` 后缀**——它们住在本族的 `frame` 模块
 // 里，这里每一个名字都是帧。
 //
 // **照实记（改名之前）**：三张表从前叫 `RegisterFrame` / `NameFrame` / `EvictFrame`——
 // **动作名 ＋ 后缀**；而注销与查**共用**同一张表，两个动作名落在同一张表上，那个名字说不了
 // 这件事（这张表要说的是"里头只有名字"）。
+//
+// **照实记（`Name` 那一张退场）**：它服务的两问（注销 / 查）**都没有生产者**（见 [`Req`] 的
+// 照实记）——两张形状、两条动作、两个线上码，一共只换来"这一族曾经有过公示板"这一句历史。
+// 今天这一族只剩两张形状：`Seed`（登记）与 `Evict`（退场）。
 //
 // 答话那一格的六个码见 [`OK`] / [`UNKNOWN`] / [`TAKEN`] / [`DENIED`] / [`FULL`] / [`BAD`]。
 //
@@ -76,14 +78,6 @@ pub struct Seed {
     pub seed: PieToken,
 }
 
-/// 只报名字那两问（注销 / 查）共用的形状。
-#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 33)]
-pub struct Name {
-    pub op: u8,
-    pub name: String,
-}
-
 /// 空载荷那一问（退场）：整帧只有动作码这一格。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Evict {
@@ -100,16 +94,14 @@ pub struct Status {
 /// （孔不预设上限），这里只是**声明这一版只用多大**——一处上界。
 pub const REQ_LEN: usize = Seed::LEN;
 
-// 四个动作在报文里的码——**与核心那四个方法同名**（`register` / `unregister` /
-// `lookup` / `evict`）：线上与模型是同一件事的两层，不该各起一套词。
+// 两个动作在报文里的码——**与核心那两个方法同名**（`register` / `evict`）：线上与模型是
+// 同一件事的两层，不该各起一套词。（`unregister` / `lookup` 两枚码随那两问退场，见 [`Req`]。）
 //
 // **它们不再是协议面**：编的那一侧由 [`Req`] 说、解的那一侧由 [`Wire`] 说，两枚码各被读一次
 // （`Req::store` 写、`Req::fetch` 认）。外面认的是类型 ⇒ 降为私有——没有读者的格不留在面上。
 const REGISTER: u8 = 1;
-const UNREGISTER: u8 = 2;
-const LOOKUP: u8 = 3;
-// 第四格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
-const EVICT: u8 = 4;
+// 第二格动作码：**空载荷**——退场那一句没有名字、也没有入口，故整帧只有这一字节。
+const EVICT: u8 = 2;
 
 /// 成功那一格：**全协议同一个号**——定义在 `protocol/src/fail_codes.rs`（`fail_codes!` 的第二个参数就是它），
 /// 本族只把它转出来。
@@ -140,6 +132,13 @@ crate::fail_codes! {
 
 /// **一问的形状**——一条动作一条形状：荷载收什么，帧里就写什么。
 ///
+/// **照实记（`Unregister` / `Lookup` 两问退场：都没有生产者）**：公示板（名字 → 入口）那一半
+/// 按裁定整支退场之后，这两问就只剩"帧形与码还留着"——仓内客侧只有 `register` / `evict` 两手，
+/// 而 `Lookup` 那一支在板上甚至**没有动作**（它答的就是"表外的动作码"同一句）。
+/// **一条没有生产者的动作不留**（`Spot` 那 29 写 0 读是上一课）：帧那一形、线上那一码、核心那一手
+/// 一起退场。上一版留着它们的理由是"删了要动码表与 `fail_to_code` 那张双射"——**量过**：
+/// 那两问只产 `Fail::{Unknown, Denied}`，两者各自还有别的生产者，故码表一个字不动。
+///
 /// **照实记（它替掉了什么）**：从前是 `pack_ask(op: u8, name: Name, seed: Option<PieToken>)`
 /// ——**任何一枚码都能配上任何一种荷载**：给退场那一码塞一个名字就编出一帧 41 字节的"退场"
 /// （而线上那一句是**一字节短帧**），给查那一码配一个入口号也编得出来。四条动作与四张形状的
@@ -156,10 +155,6 @@ crate::fail_codes! {
 pub enum Req {
     /// 登记：名字 ＋ **板上那个入口号**（`ship` 换回来的那一枚——不是"客人的 Pie 是几号"）。
     Register { name: String, seed: PieToken },
-    /// 注销：只报名字（板按"开者 = 它"认领）。
-    Unregister { name: String },
-    /// 查：只报名字。查到的那枚入口**经会话转授**，不从报文里走。
-    Lookup { name: String },
     /// 退场：**空载荷**，整帧一字节。
     Evict,
 }
@@ -183,12 +178,6 @@ pub enum Wire {
         name: String,
         seed: PieToken,
     },
-    Unregister {
-        name: String,
-    },
-    Lookup {
-        name: String,
-    },
     Evict,
     /// 表外的动作码：**这一帧读得懂（`[码][名字]`），但那一码不是这四枚之一**。
     Unknown,
@@ -209,12 +198,6 @@ impl Message for Req {
                 seed: *seed,
             }
             .store_at(out, 0),
-            Req::Unregister { name } => Name {
-                op: UNREGISTER,
-                name: name.clone(),
-            }
-            .store_at(out, 0),
-            Req::Lookup { name } => Name { op: LOOKUP, name: name.clone() }.store_at(out, 0),
             Req::Evict => Evict { op: EVICT }.store_at(out, 0),
         }
     }
@@ -243,21 +226,7 @@ impl Message for Req {
                     seed: frame.seed,
                 }
             }
-            UNREGISTER => {
-                let (frame, at) = Name::fetch_at(bytes, 0)?;
-                if at != bytes.len() {
-                    return None;
-                }
-                Wire::Unregister { name: frame.name }
-            }
-            LOOKUP => {
-                let (frame, at) = Name::fetch_at(bytes, 0)?;
-                if at != bytes.len() {
-                    return None;
-                }
-                Wire::Lookup { name: frame.name }
-            }
-            _ if !matches!(op, REGISTER | UNREGISTER | LOOKUP | EVICT) => Wire::Unknown,
+            _ if !matches!(op, REGISTER | EVICT) => Wire::Unknown,
             // 这四枚之一，长度却不是它该有的那个 ⇒ 读不懂。
             _ => return None,
         })

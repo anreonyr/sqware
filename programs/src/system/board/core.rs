@@ -73,7 +73,6 @@ impl Sign {
 ///
 /// ```text
 ///   Register    报到：写下自己的那一格        （行侧：我到 / 我换）
-///   Unregister  摘下自己的一格，牌子留着
 ///   Evict       整位退场：它挂过的全放下       （按主人，不按名字）
 /// ```
 ///
@@ -117,7 +116,7 @@ impl Board {
     ///
     /// - 那枚入口必须**是我亲手交出去的**（[`Fail::Denied`]）；
     /// - 已有牌子 ⇒ 名字**必须**与它一字不差（板不是改名处，改名就是换一枚牌：
-    ///   先 [`Board::unregister`] 再登）；
+    ///   先整位退场再登——见 [`Board::evict`]）；
     /// - 已有**别人**挂着的实例 ⇒ [`Fail::Taken`]；**自己**挂着的 ⇒ 覆盖（重登 / 换绑）；
     /// - 都没占 ⇒ 找一枚空牌子立上，板满则 [`Fail::Full`]。
     pub fn register(&mut self, name: String, entry: PieToken, who: TaskId) -> Result<PieToken, Fail> {
@@ -150,25 +149,6 @@ impl Board {
                 None => Err(Fail::Full),
             },
         }
-    }
-
-    /// 摘下自己的一枚牌子（**牌子留着**：名字的位置不还给别人）。
-    ///
-    /// 摘的时候把板上那一份入口放下——它是资源实体的一份引用，不放下就漏水。
-    ///
-    /// **空牌子 = `Unknown`**：没有实例的牌子（从未登记 / 已注销 / 已死）答不出主人是谁，
-    /// 故"这名字没人挂着"与"你挂的不是它"是两件事，`Denied` 只留给后者。
-    pub fn unregister(&mut self, name: String, who: TaskId) -> Result<(), Fail> {
-        let at = self.find(name.as_str()).ok_or(Fail::Unknown)?;
-        self.sweep_at(at);
-        if self.signs[at].entry.is_none() {
-            return Err(Fail::Unknown);
-        }
-        if self.signs[at].owner != Some(who) {
-            return Err(Fail::Denied);
-        }
-        self.unship_at(at);
-        Ok(())
     }
 
     /// 摘掉这位挂在板上的**全部**牌子，返摘了几枚（没有它的牌子 ⇒ `0`，**不算错**）。

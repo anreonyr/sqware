@@ -280,8 +280,7 @@ fn serve_one(
 /// 把一条问交给板，编出一句答（**一格**：读不懂也答，答 `BAD`）。
 ///
 /// **形状由 [`bcall::Wire`] 说**：退场那一句是**一字节短帧**（没有名字也没有入口），
-/// 报到与摘下两条各按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同），
-/// 退场的命名那一码（`Lookup`）与它同落点。
+/// 报到按自己那份荷载走；表外的动作码是**单独一格**（它不是"读不懂"，答的话也不同）。
 fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swept: usize) -> u8 {
     let said = match ask {
         bcall::Wire::Evict => {
@@ -326,22 +325,6 @@ fn answer(board: &mut Board, desk: &mut Desk, ask: bcall::Wire, who: TaskId, swe
             }
             _ => Err(Fail::Denied),
         },
-        // **照实记（`Unregister` 那一支：帧形保留、没有生产者）**：与下面 `Lookup` 那一支同一格
-        // 处置——**帧 / 码 / 核心动作一字不动**，只在板上把方向说清。`Req::Unregister`（码
-        // `UNREGISTER` = 2，帧形 `[码][名字]`）与核心那一手 [`Board::unregister`] 都留着，但
-        // **仓内没有它的生产者**：客侧那几手（`client.rs`）只有 `register` / `evict`，客人退场
-        // 走的是 `Evict`（**整位**退场：撤格 ＋ 摘牌一次做完，见 [`serve_one`]）。
-        // **`Board::unregister` 的读者关系就在这里说清**：全仓只有这一处读它（这一 arm），核心
-        // 自己一处也不叫它，`client` / `frame` 那一侧各只有帧与形、没有一个调用点——故不再往那
-        // 三处各写一遍。代价照实说：这一支今天编得过、走不到（宿主靶已删，没有用例钉它），换来
-        // 的是线上那一格码与那半条**逐名对偶**不丢——删了它就要动码表与 `fail_to_code` 那张
-        // 双射，那是改契约，不在这一笔。
-        bcall::Wire::Unregister { name } => board.unregister(name, who),
-        // **照实记（`Lookup` 这一支已退场）**：名字 → 入口那一问按裁定**不挂在板上**——
-        // board 只留**死信号**一件，按名找服务走树（`operator` 的 `/svc/drv` 与 `/svc`）。这一码
-        // 在线上还在（`frame.rs` 与它的记号一个字没动），但板上不再有动作：答法与"表外的动作码"
-        // 同一句（`Unknown`）——"这一码我不认"。
-        bcall::Wire::Lookup { .. } => Err(Fail::Unknown),
         // 没见过的动作码：与"这个名字不在板上"同一句话（不另立一格）。
         bcall::Wire::Unknown => Err(Fail::Unknown),
     };
