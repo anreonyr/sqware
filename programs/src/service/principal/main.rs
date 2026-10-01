@@ -12,7 +12,7 @@
 extern crate programs;
 
 use programs::system::control::service as core;
-use programs::system::principal;
+use programs::service::principal;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {

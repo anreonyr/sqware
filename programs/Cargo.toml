@@ -82,7 +82,7 @@ doctest = false
 
 [[bin]]
 name = "prog-principal"
-path = "src/system/principal/main.rs"
+path = "src/service/principal/main.rs"
 test = false
 bench = false
 doctest = false

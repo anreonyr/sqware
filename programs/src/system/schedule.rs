@@ -37,7 +37,7 @@ use crate::system::Assembly;
 use crate::system::control::assemble as control;
 use crate::system::control::{Error, Service};
 use crate::system::operator::bridge as operator;
-use crate::system::principal::bridge as principal;
+use crate::service::principal::bridge as principal;
 
 /// **一手**：某一轴在某一相里对某一台做的一件事。
 ///

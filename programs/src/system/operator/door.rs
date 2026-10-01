@@ -195,7 +195,7 @@ impl Facts for Court<'_> {
 ///
 /// | 规矩那一格 | 要的号 | 今天谁生得出 |
 /// |---|---|---|
-/// | [`Permit::Trunk`] / [`Permit::Bough`] | 名册上的身份号 | **只有持树者**（它手里有名册问面，[`Facts::who`] 就是它）——可它**只判不落**；**落格的那几位都没有名册面**：装配者的 [`Roster`](crate::system::principal::bridge::Roster) 只有 `bind` / `adopt`，各驱动的 `Context` 只有**入口 ＋ 树会话** |
+/// | [`Permit::Trunk`] / [`Permit::Bough`] | 名册上的身份号 | **只有持树者**（它手里有名册问面，[`Facts::who`] 就是它）——可它**只判不落**；**落格的那几位都没有名册面**：装配者的 [`Roster`](crate::service::principal::bridge::Roster) 只有 `bind` / `adopt`，各驱动的 `Context` 只有**入口 ＋ 树会话** |
 /// | [`Permit::Among`] | 盟号 | **生产里没有**：立盟那条 `Found` 零调用者（盟册那一族开两面的普查） |
 /// | [`Permit::Opener`] | 某一格的号 | 落格那一位**能**（`bridge::land` 把号答给它）——可"许给开着某格的那位"要那一格的**开者**正好就是那位客人，而生产里没有一格是"只有开者来取"的 |
 ///

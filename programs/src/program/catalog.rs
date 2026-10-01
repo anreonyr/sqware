@@ -29,7 +29,7 @@ pub mod harness;
 pub mod hub;
 #[path = "../system/operator/program.rs"]
 pub mod operator;
-#[path = "../system/principal/program.rs"]
+#[path = "../service/principal/program.rs"]
 pub mod principal;
 #[path = "../root/program.rs"]
 pub mod root;

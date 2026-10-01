@@ -1,6 +1,6 @@
 //! coalition::实现侧 — **结盟服务那一台**。
 //!
-//! 判据与 [`crate::system::principal`] 同款：**判定与接口**（正文、七条原语、帧、客侧
+//! 判据与 [`crate::service::principal`] 同款：**判定与接口**（正文、七条原语、帧、客侧
 //! 那一面）住 `crates/protocol/src/system/coalition/`；**实现方**（**独立域**，`prog-coalition`
 //! 那一台）住这里。
 //!

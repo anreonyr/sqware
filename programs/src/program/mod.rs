@@ -327,7 +327,7 @@ pub fn is_target(name: &str) -> bool {
 /// 而那两个记号是**协议里各族自己的常量**、各只有一家生产者 ⇒ **持树者按记号就认得出**，用不着谁
 /// 告诉它"那一位是几号"。于是这一格连带**整条协调帧**（`Tip::Coord` ＋ `env::wire::Eyes`）一起
 /// 退场；本域这一侧只剩一件真事：**名册那一位要认下面 ＋ 补绑自己与树**（
-/// [`adopt_roster`](crate::system::principal::bridge::adopt_roster)，判据是名册自己交上来的那一枚
+/// [`adopt_roster`](crate::service::principal::bridge::adopt_roster)，判据是名册自己交上来的那一枚
 /// `Grant::Set`）。
 ///
 /// **照实记（`operator` 那一格退场：推得出来的事不该再写一遍）**：那一格答"接不接持树者那棵树"，

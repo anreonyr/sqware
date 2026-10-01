@@ -54,7 +54,7 @@ use crate::system::bootstrap::Boot;
 use crate::system::control::supervise::Watch;
 use crate::system::control::{Control, E_TABLE, Error, READY_MS};
 use crate::system::operator::bridge::Tree;
-use crate::system::principal::bridge::Roster;
+use crate::service::principal::bridge::Roster;
 
 pub mod assemble;
 pub mod bootstrap;
@@ -72,7 +72,6 @@ pub mod desk;
 pub mod machine;
 pub mod mount;
 pub mod operator;
-pub mod principal;
 pub mod schedule;
 pub mod source;
 
@@ -80,15 +79,20 @@ pub mod source;
 ///
 /// 它不是"配置表"：配置在 `Program` 上；这里只有**跑起来的东西**（已起的域与线程、已铸的孔、
 /// 已成的关系）。
+/// **照实记（那四格的可见性：层六·3 搬域时露出来的一格）**：它们原先**私有于 `system`**——而那时
+/// 各域的 `bridge.rs` 都住在 `system/` 底下，看得见；`hub` / `coalition` / `principal` 一台台搬到
+/// `service/` 之后，编译当场报 `field … is private` ⇒ 改成 **`pub(crate)`**（它本来就只给本 crate
+/// 里的人用：四轴 [`Assembly`] 只有装配者与各域那几手碰）。**这一格不是"放宽"，是把"原本靠父子关系
+/// 才成立的东西"写明**——搬域这件事正是来量它的。
 pub struct Assembly {
     /// 生命轴：Service 的建 / 配 / 起 / 递单。
-    control: Control,
+    pub(crate) control: Control,
     /// 命名轴：持树者那一侧那条路。
-    tree: Tree,
+    pub(crate) tree: Tree,
     /// 身份轴：名册那一面。
-    roster: Roster,
+    pub(crate) roster: Roster,
     /// 存在信号·那一头：死亡道表与等任一道响的那只组。
-    watch: Watch,
+    pub(crate) watch: Watch,
 }
 
 impl Assembly {

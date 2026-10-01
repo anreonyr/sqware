@@ -26,7 +26,7 @@ use env::Wait;
 use crate::system::carrier::carrier;
 use crate::system::mount;
 use crate::system::operator::bridge;
-use crate::system::principal::core::Principal;
+use crate::service::principal::core::Principal;
 use env::TaskId;
 use protocol::communication::sender::Sender;
 use protocol::communication::session::Session;
