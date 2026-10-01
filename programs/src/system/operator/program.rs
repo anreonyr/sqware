@@ -1,7 +1,8 @@
 //! operator::program — **持树者**（`prog-operator`）的装配声明。
 //!
-//! 它与其他每一台走同一条路：编排域按 `order: Some(0)` 用 `mint` 起它。它**第一**起
-//! （客人上树要它在），且 `holds_tree: true`——起来时把提示之路交给生我者（编排域）。
+//! 它与其他每一台走同一条路：编排域按 `deps` 算出的次序用 `mint` 起它。它**第一**起
+//! （客人上树要它在）；起手把提示之路交给生我者（编排域）——**那一件事本身就是"它是持树者"的
+//! 凭据**（`holds_tree` 那一格已退场，见 [`Relation`] 的头注）。
 
 use crate::program::{Demand, Died, Ending, Identity, Program, Relation, Setup};
 
@@ -19,7 +20,6 @@ pub static PROGRAM: Program = Program {
         ending: Some(Ending::Resident),
         presence: true,
         bind: true,
-        holds_tree: true,
         ..Relation::DEFAULT
     },
     demand: Demand {

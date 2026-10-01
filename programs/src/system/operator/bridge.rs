@@ -128,6 +128,15 @@ impl Tree {
         Ok(())
     }
 
+    /// **这一台是不是持树者**——判据是**它自己交出来的那一件东西**：提示之路上那枚挂在它名下的
+    /// `TIP_MARK` 孔（`establish::find` **只看**，不另铸一枚新的）。
+    ///
+    /// **为什么不必看声明**（照实记）：`holds_tree` 那一格退场了——"我是持树者"是运行期的事实，
+    /// 而**把提示之路交出来这件事本身就是凭据**（[`Tree::adopt`] 认的也正是它）。
+    pub fn holds(&self, host: TaskId) -> bool {
+        establish::find(host, TIP_MARK).is_some()
+    }
+
     /// **递一条路上去**：请持树者把这条路上的窗格逐段立出来（缺的就地造），末段按 `leaf`
     /// 落叶子，或立窗格（`leaf = None` ⇒ 末段是**窗格**）。
     ///
@@ -228,19 +237,31 @@ fn needs_tree(program: &Program) -> bool {
         .is_some_and(|deps| deps.contains(&crate::program::operator::PROGRAM.name()))
 }
 
-/// **认下持树者本身**：读这一台声明上 `holds_tree` 那一格——它刚把提示之路交给**生我者**
-/// （= 本域）⇒ 当场认下来，此后客人上树才有路可走；并把七位操作面挂上去。
+/// **认下持树者本身**：**这一手不看声明**（照实记：`holds_tree` 那一格退场了——"我是持树者"是
+/// **运行期的事实**，声明里说不出口，说出来的那一格一定会与实情分家）。
+///
+/// 判据是**它自己交出来的那一件东西**：它起手把提示之路交给生我者（= 本域），故本域表里就有
+/// 一枚**挂在它名下的 `TIP_MARK` 孔**——[`Tree::holds`] 只看（`establish::find`），不另铸一枚。
+/// 认下来之后把七位操作面挂上（判据见下）。
+///
+/// **次序是硬的**（照实记：这一手必须在"它答得动"之后，`POLL` 就够）：持树者在起手末尾铸
+/// `READY` 那一枚孔（那是它"答得动"的凭据），而提示之路**在那之前**就交了 ⇒ 走到这一相时，
+/// 那一枚必已在表里。
 ///
 /// **持树者一就位就把七位挂上**（不是等整表起完）：那七格只是"树 ＋ 本域递东西"两件事的函数，
 /// 与后面起哪几台无关；而**等整表起完**会把它挤到最后——那正是停机扳机（`supervise` 的 `last`）
 /// 响的前一刻 ⇒ 任何"要读那七格"的客人只剩几毫秒窗口（实测：那一档里连既有的 `probe-control`
 /// 都会被扑杀）。
+///
+/// **代价照实说**（照实记）：这一格退场之后，"持树者没交出提示之路"不再报在**它**头上（从前它
+/// 死于 `operator:tip`），而报在**第一个要树的客人**头上（`Tree::attach` 的 `no tree yet`，
+/// 见 [`Tree::attach`]）——同一景里读得出来，但那一条读数换了个人。
 pub fn hold(
     assembly: &mut Assembly,
-    program: &Program,
+    _program: &Program,
     service: &mut Service,
 ) -> Result<(), &'static str> {
-    if !program.relation.holds_tree {
+    if !assembly.tree.holds(service.0) {
         return Ok(());
     }
     assembly.tree.adopt(service.0, Wait::AtMost(READY_MS))?;
