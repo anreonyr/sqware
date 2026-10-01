@@ -69,6 +69,10 @@
 # 落在它里面。纪律与 `runner.nu` 同款：**失败留档**到 `<TRACE_OUT>/scene-<景>-qtest.log`
 # （无 `--scene` 那轮叫 `qtest.log`），正常那轮丢掉，不留一堆绿的日志。
 #
+# **（但那一份是"尾若干行"）**：`cargo qtest` 在失败时只印 QEMU 输出的**尾巴**——超时那一档
+# 尾巴里恰好没有"机器跑到哪一步停住"。要全份就设 **`QEMU_TEE_LOG=<路径>`**：外壳顺路拷一份
+# 全控制台（QEMU 的 stdout 原样过 tee，两边都留）。**不设它逐字与从前相同**（`exec` 那一支）。
+#
 # **先装那个 runner**（它是个宿主工具，不在仓里）：
 #
 #   cargo install cargo-qemu-test --target x86_64-unknown-linux-gnu   # ⇒ cargo-qtest
@@ -121,12 +125,20 @@ while True:
 # QEMU 命令行改写器（`--scene` 时落到 `<TRACE_OUT>/scene-qemu.sh`，经 `cargo qtest --qemu` 递）。
 # **只摘掉 `cargo-qtest` 硬编码的 `-nographic`**——它会隐式把 serial0 绑到 stdio，把我们那一枚
 # `-serial` 挤到 serial1（guest 只跟 UART0 说话）。其余参数原样透传。
+# **（诊断：留全份控制台）** `cargo qtest` 在失败时只印 QEMU 输出**尾若干行**（超时那一档尤其
+# 只剩尾巴），而"机器跑到哪一步停住"恰恰要看**前面**。`QEMU_TEE_LOG` 给了就顺路拷一份全份；
+# 不给 = 与从前逐字相同（多一个 `cat` 的空管道而已）。
 const WRAPPER = '#!/usr/bin/env bash
+set -o pipefail
 args=()
 for a in "$@"; do
   [ "$a" = "-nographic" ] || args+=("$a")
 done
-exec qemu-system-riscv64 "${args[@]}"'
+if [ -n "$QEMU_TEE_LOG" ]; then
+  qemu-system-riscv64 "${args[@]}" 2>&1 | tee "$QEMU_TEE_LOG"
+else
+  exec qemu-system-riscv64 "${args[@]}"
+fi'
 
 def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
