@@ -1,14 +1,16 @@
-//! One authority owns lineage, qualifications, and atomic task identity snapshots.
+//! One authority owns the principal tree, coalitions, membership, and atomic task identity snapshots.
 use alloc::vec::Vec;
 use env::TaskId;
 use protocol::service::identity::{CoalitionId, Fail, PrincipalId};
 
 mod coalition;
-mod lineage;
+mod membership;
+mod principal;
 mod roster;
 
 use coalition::CoalitionNode;
-use lineage::PrincipalNode;
+use principal::PrincipalNode;
+pub use roster::Anchor;
 use roster::Bound;
 
 pub struct IdentityBook {

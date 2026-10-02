@@ -20,14 +20,14 @@ fn setup() -> (IdentityBook, TaskId, TaskId, PrincipalId) {
 fn inheritance_uses_current_and_restriction_is_permanent() {
     let (mut book, installer, task, p) = setup();
     let q = book.derive(task, p).unwrap();
-    book.adopt(task, subject(q, &[])).unwrap();
+    book.narrow_own(task, subject(q, &[]), Anchor::Keep).unwrap();
     let child = TaskId::new(4);
     book.bind(installer, child, Install::Inherit { parent: task }).unwrap();
     assert_eq!(book.resolve(child).unwrap().origin.principal, q);
     book.waive(task).unwrap();
     assert_eq!(book.resolve(task).unwrap().current.principal, p);
-    assert_eq!(book.adopt(child, subject(p, &[])), Err(Fail::NotNarrower));
-    book.restrict(task, subject(q, &[])).unwrap();
+    assert_eq!(book.narrow_own(child, subject(p, &[]), Anchor::Keep), Err(Fail::NotNarrower));
+    book.narrow_own(task, subject(q, &[]), Anchor::Move).unwrap();
     book.waive(task).unwrap();
     assert_eq!(book.resolve(task).unwrap().current.principal, q);
 }
@@ -72,7 +72,7 @@ fn managers_are_exact_and_can_manage_offline_principals() {
     let offline = book.derive(installer, book.root()).unwrap();
     book.admit(task, c, offline).unwrap();
     assert_eq!(book.amid(offline, c), Ok(true));
-    book.adopt(task, subject(descendant, &[])).unwrap();
+    book.narrow_own(task, subject(descendant, &[]), Anchor::Keep).unwrap();
     assert_eq!(book.expel(task, c, offline), Err(Fail::NotManager));
     book.expel(installer, c, offline).unwrap();
     assert_eq!(book.amid(offline, c), Ok(false));
@@ -84,7 +84,7 @@ fn authority_and_cursor_revision_are_checked_before_results() {
     let c = book.found(task).unwrap();
     let cursor = Cursor { target: PageTarget::Members(c), revision: book.revision, after: 0 };
     book.admit(task, c, p).unwrap();
-    assert!(matches!(book.members(c, Some(cursor)), Err(Fail::Changed)));
+    assert!(matches!(book.page::<PrincipalId>(PageTarget::Members(c), Some(cursor)), Err(Fail::Changed)));
     let alien = PrincipalId { authority: installer, slot: p.slot };
     assert_eq!(book.matches(TaskId::new(999), Selector::Exact(alien)),
         Err(Fail::WrongAuthority));
@@ -104,13 +104,13 @@ fn revocation_of_origin_intersects_descendant_current_but_current_revocation_can
     book.admit(task, c, p).unwrap();
     book.admit(task, c, q).unwrap();
     book.bind(installer, task, Install::Authorized(subject(p, &[c]))).unwrap();
-    book.adopt(task, subject(q, &[c])).unwrap();
+    book.narrow_own(task, subject(q, &[c]), Anchor::Keep).unwrap();
     book.expel(installer, c, q).unwrap();
     assert_eq!(book.matches(task, Selector::MemberOf(c)), Ok(Match::No));
     book.waive(task).unwrap();
     assert_eq!(book.matches(task, Selector::MemberOf(c)), Ok(Match::Yes));
     book.admit(installer, c, q).unwrap();
-    book.adopt(task, subject(q, &[c])).unwrap();
+    book.narrow_own(task, subject(q, &[c]), Anchor::Keep).unwrap();
     book.expel(installer, c, p).unwrap();
     assert!(book.resolve(task).unwrap().current.coalitions.as_slice().is_empty());
     assert_eq!(book.amid(q, c), Ok(true));
@@ -133,10 +133,10 @@ fn pages_include_slot_zero_and_sort_with_explicit_continuations() {
         ids.push(parent);
     }
     for &id in ids.iter().rev() { book.admit(installer, c, id).unwrap(); }
-    let first = book.members(c, None).unwrap();
+    let first = book.page::<PrincipalId>(PageTarget::Members(c), None).unwrap();
     assert_eq!(first.as_slice()[0], root);
     assert!(first.as_slice().windows(2).all(|w| w[0].slot < w[1].slot));
-    let second = book.members(c, first.next()).unwrap();
+    let second = book.page::<PrincipalId>(PageTarget::Members(c), first.next()).unwrap();
     assert!(second.as_slice()[0].slot > first.as_slice().last().unwrap().slot);
     assert!(second.next().is_none());
 }

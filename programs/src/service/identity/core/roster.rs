@@ -8,6 +8,15 @@ pub(super) struct Bound {
     pub(super) binding: Binding,
 }
 
+/// What the narrowed subject replaces in the sender's own binding.
+#[derive(Clone, Copy)]
+pub enum Anchor {
+    /// The origin stays; only the current selection narrows.
+    Keep,
+    /// The narrowed subject becomes the origin and the current selection.
+    Move,
+}
+
 impl IdentityBook {
     pub fn resolve(&self, task: TaskId) -> Option<Binding> {
         self.bindings.iter().find(|b| b.task == task).map(|b| b.binding)
@@ -80,19 +89,16 @@ impl IdentityBook {
         Ok(())
     }
 
-    fn transform(&mut self, from: TaskId, subject: Subject, permanent: bool) -> Result<(), Fail> {
-        self.narrow(self.resolve(from).ok_or(Fail::Denied)?.current, subject)?;
-        let b = self.bindings.iter_mut().find(|b| b.task == from).ok_or(Fail::Denied)?;
-        b.binding.current = subject;
-        if permanent { b.binding.origin = subject; }
+    pub fn narrow_own(&mut self, from: TaskId, subject: Subject, anchor: Anchor) -> Result<(), Fail> {
+        let at = self.bindings.iter().position(|b| b.task == from).ok_or(Fail::Denied)?;
+        self.narrow(self.bindings[at].binding.current, subject)?;
+        match anchor {
+            Anchor::Keep => self.bindings[at].binding.current = subject,
+            Anchor::Move => self.bindings[at].binding = Binding { origin: subject, current: subject },
+        }
         Ok(())
     }
-    pub fn adopt(&mut self, from: TaskId, subject: Subject) -> Result<(), Fail> {
-        self.transform(from, subject, false)
-    }
-    pub fn restrict(&mut self, from: TaskId, subject: Subject) -> Result<(), Fail> {
-        self.transform(from, subject, true)
-    }
+
     pub fn waive(&mut self, from: TaskId) -> Result<(), Fail> {
         let b = self.bindings.iter_mut().find(|b| b.task == from).ok_or(Fail::Denied)?;
         b.binding.current = b.binding.origin;
