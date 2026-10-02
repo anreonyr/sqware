@@ -20,7 +20,7 @@
 # `kernel/src/boot.rs` 在测试模式下**当场 panic** 指着这句话（宁可红，也不要"静默起一台没有
 # 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
 #
-#   nu scripts/qtest.nu --package kernel            # 健康面（九例，只在 debug 档）
+#   nu scripts/qtest.nu --package kernel            # 健康面（十四例，只在 debug 档）
 #   nu scripts/qtest.nu --package kernel --scene accept --feed exit   # 整机那一例
 #
 # **一例 = 一张镜像，一次运行 = 一个景**：`cargo-qtest` 没有逐例过滤器（`--help` 里只有
@@ -31,9 +31,9 @@
 #
 # **（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
 # `scene accept` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
-# `programs/src/harness/guest/guest/main.rs` 与 `programs/src/harness/probe/probe_bound/main.rs` 两处 `assert`）。病根与量法归在
-# `programs/src/user/canonical/program.rs` 头注的第 4 条（"扳机不等读数"＋"树只有一枚线程"，
-# 都不是本脚本的事）。故：**一次绿不算绿**（重复跑看红率），一次红也先看签名对不对。
+# `programs/src/harness/guest/guest/main.rs` 与 `programs/src/harness/probe/probe_bound/main.rs` 两处 `assert`）。病根是那两条
+# （**扳机不等读数**＋**树只有一枚线程**；"扳机"一词见 `scripts/boot.nu` 头注），都不在本脚本这一格。故：**一次绿不算绿**
+# （重复跑看红率），一次红也先看签名对不对。
 #
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
 #
@@ -56,12 +56,12 @@
 # **读数（量出来的）**：七个景**全绿**（release 档、每景 1 例）——
 #   accept 5.28 s · product 5.23 · again 2.17 · load 0.72 · group 0.37 · beat 2.22 · rig 3.33。
 #   `--scene product --feed list`（不喂 `exit`）→ **FAILED**：喂入是承重的，不是巧合。
-#   不给 `--scene`（debug 档）→ **9 passed · 1 failed**：健康面九例由默认那轮覆盖，
+#   不给 `--scene`（debug 档）→ **14 passed · 1 failed**：健康面那十四例由默认那轮覆盖，
 #   整机那一例报红（无镜像哨，响得出来）。
 #
 # **档那一格的裁决（尾账收口）**：**整机一律 release**——`cargo image` 的 `--profile` 默认
 # release，测试目标 `--scene` 带 `-r`。这不是哪个消费者的偏好，是**世界**的性质（见上）。
-# `debug` 档留给**自检**（健康面那九例、内核启动自检）与单元级核对；整机跑 debug 今天会
+# `debug` 档留给**自检**（健康面那十四例、内核启动自检）与单元级核对；整机跑 debug 今天会
 # 给出一台**起不完**的机器（结局笔数 5 / 11 / 6 而非 14）。
 #
 # **（归档这一格）**：测试路**没有结构化导出**（内核那个 `semihosting` feature 不在
