@@ -205,6 +205,17 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
 
 // 三格是一**组**：三个名字读成同一句式的被动式事实（*这枚是谁授的 / 这扇门是谁开的 /
 
+/// **这一枚还在不在**（**与种类无关**：孔 / 页 / 铃 / 组都答得出）。
+///
+/// 与上面那三格的分工：那三格读的是**孔的**来历与记号（`Reserve` 对页与铃答 `Denied`，
+/// 故"这一枚不是孔"与"它已不在"在那里同形）；这一格只答**存活**。
+/// 树那一层"把门牌后面那一枚交出去"要的正是这一件（判据 = 还能不能交出去，与种类无关）。
+///
+/// **不失败**：不在表里 / 已封印 / 号是野的 —— 一律 `false`。
+pub fn alive(entry: env::PieToken) -> bool {
+    runtime::env::mail::alive(entry)
+}
+
 /// **这枚是谁授的**（`Reserve` 第一格）
 pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
     runtime::env::mail::reserve(entry)

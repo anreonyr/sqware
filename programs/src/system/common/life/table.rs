@@ -79,8 +79,13 @@ pub struct Table {
 }
 
 impl Table {
-    /// 行数上限（= env::ledger::manifest::MAX_PROGRAMS）
-    pub const CAP: usize = 28;
+    /// 行数上限（**= 清单上限**：装不进这一景的程序也起不出服务）。
+    ///
+    /// **它就是清单那一格**（`env::ledger::manifest::MAX_PROGRAMS`），不是另写的一个数：
+    /// 从前这里写死 28，而注释说它等于清单上限——两处一旦分家，症状是"**第 29 台起不来**"：
+    /// `register` 找不到空行 ⇒ `Fail::Full` ⇒ 装配者报 `E_TABLE`（`system: assemble`），
+    /// 而清单里那几台明明都在。验收景（accept）加到 31 台就撞上了这一格。
+    pub const CAP: usize = env::ledger::manifest::MAX_PROGRAMS;
 
     /// 空表：每一行都"占着位但没名字"
     pub const fn new() -> Table {

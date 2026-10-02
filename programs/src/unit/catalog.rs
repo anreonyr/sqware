@@ -58,6 +58,12 @@ pub mod probe_operator_gate;
 pub mod probe_operator_land;
 #[path = "../harness/probe/probe_owner/program.rs"]
 pub mod probe_owner;
+#[path = "../harness/probe/probe_rack/program.rs"]
+pub mod probe_rack;
+#[path = "../harness/probe/probe_rack_guest/program.rs"]
+pub mod probe_rack_guest;
+#[path = "../harness/probe/probe_rack_mount/program.rs"]
+pub mod probe_rack_mount;
 #[path = "../harness/probe/probe_rule/program.rs"]
 pub mod probe_rule;
 #[path = "../harness/probe/probe_rule_other/program.rs"]
@@ -124,6 +130,11 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &probe_watch_gone::PROBE_WATCH_GONE,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
+    // 共享内存那一具架（`communication::rack`）：单域那一台量**队列语义与唤醒协议**；
+    // 另两台一对，量**跨域共映射**（页与铃当门牌过树，对端用产品同一条客人面取回）。
+    &probe_rack::PROBE_RACK,
+    &probe_rack_mount::PROBE_RACK_MOUNT,
+    &probe_rack_guest::PROBE_RACK_GUEST,
     // 那两族"没有会话"的服务（名册 / 盟册）：各该有 `Grant::ALL.len()` 枚（四族格数各归各家——
     // operator 归 `gate`、control 归 `control`）。次序：那两族起的头 ＋ 树那条路（`operator`）。
     &probe_coalition::PROBE_COALITION,

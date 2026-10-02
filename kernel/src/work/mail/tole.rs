@@ -8,6 +8,7 @@ use env::{HoleDir, TaskId};
 
 use crate::work::mail::hole::HoleId;
 use crate::work::mail::nole::NoleId;
+use crate::work::mail::pole::PoleId;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use core::time::Duration;
@@ -31,6 +32,8 @@ pub enum ToleState {
 pub(crate) enum Mate {
     Hole(HoleId, HoleDir),
     Nole(NoleId),
+    /// **页上那一位**（架把铃并进页 ⇒ 页也能进组）。只有 `Pull` 一条方向，与门铃同。
+    Pole(PoleId),
 }
 
 impl Mate {
@@ -38,6 +41,7 @@ impl Mate {
         match self {
             Mate::Hole(id, dir) => WakeKey::Hole { hole: id.0, dir },
             Mate::Nole(id) => WakeKey::Nole { id: id.0 },
+            Mate::Pole(id) => WakeKey::Pole { id: id.0 },
         }
     }
 }

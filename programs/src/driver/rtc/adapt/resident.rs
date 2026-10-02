@@ -5,7 +5,6 @@ use crate::dev::rtc;
 use env::{HoleDir, Wait};
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
-use programs::driver::shared::context::Context;
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
@@ -21,14 +20,15 @@ use runtime::env::mail::{self, HolePie};
 /// 那只组的成员就是那两枚孔（"就绪"挂进组，"取消息"仍走各自那一手）
 /// **这两个源是 rtc 自己的形状**（`uart` 只有一个源、`router` 有三个），故它不收进
 /// :——见 programs::driver::mod 那条入库判据
+/// `entry` = 本域自己铸的那一枚入口孔（`Context` 只管会话了，故它由 `main` 交过来）。
 pub fn run(
-    ctx: &Context,
+    entry: env::PieToken,
     dev: &Device,
     held: line::client::Line,
     host: &mut Host,
 ) -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
-    let entry_hole = HolePie::from_token(ctx.entry);
+    let entry_hole = HolePie::from_token(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
     if pile.attach(&entry_hole, HoleDir::Pull).is_err()
         || pile

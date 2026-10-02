@@ -202,6 +202,8 @@ fn wait_dir(
     enum Ready {
         Hole(Arc<mail::hole::HoleMeta>),
         Bell(Arc<mail::nole::NoleMeta>),
+        /// **页上那一位**（架把铃并进页；只有 `Pull` 一条方向，与门铃同）。
+        Page(Arc<mail::pole::PoleMeta>),
     }
     let need = match dir {
         HoleDir::Pull => Need::Fetch,
@@ -218,6 +220,8 @@ fn wait_dir(
             Ok(()) => match &pie {
                 AnyPie::Hole(p) => Ok(Ready::Hole(p.meta().clone())),
                 AnyPie::Nole(p) if dir == HoleDir::Pull => Ok(Ready::Bell(p.meta().clone())),
+                // 页只有"有事"一条方向（与门铃同一条纪律：别的 `dir` 答 `Denied`）。
+                AnyPie::Pole(p) if dir == HoleDir::Pull => Ok(Ready::Page(p.meta().clone())),
                 _ => Err(MailFail::Denied),
             },
         },
@@ -231,6 +235,7 @@ fn wait_dir(
             let parked = match &ready {
                 Ready::Hole(meta) => mail::hole::wait(meta, dir, dur),
                 Ready::Bell(meta) => mail::nole::wait(meta, dur),
+                Ready::Page(meta) => mail::pole::wait(meta, dur),
             };
             match parked {
                 Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
@@ -256,6 +261,9 @@ fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
         }
         // 孔上那一位不是中断响的：**不碰闸门**。
         AnyPie::Hole(p) => mail::hole::hush(p.meta()),
+        // **页上那一位同样不是中断响的**：照孔那一支写，不 `set_sext`。
+        // （这正是"铃并进页"的一个好处：驱动那颗 hart 的闸门仍只由 `line.exhaust()` 那一手重开。）
+        AnyPie::Pole(p) => mail::pole::hush(p.meta()),
         _ => Err(MailFail::Denied),
     });
     frame.gpr.set_x(
@@ -272,6 +280,8 @@ fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_pie(token, Need::Store, |pie| match pie {
         AnyPie::Nole(p) => mail::nole::ring(p.meta()),
         AnyPie::Hole(p) => mail::hole::ring(p.meta()),
+        // 页上那一位：架的写端每落一格响一下（已响答 `Busy`，写者当"正好"）。
+        AnyPie::Pole(p) => mail::pole::ring(p.meta()),
         _ => Err(MailFail::Denied),
     });
     frame.gpr.set_x(

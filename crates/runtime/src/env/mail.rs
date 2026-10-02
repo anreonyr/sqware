@@ -133,8 +133,8 @@ fn get(token: PieToken, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
 // 整面转出（**不挑**）：转发是"路径不变"的保证，一旦按"今天谁在用"挑，下一个调用点就得
 // 先认出这层壳才知道自己该写 `pie::`——那正是这一层想免掉的认知成本。
 pub use super::pie::{
-    AnyPie, Pie, Pies, accord, collect, narrow, open, pies, release, reserve, revoke, seal, shut,
-    table_size, unseal_hole, unseal_nole, unseal_pole,
+    AnyPie, Pie, Pies, accord, alive, collect, narrow, open, pies, release, reserve, revoke, seal,
+    shut, table_size, unseal_hole, unseal_nole, unseal_pole,
 };
 
 // ── 四种资源的用户态句柄 ──────────────────────────────────────────────────
@@ -351,7 +351,7 @@ impl NolePie {
     }
 }
 
-/// Pole 门闩用户态句柄——**页视图那一枚**。
+/// Pole 门闩用户态句柄——**页视图那一枚**（也带着**页上那一位"有事"**）。
 pub struct PolePie {
     token: PieToken,
 }
@@ -379,6 +379,26 @@ impl PolePie {
 
     pub fn shut(&self) -> PieResult<()> {
         shut(self.token)
+    }
+
+    /// **响一下页上那一位**：置"有待取之事"并唤醒听者（已响 ⇒ `Busy`，不是错）。
+    ///
+    /// 页上为什么有"有事"：架（[`crate::core::res`] 之外的 `protocol::communication::rack`）
+    /// 把铃并进页 ⇒ 一枚页就是一具完整的架。它**不是中断响的**：`hush` 不碰本 hart 的闸门
+    /// （与孔上那一位同一条）。
+    pub fn ring(&self) -> MailResult<()> {
+        env::mail::ring(self.token)
+    }
+
+    /// **应一下**：清掉"有待取之事"。已经清着 ⇒ `Busy`（调用方当"正好"）。
+    pub fn hush(&self) -> MailResult<()> {
+        env::mail::hush(self.token)
+    }
+
+    /// **等那一位亮**。与 [`NolePie::wait`] 同一形：只有"有事"一条方向（没有 `dir` 参数），
+    /// `true` = 当场就绪（未挂起）。**不清**那一位——清要显式 [`PolePie::hush`]。
+    pub fn wait(&self, within: Wait) -> MailResult<bool> {
+        HolePie::from_token(self.token).wait(HoleDir::Pull, within)
     }
 
     pub fn token(&self) -> PieToken {
@@ -434,11 +454,11 @@ impl TolePie {
     }
 }
 
-/// 能当**一格成员**的东西：孔与铃。
+/// 能当**一格成员**的东西：孔、铃、以及**页上那一位**。
 ///
-/// 与内核侧 `mail::tole::Mate` 是同一条边界：页不进组（没有"有事"这回事），组也不
-/// 进组（没有位，判据会变成沿图的递归）。用一个 trait 而不是收 `PieToken`，是为了
-/// 让"能挂什么"在编译期就说得清。
+/// 与内核侧 `mail::tole::Mate` 是同一条边界：**架把"有事"给了页** ⇒ 页也能进组
+/// （`Pole(PoleId)`，只有 `Pull` 一条方向）；组也不进组（没有位，判据会变成沿图的递归）。
+/// 用一个 trait 而不是收 `PieToken`，是为了让"能挂什么"在编译期就说得清。
 ///
 /// `token` 不在 [`AnyPie`] 里（那一位是"表示层转换，与 ABI 无关"）；
 /// 本 trait 的存在理由正是要那个号，故它自带一支。
@@ -456,5 +476,11 @@ impl Mate for HolePie {
 impl Mate for NolePie {
     fn token(&self) -> PieToken {
         NolePie::token(self)
+    }
+}
+
+impl Mate for PolePie {
+    fn token(&self) -> PieToken {
+        PolePie::token(self)
     }
 }

@@ -15,6 +15,8 @@ pub enum WakeKey {
     Space { space: Asid, slot: usize },
     Hole { hole: usize, dir: HoleDir },
     Nole { id: usize },
+    /// **页上那一位"有事"**（架把铃并进页之后，页也能被等——见 `mail::pole`）。
+    Pole { id: usize },
     Task { id: TaskId },
     Pies { task: TaskId },
     Tole { id: usize },
@@ -31,6 +33,7 @@ impl WakeKey {
                 (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
             }
             WakeKey::Nole { id } => (id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9),
+            WakeKey::Pole { id } => (id as u64).wrapping_mul(0x87C3_7B91_1142_53D5),
             WakeKey::Task { id } => (id.get() as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task.get() as u64).wrapping_mul(0xA24B_AED4_963E_E407),
             WakeKey::Pies { task } => (task.get() as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F),

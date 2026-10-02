@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 
 use protocol::common::path::{Path, PathBuf};
-use protocol::communication::session::establish::{opened_by, vested_by};
+use protocol::communication::session::establish::{alive, opened_by};
 use protocol::service::operator::frame::PANE_CAP;
 use protocol::service::operator::frame::watch::Kind;
 use protocol::service::operator::{EntryId, Fail, Permit, Where};
@@ -153,8 +153,8 @@ impl Operator {
     /// **寻**：把那一号后面那一枚 Pie 交出去
     /// - 号不在树上 ⇒ Fail::Unknown（剪掉、剔死、从没铸过长得一样）
     /// - 那一格是一块 `Pane` ⇒ Fail::NotATile
-    /// - 是一枚 `Tile`：**先探一次**（vested_by）——答不出 ⇒ 当场剔掉那一格、放下那一份
-    /// （mail::release），答 Fail::Dead；答得出 ⇒ 交给 `ship`
+    /// - 是一枚 `Tile`：**先问一句存活**（`establish::alive`）——不在 ⇒ 当场剔掉那一格、
+    /// 放下那一份（mail::release），答 Fail::Dead；在 ⇒ 交给 `ship`
     /// `ship` 是"交出去"那一手（**回调**：适配层把那一枚授给调用方）——与"放下"正好是
     /// 一式的两半（交出 / 放下）。它留成参数而不直接叫，是因为它带**去授给谁**那一格
     /// （调用方手里那个号），不是无参动作
@@ -167,7 +167,11 @@ impl Operator {
                 Node::Tile { pie, .. } => *pie,
             },
         };
-        if vested_by(pie).is_none() {
+        // **判的是"这一枚还能不能交出去"，与它是哪种资源无关。** 从前这里借 `vested_by`
+        // 代理（那一问的正文是 `Reserve`，而 `Reserve` **只认孔**：对页与铃答 `Denied`）
+        // ⇒ 页与铃当门牌时一律被判死，还顺手把那一格剔掉（真机量到：`land=Ok` 而
+        // `find=Err(Dead)`，四枚砖全一样）。`Alive` 那一格答的正是这件事实。
+        if !alive(pie) {
             let _ = self.unlink(id);
             let _ = runtime::env::mail::release(pie);
             return Err(Fail::Dead);
@@ -267,6 +271,12 @@ impl Operator {
         }
     }
 
+    /// **这一格此刻能不能重落**：无主 ⇒ 能；有主 ⇒ 只有主人自己，或**那一枚已经不在了**
+    /// （`establish::alive`：不在表里 / 已封印）才轮得到别人。
+    ///
+    /// **判据与 `find` 同一格**（"这一枚还能不能交出去"与"这一格能不能换人"是同一件事）：
+    /// 从前这里借 `vested_by`（孔那一套的父手），于是**页与铃那两格恒"可重落"**——任何域都能
+    /// 把别人的门牌换绑成自己的。
     pub fn claimable(&self, key: Key, who: TaskId) -> bool {
         let Some(Slot {
             node: Node::Tile { pie, owner, .. },
@@ -277,7 +287,7 @@ impl Operator {
         };
         match owner {
             None => true,
-            Some(owner) => *owner == who || vested_by(*pie).is_none(),
+            Some(owner) => *owner == who || !alive(*pie),
         }
     }
 

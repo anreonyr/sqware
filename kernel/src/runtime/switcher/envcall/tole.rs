@@ -174,6 +174,21 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                     return (Some((pie.token(), HoleDir::Pull)), skipped);
                 }
             }
+            // **页上那一位**（架把铃并进页）：与 `Mate::Nole` 同一形，方向恒为 `Pull`。
+            Mate::Pole(id) => {
+                let Some(pie) = pies
+                    .iter()
+                    .find(|p| matches!(p, AnyPie::Pole(p) if p.meta().id() == id))
+                else {
+                    skipped += 1;
+                    continue;
+                };
+                let AnyPie::Pole(p) = pie else { continue };
+                if p.meta().ready() {
+                    meta.seek_cursor((at + 1) % count);
+                    return (Some((pie.token(), HoleDir::Pull)), skipped);
+                }
+            }
         }
     }
     (None, skipped)
@@ -190,6 +205,8 @@ fn mate(pie: &AnyPie, dir: HoleDir) -> Result<(Mate, Weak<Life>), ToleFail> {
     match pie {
         AnyPie::Hole(h) => Ok((Mate::Hole(h.meta().id(), dir), h.meta().life())),
         AnyPie::Nole(n) if dir == HoleDir::Pull => Ok((Mate::Nole(n.meta().id()), n.meta().life())),
+        // 页只有"有事"一条方向（与门铃同一条纪律）。
+        AnyPie::Pole(p) if dir == HoleDir::Pull => Ok((Mate::Pole(p.meta().id()), p.meta().life())),
         _ => Err(ToleFail::Denied),
     }
 }

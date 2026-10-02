@@ -73,7 +73,7 @@ pub fn up() -> Result<Up, Fail> {
     let entry =
         mail::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = utask::sire();
-    let ctx = Context::join(entry, sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
+    let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(
             E_ROUTER,
             match s {
@@ -112,7 +112,7 @@ pub fn up() -> Result<Up, Fail> {
     let lines =
         Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
 
-    ctx.plate(SERVICE, Mine::No, Wait::AtMost(QUAY_MS));
+    ctx.plate(entry, SERVICE, Mine::No, Wait::AtMost(QUAY_MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(

@@ -16,6 +16,8 @@ mod core;
 
 use crate::adapt::{E_NO_CONSOLE, MS};
 use env::Wait;
+use programs::driver::uart::client;
+use protocol::communication::rack::Mode;
 use protocol::communication::session::Session;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face;
@@ -30,9 +32,14 @@ fn main() -> Result<(), env::Reason> {
     let session =
         Session::open(sire, operator::BERTH, Wait::AtMost(MS)).map_err(|_| E_NO_CONSOLE)?;
 
-    let console = adapt::console::find(&Face::of(session), Wait::AtMost(MS)).ok_or(E_NO_CONSOLE)?;
+    // 3：两块门牌各是一具架的页（页上那一位即铃）——客人这一面念的是**产品那一层**
+    // （`driver::uart::client`），本域不自己拼名字、也不碰那一页的布局。
+    // `Mode::Oldest` 是**本端（写端）**的规矩：回显推得太快时顶掉最旧未读那一格（丢有数）。
+    let road = client::road().ok_or(E_NO_CONSOLE)?;
+    let mut console = client::find(&Face::of(session), &road, Mode::Oldest, Wait::AtMost(MS))
+        .ok_or(E_NO_CONSOLE)?;
 
-    // 3/4：行规程那一圈，直到收场词 / EOF。
-    adapt::terminal::run(&console);
+    // 4：行规程那一圈，直到收场词 / EOF。
+    adapt::terminal::run(&mut console);
     Ok(())
 }

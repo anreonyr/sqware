@@ -51,6 +51,7 @@ pub(crate) fn dispatch(
         PieCall::Collect { index } => collect(frame, index),
         PieCall::Reserve { token } => reserve(frame, &ident, token),
         PieCall::Release { token } => release(frame, token),
+        PieCall::Alive { token } => alive(frame, token),
     })
 }
 
@@ -334,5 +335,25 @@ fn release(frame: &mut TrapContext, token: PieToken) -> Outcome {
         None => Err(PieFail::Denied),
     };
     answer(frame, r);
+    Outcome::Resume
+}
+
+/// **这一枚还在不在**（generic：孔 / 页 / 铃 / 组都答得出）。
+///
+/// 两件一起判：**在我表里**（`gate::locate`）＋ **资源还活着**（`AnyPie::alive`——封印即不在）。
+/// 与 `reserve` 的分工写在那两格的注里：那一格答的是孔的来历与记号（故对页与铃答
+/// `Denied`），这一格只答存活——树那一层要的正是这一件。
+///
+/// **别用 `usable` 顶替**：那一手只管"这一枚有没有交出去"（`heir`），**不看资源死活**——
+/// 页被封印之后它会照答"在"，树那一格就永远剔不掉（这条是那台探针自己抓出来的）。
+/// "交出去了"那一档由 `Accord` 那条路自己答 `HandedOver`，不必在这一格里重复。
+///
+/// **不失败**：`answer(Ok(0/1))` 恒走成功那一支，故"不在"就是 `false`，不是负码。
+fn alive(frame: &mut TrapContext, token: PieToken) -> Outcome {
+    let live = current()
+        .running_task()
+        .and_then(|task| gate::locate(&task, token))
+        .is_some_and(|pie| pie.alive());
+    answer(frame, Ok(live as usize));
     Outcome::Resume
 }

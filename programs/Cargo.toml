@@ -126,6 +126,27 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-probe-rack"
+path = "src/harness/probe/probe_rack/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-rack-mount"
+path = "src/harness/probe/probe_rack_mount/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-rack-guest"
+path = "src/harness/probe/probe_rack_guest/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-probe-denied"
 path = "src/harness/probe/probe_denied/main.rs"
 test = false

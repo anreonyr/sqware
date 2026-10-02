@@ -1,22 +1,26 @@
 //! 写端：**永不挂起**。满了按 `Mode` 丢一头。
 //!
 //! 与 `hand::Sender` 的分界：那边 `send` 之后还要 `reclaim`（等这只手下线，无期等）；
-//! 这边 `send` 落地即走——丢了的算在 `dropped` / `lost` 两个数上，不由发送方等。
+//! 这边 `send` 落地即走——丢了的算在 `lost` / `dropped` 两个数上，不由发送方等。
+//!
+//! **两个数各说各的**（见 [`super::ring`] 的"三个数"那一节）：`lost` = `Mode::Oldest` 下顶掉
+//! 未读格的枚数，`dropped` = `Mode::Newest` 下没进架的枚数。两者都是**写端**记的。
 
 use core::marker::PhantomData;
-use core::sync::atomic::Ordering;
 
 use env::{PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{NolePie, PolePie};
+use runtime::env::mail::PolePie;
 
-use super::{Mode, Ring, SLOT, exact, push, ring};
+use super::Mode;
+use super::bell::Bell;
+use super::ring::{Ring, SLOT, depth, dropped, exact, lost, push, ring};
 use crate::wire::message::Message;
 
 /// **写端**：一枚页上的环 ＋ 一枚铃 ＋ 本族那只编报缓冲。
 ///
 /// 名字与 `std::sync::mpsc::SyncSender` 同位——但**不阻塞**：容量满了不是"等"，而是按
-/// [`Mode`] 丢（见 `SendFail::Full`）。
+/// [`Mode`](super::Mode) 丢（见 [`SendFail::Full`]）。
 pub struct Writer<M: Message> {
     ring: &'static Ring,
     /// 本域里那一份映射（`Rack::writer` 现取时是 `None`：`Rack` 持着 `Dock`）。
@@ -26,29 +30,30 @@ pub struct Writer<M: Message> {
     /// 编报那一格：地址在整个持有期里不动（`store` 写它、`push` 读它）。
     buf: M::Buf,
     mode: Mode,
-    bell: NolePie,
+    bell: Bell,
     _m: PhantomData<M>,
 }
 
 impl<M: Message> Writer<M> {
     /// 本域里现取一枚写端（`Rack::writer`）：映射归 `Rack`，本端只借视图那一对数。
-    pub fn of(view: View, mode: Mode, bell: PieToken) -> Self {
+    /// `page` = **那一枚页**（页上那一位就是铃：落完一格响一下）。
+    pub fn of(view: View, mode: Mode, page: PieToken) -> Self {
         exact::<M>();
         Self {
             ring: ring(view),
             _dock: None,
             buf: M::EMPTY,
             mode,
-            bell: NolePie::from_token(bell),
+            bell: Bell::from_token(page),
             _m: PhantomData,
         }
     }
 
-    /// **对端**那边的写端：拿 `Rack::ship()` 交出的两枚号重建（与 `Sender::from_token` 同形）。
+    /// **对端**那边的写端：拿 [`super::Rack::ship`] 交出的**那一枚号**重建（与 `Sender::from_token` 同形）。
     ///
     /// 本端自己开一份映射并**持着它**（与驱动那一侧 `Dock::open` 同一条手：谁 open 谁持有）。
     /// 页映不进来 ⇒ `None`——此后 `send` 一律答 `SendFail::Mail(Denied)`，不猜地址。
-    pub fn from_token(page: PieToken, bell: PieToken, mode: Mode) -> Option<Self> {
+    pub fn from_token(page: PieToken, mode: Mode) -> Option<Self> {
         exact::<M>();
         let dock = match Dock::open(PolePie::from_token(page)) {
             Ok(dock) => dock,
@@ -64,7 +69,7 @@ impl<M: Message> Writer<M> {
             _dock: Some(dock),
             buf: M::EMPTY,
             mode,
-            bell: NolePie::from_token(bell),
+            bell: Bell::from_token(page),
             _m: PhantomData,
         })
     }
@@ -79,7 +84,7 @@ impl<M: Message> Writer<M> {
             return Err(SendFail::TooLong);
         }
         let bytes = self.buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
-        // 正文在 `rack::push` 那一处（与模块内的用例同一份代码）。
+        // 正文在 `rack::ring::push` 那一处（与模块内的用例同一份代码）。
         push(self.ring, self.mode, bytes).map_err(|()| SendFail::Full)?;
         // 铃是"有事"（提示型）：已响即 `Busy`，不是错——读者醒来就会把架读干。
         let _ = self.bell.ring();
@@ -96,21 +101,19 @@ impl<M: Message> Writer<M> {
         self.bell.wait(within).unwrap_or(false)
     }
 
-    /// 按策略丢掉的条数（`Mode::Newest` 会加）。
+    /// 按 `Mode::Newest` 丢掉的条数（没进架的那些）。
     pub fn dropped(&self) -> u64 {
-        self.ring.dropped.load(Ordering::Relaxed)
+        dropped(self.ring)
     }
 
-    /// 因写者覆盖而丢掉的条数（读者跳过时记）。
+    /// 按 `Mode::Oldest` 顶掉的**未读**格数（写端记）。
     pub fn lost(&self) -> u64 {
-        self.ring.lost.load(Ordering::Relaxed)
+        lost(self.ring)
     }
 
     /// 现在架上有几条（**诊断用**：与读者那一刻看到的未必同值）。
     pub fn pending(&self) -> u64 {
-        let w = self.ring.write.load(Ordering::Acquire);
-        let r = self.ring.read.load(Ordering::Acquire);
-        w.wrapping_sub(r)
+        depth(self.ring)
     }
 
     /// 本端那一枚铃的号（要交给别人听时用）。

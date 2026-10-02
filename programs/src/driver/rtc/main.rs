@@ -46,7 +46,7 @@ const MS: usize = 1000;
 fn main() -> Result<(), Fail> {
     // 解门牌 → 上板 ＋ 开会话 → 上树落门牌。门牌**公开可查**（Mine::No）：谁都能查、谁都能用。
     let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(E_RTC, "tree"))?;
-    let ctx = Context::join(entry, utask::sire(), Wait::AtMost(MS)).map_err(|s| {
+    let ctx = Context::open(utask::sire(), Wait::AtMost(MS)).map_err(|s| {
         Fail::at(
             E_RTC,
             match s {
@@ -70,7 +70,7 @@ fn main() -> Result<(), Fail> {
         .map_err(|_| Fail::at(E_RTC, "line"))?;
     debug!("{ME}: line occupied");
 
-    ctx.plate(ME, Mine::No, Wait::AtMost(MS));
+    ctx.plate(entry, ME, Mine::No, Wait::AtMost(MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(
@@ -79,5 +79,5 @@ fn main() -> Result<(), Fail> {
         env::Wait::POLL,
     );
 
-    adapt::resident::run(&ctx, &dev, line, &mut Host::new())
+    adapt::resident::run(entry, &dev, line, &mut Host::new())
 }

@@ -195,6 +195,16 @@ pub fn release(token: PieToken) -> PieResult<()> {
     env::pie::release(token)
 }
 
+/// **这一枚还在不在**（**与种类无关**：孔 / 页 / 铃 / 组都答得出）。
+///
+/// 两件一起判：在本任务表里 ＋ 没被封印 / 没交出去。与 [`reserve`] 的分工在它那一格的注里
+/// ——那一格答的是**孔的**来历与记号（对页与铃答 `Denied`），这一格只答存活这一件事实。
+///
+/// **不失败**：答不出就是 `false`（那一格不返负码）。
+pub fn alive(token: PieToken) -> bool {
+    env::pie::alive(token).unwrap_or(false)
+}
+
 // ── 类型化句柄：**权柄面**（构造 + 种类无关那几手）──
 
 /// 权柄句柄 —— Hole 与 Pole 的**权柄操作同构**，故只写一遍。

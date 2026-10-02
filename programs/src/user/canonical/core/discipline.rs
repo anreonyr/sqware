@@ -19,8 +19,9 @@
 
 use alloc::vec::Vec;
 
-/// 一行的上界。更长的行**截断**。
-pub const LINE_MAX: usize = 128;
+/// 一行的上界：**这一面的事，一处定义**（住 `programs::driver::uart::core::frame`——一条字要
+/// 塞得进那一路的缓冲，故界由那一面说；本手只是它的第一个读者）。更长的行**截断**。
+pub use programs::driver::uart::core::frame::LINE_MAX;
 
 const EXIT: &[u8] = b"exit";
 
@@ -51,6 +52,13 @@ impl Discipline {
             n: 0,
             cr: false,
         }
+    }
+
+    /// **丢过批 ⇒ 那半行作废**：读端看见跳号（`Reader::skipped`）时，攒着的那半行与回显、
+    /// 与行边界都已对不上，故**就地清账**（这也是本手唯一的读者——事实由壳看见，规矩在这一格）。
+    pub fn reset(&mut self) {
+        self.n = 0;
+        self.cr = false;
     }
 
     /// **行规程的全部判定都在这一手**：ICRNL、ECHO / ECHOCTL、ERASE、KILL、EOF。
