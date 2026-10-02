@@ -83,6 +83,9 @@ pub struct HoleMeta {
     pending: SpinLock<Pending>,
     /// 这一只（**队头**）的中段告警已经打过了没有（一枚孔最多一行）。
     alarmed: AtomicBool,
+    /// **"报不出就绪、又没有手"**那一格的中段告警打过没有（与 `alarmed` 分开：两件事，
+    /// 一枚孔各最多一行）。
+    stuck: AtomicBool,
 }
 
 impl HoleMeta {
@@ -94,7 +97,27 @@ impl HoleMeta {
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Idle),
             alarmed: AtomicBool::new(false),
+            stuck: AtomicBool::new(false),
         })
+    }
+
+    /// **那一格此刻是什么形状**（诊断那一行用；`Queue` 空着也要与"根本不在队列那一档"分开）。
+    fn pending_name(&self) -> &'static str {
+        match &*self.pending.lock() {
+            Pending::Idle => "idle",
+            Pending::Queue(q) => {
+                if q.hands.is_empty() {
+                    // **这一格是那一族的头号嫌疑**：`ready(Push)` 与 `ready(Pull)` **都是假**
+                    // ——写的人推不进来（也不会有"手压着"的告警），取的人等不到。
+                    "queue-empty"
+                } else if q.taking {
+                    "queue-taking"
+                } else {
+                    "queue-hands"
+                }
+            }
+            Pending::Rung => "rung",
+        }
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {
@@ -379,6 +402,23 @@ pub(crate) fn wait(
     if meta.ready(dir) {
         return Ok(Handoff::Resume(true));
     }
+    // **"报不出就绪、又根本没有手"**这一格：等的人（**`POLL` 那一档也在内**——它在下面
+    // `dur == ZERO` 那一条就返回了）每一拍都从这儿过，却**一条读数也不落**：`hand_age` 答
+    // `None` ⇒ `note_hold` / `alarm_stuck` 两条都不跑；而 `ready(Pull)`／`ready(Push)` 都是假
+    // ⇒ 谁也醒不过来。**这一形是量出来的**：accept 景偶发"整机跑完不出场"（canonical 卡在
+    // "写口就绪吗"那一问上，60 s 里零读数、连 `idle 10000ms` 那条看门狗都不响——因为等的人
+    // 每一毫秒都在跑）。报**孔号 ＋ 主人 ＋ 那一格的形状**，这一族下次就自己报名。
+    if dir == HoleDir::Push && hand_age(meta).is_none() {
+        // **只认那一格永久的形状**：`Pending::Rung` 是**法定**状态（路由者给"线"那一枚孔置位、
+        // 由取的人 `hush`），故写的人在那儿等是常事——量过：正常跑里每跑 1~2 次，报它只会把
+        // 信号淹掉。`Queue` **空着**那一格不同：它没有任何一条路能自己回到 `Idle`
+        // （`take` 要有手、`taken` 要先 `take`）⇒ 一旦出现就是永久的两头堵死。
+        if let Pending::Queue(q) = &*meta.pending.lock()
+            && q.hands.is_empty()
+        {
+            note_stuck(meta);
+        }
+    }
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(false));
     }
@@ -415,10 +455,34 @@ static HOLD_FROM: AtomicUsize = AtomicUsize::new(0);
 static HOLD_OWNER: AtomicUsize = AtomicUsize::new(0);
 static HANDS_LIVE: AtomicUsize = AtomicUsize::new(0);
 static ALARM_N: AtomicUsize = AtomicUsize::new(0);
+/// **"报不出就绪、又没有手"**那一格观测到几次（中段一行 ＋ 收场那一行都读它）。
+static STUCK_N: AtomicUsize = AtomicUsize::new(0);
 /// **一秒钟**：这只手压了这么久还没人取，就**记账 ＋ 当场报一行**（同一条线，见 [`hold_line`]）。
 const HOLD_MS: usize = 1000;
 /// 中段告警最多打几行（防洪水：一枚孔一行 ＋ 总量封顶）。
 const ALARM_MAX: usize = 8;
+
+/// **一格的形状报不出来、又没有手**：报一行（一枚孔最多一行 ＋ 总量封顶）。
+///
+/// 它报的正是"**两边都动不了**"那一格：写的人见 `ready(Push)` 为假（推不进来）、取的人见
+/// `ready(Pull)` 为假（等不到），而孔上**没有手** ⇒ 连"这只手压了多久"那条读数也没有。
+/// 形状由 [`HoleMeta::pending_name`] 说——`queue-empty` 与 `rung` 是两种不同的下一步。
+fn note_stuck(meta: &HoleMeta) {
+    if meta.stuck.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    STUCK_N.fetch_add(1, Ordering::Relaxed);
+    if STUCK_N.load(Ordering::Relaxed) > ALARM_MAX {
+        return;
+    }
+    crate::putln!(
+        "mail: push blocked hole#{} owner={} pending={} live={}",
+        meta.id.0,
+        meta.owner.get(),
+        meta.pending_name(),
+        HANDS_LIVE.load(Ordering::Relaxed),
+    );
+}
 
 fn elapsed_ms(at: u64) -> usize {
     clock::ticks_to_duration(clock::uptime_ticks().wrapping_sub(at)).as_millis() as usize
@@ -500,7 +564,7 @@ fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize, at: u64) {
 /// 它数的是"有一条报被内核当场扔掉了"（收方读到的是 `MailFail::Gone`）。
 pub(crate) fn hold_line() {
     crate::putln!(
-        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={} gone_n={}",
+        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={} gone_n={} stuck_n={}",
         HOLD_N.load(Ordering::Relaxed),
         HOLD_MAX_MS.load(Ordering::Relaxed),
         HOLD_WORST.load(Ordering::Relaxed),
@@ -510,6 +574,7 @@ pub(crate) fn hold_line() {
         BACK_N.load(Ordering::Relaxed),
         BACK_MAX_LEN.load(Ordering::Relaxed),
         GONE_N.load(Ordering::Relaxed),
+        STUCK_N.load(Ordering::Relaxed),
     );
 }
 
