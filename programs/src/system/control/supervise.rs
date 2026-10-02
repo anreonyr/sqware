@@ -43,7 +43,7 @@ impl Watch {
     /// 道理，本手只是把"醒来"这条快路接上）
     pub fn attach_face(&mut self, grant: ccall::Grant, face: PieToken) {
         let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
-        self.faces[(grant.at() - 1) as usize] = Some(face);
+        self.faces[grant.index()] = Some(face);
     }
 
     /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**
@@ -158,7 +158,7 @@ impl Watch {
     fn refresh_control(&self, control: &Control, tree: &mut Tree) -> Result<(), &'static str> {
         let principal = control.roster.control().ok_or("replacement control identity")?;
         for grant in ccall::Grant::ALL {
-            let Some(face) = self.faces[(grant.at() - 1) as usize] else { continue; };
+            let Some(face) = self.faces[grant.index()] else { continue; };
             let road = ccall::DIR.try_join(grant.name()).ok_or("control path")?;
             let permit = if grant == ccall::Grant::State {
                 protocol::service::operator::Permit::Public
@@ -228,13 +228,9 @@ fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face:
             continue;
         }
         if let Some(wire) = &ask {
-            let asked = ccall::Grant::of_wire(wire);
-            if asked != grant.at() {
-                debug!(
-                    "control: face={} denied as={}",
-                    grant.name(),
-                    ccall::Grant::ALL[(asked - 1) as usize].name()
-                );
+            let asked = ccall::Grant::for_wire(wire);
+            if asked != grant {
+                debug!("control: face={} denied as={}", grant.name(), asked.name());
                 // Push 已复制答话；Sender 可以随本次调用结束销毁。
                 {
                     let mut tx = Sender::<ccall::frame::Said>::from_token(back);
