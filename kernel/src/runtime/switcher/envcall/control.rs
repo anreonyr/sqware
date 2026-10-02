@@ -14,7 +14,17 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: ControlCall, ident: &Arc<T
             let world = ident.team.space.kind();
             let sp = frame.gpr.x(Gprs::SP);
             let fp = frame.gpr.x(Gprs::S0);
-            let mut reader = StackReader::new(frame.user_satp.ppn());
+            let Some(len) = frames.checked_mul(size_of::<usize>()) else {
+                ret_err(frame, ControlFail::Denied);
+                return;
+            };
+            if !ident.team.space.validate_write(buf, len)
+                || !crate::work::unit::space::Space::user_range(sp, frame::SPAN)
+            {
+                ret_err(frame, ControlFail::Denied);
+                return;
+            }
+            let mut reader = StackReader::user(ident.team.space.clone());
             let cfg = ResolveCfg::normal(world, sp.saturating_add(frame::SPAN));
             let code = move |_w: usize| true;
             let (pc_arr, count) = frame::walk(&mut reader, &cfg, sp, fp, Some(&code));

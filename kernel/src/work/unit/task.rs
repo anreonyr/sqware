@@ -314,11 +314,17 @@ impl TaskBuilder {
     }
 
     pub fn stack(mut self, size: usize) -> TaskBuilder {
-        self.stack = size.max(1).next_multiple_of(PAGE_SIZE);
+        self.stack = size;
         self
     }
 
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
+        let stack_size = self
+            .stack
+            .max(1)
+            .checked_next_multiple_of(PAGE_SIZE)
+            .filter(|size| size.checked_add(crate::layout::TASK_STACK_GUARD).is_some())
+            .ok_or(MapError::NoRegion)?;
         let id = TaskId::new(NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
         scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
@@ -333,7 +339,6 @@ impl TaskBuilder {
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
 
-        let stack_size = self.stack;
         let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
         let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
         let stack_body_top = stack_body.as_usize() + stack_size;

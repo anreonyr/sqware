@@ -86,6 +86,7 @@ pub(crate) fn scene() -> (usize, usize) {
 #[panic_handler]
 pub(crate) fn panic_handler(info: &PanicInfo) -> ! {
     if crate::testing() {
+        crate::putln!("test panic: {info}");
         semihosting::process::abort()
     }
     crash_scene(info)

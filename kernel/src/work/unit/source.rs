@@ -39,23 +39,7 @@ impl Source<'_> {
                 let Some(raw) = va.as_usize().checked_add(off) else {
                     return false;
                 };
-                let at = VirtAddr::from_raw(raw);
-                if at.as_usize().checked_add(dst.len()).is_none() {
-                    return false;
-                }
-                let mut done = 0usize;
-                for (pa, _flags, chunk) in space.segments(at, dst.len()) {
-                    // SAFETY: pa 为恒等映射的物理地址
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            pa.as_usize() as *const u8,
-                            dst.as_mut_ptr().add(done),
-                            chunk,
-                        );
-                    }
-                    done += chunk;
-                }
-                done == dst.len()
+                space.copy_in(dst, raw)
             }
         }
     }

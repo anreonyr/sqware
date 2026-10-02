@@ -109,7 +109,9 @@ impl PoleMeta {
         }
         let end = base.checked_add(reg).ok_or(PieFail::NotAligned)?;
         let lo = base & !(PAGE_SIZE - 1);
-        let hi = end.next_multiple_of(PAGE_SIZE);
+        let hi = end
+            .checked_next_multiple_of(PAGE_SIZE)
+            .ok_or(PieFail::NotAligned)?;
         let base = NonNull::new(lo as *mut u8).ok_or(PieFail::NotAligned)?;
         let size = hi - lo;
         Ok(Arc::new(Self {

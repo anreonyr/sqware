@@ -254,6 +254,28 @@ impl SpaceInner {
         }
     }
 
+    pub(super) fn maps_in(
+        &self,
+        va: VirtAddr,
+        size: usize,
+        allowed: impl Fn(&Map) -> bool,
+    ) -> bool {
+        let Some(end) = va.as_usize().checked_add(size) else {
+            return false;
+        };
+        let mut at = va.as_usize();
+        while at < end {
+            let Some(map) = self.resolve_ref(VirtAddr::wrap(at)) else {
+                return false;
+            };
+            if !allowed(map) {
+                return false;
+            }
+            at = end.min(map.va.as_usize() + map.size.get());
+        }
+        true
+    }
+
     pub(crate) fn frame() -> Result<Frame, MapError> {
         let frame: Frame = unsafe {
             Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
@@ -282,11 +304,16 @@ impl SpaceInner {
         va: VirtAddr,
         size: usize,
         flags: PteFlags,
+        permissions_only: bool,
     ) -> Result<(), MapError> {
         if size == 0 {
             return Ok(());
         }
-        let flags = flags | PteFlags::V;
+        let flags = if permissions_only {
+            flags
+        } else {
+            flags | PteFlags::V
+        };
         let end = va.as_usize().saturating_add(size);
         let span = |m: &Map| {
             let s = m.va.as_usize();
@@ -328,6 +355,33 @@ impl SpaceInner {
                 }
             }
         }
+        // Lazy permissions must follow the requested pages, including future faults.
+        let mut splits = [None, None];
+        for (index, boundary) in [va.as_usize(), end].into_iter().enumerate() {
+            if let Some(map) = self.resolve_ref(VirtAddr::wrap(boundary))
+                && map.pending == Some(Pending::Lazy)
+                && boundary > map.va.as_usize()
+            {
+                let first = (boundary - map.va.as_usize()) / PAGE_SIZE;
+                let pages = map.size.get() / PAGE_SIZE;
+                splits[index] = Some((
+                    boundary,
+                    map.part(first, pages - first, map.frames.count_range(first, pages))?,
+                ));
+            }
+        }
+        self.maps
+            .try_reserve(splits.iter().flatten().count())
+            .map_err(|_| MapError::OutOfMemory)?;
+        for (boundary, mut right) in splits.into_iter().flatten() {
+            let map = self
+                .resolve_mut(VirtAddr::wrap(boundary))
+                .expect("split mapping");
+            let first = (boundary - map.va.as_usize()) / PAGE_SIZE;
+            map.frames.move_tail(first, first, &mut right.frames);
+            map.size = core::num::NonZeroUsize::new(first * PAGE_SIZE).expect("split prefix");
+            self.maps.push(right);
+        }
         let mut fault: Option<MapError> = None;
         let root = &mut self.root;
         for m in self.maps.iter_mut() {
@@ -336,12 +390,18 @@ impl SpaceInner {
             let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
             m.runs(lo_pg, hi_pg, |rva, rsize| {
                 if fault.is_none()
-                    && let Err(e) = root.protect(rva, rsize, flags)
+                    && let Err(e) = if permissions_only {
+                        root.protect_permissions(rva, rsize, flags)
+                    } else {
+                        root.protect(rva, rsize, flags)
+                    }
                 {
                     fault = Some(e);
                 }
             });
-            if m.pending == Some(Pending::Lazy) {
+            if permissions_only {
+                m.flags = (m.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | flags;
+            } else if m.pending == Some(Pending::Lazy) {
                 m.flags = flags;
             }
         }
@@ -441,6 +501,7 @@ struct InstallGuard<'a> {
     inner: &'a mut SpaceInner,
     va: VirtAddr,
     installed: usize,
+    committed: bool,
     book: MapMode,
 }
 
@@ -450,6 +511,7 @@ impl<'a> InstallGuard<'a> {
             inner,
             va,
             installed: 0,
+            committed: false,
             book,
         }
     }
@@ -457,7 +519,7 @@ impl<'a> InstallGuard<'a> {
         self.installed += 1;
     }
     fn commit(mut self) {
-        self.installed = 0;
+        self.committed = true;
     }
 }
 
@@ -468,7 +530,13 @@ fn page_pa(f: &Frame) -> PhysAddr {
 
 impl Drop for InstallGuard<'_> {
     fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
         if self.installed == 0 {
+            if let MapMode::Claim(base) = self.book {
+                self.inner.maps.retain(|map| map.va != base);
+            }
             return;
         }
         for j in 0..self.installed {
@@ -501,9 +569,16 @@ impl SpaceInner {
     where
         F: FnMut() -> Result<Frame, MapError>,
     {
-        self.resolve_mut(va)
+        if let Err(error) = self
+            .resolve_mut(va)
             .expect("map exists")
-            .reserve_frames(pages)?;
+            .reserve_frames(pages)
+        {
+            if let MapMode::Claim(base) = book {
+                self.maps.retain(|map| map.va != base);
+            }
+            return Err(error);
+        }
         let mut guard = InstallGuard::new(self, va, book);
         let result: Result<(), MapError> = (|| {
             for i in 0..pages {

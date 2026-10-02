@@ -1,4 +1,3 @@
-use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::putln;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::unit::task::TaskIdent;
@@ -20,13 +19,9 @@ pub(super) fn put(
     let n = len.min(DBCN_MAX);
     let mut text = [0u8; DBCN_MAX];
     let space = &ident.team.space;
-    for (i, slot) in text[..n].iter_mut().enumerate() {
-        let at = KVirt::from_raw(buf.wrapping_add(i));
-        let Some((pa, _)) = space.translate(at) else {
-            return err(frame, DebugFail::Denied);
-        };
-        // SAFETY: translate 已把该 VA 落到一个有效物理页
-        *slot = unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) };
+    if !crate::work::unit::space::Space::user_range(buf, len) || !space.copy_in(&mut text[..n], buf)
+    {
+        return err(frame, DebugFail::Denied);
     }
     let text = core::str::from_utf8(&text[..n]).unwrap_or("<non-utf8>");
     putln!("{text}");
@@ -41,6 +36,9 @@ pub(super) fn get(
     len: usize,
 ) -> *mut TrapContext {
     if len == 0 || len > DBCN_MAX {
+        return err(frame, DebugFail::Denied);
+    }
+    if !ident.team.space.validate_write(buf, len) {
         return err(frame, DebugFail::Denied);
     }
     let mut stage = [0u8; DBCN_MAX];

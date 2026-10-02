@@ -80,7 +80,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                     None => return Outcome::fail(frame, UnitFail::Denied),
                 }
             };
-            let words = match copy_words(&ident.team.space, KVirt::from_raw(args.get()), count) {
+            let words = match copy_words(&ident.team.space, KVirt::wrap(args.get()), count) {
                 Some(w) => w,
                 None => return Outcome::fail(frame, UnitFail::Denied),
             };
@@ -133,9 +133,15 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             Outcome::Resume
         }
         UnitCall::Build { elf, len, kind } => {
+            if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor() {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            if len == 0 || !ident.team.space.validate_read(elf.get(), len) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
             let source = Source::Space {
                 space: &ident.team.space,
-                va: KVirt::from_raw(elf.get()),
+                va: KVirt::wrap(elf.get()),
                 len,
             };
             let sire = match current().running_task() {

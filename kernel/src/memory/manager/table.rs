@@ -246,6 +246,19 @@ impl TableNode {
         Ok(())
     }
 
+    pub(crate) fn protect_permissions(
+        &mut self,
+        vaddr: VirtAddr,
+        size: usize,
+        flags: PteFlags,
+    ) -> Result<(), MapError> {
+        for i in 0..size / PAGE_SIZE {
+            let leaf = self.walk_mut(vaddr + i * PAGE_SIZE, false, super::mode::levels())?;
+            leaf.set_flags((leaf.flags() - (PteFlags::R | PteFlags::W | PteFlags::X)) | flags);
+        }
+        Ok(())
+    }
+
     pub(crate) fn unmap(&mut self, vaddr: VirtAddr, size: usize) {
         if size == 0 || vaddr.offset() != 0 || size & (PAGE_SIZE - 1) != 0 {
             return;

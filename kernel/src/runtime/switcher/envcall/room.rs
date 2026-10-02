@@ -35,6 +35,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskI
             Outcome::Exit
         }
         RoomCall::Doom { task } => {
+            if !ident.team.space.kind().is_supervisor() {
+                return Outcome::fail(frame, RoomFail::Denied);
+            }
             let target = muster(task).and_then(|w| w.upgrade());
             let Some(target) = target else {
                 return Outcome::fail(frame, RoomFail::Dead);

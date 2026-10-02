@@ -26,27 +26,6 @@ pub struct Space {
     life: Arc<Life>,
 }
 
-pub struct Segments<'a> {
-    space: &'a Space,
-    va: usize,
-    end: usize,
-}
-
-impl Iterator for Segments<'_> {
-    type Item = (crate::memory::manager::addr::PhysAddr, PteFlags, usize);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.va >= self.end {
-            return None;
-        }
-        let (pa, flags) = self.space.translate(VirtAddr::from_raw(self.va))?;
-        let page = self.va & !(PAGE_SIZE - 1);
-        let chunk = (page + PAGE_SIZE - self.va).min(self.end - self.va);
-        self.va += chunk;
-        Some((pa, flags, chunk))
-    }
-}
-
 pub struct SpaceBuilder {
     kind: SpaceKind,
     asid: Asid,
@@ -151,17 +130,6 @@ impl Space {
         Ok(r)
     }
 
-    pub(crate) fn map(
-        &self,
-        va: VirtAddr,
-        size: usize,
-        flags: PteFlags,
-        pending: Option<Pending>,
-    ) -> Result<(), MapError> {
-        let flags = self.pte_policy(flags);
-        self.with(|inner| inner.map(va, size, flags, pending))
-    }
-
     pub fn borrow(
         &self,
         vaddr: VirtAddr,
@@ -189,10 +157,37 @@ impl Space {
         r
     }
 
+    pub(crate) fn unmap_user(&self, addr: usize, size: usize) -> Result<(), MapError> {
+        if !Self::user_range(addr, size) {
+            return Err(MapError::NoRegion);
+        }
+        if !addr.is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::NotAligned);
+        }
+        let mut salvage = Salvage::new();
+        let result = self.with_flush(|inner| {
+            let va = VirtAddr::wrap(addr);
+            if !inner.maps_in(va, size, |map| map.pending == Some(Pending::Lazy)) {
+                return Err(MapError::NoRegion);
+            }
+            inner.unmap(va, size, &mut salvage)
+        });
+        salvage.reclaim(self).expect("unmap: shootdown deaf");
+        result
+    }
+
     pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
+        self.release_if(span, |_| true)
+    }
+
+    pub(super) fn release_if(
+        &self,
+        span: Span,
+        allowed: impl FnOnce(&SpaceInner) -> bool,
+    ) -> Result<(), MapError> {
         let mut salvage = Salvage::new();
         self.with_flush(|inner| {
-            if !inner.holds(span.seg, span.va.as_usize(), span.size.get()) {
+            if !allowed(inner) || !inner.holds(span.seg, span.va.as_usize(), span.size.get()) {
                 return Err(MapError::SegmentMismatch);
             }
             inner.unmap(span.va, span.size.get(), &mut salvage)?;
@@ -209,8 +204,37 @@ impl Space {
 
     pub fn protect(&self, vaddr: VirtAddr, size: usize, flags: PteFlags) -> Result<(), MapError> {
         let flags = self.pte_policy(flags);
-        self.with_shootdown(|inner| inner.protect(vaddr, size, flags))
+        self.with_shootdown(|inner| inner.protect(vaddr, size, flags, false))
             .expect("protect: shootdown deaf")
+    }
+
+    pub(crate) fn protect_user(&self, addr: usize, size: usize, bits: u64) -> Result<(), MapError> {
+        let rwx = PteFlags::R | PteFlags::W | PteFlags::X;
+        let flags = PteFlags::from_bits(bits)
+            .filter(|flags| {
+                !flags.is_empty()
+                    && rwx.contains(*flags)
+                    && (!flags.contains(PteFlags::W) || flags.contains(PteFlags::R))
+            })
+            .ok_or(MapError::SegmentMismatch)?;
+        if !Self::user_range(addr, size) {
+            return Err(MapError::NoRegion);
+        }
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) || !addr.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::NotAligned);
+        }
+        self.with_shootdown(|inner| {
+            let va = VirtAddr::wrap(addr);
+            if !inner.maps_in(va, size, |map| {
+                map.pending != Some(Pending::Guard)
+                    && !map.flags.contains(PteFlags::G)
+                    && (self.kind().is_supervisor() || map.flags.contains(PteFlags::U))
+            }) {
+                return Err(MapError::NoRegion);
+            }
+            inner.protect(va, size, flags, true)
+        })
+        .expect("protect: shootdown deaf")
     }
 
     pub fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
@@ -226,14 +250,6 @@ impl Space {
             },
             None => PendingState::Absent,
         })
-    }
-
-    pub fn segments(&self, va: VirtAddr, len: usize) -> Segments<'_> {
-        Segments {
-            space: self,
-            va: va.as_usize(),
-            end: va.as_usize() + len,
-        }
     }
 
     #[cfg(debug_assertions)]

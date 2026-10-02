@@ -24,10 +24,7 @@ fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext 
 }
 
 fn instr_len(space: &Space, sepc: KVirt) -> usize {
-    let b0 = space
-        .translate(sepc)
-        .map(|(pa, _)| unsafe { core::ptr::read_volatile(pa.as_usize() as *const u8) })
-        .unwrap_or(0b11);
+    let b0 = space.instruction_byte(sepc.as_usize()).unwrap_or(0b11);
     if b0 & 0b11 == 0b11 { 4 } else { 2 }
 }
 
@@ -50,7 +47,13 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         call: number,
         arg: frame.gpr.x(Gprs::A0),
     }));
-    frame.sepc += instr_len(&ident.team.space, frame.sepc);
+    frame.sepc = KVirt::wrap(
+        frame
+            .sepc
+            .as_usize()
+            .checked_add(instr_len(&ident.team.space, frame.sepc))
+            .unwrap_or(frame.sepc.as_usize()),
+    );
     let envcall = match EnvCall::from_wire(number, &regs) {
         Ok(c) => c,
         Err(_) => return ret_err(frame, env::DispatchFail::Unknown),

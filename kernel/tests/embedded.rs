@@ -130,6 +130,30 @@ mod tests {
         kernel::health::hart::count();
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn syscall_abi_and_privilege() {
+        kernel::health::syscall::abi_and_privilege();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn syscall_memory() {
+        kernel::health::syscall::memory();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn syscall_pointers() {
+        kernel::health::syscall::pointers();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn syscall_capability() {
+        kernel::health::syscall::capability();
+    }
+
     // ── 整机用例：**一例 = 一张镜像** ──────────────────────────────────────────
     //
     // 体是"装台 → 开演"两句。差别**不在代码里**，在 runner 给的那张镜像里

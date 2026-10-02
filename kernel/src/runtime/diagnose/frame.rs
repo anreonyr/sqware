@@ -1,6 +1,9 @@
+use alloc::sync::Arc;
+
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
+use crate::work::unit::space::Space;
 use crate::work::unit::space::SpaceKind;
 
 pub const SPAN: usize = 4096;
@@ -40,8 +43,9 @@ impl ResolveCfg {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone)]
 pub struct StackReader {
+    space: Option<Arc<Space>>,
     root: PhysAddr,
     page: Option<(usize, PhysAddr)>,
 }
@@ -49,7 +53,16 @@ pub struct StackReader {
 impl StackReader {
     pub fn new(root_ppn: usize) -> StackReader {
         StackReader {
+            space: None,
             root: PhysAddr::from_raw(root_ppn << 12),
+            page: None,
+        }
+    }
+
+    pub fn user(space: Arc<Space>) -> Self {
+        Self {
+            space: Some(space),
+            root: PhysAddr::from_raw(0),
             page: None,
         }
     }
@@ -74,6 +87,15 @@ impl StackReader {
     }
 
     pub fn word(&mut self, addr: usize) -> Option<usize> {
+        if let Some(space) = &self.space {
+            let mut bytes = [0u8; size_of::<usize>()];
+            return space
+                .copy_in(&mut bytes, addr)
+                .then(|| usize::from_le_bytes(bytes));
+        }
+        if (addr & (PAGE_SIZE - 1)) + size_of::<usize>() > PAGE_SIZE {
+            return None;
+        }
         let page = addr & !(PAGE_SIZE - 1);
         let base = self.leaf(page)?;
         // SAFETY: 该页已 walk 命中且带 R；S 态直读
@@ -86,7 +108,10 @@ impl StackReader {
     }
 
     pub fn pair(&mut self, frame: usize) -> Option<(usize, usize)> {
-        Some((self.word(frame - 16)?, self.word(frame - 8)?))
+        Some((
+            self.word(frame.checked_sub(16)?)?,
+            self.word(frame.checked_sub(8)?)?,
+        ))
     }
 }
 
@@ -154,9 +179,15 @@ impl<'a> Walk<'a> {
                             space: world,
                         });
                     }
-                    a += 8;
+                    let Some(next) = a.checked_add(8) else { break };
+                    a = next;
                 }
-                None if sift.gaps => a = (a & !(PAGE_SIZE - 1)) + PAGE_SIZE,
+                None if sift.gaps => {
+                    let Some(next) = (a & !(PAGE_SIZE - 1)).checked_add(PAGE_SIZE) else {
+                        break;
+                    };
+                    a = next;
+                }
                 None => break,
             }
         }
@@ -191,13 +222,13 @@ pub fn walk(
     let world = cfg.world;
     let mut w = Walk::new(reader, fp, world);
     let ceiling = cfg.ceiling;
-    let broke = w.chain(world, sp + 16, ceiling);
+    let broke = w.chain(world, sp.saturating_add(16), ceiling);
     if let Some(code) = code {
         let sift = Sift {
             code,
             gaps: cfg.gaps,
         };
-        w.scan(&sift, broke + 8, ceiling, world);
+        w.scan(&sift, broke.saturating_add(8), ceiling, world);
     }
     (w.frames, w.count)
 }

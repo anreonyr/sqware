@@ -159,7 +159,14 @@ fn collect(head: &[u8], h: &Header, file_len: usize) -> Result<Vec<LoadSegment>,
         if (flags & (PF_X | PF_W)) == (PF_X | PF_W) {
             return Err(ParseError::BadPerms);
         }
-        if memsz > usize::MAX - vaddr {
+        let end = vaddr
+            .checked_add(memsz)
+            .and_then(|end| end.checked_next_multiple_of(PAGE_SIZE))
+            .ok_or(ParseError::Overflow)?;
+        if memsz == 0 {
+            continue;
+        }
+        if !super::space::Space::user_range(vaddr, end - vaddr) {
             return Err(ParseError::Overflow);
         }
         if filesz > 0 {
@@ -199,6 +206,9 @@ pub fn parse(head: &[u8], file_len: usize) -> ParseResult<ParsedProgram> {
     (|| -> Result<ParsedProgram, ParseError> {
         let h = check(head)?;
         let loads = collect(head, &h, file_len)?;
+        if loads.is_empty() || !super::space::Space::user_range(h.entry, 1) {
+            return Err(ParseError::Overflow);
+        }
         Ok(ParsedProgram {
             entry: entry(&h),
             pie: h.pie,

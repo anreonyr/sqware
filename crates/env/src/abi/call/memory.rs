@@ -40,7 +40,8 @@ pub enum MemoryCall {
     /// 释放 mmap/声明区域（VA，字节数，页对齐）。
     #[ret(())]
     Munmap { addr: VirtAddr, size: usize },
-    /// 修改映射区域保护标志（VA，字节数页对齐，新权限 PteFlags 位）。
+    /// 修改映射区域保护标志（VA，字节数页对齐，新权限仅 R/W/X：位 1/2/3）。
+    /// 内核管理 V/U/G/A/D；拒绝空权限及没有 R 的 W。
     #[ret(())]
     Mprotect {
         addr: VirtAddr,

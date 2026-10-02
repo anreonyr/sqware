@@ -4,7 +4,6 @@ use env::{HoleDir, MailCall, MailFail, PieToken, TaskId, Wait};
 
 use riscv::register::sie;
 
-use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
@@ -27,12 +26,8 @@ pub(crate) fn dispatch(
     ident: Arc<TaskIdent>,
 ) -> Option<Outcome> {
     Some(match call {
-        MailCall::Push { token, msg, len } => {
-            push(frame, ident, token, KVirt::from_raw(msg.get()), len)
-        }
-        MailCall::Pull { token, buf, max } => {
-            pull(frame, ident, token, KVirt::from_raw(buf.get()), max)
-        }
+        MailCall::Push { token, msg, len } => push(frame, ident, token, msg.get(), len),
+        MailCall::Pull { token, buf, max } => pull(frame, ident, token, buf.get(), max),
         MailCall::Peek { token } => peek(frame, token),
         MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
         MailCall::Hush { token } => hush(frame, token),
@@ -44,7 +39,7 @@ fn push(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
     token: PieToken,
-    msg: KVirt,
+    msg: usize,
     len: usize,
 ) -> Outcome {
     let me = current()
@@ -66,7 +61,7 @@ fn push(
                 AnyPie::Hole(p) => {
                     if len == 0 {
                         Err(MailFail::Denied)
-                    } else if !mail::whole(&ident.team.space, msg.as_usize(), len, PteFlags::R) {
+                    } else if !mail::whole(&ident.team.space, msg, len, PteFlags::R) {
                         Err(MailFail::Denied)
                     } else {
                         // **抄一份进内核**（这一层的分界就在这一句）：递出去之后那段字节归内核
@@ -77,14 +72,10 @@ fn push(
                             Err(MailFail::OoM)
                         } else {
                             cell.resize(len, 0);
-                            if !mail::copy_in(&ident.team.space, &mut cell, msg.as_usize()) {
+                            if !mail::copy_in(&ident.team.space, &mut cell, msg) {
                                 Err(MailFail::Denied)
                             } else {
-                                mail::hole::give(
-                                    p.meta(),
-                                    Arc::from(cell.into_boxed_slice()),
-                                    me,
-                                )
+                                mail::hole::give(p.meta(), Arc::from(cell.into_boxed_slice()), me)
                             }
                         }
                     }
@@ -107,9 +98,13 @@ fn pull(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
     token: PieToken,
-    buf: KVirt,
+    buf: usize,
     max: usize,
 ) -> Outcome {
+    if !Space::user_range(buf, max) {
+        frame.gpr.set_x(Gprs::A0, MailFail::Denied.code() as usize);
+        return Outcome::Resume;
+    }
     let found = current()
         .running_task()
         .ok_or(MailFail::Denied)
@@ -144,7 +139,7 @@ fn pull(
 fn hand_over(
     meta: &Arc<mail::HoleMeta>,
     space: &Arc<Space>,
-    buf: KVirt,
+    buf: usize,
     max: usize,
 ) -> Result<(usize, TaskId), MailFail> {
     mail::hole::take(meta)?;
@@ -153,7 +148,7 @@ fn hand_over(
         return Err(MailFail::Busy);
     };
     let len = bytes.len();
-    if len > max || !mail::whole(space, buf.as_usize(), len, PteFlags::W) {
+    if len > max || !mail::whole(space, buf, len, PteFlags::W) {
         // **"读不成、手放回"这一条要看得见**（诊断）：孔会因此**一直报就绪**——等在这一组上的
         // 读的人每一轮都啃同一格（读不成 ⇒ 手还在 ⇒ 下一轮又报就绪），而**别的客人的手就被饿在
         // 后面**；递手的那一方还在等它下线（`wait(HoleDir::Push, …)`）⇒ 两边一起卡住。
@@ -161,7 +156,7 @@ fn hand_over(
         mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
-    if !mail::copy_out(space, &bytes, buf.as_usize()) {
+    if !mail::copy_out(space, &bytes, buf) {
         // 收方那段写不进去（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来。
         mail::hole::note_back(len, max);
         mail::hole::back(meta);

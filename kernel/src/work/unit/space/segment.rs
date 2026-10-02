@@ -44,6 +44,26 @@ impl Segment {
         Ok(cursor)
     }
 
+    pub(crate) fn reserve(&mut self, addr: usize, size: usize) -> bool {
+        let Some(end) = addr.checked_add(size) else {
+            return false;
+        };
+        if size == 0 || addr < self.base || end > self.edge {
+            return false;
+        }
+        let at = self.allocated.partition_point(|&(start, _)| start < addr);
+        if at > 0 && self.allocated[at - 1].0 + self.allocated[at - 1].1 > addr
+            || at < self.allocated.len() && end > self.allocated[at].0
+        {
+            return false;
+        }
+        if self.allocated.try_reserve(1).is_err() {
+            return false;
+        }
+        self.allocated.insert(at, (addr, size));
+        true
+    }
+
     pub(crate) fn deallocate(&mut self, addr: usize, size: usize) -> bool {
         match self.allocated.iter().position(|&(start, _)| start == addr) {
             Some(at) if self.allocated[at].1 == size => {

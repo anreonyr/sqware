@@ -5,10 +5,9 @@ use env::{MemoryCall, MemoryFail};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr as KVirt;
-use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
+use crate::work::unit::space::Space;
 use crate::work::unit::space::window::{HeapWindow, ShareWindow};
-use crate::work::unit::space::{Pending, PendingState};
 use crate::work::unit::task::TaskIdent;
 
 use super::ret_err;
@@ -22,93 +21,65 @@ impl From<MapError> for MemoryFail {
             MapError::AlreadyMapped => MemoryFail::AlreadyMapped,
             MapError::WidenDenied => MemoryFail::WidenDenied,
             MapError::NotMapped | MapError::SegmentMismatch | MapError::DramOverlap => {
-                unreachable!("Memory 五格不该见到这一枚 MapError")
+                MemoryFail::Denied
             }
         }
     }
 }
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<TaskIdent>) {
-    match call {
-        MemoryCall::Allocate { size } => {
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            match HeapWindow::allocate(&ident.team.space, size) {
-                Ok(span) => frame.gpr.set_x(Gprs::A0, span.va.as_usize()),
-                Err(e) => {
-                    ret_err(frame, MemoryFail::from(e));
-                }
+    let size = match call {
+        MemoryCall::Allocate { size }
+        | MemoryCall::Deallocate { size, .. }
+        | MemoryCall::Mmap { size, .. }
+        | MemoryCall::Munmap { size, .. }
+        | MemoryCall::Mprotect { size, .. } => size,
+    };
+    let Some(size) = size.max(1).checked_next_multiple_of(PAGE_SIZE) else {
+        ret_err(frame, MemoryFail::Denied);
+        return;
+    };
+    let space = &ident.team.space;
+    let result = match call {
+        MemoryCall::Allocate { .. } => {
+            HeapWindow::allocate(space, size).map(|span| span.va.as_usize())
+        }
+        MemoryCall::Mmap { at, .. } => {
+            if at.get() == 0 {
+                ShareWindow::mmap(space, size).map(|span| span.va.as_usize())
+            } else if !Space::user_range(at.get(), size) {
+                Err(MapError::NoRegion)
+            } else {
+                ShareWindow::mmap_at(space, KVirt::wrap(at.get()), size).map(|()| at.get())
             }
         }
-        MemoryCall::Deallocate { addr, size } => {
-            let addr = addr.get();
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let ok = HeapWindow::deallocate(&ident.team.space, KVirt::from_raw(addr), size);
-            frame.gpr.set_x(
-                Gprs::A0,
-                if ok {
-                    0
-                } else {
-                    MemoryFail::Denied.code() as usize
-                },
-            );
-        }
-        MemoryCall::Mmap { size, at } => {
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let fixed = at.get();
-            let va = {
-                let s = &ident.team.space;
-                if fixed == 0 {
-                    ShareWindow::mmap(s, size).map(|span| span.va)
-                } else {
-                    let flags = s.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
-                    s.map(KVirt::from_raw(fixed), size, flags, Some(Pending::Lazy))
-                        .map(|()| KVirt::from_raw(fixed))
-                }
-            };
-            match va {
-                Ok(va) => frame.gpr.set_x(Gprs::A0, va.as_usize()),
-                Err(e) => {
-                    ret_err(frame, MemoryFail::from(e));
-                }
+        MemoryCall::Deallocate { addr, .. } => {
+            if Space::user_range(addr.get(), size)
+                && HeapWindow::deallocate(space, KVirt::wrap(addr.get()), size)
+            {
+                Ok(0)
+            } else {
+                Err(MapError::SegmentMismatch)
             }
         }
-        MemoryCall::Munmap { addr, size } => {
-            let addr = KVirt::from_raw(addr.get());
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let ok = {
-                let s = &ident.team.space;
-                if ShareWindow::munmap(s, addr, size) {
-                    true
-                } else if s.pending_state(addr) != PendingState::Absent {
-                    s.unmap(addr, size).is_ok()
-                } else {
-                    false
-                }
-            };
-            frame.gpr.set_x(
-                Gprs::A0,
-                if ok {
-                    0
-                } else {
-                    MemoryFail::Denied.code() as usize
-                },
-            );
+        MemoryCall::Munmap { addr, .. } => {
+            if Space::user_range(addr.get(), size)
+                && (ShareWindow::munmap(space, KVirt::wrap(addr.get()), size)
+                    || space.unmap_user(addr.get(), size).is_ok())
+            {
+                Ok(0)
+            } else {
+                Err(MapError::SegmentMismatch)
+            }
         }
-        MemoryCall::Mprotect { addr, size, flags } => {
-            let addr = KVirt::from_raw(addr.get());
-            let size = size.max(1).next_multiple_of(PAGE_SIZE);
-            let ok = match PteFlags::from_bits(flags) {
-                Some(f) => ident.team.space.protect(addr, size, f).is_ok(),
-                None => false,
-            };
-            frame.gpr.set_x(
-                Gprs::A0,
-                if ok {
-                    0
-                } else {
-                    MemoryFail::Denied.code() as usize
-                },
-            );
+        MemoryCall::Mprotect { addr, flags, .. } => {
+            space.protect_user(addr.get(), size, flags).map(|()| 0)
+        }
+    };
+    match result {
+        Ok(value) => frame.gpr.set_x(Gprs::A0, value),
+        Err(error) => {
+            ret_err(frame, MemoryFail::from(error));
         }
     }
 }

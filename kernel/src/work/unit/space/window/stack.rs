@@ -11,7 +11,9 @@ pub(crate) struct StackWindow;
 
 impl StackWindow {
     pub(crate) fn claim(space: &Space, size: usize) -> Result<Span, MapError> {
-        let slot_size = size + TASK_STACK_GUARD;
+        let slot_size = size
+            .checked_add(TASK_STACK_GUARD)
+            .ok_or(MapError::NoRegion)?;
         space.with_flush(|inner| {
             let slot_va = inner.allocate(SegmentKind::Normal, slot_size)?;
             let guard_flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
@@ -25,6 +27,7 @@ impl StackWindow {
             let body_va = slot_va + TASK_STACK_GUARD;
             let next = || Ok(crate::tag!(Stack, SpaceInner::frame()?));
             if let Err(e) = inner.claim(body_va, size, body_flags, next) {
+                inner.maps.retain(|map| map.va != slot_va);
                 inner.deallocate(SegmentKind::Normal, slot_va.as_usize(), slot_size);
                 return Err(e);
             }

@@ -30,7 +30,12 @@ impl HeapWindow {
             if !this.with_flush(|inner| inner.holds(seg, addr.as_usize(), size)) {
                 return false;
             }
-            this.release(Span::new(seg, addr, size, None)).is_ok()
+            this.release_if(Span::new(seg, addr, size, None), |inner| {
+                inner.maps_in(addr, size, |map| {
+                    map.pending.is_none() && !map.is_borrowed()
+                })
+            })
+            .is_ok()
         }
     }
 }

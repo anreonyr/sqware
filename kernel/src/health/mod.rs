@@ -25,6 +25,7 @@ pub mod permit;
 pub mod shell;
 pub mod spare;
 pub mod stress;
+pub mod syscall;
 
 pub fn run() {
     #[cfg(debug_assertions)]

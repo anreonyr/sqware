@@ -28,6 +28,16 @@ impl From<MapError> for LoadError {
 }
 
 pub fn load(space: Space, source: &Source, parsed: &ParsedProgram) -> Result<Loaded, LoadError> {
+    let image_end = parsed.segments.iter().try_fold(0usize, |edge, segment| {
+        segment
+            .vaddr
+            .as_usize()
+            .checked_add(segment.memsz)
+            .and_then(|end| end.checked_next_multiple_of(PAGE_SIZE))
+            .filter(|end| *end <= crate::memory::manager::mode::upper().as_usize())
+            .map(|end| edge.max(end))
+            .ok_or(MapError::NoRegion)
+    })?;
     let mut plan: Vec<Vec<Frame>> = Vec::new();
     plan.try_reserve(parsed.segments.len())
         .map_err(|_| LoadError::Map(MapError::OutOfMemory))?;
@@ -35,12 +45,6 @@ pub fn load(space: Space, source: &Source, parsed: &ParsedProgram) -> Result<Loa
         plan.push(frames_for_segment(source, seg)?);
     }
 
-    let image_end = parsed
-        .segments
-        .iter()
-        .map(|s| (s.vaddr.as_usize() + s.memsz).next_multiple_of(PAGE_SIZE))
-        .max()
-        .unwrap_or(0);
     space.with_flush(|inner| -> Result<(), MapError> {
         if !image_end.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
