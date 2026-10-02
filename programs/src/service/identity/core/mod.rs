@@ -11,7 +11,7 @@ mod roster;
 use coalition::CoalitionNode;
 use principal::PrincipalNode;
 pub use roster::Anchor;
-use roster::Bound;
+use roster::BindingRow;
 
 pub struct IdentityBook {
     authority: TaskId,
@@ -19,7 +19,7 @@ pub struct IdentityBook {
     principals: Vec<PrincipalNode>,
     coalitions: Vec<CoalitionNode>,
     memberships: Vec<(PrincipalId, CoalitionId)>,
-    bindings: Vec<Bound>,
+    bindings: Vec<BindingRow>,
     revision: u64,
 }
 

@@ -3,7 +3,7 @@ use protocol::service::identity::{Binding, Fail, Install, Match, Selector, Subje
 
 use super::IdentityBook;
 
-pub(super) struct Bound {
+pub(super) struct BindingRow {
     pub(super) task: TaskId,
     pub(super) binding: Binding,
 }
@@ -78,7 +78,7 @@ impl IdentityBook {
         } else {
             if self.bindings.len() >= limits::MAX_BINDINGS { return Err(Fail::Full); }
             self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
-            self.bindings.push(Bound { task, binding });
+            self.bindings.push(BindingRow { task, binding });
         }
         Ok(())
     }
