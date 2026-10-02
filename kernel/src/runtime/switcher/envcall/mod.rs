@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use env::{DebugCall, EnvCall};
 
@@ -31,7 +32,40 @@ fn instr_len(space: &Space, sepc: KVirt) -> usize {
     if b0 & 0b11 == 0b11 { 4 } else { 2 }
 }
 
+/// **心跳（临时诊断）**：每颗 hart 每 [`HB_EVERY`] 次系统调用打一行 `hb hart=… n=…`。
+///
+/// **为什么住这一格**：系统调用那一刻走的是**任务上下文**（内核栈），而**陷阱上下文里写控制台
+/// 是静默的**——`console::write_str` 对既不在 identity 段、又译不出的那段缓冲**一个字都不写**
+/// （量过：把心跳打在定时器那一路、每 100 拍一行，整整一跑零行）。这一条给的是
+/// "**这颗 hart 还在替任务办事**"：卡住那一族（整机跑完不出场）现场零读数、空闲看门狗也不响
+/// ⇒ 有 hart 一直在跑；哪几颗的心跳从此断掉，就是哪几颗卡住了。
+const HB_EVERY: u64 = 5_000;
+
+static HB: [AtomicU64; 8] = [
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+    AtomicU64::new(0),
+];
+
 pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Option<*mut TrapContext> {
+    let h = crate::hart::hart_id().get();
+    if h < HB.len() {
+        let mine = HB[h].fetch_add(1, Ordering::Relaxed) + 1;
+        if mine % HB_EVERY == 0 {
+            crate::putln!(
+                "hb hart={} n={} task={} call={}",
+                h,
+                mine,
+                ident.id.get(),
+                frame.gpr.x(Gprs::A7)
+            );
+        }
+    }
     let pa = dispatch_inner(frame, ident);
     if pa.is_null() { None } else { Some(pa) }
 }
