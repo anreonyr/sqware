@@ -22,7 +22,7 @@ fn walk(tree: &mut Operator, road: &Path) -> Option<Where> {
         match tree.part(at, seg.to_string()) {
             Ok(id) => at = Where::At(id),
             Err(fail) => {
-                debug!("operator: plate walk {:?}", fail);
+                debug::put(&alloc::format!("operator: plate walk road={road} at={seg:?} {fail:?}"));
                 return None;
             }
         }
@@ -31,9 +31,14 @@ fn walk(tree: &mut Operator, road: &Path) -> Option<Where> {
 }
 
 /// 失败（路空 / 某一层立不出来 / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"
+///
+/// **这几行必须 release 也出得来**：装配者那一侧不管树成没成都印 `system: … mounted at …`
+/// （它只知道"提示被取走了"），故树这一侧失败时，两边的读数必须对得起来——量到过
+/// `/svc/sys/control 底下数到 3 格而四条 mounted 都印了` 那一族，而那时树这边**一行都没有**
+/// （`debug!` 在 release 档是空操作，见 `crates/protocol/src/debug.rs`）。
 pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule) {
     let Some(last) = road.file_name() else {
-        return debug!("operator: plate empty road");
+        return debug::put("operator: plate empty road");
     };
     let Some(at) = walk(tree, road) else { return };
     // **末段是窗格**（`leaf` 那一格说"这一帧不落叶子"）：立出来就完事——目录不是叶子
@@ -41,7 +46,7 @@ pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule
     if leaf == PieToken::NONE {
         return match tree.part(at, last.to_string()) {
             Ok(_) => debug!("operator: plate pane {}", last),
-            Err(fail) => debug!("operator: plate pane {:?}", fail),
+            Err(fail) => debug::put(&alloc::format!("operator: plate pane road={road} {fail:?}")),
         };
     }
     // **末段是叶子**：没有许可（Permit::Unset）＋ **不留主人**（`None`）——与
@@ -61,11 +66,13 @@ pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule
                     None,
                 ) {
                     Ok(_) => debug!("operator: plate rule root {} id={}", last, id.get()),
-                    Err(fail) => debug!("operator: plate rule failed {fail:?}"),
+                    Err(fail) => {
+                        debug::put(&alloc::format!("operator: plate rule failed road={road} {fail:?}"))
+                    }
                 }
             }
             debug!("operator: plate landed {} id={}", last, id.get())
         }
-        Err(fail) => debug!("operator: plate land {:?}", fail),
+        Err(fail) => debug::put(&alloc::format!("operator: plate land road={road} {fail:?}")),
     }
 }
