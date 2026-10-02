@@ -48,6 +48,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
 
 pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId, code: u8) {
     use env::Wait;
+    use env::wire::Span as _;
     use protocol::communication::session::establish;
     use runtime::env::mail::HolePie;
     let me = runtime::env::unit::self_id();
@@ -391,6 +392,7 @@ pub(crate) fn after_replacement(
 
 pub fn codecs() {
     use env::{PieToken, TaskId};
+    use env::wire::Span as _;
     use protocol::service::operator::{EntryId, Permit, Tip, TipIn};
     use protocol::system::control::publication::{Frame, Object, Reply, Scope, Target};
     let a = TaskId::new(77);

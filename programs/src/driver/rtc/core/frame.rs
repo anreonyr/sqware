@@ -5,6 +5,7 @@
 
 use env::{Mark, PieToken};
 use protocol::wire::message::Message;
+use env::wire::Span as _;
 
 /// 问那一句的动作码：「现在几点」
 pub const ASK: u8 = 1;
@@ -70,11 +71,11 @@ impl Wire {
     pub fn take(bytes: &[u8]) -> Option<(PieToken, Wire)> {
         match *bytes.first()? {
             ASK if bytes.len() == Now::LEN => {
-                let ask = Now::fetch(bytes)?;
+                let ask = Now::fetch_at(bytes, 0)?.0;
                 Some((ask.back, Wire::Now))
             }
             ARM if bytes.len() == Arm::LEN => {
-                let ask = Arm::fetch(bytes)?;
+                let ask = Arm::fetch_at(bytes, 0)?.0;
                 Some((
                     ask.back,
                     Wire::Arm {
@@ -130,7 +131,7 @@ impl Message for Time {
         if bytes.len() != Time::LEN {
             return None;
         }
-        Some(Time::fetch(bytes)?.ns)
+        Some(Time::fetch_at(bytes, 0)?.0.ns)
     }
 }
 
@@ -149,6 +150,6 @@ impl Message for Status {
         if bytes.len() != Status::LEN {
             return None;
         }
-        Some(Status::fetch(bytes)?.status)
+        Some(Status::fetch_at(bytes, 0)?.0.status)
     }
 }

@@ -11,6 +11,7 @@ use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
 
 use crate::wire::message::Message;
+use env::wire::Span as _;
 
 pub mod vocab;
 

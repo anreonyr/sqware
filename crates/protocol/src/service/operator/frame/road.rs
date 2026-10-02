@@ -10,6 +10,7 @@ use crate::wire::message::Message;
 
 use super::vocab::{BAD, EntryId, PANE_CAP, Permit, Where};
 use crate::wire::OK;
+use env::wire::Span as _;
 
 /// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）
 /// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
@@ -241,7 +242,7 @@ impl Said {
         if bytes.len() != Word::LEN {
             return Err(BAD);
         }
-        Ok(Word::fetch(bytes).ok_or(BAD)?.word)
+        Ok(Word::fetch_at(bytes, 0).ok_or(BAD)?.0.word)
     }
 
     /// 按「名」那一形读（`name` 的下场）：`[status][名字]` → 一枚名字
@@ -265,7 +266,7 @@ impl Said {
             return Err(code);
         }
         let bytes = self.bytes();
-        let head = Tally::fetch(bytes).ok_or(BAD)?;
+        let head = Tally::fetch_at(bytes, 0).ok_or(BAD)?.0;
         let count = head.count as usize;
         if count > PANE_CAP {
             return Err(BAD);

@@ -3,6 +3,7 @@
 use env::Mark;
 
 use crate::wire::message::Message;
+use env::wire::Span as _;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**
 /// （`UNKNOWN`/`TAKEN`/`DENIED` ＋ 只有码的 `BAD`，加两向读法）。账那一边（`Lines` 的四原语）
@@ -68,7 +69,7 @@ impl Message for Occupy {
         if bytes.len() != Occupy::LEN {
             return None;
         }
-        let occupy = Occupy::fetch(bytes)?;
+        let occupy = Occupy::fetch_at(bytes, 0)?.0;
         (occupy.op == OCCUPY).then_some(occupy.line)
     }
 }

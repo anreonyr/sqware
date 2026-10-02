@@ -8,6 +8,7 @@ use crate::wire::OK;
 use crate::wire::id::Id;
 use crate::wire::message::Message;
 use env::PieToken;
+use env::wire::Span as _;
 
 /// **一问那一形**（principal 与 coalition **同形**）：动作码 ＋ 两个 8 字节的号 ＋
 /// **回信孔那一格**

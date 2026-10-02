@@ -12,6 +12,7 @@ use crate::communication::session::Berth;
 
 use super::Fail;
 use super::frame::{self, BACK, State};
+use env::wire::Span as _;
 
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
 /// （frame::ASK_MARK）

@@ -8,6 +8,7 @@ use runtime::core::res::port;
 use runtime::env::{mail::{self, HolePie}, unit};
 
 use crate::system::control::{BOOT_MS, Control};
+use env::wire::Span as _;
 
 pub struct Activation {
     hub: TaskId,
@@ -26,7 +27,7 @@ impl Activation {
     pub fn poll(&self, control: &Control) {
         let mut bytes = [0; runtime::PAGE_SIZE];
         while let Ok((len, from)) = HolePie::from_token(self.entry).pull(&mut bytes, Wait::POLL) {
-            let Some(ask) = Activate::fetch(&bytes[..len]) else {
+            let Some(ask) = Activate::fetch_at(&bytes[..len], 0).map(|one| one.0) else {
                 continue;
             };
             if !matches!(mail::reserve(ask.back), Ok((_, owner, mark))
@@ -82,6 +83,6 @@ pub fn activate(task: TaskId, coalition: CoalitionId) -> Result<(), ()> {
     let mut bytes = [0; Said::LEN];
     let (n, from) = HolePie::from_token(back).pull(&mut bytes, Wait::AtMost(BOOT_MS))
         .map_err(|_| ())?;
-    let said = Said::fetch(&bytes[..n]).ok_or(())?;
+    let said = Said::fetch_at(&bytes[..n], 0).map(|one| one.0).ok_or(())?;
     (from == sire && said.status == hub::OK).then_some(()).ok_or(())
 }

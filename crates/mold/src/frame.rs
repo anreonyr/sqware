@@ -1,5 +1,5 @@
-//! `#[derive(Frame)]` —— **帧**那一族的一处定义：给一枚具名字段的结构体，生成 `LEN` ＋
-//! `store_at` / `fetch` / `fetch_at`（**结构体归你写**——它本就是那张字段表）。
+//! `#[derive(Frame)]` —— **帧**那一族的一处定义：给一枚具名字段的结构体，生成 `pub const LEN`
+//! 与 `impl env::wire::Span`（**结构体归你写**——它本就是那张字段表）。
 //!
 //! ```ignore
 //! #[derive(env::Frame)]
@@ -13,9 +13,15 @@
 //!
 //! 生成的东西**一眼看得完**（没有隐藏机制）：`pub const LEN`（**最长那一形**：各格的
 //! [`env::wire::Span::MAX`] 求和，一段重复按 `MAX × 条数`；**有格不报上界时**由族写
-//! `#[frame(len = …)]` 给）、
-//! `store_at(&self, &mut [u8], at) -> Option<usize>`、
-//! `fetch(&[u8]) -> Option<Self>`、`fetch_at(&[u8], at) -> Option<(Self, usize)>`。
+//! `#[frame(len = …)]` 给），与一条 `impl Span`：`MAX = Some(LEN)`、
+//! `store_at(&self, &mut [u8], at) -> Option<usize>`、`fetch_at(&[u8], at) -> Option<(Self, usize)>`。
+//!
+//! **结构体就是那一格**：两只手各只有一处正文（固有那一份不另立），故它可直接当另一张字段表
+//! 里的一格——不必再手写一只 `impl Field` 把固有手转进 `Span`。带参数的结构体也吃：
+//! 两个 `impl` 照抄它的参数与 `where` 子句（如 `struct PageFrame<T: PageId>`：泛型帧也是帧）。
+//! **改这一处的产物 = 全仓调用点跟着动**：调用点写的是 `x.store_at(..)` / `X::fetch_at(..)`，
+//! 那些手如今是 `Span` 的两只（不是固有手），故每个这么用的文件都要有一句
+//! `use env::wire::Span as _;`（control / line / operator / hub / identity / rtc 六族都如此）。
 //!
 //! **偏移一处都不写**——两半由**同一张字段表**生成，故"同一条长度写两处、改一处漏一处
 //! **编得过**"那个病**写不出来**（协调那一帧栽的正是它：那边写着"靠注释说必须同值"）。
@@ -36,7 +42,7 @@ use proc_macro2::{Ident, Span, TokenStream};
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, parse2};
 
-/// 给一枚具名字段的结构体生成：`LEN` ＋ `store` / `store_at` / `fetch` / `fetch_at`。
+/// 给一枚具名字段的结构体生成 `pub const LEN` ＋ `impl env::wire::Span`。
 /// 展开见文件头。
 ///
 /// **生成的路径是 `::env::wire::Span`**（过程宏没有 `$crate`）：故调用方的 extern prelude
@@ -62,15 +68,9 @@ pub fn expand(input: TokenStream) -> TokenStream {
     if named.named.is_empty() {
         return syn::Error::new_spanned(&ast, "一张字段表至少要有一格").to_compile_error();
     }
-    // 参数那一格**没有对应物**：生成的 `impl` 不转发 `generics`，放过去只会换来一句
-    // `missing generics for struct`——在这里当场报。
-    if !ast.generics.params.is_empty() || ast.generics.where_clause.is_some() {
-        return syn::Error::new_spanned(
-            &ast.generics,
-            "`Frame` 不支持带参数的结构体：帧的字段表没有参数那一格",
-        )
-        .to_compile_error();
-    }
+    // 参数那一格**由结构体自己给**：两个 `impl` 照抄它的参数与 `where` 子句。字段表里出现的
+    // 参数所带的上界（如 `T: PageId`）也归那枚结构体说——derive 不替它猜。
+    let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
 
     let mut idents = Vec::new();
     let mut maxes = Vec::new();
@@ -184,8 +184,14 @@ pub fn expand(input: TokenStream) -> TokenStream {
     };
 
     quote! {
-        impl #name {
+        impl #impl_generics #name #ty_generics #where_clause {
             #len_def
+        }
+
+        /// **这一枚结构体就是过线的那一格**：`MAX` 就是 `LEN`（最长那一形），两只手各只有
+        /// 一处正文——故它可以直接当另一张字段表里的一格，不必再手写一层桥。
+        impl #impl_generics ::env::wire::Span for #name #ty_generics #where_clause {
+            const MAX: Option<usize> = Some(Self::LEN);
 
             /// 从游标 `at` 写起，返**实际长度**（装不下 ⇒ `None`）。
             ///
@@ -193,21 +199,16 @@ pub fn expand(input: TokenStream) -> TokenStream {
             ///
             /// **（装不下时前面几格可能已经写了）**：逐格写、边写边判，故 `None` 不保证
             /// "一支笔都没落"。写不进去本来不是正常路径（各族的缓冲按 `LEN` 开）。
-            pub fn store_at(&self, out: &mut [u8], mut #at: usize) -> Option<usize> {
+            fn store_at(&self, out: &mut [u8], mut #at: usize) -> Option<usize> {
                 #(#stores)*
                 let _ = #at;
                 Some(#at)
             }
 
-            /// 从 `bytes` 头上读回来；**长度不足** ⇒ `None`（不猜、不崩）。
+            /// 从游标 `at` 读起，返**值与读完之后的游标**；**长度不足** ⇒ `None`（不猜、不崩）。
             ///
             /// **它不判尾部长度**——"恰好"还是"够长"是各族的判据（见各族的 `Message::fetch`）。
-            pub fn fetch(bytes: &[u8]) -> Option<Self> {
-                Self::fetch_at(bytes, 0).map(|#one| #one.0)
-            }
-
-            /// 从游标 `at` 读起，返**值与读完之后的游标**。
-            pub fn fetch_at(bytes: &[u8], mut #at: usize) -> Option<(Self, usize)> {
+            fn fetch_at(bytes: &[u8], mut #at: usize) -> Option<(Self, usize)> {
                 #(#fetches)*
                 let _ = #at;
                 Some((Self { #(#idents),* }, #at))

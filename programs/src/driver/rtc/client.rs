@@ -15,6 +15,7 @@ use runtime::env::mail::{self, HolePie};
 
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
+use env::wire::Span as _;
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）

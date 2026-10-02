@@ -33,26 +33,6 @@ struct IdFrame {
     authority: Task,
     slot: u64,
 }
-impl Field for IdFrame {
-    const WIDTH: usize = Self::LEN;
-    fn store(&self, out: &mut [u8]) { let _ = self.store_at(out, 0); }
-    fn fetch(bytes: &[u8]) -> Option<Self> { Self::fetch(bytes) }
-}
-macro_rules! ids {
-    ($($id:ident),+) => {$(
-        impl Span for $id {
-            const MAX: Option<usize> = Some(IdFrame::LEN);
-            fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
-                IdFrame { authority: Task::new(self.authority)?, slot: self.slot }.store_at(out, at)
-            }
-            fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
-                let (frame, at) = IdFrame::fetch_at(bytes, at)?;
-                Some((Self { authority: frame.authority.0, slot: frame.slot }, at))
-            }
-        }
-    )+};
-}
-ids!(PrincipalId, CoalitionId);
 
 #[derive(env::Frame)]
 struct SelectorFrame {
@@ -187,30 +167,28 @@ impl<T: Span> Span for Optional<T> {
     }
 }
 
-macro_rules! pages {
-    ($($frame:ident: $id:ident),+) => {$(
-        #[derive(env::Frame)]
-        struct $frame {
-            count: u8,
-            #[frame(count = count, fill = $id::EMPTY)]
-            ids: [$id; MAX_PAGE_ITEMS],
-            next: Optional<Cursor>,
-        }
-        impl Span for Page<$id> {
-            const MAX: Option<usize> = Some($frame::LEN);
-            fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
-                let mut ids = [$id::EMPTY; MAX_PAGE_ITEMS];
-                ids[..self.len()].copy_from_slice(self.as_slice());
-                $frame { count: self.len() as u8, ids, next: Optional(self.next()) }.store_at(out, at)
-            }
-            fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
-                let (frame, at) = $frame::fetch_at(bytes, at)?;
-                Some((Self::new(&frame.ids[..frame.count as usize], frame.next.0).ok()?, at))
-            }
-        }
-    )+};
+/// **一页的字段表**：一条轴一份（`PrincipalId` 那一向、`CoalitionId` 那一向同形），故它泛在
+/// 那枚 id 上——`ids` 那一格的元素类型就是参数，`fill` 取那一枚 id 自己的空位。
+#[derive(env::Frame)]
+struct PageFrame<T: PageId> {
+    count: u8,
+    #[frame(count = count, fill = T::EMPTY)]
+    ids: [T; MAX_PAGE_ITEMS],
+    next: Optional<Cursor>,
 }
-pages!(MembersFrame: PrincipalId, MembershipsFrame: CoalitionId);
+
+impl<T: PageId> Span for Page<T> {
+    const MAX: Option<usize> = Some(PageFrame::<T>::LEN);
+    fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
+        let mut ids = [T::EMPTY; MAX_PAGE_ITEMS];
+        ids[..self.len()].copy_from_slice(self.as_slice());
+        PageFrame { count: self.len() as u8, ids, next: Optional(self.next()) }.store_at(out, at)
+    }
+    fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
+        let (frame, at) = <PageFrame<T> as Span>::fetch_at(bytes, at)?;
+        Some((Self::new(&frame.ids[..frame.count as usize], frame.next.0).ok()?, at))
+    }
+}
 
 impl Field for Match {
     const WIDTH: usize = u8::WIDTH;

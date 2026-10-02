@@ -9,6 +9,7 @@ use env::{Pair, PieToken};
 use crate::wire::message::Message;
 
 pub use crate::wire::OK;
+use env::wire::Span as _;
 
 pub mod bond;
 pub mod claim;

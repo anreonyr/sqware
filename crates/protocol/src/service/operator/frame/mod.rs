@@ -7,6 +7,7 @@ use crate::common::path::PathBuf;
 
 use crate::wire::id::Id as _;
 use crate::wire::message::Message;
+use env::wire::Span as _;
 
 pub mod road;
 pub mod tip;
@@ -140,7 +141,7 @@ impl Message for Req {
                 }
                 Wire::Road(frame.road)
             }
-            LIST if bytes.len() == List::LEN => Wire::List(List::fetch(bytes)?.at),
+            LIST if bytes.len() == List::LEN => Wire::List(List::fetch_at(bytes, 0)?.0.at),
             // 这两形含一枚变长名字 ⇒ **"恰好"按游标判**（帧长不再等于那张表的 `LEN`）。
             PART => {
                 let (frame, end) = Part::fetch_at(bytes, 0)?;
@@ -166,7 +167,7 @@ impl Message for Req {
                 }
             }
             FIND | TRIM | NAME if bytes.len() == Entry::LEN => {
-                let id = Entry::fetch(bytes)?.id;
+                let id = Entry::fetch_at(bytes, 0)?.0.id;
                 match op {
                     FIND => Wire::Find(id),
                     TRIM => Wire::Trim(id),

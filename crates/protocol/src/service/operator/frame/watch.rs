@@ -20,6 +20,7 @@ use crate::common::path::{Path, PathBuf};
 use crate::wire::message::Message;
 
 use super::vocab::EntryId;
+use env::wire::Span as _;
 
 /// 一次改动是**哪一种**。三个"真动了树"的下场 ＋ 一个"只改了归属"的下场（换绑不动号）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

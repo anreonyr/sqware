@@ -1,5 +1,6 @@
 use super::super::limits::{MAX_ACTIVE_COALITIONS, MAX_PAGE_ITEMS};
 use env::TaskId;
+use env::wire::Span;
 
 pub use crate::wire::OK;
 
@@ -77,7 +78,7 @@ pub enum Reply {
     Fail(Fail),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, env::Frame)]
 pub struct PrincipalId {
     pub authority: TaskId,
     pub slot: u64,
@@ -90,7 +91,7 @@ impl PrincipalId {
         Self { authority, slot: 0 }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, env::Frame)]
 pub struct CoalitionId {
     pub authority: TaskId,
     pub slot: u64,
@@ -252,7 +253,8 @@ pub struct Cursor {
     pub after: u64,
 }
 
-pub trait PageId: Copy + Ord + core::fmt::Debug + Eq {
+/// **一条 id 轴**：每枚 id 自己就是过线的一格（`Span`），故一页的字段表可以泛在一枚 id 上。
+pub trait PageId: Span + Copy + Ord + core::fmt::Debug + Eq {
     const EMPTY: Self;
     fn authority(self) -> TaskId;
     fn slot(self) -> u64;

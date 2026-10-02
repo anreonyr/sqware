@@ -2,6 +2,7 @@
 #![no_main]
 extern crate alloc;
 extern crate programs;
+use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use protocol::communication::session::{Session, establish};

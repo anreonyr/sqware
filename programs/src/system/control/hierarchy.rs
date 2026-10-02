@@ -6,6 +6,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use env::wire::Span as _;
 use env::{PieToken, TaskId, TeamId, Wait};
 use protocol::common::path::{Path, PathBuf};
 use protocol::communication::session::establish;

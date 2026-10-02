@@ -6,6 +6,7 @@ use env::wire::Field;
 
 use crate::common::path::{Path, PathBuf};
 use super::{EntryId, Permit};
+use env::wire::Span as _;
 
 /// Bootstrap acknowledgements are separate from ordinary Operator sessions.
 pub const TIP_BACK: env::Mark = env::Mark::of("operator-tip-back");
@@ -198,10 +199,10 @@ impl TipIn {
                     back: PieToken::fetch(&bytes[1 + EntryId::WIDTH..])? })
             }
             TIP_GUEST if bytes.len() == GuestFrame::LEN => {
-                Some(TipIn::Guest(GuestFrame::fetch(bytes)?.who))
+                Some(TipIn::Guest(GuestFrame::fetch_at(bytes, 0)?.0.who))
             }
             TIP_WIRED if bytes.len() == WiredFrame::LEN => {
-                let frame = WiredFrame::fetch(bytes)?;
+                let frame = WiredFrame::fetch_at(bytes, 0)?.0;
                 Some(TipIn::Wired {
                     authority: frame.authority,
                     resolve: frame.resolve,
