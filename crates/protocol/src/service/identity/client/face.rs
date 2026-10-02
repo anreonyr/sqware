@@ -1,5 +1,5 @@
 //! One validated authority-owned entry and its one-shot reply transport.
-use super::super::{BACK, Fail, Grant, Reply, Wire};
+use super::super::{BACK, DIR, Fail, Grant, Reply, Wire};
 use crate::{
     communication::{
         hand::{Receiver, RecvFail, Sender},
@@ -49,8 +49,9 @@ impl Face {
         grant: Grant,
         wait: Wait,
     ) -> Result<Self, CallError> {
+        let road = DIR.try_join(grant.name()).ok_or(CallError::Discovery)?;
         let tile = operator
-            .tile(crate::service::operator::Path::new(grant.path()), wait)
+            .tile(&road, wait)
             .map_err(|_| CallError::Discovery)?;
         let entry = tile.token(wait).map_err(|_| CallError::Discovery)?;
         Self::direct(authority, grant, entry)

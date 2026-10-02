@@ -3,7 +3,7 @@
 
 use super::frame::Wire;
 
-crate::faces! {
+crate::table! {
 /// **一条权柄边界**：一枚 = 一面。四位，位次 1..=4
     pub enum Grant {
 /// **问**：这一条此刻处于哪个阶段（`State`）——只读，不动机器一根手指

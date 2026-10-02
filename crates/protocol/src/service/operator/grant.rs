@@ -3,7 +3,7 @@
 
 use super::frame::Wire;
 
-crate::faces! {
+crate::table! {
 /// **一柄授面的权**：一枚 = 一枚操作。八位，位次 1..=8
     pub enum Grant {
 /// `part` 分

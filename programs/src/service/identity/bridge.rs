@@ -181,8 +181,8 @@ pub(crate) fn install(
             protocol::service::identity::Mount::Installer =>
                 Permit::Identity(protocol::service::identity::Selector::Exact(control)),
         };
-        let road = protocol::common::path::Path::new(grant.path());
-        control_state.hierarchy.borrow_mut().internal(tree, road, face(grant)?, permit, authority, Some(authority))?;
+        let road = protocol::service::identity::DIR.try_join(grant.name()).ok_or("identity face path")?;
+        control_state.hierarchy.borrow_mut().internal(tree, road.as_path(), face(grant)?, permit, authority, Some(authority))?;
     }
     control_state.roster = Roster {
         installer: Some(installer), control: Some(control), resolve: Some(face(Grant::Resolve)?),

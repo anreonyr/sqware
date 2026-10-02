@@ -1,4 +1,5 @@
-//! The only action/face/mark/path/mount table. No action shares an entrance.
+//! The only action/face/mark/mount table. No action shares an entrance.
+//! **位次即动作码**（第 i 行 ⇒ 第 i 号：`table!` 的 `at()` 就是它）——故这里不写第二个数。
 use super::frame::Wire;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,7 +10,7 @@ pub enum Mount {
 }
 
 macro_rules! entrances {
-    ($($variant:ident = $code:literal, $name:literal, $mount:ident, ($pattern:pat);)+) => {
+    ($($variant:ident, $name:literal, $mount:ident, ($pattern:pat);)+) => {
         crate::table! {
             pub enum Grant { $($variant => $name, ($pattern);)+ }
             stem: "identity-",
@@ -17,28 +18,26 @@ macro_rules! entrances {
             wire_ty: Wire,
         }
         impl Grant {
-            pub const fn path(self) -> &'static str { match self { $(Self::$variant => concat!("/svc/sys/identity/", $name),)+ } }
             pub const fn mount(self) -> Mount { match self { $(Self::$variant => Mount::$mount,)+ } }
         }
-        const _: () = { $(assert!(Grant::$variant.action() == $code);)+ };
     }
 }
 entrances! {
-    Resolve = 1, "resolve", Public, (Wire::Resolve(_));
-    Matches = 2, "matches", Public, (Wire::Matches(..));
-    Same = 3, "same", Public, (Wire::Same(..));
-    Sire = 4, "sire", Public, (Wire::Sire(_));
-    Heir = 5, "heir", Public, (Wire::Heir(..));
-    Amid = 6, "amid", Public, (Wire::Amid(..));
-    Members = 7, "members", Public, (Wire::Members(..));
-    Memberships = 8, "memberships", Public, (Wire::Memberships(..));
-    Adopt = 9, "adopt", Bound, (Wire::Adopt(_));
-    Waive = 10, "waive", Bound, (Wire::Waive);
-    Restrict = 11, "restrict", Bound, (Wire::Restrict(_));
-    Derive = 12, "derive", Bound, (Wire::Derive(_));
-    Found = 13, "found", Bound, (Wire::Found);
-    Admit = 14, "admit", Bound, (Wire::Admit(..));
-    Expel = 15, "expel", Bound, (Wire::Expel(..));
-    Bind = 16, "bind", Installer, (Wire::Bind(..));
-    Unbind = 17, "unbind", Installer, (Wire::Unbind(_));
+    Resolve, "resolve", Public, (Wire::Resolve(_));
+    Matches, "matches", Public, (Wire::Matches(..));
+    Same, "same", Public, (Wire::Same(..));
+    Sire, "sire", Public, (Wire::Sire(_));
+    Heir, "heir", Public, (Wire::Heir(..));
+    Amid, "amid", Public, (Wire::Amid(..));
+    Members, "members", Public, (Wire::Members(..));
+    Memberships, "memberships", Public, (Wire::Memberships(..));
+    Adopt, "adopt", Bound, (Wire::Adopt(_));
+    Waive, "waive", Bound, (Wire::Waive);
+    Restrict, "restrict", Bound, (Wire::Restrict(_));
+    Derive, "derive", Bound, (Wire::Derive(_));
+    Found, "found", Bound, (Wire::Found);
+    Admit, "admit", Bound, (Wire::Admit(..));
+    Expel, "expel", Bound, (Wire::Expel(..));
+    Bind, "bind", Installer, (Wire::Bind(..));
+    Unbind, "unbind", Installer, (Wire::Unbind(_));
 }

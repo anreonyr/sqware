@@ -26,7 +26,7 @@ const _: () = {
         let a = fams[f];
         let mut i = 0;
         while i < a.len() {
-            // 一、与**后面**各族的面（本族内部那一条由 `faces!` 自己判）。
+            // 一、与**后面**各族的面（本族内部那一条由 `table!` 自己判）。
             let mut g = f + 1;
             while g < fams.len() {
                 let b = fams[g];

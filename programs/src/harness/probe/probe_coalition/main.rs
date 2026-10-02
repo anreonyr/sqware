@@ -48,8 +48,8 @@ fn main() -> Report<'static> {
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in icall::Grant::ALL {
         let entry = if grant.mount() == icall::Mount::Installer {
-            let road = Path::new(grant.path());
-            assert_eq!(tree.tile(road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
+            let road = icall::DIR.try_join(grant.name()).expect("probe-coalition: bad face name");
+            assert_eq!(tree.tile(&road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
                 Err(protocol::service::operator::Fail::Denied),
                 "installer discovery must deny an ordinary principal");
             let entry = protocol::communication::session::establish::find(authority, grant.mark())

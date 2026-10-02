@@ -278,7 +278,8 @@ mod tests {
             assert_eq!(g.at(), (i + 1) as u8);
             assert_eq!(g.mark(), env::Mark::of(&format!("identity-{}", g.name())));
             assert_eq!(Grant::from_action(g.action()), Some(g));
-            assert!(g.path().ends_with(g.name()));
+            // 面名要**恰好一段**：门牌那条路由 `DIR.try_join(g.name())` 拼出，名字里带 `/` 或多出一段都不认。
+            assert!(!g.name().is_empty() && !g.name().contains('/'));
             assert_ne!(g.mark(), BACK);
             for other in Grant::ALL {
                 if g != other {
