@@ -12,7 +12,8 @@ use runtime::env::mail::HolePie;
 pub struct Sender<M: Message> {
     /// 写端那一枚（`None` = 还没有）
     hole: Option<PieToken>,
-    /// 编报那一格：地址在整个借用期里不动（见文件头③）。**只服务 [`Sender::send`] 那一档**。
+    /// 编报那一格（内联）。**推出去的那一刻内核就抄了一份**（`mail::copy_in`）⇒ 那一手的寿命
+    /// 与本结构再无关：可以随便复用、随便搬家，[`Drop`] 也不需要等任何人。
     buf: M::Buf,
     /// **我还排着几只**（孔那头说的数：`Peek` 的第三格）。
     ///
@@ -53,12 +54,13 @@ impl<M: Message> Sender<M> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);
         };
-        // **自己带一格缓冲 ⇒ 一次只能有一只手下线**：先把它收回（队列空），再编、再推。
-        self.reclaim().map_err(|e| SendFail::Mail(e.source))?;
-        let Some(n) = msg.store(self.buf.as_mut()) else {
+        // **不再先收口**：内核在推的那一刻就把这一段抄走了（见 `buf` 那一格），故本缓冲可以
+        // 立刻复用；孔上那一列满了会答 `Busy`（`QUEUE_CAP` 就是背压），调用方自己决定重试。
+        let out: &mut [u8] = AsMut::<[u8]>::as_mut(&mut self.buf);
+        let Some(n) = msg.store(out) else {
             return Err(SendFail::TooLong);
         };
-        let bytes = self.buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
+        let bytes = out.get(..n).ok_or(SendFail::TooLong)?;
         HolePie::from_token(hole)
             .push(bytes, Wait::POLL)
             .map_err(|e| SendFail::Mail(e.source))?;
@@ -113,7 +115,30 @@ impl<M: Message> Sender<M> {
         if self.outstanding == 0 {
             return Ok(());
         }
+        // **（临时读数）这一趟"等人取走"等了多久**：本层**唯一没有期限的等**就在这一句上，
+        // 而 [`Sender::send`] 每次推之前必须先过它（"上一手还没下线，就推不出下一手"）——
+        // 于是一位慢读者能把**这一枚线程后面的所有活**堵住（量到的原文：编排域一位客人
+        // 的答话等了 1990 ms，同一窗口里它后面五位客人的问话全压在孔上；见 F3 那一档）。
+        // 报：孔号 ＋ **主人**（欠取的那一位）＋ **等的这一位**（`self_id`）＋ 毫秒。≥100 ms 才报。
+        let t0 = runtime::env::chrono::clock();
         let r = HolePie::from_token(hole).wait(HoleDir::Push, Wait::Forever);
+        let ms = (runtime::env::chrono::clock().saturating_sub(t0) / 1_000_000) as usize;
+        if ms >= 100 {
+            static N: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, core::sync::atomic::Ordering::Relaxed) < 40 {
+                let owner = runtime::env::mail::reserve(hole)
+                    .map(|(_, owner, _)| owner.get())
+                    .unwrap_or(0);
+                crate::debug::put(&alloc::format!(
+                    "hand: reclaim slow tok#{} owner={} me={} ms={} ok={}",
+                    hole.get(),
+                    owner,
+                    runtime::env::unit::self_id().get(),
+                    ms,
+                    r.is_ok()
+                ));
+            }
+        }
         if let Err(e) = &r {
             crate::debug!(
                 "mail: reclaim miss hole={} code={}",
@@ -152,11 +177,8 @@ impl<M: Message> Default for Sender<M> {
 /// **借出去的那一段不等**（[`Sender::send_bytes`]）：它的寿命归调用方，内核取走之前是调用方
 /// 的事——落出作用域就等一句"队列空"，会把写端挂在慢读者身上（树那一侧不能被订户挂住）。
 impl<M: Message> Drop for Sender<M> {
-    fn drop(&mut self) {
-        if self.own && self.outstanding > 0 {
-            let _ = self.reclaim();
-        }
-    }
+    /// **什么都不用做**：字节是内核那一份，本结构没有"还欠着"的东西——不必等、不会漏。
+    fn drop(&mut self) {}
 }
 
 /// 递不出去：两层**分得开**

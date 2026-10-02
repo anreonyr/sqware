@@ -64,7 +64,21 @@ pub fn serve(
                     plic.enable(line, LINE_PRIORITY);
                     // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `exhaust`）。
                     if let Some(lane) = lines.lane(line) {
-                        let _ = pile.attach(&HolePie::from_token(lane.rx()), HoleDir::Pull);
+                        let ok = pile
+                            .attach(&HolePie::from_token(lane.rx()), HoleDir::Pull)
+                            .is_ok();
+                        // **（临时读数）本端把"客人排空那一枚"挂进组了没有**：`ok=false` = 这一挂
+                        // **没成**（`forward` 失败即回滚 ⇒ 那一格上的摇再也敲不到本域，客人排空那句
+                        // 就石沉大海）。`tok` 是门闩号（不是内核孔号）——与 `hand: …` 那一路对号用。
+                        // 前 40 次（一条线登记一次；重登记也走这里）。
+                        static N: ::core::sync::atomic::AtomicUsize =
+                            ::core::sync::atomic::AtomicUsize::new(0);
+                        if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 40 {
+                            protocol::debug::put(&alloc::format!(
+                                "router: attach line={line} tok={} ok={ok}",
+                                lane.rx().get()
+                            ));
+                        }
                     }
                     debug!("router: line {line} occupied");
                     lcall::OK

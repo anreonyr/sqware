@@ -1,10 +1,12 @@
 pub(super) mod holder;
 pub(super) mod site;
 
+use core::sync::atomic::{AtomicUsize, Ordering};
 use alloc::sync::{Arc, Weak};
 use core::time::Duration;
 
 use crate::memory::manager::asid::Asid;
+use env::HoleDir;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
@@ -136,11 +138,63 @@ fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
         trace::note(EventKind::Room(RoomEvent::Wake {
             tid: t.ident.id.get(),
         }));
+        kicklog::note(t.ident.id.get());
         kick(conductor::pick(), t);
         woke += 1;
     }
     woke
 }
+
+/// **（临时诊断）"踢出去"与"真跑起来"之间的那一格**：`rise`（唤醒唯一那一手）记一笔时刻，
+/// 任务下一次进内核（`envcall/tole.rs::await_` 开头）对号读回来。
+///
+/// 为什么要有它：`wake`/`knock` 把车从站点上摘下来之后，到它真的在 hart 上跑起来之间还有一段
+/// 完全看不见的路（`kick` → 运行队列 → 调度挑中 → 切上下文）。一个组等了几秒才回话，
+/// **"这一敲根本没来"与"来了、可它几秒后才被跑"是两种病**，只有这一格分得开。
+///
+/// 只留 8 格环形（够对号用），全是 `Relaxed` 原子：**热路上不加锁**。
+pub(crate) mod kicklog {
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    use crate::runtime::chrono::clock;
+
+    const N: usize = 8;
+    static ID: [AtomicUsize; N] = [const { AtomicUsize::new(0) }; N];
+    static AT: [AtomicUsize; N] = [const { AtomicUsize::new(0) }; N];
+    static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+    /// 记一笔"刚把这一位踢上运行队列"。
+    pub(crate) fn note(id: usize) {
+        if id == 0 {
+            return;
+        }
+        let i = NEXT.fetch_add(1, Ordering::Relaxed) % N;
+        AT[i].store(clock::uptime_ticks() as usize, Ordering::Relaxed);
+        ID[i].store(id, Ordering::Relaxed);
+    }
+
+    /// 这一位最近一次被踢之后过了多少毫秒（没记到 ⇒ `None`）。
+    pub(crate) fn lag_ms(id: usize) -> Option<usize> {
+        let now = clock::uptime_ticks();
+        let mut best: Option<usize> = None;
+        for i in 0..N {
+            if ID[i].load(Ordering::Relaxed) != id {
+                continue;
+            }
+            let at = AT[i].load(Ordering::Relaxed) as u64;
+            if at == 0 {
+                continue;
+            }
+            let ms = clock::ticks_to_duration(now.wrapping_sub(at)).as_millis() as usize;
+            if best.map_or(true, |b| ms < b) {
+                best = Some(ms);
+            }
+        }
+        best
+    }
+}
+
+pub(crate) use kicklog::lag_ms as kick_lag;
 
 struct Unchain {
     cur: Option<Arc<Task>>,
@@ -235,6 +289,27 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     };
     let chain = match chain {
         Some(site) => {
+            // **（临时读数）这一格是被"抹"掉的**（孔封印/组收场）：`fwd` 是**抹掉时**还挂着的
+            // 组数——被抹的那一枚若还有人挂，那几位从此再也收不到这一格的唤醒。**带挂的必打**
+            // （封顶 200），空的那种只打前 40 次。
+            let n_fwd = site.fwd.entries().count();
+            let said = if n_fwd > 0 {
+                static HOT: AtomicUsize = AtomicUsize::new(0);
+                HOT.fetch_add(1, Ordering::Relaxed) < 200
+            } else {
+                static COLD: AtomicUsize = AtomicUsize::new(0);
+                COLD.fetch_add(1, Ordering::Relaxed) < 40
+            };
+            if said {
+                let (id, kind) = site::label(key);
+                crate::putln!(
+                    "site: wipe key={} kind={} fwd={} head={}",
+                    id,
+                    kind,
+                    n_fwd,
+                    site.head.is_some()
+                );
+            }
             for (id, life) in site.fwd.entries() {
                 knock(WakeKey::Tole { id }, life);
             }
@@ -245,8 +320,26 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
     rise(Unchain { cur: chain })
 }
 
+/// **（临时读数）组那一侧的敲落点**：`KNOCK_N` = 敲了几次，`KNOCK_POP` = 其中**摘下了车**的几次。
+///
+/// 为什么要它：`ring`/`give` 报的那一行要与"这一敲到底算不算数"分开——**`pop` 为 0** ⇒
+/// 目标组当时**不在这一格上停着**（站点不在/空着 ⇒ 只立了一枚位），`pop` 为 1 ⇒ 车摘下来、
+/// 已 `kick`（此后若还没跑，账就在调度那一侧）。读数由**摇的一方**当场读（被敲的一方若再也
+/// 不跑，它自己报不了），故这两格必须是全局计数。
+static KNOCK_N: AtomicUsize = AtomicUsize::new(0);
+static KNOCK_POP: AtomicUsize = AtomicUsize::new(0);
+
+/// 读这两格（取差值用）。
+pub(crate) fn knock_stats() -> (usize, usize) {
+    (
+        KNOCK_N.load(Ordering::Relaxed),
+        KNOCK_POP.load(Ordering::Relaxed),
+    )
+}
+
 pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
-    let chain = {
+    KNOCK_N.fetch_add(1, Ordering::Relaxed);
+    let (chain, popped) = {
         let mut sites = sites(key).lock();
         let chain = match sites.get_mut(&key) {
             Some(site) => {
@@ -258,18 +351,44 @@ pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
                 chain
             }
             None => {
-                if !Life::dead(life) && sites.try_reserve(1).is_ok() {
+                // **（临时读数）这一敲**被丢**了没有**：站点不存在时，只有"这个组还活着 ＋ 备得下
+                // 一格"才立得出站点（`pend=true` ⇒ 那一位下次进门当场就复扫一遍）。两条都不成立
+                // ⇒ 这一敲**静默消失**——"该叫没叫"最硬的一条原文，故第一次就报一行。
+                let dead = Life::dead(life);
+                if !dead && sites.try_reserve(1).is_ok() {
                     let mut site = Site::new(life);
                     site.pend = true;
                     sites.insert(key, site);
+                } else {
+                    static N: AtomicUsize = AtomicUsize::new(0);
+                    let n = N.fetch_add(1, Ordering::Relaxed);
+                    if n < 20 {
+                        crate::putln!(
+                            "knock dropped key={} dead={} (no site, no reserve)",
+                            key.fold(),
+                            dead
+                        );
+                    }
                 }
                 None
             }
         };
+        let popped = chain.is_some();
         prune(&mut sites, key);
-        chain
+        (chain, popped)
     };
-    rise(Unchain { cur: chain })
+    if popped {
+        KNOCK_POP.fetch_add(1, Ordering::Relaxed);
+    }
+    let woken = rise(Unchain { cur: chain });
+    // **（临时读数）组这一侧到底醒了几个人**：0 = "knock 到了，可这一组没有停着的车"。
+    if let WakeKey::Tole { id } = key {
+        static N: AtomicUsize = AtomicUsize::new(0);
+        if N.fetch_add(1, Ordering::Relaxed) < 40 {
+            crate::putln!("knock tole#{} woken={}", id, woken);
+        }
+    }
+    woken
 }
 
 pub(crate) fn forward(
@@ -279,12 +398,37 @@ pub(crate) fn forward(
     tole_life: Weak<Life>,
 ) -> Result<(), ()> {
     let mut sites = sites(key).lock();
-    if !sites.contains_key(&key) {
+    let fresh = !sites.contains_key(&key);
+    let was = sites.get(&key).map_or(0, |s| s.fwd.entries().count());
+    if fresh {
         sites.try_reserve(1).map_err(|_| ())?;
         sites.insert(key, Site::new(&life));
     }
     let site = sites.get_mut(&key).ok_or(())?;
     let r = site.fwd.attach(tole, tole_life);
+    // **（临时读数）哪一组挂上了哪一格**：`fresh=1` = 这一格**刚从空站点立起来**（站点被摘过
+    // 之后又来挂，就会看到这一格）——"转发是不是被摘过"在这一行上直接可判。`fresh` 或失败
+    // **必打**（封顶 200），其余只打前 40 次。
+    let said = if fresh || r.is_err() {
+        static HOT: AtomicUsize = AtomicUsize::new(0);
+        HOT.fetch_add(1, Ordering::Relaxed) < 200
+    } else {
+        static COLD: AtomicUsize = AtomicUsize::new(0);
+        COLD.fetch_add(1, Ordering::Relaxed) < 40
+    };
+    if said {
+        let (id, kind) = site::label(key);
+        crate::putln!(
+            "site: forward key={} kind={} tole={} fresh={} was={} now={} ok={}",
+            id,
+            kind,
+            tole,
+            fresh,
+            was,
+            site.fwd.entries().count(),
+            r.is_ok()
+        );
+    }
     prune(&mut sites, key);
     r
 }
@@ -292,7 +436,30 @@ pub(crate) fn forward(
 pub(crate) fn unforward(key: WakeKey, tole: usize) {
     let mut sites = sites(key).lock();
     if let Some(site) = sites.get_mut(&key) {
+        let before = site.fwd.entries().count();
         site.fwd.detach(tole);
+        // **（临时读数）哪一格把**哪一组**摘了、摘完还剩几组**：`left=0` 就是"这一格的转发空了"
+        // ——此后这一格上的摇再也敲不到任何组（那个组只在**又一次 attach** 时才会回来）。
+        // `was>0`（真摘掉了一条转发）**必打**、封顶 200；其余只打前 40 次。
+        let left = site.fwd.entries().count();
+        let said = if before > 0 {
+            static HOT: AtomicUsize = AtomicUsize::new(0);
+            HOT.fetch_add(1, Ordering::Relaxed) < 200
+        } else {
+            static COLD: AtomicUsize = AtomicUsize::new(0);
+            COLD.fetch_add(1, Ordering::Relaxed) < 40
+        };
+        if said {
+            let (id, kind) = site::label(key);
+            crate::putln!(
+                "site: unforward key={} kind={} tole={} was={} left={}",
+                id,
+                kind,
+                tole,
+                before,
+                left
+            );
+        }
     }
     prune(&mut sites, key);
 }
@@ -352,6 +519,32 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
             popped
         }
     };
+    // **（临时读数）这一摇带没带转发 / 叫醒了谁**：
+    // · `dir=Pull/Push` —— 两个方向**是两个站点**（`WakeKey::Hole{dir}`），故"投递摇的那一枚"
+    //   与"取空摇的那一枚"在这一行上分得开（`give` 摇 Pull、`take`/`taken` 摇 Push）；
+    // · `fwd != 0` —— 这一格有组在等，下面那圈 knock 会发出去；`first=` 是**第一个组号**
+    //   （与 `unseal tole#… owner=…` 对号 ⇒ "叫的是不是那一位"当场可判）；
+    // · `popped=true` —— 这一摇**直接**叫醒了一个停在这一格上的车（收信那一侧的关键事件）。
+    //
+    // 只打"有组在等"与"真叫醒了人"两种（一场装配里推入几百次，按条数封顶会把关键那几次吃掉）。
+    {
+        let count = fwd.entries().count();
+        if count > 0 || popped.is_some() {
+            let (hole, dir) = match key {
+                WakeKey::Hole { hole, dir } => (hole, dir),
+                _ => (usize::MAX, HoleDir::Pull),
+            };
+            let first = fwd.entries().next().map(|(id, _)| id).unwrap_or(0);
+            crate::putln!(
+                "wake hole#{} dir={:?} popped={} fwd={} first={}",
+                hole,
+                dir,
+                popped.is_some(),
+                count,
+                first
+            );
+        }
+    }
     for (id, life) in fwd.entries() {
         knock(WakeKey::Tole { id }, life);
     }

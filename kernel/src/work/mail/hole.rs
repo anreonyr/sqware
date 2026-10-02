@@ -27,16 +27,20 @@ pub enum HoleState {
     Dead,
 }
 
-/// 孔上**待取之事**：一位写者排下的**那一列手**，或一个已响的位。
+/// 孔上**待取之事**：一位写者排下的**那一列手**，或**那一列位**。
 ///
 /// 手与位写在同一个枚举里（不是两格），故"又有手又有位"写不出来。
 ///
 /// **`Queue` 是一条有界 FIFO**（[`QUEUE_CAP`] 只手）：写者可以连推几只、不必等对侧取走一只；
 /// 读者按先进先出逐只取。`Idle` 与"队列空"是同一件事——空了就回到 `Idle`，不留空壳。
+///
+/// **`Rung(n)` 也是一列**（[`RING_CAP`] 枚）：摇一次积一枚，取一次（`hush`）应一枚，故
+/// "夹在客人自己那一圈里的那一次摇"不再被它自己的 `hush` 吃掉。此前只有一位布尔——**两次
+/// 摇合成一次**（见 `ring` 那一节的历史）。
 enum Pending {
     Idle,
     Queue(Queue),
-    Rung,
+    Rung(usize),
 }
 
 /// 排着的那一列手 ＋ "队头正被取用"那一位。
@@ -54,25 +58,27 @@ struct Queue {
 /// 一只孔上最多排几只（一处常量）。**取 1 就等于改这一形之前的行为**（单槽）。
 const QUEUE_CAP: usize = 4;
 
-/// 递出的那只手：发送方那段内存在孔上的登记。**不含字节**——字节仍躺在发送方那儿，
-/// 取走的那一刻复制**一次**。
+/// 一只孔上最多积几枚位（与手那一列同一口径：满了答 `Busy`，丢不丢留给写者）。
+///
+/// 为什么不像手那样"无限"：位只是一个计数，任人摇 ⇒ 破了的摇者能把计数推到很大，而应它的
+/// 那一方要一圈一圈应完。取 4 ＝ "夹在客人自己那一圈里的那几摇"都存得下，风暴则退化成
+/// 改这一形之前的行为（第二枚起答 `Busy`）。
+const RING_CAP: usize = 4;
+
+/// 递出的那只手：**一段归内核的字节**（`Push` 那一刻从发送方抄进来的那一份）＋ 谁递的。
+/// 取走时**再复制一次**进收方缓冲（两处各一次，与从前"取时从发送方那边抄"是同一次复制，
+/// 只是挪到了推的那一侧）。
 ///
 /// `space` 持**弱**引用：发送方退场时这一格随之作废，且不拖住它那个空间的回收——
 /// "消息随人走"由此成立，不需要另一本账。
 struct Hand {
     from: TaskId,
-    space: Weak<Space>,
-    va: usize,
-    len: usize,
+    /// **内核自己那一格字节**（`Push` 那一刻抄进来的）。于是递出去之后它与发送方再无关系：
+    /// 发送方可以立刻放手、可以退场，取的一方也不必去翻它的页表（见 `Push` 那一节的注）。
+    buf: Arc<[u8]>,
     /// **这一只**落手那一刻（ticks）：队列里排着好几只时，"谁压了多久"由它各自说
     /// （孔上那一格只记得下队头的）。
     at: u64,
-}
-
-impl Hand {
-    fn own(&self) -> Option<(Arc<Space>, usize, usize)> {
-        Some((self.space.upgrade()?, self.va, self.len))
-    }
 }
 
 pub struct HoleMeta {
@@ -83,6 +89,8 @@ pub struct HoleMeta {
     pending: SpinLock<Pending>,
     /// 这一只（**队头**）的中段告警已经打过了没有（一枚孔最多一行）。
     alarmed: AtomicBool,
+    /// **"报不出就绪、又根本没有手"**那一格的告警打过没有（与 `alarmed` 分开：两件事）。
+    stuck: AtomicBool,
 }
 
 impl HoleMeta {
@@ -94,6 +102,7 @@ impl HoleMeta {
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Idle),
             alarmed: AtomicBool::new(false),
+            stuck: AtomicBool::new(false),
         })
     }
 
@@ -113,7 +122,7 @@ impl HoleMeta {
         *self.state.lock() == HoleState::Live
     }
 
-    /// 就绪：`Pull` = **队头**可取（一只手，或一个已响的位）；`Push` = **队列空着**。
+    /// 就绪：`Pull` = **队头**可取（一只手，或**至少一枚位**）；`Push` = **队列空着**。
     ///
     /// 两个方向仍按"一只手"的老口径读——**"有位"不是"空"**：写者要"轮到我"时走
     /// `push(…, Wait::POLL)` 那一档（满了答 `Busy`，见 [`give`]）；要"我的手被取走了"时等的
@@ -124,13 +133,26 @@ impl HoleMeta {
         match dir {
             HoleDir::Pull => match &*pending {
                 Pending::Queue(q) => !q.hands.is_empty() && !q.taking,
-                Pending::Rung => true,
+                Pending::Rung(n) => *n > 0,
                 Pending::Idle => false,
             },
             HoleDir::Push => matches!(*pending, Pending::Idle),
         }
     }
 
+    /// **（临时读数）这一格"报不出就绪"时它是什么形状**：`(队里几只, 队头正被取用, 位立着没有)`。
+    ///
+    /// 组那一次等待（`envcall/tole.rs::ready`）只在"一格都报不出就绪"时问它——那时三格数正好
+    /// 把三种下一步分开：`hands>0 && taking` = **那只手卡在"正被取用"上**（`take` 走过、`taken`
+    /// / `back` 没回来 ⇒ 这一格**永久**报不出就绪），`hands>0 && !taking` = 报不出就绪却明摆着
+    /// 有手（判据与状态不一致），`rung` = 位立着（`Rung(n>0)` 本该报就绪 ⇒ 另一回事）。
+    pub(crate) fn shape(&self) -> (usize, bool, bool) {
+        match &*self.pending.lock() {
+            Pending::Queue(q) => (q.hands.len(), q.taking, false),
+            Pending::Rung(n) => (0, false, *n > 0),
+            Pending::Idle => (0, false, false),
+        }
+    }
 }
 
 impl Drop for HoleMeta {
@@ -156,23 +178,17 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 
 /// **递出一只手**：排进这一列（先进先出），并唤醒等取的人。
 ///
-/// **不搬字节、不分配**（`VecDeque` 懒分配：只在真排过队之后才向堆要一格）：登记的就是发送方
-/// 那一段（`va`/`len`），复制由取的一方做（一处）。
+/// 手里就是**内核那一格字节**（`Push` 那一层已从发送方抄进来）——递出去之后它与发送方再无
+/// 关系，故这一手**不会**因为发送方退场而作废（从前那一档 `Gone` 由此消失）。
 ///
 /// **满了（[`QUEUE_CAP`]）／位已响 ⇒ `Busy`**：满不丢最旧——"丢不丢"留给写者（`Wait::POLL`
 /// 那一档正是为它准备的）。写者要"轮到我有位"就用 `POLL` 重试；`AtMost`／`Forever` 那一档
 /// 等的是**队列空**（老语义，见 [`HoleMeta::ready`] 那一节的注）。
-pub(crate) fn give(
-    meta: &HoleMeta,
-    space: &Arc<Space>,
-    va: usize,
-    len: usize,
-    from: TaskId,
-) -> Result<(), MailFail> {
+pub(crate) fn give(meta: &HoleMeta, buf: Arc<[u8]>, from: TaskId) -> Result<(), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
-    if len == 0 {
+    if buf.is_empty() {
         return Err(MailFail::Denied);
     }
     let at = clock::uptime_ticks();
@@ -196,13 +212,7 @@ pub(crate) fn give(
     if q.hands.try_reserve(1).is_err() {
         return Err(MailFail::OoM);
     }
-    q.hands.push_back(Hand {
-        from,
-        space: Arc::downgrade(space),
-        va,
-        len,
-        at,
-    });
+    q.hands.push_back(Hand { from, buf, at });
     HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
     drop(pending);
     let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
@@ -222,49 +232,24 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
         return Err(MailFail::Dead);
     }
     let mut pending = meta.pending.lock();
-    let dead = {
-        let Pending::Queue(q) = &mut *pending else {
-            return Err(MailFail::Busy);
-        };
-        if q.taking || q.hands.is_empty() {
-            return Err(MailFail::Busy);
-        }
-        if q.hands.front().and_then(|h| h.own()).is_some() {
-            q.taking = true;
-            return Ok(());
-        }
-        // **发送方那个空间已经回收**（弱引用升不上来）⇒ 这一只**作废**（消息随人走），
-        // 就地让它下线——不作废的话，一位退场的发送方会把这一列的头永久堵死。
-        q.hands.pop_front()
+    let Pending::Queue(q) = &mut *pending else {
+        return Err(MailFail::Busy);
     };
-    let empty = match &*pending {
-        Pending::Queue(q) => q.hands.is_empty(),
-        _ => false,
-    };
-    if empty {
-        *pending = Pending::Idle;
+    if q.taking || q.hands.is_empty() {
+        return Err(MailFail::Busy);
     }
-    drop(pending);
-    if let Some(hand) = dead {
-        note_gone(meta, hand.from, hand.va, hand.len, 0, "space");
-        note_hand_off(meta, hand.from, hand.len, hand.at);
-    }
-    if empty {
-        let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
-    }
-    Err(MailFail::Gone)
+    // **字节归内核** ⇒ 这里不再有"发送方那段没了"那一档（取的一方也不必翻它的页表）。
+    q.taking = true;
+    Ok(())
 }
 
 /// 取用中那只手的复制源：`(发送者, 它那段空间, 起点, 长度)`。
 ///
 /// 只在 [`take`] 与 [`taken`]／[`back`] 之间非 `None`——那一段窗口里只有本取用者进得来。
-pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Space>, usize, usize)> {
+pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<[u8]>)> {
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Queue(q) if q.taking => q
-            .hands
-            .front()
-            .and_then(|hand| hand.own().map(|(space, va, len)| (hand.from, space, va, len))),
+        Pending::Queue(q) if q.taking => q.hands.front().map(|h| (h.from, h.buf.clone())),
         _ => None,
     }
 }
@@ -297,7 +282,8 @@ pub(crate) fn taken(meta: &HoleMeta) {
         }
     }
     if let Some(hand) = off {
-        note_hand_off(meta, hand.from, hand.len, hand.at);
+        let len = hand.buf.len();
+        note_hand_off(meta, hand.from, len, hand.at);
     }
     let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
 }
@@ -333,38 +319,97 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> 
     let pending = meta.pending.lock();
     match &*pending {
         Pending::Queue(q) => match q.hands.front() {
-            Some(hand) => Ok((hand.len, hand.from, q.hands.len())),
+            Some(hand) => Ok((hand.buf.len(), hand.from, q.hands.len())),
             None => Err(MailFail::Busy),
         },
         _ => Err(MailFail::Busy),
     }
 }
 
-/// 置位：孔空 ⇒ 置位并唤醒等取的人；已置 ⇒ `Busy`（**不累积**，与门铃同一口径）。
+/// 摇一次：孔空 ⇒ 立一枚位并唤醒等取的人；**已经立着 ⇒ 再积一枚**（`RING_CAP` 满才答 `Busy`）。
 ///
-/// 与门铃 `ring` 同名同形：**位不占字节**，故这一路零复制、零分配、也不阻塞发送方。
+/// **位是一列**（见 [`Pending`]）：一次摇 = 一枚位，取一枚（[`hush`]）应一次。此前是**一位
+/// 布尔**，"已响 ⇒ `Busy`"——那个 Busy 同时说着两件事（"别人已经摇过"与"这一摇没算数"），
+/// 而夹在客人自己那一圈里的那一次摇会被它自己的 `hush` 吃掉。改成一列之后这两件事分开：
+/// 积下的每一枚都要各自应掉。
+///
+/// **唤醒每次都发**（不论新立还是积枚）：位说的是"有待取之事"，而等它的人**可能没收到上一次
+/// 唤醒**——从前那一支在 `messenger::wake` **之前**就返回了，于是位一旦先于唤醒立起来就
+/// **再也没人叫**。量到的原文（accept 景、16 忙循环下那一跑）：路由者投递 6 次，而这一手只摇成
+/// 2 次，另外 4 次是 `busy`；uart 那边 `uart: woke None` 一直到 60 s。唤醒本来就是**提示**
+/// （等的人醒来要自己复看就绪那几格），故多叫一次无害。
 pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
-    {
+    // `was` = **摇之前积着几枚**（0 = 这一摇是新立的位）。满了就地答 `Busy`（丢不丢留给写者，
+    // 与手那一列同一口径）——那一枚位**不积**，故这是"这一摇没算数"的唯一一档。
+    let was = {
         let mut pending = meta.pending.lock();
-        if !matches!(*pending, Pending::Idle) {
-            return Err(MailFail::Busy);
+        match &mut *pending {
+            Pending::Idle => {
+                *pending = Pending::Rung(1);
+                0
+            }
+            Pending::Rung(n) if *n < RING_CAP => {
+                *n += 1;
+                *n - 1
+            }
+            _ => {
+                // 位排满了（或手正排着：位与手不共存）。
+                static M: AtomicUsize = AtomicUsize::new(0);
+                if M.fetch_add(1, Ordering::Relaxed) < 8 {
+                    crate::putln!("ring full hole#{} cap={}", meta.id.0, RING_CAP);
+                }
+                return Err(MailFail::Busy);
+            }
         }
-        *pending = Pending::Rung;
+    };
+    let (kn0, kp0) = messenger::knock_stats();
+    let woke = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
+    let (kn1, kp1) = messenger::knock_stats();
+    // **（临时诊断）这一摇落在哪**：孔号 ＋ 主人 ＋ **谁摇的** ＋ **叫醒了没有** ＋ **摇之前积着几枚**。
+    //
+    // `wake` 走的是**交付型**那一支（`WakeKey::Hole{Pull}`，一人份），组（`Pile`/`Tole`）
+    // 靠站点上的转发。故 `woke=false` = "这一摇没把任何人叫醒"——与"摇了、但对面观测的那一格
+    // 不是这一枚"是两件事，这一句正好分开。`was=0` = 新立；`was>0` = 又积了一枚（从前那一枚
+    // 会被答 `Busy`、两摇合一）。
+    static N: AtomicUsize = AtomicUsize::new(0);
+    if N.fetch_add(1, Ordering::Relaxed) < 24 {
+        let by = crate::work::room::scheduler::core::ident()
+            .map(|i| i.task_id())
+            .unwrap_or(0);
+        crate::putln!(
+            "ring hole#{} owner={} by={} woke={} was={} knock={}/{}",
+            meta.id.0,
+            meta.owner.get(),
+            by,
+            woke,
+            was,
+            kp1 - kp0,
+            kn1 - kn0
+        );
     }
-    let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
     Ok(())
 }
 
-/// 清位。**不唤醒任何人**：没人等"铃不响"（与门铃 `hush` 同一句）。
+/// 应一枚位。**不唤醒任何人**：没人等"位被应完"（与门铃 `hush` 同一句）。
+///
+/// **一次应一枚**：`Rung(n>1)` 就减一（这一格仍然报就绪），`Rung(1)` 才回到 `Idle`。故
+/// `while hush().is_ok()` 那一形（路由者 `exhaust::drain`）会把积着的每一枚都各自应掉。
 pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
     let mut pending = meta.pending.lock();
-    if !matches!(*pending, Pending::Rung) {
-        return Err(MailFail::Busy);
+    let zero = match &mut *pending {
+        Pending::Rung(n) if *n > 1 => {
+            *n -= 1;
+            false
+        }
+        Pending::Rung(_) => true,
+        _ => return Err(MailFail::Busy),
+    };
+    if zero {
+        *pending = Pending::Idle;
     }
-    *pending = Pending::Idle;
     Ok(())
 }
 
@@ -378,6 +423,17 @@ pub(crate) fn wait(
     }
     if meta.ready(dir) {
         return Ok(Handoff::Resume(true));
+    }
+    // **"报不出就绪、又根本没有手"那一格自己报名**（诊断）。
+    //
+    // 它正是那一族（整机跑完不出场）里 canonical 卡着的那一格：写的人见 `ready(Push)` 为假
+    // ⇒ 推不进去；而 `hand_age` 答 `None` ⇒ 连"这只手压了多久"那条读数（`note_hold` /
+    // `alarm_stuck`）也不会打。于是那一跑零读数。
+    //
+    // **只在"有期限的那一档"看**：`POLL` 那一档是最热的一格（canonical 空闲时每毫秒一次），
+    // 而它的下一拍（`AtMost(1)`）就在 1 ms 之内 ⇒ 照样看得到，热的那一路一分钱不花。
+    if dur != Duration::ZERO && dir == HoleDir::Push && hand_age(meta).is_none() {
+        note_shape(meta);
     }
     if dur == Duration::ZERO {
         return Ok(Handoff::Resume(false));
@@ -420,6 +476,45 @@ const HOLD_MS: usize = 1000;
 /// 中段告警最多打几行（防洪水：一枚孔一行 ＋ 总量封顶）。
 const ALARM_MAX: usize = 8;
 
+/// **那一格是什么形状**（一枚孔最多一行 ＋ 总量封顶）：见 [`wait`] 那一节。
+///
+/// 三种形状对应三种不同的下一步：
+/// · `queue-empty` —— **没有任何一条路能自己回 `Idle`**（`take` 要有手、`taken` 要先 `take`）
+///   ⇒ 一旦出现就是**永久**的两头堵死；
+/// · `rung` —— 位没人清（`hush` 才是"我取走了"的那个动作）；
+/// · `queue-hands` / `queue-taking` —— 手还在（那两条本该由 `note_hold` 报，走到这里说明
+///   `hand_age` 那一刻读不到队头）。
+fn note_shape(meta: &HoleMeta) {
+    static N: AtomicUsize = AtomicUsize::new(0);
+    if meta.stuck.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    N.fetch_add(1, Ordering::Relaxed);
+    if N.load(Ordering::Relaxed) > ALARM_MAX {
+        return;
+    }
+    let shape = match &*meta.pending.lock() {
+        Pending::Idle => "idle",
+        Pending::Queue(q) => {
+            if q.hands.is_empty() {
+                "queue-empty"
+            } else if q.taking {
+                "queue-taking"
+            } else {
+                "queue-hands"
+            }
+        }
+        Pending::Rung(_) => "rung",
+    };
+    crate::putln!(
+        "mail: push not ready hole#{} owner={} pending={} live={}",
+        meta.id.0,
+        meta.owner.get(),
+        shape,
+        HANDS_LIVE.load(Ordering::Relaxed),
+    );
+}
+
 fn elapsed_ms(at: u64) -> usize {
     clock::ticks_to_duration(clock::uptime_ticks().wrapping_sub(at)).as_millis() as usize
 }
@@ -433,7 +528,7 @@ fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
     let pending = meta.pending.lock();
     let (from, len, at) = match &*pending {
         Pending::Queue(q) => match q.hands.front() {
-            Some(hand) => (hand.from, hand.len, hand.at),
+            Some(hand) => (hand.from, hand.buf.len(), hand.at),
             None => return None,
         },
         _ => return None,
@@ -580,7 +675,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
         let mut pending = meta.pending.lock();
         let (head, rest) = match &*pending {
             Pending::Queue(q) => (
-                q.hands.front().map(|h| (h.from, h.len, h.at)),
+                q.hands.front().map(|h| (h.from, h.buf.len(), h.at)),
                 q.hands.len().saturating_sub(1),
             ),
             _ => (None, 0),

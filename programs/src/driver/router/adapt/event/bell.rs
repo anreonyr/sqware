@@ -17,10 +17,20 @@ pub fn ring(lines: &mut Lines, plic: &Plic) {
             break;
         }
         // **静音只在"那一帧真的送到了"之后**：投不出去（客户的口封了）就不静音
-        if lines.deliver(line).is_ok() {
+        let sent = lines.deliver(line).is_ok();
+        if sent {
             plic.disable(line);
         } else {
             debug!("router: deliver failed line={line}");
+        }
+        // **（临时读数）**：领到哪条线 ＋ 投出去没有 ⇒ 静音了没有。**静音之后就等客人那句
+        // "我排空了"**（`exhaust` 那一支才 `plic.enable`）——故"静音了、此后一条 enable 都没有"
+        // 就是"这条线再也不会报中断"那件事的原文。前 20 次打全。
+        {
+            static N: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+            if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
+                protocol::debug::put(&alloc::format!("router: irq line={line} sent={sent}"));
+            }
         }
         // 这条线的**第一次**：打一行只可能由中断链产生的读数（见 `driver/router/mod.rs`）。
         // **行首先补一个换行**：这一行是**兜底**——根因（一条读数行要 2~5 次 ecall、

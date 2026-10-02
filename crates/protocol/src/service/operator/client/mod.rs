@@ -253,8 +253,11 @@ fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<o
         .recv(buf.as_mut(), wait)
         // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
         .map_err(|_| Fail::Unknown);
-    // 答话回来了 ⇒ 对面早把那一只手取走 ⇒ 这一收口是零代价；没回来也得收口（那条报不许悬）。
-    let _ = tx.reclaim();
+    // **收口交给 `Drop`**（有期，见 `Sender::drop`）：答话回来了 ⇒ 对面早把那一只手取走 ⇒ 当场
+    // 收口、零代价；**没回来**（对面卡住）⇒ 等一小拍就把那一格留在堆上走人——从前这里是一次
+    // `wait(Push, Wait::Forever)`，对面一卡，本客人就停在那儿，而它等的往往正是"对面把上一问
+    // 读走"，两边互等（量到的原文：`hand: reclaim slow … me=17 ms=26868`）。
+    drop(tx);
     said
 }
 

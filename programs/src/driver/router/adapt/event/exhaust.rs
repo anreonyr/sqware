@@ -13,6 +13,8 @@ pub fn drain(lines: &mut Lines, plic: &Plic) {
     // **取"忙"的那些**（不是"有主"的那些）：只有"响过、还没回闲"的那一格才欠一句
     // 排空；这一句也是那个 `忙` 的唯一读者——账上那一格因此不是写给别人看的。
     let busy: alloc::vec::Vec<u32> = lines.busy().collect();
+    let n_busy = busy.len();
+    let mut hushed = 0usize;
     for line in busy {
         let Some(lane) = lines.lane(line) else {
             continue;
@@ -22,6 +24,18 @@ pub fn drain(lines: &mut Lines, plic: &Plic) {
         while HolePie::from_token(rx).hush().is_ok() {
             let _ = lines.exhaust(line);
             plic.enable(line, LINE_PRIORITY);
+            hushed += 1;
+        }
+    }
+    // **（临时读数）本端"排空"那一趟**：`busy` = 有几条线在等回闲，`hushed` = 真应掉了几枚
+    // 客人的"我排空了"——**每应掉一枚就当场 `plic.enable`**，故"静音了、此后一条 enable 都没有"
+    // 这件事在这一行上看得见（没有它，只能从"中断再也不来"倒推）。只有 `busy>0` 时打，前 40 次。
+    if n_busy > 0 {
+        static N: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
+        if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 40 {
+            protocol::debug::put(&alloc::format!(
+                "router: drain busy={n_busy} hushed={hushed}"
+            ));
         }
     }
 }

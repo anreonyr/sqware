@@ -69,7 +69,24 @@ fn push(
                     } else if !mail::whole(&ident.team.space, msg.as_usize(), len, PteFlags::R) {
                         Err(MailFail::Denied)
                     } else {
-                        mail::hole::give(p.meta(), &ident.team.space, msg.as_usize(), len, me)
+                        // **抄一份进内核**（这一层的分界就在这一句）：递出去之后那段字节归内核
+                        // ⇒ 发送方可以立刻放手（`Sender` 不必再"等上一手被取走"）、可以退场，
+                        // 取的一方也不必再翻它的页表（`hand_over` 那一节随之短一截）。
+                        let mut cell: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
+                        if cell.try_reserve_exact(len).is_err() {
+                            Err(MailFail::OoM)
+                        } else {
+                            cell.resize(len, 0);
+                            if !mail::copy_in(&ident.team.space, &mut cell, msg.as_usize()) {
+                                Err(MailFail::Denied)
+                            } else {
+                                mail::hole::give(
+                                    p.meta(),
+                                    Arc::from(cell.into_boxed_slice()),
+                                    me,
+                                )
+                            }
+                        }
                     }
                 }
                 _ => Err(MailFail::Denied),
@@ -119,8 +136,8 @@ fn pull(
 
 /// **取走一只手**：认下它（`take`：置"正被取用"）→ 复制**一次** → 收尾（`taken`）。
 ///
-/// 四条不过的路**都不消费那只手**（`back` 放回原处）：装不下、收方缓冲不可写 ⇒ `Denied`；
-/// 发送方那段已不可读、它那个空间已回收 ⇒ `Gone`。
+/// 两条不过的路**都不消费那只手**（`back` 放回原处）：装不下、收方缓冲不可写 ⇒ `Denied`。
+/// **"发送方那段没了"那一档没有了**：手里那段字节是 `Push` 时抄进内核的，与发送方无关。
 ///
 /// **复制在孔锁之外做**：`Space` 的锁是 `Level::Space`（2）、孔那一格是 `Level::L3`（4），
 /// 持孔锁再取空间锁是倒序（debug 档 lockdep 当场报），而复制每页都要过一遍 `translate`。
@@ -131,31 +148,24 @@ fn hand_over(
     max: usize,
 ) -> Result<(usize, TaskId), MailFail> {
     mail::hole::take(meta)?;
-    let Some((from, src, va, len)) = mail::hole::source(meta) else {
+    let Some((from, bytes)) = mail::hole::source(meta) else {
         mail::hole::back(meta);
         return Err(MailFail::Busy);
     };
+    let len = bytes.len();
     if len > max || !mail::whole(space, buf.as_usize(), len, PteFlags::W) {
         // **"读不成、手放回"这一条要看得见**（诊断）：孔会因此**一直报就绪**——等在这一组上的
         // 读的人每一轮都啃同一格（读不成 ⇒ 手还在 ⇒ 下一轮又报就绪），而**别的客人的手就被饿在
-        // 后面**；递手的那一方还在等它下线（`wait(HoleDir::Push, …)` 没有期限）⇒ 两边一起卡住。
+        // 后面**；递手的那一方还在等它下线（`wait(HoleDir::Push, …)`）⇒ 两边一起卡住。
         mail::hole::note_back(len, max);
         mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
-    if !mail::whole(&src, va, len, PteFlags::R) {
-        // **"空间还在、可那段 VA 今天不可读"**（三格成因见 `hole::note_gone`）：那只手指着一段
-        // 已经不在了的内存——与判据写在那一边，这一行只把"是哪一段"报出来。
-        mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "range");
-        mail::hole::taken(meta);
-        return Err(MailFail::Gone);
-    }
-    if !mail::copy(&src, va, space, buf.as_usize(), len) {
-        mail::hole::note_gone(meta, from, va, len, buf.as_usize(), "copy");
-        // **发送方那段没了 ⇒ 那只手就地收掉**（不是放回）：那条报再也送不到，放回只会把孔
-        // 永远占住。（量出来的）见 `work/mail/hole.rs` 的 `taken`／`back`。
-        mail::hole::taken(meta);
-        return Err(MailFail::Gone);
+    if !mail::copy_out(space, &bytes, buf.as_usize()) {
+        // 收方那段写不进去（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来。
+        mail::hole::note_back(len, max);
+        mail::hole::back(meta);
+        return Err(MailFail::Denied);
     }
     mail::hole::taken(meta);
     Ok((len, from))

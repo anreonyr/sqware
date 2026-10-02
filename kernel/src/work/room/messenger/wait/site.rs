@@ -148,7 +148,54 @@ pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) 
         && site.head.is_none()
         && (Life::dead(&site.life) || (!site.pend && site.fwd.is_empty()))
     {
+        // **（临时读数）站点是被谁摘的、摘的时候什么形状**：`wipe`/`unforward` 是另两条路
+        // （各自有读数），这一条是"没人动它、它自己被判死"——`dead=1` 才是那个判据。
+        // **带转发的站点被摘**（`fwd>0`）就是"转发凭空没了"最硬的一条原文，故**无论多少次都打**；
+        // 空站点那种收尾只打前 40 次（否则每收一枚孔都占一行）。
+        let n_fwd = site.fwd.entries().count();
+        let interesting = n_fwd > 0;
+        static HOT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        static COLD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+        let said = if interesting {
+            HOT.fetch_add(1, core::sync::atomic::Ordering::Relaxed) < 200
+        } else {
+            COLD.fetch_add(1, core::sync::atomic::Ordering::Relaxed) < 40
+        };
+        if said {
+            let (id, kind) = label(key);
+            crate::putln!(
+                "site: prune key={} kind={} fwd={} pend={} dead={}",
+                id,
+                kind,
+                n_fwd,
+                site.pend,
+                Life::dead(&site.life)
+            );
+        }
         sites.remove(&key);
+    }
+}
+
+/// **（临时读数）键长什么样**：`(号, 种类)`。种类 `0/1` = 孔 `Pull/Push`；`2` = 组；
+/// `3` = 铃；`4` = 任务；`5` = 一族的位；`6` = 闹钟；`7` = 空间那一格。
+///
+/// 站点那些读数（`prune`/`wipe`/`unforward`）都要与"哪一枚孔、哪个方向"对得上号——
+/// **`Hole{Pull}` 与 `Hole{Push}` 是两个站点**，不报方向这一格就分不开。
+pub(in super::super) fn label(key: WakeKey) -> (usize, usize) {
+    match key {
+        WakeKey::Hole { hole, dir } => (
+            hole,
+            match dir {
+                HoleDir::Pull => 0,
+                HoleDir::Push => 1,
+            },
+        ),
+        WakeKey::Tole { id } => (id, 2),
+        WakeKey::Nole { id } => (id, 3),
+        WakeKey::Task { id } => (id.get(), 4),
+        WakeKey::Pies { task } => (task.get(), 5),
+        WakeKey::Alarm { task } => (task.get(), 6),
+        WakeKey::Space { space, slot } => ((space.get() as usize) ^ slot, 7),
     }
 }
 
