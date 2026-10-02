@@ -14,7 +14,6 @@ macro_rules! entrances {
         crate::table! {
             pub enum Grant { $($variant => $name, ($pattern);)+ }
             stem: "identity-",
-            name_max: 11,
             wire_ty: Wire,
         }
         impl Grant {

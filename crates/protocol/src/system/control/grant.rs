@@ -1,5 +1,4 @@
 //! 面那一维：一枚 Grant = 一条权柄边界。
-//! ```text
 
 use super::frame::Wire;
 
@@ -7,20 +6,13 @@ crate::table! {
 /// **一条权柄边界**：一枚 = 一面。四位，位次 1..=4
     pub enum Grant {
 /// **问**：这一条此刻处于哪个阶段（`State`）——只读，不动机器一根手指
-        State => "state",
+        State => "state", (Wire::State(_));
 /// **造**：按名字起一条（建域 ＋ 产代表线程，恒产未放行）
-        Mint => "mint",
+        Mint => "mint", (Wire::Mint(_));
 /// **放行**：放行 ＋ 等就绪
-        Start => "start",
-        Stop => "stop",
+        Start => "start", (Wire::Start(_));
+        Stop => "stop", (Wire::Stop(_));
     }
     stem: "control-entry-",
-    name_max: 5,
     wire_ty: Wire,
-    wire: {
-        Wire::State(_) => State,
-        Wire::Mint(_) => Mint,
-        Wire::Start(_) => Start,
-        Wire::Stop(_) => Stop,
-    }
 }

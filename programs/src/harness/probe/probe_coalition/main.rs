@@ -91,7 +91,7 @@ fn step(tree: &TreeFace, family: &str, dir: &Path, want: usize) {
 
 /// 取回一族某一面的那一枚门牌（`tile` 译号 → `token` 把门闩授进本表）。
 fn fetch(tree: &TreeFace, dir: &Path, face: &str, family: &str) -> env::PieToken {
-    // 面名由各自那一族的 `Grant` 给（`name_max` 之内、不含 `/`），故这一段拼不出来是**类型写错**，
+    // 面名由各自那一族的 `Grant` 给（单段、不含 `/`），故这一段拼不出来是**类型写错**，
     // 不是运行期的事——照仓里那几台的排法用 `expect`。
     let road = dir
         .try_join(face)

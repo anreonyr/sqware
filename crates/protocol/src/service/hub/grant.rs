@@ -17,7 +17,6 @@ crate::table! {
         Claim => "claim", (Wire::Claim { .. });
     }
     stem: "hub-entry-",
-    name_max: 5,
     wire_ty: Wire,
 }
 
