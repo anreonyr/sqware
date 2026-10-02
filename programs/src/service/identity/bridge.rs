@@ -49,7 +49,7 @@ impl Roster {
                 Err("identity not installed")
             };
         };
-        let root = PrincipalId { authority: installer.authority(), slot: 0 };
+        let root = PrincipalId::root(installer.authority());
         let principal = installer.derive(root, Wait::AtMost(BOOT_MS))
             .map_err(|_| "derive unit identity")?;
         let subject = Subject::new(principal, &[]).map_err(|_| "unit subject")?;
@@ -160,7 +160,7 @@ pub(crate) fn install(
     let installer = Installer::direct(
         authority, face(Grant::Bind)?, face(Grant::Unbind)?, face(Grant::Derive)?,
     ).map_err(|_| "identity installer source")?;
-    let root = PrincipalId { authority, slot: 0 };
+    let root = PrincipalId::root(authority);
     let mut control = None;
     for task in [Some(unit::self_id()), tree.host(), Some(authority)].into_iter().flatten() {
         let principal = installer.derive(root, Wait::AtMost(BOOT_MS))

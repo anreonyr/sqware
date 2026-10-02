@@ -9,7 +9,7 @@ pub(super) struct PrincipalNode {
 
 impl IdentityBook {
     pub fn root(&self) -> PrincipalId {
-        PrincipalId { authority: self.authority, slot: 0 }
+        PrincipalId::root(self.authority)
     }
 
     pub(super) fn principal(&self, id: PrincipalId) -> Result<usize, Fail> {
@@ -25,11 +25,10 @@ impl IdentityBook {
 
     pub fn heir(&self, ancestor: PrincipalId, descendant: PrincipalId) -> Result<bool, Fail> {
         self.principal(ancestor)?;
-        self.principal(descendant)?;
         let mut at = Some(descendant);
         while let Some(p) = at {
             if p == ancestor { return Ok(true); }
-            at = self.principals[p.slot as usize].parent;
+            at = self.principals[self.principal(p)?].parent;
         }
         Ok(false)
     }

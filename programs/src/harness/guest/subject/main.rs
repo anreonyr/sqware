@@ -33,7 +33,7 @@ fn main() -> Report<'static> {
         .expect("subject: resolve failed").expect("subject: unbound");
     let p = initial.current.principal;
     assert_eq!(initial.current, initial.origin);
-    let root = PrincipalId { authority, slot: 0 };
+    let root = PrincipalId::root(authority);
     assert_eq!(query.sire(root, Wait::AtMost(MS)), Ok(None));
     assert_eq!(query.sire(p, Wait::AtMost(MS)), Ok(Some(root)));
     assert_eq!(query.heir(p, p, Wait::AtMost(MS)), Ok(true));
