@@ -30,7 +30,7 @@ impl IdentityBook {
         Ok(())
     }
 
-    pub fn narrow(&self, base: Subject, requested: Subject) -> Result<(), Fail> {
+    fn narrow(&self, base: Subject, requested: Subject) -> Result<(), Fail> {
         self.validate(requested)?;
         if !self.heir(base.principal, requested.principal)?
             || requested.coalitions.as_slice().iter().any(|c| !base.coalitions.contains(*c))
