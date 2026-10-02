@@ -39,7 +39,13 @@ impl Activation {
                 && control.task("hub") == Some(self.hub)
                 && !unit::join(self.hub, Wait::POLL).unwrap_or(true)
                 && control.tasks().any(|task| task == ask.task);
-            let status = if allowed && control.roster.activate(ask.task, ask.coalition).is_ok() {
+            // **一趟里的每一枚都要落**：有一枚不成 ⇒ 整趟答 `DENIED`（起手那一侧据此当场收手）
+            let status = if allowed
+                && (0..ask.len()).all(|i| {
+                    ask.coalition(i)
+                        .is_some_and(|c| control.roster.activate(ask.task, c).is_ok())
+                })
+            {
                 hub::OK
             } else {
                 hub::DENIED
@@ -60,7 +66,8 @@ impl Drop for Activation {
 }
 
 /// Ask the kernel-Sire-owned face injected at launch, not a matching public mark.
-pub fn activate(task: TaskId, coalition: CoalitionId) -> Result<(), ()> {
+/// **一趟报一批**（见 [`activation::Activate`]）：枚数写进帧里，`BACK` 那一条回话只有一个状态。
+pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
     let sire = unit::sire();
     let entry = establish::find(sire, activation::ENTRY).ok_or(())?;
     if !matches!(mail::reserve(entry), Ok((vestor, owner, mark))
@@ -77,8 +84,9 @@ pub fn activate(task: TaskId, coalition: CoalitionId) -> Result<(), ()> {
         }
     }
     let _back = Back(back);
+    let frame = Activate::of(task, coalitions, seed).ok_or(())?;
     let mut request = Sender::<Activate>::from_token(entry);
-    request.send_within(Activate { task, coalition, back: seed }, Wait::AtMost(BOOT_MS))
+    request.send_within(frame, Wait::AtMost(BOOT_MS))
         .map_err(|_| ())?;
     let mut bytes = [0; Said::LEN];
     let (n, from) = HolePie::from_token(back).pull(&mut bytes, Wait::AtMost(BOOT_MS))

@@ -225,7 +225,7 @@ fn activation_boundary(assembly: &Assembly, hub: env::TaskId,
         let entry = establish::claim(owner, activation::ENTRY, Wait::AtMost(1000)).unwrap();
         assert!(port::ship(&HolePie::from_token(entry), hub, Access::STORE, Policy::NONE).is_err(),
             "activation copy unexpectedly transferable");
-        assert!(crate::service::hub::bridge::activate(hub, coalition).is_err(),
+        assert!(crate::service::hub::bridge::activate(hub, &[coalition]).is_err(),
             "activation accepted a non-Hub kernel sender");
         finished.store(true, Ordering::Release);
     });

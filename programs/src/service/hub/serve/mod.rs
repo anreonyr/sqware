@@ -14,7 +14,7 @@ use protocol::communication::hand::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::identity::client::{Organization, Query};
-use protocol::service::identity::Selector;
+use protocol::service::identity::{CoalitionId, PageId as _, Selector};
 use protocol::service::hub::frame::Wire;
 use protocol::service::hub::frame::{Said, Window};
 use protocol::service::hub::{self, Deed, Enroll, Grant};
@@ -85,6 +85,11 @@ pub fn serve() -> Result<(), Start> {
         let subject = league.query.resolve(me, Wait::AtMost(MS))
             .map_err(|_| Start::Face(E_HUB))?
             .ok_or(Start::Face(E_HUB))?.current.principal;
+        // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
+        // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
+        // `ACTIVATE_MAX` 把关，装不下就是装配错、当场收手。
+        let mut leagues = [CoalitionId::EMPTY; hub::activation::ACTIVATE_MAX];
+        let mut n = 0usize;
         for class in &classes {
             let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
                 return Err(Start::Face(E_HUB));
@@ -92,9 +97,15 @@ pub fn serve() -> Result<(), Start> {
             if league.organization.admit(id, subject, Wait::AtMost(MS)).is_err() {
                 return Err(Start::Face(E_HUB));
             }
-            crate::service::hub::bridge::activate(me, id).map_err(|_| Start::Face(E_HUB))?;
+            let Some(slot) = leagues.get_mut(n) else {
+                return Err(Start::Face(E_HUB));
+            };
+            *slot = id;
+            n += 1;
             ledger.league(class.clone(), || id);
         }
+        crate::service::hub::bridge::activate(me, &leagues[..n])
+            .map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;

@@ -18,7 +18,7 @@ pub(super) fn bond(
         return;
     };
     let status = match league.organization.admit(coalition, binding.current.principal, Wait::AtMost(MS)) {
-        Ok(()) if crate::service::hub::bridge::activate(from, coalition).is_ok() => hub::OK,
+        Ok(()) if crate::service::hub::bridge::activate(from, &[coalition]).is_ok() => hub::OK,
         Ok(()) => hub::DENIED,
         Err(_) => hub::DENIED,
     };
