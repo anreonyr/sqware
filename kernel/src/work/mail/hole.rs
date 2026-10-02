@@ -140,19 +140,6 @@ impl HoleMeta {
         }
     }
 
-    /// **（临时读数）这一格"报不出就绪"时它是什么形状**：`(队里几只, 队头正被取用, 位立着没有)`。
-    ///
-    /// 组那一次等待（`envcall/tole.rs::ready`）只在"一格都报不出就绪"时问它——那时三格数正好
-    /// 把三种下一步分开：`hands>0 && taking` = **那只手卡在"正被取用"上**（`take` 走过、`taken`
-    /// / `back` 没回来 ⇒ 这一格**永久**报不出就绪），`hands>0 && !taking` = 报不出就绪却明摆着
-    /// 有手（判据与状态不一致），`rung` = 位立着（`Rung(n>0)` 本该报就绪 ⇒ 另一回事）。
-    pub(crate) fn shape(&self) -> (usize, bool, bool) {
-        match &*self.pending.lock() {
-            Pending::Queue(q) => (q.hands.len(), q.taking, false),
-            Pending::Rung(n) => (0, false, *n > 0),
-            Pending::Idle => (0, false, false),
-        }
-    }
 }
 
 impl Drop for HoleMeta {
@@ -355,41 +342,11 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
                 *n += 1;
                 *n - 1
             }
-            _ => {
-                // 位排满了（或手正排着：位与手不共存）。
-                static M: AtomicUsize = AtomicUsize::new(0);
-                if M.fetch_add(1, Ordering::Relaxed) < 8 {
-                    crate::putln!("ring full hole#{} cap={}", meta.id.0, RING_CAP);
-                }
-                return Err(MailFail::Busy);
-            }
+            // 位排满了（`RING_CAP`），或手正排着（位与手不共存）。
+            _ => return Err(MailFail::Busy),
         }
     };
-    let (kn0, kp0) = messenger::knock_stats();
-    let woke = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
-    let (kn1, kp1) = messenger::knock_stats();
-    // **（临时诊断）这一摇落在哪**：孔号 ＋ 主人 ＋ **谁摇的** ＋ **叫醒了没有** ＋ **摇之前积着几枚**。
-    //
-    // `wake` 走的是**交付型**那一支（`WakeKey::Hole{Pull}`，一人份），组（`Pile`/`Tole`）
-    // 靠站点上的转发。故 `woke=false` = "这一摇没把任何人叫醒"——与"摇了、但对面观测的那一格
-    // 不是这一枚"是两件事，这一句正好分开。`was=0` = 新立；`was>0` = 又积了一枚（从前那一枚
-    // 会被答 `Busy`、两摇合一）。
-    static N: AtomicUsize = AtomicUsize::new(0);
-    if N.fetch_add(1, Ordering::Relaxed) < 24 {
-        let by = crate::work::room::scheduler::core::ident()
-            .map(|i| i.task_id())
-            .unwrap_or(0);
-        crate::putln!(
-            "ring hole#{} owner={} by={} woke={} was={} knock={}/{}",
-            meta.id.0,
-            meta.owner.get(),
-            by,
-            woke,
-            was,
-            kp1 - kp0,
-            kn1 - kn0
-        );
-    }
+    let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
     Ok(())
 }
 

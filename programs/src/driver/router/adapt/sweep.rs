@@ -10,6 +10,7 @@ use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
 use env::HoleDir;
 use protocol::communication::session::establish::Endpoint;
+use protocol::debug;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie};
 
@@ -22,31 +23,20 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
         let Some(lane) = lines.lane(line) else {
             continue;
         };
-        if let Some(code) = alive(lane) {
-            plic.unwire(line);
-            let detached = pile
-                .detach(&HolePie::from_token(lane.rx()), HoleDir::Pull)
-                .is_ok();
-            let _ = lines.vacate(line);
-            // **（临时读数）真读数**（上面那一句 `debug!` 在 release 里是空的）：拆了哪一条、
-            // 探活那一问**答的是什么码**（`-1` = 表里没这枚/不是孔，`-2` = 资源已封印）、
-            // 以及"那一格从组里摘掉了没有"——`detach` 一成就把**转发**一起摘掉（见 `tole::detach`），
-            // 此后客人往那一格上说什么，本端的组都听不见了。前 20 次打全。
-            static N: ::core::sync::atomic::AtomicUsize = ::core::sync::atomic::AtomicUsize::new(0);
-            if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                protocol::debug::put(&alloc::format!(
-                    "router: vacate line={line} reserve={code} detach={detached}"
-                ));
-            }
+        if alive(lane) {
+            continue;
         }
+        plic.unwire(line);
+        let _ = pile.detach(&HolePie::from_token(lane.rx()), HoleDir::Pull);
+        let _ = lines.vacate(line);
+        debug!("router: vacate line={line}");
     }
 }
 
 /// 客人还答得出来吗：**问它铸的那一枚**（mail::reserve 走存活闸：封印之后答不出）
-/// 返 `None` = 还答得出来；`Some(码)` = 答不出（`码` 就是那一问的答复，见上）。
-fn alive(lane: &Endpoint) -> Option<i32> {
+fn alive(lane: &Endpoint) -> bool {
     match lane.tx() {
-        Some(at_peer) => mail::reserve(at_peer).err().map(|e| e.source as i32),
-        None => Some(0),
+        Some(at_peer) => mail::reserve(at_peer).is_ok(),
+        None => false,
     }
 }

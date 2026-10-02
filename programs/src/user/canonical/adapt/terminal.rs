@@ -41,15 +41,6 @@ pub fn run(console: &Console) {
         if !quit {
             while let Ok((n, _)) = console.rx.pull(&mut buf, Wait::POLL) {
                 got = true;
-                // **（临时读数）我从控制台读口取到了几字节**：`exit` 那五个字节有没有到人手里，
-                // 这一行是唯一直接的回答（下面 `eat` 的收场那一格才是它的后果）。前 20 批。
-                {
-                    static N: ::core::sync::atomic::AtomicUsize =
-                        ::core::sync::atomic::AtomicUsize::new(0);
-                    if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                        protocol::debug::put(&alloc::format!("canonical: rx n={n}"));
-                    }
-                }
                 if !eat(&mut d, &buf[..n], &mut out) {
                     quit = true; // 收场词到了：**先把待写的放完**，再走
                     break;
@@ -90,15 +81,7 @@ pub fn run(console: &Console) {
                     out.remove(0);
                     handed = false;
                 }
-                Ok(false) => {
-                    // **（临时读数）这一拍没等到**：这一格正是从前闭成死环的那一格——它在响，
-                    // 就说明"等不到就回去收读口"这条路真的在走（前 20 次）。
-                    static N: ::core::sync::atomic::AtomicUsize =
-                        ::core::sync::atomic::AtomicUsize::new(0);
-                    if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                        protocol::debug::put("canonical: tx wait tick");
-                    }
-                }
+                Ok(false) => {}
                 Err(_) => return, // 写口封了 = 持设备的域没了
             }
             continue;
@@ -114,14 +97,6 @@ pub fn run(console: &Console) {
         let Ok((n, _)) = console.rx.pull(&mut buf, Wait::Forever) else {
             return;
         };
-        // **（临时读数）阻塞那一趟取到了几字节**（上面 `POLL` 那一支是热路，这一支才是一次"等人"）。
-        {
-            static N: ::core::sync::atomic::AtomicUsize =
-                ::core::sync::atomic::AtomicUsize::new(0);
-            if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                protocol::debug::put(&alloc::format!("canonical: waited rx n={n}"));
-            }
-        }
         if !eat(&mut d, &buf[..n], &mut out) {
             quit = true;
         }

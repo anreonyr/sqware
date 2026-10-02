@@ -33,17 +33,6 @@ pub(crate) fn raise_irq() -> Result<(), MailFail> {
     if r.is_err() {
         IRQ_BUSY.fetch_add(1, Ordering::Relaxed);
     }
-    // **（临时读数）哪颗 hart 取的、成没成**：`Err` 那一支就是"关本 hart 的 `SEIE`"
-    // （`trap` 的 `SupervisorExternal` 那一格），故这颗 hart 之后还收不收得到外部中断，
-    // 全看这里。前 20 次打全，之后不再打（够看出"最后一次是谁取的、成没成"）。
-    static N: AtomicUsize = AtomicUsize::new(0);
-    if N.fetch_add(1, Ordering::Relaxed) < 20 {
-        crate::putln!(
-            "irq: ring hart={} ok={}",
-            crate::hart::hart_id().get(),
-            r.is_ok()
-        );
-    }
     r
 }
 

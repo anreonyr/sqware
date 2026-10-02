@@ -142,11 +142,6 @@ pub fn serve() -> Result<(), Start> {
     let mut last_code: u8 = 0xff;
     let mut streak: usize = 0;
     loop {
-        // **（临时读数）这一圈自己花了多久**：招待那一圈是"等一格有事 → 招待 → 回到等"，
-        // 而上面那几行读数全是 `debug!`（release 下是空操作）。客人那一侧量到的是"手压了 2 s"
-        // （`mail: hand stuck`），这一格才是**本域自己那一侧**的原文：这 2 s 是"一圈里等掉了"
-        // （等回来了、只是晚），还是"这一圈根本没转到"（停在里面出不来）。≥100 ms 才报，前 30 次。
-        let t_loop = runtime::env::chrono::clock();
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
         let settling = settle(&mut desk, &pile, &tip_hole, &mut wired, &mut tree, &mut late);
         settle_rounds = if settling {
@@ -163,21 +158,7 @@ pub fn serve() -> Result<(), Start> {
         } else {
             Wait::Forever
         };
-        let awaited = pile.await_(millis);
-        {
-            let gap = (runtime::env::chrono::clock().saturating_sub(t_loop) / 1_000_000) as usize;
-            if gap >= 100 {
-                static N: ::core::sync::atomic::AtomicUsize =
-                    ::core::sync::atomic::AtomicUsize::new(0);
-                if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 30 {
-                    protocol::debug::put(&alloc::format!(
-                        "operator: loop gap={gap}ms wakes={wakes} settling={settling} guests={}",
-                        desk.occupied()
-                    ));
-                }
-            }
-        }
-        let Ok(Some((tok, dir))) = awaited else {
+        let Ok(Some((tok, dir))) = pile.await_(millis) else {
             let _ = desk.sweep();
             continue;
         };
@@ -196,19 +177,6 @@ pub fn serve() -> Result<(), Start> {
                     tok.get(),
                     matches!(dir, HoleDir::Push)
                 );
-                // **（临时读数）真读数**（上面那一句在 release 下是空的）：组报"这一枚就绪"，
-                // 而它不在本账的客人册里 ⇒ 这一枚**没人招待**；可它一直报就绪 ⇒ 本域会一圈一圈
-                // 空转（那是"忙"不是"睡"）。量到它就说明"该招待谁"这一格坏了。前 20 次。
-                static N: ::core::sync::atomic::AtomicUsize =
-                    ::core::sync::atomic::AtomicUsize::new(0);
-                if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                    protocol::debug::put(&alloc::format!(
-                        "operator: unknown tok={} push={} guests={}",
-                        tok.get(),
-                        matches!(dir, HoleDir::Push),
-                        desk.occupied()
-                    ));
-                }
             }
             None
         };
@@ -453,17 +421,6 @@ fn serve_one(
                 ask.get(),
                 e.code()
             );
-            // **（临时读数）真读数**：组说这一枚就绪、真去取却"没有手"（`Busy`）或"用不动了"
-            // （`Dead`/`Denied`）——这一格是"就绪"与"取得到"这两件事分家的唯一落点。前 20 次。
-            static N: ::core::sync::atomic::AtomicUsize =
-                ::core::sync::atomic::AtomicUsize::new(0);
-            if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 20 {
-                protocol::debug::put(&alloc::format!(
-                    "operator: ask empty who={} code={}",
-                    guest.who().get(),
-                    e.code()
-                ));
-            }
             None
         }
         Err(RecvFail::Unread(len)) => {

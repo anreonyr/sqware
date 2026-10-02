@@ -57,19 +57,12 @@ pub fn dispatch(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> Option<*mut T
     if h < HB.len() {
         let mine = HB[h].fetch_add(1, Ordering::Relaxed) + 1;
         if mine % HB_EVERY == 0 {
-            // **顺手带上中断那一路的四个计数**：卡住时只有这一圈还在跑，故"喂进来的字节
-            // 到底有没有被 PLIC 收/有没有摇铃"只能从这儿看（详见下面那一节）。
-            let (ring, busy, idle_ring, idle_busy) = crate::platform::devices::irq_stats();
             crate::putln!(
-                "hb hart={} n={} task={} call={} irq={}/{}/{}/{}",
+                "hb hart={} n={} task={} call={}",
                 h,
                 mine,
                 ident.id.get(),
-                frame.gpr.x(Gprs::A7),
-                ring,
-                busy,
-                idle_ring,
-                idle_busy
+                frame.gpr.x(Gprs::A7)
             );
         }
     }

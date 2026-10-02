@@ -60,20 +60,7 @@ pub fn put(view: View, bytes: &[u8]) -> usize {
     // SAFETY: 同 `arm_rx`/`drain`；只读写 `LSR` / `THR` 两格（写 `THR` 即塞出一个字节）。
     unsafe {
         while n < bytes.len() {
-            // **（临时读数）这一圈是**一转里唯一无界的自旋**（等设备那一格空出来）：
-            // 它不进内核 ⇒ 域的心跳会停、控制台一行都不动，而原因只在设备那一格上。
-            // 转够多就报一行（前 8 次），转完还是照旧等——只记账，不改行为。
-            let mut spins = 0u32;
-            while core::ptr::read_volatile(at.add(LSR)) & LSR_THRE == 0 {
-                spins = spins.wrapping_add(1);
-                if spins == 4_000_000 {
-                    static N: ::core::sync::atomic::AtomicUsize =
-                        ::core::sync::atomic::AtomicUsize::new(0);
-                    if N.fetch_add(1, ::core::sync::atomic::Ordering::Relaxed) < 8 {
-                        protocol::debug::put(&alloc::format!("uart: thr stuck n={n}"));
-                    }
-                }
-            }
+            while core::ptr::read_volatile(at.add(LSR)) & LSR_THRE == 0 {}
             core::ptr::write_volatile(at.add(THR) as *mut u8, bytes[n]);
             n += 1;
         }
