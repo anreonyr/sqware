@@ -123,7 +123,7 @@ fn main() {
     if let Some(src) = upstream_source() {
         println!("cargo::rerun-if-changed={}", src.display());
         match fs::read(&src).and_then(|real| Ok((sha256(&real), real == UPSTREAM.as_bytes()))) {
-            Ok((Some(real_hash), true)) => {}
+            Ok((Some(_), true)) => {}
             Ok((Some(real_hash), false)) => panic!(
                 "上游那份 `embedded-test.x` 与本地抄件不同（上游 {real_hash} / 本地 {hash}）。\
                  两份脚本静默漂移正是这枚符号要防的事——请核对 {} 后更新 UPSTREAM 与 UPSTREAM_HASH。",

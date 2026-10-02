@@ -43,8 +43,6 @@ impl env::wire::Field for EntryId {
 /// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）
 pub use crate::wire::OK;
 
-use self::vocab::{FIND, LAND, LIST, NAME, PART, SEEK, TRIM, WATCH};
-
 /// **解开的一问**（名字已经是 String，故不是借用）
 /// 与 Req 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
 /// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 BAD

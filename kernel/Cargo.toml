@@ -89,3 +89,11 @@ harness = false
 # 与内核自己那一个（`runtime::diagnose::halt`）直接撞。取 `semihosting` 是因为
 # `embedded-test` 的 `hosting` 模块**必须**有一个传输实现（std / semihosting 二选一）。
 embedded-test = { version = "0.7", default-features = false, features = ["semihosting"] }
+
+[lints.cargo]
+# 上面那一格 `embedded-test-linker-script` 的用法**这条 lint 看不见**：它不产代码（没有 crate 可
+# `use`），承重的是两样东西——上游构建脚本发的 `-L` 搜索路径，以及 `build.rs` 从 registry 源文件
+# 读出上游那份 `embedded-test.x` 来复核哈希（见 `build.rs` 头注"哈希自检是故意的"）。
+# 删掉它 ⇒ 复核那一路**静默跳过**（`upstream_source()` 答 `None`），两份脚本又能悄悄漂移。
+# 故在此声明一次，而不是删一格承重的依赖。
+unused_dependencies = "allow"

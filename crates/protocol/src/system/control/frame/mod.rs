@@ -68,8 +68,6 @@ impl Message for Said {
 /// （crate::WireCodes 派生的两向读法就是拿它当"没失败"那一格）
 pub use crate::wire::OK;
 
-use self::vocab::{MINT, START, STATE, STOP};
-
 /// **一问的形状**——一条动作一格：荷载只有名字，"回信往哪"由 Ask::back 带
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Req {

@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 #[path = "../frame/mod.rs"]
-mod frame;
+pub mod frame;
 #[path = "../grant.rs"]
 mod grant;
 #[path = "../limits.rs"]

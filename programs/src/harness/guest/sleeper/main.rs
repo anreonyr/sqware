@@ -26,8 +26,6 @@ use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
 use runtime::env::unit as utask;
 
-const ME: &str = "sleeper";
-
 /// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
 const WANT: &str = "rtc";
 

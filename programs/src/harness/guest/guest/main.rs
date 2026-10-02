@@ -22,7 +22,6 @@ use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face;
 use runtime::env::unit as utask;
 
-const ME: &str = "guest";
 const WANT: &str = "router";
 
 const MS: usize = 1000;

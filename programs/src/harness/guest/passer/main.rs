@@ -14,19 +14,9 @@ extern crate programs;
 
 use programs::Report;
 
-const ME: &str = "passer";
-
-const MS: usize = 1000;
-
 const E_OK: usize = 0;
-const E_TRIP: usize = 1;
 
 #[programs::entry]
 fn main() -> Report<'static> {
     return Report::note(E_OK, "passer: gone");
-}
-
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
-fn bail<'a>(note: &'a str) -> Report<'a> {
-    return Report::note(E_TRIP, note);
 }

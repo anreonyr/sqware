@@ -328,18 +328,16 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
-    // `was` = **摇之前积着几枚**（0 = 这一摇是新立的位）。满了就地答 `Busy`（丢不丢留给写者，
+    // 积着几枚就是 `Rung(n)`（0 那一档 = 这一摇是新立的位）。满了就地答 `Busy`（丢不丢留给写者，
     // 与手那一列同一口径）——那一枚位**不积**，故这是"这一摇没算数"的唯一一档。
-    let was = {
+    {
         let mut pending = meta.pending.lock();
         match &mut *pending {
             Pending::Idle => {
                 *pending = Pending::Rung(1);
-                0
             }
             Pending::Rung(n) if *n < RING_CAP => {
                 *n += 1;
-                *n - 1
             }
             // 位排满了（`RING_CAP`），或手正排着（位与手不共存）。
             _ => return Err(MailFail::Busy),
