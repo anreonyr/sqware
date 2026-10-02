@@ -1,6 +1,6 @@
 //! 树这一侧要用到的孔各有各的记号（答话路 / 问话孔 / 门牌），而认领的判据只有一条：
 //! `owner == who` 且 `mark == 记号`。这一份是那条判据的唯一正文——super::server（收那三句话）
-//! 记号那一侧是调用方给的（protocol::service::operator 的 `LINK` / `ASK_MARK` / 七位各一枚，
+//! 记号那一侧是调用方给的（protocol::service::operator 的 `LINK` / `ASK_MARK` / 每一位各一枚，
 //! 以及各族交过来的门牌：名册那一族**两面各一枚**、盟册那一族仍是通用那枚 `entry`）。
 
 use env::{Mark, PieToken, TaskId};
@@ -39,7 +39,7 @@ pub(super) fn reply_of(who: TaskId) -> Option<PieToken> {
 /// 这一位客人**自己**交来的那一枚问话孔
 /// 判据两格，缺一不可：`owner == who`（那扇门是它开的）**且** 记号 == `mark`（它亲手铸的
 /// 那一枚）——客人交来的**入口**也满足前两格（都是它铸、它交的），两件事只有记号分得开
-/// **`mark` 那一格由调用方逐枚给**（super::server 的 `MARKS`）：控制面那一枚 ＋ 七位操作面
+/// **`mark` 那一格由调用方逐枚给**（super::server 的 `MARKS`）：控制面那一枚 ＋ 操作面每一位
 /// 各一枚——客人开在哪一位上，只有它那枚孔的记号说得清
 pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
     // 多枚**是契约被破**（一位客人只该在一位上铸一枚问话孔）⇒ 说一句。

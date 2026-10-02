@@ -67,19 +67,16 @@ const LATE_MS: usize = 1_000;
 
 /// **本族认得的全部问话孔记号**：控制面那一枚 ＋ 操作面**每一位**各一枚（`Grant::ALL` 的位数）
 /// **一处给**：Desk::arm_pending 逐枚试、ask_of 逐枚比——两处读的都只有这一个数组。
-/// 加一位 `Grant` 就要在这里加一枚（数组长度写死是 `const` 的代价：值与 `Grant::ALL` 对齐
-/// 由 `count_under` 那一台探针在树上量——它数的就是这一族有几格）。
-const MARKS: [Mark; 9] = [
-    ocall::ASK_MARK,
-    Grant::Part.mark(),
-    Grant::Land.mark(),
-    Grant::Find.mark(),
-    Grant::Trim.mark(),
-    Grant::List.mark(),
-    Grant::Seek.mark(),
-    Grant::Name.mark(),
-    Grant::Watch.mark(),
-];
+/// 操作面那几枚**不重列**：从 `Grant::MARKS` 抄进来，长度也由那张表给（加一位 `Grant` 就自动跟上）
+const MARKS: [Mark; Grant::COUNT + 1] = {
+    let mut marks = [ocall::ASK_MARK; Grant::COUNT + 1];
+    let mut i = 0;
+    while i < Grant::COUNT {
+        marks[i + 1] = Grant::MARKS[i];
+        i += 1;
+    }
+    marks
+};
 
 /// 起服务：**上板 → 铸提示孔交给装配者 → 一枚线程招待所有客人**
 /// settle）：它是"装配侧 → 持树者"的唯一一条路，故**不必另开一条到自己的会话**
@@ -401,7 +398,7 @@ fn settle(
     // 还没挂上问话孔的那几格：**账自己按格子号走一遍**（见 Desk::arm_pending）——
     // 调用方这一侧因此既不必按常数开数组（"一本账的容量渗到别人的栈上"那一格），
     // 也不必为"抄一份"再分配一次。
-    // **记号那一列**（MARKS）：控制面那一枚（`ASK_MARK`）＋ 七位操作面各一枚。
+    // **记号那一列**（MARKS）：控制面那一枚（`ASK_MARK`）＋ 操作面每一位各一枚。
     pending |= desk.arm_pending(
         &MARKS,
         |who, mark| ask_of(who, mark),

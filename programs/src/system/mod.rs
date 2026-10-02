@@ -98,11 +98,11 @@ impl Assembly {
         }
     }
 
-    /// **把七位操作面挂上树**（`/svc/sys/operator/{part,land,find,trim,list,seek,name}`）
+    /// **把操作面每一位挂上树**（`/svc/sys/operator/{name}`：名与位次都由那一族的 `Grant` 给）
     /// 那一族的常量给出**（`/svc/sys/operator`：**只是一段目录，不是任何能力的别名**：没有入口、
     /// 没有 Pie）。目录那几段由持树者**就地立出来**（`part` 幂等：缺的就地造，已在就是成了）
     pub(crate) fn mount_grants(&mut self) {
-        // 七位：每位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
+        // 一位一条路（`/svc/sys/operator/{name}`），前缀由持树者就地立出来。
         for grant in protocol::service::operator::Grant::ALL {
             let (entry, name) = match mount::entry(grant.mark(), grant.name()) {
                 Ok(plate) => plate,
