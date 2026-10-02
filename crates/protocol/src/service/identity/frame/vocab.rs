@@ -100,6 +100,9 @@ impl CoalitionId {
     pub const fn new(authority: TaskId, slot: u64) -> Self {
         Self { authority, slot }
     }
+    pub const fn root(authority: TaskId) -> Self {
+        Self { authority, slot: 0 }
+    }
 }
 
 /// Canonically sorted, unique, single-authority, allocation-free active selections.

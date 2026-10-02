@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn identity_uses_one_atomic_match_not_resolve() {
         use protocol::service::identity::PrincipalId;
-        let selector = Selector::Exact(PrincipalId { authority: TaskId::new(9), slot: 0 });
+        let selector = Selector::Exact(PrincipalId::new(TaskId::new(9), 0));
         let mut facts = Answers { bound: Err(()), matches: Ok(true), same: Err(()), opener: None };
         assert_eq!(judge(&facts, TaskId::new(1), Permit::Identity(selector)), Ruling::Allow);
         facts.matches = Ok(false);

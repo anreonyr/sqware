@@ -216,8 +216,8 @@ mod tests {
     #[test]
     fn permits_preserve_authority_and_slot() {
         let authority = TaskId::new(23);
-        let principal = PrincipalId { authority, slot: u64::MAX };
-        let coalition = CoalitionId { authority, slot: 0 };
+        let principal = PrincipalId::new(authority, u64::MAX);
+        let coalition = CoalitionId::new(authority, 0);
         for permit in [
             Permit::Public,
             Permit::Bound,

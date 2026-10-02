@@ -25,6 +25,6 @@ impl IdentityBook {
         slot.checked_add(1).ok_or(Fail::Full)?;
         self.coalitions.try_reserve(1).map_err(|_| Fail::Full)?;
         self.coalitions.push(CoalitionNode { manager });
-        Ok(CoalitionId { authority: self.authority, slot })
+        Ok(CoalitionId::new(self.authority, slot))
     }
 }

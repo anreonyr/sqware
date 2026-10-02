@@ -343,8 +343,8 @@ impl Client {
         wait: Wait,
     ) -> Result<Object, Fail> {
         let object = match kind {
-            1 => Object::Principal(PrincipalId::new(authority, 0)),
-            2 => Object::Coalition(CoalitionId::new(authority, 0)),
+            1 => Object::Principal(PrincipalId::root(authority)),
+            2 => Object::Coalition(CoalitionId::root(authority)),
             _ => return Err(Fail::Unknown),
         };
         let road = object.road(name).ok_or(Fail::Unknown)?;
@@ -365,8 +365,8 @@ impl Client {
             return Err(Fail::Denied);
         }
         let object = match kind {
-            1 => Object::Principal(PrincipalId::new(authority, 0)),
-            2 => Object::Coalition(CoalitionId::new(authority, 0)),
+            1 => Object::Principal(PrincipalId::root(authority)),
+            2 => Object::Coalition(CoalitionId::root(authority)),
             _ => return Err(Fail::Unknown),
         };
         let mut frame = Frame::new(

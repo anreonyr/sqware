@@ -92,7 +92,7 @@ fn main() -> Report<'static> {
         Err(CallError::Service(Fail::Changed))));
     assert!(query.members(c0, None, Wait::AtMost(MS)).is_ok());
 
-    let outside = CoalitionId { authority, slot: u64::MAX };
+    let outside = CoalitionId::new(authority, u64::MAX);
     assert!(matches!(query.amid(p, outside, Wait::AtMost(MS)),
         Err(CallError::Service(Fail::UnknownCoalition))));
     assert!(matches!(org.admit(outside, p, Wait::AtMost(MS)),

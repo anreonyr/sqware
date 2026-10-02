@@ -85,7 +85,7 @@ fn authority_and_cursor_revision_are_checked_before_results() {
     let cursor = Cursor { target: PageTarget::Members(c), revision: book.revision, after: 0 };
     book.admit(task, c, p).unwrap();
     assert!(matches!(book.page::<PrincipalId>(PageTarget::Members(c), Some(cursor)), Err(Fail::Changed)));
-    let alien = PrincipalId { authority: installer, slot: p.slot };
+    let alien = PrincipalId::new(installer, p.slot);
     assert_eq!(book.matches(TaskId::new(999), Selector::Exact(alien)),
         Err(Fail::WrongAuthority));
     assert_eq!(book.matches(TaskId::new(999), Selector::Exact(p)), Ok(Match::Unbound));

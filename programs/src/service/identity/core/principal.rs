@@ -46,6 +46,6 @@ impl IdentityBook {
         slot.checked_add(1).ok_or(Fail::Full)?;
         self.principals.try_reserve(1).map_err(|_| Fail::Full)?;
         self.principals.push(PrincipalNode { parent: Some(parent) });
-        Ok(PrincipalId { authority: self.authority, slot })
+        Ok(PrincipalId::new(self.authority, slot))
     }
 }

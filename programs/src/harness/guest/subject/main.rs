@@ -42,7 +42,7 @@ fn main() -> Report<'static> {
     let sibling = own.derive(p, Wait::AtMost(MS)).expect("subject: sibling derive failed");
     assert_eq!(query.heir(p, q, Wait::AtMost(MS)), Ok(true));
     assert_eq!(query.heir(q, p, Wait::AtMost(MS)), Ok(false));
-    let outside = PrincipalId { authority, slot: u64::MAX };
+    let outside = PrincipalId::new(authority, u64::MAX);
     assert!(matches!(query.heir(p, outside, Wait::AtMost(MS)),
         Err(CallError::Service(Fail::UnknownPrincipal))));
 

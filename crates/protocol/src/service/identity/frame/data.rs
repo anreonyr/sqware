@@ -55,9 +55,9 @@ impl Field for Selector {
         if at != bytes.len() { return None; }
         let IdFrame { authority: Task(authority), slot } = frame.id;
         match frame.kind {
-            0 => Some(Self::Exact(PrincipalId { authority, slot })),
-            1 => Some(Self::DescendantOf(PrincipalId { authority, slot })),
-            2 => Some(Self::MemberOf(CoalitionId { authority, slot })),
+            0 => Some(Self::Exact(PrincipalId::new(authority, slot))),
+            1 => Some(Self::DescendantOf(PrincipalId::new(authority, slot))),
+            2 => Some(Self::MemberOf(CoalitionId::new(authority, slot))),
             _ => None,
         }
     }
@@ -140,8 +140,8 @@ impl Span for Cursor {
         let (frame, at) = CursorFrame::fetch_at(bytes, at)?;
         let IdFrame { authority: Task(authority), slot } = frame.id;
         let target = match frame.kind {
-            0 => PageTarget::Members(CoalitionId { authority, slot }),
-            1 => PageTarget::Memberships(PrincipalId { authority, slot }),
+            0 => PageTarget::Members(CoalitionId::new(authority, slot)),
+            1 => PageTarget::Memberships(PrincipalId::new(authority, slot)),
             _ => return None,
         };
         Some((Self { target, revision: frame.revision, after: frame.after }, at))
