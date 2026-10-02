@@ -112,9 +112,16 @@ pub(super) fn halt() -> ! {
                 putln!("[verdict] 一台域都没起：世界没跑起来，这一景什么都没验");
                 semihosting::process::exit(101)
             }
+            // **判据 = 账里每一笔都是"干净的结局"**：`EXIT_OK`（自愿结束）与内核自己那两档收场码
+            // （`EXIT_DOOM` / `EXIT_CASCADE`：机器已经在收场，连坐请走的那几台）算绿，其余一律算红
+            // ——装配那一族的小整数（启动握手没走通）、`EXIT_PANIC`、`EXIT_FAULT` 都在内。
+            // **旧口径只看 `EXIT_PANIC`，太松**：装配收场（小整数那一档）与故障收场（`EXIT_FAULT`）
+            // 当时都判绿——实测过一例：`probe-rule` 干净退场、装配者随后判它"没就绪"⇒ 装配失败并
+            // 收场，而用例报绿（`kernel/tests/embedded.rs` 的 `scene` 因此看得见机器起过、看不见
+            // 装配没走完）。
             let mut blame: Option<ledger::Entry> = None;
             ledger::each(|e| {
-                if blame.is_none() && e.reason == env::EXIT_PANIC {
+                if blame.is_none() && !clean_ending(e.reason) {
                     blame = Some(*e);
                 }
             });
@@ -140,6 +147,14 @@ pub(super) fn halt() -> ! {
 }
 
 type Hook = fn();
+
+/// testing 的判据里"这一笔结局算干净吗"（见 [`halt`] 那一段）：自愿结束，或内核自己收场时
+/// 连坐请走的那两档。**其它一律算红**——包括 `EXIT_PANIC` / `EXIT_FAULT` 与各域自己的启动编号。
+fn clean_ending(reason: env::Reason) -> bool {
+    reason == env::EXIT_OK
+        || reason == crate::work::room::messenger::EXIT_DOOM
+        || reason == crate::work::room::messenger::EXIT_CASCADE
+}
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();
 
