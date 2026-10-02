@@ -1,6 +1,6 @@
 use alloc::collections::VecDeque;
 use alloc::sync::{Arc, Weak};
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
@@ -86,6 +86,9 @@ pub struct HoleMeta {
     /// **"报不出就绪、又没有手"**那一格的中段告警打过没有（与 `alarmed` 分开：两件事，
     /// 一枚孔各最多一行）。
     stuck: AtomicBool,
+    /// 第一次看到这枚孔"**是 rung、又不是手**"那一刻（ticks；0 = 还没见过）。
+    /// 它给 [`note_rung`] 判"是一拍还是卡住"——**不报瞬时那几次**（正常跑里每跑 1~2 次）。
+    rung_since: AtomicU64,
 }
 
 impl HoleMeta {
@@ -98,6 +101,7 @@ impl HoleMeta {
             pending: SpinLock::new_level(Level::L3, Pending::Idle),
             alarmed: AtomicBool::new(false),
             stuck: AtomicBool::new(false),
+            rung_since: AtomicU64::new(0),
         })
     }
 
@@ -409,14 +413,26 @@ pub(crate) fn wait(
     // "写口就绪吗"那一问上，60 s 里零读数、连 `idle 10000ms` 那条看门狗都不响——因为等的人
     // 每一毫秒都在跑）。报**孔号 ＋ 主人 ＋ 那一格的形状**，这一族下次就自己报名。
     if dir == HoleDir::Push && hand_age(meta).is_none() {
-        // **只认那一格永久的形状**：`Pending::Rung` 是**法定**状态（路由者给"线"那一枚孔置位、
-        // 由取的人 `hush`），故写的人在那儿等是常事——量过：正常跑里每跑 1~2 次，报它只会把
-        // 信号淹掉。`Queue` **空着**那一格不同：它没有任何一条路能自己回到 `Idle`
-        // （`take` 要有手、`taken` 要先 `take`）⇒ 一旦出现就是永久的两头堵死。
-        if let Pending::Queue(q) = &*meta.pending.lock()
-            && q.hands.is_empty()
-        {
-            note_stuck(meta);
+        // 两种形状，**两种判据**（都量过，故各按各的报法）：
+        //
+        // · `Queue` **空着**：没有任何一条路能自己回到 `Idle`（`take` 要有手、`taken` 要先
+        //   `take`）⇒ 一旦出现就是**永久**的两头堵死 ⇒ 当场报。
+        // · `Rung`：**法定**状态（路由者给"线"那一枚孔置位、由取的人 `hush`），写的人在那儿
+        //   等是常事——正常跑里每跑 1~2 次、每次都是**瞬时**（先按宽判据跑过，报出来那一行
+        //   的形状全已回到 `idle`），故当场报只会把信号淹掉。改判**持续**：同一枚孔连着
+        //   `RUNG_STUCK_MS` 都还是 rung 才报——它就**不再是一拍**，而是那一格真的没人清。
+        //   这一形与上面那一格不同：`ready(Pull)` 是**真**的 ⇒ 取的人会一直醒、一直
+        //   「报就绪却取不出手」地空转 ⇒ **整机不空闲**（量到的红正是：`idle 10000ms` 那条
+        //   看门狗**不响**、而零读数）。
+        let shape = match &*meta.pending.lock() {
+            Pending::Queue(q) if q.hands.is_empty() => Some("queue-empty"),
+            Pending::Rung => Some("rung"),
+            _ => None,
+        };
+        match shape {
+            Some("queue-empty") => note_stuck(meta),
+            Some("rung") => note_rung(meta),
+            _ => {}
         }
     }
     if dur == Duration::ZERO {
@@ -467,6 +483,33 @@ const ALARM_MAX: usize = 8;
 /// 它报的正是"**两边都动不了**"那一格：写的人见 `ready(Push)` 为假（推不进来）、取的人见
 /// `ready(Pull)` 为假（等不到），而孔上**没有手** ⇒ 连"这只手压了多久"那条读数也没有。
 /// 形状由 [`HoleMeta::pending_name`] 说——`queue-empty` 与 `rung` 是两种不同的下一步。
+/// **同一枚孔 rung 这一档持续多久才算"卡住"**（毫秒）——见 [`wait`] 那一节的判据。
+/// 取 1 s：正常那几次（量过每跑 1~2 次）都是**一拍**之内就清了，远远够不着。
+const RUNG_STUCK_MS: usize = 1_000;
+
+/// **rung 卡住**：第一次见到的时刻记在 `rung_since` 上，此后每次再看一眼；连着
+/// [`RUNG_STUCK_MS`] 还是 rung ⇒ 报一行（一枚孔最多一行）。
+///
+/// 与 [`note_stuck`] 分开：那一格是**错**，这一格是**法定的位没人清**——两件事两条读数。
+fn note_rung(meta: &HoleMeta) {
+    let now = clock::uptime_ticks();
+    let first = meta.rung_since.load(Ordering::Relaxed);
+    if first == 0 {
+        meta.rung_since.store(now, Ordering::Relaxed);
+        return;
+    }
+    if elapsed_ms(first) < RUNG_STUCK_MS || meta.stuck.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    crate::putln!(
+        "mail: rung stuck hole#{} owner={} held={}ms live={}",
+        meta.id.0,
+        meta.owner.get(),
+        elapsed_ms(first),
+        HANDS_LIVE.load(Ordering::Relaxed),
+    );
+}
+
 fn note_stuck(meta: &HoleMeta) {
     if meta.stuck.swap(true, Ordering::Relaxed) {
         return;

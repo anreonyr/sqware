@@ -56,9 +56,33 @@ impl<T: ?Sized> SpinLock<T> {
         let trap = unsafe { TrapGuard::save() };
         crate::lock::depend_check!(self, caller);
 
+        // **自旋太久就报一句**（**打印那一路是免锁的**：`console::_write` 只往栈上那格缓冲里
+        // 格式化、再 SBI 直写，故这一行在"整机不出声"时也出得来）。
+        //
+        // **为什么需要它**：抱锁的那一位若永远不放手，等的人就在这儿 `spin_loop` 转下去，
+        // 而**这一刻本 hart 的 IRQs 是关着的**（`TrapGuard::save`）⇒ 定时器也叫不动它；
+        // `hush()` 只在本 hart 撞上"有别的 hart 认领了报警"时才自停。于是整机**一条读数都没有**。
+        // 量到的现象正是这一形：accept 景偶发"整机跑完不出场"——控制台在装配中途整段停住、
+        // 连 `idle 10000ms with walkers alive` 那条看门狗都不响、也没有 verdict。
+        // 报的是**等级 ＋ 地址 ＋ 抱锁那位的 `ra` ＋ 等的人 `ra`**（`ra` 落到哪个函数，
+        // 用 `cargo nm` 对一下就知道）——一枚锁每次入 `lock` 最多一行。
+        const STUCK_SPINS: usize = 1 << 26;
+        let mut spins: usize = 0;
+        let mut told = false;
         while self.locked.swap(true, Ordering::Acquire) {
             crate::runtime::diagnose::halt::hush();
             core::hint::spin_loop();
+            spins += 1;
+            if !told && spins >= STUCK_SPINS {
+                told = true;
+                crate::putln!(
+                    "lock: stuck addr={:#x} level={:?} holder=ra{:#x} waiter=ra{:#x}",
+                    self as *const Self as *const () as usize,
+                    self.level,
+                    self.caller.load(Ordering::Relaxed),
+                    caller,
+                );
+            }
         }
         self.caller.store(caller, Ordering::Relaxed);
         crate::lock::depend_acquire!(self, caller);
