@@ -81,6 +81,6 @@ impl Message for Reply {
         if bytes.len() != Reply::LEN {
             return None;
         }
-        Reply::fetch(bytes)
+        Reply::fetch_at(bytes, 0).map(|one| one.0)
     }
 }

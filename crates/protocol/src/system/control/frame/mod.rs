@@ -60,7 +60,7 @@ impl Message for Said {
         if bytes.len() != Said::LEN {
             return None;
         }
-        Said::fetch(bytes)
+        Said::fetch_at(bytes, 0).map(|one| one.0)
     }
 }
 

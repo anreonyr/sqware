@@ -65,7 +65,7 @@ impl Message for Claim {
         if bytes.len() != Claim::LEN {
             return None;
         }
-        let q = Claim::fetch(bytes)?;
+        let q = Claim::fetch_at(bytes, 0)?.0;
         (q.op == CLAIM).then_some(q)
     }
 }
@@ -205,7 +205,7 @@ impl Message for Said {
         if bytes.len() != Said::LEN {
             return None;
         }
-        Said::fetch(bytes)
+        Said::fetch_at(bytes, 0).map(|one| one.0)
     }
 }
 
