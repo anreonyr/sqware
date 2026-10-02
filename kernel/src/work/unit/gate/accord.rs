@@ -13,6 +13,7 @@ pub(crate) fn accord(
     subset: Permission,
     mark: Mark,
 ) -> Result<usize, PieFail> {
+    let _graph = super::GRAPH.lock();
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
     let granted = {
         let mut pies = caller.pies.lock();

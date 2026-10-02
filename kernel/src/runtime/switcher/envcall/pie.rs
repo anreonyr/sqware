@@ -49,9 +49,20 @@ pub(crate) fn dispatch(
         PieCall::Narrow { token, subset } => narrow(frame, token, subset),
         PieCall::Revoke { dst, token } => revoke(frame, dst, token),
         PieCall::Collect { index } => collect(frame, index),
-        PieCall::Reserve { token } => reserve(frame, &ident, token),
+        PieCall::Reserve { token } => reserve(frame, token, true),
+        PieCall::Inspect { token } => reserve(frame, token, false),
         PieCall::Release { token } => release(frame, token),
         PieCall::Alive { token } => alive(frame, token),
+        PieCall::Forget { token } => {
+            answer(frame, current().running_task().ok_or(PieFail::Denied)
+                .and_then(|task| gate::forget(&task, token)).map(|_| 0));
+            Outcome::Resume
+        }
+        PieCall::Same { a, b } => {
+            answer(frame, current().running_task().ok_or(PieFail::Denied)
+                .and_then(|task| gate::same(&task, a, b)).map(usize::from));
+            Outcome::Resume
+        }
     })
 }
 
@@ -275,7 +286,7 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let target = muster(dst_id).ok_or(PieFail::Denied)?;
-        gate::revoke(&caller, &target, token, &gate::snap()).map(|_| 0)
+        gate::revoke(&caller, &target, token).map(|_| 0)
     })();
     answer(frame, r);
     Outcome::Resume
@@ -301,12 +312,12 @@ fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
     Outcome::Resume
 }
 
-fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outcome {
+fn reserve(frame: &mut TrapContext, token: PieToken, hole_only: bool) -> Outcome {
     let r = (|| -> Result<(TaskId, TaskId, usize), PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let p = gate::locate(&task, token).ok_or(PieFail::Denied)?;
         let owner = p.owner().ok_or(PieFail::Dead)?;
-        if !matches!(p, AnyPie::Hole(_)) {
+        if hole_only && !matches!(p, AnyPie::Hole(_)) {
             return Err(PieFail::Denied);
         }
         let mark = p.mark().get() as usize;
@@ -331,7 +342,7 @@ fn reserve(frame: &mut TrapContext, _ident: &TaskIdent, token: PieToken) -> Outc
 
 fn release(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = match current().running_task() {
-        Some(task) => gate::release(&task, token, &gate::snap()).map(|_| 0),
+        Some(task) => gate::release(&task, token).map(|_| 0),
         None => Err(PieFail::Denied),
     };
     answer(frame, r);

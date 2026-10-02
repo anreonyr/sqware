@@ -12,7 +12,7 @@ use runtime::env::mail::HolePie;
 pub struct Sender<M: Message> {
     /// 写端那一枚（`None` = 还没有）
     hole: Option<PieToken>,
-    /// 编报那一格：地址在整个借用期里不动（见文件头③）。**只服务 [`Sender::send`] 那一档**。
+    /// 编报缓冲：Push 复制后即可复用。**只服务 [`Sender::send`] 那一档**。
     buf: M::Buf,
     /// **我还排着几只**（孔那头说的数：`Peek` 的第三格）。
     ///
@@ -20,7 +20,7 @@ pub struct Sender<M: Message> {
     /// 没有身份、只有**深度**——单推的一只孔上，深度就是我还压着的手数。故写端由"猜自己的手"
     /// 改成"问内核"（[`Sender::outstanding`]）。
     outstanding: usize,
-    /// 最后推出去的是**自己那格 `buf`** 还是**借来的那段**——只决定 [`Drop`] 要不要收口。
+    /// 最后一帧是否由本端缓冲编码。
     own: bool,
     _m: PhantomData<M>,
 }
@@ -50,6 +50,11 @@ impl<M: Message> Sender<M> {
     }
 
     pub fn send(&mut self, msg: M) -> Result<(), SendFail> {
+        self.send_within(msg, Wait::POLL)
+    }
+
+    /// Bound queue admission. A successful push copies the bytes into the kernel queue.
+    pub fn send_within(&mut self, msg: M, within: Wait) -> Result<(), SendFail> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);
         };
@@ -60,18 +65,18 @@ impl<M: Message> Sender<M> {
         };
         let bytes = self.buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
         HolePie::from_token(hole)
-            .push(bytes, Wait::POLL)
+            .push(bytes, within)
             .map_err(|e| SendFail::Mail(e.source))?;
         self.outstanding += 1;
         self.own = true;
         Ok(())
     }
 
-    /// **借一段递出去**：字节留在**调用方**那儿（取走那一刻内核复制一次），故本层不复制。
+    /// **借一段递出去**：Push 当场把字节复制进内核队列，本层不另存一份。
     ///
-    /// 与 [`Sender::send`] 的分界：那一档自己带一格缓冲（一次只能一只手）；这一档的字节是
+    /// 与 [`Sender::send`] 的分界：那一档自己带一格编码缓冲；这一档的字节是
     /// 调用方的 ⇒ **可以连推**，直到孔上那一列排满（答 `Mail(Busy)`）。
-    /// **借出去那段的寿命归调用方**：内核取走之前它不能改、不能放（[`Drop`] 不为它收口）。
+    /// Push 成功后调用方即可修改或释放原缓冲（[`Drop`] 无须收口）。
     pub fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), SendFail> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);

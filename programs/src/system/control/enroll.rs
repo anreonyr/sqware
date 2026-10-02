@@ -39,6 +39,10 @@ impl Control {
         name: String,
         service: &mut Service,
     ) -> Result<(), Error> {
+        if program.name() == "hub" {
+            self.activation = Some(crate::service::hub::bridge::Activation::open(service.0)
+                .map_err(Error::Step)?);
+        }
         // **一、放行**（不等就绪）。
         self.start(name.as_str(), service)?;
         // **二、递物料**（只对声明了 Setup::Machine 的那一台；别的台这一步是空转）。
@@ -149,7 +153,8 @@ pub fn await_ready(
 ) -> Result<(), &'static str> {
     assembly
         .control
-        .ready(program.name().to_string(), service, program.supply())
+        .ready(program.name().to_string(), service, program.supply(),
+            |control| control.progress(&mut assembly.tree))
         .map_err(|e| e.said())
 }
 

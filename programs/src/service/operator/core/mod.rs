@@ -199,7 +199,7 @@ impl Operator {
 
     /// **剪**：把那一号那一格剪掉
     /// 那一格得存在（否则 Fail::Unknown）；是 `Pane` 的话**必须空着**（否则 Fail::NonEmpty）
-    /// 剪掉一枚 `Tile` 时那一枚放下（mail::release）——它是资源实体的一份引用，不放下就漏水
+    /// 剪掉一枚 `Tile` 时放下本地引用（mail::forget），保留已交付的副本——它是资源实体的一份引用，不放下就漏水
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 Fail::Unknown，而**它不会被重新铸出来**（水位只增）
     /// 答**真动了什么**：剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树（前者是一格没了，
@@ -216,10 +216,12 @@ impl Operator {
         };
         // **路要在剪之前记**：剪完那一槽是碑，`road_to` 再也走不出来。
         let road = self.road_to(id);
-        let _ = self.unlink(id);
         if let Some(pie) = dropped {
-            let _ = runtime::env::mail::release(pie);
+            if runtime::env::mail::pies().any(|p| p.token == pie) {
+                runtime::env::mail::forget(pie).map_err(|_| Fail::Unknown)?;
+            }
         }
+        let _ = self.unlink(id);
         // 剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树：前者是一格没了，后者是一格连资源
         // 一起放下——两档订阅者都该知道"这一号从此不在了"。**路在落那条事件时现走**（号还在，
         // 槽已空）——故 `Change` 不存路。
@@ -261,13 +263,16 @@ impl Operator {
             .ok_or(Fail::Unknown)
     }
 
+    pub fn reference(&self, id: EntryId) -> Option<PieToken> {
+        match &self.slot(id)?.node { Node::Tile { pie, .. } => Some(*pie), Node::Pane(_) => None }
+    }
     pub fn permit(&self, id: EntryId) -> Permit {
         match self.slot(id) {
             Some(Slot {
                 node: Node::Tile { permit, .. },
                 ..
             }) => *permit,
-            _ => Permit::Unset,
+            _ => Permit::Public,
         }
     }
 
@@ -318,10 +323,12 @@ impl Operator {
                     Node::Pane(inner) if inner.is_empty() => None,
                     Node::Pane(_) => return Err(Fail::NonEmpty),
                 };
-                slot.node = node;
                 if let Some(old) = old {
-                    let _ = runtime::env::mail::release(old);
+                    if runtime::env::mail::pies().any(|p| p.token == old) {
+                        runtime::env::mail::forget(old).map_err(|_| Fail::Unknown)?;
+                    }
                 }
+                slot.node = node;
                 Ok(id)
             }
             None => {

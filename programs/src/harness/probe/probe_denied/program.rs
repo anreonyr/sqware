@@ -3,14 +3,14 @@
 
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
-/// 一位**没有身份**的任务去撞树的门（`bind: false`）——"没绑身份 ⇒ 拒绝"的反例
+/// Ordinary bound task tests installer sender authorization and action-face isolation.
 pub static PROBE_DENIED: UnitFile = UnitFile {
     identity: Identity {
         name: "probe-denied",
         ..Identity::DEFAULT
     },
     relation: Relation {
-        after: Some(&["operator"]),
+        after: Some(&["operator", "identity"]),
         restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },

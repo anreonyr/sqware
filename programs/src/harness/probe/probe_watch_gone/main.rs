@@ -28,7 +28,7 @@ use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 /// 订的那条路 —— 与 `probe-watch-after` 改的那条**逐字相同**（两份文件各写一遍：各是独立 bin）。
-const ROAD: &str = "/probe-swatch";
+const ROAD: &str = "svc/probe-swatch";
 /// **订上之后还站多久**（毫秒）：够对面改头一两趟，然后本台走掉。
 const HOLD_MS: u64 = 150;
 const OK_NOTE: &str = "probe-watch-gone: subscribed then left";

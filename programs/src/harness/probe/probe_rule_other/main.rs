@@ -3,7 +3,7 @@
 
 //! probe-rule-other — 另一位客人：有身份地去用别人立了规矩的那几格，期望被拒。
 //! `probe-rule` 那一台证的是"**规矩随身份走**"（同一个 TID 换一位代表，答案就变了）。
-//! 而 Permit::Trunk 与 Permit::Bough 各还有一格**只有另一台客人量得到**：
+//! 而 Exact 与 DescendantOf 各还有一格**只有另一台客人量得到**：
 //!   在 p 那一支里，而 `adopt` 只许**往下**领（`heir(current, q)`，见
 //! :core 的 Principal::adopt 三格前置）；
 //!   演一次：装配期每位都是 `derive(ROOT)` 的**兄弟**，故彼此都不在对方那一支里。
@@ -37,7 +37,7 @@ const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
-/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/principal/ask 那一格)`（许给**别人**）
+/// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/identity/resolve 那一格)`（许给**别人**）
 const FOREIGN: &str = "foreign";
 
 const MS: usize = 1000;

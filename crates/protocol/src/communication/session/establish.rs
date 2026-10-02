@@ -122,6 +122,13 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
     })
 }
 
+/// Answer an already observed live endpoint; do not rescan for a replacement.
+pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
+    let (_, owner, mark) = mail::reserve(entry).map_err(|_| EstablishFail::NoSeed)?;
+    let (rx, seed) = seal_and_ship(owner, mark)?;
+    Ok(Endpoint { rx, tx: Some(entry), seed })
+}
+
 /// **单向赠予**：我铸一枚（刻 `mark`），把**读端**交给 `to`，本端 `narrow(STORE)` 留写端
 /// 与 endpoint 正好相反：那边交出去的是"我读的那一枚"（对端写），这边交出去的是
 /// "对端读的那一枚"（本端写）。用家是"我有一位常驻的收信人、我只有话要说"那一档

@@ -7,6 +7,7 @@
 pub mod client;
 pub mod frame;
 pub mod grant;
+pub mod publication;
 
 pub use client::{BERTH, Face};
 pub use frame::{ASK_MARK, BACK, DENIED, DIR, Fail, LINK, NAME, State};

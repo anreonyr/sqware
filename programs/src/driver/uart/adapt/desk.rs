@@ -94,7 +94,7 @@ fn plate(ctx: &Context, rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
     let tree = operator::Face::from(&ctx.session);
     let list = [(RX, rx.ship()), (TX, tx.ship())];
     let road = driver::ROAD.try_join(ME).expect("uart: tree: road");
-    let plated = bridge::land(&tree, ME, &road, Mine::Yes, Permit::Unset, &list, ms);
+    let plated = bridge::land(&tree, ME, &road, Mine::Yes, Permit::Public, &list, ms);
     assert_eq!(plated.len(), 2, "{ME}: tree: road");
     for (one, want) in plated.iter().zip([RX, TX]) {
         assert!(one.land.is_ok(), "{ME}: tree: land {want}");

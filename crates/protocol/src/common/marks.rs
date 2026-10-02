@@ -1,4 +1,4 @@
-//! 不归某族"面"那一族、却被当记号用的那几枚，与四族的面
+//! 不归某族"面"那一族、却被当记号用的那几枚，与三族的面
 //! 逐对判一次"全协议任两枚不许撞"。这一处看得见整棵树，故由它钉。
 
 use crate::system::control;
@@ -7,20 +7,19 @@ use crate::system::control;
 const LOOSE: &[env::Mark] = &[
     crate::driver::ENTRY_MARK,
     crate::service::operator::TIP_MARK,
+    crate::service::operator::TIP_BACK,
     control::ASK_MARK,
     control::BACK,
-    crate::service::principal::BACK,
-    crate::service::coalition::BACK,
+    crate::service::identity::BACK,
     crate::service::operator::ASK_MARK,
 ];
 
-/// **全协议任两枚记号不许撞**：四族的面 × 别族的面 × 上面那几枚散记号，逐对判一次
+/// **全协议任两枚记号不许撞**：三族的面 × 别族的面 × 上面那几枚散记号，逐对判一次
 const _: () = {
-    let fams: [&[env::Mark]; 4] = [
-        &crate::service::coalition::Grant::MARKS,
+    let fams: [&[env::Mark]; 3] = [
+        &crate::service::identity::Grant::MARKS,
         &control::Grant::MARKS,
         &crate::service::operator::Grant::MARKS,
-        &crate::service::principal::Grant::MARKS,
     ];
     let mut f = 0;
     while f < fams.len() {

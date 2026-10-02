@@ -32,6 +32,7 @@ use protocol::communication::session::{Session, establish};
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face, Mine};
 use protocol::service::operator::{Fail, Grant, Permit};
+use protocol::system::control::publication::{Client, Scope, Target};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -54,6 +55,12 @@ fn main() -> Report<'static> {
     let a = open(Mode::Oldest);
     let b = open(Mode::Oldest);
     let plated = land(&tree, &a, &b);
+    let client = Client::injected().unwrap();
+    let target = |name: &str| Target::Service {
+        scope: Scope::Fixture, group: rig::ROAD.into(), name: name.into(),
+    };
+    assert_eq!(client.publish(target("rx"), a.ship(), Permit::Public, Wait::AtMost(MS)), Ok(plated[0].plate));
+    assert_eq!(client.publish(target("rx"), b.ship(), Permit::Public, Wait::AtMost(MS)), Err(Fail::Denied));
 
     // A 先写满：客人一取号就该有东西可读（**不绕环**，故"读到几条"是确定的）。
     let mut aw = a.writer();
@@ -63,6 +70,8 @@ fn main() -> Report<'static> {
             "probe-rack-mount: A 第 {i} 条没落进去"
         );
     }
+
+
 
     // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
     let _ = establish::endpoint(utask::sire(), Mark::of(programs::unit::READY), Wait::POLL);
@@ -80,6 +89,16 @@ fn main() -> Report<'static> {
             "probe-rack-mount: B 上第 {i} 条不是客人落的那一条"
         );
     }
+
+    let retained = tree.tile(&rig::road().unwrap().try_join("tx").unwrap(), Wait::AtMost(MS))
+        .unwrap().token(Wait::AtMost(MS)).unwrap();
+    let mut reader = protocol::communication::rack::Reader::<Bytes>::from_token(retained).unwrap();
+    client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
+    assert_eq!(tree.root().tile(&rig::road().unwrap().try_join("tx").unwrap(), Wait::AtMost(MS)).map(|_| ()), Err(Fail::Unknown));
+    b.writer().send(rig::payload(99)).unwrap();
+    assert_eq!(reader.recv(Wait::AtMost(MS)).unwrap().bytes(), rig::payload(99).bytes());
+    assert_eq!(mail::inspect(retained).unwrap().1, utask::self_id());
+    protocol::debug::put("probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping");
 
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
     // `find` 自成一位（那一手会转移权柄）⇒ 要 `Grant::Find` 那一柄。
@@ -109,7 +128,7 @@ fn open(mode: Mode) -> Rack<Bytes> {
     }
 }
 
-/// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Unset`：谁都能查、谁都能取，
+/// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Public`：谁都能查、谁都能取，
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
 fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<Landed> {
     let road = match rig::road() {
@@ -122,7 +141,7 @@ fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<Landed> {
         rig::ROAD,
         &road,
         Mine::No,
-        Permit::Unset,
+        Permit::Public,
         &faces,
         Wait::AtMost(MS),
     );

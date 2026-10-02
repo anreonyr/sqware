@@ -6,25 +6,19 @@
 
 use super::frame::{ALIVE_MARK, BACK_MARK, Wire};
 
-crate::faces! {
+crate::table! {
 /// **一条权柄边界**：一枚 = 一面。三位，位次 1..=3
     pub enum Grant {
 /// **报名**：许我驱这一类（幂等）
-        Bond => "bond",
+        Bond => "bond", (Wire::Bond(_));
 /// **列册**：这一类里现在有哪几台、哪几台有主（纯读）
-        List => "list",
+        List => "list", (Wire::List(_, _));
 /// **认领**：这台归我（在**每台那一份**上问）
-        Claim => "claim",
+        Claim => "claim", (Wire::Claim { .. });
     }
     stem: "hub-entry-",
     name_max: 5,
     wire_ty: Wire,
-    wire: {
-        // 三条线上码逐条说它落哪一面——**一码一面，不并 `|`**。
-        Wire::Bond(_) => Bond,
-        Wire::List(_, _) => List,
-        Wire::Claim { .. } => Claim,
-    }
 }
 
 // 比的是 `.get()` 那个裸值：`Mark` 的 `PartialEq` 不是 `const`，而 `get` 是 `const fn`

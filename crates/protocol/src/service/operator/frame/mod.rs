@@ -191,23 +191,3 @@ impl Message for Req {
 }
 
 // 手写的那六手（`op_of` / `unpack_ask` / `unpack_at` / `unpack_id` / `unpack_name` / `tail`）与
-
-impl env::wire::Field for Rule {
-    const WIDTH: usize = Rule::WIDTH;
-
-    fn store(&self, out: &mut [u8]) {
-        out[0] = match *self {
-            Rule::None => 0,
-            Rule::Root => 1,
-        };
-    }
-
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        match *bytes.first()? {
-            0 => Some(Rule::None),
-            1 => Some(Rule::Root),
-            // 表外的记 ⇒ 整帧读不懂（同 `Permit` / `Where` 那一格的口径）。
-            _ => None,
-        }
-    }
-}

@@ -1,0 +1,37 @@
+//! One authority owns lineage, qualifications, and atomic task identity snapshots.
+use alloc::vec::Vec;
+use env::TaskId;
+use protocol::service::identity::{CoalitionId, Fail, PrincipalId};
+
+mod coalition;
+mod lineage;
+mod roster;
+
+use coalition::CoalitionNode;
+use lineage::PrincipalNode;
+use roster::Bound;
+
+pub struct IdentityBook {
+    authority: TaskId,
+    installer: TaskId,
+    principals: Vec<PrincipalNode>,
+    coalitions: Vec<CoalitionNode>,
+    memberships: Vec<(PrincipalId, CoalitionId)>,
+    bindings: Vec<Bound>,
+    revision: u64,
+}
+
+impl IdentityBook {
+    pub fn new(authority: TaskId, installer: TaskId) -> Result<Self, Fail> {
+        let mut principals = Vec::new();
+        principals.try_reserve(1).map_err(|_| Fail::Full)?;
+        principals.push(PrincipalNode { parent: None });
+        Ok(Self {
+            authority, installer, principals, coalitions: Vec::new(),
+            memberships: Vec::new(), bindings: Vec::new(), revision: 0,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests;

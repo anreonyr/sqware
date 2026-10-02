@@ -27,12 +27,9 @@ pub use wire::OK;
 #[doc(hidden)]
 pub use alloc::format as __format;
 
-// `principal-back` / `coalition-back` / `line-back`：同一张表里两面的回信孔若刻同一个记号，
+// `identity-back` / `line-back`：同一张表里两面的回信孔若刻同一个记号，
 // 就分不出这一枚是哪一面的。三对里 `principal ↔ coalition` 那一对钉在
 // ——`frame.rs` 那两份只认得 `env` 与同层 `core`，看不见 `driver`。这一处看得见整棵树，故由它钉。
 const _: () = assert!(
-    crate::service::principal::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
-);
-const _: () = assert!(
-    crate::service::coalition::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
+    crate::service::identity::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
 );

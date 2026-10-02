@@ -3,8 +3,7 @@
 
 use env::Mark;
 
-use crate::service::coalition::CoalitionId;
-use crate::service::principal::PrincipalId;
+use crate::service::identity::Selector;
 use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// 一枚条目的**号**：机器用的那一个
@@ -27,8 +26,9 @@ impl EntryId {
     }
 }
 
-/// 一块 `Pane` 里最多几条。条数是策略，容器要有界
-pub const PANE_CAP: usize = 16;
+/// 一块 Pane 的有界容量；必须容纳统一 Identity 的 17 个独立动作面。
+/// 核心和 Listing 帧共用此界，不允许服务已落下而列表静默截断。
+pub const PANE_CAP: usize = 32;
 
 /// **容器坐标**：要动的那一块 `Pane` 在哪
 /// 两种报法：**根**，或**某一号**。根必须显式占一格——**根没有号**（见 EntryId）
@@ -78,13 +78,12 @@ pub enum Fail {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Permit {
-    Unset,
-    /// 就是这一位
-    Trunk(PrincipalId),
-    /// 这一位在 `p` 那一支里（`p ≼ 本人`，含相等）——纵向那条轴
-    Bough(PrincipalId),
-    /// 这一位在这枚盟里——横向那条轴
-    Among(CoalitionId),
+    /// 不问身份；身份服务离线也能使用。
+    Public,
+    /// 请求者必须有绑定。
+    Bound,
+    /// 一次由身份权威判断当前有效身份。
+    Identity(Selector),
     /// **就是开着第 `e` 格的那一位**（那一格的坐标是 EntryId，不是身份号）
     Opener(EntryId),
 }
@@ -141,22 +140,15 @@ const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 
 const _: () = assert!(ASK_MARK.get() != TIP_MARK.get());
 
-/// `4` 之后的号装的是**格号**（Permit::Opener），不是身份号——同一个 8 字节那一格
-/// 「用那一轴」在帧里的标记。**没有许可**那一档是 `0`
 /// 容器坐标那一格的"记"：`0` = 根、`1` = 号（Where 两种报法在线上的样子）
 const AT_ROOT: u8 = 0;
 
 const AT_ID: u8 = 1;
 
-const PERMIT_NONE: u8 = 0;
-
-const PERMIT_TRUNK: u8 = 1;
-
-const PERMIT_BOUGH: u8 = 2;
-
-const PERMIT_AMONG: u8 = 3;
-
-const PERMIT_OPENER: u8 = 4;
+const PERMIT_PUBLIC: u8 = 0;
+const PERMIT_BOUND: u8 = 1;
+const PERMIT_IDENTITY: u8 = 2;
+const PERMIT_OPENER: u8 = 3;
 
 /// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号
 impl env::wire::Field for Where {
@@ -180,35 +172,77 @@ impl env::wire::Field for Where {
         }
     }
 }
-/// 「**用**」那一轴在线上是"**标记 ＋ 8 字节号**"（9 字节）
-/// 口径与 EntryId 那一处相同：**impl 跟着类型走**——这是 Permit 自己的编码
+/// 标记与完整 Selector（包括 authority）。不用的荷载必须为零。
 impl env::wire::Field for Permit {
-    const WIDTH: usize = 1 + 8;
+    const WIDTH: usize = 1 + <Selector as env::wire::Field>::WIDTH;
 
     fn store(&self, out: &mut [u8]) {
-        let (tag, id) = match *self {
-            Permit::Unset => (PERMIT_NONE, 0),
-            Permit::Trunk(p) => (PERMIT_TRUNK, p.get() as u64),
-            Permit::Bough(p) => (PERMIT_BOUGH, p.get() as u64),
-            Permit::Among(c) => (PERMIT_AMONG, c.get() as u64),
-            // 格号与身份号同宽（都是 8 字节）⇒ 帧长一个字节都不动。
-            Permit::Opener(e) => (PERMIT_OPENER, e.get() as u64),
-        };
-        out[0] = tag;
-        out[1..].copy_from_slice(&id.to_le_bytes());
+        out.fill(0);
+        match *self {
+            Permit::Public => out[0] = PERMIT_PUBLIC,
+            Permit::Bound => out[0] = PERMIT_BOUND,
+            Permit::Identity(selector) => {
+                out[0] = PERMIT_IDENTITY;
+                selector.store(&mut out[1..]);
+            }
+            Permit::Opener(id) => {
+                out[0] = PERMIT_OPENER;
+                id.store(&mut out[1..9]);
+            }
+        }
     }
 
     fn fetch(bytes: &[u8]) -> Option<Self> {
-        let tag = *bytes.first()?;
-        let raw: [u8; 8] = bytes.get(1..9)?.try_into().ok()?;
-        let id = u64::from_le_bytes(raw);
-        Some(match tag {
-            PERMIT_NONE => Permit::Unset,
-            PERMIT_TRUNK => Permit::Trunk(PrincipalId::new(id as usize)),
-            PERMIT_BOUGH => Permit::Bough(PrincipalId::new(id as usize)),
-            PERMIT_AMONG => Permit::Among(CoalitionId::new(id as usize)),
-            PERMIT_OPENER => Permit::Opener(EntryId::new(id as usize)),
-            _ => return None,
-        })
+        let bytes = bytes.get(..Self::WIDTH)?;
+        let payload = &bytes[1..];
+        match bytes[0] {
+            PERMIT_PUBLIC if payload.iter().all(|b| *b == 0) => Some(Permit::Public),
+            PERMIT_BOUND if payload.iter().all(|b| *b == 0) => Some(Permit::Bound),
+            PERMIT_IDENTITY => Some(Permit::Identity(Selector::fetch(payload)?)),
+            PERMIT_OPENER if payload[8..].iter().all(|b| *b == 0) => {
+                Some(Permit::Opener(EntryId::fetch(&payload[..8])?))
+            }
+            _ => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use env::{TaskId, wire::Field};
+    use crate::service::identity::{CoalitionId, PrincipalId};
+
+    #[test]
+    fn permits_preserve_authority_and_slot() {
+        let authority = TaskId::new(23);
+        let principal = PrincipalId { authority, slot: u64::MAX };
+        let coalition = CoalitionId { authority, slot: 0 };
+        for permit in [
+            Permit::Public,
+            Permit::Bound,
+            Permit::Identity(Selector::Exact(principal)),
+            Permit::Identity(Selector::DescendantOf(principal)),
+            Permit::Identity(Selector::MemberOf(coalition)),
+            Permit::Opener(EntryId::new(0)),
+        ] {
+            let mut bytes = [0u8; Permit::WIDTH];
+            permit.store(&mut bytes);
+            assert_eq!(Permit::fetch(&bytes), Some(permit));
+            assert_eq!(Permit::fetch(&bytes[..bytes.len() - 1]), None);
+        }
+    }
+
+    #[test]
+    fn permit_rejects_unknown_tag_and_unused_payload() {
+        let mut bytes = [0u8; Permit::WIDTH];
+        bytes[0] = 255;
+        assert_eq!(Permit::fetch(&bytes), None);
+        for permit in [Permit::Public, Permit::Bound, Permit::Opener(EntryId::new(2))] {
+            permit.store(&mut bytes);
+            let last = bytes.len() - 1;
+            bytes[last] = 1;
+            assert_eq!(Permit::fetch(&bytes), None);
+        }
     }
 }

@@ -1,3 +1,7 @@
+/// Serialize transfer-graph changes. Take task snapshots only after acquiring it.
+pub(super) static GRAPH: crate::lock::SpinLock<()> = crate::lock::SpinLock::new(());
+mod forget;
+pub(crate) use forget::{forget, same};
 mod accord;
 mod cull;
 mod fail;

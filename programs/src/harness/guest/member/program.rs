@@ -10,7 +10,7 @@ pub static MEMBER: UnitFile = UnitFile {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        after: Some(&["operator", "coalition", "principal"]),
+        after: Some(&["operator", "identity"]),
         restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },

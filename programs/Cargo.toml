@@ -40,6 +40,27 @@ bench = false
 doctest = false
 
 [[bin]]
+name = "prog-identity-replacement"
+path = "src/harness/probe/identity_replacement/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-replacement-dependent"
+path = "src/harness/probe/identity_replacement/dependent.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-replacement-child"
+path = "src/harness/probe/identity_replacement/child.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
 name = "prog-router"
 path = "src/driver/router/main.rs"
 test = false
@@ -71,9 +92,7 @@ test = false
 bench = false
 doctest = false
 
-# 三枚常驻服务（**U 态，各自一个域**）：持树者 / 名册（身份）/ 盟册（结盟）。它们由编排域
-# 用与其他每一台相同的 `mint` 路起起来——不再与编排者共用一份字节，也没有 `Role` 那层分派。
-# 起手位次 0/1/2（持树者第一、名册第二、盟册第三），与 iii 之前逐字相同。
+# 常驻服务（U 态，各自一个域）：持树者 / 统一身份。身份谱系、资格和绑定共用一个权威。
 [[bin]]
 name = "prog-operator"
 path = "src/service/operator/main.rs"
@@ -82,21 +101,13 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "prog-principal"
-path = "src/service/principal/main.rs"
+name = "prog-identity"
+path = "src/service/identity/main.rs"
 test = false
 bench = false
 doctest = false
 
-[[bin]]
-name = "prog-coalition"
-path = "src/service/coalition/main.rs"
-test = false
-bench = false
-doctest = false
-
-# 设备账（U 态，独立域）：收整机物料、立账、落 `/svc/hub` 与 `/dev/<类>/<名>`、答三面
-# （报名 / 列册 / 认领）。起手位次 3（驱动之前——驱动起手第一件事是向它认领）。
+# 设备账（U 态，独立域）：收整机物料、立账、落 `/svc/hub` 与 `/dev/<类>/<名>`、答三面。
 [[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"

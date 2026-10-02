@@ -1,15 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! probe_denied 证的是"没身份 ⇒ 拒绝"；本程序证的是另一半：
-//! **有身份、但那一格不是你的** ⇒ 也拒绝。两条合起来，`land` 的两条支路才算在真机上钉住。
-//! 第 5 步是"规矩属于**活着的**主人"那一格的正证：`probe-lease` 声明归属之后直接死，
-//! # 两格读数为什么与 `probe-denied` 不同
-//! `probe-denied` 撞的是**一个从没铸过的名字**，故它的第二格是 `UNKNOWN`（"没被占"）。
-//! 也不能把它变成"剪掉"。两台的第二格形状**故意不一样**，各自钉一支。
-//! # 为什么它必须有身份（`bind: true`）
-//! 这一台要证的正是"身份**对不上**"，故它自己得是个**已绑身份**——否则它撞到的是第一道
-//! 门（没身份），量到的就不是归属那一条了。装配表上它与别的客人一样（`bind` 缺省即 `true`）。
+//! Resource use does not grant publication rights; departed publishers are retired.
 
 extern crate alloc;
 extern crate programs;
@@ -86,7 +78,7 @@ fn main() -> Report<'static> {
     let land = pane.bind(
         me.to_string(),
         entry,
-        Permit::Unset,
+        Permit::Public,
         Mine::No,
         Wait::AtMost(MS),
     );
@@ -125,7 +117,7 @@ fn main() -> Report<'static> {
     let taken = take_over(&tree);
 
     debug!(
-        "probe-owner: lease land={} (owner gone ⇒ take-over)",
+        "probe-owner: lease land={} (owner gone ⇒ retired; raw mutation still denied)",
         match taken {
             Ok(id) => format!("0 id={}", id.get()),
             Err(fail) => format!("{fail:?}"),
@@ -153,73 +145,25 @@ fn main() -> Report<'static> {
         assert!(untouched, "被拒之后那一格换号了（不再是 before 那个号）")
     }
     {
-        assert!(took, "probe-lease 已经死了，那一格该重新可落")
+        assert!(took, "departed publisher entry must disappear")
     }
 
     return Report::note(E_OK, OK_NOTE);
 }
 
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
-    // 路：容器那一段（`/svc`，只在协议那一侧说）接上那一格的名（`lease`）。
-    let road = protocol::common::svc::SVC
-        .try_join("lease")
-        .ok_or(Fail::Unknown)?;
-    let me = road.file_name().ok_or(Fail::Unknown)?;
-    let Some(dir) = protocol::common::svc::SVC.file_name() else {
-        return Err(Fail::Unknown);
-    };
-    // `/svc` 那块 Pane（分目录**幂等**，再取回那块 Pane）。
-    let root = tree.root();
-    let _ = root.open(dir.to_string(), Wait::AtMost(MS));
-    let Some(sys) = tree
-        .pane(&protocol::common::svc::SVC, Wait::AtMost(MS))
-        .ok()
-    else {
-        return Err(Fail::Unknown);
-    };
-    let mut left = MS;
-    loop {
-        if root.tile(&road, Wait::AtMost(MS)).is_ok() {
-            let Ok(entry) = mail::unseal_hole(env::Mark::of("takeover-entry")) else {
-                return Err(Fail::Unknown);
-            };
-            match sys.bind(
-                me.to_string(),
-                entry,
-                Permit::Unset,
-                Mine::No,
-                Wait::AtMost(MS),
-            ) {
-                Ok(id) => return Ok(id.id()),
-                Err(Fail::Denied) if left > 0 => {
-                    // 还没死透（或我们比它先到）：等一下再来。
-                    let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
-                    left = left.saturating_sub(1);
-                }
-                Err(fail) => return Err(fail),
-            }
-        } else if left > 0 {
-            let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
-            left = left.saturating_sub(1);
-        } else {
-            return Err(Fail::Unknown);
+    let entry = mail::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
+    assert!(matches!(tree.root().bind("fixtures".into(), entry, Permit::Public, Mine::No, Wait::AtMost(MS)), Err(Fail::Denied)));
+    let road = Path::new("svc/fixtures/lease");
+    for _ in 0..MS {
+        if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
+            return Ok(EntryId::new(0));
         }
+        let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
     }
+    Err(Fail::Unknown)
 }
-
-/// `/svc/drv/uart` 那块 Pane（分目录**幂等三趟** + 取回那块 Pane）：要顶的那枚砖落在它下面
-/// 取回那一块 Pane。"忘掉头一段"那一类错在形状上写不出来了
 fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
-    let mut at: Option<EntryId> = None;
-    for seg in road.iter() {
-        let here = match at {
-            Some(id) => Pane::of(tree, id),
-            None => tree.root(),
-        };
-        if let Ok(next) = here.open(seg.to_string(), Wait::AtMost(MS)) {
-            at = Some(next.id());
-        }
-    }
     tree.pane(road, Wait::AtMost(MS)).ok()
 }
 

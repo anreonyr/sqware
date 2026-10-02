@@ -86,6 +86,7 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> usize {
 
 /// 退场那一趟：**先封印，再看快照摘副本**。
 pub(crate) fn doom(task: &Arc<Task>) {
+    let _graph = super::GRAPH.lock();
     let tid = task.ident.id;
     let _ = seal_owned(tid, task);
     // **摘副本尽力而为**：它要分配（token 快照、frontier、unmaps），备不出就只少摘几枚

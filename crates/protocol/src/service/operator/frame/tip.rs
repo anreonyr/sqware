@@ -2,8 +2,13 @@
 //! `PlateFrame`（门牌）· 三枚码（`TIP_PLATE`/`TIP_GUEST`/`TIP_WIRED`）与入口 `TipIn`。
 
 use env::{PieToken, TaskId};
+use env::wire::Field;
 
 use crate::common::path::{Path, PathBuf};
+use super::{EntryId, Permit};
+
+/// Bootstrap acknowledgements are separate from ordinary Operator sessions.
+pub const TIP_BACK: env::Mark = env::Mark::of("operator-tip-back");
 
 /// 提示之路上的两个 `kind`（首格；表外 ⇒ 这一帧读不懂）
 const TIP_PLATE: u8 = 1;
@@ -11,6 +16,9 @@ const TIP_PLATE: u8 = 1;
 const TIP_GUEST: u8 = 2;
 
 const TIP_WIRED: u8 = 3;
+const TIP_UNPLATE: u8 = 4;
+const TIP_EMPTY: u8 = 5;
+const TIP_ABORT: u8 = 6;
 
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GuestFrame {
@@ -18,38 +26,30 @@ pub struct GuestFrame {
     pub who: TaskId,
 }
 
-/// 「门禁接线」那一形：**只有一个字节**（`kind`）——一句话，不带号
-/// **它说的是什么**：装配者已经把**名册**认下来了（补绑它自己与树），从那以后持树者那道门
-/// **问得动身份**（operator::door::may）
+/// 门禁接线：可信装配者指定 authority 与三枚收件者表中的查询入口。
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WiredFrame {
     pub kind: u8,
+    pub authority: TaskId,
+    pub resolve: PieToken,
+    pub matches: PieToken,
+    pub same: PieToken,
+    pub back: PieToken,
 }
 
-/// # 为什么只有两格，且没有"填一枚 `Permit`"这一路
-/// 这条路上装的是**装配者**（它请持树者替它落格）。装配者**报不出任何号**——它没有名录面
-/// （`Roster` 只有 `bind` / `adopt`），也没有读格的那几手（`Tree` 只有"递上去"）⇒ 一枚
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Rule {
-    /// **不记许可**：与 `/svc/sys/operator/{…}` 那七格同一条口径——任何已绑身份都取得回
-    None,
-    Root,
-}
-
-impl Rule {
-    pub const WIDTH: usize = 1;
-}
-
-/// `Plate` 那一句：首格 `kind` ＋ 一条路 ＋ 末段那一枚 ＋ 规矩一格
+/// `Plate` 那一句：首格 `kind` ＋ 一条路 ＋ 末段那一枚 ＋ 完整许可
 #[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
 pub struct PlateFrame {
     pub kind: u8,
     pub road: PathBuf,
     pub leaf: PieToken,
-    pub rule: Rule,
+    pub permit: Permit,
+    pub owner: TaskId,
+    pub replace: u8,
+    pub back: PieToken,
 }
 
-const _: () = assert!(PlateFrame::LEN == 1 + Path::LEN + PieToken::WIDTH + Rule::WIDTH);
+const _: () = assert!(PlateFrame::LEN == 2 + Path::LEN + TaskId::WIDTH + 2 * PieToken::WIDTH + <Permit as env::wire::Field>::WIDTH);
 
 /// 提示之路上**最长那一形**的宽度（立一条路：PlateFrame）——两侧各备一只这么大的缓冲
 /// 收的那一侧按它拉
@@ -69,19 +69,25 @@ pub enum Tip {
     Plate {
         road: PathBuf,
         leaf: PieToken,
-        rule: Rule,
+        permit: Permit,
+        owner: TaskId,
+        replace: bool,
+        back: PieToken,
     },
     /// **这一位是客人**
     Guest(TaskId),
-    /// **门禁接线**（装配者已认下名册）：一句话，不带号
-    Wired,
+    Abort { road: PathBuf, leaf: PieToken, back: PieToken },
+    Empty { road: PathBuf, back: PieToken },
+    Unplate { id: EntryId, back: PieToken },
+    /// 门禁接线：完整来源绑定的查询束。
+    Wired { authority: TaskId, resolve: PieToken, matches: PieToken, same: PieToken, back: PieToken },
 }
 
 impl Tip {
     /// 编进 `out`，返写完的游标；装不下 / **路空** ⇒ `None`（路本身合法由 Path 保证）
     pub fn store(&self, out: &mut [u8]) -> Option<usize> {
         match self {
-            Tip::Plate { road, leaf, rule } => {
+            Tip::Plate { road, leaf, permit, owner, replace, back } => {
                 if road.is_empty() {
                     return None;
                 }
@@ -89,32 +95,71 @@ impl Tip {
                     kind: TIP_PLATE,
                     road: road.clone(),
                     leaf: *leaf,
-                    rule: *rule,
+                    permit: *permit,
+                    owner: *owner,
+                    replace: u8::from(*replace),
+                    back: *back,
                 }
                 .store_at(out, 0)
+            }
+            Tip::Abort { road, leaf, back } => AbortFrame { kind: TIP_ABORT, road: road.clone(), leaf: *leaf, back: *back }.store_at(out, 0),
+            Tip::Empty { road, back } => EmptyFrame { kind: TIP_EMPTY, road: road.clone(), back: *back }.store_at(out, 0),
+            Tip::Unplate { id, back } => {
+                let mut at = 0;
+                use env::wire::Field;
+                *out.get_mut(at)? = TIP_UNPLATE; at += 1;
+                id.store(out.get_mut(at..at + EntryId::WIDTH)?); at += EntryId::WIDTH;
+                back.store(out.get_mut(at..at + PieToken::WIDTH)?); at += PieToken::WIDTH;
+                Some(at)
             }
             Tip::Guest(who) => GuestFrame {
                 kind: TIP_GUEST,
                 who: *who,
             }
             .store_at(out, 0),
-            Tip::Wired => WiredFrame { kind: TIP_WIRED }.store_at(out, 0),
+            Tip::Wired { authority, resolve, matches, same, back } => WiredFrame {
+                kind: TIP_WIRED,
+                authority: *authority,
+                resolve: *resolve,
+                matches: *matches,
+                same: *same,
+                back: *back,
+            }.store_at(out, 0),
         }
+    }
+}
+
+impl crate::wire::message::Message for Tip {
+    type In = TipIn;
+    type Buf = [u8; TIP_LEN];
+    const EMPTY: Self::Buf = [0; TIP_LEN];
+
+    fn store(&self, bytes: &mut [u8]) -> Option<usize> {
+        Tip::store(self, bytes)
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self::In> {
+        TipIn::fetch(bytes)
     }
 }
 
 /// **解开的一句**：路已经收进自己那一份（Path）
 pub enum TipIn {
-    /// 立一条路（前缀逐段立窗格，末段按 `leaf`），并按 `rule` 决定要不要带一句规矩
+    /// 立一条路，叶子携带显式许可。
     Plate {
         road: PathBuf,
         leaf: PieToken,
-        rule: Rule,
+        permit: Permit,
+        owner: TaskId,
+        replace: bool,
+        back: PieToken,
     },
     /// 这一位是客人
     Guest(TaskId),
+    Abort { road: PathBuf, leaf: PieToken, back: PieToken },
+    Empty { road: PathBuf, back: PieToken },
+    Unplate { id: EntryId, back: PieToken },
     /// 门禁接线
-    Wired,
+    Wired { authority: TaskId, resolve: PieToken, matches: PieToken, same: PieToken, back: PieToken },
 }
 
 impl TipIn {
@@ -125,22 +170,55 @@ impl TipIn {
             TIP_PLATE => {
                 let (frame, at) = PlateFrame::fetch_at(bytes, 0)?;
                 // （`1 ＋ 1 ＋ 段数 × 32 ＋ 8 ＋ 1`：长短都不认）。两句都是本族的，derive 不替它判。
-                if frame.road.is_empty() || at != bytes.len() {
+                if frame.road.is_empty() || at != bytes.len() || frame.replace > 1 {
                     return None;
                 }
                 Some(TipIn::Plate {
                     road: frame.road,
                     leaf: frame.leaf,
-                    rule: frame.rule,
+                    permit: frame.permit,
+                    owner: frame.owner,
+                    replace: frame.replace == 1,
+                    back: frame.back,
                 })
+            }
+            TIP_ABORT => {
+                let (frame, at) = AbortFrame::fetch_at(bytes, 0)?;
+                if at != bytes.len() || frame.road.is_empty() { return None; }
+                Some(TipIn::Abort { road: frame.road, leaf: frame.leaf, back: frame.back })
+            }
+            TIP_EMPTY => {
+                let (frame, at) = EmptyFrame::fetch_at(bytes, 0)?;
+                if at != bytes.len() || frame.road.is_empty() { return None; }
+                Some(TipIn::Empty { road: frame.road, back: frame.back })
+            }
+            TIP_UNPLATE if bytes.len() == 1 + EntryId::WIDTH + PieToken::WIDTH => {
+                use env::wire::Field;
+                Some(TipIn::Unplate { id: EntryId::fetch(&bytes[1..1 + EntryId::WIDTH])?,
+                    back: PieToken::fetch(&bytes[1 + EntryId::WIDTH..])? })
             }
             TIP_GUEST if bytes.len() == GuestFrame::LEN => {
                 Some(TipIn::Guest(GuestFrame::fetch(bytes)?.who))
             }
-            TIP_WIRED if bytes.len() == WiredFrame::LEN => Some(TipIn::Wired),
+            TIP_WIRED if bytes.len() == WiredFrame::LEN => {
+                let frame = WiredFrame::fetch(bytes)?;
+                Some(TipIn::Wired {
+                    authority: frame.authority,
+                    resolve: frame.resolve,
+                    matches: frame.matches,
+                    same: frame.same,
+                    back: frame.back,
+                })
+            }
             _ => None,
         }
     }
 }
 
 // 这几格是**记号与名字**：两侧都要按它认领/铸孔，故只能有一份（规则 5）。
+
+#[derive(env::Frame, Clone, Debug, PartialEq, Eq)]
+struct EmptyFrame { kind: u8, road: PathBuf, back: PieToken }
+
+#[derive(env::Frame, Clone, Debug, PartialEq, Eq)]
+struct AbortFrame { kind: u8, road: PathBuf, leaf: PieToken, back: PieToken }

@@ -87,6 +87,7 @@ fn main() -> Report<'static> {
         ));
     }
     debug!("lodger: occupy={ok}");
+    let occupied_pies = mail::table_size();
     let (taken, _) = attempt(entry, line);
     debug!("lodger: taken={taken}");
     // 本账里没有零号格 ⇒ 答 `UNKNOWN`（1）。
@@ -109,7 +110,7 @@ fn main() -> Report<'static> {
         assert_eq!(unknown, lcall::UNKNOWN)
     }
     {
-        assert_eq!(pies, 11)
+        assert_eq!(pies, occupied_pies)
     }
 
     let all = ok == lcall::OK && taken == lcall::TAKEN && unknown == lcall::UNKNOWN;

@@ -19,7 +19,6 @@ use runtime::core::res::pile::Pile;
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use protocol::communication::hand::{Receiver, RecvFail};
 use protocol::communication::hand::Sender;
 use protocol::debug;
 use protocol::service::operator as ocall;
@@ -125,7 +124,7 @@ pub fn serve() -> Result<(), Start> {
         Err(()) => return Err(Start::Desk(E_TREE)),
     };
     let mut desk = Desk::new();
-    let mut wired = false;
+    let mut query: Option<protocol::service::identity::client::TaskQuery> = None;
     // **提示到了、答话路还没认到的那几位**（见 `Late`）：册子小、异常才非空。
     let mut late: Vec<Late> = Vec::new();
     let mut buf: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
@@ -142,8 +141,13 @@ pub fn serve() -> Result<(), Start> {
     let mut last_code: u8 = 0xff;
     let mut streak: usize = 0;
     loop {
+        if query.as_ref().is_some_and(|bundle| !bundle.available())
+        {
+            query = None;
+            debug::put("operator: retired unavailable identity query bundle");
+        }
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
-        let settling = settle(&mut desk, &pile, &tip_hole, &mut wired, &mut tree, &mut late);
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut query, &mut tree, &mut watchers, &mut late);
         settle_rounds = if settling {
             settle_rounds.saturating_add(1)
         } else {
@@ -168,7 +172,7 @@ pub fn serve() -> Result<(), Start> {
         let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(&mut tree, &mut watchers, guest, wired, &mut buf, &mut outs)
+            serve_one(&mut tree, &mut watchers, guest, query.as_ref(), &mut buf, &mut outs)
         } else {
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
             if tok != tip {
@@ -221,20 +225,34 @@ pub fn serve() -> Result<(), Start> {
     }
 }
 
+fn valid_tip_back(back: PieToken, from: TaskId) -> bool {
+    matches!(mail::reserve(back), Ok((vestor, owner, mark))
+        if vestor == from && owner == from && mark == ocall::TIP_BACK)
+}
+
+fn tip_ack(back: PieToken, status: u8, id: ocall::EntryId) {
+    let hole = mail::HolePie::from_token(back);
+    let mut bytes = [0u8; 9];
+    bytes[0] = status;
+    bytes[1..].copy_from_slice(&(id.get() as u64).to_le_bytes());
+    let _ = hole.push(&bytes, Wait::AtMost(1000));
+    let _ = mail::release(back);
+}
+
 /// 补齐那几件事，返"还有没有没补齐的"
 /// - **提示之路**：装配者推来的三形，**首格 `kind` 分派**（见 ocall::TipIn）
 /// （plate），不经会话、不当自己的客人
 /// - **一位客人**（ocall::TipIn::Guest）：`admit` 收进来；答话路还没在本表里 ⇒ **留在册上**
 ///   逐轮重问（见 [`Late`]）——契约说"提示在转授之后"，而破约时**丢**的代价是那位客人
 ///   永远进不了这本账
-/// - **门禁接线**（ocall::TipIn::Wired）：**一句话、不带号**——装配者已认下名册，门从此
-/// 问得动身份（那一格由 self::door::may 读）
+/// - 门禁接线：装配者给出完整 authority 与三枚入口；整束验证失败即清空。
 fn settle(
     desk: &mut Desk,
     pile: &Pile,
     tip: &mail::HolePie,
-    wired: &mut bool,
+    query: &mut Option<protocol::service::identity::client::TaskQuery>,
     tree: &mut Operator,
+    watchers: &mut watch::Watchers,
     late: &mut Vec<Late>,
 ) -> bool {
     // 提示：拉干净（单槽，一位客人一条）。**非阻塞**——它的到达是别人在做的事。
@@ -243,9 +261,14 @@ fn settle(
     let mut pending = false;
     let now = || runtime::env::chrono::clock();
     loop {
-        let Ok((n, _)) = tip.pull(&mut frame, Wait::POLL) else {
+        let Ok((n, from)) = tip.pull(&mut frame, Wait::POLL) else {
             break;
         };
+        // 提示通道是 Control 的特权装配边；持孔不等于有权替换身份权威。
+        if from != runtime::env::unit::sire() {
+            debug::put("operator: foreign bootstrap tip");
+            continue;
+        }
         // **首格 `kind` 决定形状**：表外的 kind / 长度不对 ⇒ 读不懂。这条路上没有答话那一格，
         // 故只能**报一句**（把那一格 kind 一起报出来，"读不懂的是哪一形"要看得见）。
         let Some(rec) = ocall::TipIn::fetch(&frame[..n]) else {
@@ -253,8 +276,56 @@ fn settle(
             continue;
         };
         match rec {
-            ocall::TipIn::Plate { road, leaf, rule } => plate(tree, &road, leaf, rule),
-            ocall::TipIn::Wired => *wired = true,
+            ocall::TipIn::Plate { road, leaf, permit, owner, replace, back } => {
+                if !valid_tip_back(back, from) {
+                    continue;
+                }
+                match plate(tree, &road, leaf, permit, owner, replace) {
+                    Ok((id, changes)) => {
+                        for change in &changes { answer::changed(tree, watchers, change); }
+                        tip_ack(back, ocall::OK, id);
+                    }
+                    Err(fail) => tip_ack(back, ocall::fail_to_code(Some(fail)), ocall::EntryId::new(0)),
+                }
+            }
+            ocall::TipIn::Abort { road, leaf, back } => {
+                if !valid_tip_back(back, from) { continue; }
+                let result = match tree.seek(&road) {
+                    Ok(id) if tree.reference(id) == Some(leaf) => tree.trim(id),
+                    _ => Ok(None),
+                };
+                if let Ok(Some(change)) = &result { answer::changed(tree, watchers, change); }
+                tip_ack(back, ocall::fail_to_code(result.err()), ocall::EntryId::new(0));
+            }
+            ocall::TipIn::Empty { road, back } => {
+                if !valid_tip_back(back, from) { continue; }
+                let result = match tree.seek(&road) {
+                    Ok(id) => tree.list(ocall::Where::At(id)).and_then(|children|
+                        if children.count() == 0 { Ok(id) } else { Err(ocall::Fail::NonEmpty) })
+                        .and_then(|id| tree.trim(id).map(|_| id)),
+                    Err(ocall::Fail::Unknown) => Ok(ocall::EntryId::new(0)),
+                    Err(fail) => Err(fail),
+                };
+                tip_ack(back, ocall::fail_to_code(result.err()), ocall::EntryId::new(0));
+            }
+            ocall::TipIn::Unplate { id, back } => {
+                if !valid_tip_back(back, from) { continue; }
+                let result = match tree.trim(id) { Err(ocall::Fail::Unknown) => Ok(None), other => other };
+                if let Ok(Some(change)) = &result { answer::changed(tree, watchers, change); }
+                tip_ack(back, ocall::fail_to_code(result.err()), id);
+            }
+            ocall::TipIn::Wired { authority, resolve, matches, same, back } => {
+                if !valid_tip_back(back, from) {
+                    continue;
+                }
+                *query = protocol::service::identity::client::TaskQuery::direct(
+                    authority, resolve, matches, same,
+                ).ok();
+                if query.is_none() {
+                    debug::put("operator: invalid identity query bundle");
+                }
+                tip_ack(back, if query.is_some() { ocall::OK } else { ocall::UNJUDGED }, ocall::EntryId::new(0));
+            }
             // **一位客人**：按"它开的 + 记号"认它那条答话路。
             ocall::TipIn::Guest(client) => match reply_of(client) {
                 Some(reply) => match desk.admit(client, reply) {
@@ -403,7 +474,7 @@ fn serve_one(
     tree: &mut Operator,
     watchers: &mut watch::Watchers,
     guest: Guest,
-    wired: bool,
+    query: Option<&protocol::service::identity::client::TaskQuery>,
     buf: &mut [u8],
     outs: &mut Vec<Outbox>,
 ) -> Option<u8> {
@@ -411,46 +482,21 @@ fn serve_one(
     // **收帧用调用方那一页**（Receiver::recv）：比家族最长那一枚更长的一条也取得出来、
     // 解得失败 ⇒ 照旧答一句 `BAD`，而槽也空了。
     // 收：**两格失败在这一门同一落点**（`answer` 收的还是 `Option`：读不懂与期限到了都答 `BAD`）。
-    let decoded = match Receiver::<ocall::Req>::from_token(ask).recv(buf, Wait::POLL) {
-        Ok(wire) => Some(wire),
-        // ①③：没有手 / 孔用不动了。**域码原样报**（`Busy` 与 `Dead` / `Denied` 是两件事）。
-        Err(RecvFail::Mail(e)) => {
-            debug!(
-                "operator: ask empty who={} tok={} code={}",
-                guest.who().get(),
-                ask.get(),
-                e.code()
-            );
-            None
+    let decoded = match mail::HolePie::from_token(ask).pull(buf, Wait::POLL) {
+        Ok((len, from)) if from == guest.who() => {
+            <ocall::Req as protocol::wire::message::Message>::fetch(&buf[..len])
         }
-        Err(RecvFail::Unread(len)) => {
-            let show = len.min(8);
-            let mut head = [0u8; 8];
-            if let Some(src) = buf.get(..show) {
-                head[..show].copy_from_slice(src);
-            }
-            debug!(
-                "operator: ask unreadable who={} tok={} len={} head={:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}",
-                guest.who().get(),
-                ask.get(),
-                len,
-                head[0],
-                head[1],
-                head[2],
-                head[3],
-                head[4],
-                head[5],
-                head[6],
-                head[7]
-            );
-            None
+        Ok((_, from)) => {
+            debug!("operator: rejected session sender={} guest={}", from.get(), guest.who().get());
+            return Some(0xff);
         }
+        Err(_) => None,
     };
     // 这一问的动作码（首格）——**读到了才有可信的首格**；它同时就是"这一醒读到了没有"。
     let code = decoded.as_ref().map(|_| buf[0]);
     let grant = grant_of(mark_of(ask));
     let t_ans = runtime::env::chrono::clock();
-    let said = answer(tree, watchers, decoded, guest.who(), wired, grant);
+    let said = answer(tree, watchers, decoded, guest.who(), query, grant);
     // 的那一格码**报出来——"哪一位客人、问什么（首格码）、答什么"三样齐了，才谈得上说得清。
     // **只在非 OK 时报**（正常一条答话不占串口）：`BAD` 与那六格各是一个成因。
     if let ocall::Union::Status(status) = said

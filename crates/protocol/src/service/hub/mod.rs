@@ -6,6 +6,7 @@
 //! **驱动不需要知道盟号**：它只说"我要驱这一类"。
 //! # `claim` 那一格为什么在设备那一格上
 
+pub mod activation;
 pub mod client;
 pub mod frame;
 pub mod grant;

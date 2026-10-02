@@ -180,4 +180,15 @@ pub enum PieCall {
     /// 不拿负码当第二个说法）。
     #[ret(bool)]
     Alive { token: PieToken },
+    /// Drop a borrowed, non-exclusive reference. Direct descendants inherit
+    /// its parent, retaining upstream revocation without closing the resource.
+    #[ret(())]
+    Forget { token: PieToken },
+    /// Compare resources behind two live references held by this Task.
+    #[ret(bool)]
+    Same { a: PieToken, b: PieToken },
+    /// Inspect the live resource's immediate transferor, owner and mark, for every kind.
+    /// Uses the same packed return layout as Reserve; Reserve remains Hole-only.
+    #[ret((usize, usize))]
+    Inspect { token: PieToken },
 }

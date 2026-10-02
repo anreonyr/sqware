@@ -3,15 +3,15 @@ use alloc::sync::Weak;
 use env::{PieFail, PieToken};
 
 use super::cull;
-use super::snap::Snap;
 use crate::work::unit::task::Task;
 
 pub(crate) fn revoke(
     caller: &Task,
     target: &Weak<Task>,
     token: PieToken,
-    snap: &Snap,
 ) -> Result<usize, PieFail> {
+    let _graph = super::GRAPH.lock();
+    let snap = super::snap();
     let target = target.upgrade().ok_or(PieFail::Denied)?;
     let sire = {
         let pies = target.pies.lock();
@@ -28,5 +28,5 @@ pub(crate) fn revoke(
     if !mine {
         return Err(PieFail::Denied);
     }
-    Ok(cull::cull((target, token), snap))
+    Ok(cull::cull((target, token), &snap))
 }

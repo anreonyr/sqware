@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# This is an excluded host workspace, including when its checkout is nested in
+# another checkout (Delta worktrees). Do not inherit the enclosing target workspace.
+[workspace]
+
 # image —— **造镜像那一步**：编程序（`programs` + `harness`）→ 打 initrd → 放到内核 ELF 旁。
 #
 # 它是**编外**的（根 `Cargo.toml` 的 `exclude`），与 `crates/alloc-probe` 同源：

@@ -11,7 +11,7 @@ use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, pro
 use protocol::communication::session::establish::Endpoint;
 
 use crate::unit::{
-    Died, coalition::E_COALITION, hub::E_HUB, operator::E_TREE, principal::E_PRINCIPAL,
+    Died, hub::E_HUB, identity::E_IDENTITY, operator::E_TREE,
 };
 
 /// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage
@@ -79,18 +79,12 @@ impl Start {
             Start::Tree(E_TREE) => "operator: tree",
             Start::Room(E_TREE) => "operator: no room",
             Start::Desk(E_TREE) => "operator: desk",
-            // 名册（`E_PRINCIPAL`）：树 / 两张表，加上 `carrier` 那三格。
-            Start::Tree(E_PRINCIPAL) => "principal: tree",
-            Start::Book(E_PRINCIPAL) => "principal: no book",
-            Start::Room(E_PRINCIPAL) => "principal: no room",
-            Start::Desk(E_PRINCIPAL) => "principal: desk",
-            Start::Dead(E_PRINCIPAL) => "inner: group dead",
-            // 盟册（`E_COALITION`）：树 / 门牌，加上 `carrier` 那三格。
-            Start::Tree(E_COALITION) => "coalition: tree",
-            Start::Face(E_COALITION) => "coalition: no identity plate",
-            Start::Room(E_COALITION) => "coalition: no room",
-            Start::Desk(E_COALITION) => "coalition: desk",
-            Start::Dead(E_COALITION) => "inner: group dead",
+            // 统一身份：权威账本、操作面与同一只 carrier/Pile。
+            Start::Tree(E_IDENTITY) => "identity: bootstrap",
+            Start::Book(E_IDENTITY) => "identity: no book",
+            Start::Room(E_IDENTITY) => "identity: no room",
+            Start::Desk(E_IDENTITY) => "identity: desk",
+            Start::Dead(E_IDENTITY) => "identity: group dead",
             // 设备账（`E_HUB`）：树 / 物料 / 盟册那面 / 自带的常驻圈（它不用 `carrier`：
             // 两个来路——那只组 ＋ 探活那一拍，见 `system/hub/serve/mod.rs`）。
             Start::Tree(E_HUB) => "hub: tree",
@@ -133,9 +127,14 @@ pub fn mint(
 
     let team = utask::build(image, kind).map_err(unit_fail)?;
     let Ok(task) = utask::spawn(team, 0, &[], 0) else {
+        let _ = utask::oust(team);
         return Err(Fail::Full);
     };
-    table.attach(name, Some(team), task)?;
+    if let Err(fail) = table.attach(name, Some(team), task) {
+        let _ = room::doom(task);
+        let _ = utask::oust(team);
+        return Err(fail);
+    }
     table.set_state(name, State::Starting);
     protocol::debug::put(&alloc::format!("system: minted {name} tid={}", task.get()));
     Ok(task)
@@ -165,7 +164,7 @@ pub fn start(
     })();
     if let Err(e) = launched {
         let _ = room::doom(task);
-        table.detach(name);
+        // Keep the team coordinate for Control's compensation/oust.
         table.set_state(name, State::Dead);
         return Err(e);
     }
@@ -185,6 +184,7 @@ pub fn ready(
 ) -> Result<bool, Fail> {
     // 先看表：上一次问过的事实（按这一行自己声明的说法解读）。
     if let Ready::Up = probe_ready(table, name) {
+        table.set_state(name, State::Ready);
         return Ok(true);
     }
     let Some(Service {
@@ -203,7 +203,7 @@ pub fn ready(
             table.set_state(name, State::Ready);
             return Ok(false);
         }
-        table.detach(name);
+        // Keep the team coordinate for Control's compensation/oust.
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
     }
@@ -222,7 +222,7 @@ pub fn ready(
         return Ok(false);
     }
     if utask::join(task, Wait::POLL).unwrap_or(true) {
-        table.detach(name);
+        // Keep the team coordinate for Control's compensation/oust.
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
     }

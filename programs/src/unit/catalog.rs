@@ -16,8 +16,8 @@ pub mod busy;
 pub mod canonical;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
-#[path = "../service/coalition/program.rs"]
-pub mod coalition;
+#[path = "../service/identity/program.rs"]
+pub mod identity;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -40,8 +40,6 @@ pub mod operator;
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
 pub mod passer;
-#[path = "../service/principal/program.rs"]
-pub mod principal;
 #[path = "../harness/probe/probe_bound/program.rs"]
 pub mod probe_bound;
 #[path = "../harness/probe/probe_coalition/program.rs"]
@@ -50,6 +48,8 @@ pub mod probe_coalition;
 pub mod probe_control;
 #[path = "../harness/probe/probe_denied/program.rs"]
 pub mod probe_denied;
+#[path = "../harness/probe/identity_replacement/program.rs"]
+pub mod identity_replacement;
 #[path = "../harness/probe/probe_lease/program.rs"]
 pub mod probe_lease;
 #[path = "../harness/probe/probe_operator_gate/program.rs"]
@@ -98,10 +98,9 @@ pub mod waiter;
 /// 就没法一眼扫完——而这张表**就是**给人扫的
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
-    // 四枚服务（持树者 / 名册 / 盟册 / 设备账）：各自一个 bin、一个域，与其他每一台同一条 `mint` 路。
+    // 三枚服务（持树者 / 统一身份 / 设备账）：各自一个 bin、一个域，同一条 `mint` 路。
     &operator::PROGRAM,
-    &principal::PROGRAM,
-    &coalition::PROGRAM,
+    &identity::PROGRAM,
     &hub::PROGRAM,
     &canonical::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
@@ -117,6 +116,9 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &member::MEMBER,
     &system::PROGRAM,
     &probe_denied::PROBE_DENIED,
+    &identity_replacement::ENTRY,
+    &identity_replacement::DEPENDENT,
+    &identity_replacement::CHILD,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,

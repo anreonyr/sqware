@@ -1,6 +1,6 @@
 //! 设备账（prog-hub）的装配声明。
 //! **U 态**：它不碰寄存器、不碰中断——只读设备树（把坐标补成"名 / 类 / 线"）、立账、落
-//! `/dev/<类>/<名>`、答三面。故它与 `operator` / `principal` / `coalition` 同一档，不需要特权。
+//! `/dev/<类>/<名>`、答三面；组织资格由 Identity 管理，有效身份须由可信 Control 安装。
 
 use crate::unit::{Demand, Died, Ending, Identity, Relation, Setup, UnitFile};
 
@@ -14,11 +14,11 @@ pub const READY: &str = "hub-ready";
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "hub",
-        wanted_by: &["accept", "product"],
+        wanted_by: &["accept", "product", "identity-replacement"],
         ..Identity::DEFAULT
     },
     relation: Relation {
-        after: Some(&["operator", "coalition"]),
+        after: Some(&["operator", "identity"]),
         restart: Some(Ending::Resident),
         ..Relation::DEFAULT
     },

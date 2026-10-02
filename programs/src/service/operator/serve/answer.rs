@@ -3,7 +3,7 @@
 //! 1. **这一位**（操作面那一维）：会话拿的是哪一位，就只许那一条原语——七位各是一条独立的权柄
 //!    边界（`find` 会**交出能力**、`trim` / `part` 会**毁掉别人那一格**）。**它绝不替代下一道**：
 //!    拿到 `find` 那一位只表示"许调 `find` 这一类"，不表示"许 `find` 任意一格"。
-//! 2. **门外那一问**（super::door::may）：两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁。
+//! 2. **门外那一问**（super::door::may）：find 判目标许可，修改/订阅要求 Bound。
 //! 3. **那一格自己的两轴**：**用**那一轴由 Operator::permit 答（许可跟着那一枚砖走，
 //!    `find` 判它）；**改**那一轴由 Operator::claimable 答（`land` / `part` / `trim` 判它）。
 //!    两轴**都住在砖上**，而**分开住**——混成一格就会得出"能改的人自然能用"。它俩都**不问外面**：
@@ -25,7 +25,7 @@ use super::watch::{Watchers, event_at};
 ///
 /// 路从**号**现走（`road_to`），剪掉那一档例外——它的路在剪之前就记在 `Change` 里了。
 /// 走不出路（号不在树上）就**不发**：一条路是假的事件比没有更坏。
-fn changed(tree: &Operator, watchers: &mut Watchers, change: &crate::service::operator::core::Change) {
+pub(super) fn changed(tree: &Operator, watchers: &mut Watchers, change: &crate::service::operator::core::Change) {
     let Some(ev) = event_at(tree, change.kind, change.id, change.owner, change.road.clone()) else {
         debug!("operator: watch event unsigned id={}", change.id.get());
         return;
@@ -41,7 +41,7 @@ pub(super) fn answer(
     watchers: &mut Watchers,
     ask: Option<ocall::Wire>,
     who: env::TaskId,
-    wired: bool,
+    query: Option<&protocol::service::identity::client::TaskQuery>,
     grant: Option<Grant>,
 ) -> ocall::Union {
     // 空帧 / 长度不对 / 表外的动作码：读不懂（答 `BAD`）。
@@ -54,32 +54,35 @@ pub(super) fn answer(
             return ocall::Union::Status(ocall::DENIED);
         }
     }
-    // **第二道：门外那一问。** 两条会**交出权柄 / 毁掉别人那一格**的原语先过门禁——`find`（把
-    // 它的准入是**那一格自己的规矩**（见下面的两支）。四条只读结构的
-    // （`part` / `list` / `seek` / `name`）一律不判。
-    // **两轴分家**：
+    if matches!(ask, ocall::Wire::Part { .. } | ocall::Wire::Land { .. } | ocall::Wire::Trim(_))
+        && who != runtime::env::unit::sire()
+    {
+        return ocall::Union::Status(ocall::DENIED);
+    }
+    // 第二道：find 判目标许可；四条修改/订阅动作要求 Bound。
+    // list / seek / name 只读结构，不依赖身份服务。归属检查仍是独立一轴。
     match ask {
         ocall::Wire::Find(id) => {
             let permit = tree.permit(id);
-            let ruling = may(tree, wired, who, permit);
+            let ruling = may(tree, query, who, permit);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
         }
         ocall::Wire::Trim(id) => {
-            if !tree.claimable(Key::Id(id), who) {
-                return ocall::Union::Status(ocall::DENIED);
-            }
-            let ruling = may(tree, wired, who, Permit::Unset);
+            let ruling = may(tree, query, who, Permit::Bound);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
+            }
+            if !tree.claimable(Key::Id(id), who) {
+                return ocall::Union::Status(ocall::DENIED);
             }
         }
         // **`land` 也要先问身份**（与 `find`/`trim` 同一道门）：它虽然不动别人的格子，
         // 但"往树上挂东西"这件事本身要求来的人是个**已绑身份**——否则没身份的任务就能往命名
         // 空间里塞条目。
-        ocall::Wire::Land { .. } => {
-            let ruling = may(tree, wired, who, Permit::Unset);
+        ocall::Wire::Land { .. } | ocall::Wire::Part { .. } => {
+            let ruling = may(tree, query, who, Permit::Bound);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }
@@ -87,7 +90,7 @@ pub(super) fn answer(
         // **`watch` 也要先问身份**（与 `land` 同一道门）：订阅是"此后一直看着树"这件事，
         // 没身份的任务不该得到它。
         ocall::Wire::Watch { .. } => {
-            let ruling = may(tree, wired, who, Permit::Unset);
+            let ruling = may(tree, query, who, Permit::Bound);
             if !ruling.passed() {
                 return ocall::Union::Status(ruling.wire());
             }

@@ -15,6 +15,7 @@ use env::{Mark, TaskId, Wait};
 use protocol::communication::session::establish::{self, Endpoint};
 
 use crate::boot::{Accounts, Catalog};
+use crate::service::identity::bridge::Roster;
 use crate::system::common::machine::Machine;
 use crate::system::run::source::Source;
 use crate::unit::{PROGRAMS, Setup, UnitFile};
@@ -24,6 +25,7 @@ use crate::system::common::life::{service, verdict as core};
 
 pub mod enroll;
 pub mod supervise;
+pub(crate) mod hierarchy;
 
 pub use crate::unit::Died;
 
@@ -77,6 +79,10 @@ pub type Service = (TaskId, Vec<Endpoint>);
 /// **Service 的生命周期与装配环境**
 pub struct Control {
     table: Table,
+    pub(crate) hierarchy: ::core::cell::RefCell<hierarchy::Hierarchy>,
+    pub(crate) roster: Roster,
+    pub(crate) activation: Option<crate::service::hub::bridge::Activation>,
+    static_tasks: Vec<TaskId>,
     pending: Vec<Pending>,
     catalog: Catalog<'static>,
     machine: Machine,
@@ -98,6 +104,10 @@ impl Control {
     pub fn new(catalog: Catalog<'static>, machine: Machine, accounts: Accounts) -> Control {
         Control {
             table: Table::new(),
+            hierarchy: ::core::cell::RefCell::new(hierarchy::Hierarchy::new()),
+            roster: Roster::default(),
+            activation: None,
+            static_tasks: Vec::new(),
             pending: Vec::new(),
             catalog,
             machine,
@@ -132,13 +142,14 @@ impl Control {
                 self.enlist(program).map_err(|_| Fail::Unknown)?;
             }
         }
+        // Reserve the pending row before minting a paused Task; failure must not orphan it.
+        self.pending.try_reserve(1).map_err(|_| Fail::Full)?;
         let service = match self.spawn(program) {
             Ok(service) => service,
             Err(Error::Missing | Error::Step(_)) => return Err(Fail::BadImage),
             Err(Error::Spawn) => return Err(Fail::Full),
             Err(_) => return Err(Fail::Unknown),
         };
-        self.pending.try_reserve(1).map_err(|_| Fail::Full)?;
         self.pending.push(Pending {
             name: program.name(),
             service,
@@ -147,7 +158,12 @@ impl Control {
     }
 
     /// **放行一枚已经造好的 Service**（线上 `Start` 那一问）：认领通道 → 放行等就绪 → 递单
-    pub fn release(&mut self, name: String) -> Result<Service, Fail> {
+    pub fn release(
+        &mut self,
+        name: String,
+        requester: TaskId,
+        mut progress: impl FnMut(&Control) -> Result<(), &'static str>,
+    ) -> Result<Service, Fail> {
         let at = self
             .pending
             .iter()
@@ -155,16 +171,100 @@ impl Control {
             .ok_or(Fail::NotReady)?;
         let mut pending = self.pending.remove(at);
         let program = program_of(pending.name).ok_or(Fail::Unknown)?;
-        assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
-        let method = pending.name.to_string();
-        // 放行 + 递单（次序是硬的：物料要落到它交回的那条路上）。
-        self.launch(program, method.clone(), &mut pending.service)
-            .map_err(|_| Fail::NotReady)?;
-        // **再等就绪**（线上这条路上没有挂板 / 挂树那两手——那两件是装配期的事，
-        // 见 crate::system::control::enroll 里 `launch` 那一格的注）。
-        self.ready(method, &mut pending.service, program.supply())
-            .map_err(|_| Fail::NotReady)?;
+        let released = (|| {
+            self.roster.inherit(pending.service.0, requester).map_err(|_| Fail::NotReady)?;
+            progress(self).map_err(|_| Fail::NotReady)?;
+            assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
+            let method = pending.name.to_string();
+            self.launch(program, method.clone(), &mut pending.service)
+                .map_err(|_| Fail::NotReady)?;
+            self.ready(method, &mut pending.service, program.supply(), &mut progress)
+                .map_err(|_| Fail::NotReady)
+        })();
+        if let Err(fail) = released {
+            self.discard(pending.name, pending.service.0);
+            let _ = progress(self);
+            return Err(fail);
+        }
         Ok(pending.service)
+    }
+
+    pub(crate) fn authorize_static(
+        &mut self,
+        task: TaskId,
+        program: &UnitFile,
+    ) -> Result<(), &'static str> {
+        self.static_tasks.try_reserve(1).map_err(|_| "static identity capacity")?;
+        self.roster.authorize(task, program)?;
+        self.static_tasks.push(task);
+        Ok(())
+    }
+
+    /// Stop old subjects rather than guessing how their attenuated identities should recover.
+    pub(crate) fn replace_identity(
+        &mut self,
+        tree: &mut crate::service::operator::bridge::Tree,
+        refresh: impl Fn(&Control, &mut crate::service::operator::bridge::Tree)
+            -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
+        let scene = crate::system::run::scene::programs(&self.catalog).map_err(|e| e.said())?;
+        let mut restart = Vec::new();
+        restart.try_reserve(scene.len()).map_err(|_| "replacement capacity")?;
+        for program in scene {
+            if program.name() == "operator" {
+                continue;
+            }
+            if program.name() == "identity" || (self.table.find(program.name())
+                .is_some_and(|row| matches!(row.state, State::Starting | State::Ready))
+                && self.task(program.name()).is_some_and(|task| self.static_tasks.contains(&task)))
+            {
+                restart.push(program);
+            }
+        }
+        if let Some(authority) = self.roster.authority() { self.hierarchy.borrow_mut().retire(tree, authority)?; }
+        self.roster.retire();
+        self.activation = None;
+        let mut stopped = [const { String::new() }; Table::CAP];
+        let mut count = 0;
+        for row in self.table.living() {
+            if row.name != "operator" {
+                stopped[count] = row.name.clone();
+                count += 1;
+            }
+        }
+        for name in &stopped[..count] {
+            if let Some(task) = self.task(name) {
+                self.discard(name, task);
+            }
+        }
+        while let Some(pending) = self.pending.pop() {
+            self.discard(pending.name, pending.service.0);
+        }
+        self.static_tasks.retain(|task| Some(*task) == tree.host());
+        for program in restart {
+            let mut service = self.spawn(program).map_err(|e| e.said())?;
+            let result = (|| {
+                self.authorize_static(service.0, program)?;
+                crate::harness::probe::identity::supply_to(self.roster.authority(), program, service.0)?;
+                assemble::connect_all(program, &mut service).map_err(|e| e.said())?;
+                self.progress(tree)?;
+                self.launch(program, program.name().to_string(), &mut service)
+                    .map_err(|e| e.said())?;
+                self.ready(program.name().to_string(), &mut service, program.supply(),
+                    |control| control.progress(tree)).map_err(|e| e.said())?;
+                if program.name() == "identity" {
+                    crate::service::identity::bridge::install(self, tree, service.0)?;
+                    refresh(self, tree)?;
+                }
+                Ok(())
+            })();
+            if let Err(why) = result {
+                self.discard(program.name(), service.0);
+                return Err(why);
+            }
+        }
+        protocol::debug::put("system: identity replacement complete; static dependents restarted");
+        Ok(())
     }
 
     /// **这一条此刻处于哪个生命阶段**（线上 `State` 那一问）
@@ -187,6 +287,11 @@ impl Control {
         };
         let task = service::mint(&mut self.table, name.as_str(), image, entry.kind)
             .map_err(|_| Error::Spawn)?;
+        let injected = self.hierarchy.borrow().inject(task);
+        if let Err(why) = injected {
+            self.discard(program.name(), task);
+            return Err(Error::Step(why));
+        }
         Ok((task, Vec::new()))
     }
 
@@ -222,6 +327,7 @@ impl Control {
         name: String,
         service: &mut Service,
         setup: &'static [Setup],
+        mut progress: impl FnMut(&Control) -> Result<(), &'static str>,
     ) -> Result<(), Error> {
         let mut marks: Vec<Mark> = Vec::new();
         for s in setup {
@@ -232,31 +338,94 @@ impl Control {
                 marks.push(Mark::of(ch));
             }
         }
-        service::ready(
-            &mut self.table,
-            name.as_str(),
-            service.1.as_mut_slice(),
-            &marks,
-            Wait::AtMost(BOOT_MS),
-        )
-        .map(|_| ())
-        .map_err(|fail| {
-            let why = match fail {
-                Fail::Unknown => "unknown",
-                Fail::BadImage => "bad image",
-                Fail::Full => "full",
-                Fail::NotReady => "not ready",
-            };
-            protocol::debug::put(&alloc::format!(
-                "system: not ready {name} why={why} marks={}",
-                marks.len()
-            ));
-            Error::Step("start failed")
-        })
+        let until = runtime::env::chrono::clock().saturating_add(BOOT_MS as u64 * 1_000_000);
+        let fail = loop {
+            progress(self).map_err(Error::Step)?;
+            self.activate_hub();
+            match service::ready(
+                &mut self.table, name.as_str(), service.1.as_mut_slice(), &marks, Wait::POLL,
+            ) {
+                Ok(already) if already
+                    || self.table.find(name.as_str()).is_some_and(|row| row.state == State::Ready) =>
+                    return Ok(()),
+                Ok(_) if runtime::env::chrono::clock() < until => {
+                    runtime::env::room::sleep(Duration::from_millis(RETRY_MS as u64))
+                        .map_err(|_| Error::Step("ready wait"))?;
+                }
+                Ok(_) => break Fail::NotReady,
+                Err(fail) => break fail,
+            }
+        };
+        let why = match fail {
+            Fail::Unknown => "unknown",
+            Fail::BadImage => "bad image",
+            Fail::Full => "full",
+            Fail::NotReady => "not ready",
+        };
+        protocol::debug::put(&alloc::format!(
+            "system: not ready {name} why={why} marks={}", marks.len(),
+        ));
+        Err(Error::Step("start failed"))
     }
 
     pub fn stop(&mut self, name: String) -> Result<(), Fail> {
-        service::stop(&mut self.table, name.as_str())
+        let task = self.task(name.as_str()).ok_or(Fail::Unknown)?;
+        service::stop(&mut self.table, name.as_str())?;
+        if name == "hub" {
+            self.activation = None;
+        }
+        if self.roster.authority() == Some(task) {
+            self.roster.retire();
+            return Ok(());
+        }
+        self.roster.unbind(task).map_err(|_| Fail::NotReady)
+    }
+
+    pub(crate) fn task(&self, name: &str) -> Option<TaskId> {
+        match self.table.find(name)?.slot {
+            Slot::Live { task, .. } => Some(task),
+            Slot::None => None,
+        }
+    }
+
+    pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
+        self.table.living().filter_map(|row| match row.slot {
+            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready) => Some(task),
+            _ => None,
+        })
+    }
+
+    pub(crate) fn progress(&self, tree: &mut crate::service::operator::bridge::Tree) -> Result<(), &'static str> {
+        if tree.host().is_some_and(|host| runtime::env::unit::join(host, Wait::POLL).unwrap_or(true)) { return Ok(()); }
+        tree.connect(self.tasks())?;
+        self.hierarchy.borrow_mut().poll(self, tree)
+    }
+    pub(crate) fn activate_hub(&self) {
+        if let Some(activation) = &self.activation {
+            activation.poll(self);
+        }
+    }
+
+    /// Compensate a failed launch, including a successful bind followed by IPC/setup failure.
+    pub(crate) fn discard(&mut self, name: &str, task: TaskId) {
+        if name == "hub" {
+            self.activation = None;
+        }
+        if self.roster.authority() == Some(task) {
+            self.roster.retire();
+        }
+        let _ = runtime::env::room::doom(task);
+        if let Some(row) = self.table.find(name) {
+            if let Slot::Live { team: Some(team), .. } = row.slot {
+                let _ = runtime::env::unit::oust(team);
+            }
+        }
+        if let Err(why) = self.roster.unbind(task) {
+            protocol::debug::put(&alloc::format!("system: compensation {name}: {why}"));
+        }
+        self.table.detach(name);
+        self.table.set_state(name, State::Dead);
+        self.static_tasks.retain(|known| *known != task);
     }
 
     /// **该收了**：账上活着的都是常驻台——会走的都走了、听令的已经发过话
@@ -304,7 +473,7 @@ impl Control {
             n += 1;
         }
         for name in &names[..n] {
-            let _ = service::stop(&mut self.table, name.as_str());
+            let _ = self.stop(name.clone());
         }
     }
 }

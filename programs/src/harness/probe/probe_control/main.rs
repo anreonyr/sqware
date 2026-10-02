@@ -6,7 +6,7 @@
 //! task-4 那条挂载路（control::edge::mount）**挂出过一块查得到、取不回的门牌**：铸入口的是
 //! 一枚**一次性**边沿线程，它一收尾，持树者表里那枚入口副本就被内核的派生链级联摘掉
 //! （`cull` 沿 `sire` 跨任务摘后代）。这一台的判据就是那一件事的**反面**：它**在另一个域里**，
-//! 走与 principal / coalition 逐字同形的路找上门，**把门牌取回来、问一句话**。
+//! 走与 Identity 同形的路找上门，**把门牌取回来、问一句话**。
 //! # 为什么第 1 步必须在最前
 //! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
 //! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**：第一版把装路排在后面，
@@ -80,13 +80,13 @@ fn main() -> Report<'static> {
     let parent = tree
         .pane(ccall::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len(), &mut watch, FACES_MS);
-    debug!("probe-control: faces={seen} want={}", ccall::Grant::ALL.len());
+    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
+    debug!("probe-control: faces={seen} want={}", (ccall::Grant::ALL.len() + 1));
     assert_eq!(
         seen,
-        ccall::Grant::ALL.len(),
+        (ccall::Grant::ALL.len() + 1),
         "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
-        ccall::Grant::ALL.len()
+        (ccall::Grant::ALL.len() + 1)
     );
     let plate = tree
         .tile(&road, Wait::AtMost(MS))
@@ -142,7 +142,7 @@ fn main() -> Report<'static> {
         "control 没答出「表里没这个名字」：{missing:?}（`Bad` = 这一趟没走到对面）"
     );
     assert!(
-        matches!(alive, Ok(ccall::State::Ready | ccall::State::Starting)),
+        matches!(alive, Ok(ccall::State::Ready)),
         "control 那一面看不见本台（装配表里的一行）：{alive:?}"
     );
     for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Start, ccall::Grant::Stop]

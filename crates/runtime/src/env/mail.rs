@@ -133,8 +133,8 @@ fn get(token: PieToken, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
 // 整面转出（**不挑**）：转发是"路径不变"的保证，一旦按"今天谁在用"挑，下一个调用点就得
 // 先认出这层壳才知道自己该写 `pie::`——那正是这一层想免掉的认知成本。
 pub use super::pie::{
-    AnyPie, Pie, Pies, accord, alive, collect, narrow, open, pies, release, reserve, revoke, seal,
-    shut, table_size, unseal_hole, unseal_nole, unseal_pole,
+    AnyPie, Pie, Pies, accord, alive, collect, forget, inspect, narrow, open, pies, release, reserve, revoke, same, seal, shut,
+    table_size, unseal_hole, unseal_nole, unseal_pole,
 };
 
 // ── 四种资源的用户态句柄 ──────────────────────────────────────────────────

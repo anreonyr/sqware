@@ -10,7 +10,7 @@ pub const E_RTC: Died = 12;
 pub static PROGRAM: UnitFile = UnitFile {
     identity: Identity {
         name: "rtc",
-        wanted_by: &["accept", "product"],
+        wanted_by: &["accept", "product", "identity-replacement"],
         ..Identity::DEFAULT
     },
     relation: Relation {

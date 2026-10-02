@@ -7,3 +7,6 @@
 
 pub mod count;
 pub mod rack;
+pub mod identity;
+
+pub mod hierarchy;

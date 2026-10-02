@@ -47,7 +47,7 @@ impl Context {
             me,
             &protocol::driver::ROAD,
             mine,
-            Permit::Unset,
+            Permit::Public,
             &list,
             ms,
         );

@@ -13,8 +13,8 @@ use protocol::communication::hand::{Receiver, RecvFail};
 use protocol::communication::hand::Sender;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::coalition as ccall;
-use protocol::service::coalition::client::Face as League;
+use protocol::service::identity::client::{Organization, Query};
+use protocol::service::identity::Selector;
 use protocol::service::hub::frame::Wire;
 use protocol::service::hub::frame::{Said, Window};
 use protocol::service::hub::{self, Deed, Enroll, Grant};
@@ -50,6 +50,11 @@ pub mod claim;
 pub mod list;
 pub mod sweep;
 
+struct League {
+    query: Query,
+    organization: Organization,
+}
+
 /// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
 /// 的早退步，失败域在末尾**折一次**
@@ -77,14 +82,17 @@ pub fn serve() -> Result<(), Start> {
         // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
         let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
         let me = utask::self_id();
+        let subject = league.query.resolve(me, Wait::AtMost(MS))
+            .map_err(|_| Start::Face(E_HUB))?
+            .ok_or(Start::Face(E_HUB))?.current.principal;
         for class in &classes {
-            let Ok(coalition) = league.found(Wait::AtMost(MS)) else {
+            let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
                 return Err(Start::Face(E_HUB));
             };
-            let id = coalition.id();
-            if coalition.admit(me, Wait::AtMost(MS)).is_err() {
+            if league.organization.admit(id, subject, Wait::AtMost(MS)).is_err() {
                 return Err(Start::Face(E_HUB));
             }
+            crate::service::hub::bridge::activate(me, id).map_err(|_| Start::Face(E_HUB))?;
             ledger.league(class.clone(), || id);
         }
 
@@ -103,7 +111,7 @@ pub fn serve() -> Result<(), Start> {
             "hub",
             &hub_road,
             Mine::No,
-            Permit::Unset,
+            Permit::Public,
             &[
                 (bond_name.as_str(), bond),
                 (list_name.as_str(), list),
@@ -119,7 +127,7 @@ pub fn serve() -> Result<(), Start> {
             return Err(Start::Tree(E_HUB));
         }
 
-        // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 `Among(c_类)`——"许驱这一类"那条规矩的落点。
+        // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 MemberOf(c_类)，检查有效选择而不是资格。
         //     名字取自册（`doors`），故"这一类落哪几台"与账是同一份事实。
         for class in &classes {
             let Some(coalition) = ledger.coalition_of(class.clone()) else {
@@ -137,7 +145,7 @@ pub fn serve() -> Result<(), Start> {
                 "hub",
                 &road,
                 Mine::No,
-                Permit::Among(coalition),
+                Permit::Identity(Selector::MemberOf(coalition)),
                 &doors,
                 Wait::AtMost(MS),
             );
@@ -370,13 +378,11 @@ fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
         .find(|pair| pair.key() == Some(key))
 }
 
-/// 找**盟册的定面**（`/svc/sys/coalition/set`——立盟与代报名都在它上面）：`None` = 没找着
+/// Discover Identity through the authority anchor issued directly by Control.
 fn find_league(tree: &TreeFace) -> Option<League> {
-    let road = ccall::DIR.try_join(ccall::Grant::Set.name())?;
-    let door = tree
-        .tile(&road, Wait::AtMost(MS))
-        .ok()?
-        .token(Wait::AtMost(MS))
-        .ok()?;
-    League::of(door).ok()
+    let authority = crate::service::identity::bridge::authority()?;
+    Some(League {
+        query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
+        organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,
+    })
 }

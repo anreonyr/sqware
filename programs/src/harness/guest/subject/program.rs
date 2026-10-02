@@ -10,7 +10,7 @@ pub static SUBJECT: UnitFile = UnitFile {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        after: Some(&["operator", "principal"]),
+        after: Some(&["operator", "identity"]),
         restart: Some(Ending::Transient),
         ..Relation::DEFAULT
     },

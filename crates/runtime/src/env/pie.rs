@@ -204,6 +204,20 @@ pub fn release(token: PieToken) -> PieResult<()> {
 pub fn alive(token: PieToken) -> bool {
     env::pie::alive(token).unwrap_or(false)
 }
+/// Drop a borrowed reference while preserving delivered capabilities.
+pub fn forget(token: PieToken) -> PieResult<()> { env::pie::forget(token) }
+
+/// Compare two live resources, independently of badge and transfer history.
+pub fn same(a: PieToken, b: PieToken) -> PieResult<bool> { env::pie::same(a, b) }
+
+/// Query the immediate transferor, original owner and mark of any live resource.
+pub fn inspect(token: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
+    env::pie::inspect(token).map(|(pair, mark)| (
+        TaskId::new(pair & 0xffff_ffff),
+        TaskId::new(pair >> 32),
+        Mark::new(mark as u64),
+    ))
+}
 
 // ── 类型化句柄：**权柄面**（构造 + 种类无关那几手）──
 

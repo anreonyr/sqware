@@ -45,8 +45,3 @@ pub(super) fn ask_of(who: TaskId, mark: Mark) -> Option<PieToken> {
     // 多枚**是契约被破**（一位客人只该在一位上铸一枚问话孔）⇒ 说一句。
     claim(mark, who, Some("operator: two asks"))
 }
-
-/// **认领那一扇门牌**——**按记号认，不看谁开的**（名册那一族 / 盟册那一族各一枚记号）
-pub(super) fn face_of_mark(mark: Mark) -> Option<PieToken> {
-    mail::pies().find(|p| p.mark == mark).map(|p| p.token)
-}

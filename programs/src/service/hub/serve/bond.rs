@@ -13,8 +13,13 @@ pub(super) fn bond(
         put_said(back, hub::UNKNOWN);
         return;
     };
-    let status = match league.coalition(coalition).admit(from, Wait::AtMost(MS)) {
-        Ok(()) => hub::OK,
+    let Ok(Some(binding)) = league.query.resolve(from, Wait::AtMost(MS)) else {
+        put_said(back, hub::DENIED);
+        return;
+    };
+    let status = match league.organization.admit(coalition, binding.current.principal, Wait::AtMost(MS)) {
+        Ok(()) if crate::service::hub::bridge::activate(from, coalition).is_ok() => hub::OK,
+        Ok(()) => hub::DENIED,
         Err(_) => hub::DENIED,
     };
     put_said(back, status);

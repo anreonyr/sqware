@@ -1,30 +1,11 @@
 #![no_std]
 #![no_main]
 
-//! probe-operator-gate — 操作面那一位持全权柄的真客人：把七格验一遍、取回那一枚入口，
-//! 再替下一位（**只有 `land` 一位、读不了树**）把两格铺在**根**底下。
-//! # 为什么第 5/6 步落在**根**底下
-//! 下一位客人只持 `land` 一位 ⇒ 它**问不得** `list` / `seek` / `name`（那三条各是另一柄权），
-//! 故它认路的坐标只能自己报得出。**根是唯一不需要号的那一格**（Where::Root：根没有号，
-//! 见 operator::frame 那一节）——于是那两格必须落在根底下，下一位才报得出坐标。
-//! 这一条是**量出来的**：把两格铺在 `/svc/sys/operator/zone` 底下，那位客人只能列号问名，
-//! 于是它每一次 `list` 都被面判拒掉、当场卡死——这正是这一维在按设计生效。
-//! # 为什么第 1 步必须在最前
-//! 装配者那一步按行 `claim` 本域交出去的孔（有期限 —— `operator::bridge::attach` 的
-//! `Wait::AtMost(READY_MS)`），故这一台**不能先做别的手脚再装路**（见
-//! `programs/src/harness/probe/probe_bound/main.rs`）。
-//! # 为什么它排在整张单的**最前**（`order: Some(3)`）
-//! 停机扳机是 `canonical`（那张单上最大 `order` 那一条），而本台问的是**树**（不需要任何驱动）
-//! ⇒ 排在身份服务之后、三台驱动之前。**但"窗口"这件事不能靠排队次治**：实测本台自己会走到那两处
-//! 重试额度的尽头（旧版是 20 s ＋ 20 s），于是"扳机早于它走完"就变成丢读数——**绿也没有、红
-//! 也没有**（喂了输入的 39 跑里丢 20 次；完全不喂的跑里也丢过）。故额度收小到 WAIT_MS、
-//! 那七段名字的读数交还给树自己（见 count_under）：数不到就**当场红**。「要读树」的客人
-//! 一律排在最前，见 `canonical/program.rs`。
+//! Verify all Operator grants and reject raw mutation through the generic session.
 
 extern crate alloc;
 extern crate programs;
 
-use alloc::string::ToString;
 
 use env::Wait;
 use programs::Report;
@@ -33,7 +14,6 @@ use programs::harness::probe;
 use protocol::common::path::Path;
 use protocol::communication::session::establish;
 use protocol::communication::session::Session;
-use protocol::debug;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane, Watch};
 use protocol::service::operator::{EntryId, Fail, Grant, Permit};
@@ -54,26 +34,8 @@ const MS: usize = 1000;
 /// （同一份镜像、直接起 QEMU 量过），故一个控制面会话看得见它们的时间以毫秒计
 const WAIT_MS: usize = 3_000;
 
-/// **`spot` 那一处**每一拍睡多久（毫秒）：它**不在事件那条路上**——等的是"这一趟走到了"
-/// （单槽孔的信），不是树变了，故仍按拍重问（见那一手的注）。
-const RETRY_MS: usize = 20;
-
-/// **下一位走完时落的那一格**（`probe-operator-land` 自己落，见那一份的第六步）。
-///
-/// **它替掉的是从前那一格墙钟**（`HOLD_MS = 1200`）：`claimable` 判"别人有主"那一轴用的判据
-/// 是 `vested_by(pie).is_none()`——**主人不在场，那一格就重新可落**，故本台从前必须"压住"
-/// 那两格压够下一位走到第四步。压多久是个只能猜的数：短了它测到的是"接手"而不是"拒"
-/// （实测红过：`Ok(EntryId(13))`），长了本台自己被停机扳机扑杀、连读数一起丢。
-/// 换成**事实**之后两侧都不猜：本台等这条事件才走，下一位落这一格 = "它的判据已经落定"。
-const DONE_ROAD: &str = "/probe-op-done";
-
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
-const OK_NOTE: &str = "probe-operator-gate: seven grants mounted";
-
-/// 声明归本台的那一格（下一位顶它 ⇒ 该拒）。**落在根底下**，见文件头
-const OWN: &str = "probe-op-own";
-/// 无主的那一格（谁都能落）
-const FREE: &str = "probe-op-free";
+const OK_NOTE: &str = "probe-operator-gate: eight grants mounted";
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -93,26 +55,6 @@ fn main() -> Report<'static> {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-operator-gate: subscribe /svc/sys/operator failed: {fail:?}"),
     };
-    // 一·三、**第二条订阅**：下一位落"我走完了"那一格时要收得到。**订在最前**——它可能比本台
-    //       走到末尾早（本台中间还有 walk / count / find 三串往返），而订阅之前的改动不在
-    //       通知义务内（见 client::Watch 的"序是契约"那一节）。
-    let Some(done_road) = protocol::common::path::PathBuf::try_new(DONE_ROAD) else {
-        panic!("probe-operator-gate: bad done road");
-    };
-    let mut done = match rein.watch(&done_road, Wait::AtMost(MS)) {
-        Ok(watch) => watch,
-        Err(fail) => panic!("probe-operator-gate: subscribe {DONE_ROAD} failed: {fail:?}"),
-    };
-
-    // 一·五、**先把那两格摆好**（摆在最前）：下一位客人与本台**并发**跑，而它读不了树
-    //       （"那两格摆好了没有"它问不出来）——故本台越早铺，那一条判据越稳。
-    //       **铺得比它晚也已经不要紧了**（从前那段"睡 300 ms 再顶"的窗口就是栽在这一处）：
-    //       它顶那一格时若还没主，它自己先落下来（`Mine::No` ⇒ 无主），本台这一手随后**换绑**
-    //       把归属收过来（`spot` 走的 `bind` 在已占那一格上是换绑，答同一个号）——它下一次再顶
-    //       就答 `Denied` 了（见它那一侧的第四步）。
-    let own = spot(&tree, OWN, "probe-gate-own", Mine::Yes);
-    let free = spot(&tree, FREE, "probe-gate-free", Mine::No);
-
     let Some(operator_id) = walk(&tree, &protocol::service::operator::DIR, &mut watch) else {
         panic!("probe-operator-gate: /svc/sys/operator is not a pane");
     };
@@ -146,47 +88,13 @@ fn main() -> Report<'static> {
         "取回来的那一枚不是一枚入口（问不出开者）"
     );
 
-    // 五、那两格已经在（见"一·五"）——这一行只是把读数补齐。
-    debug!(
-        "probe-operator-gate: land={} cap={} own={} free={}",
-        land_id.get(),
-        cap.get(),
-        own.get(),
-        free.get()
-    );
-
-    // 六、**压住那两格，直到下一位说它走完了**：`mine = true` 那一轴的判据是"**主人还在不在场**"
-    //    （Operator::claimable → `vested_by`），主人一走那一格就重新可落——下一位第四步那一问
-    //    当场变成"该通"。**等的是事实**（下一位自己落的那一格推回来的一条事件），不是墙钟：
-    //    这一条替掉了从前那一格 `HOLD_MS`（见 `DONE_ROAD` 那一节的注）。
-    let told = match done.next(Wait::AtMost(WAIT_MS)) {
-        // 收到哪一条不判：第二条订阅只订了那一条路，落在那条路上的任何一条都是"下一位走到了"。
-        Ok(ev) => {
-            debug!(
-                "probe-operator-gate: done kind={:?} id={} seq={}",
-                ev.kind,
-                ev.id.get(),
-                ev.seq
-            );
-            true
-        }
-        Err(_) => false,
-    };
-    if !told {
-        // **到点仍没有**：本台照样走完自己的判据（下一位的读数由它那一侧落），但**说一句**，
-        // 而且**问清成因**——那一格在不在，是"事件被顶掉"与"对面根本没走到"的分界
-        // （那一具架是共享的 `CAP` 格：本台读之前若另有 `CAP` 次改动，手所指的那一格已经换了
-        // 内容，订阅那一侧按"路对不上"丢掉 ⇒ 本台等不到，但那一格**在**）。
-        let at = tree.tile(&done_road, Wait::POLL);
-        protocol::debug::put(&alloc::format!(
-            "probe-operator-gate: no done event, cell={}",
-            match at {
-                Ok(tile) => alloc::format!("present id={}", tile.id().get()),
-                Err(fail) => alloc::format!("{fail:?}"),
-            }
-        ));
-    }
-    return Report::note(env::EXIT_OK, OK_NOTE);
+    let root = tree.root();
+    assert!(matches!(root.open("idt".into(), Wait::AtMost(MS)), Err(Fail::Denied)));
+    let source = mail::unseal_hole(env::Mark::of("raw-generic" )).unwrap();
+    assert!(matches!(root.bind("uit".into(), source, Permit::Public, Mine::No, Wait::AtMost(MS)), Err(Fail::Denied)));
+    assert!(matches!(root.trim(land_id, Wait::AtMost(MS)), Err(Fail::Denied)));
+    protocol::debug::put("hierarchy: generic Part/Land/Trim denied for bound Task");
+    Report::note(env::EXIT_OK, OK_NOTE)
 }
 
 /// `/svc/sys/operator` 那一格自己的号——**一问 ＋ 等事件**：那一块由**别的域**立
@@ -216,31 +124,4 @@ fn walk(tree: &TreeFace, road: &Path, watch: &mut Watch<'_>) -> Option<EntryId> 
 /// "一问的期限"）。
 fn count_under(pane: &Pane<'_>, watch: &mut Watch<'_>) -> usize {
     probe::count::count_under(pane, Grant::ALL.len(), watch, WAIT_MS)
-}
-
-/// 在**根**底下落一格（记号只为本台这台测具而立，不进任何一族的表）
-fn spot(tree: &TreeFace, name: &str, mark: &'static str, mine: Mine) -> EntryId {
-    let spot = name.to_string();
-    let Ok(entry) = mail::unseal_hole(env::Mark::of(mark)) else {
-        panic!("probe-operator-gate: no entry");
-    };
-    // **`Unknown` 重试**（与 `client.rs` 的 `road_to_id` 同一条口径）：那一格由本台与下一位
-    // 客人**并发**动，而这一手是"一问一动"——`Unknown` 在这条路上说的是"这一趟没走到"，
-    // 不是"这一格不许"。除它以外的失败都是确定的下一步（当场塌）。
-    // **它不在事件那条路上**：等的是"这一趟走到了"（单槽孔的信），不是树变了。
-    let mut left = WAIT_MS;
-    loop {
-        match tree
-            .root()
-            .bind(spot.clone(), entry, Permit::Unset, mine, Wait::AtMost(MS))
-        {
-            Ok(id) => return id.id(),
-            Err(Fail::Unknown) if left > 0 => {
-                let _ =
-                    runtime::env::room::sleep(core::time::Duration::from_millis(RETRY_MS as u64));
-                left = left.saturating_sub(RETRY_MS);
-            }
-            Err(fail) => panic!("probe-operator-gate: land {name} failed: {fail:?}"),
-        }
-    }
 }

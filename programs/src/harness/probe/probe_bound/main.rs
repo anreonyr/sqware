@@ -16,6 +16,7 @@ use alloc::string::String;
 use alloc::string::ToString;
 use env::HoleDir;
 use env::Wait;
+use env::wire::Field;
 use programs::Report;
 
 use env::PieToken;
@@ -52,7 +53,7 @@ fn junk() -> [u8; JUNK] {
 /// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（LAND_LEN 字节）
 /// 前几格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = 1`（名字**长度那一字节**）、
 /// `[11] = "x"`、`[12..20] = 0`（入口）、`[20] = 0`（`mine` 假）；**唯一越界的是
-/// `[21] = 9`**——许可那一张表只有 `0..=4`。故这一条会一路解到许可那一格才断 ⇒
+/// `[21] = 9`**——许可那一张表只有 `0..=3`。故这一条会一路解到许可那一格才断 ⇒
 /// **整帧读不懂** ⇒ 门答 `BAD`
 /// `[长度那一字节][字节]`（ 里 `String` 的 `Span` impl），故许可那一格落在
 /// `1 ＋ 9 ＋ (1 ＋ 名长) ＋ 8 ＋ 1`——**这一台手写裸帧，偏移只能自己数**
@@ -65,6 +66,7 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     f[10] = 1; // 名字长度那一字节
     f[11] = b'x'; // 名字那一个字节
     f[20] = 0; // `mine = false`
+    ocall::Permit::Public.store(&mut f[21..]);
     f[21] = permit_tag; // **这一格是唯一要试的那一格**
     f
 }
@@ -86,13 +88,12 @@ fn oversize_road() -> [u8; JUNK] {
     road
 }
 
-/// 表外那一格（`0..=4` 之外）：整帧读不懂
+/// 表外那一格（`0..=3` 之外）：整帧读不懂
 const LAND_PERMIT_UNKNOWN: u8 = 9;
 const LAND_PERMIT_KNOWN: u8 = 0;
 
-/// 这一条 `LAND` 帧有多长：`1 ＋ 9 ＋ (1 ＋ 1) ＋ 8 ＋ 1 ＋ 9`——**这一台手写裸帧**，故按线上
-/// 那一格数（名字 `"x"` 一个字节；许可那一格是 `tag ＋ 8`）
-const LAND_LEN: usize = 30;
+/// Prefix offset remains a raw-frame acceptance check; Permit width follows its codec.
+const LAND_LEN: usize = 21 + ocall::Permit::WIDTH;
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -173,6 +174,7 @@ fn main() -> Report<'static> {
             assert!(o_after, "吞了那条帧之后，门不再答正经的问了");
         }
     }
+    programs::harness::probe::identity::timeout();
     return Report::note(E_OK, OK_NOTE);
 }
 
@@ -209,7 +211,7 @@ fn junk_trip(
 
     // 正经的一问：**门还在答**。
     let root = face.root();
-    let after = root.open(dir, Wait::AtMost(MS)).is_ok();
+    let after = matches!(root.open(dir, Wait::AtMost(MS)), Err(ocall::Fail::Denied));
     (pushed, bad, after)
 }
 

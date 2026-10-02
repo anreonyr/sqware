@@ -16,6 +16,7 @@ use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
 use super::Control;
+use crate::service::operator::bridge::Tree;
 
 use crate::system::common::life::verdict as core;
 
@@ -47,7 +48,7 @@ impl Watch {
 
     /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**
     /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）
-    pub fn run(&mut self, control: &mut Control) -> bool {
+    pub fn run(&mut self, control: &mut Control, tree: &mut Tree) -> bool {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         let mut buf: Vec<u8> = Vec::new();
         if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
@@ -63,7 +64,27 @@ impl Watch {
         let mut quiet_at = clock();
         let mut owed = control.table.living().count();
         loop {
-            sweep(&mut control.table);
+            control.activate_hub();
+            if let Err(why) = control.progress(tree) {
+                debug::put(&alloc::format!("system: {why}"));
+                return false;
+            }
+            let recovered = if settling {
+                sweep(control);
+                false
+            } else {
+                match self.recover_identity(control, tree) {
+                    Ok(recovered) => recovered,
+                    Err(why) => {
+                        debug::put(&alloc::format!("system: identity replacement failed: {why}"));
+                        return false;
+                    }
+                }
+            };
+            if recovered {
+                owed = control.table.living().count();
+                quiet_at = clock();
+            }
             // 二、等一格有事：**有界节拍**（`TICK_MS`）。它不再是"顺便看一眼"的兜底，而是那一扫
             //     的节拍本身 ⇒ **每一拍都要**（不再由"有没有道"决定）。**`Pile` 的既定用法**：
             //     挂起过的那一侧返回的是预置值——内核没有第二次执行机会，故醒来必须自己按组复核，
@@ -75,7 +96,7 @@ impl Watch {
                 let Some(face) = self.faces[i] else {
                     continue;
                 };
-                serve_face(control, ccall::Grant::ALL[i], face, &mut buf);
+                serve_face(control, tree, ccall::Grant::ALL[i], face, &mut buf);
             }
             // 五、先看账有没有少一位（"有动静"是兜底唯一的复位信号）。
             let living = control.table.living().count();
@@ -119,6 +140,38 @@ impl Watch {
     }
 }
 
+impl Watch {
+    pub(crate) fn recover_identity(
+        &self,
+        control: &mut Control,
+        tree: &mut Tree,
+    ) -> Result<bool, &'static str> {
+        let authority = control.roster.authority();
+        if !sweep(control) {
+            return Ok(false);
+        }
+        if let Some(authority) = authority { control.hierarchy.borrow_mut().retire(tree, authority)?; }
+        control.replace_identity(tree, |control, tree| self.refresh_control(control, tree))?;
+        Ok(true)
+    }
+
+    fn refresh_control(&self, control: &Control, tree: &mut Tree) -> Result<(), &'static str> {
+        let principal = control.roster.control().ok_or("replacement control identity")?;
+        for grant in ccall::Grant::ALL {
+            let Some(face) = self.faces[(grant.at() - 1) as usize] else { continue; };
+            let road = ccall::DIR.try_join(grant.name()).ok_or("control path")?;
+            let permit = if grant == ccall::Grant::State {
+                protocol::service::operator::Permit::Public
+            } else {
+                protocol::service::operator::Permit::Identity(
+                    protocol::service::identity::Selector::Exact(principal))
+            };
+            control.hierarchy.borrow_mut().internal(tree, &road, face, permit, runtime::env::unit::self_id(), control.roster.authority())?;
+        }
+        Ok(())
+    }
+}
+
 /// **有界节拍**（毫秒）：要"顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒
 const TICK_MS: usize = 10;
 
@@ -129,11 +182,11 @@ const IDLE_MS: usize = 10_000;
 /// 静默上限的纳秒形（clock 那一族的标量）
 const IDLE_NS: u64 = IDLE_MS as u64 * 1_000_000;
 
-fn sweep(table: &mut Table) {
+fn sweep(control: &mut Control) -> bool {
     // 先把名字抄下来（表是定长的、行数有上界；拿名字再动表——与 `Desk` 那本账同一个形状）。
     let mut gone = [const { String::new() }; Table::CAP];
     let mut n = 0usize;
-    for row in table.living() {
+    for row in control.table.living() {
         let Slot::Live { task, .. } = row.slot else {
             continue;
         };
@@ -142,15 +195,25 @@ fn sweep(table: &mut Table) {
             n += 1;
         }
     }
-    for name in &gone[..n] {
-        mark_dead(table, name.as_str(), Reaped::Now);
+    let identity_lost = gone[..n].iter().any(|name| name == "identity");
+    if identity_lost {
+        control.roster.retire();
     }
+    for name in &gone[..n] {
+        if let Some(task) = control.task(name.as_str()) {
+            if let Err(why) = control.roster.unbind(task) {
+                debug::put(&alloc::format!("system: departed {name}: {why}"));
+            }
+        }
+        mark_dead(&mut control.table, name.as_str(), Reaped::Now);
+    }
+    identity_lost
 }
 
 /// 答回去
 /// 认那枚回信孔靠**帧里那一格** ＋ **一次 mail::reserve 验**（同 `principal/server.rs::turn`
 /// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
-fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
+fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
     // 入口是**单手**：一次醒来的这一批要取干净（可能不止一位客人）。
     while let Ok((len, from)) = entry.pull(buf, Wait::POLL) {
@@ -172,8 +235,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
                     grant.name(),
                     ccall::Grant::ALL[(asked - 1) as usize].name()
                 );
-                // **递出去就回去待客**：答话那一格由这一枚 `Sender` 自己担着（落出作用域时
-                // 等那只手被取走）。**没有"共用一格存根"了**：一位客人一枚写端，一格招待所有
+                // Push 已复制答话；Sender 可以随本次调用结束销毁。
                 {
                     let mut tx = Sender::<ccall::frame::Said>::from_token(back);
                     let _ = tx.send(ccall::frame::said_status(ccall::frame::DENIED));
@@ -182,7 +244,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
                 continue;
             }
         }
-        let said = answer(control, ask);
+        let said = answer(control, tree, from, ask);
         {
             let mut tx = Sender::<ccall::frame::Said>::from_token(back);
             let _ = tx.send(said);
@@ -195,7 +257,7 @@ fn serve_face(control: &mut Control, grant: ccall::Grant, face: PieToken, buf: &
 /// **四手就是 Control 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期
 /// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格
 /// **两格语义一个字不省**：`stop` 只到 `Stopping`（Control::stop 就是 service::stop）
-fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
+fn answer(control: &mut Control, tree: &mut Tree, from: env::TaskId, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
     let code = |fail: crate::system::common::life::verdict::Fail| {
         ccall::frame::fail_to_code(Some(wire_fail(fail)))
     };
@@ -208,7 +270,8 @@ fn answer(control: &mut Control, ask: Option<ccall::frame::Wire>) -> ccall::fram
             Ok(()) => ccall::frame::said_status(ccall::frame::OK),
             Err(fail) => ccall::frame::said_status(code(fail)),
         },
-        ccall::frame::Wire::Start(name) => match control.release(name) {
+        ccall::frame::Wire::Start(name) => match control.release(name, from,
+            |control| control.progress(tree)) {
             // 的东西。通道那本账留在 Control 里——`Endpoint` 的孔交不出去（见 `frame` 那一节）。
             Ok(service) => ccall::frame::said_task(service.0),
             Err(fail) => ccall::frame::said_status(code(fail)),

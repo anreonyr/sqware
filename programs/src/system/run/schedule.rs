@@ -3,7 +3,7 @@
 //!   立账 → 造身子 → 装通道        ← 不是手：这三件对整张单逐条做（`control/{assemble,mod}.rs`）
 
 use crate::service::operator::bridge as operator;
-use crate::service::principal::bridge as principal;
+use crate::service::identity::bridge as identity;
 use crate::system::Assembly;
 use crate::system::control::enroll as control;
 use crate::system::control::{Error, Service};
@@ -17,13 +17,13 @@ pub type Act = fn(&mut Assembly, &UnitFile, &mut Service) -> Result<(), &'static
 /// **一相**：这一相里那几只手，**次序即契约**
 pub type Phase = &'static [Act];
 
-pub const BEFORE_LAUNCH: Phase = &[principal::bind];
+pub const BEFORE_LAUNCH: Phase = &[identity::bind, prepare_runtime, crate::harness::probe::identity::supply];
 
-pub const AFTER_RELEASE: Phase = &[operator::attach_client, control::await_ready];
+pub const AFTER_RELEASE: Phase = &[control::await_ready];
 
-/// **它答得动之后**：认下"答案从哪来"那一类事实——谁持树（那一枚提示之路）、谁是名册
-/// （它交上来的那一枚定面门牌）。**两件都由运行期的那一枚孔认**，不读声明
-pub const AFTER_READY: Phase = &[operator::hold, principal::adopt_roster];
+/// Local ready 后确认 Operator，再安装 Identity 的可信查询束与完整挂载。
+/// AFTER_READY 全部成功，才放行依赖本系统服务就绪的后续单位。
+pub const AFTER_READY: Phase = &[operator::hold, identity::adopt];
 
 /// **走一相**：逐手；哪一手不成，折成**这一台自己的号**（读数 = 程序名 ＋ 那一手自己的步名）
 pub fn advance(
@@ -37,4 +37,8 @@ pub fn advance(
             .map_err(|why| crate::system::fail(program, Error::Step(why)))?;
     }
     Ok(())
+}
+
+fn prepare_runtime(assembly: &mut Assembly, _program: &UnitFile, _service: &mut Service) -> Result<(), &'static str> {
+    assembly.control.progress(&mut assembly.tree)
 }

@@ -1,78 +1,47 @@
-//! 提示之路上"立一条路"那一句 → 核（part / land）。
-//! 装配者递来的是一整条路（前缀 ＋ 末段）＋ 末段那一枚：`leaf = `PieToken::NONE 说的是
-//! **末段是窗格**。走法只有一句——**前缀逐段 `part` 出来**（`part` 幂等：缺的就地造，已在
-//! 就是成了），**末段**按 `leaf` 落叶子或立窗格。
-
-use alloc::string::ToString;
-
-use env::PieToken;
+use alloc::{string::ToString, vec::Vec};
+use env::{PieToken, TaskId};
 use protocol::common::path::Path;
-use protocol::debug;
-use protocol::service::operator::{Permit, Rule, Where};
-use protocol::service::principal::PrincipalId;
+use protocol::service::operator::{EntryId, Fail, Permit, Where};
+use crate::service::operator::core::{Change, Operator};
 
-use crate::service::operator::core::Operator;
-
-/// **走前缀**：从根起逐段把窗格立出来（`part` 幂等），返**末段该落在的那一块**
-fn walk(tree: &mut Operator, road: &Path) -> Option<Where> {
-    let mut at = Where::Root;
-    // ——末段一定有（`plate` 先取了 `file_name()`）。
-    let prefix = road.parent()?;
-    for seg in prefix.iter() {
-        match tree.part(at, seg.to_string()) {
-            Ok(id) => at = Where::At(id),
-            Err(fail) => {
-                debug::put(&alloc::format!("operator: plate walk road={road} at={seg:?} {fail:?}"));
-                return None;
-            }
+pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, permit: Permit,
+    owner: TaskId, replace: bool) -> Result<(EntryId, Vec<Change>), Fail>
+{
+    let mut fresh = Vec::new();
+    fresh.try_reserve(road.len()).map_err(|_| Fail::Full)?;
+    let mut changes = Vec::new();
+    changes.try_reserve(road.len()).map_err(|_| Fail::Full)?;
+    let result = (|| {
+        let last = road.file_name().ok_or(Fail::Unknown)?;
+        let mut at = Where::Root;
+        for seg in road.parent().ok_or(Fail::Unknown)?.iter() {
+            let (id, created, change) = tree.part_at(at, seg.to_string())?;
+            if created { fresh.push(id); }
+            // An existing tile must never masquerade as a directory.
+            let _ = tree.list(Where::At(id))?;
+            if let Some(change) = change { changes.push(change); }
+            at = Where::At(id);
         }
-    }
-    Some(at)
-}
-
-/// 失败（路空 / 某一层立不出来 / `land` 拒了）**各报一行读数**：静默退回去会变成"那一格查不到"
-///
-/// **这几行必须 release 也出得来**：装配者那一侧不管树成没成都印 `system: … mounted at …`
-/// （它只知道"提示被取走了"），故树这一侧失败时，两边的读数必须对得起来——量到过
-/// `/svc/sys/control 底下数到 3 格而四条 mounted 都印了` 那一族，而那时树这边**一行都没有**
-/// （`debug!` 在 release 档是空操作，见 `crates/protocol/src/debug.rs`）。
-pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, rule: Rule) {
-    let Some(last) = road.file_name() else {
-        return debug::put("operator: plate empty road");
-    };
-    let Some(at) = walk(tree, road) else { return };
-    // **末段是窗格**（`leaf` 那一格说"这一帧不落叶子"）：立出来就完事——目录不是叶子
-    // （没有入口、没有 Pie），故它一处都不落。
-    if leaf == PieToken::NONE {
-        return match tree.part(at, last.to_string()) {
-            Ok(_) => debug!("operator: plate pane {}", last),
-            Err(fail) => debug::put(&alloc::format!("operator: plate pane road={road} {fail:?}")),
-        };
-    }
-    // **末段是叶子**：没有许可（Permit::Unset）＋ **不留主人**（`None`）——与
-    // `/svc/sys/principal/{ask,set}` 与 `/svc/sys/coalition/{ask,set}` 那四处门牌同一格：任何已绑身份
-    match tree.land(at, last.to_string(), leaf, Permit::Unset, None) {
-        Ok(change) => {
-            let id = change.id;
-            // **带规矩那一轴**（Rule::Root）：那句规矩是"**许给根**"（`Trunk(ROOT)`）——
-            // （换绑不动号，故号仍是刚铸出来的那个）。**不成只报一行、不中止**：那一格退回
-            // 无许可那一档（这一手是"补一句规矩"，`land` 已经成了）。
-            if let Rule::Root = rule {
-                match tree.land(
-                    at,
-                    last.to_string(),
-                    leaf,
-                    Permit::Trunk(PrincipalId::ROOT),
-                    None,
-                ) {
-                    Ok(_) => debug!("operator: plate rule root {} id={}", last, id.get()),
-                    Err(fail) => {
-                        debug::put(&alloc::format!("operator: plate rule failed road={road} {fail:?}"))
-                    }
-                }
-            }
-            debug!("operator: plate landed {} id={}", last, id.get())
+        if leaf == PieToken::NONE {
+            let (id, created, change) = tree.part_at(at, last.to_string())?;
+            let _ = tree.list(Where::At(id))?;
+            if created { fresh.push(id); }
+            if let Some(change) = change { changes.push(change); }
+            return Ok(id);
         }
-        Err(fail) => debug::put(&alloc::format!("operator: plate land road={road} {fail:?}")),
+        if !runtime::env::mail::alive(leaf) { return Err(Fail::Dead); }
+        if !replace && tree.kid(at, last)?.is_some() { return Err(Fail::Denied); }
+        let change = tree.land(at, last.to_string(), leaf, permit, (owner.get() != 0).then_some(owner))?;
+        let id = change.id;
+        changes.push(change);
+        Ok(id)
+    })();
+    match result {
+        Ok(id) => Ok((id, changes)),
+        Err(fail) => {
+            for id in fresh.into_iter().rev() { let _ = tree.trim(id); }
+            if leaf != PieToken::NONE { let _ = runtime::env::mail::forget(leaf); }
+            Err(fail)
+        }
     }
 }
