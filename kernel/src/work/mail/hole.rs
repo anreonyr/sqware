@@ -10,7 +10,6 @@ use env::{HoleDir, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
-use crate::work::unit::space::Space;
 use env::MailFail;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,7 +211,7 @@ pub(crate) fn give(meta: &HoleMeta, buf: Arc<[u8]>, from: TaskId) -> Result<(), 
 /// 持孔锁再取空间锁是倒序（debug 档 lockdep 当场报），而复制每页都要过一遍 `translate`。
 /// 故这里只把"正被取用"公示出去，复制成由 [`taken`] 收尾、败由 [`back`] 把手放回。
 ///
-/// 发送方那个空间已经回收（弱引用升不上来）⇒ 这一格**作废**（消息随人走）并答 `Gone`，
+/// **字节归内核** ⇒ 这一格不会因为发送方退场而作废（从前那一档 `Gone` 由此消失），
 /// 孔回到可用——不作废的话，一位退场的发送方会把这条孔永久堵死。
 pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
     if !meta.alive() {
@@ -245,7 +244,7 @@ pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<[u8]>)> {
 ///
 /// 两个调用点，同一个状态迁移：
 /// - **复制成了**（`hand_over` 走到尾）：送到；
-/// - **发送方那段已经没了**（`hand_over` 答 `Gone`）：那条报**再也送不到**了——发送方那个空间
+/// - **收方那段写不进去**（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来——
 ///   已经回收，`Hand` 里的只是它剩下的弱引用。**这时必须就地收掉**：照 `back` 那样"手原样
 ///   放回"会把孔**永远占住**（此后每一次 `Pull` 都答 `Gone` 再把手放回，谁也推不进来）——
 ///   **实测过**：驱逐之后另一个人 `Push` 永远 `Busy`（无期等就挂住整台机器）。
@@ -292,7 +291,7 @@ pub(crate) fn back(meta: &HoleMeta) {
 // `Taking` 答 `Busy`，因为那一刻复制在另一颗 hart 上做）。**这只手今天只有"被取走"与
 // "随孔一起没"两个下场**，不需要第三条路——三条凭据：①递出的字节今天住在写端那一格
 // （`Sender`）里；②孔封印时就地抹手并唤醒发送方（`seal` 那一格）；③`Hand.space` 是弱引用，
-// 发送方走了后来那次 `Pull` 答 `Gone`。日后要做"押下—取回"（`Held`）那一类，按它的语义
+// （字节归内核，故与发送方还在不在无关）。日后要做"押下—取回"（`Held`）那一类，按它的语义
 // 重新定形再加回来。
 
 /// 只看**队头**那一只手：`(长度, 发送者, 队里排着几只)`。**不动状态**（取用中的那只也照报）。
@@ -415,7 +414,7 @@ pub(crate) fn wait(
 // 今天量的是**一只手自己的寿命**：登记（[`give`] 盖 [`Hand::at`]）→ 下线（[`note_hand_off`] 结账）。
 // 它与"某位递手的线程被卡了多久"同值——那一位正是一圈一圈等这只手下线的人。
 //
-// **下线只有三个点，`back` 不算**：`taken`（复制成了）、`take` 的 `Gone` 支（发送方那段没了、
+// **下线只有两个点，`back` 不算**：`taken`（复制成了）、`seal`／`Drop`（手随孔作废）——
 // 手被就地收掉）、`seal` 与 `Drop`（手随孔作废）。`back` 是"这一趟没成、东西还在"⇒ 手放回，
 // 时长接着长（发送方确实还等着）。四条路加起来**没有缺口**：孔上没手时 `hand_age` 答 `None`，
 // 而那一刻的终值已经由下线点记下。
@@ -548,11 +547,9 @@ fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize, at: u64) {
 ///
 /// `live` = 收场时**还压在孔上、没人取**的手数（>0 = 有手永远没人取）。
 /// `back_n` / `back_max_len` = **读不成、手原样放回**的次数与最长那一趟（见 [`note_back`]）。
-/// `gone_n` = **这只手送不到**（`Gone`，三格成因见 [`note_gone`]）的次数——**正常应当为 0**：
-/// 它数的是"有一条报被内核当场扔掉了"（收方读到的是 `MailFail::Gone`）。
 pub(crate) fn hold_line() {
     crate::putln!(
-        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={} gone_n={}",
+        "hole: push_hold_n={} push_hold_max_ms={} worst=hole#{} from={} owner={} live={} back_n={} back_max_len={}",
         HOLD_N.load(Ordering::Relaxed),
         HOLD_MAX_MS.load(Ordering::Relaxed),
         HOLD_WORST.load(Ordering::Relaxed),
@@ -561,7 +558,6 @@ pub(crate) fn hold_line() {
         HANDS_LIVE.load(Ordering::Relaxed),
         BACK_N.load(Ordering::Relaxed),
         BACK_MAX_LEN.load(Ordering::Relaxed),
-        GONE_N.load(Ordering::Relaxed),
     );
 }
 
@@ -583,43 +579,6 @@ pub(crate) fn note_back(len: usize, max: usize) {
     BACK_MAX_LEN.fetch_max(len, Ordering::Relaxed);
     if !BACK_ALARMED.swap(true, Ordering::Relaxed) {
         crate::putln!("mail: hand returned len={} max={}", len, max);
-    }
-}
-
-// ── 诊断：**这只手送不到了**（`Gone`）──────────────────────────────────────
-//
-// **（这一行要证的那件事：`Gone` 有三个成因，而它们下一步完全不同）**：
-//
-// 三格都折成同一个 `MailFail::Gone`，而"人走了"与"内存没了"要修的地方**不在同一层**。
-// 故第一次当场报一行（被 host 杀掉的跑走不到收场块），把 `from` / `va` / `len` / `dst` 四格一起
-// 报出来——验收与调试两边都能拿它对上"是哪一位、哪两段"。
-static GONE_N: AtomicUsize = AtomicUsize::new(0);
-static GONE_ALARMED: AtomicBool = AtomicBool::new(false);
-
-/// 报一笔"这只手送不到了"（成因见上，`why` 就是那一句话）。
-///
-/// `dst` = 收方那一段的 VA（0 = 这一格与收方缓冲区无关）——**两边在一页里的偏移不同**正是
-/// `why=copy` 那一格要看的东西。
-pub(crate) fn note_gone(
-    meta: &HoleMeta,
-    from: TaskId,
-    va: usize,
-    len: usize,
-    dst: usize,
-    why: &str,
-) {
-    GONE_N.fetch_add(1, Ordering::Relaxed);
-    if !GONE_ALARMED.swap(true, Ordering::Relaxed) {
-        crate::putln!(
-            "mail: hand gone hole#{} from={} owner={} va={:#x} len={} dst={:#x} why={}",
-            meta.id.0,
-            from.get(),
-            meta.owner.get(),
-            va,
-            len,
-            dst,
-            why,
-        );
     }
 }
 
