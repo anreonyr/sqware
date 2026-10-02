@@ -19,11 +19,11 @@ use crate::system::Assembly;
 use crate::system::control::{BOOT_MS, Service};
 use crate::unit::UnitFile;
 
-use protocol::common::path::Path;
+use protocol::common::path::{Path, PathBuf};
 use protocol::communication::session::establish;
 use protocol::debug;
-use protocol::service::operator::client::{Face, Mine, Pane};
-use protocol::service::operator::{EntryId, Fail, Permit, Rule, TIP_LEN, Tip};
+use protocol::service::operator::client::{Face, Mine, Pane, Watch};
+use protocol::service::operator::{EntryId, Fail, Grant, Permit, Rule, TIP_LEN, Tip};
 pub use protocol::service::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
@@ -267,8 +267,27 @@ pub fn land(
         None => tree.root(),
     };
     let root = tree.root();
+    // 二·五、**先订一次**（序是契约）：这一处落格点自己那一块——`bind` 那一下树会把
+    // `Landed`/`Rebound` 推到**订得起的人**的孔上。**订要持柄**：`watch` 是 `Grant::Watch`
+    // 那一维上的一枚（`Face::rein` 借出来）；这一面拿不到那一柄权（或订不成）⇒ 退成
+    // "每面再问一趟 `name`"，与从前逐字相同。
+    // **只有"订得起"的那几处才订**：一枚订阅换掉的是**这一处每一面那一趟 `name`**——故
+    // 单面那一档（本景里有十处：`router` / `rtc` 与八个设备类）是**纯亏**：省下的那一趟正好
+    // 等于订出去的那一趟，而树上多挂一枚订阅、多一枚孔（实测：一律订的话那么一跑里
+    // `watchers` 从 7 涨到 22）。面数 > 1 才订——那里一枚订阅换掉 n 趟。
+    let rein = tree.rein(Grant::Watch);
+    let mut watch = if faces.len() > 1 {
+        rein.watch(road, millis).ok()
+    } else {
+        None
+    };
     // 三、逐枚：落 → 查回来 → 拿号问名 → 一行读数。
     let mut out = Vec::with_capacity(faces.len());
+    // **这一处走了哪几条路**（`via_event` = 那一对由树上推回来的事件说；`via_name` = 事件没收到、
+    // 退回问了一次）：每个落格点一行、release 也看得见——**不然这一改有没有生效根本看不见**
+    // （逐面那一行是 `debug!`，release 档是空的）。
+    // `via_skip` = 这一处**按上面的判据没订**（单面那一档），故它走的就是从前的 `name` 那一趟。
+    let (mut via_event, mut via_name, mut via_skip) = (0usize, 0usize, 0usize);
     for (face_name, entry) in faces {
         let face_name = *face_name;
         let name = face_name.to_string();
@@ -281,11 +300,12 @@ pub fn land(
             Err(fail) => (Err(*fail), EntryId::new(0)),
         };
         // `try_join` 答 `None` 只可能是"那一条路满了"（名字那一关上面已过）⇒ 折成
-        // Fail::Full——与"装不下"是同一句话。
+        // Fail::Full——与"装不下"是同一句话。**两面共用它**（查回来那一趟与"等事件"那一趟）。
+        let full = road.try_join(face_name);
         let find = match &landed {
-            Ok(_) => match road.try_join(face_name) {
+            Ok(_) => match &full {
                 Some(full) => tree
-                    .tile(&full, millis)
+                    .tile(full, millis)
                     .and_then(|tile| tile.token(millis))
                     .map(|_| ()),
                 None => Err(Fail::Full),
@@ -293,23 +313,55 @@ pub fn land(
             Err(fail) => Err(*fail),
         };
         // **拿号问名**：号 ↔ 名这一对对得起来，才算那枚号是真坐标。
+        // **这一条不再另问一趟**（乙）：`bind` 那一下树是**先把事件推到本端孔上、再答那一句**
+        // （`serve/answer.rs` 的 `changed` 与 `serve/mod.rs` 的 `serve_one`——答话在 `answer`
+        // 返回之后才发），故 `landed` 一回来，那一条已经排在本端这一枚孔上了；收下它即可
+        // ——"那一格自己的号"与"从根写起的那条路"两格都在载荷里，正是本行要的那一对。
+        // 收不到（本端孔的队列溢了 / 那一格被别条路顶掉 / 一开始就没订成）⇒ **退回问一次**：
+        // 判据一字不差，只是那一趟又回来了（读数里 `via=` 那两格分得开）。
+        let mut via = "event";
         let named = match &landed {
-            Ok(id) => root.name(*id, millis).ok(),
+            Ok(id) => match &mut watch {
+                Some(w) => match named_by_event(w, full.as_ref(), *id) {
+                    Some(name) => Some(name),
+                    None => {
+                        via = "name";
+                        root.name(*id, millis).ok()
+                    }
+                },
+                None if faces.len() > 1 => {
+                    // **订过、但没收到那一条**（队列溢了 / 那一格被别条路顶掉）⇒ 退回问一次。
+                    via = "name";
+                    root.name(*id, millis).ok()
+                }
+                None => {
+                    // **本来就没订**（单面那一档）⇒ 与从前逐字相同。
+                    via = "skip";
+                    root.name(*id, millis).ok()
+                }
+            },
             Err(_) => None,
         };
+        if landed.is_ok() {
+            match via {
+                "event" => via_event += 1,
+                "skip" => via_skip += 1,
+                _ => via_name += 1,
+            }
+        }
         // **落不成当场说一句**：读数不能走 `debug!`（release 档那是空）——本手是六个调用点
         // 共用的那一处，而其中 `principal` / `coalition` 两处**不成也照样起**，从前那两个域
         // 少落一格在 release 档里**没有出处**（树上看得出少一格，没人说得出为什么）。
         if land.is_err() || find.is_err() {
             debug::put(&alloc::format!(
-                "{family}: tree land failed name={face_name} land={land:?} find={find:?} entry={} plate={} pname={}",
+                "{family}: tree land failed name={face_name} land={land:?} find={find:?} entry={} plate={} pname={} via={via}",
                 entry.get(),
                 plate.get(),
                 named.as_ref().map(|name| name.as_str()).unwrap_or("-"),
             ));
         }
         debug!(
-            "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={}",
+            "{family}: tree name={face_name} land={land:?} find={find:?} got={} entry={} plate={} pname={} via={via}",
             find.is_ok(),
             entry.get(),
             plate.get(),
@@ -322,5 +374,40 @@ pub fn land(
             named,
         });
     }
+    // **一处一行**（每面那一行是 `debug!`，release 档是空的）：这一行是"每面少问一趟"那件事
+    // 唯一的凭据——`via_event` 全中就是它成了；`via_name` 那一格一动，就是退回了问一次。
+    debug::put(&alloc::format!(
+        "{family}: tree land road={road} faces={} via_event={via_event} via_name={via_name} via_skip={via_skip} land_fail={} find_fail={}",
+        faces.len(),
+        out.iter().filter(|one| one.land.is_err()).count(),
+        out.iter().filter(|one| one.find.is_err()).count(),
+    ));
     out
+}
+
+/// **收那一条已经排到本端孔上的事件**（**非阻塞**）：路与号都对上 ⇒ 答那一段名。
+///
+/// # 为什么不必等
+/// 树是**先推、后答**的：`answer` 里 `changed` 把事件推给订得起的人，而那一句答话在
+/// `answer` 返回之后才发（`serve/mod.rs` 的 `serve_one`）。故 `bind` 的答话一到，这一条
+/// 就已经排在本端那枚孔上了——"等"这一格因此没有期限可给，也不必给。
+///
+/// # 为什么要挑
+/// 本端订的是**这一块**（`road`）：同族别的面的事件也会推到这枚孔上，故按**号 ＋ 路**
+/// 两个判据挑；挑不中的丢掉继续。孔上排得下几只由内核说（`QUEUE_CAP`），故这一圈有界
+/// ——转完仍没有 ⇒ 答 `None`，由调用方退回问一次 `name`（判据一字不差）。
+fn named_by_event(watch: &mut Watch<'_>, full: Option<&PathBuf>, plate: EntryId) -> Option<String> {
+    let full = full?;
+    for _ in 0..8 {
+        match watch.try_next() {
+            Ok(Some(ev)) => {
+                if ev.id == plate && ev.road.as_str() == full.as_str() {
+                    return Some(full.file_name()?.to_string());
+                }
+            }
+            // 孔上没有手 / 收不动 ⇒ 到此为止（由调用方退回问一次）。
+            Ok(None) | Err(_) => return None,
+        }
+    }
+    None
 }
