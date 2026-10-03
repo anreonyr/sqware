@@ -226,6 +226,12 @@ mod tests {
         kernel::health::syscall::capability();
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn hole_queue_reuse() {
+        kernel::health::hole::reuse();
+    }
+
     // ── 整机用例：**一例 = 一张镜像** ──────────────────────────────────────────
     //
     // 体是"装台 → 开演"两句。差别**不在代码里**，在 runner 给的那张镜像里
