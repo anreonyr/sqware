@@ -12,6 +12,7 @@ pub enum State {
     Ready,
     Stopping,
     Dead,
+    Debarked,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

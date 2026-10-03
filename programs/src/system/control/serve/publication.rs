@@ -321,7 +321,7 @@ fn live(table: &Table, task: TaskId) -> bool {
         matches!(row.slot, Slot::Live { task: known, .. } if known == task)
             && matches!(
                 row.state,
-                State::NeverStarted | State::Starting | State::Ready
+                State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
             && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
     })
@@ -335,4 +335,9 @@ fn reply(back: PieToken, reply: Reply) {
         let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
     }
     let _ = mail::release(back);
+}
+
+pub(crate) fn inject(entry: env::PieToken, task: env::TaskId) -> Result<(), &'static str> {
+    runtime::core::res::port::ship(&runtime::env::mail::HolePie::from_token(entry), task,
+        env::Access::STORE, env::Policy::NONE).map(|_| ()).map_err(|_| "publication inject")
 }

@@ -122,7 +122,7 @@ fn main() -> Reason {
     debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");
 
     for name in PARKER_NAMES.iter().chain(HOG_NAMES.iter()) {
-        let _ = service::stop(&mut table, name);
+        let _ = service::ruin(&mut table, name);
     }
     debug!("load: stopped all rows");
     return 0;
@@ -146,7 +146,7 @@ fn spawn_one(
     let Ok(task) = service::mint(table, name.as_str(), elf, kind) else {
         return false;
     };
-    service::start(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
+    service::embark(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
 }
 
 /// 铺不满就没得量

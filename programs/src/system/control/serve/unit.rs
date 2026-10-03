@@ -71,7 +71,7 @@ impl Control {
             .map(|s| s.state)
             .ok_or(Fail::Unknown)
     }
-    pub fn stop(
+    pub fn ruin(
         &mut self,
         name: String,
         roster: &Roster,
@@ -81,11 +81,33 @@ impl Control {
             return Err(Fail::Unknown);
         }
         let task = self.task(name.as_str()).ok_or(Fail::Unknown)?;
-        service::stop(&mut self.table, name.as_str())?;
+        service::ruin(&mut self.table, name.as_str())?;
         if name == "hub" {
             *activation = None;
         }
         roster.unbind(task).map_err(|_| Fail::NotReady)
+    }
+    pub fn debark(&mut self, name: String) -> Result<(), Fail> {
+        if matches!(name.as_str(), "operator" | "identity") { return Err(Fail::Unknown); }
+        let task = self.task(&name).ok_or(Fail::Unknown)?;
+        if self.table.find(&name).is_none_or(|r| r.state != State::Ready) { return Err(Fail::NotReady); }
+        let until = runtime::env::chrono::clock() + READY_MS as u64 * 1_000_000;
+        loop {
+            match runtime::env::unit::debark(task) {
+                Ok(()) => { self.table.set_state(&name, State::Debarked); return Ok(()); }
+                Err(e) if matches!(e.source, env::UnitFail::Busy) && runtime::env::chrono::clock() < until => {
+                    runtime::env::room::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| Fail::NotReady)?;
+                }
+                Err(_) => return Err(Fail::NotReady),
+            }
+        }
+    }
+    pub(super) fn resume(&mut self, name: &str) -> Result<Service, Fail> {
+        let task = self.task(name).ok_or(Fail::Unknown)?;
+        if self.table.find(name).is_none_or(|r| r.state != State::Debarked) { return Err(Fail::NotReady); }
+        runtime::env::unit::embark(task).map_err(|_| Fail::NotReady)?;
+        self.table.set_state(name, State::Ready);
+        Ok((task, Vec::new()))
     }
     pub(crate) fn task(&self, name: &str) -> Option<TaskId> {
         use ::core::sync::atomic::Ordering;
@@ -101,7 +123,7 @@ impl Control {
     }
     pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
         self.table.living().filter_map(|row| match row.slot {
-            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready) => {
+            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready | State::Debarked) => {
                 Some(task)
             }
             _ => None,
@@ -159,7 +181,7 @@ impl Control {
         loop {
             match self.table.find(name).map(|s| s.state) {
                 Some(State::Ready | State::Stopping | State::Dead) => return Ok(()),
-                Some(State::NeverStarted | State::Starting) => {}
+                Some(State::NeverStarted | State::Starting | State::Debarked) => {}
                 None => return Err(Fail::Unknown),
             }
             if left == 0 {
@@ -169,18 +191,18 @@ impl Control {
             left -= 1;
         }
     }
-    pub fn stop_rest(&mut self, roster: &Roster, activation: &mut Option<Activation>) {
+    pub fn ruin_rest(&mut self, roster: &Roster, activation: &mut Option<Activation>) {
         let names: Vec<String> = self
             .table
             .living()
             .filter(|row| {
-                matches!(row.state, State::Starting | State::Ready)
+                matches!(row.state, State::Starting | State::Ready | State::Debarked)
                     && !matches!(row.slot, Slot::Live { team: None, .. })
             })
             .map(|row| row.name.clone())
             .collect();
         for name in &names {
-            let _ = self.stop(name.clone(), roster, activation);
+            let _ = self.ruin(name.clone(), roster, activation);
         }
     }
 }

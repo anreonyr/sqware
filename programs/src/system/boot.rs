@@ -53,7 +53,7 @@ pub fn start() -> Result<Arc<Status>, ()> {
     }
     let operator = env::TaskId::new(status.operator.load(Ordering::Acquire));
     let identity = env::TaskId::new(status.identity.load(Ordering::Acquire));
-    if runtime::env::unit::hatch(operator).is_err() || runtime::env::unit::hatch(identity).is_err()
+    if runtime::env::unit::embark(operator).is_err() || runtime::env::unit::embark(identity).is_err()
     {
         let _ = runtime::env::room::doom(status.control);
         return Err(());

@@ -2,13 +2,13 @@ use crate::unit::Ending;
 
 use super::unit::{Announce, Slot, State, Table};
 
-pub fn admit_start(table: &Table, name: &str) -> Result<(), Fail> {
+pub fn admit_mint(table: &Table, name: &str) -> Result<(), Fail> {
     let Some(s) = table.find(name) else {
         return Err(Fail::Unknown);
     };
     match s.state {
         State::NeverStarted | State::Dead => Ok(()),
-        State::Starting | State::Ready | State::Stopping => Err(Fail::NotReady),
+        State::Starting | State::Ready | State::Stopping | State::Debarked => Err(Fail::NotReady),
     }
 }
 
@@ -30,7 +30,7 @@ pub fn probe_ready(table: &Table, name: &str) -> Ready {
             (Announce::Channel, Slot::Live { .. }) => Ready::Pending,
             (_, Slot::None) => Ready::Gone,
         },
-        State::Stopping => Ready::Gone,
+        State::Stopping | State::Debarked => Ready::Gone,
         State::NeverStarted | State::Dead => Ready::Gone,
     }
 }

@@ -19,6 +19,7 @@ pub enum State {
     /// 已下令收，还没确认收干净
     Stopping,
     Dead,
+    Debarked,
 }
 
 impl State {
@@ -30,6 +31,7 @@ impl State {
             State::Ready => 2,
             State::Stopping => 3,
             State::Dead => 4,
+            State::Debarked => 5,
         }
     }
 
@@ -41,6 +43,7 @@ impl State {
             2 => Some(State::Ready),
             3 => Some(State::Stopping),
             4 => Some(State::Dead),
+            5 => Some(State::Debarked),
             _ => None,
         }
     }
@@ -74,11 +77,13 @@ pub enum Fail {
 
 pub const MINT: u8 = 1;
 
-pub const START: u8 = 2;
+pub const EMBARK: u8 = 2;
 
-pub const STOP: u8 = 3;
+pub const DEBARK: u8 = 3;
 
 pub const STATE: u8 = 4;
+
+pub const RUIN: u8 = 5;
 
 /// 这条路叫什么（泊位那一格）：**两侧同一个**
 pub const LINK: &str = "control";

@@ -97,7 +97,7 @@ fn main() -> Reason {
         debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(
+        if service::embark(
             &mut table,
             name.as_str(),
             task,
@@ -122,7 +122,7 @@ fn main() -> Reason {
             debug!("again: r={round} step=state NEVERSTARTED (bug)");
         }
 
-        if service::stop(&mut table, name.as_str()).is_err() {
+        if service::ruin(&mut table, name.as_str()).is_err() {
             failures += 1;
             debug!("again: r={round} step=stop REFUSED");
             break;
@@ -168,7 +168,7 @@ fn main() -> Reason {
             failures += 1;
             break;
         };
-        if service::start(
+        if service::embark(
             &mut table,
             name.as_str(),
             task,
@@ -184,7 +184,7 @@ fn main() -> Reason {
         }
         tries += 1;
         restarts += 1;
-        let _ = service::stop(&mut table, name.as_str());
+        let _ = service::ruin(&mut table, name.as_str());
         let _ = service::watch(&mut table, name.as_str(), Wait::AtMost(MS));
     }
     // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
@@ -218,6 +218,7 @@ fn trace(table: &Table, name: String, round: usize, step: &str) {
         State::Ready => "Ready",
         State::Stopping => "Stopping",
         State::Dead => "Dead",
+        State::Debarked => "Debarked",
     };
     debug!("again: r={round} step={step} state={state} slot={slot} ready={ready}");
 }

@@ -31,7 +31,7 @@ pub fn acceptance() {
             env::Access::FETCH, env::Policy::NONE).unwrap();
         let token = env::pie::accord(payload.token(), task, Permission::FETCH, IMAGE).unwrap();
         HolePie::from_token(boot).push(&token.to_bytes(), Wait::AtMost(5000)).unwrap();
-        unit::hatch(task).unwrap();
+        unit::embark(task).unwrap();
         let mut bytes = [0; 40];
         let (n, from) = HolePie::from_token(report).pull(&mut bytes, Wait::AtMost(5000)).unwrap();
         assert_eq!(from, task);
@@ -70,7 +70,7 @@ pub fn unit() {
     let child = runtime::core::loader::build(elf, env::ProgramKind::User).unwrap();
     let child_team = child.team();
     let descendant = child.spawn(&[], 0).unwrap();
-    unit::hatch(descendant).unwrap();
+    unit::embark(descendant).unwrap();
     let status = Arc::new(Status {
         control: unit::self_id(), operator: AtomicUsize::new(0), identity: AtomicUsize::new(0),
         phase: AtomicU8::new(Phase::Running as u8),
@@ -96,8 +96,8 @@ pub fn unit() {
         status.control.get(), operator, identity, descendant.get(), child_team.get(),
     ]) { slot.copy_from_slice(&(id as u64).to_le_bytes()); }
     HolePie::from_token(report).push(&bytes, Wait::AtMost(5000)).unwrap();
-    unit::hatch(TaskId::new(operator)).unwrap();
-    unit::hatch(TaskId::new(identity)).unwrap();
+    unit::embark(TaskId::new(operator)).unwrap();
+    unit::embark(TaskId::new(identity)).unwrap();
     if mode == 0 { return; }
     loop {
         if [operator, identity].iter().any(|id| unit::join(TaskId::new(*id), Wait::POLL).unwrap_or(true)) {

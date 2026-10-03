@@ -1,7 +1,7 @@
 //! Control owns identity installation; bootstrap is direct IPC, never Operator discovery.
 //!
 //! Static units are explicitly authorized with separate root-derived principals. Runtime
-//! children inherit the kernel sender's current snapshot before hatch. An unavailable
+//! children inherit the kernel sender's current snapshot before embark. An unavailable
 //! authority is not a reason to release a child without an identity.
 
 use env::{Access, PieToken, Policy, TaskId, Wait};
@@ -35,7 +35,7 @@ impl Roster {
         self.installer.as_ref().map(Installer::authority)
     }
 
-    /// Give an external unit its own root-derived principal before hatch.
+    /// Give an external unit its own root-derived principal before embark.
     pub fn authorize(&self, task: TaskId) -> Result<(), &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let root = PrincipalId::root(installer.authority());

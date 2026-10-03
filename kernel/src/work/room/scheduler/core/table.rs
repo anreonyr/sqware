@@ -24,6 +24,9 @@ pub(crate) fn rip() {
         let mut i = c.inner.lock();
         c.starved_clear(&mut i);
     }
+    for task in roster().into_iter().filter_map(|w| w.upgrade()) {
+        task.boarding.lock().parked.take();
+    }
     messenger::rip();
     if let Some(r) = ROSTER.get() {
         r.lock().clear();

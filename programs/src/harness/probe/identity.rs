@@ -96,7 +96,7 @@ pub fn acceptance() {
     };
     for name in ["operator", "identity"] {
         assert!(assembly.control.mint(name.into(), &assembly.images).is_err());
-        assert!(assembly.control.stop(name.into(), &assembly.roster, &mut assembly.activation).is_err());
+        assert!(assembly.control.ruin(name.into(), &assembly.roster, &mut assembly.activation).is_err());
         assert_eq!(assembly.control.state(name.into()).unwrap(), crate::system::control::core::unit::State::Ready);
     }
     let old_authority = assembly.roster.authority().unwrap();
@@ -138,20 +138,39 @@ pub fn acceptance() {
     {
         ready_driver(&operator, &old_query, assembly.control.task(name).unwrap(), road);
     }
-    assembly.control.mint(alloc::string::String::from("system-child"), &assembly.images)
-        .expect("identity: runtime mint");
-    let machine = assembly.supplies.machine;
-    let child = assembly.control.release(alloc::string::String::from("system-child"),
-        old_dependent, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| crate::system::run::cycle::poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree))
-        .expect("identity: runtime inheritance").0;
+    use crate::system::control::serve::lifecycle::Action;
+    {
+        use crate::system::control::serve::{driver, lifecycle::{Operations, Request}};
+        let mut plans = crate::system::run::schedule::lifecycle().unwrap();
+        let mut operations = Operations::new();
+        operations.push(Request { name: "absent-unit".into(), action: Action::Ruin, back: None }).unwrap();
+        driver::poll(&mut plans, &mut operations, &mut assembly.control, &assembly.roster,
+            &mut assembly.supplies, &mut assembly.activation, &assembly.images).expect("unknown Ruin must not terminate System");
+        let job = operations.0.front().unwrap();
+        assert!(job.complete);
+        assert_eq!(job.operation.failure, Some(crate::system::control::core::verdict::Fail::Unknown));
+    }
+
+    assembly.action("system-child", Action::Mint).expect("identity: scheduled mint");
+    let child = assembly.action("system-child", Action::Embark { parent: Some(old_dependent) })
+        .expect("identity: scheduled inheritance").unwrap();
     let parent_binding = old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap().unwrap();
     let child_binding = old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap();
     assert_eq!(child_binding.origin, parent_binding.current);
+    for _ in 0..3 {
+        assembly.action("system-child", Action::Debark).expect("identity: scheduled debark");
+        assert_eq!(assembly.control.state("system-child".into()).unwrap(), crate::system::control::core::unit::State::Debarked);
+        assert_eq!(old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap(), child_binding);
+        let resumed = assembly.action("system-child", Action::Embark { parent: Some(old_dependent) }).expect("identity: scheduled resume").unwrap();
+        assert_eq!(resumed, child);
+        assert_eq!(old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap(), child_binding);
+    }
+
     assert_eq!(old.current.principal.authority, old_authority);
     let dynamic = super::hierarchy::exercise(&mut assembly, &operator, old_authority, old_dependent, child);
     let _ = dynamic;
     protocol::debug::put("system: identity, device and publication acceptance passed");
-    assembly.control.stop_rest(&assembly.roster, &mut assembly.activation);
+    assembly.control.ruin_rest(&assembly.roster, &mut assembly.activation);
     assert!(assembly.supervise().is_ok(), "system: normal team shutdown failed");
 }
 

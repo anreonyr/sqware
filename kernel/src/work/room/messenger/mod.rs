@@ -52,7 +52,7 @@ pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;
 
 pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
 
-pub(crate) use doom::{branch_stats, cull, doom, sweep_doomed, take_doomed};
+pub(crate) use doom::{branch_stats, cull, doom, slay, sweep_doomed, take_doomed};
 pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;

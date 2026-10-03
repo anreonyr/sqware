@@ -93,9 +93,9 @@ fn main() -> Report<'static> {
     let alive = control.service(mine).state(Wait::AtMost(MS));
     debug!("probe-control: self={alive:?}");
 
-    // 六、**带规矩那三面**：`mint` / `start` / `stop` 各取一遍 ⇒ 期望 `Denied`（树那一层）。
-    let mut denied_cells = [false; 3];
-    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Start, ccall::Grant::Stop]
+    // 六、**带规矩那四面**：`mint` / `embark` / `debark` / `ruin` 各取一遍 ⇒ 期望 `Denied`（树那一层）。
+    let mut denied_cells = [false; 4];
+    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Embark, ccall::Grant::Debark, ccall::Grant::Ruin]
         .into_iter()
         .enumerate()
     {
@@ -113,12 +113,15 @@ fn main() -> Report<'static> {
     let write_mint = control.mint(nobody.clone(), Wait::AtMost(MS)).err();
     let write_start = control
         .service(nobody.clone())
-        .start(Wait::AtMost(MS))
+        .embark(Wait::AtMost(MS))
         .err();
-    let write_stop = control.service(nobody).stop(Wait::AtMost(MS)).err();
+    let write_stop = control.service(nobody.clone()).debark(Wait::AtMost(MS)).err();
     debug!(
         "probe-control: mint(ask)={write_mint:?} start(ask)={write_start:?} stop(ask)={write_stop:?}"
     );
+
+    let write_ruin = control.service(nobody).ruin(Wait::AtMost(MS)).err();
+    assert!(matches!(write_ruin, Some(ccall::Fail::Denied)), "问面发不出 Ruin：{write_ruin:?}");
 
     // 八、判据：**一例一条**，名字即结论（`Bad` 那一格在每一条里都是红）。
     assert!(
@@ -129,7 +132,7 @@ fn main() -> Report<'static> {
         matches!(alive, Ok(ccall::State::Ready)),
         "control 那一面看不见本台（装配表里的一行）：{alive:?}"
     );
-    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Start, ccall::Grant::Stop]
+    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Embark, ccall::Grant::Debark, ccall::Grant::Ruin]
         .into_iter()
         .enumerate()
     {
@@ -145,11 +148,11 @@ fn main() -> Report<'static> {
     );
     assert!(
         matches!(write_start, Some(ccall::Fail::Denied)),
-        "问面发不出 Start：{write_start:?}"
+        "问面发不出 Embark：{write_start:?}"
     );
     assert!(
         matches!(write_stop, Some(ccall::Fail::Denied)),
-        "问面发不出 Stop：{write_stop:?}"
+        "问面发不出 Debark：{write_stop:?}"
     );
     return Report::note(env::EXIT_OK, OK_NOTE);
 }

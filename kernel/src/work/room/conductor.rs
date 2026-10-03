@@ -264,7 +264,7 @@ pub(super) fn yell() {
     }
 }
 
-pub(super) fn nudge(hart: HartId) {
+pub(crate) fn nudge(hart: HartId) {
     let (word, bit) = hart.bit();
     let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
         .args(SArgs {

@@ -1,4 +1,4 @@
-use super::{bootstrap, cycle, scene};
+use super::{bootstrap, scene};
 use crate::system::control::{
     core::publication::Publications,
     serve::{
@@ -52,41 +52,6 @@ pub fn run() -> Result<(), env::Reason> {
             debug::put(why);
             start::E_TABLE
         })?;
-        for program in list {
-            let service =
-                start::stage(program, &mut control, &images, &roster).map_err(|error| {
-                    debug::put(program.name());
-                    debug::put(error.said());
-                    start::E_PROGRAM
-                })?;
-            let machine = supplies.machine;
-            start::finish(
-                program,
-                &mut control,
-                service,
-                &mut supplies,
-                &roster,
-                &mut activation,
-                |control, activation| {
-                    cycle::poll(
-                        control,
-                        &roster,
-                        &machine,
-                        activation,
-                        entry,
-                        &mut publications,
-                        &mut resources,
-                        &mut names,
-                        &mut tree,
-                    )
-                },
-            )
-            .map_err(|error| {
-                debug::put(program.name());
-                debug::put(error.said());
-                start::E_PROGRAM
-            })?;
-        }
         serve::run(
             &mut watch,
             &mut control,
@@ -98,6 +63,7 @@ pub fn run() -> Result<(), env::Reason> {
             &mut resources,
             &mut names,
             &mut tree,
+            &list,
         )
         .map_err(|_| 9usize)?;
         life::stop(&status).map_err(|_| 9usize)

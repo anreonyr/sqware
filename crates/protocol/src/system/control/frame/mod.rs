@@ -1,10 +1,10 @@
 //! 帧、码、记号、状态
 //! **帧里没有镜像**（见 super 的"`build` 不拷字节"那一节）：`mint` 那一问只带名字，
 //! 持表那一侧自己去清单里取那段 `&[u8]`。**帧里也没有"几格通道"/"要什么资源"**：那是
-//! `start` / `wire` 的装配细节，归实现侧按那一台的 `setup` 推。
+//! `embark` / `wire` 的装配细节，归实现侧按那一台的 `setup` 推。
 //! 一问一答两张表、以及本族那几格记号。
-//! # 四个动作在报文里的码
-//! `MINT` / `START` / `STOP` / `STATE`——**与四手同名**：线上与模型是同一件事的两层，
+//! # 五个动作在报文里的码
+//! `MINT` / `EMBARK` / `DEBARK` / `RUIN` / `STATE`——**与五手同名**：线上与模型是同一件事的两层，
 //! 不该各起一套词（同 operator 那一族的纪律）。
 
 use alloc::string::String;
@@ -28,10 +28,10 @@ pub struct Ask {
 }
 
 /// 答话那一格：状态 ＋ 答案那一格 ＋ **那一条的身子**
-/// 定长一形（**不改多变**）：`mint` / `stop` 只看状态，`state` 再看第二格，`start` 看第三格——
+/// 定长一形（**不改多变**）：`mint` / `debark` 只看状态，`state` 再看第二格，`embark` 看第三格——
 /// 每一问都只需要这三格里属于它的那一格，故不需要 operator 那一族那种"一答多形"
 /// # `task` 那一格：身子的 `TaskId` 能跨域，通道副本不能
-/// `Start` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续
+/// `Embark` 那一答把**子域的 `TaskId`** 交出来——那是"`build` 不拷字节"那条口径的延续
 /// 内核按 `TaskId` 认一枚线程，与它在哪个域无关，故这个号**跨域有意义**。而 `Endpoint`
 /// 的两枚孔是"持有它的那张表里才念得动"的号（communication
 /// 事实 8）⇒ control 铸出来的是**它自己那一侧**的孔，交不到客人手里。故
@@ -40,7 +40,7 @@ pub struct Said {
     pub status: u8,
     /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）
     pub a: u8,
-    /// **那一条的身子**（只有 `start` 那一答填它；其余答话是 [`TaskId::new(0)`]）
+    /// **那一条的身子**（只有 `embark` 那一答填它；其余答话是 [`TaskId::new(0)`]）
     pub task: TaskId,
 }
 
@@ -73,9 +73,10 @@ pub use crate::wire::OK;
 pub enum Req {
     /// `MINT`：按名字起一条（建域 + 产代表线程，**恒产未放行**）
     Mint(String),
-    /// `START`：放行 ＋ 等就绪
-    Start(String),
-    Stop(String),
+    /// `EMBARK`：放行 ＋ 等就绪
+    Embark(String),
+    Debark(String),
+    Ruin(String),
     /// `STATE`：这一条此刻处于哪个阶段
     State(String),
 }
@@ -84,8 +85,9 @@ impl Req {
     pub fn ask(self, back: PieToken) -> Ask {
         let (op, name) = match self {
             Req::Mint(name) => (MINT, name),
-            Req::Start(name) => (START, name),
-            Req::Stop(name) => (STOP, name),
+            Req::Embark(name) => (EMBARK, name),
+            Req::Debark(name) => (DEBARK, name),
+            Req::Ruin(name) => (RUIN, name),
             Req::State(name) => (STATE, name),
         };
         Ask { op, name, back }
@@ -99,8 +101,9 @@ impl Req {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
     Mint(String),
-    Start(String),
-    Stop(String),
+    Embark(String),
+    Debark(String),
+    Ruin(String),
     State(String),
 }
 
@@ -114,8 +117,9 @@ impl Wire {
         }
         let ask = match q.op {
             MINT => Some(Wire::Mint(q.name)),
-            START => Some(Wire::Start(q.name)),
-            STOP => Some(Wire::Stop(q.name)),
+            EMBARK => Some(Wire::Embark(q.name)),
+            DEBARK => Some(Wire::Debark(q.name)),
+            RUIN => Some(Wire::Ruin(q.name)),
             STATE => Some(Wire::State(q.name)),
             _ => None,
         };
@@ -141,7 +145,7 @@ pub const fn said_state(state: State) -> Said {
     }
 }
 
-/// 编一答：`OK` ＋ **那一条的身子**（只有 `start` 那一问用）
+/// 编一答：`OK` ＋ **那一条的身子**（只有 `embark` 那一问用）
 pub const fn said_task(task: TaskId) -> Said {
     Said {
         status: OK,

@@ -116,18 +116,23 @@ impl Service<'_> {
         &self.name
     }
 
-    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 Started
-    pub fn start(&self, wait: Wait) -> Result<Started<'_>, Fail> {
-        let said = self.face.call(frame::Req::Start(self.name.clone()), wait)?;
-        Ok(Started {
+    /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 Embarked
+    pub fn embark(&self, wait: Wait) -> Result<Embarked<'_>, Fail> {
+        let said = self.face.call(frame::Req::Embark(self.name.clone()), wait)?;
+        Ok(Embarked {
             face: self.face,
             name: self.name.clone(),
             task: read(said)?.task,
         })
     }
 
-    pub fn stop(&self, wait: Wait) -> Result<(), Fail> {
-        let said = self.face.call(frame::Req::Stop(self.name.clone()), wait)?;
+    pub fn debark(&self, wait: Wait) -> Result<(), Fail> {
+        let said = self.face.call(frame::Req::Debark(self.name.clone()), wait)?;
+        read(said).map(|_| ())
+    }
+
+    pub fn ruin(&self, wait: Wait) -> Result<(), Fail> {
+        let said = self.face.call(frame::Req::Ruin(self.name.clone()), wait)?;
         read(said).map(|_| ())
     }
 
@@ -140,14 +145,14 @@ impl Service<'_> {
 }
 
 /// 它不重抄 Service 那几手（照树那一族的先例：`Tile` 不抄 `Pane` 的手，只给一条回头的路）
-/// 要 `stop` / `state` 就 Started::service 拿回那一柄
-pub struct Started<'a> {
+/// 要 `debark` / `state` 就 Embarked::service 拿回那一柄
+pub struct Embarked<'a> {
     face: &'a Face,
     name: String,
     task: TaskId,
 }
 
-impl Started<'_> {
+impl Embarked<'_> {
     /// 这一条叫什么（读数用）
     pub fn name(&self) -> &String {
         &self.name
@@ -160,7 +165,7 @@ impl Started<'_> {
         self.task
     }
 
-    /// 回到那一柄（`stop` / `state` 的入口）
+    /// 回到那一柄（`debark` / `state` 的入口）
     pub fn service(&self) -> Service<'_> {
         Service {
             face: self.face,
