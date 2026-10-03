@@ -252,11 +252,12 @@ pub(crate) fn exercise(
     let failed_task = assembly.control.task("system-child").unwrap();
     let mut prepared = None;
     let mut fail_once = true;
+    let mut cycle = crate::system::run::cycle::Cycle::new().unwrap();
     let machine = assembly.supplies.machine;
     let result = assembly
         .control
         .embark("system-child".into(), service, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| {
-            crate::system::run::cycle::poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
+            cycle.poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
             if fail_once {
                 prepared = assembly.runtime.runtime_road(failed_task);
                 fail_once = false;

@@ -1,3 +1,5 @@
+use protocol::common::schedule::{Progress, Res, ResMut};
+use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::identity::serve::install::Roster;
 use crate::system::identity::serve::query::{current_authority, validate};
 use crate::system::operator::serve::install::Tree;
@@ -19,45 +21,6 @@ pub struct Names {
     aliases: Vec<Alias>,
 }
 impl Names {
-    pub fn prepare(
-        &mut self,
-        table: &crate::system::control::core::unit::Table,
-        roster: &Roster,
-        tree: &mut Tree,
-    ) -> Result<(), &'static str> {
-        use crate::system::control::core::unit::{Slot, State};
-        if current_authority(roster).is_none() || tree.host().is_none() {
-            return Ok(());
-        }
-        for row in table.living() {
-            if !row.named
-                || !matches!(
-                    row.state,
-                    State::NeverStarted | State::Starting | State::Ready | State::Debarked
-                )
-            {
-                continue;
-            }
-            let Slot::Live { task, .. } = row.slot else {
-                continue;
-            };
-            if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
-                continue;
-            }
-            if let Some(binding) =
-                super::query::binding(roster, task).map_err(|_| "alias identity query")?
-            {
-                self.register(
-                    roster,
-                    tree,
-                    &row.name,
-                    Object::Principal(binding.origin.principal),
-                    Some(task),
-                )?;
-            }
-        }
-        Ok(())
-    }
 
     pub fn new() -> Self {
         Self {
@@ -145,52 +108,7 @@ impl Names {
         self.aliases.remove(at);
         Ok(())
     }
-    pub fn poll(&mut self, roster: &Roster) {
-        let mut bytes = [0; Frame::LEN];
-        // Ref answers read only the verified index and never wait for Operator.
-        for alias in &self.aliases {
-            while let Ok((n, from)) = HolePie::from_token(alias.entry).pull(&mut bytes, Wait::POLL)
-            {
-                let Some(frame) = Frame::take(&bytes[..n]) else {
-                    continue;
-                };
-                if !valid_back(frame.back, from) {
-                    continue;
-                }
-                let accepted = frame.op == pubcall::RESOLVE
-                    && frame.name == alias.name
-                    && frame.kind == 10 + alias.object.kind()
-                    && Some(alias.object.authority()) == current_authority(roster);
-                reply(
-                    frame.back,
-                    if accepted {
-                        Reply::object(alias.object)
-                    } else {
-                        Reply::fail(Fail::Unjudged)
-                    },
-                );
-            }
-        }
-    }
-    pub fn sweep(
-        &mut self,
-        roster: &Roster,
-        tree: &mut Tree,
-        live: impl Fn(TaskId) -> bool,
-    ) -> Result<(), &'static str> {
-        let authority = current_authority(roster);
-        let mut at = 0;
-        while at < self.aliases.len() {
-            if Some(self.aliases[at].object.authority()) != authority
-                || self.aliases[at].lifetime.is_some_and(|task| !live(task))
-            {
-                self.remove(tree, at)?;
-            } else {
-                at += 1;
-            }
-        }
-        Ok(())
-    }
+
 }
 fn valid_back(back: PieToken, from: TaskId) -> bool {
     matches!(mail::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
@@ -201,4 +119,93 @@ fn reply(back: PieToken, reply: Reply) {
         let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
     }
     let _ = mail::release(back);
+}
+
+pub(crate) fn retire(living: Res<Living>, roster: Res<Roster>, mut names: ResMut<Names>,
+    mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+    let roster = &*roster;
+    let tree = &mut *tree;
+    let live = |task| living.contains(task);
+
+    let authority = current_authority(roster);
+    let mut at = 0;
+    while at < names.aliases.len() {
+        if Some(names.aliases[at].object.authority()) != authority
+            || names.aliases[at].lifetime.is_some_and(|task| !live(task))
+        {
+            names.remove(tree, at)?;
+        } else {
+            at += 1;
+        }
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut tree: ResMut<Tree>,
+    mut names: ResMut<Names>) -> Result<Progress, &'static str> {
+    let table = &control.table;
+    let roster = &*roster;
+    let tree = &mut *tree;
+
+    use crate::system::control::core::unit::{Slot, State};
+    if current_authority(roster).is_none() || tree.host().is_none() {
+        return Ok(Progress::Done);
+    }
+    for row in table.living() {
+        if !row.named
+            || !matches!(
+                row.state,
+                State::NeverStarted | State::Starting | State::Ready | State::Debarked
+            )
+        {
+            continue;
+        }
+        let Slot::Live { task, .. } = row.slot else {
+            continue;
+        };
+        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
+            continue;
+        }
+        if let Some(binding) =
+            super::query::binding(roster, task).map_err(|_| "alias identity query")?
+        {
+            names.register(
+                roster,
+                tree,
+                &row.name,
+                Object::Principal(binding.origin.principal),
+                Some(task),
+            )?;
+        }
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress, &'static str> {
+    let roster = &*roster;
+
+    let mut bytes = [0; Frame::LEN];
+    // Ref answers read only the verified index and never wait for Operator.
+    for alias in &names.aliases {
+        while let Ok((n, from)) = HolePie::from_token(alias.entry).pull(&mut bytes, Wait::POLL)
+        {
+            let Some(frame) = Frame::take(&bytes[..n]) else {
+                continue;
+            };
+            if !valid_back(frame.back, from) {
+                continue;
+            }
+            let accepted = frame.op == pubcall::RESOLVE
+                && frame.name == alias.name
+                && frame.kind == 10 + alias.object.kind()
+                && Some(alias.object.authority()) == current_authority(roster);
+            reply(
+                frame.back,
+                if accepted {
+                    Reply::object(alias.object)
+                } else {
+                    Reply::fail(Fail::Unjudged)
+                },
+            );
+        }
+    }
+    Ok(Progress::Done)
 }

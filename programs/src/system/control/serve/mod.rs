@@ -1,5 +1,6 @@
 pub mod answer;
 pub mod material;
+pub mod living;
 pub mod publication;
 pub mod reap;
 pub mod resource;
@@ -52,6 +53,7 @@ pub fn run(
     buf.resize(runtime::PAGE_SIZE, 0);
     let mut operations = lifecycle::Operations::new();
     let mut plans = crate::system::run::schedule::lifecycle().map_err(|_| Fail::Room)?;
+    let mut cycle = crate::system::run::cycle::Cycle::new().map_err(|_| Fail::Room)?;
     let mut boot_at = 0;
     if let Some(program) = initial.first() {
         operations.push(lifecycle::Request { name: program.name().into(), action: lifecycle::Action::Mint, back: None }).map_err(|_| Fail::Room)?;
@@ -61,7 +63,7 @@ pub fn run(
     let mut quiet_at = clock();
     let mut owed = control.table.living().count();
     loop {
-        if let Err(why) = crate::system::run::cycle::poll(
+        if let Err(why) = cycle.poll(
             control,
             roster,
             &supplies.machine,
@@ -93,7 +95,7 @@ pub fn run(
         }
         driver::poll(&mut plans, &mut operations, control, roster, supplies, activation, images)?;
         // Retire names and publications before acknowledging a completed action.
-        crate::system::run::cycle::poll(control, roster, &supplies.machine, activation,
+        cycle.poll(control, roster, &supplies.machine, activation,
             images.entry, publications, resources, names, tree).map_err(|_| Fail::Publication)?;
         let finished = operations.0.iter().find(|job| job.complete && job.operation.request.back.is_none() && !settling)
             .map(|job| (job.operation.request.action, job.operation.failure));

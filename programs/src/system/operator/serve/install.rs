@@ -1,5 +1,6 @@
 //! Control registers approved paths over the private Operator channel; services request typed publication.
 
+use protocol::common::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 
 use env::Mark;
@@ -317,4 +318,12 @@ pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())
+}
+
+pub(crate) fn connect(
+    control: Res<crate::system::control::serve::unit::Control>,
+    mut tree: ResMut<Tree>,
+) -> Result<Progress, &'static str> {
+    tree.connect(control.tasks())?;
+    Ok(Progress::Done)
 }
