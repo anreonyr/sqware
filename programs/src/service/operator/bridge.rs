@@ -84,8 +84,21 @@ impl Tree {
     pub fn connect(&mut self, tasks: impl Iterator<Item = TaskId>) -> Result<(), &'static str> {
         let Some(host) = self.host else { return Ok(()); };
         self.clients.retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
+        let mut requests = Vec::new();
         for client in tasks {
-            let Some(reply) = establish::find(client, Mark::of(LINK)) else { continue; };
+            requests.try_reserve(1).map_err(|_| "operator:request capacity")?;
+            requests.push((client, None));
+        }
+        if requests.is_empty() { return Ok(()); }
+        // Enumerate once, retaining the last matching LINK for each client.
+        for pie in mail::pies() {
+            if pie.mark != Mark::of(LINK) { continue; }
+            for (client, reply) in &mut requests {
+                if pie.owner == *client { *reply = Some(pie.token); }
+            }
+        }
+        for (client, reply) in requests {
+            let Some(reply) = reply else { continue; };
             let old = self.clients.iter().position(|(task, _)| *task == client);
             if old.is_some_and(|at| self.clients[at].1.tx() == Some(reply)) {
                 continue;

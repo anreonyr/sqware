@@ -22,6 +22,9 @@ pub(crate) fn inner_frame() -> Result<crate::memory::manager::table::Frame, crat
 
 pub(crate) fn sync_instructions() -> Result<(), crate::memory::manager::MapError> {
     // SAFETY: callers have finished writing the pages before publishing executable mappings.
+    unsafe { core::arch::asm!("fence rw, rw", options(nostack)) };
+    crate::hart::request_instruction_sync();
+    // SAFETY: order pending stores before reading leases; restore orders its lease before checking pending.
     unsafe { core::arch::asm!("fence rw, rw", "fence.i", options(nostack)) };
     let me = crate::hart::hart_id();
     let mut mask = 0usize;

@@ -124,6 +124,15 @@ global_asm!(
     "    ld    t0,  0x140(sp)",
     "    csrw  sscratch, t0",
     "2:",
+    // Kernel tp still addresses PerHart; publish the occupied lease before checking pending.
+    "    fence rw, rw",
+    "    ld    t0, {instruction_sync}(tp)",
+    "    beqz  t0, 3f",
+    "    addi  t0, tp, {instruction_sync}",
+    // Clear before fencing so a concurrent publication can leave another pending request.
+    "    amoswap.d.aq t1, zero, (t0)",
+    "    fence.i",
+    "3:",
     "    ld    x1,  0x38(sp)",
     "    ld    x3,  0x48(sp)",
     "    ld    x4,  0x50(sp)",
@@ -160,10 +169,10 @@ global_asm!(
     "    ld    x6,  0x60(x5)",
     "    ld    x2,  0x40(x5)",
     "    ld    x5,  0x58(x5)",
-    "    fence.i",
     "    sret",
     ".globl __trampoline_end",
     "__trampoline_end:",
+    instruction_sync = const core::mem::offset_of!(crate::hart::PerHart, instruction_sync),
 );
 
 unsafe extern "C" {

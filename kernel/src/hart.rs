@@ -70,7 +70,8 @@ pub struct PerHart {
     pub frame: VirtAddr,
     pub scheduler: AtomicPtr<()>,
     pub lease: AtomicUsize,
-    _pad: [usize; 4],
+    pub(crate) instruction_sync: AtomicUsize,
+    _pad: [usize; 3],
 }
 
 impl PerHart {
@@ -80,7 +81,8 @@ impl PerHart {
             frame: VirtAddr::wrap(HART_FRAME_BASE.as_usize() + id * PAGE_SIZE),
             scheduler: AtomicPtr::new(core::ptr::null_mut()),
             lease: AtomicUsize::new(crate::memory::manager::asid::vacant()),
-            _pad: [0; 4],
+            instruction_sync: AtomicUsize::new(1),
+            _pad: [0; 3],
         }
     }
 }
@@ -114,6 +116,12 @@ pub fn set_scheduler(id: HartId, p: *mut ()) {
         "set_scheduler: id {id} beyond MAX_HART_SLOTS"
     );
     PER_HART[id.get()].scheduler.store(p, Ordering::Release);
+}
+
+pub(crate) fn request_instruction_sync() {
+    for hart in &PER_HART[..hart_count()] {
+        hart.instruction_sync.store(1, Ordering::Release);
+    }
 }
 
 #[inline]
@@ -162,5 +170,6 @@ const _: () = {
     assert!(core::mem::offset_of!(PerHart, frame) == 0x08);
     assert!(core::mem::offset_of!(PerHart, scheduler) == 0x10);
     assert!(core::mem::offset_of!(PerHart, lease) == 0x18);
+    assert!(core::mem::offset_of!(PerHart, instruction_sync) == 0x20);
     assert!(core::mem::size_of::<PerHart>() == 64);
 };

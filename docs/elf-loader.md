@@ -47,7 +47,9 @@ Team 容器容量在发布前准备。全局名册锁内执行可失败预留，
 
 只有首次 Spawn 能关闭 Constructing 状态；内部 hold 仅接受 Ready Team。后续 Spawn 验证 executable 入口，不重新开放构造。Oust 和父方退出覆盖没有 Task 的构造对象。
 
-指令发布执行写屏障、当前 hart fence.i 与活跃 hart 的远程 fence.i；每次返回任务前也执行 fence.i，覆盖当时未活跃的 hart。
+指令发布执行写屏障、设置各 hart 的待同步标记、当前 hart fence.i 与活跃 hart 的远程 fence.i。返回任务时只在标记非零时执行 fence.i，覆盖发布时未活跃的 hart。发布端先设置标记再经屏障读取 lease；恢复端先登记 lease 再经屏障读取标记，避免双方同时漏掉对方。恢复端以 acquire 原子交换清除标记后执行 fence.i；并发的新发布仍可留下后续同步请求。PerHart 继续保持 64 字节，没有用户可见 ABI 变更。
+
+Operator 的 Tree::connect 每轮只枚举一次权限表，为各客户端保留最后一枚 owner/mark 匹配的 LINK。新建或替换连接前仍用 current_request 重新扫描、核验当前最新枚与 Reserve；能力撤销、失效及 LINK 替换的复核保持。
 
 另修正 frame allocator 初始化：先为分配器自身保留存储，再计算可分配帧边界，防止该对象跨入第一帧后被后续帧分配覆盖。
 
@@ -67,3 +69,11 @@ Team 容器容量在发布前准备。全局名册锁内执行可失败预留，
 复现 debug 整机时，`cargo image group debug` 后运行 `QEMU_SEMI=1 QEMU_TIMEOUT=30 QEMU_SETTLE=0 cargo run --features semihosting`；开启导出 feature 时也必须给 QEMU 开启 semihosting。
 
 当前 parser 支持静态 ELF64 little-endian RISC-V ET_EXEC；动态链接与 ET_DYN 不在本次范围。没有保留内核 ELF 格式解释代码；检索中的 SELF_ADDR 是 IPI 自检变量，与 ELF 无关。可信 Supervisor 域仍遵循原内核信任边界。
+
+## 模拟器 CPU 对比
+
+在同一宿主上运行 product/release，内核开启 semihosting，四 hart、固定 seed=12345，不传 -icount。启动两秒后采样四秒，随后发送 exit 并检查正常停机；旧版 9298951 与修正版交替各三轮。QEMU 进程 CPU 占用以一个逻辑核=100% 计算：旧版 77.25/79.00/78.25%，修正版 56.75/56.50/55.00%，均值 78.17→56.08%，下降约 28.3%。六轮均正常退出，无内核 panic。
+
+单独调整 fence.i 的三轮均值仅从 78.25→77.74%，差异很小。主要改善来自减少重复扫表；结构化记录同一稳定窗口内的 Collect 为 83,498→23,231 次。结果仅表示上述场景与采样窗口的进程 CPU 时间，其他场景及不导出记录时的收益需分别测量。
+
+修正后关闭 icount 的回归：20 个 debug 健康用例通过（无 initrd 的 scene 仍按契约报错）；accept/product/again/load/group/beat/rig 与 identity-replacement 八个 release 场景通过。四 hart debug group 输出 concurrent builders=64、group: PASS 并正常停机，发布禁分配检查未触发。
