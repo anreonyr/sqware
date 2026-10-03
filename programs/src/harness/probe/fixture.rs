@@ -17,6 +17,7 @@ use crate::unit::{Died, UnitFile};
 use runtime::env::mail;
 
 pub struct Fixture {
+    cycle: cycle::Cycle,
     pub control: Control,
     pub roster: Roster,
     pub tree: Tree,
@@ -34,6 +35,7 @@ impl Fixture {
         let entry =
             mail::unseal_hole(protocol::system::control::publication::ENTRY).map_err(|_| ())?;
         let mut fixture = Self {
+            cycle: cycle::Cycle::new().map_err(|_| ())?,
             control: Control::new(status.clone()),
             roster: Roster::default(),
             tree: Tree::default(),
@@ -85,7 +87,7 @@ impl Fixture {
             &self.roster,
             &mut self.activation,
             |control, activation| {
-                cycle::poll(
+                self.cycle.poll(
                     control,
                     &self.roster,
                     &machine,
@@ -116,7 +118,7 @@ impl Fixture {
         }
     }
     pub fn progress(&mut self) -> Result<(), &'static str> {
-        cycle::poll(
+        self.cycle.poll(
             &self.control,
             &self.roster,
             &self.supplies.machine,

@@ -1,4 +1,5 @@
 //! Control owns this private installation face; only the live Hub can ask through it.
+use protocol::common::schedule::{Progress, Res};
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
@@ -98,4 +99,13 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
         .map_err(|_| ())?;
     let said = Said::fetch_at(&bytes[..n], 0).map(|one| one.0).ok_or(())?;
     (from == sire && said.status == hub::OK).then_some(()).ok_or(())
+}
+
+pub(crate) fn maintain(
+    activation: Res<Option<Activation>>,
+    control: Res<crate::system::control::serve::unit::Control>,
+    roster: Res<crate::system::identity::serve::install::Roster>,
+) -> Result<Progress, &'static str> {
+    if let Some(activation) = activation.as_ref() { activation.poll(&control, &roster); }
+    Ok(Progress::Done)
 }

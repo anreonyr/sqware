@@ -1,3 +1,5 @@
+use protocol::common::schedule::{Progress, Res, ResMut};
+use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::common::machine::Machine;
 use crate::system::control::core::publication::{Publications, Record};
 use crate::system::control::core::unit::{Slot, State, Table};
@@ -63,56 +65,7 @@ impl Publications {
         });
         Ok(())
     }
-    pub fn sweep(
-        &mut self,
-        tree: &mut Tree,
-        live: impl Fn(TaskId) -> bool,
-    ) -> Result<(), &'static str> {
-        let mut at = 0;
-        while at < self.records.len() {
-            let r = &self.records[at];
-            if r.mount.is_none() || !live(r.publisher) || !live(r.owner) {
-                self.remove(tree, at)?;
-            } else {
-                at += 1;
-            }
-        }
-        Ok(())
-    }
-    pub fn poll(
-        &mut self,
-        entry: PieToken,
-        table: &Table,
-        roster: &Roster,
-        machine: &Machine,
-        runtime: &mut Resources,
-        names: &mut Names,
-        tree: &mut Tree,
-    ) -> Result<(), &'static str> {
-        let mut bytes = [0; Frame::LEN];
-        {
-            while let Ok((n, from)) = HolePie::from_token(entry).pull(&mut bytes, Wait::POLL) {
-                let Some(frame) = Frame::take(&bytes[..n]) else {
-                    continue;
-                };
-                let source = matches!(mail::inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from);
-                if !valid_back(frame.back, from) {
-                    if frame.op == pubcall::PUBLISH && source && !self.owns(frame.entry) {
-                        let _ = mail::forget(frame.entry);
-                    }
-                    continue;
-                }
-                let back = frame.back;
-                let result =
-                    self.answer(table, roster, machine, runtime, names, tree, from, &frame);
-                if frame.op == pubcall::PUBLISH && source && !self.owns(frame.entry) {
-                    let _ = mail::forget(frame.entry);
-                }
-                reply(back, result.unwrap_or_else(Reply::fail));
-            }
-        }
-        Ok(())
-    }
+
     fn answer(
         &mut self,
         table: &Table,
@@ -340,4 +293,56 @@ fn reply(back: PieToken, reply: Reply) {
 pub(crate) fn inject(entry: env::PieToken, task: env::TaskId) -> Result<(), &'static str> {
     runtime::core::res::port::ship(&runtime::env::mail::HolePie::from_token(entry), task,
         env::Access::STORE, env::Policy::NONE).map(|_| ()).map_err(|_| "publication inject")
+}
+
+pub(crate) fn retire(living: Res<Living>, mut publications: ResMut<Publications>,
+    mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+    let tree = &mut *tree;
+    let live = |task| living.contains(task);
+
+    let mut at = 0;
+    while at < publications.records.len() {
+        let r = &publications.records[at];
+        if r.mount.is_none() || !live(r.publisher) || !live(r.owner) {
+            publications.remove(tree, at)?;
+        } else {
+            at += 1;
+        }
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn receive(entry: Res<PieToken>, control: Res<Control>, roster: Res<Roster>,
+    machine: Res<Machine>, mut resources: ResMut<Resources>, mut names: ResMut<Names>,
+    mut tree: ResMut<Tree>, mut publications: ResMut<Publications>) -> Result<Progress, &'static str> {
+    let entry = *entry;
+    let table = &control.table;
+    let roster = &*roster;
+    let machine = &*machine;
+    let runtime = &mut *resources;
+    let names = &mut *names;
+    let tree = &mut *tree;
+
+    let mut bytes = [0; Frame::LEN];
+    {
+        while let Ok((n, from)) = HolePie::from_token(entry).pull(&mut bytes, Wait::POLL) {
+            let Some(frame) = Frame::take(&bytes[..n]) else {
+                continue;
+            };
+            let source = matches!(mail::inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from);
+            if !valid_back(frame.back, from) {
+                if frame.op == pubcall::PUBLISH && source && !publications.owns(frame.entry) {
+                    let _ = mail::forget(frame.entry);
+                }
+                continue;
+            }
+            let back = frame.back;
+            let result =
+                publications.answer(table, roster, machine, runtime, names, tree, from, &frame);
+            if frame.op == pubcall::PUBLISH && source && !publications.owns(frame.entry) {
+                let _ = mail::forget(frame.entry);
+            }
+            reply(back, result.unwrap_or_else(Reply::fail));
+        }
+    }
+    Ok(Progress::Done)
 }
