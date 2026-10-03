@@ -39,7 +39,7 @@ impl StackWindow {
             let body_va = slot_va + TASK_STACK_GUARD;
             let next = || Ok(crate::tag!(Stack, SpaceInner::frame()?));
             if let Err(e) = inner.claim(body_va, size, body_flags, next) {
-                inner.maps.retain(|map| map.va != slot_va);
+                inner.maps.remove(slot_va);
                 inner.deallocate(SegmentKind::Normal, slot_va.as_usize(), slot_size);
                 return Err(e);
             }

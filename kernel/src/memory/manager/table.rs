@@ -276,7 +276,7 @@ impl TableNode {
             (geo.levels - 1) as usize,
             0,
             vaddr.as_usize() & mask,
-            (vaddr.as_usize() + size) & mask,
+            (vaddr.as_usize() & mask) + size,
         );
     }
 

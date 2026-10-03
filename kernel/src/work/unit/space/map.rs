@@ -120,7 +120,11 @@ impl Frames {
 
 #[derive(Debug)]
 pub(crate) struct Map {
-    pub(super) next: Option<Box<Map>>,
+    // Detached maps use left as the salvage chain.
+    pub(super) left: Option<Box<Map>>,
+    pub(super) right: Option<Box<Map>>,
+    pub(super) height: u8,
+    pub(super) max_end: usize,
     pub(super) va: VirtAddr,
     pub(super) size: NonZeroUsize,
     pub(super) flags: PteFlags,
@@ -135,9 +139,9 @@ impl Drop for Map {
             if !private { backing.alias(false); }
             if ceiling.contains(PteFlags::W) { backing.map_write(false); }
         }
-        let mut cur = self.next.take();
+        let mut cur = self.left.take();
         while let Some(mut node) = cur {
-            cur = node.next.take();
+            cur = node.left.take();
         }
     }
 }
@@ -150,7 +154,10 @@ impl Map {
         pending: Option<Pending>,
     ) -> Self {
         Self {
-            next: None,
+            left: None,
+            right: None,
+            height: 1,
+            max_end: va.as_usize().saturating_add(size - 1),
             va,
             size: NonZeroUsize::new(size).expect("map size must be non-zero"),
             flags,
@@ -158,6 +165,10 @@ impl Map {
             frames: Frames::new(),
             origin: Origin::Owned,
         }
+    }
+
+    pub(super) fn end(&self) -> usize {
+        self.va.as_usize().saturating_add(self.size.get() - 1)
     }
 
     pub(super) fn contains(&self, vaddr: VirtAddr) -> bool {
