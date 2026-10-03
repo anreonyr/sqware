@@ -10,6 +10,7 @@ use crate::memory::manager::mode;
 use crate::memory::manager::table::{Frame, TableNode};
 
 use super::SegmentKind;
+use super::index::Index;
 use super::map::{Map, Origin, Pending};
 use super::salvage::Salvage;
 
@@ -17,8 +18,7 @@ pub(crate) struct SpaceInner {
     pub(crate) root: TableNode,
     pub(crate) user: Option<super::segment::Segment>,
     pub(crate) kernel: super::segment::Segment,
-    #[allow(clippy::vec_box)]
-    pub(crate) maps: Vec<Box<Map>>,
+    pub(super) maps: Index,
 }
 
 impl core::fmt::Debug for SpaceInner {
@@ -39,7 +39,7 @@ impl SpaceInner {
                 TEAM_FRAME_BASE.as_usize(),
                 TEAM_FRAME_BASE.as_usize() + TEAM_FRAME_WINDOW_SIZE,
             ),
-            maps: Vec::new(),
+            maps: Index::new(),
         })
     }
 
@@ -76,11 +76,8 @@ impl SpaceInner {
     }
 
     fn register(&mut self, map: Map) -> Result<(), MapError> {
-        self.maps
-            .try_reserve(1)
-            .map_err(|_| MapError::OutOfMemory)?;
         let map = Box::try_new(map).map_err(|_| MapError::OutOfMemory)?;
-        self.maps.push(map);
+        self.maps.insert(map);
         Ok(())
     }
 
@@ -193,7 +190,7 @@ impl SpaceInner {
         self.register(map)?;
         if let Err(error) = self.root.map(va, pa, size, flags) {
             self.root.unmap(va, size);
-            self.maps.retain(|map| map.va != va);
+            self.maps.remove(va);
             return Err(error);
         }
         Ok(())
@@ -222,20 +219,26 @@ impl SpaceInner {
     }
 
     pub(crate) fn narrow_token(&mut self, token: env::PieToken, access: PteFlags) -> Result<(), MapError> {
-        for map in &mut self.maps {
+        let mut fault = None;
+        let root = &mut self.root;
+        self.maps.visit_mut(0, usize::MAX, |map| {
+            if fault.is_some() { return; }
             if let Origin::Backed { backing, ceiling, token: Some(source), .. } = &mut map.origin {
-                if *source != token { continue; }
+                if *source != token { return; }
                 let narrowed = *ceiling & access;
                 let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | (map.flags & narrowed);
-                self.root.protect(map.va, map.size.get(), flags)?;
+                if let Err(error) = root.protect(map.va, map.size.get(), flags) {
+                    fault = Some(error);
+                    return;
+                }
                 if ceiling.contains(PteFlags::W) && !narrowed.contains(PteFlags::W) {
                     backing.map_write(false);
                 }
                 *ceiling = narrowed;
                 map.flags = flags;
             }
-        }
-        Ok(())
+        });
+        fault.map_or(Ok(()), Err)
     }
 
     pub(crate) fn unmap(
@@ -248,19 +251,15 @@ impl SpaceInner {
             return Ok(());
         }
         let lo = va.as_usize();
-        let end = lo.saturating_add(size);
+        let last = lo.saturating_add(size - 1);
 
         let mut splits: Vec<Split> = Vec::new();
-        let mut rights = 0usize;
-        for m in self.maps.iter() {
-            let Some((lo_pg, hi_pg)) = intersect(m, lo, end) else {
+        for m in self.maps.overlapping(lo, last) {
+            let Some((lo_pg, hi_pg)) = intersect(m, lo, last) else {
                 continue;
             };
-            let s = m.va.as_usize();
-            if lo <= s && end >= s.saturating_add(m.size.get()) {
-                continue;
-            }
             let pages = m.size.get() / PAGE_SIZE;
+            if lo_pg == 0 && hi_pg == pages { continue; }
             let hole = {
                 let n = m.frames.count_range(lo_pg, hi_pg);
                 (n > 0 || m.retains_backing())
@@ -272,31 +271,19 @@ impl SpaceInner {
             } else {
                 None
             };
-            rights += usize::from(right.is_some());
             splits.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
             splits.push(Split { hole, right });
         }
-        self.maps
-            .try_reserve(rights)
-            .map_err(|_| MapError::OutOfMemory)?;
 
         let SpaceInner { root, maps, .. } = self;
-        let mut i = 0usize;
         let mut n = 0usize;
-        while i < maps.len() {
-            let m_va = maps[i].va.as_usize();
-            let m_size = maps[i].size.get();
-            let l = lo.max(m_va);
-            let h = end.min(m_va.saturating_add(m_size));
-            if l >= h {
-                i += 1;
-                continue;
-            }
-            let lo_pg = (l - m_va) / PAGE_SIZE;
-            let hi_pg = (h - m_va).div_ceil(PAGE_SIZE);
-            let mut m = maps.remove(i);
+        while let Some(m) = maps.first_overlap(lo, last) {
+            let m_va = m.va.as_usize();
+            let pages = m.size.get() / PAGE_SIZE;
+            let (lo_pg, hi_pg) = intersect(m, lo, last).expect("unmap intersection");
+            let mut m = maps.remove(VirtAddr::wrap(m_va)).expect("unmap indexed map");
             m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap(rva, rsize));
-            if lo <= m_va && end >= m_va.saturating_add(m_size) {
+            if lo_pg == 0 && hi_pg == pages {
                 salvage.take_map(m);
                 continue;
             }
@@ -312,9 +299,9 @@ impl SpaceInner {
                 salvage.take_map(hole);
             }
             if let Some(right) = split.right.take() {
-                maps.push(right);
+                maps.insert(right);
             }
-            maps.push(m);
+            maps.insert(m);
         }
         debug_assert_eq!(n, splits.len(), "unmap: 两趟的图数不一致");
         Ok(())
@@ -333,20 +320,16 @@ impl SpaceInner {
         size: usize,
         allowed: impl Fn(&Map) -> bool,
     ) -> bool {
-        let Some(end) = va.as_usize().checked_add(size) else {
-            return false;
-        };
+        if size == 0 { return true; }
+        let Some(last) = va.as_usize().checked_add(size - 1) else { return false };
         let mut at = va.as_usize();
-        while at < end {
-            let Some(map) = self.resolve_ref(VirtAddr::wrap(at)) else {
-                return false;
-            };
-            if !allowed(map) {
-                return false;
-            }
-            at = end.min(map.va.as_usize() + map.size.get());
+        for map in self.maps.overlapping(at, last) {
+            if !map.contains(VirtAddr::wrap(at)) || !allowed(map) { return false; }
+            let end = last.min(map.end());
+            if end == last { return true; }
+            at = end + 1;
         }
-        true
+        false
     }
 
     pub(crate) fn frame() -> Result<Frame, MapError> {
@@ -387,25 +370,24 @@ impl SpaceInner {
         } else {
             flags | PteFlags::V
         };
-        let end = va.as_usize().saturating_add(size);
+        let lo = va.as_usize();
+        let last = lo.saturating_add(size - 1);
         let span = |m: &Map| {
             let s = m.va.as_usize();
-            let lo = va.as_usize().max(s);
-            let hi = end.min(s.saturating_add(m.size.get()));
-            (lo < hi).then_some((s, lo, hi))
+            let first = lo.max(s);
+            let last = last.min(m.end());
+            (first <= last).then_some((s, first, last))
         };
-        let covered: usize = self
-            .maps
-            .iter()
+        let covered: usize = self.maps.overlapping(lo, last)
             .filter_map(|m| span(m))
-            .map(|(_, lo, hi)| hi - lo)
+            .map(|(_, first, last)| last - first + 1)
             .sum();
         if covered != size {
             return Err(MapError::NoRegion);
         }
         {
             let root = &self.root;
-            for m in self.maps.iter() {
+            for m in self.maps.overlapping(lo, last) {
                 if let Origin::Limited { ceiling } = &m.origin {
                     if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
                         return Err(MapError::WidenDenied);
@@ -421,7 +403,7 @@ impl SpaceInner {
                 }
                 let Some((s, lo, hi)) = span(m) else { continue };
                 let lo_pg = (lo - s) / PAGE_SIZE;
-                let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
+                let hi_pg = (hi - s) / PAGE_SIZE + 1;
                 let mut denied = false;
                 m.runs(lo_pg, hi_pg, |rva, rsize| {
                     for i in 0..(rsize / PAGE_SIZE) {
@@ -440,7 +422,8 @@ impl SpaceInner {
         }
         // Lazy permissions must follow the requested pages, including future faults.
         let mut splits = [None, None];
-        for (index, boundary) in [va.as_usize(), end].into_iter().enumerate() {
+        for (index, boundary) in [Some(lo), lo.checked_add(size)].into_iter().enumerate() {
+            let Some(boundary) = boundary else { continue };
             if let Some(map) = self.resolve_ref(VirtAddr::wrap(boundary))
                 && (map.pending == Some(Pending::Lazy) || map.retains_backing())
                 && boundary > map.va.as_usize()
@@ -453,24 +436,21 @@ impl SpaceInner {
                 ));
             }
         }
-        self.maps
-            .try_reserve(splits.iter().flatten().count())
-            .map_err(|_| MapError::OutOfMemory)?;
         for (boundary, mut right) in splits.into_iter().flatten() {
-            let map = self
-                .resolve_mut(VirtAddr::wrap(boundary))
-                .expect("split mapping");
+            let key = self.resolve_ref(VirtAddr::wrap(boundary)).expect("split mapping").va;
+            let mut map = self.maps.remove(key).expect("split indexed map");
             let first = (boundary - map.va.as_usize()) / PAGE_SIZE;
             map.frames.move_tail(first, first, &mut right.frames);
             map.size = core::num::NonZeroUsize::new(first * PAGE_SIZE).expect("split prefix");
-            self.maps.push(right);
+            self.maps.insert(map);
+            self.maps.insert(right);
         }
         let mut fault: Option<MapError> = None;
         let root = &mut self.root;
-        for m in self.maps.iter_mut() {
-            let Some((s, lo, hi)) = span(m) else { continue };
+        self.maps.visit_mut(lo, last, |m| {
+            let Some((s, lo, hi)) = span(m) else { return };
             let lo_pg = (lo - s) / PAGE_SIZE;
-            let hi_pg = (hi - s).div_ceil(PAGE_SIZE);
+            let hi_pg = (hi - s) / PAGE_SIZE + 1;
             m.runs(lo_pg, hi_pg, |rva, rsize| {
                 if fault.is_none()
                     && let Err(e) = if permissions_only {
@@ -487,7 +467,7 @@ impl SpaceInner {
             } else if m.pending == Some(Pending::Lazy) || m.retains_backing() {
                 m.flags = flags;
             }
-        }
+        });
         match fault {
             Some(e) => Err(e),
             None => Ok(()),
@@ -495,26 +475,16 @@ impl SpaceInner {
     }
 
     pub(crate) fn overlaps(&self, start: VirtAddr, size: usize) -> bool {
-        let end = start.as_usize().saturating_add(size);
-        self.maps.iter().any(|m| {
-            start.as_usize() < m.va.as_usize().saturating_add(m.size.get()) && end > m.va.as_usize()
-        })
+        size != 0 && self.maps.first_overlap(start.as_usize(), start.as_usize().saturating_add(size - 1))
+            .is_some()
     }
 
     pub(super) fn resolve_ref(&self, vaddr: VirtAddr) -> Option<&Map> {
-        self.maps
-            .iter()
-            .rev()
-            .find(|m| m.contains(vaddr))
-            .map(Box::as_ref)
+        self.maps.get(vaddr)
     }
 
     pub(super) fn resolve_mut(&mut self, vaddr: VirtAddr) -> Option<&mut Map> {
-        self.maps
-            .iter_mut()
-            .rev()
-            .find(|m| m.contains(vaddr))
-            .map(Box::as_mut)
+        self.maps.get_mut(vaddr)
     }
 
     pub(super) fn translate(&self, vaddr: VirtAddr) -> Option<(PhysAddr, PteFlags)> {
@@ -526,7 +496,8 @@ impl SpaceInner {
 
     #[cfg(debug_assertions)]
     pub(crate) fn audit(&self) {
-        for m in &self.maps {
+        self.maps.audit();
+        for m in self.maps.iter() {
             for (i, f) in m.frames.iter() {
                 let va = m.va + i * PAGE_SIZE;
                 let expect = page_pa(f);
@@ -567,11 +538,11 @@ struct Split {
     right: Option<Box<Map>>,
 }
 
-fn intersect(m: &Map, lo: usize, end: usize) -> Option<(usize, usize)> {
+fn intersect(m: &Map, lo: usize, last: usize) -> Option<(usize, usize)> {
     let s = m.va.as_usize();
     let l = lo.max(s);
-    let h = end.min(s.saturating_add(m.size.get()));
-    (l < h).then(|| ((l - s) / PAGE_SIZE, (h - s).div_ceil(PAGE_SIZE)))
+    let h = last.min(m.end());
+    (l <= h).then(|| ((l - s) / PAGE_SIZE, (h - s) / PAGE_SIZE + 1))
 }
 
 #[derive(Clone, Copy)]
@@ -618,7 +589,7 @@ impl Drop for InstallGuard<'_> {
         }
         if self.installed == 0 {
             if let MapMode::Claim(base) = self.book {
-                self.inner.maps.retain(|map| map.va != base);
+                self.inner.maps.remove(base);
             }
             return;
         }
@@ -634,7 +605,7 @@ impl Drop for InstallGuard<'_> {
                 }
             }
             MapMode::Claim(va) => {
-                self.inner.maps.retain(|m| m.va != va);
+                self.inner.maps.remove(va);
             }
         }
     }
@@ -658,7 +629,7 @@ impl SpaceInner {
             .reserve_frames(pages)
         {
             if let MapMode::Claim(base) = book {
-                self.maps.retain(|map| map.va != base);
+                self.maps.remove(base);
             }
             return Err(error);
         }

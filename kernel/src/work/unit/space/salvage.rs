@@ -41,8 +41,8 @@ impl Salvage {
     }
 
     pub(super) fn take_map(&mut self, mut map: Box<Map>) {
-        debug_assert!(map.next.is_none(), "salvage: 收进料箱的图不得已带链");
-        map.next = self.maps.take();
+        debug_assert!(map.left.is_none() && map.right.is_none(), "salvage: indexed map");
+        map.left = self.maps.take();
         self.maps = Some(map);
     }
 
@@ -56,7 +56,7 @@ impl Salvage {
         let mut cur = self.maps.as_deref();
         while let Some(m) = cur {
             n += 1;
-            cur = m.next.as_deref();
+            cur = m.left.as_deref();
         }
         n
     }

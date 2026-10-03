@@ -264,3 +264,65 @@ pub fn image_dynamic_region() {
     });
     team.space.audit();
 }
+
+
+pub fn interval_index() {
+    use crate::work::unit::space::Pending;
+    use crate::memory::manager::MapError;
+
+    crate::work::unit::space::index_accept();
+    const BASE: usize = 0x4000_0000;
+    const COUNT: usize = 64;
+    const STRIDE: usize = 16 * PAGE_SIZE;
+    let space = SpaceBuilder::user().build().expect("interval space");
+    let flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
+    let tables = space.table_count();
+    for i in (0..COUNT).rev() {
+        let va = VirtAddr::wrap(BASE + i * STRIDE);
+        space.with(|inner| inner.map(va, 8 * PAGE_SIZE, flags, Some(Pending::Lazy)))
+            .expect("indexed lazy region");
+    }
+    for i in 0..COUNT {
+        let va = VirtAddr::wrap(BASE + i * STRIDE);
+        space.protect_user(va.as_usize() + 2 * PAGE_SIZE, 2 * PAGE_SIZE, 2).expect("split permissions");
+        space.materialize(va + 2 * PAGE_SIZE, PAGE_SIZE).expect("protected fault");
+        let (_, pte) = space.translate(va + 2 * PAGE_SIZE).expect("protected page");
+        assert!(pte.contains(PteFlags::R | PteFlags::U) && !pte.contains(PteFlags::W));
+        space.materialize(va + 4 * PAGE_SIZE, PAGE_SIZE).expect("writable fault");
+        assert!(space.translate(va + 4 * PAGE_SIZE).expect("writable page").1.contains(PteFlags::W));
+        space.unmap(va, PAGE_SIZE).expect("move mapping start");
+        space.unmap(va + 3 * PAGE_SIZE, 2 * PAGE_SIZE).expect("cut across mappings");
+        space.with(|inner| {
+            assert!(!inner.overlaps(va, PAGE_SIZE));
+            assert!(inner.overlaps(va + PAGE_SIZE, PAGE_SIZE));
+            assert!(!inner.overlaps(va + 3 * PAGE_SIZE, 2 * PAGE_SIZE));
+            inner.map(va + 3 * PAGE_SIZE, 2 * PAGE_SIZE, flags, Some(Pending::Lazy))
+        }).expect("fill mapping hole");
+        space.audit();
+    }
+    let failed = VirtAddr::wrap(BASE + 12 * PAGE_SIZE);
+    space.with(|inner| {
+        let mut pages = 0;
+        let result = inner.claim(failed, 2 * PAGE_SIZE, flags, || {
+            pages += 1;
+            if pages == 2 { Err(MapError::OutOfMemory) } else { crate::work::unit::space::inner_frame() }
+        });
+        assert!(matches!(result, Err(MapError::OutOfMemory)));
+        assert!(!inner.overlaps(failed, 2 * PAGE_SIZE));
+    });
+    assert!(space.translate(failed).is_none());
+    space.audit();
+    for i in (0..COUNT).rev() {
+        space.unmap(VirtAddr::wrap(BASE + i * STRIDE), STRIDE).expect("remove split region");
+        space.audit();
+    }
+    assert_eq!(space.table_count(), tables);
+    // The last virtual page must also support protection and full removal.
+    space.with_shootdown(|inner| inner.protect(crate::layout::TRAMPOLINE, PAGE_SIZE,
+        PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G, false))
+        .expect("top page shootdown").expect("top page protection");
+    space.unmap(crate::layout::TRAMPOLINE, PAGE_SIZE).expect("top page unmap");
+    assert!(space.translate(crate::layout::TRAMPOLINE).is_none());
+    assert_eq!(space.table_count(), 1);
+    space.audit();
+}

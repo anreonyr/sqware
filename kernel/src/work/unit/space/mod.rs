@@ -1,6 +1,7 @@
 mod access;
 mod backing;
 mod inner;
+mod index;
 mod map;
 mod outer;
 mod salvage;
@@ -8,6 +9,8 @@ mod segment;
 pub(crate) mod window;
 
 pub(crate) use map::{Pending, PendingState};
+#[cfg(debug_assertions)]
+pub(crate) use index::accept as index_accept;
 pub(crate) use backing::Backing;
 pub(crate) use backing::Permit;
 pub use outer::{Space, SpaceBuilder};

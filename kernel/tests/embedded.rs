@@ -95,6 +95,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn interval_tree_queries_and_splits() {
+        kernel::health::pagetable::interval_index();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pagetable_recycle() {
         kernel::health::pagetable::pagetable();
     }
