@@ -17,3 +17,5 @@ pub mod fixture;
 pub mod lifecycle;
 
 pub mod copy;
+
+pub mod heap;

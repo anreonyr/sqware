@@ -5,6 +5,7 @@ extern crate programs;
 
 #[programs::entry]
 fn main() -> programs::Report<'static> {
+    programs::harness::probe::heap::acceptance();
     programs::harness::probe::lifecycle::acceptance();
     programs::harness::probe::copy::acceptance();
     programs::harness::probe::identity::acceptance();
