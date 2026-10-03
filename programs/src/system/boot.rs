@@ -10,15 +10,30 @@ pub struct Mounts(pub Vec<Internal>);
 pub fn status() -> Arc<Status> {
     Arc::new(Status { control: runtime::env::unit::self_id(), operator: AtomicUsize::new(0), identity: AtomicUsize::new(0), phase: AtomicU8::new(Phase::Starting as u8) })
 }
-pub fn spawn(status: Res<Arc<Status>>) -> Result<Progress, &'static str> {
+pub fn spawn(
+    status: Res<Arc<Status>>,
+    epoch: Res<identity::serve::revision::Epoch>,
+    changed: Res<identity::serve::revision::Changed>,
+) -> Result<Progress, &'static str> {
+    let signal = Arc::new(AtomicUsize::new(0));
     // Publish both task identities before either task is released.
     for (slot, operator) in [(&status.operator, true), (&status.identity, false)] {
         let state = (*status).clone();
+        let version = (*epoch).clone();
+        let bell = signal.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             let success = if operator {
                 operator::serve::run::serve(state.clone()).is_ok()
             } else {
-                identity::serve::run::serve(state.clone()).is_ok()
+                identity::serve::run::serve(
+                    state.clone(),
+                    version,
+                    identity::serve::revision::Changed(runtime::env::mail::NolePie::from_token(
+                        PieToken::from_bytes(&(bell.load(Ordering::Acquire) as u64).to_le_bytes())
+                            .unwrap(),
+                    )),
+                )
+                .is_ok()
             };
             if !success || state.phase.load(Ordering::Acquire) != Phase::Stopping as u8 {
                 debug::put("system: internal task failed; terminating team");
@@ -43,6 +58,17 @@ pub fn spawn(status: Res<Arc<Status>>) -> Result<Progress, &'static str> {
             }
         };
         slot.store(task.get(), Ordering::Release);
+        if !operator {
+            let seed = runtime::core::res::port::ship(
+                &changed.0,
+                task,
+                env::Access::STORE,
+                env::Policy::NONE,
+            )
+            .map_err(|_| "identity change signal")?
+            .seed();
+            signal.store(seed.get(), Ordering::Release);
+        }
     }
     Ok(Progress::Done)
 }

@@ -2,9 +2,21 @@ use crate::system::{control::{core::verdict, serve::{self, unit::Control, lifecy
 use crate::system::control::serve::schedule;
 use crate::unit::{Died, UnitFile};
 use protocol::common::schedule::{Resources as Registry, Res, ResMut, Plan, Schedule, Progress, Cursor, Dispatch, Invocation};
-pub struct Fault { pub armed: bool, pub task: Option<env::TaskId>, pub road: Option<protocol::common::path::PathBuf> }
-pub struct Fixture { pub resources: Registry<'static>, plans: [Plan<serve::Fail>; 4] }
-fn supply(active: Res<Active>, roster: Res<Roster>, control: Res<Control>) -> Result<Progress, verdict::Fail> {
+pub struct Fault {
+    pub armed: bool,
+    pub task: Option<env::TaskId>,
+    pub road: Option<protocol::common::path::PathBuf>,
+}
+pub struct Fixture {
+    pub resources: Registry<'static>,
+    plans: [Plan<serve::Fail>; 4],
+    cursors: [Cursor; 4],
+}
+fn supply(
+    active: Res<Active>,
+    roster: Res<Roster>,
+    control: Res<Control>,
+) -> Result<Progress, verdict::Fail> {
     let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
     let program = serve::start::program_of(&job.request.name)?;
     let task = control.task(&job.request.name).ok_or(verdict::Fail::Unknown)?;
@@ -40,9 +52,26 @@ impl Fixture {
         plan.add_system("fixture.probe", 2, probe).map_err(|_| ())?;
         plan.add_subplans("fixture.failure", 3, select_probe, alloc::vec![((), schedule::maintenance().map_err(|_| ())?.map_error(|_| verdict::Fail::NotReady))], inject).map_err(|_| ())?;
         children.push((Key::Embark, plan.build().map_err(|_| ())?));
-        let plans = [schedule::maintenance().map_err(|_| ())?.map_error(|_| serve::Fail::Publication), schedule::actions(children).map_err(|_| ())?, schedule::frame().map_err(|_| ())?, schedule::shutdown().map_err(|_| ())?];
-        start.advance(&mut Cursor::default(), &resources).map_err(|_| ())?;
-        Ok(Self { resources, plans })
+        let mut plans = [
+            schedule::maintenance()
+                .map_err(|_| ())?
+                .map_error(|_| serve::Fail::Publication),
+            schedule::actions(children).map_err(|_| ())?,
+            schedule::frame().map_err(|_| ())?,
+            schedule::shutdown().map_err(|_| ())?,
+        ];
+        start.prepare(&resources);
+        for plan in &mut plans {
+            plan.prepare(&resources);
+        }
+        start
+            .advance(&mut Cursor::default(), &resources)
+            .map_err(|_| ())?;
+        Ok(Self {
+            resources,
+            plans,
+            cursors: core::array::from_fn(|_| Cursor::default()),
+        })
     }
     pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
         self.action(program.name(), Action::Mint).map_err(|_| serve::start::E_PROGRAM)?;
@@ -52,7 +81,13 @@ impl Fixture {
     pub fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
         self.resources.write::<Operations>().map_err(|_| ())?.push(Request { name: name.into(), action, back: None }).map_err(|_| ())?;
         loop {
-            self.plans[1].advance(&mut Cursor::default(), &self.resources).map_err(|_| ())?;
+            if self.plans[1]
+                .advance(&mut self.cursors[1], &self.resources)
+                .map_err(|_| ())?
+                == Progress::Done
+            {
+                self.cursors[1].reset();
+            }
             self.progress().map_err(|_| ())?;
             {
                 let mut operations = self.resources.write::<Operations>().map_err(|_| ())?;
@@ -65,15 +100,38 @@ impl Fixture {
         }
     }
     pub fn progress(&mut self) -> Result<(), &'static str> {
-        self.plans[0].advance(&mut Cursor::default(), &self.resources).map_err(|_| "fixture maintenance")?; Ok(())
+        if self.plans[0]
+            .advance(&mut self.cursors[0], &self.resources)
+            .map_err(|_| "fixture maintenance")?
+            == Progress::Done
+        {
+            self.cursors[0].reset();
+        }
+        Ok(())
     }
     pub fn supervise(&mut self) -> Result<(), serve::Fail> {
-        let mut cursor = Cursor::default();
-        while !self.resources.read::<serve::frame::Flow>().map_err(|_| serve::Fail::Room)?.done {
-            if self.plans[2].advance(&mut cursor, &self.resources).map_err(|error| { protocol::debug::put(&alloc::format!("fixture: frame {:?}", error)); serve::Fail::Shutdown })? == Progress::Done { cursor.reset(); }
+        while !self
+            .resources
+            .read::<serve::frame::Flow>()
+            .map_err(|_| serve::Fail::Room)?
+            .done
+        {
+            if self.plans[2]
+                .advance(&mut self.cursors[2], &self.resources)
+                .map_err(|error| {
+                    protocol::debug::put(&alloc::format!("fixture: frame {:?}", error));
+                    serve::Fail::Shutdown
+                })?
+                == Progress::Done
+            {
+                self.cursors[2].reset();
+            }
         }
-        let mut cursor = Cursor::default();
-        while self.plans[3].advance(&mut cursor, &self.resources).map_err(|_| serve::Fail::Shutdown)? == Progress::Pending {}
+        while self.plans[3]
+            .advance(&mut self.cursors[3], &self.resources)
+            .map_err(|_| serve::Fail::Shutdown)?
+            == Progress::Pending
+        {}
         Ok(())
     }
 }

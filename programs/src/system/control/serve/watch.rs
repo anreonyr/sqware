@@ -34,7 +34,7 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 pub struct Interests { pub tokens: Vec<PieToken>, pub subs: Vec<Sub>, pub armed: bool }
 pub fn entries(watch: Res<Watch>, names: Res<Names>, mut wanted: ResMut<Interests>) -> Result<Progress, super::Fail> {
     wanted.tokens.clear(); wanted.subs.clear(); wanted.armed = false;
-    wanted.tokens.try_reserve(watch.faces.len() + names.entries().len() + 2).map_err(|_| super::Fail::Room)?;
+    wanted.tokens.try_reserve(watch.faces.len() + names.entries().len() + 3).map_err(|_| super::Fail::Room)?;
     wanted.tokens.extend(watch.faces.iter().flatten().copied());
     wanted.tokens.extend(names.entries());
     Ok(Progress::Done)
@@ -80,5 +80,13 @@ pub fn apply(mut watch: ResMut<Watch>, mut wanted: ResMut<Interests>) -> Result<
 }
 pub fn wait(watch: Res<Watch>, wanted: Res<Interests>, bound: Res<super::frame::Bound>) -> Result<Progress, super::Fail> {
     watch.pile.await_(if wanted.armed { bound.0 } else { Wait::AtMost(10) }).map_err(|_| super::Fail::Wait)?;
+    Ok(Progress::Done)
+}
+
+pub fn identity_changes(
+    changed: Res<crate::system::identity::serve::revision::Changed>,
+    mut wanted: ResMut<Interests>,
+) -> Result<Progress, super::Fail> {
+    wanted.tokens.push(changed.0.token());
     Ok(Progress::Done)
 }

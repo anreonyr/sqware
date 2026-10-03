@@ -209,3 +209,156 @@ mod tests {
         assert_eq!(resources.read::<Trace>().unwrap().0, ["pre", "pre"]);
     }
 }
+
+#[cfg(test)]
+mod allocations {
+    use std::{
+        alloc::{GlobalAlloc, Layout, System},
+        cell::Cell,
+    };
+    thread_local! { static COUNT: Cell<Option<usize>> = const { Cell::new(None) }; }
+    pub struct Counting;
+    unsafe impl GlobalAlloc for Counting {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            let _ = COUNT.try_with(|count| {
+                if let Some(value) = count.get() {
+                    count.set(Some(value + 1));
+                }
+            });
+            unsafe { System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { System.dealloc(ptr, layout) }
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
+            let _ = COUNT.try_with(|count| {
+                if let Some(value) = count.get() {
+                    count.set(Some(value + 1));
+                }
+            });
+            unsafe { System.realloc(ptr, layout, size) }
+        }
+    }
+    pub fn count(run: impl FnOnce()) -> usize {
+        COUNT.with(|count| count.set(Some(0)));
+        run();
+        COUNT.with(|count| count.replace(None).unwrap())
+    }
+}
+#[cfg(test)]
+#[global_allocator]
+static ALLOCATOR: allocations::Counting = allocations::Counting;
+
+#[cfg(test)]
+mod regression {
+    use super::{allocations, schedule::*};
+    #[derive(Default)]
+    struct Counter(usize);
+    fn increment(mut counter: ResMut<Counter>) -> Result<Progress, &'static str> {
+        counter.0 += 1;
+        Ok(Progress::Done)
+    }
+    #[test]
+    fn nested_mapped_plans_allocate_nothing_after_warmup() {
+        let mut resources = Resources::new();
+        resources.insert(Counter::default()).unwrap();
+        let mut child = Schedule::new();
+        child.add_system("increment", 0u8, increment).unwrap();
+        let mut parent = Schedule::new();
+        parent
+            .add_plan(
+                "first",
+                0u8,
+                child.build().unwrap().map_error(|error| error),
+            )
+            .unwrap();
+        let mut second = Schedule::new();
+        second.add_system("increment", 0u8, increment).unwrap();
+        parent
+            .add_plan("second", 1, second.build().unwrap())
+            .unwrap();
+        let mut plan = parent.build().unwrap();
+        plan.prepare(&resources);
+        let mut cursor = Cursor::default();
+        plan.advance(&mut cursor, &resources).unwrap();
+        let allocations = allocations::count(|| {
+            for _ in 0..1000 {
+                cursor.reset();
+                assert_eq!(plan.advance(&mut cursor, &resources), Ok(Progress::Done));
+            }
+        });
+        assert_eq!(
+            allocations, 0,
+            "resetting a completed nested plan must reuse its storage"
+        );
+        assert_eq!(resources.read::<Counter>().unwrap().0, 2002);
+    }
+    #[test]
+    fn cached_slots_rebind_when_resource_order_changes() {
+        let mut first = Resources::new();
+        first.insert(Counter::default()).unwrap();
+        first.insert(false).unwrap();
+        let mut second = Resources::new();
+        second.insert(false).unwrap();
+        second.insert(Counter(20)).unwrap();
+        let mut schedule = Schedule::new();
+        schedule.add_system("increment", 0u8, increment).unwrap();
+        let mut plan = schedule.build().unwrap();
+        plan.prepare(&first);
+        plan.advance(&mut Cursor::default(), &first).unwrap();
+        plan.advance(&mut Cursor::default(), &second).unwrap();
+        plan.advance(&mut Cursor::default(), &first).unwrap();
+        assert_eq!(first.read::<Counter>().unwrap().0, 2);
+        assert_eq!(second.read::<Counter>().unwrap().0, 21);
+        assert!(!*second.read::<bool>().unwrap());
+    }
+    #[test]
+    fn preparing_unused_children_does_not_raise_their_missing_resource_error() {
+        fn choose(
+            mut dispatch: ResMut<Dispatch<u8, &'static str>>,
+        ) -> Result<Progress, &'static str> {
+            dispatch.current = Some(Invocation {
+                key: 0,
+                cursor: Cursor::default(),
+            });
+            Ok(Progress::Done)
+        }
+        fn finish(
+            mut dispatch: ResMut<Dispatch<u8, &'static str>>,
+        ) -> Result<Progress, &'static str> {
+            assert_eq!(dispatch.result.take(), Some(Ok(Progress::Done)));
+            dispatch.current = None;
+            Ok(Progress::Done)
+        }
+        fn done() -> Result<Progress, &'static str> {
+            Ok(Progress::Done)
+        }
+        let mut present = Schedule::new();
+        present.add_system("done", 0u8, done).unwrap();
+        let mut absent = Schedule::new();
+        absent.add_system("missing", 0u8, increment).unwrap();
+        let mut parent = Schedule::new();
+        parent
+            .add_subplans(
+                "select",
+                0u8,
+                choose,
+                alloc::vec![
+                    (0u8, present.build().unwrap()),
+                    (1, absent.build().unwrap())
+                ],
+                finish,
+            )
+            .unwrap();
+        let mut resources = Resources::new();
+        let mut dispatch = Dispatch::<u8, &'static str>::new();
+        dispatch.budget = 1;
+        resources.insert(dispatch).unwrap();
+        let mut plan = parent.build().unwrap();
+        plan.prepare(&resources);
+        assert_eq!(
+            plan.advance(&mut Cursor::default(), &resources),
+            Ok(Progress::Done)
+        );
+    }
+}

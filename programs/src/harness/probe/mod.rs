@@ -16,3 +16,5 @@ pub mod system_fault;
 pub mod fixture;
 
 pub mod lifecycle;
+
+pub mod copy;

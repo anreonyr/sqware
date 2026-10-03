@@ -23,6 +23,7 @@ pub(super) struct Incoming {
 }
 pub(super) struct Current(pub Option<Incoming>);
 pub(super) struct Response(pub Option<Reply>);
+pub(super) struct Ready(pub Option<(PieToken, Grant)>);
 pub(super) fn faces(
     status: Res<Arc<Status>>,
     mut faces: ResMut<Faces>,
@@ -47,16 +48,23 @@ pub(super) fn faces(
     }
     Ok(Progress::Done)
 }
-pub(super) fn wait(pile: Res<Pile>) -> Result<Progress, Fail> {
-    pile.await_(Wait::AtMost(100)).map_err(|_| Fail::Dead)?;
+pub(super) fn wait(
+    pile: Res<Pile>,
+    faces: Res<Faces>,
+    mut ready: ResMut<Ready>,
+) -> Result<Progress, Fail> {
+    ready.0 = pile
+        .await_(Wait::AtMost(100))
+        .map_err(|_| Fail::Dead)?
+        .and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
     Ok(Progress::Done)
 }
 pub(super) fn receive(
-    faces: Res<Faces>,
+    ready: Res<Ready>,
     mut buffer: ResMut<Buffer>,
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
-    for (entry, grant) in &faces.0 {
+    if let Some((entry, grant)) = &ready.0 {
         while let Ok((n, from)) = HolePie::from_token(*entry).pull(&mut buffer.0, Wait::POLL) {
             let Some((wire, back)) = Wire::take(&buffer.0[..n]) else {
                 continue;

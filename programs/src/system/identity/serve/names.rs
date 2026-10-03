@@ -1,13 +1,13 @@
-use crate::system::operator::serve::plate::Placement;
-use crate::system::operator::core::Tile;
-use protocol::common::schedule::{Progress, Res, ResMut};
 use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::identity::serve::install::Roster;
 use crate::system::identity::serve::query::{current_authority, validate};
+use crate::system::operator::core::Tile;
 use crate::system::operator::serve::install::Tree;
+use crate::system::operator::serve::plate::Placement;
 use alloc::{string::String, vec::Vec};
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
+use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use runtime::env::mail::{self, HolePie};
@@ -110,7 +110,31 @@ fn reply(back: PieToken, reply: Reply) {
     let _ = mail::release(back);
 }
 
-pub struct Registrations(pub Vec<Registration>);
+pub enum AliasRequest {
+    Candidate { task: TaskId, object: Object },
+    Install(Registration),
+}
+pub struct Registrations {
+    pub requests: Vec<AliasRequest>,
+    pub seen: u64,
+    pub dirty: bool,
+}
+pub(crate) fn changes(
+    epoch: Res<super::revision::Epoch>,
+    changed: Res<super::revision::Changed>,
+    mut pending: ResMut<Registrations>,
+) -> Result<Progress, &'static str> {
+    // Clear before observing the epoch so a later mutation leaves the bell armed.
+    match changed.0.hush() {
+        Ok(()) => {}
+        Err(error) if error.source.is_busy() => {}
+        Err(_) => return Err("identity change bell"),
+    }
+    let revision = epoch.0.load(core::sync::atomic::Ordering::Acquire);
+    pending.dirty |= pending.seen != revision;
+    pending.seen = revision;
+    Ok(Progress::Done)
+}
 pub(crate) fn expired(living: Res<Living>, roster: Res<Roster>, mut names: ResMut<Names>) -> Result<Progress, &'static str> {
     let authority = current_authority(&roster);
     // Mark aliases before tree mutations; no Identity request is made during removal.
@@ -130,24 +154,82 @@ pub(crate) fn retire(mut names: ResMut<Names>, mut tree: ResMut<Tree>) -> Result
 }
 pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut pending: ResMut<Registrations>) -> Result<Progress, &'static str> {
     use crate::system::control::core::unit::{Slot, State};
-    pending.0.clear();
+    pending.requests.clear();
+    if !pending.dirty {
+        return Ok(Progress::Done);
+    }
+    pending.dirty = false;
     if current_authority(&roster).is_none() { return Ok(Progress::Done); }
     for row in control.table.living() {
-        if !row.named || !matches!(row.state, State::NeverStarted | State::Starting | State::Ready | State::Debarked) { continue; }
-        let Slot::Live { task, .. } = row.slot else { continue; };
-        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) { continue; }
-        if let Some(binding) = super::query::binding(&roster, task).map_err(|_| "alias identity query")? {
-            let registration = Registration { name: row.name.clone(), object: Object::Principal(binding.origin.principal), lifetime: Some(task) };
-            validate(&roster, registration.object).map_err(|_| "identity alias source")?;
-            pending.0.try_reserve(1).map_err(|_| "alias capacity")?;
-            pending.0.push(registration);
+        if !row.named
+            || !matches!(
+                row.state,
+                State::NeverStarted | State::Starting | State::Ready | State::Debarked
+            )
+        {
+            continue;
+        }
+        let Slot::Live { task, .. } = row.slot else {
+            continue;
+        };
+        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
+            continue;
+        }
+        if let Some(binding) =
+            super::query::binding(&roster, task).map_err(|_| "alias identity query")?
+        {
+            pending
+                .requests
+                .try_reserve(1)
+                .map_err(|_| "alias capacity")?;
+            pending.requests.push(AliasRequest::Candidate {
+                task,
+                object: Object::Principal(binding.origin.principal),
+            });
         }
     }
     Ok(Progress::Done)
 }
-pub(crate) fn install(mut pending: ResMut<Registrations>, mut names: ResMut<Names>, mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
-    if tree.host().is_none() { return Ok(Progress::Done); }
-    for registration in pending.0.drain(..) { names.register(&mut tree, registration)?; }
+pub(crate) fn select(
+    control: Res<Control>,
+    names: Res<Names>,
+    mut pending: ResMut<Registrations>,
+) -> Result<Progress, &'static str> {
+    pending.requests.retain_mut(|request| {
+        let AliasRequest::Candidate { task, object } = *request else { return true; };
+        let Some(row) = control.table.living().find(|row| matches!(row.slot, crate::system::control::core::unit::Slot::Live { task: known, .. } if known == task)) else { return false; };
+        if names.aliases.iter().any(|alias| alias.name == row.name && alias.object == object) { return false; }
+        *request = AliasRequest::Install(Registration { name: row.name.clone(), object, lifetime: Some(task) });
+        true
+    });
+    Ok(Progress::Done)
+}
+pub(crate) fn verify(
+    roster: Res<Roster>,
+    pending: Res<Registrations>,
+) -> Result<Progress, &'static str> {
+    for request in &pending.requests {
+        let AliasRequest::Install(registration) = request else {
+            return Err("alias selection");
+        };
+        validate(&roster, registration.object).map_err(|_| "identity alias source")?;
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn install(
+    mut pending: ResMut<Registrations>,
+    mut names: ResMut<Names>,
+    mut tree: ResMut<Tree>,
+) -> Result<Progress, &'static str> {
+    if tree.host().is_none() {
+        return Ok(Progress::Done);
+    }
+    for request in pending.requests.drain(..) {
+        let AliasRequest::Install(registration) = request else {
+            return Err("alias selection");
+        };
+        names.register(&mut tree, registration)?;
+    }
     Ok(Progress::Done)
 }
 pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress, &'static str> {

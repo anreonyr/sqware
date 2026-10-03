@@ -65,6 +65,9 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .insert(Dispatch::<(), Fail>::new())
         .map_err(|_| Fail::Room)?;
     let [mut start, mut frame, mut stop] = super::schedule::plans().map_err(|_| Fail::Room)?;
+    start.prepare(&resources);
+    frame.prepare(&resources);
+    stop.prepare(&resources);
     start
         .advance(&mut Cursor::default(), &resources)
         .map_err(|_| Fail::Tree)?;
