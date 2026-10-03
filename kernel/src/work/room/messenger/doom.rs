@@ -216,5 +216,7 @@ pub(crate) fn descends(actor: &Arc<Team>, target: &Arc<Team>) -> bool {
 }
 
 pub(crate) fn slay(task: &Arc<Task>) {
-    if suspend(task, super::EXIT_DOOM) { reap(task.clone()); }
+    if suspend(task, super::EXIT_DOOM) {
+        reap(task.clone());
+    }
 }

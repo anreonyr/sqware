@@ -5,7 +5,7 @@
 //! 词汇**（`MemoryFail`）——`Allocate` 答得出 `OoM` 与 `NoRegion`，`Deallocate` 只答
 //! `Denied`。每个调用按格生成签名，不再有"一个 `call()` 对整张 `Ret` 联合负责"。
 
-use env::{MemoryResult, VirtAddr, TeamId, PieToken};
+use env::{MemoryResult, PieToken, TeamId, VirtAddr};
 
 /// 用户堆分配（按页取整、至少一页）。
 ///
@@ -50,7 +50,14 @@ pub fn mprotect(addr: usize, size: usize, flags: u64) -> MemoryResult<()> {
     env::memory::mprotect(TeamId::new(0), VirtAddr::new(addr), size, flags)
 }
 
-pub fn map(team: TeamId, at: usize, size: usize, backing: PieToken, offset: usize, flags: u64) -> MemoryResult<usize> {
+pub fn map(
+    team: TeamId,
+    at: usize,
+    size: usize,
+    backing: PieToken,
+    offset: usize,
+    flags: u64,
+) -> MemoryResult<usize> {
     env::memory::mmap(team, VirtAddr::new(at), size, backing, offset, flags).map(|va| va.get())
 }
 

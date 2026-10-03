@@ -28,20 +28,20 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
+use programs::Reason;
 use programs::system::control::core::unit::Declaration;
 use programs::system::control::serve::task::Image;
 use programs::system::control::serve::task::Launch;
 use programs::system::control::serve::task::Readiness;
-use env::Wait;
-use programs::Reason;
 
 use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::control::serve::task as service;
 use programs::system::control::core::unit::{Announce, Slot, State, Table};
 use programs::system::control::core::verdict::{Ready, probe_ready};
+use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;
@@ -74,12 +74,20 @@ fn main() -> Reason {
     for round in 1..=ROUNDS {
         // 首启唯一的一次 register；重发**不许**再 register（重名即 Unknown，见 §六）。
         if round == 1 {
-            match table.register(Declaration { name: name.clone(), announce: Announce::None, restart: Ending::Transient }) {
+            match table.register(Declaration {
+                name: name.clone(),
+                announce: Announce::None,
+                restart: Ending::Transient,
+            }) {
                 Ok(()) => debug!("again: r={round} step=register ok"),
                 Err(_) => return die("again: register"),
             }
         } else {
-            match table.register(Declaration { name: name.clone(), announce: Announce::None, restart: Ending::Transient }) {
+            match table.register(Declaration {
+                name: name.clone(),
+                announce: Announce::None,
+                restart: Ending::Transient,
+            }) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
                 Err(_) => debug!("again: r={round} step=register refused (expected)"),
                 Ok(()) => {
@@ -90,7 +98,14 @@ fn main() -> Reason {
         }
 
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
-        let task = match service::mint(&mut table, Image { name: name.as_str(), bytes: elf, kind }) {
+        let task = match service::mint(
+            &mut table,
+            Image {
+                name: name.as_str(),
+                bytes: elf,
+                kind,
+            },
+        ) {
             Ok(task) => task,
             Err(_) => {
                 failures += 1;
@@ -101,7 +116,19 @@ fn main() -> Reason {
         debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::embark(&mut table, Launch { task, grants: &[], readiness: Readiness { name: name.as_str(), marks: &[], wait: Wait::AtMost(MS) } }, &mut [])
+        if service::embark(
+            &mut table,
+            Launch {
+                task,
+                grants: &[],
+                readiness: Readiness {
+                    name: name.as_str(),
+                    marks: &[],
+                    wait: Wait::AtMost(MS),
+                },
+            },
+            &mut [],
+        )
         .is_err()
         {
             failures += 1;
@@ -160,11 +187,30 @@ fn main() -> Reason {
         {
             let _ = unit::oust(team);
         }
-        let Ok(task) = service::mint(&mut table, Image { name: name.as_str(), bytes: elf, kind }) else {
+        let Ok(task) = service::mint(
+            &mut table,
+            Image {
+                name: name.as_str(),
+                bytes: elf,
+                kind,
+            },
+        ) else {
             failures += 1;
             break;
         };
-        if service::embark(&mut table, Launch { task, grants: &[], readiness: Readiness { name: name.as_str(), marks: &[], wait: Wait::AtMost(MS) } }, &mut [])
+        if service::embark(
+            &mut table,
+            Launch {
+                task,
+                grants: &[],
+                readiness: Readiness {
+                    name: name.as_str(),
+                    marks: &[],
+                    wait: Wait::AtMost(MS),
+                },
+            },
+            &mut [],
+        )
         .is_err()
         {
             failures += 1;

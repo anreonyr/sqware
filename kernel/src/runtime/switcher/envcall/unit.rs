@@ -82,7 +82,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 None => return Outcome::fail(frame, UnitFail::Denied),
             };
             let caller = current().running_task();
-            let result = crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
+            let result =
+                crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
             match result {
                 Ok(task) => frame.gpr.set_x(Gprs::A0, task.ident.id.get()),
                 Err(error) => return Outcome::fail(frame, error),
@@ -141,8 +142,12 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 return Outcome::fail(frame, UnitFail::Denied);
             };
             let same = Arc::ptr_eq(&target.ident.team, &ident.team);
-            let mine = current().running_task().is_some_and(|me| me.heir(target.ident.team.id).is_some());
-            if !(same || mine) { return Outcome::fail(frame, UnitFail::Denied); }
+            let mine = current()
+                .running_task()
+                .is_some_and(|me| me.heir(target.ident.team.id).is_some());
+            if !(same || mine) {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
             if matches!(target.tag(), TaskTag::Doomed | TaskTag::Reaped) {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
@@ -152,34 +157,50 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                     if target.tag() == TaskTag::Held {
                         boarding.stopped = false;
                         drop(boarding);
-                        if let Err(e) = Task::release(&target) { return Outcome::fail(frame, e); }
+                        if let Err(e) = Task::release(&target) {
+                            return Outcome::fail(frame, e);
+                        }
                         return Outcome::Resume;
                     }
-                    if !boarding.stopped { return Outcome::fail(frame, UnitFail::Denied); }
-                    if target.tag() == TaskTag::Running { return Outcome::fail(frame, UnitFail::Busy); }
+                    if !boarding.stopped {
+                        return Outcome::fail(frame, UnitFail::Denied);
+                    }
+                    if target.tag() == TaskTag::Running {
+                        return Outcome::fail(frame, UnitFail::Busy);
+                    }
                     boarding.stopped = false;
                     let parked = boarding.parked.take();
                     drop(boarding);
-                    if let Some(task) = parked { crate::work::room::scheduler::core::launch(task); }
+                    if let Some(task) = parked {
+                        crate::work::room::scheduler::core::launch(task);
+                    }
                 }
                 UnitCall::Debark { .. } => {
                     target.boarding.lock().stopped = true;
                     if target.ident.id == ident.id {
                         frame.gpr.set_x(Gprs::A0, 0);
-                        drop(target); drop(ident);
-                        return Outcome::Switch(crate::work::room::scheduler::trap::run() as *mut TrapContext);
+                        drop(target);
+                        drop(ident);
+                        return Outcome::Switch(
+                            crate::work::room::scheduler::trap::run() as *mut TrapContext
+                        );
                     }
                     if let Some(hart) = crate::work::room::scheduler::core::running_hart(&target) {
                         crate::work::room::conductor::nudge(hart);
                     }
-                    if target.tag() == TaskTag::Running { return Outcome::fail(frame, UnitFail::Busy); }
+                    if target.tag() == TaskTag::Running {
+                        return Outcome::fail(frame, UnitFail::Busy);
+                    }
                 }
                 UnitCall::Slay { .. } => {
                     messenger::slay(&target);
                     if target.ident.id == ident.id {
                         messenger::set_exit_reason(messenger::EXIT_DOOM);
-                        drop(target); drop(ident);
-                        return Outcome::Switch(crate::work::room::messenger::quit() as *mut TrapContext);
+                        drop(target);
+                        drop(ident);
+                        return Outcome::Switch(
+                            crate::work::room::messenger::quit() as *mut TrapContext
+                        );
                     }
                 }
                 _ => unreachable!(),

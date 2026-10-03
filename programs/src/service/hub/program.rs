@@ -14,12 +14,24 @@ pub const READY: &str = "hub-ready";
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[
         crate::unit::Publish::Entries {
-            scope: crate::unit::PublishScope::Hub, group: "", road: "svc/hub",
+            scope: crate::unit::PublishScope::Hub,
+            group: "",
+            road: "svc/hub",
             entries: &[
-                crate::unit::PublishEntry { name: "bond", mark: Some(env::Mark::of("hub-entry-bond")) },
-                crate::unit::PublishEntry { name: "list", mark: Some(env::Mark::of("hub-entry-list")) },
-                crate::unit::PublishEntry { name: "claim", mark: Some(env::Mark::of("hub-entry-claim")) },
-            ], public: true,
+                crate::unit::PublishEntry {
+                    name: "bond",
+                    mark: Some(env::Mark::of("hub-entry-bond")),
+                },
+                crate::unit::PublishEntry {
+                    name: "list",
+                    mark: Some(env::Mark::of("hub-entry-list")),
+                },
+                crate::unit::PublishEntry {
+                    name: "claim",
+                    mark: Some(env::Mark::of("hub-entry-claim")),
+                },
+            ],
+            public: true,
         },
         crate::unit::Publish::Devices,
     ],

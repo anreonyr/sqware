@@ -1,21 +1,30 @@
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
+use super::Backing;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
-use super::Backing;
 
 #[derive(Debug, Clone)]
 pub(super) enum Origin {
     Owned,
     Borrowed,
-    Limited { ceiling: PteFlags },
-    Backed { backing: Arc<Backing>, offset: usize, ceiling: PteFlags, token: Option<env::PieToken>, private: bool, open: bool },
+    Limited {
+        ceiling: PteFlags,
+    },
+    Backed {
+        backing: Arc<Backing>,
+        offset: usize,
+        ceiling: PteFlags,
+        token: Option<env::PieToken>,
+        private: bool,
+        open: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,9 +144,19 @@ pub(crate) struct Map {
 
 impl Drop for Map {
     fn drop(&mut self) {
-        if let Origin::Backed { backing, ceiling, private, .. } = &self.origin {
-            if !private { backing.alias(false); }
-            if ceiling.contains(PteFlags::W) { backing.map_write(false); }
+        if let Origin::Backed {
+            backing,
+            ceiling,
+            private,
+            ..
+        } = &self.origin
+        {
+            if !private {
+                backing.alias(false);
+            }
+            if ceiling.contains(PteFlags::W) {
+                backing.map_write(false);
+            }
         }
         let mut cur = self.left.take();
         while let Some(mut node) = cur {
@@ -185,7 +204,15 @@ impl Map {
     }
 
     pub(super) fn is_borrowed(&self) -> bool {
-        matches!(self.origin, Origin::Borrowed | Origin::Backed { token: Some(_), private: false, .. })
+        matches!(
+            self.origin,
+            Origin::Borrowed
+                | Origin::Backed {
+                    token: Some(_),
+                    private: false,
+                    ..
+                }
+        )
     }
 
     pub(super) fn retains_backing(&self) -> bool {
@@ -209,12 +236,29 @@ impl Map {
             self.pending,
         );
         map.origin = match &self.origin {
-            Origin::Backed { backing, offset, ceiling, token, private, open } => {
-                if !private { backing.alias(true); }
-                if ceiling.contains(PteFlags::W) { backing.map_write(true); }
-                Origin::Backed { backing: backing.clone(), offset: offset + first_pg * PAGE_SIZE,
-                    ceiling: *ceiling, token: *token, private: *private, open: *open }
-            },
+            Origin::Backed {
+                backing,
+                offset,
+                ceiling,
+                token,
+                private,
+                open,
+            } => {
+                if !private {
+                    backing.alias(true);
+                }
+                if ceiling.contains(PteFlags::W) {
+                    backing.map_write(true);
+                }
+                Origin::Backed {
+                    backing: backing.clone(),
+                    offset: offset + first_pg * PAGE_SIZE,
+                    ceiling: *ceiling,
+                    token: *token,
+                    private: *private,
+                    open: *open,
+                }
+            }
             other => other.clone(),
         };
         map.reserve_frames(frames)?;

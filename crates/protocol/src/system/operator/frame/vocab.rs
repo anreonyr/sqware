@@ -210,8 +210,8 @@ impl env::wire::Field for Permit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use env::{TaskId, wire::Field};
     use crate::system::identity::{CoalitionId, PrincipalId};
+    use env::{TaskId, wire::Field};
 
     #[test]
     fn permits_preserve_authority_and_slot() {
@@ -238,7 +238,11 @@ mod tests {
         let mut bytes = [0u8; Permit::WIDTH];
         bytes[0] = 255;
         assert_eq!(Permit::fetch(&bytes), None);
-        for permit in [Permit::Public, Permit::Bound, Permit::Opener(EntryId::new(2))] {
+        for permit in [
+            Permit::Public,
+            Permit::Bound,
+            Permit::Opener(EntryId::new(2)),
+        ] {
             permit.store(&mut bytes);
             let last = bytes.len() - 1;
             bytes[last] = 1;

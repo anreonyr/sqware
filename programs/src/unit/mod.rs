@@ -217,7 +217,11 @@ impl UnitFile {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PublishScope { Driver, Hub, Fixture }
+pub enum PublishScope {
+    Driver,
+    Hub,
+    Fixture,
+}
 
 #[derive(Clone, Copy)]
 pub struct PublishEntry {

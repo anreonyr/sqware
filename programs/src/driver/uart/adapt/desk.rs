@@ -4,11 +4,11 @@ use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
-use protocol::system::control::publication::Scope;
 use programs::unit::uart::E_UART;
 use protocol::communication::rack::{Mode, Rack, Reader, Writer};
 use protocol::debug;
 use protocol::driver::line::client::Line;
+use protocol::system::control::publication::Scope;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
@@ -89,11 +89,16 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
 /// → `rx` / `tx` 各一枚 Tile（**各是一具架的页**）→ 各查回来一遍（号 ↔ 名对得上才算真坐标）
 /// 送出去的是 `Rack::ship()` 交给对端的**那一枚页**：客人拿它既能映页、又能等页上那一位。
 fn plate(rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
-    let client = protocol::system::control::publication::Client::injected().expect("uart: publication entry");
+    let client = protocol::system::control::publication::Client::injected()
+        .expect("uart: publication entry");
     for (name, entry) in [(RX, rx.ship()), (TX, tx.ship())] {
         let target = protocol::system::control::publication::Target::Service {
-            scope: Scope::Driver, group: "uart".into(), name: name.into(),
+            scope: Scope::Driver,
+            group: "uart".into(),
+            name: name.into(),
         };
-        client.publish(target, entry, Permit::Public, ms).expect("uart: publication");
+        client
+            .publish(target, entry, Permit::Public, ms)
+            .expect("uart: publication");
     }
 }

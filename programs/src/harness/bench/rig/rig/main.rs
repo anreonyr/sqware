@@ -32,12 +32,12 @@
 extern crate alloc;
 extern crate programs;
 
+use env::Wait;
+use programs::Reason;
 use programs::system::control::core::unit::Declaration;
 use programs::system::control::serve::task::Image;
 use programs::system::control::serve::task::Launch;
 use programs::system::control::serve::task::Readiness;
-use env::Wait;
-use programs::Reason;
 
 use env::Mark;
 use programs::harness::tick;
@@ -48,9 +48,9 @@ use core::time::Duration;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::control::serve::task as service;
 use programs::system::control::core::unit::{Announce, Slot, Table};
 use programs::system::control::core::verdict::Reaped;
+use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use protocol::communication::session::establish::{self, Endpoint, Held};
 use protocol::debug;
@@ -232,9 +232,21 @@ fn trial(
     // （表是纯值，`Table::new()` 不碰全局）。
     let mut table = Table::new();
     table
-        .register(Declaration { name: name.clone(), announce: Announce::Channel, restart: Ending::Transient })
+        .register(Declaration {
+            name: name.clone(),
+            announce: Announce::Channel,
+            restart: Ending::Transient,
+        })
         .map_err(|_| "register")?;
-    let task = service::mint(&mut table, Image { name: name.as_str(), bytes: elf, kind }).map_err(|_| "spawn")?;
+    let task = service::mint(
+        &mut table,
+        Image {
+            name: name.as_str(),
+            bytes: elf,
+            kind,
+        },
+    )
+    .map_err(|_| "spawn")?;
     // **rig A：握手**。台主这一侧先铸一条（`endpoint`：本端那一枚交出去，顺带试认它那一枚），
     // 放行时把通道交给受害者；它铸出自己那一枚交给台主、随即挂在自己那枚孔上 ⇒ 台主 `claim`
     // 到它就等于**"它已经挂好了、可以被唤醒了"**（它**不自己校准**，轮数随后由台主发过去）。
@@ -278,7 +290,19 @@ fn body(
     channels: &mut [Endpoint],
     link: String,
 ) -> Result<Verdict, &'static str> {
-    service::embark(table, Launch { task, grants: &[], readiness: Readiness { name: name.as_str(), marks: &[Mark::of(link.as_str())], wait: Wait::AtMost(HANDSHAKE_MS) } }, channels)
+    service::embark(
+        table,
+        Launch {
+            task,
+            grants: &[],
+            readiness: Readiness {
+                name: name.as_str(),
+                marks: &[Mark::of(link.as_str())],
+                wait: Wait::AtMost(HANDSHAKE_MS),
+            },
+        },
+        channels,
+    )
     .map_err(|_| "start")?;
     let at_peer = channels.first().and_then(Endpoint::tx).ok_or("no pier")?;
     // ★ 唤醒，并顺手把"在台上跑多少轮"告诉它（**第一句即第一次唤醒**；此后每句都只是唤醒）。

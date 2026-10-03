@@ -15,10 +15,10 @@ use programs::harness::probe;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Fail as TreeFail;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::Grant as TreeGrant;
 use protocol::system::control as ccall;
+use protocol::system::operator::Fail as TreeFail;
+use protocol::system::operator::Grant as TreeGrant;
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
@@ -64,8 +64,12 @@ fn main() -> Report<'static> {
     let parent = tree
         .pane(ccall::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
-    debug!("probe-control: faces={seen} want={}", (ccall::Grant::ALL.len() + 1));
+    let seen =
+        probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
+    debug!(
+        "probe-control: faces={seen} want={}",
+        (ccall::Grant::ALL.len() + 1)
+    );
     assert_eq!(
         seen,
         (ccall::Grant::ALL.len() + 1),
@@ -95,9 +99,14 @@ fn main() -> Report<'static> {
 
     // 六、**带规矩那四面**：`mint` / `embark` / `debark` / `ruin` 各取一遍 ⇒ 期望 `Denied`（树那一层）。
     let mut denied_cells = [false; 4];
-    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Embark, ccall::Grant::Debark, ccall::Grant::Ruin]
-        .into_iter()
-        .enumerate()
+    for (i, grant) in [
+        ccall::Grant::Mint,
+        ccall::Grant::Embark,
+        ccall::Grant::Debark,
+        ccall::Grant::Ruin,
+    ]
+    .into_iter()
+    .enumerate()
     {
         let road = ccall::DIR
             .try_join(grant.name())
@@ -115,13 +124,19 @@ fn main() -> Report<'static> {
         .service(nobody.clone())
         .embark(Wait::AtMost(MS))
         .err();
-    let write_stop = control.service(nobody.clone()).debark(Wait::AtMost(MS)).err();
+    let write_stop = control
+        .service(nobody.clone())
+        .debark(Wait::AtMost(MS))
+        .err();
     debug!(
         "probe-control: mint(ask)={write_mint:?} start(ask)={write_start:?} stop(ask)={write_stop:?}"
     );
 
     let write_ruin = control.service(nobody).ruin(Wait::AtMost(MS)).err();
-    assert!(matches!(write_ruin, Some(ccall::Fail::Denied)), "问面发不出 Ruin：{write_ruin:?}");
+    assert!(
+        matches!(write_ruin, Some(ccall::Fail::Denied)),
+        "问面发不出 Ruin：{write_ruin:?}"
+    );
 
     // 八、判据：**一例一条**，名字即结论（`Bad` 那一格在每一条里都是红）。
     assert!(
@@ -132,9 +147,14 @@ fn main() -> Report<'static> {
         matches!(alive, Ok(ccall::State::Ready)),
         "control 那一面看不见本台（装配表里的一行）：{alive:?}"
     );
-    for (i, grant) in [ccall::Grant::Mint, ccall::Grant::Embark, ccall::Grant::Debark, ccall::Grant::Ruin]
-        .into_iter()
-        .enumerate()
+    for (i, grant) in [
+        ccall::Grant::Mint,
+        ccall::Grant::Embark,
+        ccall::Grant::Debark,
+        ccall::Grant::Ruin,
+    ]
+    .into_iter()
+    .enumerate()
     {
         assert!(
             denied_cells[i],

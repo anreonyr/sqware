@@ -29,7 +29,12 @@ impl Supplies {
     ) -> Result<(), Error> {
         let (task, channels) = service;
         let name = program.name();
-        let load = program.supply().iter().find(|setup| setup.machine()).map(crate::unit::Setup::channel).ok_or(Error::Step("no machine supply"))?;
+        let load = program
+            .supply()
+            .iter()
+            .find(|setup| setup.machine())
+            .map(crate::unit::Setup::channel)
+            .ok_or(Error::Step("no machine supply"))?;
         let Some(link) = channels.first_mut() else {
             return Err(Error::Step("no channel"));
         };

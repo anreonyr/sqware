@@ -83,23 +83,64 @@ impl Resources {
         Ok(())
     }
 
-    pub fn policy(&self, incoming: &super::publication::Incoming) -> Result<super::publication::Decision, Fail> {
+    pub fn policy(
+        &self,
+        incoming: &super::publication::Incoming,
+    ) -> Result<super::publication::Decision, Fail> {
         use super::publication::{Approved, Decision};
         use protocol::system::control::publication::Target;
         let target = incoming.frame.target().ok_or(Fail::Denied)?;
-        let Target::RuntimeResource { task, kind, name } = &target else { return Err(Fail::Denied); };
-        let run = self.runs.iter().find(|r| r.task == *task).ok_or(Fail::Denied)?;
-        let approval = self.approvals.iter().find(|a| a.service == incoming.from && a.task == *task && a.kind == *kind && a.name == *name);
+        let Target::RuntimeResource { task, kind, name } = &target else {
+            return Err(Fail::Denied);
+        };
+        let run = self
+            .runs
+            .iter()
+            .find(|r| r.task == *task)
+            .ok_or(Fail::Denied)?;
+        let approval = self.approvals.iter().find(|a| {
+            a.service == incoming.from && a.task == *task && a.kind == *kind && a.name == *name
+        });
         let own_hole = approval.is_none() && incoming.from == *task && kind == "hole";
-        let permit = if let Some(approval) = approval { approval.permit }
-            else if incoming.from == *task { match kind.as_str() { "public" => Permit::Public, "bound" => Permit::Bound, "hole" => incoming.frame.permit, _ => return Err(Fail::Denied) } }
-            else { return Err(Fail::Denied); };
-        if permit != incoming.frame.permit { return Err(Fail::Denied); }
-        let road = run.road.try_join(kind).and_then(|p| p.try_join(name)).ok_or(Fail::Denied)?;
-        let approved = Approved { target: target.clone(), placement: Placement { road, tile: Tile { pie: incoming.frame.entry, permit, owner: Some(*task) }, replace: false }, publisher: incoming.from };
-        Ok(if own_hole { Decision::OwnHole(approved) } else { Decision::Install(approved) })
+        let permit = if let Some(approval) = approval {
+            approval.permit
+        } else if incoming.from == *task {
+            match kind.as_str() {
+                "public" => Permit::Public,
+                "bound" => Permit::Bound,
+                "hole" => incoming.frame.permit,
+                _ => return Err(Fail::Denied),
+            }
+        } else {
+            return Err(Fail::Denied);
+        };
+        if permit != incoming.frame.permit {
+            return Err(Fail::Denied);
+        }
+        let road = run
+            .road
+            .try_join(kind)
+            .and_then(|p| p.try_join(name))
+            .ok_or(Fail::Denied)?;
+        let approved = Approved {
+            target: target.clone(),
+            placement: Placement {
+                road,
+                tile: Tile {
+                    pie: incoming.frame.entry,
+                    permit,
+                    owner: Some(*task),
+                },
+                replace: false,
+            },
+            publisher: incoming.from,
+        };
+        Ok(if own_hole {
+            Decision::OwnHole(approved)
+        } else {
+            Decision::Install(approved)
+        })
     }
-
 }
 fn live(table: &Table, task: TaskId) -> bool {
     if task == runtime::env::unit::self_id() {
@@ -115,8 +156,11 @@ fn live(table: &Table, task: TaskId) -> bool {
     })
 }
 
-pub(crate) fn retire(living: Res<Living>, mut resources: ResMut<Resources>,
-    mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+pub(crate) fn retire(
+    living: Res<Living>,
+    mut resources: ResMut<Resources>,
+    mut tree: ResMut<Tree>,
+) -> Result<Progress, &'static str> {
     let live = |task| living.contains(task);
     let resources = &mut *resources;
 
@@ -139,11 +183,14 @@ pub(crate) fn retire(living: Res<Living>, mut resources: ResMut<Resources>,
         {
             tree.unmount(r.team_pane)?;
         }
-        resources.approvals
+        resources
+            .approvals
             .retain(|a| a.task != r.task && a.service != r.task);
         resources.runs.remove(at);
     }
-    resources.approvals.retain(|a| live(a.service) && live(a.task));
+    resources
+        .approvals
+        .retain(|a| live(a.service) && live(a.task));
     Ok(Progress::Done)
 }
 pub(crate) fn candidates(
@@ -169,7 +216,10 @@ pub(crate) fn candidates(
         {
             continue;
         }
-        pending.requests.try_reserve(1).map_err(|_| "runtime capacity")?;
+        pending
+            .requests
+            .try_reserve(1)
+            .map_err(|_| "runtime capacity")?;
         pending.requests.push((task, team));
     }
     Ok(Progress::Done)
@@ -206,20 +256,51 @@ pub(crate) fn prepare(
     }
     Ok(Progress::Done)
 }
-pub struct Runtimes { pub requests: Vec<(TaskId, TeamId)>, pub seen: u64 }
-pub(crate) fn install(mut pending: ResMut<Runtimes>, mut tree: ResMut<Tree>, mut resources: ResMut<Resources>) -> Result<Progress, &'static str> {
-    if tree.host().is_none() { pending.requests.clear(); return Ok(Progress::Done); }
+pub struct Runtimes {
+    pub requests: Vec<(TaskId, TeamId)>,
+    pub seen: u64,
+}
+pub(crate) fn install(
+    mut pending: ResMut<Runtimes>,
+    mut tree: ResMut<Tree>,
+    mut resources: ResMut<Resources>,
+) -> Result<Progress, &'static str> {
+    if tree.host().is_none() {
+        pending.requests.clear();
+        return Ok(Progress::Done);
+    }
     for (task, team) in pending.requests.drain(..) {
-        if resources.runs.iter().any(|r| r.task == task) { continue; }
-        resources.runs.try_reserve(1).map_err(|_| "runtime capacity")?;
+        if resources.runs.iter().any(|r| r.task == task) {
+            continue;
+        }
+        resources
+            .runs
+            .try_reserve(1)
+            .map_err(|_| "runtime capacity")?;
         let team_road = Path::new("uit")
             .try_join(&team.get().to_string())
             .ok_or("runtime team path")?;
         let road = team_road
             .try_join(&task.get().to_string())
             .ok_or("runtime task path")?;
-        let team_pane = tree.mount(&Placement { road: (&team_road).to_path_buf(), tile: Tile { pie: env::PieToken::NONE, permit: Permit::Public, owner: None }, replace: false })?;
-        let pane = match tree.mount(&Placement { road: (&road).to_path_buf(), tile: Tile { pie: env::PieToken::NONE, permit: Permit::Public, owner: None }, replace: false }) {
+        let team_pane = tree.mount(&Placement {
+            road: (&team_road).to_path_buf(),
+            tile: Tile {
+                pie: env::PieToken::NONE,
+                permit: Permit::Public,
+                owner: None,
+            },
+            replace: false,
+        })?;
+        let pane = match tree.mount(&Placement {
+            road: (&road).to_path_buf(),
+            tile: Tile {
+                pie: env::PieToken::NONE,
+                permit: Permit::Public,
+                owner: None,
+            },
+            replace: false,
+        }) {
             Ok(pane) => pane,
             Err(why) => {
                 let _ = tree.unmount(team_pane);

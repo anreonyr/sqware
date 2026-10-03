@@ -1,14 +1,14 @@
+pub mod graph;
 pub mod phase;
+pub mod plan;
 pub mod resource;
 pub mod system;
-pub mod graph;
-pub mod plan;
 
+pub use graph::{BuildError, Schedule};
 pub use phase::Phase;
-pub use resource::{Resources, Res, ResMut};
-pub use system::{Progress, RunError, IntoSystem};
-pub use graph::{Schedule, BuildError};
-pub use plan::{Plan, Cursor};
+pub use plan::{Cursor, Plan};
+pub use resource::{Res, ResMut, Resources};
+pub use system::{IntoSystem, Progress, RunError};
 
 pub mod dispatch;
 pub use dispatch::{Dispatch, Invocation};

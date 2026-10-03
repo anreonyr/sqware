@@ -8,16 +8,16 @@ use alloc::vec::Vec;
 
 use env::HoleDir;
 use env::{Access, Key, MailFail, Mark, Pair, PieKind, PieToken, Policy, TaskId, Wait};
-use protocol::communication::session::establish;
-use protocol::communication::hand::{Receiver, RecvFail};
 use protocol::communication::hand::Sender;
+use protocol::communication::hand::{Receiver, RecvFail};
 use protocol::communication::session::Session;
+use protocol::communication::session::establish;
 use protocol::debug;
-use protocol::system::identity::client::{Organization, Query};
-use protocol::system::identity::{CoalitionId, PageId as _, Selector};
 use protocol::service::hub::frame::Wire;
 use protocol::service::hub::frame::{Said, Window};
 use protocol::service::hub::{self, Deed, Enroll, Grant};
+use protocol::system::identity::client::{Organization, Query};
+use protocol::system::identity::{CoalitionId, PageId as _, Selector};
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::client::Face as TreeFace;
@@ -30,11 +30,11 @@ use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
 
 use crate::service::hub::core::{Entry, Ledger, Owner};
-use protocol::system::control::publication::Scope;
 use crate::system::common::face::mount;
-use crate::system::control::serve::task::Start;
 use crate::system::common::machine::Machine;
+use crate::system::control::serve::task::Start;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
+use protocol::system::control::publication::Scope;
 
 use self::sweep::alive;
 
@@ -81,9 +81,13 @@ pub fn serve() -> Result<(), Start> {
         // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
         let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
         let me = utask::self_id();
-        let subject = league.query.resolve(me, Wait::AtMost(MS))
+        let subject = league
+            .query
+            .resolve(me, Wait::AtMost(MS))
             .map_err(|_| Start::Face(E_HUB))?
-            .ok_or(Start::Face(E_HUB))?.current.principal;
+            .ok_or(Start::Face(E_HUB))?
+            .current
+            .principal;
         // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
         // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
         // `ACTIVATE_MAX` 把关，装不下就是装配错、当场收手。
@@ -93,7 +97,11 @@ pub fn serve() -> Result<(), Start> {
             let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
                 return Err(Start::Face(E_HUB));
             };
-            if league.organization.admit(id, subject, Wait::AtMost(MS)).is_err() {
+            if league
+                .organization
+                .admit(id, subject, Wait::AtMost(MS))
+                .is_err()
+            {
                 return Err(Start::Face(E_HUB));
             }
             let Some(slot) = leagues.get_mut(n) else {
@@ -103,8 +111,7 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        crate::service::hub::bridge::activate(me, &leagues[..n])
-            .map_err(|_| Start::Face(E_HUB))?;
+        crate::service::hub::bridge::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
@@ -115,11 +122,19 @@ pub fn serve() -> Result<(), Start> {
         // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
         let publisher = protocol::system::control::publication::Client::injected()
             .map_err(|_| Start::Tree(E_HUB))?;
-        for (name, entry) in [(bond_name.as_str(), bond), (list_name.as_str(), list), (claim_name.as_str(), claim)] {
+        for (name, entry) in [
+            (bond_name.as_str(), bond),
+            (list_name.as_str(), list),
+            (claim_name.as_str(), claim),
+        ] {
             let target = protocol::system::control::publication::Target::Service {
-                scope: Scope::Hub, group: "".into(), name: name.into(),
+                scope: Scope::Hub,
+                group: "".into(),
+                name: name.into(),
             };
-            publisher.publish(target, entry, Permit::Public, Wait::AtMost(MS)).map_err(|_| Start::Tree(E_HUB))?;
+            publisher
+                .publish(target, entry, Permit::Public, Wait::AtMost(MS))
+                .map_err(|_| Start::Tree(E_HUB))?;
         }
 
         // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 MemberOf(c_类)，检查有效选择而不是资格。
@@ -134,9 +149,17 @@ pub fn serve() -> Result<(), Start> {
                 .collect();
             for (name, entry) in doors {
                 let target = protocol::system::control::publication::Target::Service {
-                    scope: Scope::Device, group: class.clone(), name: name.into(),
+                    scope: Scope::Device,
+                    group: class.clone(),
+                    name: name.into(),
                 };
-                publisher.publish(target, entry, Permit::Identity(Selector::MemberOf(coalition)), Wait::AtMost(MS))
+                publisher
+                    .publish(
+                        target,
+                        entry,
+                        Permit::Identity(Selector::MemberOf(coalition)),
+                        Wait::AtMost(MS),
+                    )
                     .map_err(|_| Start::Tree(E_HUB))?;
             }
         }

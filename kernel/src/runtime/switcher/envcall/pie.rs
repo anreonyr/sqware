@@ -55,13 +55,25 @@ pub(crate) fn dispatch(
         PieCall::Release { token } => release(frame, token),
         PieCall::Alive { token } => alive(frame, token),
         PieCall::Forget { token } => {
-            answer(frame, current().running_task().ok_or(PieFail::Denied)
-                .and_then(|task| gate::forget(&task, token)).map(|_| 0));
+            answer(
+                frame,
+                current()
+                    .running_task()
+                    .ok_or(PieFail::Denied)
+                    .and_then(|task| gate::forget(&task, token))
+                    .map(|_| 0),
+            );
             Outcome::Resume
         }
         PieCall::Same { a, b } => {
-            answer(frame, current().running_task().ok_or(PieFail::Denied)
-                .and_then(|task| gate::same(&task, a, b)).map(usize::from));
+            answer(
+                frame,
+                current()
+                    .running_task()
+                    .ok_or(PieFail::Denied)
+                    .and_then(|task| gate::same(&task, a, b))
+                    .map(usize::from),
+            );
             Outcome::Resume
         }
     })
@@ -89,7 +101,9 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
 
 pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     if let AnyPie::Pole(p) = pie {
-        if p.meta().backing().reserved() != 0 { return Err(E::handed_over()); }
+        if p.meta().backing().reserved() != 0 {
+            return Err(E::handed_over());
+        }
     }
     let Some(h) = pie.heir().copied() else {
         return Ok(());
@@ -104,7 +118,9 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
         && clear_heir(&task, pie.token())
     {
         // 就地清掉一格陈旧的 heir 也是能力状态变化（它改的是"这一枚还能不能授出"）。
-        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
+        let _ = messenger::signal(WakeKey::Capabilities {
+            task: task.ident.id,
+        });
     }
     Ok(())
 }
@@ -127,7 +143,9 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
         }
         // 本地造一枚：权限表的枚举结果变了。出锁之后要求复核一次
         // （没有观察者时 `signal` 不建站点）。
-        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
+        let _ = messenger::signal(WakeKey::Capabilities {
+            task: task.ident.id,
+        });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -159,7 +177,9 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
             pies.push(AnyPie::Nole(pie));
         }
         // 本地造一枚：权限表的枚举结果变了。
-        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
+        let _ = messenger::signal(WakeKey::Capabilities {
+            task: task.ident.id,
+        });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -172,13 +192,10 @@ fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
         let meta = mail::pole::meta(size, task.ident.id)?;
         let task_space = task.ident.team.space.clone();
         let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
-        if !shared { permission |= Permission::ONLY; }
-        let pie: Pie<Pole> = gate::try_new_pie(
-            meta.clone(),
-            Mark::NONE,
-            permission,
-            None,
-        )?;
+        if !shared {
+            permission |= Permission::ONLY;
+        }
+        let pie: Pie<Pole> = gate::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
         let token = pie.token;
         task.pies.lock().try_reserve(1).map_err(|_| PieFail::OoM)?;
         let creator_flags = task_space
@@ -186,7 +203,9 @@ fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
         mail::pole::open(&meta, token, &task_space, creator_flags)?;
         task.pies.lock().push(AnyPie::Pole(pie));
         // 本地造一枚：权限表的枚举结果变了。
-        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
+        let _ = messenger::signal(WakeKey::Capabilities {
+            task: task.ident.id,
+        });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -203,12 +222,19 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         Ok(AnyPie::Pole(p)) => {
             let r = (|| {
                 let _operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
-                if p.meta().backing().reserved() != 0 { return Err(PieFail::HandedOver); }
+                if p.meta().backing().reserved() != 0 {
+                    return Err(PieFail::HandedOver);
+                }
                 let flags = subset_to_pte(p.permission())?;
-                mail::pole::open(p.meta(), token, &ident.team.space, ident.team.space.pte_policy(flags))
+                mail::pole::open(
+                    p.meta(),
+                    token,
+                    &ident.team.space,
+                    ident.team.space.pte_policy(flags),
+                )
             })();
             r
-        },
+        }
         Ok(AnyPie::Hole(_)) => Err(PieFail::Denied),
         Ok(AnyPie::Nole(_)) => Err(PieFail::Denied),
         Ok(AnyPie::Tole(_)) => Err(PieFail::Denied),
@@ -249,9 +275,11 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
             AnyPie::Hole(h) => mail::hole::seal(h.meta()),
             AnyPie::Pole(pl) => {
                 let _operation = pl.meta().backing().operation().ok_or(PieFail::Busy)?;
-                if pl.meta().backing().reserved() != 0 { return Err(PieFail::Busy); }
+                if pl.meta().backing().reserved() != 0 {
+                    return Err(PieFail::Busy);
+                }
                 mail::pole::seal(pl.meta());
-            },
+            }
             AnyPie::Nole(v) => mail::nole::seal(v.meta()),
             AnyPie::Tole(t) => mail::tole::seal(t.meta()),
         }
@@ -282,8 +310,11 @@ fn accord(
 }
 
 fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
-    let r = current().running_task().ok_or(PieFail::Denied)
-        .and_then(|task| gate::reduce(&task, token, subset)).map(|()| 0);
+    let r = current()
+        .running_task()
+        .ok_or(PieFail::Denied)
+        .and_then(|task| gate::reduce(&task, token, subset))
+        .map(|()| 0);
     answer(frame, r);
     Outcome::Resume
 }

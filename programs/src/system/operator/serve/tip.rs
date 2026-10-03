@@ -203,7 +203,10 @@ pub(super) fn mutate(
                 _ => Ok(None),
             };
             let fail = match result {
-                Ok(change) => { out.changes.extend(change); None }
+                Ok(change) => {
+                    out.changes.extend(change);
+                    None
+                }
                 Err(fail) => Some(fail),
             };
             out.reply = Some(Ack {
@@ -245,7 +248,10 @@ pub(super) fn mutate(
                 other => other,
             };
             let fail = match result {
-                Ok(change) => { out.changes.extend(change); None }
+                Ok(change) => {
+                    out.changes.extend(change);
+                    None
+                }
                 Err(fail) => Some(fail),
             };
             out.reply = Some(Ack {

@@ -43,7 +43,9 @@ impl Segment {
         if size == 0 || addr < self.base || end > self.edge {
             return Err(MapError::NoRegion);
         }
-        let at = self.allocated.partition_point(|&(start, _, _)| start < addr);
+        let at = self
+            .allocated
+            .partition_point(|&(start, _, _)| start < addr);
         if at > 0 && self.allocated[at - 1].0 + self.allocated[at - 1].1 > addr
             || at < self.allocated.len() && end > self.allocated[at].0
         {
@@ -55,7 +57,11 @@ impl Segment {
     }
 
     pub(crate) fn deallocate(&mut self, addr: usize, size: usize) -> bool {
-        match self.allocated.iter().position(|&(start, _, retired)| start == addr && retired == 0) {
+        match self
+            .allocated
+            .iter()
+            .position(|&(start, _, retired)| start == addr && retired == 0)
+        {
             Some(at) if self.allocated[at].1 == size => {
                 self.allocated.remove(at);
                 true
@@ -75,8 +81,9 @@ impl Segment {
     }
 
     pub(crate) fn covering(&self, addr: usize) -> Option<(usize, usize)> {
-        self.allocated.iter().find_map(|&(start, len, retired)|
-            (retired == 0 && start <= addr && addr < start + len).then_some((start, len)))
+        self.allocated.iter().find_map(|&(start, len, retired)| {
+            (retired == 0 && start <= addr && addr < start + len).then_some((start, len))
+        })
     }
 
     /// Keep removed addresses reserved until their PTE eviction completes.
@@ -90,13 +97,23 @@ impl Segment {
         while i < self.allocated.len() {
             let (start, len, retired) = self.allocated[i];
             let stop = start + len;
-            if retired != 0 || addr >= stop || end <= start { i += 1; continue; }
+            if retired != 0 || addr >= stop || end <= start {
+                i += 1;
+                continue;
+            }
             self.allocated.remove(i);
-            if start < addr { self.allocated.insert(i, (start, addr - start, 0)); i += 1; }
+            if start < addr {
+                self.allocated.insert(i, (start, addr - start, 0));
+                i += 1;
+            }
             let lo = start.max(addr);
             let hi = stop.min(end);
-            self.allocated.insert(i, (lo, hi - lo, ticket)); i += 1;
-            if stop > end { self.allocated.insert(i, (end, stop - end, 0)); i += 1; }
+            self.allocated.insert(i, (lo, hi - lo, ticket));
+            i += 1;
+            if stop > end {
+                self.allocated.insert(i, (end, stop - end, 0));
+                i += 1;
+            }
         }
         ticket
     }

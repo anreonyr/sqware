@@ -6,9 +6,16 @@ use alloc::boxed::Box;
 use core::marker::PhantomData;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Progress { Done, Pending }
+pub enum Progress {
+    Done,
+    Pending,
+}
 #[derive(Debug, PartialEq, Eq)]
-pub enum RunError<E> { Resource(AccessError), Step(E), UnknownPlan }
+pub enum RunError<E> {
+    Resource(AccessError),
+    Step(E),
+    UnknownPlan,
+}
 pub(crate) const MAX_PARAMS: usize = 10;
 pub(crate) type Accesses = [Option<Access>; MAX_PARAMS];
 pub(crate) trait Runner<E> {
@@ -58,7 +65,9 @@ impl<E> System<E> {
         self.runner.run(resources, cursor, &self.slots)
     }
 }
-pub trait IntoSystem<M, E> { fn into_system(self) -> System<E>; }
+pub trait IntoSystem<M, E> {
+    fn into_system(self) -> System<E>;
+}
 struct Function<F, M> {
     function: F,
     marker: PhantomData<fn() -> M>,
@@ -99,7 +108,9 @@ systems!(A, B, C, D, E0, F0, G, H);
 systems!(A, B, C, D, E0, F0, G, H, I);
 systems!(A, B, C, D, E0, F0, G, H, I, J);
 impl<F, E: 'static> Runner<E> for Function<F, fn()>
-where F: 'static + FnMut() -> Result<Progress, E> {
+where
+    F: 'static + FnMut() -> Result<Progress, E>,
+{
     fn run(
         &mut self,
         _: &Resources<'_>,
@@ -110,7 +121,9 @@ where F: 'static + FnMut() -> Result<Progress, E> {
     }
 }
 impl<F, E: 'static> IntoSystem<fn(), E> for F
-where F: 'static + FnMut() -> Result<Progress, E> {
+where
+    F: 'static + FnMut() -> Result<Progress, E>,
+{
     fn into_system(self) -> System<E> {
         System::new(
             [None; MAX_PARAMS],

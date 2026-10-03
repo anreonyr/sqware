@@ -53,7 +53,12 @@ impl SpaceInner {
         self.user = Some(super::segment::Segment::new(base, edge));
     }
 
-    pub(crate) fn allocate(&mut self, seg: SegmentKind, addr: usize, size: usize) -> Result<(), MapError> {
+    pub(crate) fn allocate(
+        &mut self,
+        seg: SegmentKind,
+        addr: usize,
+        size: usize,
+    ) -> Result<(), MapError> {
         if size == 0 || !addr.is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
@@ -185,8 +190,17 @@ impl SpaceInner {
         }
         let mut map = Map::new(va, size, flags, None);
         backing.alias(true);
-        if ceiling.contains(PteFlags::W) { backing.map_write(true); }
-        map.origin = Origin::Backed { backing, offset, ceiling: ceiling & access, token: None, private: false, open: false };
+        if ceiling.contains(PteFlags::W) {
+            backing.map_write(true);
+        }
+        map.origin = Origin::Backed {
+            backing,
+            offset,
+            ceiling: ceiling & access,
+            token: None,
+            private: false,
+            open: false,
+        };
         self.register(map)?;
         if let Err(error) = self.root.map(va, pa, size, flags) {
             self.root.unmap(va, size)?;
@@ -198,35 +212,64 @@ impl SpaceInner {
 
     pub(crate) fn bind(&mut self, va: VirtAddr, token: env::PieToken) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { token: source, .. } = &mut map.origin { *source = Some(token); }
+            if let Origin::Backed { token: source, .. } = &mut map.origin {
+                *source = Some(token);
+            }
         }
     }
 
     pub(crate) fn mark_open(&mut self, va: VirtAddr) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { open, .. } = &mut map.origin { *open = true; }
+            if let Origin::Backed { open, .. } = &mut map.origin {
+                *open = true;
+            }
         }
     }
 
     pub(crate) fn limit(&mut self, va: VirtAddr, ceiling: PteFlags) {
-        if let Some(map) = self.resolve_mut(va) { map.origin = Origin::Limited { ceiling }; }
+        if let Some(map) = self.resolve_mut(va) {
+            map.origin = Origin::Limited { ceiling };
+        }
     }
 
     pub(crate) fn private(&mut self, va: VirtAddr) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { private, backing, .. } = &mut map.origin { if !*private { backing.alias(false); *private = true; } }
+            if let Origin::Backed {
+                private, backing, ..
+            } = &mut map.origin
+            {
+                if !*private {
+                    backing.alias(false);
+                    *private = true;
+                }
+            }
         }
     }
 
-    pub(crate) fn narrow_token(&mut self, token: env::PieToken, access: PteFlags) -> Result<(), MapError> {
+    pub(crate) fn narrow_token(
+        &mut self,
+        token: env::PieToken,
+        access: PteFlags,
+    ) -> Result<(), MapError> {
         let mut fault = None;
         let root = &mut self.root;
         self.maps.visit_mut(0, usize::MAX, |map| {
-            if fault.is_some() { return; }
-            if let Origin::Backed { backing, ceiling, token: Some(source), .. } = &mut map.origin {
-                if *source != token { return; }
+            if fault.is_some() {
+                return;
+            }
+            if let Origin::Backed {
+                backing,
+                ceiling,
+                token: Some(source),
+                ..
+            } = &mut map.origin
+            {
+                if *source != token {
+                    return;
+                }
                 let narrowed = *ceiling & access;
-                let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | (map.flags & narrowed);
+                let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X))
+                    | (map.flags & narrowed);
                 if let Err(error) = root.protect(map.va, map.size.get(), flags) {
                     fault = Some(error);
                     return;
@@ -259,7 +302,9 @@ impl SpaceInner {
                 continue;
             };
             let pages = m.size.get() / PAGE_SIZE;
-            if lo_pg == 0 && hi_pg == pages { continue; }
+            if lo_pg == 0 && hi_pg == pages {
+                continue;
+            }
             let hole = {
                 let n = m.frames.count_range(lo_pg, hi_pg);
                 (n > 0 || m.retains_backing())
@@ -282,7 +327,9 @@ impl SpaceInner {
             let m_va = m.va.as_usize();
             let pages = m.size.get() / PAGE_SIZE;
             let (lo_pg, hi_pg) = intersect(m, lo, last).expect("unmap intersection");
-            let mut m = maps.remove(VirtAddr::wrap(m_va)).expect("unmap indexed map");
+            let mut m = maps
+                .remove(VirtAddr::wrap(m_va))
+                .expect("unmap indexed map");
             m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap_prepared(rva, rsize));
             if lo_pg == 0 && hi_pg == pages {
                 salvage.take_map(m);
@@ -321,13 +368,21 @@ impl SpaceInner {
         size: usize,
         allowed: impl Fn(&Map) -> bool,
     ) -> bool {
-        if size == 0 { return true; }
-        let Some(last) = va.as_usize().checked_add(size - 1) else { return false };
+        if size == 0 {
+            return true;
+        }
+        let Some(last) = va.as_usize().checked_add(size - 1) else {
+            return false;
+        };
         let mut at = va.as_usize();
         for map in self.maps.overlapping(at, last) {
-            if !map.contains(VirtAddr::wrap(at)) || !allowed(map) { return false; }
+            if !map.contains(VirtAddr::wrap(at)) || !allowed(map) {
+                return false;
+            }
             let end = last.min(map.end());
-            if end == last { return true; }
+            if end == last {
+                return true;
+            }
             at = end + 1;
         }
         false
@@ -379,7 +434,9 @@ impl SpaceInner {
             let last = last.min(m.end());
             (first <= last).then_some((s, first, last))
         };
-        let covered: usize = self.maps.overlapping(lo, last)
+        let covered: usize = self
+            .maps
+            .overlapping(lo, last)
             .filter_map(|m| span(m))
             .map(|(_, first, last)| last - first + 1)
             .sum();
@@ -390,12 +447,16 @@ impl SpaceInner {
             let root = &self.root;
             for m in self.maps.overlapping(lo, last) {
                 if let Origin::Limited { ceiling } = &m.origin {
-                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                    if span(m).is_some()
+                        && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X))
+                    {
                         return Err(MapError::WidenDenied);
                     }
                 }
                 if let Origin::Backed { ceiling, .. } = &m.origin {
-                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                    if span(m).is_some()
+                        && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X))
+                    {
                         return Err(MapError::WidenDenied);
                     }
                 }
@@ -439,7 +500,10 @@ impl SpaceInner {
         }
         self.root.prepare(va, size)?;
         for (boundary, mut right) in splits.into_iter().flatten() {
-            let key = self.resolve_ref(VirtAddr::wrap(boundary)).expect("split mapping").va;
+            let key = self
+                .resolve_ref(VirtAddr::wrap(boundary))
+                .expect("split mapping")
+                .va;
             let mut map = self.maps.remove(key).expect("split indexed map");
             let first = (boundary - map.va.as_usize()) / PAGE_SIZE;
             map.frames.move_tail(first, first, &mut right.frames);
@@ -477,8 +541,11 @@ impl SpaceInner {
     }
 
     pub(crate) fn overlaps(&self, start: VirtAddr, size: usize) -> bool {
-        size != 0 && self.maps.first_overlap(start.as_usize(), start.as_usize().saturating_add(size - 1))
-            .is_some()
+        size != 0
+            && self
+                .maps
+                .first_overlap(start.as_usize(), start.as_usize().saturating_add(size - 1))
+                .is_some()
     }
 
     pub(super) fn resolve_ref(&self, vaddr: VirtAddr) -> Option<&Map> {
@@ -596,7 +663,9 @@ impl Drop for InstallGuard<'_> {
             return;
         }
         for j in 0..self.installed {
-            self.inner.root.unmap_prepared(self.va + j * PAGE_SIZE, PAGE_SIZE);
+            self.inner
+                .root
+                .unmap_prepared(self.va + j * PAGE_SIZE, PAGE_SIZE);
         }
         match self.book {
             MapMode::Materialize => {

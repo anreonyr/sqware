@@ -1,5 +1,5 @@
-use alloc::{collections::VecDeque, vec::Vec};
 use alloc::sync::{Arc, Weak};
+use alloc::{collections::VecDeque, vec::Vec};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -68,7 +68,10 @@ enum Slot {
 }
 impl Slot {
     fn hand(&self) -> Option<&Hand> {
-        match self { Self::Ready(hand) => Some(hand), Self::Reserved(_) => None }
+        match self {
+            Self::Ready(hand) => Some(hand),
+            Self::Reserved(_) => None,
+        }
     }
 }
 
@@ -125,17 +128,21 @@ impl HoleMeta {
                 Pending::Rung { count, .. } => *count > 0,
                 Pending::Dead => false,
             },
-            HoleDir::Push => matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking),
+            HoleDir::Push => {
+                matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking)
+            }
         }
     }
-
 }
 
 impl Drop for HoleMeta {
     fn drop(&mut self) {
         let pending = core::mem::replace(&mut *self.pending.lock(), Pending::Dead);
         if let Pending::Queue(q) = &pending {
-            HANDS_LIVE.fetch_sub(q.hands.iter().filter_map(Slot::hand).count(), Ordering::Relaxed);
+            HANDS_LIVE.fetch_sub(
+                q.hands.iter().filter_map(Slot::hand).count(),
+                Ordering::Relaxed,
+            );
         }
         drop(pending);
         messenger::wipe(key(self, HoleDir::Pull));
@@ -159,9 +166,12 @@ pub(crate) fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, MailFail> {
         Pending::Dead => return Err(MailFail::Dead),
         Pending::Rung { .. } => return Err(MailFail::Busy),
     };
-    if q.hands.len() >= QUEUE_CAP { return Err(MailFail::Busy); }
+    if q.hands.len() >= QUEUE_CAP {
+        return Err(MailFail::Busy);
+    }
     q.hands.try_reserve(1).map_err(|_| MailFail::OoM)?;
-    let id = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+    let id = NEXT
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .map_err(|_| MailFail::OoM)?;
     q.hands.push_back(Slot::Reserved(id));
     Ok(Reservation { meta, id: Some(id) })
@@ -174,12 +184,19 @@ pub(crate) struct Reservation<'a> {
 }
 impl Reservation<'_> {
     pub(crate) fn commit(mut self, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(), MailFail> {
-        if buf.is_empty() { return Err(MailFail::Denied); }
+        if buf.is_empty() {
+            return Err(MailFail::Denied);
+        }
         let at = clock::uptime_ticks();
         {
             let mut pending = self.meta.pending.lock();
-            let Pending::Queue(q) = &mut *pending else { return Err(MailFail::Dead); };
-            let slot = q.hands.iter_mut().find(|slot| matches!(slot, Slot::Reserved(id) if Some(*id) == self.id))
+            let Pending::Queue(q) = &mut *pending else {
+                return Err(MailFail::Dead);
+            };
+            let slot = q
+                .hands
+                .iter_mut()
+                .find(|slot| matches!(slot, Slot::Reserved(id) if Some(*id) == self.id))
                 .ok_or(MailFail::Dead)?;
             *slot = Slot::Ready(Hand { from, buf, at });
             HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
@@ -191,12 +208,18 @@ impl Reservation<'_> {
 }
 impl Drop for Reservation<'_> {
     fn drop(&mut self) {
-        let Some(id) = self.id.take() else { return; };
+        let Some(id) = self.id.take() else {
+            return;
+        };
         let removed = {
             let mut pending = self.meta.pending.lock();
             match &mut *pending {
-                Pending::Queue(q) => q.hands.iter().position(|slot| matches!(slot, Slot::Reserved(known) if *known == id))
-                    .and_then(|at| q.hands.remove(at)).is_some(),
+                Pending::Queue(q) => q
+                    .hands
+                    .iter()
+                    .position(|slot| matches!(slot, Slot::Reserved(known) if *known == id))
+                    .and_then(|at| q.hands.remove(at))
+                    .is_some(),
                 _ => false,
             }
         };
@@ -237,7 +260,11 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
 pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Vec<u8>>)> {
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Queue(q) if q.taking => q.hands.front().and_then(Slot::hand).map(|h| (h.from, h.buf.clone())),
+        Pending::Queue(q) if q.taking => q
+            .hands
+            .front()
+            .and_then(Slot::hand)
+            .map(|h| (h.from, h.buf.clone())),
         _ => None,
     }
 }
@@ -260,7 +287,10 @@ pub(crate) fn taken(meta: &HoleMeta) {
         if let Pending::Queue(q) = &mut *pending {
             if q.taking {
                 q.taking = false;
-                off = q.hands.pop_front().and_then(|slot| match slot { Slot::Ready(hand) => Some(hand), Slot::Reserved(_) => None });
+                off = q.hands.pop_front().and_then(|slot| match slot {
+                    Slot::Ready(hand) => Some(hand),
+                    Slot::Reserved(_) => None,
+                });
             }
         }
     }
@@ -302,7 +332,11 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> 
     let pending = meta.pending.lock();
     match &*pending {
         Pending::Queue(q) => match q.hands.front().and_then(Slot::hand) {
-            Some(hand) => Ok((hand.buf.len(), hand.from, q.hands.iter().filter_map(Slot::hand).count())),
+            Some(hand) => Ok((
+                hand.buf.len(),
+                hand.from,
+                q.hands.iter().filter_map(Slot::hand).count(),
+            )),
             None => Err(MailFail::Busy),
         },
         _ => Err(MailFail::Busy),
@@ -331,7 +365,10 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
         let mut pending = meta.pending.lock();
         match &mut *pending {
             Pending::Queue(q) if q.hands.is_empty() && !q.taking => {
-                *pending = Pending::Rung { count: 1, spare: core::mem::take(&mut q.hands) };
+                *pending = Pending::Rung {
+                    count: 1,
+                    spare: core::mem::take(&mut q.hands),
+                };
             }
             Pending::Rung { count, .. } if *count < RING_CAP => {
                 *count += 1;
@@ -353,7 +390,10 @@ pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
     match &mut *pending {
         Pending::Rung { count, .. } if *count > 1 => *count -= 1,
         Pending::Rung { spare, .. } => {
-            *pending = Pending::Queue(Queue { hands: core::mem::take(spare), taking: false });
+            *pending = Pending::Queue(Queue {
+                hands: core::mem::take(spare),
+                taking: false,
+            });
         }
         _ => return Err(MailFail::Busy),
     }

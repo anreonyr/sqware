@@ -14,7 +14,11 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub(crate) fn command(assembly: &mut crate::harness::probe::fixture::Fixture, task: env::TaskId, code: u8) {
+pub(crate) fn command(
+    assembly: &mut crate::harness::probe::fixture::Fixture,
+    task: env::TaskId,
+    code: u8,
+) {
     use env::Wait;
     use env::wire::Span as _;
     use protocol::communication::session::establish;
@@ -29,16 +33,23 @@ pub(crate) fn command(assembly: &mut crate::harness::probe::fixture::Fixture, ta
         .unwrap();
     let until = runtime::env::chrono::clock() + 10_000_000_000;
     loop {
-        assembly.progress()
-            .expect("hierarchy progress");
+        assembly.progress().expect("hierarchy progress");
         if code == 5 {
             use protocol::system::control::publication::{Frame, Object, REF, Reply};
             let fake = establish::find(me, REF).unwrap();
             let mut request = [0; Frame::LEN];
             if let Ok((n, _)) = HolePie::from_token(fake).pull(&mut request, Wait::POLL) {
                 let frame = Frame::take(&request[..n]).unwrap();
-                let wrong =
-                    env::TaskId::new(assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap().authority().unwrap().get() + 10000);
+                let wrong = env::TaskId::new(
+                    assembly
+                        .resources
+                        .read::<crate::system::identity::serve::install::Roster>()
+                        .unwrap()
+                        .authority()
+                        .unwrap()
+                        .get()
+                        + 10000,
+                );
                 let reply = Reply::object(Object::Principal(
                     protocol::system::identity::PrincipalId::new(wrong, 0),
                 ));
@@ -53,7 +64,12 @@ pub(crate) fn command(assembly: &mut crate::harness::probe::fixture::Fixture, ta
         if let Ok((1, from)) = HolePie::from_token(answer).pull(&mut bytes, Wait::POLL) {
             assert_eq!(
                 from,
-                assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().task("system-dependent").unwrap()
+                assembly
+                    .resources
+                    .read::<crate::system::control::serve::unit::Control>()
+                    .unwrap()
+                    .task("system-dependent")
+                    .unwrap()
             );
             assert_eq!(bytes[0], code);
             break;
@@ -75,10 +91,10 @@ pub(crate) fn exercise(
 ) -> protocol::system::identity::CoalitionId {
     use env::Wait;
     use protocol::communication::session::establish;
+    use protocol::system::control::publication::Object;
     use protocol::system::identity::client::{Face, Installer, Organization};
     use protocol::system::identity::{Grant, Install, Reply, Selector, Subject, Wire};
     use protocol::system::operator::{Fail, Permit};
-    use protocol::system::control::publication::Object;
     use runtime::env::mail::{self, HolePie};
     let wait = Wait::AtMost(3000);
     let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
@@ -104,27 +120,174 @@ pub(crate) fn exercise(
     .unwrap();
     let coalition = organization.found(wait).unwrap();
     organization.admit(coalition, p, wait).unwrap();
-    assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap()
+    assembly
+        .resources
+        .read::<crate::system::identity::serve::install::Roster>()
+        .unwrap()
         .activate(service, coalition)
         .unwrap();
-    assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap().activate(target, coalition).unwrap();
+    assembly
+        .resources
+        .read::<crate::system::identity::serve::install::Roster>()
+        .unwrap()
+        .activate(target, coalition)
+        .unwrap();
     {
-        { let registration = crate::system::identity::serve::names::Registration { name: ("named-subject").into(), object: Object::Principal(p), lifetime: None }; crate::system::identity::serve::query::validate(&assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap(), registration.object).map_err(|_| "identity alias source").and_then(|_| assembly.resources.write::<crate::system::identity::serve::names::Names>().unwrap().register(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), registration)) }
-            .unwrap();
-        { let registration = crate::system::identity::serve::names::Registration { name: ("named-league").into(), object: Object::Coalition(coalition), lifetime: None }; crate::system::identity::serve::query::validate(&assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap(), registration.object).map_err(|_| "identity alias source").and_then(|_| assembly.resources.write::<crate::system::identity::serve::names::Names>().unwrap().register(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), registration)) }
-            .unwrap();
-        { let registration = crate::system::identity::serve::names::Registration { name: ("named-league").into(), object: Object::Coalition(coalition), lifetime: None }; crate::system::identity::serve::query::validate(&assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap(), registration.object).map_err(|_| "identity alias source").and_then(|_| assembly.resources.write::<crate::system::identity::serve::names::Names>().unwrap().register(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), registration)) }
-            .unwrap();
+        {
+            let registration = crate::system::identity::serve::names::Registration {
+                name: ("named-subject").into(),
+                object: Object::Principal(p),
+                lifetime: None,
+            };
+            crate::system::identity::serve::query::validate(
+                &assembly
+                    .resources
+                    .read::<crate::system::identity::serve::install::Roster>()
+                    .unwrap(),
+                registration.object,
+            )
+            .map_err(|_| "identity alias source")
+            .and_then(|_| {
+                assembly
+                    .resources
+                    .write::<crate::system::identity::serve::names::Names>()
+                    .unwrap()
+                    .register(
+                        &mut assembly
+                            .resources
+                            .write::<crate::system::operator::serve::install::Tree>()
+                            .unwrap(),
+                        registration,
+                    )
+            })
+        }
+        .unwrap();
+        {
+            let registration = crate::system::identity::serve::names::Registration {
+                name: ("named-league").into(),
+                object: Object::Coalition(coalition),
+                lifetime: None,
+            };
+            crate::system::identity::serve::query::validate(
+                &assembly
+                    .resources
+                    .read::<crate::system::identity::serve::install::Roster>()
+                    .unwrap(),
+                registration.object,
+            )
+            .map_err(|_| "identity alias source")
+            .and_then(|_| {
+                assembly
+                    .resources
+                    .write::<crate::system::identity::serve::names::Names>()
+                    .unwrap()
+                    .register(
+                        &mut assembly
+                            .resources
+                            .write::<crate::system::operator::serve::install::Tree>()
+                            .unwrap(),
+                        registration,
+                    )
+            })
+        }
+        .unwrap();
+        {
+            let registration = crate::system::identity::serve::names::Registration {
+                name: ("named-league").into(),
+                object: Object::Coalition(coalition),
+                lifetime: None,
+            };
+            crate::system::identity::serve::query::validate(
+                &assembly
+                    .resources
+                    .read::<crate::system::identity::serve::install::Roster>()
+                    .unwrap(),
+                registration.object,
+            )
+            .map_err(|_| "identity alias source")
+            .and_then(|_| {
+                assembly
+                    .resources
+                    .write::<crate::system::identity::serve::names::Names>()
+                    .unwrap()
+                    .register(
+                        &mut assembly
+                            .resources
+                            .write::<crate::system::operator::serve::install::Tree>()
+                            .unwrap(),
+                        registration,
+                    )
+            })
+        }
+        .unwrap();
         let other = organization.found(wait).unwrap();
         assert!(
-            { let registration = crate::system::identity::serve::names::Registration { name: ("named-league").into(), object: Object::Coalition(other), lifetime: None }; crate::system::identity::serve::query::validate(&assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap(), registration.object).map_err(|_| "identity alias source").and_then(|_| assembly.resources.write::<crate::system::identity::serve::names::Names>().unwrap().register(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), registration)) }
-                .is_err()
+            {
+                let registration = crate::system::identity::serve::names::Registration {
+                    name: ("named-league").into(),
+                    object: Object::Coalition(other),
+                    lifetime: None,
+                };
+                crate::system::identity::serve::query::validate(
+                    &assembly
+                        .resources
+                        .read::<crate::system::identity::serve::install::Roster>()
+                        .unwrap(),
+                    registration.object,
+                )
+                .map_err(|_| "identity alias source")
+                .and_then(|_| {
+                    assembly
+                        .resources
+                        .write::<crate::system::identity::serve::names::Names>()
+                        .unwrap()
+                        .register(
+                            &mut assembly
+                                .resources
+                                .write::<crate::system::operator::serve::install::Tree>()
+                                .unwrap(),
+                            registration,
+                        )
+                })
+            }
+            .is_err()
         );
         assert!(
-            { let registration = crate::system::identity::serve::names::Registration { name: ("bad/name").into(), object: Object::Principal(p), lifetime: None }; crate::system::identity::serve::query::validate(&assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap(), registration.object).map_err(|_| "identity alias source").and_then(|_| assembly.resources.write::<crate::system::identity::serve::names::Names>().unwrap().register(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), registration)) }
-                .is_err()
+            {
+                let registration = crate::system::identity::serve::names::Registration {
+                    name: ("bad/name").into(),
+                    object: Object::Principal(p),
+                    lifetime: None,
+                };
+                crate::system::identity::serve::query::validate(
+                    &assembly
+                        .resources
+                        .read::<crate::system::identity::serve::install::Roster>()
+                        .unwrap(),
+                    registration.object,
+                )
+                .map_err(|_| "identity alias source")
+                .and_then(|_| {
+                    assembly
+                        .resources
+                        .write::<crate::system::identity::serve::names::Names>()
+                        .unwrap()
+                        .register(
+                            &mut assembly
+                                .resources
+                                .write::<crate::system::operator::serve::install::Tree>()
+                                .unwrap(),
+                            registration,
+                        )
+                })
+            }
+            .is_err()
         );
-        assembly.resources.write::<crate::system::control::serve::resource::Resources>().unwrap().approve(crate::system::control::serve::resource::Approval {
+        assembly
+            .resources
+            .write::<crate::system::control::serve::resource::Resources>()
+            .unwrap()
+            .approve(crate::system::control::serve::resource::Approval {
                 service,
                 task: target,
                 kind: "test".into(),
@@ -133,7 +296,11 @@ pub(crate) fn exercise(
             })
             .unwrap();
         for i in 0..33 {
-            assembly.resources.write::<crate::system::control::serve::resource::Resources>().unwrap().approve(crate::system::control::serve::resource::Approval {
+            assembly
+                .resources
+                .write::<crate::system::control::serve::resource::Resources>()
+                .unwrap()
+                .approve(crate::system::control::serve::resource::Approval {
                     service,
                     task: target,
                     kind: "full".into(),
@@ -143,7 +310,21 @@ pub(crate) fn exercise(
                 .unwrap();
         }
         let source = mail::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
-        assembly.resources.write::<crate::system::control::core::publication::Publications>().unwrap().internal(&mut assembly.resources.write::<crate::system::operator::serve::install::Tree>().unwrap(), &crate::system::control::serve::publication::Internal { road: (protocol::common::path::Path::new("svc/fixtures/stale")).to_path_buf(), entry: source, access: (Permit::Identity(Selector::MemberOf(coalition)), me) })
+        assembly
+            .resources
+            .write::<crate::system::control::core::publication::Publications>()
+            .unwrap()
+            .internal(
+                &mut assembly
+                    .resources
+                    .write::<crate::system::operator::serve::install::Tree>()
+                    .unwrap(),
+                &crate::system::control::serve::publication::Internal {
+                    road: (protocol::common::path::Path::new("svc/fixtures/stale")).to_path_buf(),
+                    entry: source,
+                    access: (Permit::Identity(Selector::MemberOf(coalition)), me),
+                },
+            )
             .unwrap();
     }
     standalone_mutations(assembly);
@@ -167,7 +348,11 @@ pub(crate) fn exercise(
     command(assembly, target, 5);
     let _ = mail::seal(fake);
     let _ = mail::release(fake);
-    let service_road = assembly.resources.read::<crate::system::control::serve::resource::Resources>().unwrap().runtime_road(service)
+    let service_road = assembly
+        .resources
+        .read::<crate::system::control::serve::resource::Resources>()
+        .unwrap()
+        .runtime_road(service)
         .unwrap();
     let same = service_road
         .try_join("hole")
@@ -201,9 +386,18 @@ pub(crate) fn exercise(
     );
     organization.expel(coalition, p, wait).unwrap();
     command(assembly, target, 2);
-    let target_road = assembly.resources.read::<crate::system::control::serve::resource::Resources>().unwrap().runtime_road(target)
+    let target_road = assembly
+        .resources
+        .read::<crate::system::control::serve::resource::Resources>()
+        .unwrap()
+        .runtime_road(target)
         .unwrap();
-    assembly.action("system-child", crate::system::control::serve::lifecycle::Action::Ruin).expect("hierarchy: scheduled ruin");
+    assembly
+        .action(
+            "system-child",
+            crate::system::control::serve::lifecycle::Action::Ruin,
+        )
+        .expect("hierarchy: scheduled ruin");
     assert!(runtime::env::unit::join(target, wait).unwrap_or(true));
     assembly.progress().unwrap();
     assert!(matches!(
@@ -211,14 +405,56 @@ pub(crate) fn exercise(
         Err(Fail::Unknown)
     ));
     command(assembly, target, 3);
-    assembly.action("system-child", crate::system::control::serve::lifecycle::Action::Mint).unwrap();
-    let failed_task = assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().task("system-child").unwrap();
-    assembly.resources.write::<super::fixture::Fault>().unwrap().armed = true;
-    assert!(assembly.action("system-child", crate::system::control::serve::lifecycle::Action::Embark { parent: Some(service) }).is_err());
-    let prepared = assembly.resources.read::<super::fixture::Fault>().unwrap().road.clone().expect("injected failure must follow runtime preparation");
-    assert!(assembly.resources.read::<crate::system::control::serve::resource::Resources>().unwrap().runtime_road(failed_task).is_none());
-    assert!(matches!(operator.root().tile(&prepared, wait), Err(Fail::Unknown)));
-    assert!(matches!(face(Grant::Resolve).call(Wire::Resolve(failed_task), wait), Ok(Reply::Binding(None))));
+    assembly
+        .action(
+            "system-child",
+            crate::system::control::serve::lifecycle::Action::Mint,
+        )
+        .unwrap();
+    let failed_task = assembly
+        .resources
+        .read::<crate::system::control::serve::unit::Control>()
+        .unwrap()
+        .task("system-child")
+        .unwrap();
+    assembly
+        .resources
+        .write::<super::fixture::Fault>()
+        .unwrap()
+        .armed = true;
+    assert!(
+        assembly
+            .action(
+                "system-child",
+                crate::system::control::serve::lifecycle::Action::Embark {
+                    parent: Some(service)
+                }
+            )
+            .is_err()
+    );
+    let prepared = assembly
+        .resources
+        .read::<super::fixture::Fault>()
+        .unwrap()
+        .road
+        .clone()
+        .expect("injected failure must follow runtime preparation");
+    assert!(
+        assembly
+            .resources
+            .read::<crate::system::control::serve::resource::Resources>()
+            .unwrap()
+            .runtime_road(failed_task)
+            .is_none()
+    );
+    assert!(matches!(
+        operator.root().tile(&prepared, wait),
+        Err(Fail::Unknown)
+    ));
+    assert!(matches!(
+        face(Grant::Resolve).call(Wire::Resolve(failed_task), wait),
+        Ok(Reply::Binding(None))
+    ));
     protocol::debug::put(
         "hierarchy: failed launch after identity/runtime preparation compensates bind and directories",
     );
@@ -226,10 +462,10 @@ pub(crate) fn exercise(
 }
 
 pub fn codecs() {
-    use env::{PieToken, TaskId};
     use env::wire::Span as _;
-    use protocol::system::operator::{EntryId, Permit, Tip, TipIn};
+    use env::{PieToken, TaskId};
     use protocol::system::control::publication::{Frame, Object, Reply, Scope, Target};
+    use protocol::system::operator::{EntryId, Permit, Tip, TipIn};
     let a = TaskId::new(77);
     let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
     let p = protocol::system::identity::PrincipalId::new(a, 19);
@@ -450,8 +686,8 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use protocol::system::operator::{Fail, Permit};
     use protocol::system::control::publication::{Client, ENTRY, Frame, Scope, Target};
+    use protocol::system::operator::{Fail, Permit};
     use runtime::core::res::port::{self, Access, Policy};
     use runtime::env::mail::{self, HolePie};
     let done = Arc::new(AtomicBool::new(false));
@@ -487,7 +723,11 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         );
         complete.store(true, Ordering::Release);
     });
-    let entry = assembly.resources.read::<crate::system::control::serve::start::Images>().unwrap().entry;
+    let entry = assembly
+        .resources
+        .read::<crate::system::control::serve::start::Images>()
+        .unwrap()
+        .entry;
     port::ship(
         &HolePie::from_token(entry),
         caller.id(),
@@ -528,7 +768,12 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     use runtime::core::res::port::{self, Access, Policy};
     use runtime::env::mail::HolePie;
     let control = runtime::env::unit::self_id();
-    let host = assembly.resources.read::<crate::system::operator::serve::install::Tree>().unwrap().host().unwrap();
+    let host = assembly
+        .resources
+        .read::<crate::system::operator::serve::install::Tree>()
+        .unwrap()
+        .host()
+        .unwrap();
     for grant in [Grant::Part, Grant::Trim] {
         let done = Arc::new(AtomicBool::new(false));
         let complete = done.clone();
@@ -577,7 +822,10 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 .unwrap();
             complete.store(true, Ordering::Release);
         });
-        assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap()
+        assembly
+            .resources
+            .read::<crate::system::identity::serve::install::Roster>()
+            .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
         let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
@@ -591,7 +839,12 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         released.store(true, Ordering::Release);
         let until = runtime::env::chrono::clock() + 10_000_000_000;
         while !done.load(Ordering::Acquire) {
-            assembly.resources.write::<crate::system::operator::serve::install::Connections>().unwrap().0.push(caller.id());
+            assembly
+                .resources
+                .write::<crate::system::operator::serve::install::Connections>()
+                .unwrap()
+                .0
+                .push(caller.id());
             assembly.progress().unwrap();
             assert!(
                 runtime::env::chrono::clock() < until,
@@ -601,7 +854,12 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         }
         let caller_id = caller.id();
         caller.join();
-        assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap().unbind(caller_id).unwrap();
+        assembly
+            .resources
+            .read::<crate::system::identity::serve::install::Roster>()
+            .unwrap()
+            .unbind(caller_id)
+            .unwrap();
     }
     protocol::debug::put(
         "hierarchy: standalone Part/Trim deny bound same-subject callers; private Plate still requires actual Control sender",
