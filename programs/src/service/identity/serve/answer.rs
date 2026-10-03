@@ -1,11 +1,15 @@
 //! Face admission precedes every state read or write.
+use crate::service::identity::core::{Anchor, IdentityBook};
 use env::TaskId;
 use protocol::service::identity::{Fail, Grant, PageTarget, Reply, Wire};
-use crate::service::identity::core::{Anchor, IdentityBook};
 
 pub fn answer(book: &mut IdentityBook, from: TaskId, grant: Grant, wire: Option<Wire>) -> Reply {
-    let Some(wire) = wire else { return Reply::Fail(Fail::Bad); };
-    if Grant::for_wire(&wire) != grant { return Reply::Fail(Fail::Denied); }
+    let Some(wire) = wire else {
+        return Reply::Fail(Fail::Bad);
+    };
+    if Grant::for_wire(&wire) != grant {
+        return Reply::Fail(Fail::Denied);
+    }
     let result = match wire {
         Wire::Resolve(task) => Ok(Reply::Binding(book.resolve(task))),
         Wire::Matches(task, selector) => book.matches(task, selector).map(Reply::Match),
@@ -13,8 +17,12 @@ pub fn answer(book: &mut IdentityBook, from: TaskId, grant: Grant, wire: Option<
         Wire::Sire(p) => book.sire(p).map(Reply::Principal),
         Wire::Heir(a, b) => book.heir(a, b).map(Reply::Bool),
         Wire::Amid(p, c) => book.amid(p, c).map(Reply::Bool),
-        Wire::Members(c, cursor) => book.page(PageTarget::Members(c), cursor).map(Reply::Members),
-        Wire::Memberships(p, cursor) => book.page(PageTarget::Memberships(p), cursor).map(Reply::Memberships),
+        Wire::Members(c, cursor) => book
+            .page(PageTarget::Members(c), cursor)
+            .map(Reply::Members),
+        Wire::Memberships(p, cursor) => book
+            .page(PageTarget::Memberships(p), cursor)
+            .map(Reply::Memberships),
         Wire::Adopt(s) => book.narrow_own(from, s, Anchor::Keep).map(|()| Reply::Unit),
         Wire::Waive => book.waive(from).map(|()| Reply::Unit),
         Wire::Restrict(s) => book.narrow_own(from, s, Anchor::Move).map(|()| Reply::Unit),

@@ -8,8 +8,8 @@ use core::time::Duration;
 
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use protocol::communication::session::establish;
-use protocol::service::identity::{Grant, Install, PrincipalId, Subject};
 use protocol::service::identity::client::Installer;
+use protocol::service::identity::{Grant, Install, PrincipalId, Subject};
 use protocol::service::operator::Permit;
 use runtime::core::res::port;
 use runtime::env::{mail, room, unit};
@@ -50,26 +50,34 @@ impl Roster {
             };
         };
         let root = PrincipalId::root(installer.authority());
-        let principal = installer.derive(root, Wait::AtMost(BOOT_MS))
+        let principal = installer
+            .derive(root, Wait::AtMost(BOOT_MS))
             .map_err(|_| "derive unit identity")?;
         let subject = Subject::new(principal, &[]).map_err(|_| "unit subject")?;
-        installer.bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
+        installer
+            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
             .map_err(|_| "authorize unit identity")?;
         self.inject(task)
     }
 
     pub fn inherit(&self, task: TaskId, parent: TaskId) -> Result<(), &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
-        installer.bind(task, Install::Inherit { parent }, Wait::AtMost(BOOT_MS))
+        installer
+            .bind(task, Install::Inherit { parent }, Wait::AtMost(BOOT_MS))
             .map_err(|_| "inherit identity")?;
         self.inject(task)
     }
 
     fn inject(&self, task: TaskId) -> Result<(), &'static str> {
         let resolve = self.resolve.ok_or("identity authority anchor")?;
-        port::ship(&mail::HolePie::from_token(resolve), task,
-            Access::STORE | Access::FETCH, Policy::NONE)
-            .map(|_| ()).map_err(|_| "inject identity authority")
+        port::ship(
+            &mail::HolePie::from_token(resolve),
+            task,
+            Access::STORE | Access::FETCH,
+            Policy::NONE,
+        )
+        .map(|_| ())
+        .map_err(|_| "inject identity authority")
     }
 
     /// Explicit device grant, never a reset of a task's attenuated binding.
@@ -78,16 +86,21 @@ impl Roster {
         task: TaskId,
         coalition: protocol::service::identity::CoalitionId,
     ) -> Result<(), &'static str> {
-        use protocol::service::identity::{Reply, Wire, limits::MAX_ACTIVE_COALITIONS};
         use protocol::service::identity::client::Face;
+        use protocol::service::identity::{Reply, Wire, limits::MAX_ACTIVE_COALITIONS};
 
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let authority = installer.authority();
-        let resolve = Face::direct(authority, Grant::Resolve,
-            self.resolve.ok_or("identity authority anchor")?)
-            .map_err(|_| "identity resolve source")?;
-        let Reply::Binding(Some(binding)) = resolve.call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "device identity resolve")? else {
+        let resolve = Face::direct(
+            authority,
+            Grant::Resolve,
+            self.resolve.ok_or("identity authority anchor")?,
+        )
+        .map_err(|_| "identity resolve source")?;
+        let Reply::Binding(Some(binding)) = resolve
+            .call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
+            .map_err(|_| "device identity resolve")?
+        else {
             return Err("device identity unbound");
         };
         if binding.origin != binding.current || coalition.authority != authority {
@@ -96,8 +109,13 @@ impl Roster {
         let subject = binding.current;
         let amid = Face::direct(authority, Grant::Amid, face_of(authority, Grant::Amid)?)
             .map_err(|_| "identity amid source")?;
-        if amid.call(Wire::Amid(subject.principal, coalition), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "device qualification query")? != Reply::Bool(true)
+        if amid
+            .call(
+                Wire::Amid(subject.principal, coalition),
+                Wait::AtMost(BOOT_MS),
+            )
+            .map_err(|_| "device qualification query")?
+            != Reply::Bool(true)
         {
             return Err("device identity not eligible");
         }
@@ -112,7 +130,8 @@ impl Roster {
         ids[..len].copy_from_slice(subject.coalitions.as_slice());
         let subject = Subject::new(subject.principal, &ids[..len + 1])
             .map_err(|_| "device identity subject")?;
-        installer.bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
+        installer
+            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
             .map_err(|_| "device identity activate")
     }
 
@@ -120,7 +139,9 @@ impl Roster {
         let Some(installer) = self.installer.as_ref() else {
             return Ok(());
         };
-        installer.unbind(task, Wait::AtMost(BOOT_MS)).map_err(|_| "unbind identity")
+        installer
+            .unbind(task, Wait::AtMost(BOOT_MS))
+            .map_err(|_| "unbind identity")
     }
 }
 
@@ -158,39 +179,70 @@ pub(crate) fn install(
     }
     let face = |grant: Grant| faces[grant.index()].ok_or("identity face missing");
     let installer = Installer::direct(
-        authority, face(Grant::Bind)?, face(Grant::Unbind)?, face(Grant::Derive)?,
-    ).map_err(|_| "identity installer source")?;
+        authority,
+        face(Grant::Bind)?,
+        face(Grant::Unbind)?,
+        face(Grant::Derive)?,
+    )
+    .map_err(|_| "identity installer source")?;
     let root = PrincipalId::root(authority);
     let mut control = None;
-    for task in [Some(unit::self_id()), tree.host(), Some(authority)].into_iter().flatten() {
-        let principal = installer.derive(root, Wait::AtMost(BOOT_MS))
+    for task in [Some(unit::self_id()), tree.host(), Some(authority)]
+        .into_iter()
+        .flatten()
+    {
+        let principal = installer
+            .derive(root, Wait::AtMost(BOOT_MS))
             .map_err(|_| "derive bootstrap identity")?;
         let subject = Subject::new(principal, &[]).map_err(|_| "bootstrap subject")?;
-        installer.bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
+        installer
+            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
             .map_err(|_| "bind bootstrap identity")?;
         if task == unit::self_id() {
             control = Some(principal);
         }
     }
     let control = control.ok_or("control identity missing")?;
-    tree.wire(authority, face(Grant::Resolve)?, face(Grant::Matches)?, face(Grant::Same)?)?;
+    tree.wire(
+        authority,
+        face(Grant::Resolve)?,
+        face(Grant::Matches)?,
+        face(Grant::Same)?,
+    )?;
     for grant in Grant::ALL {
         let permit = match grant.mount() {
             protocol::service::identity::Mount::Public => Permit::Public,
             protocol::service::identity::Mount::Bound => Permit::Bound,
-            protocol::service::identity::Mount::Installer =>
-                Permit::Identity(protocol::service::identity::Selector::Exact(control)),
+            protocol::service::identity::Mount::Installer => {
+                Permit::Identity(protocol::service::identity::Selector::Exact(control))
+            }
         };
-        let road = protocol::service::identity::DIR.try_join(grant.name()).ok_or("identity face path")?;
-        control_state.hierarchy.borrow_mut().internal(tree, road.as_path(), face(grant)?, permit, authority, Some(authority))?;
+        let road = protocol::service::identity::DIR
+            .try_join(grant.name())
+            .ok_or("identity face path")?;
+        control_state.hierarchy.borrow_mut().internal(
+            tree,
+            road.as_path(),
+            face(grant)?,
+            permit,
+            authority,
+            Some(authority),
+        )?;
     }
     control_state.roster = Roster {
-        installer: Some(installer), control: Some(control), resolve: Some(face(Grant::Resolve)?),
+        installer: Some(installer),
+        control: Some(control),
+        resolve: Some(face(Grant::Resolve)?),
     };
     control_state.progress(tree)?;
     let principal = control_state.roster.control().ok_or("control identity")?;
-    control_state.hierarchy.borrow_mut().register(control_state, tree, "control",
-        protocol::system::control::publication::Object::Principal(principal), None)?;
+    control_state.hierarchy.borrow_mut().register(
+        control_state,
+        tree,
+        "control",
+        protocol::system::control::publication::Object::Principal(principal),
+        None,
+    )?;
     protocol::debug::put("system: identity installed; 17 source-checked faces published");
     Ok(())
 }

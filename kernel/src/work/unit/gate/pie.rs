@@ -12,7 +12,12 @@ use crate::work::unit::task::Task;
 
 pub(crate) trait Mail: Send + Sync + 'static {
     fn alive(&self) -> bool;
-    fn permit(&self, _permission: Permission) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> { Ok(None) }
+    fn permit(
+        &self,
+        _permission: Permission,
+    ) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
+        Ok(None)
+    }
 }
 
 impl Mail for HoleMeta {
@@ -22,8 +27,14 @@ impl Mail for HoleMeta {
 }
 
 impl Mail for PoleMeta {
-    fn permit(&self, permission: Permission) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
-        self.backing().try_permit(permission).map(Some).map_err(|_| env::PieFail::OoM)
+    fn permit(
+        &self,
+        permission: Permission,
+    ) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
+        self.backing()
+            .try_permit(permission)
+            .map(Some)
+            .map_err(|_| env::PieFail::OoM)
     }
     fn alive(&self) -> bool {
         PoleMeta::alive(self)
@@ -123,7 +134,9 @@ where
 
 impl<T: PieType> Pie<T> {
     pub(crate) fn permission(&self) -> Permission {
-        self.permit.as_ref().map_or(self.permission, |permit| permit.permission())
+        self.permit
+            .as_ref()
+            .map_or(self.permission, |permit| permit.permission())
     }
     pub(crate) fn meta(&self) -> &Arc<T::Mail> {
         &self.meta
@@ -156,7 +169,11 @@ pub enum AnyPie {
 
 impl AnyPie {
     pub(crate) fn invalidate(&self) {
-        if let Self::Pole(p) = self { if let Some(permit) = &p.permit { permit.invalidate(); } }
+        if let Self::Pole(p) = self {
+            if let Some(permit) = &p.permit {
+                permit.invalidate();
+            }
+        }
     }
     pub fn permission(&self) -> Permission {
         match self {
@@ -258,11 +275,20 @@ pub(crate) fn new_pie<T: PieType>(
     try_new_pie(meta, mark, permission, sire).expect("pie: allocation")
 }
 
-pub(crate) fn try_new_pie<T: PieType>(meta: Arc<T::Mail>, mark: T::Mark,
-    permission: Permission, sire: Option<PieToken>) -> Result<Pie<T>, env::PieFail> {
+pub(crate) fn try_new_pie<T: PieType>(
+    meta: Arc<T::Mail>,
+    mark: T::Mark,
+    permission: Permission,
+    sire: Option<PieToken>,
+) -> Result<Pie<T>, env::PieFail> {
     Ok(Pie {
         permit: meta.permit(permission)?,
-        permission, sire, heir: None, token: alloc_id(), mark, meta,
+        permission,
+        sire,
+        heir: None,
+        token: alloc_id(),
+        mark,
+        meta,
     })
 }
 

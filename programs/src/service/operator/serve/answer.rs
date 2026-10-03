@@ -25,8 +25,18 @@ use super::watch::{Watchers, event_at};
 ///
 /// 路从**号**现走（`road_to`），剪掉那一档例外——它的路在剪之前就记在 `Change` 里了。
 /// 走不出路（号不在树上）就**不发**：一条路是假的事件比没有更坏。
-pub(super) fn changed(tree: &Operator, watchers: &mut Watchers, change: &crate::service::operator::core::Change) {
-    let Some(ev) = event_at(tree, change.kind, change.id, change.owner, change.road.clone()) else {
+pub(super) fn changed(
+    tree: &Operator,
+    watchers: &mut Watchers,
+    change: &crate::service::operator::core::Change,
+) {
+    let Some(ev) = event_at(
+        tree,
+        change.kind,
+        change.id,
+        change.owner,
+        change.road.clone(),
+    ) else {
         debug!("operator: watch event unsigned id={}", change.id.get());
         return;
     };
@@ -54,8 +64,10 @@ pub(super) fn answer(
             return ocall::Union::Status(ocall::DENIED);
         }
     }
-    if matches!(ask, ocall::Wire::Part { .. } | ocall::Wire::Land { .. } | ocall::Wire::Trim(_))
-        && who != runtime::env::unit::sire()
+    if matches!(
+        ask,
+        ocall::Wire::Part { .. } | ocall::Wire::Land { .. } | ocall::Wire::Trim(_)
+    ) && who != runtime::env::unit::sire()
     {
         return ocall::Union::Status(ocall::DENIED);
     }

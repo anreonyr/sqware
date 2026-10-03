@@ -82,7 +82,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 None => return Outcome::fail(frame, UnitFail::Denied),
             };
             let caller = current().running_task();
-            let result = crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
+            let result =
+                crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
             match result {
                 Ok(task) => frame.gpr.set_x(Gprs::A0, task.ident.id.get()),
                 Err(error) => return Outcome::fail(frame, error),

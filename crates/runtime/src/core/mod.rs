@@ -10,6 +10,6 @@
 //! 编帧解帧、一问一答、开会话的握手都在 `crates/protocol`（它们的消费者在那里）。
 
 pub mod exit;
+pub mod loader;
 pub mod res;
 pub mod task;
-pub mod loader;

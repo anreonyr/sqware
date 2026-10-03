@@ -6,8 +6,8 @@ pub mod grant;
 pub mod limits;
 
 pub use client::{CallError, Installer, Organization, Query, SelfOps, TaskQuery};
+pub use frame::vocab::*;
 pub use frame::{BACK, Fail, Reply, Wire};
 pub use grant::{Grant, Mount, grant_of};
-pub use frame::vocab::*;
 
 pub const DIR: &crate::common::path::Path = crate::common::path::Path::new(frame::DIR);

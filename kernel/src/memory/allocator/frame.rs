@@ -385,7 +385,8 @@ pub fn allocator() -> &'static dyn Allocator {
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
         // Reserve the allocator itself before calculating the first free frame.
-        let mut slot = Box::<FrameAllocator>::try_new_uninit().map_err(|_| InitError::OutOfMemory)?;
+        let mut slot =
+            Box::<FrameAllocator>::try_new_uninit().map_err(|_| InitError::OutOfMemory)?;
         slot.write(FrameAllocator::init()?);
         // SAFETY: initialization filled the reserved slot.
         let heap = Box::leak(unsafe { slot.assume_init() });

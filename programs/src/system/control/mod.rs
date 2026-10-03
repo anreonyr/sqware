@@ -24,8 +24,8 @@ use self::enroll as assemble;
 use crate::system::common::life::{service, verdict as core};
 
 pub mod enroll;
-pub mod supervise;
 pub(crate) mod hierarchy;
+pub mod supervise;
 
 pub use crate::unit::Died;
 
@@ -172,14 +172,21 @@ impl Control {
         let mut pending = self.pending.remove(at);
         let program = program_of(pending.name).ok_or(Fail::Unknown)?;
         let released = (|| {
-            self.roster.inherit(pending.service.0, requester).map_err(|_| Fail::NotReady)?;
+            self.roster
+                .inherit(pending.service.0, requester)
+                .map_err(|_| Fail::NotReady)?;
             progress(self).map_err(|_| Fail::NotReady)?;
             assemble::connect_all(program, &mut pending.service).map_err(|_| Fail::NotReady)?;
             let method = pending.name.to_string();
             self.launch(program, method.clone(), &mut pending.service)
                 .map_err(|_| Fail::NotReady)?;
-            self.ready(method, &mut pending.service, program.supply(), &mut progress)
-                .map_err(|_| Fail::NotReady)
+            self.ready(
+                method,
+                &mut pending.service,
+                program.supply(),
+                &mut progress,
+            )
+            .map_err(|_| Fail::NotReady)
         })();
         if let Err(fail) = released {
             self.discard(pending.name, pending.service.0);
@@ -194,7 +201,9 @@ impl Control {
         task: TaskId,
         program: &UnitFile,
     ) -> Result<(), &'static str> {
-        self.static_tasks.try_reserve(1).map_err(|_| "static identity capacity")?;
+        self.static_tasks
+            .try_reserve(1)
+            .map_err(|_| "static identity capacity")?;
         self.roster.authorize(task, program)?;
         self.static_tasks.push(task);
         Ok(())
@@ -204,24 +213,35 @@ impl Control {
     pub(crate) fn replace_identity(
         &mut self,
         tree: &mut crate::service::operator::bridge::Tree,
-        refresh: impl Fn(&Control, &mut crate::service::operator::bridge::Tree)
-            -> Result<(), &'static str>,
+        refresh: impl Fn(
+            &Control,
+            &mut crate::service::operator::bridge::Tree,
+        ) -> Result<(), &'static str>,
     ) -> Result<(), &'static str> {
         let scene = crate::system::run::scene::programs(&self.catalog).map_err(|e| e.said())?;
         let mut restart = Vec::new();
-        restart.try_reserve(scene.len()).map_err(|_| "replacement capacity")?;
+        restart
+            .try_reserve(scene.len())
+            .map_err(|_| "replacement capacity")?;
         for program in scene {
             if program.name() == "operator" {
                 continue;
             }
-            if program.name() == "identity" || (self.table.find(program.name())
-                .is_some_and(|row| matches!(row.state, State::Starting | State::Ready))
-                && self.task(program.name()).is_some_and(|task| self.static_tasks.contains(&task)))
+            if program.name() == "identity"
+                || (self
+                    .table
+                    .find(program.name())
+                    .is_some_and(|row| matches!(row.state, State::Starting | State::Ready))
+                    && self
+                        .task(program.name())
+                        .is_some_and(|task| self.static_tasks.contains(&task)))
             {
                 restart.push(program);
             }
         }
-        if let Some(authority) = self.roster.authority() { self.hierarchy.borrow_mut().retire(tree, authority)?; }
+        if let Some(authority) = self.roster.authority() {
+            self.hierarchy.borrow_mut().retire(tree, authority)?;
+        }
         self.roster.retire();
         self.activation = None;
         let mut stopped = [const { String::new() }; Table::CAP];
@@ -245,13 +265,22 @@ impl Control {
             let mut service = self.spawn(program).map_err(|e| e.said())?;
             let result = (|| {
                 self.authorize_static(service.0, program)?;
-                crate::harness::probe::identity::supply_to(self.roster.authority(), program, service.0)?;
+                crate::harness::probe::identity::supply_to(
+                    self.roster.authority(),
+                    program,
+                    service.0,
+                )?;
                 assemble::connect_all(program, &mut service).map_err(|e| e.said())?;
                 self.progress(tree)?;
                 self.launch(program, program.name().to_string(), &mut service)
                     .map_err(|e| e.said())?;
-                self.ready(program.name().to_string(), &mut service, program.supply(),
-                    |control| control.progress(tree)).map_err(|e| e.said())?;
+                self.ready(
+                    program.name().to_string(),
+                    &mut service,
+                    program.supply(),
+                    |control| control.progress(tree),
+                )
+                .map_err(|e| e.said())?;
                 if program.name() == "identity" {
                     crate::service::identity::bridge::install(self, tree, service.0)?;
                     refresh(self, tree)?;
@@ -343,11 +372,21 @@ impl Control {
             progress(self).map_err(Error::Step)?;
             self.activate_hub();
             match service::ready(
-                &mut self.table, name.as_str(), service.1.as_mut_slice(), &marks, Wait::POLL,
+                &mut self.table,
+                name.as_str(),
+                service.1.as_mut_slice(),
+                &marks,
+                Wait::POLL,
             ) {
-                Ok(already) if already
-                    || self.table.find(name.as_str()).is_some_and(|row| row.state == State::Ready) =>
-                    return Ok(()),
+                Ok(already)
+                    if already
+                        || self
+                            .table
+                            .find(name.as_str())
+                            .is_some_and(|row| row.state == State::Ready) =>
+                {
+                    return Ok(());
+                }
                 Ok(_) if runtime::env::chrono::clock() < until => {
                     runtime::env::room::sleep(Duration::from_millis(RETRY_MS as u64))
                         .map_err(|_| Error::Step("ready wait"))?;
@@ -363,7 +402,8 @@ impl Control {
             Fail::NotReady => "not ready",
         };
         protocol::debug::put(&alloc::format!(
-            "system: not ready {name} why={why} marks={}", marks.len(),
+            "system: not ready {name} why={why} marks={}",
+            marks.len(),
         ));
         Err(Error::Step("start failed"))
     }
@@ -390,13 +430,23 @@ impl Control {
 
     pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
         self.table.living().filter_map(|row| match row.slot {
-            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready) => Some(task),
+            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready) => {
+                Some(task)
+            }
             _ => None,
         })
     }
 
-    pub(crate) fn progress(&self, tree: &mut crate::service::operator::bridge::Tree) -> Result<(), &'static str> {
-        if tree.host().is_some_and(|host| runtime::env::unit::join(host, Wait::POLL).unwrap_or(true)) { return Ok(()); }
+    pub(crate) fn progress(
+        &self,
+        tree: &mut crate::service::operator::bridge::Tree,
+    ) -> Result<(), &'static str> {
+        if tree
+            .host()
+            .is_some_and(|host| runtime::env::unit::join(host, Wait::POLL).unwrap_or(true))
+        {
+            return Ok(());
+        }
         tree.connect(self.tasks())?;
         self.hierarchy.borrow_mut().poll(self, tree)
     }
@@ -416,7 +466,10 @@ impl Control {
         }
         let _ = runtime::env::room::doom(task);
         if let Some(row) = self.table.find(name) {
-            if let Slot::Live { team: Some(team), .. } = row.slot {
+            if let Slot::Live {
+                team: Some(team), ..
+            } = row.slot
+            {
                 let _ = runtime::env::unit::oust(team);
             }
         }

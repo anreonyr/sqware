@@ -587,9 +587,11 @@ impl Hierarchy {
                     if service.name == "probe-rack-mount" {
                         Path::new("probe-rack").try_join(name)
                     } else {
-                        Path::new("svc").try_join(group).and_then(|p| p.try_join(name))
+                        Path::new("svc")
+                            .try_join(group)
+                            .and_then(|p| p.try_join(name))
                     }
-                        .ok_or(Fail::Denied)?,
+                    .ok_or(Fail::Denied)?,
                     requested,
                     from,
                 ))
@@ -691,8 +693,10 @@ impl Hierarchy {
         let mut living = [TaskId::new(0); Table::CAP];
         let mut count = 0;
         for row in control.table.living() {
-            if matches!(row.state, State::NeverStarted | State::Starting | State::Ready)
-                && let Slot::Live { task, .. } = row.slot
+            if matches!(
+                row.state,
+                State::NeverStarted | State::Starting | State::Ready
+            ) && let Slot::Live { task, .. } = row.slot
                 && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
             {
                 living[count] = task;
@@ -713,9 +717,7 @@ impl Hierarchy {
         let mut at = 0;
         while at < self.aliases.len() {
             if Some(self.aliases[at].object.authority()) != authority
-                || self.aliases[at]
-                    .lifetime
-                    .is_some_and(|task| !live(task))
+                || self.aliases[at].lifetime.is_some_and(|task| !live(task))
             {
                 self.remove_alias(tree, at)?;
             } else {
@@ -745,8 +747,7 @@ impl Hierarchy {
                 .retain(|a| a.task != r.task && a.service != r.task);
             self.runs.remove(at);
         }
-        self.approvals
-            .retain(|a| live(a.service) && live(a.task));
+        self.approvals.retain(|a| live(a.service) && live(a.task));
         Ok(())
     }
 }

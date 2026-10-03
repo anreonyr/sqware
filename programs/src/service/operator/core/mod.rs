@@ -123,7 +123,11 @@ impl Operator {
 
     /// **分 ＋ 真动了什么**：**真造了一块**才记 [`Kind::Parted`]（已是窗格那一档 `changed = false`
     /// ——树一个字节没变，不该报一条事件）。**两档都答那一格自己的号**（幂等那一档要把它查出来）。
-    pub fn part_at(&mut self, at: Where, name: String) -> Result<(EntryId, bool, Option<Change>), Fail> {
+    pub fn part_at(
+        &mut self,
+        at: Where,
+        name: String,
+    ) -> Result<(EntryId, bool, Option<Change>), Fail> {
         if let Some(id) = self.kid(at, name.as_str())? {
             return Ok((id, false, None));
         }
@@ -264,7 +268,10 @@ impl Operator {
     }
 
     pub fn reference(&self, id: EntryId) -> Option<PieToken> {
-        match &self.slot(id)?.node { Node::Tile { pie, .. } => Some(*pie), Node::Pane(_) => None }
+        match &self.slot(id)?.node {
+            Node::Tile { pie, .. } => Some(*pie),
+            Node::Pane(_) => None,
+        }
     }
     pub fn permit(&self, id: EntryId) -> Permit {
         match self.slot(id) {

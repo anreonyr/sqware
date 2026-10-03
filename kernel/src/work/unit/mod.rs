@@ -1,5 +1,5 @@
-pub(crate) mod gate;
 pub(crate) mod capsule;
+pub(crate) mod gate;
 pub(crate) mod life;
 pub mod space;
 pub(crate) mod task;
@@ -40,9 +40,13 @@ pub(crate) fn build(
     let space = match kind {
         space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
         space::SpaceKind::User => SpaceBuilder::user(),
-    }.build()?;
+    }
+    .build()?;
     space.with(|inner| inner.dynamic(PAGE_SIZE));
-    team::TeamBuilder::new(space).sire(sire).constructing().spawn()
+    team::TeamBuilder::new(space)
+        .sire(sire)
+        .constructing()
+        .spawn()
 }
 
 pub fn init() -> MapResult<()> {

@@ -64,7 +64,9 @@ unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(crate) fn backing(&self) -> &Arc<Backing> { &self.backing }
+    pub(crate) fn backing(&self) -> &Arc<Backing> {
+        &self.backing
+    }
     pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(PieFail::NotAligned);
@@ -82,7 +84,8 @@ impl PoleMeta {
             id: alloc_id(),
             life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, false),
-        }).map_err(|_| PieFail::OoM)
+        })
+        .map_err(|_| PieFail::OoM)
     }
 
     pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
@@ -108,7 +111,8 @@ impl PoleMeta {
             id: alloc_id(),
             life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, false),
-        }).map_err(|_| PieFail::OoM)
+        })
+        .map_err(|_| PieFail::OoM)
     }
 
     pub(crate) fn owner(&self) -> TaskId {
@@ -147,14 +151,7 @@ impl PoleMeta {
         let va = space
             .with_flush(|inner| {
                 let va = inner.allocate(SegmentKind::Normal, self.size)?;
-                if let Err(e) = inner.backed(
-                    va,
-                    self.backing.clone(),
-                    0,
-                    self.size,
-                    flags,
-                    flags,
-                ) {
+                if let Err(e) = inner.backed(va, self.backing.clone(), 0, self.size, flags, flags) {
                     inner.deallocate(SegmentKind::Normal, va.as_usize(), self.size);
                     return Err(e);
                 }
@@ -189,7 +186,8 @@ impl PoleMeta {
                 })
         };
         if let Some((space, _, _)) = target {
-            space.with_shootdown(|inner| inner.narrow_token(token, flags))
+            space
+                .with_shootdown(|inner| inner.narrow_token(token, flags))
                 .expect("narrow: shootdown failed")
                 .map_err(|_| PieFail::Denied)?;
         }
@@ -197,12 +195,18 @@ impl PoleMeta {
     }
 
     pub(crate) fn mapped(&self) -> bool {
-        self.mappings.lock().iter().any(|(token, weak, _, _)| weak.upgrade().is_some_and(|space| {
-            space.has_token(*token)
-        }))
+        self.mappings
+            .lock()
+            .iter()
+            .any(|(token, weak, _, _)| weak.upgrade().is_some_and(|space| space.has_token(*token)))
     }
 
-    pub(crate) fn record(&self, token: PieToken, space: &Arc<Space>, span: Span) -> Result<(), PieFail> {
+    pub(crate) fn record(
+        &self,
+        token: PieToken,
+        space: &Arc<Space>,
+        span: Span,
+    ) -> Result<(), PieFail> {
         let mut mappings = self.mappings.lock();
         mappings.try_reserve(1).map_err(|_| PieFail::OoM)?;
         mappings.push((token, Arc::downgrade(space), span, false));
@@ -211,14 +215,19 @@ impl PoleMeta {
 
     fn shut_from(&self, token: PieToken) -> Result<(), PieFail> {
         loop {
-            let target = self.mappings.lock().iter().find(|(t, _, _, _)| *t == token)
+            let target = self
+                .mappings
+                .lock()
+                .iter()
+                .find(|(t, _, _, _)| *t == token)
                 .map(|(_, weak, _, _)| weak.clone());
             let Some(weak) = target else { return Ok(()) };
-            if let Some(space) = weak.upgrade() { space.unmap_token(token).map_err(|_| PieFail::Denied)?; }
+            if let Some(space) = weak.upgrade() {
+                space.unmap_token(token).map_err(|_| PieFail::Denied)?;
+            }
             self.mappings.lock().retain(|(t, _, _, _)| *t != token);
         }
     }
-
 }
 
 impl Drop for PoleMeta {
@@ -233,7 +242,6 @@ impl Drop for PoleMeta {
                 let _ = space.unmap_token(token);
             }
         }
-
     }
 }
 
@@ -247,7 +255,9 @@ pub(crate) fn open(
         return Err(PieFail::Dead);
     }
     let va = meta.open_into(token, space, flags)?;
-    space.protect(VirtAddr::from_raw(va), meta.size, flags).map_err(|_| PieFail::Denied)?;
+    space
+        .protect(VirtAddr::from_raw(va), meta.size, flags)
+        .map_err(|_| PieFail::Denied)?;
     Ok((va, meta.size))
 }
 

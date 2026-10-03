@@ -77,7 +77,9 @@ pub(crate) fn fail_next_reservation() {
 pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc<Task>, T), ()> {
     let mut roster = roster_table().lock();
     #[cfg(debug_assertions)]
-    if FAIL_RESERVE.swap(false, core::sync::atomic::Ordering::AcqRel) { return Err(()); }
+    if FAIL_RESERVE.swap(false, core::sync::atomic::Ordering::AcqRel) {
+        return Err(());
+    }
     roster.try_reserve(1).map_err(|_| ())?;
     #[cfg(debug_assertions)]
     let _commit = crate::memory::allocator::NoAllocation::enter();

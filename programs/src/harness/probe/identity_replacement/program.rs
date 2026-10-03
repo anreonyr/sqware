@@ -22,7 +22,9 @@ pub static DEPENDENT: UnitFile = UnitFile {
         after: Some(&["identity"]),
         restart: Some(Ending::Resident),
     },
-    demand: Demand { supply: &[Setup::Ready] },
+    demand: Demand {
+        supply: &[Setup::Ready],
+    },
 };
 
 pub static CHILD: UnitFile = UnitFile {
@@ -35,5 +37,7 @@ pub static CHILD: UnitFile = UnitFile {
         after: Some(&["identity"]),
         restart: Some(Ending::Resident),
     },
-    demand: Demand { supply: &[Setup::Ready] },
+    demand: Demand {
+        supply: &[Setup::Ready],
+    },
 };

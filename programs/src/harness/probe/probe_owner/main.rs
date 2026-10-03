@@ -153,7 +153,16 @@ fn main() -> Report<'static> {
 
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     let entry = mail::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
-    assert!(matches!(tree.root().bind("fixtures".into(), entry, Permit::Public, Mine::No, Wait::AtMost(MS)), Err(Fail::Denied)));
+    assert!(matches!(
+        tree.root().bind(
+            "fixtures".into(),
+            entry,
+            Permit::Public,
+            Mine::No,
+            Wait::AtMost(MS)
+        ),
+        Err(Fail::Denied)
+    ));
     let road = Path::new("svc/fixtures/lease");
     for _ in 0..MS {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {

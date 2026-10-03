@@ -39,10 +39,18 @@ mod tests {
 
     struct Offline;
     impl Facts for Offline {
-        fn bound(&self, _: TaskId) -> Result<bool, ()> { Err(()) }
-        fn matches(&self, _: TaskId, _: Selector) -> Result<bool, ()> { Err(()) }
-        fn same(&self, _: TaskId, _: TaskId) -> Result<bool, ()> { Err(()) }
-        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> { Err(()) }
+        fn bound(&self, _: TaskId) -> Result<bool, ()> {
+            Err(())
+        }
+        fn matches(&self, _: TaskId, _: Selector) -> Result<bool, ()> {
+            Err(())
+        }
+        fn same(&self, _: TaskId, _: TaskId) -> Result<bool, ()> {
+            Err(())
+        }
+        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
+            Err(())
+        }
     }
 
     #[test]
@@ -50,7 +58,10 @@ mod tests {
         let who = TaskId::new(7);
         assert_eq!(judge(&Offline, who, Permit::Public), Ruling::Allow);
         assert_eq!(judge(&Offline, who, Permit::Bound), Ruling::Unjudged);
-        assert_eq!(judge(&Offline, who, Permit::Opener(EntryId::new(0))), Ruling::Unjudged);
+        assert_eq!(
+            judge(&Offline, who, Permit::Opener(EntryId::new(0))),
+            Ruling::Unjudged
+        );
     }
 
     struct Answers {
@@ -61,15 +72,28 @@ mod tests {
     }
 
     impl Facts for Answers {
-        fn bound(&self, _: TaskId) -> Result<bool, ()> { self.bound }
-        fn matches(&self, _: TaskId, _: Selector) -> Result<bool, ()> { self.matches }
-        fn same(&self, _: TaskId, _: TaskId) -> Result<bool, ()> { self.same }
-        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> { Ok(self.opener) }
+        fn bound(&self, _: TaskId) -> Result<bool, ()> {
+            self.bound
+        }
+        fn matches(&self, _: TaskId, _: Selector) -> Result<bool, ()> {
+            self.matches
+        }
+        fn same(&self, _: TaskId, _: TaskId) -> Result<bool, ()> {
+            self.same
+        }
+        fn opens(&self, _: EntryId) -> Result<Option<TaskId>, ()> {
+            Ok(self.opener)
+        }
     }
 
     #[test]
     fn bound_distinguishes_no_binding_from_unavailable() {
-        let facts = Answers { bound: Ok(false), matches: Err(()), same: Err(()), opener: None };
+        let facts = Answers {
+            bound: Ok(false),
+            matches: Err(()),
+            same: Err(()),
+            opener: None,
+        };
         assert_eq!(judge(&facts, TaskId::new(1), Permit::Bound), Ruling::Deny);
     }
 
@@ -77,17 +101,36 @@ mod tests {
     fn identity_uses_one_atomic_match_not_resolve() {
         use protocol::service::identity::PrincipalId;
         let selector = Selector::Exact(PrincipalId::new(TaskId::new(9), 0));
-        let mut facts = Answers { bound: Err(()), matches: Ok(true), same: Err(()), opener: None };
-        assert_eq!(judge(&facts, TaskId::new(1), Permit::Identity(selector)), Ruling::Allow);
+        let mut facts = Answers {
+            bound: Err(()),
+            matches: Ok(true),
+            same: Err(()),
+            opener: None,
+        };
+        assert_eq!(
+            judge(&facts, TaskId::new(1), Permit::Identity(selector)),
+            Ruling::Allow
+        );
         facts.matches = Ok(false);
-        assert_eq!(judge(&facts, TaskId::new(1), Permit::Identity(selector)), Ruling::Deny);
+        assert_eq!(
+            judge(&facts, TaskId::new(1), Permit::Identity(selector)),
+            Ruling::Deny
+        );
         facts.matches = Err(());
-        assert_eq!(judge(&facts, TaskId::new(1), Permit::Identity(selector)), Ruling::Unjudged);
+        assert_eq!(
+            judge(&facts, TaskId::new(1), Permit::Identity(selector)),
+            Ruling::Unjudged
+        );
     }
 
     #[test]
     fn opener_uses_same_not_two_resolves() {
-        let mut facts = Answers { bound: Err(()), matches: Err(()), same: Ok(true), opener: Some(TaskId::new(2)) };
+        let mut facts = Answers {
+            bound: Err(()),
+            matches: Err(()),
+            same: Ok(true),
+            opener: Some(TaskId::new(2)),
+        };
         let permit = Permit::Opener(EntryId::new(0));
         assert_eq!(judge(&facts, TaskId::new(1), permit), Ruling::Allow);
         facts.same = Ok(false);

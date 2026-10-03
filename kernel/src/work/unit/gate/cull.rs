@@ -59,24 +59,42 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
         // 表动过而通知没处记，就是一次漏报。
         let mut tasks = Vec::new();
         if tasks.try_reserve(1).is_err() {
-            return Cleanup { root: None, removed: Vec::new(), tasks };
+            return Cleanup {
+                root: None,
+                removed: Vec::new(),
+                tasks,
+            };
         }
         let root = take(&root_task, root_token);
         if root.is_some() {
             tasks.push(root_task.ident.id);
         }
-        return Cleanup { root, removed: Vec::new(), tasks };
+        return Cleanup {
+            root,
+            removed: Vec::new(),
+            tasks,
+        };
     }
     let mut root = None;
     let mut removed = Vec::new();
     let mut tasks = Vec::new();
     let mut frontier = Vec::new();
     // Reserve for every actual token before changing the graph.
-    let count = snap.iter().filter_map(|weak| weak.upgrade())
-        .map(|task| task.pies.lock().len()).sum::<usize>() + 1;
-    if removed.try_reserve(count).is_err() || frontier.try_reserve(count).is_err()
-        || tasks.try_reserve(count).is_err() {
-        return Cleanup { root, removed, tasks };
+    let count = snap
+        .iter()
+        .filter_map(|weak| weak.upgrade())
+        .map(|task| task.pies.lock().len())
+        .sum::<usize>()
+        + 1;
+    if removed.try_reserve(count).is_err()
+        || frontier.try_reserve(count).is_err()
+        || tasks.try_reserve(count).is_err()
+    {
+        return Cleanup {
+            root,
+            removed,
+            tasks,
+        };
     }
     root = take(&root_task, root_token);
     if root.is_some() {
@@ -87,7 +105,9 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
     while cursor < frontier.len() {
         let token = frontier[cursor];
         cursor += 1;
-        let Some(kin) = snap::heirs(token, snap) else { break };
+        let Some(kin) = snap::heirs(token, snap) else {
+            break;
+        };
         for (task, token) in kin {
             if let Some(pie) = take(&task, token) {
                 frontier.push(token);
@@ -98,7 +118,11 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
             }
         }
     }
-    Cleanup { root, removed, tasks }
+    Cleanup {
+        root,
+        removed,
+        tasks,
+    }
 }
 
 /// 退场那一趟：**先封印，再看快照摘副本**。
@@ -121,10 +145,16 @@ pub(crate) fn doom(task: &Arc<Task>) {
     }
     let snap = snap::snap();
     let mut cleanups = Vec::new();
-    if cleanups.try_reserve(tokens.len()).is_err() { return; }
-    for token in tokens { cleanups.push(cull((task.clone(), token), &snap)); }
+    if cleanups.try_reserve(tokens.len()).is_err() {
+        return;
+    }
+    for token in tokens {
+        cleanups.push(cull((task.clone(), token), &snap));
+    }
     drop(graph);
-    for cleanup in cleanups { cleanup.finish(); }
+    for cleanup in cleanups {
+        cleanup.finish();
+    }
 }
 
 /// 退场者铸的那些资源，**就地封印**（四族一起）。返封了几枚。

@@ -128,7 +128,11 @@ impl<M: Message> Reader<M> {
             }
             // 等铃：**它只是"有事"**，醒来还得回环里读（可能已被别人读干，或读到的还是
             // 那些丢过的格）。故这里不把铃当成"有一条"的承诺。
-            if !self.bell.wait(remain).map_err(|e| RecvFail::Mail(e.source))? {
+            if !self
+                .bell
+                .wait(remain)
+                .map_err(|e| RecvFail::Mail(e.source))?
+            {
                 return Err(RecvFail::Empty);
             }
         }

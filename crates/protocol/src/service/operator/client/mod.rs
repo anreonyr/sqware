@@ -16,8 +16,8 @@ use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::common::path::Path;
-use crate::communication::session::establish::Endpoint;
 use crate::communication::hand::Sender;
+use crate::communication::session::establish::Endpoint;
 use crate::communication::session::{Berth, Session};
 use crate::communication::{deadline, remain};
 use crate::service::operator as ocall;
@@ -30,8 +30,8 @@ pub mod tile;
 pub mod watch;
 
 pub use self::pane::*;
-pub use self::watch::Watch;
 pub use self::tile::*;
+pub use self::watch::Watch;
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）
 /// 开会话那一手（Session::open）要它；本层只把这两格交出去，不替调用方开会话
 pub const BERTH: Berth = Berth {
@@ -281,7 +281,9 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
                     runtime::env::room::sleep(core::time::Duration::from_millis(backoff as u64));
                 backoff = (backoff * 2).min(RETRY_MAX_MS);
                 // Do not enqueue a final request with no time left to receive its reply.
-                if remain(until) == Wait::POLL { return Err(Fail::Unknown); }
+                if remain(until) == Wait::POLL {
+                    return Err(Fail::Unknown);
+                }
             }
             Err(fail) => return Err(fail),
         }

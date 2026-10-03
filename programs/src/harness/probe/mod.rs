@@ -6,7 +6,7 @@
 //! - [`rack`]：架那一族三台的**试验场**（那条路、那两枚砖、那一条载荷）。
 
 pub mod count;
-pub mod rack;
 pub mod identity;
+pub mod rack;
 
 pub mod hierarchy;

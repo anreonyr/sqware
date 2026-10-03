@@ -193,8 +193,17 @@ impl SpaceInner {
         }
         let mut map = Map::new(va, size, flags, None);
         backing.alias(true);
-        if ceiling.contains(PteFlags::W) { backing.map_write(true); }
-        map.origin = Origin::Backed { backing, offset, ceiling: ceiling & access, token: None, private: false, open: false };
+        if ceiling.contains(PteFlags::W) {
+            backing.map_write(true);
+        }
+        map.origin = Origin::Backed {
+            backing,
+            offset,
+            ceiling: ceiling & access,
+            token: None,
+            private: false,
+            open: false,
+        };
         self.register(map)?;
         if let Err(error) = self.root.map(va, pa, size, flags) {
             self.root.unmap(va, size);
@@ -206,32 +215,59 @@ impl SpaceInner {
 
     pub(crate) fn bind(&mut self, va: VirtAddr, token: env::PieToken) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { token: source, .. } = &mut map.origin { *source = Some(token); }
+            if let Origin::Backed { token: source, .. } = &mut map.origin {
+                *source = Some(token);
+            }
         }
     }
 
     pub(crate) fn mark_open(&mut self, va: VirtAddr) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { open, .. } = &mut map.origin { *open = true; }
+            if let Origin::Backed { open, .. } = &mut map.origin {
+                *open = true;
+            }
         }
     }
 
     pub(crate) fn limit(&mut self, va: VirtAddr, ceiling: PteFlags) {
-        if let Some(map) = self.resolve_mut(va) { map.origin = Origin::Limited { ceiling }; }
+        if let Some(map) = self.resolve_mut(va) {
+            map.origin = Origin::Limited { ceiling };
+        }
     }
 
     pub(crate) fn private(&mut self, va: VirtAddr) {
         if let Some(map) = self.resolve_mut(va) {
-            if let Origin::Backed { private, backing, .. } = &mut map.origin { if !*private { backing.alias(false); *private = true; } }
+            if let Origin::Backed {
+                private, backing, ..
+            } = &mut map.origin
+            {
+                if !*private {
+                    backing.alias(false);
+                    *private = true;
+                }
+            }
         }
     }
 
-    pub(crate) fn narrow_token(&mut self, token: env::PieToken, access: PteFlags) -> Result<(), MapError> {
+    pub(crate) fn narrow_token(
+        &mut self,
+        token: env::PieToken,
+        access: PteFlags,
+    ) -> Result<(), MapError> {
         for map in &mut self.maps {
-            if let Origin::Backed { backing, ceiling, token: Some(source), .. } = &mut map.origin {
-                if *source != token { continue; }
+            if let Origin::Backed {
+                backing,
+                ceiling,
+                token: Some(source),
+                ..
+            } = &mut map.origin
+            {
+                if *source != token {
+                    continue;
+                }
                 let narrowed = *ceiling & access;
-                let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | (map.flags & narrowed);
+                let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X))
+                    | (map.flags & narrowed);
                 self.root.protect(map.va, map.size.get(), flags)?;
                 if ceiling.contains(PteFlags::W) && !narrowed.contains(PteFlags::W) {
                     backing.map_write(false);
@@ -412,12 +448,16 @@ impl SpaceInner {
             let root = &self.root;
             for m in self.maps.iter() {
                 if let Origin::Limited { ceiling } = &m.origin {
-                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                    if span(m).is_some()
+                        && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X))
+                    {
                         return Err(MapError::WidenDenied);
                     }
                 }
                 if let Origin::Backed { ceiling, .. } = &m.origin {
-                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                    if span(m).is_some()
+                        && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X))
+                    {
                         return Err(MapError::WidenDenied);
                     }
                 }

@@ -111,7 +111,10 @@ impl Watchers {
         ev.seq = self.seq;
         if self.writer.send(ev.clone()).is_err() {
             // 装不进一格（本族的报比 `SLOT` 还长）——类型那一关就过不去，报一行便于对账。
-            protocol::debug::put(&alloc::format!("operator: watch event too long seq={}", ev.seq));
+            protocol::debug::put(&alloc::format!(
+                "operator: watch event too long seq={}",
+                ev.seq
+            ));
             return 0;
         }
         // ② 那一格的载荷：手就指向它（**不复制**）。

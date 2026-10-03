@@ -138,7 +138,6 @@ impl HoleMeta {
             HoleDir::Push => matches!(*pending, Pending::Idle),
         }
     }
-
 }
 
 impl Drop for HoleMeta {

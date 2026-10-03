@@ -40,8 +40,9 @@ impl Control {
         service: &mut Service,
     ) -> Result<(), Error> {
         if program.name() == "hub" {
-            self.activation = Some(crate::service::hub::bridge::Activation::open(service.0)
-                .map_err(Error::Step)?);
+            self.activation = Some(
+                crate::service::hub::bridge::Activation::open(service.0).map_err(Error::Step)?,
+            );
         }
         // **一、放行**（不等就绪）。
         self.start(name.as_str(), service)?;
@@ -153,8 +154,12 @@ pub fn await_ready(
 ) -> Result<(), &'static str> {
     assembly
         .control
-        .ready(program.name().to_string(), service, program.supply(),
-            |control| control.progress(&mut assembly.tree))
+        .ready(
+            program.name().to_string(),
+            service,
+            program.supply(),
+            |control| control.progress(&mut assembly.tree),
+        )
         .map_err(|e| e.said())
 }
 

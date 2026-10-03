@@ -29,8 +29,13 @@ impl IdentityBook {
         principals.try_reserve(1).map_err(|_| Fail::Full)?;
         principals.push(PrincipalNode { parent: None });
         Ok(Self {
-            authority, installer, principals, coalitions: Vec::new(),
-            memberships: Vec::new(), bindings: Vec::new(), revision: 0,
+            authority,
+            installer,
+            principals,
+            coalitions: Vec::new(),
+            memberships: Vec::new(),
+            bindings: Vec::new(),
+            revision: 0,
         })
     }
 }

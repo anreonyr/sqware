@@ -11,9 +11,9 @@ pub(super) use table::SCHEDULERS;
 pub(crate) use beacon::arm as beacon_arm;
 
 pub use ident::{Identity, ident};
-#[cfg(debug_assertions)]
-pub(crate) use table::{scheduler_addr, fail_next_reservation};
 pub(crate) use table::{
-    current, kick, launch, muster, prune_dead, remove_from_starved, rip, roster,
-    running_hart, publish,
+    current, kick, launch, muster, prune_dead, publish, remove_from_starved, rip, roster,
+    running_hart,
 };
+#[cfg(debug_assertions)]
+pub(crate) use table::{fail_next_reservation, scheduler_addr};

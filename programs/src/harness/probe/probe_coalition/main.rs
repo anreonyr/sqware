@@ -18,9 +18,9 @@ use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::identity as icall;
+use protocol::service::operator::Grant as TreeGrant;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
-use protocol::service::operator::Grant as TreeGrant;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
@@ -48,10 +48,16 @@ fn main() -> Report<'static> {
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in icall::Grant::ALL {
         let entry = if grant.mount() == icall::Mount::Installer {
-            let road = icall::DIR.try_join(grant.name()).expect("probe-coalition: bad face name");
-            assert_eq!(tree.tile(&road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
+            let road = icall::DIR
+                .try_join(grant.name())
+                .expect("probe-coalition: bad face name");
+            assert_eq!(
+                tree.tile(&road, Wait::AtMost(MS))
+                    .unwrap()
+                    .token(Wait::AtMost(MS)),
                 Err(protocol::service::operator::Fail::Denied),
-                "installer discovery must deny an ordinary principal");
+                "installer discovery must deny an ordinary principal"
+            );
             let entry = protocol::communication::session::establish::find(authority, grant.mark())
                 .expect("probe-coalition: missing explicit installer face copy");
             assert_eq!(runtime::env::mail::reserve(entry).unwrap().0, utask::sire());
@@ -93,9 +99,7 @@ fn step(tree: &TreeFace, family: &str, dir: &Path, want: usize) {
 fn fetch(tree: &TreeFace, dir: &Path, face: &str, family: &str) -> env::PieToken {
     // 面名由各自那一族的 `Grant` 给（单段、不含 `/`），故这一段拼不出来是**类型写错**，
     // 不是运行期的事——照仓里那几台的排法用 `expect`。
-    let road = dir
-        .try_join(face)
-        .expect("probe-coalition: bad face name");
+    let road = dir.try_join(face).expect("probe-coalition: bad face name");
     let got = tree
         .tile(&road, Wait::AtMost(MS))
         .and_then(|tile| tile.token(Wait::AtMost(MS)));
