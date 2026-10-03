@@ -1,23 +1,24 @@
+use crate::system::control::serve::task::Readiness;
 use alloc::vec::Vec;
 use env::{Mark, Wait};
 use protocol::common::schedule::{Progress, Res, ResMut};
 use crate::system::{control::core::{unit::State, verdict::Fail}, identity::serve::install::Roster};
 use crate::service::hub::bridge::Activation;
-use super::{Action, Active, Instance, program};
+use super::{Action, Active, Instance};
 use super::super::{unit::Control, start, material::Supplies, task};
 
 pub fn pre(mut active: ResMut<Active>, mut control: ResMut<Control>, roster: Res<Roster>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let p = program(&job.request.name)?;
+    let p = super::super::start::program_of(&job.request.name)?;
     if control.table.find(p.name()).is_some_and(|r| r.state == State::Debarked) {
-        job.task = control.task(p.name());
+        job.execution.task = control.task(p.name());
         return Ok(Progress::Done);
     }
     let at = control.pending.iter().position(|p| p.name == job.request.name).ok_or(Fail::NotReady)?;
     let pending = control.pending.remove(at);
-    job.task = Some(pending.service.0);
-    job.instance = Some(Instance { service: pending.service, marks: Vec::new(), launched: false });
-    let instance = job.instance.as_mut().ok_or(Fail::NotReady)?;
+    job.execution.task = Some(pending.service.0);
+    job.execution.instance = Some(Instance { service: pending.service, marks: Vec::new(), launched: false });
+    let instance = job.execution.instance.as_mut().ok_or(Fail::NotReady)?;
     match job.request.action {
         Action::Embark { parent: Some(parent) } => roster.inherit(instance.service.0, parent),
         Action::Embark { parent: None } => roster.authorize(instance.service.0),
@@ -33,22 +34,41 @@ pub fn pre(mut active: ResMut<Active>, mut control: ResMut<Control>, roster: Res
     }
     Ok(Progress::Done)
 }
-pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>, mut supplies: ResMut<Supplies>, mut activation: ResMut<Option<Activation>>) -> Result<Progress, Fail> {
+pub fn activation(active: Res<Active>, mut activation: ResMut<Option<Activation>>) -> Result<Progress, Fail> {
+    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    if job.execution.instance.as_ref().is_some_and(|instance| !instance.launched) && job.request.name == "hub" {
+        *activation = Some(Activation::open(job.execution.task.ok_or(Fail::Unknown)?).map_err(|_| Fail::NotReady)?);
+    }
+    Ok(Progress::Done)
+}
+pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    if job.instance.is_none() {
-        control.resume(&job.request.name)?;
-        return Ok(Progress::Done);
+    if let Some(instance) = job.execution.instance.as_mut() {
+        if !instance.launched {
+            runtime::env::unit::embark(instance.service.0).map_err(|_| Fail::NotReady)?;
+            instance.launched = true;
+        }
+    } else { control.resume(&job.request.name)?; }
+    Ok(Progress::Done)
+}
+pub fn supply(mut active: ResMut<Active>, mut supplies: ResMut<Supplies>) -> Result<Progress, Fail> {
+    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
+    if let Some(instance) = job.execution.instance.as_mut() {
+        let program = super::super::start::program_of(&job.request.name)?;
+        if program.supply().iter().any(|setup| setup.machine()) {
+            supplies.enroll(&mut instance.service, program).map_err(|_| Fail::NotReady)?;
+        }
     }
-    let p = program(&job.request.name)?;
-    let instance = job.instance.as_mut().ok_or(Fail::NotReady)?;
-    if !instance.launched {
-        control.launch(p, job.request.name.clone(), &mut instance.service, &mut supplies, &mut activation).map_err(|_| Fail::NotReady)?;
-        instance.launched = true;
-    }
-    match task::ready(&mut control.table, p.name(), &mut instance.service.1, &instance.marks, Wait::POLL) {
+    Ok(Progress::Done)
+}
+pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
+    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
+    let Some(instance) = job.execution.instance.as_mut() else { return Ok(Progress::Done); };
+    let p = super::super::start::program_of(&job.request.name)?;
+    match task::ready(&mut control.table, Readiness { name: p.name(), marks: &instance.marks, wait: Wait::POLL }, &mut instance.service.1) {
         Ok(true) => Ok(Progress::Done),
         Ok(false) if control.table.find(p.name()).is_some_and(|r| r.state == State::Ready) => Ok(Progress::Done),
-        Ok(false) if runtime::env::chrono::clock() < job.deadline => Ok(Progress::Pending),
+        Ok(false) if runtime::env::chrono::clock() < job.execution.deadline => Ok(Progress::Pending),
         _ => Err(Fail::NotReady),
     }
 }

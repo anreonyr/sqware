@@ -62,7 +62,8 @@ impl IdentityBook {
         }
     }
 
-    pub fn bind(&mut self, from: TaskId, task: TaskId, install: Install) -> Result<(), Fail> {
+    pub fn bind(&mut self, from: TaskId, request: BindingRequest) -> Result<(), Fail> {
+        let BindingRequest { task, install } = request;
         if from != self.installer { return Err(Fail::Denied); }
         let subject = match install {
             Install::Authorized(s) => { self.validate(s)?; s }
@@ -89,7 +90,8 @@ impl IdentityBook {
         Ok(())
     }
 
-    pub fn narrow_own(&mut self, from: TaskId, subject: Subject, anchor: Anchor) -> Result<(), Fail> {
+    pub fn narrow_own(&mut self, from: TaskId, selection: Selection) -> Result<(), Fail> {
+        let Selection { subject, anchor } = selection;
         let at = self.bindings.iter().position(|b| b.task == from).ok_or(Fail::Denied)?;
         self.narrow(self.bindings[at].binding.current, subject)?;
         match anchor {
@@ -105,3 +107,6 @@ impl IdentityBook {
         Ok(())
     }
 }
+
+pub struct BindingRequest { pub task: TaskId, pub install: Install }
+pub struct Selection { pub subject: Subject, pub anchor: Anchor }

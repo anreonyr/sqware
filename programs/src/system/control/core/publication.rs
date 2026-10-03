@@ -4,15 +4,10 @@ use protocol::common::path::PathBuf;
 use protocol::system::control::publication::Target;
 use protocol::system::operator::{EntryId, Permit};
 
-pub(crate) struct Record {
-    pub(crate) road: PathBuf,
-    pub(crate) target: Option<Target>,
-    pub(crate) publisher: TaskId,
-    pub(crate) owner: TaskId,
-    pub(crate) entry: PieToken,
-    pub(crate) permit: Permit,
-    pub(crate) mount: Option<EntryId>,
-}
+pub(crate) struct Address { pub(crate) road: PathBuf, pub(crate) target: Option<Target> }
+pub(crate) struct Source { pub(crate) publisher: TaskId, pub(crate) entry: PieToken, pub(crate) permit: Permit }
+pub(crate) struct Installation { pub(crate) owner: TaskId, pub(crate) mount: Option<EntryId> }
+pub(crate) struct Record { pub(crate) address: Address, pub(crate) source: Source, pub(crate) installation: Installation }
 
 pub struct Publications {
     pub(crate) records: Vec<Record>,
@@ -24,6 +19,6 @@ impl Publications {
         }
     }
     pub(crate) fn owns(&self, entry: PieToken) -> bool {
-        self.records.iter().any(|r| r.entry == entry)
+        self.records.iter().any(|r| r.source.entry == entry)
     }
 }

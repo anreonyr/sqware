@@ -8,7 +8,7 @@ use alloc::{string::String, vec::Vec};
 use env::Wait;
 use protocol::debug;
 use runtime::env::unit as utask;
-pub(crate) fn sweep(control: &mut Control, roster: &Roster, operations: &super::lifecycle::Operations) {
+pub(crate) fn sweep(mut control: protocol::common::schedule::ResMut<Control>, roster: protocol::common::schedule::Res<Roster>, operations: protocol::common::schedule::Res<super::lifecycle::Operations>) -> Result<protocol::common::schedule::Progress, super::Fail> {
     let gone: Vec<String> = control
         .table
         .living()
@@ -28,6 +28,7 @@ pub(crate) fn sweep(control: &mut Control, roster: &Roster, operations: &super::
         }
         mark_dead(&mut control.table, name.as_str(), Reaped::Now);
     }
+    Ok(protocol::common::schedule::Progress::Done)
 }
 fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
     let Some(row) = table.find(name) else {

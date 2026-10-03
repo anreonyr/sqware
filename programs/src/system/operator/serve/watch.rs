@@ -24,8 +24,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait};
 use protocol::common::path::{Path, PathBuf};
 use protocol::communication::rack::{self, Mode, Rack};
-use protocol::system::operator::EntryId;
-use protocol::system::operator::frame::watch::{Event, Kind};
+use protocol::system::operator::frame::watch::Event;
 use runtime::env::mail::HolePie;
 
 use crate::system::operator::core::Operator;
@@ -78,7 +77,8 @@ impl Watchers {
     /// （各有一条自己的孔、各收各的）；而**同一位同一条路订两次**会让同一次改动递两份，故拒。
     /// 孔那一侧**不预检**：孔不在表里 / 封印了，`publish` 那一手会当场答 `Dead`／`Gone` 就地摘掉
     /// ——省一趟往返，也省一格"认孔"的状态。
-    pub fn join(&mut self, who: TaskId, road: &Path, hole: PieToken) -> Result<(), ()> {
+    pub fn join(&mut self, subscription: Subscription) -> Result<(), ()> {
+        let Subscription { who, road, hole } = subscription;
         if self
             .list
             .iter()
@@ -168,22 +168,20 @@ fn prefix_of(filter: &Path, road: &str) -> bool {
 ///
 /// **号那一格留 `0`**：它由订阅册那一手盖（[`Watchers::publish`] 才是号的持有者——号与环里的
 /// 格一一对应，故只能由落格那一手给）。
-pub fn event_at(
-    tree: &Operator,
-    kind: Kind,
-    id: EntryId,
-    owner: TaskId,
-    road: Option<PathBuf>,
-) -> Option<Event> {
-    let road = match road {
-        Some(road) => road,
-        None => tree.road_to(id)?,
-    };
-    Some(Event {
-        seq: 0,
-        kind,
-        road,
-        id,
-        owner,
-    })
+pub struct Subscription { pub who: TaskId, pub road: PathBuf, pub hole: PieToken }
+pub fn event_at(tree: &Operator, change: &crate::system::operator::core::Change) -> Option<Event> {
+    let road = match &change.road { Some(road) => road.clone(), None => tree.road_to(change.id)? };
+    Some(Event { seq: 0, kind: change.kind, road, id: change.id, owner: change.owner })
+}
+
+use protocol::{common::schedule::{Progress, Res, ResMut}, system::operator as ocall};
+use super::{Fail, answer::Output, session::Request};
+pub(super) fn subscribe(request: Res<Request>, mut watchers: ResMut<Watchers>, mut out: ResMut<Output<ocall::Union>>) -> Result<Progress, super::Fail> {
+    if let Some(incoming) = &request.0 { if let Some(ocall::Wire::Watch { road, hole }) = &incoming.ask {
+        out.reply = Some(match watchers.join(super::watch::Subscription { who: incoming.guest.who(), road: road.clone(), hole: *hole }) { Ok(()) => ocall::Union::Status(ocall::OK), Err(()) => ocall::Union::Status(ocall::DENIED) });
+    } }
+    Ok(Progress::Done)
+}
+pub(super) fn emit<T: 'static>(tree: Res<Operator>, mut watchers: ResMut<Watchers>, mut out: ResMut<Output<T>>) -> Result<Progress, Fail> {
+    for change in out.changes.drain(..) { if let Some(event) = event_at(&tree, &change) { let _ = watchers.publish(event); } } Ok(Progress::Done)
 }

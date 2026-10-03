@@ -77,12 +77,12 @@ pub struct Grant {
     pub perm: Permission,
 }
 
-pub fn mint(
-    table: &mut Table,
-    name: &str,
-    image: &[u8],
-    kind: ProgramKind,
-) -> Result<TaskId, Fail> {
+pub struct Image<'a> { pub name: &'a str, pub bytes: &'a [u8], pub kind: ProgramKind }
+pub struct Readiness<'a> { pub name: &'a str, pub marks: &'a [Mark], pub wait: Wait }
+pub struct Launch<'a> { pub task: TaskId, pub grants: &'a [Grant], pub readiness: Readiness<'a> }
+
+pub fn mint(table: &mut Table, image: Image<'_>) -> Result<TaskId, Fail> {
+    let Image { name, bytes: image, kind } = image;
     admit_mint(table, name)?;
 
     let image = runtime::core::loader::build(image, kind).map_err(unit_fail)?;
@@ -90,7 +90,7 @@ pub fn mint(
     let Ok(task) = image.spawn(&[], 0) else {
         return Err(Fail::Full);
     };
-    if let Err(fail) = table.attach(name, Some(team), task) {
+    if let Err(fail) = table.attach(name, Slot::Live { team: Some(team), task }) {
         let _ = room::doom(task);
         let _ = utask::oust(team);
         return Err(fail);
@@ -100,15 +100,9 @@ pub fn mint(
     Ok(task)
 }
 
-pub fn embark(
-    table: &mut Table,
-    name: &str,
-    task: TaskId,
-    grants: &[Grant],
-    channels: &mut [Endpoint],
-    marks: &[Mark],
-    millis: Wait,
-) -> Result<(), Fail> {
+pub fn embark(table: &mut Table, launch: Launch<'_>, channels: &mut [Endpoint]) -> Result<(), Fail> {
+    let Launch { task, grants, readiness } = launch;
+    let name = readiness.name;
     let launched = (|| -> Result<(), Fail> {
         for g in grants {
             mail::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
@@ -120,17 +114,12 @@ pub fn embark(
         table.set_state(name, State::Dead);
         return Err(e);
     }
-    ready(table, name, channels, marks, millis)?;
+    ready(table, readiness, channels)?;
     Ok(())
 }
 
-pub fn ready(
-    table: &mut Table,
-    name: &str,
-    channels: &mut [Endpoint],
-    marks: &[Mark],
-    millis: Wait,
-) -> Result<bool, Fail> {
+pub fn ready(table: &mut Table, readiness: Readiness<'_>, channels: &mut [Endpoint]) -> Result<bool, Fail> {
+    let Readiness { name, marks, wait: millis } = readiness;
     if let Ready::Up = probe_ready(table, name) {
         table.set_state(name, State::Ready);
         return Ok(true);

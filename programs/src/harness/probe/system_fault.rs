@@ -79,8 +79,8 @@ pub fn unit() {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             if mode == role { room::exit(env::EXIT_OK, Some("system-fault: injected task exit")); }
-            let success = if role == 1 { crate::system::operator::serve::serve(state.clone()).is_ok() }
-                else { crate::system::identity::serve::serve(state.clone()).is_ok() };
+            let success = if role == 1 { crate::system::operator::serve::run::serve(state.clone()).is_ok() }
+                else { crate::system::identity::serve::run::serve(state.clone()).is_ok() };
             if !success { let _ = room::doom(unit::self_id()); }
         });
         let ptr = Box::into_raw(Box::new(body));

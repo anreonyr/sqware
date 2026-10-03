@@ -1,12 +1,15 @@
 use alloc::{string::ToString, vec::Vec};
 use env::{PieToken, TaskId};
-use protocol::common::path::Path;
-use protocol::system::operator::{EntryId, Fail, Permit, Where};
-use crate::system::operator::core::{Change, Operator};
+use protocol::system::operator::{EntryId, Fail, Where};
+use crate::system::operator::core::{Change, Operator, Location, Tile};
+pub struct Placement { pub road: protocol::common::path::PathBuf, pub tile: Tile, pub replace: bool }
 
-pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, permit: Permit,
-    owner: TaskId, replace: bool) -> Result<(EntryId, Vec<Change>), Fail>
+pub(super) fn plate(tree: &mut Operator, request: &Placement) -> Result<(EntryId, Vec<Change>), Fail>
 {
+    let road = &request.road;
+    let Tile { pie: leaf, permit, owner } = request.tile;
+    let owner = owner.unwrap_or(TaskId::new(0));
+    let replace = request.replace;
     let mut fresh = Vec::new();
     fresh.try_reserve(road.len()).map_err(|_| Fail::Full)?;
     let mut changes = Vec::new();
@@ -31,7 +34,7 @@ pub(super) fn plate(tree: &mut Operator, road: &Path, leaf: PieToken, permit: Pe
         }
         if !runtime::env::mail::alive(leaf) { return Err(Fail::Dead); }
         if !replace && tree.kid(at, last)?.is_some() { return Err(Fail::Denied); }
-        let change = tree.land(at, last.to_string(), leaf, permit, (owner.get() != 0).then_some(owner))?;
+        let change = tree.land(Location { at, name: last.to_string() }, Tile { pie: leaf, permit, owner: (owner.get() != 0).then_some(owner) })?;
         let id = change.id;
         changes.push(change);
         Ok(id)

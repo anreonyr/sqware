@@ -4,10 +4,10 @@ use super::resource::{Access, AccessError, Param, Resources};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Progress { Done, Pending }
 #[derive(Debug, PartialEq, Eq)]
-pub enum RunError<E> { Resource(AccessError), Step(E) }
+pub enum RunError<E> { Resource(AccessError), Step(E), UnknownPlan }
 pub struct System<E> {
     pub(crate) access: Vec<Access>,
-    pub(crate) run: Box<dyn FnMut(&Resources<'_>) -> Result<Progress, RunError<E>>>,
+    pub(crate) run: Box<dyn FnMut(&Resources<'_>, &mut super::Cursor) -> Result<Progress, RunError<E>>>,
 }
 pub trait IntoSystem<M, E> { fn into_system(self) -> System<E>; }
 
@@ -21,7 +21,7 @@ macro_rules! systems {
             fn into_system(mut self) -> System<E> {
                 System {
                     access: alloc::vec![$($p::access()),*],
-                    run: Box::new(move |resources| {
+                    run: Box::new(move |resources, _| {
                         $(let $p = $p::get(resources).map_err(RunError::Resource)?;)*
                         self($($p),*).map_err(RunError::Step)
                     }),
@@ -40,3 +40,10 @@ systems!(A, B, C, D, E0, F0, G);
 systems!(A, B, C, D, E0, F0, G, H);
 systems!(A, B, C, D, E0, F0, G, H, I);
 systems!(A, B, C, D, E0, F0, G, H, I, J);
+
+impl<F, E: 'static> IntoSystem<fn(), E> for F
+where F: 'static + FnMut() -> Result<Progress, E> {
+    fn into_system(mut self) -> System<E> {
+        System { access: Vec::new(), run: Box::new(move |_, _| self().map_err(RunError::Step)) }
+    }
+}

@@ -6,5 +6,3 @@
 pub mod bridge;
 pub mod core;
 pub mod serve;
-
-pub mod publication;

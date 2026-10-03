@@ -36,7 +36,8 @@ impl IdentityBook {
         Ok(self.memberships.contains(&(p, c)))
     }
 
-    fn manage(&self, from: TaskId, c: CoalitionId, p: PrincipalId) -> Result<(), Fail> {
+    fn manage(&self, from: TaskId, member: Membership) -> Result<(), Fail> {
+        let Membership { coalition: c, principal: p } = member;
         let index = self.coalition(c)?;
         self.principal(p)?;
         if from == self.installer { return Ok(()); }
@@ -45,8 +46,9 @@ impl IdentityBook {
         Ok(())
     }
 
-    pub fn admit(&mut self, from: TaskId, c: CoalitionId, p: PrincipalId) -> Result<(), Fail> {
-        self.manage(from, c, p)?;
+    pub fn admit(&mut self, from: TaskId, member: Membership) -> Result<(), Fail> {
+        self.manage(from, member)?;
+        let Membership { coalition: c, principal: p } = member;
         if self.memberships.contains(&(p, c)) { return Ok(()); }
         if self.memberships.len() >= limits::MAX_MEMBERSHIPS { return Err(Fail::Full); }
         let revision = self.revision.checked_add(1).ok_or(Fail::Full)?;
@@ -56,8 +58,9 @@ impl IdentityBook {
         Ok(())
     }
 
-    pub fn expel(&mut self, from: TaskId, c: CoalitionId, p: PrincipalId) -> Result<(), Fail> {
-        self.manage(from, c, p)?;
+    pub fn expel(&mut self, from: TaskId, member: Membership) -> Result<(), Fail> {
+        self.manage(from, member)?;
+        let Membership { coalition: c, principal: p } = member;
         let exists = self.memberships.contains(&(p, c));
         let revision = if exists {
             self.revision.checked_add(1).ok_or(Fail::Full)?
@@ -109,3 +112,6 @@ impl IdentityBook {
         Page::new(&ids[..count], next)
     }
 }
+
+#[derive(Clone, Copy)]
+pub struct Membership { pub coalition: CoalitionId, pub principal: PrincipalId }
