@@ -78,8 +78,7 @@ fn system() -> Result<(), Fail> {
     for program in &list {
         assembly.assemble(program).map_err(Fail::Assemble)?;
     }
-    assembly.mount_control();
-    if !assembly.supervise() {
+    if assembly.supervise().is_err() {
         return Err(Fail::Doom);
     }
     Ok(())

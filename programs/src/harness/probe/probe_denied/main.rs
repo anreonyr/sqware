@@ -10,11 +10,11 @@ use env::{PieToken, Wait};
 use programs::Report;
 use protocol::communication::hand::Receiver;
 use protocol::communication::session::{Session, establish};
-use protocol::service::identity as identity;
-use protocol::service::identity::client::{Organization, Query, SelfOps};
-use protocol::service::identity::frame::{Reply, Wire};
-use protocol::service::identity::{Fail, Grant, Install};
-use protocol::service::operator::client as operator;
+use protocol::system::identity as identity;
+use protocol::system::identity::client::{Organization, Query, SelfOps};
+use protocol::system::identity::frame::{Reply, Wire};
+use protocol::system::identity::{Fail, Grant, Install};
+use protocol::system::operator::client as operator;
 use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
@@ -26,13 +26,13 @@ fn main() -> Report<'static> {
     // not evidence that an unrelated service failed to launch.
     for delay in [0, 1, 2, 0, 2, 1] {
         let request = establish::Held(establish::endpoint(
-            utask::sire(), env::Mark::of(protocol::service::operator::LINK), Wait::POLL,
+            utask::sire(), env::Mark::of(protocol::system::operator::LINK), Wait::POLL,
         ).expect("probe-denied: transient LINK"));
         runtime::env::room::sleep(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");
         drop(request);
     }
-    let authority = programs::service::identity::bridge::authority()
+    let authority = programs::system::identity::bridge::authority()
         .expect("probe-denied: no Control-issued identity authority");
     let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()

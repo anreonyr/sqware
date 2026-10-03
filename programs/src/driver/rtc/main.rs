@@ -23,8 +23,7 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
 use protocol::debug;
 use protocol::driver::ENTRY_MARK;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Mine;
+use protocol::system::operator::client as operator;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -70,7 +69,7 @@ fn main() -> Result<(), Fail> {
         .map_err(|_| Fail::at(E_RTC, "line"))?;
     debug!("{ME}: line occupied");
 
-    ctx.plate(entry, ME, Mine::No, Wait::AtMost(MS));
+    ctx.plate(entry, ME, Wait::AtMost(MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(

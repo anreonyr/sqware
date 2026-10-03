@@ -31,5 +31,5 @@ pub use alloc::format as __format;
 // 就分不出这一枚是哪一面的。三对里 `principal ↔ coalition` 那一对钉在
 // ——`frame.rs` 那两份只认得 `env` 与同层 `core`，看不见 `driver`。这一处看得见整棵树，故由它钉。
 const _: () = assert!(
-    crate::service::identity::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
+    crate::system::identity::frame::BACK.get() != crate::driver::line::frame::BACK_MARK.get()
 );

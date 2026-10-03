@@ -8,16 +8,16 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use protocol::communication::session::Session;
-use protocol::service::identity::client::{CallError, Organization, Query, SelfOps};
-use protocol::service::identity::{CoalitionId, Fail, Match, Selector, Subject};
-use protocol::service::operator::client as operator;
+use protocol::system::identity::client::{CallError, Organization, Query, SelfOps};
+use protocol::system::identity::{CoalitionId, Fail, Match, Selector, Subject};
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = programs::service::identity::bridge::authority()
+    let authority = programs::system::identity::bridge::authority()
         .expect("member: no Control-issued identity authority");
     let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
@@ -77,7 +77,7 @@ fn main() -> Report<'static> {
     // invalidate that revision-bound cursor rather than silently continuing a new list.
     let mut cursor = None;
     let mut last = q;
-    for _ in 0..=protocol::service::identity::limits::PAGE_ITEMS {
+    for _ in 0..=protocol::system::identity::limits::PAGE_ITEMS {
         let page = query.members(c0, None, Wait::AtMost(MS)).expect("member: page failed");
         if page.next().is_some() {
             cursor = page.next();

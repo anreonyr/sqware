@@ -11,9 +11,13 @@ pub const E_ROUTER: Died = 5;
 pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 pub static PROGRAM: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: Some(crate::driver::router::publication),
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "router",
-        wanted_by: &["accept", "product", "identity-replacement"],
+        wanted_by: &["accept", "product", "system-fault"],
         ..Identity::DEFAULT
     },
     relation: Relation {

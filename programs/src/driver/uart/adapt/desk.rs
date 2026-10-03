@@ -4,15 +4,15 @@ use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
-use programs::service::operator::bridge;
+use programs::system::publication;
+use protocol::system::control::publication::Scope;
 use programs::unit::uart::E_UART;
 use protocol::communication::rack::{Mode, Rack, Reader, Writer};
 use protocol::debug;
 use protocol::driver;
 use protocol::driver::line::client::Line;
-use protocol::service::operator::Permit;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Mine;
+use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 const ASK: Ask = Ask {
@@ -94,7 +94,7 @@ fn plate(ctx: &Context, rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
     let tree = operator::Face::from(&ctx.session);
     let list = [(RX, rx.ship()), (TX, tx.ship())];
     let road = driver::ROAD.try_join(ME).expect("uart: tree: road");
-    let plated = bridge::land(&tree, ME, &road, Mine::Yes, Permit::Public, &list, ms);
+    let plated = publication::land(&tree, ME, &road, Scope::Driver, "uart", Permit::Public, &list, ms);
     assert_eq!(plated.len(), 2, "{ME}: tree: road");
     for (one, want) in plated.iter().zip([RX, TX]) {
         assert!(one.land.is_ok(), "{ME}: tree: land {want}");

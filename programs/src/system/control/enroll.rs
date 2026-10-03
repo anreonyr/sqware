@@ -17,7 +17,6 @@ use runtime::env::mail::{NolePie, PolePie};
 use crate::system::common::life::table::Announce;
 
 use super::{BOOT_MS, Control, Error, Service};
-use crate::system::Assembly;
 use crate::unit::{Setup, UnitFile};
 
 impl Control {
@@ -144,18 +143,6 @@ impl Control {
         debug!("system: enrolled {} supplies for {}", got, name.as_str());
         Ok(())
     }
-}
-
-pub fn await_ready(
-    assembly: &mut Assembly,
-    program: &UnitFile,
-    service: &mut Service,
-) -> Result<(), &'static str> {
-    assembly
-        .control
-        .ready(program.name().to_string(), service, program.supply(),
-            |control| control.progress(&mut assembly.tree))
-        .map_err(|e| e.said())
 }
 
 /// **怎么算"它起来了"**：由这一行的 `setup` 推出（见 Control::enlist）

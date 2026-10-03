@@ -12,3 +12,18 @@
 
 pub mod client;
 pub mod core;
+
+pub(crate) fn publication(
+    program: &crate::unit::UnitFile, _from: env::TaskId,
+    target: &protocol::system::control::publication::Target,
+    mark: env::Mark, requested: protocol::system::operator::Permit,
+    _machine: &crate::system::common::machine::Machine,
+    _roster: &crate::system::identity::bridge::Roster,
+) -> Result<protocol::common::path::PathBuf, protocol::system::operator::Fail> {
+    use protocol::system::control::publication::{Target, Scope};
+    use protocol::system::operator::{Permit, Fail};
+    let Target::Service { scope: Scope::Driver, group, name } = target else { return Err(Fail::Denied); };
+    if !group.is_empty() || name != program.name() || mark != protocol::driver::ENTRY_MARK
+        || requested != Permit::Public { return Err(Fail::Denied); }
+    protocol::driver::ROAD.try_join(name).ok_or(Fail::Denied)
+}

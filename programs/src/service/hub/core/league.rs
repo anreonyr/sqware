@@ -2,7 +2,7 @@
 //! 盟由适配层铸（`mint` 是喂进来的闭包）——核心不叫盟册。
 
 use alloc::string::String;
-use protocol::service::identity::CoalitionId;
+use protocol::system::identity::CoalitionId;
 
 use super::Ledger;
 

@@ -10,6 +10,10 @@ use env::ProgramKind;
 pub const E_BOOT: Died = 1;
 
 pub static PROGRAM: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "system",
         space: ProgramKind::Supervisor,

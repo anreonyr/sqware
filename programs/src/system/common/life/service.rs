@@ -11,7 +11,7 @@ use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, pro
 use protocol::communication::session::establish::Endpoint;
 
 use crate::unit::{
-    Died, hub::E_HUB, identity::E_IDENTITY, operator::E_TREE,
+    Died, hub::E_HUB,
 };
 
 /// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage
@@ -35,7 +35,7 @@ fn pie_fail(e: erra::Error<PieFail>) -> Fail {
 }
 
 /// **四枚服务起手失败**（持树者 / 名册 / 盟册 / 设备账各一个 bin，共用这一枚词表）
-/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::service::operator::{…
+/// **名字为什么不叫 `Fail`**：`operator/server.rs` 已经 `use protocol::system::operator::{…
 /// Fail}`（那是**核心**的失败域），两个 `Fail` 在同一份文件里撞名。起手这几格与核心那几格
 /// 不是一回事，故按"死在起手的哪一步"取名 Start
 /// **它自己就是出口**（`impl Exit`）：三个 bin 的 `main` 直接答 `Result<(), Start>`——
@@ -75,16 +75,6 @@ impl Start {
     /// **这一句话怎么念**：族名 ＋ 步名
     pub fn text(self) -> &'static str {
         match self {
-            // 持树者（`E_TREE`）：它会走到的那三步。
-            Start::Tree(E_TREE) => "operator: tree",
-            Start::Room(E_TREE) => "operator: no room",
-            Start::Desk(E_TREE) => "operator: desk",
-            // 统一身份：权威账本、操作面与同一只 carrier/Pile。
-            Start::Tree(E_IDENTITY) => "identity: bootstrap",
-            Start::Book(E_IDENTITY) => "identity: no book",
-            Start::Room(E_IDENTITY) => "identity: no room",
-            Start::Desk(E_IDENTITY) => "identity: desk",
-            Start::Dead(E_IDENTITY) => "identity: group dead",
             // 设备账（`E_HUB`）：树 / 物料 / 盟册那面 / 自带的常驻圈（它不用 `carrier`：
             // 两个来路——那只组 ＋ 探活那一拍，见 `system/hub/serve/mod.rs`）。
             Start::Tree(E_HUB) => "hub: tree",

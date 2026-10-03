@@ -14,17 +14,17 @@ use programs::Report;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::identity as icall;
-use protocol::service::identity::client::{Organization, Query, SelfOps};
-use protocol::service::identity::{Selector, Subject};
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::{EntryId, Fail, Permit};
+use protocol::system::identity as icall;
+use protocol::system::identity::client::{Organization, Query, SelfOps};
+use protocol::system::identity::{Selector, Subject};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::system::operator::{EntryId, Fail, Permit};
 use protocol::system::control::publication;
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
-const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
+const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）
 const IS: &str = "is";
@@ -58,7 +58,7 @@ fn main() -> Report<'static> {
         return bail("probe-rule: no tree link");
     };
     let tree = TreeFace::of(session);
-    let authority = programs::service::identity::bridge::authority()
+    let authority = programs::system::identity::bridge::authority()
         .expect("probe-rule: no Control-issued identity authority");
     let iask = Query::discover(&tree, authority, Wait::AtMost(MS))
         .expect("probe-rule: no identity query");

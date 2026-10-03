@@ -27,13 +27,13 @@ use programs::Report;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::Fail;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face as TreeFace;
+use protocol::system::operator::Fail;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use runtime::env::unit as utask;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
-const DIR: &protocol::service::operator::Path = protocol::common::svc::SVC;
+const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";

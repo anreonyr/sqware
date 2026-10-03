@@ -6,7 +6,7 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 use protocol::communication::session::Session;
-use protocol::service::operator::{client::{self as operator, Face, Mine}, EntryId, Fail, Grant, Permit, Where};
+use protocol::system::operator::{client::{self as operator, Face, Mine}, EntryId, Fail, Grant, Permit, Where};
 use protocol::system::control::publication::{Client, Scope, Target};
 use runtime::env::mail::{self, HolePie};
 const MS: Wait = Wait::AtMost(3000);

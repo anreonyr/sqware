@@ -7,6 +7,10 @@ pub const E_LODGER: Died = 11;
 
 /// 房客：占一条线、**直接死**——线路由者那本账的探活读数
 pub static LODGER: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "lodger",
         ..Identity::DEFAULT

@@ -16,9 +16,9 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::Fail;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face;
+use protocol::system::operator::Fail;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 
 use env::PieToken;
 use programs::driver::rtc::client as clock;

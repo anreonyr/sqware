@@ -5,6 +5,10 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// 主体：身份服务的第一位真客人
 pub static SUBJECT: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "subject",
         ..Identity::DEFAULT

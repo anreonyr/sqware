@@ -149,7 +149,7 @@ impl Ledger {
 
     /// 册 · 读：**这一类怎么落**——那几台的（名 ＋ 那枚孔），序 = 入册序（同 Ledger::list）
     /// **为什么不是从 Ledger::list 推**：那一窗给的是名字 ＋ 有主掩码（客人的读数）
-    /// crate::service::operator::bridge::land
+    /// crate::system::publication::land
     pub fn doors(&self, class: String) -> impl Iterator<Item = (&String, PieToken)> + '_ {
         self.cells
             .iter()

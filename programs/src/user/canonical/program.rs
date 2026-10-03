@@ -7,6 +7,10 @@ use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 pub const E_CANONICAL: Died = 24;
 
 pub static PROGRAM: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "canonical",
         wanted_by: &["accept", "product"],

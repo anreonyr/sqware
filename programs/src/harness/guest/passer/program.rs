@@ -5,6 +5,10 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// 过客：起来、挂一个名字、**直接死**（不说再见）
 pub static PASSER: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "passer",
         ..Identity::DEFAULT
