@@ -19,6 +19,8 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
+pub use crate::work::mail::hole::tests as hole;
+
 pub mod hart;
 pub mod backing;
 pub mod pagetable;

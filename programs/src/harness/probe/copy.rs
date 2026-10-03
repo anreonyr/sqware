@@ -76,6 +76,22 @@ fn queued() {
             "copy: queued bytes changed after sender exit"
         );
     }
+    let hole = HolePie::from_token(entry);
+    for cycle in 0..16u8 {
+        assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
+        for _ in 0..4 { env::mail::ring(entry).unwrap(); }
+        assert!(env::mail::ring(entry).is_err());
+        assert!(hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
+        assert!(hole.push(&[cycle], Wait::POLL).is_err());
+        for _ in 0..4 { env::mail::hush(entry).unwrap(); }
+        assert!(env::mail::hush(entry).is_err());
+        assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
+        hole.push(&[cycle], Wait::POLL).unwrap();
+        assert_eq!(hole.pull(&mut bytes, Wait::POLL).unwrap(), (1, owner));
+        assert_eq!(bytes[0], cycle);
+    }
     mail::seal(entry).unwrap();
     mail::release(entry).unwrap();
 }

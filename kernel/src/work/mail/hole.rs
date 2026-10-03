@@ -26,20 +26,11 @@ pub enum HoleState {
     Dead,
 }
 
-/// 孔上**待取之事**：一位写者排下的**那一列手**，或**那一列位**。
-///
-/// 手与位写在同一个枚举里（不是两格），故"又有手又有位"写不出来。
-///
-/// **`Queue` 是一条有界 FIFO**（[`QUEUE_CAP`] 只手）：写者可以连推几只、不必等对侧取走一只；
-/// 读者按先进先出逐只取。`Idle` 与"队列空"是同一件事——空了就回到 `Idle`，不留空壳。
-///
-/// **`Rung(n)` 也是一列**（[`RING_CAP`] 枚）：摇一次积一枚，取一次（`hush`）应一枚，故
-/// "夹在客人自己那一圈里的那一次摇"不再被它自己的 `hush` 吃掉。此前只有一位布尔——**两次
-/// 摇合成一次**（见 `ring` 那一节的历史）。
+/// 待取消息与位通知互斥；空队列保留已分配的存储。
+/// 摇铃期间闲置的队列存储随位计数保存，应完后交回 FIFO。
 enum Pending {
-    Idle,
     Queue(Queue),
-    Rung(usize),
+    Rung { count: usize, spare: VecDeque<Hand> },
 }
 
 /// 排着的那一列手 ＋ "队头正被取用"那一位。
@@ -47,6 +38,7 @@ enum Pending {
 /// **队头正被取用**是复制那一瞬的公示：手仍在本列里，但正被一位取用者搬。取用中不算可取
 /// （别人见它答 `Busy`），故一只手只会被交付一次。它必须活在孔锁里——复制在孔锁**之外**做
 /// （锁序 `Space`(L2) < 孔(L4)，见 [`take`] 那一节）。
+#[derive(Default)]
 struct Queue {
     /// 排着的那些手（先进先出）。**懒分配**：没排过队的孔一点内核堆都不占。
     hands: VecDeque<Hand>,
@@ -99,7 +91,7 @@ impl HoleMeta {
             id,
             life: Life::new(),
             owner,
-            pending: SpinLock::new_level(Level::L3, Pending::Idle),
+            pending: SpinLock::new_level(Level::L3, Pending::Queue(Queue::default())),
             alarmed: AtomicBool::new(false),
             stuck: AtomicBool::new(false),
         })
@@ -132,10 +124,9 @@ impl HoleMeta {
         match dir {
             HoleDir::Pull => match &*pending {
                 Pending::Queue(q) => !q.hands.is_empty() && !q.taking,
-                Pending::Rung(n) => *n > 0,
-                Pending::Idle => false,
+                Pending::Rung { count, .. } => *count > 0,
             },
-            HoleDir::Push => matches!(*pending, Pending::Idle),
+            HoleDir::Push => matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking),
         }
     }
 
@@ -179,16 +170,6 @@ pub(crate) fn give(meta: &HoleMeta, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(
     }
     let at = clock::uptime_ticks();
     let mut pending = meta.pending.lock();
-    if !matches!(*pending, Pending::Idle | Pending::Queue(_)) {
-        // 位已响：位与手不共存（与今天同一句）。
-        return Err(MailFail::Busy);
-    }
-    if matches!(*pending, Pending::Idle) {
-        *pending = Pending::Queue(Queue {
-            hands: VecDeque::new(),
-            taking: false,
-        });
-    }
     let Pending::Queue(q) = &mut *pending else {
         return Err(MailFail::Busy);
     };
@@ -253,18 +234,13 @@ pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Vec<u8>>)> {
 /// 这一格是"**东西没了**"。前者还能拿更大的缓冲再来，后者没有下一趟。
 pub(crate) fn taken(meta: &HoleMeta) {
     let mut off = None;
-    let mut empty = false;
     {
         let mut pending = meta.pending.lock();
         if let Pending::Queue(q) = &mut *pending {
             if q.taking {
                 q.taking = false;
                 off = q.hands.pop_front();
-                empty = q.hands.is_empty();
             }
-        }
-        if empty {
-            *pending = Pending::Idle;
         }
     }
     if let Some(hand) = off {
@@ -333,11 +309,11 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
     {
         let mut pending = meta.pending.lock();
         match &mut *pending {
-            Pending::Idle => {
-                *pending = Pending::Rung(1);
+            Pending::Queue(q) if q.hands.is_empty() && !q.taking => {
+                *pending = Pending::Rung { count: 1, spare: core::mem::take(&mut q.hands) };
             }
-            Pending::Rung(n) if *n < RING_CAP => {
-                *n += 1;
+            Pending::Rung { count, .. } if *count < RING_CAP => {
+                *count += 1;
             }
             // 位排满了（`RING_CAP`），或手正排着（位与手不共存）。
             _ => return Err(MailFail::Busy),
@@ -349,20 +325,16 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
 
 /// 应一枚位。**不唤醒任何人**：没人等"位被应完"（与门铃 `hush` 同一句）。
 ///
-/// **一次应一枚**：`Rung(n>1)` 就减一（这一格仍然报就绪），`Rung(1)` 才回到 `Idle`。故
+/// **一次应一枚**：计数大于一时递减，最后一枚应完后恢复空 FIFO。故
 /// `while hush().is_ok()` 那一形（路由者 `exhaust::drain`）会把积着的每一枚都各自应掉。
 pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
     let mut pending = meta.pending.lock();
-    let zero = match &mut *pending {
-        Pending::Rung(n) if *n > 1 => {
-            *n -= 1;
-            false
+    match &mut *pending {
+        Pending::Rung { count, .. } if *count > 1 => *count -= 1,
+        Pending::Rung { spare, .. } => {
+            *pending = Pending::Queue(Queue { hands: core::mem::take(spare), taking: false });
         }
-        Pending::Rung(_) => true,
         _ => return Err(MailFail::Busy),
-    };
-    if zero {
-        *pending = Pending::Idle;
     }
     Ok(())
 }
@@ -430,14 +402,7 @@ const HOLD_MS: usize = 1000;
 /// 中段告警最多打几行（防洪水：一枚孔一行 ＋ 总量封顶）。
 const ALARM_MAX: usize = 8;
 
-/// **那一格是什么形状**（一枚孔最多一行 ＋ 总量封顶）：见 [`wait`] 那一节。
-///
-/// 三种形状对应三种不同的下一步：
-/// · `queue-empty` —— **没有任何一条路能自己回 `Idle`**（`take` 要有手、`taken` 要先 `take`）
-///   ⇒ 一旦出现就是**永久**的两头堵死；
-/// · `rung` —— 位没人清（`hush` 才是"我取走了"的那个动作）；
-/// · `queue-hands` / `queue-taking` —— 手还在（那两条本该由 `note_hold` 报，走到这里说明
-///   `hand_age` 那一刻读不到队头）。
+/// 记录未就绪孔的消息或位状态；每枚孔最多一行。
 fn note_shape(meta: &HoleMeta) {
     static N: AtomicUsize = AtomicUsize::new(0);
     if meta.stuck.swap(true, Ordering::Relaxed) {
@@ -448,7 +413,6 @@ fn note_shape(meta: &HoleMeta) {
         return;
     }
     let shape = match &*meta.pending.lock() {
-        Pending::Idle => "idle",
         Pending::Queue(q) => {
             if q.hands.is_empty() {
                 "queue-empty"
@@ -458,7 +422,7 @@ fn note_shape(meta: &HoleMeta) {
                 "queue-hands"
             }
         }
-        Pending::Rung(_) => "rung",
+        Pending::Rung { .. } => "rung",
     };
     crate::putln!(
         "mail: push not ready hole#{} owner={} pending={} live={}",
@@ -594,7 +558,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
             ),
             _ => (None, 0),
         };
-        *pending = Pending::Idle;
+        *pending = Pending::Queue(Queue::default());
         (head, rest)
     };
     if let Some((from, len, at)) = head {
@@ -608,3 +572,6 @@ pub(crate) fn seal(meta: &HoleMeta) {
 pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
     HoleMeta::new(alloc_id(), owner)
 }
+
+#[cfg(debug_assertions)]
+pub mod tests;
