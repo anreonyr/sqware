@@ -1,17 +1,17 @@
-use crate::system::operator::serve::plate::Placement;
-use crate::system::operator::core::Tile;
-use protocol::common::schedule::{Progress, Res, ResMut};
-use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::control::core::unit::{Slot, State, Table};
+use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::identity::serve::install::Roster;
 use crate::system::identity::serve::query::{binding, current_authority};
+use crate::system::operator::core::Tile;
 use crate::system::operator::serve::install::Tree;
+use crate::system::operator::serve::plate::Placement;
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
 use env::{TaskId, TeamId, Wait};
 use protocol::common::path::{Path, PathBuf};
+use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::operator::{EntryId, Fail, Permit};
 struct Run {
     task: TaskId,
@@ -146,15 +146,13 @@ pub(crate) fn retire(living: Res<Living>, mut resources: ResMut<Resources>,
     resources.approvals.retain(|a| live(a.service) && live(a.task));
     Ok(Progress::Done)
 }
-pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut pending: ResMut<Runtimes>) -> Result<Progress, &'static str> {
-    pending.0.clear();
-    let table = &control.table;
-    let roster = &*roster;
-
-    if current_authority(roster).is_none() {
-        return Ok(Progress::Done);
-    }
-    for row in table.living() {
+pub(crate) fn candidates(
+    control: Res<Control>,
+    resources: Res<Resources>,
+    mut pending: ResMut<Runtimes>,
+) -> Result<Progress, &'static str> {
+    pending.requests.clear();
+    for row in control.table.living() {
         let Slot::Live {
             task,
             team: Some(team),
@@ -162,26 +160,56 @@ pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut pending: R
         else {
             continue;
         };
-        if !matches!(
+        if resources.runs.iter().any(|run| run.task == task)
+            || !matches!(
                 row.state,
                 State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
-            || !live(table, task)
+            || !live(&control.table, task)
         {
             continue;
         }
-        let Some(_) = binding(roster, task).map_err(|_| "runtime identity query")? else {
-            continue;
-        };
-        pending.0.try_reserve(1).map_err(|_| "runtime capacity")?;
-        pending.0.push((task, team));
+        pending.requests.try_reserve(1).map_err(|_| "runtime capacity")?;
+        pending.requests.push((task, team));
     }
     Ok(Progress::Done)
 }
-pub struct Runtimes(pub Vec<(TaskId, TeamId)>);
+pub(crate) fn prepare(
+    roster: Res<Roster>,
+    epoch: Res<crate::system::identity::serve::revision::Epoch>,
+    mut pending: ResMut<Runtimes>,
+) -> Result<Progress, &'static str> {
+    if pending.requests.is_empty() {
+        return Ok(Progress::Done);
+    }
+    let revision = epoch.0.load(core::sync::atomic::Ordering::Acquire);
+    // Only an identity change can make an unbound candidate eligible.
+    if pending.seen == revision {
+        pending.requests.clear();
+        return Ok(Progress::Done);
+    }
+    pending.seen = revision;
+    if current_authority(&roster).is_none() {
+        pending.requests.clear();
+        return Ok(Progress::Done);
+    }
+    let mut at = 0;
+    while at < pending.requests.len() {
+        if binding(&roster, pending.requests[at].0)
+            .map_err(|_| "runtime identity query")?
+            .is_some()
+        {
+            at += 1;
+        } else {
+            pending.requests.remove(at);
+        }
+    }
+    Ok(Progress::Done)
+}
+pub struct Runtimes { pub requests: Vec<(TaskId, TeamId)>, pub seen: u64 }
 pub(crate) fn install(mut pending: ResMut<Runtimes>, mut tree: ResMut<Tree>, mut resources: ResMut<Resources>) -> Result<Progress, &'static str> {
-    if tree.host().is_none() { pending.0.clear(); return Ok(Progress::Done); }
-    for (task, team) in pending.0.drain(..) {
+    if tree.host().is_none() { pending.requests.clear(); return Ok(Progress::Done); }
+    for (task, team) in pending.requests.drain(..) {
         if resources.runs.iter().any(|r| r.task == task) { continue; }
         resources.runs.try_reserve(1).map_err(|_| "runtime capacity")?;
         let team_road = Path::new("uit")

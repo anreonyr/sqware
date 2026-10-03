@@ -34,15 +34,34 @@ impl<'r> Resources<'r> {
         self.entries.try_reserve(1).map_err(|_| AccessError::Room)?;
         self.entries.push(Entry { id, value: RefCell::new(value) }); Ok(())
     }
+    pub(crate) fn index(&self, id: TypeId, cached: usize) -> Result<usize, AccessError> {
+        if self.entries.get(cached).is_some_and(|entry| entry.id == id) {
+            return Ok(cached);
+        }
+        self.entries
+            .iter()
+            .position(|entry| entry.id == id)
+            .ok_or(AccessError::Missing)
+    }
     pub fn read<T: 'static>(&self) -> Result<Res<'_, T>, AccessError> {
-        let e = self.entries.iter().find(|e| e.id == TypeId::of::<T>()).ok_or(AccessError::Missing)?;
+        self.read_at(self.index(TypeId::of::<T>(), usize::MAX)?)
+    }
+    pub fn write<T: 'static>(&self) -> Result<ResMut<'_, T>, AccessError> {
+        self.write_at(self.index(TypeId::of::<T>(), usize::MAX)?)
+    }
+    pub(crate) fn read_at<T: 'static>(&self, index: usize) -> Result<Res<'_, T>, AccessError> {
+        let e = self.entries.get(index).ok_or(AccessError::Missing)?;
         let r = e.value.try_borrow().map_err(|_| AccessError::Borrowed)?;
         Ref::filter_map(r, |v| v.any().downcast_ref()).map_err(|_| AccessError::Missing)
     }
-    pub fn write<T: 'static>(&self) -> Result<ResMut<'_, T>, AccessError> {
-        let e = self.entries.iter().find(|e| e.id == TypeId::of::<T>()).ok_or(AccessError::Missing)?;
-        let r = e.value.try_borrow_mut().map_err(|_| AccessError::Borrowed)?;
-        RefMut::filter_map(r, |v| v.any_mut().and_then(|v| v.downcast_mut())).map_err(|_| AccessError::Missing)
+    pub(crate) fn write_at<T: 'static>(&self, index: usize) -> Result<ResMut<'_, T>, AccessError> {
+        let e = self.entries.get(index).ok_or(AccessError::Missing)?;
+        let r = e
+            .value
+            .try_borrow_mut()
+            .map_err(|_| AccessError::Borrowed)?;
+        RefMut::filter_map(r, |v| v.any_mut().and_then(|v| v.downcast_mut()))
+            .map_err(|_| AccessError::Missing)
     }
 }
 
@@ -50,16 +69,30 @@ impl<'r> Resources<'r> {
 pub struct Access { pub(crate) id: TypeId, pub(crate) write: bool }
 pub trait Param: 'static {
     type Item<'a>;
-    fn get<'a>(resources: &'a Resources<'_>) -> Result<Self::Item<'a>, AccessError>;
+    fn get<'a>(resources: &'a Resources<'_>, index: usize) -> Result<Self::Item<'a>, AccessError>;
     fn access() -> Access;
 }
 impl<T: 'static> Param for Ref<'static, T> {
     type Item<'a> = Ref<'a, T>;
-    fn get<'a>(r: &'a Resources<'_>) -> Result<Self::Item<'a>, AccessError> { r.read() }
-    fn access() -> Access { Access { id: TypeId::of::<T>(), write: false } }
+    fn get<'a>(r: &'a Resources<'_>, index: usize) -> Result<Self::Item<'a>, AccessError> {
+        r.read_at(index)
+    }
+    fn access() -> Access {
+        Access {
+            id: TypeId::of::<T>(),
+            write: false,
+        }
+    }
 }
 impl<T: 'static> Param for RefMut<'static, T> {
     type Item<'a> = RefMut<'a, T>;
-    fn get<'a>(r: &'a Resources<'_>) -> Result<Self::Item<'a>, AccessError> { r.write() }
-    fn access() -> Access { Access { id: TypeId::of::<T>(), write: true } }
+    fn get<'a>(r: &'a Resources<'_>, index: usize) -> Result<Self::Item<'a>, AccessError> {
+        r.write_at(index)
+    }
+    fn access() -> Access {
+        Access {
+            id: TypeId::of::<T>(),
+            write: true,
+        }
+    }
 }

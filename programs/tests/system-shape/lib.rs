@@ -14,7 +14,7 @@ mod tests {
     }
     impl<'ast> Visit<'ast> for Signatures {
         fn visit_item_struct(&mut self, item: &'ast ItemStruct) {
-            const INTERMEDIATE: &[&str] = &["Address", "Source", "Installation", "Record", "Declaration", "Location", "Tile", "Placement", "Registration", "Registrations", "Runtimes", "Image", "Readiness", "Launch", "Wiring", "Connections", "Internal", "Incoming", "Inbox", "Request", "Outcome", "Approved", "Kind", "Execution", "Operation", "Tracked", "Active", "Operations", "Startup", "Flow", "Activity", "Bound", "Shutoff", "Output", "Mounts", "Faces", "Book", "Buffer", "Current", "CurrentTip", "Response", "Running", "Tips", "Tip", "Ack", "LateGuests", "Outboxes", "Hit", "Selected", "Settling", "Judgment", "Membership", "BindingRequest", "Selection", "Subscription"];
+            const INTERMEDIATE: &[&str] = &["Address", "Source", "Installation", "Record", "Declaration", "Location", "Tile", "Placement", "Registration", "Registrations", "Runtimes", "Image", "Readiness", "Launch", "Wiring", "Connections", "Internal", "Incoming", "Inbox", "Request", "Outcome", "Approved", "Kind", "Execution", "Operation", "Tracked", "Active", "Operations", "Startup", "Flow", "Activity", "Bound", "Shutoff", "Output", "Mounts", "Faces", "Book", "Buffer", "Current", "CurrentTip", "Response", "Ready", "Epoch", "Changed", "Running", "Tips", "Tip", "Ack", "LateGuests", "Outboxes", "Hit", "Selected", "Settling", "Judgment", "Membership", "BindingRequest", "Selection", "Subscription"];
             if INTERMEDIATE.contains(&item.ident.to_string().as_str()) && item.fields.len() > 3 {
                 self.violations.push(format!("{} has {} fields", item.ident, item.fields.len()));
             }

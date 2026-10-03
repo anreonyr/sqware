@@ -79,15 +79,15 @@ pub fn timeout() {
 
 /// Isolated supervisor fixture. Every observation goes over the real Identity IPC faces.
 pub fn acceptance() {
-
-    use protocol::system::identity::client::TaskQuery;
     use crate::system::run::{bootstrap, scene};
+    use protocol::system::identity::client::TaskQuery;
 
     super::hierarchy::codecs();
     super::hierarchy::reference_lifetime();
     let boot = bootstrap::take().expect("identity: bootstrap");
     let list = scene::programs(&boot.catalog).expect("identity: scene");
     let mut assembly = Fixture::new(boot).ok().expect("identity: assembly");
+    revision(&mut assembly);
     for program in list {
         if program.name() == "system-child" {
             assembly.resources.write::<crate::system::control::serve::unit::Control>().unwrap().enlist(program).expect("identity: runtime declaration");
@@ -171,6 +171,114 @@ pub fn acceptance() {
     protocol::debug::put("system: identity, device and publication acceptance passed");
     assembly.resources.write::<crate::system::control::serve::frame::Flow>().unwrap().settling = true;
     assert!(assembly.supervise().is_ok(), "system: normal team shutdown failed");
+}
+
+fn revision(assembly: &mut Fixture) {
+    use crate::system::identity::serve::{
+        install::Roster,
+        revision::{Changed, Epoch},
+    };
+    use core::sync::atomic::Ordering;
+    use protocol::system::identity::{
+        PrincipalId, Reply, Wire,
+        client::{CallError, Face},
+    };
+
+    assembly.progress().expect("identity: initial maintenance");
+    let authority = assembly
+        .resources
+        .read::<Roster>()
+        .unwrap()
+        .authority()
+        .unwrap();
+    let epoch = assembly.resources.read::<Epoch>().unwrap().clone();
+    let changed = assembly.resources.read::<Changed>().unwrap();
+    assert!(
+        !changed.0.wait(Wait::POLL).unwrap(),
+        "identity: initial changes not consumed"
+    );
+    let before = epoch.0.load(Ordering::Acquire);
+    let query = Face::direct(
+        authority,
+        Grant::Resolve,
+        establish::find(authority, Grant::Resolve.mark()).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        query.call(
+            Wire::Resolve(runtime::env::unit::self_id()),
+            Wait::AtMost(1000)
+        ),
+        Ok(Reply::Binding(Some(_)))
+    ));
+    assert_eq!(
+        epoch.0.load(Ordering::Acquire),
+        before,
+        "identity: query changed revision"
+    );
+    assert!(
+        !changed.0.wait(Wait::POLL).unwrap(),
+        "identity: query woke maintenance"
+    );
+    let derive = Face::direct(
+        authority,
+        Grant::Derive,
+        establish::find(authority, Grant::Derive.mark()).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        derive.call(
+            Wire::Derive(PrincipalId::new(authority, u64::MAX)),
+            Wait::AtMost(1000)
+        ),
+        Err(CallError::Service(_))
+    ));
+    assert_eq!(
+        epoch.0.load(Ordering::Acquire),
+        before,
+        "identity: denial changed revision"
+    );
+    assert!(
+        !changed.0.wait(Wait::POLL).unwrap(),
+        "identity: denial woke maintenance"
+    );
+    assert!(matches!(
+        derive.call(
+            Wire::Derive(PrincipalId::root(authority)),
+            Wait::AtMost(1000)
+        ),
+        Ok(Reply::Principal(_))
+    ));
+    assert_eq!(
+        epoch.0.load(Ordering::Acquire),
+        before + 1,
+        "identity: mutation revision missing"
+    );
+    assert!(
+        changed.0.wait(Wait::POLL).unwrap(),
+        "identity: mutation did not wake maintenance"
+    );
+    drop(changed);
+    assembly.progress().expect("identity: changed maintenance");
+    assert_eq!(
+        assembly
+            .resources
+            .read::<crate::system::identity::serve::names::Registrations>()
+            .unwrap()
+            .seen,
+        before + 1
+    );
+    assert!(
+        !assembly
+            .resources
+            .read::<Changed>()
+            .unwrap()
+            .0
+            .wait(Wait::POLL)
+            .unwrap(),
+        "identity: mutation notification not consumed"
+    );
+    protocol::debug::put("identity: only successful mutations wake maintenance");
 }
 
 fn activation_boundary(assembly: &Fixture, hub: env::TaskId,

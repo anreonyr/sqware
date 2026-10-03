@@ -1,4 +1,4 @@
-use alloc::collections::VecDeque;
+use alloc::{collections::VecDeque, vec::Vec};
 use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
@@ -74,7 +74,7 @@ struct Hand {
     from: TaskId,
     /// **内核自己那一格字节**（`Push` 那一刻抄进来的）。于是递出去之后它与发送方再无关系：
     /// 发送方可以立刻放手、可以退场，取的一方也不必去翻它的页表（见 `Push` 那一节的注）。
-    buf: Arc<[u8]>,
+    buf: Arc<Vec<u8>>,
     /// **这一只**落手那一刻（ticks）：队列里排着好几只时，"谁压了多久"由它各自说
     /// （孔上那一格只记得下队头的）。
     at: u64,
@@ -170,7 +170,7 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 /// **满了（[`QUEUE_CAP`]）／位已响 ⇒ `Busy`**：满不丢最旧——"丢不丢"留给写者（`Wait::POLL`
 /// 那一档正是为它准备的）。写者要"轮到我有位"就用 `POLL` 重试；`AtMost`／`Forever` 那一档
 /// 等的是**队列空**（老语义，见 [`HoleMeta::ready`] 那一节的注）。
-pub(crate) fn give(meta: &HoleMeta, buf: Arc<[u8]>, from: TaskId) -> Result<(), MailFail> {
+pub(crate) fn give(meta: &HoleMeta, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(), MailFail> {
     if !meta.alive() {
         return Err(MailFail::Dead);
     }
@@ -232,7 +232,7 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
 /// 取用中那只手的复制源：`(发送者, 它那段空间, 起点, 长度)`。
 ///
 /// 只在 [`take`] 与 [`taken`]／[`back`] 之间非 `None`——那一段窗口里只有本取用者进得来。
-pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<[u8]>)> {
+pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Vec<u8>>)> {
     let pending = meta.pending.lock();
     match &*pending {
         Pending::Queue(q) if q.taking => q.hands.front().map(|h| (h.from, h.buf.clone())),

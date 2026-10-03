@@ -35,6 +35,10 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
                 .map_err(|_| "system resource capacity")?
         };
     }
+    put!(crate::system::identity::serve::revision::Epoch::new());
+    put!(crate::system::identity::serve::revision::Changed(
+        runtime::env::mail::NolePie::unseal().map_err(|_| "identity change bell")?
+    ));
     put!(Control::new(status.clone()));
     put!(status);
     put!(boot::Faces(Vec::new()));
@@ -53,9 +57,13 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(watch::Watch::new().map_err(|_| "control watch")?);
     put!(Publications::new());
     put!(resource::Resources::new());
-    put!(resource::Runtimes(Vec::new()));
+    put!(resource::Runtimes { requests: Vec::new(), seen: 0 });
     put!(names::Names::new());
-    put!(names::Registrations(Vec::new()));
+    put!(names::Registrations {
+        requests: Vec::new(),
+        seen: 0,
+        dirty: false
+    });
     put!(None::<crate::service::hub::bridge::Activation>);
     put!(Living::new());
     put!(lifecycle::Operations::new());
@@ -108,6 +116,9 @@ pub fn run() -> Result<(), env::Reason> {
     let mut startup = schedule::startup().map_err(|_| start::E_TABLE)?;
     let mut frame = schedule::frame().map_err(|_| start::E_TABLE)?;
     let mut shutdown = schedule::shutdown().map_err(|_| start::E_TABLE)?;
+    startup.prepare(&resources);
+    frame.prepare(&resources);
+    shutdown.prepare(&resources);
     let result = (|| {
         let mut starting = Cursor::default();
         let mut cursor = Cursor::default();

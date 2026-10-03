@@ -1,10 +1,13 @@
 //! Observe a system team's failure from an independent parent team.
+use crate::system::life::{Phase, Status};
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, TeamId, Wait};
-use runtime::env::{mail::{self, HolePie, PolePie}, room, unit};
 use protocol::communication::session::establish;
-use crate::system::life::{Phase, Status};
+use runtime::env::{
+    mail::{self, HolePie, PolePie},
+    room, unit,
+};
 
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");
@@ -78,10 +81,24 @@ pub fn unit() {
     for (role, slot) in [(1, &status.operator), (2, &status.identity)] {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
-            if mode == role { room::exit(env::EXIT_OK, Some("system-fault: injected task exit")); }
-            let success = if role == 1 { crate::system::operator::serve::run::serve(state.clone()).is_ok() }
-                else { crate::system::identity::serve::run::serve(state.clone()).is_ok() };
-            if !success { let _ = room::doom(unit::self_id()); }
+            if mode == role {
+                room::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
+            }
+            let success = if role == 1 {
+                crate::system::operator::serve::run::serve(state.clone()).is_ok()
+            } else {
+                crate::system::identity::serve::run::serve(
+                    state.clone(),
+                    crate::system::identity::serve::revision::Epoch::new(),
+                    crate::system::identity::serve::revision::Changed(
+                        mail::NolePie::unseal().unwrap(),
+                    ),
+                )
+                .is_ok()
+            };
+            if !success {
+                let _ = room::doom(unit::self_id());
+            }
         });
         let ptr = Box::into_raw(Box::new(body));
         let task = unit::spawn(TeamId::new(0), runtime::core::task::join::trampoline as *const () as usize,

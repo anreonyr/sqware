@@ -16,7 +16,11 @@ pub struct Plan<E> {
 }
 impl Cursor {
     pub fn reset(&mut self) {
-        *self = Self::default();
+        self.at = 0;
+        self.finishing = false;
+        if let Some(nested) = &mut self.nested {
+            nested.reset();
+        }
     }
 }
 impl<E> Plan<E> {
@@ -27,11 +31,13 @@ impl<E> Plan<E> {
         resources: &Resources<'_>,
     ) -> Result<Progress, RunError<E>> {
         while let Some(step) = self.steps.get_mut(cursor.at) {
-            match (step.run)(resources, cursor)? {
+            match step.execute(resources, cursor)? {
                 Progress::Pending => return Ok(Progress::Pending),
                 Progress::Done => {
                     cursor.at += 1;
-                    cursor.nested = None;
+                    if let Some(nested) = &mut cursor.nested {
+                        nested.reset();
+                    }
                     cursor.finishing = false;
                 }
             }
@@ -40,26 +46,50 @@ impl<E> Plan<E> {
     }
 }
 
+impl<E> Plan<E> {
+    /// Bind declared resources before execution. Missing resources fail only when their step runs.
+    pub fn prepare(&mut self, resources: &Resources<'_>) {
+        for step in &mut self.steps {
+            step.prepare(resources);
+        }
+    }
+}
+struct Mapped<E, F, M> {
+    plan: Plan<E>,
+    map: M,
+    marker: core::marker::PhantomData<fn() -> F>,
+}
+impl<E, F, M: Fn(E) -> F> super::system::Runner<F> for Mapped<E, F, M> {
+    fn prepare(&mut self, resources: &Resources<'_>) {
+        self.plan.prepare(resources);
+    }
+    fn run(
+        &mut self,
+        resources: &Resources<'_>,
+        cursor: &mut Cursor,
+        _: &[usize; super::system::MAX_PARAMS],
+    ) -> Result<Progress, RunError<F>> {
+        let nested = cursor.nested.get_or_insert_with(Default::default);
+        self.plan
+            .advance(nested, resources)
+            .map_err(|error| match error {
+                RunError::Step(error) => RunError::Step((self.map)(error)),
+                RunError::Resource(error) => RunError::Resource(error),
+                RunError::UnknownPlan => RunError::UnknownPlan,
+            })
+    }
+}
 impl<E: 'static> Plan<E> {
-    pub fn map_error<F: 'static>(self, map: impl Fn(E) -> F + Clone + 'static) -> Plan<F> {
+    pub fn map_error<F: 'static>(self, map: impl Fn(E) -> F + 'static) -> Plan<F> {
         Plan {
-            steps: self
-                .steps
-                .into_iter()
-                .map(|mut step| {
-                    let map = map.clone();
-                    System {
-                        access: step.access,
-                        run: alloc::boxed::Box::new(move |resources, cursor| {
-                            (step.run)(resources, cursor).map_err(|error| match error {
-                                RunError::Step(error) => RunError::Step(map(error)),
-                                RunError::Resource(error) => RunError::Resource(error),
-                                RunError::UnknownPlan => RunError::UnknownPlan,
-                            })
-                        }),
-                    }
-                })
-                .collect(),
+            steps: alloc::vec![System::new(
+                [None; super::system::MAX_PARAMS],
+                Mapped {
+                    plan: self,
+                    map,
+                    marker: core::marker::PhantomData
+                }
+            )],
         }
     }
 }

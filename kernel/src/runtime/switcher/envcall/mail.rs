@@ -75,7 +75,10 @@ fn push(
                             if !mail::copy_in(&ident.team.space, &mut cell, msg) {
                                 Err(MailFail::Denied)
                             } else {
-                                mail::hole::give(p.meta(), Arc::from(cell.into_boxed_slice()), me)
+                                match Arc::try_new(cell) {
+                                    Ok(cell) => mail::hole::give(p.meta(), cell, me),
+                                    Err(_) => Err(MailFail::OoM),
+                                }
                             }
                         }
                     }

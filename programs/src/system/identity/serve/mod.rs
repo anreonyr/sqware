@@ -11,3 +11,4 @@ pub mod install;
 pub mod source;
 pub mod query;
 pub mod names;
+pub mod revision;

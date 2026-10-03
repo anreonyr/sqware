@@ -88,10 +88,18 @@ pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     schedule.add_system("names.expired", 6, names::expired)?;
     schedule.add_system("names.retire", 7, names::retire)?;
     schedule.add_system("resources.retire", 8, resource::retire)?;
+    schedule.add_system("resources.candidates", 9, resource::candidates)?;
     schedule.add_system("resources.prepare", 9, resource::prepare)?;
+    schedule.before("resources.candidates", "resources.prepare")?;
     schedule.add_system("resources.install", 10, resource::install)?;
+    schedule.add_system("names.changes", 11, names::changes)?;
     schedule.add_system("names.prepare", 11, names::prepare)?;
+    schedule.before("names.changes", "names.prepare")?;
+    schedule.add_system("names.select", 12, names::select)?;
+    schedule.add_system("names.verify", 12, names::verify)?;
     schedule.add_system("names.install", 12, names::install)?;
+    schedule.before("names.select", "names.verify")?;
+    schedule.before("names.verify", "names.install")?;
     schedule.add_system("publications.receive", 13, p::receive::receive)?;
     schedule.add_subplans(
         "publications",
@@ -166,6 +174,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.add_system("pending", 19, f::pending)?;
     frame.add_system("watch.entries", 20, watch::entries)?;
     frame.add_system("watch.publication", 21, watch::publication)?;
+    frame.add_system("watch.identity", 21, watch::identity_changes)?;
     frame.add_system("watch.activation", 22, watch::activation)?;
     frame.add_system("watch.tasks", 23, watch::tasks)?;
     frame.add_system("watch.apply", 24, watch::apply)?;
