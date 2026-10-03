@@ -168,6 +168,12 @@ mod tests {
     // 第九例（后补）：钉住参数表那颗 `-smp` 默认——见 `kernel/src/health/hart.rs` 的头注。
     #[cfg(debug_assertions)]
     #[test]
+    fn scheduler_ready_and_steal() {
+        kernel::health::scheduler();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn hart_multi() {
         kernel::health::hart::count();
     }

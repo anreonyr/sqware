@@ -1,5 +1,6 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::HashMap;
 use sbi::ecall::SArgs;
@@ -47,20 +48,48 @@ pub(crate) fn launch(task: Arc<Task>) {
 }
 
 pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
-    schedulers()[hart.get()].push(task);
-    if conductor::waiting(hart) {
-        conductor::note_kick_ipi();
-        let (word, bit) = hart.bit();
-        let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-            .args(SArgs {
-                a0: bit,
-                a1: word * (usize::BITS as usize),
-                ..Default::default()
-            })
-            .call();
+    let notify = schedulers()[hart.get()].push(task);
+    if conductor::waiting(hart) || notify {
+        notify_hart(hart);
+        if !conductor::waiting(hart)
+            && let Some(idle) = schedulers()
+                .iter()
+                .find(|s| s.hart != hart && conductor::waiting(s.hart))
+        {
+            notify_hart(idle.hart);
+        }
     } else {
         conductor::note_fallback();
     }
+}
+
+fn notify_hart(hart: HartId) {
+    conductor::note_kick_ipi();
+    let (word, bit) = hart.bit();
+    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
+        .args(SArgs {
+            a0: bit,
+            a1: word * (usize::BITS as usize),
+            ..Default::default()
+        })
+        .call();
+}
+
+static STEAL_CURSOR: AtomicUsize = AtomicUsize::new(0);
+
+pub(super) fn steal() -> Option<Arc<Task>> {
+    let all = schedulers();
+    let me = crate::hart::hart_id();
+    let start = STEAL_CURSOR.fetch_add(1, Ordering::Relaxed) % all.len();
+    for offset in 0..all.len() {
+        let victim = &all[(start + offset) % all.len()];
+        if victim.hart != me
+            && let Some(task) = victim.steal()
+        {
+            return Some(task);
+        }
+    }
+    None
 }
 
 static ROSTER: OnceLock<SpinLock<HashMap<TaskId, TaskWeak>>> = OnceLock::new();
