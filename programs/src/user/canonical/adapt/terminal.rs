@@ -58,7 +58,7 @@ pub fn run(console: &mut Console) {
         // 2：写——一具架，**写端永不挂起**（满了按 `Mode::Oldest` 顶掉最旧未读格、记 `lost`）。
         for one in out.drain(..) {
             if let Some(batch) = Bytes::of(&one) {
-                let _ = console.tx.send(batch);
+                let _ = console.tx.send(&batch);
             }
         }
         if console.tx.lost() != dropped {

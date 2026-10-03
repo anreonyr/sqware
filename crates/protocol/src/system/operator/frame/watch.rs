@@ -119,14 +119,11 @@ impl Message for Event {
     const EMPTY: Self::Buf = [0u8; EventFrame::LEN];
 
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        EventFrame {
-            seq: self.seq,
-            kind: self.kind.code(),
-            road: self.road.clone(),
-            id: self.id,
-            owner: self.owner,
-        }
-        .store_at(out, 0)
+        let at = self.seq.store_at(out, 0)?;
+        let at = self.kind.code().store_at(out, at)?;
+        let at = self.road.store_at(out, at)?;
+        let at = self.id.store_at(out, at)?;
+        self.owner.store_at(out, at)
     }
 
     fn fetch(bytes: &[u8]) -> Option<Event> {

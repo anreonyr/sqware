@@ -64,7 +64,7 @@ fn main() -> Report<'static> {
     let mut aw = a.writer();
     for i in 0..rig::count() {
         assert!(
-            aw.send(rig::payload(i)).is_ok(),
+            aw.send(&rig::payload(i)).is_ok(),
             "probe-rack-mount: A 第 {i} 条没落进去"
         );
     }
@@ -93,7 +93,7 @@ fn main() -> Report<'static> {
     let mut reader = protocol::communication::rack::Reader::<Bytes>::from_token(retained).unwrap();
     client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
     assert_eq!(tree.root().tile(&rig::road().unwrap().try_join("tx").unwrap(), Wait::AtMost(MS)).map(|_| ()), Err(Fail::Unknown));
-    b.writer().send(rig::payload(99)).unwrap();
+    b.writer().send(&rig::payload(99)).unwrap();
     assert_eq!(reader.recv(Wait::AtMost(MS)).unwrap().bytes(), rig::payload(99).bytes());
     assert_eq!(mail::inspect(retained).unwrap().1, utask::self_id());
     protocol::debug::put("probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping");

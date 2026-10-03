@@ -44,9 +44,9 @@ enum Want {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Key {
+pub enum Key<'a> {
     /// 坐标：那一块 `Pane` + 那一段名字（`land` / `part` 那一问手里有的）
-    At(Where, String),
+    At(Where, &'a str),
     /// 号：条目自己的号（`find` / `trim` 手里有的）
     Id(EntryId),
 }
@@ -281,7 +281,7 @@ impl Operator {
     /// **判据与 `find` 同一格**（"这一枚还能不能交出去"与"这一格能不能换人"是同一件事）：
     /// 从前这里借 `vested_by`（孔那一套的父手），于是**页与铃那两格恒"可重落"**——任何域都能
     /// 把别人的门牌换绑成自己的。
-    pub fn claimable(&self, key: Key, who: TaskId) -> bool {
+    pub fn claimable(&self, key: Key<'_>, who: TaskId) -> bool {
         let Some(Slot {
             node: Node::Tile { pie, owner, .. },
             ..
@@ -384,10 +384,10 @@ impl Operator {
     }
 
     /// 按 Key 那两把钥匙取那一格（只读）。两种寻址**打的是同一格**（见 Key）
-    fn slot_at(&self, key: Key) -> Option<&Slot> {
+    fn slot_at(&self, key: Key<'_>) -> Option<&Slot> {
         match key {
             Key::Id(id) => self.slot(id),
-            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name.as_str())?),
+            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name)?),
         }
     }
 

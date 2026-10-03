@@ -20,28 +20,29 @@ pub(super) fn apply(mut request: ResMut<Request>, mut tree: ResMut<Operator>, mu
             permit,
             mine,
         } => {
-            if !tree.claimable(Key::At(at, name.clone()), who) {
+            if !tree.claimable(Key::At(at, &name), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
             // **一问一动**：两轴与那一枚砖**一起落**（`tree.land` 那一手的 Node::Tile）——
             // 故"树改了、两轴没记上"这一类**构造上不存在**，这一支没有第二步可漏。
-            return match tree.land(Location { at, name: name.clone() }, Tile { pie: entry, permit, owner: mine.then_some(who) }) {
+            return match tree.land(Location { at, name }, Tile { pie: entry, permit, owner: mine.then_some(who) }) {
                 Ok(change) => {
-                    out.changes.push(change.clone());
-                    ocall::Union::Entry(change.id)
+                    let id = change.id;
+                    out.changes.push(change);
+                    ocall::Union::Entry(id)
                 }
                 Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
             };
         }
         ocall::Wire::Part { at, name } => {
-            if !tree.claimable(Key::At(at, name.clone()), who) {
+            if !tree.claimable(Key::At(at, &name), who) {
                 return ocall::Union::Status(ocall::DENIED);
             }
             return match tree.part_at(at, name) {
                 Ok((id, _fresh, change)) => {
                     // **幂等那一档没有事件**（`change = None` = 树一个字节没变），号照答。
-                    if let Some(change) = &change {
-                        out.changes.push(change.clone());
+                    if let Some(change) = change {
+                        out.changes.push(change);
                     }
                     ocall::Union::Entry(id)
                 }
@@ -74,8 +75,8 @@ pub(super) fn apply(mut request: ResMut<Request>, mut tree: ResMut<Operator>, mu
         // `trim` 的两档都是"一格状态"：**各自就地成答**，不再走下面那条窄路（`said`）。
         ocall::Wire::Trim(id) => match tree.trim(id) {
             Ok(change) => {
-                if let Some(change) = &change {
-                    out.changes.push(change.clone());
+                if let Some(change) = change {
+                    out.changes.push(change);
                 }
                 return ocall::Union::Status(ocall::OK);
             }

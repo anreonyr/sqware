@@ -24,7 +24,7 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .map_err(|_| Fail::Room)?;
     resources.insert(Operator::new()).map_err(|_| Fail::Room)?;
     resources
-        .insert(watch::Watchers::open().map_err(|_| Fail::Desk)?)
+        .insert(watch::Watchers::new())
         .map_err(|_| Fail::Room)?;
     resources.insert(Desk::new()).map_err(|_| Fail::Room)?;
     resources

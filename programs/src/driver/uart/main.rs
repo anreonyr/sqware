@@ -68,7 +68,7 @@ fn main() -> Result<(), Fail> {
             let n = device::drain(view, &mut raw);
             if let Some(batch) = Bytes::of(&raw[..n]) {
                 // 满了（`Mode::Oldest`）由架顶掉最旧未读格并把数记在 `lost` 上——不由本域等。
-                let _ = desk.rx_w.send(batch);
+                let _ = desk.rx_w.send(&batch);
             }
             // 排空的**通知**照旧发：0 字节也算"这一条我处理完了"——那一格回闲 ＋ 把线放回去。
             desk.line.exhaust().unwrap();

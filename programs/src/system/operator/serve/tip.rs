@@ -178,9 +178,7 @@ pub(super) fn mutate(
                 },
             ) {
                 Ok((id, changes)) => {
-                    for change in &changes {
-                        out.changes.push(change.clone());
-                    }
+                    out.changes.extend(changes);
                     out.reply = Some(Ack {
                         back,
                         status: ocall::OK,
@@ -204,12 +202,13 @@ pub(super) fn mutate(
                 Ok(id) if tree.reference(id) == Some(leaf) => tree.trim(id),
                 _ => Ok(None),
             };
-            if let Ok(Some(change)) = &result {
-                out.changes.push(change.clone());
-            }
+            let fail = match result {
+                Ok(change) => { out.changes.extend(change); None }
+                Err(fail) => Some(fail),
+            };
             out.reply = Some(Ack {
                 back,
-                status: ocall::fail_to_code(result.err()),
+                status: ocall::fail_to_code(fail),
                 id: ocall::EntryId::new(0),
             });
         }
@@ -245,12 +244,13 @@ pub(super) fn mutate(
                 Err(ocall::Fail::Unknown) => Ok(None),
                 other => other,
             };
-            if let Ok(Some(change)) = &result {
-                out.changes.push(change.clone());
-            }
+            let fail = match result {
+                Ok(change) => { out.changes.extend(change); None }
+                Err(fail) => Some(fail),
+            };
             out.reply = Some(Ack {
                 back,
-                status: ocall::fail_to_code(result.err()),
+                status: ocall::fail_to_code(fail),
                 id,
             });
         }
