@@ -24,6 +24,8 @@ pub struct Watch {
     pile: Pile,
     /// 这一景没有持树者 / 那几趟没成）
     faces: [Option<PieToken>; ccall::Grant::ALL.len()],
+    sources: [Option<PieToken>; 2],
+    armed: bool,
 }
 
 impl Watch {
@@ -33,21 +35,44 @@ impl Watch {
         Ok(Watch {
             pile,
             faces: [None; ccall::Grant::ALL.len()],
+            sources: [None; 2],
+            armed: false,
         })
     }
 
-    /// **认出某一面的待客入口**：把那一枚挂进**同一只组**（多源等待的写法）
-    /// 调用者只有一处：Assembly::mount_control——**铸入口那一枚线程**（编排域主线程）在
-    /// 它的到达就是"有人来问 control 这一面了"那一格
-    /// **装不上也认**（`faces` 仍记着）：面那一侧每拍还会非阻塞地取一次（单手的推没有丢的
-    /// 道理，本手只是把"醒来"这条快路接上）
+    /// Register a Control request face for the supervisor's wait group.
     pub fn attach_face(&mut self, grant: ccall::Grant, face: PieToken) {
-        let _ = self.pile.attach(&HolePie::from_token(face), HoleDir::Pull);
         self.faces[grant.index()] = Some(face);
+        self.armed = false;
+    }
+
+    fn arm(&mut self, control: &Control) -> bool {
+        let sources = [
+            control.activation.as_ref().map(|activation| activation.entry()),
+            control.hierarchy.borrow().entry,
+        ];
+        if self.armed && sources == self.sources {
+            return true;
+        }
+        let Ok(pile) = Pile::unseal(false) else { return false; };
+        for token in self.faces.iter().chain(sources.iter()).flatten() {
+            if pile.attach(&HolePie::from_token(*token), HoleDir::Pull).is_err() {
+                let _ = mail::seal(pile.token());
+                let _ = mail::release(pile.token());
+                return false;
+            }
+        }
+        // Replacing the group also removes registrations for retired activation faces.
+        let old = ::core::mem::replace(&mut self.pile, pile);
+        let _ = mail::seal(old.token());
+        let _ = mail::release(old.token());
+        self.sources = sources;
+        self.armed = true;
+        true
     }
 
     /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**
-    /// 事件有两个来源，挂在**同一只组**上（多源等待，不是一个轮询圈）
+    /// Control、Hub 激活及发布入口共用一只组；任务退出与新 LINK 有界轮询。
     pub fn run(&mut self, control: &mut Control, tree: &mut Tree) -> bool {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         let mut buf: Vec<u8> = Vec::new();
@@ -85,11 +110,10 @@ impl Watch {
                 owed = control.table.living().count();
                 quiet_at = clock();
             }
-            // 二、等一格有事：**有界节拍**（`TICK_MS`）。它不再是"顺便看一眼"的兜底，而是那一扫
-            //     的节拍本身 ⇒ **每一拍都要**（不再由"有没有道"决定）。**`Pile` 的既定用法**：
-            //     挂起过的那一侧返回的是预置值——内核没有第二次执行机会，故醒来必须自己按组复核，
-            //     不能靠返回值拿身份。
-            let _ = self.pile.await_(Wait::AtMost(TICK_MS));
+            // Requests wake the group; deaths and new LINKs use a bounded periodic check.
+            // Recheck every source after waking, including the pre-set return from a blocked await.
+            let millis = if self.arm(control) { POLL_MS } else { RETRY_MS };
+            let _ = self.pile.await_(Wait::AtMost(millis));
             // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单手，
             //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
             for i in 0..ccall::Grant::ALL.len() {
@@ -172,8 +196,9 @@ impl Watch {
     }
 }
 
-/// **有界节拍**（毫秒）：要"顺便看一眼"时的等待上限。**不是轮询圈**——事件一到就醒
-const TICK_MS: usize = 10;
+const POLL_MS: usize = 100;
+// Failed wait-group registration falls back to the shorter polling interval.
+const RETRY_MS: usize = 10;
 
 /// **静默上限**（毫秒）：账上一位都没少的时长上限——超过它而闸还没成立（或收场还没收讫）
 /// 就**出声并收场**

@@ -77,3 +77,13 @@ Operator 的 Tree::connect 每轮只枚举一次权限表，为各客户端保�
 单独调整 fence.i 的三轮均值仅从 78.25→77.74%，差异很小。主要改善来自减少重复扫表；结构化记录同一稳定窗口内的 Collect 为 83,498→23,231 次。结果仅表示上述场景与采样窗口的进程 CPU 时间，其他场景及不导出记录时的收益需分别测量。
 
 修正后关闭 icount 的回归：20 个 debug 健康用例通过（无 initrd 的 scene 仍按契约报错）；accept/product/again/load/group/beat/rig 与 identity-replacement 八个 release 场景通过。四 hart debug group 输出 concurrent builders=64、group: PASS 并正常停机，发布禁分配检查未触发。
+
+### 监督循环的后续修正
+
+按普通 `cargo run --release` 配置关闭内核 semihosting 导出，以 `1755b19` 为本轮基线。Hierarchy 清理每轮只采样一次各任务的存活状态，重复记录与目录复用这一轮的结果；已登记的 runtime 在 prepare 中不再重复查询。请求处理中的来源、存活与授权检查仍即时执行，清理快照不跨轮保留。
+
+Control 请求面、Hub 激活入口与发布入口加入同一只独占 Pile，请求到达时唤醒监督线程。入口发生替换时先完整安装新组，再封印并释放旧组，撤掉旧入口的等待登记；安装失败释放临时组，继续使用旧组及 10 ms 兜底。无事件时的任务退出、新 LINK 与身份别名检查改为 100 ms 间隔，因此这些后台变化的发现可能比此前晚，实际耗时还受调度及本轮工作影响。没有新增 ABI 或关闭诊断记录。
+
+沿用四 hart、seed=12345、无 icount、启动两秒后采样四秒的交替三轮测量：基线 47.25/45.75/45.50%，本轮 3.75/3.75/4.00%，均值 46.17→3.83%，进程 CPU 时间减少约 91.7%。六轮均正常退出且无 panic。仅合并重复存活查询、保持 10 ms 间隔时，另外两轮为 28.50/27.75%，说明剩余空闲开销主要来自周期性监督查询。上述比例仍以一个逻辑核=100% 计，仅代表 product 场景的稳定采样窗口。
+
+本轮 `cargo check -p kernel -p programs` 通过；关闭 icount 的 accept/product/again/load/group/beat/rig/identity-replacement 八个 release 整机场景全部通过。

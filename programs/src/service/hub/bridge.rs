@@ -16,6 +16,10 @@ pub struct Activation {
 }
 
 impl Activation {
+    pub(crate) fn entry(&self) -> PieToken {
+        self.entry
+    }
+
     pub fn open(hub: TaskId) -> Result<Self, &'static str> {
         let entry = mail::unseal_hole(activation::ENTRY).map_err(|_| "hub activation hole")?;
         let owned = Self { hub, entry };

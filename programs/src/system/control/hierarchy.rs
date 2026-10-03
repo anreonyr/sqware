@@ -1,7 +1,7 @@
 //! Trusted publication records, identity aliases and runtime directories.
 use super::{BOOT_MS, Control};
 use crate::service::operator::bridge::Tree;
-use crate::system::common::life::table::{Slot, State};
+use crate::system::common::life::table::{Slot, State, Table};
 use alloc::{
     string::{String, ToString},
     vec::Vec,
@@ -227,12 +227,12 @@ impl Hierarchy {
             else {
                 continue;
             };
-            if !live(control, task)
+            if self.runs.iter().any(|r| r.task == task)
                 || !matches!(
                     row.state,
                     State::NeverStarted | State::Starting | State::Ready
                 )
-                || self.runs.iter().any(|r| r.task == task)
+                || !live(control, task)
             {
                 continue;
             }
@@ -678,10 +678,25 @@ impl Hierarchy {
         if tree.host().is_none() {
             return Ok(());
         }
+        // This sweep shares one liveness sample; request authorization queries afresh.
+        let me = runtime::env::unit::self_id();
+        let mut living = [TaskId::new(0); Table::CAP];
+        let mut count = 0;
+        for row in control.table.living() {
+            if matches!(row.state, State::NeverStarted | State::Starting | State::Ready)
+                && let Slot::Live { task, .. } = row.slot
+                && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
+            {
+                living[count] = task;
+                count += 1;
+            }
+        }
+        let live = |task| task == me || living[..count].contains(&task);
+        let authority = current_authority(control);
         let mut at = 0;
         while at < self.records.len() {
             let r = &self.records[at];
-            if !r.mounted || !live(control, r.publisher) || !live(control, r.owner) {
+            if !r.mounted || !live(r.publisher) || !live(r.owner) {
                 self.remove(tree, at)?;
             } else {
                 at += 1;
@@ -689,10 +704,10 @@ impl Hierarchy {
         }
         let mut at = 0;
         while at < self.aliases.len() {
-            if Some(self.aliases[at].object.authority()) != current_authority(control)
+            if Some(self.aliases[at].object.authority()) != authority
                 || self.aliases[at]
                     .lifetime
-                    .is_some_and(|task| !live(control, task))
+                    .is_some_and(|task| !live(task))
             {
                 self.remove_alias(tree, at)?;
             } else {
@@ -701,7 +716,7 @@ impl Hierarchy {
         }
         let mut at = 0;
         while at < self.runs.len() {
-            if live(control, self.runs[at].task) {
+            if live(self.runs[at].task) {
                 at += 1;
                 continue;
             }
@@ -723,7 +738,7 @@ impl Hierarchy {
             self.runs.remove(at);
         }
         self.approvals
-            .retain(|a| live(control, a.service) && live(control, a.task));
+            .retain(|a| live(a.service) && live(a.task));
         Ok(())
     }
 }
