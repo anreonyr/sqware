@@ -62,11 +62,37 @@ impl Cell {
     }
 }
 
+/// **一条状态订阅的描述**（订阅与取消共用同一个值；它不是 token，不发给调用方）。
+///
+/// [`Sub::key`] 是**派生量、不是字段**：两格各自映射到一个 `WakeKey`，于是"描述"与
+/// "边"不可能不一致。两格都产不出 `Tole { .. }`——订阅的转发图因此**不可能成环**。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Sub {
+    /// 观察某个任务的**退出收尾完成**（搭在既有的 `WakeKey::Task` 上）。
+    TaskCompleted(TaskId),
+    /// 观察**订阅者自己**能力的可观察状态改变。
+    Capabilities(TaskId),
+}
+
+impl Sub {
+    pub(crate) fn key(self) -> WakeKey {
+        match self {
+            Sub::TaskCompleted(id) => WakeKey::Task { id },
+            Sub::Capabilities(id) => WakeKey::Capabilities { task: id },
+        }
+    }
+}
+
 pub struct ToleMeta {
     state: SpinLock<ToleState>,
     id: ToleId,
     life: Arc<Life>,
     cells: SpinLock<Vec<Cell>>,
+    /// **第二张表**：状态订阅（与 `cells` 并列）。
+    ///
+    /// 不能并进 `cells`：那里的 [`Cell::live`] 过滤恰好会把"目标已销毁、完成提示还没被
+    /// 消费"那一条滤掉——而那一格正是订阅要保的东西。
+    subs: SpinLock<Vec<Sub>>,
     owner: TaskId,
     /// **轮转游标**：`ready()` 下一次**从第几格起扫**。
     ///
@@ -91,6 +117,7 @@ impl ToleMeta {
             id,
             life: Life::new(),
             cells: SpinLock::new_level(Level::L3, Vec::new()),
+            subs: SpinLock::new_level(Level::L3, Vec::new()),
             owner,
             cursor: AtomicUsize::new(0),
         })
@@ -135,6 +162,16 @@ impl ToleMeta {
         }
         out.extend(cells.iter().filter(|c| c.live()).cloned());
         out
+    }
+
+    /// 这一组装没装状态订阅（`Accord` 的拒授判据用它：含订阅的组不许转授）。
+    pub(crate) fn has_subs(&self) -> bool {
+        !self.subs.lock().is_empty()
+    }
+
+    #[cfg(debug_assertions)]
+    pub(crate) fn subs_len(&self) -> usize {
+        self.subs.lock().len()
     }
 }
 
@@ -181,6 +218,61 @@ pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), ToleFail> {
     Ok(())
 }
 
+/// 把一个**状态来源**登记进组：同描述重复登记幂等（不重装转发边、不重复留提示）。
+///
+/// `life` 是**来源那一侧**的弱寿命（`TaskCompleted` 用目标任务的，`CapabilitiesChanged`
+/// 用订阅者自己的）——它就是这条转发边的存活凭据：来源已死则 `forward` 收尾那一趟
+/// `prune` 会把站点连同这条边一起收掉。
+///
+/// 登记成功**先留一次待复核提示**：已有变化、已完成的任务以及登记那一刻的状态，
+/// 都不依赖"未来再来一个事件"。
+pub(crate) fn subscribe(
+    meta: &ToleMeta,
+    sub: Sub,
+    life: Weak<Life>,
+) -> Result<(), ToleFail> {
+    if !meta.alive() {
+        return Err(ToleFail::Dead);
+    }
+    {
+        let mut subs = meta.subs.lock();
+        if subs.contains(&sub) {
+            return Ok(());
+        }
+        if subs.try_reserve(1).is_err() {
+            return Err(ToleFail::OoM);
+        }
+        subs.push(sub);
+    }
+    if messenger::forward(sub.key(), life, meta.id.0, meta.life()).is_err() {
+        let mut subs = meta.subs.lock();
+        if let Some(at) = subs.iter().position(|s| *s == sub) {
+            subs.swap_remove(at);
+        }
+        return Err(ToleFail::OoM);
+    }
+    let _ = messenger::knock(key(meta), &meta.life());
+    Ok(())
+}
+
+/// 按**已安装的订阅描述**取消；同描述重复取消无事。
+///
+/// 只认 `(source, target)` 这条描述：**不要求目标还在世**、不要求还能升级出它的域、
+/// 也不要求它还在 heir 里。
+pub(crate) fn unsubscribe(meta: &ToleMeta, sub: Sub) -> Result<(), ToleFail> {
+    if !meta.alive() {
+        return Err(ToleFail::Dead);
+    }
+    {
+        let mut subs = meta.subs.lock();
+        if let Some(at) = subs.iter().position(|s| *s == sub) {
+            subs.swap_remove(at);
+        }
+    }
+    messenger::unforward(sub.key(), meta.id.0);
+    Ok(())
+}
+
 pub(crate) fn seal(meta: &ToleMeta) {
     *meta.state.lock() = ToleState::Dead;
     retire(meta);
@@ -191,6 +283,10 @@ fn retire(meta: &ToleMeta) {
     for c in &cells {
         messenger::unforward(c.mate.key(), meta.id.0);
     }
+    let subs = core::mem::take(&mut *meta.subs.lock());
+    for s in &subs {
+        messenger::unforward(s.key(), meta.id.0);
+    }
     messenger::wipe(key(meta));
 }
 
@@ -199,6 +295,10 @@ impl Drop for ToleMeta {
         let cells = core::mem::take(&mut *self.cells.lock());
         for c in &cells {
             messenger::unforward(c.mate.key(), self.id.0);
+        }
+        let subs = core::mem::take(&mut *self.subs.lock());
+        for s in &subs {
+            messenger::unforward(s.key(), self.id.0);
         }
         messenger::wipe(key(self));
     }

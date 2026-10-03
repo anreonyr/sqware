@@ -7,6 +7,7 @@ use crate::work::mail::hole::{self, HoleMeta};
 use crate::work::mail::nole::{self, NoleMeta};
 use crate::work::mail::pole::{self, PoleMeta};
 use crate::work::mail::tole::{self, ToleMeta};
+use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
 use super::pie::AnyPie;
@@ -23,16 +24,27 @@ fn take(t: &Task, token: PieToken) -> Option<AnyPie> {
 pub(crate) struct Cleanup {
     root: Option<AnyPie>,
     removed: Vec<AnyPie>,
+    /// 这一趟摘过表的任务（`finish` 在锁外逐条要求复核）。
+    tasks: Vec<TaskId>,
 }
 
 impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         let count = self.removed.len() + usize::from(self.root.is_some());
-        for pie in self.root.into_iter().chain(self.removed) {
+        let Self {
+            root,
+            removed,
+            tasks,
+        } = self;
+        for pie in root.into_iter().chain(removed) {
             if let AnyPie::Pole(p) = &pie {
                 pole::shut(p.meta(), p.token).expect("cull: unmap token");
             }
             drop(pie);
+        }
+        // 调用点都在 `drop(GRAPH)` 之后：唤醒路径不在这里制造跨锁关系。
+        for task in tasks {
+            let _ = messenger::signal(WakeKey::Capabilities { task });
         }
         count
     }
@@ -42,17 +54,34 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
     let (root_task, root_token) = root;
     let sole = root_task.pies.lock().iter().find(|pie| pie.token() == root_token)
         .is_some_and(|pie| matches!(pie, AnyPie::Pole(p) if p.meta().backing().exclusive() && p.heir.is_none()));
-    if sole { return Cleanup { root: take(&root_task, root_token), removed: Vec::new() }; }
+    if sole {
+        // 先备账再动表：名册备不下就整趟不动（与下面"改图之前先备够"同一条纪律）——
+        // 表动过而通知没处记，就是一次漏报。
+        let mut tasks = Vec::new();
+        if tasks.try_reserve(1).is_err() {
+            return Cleanup { root: None, removed: Vec::new(), tasks };
+        }
+        let root = take(&root_task, root_token);
+        if root.is_some() {
+            tasks.push(root_task.ident.id);
+        }
+        return Cleanup { root, removed: Vec::new(), tasks };
+    }
     let mut root = None;
     let mut removed = Vec::new();
+    let mut tasks = Vec::new();
     let mut frontier = Vec::new();
     // Reserve for every actual token before changing the graph.
     let count = snap.iter().filter_map(|weak| weak.upgrade())
         .map(|task| task.pies.lock().len()).sum::<usize>() + 1;
-    if removed.try_reserve(count).is_err() || frontier.try_reserve(count).is_err() {
-        return Cleanup { root, removed };
+    if removed.try_reserve(count).is_err() || frontier.try_reserve(count).is_err()
+        || tasks.try_reserve(count).is_err() {
+        return Cleanup { root, removed, tasks };
     }
     root = take(&root_task, root_token);
+    if root.is_some() {
+        tasks.push(root_task.ident.id);
+    }
     frontier.push(root_token);
     let mut cursor = 0;
     while cursor < frontier.len() {
@@ -63,10 +92,13 @@ pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
             if let Some(pie) = take(&task, token) {
                 frontier.push(token);
                 removed.push(pie);
+                if !tasks.contains(&task.ident.id) {
+                    tasks.push(task.ident.id);
+                }
             }
         }
     }
-    Cleanup { root, removed }
+    Cleanup { root, removed, tasks }
 }
 
 /// 退场那一趟：**先封印，再看快照摘副本**。

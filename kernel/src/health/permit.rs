@@ -7,9 +7,10 @@ use env::{HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
-use crate::work::room::messenger::{FWD_MAX, WakeKey};
+use crate::work::room::messenger::{self, FWD_MAX, WakeKey};
 use crate::work::room::scheduler::core::prune_dead;
 use crate::work::unit::gate::{self, AnyPie, Need, Permission};
+use crate::work::unit::life::Life;
 use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::TeamBuilder;
 
@@ -150,6 +151,132 @@ pub fn fanout() {
         groups.iter().all(|g| g.cells().len() == 1),
         "被拒的那一次不该动既有组的格子"
     );
+}
+
+/// 状态订阅那一张表：**幂等、可退、满额报 OoM 且不留半安装**；
+/// 组封印要把订阅一并摘掉；没有观察者时 `signal` 一个站点都不建。
+pub fn subs() {
+    let target = TaskId::new(7);
+    let life = Life::new();
+    let weak = Arc::downgrade(&life);
+
+    // 两格各自投一个键，且都投不出 `Tole`（订阅的转发图不可能成环）。
+    crate::expect!(
+        tole::Sub::TaskCompleted(target).key() == WakeKey::Task { id: target },
+        "任务收尾这一类必须投 `Task` 键"
+    );
+    crate::expect!(
+        tole::Sub::Capabilities(target).key() == WakeKey::Capabilities { task: target },
+        "能力变化这一类必须投 `Capabilities` 键"
+    );
+
+    let group = tole::meta(TaskId::new(0));
+    let sub = tole::Sub::TaskCompleted(target);
+    tole::subscribe(&group, sub, weak.clone()).expect("第一次登记");
+    crate::expect!(group.subs_len() == 1, "登记之后组里应当有一条订阅");
+    tole::subscribe(&group, sub, weak.clone()).expect("重复登记");
+    crate::expect!(group.subs_len() == 1, "同描述幂等：重复登记不叠加");
+    tole::unsubscribe(&group, sub).expect("取消");
+    crate::expect!(group.subs_len() == 0, "取消之后组里没有订阅");
+    tole::unsubscribe(&group, sub).expect("重复取消");
+    crate::expect!(group.subs_len() == 0, "没装过即无事：重复取消不报错");
+
+    // 满额：`FWD_MAX` 个组都订同一个来源，第 `FWD_MAX + 1` 个报 OoM。
+    let mut groups = Vec::new();
+    for i in 0..FWD_MAX {
+        let g = tole::meta(TaskId::new(0));
+        tole::subscribe(&g, sub, weak.clone()).expect("前 FWD_MAX 个组都该订得上");
+        crate::expect!(
+            g.subs_len() == 1,
+            "第 {} 个组应当订上（容量 {}）",
+            i + 1,
+            FWD_MAX
+        );
+        groups.push(g);
+    }
+    let extra = tole::meta(TaskId::new(0));
+    crate::expect!(
+        matches!(tole::subscribe(&extra, sub, weak.clone()), Err(ToleFail::OoM)),
+        "转发格满（{} 个组）时登记应当报 OoM，不静默丢",
+        FWD_MAX
+    );
+    crate::expect!(
+        extra.subs_len() == 0,
+        "订不上就得把刚记的那一条退回（组里不留叫不醒的边）"
+    );
+    crate::expect!(
+        groups.iter().all(|g| g.subs_len() == 1),
+        "被拒的那一次不该动既有组的订阅"
+    );
+
+    // 封印：订阅与成员一样，得在组消亡那一趟里一起摘掉。
+    for g in &groups {
+        tole::seal(g);
+    }
+    crate::expect!(
+        groups.iter().all(|g| g.subs_len() == 0),
+        "封印之后订阅表应当清空"
+    );
+    drop(groups);
+
+    // 含状态订阅的组**不许转授**：不借组转授绕过"只能观察自己"这一条。
+    const USER_BASE: usize = 0x4000_0000;
+    let space = SpaceBuilder::user().build().expect("subs: build space");
+    space.with_flush(|inner| inner.dynamic(USER_BASE));
+    let team = TeamBuilder::new(space).spawn().expect("subs: spawn team");
+    let caller = team.task().hold().expect("subs: hold caller");
+    let dst = team.task().hold().expect("subs: hold dst");
+    let meta = tole::meta(caller.ident.id);
+    let token = {
+        let pie: gate::Pie<gate::Tole> = gate::new_pie(
+            meta.clone(),
+            Mark::NONE,
+            Permission::FETCH | Permission::VEST,
+            None,
+        );
+        let token = pie.token;
+        caller.pies.lock().push(AnyPie::Tole(pie));
+        token
+    };
+    let dst_weak = Arc::downgrade(&dst);
+    gate::accord(&caller, token, &dst_weak, Permission::FETCH, Mark::NONE)
+        .expect("没装订阅时，组照旧可以转授");
+    tole::subscribe(
+        &meta,
+        tole::Sub::Capabilities(caller.ident.id),
+        caller.life(),
+    )
+    .expect("装上一条状态订阅");
+    crate::expect!(
+        matches!(
+            gate::accord(&caller, token, &dst_weak, Permission::FETCH, Mark::NONE),
+            Err(PieFail::Denied)
+        ),
+        "含状态订阅的组不许转授"
+    );
+    let _ = team.release_held(&caller);
+    let _ = team.release_held(&dst);
+    team.prune_tasks(&caller);
+    team.prune_tasks(&dst);
+    drop(caller);
+    drop(dst);
+    drop(team);
+    prune_dead();
+
+    // 没有观察者时 `signal` 不留痕：站点一个都不建、也不放行谁。
+    let before = messenger::site_count();
+    crate::expect!(
+        messenger::signal(WakeKey::Capabilities {
+            task: TaskId::new(9_999)
+        }) == 0,
+        "没有观察者的键上发信号应当什么都不放行"
+    );
+    crate::expect!(
+        messenger::site_count() == before,
+        "没有观察者时不为记录这一趟变化建站点"
+    );
+    drop(extra);
+    drop(group);
 }
 
 pub fn order() {

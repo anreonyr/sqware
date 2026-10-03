@@ -58,9 +58,12 @@ pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
 #[cfg(debug_assertions)]
 pub(crate) use wait::site::FWD_MAX;
+#[cfg(debug_assertions)]
+pub(crate) use wait::site_count;
 pub(crate) use wait::site::WakeKey;
 pub(crate) use wait::{
-    fall, forward, join, knock, park, park_until, redeem, unforward, wait, wake, wipe, wipe_space,
+    fall, forward, join, knock, park, park_until, redeem, signal, unforward, wait, wake, wipe,
+    wipe_space,
 };
 
 pub(crate) fn rip() {

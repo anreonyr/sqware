@@ -82,6 +82,14 @@ impl Hierarchy {
         .map(|_| ())
         .map_err(|_| "publication inject")
     }
+    /// 每个身份别名的入口孔。
+    ///
+    /// 等待集合要挂它们——别名请求走的是各自的入口，漏挂一枚就会让 `Forever` 那一等
+    /// 卡住别名查询。增删都发生在本层自己经手的 `register`/`remove_alias`/`retire`/`sweep`
+    /// 里，所以调用点的同步（挂/摘差分）总在那些调用之后。
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = PieToken> + '_ {
+        self.aliases.iter().map(|a| a.entry)
+    }
     pub(crate) fn runtime_road(&self, task: TaskId) -> Option<PathBuf> {
         self.runs
             .iter()

@@ -3,13 +3,13 @@ use core::sync::atomic::Ordering;
 
 use env::{HoleDir, Mark, ToleCall};
 
-use env::{PieToken, ToleFail, Wait};
+use env::{PieToken, Source, TaskId, ToleFail, Wait};
 
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail::tole::{MATE_SKIP, Mate};
+use crate::work::mail::tole::{MATE_SKIP, Mate, Sub};
 use crate::work::mail::{ToleMeta, tole};
 use crate::work::room::messenger::Handoff;
-use crate::work::room::scheduler::core::current;
+use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{self, AnyPie, Need, Permission, Pie};
 use crate::work::unit::life::Life;
 use crate::work::unit::task::TaskIdent;
@@ -28,6 +28,16 @@ pub(crate) fn dispatch(
         ToleCall::Attach { tole, pie, dir } => attach(frame, tole, pie, dir),
         ToleCall::Detach { tole, pie, dir } => detach(frame, tole, pie, dir),
         ToleCall::Await { tole, millis } => return Some(await_(frame, tole, millis)),
+        ToleCall::Subscribe {
+            tole,
+            source,
+            target,
+        } => subscribe(frame, tole, source, target),
+        ToleCall::Unsubscribe {
+            tole,
+            source,
+            target,
+        } => unsubscribe(frame, tole, source, target),
     })
 }
 
@@ -72,6 +82,69 @@ fn detach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleD
         let latch = gate::accede::<ToleFail>(&task, member, Need::Fetch)?;
         let (mate, _life) = mate(&latch, dir)?;
         tole::detach(&meta, mate)
+    })();
+    answer_void(frame, r);
+    Outcome::Resume
+}
+
+/// 把一个状态来源登记进组。
+///
+/// 次序即判据：组的 `STORE` → 组必须是**本地持有的独占组** → 来源与目标这一对必须合法
+/// → 取来源那一侧的弱寿命 → 组层登记（幂等、失败回滚、成功留一次待复核提示）。
+fn subscribe(frame: &mut TrapContext, group: PieToken, source: Source, target: TaskId) -> Outcome {
+    let r = (|| -> Result<(), ToleFail> {
+        let task = current().running_task().ok_or(ToleFail::Denied)?;
+        let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
+        let meta = rack(&latch)?;
+        // 首版只收本地持有的独占组：含状态订阅的组一旦易主，"观察我自己"那一格就与新持有者
+        // 错配（转授那一侧另有拒授，见 `gate::accord`）。
+        if !latch.permission().contains(Permission::ONLY) {
+            return Err(ToleFail::Denied);
+        }
+        let (sub, life) = match source {
+            Source::CapabilitiesChanged => {
+                if target != task.ident.id {
+                    return Err(ToleFail::Denied);
+                }
+                (Sub::Capabilities(target), task.life())
+            }
+            Source::TaskCompleted => match muster(target).and_then(|w| w.upgrade()) {
+                Some(observed) => {
+                    // 观察范围不得比 `Join` 宽：逐条复用它的那一条授权判据。
+                    let same = Arc::ptr_eq(&observed.ident.team, &task.ident.team);
+                    if !(same || task.heir(observed.ident.team.id).is_some()) {
+                        return Err(ToleFail::Denied);
+                    }
+                    (Sub::TaskCompleted(target), observed.life())
+                }
+                // 目标已经升不出来：授权无从核，但这条边也建不起来——`forward` 收尾那一趟
+                // `prune` 会用已死的弱寿命把站点收掉。于是这一格退化成"自己组上响一声"：
+                // 初始提示保证调用方复核一次，而没有任何持久的观察能力被授出。
+                None => (Sub::TaskCompleted(target), Weak::new()),
+            },
+        };
+        tole::subscribe(&meta, sub, life)
+    })();
+    answer_void(frame, r);
+    Outcome::Resume
+}
+
+/// 按**已安装的订阅描述**取消：只认那条描述，不核组合、不核目标死活。
+fn unsubscribe(
+    frame: &mut TrapContext,
+    group: PieToken,
+    source: Source,
+    target: TaskId,
+) -> Outcome {
+    let r = (|| -> Result<(), ToleFail> {
+        let task = current().running_task().ok_or(ToleFail::Denied)?;
+        let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
+        let meta = rack(&latch)?;
+        let sub = match source {
+            Source::TaskCompleted => Sub::TaskCompleted(target),
+            Source::CapabilitiesChanged => Sub::Capabilities(target),
+        };
+        tole::unsubscribe(&meta, sub)
     })();
     answer_void(frame, r);
     Outcome::Resume

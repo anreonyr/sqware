@@ -39,6 +39,7 @@ pub fn run() {
         permit::form();
         permit::members();
         permit::fanout();
+        permit::subs();
         permit::order();
         permit::badge();
         hart::count();

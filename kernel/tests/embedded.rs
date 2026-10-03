@@ -149,6 +149,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn permit_subs() {
+        kernel::health::permit::subs();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn permit_order() {
         kernel::health::permit::order();
     }

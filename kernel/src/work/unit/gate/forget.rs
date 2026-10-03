@@ -51,6 +51,10 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
     if let AnyPie::Pole(p) = pie {
         let _ = crate::work::mail::pole::shut(p.meta(), token);
     }
+    // 表里少了一枚：出锁之后要求持有者复核一次（没有观察者时不留站点）。
+    let _ = crate::work::room::messenger::signal(
+        crate::work::room::messenger::WakeKey::Capabilities { task: task.ident.id },
+    );
     Ok(())
 }
 

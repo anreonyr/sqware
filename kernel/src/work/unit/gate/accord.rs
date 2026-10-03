@@ -41,6 +41,13 @@ pub(crate) fn accord(
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
+        // **含状态订阅的组不许转授**：订阅里有一格是"观察订阅者自己"，组一旦易主，
+        // 那一格就与新持有者错配——不拒就会开出"借转授让别人的组替你观察"的口子。
+        if let AnyPie::Tole(p) = &*pie
+            && p.meta().has_subs()
+        {
+            return Err(PieFail::Denied);
+        }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
         let granted = match &*pie {
             AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
@@ -73,12 +80,20 @@ pub(crate) fn accord(
     kids.push(granted);
     drop(kids);
     drop(operation);
+    // 两处通知都必须在真实状态提交之后、且**出 `GRAPH`**：唤醒路径会 `kick` 到调度器锁，
+    // 在这里发等于在 GRAPH 内制造一条新的跨锁关系。
+    drop(_graph);
     let _ = messenger::wake(
         WakeKey::Pies {
             task: target.ident.id,
         },
         &target.life(),
     );
+    // 外来 Accord 到达：目标的能力表变了。只要求复核，不代替任何判据；
+    // 没有观察者时 `signal` 不留站点。
+    let _ = messenger::signal(WakeKey::Capabilities {
+        task: target.ident.id,
+    });
     Ok(token.get())
 }
 

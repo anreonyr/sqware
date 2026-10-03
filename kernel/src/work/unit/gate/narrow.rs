@@ -28,6 +28,16 @@ pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail
 /// Lower token-associated views and staged program ceilings before removing authority.
 pub(crate) fn reduce(task: &alloc::sync::Arc<crate::work::unit::task::Task>, token: env::PieToken,
     subset: Permission) -> Result<(), PieFail> {
+    reduce_locked(task, token, subset)?;
+    // 表里那一枚**就地**缩了权：出 `GRAPH`/`pies` 之后要求持有者复核一次。
+    let _ = crate::work::room::messenger::signal(
+        crate::work::room::messenger::WakeKey::Capabilities { task: task.ident.id },
+    );
+    Ok(())
+}
+
+fn reduce_locked(task: &alloc::sync::Arc<crate::work::unit::task::Task>, token: env::PieToken,
+    subset: Permission) -> Result<(), PieFail> {
     use crate::memory::manager::entry::PteFlags;
     let pie = super::locate(task, token).ok_or(PieFail::Denied)?;
     if !pie.alive() { return Err(PieFail::Dead); }

@@ -6,9 +6,9 @@
 //! （权柄 / 数据）。本层按轴分文件：
 //!
 //!   - **通信面（本文件）**：class 5 的 `Push` / `Pull` / `Peek` / `Wait` / `Hush` / `Ring`，加
-//!     class 9（`ToleCall`：一枚"组"的造 / 挂 / 摘 / 等）。组是**多路等待**——成员是孔的
-//!     一个方向或一枚铃，故它接着本文件那一族的等待语义（分界见 `env::abi::call`：
-//!     "本类不搬载荷"）；
+//!     class 9（`ToleCall`：一枚"组"的造 / 挂 / 摘 / 等 / 订 / 退）。组是**多路等待**——成员是孔的
+//!     一个方向或一枚铃，外加**状态订阅**（观察某个任务的收尾完成、或自己能力的变化），
+//!     故它接着本文件那一族的等待语义（分界见 `env::abi::call`："本类不搬载荷"）；
 //!   - **权柄面**（[`pie`](super::pie)）：class 7 的转发 + [`AnyPie`] 与它的四份实现。
 //!
 //! # 四种资源的用户态句柄都住本文件
@@ -92,7 +92,8 @@
 //! ——**服务侧答话的收口**（今天它就是 `Sender::reclaim` 的无界等）。
 
 use env::Wait;
-use env::{HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId, ToleResult, VirtAddr};
+use env::{HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, Source, TaskId, ToleResult,
+    VirtAddr};
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。内核那一格没有
 /// 失败支，故跟着 [`clock`](crate::env::chrono::clock) 一起不返 `Result`。
@@ -440,9 +441,24 @@ impl TolePie {
         env::tole::detach(self.token, mate.token(), dir)
     }
 
+    /// 把一个**状态来源**登记进组（同 `(source, target)` 幂等）。
+    ///
+    /// 登记成功即留一次待复核提示；`target` 的合法性（组需本地独占、能力变化只能看自己、
+    /// 任务收尾的授权同 `Join`）由内核核。
+    pub fn subscribe(&self, source: Source, target: TaskId) -> ToleResult<()> {
+        env::tole::subscribe(self.token, source, target)
+    }
+
+    /// 按**已安装的订阅描述**取消；同描述重复取消无事。
+    pub fn unsubscribe(&self, source: Source, target: TaskId) -> ToleResult<()> {
+        env::tole::unsubscribe(self.token, source, target)
+    }
+
     /// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 上限族，同全树。
     ///
     /// `PieToken::NONE` = 没等到（或挂起过——见 `env::abi::call` 的 `ToleCall::Await`）。
+    /// **组上装了状态订阅时，它还有第二义**："有来源报过事，去复核"——它从不等于
+    /// "肯定没有变化"。
     /// **这一格不循环**：组的返回是**提示**（"快照变了"），"等到没有"是调用点的循环
     /// （见 `programs/src/harness/bench/group/waiter/main.rs`：契约就是"别把一次返回当终局"）。
     pub fn await_(&self, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {

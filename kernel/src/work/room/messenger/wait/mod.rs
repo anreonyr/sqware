@@ -297,6 +297,50 @@ pub(crate) fn unforward(key: WakeKey, tole: usize) {
     prune(&mut sites, key);
 }
 
+/// **只投给已登记的观察者**。
+///
+/// 与另外两条的分界一句话成族：`wake` 交付**一个**等待者（顺带提示转发组）、`knock` 是
+/// 提示型（整链放行，**允许就地建站点**）、本函数**只对已经站着的那个站点说话**：
+/// 有转发边就逐条把它转成对观察组的 `knock`，有直等链就整链摘下来放行；
+/// **站点不在 ⇒ 直接返回 0，不建站点、不分配、不置位**——没有观察者的键不留痕。
+///
+/// 那条"不留痕"是承重的：能力变化走的是造门闩那条热路径，若为每个改过表的任务都留下
+/// 一个站点，站点表会随任务数单调长大。
+///
+/// **不写站点自己的 `pend`**：这个键的合法消费者只有经转发边挂上来的组——把提示留在
+/// 本键上无人消费，反而会让站点永远过不了 [`prune`]。
+///
+/// 锁：`Fwd` 快照只在分片锁内取，出锁才 knock（与 `wake` 同形，不跨 shard 嵌套加锁）。
+pub(crate) fn signal(key: WakeKey) -> usize {
+    let mut fwd = Fwd::empty();
+    let chain = {
+        let mut sites = sites(key).lock();
+        let chain = match sites.get_mut(&key) {
+            Some(site) => {
+                fwd = site.fwd.clone();
+                let chain = site.head.take();
+                site.tail = None;
+                chain
+            }
+            None => None,
+        };
+        prune(&mut sites, key);
+        chain
+    };
+    for (id, life) in fwd.entries() {
+        knock(WakeKey::Tole { id }, life);
+    }
+    rise(Unchain { cur: chain })
+}
+
+/// 站点总数（只给健康面读：证"没有观察者就不建站点"这一条）。
+#[cfg(debug_assertions)]
+pub(crate) fn site_count() -> usize {
+    (0..SITE_SHARDS)
+        .map(|shard| shard_at(shard).lock().len())
+        .sum()
+}
+
 pub(crate) fn wipe_space(space: Asid) -> usize {
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {

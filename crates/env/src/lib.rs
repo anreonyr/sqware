@@ -30,7 +30,8 @@ pub use abi::call::{
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleDir, MailCall,
     MailCallRet, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
     NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, RoomCall, RoomCallRet, RoomFail, RoomResult,
-    ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail, UnitResult,
+    Source, ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail,
+    UnitResult,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…

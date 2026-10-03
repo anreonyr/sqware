@@ -127,6 +127,18 @@ impl Wire for crate::abi::call::HoleDir {
     }
 }
 
+impl Wire for crate::abi::call::tole::Source {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        s[*i] = self.wire();
+        *i += 1;
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
+        let v = *s.get(*i).ok_or(Decode::Overflow)?;
+        *i += 1;
+        crate::abi::call::tole::Source::of(v).ok_or(Decode::Invalid)
+    }
+}
+
 impl Wire for crate::wire::program_kind::ProgramKind {
     fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
         s[*i] = match self {

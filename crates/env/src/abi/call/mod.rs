@@ -65,7 +65,7 @@ pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
 pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
 pub use self::room::NOTE_MAX;
 pub use self::room::{RoomCall, RoomCallRet, RoomFail, RoomResult};
-pub use self::tole::{ToleCall, ToleCallRet, ToleFail, ToleResult};
+pub use self::tole::{Source, ToleCall, ToleCallRet, ToleFail, ToleResult};
 pub use self::unit::{UnitCall, UnitCallRet, UnitFail, UnitResult};
 
 /// **无域那一层**（dispatch）：`EnvCall::from_wire` 失败——调用号读不懂。

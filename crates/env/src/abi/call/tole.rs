@@ -2,7 +2,7 @@
 
 use super::HoleDir;
 use crate::abi::wait::Wait;
-use crate::wire::PieToken;
+use crate::wire::{PieToken, TaskId};
 use mold::{Envcall, Fail};
 
 /// Tole 域（class 9：多路等待）的失败词汇。
@@ -24,10 +24,55 @@ pub enum ToleFail {
 /// `ToleFail` 的结果别名。
 pub type ToleResult<T> = Result<T, erra::Error<ToleFail>>;
 
-/// Tole 调用（class 9）—— **多路等待**：一枚"组"的四件事：造、挂、摘、等。
+/// **状态订阅观察的来源**（线上那一格：`0` = 任务收尾、`1` = 能力变化）。
+///
+/// 判别号只写一处（[`Source::wire`] / [`Source::of`] 在类型自己身上，`crate::wire` 那一对
+/// impl 只转调）——与 `PieKind::of` 同一条理由：两处各写一遍 `match 0/1` 就是两份判别号表，
+/// 日后加一格必漏一处。
+///
+/// **两格的 `target` 不同类**：`TaskCompleted` 的那一格是**被观察的任务**；
+/// `CapabilitiesChanged` 的那一格必须等于**调用者自己**——内核核，不认别人。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Source {
+    /// 观察指定 Task 的**退出收尾完成**。
+    ///
+    /// 通知时刻**不早于**退出钩子跑完且 `Reaped` 已发布；它不宣称栈、帧、Team、Space
+    /// 已经归还，也不改动 conductor 的恰好一次计数。观察范围**不比 `Join` 宽**
+    /// （授权判据逐条复用 `Join` 那一条）。
+    TaskCompleted,
+    /// 观察**调用者自己能力的可观察状态改变**。
+    ///
+    /// 覆盖会影响下一次 `Reserve`/`Alive`、LINK 选择或权限表枚举结果的**成功**变更：
+    /// 外来 Accord 到达、`Release`/`Forget`/`Revoke` 及级联摘除、`Narrow`、`Seal`、
+    /// 本地创建与移交。失败与纯查询（`Collect`/`Reserve`/`Alive`）不产生通知。
+    /// 通知只要求**复核**，不代替任何判据。
+    CapabilitiesChanged,
+}
+
+impl Source {
+    /// 本类型 → 线上那一格。
+    pub const fn wire(self) -> usize {
+        match self {
+            Source::TaskCompleted => 0,
+            Source::CapabilitiesChanged => 1,
+        }
+    }
+
+    /// 线上那一格 → 本类型（**判别号不认识 ⇒ `None`**：读的人按"这一帧读不懂"处置，不猜）。
+    pub const fn of(raw: usize) -> Option<Source> {
+        match raw {
+            0 => Some(Source::TaskCompleted),
+            1 => Some(Source::CapabilitiesChanged),
+            _ => None,
+        }
+    }
+}
+
+/// Tole 调用（class 9）—— **多路等待**：一枚"组"的六件事：造、挂、摘、等、订、退。
 ///
 /// 与 class 7（权柄轴）的分界：本类不搬许可的生死，只改"这一组我关心哪几枚可等地"
-/// ——**成员只有两种：孔（一个方向）与铃**（两者都有"有一位可读的就绪谓词"）；
+/// ——**成员只有两种：孔（一个方向）与铃**（两者都有"有一位可读的就绪谓词"），
+/// 外加**状态订阅**（观察"某个任务的收尾完成"或"我自己的能力变化"）；
 /// 与 class 5（数据轴）的分界：本类不搬载荷。组自己的身份就是 `PieToken`
 /// （与 Hole/Pole/Nole 同款：号只在持有它的那张表里有意义），资源实体见
 /// `work::mail::tole`。
@@ -82,10 +127,45 @@ pub enum ToleCall {
     /// **挂起过一侧返回恒是预置值**（`PieToken::NONE`）：内核没有第二次执行机会
     /// ——调用方按 deadline 循环、醒来自己按组快照复核（与 `UnitCall::Fall` 同款）。
     ///
+    /// **`PieToken::NONE` 不等于"肯定没有变化"**：它也可能是"某个状态订阅变了，去复核"。
+    /// 组上装了状态订阅时，一次 `NONE` 只说明"这一次没有成员就绪、或者有来源报过事"，
+    /// 从不说明"以后也不会有"。
+    ///
     /// 错误：token 不在本任务表 / 权不够（组需 `FETCH`）/ 不是组（递了孔、铃、页）
     /// → `-1 Denied`；组已封印 → `-2 Dead`；**组的等待权已被我过户出去**（`ONLY` 的
     /// 移交）→ `-7 HandedOver`。三个码**不折平**（与数据轴 [`MailCall::Wait`] 同款口径）：
     /// `Denied` 是号拿错了、`Dead` 是组没了该换策略、`HandedOver` 是交回即复原。
     #[ret((PieToken, HoleDir))]
     Await { tole: PieToken, millis: Wait },
+    /// 把一个**状态来源**登记进组：同 `(source, target)` 重复登记幂等（不重装转发边、
+    /// 不重复留提示）。登记成功**先留一次待复核提示**——已有变化、已完成的任务以及
+    /// 登记那一刻的状态，都不依赖"未来再来一个事件"。
+    ///
+    /// 权利：组需 `STORE`（与 [`ToleCall::Attach`] 同一条）；组必须是**当前 Task 本地持有的
+    /// 独占组**（带 `ONLY`）——转授、共享组不受理。`Source::CapabilitiesChanged` 的
+    /// `target` **必须等于调用者自己**；`Source::TaskCompleted` 的授权判据逐条复用
+    /// `UnitCall::Join`（同域或自己的子域）。
+    ///
+    /// 订阅由组持有，**不发给调用方任何 token**；取消靠同一份来源描述
+    /// （见 [`ToleCall::Unsubscribe`]）。登记失败（组表满 / 转发边满）完整回滚。
+    ///
+    /// 错误同 `Attach`：`Denied` / `Dead` / `OoM`。
+    #[ret(())]
+    Subscribe {
+        tole: PieToken,
+        source: Source,
+        target: TaskId,
+    },
+    /// 按**已安装的订阅描述**取消；同描述重复取消无事。
+    ///
+    /// 只认 `(source, target)` 这条描述：**不要求目标还在世**、不要求还能升级出它的域、
+    /// 也不要求它还在 heir 里。权利同 [`ToleCall::Subscribe`]（组需 `STORE`）。
+    ///
+    /// 错误：`Denied` / `Dead`。
+    #[ret(())]
+    Unsubscribe {
+        tole: PieToken,
+        source: Source,
+        target: TaskId,
+    },
 }

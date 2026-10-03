@@ -5,6 +5,7 @@ use env::{Mark, PieCall, PieFail, PieToken, TaskId};
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
+use crate::work::room::messenger::{self, WakeKey};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{
     self, AnyPie, GateFail, Hole, Need, Nole, Permission, Pie, Pole, clear_heir,
@@ -99,8 +100,11 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     if held {
         return Err(E::handed_over());
     }
-    if let Some(task) = current().running_task() {
-        clear_heir(&task, pie.token());
+    if let Some(task) = current().running_task()
+        && clear_heir(&task, pie.token())
+    {
+        // 就地清掉一格陈旧的 heir 也是能力状态变化（它改的是"这一枚还能不能授出"）。
+        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
     }
     Ok(())
 }
@@ -116,9 +120,14 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
             None,
         );
         let token = pie.token;
-        let mut pies = task.pies.lock();
-        pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-        pies.push(AnyPie::Hole(pie));
+        {
+            let mut pies = task.pies.lock();
+            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
+            pies.push(AnyPie::Hole(pie));
+        }
+        // 本地造一枚：权限表的枚举结果变了。出锁之后要求复核一次
+        // （没有观察者时 `signal` 不建站点）。
+        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -144,9 +153,13 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
             None,
         );
         let token = pie.token;
-        let mut pies = task.pies.lock();
-        pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-        pies.push(AnyPie::Nole(pie));
+        {
+            let mut pies = task.pies.lock();
+            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
+            pies.push(AnyPie::Nole(pie));
+        }
+        // 本地造一枚：权限表的枚举结果变了。
+        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -172,6 +185,8 @@ fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         mail::pole::open(&meta, token, &task_space, creator_flags)?;
         task.pies.lock().push(AnyPie::Pole(pie));
+        // 本地造一枚：权限表的枚举结果变了。
+        let _ = messenger::signal(WakeKey::Capabilities { task: task.ident.id });
         Ok(token.get())
     })();
     answer(frame, r);
@@ -240,6 +255,8 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
             AnyPie::Nole(v) => mail::nole::seal(v.meta()),
             AnyPie::Tole(t) => mail::tole::seal(t.meta()),
         }
+        // 资源封印让这一枚能力失效——表项还在，所以枚举结果本身就变了。
+        let _ = messenger::signal(WakeKey::Capabilities { task: me.ident.id });
         Ok(0)
     })();
     answer(frame, r);

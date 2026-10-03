@@ -222,6 +222,7 @@ pub(crate) fn spawn(target: &Arc<Team>, caller: Option<&Arc<Task>>, entry: usize
     }
     let mut builder = target.task().entry(KVirt::from_raw(entry_va)).args(words);
     if stack > 0 { builder = builder.stack(stack); }
+    let caller_id = caller.map(|caller| caller.ident.id);
     let result = (|| -> Result<Arc<Task>, UnitFail> {
         use crate::work::unit::gate::{self, AnyPie, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
@@ -271,5 +272,15 @@ pub(crate) fn spawn(target: &Arc<Team>, caller: Option<&Arc<Task>>, entry: usize
         drop(leases);
         result
     })();
+    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出 `GRAPH`、也出了
+    // `NoAllocation` 之后才要求复核一次。
+    if let Some(caller) = caller_id
+        && first
+        && result.is_ok()
+    {
+        let _ = crate::work::room::messenger::signal(
+            crate::work::room::messenger::WakeKey::Capabilities { task: caller },
+        );
+    }
     result
 }
