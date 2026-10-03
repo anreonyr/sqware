@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use runtime::env::{mail::{self, HolePie, PolePie}, room, unit};
 use protocol::communication::session::establish;
-use crate::system::{Phase, Status};
+use crate::system::life::{Phase, Status};
 
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");

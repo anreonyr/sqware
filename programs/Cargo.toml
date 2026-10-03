@@ -357,3 +357,10 @@ path = "src/harness/probe/system_fault/fault_unit.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "prog-accept-system"
+path = "src/harness/probe/accept/main.rs"
+test = false
+bench = false
+doctest = false

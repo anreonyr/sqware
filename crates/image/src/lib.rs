@@ -151,8 +151,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
-    // 引导镜像**按声明查**（不是"跟景同名"）：两景的引导镜像都是 `system`（见
-    // `system/program.rs` 的 `entry`）。它必须在清单里——不在就是那张装配表写错了。
+    // 引导镜像由 entry 声明选择，并且必须包含在本景清单中。
     let entry = entry_of(scenario)
         .ok_or_else(|| format!("initrd: 不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
     let entry_at = bins

@@ -7,10 +7,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 ///
 /// 次序：树那条路（`operator`）。与 `probe-watch-after` **并发**（两条边不互相等）。
 pub static PROBE_WATCH_GONE: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "probe-watch-gone",
         ..Identity::DEFAULT

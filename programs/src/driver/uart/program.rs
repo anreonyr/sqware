@@ -7,10 +7,13 @@ use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 pub const E_UART: Died = 9;
 
 pub static PROGRAM: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: Some(crate::driver::uart::publication),
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[crate::unit::Publish::Entries {
+        scope: crate::unit::PublishScope::Driver, group: "uart", road: "svc/drv/uart",
+        entries: &[
+            crate::unit::PublishEntry { name: "rx", mark: Some(env::Mark::NONE) },
+            crate::unit::PublishEntry { name: "tx", mark: Some(env::Mark::NONE) },
+        ], public: true,
+    }],
     identity: Identity {
         name: "uart",
         wanted_by: &["accept", "product", "system-fault"],

@@ -9,7 +9,7 @@ use env::{HoleDir, PieToken, TaskId};
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
-use crate::system::control::BOOT_MS;
+use crate::system::control::serve::start::BOOT_MS;
 
 use protocol::common::path::Path;
 use protocol::communication::hand::Sender;
@@ -19,7 +19,9 @@ pub use protocol::system::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
-    Sender::<Tip>::from_token(into).send_within(tip, Wait::AtMost(BOOT_MS)).map_err(|_| ())
+    Sender::<Tip>::from_token(into)
+        .send_within(tip, Wait::AtMost(BOOT_MS))
+        .map_err(|_| ())
 }
 
 /// Consuming a bootstrap request does not prove its mutation succeeded.
@@ -37,15 +39,19 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
     let _back = Back(back);
     let result = (|| {
         let mut request = Sender::<Tip>::from_token(into);
-        request.send_within(make(seed), Wait::AtMost(BOOT_MS))
+        request
+            .send_within(make(seed), Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip send")?;
         let mut status = [0xff; 9];
         let (len, from) = mail::HolePie::from_token(back)
-            .pull(&mut status, Wait::AtMost(BOOT_MS)).map_err(|_| "operator:tip ack")?;
+            .pull(&mut status, Wait::AtMost(BOOT_MS))
+            .map_err(|_| "operator:tip ack")?;
         if len != 9 || from != host || status[0] != protocol::system::operator::OK {
             return Err("operator:tip rejected");
         }
-        Ok(EntryId::new(u64::from_le_bytes(status[1..].try_into().unwrap()) as usize))
+        Ok(EntryId::new(
+            u64::from_le_bytes(status[1..].try_into().unwrap()) as usize,
+        ))
     })();
     result
 }
@@ -77,35 +83,54 @@ impl Tree {
 
     /// Only a live client-issued LINK requests a session; ordering is not a request.
     pub fn connect(&mut self, tasks: impl Iterator<Item = TaskId>) -> Result<(), &'static str> {
-        let Some(host) = self.host else { return Ok(()); };
-        self.clients.retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
+        let Some(host) = self.host else {
+            return Ok(());
+        };
+        self.clients
+            .retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
         let mut requests = Vec::new();
         for client in tasks {
-            requests.try_reserve(1).map_err(|_| "operator:request capacity")?;
+            requests
+                .try_reserve(1)
+                .map_err(|_| "operator:request capacity")?;
             requests.push((client, None));
         }
-        if requests.is_empty() { return Ok(()); }
+        if requests.is_empty() {
+            return Ok(());
+        }
         // Enumerate once, retaining the last matching LINK for each client.
         for pie in mail::pies() {
-            if pie.mark != Mark::of(LINK) { continue; }
+            if pie.mark != Mark::of(LINK) {
+                continue;
+            }
             for (client, reply) in &mut requests {
-                if pie.owner == *client { *reply = Some(pie.token); }
+                if pie.owner == *client {
+                    *reply = Some(pie.token);
+                }
             }
         }
         for (client, reply) in requests {
-            let Some(reply) = reply else { continue; };
+            let Some(reply) = reply else {
+                continue;
+            };
             let old = self.clients.iter().position(|(task, _)| *task == client);
             if old.is_some_and(|at| self.clients[at].1.tx() == Some(reply)) {
                 continue;
             }
             if old.is_none() {
-                self.clients.try_reserve(1).map_err(|_| "operator:client capacity")?;
+                self.clients
+                    .try_reserve(1)
+                    .map_err(|_| "operator:client capacity")?;
             }
             let link = match attach(client, host, reply, &mut self.tip) {
                 Ok(link) if current_request(client, reply) => link,
                 Ok(_) => continue,
-                Err(_) if !current_request(client, reply)
-                    || runtime::env::unit::join(client, Wait::POLL).unwrap_or(true) => continue,
+                Err(_)
+                    if !current_request(client, reply)
+                        || runtime::env::unit::join(client, Wait::POLL).unwrap_or(true) =>
+                {
+                    continue;
+                }
                 Err(why) => return Err(why),
             };
             if let Some(at) = old {
@@ -129,7 +154,11 @@ impl Tree {
         let Some(tip) = self.tip else {
             return Err("no tip");
         };
-        let faces = [(resolve, Grant::Resolve), (matches, Grant::Matches), (same, Grant::Same)];
+        let faces = [
+            (resolve, Grant::Resolve),
+            (matches, Grant::Matches),
+            (same, Grant::Same),
+        ];
         // 先验整束，再转授。只认装配者指定的来源，不认同 mark 的伪入口。
         for (token, grant) in faces {
             let (_, owner, mark) = mail::reserve(token).map_err(|_| "operator:wire source")?;
@@ -140,13 +169,22 @@ impl Tree {
         let mut seeds = [PieToken::NONE; 3];
         for (at, (token, _)) in faces.into_iter().enumerate() {
             seeds[at] = port::ship(
-                &mail::HolePie::from_token(token), host,
-                Access::FETCH | Access::STORE, Policy::VEST,
-            ).map_err(|_| "operator:wire ship")?.seed();
+                &mail::HolePie::from_token(token),
+                host,
+                Access::FETCH | Access::STORE,
+                Policy::VEST,
+            )
+            .map_err(|_| "operator:wire ship")?
+            .seed();
         }
         request(tip, |back| Tip::Wired {
-            authority, resolve: seeds[0], matches: seeds[1], same: seeds[2], back,
-        }).map(|_| ())
+            authority,
+            resolve: seeds[0],
+            matches: seeds[1],
+            same: seeds[2],
+            back,
+        })
+        .map(|_| ())
     }
 
     /// **它就是持树者本身**：认下它那条提示之路，此后客人上树才有路可走
@@ -164,31 +202,55 @@ impl Tree {
         establish::find(host, TIP_MARK).is_some()
     }
 
-    pub(crate) fn mount(&mut self, road: &Path, leaf: Option<PieToken>, permit: Permit,
-        owner: Option<TaskId>, replace: bool) -> Result<EntryId, &'static str>
-    {
+    pub(crate) fn mount(
+        &mut self,
+        road: &Path,
+        leaf: Option<PieToken>,
+        permit: Permit,
+        owner: Option<TaskId>,
+        replace: bool,
+    ) -> Result<EntryId, &'static str> {
         let host = self.host.ok_or("no tree yet")?;
         let tip = self.tip.ok_or("no tip")?;
         let seed = match leaf {
-            Some(entry) => port::ship(&mail::HolePie::from_token(entry), host,
-                Access::FETCH | Access::STORE, Policy::VEST).map_err(|_| "operator:mount ship")?.seed(),
+            Some(entry) => port::ship(
+                &mail::HolePie::from_token(entry),
+                host,
+                Access::FETCH | Access::STORE,
+                Policy::VEST,
+            )
+            .map_err(|_| "operator:mount ship")?
+            .seed(),
             None => PieToken::NONE,
         };
-        let result = request(tip, |back| Tip::Plate { road: road.to_path_buf(), leaf: seed,
-            permit, owner: owner.unwrap_or(TaskId::new(0)), replace, back });
+        let result = request(tip, |back| Tip::Plate {
+            road: road.to_path_buf(),
+            leaf: seed,
+            permit,
+            owner: owner.unwrap_or(TaskId::new(0)),
+            replace,
+            back,
+        });
         if result.is_err() && seed != PieToken::NONE {
-            let _ = request(tip, |back| Tip::Abort { road: road.to_path_buf(), leaf: seed, back });
+            let _ = request(tip, |back| Tip::Abort {
+                road: road.to_path_buf(),
+                leaf: seed,
+                back,
+            });
             let _ = mail::revoke(host, seed);
         }
         result
     }
 
     pub(crate) fn remove_empty(&mut self, road: &Path) -> Result<(), &'static str> {
-        request(self.tip.ok_or("no tip")?, |back| Tip::Empty { road: road.to_path_buf(), back }).map(|_| ())
+        request(self.tip.ok_or("no tip")?, |back| Tip::Empty {
+            road: road.to_path_buf(),
+            back,
+        })
+        .map(|_| ())
     }
     pub(crate) fn unmount(&mut self, id: EntryId) -> Result<(), &'static str> {
         request(self.tip.ok_or("no tip")?, |back| Tip::Unplate { id, back }).map(|_| ())
-
     }
 }
 

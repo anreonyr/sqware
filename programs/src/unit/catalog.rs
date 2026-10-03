@@ -80,6 +80,8 @@ pub mod rtc;
 pub mod sleeper;
 #[path = "../harness/guest/subject/program.rs"]
 pub mod subject;
+#[path = "../harness/probe/accept/program.rs"]
+pub mod accept;
 #[path = "../system/program.rs"]
 pub mod system;
 #[path = "../driver/uart/program.rs"]
@@ -109,6 +111,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &subject::SUBJECT,
     &member::MEMBER,
     &system::PROGRAM,
+    &accept::PROGRAM,
     &probe_denied::PROBE_DENIED,
     &system_fault::ENTRY,
     &system_fault::FAULT_UNIT,

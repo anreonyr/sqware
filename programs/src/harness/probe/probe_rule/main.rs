@@ -58,7 +58,7 @@ fn main() -> Report<'static> {
         return bail("probe-rule: no tree link");
     };
     let tree = TreeFace::of(session);
-    let authority = programs::system::identity::bridge::authority()
+    let authority = programs::system::identity::serve::source::authority()
         .expect("probe-rule: no Control-issued identity authority");
     let iask = Query::discover(&tree, authority, Wait::AtMost(MS))
         .expect("probe-rule: no identity query");

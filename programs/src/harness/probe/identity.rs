@@ -6,7 +6,7 @@ use protocol::system::identity::Grant;
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 
-use crate::system::Assembly;
+use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
 
 pub(crate) fn supply_to(
@@ -80,7 +80,7 @@ pub fn acceptance() {
     super::hierarchy::reference_lifetime();
     let boot = bootstrap::take().expect("identity: bootstrap");
     let list = scene::programs(&boot.catalog).expect("identity: scene");
-    let mut assembly = Assembly::new(boot).ok().expect("identity: assembly");
+    let mut assembly = Fixture::new(boot).ok().expect("identity: assembly");
     for program in list {
         if program.name() == "system-child" {
             assembly.control.enlist(program).expect("identity: runtime declaration");
@@ -95,11 +95,11 @@ pub fn acceptance() {
             .expect("identity: face source")
     };
     for name in ["operator", "identity"] {
-        assert!(assembly.control.mint(name.into()).is_err());
-        assert!(assembly.control.stop(name.into()).is_err());
-        assert_eq!(assembly.control.state(name.into()).unwrap(), crate::system::common::life::table::State::Ready);
+        assert!(assembly.control.mint(name.into(), &assembly.images).is_err());
+        assert!(assembly.control.stop(name.into(), &assembly.roster, &mut assembly.activation).is_err());
+        assert_eq!(assembly.control.state(name.into()).unwrap(), crate::system::control::core::unit::State::Ready);
     }
-    let old_authority = assembly.control.roster.authority().unwrap();
+    let old_authority = assembly.roster.authority().unwrap();
     let old_query = query(old_authority);
     let me = runtime::env::unit::self_id();
     let host = assembly.tree.host().unwrap();
@@ -130,7 +130,7 @@ pub fn acceptance() {
     let coalition = old_devices.coalitions.iter().next().unwrap();
     activation_boundary(&assembly, old_hub, coalition);
     let before = old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap();
-    assert!(assembly.control.roster.activate(old_dependent, coalition).is_err(),
+    assert!(assembly.roster.activate(old_dependent, coalition).is_err(),
         "identity: qualification was not checked");
     assert_eq!(old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap(), before);
     for (name, road) in [("router", "/svc/drv/router"), ("rtc", "/svc/drv/rtc"),
@@ -138,10 +138,11 @@ pub fn acceptance() {
     {
         ready_driver(&operator, &old_query, assembly.control.task(name).unwrap(), road);
     }
-    assembly.control.mint(alloc::string::String::from("system-child"))
+    assembly.control.mint(alloc::string::String::from("system-child"), &assembly.images)
         .expect("identity: runtime mint");
+    let machine = assembly.supplies.machine;
     let child = assembly.control.release(alloc::string::String::from("system-child"),
-        old_dependent, |control| assembly.publication.poll(&control.table, &control.roster, &control.machine, &control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree))
+        old_dependent, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| crate::system::run::cycle::poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree))
         .expect("identity: runtime inheritance").0;
     let parent_binding = old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap().unwrap();
     let child_binding = old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap();
@@ -150,11 +151,11 @@ pub fn acceptance() {
     let dynamic = super::hierarchy::exercise(&mut assembly, &operator, old_authority, old_dependent, child);
     let _ = dynamic;
     protocol::debug::put("system: identity, device and publication acceptance passed");
-    assembly.control.stop_rest();
+    assembly.control.stop_rest(&assembly.roster, &mut assembly.activation);
     assert!(assembly.supervise().is_ok(), "system: normal team shutdown failed");
 }
 
-fn activation_boundary(assembly: &Assembly, hub: env::TaskId,
+fn activation_boundary(assembly: &Fixture, hub: env::TaskId,
     coalition: protocol::system::identity::CoalitionId)
 {
     use alloc::sync::Arc;
@@ -180,7 +181,7 @@ fn activation_boundary(assembly: &Assembly, hub: env::TaskId,
     port::ship(&HolePie::from_token(entry), caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = runtime::env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        assembly.control.activate_hub();
+        if let Some(activation) = &assembly.activation { activation.poll(&assembly.control, &assembly.roster); }
         assert!(runtime::env::chrono::clock() < until, "activation boundary never answered");
         runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }

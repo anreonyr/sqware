@@ -1,7 +1,7 @@
 //! Identity task 独占身份账和请求面，按授权提交身份状态变更。
 use alloc::{vec::Vec, sync::Arc};
 use core::sync::atomic::Ordering;
-use crate::system::{Status, Phase};
+use crate::system::life::{Status, Phase};
 use env::{HoleDir, Wait};
 use runtime::core::res::pile::Pile;
 use env::TaskId;
@@ -65,3 +65,8 @@ fn turn(book: &mut IdentityBook, from: TaskId, grant: Grant, frame: &[u8]) {
     let _ = Sender::<Reply>::from_token(back).send(reply);
     let _ = mail::release(back);
 }
+
+pub mod install;
+pub mod source;
+pub mod query;
+pub mod names;

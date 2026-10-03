@@ -4,10 +4,7 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static GUEST: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "guest",
         ..Identity::DEFAULT

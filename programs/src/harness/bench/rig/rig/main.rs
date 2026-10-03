@@ -44,9 +44,9 @@ use core::time::Duration;
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::common::life::service;
-use programs::system::common::life::table::{Announce, Slot, Table};
-use programs::system::common::life::verdict::Reaped;
+use programs::system::control::serve::task as service;
+use programs::system::control::core::unit::{Announce, Slot, Table};
+use programs::system::control::core::verdict::Reaped;
 use programs::unit::Ending;
 use protocol::communication::session::establish::{self, Endpoint, Held};
 use protocol::debug;

@@ -44,8 +44,8 @@ use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
-use programs::system::common::life::service;
-use programs::system::common::life::table::{Announce, Table};
+use programs::system::control::serve::task as service;
+use programs::system::control::core::unit::{Announce, Table};
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::room;

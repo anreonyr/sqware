@@ -4,10 +4,21 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RULE: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: Some(crate::harness::probe::hierarchy::publication),
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[crate::unit::Publish::Entries {
+        scope: crate::unit::PublishScope::Fixture, group: "rule", road: "svc/rule",
+        entries: &[
+            crate::unit::PublishEntry { name: "is", mark: None },
+            crate::unit::PublishEntry { name: "under", mark: None },
+            crate::unit::PublishEntry { name: "in", mark: None },
+            crate::unit::PublishEntry { name: "door", mark: None },
+            crate::unit::PublishEntry { name: "open", mark: None },
+            crate::unit::PublishEntry { name: "foreign", mark: None },
+            crate::unit::PublishEntry { name: "temp", mark: None },
+            crate::unit::PublishEntry { name: "at-pane", mark: None },
+            crate::unit::PublishEntry { name: "gone-door", mark: None },
+            crate::unit::PublishEntry { name: "mine", mark: None },
+        ], public: false,
+    }],
     identity: Identity {
         name: "probe-rule",
         ..Identity::DEFAULT

@@ -10,15 +10,12 @@ use env::ProgramKind;
 pub const E_BOOT: Died = 1;
 
 pub static PROGRAM: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "system",
         space: ProgramKind::Supervisor,
-        wanted_by: &["accept", "product"],
-        entry: &["accept", "product"],
+        wanted_by: &["product"],
+        entry: &["product"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,
