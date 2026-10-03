@@ -17,6 +17,13 @@ const FRAME_HELD: usize = 8;
 
 pub fn accept() {
     let a = hybrid::allocator();
+    // Each size class retains one spare page after its first use.
+    for size in SIZES {
+        let layout = Layout::from_size_align(size, 8).unwrap();
+        let block = a.allocate(layout).expect("stress: warm size class");
+        // SAFETY: block and layout come from the same allocation.
+        unsafe { a.deallocate(block.cast(), layout); }
+    }
     let kinds_before = crate::memory::allocator::statistics::kinds();
 
     for i in 0..STEPS {

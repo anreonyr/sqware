@@ -156,11 +156,11 @@ impl SpaceInner {
         let mut map = Map::new(vaddr, size, flags, None);
         map.origin = Origin::Borrowed;
         if let Err(error) = self.root.map(vaddr, paddr, size, flags) {
-            self.root.unmap(vaddr, size);
+            self.root.unmap(vaddr, size)?;
             return Err(error);
         }
         if let Err(error) = self.register(map) {
-            self.root.unmap(vaddr, size);
+            self.root.unmap(vaddr, size)?;
             return Err(error);
         }
         Ok(())
@@ -189,7 +189,7 @@ impl SpaceInner {
         map.origin = Origin::Backed { backing, offset, ceiling: ceiling & access, token: None, private: false, open: false };
         self.register(map)?;
         if let Err(error) = self.root.map(va, pa, size, flags) {
-            self.root.unmap(va, size);
+            self.root.unmap(va, size)?;
             self.maps.remove(va);
             return Err(error);
         }
@@ -275,6 +275,7 @@ impl SpaceInner {
             splits.push(Split { hole, right });
         }
 
+        self.root.prepare(va, size)?;
         let SpaceInner { root, maps, .. } = self;
         let mut n = 0usize;
         while let Some(m) = maps.first_overlap(lo, last) {
@@ -282,7 +283,7 @@ impl SpaceInner {
             let pages = m.size.get() / PAGE_SIZE;
             let (lo_pg, hi_pg) = intersect(m, lo, last).expect("unmap intersection");
             let mut m = maps.remove(VirtAddr::wrap(m_va)).expect("unmap indexed map");
-            m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap(rva, rsize));
+            m.runs(lo_pg, hi_pg, |rva, rsize| root.unmap_prepared(rva, rsize));
             if lo_pg == 0 && hi_pg == pages {
                 salvage.take_map(m);
                 continue;
@@ -436,6 +437,7 @@ impl SpaceInner {
                 ));
             }
         }
+        self.root.prepare(va, size)?;
         for (boundary, mut right) in splits.into_iter().flatten() {
             let key = self.resolve_ref(VirtAddr::wrap(boundary)).expect("split mapping").va;
             let mut map = self.maps.remove(key).expect("split indexed map");
@@ -594,7 +596,7 @@ impl Drop for InstallGuard<'_> {
             return;
         }
         for j in 0..self.installed {
-            self.inner.root.unmap(self.va + j * PAGE_SIZE, PAGE_SIZE);
+            self.inner.root.unmap_prepared(self.va + j * PAGE_SIZE, PAGE_SIZE);
         }
         match self.book {
             MapMode::Materialize => {

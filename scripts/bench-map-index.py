@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Compare f600554 Vec maps with workspace maps in isolated release snapshots.
+"""Compare eb2a01d Vec maps with workspace maps in isolated release snapshots.
 Run from any directory: python3 scripts/bench-map-index.py
 Outputs build logs, guest logs, and ELFs in /tmp/sqware-map-bench.
+Use --tables to compare kernel page-table counts against 2225340.
 Requires cargo, nu, nm, qemu-system-riscv64. Does not edit kernel sources.
 """
-import pathlib, subprocess, tarfile, io, os, json
+import pathlib, subprocess, tarfile, io, os, json, argparse
 root=pathlib.Path(__file__).resolve().parents[1]
-out=pathlib.Path('/tmp/sqware-map-bench'); out.mkdir(exist_ok=True)
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--tables', action='store_true', help='Compare kernel page-table counts in debug builds')
+options=parser.parse_args()
+out=pathlib.Path('/tmp/sqware-page-tables' if options.tables else '/tmp/sqware-map-bench')
+out.mkdir(exist_ok=True)
 source=r'''use core::fmt::Write;
 use core::hint::black_box;
 use core::sync::atomic::{compiler_fence, Ordering};
@@ -68,12 +73,20 @@ pub fn run() {
     }
 }
 '''
-archive=subprocess.check_output(['git','archive','f600554'],cwd=root)
-changes=['kernel/src/memory/manager/table.rs', 'kernel/src/work/unit/space/inner.rs', 'kernel/src/work/unit/space/map.rs', 'kernel/src/work/unit/space/mod.rs', 'kernel/src/work/unit/space/outer.rs', 'kernel/src/work/unit/space/salvage.rs', 'kernel/src/work/unit/space/window/stack.rs', 'kernel/src/work/unit/space/index.rs']
-for variant in ['vec','tree']:
+if options.tables:
+    source=r"""use core::fmt::Write;
+pub fn run() {
+    let space = &crate::work::unit::team::kernel().unwrap().space;
+    writeln!(crate::console::Sink, "TABLES,{}", space.table_count()).unwrap();
+}
+"""
+baseline='2225340' if options.tables else 'eb2a01d'
+archive=subprocess.check_output(['git','archive',baseline],cwd=root)
+changes=['kernel/src/memory/manager/table.rs', 'kernel/src/memory/manager/mod.rs', 'kernel/src/memory/manager/asid.rs', 'kernel/src/work/unit/space/inner.rs', 'kernel/src/work/unit/space/map.rs', 'kernel/src/work/unit/space/mod.rs', 'kernel/src/work/unit/space/outer.rs', 'kernel/src/work/unit/space/salvage.rs', 'kernel/src/work/unit/space/window/stack.rs', 'kernel/src/work/unit/space/index.rs']
+for variant in (['before','after'] if options.tables else ['vec','tree']):
     dst=out/variant; dst.mkdir(exist_ok=True)
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar: tar.extractall(dst,filter='data')
-    if variant=='tree':
+    if variant in ['tree','after']:
         for name in changes: (dst/name).write_bytes((root/name).read_bytes())
     folder=dst/'kernel/src/work/unit/space'
     (folder/'bench.rs').write_text(source.replace('CAPACITY_BYTES','inner.maps.capacity()*core::mem::size_of::<alloc::boxed::Box<Map>>()' if variant=='vec' else '0usize'))
@@ -84,7 +97,7 @@ for variant in ['vec','tree']:
 }
 '''; f.write_text(text)
     env=dict(os.environ,CARGO_TARGET_DIR=str(out/'target'))
-    p=subprocess.run(['cargo','test','-p','kernel','--test','embedded','--release','--no-run','--message-format=json'],cwd=dst,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+    p=subprocess.run(['cargo','test','-p','kernel','--test','embedded']+([] if options.tables else ['--release'])+['--no-run','--message-format=json'],cwd=dst,env=env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
     (out/(variant+'-build.log')).write_text(p.stderr)
     if p.returncode:
         print(p.stderr)
@@ -95,7 +108,8 @@ for variant in ['vec','tree']:
     exe=None
     for line in p.stdout.splitlines():
         data=json.loads(line)
-        if data.get('executable'): exe=data['executable']
+        if data.get('executable') and data.get('target', {}).get('name') == 'embedded':
+            exe=data['executable']
     assert exe
     (out/(variant+'.elf')).write_bytes(pathlib.Path(exe).read_bytes())
     env=dict(os.environ,QEMU_ICOUNT='0,sleep=off',QEMU_SMP='1')
@@ -106,5 +120,5 @@ for variant in ['vec','tree']:
     p=subprocess.run(['qemu-system-riscv64']+args,cwd=dst,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=120)
     (out/(variant+'.log')).write_text(p.stdout)
     print(variant, 'exit',p.returncode,flush=True)
-    print('\n'.join(l for l in p.stdout.splitlines() if 'MEM,' in l or 'BENCH,' in l),flush=True)
+    print('\n'.join(l for l in p.stdout.splitlines() if 'MEM,' in l or 'BENCH,' in l or 'TABLES,' in l),flush=True)
     if p.returncode: print(p.stdout); raise SystemExit(p.returncode)

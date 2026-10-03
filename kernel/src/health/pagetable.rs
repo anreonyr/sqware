@@ -326,3 +326,30 @@ pub fn interval_index() {
     assert_eq!(space.table_count(), 1);
     space.audit();
 }
+
+
+pub fn large_pages() {
+    use crate::memory::manager::table;
+    table::large_pages_accept();
+    const MEGA: usize = 1 << 21;
+    let va = VirtAddr::wrap(0x4000_0000);
+    let pa = PhysAddr::from_raw(0x8000_0000);
+    let space = SpaceBuilder::user().build().expect("large page space");
+    let flags = space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
+    let before = space.table_count();
+    space.borrow(va, pa, 2 * MEGA, flags).expect("large borrowed maps");
+    assert_eq!(space.table_count(), before + crate::memory::manager::mode::levels() - 2);
+    for offset in [0, 13, PAGE_SIZE + 17, MEGA + 91, 2 * MEGA - 1] {
+        assert_eq!(space.translate(va + offset).unwrap().0, pa + offset);
+    }
+    space.protect(va + PAGE_SIZE, PAGE_SIZE, flags - PteFlags::W).expect("large space protect");
+    assert!(!space.translate(va + PAGE_SIZE).unwrap().1.contains(PteFlags::W));
+    assert!(space.translate(va + 2 * PAGE_SIZE).unwrap().1.contains(PteFlags::W));
+    space.unmap(va + MEGA + PAGE_SIZE, PAGE_SIZE).expect("large space hole");
+    assert!(space.translate(va + MEGA + PAGE_SIZE).is_none());
+    assert_eq!(space.translate(va + MEGA + 2 * PAGE_SIZE).unwrap().0, pa + MEGA + 2 * PAGE_SIZE);
+    space.audit();
+    space.unmap(va, 2 * MEGA).expect("large space removal");
+    assert_eq!(space.table_count(), before);
+    space.audit();
+}

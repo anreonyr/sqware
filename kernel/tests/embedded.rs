@@ -101,6 +101,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn large_page_mapping_and_splits() {
+        kernel::health::pagetable::large_pages();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pagetable_recycle() {
         kernel::health::pagetable::pagetable();
     }
