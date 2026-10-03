@@ -106,15 +106,13 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 return Err(MemoryFail::NotAligned);
             }
             let va = space.with_flush(|inner| {
-                let va = if at.get() == 0 { inner.allocate(SegmentKind::Normal, size)? }
+                let va = if at.get() == 0 { HeapWindow::locate(inner, size)? }
                     else {
                         let va = KVirt::wrap(at.get());
                         if inner.overlaps(va, size) { return Err(MapError::AlreadyMapped); }
-                        if !inner.user.as_mut().is_some_and(|segment| segment.reserve(at.get(), size)) {
-                            return Err(MapError::NoRegion);
-                        }
                         va
                     };
+                inner.allocate(SegmentKind::Normal, va.as_usize(), size)?;
                 let result = if let Some(p) = &source {
                     inner.backed(va, p.meta().backing().clone(), offset, size, pte, ceiling)
                 } else { inner.map(va, size, pte, Some(Pending::Lazy)) };

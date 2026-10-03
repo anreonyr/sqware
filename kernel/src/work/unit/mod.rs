@@ -28,6 +28,8 @@ use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
 use space::SpaceBuilder;
 
 unsafe extern "C" {
+    static _kernel_base: u8;
+    static _text_end: u8;
     static _rodata_start: u8;
 }
 
@@ -61,36 +63,47 @@ pub fn init() -> MapResult<()> {
             {
                 let this = &kernel_space;
                 let base = crate::layout::IMAGE_BASE.as_usize();
-                this.with(|inner| inner.dynamic(base));
+                this.with(|inner| {
+                    inner.dynamic(base);
+                    inner.allocate(space::SegmentKind::Normal, m.dram.base, m.dram.size)
+                })?;
             };
 
             let ram_flags = PteFlags::V
                 | PteFlags::R
                 | PteFlags::W
-                | PteFlags::X
                 | PteFlags::A
                 | PteFlags::D
                 | PteFlags::G;
 
-            kernel_space.borrow(
-                VirtAddr::from_raw(m.dram.base),
-                PhysAddr::from_raw(m.dram.base),
-                m.dram.size,
-                ram_flags,
-            )?;
-
-            kernel_space.borrow(
-                mode::lower() + m.dram.base,
-                PhysAddr::from_raw(m.dram.base),
-                m.dram.size,
-                ram_flags,
-            )?;
-
+            let text_start = (&raw const _kernel_base).addr();
+            let text_end = (&raw const _text_end).addr();
             let rodata_start = (&raw const _rodata_start).addr();
-            let rodata_size = kernel_edge() - rodata_start;
-            let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.protect(VirtAddr::from_raw(rodata_start), rodata_size, ro_flags)?;
-            kernel_space.protect(mode::lower() + rodata_start, rodata_size, ro_flags)?;
+            let image_end = kernel_edge();
+            let ram_end = m.dram.base.checked_add(m.dram.size).ok_or(MapError::NoRegion)?;
+            if !(m.dram.base <= text_start && text_start < text_end
+                && text_end <= rodata_start && rodata_start <= image_end && image_end <= ram_end) {
+                return Err(MapError::NoRegion);
+            }
+            let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G;
+            let text_flags = ro_flags | PteFlags::X;
+            for (start, end, flags) in [
+                (m.dram.base, text_start, ram_flags),
+                (text_start, text_end, text_flags),
+                (text_end, rodata_start, ram_flags),
+                (rodata_start, image_end, ro_flags),
+                (image_end, ram_end, ram_flags),
+            ] {
+                if start == end { continue; }
+                for offset in [0, mode::lower().as_usize()] {
+                    kernel_space.borrow(
+                        VirtAddr::wrap(offset + start),
+                        PhysAddr::from_raw(start),
+                        end - start,
+                        flags,
+                    )?;
+                }
+            }
 
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;

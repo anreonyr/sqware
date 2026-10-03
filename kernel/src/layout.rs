@@ -65,7 +65,6 @@ pub(crate) const TRAP_STACK_GUARD: usize = PAGE_SIZE;
 pub(crate) const TRAP_STACK_BASE: VirtAddr =
     VirtAddr::wrap(TEAM_FRAME_BASE.as_usize() - (MAX_HART_SLOTS << TRAP_STACK_SLOT_SHIFT));
 
-pub const STACK_WINDOW_SIZE: usize = 0x4000_0000;
 pub const IMAGE_BASE: VirtAddr = VirtAddr::wrap(0x1_0000);
 
 const _: () = {
@@ -107,10 +106,7 @@ pub(crate) fn validate() {
     assert!(!lower.is_user());
     assert_eq!(upper.as_usize(), top, "upper must equal user space ceiling");
     assert!(upper.as_usize().is_multiple_of(PAGE_SIZE));
-    let stack_bottom = upper.as_usize() - STACK_WINDOW_SIZE;
-    assert!(stack_bottom.is_multiple_of(PAGE_SIZE));
-    assert!(stack_bottom < upper.as_usize());
-    assert!(VirtAddr::wrap(stack_bottom).is_user());
+    assert!(VirtAddr::wrap(upper.as_usize() - PAGE_SIZE).is_user());
     assert!(!TRAMPOLINE.is_user());
     assert!(HART_FRAME_BASE.as_usize() < TRAMPOLINE.as_usize());
     assert!(!TEAM_FRAME_BASE.is_user());

@@ -77,6 +77,24 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn kernel_memory_layout() {
+        kernel::health::pagetable::kernel_layout();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn space_window_layout() {
+        kernel::health::pagetable::window_layout();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn heap_starts_after_image_bss() {
+        kernel::health::pagetable::image_dynamic_region();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pagetable_recycle() {
         kernel::health::pagetable::pagetable();
     }
