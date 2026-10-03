@@ -4,6 +4,10 @@
 use crate::unit::{Demand, Identity, Relation, UnitFile};
 
 pub static BUSY: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "busy",
         wanted_by: &["load"],

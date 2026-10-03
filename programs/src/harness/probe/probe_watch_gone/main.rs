@@ -20,9 +20,9 @@ use programs::Report;
 
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
-use protocol::service::operator::Grant;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face as TreeFace;
+use protocol::system::operator::Grant;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
 use runtime::env::room;
 use runtime::env::unit as utask;
 

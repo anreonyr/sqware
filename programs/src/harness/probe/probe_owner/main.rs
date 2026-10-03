@@ -14,9 +14,9 @@ use alloc::string::ToString;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::{EntryId, Fail, Permit};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::system::operator::{EntryId, Fail, Permit};
 
 use protocol::driver;
 use runtime::env::mail;

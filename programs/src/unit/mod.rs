@@ -11,6 +11,10 @@ pub type Died = env::Reason;
 /// 装配者按需求铸通道。
 #[derive(Clone, Copy)]
 pub struct UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    pub publication: Option<crate::system::publication::PublicationRule>,
+    #[cfg(target_arch = "riscv64")]
+    pub prepare: Option<fn(Option<env::TaskId>, &UnitFile, env::TaskId) -> Result<(), &'static str>>,
     /// 身份：宿主只读这一块。
     pub identity: Identity,
     /// 装配关系：编排域读这一块。
@@ -93,6 +97,10 @@ pub const SCENE: &str = "scene";
 /// 名单里的目标单元：没有身子、不进任何镜像——它对这张单的贡献只有一件事：
 /// 给"这一趟走完"一个落点（`SCENE` 那条边指着它）。
 pub static SCENE_UNIT: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: SCENE,
         kind: Kind::Target,

@@ -1,7 +1,4 @@
-//! 一张定长表（Service）与一行的形状（名字 / 身子 /
-//! 生命阶段 / 怎么算起来）。
-//! 它只服务**生命轴**（Control 与它那四相）与几处读口（板与服务那一侧的
-//! （板线程在编排域、持树者在 operator 域），故住它们共同的那一格 crate::system::common::face::desk。
+//! Control 的外部 team 生命账：声明、task 坐标和状态。
 
 use alloc::string::String;
 use env::{TaskId, TeamId};
@@ -23,10 +20,10 @@ pub enum State {
     Dead,
 }
 
-/// **最近一次实例的坐标**：域 + 那一枚线程。生死看 State——State::Dead 与坐标并存
+/// **最近一次实例的坐标**：域 + 那一枚task。生死看 State——State::Dead 与坐标并存
 /// 是合法的（"起过、现在死了"），坐标留给重启与放下用：**死亡记账不清它**（清了就没得
 /// 放下、也没得重启）
-/// **两格绑在同一个变体里**是刻意的：分开成两个字段就允许"有域、没线程"这种半死状态
+/// **两格绑在同一个变体里**是刻意的：分开成两个字段就允许"有域、没task"这种半死状态
 /// 被写出来，而现在它不可表达
 /// 这个 `None` 不是"省一格"：`team` 的**唯一读者**是 `mark_dead` 那一格（要"放下那个域"）
 
@@ -137,7 +134,7 @@ impl Table {
         }
     }
 
-    /// 挂上身子：**一次给全**（域 + 线程）。没登记过 ⇒ `Unknown`
+    /// 挂上身子：**一次给全**（域 + task）。没登记过 ⇒ `Unknown`
     pub fn attach(&mut self, name: &str, team: Option<TeamId>, task: TaskId) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);

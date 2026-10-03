@@ -25,7 +25,7 @@ pub fn order_scene(list: &mut [&'static UnitFile]) -> Result<(), DepsFail> {
             while d < deps.len() {
                 let name = deps[d];
                 // 也没有"答得动"可言（见 SCENE_UNIT 与 is_target）。
-                if !is_target(name) {
+                if !is_target(name) && !matches!(name, "operator" | "identity") {
                     match find(list, name) {
                         None => return Err(DepsFail::Unknown(name)),
                         Some(target) if target.supply().is_empty() => {
@@ -97,7 +97,7 @@ fn ready(list: &[&'static UnitFile], i: usize, placed: usize) -> bool {
     };
     let mut d = 0;
     while d < deps.len() {
-        let mut found = false;
+        let mut found = matches!(deps[d], "operator" | "identity");
         let mut j = 0;
         while j < placed {
             if list[j].name() == deps[d] {

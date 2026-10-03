@@ -1,7 +1,4 @@
-//! 它只答一件事：这一条服务在不在、怎么被创建 / 配置 / 启动 / 停止。
-//! 四套协议的语义（命名 / 身份 / 横向关系 / 存在信号）**不在这一层**：那些是程序声明上的
-//! 各自的手上。
-//! **`Service` 不另立类型**：它就是"一枚线程 ＋ 它那几条通道"（Service 是那两样的别名）。
+//! Control 管理外部 team 的创建、配置、启动、停止与监督。
 
 use alloc::string::String;
 use alloc::string::ToString;
@@ -15,7 +12,7 @@ use env::{Mark, TaskId, Wait};
 use protocol::communication::session::establish::{self, Endpoint};
 
 use crate::boot::{Accounts, Catalog};
-use crate::service::identity::bridge::Roster;
+use crate::system::identity::bridge::Roster;
 use crate::system::common::machine::Machine;
 use crate::system::run::source::Source;
 use crate::unit::{PROGRAMS, Setup, UnitFile};
@@ -25,7 +22,6 @@ use crate::system::common::life::{service, verdict as core};
 
 pub mod enroll;
 pub mod supervise;
-pub(crate) mod hierarchy;
 
 pub use crate::unit::Died;
 
@@ -51,7 +47,7 @@ pub enum Error {
     Missing,
     /// 账里立不起这一行（没登记过 / 表满）
     Table,
-    /// 身子没产出来（建域 / 产线程那一关，或账里没有这一行）
+    /// 身子没产出来（建域 / 产task那一关，或账里没有这一行）
     Spawn,
     /// 死在装配的某一步——**读数靠 debug 行"程序名 + 哪一步"**
     Step(&'static str),
@@ -70,7 +66,7 @@ impl Error {
     }
 }
 
-/// **一条运行时服务**：一枚线程 ＋ 它那几条通道（会话）
+/// **一条运行时服务**：一枚task ＋ 它那几条通道（会话）
 /// （第一条是 `records`），随后板 / 树两条装配路也各往这本账里添一件
 /// **一条通道一件持有者**（Endpoint）——`Endpoint` 只装两枚孔，故"一条关系 N 条通道"那一档
 /// 名字不进这个别名——账里那一行就是名字，调用方手里也有 `UnitFile`
@@ -78,14 +74,15 @@ pub type Service = (TaskId, Vec<Endpoint>);
 
 /// **Service 的生命周期与装配环境**
 pub struct Control {
-    table: Table,
-    pub(crate) hierarchy: ::core::cell::RefCell<hierarchy::Hierarchy>,
+    pub(crate) status: alloc::sync::Arc<super::Status>,
+    pub(crate) table: Table,
+    publication_entry: Option<env::PieToken>,
     pub(crate) roster: Roster,
     pub(crate) activation: Option<crate::service::hub::bridge::Activation>,
-    static_tasks: Vec<TaskId>,
+    pub(crate) static_tasks: Vec<TaskId>,
     pending: Vec<Pending>,
     catalog: Catalog<'static>,
-    machine: Machine,
+    pub(crate) machine: Machine,
     accounts: Accounts,
     /// **上一手入册那一单的写端**（Setup::Machine 那一格）
     out: protocol::communication::hand::Sender<protocol::service::hub::Enroll>,
@@ -95,16 +92,17 @@ pub struct Control {
 struct Pending {
     /// 装配表上的名字（`&'static str`——`spawn` / `start` 要它）
     name: &'static str,
-    /// 那一枚线程 ＋ 它已经认领的通道
+    /// 那一枚task ＋ 它已经认领的通道
     service: Service,
 }
 
 impl Control {
     /// 就位（四样都由 `System` 在引导之后交进来）
-    pub fn new(catalog: Catalog<'static>, machine: Machine, accounts: Accounts) -> Control {
+    pub fn new(catalog: Catalog<'static>, machine: Machine, accounts: Accounts, status: alloc::sync::Arc<super::Status>, publication_entry: Option<env::PieToken>) -> Control {
         Control {
+            status,
             table: Table::new(),
-            hierarchy: ::core::cell::RefCell::new(hierarchy::Hierarchy::new()),
+            publication_entry,
             roster: Roster::default(),
             activation: None,
             static_tasks: Vec::new(),
@@ -121,7 +119,7 @@ impl Control {
     // 因为"该不该起"是策略，本层只答"起不起得来"。
 
     /// **造一个 Service**（线上 `Mint` 那一问）：复核 → （没有行就立账）→ 按声明上的来源取字节
-    /// → 建域产线程
+    /// → 建域产task
     /// **复核两格**：名字得在装配声明里（`PROGRAMS`——字节与 `kind` 的声明处，帧里没有镜像）
     /// 且这一行**此刻能起**——判据与 crate::system::common::life::verdict::admit_start 同一条
     /// （`NeverStarted | Dead` 才起；表里还没这一行就先立一行）。已经在跑 / 正在起的答
@@ -192,91 +190,32 @@ impl Control {
     pub(crate) fn authorize_static(
         &mut self,
         task: TaskId,
-        program: &UnitFile,
     ) -> Result<(), &'static str> {
         self.static_tasks.try_reserve(1).map_err(|_| "static identity capacity")?;
-        self.roster.authorize(task, program)?;
+        self.roster.authorize(task)?;
         self.static_tasks.push(task);
-        Ok(())
-    }
-
-    /// Stop old subjects rather than guessing how their attenuated identities should recover.
-    pub(crate) fn replace_identity(
-        &mut self,
-        tree: &mut crate::service::operator::bridge::Tree,
-        refresh: impl Fn(&Control, &mut crate::service::operator::bridge::Tree)
-            -> Result<(), &'static str>,
-    ) -> Result<(), &'static str> {
-        let scene = crate::system::run::scene::programs(&self.catalog).map_err(|e| e.said())?;
-        let mut restart = Vec::new();
-        restart.try_reserve(scene.len()).map_err(|_| "replacement capacity")?;
-        for program in scene {
-            if program.name() == "operator" {
-                continue;
-            }
-            if program.name() == "identity" || (self.table.find(program.name())
-                .is_some_and(|row| matches!(row.state, State::Starting | State::Ready))
-                && self.task(program.name()).is_some_and(|task| self.static_tasks.contains(&task)))
-            {
-                restart.push(program);
-            }
-        }
-        if let Some(authority) = self.roster.authority() { self.hierarchy.borrow_mut().retire(tree, authority)?; }
-        self.roster.retire();
-        self.activation = None;
-        let mut stopped = [const { String::new() }; Table::CAP];
-        let mut count = 0;
-        for row in self.table.living() {
-            if row.name != "operator" {
-                stopped[count] = row.name.clone();
-                count += 1;
-            }
-        }
-        for name in &stopped[..count] {
-            if let Some(task) = self.task(name) {
-                self.discard(name, task);
-            }
-        }
-        while let Some(pending) = self.pending.pop() {
-            self.discard(pending.name, pending.service.0);
-        }
-        self.static_tasks.retain(|task| Some(*task) == tree.host());
-        for program in restart {
-            let mut service = self.spawn(program).map_err(|e| e.said())?;
-            let result = (|| {
-                self.authorize_static(service.0, program)?;
-                crate::harness::probe::identity::supply_to(self.roster.authority(), program, service.0)?;
-                assemble::connect_all(program, &mut service).map_err(|e| e.said())?;
-                self.progress(tree)?;
-                self.launch(program, program.name().to_string(), &mut service)
-                    .map_err(|e| e.said())?;
-                self.ready(program.name().to_string(), &mut service, program.supply(),
-                    |control| control.progress(tree)).map_err(|e| e.said())?;
-                if program.name() == "identity" {
-                    crate::service::identity::bridge::install(self, tree, service.0)?;
-                    refresh(self, tree)?;
-                }
-                Ok(())
-            })();
-            if let Err(why) = result {
-                self.discard(program.name(), service.0);
-                return Err(why);
-            }
-        }
-        protocol::debug::put("system: identity replacement complete; static dependents restarted");
         Ok(())
     }
 
     /// **这一条此刻处于哪个生命阶段**（线上 `State` 那一问）
     /// **只读表里那一格**：实例坐标是另一件事（"起过、现在死了"时它仍在）——见协议那一节
     pub fn state(&self, name: String) -> Result<State, Fail> {
+        if matches!(name.as_str(), "operator" | "identity") {
+            let task = self.task(&name).ok_or(Fail::Unknown)?;
+            if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) { return Ok(State::Dead); }
+            return Ok(match self.status.phase.load(::core::sync::atomic::Ordering::Acquire) {
+                phase if phase == super::Phase::Starting as u8 => State::Starting,
+                phase if phase == super::Phase::Running as u8 => State::Ready,
+                _ => State::Stopping,
+            });
+        }
         self.table
             .find(name.as_str())
             .map(|s| s.state)
             .ok_or(Fail::Unknown)
     }
 
-    /// **起一个 Service**：按名字取那一段字节 → 建域 → 产线程 → 备通道账
+    /// **起一个 Service**：按名字取那一段字节 → 建域 → 产task → 备通道账
     /// 前置：这一行**已经登记过**（Control::enlist）——没登记过由 `admit_start` 拦下
     /// 特权级仍从清单那一条取（"唯一声明处是装配表"，打包时写进去），而"字节在哪儿"本层不问
     pub fn spawn(&mut self, program: &UnitFile) -> Result<Service, Error> {
@@ -287,7 +226,10 @@ impl Control {
         };
         let task = service::mint(&mut self.table, name.as_str(), image, entry.kind)
             .map_err(|_| Error::Spawn)?;
-        let injected = self.hierarchy.borrow().inject(task);
+        let injected = self.publication_entry.ok_or("publication entry").and_then(|entry|
+            runtime::core::res::port::ship(&runtime::env::mail::HolePie::from_token(entry), task,
+                runtime::core::res::port::Access::STORE, runtime::core::res::port::Policy::NONE)
+                .map(|_| ()).map_err(|_| "publication inject"));
         if let Err(why) = injected {
             self.discard(program.name(), task);
             return Err(Error::Step(why));
@@ -369,19 +311,22 @@ impl Control {
     }
 
     pub fn stop(&mut self, name: String) -> Result<(), Fail> {
+        if matches!(name.as_str(), "operator" | "identity") { return Err(Fail::Unknown); }
         let task = self.task(name.as_str()).ok_or(Fail::Unknown)?;
         service::stop(&mut self.table, name.as_str())?;
         if name == "hub" {
             self.activation = None;
         }
-        if self.roster.authority() == Some(task) {
-            self.roster.retire();
-            return Ok(());
-        }
         self.roster.unbind(task).map_err(|_| Fail::NotReady)
     }
 
     pub(crate) fn task(&self, name: &str) -> Option<TaskId> {
+        use ::core::sync::atomic::Ordering;
+        match name {
+            "operator" => return Some(TaskId::new(self.status.operator.load(Ordering::Acquire))),
+            "identity" => return Some(TaskId::new(self.status.identity.load(Ordering::Acquire))),
+            _ => {}
+        }
         match self.table.find(name)?.slot {
             Slot::Live { task, .. } => Some(task),
             Slot::None => None,
@@ -395,11 +340,6 @@ impl Control {
         })
     }
 
-    pub(crate) fn progress(&self, tree: &mut crate::service::operator::bridge::Tree) -> Result<(), &'static str> {
-        if tree.host().is_some_and(|host| runtime::env::unit::join(host, Wait::POLL).unwrap_or(true)) { return Ok(()); }
-        tree.connect(self.tasks())?;
-        self.hierarchy.borrow_mut().poll(self, tree)
-    }
     pub(crate) fn activate_hub(&self) {
         if let Some(activation) = &self.activation {
             activation.poll(self);
@@ -410,9 +350,6 @@ impl Control {
     pub(crate) fn discard(&mut self, name: &str, task: TaskId) {
         if name == "hub" {
             self.activation = None;
-        }
-        if self.roster.authority() == Some(task) {
-            self.roster.retire();
         }
         let _ = runtime::env::room::doom(task);
         if let Some(row) = self.table.find(name) {
@@ -439,6 +376,11 @@ impl Control {
     }
 
     pub fn await_ready(&self, name: &str, wait: Wait) -> Result<(), Fail> {
+        if matches!(name, "operator" | "identity") {
+            return if self.status.phase.load(::core::sync::atomic::Ordering::Acquire) == super::Phase::Running as u8 {
+                Ok(())
+            } else { Err(Fail::NotReady) };
+        }
         let mut left = match wait {
             Wait::POLL => 0,
             Wait::AtMost(ms) => ms,

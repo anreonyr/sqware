@@ -16,9 +16,15 @@ use runtime::env::mail::{self, HolePie};
 use runtime::env::unit as utask;
 
 use super::Control;
-use crate::service::operator::bridge::Tree;
+use crate::system::publication::Publication;
+use crate::system::runtime::Runtime;
+use crate::system::identity::names::Names;
+use crate::system::operator::bridge::Tree;
 
 use crate::system::common::life::verdict as core;
+
+#[derive(Debug)]
+pub enum Fail { Room, Publication, Dead, Wait, Idle, Shutdown }
 
 pub struct Watch {
     /// 一次造、一直持有的那只组：来源变了是**挂/摘/订/退**，不是整只换组。
@@ -51,22 +57,21 @@ impl Watch {
     /// 把等待集合对齐到"此刻该等的东西"；全部登记成功 ⇒ true。
     ///
     /// 期望集合的唯一来源：四面 ＋ 激活入口 ＋ 主发布入口 ＋ 每个别名入口
-    /// （这些入口的增删都发生在监督线程自己经手的 `progress`/`sweep`/服务请求里，
+    /// （这些入口的增删都发生在Control task自己经手的 发布轮询 / `sweep`/服务请求里，
     /// 所以同步点就在它们之后）、每个在册任务的收尾完成、以及自己的能力变化。
     ///
     /// 挂与订本身都会敲一次组（`tole::attach`/`subscribe` 收尾那一下），故"先同步、后等"
     /// 不会把落在两者之间的事件丢掉。
-    fn sync(&mut self, control: &Control) -> bool {
+    fn sync(&mut self, control: &Control, publication: &Publication, names: &Names) -> bool {
         let mut wanted: Vec<PieToken> = Vec::new();
         {
-            let hierarchy = control.hierarchy.borrow();
-            let capacity = self.faces.len() + 2 + hierarchy.entries().len();
+            let capacity = self.faces.len() + 2 + names.entries().len();
             if wanted.try_reserve(capacity).is_err() {
                 return false;
             }
             wanted.extend(self.faces.iter().flatten().copied());
-            wanted.extend(hierarchy.entry);
-            wanted.extend(hierarchy.entries());
+            wanted.extend(publication.entry);
+            wanted.extend(names.entries());
         }
         if let Some(activation) = &control.activation {
             wanted.push(activation.entry());
@@ -99,13 +104,15 @@ impl Watch {
             .living()
             .filter(|row| matches!(row.slot, Slot::Live { .. }))
             .count();
-        if wanted.try_reserve(count + 1).is_err() {
+        if wanted.try_reserve(count + 3).is_err() {
             return false;
         }
         wanted.extend(control.table.living().filter_map(|row| match row.slot {
             Slot::Live { task, .. } => Some(Sub::TaskCompleted(task)),
             Slot::None => None,
         }));
+        wanted.push(Sub::TaskCompleted(control.task("operator").unwrap()));
+        wanted.push(Sub::TaskCompleted(control.task("identity").unwrap()));
         wanted.push(Sub::Capabilities);
         let mut at = 0;
         while at < self.subs.len() {
@@ -130,12 +137,15 @@ impl Watch {
 
     /// 监督循环：**发现死亡 + 记账 + 放下死域 + 待客 + 收场**
     /// Control、Hub 激活及发布入口共用一只组；任务退出与新 LINK 有界轮询。
-    pub fn run(&mut self, control: &mut Control, tree: &mut Tree) -> bool {
+    pub fn run(
+        &mut self, control: &mut Control, publication: &mut Publication,
+        runtime: &mut Runtime, names: &mut Names, tree: &mut Tree,
+    ) -> Result<(), Fail> {
         // 收帧那一页：**一页**——与门那一侧同一条规则（谁能往里推，缓冲就按**载体**的界备，
         let mut buf: Vec<u8> = Vec::new();
         if buf.try_reserve_exact(runtime::PAGE_SIZE).is_err() {
             debug!("system: no room");
-            return true;
+            return Err(Fail::Room);
         }
         buf.resize(runtime::PAGE_SIZE, 0);
         // **收场那一相的闩**：闸一旦成立就一直成立（会走的只会更少），拍下它只是
@@ -147,38 +157,29 @@ impl Watch {
         let mut owed = control.table.living().count();
         loop {
             control.activate_hub();
-            if let Err(why) = control.progress(tree) {
+            if let Err(why) = publication.poll(&control.table, &control.roster, &control.machine, &control.static_tasks, runtime, names, tree) {
                 debug::put(&alloc::format!("system: {why}"));
-                return false;
+                return Err(Fail::Publication);
             }
-            let recovered = if settling {
-                sweep(control);
-                false
-            } else {
-                match self.recover_identity(control, tree) {
-                    Ok(recovered) => recovered,
-                    Err(why) => {
-                        debug::put(&alloc::format!("system: identity replacement failed: {why}"));
-                        return false;
-                    }
+            for task in [control.task("operator").unwrap(), control.task("identity").unwrap()] {
+                if utask::join(task, Wait::POLL).unwrap_or(true) {
+                    debug::put("system: internal task ended; terminating team");
+                    return Err(Fail::Dead);
                 }
-            };
-            if recovered {
-                owed = control.table.living().count();
-                quiet_at = clock();
             }
+            sweep(control);
             // 四、四面：有人来问 control 吗（**逐面**非阻塞地取干净这一批——每枚孔单手，
             //     各自的批各自取）。位次翻回是哪一面：醒来的是哪一枚孔，就是哪一位。
             for i in 0..ccall::Grant::ALL.len() {
                 let Some(face) = self.faces[i] else {
                     continue;
                 };
-                serve_face(control, tree, ccall::Grant::ALL[i], face, &mut buf);
+                serve_face(control, publication, runtime, names, tree, ccall::Grant::ALL[i], face, &mut buf);
             }
-            // 五、把等待集合对齐到"此刻该等的东西"：这一趟里 `progress`/`sweep`/服务请求
+            // 五、把等待集合对齐到"此刻该等的东西"：这一趟里 发布轮询 / `sweep`/服务请求
             //     都可能增删入口（激活、别名）或增删任务。挂与订收尾那一下会敲一次组，
             //     所以落在"同步"与"睡下"之间的事件不会丢。
-            let armed = self.sync(control);
+            let armed = self.sync(control, publication, names);
             // 六、先看账有没有少一位（"有动静"是兜底唯一的复位信号）。
             let living = control.table.living().count();
             if living < owed {
@@ -193,7 +194,7 @@ impl Watch {
                 quiet_at = clock();
             }
             if settling && control.done() {
-                return !forced;
+                return if forced { Err(Fail::Idle) } else { Ok(()) };
             }
             // 八、静默兜底：**还有"会自己走"的台，静了 `IDLE_MS` 就出声并收场**；已经在收场而
             if clock() - quiet_at >= IDLE_NS {
@@ -212,51 +213,19 @@ impl Watch {
                         IDLE_MS,
                         owed
                     ));
-                    return false;
+                    return Err(Fail::Idle);
                 } else {
                     quiet_at = clock();
                 }
             }
             // 九、睡。**没有事件、也没有业务期限时真睡着**；登记没成全的那一趟退回有界重试。
             if !armed {
-                let _ = self.pile.await_(Wait::AtMost(RETRY_MS));
+                self.pile.await_(Wait::AtMost(RETRY_MS)).map_err(|_| Fail::Wait)?;
                 continue;
             }
             let wait = bound(settling, core::walking(&control.table), quiet_at);
-            let _ = self.pile.await_(wait);
+            self.pile.await_(wait).map_err(|_| Fail::Wait)?;
         }
-    }
-}
-
-impl Watch {
-    pub(crate) fn recover_identity(
-        &self,
-        control: &mut Control,
-        tree: &mut Tree,
-    ) -> Result<bool, &'static str> {
-        let authority = control.roster.authority();
-        if !sweep(control) {
-            return Ok(false);
-        }
-        if let Some(authority) = authority { control.hierarchy.borrow_mut().retire(tree, authority)?; }
-        control.replace_identity(tree, |control, tree| self.refresh_control(control, tree))?;
-        Ok(true)
-    }
-
-    fn refresh_control(&self, control: &Control, tree: &mut Tree) -> Result<(), &'static str> {
-        let principal = control.roster.control().ok_or("replacement control identity")?;
-        for grant in ccall::Grant::ALL {
-            let Some(face) = self.faces[grant.index()] else { continue; };
-            let road = ccall::DIR.try_join(grant.name()).ok_or("control path")?;
-            let permit = if grant == ccall::Grant::State {
-                protocol::service::operator::Permit::Public
-            } else {
-                protocol::service::operator::Permit::Identity(
-                    protocol::service::identity::Selector::Exact(principal))
-            };
-            control.hierarchy.borrow_mut().internal(tree, &road, face, permit, runtime::env::unit::self_id(), control.roster.authority())?;
-        }
-        Ok(())
     }
 }
 
@@ -276,7 +245,7 @@ const IDLE_NS: u64 = IDLE_MS as u64 * 1_000_000;
 /// 期限那两支（在收场 / 还有"会自己走"的台）照旧按 `quiet_at + IDLE_MS` 算剩余额度；
 /// 其余那一格跑满期限唯一的效果是把 `quiet_at` 拨回去（零可观察动作）⇒ 直接 `Forever`。
 ///
-/// 等价关系的形状：`settling` 只由本循环赋值、`walking()` 只读表而表的行只在本线程或
+/// 等价关系的形状：`settling` 只由本循环赋值、`walking()` 只读表而表的行只在本 task或
 /// 死亡事件里动 ⇒ 睡在 `Forever` 上不会漏掉任何一次期限。
 fn bound(settling: bool, walking: bool, quiet_at: u64) -> Wait {
     if !settling && !walking {
@@ -286,7 +255,7 @@ fn bound(settling: bool, walking: bool, quiet_at: u64) -> Wait {
     Wait::AtMost(left.div_ceil(1_000_000).max(1) as usize)
 }
 
-fn sweep(control: &mut Control) -> bool {
+pub(crate) fn sweep(control: &mut Control) {
     // 先把名字抄下来（表是定长的、行数有上界；拿名字再动表——与 `Desk` 那本账同一个形状）。
     let mut gone = [const { String::new() }; Table::CAP];
     let mut n = 0usize;
@@ -299,10 +268,6 @@ fn sweep(control: &mut Control) -> bool {
             n += 1;
         }
     }
-    let identity_lost = gone[..n].iter().any(|name| name == "identity");
-    if identity_lost {
-        control.roster.retire();
-    }
     for name in &gone[..n] {
         if let Some(task) = control.task(name.as_str()) {
             if let Err(why) = control.roster.unbind(task) {
@@ -311,13 +276,12 @@ fn sweep(control: &mut Control) -> bool {
         }
         mark_dead(&mut control.table, name.as_str(), Reaped::Now);
     }
-    identity_lost
 }
 
 /// 答回去
 /// 认那枚回信孔靠**帧里那一格** ＋ **一次 mail::reserve 验**（同 `principal/server.rs::turn`
 /// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
-fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
+fn serve_face(control: &mut Control, publication: &mut Publication, runtime: &mut Runtime, names: &mut Names, tree: &mut Tree, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
     // 入口是**单手**：一次醒来的这一批要取干净（可能不止一位客人）。
     while let Ok((len, from)) = entry.pull(buf, Wait::POLL) {
@@ -344,7 +308,7 @@ fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face:
                 continue;
             }
         }
-        let said = answer(control, tree, from, ask);
+        let said = answer(control, publication, runtime, names, tree, from, ask);
         {
             let mut tx = Sender::<ccall::frame::Said>::from_token(back);
             let _ = tx.send(said);
@@ -357,7 +321,7 @@ fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face:
 /// **四手就是 Control 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期
 /// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格
 /// **两格语义一个字不省**：`stop` 只到 `Stopping`（Control::stop 就是 service::stop）
-fn answer(control: &mut Control, tree: &mut Tree, from: env::TaskId, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
+fn answer(control: &mut Control, publication: &mut Publication, runtime: &mut Runtime, names: &mut Names, tree: &mut Tree, from: env::TaskId, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
     let code = |fail: crate::system::common::life::verdict::Fail| {
         ccall::frame::fail_to_code(Some(wire_fail(fail)))
     };
@@ -371,7 +335,7 @@ fn answer(control: &mut Control, tree: &mut Tree, from: env::TaskId, ask: Option
             Err(fail) => ccall::frame::said_status(code(fail)),
         },
         ccall::frame::Wire::Start(name) => match control.release(name, from,
-            |control| control.progress(tree)) {
+            |control| publication.poll(&control.table, &control.roster, &control.machine, &control.static_tasks, runtime, names, tree)) {
             // 的东西。通道那本账留在 Control 里——`Endpoint` 的孔交不出去（见 `frame` 那一节）。
             Ok(service) => ccall::frame::said_task(service.0),
             Err(fail) => ccall::frame::said_status(code(fail)),

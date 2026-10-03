@@ -17,10 +17,10 @@ use programs::harness::probe;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::identity as icall;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face as TreeFace;
-use protocol::service::operator::Grant as TreeGrant;
+use protocol::system::identity as icall;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::Grant as TreeGrant;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
@@ -44,13 +44,13 @@ fn main() -> Report<'static> {
 
     assert_eq!(icall::Grant::ALL.len(), 17);
     step(&tree, "identity", icall::DIR, icall::Grant::ALL.len());
-    let authority = programs::service::identity::bridge::authority()
+    let authority = programs::system::identity::bridge::authority()
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in icall::Grant::ALL {
         let entry = if grant.mount() == icall::Mount::Installer {
             let road = icall::DIR.try_join(grant.name()).expect("probe-coalition: bad face name");
             assert_eq!(tree.tile(&road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
-                Err(protocol::service::operator::Fail::Denied),
+                Err(protocol::system::operator::Fail::Denied),
                 "installer discovery must deny an ordinary principal");
             let entry = protocol::communication::session::establish::find(authority, grant.mark())
                 .expect("probe-coalition: missing explicit installer face copy");

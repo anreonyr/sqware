@@ -11,6 +11,10 @@ use crate::unit::{Demand, Ending, Identity, Relation, SCENE, UnitFile};
 /// 判据两条（`programs/src/harness/probe/probe_control/main.rs`）：表外那个名字答 `Unknown`、本台自己答得出一个
 /// （Assembly::mount_control，由 `system/main.rs` 的相四叫）——那**不是一个台**，图里本来
 pub static PROBE_CONTROL: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "probe-control",
         ..Identity::DEFAULT

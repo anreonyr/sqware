@@ -9,16 +9,16 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use protocol::communication::session::Session;
-use protocol::service::identity::client::{CallError, Query, SelfOps};
-use protocol::service::identity::{Fail, PrincipalId, Subject};
-use protocol::service::operator::client as operator;
+use protocol::system::identity::client::{CallError, Query, SelfOps};
+use protocol::system::identity::{Fail, PrincipalId, Subject};
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = programs::service::identity::bridge::authority()
+    let authority = programs::system::identity::bridge::authority()
         .expect("subject: no Control-issued identity authority");
     let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()

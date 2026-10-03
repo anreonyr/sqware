@@ -21,7 +21,7 @@ use env::{PieToken, Wait};
 use protocol::common::path::{Path, PathBuf};
 use protocol::communication::rack::{Mode, Reader, Writer};
 use protocol::driver;
-use protocol::service::operator::client::Face;
+use protocol::system::operator::client::Face;
 
 use crate::driver::uart::core::frame::{self, Bytes};
 

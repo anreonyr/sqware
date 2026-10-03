@@ -83,7 +83,7 @@
 //!      要它就得另立一行。
 //!
 //! 除这三类之外**一律有界**：客侧敲门与收答（`AtMost`）、"译不出的路"那一重试（退避 ＋ 真时限，
-//! 见 `protocol::service::operator::client` 的 `RETRY_MIN_MS`）、装配期问一格（`AtMost(MS)`）。
+//! 见 `protocol::system::operator::client` 的 `RETRY_MIN_MS`）、装配期问一格（`AtMost(MS)`）。
 //!
 //! **（这一条是量与查两条腿里"查"的那一条）**：debug 档 `product` 景里量到过"同一枚孔被
 //! 连问 500／1000 次而整机不前进"（`operator: woke n=500…2000 tok=501 known=true read=true`）

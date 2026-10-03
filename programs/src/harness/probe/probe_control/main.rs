@@ -31,9 +31,9 @@ use programs::harness::probe;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::Fail as TreeFail;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::Grant as TreeGrant;
+use protocol::system::operator::Fail as TreeFail;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::Grant as TreeGrant;
 use protocol::system::control as ccall;
 use runtime::env::unit as utask;
 

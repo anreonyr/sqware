@@ -1,5 +1,2 @@
-//! 在协议这一侧的目录。
-
+//! Device service protocols.
 pub mod hub;
-pub mod identity;
-pub mod operator;

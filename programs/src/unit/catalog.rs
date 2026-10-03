@@ -2,7 +2,7 @@
 
 use super::{SCENE_UNIT, UnitFile};
 
-// **它们不在这份文件的自然模块树里**：那些目录（`driver/uart/`、`system/operator/`…）都拖着
+// **它们不在这份文件的自然模块树里**：那些目录（`driver/uart/`、`service/hub/`…）都拖着
 // runtime / protocol 代码，`crates/image` 进不去。故只由 PROGRAMS 这一处按 `#[path]` 拉
 // 进来一次——**唯一的声明点**。
 
@@ -16,8 +16,6 @@ pub mod busy;
 pub mod canonical;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
-#[path = "../service/identity/program.rs"]
-pub mod identity;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -34,8 +32,6 @@ pub mod load;
 pub mod lodger;
 #[path = "../harness/guest/member/program.rs"]
 pub mod member;
-#[path = "../service/operator/program.rs"]
-pub mod operator;
 #[path = "../harness/bench/load/park/program.rs"]
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
@@ -48,8 +44,8 @@ pub mod probe_coalition;
 pub mod probe_control;
 #[path = "../harness/probe/probe_denied/program.rs"]
 pub mod probe_denied;
-#[path = "../harness/probe/identity_replacement/program.rs"]
-pub mod identity_replacement;
+#[path = "../harness/probe/system_fault/program.rs"]
+pub mod system_fault;
 #[path = "../harness/probe/probe_lease/program.rs"]
 pub mod probe_lease;
 #[path = "../harness/probe/probe_operator_gate/program.rs"]
@@ -98,9 +94,7 @@ pub mod waiter;
 /// 就没法一眼扫完——而这张表**就是**给人扫的
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
-    // 三枚服务（持树者 / 统一身份 / 设备账）：各自一个 bin、一个域，同一条 `mint` 路。
-    &operator::PROGRAM,
-    &identity::PROGRAM,
+    // Device service.
     &hub::PROGRAM,
     &canonical::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
@@ -116,9 +110,10 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &member::MEMBER,
     &system::PROGRAM,
     &probe_denied::PROBE_DENIED,
-    &identity_replacement::ENTRY,
-    &identity_replacement::DEPENDENT,
-    &identity_replacement::CHILD,
+    &system_fault::ENTRY,
+    &system_fault::FAULT_UNIT,
+    &system_fault::DEPENDENT,
+    &system_fault::CHILD,
     &probe_owner::PROBE_OWNER,
     &probe_rule::PROBE_RULE,
     &probe_rule_other::PROBE_RULE_OTHER,

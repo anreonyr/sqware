@@ -5,6 +5,10 @@ use crate::unit::{Demand, Identity, Relation, UnitFile};
 use env::ProgramKind;
 
 pub static GROUP: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "group",
         space: ProgramKind::Supervisor,

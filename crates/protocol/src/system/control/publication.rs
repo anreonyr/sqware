@@ -2,8 +2,8 @@
 use crate::common::path::{Path, PathBuf};
 use crate::communication::hand::Sender;
 use crate::communication::session::establish;
-use crate::service::identity::{CoalitionId, PrincipalId};
-use crate::service::operator::{EntryId, Fail, Permit};
+use crate::system::identity::{CoalitionId, PrincipalId};
+use crate::system::operator::{EntryId, Fail, Permit};
 use crate::wire::message::Message;
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId, Wait};
@@ -218,7 +218,7 @@ impl Reply {
     }
     pub fn fail(fail: Fail) -> Self {
         Self {
-            status: crate::service::operator::fail_to_code(Some(fail)),
+            status: crate::system::operator::fail_to_code(Some(fail)),
             kind: 0,
             task: TaskId::new(0),
             number: 0,
@@ -228,7 +228,7 @@ impl Reply {
         if self.status == 0 {
             Ok(self)
         } else {
-            Err(crate::service::operator::code_to_fail(self.status).unwrap_or(Fail::Unknown))
+            Err(crate::system::operator::code_to_fail(self.status).unwrap_or(Fail::Unknown))
         }
     }
     pub fn identity(self, authority: TaskId) -> Result<Object, Fail> {
@@ -336,7 +336,7 @@ impl Client {
     }
     pub fn reference(
         &self,
-        operator: &crate::service::operator::client::Face,
+        operator: &crate::system::operator::client::Face,
         authority: TaskId,
         kind: u8,
         name: &str,

@@ -13,10 +13,10 @@ use programs::Report;
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace};
-use protocol::service::operator::frame::watch::{Event, Kind};
-use protocol::service::operator::{EntryId, Grant, Permit};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::{Face as TreeFace};
+use protocol::system::operator::frame::watch::{Event, Kind};
+use protocol::system::operator::{EntryId, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 

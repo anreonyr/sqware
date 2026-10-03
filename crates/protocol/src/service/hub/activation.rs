@@ -1,7 +1,7 @@
 //! Private Hub → Control device-identity installation, never an Operator tile.
 use env::{Mark, PieToken, TaskId};
 
-use crate::service::identity::{CoalitionId, PageId};
+use crate::system::identity::{CoalitionId, PageId};
 use crate::wire::message::Message;
 use env::wire::Span as _;
 

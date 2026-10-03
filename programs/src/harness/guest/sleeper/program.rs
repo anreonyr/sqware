@@ -5,6 +5,10 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// 客人：`/svc/drv/rtc` 那面服务的第一位用家
 pub static SLEEPER: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "sleeper",
         ..Identity::DEFAULT

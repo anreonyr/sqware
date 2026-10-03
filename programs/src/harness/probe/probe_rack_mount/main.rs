@@ -25,13 +25,13 @@ use env::{Mark, Wait};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use programs::service::operator::bridge;
-use programs::service::operator::bridge::Landed;
+use programs::system::publication;
+use programs::system::publication::Landed;
 use protocol::communication::rack::{Mode, Rack};
 use protocol::communication::session::{Session, establish};
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face, Mine};
-use protocol::service::operator::{Fail, Grant, Permit};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
+use protocol::system::operator::{Fail, Grant, Permit};
 use protocol::system::control::publication::{Client, Scope, Target};
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -136,11 +136,12 @@ fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<Landed> {
         None => panic!("probe-rack-mount: 试验场那条路拼不出来"),
     };
     let faces = rig::faces(a, b);
-    let plated = bridge::land(
+    let plated = publication::land(
         tree,
         rig::ROAD,
         &road,
-        Mine::No,
+        Scope::Fixture,
+        rig::ROAD,
         Permit::Public,
         &faces,
         Wait::AtMost(MS),

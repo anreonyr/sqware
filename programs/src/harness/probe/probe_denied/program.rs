@@ -5,6 +5,10 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// Ordinary bound task tests installer sender authorization and action-face isolation.
 pub static PROBE_DENIED: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: None,
+    #[cfg(target_arch = "riscv64")]
+    prepare: Some(crate::harness::probe::identity::supply_to),
     identity: Identity {
         name: "probe-denied",
         ..Identity::DEFAULT

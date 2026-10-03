@@ -12,9 +12,13 @@ pub const CHANNEL: &str = "hub";
 pub const READY: &str = "hub-ready";
 
 pub static PROGRAM: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: Some(crate::service::hub::bridge::publication),
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "hub",
-        wanted_by: &["accept", "product", "identity-replacement"],
+        wanted_by: &["accept", "product", "system-fault"],
         ..Identity::DEFAULT
     },
     relation: Relation {

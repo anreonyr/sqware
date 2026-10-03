@@ -21,8 +21,8 @@ use programs::driver::uart::client;
 use programs::harness::probe::rack as rig;
 use protocol::communication::rack::Mode;
 use protocol::communication::session::Session;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
 
 /// 等板 / 等树那一趟的额度（毫秒）

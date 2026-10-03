@@ -4,6 +4,10 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RULE: UnitFile = UnitFile {
+    #[cfg(target_arch = "riscv64")]
+    publication: Some(crate::harness::probe::hierarchy::publication),
+    #[cfg(target_arch = "riscv64")]
+    prepare: None,
     identity: Identity {
         name: "probe-rule",
         ..Identity::DEFAULT

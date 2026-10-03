@@ -30,6 +30,22 @@ pub(crate) fn fixture_allowed(program: &str, group: &str, name: &str) -> bool {
     }
 }
 
+pub(crate) fn publication(
+    program: &crate::unit::UnitFile, _from: env::TaskId,
+    target: &protocol::system::control::publication::Target,
+    _mark: env::Mark, _requested: protocol::system::operator::Permit,
+    _machine: &crate::system::common::machine::Machine,
+    _roster: &crate::system::identity::bridge::Roster,
+) -> Result<protocol::common::path::PathBuf, protocol::system::operator::Fail> {
+    use protocol::system::control::publication::{Target, Scope};
+    use protocol::system::operator::Fail;
+    use protocol::common::path::Path;
+    let Target::Service { scope: Scope::Fixture, group, name } = target else { return Err(Fail::Denied); };
+    if !fixture_allowed(program.name(), group, name) { return Err(Fail::Denied); }
+    if program.name() == "probe-rack-mount" { Path::new("probe-rack").try_join(name) }
+    else { Path::new("svc").try_join(group).and_then(|p| p.try_join(name)) }.ok_or(Fail::Denied)
+}
+
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
 pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
@@ -61,9 +77,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
         .unwrap();
     let until = runtime::env::chrono::clock() + 10_000_000_000;
     loop {
-        assembly
-            .control
-            .progress(&mut assembly.tree)
+        assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)
             .expect("hierarchy progress");
         if code == 5 {
             use protocol::system::control::publication::{Frame, Object, REF, Reply};
@@ -74,7 +88,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
                 let wrong =
                     env::TaskId::new(assembly.control.roster.authority().unwrap().get() + 10000);
                 let reply = Reply::object(Object::Principal(
-                    protocol::service::identity::PrincipalId::new(wrong, 0),
+                    protocol::system::identity::PrincipalId::new(wrong, 0),
                 ));
                 let mut encoded = [0; Reply::LEN];
                 let n = reply.store_at(&mut encoded, 0).unwrap();
@@ -87,7 +101,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
         if let Ok((1, from)) = HolePie::from_token(answer).pull(&mut bytes, Wait::POLL) {
             assert_eq!(
                 from,
-                assembly.control.task("replacement-dependent").unwrap()
+                assembly.control.task("system-dependent").unwrap()
             );
             assert_eq!(bytes[0], code);
             break;
@@ -102,16 +116,16 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
 
 pub(crate) fn exercise(
     assembly: &mut crate::system::Assembly,
-    operator: &protocol::service::operator::client::Face,
+    operator: &protocol::system::operator::client::Face,
     authority: env::TaskId,
     service: env::TaskId,
     target: env::TaskId,
-) -> protocol::service::identity::CoalitionId {
+) -> protocol::system::identity::CoalitionId {
     use env::Wait;
     use protocol::communication::session::establish;
-    use protocol::service::identity::client::{Face, Installer, Organization};
-    use protocol::service::identity::{Grant, Install, Reply, Selector, Subject, Wire};
-    use protocol::service::operator::{Fail, Permit};
+    use protocol::system::identity::client::{Face, Installer, Organization};
+    use protocol::system::identity::{Grant, Install, Reply, Selector, Subject, Wire};
+    use protocol::system::operator::{Fail, Permit};
     use protocol::system::control::publication::Object;
     use runtime::env::mail::{self, HolePie};
     let wait = Wait::AtMost(3000);
@@ -145,28 +159,24 @@ pub(crate) fn exercise(
         .unwrap();
     assembly.control.roster.activate(target, coalition).unwrap();
     {
-        let mut hierarchy = assembly.control.hierarchy.borrow_mut();
-        hierarchy
-            .register(
-                &assembly.control,
+        assembly.names.register(
+                &assembly.control.roster,
                 &mut assembly.tree,
                 "named-subject",
                 Object::Principal(p),
                 None,
             )
             .unwrap();
-        hierarchy
-            .register(
-                &assembly.control,
+        assembly.names.register(
+                &assembly.control.roster,
                 &mut assembly.tree,
                 "named-league",
                 Object::Coalition(coalition),
                 None,
             )
             .unwrap();
-        hierarchy
-            .register(
-                &assembly.control,
+        assembly.names.register(
+                &assembly.control.roster,
                 &mut assembly.tree,
                 "named-league",
                 Object::Coalition(coalition),
@@ -175,9 +185,8 @@ pub(crate) fn exercise(
             .unwrap();
         let other = organization.found(wait).unwrap();
         assert!(
-            hierarchy
-                .register(
-                    &assembly.control,
+            assembly.names.register(
+                    &assembly.control.roster,
                     &mut assembly.tree,
                     "named-league",
                     Object::Coalition(other),
@@ -186,9 +195,8 @@ pub(crate) fn exercise(
                 .is_err()
         );
         assert!(
-            hierarchy
-                .register(
-                    &assembly.control,
+            assembly.names.register(
+                    &assembly.control.roster,
                     &mut assembly.tree,
                     "bad/name",
                     Object::Principal(p),
@@ -196,8 +204,7 @@ pub(crate) fn exercise(
                 )
                 .is_err()
         );
-        hierarchy
-            .approve(crate::system::control::hierarchy::Approval {
+        assembly.runtime.approve(crate::system::runtime::Approval {
                 service,
                 task: target,
                 kind: "test".into(),
@@ -206,8 +213,7 @@ pub(crate) fn exercise(
             })
             .unwrap();
         for i in 0..33 {
-            hierarchy
-                .approve(crate::system::control::hierarchy::Approval {
+            assembly.runtime.approve(crate::system::runtime::Approval {
                     service,
                     task: target,
                     kind: "full".into(),
@@ -217,8 +223,7 @@ pub(crate) fn exercise(
                 .unwrap();
         }
         let source = mail::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
-        hierarchy
-            .internal(
+        assembly.publication.internal(
                 &mut assembly.tree,
                 protocol::common::path::Path::new("svc/fixtures/stale"),
                 source,
@@ -249,11 +254,7 @@ pub(crate) fn exercise(
     command(assembly, target, 5);
     let _ = mail::seal(fake);
     let _ = mail::release(fake);
-    let service_road = assembly
-        .control
-        .hierarchy
-        .borrow()
-        .runtime_road(service)
+    let service_road = assembly.runtime.runtime_road(service)
         .unwrap();
     let same = service_road
         .try_join("hole")
@@ -287,36 +288,27 @@ pub(crate) fn exercise(
     );
     organization.expel(coalition, p, wait).unwrap();
     command(assembly, target, 2);
-    let target_road = assembly
-        .control
-        .hierarchy
-        .borrow()
-        .runtime_road(target)
+    let target_road = assembly.runtime.runtime_road(target)
         .unwrap();
     runtime::env::room::doom(target).unwrap();
     assert!(runtime::env::unit::join(target, wait).unwrap());
-    assembly.control.progress(&mut assembly.tree).unwrap();
+    assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
     assert!(matches!(
         operator.root().tile(&target_road, wait),
         Err(Fail::Unknown)
     ));
     command(assembly, target, 3);
-    assert!(
-        !assembly
-            .watch
-            .recover_identity(&mut assembly.control, &mut assembly.tree)
-            .unwrap()
-    );
-    assembly.control.mint("replacement-child".into()).unwrap();
-    let failed_task = assembly.control.task("replacement-child").unwrap();
+    crate::system::control::supervise::sweep(&mut assembly.control);
+    assembly.control.mint("system-child".into()).unwrap();
+    let failed_task = assembly.control.task("system-child").unwrap();
     let mut prepared = None;
     let mut fail_once = true;
     let result = assembly
         .control
-        .release("replacement-child".into(), service, |control| {
-            control.progress(&mut assembly.tree)?;
+        .release("system-child".into(), service, |control| {
+            assembly.publication.poll(&control.table, &control.roster, &control.machine, &control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
             if fail_once {
-                prepared = control.hierarchy.borrow().runtime_road(failed_task);
+                prepared = assembly.runtime.runtime_road(failed_task);
                 fail_once = false;
                 Err("injected fixture preparation failure")
             } else {
@@ -325,11 +317,7 @@ pub(crate) fn exercise(
         });
     assert!(result.is_err());
     assert!(
-        assembly
-            .control
-            .hierarchy
-            .borrow()
-            .runtime_road(failed_task)
+        assembly.runtime.runtime_road(failed_task)
             .is_none()
     );
     assert!(matches!(
@@ -346,58 +334,14 @@ pub(crate) fn exercise(
     coalition
 }
 
-pub(crate) fn after_replacement(
-    assembly: &mut crate::system::Assembly,
-    operator: &protocol::service::operator::client::Face,
-    old: env::TaskId,
-    fresh: env::TaskId,
-    coalition: protocol::service::identity::CoalitionId,
-) {
-    use env::Wait;
-    use protocol::service::operator::Fail;
-    use protocol::system::control::publication::{Object, Reply};
-    let wait = Wait::AtMost(3000);
-    assert_ne!(old, fresh);
-    assert!(
-        Reply::object(Object::Coalition(coalition))
-            .identity(fresh)
-            .is_err()
-    );
-    assert!(matches!(
-        operator.root().tile(
-            protocol::common::path::Path::new("idt/principal/named-subject/ref"),
-            wait
-        ),
-        Err(Fail::Unknown)
-    ));
-    assert!(matches!(
-        operator.root().tile(
-            protocol::common::path::Path::new("idt/coalition/named-league/ref"),
-            wait
-        ),
-        Err(Fail::Unknown)
-    ));
-    assert_eq!(
-        operator
-            .tile(
-                protocol::common::path::Path::new("svc/fixtures/stale"),
-                wait
-            )
-            .unwrap()
-            .token(wait),
-        Err(Fail::Unjudged)
-    );
-    command(assembly, env::TaskId::new(0), 4);
-}
-
 pub fn codecs() {
     use env::{PieToken, TaskId};
     use env::wire::Span as _;
-    use protocol::service::operator::{EntryId, Permit, Tip, TipIn};
+    use protocol::system::operator::{EntryId, Permit, Tip, TipIn};
     use protocol::system::control::publication::{Frame, Object, Reply, Scope, Target};
     let a = TaskId::new(77);
     let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
-    let p = protocol::service::identity::PrincipalId::new(a, 19);
+    let p = protocol::system::identity::PrincipalId::new(a, 19);
     for target in [
         Target::Service {
             scope: Scope::Driver,
@@ -443,7 +387,7 @@ pub fn codecs() {
             .identity(TaskId::new(78))
             .is_err()
     );
-    let mut bytes = [0; protocol::service::operator::TIP_LEN + 1];
+    let mut bytes = [0; protocol::system::operator::TIP_LEN + 1];
     let tip = Tip::Plate {
         road: protocol::common::path::Path::new("svc/test/entry").to_path_buf(),
         leaf: b,
@@ -615,7 +559,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use protocol::service::operator::{Fail, Permit};
+    use protocol::system::operator::{Fail, Permit};
     use protocol::system::control::publication::{Client, ENTRY, Frame, Scope, Target};
     use runtime::core::res::port::{self, Access, Policy};
     use runtime::env::mail::{self, HolePie};
@@ -652,7 +596,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
         );
         complete.store(true, Ordering::Release);
     });
-    let entry = assembly.control.hierarchy.borrow().entry.unwrap();
+    let entry = assembly.publication.entry.unwrap();
     port::ship(
         &HolePie::from_token(entry),
         caller.id(),
@@ -662,7 +606,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
     .unwrap();
     let until = runtime::env::chrono::clock() + 10_000_000_000;
     while !done.load(Ordering::Acquire) {
-        assembly.control.progress(&mut assembly.tree).unwrap();
+        assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
         assert!(
             runtime::env::chrono::clock() < until,
             "sender boundary timeout"
@@ -686,7 +630,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
     use protocol::communication::session::{Session, establish};
-    use protocol::service::operator::{
+    use protocol::system::operator::{
         EntryId, Fail, Grant, Where,
         client::{self as operator, Face},
     };
@@ -723,19 +667,19 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
             }
             let private = establish::claim(
                 env::TaskId::new(host.get()),
-                protocol::service::operator::TIP_MARK,
+                protocol::system::operator::TIP_MARK,
                 Wait::AtMost(1000),
             )
             .unwrap();
-            let tip = protocol::service::operator::Tip::Plate {
+            let tip = protocol::system::operator::Tip::Plate {
                 road: protocol::common::path::Path::new("idt/principal/forged/ref").to_path_buf(),
                 leaf: env::PieToken::NONE,
-                permit: protocol::service::operator::Permit::Public,
+                permit: protocol::system::operator::Permit::Public,
                 owner: control,
                 replace: false,
                 back: env::PieToken::NONE,
             };
-            let mut bytes = [0; protocol::service::operator::TIP_LEN];
+            let mut bytes = [0; protocol::system::operator::TIP_LEN];
             let n = tip.store(&mut bytes).unwrap();
             HolePie::from_token(private)
                 .push(&bytes[..n], Wait::AtMost(1000))
@@ -747,7 +691,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
             .roster
             .inherit(caller.id(), control)
             .unwrap();
-        let private = establish::find(host, protocol::service::operator::TIP_MARK).unwrap();
+        let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
         port::ship(
             &HolePie::from_token(private),
             caller.id(),
@@ -762,7 +706,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
                 .tree
                 .connect(core::iter::once(caller.id()))
                 .unwrap();
-            assembly.control.progress(&mut assembly.tree).unwrap();
+            assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
             assert!(
                 runtime::env::chrono::clock() < until,
                 "standalone raw mutation timeout"

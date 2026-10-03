@@ -16,10 +16,10 @@ use programs::Report;
 use env::PieToken;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator as ocall;
-use protocol::service::operator::Fail;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face;
+use protocol::system::operator as ocall;
+use protocol::system::operator::Fail;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
 
 const WANT: &str = "router";
@@ -75,7 +75,7 @@ fn main() -> Report<'static> {
     );
 }
 
-fn find_face(tree: &Face, road: &protocol::service::operator::Path) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {

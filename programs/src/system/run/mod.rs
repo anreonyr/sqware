@@ -1,6 +1,5 @@
-//! 装配的相（schedule）· 程序来源那一格（source）。
+//! System 引导、场景选择与程序来源。
 
 pub mod bootstrap;
 pub mod scene;
-pub mod schedule;
 pub mod source;
