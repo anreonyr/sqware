@@ -56,12 +56,12 @@ fn newest() -> (u64, u64) {
     let mut r = rack.reader();
     for i in 0..CAP {
         assert!(
-            w.send(payload(i)).is_ok(),
+            w.send(&payload(i)).is_ok(),
             "probe-rack: newest 第 {i} 条该进得去"
         );
     }
     assert!(
-        matches!(w.send(payload(CAP)), Err(SendFail::Full)),
+        matches!(w.send(&payload(CAP)), Err(SendFail::Full)),
         "probe-rack: 第 CAP+1 条该答 Full（满了那一档不是永久满）"
     );
     assert_eq!(w.dropped(), 1, "probe-rack: dropped 该记一枚");
@@ -87,7 +87,7 @@ fn newest() -> (u64, u64) {
         other => panic!("probe-rack: 读干之后等铃该是 Ok(false)（不空转），实测 {other:?}"),
     }
     // 唤醒协议：再落一条 ⇒ 铃该响，且读到它。
-    assert!(w.send(payload(99)).is_ok(), "probe-rack: 唤醒那一落");
+    assert!(w.send(&payload(99)).is_ok(), "probe-rack: 唤醒那一落");
     match r.wait(Wait::AtMost(50)) {
         Ok(true) => {}
         other => panic!("probe-rack: 落了新的一条，等铃该是 Ok(true)，实测 {other:?}"),
@@ -111,7 +111,7 @@ fn oldest() -> (u64, u64, usize) {
     let mut r = rack.reader();
     for i in 0..CAP + 3 {
         assert!(
-            w.send(payload(i)).is_ok(),
+            w.send(&payload(i)).is_ok(),
             "probe-rack: oldest 第 {i} 条该进得去（Oldest 不答 Full）"
         );
     }
