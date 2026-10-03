@@ -146,7 +146,8 @@ impl PoleMeta {
         }
         let va = space
             .with_flush(|inner| {
-                let va = inner.allocate(SegmentKind::Normal, self.size)?;
+                let va = crate::work::unit::space::window::HeapWindow::locate(inner, self.size)?;
+                inner.allocate(SegmentKind::Normal, va.as_usize(), self.size)?;
                 if let Err(e) = inner.backed(
                     va,
                     self.backing.clone(),

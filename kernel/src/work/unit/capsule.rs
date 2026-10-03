@@ -8,18 +8,19 @@ use super::team::{Team, TeamBuilder};
 pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
     let capsule = Capsule::parse(bytes).ok_or(MapError::NoRegion)?;
     if !(bytes.as_ptr() as usize).is_multiple_of(PAGE) { return Err(MapError::NotAligned); }
+    let mut image_end = PAGE;
     for i in 0..capsule.count {
         let region = capsule.region(i).ok_or(MapError::NoRegion)?;
         if !Space::user_range(region.va, region.pages * PAGE) { return Err(MapError::NoRegion); }
+        image_end = image_end.max(region.va + region.pages * PAGE);
     }
     let space = SpaceBuilder::supervisor().build()?;
     space.with_flush(|inner| {
-        inner.dynamic(PAGE);
+        inner.dynamic(image_end);
         for i in 0..capsule.count {
             let region = capsule.region(i).ok_or(MapError::NoRegion)?;
             let size = region.pages * PAGE;
-            if inner.overlaps(VirtAddr::wrap(region.va), size)
-                || !inner.user.as_mut().is_some_and(|segment| segment.reserve(region.va, size)) {
+            if inner.overlaps(VirtAddr::wrap(region.va), size) {
                 return Err(MapError::AlreadyMapped);
             }
             let va = VirtAddr::wrap(region.va);

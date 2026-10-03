@@ -23,7 +23,7 @@ pub enum MapError {
     NotMapped,
     #[error("virtual address not in any declared map")]
     NoRegion,
-    #[error("DRAM identity map overlaps the user stack window")]
+    #[error("DRAM identity map exceeds the lower address half")]
     DramOverlap,
     #[error("span does not match segment state")]
     SegmentMismatch,

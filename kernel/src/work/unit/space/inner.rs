@@ -53,20 +53,15 @@ impl SpaceInner {
         self.user = Some(super::segment::Segment::new(base, edge));
     }
 
-    pub(crate) fn allocate(&mut self, seg: SegmentKind, size: usize) -> Result<VirtAddr, MapError> {
-        let base = match seg {
-            SegmentKind::Normal => self
-                .user
-                .as_mut()
-                .ok_or(MapError::NoRegion)?
-                .allocate(size)
-                .map_err(|_| MapError::OutOfMemory)?,
-            SegmentKind::Kernel => self
-                .kernel
-                .allocate(size)
-                .map_err(|_| MapError::OutOfMemory)?,
+    pub(crate) fn allocate(&mut self, seg: SegmentKind, addr: usize, size: usize) -> Result<(), MapError> {
+        if size == 0 || !addr.is_multiple_of(PAGE_SIZE) || !size.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::NotAligned);
+        }
+        let segment = match seg {
+            SegmentKind::Normal => self.user.as_mut().ok_or(MapError::NoRegion)?,
+            SegmentKind::Kernel => &mut self.kernel,
         };
-        Ok(VirtAddr::from_raw(base))
+        segment.allocate(addr, size)
     }
 
     pub(crate) fn deallocate(&mut self, seg: SegmentKind, addr: usize, size: usize) -> bool {
