@@ -20,6 +20,7 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 }
 
 pub use crate::work::mail::hole::tests as hole;
+pub use crate::work::room::scheduler::core::acceptance as scheduler;
 
 pub mod backing;
 pub mod hart;

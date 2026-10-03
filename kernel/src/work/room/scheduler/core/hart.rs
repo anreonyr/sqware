@@ -1,8 +1,9 @@
 use alloc::sync::Arc;
+use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
 use crate::memory::manager::addr::PhysAddr;
-use crate::runtime::chrono::timer;
+use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
@@ -11,6 +12,7 @@ use crate::work::unit::task::{Task, TaskIdent, TaskState};
 use super::ident::Badge;
 
 const QUANTUM_TICKS: u32 = 8;
+const READY_MS: u64 = 2;
 
 #[repr(align(64))]
 pub(crate) struct Scheduler {
@@ -23,9 +25,17 @@ pub(super) struct SchedulerInner {
     pub(super) running: Option<Arc<Task>>,
     head: Option<Arc<Task>>,
     tail: Option<Arc<Task>>,
+    ready_since: Option<u64>,
 }
 
 impl SchedulerInner {
+    fn ready_ceiling(&self) -> u64 {
+        self.ready_since.map_or(timer::blind_ceiling(), |since| {
+            let budget = clock::duration_to_ticks(Duration::from_millis(READY_MS));
+            budget.saturating_sub(clock::now().as_ticks().saturating_sub(since))
+        })
+    }
+
     fn starved_is_empty(&self) -> bool {
         self.head.is_none()
     }
@@ -41,6 +51,7 @@ impl Scheduler {
                     running: None,
                     head: None,
                     tail: None,
+                    ready_since: None,
                 },
             ),
             badge: Badge::new(),
@@ -56,7 +67,10 @@ impl Scheduler {
             "starved 容器只收 Starved 任务，且入队前不得挂在链上"
         );
         match i.tail.take() {
-            None => i.head = Some(task.clone()),
+            None => {
+                i.ready_since = Some(clock::now().as_ticks());
+                i.head = Some(task.clone());
+            }
             Some(mut last) => *Task::starved_next(&mut last) = Some(task.clone()),
         }
         i.tail = Some(task);
@@ -68,6 +82,9 @@ impl Scheduler {
             i.head = Task::starved_next(&mut head).take();
             if i.head.is_none() {
                 i.tail = None;
+                i.ready_since = None;
+            } else {
+                i.ready_since = Some(clock::now().as_ticks());
             }
             let anchor = head.clone();
             let mut boarding = anchor.boarding.lock();
@@ -94,6 +111,9 @@ impl Scheduler {
                 if was_tail {
                     i.tail = prev;
                 }
+                if i.head.is_none() {
+                    i.ready_since = None;
+                }
                 return true;
             }
             prev = Some(node.clone());
@@ -106,7 +126,7 @@ impl Scheduler {
         while self.starved_pop(i).is_some() {}
     }
 
-    pub(crate) fn push(&self, mut task: Arc<Task>) {
+    pub(crate) fn push(&self, mut task: Arc<Task>) -> bool {
         debug_assert!(
             matches!(
                 Task::exclusive(&mut task).state(),
@@ -115,7 +135,9 @@ impl Scheduler {
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
+        let notify = i.starved_is_empty();
         self.starved_push(&mut i, task);
+        notify
     }
 
     pub(super) fn pull(&self) -> Option<Arc<Task>> {
@@ -123,7 +145,12 @@ impl Scheduler {
         self.starved_pop(&mut i)
     }
 
-    fn prepare(&self, task: &mut Arc<Task>) {
+    pub(super) fn steal(&self) -> Option<Arc<Task>> {
+        let mut i = self.inner.try_lock()?;
+        self.starved_pop(&mut i)
+    }
+
+    fn prepare(&self, task: &mut Arc<Task>, ceiling: u64) {
         let t = Task::exclusive(task);
         t.transform(TaskState::Running {
             ticks_left: QUANTUM_TICKS,
@@ -138,7 +165,7 @@ impl Scheduler {
                     .set_x(Gprs::TP, crate::hart::per_hart_ptr(self.hart));
             }
         }
-        timer::beat_until(timer::blind_ceiling());
+        timer::beat_until(ceiling);
     }
 
     pub(super) fn seat(&self, mut task: Arc<Task>) -> Option<usize> {
@@ -150,7 +177,7 @@ impl Scheduler {
             boarding.parked = Some(task);
             return None;
         }
-        self.prepare(&mut task);
+        self.prepare(&mut task, i.ready_ceiling());
         let pa = frame_pa(&task.ident).as_usize();
         self.badge.seat(&task.ident);
         debug_assert!(
@@ -230,12 +257,14 @@ impl Scheduler {
             TaskState::Running { ticks_left } => *ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
         };
-        if ticks_left > 1 || i.starved_is_empty() {
+        let ceiling = i.ready_ceiling();
+        if i.starved_is_empty() || (ticks_left > 1 && ceiling != 0) {
             if ticks_left > 1 {
                 Task::exclusive(&mut cur).dec_ticks_left();
             }
             let pa = frame_pa(&cur.ident).as_usize();
             i.running = Some(cur);
+            timer::beat_until(ceiling);
             return Some(pa);
         }
         let prev_tid = cur.ident.id.get();
@@ -252,3 +281,7 @@ impl Scheduler {
 pub(super) fn frame_pa(ident: &TaskIdent) -> PhysAddr {
     ident.frame.pa.expect("frame span has pa")
 }
+
+#[cfg(debug_assertions)]
+#[path = "tests.rs"]
+pub mod tests;

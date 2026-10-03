@@ -8,7 +8,7 @@ use crate::work::room::conductor;
 use crate::work::room::messenger;
 use crate::work::unit::task::Task;
 
-use super::table::current;
+use super::table::{current, steal};
 
 const WFI_FAR: u64 = 1 << 60;
 const BEACON_TICK: u64 = 250_000;
@@ -30,7 +30,7 @@ pub(in super::super) fn fetch() -> usize {
         unsafe {
             sie::set_sext();
         }
-        if let Some(task) = s.pull() {
+        if let Some(task) = pull() {
             if let Some(pa) = s.seat(task) {
                 return pa;
             }
@@ -46,10 +46,14 @@ pub(in super::super) fn fetch() -> usize {
     }
 }
 
+fn pull() -> Option<Arc<Task>> {
+    current().pull().or_else(steal)
+}
+
 fn wait() -> Option<Arc<Task>> {
     let me = hart::hart_id();
     conductor::sleep(me);
-    let found = current().pull();
+    let found = pull();
     if let Some(task) = found {
         conductor::wake(me);
         return Some(task);
@@ -79,6 +83,10 @@ fn wait() -> Option<Arc<Task>> {
         if sip::read().sext() {
             let _ = crate::platform::devices::raise_irq_idle();
         }
+        if let Some(task) = pull() {
+            conductor::wake(me);
+            return Some(task);
+        }
         #[cfg(debug_assertions)]
         crate::runtime::diagnose::ipi::idle_hook();
         #[cfg(debug_assertions)]
@@ -92,7 +100,7 @@ fn wait() -> Option<Arc<Task>> {
         if messenger::redeem() {
             break;
         }
-        if let Some(task) = current().pull() {
+        if let Some(task) = pull() {
             conductor::wake(me);
             return Some(task);
         }

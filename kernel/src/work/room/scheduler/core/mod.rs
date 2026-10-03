@@ -17,3 +17,6 @@ pub(crate) use table::{
 };
 #[cfg(debug_assertions)]
 pub(crate) use table::{fail_next_reservation, scheduler_addr};
+
+#[cfg(debug_assertions)]
+pub use hart::tests::acceptance;
