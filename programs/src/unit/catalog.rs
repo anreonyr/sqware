@@ -6,6 +6,8 @@ use super::{SCENE_UNIT, UnitFile};
 // runtime / protocol 代码，`crates/image` 进不去。故只由 PROGRAMS 这一处按 `#[path]` 拉
 // 进来一次——**唯一的声明点**。
 
+#[path = "../harness/probe/accept/program.rs"]
+pub mod accept;
 #[path = "../harness/bench/again/again/program.rs"]
 pub mod again;
 #[path = "../harness/bench/beat/program.rs"]
@@ -44,8 +46,6 @@ pub mod probe_coalition;
 pub mod probe_control;
 #[path = "../harness/probe/probe_denied/program.rs"]
 pub mod probe_denied;
-#[path = "../harness/probe/system_fault/program.rs"]
-pub mod system_fault;
 #[path = "../harness/probe/probe_lease/program.rs"]
 pub mod probe_lease;
 #[path = "../harness/probe/probe_operator_gate/program.rs"]
@@ -80,10 +80,10 @@ pub mod rtc;
 pub mod sleeper;
 #[path = "../harness/guest/subject/program.rs"]
 pub mod subject;
-#[path = "../harness/probe/accept/program.rs"]
-pub mod accept;
 #[path = "../system/program.rs"]
 pub mod system;
+#[path = "../harness/probe/system_fault/program.rs"]
+pub mod system_fault;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
 #[path = "../harness/bench/group/waiter/program.rs"]

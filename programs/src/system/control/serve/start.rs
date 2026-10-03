@@ -1,10 +1,16 @@
+use super::{
+    task as service,
+    unit::{Control, Service},
+};
 use crate::system::control::serve::task::Image;
+use crate::system::run::source::Source;
+use crate::{
+    boot::Catalog,
+    unit::{Died, PROGRAMS, UnitFile},
+};
 use alloc::{string::ToString, vec::Vec};
 use env::{Mark, Wait};
 use protocol::communication::session::establish;
-use crate::{boot::Catalog, unit::{Died, UnitFile, PROGRAMS}};
-use crate::system::run::source::Source;
-use super::{unit::{Control, Service}, task as service};
 pub const RETRY_MS: usize = 1;
 pub const BOOT_MS: usize = 5000;
 
@@ -39,14 +45,20 @@ pub struct Images {
 }
 impl Control {
     pub fn spawn(&mut self, program: &UnitFile, images: &Images) -> Result<Service, Error> {
-
         let name = program.name().to_string();
         let entry = images.catalog.find(name.as_str()).ok_or(Error::Missing)?;
         let Some(image) = Source::initrd(images.catalog).image(name.clone()) else {
             return Err(Error::Missing);
         };
-        let task = service::mint(&mut self.table, Image { name: name.as_str(), bytes: image, kind: entry.kind })
-            .map_err(|_| Error::Spawn)?;
+        let task = service::mint(
+            &mut self.table,
+            Image {
+                name: name.as_str(),
+                bytes: image,
+                kind: entry.kind,
+            },
+        )
+        .map_err(|_| Error::Spawn)?;
         Ok((task, Vec::new()))
     }
 }
@@ -57,13 +69,16 @@ pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Erro
                 .1
                 .try_reserve(1)
                 .map_err(|_| Error::Step("no room for channels"))?;
-            let channel = establish::endpoint(service.0, Mark::of(ch), Wait::POLL).map_err(|_| Error::Step("connect failed"))?;
+            let channel = establish::endpoint(service.0, Mark::of(ch), Wait::POLL)
+                .map_err(|_| Error::Step("connect failed"))?;
             service.1.push(channel);
         }
     }
     Ok(())
 }
-pub(crate) fn program_of(name: &str) -> Result<&'static UnitFile, crate::system::control::core::verdict::Fail> {
+pub(crate) fn program_of(
+    name: &str,
+) -> Result<&'static UnitFile, crate::system::control::core::verdict::Fail> {
     PROGRAMS
         .iter()
         .copied()

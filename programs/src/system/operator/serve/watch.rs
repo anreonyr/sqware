@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 
 use env::{PieToken, TaskId, Wait};
 use protocol::common::path::{Path, PathBuf};
-use protocol::wire::message::Message;
 use protocol::system::operator::frame::watch::Event;
+use protocol::wire::message::Message;
 use runtime::env::mail::HolePie;
 
 use crate::system::operator::core::Operator;
@@ -31,7 +31,11 @@ pub struct Watchers {
 
 impl Watchers {
     pub fn new() -> Self {
-        Self { list: Vec::new(), buffer: Event::EMPTY, seq: 0 }
+        Self {
+            list: Vec::new(),
+            buffer: Event::EMPTY,
+            seq: 0,
+        }
     }
 
     /// **收一位订阅者**：记下它那一枚孔与它订的那条路。
@@ -69,7 +73,10 @@ impl Watchers {
         self.seq += 1;
         ev.seq = self.seq;
         let Some(size) = ev.store(&mut self.buffer) else {
-            protocol::debug::put(&alloc::format!("operator: watch event too long seq={}", ev.seq));
+            protocol::debug::put(&alloc::format!(
+                "operator: watch event too long seq={}",
+                ev.seq
+            ));
             return 0;
         };
         // Push 返回后字节已归内核，不依赖下一次发布的缓冲内容。
@@ -125,23 +132,63 @@ fn prefix_of(filter: &Path, road: &str) -> bool {
 ///
 /// **号那一格留 `0`**：它由订阅册那一手盖（[`Watchers::publish`] 才是号的持有者——号与环里的
 /// 格一一对应，故只能由落格那一手给）。
-pub struct Subscription { pub who: TaskId, pub road: PathBuf, pub hole: PieToken }
+pub struct Subscription {
+    pub who: TaskId,
+    pub road: PathBuf,
+    pub hole: PieToken,
+}
 pub fn event_at(tree: &Operator, change: crate::system::operator::core::Change) -> Option<Event> {
-    let road = match change.road { Some(road) => road, None => tree.road_to(change.id)? };
-    Some(Event { seq: 0, kind: change.kind, road, id: change.id, owner: change.owner })
+    let road = match change.road {
+        Some(road) => road,
+        None => tree.road_to(change.id)?,
+    };
+    Some(Event {
+        seq: 0,
+        kind: change.kind,
+        road,
+        id: change.id,
+        owner: change.owner,
+    })
 }
 
-use protocol::{common::schedule::{Progress, Res, ResMut}, system::operator as ocall};
 use super::{Fail, answer::Output, session::Request};
-pub(super) fn subscribe(mut request: ResMut<Request>, mut watchers: ResMut<Watchers>, mut out: ResMut<Output<ocall::Union>>) -> Result<Progress, super::Fail> {
+use protocol::{
+    common::schedule::{Progress, Res, ResMut},
+    system::operator as ocall,
+};
+pub(super) fn subscribe(
+    mut request: ResMut<Request>,
+    mut watchers: ResMut<Watchers>,
+    mut out: ResMut<Output<ocall::Union>>,
+) -> Result<Progress, super::Fail> {
     if let Some(incoming) = &mut request.0 {
         if matches!(incoming.ask, Some(ocall::Wire::Watch { .. })) {
-            let Some(ocall::Wire::Watch { road, hole }) = incoming.ask.take() else { unreachable!(); };
-            out.reply = Some(match watchers.join(Subscription { who: incoming.guest.who(), road, hole }) { Ok(()) => ocall::Union::Status(ocall::OK), Err(()) => ocall::Union::Status(ocall::DENIED) });
+            let Some(ocall::Wire::Watch { road, hole }) = incoming.ask.take() else {
+                unreachable!();
+            };
+            out.reply = Some(
+                match watchers.join(Subscription {
+                    who: incoming.guest.who(),
+                    road,
+                    hole,
+                }) {
+                    Ok(()) => ocall::Union::Status(ocall::OK),
+                    Err(()) => ocall::Union::Status(ocall::DENIED),
+                },
+            );
         }
     }
     Ok(Progress::Done)
 }
-pub(super) fn emit<T: 'static>(tree: Res<Operator>, mut watchers: ResMut<Watchers>, mut out: ResMut<Output<T>>) -> Result<Progress, Fail> {
-    for change in out.changes.drain(..) { if let Some(event) = event_at(&tree, change) { let _ = watchers.publish(event); } } Ok(Progress::Done)
+pub(super) fn emit<T: 'static>(
+    tree: Res<Operator>,
+    mut watchers: ResMut<Watchers>,
+    mut out: ResMut<Output<T>>,
+) -> Result<Progress, Fail> {
+    for change in out.changes.drain(..) {
+        if let Some(event) = event_at(&tree, change) {
+            let _ = watchers.publish(event);
+        }
+    }
+    Ok(Progress::Done)
 }

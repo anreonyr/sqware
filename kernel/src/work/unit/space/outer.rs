@@ -58,7 +58,9 @@ impl SpaceBuilder {
         let (life, inner) = match prepared {
             Ok(prepared) => prepared,
             Err(error) => {
-                if !self.asid.is_kernel() { asid::deallocate(self.asid).expect("space prepare: shootdown"); }
+                if !self.asid.is_kernel() {
+                    asid::deallocate(self.asid).expect("space prepare: shootdown");
+                }
                 return Err(error);
             }
         };
@@ -182,18 +184,31 @@ impl Space {
             let va = VirtAddr::wrap(addr);
             let end = addr + size;
             let mut found = false;
-            for map in inner.maps.iter().filter(|map| addr < map.va.as_usize().saturating_add(map.size.get())
-                && map.va.as_usize() < end) {
+            for map in inner.maps.iter().filter(|map| {
+                addr < map.va.as_usize().saturating_add(map.size.get()) && map.va.as_usize() < end
+            }) {
                 found = true;
                 if !(map.pending == Some(Pending::Lazy)
-                    || matches!(map.origin, super::map::Origin::Backed { open: false, .. })) {
+                    || matches!(map.origin, super::map::Origin::Backed { open: false, .. }))
+                {
                     return Err(MapError::NoRegion);
                 }
             }
-            if !found { return Err(MapError::NoRegion); }
-            inner.user.as_mut().ok_or(MapError::NoRegion)?.prepare_cut().map_err(|_| MapError::OutOfMemory)?;
+            if !found {
+                return Err(MapError::NoRegion);
+            }
+            inner
+                .user
+                .as_mut()
+                .ok_or(MapError::NoRegion)?
+                .prepare_cut()
+                .map_err(|_| MapError::OutOfMemory)?;
             inner.unmap(va, size, &mut salvage)?;
-            Ok(inner.user.as_mut().expect("normal segment").retire(addr, size))
+            Ok(inner
+                .user
+                .as_mut()
+                .expect("normal segment")
+                .retire(addr, size))
         });
         salvage.reclaim(self).expect("unmap: shootdown deaf");
         let ticket = result?;
@@ -237,8 +252,12 @@ impl Space {
                 inner.unmap(VirtAddr::wrap(start), size, &mut salvage)?;
                 Ok(Some(inner.user.as_mut().expect("token segment").retire(start, size)))
             })?;
-            salvage.reclaim(self).expect("token unmap: shootdown failed");
-            let Some(ticket) = ticket else { return Ok(()); };
+            salvage
+                .reclaim(self)
+                .expect("token unmap: shootdown failed");
+            let Some(ticket) = ticket else {
+                return Ok(());
+            };
             self.with(|inner| inner.user.as_mut().expect("token segment").reclaim(ticket));
         }
     }
@@ -268,7 +287,9 @@ impl Space {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) || !addr.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        if flags.contains(PteFlags::X) { super::sync_instructions()?; }
+        if flags.contains(PteFlags::X) {
+            super::sync_instructions()?;
+        }
         self.with_shootdown(|inner| {
             let va = VirtAddr::wrap(addr);
             if !inner.maps_in(va, size, |map| {

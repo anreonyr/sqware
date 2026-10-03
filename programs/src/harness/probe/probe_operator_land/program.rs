@@ -8,10 +8,14 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// 在**别人有主**那一格上拒——后者证的是"面判与归属那一条轴**正交**"
 pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Fixture, group: "operator-fixture", road: "svc/operator-fixture",
-        entries: &[
-            crate::unit::PublishEntry { name: "entry", mark: None },
-        ], public: false,
+        scope: crate::unit::PublishScope::Fixture,
+        group: "operator-fixture",
+        road: "svc/operator-fixture",
+        entries: &[crate::unit::PublishEntry {
+            name: "entry",
+            mark: None,
+        }],
+        public: false,
     }],
     identity: Identity {
         name: "probe-operator-land",

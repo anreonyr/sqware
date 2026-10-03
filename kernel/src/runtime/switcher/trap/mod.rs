@@ -153,7 +153,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
-            if from_task { run() as *mut TrapContext } else { frame as *mut TrapContext }
+            if from_task {
+                run() as *mut TrapContext
+            } else {
+                frame as *mut TrapContext
+            }
         }
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
             if crate::platform::devices::raise_irq().is_err() {

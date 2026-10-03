@@ -1,7 +1,21 @@
-use crate::system::{control::{core::verdict, serve::{self, unit::Control, lifecycle::{Action, Active, Key, Operations, Request}, resource::Resources}}, identity::serve::install::Roster, run::bootstrap::Boot};
 use crate::system::control::serve::schedule;
+use crate::system::{
+    control::{
+        core::verdict,
+        serve::{
+            self,
+            lifecycle::{Action, Active, Key, Operations, Request},
+            resource::Resources,
+            unit::Control,
+        },
+    },
+    identity::serve::install::Roster,
+    run::bootstrap::Boot,
+};
 use crate::unit::{Died, UnitFile};
-use protocol::common::schedule::{Resources as Registry, Res, ResMut, Plan, Schedule, Progress, Cursor, Dispatch, Invocation};
+use protocol::common::schedule::{
+    Cursor, Dispatch, Invocation, Plan, Progress, Res, ResMut, Resources as Registry, Schedule,
+};
 pub struct Fault {
     pub armed: bool,
     pub task: Option<env::TaskId>,
@@ -19,17 +33,34 @@ fn supply(
 ) -> Result<Progress, verdict::Fail> {
     let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
     let program = serve::start::program_of(&job.request.name)?;
-    let task = control.task(&job.request.name).ok_or(verdict::Fail::Unknown)?;
-    super::identity::supply_to(roster.authority(), program, task).map_err(|_| verdict::Fail::NotReady)?;
+    let task = control
+        .task(&job.request.name)
+        .ok_or(verdict::Fail::Unknown)?;
+    super::identity::supply_to(roster.authority(), program, task)
+        .map_err(|_| verdict::Fail::NotReady)?;
     Ok(Progress::Done)
 }
-fn probe(fault: Res<Fault>, mut dispatch: ResMut<Dispatch<(), verdict::Fail>>) -> Result<Progress, verdict::Fail> {
-    dispatch.budget = usize::from(fault.armed); Ok(Progress::Done)
+fn probe(
+    fault: Res<Fault>,
+    mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
+) -> Result<Progress, verdict::Fail> {
+    dispatch.budget = usize::from(fault.armed);
+    Ok(Progress::Done)
 }
-fn select_probe(mut dispatch: ResMut<Dispatch<(), verdict::Fail>>) -> Result<Progress, verdict::Fail> {
-    dispatch.current = Some(Invocation { key: (), cursor: Default::default() }); Ok(Progress::Done)
+fn select_probe(
+    mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
+) -> Result<Progress, verdict::Fail> {
+    dispatch.current = Some(Invocation {
+        key: (),
+        cursor: Default::default(),
+    });
+    Ok(Progress::Done)
 }
-fn inject(active: Res<Active>, resources: Res<Resources>, mut fault: ResMut<Fault>) -> Result<Progress, verdict::Fail> {
+fn inject(
+    active: Res<Active>,
+    resources: Res<Resources>,
+    mut fault: ResMut<Fault>,
+) -> Result<Progress, verdict::Fail> {
     if fault.armed {
         fault.armed = false;
         fault.task = active.0.as_ref().and_then(|job| job.execution.task);
@@ -41,16 +72,41 @@ fn inject(active: Res<Active>, resources: Res<Resources>, mut fault: ResMut<Faul
 impl Fixture {
     pub fn new(boot: Boot) -> Result<Self, ()> {
         let mut resources = crate::system::control::serve::run::resources(boot).map_err(|_| ())?;
-        resources.insert(Fault { armed: false, task: None, road: None }).map_err(|_| ())?;
-        resources.insert(Dispatch::<(), verdict::Fail>::new()).map_err(|_| ())?;
+        resources
+            .insert(Fault {
+                armed: false,
+                task: None,
+                road: None,
+            })
+            .map_err(|_| ())?;
+        resources
+            .insert(Dispatch::<(), verdict::Fail>::new())
+            .map_err(|_| ())?;
         let mut start = schedule::startup().map_err(|_| ())?;
         let mut children = schedule::lifecycle().map_err(|_| ())?;
-        let at = children.iter().position(|(key, _)| *key == Key::Embark).unwrap();
+        let at = children
+            .iter()
+            .position(|(key, _)| *key == Key::Embark)
+            .unwrap();
         let (_, embark) = children.remove(at);
-        let mut plan = Schedule::new(); plan.add_system("fixture.supply", 0u8, supply).map_err(|_| ())?;
+        let mut plan = Schedule::new();
+        plan.add_system("fixture.supply", 0u8, supply)
+            .map_err(|_| ())?;
         plan.add_plan("embark", 1, embark).map_err(|_| ())?;
         plan.add_system("fixture.probe", 2, probe).map_err(|_| ())?;
-        plan.add_subplans("fixture.failure", 3, select_probe, alloc::vec![((), schedule::maintenance().map_err(|_| ())?.map_error(|_| verdict::Fail::NotReady))], inject).map_err(|_| ())?;
+        plan.add_subplans(
+            "fixture.failure",
+            3,
+            select_probe,
+            alloc::vec![(
+                (),
+                schedule::maintenance()
+                    .map_err(|_| ())?
+                    .map_error(|_| verdict::Fail::NotReady)
+            )],
+            inject,
+        )
+        .map_err(|_| ())?;
         children.push((Key::Embark, plan.build().map_err(|_| ())?));
         let mut plans = [
             schedule::maintenance()
@@ -74,12 +130,22 @@ impl Fixture {
         })
     }
     pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
-        self.action(program.name(), Action::Mint).map_err(|_| serve::start::E_PROGRAM)?;
-        self.action(program.name(), Action::Embark { parent: None }).map_err(|_| serve::start::E_PROGRAM)?;
+        self.action(program.name(), Action::Mint)
+            .map_err(|_| serve::start::E_PROGRAM)?;
+        self.action(program.name(), Action::Embark { parent: None })
+            .map_err(|_| serve::start::E_PROGRAM)?;
         Ok(())
     }
     pub fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
-        self.resources.write::<Operations>().map_err(|_| ())?.push(Request { name: name.into(), action, back: None }).map_err(|_| ())?;
+        self.resources
+            .write::<Operations>()
+            .map_err(|_| ())?
+            .push(Request {
+                name: name.into(),
+                action,
+                back: None,
+            })
+            .map_err(|_| ())?;
         loop {
             if self.plans[1]
                 .advance(&mut self.cursors[1], &self.resources)
@@ -91,9 +157,17 @@ impl Fixture {
             self.progress().map_err(|_| ())?;
             {
                 let mut operations = self.resources.write::<Operations>().map_err(|_| ())?;
-                if let Some(at) = operations.0.iter().position(|job| job.complete && job.operation.request.name == name) {
+                if let Some(at) = operations
+                    .0
+                    .iter()
+                    .position(|job| job.complete && job.operation.request.name == name)
+                {
                     let job = operations.0.remove(at).ok_or(())?;
-                    return if job.operation.failure.is_some() { Err(()) } else { Ok(job.operation.execution.task) };
+                    return if job.operation.failure.is_some() {
+                        Err(())
+                    } else {
+                        Ok(job.operation.execution.task)
+                    };
                 }
             }
             runtime::env::room::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;

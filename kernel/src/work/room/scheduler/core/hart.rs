@@ -66,7 +66,9 @@ impl Scheduler {
         loop {
             let mut head = i.head.take()?;
             i.head = Task::starved_next(&mut head).take();
-            if i.head.is_none() { i.tail = None; }
+            if i.head.is_none() {
+                i.tail = None;
+            }
             let anchor = head.clone();
             let mut boarding = anchor.boarding.lock();
             if boarding.stopped {
@@ -189,7 +191,10 @@ impl Scheduler {
     }
 
     pub(crate) fn starve(&self) -> usize {
-        if self.running_task().is_some_and(|t| t.boarding.lock().stopped) {
+        if self
+            .running_task()
+            .is_some_and(|t| t.boarding.lock().stopped)
+        {
             return self.advance().unwrap_or_else(super::fetch::fetch);
         }
         let mut i = self.inner.lock();

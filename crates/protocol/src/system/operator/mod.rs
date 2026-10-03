@@ -41,8 +41,8 @@ pub const NAME: &str = "operator";
 pub const DIR: &Path = Path::new("svc/sys/operator");
 
 pub use frame::{
-    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, OK, Req, Said, TIP_LEN, TIP_MARK, Tip, TipIn,
-    UNJUDGED, UNKNOWN, Union, Wire, TIP_BACK, code_to_fail, fail_to_code,
+    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, OK, Req, Said, TIP_BACK, TIP_LEN, TIP_MARK, Tip,
+    TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
 };
 pub use frame::{Permit, Ruling};
 

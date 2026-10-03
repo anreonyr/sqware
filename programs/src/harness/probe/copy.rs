@@ -81,12 +81,16 @@ fn queued() {
     for cycle in 0..16u8 {
         assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
         assert!(!hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
-        for _ in 0..4 { env::mail::ring(entry).unwrap(); }
+        for _ in 0..4 {
+            env::mail::ring(entry).unwrap();
+        }
         assert!(env::mail::ring(entry).is_err());
         assert!(hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
         assert!(!hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
         assert!(hole.push(&[cycle], Wait::POLL).is_err());
-        for _ in 0..4 { env::mail::hush(entry).unwrap(); }
+        for _ in 0..4 {
+            env::mail::hush(entry).unwrap();
+        }
         assert!(env::mail::hush(entry).is_err());
         assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
         hole.push(&[cycle], Wait::POLL).unwrap();
@@ -104,19 +108,32 @@ fn concurrent() {
     for producer in 0..4u8 {
         let worker = runtime::core::task::join::closure(move || {
             let token = protocol::communication::session::establish::claim(
-                owner, Mark::of("copy-concurrent"), Wait::AtMost(2000),
-            ).unwrap();
+                owner,
+                Mark::of("copy-concurrent"),
+                Wait::AtMost(2000),
+            )
+            .unwrap();
             for sequence in 0..32u8 {
-                HolePie::from_token(token).push(&[producer, sequence], Wait::AtMost(2000)).unwrap();
+                HolePie::from_token(token)
+                    .push(&[producer, sequence], Wait::AtMost(2000))
+                    .unwrap();
             }
         });
-        runtime::core::res::port::ship(&HolePie::from_token(entry), worker.id(), env::Access::STORE, env::Policy::NONE).unwrap();
+        runtime::core::res::port::ship(
+            &HolePie::from_token(entry),
+            worker.id(),
+            env::Access::STORE,
+            env::Policy::NONE,
+        )
+        .unwrap();
         workers.push(worker);
     }
     let mut counts = [0u8; 4];
     let mut bytes = [0; 2];
     for _ in 0..128 {
-        let (size, sender) = HolePie::from_token(entry).pull(&mut bytes, Wait::AtMost(2000)).unwrap();
+        let (size, sender) = HolePie::from_token(entry)
+            .pull(&mut bytes, Wait::AtMost(2000))
+            .unwrap();
         assert_eq!(size, 2);
         let producer = bytes[0] as usize;
         assert!(producer < workers.len());
@@ -125,10 +142,14 @@ fn concurrent() {
         counts[producer] += 1;
     }
     assert_eq!(counts, [32; 4]);
-    for worker in workers { worker.join(); }
+    for worker in workers {
+        worker.join();
+    }
     mail::seal(entry).unwrap();
     mail::release(entry).unwrap();
-    protocol::debug::put("copy: four concurrent producers delivered 128 frames in producer FIFO order");
+    protocol::debug::put(
+        "copy: four concurrent producers delivered 128 frames in producer FIFO order",
+    );
 }
 
 fn tokens() -> Vec<PieToken> {

@@ -92,7 +92,11 @@ pub fn heir_at(index: usize) -> TeamId {
 }
 
 /// 请求挂起 task；Busy 表示目标正在离开处理器，调用者需重试确认。
-pub fn debark(task: TaskId) -> UnitResult<()> { env::unit::debark(task) }
+pub fn debark(task: TaskId) -> UnitResult<()> {
+    env::unit::debark(task)
+}
 
 /// 销毁指定 task 及其拥有的子 team。
-pub fn slay(task: TaskId) -> UnitResult<()> { env::unit::slay(task) }
+pub fn slay(task: TaskId) -> UnitResult<()> {
+    env::unit::slay(task)
+}

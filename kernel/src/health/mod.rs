@@ -21,8 +21,8 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 
 pub use crate::work::mail::hole::tests as hole;
 
-pub mod hart;
 pub mod backing;
+pub mod hart;
 pub mod pagetable;
 pub mod permit;
 pub mod shell;

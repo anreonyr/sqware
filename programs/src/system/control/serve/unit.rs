@@ -1,5 +1,5 @@
-use crate::system::control::core::unit::Declaration;
 use super::start::Error;
+use crate::system::control::core::unit::Declaration;
 use crate::system::control::core::unit::{Slot, State, Table};
 use crate::system::control::core::verdict::Fail;
 use crate::system::life::{Phase, Status};
@@ -34,11 +34,15 @@ impl Control {
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
-            .register(Declaration { name, announce: if program.supply().is_empty() {
+            .register(Declaration {
+                name,
+                announce: if program.supply().is_empty() {
                     crate::system::control::core::unit::Announce::None
                 } else {
                     crate::system::control::core::unit::Announce::Channel
-                }, restart })
+                },
+                restart,
+            })
             .map_err(|_| Error::Table)
     }
     pub fn state(&self, name: String) -> Result<State, Fail> {
@@ -65,10 +69,15 @@ impl Control {
             .ok_or(Fail::Unknown)
     }
 
-
     pub(super) fn resume(&mut self, name: &str) -> Result<(), Fail> {
         let task = self.task(name).ok_or(Fail::Unknown)?;
-        if self.table.find(name).is_none_or(|r| r.state != State::Debarked) { return Err(Fail::NotReady); }
+        if self
+            .table
+            .find(name)
+            .is_none_or(|r| r.state != State::Debarked)
+        {
+            return Err(Fail::NotReady);
+        }
         runtime::env::unit::embark(task).map_err(|_| Fail::NotReady)?;
         self.table.set_state(name, State::Ready);
         Ok(())
@@ -87,11 +96,12 @@ impl Control {
     }
     pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
         self.table.living().filter_map(|row| match row.slot {
-            Slot::Live { task, .. } if matches!(row.state, State::Starting | State::Ready | State::Debarked) => {
+            Slot::Live { task, .. }
+                if matches!(row.state, State::Starting | State::Ready | State::Debarked) =>
+            {
                 Some(task)
             }
             _ => None,
         })
     }
-
 }

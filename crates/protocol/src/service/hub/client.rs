@@ -11,8 +11,8 @@ use env::{HoleDir, PieKind, PieToken, TaskId, Wait};
 use runtime::core::res::port;
 use runtime::env::mail;
 
-use crate::communication::session::establish;
 use crate::communication::hand::{Receiver, RecvFail};
+use crate::communication::session::establish;
 use crate::wire::message::Message;
 
 use super::Fail;

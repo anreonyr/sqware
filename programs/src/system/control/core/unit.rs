@@ -58,7 +58,11 @@ impl Table {
     }
 
     pub fn register(&mut self, declaration: Declaration) -> Result<(), Fail> {
-        let Declaration { name, announce, restart } = declaration;
+        let Declaration {
+            name,
+            announce,
+            restart,
+        } = declaration;
         if self.find(name.as_str()).is_some() {
             return Err(Fail::Unknown);
         }
@@ -124,4 +128,8 @@ impl Table {
     }
 }
 
-pub struct Declaration { pub name: String, pub announce: Announce, pub restart: Ending }
+pub struct Declaration {
+    pub name: String,
+    pub announce: Announce,
+    pub restart: Ending,
+}

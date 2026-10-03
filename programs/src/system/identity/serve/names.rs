@@ -11,9 +11,17 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use runtime::env::mail::{self, HolePie};
-pub struct Registration { pub name: String, pub object: Object, pub lifetime: Option<TaskId> }
+pub struct Registration {
+    pub name: String,
+    pub object: Object,
+    pub lifetime: Option<TaskId>,
+}
 
-enum Lifetime { Permanent, Task(TaskId), Retired }
+enum Lifetime {
+    Permanent,
+    Task(TaskId),
+    Retired,
+}
 struct Alias {
     name: String,
     object: Object,
@@ -26,7 +34,6 @@ pub struct Names {
     aliases: Vec<Alias>,
 }
 impl Names {
-
     pub fn new() -> Self {
         Self {
             aliases: Vec::new(),
@@ -35,7 +42,11 @@ impl Names {
     pub fn entries(&self) -> impl ExactSizeIterator<Item = PieToken> + '_ {
         self.aliases.iter().map(|a| a.entry)
     }
-    pub fn register(&mut self, tree: &mut Tree, registration: Registration) -> Result<(), &'static str> {
+    pub fn register(
+        &mut self,
+        tree: &mut Tree,
+        registration: Registration,
+    ) -> Result<(), &'static str> {
         let name = registration.name.as_str();
         let object = registration.object;
         let lifetime = registration.lifetime;
@@ -61,7 +72,15 @@ impl Names {
             .try_reserve(1)
             .map_err(|_| "identity alias capacity")?;
         let road = object.road(name).ok_or("identity alias path")?;
-        let pane = tree.mount(&Placement { road: (road.parent().ok_or("identity alias parent")?).to_path_buf(), tile: Tile { pie: env::PieToken::NONE, permit: Permit::Public, owner: None }, replace: false })?;
+        let pane = tree.mount(&Placement {
+            road: (road.parent().ok_or("identity alias parent")?).to_path_buf(),
+            tile: Tile {
+                pie: env::PieToken::NONE,
+                permit: Permit::Public,
+                owner: None,
+            },
+            replace: false,
+        })?;
         let entry = match mail::unseal_hole(pubcall::REF) {
             Ok(entry) => entry,
             Err(_) => {
@@ -69,7 +88,15 @@ impl Names {
                 return Err("identity alias entry");
             }
         };
-        let mount = match tree.mount(&Placement { road: (&road).to_path_buf(), tile: Tile { pie: entry, permit: Permit::Public, owner: Some(runtime::env::unit::self_id()) }, replace: false }) {
+        let mount = match tree.mount(&Placement {
+            road: (&road).to_path_buf(),
+            tile: Tile {
+                pie: entry,
+                permit: Permit::Public,
+                owner: Some(runtime::env::unit::self_id()),
+            },
+            replace: false,
+        }) {
             Ok(mount) => mount,
             Err(why) => {
                 let _ = mail::seal(entry);
@@ -97,7 +124,6 @@ impl Names {
         self.aliases.remove(at);
         Ok(())
     }
-
 }
 fn valid_back(back: PieToken, from: TaskId) -> bool {
     matches!(mail::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
@@ -135,31 +161,50 @@ pub(crate) fn changes(
     pending.seen = revision;
     Ok(Progress::Done)
 }
-pub(crate) fn expired(living: Res<Living>, roster: Res<Roster>, mut names: ResMut<Names>) -> Result<Progress, &'static str> {
+pub(crate) fn expired(
+    living: Res<Living>,
+    roster: Res<Roster>,
+    mut names: ResMut<Names>,
+) -> Result<Progress, &'static str> {
     let authority = current_authority(&roster);
     // Mark aliases before tree mutations; no Identity request is made during removal.
     for alias in &mut names.aliases {
-        if Some(alias.object.authority()) != authority || matches!(alias.lifetime, Lifetime::Task(task) if !living.contains(task)) {
+        if Some(alias.object.authority()) != authority
+            || matches!(alias.lifetime, Lifetime::Task(task) if !living.contains(task))
+        {
             alias.lifetime = Lifetime::Retired;
         }
     }
     Ok(Progress::Done)
 }
-pub(crate) fn retire(mut names: ResMut<Names>, mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+pub(crate) fn retire(
+    mut names: ResMut<Names>,
+    mut tree: ResMut<Tree>,
+) -> Result<Progress, &'static str> {
     let mut at = 0;
     while at < names.aliases.len() {
-        if matches!(names.aliases[at].lifetime, Lifetime::Retired) { names.remove(&mut tree, at)?; } else { at += 1; }
+        if matches!(names.aliases[at].lifetime, Lifetime::Retired) {
+            names.remove(&mut tree, at)?;
+        } else {
+            at += 1;
+        }
     }
     Ok(Progress::Done)
 }
-pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut pending: ResMut<Registrations>) -> Result<Progress, &'static str> {
+pub(crate) fn prepare(
+    control: Res<Control>,
+    roster: Res<Roster>,
+    mut pending: ResMut<Registrations>,
+) -> Result<Progress, &'static str> {
     use crate::system::control::core::unit::{Slot, State};
     pending.requests.clear();
     if !pending.dirty {
         return Ok(Progress::Done);
     }
     pending.dirty = false;
-    if current_authority(&roster).is_none() { return Ok(Progress::Done); }
+    if current_authority(&roster).is_none() {
+        return Ok(Progress::Done);
+    }
     for row in control.table.living() {
         if !row.named
             || !matches!(
@@ -238,8 +283,7 @@ pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress
     let mut bytes = [0; Frame::LEN];
     // Ref answers read only the verified index and never wait for Operator.
     for alias in &names.aliases {
-        while let Ok((n, from)) = HolePie::from_token(alias.entry).pull(&mut bytes, Wait::POLL)
-        {
+        while let Ok((n, from)) = HolePie::from_token(alias.entry).pull(&mut bytes, Wait::POLL) {
             let Some(frame) = Frame::take(&bytes[..n]) else {
                 continue;
             };

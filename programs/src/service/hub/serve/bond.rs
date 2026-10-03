@@ -17,10 +17,14 @@ pub(super) fn bond(
         put_said(back, hub::DENIED);
         return;
     };
-    let status = match league.organization.admit(coalition, binding.current.principal, Wait::AtMost(MS)) {
-        Ok(()) if crate::service::hub::bridge::activate(from, &[coalition]).is_ok() => hub::OK,
-        Ok(()) => hub::DENIED,
-        Err(_) => hub::DENIED,
-    };
+    let status =
+        match league
+            .organization
+            .admit(coalition, binding.current.principal, Wait::AtMost(MS))
+        {
+            Ok(()) if crate::service::hub::bridge::activate(from, &[coalition]).is_ok() => hub::OK,
+            Ok(()) => hub::DENIED,
+            Err(_) => hub::DENIED,
+        };
     put_said(back, status);
 }

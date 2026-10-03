@@ -49,17 +49,29 @@ impl Backing {
     }
 
     fn new(base: NonNull<u8>, size: usize, owned: bool) -> Self {
-        Self { base, size, owned, holders: AtomicUsize::new(0), writers: AtomicUsize::new(0),
-            writable_maps: AtomicUsize::new(0), aliases: AtomicUsize::new(0), operating: AtomicBool::new(false), reserved: AtomicUsize::new(0) }
+        Self {
+            base,
+            size,
+            owned,
+            holders: AtomicUsize::new(0),
+            writers: AtomicUsize::new(0),
+            writable_maps: AtomicUsize::new(0),
+            aliases: AtomicUsize::new(0),
+            operating: AtomicBool::new(false),
+            reserved: AtomicUsize::new(0),
+        }
     }
 
     pub(crate) fn operation(self: &Arc<Self>) -> Option<Operation> {
-        self.operating.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).ok()?;
+        self.operating
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()?;
         Some(Operation(self.clone()))
     }
 
     pub(crate) fn readonly(&self) -> bool {
-        self.writers.load(Ordering::Acquire) == 0 && self.writable_maps.load(Ordering::Acquire) == 0
+        self.writers.load(Ordering::Acquire) == 0
+            && self.writable_maps.load(Ordering::Acquire) == 0
             && self.reserved.load(Ordering::Acquire) == 0
     }
 
@@ -67,19 +79,33 @@ impl Backing {
         self.holders.load(Ordering::Acquire) == 1 && self.reserved.load(Ordering::Acquire) == 0
     }
 
-    pub(crate) fn reserved(&self) -> usize { self.reserved.load(Ordering::Acquire) }
-    pub(crate) fn reserve(&self, team: TeamId) { self.reserved.store(team.get(), Ordering::Release); }
-    pub(crate) fn unreserve(&self) { self.reserved.store(0, Ordering::Release); }
+    pub(crate) fn reserved(&self) -> usize {
+        self.reserved.load(Ordering::Acquire)
+    }
+    pub(crate) fn reserve(&self, team: TeamId) {
+        self.reserved.store(team.get(), Ordering::Release);
+    }
+    pub(crate) fn unreserve(&self) {
+        self.reserved.store(0, Ordering::Release);
+    }
 
-    pub(crate) fn unmapped(&self) -> bool { self.aliases.load(Ordering::Acquire) == 0 }
+    pub(crate) fn unmapped(&self) -> bool {
+        self.aliases.load(Ordering::Acquire) == 0
+    }
     pub(super) fn alias(&self, add: bool) {
-        if add { self.aliases.fetch_add(1, Ordering::AcqRel); }
-        else { self.aliases.fetch_sub(1, Ordering::AcqRel); }
+        if add {
+            self.aliases.fetch_add(1, Ordering::AcqRel);
+        } else {
+            self.aliases.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 
     pub(super) fn map_write(&self, add: bool) {
-        if add { self.writable_maps.fetch_add(1, Ordering::AcqRel); }
-        else { self.writable_maps.fetch_sub(1, Ordering::AcqRel); }
+        if add {
+            self.writable_maps.fetch_add(1, Ordering::AcqRel);
+        } else {
+            self.writable_maps.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -87,12 +113,21 @@ impl Backing {
         self.try_permit(permission).expect("permit: allocation")
     }
 
-    pub(crate) fn try_permit(self: &Arc<Self>, permission: Permission) -> Result<Arc<Permit>, MapError> {
+    pub(crate) fn try_permit(
+        self: &Arc<Self>,
+        permission: Permission,
+    ) -> Result<Arc<Permit>, MapError> {
         self.holders.fetch_add(1, Ordering::AcqRel);
-        if permission.contains(Permission::STORE) { self.writers.fetch_add(1, Ordering::AcqRel); }
+        if permission.contains(Permission::STORE) {
+            self.writers.fetch_add(1, Ordering::AcqRel);
+        }
         // An allocation failure drops Permit and reverses these registrations.
-        Arc::try_new(Permit { backing: self.clone(), permission: AtomicU32::new(permission.bits()), live: AtomicBool::new(true) })
-            .map_err(|_| MapError::OutOfMemory)
+        Arc::try_new(Permit {
+            backing: self.clone(),
+            permission: AtomicU32::new(permission.bits()),
+            live: AtomicBool::new(true),
+        })
+        .map_err(|_| MapError::OutOfMemory)
     }
 
     pub(crate) fn size(&self) -> usize {
@@ -116,7 +151,9 @@ impl Backing {
 
 pub(crate) struct Operation(Arc<Backing>);
 impl Drop for Operation {
-    fn drop(&mut self) { self.0.operating.store(false, Ordering::Release); }
+    fn drop(&mut self) {
+        self.0.operating.store(false, Ordering::Release);
+    }
 }
 
 pub(crate) struct Permit {
@@ -127,7 +164,9 @@ pub(crate) struct Permit {
 
 impl Permit {
     pub(crate) fn permission(&self) -> Permission {
-        if !self.live.load(Ordering::Acquire) { return Permission::empty(); }
+        if !self.live.load(Ordering::Acquire) {
+            return Permission::empty();
+        }
         Permission::from_bits_retain(self.permission.load(Ordering::Acquire))
     }
     pub(crate) fn narrow(&self, subset: Permission) {
@@ -146,7 +185,11 @@ impl Permit {
     }
 }
 
-impl Drop for Permit { fn drop(&mut self) { self.invalidate(); } }
+impl Drop for Permit {
+    fn drop(&mut self) {
+        self.invalidate();
+    }
+}
 
 impl Drop for Backing {
     fn drop(&mut self) {

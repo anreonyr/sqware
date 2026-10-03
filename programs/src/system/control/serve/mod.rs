@@ -1,6 +1,6 @@
 pub mod answer;
-pub mod material;
 pub mod living;
+pub mod material;
 pub mod publication;
 pub mod reap;
 pub mod resource;
@@ -19,9 +19,9 @@ pub enum Fail {
     Shutdown,
 }
 
-pub mod lifecycle;
 pub(crate) mod driver;
 pub mod frame;
+pub mod lifecycle;
 
 pub mod run;
 pub mod schedule;

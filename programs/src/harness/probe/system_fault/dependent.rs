@@ -6,13 +6,13 @@ use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use protocol::communication::session::{Session, establish};
+use protocol::system::control::publication::{Client, Object, Target};
 use protocol::system::identity::Selector;
 use protocol::system::identity::client::{Query, SelfOps};
 use protocol::system::operator::{
     Fail, Permit,
     client::{self as operator, Face},
 };
-use protocol::system::control::publication::{Client, Object, Target};
 use runtime::env::mail::{self, HolePie};
 const WAIT: Wait = Wait::AtMost(3000);
 #[programs::entry]

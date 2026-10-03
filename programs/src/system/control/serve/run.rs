@@ -57,7 +57,10 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(watch::Watch::new().map_err(|_| "control watch")?);
     put!(Publications::new());
     put!(resource::Resources::new());
-    put!(resource::Runtimes { requests: Vec::new(), seen: 0 });
+    put!(resource::Runtimes {
+        requests: Vec::new(),
+        seen: 0
+    });
     put!(names::Names::new());
     put!(names::Registrations {
         requests: Vec::new(),

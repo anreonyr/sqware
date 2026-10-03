@@ -6,9 +6,9 @@ use env::Wait;
 use env::{HoleDir, PieToken, TaskId};
 use runtime::env::mail;
 
-use crate::communication::session::establish;
 use crate::communication::hand::{Receiver, RecvFail};
 use crate::communication::session::Berth;
+use crate::communication::session::establish;
 
 use super::Fail;
 use super::frame::{self, BACK, State};
@@ -118,7 +118,9 @@ impl Service<'_> {
 
     /// **放行 + 等就绪**（有通道的那条顺带逐条认领）⇒ 答一枚 Embarked
     pub fn embark(&self, wait: Wait) -> Result<Embarked<'_>, Fail> {
-        let said = self.face.call(frame::Req::Embark(self.name.clone()), wait)?;
+        let said = self
+            .face
+            .call(frame::Req::Embark(self.name.clone()), wait)?;
         Ok(Embarked {
             face: self.face,
             name: self.name.clone(),
@@ -127,7 +129,9 @@ impl Service<'_> {
     }
 
     pub fn debark(&self, wait: Wait) -> Result<(), Fail> {
-        let said = self.face.call(frame::Req::Debark(self.name.clone()), wait)?;
+        let said = self
+            .face
+            .call(frame::Req::Debark(self.name.clone()), wait)?;
         read(said).map(|_| ())
     }
 
