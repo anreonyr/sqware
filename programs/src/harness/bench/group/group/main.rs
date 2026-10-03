@@ -146,8 +146,8 @@ fn main() -> Reason {
         {
             return die("group: accord");
         }
-        if unit::hatch(task).is_err() {
-            return die("group: hatch");
+        if unit::embark(task).is_err() {
+            return die("group: embark");
         }
     }
 

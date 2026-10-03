@@ -6,7 +6,7 @@ use core::mem::MaybeUninit;
 use env::{TaskId, UnitFail};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
-use crate::lock::SpinLock;
+use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -117,6 +117,11 @@ impl TaskState {
     }
 }
 
+pub(crate) struct Boarding {
+    pub(crate) stopped: bool,
+    pub(crate) parked: Option<Arc<Task>>,
+}
+
 pub struct Task {
     pub(crate) ident: Arc<TaskIdent>,
     pub(crate) life: Arc<Life>,
@@ -124,6 +129,7 @@ pub struct Task {
     tag: AtomicU8,
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
+    pub(crate) boarding: SpinLock<Boarding>,
 }
 
 pub(crate) struct TaskIdent {
@@ -173,6 +179,7 @@ impl PreparedTask {
                 life: self.life.clone(),
                 state: TaskState::Held,
                 tag: AtomicU8::new(TaskTag::Held as u8),
+                boarding: SpinLock::new_level(Level::L3, Boarding { stopped: false, parked: None }),
                 pies: SpinLock::new(Vec::new()),
                 heir: SpinLock::new(Vec::new()),
             });

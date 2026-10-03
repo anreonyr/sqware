@@ -274,7 +274,7 @@ fn body(
     channels: &mut [Endpoint],
     link: String,
 ) -> Result<Verdict, &'static str> {
-    service::start(
+    service::embark(
         table,
         name.as_str(),
         task,
@@ -308,7 +308,7 @@ fn body(
     tick::spin_iters(delay_us.saturating_mul(iters_per_ms) / 1_000);
 
     // 杀（域粒度收令）+ 判：判决只认非阻塞那一问（见 service::until）。
-    let _ = service::stop(table, name.as_str());
+    let _ = service::ruin(table, name.as_str());
     Ok(
         match service::until(table, name.as_str(), Wait::AtMost(MS)) {
             Ok(Reaped::Now) => Verdict::Now,

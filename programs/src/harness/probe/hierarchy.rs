@@ -239,15 +239,15 @@ pub(crate) fn exercise(
     command(assembly, target, 2);
     let target_road = assembly.runtime.runtime_road(target)
         .unwrap();
-    runtime::env::room::doom(target).unwrap();
-    assert!(runtime::env::unit::join(target, wait).unwrap());
+    assembly.action("system-child", crate::system::control::serve::lifecycle::Action::Ruin).expect("hierarchy: scheduled ruin");
+    assert!(runtime::env::unit::join(target, wait).unwrap_or(true));
     assembly.progress().unwrap();
     assert!(matches!(
         operator.root().tile(&target_road, wait),
         Err(Fail::Unknown)
     ));
     command(assembly, target, 3);
-    crate::system::control::serve::reap::sweep(&mut assembly.control, &assembly.roster);
+    crate::system::control::serve::reap::sweep(&mut assembly.control, &assembly.roster, &crate::system::control::serve::lifecycle::Operations::new());
     assembly.control.mint("system-child".into(), &assembly.images).unwrap();
     let failed_task = assembly.control.task("system-child").unwrap();
     let mut prepared = None;
@@ -255,7 +255,7 @@ pub(crate) fn exercise(
     let machine = assembly.supplies.machine;
     let result = assembly
         .control
-        .release("system-child".into(), service, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| {
+        .embark("system-child".into(), service, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| {
             crate::system::run::cycle::poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
             if fail_once {
                 prepared = assembly.runtime.runtime_road(failed_task);

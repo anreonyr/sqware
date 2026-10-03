@@ -99,7 +99,7 @@ impl Resources {
             if self.runs.iter().any(|r| r.task == task)
                 || !matches!(
                     row.state,
-                    State::NeverStarted | State::Starting | State::Ready
+                    State::NeverStarted | State::Starting | State::Ready | State::Debarked
                 )
                 || !live(table, task)
             {
@@ -226,7 +226,7 @@ fn live(table: &Table, task: TaskId) -> bool {
         matches!(row.slot, Slot::Live { task: known, .. } if known == task)
             && matches!(
                 row.state,
-                State::NeverStarted | State::Starting | State::Ready
+                State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
             && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
     })

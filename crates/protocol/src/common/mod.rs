@@ -4,3 +4,5 @@ pub mod marks;
 pub mod path;
 pub mod svc;
 pub mod table;
+
+pub mod schedule;

@@ -35,7 +35,7 @@ pub fn poll(
         if let Slot::Live { task, .. } = row.slot
             && matches!(
                 row.state,
-                State::NeverStarted | State::Starting | State::Ready
+                State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
             && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
         {

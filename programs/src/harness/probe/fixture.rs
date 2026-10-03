@@ -100,6 +100,21 @@ impl Fixture {
         )
         .map_err(|_| start::E_PROGRAM)
     }
+    pub fn action(&mut self, name: &str, action: serve::lifecycle::Action) -> Result<Option<env::TaskId>, ()> {
+        let mut plans = crate::system::run::schedule::lifecycle().map_err(|_| ())?;
+        let mut operations = serve::lifecycle::Operations::new();
+        operations.push(serve::lifecycle::Request { name: name.into(), action, back: None }).map_err(|_| ())?;
+        loop {
+            serve::driver::poll(&mut plans, &mut operations, &mut self.control,
+                &self.roster, &mut self.supplies, &mut self.activation, &self.images).map_err(|_| ())?;
+            self.progress().map_err(|_| ())?;
+            let tracked = operations.0.front().ok_or(())?;
+            if tracked.complete {
+                return if tracked.operation.failure.is_some() { Err(()) } else { Ok(tracked.operation.task) };
+            }
+            runtime::env::room::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;
+        }
+    }
     pub fn progress(&mut self) -> Result<(), &'static str> {
         cycle::poll(
             &self.control,
@@ -125,6 +140,7 @@ impl Fixture {
             &mut self.runtime,
             &mut self.names,
             &mut self.tree,
+            &[],
         );
         if result.is_err() {
             let _ = runtime::env::room::doom(self.control.status.control);

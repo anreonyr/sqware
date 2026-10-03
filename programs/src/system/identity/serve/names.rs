@@ -33,7 +33,7 @@ impl Names {
             if !row.named
                 || !matches!(
                     row.state,
-                    State::NeverStarted | State::Starting | State::Ready
+                    State::NeverStarted | State::Starting | State::Ready | State::Debarked
                 )
             {
                 continue;

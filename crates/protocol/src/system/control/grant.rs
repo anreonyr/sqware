@@ -10,8 +10,9 @@ crate::table! {
 /// **造**：按名字起一条（建域 ＋ 产代表线程，恒产未放行）
         Mint => "mint", (Wire::Mint(_));
 /// **放行**：放行 ＋ 等就绪
-        Start => "start", (Wire::Start(_));
-        Stop => "stop", (Wire::Stop(_));
+        Embark => "embark", (Wire::Embark(_));
+        Debark => "debark", (Wire::Debark(_));
+        Ruin => "ruin", (Wire::Ruin(_));
     }
     stem: "control-entry-",
     wire_ty: Wire,

@@ -56,7 +56,8 @@ fn suspend(task: &Arc<Task>, reason: usize) -> bool {
                 ok
             }
             TaskTag::Starved => {
-                let ok = crate::work::room::scheduler::core::remove_from_starved(task);
+                let ok = crate::work::room::scheduler::core::remove_from_starved(task)
+                    || task.boarding.lock().parked.take().is_some();
                 if ok {
                     CULL_STARVED.fetch_add(1, Ordering::Relaxed);
                 }
@@ -212,4 +213,8 @@ pub(crate) fn descends(actor: &Arc<Team>, target: &Arc<Team>) -> bool {
         }
         team = parent.ident.team.clone();
     }
+}
+
+pub(crate) fn slay(task: &Arc<Task>) {
+    if suspend(task, super::EXIT_DOOM) { reap(task.clone()); }
 }

@@ -72,13 +72,17 @@ impl Control {
             Err(Error::Spawn) => return Err(Fail::Full),
             Err(_) => return Err(Fail::Unknown),
         };
+        if super::publication::inject(images.entry, service.0).is_err() {
+            self.discard_image(program.name(), service.0);
+            return Err(Fail::BadImage);
+        }
         self.pending.push(Pending {
             name: program.name(),
             service,
         });
         Ok(())
     }
-    pub fn release(
+    pub fn embark(
         &mut self,
         name: String,
         requester: TaskId,
@@ -87,6 +91,7 @@ impl Control {
         supplies: &mut Supplies,
         mut progress: impl FnMut(&Control, &Option<Activation>) -> Result<(), &'static str>,
     ) -> Result<Service, Fail> {
+        if self.table.find(&name).is_some_and(|r| r.state == State::Debarked) { return self.resume(&name); }
         let at = self
             .pending
             .iter()
@@ -133,25 +138,11 @@ impl Control {
         };
         let task = service::mint(&mut self.table, name.as_str(), image, entry.kind)
             .map_err(|_| Error::Spawn)?;
-        let injected = Ok(images.entry).and_then(|entry| {
-            runtime::core::res::port::ship(
-                &runtime::env::mail::HolePie::from_token(entry),
-                task,
-                runtime::core::res::port::Access::STORE,
-                runtime::core::res::port::Policy::NONE,
-            )
-            .map(|_| ())
-            .map_err(|_| "publication inject")
-        });
-        if let Err(why) = injected {
-            self.discard_image(program.name(), task);
-            return Err(Error::Step(why));
-        }
         Ok((task, Vec::new()))
     }
-    pub fn start(&mut self, name: &str, service: &mut Service) -> Result<(), Error> {
+    pub fn activate(&mut self, name: &str, service: &mut Service) -> Result<(), Error> {
         let (task, channels) = service;
-        service::start(
+        service::embark(
             &mut self.table,
             name,
             *task,
@@ -240,7 +231,7 @@ impl Control {
                 crate::service::hub::bridge::Activation::open(service.0).map_err(Error::Step)?,
             );
         }
-        self.start(name.as_str(), service)?;
+        self.activate(name.as_str(), service)?;
         if let Some(load) = program
             .demand
             .supply
@@ -303,6 +294,9 @@ pub fn stage(
     }
     control.enlist(program)?;
     let service = control.spawn(program, images)?;
+    if let Err(why) = super::publication::inject(images.entry, service.0) {
+        control.discard_image(program.name(), service.0); return Err(Error::Step(why));
+    }
     if let Err(why) = roster.authorize(service.0) {
         control.discard_image(program.name(), service.0);
         let _ = roster.unbind(service.0);

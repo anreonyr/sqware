@@ -8,10 +8,11 @@ use alloc::{string::String, vec::Vec};
 use env::Wait;
 use protocol::debug;
 use runtime::env::unit as utask;
-pub(crate) fn sweep(control: &mut Control, roster: &Roster) {
+pub(crate) fn sweep(control: &mut Control, roster: &Roster, operations: &super::lifecycle::Operations) {
     let gone: Vec<String> = control
         .table
         .living()
+        .filter(|row| !operations.0.iter().any(|job| job.operation.request.name == row.name))
         .filter_map(|row| match row.slot {
             Slot::Live { task, .. } if utask::join(task, Wait::POLL).unwrap_or(true) => {
                 Some(row.name.clone())

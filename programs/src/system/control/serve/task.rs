@@ -4,7 +4,7 @@ use runtime::env::room;
 use runtime::env::unit as utask;
 
 use crate::system::control::core::unit::{Announce, Service, Slot, State, Table};
-use crate::system::control::core::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
+use crate::system::control::core::verdict::{Fail, Ready, Reaped, admit_mint, probe_ready};
 use protocol::communication::session::establish::Endpoint;
 
 use crate::unit::{Died, hub::E_HUB};
@@ -83,7 +83,7 @@ pub fn mint(
     image: &[u8],
     kind: ProgramKind,
 ) -> Result<TaskId, Fail> {
-    admit_start(table, name)?;
+    admit_mint(table, name)?;
 
     let image = runtime::core::loader::build(image, kind).map_err(unit_fail)?;
     let team = image.team();
@@ -100,7 +100,7 @@ pub fn mint(
     Ok(task)
 }
 
-pub fn start(
+pub fn embark(
     table: &mut Table,
     name: &str,
     task: TaskId,
@@ -113,7 +113,7 @@ pub fn start(
         for g in grants {
             mail::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
         }
-        utask::hatch(task).map_err(unit_fail)
+        utask::embark(task).map_err(unit_fail)
     })();
     if let Err(e) = launched {
         let _ = room::doom(task);
@@ -174,7 +174,7 @@ pub fn ready(
     Err(Fail::NotReady)
 }
 
-pub fn stop(table: &mut Table, name: &str) -> Result<(), Fail> {
+pub fn ruin(table: &mut Table, name: &str) -> Result<(), Fail> {
     let Some(Service {
         slot: Slot::Live { task, .. },
         ..
@@ -183,7 +183,7 @@ pub fn stop(table: &mut Table, name: &str) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let task = *task;
-    let _ = room::doom(task);
+    utask::slay(task).map_err(unit_fail)?;
     table.set_state(name, State::Stopping);
     Ok(())
 }
