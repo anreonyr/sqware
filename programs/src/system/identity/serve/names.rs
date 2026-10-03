@@ -1,11 +1,12 @@
+use crate::system::identity::serve::install::Roster;
+use crate::system::identity::serve::query::{current_authority, validate};
+use crate::system::operator::serve::install::Tree;
 use alloc::{string::String, vec::Vec};
-use env::{PieToken, TaskId, Wait};
 use env::wire::Span as _;
-use protocol::system::operator::{EntryId, Fail, Permit};
+use env::{PieToken, TaskId, Wait};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
+use protocol::system::operator::{EntryId, Fail, Permit};
 use runtime::env::mail::{self, HolePie};
-use crate::system::operator::bridge::Tree;
-use crate::system::identity::bridge::{Roster, validate, current_authority};
 struct Alias {
     name: String,
     object: Object,
@@ -14,9 +15,55 @@ struct Alias {
     pane: EntryId,
     mount: EntryId,
 }
-pub struct Names { aliases: Vec<Alias> }
+pub struct Names {
+    aliases: Vec<Alias>,
+}
 impl Names {
-    pub fn new() -> Self { Self { aliases: Vec::new() } }
+    pub fn prepare(
+        &mut self,
+        table: &crate::system::control::core::unit::Table,
+        roster: &Roster,
+        tree: &mut Tree,
+    ) -> Result<(), &'static str> {
+        use crate::system::control::core::unit::{Slot, State};
+        if current_authority(roster).is_none() || tree.host().is_none() {
+            return Ok(());
+        }
+        for row in table.living() {
+            if !row.named
+                || !matches!(
+                    row.state,
+                    State::NeverStarted | State::Starting | State::Ready
+                )
+            {
+                continue;
+            }
+            let Slot::Live { task, .. } = row.slot else {
+                continue;
+            };
+            if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
+                continue;
+            }
+            if let Some(binding) =
+                super::query::binding(roster, task).map_err(|_| "alias identity query")?
+            {
+                self.register(
+                    roster,
+                    tree,
+                    &row.name,
+                    Object::Principal(binding.origin.principal),
+                    Some(task),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn new() -> Self {
+        Self {
+            aliases: Vec::new(),
+        }
+    }
     pub fn entries(&self) -> impl ExactSizeIterator<Item = PieToken> + '_ {
         self.aliases.iter().map(|a| a.entry)
     }
@@ -125,13 +172,22 @@ impl Names {
             }
         }
     }
-    pub fn sweep(&mut self, roster: &Roster, tree: &mut Tree, live: impl Fn(TaskId) -> bool) -> Result<(), &'static str> {
+    pub fn sweep(
+        &mut self,
+        roster: &Roster,
+        tree: &mut Tree,
+        live: impl Fn(TaskId) -> bool,
+    ) -> Result<(), &'static str> {
         let authority = current_authority(roster);
         let mut at = 0;
         while at < self.aliases.len() {
             if Some(self.aliases[at].object.authority()) != authority
                 || self.aliases[at].lifetime.is_some_and(|task| !live(task))
-            { self.remove(tree, at)?; } else { at += 1; }
+            {
+                self.remove(tree, at)?;
+            } else {
+                at += 1;
+            }
         }
         Ok(())
     }

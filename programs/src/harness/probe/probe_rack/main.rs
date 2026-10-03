@@ -36,10 +36,7 @@ const OK_NOTE: &str = "probe-rack: newest_full=1 quiet=false";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    // **上板那一条仪式**：本台的 `after` 里点了树那位 ⇒ 装配者那一手 `attach` 会等本域交回
-    // 那枚 `LINK`（两侧对称建立，见 `operator::bridge::attach`）。本台其实一句树话都不说，
-    // 但这一枚不交回去，装配就卡在这里（量到过：`operator:claim` ＋ 整单中止）。
-    // 故会话要开到本台走完为止（放下它就是撤那一枚）。
+    // 会话保持到探针结束，供 System 识别已就绪的树连接。
     let Ok(_session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack: 树那条路开不出来（装配者等的那一枚 LINK）");
     };

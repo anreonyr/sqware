@@ -35,9 +35,9 @@ use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::common::life::service;
-use programs::system::common::life::table::{Announce, Slot, State, Table};
-use programs::system::common::life::verdict::{Ready, probe_ready};
+use programs::system::control::serve::task as service;
+use programs::system::control::core::unit::{Announce, Slot, State, Table};
+use programs::system::control::core::verdict::{Ready, probe_ready};
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;

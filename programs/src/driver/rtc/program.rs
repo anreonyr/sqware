@@ -8,10 +8,12 @@ use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 pub const E_RTC: Died = 12;
 
 pub static PROGRAM: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: Some(crate::driver::rtc::publication),
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[crate::unit::Publish::Entries {
+        scope: crate::unit::PublishScope::Driver, group: "", road: "svc/drv",
+        entries: &[
+            crate::unit::PublishEntry { name: "rtc", mark: Some(env::Mark::of("entry")) },
+        ], public: true,
+    }],
     identity: Identity {
         name: "rtc",
         wanted_by: &["accept", "product", "system-fault"],

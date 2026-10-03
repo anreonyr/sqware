@@ -30,10 +30,9 @@ use runtime::env::mail::{self, HolePie, NolePie, PolePie};
 use runtime::env::unit as utask;
 
 use crate::service::hub::core::{Entry, Ledger, Owner};
-use crate::system::publication;
 use protocol::system::control::publication::Scope;
 use crate::system::common::face::mount;
-use crate::system::common::life::service::Start;
+use crate::system::control::serve::task::Start;
 use crate::system::common::machine::Machine;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
 
@@ -114,29 +113,13 @@ pub fn serve() -> Result<(), Start> {
         let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
             .map_err(|_| Start::Tree(E_HUB))?;
         // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
-        let hub_road = protocol::common::svc::SVC
-            .try_join(hub::NAME)
-            .ok_or(Start::Tree(E_HUB))?;
-        let plated = publication::land(
-            &tree,
-            "hub",
-            &hub_road,
-            Scope::Hub,
-            "",
-            Permit::Public,
-            &[
-                (bond_name.as_str(), bond),
-                (list_name.as_str(), list),
-                (claim_name.as_str(), claim),
-            ],
-            Wait::AtMost(MS),
-        );
-        if plated.len() != 3
-            || plated
-                .iter()
-                .any(|one| one.land.is_err() || one.find.is_err())
-        {
-            return Err(Start::Tree(E_HUB));
+        let publisher = protocol::system::control::publication::Client::injected()
+            .map_err(|_| Start::Tree(E_HUB))?;
+        for (name, entry) in [(bond_name.as_str(), bond), (list_name.as_str(), list), (claim_name.as_str(), claim)] {
+            let target = protocol::system::control::publication::Target::Service {
+                scope: Scope::Hub, group: "".into(), name: name.into(),
+            };
+            publisher.publish(target, entry, Permit::Public, Wait::AtMost(MS)).map_err(|_| Start::Tree(E_HUB))?;
         }
 
         // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 MemberOf(c_类)，检查有效选择而不是资格。
@@ -149,27 +132,13 @@ pub fn serve() -> Result<(), Start> {
                 .doors(class.clone())
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
-            let road = hub::DEV_ROAD
-                .try_join(class.as_str())
-                .ok_or(Start::Tree(E_HUB))?;
-            let plated = publication::land(
-                &tree,
-                "hub",
-                &road,
-                Scope::Device,
-                class.as_str(),
-                Permit::Identity(Selector::MemberOf(coalition)),
-                &doors,
-                Wait::AtMost(MS),
-            );
-            if plated.len() != doors.len()
-                || plated
-                    .iter()
-                    .any(|one| one.land.is_err() || one.find.is_err())
-            {
-                return Err(Start::Tree(E_HUB));
+            for (name, entry) in doors {
+                let target = protocol::system::control::publication::Target::Service {
+                    scope: Scope::Device, group: class.clone(), name: name.into(),
+                };
+                publisher.publish(target, entry, Permit::Identity(Selector::MemberOf(coalition)), Wait::AtMost(MS))
+                    .map_err(|_| Start::Tree(E_HUB))?;
             }
-            debug!("hub: /dev/{} has {} devices", class.as_str(), doors.len());
         }
         debug!("hub: {} devices, {} classes", ledger.count(), classes.len());
 
@@ -393,7 +362,7 @@ fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
 
 /// Discover Identity through the authority anchor issued directly by Control.
 fn find_league(tree: &TreeFace) -> Option<League> {
-    let authority = crate::system::identity::bridge::authority()?;
+    let authority = crate::system::identity::serve::source::authority()?;
     Some(League {
         query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,

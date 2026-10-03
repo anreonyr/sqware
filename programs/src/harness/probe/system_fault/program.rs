@@ -1,10 +1,7 @@
 use crate::unit::{Demand, Ending, Identity, Relation, Setup, UnitFile};
 
 pub static ENTRY: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: Some(crate::harness::probe::identity::supply_to),
+    publication: &[],
     identity: Identity {
         name: "system-fault",
         wanted_by: &["system-fault"],
@@ -17,10 +14,7 @@ pub static ENTRY: UnitFile = UnitFile {
 };
 
 pub static DEPENDENT: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: Some(crate::harness::probe::identity::supply_to),
+    publication: &[],
     identity: Identity {
         name: "system-dependent",
         wanted_by: &["system-fault"],
@@ -34,10 +28,7 @@ pub static DEPENDENT: UnitFile = UnitFile {
 };
 
 pub static CHILD: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: Some(crate::harness::probe::identity::supply_to),
+    publication: &[],
     identity: Identity {
         name: "system-child",
         wanted_by: &["system-fault"],
@@ -51,10 +42,7 @@ pub static CHILD: UnitFile = UnitFile {
 };
 
 pub static FAULT_UNIT: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "system-fault-unit",
         wanted_by: &["system-fault"],

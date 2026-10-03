@@ -18,7 +18,7 @@ use crate::system::operator::core::Operator;
 use crate::system::common::face::desk::{Desk, DeskFail, Guest};
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
-use crate::system::{Status, Phase};
+use crate::system::life::{Status, Phase};
 #[derive(Debug)]
 pub enum Fail { Tree, Desk, Room, Dead }
 
@@ -520,3 +520,5 @@ fn serve_one(
     }
     code
 }
+
+pub mod install;

@@ -6,10 +6,7 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RACK: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "probe-rack",
         ..Identity::DEFAULT

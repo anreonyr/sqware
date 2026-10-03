@@ -1,51 +1,3 @@
-//! Closed publication policies for fixed acceptance-harness programs.
-pub(crate) fn fixture_allowed(program: &str, group: &str, name: &str) -> bool {
-    match program {
-        "probe-rule" => {
-            group == "rule"
-                && [
-                    "is",
-                    "under",
-                    "in",
-                    "door",
-                    "open",
-                    "foreign",
-                    "temp",
-                    "at-pane",
-                    "gone-door",
-                    "mine",
-                ]
-                .contains(&name)
-        }
-        "probe-rack-mount" => group == "probe-rack" && ["rx", "tx"].contains(&name),
-        "probe-lease" => group == "fixtures" && name == "lease",
-        "probe-watch" => {
-            (group == "probe-watch" && ["in", "out"].contains(&name))
-                || (group == "probe-watch-q"
-                    && ["c0", "c1", "c2", "c3", "c4", "c5"].contains(&name))
-        }
-        "probe-watch-after" => group == "probe-swatch" && name == "in",
-        "probe-operator-land" => group == "operator-fixture" && name == "entry",
-        _ => false,
-    }
-}
-
-pub(crate) fn publication(
-    program: &crate::unit::UnitFile, _from: env::TaskId,
-    target: &protocol::system::control::publication::Target,
-    _mark: env::Mark, _requested: protocol::system::operator::Permit,
-    _machine: &crate::system::common::machine::Machine,
-    _roster: &crate::system::identity::bridge::Roster,
-) -> Result<protocol::common::path::PathBuf, protocol::system::operator::Fail> {
-    use protocol::system::control::publication::{Target, Scope};
-    use protocol::system::operator::Fail;
-    use protocol::common::path::Path;
-    let Target::Service { scope: Scope::Fixture, group, name } = target else { return Err(Fail::Denied); };
-    if !fixture_allowed(program.name(), group, name) { return Err(Fail::Denied); }
-    if program.name() == "probe-rack-mount" { Path::new("probe-rack").try_join(name) }
-    else { Path::new("svc").try_join(group).and_then(|p| p.try_join(name)) }.ok_or(Fail::Denied)
-}
-
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
 pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
@@ -62,7 +14,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId, code: u8) {
+pub(crate) fn command(assembly: &mut crate::harness::probe::fixture::Fixture, task: env::TaskId, code: u8) {
     use env::Wait;
     use env::wire::Span as _;
     use protocol::communication::session::establish;
@@ -77,7 +29,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
         .unwrap();
     let until = runtime::env::chrono::clock() + 10_000_000_000;
     loop {
-        assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)
+        assembly.progress()
             .expect("hierarchy progress");
         if code == 5 {
             use protocol::system::control::publication::{Frame, Object, REF, Reply};
@@ -86,7 +38,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
             if let Ok((n, _)) = HolePie::from_token(fake).pull(&mut request, Wait::POLL) {
                 let frame = Frame::take(&request[..n]).unwrap();
                 let wrong =
-                    env::TaskId::new(assembly.control.roster.authority().unwrap().get() + 10000);
+                    env::TaskId::new(assembly.roster.authority().unwrap().get() + 10000);
                 let reply = Reply::object(Object::Principal(
                     protocol::system::identity::PrincipalId::new(wrong, 0),
                 ));
@@ -115,7 +67,7 @@ pub(crate) fn command(assembly: &mut crate::system::Assembly, task: env::TaskId,
 }
 
 pub(crate) fn exercise(
-    assembly: &mut crate::system::Assembly,
+    assembly: &mut crate::harness::probe::fixture::Fixture,
     operator: &protocol::system::operator::client::Face,
     authority: env::TaskId,
     service: env::TaskId,
@@ -152,15 +104,13 @@ pub(crate) fn exercise(
     .unwrap();
     let coalition = organization.found(wait).unwrap();
     organization.admit(coalition, p, wait).unwrap();
-    assembly
-        .control
-        .roster
+    assembly.roster
         .activate(service, coalition)
         .unwrap();
-    assembly.control.roster.activate(target, coalition).unwrap();
+    assembly.roster.activate(target, coalition).unwrap();
     {
         assembly.names.register(
-                &assembly.control.roster,
+                &assembly.roster,
                 &mut assembly.tree,
                 "named-subject",
                 Object::Principal(p),
@@ -168,7 +118,7 @@ pub(crate) fn exercise(
             )
             .unwrap();
         assembly.names.register(
-                &assembly.control.roster,
+                &assembly.roster,
                 &mut assembly.tree,
                 "named-league",
                 Object::Coalition(coalition),
@@ -176,7 +126,7 @@ pub(crate) fn exercise(
             )
             .unwrap();
         assembly.names.register(
-                &assembly.control.roster,
+                &assembly.roster,
                 &mut assembly.tree,
                 "named-league",
                 Object::Coalition(coalition),
@@ -186,7 +136,7 @@ pub(crate) fn exercise(
         let other = organization.found(wait).unwrap();
         assert!(
             assembly.names.register(
-                    &assembly.control.roster,
+                    &assembly.roster,
                     &mut assembly.tree,
                     "named-league",
                     Object::Coalition(other),
@@ -196,7 +146,7 @@ pub(crate) fn exercise(
         );
         assert!(
             assembly.names.register(
-                    &assembly.control.roster,
+                    &assembly.roster,
                     &mut assembly.tree,
                     "bad/name",
                     Object::Principal(p),
@@ -204,7 +154,7 @@ pub(crate) fn exercise(
                 )
                 .is_err()
         );
-        assembly.runtime.approve(crate::system::runtime::Approval {
+        assembly.runtime.approve(crate::system::control::serve::resource::Approval {
                 service,
                 task: target,
                 kind: "test".into(),
@@ -213,7 +163,7 @@ pub(crate) fn exercise(
             })
             .unwrap();
         for i in 0..33 {
-            assembly.runtime.approve(crate::system::runtime::Approval {
+            assembly.runtime.approve(crate::system::control::serve::resource::Approval {
                     service,
                     task: target,
                     kind: "full".into(),
@@ -223,13 +173,12 @@ pub(crate) fn exercise(
                 .unwrap();
         }
         let source = mail::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
-        assembly.publication.internal(
+        assembly.publications.internal(
                 &mut assembly.tree,
                 protocol::common::path::Path::new("svc/fixtures/stale"),
                 source,
                 Permit::Identity(Selector::MemberOf(coalition)),
                 me,
-                Some(authority),
             )
             .unwrap();
     }
@@ -292,21 +241,22 @@ pub(crate) fn exercise(
         .unwrap();
     runtime::env::room::doom(target).unwrap();
     assert!(runtime::env::unit::join(target, wait).unwrap());
-    assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
+    assembly.progress().unwrap();
     assert!(matches!(
         operator.root().tile(&target_road, wait),
         Err(Fail::Unknown)
     ));
     command(assembly, target, 3);
-    crate::system::control::supervise::sweep(&mut assembly.control);
-    assembly.control.mint("system-child".into()).unwrap();
+    crate::system::control::serve::reap::sweep(&mut assembly.control, &assembly.roster);
+    assembly.control.mint("system-child".into(), &assembly.images).unwrap();
     let failed_task = assembly.control.task("system-child").unwrap();
     let mut prepared = None;
     let mut fail_once = true;
+    let machine = assembly.supplies.machine;
     let result = assembly
         .control
-        .release("system-child".into(), service, |control| {
-            assembly.publication.poll(&control.table, &control.roster, &control.machine, &control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
+        .release("system-child".into(), service, &assembly.roster, &mut assembly.activation, &mut assembly.supplies, |control, activation| {
+            crate::system::run::cycle::poll(control, &assembly.roster, &machine, activation, assembly.images.entry, &mut assembly.publications, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree)?;
             if fail_once {
                 prepared = assembly.runtime.runtime_road(failed_task);
                 fail_once = false;
@@ -555,7 +505,7 @@ pub fn reference_lifetime() {
     );
 }
 
-fn sender_boundary(assembly: &mut crate::system::Assembly) {
+fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
@@ -596,7 +546,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
         );
         complete.store(true, Ordering::Release);
     });
-    let entry = assembly.publication.entry.unwrap();
+    let entry = assembly.images.entry;
     port::ship(
         &HolePie::from_token(entry),
         caller.id(),
@@ -606,7 +556,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
     .unwrap();
     let until = runtime::env::chrono::clock() + 10_000_000_000;
     while !done.load(Ordering::Acquire) {
-        assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
+        assembly.progress().unwrap();
         assert!(
             runtime::env::chrono::clock() < until,
             "sender boundary timeout"
@@ -625,7 +575,7 @@ fn sender_boundary(assembly: &mut crate::system::Assembly) {
     );
 }
 
-fn standalone_mutations(assembly: &mut crate::system::Assembly) {
+fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
@@ -686,9 +636,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
                 .unwrap();
             complete.store(true, Ordering::Release);
         });
-        assembly
-            .control
-            .roster
+        assembly.roster
             .inherit(caller.id(), control)
             .unwrap();
         let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
@@ -706,7 +654,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
                 .tree
                 .connect(core::iter::once(caller.id()))
                 .unwrap();
-            assembly.publication.poll(&assembly.control.table, &assembly.control.roster, &assembly.control.machine, &assembly.control.static_tasks, &mut assembly.runtime, &mut assembly.names, &mut assembly.tree).unwrap();
+            assembly.progress().unwrap();
             assert!(
                 runtime::env::chrono::clock() < until,
                 "standalone raw mutation timeout"
@@ -715,7 +663,7 @@ fn standalone_mutations(assembly: &mut crate::system::Assembly) {
         }
         let caller_id = caller.id();
         caller.join();
-        assembly.control.roster.unbind(caller_id).unwrap();
+        assembly.roster.unbind(caller_id).unwrap();
     }
     protocol::debug::put(
         "hierarchy: standalone Part/Trim deny bound same-subject callers; private Plate still requires actual Control sender",

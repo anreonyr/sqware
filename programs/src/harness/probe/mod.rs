@@ -11,3 +11,6 @@ pub mod identity;
 
 pub mod hierarchy;
 pub mod system_fault;
+
+
+pub mod fixture;

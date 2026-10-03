@@ -4,10 +4,7 @@
 use crate::unit::{Demand, Identity, Relation, UnitFile};
 
 pub static HANG: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "hang",
         wanted_by: &["rig"],

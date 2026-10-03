@@ -11,10 +11,12 @@ pub const E_ROUTER: Died = 5;
 pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 pub static PROGRAM: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: Some(crate::driver::router::publication),
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[crate::unit::Publish::Entries {
+        scope: crate::unit::PublishScope::Driver, group: "", road: "svc/drv",
+        entries: &[
+            crate::unit::PublishEntry { name: "router", mark: Some(env::Mark::of("entry")) },
+        ], public: true,
+    }],
     identity: Identity {
         name: "router",
         wanted_by: &["accept", "product", "system-fault"],

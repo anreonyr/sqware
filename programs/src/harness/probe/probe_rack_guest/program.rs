@@ -1,17 +1,12 @@
 //! probe-rack-guest 的装配声明（身子在本目录 `main.rs`）。
 //!
-//! **对端那一侧**：用产品同一条客人面取回两端，先读完 A、再写满 B。
-//! 次序：**`operator` 必须写在 `after` 里**——装配者那一手 `attach` 只对"点了树那位"的台做
-//! （`operator::bridge::needs_tree`），而本台要开会话（交流那一枚 `LINK`）就得有人跟它对上。
-//! 再等铺场那一台（`probe-rack-mount`）：它落完两枚砖、把 A 写满之后才响 `Ready`。
+//! 依赖 Operator 会话和已发布两端的 probe-rack-mount。
+//! 取回两端后先读完 A，再写满 B。
 
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RACK_GUEST: UnitFile = UnitFile {
-    #[cfg(target_arch = "riscv64")]
-    publication: None,
-    #[cfg(target_arch = "riscv64")]
-    prepare: None,
+    publication: &[],
     identity: Identity {
         name: "probe-rack-guest",
         ..Identity::DEFAULT
