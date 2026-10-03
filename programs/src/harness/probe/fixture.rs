@@ -1,153 +1,79 @@
-use crate::system::control::{
-    core::publication::Publications,
-    serve::{
-        self,
-        material::Supplies,
-        resource::Resources,
-        start::{self, Images},
-        unit::Control,
-        watch::Watch,
-    },
-};
-use crate::system::identity::serve::{install::Roster, names::Names};
-use crate::system::operator::serve::install::Tree;
-use crate::system::run::{bootstrap::Boot, cycle};
-use crate::system::{boot, life};
+use crate::system::{control::{core::verdict, serve::{self, unit::Control, lifecycle::{Action, Active, Key, Operations, Request}, resource::Resources}}, identity::serve::install::Roster, run::bootstrap::Boot};
+use crate::system::control::serve::schedule;
 use crate::unit::{Died, UnitFile};
-use runtime::env::mail;
-
-pub struct Fixture {
-    cycle: cycle::Cycle,
-    pub control: Control,
-    pub roster: Roster,
-    pub tree: Tree,
-    pub watch: Watch,
-    pub publications: Publications,
-    pub runtime: Resources,
-    pub names: Names,
-    pub images: Images,
-    pub supplies: Supplies,
-    pub activation: Option<crate::service::hub::bridge::Activation>,
+use protocol::common::schedule::{Resources as Registry, Res, ResMut, Plan, Schedule, Progress, Cursor, Dispatch, Invocation};
+pub struct Fault { pub armed: bool, pub task: Option<env::TaskId>, pub road: Option<protocol::common::path::PathBuf> }
+pub struct Fixture { pub resources: Registry<'static>, plans: [Plan<serve::Fail>; 4] }
+fn supply(active: Res<Active>, roster: Res<Roster>, control: Res<Control>) -> Result<Progress, verdict::Fail> {
+    let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
+    let program = serve::start::program_of(&job.request.name)?;
+    let task = control.task(&job.request.name).ok_or(verdict::Fail::Unknown)?;
+    super::identity::supply_to(roster.authority(), program, task).map_err(|_| verdict::Fail::NotReady)?;
+    Ok(Progress::Done)
+}
+fn probe(fault: Res<Fault>, mut dispatch: ResMut<Dispatch<(), verdict::Fail>>) -> Result<Progress, verdict::Fail> {
+    dispatch.budget = usize::from(fault.armed); Ok(Progress::Done)
+}
+fn select_probe(mut dispatch: ResMut<Dispatch<(), verdict::Fail>>) -> Result<Progress, verdict::Fail> {
+    dispatch.current = Some(Invocation { key: (), cursor: Default::default() }); Ok(Progress::Done)
+}
+fn inject(active: Res<Active>, resources: Res<Resources>, mut fault: ResMut<Fault>) -> Result<Progress, verdict::Fail> {
+    if fault.armed {
+        fault.armed = false;
+        fault.task = active.0.as_ref().and_then(|job| job.execution.task);
+        fault.road = fault.task.and_then(|task| resources.runtime_road(task));
+        return Err(verdict::Fail::NotReady);
+    }
+    Ok(Progress::Done)
 }
 impl Fixture {
     pub fn new(boot: Boot) -> Result<Self, ()> {
-        let status = crate::system::boot::start()?;
-        let entry =
-            mail::unseal_hole(protocol::system::control::publication::ENTRY).map_err(|_| ())?;
-        let mut fixture = Self {
-            cycle: cycle::Cycle::new().map_err(|_| ())?,
-            control: Control::new(status.clone()),
-            roster: Roster::default(),
-            tree: Tree::default(),
-            watch: Watch::new()?,
-            publications: Publications::new(),
-            runtime: Resources::new(),
-            names: Names::new(),
-            images: Images {
-                catalog: boot.catalog,
-                entry,
-            },
-            supplies: Supplies::new(boot.machine, boot.accounts),
-            activation: None,
-        };
-        if boot::install(
-            &status,
-            &mut fixture.roster,
-            &mut fixture.tree,
-            &mut fixture.publications,
-            entry,
-            &mut fixture.names,
-            &mut fixture.watch,
-        )
-        .is_err()
-        {
-            let _ = runtime::env::room::doom(status.control);
-            return Err(());
-        }
-        Ok(fixture)
+        let mut resources = crate::system::control::serve::run::resources(boot).map_err(|_| ())?;
+        resources.insert(Fault { armed: false, task: None, road: None }).map_err(|_| ())?;
+        resources.insert(Dispatch::<(), verdict::Fail>::new()).map_err(|_| ())?;
+        let mut start = schedule::startup().map_err(|_| ())?;
+        let mut children = schedule::lifecycle().map_err(|_| ())?;
+        let at = children.iter().position(|(key, _)| *key == Key::Embark).unwrap();
+        let (_, embark) = children.remove(at);
+        let mut plan = Schedule::new(); plan.add_system("fixture.supply", 0u8, supply).map_err(|_| ())?;
+        plan.add_plan("embark", 1, embark).map_err(|_| ())?;
+        plan.add_system("fixture.probe", 2, probe).map_err(|_| ())?;
+        plan.add_subplans("fixture.failure", 3, select_probe, alloc::vec![((), schedule::maintenance().map_err(|_| ())?.map_error(|_| verdict::Fail::NotReady))], inject).map_err(|_| ())?;
+        children.push((Key::Embark, plan.build().map_err(|_| ())?));
+        let plans = [schedule::maintenance().map_err(|_| ())?.map_error(|_| serve::Fail::Publication), schedule::actions(children).map_err(|_| ())?, schedule::frame().map_err(|_| ())?, schedule::shutdown().map_err(|_| ())?];
+        start.advance(&mut Cursor::default(), &resources).map_err(|_| ())?;
+        Ok(Self { resources, plans })
     }
     pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
-        let service = start::stage(program, &mut self.control, &self.images, &self.roster)
-            .map_err(|_| start::E_PROGRAM)?;
-        if let Err(_) = super::identity::supply_to(self.roster.authority(), program, service.0) {
-            self.control.discard(
-                program.name(),
-                service.0,
-                &self.roster,
-                &mut self.activation,
-            );
-            return Err(start::E_PROGRAM);
-        }
-        let machine = self.supplies.machine;
-        start::finish(
-            program,
-            &mut self.control,
-            service,
-            &mut self.supplies,
-            &self.roster,
-            &mut self.activation,
-            |control, activation| {
-                self.cycle.poll(
-                    control,
-                    &self.roster,
-                    &machine,
-                    activation,
-                    self.images.entry,
-                    &mut self.publications,
-                    &mut self.runtime,
-                    &mut self.names,
-                    &mut self.tree,
-                )
-            },
-        )
-        .map_err(|_| start::E_PROGRAM)
+        self.action(program.name(), Action::Mint).map_err(|_| serve::start::E_PROGRAM)?;
+        self.action(program.name(), Action::Embark { parent: None }).map_err(|_| serve::start::E_PROGRAM)?;
+        Ok(())
     }
-    pub fn action(&mut self, name: &str, action: serve::lifecycle::Action) -> Result<Option<env::TaskId>, ()> {
-        let mut plans = crate::system::run::schedule::lifecycle().map_err(|_| ())?;
-        let mut operations = serve::lifecycle::Operations::new();
-        operations.push(serve::lifecycle::Request { name: name.into(), action, back: None }).map_err(|_| ())?;
+    pub fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
+        self.resources.write::<Operations>().map_err(|_| ())?.push(Request { name: name.into(), action, back: None }).map_err(|_| ())?;
         loop {
-            serve::driver::poll(&mut plans, &mut operations, &mut self.control,
-                &self.roster, &mut self.supplies, &mut self.activation, &self.images).map_err(|_| ())?;
+            self.plans[1].advance(&mut Cursor::default(), &self.resources).map_err(|_| ())?;
             self.progress().map_err(|_| ())?;
-            let tracked = operations.0.front().ok_or(())?;
-            if tracked.complete {
-                return if tracked.operation.failure.is_some() { Err(()) } else { Ok(tracked.operation.task) };
+            {
+                let mut operations = self.resources.write::<Operations>().map_err(|_| ())?;
+                if let Some(at) = operations.0.iter().position(|job| job.complete && job.operation.request.name == name) {
+                    let job = operations.0.remove(at).ok_or(())?;
+                    return if job.operation.failure.is_some() { Err(()) } else { Ok(job.operation.execution.task) };
+                }
             }
             runtime::env::room::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;
         }
     }
     pub fn progress(&mut self) -> Result<(), &'static str> {
-        self.cycle.poll(
-            &self.control,
-            &self.roster,
-            &self.supplies.machine,
-            &self.activation,
-            self.images.entry,
-            &mut self.publications,
-            &mut self.runtime,
-            &mut self.names,
-            &mut self.tree,
-        )
+        self.plans[0].advance(&mut Cursor::default(), &self.resources).map_err(|_| "fixture maintenance")?; Ok(())
     }
     pub fn supervise(&mut self) -> Result<(), serve::Fail> {
-        let result = serve::run(
-            &mut self.watch,
-            &mut self.control,
-            &self.roster,
-            &mut self.supplies,
-            &mut self.activation,
-            &self.images,
-            &mut self.publications,
-            &mut self.runtime,
-            &mut self.names,
-            &mut self.tree,
-            &[],
-        );
-        if result.is_err() {
-            let _ = runtime::env::room::doom(self.control.status.control);
+        let mut cursor = Cursor::default();
+        while !self.resources.read::<serve::frame::Flow>().map_err(|_| serve::Fail::Room)?.done {
+            if self.plans[2].advance(&mut cursor, &self.resources).map_err(|error| { protocol::debug::put(&alloc::format!("fixture: frame {:?}", error)); serve::Fail::Shutdown })? == Progress::Done { cursor.reset(); }
         }
-        result?;
-        life::stop(&self.control.status)
+        let mut cursor = Cursor::default();
+        while self.plans[3].advance(&mut cursor, &self.resources).map_err(|_| serve::Fail::Shutdown)? == Progress::Pending {}
+        Ok(())
     }
 }

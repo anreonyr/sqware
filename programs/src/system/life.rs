@@ -16,23 +16,20 @@ pub struct Status {
     pub(crate) phase: AtomicU8,
 }
 
-pub fn stop(status: &Status) -> Result<(), crate::system::control::serve::Fail> {
+pub struct Deadline(pub u64);
+pub fn stopping(status: protocol::common::schedule::Res<alloc::sync::Arc<Status>>, mut deadline: protocol::common::schedule::ResMut<Deadline>) -> Result<protocol::common::schedule::Progress, crate::system::control::serve::Fail> {
     status.phase.store(Phase::Stopping as u8, Ordering::Release);
-    let until = runtime::env::chrono::clock()
-        + crate::system::control::serve::start::BOOT_MS as u64 * 1_000_000;
-    for task in [
-        status.operator.load(Ordering::Acquire),
-        status.identity.load(Ordering::Acquire),
-    ] {
-        while !runtime::env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
-            if runtime::env::chrono::clock() >= until {
-                let _ = runtime::env::room::doom(status.control);
-                return Err(crate::system::control::serve::Fail::Shutdown);
-            }
-            runtime::env::room::sleep(core::time::Duration::from_millis(1))
-                .map_err(|_| crate::system::control::serve::Fail::Wait)?;
+    deadline.0 = runtime::env::chrono::clock() + crate::system::control::serve::start::BOOT_MS as u64 * 1_000_000;
+    Ok(protocol::common::schedule::Progress::Done)
+}
+pub fn join(status: protocol::common::schedule::Res<alloc::sync::Arc<Status>>, deadline: protocol::common::schedule::Res<Deadline>) -> Result<protocol::common::schedule::Progress, crate::system::control::serve::Fail> {
+    for task in [status.operator.load(Ordering::Acquire), status.identity.load(Ordering::Acquire)] {
+        if !runtime::env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
+            if runtime::env::chrono::clock() >= deadline.0 { return Err(crate::system::control::serve::Fail::Shutdown); }
+            runtime::env::room::sleep(core::time::Duration::from_millis(1)).map_err(|_| crate::system::control::serve::Fail::Wait)?;
+            return Ok(protocol::common::schedule::Progress::Pending);
         }
     }
     debug::put("system: internal tasks stopped");
-    Ok(())
+    Ok(protocol::common::schedule::Progress::Done)
 }

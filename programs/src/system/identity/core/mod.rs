@@ -37,3 +37,6 @@ impl IdentityBook {
 
 #[cfg(test)]
 mod tests;
+
+pub use membership::Membership;
+pub use roster::{BindingRequest, Selection};

@@ -14,6 +14,13 @@ pub(crate) fn supply_to(
     program: &UnitFile,
     task: env::TaskId,
 ) -> Result<(), &'static str> {
+    if matches!(program.name(), "probe-rule" | "probe-rule-other") {
+        let mark = env::Mark::of("probe-rule-verified");
+        let owner = runtime::env::unit::self_id();
+        let token = establish::find(owner, mark).or_else(|| mail::unseal_hole(mark).ok()).ok_or("rule verification channel")?;
+        let access = if program.name() == "probe-rule" { Access::FETCH } else { Access::STORE };
+        port::ship(&HolePie::from_token(token), task, access, Policy::NONE).map_err(|_| "rule verification supply")?;
+    }
     if program.name() == "system-dependent" { super::hierarchy::supply(task)?; }
     if program.name() != unit::probe_denied::PROBE_DENIED.name()
         && program.name() != unit::probe_coalition::PROBE_COALITION.name()
@@ -83,7 +90,7 @@ pub fn acceptance() {
     let mut assembly = Fixture::new(boot).ok().expect("identity: assembly");
     for program in list {
         if program.name() == "system-child" {
-            assembly.control.enlist(program).expect("identity: runtime declaration");
+            assembly.resources.write::<crate::system::control::serve::unit::Control>().unwrap().enlist(program).expect("identity: runtime declaration");
             continue;
         }
         assembly.assemble(program).expect("identity: install static unit");
@@ -95,14 +102,14 @@ pub fn acceptance() {
             .expect("identity: face source")
     };
     for name in ["operator", "identity"] {
-        assert!(assembly.control.mint(name.into(), &assembly.images).is_err());
-        assert!(assembly.control.ruin(name.into(), &assembly.roster, &mut assembly.activation).is_err());
-        assert_eq!(assembly.control.state(name.into()).unwrap(), crate::system::control::core::unit::State::Ready);
+        assert!(assembly.action(name, crate::system::control::serve::lifecycle::Action::Mint).is_err());
+        assert!(assembly.action(name, crate::system::control::serve::lifecycle::Action::Ruin).is_err());
+        assert_eq!(assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().state(name.into()).unwrap(), crate::system::control::core::unit::State::Ready);
     }
-    let old_authority = assembly.roster.authority().unwrap();
+    let old_authority = assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap().authority().unwrap();
     let old_query = query(old_authority);
     let me = runtime::env::unit::self_id();
-    let host = assembly.tree.host().unwrap();
+    let host = assembly.resources.read::<crate::system::operator::serve::install::Tree>().unwrap().host().unwrap();
     let link = establish::endpoint(host, env::Mark::of(protocol::system::operator::LINK), Wait::POLL)
         .expect("identity: operator request");
     let talk = establish::give(host, protocol::system::operator::ASK_MARK)
@@ -123,33 +130,24 @@ pub fn acceptance() {
         Wait::AtMost(1000)).expect("identity: public tile");
     assert!(public.token(Wait::AtMost(1000)).is_ok());
     let old = old_query.resolve(me, Wait::AtMost(1000)).unwrap().unwrap();
-    let old_dependent = assembly.control.task("system-dependent").unwrap();
-    let old_hub = assembly.control.task("hub").unwrap();
+    let old_dependent = assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().task("system-dependent").unwrap();
+    let old_hub = assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().task("hub").unwrap();
     let old_devices = old_query.resolve(old_hub, Wait::AtMost(1000)).unwrap().unwrap().current;
     assert!(!old_devices.coalitions.is_empty(), "identity: Hub selections not activated");
     let coalition = old_devices.coalitions.iter().next().unwrap();
     activation_boundary(&assembly, old_hub, coalition);
     let before = old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap();
-    assert!(assembly.roster.activate(old_dependent, coalition).is_err(),
+    assert!(assembly.resources.read::<crate::system::identity::serve::install::Roster>().unwrap().activate(old_dependent, coalition).is_err(),
         "identity: qualification was not checked");
     assert_eq!(old_query.resolve(old_dependent, Wait::AtMost(1000)).unwrap(), before);
     for (name, road) in [("router", "/svc/drv/router"), ("rtc", "/svc/drv/rtc"),
         ("uart", "/svc/drv/uart/rx")]
     {
-        ready_driver(&operator, &old_query, assembly.control.task(name).unwrap(), road);
+        ready_driver(&operator, &old_query, assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().task(name).unwrap(), road);
     }
     use crate::system::control::serve::lifecycle::Action;
-    {
-        use crate::system::control::serve::{driver, lifecycle::{Operations, Request}};
-        let mut plans = crate::system::run::schedule::lifecycle().unwrap();
-        let mut operations = Operations::new();
-        operations.push(Request { name: "absent-unit".into(), action: Action::Ruin, back: None }).unwrap();
-        driver::poll(&mut plans, &mut operations, &mut assembly.control, &assembly.roster,
-            &mut assembly.supplies, &mut assembly.activation, &assembly.images).expect("unknown Ruin must not terminate System");
-        let job = operations.0.front().unwrap();
-        assert!(job.complete);
-        assert_eq!(job.operation.failure, Some(crate::system::control::core::verdict::Fail::Unknown));
-    }
+    assert!(assembly.action("absent-unit", Action::Ruin).is_err(), "unknown Ruin must fail without terminating System");
+    assembly.progress().expect("System remains usable after unknown request");
 
     assembly.action("system-child", Action::Mint).expect("identity: scheduled mint");
     let child = assembly.action("system-child", Action::Embark { parent: Some(old_dependent) })
@@ -159,18 +157,19 @@ pub fn acceptance() {
     assert_eq!(child_binding.origin, parent_binding.current);
     for _ in 0..3 {
         assembly.action("system-child", Action::Debark).expect("identity: scheduled debark");
-        assert_eq!(assembly.control.state("system-child".into()).unwrap(), crate::system::control::core::unit::State::Debarked);
+        assert_eq!(assembly.resources.read::<crate::system::control::serve::unit::Control>().unwrap().state("system-child".into()).unwrap(), crate::system::control::core::unit::State::Debarked);
         assert_eq!(old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap(), child_binding);
         let resumed = assembly.action("system-child", Action::Embark { parent: Some(old_dependent) }).expect("identity: scheduled resume").unwrap();
         assert_eq!(resumed, child);
         assert_eq!(old_query.resolve(child, Wait::AtMost(1000)).unwrap().unwrap(), child_binding);
     }
 
+    protocol::debug::put("identity: three Debark/Embark rounds preserve task and binding");
     assert_eq!(old.current.principal.authority, old_authority);
     let dynamic = super::hierarchy::exercise(&mut assembly, &operator, old_authority, old_dependent, child);
     let _ = dynamic;
     protocol::debug::put("system: identity, device and publication acceptance passed");
-    assembly.control.ruin_rest(&assembly.roster, &mut assembly.activation);
+    assembly.resources.write::<crate::system::control::serve::frame::Flow>().unwrap().settling = true;
     assert!(assembly.supervise().is_ok(), "system: normal team shutdown failed");
 }
 
@@ -200,7 +199,7 @@ fn activation_boundary(assembly: &Fixture, hub: env::TaskId,
     port::ship(&HolePie::from_token(entry), caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = runtime::env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        if let Some(activation) = &assembly.activation { activation.poll(&assembly.control, &assembly.roster); }
+        crate::service::hub::bridge::maintain(assembly.resources.read().unwrap(), assembly.resources.read().unwrap(), assembly.resources.read().unwrap()).unwrap();
         assert!(runtime::env::chrono::clock() < until, "activation boundary never answered");
         runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }

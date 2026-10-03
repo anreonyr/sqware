@@ -78,6 +78,8 @@ fn main() -> Report<'static> {
         assert_eq!(foreign, Err(Fail::Denied))
     }
 
+    let complete = protocol::communication::session::establish::claim(sire, env::Mark::of("probe-rule-verified"), Wait::AtMost(MS)).expect("probe-other: completion channel");
+    runtime::env::mail::HolePie::from_token(complete).push(&[1], Wait::AtMost(MS)).expect("probe-other: completion reply");
     return Report::note(E_OK, OK_NOTE);
 }
 

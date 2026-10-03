@@ -1,3 +1,5 @@
+use crate::system::operator::serve::plate::Placement;
+use crate::system::operator::core::Tile;
 use protocol::common::schedule::{Progress, Res, ResMut};
 use crate::system::control::serve::{living::Living, unit::Control};
 use crate::system::identity::serve::install::Roster;
@@ -9,10 +11,13 @@ use env::{PieToken, TaskId, Wait};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use runtime::env::mail::{self, HolePie};
+pub struct Registration { pub name: String, pub object: Object, pub lifetime: Option<TaskId> }
+
+enum Lifetime { Permanent, Task(TaskId), Retired }
 struct Alias {
     name: String,
     object: Object,
-    lifetime: Option<TaskId>,
+    lifetime: Lifetime,
     entry: PieToken,
     pane: EntryId,
     mount: EntryId,
@@ -30,14 +35,11 @@ impl Names {
     pub fn entries(&self) -> impl ExactSizeIterator<Item = PieToken> + '_ {
         self.aliases.iter().map(|a| a.entry)
     }
-    pub fn register(
-        &mut self,
-        roster: &Roster,
-        tree: &mut Tree,
-        name: &str,
-        object: Object,
-        lifetime: Option<TaskId>,
-    ) -> Result<(), &'static str> {
+    pub fn register(&mut self, tree: &mut Tree, registration: Registration) -> Result<(), &'static str> {
+        let name = registration.name.as_str();
+        let object = registration.object;
+        let lifetime = registration.lifetime;
+
         if !pubcall::valid_name(name) {
             return Err("identity alias name");
         }
@@ -55,18 +57,11 @@ impl Names {
         {
             return Ok(());
         }
-        validate(roster, object).map_err(|_| "identity alias source")?;
         self.aliases
             .try_reserve(1)
             .map_err(|_| "identity alias capacity")?;
         let road = object.road(name).ok_or("identity alias path")?;
-        let pane = tree.mount(
-            road.parent().ok_or("identity alias parent")?,
-            None,
-            Permit::Public,
-            None,
-            false,
-        )?;
+        let pane = tree.mount(&Placement { road: (road.parent().ok_or("identity alias parent")?).to_path_buf(), tile: Tile { pie: env::PieToken::NONE, permit: Permit::Public, owner: None }, replace: false })?;
         let entry = match mail::unseal_hole(pubcall::REF) {
             Ok(entry) => entry,
             Err(_) => {
@@ -74,13 +69,7 @@ impl Names {
                 return Err("identity alias entry");
             }
         };
-        let mount = match tree.mount(
-            &road,
-            Some(entry),
-            Permit::Public,
-            Some(runtime::env::unit::self_id()),
-            false,
-        ) {
+        let mount = match tree.mount(&Placement { road: (&road).to_path_buf(), tile: Tile { pie: entry, permit: Permit::Public, owner: Some(runtime::env::unit::self_id()) }, replace: false }) {
             Ok(mount) => mount,
             Err(why) => {
                 let _ = mail::seal(entry);
@@ -92,7 +81,7 @@ impl Names {
         self.aliases.push(Alias {
             name: name.into(),
             object,
-            lifetime,
+            lifetime: lifetime.map_or(Lifetime::Permanent, Lifetime::Task),
             entry,
             pane,
             mount,
@@ -121,62 +110,44 @@ fn reply(back: PieToken, reply: Reply) {
     let _ = mail::release(back);
 }
 
-pub(crate) fn retire(living: Res<Living>, roster: Res<Roster>, mut names: ResMut<Names>,
-    mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
-    let roster = &*roster;
-    let tree = &mut *tree;
-    let live = |task| living.contains(task);
-
-    let authority = current_authority(roster);
-    let mut at = 0;
-    while at < names.aliases.len() {
-        if Some(names.aliases[at].object.authority()) != authority
-            || names.aliases[at].lifetime.is_some_and(|task| !live(task))
-        {
-            names.remove(tree, at)?;
-        } else {
-            at += 1;
+pub struct Registrations(pub Vec<Registration>);
+pub(crate) fn expired(living: Res<Living>, roster: Res<Roster>, mut names: ResMut<Names>) -> Result<Progress, &'static str> {
+    let authority = current_authority(&roster);
+    // Mark aliases before tree mutations; no Identity request is made during removal.
+    for alias in &mut names.aliases {
+        if Some(alias.object.authority()) != authority || matches!(alias.lifetime, Lifetime::Task(task) if !living.contains(task)) {
+            alias.lifetime = Lifetime::Retired;
         }
     }
     Ok(Progress::Done)
 }
-pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut tree: ResMut<Tree>,
-    mut names: ResMut<Names>) -> Result<Progress, &'static str> {
-    let table = &control.table;
-    let roster = &*roster;
-    let tree = &mut *tree;
-
+pub(crate) fn retire(mut names: ResMut<Names>, mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+    let mut at = 0;
+    while at < names.aliases.len() {
+        if matches!(names.aliases[at].lifetime, Lifetime::Retired) { names.remove(&mut tree, at)?; } else { at += 1; }
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn prepare(control: Res<Control>, roster: Res<Roster>, mut pending: ResMut<Registrations>) -> Result<Progress, &'static str> {
     use crate::system::control::core::unit::{Slot, State};
-    if current_authority(roster).is_none() || tree.host().is_none() {
-        return Ok(Progress::Done);
-    }
-    for row in table.living() {
-        if !row.named
-            || !matches!(
-                row.state,
-                State::NeverStarted | State::Starting | State::Ready | State::Debarked
-            )
-        {
-            continue;
-        }
-        let Slot::Live { task, .. } = row.slot else {
-            continue;
-        };
-        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
-            continue;
-        }
-        if let Some(binding) =
-            super::query::binding(roster, task).map_err(|_| "alias identity query")?
-        {
-            names.register(
-                roster,
-                tree,
-                &row.name,
-                Object::Principal(binding.origin.principal),
-                Some(task),
-            )?;
+    pending.0.clear();
+    if current_authority(&roster).is_none() { return Ok(Progress::Done); }
+    for row in control.table.living() {
+        if !row.named || !matches!(row.state, State::NeverStarted | State::Starting | State::Ready | State::Debarked) { continue; }
+        let Slot::Live { task, .. } = row.slot else { continue; };
+        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) { continue; }
+        if let Some(binding) = super::query::binding(&roster, task).map_err(|_| "alias identity query")? {
+            let registration = Registration { name: row.name.clone(), object: Object::Principal(binding.origin.principal), lifetime: Some(task) };
+            validate(&roster, registration.object).map_err(|_| "identity alias source")?;
+            pending.0.try_reserve(1).map_err(|_| "alias capacity")?;
+            pending.0.push(registration);
         }
     }
+    Ok(Progress::Done)
+}
+pub(crate) fn install(mut pending: ResMut<Registrations>, mut names: ResMut<Names>, mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+    if tree.host().is_none() { return Ok(Progress::Done); }
+    for registration in pending.0.drain(..) { names.register(&mut tree, registration)?; }
     Ok(Progress::Done)
 }
 pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress, &'static str> {

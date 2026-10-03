@@ -11,7 +11,7 @@ trap 'rm -rf "$temporary"' EXIT HUP INT TERM
 python3 - "$here" "$protocol_root" "$temporary" "$root" <<'PY'
 import pathlib, sys
 here, protocol, temporary, root = map(pathlib.Path, sys.argv[1:])
-source = (here / "host.rs").read_text()
+source = (root / "programs/tests/identity/host.rs").read_text()
 source = source.replace("../../../../../crates/protocol", str(protocol / "crates/protocol"))
 source = source.replace('#[path = "mod.rs"]', f'#[path = "{here / "mod.rs"}"]')
 source = source.replace('#[path = "../serve/answer.rs"]', f'#[path = "{here / "../serve/answer.rs"}"]')

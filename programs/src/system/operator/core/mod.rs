@@ -78,6 +78,10 @@ pub struct Operator {
     slots: Vec<Option<Slot>>,
 }
 
+pub struct Location { pub at: Where, pub name: String }
+#[derive(Clone, Copy)]
+pub struct Tile { pub pie: PieToken, pub permit: Permit, pub owner: Option<TaskId> }
+
 impl Operator {
     pub const fn new() -> Operator {
         Operator {
@@ -90,20 +94,15 @@ impl Operator {
     ///
     /// 新铸那一档是 [`Kind::Landed`]，换绑那一档是 [`Kind::Rebound`]（**号不动**）——
     /// 树一个字节没变的那一档不存在：`put` 只在"造了一格"或"换掉了那一格的两轴"两种下场里返 `Ok`。
-    pub fn land(
-        &mut self,
-        at: Where,
-        name: String,
-        pie: PieToken,
-        permit: Permit,
-        owner: Option<TaskId>,
-    ) -> Result<Change, Fail> {
+    pub fn land(&mut self, location: Location, tile: Tile) -> Result<Change, Fail> {
+        let Location { at, name } = location;
+        let Tile { pie, permit, owner } = tile;
         // **归属原样带过去**：`None` = 无主（谁都能接手），`Some(w)` = 有主。**不许折成零号**——
         // `claimable` 读的就是这一格（零号是一个"永远不在场"的主人，与"无主"不是一件事）。
         let who = owner.unwrap_or(TaskId::new(0));
         // **换绑还是新铸**：落之前先只读地问一遍（那一手与 `put` 开头那一趟是同一件事）。
         let was_tile = self.kid(at, name.as_str())?.is_some();
-        let id = self.put(at, name, Node::Tile { pie, permit, owner }, Want::Tile)?;
+        let id = self.put(Location { at, name }, Node::Tile { pie, permit, owner })?;
         Ok(Change {
             kind: if was_tile {
                 Kind::Rebound
@@ -127,7 +126,7 @@ impl Operator {
         if let Some(id) = self.kid(at, name.as_str())? {
             return Ok((id, false, None));
         }
-        let id = self.put(at, name, Node::Pane(Vec::new()), Want::Pane)?;
+        let id = self.put(Location { at, name }, Node::Pane(Vec::new()))?;
         Ok((
             id,
             true,
@@ -301,7 +300,9 @@ impl Operator {
     /// `at` 那一块 `Pane` 就是一次 Operator::kids
     /// **先只读地问一遍**（那一格叫什么号），再动手：这样动手那一段只需要一次
     /// `slots[i]` 的可变借用，不必在 children 里穿一层 `&mut`（那正是老一版递归的由头）
-    fn put(&mut self, at: Where, name: String, node: Node, want: Want) -> Result<EntryId, Fail> {
+    fn put(&mut self, location: Location, node: Node) -> Result<EntryId, Fail> {
+        let Location { at, name } = location;
+        let want = if matches!(node, Node::Tile { .. }) { Want::Tile } else { Want::Pane };
         let existing = self
             .kids(at)?
             .iter()

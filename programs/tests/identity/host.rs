@@ -77,19 +77,19 @@ fn allocation_failures_leave_the_authority_unchanged() {
     assert_eq!(q.slot, last.slot + 1);
     let task = TaskId::new(3);
     let subject = Subject::new(p, &[]).unwrap();
-    assert_eq!(without_allocating(|| book.bind(installer, task, Install::Authorized(subject))),
+    assert_eq!(without_allocating(|| book.bind(installer, crate::book::BindingRequest { task: task, install: Install::Authorized(subject) })),
         Err(Fail::Full));
     assert!(book.resolve(task).is_none());
-    book.bind(installer, task, Install::Authorized(subject)).unwrap();
+    book.bind(installer, crate::book::BindingRequest { task: task, install: Install::Authorized(subject) }).unwrap();
     assert_eq!(without_allocating(|| book.found(task)), Err(Fail::Full));
     let c = book.found(task).unwrap();
     assert_eq!(c.slot, 0);
-    assert_eq!(without_allocating(|| book.admit(task, c, p)), Err(Fail::Full));
+    assert_eq!(without_allocating(|| book.admit(task, crate::book::Membership { coalition: c, principal: p })), Err(Fail::Full));
     assert_eq!(book.amid(p, c), Ok(false));
-    book.admit(task, c, p).unwrap();
-    book.bind(installer, task, Install::Authorized(Subject::new(p, &[c]).unwrap())).unwrap();
+    book.admit(task, crate::book::Membership { coalition: c, principal: p }).unwrap();
+    book.bind(installer, crate::book::BindingRequest { task: task, install: Install::Authorized(Subject::new(p, &[c]).unwrap()) }).unwrap();
     assert!(without_allocating(|| book.page::<PrincipalId>(PageTarget::Members(c), None)).is_ok());
-    assert_eq!(without_allocating(|| book.expel(task, c, p)), Ok(()));
+    assert_eq!(without_allocating(|| book.expel(task, crate::book::Membership { coalition: c, principal: p })), Ok(()));
     assert_eq!(without_allocating(|| book.waive(task)), Ok(()));
     assert_eq!(without_allocating(|| book.unbind(installer, task)), Ok(()));
 }
@@ -103,7 +103,7 @@ fn all_seventeen_faces_reject_every_other_action_without_mutation() {
     let mut book = book::IdentityBook::new(TaskId::new(2), installer).unwrap();
     let p = book.root();
     let subject = Subject::new(p, &[]).unwrap();
-    book.bind(installer, task, Install::Authorized(subject)).unwrap();
+    book.bind(installer, crate::book::BindingRequest { task: task, install: Install::Authorized(subject) }).unwrap();
     let c = book.found(task).unwrap();
     let actions = [
         Wire::Resolve(task), Wire::Matches(task, Selector::Exact(p)), Wire::Same(task, task),
@@ -116,7 +116,7 @@ fn all_seventeen_faces_reject_every_other_action_without_mutation() {
         for wire in actions {
             if Grant::for_wire(&wire) == face { continue; }
             let before = book.resolve(task);
-            assert_eq!(answer::answer(&mut book, installer, face, Some(wire)),
+            assert_eq!(answer::answer(&mut book, answer::Request { from: installer, grant: face, wire: Some(wire) }),
                 Reply::Fail(Fail::Denied));
             assert_eq!(book.resolve(task), before);
             assert_eq!(book.amid(p, c), Ok(false));
@@ -132,14 +132,14 @@ fn adopt_keeps_the_origin_and_restrict_moves_it() {
     let task = TaskId::new(3);
     let mut book = book::IdentityBook::new(TaskId::new(2), installer).unwrap();
     let p = book.derive(installer, book.root()).unwrap();
-    book.bind(installer, task, Install::Authorized(Subject::new(p, &[]).unwrap())).unwrap();
+    book.bind(installer, crate::book::BindingRequest { task: task, install: Install::Authorized(Subject::new(p, &[]).unwrap()) }).unwrap();
     let q = book.derive(task, p).unwrap();
     let narrowed = Subject::new(q, &[]).unwrap();
-    assert_eq!(answer::answer(&mut book, task, Grant::Adopt, Some(Wire::Adopt(narrowed))),
+    assert_eq!(answer::answer(&mut book, answer::Request { from: task, grant: Grant::Adopt, wire: Some(Wire::Adopt(narrowed)) }),
         Reply::Unit);
     assert_eq!(book.resolve(task).unwrap().origin.principal, p);
     assert_eq!(book.resolve(task).unwrap().current.principal, q);
-    assert_eq!(answer::answer(&mut book, task, Grant::Restrict, Some(Wire::Restrict(narrowed))),
+    assert_eq!(answer::answer(&mut book, answer::Request { from: task, grant: Grant::Restrict, wire: Some(Wire::Restrict(narrowed)) }),
         Reply::Unit);
     assert_eq!(book.resolve(task).unwrap().origin.principal, q);
 }

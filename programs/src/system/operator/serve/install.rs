@@ -15,7 +15,7 @@ use crate::system::control::serve::start::BOOT_MS;
 use protocol::common::path::Path;
 use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
-use protocol::system::operator::{EntryId, Permit, Tip};
+use protocol::system::operator::{EntryId, Tip};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
@@ -83,73 +83,10 @@ impl Tree {
     }
 
     /// Only a live client-issued LINK requests a session; ordering is not a request.
-    pub fn connect(&mut self, tasks: impl Iterator<Item = TaskId>) -> Result<(), &'static str> {
-        let Some(host) = self.host else {
-            return Ok(());
-        };
-        self.clients
-            .retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
-        let mut requests = Vec::new();
-        for client in tasks {
-            requests
-                .try_reserve(1)
-                .map_err(|_| "operator:request capacity")?;
-            requests.push((client, None));
-        }
-        if requests.is_empty() {
-            return Ok(());
-        }
-        // Enumerate once, retaining the last matching LINK for each client.
-        for pie in mail::pies() {
-            if pie.mark != Mark::of(LINK) {
-                continue;
-            }
-            for (client, reply) in &mut requests {
-                if pie.owner == *client {
-                    *reply = Some(pie.token);
-                }
-            }
-        }
-        for (client, reply) in requests {
-            let Some(reply) = reply else {
-                continue;
-            };
-            let old = self.clients.iter().position(|(task, _)| *task == client);
-            if old.is_some_and(|at| self.clients[at].1.tx() == Some(reply)) {
-                continue;
-            }
-            if old.is_none() {
-                self.clients
-                    .try_reserve(1)
-                    .map_err(|_| "operator:client capacity")?;
-            }
-            let link = match attach(client, host, reply, &mut self.tip) {
-                Ok(link) if current_request(client, reply) => link,
-                Ok(_) => continue,
-                Err(_)
-                    if !current_request(client, reply)
-                        || runtime::env::unit::join(client, Wait::POLL).unwrap_or(true) =>
-                {
-                    continue;
-                }
-                Err(why) => return Err(why),
-            };
-            if let Some(at) = old {
-                self.clients[at].1 = link;
-            } else {
-                self.clients.push((client, link));
-            }
-        }
-        Ok(())
-    }
 
-    pub fn wire(
-        &mut self,
-        authority: TaskId,
-        resolve: PieToken,
-        matches: PieToken,
-        same: PieToken,
-    ) -> Result<(), &'static str> {
+
+    pub fn wire(&mut self, wiring: Wiring) -> Result<(), &'static str> {
+        let Wiring { authority, faces: [resolve, matches, same] } = wiring;
         use protocol::system::identity::Grant;
         let host = self.host.ok_or("no tree yet")?;
         let Some(tip) = self.tip else {
@@ -203,14 +140,13 @@ impl Tree {
         establish::find(host, TIP_MARK).is_some()
     }
 
-    pub(crate) fn mount(
-        &mut self,
-        road: &Path,
-        leaf: Option<PieToken>,
-        permit: Permit,
-        owner: Option<TaskId>,
-        replace: bool,
-    ) -> Result<EntryId, &'static str> {
+    pub(crate) fn mount(&mut self, placement: &super::plate::Placement) -> Result<EntryId, &'static str> {
+        let road = &placement.road;
+        let leaf = (placement.tile.pie != PieToken::NONE).then_some(placement.tile.pie);
+        let permit = placement.tile.permit;
+        let owner = placement.tile.owner;
+        let replace = placement.replace;
+
         let host = self.host.ok_or("no tree yet")?;
         let tip = self.tip.ok_or("no tip")?;
         let seed = match leaf {
@@ -266,12 +202,8 @@ fn current_request(client: TaskId, reply: PieToken) -> bool {
             if owner == client && mark == Mark::of(LINK))
 }
 
-fn attach(
-    client: TaskId,
-    host: TaskId,
-    reply: PieToken,
-    tip: &mut Option<PieToken>,
-) -> Result<establish::Held, &'static str> {
+fn attach(request: (TaskId, PieToken), host: TaskId, tip: &mut Option<PieToken>) -> Result<establish::Held, &'static str> {
+    let (client, reply) = request;
     //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
     //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
     if !current_request(client, reply) {
@@ -320,10 +252,73 @@ pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
         .map_err(|_| ())
 }
 
-pub(crate) fn connect(
-    control: Res<crate::system::control::serve::unit::Control>,
-    mut tree: ResMut<Tree>,
-) -> Result<Progress, &'static str> {
-    tree.connect(control.tasks())?;
+pub struct Connections(pub Vec<TaskId>);
+pub(crate) fn candidates(control: Res<crate::system::control::serve::unit::Control>, mut connections: ResMut<Connections>) -> Result<Progress, &'static str> {
+    for task in control.tasks() {
+        if !connections.0.contains(&task) { connections.0.try_reserve(1).map_err(|_| "operator request capacity")?; connections.0.push(task); }
+    }
     Ok(Progress::Done)
 }
+pub(crate) fn connect(mut connections: ResMut<Connections>, mut tree: ResMut<Tree>) -> Result<Progress, &'static str> {
+
+        let Some(host) = tree.host else {
+            return Ok(Progress::Done);
+        };
+        tree.clients
+            .retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
+        let mut requests = Vec::new();
+        for client in connections.0.drain(..) {
+            requests
+                .try_reserve(1)
+                .map_err(|_| "operator:request capacity")?;
+            requests.push((client, None));
+        }
+        if requests.is_empty() {
+            return Ok(Progress::Done);
+        }
+        // Enumerate once, retaining the last matching LINK for each client.
+        for pie in mail::pies() {
+            if pie.mark != Mark::of(LINK) {
+                continue;
+            }
+            for (client, reply) in &mut requests {
+                if pie.owner == *client {
+                    *reply = Some(pie.token);
+                }
+            }
+        }
+        for (client, reply) in requests {
+            let Some(reply) = reply else {
+                continue;
+            };
+            let old = tree.clients.iter().position(|(task, _)| *task == client);
+            if old.is_some_and(|at| tree.clients[at].1.tx() == Some(reply)) {
+                continue;
+            }
+            if old.is_none() {
+                tree.clients
+                    .try_reserve(1)
+                    .map_err(|_| "operator:client capacity")?;
+            }
+            let link = match attach((client, reply), host, &mut tree.tip) {
+                Ok(link) if current_request(client, reply) => link,
+                Ok(_) => continue,
+                Err(_)
+                    if !current_request(client, reply)
+                        || runtime::env::unit::join(client, Wait::POLL).unwrap_or(true) =>
+                {
+                    continue;
+                }
+                Err(why) => return Err(why),
+            };
+            if let Some(at) = old {
+                tree.clients[at].1 = link;
+            } else {
+                tree.clients.push((client, link));
+            }
+        }
+        Ok(Progress::Done)
+
+}
+
+pub struct Wiring { pub authority: TaskId, pub faces: [PieToken; 3] }

@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use env::{Mark, PieToken, TaskId};
+use env::{PieToken, TaskId};
 
 /// 这本账的两种不成——**每格一个不同的下一步**：**重放**不动账（接着办下一件事）
 /// **满了**报一句（别静默丢一位客人）
@@ -142,8 +142,7 @@ impl Desk {
     /// 并报"还没补齐"
     pub fn arm_pending(
         &mut self,
-        marks: &[Mark],
-        ask_of: impl Fn(TaskId, Mark) -> Option<PieToken>,
+        find: impl Fn(TaskId) -> Option<PieToken>,
         mut attach: impl FnMut(PieToken) -> bool,
     ) -> bool {
         let mut pending = false;
@@ -154,7 +153,7 @@ impl Desk {
             if self.guests[slot].as_ref().is_some_and(|g| g.armed()) {
                 continue;
             }
-            let found = marks.iter().find_map(|mark| ask_of(who, *mark));
+            let found = find(who);
             match found {
                 Some(ask) => {
                     let hung = self.arm(slot, ask) && attach(ask);
@@ -190,10 +189,6 @@ impl Desk {
     /// 那一枚答 `None`（不在我表里，**或**它那扇门已经封印）就剔。**看出来的**那一档
     /// **听来的**那一档是 Desk::evict（客人自己说了走，账当场撤，不等它的门封印）
     /// 两档都在，因为没说就走的那种也得有人收
-    pub fn sweep(&mut self) -> usize {
-        self.sweep_each(|_| {})
-    }
-
     pub fn sweep_each(&mut self, mut f: impl FnMut(Gone)) -> usize {
         let mut gone = 0;
         for cell in self.guests.iter_mut() {

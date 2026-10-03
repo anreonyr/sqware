@@ -228,6 +228,9 @@ fn main() -> Report<'static> {
         assert_eq!(keep, Ok(()), "归属记的是命，换代表照样改得")
     }
 
+    let complete = protocol::communication::session::establish::claim(sire, env::Mark::of("probe-rule-verified"), Wait::AtMost(MS)).expect("probe-rule: peer completion channel");
+    let mut verified = [0];
+    runtime::env::mail::HolePie::from_token(complete).pull(&mut verified, Wait::AtMost(10_000)).expect("probe-rule: peer did not verify before retirement");
     return Report::note(E_OK, OK_NOTE);
 }
 

@@ -33,6 +33,10 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::system::control::core::unit::Declaration;
+use programs::system::control::serve::task::Image;
+use programs::system::control::serve::task::Launch;
+use programs::system::control::serve::task::Readiness;
 use alloc::string::ToString;
 
 use env::Wait;
@@ -138,15 +142,15 @@ fn spawn_one(
 ) -> bool {
     let name = name.to_string();
     if table
-        .register(name.clone(), Announce::None, Ending::Transient)
+        .register(Declaration { name: name.clone(), announce: Announce::None, restart: Ending::Transient })
         .is_err()
     {
         return false;
     }
-    let Ok(task) = service::mint(table, name.as_str(), elf, kind) else {
+    let Ok(task) = service::mint(table, Image { name: name.as_str(), bytes: elf, kind }) else {
         return false;
     };
-    service::embark(table, name.as_str(), task, &[], &mut [], &[], Wait::POLL).is_ok()
+    service::embark(table, Launch { task, grants: &[], readiness: Readiness { name: name.as_str(), marks: &[], wait: Wait::POLL } }, &mut []).is_ok()
 }
 
 /// 铺不满就没得量

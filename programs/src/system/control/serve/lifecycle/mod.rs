@@ -9,30 +9,25 @@ pub mod embark;
 pub mod debark;
 pub mod ruin;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Key { Mint, Embark, Debark, Ruin }
 #[derive(Clone, Copy)]
 pub enum Action { Mint, Embark { parent: Option<TaskId> }, Debark, Ruin }
 pub struct Request { pub name: String, pub action: Action, pub back: Option<PieToken> }
 pub struct Instance { pub service: Service, pub marks: Vec<Mark>, pub launched: bool }
-pub struct Operation {
-    pub request: Request,
-    pub instance: Option<Instance>,
-    pub task: Option<TaskId>,
-    pub deadline: u64,
-    pub failure: Option<Fail>,
-}
+pub struct Execution { pub instance: Option<Instance>, pub task: Option<TaskId>, pub deadline: u64 }
+pub struct Operation { pub request: Request, pub execution: Execution, pub failure: Option<Fail> }
 pub struct Active(pub Option<Operation>);
 pub struct Tracked { pub operation: Operation, pub cursor: Cursor, pub complete: bool }
 pub struct Operations(pub VecDeque<Tracked>);
 impl Operations {
     pub fn new() -> Self { Self(VecDeque::new()) }
     pub fn push(&mut self, request: Request) -> Result<(), Fail> {
-        if self.0.iter().any(|j| j.operation.request.name == request.name) { return Err(Fail::NotReady); }
+        if self.0.iter().any(|j| !j.complete && j.operation.request.name == request.name) { return Err(Fail::NotReady); }
         self.0.try_reserve(1).map_err(|_| Fail::Full)?;
         self.0.push_back(Tracked { operation: Operation {
-            request, instance: None, task: None, failure: None,
-            deadline: runtime::env::chrono::clock() + start::BOOT_MS as u64 * 1_000_000,
+            request, failure: None, execution: Execution { instance: None, task: None, deadline: runtime::env::chrono::clock() + start::BOOT_MS as u64 * 1_000_000 },
         }, cursor: Cursor::default(), complete: false });
         Ok(())
     }
 }
-fn program(name: &str) -> Result<&'static crate::unit::UnitFile, Fail> { start::program_of(name).ok_or(Fail::Unknown) }

@@ -2,7 +2,6 @@ use super::start::{BOOT_MS, Error};
 use super::unit::Service;
 use crate::boot::Accounts;
 use crate::system::common::machine::Machine;
-use alloc::string::String;
 use env::{Access, Key, Mark, Pair, PieKind, Policy, Wait};
 use protocol::debug;
 use protocol::service::hub::{ENROLL_MAX, Enroll};
@@ -25,11 +24,12 @@ impl Supplies {
 impl Supplies {
     pub fn enroll(
         &mut self,
-        name: String,
         service: &mut Service,
-        load: &'static str,
+        program: &crate::unit::UnitFile,
     ) -> Result<(), Error> {
         let (task, channels) = service;
+        let name = program.name();
+        let load = program.supply().iter().find(|setup| setup.machine()).map(crate::unit::Setup::channel).ok_or(Error::Step("no machine supply"))?;
         let Some(link) = channels.first_mut() else {
             return Err(Error::Step("no channel"));
         };
@@ -63,7 +63,7 @@ impl Supplies {
                 }
                 None => debug!(
                     "system: enroll {} skipped {:#x}",
-                    name.as_str(),
+                    name,
                     key.base().unwrap_or(0)
                 ),
             }
@@ -86,7 +86,7 @@ impl Supplies {
         if self.out.send(enroll).is_err() {
             return Err(Error::Step("no channel"));
         }
-        debug!("system: enrolled {} supplies for {}", got, name.as_str());
+        debug!("system: enrolled {} supplies for {}", got, name);
         Ok(())
     }
 }

@@ -57,12 +57,8 @@ impl Table {
         Table { rows: Vec::new() }
     }
 
-    pub fn register(
-        &mut self,
-        name: String,
-        announce: Announce,
-        restart: Ending,
-    ) -> Result<(), Fail> {
+    pub fn register(&mut self, declaration: Declaration) -> Result<(), Fail> {
+        let Declaration { name, announce, restart } = declaration;
         if self.find(name.as_str()).is_some() {
             return Err(Fail::Unknown);
         }
@@ -97,11 +93,11 @@ impl Table {
         }
     }
 
-    pub fn attach(&mut self, name: &str, team: Option<TeamId>, task: TaskId) -> Result<(), Fail> {
+    pub fn attach(&mut self, name: &str, slot: Slot) -> Result<(), Fail> {
         let Some(s) = self.row_mut(name) else {
             return Err(Fail::Unknown);
         };
-        s.slot = Slot::Live { team, task };
+        s.slot = slot;
         s.state = State::NeverStarted;
         s.named = false;
         Ok(())
@@ -127,3 +123,5 @@ impl Table {
         self.rows.iter_mut().find(|s| s.name == name)
     }
 }
+
+pub struct Declaration { pub name: String, pub announce: Announce, pub restart: Ending }
