@@ -24,9 +24,7 @@ pub(crate) fn accord(
             .ok_or(PieFail::Denied)?;
         if let AnyPie::Pole(p) = &*pie {
             operation = Some(p.meta().backing().operation().ok_or(PieFail::Busy)?);
-            if p.meta().backing().reserved() != 0 {
-                return Err(PieFail::HandedOver);
-            }
+            if p.meta().backing().reserved() != 0 { return Err(PieFail::HandedOver); }
         }
         if !pie.alive() {
             return Err(PieFail::Dead);
@@ -53,12 +51,7 @@ pub(crate) fn accord(
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
         let granted = match &*pie {
             AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
-            AnyPie::Pole(p) => AnyPie::Pole(super::try_new_pie(
-                p.meta().clone(),
-                badge,
-                subset,
-                Some(src),
-            )?),
+            AnyPie::Pole(p) => AnyPie::Pole(super::try_new_pie(p.meta().clone(), badge, subset, Some(src))?),
             AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), badge, subset, Some(src))),
             AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), badge, subset, Some(src))),
         };

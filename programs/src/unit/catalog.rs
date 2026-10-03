@@ -16,6 +16,8 @@ pub mod busy;
 pub mod canonical;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
+#[path = "../service/identity/program.rs"]
+pub mod identity;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -26,10 +28,6 @@ pub mod guest;
 pub mod hang;
 #[path = "../service/hub/program.rs"]
 pub mod hub;
-#[path = "../service/identity/program.rs"]
-pub mod identity;
-#[path = "../harness/probe/identity_replacement/program.rs"]
-pub mod identity_replacement;
 #[path = "../harness/bench/load/load/program.rs"]
 pub mod load;
 #[path = "../harness/guest/lodger/program.rs"]
@@ -50,6 +48,8 @@ pub mod probe_coalition;
 pub mod probe_control;
 #[path = "../harness/probe/probe_denied/program.rs"]
 pub mod probe_denied;
+#[path = "../harness/probe/identity_replacement/program.rs"]
+pub mod identity_replacement;
 #[path = "../harness/probe/probe_lease/program.rs"]
 pub mod probe_lease;
 #[path = "../harness/probe/probe_operator_gate/program.rs"]

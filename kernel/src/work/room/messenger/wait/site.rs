@@ -12,37 +12,17 @@ use crate::work::unit::task::{Task, TaskState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
-    Space {
-        space: Asid,
-        slot: usize,
-    },
-    Hole {
-        hole: usize,
-        dir: HoleDir,
-    },
-    Nole {
-        id: usize,
-    },
+    Space { space: Asid, slot: usize },
+    Hole { hole: usize, dir: HoleDir },
+    Nole { id: usize },
     /// **页上那一位"有事"**（架把铃并进页之后，页也能被等——见 `mail::pole`）。
-    Pole {
-        id: usize,
-    },
-    Task {
-        id: TaskId,
-    },
-    Pies {
-        task: TaskId,
-    },
+    Pole { id: usize },
+    Task { id: TaskId },
+    Pies { task: TaskId },
     /// **能力可观察状态改变**（独立一格：`Pies` 的到达语义留给 `Fall`，一个字不扩）。
-    Capabilities {
-        task: TaskId,
-    },
-    Tole {
-        id: usize,
-    },
-    Alarm {
-        task: TaskId,
-    },
+    Capabilities { task: TaskId },
+    Tole { id: usize },
+    Alarm { task: TaskId },
 }
 
 impl WakeKey {

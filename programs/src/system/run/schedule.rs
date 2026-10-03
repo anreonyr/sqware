@@ -2,8 +2,8 @@
 //! ```text
 //!   立账 → 造身子 → 装通道        ← 不是手：这三件对整张单逐条做（`control/{assemble,mod}.rs`）
 
-use crate::service::identity::bridge as identity;
 use crate::service::operator::bridge as operator;
+use crate::service::identity::bridge as identity;
 use crate::system::Assembly;
 use crate::system::control::enroll as control;
 use crate::system::control::{Error, Service};
@@ -17,11 +17,7 @@ pub type Act = fn(&mut Assembly, &UnitFile, &mut Service) -> Result<(), &'static
 /// **一相**：这一相里那几只手，**次序即契约**
 pub type Phase = &'static [Act];
 
-pub const BEFORE_LAUNCH: Phase = &[
-    identity::bind,
-    prepare_runtime,
-    crate::harness::probe::identity::supply,
-];
+pub const BEFORE_LAUNCH: Phase = &[identity::bind, prepare_runtime, crate::harness::probe::identity::supply];
 
 pub const AFTER_RELEASE: Phase = &[control::await_ready];
 
@@ -43,10 +39,6 @@ pub fn advance(
     Ok(())
 }
 
-fn prepare_runtime(
-    assembly: &mut Assembly,
-    _program: &UnitFile,
-    _service: &mut Service,
-) -> Result<(), &'static str> {
+fn prepare_runtime(assembly: &mut Assembly, _program: &UnitFile, _service: &mut Service) -> Result<(), &'static str> {
     assembly.control.progress(&mut assembly.tree)
 }

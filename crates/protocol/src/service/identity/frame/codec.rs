@@ -1,11 +1,7 @@
 //! Tagged request/reply dispatch; field layout belongs to Frame and Span.
 
+use super::{vocab::*, data::{Back, Optional, Task, valid_selector}, MAX_FRAME, OK};
 use super::super::grant::Grant;
-use super::{
-    MAX_FRAME, OK,
-    data::{Back, Optional, Task, valid_selector},
-    vocab::*,
-};
 use crate::wire::message::Message;
 use env::{PieToken, wire::Span};
 
@@ -49,11 +45,7 @@ impl Span for Install {
             }
             Self::Restrict { parent, subject } => {
                 put(&2u8, bytes, &mut at)?;
-                at = Restricted {
-                    parent: Task::new(parent)?,
-                    subject,
-                }
-                .store_at(bytes, at)?;
+                at = Restricted { parent: Task::new(parent)?, subject }.store_at(bytes, at)?;
             }
         }
         Some(at)
@@ -61,16 +53,11 @@ impl Span for Install {
     fn fetch_at(bytes: &[u8], mut at: usize) -> Option<(Self, usize)> {
         let install = match get::<u8>(bytes, &mut at)? {
             0 => Self::Authorized(get(bytes, &mut at)?),
-            1 => Self::Inherit {
-                parent: get::<Task>(bytes, &mut at)?.0,
-            },
+            1 => Self::Inherit { parent: get::<Task>(bytes, &mut at)?.0 },
             2 => {
                 let (frame, next) = Restricted::fetch_at(bytes, at)?;
                 at = next;
-                Self::Restrict {
-                    parent: frame.parent.0,
-                    subject: frame.subject,
-                }
+                Self::Restrict { parent: frame.parent.0, subject: frame.subject }
             }
             _ => return None,
         };
@@ -81,14 +68,8 @@ impl Span for Install {
 impl Wire {
     pub fn store(self, back: PieToken, bytes: &mut [u8]) -> Option<usize> {
         self.validate()?;
-        if back.get() == 0 {
-            return None;
-        }
-        let mut at = Header {
-            back: Back(back),
-            action: Grant::of_wire(&self),
-        }
-        .store_at(bytes, 0)?;
+        if back.get() == 0 { return None; }
+        let mut at = Header { back: Back(back), action: Grant::of_wire(&self) }.store_at(bytes, 0)?;
         match self {
             Self::Resolve(t) | Self::Unbind(t) => put(&Task::new(t)?, bytes, &mut at)?,
             Self::Matches(t, selector) => {
@@ -133,34 +114,19 @@ impl Wire {
 
     /// An intact header with a malformed/unknown action keeps the caller's reply route.
     pub fn take(bytes: &[u8]) -> Option<(Option<Self>, PieToken)> {
-        if bytes.len() > MAX_FRAME {
-            return None;
-        }
+        if bytes.len() > MAX_FRAME { return None; }
         let (header, mut at) = Header::fetch_at(bytes, 0)?;
-        if header.back.0.get() == 0 {
-            return None;
-        }
+        if header.back.0.get() == 0 { return None; }
         let decoded = (|| {
             let wire = match Grant::from_action(header.action)? {
                 Grant::Resolve => Self::Resolve(get::<Task>(bytes, &mut at)?.0),
-                Grant::Matches => {
-                    Self::Matches(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?)
-                }
-                Grant::Same => Self::Same(
-                    get::<Task>(bytes, &mut at)?.0,
-                    get::<Task>(bytes, &mut at)?.0,
-                ),
+                Grant::Matches => Self::Matches(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?),
+                Grant::Same => Self::Same(get::<Task>(bytes, &mut at)?.0, get::<Task>(bytes, &mut at)?.0),
                 Grant::Sire => Self::Sire(get(bytes, &mut at)?),
                 Grant::Heir => Self::Heir(get(bytes, &mut at)?, get(bytes, &mut at)?),
                 Grant::Amid => Self::Amid(get(bytes, &mut at)?, get(bytes, &mut at)?),
-                Grant::Members => Self::Members(
-                    get(bytes, &mut at)?,
-                    get::<Optional<Cursor>>(bytes, &mut at)?.0,
-                ),
-                Grant::Memberships => Self::Memberships(
-                    get(bytes, &mut at)?,
-                    get::<Optional<Cursor>>(bytes, &mut at)?.0,
-                ),
+                Grant::Members => Self::Members(get(bytes, &mut at)?, get::<Optional<Cursor>>(bytes, &mut at)?.0),
+                Grant::Memberships => Self::Memberships(get(bytes, &mut at)?, get::<Optional<Cursor>>(bytes, &mut at)?.0),
                 Grant::Adopt => Self::Adopt(get(bytes, &mut at)?),
                 Grant::Waive => Self::Waive,
                 Grant::Restrict => Self::Restrict(get(bytes, &mut at)?),
@@ -197,19 +163,11 @@ impl Message for Reply {
     const EMPTY: Self::Buf = [0; MAX_FRAME];
 
     fn store(&self, bytes: &mut [u8]) -> Option<usize> {
-        if let Self::Fail(fail) = *self {
-            return fail_to_code(Some(fail)).store_at(bytes, 0);
-        }
+        if let Self::Fail(fail) = *self { return fail_to_code(Some(fail)).store_at(bytes, 0); }
         let kind = match self {
-            Self::Unit => 0,
-            Self::Binding(_) => 1,
-            Self::Principal(_) => 2,
-            Self::Coalition(_) => 3,
-            Self::Match(_) => 4,
-            Self::Bool(_) => 5,
-            Self::Members(_) => 6,
-            Self::Memberships(_) => 7,
-            Self::Fail(_) => return None,
+            Self::Unit => 0, Self::Binding(_) => 1, Self::Principal(_) => 2,
+            Self::Coalition(_) => 3, Self::Match(_) => 4, Self::Bool(_) => 5,
+            Self::Members(_) => 6, Self::Memberships(_) => 7, Self::Fail(_) => return None,
         };
         let mut at = ReplyHeader { status: OK, kind }.store_at(bytes, 0)?;
         match *self {
@@ -227,9 +185,7 @@ impl Message for Reply {
     }
 
     fn fetch(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() > MAX_FRAME {
-            return None;
-        }
+        if bytes.len() > MAX_FRAME { return None; }
         let (status, end) = u8::fetch_at(bytes, 0)?;
         if status != OK {
             let fail = code_to_fail(status)?;

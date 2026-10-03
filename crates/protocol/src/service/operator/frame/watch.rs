@@ -13,8 +13,8 @@
 //! 那一格自己的号、以及它的主人。订阅者按 `road` 做前缀过滤，故**前缀里那几格的幂等落法
 //! 不单独报**：报了也只会是"这条路可寻址"的同义句。
 
-use env::TaskId;
 use env::wire::Field as _;
+use env::TaskId;
 
 use crate::common::path::{Path, PathBuf};
 use crate::wire::message::Message;

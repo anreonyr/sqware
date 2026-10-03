@@ -32,8 +32,8 @@ use programs::harness::probe;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::Fail as TreeFail;
-use protocol::service::operator::Grant as TreeGrant;
 use protocol::service::operator::client as operator;
+use protocol::service::operator::Grant as TreeGrant;
 use protocol::system::control as ccall;
 use runtime::env::unit as utask;
 
@@ -80,12 +80,8 @@ fn main() -> Report<'static> {
     let parent = tree
         .pane(ccall::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    let seen =
-        probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
-    debug!(
-        "probe-control: faces={seen} want={}",
-        (ccall::Grant::ALL.len() + 1)
-    );
+    let seen = probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
+    debug!("probe-control: faces={seen} want={}", (ccall::Grant::ALL.len() + 1));
     assert_eq!(
         seen,
         (ccall::Grant::ALL.len() + 1),

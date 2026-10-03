@@ -41,7 +41,7 @@ pub mod writer;
 
 use core::marker::PhantomData;
 
-use env::{PieResult, PieToken};
+use env::{PieToken, PieResult};
 use runtime::core::res::dock::Dock;
 use runtime::env::mail::PolePie;
 

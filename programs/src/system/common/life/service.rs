@@ -10,7 +10,9 @@ use crate::system::common::life::table::{Announce, Service, Slot, State, Table};
 use crate::system::common::life::verdict::{Fail, Ready, Reaped, admit_start, probe_ready};
 use protocol::communication::session::establish::Endpoint;
 
-use crate::unit::{Died, hub::E_HUB, identity::E_IDENTITY, operator::E_TREE};
+use crate::unit::{
+    Died, hub::E_HUB, identity::E_IDENTITY, operator::E_TREE,
+};
 
 /// **穷尽 match 在域词表上**（env::UnitFail）：装不上 = UnitFail::BadImage
 /// 内存不够 / 产不出来 = UnitFail::OoM（本协议名 Fail::Full）；其余
@@ -26,11 +28,9 @@ fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
 fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     match e.source {
         PieFail::OoM => Fail::Full,
-        PieFail::Denied
-        | PieFail::Dead
-        | PieFail::HandedOver
-        | PieFail::NotAligned
-        | PieFail::Busy => Fail::Unknown,
+        PieFail::Denied | PieFail::Dead | PieFail::HandedOver | PieFail::NotAligned | PieFail::Busy => {
+            Fail::Unknown
+        }
     }
 }
 

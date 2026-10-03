@@ -3,9 +3,9 @@
 //! 长度全部由字段宽度求和得出（`#[derive(env::Frame)]` 那一处定义），手写的那五枚自由函数
 //! （`pack_ask` / `pack_arm` / `unpack_ask` / `pack_time` / `unpack_time`）与那四个长度常量
 
-use env::wire::Span as _;
 use env::{Mark, PieToken};
 use protocol::wire::message::Message;
+use env::wire::Span as _;
 
 /// 问那一句的动作码：「现在几点」
 pub const ASK: u8 = 1;

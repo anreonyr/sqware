@@ -20,8 +20,8 @@ use env::wire::Field;
 use programs::Report;
 
 use env::PieToken;
-use protocol::communication::session::Session;
 use protocol::communication::session::establish::Endpoint;
+use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator as ocall;
 use protocol::service::operator::client as operator;

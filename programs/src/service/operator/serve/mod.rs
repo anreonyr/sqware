@@ -138,20 +138,13 @@ pub fn serve() -> Result<(), Start> {
     let mut last_code: u8 = 0xff;
     let mut streak: usize = 0;
     loop {
-        if query.as_ref().is_some_and(|bundle| !bundle.available()) {
+        if query.as_ref().is_some_and(|bundle| !bundle.available())
+        {
             query = None;
             debug::put("operator: retired unavailable identity query bundle");
         }
         // 一、补齐那几件事（收提示之路上那三种帧；认领答话路；认出问话孔并挂组）。
-        let settling = settle(
-            &mut desk,
-            &pile,
-            &tip_hole,
-            &mut query,
-            &mut tree,
-            &mut watchers,
-            &mut late,
-        );
+        let settling = settle(&mut desk, &pile, &tip_hole, &mut query, &mut tree, &mut watchers, &mut late);
         settle_rounds = if settling {
             settle_rounds.saturating_add(1)
         } else {
@@ -176,14 +169,7 @@ pub fn serve() -> Result<(), Start> {
         let code = if tok != tip
             && let Some(guest) = desk.guest(tok).copied()
         {
-            serve_one(
-                &mut tree,
-                &mut watchers,
-                guest,
-                query.as_ref(),
-                &mut buf,
-                &mut outs,
-            )
+            serve_one(&mut tree, &mut watchers, guest, query.as_ref(), &mut buf, &mut outs)
         } else {
             // 但**别的号**就是在查的那一形——组里挂着一枚"一直报就绪、却没人招待"的孔。
             if tok != tip {
@@ -287,111 +273,55 @@ fn settle(
             continue;
         };
         match rec {
-            ocall::TipIn::Plate {
-                road,
-                leaf,
-                permit,
-                owner,
-                replace,
-                back,
-            } => {
+            ocall::TipIn::Plate { road, leaf, permit, owner, replace, back } => {
                 if !valid_tip_back(back, from) {
                     continue;
                 }
                 match plate(tree, &road, leaf, permit, owner, replace) {
                     Ok((id, changes)) => {
-                        for change in &changes {
-                            answer::changed(tree, watchers, change);
-                        }
+                        for change in &changes { answer::changed(tree, watchers, change); }
                         tip_ack(back, ocall::OK, id);
                     }
-                    Err(fail) => tip_ack(
-                        back,
-                        ocall::fail_to_code(Some(fail)),
-                        ocall::EntryId::new(0),
-                    ),
+                    Err(fail) => tip_ack(back, ocall::fail_to_code(Some(fail)), ocall::EntryId::new(0)),
                 }
             }
             ocall::TipIn::Abort { road, leaf, back } => {
-                if !valid_tip_back(back, from) {
-                    continue;
-                }
+                if !valid_tip_back(back, from) { continue; }
                 let result = match tree.seek(&road) {
                     Ok(id) if tree.reference(id) == Some(leaf) => tree.trim(id),
                     _ => Ok(None),
                 };
-                if let Ok(Some(change)) = &result {
-                    answer::changed(tree, watchers, change);
-                }
-                tip_ack(
-                    back,
-                    ocall::fail_to_code(result.err()),
-                    ocall::EntryId::new(0),
-                );
+                if let Ok(Some(change)) = &result { answer::changed(tree, watchers, change); }
+                tip_ack(back, ocall::fail_to_code(result.err()), ocall::EntryId::new(0));
             }
             ocall::TipIn::Empty { road, back } => {
-                if !valid_tip_back(back, from) {
-                    continue;
-                }
+                if !valid_tip_back(back, from) { continue; }
                 let result = match tree.seek(&road) {
-                    Ok(id) => tree
-                        .list(ocall::Where::At(id))
-                        .and_then(|children| {
-                            if children.count() == 0 {
-                                Ok(id)
-                            } else {
-                                Err(ocall::Fail::NonEmpty)
-                            }
-                        })
+                    Ok(id) => tree.list(ocall::Where::At(id)).and_then(|children|
+                        if children.count() == 0 { Ok(id) } else { Err(ocall::Fail::NonEmpty) })
                         .and_then(|id| tree.trim(id).map(|_| id)),
                     Err(ocall::Fail::Unknown) => Ok(ocall::EntryId::new(0)),
                     Err(fail) => Err(fail),
                 };
-                tip_ack(
-                    back,
-                    ocall::fail_to_code(result.err()),
-                    ocall::EntryId::new(0),
-                );
+                tip_ack(back, ocall::fail_to_code(result.err()), ocall::EntryId::new(0));
             }
             ocall::TipIn::Unplate { id, back } => {
-                if !valid_tip_back(back, from) {
-                    continue;
-                }
-                let result = match tree.trim(id) {
-                    Err(ocall::Fail::Unknown) => Ok(None),
-                    other => other,
-                };
-                if let Ok(Some(change)) = &result {
-                    answer::changed(tree, watchers, change);
-                }
+                if !valid_tip_back(back, from) { continue; }
+                let result = match tree.trim(id) { Err(ocall::Fail::Unknown) => Ok(None), other => other };
+                if let Ok(Some(change)) = &result { answer::changed(tree, watchers, change); }
                 tip_ack(back, ocall::fail_to_code(result.err()), id);
             }
-            ocall::TipIn::Wired {
-                authority,
-                resolve,
-                matches,
-                same,
-                back,
-            } => {
+            ocall::TipIn::Wired { authority, resolve, matches, same, back } => {
                 if !valid_tip_back(back, from) {
                     continue;
                 }
                 *query = protocol::service::identity::client::TaskQuery::direct(
                     authority, resolve, matches, same,
-                )
-                .ok();
+                ).ok();
                 if query.is_none() {
                     debug::put("operator: invalid identity query bundle");
                 }
-                tip_ack(
-                    back,
-                    if query.is_some() {
-                        ocall::OK
-                    } else {
-                        ocall::UNJUDGED
-                    },
-                    ocall::EntryId::new(0),
-                );
+                tip_ack(back, if query.is_some() { ocall::OK } else { ocall::UNJUDGED }, ocall::EntryId::new(0));
             }
             // **一位客人**：按"它开的 + 记号"认它那条答话路。
             ocall::TipIn::Guest(client) => match reply_of(client) {
@@ -554,11 +484,7 @@ fn serve_one(
             <ocall::Req as protocol::wire::message::Message>::fetch(&buf[..len])
         }
         Ok((_, from)) => {
-            debug!(
-                "operator: rejected session sender={} guest={}",
-                from.get(),
-                guest.who().get()
-            );
+            debug!("operator: rejected session sender={} guest={}", from.get(), guest.who().get());
             return Some(0xff);
         }
         Err(_) => None,

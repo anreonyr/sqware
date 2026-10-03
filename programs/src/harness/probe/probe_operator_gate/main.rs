@@ -6,13 +6,14 @@
 extern crate alloc;
 extern crate programs;
 
+
 use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
 use protocol::communication::session::establish;
+use protocol::communication::session::Session;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::{Face as TreeFace, Mine, Pane, Watch};
 use protocol::service::operator::{EntryId, Fail, Grant, Permit};
@@ -88,25 +89,10 @@ fn main() -> Report<'static> {
     );
 
     let root = tree.root();
-    assert!(matches!(
-        root.open("idt".into(), Wait::AtMost(MS)),
-        Err(Fail::Denied)
-    ));
-    let source = mail::unseal_hole(env::Mark::of("raw-generic")).unwrap();
-    assert!(matches!(
-        root.bind(
-            "uit".into(),
-            source,
-            Permit::Public,
-            Mine::No,
-            Wait::AtMost(MS)
-        ),
-        Err(Fail::Denied)
-    ));
-    assert!(matches!(
-        root.trim(land_id, Wait::AtMost(MS)),
-        Err(Fail::Denied)
-    ));
+    assert!(matches!(root.open("idt".into(), Wait::AtMost(MS)), Err(Fail::Denied)));
+    let source = mail::unseal_hole(env::Mark::of("raw-generic" )).unwrap();
+    assert!(matches!(root.bind("uit".into(), source, Permit::Public, Mine::No, Wait::AtMost(MS)), Err(Fail::Denied)));
+    assert!(matches!(root.trim(land_id, Wait::AtMost(MS)), Err(Fail::Denied)));
     protocol::debug::put("hierarchy: generic Part/Land/Trim denied for bound Task");
     Report::note(env::EXIT_OK, OK_NOTE)
 }

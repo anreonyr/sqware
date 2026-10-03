@@ -126,11 +126,7 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
 pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
     let (_, owner, mark) = mail::reserve(entry).map_err(|_| EstablishFail::NoSeed)?;
     let (rx, seed) = seal_and_ship(owner, mark)?;
-    Ok(Endpoint {
-        rx,
-        tx: Some(entry),
-        seed,
-    })
+    Ok(Endpoint { rx, tx: Some(entry), seed })
 }
 
 /// **单向赠予**：我铸一枚（刻 `mark`），把**读端**交给 `to`，本端 `narrow(STORE)` 留写端

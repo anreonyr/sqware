@@ -182,10 +182,9 @@ pub(crate) fn install(task: &Task, items: Vec<(Key, AnyPie)>) -> usize {
         task.pies.lock().push(pie);
     }
     // 装完这一批设备能力：要求复核一次（boot 期还没有订阅者，`signal` 也就什么都不做）。
-    let _ =
-        crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Capabilities {
-            task: task.ident.id,
-        });
+    let _ = crate::work::room::messenger::signal(
+        crate::work::room::messenger::WakeKey::Capabilities { task: task.ident.id },
+    );
     n
 }
 

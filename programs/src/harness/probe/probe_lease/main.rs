@@ -6,6 +6,7 @@
 extern crate alloc;
 extern crate programs;
 
+
 use env::Wait;
 use programs::Report;
 
@@ -13,7 +14,7 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::service::operator::Permit;
 use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face as TreeFace;
+use protocol::service::operator::client::{Face as TreeFace};
 
 use runtime::env::mail;
 use runtime::env::unit as utask;
@@ -37,26 +38,12 @@ fn main() -> Report<'static> {
     let entry = mail::unseal_hole(env::Mark::of("lease-entry")).unwrap();
     let target = protocol::system::control::publication::Target::Service {
         scope: protocol::system::control::publication::Scope::Fixture,
-        group: "fixtures".into(),
-        name: "lease".into(),
+        group: "fixtures".into(), name: "lease".into(),
     };
-    let id = protocol::system::control::publication::Client::injected()
-        .unwrap()
-        .publish(target, entry, Permit::Public, Wait::AtMost(MS))
-        .unwrap();
-    let cap = tree
-        .tile(
-            protocol::common::path::Path::new("svc/fixtures/lease"),
-            Wait::AtMost(MS),
-        )
-        .unwrap()
-        .token(Wait::AtMost(MS))
-        .unwrap();
-    assert_eq!(
-        mail::reserve(cap).unwrap().1,
-        utask::self_id(),
-        "Control must preserve publisher ownership"
-    );
+    let id = protocol::system::control::publication::Client::injected().unwrap()
+        .publish(target, entry, Permit::Public, Wait::AtMost(MS)).unwrap();
+    let cap = tree.tile(protocol::common::path::Path::new("svc/fixtures/lease"), Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)).unwrap();
+    assert_eq!(mail::reserve(cap).unwrap().1, utask::self_id(), "Control must preserve publisher ownership");
     debug!("probe-lease: publication={}", id.get());
 
     return Report::note(E_OK, OK_NOTE);

@@ -8,16 +8,16 @@ use alloc::vec::Vec;
 
 use env::HoleDir;
 use env::{Access, Key, MailFail, Mark, Pair, PieKind, PieToken, Policy, TaskId, Wait};
-use protocol::communication::hand::Sender;
-use protocol::communication::hand::{Receiver, RecvFail};
-use protocol::communication::session::Session;
 use protocol::communication::session::establish;
+use protocol::communication::hand::{Receiver, RecvFail};
+use protocol::communication::hand::Sender;
+use protocol::communication::session::Session;
 use protocol::debug;
+use protocol::service::identity::client::{Organization, Query};
+use protocol::service::identity::{CoalitionId, PageId as _, Selector};
 use protocol::service::hub::frame::Wire;
 use protocol::service::hub::frame::{Said, Window};
 use protocol::service::hub::{self, Deed, Enroll, Grant};
-use protocol::service::identity::client::{Organization, Query};
-use protocol::service::identity::{CoalitionId, PageId as _, Selector};
 use protocol::service::operator::Permit;
 use protocol::service::operator::client as operator;
 use protocol::service::operator::client::Face as TreeFace;
@@ -82,13 +82,9 @@ pub fn serve() -> Result<(), Start> {
         // 五、**逐类立一枚盟**：那一枚盟号就是 permit 里那句"许驱这一类"的对象（也留给 `bond`
         let classes = ledger.classes().ok_or(Start::Tree(E_HUB))?;
         let me = utask::self_id();
-        let subject = league
-            .query
-            .resolve(me, Wait::AtMost(MS))
+        let subject = league.query.resolve(me, Wait::AtMost(MS))
             .map_err(|_| Start::Face(E_HUB))?
-            .ok_or(Start::Face(E_HUB))?
-            .current
-            .principal;
+            .ok_or(Start::Face(E_HUB))?.current.principal;
         // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
         // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
         // `ACTIVATE_MAX` 把关，装不下就是装配错、当场收手。
@@ -98,11 +94,7 @@ pub fn serve() -> Result<(), Start> {
             let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
                 return Err(Start::Face(E_HUB));
             };
-            if league
-                .organization
-                .admit(id, subject, Wait::AtMost(MS))
-                .is_err()
-            {
+            if league.organization.admit(id, subject, Wait::AtMost(MS)).is_err() {
                 return Err(Start::Face(E_HUB));
             }
             let Some(slot) = leagues.get_mut(n) else {
@@ -112,7 +104,8 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        crate::service::hub::bridge::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
+        crate::service::hub::bridge::activate(me, &leagues[..n])
+            .map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;

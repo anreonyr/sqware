@@ -19,8 +19,8 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
-pub mod backing;
 pub mod hart;
+pub mod backing;
 pub mod pagetable;
 pub mod permit;
 pub mod shell;

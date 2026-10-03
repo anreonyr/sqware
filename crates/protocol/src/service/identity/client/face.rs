@@ -82,9 +82,7 @@ impl Face {
         }
         let _back = Back(back);
         let mut request = Sender::<(Wire, PieToken)>::from_token(self.entry);
-        request
-            .send_within((wire, seed), wait)
-            .map_err(|_| CallError::Transport)?;
+        request.send_within((wire, seed), wait).map_err(|_| CallError::Transport)?;
         let mut bytes = Reply::EMPTY;
         let reply = Receiver::<Reply>::from_token(back)
             .recv(&mut bytes, wait)

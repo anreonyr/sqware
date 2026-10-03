@@ -226,7 +226,11 @@ pub(crate) fn detach(meta: &ToleMeta, mate: Mate) -> Result<(), ToleFail> {
 ///
 /// 登记成功**先留一次待复核提示**：已有变化、已完成的任务以及登记那一刻的状态，
 /// 都不依赖"未来再来一个事件"。
-pub(crate) fn subscribe(meta: &ToleMeta, sub: Sub, life: Weak<Life>) -> Result<(), ToleFail> {
+pub(crate) fn subscribe(
+    meta: &ToleMeta,
+    sub: Sub,
+    life: Weak<Life>,
+) -> Result<(), ToleFail> {
     if !meta.alive() {
         return Err(ToleFail::Dead);
     }

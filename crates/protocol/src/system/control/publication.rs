@@ -6,9 +6,9 @@ use crate::service::identity::{CoalitionId, PrincipalId};
 use crate::service::operator::{EntryId, Fail, Permit};
 use crate::wire::message::Message;
 use alloc::string::String;
-use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use runtime::env::mail::{self, HolePie};
+use env::wire::Span as _;
 
 pub const ENTRY: Mark = Mark::of("control-publication");
 pub const BACK: Mark = Mark::of("control-publication-back");
@@ -198,9 +198,7 @@ impl Reply {
         if bytes.len() != Self::LEN || from != control {
             return Err(Fail::Denied);
         }
-        Self::fetch_at(bytes, 0)
-            .map(|one| one.0)
-            .ok_or(Fail::Unknown)
+        Self::fetch_at(bytes, 0).map(|one| one.0).ok_or(Fail::Unknown)
     }
     pub fn mount(id: EntryId) -> Self {
         Self {

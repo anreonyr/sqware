@@ -40,9 +40,8 @@ impl TaskQuery {
     }
     /// Revalidate the whole source-bound bundle without querying or caching identity state.
     pub fn available(&self) -> bool {
-        [&self.resolve, &self.matches, &self.same]
-            .into_iter()
-            .all(|face| Face::direct(face.authority(), face.grant(), face.entry()).is_ok())
+        [&self.resolve, &self.matches, &self.same].into_iter().all(|face|
+            Face::direct(face.authority(), face.grant(), face.entry()).is_ok())
     }
 
     pub fn resolve(&self, task: TaskId, wait: Wait) -> Result<Option<Binding>, CallError> {

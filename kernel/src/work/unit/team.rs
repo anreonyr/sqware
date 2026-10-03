@@ -35,26 +35,18 @@ pub(crate) struct Staging {
 
 pub(crate) struct Construction(Arc<Team>);
 impl Drop for Construction {
-    fn drop(&mut self) {
-        self.0.operating.store(false, Ordering::Release);
-    }
+    fn drop(&mut self) { self.0.operating.store(false, Ordering::Release); }
 }
 
 impl Team {
     pub(crate) fn operation(self: &Arc<Self>) -> Option<Construction> {
-        self.operating
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()?;
+        self.operating.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).ok()?;
         Some(Construction(self.clone()))
     }
 
     pub(crate) fn cancel_staging(&self) -> Result<(), crate::memory::manager::MapError> {
         loop {
-            let item = self
-                .staged
-                .lock()
-                .last()
-                .map(|item| (item.meta.clone(), item.span));
+            let item = self.staged.lock().last().map(|item| (item.meta.clone(), item.span));
             let Some((meta, span)) = item else { break };
             self.space.release(span)?;
             meta.backing().unreserve();
@@ -129,9 +121,7 @@ impl Team {
 }
 
 impl Drop for Team {
-    fn drop(&mut self) {
-        self.cancel_staging().expect("team: cancel staging");
-    }
+    fn drop(&mut self) { self.cancel_staging().expect("team: cancel staging"); }
 }
 
 pub struct TeamBuilder {
@@ -154,10 +144,7 @@ impl TeamBuilder {
         self
     }
 
-    pub(crate) fn constructing(mut self) -> Self {
-        self.constructing = true;
-        self
-    }
+    pub(crate) fn constructing(mut self) -> Self { self.constructing = true; self }
 
     pub fn spawn(self) -> Result<Arc<Team>, crate::memory::manager::MapError> {
         let id = alloc_team_id();
@@ -176,8 +163,7 @@ impl TeamBuilder {
                 operating: AtomicBool::new(false),
                 staged: SpinLock::new(Vec::new()),
             })
-        )
-        .map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;
+        ).map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;
         if let Some(sire) = team.sire.upgrade() {
             sire.adopt(team.clone())
                 .map_err(|()| crate::memory::manager::MapError::OutOfMemory)?;
@@ -219,65 +205,36 @@ pub(crate) fn alloc_team_id() -> TeamId {
 }
 
 /// Prepare and atomically publish one Held task, consuming private roots only at commit.
-pub(crate) fn spawn(
-    target: &Arc<Team>,
-    caller: Option<&Arc<Task>>,
-    entry: usize,
-    words: Vec<usize>,
-    stack: usize,
-) -> Result<Arc<Task>, env::UnitFail> {
-    use crate::memory::manager::{MapError, addr::VirtAddr as KVirt};
+pub(crate) fn spawn(target: &Arc<Team>, caller: Option<&Arc<Task>>, entry: usize,
+    words: Vec<usize>, stack: usize) -> Result<Arc<Task>, env::UnitFail> {
     use env::UnitFail;
+    use crate::memory::manager::{MapError, addr::VirtAddr as KVirt};
     fn map_err(error: MapError) -> UnitFail {
-        if error == MapError::OutOfMemory {
-            UnitFail::OoM
-        } else {
-            UnitFail::Denied
-        }
+        if error == MapError::OutOfMemory { UnitFail::OoM } else { UnitFail::Denied }
     }
     let first = !target.ready.load(Ordering::Acquire);
-    let _construction = if first {
-        Some(target.operation().ok_or(UnitFail::Busy)?)
-    } else {
-        None
-    };
-    let entry_va = if entry == 0 {
-        target.default_entry()
-    } else {
-        entry
-    };
-    if !entry_va.is_multiple_of(2)
-        || !Space::user_range(entry_va, 2)
+    let _construction = if first { Some(target.operation().ok_or(UnitFail::Busy)?) } else { None };
+    let entry_va = if entry == 0 { target.default_entry() } else { entry };
+    if !entry_va.is_multiple_of(2) || !Space::user_range(entry_va, 2)
         || target.space.instruction_byte(entry_va).is_none()
-        || target.space.instruction_byte(entry_va + 1).is_none()
-    {
+        || target.space.instruction_byte(entry_va + 1).is_none() {
         return Err(env::UnitFail::BadEntry);
     }
     let mut builder = target.task().entry(KVirt::from_raw(entry_va)).args(words);
-    if stack > 0 {
-        builder = builder.stack(stack);
-    }
+    if stack > 0 { builder = builder.stack(stack); }
     let caller_id = caller.map(|caller| caller.ident.id);
     let result = (|| -> Result<Arc<Task>, UnitFail> {
         use crate::work::unit::gate::{self, AnyPie, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
-        if !first {
-            return prepared.publish(|| {}).map_err(map_err);
-        }
+        if !first { return prepared.publish(|| {}).map_err(map_err); }
         let caller = caller.ok_or(UnitFail::Denied)?;
         let mut staged = target.staged.lock();
         let mut operations = Vec::new();
         let mut retired = Vec::new();
         let mut leases = Vec::new();
-        operations
-            .try_reserve(staged.len())
-            .map_err(|_| UnitFail::OoM)?;
-        retired
-            .try_reserve(staged.len())
-            .map_err(|_| UnitFail::OoM)?;
-        leases
-            .try_reserve(staged.len())
-            .map_err(|_| UnitFail::OoM)?;
+        operations.try_reserve(staged.len()).map_err(|_| UnitFail::OoM)?;
+        retired.try_reserve(staged.len()).map_err(|_| UnitFail::OoM)?;
+        leases.try_reserve(staged.len()).map_err(|_| UnitFail::OoM)?;
         for item in staged.iter() {
             operations.push(item.meta.backing().operation().ok_or(UnitFail::Busy)?);
         }
@@ -287,40 +244,26 @@ pub(crate) fn spawn(
             let Some(AnyPie::Pole(p)) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
             };
-            if !Arc::ptr_eq(p.meta(), &item.meta)
-                || !p.meta().alive()
-                || p.sire.is_some()
-                || p.heir.is_some()
-                || p.meta().owner() != caller.ident.id
-                || !p
-                    .permission()
-                    .contains(Permission::FETCH | Permission::VEST | Permission::ONLY)
+            if !Arc::ptr_eq(p.meta(), &item.meta) || !p.meta().alive() || p.sire.is_some()
+                || p.heir.is_some() || p.meta().owner() != caller.ident.id
+                || !p.permission().contains(Permission::FETCH | Permission::VEST | Permission::ONLY)
                 || p.meta().backing().reserved() != target.id.get()
-                || !p.meta().backing().unmapped()
-                || p.meta().mapped()
-            {
+                || !p.meta().backing().unmapped() || p.meta().mapped() {
                 return Err(UnitFail::Denied);
             }
         }
-        let result = prepared
-            .publish(|| {
-                for item in staged.drain(..) {
-                    let index = pies
-                        .iter()
-                        .position(|p| p.token() == item.token)
-                        .expect("staged root");
-                    let pie = pies.remove(index);
-                    pie.invalidate();
-                    retired.push(pie);
-                    item.meta.backing().unreserve();
-                    leases.push(item);
-                }
-                target.set_default_entry(entry_va);
-                target
-                    .ready
-                    .store(true, core::sync::atomic::Ordering::Release);
-            })
-            .map_err(map_err);
+        let result = prepared.publish(|| {
+            for item in staged.drain(..) {
+                let index = pies.iter().position(|p| p.token() == item.token).expect("staged root");
+                let pie = pies.remove(index);
+                pie.invalidate();
+                retired.push(pie);
+                item.meta.backing().unreserve();
+                leases.push(item);
+            }
+            target.set_default_entry(entry_va);
+            target.ready.store(true, core::sync::atomic::Ordering::Release);
+        }).map_err(map_err);
         drop(pies);
         drop(graph);
         drop(staged);

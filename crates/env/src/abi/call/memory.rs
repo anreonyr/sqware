@@ -1,6 +1,6 @@
 //! call::memory — **Memory 域（class 2：地址空间与页）**：调用表（[`MemoryCall`]）与失败词汇（[`MemoryFail`]）。
 
-use crate::wire::{PieToken, TeamId, VirtAddr};
+use crate::wire::{VirtAddr, TeamId, PieToken};
 use mold::{Envcall, Fail};
 
 /// Memory 域（class 2：用户堆与映射）的失败词汇。
@@ -41,21 +41,10 @@ pub enum MemoryCall {
     /// backing=NONE 创建 R/RW lazy-zero；Pole 提供受授权上限约束的物理页。
     /// 共享程序页无写授权；ONLY 根页在首次 Spawn 时原子消费。
     #[ret(VirtAddr)]
-    Mmap {
-        team: TeamId,
-        at: VirtAddr,
-        size: usize,
-        backing: PieToken,
-        offset: usize,
-        flags: u64,
-    },
+    Mmap { team: TeamId, at: VirtAddr, size: usize, backing: PieToken, offset: usize, flags: u64 },
     /// 释放 mmap/声明区域（VA，字节数，页对齐）。
     #[ret(())]
-    Munmap {
-        team: TeamId,
-        addr: VirtAddr,
-        size: usize,
-    },
+    Munmap { team: TeamId, addr: VirtAddr, size: usize },
     /// 修改映射区域保护标志（VA，字节数页对齐，新权限仅 R/W/X：位 1/2/3）。
     /// 内核管理 V/U/G/A/D；拒绝空权限及没有 R 的 W。
     #[ret(())]

@@ -14,9 +14,9 @@ use programs::Report;
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::Permit;
 use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face as TreeFace;
+use protocol::service::operator::client::{Face as TreeFace};
+use protocol::service::operator::Permit;
 use runtime::env::mail;
 use runtime::env::room;
 use runtime::env::unit as utask;
@@ -42,18 +42,12 @@ fn main() -> Report<'static> {
 
     let client = protocol::system::control::publication::Client::injected().unwrap();
     let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
-        group: "probe-swatch".into(),
-        name: IN.into(),
+        scope: protocol::system::control::publication::Scope::Fixture, group: "probe-swatch".into(), name: IN.into(),
     };
     for i in 0..CELLS {
-        if i > 0 {
-            client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
-        }
+        if i > 0 { client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap(); }
         let entry = mail::unseal_hole(env::Mark::of("probe-swatch-after")).unwrap();
-        let id = client
-            .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
-            .unwrap();
+        let id = client.publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS)).unwrap();
         debug!("probe-watch-after: republished #{i} id={}", id.get());
         // **树还答得动吗**：同一块窗格再问一次。
         let Ok(again) = tree.pane(&road, Wait::AtMost(MS)) else {
@@ -63,17 +57,10 @@ fn main() -> Report<'static> {
         let _ = room::sleep(Duration::from_millis(STEP_MS));
     }
 
-    let Ok(listing) = tree
-        .pane(&road, Wait::AtMost(MS))
-        .unwrap()
-        .list(Wait::AtMost(MS))
-    else {
+    let Ok(listing) = tree.pane(&road, Wait::AtMost(MS)).unwrap().list(Wait::AtMost(MS)) else {
         panic!("probe-watch-after: the tree stopped answering (list)");
     };
     let seen = listing.iter().count();
-    assert_eq!(
-        seen, 1,
-        "那块窗格底下该只有 1 格（本台连改同一格），数到 {seen}"
-    );
+    assert_eq!(seen, 1, "那块窗格底下该只有 1 格（本台连改同一格），数到 {seen}");
     Report::note(env::EXIT_OK, OK_NOTE)
 }

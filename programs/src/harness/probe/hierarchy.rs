@@ -391,8 +391,8 @@ pub(crate) fn after_replacement(
 }
 
 pub fn codecs() {
-    use env::wire::Span as _;
     use env::{PieToken, TaskId};
+    use env::wire::Span as _;
     use protocol::service::operator::{EntryId, Permit, Tip, TipIn};
     use protocol::system::control::publication::{Frame, Object, Reply, Scope, Target};
     let a = TaskId::new(77);

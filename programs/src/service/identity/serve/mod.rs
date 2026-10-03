@@ -19,42 +19,29 @@ pub fn serve() -> Result<(), Start> {
     let mut book = IdentityBook::new(runtime::env::unit::self_id(), installer)
         .map_err(|_| Start::Book(E_IDENTITY))?;
     let mut faces = Vec::new();
-    faces
-        .try_reserve_exact(Grant::ALL.len())
-        .map_err(|_| Start::Room(E_IDENTITY))?;
+    faces.try_reserve_exact(Grant::ALL.len()).map_err(|_| Start::Room(E_IDENTITY))?;
     for grant in Grant::ALL {
-        let (token, _) =
-            mount::entry(grant.mark(), grant.name()).map_err(|_| Start::Tree(E_IDENTITY))?;
+        let (token, _) = mount::entry(grant.mark(), grant.name())
+            .map_err(|_| Start::Tree(E_IDENTITY))?;
         // Control publishes the complete mount table and wires Operator. Identity
         // must not synchronously call Operator while its own query loop is stopped.
         port::ship(
-            &HolePie::from_token(token),
-            installer,
-            Access::FETCH | Access::STORE,
-            Policy::VEST,
-        )
-        .map_err(|_| Start::Tree(E_IDENTITY))?;
+            &HolePie::from_token(token), installer,
+            Access::FETCH | Access::STORE, Policy::VEST,
+        ).map_err(|_| Start::Tree(E_IDENTITY))?;
         faces.push((token, grant));
     }
     let _ = protocol::communication::session::establish::endpoint(
-        installer,
-        env::Mark::of(crate::unit::READY),
-        env::Wait::POLL,
+        installer, env::Mark::of(crate::unit::READY), env::Wait::POLL,
     );
-    carrier(E_IDENTITY, &faces, |grant, from, frame| {
-        turn(&mut book, from, grant, frame)
-    })
+    carrier(E_IDENTITY, &faces, |grant, from, frame| turn(&mut book, from, grant, frame))
 }
 
 fn turn(book: &mut IdentityBook, from: TaskId, grant: Grant, frame: &[u8]) {
-    let Some((wire, back)) = Wire::take(frame) else {
-        return;
-    };
+    let Some((wire, back)) = Wire::take(frame) else { return; };
     if !matches!(mail::reserve(back), Ok((_, owner, mark))
         if owner == from && mark == api::BACK)
-    {
-        return;
-    }
+    { return; }
     let reply = answer(book, from, grant, wire);
     let _ = Sender::<Reply>::from_token(back).send(reply);
     let _ = mail::release(back);

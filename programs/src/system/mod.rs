@@ -57,25 +57,15 @@ impl Assembly {
         let publication = self.control.hierarchy.borrow().entry;
         if let Some(entry) = publication {
             let road = protocol::common::path::Path::new("svc/sys/control/publish");
-            let result = self.control.hierarchy.borrow_mut().internal(
-                &mut self.tree,
-                road,
-                entry,
-                protocol::service::operator::Permit::Public,
-                runtime::env::unit::self_id(),
-                self.control.roster.authority(),
-            );
-            if let Err(why) = result {
-                debug::put(why);
-            }
+            let result = self.control.hierarchy.borrow_mut().internal(&mut self.tree, road, entry,
+                protocol::service::operator::Permit::Public, runtime::env::unit::self_id(), self.control.roster.authority());
+            if let Err(why) = result { debug::put(why); }
         }
         // State 公开；创建、启动、停止的发现边界是本实例明确安装的 Control 主体。
         // 不能用脱离 Identity authority 的裸 ROOT 编号表达安装权。
         for grant in protocol::system::control::Grant::ALL {
             let permit = match grant {
-                protocol::system::control::Grant::State => {
-                    protocol::service::operator::Permit::Public
-                }
+                protocol::system::control::Grant::State => protocol::service::operator::Permit::Public,
                 _ => {
                     let Some(control) = self.control.roster.control() else {
                         debug::put("system: control identity not installed");
@@ -98,14 +88,7 @@ impl Assembly {
                 debug::put("system: control face not mounted (name)");
                 continue;
             };
-            if let Err(why) = self.control.hierarchy.borrow_mut().internal(
-                &mut self.tree,
-                &road,
-                entry,
-                permit,
-                runtime::env::unit::self_id(),
-                self.control.roster.authority(),
-            ) {
+            if let Err(why) = self.control.hierarchy.borrow_mut().internal(&mut self.tree, &road, entry, permit, runtime::env::unit::self_id(), self.control.roster.authority()) {
                 debug::put(&alloc::format!("system: control face not mounted ({why})"));
                 continue;
             }
@@ -133,23 +116,11 @@ impl Assembly {
                 debug::put("system: grant not mounted (name)");
                 continue;
             };
-            if let Err(why) = self.control.hierarchy.borrow_mut().internal(
-                &mut self.tree,
-                &road,
-                entry,
-                if matches!(
-                    grant,
-                    protocol::service::operator::Grant::Part
-                        | protocol::service::operator::Grant::Land
-                        | protocol::service::operator::Grant::Trim
-                ) {
-                    protocol::service::operator::Permit::Bound
-                } else {
-                    protocol::service::operator::Permit::Public
-                },
-                runtime::env::unit::self_id(),
-                self.control.roster.authority(),
-            ) {
+            if let Err(why) =
+                self.control.hierarchy.borrow_mut().internal(&mut self.tree, &road, entry,
+                    if matches!(grant, protocol::service::operator::Grant::Part | protocol::service::operator::Grant::Land | protocol::service::operator::Grant::Trim) { protocol::service::operator::Permit::Bound } else { protocol::service::operator::Permit::Public },
+                    runtime::env::unit::self_id(), self.control.roster.authority())
+            {
                 debug::put(&alloc::format!("system: grant not mounted ({why})"));
                 continue;
             }

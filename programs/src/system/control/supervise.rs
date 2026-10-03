@@ -158,9 +158,7 @@ impl Watch {
                 match self.recover_identity(control, tree) {
                     Ok(recovered) => recovered,
                     Err(why) => {
-                        debug::put(&alloc::format!(
-                            "system: identity replacement failed: {why}"
-                        ));
+                        debug::put(&alloc::format!("system: identity replacement failed: {why}"));
                         return false;
                     }
                 }
@@ -240,38 +238,23 @@ impl Watch {
         if !sweep(control) {
             return Ok(false);
         }
-        if let Some(authority) = authority {
-            control.hierarchy.borrow_mut().retire(tree, authority)?;
-        }
+        if let Some(authority) = authority { control.hierarchy.borrow_mut().retire(tree, authority)?; }
         control.replace_identity(tree, |control, tree| self.refresh_control(control, tree))?;
         Ok(true)
     }
 
     fn refresh_control(&self, control: &Control, tree: &mut Tree) -> Result<(), &'static str> {
-        let principal = control
-            .roster
-            .control()
-            .ok_or("replacement control identity")?;
+        let principal = control.roster.control().ok_or("replacement control identity")?;
         for grant in ccall::Grant::ALL {
-            let Some(face) = self.faces[grant.index()] else {
-                continue;
-            };
+            let Some(face) = self.faces[grant.index()] else { continue; };
             let road = ccall::DIR.try_join(grant.name()).ok_or("control path")?;
             let permit = if grant == ccall::Grant::State {
                 protocol::service::operator::Permit::Public
             } else {
                 protocol::service::operator::Permit::Identity(
-                    protocol::service::identity::Selector::Exact(principal),
-                )
+                    protocol::service::identity::Selector::Exact(principal))
             };
-            control.hierarchy.borrow_mut().internal(
-                tree,
-                &road,
-                face,
-                permit,
-                runtime::env::unit::self_id(),
-                control.roster.authority(),
-            )?;
+            control.hierarchy.borrow_mut().internal(tree, &road, face, permit, runtime::env::unit::self_id(), control.roster.authority())?;
         }
         Ok(())
     }
@@ -334,13 +317,7 @@ fn sweep(control: &mut Control) -> bool {
 /// 答回去
 /// 认那枚回信孔靠**帧里那一格** ＋ **一次 mail::reserve 验**（同 `principal/server.rs::turn`
 /// 那一门）：那一格是"客人借来的那枚回信孔**在本表里**是几号"——"是谁给的、刻的什么"仍要当场
-fn serve_face(
-    control: &mut Control,
-    tree: &mut Tree,
-    grant: ccall::Grant,
-    face: PieToken,
-    buf: &mut [u8],
-) {
+fn serve_face(control: &mut Control, tree: &mut Tree, grant: ccall::Grant, face: PieToken, buf: &mut [u8]) {
     let entry = HolePie::from_token(face);
     // 入口是**单手**：一次醒来的这一批要取干净（可能不止一位客人）。
     while let Ok((len, from)) = entry.pull(buf, Wait::POLL) {
@@ -380,12 +357,7 @@ fn serve_face(
 /// **四手就是 Control 那四手**（`mint` / `release` / `stop` / `state`）：本层不重写生命周期
 /// 只做"**复核 + 应答**"——复核的判据在那边一条一条列着；本层只把失败域翻成线上那一格
 /// **两格语义一个字不省**：`stop` 只到 `Stopping`（Control::stop 就是 service::stop）
-fn answer(
-    control: &mut Control,
-    tree: &mut Tree,
-    from: env::TaskId,
-    ask: Option<ccall::frame::Wire>,
-) -> ccall::frame::Said {
+fn answer(control: &mut Control, tree: &mut Tree, from: env::TaskId, ask: Option<ccall::frame::Wire>) -> ccall::frame::Said {
     let code = |fail: crate::system::common::life::verdict::Fail| {
         ccall::frame::fail_to_code(Some(wire_fail(fail)))
     };
@@ -398,13 +370,12 @@ fn answer(
             Ok(()) => ccall::frame::said_status(ccall::frame::OK),
             Err(fail) => ccall::frame::said_status(code(fail)),
         },
-        ccall::frame::Wire::Start(name) => {
-            match control.release(name, from, |control| control.progress(tree)) {
-                // 的东西。通道那本账留在 Control 里——`Endpoint` 的孔交不出去（见 `frame` 那一节）。
-                Ok(service) => ccall::frame::said_task(service.0),
-                Err(fail) => ccall::frame::said_status(code(fail)),
-            }
-        }
+        ccall::frame::Wire::Start(name) => match control.release(name, from,
+            |control| control.progress(tree)) {
+            // 的东西。通道那本账留在 Control 里——`Endpoint` 的孔交不出去（见 `frame` 那一节）。
+            Ok(service) => ccall::frame::said_task(service.0),
+            Err(fail) => ccall::frame::said_status(code(fail)),
+        },
         ccall::frame::Wire::Stop(name) => match control.stop(name) {
             Ok(()) => ccall::frame::said_status(ccall::frame::OK),
             Err(fail) => ccall::frame::said_status(code(fail)),

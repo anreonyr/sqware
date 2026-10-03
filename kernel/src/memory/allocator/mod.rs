@@ -73,16 +73,12 @@ impl NoAllocation {
 
 #[cfg(debug_assertions)]
 impl Drop for NoAllocation {
-    fn drop(&mut self) {
-        FORBIDDEN[self.0.get()].store(false, core::sync::atomic::Ordering::Relaxed);
-    }
+    fn drop(&mut self) { FORBIDDEN[self.0.get()].store(false, core::sync::atomic::Ordering::Relaxed); }
 }
 
 #[inline]
 pub(crate) fn assert_allocation_allowed() {
     #[cfg(debug_assertions)]
-    assert!(
-        !FORBIDDEN[crate::hart::hart_id().get()].load(core::sync::atomic::Ordering::Relaxed),
-        "allocation or shootdown in publication commit"
-    );
+    assert!(!FORBIDDEN[crate::hart::hart_id().get()].load(core::sync::atomic::Ordering::Relaxed),
+        "allocation or shootdown in publication commit");
 }

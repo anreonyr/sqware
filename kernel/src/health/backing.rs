@@ -1,9 +1,9 @@
 #![cfg(debug_assertions)]
 
+use alloc::sync::Arc;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{MapError, addr::VirtAddr, entry::PteFlags};
 use crate::work::unit::space::{Backing, SpaceBuilder};
-use alloc::sync::Arc;
 
 pub fn sharing() {
     const BASE: usize = 0x4000_0000;
@@ -16,43 +16,21 @@ pub fn sharing() {
     let first = backing.address(0, 3 * PAGE_SIZE).unwrap();
     let flags = a.pte_policy(PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D);
     for space in [&a, &b] {
-        space
-            .with_flush(|inner| {
-                inner.backed(
-                    VirtAddr::wrap(BASE),
-                    backing.clone(),
-                    0,
-                    3 * PAGE_SIZE,
-                    flags,
-                    PteFlags::R,
-                )
-            })
-            .unwrap();
+        space.with_flush(|inner| inner.backed(
+            VirtAddr::wrap(BASE), backing.clone(), 0, 3 * PAGE_SIZE, flags, PteFlags::R,
+        )).unwrap();
     }
     drop(backing);
     assert_eq!(a.translate(VirtAddr::wrap(BASE)).unwrap().0, first);
     assert_eq!(b.translate(VirtAddr::wrap(BASE)).unwrap().0, first);
-    assert!(matches!(
-        a.protect_user(BASE, 3 * PAGE_SIZE, 6),
-        Err(MapError::WidenDenied)
-    ));
-    a.unmap(VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE)
-        .unwrap();
+    assert!(matches!(a.protect_user(BASE, 3 * PAGE_SIZE, 6), Err(MapError::WidenDenied)));
+    a.unmap(VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE).unwrap();
     assert!(a.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    assert_eq!(
-        a.translate(VirtAddr::wrap(BASE + 2 * PAGE_SIZE)).unwrap().0,
-        first + 2 * PAGE_SIZE
-    );
-    assert!(matches!(
-        a.protect_user(BASE + 2 * PAGE_SIZE, PAGE_SIZE, 6),
-        Err(MapError::WidenDenied)
-    ));
+    assert_eq!(a.translate(VirtAddr::wrap(BASE + 2 * PAGE_SIZE)).unwrap().0, first + 2 * PAGE_SIZE);
+    assert!(matches!(a.protect_user(BASE + 2 * PAGE_SIZE, PAGE_SIZE, 6), Err(MapError::WidenDenied)));
     a.protect_user(BASE + 2 * PAGE_SIZE, PAGE_SIZE, 2).unwrap();
     b.unmap(VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
-    assert_eq!(
-        b.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).unwrap().0,
-        first + PAGE_SIZE
-    );
+    assert_eq!(b.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).unwrap().0, first + PAGE_SIZE);
     a.audit();
     b.audit();
     drop(a);
@@ -68,30 +46,16 @@ pub fn sharing() {
         let backing = Backing::allocate(PAGE_SIZE).unwrap();
         addresses[index] = backing.address(0, PAGE_SIZE).unwrap().as_usize();
         lifetimes.push(Arc::downgrade(&backing));
-        space
-            .with_flush(|inner| {
-                inner.backed(
-                    VirtAddr::wrap(BASE),
-                    backing,
-                    0,
-                    PAGE_SIZE,
-                    space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W),
-                    PteFlags::R | PteFlags::W,
-                )?;
-                inner.private(VirtAddr::wrap(BASE));
-                Ok::<_, MapError>(())
-            })
-            .unwrap();
+        space.with_flush(|inner| {
+            inner.backed(VirtAddr::wrap(BASE), backing, 0, PAGE_SIZE,
+                space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W), PteFlags::R | PteFlags::W)?;
+            inner.private(VirtAddr::wrap(BASE));
+            Ok::<_, MapError>(())
+        }).unwrap();
     }
     assert_ne!(addresses[0], addresses[1]);
-    assert_eq!(
-        a.translate(VirtAddr::wrap(BASE)).unwrap().0.as_usize(),
-        addresses[0]
-    );
-    assert_eq!(
-        b.translate(VirtAddr::wrap(BASE)).unwrap().0.as_usize(),
-        addresses[1]
-    );
+    assert_eq!(a.translate(VirtAddr::wrap(BASE)).unwrap().0.as_usize(), addresses[0]);
+    assert_eq!(b.translate(VirtAddr::wrap(BASE)).unwrap().0.as_usize(), addresses[1]);
     // SAFETY: both live Spaces retain separate writable backing allocations.
     unsafe {
         *(addresses[0] as *mut u8) = 0x5a;
@@ -104,6 +68,7 @@ pub fn sharing() {
     drop(b);
     assert!(lifetimes[1].upgrade().is_none());
 }
+
 
 pub fn authority() {
     use env::Permission;
@@ -130,22 +95,10 @@ pub fn retirement() {
     const BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().unwrap();
     let backing = Backing::allocate(PAGE_SIZE).unwrap();
-    space
-        .with_flush(|inner| {
-            inner.backed(
-                VirtAddr::wrap(BASE),
-                backing.clone(),
-                0,
-                PAGE_SIZE,
-                space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W),
-                PteFlags::R | PteFlags::W,
-            )
-        })
-        .unwrap();
+    space.with_flush(|inner| inner.backed(VirtAddr::wrap(BASE), backing.clone(), 0, PAGE_SIZE,
+        space.pte_policy(PteFlags::V | PteFlags::R | PteFlags::W), PteFlags::R | PteFlags::W)).unwrap();
     let mut salvage = Salvage::new();
-    space
-        .with_flush(|inner| inner.unmap(VirtAddr::wrap(BASE), PAGE_SIZE, &mut salvage))
-        .unwrap();
+    space.with_flush(|inner| inner.unmap(VirtAddr::wrap(BASE), PAGE_SIZE, &mut salvage)).unwrap();
     assert!(space.translate(VirtAddr::wrap(BASE)).is_none());
     assert!(!backing.unmapped());
     assert!(!backing.readonly());

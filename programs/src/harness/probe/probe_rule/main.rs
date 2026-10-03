@@ -60,26 +60,17 @@ fn main() -> Report<'static> {
     let tree = TreeFace::of(session);
     let authority = programs::service::identity::bridge::authority()
         .expect("probe-rule: no Control-issued identity authority");
-    let iask =
-        Query::discover(&tree, authority, Wait::AtMost(MS)).expect("probe-rule: no identity query");
+    let iask = Query::discover(&tree, authority, Wait::AtMost(MS))
+        .expect("probe-rule: no identity query");
     let iset = SelfOps::discover(&tree, authority, Wait::AtMost(MS))
         .expect("probe-rule: no identity self actions");
     let coal = Organization::discover(&tree, authority, Wait::AtMost(MS))
         .expect("probe-rule: no organization actions");
-    let p = iask
-        .resolve(me, Wait::AtMost(MS))
-        .unwrap()
-        .expect("probe-rule: unbound")
-        .current
-        .principal;
-    let q = iset
-        .derive(p, Wait::AtMost(MS))
-        .expect("probe-rule: no sub identity");
-    let c = coal
-        .found(Wait::AtMost(MS))
-        .expect("probe-rule: no coalition id");
-    coal.admit(c, p, Wait::AtMost(MS))
-        .expect("probe-rule: manager admit failed");
+    let p = iask.resolve(me, Wait::AtMost(MS)).unwrap()
+        .expect("probe-rule: unbound").current.principal;
+    let q = iset.derive(p, Wait::AtMost(MS)).expect("probe-rule: no sub identity");
+    let c = coal.found(Wait::AtMost(MS)).expect("probe-rule: no coalition id");
+    coal.admit(c, p, Wait::AtMost(MS)).expect("probe-rule: manager admit failed");
     assert_eq!(iask.amid(p, c, Wait::AtMost(MS)), Ok(true));
     // Boot installation deliberately selects no organizations. Admission must not
     // silently grant access; the MemberOf door below must therefore deny even p.
@@ -116,11 +107,7 @@ fn main() -> Report<'static> {
 
     let _ = plate(AT_PANE, Permit::Opener(sys.id()));
     let temp_id = plate(TEMP, Permit::Public);
-    let trimmed = temp_id.get() != 0
-        && publication::Client::injected()
-            .unwrap()
-            .unpublish(target(TEMP), Wait::AtMost(MS))
-            .is_ok();
+    let trimmed = temp_id.get() != 0 && publication::Client::injected().unwrap().unpublish(target(TEMP), Wait::AtMost(MS)).is_ok();
     let _ = plate(GONE_DOOR, Permit::Opener(temp_id));
 
     // 下面在 `adopt(q)` **之后**再落一次同一格——这是要量的那件事：**归属记的是"命"而不是
@@ -146,9 +133,7 @@ fn main() -> Report<'static> {
     let on_gone = look(&root, &rule_road, GONE_DOOR, Wait::AtMost(MS));
 
     // 七、**换一位代表**（同一个 TID）：领到自己派生的那条号底下。
-    let adopt = iset
-        .adopt(Subject::new(q, &[]).unwrap(), Wait::AtMost(MS))
-        .is_ok();
+    let adopt = iset.adopt(Subject::new(q, &[]).unwrap(), Wait::AtMost(MS)).is_ok();
 
     //     `open` 那一格**照旧过**：开者与问的人是**同一条 TID**，换代表之后两边一起变成 `q`
     //     ——这正是"规矩随**身份**走、不随 TID 走"与 Exact 那一格（拒）的分野。
@@ -159,21 +144,12 @@ fn main() -> Report<'static> {
     // Bound 以 `q` 再问一遍，只判有没有绑定，不判是不是 p。
     // `mine` 那一格只被用来量「改」那一轴（下面的 `keep`），"用"那一轴没人问过它。
     let mine_sub = look(&root, &rule_road, MINE, Wait::AtMost(MS));
-    let raw = at.bind(
-        MINE.to_string(),
-        mail::unseal_hole(env::Mark::of("rule-entry")).unwrap(),
-        Permit::Bound,
-        Mine::Yes,
-        Wait::AtMost(MS),
-    );
+    let raw = at.bind(MINE.to_string(), mail::unseal_hole(env::Mark::of("rule-entry")).unwrap(),
+        Permit::Bound, Mine::Yes, Wait::AtMost(MS));
     assert!(matches!(raw, Err(Fail::Denied)));
     let publisher = publication::Client::injected().unwrap();
     let keep = publisher.unpublish(target(MINE), Wait::AtMost(MS));
-    assert_ne!(
-        plate(MINE, Permit::Bound),
-        mine_id,
-        "retired mounts get new identifiers"
-    );
+    assert_ne!(plate(MINE, Permit::Bound), mine_id, "retired mounts get new identifiers");
 
     // 九、**两行**读数（**错误那一格从数字变成名字**：新面答的是 Fail，不是裸码）。
     debug!(
@@ -203,11 +179,7 @@ fn main() -> Report<'static> {
         assert_eq!(under, Ok(()))
     }
     {
-        assert_eq!(
-            inside,
-            Err(Fail::Denied),
-            "eligible but inactive must be denied"
-        )
+        assert_eq!(inside, Err(Fail::Denied), "eligible but inactive must be denied")
     }
     // —— `Opener` 的正负两面。
     {
@@ -240,11 +212,7 @@ fn main() -> Report<'static> {
         assert_eq!(in_sub, Err(Fail::Denied), "换代表之后不在那枚盟里了")
     }
     {
-        assert_eq!(
-            under_sub,
-            Ok(()),
-            "q 仍在 p 那一支里 ⇒ DescendantOf(p) 照旧过"
-        )
+        assert_eq!(under_sub, Ok(()), "q 仍在 p 那一支里 ⇒ DescendantOf(p) 照旧过")
     }
     assert_eq!(open_sub, Ok(()), "开者与问的是同一条 TID ⇒ 两边一起变成 q");
     // —— 没记许可那一格：**"用"那一轴的第一格**（"你有没有身份"）——它不判"是不是你"。
@@ -266,18 +234,11 @@ fn main() -> Report<'static> {
 /// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）
 /// Identity 起头就分了 /svc，故这时落出来的号不可能是 `0`
 fn target(name: &str) -> publication::Target {
-    publication::Target::Service {
-        scope: publication::Scope::Fixture,
-        group: PANE.into(),
-        name: name.into(),
-    }
+    publication::Target::Service { scope: publication::Scope::Fixture, group: PANE.into(), name: name.into() }
 }
 fn plate(name: &str, permit: Permit) -> EntryId {
     let entry = mail::unseal_hole(env::Mark::of("rule-entry")).unwrap();
-    publication::Client::injected()
-        .unwrap()
-        .publish(target(name), entry, permit, Wait::AtMost(MS))
-        .unwrap()
+    publication::Client::injected().unwrap().publish(target(name), entry, permit, Wait::AtMost(MS)).unwrap()
 }
 
 /// 拿那一格去 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 Fail（本程序只看那一格，不看

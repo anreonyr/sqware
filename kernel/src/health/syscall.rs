@@ -65,6 +65,8 @@ impl Caller {
         assert!(at > 0);
         at as usize
     }
+
+
 }
 
 impl Drop for Caller {
@@ -89,10 +91,7 @@ pub fn abi_and_privilege() {
     ));
     let build = |kind| EnvCall::Unit(UnitCall::Build { kind });
     let heirs = user.task.heir_count();
-    assert_eq!(
-        user.call(build(ProgramKind::Supervisor)),
-        env::UnitFail::Denied.code()
-    );
+    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
     assert_eq!(user.task.heir_count(), heirs);
     assert!(user.call(build(ProgramKind::User)) > 0);
     assert_eq!(
@@ -104,7 +103,11 @@ pub fn abi_and_privilege() {
     assert_eq!(user.task.tag(), TaskTag::Held);
     let supervisor = Caller::new(true);
     for kind in [ProgramKind::User, ProgramKind::Supervisor] {
-        assert!(supervisor.call(EnvCall::Unit(UnitCall::Build { kind })) > 0);
+        assert!(
+            supervisor.call(EnvCall::Unit(UnitCall::Build {
+                kind
+            })) > 0
+        );
     }
     assert_eq!(
         supervisor.call(EnvCall::Room(RoomCall::Doom {
@@ -129,8 +132,7 @@ pub fn memory() {
     let before = user.team.space.translate(KVirt::wrap(at)).unwrap().1.bits();
     for flags in [1, 16, 32, 64, 128, 256, 1u64 << 63, 0, 4] {
         assert!(
-            user.call(EnvCall::Memory(MemoryCall::Mprotect {
-                team: env::TeamId::new(0),
+            user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size: PAGE_SIZE,
                 flags
@@ -143,8 +145,7 @@ pub fn memory() {
     }
     for flags in [2, 8, 10, 6] {
         assert_eq!(
-            user.call(EnvCall::Memory(MemoryCall::Mprotect {
-                team: env::TeamId::new(0),
+            user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size: PAGE_SIZE,
                 flags
@@ -162,14 +163,12 @@ pub fn memory() {
         at + (mode::upper().as_usize() << 1),
     ] {
         for call in [
-            MemoryCall::Mprotect {
-                team: env::TeamId::new(0),
+            MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
                 flags: 6,
             },
-            MemoryCall::Munmap {
-                team: env::TeamId::new(0),
+            MemoryCall::Munmap { team: env::TeamId::new(0),
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
@@ -177,11 +176,7 @@ pub fn memory() {
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
-            MemoryCall::Mmap {
-                team: env::TeamId::new(0),
-                backing: env::PieToken::NONE,
-                offset: 0,
-                flags: 6,
+            MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
                 at: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
@@ -196,21 +191,15 @@ pub fn memory() {
                 addr: VirtAddr::new(at),
                 size,
             },
-            MemoryCall::Mmap {
-                team: env::TeamId::new(0),
-                backing: env::PieToken::NONE,
-                offset: 0,
-                flags: 6,
+            MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
                 at: VirtAddr::new(0),
                 size,
             },
-            MemoryCall::Munmap {
-                team: env::TeamId::new(0),
+            MemoryCall::Munmap { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size,
             },
-            MemoryCall::Mprotect {
-                team: env::TeamId::new(0),
+            MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size,
                 flags: 6,
@@ -239,19 +228,14 @@ pub fn memory() {
 
     let fixed = 0x4004_0000;
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mmap {
-            team: env::TeamId::new(0),
-            backing: env::PieToken::NONE,
-            offset: 0,
-            flags: 6,
+        user.call(EnvCall::Memory(MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
             at: VirtAddr::new(fixed),
             size: 3 * PAGE_SIZE
         })),
         fixed as isize
     );
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mprotect {
-            team: env::TeamId::new(0),
+        user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed + PAGE_SIZE),
             size: PAGE_SIZE,
             flags: 2
@@ -278,16 +262,14 @@ pub fn memory() {
         );
     }
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Munmap {
-            team: env::TeamId::new(0),
+        user.call(EnvCall::Memory(MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed + PAGE_SIZE),
             size: PAGE_SIZE
         })),
         0
     );
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Munmap {
-            team: env::TeamId::new(0),
+        user.call(EnvCall::Memory(MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed),
             size: 3 * PAGE_SIZE
         })),
@@ -362,8 +344,7 @@ pub fn pointers() {
     let mut reader = StackReader::user(user.team.space.clone());
     assert!(reader.word(user.task.ident.frame.va.as_usize()).is_none());
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mprotect {
-            team: env::TeamId::new(0),
+        user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size: PAGE_SIZE,
             flags: 8
@@ -422,13 +403,11 @@ pub fn capability() {
             addr: VirtAddr::new(at),
             size,
         },
-        MemoryCall::Munmap {
-            team: env::TeamId::new(0),
+        MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size,
         },
-        MemoryCall::Mprotect {
-            team: env::TeamId::new(0),
+        MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size,
             flags: 6,

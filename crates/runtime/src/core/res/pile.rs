@@ -38,7 +38,10 @@ impl Sub {
     fn wire(self) -> (Source, TaskId) {
         match self {
             Sub::TaskCompleted(id) => (Source::TaskCompleted, id),
-            Sub::Capabilities => (Source::CapabilitiesChanged, crate::env::unit::self_id()),
+            Sub::Capabilities => (
+                Source::CapabilitiesChanged,
+                crate::env::unit::self_id(),
+            ),
         }
     }
 }

@@ -52,10 +52,9 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
         let _ = crate::work::mail::pole::shut(p.meta(), token);
     }
     // 表里少了一枚：出锁之后要求持有者复核一次（没有观察者时不留站点）。
-    let _ =
-        crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Capabilities {
-            task: task.ident.id,
-        });
+    let _ = crate::work::room::messenger::signal(
+        crate::work::room::messenger::WakeKey::Capabilities { task: task.ident.id },
+    );
     Ok(())
 }
 
@@ -67,9 +66,7 @@ pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, P
             .ok_or(PieFail::Denied)
     };
     let (a, b) = (find(a)?, find(b)?);
-    if !a.alive() || !b.alive() {
-        return Err(PieFail::Dead);
-    }
+    if !a.alive() || !b.alive() { return Err(PieFail::Dead); }
     Ok(match (a, b) {
         (AnyPie::Hole(a), AnyPie::Hole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
         (AnyPie::Pole(a), AnyPie::Pole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
