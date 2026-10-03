@@ -13,10 +13,12 @@ pub enum UnitFail {
     /// 条件未就绪（`Fall` 没等到 / `Oust` 还有没收尾的线程）。
     #[busy]
     Busy = -2,
-    /// 备料失败（装载头窗口 / 任务帧 / 等待位）。
+    /// 空域、任务准备或发布所需的资源不足。
     OoM = -3,
-    /// 镜像不可装载。
+    /// 用户态 loader 保留的镜像错误码；内核 Build 不解释镜像。
     BadImage = -4,
+    /// 入口不是当前域内有效、对齐的可执行地址。
+    BadEntry = -5,
 }
 
 /// `UnitFail` 的结果别名。
@@ -62,23 +64,10 @@ pub enum UnitCall {
     #[infallible]
     #[ret(TeamId)]
     Heir { index: usize },
-    /// 装域：镜像字节区间 + 特权级 → 新域（Space + Team，**无线程**）。
-    ///
-    /// **不收名字**：域名字归装配账，内核一个名字都不记（身份只有号）。
-    ///
-    /// U-domain 只能创建 User；Supervisor 可创建两种执行空间。
-    /// 镜像必须来自调用者可读的普通映射。
-    ///
-    /// **镜像字节不被拷走**：内核按 ELF 段现读 `elf` 那几页（一份 ELF 里九成以上是
-    /// 符号表与调试信息）。故 `elf` 那段区间在调用期间必须一直映射着。
-    ///
-    /// 失败：`-4 BadImage`（不可装载）/ `-1 Denied`（镜像区读不出来）/ `-3 OoM`（内存不够）。
+    /// 创建空的 Constructing 域；调用者通过 Mmap 安装程序页。
+    /// User 域只能创建 User 域。首次 Spawn 验证入口并提交构造。
     #[ret(TeamId)]
-    Build {
-        elf: VirtAddr,
-        len: usize,
-        kind: ProgramKind,
-    },
+    Build { kind: ProgramKind },
     /// 放行：`Held → Starved`。放行只发生一次——重复调用返回 `-1 Denied`。
     #[ret(())]
     Hatch { task: TaskId },

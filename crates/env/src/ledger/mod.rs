@@ -4,6 +4,7 @@
 //! （域）用同一份定义，故不住任何一侧。
 
 pub mod args;
+pub mod capsule;
 pub mod key;
 pub mod manifest;
 pub mod pair;

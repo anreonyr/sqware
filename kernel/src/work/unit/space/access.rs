@@ -12,6 +12,7 @@ impl Space {
                 .is_some_and(|end| end <= mode::upper().as_usize())
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn validate_read(&self, va: usize, len: usize) -> bool {
         self.validate_access(va, len, PteFlags::R)
     }

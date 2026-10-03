@@ -12,8 +12,8 @@ pub(crate) use beacon::arm as beacon_arm;
 
 pub use ident::{Identity, ident};
 #[cfg(debug_assertions)]
-pub(crate) use table::scheduler_addr;
+pub(crate) use table::{scheduler_addr, fail_next_reservation};
 pub(crate) use table::{
-    current, enlist, kick, launch, muster, prune_dead, remove_from_starved, rip, roster,
-    running_hart, try_reserve_roster,
+    current, kick, launch, muster, prune_dead, remove_from_starved, rip, roster,
+    running_hart, publish,
 };

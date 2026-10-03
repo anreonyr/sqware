@@ -12,6 +12,7 @@ use crate::work::unit::task::Task;
 
 pub(crate) trait Mail: Send + Sync + 'static {
     fn alive(&self) -> bool;
+    fn permit(&self, _permission: Permission) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> { Ok(None) }
 }
 
 impl Mail for HoleMeta {
@@ -21,6 +22,9 @@ impl Mail for HoleMeta {
 }
 
 impl Mail for PoleMeta {
+    fn permit(&self, permission: Permission) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
+        self.backing().try_permit(permission).map(Some).map_err(|_| env::PieFail::OoM)
+    }
     fn alive(&self) -> bool {
         PoleMeta::alive(self)
     }
@@ -95,6 +99,7 @@ pub struct Pie<T: PieType> {
     pub(crate) token: PieToken,
     pub(crate) mark: T::Mark,
     pub(crate) meta: Arc<T::Mail>,
+    pub(crate) permit: Option<Arc<super::super::space::Permit>>,
 }
 
 unsafe impl<T: PieType> Send for Pie<T> where T::Mark: Send {}
@@ -111,25 +116,29 @@ where
             token: self.token,
             mark: self.mark,
             meta: self.meta.clone(),
+            permit: self.permit.clone(),
         }
     }
 }
 
 impl<T: PieType> Pie<T> {
+    pub(crate) fn permission(&self) -> Permission {
+        self.permit.as_ref().map_or(self.permission, |permit| permit.permission())
+    }
     pub(crate) fn meta(&self) -> &Arc<T::Mail> {
         &self.meta
     }
 
     pub fn allows(&self, need: Need) -> bool {
         match need {
-            Need::Fetch => self.permission.contains(Permission::FETCH),
-            Need::Store => self.permission.contains(Permission::STORE),
-            Need::Grant => self.permission.contains(Permission::VEST),
+            Need::Fetch => self.permission().contains(Permission::FETCH),
+            Need::Store => self.permission().contains(Permission::STORE),
+            Need::Grant => self.permission().contains(Permission::VEST),
         }
     }
 
     pub fn covers(&self, subset: Permission) -> bool {
-        self.permission.contains(subset) && !subset.is_empty()
+        self.permission().contains(subset) && !subset.is_empty()
     }
 }
 
@@ -146,10 +155,13 @@ pub enum AnyPie {
 }
 
 impl AnyPie {
+    pub(crate) fn invalidate(&self) {
+        if let Self::Pole(p) = self { if let Some(permit) = &p.permit { permit.invalidate(); } }
+    }
     pub fn permission(&self) -> Permission {
         match self {
             AnyPie::Hole(p) => p.permission,
-            AnyPie::Pole(p) => p.permission,
+            AnyPie::Pole(p) => p.permission(),
             AnyPie::Nole(p) => p.permission,
             AnyPie::Tole(p) => p.permission,
         }
@@ -243,17 +255,18 @@ pub(crate) fn new_pie<T: PieType>(
     permission: Permission,
     sire: Option<PieToken>,
 ) -> Pie<T> {
-    Pie {
-        permission,
-        sire,
-        heir: None,
-        token: alloc_id(),
-        mark,
-        meta,
-    }
+    try_new_pie(meta, mark, permission, sire).expect("pie: allocation")
 }
 
-pub(crate) fn locate(task: &Arc<Task>, token: PieToken) -> Option<AnyPie> {
+pub(crate) fn try_new_pie<T: PieType>(meta: Arc<T::Mail>, mark: T::Mark,
+    permission: Permission, sire: Option<PieToken>) -> Result<Pie<T>, env::PieFail> {
+    Ok(Pie {
+        permit: meta.permit(permission)?,
+        permission, sire, heir: None, token: alloc_id(), mark, meta,
+    })
+}
+
+pub(crate) fn locate(task: &Task, token: PieToken) -> Option<AnyPie> {
     let pies = task.pies.lock();
     pies.iter().find(|p| p.token() == token).cloned()
 }

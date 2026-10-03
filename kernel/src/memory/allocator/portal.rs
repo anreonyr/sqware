@@ -33,6 +33,7 @@ unsafe impl GlobalAllocator for PortalAllocator {}
 
 unsafe impl Allocator for PortalAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::assert_allocation_allowed();
         backend().ok_or(AllocError)?.allocate(layout)
     }
 

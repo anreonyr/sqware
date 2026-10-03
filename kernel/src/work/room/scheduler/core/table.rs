@@ -63,17 +63,29 @@ pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
 static ROSTER: OnceLock<SpinLock<HashMap<TaskId, TaskWeak>>> = OnceLock::new();
 
 fn roster_table() -> &'static SpinLock<HashMap<TaskId, TaskWeak>> {
-    ROSTER.get_or_init(|| SpinLock::new_level(Level::L3, HashMap::new()))
+    ROSTER.get_or_init(|| SpinLock::new_level(Level::Roster, HashMap::new()))
 }
 
-pub(crate) fn enlist(id: TaskId, task: &Arc<Task>) {
-    roster_table()
-        .lock()
-        .insert(id, TaskWeak::stored(Arc::downgrade(task), Site::Roster));
+#[cfg(debug_assertions)]
+static FAIL_RESERVE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+#[cfg(debug_assertions)]
+pub(crate) fn fail_next_reservation() {
+    FAIL_RESERVE.store(true, core::sync::atomic::Ordering::Release);
 }
 
-pub(crate) fn try_reserve_roster() -> Result<(), ()> {
-    roster_table().lock().try_reserve(1).map_err(|_| ())
+pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc<Task>, T), ()> {
+    let mut roster = roster_table().lock();
+    #[cfg(debug_assertions)]
+    if FAIL_RESERVE.swap(false, core::sync::atomic::Ordering::AcqRel) { return Err(()); }
+    roster.try_reserve(1).map_err(|_| ())?;
+    #[cfg(debug_assertions)]
+    let _commit = crate::memory::allocator::NoAllocation::enter();
+    let (task, value) = commit();
+    let id = task.ident.id;
+    let previous = roster.insert(id, TaskWeak::stored(Arc::downgrade(&task), Site::Roster));
+    assert!(previous.is_none(), "publish: duplicate task id");
+    Ok((task, value))
 }
 
 pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {

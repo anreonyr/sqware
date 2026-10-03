@@ -17,6 +17,8 @@ pub enum PieFail {
     NotAligned = -4,
     /// 这一枚已交出去（交回即复原）。
     HandedOver = -5,
+    #[busy]
+    Busy = -6,
 }
 
 /// `PieFail` 的结果别名。
@@ -56,8 +58,9 @@ pub enum PieCall {
     #[ret(PieToken)]
     UnsealHole { mark: Mark },
     /// 解封 Pole（页级安全内存；大小页对齐）。
+    /// shared=false 在创建时带 ONLY；两种形式均自动 RW Open。
     #[ret(PieToken)]
-    UnsealPole { size: usize },
+    UnsealPole { size: usize, shared: bool },
     /// 解封 Nole（**无数据面的权柄载体**）：造一枚只有身份与存活的许可载体。
     ///
     /// **无参数**——没有 mtu、没有字节数、没有对齐可校验。它的全部内容就是"这一枚

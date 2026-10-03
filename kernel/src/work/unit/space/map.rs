@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use alloc::sync::Arc;
 use core::num::NonZeroUsize;
 
 use crate::memory::PAGE_SIZE;
@@ -7,6 +8,15 @@ use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::memory::manager::table::Frame;
+use super::Backing;
+
+#[derive(Debug, Clone)]
+pub(super) enum Origin {
+    Owned,
+    Borrowed,
+    Limited { ceiling: PteFlags },
+    Backed { backing: Arc<Backing>, offset: usize, ceiling: PteFlags, token: Option<env::PieToken>, private: bool, open: bool },
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pending {
@@ -30,10 +40,6 @@ pub(crate) struct Frames {
 impl Frames {
     pub(super) const fn new() -> Self {
         Self { v: Vec::new() }
-    }
-
-    pub(super) fn is_empty(&self) -> bool {
-        self.v.is_empty()
     }
 
     pub(super) fn reserve(&mut self, add: usize) -> Result<(), MapError> {
@@ -120,10 +126,15 @@ pub(crate) struct Map {
     pub(super) flags: PteFlags,
     pub(super) pending: Option<Pending>,
     pub(super) frames: Frames,
+    pub(super) origin: Origin,
 }
 
 impl Drop for Map {
     fn drop(&mut self) {
+        if let Origin::Backed { backing, ceiling, private, .. } = &self.origin {
+            if !private { backing.alias(false); }
+            if ceiling.contains(PteFlags::W) { backing.map_write(false); }
+        }
         let mut cur = self.next.take();
         while let Some(mut node) = cur {
             cur = node.next.take();
@@ -145,6 +156,7 @@ impl Map {
             flags,
             pending,
             frames: Frames::new(),
+            origin: Origin::Owned,
         }
     }
 
@@ -162,7 +174,11 @@ impl Map {
     }
 
     pub(super) fn is_borrowed(&self) -> bool {
-        self.pending.is_none() && self.frames.is_empty()
+        matches!(self.origin, Origin::Borrowed | Origin::Backed { token: Some(_), private: false, .. })
+    }
+
+    pub(super) fn retains_backing(&self) -> bool {
+        matches!(self.origin, Origin::Backed { .. })
     }
 
     pub(super) fn reserve_frames(&mut self, pages: usize) -> Result<(), MapError> {
@@ -181,6 +197,15 @@ impl Map {
             self.flags,
             self.pending,
         );
+        map.origin = match &self.origin {
+            Origin::Backed { backing, offset, ceiling, token, private, open } => {
+                if !private { backing.alias(true); }
+                if ceiling.contains(PteFlags::W) { backing.map_write(true); }
+                Origin::Backed { backing: backing.clone(), offset: offset + first_pg * PAGE_SIZE,
+                    ceiling: *ceiling, token: *token, private: *private, open: *open }
+            },
+            other => other.clone(),
+        };
         map.reserve_frames(frames)?;
         Box::try_new(map).map_err(|_| MapError::OutOfMemory)
     }
@@ -225,6 +250,9 @@ impl Map {
             debug_assert!(right.is_none(), "carve: 洞在头时由本图重绕，无独立右段");
             self.frames.shift_keys(hi_pg);
             self.va += hi_pg * PAGE_SIZE;
+            if let Origin::Backed { offset, .. } = &mut self.origin {
+                *offset += hi_pg * PAGE_SIZE;
+            }
             self.size = NonZeroUsize::new((pages - hi_pg) * PAGE_SIZE).expect("non-zero");
             return;
         }

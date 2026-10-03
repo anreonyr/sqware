@@ -162,15 +162,8 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     };
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
-    let elf = crate::platform::initrd::entry_image(blob).expect("initrd: entry image missing");
-
-    let source = crate::work::unit::source::Source::Slice(elf);
-    let team = crate::work::unit::build(
-        &source,
-        crate::work::unit::space::SpaceKind::Supervisor,
-        crate::work::unit::weak::TaskWeak::empty(),
-    )
-    .expect("assemble entry elf");
+    let capsule = crate::platform::initrd::entry_image(blob).expect("initrd: capsule missing");
+    let team = crate::work::unit::capsule::assemble(capsule).expect("assemble boot capsule");
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(
@@ -263,7 +256,7 @@ pub(crate) extern "C" fn boot_main() -> ! {
     let ksatp = frame.kernel_satp;
     unsafe {
         satp::set(mode::mode(), ksatp.asid(), ksatp.ppn());
-        core::arch::asm!("sfence.vma");
+        core::arch::asm!("sfence.vma", "fence.i");
     }
     arm_hart();
     crate::memory::manager::asid::occupy(crate::memory::manager::asid::Asid::kernel());

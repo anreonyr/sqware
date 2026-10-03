@@ -9,10 +9,8 @@ use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::life::TaskLife;
-use crate::work::unit::source::Source;
 use crate::work::unit::space::{Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
-use crate::work::unit::team::UnitError;
 use crate::work::unit::weak::{Site, TaskWeak};
 
 use super::ret_err;
@@ -49,8 +47,7 @@ fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
     let width = size_of::<usize>();
     let len = count * width;
     let mut bytes = [0u8; MAX_ARGS * size_of::<usize>()];
-    let src = Source::Space { space, va, len };
-    if !src.read(0, &mut bytes[..len]) {
+    if !space.copy_in(&mut bytes[..len], va.as_usize()) {
         return None;
     }
     let mut out: Vec<usize> = Vec::new();
@@ -84,18 +81,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 Some(w) => w,
                 None => return Outcome::fail(frame, UnitFail::Denied),
             };
-            let entry_va = if entry == 0 {
-                target.default_entry()
-            } else {
-                entry
-            };
-            let mut builder = target.task().entry(KVirt::from_raw(entry_va)).args(words);
-            if stack > 0 {
-                builder = builder.stack(stack);
-            }
-            match builder.hold() {
-                Ok(t) => frame.gpr.set_x(Gprs::A0, t.ident.id.get()),
-                Err(e) => return Outcome::fail(frame, map_err(e)),
+            let caller = current().running_task();
+            let result = crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
+            match result {
+                Ok(task) => frame.gpr.set_x(Gprs::A0, task.ident.id.get()),
+                Err(error) => return Outcome::fail(frame, error),
             }
             Outcome::Resume
         }
@@ -132,27 +122,17 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             frame.gpr.set_x(Gprs::A0, id);
             Outcome::Resume
         }
-        UnitCall::Build { elf, len, kind } => {
+        UnitCall::Build { kind } => {
             if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor() {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
-            if len == 0 || !ident.team.space.validate_read(elf.get(), len) {
-                return Outcome::fail(frame, UnitFail::Denied);
-            }
-            let source = Source::Space {
-                space: &ident.team.space,
-                va: KVirt::wrap(elf.get()),
-                len,
-            };
             let sire = match current().running_task() {
                 Some(me) => TaskWeak::stored(Arc::downgrade(&me), Site::Sire),
                 None => TaskWeak::empty(),
             };
-            match crate::work::unit::build(&source, SpaceKind::from(kind), sire) {
+            match crate::work::unit::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
-                Err(UnitError::Unreadable) => return Outcome::fail(frame, UnitFail::Denied),
-                Err(UnitError::OoM) => return Outcome::fail(frame, UnitFail::OoM),
-                Err(UnitError::Load) => return Outcome::fail(frame, UnitFail::BadImage),
+                Err(error) => return Outcome::fail(frame, map_err(error)),
             }
             Outcome::Resume
         }
@@ -233,8 +213,14 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             let Some(child) = me.heir(team) else {
                 return Outcome::fail(frame, UnitFail::Denied);
             };
+            let Some(_construction) = child.operation() else {
+                return Outcome::fail(frame, UnitFail::Busy);
+            };
             if !child.all_reaped() {
                 return Outcome::fail(frame, UnitFail::Busy);
+            }
+            if let Err(error) = child.cancel_staging() {
+                return Outcome::fail(frame, map_err(error));
             }
             drop(child);
             drop(me.oust(team));

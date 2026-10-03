@@ -15,12 +15,17 @@ pub(crate) fn accord(
 ) -> Result<usize, PieFail> {
     let _graph = super::GRAPH.lock();
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
+    let mut operation = None;
     let granted = {
         let mut pies = caller.pies.lock();
         let pie = pies
             .iter_mut()
             .find(|p| p.token() == src)
             .ok_or(PieFail::Denied)?;
+        if let AnyPie::Pole(p) = &*pie {
+            operation = Some(p.meta().backing().operation().ok_or(PieFail::Busy)?);
+            if p.meta().backing().reserved() != 0 { return Err(PieFail::HandedOver); }
+        }
         if !pie.alive() {
             return Err(PieFail::Dead);
         }
@@ -39,7 +44,7 @@ pub(crate) fn accord(
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
         let granted = match &*pie {
             AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
-            AnyPie::Pole(p) => AnyPie::Pole(new_pie(p.meta().clone(), badge, subset, Some(src))),
+            AnyPie::Pole(p) => AnyPie::Pole(super::try_new_pie(p.meta().clone(), badge, subset, Some(src))?),
             AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), badge, subset, Some(src))),
             AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), badge, subset, Some(src))),
         };
@@ -67,6 +72,7 @@ pub(crate) fn accord(
     }
     kids.push(granted);
     drop(kids);
+    drop(operation);
     let _ = messenger::wake(
         WakeKey::Pies {
             task: target.ident.id,

@@ -35,7 +35,7 @@ pub(crate) fn dispatch(
     let _ = &ident;
     Some(match call {
         PieCall::UnsealHole { mark } => unseal_hole(frame, &ident, mark),
-        PieCall::UnsealPole { size } => unseal_pole(frame, size),
+        PieCall::UnsealPole { size, shared } => unseal_pole(frame, size, shared),
         PieCall::UnsealNole => unseal_nole(frame),
         PieCall::Open { token } => open(frame, ident, token),
         PieCall::Shut { token } => shut(frame, ident, token),
@@ -87,6 +87,9 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
 }
 
 pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
+    if let AnyPie::Pole(p) = pie {
+        if p.meta().backing().reserved() != 0 { return Err(E::handed_over()); }
+    }
     let Some(h) = pie.heir().copied() else {
         return Ok(());
     };
@@ -150,17 +153,19 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     Outcome::Resume
 }
 
-fn unseal_pole(frame: &mut TrapContext, size: usize) -> Outcome {
+fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::pole::meta(size, task.ident.id)?;
         let task_space = task.ident.team.space.clone();
-        let pie: Pie<Pole> = gate::new_pie(
+        let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
+        if !shared { permission |= Permission::ONLY; }
+        let pie: Pie<Pole> = gate::try_new_pie(
             meta.clone(),
             Mark::NONE,
-            Permission::FETCH | Permission::STORE | Permission::VEST,
+            permission,
             None,
-        );
+        )?;
         let token = pie.token;
         task.pies.lock().try_reserve(1).map_err(|_| PieFail::OoM)?;
         let creator_flags = task_space
@@ -180,14 +185,14 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         .and_then(|task| gate::accede::<PieFail>(&task, token, Need::Fetch));
     let r = match looked.and_then(|p| usable::<PieFail>(&p).map(|()| p)) {
         Err(e) => Err(e),
-        Ok(AnyPie::Pole(p)) => match subset_to_pte(p.permission) {
-            Err(e) => Err(e),
-            Ok(flags) => mail::pole::open(
-                p.meta(),
-                token,
-                &ident.team.space,
-                ident.team.space.pte_policy(flags),
-            ),
+        Ok(AnyPie::Pole(p)) => {
+            let r = (|| {
+                let _operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
+                if p.meta().backing().reserved() != 0 { return Err(PieFail::HandedOver); }
+                let flags = subset_to_pte(p.permission())?;
+                mail::pole::open(p.meta(), token, &ident.team.space, ident.team.space.pte_policy(flags))
+            })();
+            r
         },
         Ok(AnyPie::Hole(_)) => Err(PieFail::Denied),
         Ok(AnyPie::Nole(_)) => Err(PieFail::Denied),
@@ -227,7 +232,11 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         }
         match &pie {
             AnyPie::Hole(h) => mail::hole::seal(h.meta()),
-            AnyPie::Pole(pl) => mail::pole::seal(pl.meta()),
+            AnyPie::Pole(pl) => {
+                let _operation = pl.meta().backing().operation().ok_or(PieFail::Busy)?;
+                if pl.meta().backing().reserved() != 0 { return Err(PieFail::Busy); }
+                mail::pole::seal(pl.meta());
+            },
             AnyPie::Nole(v) => mail::nole::seal(v.meta()),
             AnyPie::Tole(t) => mail::tole::seal(t.meta()),
         }
@@ -256,28 +265,8 @@ fn accord(
 }
 
 fn narrow(frame: &mut TrapContext, token: PieToken, subset: Permission) -> Outcome {
-    let r = (|| -> Result<usize, PieFail> {
-        let task = current().running_task().ok_or(PieFail::Denied)?;
-        let pie = gate::locate(&task, token).ok_or(PieFail::Denied)?;
-        if !pie.alive() {
-            return Err(PieFail::Dead);
-        }
-        if !pie.covers(subset) {
-            return Err(PieFail::Denied);
-        }
-        let pole_meta = match &pie {
-            AnyPie::Pole(p) => Some(p.meta().clone()),
-            AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => None,
-        };
-        if let Some(meta) = pole_meta {
-            mail::pole::narrow(&meta, token, subset_to_pte(subset)?)?;
-        }
-        let mut pies = task.pies.lock();
-        match pies.iter_mut().find(|p| p.token() == token) {
-            Some(p) => gate::narrow(p, subset).map(|()| 0),
-            None => Err(PieFail::Denied),
-        }
-    })();
+    let r = current().running_task().ok_or(PieFail::Denied)
+        .and_then(|task| gate::reduce(&task, token, subset)).map(|()| 0);
     answer(frame, r);
     Outcome::Resume
 }

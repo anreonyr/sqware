@@ -22,6 +22,7 @@ publish = false
 # **装配表不在依赖里**：它住 `programs/src/unit/catalog.rs`，由 `src/lib.rs` 用一行 `#[path]`
 # 文本包含（那份声明只引 `env`，故宿主编得过）——见那边 `mod program;` 的头注。
 env = { path = "../env" }
+loader = { path = "../loader" }
 
 [[bin]]
 name = "sqware-image"

@@ -1,6 +1,5 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -10,13 +9,12 @@ use env::PieToken;
 
 use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
-use crate::memory::allocator::frame;
 use crate::memory::manager::MapError;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
-use crate::work::unit::space::{SegmentKind, Space, Span};
+use crate::work::unit::space::{Backing, SegmentKind, Space, Span};
 
 use env::{MailFail, PieFail};
 
@@ -34,13 +32,7 @@ pub enum PoleState {
     Dead,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Payload {
-    Frames,
-    Region,
-}
-
-/// 一枚页：一段页级安全内存（`payload` 说它那几帧是自有还是外来区）＋ **页上那一位"有事"**。
+/// 一枚页：一段由 backing 管理的页级安全内存与页上的"有事"位。
 ///
 /// # 页上为什么有"有事"
 /// 一具架（`protocol::communication::rack`）是"一枚页 ＋ 一枚铃"两件东西；把**铃并进页**
@@ -55,10 +47,9 @@ pub enum Payload {
 /// "正好"忽略。落一列位会把 `hush` 变成"应几次"，与那四拍多出没有读者的一档。
 pub struct PoleMeta {
     state: SpinLock<PoleState>,
-    payload: Payload,
-    base: NonNull<u8>,
+    backing: Arc<Backing>,
     size: usize,
-    mappings: SpinLock<Vec<(PieToken, Weak<Space>, Span)>>,
+    mappings: SpinLock<Vec<(PieToken, Weak<Space>, Span, bool)>>,
     owner: TaskId,
     /// 这一枚在本机里的号（组、唤醒键用它——`PieToken` 是**表内**的号，跨域没有意义）。
     id: PoleId,
@@ -68,39 +59,30 @@ pub struct PoleMeta {
     ring: SpinLock<bool>,
 }
 
-// SAFETY: PoleMeta 经 Arc 跨任务共享；base 指向共享物理帧
+// SAFETY: backing 管理共享物理帧，状态及映射登记经锁同步。
 unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
+    pub(crate) fn backing(&self) -> &Arc<Backing> { &self.backing }
     pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(PieFail::NotAligned);
         }
-        let layout = core::alloc::Layout::from_size_align(size, PAGE_SIZE)
-            .map_err(|_| PieFail::NotAligned)?;
-        let ptr = crate::tag!(
-            Pole,
-            frame::allocator()
-                .allocate(layout)
-                .map_err(|_| PieFail::OoM)?
-        );
-        // SAFETY: 分配返回非空
-        let base = unsafe { NonNull::new_unchecked(ptr.as_ptr().cast::<u8>()) };
-        unsafe {
-            core::ptr::write_bytes(base.as_ptr(), 0, size);
-        }
-        Ok(Arc::new(Self {
+        let backing = Backing::allocate(size).map_err(|e| match e {
+            MapError::OutOfMemory => PieFail::OoM,
+            _ => PieFail::NotAligned,
+        })?;
+        Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
-            payload: Payload::Frames,
-            base,
+            backing,
             size,
             mappings: SpinLock::new(Vec::new()),
             owner,
             id: alloc_id(),
-            life: Life::new(),
+            life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, false),
-        }))
+        }).map_err(|_| PieFail::OoM)
     }
 
     pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
@@ -112,19 +94,21 @@ impl PoleMeta {
         let hi = end
             .checked_next_multiple_of(PAGE_SIZE)
             .ok_or(PieFail::NotAligned)?;
-        let base = NonNull::new(lo as *mut u8).ok_or(PieFail::NotAligned)?;
         let size = hi - lo;
-        Ok(Arc::new(Self {
+        let backing = Backing::region(lo, size).map_err(|e| match e {
+            MapError::OutOfMemory => PieFail::OoM,
+            _ => PieFail::NotAligned,
+        })?;
+        Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, PoleState::Live),
-            payload: Payload::Region,
-            base,
+            backing,
             size,
             mappings: SpinLock::new(Vec::new()),
             owner,
             id: alloc_id(),
-            life: Life::new(),
+            life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, false),
-        }))
+        }).map_err(|_| PieFail::OoM)
     }
 
     pub(crate) fn owner(&self) -> TaskId {
@@ -156,22 +140,26 @@ impl PoleMeta {
     ) -> Result<usize, PieFail> {
         {
             let m = self.mappings.lock();
-            if let Some((_, _, span)) = m.iter().find(|(t, _, _)| *t == token) {
+            if let Some((_, _, span, _)) = m.iter().find(|(t, _, _, open)| *t == token && *open) {
                 return Ok(span.va.as_usize());
             }
         }
         let va = space
             .with_flush(|inner| {
                 let va = inner.allocate(SegmentKind::Normal, self.size)?;
-                if let Err(e) = inner.borrow(
+                if let Err(e) = inner.backed(
                     va,
-                    PhysAddr::from_raw(self.base.as_ptr() as usize),
+                    self.backing.clone(),
+                    0,
                     self.size,
+                    flags,
                     flags,
                 ) {
                     inner.deallocate(SegmentKind::Normal, va.as_usize(), self.size);
                     return Err(e);
                 }
+                inner.bind(va, token);
+                inner.mark_open(va);
                 Ok::<_, MapError>(va)
             })
             .map_err(|_| PieFail::OoM)?;
@@ -185,6 +173,7 @@ impl PoleMeta {
             token,
             Arc::downgrade(space),
             Span::new(SegmentKind::Normal, va, self.size, None),
+            true,
         ));
         Ok(va.as_usize())
     }
@@ -193,37 +182,43 @@ impl PoleMeta {
         let target = {
             let m = self.mappings.lock();
             m.iter()
-                .find(|(t, _, _)| *t == token)
-                .and_then(|(_, w, s)| {
+                .find(|(t, _, _, _)| *t == token)
+                .and_then(|(_, w, s, _)| {
                     w.upgrade()
                         .map(|space| (space, s.va.as_usize(), s.size.get()))
                 })
         };
-        if let Some((space, va, size)) = target {
-            space
-                .protect(VirtAddr::from_raw(va), size, flags)
+        if let Some((space, _, _)) = target {
+            space.with_shootdown(|inner| inner.narrow_token(token, flags))
+                .expect("narrow: shootdown failed")
                 .map_err(|_| PieFail::Denied)?;
         }
         Ok(())
     }
 
-    fn shut_from(&self, token: PieToken) -> Result<(), PieFail> {
-        let (space, span) = {
-            let mut m = self.mappings.lock();
-            let pos = m.iter().position(|(t, _, _)| *t == token);
-            match pos {
-                Some(i) => {
-                    let (_, w, s) = m.remove(i);
-                    match w.upgrade() {
-                        Some(space) => (space, s),
-                        None => return Ok(()),
-                    }
-                }
-                None => return Ok(()),
-            }
-        };
-        space.release(span).map_err(|_| PieFail::Denied)
+    pub(crate) fn mapped(&self) -> bool {
+        self.mappings.lock().iter().any(|(token, weak, _, _)| weak.upgrade().is_some_and(|space| {
+            space.has_token(*token)
+        }))
     }
+
+    pub(crate) fn record(&self, token: PieToken, space: &Arc<Space>, span: Span) -> Result<(), PieFail> {
+        let mut mappings = self.mappings.lock();
+        mappings.try_reserve(1).map_err(|_| PieFail::OoM)?;
+        mappings.push((token, Arc::downgrade(space), span, false));
+        Ok(())
+    }
+
+    fn shut_from(&self, token: PieToken) -> Result<(), PieFail> {
+        loop {
+            let target = self.mappings.lock().iter().find(|(t, _, _, _)| *t == token)
+                .map(|(_, weak, _, _)| weak.clone());
+            let Some(weak) = target else { return Ok(()) };
+            if let Some(space) = weak.upgrade() { space.unmap_token(token).map_err(|_| PieFail::Denied)?; }
+            self.mappings.lock().retain(|(t, _, _, _)| *t != token);
+        }
+    }
+
 }
 
 impl Drop for PoleMeta {
@@ -231,20 +226,14 @@ impl Drop for PoleMeta {
         *self.state.lock() = PoleState::Dead;
         // 睡在"页上那一位"上面的读者随资源一起醒（与 nole 同一条）。
         messenger::wipe(key(self));
-        let mappings: Vec<(PieToken, Weak<Space>, Span)> =
+        let mappings: Vec<(PieToken, Weak<Space>, Span, bool)> =
             core::mem::take(&mut *self.mappings.lock());
-        for (_, weak, span) in mappings {
+        for (token, weak, _, _) in mappings {
             if let Some(space) = weak.upgrade() {
-                let _ = space.release(span);
+                let _ = space.unmap_token(token);
             }
         }
-        let layout =
-            core::alloc::Layout::from_size_align(self.size, PAGE_SIZE).expect("pole layout valid");
-        if self.payload == Payload::Frames {
-            unsafe {
-                frame::allocator().deallocate(self.base, layout);
-            }
-        }
+
     }
 }
 
@@ -258,7 +247,7 @@ pub(crate) fn open(
         return Err(PieFail::Dead);
     }
     let va = meta.open_into(token, space, flags)?;
-    let _ = space.protect(VirtAddr::from_raw(va), meta.size, flags);
+    space.protect(VirtAddr::from_raw(va), meta.size, flags).map_err(|_| PieFail::Denied)?;
     Ok((va, meta.size))
 }
 

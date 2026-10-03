@@ -50,6 +50,7 @@ fn block_power(size: usize) -> usize {
 
 unsafe impl Allocator for FrameAllocator {
     fn allocate(&self, layout: core::alloc::Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::assert_allocation_allowed();
         {
             let this = &self;
             let size = layout.size().max(PAGE_SIZE);
@@ -383,7 +384,11 @@ pub fn allocator() -> &'static dyn Allocator {
 
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        let heap = Box::leak(Box::new(FrameAllocator::init()?));
+        // Reserve the allocator itself before calculating the first free frame.
+        let mut slot = Box::<FrameAllocator>::try_new_uninit().map_err(|_| InitError::OutOfMemory)?;
+        slot.write(FrameAllocator::init()?);
+        // SAFETY: initialization filled the reserved slot.
+        let heap = Box::leak(unsafe { slot.assume_init() });
         FRAME_ALLOCATOR
             .set(heap)
             .map_err(|_| InitError::AlreadyInitialized)

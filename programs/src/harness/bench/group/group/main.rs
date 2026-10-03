@@ -51,6 +51,48 @@ const MS: usize = 2_000;
 /// 投信前的稳压（毫秒；理由见头注）
 const SETTLE: u64 = 200;
 
+static BUILDERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind) -> bool {
+    use core::sync::atomic::Ordering;
+    use runtime::core::task::join;
+    let worker = move || {
+        BUILDERS.fetch_add(1, Ordering::AcqRel);
+        let mut spins = 0;
+        while BUILDERS.load(Ordering::Acquire) < 2 {
+            core::hint::spin_loop();
+            spins += 1;
+            if spins == 1_000_000 { room::starve(); spins = 0; }
+        }
+        let mut children = alloc::vec::Vec::new();
+        if children.try_reserve(32).is_err() { return false; }
+        let mut residents = 0;
+        for index in 0..32 {
+            let Ok(image) = runtime::core::loader::build(elf, kind) else { return false };
+            let team = image.team();
+            let Ok(task) = image.spawn(&[], 0) else { return false };
+            children.push((team, task));
+            if index == 0 { residents = runtime::env::pie::table_size(); }
+        }
+        let current = runtime::env::pie::table_size();
+        if current != residents {
+            debug::put(&alloc::format!("group: builder roots {residents}->{current}"));
+            return false;
+        }
+        for (team, task) in children {
+            if room::doom(task).is_err() { debug::put("group: builder doom"); return false; }
+            if unit::join(task, Wait::Forever).is_err() { debug::put("group: builder join"); return false; }
+            if unit::oust(team).is_err() { debug::put("group: builder oust"); return false; }
+        }
+        true
+    };
+    let _ = room::sleep(core::time::Duration::from_millis(100));
+    let Ok(left) = join::try_closure(worker) else { return false };
+    let _ = room::sleep(core::time::Duration::from_millis(10));
+    let Ok(right) = join::try_closure(worker) else { return false };
+    left.join() && right.join()
+}
+
 #[programs::entry]
 fn main() -> Reason {
     let Some(accounts) = Accounts::take() else {
@@ -60,6 +102,8 @@ fn main() -> Reason {
         return die("group: waiter not in manifest");
     };
     let (elf, kind) = (waiter.elf, waiter.kind);
+    if !concurrent_builders(elf, kind) { return die("group: concurrent builders"); }
+    debug::put("group: concurrent builders=64");
 
     // ① 组：**共享**（不带 `ONLY` ⇒ 同一枚 accord 给两个任务都成立）。
     let Ok(pile) = Pile::unseal(true) else {
@@ -84,10 +128,10 @@ fn main() -> Reason {
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut tasks = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(team) = unit::build(elf, kind) else {
+        let Ok(image) = runtime::core::loader::build(elf, kind) else {
             return die("group: build");
         };
-        let Ok(task) = unit::spawn(team, 0, &[], 0) else {
+        let Ok(task) = image.spawn(&[], 0) else {
             return die("group: spawn");
         };
         tasks[i] = task;

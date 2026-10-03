@@ -15,78 +15,63 @@ use super::snap::{self, Snap};
 fn take(t: &Task, token: PieToken) -> Option<AnyPie> {
     let mut pies = t.pies.lock();
     let pos = pies.iter().position(|p| p.token() == token)?;
-    Some(pies.remove(pos))
+    let pie = pies.remove(pos);
+    pie.invalidate();
+    Some(pie)
 }
 
-fn pole_meta(pie: &AnyPie) -> Option<Arc<PoleMeta>> {
-    match pie {
-        AnyPie::Pole(p) => Some(p.meta().clone()),
-        AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => None,
+pub(crate) struct Cleanup {
+    root: Option<AnyPie>,
+    removed: Vec<AnyPie>,
+}
+
+impl Cleanup {
+    pub(crate) fn finish(self) -> usize {
+        let count = self.removed.len() + usize::from(self.root.is_some());
+        for pie in self.root.into_iter().chain(self.removed) {
+            if let AnyPie::Pole(p) = &pie {
+                pole::shut(p.meta(), p.token).expect("cull: unmap token");
+            }
+            drop(pie);
+        }
+        count
     }
 }
 
-pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> usize {
+pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
     let (root_task, root_token) = root;
-    let mut removed = 0usize;
-    let mut unmaps: Vec<(Arc<PoleMeta>, PieToken)> = Vec::new();
-
-    if unmaps.try_reserve(snap.len()).is_err() {
-        return 0;
+    let sole = root_task.pies.lock().iter().find(|pie| pie.token() == root_token)
+        .is_some_and(|pie| matches!(pie, AnyPie::Pole(p) if p.meta().backing().exclusive() && p.heir.is_none()));
+    if sole { return Cleanup { root: take(&root_task, root_token), removed: Vec::new() }; }
+    let mut root = None;
+    let mut removed = Vec::new();
+    let mut frontier = Vec::new();
+    // Reserve for every actual token before changing the graph.
+    let count = snap.iter().filter_map(|weak| weak.upgrade())
+        .map(|task| task.pies.lock().len()).sum::<usize>() + 1;
+    if removed.try_reserve(count).is_err() || frontier.try_reserve(count).is_err() {
+        return Cleanup { root, removed };
     }
-    let mut frontier: Vec<PieToken> = Vec::new();
-    if frontier.try_reserve(1).is_err() {
-        return 0;
-    }
+    root = take(&root_task, root_token);
     frontier.push(root_token);
-
-    if let Some(pie) = take(&root_task, root_token) {
-        removed += 1;
-        let meta = pole_meta(&pie);
-        drop(pie);
-        if let Some(m) = meta {
-            unmaps.push((m, root_token));
-        }
-    }
-
-    while !frontier.is_empty() {
-        let mut next: Vec<PieToken> = Vec::new();
-        let mut scan: Vec<(Arc<Task>, PieToken)> = Vec::new();
-        for f in frontier.drain(..) {
-            let Some(kin) = snap::heirs(f, snap) else {
-                break;
-            };
-            if scan.try_reserve(kin.len()).is_err() {
-                break;
-            }
-            scan.extend(kin);
-        }
-        for (t, token) in scan {
-            if let Some(pie) = take(&t, token) {
-                removed += 1;
-                if next.try_reserve(1).is_err() {
-                    break;
-                }
-                next.push(token);
-                let meta = pole_meta(&pie);
-                drop(pie);
-                if let Some(m) = meta {
-                    unmaps.push((m, token));
-                }
+    let mut cursor = 0;
+    while cursor < frontier.len() {
+        let token = frontier[cursor];
+        cursor += 1;
+        let Some(kin) = snap::heirs(token, snap) else { break };
+        for (task, token) in kin {
+            if let Some(pie) = take(&task, token) {
+                frontier.push(token);
+                removed.push(pie);
             }
         }
-        frontier = next;
     }
-
-    for (meta, token) in unmaps {
-        let _ = pole::shut(&meta, token);
-    }
-
-    removed
+    Cleanup { root, removed }
 }
 
 /// 退场那一趟：**先封印，再看快照摘副本**。
 pub(crate) fn doom(task: &Arc<Task>) {
-    let _graph = super::GRAPH.lock();
+    let graph = super::GRAPH.lock();
     let tid = task.ident.id;
     let _ = seal_owned(tid, task);
     // **摘副本尽力而为**：它要分配（token 快照、frontier、unmaps），备不出就只少摘几枚
@@ -103,9 +88,11 @@ pub(crate) fn doom(task: &Arc<Task>) {
         return;
     }
     let snap = snap::snap();
-    for token in tokens {
-        cull((task.clone(), token), &snap);
-    }
+    let mut cleanups = Vec::new();
+    if cleanups.try_reserve(tokens.len()).is_err() { return; }
+    for token in tokens { cleanups.push(cull((task.clone(), token), &snap)); }
+    drop(graph);
+    for cleanup in cleanups { cleanup.finish(); }
 }
 
 /// 退场者铸的那些资源，**就地封印**（四族一起）。返封了几枚。

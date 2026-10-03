@@ -221,6 +221,7 @@ impl BlockAllocator {
 
 unsafe impl Allocator for BlockAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::assert_allocation_allowed();
         let power = layout
             .size()
             .max(1usize << MIN_POWER)

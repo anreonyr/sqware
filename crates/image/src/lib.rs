@@ -1,15 +1,8 @@
 //! image — **造镜像那一步**：编程序（`programs`，含测具那一档）→ 打 initrd → 放到内核 ELF 旁。
 //!
-//! # 瘦身（`slim`）：为什么在**打包侧**剥符号与调试节
-//!
-//! `prog-*` 那份字节是**宿主调试用的那一份**（`gdb` 要符号），而进 initrd 的这一份只被内核
-//! 按 ELF 段读——**两个消费者，两份字节**。在这里剥，两边都不亏。实测 31 张：debug
-//! 128.2 MiB → 3.3 MiB（−97.4%），release 5.9 → 1.4 MiB（−77.2%）。省的不只是宿主读盘：
-//! initrd 是 boot 给的**持久保留区**，帧分配器永不分配它（`platform/machine.rs` 的
-//! `reserved`），debug 档那一份在 256 MiB 的机器上白占 78 MiB——故在这里剥。
-//!
-//! `llvm-objcopy` 原样保留 `p_offset` / `p_vaddr` / `p_filesz`（仍页对齐），故**内核侧一行
-//! 都不用改**——三条判据（`offset`/`vaddr` 页对齐、段落在文件内）在 93 张产物上逐张验过。
+//! 保留供用户态装载的 ELF 清单，并从引导 ELF 生成页化 capsule。
+//! RX payload 包含完整补零页；内核只消费 capsule，不解析 ELF。
+//! 入包 ELF 剥除符号与调试节，宿主调试产物仍保留这些内容。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -166,8 +159,19 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .iter()
         .position(|(name, _)| *name == entry)
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
-    let blob = env::ledger::manifest::pack(&items, entry_at)
+    let mut blob = env::ledger::manifest::pack(&items, entry_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
+    let capsule = loader::capsule(items[entry_at].2)
+        .map_err(|error| format!("bootstrap {entry}: {error:?}"))?;
+    let offset = blob.len().checked_next_multiple_of(env::ledger::capsule::PAGE)
+        .ok_or_else(|| "initrd: capsule offset overflow".to_string())?;
+    let total = offset.checked_add(capsule.len()).filter(|n| *n <= u32::MAX as usize)
+        .ok_or_else(|| "initrd: capsule exceeds u32 range".to_string())?;
+    blob.try_reserve(total - blob.len()).map_err(|_| "initrd: no memory".to_string())?;
+    blob.resize(offset, 0);
+    blob.extend_from_slice(&capsule);
+    blob[..4].copy_from_slice(&(offset as u32).to_le_bytes());
+    blob[4..8].copy_from_slice(&(capsule.len() as u32).to_le_bytes());
 
     // 落点：内核 ELF 同目录（`boot.nu` 就在那儿找）。
     let at = root

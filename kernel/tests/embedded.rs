@@ -83,6 +83,42 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn backing_sharing_and_recycle() {
+        kernel::health::backing::sharing();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn task_preparation_rollback() {
+        kernel::health::task::preparation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn first_spawn_atomic_commit() {
+        kernel::health::task::construction();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn construction_narrow_and_cancel() {
+        kernel::health::task::cancellation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn backing_authority_tracks_actual_holders() {
+        kernel::health::backing::authority();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn retirement_waits_for_eviction() {
+        kernel::health::backing::retirement();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn stress_allocator() {
         kernel::health::stress::accept();
     }

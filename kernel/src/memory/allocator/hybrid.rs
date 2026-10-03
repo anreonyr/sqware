@@ -22,6 +22,7 @@ impl HybridAllocator {
 
 unsafe impl Allocator for HybridAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::assert_allocation_allowed();
         if layout.size() <= PAGE_SIZE / 2 {
             block::allocator().allocate(layout)
         } else {

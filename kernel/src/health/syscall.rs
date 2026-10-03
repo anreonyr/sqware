@@ -66,24 +66,7 @@ impl Caller {
         at as usize
     }
 
-    fn image(&self) -> usize {
-        let mut elf = [0u8; 128];
-        elf[..6].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1]);
-        elf[16..18].copy_from_slice(&2u16.to_le_bytes());
-        elf[18..20].copy_from_slice(&243u16.to_le_bytes());
-        elf[24..32].copy_from_slice(&0x10000u64.to_le_bytes());
-        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
-        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
-        elf[56..58].copy_from_slice(&1u16.to_le_bytes());
-        elf[64..68].copy_from_slice(&1u32.to_le_bytes());
-        elf[68..72].copy_from_slice(&5u32.to_le_bytes());
-        elf[80..88].copy_from_slice(&0x10000u64.to_le_bytes());
-        elf[96..104].copy_from_slice(&128u64.to_le_bytes());
-        elf[104..112].copy_from_slice(&(PAGE_SIZE as u64).to_le_bytes());
-        let at = self.allocate(PAGE_SIZE);
-        assert!(self.team.space.copy_out(&elf, at));
-        at
-    }
+
 }
 
 impl Drop for Caller {
@@ -99,48 +82,18 @@ pub fn abi_and_privilege() {
     let user = Caller::new(false);
     assert!(user.raw(3usize << 32, [0; 6]) < 0);
     assert!(user.raw((2usize << 32) | 99, [0; 6]) < 0);
-    assert!(user.raw((1usize << 32) | 5, [0, 0, 2, 0, 0, 0]) < 0);
+    assert!(user.raw((1usize << 32) | 5, [2, 0, 0, 0, 0, 0]) < 0);
     assert!(user.raw((5usize << 32) | 3, [0, 2, 0, 0, 0, 0]) < 0);
     assert!(user.raw((7usize << 32) | 6, [0, 0, usize::MAX, 0, 0, 0]) < 0);
     assert!(matches!(
         bool::unpack(&[2, 0, 0, 0, 0, 0], &mut 0),
         Err(Decode::Invalid)
     ));
-    let elf = user.image();
-    let build = |kind| {
-        EnvCall::Unit(UnitCall::Build {
-            elf: VirtAddr::new(elf),
-            len: 128,
-            kind,
-        })
-    };
+    let build = |kind| EnvCall::Unit(UnitCall::Build { kind });
     let heirs = user.task.heir_count();
-    assert_eq!(
-        user.call(build(ProgramKind::Supervisor)),
-        env::UnitFail::Denied.code()
-    );
+    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
     assert_eq!(user.task.heir_count(), heirs);
     assert!(user.call(build(ProgramKind::User)) > 0);
-    for (address, size) in [
-        (crate::layout::TEAM_FRAME_BASE.as_usize(), PAGE_SIZE),
-        (usize::MAX - PAGE_SIZE + 1, PAGE_SIZE),
-        (mode::upper().as_usize() - PAGE_SIZE, PAGE_SIZE + 1),
-    ] {
-        assert!(
-            user.team
-                .space
-                .copy_out(&(address as u64).to_le_bytes(), elf + 80)
-        );
-        assert!(
-            user.team
-                .space
-                .copy_out(&(size as u64).to_le_bytes(), elf + 104)
-        );
-        assert_eq!(
-            user.call(build(ProgramKind::User)),
-            env::UnitFail::BadImage.code()
-        );
-    }
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
             task: user.task.ident.id
@@ -149,12 +102,9 @@ pub fn abi_and_privilege() {
     );
     assert_eq!(user.task.tag(), TaskTag::Held);
     let supervisor = Caller::new(true);
-    let elf = supervisor.image();
     for kind in [ProgramKind::User, ProgramKind::Supervisor] {
         assert!(
             supervisor.call(EnvCall::Unit(UnitCall::Build {
-                elf: VirtAddr::new(elf),
-                len: 128,
                 kind
             })) > 0
         );
@@ -168,6 +118,7 @@ pub fn abi_and_privilege() {
 }
 
 pub fn memory() {
+    crate::work::room::scheduler::boot::init();
     let user = Caller::new(false);
     let zero = user.allocate(0);
     assert_eq!(
@@ -181,7 +132,7 @@ pub fn memory() {
     let before = user.team.space.translate(KVirt::wrap(at)).unwrap().1.bits();
     for flags in [1, 16, 32, 64, 128, 256, 1u64 << 63, 0, 4] {
         assert!(
-            user.call(EnvCall::Memory(MemoryCall::Mprotect {
+            user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size: PAGE_SIZE,
                 flags
@@ -194,7 +145,7 @@ pub fn memory() {
     }
     for flags in [2, 8, 10, 6] {
         assert_eq!(
-            user.call(EnvCall::Memory(MemoryCall::Mprotect {
+            user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size: PAGE_SIZE,
                 flags
@@ -212,12 +163,12 @@ pub fn memory() {
         at + (mode::upper().as_usize() << 1),
     ] {
         for call in [
-            MemoryCall::Mprotect {
+            MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
                 flags: 6,
             },
-            MemoryCall::Munmap {
+            MemoryCall::Munmap { team: env::TeamId::new(0),
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
@@ -225,7 +176,7 @@ pub fn memory() {
                 addr: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
-            MemoryCall::Mmap {
+            MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
                 at: VirtAddr::new(internal),
                 size: PAGE_SIZE,
             },
@@ -240,15 +191,15 @@ pub fn memory() {
                 addr: VirtAddr::new(at),
                 size,
             },
-            MemoryCall::Mmap {
+            MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
                 at: VirtAddr::new(0),
                 size,
             },
-            MemoryCall::Munmap {
+            MemoryCall::Munmap { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size,
             },
-            MemoryCall::Mprotect {
+            MemoryCall::Mprotect { team: env::TeamId::new(0),
                 addr: VirtAddr::new(at),
                 size,
                 flags: 6,
@@ -277,14 +228,14 @@ pub fn memory() {
 
     let fixed = 0x4004_0000;
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mmap {
+        user.call(EnvCall::Memory(MemoryCall::Mmap { team: env::TeamId::new(0), backing: env::PieToken::NONE, offset: 0, flags: 6,
             at: VirtAddr::new(fixed),
             size: 3 * PAGE_SIZE
         })),
         fixed as isize
     );
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mprotect {
+        user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed + PAGE_SIZE),
             size: PAGE_SIZE,
             flags: 2
@@ -311,14 +262,14 @@ pub fn memory() {
         );
     }
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Munmap {
+        user.call(EnvCall::Memory(MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed + PAGE_SIZE),
             size: PAGE_SIZE
         })),
         0
     );
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Munmap {
+        user.call(EnvCall::Memory(MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(fixed),
             size: 3 * PAGE_SIZE
         })),
@@ -328,6 +279,7 @@ pub fn memory() {
 }
 
 pub fn pointers() {
+    crate::work::room::scheduler::boot::init();
     let user = Caller::new(false);
     let at = user.allocate(PAGE_SIZE);
     assert!(user.team.space.copy_out(b"readable", at));
@@ -346,13 +298,6 @@ pub fn pointers() {
             user.call(EnvCall::Debug(DebugCall::Put {
                 buf: VirtAddr::new(va),
                 len
-            })) < 0
-        );
-        assert!(
-            user.call(EnvCall::Unit(UnitCall::Build {
-                elf: VirtAddr::new(va),
-                len,
-                kind: ProgramKind::User
             })) < 0
         );
         if !user.team.space.validate_read(va, size_of::<usize>()) {
@@ -399,7 +344,7 @@ pub fn pointers() {
     let mut reader = StackReader::user(user.team.space.clone());
     assert!(reader.word(user.task.ident.frame.va.as_usize()).is_none());
     assert_eq!(
-        user.call(EnvCall::Memory(MemoryCall::Mprotect {
+        user.call(EnvCall::Memory(MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size: PAGE_SIZE,
             flags: 8
@@ -419,6 +364,7 @@ pub fn pointers() {
 }
 
 pub fn capability() {
+    crate::work::room::scheduler::boot::init();
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
@@ -457,11 +403,11 @@ pub fn capability() {
             addr: VirtAddr::new(at),
             size,
         },
-        MemoryCall::Munmap {
+        MemoryCall::Munmap { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size,
         },
-        MemoryCall::Mprotect {
+        MemoryCall::Mprotect { team: env::TeamId::new(0),
             addr: VirtAddr::new(at),
             size,
             flags: 6,

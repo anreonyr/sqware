@@ -7,7 +7,13 @@ pub(crate) fn release(
     task: &alloc::sync::Arc<Task>,
     token: PieToken,
 ) -> Result<usize, PieFail> {
-    let _graph = super::GRAPH.lock();
+    let graph = super::GRAPH.lock();
+    let source = super::locate(task, token).ok_or(PieFail::Denied)?;
+    let _operation = if let super::AnyPie::Pole(p) = &source {
+        let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
+        if p.meta().backing().reserved() != 0 { return Err(PieFail::Busy); }
+        Some(operation)
+    } else { None };
     let snap = super::snap();
     let present = {
         let pies = task.pies.lock();
@@ -16,5 +22,7 @@ pub(crate) fn release(
     if !present {
         return Err(PieFail::Denied);
     }
-    Ok(cull::cull((task.clone(), token), &snap))
+    let cleanup = cull::cull((task.clone(), token), &snap);
+    drop(graph);
+    Ok(cleanup.finish())
 }

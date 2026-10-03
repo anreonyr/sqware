@@ -10,7 +10,7 @@ use crate::memory::manager::mode;
 use crate::memory::manager::table::{Frame, TableNode};
 
 use super::SegmentKind;
-use super::map::{Map, Pending};
+use super::map::{Map, Origin, Pending};
 use super::salvage::Salvage;
 
 pub(crate) struct SpaceInner {
@@ -161,8 +161,86 @@ impl SpaceInner {
         if self.overlaps(vaddr, size) {
             return Err(MapError::AlreadyMapped);
         }
-        self.root.map(vaddr, paddr, size, flags)?;
-        self.register(Map::new(vaddr, size, flags, None))
+        let mut map = Map::new(vaddr, size, flags, None);
+        map.origin = Origin::Borrowed;
+        if let Err(error) = self.root.map(vaddr, paddr, size, flags) {
+            self.root.unmap(vaddr, size);
+            return Err(error);
+        }
+        if let Err(error) = self.register(map) {
+            self.root.unmap(vaddr, size);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn backed(
+        &mut self,
+        va: VirtAddr,
+        backing: alloc::sync::Arc<super::Backing>,
+        offset: usize,
+        size: usize,
+        flags: PteFlags,
+        ceiling: PteFlags,
+    ) -> Result<(), MapError> {
+        let pa = backing.address(offset, size)?;
+        if va.offset() != 0 || self.overlaps(va, size) {
+            return Err(MapError::AlreadyMapped);
+        }
+        let access = PteFlags::R | PteFlags::W | PteFlags::X;
+        if !(ceiling & access).contains(flags & access) {
+            return Err(MapError::WidenDenied);
+        }
+        let mut map = Map::new(va, size, flags, None);
+        backing.alias(true);
+        if ceiling.contains(PteFlags::W) { backing.map_write(true); }
+        map.origin = Origin::Backed { backing, offset, ceiling: ceiling & access, token: None, private: false, open: false };
+        self.register(map)?;
+        if let Err(error) = self.root.map(va, pa, size, flags) {
+            self.root.unmap(va, size);
+            self.maps.retain(|map| map.va != va);
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn bind(&mut self, va: VirtAddr, token: env::PieToken) {
+        if let Some(map) = self.resolve_mut(va) {
+            if let Origin::Backed { token: source, .. } = &mut map.origin { *source = Some(token); }
+        }
+    }
+
+    pub(crate) fn mark_open(&mut self, va: VirtAddr) {
+        if let Some(map) = self.resolve_mut(va) {
+            if let Origin::Backed { open, .. } = &mut map.origin { *open = true; }
+        }
+    }
+
+    pub(crate) fn limit(&mut self, va: VirtAddr, ceiling: PteFlags) {
+        if let Some(map) = self.resolve_mut(va) { map.origin = Origin::Limited { ceiling }; }
+    }
+
+    pub(crate) fn private(&mut self, va: VirtAddr) {
+        if let Some(map) = self.resolve_mut(va) {
+            if let Origin::Backed { private, backing, .. } = &mut map.origin { if !*private { backing.alias(false); *private = true; } }
+        }
+    }
+
+    pub(crate) fn narrow_token(&mut self, token: env::PieToken, access: PteFlags) -> Result<(), MapError> {
+        for map in &mut self.maps {
+            if let Origin::Backed { backing, ceiling, token: Some(source), .. } = &mut map.origin {
+                if *source != token { continue; }
+                let narrowed = *ceiling & access;
+                let flags = (map.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | (map.flags & narrowed);
+                self.root.protect(map.va, map.size.get(), flags)?;
+                if ceiling.contains(PteFlags::W) && !narrowed.contains(PteFlags::W) {
+                    backing.map_write(false);
+                }
+                *ceiling = narrowed;
+                map.flags = flags;
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn unmap(
@@ -190,7 +268,7 @@ impl SpaceInner {
             let pages = m.size.get() / PAGE_SIZE;
             let hole = {
                 let n = m.frames.count_range(lo_pg, hi_pg);
-                (n > 0)
+                (n > 0 || m.retains_backing())
                     .then(|| m.part(lo_pg, hi_pg - lo_pg, n))
                     .transpose()?
             };
@@ -333,6 +411,16 @@ impl SpaceInner {
         {
             let root = &self.root;
             for m in self.maps.iter() {
+                if let Origin::Limited { ceiling } = &m.origin {
+                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                        return Err(MapError::WidenDenied);
+                    }
+                }
+                if let Origin::Backed { ceiling, .. } = &m.origin {
+                    if span(m).is_some() && !ceiling.contains(flags & (PteFlags::R | PteFlags::W | PteFlags::X)) {
+                        return Err(MapError::WidenDenied);
+                    }
+                }
                 if !m.is_borrowed() {
                     continue;
                 }
@@ -359,7 +447,7 @@ impl SpaceInner {
         let mut splits = [None, None];
         for (index, boundary) in [va.as_usize(), end].into_iter().enumerate() {
             if let Some(map) = self.resolve_ref(VirtAddr::wrap(boundary))
-                && map.pending == Some(Pending::Lazy)
+                && (map.pending == Some(Pending::Lazy) || map.retains_backing())
                 && boundary > map.va.as_usize()
             {
                 let first = (boundary - map.va.as_usize()) / PAGE_SIZE;
@@ -401,7 +489,7 @@ impl SpaceInner {
             });
             if permissions_only {
                 m.flags = (m.flags - (PteFlags::R | PteFlags::W | PteFlags::X)) | flags;
-            } else if m.pending == Some(Pending::Lazy) {
+            } else if m.pending == Some(Pending::Lazy) || m.retains_backing() {
                 m.flags = flags;
             }
         }

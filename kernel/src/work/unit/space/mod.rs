@@ -1,4 +1,5 @@
 mod access;
+mod backing;
 mod inner;
 mod map;
 mod outer;
@@ -7,9 +8,30 @@ mod segment;
 pub(crate) mod window;
 
 pub(crate) use map::{Pending, PendingState};
+pub(crate) use backing::Backing;
+pub(crate) use backing::Permit;
 pub use outer::{Space, SpaceBuilder};
 pub(crate) use salvage::Span;
+#[cfg(debug_assertions)]
+pub(crate) use salvage::Salvage;
 pub(crate) use segment::SegmentKind;
+
+pub(crate) fn inner_frame() -> Result<crate::memory::manager::table::Frame, crate::memory::manager::MapError> {
+    inner::SpaceInner::frame()
+}
+
+pub(crate) fn sync_instructions() -> Result<(), crate::memory::manager::MapError> {
+    // SAFETY: callers have finished writing the pages before publishing executable mappings.
+    unsafe { core::arch::asm!("fence rw, rw", "fence.i", options(nostack)) };
+    let me = crate::hart::hart_id();
+    let mut mask = 0usize;
+    for h in (0..crate::hart::hart_count()).map(crate::hart::HartId::new) {
+        if h != me && crate::memory::manager::asid::lease(h).is_some() { mask |= h.bit().1; }
+    }
+    sbi::RfenceCall::new(sbi::fid::Rfence::RemoteFenceI)
+        .args(sbi::ecall::SArgs { a0: mask, a1: 0, ..Default::default() }).call()
+        .map(|_| ()).map_err(|_| crate::memory::manager::MapError::NoRegion)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SpaceKind {

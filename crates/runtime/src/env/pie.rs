@@ -33,7 +33,11 @@ pub fn unseal_hole(mark: Mark) -> PieResult<PieToken> {
 }
 
 pub fn unseal_pole(size: usize) -> PieResult<PieToken> {
-    env::pie::unseal_pole(size)
+    env::pie::unseal_pole(size, true)
+}
+
+pub fn unseal_pole_exclusive(size: usize) -> PieResult<PieToken> {
+    env::pie::unseal_pole(size, false)
 }
 
 /// 解封 Nole（**无数据面**的权柄载体）：造一枚只有身份与存活的许可载体。

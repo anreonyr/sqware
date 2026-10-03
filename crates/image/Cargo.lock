@@ -28,6 +28,14 @@ name = "image"
 version = "0.1.0"
 dependencies = [
  "env",
+ "loader",
+]
+
+[[package]]
+name = "loader"
+version = "0.1.0"
+dependencies = [
+ "env",
 ]
 
 [[package]]

@@ -21,14 +21,14 @@ fn unit_fail(e: erra::Error<UnitFail>) -> Fail {
     match e.source {
         UnitFail::BadImage => Fail::BadImage,
         UnitFail::OoM => Fail::Full,
-        UnitFail::Denied | UnitFail::Busy => Fail::Unknown,
+        UnitFail::Denied | UnitFail::Busy | UnitFail::BadEntry => Fail::Unknown,
     }
 }
 
 fn pie_fail(e: erra::Error<PieFail>) -> Fail {
     match e.source {
         PieFail::OoM => Fail::Full,
-        PieFail::Denied | PieFail::Dead | PieFail::HandedOver | PieFail::NotAligned => {
+        PieFail::Denied | PieFail::Dead | PieFail::HandedOver | PieFail::NotAligned | PieFail::Busy => {
             Fail::Unknown
         }
     }
@@ -125,9 +125,9 @@ pub fn mint(
 ) -> Result<TaskId, Fail> {
     admit_start(table, name)?;
 
-    let team = utask::build(image, kind).map_err(unit_fail)?;
-    let Ok(task) = utask::spawn(team, 0, &[], 0) else {
-        let _ = utask::oust(team);
+    let image = runtime::core::loader::build(image, kind).map_err(unit_fail)?;
+    let team = image.team();
+    let Ok(task) = image.spawn(&[], 0) else {
         return Err(Fail::Full);
     };
     if let Err(fail) = table.attach(name, Some(team), task) {

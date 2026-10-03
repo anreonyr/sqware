@@ -160,6 +160,7 @@ global_asm!(
     "    ld    x6,  0x60(x5)",
     "    ld    x2,  0x40(x5)",
     "    ld    x5,  0x58(x5)",
+    "    fence.i",
     "    sret",
     ".globl __trampoline_end",
     "__trampoline_end:",

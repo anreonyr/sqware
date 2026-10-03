@@ -20,12 +20,14 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
 }
 
 pub mod hart;
+pub mod backing;
 pub mod pagetable;
 pub mod permit;
 pub mod shell;
 pub mod spare;
 pub mod stress;
 pub mod syscall;
+pub mod task;
 
 pub fn run() {
     #[cfg(debug_assertions)]

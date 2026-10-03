@@ -4,7 +4,7 @@ use alloc::sync::Arc;
 use env::{Permission, PieFail, PieToken};
 
 pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
-    let _graph = super::GRAPH.lock();
+    let graph = super::GRAPH.lock();
     let parent = {
         let pies = task.pies.lock();
         let pie = pies
@@ -45,7 +45,9 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
         .position(|p| p.token() == token)
         .ok_or(PieFail::Denied)?;
     let pie = pies.remove(at);
+    pie.invalidate();
     drop(pies);
+    drop(graph);
     if let AnyPie::Pole(p) = pie {
         let _ = crate::work::mail::pole::shut(p.meta(), token);
     }

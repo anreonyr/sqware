@@ -167,6 +167,7 @@ pub(crate) fn cull(roots: &[Arc<Team>], reason: usize) {
     let mut work: Vec<Arc<Team>> = roots.to_vec();
     let mut tasks: Vec<Arc<Task>> = Vec::new();
     while let Some(t) = work.pop() {
+        t.cancel_staging().expect("exit: cancel construction");
         for weak_task in t.tasks_snapshot() {
             if let Some(task) = weak_task.upgrade() {
                 work.extend(task.heirs());

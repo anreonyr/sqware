@@ -15,3 +15,4 @@ doctest = false
 [dependencies]
 env = { path = "../env" }
 erra = { version = "0.2.0", default-features = false }
+loader = { path = "../loader" }

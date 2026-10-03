@@ -14,10 +14,12 @@ use crate::platform::machine;
 pub enum Level {
     Scheduler = 1,
     Space = 2,
+    TeamTasks = 3,
     L3 = 4,
-    Asid = 5,
-    Frame = 6,
-    Block = 7,
+    Roster = 5,
+    Asid = 6,
+    Frame = 7,
+    Block = 8,
     Tally = 9,
     Spare = 10,
 }

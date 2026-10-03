@@ -5,7 +5,7 @@
 //! 词汇**（`MemoryFail`）——`Allocate` 答得出 `OoM` 与 `NoRegion`，`Deallocate` 只答
 //! `Denied`。每个调用按格生成签名，不再有"一个 `call()` 对整张 `Ret` 联合负责"。
 
-use env::{MemoryResult, VirtAddr};
+use env::{MemoryResult, VirtAddr, TeamId, PieToken};
 
 /// 用户堆分配（按页取整、至少一页）。
 ///
@@ -31,7 +31,7 @@ pub fn deallocate(addr: usize, size: usize) -> MemoryResult<()> {
 /// - `NotAligned`(-3)    定点 `addr` 未页对齐
 /// - `AlreadyMapped`(-5) 定点 `addr` 已被映射
 pub fn mmap(size: usize, at: Option<usize>) -> MemoryResult<usize> {
-    env::memory::mmap(size, VirtAddr::new(at.unwrap_or(0))).map(|va| va.get())
+    map(TeamId::new(0), at.unwrap_or(0), size, PieToken::NONE, 0, 6)
 }
 
 /// 释放 mmap / 声明区域。
@@ -39,7 +39,7 @@ pub fn mmap(size: usize, at: Option<usize>) -> MemoryResult<usize> {
 /// # Errors
 /// - `Denied`(-1) 这一区间不是本段的已分配块
 pub fn munmap(addr: usize, size: usize) -> MemoryResult<()> {
-    env::memory::munmap(VirtAddr::new(addr), size)
+    env::memory::munmap(TeamId::new(0), VirtAddr::new(addr), size)
 }
 
 /// 修改映射区域保护标志。
@@ -47,5 +47,13 @@ pub fn munmap(addr: usize, size: usize) -> MemoryResult<()> {
 /// # Errors
 /// - `Denied`(-1) 标志位非法 / 覆盖不足 / 借入页不许加宽
 pub fn mprotect(addr: usize, size: usize, flags: u64) -> MemoryResult<()> {
-    env::memory::mprotect(VirtAddr::new(addr), size, flags)
+    env::memory::mprotect(TeamId::new(0), VirtAddr::new(addr), size, flags)
+}
+
+pub fn map(team: TeamId, at: usize, size: usize, backing: PieToken, offset: usize, flags: u64) -> MemoryResult<usize> {
+    env::memory::mmap(team, VirtAddr::new(at), size, backing, offset, flags).map(|va| va.get())
+}
+
+pub fn unmap(team: TeamId, at: usize, size: usize) -> MemoryResult<()> {
+    env::memory::munmap(team, VirtAddr::new(at), size)
 }

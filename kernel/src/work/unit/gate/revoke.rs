@@ -10,9 +10,16 @@ pub(crate) fn revoke(
     target: &Weak<Task>,
     token: PieToken,
 ) -> Result<usize, PieFail> {
-    let _graph = super::GRAPH.lock();
-    let snap = super::snap();
+    let graph = super::GRAPH.lock();
     let target = target.upgrade().ok_or(PieFail::Denied)?;
+    let source_token = super::locate(&target, token).and_then(|pie| pie.sire()).ok_or(PieFail::Denied)?;
+    let source = super::locate(caller, source_token).ok_or(PieFail::Denied)?;
+    let _operation = if let super::AnyPie::Pole(p) = &source {
+        let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
+        if p.meta().backing().reserved() != 0 { return Err(PieFail::Busy); }
+        Some(operation)
+    } else { None };
+    let snap = super::snap();
     let sire = {
         let pies = target.pies.lock();
         let pie = pies
@@ -28,5 +35,7 @@ pub(crate) fn revoke(
     if !mine {
         return Err(PieFail::Denied);
     }
-    Ok(cull::cull((target, token), &snap))
+    let cleanup = cull::cull((target, token), &snap);
+    drop(graph);
+    Ok(cleanup.finish())
 }

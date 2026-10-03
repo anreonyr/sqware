@@ -54,11 +54,19 @@ impl SpaceBuilder {
     }
 
     pub fn build(self) -> Result<Space, MapError> {
+        let prepared = (|| Ok::<_, MapError>((Life::try_new()?, SpaceInner::durable()?)))();
+        let (life, inner) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if !self.asid.is_kernel() { asid::deallocate(self.asid).expect("space prepare: shootdown"); }
+                return Err(error);
+            }
+        };
         let mut space = Space {
             kind: self.kind,
             asid: self.asid,
-            life: Life::new(),
-            inner: RelLock::new_level(Level::Space, SpaceInner::durable()?),
+            life,
+            inner: RelLock::new_level(Level::Space, inner),
         };
         if !self.asid.is_kernel() {
             self.seed_trampoline(&mut space)?;
@@ -81,6 +89,11 @@ impl SpaceBuilder {
 }
 
 impl Space {
+    pub(crate) fn has_token(&self, token: env::PieToken) -> bool {
+        self.with(|inner| inner.maps.iter().any(|item|
+            matches!(&item.origin, super::map::Origin::Backed { token: Some(t), .. } if *t == token)))
+    }
+
     pub fn kind(&self) -> SpaceKind {
         self.kind
     }
@@ -167,13 +180,25 @@ impl Space {
         let mut salvage = Salvage::new();
         let result = self.with_flush(|inner| {
             let va = VirtAddr::wrap(addr);
-            if !inner.maps_in(va, size, |map| map.pending == Some(Pending::Lazy)) {
-                return Err(MapError::NoRegion);
+            let end = addr + size;
+            let mut found = false;
+            for map in inner.maps.iter().filter(|map| addr < map.va.as_usize().saturating_add(map.size.get())
+                && map.va.as_usize() < end) {
+                found = true;
+                if !(map.pending == Some(Pending::Lazy)
+                    || matches!(map.origin, super::map::Origin::Backed { open: false, .. })) {
+                    return Err(MapError::NoRegion);
+                }
             }
-            inner.unmap(va, size, &mut salvage)
+            if !found { return Err(MapError::NoRegion); }
+            inner.user.as_mut().ok_or(MapError::NoRegion)?.prepare_cut().map_err(|_| MapError::OutOfMemory)?;
+            inner.unmap(va, size, &mut salvage)?;
+            Ok(inner.user.as_mut().expect("normal segment").retire(addr, size))
         });
         salvage.reclaim(self).expect("unmap: shootdown deaf");
-        result
+        let ticket = result?;
+        self.with(|inner| inner.user.as_mut().expect("normal segment").reclaim(ticket));
+        Ok(())
     }
 
     pub(crate) fn release(&self, span: Span) -> Result<(), MapError> {
@@ -196,6 +221,26 @@ impl Space {
         })?;
         salvage.reclaim(self).expect("release: shootdown deaf");
         Ok(())
+    }
+
+    pub(crate) fn unmap_token(&self, token: env::PieToken) -> Result<(), MapError> {
+        loop {
+            let mut salvage = Salvage::new();
+            let ticket = self.with_flush(|inner| {
+                let at = inner.maps.iter().filter(|map|
+                    matches!(map.origin, super::map::Origin::Backed { token: Some(t), .. } if t == token))
+                    .map(|map| map.va.as_usize()).min();
+                let Some(at) = at else { return Ok(None) };
+                let (start, size) = inner.user.as_ref().and_then(|segment| segment.covering(at))
+                    .ok_or(MapError::SegmentMismatch)?;
+                // Protection may split Maps; the reservation still identifies the entire token view.
+                inner.unmap(VirtAddr::wrap(start), size, &mut salvage)?;
+                Ok(Some(inner.user.as_mut().expect("token segment").retire(start, size)))
+            })?;
+            salvage.reclaim(self).expect("token unmap: shootdown failed");
+            let Some(ticket) = ticket else { return Ok(()); };
+            self.with(|inner| inner.user.as_mut().expect("token segment").reclaim(ticket));
+        }
     }
 
     pub fn materialize(&self, vaddr: VirtAddr, size: usize) -> Result<(), MapError> {
@@ -223,6 +268,7 @@ impl Space {
         if size == 0 || !size.is_multiple_of(PAGE_SIZE) || !addr.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
+        if flags.contains(PteFlags::X) { super::sync_instructions()?; }
         self.with_shootdown(|inner| {
             let va = VirtAddr::wrap(addr);
             if !inner.maps_in(va, size, |map| {

@@ -198,6 +198,7 @@ impl SpareAllocator {
 
 unsafe impl Allocator for SpareAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        super::assert_allocation_allowed();
         if layout.align() > MAX_ALIGN {
             return Err(AllocError);
         }

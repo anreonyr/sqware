@@ -1,14 +1,11 @@
 pub(crate) mod gate;
+pub(crate) mod capsule;
 pub(crate) mod life;
-pub(crate) mod loader;
-pub(crate) mod parser;
-pub(crate) mod source;
 pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;
 pub(crate) mod weak;
 
-use alloc::alloc::Allocator;
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -37,37 +34,15 @@ unsafe extern "C" {
 pub type MapResult<T> = erra::Result<T, MapError>;
 
 pub(crate) fn build(
-    source: &source::Source,
     kind: space::SpaceKind,
     sire: weak::TaskWeak,
-) -> Result<Arc<team::Team>, team::UnitError> {
-    let mut head: Box<[u8; source::HEAD], &'static dyn Allocator> = unsafe {
-        Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-            .map_err(|_| team::UnitError::OoM)?
-            .assume_init()
-    };
-    let n = source.len().min(source::HEAD);
-    if !source.read(0, &mut head[..n]) {
-        return Err(team::UnitError::Unreadable);
-    }
-    let parsed = parser::parse(&head[..n], source.len()).map_err(|_| team::UnitError::Load)?;
-    let builder = match kind {
+) -> Result<Arc<team::Team>, MapError> {
+    let space = match kind {
         space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
         space::SpaceKind::User => SpaceBuilder::user(),
-    };
-    let space = builder.build().map_err(|_| team::UnitError::Load)?;
-    let loaded = loader::load(space, source, &parsed).map_err(|e| match e {
-        loader::LoadError::Unreadable => team::UnitError::Unreadable,
-        loader::LoadError::Map(MapError::OutOfMemory) => team::UnitError::OoM,
-        loader::LoadError::Map(_) => team::UnitError::Load,
-    })?;
-    let entry = loaded.entry;
-    let team = team::TeamBuilder::new(loaded.space)
-        .sire(sire)
-        .spawn()
-        .map_err(|_| team::UnitError::Load)?;
-    team.set_default_entry(entry.as_usize());
-    Ok(team)
+    }.build()?;
+    space.with(|inner| inner.dynamic(PAGE_SIZE));
+    team::TeamBuilder::new(space).sire(sire).constructing().spawn()
 }
 
 pub fn init() -> MapResult<()> {

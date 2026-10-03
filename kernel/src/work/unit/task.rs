@@ -1,6 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::mem::MaybeUninit;
 
 use env::{TaskId, UnitFail};
 
@@ -24,6 +25,21 @@ use crate::work::room::scheduler;
 use env::TeamId;
 
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+
+#[cfg(debug_assertions)]
+static FAIL_PREPARATION: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(debug_assertions)]
+pub(crate) fn fail_preparation_at(stage: usize) { FAIL_PREPARATION.store(stage, Ordering::Relaxed); }
+
+#[inline]
+fn preparation_checkpoint(_stage: usize) -> Result<(), MapError> {
+    #[cfg(debug_assertions)]
+    if FAIL_PREPARATION.compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+        return Err(MapError::OutOfMemory);
+    }
+    Ok(())
+}
 
 pub(crate) const MAX_ARGS: usize = 64;
 
@@ -115,6 +131,65 @@ pub(crate) struct TaskIdent {
     pub(crate) team: Arc<Team>,
     pub(crate) stack: crate::work::unit::space::Span,
     pub(crate) frame: crate::work::unit::space::Span,
+}
+
+struct TaskSpans {
+    team: Arc<Team>,
+    stack: Option<super::space::Span>,
+    frame: Option<super::space::Span>,
+}
+
+impl Drop for TaskSpans {
+    fn drop(&mut self) {
+        if let Some(span) = self.frame.take() {
+            self.team.space.release(span).expect("prepare: release frame");
+        }
+        if let Some(span) = self.stack.take() {
+            self.team.space.release(span).expect("prepare: release stack");
+        }
+    }
+}
+
+pub(crate) struct PreparedTask {
+    ident: Arc<TaskIdent>,
+    life: Arc<Life>,
+    slot: Option<Arc<MaybeUninit<Task>>>,
+    spans: TaskSpans,
+}
+
+impl PreparedTask {
+    pub(crate) fn publish(&mut self, commit: impl FnOnce()) -> Result<Arc<Task>, MapError> {
+        let team = self.ident.team.clone();
+        let mut tasks = team.tasks.lock();
+        let mut held = team.held.lock();
+        tasks.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+        held.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+        let (task, ()) = scheduler::core::publish(|| {
+            commit();
+            assert!(team.ready.load(Ordering::Acquire), "publish: constructing team");
+            let mut slot = self.slot.take().expect("prepare slot");
+            Arc::get_mut(&mut slot).expect("unique prepare slot").write(Task {
+                ident: self.ident.clone(),
+                life: self.life.clone(),
+                state: TaskState::Held,
+                tag: AtomicU8::new(TaskTag::Held as u8),
+                pies: SpinLock::new(Vec::new()),
+                heir: SpinLock::new(Vec::new()),
+            });
+            // SAFETY: the unique slot now contains a completely initialized Task.
+            let task = unsafe { slot.assume_init() };
+            self.spans.stack = None;
+            self.spans.frame = None;
+            tasks.push(super::weak::TaskWeak::stored(Arc::downgrade(&task), super::weak::Site::TeamTasks));
+            held.push(task.clone());
+            conductor::push();
+            (task, ())
+        }).map_err(|_| MapError::OutOfMemory)?;
+        drop(held);
+        drop(tasks);
+        trace::note(EventKind::Room(RoomEvent::Spawn { tid: task.ident.id.get() }));
+        Ok(task)
+    }
 }
 
 impl Task {
@@ -319,6 +394,11 @@ impl TaskBuilder {
     }
 
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
+        if !self.team.ready.load(Ordering::Acquire) { return Err(MapError::WidenDenied); }
+        self.prepare()?.publish(|| {})
+    }
+
+    pub(crate) fn prepare(self) -> Result<PreparedTask, MapError> {
         let stack_size = self
             .stack
             .max(1)
@@ -327,32 +407,16 @@ impl TaskBuilder {
             .ok_or(MapError::NoRegion)?;
         let id = TaskId::new(NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
-        scheduler::core::try_reserve_roster().map_err(|()| MapError::OutOfMemory)?;
-        self.team
-            .tasks
-            .lock()
-            .try_reserve(1)
-            .map_err(|_| MapError::OutOfMemory)?;
-        self.team
-            .held
-            .lock()
-            .try_reserve(1)
-            .map_err(|_| MapError::OutOfMemory)?;
-
+        let mut spans = TaskSpans { team: self.team.clone(), stack: None, frame: None };
         let stack_span = StackWindow::claim(&self.team.space, stack_size)?;
+        spans.stack = Some(stack_span);
+        preparation_checkpoint(1)?;
         let stack_body = stack_span.va + crate::layout::TASK_STACK_GUARD;
         let stack_body_top = stack_body.as_usize() + stack_size;
 
-        let frame_span = match FrameWindow::claim(&self.team.space) {
-            Ok(s) => s,
-            Err(e) => {
-                self.team
-                    .space
-                    .release(stack_span)
-                    .expect("release: rollback");
-                return Err(e);
-            }
-        };
+        let frame_span = FrameWindow::claim(&self.team.space)?;
+        spans.frame = Some(frame_span);
+        preparation_checkpoint(2)?;
         let frame_pa = frame_span.pa.expect("frame span has pa");
         let frame_va = frame_span.va;
 
@@ -397,57 +461,26 @@ impl TaskBuilder {
                     alloc,
                 )
             )
-            .map_err(|_| {
-                self.team
-                    .space
-                    .release(frame_span)
-                    .expect("release: rollback");
-                self.team
-                    .space
-                    .release(stack_span)
-                    .expect("release: rollback");
-                MapError::OutOfMemory
-            })?;
+            .map_err(|_| MapError::OutOfMemory)?;
             let (ptr, _alloc) = Arc::into_raw_with_allocator(ident);
             Arc::from_raw(ptr)
         };
-        let life = match Life::try_new() {
-            Ok(l) => l,
-            Err(_) => {
-                drop(ident);
-                return Err(MapError::OutOfMemory);
-            }
-        };
-        let task: Arc<Task> = unsafe {
-            let task = crate::tag!(
-                Task,
-                Arc::try_new_in(
-                    Task {
-                        ident,
-                        life,
-                        state: TaskState::Held,
-                        tag: AtomicU8::new(TaskTag::Held as u8),
-                        pies: SpinLock::new(Vec::new()),
-                        heir: SpinLock::new(Vec::new()),
-                    },
-                    alloc,
-                )
-            )
-            .map_err(|_| MapError::OutOfMemory)?;
-            let (ptr, _alloc) = Arc::into_raw_with_allocator(task);
+        preparation_checkpoint(3)?;
+        let life = Life::try_new().map_err(|_| MapError::OutOfMemory)?;
+        preparation_checkpoint(4)?;
+        let slot: Arc<MaybeUninit<Task>> = unsafe {
+            let slot = crate::tag!(Task, Arc::<Task, _>::try_new_uninit_in(alloc))
+                .map_err(|_| MapError::OutOfMemory)?;
+            let (ptr, _) = Arc::into_raw_with_allocator(slot);
             Arc::from_raw(ptr)
         };
-        scheduler::core::enlist(id, &task);
-        self.team.push_task(&task);
-        self.team.hold(&task);
-        conductor::push();
-        trace::note(EventKind::Room(RoomEvent::Spawn { tid: id.get() }));
-        Ok(task)
+        Ok(PreparedTask { ident, life, slot: Some(slot), spans })
     }
 }
 
 impl Drop for Task {
     fn drop(&mut self) {
+        for pie in self.pies.lock().iter() { pie.invalidate(); }
         self.count_vanished();
     }
 }

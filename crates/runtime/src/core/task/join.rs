@@ -178,6 +178,7 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // = 真漏）；补上这一行后见同档复测。这页是 `tls::alloc` 自己领的，故由
     // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
     // 不需要任何新 ABI。
+    crate::core::loader::retire();
     tls::deallocate();
     room::exit(env::EXIT_OK, None)
 }

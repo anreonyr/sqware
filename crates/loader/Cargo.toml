@@ -1,0 +1,7 @@
+[package]
+name = "loader"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+env = { path = "../env" }

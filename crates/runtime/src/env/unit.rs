@@ -8,22 +8,9 @@
 use env::Wait;
 use env::{ProgramKind, TaskId, TeamId, UnitResult, VirtAddr};
 
-/// 装域：镜像字节 + 特权级 → 新域（Space + Team，**无线程**）。
-///
-/// # 门
-///
-/// **没有门**——能不能起由内核回答（答"能"），该不该起归 `protocol::system` 的编排者
-/// （那一侧的动词叫 `Mint`）。放开**不构成提权**：
-/// 特权级由内核打包表决定（调用方说不上话），镜像仍要调用方交字节。
-///
-/// **字节不被拷走**：内核按段现读 `elf` 那几页——故调用期间
-/// 这段区间必须一直映射着，且**读完之前不许 `munmap`**（本域另一枚线程并发放手 ⇒ 恰好
-/// 读不到的那几页答 `-1`）。
-///
-/// 失败 `-6 BadImage`（镜像不可装载）/ `-1 Denied`（镜像区读不出来）/ `-4 OoM`（头窗口
-/// 或装载帧备不下）。
-pub fn build(elf: &[u8], kind: ProgramKind) -> UnitResult<TeamId> {
-    env::unit::build(VirtAddr::new(elf.as_ptr() as usize), elf.len(), kind)
+/// 创建空的 Constructing 域。
+pub fn build(kind: ProgramKind) -> UnitResult<TeamId> {
+    env::unit::build(kind)
 }
 
 /// 产线程（**Held**，未放行）：`team`（`TeamId(0)` = 当前域）+ `entry`（0 = 域默认
