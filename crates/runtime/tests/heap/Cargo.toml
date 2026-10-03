@@ -1,0 +1,14 @@
+[package]
+name = "runtime-heap-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dev-dependencies]
+talc = { version = "=5.1.1", default-features = false }
+spinning_top = { version = "=0.3.0", default-features = false }
