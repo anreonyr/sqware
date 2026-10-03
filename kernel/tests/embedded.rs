@@ -198,6 +198,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn hole_reservations() {
+        kernel::health::hole::reservations();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn hole_queue_reuse() {
         kernel::health::hole::reuse();
     }

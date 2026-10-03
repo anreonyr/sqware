@@ -20,17 +20,12 @@ fn alloc_id() -> HoleId {
     HoleId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HoleState {
-    Live,
-    Dead,
-}
-
 /// 待取消息与位通知互斥；空队列保留已分配的存储。
 /// 摇铃期间闲置的队列存储随位计数保存，应完后交回 FIFO。
 enum Pending {
     Queue(Queue),
-    Rung { count: usize, spare: VecDeque<Hand> },
+    Rung { count: usize, spare: VecDeque<Slot> },
+    Dead,
 }
 
 /// 排着的那一列手 ＋ "队头正被取用"那一位。
@@ -41,7 +36,7 @@ enum Pending {
 #[derive(Default)]
 struct Queue {
     /// 排着的那些手（先进先出）。**懒分配**：没排过队的孔一点内核堆都不占。
-    hands: VecDeque<Hand>,
+    hands: VecDeque<Slot>,
     /// 队头正被取用（复制中）。
     taking: bool,
 }
@@ -56,12 +51,7 @@ const QUEUE_CAP: usize = 4;
 /// 改这一形之前的行为（第二枚起答 `Busy`）。
 const RING_CAP: usize = 4;
 
-/// 递出的那只手：**一段归内核的字节**（`Push` 那一刻从发送方抄进来的那一份）＋ 谁递的。
-/// 取走时**再复制一次**进收方缓冲（两处各一次，与从前"取时从发送方那边抄"是同一次复制，
-/// 只是挪到了推的那一侧）。
-///
-/// `space` 持**弱**引用：发送方退场时这一格随之作废，且不拖住它那个空间的回收——
-/// "消息随人走"由此成立，不需要另一本账。
+/// 已提交的载荷归内核所有，发送者退出不影响后续交付。
 struct Hand {
     from: TaskId,
     /// **内核自己那一格字节**（`Push` 那一刻抄进来的）。于是递出去之后它与发送方再无关系：
@@ -72,8 +62,17 @@ struct Hand {
     at: u64,
 }
 
+enum Slot {
+    Reserved(usize),
+    Ready(Hand),
+}
+impl Slot {
+    fn hand(&self) -> Option<&Hand> {
+        match self { Self::Ready(hand) => Some(hand), Self::Reserved(_) => None }
+    }
+}
+
 pub struct HoleMeta {
-    state: SpinLock<HoleState>,
     id: HoleId,
     life: Arc<Life>,
     owner: TaskId,
@@ -87,7 +86,6 @@ pub struct HoleMeta {
 impl HoleMeta {
     pub(super) fn new(id: HoleId, owner: TaskId) -> Arc<Self> {
         Arc::new(Self {
-            state: SpinLock::new_level(Level::L3, HoleState::Live),
             id,
             life: Life::new(),
             owner,
@@ -110,21 +108,22 @@ impl HoleMeta {
     }
 
     pub(crate) fn alive(&self) -> bool {
-        *self.state.lock() == HoleState::Live
+        !matches!(*self.pending.lock(), Pending::Dead)
     }
 
     /// 就绪：`Pull` = **队头**可取（一只手，或**至少一枚位**）；`Push` = **队列空着**。
     ///
     /// 两个方向仍按"一只手"的老口径读——**"有位"不是"空"**：写者要"轮到我"时走
-    /// `push(…, Wait::POLL)` 那一档（满了答 `Busy`，见 [`give`]）；要"我的手被取走了"时等的
+    /// `push(…, Wait::POLL)` 那一档（满了答 `Busy`，见 [`reserve`]）；要"我的手被取走了"时等的
     /// 正是这一格（队列空 ⟺ 单推写者的手全下线了）。把这一格改成"有位"会让四处
     /// `door.wait(HoleDir::Push, Wait::Forever)` 当场变成空等（它们护的是"这段字节活到被取走"）。
     pub(crate) fn ready(&self, dir: HoleDir) -> bool {
         let pending = self.pending.lock();
         match dir {
             HoleDir::Pull => match &*pending {
-                Pending::Queue(q) => !q.hands.is_empty() && !q.taking,
+                Pending::Queue(q) => q.hands.front().and_then(Slot::hand).is_some() && !q.taking,
                 Pending::Rung { count, .. } => *count > 0,
+                Pending::Dead => false,
             },
             HoleDir::Push => matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking),
         }
@@ -134,13 +133,11 @@ impl HoleMeta {
 
 impl Drop for HoleMeta {
     fn drop(&mut self) {
-        *self.state.lock() = HoleState::Dead;
-        // 孔都没了、手还在 ⇒ 也算"没人取"。**这里只记账、不打印**（`Drop` 可能在别的锁底下跑，
-        // 打印要取控制台锁）；结账那一路见 [`note_hand_off`]。
-        // **一列手一只不留**：`seal` 那一趟若已经结过账，这里看到的已是空的（它把队列清掉了）。
-        if let Pending::Queue(q) = &*self.pending.lock() {
-            HANDS_LIVE.fetch_sub(q.hands.len(), Ordering::Relaxed);
+        let pending = core::mem::replace(&mut *self.pending.lock(), Pending::Dead);
+        if let Pending::Queue(q) = &pending {
+            HANDS_LIVE.fetch_sub(q.hands.iter().filter_map(Slot::hand).count(), Ordering::Relaxed);
         }
+        drop(pending);
         messenger::wipe(key(self, HoleDir::Pull));
         messenger::wipe(key(self, HoleDir::Push));
     }
@@ -153,37 +150,61 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
     }
 }
 
-/// **递出一只手**：排进这一列（先进先出），并唤醒等取的人。
-///
-/// 手里就是**内核那一格字节**（`Push` 那一层已从发送方抄进来）——递出去之后它与发送方再无
-/// 关系，故这一手**不会**因为发送方退场而作废（从前那一档 `Gone` 由此消失）。
-///
-/// **满了（[`QUEUE_CAP`]）／位已响 ⇒ `Busy`**：满不丢最旧——"丢不丢"留给写者（`Wait::POLL`
-/// 那一档正是为它准备的）。写者要"轮到我有位"就用 `POLL` 重试；`AtMost`／`Forever` 那一档
-/// 等的是**队列空**（老语义，见 [`HoleMeta::ready`] 那一节的注）。
-pub(crate) fn give(meta: &HoleMeta, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(), MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
-    }
-    if buf.is_empty() {
-        return Err(MailFail::Denied);
-    }
-    let at = clock::uptime_ticks();
+/// 锁内预留 FIFO 位置；载荷分配与复制在锁外进行。
+pub(crate) fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, MailFail> {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
     let mut pending = meta.pending.lock();
-    let Pending::Queue(q) = &mut *pending else {
-        return Err(MailFail::Busy);
+    let q = match &mut *pending {
+        Pending::Queue(q) => q,
+        Pending::Dead => return Err(MailFail::Dead),
+        Pending::Rung { .. } => return Err(MailFail::Busy),
     };
-    if q.hands.len() >= QUEUE_CAP {
-        return Err(MailFail::Busy);
+    if q.hands.len() >= QUEUE_CAP { return Err(MailFail::Busy); }
+    q.hands.try_reserve(1).map_err(|_| MailFail::OoM)?;
+    let id = NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        .map_err(|_| MailFail::OoM)?;
+    q.hands.push_back(Slot::Reserved(id));
+    Ok(Reservation { meta, id: Some(id) })
+}
+
+/// 尚未提交的位置；释放守卫即取消，后续消息保持原有次序。
+pub(crate) struct Reservation<'a> {
+    meta: &'a HoleMeta,
+    id: Option<usize>,
+}
+impl Reservation<'_> {
+    pub(crate) fn commit(mut self, buf: Arc<Vec<u8>>, from: TaskId) -> Result<(), MailFail> {
+        if buf.is_empty() { return Err(MailFail::Denied); }
+        let at = clock::uptime_ticks();
+        {
+            let mut pending = self.meta.pending.lock();
+            let Pending::Queue(q) = &mut *pending else { return Err(MailFail::Dead); };
+            let slot = q.hands.iter_mut().find(|slot| matches!(slot, Slot::Reserved(id) if Some(*id) == self.id))
+                .ok_or(MailFail::Dead)?;
+            *slot = Slot::Ready(Hand { from, buf, at });
+            HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
+            self.id = None;
+        }
+        let _ = messenger::wake(key(self.meta, HoleDir::Pull), &self.meta.life());
+        Ok(())
     }
-    if q.hands.try_reserve(1).is_err() {
-        return Err(MailFail::OoM);
+}
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else { return; };
+        let removed = {
+            let mut pending = self.meta.pending.lock();
+            match &mut *pending {
+                Pending::Queue(q) => q.hands.iter().position(|slot| matches!(slot, Slot::Reserved(known) if *known == id))
+                    .and_then(|at| q.hands.remove(at)).is_some(),
+                _ => false,
+            }
+        };
+        if removed {
+            let _ = messenger::wake(key(self.meta, HoleDir::Pull), &self.meta.life());
+            let _ = messenger::wake(key(self.meta, HoleDir::Push), &self.meta.life());
+        }
     }
-    q.hands.push_back(Hand { from, buf, at });
-    HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
-    drop(pending);
-    let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
-    Ok(())
 }
 
 /// 认下要取的那只手，把它置成 `Taking`；`Ok` 之后用 [`source`] 取复制所需的四格。
@@ -202,7 +223,7 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
     let Pending::Queue(q) = &mut *pending else {
         return Err(MailFail::Busy);
     };
-    if q.taking || q.hands.is_empty() {
+    if q.taking || q.hands.front().and_then(Slot::hand).is_none() {
         return Err(MailFail::Busy);
     }
     // **字节归内核** ⇒ 这里不再有"发送方那段没了"那一档（取的一方也不必翻它的页表）。
@@ -210,13 +231,13 @@ pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
     Ok(())
 }
 
-/// 取用中那只手的复制源：`(发送者, 它那段空间, 起点, 长度)`。
+/// 取用中的发送者与共享载荷；持有载荷期间字节保持有效。
 ///
 /// 只在 [`take`] 与 [`taken`]／[`back`] 之间非 `None`——那一段窗口里只有本取用者进得来。
 pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Vec<u8>>)> {
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Queue(q) if q.taking => q.hands.front().map(|h| (h.from, h.buf.clone())),
+        Pending::Queue(q) if q.taking => q.hands.front().and_then(Slot::hand).map(|h| (h.from, h.buf.clone())),
         _ => None,
     }
 }
@@ -239,7 +260,7 @@ pub(crate) fn taken(meta: &HoleMeta) {
         if let Pending::Queue(q) = &mut *pending {
             if q.taking {
                 q.taking = false;
-                off = q.hands.pop_front();
+                off = q.hands.pop_front().and_then(|slot| match slot { Slot::Ready(hand) => Some(hand), Slot::Reserved(_) => None });
             }
         }
     }
@@ -280,8 +301,8 @@ pub(crate) fn peek(meta: &HoleMeta) -> Result<(usize, TaskId, usize), MailFail> 
     }
     let pending = meta.pending.lock();
     match &*pending {
-        Pending::Queue(q) => match q.hands.front() {
-            Some(hand) => Ok((hand.buf.len(), hand.from, q.hands.len())),
+        Pending::Queue(q) => match q.hands.front().and_then(Slot::hand) {
+            Some(hand) => Ok((hand.buf.len(), hand.from, q.hands.iter().filter_map(Slot::hand).count())),
             None => Err(MailFail::Busy),
         },
         _ => Err(MailFail::Busy),
@@ -381,7 +402,7 @@ pub(crate) fn wait(
 
 // ── 诊断：一只手在孔上压了多久（"递出去没人取"）────────────────────────────
 //
-// 今天量的是**一只手自己的寿命**：登记（[`give`] 盖 [`Hand::at`]）→ 下线（[`note_hand_off`] 结账）。
+// 今天量的是**一只手自己的寿命**：提交（[`Reservation::commit`] 盖 [`Hand::at`]）→ 下线（[`note_hand_off`] 结账）。
 // 它与"某位递手的线程被卡了多久"同值——那一位正是一圈一圈等这只手下线的人。
 //
 // **下线只有两个点，`back` 不算**：`taken`（复制成了）、`seal`／`Drop`（手随孔作废）——
@@ -416,6 +437,8 @@ fn note_shape(meta: &HoleMeta) {
         Pending::Queue(q) => {
             if q.hands.is_empty() {
                 "queue-empty"
+            } else if q.hands.front().and_then(Slot::hand).is_none() {
+                "queue-reserved"
             } else if q.taking {
                 "queue-taking"
             } else {
@@ -423,6 +446,7 @@ fn note_shape(meta: &HoleMeta) {
             }
         }
         Pending::Rung { .. } => "rung",
+        Pending::Dead => "dead",
     };
     crate::putln!(
         "mail: push not ready hole#{} owner={} pending={} live={}",
@@ -445,7 +469,7 @@ fn elapsed_ms(at: u64) -> usize {
 fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
     let pending = meta.pending.lock();
     let (from, len, at) = match &*pending {
-        Pending::Queue(q) => match q.hands.front() {
+        Pending::Queue(q) => match q.hands.front().and_then(Slot::hand) {
             Some(hand) => (hand.from, hand.buf.len(), hand.at),
             None => return None,
         },
@@ -545,26 +569,15 @@ pub(crate) fn note_back(len: usize, max: usize) {
 }
 
 pub(crate) fn seal(meta: &HoleMeta) {
-    *meta.state.lock() = HoleState::Dead;
-    // 手随孔作废 —— 也是一种"没人取"（结账在放下孔锁之后：`note_hand_off` 里有打印）。
-    // **一列手一只不留**：队头按它自己那一刻结账、余下几只各减一枚，队列就地清掉
-    // （不清的话 `Drop` 会再结一次账 ⇒ `HANDS_LIVE` 下溢——实测踩过）。
-    let (head, rest) = {
-        let mut pending = meta.pending.lock();
-        let (head, rest) = match &*pending {
-            Pending::Queue(q) => (
-                q.hands.front().map(|h| (h.from, h.buf.len(), h.at)),
-                q.hands.len().saturating_sub(1),
-            ),
-            _ => (None, 0),
-        };
-        *pending = Pending::Queue(Queue::default());
-        (head, rest)
-    };
-    if let Some((from, len, at)) = head {
-        note_hand_off(meta, from, len, at);
+    let pending = core::mem::replace(&mut *meta.pending.lock(), Pending::Dead);
+    if let Pending::Queue(q) = &pending {
+        let mut hands = q.hands.iter().filter_map(Slot::hand);
+        if let Some(head) = hands.next() {
+            note_hand_off(meta, head.from, head.buf.len(), head.at);
+        }
+        HANDS_LIVE.fetch_sub(hands.count(), Ordering::Relaxed);
     }
-    HANDS_LIVE.fetch_sub(rest, Ordering::Relaxed);
+    drop(pending);
     messenger::wipe(key(meta, HoleDir::Pull));
     messenger::wipe(key(meta, HoleDir::Push));
 }

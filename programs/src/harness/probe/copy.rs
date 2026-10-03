@@ -8,6 +8,7 @@ use runtime::env::{
 
 pub fn acceptance() {
     queued();
+    concurrent();
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
     let worker = runtime::core::task::join::closure(move || {
@@ -94,6 +95,40 @@ fn queued() {
     }
     mail::seal(entry).unwrap();
     mail::release(entry).unwrap();
+}
+
+fn concurrent() {
+    let owner = unit::self_id();
+    let entry = mail::unseal_hole(Mark::of("copy-concurrent")).unwrap();
+    let mut workers = Vec::new();
+    for producer in 0..4u8 {
+        let worker = runtime::core::task::join::closure(move || {
+            let token = protocol::communication::session::establish::claim(
+                owner, Mark::of("copy-concurrent"), Wait::AtMost(2000),
+            ).unwrap();
+            for sequence in 0..32u8 {
+                HolePie::from_token(token).push(&[producer, sequence], Wait::AtMost(2000)).unwrap();
+            }
+        });
+        runtime::core::res::port::ship(&HolePie::from_token(entry), worker.id(), env::Access::STORE, env::Policy::NONE).unwrap();
+        workers.push(worker);
+    }
+    let mut counts = [0u8; 4];
+    let mut bytes = [0; 2];
+    for _ in 0..128 {
+        let (size, sender) = HolePie::from_token(entry).pull(&mut bytes, Wait::AtMost(2000)).unwrap();
+        assert_eq!(size, 2);
+        let producer = bytes[0] as usize;
+        assert!(producer < workers.len());
+        assert_eq!(sender, workers[producer].id());
+        assert_eq!(bytes[1], counts[producer], "copy: producer FIFO changed");
+        counts[producer] += 1;
+    }
+    assert_eq!(counts, [32; 4]);
+    for worker in workers { worker.join(); }
+    mail::seal(entry).unwrap();
+    mail::release(entry).unwrap();
+    protocol::debug::put("copy: four concurrent producers delivered 128 frames in producer FIFO order");
 }
 
 fn tokens() -> Vec<PieToken> {
