@@ -155,17 +155,17 @@ pub fn retirement() {
     space.with(|inner| {
         inner.dynamic(BASE);
         let segment = inner.user.as_mut().unwrap();
-        assert!(segment.reserve(BASE, 3 * PAGE_SIZE));
+        assert!(segment.allocate(BASE, 3 * PAGE_SIZE).is_ok());
         segment.prepare_cut().unwrap();
         let middle = segment.retire(BASE + PAGE_SIZE, PAGE_SIZE);
-        assert!(!segment.reserve(BASE + PAGE_SIZE, PAGE_SIZE));
+        assert!(!segment.allocate(BASE + PAGE_SIZE, PAGE_SIZE).is_ok());
         segment.prepare_cut().unwrap();
         let prefix = segment.retire(BASE, 2 * PAGE_SIZE);
         segment.reclaim(prefix);
-        assert!(segment.reserve(BASE, PAGE_SIZE));
-        assert!(!segment.reserve(BASE + PAGE_SIZE, PAGE_SIZE));
+        assert!(segment.allocate(BASE, PAGE_SIZE).is_ok());
+        assert!(!segment.allocate(BASE + PAGE_SIZE, PAGE_SIZE).is_ok());
         segment.reclaim(middle);
-        assert!(segment.reserve(BASE + PAGE_SIZE, PAGE_SIZE));
+        assert!(segment.allocate(BASE + PAGE_SIZE, PAGE_SIZE).is_ok());
         segment.reclaim(prefix);
         assert!(segment.holds(BASE, PAGE_SIZE));
         assert!(segment.holds(BASE + PAGE_SIZE, PAGE_SIZE));

@@ -63,7 +63,13 @@ pub fn construction() {
     .unwrap();
     let code = Backing::allocate(PAGE_SIZE).unwrap();
     child.space.with_flush(|inner| {
-        assert!(inner.user.as_mut().unwrap().reserve(0x10000, PAGE_SIZE));
+        inner
+            .allocate(
+                crate::work::unit::space::SegmentKind::Normal,
+                0x10000,
+                PAGE_SIZE,
+            )
+            .unwrap();
         inner
             .backed(
                 VirtAddr::wrap(0x10000),
@@ -99,13 +105,13 @@ pub fn construction() {
         assert!(!meta.mapped());
         let at = VirtAddr::wrap(0x20000 + index * PAGE_SIZE);
         child.space.with_flush(|inner| {
-            assert!(
-                inner
-                    .user
-                    .as_mut()
-                    .unwrap()
-                    .reserve(at.as_usize(), PAGE_SIZE)
-            );
+            inner
+                .allocate(
+                    crate::work::unit::space::SegmentKind::Normal,
+                    at.as_usize(),
+                    PAGE_SIZE,
+                )
+                .unwrap();
             inner
                 .backed(
                     at,
@@ -174,6 +180,13 @@ pub fn construction() {
     ));
     let task = team::spawn(&child, Some(&caller), 0x10000, Vec::new(), 0).unwrap();
     assert!(child.ready.load(Ordering::Acquire));
+    let frame_pa = task.ident.frame.pa.expect("task frame").as_usize();
+    // SAFETY: the task has not run and its frame is exclusively owned by this test.
+    let frame = unsafe { &*(frame_pa as *const crate::runtime::switcher::context::TrapContext) };
+    assert_eq!(
+        frame.gpr.x(crate::runtime::switcher::context::Gprs::SP),
+        crate::memory::manager::mode::upper().as_usize()
+    );
     assert_eq!(child.default_entry(), 0x10000);
     assert!(child.staged.lock().is_empty());
     assert!(
@@ -233,13 +246,13 @@ pub fn cancellation() {
     caller.pies.lock().push(AnyPie::Pole(root));
     let at = VirtAddr::wrap(0x20000);
     child.space.with_flush(|inner| {
-        assert!(
-            inner
-                .user
-                .as_mut()
-                .unwrap()
-                .reserve(at.as_usize(), 3 * PAGE_SIZE)
-        );
+        inner
+            .allocate(
+                crate::work::unit::space::SegmentKind::Normal,
+                at.as_usize(),
+                3 * PAGE_SIZE,
+            )
+            .unwrap();
         inner
             .backed(
                 at,

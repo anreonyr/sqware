@@ -12,6 +12,10 @@ use asid::Asid;
 #[inline(always)]
 pub unsafe fn flush_asid(asid: Asid) {
     unsafe {
-        core::arch::asm!("sfence.vma zero, {}", in(reg) asid.get());
+        if asid.is_kernel() {
+            core::arch::asm!("sfence.vma zero, zero");
+        } else {
+            core::arch::asm!("sfence.vma zero, {}", in(reg) asid.get());
+        }
     }
 }

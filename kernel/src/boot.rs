@@ -168,7 +168,8 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(crate::work::unit::space::SegmentKind::Normal, view_size)?;
+            let va = crate::work::unit::space::window::HeapWindow::locate(inner, view_size)?;
+            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), view_size)?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(region.base),
@@ -183,7 +184,8 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     let (pairs_pa, pairs_bytes) = crate::platform::devices::block();
     let pairs = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = inner.allocate(crate::work::unit::space::SegmentKind::Normal, pairs_bytes)?;
+            let va = crate::work::unit::space::window::HeapWindow::locate(inner, pairs_bytes)?;
+            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), pairs_bytes)?;
             inner.borrow(
                 va,
                 crate::memory::manager::addr::PhysAddr::from_raw(pairs_pa),

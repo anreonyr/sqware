@@ -184,9 +184,7 @@ impl Space {
             let va = VirtAddr::wrap(addr);
             let end = addr + size;
             let mut found = false;
-            for map in inner.maps.iter().filter(|map| {
-                addr < map.va.as_usize().saturating_add(map.size.get()) && map.va.as_usize() < end
-            }) {
+            for map in inner.maps.overlapping(addr, end.saturating_sub(1)) {
                 found = true;
                 if !(map.pending == Some(Pending::Lazy)
                     || matches!(map.origin, super::map::Origin::Backed { open: false, .. }))
@@ -242,9 +240,9 @@ impl Space {
         loop {
             let mut salvage = Salvage::new();
             let ticket = self.with_flush(|inner| {
-                let at = inner.maps.iter().filter(|map|
+                let at = inner.maps.iter().find(|map|
                     matches!(map.origin, super::map::Origin::Backed { token: Some(t), .. } if t == token))
-                    .map(|map| map.va.as_usize()).min();
+                    .map(|map| map.va.as_usize());
                 let Some(at) = at else { return Ok(None) };
                 let (start, size) = inner.user.as_ref().and_then(|segment| segment.covering(at))
                     .ok_or(MapError::SegmentMismatch)?;

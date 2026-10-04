@@ -82,13 +82,15 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
         if hart == me {
             continue;
         }
-        if lease(hart) == Some(asid) {
+        if asid.is_kernel() || lease(hart) == Some(asid) {
             let (_, bit) = hart.bit();
             mask |= bit;
         }
     }
 
-    let r = sbi::RfenceCall::new(fid::Rfence::RemoteSfenceVmaAsid)
+    let operation = if asid.is_kernel() { fid::Rfence::RemoteSfenceVma }
+        else { fid::Rfence::RemoteSfenceVmaAsid };
+    let r = sbi::RfenceCall::new(operation)
         .args(SArgs {
             a0: mask,
             a1: 0,
