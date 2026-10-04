@@ -5,6 +5,7 @@ use crate::unit::{Demand, Identity, Relation, UnitFile};
 use env::ProgramKind;
 
 pub static RIG: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "rig",
         space: ProgramKind::Supervisor,

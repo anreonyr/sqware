@@ -196,7 +196,10 @@ pub fn subs() {
     }
     let extra = tole::meta(TaskId::new(0));
     crate::expect!(
-        matches!(tole::subscribe(&extra, sub, weak.clone()), Err(ToleFail::OoM)),
+        matches!(
+            tole::subscribe(&extra, sub, weak.clone()),
+            Err(ToleFail::OoM)
+        ),
         "转发格满（{} 个组）时登记应当报 OoM，不静默丢",
         FWD_MAX
     );

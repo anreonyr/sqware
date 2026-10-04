@@ -4,6 +4,7 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static GUEST: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "guest",
         ..Identity::DEFAULT

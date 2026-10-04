@@ -29,6 +29,7 @@ pub struct Device {
 
 /// **引导期那两件不按类认的东西**的坐标由它们自己说（`Key::dtb()` / `Key::irq()`）——
 /// 它们不进 Machine::devices 那张表（树里没有"哪一类"可判），由装配者按**已知坐标**要
+#[derive(Clone, Copy)]
 pub struct Machine {
     fdt: fdt::Fdt<'static>,
 }

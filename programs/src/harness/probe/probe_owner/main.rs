@@ -14,9 +14,9 @@ use alloc::string::ToString;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::service::operator::{EntryId, Fail, Permit};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
+use protocol::system::operator::{EntryId, Fail, Permit};
 
 use protocol::driver;
 use runtime::env::mail;
@@ -153,7 +153,16 @@ fn main() -> Report<'static> {
 
 fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     let entry = mail::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
-    assert!(matches!(tree.root().bind("fixtures".into(), entry, Permit::Public, Mine::No, Wait::AtMost(MS)), Err(Fail::Denied)));
+    assert!(matches!(
+        tree.root().bind(
+            "fixtures".into(),
+            entry,
+            Permit::Public,
+            Mine::No,
+            Wait::AtMost(MS)
+        ),
+        Err(Fail::Denied)
+    ));
     let road = Path::new("svc/fixtures/lease");
     for _ in 0..MS {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {

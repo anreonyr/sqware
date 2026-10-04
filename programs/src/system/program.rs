@@ -10,11 +10,12 @@ use env::ProgramKind;
 pub const E_BOOT: Died = 1;
 
 pub static PROGRAM: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "system",
         space: ProgramKind::Supervisor,
-        wanted_by: &["accept", "product"],
-        entry: &["accept", "product"],
+        wanted_by: &["product"],
+        entry: &["product"],
         ..Identity::DEFAULT
     },
     relation: Relation::DEFAULT,

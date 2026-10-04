@@ -1,4 +1,4 @@
-//! 一台程序的**装配声明**——三块：身份、关系、需求。
+//! 程序的静态装配声明：身份、关系、需求和发布权限。
 //!
 //! 声明跟着 program.rs：每个 bin 自有目录，声明就在那里。
 
@@ -7,10 +7,11 @@ use env::ProgramKind;
 /// 装配失败号。**true = 死在这**——装配期那两步不能往里挂死。
 pub type Died = env::Reason;
 
-/// 一台程序 = 身份 + 关系 + 需求。三块各由单独的域读：宿主只读身份，装配者按关系算次序，
-/// 装配者按需求铸通道。
+/// 宿主读取身份，Control 按关系和需求启动实例，并检查发布权限。
 #[derive(Clone, Copy)]
 pub struct UnitFile {
+    /// 允许实例发布的入口；运行时身份由 Identity 绑定。
+    pub publication: &'static [Publish],
     /// 身份：宿主只读这一块。
     pub identity: Identity,
     /// 装配关系：编排域读这一块。
@@ -86,13 +87,13 @@ pub enum Ending {
 
 /// 这一趟装配本身：名单里那个目标单元的名字。
 ///
-/// 写法是 `after: Some(&[…, SCENE])` = "等这一趟装配走完再起我"。今天**只有 `probe-control` 一家写它**——
-/// 它问的 `/svc/sys/control/state` 由装配者在整表起完之后才铸、且要等监督那一趟开始才被服务。
+/// `after: Some(&[…, SCENE])` 表示等待本景的其他单元就绪。
 pub const SCENE: &str = "scene";
 
 /// 名单里的目标单元：没有身子、不进任何镜像——它对这张单的贡献只有一件事：
 /// 给"这一趟走完"一个落点（`SCENE` 那条边指着它）。
 pub static SCENE_UNIT: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: SCENE,
         kind: Kind::Target,
@@ -213,4 +214,29 @@ impl UnitFile {
             &[]
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PublishScope {
+    Driver,
+    Hub,
+    Fixture,
+}
+
+#[derive(Clone, Copy)]
+pub struct PublishEntry {
+    pub name: &'static str,
+    pub mark: Option<env::Mark>,
+}
+
+#[derive(Clone, Copy)]
+pub enum Publish {
+    Entries {
+        scope: PublishScope,
+        group: &'static str,
+        road: &'static str,
+        entries: &'static [PublishEntry],
+        public: bool,
+    },
+    Devices,
 }

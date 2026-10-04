@@ -10,14 +10,13 @@
 //! `publish` / `offer` / `taken`：那是"一手一格"时代 uart 那两半握手（`Forever` 那一半与
 //! `POLL` 那两半）的化身；两条路都改成一具架之后，谁也不等对方，故它们没有读者了。
 
-use crate::service::operator::bridge;
 use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::driver::line::client::Line;
-use protocol::service::operator::Permit;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Mine;
+use protocol::system::control::publication::Scope;
+use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 
 /// 要找的那位服务（线路由者）在树上的名字
 const ROUTER: &str = "router";
@@ -39,29 +38,17 @@ impl Context {
     }
 
     /// 上树落**一枚门牌**（`entry` = 这一域自己铸的那一枚孔）。
-    pub fn plate(&self, entry: PieToken, me: &str, mine: Mine, ms: Wait) {
-        let tree = operator::Face::from(&self.session);
-        let list = [(me, entry)];
-        let plated = bridge::land(
-            &tree,
-            me,
-            &protocol::driver::ROAD,
-            mine,
-            Permit::Public,
-            &list,
-            ms,
-        );
-        // **这一域的判据**：失败是一条"不该活着"，不是一条错误分支（值那几格从门那边搬进来：
-        // 门只剩"这一行还在不在"）。
-        assert_eq!(plated.len(), 1, "{me}: tree: road");
-        let one = &plated[0];
-        assert!(one.land.is_ok(), "{me}: tree: land");
-        assert!(one.find.is_ok(), "{me}: tree: find");
-        assert_eq!(
-            one.named.as_ref().map(|name| name.as_str()),
-            Some(me),
-            "{me}: tree: name"
-        );
+    pub fn plate(&self, entry: PieToken, me: &str, ms: Wait) {
+        let client = protocol::system::control::publication::Client::injected()
+            .expect("driver: publication entry");
+        let target = protocol::system::control::publication::Target::Service {
+            scope: Scope::Driver,
+            group: "".into(),
+            name: me.into(),
+        };
+        client
+            .publish(target, entry, Permit::Public, ms)
+            .expect("driver: publication");
     }
 
     /// **它拿一面借来的视图**而不是收走会话：`Context` 持着这条会话（`uart` 那一台还要从它

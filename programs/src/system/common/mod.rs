@@ -3,5 +3,4 @@
 //! 机器自述（machine）。
 
 pub mod face;
-pub mod life;
 pub mod machine;

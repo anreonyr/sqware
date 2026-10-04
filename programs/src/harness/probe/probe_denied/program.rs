@@ -5,6 +5,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// Ordinary bound task tests installer sender authorization and action-face isolation.
 pub static PROBE_DENIED: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "probe-denied",
         ..Identity::DEFAULT

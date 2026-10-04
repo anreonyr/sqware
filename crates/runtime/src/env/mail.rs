@@ -83,7 +83,7 @@
 //!      要它就得另立一行。
 //!
 //! 除这三类之外**一律有界**：客侧敲门与收答（`AtMost`）、"译不出的路"那一重试（退避 ＋ 真时限，
-//! 见 `protocol::service::operator::client` 的 `RETRY_MIN_MS`）、装配期问一格（`AtMost(MS)`）。
+//! 见 `protocol::system::operator::client` 的 `RETRY_MIN_MS`）、装配期问一格（`AtMost(MS)`）。
 //!
 //! **（这一条是量与查两条腿里"查"的那一条）**：debug 档 `product` 景里量到过"同一枚孔被
 //! 连问 500／1000 次而整机不前进"（`operator: woke n=500…2000 tok=501 known=true read=true`）
@@ -92,8 +92,9 @@
 //! ——**服务侧答话的收口**（今天它就是 `Sender::reclaim` 的无界等）。
 
 use env::Wait;
-use env::{HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, Source, TaskId, ToleResult,
-    VirtAddr};
+use env::{
+    HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, Source, TaskId, ToleResult, VirtAddr,
+};
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。内核那一格没有
 /// 失败支，故跟着 [`clock`](crate::env::chrono::clock) 一起不返 `Result`。
@@ -134,8 +135,8 @@ fn get(token: PieToken, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
 // 整面转出（**不挑**）：转发是"路径不变"的保证，一旦按"今天谁在用"挑，下一个调用点就得
 // 先认出这层壳才知道自己该写 `pie::`——那正是这一层想免掉的认知成本。
 pub use super::pie::{
-    AnyPie, Pie, Pies, accord, alive, collect, forget, inspect, narrow, open, pies, release, reserve, revoke, same, seal, shut,
-    table_size, unseal_hole, unseal_nole, unseal_pole,
+    AnyPie, Pie, Pies, accord, alive, collect, forget, inspect, narrow, open, pies, release,
+    reserve, revoke, same, seal, shut, table_size, unseal_hole, unseal_nole, unseal_pole,
 };
 
 // ── 四种资源的用户态句柄 ──────────────────────────────────────────────────

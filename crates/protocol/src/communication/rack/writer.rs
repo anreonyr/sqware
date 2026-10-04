@@ -76,7 +76,7 @@ impl<M: Message> Writer<M> {
 
     /// **落一格**：放进去了答 `Ok`；按策略丢了答 `Err(SendFail::Full)`（**不是失败**，
     /// 是"这一格没进架"——丢掉的数在 `lost` / `dropped` 上）。
-    pub fn send(&mut self, msg: M) -> Result<(), SendFail> {
+    pub fn send(&mut self, msg: &M) -> Result<(), SendFail> {
         let Some(n) = msg.store(self.buf.as_mut()) else {
             return Err(SendFail::TooLong);
         };
@@ -92,7 +92,7 @@ impl<M: Message> Writer<M> {
     }
 
     /// 非阻塞的别名（与 std 同名）：本实现里 `send` 本来就只尝试一次。
-    pub fn try_send(&mut self, msg: M) -> Result<(), SendFail> {
+    pub fn try_send(&mut self, msg: &M) -> Result<(), SendFail> {
         self.send(msg)
     }
 

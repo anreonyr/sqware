@@ -6,6 +6,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// Unified Identity publication acceptance: seventeen actions, action marks and one authority.
 /// The historical executable name remains stable for existing acceptance runners.
 pub static PROBE_COALITION: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "probe-coalition",
         ..Identity::DEFAULT

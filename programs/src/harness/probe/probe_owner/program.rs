@@ -5,6 +5,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 /// **有身份**、但那一格归别人（声明过归属）⇒ 也拒
 pub static PROBE_OWNER: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "probe-owner",
         ..Identity::DEFAULT

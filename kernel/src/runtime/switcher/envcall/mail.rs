@@ -64,20 +64,17 @@ fn push(
                     } else if !mail::whole(&ident.team.space, msg, len, PteFlags::R) {
                         Err(MailFail::Denied)
                     } else {
-                        // **抄一份进内核**（这一层的分界就在这一句）：递出去之后那段字节归内核
-                        // ⇒ 发送方可以立刻放手（`Sender` 不必再"等上一手被取走"）、可以退场，
-                        // 取的一方也不必再翻它的页表（`hand_over` 那一节随之短一截）。
-                        let mut cell: alloc::vec::Vec<u8> = alloc::vec::Vec::new();
-                        if cell.try_reserve_exact(len).is_err() {
-                            Err(MailFail::OoM)
-                        } else {
+                        (|| {
+                            let reservation = mail::hole::reserve(p.meta())?;
+                            let mut cell = alloc::vec::Vec::new();
+                            cell.try_reserve_exact(len).map_err(|_| MailFail::OoM)?;
                             cell.resize(len, 0);
                             if !mail::copy_in(&ident.team.space, &mut cell, msg) {
-                                Err(MailFail::Denied)
-                            } else {
-                                mail::hole::give(p.meta(), Arc::from(cell.into_boxed_slice()), me)
+                                return Err(MailFail::Denied);
                             }
-                        }
+                            let bytes = Arc::try_new(cell).map_err(|_| MailFail::OoM)?;
+                            reservation.commit(bytes, me)
+                        })()
                     }
                 }
                 _ => Err(MailFail::Denied),

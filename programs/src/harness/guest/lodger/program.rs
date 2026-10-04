@@ -7,6 +7,7 @@ pub const E_LODGER: Died = 11;
 
 /// 房客：占一条线、**直接死**——线路由者那本账的探活读数
 pub static LODGER: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "lodger",
         ..Identity::DEFAULT

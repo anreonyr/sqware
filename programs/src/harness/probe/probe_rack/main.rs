@@ -25,7 +25,7 @@ use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use protocol::communication::rack::{CAP, Mode, Rack, SendFail};
 use protocol::communication::session::Session;
-use protocol::service::operator::client as operator;
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 /// 等板 / 等树那一趟的额度（毫秒）
@@ -36,10 +36,7 @@ const OK_NOTE: &str = "probe-rack: newest_full=1 quiet=false";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    // **上板那一条仪式**：本台的 `after` 里点了树那位 ⇒ 装配者那一手 `attach` 会等本域交回
-    // 那枚 `LINK`（两侧对称建立，见 `operator::bridge::attach`）。本台其实一句树话都不说，
-    // 但这一枚不交回去，装配就卡在这里（量到过：`operator:claim` ＋ 整单中止）。
-    // 故会话要开到本台走完为止（放下它就是撤那一枚）。
+    // 会话保持到探针结束，供 System 识别已就绪的树连接。
     let Ok(_session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack: 树那条路开不出来（装配者等的那一枚 LINK）");
     };
@@ -59,12 +56,12 @@ fn newest() -> (u64, u64) {
     let mut r = rack.reader();
     for i in 0..CAP {
         assert!(
-            w.send(payload(i)).is_ok(),
+            w.send(&payload(i)).is_ok(),
             "probe-rack: newest 第 {i} 条该进得去"
         );
     }
     assert!(
-        matches!(w.send(payload(CAP)), Err(SendFail::Full)),
+        matches!(w.send(&payload(CAP)), Err(SendFail::Full)),
         "probe-rack: 第 CAP+1 条该答 Full（满了那一档不是永久满）"
     );
     assert_eq!(w.dropped(), 1, "probe-rack: dropped 该记一枚");
@@ -90,7 +87,7 @@ fn newest() -> (u64, u64) {
         other => panic!("probe-rack: 读干之后等铃该是 Ok(false)（不空转），实测 {other:?}"),
     }
     // 唤醒协议：再落一条 ⇒ 铃该响，且读到它。
-    assert!(w.send(payload(99)).is_ok(), "probe-rack: 唤醒那一落");
+    assert!(w.send(&payload(99)).is_ok(), "probe-rack: 唤醒那一落");
     match r.wait(Wait::AtMost(50)) {
         Ok(true) => {}
         other => panic!("probe-rack: 落了新的一条，等铃该是 Ok(true)，实测 {other:?}"),
@@ -114,7 +111,7 @@ fn oldest() -> (u64, u64, usize) {
     let mut r = rack.reader();
     for i in 0..CAP + 3 {
         assert!(
-            w.send(payload(i)).is_ok(),
+            w.send(&payload(i)).is_ok(),
             "probe-rack: oldest 第 {i} 条该进得去（Oldest 不答 Full）"
         );
     }

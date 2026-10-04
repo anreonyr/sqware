@@ -5,6 +5,7 @@ use crate::unit::{Demand, Identity, Relation, UnitFile};
 use env::ProgramKind;
 
 pub static BEAT: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "beat",
         space: ProgramKind::Supervisor,

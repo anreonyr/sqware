@@ -21,8 +21,8 @@ use programs::driver::uart::client;
 use programs::harness::probe::rack as rig;
 use protocol::communication::rack::Mode;
 use protocol::communication::session::Session;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Face;
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
 use runtime::env::unit as utask;
 
 /// 等板 / 等树那一趟的额度（毫秒）
@@ -64,7 +64,7 @@ fn main() -> Report<'static> {
     // 再写 B（**次序是契约**：写满 B 就是"我已经读完 A"的凭据）。
     for i in 0..rig::count() {
         assert!(
-            console.tx.send(rig::payload(i)).is_ok(),
+            console.tx.send(&rig::payload(i)).is_ok(),
             "probe-rack-guest: B 第 {i} 条没落进去"
         );
     }

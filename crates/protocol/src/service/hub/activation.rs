@@ -1,7 +1,7 @@
 //! Private Hub → Control device-identity installation, never an Operator tile.
 use env::{Mark, PieToken, TaskId};
 
-use crate::service::identity::{CoalitionId, PageId};
+use crate::system::identity::{CoalitionId, PageId};
 use crate::wire::message::Message;
 use env::wire::Span as _;
 
@@ -28,10 +28,18 @@ pub struct Activate {
 impl Activate {
     /// 编一段：**一枚盟号都不翻译**（条数 ＋ 那几枚号照原样过线）
     pub fn of(task: TaskId, coalitions: &[CoalitionId], back: PieToken) -> Option<Self> {
-        if coalitions.is_empty() || coalitions.len() > ACTIVATE_MAX { return None; }
+        if coalitions.is_empty() || coalitions.len() > ACTIVATE_MAX {
+            return None;
+        }
         let mut held = [CoalitionId::EMPTY; ACTIVATE_MAX];
-        held.get_mut(..coalitions.len())?.copy_from_slice(coalitions);
-        Some(Self { task, n: coalitions.len() as u8, coalitions: held, back })
+        held.get_mut(..coalitions.len())?
+            .copy_from_slice(coalitions);
+        Some(Self {
+            task,
+            n: coalitions.len() as u8,
+            coalitions: held,
+            back,
+        })
     }
 
     /// 几枚

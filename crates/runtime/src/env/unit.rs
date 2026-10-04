@@ -1,4 +1,4 @@
-//! Unit 域（class 1）：`UnitCall::*` 转发（`Build` 装域 / `Spawn` 产线程 / `Hatch`
+//! Unit 域（class 1）：`UnitCall::*` 转发（`Build` 装域 / `Spawn` 创建 task / `Embark`
 //! 放行 / `Join` 等结束 / `Oust` 放下 / `Fall` 等落表 + 血缘观察）。
 //!
 //! **启动参数（`save_args` / `args`）不在这里**：那是**任务本地状态**（`Spawn` 那两格的
@@ -13,10 +13,10 @@ pub fn build(kind: ProgramKind) -> UnitResult<TeamId> {
     env::unit::build(kind)
 }
 
-/// 产线程（**Held**，未放行）：`team`（`TeamId(0)` = 当前域）+ `entry`（0 = 域默认
+/// 创建 task（**Held**，未放行）：`team`（`TeamId(0)` = 当前域）+ `entry`（0 = 域默认
 /// 入口）+ 启动参数（写入新任务栈顶，`a0`/`a1` 取回）+ 栈（0 = 默认）。
 ///
-/// 产出的线程不会先于 [`hatch`] 运行——父方可先 `Accord` 授权。
+/// 产出的 task不会先于 [`embark`] 运行——父方可先 `Accord` 授权。
 pub fn spawn(team: TeamId, entry: usize, args: &[usize], stack: usize) -> UnitResult<TaskId> {
     env::unit::spawn(
         team,
@@ -27,14 +27,14 @@ pub fn spawn(team: TeamId, entry: usize, args: &[usize], stack: usize) -> UnitRe
     )
 }
 
-/// 放行（`Held → Starved`）。放行只发生一次——重复调用 → `-1 Denied`。
-pub fn hatch(task: TaskId) -> UnitResult<()> {
-    env::unit::hatch(task)
+/// 首次放行或恢复指定 task。
+pub fn embark(task: TaskId) -> UnitResult<()> {
+    env::unit::embark(task)
 }
 
 /// **放下**一个子域：摘掉我自己 `heir` 表里那一格。
 ///
-/// 前置：那域里没有还没收尾的线程（否则 `-3 Busy`）；它必须是我生的（否则 `-1 Denied`）。
+/// 前置：那域里没有还没收尾的 task（否则 `-2 Busy`）；它必须是我生的（否则 `-1 Denied`）。
 /// 一次一格；重复调用答 `Denied`。要等它收干净：先 `Doom { task }`（`task` 只是指认域的
 /// 手柄），再按 `join` 的两段式循环等。
 pub fn oust(team: TeamId) -> UnitResult<()> {
@@ -89,4 +89,14 @@ pub fn heir_count() -> usize {
 /// 留着是因为它是那套枚举的第二趟，不是"备复用"。
 pub fn heir_at(index: usize) -> TeamId {
     env::unit::heir(index)
+}
+
+/// 请求挂起 task；Busy 表示目标正在离开处理器，调用者需重试确认。
+pub fn debark(task: TaskId) -> UnitResult<()> {
+    env::unit::debark(task)
+}
+
+/// 销毁指定 task 及其拥有的子 team。
+pub fn slay(task: TaskId) -> UnitResult<()> {
+    env::unit::slay(task)
 }

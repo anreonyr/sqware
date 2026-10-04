@@ -45,9 +45,7 @@ pub fn run(console: &mut Console) {
                     seen = console.rx.skipped();
                     // 丢过批：半行作废（那一段字节与回显都对不上了）。
                     d.reset();
-                    protocol::debug::put(&alloc::format!(
-                        "canonical: rx gap skipped={seen}"
-                    ));
+                    protocol::debug::put(&alloc::format!("canonical: rx gap skipped={seen}"));
                 }
                 if !eat(&mut d, batch.bytes(), &mut out) {
                     quit = true; // 收场词到了：**先把待写的放完**，再走
@@ -58,7 +56,7 @@ pub fn run(console: &mut Console) {
         // 2：写——一具架，**写端永不挂起**（满了按 `Mode::Oldest` 顶掉最旧未读格、记 `lost`）。
         for one in out.drain(..) {
             if let Some(batch) = Bytes::of(&one) {
-                let _ = console.tx.send(batch);
+                let _ = console.tx.send(&batch);
             }
         }
         if console.tx.lost() != dropped {

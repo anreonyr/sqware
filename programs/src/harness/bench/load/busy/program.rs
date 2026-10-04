@@ -4,6 +4,7 @@
 use crate::unit::{Demand, Identity, Relation, UnitFile};
 
 pub static BUSY: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "busy",
         wanted_by: &["load"],

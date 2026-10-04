@@ -31,13 +31,17 @@ pub(in super::super) fn fetch() -> usize {
             sie::set_sext();
         }
         if let Some(task) = s.pull() {
-            return s.seat(task);
+            if let Some(pa) = s.seat(task) {
+                return pa;
+            }
         }
         if conductor::done() {
             conductor::halt();
         }
         if let Some(task) = wait() {
-            return s.seat(task);
+            if let Some(pa) = s.seat(task) {
+                return pa;
+            }
         }
     }
 }

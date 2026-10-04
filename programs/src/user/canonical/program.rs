@@ -7,6 +7,7 @@ use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 pub const E_CANONICAL: Died = 24;
 
 pub static PROGRAM: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "canonical",
         wanted_by: &["accept", "product"],

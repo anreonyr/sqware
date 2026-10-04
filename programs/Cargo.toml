@@ -40,22 +40,22 @@ bench = false
 doctest = false
 
 [[bin]]
-name = "prog-identity-replacement"
-path = "src/harness/probe/identity_replacement/main.rs"
+name = "prog-system-fault"
+path = "src/harness/probe/system_fault/main.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
-name = "prog-replacement-dependent"
-path = "src/harness/probe/identity_replacement/dependent.rs"
+name = "prog-system-dependent"
+path = "src/harness/probe/system_fault/dependent.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
-name = "prog-replacement-child"
-path = "src/harness/probe/identity_replacement/child.rs"
+name = "prog-system-child"
+path = "src/harness/probe/system_fault/child.rs"
 test = false
 bench = false
 doctest = false
@@ -92,22 +92,7 @@ test = false
 bench = false
 doctest = false
 
-# 常驻服务（U 态，各自一个域）：持树者 / 统一身份。身份谱系、资格和绑定共用一个权威。
-[[bin]]
-name = "prog-operator"
-path = "src/service/operator/main.rs"
-test = false
-bench = false
-doctest = false
-
-[[bin]]
-name = "prog-identity"
-path = "src/service/identity/main.rs"
-test = false
-bench = false
-doctest = false
-
-# 设备账（U 态，独立域）：收整机物料、立账、落 `/svc/hub` 与 `/dev/<类>/<名>`、答三面。
+# 设备账（U 态，独立 team）：整机物料、设备发布和驱动激活。
 [[bin]]
 name = "prog-hub"
 path = "src/service/hub/main.rs"
@@ -362,6 +347,20 @@ doctest = false
 [[bin]]
 name = "prog-group"
 path = "src/harness/bench/group/group/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-system-fault-unit"
+path = "src/harness/probe/system_fault/fault_unit.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-accept-system"
+path = "src/harness/probe/accept/main.rs"
 test = false
 bench = false
 doctest = false

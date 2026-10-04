@@ -63,12 +63,21 @@ impl Scheduler {
     }
 
     fn starved_pop(&self, i: &mut SchedulerInner) -> Option<Arc<Task>> {
-        let mut head = i.head.take()?;
-        i.head = Task::starved_next(&mut head).take();
-        if i.head.is_none() {
-            i.tail = None;
+        loop {
+            let mut head = i.head.take()?;
+            i.head = Task::starved_next(&mut head).take();
+            if i.head.is_none() {
+                i.tail = None;
+            }
+            let anchor = head.clone();
+            let mut boarding = anchor.boarding.lock();
+            if boarding.stopped {
+                debug_assert!(boarding.parked.is_none());
+                boarding.parked = Some(head);
+                continue;
+            }
+            return Some(head);
         }
-        Some(head)
     }
 
     pub(super) fn starved_remove(&self, i: &mut SchedulerInner, target: &Arc<Task>) -> bool {
@@ -132,8 +141,15 @@ impl Scheduler {
         timer::beat_until(timer::blind_ceiling());
     }
 
-    pub(super) fn seat(&self, mut task: Arc<Task>) -> usize {
+    pub(super) fn seat(&self, mut task: Arc<Task>) -> Option<usize> {
         let mut i = self.inner.lock();
+        let anchor = task.clone();
+        let mut boarding = anchor.boarding.lock();
+        if boarding.stopped {
+            debug_assert!(boarding.parked.is_none());
+            boarding.parked = Some(task);
+            return None;
+        }
         self.prepare(&mut task);
         let pa = frame_pa(&task.ident).as_usize();
         self.badge.seat(&task.ident);
@@ -146,7 +162,7 @@ impl Scheduler {
         );
         let prev = i.running.replace(task);
         debug_assert!(prev.is_none(), "装槽前 running 必须为空");
-        pa
+        Some(pa)
     }
 
     pub(crate) fn swap(&self) -> (Arc<Task>, Option<usize>) {
@@ -154,12 +170,10 @@ impl Scheduler {
         let task = i.running.take().expect("no running task");
         let next = self.starved_pop(&mut i);
         drop(i);
+        self.badge.shed(&task.ident);
         let next_pa = if let Some(next) = next {
-            let pa = frame_pa(&next.ident).as_usize();
-            self.seat(next);
-            Some(pa)
+            self.seat(next)
         } else {
-            self.badge.shed(&task.ident);
             None
         };
         (task, next_pa)
@@ -170,13 +184,19 @@ impl Scheduler {
         i.running.as_ref().map(Arc::clone)
     }
 
-    fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Arc<Task> {
+    fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Option<Arc<Task>> {
         Task::exclusive(&mut cur).transform(TaskState::Starved { next: None });
         self.starved_push(i, cur);
-        self.starved_pop(i).expect("non-empty")
+        self.starved_pop(i)
     }
 
     pub(crate) fn starve(&self) -> usize {
+        if self
+            .running_task()
+            .is_some_and(|t| t.boarding.lock().stopped)
+        {
+            return self.advance().unwrap_or_else(super::fetch::fetch);
+        }
         let mut i = self.inner.lock();
         let Some(cur) = i.running.take() else {
             panic!("starve with no running task on hart {}", self.hart);
@@ -187,16 +207,25 @@ impl Scheduler {
             return pa;
         }
         let prev_tid = cur.ident.id.get();
+        self.badge.shed(&cur.ident);
         let next = self.rotate(&mut i, cur);
         drop(i);
-        let pa = self.seat(next);
+        let pa = next.and_then(|next| self.seat(next));
         trace::note(EventKind::Room(RoomEvent::Starve { tid: prev_tid }));
-        pa
+        pa.unwrap_or_else(super::fetch::fetch)
     }
 
     pub(in super::super) fn advance(&self) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut cur = i.running.take()?;
+        if cur.boarding.lock().stopped {
+            Task::exclusive(&mut cur).transform(TaskState::Starved { next: None });
+            self.badge.shed(&cur.ident);
+            self.starved_push(&mut i, cur);
+            let next = self.starved_pop(&mut i);
+            drop(i);
+            return next.and_then(|next| self.seat(next));
+        }
         let ticks_left = match Task::exclusive(&mut cur).state() {
             TaskState::Running { ticks_left } => *ticks_left,
             _ => unreachable!("running 容器里不是 Running 任务"),
@@ -210,12 +239,13 @@ impl Scheduler {
             return Some(pa);
         }
         let prev_tid = cur.ident.id.get();
+        self.badge.shed(&cur.ident);
         let next = self.rotate(&mut i, cur);
-        let next_tid = next.ident.id.get();
+        let next_tid = next.as_ref().map_or(0, |t| t.ident.id.get());
         drop(i);
-        let pa = self.seat(next);
+        let pa = next.and_then(|next| self.seat(next));
         trace::note(EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }));
-        Some(pa)
+        pa
     }
 }
 

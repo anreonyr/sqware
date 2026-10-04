@@ -6,6 +6,7 @@
 use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RACK: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "probe-rack",
         ..Identity::DEFAULT

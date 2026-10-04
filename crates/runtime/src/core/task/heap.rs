@@ -1,53 +1,43 @@
-//! 用户堆 — Global Alloc 后端 + `#[global_allocator]`。
+//! 用户堆：Talc 管理对象，页来源只调用现有内存接口。
 
 use core::alloc::{GlobalAlloc, Layout};
+use core::ptr::null_mut;
 
-use crate::PAGE_SIZE;
-use crate::env::memory;
+use spinning_top::RawSpinlock;
+use talc::{TalcLock, source::GlobalAllocSource};
 
-pub struct Heap;
+use crate::{PAGE_SIZE, env::memory};
 
-/// 实际分配的字节（按页取整 + 至少一页）。
-fn alloc_size(layout: &Layout) -> usize {
-    layout.size().max(1).next_multiple_of(PAGE_SIZE)
-}
+const BLOCK_SIZE: usize = 4 * PAGE_SIZE;
 
-unsafe impl GlobalAlloc for Heap {
+type Heap = TalcLock<RawSpinlock, GlobalAllocSource<Pages>>;
+
+#[derive(Debug)]
+struct Pages;
+
+// SAFETY: 每个区域独立申请；Talc 保留原始地址和大小，整块归还。
+unsafe impl GlobalAlloc for Pages {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        match memory::allocate(alloc_size(&layout)) {
-            Ok(addr) => addr as *mut u8,
-            Err(_) => core::ptr::null_mut(),
+        if layout.align() > PAGE_SIZE {
+            return null_mut();
         }
+        let Some(size) = layout.size().max(1).checked_next_multiple_of(PAGE_SIZE) else {
+            return null_mut();
+        };
+        memory::allocate(size).map_or(null_mut(), |addr| addr as *mut u8)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        let _ = memory::deallocate(ptr as usize, alloc_size(&layout));
-    }
-
-    /// realloc：只在确需跨页时分配新页 + 拷贝 + 释放旧页；否则原地返回。
-    ///
-    /// 系统分配是页粒度（`alloc`/`dealloc` 按页取整），而 `Vec`/`String` 的
-    /// `new_size` 常是元素字节数的非页倍数。若 new_size 落在当前页内（原页已够），
-    /// 返回原指针即可，避免每次扩容都换页（会加剧堆地址空间碎片 + 反复页分配）。
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if new_size <= alloc_size(&layout) {
-            // 原页仍足够：原地返回，不搬移。
-            return ptr;
-        }
-        // 需新页：alloc + copy + dealloc（同 GlobalAlloc 默认，但这里显式）。
-        assert!(layout.size() != 0, "realloc: zero-size layout");
-        assert!(new_size != 0, "realloc: zero new_size");
-        let new_layout = unsafe { Layout::from_size_align_unchecked(new_size, layout.align()) };
-        let new_ptr = unsafe { self.alloc(new_layout) };
-        if !new_ptr.is_null() {
-            unsafe {
-                core::ptr::copy_nonoverlapping(ptr, new_ptr, layout.size());
-                self.dealloc(ptr, layout);
-            }
-        }
-        new_ptr
+        let size = layout.size().max(1).next_multiple_of(PAGE_SIZE);
+        let _ = memory::deallocate(ptr as usize, size);
     }
 }
 
+// 页来源不使用用户堆，避免获取或归还区域时递归进入 Talc。
+#[cfg(target_arch = "riscv64")]
 #[global_allocator]
-static HEAP: Heap = Heap;
+static HEAP: Heap = Heap::new(GlobalAllocSource::with_block_size(Pages, BLOCK_SIZE));
+
+#[cfg(test)]
+#[path = "heap/tests.rs"]
+mod tests;

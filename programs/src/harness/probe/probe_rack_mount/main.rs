@@ -25,14 +25,12 @@ use env::{Mark, Wait};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use programs::service::operator::bridge;
-use programs::service::operator::bridge::Landed;
 use protocol::communication::rack::{Mode, Rack};
 use protocol::communication::session::{Session, establish};
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face, Mine};
-use protocol::service::operator::{Fail, Grant, Permit};
 use protocol::system::control::publication::{Client, Scope, Target};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face;
+use protocol::system::operator::{Fail, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -57,21 +55,27 @@ fn main() -> Report<'static> {
     let plated = land(&tree, &a, &b);
     let client = Client::injected().unwrap();
     let target = |name: &str| Target::Service {
-        scope: Scope::Fixture, group: rig::ROAD.into(), name: name.into(),
+        scope: Scope::Fixture,
+        group: rig::ROAD.into(),
+        name: name.into(),
     };
-    assert_eq!(client.publish(target("rx"), a.ship(), Permit::Public, Wait::AtMost(MS)), Ok(plated[0].plate));
-    assert_eq!(client.publish(target("rx"), b.ship(), Permit::Public, Wait::AtMost(MS)), Err(Fail::Denied));
+    assert_eq!(
+        client.publish(target("rx"), a.ship(), Permit::Public, Wait::AtMost(MS)),
+        Ok(plated[0])
+    );
+    assert_eq!(
+        client.publish(target("rx"), b.ship(), Permit::Public, Wait::AtMost(MS)),
+        Err(Fail::Denied)
+    );
 
     // A 先写满：客人一取号就该有东西可读（**不绕环**，故"读到几条"是确定的）。
     let mut aw = a.writer();
     for i in 0..rig::count() {
         assert!(
-            aw.send(rig::payload(i)).is_ok(),
+            aw.send(&rig::payload(i)).is_ok(),
             "probe-rack-mount: A 第 {i} 条没落进去"
         );
     }
-
-
 
     // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
     let _ = establish::endpoint(utask::sire(), Mark::of(programs::unit::READY), Wait::POLL);
@@ -90,15 +94,34 @@ fn main() -> Report<'static> {
         );
     }
 
-    let retained = tree.tile(&rig::road().unwrap().try_join("tx").unwrap(), Wait::AtMost(MS))
-        .unwrap().token(Wait::AtMost(MS)).unwrap();
+    let retained = tree
+        .tile(
+            &rig::road().unwrap().try_join("tx").unwrap(),
+            Wait::AtMost(MS),
+        )
+        .unwrap()
+        .token(Wait::AtMost(MS))
+        .unwrap();
     let mut reader = protocol::communication::rack::Reader::<Bytes>::from_token(retained).unwrap();
     client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
-    assert_eq!(tree.root().tile(&rig::road().unwrap().try_join("tx").unwrap(), Wait::AtMost(MS)).map(|_| ()), Err(Fail::Unknown));
-    b.writer().send(rig::payload(99)).unwrap();
-    assert_eq!(reader.recv(Wait::AtMost(MS)).unwrap().bytes(), rig::payload(99).bytes());
+    assert_eq!(
+        tree.root()
+            .tile(
+                &rig::road().unwrap().try_join("tx").unwrap(),
+                Wait::AtMost(MS)
+            )
+            .map(|_| ()),
+        Err(Fail::Unknown)
+    );
+    b.writer().send(&rig::payload(99)).unwrap();
+    assert_eq!(
+        reader.recv(Wait::AtMost(MS)).unwrap().bytes(),
+        rig::payload(99).bytes()
+    );
     assert_eq!(mail::inspect(retained).unwrap().1, utask::self_id());
-    protocol::debug::put("probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping");
+    protocol::debug::put(
+        "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
+    );
 
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
     // `find` 自成一位（那一手会转移权柄）⇒ 要 `Grant::Find` 那一柄。
@@ -107,7 +130,7 @@ fn main() -> Report<'static> {
         "probe-rack-mount: 封印自己那一枚页失败"
     );
     let rein = tree.rein(Grant::Find);
-    match rein.find(plated[0].plate, Wait::AtMost(MS)) {
+    match rein.find(plated[0], Wait::AtMost(MS)) {
         Err(Fail::Dead) => {}
         other => panic!("probe-rack-mount: 封印之后那一格该答 Dead，实测 {other:?}"),
     }
@@ -130,30 +153,27 @@ fn open(mode: Mode) -> Rack<Bytes> {
 
 /// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Public`：谁都能查、谁都能取，
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
-fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<Landed> {
-    let road = match rig::road() {
-        Some(road) => road,
-        None => panic!("probe-rack-mount: 试验场那条路拼不出来"),
-    };
-    let faces = rig::faces(a, b);
-    let plated = bridge::land(
-        tree,
-        rig::ROAD,
-        &road,
-        Mine::No,
-        Permit::Public,
-        &faces,
-        Wait::AtMost(MS),
-    );
-    assert_eq!(plated.len(), 2, "probe-rack-mount: 两枚砖没落齐");
-    for (one, (want, _)) in plated.iter().zip(faces.iter()) {
-        assert!(one.land.is_ok(), "probe-rack-mount: 落 {want} 失败");
-        assert!(one.find.is_ok(), "probe-rack-mount: 查回 {want} 失败");
-        assert_eq!(
-            one.named.as_ref().map(|name| name.as_str()),
-            Some(*want),
-            "probe-rack-mount: {want} 那一格的名字对不上"
-        );
+fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<protocol::system::operator::EntryId> {
+    let road = rig::road().expect("probe-rack-mount: road");
+    let publisher = Client::injected().expect("probe-rack-mount: publication entry");
+    let mut mounts = Vec::new();
+    for (name, entry) in rig::faces(a, b) {
+        let target = Target::Service {
+            scope: Scope::Fixture,
+            group: rig::ROAD.into(),
+            name: name.into(),
+        };
+        let mount = publisher
+            .publish(target, entry, Permit::Public, Wait::AtMost(MS))
+            .expect("probe-rack-mount: publication");
+        let full = road.try_join(name).unwrap();
+        tree.tile(&full, Wait::AtMost(MS))
+            .unwrap()
+            .token(Wait::AtMost(MS))
+            .unwrap();
+        assert_eq!(tree.root().name(mount, Wait::AtMost(MS)).unwrap(), name);
+        mounts.push(mount);
     }
-    plated
+    assert_eq!(mounts.len(), 2);
+    mounts
 }

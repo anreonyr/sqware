@@ -6,17 +6,16 @@
 extern crate alloc;
 extern crate programs;
 
-
 use env::Wait;
 use programs::Report;
 
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::{Face as TreeFace};
-use protocol::service::operator::frame::watch::{Event, Kind};
-use protocol::service::operator::{EntryId, Grant, Permit};
+use protocol::system::operator::client as operator;
+use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::frame::watch::{Event, Kind};
+use protocol::system::operator::{EntryId, Grant, Permit};
 use runtime::env::mail;
 use runtime::env::unit as utask;
 
@@ -96,13 +95,17 @@ fn main() -> Report<'static> {
     //    判据两条：**读到的比落的少**且**至少读到一条**，而读到的那几条**号严格递增**。
     const LANDED: usize = 6;
     const EVENTS: usize = LANDED + 1;
-    let qroad = PathBuf::try_new("svc/probe-watch-q")
-        .unwrap_or_else(|| panic!("probe-watch: bad q road"));
+    let qroad =
+        PathBuf::try_new("svc/probe-watch-q").unwrap_or_else(|| panic!("probe-watch: bad q road"));
     let mut queue = rein
         .watch(&qroad, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
     for i in 0..LANDED {
-        let _ = spot(&tree, &alloc::format!("svc/probe-watch-q/c{i}"), "probe-watch-q");
+        let _ = spot(
+            &tree,
+            &alloc::format!("svc/probe-watch-q/c{i}"),
+            "probe-watch-q",
+        );
     }
     let mut got = 0usize;
     let mut last = 0u64;
@@ -148,10 +151,20 @@ fn spot(tree: &TreeFace, road: &str, mark: &'static str) -> EntryId {
     let group = parent.strip_prefix("svc/").unwrap();
     let entry = mail::unseal_hole(env::Mark::of(mark)).unwrap();
     let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture, group: group.into(), name: name.into(),
+        scope: protocol::system::control::publication::Scope::Fixture,
+        group: group.into(),
+        name: name.into(),
     };
-    let id = protocol::system::control::publication::Client::injected().unwrap()
-        .publish(target, entry, Permit::Public, Wait::AtMost(MS)).unwrap();
-    assert_eq!(tree.root().tile(&PathBuf::try_new(road).unwrap(), Wait::AtMost(MS)).unwrap().id(), id);
+    let id = protocol::system::control::publication::Client::injected()
+        .unwrap()
+        .publish(target, entry, Permit::Public, Wait::AtMost(MS))
+        .unwrap();
+    assert_eq!(
+        tree.root()
+            .tile(&PathBuf::try_new(road).unwrap(), Wait::AtMost(MS))
+            .unwrap()
+            .id(),
+        id
+    );
     id
 }

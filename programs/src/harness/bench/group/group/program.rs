@@ -5,6 +5,7 @@ use crate::unit::{Demand, Identity, Relation, UnitFile};
 use env::ProgramKind;
 
 pub static GROUP: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "group",
         space: ProgramKind::Supervisor,

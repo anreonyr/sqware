@@ -30,14 +30,18 @@ extern crate programs;
 
 use env::Wait;
 use programs::Reason;
+use programs::system::control::core::unit::Declaration;
+use programs::system::control::serve::task::Image;
+use programs::system::control::serve::task::Launch;
+use programs::system::control::serve::task::Readiness;
 
 use programs::boot::{Accounts, Catalog};
 
 use alloc::string::String;
 use alloc::string::ToString;
-use programs::system::common::life::service;
-use programs::system::common::life::table::{Announce, Slot, State, Table};
-use programs::system::common::life::verdict::{Ready, probe_ready};
+use programs::system::control::core::unit::{Announce, Slot, State, Table};
+use programs::system::control::core::verdict::{Ready, probe_ready};
+use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use protocol::debug;
 use runtime::env::unit;
@@ -70,12 +74,20 @@ fn main() -> Reason {
     for round in 1..=ROUNDS {
         // 首启唯一的一次 register；重发**不许**再 register（重名即 Unknown，见 §六）。
         if round == 1 {
-            match table.register(name.clone(), Announce::None, Ending::Transient) {
+            match table.register(Declaration {
+                name: name.clone(),
+                announce: Announce::None,
+                restart: Ending::Transient,
+            }) {
                 Ok(()) => debug!("again: r={round} step=register ok"),
                 Err(_) => return die("again: register"),
             }
         } else {
-            match table.register(name.clone(), Announce::None, Ending::Transient) {
+            match table.register(Declaration {
+                name: name.clone(),
+                announce: Announce::None,
+                restart: Ending::Transient,
+            }) {
                 // 首启之后再登记必须被拒——这一条也是判据（拒了才说明行是复用的）。
                 Err(_) => debug!("again: r={round} step=register refused (expected)"),
                 Ok(()) => {
@@ -86,7 +98,14 @@ fn main() -> Reason {
         }
 
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
-        let task = match service::mint(&mut table, name.as_str(), elf, kind) {
+        let task = match service::mint(
+            &mut table,
+            Image {
+                name: name.as_str(),
+                bytes: elf,
+                kind,
+            },
+        ) {
             Ok(task) => task,
             Err(_) => {
                 failures += 1;
@@ -97,14 +116,18 @@ fn main() -> Reason {
         debug!("again: r={round} step=spawn ok");
 
         // start（无授权、无会话、放行即起来的那一种）。
-        if service::start(
+        if service::embark(
             &mut table,
-            name.as_str(),
-            task,
-            &[],
+            Launch {
+                task,
+                grants: &[],
+                readiness: Readiness {
+                    name: name.as_str(),
+                    marks: &[],
+                    wait: Wait::AtMost(MS),
+                },
+            },
             &mut [],
-            &[],
-            Wait::AtMost(MS),
         )
         .is_err()
         {
@@ -122,7 +145,7 @@ fn main() -> Reason {
             debug!("again: r={round} step=state NEVERSTARTED (bug)");
         }
 
-        if service::stop(&mut table, name.as_str()).is_err() {
+        if service::ruin(&mut table, name.as_str()).is_err() {
             failures += 1;
             debug!("again: r={round} step=stop REFUSED");
             break;
@@ -164,18 +187,29 @@ fn main() -> Reason {
         {
             let _ = unit::oust(team);
         }
-        let Ok(task) = service::mint(&mut table, name.as_str(), elf, kind) else {
+        let Ok(task) = service::mint(
+            &mut table,
+            Image {
+                name: name.as_str(),
+                bytes: elf,
+                kind,
+            },
+        ) else {
             failures += 1;
             break;
         };
-        if service::start(
+        if service::embark(
             &mut table,
-            name.as_str(),
-            task,
-            &[],
+            Launch {
+                task,
+                grants: &[],
+                readiness: Readiness {
+                    name: name.as_str(),
+                    marks: &[],
+                    wait: Wait::AtMost(MS),
+                },
+            },
             &mut [],
-            &[],
-            Wait::AtMost(MS),
         )
         .is_err()
         {
@@ -184,7 +218,7 @@ fn main() -> Reason {
         }
         tries += 1;
         restarts += 1;
-        let _ = service::stop(&mut table, name.as_str());
+        let _ = service::ruin(&mut table, name.as_str());
         let _ = service::watch(&mut table, name.as_str(), Wait::AtMost(MS));
     }
     // 放弃之后表里的样子：**`Dead` 与坐标并存**（这就是"它是什么"的答案）。
@@ -218,6 +252,7 @@ fn trace(table: &Table, name: String, round: usize, step: &str) {
         State::Ready => "Ready",
         State::Stopping => "Stopping",
         State::Dead => "Dead",
+        State::Debarked => "Debarked",
     };
     debug!("again: r={round} step={step} state={state} slot={slot} ready={ready}");
 }

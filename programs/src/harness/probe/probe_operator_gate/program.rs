@@ -8,6 +8,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// 给下一位客人
 /// 故它一上来就看得见；**那七段名字的读数归树自己**
 pub static PROBE_OPERATOR_GATE: UnitFile = UnitFile {
+    publication: &[],
     identity: Identity {
         name: "probe-operator-gate",
         ..Identity::DEFAULT

@@ -8,9 +8,19 @@ use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
 pub const E_RTC: Died = 12;
 
 pub static PROGRAM: UnitFile = UnitFile {
+    publication: &[crate::unit::Publish::Entries {
+        scope: crate::unit::PublishScope::Driver,
+        group: "",
+        road: "svc/drv",
+        entries: &[crate::unit::PublishEntry {
+            name: "rtc",
+            mark: Some(env::Mark::of("entry")),
+        }],
+        public: true,
+    }],
     identity: Identity {
         name: "rtc",
-        wanted_by: &["accept", "product", "identity-replacement"],
+        wanted_by: &["accept", "product", "system-fault"],
         ..Identity::DEFAULT
     },
     relation: Relation {

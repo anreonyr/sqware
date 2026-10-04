@@ -11,6 +11,56 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 ///
 /// 次序：树那条路（`operator`）；它只跟树说话。
 pub static PROBE_WATCH: UnitFile = UnitFile {
+    publication: &[
+        crate::unit::Publish::Entries {
+            scope: crate::unit::PublishScope::Fixture,
+            group: "probe-watch",
+            road: "svc/probe-watch",
+            entries: &[
+                crate::unit::PublishEntry {
+                    name: "in",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "out",
+                    mark: None,
+                },
+            ],
+            public: false,
+        },
+        crate::unit::Publish::Entries {
+            scope: crate::unit::PublishScope::Fixture,
+            group: "probe-watch-q",
+            road: "svc/probe-watch-q",
+            entries: &[
+                crate::unit::PublishEntry {
+                    name: "c0",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "c1",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "c2",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "c3",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "c4",
+                    mark: None,
+                },
+                crate::unit::PublishEntry {
+                    name: "c5",
+                    mark: None,
+                },
+            ],
+            public: false,
+        },
+    ],
     identity: Identity {
         name: "probe-watch",
         ..Identity::DEFAULT

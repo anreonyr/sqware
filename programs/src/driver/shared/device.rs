@@ -7,7 +7,7 @@ use env::{PieKind, PieToken, Wait};
 use protocol::common::path::Path;
 use protocol::service::hub;
 use protocol::service::hub::Deed;
-use protocol::service::operator::client::Face as TreeFace;
+use protocol::system::operator::client::Face as TreeFace;
 use runtime::core::res::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 

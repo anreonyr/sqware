@@ -4,15 +4,13 @@ use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
-use programs::service::operator::bridge;
 use programs::unit::uart::E_UART;
 use protocol::communication::rack::{Mode, Rack, Reader, Writer};
 use protocol::debug;
-use protocol::driver;
 use protocol::driver::line::client::Line;
-use protocol::service::operator::Permit;
-use protocol::service::operator::client as operator;
-use protocol::service::operator::client::Mine;
+use protocol::system::control::publication::Scope;
+use protocol::system::operator::Permit;
+use protocol::system::operator::client as operator;
 use runtime::env::unit as utask;
 
 const ASK: Ask = Ask {
@@ -68,7 +66,7 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     let tx = Rack::<Bytes>::open(Mode::Oldest).map_err(|_| Fail::at(E_UART, "desk"))?;
     let tx_r = tx.reader();
 
-    plate(&ctx, &rx, &tx, ms);
+    plate(&rx, &tx, ms);
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(
@@ -90,19 +88,17 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
 
 /// → `rx` / `tx` 各一枚 Tile（**各是一具架的页**）→ 各查回来一遍（号 ↔ 名对得上才算真坐标）
 /// 送出去的是 `Rack::ship()` 交给对端的**那一枚页**：客人拿它既能映页、又能等页上那一位。
-fn plate(ctx: &Context, rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
-    let tree = operator::Face::from(&ctx.session);
-    let list = [(RX, rx.ship()), (TX, tx.ship())];
-    let road = driver::ROAD.try_join(ME).expect("uart: tree: road");
-    let plated = bridge::land(&tree, ME, &road, Mine::Yes, Permit::Public, &list, ms);
-    assert_eq!(plated.len(), 2, "{ME}: tree: road");
-    for (one, want) in plated.iter().zip([RX, TX]) {
-        assert!(one.land.is_ok(), "{ME}: tree: land {want}");
-        assert!(one.find.is_ok(), "{ME}: tree: find {want}");
-        assert_eq!(
-            one.named.as_ref().map(|name| name.as_str()),
-            Some(want),
-            "{ME}: tree: name {want}"
-        );
+fn plate(rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
+    let client = protocol::system::control::publication::Client::injected()
+        .expect("uart: publication entry");
+    for (name, entry) in [(RX, rx.ship()), (TX, tx.ship())] {
+        let target = protocol::system::control::publication::Target::Service {
+            scope: Scope::Driver,
+            group: "uart".into(),
+            name: name.into(),
+        };
+        client
+            .publish(target, entry, Permit::Public, ms)
+            .expect("uart: publication");
     }
 }
