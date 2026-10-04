@@ -23,6 +23,7 @@ fn heterogeneous_directory_roundtrips() {
         entry(Name::Trap(Trap::SupervisorExternal), 1),
         entry(Name::Trap(Trap::PageFault), 2),
         entry(Name::Call(Call::Build), 3),
+        entry(Name::Call(Call::Doom), 7),
         entry(Name::Page(Page::Dtb), 4),
         entry(Name::Page(Page::Initrd), 5),
         entry(Name::Page(Page::Region(0x10000000)), 6),

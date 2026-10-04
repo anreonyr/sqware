@@ -35,9 +35,17 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskI
             Outcome::Exit
         }
         RoomCall::Doom { task } => {
-            if !ident.team.space.kind().is_supervisor() {
+            let Some(me) = muster(ident.id).and_then(|w| w.upgrade()) else {
+                return Outcome::fail(frame, RoomFail::Denied);
+            };
+            if !Arc::ptr_eq(&me.ident, &ident)
+                || !crate::work::unit::gate::allows(
+                    &me, &super::resources::get().doom, crate::work::unit::gate::Need::Fetch,
+                )
+            {
                 return Outcome::fail(frame, RoomFail::Denied);
             }
+            drop(me);
             let target = muster(task).and_then(|w| w.upgrade());
             let Some(target) = target else {
                 return Outcome::fail(frame, RoomFail::Dead);

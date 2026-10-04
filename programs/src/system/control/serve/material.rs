@@ -22,6 +22,12 @@ impl Supplies {
     }
 }
 impl Supplies {
+    pub fn grant_call(&self, call: env::Call, task: env::TaskId) -> Result<(), &'static str> {
+        let token = self.accounts.token(Name::Call(call)).ok_or("Call authority missing")?;
+        env::pie::accord(token, task, env::Permission::FETCH, Mark::NONE)
+            .map_err(|_| "Call authority grant")?;
+        Ok(())
+    }
     pub fn enroll(
         &mut self,
         service: &mut Service,

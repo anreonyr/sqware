@@ -92,9 +92,14 @@ pub fn spawn(
     }
     Ok(Progress::Done)
 }
-pub fn embark(status: Res<Arc<Status>>) -> Result<Progress, &'static str> {
+pub fn embark(
+    status: Res<Arc<Status>>,
+    supplies: Res<crate::system::control::serve::material::Supplies>,
+) -> Result<Progress, &'static str> {
     for slot in [&status.operator, &status.identity] {
-        env::unit::embark(TaskId::new(slot.load(Ordering::Acquire)))
+        let task = TaskId::new(slot.load(Ordering::Acquire));
+        supplies.grant_call(env::Call::Doom, task)?;
+        env::unit::embark(task)
             .map_err(|_| "internal task embark")?;
     }
     Ok(Progress::Done)

@@ -15,6 +15,9 @@ pub fn acceptance() {
         .unwrap()
         .token(env::Name::Call(env::Call::Build))
         .unwrap();
+    let doom = crate::boot::Accounts::take().unwrap()
+        .token(env::Name::Call(env::Call::Doom)).unwrap();
+    let doom_mark = Mark::of("copy-doom");
     let mark = Mark::of("copy-build");
     let worker = runtime::core::task::join::closure(move || {
         assert!(
@@ -25,11 +28,15 @@ pub fn acceptance() {
             )
             .is_some()
         );
+        assert!(protocol::communication::session::establish::claim(
+            env::TaskId::new(0), doom_mark, Wait::AtMost(2000),
+        ).is_some());
         elf();
         cache_limits();
         finished.store(true, Ordering::Release);
     });
     env::pie::accord(build, worker.id(), env::Permission::FETCH, mark).unwrap();
+    env::pie::accord(doom, worker.id(), env::Permission::FETCH, doom_mark).unwrap();
     worker.join();
     assert!(
         done.load(Ordering::Acquire),

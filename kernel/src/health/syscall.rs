@@ -100,11 +100,6 @@ pub fn abi_and_privilege() {
         ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
     )));
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
-    let mut registry = crate::resource::Registry::default();
-    crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
-    registry.freeze().unwrap().grant(&user.task).unwrap();
-    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
-    assert!(user.call(build(ProgramKind::User)) > 0);
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
             task: user.task.ident.id
@@ -112,7 +107,18 @@ pub fn abi_and_privilege() {
         env::RoomFail::Denied.code()
     );
     assert_eq!(user.task.tag(), TaskTag::Held);
+    let mut registry = crate::resource::Registry::default();
+    crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
+    registry.freeze().unwrap().grant(&user.task).unwrap();
+    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
+    assert!(user.call(build(ProgramKind::User)) > 0);
+    assert_eq!(user.call(EnvCall::Room(RoomCall::Doom {
+        task: env::TaskId::new(usize::MAX),
+    })), env::RoomFail::Dead.code());
     let supervisor = Caller::new(true);
+    assert_eq!(supervisor.call(EnvCall::Room(RoomCall::Doom {
+        task: user.task.ident.id,
+    })), env::RoomFail::Denied.code());
     assert_eq!(supervisor.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     let mut registry = crate::resource::Registry::default();
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
@@ -479,7 +485,7 @@ pub fn resource_registration() {
     assert_eq!(error.value.1.token(), token);
     assert!(registry.register(Name::Trap(Trap::PageFault), root()).is_err());
     let entries = registry.freeze().unwrap().grant(&system.task).unwrap();
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
     assert!(entries.iter().all(env::Entry::valid));
     let token = entries.iter().find(|e| e.name() == Name::Call(Call::Build)).unwrap().token();
     assert!(gate::allows(&system.task, &calls::get().build, Need::Fetch));
@@ -494,6 +500,29 @@ pub fn resource_registration() {
     gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
     assert!(!gate::allows(&service.task, &calls::get().build, Need::Fetch));
     assert_eq!(service.call(EnvCall::Unit(UnitCall::Build { kind: ProgramKind::User })), env::UnitFail::Denied.code());
+    let doom = entries.iter().find(|e| e.name() == Name::Call(Call::Doom)).unwrap().token();
+    let call = EnvCall::Room(RoomCall::Doom { task: env::TaskId::new(usize::MAX) });
+    assert_eq!(service.call(call), env::RoomFail::Denied.code());
+    let token = PieToken::mint(gate::accord(
+        &system.task, doom, &Arc::downgrade(&service.task), Permission::VEST, Mark::NONE,
+    ).unwrap());
+    assert_eq!(service.call(call), env::RoomFail::Denied.code());
+    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    let token = PieToken::mint(gate::accord(
+        &system.task, doom, &Arc::downgrade(&service.task), Permission::FETCH, Mark::NONE,
+    ).unwrap());
+    assert!(gate::allows(&service.task, &calls::get().doom, Need::Fetch));
+    let victim = Caller::new(false);
+    assert_eq!(service.call(EnvCall::Room(RoomCall::Doom {
+        task: victim.task.ident.id,
+    })), 0);
+    assert!(matches!(victim.task.tag(), TaskTag::Doomed | TaskTag::Reaped));
+    assert_eq!(service.call(call), env::RoomFail::Dead.code());
+    assert!(matches!(gate::accord(
+        &service.task, token, &Arc::downgrade(&other.task), Permission::FETCH, Mark::NONE,
+    ), Err(PieFail::Denied)));
+    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let invalid = AnyPie::Nole(gate::new_pie(

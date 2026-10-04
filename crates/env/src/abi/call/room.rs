@@ -14,7 +14,7 @@ pub enum RoomFail {
     /// 条件未就绪（等待那一路在退化上下文里答这一枚）。
     #[busy]
     Busy = -3,
-    /// 调用者不是 Supervisor（`Doom`）。
+    /// 调用者没有 Doom Nole 的 FETCH 权限。
     Denied = -4,
 }
 
@@ -88,8 +88,8 @@ pub enum RoomCall {
     #[ret(bool)]
     Wake { key: usize },
     /// 销毁目标所属的域及其子树；`task` 是指认域的手柄。
-    /// 仅 Supervisor 可调用；具体目标的编排策略由 System Protocol 决定。
-    /// 目标域已收尾返回 `Dead`，U-domain 返回 `Denied`。
+    /// 当前任务须持有内核铸造的 Doom Nole，且带 FETCH 权限。
+    /// 目标域已收尾返回 `Dead`，缺少权限返回 `Denied`。
     /// 不等待回收；等待用 [`UnitCall::Join`]。
     ///
     /// [`UnitCall::Join`]: crate::abi::call::UnitCall::Join

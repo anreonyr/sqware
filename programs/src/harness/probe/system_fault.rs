@@ -11,6 +11,7 @@ use env::{Mark, Permission, TaskId, TeamId, Wait};
 use protocol::communication::session::establish;
 use runtime::core::res::pie::{HolePie};
 
+const DOOM: Mark = Mark::of("system-fault-doom");
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");
 const IMAGE: Mark = Mark::of("system-fault-child-image");
@@ -61,6 +62,8 @@ pub fn acceptance() {
             .unwrap();
         let build = accounts.token(env::Name::Call(env::Call::Build)).unwrap();
         env::pie::accord(build, task, Permission::FETCH, Mark::NONE).unwrap();
+        let doom = accounts.token(env::Name::Call(env::Call::Doom)).unwrap();
+        env::pie::accord(doom, task, Permission::FETCH | Permission::VEST, DOOM).unwrap();
         unit::embark(task).unwrap();
         let mut bytes = [0; 40];
         let (n, from) = HolePie::from_token(report)
@@ -97,6 +100,7 @@ pub fn acceptance() {
 pub fn unit() {
     let mut loader = Loader::new();
     let args = runtime::core::task::args::args();
+    let doom = establish::claim(TaskId::new(0), DOOM, Wait::AtMost(5000)).unwrap();
     let mode = args[0];
     let sire = TaskId::new(args[2]);
     let boot = establish::find(sire, BOOT).unwrap();
@@ -152,6 +156,7 @@ pub fn unit() {
             0,
         )
         .unwrap();
+        env::pie::accord(doom, task, Permission::FETCH, DOOM).unwrap();
         slot.store(task.get(), Ordering::Release);
     }
     let operator = status.operator.load(Ordering::Acquire);
