@@ -65,6 +65,7 @@ fn main() -> Reason {
 
     // 一整场只用这一张表：**这就是本台子与 rig 的关键差别**（那个每轮造新表）。
     let mut table = Table::new();
+    let mut loader = programs::system::loader::Loader::new();
     let mut restarts = 0usize;
     let mut failures = 0usize;
 
@@ -97,6 +98,7 @@ fn main() -> Reason {
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
         let task = match service::mint(
             &mut table,
+            &mut loader,
             Image {
                 name: name.as_str(),
                 bytes: elf,
@@ -186,6 +188,7 @@ fn main() -> Reason {
         }
         let Ok(task) = service::mint(
             &mut table,
+            &mut loader,
             Image {
                 name: name.as_str(),
                 bytes: elf,

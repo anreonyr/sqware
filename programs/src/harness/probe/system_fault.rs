@@ -1,5 +1,6 @@
 //! Observe a system team's failure from an independent parent team.
 use crate::system::life::{Phase, Status};
+use crate::system::loader::{Image, Loader};
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, TeamId, Wait};
@@ -15,6 +16,7 @@ const BOOT: Mark = Mark::of("system-fault-boot");
 const IMAGE: Mark = Mark::of("system-fault-child-image");
 
 pub fn acceptance() {
+    let mut loader = Loader::new();
     let accounts = crate::boot::Accounts::take().unwrap();
     let catalog = crate::boot::Catalog::of_boot(&accounts).unwrap();
     let victim = catalog.find("system-fault-unit").unwrap();
@@ -29,7 +31,7 @@ pub fn acceptance() {
     let report = pie::unseal_hole(REPORT).unwrap();
     let boot = pie::unseal_hole(BOOT).unwrap();
     for mode in 0..3 {
-        let image = runtime::core::loader::build(victim.elf, victim.kind).unwrap();
+        let image = loader.mint(Image { bytes: victim.elf, kind: victim.kind }).unwrap();
         let team = image.team();
         let task = image
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
@@ -88,6 +90,7 @@ pub fn acceptance() {
 }
 
 pub fn unit() {
+    let mut loader = Loader::new();
     let args = runtime::core::task::args::args();
     let mode = args[0];
     let sire = TaskId::new(args[2]);
@@ -101,7 +104,7 @@ pub fn unit() {
     let dock = runtime::core::res::dock::Dock::open(PolePie::from_token(payload)).unwrap();
     // SAFETY: the parent supplied an immutable ELF payload of args[1] bytes.
     let elf = unsafe { core::slice::from_raw_parts(dock.view().base() as *const u8, args[1]) };
-    let child = runtime::core::loader::build(elf, env::ProgramKind::User).unwrap();
+    let child = loader.mint(Image { bytes: elf, kind: env::ProgramKind::User }).unwrap();
     let child_team = child.team();
     let descendant = child.spawn(&[], 0).unwrap();
     unit::embark(descendant).unwrap();

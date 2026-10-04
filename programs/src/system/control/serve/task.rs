@@ -93,17 +93,23 @@ pub struct Launch<'a> {
     pub readiness: Readiness<'a>,
 }
 
-pub fn mint(table: &mut Table, image: Image<'_>) -> Result<TaskId, Fail> {
+pub fn mint(
+    table: &mut Table,
+    loader: &mut crate::system::loader::Loader,
+    image: Image<'_>,
+) -> Result<TaskId, Fail> {
     let Image {
         name,
-        bytes: image,
+        bytes,
         kind,
     } = image;
     admit_mint(table, name)?;
 
-    let image = runtime::core::loader::build(image, kind).map_err(unit_fail)?;
-    let team = image.team();
-    let Ok(task) = image.spawn(&[], 0) else {
+    let minted = loader
+        .mint(crate::system::loader::Image { bytes, kind })
+        .map_err(unit_fail)?;
+    let team = minted.team();
+    let Ok(task) = minted.spawn(&[], 0) else {
         return Err(Fail::Full);
     };
     if let Err(fail) = table.attach(

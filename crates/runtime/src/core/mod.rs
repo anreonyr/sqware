@@ -4,7 +4,7 @@
 //!   `core::`（无前缀）      Rust 的 freestanding 核心库（`core::mem` 等）。
 //!
 //! 本 crate 只有两层：`core/` 是组合与封装（[`res`] 的四件厚壳、[`task`] 的任务本地原语、
-//! [`loader`] / [`exit`]），[`adapt`] 是唯一剩下的"调用方口径 → 内核口径"转换。
+//! [`exit`]），[`adapt`] 是唯一剩下的"调用方口径 → 内核口径"转换。
 //! envcall 本身没有第二层：`crates/env` 生成的每格入口就是调用点直接叫的那一手。
 //!
 //! 例子：[`res::pie::HolePie`] 是门闩句柄（带期限循环），`res::port::Port` 是「厚」的一件——
@@ -13,6 +13,5 @@
 
 pub mod adapt;
 pub mod exit;
-pub mod loader;
 pub mod res;
 pub mod task;

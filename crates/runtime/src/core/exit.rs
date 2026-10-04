@@ -152,7 +152,6 @@ impl<T: Exit, E: Exit> Exit for Result<T, E> {
 /// 这里同时让 `reason` 在 `exit(...)` 返回（不该发生）时留在现场，读的人不至于只看到一句
 /// `unreachable`。
 pub fn finish(report: Report<'_>) -> ! {
-    super::loader::retire();
     let reason = report.reason;
     let (_, note) = report.parts();
     exit(reason, note)

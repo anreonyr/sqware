@@ -1,3 +1,4 @@
+use crate::system::loader::{Image, Loader};
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
@@ -192,9 +193,10 @@ fn segment(bytes: &mut [u8], at: usize, values: [u64; 5]) {
 }
 
 fn elf() {
+    let mut loader = Loader::new();
     let mut bytes = image();
     let before = tokens();
-    drop(runtime::core::loader::build(&bytes, ProgramKind::User).unwrap());
+    drop(loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap());
     let cached = tokens();
     let added: Vec<_> = cached
         .iter()
@@ -218,7 +220,7 @@ fn elf() {
     );
     page.shut().unwrap();
     pie::release(view).unwrap();
-    drop(runtime::core::loader::build(&bytes.clone(), ProgramKind::User).unwrap());
+    drop(loader.mint(Image { bytes: &bytes.clone(), kind: ProgramKind::User }).unwrap());
     assert_eq!(
         tokens(),
         cached,
@@ -226,14 +228,14 @@ fn elf() {
     );
     let mut shifted = bytes.clone();
     segment(&mut shifted, 64, [5, 4096, 0x10000, 6, 4103]);
-    drop(runtime::core::loader::build(&shifted, ProgramKind::User).unwrap());
+    drop(loader.mint(Image { bytes: &shifted, kind: ProgramKind::User }).unwrap());
     assert_eq!(
         tokens(),
         cached,
         "copy: equivalent zero padding missed cache"
     );
     bytes[4098] = 0x93;
-    drop(runtime::core::loader::build(&bytes, ProgramKind::User).unwrap());
+    drop(loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap());
     assert_eq!(
         tokens().len(),
         cached.len() + 1,
@@ -244,7 +246,7 @@ fn elf() {
     bytes[56..58].copy_from_slice(&2u16.to_le_bytes());
     segment(&mut bytes, 120, [6, 8193, 0x20001, 3, 4101]);
     bytes[8193..8196].copy_from_slice(&[7, 8, 9]);
-    let writable = runtime::core::loader::build(&bytes, ProgramKind::User).unwrap();
+    let writable = loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap();
     assert_eq!(
         tokens().len(),
         stable.len() + 1,
@@ -256,4 +258,20 @@ fn elf() {
         stable,
         "copy: unpublished private image leaked its source"
     );
+    drop(loader);
+    assert_eq!(tokens(), before, "copy: loader cache survived its owner");
+
+    let mut loader = Loader::new();
+    let heirs = unit::heir_count();
+    assert!(loader.mint(Image { bytes: b"invalid", kind: ProgramKind::User })
+        .is_err_and(|e| e.source == env::UnitFail::BadImage));
+    assert_eq!(unit::heir_count(), heirs);
+    let minted = loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap();
+    let team = minted.team();
+    drop(loader);
+    let task = minted.spawn(&[], 0).unwrap();
+    assert_eq!(tokens(), before, "copy: committed sources survived loader drop");
+    env::room::doom(task).unwrap();
+    assert!(unit::join(task, Wait::AtMost(2000)).unwrap());
+    unit::oust(team).unwrap();
 }

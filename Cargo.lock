@@ -277,6 +277,7 @@ dependencies = [
  "env",
  "erra",
  "fdt",
+ "loader",
  "mold",
  "protocol",
  "runtime",
@@ -336,7 +337,6 @@ version = "0.1.0"
 dependencies = [
  "env",
  "erra",
- "loader",
  "spinning_top",
  "talc",
 ]

@@ -15,6 +15,7 @@ pub type Service = (TaskId, Vec<Endpoint>);
 pub struct Control {
     pub(crate) status: Arc<Status>,
     pub(crate) table: Table,
+    pub(crate) loader: crate::system::loader::Loader,
     pub(crate) pending: Vec<Pending>,
 }
 pub(crate) struct Pending {
@@ -26,6 +27,7 @@ impl Control {
         Self {
             status,
             table: Table::new(),
+            loader: crate::system::loader::Loader::new(),
             pending: Vec::new(),
         }
     }

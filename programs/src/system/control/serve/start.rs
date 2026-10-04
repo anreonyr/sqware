@@ -52,6 +52,7 @@ impl Control {
         };
         let task = service::mint(
             &mut self.table,
+            &mut self.loader,
             Image {
                 name: name.as_str(),
                 bytes: image,

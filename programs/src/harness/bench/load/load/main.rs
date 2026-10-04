@@ -98,16 +98,17 @@ fn main() -> Reason {
     let gap = (iters_per_ms.saturating_mul(GAP_US) / 1_000).max(1);
 
     let mut table = Table::new();
+    let mut loader = programs::system::loader::Loader::new();
     let mut rows = 0usize;
     for name in PARKER_NAMES {
-        if !spawn_one(&mut table, name, parker, parker_kind) {
+        if !spawn_one(&mut table, &mut loader, name, parker, parker_kind) {
             return die("load: spawn parker");
         }
         rows += 1;
         tick::spin_iters(gap);
     }
     for name in HOG_NAMES {
-        if !spawn_one(&mut table, name, hog, hog_kind) {
+        if !spawn_one(&mut table, &mut loader, name, hog, hog_kind) {
             return die("load: spawn hog");
         }
         rows += 1;
@@ -134,6 +135,7 @@ fn main() -> Reason {
 /// 任何一步失败都返回 `false`（台主自己报 `die`）
 fn spawn_one(
     table: &mut Table,
+    loader: &mut programs::system::loader::Loader,
     name: &'static str,
     elf: &'static [u8],
     kind: env::ProgramKind,
@@ -151,6 +153,7 @@ fn spawn_one(
     }
     let Ok(task) = service::mint(
         table,
+        loader,
         Image {
             name: name.as_str(),
             bytes: elf,

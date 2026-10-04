@@ -23,9 +23,9 @@ Memory 的 team=0 为当前域；非零必须是调用者自己的 Constructing 
 
 `crates/loader` 提供无内核依赖的 ELF64 RISC-V 静态镜像解析、页计划和 capsule 编码。宿主与用户态共享页化及入口校验：入口先限制在原文件的 executable 内容内，再补零。RX 的整个区域都成为 payload；R/RW 的纯零尾保持对应权限，使用 lazy-zero。
 
-宿主保留普通 ELF 清单，另外生成引导 capsule。内核启动只安装 capsule；普通 Build 只创建空的 Constructing Team，内核 ELF parser/loader 已移除。`runtime::core::loader::Image` 持有构造和私有源枚的清理责任，首次 Spawn 成功后解除守卫。服务启动及 group 场景已迁移到此路径。
+宿主保留普通 ELF 清单，另外生成引导 capsule。内核启动只安装 capsule；普通 Build 只创建空的 Constructing Team，内核 ELF parser/loader 已移除。`system::loader::Unit` 持有构造和私有源枚的清理责任，首次 Spawn 成功后解除守卫。服务启动及 group 场景已迁移到此路径。
 
-只读缓存以创建 Task、VA、权限及实际补零 payload 匹配；相同创建者的重复装载复用同一 backing。普通运行时退出释放当前 Task 的缓存源枚，已安装程序 Map 继续持有 backing。缓存没有跨 Task 使用裸 token。
+`Control` 持有 `system::loader::Loader`，通过 `mint(Image)` 构造 `Unit`，再调用 `Unit::spawn` 创建 Held Task。只读缓存由 Loader 实例持有，以 VA、权限及实际补零 payload 匹配；同一实例的重复装载复用 backing。Loader 析构时释放缓存映射与源枚，已安装程序 Map 继续持有 backing。Loader 与 Unit 不跨任务传递，runtime 不再包含装载执行或退出清理钩子。
 
 ## 授权与资源
 

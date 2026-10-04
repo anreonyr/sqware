@@ -117,6 +117,7 @@ fn main() -> Reason {
         return die("rig: victim not in manifest");
     };
     let (elf, kind) = (victim.elf, victim.kind);
+    let mut loader = programs::system::loader::Loader::new();
     let name = ROW.to_string();
     // 握手那条泊位的名字：**编译期常量**，只解一次——解不出来就不必跑。
     let link = LINK.to_string();
@@ -130,7 +131,7 @@ fn main() -> Reason {
     while d_us <= DELAY_MAX_US {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(name.clone(), link.clone(), elf, kind, d_us, iters_per_ms) {
+            match trial(&mut loader, name.clone(), link.clone(), elf, kind, d_us, iters_per_ms) {
                 Ok(verdict) => {
                     t.n += 1;
                     match verdict {
@@ -168,7 +169,7 @@ fn main() -> Reason {
     while b_us <= 20_500 {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(name.clone(), link.clone(), elf, kind, b_us, iters_per_ms) {
+            match trial(&mut loader, name.clone(), link.clone(), elf, kind, b_us, iters_per_ms) {
                 Ok(v) => {
                     t.n += 1;
                     match v {
@@ -218,6 +219,7 @@ enum Verdict {
 /// 实测各场没有一条 `trial failed`；现在收场不看这一轮成没成。）
 /// 只有 `register` / `spawn` 两条仍不收场：那时域还没造出来（表是纯值），没什么可收
 fn trial(
+    loader: &mut programs::system::loader::Loader,
     name: String,
     link: String,
     elf: &'static [u8],
@@ -237,6 +239,7 @@ fn trial(
         .map_err(|_| "register")?;
     let task = service::mint(
         &mut table,
+        loader,
         Image {
             name: name.as_str(),
             bytes: elf,

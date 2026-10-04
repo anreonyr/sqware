@@ -27,6 +27,7 @@
 extern crate alloc;
 extern crate programs;
 
+use programs::system::loader::{Image, Loader};
 use env::Wait;
 use programs::Reason;
 
@@ -74,13 +75,14 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authority: Pi
                 spins = 0;
             }
         }
+        let mut loader = Loader::new();
         let mut children = alloc::vec::Vec::new();
         if children.try_reserve(32).is_err() {
             return false;
         }
         let mut residents = 0;
         for index in 0..32 {
-            let Ok(image) = runtime::core::loader::build(elf, kind) else {
+            let Ok(image) = loader.mint(Image { bytes: elf, kind }) else {
                 return false;
             };
             let team = image.team();
@@ -140,6 +142,7 @@ fn main() -> Reason {
         return die("group: waiter not in manifest");
     };
     let (elf, kind) = (waiter.elf, waiter.kind);
+    let mut loader = Loader::new();
     let Some(authority) = accounts.token(env::Name::Call(env::Call::Build)) else {
         return die("group: build authority missing");
     };
@@ -171,7 +174,7 @@ fn main() -> Reason {
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut tasks = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(image) = runtime::core::loader::build(elf, kind) else {
+        let Ok(image) = loader.mint(Image { bytes: elf, kind }) else {
             return die("group: build");
         };
         let Ok(task) = image.spawn(&[], 0) else {
