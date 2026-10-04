@@ -14,7 +14,7 @@
 //! 那一台管），而那几格是 `mine = false` 落下的（谁都能改）。若本台顺手落一次，就会**顶掉**
 //! `foreign` 那一格也是 `probe-rule` 落的——本台只负责"换一台客人再去撞一次"。
 
-// ——与 `canonical` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
+// ——与 `terminal` / `probe-denied` 同一条：`programs/src/user/mod.rs` 里没有它。
 // 两条 `extern crate` 缺一不可（实测）：`alloc` 是 `format!` 要用；`programs` **不是**为了
 // 用它里面的东西，而是为了把 `libprograms` 链进来——**panic handler 与 `_start` 都住那份
 // lib**（`programs/src/entry.rs`）。少了它，链接期报 `` `#[panic_handler]` function required ``。

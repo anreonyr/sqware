@@ -14,8 +14,12 @@ pub mod again;
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
-#[path = "../user/canonical/program.rs"]
-pub mod canonical;
+#[path = "../user/terminal/program.rs"]
+pub mod terminal;
+#[path = "../harness/probe/probe_terminal/program.rs"]
+pub mod probe_terminal;
+#[path = "../user/login/program.rs"]
+pub mod login;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
 #[path = "../harness/bench/group/group/program.rs"]
@@ -98,7 +102,9 @@ pub mod waiter;
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
-    &canonical::PROGRAM,
+    &terminal::PROGRAM,
+    &login::PROGRAM,
+    &probe_terminal::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &guest::GUEST,
     &passer::PASSER,

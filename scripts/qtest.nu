@@ -12,7 +12,8 @@
 #   nu scripts/qtest.nu                              # 跑当前 manifest 的全部用例
 #   nu scripts/qtest.nu --package kernel             # 指定包（工作区里用）
 #   nu scripts/qtest.nu --package kernel --scene rig # 造 rig 景、带它跑整机那一例
-#   nu scripts/qtest.nu --package kernel --scene accept --feed exit
+#   nu scripts/qtest.nu --package kernel --scene accept
+#   nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
 #   nu scripts/qtest.nu -- --list                    # `--` 之后原样转给 cargo-qtest
 #
 # **（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
@@ -21,7 +22,7 @@
 # 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
 #
 #   nu scripts/qtest.nu --package kernel            # 健康面（十四例，只在 debug 档）
-#   nu scripts/qtest.nu --package kernel --scene accept --feed exit   # 整机那一例
+#   nu scripts/qtest.nu --package kernel --scene accept   # 整机那一例
 #
 # **一例 = 一张镜像，一次运行 = 一个景**：`cargo-qtest` 没有逐例过滤器（`--help` 里只有
 # `--test <目标名>`——那是**测试目标**名，不是用例名），而 `--qemu-arg=` 是**整次运行**的
@@ -49,7 +50,7 @@
 #      而 guest 只跟 UART0（`0x10000000`）说话 ⇒ 一个字节都收不到（实测：捕获全空）。
 #   ③ **帮手**：每 accept 一次 ＝ 一例的 QEMU 连上了（用例是**串行**的——`cargo-qtest`
 #      的 `for test in tests`），把 guest 控制台追进捕获文件，并**每 2 s 重喂一次**
-#      `--feed`（默认 `exit`）直到写不进去（那一例结束）。
+#      `--feed`（默认 EOF 字节）直到写不进去（那一例结束）。
 #
 #   `--scene` 不给 ⇒ 这三段全不启用，串口还是 `stdio`。
 #
@@ -82,10 +83,12 @@
 # 用 python 只为"同一条连接上既读又写"这件事；bash 做不了 listener，`nc` 那套要另装工具。
 const FEED = '#!/usr/bin/env python3
 """喂日程的帮手：连上一次 ＝ 一例；断开 ＝ 那一例结束，回去等下一例。"""
-import socket, sys, threading, time
+import socket, sys, threading, time, importlib.util, pathlib
+sys.dont_write_bytecode = True
 
 port_file, cap, text = sys.argv[1], sys.argv[2], sys.argv[3]
 after = float(sys.argv[4]) if len(sys.argv) > 4 else 5.0
+script = sys.argv[5] if len(sys.argv) > 5 else ""
 srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 srv.bind(("127.0.0.1", 0))
@@ -97,6 +100,21 @@ while True:
     conn, _ = srv.accept()
     with open(cap, "ab") as f:
         f.write("\n──── 一例 ────\n".encode())
+
+    if script:
+        result = pathlib.Path(cap + ".result")
+        try:
+            spec = importlib.util.spec_from_file_location("scene_driver", script)
+            driver = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(driver)
+            driver.run(conn, cap)
+            result.write_text("ok")
+        except Exception as error:
+            result.write_text(str(error))
+            raise
+        finally:
+            conn.close()
+        continue
 
     def tee(c=conn):
         while True:
@@ -140,7 +158,7 @@ else
   exec qemu-system-riscv64 "${args[@]}"
 fi'
 
-def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-after: int = 5, ...rest: string] {
+def main [--package: string, --scene: string, --profile: string, --feed: string, --feed-script: string, --feed-after: int = 5, ...rest: string] {
   if ($env.QEMU_ICOUNT? | is-empty) { $env.QEMU_ICOUNT = "" }
 
   # **runner 守卫**：crates.io 上**两个包**都提供 `cargo-qtest` 这一枚 bin——
@@ -190,21 +208,23 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     let pid_file = ($trapdir | path join "scene-feed.pid")
     let port_file = ($trapdir | path join "scene-feed.port")
     let err_file = ($trapdir | path join "scene-feed.err")
-    let text = if ($feed | is-empty) { "exit" } else { $feed }
+    let text = if ($feed | is-empty) { "\u{4}" } else { $feed }
     $FEED | save --force $helper
     rm -f $port_file
+    if not ($feed_script | is-empty) { rm -f $"($cap).result" }
     $env.FEED_HELPER = $helper
     $env.FEED_PID = $pid_file
     $env.FEED_PORTFILE = $port_file
     $env.FEED_CAP = $cap
     $env.FEED_TEXT = $text
     $env.FEED_AFTER = ($feed_after | into string)
+    $env.FEED_SCRIPT = (if ($feed_script | is-empty) { "" } else { $feed_script | path expand })
     $env.FEED_ERR = $err_file
     # 上一轮万一留了帮手，先收掉（它自己会一直 listen）。
     if ($pid_file | path exists) {
       ^bash -c 'p=$(cat "$FEED_PID"); kill "$p" 2>/dev/null; true'
     }
-    ^bash -c 'nohup python3 "$FEED_HELPER" "$FEED_PORTFILE" "$FEED_CAP" "$FEED_TEXT" "$FEED_AFTER" >"$FEED_ERR" 2>&1 & echo $! > "$FEED_PID"'
+    ^bash -c 'nohup python3 "$FEED_HELPER" "$FEED_PORTFILE" "$FEED_CAP" "$FEED_TEXT" "$FEED_AFTER" "$FEED_SCRIPT" >"$FEED_ERR" 2>&1 & echo $! > "$FEED_PID"'
     # 端口由帮手 bind(0) 后报出来（有界等；它没起来就当场说清楚，不要等到十例都超时）。
     let got = (^bash -c 'for i in $(seq 1 50); do if [ -s "$FEED_PORTFILE" ]; then cat "$FEED_PORTFILE"; exit 0; fi; sleep 0.1; done; exit 1' | complete)
     if ($got.exit_code != 0) {
@@ -219,7 +239,8 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $WRAPPER | save --force $wrapper
     $env.QEMU_WRAPPER = $wrapper
     ^bash -c 'chmod +x "$QEMU_WRAPPER"'
-    print $"喂入 ($text)（重喂到机器退）· 串口 ($serial) · 捕获 ($cap)"
+    let label = if not ($feed_script | is-empty) { $"交互脚本 ($feed_script)" } else if ($feed | is-empty) { "EOF" } else { $feed }
+    print $"喂入 ($label)（重喂到机器退）· 串口 ($serial) · 捕获 ($cap)"
   }
 
   # 参数表**唯一出处**：串口那一格也归它（`--serial`），本文件不写板子字面量。
@@ -254,7 +275,19 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $env.RUSTFLAGS = "-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium"
   }
   try { ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } } catch { }
-  let code = $env.LAST_EXIT_CODE
+  mut code = $env.LAST_EXIT_CODE
+  if not ($feed_script | is-empty) {
+    let result = $"($cap).result"
+    $env.FEED_RESULT = $result
+    ^bash -c 'for i in $(seq 1 50); do if [ -s "$FEED_RESULT" ]; then exit 0; fi; sleep 0.02; done; true'
+    if not ($result | path exists) {
+      print "交互驱动未完成"
+      $code = 1
+    } else if (open --raw $result | str trim) != "ok" {
+      print (open --raw $result)
+      $code = 1
+    }
+  }
 
   if ($qtlog | path exists) {
     if $code == 0 {

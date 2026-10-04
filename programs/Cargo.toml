@@ -33,8 +33,15 @@ fdt = { version = "0.1.5", default-features = false }
 erra = { version = "0.2.0", default-features = false }
 
 [[bin]]
-name = "prog-canonical"
-path = "src/user/canonical/main.rs"
+name = "prog-login"
+path = "src/user/login/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-terminal"
+path = "src/user/terminal/main.rs"
 test = false
 bench = false
 doctest = false
@@ -361,6 +368,13 @@ doctest = false
 [[bin]]
 name = "prog-accept-system"
 path = "src/harness/probe/accept/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-probe-terminal"
+path = "src/harness/probe/probe_terminal/main.rs"
 test = false
 bench = false
 doctest = false

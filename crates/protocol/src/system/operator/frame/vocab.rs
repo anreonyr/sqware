@@ -129,7 +129,7 @@ pub const LINK: &str = "operator";
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）
 /// **带面名**（本族那一枚是 `operator-ask`，提示那一枚是 `*-tip`）：问话孔的认领键是
-/// "**谁开的 + 记号**"，而**同一枚任务可能同时是两族的客人**（`canonical` / `guest` / `principal`
+/// "**谁开的 + 记号**"，而**同一枚任务可能同时是两族的客人**（`terminal` / `guest` / `principal`
 /// …都是）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了
 pub const ASK_MARK: Mark = Mark::of("operator-ask");
 

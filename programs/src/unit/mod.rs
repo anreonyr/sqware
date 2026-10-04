@@ -221,6 +221,7 @@ pub enum PublishScope {
     Driver,
     Hub,
     Fixture,
+    Terminal,
 }
 
 #[derive(Clone, Copy)]

@@ -90,6 +90,7 @@ pub fn service(
                         crate::unit::PublishScope::Driver => Scope::Driver,
                         crate::unit::PublishScope::Hub => Scope::Hub,
                         crate::unit::PublishScope::Fixture => Scope::Fixture,
+                        crate::unit::PublishScope::Terminal => Scope::Terminal,
                     };
                     if *scope == allowed
                         && group == expected

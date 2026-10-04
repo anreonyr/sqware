@@ -25,6 +25,7 @@ pub enum Scope {
     Hub = 2,
     Device = 3,
     Fixture = 4,
+    Terminal = 5,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -162,6 +163,7 @@ impl Frame {
             2 => Scope::Hub,
             3 => Scope::Device,
             4 => Scope::Fixture,
+            5 => Scope::Terminal,
             _ => return None,
         };
         (self.task.get() == 0 && self.number == 0).then(|| Target::Service {

@@ -13,7 +13,9 @@ fn main() {
     // 一条一条列（不走 `src` 目录的 `rerun-if-changed`：那是未定义行为），让 cargo 自己算指纹。
     // **本表与 `Cargo.toml` 的 `[[bin]]` 一一对应**（40 条：产品 9 ＋ 测具 31）——改一处要同时改两处。
     println!("cargo::rerun-if-changed=src/lib.rs");
-    println!("cargo::rerun-if-changed=src/user/canonical/main.rs");
+    println!("cargo::rerun-if-changed=src/user/terminal/main.rs");
+    println!("cargo::rerun-if-changed=src/user/login/main.rs");
+    println!("cargo::rerun-if-changed=src/harness/probe/probe_terminal/main.rs");
     println!("cargo::rerun-if-changed=src/driver/router/main.rs");
     println!("cargo::rerun-if-changed=src/driver/uart/main.rs");
     println!("cargo::rerun-if-changed=src/driver/rtc/main.rs");
