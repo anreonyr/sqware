@@ -12,6 +12,7 @@ use crate::work::room::scheduler::core::{Identity, ident};
 use crate::work::room::scheduler::trap::run;
 
 mod stack;
+pub(crate) mod resources;
 
 pub(crate) use stack::{TRAP_STACK_CANARY, trap_stack_guard_hart, trap_stack_hart};
 pub use stack::{arm_hart, init, trap_stack, trap_stack_base, trap_stack_edge};
@@ -160,7 +161,9 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             }
         }
         Trap::Interrupt(Interrupt::SupervisorExternal) => {
-            if crate::platform::devices::raise_irq().is_err() {
+            let result = crate::work::mail::nole::ring(&resources::get().supervisor_external);
+            resources::note_external(result.is_err(), false);
+            if result.is_err() {
                 unsafe {
                     sie::clear_sext();
                 }

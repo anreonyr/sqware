@@ -11,6 +11,7 @@ mod layout;
 mod lock;
 mod memory;
 mod platform;
+mod resource;
 mod runtime;
 mod work;
 
@@ -39,6 +40,8 @@ pub fn init(dtp: usize) {
     unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
     clock::init().unwrap_or_else(|e| panic!("clock init failed: {e}"));
     trace::init().unwrap_or_else(|e| panic!("trace init failed: {e}"));
+    trap::resources::init();
+    runtime::switcher::envcall::resources::init();
     trap::init();
 }
 

@@ -11,6 +11,7 @@ use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
 
 pub(crate) trait Mail: Send + Sync + 'static {
+    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool where Self: Sized;
     fn alive(&self) -> bool;
     fn permit(
         &self,
@@ -21,12 +22,18 @@ pub(crate) trait Mail: Send + Sync + 'static {
 }
 
 impl Mail for HoleMeta {
+    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
+        matches!(pie, AnyPie::Hole(p) if Arc::ptr_eq(p.meta(), meta))
+    }
     fn alive(&self) -> bool {
         HoleMeta::alive(self)
     }
 }
 
 impl Mail for PoleMeta {
+    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
+        matches!(pie, AnyPie::Pole(p) if Arc::ptr_eq(p.meta(), meta))
+    }
     fn permit(
         &self,
         permission: Permission,
@@ -42,12 +49,18 @@ impl Mail for PoleMeta {
 }
 
 impl Mail for NoleMeta {
+    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
+        matches!(pie, AnyPie::Nole(p) if Arc::ptr_eq(p.meta(), meta))
+    }
     fn alive(&self) -> bool {
         NoleMeta::alive(self)
     }
 }
 
 impl Mail for ToleMeta {
+    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
+        matches!(pie, AnyPie::Tole(p) if Arc::ptr_eq(p.meta(), meta))
+    }
     fn alive(&self) -> bool {
         ToleMeta::alive(self)
     }
@@ -168,6 +181,15 @@ pub enum AnyPie {
 }
 
 impl AnyPie {
+    pub(crate) fn kind(&self) -> env::PieKind {
+        match self {
+            Self::Hole(_) => env::PieKind::Hole,
+            Self::Pole(_) => env::PieKind::Pole,
+            Self::Nole(_) => env::PieKind::Nole,
+            Self::Tole(_) => env::PieKind::Tole,
+        }
+    }
+
     pub(crate) fn invalidate(&self) {
         if let Self::Pole(p) = self {
             if let Some(permit) = &p.permit {
@@ -310,4 +332,11 @@ pub(crate) fn accede<E: GateFail>(
         return Err(E::denied());
     }
     Ok(pie)
+}
+
+pub(crate) fn allows<M: Mail>(task: &Task, resource: &Arc<M>, need: Need) -> bool {
+    let _graph = super::GRAPH.lock();
+    task.pies.lock().iter().any(|pie| {
+        M::same(pie, resource) && pie.alive() && pie.heir().is_none() && pie.allows(need)
+    })
 }

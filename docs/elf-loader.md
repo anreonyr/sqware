@@ -8,7 +8,7 @@
 
 | 调用 | 参数与结果 |
 |---|---|
-| Build | `kind → TeamId`，创建空 Constructing Team |
+| Build | `kind → TeamId`，持有 Build authority 后创建空 Constructing Team |
 | Spawn | `team, entry, args, count, stack → TaskId`，返回 Held Task；首次调用提交构造 |
 | Mmap | `team, at, size, backing, offset, flags → VA`，六个标量按此顺序打包 |
 | Munmap | `team, addr, size → ()` |
@@ -28,6 +28,8 @@ Memory 的 team=0 为当前域；非零必须是调用者自己的 Constructing 
 只读缓存以创建 Task、VA、权限及实际补零 payload 匹配；相同创建者的重复装载复用同一 backing。普通运行时退出释放当前 Task 的缓存源枚，已安装程序 Map 继续持有 backing。缓存没有跨 Task 使用裸 token。
 
 ## 授权与资源
+
+启动资源统一使用 `Name::{Trap, Call, Page}` 与 `Entry { name, kind, token }`。内核按 `register → freeze → grant` 安装初始任务的资源，再发布只读目录。`Call(Build)` 对应内核保存的 NoleMeta；Build 检查调用任务是否实际持有其 FETCH 权限，普通 Nole 与相同标记均不能替代。system 持有 FETCH | VEST，可用既有 Accord 派发 FETCH；收方不带 VEST 时不能再派发。
 
 - 未增加 Freeze、Frozen、Write、BuilderToken、Finish 或 Abort。
 - `UnsealPole(size, shared)` 保留自动 Open；shared=false 在创建时提供 ONLY。初始化统一使用 UnsealPole → Shut → 当前域 RW Mmap → 写入 → Munmap。

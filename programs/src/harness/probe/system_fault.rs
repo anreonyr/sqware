@@ -52,6 +52,8 @@ pub fn acceptance() {
         HolePie::from_token(boot)
             .push(&token.to_bytes(), Wait::AtMost(5000))
             .unwrap();
+        let build = accounts.token(env::Name::Call(env::Call::Build)).unwrap();
+        env::pie::accord(build, task, Permission::FETCH, Mark::NONE).unwrap();
         unit::embark(task).unwrap();
         let mut bytes = [0; 40];
         let (n, from) = HolePie::from_token(report)

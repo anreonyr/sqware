@@ -15,6 +15,7 @@ pub(crate) mod mail;
 mod memory;
 mod pie;
 mod room;
+pub(crate) mod resources;
 mod tole;
 mod unit;
 

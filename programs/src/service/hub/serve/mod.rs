@@ -5,7 +5,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use env::{HoleDir, Access, Key, MailFail, Mark, Pair, PieKind, PieToken, Policy, TaskId, Wait};
+use env::{HoleDir, Access, Name, MailFail, Mark, Entry as ResourceEntry, PieKind, PieToken, Policy, TaskId, Wait};
 use protocol::communication::hand::{Sender, Receiver, RecvFail};
 use protocol::communication::session::{Session, establish};
 use protocol::debug;
@@ -300,6 +300,7 @@ pub(super) fn ship(
     let shipped = match kind {
         PieKind::Pole => port::ship(&PolePie::from_token(entry.page), to, access, policy),
         PieKind::Nole => port::ship(&NolePie::from_token(entry.page), to, access, policy),
+        PieKind::Hole | PieKind::Tole => return Err(()),
     };
     shipped.map(|seat| seat.seed()).map_err(|_| ())
 }
@@ -325,12 +326,12 @@ fn take(rx: PieToken) -> Option<Enroll> {
 /// 的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去
 /// 2. **逐条对**：段里那几条记录给的是**坐标 ＋ 号**，而"这一条是哪一台"由坐标对树
 /// （Machine::devices 那张表就是那个对照）
-/// 按坐标认出来、按 hub::BOOT 那一类入册（`/dev/boot/{dtb,irq}`）——于是"取法"只有一条
+/// 按坐标认出来、按 hub::BOOT 那一类入册（`/dev/boot/{dtb,supervisor_external}`）——于是"取法"只有一条
 /// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案
 fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     let mut ledger = Ledger::new();
     // 一、树那一页（**留着不掉**：Machine::of 借的就是它映射进来的那段字节）。
-    let Some(dtb) = record(enroll, Key::dtb()) else {
+    let Some(dtb) = record(enroll, Name::Page(env::Page::Dtb)) else {
         return Err(Start::Load(E_HUB));
     };
     let dock = Dock::open(PolePie::from_token(dtb.token())).map_err(|_| Start::Load(E_HUB))?;
@@ -341,13 +342,11 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let Some(pair) = enroll.record(i) else {
             break;
         };
-        let Some(key) = pair.key() else {
-            continue;
-        };
+        let key = pair.name();
         let (name, class, line) = match key {
-            k if k == Key::dtb() => (hub::DTB, hub::BOOT, 0),
-            k if k == Key::irq() => (hub::IRQ, hub::BOOT, 0),
-            _ => match devices.iter().find(|d| d.key == key) {
+            k if k == Name::Page(env::Page::Dtb) => (hub::DTB, hub::BOOT, 0),
+            k if k == Name::Trap(env::Trap::SupervisorExternal) => (hub::SUPERVISOR_EXTERNAL, hub::BOOT, 0),
+            _ => match devices.iter().find(|d| d.resource == key) {
                 Some(device) => (device.name.as_str(), device.class.as_str(), device.line),
                 None => continue,
             },
@@ -370,10 +369,10 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
 }
 
 /// 段里按坐标取那一条（照单取源那一套的读侧：坐标唯一）
-fn record(enroll: &Enroll, key: Key) -> Option<Pair> {
+fn record(enroll: &Enroll, key: Name) -> Option<ResourceEntry> {
     (0..enroll.len())
         .filter_map(|i| enroll.record(i))
-        .find(|pair| pair.key() == Some(key))
+        .find(|pair| pair.name() == key)
 }
 
 /// Discover Identity through the authority anchor issued directly by Control.

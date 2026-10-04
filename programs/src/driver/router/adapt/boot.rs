@@ -43,7 +43,7 @@ const DTB_ASK: Ask = Ask {
 };
 const IRQ_ASK: Ask = Ask {
     class: hcall::BOOT,
-    name: Some(hcall::IRQ),
+    name: Some(hcall::SUPERVISOR_EXTERNAL),
     kind: PieKind::Nole,
     access: Access::FETCH,
     policy: Policy::NONE,

@@ -257,6 +257,12 @@ mod tests {
     // 判据**不在这里**（`boot::run` 不返回）：它在 `conductor::halt` 的 testing 分支
     // ——账里没有一笔 `EXIT_PANIC` 即绿。
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn resource_registration_and_revocation() {
+        kernel::health::syscall::resource_registration();
+    }
+
     #[test]
     fn scene() {
         kernel::boot::init();

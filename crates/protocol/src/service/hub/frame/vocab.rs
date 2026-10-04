@@ -1,5 +1,5 @@
 //! :frame 的词汇那一半：三面码（BOND/LIST/CLAIM）· 上限（LIST_MAX）·
-//! 记号（`BACK_MARK`/`ALIVE_MARK`）· 设备路与三枚键名（`DEV_ROAD`/`BOOT`/`DTB`/`IRQ`）· 失败词汇（`Fail`）。
+//! 记号（`BACK_MARK`/`ALIVE_MARK`）· 设备路与三枚键名（`DEV_ROAD`/`BOOT`/`DTB`/`SUPERVISOR_EXTERNAL`）· 失败词汇（`Fail`）。
 
 use crate::common::path::Path;
 use crate::wire::OK;
@@ -29,7 +29,7 @@ pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
 pub const DEV_ROAD: &Path = Path::new("dev");
 
 /// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
-/// （`/dev/boot/{dtb,irq}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的
+/// （`/dev/boot/{dtb,supervisor_external}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的
 pub const BOOT: &str = "boot";
 
 /// boot 那一类底下那两格的名字：**设备树本体**（hub 自己也要用它读名 / 类 / 线
@@ -37,7 +37,7 @@ pub const BOOT: &str = "boot";
 pub const DTB: &str = "dtb";
 
 /// boot 那一类底下那两格的名字：**门铃**（中断那枚空载荷信号）
-pub const IRQ: &str = "irq";
+pub const SUPERVISOR_EXTERNAL: &str = "supervisor_external";
 
 /// 四格 ＋ 一格"读不懂"。**前四格对应四个不同的下一步**；Fail::Bad 是本端那一格
 #[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]

@@ -19,6 +19,7 @@
 //! **名字不报上界**（那一格 `MAX = None`）：它多长由**族**说——带它的帧写 `#[frame(len = …)]`。
 
 extern crate alloc;
+extern crate self as env;
 
 pub mod abi;
 pub mod ecall;
@@ -44,8 +45,6 @@ pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};
 pub use abi::wait::Wait;
 pub use ecall::{FailCode, make_fail};
-pub use ledger::key::{KEY_LEN, Key};
-pub use ledger::pair::{PAIR_LEN, Pair};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
 pub use mold::Frame;
@@ -55,3 +54,6 @@ pub use mold::WireCodes;
 pub use wire::pie_kind::PieKind;
 pub use wire::program_kind::ProgramKind;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};
+
+pub use ledger::name::{NAME_LEN, Name, Trap, Call, Page};
+pub use ledger::entry::{ENTRY_LEN, Entry};

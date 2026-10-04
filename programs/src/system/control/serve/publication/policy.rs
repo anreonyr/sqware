@@ -156,7 +156,7 @@ pub fn device(
         unreachable!()
     };
     let valid = (group == protocol::service::hub::BOOT
-        && [protocol::service::hub::DTB, protocol::service::hub::IRQ].contains(&name.as_str()))
+        && [protocol::service::hub::DTB, protocol::service::hub::SUPERVISOR_EXTERNAL].contains(&name.as_str()))
         || machine.devices().is_some_and(|devices| {
             devices
                 .iter()

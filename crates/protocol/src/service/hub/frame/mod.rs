@@ -4,7 +4,7 @@
 //! 那一族正相反：那边每一位原语共用一扇门，答话才要四种形状。
 
 use alloc::string::String;
-use env::{Pair, PieToken};
+use env::{Entry, PieToken};
 
 use crate::wire::message::Message;
 
@@ -121,28 +121,26 @@ pub const ENROLL_MAX: usize = 64;
 
 pub const ENROLL_CAP: usize = Enroll::LEN;
 
-/// **入册那一段**：条数 ＋ 那几条记录（Pair = 坐标 ＋ 那枚门闩**在收方表里**的号）
-/// **为什么是 `Pair` 而不是本族自己那一形**：装配者手里拿到的就是它——它按坐标从自己那本账
-/// 取源、授出一枚、当场记一条 `Pair`（见 `programs/src/system/control/enroll.rs` 的
-/// 故装配者一并把它授出（本族起手按坐标取它，见 `hub/serve/mod.rs`）
+/// 资源登记：条数与收方持有的统一资源记录。
 #[derive(env::Frame, Clone, Copy)]
 pub struct Enroll {
     n: u8,
-    #[frame(count = n, fill = Pair::NONE)]
-    records: [Pair; ENROLL_MAX],
+    #[frame(count = n, fill = Entry::NONE)]
+    records: [Entry; ENROLL_MAX],
 }
 
-const _: () = assert!(Enroll::LEN == 1 + env::PAIR_LEN * ENROLL_MAX);
+const _: () = assert!(Enroll::LEN == 1 + env::ENTRY_LEN * ENROLL_MAX);
 
 impl Enroll {
-    /// 编一段入册。**条数越界 ⇒ `None`**（调用方按本地失败处置——那是"这台机器比内核那一侧
-    /// 的配对块还大"，不是一条线上失败）
-    pub fn of(records: &[Pair]) -> Option<Enroll> {
+    /// 拒绝超出容量、重复或无效的记录。
+    pub fn of(records: &[Entry]) -> Option<Enroll> {
         let n = records.len();
-        if n > ENROLL_MAX {
+        if n > ENROLL_MAX || records.iter().enumerate().any(|(i, entry)| {
+            !entry.valid() || records[..i].iter().any(|prior| prior.name() == entry.name())
+        }) {
             return None;
         }
-        let mut held = [Pair::NONE; ENROLL_MAX];
+        let mut held = [Entry::NONE; ENROLL_MAX];
         held.get_mut(..n)?.copy_from_slice(records);
         Some(Enroll {
             n: n as u8,
@@ -155,7 +153,7 @@ impl Enroll {
         self.n as usize
     }
 
-    pub fn record(&self, i: usize) -> Option<Pair> {
+    pub fn record(&self, i: usize) -> Option<Entry> {
         (i < self.len()).then(|| self.records[i])
     }
 }
@@ -170,10 +168,16 @@ impl Message for Enroll {
         self.store_at(out, 0)
     }
 
-    /// 解一段：**条数越界 / 不够长 ⇒ `None`**（不猜、不崩）
-    /// **"够长即可"**（多出来的那几字节不算读不懂）：这条判据是**本族的**，derive 不替它判
+    /// 精确匹配长度，并检查类型与重复名称。
     fn fetch(bytes: &[u8]) -> Option<Enroll> {
-        let (enroll, _) = Enroll::fetch_at(bytes, 0)?;
+        let (enroll, at) = Enroll::fetch_at(bytes, 0)?;
+        if at != bytes.len() { return None; }
+        for i in 0..enroll.len() {
+            let record = enroll.record(i)?;
+            if !record.valid() || (0..i).any(|j| enroll.records[j].name() == record.name()) {
+                return None;
+            }
+        }
         Some(enroll)
     }
 }

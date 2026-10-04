@@ -8,7 +8,7 @@ use crate::system::common::machine::Machine;
 pub enum Fail {
     /// 两块账读不出来（启动参数不足 / 清单头非法）
     BootArgs,
-    /// 那台机器的自述（Key::dtb）没领到 / 读不懂
+    /// 那台机器的自述（Page::Dtb）没领到 / 读不懂
     Machine,
 }
 
@@ -54,7 +54,7 @@ pub fn take() -> Result<Boot, Fail> {
 }
 
 fn take_machine(accounts: &Accounts) -> Option<Machine> {
-    let token = accounts.token(env::Key::dtb())?;
+    let token = accounts.token(env::Name::Page(env::Page::Dtb))?;
     let dock = Dock::open(PolePie::from_token(token)).ok()?;
     Machine::of(dock.view()).ok()
 }

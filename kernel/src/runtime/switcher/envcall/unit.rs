@@ -127,10 +127,17 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor() {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
-            let sire = match current().running_task() {
-                Some(me) => TaskWeak::stored(Arc::downgrade(&me), Site::Sire),
-                None => TaskWeak::empty(),
+            let Some(me) = muster(ident.id).and_then(|w| w.upgrade()) else {
+                return Outcome::fail(frame, UnitFail::Denied);
             };
+            if !Arc::ptr_eq(&me.ident, &ident)
+                || !crate::work::unit::gate::allows(
+                    &me, &super::resources::get().build, crate::work::unit::gate::Need::Fetch,
+                )
+            {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            let sire = TaskWeak::stored(Arc::downgrade(&me), Site::Sire);
             match crate::work::unit::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),

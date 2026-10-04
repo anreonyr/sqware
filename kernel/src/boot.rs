@@ -180,16 +180,21 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
         },
     )?;
 
-    let devices = crate::platform::devices::scan();
-    let (pairs_pa, pairs_bytes) = crate::platform::devices::block();
-    let pairs = team.space.with_flush(
+    let mut registry = crate::resource::Registry::default();
+    crate::platform::devices::register(&mut registry).map_err(resource_error)?;
+    crate::runtime::switcher::trap::resources::register(&mut registry).map_err(resource_error)?;
+    crate::runtime::switcher::envcall::resources::register(&mut registry).map_err(resource_error)?;
+    let resources = registry.freeze().map_err(|e| resource_error(e.into_parts().0))?;
+    let ledger_len = crate::resource::boot::size(resources.len()).map_err(resource_error)?;
+    let (ledger_pa, ledger_bytes) = crate::resource::boot::block();
+    let ledger = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = crate::work::unit::space::window::HeapWindow::locate(inner, pairs_bytes)?;
-            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), pairs_bytes)?;
+            let va = crate::work::unit::space::window::HeapWindow::locate(inner, ledger_bytes)?;
+            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), ledger_bytes)?;
             inner.borrow(
                 va,
-                crate::memory::manager::addr::PhysAddr::from_raw(pairs_pa),
-                pairs_bytes,
+                crate::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
+                ledger_bytes,
                 read_only(),
             )?;
             Ok(va)
@@ -199,11 +204,12 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
     args[env::ledger::args::VIEW_LEN] = region.size;
-    args[env::ledger::args::PAIRS] = pairs.as_usize();
-    args[env::ledger::args::COUNT] = devices.len();
+    args[env::ledger::args::LEDGER] = ledger.as_usize();
+    args[env::ledger::args::LEDGER_LEN] = ledger_len;
     let bootstrap = team.task().args(args.to_vec()).hold()?;
+    let entries = resources.grant(&bootstrap).map_err(|e| resource_error(e.into_parts().0))?;
+    crate::resource::boot::write(&entries).map_err(resource_error)?;
     crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");
-    crate::platform::devices::install(&bootstrap, devices);
 
     #[cfg(debug_assertions)]
     team.space.audit();
@@ -212,6 +218,13 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     kernel().expect("kernel team not initialized").space.audit();
 
     Ok(Some(bootstrap))
+}
+
+fn resource_error(error: env::PieFail) -> MapError {
+    match error {
+        env::PieFail::OoM => MapError::OutOfMemory,
+        _ => MapError::SegmentMismatch,
+    }
 }
 
 fn read_only() -> crate::memory::manager::entry::PteFlags {

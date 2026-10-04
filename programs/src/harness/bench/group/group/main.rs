@@ -54,10 +54,16 @@ const SETTLE: u64 = 200;
 
 static BUILDERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind) -> bool {
+fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authority: PieToken) -> bool {
     use core::sync::atomic::Ordering;
     use runtime::core::task::join;
+    let mark = Mark::of("group-build");
     let worker = move || {
+        if protocol::communication::session::establish::claim(
+            TaskId::new(0), mark, Wait::AtMost(MS),
+        ).is_none() {
+            return false;
+        }
         BUILDERS.fetch_add(1, Ordering::AcqRel);
         let mut spins = 0;
         while BUILDERS.load(Ordering::Acquire) < 2 {
@@ -117,6 +123,11 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind) -> bool {
     let Ok(right) = join::try_closure(worker) else {
         return false;
     };
+    for task in [left.id(), right.id()] {
+        if env::pie::accord(authority, task, env::Permission::FETCH, mark).is_err() {
+            return false;
+        }
+    }
     left.join() && right.join()
 }
 
@@ -129,7 +140,10 @@ fn main() -> Reason {
         return die("group: waiter not in manifest");
     };
     let (elf, kind) = (waiter.elf, waiter.kind);
-    if !concurrent_builders(elf, kind) {
+    let Some(authority) = accounts.token(env::Name::Call(env::Call::Build)) else {
+        return die("group: build authority missing");
+    };
+    if !concurrent_builders(elf, kind, authority) {
         return die("group: concurrent builders");
     }
     debug::put("group: concurrent builders=64");

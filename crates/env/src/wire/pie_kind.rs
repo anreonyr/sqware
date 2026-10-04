@@ -8,6 +8,8 @@
 
 const KIND_POLE: u8 = PieKind::Pole as u8;
 const KIND_NOLE: u8 = PieKind::Nole as u8;
+const KIND_HOLE: u8 = PieKind::Hole as u8;
+const KIND_TOLE: u8 = PieKind::Tole as u8;
 
 /// **要的是哪一种门闩**（**判别号即线格式**：`repr(u8)`）。
 ///
@@ -19,6 +21,8 @@ pub enum PieKind {
     Pole,
     /// 空载荷的信号（中断门铃）。
     Nole,
+    Hole,
+    Tole,
 }
 
 impl PieKind {
@@ -31,7 +35,15 @@ impl PieKind {
         match raw {
             KIND_POLE => Some(PieKind::Pole),
             KIND_NOLE => Some(PieKind::Nole),
+            KIND_HOLE => Some(PieKind::Hole),
+            KIND_TOLE => Some(PieKind::Tole),
             _ => None,
         }
     }
+}
+
+impl crate::wire::Field for PieKind {
+    const WIDTH: usize = 1;
+    fn store(&self, out: &mut [u8]) { out[0] = *self as u8; }
+    fn fetch(bytes: &[u8]) -> Option<Self> { Self::of(*bytes.first()?) }
 }

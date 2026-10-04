@@ -17,7 +17,7 @@ pub(in super::super) fn fetch() -> usize {
     let s = current();
     loop {
         // **开闸门**：外部门闸（`SEIE`）是**按 hart 记账**的——取到外部中断而
-        // `raise_irq()` 失败时，`trap` 那一支会关掉**本 hart** 的闸门，而重开它的路只有两条：
+        // `nole::ring` 失败时，`trap` 那一支会关掉**本 hart** 的闸门，而重开它的路只有两条：
         // 本 hart 上有人 `hush`（`envcall/mail.rs` 那一支），或**本 hart 进空闲循环**
         //（`wait()` 那一支，每轮无条件置）。
         //
@@ -81,7 +81,9 @@ fn wait() -> Option<Arc<Task>> {
             sie::set_sext();
         }
         if sip::read().sext() {
-            let _ = crate::platform::devices::raise_irq_idle();
+            let resources = crate::runtime::switcher::trap::resources::get();
+            let result = crate::work::mail::nole::ring(&resources.supervisor_external);
+            crate::runtime::switcher::trap::resources::note_external(result.is_err(), true);
         }
         if let Some(task) = pull() {
             conductor::wake(me);

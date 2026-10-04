@@ -16,7 +16,7 @@ mod snap;
 #[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
 pub(crate) use pie::{
-    AnyPie, Hole, Need, Nole, Permission, Pie, Pole, Tole, accede, locate, new_pie, try_new_pie,
+    AnyPie, Hole, Need, Nole, Permission, Pie, Pole, Tole, accede, allows, locate, new_pie, try_new_pie,
 };
 
 pub(crate) use accord::{accord, clear_heir};

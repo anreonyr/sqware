@@ -2,7 +2,7 @@ use super::start::{BOOT_MS, Error};
 use super::unit::Service;
 use crate::boot::Accounts;
 use crate::system::common::machine::Machine;
-use env::{Access, Key, Mark, Pair, PieKind, Policy, Wait};
+use env::{Access, Name, Mark, Entry, PieKind, Policy, Wait};
 use protocol::debug;
 use protocol::service::hub::{ENROLL_MAX, Enroll};
 use runtime::core::res::port;
@@ -55,16 +55,17 @@ impl Supplies {
             return Err(Error::Step("too many devices"));
         }
 
-        let mut records = [Pair::NONE; ENROLL_MAX];
+        let mut records = [Entry::NONE; ENROLL_MAX];
         let mut got = 0usize;
-        let mut put = |key: Key, kind: PieKind, access: Access, policy: Policy| {
+        let mut put = |key: Name, kind: PieKind, access: Access, policy: Policy| {
             let shipped = self.accounts.token(key).and_then(|src| match kind {
                 PieKind::Pole => port::ship(&PolePie::from_token(src), *task, access, policy).ok(),
                 PieKind::Nole => port::ship(&NolePie::from_token(src), *task, access, policy).ok(),
+                PieKind::Hole | PieKind::Tole => None,
             });
             match shipped {
                 Some(seat) => {
-                    records[got] = Pair::new(key, seat.seed());
+                    records[got] = Entry::new(key, kind, seat.seed());
                     got += 1;
                 }
                 None => debug!(
@@ -74,11 +75,11 @@ impl Supplies {
                 ),
             }
         };
-        put(Key::dtb(), PieKind::Pole, Access::FETCH, Policy::VEST);
-        put(Key::irq(), PieKind::Nole, Access::FETCH, Policy::VEST);
+        put(Name::Page(env::Page::Dtb), PieKind::Pole, Access::FETCH, Policy::VEST);
+        put(Name::Trap(env::Trap::SupervisorExternal), PieKind::Nole, Access::FETCH, Policy::VEST);
         for device in &devices {
             put(
-                device.key,
+                device.resource,
                 PieKind::Pole,
                 Access::FETCH_STORE,
                 Policy::VEST | Policy::ONLY,

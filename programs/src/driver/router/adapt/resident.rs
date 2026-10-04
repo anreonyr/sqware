@@ -7,15 +7,9 @@ use env::Wait;
 use programs::driver::shared::fail::Fail;
 use programs::unit::router::E_ROUTER;
 
-/// 常驻：**一只组等两个源**（加上门牌，共三个）
-/// 由内核**永久持有**，`platform/devices.rs::IRQ`——它是一格防御，不是读数）
+/// 等待外部 trap 通知、入口请求和排空消息。
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
-        // **等到有事件**：三样（铃 / 门上有人 / 客人的排空）都可等地，醒来就说明有一格有事。
-        // **纯事件（Wait::Forever），没有兜底的一拍**：铃的根在铃那一侧——空闲核不进外部 trap，
-        // `raise_irq` 在它身上没有调用点（见 `kernel/src/work/room/scheduler/core/fetch.rs`
-        // 的空闲循环）。根修在那里，`SEIP` 能挂的那两条长驻态各有振铃点之后这一拍就是多余的：
-        // 铃一定响，醒来 `claim`+`hush` 即到。
         match up.pile.await_(Wait::Forever) {
             Ok(Some(_)) => {}
             // 挂起过（不是期限）：照样往下走一遍——`claim` 领到空就什么也不做。

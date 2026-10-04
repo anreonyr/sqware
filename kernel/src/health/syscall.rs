@@ -94,6 +94,16 @@ pub fn abi_and_privilege() {
         env::UnitFail::Denied.code()
     );
     assert_eq!(user.task.heir_count(), heirs);
+    assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
+    user.task.pies.lock().push(AnyPie::Nole(gate::new_pie(
+        ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
+    )));
+    assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    let mut registry = crate::resource::Registry::default();
+    crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
+    registry.freeze().unwrap().grant(&user.task).unwrap();
+    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
     assert!(user.call(build(ProgramKind::User)) > 0);
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
@@ -103,6 +113,10 @@ pub fn abi_and_privilege() {
     );
     assert_eq!(user.task.tag(), TaskTag::Held);
     let supervisor = Caller::new(true);
+    assert_eq!(supervisor.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    let mut registry = crate::resource::Registry::default();
+    crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
+    registry.freeze().unwrap().grant(&supervisor.task).unwrap();
     for kind in [ProgramKind::User, ProgramKind::Supervisor] {
         assert!(supervisor.call(EnvCall::Unit(UnitCall::Build { kind })) > 0);
     }
@@ -440,4 +454,67 @@ pub fn capability() {
     pole::shut(&pole, token).unwrap();
     assert!(!user.team.space.validate_read(at, size));
     let _ = HeapWindow::allocate(&user.team.space, PAGE_SIZE).unwrap();
+}
+
+
+pub fn resource_registration() {
+    use crate::resource::Registry;
+    use crate::runtime::switcher::{envcall::resources as calls, trap::resources as traps};
+    use env::{Call, Mark, Name, PieFail, PieToken, Trap};
+    crate::work::room::scheduler::boot::init();
+    gate::install(crate::work::room::scheduler::core::roster);
+    let system = Caller::new(true);
+    let service = Caller::new(false);
+    let other = Caller::new(false);
+    let mut registry = Registry::default();
+    calls::register(&mut registry).unwrap();
+    traps::register(&mut registry).unwrap();
+    let root = || AnyPie::Nole(gate::new_pie(
+        calls::get().build.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
+    ));
+    let duplicate = root();
+    let token = duplicate.token();
+    let error = registry.register(Name::Call(Call::Build), duplicate).unwrap_err();
+    assert_eq!(error.reason, PieFail::Denied);
+    assert_eq!(error.value.1.token(), token);
+    assert!(registry.register(Name::Trap(Trap::PageFault), root()).is_err());
+    let entries = registry.freeze().unwrap().grant(&system.task).unwrap();
+    assert_eq!(entries.len(), 3);
+    assert!(entries.iter().all(env::Entry::valid));
+    let token = entries.iter().find(|e| e.name() == Name::Call(Call::Build)).unwrap().token();
+    assert!(gate::allows(&system.task, &calls::get().build, Need::Fetch));
+    let token = PieToken::mint(gate::accord(
+        &system.task, token, &Arc::downgrade(&service.task), Permission::FETCH, Mark::NONE,
+    ).unwrap());
+    assert!(gate::allows(&service.task, &calls::get().build, Need::Fetch));
+    assert!(service.call(EnvCall::Unit(UnitCall::Build { kind: ProgramKind::User })) > 0);
+    assert!(matches!(gate::accord(
+        &service.task, token, &Arc::downgrade(&other.task), Permission::FETCH, Mark::NONE,
+    ), Err(PieFail::Denied)));
+    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    assert!(!gate::allows(&service.task, &calls::get().build, Need::Fetch));
+    assert_eq!(service.call(EnvCall::Unit(UnitCall::Build { kind: ProgramKind::User })), env::UnitFail::Denied.code());
+    let mut registry = Registry::default();
+    let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
+    let invalid = AnyPie::Nole(gate::new_pie(
+        dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
+    ));
+    registry.register(Name::Call(Call::Build), invalid).unwrap();
+    crate::work::mail::nole::seal(&dead);
+    let frozen = match registry.freeze() { Err(e) => e, Ok(_) => panic!("accepted dead root") };
+    assert_eq!(frozen.reason, PieFail::Denied);
+
+    let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
+    let mut registry = Registry::default();
+    let invalid = AnyPie::Nole(gate::new_pie(
+        dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
+    ));
+    registry.register(Name::Call(Call::Build), invalid).unwrap();
+    let frozen = registry.freeze().unwrap();
+    crate::work::mail::nole::seal(&dead);
+    let before = other.task.pies.lock().len();
+    let error = frozen.grant(&other.task).unwrap_err();
+    assert_eq!(error.reason, PieFail::Denied);
+    assert_eq!(error.value.len(), 1);
+    assert_eq!(other.task.pies.lock().len(), before);
 }
