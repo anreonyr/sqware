@@ -9,3 +9,7 @@ pub mod build;
 pub mod frame;
 pub mod install;
 pub mod schedule;
+
+pub mod publication;
+
+pub mod watch;

@@ -43,3 +43,5 @@ pub enum Decision {
 pub struct Kind {
     pub road: Option<PathBuf>,
 }
+
+pub mod faces;

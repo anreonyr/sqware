@@ -7,6 +7,25 @@ use crate::system::operator::serve::plate::Placement;
 
 use super::Internal;
 impl Publications {
+    pub(crate) fn withdraw_internal(
+        &mut self,
+        tree: &mut Tree,
+        entry: env::PieToken,
+    ) -> Result<(), &'static str> {
+        let mut at = 0;
+        while at < self.records.len() {
+            let record = &self.records[at];
+            if record.address.target.is_none()
+                && record.source.publisher == env::unit::self_id()
+                && record.source.entry == entry
+            {
+                self.remove(tree, at)?;
+            } else {
+                at += 1;
+            }
+        }
+        Ok(())
+    }
     pub fn internal(
         &mut self,
         tree: &mut Tree,

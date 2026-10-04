@@ -15,6 +15,10 @@ impl Cache {
             limit,
         }
     }
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.pages = 0;
+    }
     pub fn find(&self, bytes: &[u8], region: &loader::Region) -> Option<PieToken> {
         self.entries
             .iter()

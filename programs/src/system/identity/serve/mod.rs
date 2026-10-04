@@ -18,3 +18,5 @@ pub mod revision;
 pub mod run;
 mod schedule;
 pub mod source;
+
+pub mod publication;

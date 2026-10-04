@@ -26,3 +26,5 @@ pub mod lifecycle;
 pub mod instance;
 pub mod run;
 pub mod schedule;
+
+pub mod install;

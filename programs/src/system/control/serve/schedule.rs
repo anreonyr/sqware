@@ -119,13 +119,29 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.add_system("adopt", 2, boot::adopt)?;
     start.add_system("identity", 3, boot::identity)?;
     start.add_system("wire", 4, boot::wire)?;
-    start.add_system("identity.faces", 5, boot::identity_faces)?;
+    start.add_system(
+        "identity.faces",
+        5,
+        crate::system::identity::serve::publication::faces,
+    )?;
     start.add_system("identity.publish", 6, boot::publish)?;
     start.add_system("control.name", 7, boot::name)?;
-    start.add_system("operator.faces", 8, boot::operator_faces)?;
-    start.add_system("publication.face", 9, boot::publication_face)?;
-    start.add_system("control.faces", 10, boot::control_faces)?;
-    start.add_system("loader", 10, crate::system::loader::serve::install::install)?;
+    start.add_system(
+        "operator.faces",
+        8,
+        crate::system::operator::serve::publication::faces,
+    )?;
+    start.add_system(
+        "publication.face",
+        9,
+        serve::publication::faces::publication_face,
+    )?;
+    start.add_system("control.faces", 10, serve::publication::faces::faces)?;
+    start.add_system(
+        "loader",
+        10,
+        crate::system::loader::serve::publication::faces,
+    )?;
     start.add_system("publish", 11, boot::publish)?;
     let mut units = Schedule::new();
     units.add_system("begin", 0u8, serve::frame::startup)?;
@@ -184,6 +200,11 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.add_system("pending", 19, f::pending)?;
     frame.add_system("instances.pending", 19, serve::instance::pending)?;
     frame.add_system("watch.entries", 20, watch::entries)?;
+    frame.add_system(
+        "watch.loader",
+        21,
+        crate::system::loader::serve::watch::entries,
+    )?;
     frame.add_system("watch.publication", 21, watch::publication)?;
     frame.add_system("watch.identity", 21, watch::identity_changes)?;
     frame.add_system("watch.activation", 22, watch::activation)?;
@@ -194,7 +215,13 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
 }
 pub fn shutdown() -> Result<Plan<serve::Fail>, BuildError> {
     let mut stop = Schedule::new();
+    stop.add_plan(
+        "loader.close",
+        0u8,
+        crate::system::loader::serve::schedule::shutdown()?,
+    )?;
     stop.add_system("stopping", 0u8, crate::system::life::stopping)?;
+    stop.before("loader.close", "stopping")?;
     stop.add_system("join", 1, crate::system::life::join)?;
     stop.build()
 }

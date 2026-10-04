@@ -72,7 +72,7 @@ fn inject(
 }
 impl Fixture {
     pub fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::control::serve::run::resources(boot).map_err(|_| ())?;
+        let mut resources = crate::system::control::serve::install::resources(boot).map_err(|_| ())?;
         resources
             .insert(Fault {
                 armed: false,

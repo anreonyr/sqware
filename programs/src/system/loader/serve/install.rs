@@ -1,28 +1,7 @@
 use super::answer::Inbox;
-use crate::system::{
-    boot::Mounts, common::face::mount, control::serve::publication::Internal,
-    identity::serve::install::Roster,
-};
-use protocol::{
-    common::schedule::{Progress, Res, ResMut},
-    system::{identity, loader as call, operator},
-};
-pub fn install(
-    roster: Res<Roster>,
-    mut mounts: ResMut<Mounts>,
-    mut inbox: ResMut<Inbox>,
-) -> Result<Progress, &'static str> {
-    let principal = roster.control().ok_or("Control identity missing")?;
-    let grant = call::Grant::Build;
-    let (entry, _) = mount::entry(grant.mark(), grant.name())?;
-    mounts.0.push(Internal {
-        road: call::DIR.try_join(grant.name()).ok_or("Loader path")?,
-        entry,
-        access: (
-            operator::Permit::Identity(identity::Selector::Exact(principal)),
-            env::unit::self_id(),
-        ),
-    });
-    inbox.entry = Some(entry);
-    Ok(Progress::Done)
+use protocol::common::schedule::Resources;
+pub fn resources(resources: &mut Resources<'static>) -> Result<(), &'static str> {
+    resources
+        .insert(Inbox::new())
+        .map_err(|_| "system resource capacity")
 }

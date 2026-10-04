@@ -111,3 +111,17 @@ pub(super) fn reply(back: PieToken, said: Said) -> bool {
     let _ = pie::release(back);
     result
 }
+
+pub(super) fn reject(inbox: &mut Inbox) {
+    for incoming in inbox.requests.drain(..) {
+        release_image(&incoming.ask, incoming.from);
+        reply(
+            incoming.ask.back,
+            Said {
+                status: protocol::system::control::frame::NOTREADY,
+                team: 0,
+                task: TaskId::new(0),
+            },
+        );
+    }
+}

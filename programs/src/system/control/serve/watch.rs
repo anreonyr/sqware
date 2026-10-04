@@ -39,7 +39,6 @@ pub struct Interests {
 pub fn entries(
     watch: Res<Watch>,
     names: Res<Names>,
-    loader: Res<crate::system::loader::serve::answer::Inbox>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, super::Fail> {
     wanted.tokens.clear();
@@ -51,7 +50,6 @@ pub fn entries(
         .map_err(|_| super::Fail::Room)?;
     wanted.tokens.extend(watch.faces.iter().flatten().copied());
     wanted.tokens.extend(names.entries());
-    wanted.tokens.extend(loader.entry);
     Ok(Progress::Done)
 }
 pub fn publication(

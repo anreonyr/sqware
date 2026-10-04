@@ -16,3 +16,5 @@ mod schedule;
 mod session;
 mod tip;
 mod watch;
+
+pub mod publication;

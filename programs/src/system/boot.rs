@@ -1,12 +1,7 @@
 use crate::system::{
-    common::face::mount,
     control::{
         core::publication::Publications,
-        serve::{
-            publication::Internal,
-            start::{BOOT_MS, Images},
-            watch::Watch,
-        },
+        serve::{publication::Internal, start::BOOT_MS},
     },
     identity,
     identity::serve::{
@@ -20,16 +15,13 @@ use crate::system::{
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
-use runtime::core::res::pie::{NolePie};
-use runtime::core::adapt;
 use protocol::{
-    common::{
-        path::Path,
-        schedule::{Progress, Res, ResMut},
-    },
+    common::schedule::{Progress, Res, ResMut},
     debug,
-    system::{identity as id, operator as op},
+    system::identity as id,
 };
+use runtime::core::adapt;
+use runtime::core::res::pie::NolePie;
 pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
 pub fn status() -> Arc<Status> {
@@ -145,28 +137,7 @@ pub fn wire(
     })?;
     Ok(Progress::Done)
 }
-pub fn identity_faces(
-    roster: Res<Roster>,
-    faces: Res<Faces>,
-    mut mounts: ResMut<Mounts>,
-) -> Result<Progress, &'static str> {
-    let principal = roster.control().ok_or("Control identity missing")?;
-    let authority =
-        identity::serve::query::current_authority(&roster).ok_or("identity authority")?;
-    for grant in id::Grant::ALL {
-        let permit = match grant.mount() {
-            id::Mount::Public => op::Permit::Public,
-            id::Mount::Bound => op::Permit::Bound,
-            id::Mount::Installer => op::Permit::Identity(id::Selector::Exact(principal)),
-        };
-        mounts.0.push(Internal {
-            road: id::DIR.try_join(grant.name()).ok_or("Identity path")?,
-            entry: faces.0[grant.index()],
-            access: (permit, authority),
-        });
-    }
-    Ok(Progress::Done)
-}
+
 pub fn name(
     roster: Res<Roster>,
     mut names: ResMut<Names>,
@@ -186,60 +157,7 @@ pub fn name(
     )?;
     Ok(Progress::Done)
 }
-pub fn operator_faces(
-    status: Res<Arc<Status>>,
-    mut mounts: ResMut<Mounts>,
-) -> Result<Progress, &'static str> {
-    for grant in op::Grant::ALL {
-        let (entry, _) = mount::entry(grant.mark(), grant.name())?;
-        let permit = if matches!(grant, op::Grant::Part | op::Grant::Land | op::Grant::Trim) {
-            op::Permit::Bound
-        } else {
-            op::Permit::Public
-        };
-        mounts.0.push(Internal {
-            road: op::DIR.try_join(grant.name()).ok_or("Operator path")?,
-            entry,
-            access: (permit, status.control),
-        });
-    }
-    Ok(Progress::Done)
-}
-pub fn publication_face(
-    images: Res<Images>,
-    mut mounts: ResMut<Mounts>,
-) -> Result<Progress, &'static str> {
-    mounts.0.push(Internal {
-        road: Path::new("svc/sys/control/publish").to_path_buf(),
-        entry: images.entry,
-        access: (op::Permit::Public, env::unit::self_id()),
-    });
-    Ok(Progress::Done)
-}
-pub fn control_faces(
-    roster: Res<Roster>,
-    mut mounts: ResMut<Mounts>,
-    mut watch: ResMut<Watch>,
-) -> Result<Progress, &'static str> {
-    let principal = roster.control().ok_or("Control identity missing")?;
-    for grant in protocol::system::control::Grant::ALL {
-        let permit = if grant == protocol::system::control::Grant::State {
-            op::Permit::Public
-        } else {
-            op::Permit::Identity(id::Selector::Exact(principal))
-        };
-        let (entry, _) = mount::entry(grant.mark(), grant.name())?;
-        mounts.0.push(Internal {
-            road: protocol::system::control::DIR
-                .try_join(grant.name())
-                .ok_or("Control path")?,
-            entry,
-            access: (permit, env::unit::self_id()),
-        });
-        watch.attach_face(grant, entry);
-    }
-    Ok(Progress::Done)
-}
+
 pub fn publish(
     mut mounts: ResMut<Mounts>,
     mut publications: ResMut<Publications>,
