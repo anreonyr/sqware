@@ -69,11 +69,11 @@ pub(super) fn feed(
             mode.reset();
             server.reset();
             server.interrupt = true;
-            frame.append(b"^C\r\n");
+            if server.echo { frame.append(b"^C\r\n"); }
             continue;
         }
         let effect = mode.feed(b);
-        frame.append(effect.echo());
+        if server.echo { frame.append(effect.echo()); }
         match effect.input {
             Input::Line(line) => {
                 let mut bytes = [0; stream::MAX];

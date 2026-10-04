@@ -11,6 +11,8 @@ pub const CONTROL: Mark = Mark::of("terminal-control");
 pub const ATTACH: u8 = 1;
 pub const FOREGROUND: u8 = 2;
 pub const DETACH: u8 = 3;
+pub const ECHO_OFF: u8 = 4;
+pub const ECHO_ON: u8 = 5;
 pub const INTERRUPT: u8 = 1;
 pub const DATA: u8 = 1;
 pub const EOF: u8 = 2;
@@ -63,6 +65,10 @@ impl Input {
             EOF => self.n == 0,
             _ => false,
         }
+    }
+    pub fn clear(&mut self) {
+        self.bytes.fill(0);
+        self.n = 0;
     }
     pub fn bytes(&self) -> &[u8] {
         &self.bytes[..self.n as usize]

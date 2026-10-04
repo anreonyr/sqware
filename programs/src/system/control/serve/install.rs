@@ -33,6 +33,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
         Bell::unseal().map_err(|_| "identity change bell")?
     ));
     put!(Control::new(status.clone()));
+    put!(super::account::Accounts::new(boot.catalog)?);
     crate::system::loader::serve::install::resources(&mut resources)?;
     put!(status);
     put!(boot::Faces(Vec::new()));

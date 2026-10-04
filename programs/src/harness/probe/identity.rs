@@ -202,6 +202,7 @@ pub fn acceptance() {
             host,
         });
     super::loader::acceptance(&mut assembly, &operator);
+    super::account::acceptance(&mut assembly, &operator);
     let protected = || {
         operator
             .tile(

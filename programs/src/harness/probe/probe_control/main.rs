@@ -24,7 +24,7 @@ use protocol::system::operator::client as operator;
 const MS: usize = 1000;
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
-const OK_NOTE: &str = "probe-control: ask open, three faces denied";
+const OK_NOTE: &str = "probe-control: state open, service faces and account creation denied";
 
 /// 等待 Control 开始处理请求的总窗口（毫秒）。
 /// （`probe-control` 的头注：第 4 / 5 步都要等）——故有界：等的是**事件**（`Watch::next`），
@@ -64,17 +64,18 @@ fn main() -> Report<'static> {
     let parent = tree
         .pane(ccall::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
+    // Publication, account construction and instance lifecycle are separate entries.
     let seen =
-        probe::count::count_under(&parent, ccall::Grant::ALL.len() + 1, &mut watch, FACES_MS);
+        probe::count::count_under(&parent, ccall::Grant::ALL.len() + 3, &mut watch, FACES_MS);
     debug!(
         "probe-control: faces={seen} want={}",
-        (ccall::Grant::ALL.len() + 1)
+        (ccall::Grant::ALL.len() + 3)
     );
     assert_eq!(
         seen,
-        (ccall::Grant::ALL.len() + 1),
+        (ccall::Grant::ALL.len() + 3),
         "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
-        (ccall::Grant::ALL.len() + 1)
+        (ccall::Grant::ALL.len() + 3)
     );
     let plate = tree
         .tile(&road, Wait::AtMost(MS))
@@ -118,6 +119,22 @@ fn main() -> Report<'static> {
         denied_cells[i] = matches!(got, Err(Fail::Denied));
     }
 
+    let accounts = ccall::account::Client::find(&tree, Wait::AtMost(MS))
+        .expect("probe-control: account entry");
+    assert!(matches!(
+        accounts.create("anran", Wait::AtMost(MS)),
+        Err(ccall::Fail::Denied)
+    ));
+    let instance = ccall::Face::of(
+        tree.tile(ccall::client::INSTANCE, Wait::AtMost(MS))
+            .and_then(|tile| tile.token(Wait::AtMost(MS)))
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        instance.service("terminal".into()).ruin(Wait::AtMost(MS)),
+        Err(ccall::Fail::Denied)
+    ));
     let loader_road = protocol::system::loader::DIR
         .try_join(protocol::system::loader::Grant::Build.name())
         .unwrap();

@@ -11,7 +11,11 @@ use protocol::{
     system::control::{self as call},
 };
 
-pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<Progress, Fail> {
+pub fn answer(
+    mut control: ResMut<Control>,
+    mut inbox: ResMut<Inbox>,
+    resources: Res<super::resource::Resources>,
+) -> Result<Progress, Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(Fail::Room)?;
@@ -38,19 +42,34 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
             if item.owner != incoming.from {
                 return Err(call::Fail::Denied);
             }
-            if !item.claimed && !matches!(incoming.wire, call::frame::Wire::StateInstance(_)) {
+            if item.team.is_some()
+                && !item.claimed
+                && matches!(incoming.wire, call::frame::Wire::EmbarkInstance(_))
+                && (env::chrono::clock() >= item.claim_until
+                    || resources.runtime_road(task).is_none())
+            {
+                item.state = State::Stopping;
                 return Err(call::Fail::NotReady);
             }
             match incoming.wire {
                 call::frame::Wire::StateInstance(_) => {
                     return Ok(Some(call::frame::said_state(answer::wire_state(
-                        item.state,
+                        if item.state == State::Dead && resources.runtime_road(task).is_some() {
+                            State::Stopping
+                        } else {
+                            item.state
+                        },
                     ))));
                 }
                 call::frame::Wire::EmbarkInstance(_) if item.state == State::Debarked => {
-                    unit::embark(task).map_err(|_| call::Fail::NotReady)?;
+                    if unit::embark(task).is_err() {
+                        item.state = State::Stopping;
+                        return Err(call::Fail::NotReady);
+                    }
+                    item.claimed = true;
                     item.state = State::Ready;
                 }
+                call::frame::Wire::EmbarkInstance(_) if item.state == State::Ready => {}
                 call::frame::Wire::DebarkInstance(_) if item.state == State::Ready => {
                     match unit::debark(task) {
                         Ok(()) => {}
@@ -63,6 +82,9 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
                     if item.team.is_some() {
                         item.state = State::Stopping;
                         let _ = env::room::doom(task);
+                        return Ok(None);
+                    }
+                    if resources.runtime_road(task).is_some() {
                         return Ok(None);
                     }
                 }
@@ -140,6 +162,59 @@ pub fn pending(
         .any(|item| item.state == State::Stopping)
     {
         bound.0 = Wait::AtMost(1);
+    }
+    Ok(Progress::Done)
+}
+
+pub fn publication(
+    mut watch: ResMut<super::watch::Watch>,
+    mut mounts: ResMut<crate::system::boot::Mounts>,
+) -> Result<Progress, &'static str> {
+    let entry = env::pie::unseal_hole(call::ASK_MARK).map_err(|_| "instance entry")?;
+    watch.instance = Some(entry);
+    mounts.0.push(super::publication::Internal {
+        road: call::client::INSTANCE.to_path_buf(),
+        entry,
+        access: (protocol::system::operator::Permit::Bound, unit::self_id()),
+    });
+    Ok(Progress::Done)
+}
+pub fn receive(
+    watch: Res<super::watch::Watch>,
+    mut buffer: ResMut<answer::Buffer>,
+    mut inbox: ResMut<Inbox>,
+) -> Result<Progress, Fail> {
+    let Some(entry) = watch.instance else {
+        return Ok(Progress::Done);
+    };
+    for _ in 0..16 {
+        let Ok((len, from)) =
+            runtime::core::res::pie::HolePie::from_token(entry).pull(&mut buffer.0, Wait::POLL)
+        else {
+            break;
+        };
+        let Some((wire, back)) = call::frame::Wire::take(&buffer.0[..len]) else {
+            continue;
+        };
+        if !matches!(runtime::core::res::pie::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == call::BACK)
+        {
+            continue;
+        }
+        match wire {
+            Some(
+                wire @ (call::frame::Wire::EmbarkInstance(_)
+                | call::frame::Wire::DebarkInstance(_)
+                | call::frame::Wire::RuinInstance(_)
+                | call::frame::Wire::StateInstance(_)),
+            ) => {
+                if inbox.0.try_reserve(1).is_err() {
+                    answer::reply(back, call::frame::said_status(call::frame::FULL));
+                } else {
+                    inbox.0.push_back(answer::Incoming { wire, from, back });
+                }
+            }
+            _ => answer::reply(back, call::frame::said_status(call::frame::DENIED)),
+        }
     }
     Ok(Progress::Done)
 }

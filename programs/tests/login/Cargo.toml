@@ -1,0 +1,13 @@
+[package]
+name = "login-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+env = { path = "../../../crates/env" }
+
+[dev-dependencies]
+argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "password-hash", "zeroize"] }

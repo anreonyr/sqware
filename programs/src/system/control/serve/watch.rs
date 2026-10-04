@@ -7,6 +7,7 @@ use protocol::system::control as ccall;
 use runtime::core::res::pile::{Pile, Sub};
 
 pub struct Watch {
+    pub(crate) instance: Option<PieToken>,
     pub(crate) pile: Pile,
     pub(crate) faces: [Option<PieToken>; ccall::Grant::ALL.len()],
     members: Vec<PieToken>,
@@ -17,6 +18,7 @@ impl Watch {
     pub fn new() -> Result<Watch, ()> {
         let pile = Pile::unseal(false).map_err(|_| ())?;
         Ok(Watch {
+            instance: None,
             pile,
             faces: [None; ccall::Grant::ALL.len()],
             members: Vec::new(),
@@ -48,6 +50,7 @@ pub fn entries(
         .try_reserve(watch.faces.len() + names.entries().len() + 3)
         .map_err(|_| super::Fail::Room)?;
     wanted.tokens.extend(watch.faces.iter().flatten().copied());
+    wanted.tokens.extend(watch.instance);
     wanted.tokens.extend(names.entries());
     Ok(Progress::Done)
 }
@@ -106,20 +109,14 @@ pub fn apply(
             at += 1;
         } else {
             let token = watch.members.swap_remove(at);
-            let _ = watch
-                .pile
-                .detach(token, HoleDir::Pull);
+            let _ = watch.pile.detach(token, HoleDir::Pull);
         }
     }
     for &token in &wanted.tokens {
         if watch.members.contains(&token) {
             continue;
         }
-        if watch
-            .pile
-            .attach(token, HoleDir::Pull)
-            .is_err()
-        {
+        if watch.pile.attach(token, HoleDir::Pull).is_err() {
             return Ok(Progress::Done);
         }
         watch.members.push(token);

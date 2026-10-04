@@ -18,6 +18,8 @@ pub mod busy;
 pub mod terminal;
 #[path = "../harness/probe/probe_terminal/program.rs"]
 pub mod probe_terminal;
+#[path = "../user/cat/program.rs"]
+pub mod cat;
 #[path = "../user/login/program.rs"]
 pub mod login;
 #[path = "../harness/bench/again/churn/program.rs"]
@@ -104,6 +106,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &hub::PROGRAM,
     &terminal::PROGRAM,
     &login::PROGRAM,
+    &cat::PROGRAM,
     &probe_terminal::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &guest::GUEST,

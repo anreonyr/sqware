@@ -104,6 +104,7 @@ pub(super) struct Server {
     pub interrupt: bool,
     pub active: bool,
     pub running: bool,
+    pub echo: bool,
     pub waiting_input: bool,
 }
 impl Server {
@@ -140,6 +141,7 @@ impl Server {
             interrupt: false,
             active: false,
             running: true,
+            echo: true,
             waiting_input: false,
         })
     }
@@ -161,6 +163,7 @@ impl Server {
         }
     }
     fn detach(&mut self) {
+        self.echo = true;
         self.reset();
         if let Some(attachment) = self.attachment.take() {
             let _ = self.pile.detach(attachment.endpoints.output, HoleDir::Pull);
@@ -189,6 +192,7 @@ impl Server {
                         return Err(());
                     }
                 };
+                self.echo = true;
                 self.attachment = Some(attachment);
                 Ok(authority)
             }
@@ -198,8 +202,18 @@ impl Server {
                     return Err(());
                 }
                 attachment.revoke()?;
+                self.echo = true;
                 self.reset();
                 self.attachment.as_mut().unwrap().grant(command.task)?;
+                Ok(PieToken::NONE)
+            }
+            frame::ECHO_ON | frame::ECHO_OFF => {
+                let attachment = self.attachment.as_ref().ok_or(())?;
+                if from != attachment.foreground || command.task != from
+                    || !pie::same(attachment.authority, command.authority).map_err(|_| ())? {
+                    return Err(());
+                }
+                self.echo = command.op == frame::ECHO_ON;
                 Ok(PieToken::NONE)
             }
             frame::DETACH => {
@@ -267,7 +281,8 @@ pub(super) fn requests(
             Err(())
         };
         if result.is_ok() {
-            mode.reset();
+            if matches!(command.op, frame::ECHO_ON | frame::ECHO_OFF) { mode.clear(); }
+            else { mode.reset(); }
         }
         if loaned && (command.op != frame::ATTACH || result.is_err()) {
             let _ = pie::release(command.authority);

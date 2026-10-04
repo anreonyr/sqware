@@ -153,6 +153,9 @@ impl Connection {
             }
         }
     }
+    pub fn set_echo(&self, enabled: bool) -> Result<(), ()> {
+        self.command(if enabled { frame::ECHO_ON } else { frame::ECHO_OFF }, env::unit::self_id())
+    }
     pub fn close(&self) -> Result<(), ()> {
         self.command(frame::DETACH, env::unit::self_id())
     }

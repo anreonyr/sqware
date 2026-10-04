@@ -82,15 +82,7 @@ impl Object {
     }
 }
 
-pub fn valid_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 31
-        && !name.contains('/')
-        && !name.as_bytes().contains(&0)
-        && name != "."
-        && name != ".."
-        && !name.chars().any(char::is_control)
-}
+pub use crate::common::name::valid as valid_name;
 
 #[derive(env::Frame, Clone, Debug, PartialEq, Eq)]
 #[frame(len = 160)]

@@ -28,3 +28,5 @@ pub mod run;
 pub mod schedule;
 
 pub mod install;
+
+pub mod account;

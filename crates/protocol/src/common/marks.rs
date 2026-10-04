@@ -5,6 +5,8 @@ use crate::system::control;
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）
 const LOOSE: &[env::Mark] = &[
+    control::account::ENTRY,
+    control::account::BACK,
     crate::system::loader::frame::BACK,
     crate::system::loader::frame::IMAGE,
     crate::driver::ENTRY_MARK,

@@ -34,6 +34,10 @@ pub enum Mode {
 impl Mode {
     pub fn canonical() -> Self { Self::Canonical(Canonical::new()) }
 
+    pub fn clear(&mut self) {
+        match self { Self::Canonical(mode) => mode.clear() }
+    }
+
     pub fn reset(&mut self) {
         match self { Self::Canonical(mode) => mode.reset() }
     }

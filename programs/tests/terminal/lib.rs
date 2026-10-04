@@ -23,6 +23,16 @@ mod tests {
     }
 
     #[test]
+    fn clearing_secret_preserves_crlf_folding() {
+        let mut mode = Canonical::new();
+        for &b in b"secret" { mode.feed(b); }
+        assert_eq!(line(mode.feed(b'\r').input), b"secret");
+        mode.clear();
+        assert!(matches!(mode.feed(b'\n').input, Input::More));
+        assert!(line(mode.feed(b'\n').input).is_empty());
+    }
+
+    #[test]
     fn editing_preserves_utf8_and_erases_control_echo() {
         let mut mode = Canonical::new();
         for &b in "a中".as_bytes() { mode.feed(b); }

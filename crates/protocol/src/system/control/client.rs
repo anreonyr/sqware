@@ -12,6 +12,8 @@ use super::frame::{self, BACK, State};
 use env::pie;
 use runtime::core::res::pie::HolePie;
 
+pub const INSTANCE: &crate::common::path::Path = crate::common::path::Path::new("/svc/sys/control/instance");
+
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
 /// （frame::ASK_MARK）
 /// 开会话那一手（Session::open）要它——control 那一侧上树 / 装配者转授时用同一格

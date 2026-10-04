@@ -48,6 +48,20 @@ impl Roster {
         self.inject(task)
     }
 
+    pub fn user(&self) -> Result<Subject, &'static str> {
+        let installer = self.installer.as_ref().ok_or("identity not installed")?;
+        let principal = installer.derive(PrincipalId::root(installer.authority()), Wait::AtMost(BOOT_MS))
+            .map_err(|_| "derive user identity")?;
+        Subject::new(principal, &[]).map_err(|_| "user subject")
+    }
+
+    pub fn install_subject(&self, task: TaskId, subject: Subject) -> Result<(), &'static str> {
+        self.installer.as_ref().ok_or("identity not installed")?
+            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
+            .map_err(|_| "install user identity")?;
+        self.inject(task)
+    }
+
     pub fn inherit(&self, task: TaskId, parent: TaskId) -> Result<(), &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         installer

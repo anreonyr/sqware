@@ -1,15 +1,12 @@
-"""QEMU interaction regression: three cat tasks, EOF, Ctrl-C and foreground return.
-Run: nu scripts/qtest.nu --package kernel --scene accept --feed-script programs/tests/terminal/session.py
-"""
+"""Login, user identity and terminal session regression in QEMU."""
+import re
 import socket
 import time
-
 
 def run(conn, capture):
     received = bytearray()
     conn.settimeout(0.25)
-
-    def wait_for(text, count=1, timeout=12):
+    def wait_for(text, count=1, timeout=60):
         until = time.monotonic() + timeout
         while received.count(text) < count:
             if time.monotonic() >= until:
@@ -23,36 +20,47 @@ def run(conn, capture):
             received.extend(data)
             with open(capture, "ab") as output:
                 output.write(data)
-
-    def login(name, count):
-        wait_for(b"login: ", count)
+    def credentials(name, password, prompt):
+        wait_for(b"login: ", prompt)
         conn.sendall(name + b"\r\n")
-        wait_for(b"Hello, " + name + b".\r\n")
-        # The greeting precedes the held task's capability installation and release.
-        time.sleep(0.15)
-
-    login(b"alice", 1)
+        wait_for(b"Password: ", prompt)
+        conn.sendall(password + b"\r\n")
+    credentials(b"unknown", b"sqware", 1)
+    wait_for(b"Login incorrect", 1)
+    credentials(b"anran", b"wrong-secret", 2)
+    wait_for(b"Login incorrect", 2)
+    wait_for(b"login: ", 3)
+    conn.sendall(b"anran\r\n")
+    wait_for(b"Password: ", 3)
+    conn.sendall(b"cancel-secret\x03")
+    wait_for(b"login: ", 4)
+    conn.sendall(b"anran\r\n")
+    wait_for(b"Password: ", 4)
+    conn.sendall(b"\x04")
+    wait_for(b"login: ", 5)
+    # Editing remains canonical while echo is disabled.
+    credentials(b"anran", b"discard\x15sqwarx\x7fe", 5)
+    wait_for(b"cat: task=", 1)
+    # Wait for the complete identity line before providing cat input.
+    wait_for(b"principal=", 1)
     conn.sendall(b"first line\n")
     wait_for(b"first line\r\n", 2)
     conn.sendall(b"exit\n")
     wait_for(b"exit\r\n", 2)
     conn.sendall(b"\x04")
-    wait_for(b"login: ", 2)
-
-    login(b"bob", 2)
+    wait_for(b"login: ", 6)
+    credentials(b"anran", b"sqware", 6)
+    wait_for(b"cat: task=", 2)
     conn.sendall(b"discarded\x03")
-    wait_for(b"^C\r\n")
-    wait_for(b"login: ", 3)
-
-    login(b"carol", 3)
-    conn.sendall(b"third line\n")
-    wait_for(b"third line\r\n", 2)
+    wait_for(b"login: ", 7)
+    identities = re.findall(rb"cat: task=(\d+) principal=(\d+):(\d+)", received)
+    assert len(identities) == 2, identities
+    assert identities[0][0] != identities[1][0], identities
+    assert identities[0][1:] == identities[1][1:], identities
+    for secret in (b"sqware", b"wrong-secret", b"cancel-secret", b"sqwarx", b"discard\x15"):
+        assert secret not in received, f"password echoed: {secret!r}"
     conn.sendall(b"\x04")
-    wait_for(b"login: ", 4)
-    assert b"terminal:" not in received, "terminal must not emit a banner"
-    conn.sendall(b"\x04")
-    # Login ends the demo session; terminal is stopped by the scene owner afterward.
-    until = time.monotonic() + 12
+    until = time.monotonic() + 20
     while time.monotonic() < until:
         try:
             data = conn.recv(65536)

@@ -16,8 +16,13 @@ impl Canonical {
         Self { raw: [0; LINE_MAX], n: 0, cr: false }
     }
 
-    pub fn reset(&mut self) {
+    pub fn clear(&mut self) {
+        self.raw.fill(0);
         self.n = 0;
+    }
+
+    pub fn reset(&mut self) {
+        self.clear();
         self.cr = false;
     }
 

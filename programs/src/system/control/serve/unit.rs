@@ -116,9 +116,7 @@ impl Control {
                 self.instances
                     .iter()
                     .filter(|item| {
-                        item.claimed
-                            && item.team.is_some()
-                            && matches!(item.state, State::Ready | State::Debarked)
+                        item.team.is_some() && matches!(item.state, State::Ready | State::Debarked)
                     })
                     .map(|item| item.task),
             )

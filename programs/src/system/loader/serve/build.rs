@@ -61,6 +61,53 @@ pub(super) fn construct(
     roster: &Roster,
     incoming: &Incoming,
 ) -> Result<Built, frame::Fail> {
+    let bytes = snapshot(incoming)?;
+    let mut args = [0; frame::MAX_ARGS];
+    let count = incoming.ask.count as usize;
+    if count > args.len() {
+        return Err(frame::Fail::Bad);
+    }
+    for (to, from) in args.iter_mut().zip(&incoming.ask.args[..count]) {
+        *to = *from as usize;
+    }
+    construct_image(
+        control,
+        roster,
+        Build {
+            image: Image {
+                bytes: &bytes,
+                kind: ProgramKind::User,
+            },
+            spawn: Spawn {
+                owner: incoming.from,
+                args: &args[..count],
+                stack: incoming.ask.stack as usize,
+            },
+            subject: None,
+        },
+    )
+}
+
+pub(crate) struct Spawn<'a> {
+    pub owner: env::TaskId,
+    pub args: &'a [usize],
+    pub stack: usize,
+}
+pub(crate) struct Build<'a> {
+    pub image: Image<'a>,
+    pub spawn: Spawn<'a>,
+    pub subject: Option<protocol::system::identity::Subject>,
+}
+pub(crate) fn construct_image(
+    control: &mut Control,
+    roster: &Roster,
+    build: Build<'_>,
+) -> Result<Built, frame::Fail> {
+    let Build {
+        image,
+        spawn: Spawn { owner, args, stack },
+        subject,
+    } = build;
     if control.instances.len() >= INSTANCE_CAP {
         if let Some(at) = control
             .instances
@@ -76,37 +123,22 @@ pub(super) fn construct(
         .instances
         .try_reserve(1)
         .map_err(|_| frame::Fail::Full)?;
-    let bytes = snapshot(incoming)?;
-    let mut args = [0; frame::MAX_ARGS];
-    let count = incoming.ask.count as usize;
-    if count > args.len() {
-        return Err(frame::Fail::Bad);
-    }
-    for (to, from) in args.iter_mut().zip(&incoming.ask.args[..count]) {
-        *to = *from as usize;
-    }
-    let unit = control
-        .loader
-        .build(Image {
-            bytes: &bytes,
-            kind: ProgramKind::User,
-        })
-        .map_err(unit_fail)?;
+    let unit = control.loader.build(image).map_err(unit_fail)?;
     let team = unit.team();
-    let task = unit
-        .spawn(&args[..count], incoming.ask.stack as usize)
-        .map_err(unit_fail)?;
+    let task = unit.spawn(args, stack).map_err(unit_fail)?;
     control.instances.push(Instance {
-        owner: incoming.from,
+        owner,
         task,
         team: Some(team),
         state: State::Stopping,
         claimed: false,
         claim_until: env::chrono::clock() + frame::CLAIM_MS as u64 * 1_000_000,
     });
-    roster
-        .inherit(task, incoming.from)
-        .map_err(|_| frame::Fail::Denied)?;
+    match subject {
+        Some(subject) => roster.install_subject(task, subject),
+        None => roster.inherit(task, owner),
+    }
+    .map_err(|_| frame::Fail::Denied)?;
     control.instances.last_mut().unwrap().state = State::Debarked;
     Ok(Built { task, team })
 }

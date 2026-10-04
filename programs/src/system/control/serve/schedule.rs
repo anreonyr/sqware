@@ -137,11 +137,16 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
         serve::publication::faces::publication_face,
     )?;
     start.add_system("control.faces", 10, serve::publication::faces::faces)?;
+    start.add_system("instance.face", 10, serve::instance::publication)?;
     start.add_system(
         "loader",
         10,
         crate::system::loader::serve::publication::faces,
     )?;
+    start.add_system("account.initialize", 10, serve::account::initialize)?;
+    start.add_system("account.identity", 10, serve::account::account)?;
+    start.before("account.initialize", "account.identity")?;
+    start.add_system("account.publication", 10, serve::account::publication)?;
     start.add_system("publish", 11, boot::publish)?;
     let mut units = Schedule::new();
     units.add_system("begin", 0u8, serve::frame::startup)?;
@@ -166,7 +171,9 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.add_system("reap", 2, serve::reap::sweep)?;
     frame.add_system("requests.receive", 3, answer::receive)?;
     frame.add_system("requests.state", 4, answer::state)?;
+    frame.add_system("instances.receive", 3, serve::instance::receive)?;
     frame.add_system("requests.instances", 5, serve::instance::answer)?;
+    frame.add_system("accounts.receive", 5, serve::account::receive)?;
     frame.add_system("requests.enqueue", 5, answer::enqueue)?;
     frame.before("requests.instances", "requests.enqueue")?;
     frame.add_plan(
@@ -182,6 +189,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
         7,
         maintenance()?.map_error(|_| serve::Fail::Publication),
     )?;
+    frame.add_system("accounts.completed", 9, serve::account::completed)?;
     frame.add_system("replies", 8, f::reply)?;
     frame.add_system("static", 9, f::startup)?;
     frame.add_system("retire.static", 9, f::retire_static)?;
@@ -206,6 +214,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
         crate::system::loader::serve::watch::entries,
     )?;
     frame.add_system("watch.publication", 21, watch::publication)?;
+    frame.add_system("watch.account", 21, serve::account::watch)?;
     frame.add_system("watch.identity", 21, watch::identity_changes)?;
     frame.add_system("watch.activation", 22, watch::activation)?;
     frame.add_system("watch.tasks", 23, watch::tasks)?;
