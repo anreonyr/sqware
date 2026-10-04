@@ -8,17 +8,18 @@
 //! 刻上去，随副本过线、转手不变）。这一条是原 Quay::claim 的正文，判据一字未改；**一律按
 //! 两格问**：只按记号扫表会把"同一张表里另一枚同记号的孔"认进来。
 //! # 归属：两个寿命，**两个类型**——错的那个动作在 API 上不存在
-//! 孔的活命跟着它所在那张表（内核的规矩：mail::release 放下**并连派生边一起摘下**，
+//! 孔的活命跟着它所在那张表（内核的规矩：pie::release 放下**并连派生边一起摘下**，
 
 use core::ops::{Deref, DerefMut};
 
 use env::{Mark, Permission, PieToken, TaskId, Wait};
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail::{self, AnyPie};
 
 use super::super::hand::{Receiver, Sender};
 use super::super::{deadline, remain};
 use crate::wire::message::Message;
+use env::pie;
+use runtime::core::res::pie::{AnyPie, HolePie, pies, reserve};
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,7 +104,7 @@ impl DerefMut for Held {
 impl Drop for Held {
     fn drop(&mut self) {
         // **只放本端铸的那一枚**（对端那一枚归对端，见文件头）。
-        let _ = mail::release(self.0.rx);
+        let _ = pie::release(self.0.rx);
     }
 }
 
@@ -124,7 +125,7 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
 
 /// Answer an already observed live endpoint; do not rescan for a replacement.
 pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
-    let (_, owner, mark) = mail::reserve(entry).map_err(|_| EstablishFail::NoSeed)?;
+    let (_, owner, mark) = reserve(entry).map_err(|_| EstablishFail::NoSeed)?;
     let (rx, seed) = seal_and_ship(owner, mark)?;
     Ok(Endpoint {
         rx,
@@ -140,8 +141,8 @@ pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
 /// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔
 /// 而孔是单手，谁先读谁吃掉
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
-    let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
-    let pie = mail::HolePie::from_token(hole);
+    let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
+    let pie = HolePie::from_token(hole);
     port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::NONE)
         .map_err(|_| EstablishFail::NoSeed)?;
     pie.narrow(Permission::STORE)
@@ -154,7 +155,7 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
 /// 次序是契约的一半，不是实现细节
 pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
     let mut found = None;
-    for p in mail::pies() {
+    for p in pies() {
         if p.owner == of && p.mark == mark {
             found = Some(p.token);
         }
@@ -172,7 +173,7 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
         if remain == Wait::POLL {
             return None;
         }
-        let _ = runtime::env::unit::fall(remain);
+        let _ = env::unit::fall(remain);
     }
 }
 
@@ -182,13 +183,13 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
 /// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = mail::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
-    let pie = mail::HolePie::from_token(hole);
+    let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
+    let pie = HolePie::from_token(hole);
     match port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::VEST) {
         Ok(at) => Ok((hole, at.seed())),
         Err(_) => {
             // **交不出去就当场放回来**：不留一枚没人认得的孔在本端表里。
-            let _ = mail::release(hole);
+            let _ = pie::release(hole);
             Err(EstablishFail::NoSeed)
         }
     }
@@ -199,16 +200,16 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = mail::unseal_hole(mark).map_err(|_| ())?;
+    let back = pie::unseal_hole(mark).map_err(|_| ())?;
     match port::ship(
-        &mail::HolePie::from_token(back),
+        &HolePie::from_token(back),
         host,
         Access::STORE,
         Policy::NONE,
     ) {
         Ok(to) => Ok((back, to.seed())),
         Err(_) => {
-            let _ = mail::release(back);
+            let _ = pie::release(back);
             Err(())
         }
     }
@@ -224,12 +225,12 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
 ///
 /// **不失败**：不在表里 / 已封印 / 号是野的 —— 一律 `false`。
 pub fn alive(entry: env::PieToken) -> bool {
-    runtime::env::mail::alive(entry)
+    runtime::core::res::pie::alive(entry)
 }
 
 /// **这枚是谁授的**（`Reserve` 第一格）
 pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
-    runtime::env::mail::reserve(entry)
+    reserve(entry)
         .ok()
         .map(|(vestor, _owner, _mark)| vestor)
 }
@@ -239,7 +240,7 @@ pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
 /// "同一位开的多枚孔"（那一格答"这是哪条路上的"）
 /// 问不到那两格（这一枚**不是孔**、或它已不在表里）⇒ `None`：这一条候选不成立
 pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
-    match runtime::env::mail::reserve(hole) {
+    match reserve(hole) {
         Ok((_vestor, owner, _mark)) if owner.get() != 0 => Some(owner),
         _ => None,
     }
@@ -250,7 +251,7 @@ pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
 /// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
 /// `entry`"在 owner 0 的那批门闩上照样要答得出
 pub fn marked_as(hole: env::PieToken) -> Option<env::Mark> {
-    match runtime::env::mail::reserve(hole) {
+    match reserve(hole) {
         Ok((_vestor, _owner, mark)) => Some(mark),
         _ => None,
     }

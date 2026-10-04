@@ -5,10 +5,11 @@ use protocol::communication::session::establish;
 use protocol::system::control::Object;
 use protocol::system::identity::{Grant, Selector, Wire, client::Face};
 use protocol::system::operator::{Fail, Permit};
+
 pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
     roster
         .authority()
-        .filter(|authority| !runtime::env::unit::join(*authority, Wait::POLL).unwrap_or(true))
+        .filter(|authority| !env::unit::join(*authority, Wait::POLL).unwrap_or(true))
 }
 fn face(roster: &Roster, grant: Grant) -> Result<Face, Fail> {
     let authority = roster.authority().ok_or(Fail::Unjudged)?;

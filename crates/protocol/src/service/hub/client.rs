@@ -8,7 +8,6 @@
 use alloc::string::String;
 use env::{Access, Policy, HoleDir, PieKind, PieToken, TaskId, Wait};
 use runtime::core::res::port;
-use runtime::env::mail;
 
 use crate::communication::hand::{Receiver, RecvFail};
 use crate::communication::session::establish;
@@ -16,6 +15,8 @@ use crate::wire::message::Message;
 
 use super::Fail;
 use super::frame::{self, BACK_MARK};
+use env::pie;
+use runtime::core::res::pie::{HolePie};
 
 /// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）
 pub struct Face {
@@ -65,7 +66,7 @@ impl Face {
         // 交出去的只是**读的那一份**（`FETCH|STORE`、不给 `VEST`）：hub 只用它 `reserve`
         // 一次（问"这一枚还在不在"），不需要再授给谁。
         let shipped = port::ship(
-            &mail::HolePie::from_token(sensor),
+            &HolePie::from_token(sensor),
             self.host,
             Access::FETCH | Access::STORE,
             Policy::NONE,
@@ -111,16 +112,16 @@ impl Face {
         let mut ask = S::EMPTY;
         let Some(n) = with(seed).store(ask.as_mut()) else {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             report("encode");
             return Err(Fail::Bad);
         };
-        let door = mail::HolePie::from_token(self.entry);
+        let door = HolePie::from_token(self.entry);
         if door.push(&ask.as_ref()[..n], Wait::Forever).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             report("push");
             return Err(Fail::Dead);
         }
@@ -142,8 +143,8 @@ impl Face {
         };
         let _ = door.wait(HoleDir::Push, Wait::Forever);
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         got
     }
 }

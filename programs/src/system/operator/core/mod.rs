@@ -8,6 +8,8 @@ use env::{PieToken, TaskId};
 use protocol::common::path::{Path, PathBuf};
 use protocol::communication::session::{alive, opened_by};
 use protocol::system::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
+use env::pie;
+use runtime::core::res::pie::{pies};
 
 pub mod gate;
 pub mod judge;
@@ -162,7 +164,7 @@ impl Operator {
     /// - 号不在树上 ⇒ Fail::Unknown（剪掉、剔死、从没铸过长得一样）
     /// - 那一格是一块 `Pane` ⇒ Fail::NotATile
     /// - 是一枚 `Tile`：**先问一句存活**（`establish::alive`）——不在 ⇒ 当场剔掉那一格、
-    /// 放下那一份（mail::release），答 Fail::Dead；在 ⇒ 交给 `ship`
+    /// 放下那一份（pie::release），答 Fail::Dead；在 ⇒ 交给 `ship`
     /// `ship` 是"交出去"那一手（**回调**：适配层把那一枚授给调用方）——与"放下"正好是
     /// 一式的两半（交出 / 放下）。它留成参数而不直接叫，是因为它带**去授给谁**那一格
     /// （调用方手里那个号），不是无参动作
@@ -181,7 +183,7 @@ impl Operator {
         // `find=Err(Dead)`，四枚砖全一样）。`Alive` 那一格答的正是这件事实。
         if !alive(pie) {
             let _ = self.unlink(id);
-            let _ = runtime::env::mail::release(pie);
+            let _ = pie::release(pie);
             return Err(Fail::Dead);
         }
         ship(pie);
@@ -207,7 +209,7 @@ impl Operator {
 
     /// **剪**：把那一号那一格剪掉
     /// 那一格得存在（否则 Fail::Unknown）；是 `Pane` 的话**必须空着**（否则 Fail::NonEmpty）
-    /// 剪掉一枚 `Tile` 时放下本地引用（mail::forget），保留已交付的副本——它是资源实体的一份引用，不放下就漏水
+    /// 剪掉一枚 `Tile` 时放下本地引用（pie::forget），保留已交付的副本——它是资源实体的一份引用，不放下就漏水
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 Fail::Unknown，而**它不会被重新铸出来**（水位只增）
     /// 答**真动了什么**：剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树（前者是一格没了，
@@ -225,8 +227,8 @@ impl Operator {
         // **路要在剪之前记**：剪完那一槽是碑，`road_to` 再也走不出来。
         let road = self.road_to(id);
         if let Some(pie) = dropped {
-            if runtime::env::mail::pies().any(|p| p.token == pie) {
-                runtime::env::mail::forget(pie).map_err(|_| Fail::Unknown)?;
+            if pies().any(|p| p.token == pie) {
+                pie::forget(pie).map_err(|_| Fail::Unknown)?;
             }
         }
         let _ = self.unlink(id);
@@ -341,8 +343,8 @@ impl Operator {
                     Node::Pane(_) => return Err(Fail::NonEmpty),
                 };
                 if let Some(old) = old {
-                    if runtime::env::mail::pies().any(|p| p.token == old) {
-                        runtime::env::mail::forget(old).map_err(|_| Fail::Unknown)?;
+                    if pies().any(|p| p.token == old) {
+                        pie::forget(old).map_err(|_| Fail::Unknown)?;
                     }
                 }
                 slot.node = node;

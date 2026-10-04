@@ -10,12 +10,12 @@ use core::marker::PhantomData;
 
 use env::{PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::PolePie;
 
 use super::Mode;
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, depth, dropped, exact, lost, push, ring};
 use crate::wire::message::Message;
+use runtime::core::res::pie::{PolePie};
 
 /// **写端**：一枚页上的环 ＋ 一枚铃 ＋ 本族那只编报缓冲。
 ///

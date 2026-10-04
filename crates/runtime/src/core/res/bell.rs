@@ -35,7 +35,7 @@
 
 use env::{MailResult, Wait};
 
-use crate::env::mail::NolePie;
+use crate::core::res::pie::NolePie;
 
 /// 门铃：一枚 Nole + "怎么用它"。
 pub struct Bell {

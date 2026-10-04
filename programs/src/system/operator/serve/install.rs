@@ -6,7 +6,6 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 use env::{Mark, Wait, HoleDir, PieToken, TaskId};
 use env::wire::Field;
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail;
 
 use crate::system::control::serve::start::BOOT_MS;
 
@@ -14,6 +13,8 @@ use protocol::common::path::Path;
 use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
 use protocol::system::operator::{EntryId, Tip};
+use env::pie;
+use runtime::core::res::pie::{HolePie, pies, reserve};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
@@ -31,8 +32,8 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
     struct Back(PieToken);
     impl Drop for Back {
         fn drop(&mut self) {
-            let _ = mail::seal(self.0);
-            let _ = mail::release(self.0);
+            let _ = pie::seal(self.0);
+            let _ = pie::release(self.0);
         }
     }
     let _back = Back(back);
@@ -42,7 +43,7 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
             .send_within(make(seed), Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip send")?;
         let mut status = [0xff; 9];
-        let (len, from) = mail::HolePie::from_token(back)
+        let (len, from) = HolePie::from_token(back)
             .pull(&mut status, Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip ack")?;
         if len != 9 || from != host || status[0] != protocol::system::operator::OK {
@@ -59,7 +60,7 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);
-    let road = mail::HolePie::from_token(into);
+    let road = HolePie::from_token(into);
     road.push(&rec, Wait::AtMost(BOOT_MS)).map_err(|_| ())?;
     road.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
     Ok(())
@@ -99,7 +100,7 @@ impl Tree {
         ];
         // 先验整束，再转授。只认装配者指定的来源，不认同 mark 的伪入口。
         for (token, grant) in faces {
-            let (_, owner, mark) = mail::reserve(token).map_err(|_| "operator:wire source")?;
+            let (_, owner, mark) = reserve(token).map_err(|_| "operator:wire source")?;
             if owner != authority || mark != grant.mark() {
                 return Err("operator:wire source");
             }
@@ -107,7 +108,7 @@ impl Tree {
         let mut seeds = [PieToken::NONE; 3];
         for (at, (token, _)) in faces.into_iter().enumerate() {
             seeds[at] = port::ship(
-                &mail::HolePie::from_token(token),
+                &HolePie::from_token(token),
                 host,
                 Access::FETCH | Access::STORE,
                 Policy::VEST,
@@ -154,7 +155,7 @@ impl Tree {
         let tip = self.tip.ok_or("no tip")?;
         let seed = match leaf {
             Some(entry) => port::ship(
-                &mail::HolePie::from_token(entry),
+                &HolePie::from_token(entry),
                 host,
                 Access::FETCH | Access::STORE,
                 Policy::VEST,
@@ -177,7 +178,7 @@ impl Tree {
                 leaf: seed,
                 back,
             });
-            let _ = mail::revoke(host, seed);
+            let _ = pie::revoke(host, seed);
         }
         result
     }
@@ -201,7 +202,7 @@ impl Tree {
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格
 fn current_request(client: TaskId, reply: PieToken) -> bool {
     establish::find(client, Mark::of(LINK)) == Some(reply)
-        && matches!(mail::reserve(reply), Ok((_, owner, mark))
+        && matches!(reserve(reply), Ok((_, owner, mark))
             if owner == client && mark == Mark::of(LINK))
 }
 
@@ -253,7 +254,7 @@ pub fn host_of(
 /// 转授的是"客人开的那扇门"（`owner` 是客人），持树者那侧认领时认的正是它
 /// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
-    let hole = mail::HolePie::from_token(reply);
+    let hole = HolePie::from_token(reply);
     port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())
@@ -283,7 +284,7 @@ pub(crate) fn connect(
         return Ok(Progress::Done);
     };
     tree.clients
-        .retain(|(_, link)| link.tx().is_some_and(|token| mail::reserve(token).is_ok()));
+        .retain(|(_, link)| link.tx().is_some_and(|token| reserve(token).is_ok()));
     let mut requests = Vec::new();
     for client in connections.0.drain(..) {
         requests
@@ -295,7 +296,7 @@ pub(crate) fn connect(
         return Ok(Progress::Done);
     }
     // Enumerate once, retaining the last matching LINK for each client.
-    for pie in mail::pies() {
+    for pie in pies() {
         if pie.mark != Mark::of(LINK) {
             continue;
         }
@@ -323,7 +324,7 @@ pub(crate) fn connect(
             Ok(_) => continue,
             Err(_)
                 if !current_request(client, reply)
-                    || runtime::env::unit::join(client, Wait::POLL).unwrap_or(true) =>
+                    || env::unit::join(client, Wait::POLL).unwrap_or(true) =>
             {
                 continue;
             }

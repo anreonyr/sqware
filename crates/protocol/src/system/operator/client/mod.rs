@@ -11,7 +11,6 @@ use alloc::string::String;
 use crate::wire::message::Message;
 use env::{Mark, Wait, PieToken, TaskId};
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail;
 
 use crate::common::path::Path;
 use crate::communication::hand::Sender;
@@ -20,6 +19,8 @@ use crate::communication::session::{Berth, Session};
 use crate::communication::{deadline, remain};
 use crate::system::operator as ocall;
 use crate::system::operator::{Fail, EntryId, Grant, Listing, Where, Permit};
+use runtime::core::res::pie::{HolePie};
+use runtime::core::adapt;
 
 pub mod pane;
 pub mod tile;
@@ -164,7 +165,7 @@ impl Rein<'_> {
         mine: Mine,
         wait: Wait,
     ) -> Result<EntryId, Fail> {
-        let pie = mail::HolePie::from_token(entry);
+        let pie = HolePie::from_token(entry);
         let shipped = port::ship(
             &pie,
             self.face.session.host,
@@ -274,7 +275,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
                 }
                 rounds += 1;
                 let _ =
-                    runtime::env::room::sleep(core::time::Duration::from_millis(backoff as u64));
+                    adapt::sleep(core::time::Duration::from_millis(backoff as u64));
                 backoff = (backoff * 2).min(RETRY_MAX_MS);
                 // Do not enqueue a final request with no time left to receive its reply.
                 if remain(until) == Wait::POLL {

@@ -1,6 +1,8 @@
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::Wait;
 use protocol::debug;
+use runtime::core::adapt;
+
 #[repr(u8)]
 #[derive(Clone, Copy)]
 pub enum Phase {
@@ -22,7 +24,7 @@ pub fn stopping(
     mut deadline: protocol::common::schedule::ResMut<Deadline>,
 ) -> Result<protocol::common::schedule::Progress, crate::system::control::serve::Fail> {
     status.phase.store(Phase::Stopping as u8, Ordering::Release);
-    deadline.0 = runtime::env::chrono::clock()
+    deadline.0 = env::chrono::clock()
         + crate::system::control::serve::start::BOOT_MS as u64 * 1_000_000;
     Ok(protocol::common::schedule::Progress::Done)
 }
@@ -34,11 +36,11 @@ pub fn join(
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),
     ] {
-        if !runtime::env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
-            if runtime::env::chrono::clock() >= deadline.0 {
+        if !env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
+            if env::chrono::clock() >= deadline.0 {
                 return Err(crate::system::control::serve::Fail::Shutdown);
             }
-            runtime::env::room::sleep(core::time::Duration::from_millis(1))
+            adapt::sleep(core::time::Duration::from_millis(1))
                 .map_err(|_| crate::system::control::serve::Fail::Wait)?;
             return Ok(protocol::common::schedule::Progress::Pending);
         }

@@ -19,7 +19,7 @@ use protocol::system::control as ccall;
 use protocol::system::operator::Fail;
 use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
-use runtime::env::unit;
+use env::unit;
 
 const MS: usize = 1000;
 

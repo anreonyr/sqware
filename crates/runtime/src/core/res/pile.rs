@@ -16,14 +16,14 @@
 
 use env::{Wait, HoleDir, PieToken, Source, TaskId, ToleResult};
 
-use crate::env::mail::{Mate, TolePie};
+use crate::core::res::pie::{Mate, TolePie};
 
 /// **一条状态订阅的描述**——两格的**名字与内核 `work::mail::tole::Sub` 逐字相同**。
 ///
 /// 它同时是"订阅"与"取消"的凭据：本层**不发 token**，取消就凭这同一条描述。
 ///
 /// **第二格不带载荷**（内核那一格带 `TaskId`）：本层的目标是**自己**，由
-/// [`crate::env::unit::self_id`] 就地取——调用方因此**表达不出**"观察别人的能力表"。
+/// [`env::unit::self_id`] 就地取——调用方因此**表达不出**"观察别人的能力表"。
 /// 名字对齐、载荷故意缺一格，就是这条类型义务本身。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Sub {
@@ -37,7 +37,7 @@ impl Sub {
     fn wire(self) -> (Source, TaskId) {
         match self {
             Sub::TaskCompleted(id) => (Source::TaskCompleted, id),
-            Sub::Capabilities => (Source::CapabilitiesChanged, crate::env::unit::self_id()),
+            Sub::Capabilities => (Source::CapabilitiesChanged, env::unit::self_id()),
         }
     }
 }

@@ -16,8 +16,9 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;
-use runtime::env::{mail, room};
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::adapt;
 
 const MS: usize = 1000;
 /// 那一块窗格 —— 与 `probe-watch-gone` 订的那条路**逐字相同**（两份文件各写一遍）。
@@ -48,7 +49,7 @@ fn main() -> Report<'static> {
         if i > 0 {
             client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
         }
-        let entry = mail::unseal_hole(env::Mark::of("probe-swatch-after")).unwrap();
+        let entry = pie::unseal_hole(env::Mark::of("probe-swatch-after")).unwrap();
         let id = client
             .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
             .unwrap();
@@ -58,7 +59,7 @@ fn main() -> Report<'static> {
             panic!("probe-watch-after: the tree stopped answering after #{i}");
         };
         drop(again);
-        let _ = room::sleep(Duration::from_millis(STEP_MS));
+        let _ = adapt::sleep(Duration::from_millis(STEP_MS));
     }
 
     let Ok(listing) = tree

@@ -19,7 +19,8 @@ use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::{Fail, Face};
 use protocol::system::operator::client as operator;
-use runtime::env::unit;
+use env::unit;
+use runtime::core::adapt;
 
 const WANT: &str = "router";
 
@@ -84,7 +85,7 @@ fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<Pie
         {
             Ok(entry) => return Ok(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                let _ = adapt::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

@@ -24,7 +24,8 @@ extern crate programs;
 use core::time::Duration;
 
 use protocol::debug;
-use runtime::env::{chrono, room};
+use env::chrono;
+use runtime::core::adapt;
 
 /// 每轮要的周期（毫秒）
 const PERIOD_MS: u64 = 5;
@@ -42,7 +43,7 @@ fn main() {
     let mut min: i64 = i64::MAX;
     for _ in 0..N {
         let t0 = now_ns();
-        let _ = room::sleep(Duration::from_millis(PERIOD_MS));
+        let _ = adapt::sleep(Duration::from_millis(PERIOD_MS));
         let t1 = now_ns();
         let drift = t1.saturating_sub(t0) as i64 - period_ns as i64;
         sum += drift;
@@ -66,7 +67,7 @@ fn main() {
     let mut next = now_ns() + period_ns;
     for _ in 0..N {
         next += period_ns;
-        let _ = room::sleep_until(next);
+        let _ = env::room::park_until(next);
         let drift = now_ns() as i64 - next as i64;
         sum += drift;
         max = max.max(drift);

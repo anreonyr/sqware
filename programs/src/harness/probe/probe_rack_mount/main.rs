@@ -30,8 +30,9 @@ use protocol::communication::session::{Session, establish};
 use protocol::system::control::{Client, Scope, Target};
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face, Fail, Grant, Permit};
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{inspect};
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -117,7 +118,7 @@ fn main() -> Report<'static> {
         reader.recv(Wait::AtMost(MS)).unwrap().bytes(),
         rig::payload(99).bytes()
     );
-    assert_eq!(mail::inspect(retained).unwrap().1, unit::self_id());
+    assert_eq!(inspect(retained).unwrap().1, unit::self_id());
     protocol::debug::put(
         "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
     );
@@ -125,7 +126,7 @@ fn main() -> Report<'static> {
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
     // `find` 自成一位（那一手会转移权柄）⇒ 要 `Grant::Find` 那一柄。
     assert!(
-        mail::seal(a.ship()).is_ok(),
+        pie::seal(a.ship()).is_ok(),
         "probe-rack-mount: 封印自己那一枚页失败"
     );
     let rein = tree.rein(Grant::Find);

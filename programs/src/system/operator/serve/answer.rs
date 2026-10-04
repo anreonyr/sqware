@@ -4,10 +4,8 @@ use protocol::{
     common::schedule::{Progress, ResMut},
     system::operator as ocall,
 };
-use runtime::{
-    core::res::port::{self, Access, Policy},
-    env::mail,
-};
+use runtime::core::res::pie::HolePie;
+use runtime::core::res::port::{self, Access, Policy};
 pub(super) struct Output<T> {
     pub reply: Option<T>,
     pub changes: alloc::vec::Vec<crate::system::operator::core::Change>,
@@ -83,7 +81,7 @@ pub(super) fn apply(
                 let said = tree.find(id, |pie| {
                     // **交出那一手就是 port::ship**（`R|W` ＋ 一格 `VEST`）：捡到的那一枚砖
                     // 要能替客人再授出，少 `VEST` ⇒ 转授那一步答 `Denied`。
-                    let grant_pie = mail::HolePie::from_token(pie);
+                    let grant_pie = HolePie::from_token(pie);
                     grant =
                         port::ship(&grant_pie, who, Access::FETCH | Access::STORE, Policy::VEST)
                             .map(|at| seed = Some(at.seed()))

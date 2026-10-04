@@ -7,23 +7,24 @@ use env::{Mark, Wait};
 use programs::Report;
 use protocol::communication::session::Session;
 use protocol::system::control::{Client, Scope, Target};
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
 use protocol::system::operator::{
     EntryId, Fail, Grant, Permit, Where,
     client::{self as operator, Face, Mine},
 };
-use runtime::env::mail::{self, HolePie};
 const MS: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> Report<'static> {
     let session = Session::open(
-        runtime::env::unit::sire(),
+        env::unit::sire(),
         operator::granted_berth(Grant::Land),
         MS,
     )
     .unwrap_or_else(|_| panic!("no land session"));
     let face = Face::of(session);
     let land = face.rein(Grant::Land);
-    let source = mail::unseal_hole(Mark::of("publication-test")).unwrap();
+    let source = pie::unseal_hole(Mark::of("publication-test")).unwrap();
     assert_eq!(
         land.land(
             Where::Root,
@@ -57,7 +58,7 @@ fn main() -> Report<'static> {
         client.publish(target.clone(), source, Permit::Public, MS),
         Ok(id)
     );
-    let other = mail::unseal_hole(Mark::of("publication-test")).unwrap();
+    let other = pie::unseal_hole(Mark::of("publication-test")).unwrap();
     assert_eq!(
         client.publish(target.clone(), other, Permit::Public, MS),
         Err(Fail::Denied)
@@ -78,7 +79,7 @@ fn main() -> Report<'static> {
     assert_eq!(
         client.publish(
             Target::RuntimeResource {
-                task: runtime::env::unit::sire(),
+                task: env::unit::sire(),
                 kind: "public".into(),
                 name: "forged".into()
             },
@@ -90,7 +91,7 @@ fn main() -> Report<'static> {
     );
     client.unpublish(target.clone(), MS).unwrap();
     assert!(
-        mail::reserve(source).is_ok(),
+        reserve(source).is_ok(),
         "unpublish must preserve the source resource"
     );
     HolePie::from_token(source).push(b"live", MS).unwrap();

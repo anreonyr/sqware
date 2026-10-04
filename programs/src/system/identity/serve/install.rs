@@ -7,10 +7,11 @@
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use protocol::system::identity::{Installer, Grant, Install, PrincipalId, Subject};
 use runtime::core::res::port;
-use runtime::env::{mail, unit};
+use env::unit;
 
 use super::source::face_of;
 use crate::system::control::serve::start::BOOT_MS;
+use runtime::core::res::pie::{HolePie};
 
 const _: () = assert!(Grant::ALL.len() <= protocol::system::operator::frame::PANE_CAP);
 
@@ -59,7 +60,7 @@ impl Roster {
     fn inject(&self, task: TaskId) -> Result<(), &'static str> {
         let resolve = self.resolve.ok_or("identity authority anchor")?;
         port::ship(
-            &mail::HolePie::from_token(resolve),
+            &HolePie::from_token(resolve),
             task,
             Access::STORE | Access::FETCH,
             Policy::NONE,

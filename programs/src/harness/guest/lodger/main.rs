@@ -29,8 +29,9 @@ use protocol::system::operator::client as operator;
 use env::{Access, PieKind, PieToken, Policy};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use runtime::core::res::pie::{table_size};
+use runtime::core::adapt;
 
 /// 领上就死
 const ASK: Ask = Ask {
@@ -86,7 +87,7 @@ fn main() -> Report<'static> {
         ));
     }
     debug!("lodger: occupy={ok}");
-    let occupied_pies = mail::table_size();
+    let occupied_pies = table_size();
     let (taken, _) = attempt(entry, line);
     debug!("lodger: taken={taken}");
     // 本账里没有零号格 ⇒ 答 `UNKNOWN`（1）。
@@ -96,7 +97,7 @@ fn main() -> Report<'static> {
     //    随退出钩子封印，路由者那一格因此醒来（`router: vacate line=1`）。
     let _held = held;
     // 各把本端 `seat` 出去的那一枚（Endpoint::shut）与本趟借出去的那枚回信孔放下（见
-    let pies = mail::table_size();
+    let pies = table_size();
     debug!("lodger: pies={pies}");
 
     // 三趟登记的答码（与读数同一批常量）；第四例是**探针良过的那一格**（头注：把失败那两趟的
@@ -138,7 +139,7 @@ fn find_router(tree: &Face) -> Option<PieToken> {
         {
             Ok(entry) => return Some(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                let _ = adapt::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

@@ -41,7 +41,7 @@ use programs::system::control::core::verdict::{Ready, probe_ready};
 use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use protocol::debug;
-use runtime::env::unit;
+use env::unit;
 
 /// 被重起的服务（清单里已有的一个常驻程序——它起来就不走，故必须靠 `stop` 收）
 const VICTIM: &str = "churn";

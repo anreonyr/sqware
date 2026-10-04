@@ -22,8 +22,8 @@ use protocol::communication::session::{Session, Endpoint};
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use runtime::core::res::pie::{HolePie};
 
 const MS: usize = 1000;
 
@@ -188,13 +188,13 @@ fn junk_trip(
     dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
-    let door = mail::HolePie::from_token(hedge);
+    let door = HolePie::from_token(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
         && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let pulled = mail::HolePie::from_token(tree.rx())
+    let pulled = HolePie::from_token(tree.rx())
         .pull(&mut back, Wait::AtMost(MS))
         .map(|(n, _)| n);
     debug!(

@@ -5,7 +5,8 @@ use super::{
 use crate::system::control::core::unit::State;
 use env::{PieToken, Wait};
 use protocol::{communication::hand::Sender, system::control as ccall};
-use runtime::env::mail::{self, HolePie};
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,
@@ -29,7 +30,7 @@ pub fn receive(
             let Some((ask, back)) = ccall::frame::Wire::take(&buffer.0[..len]) else {
                 continue;
             };
-            if !matches!(mail::reserve(back), Ok((_, owner, mark)) if owner == from && mark == ccall::BACK)
+            if !matches!(reserve(back), Ok((_, owner, mark)) if owner == from && mark == ccall::BACK)
             {
                 continue;
             }
@@ -123,7 +124,7 @@ fn reply(back: PieToken, said: ccall::frame::Said) {
         let mut tx = Sender::<ccall::frame::Said>::from_token(back);
         let _ = tx.send(said);
     }
-    let _ = mail::release(back);
+    let _ = pie::release(back);
 }
 fn wire_fail(fail: crate::system::control::core::verdict::Fail) -> ccall::Fail {
     use crate::system::control::core::verdict::Fail as Model;

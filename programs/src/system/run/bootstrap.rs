@@ -1,5 +1,4 @@
 use runtime::core::res::dock::Dock;
-use runtime::env::mail::PolePie;
 
 use crate::boot::{Accounts, Catalog};
 use crate::system::common::machine::Machine;
@@ -31,6 +30,7 @@ impl Fail {
 
 /// 引导那一族共用的号（"两块账读不出来"那一格）
 use crate::unit::system::E_BOOT;
+use runtime::core::res::pie::{PolePie};
 
 /// **起手要的三样东西**：两块账、那台机器的自述、那块清单
 pub struct Boot {

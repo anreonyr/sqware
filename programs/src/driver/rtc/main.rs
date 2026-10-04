@@ -24,8 +24,8 @@ use programs::unit::rtc::E_RTC;
 use protocol::debug;
 use protocol::driver::ENTRY_MARK;
 use protocol::system::operator::client as operator;
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
 
 const ASK: Ask = Ask {
     class: "google,goldfish-rtc",
@@ -44,7 +44,7 @@ const MS: usize = 1000;
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // 解门牌 → 上板 ＋ 开会话 → 上树落门牌。门牌**公开可查**（Mine::No）：谁都能查、谁都能用。
-    let entry = mail::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(E_RTC, "tree"))?;
+    let entry = pie::unseal_hole(ENTRY_MARK).map_err(|_| Fail::at(E_RTC, "tree"))?;
     let ctx = Context::open(unit::sire(), Wait::AtMost(MS)).map_err(|s| {
         Fail::at(
             E_RTC,
@@ -73,7 +73,7 @@ fn main() -> Result<(), Fail> {
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(
-        runtime::env::unit::sire(),
+        env::unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
     );

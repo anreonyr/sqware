@@ -26,7 +26,7 @@ pub fn capture(
         .tasks
         .try_reserve(control.table.living().count() + 3)
         .map_err(|_| "live task capacity")?;
-    living.tasks.push(runtime::env::unit::self_id());
+    living.tasks.push(env::unit::self_id());
 
     for row in control.table.living() {
         if let Slot::Live { task, .. } = row.slot
@@ -34,7 +34,7 @@ pub fn capture(
                 row.state,
                 State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
-            && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
+            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
         {
             living.tasks.push(task);
         }

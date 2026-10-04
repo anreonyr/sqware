@@ -143,7 +143,7 @@ impl Resources {
     }
 }
 fn live(table: &Table, task: TaskId) -> bool {
-    if task == runtime::env::unit::self_id() {
+    if task == env::unit::self_id() {
         return true;
     }
     table.living().any(|row| {
@@ -152,7 +152,7 @@ fn live(table: &Table, task: TaskId) -> bool {
                 row.state,
                 State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
-            && !runtime::env::unit::join(task, Wait::POLL).unwrap_or(true)
+            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
     })
 }
 

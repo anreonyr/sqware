@@ -21,7 +21,8 @@ use protocol::system::identity as icall;
 use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::Face;
-use runtime::env::unit;
+use env::unit;
+use runtime::core::res::pie::{reserve};
 
 const MS: usize = 1000;
 
@@ -60,12 +61,12 @@ fn main() -> Report<'static> {
             );
             let entry = protocol::communication::session::establish::find(authority, grant.mark())
                 .expect("probe-coalition: missing explicit installer face copy");
-            assert_eq!(runtime::env::mail::reserve(entry).unwrap().0, unit::sire());
+            assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
             fetch(&tree, icall::DIR, grant.name(), "identity")
         };
-        let (_, owner, mark) = runtime::env::mail::reserve(entry)
+        let (_, owner, mark) = reserve(entry)
             .expect("probe-coalition: identity entry cannot be reserved");
         assert_eq!(mark, grant.mark(), "identity action mark mismatch");
         assert_eq!(owner, authority, "identity action has foreign owner");

@@ -20,8 +20,9 @@ use protocol::system::operator::client as operator;
 use runtime::PAGE_SIZE;
 use runtime::core::res::bell::Bell;
 use runtime::core::res::pile::Pile;
-use runtime::env::mail::{self, HolePie, NolePie};
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{HolePie, NolePie};
 
 const SERVICE: &str = "router";
 
@@ -70,7 +71,7 @@ pub struct Up {
 pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
     let entry =
-        mail::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
+        pie::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(
@@ -115,7 +116,7 @@ pub fn up() -> Result<Up, Fail> {
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = protocol::communication::session::establish::endpoint(
-        runtime::env::unit::sire(),
+        env::unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
     );

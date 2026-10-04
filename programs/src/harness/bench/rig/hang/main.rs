@@ -21,8 +21,8 @@ use programs::harness::tick;
 
 use protocol::communication::session::establish;
 use protocol::debug;
-use runtime::env::mail::HolePie;
-use runtime::env::unit;
+use env::unit;
+use runtime::core::res::pie::{HolePie};
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它
 const MARK: &str = "wake";

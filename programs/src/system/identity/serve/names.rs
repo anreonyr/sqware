@@ -10,7 +10,9 @@ use env::{PieToken, TaskId, Wait};
 use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
-use runtime::env::mail::{self, HolePie};
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
+
 pub struct Registration {
     pub name: String,
     pub object: Object,
@@ -81,7 +83,7 @@ impl Names {
             },
             replace: false,
         })?;
-        let entry = match mail::unseal_hole(pubcall::REF) {
+        let entry = match pie::unseal_hole(pubcall::REF) {
             Ok(entry) => entry,
             Err(_) => {
                 let _ = tree.unmount(pane);
@@ -93,14 +95,14 @@ impl Names {
             tile: Tile {
                 pie: entry,
                 permit: Permit::Public,
-                owner: Some(runtime::env::unit::self_id()),
+                owner: Some(env::unit::self_id()),
             },
             replace: false,
         }) {
             Ok(mount) => mount,
             Err(why) => {
-                let _ = mail::seal(entry);
-                let _ = mail::release(entry);
+                let _ = pie::seal(entry);
+                let _ = pie::release(entry);
                 let _ = tree.unmount(pane);
                 return Err(why);
             }
@@ -119,21 +121,21 @@ impl Names {
         let a = &self.aliases[at];
         tree.unmount(a.mount)?;
         tree.unmount(a.pane)?;
-        let _ = mail::seal(a.entry);
-        let _ = mail::release(a.entry);
+        let _ = pie::seal(a.entry);
+        let _ = pie::release(a.entry);
         self.aliases.remove(at);
         Ok(())
     }
 }
 fn valid_back(back: PieToken, from: TaskId) -> bool {
-    matches!(mail::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
+    matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
 }
 fn reply(back: PieToken, reply: Reply) {
     let mut bytes = [0; Reply::LEN];
     if let Some(n) = reply.store_at(&mut bytes, 0) {
         let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
     }
-    let _ = mail::release(back);
+    let _ = pie::release(back);
 }
 
 pub enum AliasRequest {
@@ -217,7 +219,7 @@ pub(crate) fn prepare(
         let Slot::Live { task, .. } = row.slot else {
             continue;
         };
-        if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
+        if env::unit::join(task, Wait::POLL).unwrap_or(true) {
             continue;
         }
         if let Some(binding) =

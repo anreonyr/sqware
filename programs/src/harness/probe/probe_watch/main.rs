@@ -14,8 +14,8 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
 
 const MS: usize = 1000;
 
@@ -147,7 +147,7 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
-    let entry = mail::unseal_hole(env::Mark::of(mark)).unwrap();
+    let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
     let target = protocol::system::control::publication::Target::Service {
         scope: protocol::system::control::publication::Scope::Fixture,
         group: group.into(),

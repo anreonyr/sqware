@@ -19,8 +19,9 @@ use protocol::system::identity as icall;
 use protocol::system::identity::{Organization, Query, SelfOps, Selector, Subject};
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{HolePie};
 
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
@@ -159,7 +160,7 @@ fn main() -> Report<'static> {
     let mine_sub = look(&root, &rule_road, MINE, Wait::AtMost(MS));
     let raw = at.bind(
         MINE.to_string(),
-        mail::unseal_hole(env::Mark::of("rule-entry")).unwrap(),
+        pie::unseal_hole(env::Mark::of("rule-entry")).unwrap(),
         Permit::Bound,
         Mine::Yes,
         Wait::AtMost(MS),
@@ -265,7 +266,7 @@ fn main() -> Report<'static> {
     )
     .expect("probe-rule: peer completion channel");
     let mut verified = [0];
-    runtime::env::mail::HolePie::from_token(complete)
+    HolePie::from_token(complete)
         .pull(&mut verified, Wait::AtMost(10_000))
         .expect("probe-rule: peer did not verify before retirement");
     return Report::note(E_OK, OK_NOTE);
@@ -281,7 +282,7 @@ fn target(name: &str) -> publication::Target {
     }
 }
 fn plate(name: &str, permit: Permit) -> EntryId {
-    let entry = mail::unseal_hole(env::Mark::of("rule-entry")).unwrap();
+    let entry = pie::unseal_hole(env::Mark::of("rule-entry")).unwrap();
     publication::Client::injected()
         .unwrap()
         .publish(target(name), entry, permit, Wait::AtMost(MS))

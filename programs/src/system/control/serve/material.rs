@@ -6,7 +6,8 @@ use env::{Access, Key, Mark, Pair, PieKind, Policy, Wait};
 use protocol::debug;
 use protocol::service::hub::{ENROLL_MAX, Enroll};
 use runtime::core::res::port;
-use runtime::env::mail::{NolePie, PolePie};
+use runtime::core::res::pie::{NolePie, PolePie};
+
 pub struct Supplies {
     pub machine: Machine,
     pub(super) accounts: Accounts,

@@ -8,16 +8,17 @@ use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use protocol::communication::session::{Session, establish};
 use protocol::system::control::{Client, Object, Target};
 use protocol::system::identity::{Selector, Query, SelfOps};
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
 use protocol::system::operator::{
     Fail, Permit,
     client::{self as operator, Face},
 };
-use runtime::env::mail::{self, HolePie};
 const WAIT: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> programs::Report<'static> {
-    let control = runtime::env::unit::sire();
-    let me = runtime::env::unit::self_id();
+    let control = env::unit::sire();
+    let me = env::unit::self_id();
     let command = establish::claim(control, COMMAND, WAIT).unwrap();
     let answer = establish::claim(control, ANSWER, WAIT).unwrap();
     let _ready = establish::Held(
@@ -76,7 +77,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        mail::unseal_hole(protocol::system::control::publication::REF).unwrap(),
+                        pie::unseal_hole(protocol::system::control::publication::REF).unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -91,13 +92,13 @@ fn main() -> programs::Report<'static> {
                                 object: Object::Principal(p),
                                 name: "forged".into()
                             },
-                            mail::unseal_hole(Mark::of("forged")).unwrap(),
+                            pie::unseal_hole(Mark::of("forged")).unwrap(),
                             Permit::Public,
                             WAIT
                         )
                         .is_err()
                 );
-                resource = mail::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                resource = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
                 let proxy = Target::RuntimeResource {
                     task,
                     kind: "test".into(),
@@ -128,7 +129,7 @@ fn main() -> programs::Report<'static> {
                     .token(WAIT)
                     .unwrap();
                 // Directory ownership is the real target, resource ownership remains the service.
-                assert_eq!(mail::reserve(acquired).unwrap().1, me);
+                assert_eq!(reserve(acquired).unwrap().1, me);
                 assert_eq!(
                     client.unpublish(
                         Target::RuntimeResource {
@@ -172,7 +173,7 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap()
                     .seed();
-                    let closed = mail::unseal_hole(BACK).unwrap();
+                    let closed = pie::unseal_hole(BACK).unwrap();
                     let reply = port::ship(
                         &HolePie::from_token(closed),
                         control,
@@ -181,7 +182,7 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap()
                     .seed();
-                    mail::seal(closed).unwrap();
+                    pie::seal(closed).unwrap();
                     let mut frame = Frame::new(1, abandoned.clone(), seed, Permit::Public);
                     frame.back = reply;
                     protocol::communication::hand::Sender::<Frame>::from_token(
@@ -191,14 +192,14 @@ fn main() -> programs::Report<'static> {
                     .unwrap_or_else(|_| panic!("abandoned request admission"));
                     client.runtime(me, WAIT).unwrap();
                     assert!(
-                        mail::revoke(control, seed).is_err(),
+                        pie::revoke(control, seed).is_err(),
                         "invalid reply channel must release transferred source"
                     );
                     client
                         .publish(abandoned.clone(), resource, Permit::Public, WAIT)
                         .unwrap();
                     client.unpublish(abandoned, WAIT).unwrap();
-                    let _ = mail::release(closed);
+                    let _ = pie::release(closed);
                     protocol::debug::put(
                         "hierarchy: abandoned request with closed reply channel drops its borrowed source and leaves no claim",
                     );
@@ -258,12 +259,12 @@ fn main() -> programs::Report<'static> {
                     (4, me)
                 );
                 assert_eq!(&read, b"kept");
-                mail::seal(resource).unwrap();
+                pie::seal(resource).unwrap();
                 assert!(
-                    mail::reserve(acquired).is_err(),
+                    reserve(acquired).is_err(),
                     "resource close must invalidate delivered capability"
                 );
-                let other = mail::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                let other = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
                 client
                     .publish(
                         target.as_ref().unwrap().clone(),
@@ -294,7 +295,7 @@ fn main() -> programs::Report<'static> {
                         .is_err()
                 );
                 assert!(
-                    mail::reserve(resource).is_ok(),
+                    reserve(resource).is_ok(),
                     "target exit must not close proxy service resource"
                 );
                 protocol::debug::put(
@@ -309,7 +310,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(control, authority, fake, 1, "wrong-authority", WAIT),
                     Err(Fail::Unjudged)
                 );
-                let back = mail::unseal_hole(BACK).unwrap();
+                let back = pie::unseal_hole(BACK).unwrap();
                 let from = me.get();
                 let helper = runtime::core::task::join::closure(move || {
                     let back = establish::claim(TaskId::new(from), BACK, WAIT).unwrap();
@@ -338,8 +339,8 @@ fn main() -> programs::Report<'static> {
                     Err(Fail::Denied)
                 );
                 helper.join();
-                let _ = mail::seal(back);
-                let _ = mail::release(back);
+                let _ = pie::seal(back);
+                let _ = pie::release(back);
                 protocol::debug::put(
                     "hierarchy: real ref IPC rejects wrong authority; shared reply validator rejects actual forged sender",
                 );

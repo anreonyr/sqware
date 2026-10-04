@@ -27,7 +27,7 @@
 //! 共享一手必须带回调，那是"为复用造抽象"）。本层只认两样：**孔**，与**这一路上流的那种报**。
 
 use env::Wait;
-use runtime::env::chrono;
+use env::chrono;
 
 pub mod hand;
 pub mod rack;

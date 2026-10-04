@@ -7,7 +7,7 @@ use env::{Mark, PieToken, TaskId};
 use protocol::communication::session::establish;
 use protocol::debug;
 use protocol::system::operator::LINK;
-use runtime::env::mail;
+use runtime::core::res::pie::{pies};
 
 /// 读不出（不在本表里 / 不是孔 / 已封印）⇒ Mark::NONE——它不是任何一面，故
 /// grant_of 答 `None`、ask_of 也认不回它
@@ -18,7 +18,7 @@ pub(super) fn mark_of(ask: PieToken) -> Mark {
 
 /// **认领恰好一枚**：按「谁开的 + 记号」扫全表，答**第一枚**
 pub(super) fn claim(mark: Mark, who: TaskId, more: Option<&str>) -> Option<PieToken> {
-    let mut hits = mail::pies().filter(|p| p.owner == who && p.mark == mark);
+    let mut hits = pies().filter(|p| p.owner == who && p.mark == mark);
     let first = hits.next()?;
     // **第二枚 ⇒ "只可能有一枚"那条纪律破了**：说话（`more` 那一格就是这句话）。
     if hits.next().is_some() {

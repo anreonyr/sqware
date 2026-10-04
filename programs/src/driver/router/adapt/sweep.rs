@@ -1,6 +1,6 @@
 //! alive 答不出的那几条线——拆线 + 空出格子。
 //! 判定在 crate::core::lines（`vacate` 那一手，连它的两个后果）；探活是内核的一问
-//! （mail::reserve），拆线是设备面的一手（`plic.unwire`）。
+//! （reserve），拆线是设备面的一手（`plic.unwire`）。
 //! 时机是**每一次醒**（组那一次等待回来就扫一遍）：主人一没，它铸的那一枚孔就封印，而那一格
 //! 故"收线"不靠板、也不靠一拍。
 //! **这一跳有读数了**：`programs/src/harness/guest/lodger/main.rs`（房客）每次冷启动都占住 1 号线、然后一句话不说就走
@@ -12,7 +12,7 @@ use env::HoleDir;
 use protocol::communication::session::Endpoint;
 use protocol::debug;
 use runtime::core::res::pile::Pile;
-use runtime::env::mail::{self, HolePie};
+use runtime::core::res::pie::{HolePie, reserve};
 
 /// 逐客：主人没了的那几条——拆线 + 空出格子
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
@@ -33,10 +33,10 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
     }
 }
 
-/// 客人还答得出来吗：**问它铸的那一枚**（mail::reserve 走存活闸：封印之后答不出）
+/// 客人还答得出来吗：**问它铸的那一枚**（reserve 走存活闸：封印之后答不出）
 fn alive(lane: &Endpoint) -> bool {
     match lane.tx() {
-        Some(at_peer) => mail::reserve(at_peer).is_ok(),
+        Some(at_peer) => reserve(at_peer).is_ok(),
         None => false,
     }
 }

@@ -8,7 +8,8 @@ use crate::{
     wire::message::Message,
 };
 use env::{PieToken, TaskId, Wait};
-use runtime::env::mail;
+use env::pie;
+use runtime::core::res::pie::{reserve};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallError {
@@ -28,7 +29,7 @@ pub struct Face {
 }
 impl Face {
     pub fn direct(authority: TaskId, grant: Grant, entry: PieToken) -> Result<Self, CallError> {
-        match mail::reserve(entry) {
+        match reserve(entry) {
             Ok((_, owner, mark)) if authority.get() != 0 && owner == authority => {
                 if mark != grant.mark() {
                     return Err(CallError::WrongGrant);
@@ -76,8 +77,8 @@ impl Face {
         struct Back(PieToken);
         impl Drop for Back {
             fn drop(&mut self) {
-                let _ = mail::seal(self.0);
-                let _ = mail::release(self.0);
+                let _ = pie::seal(self.0);
+                let _ = pie::release(self.0);
             }
         }
         let _back = Back(back);

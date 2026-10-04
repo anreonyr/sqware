@@ -12,7 +12,7 @@ pub(super) fn initialize(
     mut book: ResMut<Book>,
 ) -> Result<Progress, Fail> {
     book.0 = Some(
-        IdentityBook::new(runtime::env::unit::self_id(), status.control).map_err(|_| Fail::Book)?,
+        IdentityBook::new(env::unit::self_id(), status.control).map_err(|_| Fail::Book)?,
     );
     Ok(Progress::Done)
 }

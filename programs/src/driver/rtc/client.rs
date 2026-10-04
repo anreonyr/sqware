@@ -10,11 +10,12 @@ use protocol::communication::hand::Receiver;
 use protocol::communication::session::establish;
 use protocol::debug;
 use protocol::wire::message::Message;
-use runtime::env::mail::{self, HolePie};
 
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
 use env::wire::Span as _;
+use env::pie;
+use runtime::core::res::pie::{HolePie};
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）
@@ -26,8 +27,8 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let mut frame = [0u8; Now::LEN];
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         return Err(Fail::Denied);
     };
     let door = HolePie::from_token(entry);
@@ -35,8 +36,8 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
         || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
     {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         return Err(Fail::Denied);
     }
     // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
@@ -45,8 +46,8 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
         .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-    let _ = mail::seal(back);
-    let _ = mail::release(back);
+    let _ = pie::seal(back);
+    let _ = pie::release(back);
     answer
 }
 
@@ -65,32 +66,32 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     let Some(n) = Arm::of(seed, after_ns).store_at(&mut frame, 0) else {
         why("store", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         return Err(Fail::Denied);
     };
     let door = HolePie::from_token(entry);
     if door.push(&frame[..n], Wait::Forever).is_err() {
         why("push", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         return Err(Fail::Denied);
     }
     if !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true)) {
         why("take", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         return Err(Fail::Denied);
     }
     // 收那一格答码（**恰好 1 字节**：长短都不是这一形 ⇒ 读不懂 ⇒ `Denied`）。
     let mut one = Status::EMPTY;
-    let t_recv = runtime::env::chrono::clock();
+    let t_recv = env::chrono::clock();
     let code = match Receiver::<Status>::from_token(back).recv(one.as_mut(), millis) {
         Ok(code) => code,
         Err(e) => {
-            let ms = (runtime::env::chrono::clock().saturating_sub(t_recv) / 1_000_000) as usize;
+            let ms = (env::chrono::clock().saturating_sub(t_recv) / 1_000_000) as usize;
             // **（临时读数）"没等到"与"读不懂"在这里分开**（`RecvFail` 两格），再把这一趟花了
             // 多少毫秒带上——它是"预算到期"与"答话不成形"的唯一分界。前 20 次。
             match e {
@@ -102,8 +103,8 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
                 }
             }
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             return Err(Fail::Denied);
         }
     };
@@ -114,8 +115,8 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
         });
     }
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-    let _ = mail::seal(back);
-    let _ = mail::release(back);
+    let _ = pie::seal(back);
+    let _ = pie::release(back);
     why("code", 0, &alloc::format!("got={code}"));
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }

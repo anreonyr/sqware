@@ -13,7 +13,8 @@ use protocol::debug;
 use protocol::driver::line;
 use runtime::PAGE_SIZE;
 use runtime::core::res::pile::Pile;
-use runtime::env::mail::{self, HolePie};
+use env::pie;
+use runtime::core::res::pie::{HolePie};
 
 /// 常驻：**一只组等两个源**——门上有请求、线上有投递
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限
@@ -70,7 +71,7 @@ pub fn run(
                         Err(_) => debug!("rtc: notify failed"),
                     }
                 }
-                let _ = mail::release(back);
+                let _ = pie::release(back);
             }
             let _ = held.exhaust();
         }

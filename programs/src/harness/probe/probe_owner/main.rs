@@ -18,8 +18,9 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 
 use protocol::driver;
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::adapt;
 
 /// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
@@ -59,7 +60,7 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    let Ok(entry) = mail::unseal_hole(env::Mark::of("probe-entry")) else {
+    let Ok(entry) = pie::unseal_hole(env::Mark::of("probe-entry")) else {
         return bail("probe-owner: no entry");
     };
     // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
@@ -151,7 +152,7 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let entry = mail::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
+    let entry = pie::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         tree.root().bind(
             "fixtures".into(),
@@ -167,7 +168,7 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
             return Ok(EntryId::new(0));
         }
-        let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+        let _ = adapt::sleep(core::time::Duration::from_millis(1));
     }
     Err(Fail::Unknown)
 }
@@ -183,7 +184,7 @@ fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
         match root.tile(road, Wait::AtMost(MS)) {
             Ok(entry) => return Some(entry.id()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+                let _ = adapt::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

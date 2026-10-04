@@ -3,7 +3,6 @@
 use crate::wire::message::Message;
 use alloc::string::String;
 use env::{Wait, HoleDir, PieToken, TaskId};
-use runtime::env::mail;
 
 use crate::communication::hand::{Receiver, RecvFail};
 use crate::communication::session::{Berth, establish};
@@ -11,6 +10,8 @@ use crate::communication::session::{Berth, establish};
 use super::Fail;
 use super::frame::{self, BACK, State};
 use env::wire::Span as _;
+use env::pie;
+use runtime::core::res::pie::{HolePie};
 
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
 /// （frame::ASK_MARK）
@@ -73,11 +74,11 @@ impl Face {
             .ask(seed)
             .store_at(&mut frame, 0)
             .ok_or_else(|| deny("encode"))?;
-        let door = mail::HolePie::from_token(self.entry);
+        let door = HolePie::from_token(self.entry);
         if door.push(&frame[..n], Wait::Forever).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             return Err(deny("push"));
         }
         let mut buf = frame::Said::EMPTY;
@@ -95,8 +96,8 @@ impl Face {
             });
         let _ = door.wait(HoleDir::Push, Wait::Forever);
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         got
     }
 }

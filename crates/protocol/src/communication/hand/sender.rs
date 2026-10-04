@@ -6,7 +6,7 @@ use core::marker::PhantomData;
 use env::{HoleDir, MailFail, MailResult, PieToken, Wait};
 
 use crate::wire::message::Message;
-use runtime::env::mail::HolePie;
+use runtime::core::res::pie::{HolePie};
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）＋ 那一格缓冲 ＋ **我还排着几只**。
 pub struct Sender<M: Message> {

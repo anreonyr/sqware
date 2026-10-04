@@ -1,10 +1,10 @@
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use runtime::env::{
-    mail::{self, HolePie, PolePie},
-    memory, pie, unit,
-};
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{HolePie, PolePie, pies};
+use runtime::core::adapt;
 
 pub fn acceptance() {
     queued();
@@ -27,7 +27,7 @@ pub fn acceptance() {
 
 fn queued() {
     let owner = unit::self_id();
-    let entry = mail::unseal_hole(Mark::of("copy-queued")).unwrap();
+    let entry = pie::unseal_hole(Mark::of("copy-queued")).unwrap();
     let raw_owner = owner.get();
     let writer = runtime::core::task::join::closure(move || {
         let entry = protocol::communication::session::establish::claim(
@@ -97,13 +97,13 @@ fn queued() {
         assert_eq!(hole.pull(&mut bytes, Wait::POLL).unwrap(), (1, owner));
         assert_eq!(bytes[0], cycle);
     }
-    mail::seal(entry).unwrap();
-    mail::release(entry).unwrap();
+    pie::seal(entry).unwrap();
+    pie::release(entry).unwrap();
 }
 
 fn concurrent() {
     let owner = unit::self_id();
-    let entry = mail::unseal_hole(Mark::of("copy-concurrent")).unwrap();
+    let entry = pie::unseal_hole(Mark::of("copy-concurrent")).unwrap();
     let mut workers = Vec::new();
     for producer in 0..4u8 {
         let worker = runtime::core::task::join::closure(move || {
@@ -145,15 +145,15 @@ fn concurrent() {
     for worker in workers {
         worker.join();
     }
-    mail::seal(entry).unwrap();
-    mail::release(entry).unwrap();
+    pie::seal(entry).unwrap();
+    pie::release(entry).unwrap();
     protocol::debug::put(
         "copy: four concurrent producers delivered 128 frames in producer FIFO order",
     );
 }
 
 fn tokens() -> Vec<PieToken> {
-    pie::pies().map(|pie| pie.token).collect()
+    pies().map(|pie| pie.token).collect()
 }
 
 fn image() -> Vec<u8> {
@@ -206,7 +206,7 @@ fn elf() {
     assert_eq!(&data[2..6], &[0x13, 0, 0, 0]);
     assert!(data[..2].iter().chain(&data[6..]).all(|&byte| byte == 0));
     assert!(
-        memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
+        adapt::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
         "copy: shared source can be widened"
     );
     page.shut().unwrap();

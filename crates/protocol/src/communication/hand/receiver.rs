@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 use env::{MailFail, PieToken, Wait};
 
 use crate::wire::message::Message;
-use runtime::env::mail;
+use runtime::core::res::pie::{HolePie};
 
 /// **我收的那一枚孔** ＋ 这一路流的那一种报（类型）
 pub struct Receiver<M: Message> {
@@ -31,7 +31,7 @@ impl<M: Message> Receiver<M> {
     /// 失败三格**分得开**（RecvFail）：搬不动（`Mail`）/ 收到了解不动（`Unread`）——
     /// 而 `Mail` 里 `Busy`（期限内没等到）与 `Dead` / `Denied`（这一枚孔用不动了）也分得开
     pub fn recv(&self, buffer: &mut [u8], wait: Wait) -> Result<M::In, RecvFail> {
-        let (n, _from) = mail::HolePie::from_token(self.hole)
+        let (n, _from) = HolePie::from_token(self.hole)
             .pull(buffer, wait)
             .map_err(|e| RecvFail::Mail(e.source))?;
         let bytes = buffer.get(..n).ok_or(RecvFail::Unread(n))?;
@@ -43,7 +43,7 @@ impl<M: Message> Receiver<M> {
     /// 孔上可以排着至多 `QUEUE_CAP` 只手：读者据此知道"还有几条要取"（取干为止的那一圈
     /// 就是拿它当上界）。
     pub fn depth(&self) -> Result<usize, RecvFail> {
-        mail::HolePie::from_token(self.hole)
+        HolePie::from_token(self.hole)
             .depth()
             .map_err(|e| RecvFail::Mail(e.source))
     }

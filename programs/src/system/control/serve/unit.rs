@@ -47,7 +47,7 @@ impl Control {
     pub fn state(&self, name: String) -> Result<State, Fail> {
         if matches!(name.as_str(), "operator" | "identity") {
             let task = self.task(&name).ok_or(Fail::Unknown)?;
-            if runtime::env::unit::join(task, Wait::POLL).unwrap_or(true) {
+            if env::unit::join(task, Wait::POLL).unwrap_or(true) {
                 return Ok(State::Dead);
             }
             return Ok(
@@ -77,7 +77,7 @@ impl Control {
         {
             return Err(Fail::NotReady);
         }
-        runtime::env::unit::embark(task).map_err(|_| Fail::NotReady)?;
+        env::unit::embark(task).map_err(|_| Fail::NotReady)?;
         self.table.set_state(name, State::Ready);
         Ok(())
     }

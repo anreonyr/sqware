@@ -20,7 +20,7 @@ use env::{
     Wait, HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail,
 };
 
-use crate::env::mail::{self, AnyPie, HolePie};
+use crate::core::res::pie::{self, AnyPie, HolePie};
 
 /// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
 fn denied_mail() -> erra::Error<MailFail> {
@@ -121,7 +121,7 @@ impl Port {
     /// - `Dead`   — 入口那一枚的资源已封印
     /// - `OoM`    — 本端或对端那张表备不下这一枚
     pub fn open(entry: &HolePie) -> PieResult<Port> {
-        let peer = mail::reserve(entry.token())?.1;
+        let peer = pie::reserve(entry.token())?.1;
         if peer.get() == 0 {
             return Err(denied_pie());
         }

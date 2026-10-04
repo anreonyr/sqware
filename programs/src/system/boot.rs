@@ -20,6 +20,8 @@ use crate::system::{
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
+use runtime::core::res::pie::{NolePie};
+use runtime::core::adapt;
 use protocol::{
     common::{
         path::Path,
@@ -32,7 +34,7 @@ pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
 pub fn status() -> Arc<Status> {
     Arc::new(Status {
-        control: runtime::env::unit::self_id(),
+        control: env::unit::self_id(),
         operator: AtomicUsize::new(0),
         identity: AtomicUsize::new(0),
         phase: AtomicU8::new(Phase::Starting as u8),
@@ -56,7 +58,7 @@ pub fn spawn(
                 identity::serve::run::serve(
                     state.clone(),
                     version,
-                    identity::serve::revision::Changed(runtime::env::mail::NolePie::from_token(
+                    identity::serve::revision::Changed(NolePie::from_token(
                         PieToken::from_bytes(&(bell.load(Ordering::Acquire) as u64).to_le_bytes())
                             .unwrap(),
                     )),
@@ -65,11 +67,11 @@ pub fn spawn(
             };
             if !success || state.phase.load(Ordering::Acquire) != Phase::Stopping as u8 {
                 debug::put("system: internal task failed; terminating team");
-                let _ = runtime::env::room::doom(runtime::env::unit::self_id());
+                let _ = env::room::doom(env::unit::self_id());
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = match runtime::env::unit::spawn(
+        let task = match adapt::spawn(
             env::TeamId::new(0),
             runtime::core::task::join::trampoline as *const () as usize,
             &[ptr as usize],
@@ -81,7 +83,7 @@ pub fn spawn(
                 unsafe {
                     drop(Box::from_raw(ptr));
                 }
-                let _ = runtime::env::room::doom(status.control);
+                let _ = env::room::doom(status.control);
                 return Err("internal task spawn");
             }
         };
@@ -102,7 +104,7 @@ pub fn spawn(
 }
 pub fn embark(status: Res<Arc<Status>>) -> Result<Progress, &'static str> {
     for slot in [&status.operator, &status.identity] {
-        runtime::env::unit::embark(TaskId::new(slot.load(Ordering::Acquire)))
+        env::unit::embark(TaskId::new(slot.load(Ordering::Acquire)))
             .map_err(|_| "internal task embark")?;
     }
     Ok(Progress::Done)
@@ -210,7 +212,7 @@ pub fn publication_face(
     mounts.0.push(Internal {
         road: Path::new("svc/sys/control/publish").to_path_buf(),
         entry: images.entry,
-        access: (op::Permit::Public, runtime::env::unit::self_id()),
+        access: (op::Permit::Public, env::unit::self_id()),
     });
     Ok(Progress::Done)
 }
@@ -232,7 +234,7 @@ pub fn control_faces(
                 .try_join(grant.name())
                 .ok_or("Control path")?,
             entry,
-            access: (permit, runtime::env::unit::self_id()),
+            access: (permit, env::unit::self_id()),
         });
         watch.attach_face(grant, entry);
     }

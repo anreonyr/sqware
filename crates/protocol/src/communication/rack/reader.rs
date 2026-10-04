@@ -24,11 +24,11 @@ use core::marker::PhantomData;
 
 use env::{MailFail, PieToken, Wait};
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::PolePie;
 
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};
 use crate::wire::message::Message;
+use runtime::core::res::pie::{PolePie};
 
 /// **读端**：一条游标 ＋ 一枚铃。
 pub struct Reader<M: Message> {

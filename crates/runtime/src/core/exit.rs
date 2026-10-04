@@ -16,7 +16,7 @@
 
 use env::{EXIT_OK, Reason};
 
-use crate::env::room::exit;
+use crate::core::adapt::exit;
 
 /// note 的**线形状**：`(ptr, len)`——`0` 长度即"无话"。
 ///

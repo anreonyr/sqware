@@ -2,6 +2,7 @@ use super::{Fail, answer::Request as IdentityRequest};
 use crate::system::{common::face::mount, life::Status};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::{HoleDir, PieToken, Wait};
+use env::pie;
 use protocol::{
     common::schedule::{Dispatch, Invocation, Progress, Res, ResMut},
     communication::hand::Sender,
@@ -9,10 +10,10 @@ use protocol::{
 };
 use runtime::{
     core::res::{
+        pie::{HolePie, reserve},
         pile::Pile,
         port::{self, Access, Policy},
     },
-    env::mail::{self, HolePie},
 };
 pub(super) struct Faces(pub Vec<(PieToken, Grant)>);
 pub(super) struct Buffer(pub Vec<u8>);
@@ -69,7 +70,7 @@ pub(super) fn receive(
             let Some((wire, back)) = Wire::take(&buffer.0[..n]) else {
                 continue;
             };
-            if !matches!(mail::reserve(back), Ok((_, owner, mark)) if owner == from && mark == api::BACK)
+            if !matches!(reserve(back), Ok((_, owner, mark)) if owner == from && mark == api::BACK)
             {
                 continue;
             }
@@ -115,7 +116,7 @@ pub(super) fn reply(
     if let Some(response) = response.0.take() {
         let _ = Sender::<Reply>::from_token(incoming.back).send(response);
     }
-    let _ = mail::release(incoming.back);
+    let _ = pie::release(incoming.back);
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
@@ -128,8 +129,8 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
         let _ = pile.detach(&HolePie::from_token(*entry), HoleDir::Pull);
-        let _ = mail::seal(*entry);
-        let _ = mail::release(*entry);
+        let _ = pie::seal(*entry);
+        let _ = pie::release(*entry);
     }
     Ok(Progress::Done)
 }

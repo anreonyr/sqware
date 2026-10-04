@@ -4,10 +4,12 @@ use env::Wait;
 use protocol::communication::session::establish;
 use protocol::system::identity::Grant;
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail::{self, HolePie};
 
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
+use env::pie;
+use runtime::core::res::pie::{HolePie, inspect, reserve};
+use runtime::core::adapt;
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -16,9 +18,9 @@ pub(crate) fn supply_to(
 ) -> Result<(), &'static str> {
     if matches!(program.name(), "probe-rule" | "probe-rule-other") {
         let mark = env::Mark::of("probe-rule-verified");
-        let owner = runtime::env::unit::self_id();
+        let owner = env::unit::self_id();
         let token = establish::find(owner, mark)
-            .or_else(|| mail::unseal_hole(mark).ok())
+            .or_else(|| pie::unseal_hole(mark).ok())
             .ok_or("rule verification channel")?;
         let access = if program.name() == "probe-rule" {
             Access::FETCH
@@ -40,7 +42,7 @@ pub(crate) fn supply_to(
     for grant in [Grant::Bind, Grant::Unbind] {
         let token =
             establish::claim(authority, grant.mark(), Wait::POLL).ok_or("identity fixture face")?;
-        if !matches!(mail::reserve(token), Ok((_, owner, mark))
+        if !matches!(reserve(token), Ok((_, owner, mark))
             if owner == authority && mark == grant.mark())
         {
             return Err("identity fixture source");
@@ -67,8 +69,8 @@ pub fn timeout() {
         limits::MAX_FRAME,
     };
 
-    let owner = runtime::env::unit::self_id();
-    let entry = mail::unseal_hole(Grant::Resolve.mark()).unwrap();
+    let owner = env::unit::self_id();
+    let entry = pie::unseal_hole(Grant::Resolve.mark()).unwrap();
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
@@ -76,7 +78,7 @@ pub fn timeout() {
         let owner = env::TaskId::new(raw_owner);
         let entry = establish::claim(owner, Grant::Resolve.mark(), Wait::AtMost(1000)).unwrap();
         while !release_reader.load(Ordering::Acquire) {
-            runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let mut bytes = [0; MAX_FRAME];
         let (n, from) = HolePie::from_token(entry)
@@ -100,8 +102,8 @@ pub fn timeout() {
     timed_out.store(true, Ordering::Release);
     assert_eq!(result, Err(CallError::Transport));
     reader.join();
-    let _ = mail::seal(entry);
-    let _ = mail::release(entry);
+    let _ = pie::seal(entry);
+    let _ = pie::release(entry);
     protocol::debug::put("identity-timeout: queued request decoded after client timeout");
 }
 
@@ -170,7 +172,7 @@ pub fn acceptance() {
         .authority()
         .unwrap();
     let old_query = query(old_authority);
-    let me = runtime::env::unit::self_id();
+    let me = env::unit::self_id();
     let host = assembly
         .resources
         .read::<crate::system::operator::serve::install::Tree>()
@@ -402,7 +404,7 @@ fn revision(assembly: &mut Fixture) {
     .unwrap();
     assert!(matches!(
         query.call(
-            Wire::Resolve(runtime::env::unit::self_id()),
+            Wire::Resolve(env::unit::self_id()),
             Wait::AtMost(1000)
         ),
         Ok(Reply::Binding(Some(_)))
@@ -486,7 +488,7 @@ fn activation_boundary(
     use core::sync::atomic::{AtomicBool, Ordering};
     use protocol::service::hub::activation;
 
-    let owner = runtime::env::unit::self_id();
+    let owner = env::unit::self_id();
     let entry = establish::find(owner, activation::ENTRY).unwrap();
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
@@ -525,7 +527,7 @@ fn activation_boundary(
         Policy::NONE,
     )
     .unwrap();
-    let until = runtime::env::chrono::clock() + 5_000_000_000;
+    let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
         crate::service::hub::bridge::maintain(
             assembly.resources.read().unwrap(),
@@ -534,10 +536,10 @@ fn activation_boundary(
         )
         .unwrap();
         assert!(
-            runtime::env::chrono::clock() < until,
+            env::chrono::clock() < until,
             "activation boundary never answered"
         );
-        runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
 }
@@ -548,13 +550,13 @@ fn ready_driver(
     task: env::TaskId,
     road: &'static str,
 ) {
-    let until = runtime::env::chrono::clock() + 5_000_000_000;
+    let until = env::chrono::clock() + 5_000_000_000;
     loop {
         if let Ok(entry) = operator
             .tile(protocol::common::path::Path::new(road), Wait::AtMost(1000))
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
-            if matches!(mail::inspect(entry), Ok((_, owner, _)) if owner == task) {
+            if matches!(inspect(entry), Ok((_, owner, _)) if owner == task) {
                 let binding = query.resolve(task, Wait::AtMost(1000)).unwrap().unwrap();
                 assert!(
                     !binding.current.coalitions.is_empty(),
@@ -565,9 +567,9 @@ fn ready_driver(
             }
         }
         assert!(
-            runtime::env::chrono::clock() < until,
+            env::chrono::clock() < until,
             "identity: driver never republished"
         );
-        runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }

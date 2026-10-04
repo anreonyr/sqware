@@ -14,8 +14,8 @@ use protocol::common::path::Path;
 use protocol::communication::session::{Session, establish};
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
 
 const MS: usize = 1000;
 
@@ -90,7 +90,7 @@ fn main() -> Report<'static> {
         root.open("idt".into(), Wait::AtMost(MS)),
         Err(Fail::Denied)
     ));
-    let source = mail::unseal_hole(env::Mark::of("raw-generic")).unwrap();
+    let source = pie::unseal_hole(env::Mark::of("raw-generic")).unwrap();
     assert!(matches!(
         root.bind(
             "uit".into(),

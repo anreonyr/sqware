@@ -81,7 +81,7 @@ pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<P
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.execution.instance.as_mut() {
         if !instance.launched {
-            runtime::env::unit::embark(instance.service.0).map_err(|_| Fail::NotReady)?;
+            env::unit::embark(instance.service.0).map_err(|_| Fail::NotReady)?;
             instance.launched = true;
         }
     } else {
@@ -128,7 +128,7 @@ pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result
         {
             Ok(Progress::Done)
         }
-        Ok(false) if runtime::env::chrono::clock() < job.execution.deadline => {
+        Ok(false) if env::chrono::clock() < job.execution.deadline => {
             Ok(Progress::Pending)
         }
         _ => Err(Fail::NotReady),

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use env::{HoleDir, PieToken, Wait};
 use protocol::system::control as ccall;
 use runtime::core::res::pile::{Pile, Sub};
-use runtime::env::mail::HolePie;
+
 pub struct Watch {
     pub(crate) pile: Pile,
     pub(crate) faces: [Option<PieToken>; ccall::Grant::ALL.len()],
@@ -30,6 +30,7 @@ impl Watch {
 }
 
 use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::core::res::pie::{HolePie};
 pub struct Interests {
     pub tokens: Vec<PieToken>,
     pub subs: Vec<Sub>,

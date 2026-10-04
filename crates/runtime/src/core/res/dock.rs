@@ -35,7 +35,7 @@
 
 use env::PieResult;
 
-use crate::env::mail::PolePie;
+use crate::core::res::pie::PolePie;
 
 /// 视图：一段**已映射进本域**的内存。
 ///

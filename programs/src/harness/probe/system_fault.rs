@@ -4,10 +4,11 @@ use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use protocol::communication::session::establish;
-use runtime::env::{
-    mail::{self, HolePie, PolePie},
-    room, unit,
-};
+use env::room;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{HolePie, NolePie, PolePie};
+use runtime::core::adapt;
 
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");
@@ -25,8 +26,8 @@ pub fn acceptance() {
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
     }
-    let report = mail::unseal_hole(REPORT).unwrap();
-    let boot = mail::unseal_hole(BOOT).unwrap();
+    let report = pie::unseal_hole(REPORT).unwrap();
+    let boot = pie::unseal_hole(BOOT).unwrap();
     for mode in 0..3 {
         let image = runtime::core::loader::build(victim.elf, victim.kind).unwrap();
         let team = image.team();
@@ -63,14 +64,14 @@ pub fn acceptance() {
             .map(|b| u64::from_le_bytes(b.try_into().unwrap()) as usize)
             .collect();
         assert_eq!(ids[0], task.get());
-        let until = runtime::env::chrono::clock() + 5_000_000_000;
+        let until = env::chrono::clock() + 5_000_000_000;
         for id in &ids[..4] {
             while !unit::join(TaskId::new(*id), Wait::POLL).unwrap_or(true) {
                 assert!(
-                    runtime::env::chrono::clock() < until,
+                    env::chrono::clock() < until,
                     "system-fault: task survived team failure"
                 );
-                room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
         }
         unit::oust(team).unwrap();
@@ -78,10 +79,10 @@ pub fn acceptance() {
             "system-fault: role={mode}; three tasks and descendant reclaimed"
         ));
     }
-    let _ = mail::seal(boot);
-    let _ = mail::release(boot);
-    let _ = mail::seal(report);
-    let _ = mail::release(report);
+    let _ = pie::seal(boot);
+    let _ = pie::release(boot);
+    let _ = pie::seal(report);
+    let _ = pie::release(report);
 }
 
 pub fn unit() {
@@ -112,7 +113,7 @@ pub fn unit() {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             if mode == role {
-                room::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
+                adapt::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
             }
             let success = if role == 1 {
                 crate::system::operator::serve::run::serve(state.clone()).is_ok()
@@ -121,7 +122,7 @@ pub fn unit() {
                     state.clone(),
                     crate::system::identity::serve::revision::Epoch::new(),
                     crate::system::identity::serve::revision::Changed(
-                        mail::NolePie::unseal().unwrap(),
+                        NolePie::unseal().unwrap(),
                     ),
                 )
                 .is_ok()
@@ -131,7 +132,7 @@ pub fn unit() {
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = unit::spawn(
+        let task = adapt::spawn(
             TeamId::new(0),
             runtime::core::task::join::trampoline as *const () as usize,
             &[ptr as usize],
@@ -168,6 +169,6 @@ pub fn unit() {
         {
             let _ = room::doom(unit::self_id());
         }
-        room::sleep(core::time::Duration::from_millis(10)).unwrap();
+        adapt::sleep(core::time::Duration::from_millis(10)).unwrap();
     }
 }

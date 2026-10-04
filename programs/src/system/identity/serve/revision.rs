@@ -4,11 +4,12 @@ use super::{
 };
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
+use env::pie;
+use runtime::core::res::pie::{NolePie};
 use protocol::{
     common::schedule::{Progress, Res},
     system::identity::{Mount, Reply},
 };
-use runtime::env::mail::{self, NolePie};
 #[derive(Clone)]
 pub struct Epoch(pub Arc<AtomicU64>);
 pub struct Changed(pub NolePie);
@@ -49,6 +50,6 @@ pub(super) fn notify(
     Ok(Progress::Done)
 }
 pub(super) fn close(changed: Res<Changed>) -> Result<Progress, Fail> {
-    let _ = mail::release(changed.0.token());
+    let _ = pie::release(changed.0.token());
     Ok(Progress::Done)
 }

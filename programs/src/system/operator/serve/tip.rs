@@ -7,6 +7,8 @@ use crate::system::{
 };
 use alloc::{collections::VecDeque, sync::Arc};
 use env::{HoleDir, PieToken, TaskId, Wait};
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
 use protocol::{
     common::schedule::{Dispatch, Invocation, Progress, Res, ResMut},
     debug,
@@ -17,7 +19,6 @@ use runtime::{
         pile::Pile,
         port::{self, Access, Policy},
     },
-    env::mail,
 };
 pub(super) struct Tip(pub PieToken);
 pub(super) struct Tips(pub VecDeque<(ocall::TipIn, TaskId)>);
@@ -32,8 +33,8 @@ pub(super) fn tip(
     mut tip: ResMut<Tip>,
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    tip.0 = mail::unseal_hole(ocall::TIP_MARK).map_err(|_| Fail::Tree)?;
-    let hole = mail::HolePie::from_token(tip.0);
+    tip.0 = pie::unseal_hole(ocall::TIP_MARK).map_err(|_| Fail::Tree)?;
+    let hole = HolePie::from_token(tip.0);
     port::ship(
         &hole,
         status.control,
@@ -50,7 +51,7 @@ pub(super) fn receive_tips(
     mut tips: ResMut<Tips>,
 ) -> Result<Progress, Fail> {
     let mut frame = [0; ocall::TIP_LEN];
-    while let Ok((n, from)) = mail::HolePie::from_token(tip.0).pull(&mut frame, Wait::POLL) {
+    while let Ok((n, from)) = HolePie::from_token(tip.0).pull(&mut frame, Wait::POLL) {
         if from != status.control {
             debug::put("operator: foreign bootstrap tip");
             continue;
@@ -84,7 +85,7 @@ pub(super) fn select(
     Ok(Progress::Done)
 }
 pub(super) fn valid_tip_back(back: PieToken, from: TaskId) -> bool {
-    matches!(mail::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == ocall::TIP_BACK)
+    matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == ocall::TIP_BACK)
 }
 pub(super) fn wired(
     current: Res<CurrentTip>,
@@ -135,7 +136,7 @@ pub(super) fn guest(
             late.0.try_reserve(1).map_err(|_| Fail::Room)?;
             late.0.push(Late {
                 who: *client,
-                since: runtime::env::chrono::clock(),
+                since: env::chrono::clock(),
             });
         }
     }
@@ -265,8 +266,8 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
         let mut bytes = [0; 9];
         bytes[0] = status;
         bytes[1..].copy_from_slice(&(id.get() as u64).to_le_bytes());
-        let _ = mail::HolePie::from_token(back).push(&bytes, Wait::AtMost(1000));
-        let _ = mail::release(back);
+        let _ = HolePie::from_token(back).push(&bytes, Wait::AtMost(1000));
+        let _ = pie::release(back);
     }
     Ok(Progress::Done)
 }
@@ -278,8 +279,8 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(&mail::HolePie::from_token(tip.0), HoleDir::Pull);
-    let _ = mail::seal(tip.0);
-    let _ = mail::release(tip.0);
+    let _ = pile.detach(&HolePie::from_token(tip.0), HoleDir::Pull);
+    let _ = pie::seal(tip.0);
+    let _ = pie::release(tip.0);
     Ok(Progress::Done)
 }

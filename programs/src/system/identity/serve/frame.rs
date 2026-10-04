@@ -4,6 +4,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use env::{TaskId, Wait};
 use protocol::common::schedule::{Progress, Res, ResMut};
+
 pub(super) struct Running(pub bool);
 pub(super) fn health(
     status: Res<Arc<Status>>,
@@ -13,8 +14,8 @@ pub(super) fn health(
         running.0 = false;
         return Ok(Progress::Pending);
     }
-    if runtime::env::unit::join(status.control, Wait::POLL).unwrap_or(true)
-        || runtime::env::unit::join(
+    if env::unit::join(status.control, Wait::POLL).unwrap_or(true)
+        || env::unit::join(
             TaskId::new(status.operator.load(Ordering::Acquire)),
             Wait::POLL,
         )

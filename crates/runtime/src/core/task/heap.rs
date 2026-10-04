@@ -6,7 +6,7 @@ use core::ptr::null_mut;
 use spinning_top::RawSpinlock;
 use talc::{TalcLock, source::GlobalAllocSource};
 
-use crate::{PAGE_SIZE, env::memory};
+use crate::{PAGE_SIZE, core::adapt};
 
 const BLOCK_SIZE: usize = 4 * PAGE_SIZE;
 
@@ -24,12 +24,12 @@ unsafe impl GlobalAlloc for Pages {
         let Some(size) = layout.size().max(1).checked_next_multiple_of(PAGE_SIZE) else {
             return null_mut();
         };
-        memory::allocate(size).map_or(null_mut(), |addr| addr as *mut u8)
+        adapt::allocate(size).map_or(null_mut(), |addr| addr as *mut u8)
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let size = layout.size().max(1).next_multiple_of(PAGE_SIZE);
-        let _ = memory::deallocate(ptr as usize, size);
+        let _ = adapt::deallocate(ptr as usize, size);
     }
 }
 

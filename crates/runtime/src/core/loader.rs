@@ -1,7 +1,8 @@
 //! ELF planning and construction from the existing Unit, Memory, and Pie calls.
 use super::task::lock::Lock;
-use crate::env::{memory, pie, unit};
+use crate::core::adapt;
 use alloc::vec::Vec;
+use env::{pie, unit};
 use env::{Permission, PieToken, ProgramKind, TaskId, TeamId, UnitFail, UnitResult};
 
 fn fail(source: UnitFail) -> erra::Error<UnitFail> {
@@ -25,7 +26,7 @@ struct Source {
 impl Drop for Source {
     fn drop(&mut self) {
         if let Some((at, size)) = self.mapping.take() {
-            let _ = memory::munmap(at, size);
+            let _ = adapt::munmap(at, size);
         }
         if self.token != PieToken::NONE {
             let _ = pie::release(self.token);
@@ -45,7 +46,7 @@ impl Image {
         self.team
     }
     pub fn spawn(mut self, args: &[usize], stack: usize) -> UnitResult<TaskId> {
-        let task = unit::spawn(self.team, self.entry, args, stack)?;
+        let task = adapt::spawn(self.team, self.entry, args, stack)?;
         self.committed = true;
         Ok(task)
     }
@@ -82,9 +83,9 @@ impl Source {
 fn initialize(bytes: &[u8], region: &loader::Region) -> UnitResult<Source> {
     let private = region.flags & 4 != 0;
     let token = if private {
-        pie::unseal_pole_exclusive(region.data_size)
+        pie::unseal_pole(region.data_size, false)
     } else {
-        pie::unseal_pole(region.data_size)
+        pie::unseal_pole(region.data_size, true)
     }
     .map_err(|e| {
         if matches!(e.source, env::PieFail::OoM) {
@@ -98,7 +99,7 @@ fn initialize(bytes: &[u8], region: &loader::Region) -> UnitResult<Source> {
         mapping: None,
     };
     pie::shut(token).map_err(|_| fail(UnitFail::Denied))?;
-    let at = memory::map(TeamId::new(0), 0, region.data_size, token, 0, 6).map_err(|e| {
+    let at = adapt::map(TeamId::new(0), 0, region.data_size, token, 0, 6).map_err(|e| {
         if matches!(e.source, env::MemoryFail::OoM) {
             fail(UnitFail::OoM)
         } else {
@@ -115,7 +116,7 @@ fn initialize(bytes: &[u8], region: &loader::Region) -> UnitResult<Source> {
         )
     };
     if private {
-        memory::munmap(at, region.data_size).map_err(|_| fail(UnitFail::Denied))?;
+        adapt::munmap(at, region.data_size).map_err(|_| fail(UnitFail::Denied))?;
         source.mapping = None;
     }
     Ok(source)
@@ -191,7 +192,7 @@ pub fn build(bytes: &[u8], kind: ProgramKind) -> UnitResult<Image> {
             } else {
                 shared(bytes, region)?
             };
-            memory::map(
+            adapt::map(
                 image.team,
                 region.va,
                 region.data_size,
@@ -208,7 +209,7 @@ pub fn build(bytes: &[u8], kind: ProgramKind) -> UnitResult<Image> {
             })?;
         }
         if region.data_size < region.size {
-            memory::map(
+            adapt::map(
                 image.team,
                 region.va + region.data_size,
                 region.size - region.data_size,

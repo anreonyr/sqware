@@ -8,9 +8,10 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Object, Reply, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{EntryId, Fail, Permit};
-use runtime::env::mail::self;
 
 use super::{Decision, Kind, Outcome, Request};
+use env::pie;
+use runtime::core::res::pie::{pies};
 impl Publications {
     pub(super) fn remove(&mut self, tree: &mut Tree, at: usize) -> Result<(), &'static str> {
         let r = &self.records[at];
@@ -21,8 +22,8 @@ impl Publications {
         let r = &self.records[at];
         if r.address.target.is_some() {
             let entry = r.source.entry;
-            if mail::pies().any(|p| p.token == entry) {
-                mail::forget(entry).map_err(|_| "publication reference cleanup")?;
+            if pies().any(|p| p.token == entry) {
+                pie::forget(entry).map_err(|_| "publication reference cleanup")?;
             }
         }
         self.records.remove(at);
@@ -123,7 +124,7 @@ pub fn existing(
                     && record.address.target.as_ref() == Some(&approved.target)
                     && record.installation.owner == approved.placement.tile.owner.unwrap()
                     && record.source.permit == approved.placement.tile.permit
-                    && mail::same(record.source.entry, approved.placement.tile.pie).unwrap_or(false)
+                    && pie::same(record.source.entry, approved.placement.tile.pie).unwrap_or(false)
                 {
                     Ok(Reply::mount(record.installation.mount.unwrap()))
                 } else {

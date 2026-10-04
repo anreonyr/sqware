@@ -14,8 +14,9 @@ use protocol::debug;
 use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;
 
-use runtime::env::mail;
-use runtime::env::unit;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{reserve};
 
 const MS: usize = 1000;
 
@@ -33,7 +34,7 @@ fn main() -> Report<'static> {
         return bail("probe-lease: no tree link");
     };
     let tree = Face::of(session);
-    let entry = mail::unseal_hole(env::Mark::of("lease-entry")).unwrap();
+    let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
     let target = protocol::system::control::publication::Target::Service {
         scope: protocol::system::control::publication::Scope::Fixture,
         group: "fixtures".into(),
@@ -52,7 +53,7 @@ fn main() -> Report<'static> {
         .token(Wait::AtMost(MS))
         .unwrap();
     assert_eq!(
-        mail::reserve(cap).unwrap().1,
+        reserve(cap).unwrap().1,
         unit::self_id(),
         "Control must preserve publisher ownership"
     );

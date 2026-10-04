@@ -16,8 +16,8 @@ pub(super) fn health(
         running.0 = false;
         return Ok(Progress::Pending);
     }
-    if runtime::env::unit::join(status.control, Wait::POLL).unwrap_or(true)
-        || runtime::env::unit::join(
+    if env::unit::join(status.control, Wait::POLL).unwrap_or(true)
+        || env::unit::join(
             TaskId::new(status.identity.load(Ordering::Acquire)),
             Wait::POLL,
         )

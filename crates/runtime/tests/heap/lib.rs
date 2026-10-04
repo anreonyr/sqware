@@ -2,8 +2,8 @@
 
 pub const PAGE_SIZE: usize = 4096;
 
-mod env {
-    pub mod memory {
+mod core {
+    pub mod adapt {
         use std::alloc::{GlobalAlloc, Layout, System};
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 

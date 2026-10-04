@@ -2,6 +2,9 @@ use crate::system::operator::core::{Change, Location, Operator, Tile};
 use alloc::{string::ToString, vec::Vec};
 use env::{PieToken, TaskId};
 use protocol::system::operator::{EntryId, Fail, Where};
+use env::pie;
+use runtime::core::res::pie::{alive};
+
 pub struct Placement {
     pub road: protocol::common::path::PathBuf,
     pub tile: Tile,
@@ -50,7 +53,7 @@ pub(super) fn plate(
             }
             return Ok(id);
         }
-        if !runtime::env::mail::alive(leaf) {
+        if !alive(leaf) {
             return Err(Fail::Dead);
         }
         if !replace && tree.kid(at, last)?.is_some() {
@@ -78,7 +81,7 @@ pub(super) fn plate(
                 let _ = tree.trim(id);
             }
             if leaf != PieToken::NONE {
-                let _ = runtime::env::mail::forget(leaf);
+                let _ = pie::forget(leaf);
             }
             Err(fail)
         }

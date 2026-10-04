@@ -10,14 +10,13 @@ use protocol::service::hub::{
 };
 use protocol::system::identity::CoalitionId;
 use runtime::core::res::port;
-use runtime::env::{
-    mail::{self, HolePie},
-    unit,
-};
+use env::unit;
 
 use crate::system::control::serve::start::BOOT_MS;
 use crate::system::control::serve::unit::Control;
 use env::wire::Span as _;
+use env::pie;
+use runtime::core::res::pie::{HolePie, reserve};
 
 pub struct Activation {
     hub: TaskId,
@@ -30,7 +29,7 @@ impl Activation {
     }
 
     pub fn open(hub: TaskId) -> Result<Self, &'static str> {
-        let entry = mail::unseal_hole(activation::ENTRY).map_err(|_| "hub activation hole")?;
+        let entry = pie::unseal_hole(activation::ENTRY).map_err(|_| "hub activation hole")?;
         let owned = Self { hub, entry };
         port::ship(
             &HolePie::from_token(entry),
@@ -52,7 +51,7 @@ impl Activation {
             let Some(ask) = Activate::fetch_at(&bytes[..len], 0).map(|one| one.0) else {
                 continue;
             };
-            if !matches!(mail::reserve(ask.back), Ok((_, owner, mark))
+            if !matches!(reserve(ask.back), Ok((_, owner, mark))
                 if owner == from && mark == activation::BACK)
             {
                 continue;
@@ -74,15 +73,15 @@ impl Activation {
             let mut reply = Sender::<Said>::from_token(ask.back);
             let _ = reply.send(Said::of(status));
             drop(reply);
-            let _ = mail::release(ask.back);
+            let _ = pie::release(ask.back);
         }
     }
 }
 
 impl Drop for Activation {
     fn drop(&mut self) {
-        let _ = mail::seal(self.entry);
-        let _ = mail::release(self.entry);
+        let _ = pie::seal(self.entry);
+        let _ = pie::release(self.entry);
     }
 }
 
@@ -91,7 +90,7 @@ impl Drop for Activation {
 pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
     let sire = unit::sire();
     let entry = establish::find(sire, activation::ENTRY).ok_or(())?;
-    if !matches!(mail::reserve(entry), Ok((vestor, owner, mark))
+    if !matches!(reserve(entry), Ok((vestor, owner, mark))
         if vestor == sire && owner == sire && mark == activation::ENTRY)
     {
         return Err(());
@@ -100,8 +99,8 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
     struct Back(PieToken);
     impl Drop for Back {
         fn drop(&mut self) {
-            let _ = mail::seal(self.0);
-            let _ = mail::release(self.0);
+            let _ = pie::seal(self.0);
+            let _ = pie::release(self.0);
         }
     }
     let _back = Back(back);

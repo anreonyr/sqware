@@ -4,22 +4,23 @@ use env::{PieToken, TaskId, Wait};
 use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Reply};
 use protocol::system::operator::Fail;
-use runtime::env::mail::{self, HolePie};
 
 use super::{Inbox, Incoming, Outcome, Request};
+use env::pie;
+use runtime::core::res::pie::{HolePie, inspect, reserve};
 fn valid_back(back: PieToken, from: TaskId) -> bool {
-    matches!(mail::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
+    matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
 }
 fn reply(back: PieToken, reply: Reply) {
     let mut bytes = [0; Reply::LEN];
     if let Some(n) = reply.store_at(&mut bytes, 0) {
         let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
     }
-    let _ = mail::release(back);
+    let _ = pie::release(back);
 }
 pub(crate) fn inject(entry: env::PieToken, task: env::TaskId) -> Result<(), &'static str> {
     runtime::core::res::port::ship(
-        &runtime::env::mail::HolePie::from_token(entry),
+        &HolePie::from_token(entry),
         task,
         env::Access::STORE,
         env::Policy::NONE,
@@ -39,7 +40,7 @@ pub fn receive(
         };
         if !valid_back(frame.back, from) {
             if frame.op == pubcall::PUBLISH
-                && matches!(mail::inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from)
+                && matches!(inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from)
             {
                 // Existing publications may still own an equivalent reference; cleanup runs with the index.
                 inbox.0.try_reserve(1).map_err(|_| "publication capacity")?;
@@ -83,10 +84,10 @@ pub fn finish(
 ) -> Result<Progress, &'static str> {
     let incoming = request.0.take().ok_or("publication request")?;
     if incoming.frame.op == pubcall::PUBLISH
-        && matches!(mail::inspect(incoming.frame.entry), Ok((vestor, owner, _)) if vestor == incoming.from && owner == incoming.from)
+        && matches!(inspect(incoming.frame.entry), Ok((vestor, owner, _)) if vestor == incoming.from && owner == incoming.from)
         && !publications.owns(incoming.frame.entry)
     {
-        let _ = mail::forget(incoming.frame.entry);
+        let _ = pie::forget(incoming.frame.entry);
     }
     if !incoming.admitted {
         return Ok(Progress::Done);

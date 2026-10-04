@@ -43,9 +43,9 @@ use core::marker::PhantomData;
 
 use env::{PieResult, PieToken};
 use runtime::core::res::dock::Dock;
-use runtime::env::mail::PolePie;
 
 use crate::wire::message::Message;
+use runtime::core::res::pie::{PolePie};
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::ring::{CAP, SIZE};

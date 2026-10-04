@@ -6,8 +6,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::{Wait, TaskId, TeamId, UnitResult};
 
+use crate::core::adapt;
 use crate::core::task::tls;
-use crate::env::{room, unit as env_task};
+use env::{room, unit as env_task};
 
 /// 子任务已完工（result 可取）。
 const DONE: usize = 1;
@@ -134,7 +135,7 @@ where
     });
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let task_id = env_task::spawn(
+    let task_id = adapt::spawn(
         TeamId::new(0),
         (trampoline as extern "C" fn(usize) -> !) as usize,
         &[ptr],
@@ -179,5 +180,5 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // 不需要任何新 ABI。
     crate::core::loader::retire();
     tls::deallocate();
-    room::exit(env::EXIT_OK, None)
+    adapt::exit(env::EXIT_OK, None)
 }

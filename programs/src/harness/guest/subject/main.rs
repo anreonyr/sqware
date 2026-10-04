@@ -11,7 +11,7 @@ use programs::Report;
 use protocol::communication::session::Session;
 use protocol::system::identity::{CallError, Query, SelfOps, Fail, PrincipalId, Subject};
 use protocol::system::operator::client as operator;
-use runtime::env::unit;
+use env::unit;
 
 const MS: usize = 1000;
 

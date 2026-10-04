@@ -8,7 +8,8 @@ use crate::wire::message::Message;
 use alloc::string::String;
 use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
-use runtime::env::mail::{self, HolePie};
+use env::pie;
+use runtime::core::res::pie::{HolePie, inspect, reserve};
 
 pub const ENTRY: Mark = Mark::of("control-publication");
 pub const BACK: Mark = Mark::of("control-publication-back");
@@ -259,16 +260,16 @@ pub struct Client {
 }
 impl Client {
     pub fn direct(control: TaskId, entry: PieToken) -> Result<Self, Fail> {
-        if !matches!(mail::reserve(entry), Ok((_, owner, mark)) if owner == control && mark == ENTRY)
+        if !matches!(reserve(entry), Ok((_, owner, mark)) if owner == control && mark == ENTRY)
         {
             return Err(Fail::Denied);
         }
         Ok(Self { control, entry })
     }
     pub fn injected() -> Result<Self, Fail> {
-        let control = runtime::env::unit::sire();
+        let control = env::unit::sire();
         let entry = establish::find(control, ENTRY).ok_or(Fail::Unknown)?;
-        if !matches!(mail::reserve(entry), Ok((vestor, owner, _)) if vestor == control && owner == control)
+        if !matches!(reserve(entry), Ok((vestor, owner, _)) if vestor == control && owner == control)
         {
             return Err(Fail::Denied);
         }
@@ -290,7 +291,7 @@ impl Client {
             return Err(Fail::Denied);
         }
         Self::direct(self.control, self.entry)?;
-        if !matches!(mail::inspect(entry), Ok((_, owner, _)) if owner == runtime::env::unit::self_id())
+        if !matches!(inspect(entry), Ok((_, owner, _)) if owner == env::unit::self_id())
         {
             return Err(Fail::Denied);
         }
@@ -309,7 +310,7 @@ impl Client {
             .map(|r| EntryId::new(r.number as usize));
         // Once admitted, timeout is an unknown outcome and does not cancel publication.
         if result.is_err() && !admitted {
-            let _ = mail::revoke(self.control, seed);
+            let _ = pie::revoke(self.control, seed);
         }
         result
     }
@@ -362,7 +363,7 @@ impl Client {
         wait: Wait,
     ) -> Result<Object, Fail> {
         if !valid_name(name)
-            || !matches!(mail::reserve(entry), Ok((_, owner, mark)) if owner == control && mark == REF)
+            || !matches!(reserve(entry), Ok((_, owner, mark)) if owner == control && mark == REF)
         {
             return Err(Fail::Denied);
         }
@@ -399,8 +400,8 @@ fn exchange(
     struct Back(PieToken);
     impl Drop for Back {
         fn drop(&mut self) {
-            let _ = mail::seal(self.0);
-            let _ = mail::release(self.0);
+            let _ = pie::seal(self.0);
+            let _ = pie::release(self.0);
         }
     }
     let _back = Back(back);

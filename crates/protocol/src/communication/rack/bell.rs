@@ -19,7 +19,7 @@
 //! 四拍（见 [`super::reader`]）——重复的响本就该并成一枚，多响的那几次答 `Busy`、写端当"正好"。
 
 use env::{MailResult, PieToken, Wait};
-use runtime::env::mail::PolePie;
+use runtime::core::res::pie::{PolePie};
 
 /// 一具架那一枚铃（＝**那枚页上的一位**）。
 pub(crate) struct Bell {

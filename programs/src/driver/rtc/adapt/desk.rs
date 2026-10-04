@@ -8,9 +8,10 @@ use programs::driver::rtc::core::host::{Answer, Host};
 use protocol::communication::hand::Sender;
 use protocol::debug;
 use runtime::core::res::dock::View;
-use runtime::env::mail;
+use env::pie;
+use runtime::core::res::pie::{reserve};
 
-/// 认那枚孔靠**帧里那一格** ＋ **一次 mail::reserve 验**：那一格是"客人
+/// 认那枚孔靠**帧里那一格** ＋ **一次 reserve 验**：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
 /// ⇒ 答完当场放下
 pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
@@ -20,7 +21,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     };
     // **一次 `reserve`，代替一次全表扫**：判据与旧那一扫**逐字同一条**（谁给的 ＋ 记号），
     if !matches!(
-        mail::reserve(back),
+        reserve(back),
         Ok((_vestor, owner, mark)) if owner == from && mark == frame::BACK
     ) {
         debug!("rtc: no back hole from {}", from.get());
@@ -30,7 +31,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     match host.ask(ask, back, now) {
         Answer::Time(now) => {
             ship_time(back, now);
-            let _ = mail::release(back);
+            let _ = pie::release(back);
             debug!("rtc: asked now={now}");
         }
         // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层
@@ -49,7 +50,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
         // 拒了：答一格码 + 放下这一枚，并留一行读数。
         Answer::Refused { code, at } => {
             ship_code(back, code);
-            let _ = mail::release(back);
+            let _ = pie::release(back);
             debug!(
                 "rtc: refused={code} at={at} now={now} late_ns={}",
                 now.saturating_sub(at)

@@ -37,8 +37,11 @@ use env::{PieToken, TaskId};
 use protocol::debug;
 use runtime::core::res::pile::Pile;
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail::{self, HolePie, TolePie};
-use runtime::env::{room, unit};
+use env::room;
+use env::unit;
+use env::pie;
+use runtime::core::res::pie::{HolePie, TolePie};
+use runtime::core::adapt;
 
 /// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）
 const WAITER: &str = "waiter";
@@ -80,10 +83,10 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind) -> bool {
             };
             children.push((team, task));
             if index == 0 {
-                residents = runtime::env::pie::table_size();
+                residents = runtime::core::res::pie::table_size();
             }
         }
-        let current = runtime::env::pie::table_size();
+        let current = runtime::core::res::pie::table_size();
         if current != residents {
             debug::put(&alloc::format!(
                 "group: builder roots {residents}->{current}"
@@ -106,11 +109,11 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind) -> bool {
         }
         true
     };
-    let _ = room::sleep(core::time::Duration::from_millis(100));
+    let _ = adapt::sleep(core::time::Duration::from_millis(100));
     let Ok(left) = join::try_closure(worker) else {
         return false;
     };
-    let _ = room::sleep(core::time::Duration::from_millis(10));
+    let _ = adapt::sleep(core::time::Duration::from_millis(10));
     let Ok(right) = join::try_closure(worker) else {
         return false;
     };
@@ -137,7 +140,7 @@ fn main() -> Reason {
     };
     let group = pile.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = mail::unseal_hole(Mark::of("member")) else {
+    let Ok(member) = pie::unseal_hole(Mark::of("member")) else {
         return die("group: member hole");
     };
     let member = HolePie::from_token(member);
@@ -145,7 +148,7 @@ fn main() -> Reason {
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = mail::unseal_hole(Mark::of("report")) else {
+        let Ok(tok) = pie::unseal_hole(Mark::of("report")) else {
             return die("group: report hole");
         };
         *slot = tok;
@@ -191,7 +194,7 @@ fn main() -> Reason {
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：HolePie::push
     // **递出即返，交付由取的一方做**。
-    let _ = room::sleep(core::time::Duration::from_millis(SETTLE));
+    let _ = adapt::sleep(core::time::Duration::from_millis(SETTLE));
     let _ = HolePie::from_token(member.token()).push(b"x", Wait::POLL);
 
     let mut woke = 0usize;

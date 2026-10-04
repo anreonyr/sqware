@@ -3,18 +3,21 @@ use core::time::Duration;
 use env::{PieToken, TaskId};
 use protocol::communication::session::establish;
 use protocol::system::identity::Grant;
-use runtime::env::{mail, room, unit};
+use env::unit;
+use runtime::core::res::pie::{pies, reserve};
+use runtime::core::adapt;
+
 /// Obtain the startup authority from a Control-injected face, not a marked public entry.
 /// Kernel Sire and vestor anchor the trust decision; the original owner is the Identity
 /// instance. Discovery clients then verify every other face against that exact owner.
 pub fn authority() -> Option<TaskId> {
     let sire = unit::sire();
     let mut authority = None;
-    for pie in mail::pies() {
+    for pie in pies() {
         if pie.mark != Grant::Resolve.mark() {
             continue;
         }
-        let Ok((vestor, owner, mark)) = mail::reserve(pie.token) else {
+        let Ok((vestor, owner, mark)) = reserve(pie.token) else {
             continue;
         };
         if vestor != sire || owner == sire || mark != Grant::Resolve.mark() {
@@ -32,7 +35,7 @@ pub(crate) fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'sta
     let mut left = BOOT_MS;
     loop {
         if let Some(entry) = establish::find(authority, grant.mark()) {
-            if matches!(mail::reserve(entry), Ok((_, owner, mark))
+            if matches!(reserve(entry), Ok((_, owner, mark))
                 if owner == authority && mark == grant.mark())
             {
                 return Ok(entry);
@@ -42,7 +45,7 @@ pub(crate) fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'sta
         if left == 0 {
             return Err("identity face missing");
         }
-        room::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
+        adapt::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
         left = left.saturating_sub(RETRY_MS);
     }
 }

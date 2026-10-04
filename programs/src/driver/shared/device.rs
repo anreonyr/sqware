@@ -8,11 +8,12 @@ use protocol::service::hub;
 use protocol::service::hub::Deed;
 use protocol::system::operator::Face;
 use runtime::core::res::dock::{Dock, View};
-use runtime::env::mail::{self, PolePie};
 
 use crate::unit::Died;
 
 use crate::driver::shared::fail::Fail;
+use env::pie;
+use runtime::core::res::pie::{PolePie};
 
 /// 它是**声明**（`const` 可造：三格全是字面量 / 枚举），各驱动写在**自己那一域**里——装配表
 #[derive(Clone, Copy)]
@@ -64,7 +65,7 @@ impl Hub {
             died,
             ms,
         )?;
-        let sensor = mail::unseal_hole(hub::ALIVE_MARK).map_err(|_| Fail::at(died, "hub"))?;
+        let sensor = pie::unseal_hole(hub::ALIVE_MARK).map_err(|_| Fail::at(died, "hub"))?;
         Ok(Hub { bond, list, sensor })
     }
 

@@ -21,7 +21,6 @@ use alloc::string::String;
 use env::{MailFail, Mark, Wait};
 
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail::HolePie;
 
 use crate::common::path::{Path, PathBuf};
 use crate::communication::hand::{Receiver, RecvFail};
@@ -31,6 +30,7 @@ use crate::system::operator::{EntryId, Fail};
 
 use super::{Face, map_code};
 use crate::system::operator as ocall;
+use runtime::core::res::pie::{HolePie};
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
 const HOLE_MARK: &str = "operator-watch";

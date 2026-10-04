@@ -12,7 +12,9 @@
 /// 宏的身子。不导出：调用点一律走 [`debug!`]
 #[doc(hidden)]
 pub fn put(msg: &str) {
-    let _ = runtime::env::debug::put(msg);
+    // 切片 → `(ptr, len)` 是这一格唯一的转换；`Envcall` 只收一段裸地址。
+    let bytes = msg.as_bytes();
+    let _ = env::debug::put(env::VirtAddr::new(bytes.as_ptr() as usize), bytes.len());
 }
 
 #[macro_export]

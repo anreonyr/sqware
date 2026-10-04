@@ -22,7 +22,7 @@ use programs::Reason;
 use env::{HoleDir, Mark, PieToken};
 use protocol::debug;
 use runtime::core::res::pile::Pile;
-use runtime::env::mail::{self, HolePie, TolePie};
+use runtime::core::res::pie::{HolePie, TolePie, pies};
 
 #[programs::entry]
 fn main() -> Reason {
@@ -80,7 +80,7 @@ fn main() -> Reason {
 /// 或它已封印）——内核在 `Collect` 里先问死活、再问是不是孔，两类情形落同一格
 fn discover() -> (Option<PieToken>, Option<PieToken>, Option<PieToken>) {
     let (mut group, mut member, mut report) = (None, None, None);
-    for p in mail::pies() {
+    for p in pies() {
         if p.mark == Mark::of("member") {
             member = Some(p.token);
         } else if p.mark == Mark::of("report") {

@@ -13,8 +13,9 @@ use protocol::communication::session::{Session, establish};
 use protocol::system::identity;
 use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
 use protocol::system::operator::client as operator;
-use runtime::env::mail::{self, HolePie};
-use runtime::env::unit;
+use env::unit;
+use runtime::core::res::pie::{HolePie, reserve};
+use runtime::core::adapt;
 
 const MS: usize = 1000;
 
@@ -31,7 +32,7 @@ fn main() -> Report<'static> {
             )
             .expect("probe-denied: transient LINK"),
         );
-        runtime::env::room::sleep(core::time::Duration::from_millis(delay))
+        adapt::sleep(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");
         drop(request);
     }
@@ -102,7 +103,7 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
     if matches!(grant, Grant::Bind | Grant::Unbind) {
         let entry = establish::find(authority, grant.mark())
             .expect("probe-denied: missing explicitly injected installer face");
-        let (vestor, owner, mark) = mail::reserve(entry).unwrap();
+        let (vestor, owner, mark) = reserve(entry).unwrap();
         assert_eq!(vestor, unit::sire());
         assert_eq!(owner, authority);
         assert_eq!(mark, grant.mark());
@@ -116,7 +117,7 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
         .unwrap()
         .token(Wait::AtMost(MS))
         .expect("probe-denied: action entry missing");
-    let (_, owner, mark) = mail::reserve(entry).expect("probe-denied: entry cannot be reserved");
+    let (_, owner, mark) = reserve(entry).expect("probe-denied: entry cannot be reserved");
     assert_eq!(owner, authority);
     assert_eq!(mark, grant.mark());
     entry

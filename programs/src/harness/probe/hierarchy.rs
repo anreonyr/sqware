@@ -1,12 +1,15 @@
+use env::pie;
+use runtime::core::res::pie::{HolePie, pies, reserve};
+use runtime::core::adapt;
+
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
 pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
     use runtime::core::res::port::{self, Access, Policy};
-    use runtime::env::mail::{self, HolePie};
-    let me = runtime::env::unit::self_id();
+    let me = env::unit::self_id();
     for (mark, access) in [(COMMAND, Access::FETCH), (ANSWER, Access::STORE)] {
         let token = protocol::communication::session::establish::find(me, mark)
-            .or_else(|| mail::unseal_hole(mark).ok())
+            .or_else(|| pie::unseal_hole(mark).ok())
             .ok_or("hierarchy fixture channel")?;
         port::ship(&HolePie::from_token(token), task, access, Policy::NONE)
             .map_err(|_| "hierarchy fixture ship")?;
@@ -22,8 +25,7 @@ pub(crate) fn command(
     use env::Wait;
     use env::wire::Span as _;
     use protocol::communication::session::establish;
-    use runtime::env::mail::HolePie;
-    let me = runtime::env::unit::self_id();
+    let me = env::unit::self_id();
     let command = establish::find(me, COMMAND).unwrap();
     let answer = establish::find(me, ANSWER).unwrap();
     let mut bytes = [code; 9];
@@ -31,7 +33,7 @@ pub(crate) fn command(
     HolePie::from_token(command)
         .push(&bytes, Wait::AtMost(1000))
         .unwrap();
-    let until = runtime::env::chrono::clock() + 10_000_000_000;
+    let until = env::chrono::clock() + 10_000_000_000;
     loop {
         assembly.progress().expect("hierarchy progress");
         if code == 5 {
@@ -58,7 +60,7 @@ pub(crate) fn command(
                 HolePie::from_token(frame.back)
                     .push(&encoded[..n], Wait::AtMost(1000))
                     .unwrap();
-                let _ = runtime::env::mail::release(frame.back);
+                let _ = pie::release(frame.back);
             }
         }
         if let Ok((1, from)) = HolePie::from_token(answer).pull(&mut bytes, Wait::POLL) {
@@ -75,10 +77,10 @@ pub(crate) fn command(
             break;
         }
         assert!(
-            runtime::env::chrono::clock() < until,
+            env::chrono::clock() < until,
             "hierarchy worker did not finish command {code}"
         );
-        runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 
@@ -95,11 +97,10 @@ pub(crate) fn exercise(
     use protocol::system::identity::client::{Face, Installer, Organization};
     use protocol::system::identity::{Grant, Install, Reply, Selector, Subject, Wire};
     use protocol::system::operator::{Fail, Permit};
-    use runtime::env::mail::{self, HolePie};
     let wait = Wait::AtMost(3000);
     let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
     let face = |g| Face::direct(authority, g, entry(g)).unwrap();
-    let me = runtime::env::unit::self_id();
+    let me = env::unit::self_id();
     let Reply::Binding(Some(saved)) = face(Grant::Resolve).call(Wire::Resolve(me), wait).unwrap()
     else {
         panic!("control binding");
@@ -309,7 +310,7 @@ pub(crate) fn exercise(
                 })
                 .unwrap();
         }
-        let source = mail::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
+        let source = pie::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
         assembly
             .resources
             .write::<crate::system::control::core::publication::Publications>()
@@ -337,7 +338,7 @@ pub(crate) fn exercise(
     ));
     sender_boundary(assembly);
     command(assembly, target, 1);
-    let fake = mail::unseal_hole(protocol::system::control::publication::REF).unwrap();
+    let fake = pie::unseal_hole(protocol::system::control::publication::REF).unwrap();
     runtime::core::res::port::ship(
         &HolePie::from_token(fake),
         service,
@@ -346,8 +347,8 @@ pub(crate) fn exercise(
     )
     .unwrap();
     command(assembly, target, 5);
-    let _ = mail::seal(fake);
-    let _ = mail::release(fake);
+    let _ = pie::seal(fake);
+    let _ = pie::release(fake);
     let service_road = assembly
         .resources
         .read::<crate::system::control::serve::resource::Resources>()
@@ -398,7 +399,7 @@ pub(crate) fn exercise(
             crate::system::control::serve::lifecycle::Action::Ruin,
         )
         .expect("hierarchy: scheduled ruin");
-    assert!(runtime::env::unit::join(target, wait).unwrap_or(true));
+    assert!(env::unit::join(target, wait).unwrap_or(true));
     assembly.progress().unwrap();
     assert!(matches!(
         operator.root().tile(&target_road, wait),
@@ -564,11 +565,10 @@ pub fn reference_lifetime() {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use env::{Mark, Wait};
     use runtime::core::res::port::{self, Access, Policy};
-    use runtime::env::mail::{self, HolePie};
-    let me = runtime::env::unit::self_id();
-    let source = mail::unseal_hole(Mark::of("forget-source")).unwrap();
+    let me = env::unit::self_id();
+    let source = pie::unseal_hole(Mark::of("forget-source")).unwrap();
     assert!(
-        mail::forget(source).is_err(),
+        pie::forget(source).is_err(),
         "original resource ownership cannot be forgotten"
     );
     let borrowed = port::ship(
@@ -587,10 +587,10 @@ pub fn reference_lifetime() {
     )
     .unwrap()
     .seed();
-    assert_eq!(mail::same(source, child), Ok(true));
-    let other = mail::unseal_hole(Mark::of("forget-source")).unwrap();
-    assert_eq!(mail::same(source, other), Ok(false));
-    mail::forget(borrowed).unwrap();
+    assert_eq!(pie::same(source, child), Ok(true));
+    let other = pie::unseal_hole(Mark::of("forget-source")).unwrap();
+    assert_eq!(pie::same(source, other), Ok(false));
+    pie::forget(borrowed).unwrap();
     HolePie::from_token(child).push(b"ok", Wait::POLL).unwrap();
     let mut bytes = [0; 2];
     assert_eq!(
@@ -599,13 +599,13 @@ pub fn reference_lifetime() {
             .unwrap(),
         (2, me)
     );
-    mail::revoke(me, child).unwrap();
+    pie::revoke(me, child).unwrap();
     assert!(
-        mail::reserve(child).is_err(),
+        reserve(child).is_err(),
         "reparented capability remains revocable upstream"
     );
     for round in 0..8 {
-        let root = mail::unseal_hole(Mark::of("forget-race")).unwrap();
+        let root = pie::unseal_hole(Mark::of("forget-race")).unwrap();
         let middle = port::ship(
             &HolePie::from_token(root),
             me,
@@ -624,10 +624,10 @@ pub fn reference_lifetime() {
                 Wait::AtMost(1000),
             )
             .unwrap();
-            let me = runtime::env::unit::self_id();
+            let me = env::unit::self_id();
             progress.store(1, Ordering::Release);
             while progress.load(Ordering::Acquire) < 2 {
-                runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             for _ in 0..32 {
                 port::ship(
@@ -640,10 +640,10 @@ pub fn reference_lifetime() {
             }
             progress.store(3, Ordering::Release);
             while progress.load(Ordering::Acquire) < 4 {
-                runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             assert!(
-                !mail::pies().any(|p| p.mark == Mark::of("forget-race")),
+                !pies().any(|p| p.mark == Mark::of("forget-race")),
                 "revocation missed a concurrent descendant"
             );
         });
@@ -656,27 +656,27 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
         while stage.load(Ordering::Acquire) < 1 {
-            runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         stage.store(2, Ordering::Release);
-        mail::forget(middle).unwrap();
+        pie::forget(middle).unwrap();
         while stage.load(Ordering::Acquire) < 3 {
-            runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         if round % 2 == 0 {
-            mail::revoke(worker.id(), downstream).unwrap();
+            pie::revoke(worker.id(), downstream).unwrap();
         } else {
-            mail::release(root).unwrap();
+            pie::release(root).unwrap();
         }
         stage.store(4, Ordering::Release);
         worker.join();
-        let _ = mail::seal(root);
-        let _ = mail::release(root);
+        let _ = pie::seal(root);
+        let _ = pie::release(root);
     }
-    let _ = mail::seal(source);
-    let _ = mail::release(source);
-    let _ = mail::seal(other);
-    let _ = mail::release(other);
+    let _ = pie::seal(source);
+    let _ = pie::release(source);
+    let _ = pie::seal(other);
+    let _ = pie::release(other);
     protocol::debug::put(
         "hierarchy: Forget preserves delivered capabilities, Same distinguishes objects, concurrent Accord keeps upstream revoke/release effective",
     );
@@ -689,11 +689,10 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use protocol::system::control::publication::{Client, ENTRY, Frame, Scope, Target};
     use protocol::system::operator::{Fail, Permit};
     use runtime::core::res::port::{self, Access, Policy};
-    use runtime::env::mail::{self, HolePie};
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
-    let control = runtime::env::unit::self_id().get();
-    let protected = mail::unseal_hole(env::Mark::of("source-validation")).unwrap();
+    let control = env::unit::self_id().get();
+    let protected = pie::unseal_hole(env::Mark::of("source-validation")).unwrap();
     let raw = protected.get();
     let caller = runtime::core::task::join::closure(move || {
         let control = env::TaskId::new(control);
@@ -706,7 +705,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
             group: "operator-fixture".into(),
             name: "entry".into(),
         };
-        let source = mail::unseal_hole(env::Mark::of("publication-test")).unwrap();
+        let source = pie::unseal_hole(env::Mark::of("publication-test")).unwrap();
         assert_eq!(
             client.publish(target.clone(), source, Permit::Public, Wait::AtMost(3000)),
             Err(Fail::Denied),
@@ -735,22 +734,22 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         Policy::NONE,
     )
     .unwrap();
-    let until = runtime::env::chrono::clock() + 10_000_000_000;
+    let until = env::chrono::clock() + 10_000_000_000;
     while !done.load(Ordering::Acquire) {
         assembly.progress().unwrap();
         assert!(
-            runtime::env::chrono::clock() < until,
+            env::chrono::clock() < until,
             "sender boundary timeout"
         );
-        runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
     assert!(
-        mail::reserve(protected).is_ok(),
+        reserve(protected).is_ok(),
         "invalid request must not discard somebody else's reference"
     );
-    let _ = mail::seal(protected);
-    let _ = mail::release(protected);
+    let _ = pie::seal(protected);
+    let _ = pie::release(protected);
     protocol::debug::put(
         "hierarchy: real kernel sender and transferred source checks reject unregistered caller and forged source",
     );
@@ -766,8 +765,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         client::{self as operator, Face},
     };
     use runtime::core::res::port::{self, Access, Policy};
-    use runtime::env::mail::HolePie;
-    let control = runtime::env::unit::self_id();
+    let control = env::unit::self_id();
     let host = assembly
         .resources
         .read::<crate::system::operator::serve::install::Tree>()
@@ -782,7 +780,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         let root = control.get();
         let caller = runtime::core::task::join::closure(move || {
             while !gate.load(Ordering::Acquire) {
-                runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             let control = env::TaskId::new(root);
             let session =
@@ -837,7 +835,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         )
         .unwrap();
         released.store(true, Ordering::Release);
-        let until = runtime::env::chrono::clock() + 10_000_000_000;
+        let until = env::chrono::clock() + 10_000_000_000;
         while !done.load(Ordering::Acquire) {
             assembly
                 .resources
@@ -847,10 +845,10 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 .push(caller.id());
             assembly.progress().unwrap();
             assert!(
-                runtime::env::chrono::clock() < until,
+                env::chrono::clock() < until,
                 "standalone raw mutation timeout"
             );
-            runtime::env::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let caller_id = caller.id();
         caller.join();

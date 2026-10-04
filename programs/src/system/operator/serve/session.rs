@@ -11,7 +11,8 @@ use protocol::{
     debug,
     system::operator as ocall,
 };
-use runtime::{core::res::pile::Pile, env::mail};
+use runtime::core::res::pie::HolePie;
+use runtime::core::res::pile::Pile;
 const SETTLE_MS: usize = 1;
 const LATE_MS: usize = 1000;
 const MARKS: [Mark; ocall::Grant::COUNT + 1] = {
@@ -48,7 +49,7 @@ pub(super) fn retry(
     mut late: ResMut<LateGuests>,
     mut settling: ResMut<Settling>,
 ) -> Result<Progress, Fail> {
-    let now = runtime::env::chrono::clock();
+    let now = env::chrono::clock();
     let mut at = 0;
     while at < late.0.len() {
         let who = late.0[at].who;
@@ -73,7 +74,7 @@ pub(super) fn arm(
     settling.0 |= desk.arm_pending(
         |who| (&MARKS).iter().find_map(|mark| (ask_of)(who, *mark)),
         |ask| {
-            pile.attach(&mail::HolePie::from_token(ask), HoleDir::Pull)
+            pile.attach(&HolePie::from_token(ask), HoleDir::Pull)
                 .is_ok()
         },
     );
@@ -106,7 +107,7 @@ pub(super) fn receive(
     request.0 = None;
     if let Some(guest) = selected.0 {
         if let Some(ask) = guest.ask() {
-            let decoded = match mail::HolePie::from_token(ask).pull(&mut buffer.0, Wait::POLL) {
+            let decoded = match HolePie::from_token(ask).pull(&mut buffer.0, Wait::POLL) {
                 Ok((n, from)) if from == guest.who() => {
                     <ocall::Req as protocol::wire::message::Message>::fetch(&buffer.0[..n])
                 }
@@ -152,7 +153,7 @@ pub(super) fn sweep(
 ) -> Result<Progress, Fail> {
     let _ = desk.sweep_each(|gone| {
         if let Some(ask) = gone.ask {
-            let _ = pile.detach(&mail::HolePie::from_token(ask), HoleDir::Pull);
+            let _ = pile.detach(&HolePie::from_token(ask), HoleDir::Pull);
         }
         if let Some(at) = outs.0.iter().position(|out| out.who == gone.who) {
             if outs.0[at].send.settle() {

@@ -4,12 +4,14 @@
 
 use env::{Wait, HoleDir, Mark, PieToken};
 use runtime::core::res::port::{self, Access, Policy};
-use runtime::env::mail::{self, HolePie};
 
 use super::frame;
 use super::frame::Fail;
 use crate::communication::hand::Sender;
 use crate::communication::session::establish::{self, Held};
+use env::pie;
+use runtime::core::res::pie::{HolePie};
+use runtime::core::adapt;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
@@ -44,7 +46,7 @@ impl Line {
             Err(_) => return Err(deny(2, 0)),
         };
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单手的孔只够一个方向）。
-        let back = match mail::unseal_hole(frame::BACK_MARK) {
+        let back = match pie::unseal_hole(frame::BACK_MARK) {
             Ok(back) => back,
             Err(_) => return Err(deny(3, 0)),
         };
@@ -58,8 +60,8 @@ impl Line {
         .is_err()
         {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             return Err(deny(4, 0));
         }
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
@@ -76,12 +78,12 @@ impl Line {
             if spent >= budget {
                 break;
             }
-            let _ = runtime::env::room::sleep(core::time::Duration::from_millis(1));
+            let _ = adapt::sleep(core::time::Duration::from_millis(1));
         }
         if spent >= budget {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = mail::seal(back);
-            let _ = mail::release(back);
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
             return Err(deny(5, 0));
         }
         let mut one = [0u8; 1];
@@ -92,8 +94,8 @@ impl Line {
         let _ = out.reclaim();
         // 这一份，路由者那一份由它自己放。
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = mail::seal(back);
-        let _ = mail::release(back);
+        let _ = pie::seal(back);
+        let _ = pie::release(back);
         if code != frame::OK {
             deny(6, code);
             return Err(match code {

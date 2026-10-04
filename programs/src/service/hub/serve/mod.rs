@@ -18,8 +18,7 @@ use runtime::PAGE_SIZE;
 use runtime::core::res::dock::Dock;
 use runtime::core::res::pile::Pile;
 use runtime::core::res::port;
-use runtime::env::mail::{self, HolePie, NolePie, PolePie};
-use runtime::env::unit;
+use env::unit;
 
 use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::system::common::face::mount;
@@ -29,6 +28,8 @@ use crate::unit::hub::{CHANNEL, E_HUB, READY};
 use protocol::system::control::Scope;
 
 use self::sweep::alive;
+use env::pie;
+use runtime::core::res::pie::{HolePie, NolePie, PolePie, reserve};
 
 const MS: usize = 1000;
 
@@ -219,7 +220,7 @@ fn turn(
         return;
     };
     if !matches!(
-        mail::reserve(back),
+        reserve(back),
         Ok((_vestor, owner, mark)) if owner == from && mark == hub::BACK_MARK
     ) {
         return;
@@ -244,7 +245,7 @@ fn turn(
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
         _ => send_status(mine, hub::BAD, back),
     }
-    let _ = mail::release(back);
+    let _ = pie::release(back);
 }
 
 pub(super) fn put_said(back: PieToken, status: u8) {
@@ -354,7 +355,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
-        let door = mail::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
+        let door = pie::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
         ledger
             .enroll(Entry {
                 name,

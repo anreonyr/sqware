@@ -12,7 +12,8 @@ use protocol::debug;
 use protocol::driver::line::frame as lcall;
 use protocol::wire::message::Message;
 use runtime::core::res::pile::Pile;
-use runtime::env::mail::{self, HolePie};
+use env::pie;
+use runtime::core::res::pie::{HolePie, table_size};
 
 /// 装泊位 / 认泊位的期限（毫秒）
 const QUAY_MS: usize = 1000;
@@ -72,7 +73,7 @@ pub fn serve(
                 Err(fail) => {
                     debug!(
                         "router: lane dropped line={line} pies={}",
-                        mail::table_size()
+                        table_size()
                     );
                     lcall::fail_to_code(Some(fail))
                 }
@@ -88,7 +89,7 @@ pub fn serve(
                 }
                 None => debug!("router: no reply slot from={}", from.get()),
             }
-            let _ = mail::release(back);
+            let _ = pie::release(back);
         }
     }
 }
