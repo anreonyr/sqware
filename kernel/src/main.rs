@@ -21,6 +21,9 @@ global_asm!(
 );
 
 #[unsafe(no_mangle)]
-extern "C" fn main(hartid: usize, dtp: usize) -> ! {
-    kernel::main(hartid, dtp)
+extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
+    match kernel::init(dtp).and_then(|_| kernel::boot::init()) {
+        Ok(()) => kernel::boot::run(),
+        Err(error) => kernel::boot::fail(error),
+    }
 }

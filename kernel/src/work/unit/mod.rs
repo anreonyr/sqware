@@ -8,7 +8,7 @@ pub(crate) mod weak;
 
 use alloc::boxed::Box;
 use alloc::sync::Arc;
-use alloc::vec;
+use alloc::vec::Vec;
 use erra::ResultExt;
 
 use riscv::register::satp;
@@ -55,8 +55,6 @@ pub fn init() -> MapResult<()> {
     (|| -> Result<(), MapError> {
         unsafe {
             let m = machine::info();
-
-            mode::detect().unwrap_or_else(|e| panic!("satp mode detect failed: {e:?}"));
 
             if VirtAddr::from_raw(m.dram.base + m.dram.size) > mode::upper() {
                 return Err(MapError::DramOverlap);
@@ -120,20 +118,23 @@ pub fn init() -> MapResult<()> {
                         .map_err(|_| MapError::OutOfMemory)?
                         .assume_init()
                 });
+                let mut pages = Vec::new();
+                pages.try_reserve_exact(1).map_err(|_| MapError::OutOfMemory)?;
+                pages.push(page);
                 kernel_space.attach(
                     HART_FRAME_BASE + h * PAGE_SIZE,
-                    vec![page],
+                    pages,
                     PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
                 )?;
             }
 
+            let kernel_space = Arc::try_new(kernel_space).map_err(|_| MapError::OutOfMemory)?;
+            team::init_kernel(kernel_space.clone())?;
             satp::set(mode::mode(), kernel_space.asid().get(), kernel_space.root());
 
             flush_asid(kernel_space.asid());
             #[cfg(debug_assertions)]
             crate::layout::validate();
-
-            team::init_kernel(Arc::new(kernel_space));
 
             Ok(())
         }

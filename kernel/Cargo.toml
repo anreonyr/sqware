@@ -44,7 +44,6 @@ embedded-test-linker-script = "0.1"
 
 env = { path = "../crates/env" }
 sbi = { path = "../crates/sbi" }
-stanza = "0.5.2"
 
 bitflags = "2.13.1"
 erra = { version = "0.2.0", default-features = false }

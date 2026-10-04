@@ -33,21 +33,20 @@ pub(crate) fn testing() -> bool {
     TESTING.load(Ordering::Relaxed)
 }
 
-pub fn init(dtp: usize) {
+pub fn init(dtp: usize) -> Result<(), boot::BootError> {
     console::init();
-    platform::machine::init(dtp);
-    allocator::init().unwrap_or_else(|e| panic!("allocator init failed: {e}"));
-    unit::init().unwrap_or_else(|e| panic!("unit init failed: {e}"));
-    clock::init().unwrap_or_else(|e| panic!("clock init failed: {e}"));
-    trace::init().unwrap_or_else(|e| panic!("trace init failed: {e}"));
-    trap::resources::init();
-    runtime::switcher::envcall::resources::init();
-    trap::init();
-}
-
-pub fn main(_hartid: usize, dtp: usize) -> ! {
-    init(dtp);
-    boot::banner();
-    boot::init();
-    boot::run()
+    platform::machine::init(dtp).map_err(|source| boot::BootError::Machine { dtp, source })?;
+    allocator::init().map_err(boot::BootError::Allocator)?;
+    memory::manager::mode::detect().map_err(boot::BootError::PagingMode)?;
+    unit::init().map_err(boot::BootError::KernelSpace)?;
+    clock::init().map_err(boot::BootError::Clock)?;
+    trace::init().map_err(boot::BootError::Trace)?;
+    trap::resources::init().map_err(|source| boot::BootError::Resources {
+        operation: boot::ResourceOperation::InitializeTraps, source,
+    })?;
+    runtime::switcher::envcall::resources::init().map_err(|source| boot::BootError::Resources {
+        operation: boot::ResourceOperation::InitializeCalls, source,
+    })?;
+    trap::init().map_err(boot::BootError::TrapStacks)?;
+    Ok(())
 }

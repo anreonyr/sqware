@@ -8,9 +8,11 @@ use super::addr::VirtAddr;
 use super::entry::PteFlags;
 use super::table::TableNode;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(fack::prelude::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SatpError {
+    #[error("no supported page table mode")]
     Unsupported,
+    #[error("page table mode probe ran out of memory")]
     OutOfMemory,
 }
 
@@ -18,9 +20,13 @@ static MODE: OnceLock<satp::Mode> = OnceLock::new();
 
 pub fn detect() -> Result<satp::Mode, SatpError> {
     for candidate in [satp::Mode::Sv57, satp::Mode::Sv48, satp::Mode::Sv39] {
-        if try_mode(candidate).is_ok() {
-            MODE.set(candidate).expect("mode: detect is single-shot");
-            return Ok(candidate);
+        match try_mode(candidate) {
+            Ok(()) => {
+                MODE.set(candidate).expect("mode: detect is single-shot");
+                return Ok(candidate);
+            }
+            Err(SatpError::Unsupported) => {},
+            Err(error) => return Err(error),
         }
     }
     Err(SatpError::Unsupported)

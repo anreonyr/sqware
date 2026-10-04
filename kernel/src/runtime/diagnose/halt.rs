@@ -178,6 +178,14 @@ extern "C" fn info(info: &PanicInfo) -> ! {
     halt_loop()
 }
 
+pub(crate) fn stop_boot() {
+    // SAFETY: disable interrupts on the reporting hart.
+    unsafe { core::arch::asm!("csrci sstatus, 2") };
+    if claim() && crate::platform::machine::dram_edge().is_some() {
+        broadcast();
+    }
+}
+
 pub(crate) fn halt_loop() -> ! {
     // SAFETY: 仅清 sstatus.SIE（写本 hart CSR）
     unsafe { core::arch::asm!("csrci sstatus, 2") };

@@ -1,21 +1,13 @@
-use crate::console::Sink;
 use crate::platform::machine;
 use crate::resource::Registry;
-use crate::runtime::diagnose::render::render;
-use crate::runtime::diagnose::report::Report;
 use crate::work::mail;
 use crate::work::unit::gate::{self, AnyPie, Permission};
-use alloc::format;
-use alloc::string::String;
-use alloc::vec;
 use env::{Mark, Name, Page, PieFail, TaskId};
 
 pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
     let dtb = machine::info().dtb();
     // SAFETY: boot retains the DTB physical region for the machine's lifetime.
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base as *const u8) }.map_err(|_| PieFail::Denied)?;
-    let mut log = Report::default();
-    let log_p = log.paragraph("supplies", None);
     for node in fdt.all_nodes() {
         if exempt(node.name) {
             continue;
@@ -40,10 +32,6 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
                 Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
                 None,
             )?;
-            log_p.items.push(vec![
-                Some(String::from(node.name)),
-                Some(format!("token {}", root.token.get())),
-            ]);
             registry
                 .register(Name::Page(Page::Region(base as u64)), AnyPie::Pole(root))
                 .map_err(|e| e.into_parts().0)?;
@@ -61,7 +49,6 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
             .register(Name::Page(Page::Initrd), AnyPie::Pole(root))
             .map_err(|e| e.into_parts().0)?;
     }
-    render(log.seal(), &mut Sink, 0);
     Ok(())
 }
 fn exempt(name: &str) -> bool {

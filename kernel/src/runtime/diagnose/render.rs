@@ -1,43 +1,6 @@
 use core::fmt::Write;
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
-
-use stanza::renderer::Renderer;
-use stanza::renderer::console::{Console, Decor};
-use stanza::style::{MaxWidth, MinWidth, Styles};
-use stanza::table::{Cell, Col, Content, Row, Table};
-
 use crate::runtime::diagnose::report::{Paragraph, Report};
-
-pub fn fixed(w: usize) -> Styles {
-    Styles::default().with(MinWidth(w)).with(MaxWidth(w))
-}
-
-pub fn fixed_table(widths: &[usize]) -> Table {
-    Table::default().with_cols(widths.iter().map(|&w| Col::new(fixed(w))).collect())
-}
-
-pub fn cell(s: &str, w: usize) -> Cell {
-    Cell::new(Styles::default(), Content::Label(trunc(s, w)))
-}
-
-fn trunc(s: &str, w: usize) -> String {
-    if s.chars().count() <= w {
-        s.to_string()
-    } else {
-        s.chars().take(w).collect()
-    }
-}
-
-pub fn render_table(t: &Table) -> String {
-    let decor = Decor::default()
-        .suppress_escape_codes()
-        .suppress_outer_border()
-        .suppress_inner_horizontal_border()
-        .suppress_all_lines();
-    Console(decor).render(t)
-}
 
 pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
     for p in &r.paras {
@@ -46,34 +9,35 @@ pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
             let _ = writeln!(sink);
         }
         let mut ind = Indented::new(sink, indent);
-        let _ = ind.write_str(&render_paragraph(p));
+        let _ = render_paragraph(p, &mut ind);
         let _ = writeln!(sink);
     }
 }
 
-fn render_paragraph(p: &Paragraph) -> String {
+fn render_paragraph(p: &Paragraph, sink: &mut impl Write) -> core::fmt::Result {
     let cols = p.items.iter().map(|row| row.len()).max().unwrap_or(0);
-    let widths: Vec<usize> = (0..cols)
-        .map(|c| {
-            p.items
-                .iter()
-                .filter_map(|row| row.get(c).and_then(|s| s.as_deref()))
-                .map(|s| s.chars().count())
-                .max()
-                .unwrap_or(0)
-        })
-        .collect();
-    let mut t = fixed_table(&widths);
     for row in &p.items {
-        let cells: Vec<Cell> = (0..cols)
-            .map(|c| {
-                let s = row.get(c).and_then(|s| s.as_deref()).unwrap_or("");
-                cell(s, widths[c])
-            })
-            .collect();
-        t = t.with_row(Row::new(Styles::default(), cells));
+        let height = row.iter().filter_map(|cell| cell.as_deref())
+            .map(|text| text.lines().count()).max().unwrap_or(0).max(1);
+        for line in 0..height {
+            for col in 0..cols {
+                let text = row.get(col).and_then(|cell| cell.as_deref())
+                    .and_then(|text| text.lines().nth(line)).unwrap_or("");
+                sink.write_str(text)?;
+                if col + 1 < cols {
+                    let width = p.items.iter()
+                        .filter_map(|row| row.get(col).and_then(|cell| cell.as_deref()))
+                        .flat_map(|text| text.lines()).map(|text| text.chars().count())
+                        .max().unwrap_or(0);
+                    for _ in 0..width.saturating_sub(text.chars().count()) + 2 {
+                        sink.write_char(' ')?;
+                    }
+                }
+            }
+            sink.write_char('\n')?;
+        }
     }
-    render_table(&t)
+    Ok(())
 }
 
 struct Indented<'a, W: Write> {

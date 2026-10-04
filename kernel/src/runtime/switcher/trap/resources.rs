@@ -35,11 +35,14 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
         .map_err(|e| e.into_parts().0)?;
     Ok(())
 }
-pub(crate) fn init() {
-    RESOURCES.get_or_init(|| Resources {
-        supervisor_external: nole::NoleMeta::new(TaskId::new(0)),
-        page_fault: hole::meta(TaskId::new(0)),
-    });
+pub(crate) fn init() -> Result<(), PieFail> {
+    if RESOURCES.get().is_some() { return Ok(()) }
+    let resources = Resources {
+        supervisor_external: nole::NoleMeta::try_new(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
+        page_fault: hole::try_meta(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
+    };
+    assert!(RESOURCES.set(resources).is_ok(), "trap resources already initialized");
+    Ok(())
 }
 pub(crate) fn get() -> &'static Resources {
     RESOURCES.get().expect("trap resources not initialized")

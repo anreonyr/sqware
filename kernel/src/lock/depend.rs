@@ -2,7 +2,6 @@ use core::cell::UnsafeCell;
 
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::vec::Vec;
 
 use super::OnceLock;
 use crate::hart;
@@ -148,10 +147,13 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
         return Err(DepInitError::AlreadyInit);
     }
     let n = hart_count.clamp(1, crate::layout::MAX_HART_SLOTS);
-    let cells: Vec<HeldCell> = (0..n)
-        .map(|_| HeldCell(UnsafeCell::new(HeldSet::new())))
-        .collect();
-    let pool: &'static [HeldCell] = Box::leak(cells.into_boxed_slice());
+    let mut cells = Box::<[HeldCell]>::try_new_uninit_slice(n)
+        .map_err(|_| DepInitError::OutOfMemory)?;
+    for cell in cells.iter_mut() {
+        cell.write(HeldCell(UnsafeCell::new(HeldSet::new())));
+    }
+    // SAFETY: every slot has been initialized above.
+    let pool: &'static [HeldCell] = Box::leak(unsafe { cells.assume_init() });
     POOL.set(pool).map_err(|_| DepInitError::AlreadyInit)
 }
 

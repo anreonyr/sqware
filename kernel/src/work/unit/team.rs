@@ -188,12 +188,13 @@ impl TeamBuilder {
 
 pub(crate) static KERNEL_TEAM: OnceLock<Arc<Team>> = OnceLock::new();
 
-pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
-    KERNEL_TEAM.get_or_init(|| {
+pub(crate) fn init_kernel(space: Arc<Space>) -> Result<&'static Arc<Team>, crate::memory::manager::MapError> {
+    if let Some(team) = KERNEL_TEAM.get() { return Ok(team) }
+    let team = {
         let id = alloc_team_id();
         crate::tag!(
             Team,
-            Arc::new(Team {
+            Arc::try_new(Team {
                 space,
                 tasks: SpinLock::new_level(Level::TeamTasks, Vec::new()),
                 held: SpinLock::new_level(Level::L3, Vec::new()),
@@ -204,8 +205,10 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> &'static Arc<Team> {
                 operating: AtomicBool::new(false),
                 staged: SpinLock::new(Vec::new()),
             })
-        )
-    })
+        ).map_err(|_| crate::memory::manager::MapError::OutOfMemory)?
+    };
+    assert!(KERNEL_TEAM.set(team).is_ok(), "kernel team already initialized");
+    Ok(KERNEL_TEAM.get().expect("kernel team just initialized"))
 }
 
 pub fn kernel() -> Option<&'static Arc<Team>> {

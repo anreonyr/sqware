@@ -59,7 +59,8 @@ mod tests {
     #[init]
     fn init() {
         kernel::testing_mode();
-        kernel::init(BOOT_DTP.load(Ordering::Relaxed));
+        kernel::init(BOOT_DTP.load(Ordering::Relaxed))
+            .unwrap_or_else(|error| kernel::boot::fail(error));
     }
 
     // 用例：**健康面那十例只在 debug 档存在**——它们的身体是 `kernel::health::*`，而那些
@@ -68,6 +69,12 @@ mod tests {
     // 同一个 `root` 景，release 产品路 **6/6 稳、14 笔结局**；debug 产品路结局笔数
     // **5 / 11 / 6 / 11** 乱跳、偶发 panic。故 release 档的测试目标里**只剩整机那一例**
     // （`--scene` 会带 `-r`，见 `scripts/qtest.nu`），健康面由默认那轮（debug）覆盖。
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn boot_error_reports_without_allocation() {
+        kernel::health::boot_errors();
+    }
 
     #[cfg(debug_assertions)]
     #[test]
@@ -265,7 +272,7 @@ mod tests {
 
     #[test]
     fn scene() {
-        kernel::boot::init();
+        kernel::boot::init().unwrap_or_else(|error| kernel::boot::fail(error));
         kernel::boot::run();
     }
 }

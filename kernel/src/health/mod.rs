@@ -19,6 +19,7 @@ pub(crate) fn report_ok(item: &str, detail: fmt::Arguments) {
     crate::putln!("[health] {item}: ok ({detail})");
 }
 
+pub use crate::boot::error::accept as boot_errors;
 pub use crate::work::mail::hole::tests as hole;
 pub use crate::work::room::scheduler::core::acceptance as scheduler;
 

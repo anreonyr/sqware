@@ -34,13 +34,18 @@ pub struct NoleMeta {
 
 impl NoleMeta {
     pub(crate) fn new(owner: TaskId) -> Arc<Self> {
-        Arc::new(Self {
+        Self::try_new(owner).expect("nole allocation failed")
+    }
+
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        let life = Life::try_new()?;
+        Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, NoleState::Live),
             id: alloc_id(),
-            life: Life::new(),
+            life,
             ring: SpinLock::new_level(Level::L3, false),
             owner,
-        })
+        }).map_err(|_| crate::memory::manager::MapError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {

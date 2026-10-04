@@ -75,7 +75,7 @@ impl Drop for Caller {
 }
 
 pub fn abi_and_privilege() {
-    crate::work::room::scheduler::boot::init();
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
     use env::wire::{Decode, Wire};
     let user = Caller::new(false);
     assert!(user.raw(3usize << 32, [0; 6]) < 0);
@@ -129,7 +129,7 @@ pub fn abi_and_privilege() {
 }
 
 pub fn memory() {
-    crate::work::room::scheduler::boot::init();
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
     let user = Caller::new(false);
     let zero = user.allocate(0);
     assert_eq!(
@@ -311,7 +311,7 @@ pub fn memory() {
 }
 
 pub fn pointers() {
-    crate::work::room::scheduler::boot::init();
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
     let user = Caller::new(false);
     let at = user.allocate(PAGE_SIZE);
     assert!(user.team.space.copy_out(b"readable", at));
@@ -397,7 +397,7 @@ pub fn pointers() {
 }
 
 pub fn capability() {
-    crate::work::room::scheduler::boot::init();
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
@@ -461,7 +461,7 @@ pub fn resource_registration() {
     use crate::resource::Registry;
     use crate::runtime::switcher::{envcall::resources as calls, trap::resources as traps};
     use env::{Call, Mark, Name, PieFail, PieToken, Trap};
-    crate::work::room::scheduler::boot::init();
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
     gate::install(crate::work::room::scheduler::core::roster);
     let system = Caller::new(true);
     let service = Caller::new(false);

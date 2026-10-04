@@ -1,22 +1,22 @@
+pub(crate) mod error;
+
+pub use error::{BootError, MapOperation, ResourceOperation, fail};
+
 use core::arch::global_asm;
 
-use alloc::format;
-use alloc::vec;
 use riscv::register::satp;
 
-use crate::console::Sink;
 use crate::hart::{self, HartId};
-use crate::layout::{HART_FRAME_BASE, TRAP_STACK_SLOT_SIZE};
+use crate::layout::TRAP_STACK_SLOT_SIZE;
 use crate::layout::{ROOT_STACK_CANARY, root_stack_base};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::mode;
 use crate::platform::machine;
-use crate::runtime::diagnose::report::Report;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
-use crate::runtime::switcher::trampoline::{alltraps_va, restore};
-use crate::runtime::switcher::trap::{arm_hart, trap_stack, trap_stack_base, trap_stack_edge};
+use crate::runtime::switcher::trampoline::restore;
+use crate::runtime::switcher::trap::{arm_hart, trap_stack};
 use crate::work::room::scheduler;
 use crate::work::unit::team::kernel;
 
@@ -37,89 +37,30 @@ unsafe extern "C" {
     static _boot_entry: u8;
 }
 
-pub fn banner() {
-    let m = machine::info();
-    let mut r = Report::default();
-    {
-        let p = r.paragraph("banner", None);
-        for (label, value) in [
-            ("hart count", format!("{} H", m.hart.count)),
-            ("hart this", format!("{}", hart::hart_id())),
-            ("timebase", format!("{} Hz", m.hart.hertz)),
-            (
-                "dram",
-                format!("{:#x}..{:#x}", m.dram.base, m.dram.range().end),
-            ),
-            (
-                "free",
-                format!("{:#x}..{:#x}", m.free.base, m.free.range().end),
-            ),
-            ("trap vector", format!("{:#x}", alltraps_va())),
-            (
-                "kernel frames",
-                format!(
-                    "{:#x}..{:#x}",
-                    HART_FRAME_BASE.as_usize(),
-                    HART_FRAME_BASE.as_usize() + m.hart.count * PAGE_SIZE
-                ),
-            ),
-            (
-                "trap stack",
-                format!(
-                    "{:#x}..{:#x}",
-                    trap_stack_base(HartId::new(0)).as_usize(),
-                    trap_stack_edge(HartId::new(0)).as_usize()
-                ),
-            ),
-            (
-                "trap stack this",
-                format!(
-                    "{} @ {:#x}..{:#x}",
-                    hart::hart_id(),
-                    trap_stack_base(hart::hart_id()).as_usize(),
-                    trap_stack_edge(hart::hart_id()).as_usize()
-                ),
-            ),
-        ] {
-            p.items.push(vec![Some(label.into()), Some(value)]);
-        }
-    }
-    let sealed = r.seal();
-    let mut sink = Sink;
-    crate::runtime::diagnose::render::render(sealed, &mut sink, 0);
-}
-
-pub fn init() {
-    scheduler::boot::init();
+pub fn init() -> Result<(), BootError> {
+    scheduler::boot::init().map_err(BootError::Scheduler)?;
     register_runtime_hooks();
 
     #[cfg(debug_assertions)]
-    crate::lock::init_depend(hart::hart_count()).expect("depend init failed");
+    crate::lock::init_depend(hart::hart_count()).map_err(BootError::Dependencies)?;
 
-    // **（这一格是 release 档编不过的当场修复）**：健康面那九例整体 gate 进了
-    // `debug_assertions`（`kernel/src/health/mod.rs` 头上那一句），而这一句**没跟着 gate**
-    // ——于是 `cargo build -p kernel --release`（以及 `cargo qtest --scene` 那条 release 路）
-    // 当场 E0433：`cannot find health in the crate root`。两侧同一个闸：这里补上。
     #[cfg(debug_assertions)]
     crate::health::run();
 
     if crate::testing() && machine::info().initrd().is_none() {
-        panic!(
-            "整机用例没有镜像：`cargo-qtest` 不带 `-initrd`。请用 \
-             `nu scripts/qtest.nu --scene <景>` 跑（本检查只在测试模式生效）"
-        );
+        return Err(BootError::MissingImage);
     }
 
-    if let Some(entry) = spawn_entry().expect("boot spawn failed") {
+    if let Some(entry) = spawn_entry()? {
         crate::work::room::scheduler::core::beacon_arm(&entry);
     }
 
     crate::work::room::conductor::rooted();
 
-    boot_harts();
+    boot_harts()?;
 
     #[cfg(debug_assertions)]
-    {
+    if crate::testing() {
         crate::runtime::diagnose::ipi::run("early", None);
         crate::runtime::diagnose::ipi::start_delayed();
     }
@@ -129,6 +70,7 @@ pub fn init() {
         boot_guard == ROOT_STACK_CANARY,
         "ROOT stack overflow during boot: canary corrupted {boot_guard:#x}",
     );
+    Ok(())
 }
 
 pub fn run() -> ! {
@@ -156,14 +98,16 @@ fn register_runtime_hooks() {
     conductor::hook(SHUTDOWN_HOOKS);
 }
 
-fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, MapError> {
+fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task>>, BootError> {
     let Some(region) = machine::info().initrd() else {
         return Ok(None);
     };
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
-    let capsule = crate::platform::initrd::entry_image(blob).expect("initrd: capsule missing");
-    let team = crate::work::unit::capsule::assemble(capsule).expect("assemble boot capsule");
+    let capsule = crate::platform::initrd::entry_image(blob)
+        .ok_or(BootError::InvalidEntryImage { base: region.base, size: region.size })?;
+    let team = crate::work::unit::capsule::assemble(capsule)
+        .map_err(|source| BootError::Mapping { operation: MapOperation::AssembleCapsule, source })?;
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view = team.space.with_flush(
@@ -178,14 +122,20 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
             )?;
             Ok(va)
         },
-    )?;
+    ).map_err(|source| BootError::Mapping { operation: MapOperation::ImageView, source })?;
 
     let mut registry = crate::resource::Registry::default();
-    crate::platform::devices::register(&mut registry).map_err(resource_error)?;
-    crate::runtime::switcher::trap::resources::register(&mut registry).map_err(resource_error)?;
-    crate::runtime::switcher::envcall::resources::register(&mut registry).map_err(resource_error)?;
-    let resources = registry.freeze().map_err(|e| resource_error(e.into_parts().0))?;
-    let ledger_len = crate::resource::boot::size(resources.len()).map_err(resource_error)?;
+    crate::platform::devices::register(&mut registry)
+        .map_err(|source| BootError::Resources { operation: ResourceOperation::Devices, source })?;
+    crate::runtime::switcher::trap::resources::register(&mut registry)
+        .map_err(|source| BootError::Resources { operation: ResourceOperation::Traps, source })?;
+    crate::runtime::switcher::envcall::resources::register(&mut registry)
+        .map_err(|source| BootError::Resources { operation: ResourceOperation::Calls, source })?;
+    let resources = registry.freeze().map_err(|e| BootError::Resources {
+        operation: ResourceOperation::Freeze, source: e.into_parts().0,
+    })?;
+    let ledger_len = crate::resource::boot::size(resources.len())
+        .map_err(|source| BootError::Resources { operation: ResourceOperation::LedgerSize, source })?;
     let (ledger_pa, ledger_bytes) = crate::resource::boot::block();
     let ledger = team.space.with_flush(
         |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
@@ -199,17 +149,24 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
             )?;
             Ok(va)
         },
-    )?;
+    ).map_err(|source| BootError::Mapping { operation: MapOperation::LedgerView, source })?;
 
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
     args[env::ledger::args::VIEW_LEN] = region.size;
     args[env::ledger::args::LEDGER] = ledger.as_usize();
     args[env::ledger::args::LEDGER_LEN] = ledger_len;
-    let bootstrap = team.task().args(args.to_vec()).hold()?;
-    let entries = resources.grant(&bootstrap).map_err(|e| resource_error(e.into_parts().0))?;
-    crate::resource::boot::write(&entries).map_err(resource_error)?;
-    crate::work::unit::task::Task::release(&bootstrap).expect("freshly held task must release");
+    let mut words = alloc::vec::Vec::new();
+    words.try_reserve_exact(args.len()).map_err(|_| BootError::Bootstrap(MapError::OutOfMemory))?;
+    words.extend_from_slice(&args);
+    let bootstrap = team.task().args(words).hold().map_err(BootError::Bootstrap)?;
+    let entries = resources.grant(&bootstrap).map_err(|e| BootError::Resources {
+        operation: ResourceOperation::Grant, source: e.into_parts().0,
+    })?;
+    crate::resource::boot::write(&entries)
+        .map_err(|source| BootError::Resources { operation: ResourceOperation::WriteLedger, source })?;
+    crate::work::unit::task::Task::release(&bootstrap)
+        .map_err(|source| BootError::BootstrapRelease { task: bootstrap.ident.id, source })?;
 
     #[cfg(debug_assertions)]
     team.space.audit();
@@ -220,19 +177,12 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     Ok(Some(bootstrap))
 }
 
-fn resource_error(error: env::PieFail) -> MapError {
-    match error {
-        env::PieFail::OoM => MapError::OutOfMemory,
-        _ => MapError::SegmentMismatch,
-    }
-}
-
 fn read_only() -> crate::memory::manager::entry::PteFlags {
     use crate::memory::manager::entry::PteFlags;
     PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D
 }
 
-fn boot_harts() {
+fn boot_harts() -> Result<(), BootError> {
     let me = hart::hart_id();
     hart::mark_hart_started(me);
     let count = hart::hart_count();
@@ -251,11 +201,10 @@ fn boot_harts() {
                 ..Default::default()
             })
             .call();
-        if r.is_err() {
-            panic!("failed to start hart {hart}: {r:?}");
-        }
+        r.map_err(|source| BootError::HartStart { hart: HartId::new(hart), source })?;
         hart::mark_hart_started(HartId::new(hart));
     }
+    Ok(())
 }
 
 #[unsafe(no_mangle)]

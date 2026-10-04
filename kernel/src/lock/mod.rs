@@ -53,6 +53,8 @@ pub(crate) use depend_release;
 
 pub use bare::BareLock;
 pub use depend::Level;
+#[cfg(debug_assertions)]
+pub use depend::DepInitError;
 pub use once::OnceLock;
 pub use reentrant::RelLock;
 pub use rw::RwLock;

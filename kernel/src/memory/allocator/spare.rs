@@ -251,7 +251,8 @@ pub fn allocator() -> &'static dyn Allocator {
 
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        let heap = Box::leak(Box::new(SpareAllocator::init()?));
+        let heap = Box::leak(Box::try_new(SpareAllocator::init()?)
+            .map_err(|_| InitError::OutOfMemory)?);
         SPARE_ALLOCATOR
             .set(heap)
             .map_err(|_| InitError::AlreadyInitialized)

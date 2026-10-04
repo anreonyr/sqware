@@ -51,7 +51,7 @@ pub fn construction() {
     use alloc::{sync::Arc, vec::Vec};
     use core::sync::atomic::Ordering;
     use env::{Mark, Permission, UnitFail};
-    scheduler::boot::init();
+    scheduler::boot::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space.with(|inner| inner.dynamic(PAGE_SIZE));
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();

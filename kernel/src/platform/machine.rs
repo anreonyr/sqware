@@ -1,6 +1,8 @@
 use core::ops;
 
-use crate::layout::root_stack_edge;
+use fack::prelude::Error;
+
+use crate::layout::{MAX_HART_SLOTS, root_stack_edge};
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
 
@@ -50,46 +52,81 @@ impl Machine {
 
 static MACHINE: OnceLock<Machine> = OnceLock::new();
 
-pub fn init(dtp: usize) {
-    let fdt = unsafe { fdt::Fdt::from_ptr(dtp as *const u8) }.expect("invalid device tree blob");
-
-    let count = fdt.cpus().count();
-
-    let mem = fdt
-        .memory()
-        .regions()
-        .next()
-        .expect("device tree has no /memory node");
-    let dram_base = mem.starting_address.addr();
-    let dram_size = mem.size.unwrap_or(0);
-    let hertz = hertz(&fdt);
-    let hart = HartInfo { count, hertz };
-
-    let free_base = root_stack_edge();
-    let free_end = dram_base + dram_size;
-    let free_size = free_end - free_base;
-
-    let initrd = initrd_region(&fdt);
-    let dtb = Region::new(dtp, dtb_size(dtp as *const u8));
-
-    let mut reserved = [None; MAX_RESERVED];
-    reserved[RESERVED_INITRD] = initrd;
-    reserved[RESERVED_DTB] = Some(dtb);
-
-    MACHINE
-        .set(Machine {
-            dram: Region::new(dram_base, dram_size),
-            free: Region::new(free_base, free_size),
-            hart,
-            reserved,
-        })
-        .unwrap()
+#[derive(Error, Debug)]
+pub enum MachineError {
+    #[error("invalid device tree: {0}")]
+    DeviceTree(fdt::FdtError),
+    #[error("device tree has no /cpus node")]
+    MissingCpus,
+    #[error("device tree has no usable memory region")]
+    MissingMemory,
+    #[error("RAM does not contain the kernel and root stack")]
+    InvalidMemory,
+    #[error("invalid hart topology: count={count}, boot={boot}")]
+    Harts { count: usize, boot: usize },
+    #[error("invalid initrd region")]
+    Initrd,
+    #[error("device tree region is outside RAM")]
+    DtbRegion,
 }
 
-fn dtb_size(dtp: *const u8) -> usize {
-    // SAFETY: dtp 是 boot 交上来的 DTB 首址，前 8 字节是 magic + totalsize
-    let total = unsafe { core::ptr::read_unaligned(dtp.add(4).cast::<u32>()) };
-    (u32::from_be(total) as usize).next_multiple_of(PAGE_SIZE)
+pub fn init(dtp: usize) -> Result<(), MachineError> {
+    // SAFETY: firmware supplies a readable DTB pointer.
+    let fdt = unsafe { fdt::Fdt::from_ptr(dtp as *const u8) }
+        .map_err(MachineError::DeviceTree)?;
+    let cpus = fdt.find_node("/cpus").ok_or(MachineError::MissingCpus)?;
+    let count = cpus.children()
+        .filter(|node| node.name.split('@').next() == Some("cpu"))
+        .count();
+    let boot = crate::hart::hart_id().get();
+    if count == 0 || count > MAX_HART_SLOTS || boot >= count {
+        return Err(MachineError::Harts { count, boot });
+    }
+    let mut seen = [false; MAX_HART_SLOTS];
+    for node in cpus.children().filter(|node| node.name.split('@').next() == Some("cpu")) {
+        let id = node.property("reg").and_then(|property| property.as_usize());
+        let Some(id) = id.filter(|id| *id < count) else {
+            return Err(MachineError::Harts { count, boot });
+        };
+        if core::mem::replace(&mut seen[id], true) {
+            return Err(MachineError::Harts { count, boot });
+        }
+    }
+    let mem = fdt.find_node("/memory")
+        .and_then(|node| node.reg())
+        .and_then(|mut regions| regions.next())
+        .ok_or(MachineError::MissingMemory)?;
+    let dram_base = mem.starting_address.addr();
+    let dram_size = mem.size.filter(|size| *size > 0)
+        .ok_or(MachineError::MissingMemory)?;
+    let free_base = root_stack_edge();
+    let free_end = dram_base.checked_add(dram_size).ok_or(MachineError::InvalidMemory)?;
+    unsafe extern "C" { static _kernel_base: u8; }
+    if dram_base > core::ptr::addr_of!(_kernel_base) as usize || free_base > free_end {
+        return Err(MachineError::InvalidMemory);
+    }
+    let free_size = free_end - free_base;
+    let dtb_size = fdt.total_size().checked_next_multiple_of(PAGE_SIZE)
+        .ok_or(MachineError::DtbRegion)?;
+    if dtp < dram_base || dtp.checked_add(dtb_size).is_none_or(|end| end > free_end) {
+        return Err(MachineError::DtbRegion);
+    }
+    let initrd = initrd_region(&fdt)?;
+    if initrd.is_some_and(|region| {
+        region.base < free_base || region.range().end > free_end
+    }) {
+        return Err(MachineError::Initrd);
+    }
+    let mut reserved = [None; MAX_RESERVED];
+    reserved[RESERVED_INITRD] = initrd;
+    reserved[RESERVED_DTB] = Some(Region::new(dtp, dtb_size));
+    assert!(MACHINE.set(Machine {
+        dram: Region::new(dram_base, dram_size),
+        free: Region::new(free_base, free_size),
+        hart: HartInfo { count, hertz: hertz(&fdt) },
+        reserved,
+    }).is_ok(), "machine already initialized");
+    Ok(())
 }
 
 pub fn info() -> &'static Machine {
@@ -114,13 +151,18 @@ fn hertz(fdt: &fdt::Fdt) -> usize {
         .unwrap_or(0)
 }
 
-fn initrd_region(fdt: &fdt::Fdt) -> Option<Region> {
-    let chosen = fdt.find_node("/chosen")?;
-    let start = chosen.property("linux,initrd-start")?.as_usize()?;
-    let end = chosen.property("linux,initrd-end")?.as_usize()?;
-    if start == 0 || end <= start || !start.is_multiple_of(PAGE_SIZE) {
-        return None;
+fn initrd_region(fdt: &fdt::Fdt) -> Result<Option<Region>, MachineError> {
+    let Some(chosen) = fdt.find_node("/chosen") else { return Ok(None) };
+    let start = chosen.property("linux,initrd-start");
+    let end = chosen.property("linux,initrd-end");
+    if start.is_none() && end.is_none() {
+        return Ok(None);
     }
-    let end = end.next_multiple_of(PAGE_SIZE);
-    Some(Region::new(start, end - start))
+    let start = start.and_then(|p| p.as_usize()).ok_or(MachineError::Initrd)?;
+    let end = end.and_then(|p| p.as_usize()).ok_or(MachineError::Initrd)?;
+    if start == 0 || end <= start || !start.is_multiple_of(PAGE_SIZE) {
+        return Err(MachineError::Initrd);
+    }
+    let end = end.checked_next_multiple_of(PAGE_SIZE).ok_or(MachineError::Initrd)?;
+    Ok(Some(Region::new(start, end - start)))
 }

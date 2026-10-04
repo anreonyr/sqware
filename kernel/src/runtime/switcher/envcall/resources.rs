@@ -23,10 +23,13 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
         .map_err(|e| e.into_parts().0)?;
     Ok(())
 }
-pub(crate) fn init() {
-    RESOURCES.get_or_init(|| Resources {
-        build: NoleMeta::new(TaskId::new(0)),
-    });
+pub(crate) fn init() -> Result<(), PieFail> {
+    if RESOURCES.get().is_some() { return Ok(()) }
+    let resources = Resources {
+        build: NoleMeta::try_new(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
+    };
+    assert!(RESOURCES.set(resources).is_ok(), "call resources already initialized");
+    Ok(())
 }
 pub(crate) fn get() -> &'static Resources {
     RESOURCES.get().expect("call resources not initialized")

@@ -88,14 +88,19 @@ pub struct HoleMeta {
 
 impl HoleMeta {
     pub(super) fn new(id: HoleId, owner: TaskId) -> Arc<Self> {
-        Arc::new(Self {
+        Self::try_new(id, owner).expect("hole allocation failed")
+    }
+
+    fn try_new(id: HoleId, owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        let life = Life::try_new()?;
+        Arc::try_new(Self {
             id,
-            life: Life::new(),
+            life,
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Queue(Queue::default())),
             alarmed: AtomicBool::new(false),
             stuck: AtomicBool::new(false),
-        })
+        }).map_err(|_| crate::memory::manager::MapError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {
@@ -624,6 +629,10 @@ pub(crate) fn seal(meta: &HoleMeta) {
 
 pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
     HoleMeta::new(alloc_id(), owner)
+}
+
+pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<HoleMeta>, crate::memory::manager::MapError> {
+    HoleMeta::try_new(alloc_id(), owner)
 }
 
 #[cfg(debug_assertions)]

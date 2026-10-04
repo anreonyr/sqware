@@ -6,6 +6,7 @@ use crate::layout::{
 };
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
+use crate::memory::manager::MapError;
 use crate::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::timer;
@@ -57,16 +58,12 @@ pub fn trap_stack() -> usize {
     *TRAP_STACK_PHYS.get().expect("trap stacks not initialized")
 }
 
-pub fn init() {
+pub fn init() -> Result<(), MapError> {
     let per_hart = TRAP_STACK_SLOT_SIZE + PAGE_SIZE;
     let need = crate::hart::hart_count() * per_hart;
-    assert!(
-        crate::platform::machine::info().free.size >= need,
-        "hart_count {} needs {need:#x} B ({}×{per_hart:#x}) but free pool is {:#x} B",
-        crate::hart::hart_count(),
-        crate::hart::hart_count(),
-        crate::platform::machine::info().free.size,
-    );
+    if crate::platform::machine::info().free.size < need {
+        return Err(MapError::OutOfMemory);
+    }
 
     let segments = crate::hart::hart_count();
     assert!(segments > 0, "no harts");
@@ -81,7 +78,7 @@ pub fn init() {
         TrapStack,
         crate::memory::allocator::frame::allocator()
             .allocate(layout)
-            .expect("trap stack block allocation")
+            .map_err(|_| MapError::OutOfMemory)?
     );
     let base = block.cast::<u8>().as_ptr() as usize;
     assert!(
@@ -100,11 +97,9 @@ pub fn init() {
                 PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
                 TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
                 flags,
-            )
-            .expect("map trap stack body");
+            )?;
         space
-            .unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)
-            .expect("trap stack guard punch");
+            .unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)?;
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
@@ -133,6 +128,7 @@ pub fn init() {
     timer::beat_until(timer::blind_ceiling());
 
     arm_hart();
+    Ok(())
 }
 
 pub fn arm_hart() {
