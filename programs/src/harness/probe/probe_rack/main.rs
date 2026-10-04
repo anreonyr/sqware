@@ -26,7 +26,7 @@ use programs::driver::uart::core::frame::Bytes;
 use protocol::communication::rack::{CAP, Mode, Rack, SendFail};
 use protocol::communication::session::Session;
 use protocol::system::operator::client as operator;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -37,7 +37,7 @@ const OK_NOTE: &str = "probe-rack: newest_full=1 quiet=false";
 #[programs::entry]
 fn main() -> Report<'static> {
     // 会话保持到探针结束，供 System 识别已就绪的树连接。
-    let Ok(_session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(_session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack: 树那条路开不出来（装配者等的那一枚 LINK）");
     };
     let (dropped, _) = newest();

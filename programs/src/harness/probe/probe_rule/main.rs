@@ -16,13 +16,11 @@ use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::control::publication;
 use protocol::system::identity as icall;
-use protocol::system::identity::client::{Organization, Query, SelfOps};
-use protocol::system::identity::{Selector, Subject};
+use protocol::system::identity::{Organization, Query, SelfOps, Selector, Subject};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Permit};
+use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
@@ -51,13 +49,13 @@ const OK_NOTE: &str = "probe-rule: the rules held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
-    let me = utask::self_id();
+    let sire = unit::sire();
+    let me = unit::self_id();
 
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-rule: no tree link");
     };
-    let tree = TreeFace::of(session);
+    let tree = Face::of(session);
     let authority = programs::system::identity::serve::source::authority()
         .expect("probe-rule: no Control-issued identity authority");
     let iask =
@@ -131,7 +129,7 @@ fn main() -> Report<'static> {
     // **报"答得动了"**（Setup::Ready）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
     // （与三台驱动、三台服务那几处**同一手**）。
     let _ = protocol::communication::session::establish::endpoint(
-        utask::sire(),
+        unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
     );

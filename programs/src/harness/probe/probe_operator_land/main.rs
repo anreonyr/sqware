@@ -6,7 +6,7 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 use protocol::communication::session::Session;
-use protocol::system::control::publication::{Client, Scope, Target};
+use protocol::system::control::{Client, Scope, Target};
 use protocol::system::operator::{
     EntryId, Fail, Grant, Permit, Where,
     client::{self as operator, Face, Mine},

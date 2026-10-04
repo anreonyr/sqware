@@ -3,10 +3,8 @@
 use alloc::vec::Vec;
 use protocol::common::schedule::{Progress, Res, ResMut};
 
-use env::Mark;
-use env::Wait;
+use env::{Mark, Wait, HoleDir, PieToken, TaskId};
 use env::wire::Field;
-use env::{HoleDir, PieToken, TaskId};
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 

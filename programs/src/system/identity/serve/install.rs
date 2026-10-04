@@ -5,8 +5,7 @@
 //! authority is not a reason to release a child without an identity.
 
 use env::{Access, PieToken, Policy, TaskId, Wait};
-use protocol::system::identity::client::Installer;
-use protocol::system::identity::{Grant, Install, PrincipalId, Subject};
+use protocol::system::identity::{Installer, Grant, Install, PrincipalId, Subject};
 use runtime::core::res::port;
 use runtime::env::{mail, unit};
 

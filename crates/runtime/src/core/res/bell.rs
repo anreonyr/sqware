@@ -33,8 +33,7 @@
 //! 铃只有一条方向（有事/没事）。签名少一个参数就把这件事说完了，不必写注释解释
 //! "为什么只有 Pull"。
 
-use env::MailResult;
-use env::Wait;
+use env::{MailResult, Wait};
 
 use crate::env::mail::NolePie;
 

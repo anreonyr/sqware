@@ -19,9 +19,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 
-use env::HoleDir;
-use env::Mark;
-use env::PieToken;
+use env::{HoleDir, Mark, PieToken};
 use protocol::debug;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie, TolePie};

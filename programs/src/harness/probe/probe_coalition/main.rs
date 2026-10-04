@@ -18,10 +18,10 @@ use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::identity as icall;
-use protocol::system::operator::Grant as TreeGrant;
+use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use runtime::env::unit as utask;
+use protocol::system::operator::Face;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -37,10 +37,10 @@ const OK_NOTE: &str = "probe-coalition: identity=17, all action entries home";
 #[programs::entry]
 fn main() -> Report<'static> {
     // 一、**先装路**（次序是硬的：这一台只在别的域里说话，故先要树那条会话）。
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-coalition: no tree link");
     };
-    let tree = TreeFace::from(&session);
+    let tree = Face::from(&session);
 
     assert_eq!(icall::Grant::ALL.len(), 17);
     step(&tree, "identity", icall::DIR, icall::Grant::ALL.len());
@@ -60,7 +60,7 @@ fn main() -> Report<'static> {
             );
             let entry = protocol::communication::session::establish::find(authority, grant.mark())
                 .expect("probe-coalition: missing explicit installer face copy");
-            assert_eq!(runtime::env::mail::reserve(entry).unwrap().0, utask::sire());
+            assert_eq!(runtime::env::mail::reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
             fetch(&tree, icall::DIR, grant.name(), "identity")
@@ -75,11 +75,11 @@ fn main() -> Report<'static> {
 }
 
 /// 数一族：那一块窗格底下到齐没有（该有几枚由调用方那一族的 `Grant::ALL` 说）。
-fn step(tree: &TreeFace, family: &str, dir: &Path, want: usize) {
+fn step(tree: &Face, family: &str, dir: &Path, want: usize) {
     // **先订**（序是契约）：那一族此后每落一格都往本端这一页记一条，`Watch::of` 返回就是
     // 那个序点——故订阅排在"数一次"之前，已经到齐的族则由量具第一问当场返回。
     // 订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
-    let rein = tree.rein(TreeGrant::Watch);
+    let rein = tree.rein(Grant::Watch);
     let mut watch = match rein.watch(dir, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-coalition: {family} 那一族订不成：{fail:?}"),
@@ -96,7 +96,7 @@ fn step(tree: &TreeFace, family: &str, dir: &Path, want: usize) {
 }
 
 /// 取回一族某一面的那一枚门牌（`tile` 译号 → `token` 把门闩授进本表）。
-fn fetch(tree: &TreeFace, dir: &Path, face: &str, family: &str) -> env::PieToken {
+fn fetch(tree: &Face, dir: &Path, face: &str, family: &str) -> env::PieToken {
     // 面名由各自那一族的 `Grant` 给（单段、不含 `/`），故这一段拼不出来是**类型写错**，
     // 不是运行期的事——照仓里那几台的排法用 `expect`。
     let road = dir.try_join(face).expect("probe-coalition: bad face name");

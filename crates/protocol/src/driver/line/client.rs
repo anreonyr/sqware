@@ -2,8 +2,7 @@
 //! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
 //! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
-use env::Wait;
-use env::{HoleDir, Mark, PieToken};
+use env::{Wait, HoleDir, Mark, PieToken};
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail::{self, HolePie};
 

@@ -2,16 +2,13 @@
 
 use alloc::string::String;
 
-use env::PieToken;
-use env::Wait;
+use env::{PieToken, Wait};
 use runtime::core::res::port::{self, Access, Policy};
 use runtime::env::mail;
 
 use crate::common::path::Path;
 use crate::system::operator as ocall;
-use crate::system::operator::Fail;
-use crate::system::operator::frame::Permit;
-use crate::system::operator::{EntryId, Listing, Where};
+use crate::system::operator::{Fail, EntryId, Listing, Where, Permit};
 
 use super::tile::Tile;
 use super::{Face, Mine, map_code};

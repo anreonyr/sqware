@@ -1,8 +1,4 @@
-use super::{Fail, answer::Output};
-use super::{
-    plate,
-    session::{Late, LateGuests},
-};
+use super::{Fail, answer::Output, plate, session::{Late, LateGuests}};
 use crate::system::operator::core::Tile;
 use crate::system::{
     common::face::desk::{Desk, DeskFail},

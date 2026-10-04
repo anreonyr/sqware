@@ -13,8 +13,8 @@
 use env::{PieToken, TaskId, Wait};
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::driver::line::client::Line;
-use protocol::system::control::publication::Scope;
+use protocol::driver::line::Line;
+use protocol::system::control::Scope;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
 

@@ -20,13 +20,13 @@ use programs::driver::uart::client;
 use protocol::communication::rack::Mode;
 use protocol::communication::session::Session;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
-use runtime::env::unit as utask;
+use protocol::system::operator::Face;
+use runtime::env::unit;
 
 /// 本 bin 的 `main`：**返回类型就是它的退出账**——本域只有一种失败，故直接用 `Reason`。
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
-    let sire = utask::sire();
+    let sire = unit::sire();
 
     // 2：树那条路：本域只开一条会话（`Session::open`）——找控制台要它。
     let session =

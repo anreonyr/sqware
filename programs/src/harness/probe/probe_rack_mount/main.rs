@@ -27,12 +27,11 @@ use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
 use protocol::communication::rack::{Mode, Rack};
 use protocol::communication::session::{Session, establish};
-use protocol::system::control::publication::{Client, Scope, Target};
+use protocol::system::control::{Client, Scope, Target};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
-use protocol::system::operator::{Fail, Grant, Permit};
+use protocol::system::operator::{Face, Fail, Grant, Permit};
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -45,7 +44,7 @@ const OK_NOTE: &str = "probe-rack-mount: landed=2 sealed=pruned";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack-mount: 树那条路开不出来");
     };
     let tree = Face::of(session);
@@ -78,7 +77,7 @@ fn main() -> Report<'static> {
     }
 
     // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
-    let _ = establish::endpoint(utask::sire(), Mark::of(programs::unit::READY), Wait::POLL);
+    let _ = establish::endpoint(unit::sire(), Mark::of(programs::unit::READY), Wait::POLL);
 
     // 等 B：见到 CAP 条 = 客人已经读完 A（它那一边的次序）。
     let mut br = b.reader();
@@ -118,7 +117,7 @@ fn main() -> Report<'static> {
         reader.recv(Wait::AtMost(MS)).unwrap().bytes(),
         rig::payload(99).bytes()
     );
-    assert_eq!(mail::inspect(retained).unwrap().1, utask::self_id());
+    assert_eq!(mail::inspect(retained).unwrap().1, unit::self_id());
     protocol::debug::put(
         "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
     );

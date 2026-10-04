@@ -21,7 +21,7 @@ use runtime::PAGE_SIZE;
 use runtime::core::res::bell::Bell;
 use runtime::core::res::pile::Pile;
 use runtime::env::mail::{self, HolePie, NolePie};
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const SERVICE: &str = "router";
 
@@ -71,7 +71,7 @@ pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
     let entry =
         mail::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
-    let sire = utask::sire();
+    let sire = unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(
             E_ROUTER,

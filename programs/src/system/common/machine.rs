@@ -4,8 +4,7 @@
 //! 说齐）、**读 `/chosen` 拿载荷区的坐标**（Machine::payload）、以及按**已知坐标**要那两件
 //! （它不解释设备语义：类串是收方给的；也不持有任何设备——它只是把机器自己写的那份自述读出来）。
 
-use alloc::string::String;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use env::Key;

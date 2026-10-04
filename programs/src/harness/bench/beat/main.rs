@@ -24,8 +24,7 @@ extern crate programs;
 use core::time::Duration;
 
 use protocol::debug;
-use runtime::env::chrono;
-use runtime::env::room;
+use runtime::env::{chrono, room};
 
 /// 每轮要的周期（毫秒）
 const PERIOD_MS: u64 = 5;

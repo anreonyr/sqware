@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use env::{PieToken, TaskId, Wait};
 use protocol::common::path::{Path, PathBuf};
-use protocol::system::operator::frame::watch::Event;
+use protocol::system::operator::Event;
 use protocol::wire::message::Message;
 use runtime::env::mail::HolePie;
 

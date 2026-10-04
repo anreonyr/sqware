@@ -6,5 +6,6 @@ pub mod frame;
 pub use frame::Fail;
 
 pub mod client;
+pub use client::Line;
 
 // **客侧留在本侧**（`client`）：它自己铸孔、自己 `claim`，碰内核；形与据住同层（`frame`）。

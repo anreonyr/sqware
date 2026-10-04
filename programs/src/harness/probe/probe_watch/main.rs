@@ -13,11 +13,9 @@ use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use protocol::system::operator::frame::watch::{Event, Kind};
-use protocol::system::operator::{EntryId, Grant, Permit};
+use protocol::system::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -37,10 +35,10 @@ fn main() -> Report<'static> {
     // 一、**一条会话**（`Face::root()` 那条全操作面的路，与 `probe-rule` 同一手）：
     //    订与落都走它。**一位客人一条会话**是本族的形状（认领键是"谁开的 ＋ 树路记号"），
     //    故这一台不另开第二条——两条会话同开时，第二位客人认不到自己的那条答话路。
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-watch: no tree link");
     };
-    let tree = TreeFace::from(&session);
+    let tree = Face::from(&session);
 
     // 二、**订**：`watch` 那一面回 `OK` 之后，此后真变了才发得过来。
     let road = PathBuf::try_new(IN_ROAD).unwrap_or_else(|| panic!("probe-watch: bad road"));
@@ -146,7 +144,7 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 /// 前缀那几段由**本台自己分**（`Pane::open`：幂等，缺的就地造）——那几段是这一台自己的试验场，
 /// 不是别人的。**逐段只收号**（`Pane` 借的是上一块，攒着它就没法在循环里换新的）；
 /// 落完再沿整条路译一遍，确认"事件里那个号"与树上那一格是同一个。
-fn spot(tree: &TreeFace, road: &str, mark: &'static str) -> EntryId {
+fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
     let entry = mail::unseal_hole(env::Mark::of(mark)).unwrap();

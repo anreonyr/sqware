@@ -22,7 +22,7 @@ use programs::harness::tick;
 use protocol::communication::session::establish;
 use protocol::debug;
 use runtime::env::mail::HolePie;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它
 const MARK: &str = "wake";
@@ -35,7 +35,7 @@ const REPORT_WAKE: bool = false;
 
 #[programs::entry]
 fn main() -> Reason {
-    let sire = utask::sire();
+    let sire = unit::sire();
 
     // 一手就是"两头都装"：铸本端那一枚（刻 `wake` 的记号）交给生我者——台主认领它，于是台主
     // 手里有写端、推得醒本端——并顺手试认它那一枚（`POLL` = 不等：**它本端用不上**，本端只读

@@ -1,7 +1,5 @@
 use super::session::Request;
-use crate::system::operator::core::Location;
-use crate::system::operator::core::Tile;
-use crate::system::operator::core::{Key, Operator};
+use crate::system::operator::core::{Location, Tile, Key, Operator};
 use protocol::{
     common::schedule::{Progress, ResMut},
     system::operator as ocall,

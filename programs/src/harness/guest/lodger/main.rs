@@ -23,15 +23,14 @@ use programs::unit::lodger::E_LODGER;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Fail;
+use protocol::system::operator::{Fail, Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
 
 use env::{Access, PieKind, PieToken, Policy};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// 领上就死
 const ASK: Ask = Ask {
@@ -51,7 +50,7 @@ const E_TRIP: usize = 1;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         return Report::note(E_TRIP, "lodger: no tree link");
     };
     let tree = Face::of(session);

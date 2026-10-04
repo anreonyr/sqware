@@ -6,8 +6,7 @@
 //! **传输失败折进 Fail::Bad**：借不出回信孔 / 推不出去 / 超时 / 答话形状不对——四件事对
 
 use alloc::string::String;
-use env::{Access, Policy};
-use env::{HoleDir, PieKind, PieToken, TaskId, Wait};
+use env::{Access, Policy, HoleDir, PieKind, PieToken, TaskId, Wait};
 use runtime::core::res::port;
 use runtime::env::mail;
 

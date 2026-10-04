@@ -35,9 +35,7 @@ extern crate programs;
 
 use alloc::string::ToString;
 use programs::system::control::core::unit::Declaration;
-use programs::system::control::serve::task::Image;
-use programs::system::control::serve::task::Launch;
-use programs::system::control::serve::task::Readiness;
+use programs::system::control::serve::task::{Image, Launch, Readiness};
 
 use env::Wait;
 use programs::Reason;

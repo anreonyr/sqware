@@ -2,12 +2,11 @@
 
 use alloc::string::ToString;
 
-use env::{Access, Policy};
-use env::{PieKind, PieToken, Wait};
+use env::{Access, Policy, PieKind, PieToken, Wait};
 use protocol::common::path::Path;
 use protocol::service::hub;
 use protocol::service::hub::Deed;
-use protocol::system::operator::client::Face as TreeFace;
+use protocol::system::operator::Face;
 use runtime::core::res::dock::{Dock, View};
 use runtime::env::mail::{self, PolePie};
 
@@ -31,7 +30,7 @@ pub struct Ask {
 }
 
 /// 只能问主人自己交来的那一枚（内核那一问 `Join` 只许同队或父域，而 hub 与驱动是兄弟）
-/// **它不持树那条会话**：树上那几手每次按调用方给的 TreeFace 走（会话归 Context
+/// **它不持树那条会话**：树上那几手每次按调用方给的 Face 走（会话归 Context
 /// 四个客人各持各的）
 /// crate::driver::shared::context::Context
 pub struct Hub {
@@ -41,8 +40,8 @@ pub struct Hub {
 }
 
 impl Hub {
-    /// 两枚面各找一趟（译号带重试 ＋ 取那一枚，落在 TreeFace::tile 上）：hub 可能落得比
-    pub fn find(tree: &TreeFace, died: Died, ms: Wait) -> Result<Hub, Fail> {
+    /// 两枚面各找一趟（译号带重试 ＋ 取那一枚，落在 Face::tile 上）：hub 可能落得比
+    pub fn find(tree: &Face, died: Died, ms: Wait) -> Result<Hub, Fail> {
         // **路是 `/svc/hub/<面>`**（容器那一段接 `hub` 那一段，末段是那一枚面）——**不是
         // `/svc/drv/...`**：hub 是**服务那一层**里的一位（与驱动平级），故头一段是 `SVC`
         // 而不是驱动那一家两段。
@@ -71,7 +70,7 @@ impl Hub {
 
     /// **认领一台**：报名（Hub::bond，幂等）→ 列册（取名字）→ 树上找那一格 → 认领 ⇒ 一张契
     /// **"哪一台"由"你找的是哪一格"定**（见 protocol::service::hub）：`ask.name = None`
-    pub fn claim(&self, tree: &TreeFace, ask: &Ask, died: Died, ms: Wait) -> Result<Deed, Fail> {
+    pub fn claim(&self, tree: &Face, ask: &Ask, died: Died, ms: Wait) -> Result<Deed, Fail> {
         let class = ask.class.to_string();
         self.bond
             .bond(class.clone(), ms)
@@ -108,7 +107,7 @@ impl Hub {
 
 /// 树上找一枚门牌（**沿一条路，答那一枚**）——三个客人（本手两处 ＋ 各域自己那几处）共用
 /// **它不吞错**：失败一律折 `Fail::at(died, "hub")`（"设备账那两枚面没找着"），由调用方给号
-fn face_of(tree: &TreeFace, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
+fn face_of(tree: &Face, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
     let door = tree
         .tile(road, ms)
         .and_then(|entry| entry.token(ms))

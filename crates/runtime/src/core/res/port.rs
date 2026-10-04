@@ -16,8 +16,9 @@
 //! 差别只在三件事——推的是哪一枚、收的是哪一枚、收的时候**校不校来源**。编帧、解帧、
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
 
-use env::Wait;
-use env::{HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail};
+use env::{
+    Wait, HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail,
+};
 
 use crate::env::mail::{self, AnyPie, HolePie};
 

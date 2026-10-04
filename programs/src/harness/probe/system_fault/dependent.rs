@@ -6,9 +6,8 @@ use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use protocol::communication::session::{Session, establish};
-use protocol::system::control::publication::{Client, Object, Target};
-use protocol::system::identity::Selector;
-use protocol::system::identity::client::{Query, SelfOps};
+use protocol::system::control::{Client, Object, Target};
+use protocol::system::identity::{Selector, Query, SelfOps};
 use protocol::system::operator::{
     Fail, Permit,
     client::{self as operator, Face},

@@ -14,12 +14,10 @@ use programs::Report;
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Permit;
+use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use runtime::env::mail;
-use runtime::env::room;
-use runtime::env::unit as utask;
+use runtime::env::{mail, room};
+use runtime::env::unit;
 
 const MS: usize = 1000;
 /// 那一块窗格 —— 与 `probe-watch-gone` 订的那条路**逐字相同**（两份文件各写一遍）。
@@ -34,10 +32,10 @@ const OK_NOTE: &str = "probe-watch-after: retired and republished six times";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-watch-after: no tree link");
     };
-    let tree = TreeFace::from(&session);
+    let tree = Face::from(&session);
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
     let client = protocol::system::control::publication::Client::injected().unwrap();

@@ -25,7 +25,8 @@ use runtime::env::mail::HolePie;
 
 use crate::common::path::{Path, PathBuf};
 use crate::communication::hand::{Receiver, RecvFail};
-use crate::system::operator::frame::watch::{Event, EventFrame};
+use crate::system::operator::frame::Event;
+use crate::system::operator::frame::watch::EventFrame;
 use crate::system::operator::{EntryId, Fail};
 
 use super::{Face, map_code};

@@ -5,8 +5,7 @@
 //! 读侧），不是一次 envcall 转发——已随其余任务本地原语搬去 `crate::core::task`
 //! （那一处新开"启动参数面"一节）。本文件因此只剩"一次调用一个函数"。
 
-use env::Wait;
-use env::{ProgramKind, TaskId, TeamId, UnitResult, VirtAddr};
+use env::{Wait, ProgramKind, TaskId, TeamId, UnitResult, VirtAddr};
 
 /// 创建空的 Constructing 域。
 pub fn build(kind: ProgramKind) -> UnitResult<TeamId> {

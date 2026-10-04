@@ -1,9 +1,8 @@
 //! 清单那一块（程序表）与配对块（门闩表）＋它的逐条读法。
 
-use env::PieToken;
+use env::{PieToken, Key, PAIR_LEN, Pair};
 use env::ledger::key::{DTB, IRQ, REGION};
 use env::ledger::{args as boot_args, manifest};
-use env::{Key, PAIR_LEN, Pair};
 use protocol::debug;
 
 /// 两块账：清单（装了哪些程序）与配对块（有哪些门闩）

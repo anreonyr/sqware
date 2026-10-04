@@ -8,10 +8,11 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use protocol::communication::session::Session;
-use protocol::system::identity::client::{CallError, Organization, Query, SelfOps};
-use protocol::system::identity::{CoalitionId, Fail, Match, Selector, Subject};
+use protocol::system::identity::{
+    CallError, Organization, Query, SelfOps, CoalitionId, Fail, Match, Selector, Subject,
+};
 use protocol::system::operator::client as operator;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -19,7 +20,7 @@ const MS: usize = 1000;
 fn main() -> Report<'static> {
     let authority = programs::system::identity::serve::source::authority()
         .expect("member: no Control-issued identity authority");
-    let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS))
+    let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
         .expect("member: no tree link");
     let tree = operator::Face::of(session);
@@ -28,7 +29,7 @@ fn main() -> Report<'static> {
         SelfOps::discover(&tree, authority, Wait::AtMost(MS)).expect("member: no self actions");
     let org = Organization::discover(&tree, authority, Wait::AtMost(MS))
         .expect("member: no organization actions");
-    let me = utask::self_id();
+    let me = unit::self_id();
     let initial = query
         .resolve(me, Wait::AtMost(MS))
         .unwrap()

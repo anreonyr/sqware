@@ -4,8 +4,7 @@
 use alloc::boxed::Box;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::Wait;
-use env::{TaskId, TeamId, UnitResult};
+use env::{Wait, TaskId, TeamId, UnitResult};
 
 use crate::core::task::tls;
 use crate::env::{room, unit as env_task};

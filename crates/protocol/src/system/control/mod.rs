@@ -12,3 +12,4 @@ pub mod publication;
 pub use client::{BERTH, Face};
 pub use frame::{ASK_MARK, BACK, DENIED, DIR, Fail, LINK, NAME, State};
 pub use grant::{Grant, grant_of};
+pub use publication::{Client, Frame, Object, Reply, Scope, Target};

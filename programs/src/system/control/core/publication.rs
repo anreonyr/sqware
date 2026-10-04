@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 use protocol::common::path::PathBuf;
-use protocol::system::control::publication::Target;
+use protocol::system::control::Target;
 use protocol::system::operator::{EntryId, Permit};
 
 pub(crate) struct Address {

@@ -7,8 +7,7 @@
 
 use core::time::Duration;
 
-use runtime::env::chrono;
-use runtime::env::room;
+use runtime::env::{chrono, room};
 
 /// 一段"在台上"的目标时长（毫秒）：与 `churn` 的睡眠段一样长 ⇒ 一半在台上、一半离核
 pub const BURST_MS: usize = 1;

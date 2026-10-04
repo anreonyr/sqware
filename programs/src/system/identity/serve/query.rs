@@ -2,7 +2,7 @@ use super::install::Roster;
 use crate::system::control::serve::start::BOOT_MS;
 use env::{TaskId, Wait};
 use protocol::communication::session::establish;
-use protocol::system::control::publication::Object;
+use protocol::system::control::Object;
 use protocol::system::identity::{Grant, Selector, Wire, client::Face};
 use protocol::system::operator::{Fail, Permit};
 pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {

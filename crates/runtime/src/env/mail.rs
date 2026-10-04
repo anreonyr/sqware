@@ -91,9 +91,9 @@
 //! 这一张白名单是**下一刀（"一客一格 ＋ 待答账"）的判据**：那时三类之外会多出一类必须处理的对象
 //! ——**服务侧答话的收口**（今天它就是 `Sender::reclaim` 的无界等）。
 
-use env::Wait;
 use env::{
-    HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, Source, TaskId, ToleResult, VirtAddr,
+    Wait, HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, Source, TaskId, ToleResult,
+    VirtAddr,
 };
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。内核那一格没有

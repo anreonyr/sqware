@@ -11,13 +11,11 @@ use programs::Report;
 use programs::harness::probe;
 
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
-use protocol::communication::session::establish;
+use protocol::communication::session::{Session, establish};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine, Pane, Watch};
-use protocol::system::operator::{EntryId, Fail, Grant, Permit};
+use protocol::system::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -39,10 +37,10 @@ const OK_NOTE: &str = "probe-operator-gate: eight grants mounted";
 #[programs::entry]
 fn main() -> Report<'static> {
     // 一、**先装路**（次序是硬的，见文件头）。
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-operator-gate: no tree link");
     };
-    let tree = TreeFace::of(session);
+    let tree = Face::of(session);
 
     // 一·二、**先订**（序是契约）：`Watch::of` 返回就是那个序点——本台此后每一处都是
     //       "先问一次、不满才等事件"，故订阅必须排在"等那一块长出来"之前。
@@ -113,9 +111,9 @@ fn main() -> Report<'static> {
 
 /// `/svc/sys/operator` 那一格自己的号——**一问 ＋ 等事件**：那一块由**别的域**立
 /// （本台可能比它先起），"长出来了"那件事就是一条 `Landed`。
-/// 三手都是 TreeFace 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
+/// 三手都是 Face 上现成的手：`root().tile(路)` 译号（**只译号**，不取门闩）、
 /// `Tile::id()` 答号、`Tile::pane()` 判"是不是一块 Pane"
-fn walk(tree: &TreeFace, road: &Path, watch: &mut Watch<'_>) -> Option<EntryId> {
+fn walk(tree: &Face, road: &Path, watch: &mut Watch<'_>) -> Option<EntryId> {
     let root = tree.root();
     loop {
         // **认得出就是认出了**：`pane` 那一问失败 ⇒ 那一格此刻还不是一块窗格 ⇒ 等一条事件。

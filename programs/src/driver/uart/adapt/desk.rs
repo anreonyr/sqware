@@ -7,11 +7,11 @@ use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
 use programs::unit::uart::E_UART;
 use protocol::communication::rack::{Mode, Rack, Reader, Writer};
 use protocol::debug;
-use protocol::driver::line::client::Line;
-use protocol::system::control::publication::Scope;
+use protocol::driver::line::Line;
+use protocol::system::control::Scope;
 use protocol::system::operator::Permit;
 use protocol::system::operator::client as operator;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const ASK: Ask = Ask {
     class: "ns16550a",
@@ -40,7 +40,7 @@ pub struct Desk {
 /// 起手：上板 ＋ 开会话 → 认领设备 → 开闸 → 占线 → **开两具架** → 上树落两枚门牌（自证）→
 /// 报 `Ready`。失败那几格说**步名**（`tree` / `desk` / `line` …）。
 pub fn start(ms: Wait) -> Result<Desk, Fail> {
-    let ctx = Context::open(utask::sire(), ms).map_err(|s| {
+    let ctx = Context::open(unit::sire(), ms).map_err(|s| {
         Fail::at(
             E_UART,
             match s {

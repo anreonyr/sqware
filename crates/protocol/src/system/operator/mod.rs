@@ -41,9 +41,10 @@ pub const NAME: &str = "operator";
 pub const DIR: &Path = Path::new("svc/sys/operator");
 
 pub use frame::{
-    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, OK, Req, Said, TIP_BACK, TIP_LEN, TIP_MARK, Tip,
-    TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code,
+    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, OK, Req, Said, TIP_BACK, TIP_LEN, TIP_MARK,
+    Tip, TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code, Permit, Ruling,
+    Event, Kind, PANE_CAP,
 };
-pub use frame::{Permit, Ruling};
+pub use client::{Face, Mine, Pane, Watch};
 
 // 三格是**一组**，三个名字读成同一句式的被动式事实、故等长（9/9/9）：

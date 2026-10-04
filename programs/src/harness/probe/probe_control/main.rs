@@ -16,10 +16,10 @@ use programs::harness::probe;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::control as ccall;
-use protocol::system::operator::Fail as TreeFail;
-use protocol::system::operator::Grant as TreeGrant;
+use protocol::system::operator::Fail;
+use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -39,7 +39,7 @@ const NOBODY: &str = "probe-control-nobody";
 #[programs::entry]
 fn main() -> Report<'static> {
     // 一、**先装路**（次序是硬的，见文件头）。
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-control: no tree link");
     };
     let tree = operator::Face::from(&session);
@@ -47,7 +47,7 @@ fn main() -> Report<'static> {
     // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
     //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。
     //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
-    let rein = tree.rein(TreeGrant::Watch);
+    let rein = tree.rein(Grant::Watch);
     let mut watch = match rein.watch(ccall::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-control: /svc/sys/control 那一族订不成：{fail:?}"),
@@ -115,7 +115,7 @@ fn main() -> Report<'static> {
             .tile(&road, Wait::AtMost(MS))
             .and_then(|tile| tile.token(Wait::AtMost(MS)));
         debug!("probe-control: {}=err:{got:?}", grant.name());
-        denied_cells[i] = matches!(got, Err(TreeFail::Denied));
+        denied_cells[i] = matches!(got, Err(Fail::Denied));
     }
 
     //     走到了对面，是对面**说得清清楚楚**地拒的）。

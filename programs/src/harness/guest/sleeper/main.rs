@@ -16,15 +16,14 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Fail;
+use protocol::system::operator::{Fail, Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
 
 use env::PieToken;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
 const WANT: &str = "rtc";
@@ -46,7 +45,7 @@ fn no_service(step: &'static str) -> Report<'static> {
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
+    let sire = unit::sire();
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return no_service("sleeper: no operator");
     };

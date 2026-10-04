@@ -11,12 +11,11 @@ use programs::Report;
 
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Permit;
+use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
 
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -29,11 +28,11 @@ const OK_NOTE: &str = "probe-lease: landed, leaving";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
+    let sire = unit::sire();
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-lease: no tree link");
     };
-    let tree = TreeFace::of(session);
+    let tree = Face::of(session);
     let entry = mail::unseal_hole(env::Mark::of("lease-entry")).unwrap();
     let target = protocol::system::control::publication::Target::Service {
         scope: protocol::system::control::publication::Scope::Fixture,
@@ -54,7 +53,7 @@ fn main() -> Report<'static> {
         .unwrap();
     assert_eq!(
         mail::reserve(cap).unwrap().1,
-        utask::self_id(),
+        unit::self_id(),
         "Control must preserve publisher ownership"
     );
     debug!("probe-lease: publication={}", id.get());

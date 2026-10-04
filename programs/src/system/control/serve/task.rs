@@ -1,11 +1,10 @@
 use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
-use runtime::env::mail;
-use runtime::env::room;
-use runtime::env::unit as utask;
+use runtime::env::{mail, room};
+use runtime::env::unit;
 
 use crate::system::control::core::unit::{Announce, Service, Slot, State, Table};
 use crate::system::control::core::verdict::{Fail, Ready, Reaped, admit_mint, probe_ready};
-use protocol::communication::session::establish::Endpoint;
+use protocol::communication::session::Endpoint;
 
 use crate::unit::{Died, hub::E_HUB};
 
@@ -114,7 +113,7 @@ pub fn mint(table: &mut Table, image: Image<'_>) -> Result<TaskId, Fail> {
         },
     ) {
         let _ = room::doom(task);
-        let _ = utask::oust(team);
+        let _ = unit::oust(team);
         return Err(fail);
     }
     table.set_state(name, State::Starting);
@@ -137,7 +136,7 @@ pub fn embark(
         for g in grants {
             mail::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
         }
-        utask::embark(task).map_err(unit_fail)
+        unit::embark(task).map_err(unit_fail)
     })();
     if let Err(e) = launched {
         let _ = room::doom(task);
@@ -173,7 +172,7 @@ pub fn ready(
     let (task, announce) = (*task, *announce);
 
     if announce == Announce::None {
-        if !utask::join(task, Wait::POLL).unwrap_or(true) {
+        if !unit::join(task, Wait::POLL).unwrap_or(true) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -191,7 +190,7 @@ pub fn ready(
         table.set_state(name, State::Ready);
         return Ok(false);
     }
-    if utask::join(task, Wait::POLL).unwrap_or(true) {
+    if unit::join(task, Wait::POLL).unwrap_or(true) {
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
     }
@@ -210,7 +209,7 @@ pub fn ruin(table: &mut Table, name: &str) -> Result<(), Fail> {
         return Err(Fail::Unknown);
     };
     let task = *task;
-    utask::slay(task).map_err(unit_fail)?;
+    unit::slay(task).map_err(unit_fail)?;
     table.set_state(name, State::Stopping);
     Ok(())
 }
@@ -219,14 +218,14 @@ pub fn until(table: &Table, name: &str, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
-    if utask::join(task, Wait::POLL).unwrap_or(true) {
+    if unit::join(task, Wait::POLL).unwrap_or(true) {
         return Ok(Reaped::Now);
     }
     if millis == Wait::POLL {
         return Ok(Reaped::Unsettled);
     }
-    let _ = utask::join(task, millis);
-    if utask::join(task, Wait::POLL).unwrap_or(true) {
+    let _ = unit::join(task, millis);
+    if unit::join(task, Wait::POLL).unwrap_or(true) {
         Ok(Reaped::Unsettled)
     } else {
         Ok(Reaped::Waited)

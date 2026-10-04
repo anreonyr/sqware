@@ -22,8 +22,8 @@ use programs::harness::probe::rack as rig;
 use protocol::communication::rack::Mode;
 use protocol::communication::session::Session;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face;
-use runtime::env::unit as utask;
+use protocol::system::operator::Face;
+use runtime::env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -36,7 +36,7 @@ const OK_NOTE: &str = "probe-rack-guest: read=16 wrote=16";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack-guest: 树那条路开不出来");
     };
     let tree = Face::of(session);

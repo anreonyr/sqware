@@ -11,12 +11,10 @@ use programs::Report;
 use protocol::communication::hand::Receiver;
 use protocol::communication::session::{Session, establish};
 use protocol::system::identity;
-use protocol::system::identity::client::{Organization, Query, SelfOps};
-use protocol::system::identity::frame::{Reply, Wire};
-use protocol::system::identity::{Fail, Grant, Install};
+use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
 use protocol::system::operator::client as operator;
 use runtime::env::mail::{self, HolePie};
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 
@@ -27,7 +25,7 @@ fn main() -> Report<'static> {
     for delay in [0, 1, 2, 0, 2, 1] {
         let request = establish::Held(
             establish::endpoint(
-                utask::sire(),
+                unit::sire(),
                 env::Mark::of(protocol::system::operator::LINK),
                 Wait::POLL,
             )
@@ -39,7 +37,7 @@ fn main() -> Report<'static> {
     }
     let authority = programs::system::identity::serve::source::authority()
         .expect("probe-denied: no Control-issued identity authority");
-    let session = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS))
+    let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
         .expect("probe-denied: no tree link");
     let tree = operator::Face::of(session);
@@ -49,7 +47,7 @@ fn main() -> Report<'static> {
         .expect("probe-denied: no self actions");
     let org = Organization::discover(&tree, authority, Wait::AtMost(MS))
         .expect("probe-denied: no organization actions");
-    let me = utask::self_id();
+    let me = unit::self_id();
     let initial = query
         .resolve(me, Wait::AtMost(MS))
         .unwrap()
@@ -105,7 +103,7 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
         let entry = establish::find(authority, grant.mark())
             .expect("probe-denied: missing explicitly injected installer face");
         let (vestor, owner, mark) = mail::reserve(entry).unwrap();
-        assert_eq!(vestor, utask::sire());
+        assert_eq!(vestor, unit::sire());
         assert_eq!(owner, authority);
         assert_eq!(mark, grant.mark());
         return entry;

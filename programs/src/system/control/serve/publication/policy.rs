@@ -12,7 +12,7 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{Fail, Permit};
-use runtime::env::mail::{self};
+use runtime::env::mail::self;
 
 use super::{Approved, Decision, Request};
 fn live(table: &Table, task: TaskId) -> bool {

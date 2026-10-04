@@ -5,8 +5,7 @@
 //! 两形各是一张实现了报文约定的表，见 super::core::frame）。
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::PieToken;
-use env::{HoleDir, Wait};
+use env::{PieToken, HoleDir, Wait};
 use protocol::communication::hand::Receiver;
 use protocol::communication::session::establish;
 use protocol::debug;

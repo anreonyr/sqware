@@ -8,7 +8,7 @@ use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Object, Reply, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{EntryId, Fail, Permit};
-use runtime::env::mail::{self};
+use runtime::env::mail::self;
 
 use super::{Decision, Kind, Outcome, Request};
 impl Publications {

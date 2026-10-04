@@ -15,12 +15,11 @@ use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::{Face as TreeFace, Mine, Pane};
-use protocol::system::operator::{EntryId, Fail, Permit};
+use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 
 use protocol::driver;
 use runtime::env::mail;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
@@ -40,13 +39,13 @@ const OK_NOTE: &str = "probe-owner: owner rule held";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
+    let sire = unit::sire();
 
     // 一、与树开会话（同 `canonical` / `probe-denied`）。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-owner: no tree link");
     };
-    let tree = TreeFace::of(session);
+    let tree = Face::of(session);
 
     // 路：驱动那一族的常量（`/svc/drv`）接上服务名与砖名——一处都不自己拼。
     let Some(road) = driver::ROAD
@@ -151,7 +150,7 @@ fn main() -> Report<'static> {
     return Report::note(E_OK, OK_NOTE);
 }
 
-fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
+fn take_over(tree: &Face) -> Result<EntryId, Fail> {
     let entry = mail::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         tree.root().bind(
@@ -172,12 +171,12 @@ fn take_over(tree: &TreeFace) -> Result<EntryId, Fail> {
     }
     Err(Fail::Unknown)
 }
-fn wait_pane<'a>(tree: &'a TreeFace, road: &Path) -> Option<Pane<'a>> {
+fn wait_pane<'a>(tree: &'a Face, road: &Path) -> Option<Pane<'a>> {
     tree.pane(road, Wait::AtMost(MS)).ok()
 }
 
 /// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile
-fn wait_id(tree: &TreeFace, road: &Path) -> Option<EntryId> {
+fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
     let root = tree.root();
     let mut left = MS;
     loop {

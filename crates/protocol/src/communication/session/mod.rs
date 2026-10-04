@@ -3,12 +3,12 @@
 //! "两枚孔到手"与"一条路装上"是同一件事的两段（见 `establish` 头注那"一手"）。
 
 pub mod establish;
+pub use establish::{Endpoint, Held, alive, opened_by};
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
 use runtime::env::mail;
 
-use self::establish::Endpoint;
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）
 #[derive(Clone, Copy)]

@@ -27,10 +27,9 @@ use programs::Report;
 use protocol::common::path::Path;
 use protocol::communication::session::Session;
 use protocol::debug;
-use protocol::system::operator::Fail;
+use protocol::system::operator::{Fail, Face as Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
@@ -50,12 +49,12 @@ const OK_NOTE: &str = "probe-rule-other: all three denied as expected";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let sire = utask::sire();
+    let sire = unit::sire();
 
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-other: no tree link");
     };
-    let tree = TreeFace::of(session);
+    let tree = Face::of(session);
     let Some(base) = DIR.try_join(PANE) else {
         return bail("probe-other: bad name");
     };
@@ -94,7 +93,7 @@ fn main() -> Report<'static> {
 /// **（两格为什么分开写）**：新面把这两件分在
 /// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的
 /// 重试那一层
-fn denied(tree: &TreeFace, base: &Path, leaf: &str) -> Result<(), Fail> {
+fn denied(tree: &Face, base: &Path, leaf: &str) -> Result<(), Fail> {
     let road = base.try_join(leaf).ok_or(Fail::Unknown)?;
     let root = tree.root();
     let mut left = MS;

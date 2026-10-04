@@ -63,8 +63,7 @@ pub use self::debug::{DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult}
 pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
 pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
 pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
-pub use self::room::NOTE_MAX;
-pub use self::room::{RoomCall, RoomCallRet, RoomFail, RoomResult};
+pub use self::room::{NOTE_MAX, RoomCall, RoomCallRet, RoomFail, RoomResult};
 pub use self::tole::{Source, ToleCall, ToleCallRet, ToleFail, ToleResult};
 pub use self::unit::{UnitCall, UnitCallRet, UnitFail, UnitResult};
 

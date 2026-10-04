@@ -34,9 +34,7 @@
 use core::alloc::Layout;
 use core::ptr::NonNull;
 
-use alloc_probe::concurrent;
-use alloc_probe::harness;
-use alloc_probe::machine;
+use alloc_probe::{concurrent, harness, machine};
 use alloc_probe::memory::allocator::block;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, TestCaseError, TestRunner};

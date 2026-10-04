@@ -7,7 +7,7 @@ use crate::system::identity::serve::install::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
 use protocol::debug;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 pub(crate) fn sweep(
     mut control: protocol::common::schedule::ResMut<Control>,
     roster: protocol::common::schedule::Res<Roster>,
@@ -23,7 +23,7 @@ pub(crate) fn sweep(
                 .any(|job| job.operation.request.name == row.name)
         })
         .filter_map(|row| match row.slot {
-            Slot::Live { task, .. } if utask::join(task, Wait::POLL).unwrap_or(true) => {
+            Slot::Live { task, .. } if unit::join(task, Wait::POLL).unwrap_or(true) => {
                 Some(row.name.clone())
             }
             _ => None,
@@ -50,12 +50,12 @@ fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
         return;
     };
     table.set_state(name, State::Dead);
-    let before = utask::heir_count();
+    let before = unit::heir_count();
     let ousted = match team {
-        Some(team) => utask::oust(team).is_ok(),
+        Some(team) => unit::oust(team).is_ok(),
         None => false,
     };
-    let after = utask::heir_count();
+    let after = unit::heir_count();
     let wait = match reaped {
         Reaped::Now => "now",
         Reaped::Waited => "waited",

@@ -2,12 +2,10 @@
 
 use alloc::string::String;
 
-use env::PieToken;
-use env::Wait;
+use env::{PieToken, Wait};
 
 use crate::system::operator as ocall;
-use crate::system::operator::EntryId;
-use crate::system::operator::Fail;
+use crate::system::operator::{EntryId, Fail};
 
 use super::pane::Pane;
 use super::{Face, map_code};

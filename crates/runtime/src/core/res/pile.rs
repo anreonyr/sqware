@@ -14,8 +14,7 @@
 //! 两义共用一个形状是有意的：通知只要求复核，从不代替判据——调用方无论如何都要
 //! 重新读一遍实际状态。
 
-use env::Wait;
-use env::{HoleDir, PieToken, Source, TaskId, ToleResult};
+use env::{Wait, HoleDir, PieToken, Source, TaskId, ToleResult};
 
 use crate::env::mail::{Mate, TolePie};
 

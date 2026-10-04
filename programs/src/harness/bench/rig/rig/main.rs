@@ -35,9 +35,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 use programs::system::control::core::unit::Declaration;
-use programs::system::control::serve::task::Image;
-use programs::system::control::serve::task::Launch;
-use programs::system::control::serve::task::Readiness;
+use programs::system::control::serve::task::{Image, Launch, Readiness};
 
 use env::Mark;
 use programs::harness::tick;
@@ -46,8 +44,7 @@ use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
-use alloc::string::String;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use programs::system::control::core::unit::{Announce, Slot, Table};
 use programs::system::control::core::verdict::Reaped;
 use programs::system::control::serve::task as service;
@@ -55,8 +52,7 @@ use programs::unit::Ending;
 use protocol::communication::session::establish::{self, Endpoint, Held};
 use protocol::debug;
 use runtime::env::mail::HolePie;
-use runtime::env::room;
-use runtime::env::unit;
+use runtime::env::{room, unit};
 
 /// 受害者的清单名（programs::unit::PROGRAMS 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来

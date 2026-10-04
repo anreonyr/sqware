@@ -1,8 +1,7 @@
 //! 一份由装配者接入的 Resolve / Matches / Same 查询束；不按 mark 猜权威。
 
 use env::{TaskId, Wait};
-use protocol::system::identity::client::TaskQuery;
-use protocol::system::identity::{Match, Selector};
+use protocol::system::identity::{TaskQuery, Match, Selector};
 use protocol::system::operator::{EntryId, Permit};
 
 use crate::system::operator::core::Operator;

@@ -20,11 +20,10 @@ use programs::Report;
 
 use protocol::common::path::PathBuf;
 use protocol::communication::session::Session;
-use protocol::system::operator::Grant;
+use protocol::system::operator::{Grant, Face as Face};
 use protocol::system::operator::client as operator;
-use protocol::system::operator::client::Face as TreeFace;
 use runtime::env::room;
-use runtime::env::unit as utask;
+use runtime::env::unit;
 
 const MS: usize = 1000;
 /// 订的那条路 —— 与 `probe-watch-after` 改的那条**逐字相同**（两份文件各写一遍：各是独立 bin）。
@@ -35,10 +34,10 @@ const OK_NOTE: &str = "probe-watch-gone: subscribed then left";
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let Ok(session) = Session::open(utask::sire(), operator::BERTH, Wait::AtMost(MS)) else {
+    let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-watch-gone: no tree link");
     };
-    let tree = TreeFace::from(&session);
+    let tree = Face::from(&session);
     let road = PathBuf::try_new(ROAD).unwrap_or_else(|| panic!("probe-watch-gone: bad road"));
     // **柄先绑**：临时的 `Rein` 活不过这一条绑定（与 `probe-watch` 那一手同形）。
     let rein = tree.rein(Grant::Watch);

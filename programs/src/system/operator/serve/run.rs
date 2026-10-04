@@ -1,7 +1,5 @@
-use super::{Fail, answer::Output, watch};
 use super::{
-    door::Judgment,
-    frame::Running,
+    Fail, answer::Output, watch, door::Judgment, frame::Running,
     session::{Buffer, Hit, LateGuests, Outboxes, Request, Selected, Settling},
     tip::{Ack, CurrentTip, Tip, Tips},
 };
