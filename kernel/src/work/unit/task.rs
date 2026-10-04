@@ -466,7 +466,7 @@ impl TaskBuilder {
         if count > 0 {
             write_args(&self.team.space, VirtAddr::from_raw(args_at), &self.args);
         }
-        let sp = VirtAddr::from_raw(args_at & !0xF);
+        let sp = VirtAddr::wrap(args_at & !0xF);
 
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
@@ -482,7 +482,7 @@ impl TaskBuilder {
                 &self.team,
                 self.entry,
                 sp,
-                (VirtAddr::from_raw(args_at), count),
+                (VirtAddr::wrap(args_at), count),
                 frame_pa,
                 frame_va,
             );

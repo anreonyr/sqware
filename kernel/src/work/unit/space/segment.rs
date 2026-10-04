@@ -1,6 +1,8 @@
 use alloc::alloc::AllocError;
 use alloc::vec::Vec;
 
+use crate::memory::manager::MapError;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SegmentKind {
     Normal,
@@ -23,33 +25,23 @@ impl Segment {
         }
     }
 
-    pub(crate) fn allocate(&mut self, size: usize) -> Result<usize, AllocError> {
-        let size = size.max(1);
-        let mut cursor = self.base;
-        let mut at = self.allocated.len();
-        for (i, &(start, len, _)) in self.allocated.iter().enumerate() {
-            if start.saturating_sub(cursor) >= size {
-                at = i;
-                break;
-            }
-            cursor = cursor.max(start.saturating_add(len));
-        }
-        if at == self.allocated.len() {
-            if self.edge.saturating_sub(cursor) < size {
-                return Err(AllocError);
-            }
-        }
-        self.allocated.try_reserve(1).map_err(|_| AllocError)?;
-        self.allocated.insert(at, (cursor, size, 0));
-        Ok(cursor)
+    pub(crate) fn gaps(&self) -> impl DoubleEndedIterator<Item = (usize, usize)> + '_ {
+        (0..=self.allocated.len()).map(|i| {
+            let start = if i == 0 { self.base } else {
+                let (start, len, _) = self.allocated[i - 1];
+                start + len
+            };
+            let end = self.allocated.get(i).map_or(self.edge, |&(start, _, _)| start);
+            (start, end)
+        }).filter(|&(start, end)| start < end)
     }
 
-    pub(crate) fn reserve(&mut self, addr: usize, size: usize) -> bool {
+    pub(crate) fn allocate(&mut self, addr: usize, size: usize) -> Result<(), MapError> {
         let Some(end) = addr.checked_add(size) else {
-            return false;
+            return Err(MapError::NoRegion);
         };
         if size == 0 || addr < self.base || end > self.edge {
-            return false;
+            return Err(MapError::NoRegion);
         }
         let at = self
             .allocated
@@ -57,13 +49,11 @@ impl Segment {
         if at > 0 && self.allocated[at - 1].0 + self.allocated[at - 1].1 > addr
             || at < self.allocated.len() && end > self.allocated[at].0
         {
-            return false;
+            return Err(MapError::NoRegion);
         }
-        if self.allocated.try_reserve(1).is_err() {
-            return false;
-        }
+        self.allocated.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
         self.allocated.insert(at, (addr, size, 0));
-        true
+        Ok(())
     }
 
     pub(crate) fn deallocate(&mut self, addr: usize, size: usize) -> bool {

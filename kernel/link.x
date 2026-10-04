@@ -15,15 +15,18 @@ SECTIONS
   .trampoline ALIGN(0x1000) : {
     KEEP(*(.trampoline))
   }
-  /* 代码段尾：**今日无读者**（旧 alloc-site 回溯守卫随 fence 审计层一起删了；
-     内核域判定今天比的是 `_kernel_edge`）。留着是为了链接脚本的完整性。 */
+  ASSERT(SIZEOF(.trampoline) <= 0x1000, "trampoline exceeds one page")
+  . = ALIGN(0x1000);
   _text_end = .;
 
   .data : {
     *(.data*)
+    *(.sdata*)
   }
   .bss : {
     *(.bss*)
+    *(.sbss*)
+    *(COMMON)
   }
 
   /* 只读段放镜像最后：主栈位于 `_kernel_edge` 之上、向下生长，越界第一脚即踩
@@ -33,6 +36,9 @@ SECTIONS
   .rodata ALIGN(0x1000) : {
     _rodata_start = .;
     *(.rodata*)
+    *(.srodata*)
+    *(.eh_frame_hdr)
+    *(.eh_frame)
   }
 
   . = ALIGN(0x1000);
