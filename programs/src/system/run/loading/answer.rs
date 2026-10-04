@@ -1,4 +1,3 @@
-use crate::system::control::core::unit::State;
 use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait, pie};
 use protocol::{
@@ -42,19 +41,7 @@ pub fn receive(
                 {
                     continue;
                 }
-                let mut accepted = None;
-                if let Some(item) = control
-                    .instances
-                    .iter_mut()
-                    .find(|item| item.task == claim.task && item.owner == from)
-                {
-                    if env::chrono::clock() < item.claim_until && item.state == State::Debarked {
-                        if let Some(team) = item.team {
-                            item.claimed = true;
-                            accepted = Some(team);
-                        }
-                    }
-                }
+                let accepted = control.claim_instance(from, claim.task);
                 let said = Said {
                     status: if accepted.is_some() {
                         protocol::wire::OK
@@ -65,13 +52,7 @@ pub fn receive(
                     task: claim.task,
                 };
                 if !reply(claim.back, said) && accepted.is_some() {
-                    if let Some(item) = control
-                        .instances
-                        .iter_mut()
-                        .find(|item| item.task == claim.task)
-                    {
-                        item.state = State::Stopping;
-                    }
+                    control.stop_instance(claim.task);
                 }
                 continue;
             }

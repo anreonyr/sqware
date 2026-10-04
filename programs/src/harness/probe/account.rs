@@ -11,7 +11,96 @@ use protocol::common::schedule::{Cursor, Progress, Schedule};
 use protocol::system::control::{self, Face, State, account::Client};
 
 const WAIT: Wait = Wait::AtMost(2000);
+#[derive(Default)]
+struct HookFault {
+    prepare: bool,
+    failed_task: Option<TaskId>,
+    waited: bool,
+    retired_failed: bool,
+    waiting: Option<usize>,
+    signals: Option<Arc<Signals>>,
+}
+fn fail_prepare(
+    mut fault: protocol::common::schedule::ResMut<HookFault>,
+    active: protocol::common::schedule::Res<serve::hook::Active>,
+    resources: protocol::common::schedule::Res<crate::system::run::resource::Resources>,
+) -> Result<Progress, &'static str> {
+    if fault.prepare {
+        let task = active.task.ok_or("probe hook target")?;
+        assert!(
+            resources.runtime_road(task).is_some(),
+            "prepare hook failed before mounting runtime"
+        );
+        fault.prepare = false;
+        fault.failed_task = Some(task);
+        return Err("probe preparation hook failure");
+    }
+    Ok(Progress::Done)
+}
+fn delay_retire(
+    mut fault: protocol::common::schedule::ResMut<HookFault>,
+    active: protocol::common::schedule::Res<serve::hook::Active>,
+    control: protocol::common::schedule::Res<serve::unit::Control>,
+) -> Result<Progress, &'static str> {
+    let item = control
+        .instances
+        .iter()
+        .find(|item| Some(item.task) == active.task)
+        .unwrap();
+    assert_eq!(item.state, UnitState::Stopping);
+    assert!(
+        item.team.is_some(),
+        "retire hook reported reclaimed before completion"
+    );
+    if !fault.waited {
+        fault.waited = true;
+        fault.waiting = Some(
+            fault
+                .signals
+                .as_ref()
+                .unwrap()
+                .pings
+                .load(Ordering::Acquire),
+        );
+        return Ok(Progress::Pending);
+    }
+    if let Some(baseline) = fault.waiting {
+        if fault
+            .signals
+            .as_ref()
+            .unwrap()
+            .pings
+            .load(Ordering::Acquire)
+            <= baseline
+        {
+            return Ok(Progress::Pending);
+        }
+        fault.waiting = None;
+    }
+    if !fault.retired_failed {
+        fault.retired_failed = true;
+        return Err("probe retirement hook failure");
+    }
+    Ok(Progress::Done)
+}
+fn hooks() -> protocol::common::schedule::Plan<serve::Fail> {
+    let children = crate::system::run::hooks::children().unwrap();
+    let mut wrapped = alloc::vec::Vec::new();
+    for (key, child) in children {
+        let mut wrap = Schedule::new();
+        if key == serve::hook::Key::Retire {
+            wrap.add_system("delay", 0u8, delay_retire).unwrap();
+        }
+        wrap.add_plan("registered", 1u8, child).unwrap();
+        if key == serve::hook::Key::Prepare {
+            wrap.add_system("fail", 2u8, fail_prepare).unwrap();
+        }
+        wrapped.push((key, wrap.build().unwrap()));
+    }
+    serve::hook::plan(wrapped).unwrap()
+}
 struct Signals {
+    pings: AtomicUsize,
     stage: AtomicUsize,
     ack: AtomicUsize,
     target: AtomicUsize,
@@ -50,6 +139,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     let root = unit::self_id();
     let heirs = unit::heir_count();
     let signals = Arc::new(Signals {
+        pings: AtomicUsize::new(0),
         stage: AtomicUsize::new(0),
         ack: AtomicUsize::new(0),
         target: AtomicUsize::new(0),
@@ -107,6 +197,12 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
         announce(&s, 13, failed.task);
         lifecycle.instance(failed.task).ruin(WAIT).unwrap();
         assert_eq!(reference(root), account);
+        announce(&s, 5, TaskId::new(0));
+        assert_eq!(
+            client.create("anran", WAIT).err(),
+            Some(control::Fail::NotReady)
+        );
+        announce(&s, 15, TaskId::new(0));
         let abandoned = client.create("anran", WAIT).unwrap();
         announce(&s, 4, abandoned.task);
         s.done.store(true, Ordering::Release);
@@ -115,7 +211,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     let s = signals.clone();
     let entry = assembly
         .resources
-        .read::<serve::account::Accounts>()
+        .read::<crate::system::run::account::Accounts>()
         .unwrap()
         .entry;
     let alias = operator
@@ -185,7 +281,14 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             Err(control::Fail::Denied)
         ));
         p.peer_done.store(true, Ordering::Release);
-        until(|| p.done.load(Ordering::Acquire));
+        while !p.done.load(Ordering::Acquire) {
+            assert!(matches!(
+                lifecycle.instance(target).state(WAIT),
+                Err(control::Fail::Denied)
+            ));
+            p.pings.fetch_add(1, Ordering::Release);
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        }
     });
     let peer_grant = env::pie::accord(
         entry,
@@ -241,9 +344,16 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             .unwrap()
             .current
     };
+    assembly
+        .resources
+        .insert(HookFault {
+            signals: Some(signals.clone()),
+            ..HookFault::default()
+        })
+        .unwrap();
     let mut schedule = Schedule::new();
     schedule
-        .add_system("account.receive", 0u8, serve::account::receive)
+        .add_system("account.receive", 0u8, crate::system::run::account::receive)
         .unwrap();
     schedule
         .add_system("instances.receive", 1, serve::instance::receive)
@@ -254,8 +364,9 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     schedule
         .add_system("instances.reap", 3, serve::instance::reap)
         .unwrap();
+    schedule.add_plan("instance.hooks", 4, hooks()).unwrap();
     schedule
-        .add_system("account.completed", 4, serve::account::completed)
+        .add_system("launch.completed", 5, crate::system::run::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -270,7 +381,29 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             cursor.reset();
         }
         let stage = signals.stage.load(Ordering::Acquire);
-        let target = TaskId::new(signals.target.load(Ordering::Acquire));
+        let mut target = TaskId::new(signals.target.load(Ordering::Acquire));
+        if stage == 5 && stage != observed {
+            assembly.resources.write::<HookFault>().unwrap().prepare = true;
+            observed = stage;
+            signals.ack.store(stage, Ordering::Release);
+            continue;
+        }
+        if stage == 15 {
+            target = assembly
+                .resources
+                .read::<HookFault>()
+                .unwrap()
+                .failed_task
+                .expect("preparation failure was not injected");
+            let control = assembly.resources.read::<serve::unit::Control>().unwrap();
+            if !control
+                .instances
+                .iter()
+                .any(|item| item.task == target && item.state == UnitState::Dead)
+            {
+                continue;
+            }
+        }
         if stage != 0 && stage != observed {
             let roster = assembly
                 .resources
@@ -279,7 +412,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             let binding = crate::system::identity::serve::query::binding(&roster, target).unwrap();
             let runtime = assembly
                 .resources
-                .read::<serve::resource::Resources>()
+                .read::<crate::system::run::resource::Resources>()
                 .unwrap()
                 .runtime_road(target);
             if stage < 10 {
@@ -317,7 +450,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             .all(|item| item.team.is_none());
         let registered = assembly
             .resources
-            .read::<serve::resource::Resources>()
+            .read::<crate::system::run::resource::Resources>()
             .unwrap()
             .runtime_road(target)
             .is_some();
@@ -370,12 +503,19 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
             .token(WAIT)
             .is_ok()
     );
+    {
+        let fault = assembly.resources.read::<HookFault>().unwrap();
+        assert!(
+            fault.waited && fault.retired_failed && fault.failed_task.is_some(),
+            "hook failure coverage missing"
+        );
+    }
     assert_eq!(
         unit::heir_count(),
         heirs,
         "account-instance: runtime team leaked"
     );
     protocol::debug::put(
-        "account-instance: foreign caller, expiry, start failure and owner death cleaned",
+        "account-instance: hook wait/failure rollback, foreign caller, expiry, start failure and owner death cleaned",
     );
 }

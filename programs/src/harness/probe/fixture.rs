@@ -1,11 +1,11 @@
-use crate::system::control::serve::schedule;
+use crate::system::run::resource::Resources;
+use crate::system::run::schedule;
 use crate::system::{
     control::{
         core::verdict,
         serve::{
             self,
             lifecycle::{Action, Active, Key, Operations, Request},
-            resource::Resources,
             unit::Control,
         },
     },
@@ -72,7 +72,7 @@ fn inject(
 }
 impl Fixture {
     pub fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::control::serve::install::resources(boot).map_err(|_| ())?;
+        let mut resources = crate::system::run::install::resources(boot).map_err(|_| ())?;
         resources
             .insert(Fault {
                 armed: false,
@@ -84,7 +84,7 @@ impl Fixture {
             .insert(Dispatch::<(), verdict::Fail>::new())
             .map_err(|_| ())?;
         let mut start = schedule::startup().map_err(|_| ())?;
-        let mut children = schedule::lifecycle().map_err(|_| ())?;
+        let mut children = serve::schedule::lifecycle().map_err(|_| ())?;
         let at = children
             .iter()
             .position(|(key, _)| *key == Key::Embark)
@@ -113,7 +113,7 @@ impl Fixture {
             schedule::maintenance()
                 .map_err(|_| ())?
                 .map_error(|_| serve::Fail::Publication),
-            schedule::actions(children).map_err(|_| ())?,
+            serve::schedule::actions(children).map_err(|_| ())?,
             schedule::frame().map_err(|_| ())?,
             schedule::shutdown().map_err(|_| ())?,
         ];

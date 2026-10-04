@@ -4,10 +4,10 @@
 //! children inherit the kernel sender's current snapshot before embark. An unavailable
 //! authority is not a reason to release a child without an identity.
 
-use env::{Access, PieToken, Policy, TaskId, Wait};
-use protocol::system::identity::{Installer, Grant, Install, PrincipalId, Subject};
-use runtime::core::res::port;
 use env::unit;
+use env::{Access, PieToken, Policy, TaskId, Wait};
+use protocol::system::identity::{Grant, Install, Installer, PrincipalId, Subject};
+use runtime::core::res::port;
 
 use super::source::face_of;
 use crate::system::control::serve::start::BOOT_MS;
@@ -48,38 +48,35 @@ impl Roster {
         self.inject(task)
     }
 
-    pub fn user(&self) -> Result<Subject, &'static str> {
+    pub fn derive_subject(&self) -> Result<Subject, &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
-        let principal = installer.derive(PrincipalId::root(installer.authority()), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "derive user identity")?;
-        Subject::new(principal, &[]).map_err(|_| "user subject")
+        let principal = installer
+            .derive(
+                PrincipalId::root(installer.authority()),
+                Wait::AtMost(BOOT_MS),
+            )
+            .map_err(|_| "derive subject principal")?;
+        Subject::new(principal, &[]).map_err(|_| "derived subject")
     }
 
-    pub fn install_subject(&self, task: TaskId, subject: Subject) -> Result<(), &'static str> {
-        self.installer.as_ref().ok_or("identity not installed")?
-            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "install user identity")?;
+    pub fn install(&self, task: TaskId, identity: Install) -> Result<(), &'static str> {
+        self.installer
+            .as_ref()
+            .ok_or("identity not installed")?
+            .bind(task, identity, Wait::AtMost(BOOT_MS))
+            .map_err(|_| "install task identity")?;
         self.inject(task)
     }
 
     pub fn inherit(&self, task: TaskId, parent: TaskId) -> Result<(), &'static str> {
-        let installer = self.installer.as_ref().ok_or("identity not installed")?;
-        installer
-            .bind(task, Install::Inherit { parent }, Wait::AtMost(BOOT_MS))
-            .map_err(|_| "inherit identity")?;
-        self.inject(task)
+        self.install(task, Install::Inherit { parent })
     }
 
     fn inject(&self, task: TaskId) -> Result<(), &'static str> {
         let resolve = self.resolve.ok_or("identity authority anchor")?;
-        port::ship(
-            resolve,
-            task,
-            Access::STORE | Access::FETCH,
-            Policy::NONE,
-        )
-        .map(|_| ())
-        .map_err(|_| "inject identity authority")
+        port::ship(resolve, task, Access::STORE | Access::FETCH, Policy::NONE)
+            .map(|_| ())
+            .map_err(|_| "inject identity authority")
     }
 
     /// Explicit device grant, never a reset of a task's attenuated binding.

@@ -8,4 +8,14 @@ pub struct Instance {
     pub state: State,
     pub claimed: bool,
     pub claim_until: u64,
+    pub hook: protocol::common::schedule::Cursor,
+}
+
+impl Instance {
+    pub(crate) fn stop(&mut self) {
+        if self.state != State::Stopping {
+            self.hook.reset();
+        }
+        self.state = State::Stopping;
+    }
 }

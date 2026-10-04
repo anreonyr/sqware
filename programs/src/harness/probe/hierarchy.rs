@@ -10,8 +10,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
         let token = protocol::communication::session::establish::find(me, mark)
             .or_else(|| pie::unseal_hole(mark).ok())
             .ok_or("hierarchy fixture channel")?;
-        port::ship(token, task, access, Policy::NONE)
-            .map_err(|_| "hierarchy fixture ship")?;
+        port::ship(token, task, access, Policy::NONE).map_err(|_| "hierarchy fixture ship")?;
     }
     Ok(())
 }
@@ -285,9 +284,9 @@ pub(crate) fn exercise(
         );
         assembly
             .resources
-            .write::<crate::system::control::serve::resource::Resources>()
+            .write::<crate::system::run::resource::Resources>()
             .unwrap()
-            .approve(crate::system::control::serve::resource::Approval {
+            .approve(crate::system::run::resource::Approval {
                 service,
                 task: target,
                 kind: "test".into(),
@@ -298,9 +297,9 @@ pub(crate) fn exercise(
         for i in 0..33 {
             assembly
                 .resources
-                .write::<crate::system::control::serve::resource::Resources>()
+                .write::<crate::system::run::resource::Resources>()
                 .unwrap()
-                .approve(crate::system::control::serve::resource::Approval {
+                .approve(crate::system::run::resource::Approval {
                     service,
                     task: target,
                     kind: "full".into(),
@@ -312,14 +311,14 @@ pub(crate) fn exercise(
         let source = pie::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
         assembly
             .resources
-            .write::<crate::system::control::core::publication::Publications>()
+            .write::<crate::system::run::publication::book::Publications>()
             .unwrap()
             .internal(
                 &mut assembly
                     .resources
                     .write::<crate::system::operator::serve::install::Tree>()
                     .unwrap(),
-                &crate::system::control::serve::publication::Internal {
+                &crate::system::run::publication::Internal {
                     road: (protocol::common::path::Path::new("svc/fixtures/stale")).to_path_buf(),
                     entry: source,
                     access: (Permit::Identity(Selector::MemberOf(coalition)), me),
@@ -350,7 +349,7 @@ pub(crate) fn exercise(
     let _ = pie::release(fake);
     let service_road = assembly
         .resources
-        .read::<crate::system::control::serve::resource::Resources>()
+        .read::<crate::system::run::resource::Resources>()
         .unwrap()
         .runtime_road(service)
         .unwrap();
@@ -388,7 +387,7 @@ pub(crate) fn exercise(
     command(assembly, target, 2);
     let target_road = assembly
         .resources
-        .read::<crate::system::control::serve::resource::Resources>()
+        .read::<crate::system::run::resource::Resources>()
         .unwrap()
         .runtime_road(target)
         .unwrap();
@@ -442,7 +441,7 @@ pub(crate) fn exercise(
     assert!(
         assembly
             .resources
-            .read::<crate::system::control::serve::resource::Resources>()
+            .read::<crate::system::run::resource::Resources>()
             .unwrap()
             .runtime_road(failed_task)
             .is_none()
@@ -570,22 +569,12 @@ pub fn reference_lifetime() {
         pie::forget(source).is_err(),
         "original resource ownership cannot be forgotten"
     );
-    let borrowed = port::ship(
-        source,
-        me,
-        Access::FETCH | Access::STORE,
-        Policy::VEST,
-    )
-    .unwrap()
-    .seed();
-    let child = port::ship(
-        borrowed,
-        me,
-        Access::FETCH | Access::STORE,
-        Policy::VEST,
-    )
-    .unwrap()
-    .seed();
+    let borrowed = port::ship(source, me, Access::FETCH | Access::STORE, Policy::VEST)
+        .unwrap()
+        .seed();
+    let child = port::ship(borrowed, me, Access::FETCH | Access::STORE, Policy::VEST)
+        .unwrap()
+        .seed();
     assert_eq!(pie::same(source, child), Ok(true));
     let other = pie::unseal_hole(Mark::of("forget-source")).unwrap();
     assert_eq!(pie::same(source, other), Ok(false));
@@ -605,14 +594,9 @@ pub fn reference_lifetime() {
     );
     for round in 0..8 {
         let root = pie::unseal_hole(Mark::of("forget-race")).unwrap();
-        let middle = port::ship(
-            root,
-            me,
-            Access::FETCH | Access::STORE,
-            Policy::VEST,
-        )
-        .unwrap()
-        .seed();
+        let middle = port::ship(root, me, Access::FETCH | Access::STORE, Policy::VEST)
+            .unwrap()
+            .seed();
         let stage = Arc::new(AtomicUsize::new(0));
         let progress = stage.clone();
         let root_id = me.get();
@@ -629,13 +613,7 @@ pub fn reference_lifetime() {
                 runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             for _ in 0..32 {
-                port::ship(
-                    middle,
-                    me,
-                    Access::STORE,
-                    Policy::NONE,
-                )
-                .unwrap();
+                port::ship(middle, me, Access::STORE, Policy::NONE).unwrap();
             }
             progress.store(3, Ordering::Release);
             while progress.load(Ordering::Acquire) < 4 {
@@ -726,20 +704,11 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         .read::<crate::system::control::serve::start::Images>()
         .unwrap()
         .entry;
-    port::ship(
-        entry,
-        caller.id(),
-        Access::STORE,
-        Policy::NONE,
-    )
-    .unwrap();
+    port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 10_000_000_000;
     while !done.load(Ordering::Acquire) {
         assembly.progress().unwrap();
-        assert!(
-            env::chrono::clock() < until,
-            "sender boundary timeout"
-        );
+        assert!(env::chrono::clock() < until, "sender boundary timeout");
         runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
@@ -826,13 +795,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             .inherit(caller.id(), control)
             .unwrap();
         let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
-        port::ship(
-            private,
-            caller.id(),
-            Access::STORE,
-            Policy::NONE,
-        )
-        .unwrap();
+        port::ship(private, caller.id(), Access::STORE, Policy::NONE).unwrap();
         released.store(true, Ordering::Release);
         let until = env::chrono::clock() + 10_000_000_000;
         while !done.load(Ordering::Acquire) {

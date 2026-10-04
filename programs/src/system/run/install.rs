@@ -1,11 +1,15 @@
+use super::{
+    publication::{self, book::Publications},
+    resource,
+};
 use crate::system::run::bootstrap::Boot;
 use crate::system::{
     boot,
     control::{
-        core::{publication::Publications, verdict},
+        core::verdict,
         serve::{
-            answer, frame, lifecycle, living::Living, material::Supplies, publication, resource,
-            start::Images, unit::Control, watch,
+            answer, frame, lifecycle, living::Living, material::Supplies, start::Images,
+            unit::Control, watch,
         },
     },
     identity::serve::{install::Roster, names},
@@ -33,8 +37,14 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
         Bell::unseal().map_err(|_| "identity change bell")?
     ));
     put!(Control::new(status.clone()));
+    put!(super::launch::Pending::default());
+    put!(crate::system::control::serve::hook::Active::default());
+    put!(Dispatch::<
+        crate::system::control::serve::hook::Key,
+        &'static str,
+    >::new());
     put!(super::account::Accounts::new(boot.catalog)?);
-    crate::system::loader::serve::install::resources(&mut resources)?;
+    crate::system::run::loading::install::resources(&mut resources)?;
     put!(status);
     put!(boot::Faces(Vec::new()));
     put!(boot::Mounts(Vec::new()));

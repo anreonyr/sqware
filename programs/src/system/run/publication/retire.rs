@@ -1,6 +1,6 @@
-use crate::system::control::core::publication::Publications;
 use crate::system::control::serve::living::Living;
 use crate::system::operator::serve::install::Tree;
+use crate::system::run::publication::book::Publications;
 use protocol::common::schedule::{Progress, Res, ResMut};
 
 pub(crate) fn retire(

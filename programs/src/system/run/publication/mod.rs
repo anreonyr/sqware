@@ -45,3 +45,5 @@ pub struct Kind {
 }
 
 pub mod faces;
+
+pub mod book;

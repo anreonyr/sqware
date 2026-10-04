@@ -54,7 +54,7 @@ pub fn post(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let instance = job.execution.instance.as_ref().ok_or(Fail::NotReady)?;
-    super::super::publication::receive::inject(images.entry, instance.service.0)
+    crate::system::run::publication::receive::inject(images.entry, instance.service.0)
         .map_err(|_| Fail::Full)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
     control.pending.push(Pending {

@@ -1,7 +1,7 @@
 use crate::system::{
     boot::{Faces, Mounts},
-    control::serve::publication::Internal,
     identity::serve::{install::Roster, query},
+    run::publication::Internal,
 };
 use protocol::{
     common::schedule::{Progress, Res, ResMut},

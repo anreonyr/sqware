@@ -4,18 +4,13 @@ use super::{
     unit::Control,
 };
 use crate::system::control::core::unit::State;
-use crate::system::identity::serve::install::Roster;
 use env::{Wait, unit};
 use protocol::{
     common::schedule::{Progress, Res, ResMut},
     system::control::{self as call},
 };
 
-pub fn answer(
-    mut control: ResMut<Control>,
-    mut inbox: ResMut<Inbox>,
-    resources: Res<super::resource::Resources>,
-) -> Result<Progress, Fail> {
+pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<Progress, Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(Fail::Room)?;
@@ -45,25 +40,20 @@ pub fn answer(
             if item.team.is_some()
                 && !item.claimed
                 && matches!(incoming.wire, call::frame::Wire::EmbarkInstance(_))
-                && (env::chrono::clock() >= item.claim_until
-                    || resources.runtime_road(task).is_none())
+                && (env::chrono::clock() >= item.claim_until)
             {
-                item.state = State::Stopping;
+                item.stop();
                 return Err(call::Fail::NotReady);
             }
             match incoming.wire {
                 call::frame::Wire::StateInstance(_) => {
                     return Ok(Some(call::frame::said_state(answer::wire_state(
-                        if item.state == State::Dead && resources.runtime_road(task).is_some() {
-                            State::Stopping
-                        } else {
-                            item.state
-                        },
+                        item.state,
                     ))));
                 }
                 call::frame::Wire::EmbarkInstance(_) if item.state == State::Debarked => {
                     if unit::embark(task).is_err() {
-                        item.state = State::Stopping;
+                        item.stop();
                         return Err(call::Fail::NotReady);
                     }
                     item.claimed = true;
@@ -80,11 +70,8 @@ pub fn answer(
                 }
                 call::frame::Wire::RuinInstance(_) => {
                     if item.team.is_some() {
-                        item.state = State::Stopping;
+                        item.stop();
                         let _ = env::room::doom(task);
-                        return Ok(None);
-                    }
-                    if resources.runtime_road(task).is_some() {
                         return Ok(None);
                     }
                 }
@@ -104,11 +91,7 @@ pub fn answer(
     Ok(Progress::Done)
 }
 
-pub fn reap(
-    mut control: ResMut<Control>,
-    roster: Res<Roster>,
-    flow: Res<super::frame::Flow>,
-) -> Result<Progress, Fail> {
+pub fn reap(mut control: ResMut<Control>, flow: Res<super::frame::Flow>) -> Result<Progress, Fail> {
     for item in &mut control.instances {
         if item.team.is_none() {
             continue;
@@ -116,20 +99,12 @@ pub fn reap(
         if flow.settling
             || (!item.claimed && env::chrono::clock() >= item.claim_until)
             || unit::join(item.owner, Wait::POLL).unwrap_or(true)
+            || unit::join(item.task, Wait::POLL).unwrap_or(true)
         {
-            item.state = State::Stopping;
+            item.stop();
         }
         if item.state == State::Stopping {
             let _ = env::room::doom(item.task);
-        }
-        if unit::join(item.task, Wait::POLL).unwrap_or(true) {
-            item.state = State::Stopping;
-            let _ = env::room::doom(item.task);
-            roster.unbind(item.task).map_err(|_| Fail::Publication)?;
-            if unit::oust(item.team.unwrap()).is_ok() {
-                item.team = None;
-                item.state = State::Dead;
-            }
         }
     }
     control
@@ -159,7 +134,7 @@ pub fn pending(
     if control
         .instances
         .iter()
-        .any(|item| item.state == State::Stopping)
+        .any(|item| matches!(item.state, State::Starting | State::Stopping))
     {
         bound.0 = Wait::AtMost(1);
     }
@@ -172,7 +147,7 @@ pub fn publication(
 ) -> Result<Progress, &'static str> {
     let entry = env::pie::unseal_hole(call::ASK_MARK).map_err(|_| "instance entry")?;
     watch.instance = Some(entry);
-    mounts.0.push(super::publication::Internal {
+    mounts.0.push(crate::system::run::publication::Internal {
         road: call::client::INSTANCE.to_path_buf(),
         entry,
         access: (protocol::system::operator::Permit::Bound, unit::self_id()),

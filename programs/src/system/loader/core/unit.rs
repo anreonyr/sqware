@@ -13,6 +13,9 @@ pub struct Loader {
     pub(in crate::system::loader) cache: Cache,
 }
 impl Loader {
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
     pub fn new() -> Self {
         Self {
             cache: Cache::new(CACHE_PAGES),

@@ -116,9 +116,71 @@ impl Control {
                 self.instances
                     .iter()
                     .filter(|item| {
-                        item.team.is_some() && matches!(item.state, State::Ready | State::Debarked)
+                        item.team.is_some()
+                            && matches!(
+                                item.state,
+                                State::Starting | State::Ready | State::Debarked
+                            )
                     })
                     .map(|item| item.task),
             )
+    }
+}
+
+impl Control {
+    pub(crate) fn reserve_instance(&mut self) -> Result<(), protocol::system::control::Fail> {
+        use crate::system::control::core::instance::INSTANCE_CAP;
+        if self.instances.len() >= INSTANCE_CAP {
+            if let Some(at) = self
+                .instances
+                .iter()
+                .position(|item| item.state == State::Dead)
+            {
+                self.instances.remove(at);
+            } else {
+                return Err(protocol::system::control::Fail::Full);
+            }
+        }
+        self.instances
+            .try_reserve(1)
+            .map_err(|_| protocol::system::control::Fail::Full)
+    }
+    pub(crate) fn register_instance(
+        &mut self,
+        built: protocol::system::loader::Built,
+        owner: TaskId,
+    ) {
+        self.instances
+            .push(crate::system::control::core::instance::Instance {
+                owner,
+                task: built.task,
+                team: Some(built.team),
+                state: State::Starting,
+                claimed: false,
+                claim_until: env::chrono::clock()
+                    + protocol::system::loader::frame::CLAIM_MS as u64 * 1_000_000,
+                hook: Default::default(),
+            });
+    }
+    pub(crate) fn stop_instance(&mut self, task: TaskId) {
+        if let Some(item) = self
+            .instances
+            .iter_mut()
+            .find(|item| item.task == task && item.team.is_some())
+        {
+            item.stop();
+        }
+    }
+    pub(crate) fn claim_instance(&mut self, owner: TaskId, task: TaskId) -> Option<env::TeamId> {
+        let item = self
+            .instances
+            .iter_mut()
+            .find(|item| item.task == task && item.owner == owner)?;
+        if env::chrono::clock() >= item.claim_until || item.state != State::Debarked {
+            return None;
+        }
+        let team = item.team?;
+        item.claimed = true;
+        Some(team)
     }
 }

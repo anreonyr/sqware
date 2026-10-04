@@ -47,7 +47,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     });
     let entry = assembly
         .resources
-        .read::<crate::system::loader::serve::answer::Inbox>()
+        .read::<crate::system::run::loading::answer::Inbox>()
         .unwrap()
         .entry
         .unwrap();
@@ -82,7 +82,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .add_plan(
             "loader",
             0u8,
-            crate::system::loader::serve::schedule::frame().unwrap(),
+            crate::system::run::loading::schedule::frame().unwrap(),
         )
         .unwrap();
     schedule
@@ -97,6 +97,16 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .unwrap();
     schedule
         .add_system("reap", 3, crate::system::control::serve::instance::reap)
+        .unwrap();
+    schedule
+        .add_plan(
+            "instance.hooks",
+            4,
+            crate::system::run::hooks::instance().unwrap(),
+        )
+        .unwrap();
+    schedule
+        .add_system("launch.completed", 5, crate::system::run::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -113,7 +123,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         if task.get() != 0
             && assembly
                 .resources
-                .read::<crate::system::control::serve::resource::Resources>()
+                .read::<crate::system::run::resource::Resources>()
                 .unwrap()
                 .runtime_road(task)
                 .is_some()
@@ -247,8 +257,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy = env::pie::accord(image, root, Permission::FETCH, call::frame::IMAGE)
-        .unwrap();
+    let image_copy = env::pie::accord(image, root, Permission::FETCH, call::frame::IMAGE).unwrap();
     let (back, seed) = establish::lend_out(entry, call::frame::BACK).unwrap();
     let ask = call::frame::Ask {
         op: call::frame::BUILD,

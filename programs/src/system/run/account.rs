@@ -1,14 +1,12 @@
 //! Boot account identities and trusted Login construction.
-use super::{resource::Resources, unit::Control};
-use crate::system::control::core::unit::State;
+use crate::system::control::serve::{Fail, unit::Control};
 use crate::system::identity::serve::{
     install::Roster,
     names::{Names, Registration},
 };
 use crate::system::operator::serve::install::Tree;
-use alloc::vec::Vec;
 use env::wire::Span as _;
-use env::{PieToken, TaskId, Wait, pie, unit};
+use env::{PieToken, Wait, pie, unit};
 use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::{self as control_call, Object, account as call};
 use protocol::system::identity::Subject;
@@ -19,7 +17,6 @@ pub struct Accounts {
     pub entry: PieToken,
     subject: Option<Subject>,
     image: Option<&'static [u8]>,
-    replies: Vec<(TaskId, PieToken)>,
 }
 impl Accounts {
     pub fn new(catalog: crate::boot::Catalog<'static>) -> Result<Self, &'static str> {
@@ -27,7 +24,6 @@ impl Accounts {
             entry: pie::unseal_hole(call::ENTRY).map_err(|_| "account entry")?,
             subject: None,
             image: catalog.find("cat").map(|entry| entry.elf),
-            replies: Vec::new(),
         })
     }
 }
@@ -35,7 +31,7 @@ pub fn initialize(
     mut accounts: ResMut<Accounts>,
     roster: Res<Roster>,
 ) -> Result<Progress, &'static str> {
-    accounts.subject = Some(roster.user()?);
+    accounts.subject = Some(roster.derive_subject()?);
     Ok(Progress::Done)
 }
 pub fn account(
@@ -65,36 +61,11 @@ pub fn publication(
     });
     Ok(Progress::Done)
 }
-fn reply(
-    back: PieToken,
-    result: Result<protocol::system::loader::Built, control_call::Fail>,
-) -> bool {
-    let value = match result {
-        Ok(built) => protocol::system::loader::frame::Said {
-            status: control_call::frame::OK,
-            task: built.task,
-            team: built.team.get() as u64,
-        },
-        Err(fail) => protocol::system::loader::frame::Said {
-            status: control_call::frame::fail_to_code(Some(fail)),
-            task: TaskId::new(0),
-            team: 0,
-        },
-    };
-    let mut bytes = [0; protocol::system::loader::frame::Said::LEN];
-    let sent = value.store_at(&mut bytes, 0).is_some_and(|n| {
-        HolePie::from_token(back)
-            .push(&bytes[..n], Wait::POLL)
-            .is_ok()
-    });
-    let _ = pie::release(back);
-    sent
-}
 pub fn receive(
-    mut accounts: ResMut<Accounts>,
+    accounts: Res<Accounts>,
     mut control: ResMut<Control>,
-    roster: Res<Roster>,
-) -> Result<Progress, super::Fail> {
+    mut pending: ResMut<super::launch::Pending>,
+) -> Result<Progress, Fail> {
     let mut bytes = [0; call::Request::LEN];
     for _ in 0..16 {
         let Ok((n, from)) = HolePie::from_token(accounts.entry).pull(&mut bytes, Wait::POLL) else {
@@ -123,81 +94,43 @@ pub fn receive(
             {
                 return Err(control_call::Fail::NotReady);
             }
-            accounts
-                .replies
-                .try_reserve(1)
-                .map_err(|_| control_call::Fail::Full)?;
             let subject = accounts.subject.ok_or(control_call::Fail::NotReady)?;
             let host = control
                 .task("terminal")
                 .filter(|host| control.live(*host))
                 .ok_or(control_call::Fail::NotReady)?;
             let bytes = accounts.image.ok_or(control_call::Fail::Unknown)?;
-            let built = crate::system::loader::serve::build::construct_image(
+            super::launch::construct(
                 &mut control,
-                &roster,
-                crate::system::loader::serve::build::Build {
+                &mut pending,
+                super::launch::Build {
                     image: crate::system::loader::Image {
                         bytes,
                         kind: env::ProgramKind::User,
                     },
                     spawn: crate::system::loader::serve::build::Spawn {
-                        owner: from,
                         args: &[host.get()],
                         stack: 0,
                     },
-                    subject: Some(subject),
+                    delivery: super::launch::Delivery {
+                        owner: from,
+                        identity: protocol::system::identity::Install::Authorized(subject),
+                        back,
+                    },
                 },
             )?;
-            accounts.replies.push((built.task, back));
             Ok(())
         })();
         if let Err(fail) = result {
-            reply(back, Err(fail));
+            super::launch::reply(back, Err(fail));
         }
-    }
-    Ok(Progress::Done)
-}
-pub fn completed(
-    mut accounts: ResMut<Accounts>,
-    mut control: ResMut<Control>,
-    resources: Res<Resources>,
-) -> Result<Progress, super::Fail> {
-    let mut index = 0;
-    while index < accounts.replies.len() {
-        let (task, back) = accounts.replies[index];
-        let item = control.instances.iter_mut().find(|item| item.task == task);
-        match item {
-            Some(item)
-                if item.state == State::Debarked && resources.runtime_road(task).is_some() =>
-            {
-                let built = protocol::system::loader::Built {
-                    task,
-                    team: item.team.ok_or(super::Fail::Room)?,
-                };
-                if !reply(back, Ok(built)) {
-                    item.state = State::Stopping;
-                }
-            }
-            Some(item) if matches!(item.state, State::Dead | State::Stopping) => {
-                reply(back, Err(control_call::Fail::NotReady));
-            }
-            None => {
-                reply(back, Err(control_call::Fail::NotReady));
-            }
-            _ => {
-                index += 1;
-                continue;
-            }
-        }
-        accounts.replies.remove(index);
     }
     Ok(Progress::Done)
 }
 pub fn watch(
     accounts: Res<Accounts>,
-    mut interests: ResMut<super::watch::Interests>,
-) -> Result<Progress, super::Fail> {
+    mut interests: ResMut<crate::system::control::serve::watch::Interests>,
+) -> Result<Progress, Fail> {
     interests.tokens.push(accounts.entry);
     Ok(Progress::Done)
 }
