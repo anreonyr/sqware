@@ -1,7 +1,6 @@
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::Wait;
 use protocol::debug;
-use runtime::core::adapt;
 
 #[repr(u8)]
 #[derive(Clone, Copy)]
@@ -40,7 +39,7 @@ pub fn join(
             if env::chrono::clock() >= deadline.0 {
                 return Err(crate::system::control::serve::Fail::Shutdown);
             }
-            adapt::sleep(core::time::Duration::from_millis(1))
+            runtime::core::task::sleep(core::time::Duration::from_millis(1))
                 .map_err(|_| crate::system::control::serve::Fail::Wait)?;
             return Ok(protocol::common::schedule::Progress::Pending);
         }

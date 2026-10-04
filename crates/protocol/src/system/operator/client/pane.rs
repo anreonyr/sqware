@@ -71,8 +71,7 @@ impl<'a> Pane<'a> {
         wait: Wait,
     ) -> Result<Tile<'_>, Fail> {
         let pie = HolePie::from_token(e);
-        let shipped = port::ship(
-            &pie,
+        let shipped = port::ship(pie.token(),
             self.face.session.host,
             Access::FETCH | Access::STORE,
             Policy::VEST,

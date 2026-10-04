@@ -15,7 +15,7 @@ use crate::system::{
 use alloc::{collections::VecDeque, vec::Vec};
 use env::pie;
 use protocol::common::schedule::{Dispatch, Resources as Registry};
-use runtime::core::res::pie::NolePie;
+use runtime::core::res::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();
     let entry = pie::unseal_hole(protocol::system::control::publication::ENTRY)
@@ -30,7 +30,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     }
     put!(crate::system::identity::serve::revision::Epoch::new());
     put!(crate::system::identity::serve::revision::Changed(
-        NolePie::unseal().map_err(|_| "identity change bell")?
+        Bell::unseal().map_err(|_| "identity change bell")?
     ));
     put!(Control::new(status.clone()));
     crate::system::loader::serve::install::resources(&mut resources)?;

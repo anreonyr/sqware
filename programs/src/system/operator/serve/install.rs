@@ -108,7 +108,7 @@ impl Tree {
         let mut seeds = [PieToken::NONE; 3];
         for (at, (token, _)) in faces.into_iter().enumerate() {
             seeds[at] = port::ship(
-                &HolePie::from_token(token),
+                token,
                 host,
                 Access::FETCH | Access::STORE,
                 Policy::VEST,
@@ -155,7 +155,7 @@ impl Tree {
         let tip = self.tip.ok_or("no tip")?;
         let seed = match leaf {
             Some(entry) => port::ship(
-                &HolePie::from_token(entry),
+                entry,
                 host,
                 Access::FETCH | Access::STORE,
                 Policy::VEST,
@@ -255,7 +255,7 @@ pub fn host_of(
 /// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
     let hole = HolePie::from_token(reply);
-    port::ship(&hole, host, Access::FETCH | Access::STORE, Policy::NONE)
+    port::ship(hole.token(), host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())
 }

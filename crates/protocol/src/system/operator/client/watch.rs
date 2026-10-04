@@ -59,7 +59,7 @@ impl<'a> Watch<'a> {
         let hole = HolePie::unseal(Mark::of(HOLE_MARK)).map_err(|_| Fail::Unknown)?;
         // **那一枚孔要交给持树者**：它得推得进来（`Push` 是"把发送方那段登记到孔上"⇒ 要写权）。
         // `Policy::NONE`：接过来的人不必再授出（事件只有持树者递）。
-        let shipped = port::ship(&hole, face.host(), Access::STORE, Policy::NONE)
+        let shipped = port::ship(hole.token(), face.host(), Access::STORE, Policy::NONE)
             .map(|to| to.seed())
             .map_err(|_| Fail::Unknown)?;
         let said = face.call(

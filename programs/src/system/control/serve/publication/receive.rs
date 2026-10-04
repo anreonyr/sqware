@@ -20,7 +20,7 @@ fn reply(back: PieToken, reply: Reply) {
 }
 pub(crate) fn inject(entry: env::PieToken, task: env::TaskId) -> Result<(), &'static str> {
     runtime::core::res::port::ship(
-        &HolePie::from_token(entry),
+        entry,
         task,
         env::Access::STORE,
         env::Policy::NONE,

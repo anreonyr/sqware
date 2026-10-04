@@ -1,6 +1,5 @@
 use env::pie;
 use runtime::core::res::pie::{HolePie, pies, reserve};
-use runtime::core::adapt;
 
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
@@ -11,7 +10,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
         let token = protocol::communication::session::establish::find(me, mark)
             .or_else(|| pie::unseal_hole(mark).ok())
             .ok_or("hierarchy fixture channel")?;
-        port::ship(&HolePie::from_token(token), task, access, Policy::NONE)
+        port::ship(token, task, access, Policy::NONE)
             .map_err(|_| "hierarchy fixture ship")?;
     }
     Ok(())
@@ -80,7 +79,7 @@ pub(crate) fn command(
             env::chrono::clock() < until,
             "hierarchy worker did not finish command {code}"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 
@@ -340,7 +339,7 @@ pub(crate) fn exercise(
     command(assembly, target, 1);
     let fake = pie::unseal_hole(protocol::system::control::publication::REF).unwrap();
     runtime::core::res::port::ship(
-        &HolePie::from_token(fake),
+        fake,
         service,
         runtime::core::res::port::Access::STORE,
         runtime::core::res::port::Policy::NONE,
@@ -572,7 +571,7 @@ pub fn reference_lifetime() {
         "original resource ownership cannot be forgotten"
     );
     let borrowed = port::ship(
-        &HolePie::from_token(source),
+        source,
         me,
         Access::FETCH | Access::STORE,
         Policy::VEST,
@@ -580,7 +579,7 @@ pub fn reference_lifetime() {
     .unwrap()
     .seed();
     let child = port::ship(
-        &HolePie::from_token(borrowed),
+        borrowed,
         me,
         Access::FETCH | Access::STORE,
         Policy::VEST,
@@ -607,7 +606,7 @@ pub fn reference_lifetime() {
     for round in 0..8 {
         let root = pie::unseal_hole(Mark::of("forget-race")).unwrap();
         let middle = port::ship(
-            &HolePie::from_token(root),
+            root,
             me,
             Access::FETCH | Access::STORE,
             Policy::VEST,
@@ -627,11 +626,11 @@ pub fn reference_lifetime() {
             let me = env::unit::self_id();
             progress.store(1, Ordering::Release);
             while progress.load(Ordering::Acquire) < 2 {
-                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             for _ in 0..32 {
                 port::ship(
-                    &HolePie::from_token(middle),
+                    middle,
                     me,
                     Access::STORE,
                     Policy::NONE,
@@ -640,7 +639,7 @@ pub fn reference_lifetime() {
             }
             progress.store(3, Ordering::Release);
             while progress.load(Ordering::Acquire) < 4 {
-                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             assert!(
                 !pies().any(|p| p.mark == Mark::of("forget-race")),
@@ -648,7 +647,7 @@ pub fn reference_lifetime() {
             );
         });
         let downstream = port::ship(
-            &HolePie::from_token(middle),
+            middle,
             worker.id(),
             Access::FETCH | Access::STORE,
             Policy::VEST,
@@ -656,12 +655,12 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
         while stage.load(Ordering::Acquire) < 1 {
-            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         stage.store(2, Ordering::Release);
         pie::forget(middle).unwrap();
         while stage.load(Ordering::Acquire) < 3 {
-            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         if round % 2 == 0 {
             pie::revoke(worker.id(), downstream).unwrap();
@@ -728,7 +727,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         .unwrap()
         .entry;
     port::ship(
-        &HolePie::from_token(entry),
+        entry,
         caller.id(),
         Access::STORE,
         Policy::NONE,
@@ -741,7 +740,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
             env::chrono::clock() < until,
             "sender boundary timeout"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
     assert!(
@@ -780,7 +779,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         let root = control.get();
         let caller = runtime::core::task::join::closure(move || {
             while !gate.load(Ordering::Acquire) {
-                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             let control = env::TaskId::new(root);
             let session =
@@ -828,7 +827,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             .unwrap();
         let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
         port::ship(
-            &HolePie::from_token(private),
+            private,
             caller.id(),
             Access::STORE,
             Policy::NONE,
@@ -848,7 +847,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 env::chrono::clock() < until,
                 "standalone raw mutation timeout"
             );
-            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let caller_id = caller.id();
         caller.join();

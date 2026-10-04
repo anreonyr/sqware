@@ -2,11 +2,10 @@ use super::{fail, source::initialize};
 use crate::system::loader::{Image, Loader, Unit};
 use alloc::vec::Vec;
 use env::{Permission, PieToken, TaskId, UnitFail, UnitResult, pie, unit};
-use runtime::core::adapt;
 
 impl Unit {
     pub fn spawn(mut self, args: &[usize], stack: usize) -> UnitResult<TaskId> {
-        let task = adapt::spawn(self.team, self.entry, args, stack)?;
+        let task = runtime::core::task::spawn(self.team, self.entry, args, stack)?;
         self.committed = true;
         Ok(task)
     }
@@ -58,7 +57,7 @@ impl Loader {
                     pie::narrow(token, Permission::FETCH | Permission::VEST)
                         .map_err(|_| fail(UnitFail::Denied))?;
                 }
-                adapt::map(
+                runtime::core::memory::map(
                     minted.team,
                     region.va,
                     region.data_size,
@@ -84,7 +83,7 @@ impl Loader {
                 }
             }
             if region.data_size < region.size {
-                adapt::map(
+                runtime::core::memory::map(
                     minted.team,
                     region.va + region.data_size,
                     region.size - region.data_size,

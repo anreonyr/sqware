@@ -1,43 +1,6 @@
-//! pie — **四枚门闩句柄**（Hole / Nole / Pole / Tole）＋ 它们共用的权柄动词。
-//!
-//! 句柄是**厚的一侧**：`PieToken` 只是内核那张表里的一个号，句柄把它与"怎么用"绑在一起
-//! ——孔的三手（[`HolePie::push`] / [`HolePie::pull`] / [`HolePie::wait`]）带**期限循环**，
-//! 页的视图（[`PolePie::open`] / [`PolePie::shut`]）把起止成对带回来，组把成员挂到一处。
-//! 期限循环是政策，不是转发——故按 [`crate::core`] 的判据（薄/厚）住这里。
-//!
-//! **裸 envcall 不在这里**：`env::pie::seal(token)`、`env::mail::push(token, …)`、
-//! `env::tole::attach(…)` 是 `crates/env` 生成的每格入口，句柄直接叫它们，不再经一层同名转发。
-//!
-//! # 三条口径
-//!
-//! - **`AnyPie`**：权柄操作（`Seal` / `Narrow` / `Accord` / `Revoke` / `Release`）与资源种类
-//!   无关，故四份 `impl` **摆在一处**——散进四个文件就只剩四次重复。镜像内核侧
-//!   `gate::AnyPie` 的四个变体提供同一批方法。
-//! - **`Mate`**：能当组的一格成员的东西（孔 / 铃 / 页上那一位）——一个 trait 而不是收
-//!   `PieToken`，让"能挂什么"在编译期说得清。
-//! - **三个动词，等由参数说**：数据面只有 `push` / `pull` / `wait` 三手，`Wait::POLL`
-//!   （= `AtMost(0)`）就是"只试一次"；`try_push` / `pull_timeout` 那一族都是预算的写法，
-//!   留在调用点。
-//!
-//! # 推的人与取的人等的是**同一个内核条件**
-//!
-//! `ready(Push) = Idle`（孔空）与 `ready(Pull) = Hand | Rung`（有东西）是孔那一格状态轴的
-//! 两个方向。推的人在 [`HoleDir::Push`] 上等"孔空"——它**同时**覆盖"轮到我"（孔上站着
-//! 别人的手）与"我那只手被取走"；取的人在 [`HoleDir::Pull`] 上等"有东西"。故
-//! [`HolePie::push`] 只等到**递得出去**；递出之后还要不要等它下线，是**第二件事**、
-//! 由写端那一格显式说（`protocol::communication::hand` 的 `Sender::reclaim`）。
-//!
-//! # 无界等的白名单
-//!
-//! **"等"的尽头不许是"对面想起来"**。每一处 `Wait::Forever` 都要能指回三类之一：
-//! 常驻事件等待（`Pile::await_` 那一族）、"字节必须活到被取走"（`push` 之后那一等）、
-//! 等外部世界或必然会来的答复（控制台那一枚 `pull`、驱动那一族的 `recv`）。除这三类之外
-//! **一律有界**（详见 `protocol::system::operator::client` 的 `RETRY_MIN_MS` 那条）。
+//! 孔的有界收发与等待，以及资源表查询。
 
-use env::{
-    Wait, HoleDir, MailFail, MailResult, Mark, Permission, PieResult, PieToken, Source, TaskId,
-    ToleResult, VirtAddr,
-};
+use env::{Wait, HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId, VirtAddr};
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。
 fn now_ns() -> u64 {
@@ -72,8 +35,6 @@ fn get(token: PieToken, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
     env::mail::pull(token, VirtAddr::new(buf.as_mut_ptr() as usize), buf.len())
 }
 
-// ── 四种资源的用户态句柄 ──────────────────────────────────────────────────
-
 /// Hole 门闩用户态句柄——**数据面那一枚**。
 pub struct HolePie {
     token: PieToken,
@@ -96,7 +57,7 @@ impl HolePie {
         self.token
     }
 
-    /// **递出一条消息**：把 `msg` 那一手登记到本孔上（`len ≥ 1`；**不搬字节、不分配**）。
+    /// **递出一条消息**：把 `msg` 那一手登记到本孔上（`len ≥ 1`；**内核当场复制进队列**）。
     ///
     /// `within` = **孔上站着别人的手时**允许等多久：
     ///
@@ -127,7 +88,7 @@ impl HolePie {
         }
     }
 
-    /// **取走一只手**：把发送方那段复制**一次**进 `buf`，返 `(实际长度, 发送者)`。
+    /// **取走一只手**：把内核队列里的字节复制进 `buf`，返 `(实际长度, 发送者)`。
     ///
     /// `within` = **手上没东西时**允许等多久：`Wait::POLL` = 只试一次（手上没东西 ⇒ `Busy`）；
     /// `AtMost(n)` / `Forever` = 等到**有东西**（`Wait{HoleDir::Pull}` 就绪）。
@@ -170,22 +131,7 @@ impl HolePie {
     /// （~100 ms）复探了一次。故这里是**按 deadline 的循环**：只有 `clock()` 真的走完 `within`
     /// 才报 `false`，否则带剩余时间重探。`Wait::Forever` 在这一层 = 一直等（deadline 到不了）。
     pub fn wait(&self, dir: HoleDir, within: Wait) -> MailResult<bool> {
-        if env::mail::wait(self.token, dir, within)? {
-            return Ok(true);
-        }
-        if matches!(within, Wait::AtMost(0)) {
-            return Ok(false);
-        }
-        let deadline = deadline_of(within);
-        loop {
-            if now_ns() >= deadline {
-                return Ok(false);
-            }
-            let step = remains(within, deadline);
-            if env::mail::wait(self.token, dir, step)? {
-                return Ok(true);
-            }
-        }
+        wait(self.token, dir, within)
     }
 
     /// **只看一眼**：孔上那只手的**长度、发送者、队里排着几只**，**一个字节都不取**（孔留原样）。
@@ -222,205 +168,6 @@ impl HolePie {
     pub fn hush(&self) -> MailResult<()> {
         env::mail::hush(self.token)
     }
-}
-
-/// Nole 门闩用户态句柄——**门铃**：四枚句柄里唯一没有自己那一套数据面的那种。
-///
-/// 它没有 `push`/`pull`（那是 Hole 的数据面）、没有 `open`/`shut`（那是 Pole 的页视图）。
-/// 它能做的只有 [`AnyPie`] 那一套 ＋ 铃那一套（`wait` / `hush` / `ring`）——因为它的全部
-/// 内容就是"一位 ＋ 我持有这一枚"。
-pub struct NolePie {
-    token: PieToken,
-}
-
-impl NolePie {
-    /// 解封一枚 Nole（无参数：没有大小、没有对齐）。
-    pub fn unseal() -> PieResult<Self> {
-        Ok(Self {
-            token: env::pie::unseal_nole()?,
-        })
-    }
-
-    /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: PieToken) -> Self {
-        Self { token }
-    }
-
-    pub fn token(&self) -> PieToken {
-        self.token
-    }
-
-    /// **等铃响**。**没有方向参数**：铃只有一条方向（有事 / 没事），签名少一个参数就把这件事
-    /// 说完了。返回 `true` = 当场就绪（未挂起）；`false` = 预算走完仍未就绪。**不清**那一位
-    /// ——见 [`NolePie::hush`]。
-    pub fn wait(&self, within: Wait) -> MailResult<bool> {
-        HolePie::from_token(self.token).wait(HoleDir::Pull, within)
-    }
-
-    /// 响铃：置"有待取之事"并唤醒听者。已响 → `Busy`。
-    pub fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.token)
-    }
-
-    /// 应铃：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
-    pub fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.token)
-    }
-}
-
-/// Pole 门闩用户态句柄——**页视图那一枚**（也带着**页上那一位"有事"**）。
-pub struct PolePie {
-    token: PieToken,
-}
-
-impl PolePie {
-    /// 解封 Pole：一段页级安全内存（**大小页对齐**，清零）。
-    ///
-    /// 创建者的视图由内核顺手落好（`unseal` 内部 `auto-map`），但**那个 VA 不在这里回**
-    /// ——要地址就再 `open` 一次（幂等，返同一个 VA）。
-    pub fn unseal(size: usize) -> PieResult<Self> {
-        Ok(Self {
-            token: env::pie::unseal_pole(size, true)?,
-        })
-    }
-
-    /// 由 token 重建句柄（用于接收 accord 来的 pie）。
-    pub fn from_token(token: PieToken) -> Self {
-        Self { token }
-    }
-
-    /// 开闩：借映进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
-    pub fn open(&self) -> PieResult<(usize, usize)> {
-        open(self.token)
-    }
-
-    pub fn shut(&self) -> PieResult<()> {
-        env::pie::shut(self.token)
-    }
-
-    /// **响一下页上那一位**：置"有待取之事"并唤醒听者（已响 ⇒ `Busy`，不是错）。
-    ///
-    /// 页上为什么有"有事"：架（`protocol::communication::rack`）把铃并进页 ⇒ 一枚页就是一具
-    /// 完整的架。它**不是中断响的**：`hush` 不碰本 hart 的闸门（与孔上那一位同一条）。
-    pub fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.token)
-    }
-
-    /// **应一下**：清掉"有待取之事"。已经清着 ⇒ `Busy`（调用方当"正好"）。
-    pub fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.token)
-    }
-
-    /// **等那一位亮**。与 [`NolePie::wait`] 同一形：只有"有事"一条方向（没有 `dir` 参数），
-    /// `true` = 当场就绪（未挂起）。**不清**那一位——清要显式 [`PolePie::hush`]。
-    pub fn wait(&self, within: Wait) -> MailResult<bool> {
-        HolePie::from_token(self.token).wait(HoleDir::Pull, within)
-    }
-
-    pub fn token(&self) -> PieToken {
-        self.token
-    }
-}
-
-/// 组的用户态句柄（与 [`HolePie`] 同款：只持一枚号，资源实体在内核）。
-///
-/// 方法集 = 这一个对象上能做的三件事（`unseal` 是**构造**，做不成 `&self` 方法）。
-pub struct TolePie {
-    token: PieToken,
-}
-
-impl TolePie {
-    /// 造一个空组。
-    ///
-    /// `shared` = 这枚组允不许多个使用者（**造的时候定、之后不可变**，
-    /// `ToleCall::Unseal`）：`false` = 独占组（授出即移交、复制不出来），`true` = 共享组
-    /// （可 `accord` 复制给多个任务；组键的唤醒是提示型——放行全链）。
-    pub fn unseal(shared: bool) -> ToleResult<Self> {
-        Ok(Self {
-            token: env::tole::unseal(shared)?,
-        })
-    }
-
-    /// 由 token 重建句柄（用于接收 accord 来的组）。
-    pub fn from_token(token: PieToken) -> Self {
-        Self { token }
-    }
-
-    /// 把一枚成员的一个方向挂进来（同成员幂等）。
-    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
-        env::tole::attach(self.token, mate.token(), dir)
-    }
-
-    /// 摘掉一格；没挂过即无事。
-    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
-        env::tole::detach(self.token, mate.token(), dir)
-    }
-
-    /// 把一个**状态来源**登记进组（同 `(source, target)` 幂等）。
-    ///
-    /// 登记成功即留一次待复核提示；`target` 的合法性（组需本地独占、能力变化只能看自己、
-    /// 任务收尾的授权同 `Join`）由内核核。
-    pub fn subscribe(&self, source: Source, target: TaskId) -> ToleResult<()> {
-        env::tole::subscribe(self.token, source, target)
-    }
-
-    /// 按**已安装的订阅描述**取消；同描述重复取消无事。
-    pub fn unsubscribe(&self, source: Source, target: TaskId) -> ToleResult<()> {
-        env::tole::unsubscribe(self.token, source, target)
-    }
-
-    /// 等到组里任意一格有事：`(哪一枚, 哪个方向)`；`millis` 上限族，同全树。
-    ///
-    /// `PieToken::NONE` = 没等到（或挂起过——见 `ToleCall::Await`）。
-    /// **组上装了状态订阅时，它还有第二义**："有来源报过事，去复核"——它从不等于
-    /// "肯定没有变化"。
-    /// **这一格不循环**：组的返回是**提示**（"快照变了"），"等到没有"是调用点的循环
-    /// （见 `programs/src/harness/bench/group/waiter/main.rs`）。
-    pub fn await_(&self, millis: Wait) -> ToleResult<(PieToken, HoleDir)> {
-        env::tole::await_(self.token, millis)
-    }
-
-    pub fn token(&self) -> PieToken {
-        self.token
-    }
-}
-
-/// 能当**一格成员**的东西：孔、铃、以及**页上那一位**。
-///
-/// 与内核侧 `mail::tole::Mate` 是同一条边界：**架把"有事"给了页** ⇒ 页也能进组
-/// （`Pole(PoleId)`，只有 `Pull` 一条方向）；组也不进组（没有位，判据会变成沿图的递归）。
-/// 用一个 trait 而不是收 `PieToken`，是为了让"能挂什么"在编译期就说得清。
-pub trait Mate {
-    /// 本成员在**我这张表**里的号。
-    fn token(&self) -> PieToken;
-}
-
-impl Mate for HolePie {
-    fn token(&self) -> PieToken {
-        HolePie::token(self)
-    }
-}
-
-impl Mate for NolePie {
-    fn token(&self) -> PieToken {
-        NolePie::token(self)
-    }
-}
-
-impl Mate for PolePie {
-    fn token(&self) -> PieToken {
-        PolePie::token(self)
-    }
-}
-
-// ── 记号类适配：内核那几格的口径 → 调用方口径 ──────────────────────────────
-
-/// 开闩：借映 Pole 页进本任务空间 → `(视图起点, 这一段多大)`（同 token 幂等复用）。
-///
-/// **两件一起返**：起点与长度是同一段区间的两半，而长度只在内核手里（外来区按
-/// 页界撑开，设备树 `reg` 声明的长度内核不知道）。
-pub fn open(token: PieToken) -> PieResult<(usize, usize)> {
-    env::pie::open(token).map(|(va, size)| (va.get(), size))
 }
 
 /// 表里的一枚（[`collect`] 收拢出来的那一格）——**三件事实一起**，故不必再问第二次。
@@ -539,149 +286,27 @@ pub fn inspect(token: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
     })
 }
 
-// ── 类型化句柄：**权柄面**（构造 + 种类无关那几手）──
-
-/// 权柄句柄 —— Hole / Pole / Nole / Tole 的**权柄操作同构**，故只写一遍。
-///
-/// 方法集 = `PieCall` 里「实例作用域 ∧ 与资源种类无关」那一类，一一对应，不多不少：
-/// `Seal` / `Narrow` / `Accord` / `Revoke` / `Release`。
-///
-/// 不在本 trait 的，各有其理由：
-/// - **构造**：`unseal*` 产出 `Self`，做不成 `&self` 方法
-/// - **任务作用域**：`Collect`（按 index 枚举我表里的）、`Reserve`（按句柄查来历）
-///   ——它们不作用在「某一个句柄」上
-/// - **资源专属**：`Open`/`Shut`（Pole）、`Push`/`Pull`/`Wait`（Hole）
-/// - **表示层转换**：`from_token` / `token` —— 与 ABI 无关
-///
-/// 镜像内核侧 `gate::AnyPie`（`enum { Hole, Pole, Nole, Tole }`，提供同一批跨种类方法）
-/// ——**四个变体、四份 `impl`**：同一条「权柄操作与资源种类无关」的知识在两侧各落一次，
-/// 而不是按资源种类各散一份。
-pub trait AnyPie {
-    /// 封印资源（**只有资源开辟者**可做）。
-    ///
-    /// 只置死并唤醒等待者，**不摘表项**——持有者仍须 [`release`](AnyPie::release)
-    /// 收尾，否则表项泄漏。故 `release` 与 `PolePie::shut` 是**仅有的两处**不过存活闸
-    /// 的操作（ABI 那一侧的两条注记同时写着这一条：`env::abi::call` 的 `Release` / `Shut`）。
-    fn seal(&self) -> PieResult<()>;
-
-    /// 收窄本 pie 权限（就地改写，单调；`subset` ⊆ 当前权限）。
-    ///
-    /// Pole 多一条约束：`subset` 须含 FETCH（RISC-V PTE 无 R=0 的合法数据叶子），
-    /// 且会同步把已映射段降权。Hole 无映射，故无此约束。
-    fn narrow(&self, subset: Permission) -> PieResult<()>;
-
-    /// 转授子集给 `dst`，返回**对端侧**那枚的句柄（撤销句柄）——
-    /// 对方用 `from_token(at_dst)` 重建。`mark` = 子枚的记号（`NONE` = 照源枚）。
-    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken>;
-
-    /// 收回我授给 `dst` 的副本（含其全部后代，幂等）。
-    ///
-    /// `at_dst` = 该副本在**对端表里**的句柄（[`accord`](AnyPie::accord) 的返回值，
-    /// 经线形送达）——**不是我这边的 token**。鉴权 = 「这枚的 `sire` 在我表里」。
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()>;
-
-    /// 放下我这一份（含其全部后代；Pole 同步撤映射）。资源本身不动——封印用
-    /// [`seal`](AnyPie::seal)。不需要任何权限位。
-    fn release(&self) -> PieResult<()>;
-}
-
-// ── 四份同构的实现 ────────────────────────────────────────────────────────
-//
-// 四份都只是把 `self.token()` 递给 `env::pie` 那几个入口——**没有一份多一行**：那正是
-// trait 头注那句"权柄操作与资源种类无关"的读法（`revoke` 的那一格收的是**对端**的句柄，
-// 故四份都不看 `self.token()`，那一处不算例外）。
-
-impl AnyPie for HolePie {
-    fn seal(&self) -> PieResult<()> {
-        env::pie::seal(self.token())
+/// 等资源就绪；无关唤醒后继续使用剩余预算。
+pub(crate) fn wait(token: PieToken, dir: HoleDir, within: Wait) -> MailResult<bool> {
+    if env::mail::wait(token, dir, within)? {
+        return Ok(true);
     }
-
-    fn narrow(&self, subset: Permission) -> PieResult<()> {
-        env::pie::narrow(self.token(), subset)
+    if matches!(within, Wait::AtMost(0)) {
+        return Ok(false);
     }
-
-    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
-        env::pie::accord(self.token(), dst, subset, mark)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
-        env::pie::revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> PieResult<()> {
-        env::pie::release(self.token())
+    let deadline = deadline_of(within);
+    loop {
+        if now_ns() >= deadline {
+            return Ok(false);
+        }
+        let step = remains(within, deadline);
+        if env::mail::wait(token, dir, step)? {
+            return Ok(true);
+        }
     }
 }
 
-impl AnyPie for NolePie {
-    fn seal(&self) -> PieResult<()> {
-        env::pie::seal(self.token())
-    }
-
-    fn narrow(&self, subset: Permission) -> PieResult<()> {
-        env::pie::narrow(self.token(), subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
-        env::pie::accord(self.token(), dst, subset, mark)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
-        env::pie::revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> PieResult<()> {
-        env::pie::release(self.token())
-    }
-}
-
-impl AnyPie for PolePie {
-    fn seal(&self) -> PieResult<()> {
-        env::pie::seal(self.token())
-    }
-
-    fn narrow(&self, subset: Permission) -> PieResult<()> {
-        env::pie::narrow(self.token(), subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
-        env::pie::accord(self.token(), dst, subset, mark)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
-        env::pie::revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> PieResult<()> {
-        env::pie::release(self.token())
-    }
-}
-
-/// 组（Tole）的那一份——与前三份逐字同构。它成立的前提在内核侧：`gate::AnyPie` 的
-/// `Tole` 变体在 `seal` / `narrow` / `accord` / `revoke` / `release` 五条路上都有人接
-/// （`envcall/pie.rs`、`gate/narrow.rs`、`gate/accord.rs`、`gate/cull.rs`）——
-/// 少一条，这一份就是假接口。
-///
-/// 共享组（`ToleCall::Unseal { shared: true }`）本来就要经 `accord` 才到得了多个任务
-/// （"共享组若不可复制，'多个使用者'是空话"），故这一份不是补上去的摆设。
-impl AnyPie for TolePie {
-    fn seal(&self) -> PieResult<()> {
-        env::pie::seal(self.token())
-    }
-
-    fn narrow(&self, subset: Permission) -> PieResult<()> {
-        env::pie::narrow(self.token(), subset)
-    }
-
-    fn accord(&self, dst: TaskId, subset: Permission, mark: Mark) -> PieResult<PieToken> {
-        env::pie::accord(self.token(), dst, subset, mark)
-    }
-
-    fn revoke(&self, dst: TaskId, at_dst: PieToken) -> PieResult<()> {
-        env::pie::revoke(dst, at_dst)
-    }
-
-    fn release(&self) -> PieResult<()> {
-        env::pie::release(self.token())
-    }
+/// 借映共享页，返回映射起点与长度。
+pub fn open(token: PieToken) -> PieResult<(usize, usize)> {
+    env::pie::open(token).map(|(va, size)| (va.get(), size))
 }

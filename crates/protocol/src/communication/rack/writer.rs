@@ -15,7 +15,6 @@ use super::Mode;
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, depth, dropped, exact, lost, push, ring};
 use crate::wire::message::Message;
-use runtime::core::res::pie::{PolePie};
 
 /// **写端**：一枚页上的环 ＋ 一枚铃 ＋ 本族那只编报缓冲。
 ///
@@ -55,7 +54,7 @@ impl<M: Message> Writer<M> {
     /// 页映不进来 ⇒ `None`——此后 `send` 一律答 `SendFail::Mail(Denied)`，不猜地址。
     pub fn from_token(page: PieToken, mode: Mode) -> Option<Self> {
         exact::<M>();
-        let dock = match Dock::open(PolePie::from_token(page)) {
+        let dock = match Dock::open(page) {
             Ok(dock) => dock,
             Err(fail) => {
                 // **release 也看得见**：写端映不进来是"订阅成了但发不出去"那一格的头号成因。

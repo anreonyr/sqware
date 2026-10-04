@@ -20,8 +20,6 @@ use programs::harness::tick;
 
 use core::time::Duration;
 
-use runtime::core::adapt;
-
 #[programs::entry]
 fn main() -> ! {
     // 自校准：本机"在台上"那一段 = 多少轮空转（与台主扫时序用的是同一把尺）。
@@ -29,6 +27,6 @@ fn main() -> ! {
     let burst = iters_per_ms.saturating_mul(tick::BURST_MS);
     loop {
         tick::spin(burst); // 在台上
-        let _ = adapt::sleep(Duration::from_millis(tick::BURST_MS as u64)); // 离核
+        let _ = runtime::core::task::sleep(Duration::from_millis(tick::BURST_MS as u64)); // 离核
     }
 }

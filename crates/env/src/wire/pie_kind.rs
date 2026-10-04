@@ -13,7 +13,7 @@ const KIND_TOLE: u8 = PieKind::Tole as u8;
 
 /// **要的是哪一种门闩**（**判别号即线格式**：`repr(u8)`）。
 ///
-/// 两格对应内核那两种门闩句柄（`PolePie` / `NolePie`）——发货那一侧据此挑对那一层。
+/// 资源目录与授出方使用同一枚种类标签。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PieKind {

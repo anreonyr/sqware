@@ -31,7 +31,6 @@ use protocol::system::operator::{Fail, Face as Face};
 use protocol::system::operator::client as operator;
 use env::unit;
 use runtime::core::res::pie::{HolePie};
-use runtime::core::adapt;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
@@ -107,7 +106,7 @@ fn denied(tree: &Face, base: &Path, leaf: &str) -> Result<(), Fail> {
         {
             Ok(()) => return Ok(()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = adapt::sleep(core::time::Duration::from_millis(1));
+                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

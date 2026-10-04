@@ -6,7 +6,6 @@ use env::{Access, Name, Mark, Entry, PieKind, Policy, Wait};
 use protocol::debug;
 use protocol::service::hub::{ENROLL_MAX, Enroll};
 use runtime::core::res::port;
-use runtime::core::res::pie::{NolePie, PolePie};
 
 pub struct Supplies {
     pub machine: Machine,
@@ -59,8 +58,8 @@ impl Supplies {
         let mut got = 0usize;
         let mut put = |key: Name, kind: PieKind, access: Access, policy: Policy| {
             let shipped = self.accounts.token(key).and_then(|src| match kind {
-                PieKind::Pole => port::ship(&PolePie::from_token(src), *task, access, policy).ok(),
-                PieKind::Nole => port::ship(&NolePie::from_token(src), *task, access, policy).ok(),
+                PieKind::Pole => port::ship(src, *task, access, policy).ok(),
+                PieKind::Nole => port::ship(src, *task, access, policy).ok(),
                 PieKind::Hole | PieKind::Tole => None,
             });
             match shipped {

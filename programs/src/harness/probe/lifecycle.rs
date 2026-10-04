@@ -2,7 +2,6 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::Wait;
 use env::unit;
-use runtime::core::adapt;
 
 fn until(mut done: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 2_000_000_000;
@@ -11,7 +10,7 @@ fn until(mut done: impl FnMut() -> bool) {
             env::chrono::clock() < deadline,
             "lifecycle: timed out"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn debark(task: env::TaskId) {
@@ -26,7 +25,7 @@ pub fn acceptance() {
     let count = Arc::new(AtomicUsize::new(0));
     let sibling = Arc::new(AtomicUsize::new(0));
     let finish = Arc::new(AtomicBool::new(false));
-    let worker = adapt::spawn(
+    let worker = runtime::core::task::spawn(
         env::TeamId::new(0),
         tick as *const () as usize,
         &[Arc::as_ptr(&count) as usize],
@@ -39,14 +38,14 @@ pub fn acceptance() {
     let peer = runtime::core::task::join::closure(move || {
         while !ending.load(Ordering::Acquire) {
             sib.fetch_add(1, Ordering::Release);
-            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
     });
     until(|| count.load(Ordering::Acquire) > 1);
     for _ in 0..3 {
         debark(worker);
         let stopped = count.load(Ordering::Acquire);
-        adapt::sleep(core::time::Duration::from_millis(12)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(12)).unwrap();
         assert_eq!(
             count.load(Ordering::Acquire),
             stopped,
@@ -61,7 +60,7 @@ pub fn acceptance() {
     unit::slay(worker).unwrap();
     until(|| unit::join(worker, Wait::POLL).unwrap_or(true));
     until(|| sibling.load(Ordering::Acquire) > before);
-    let running = adapt::spawn(
+    let running = runtime::core::task::spawn(
         env::TeamId::new(0),
         spin as *const () as usize,
         &[Arc::as_ptr(&count) as usize],
@@ -74,7 +73,7 @@ pub fn acceptance() {
     until(|| count.load(Ordering::Acquire) > held);
     debark(running);
     let stopped = count.load(Ordering::Acquire);
-    adapt::sleep(core::time::Duration::from_millis(12)).unwrap();
+    runtime::core::task::sleep(core::time::Duration::from_millis(12)).unwrap();
     assert_eq!(
         count.load(Ordering::Acquire),
         stopped,
@@ -84,7 +83,7 @@ pub fn acceptance() {
     until(|| count.load(Ordering::Acquire) > stopped);
     unit::slay(running).unwrap();
     until(|| unit::join(running, Wait::POLL).unwrap_or(true));
-    let held = adapt::spawn(
+    let held = runtime::core::task::spawn(
         env::TeamId::new(0),
         spin as *const () as usize,
         &[Arc::as_ptr(&count) as usize],
@@ -106,7 +105,7 @@ extern "C" fn tick(args: usize) -> ! {
     let count = unsafe { &*(*(args as *const usize) as *const AtomicUsize) };
     loop {
         count.fetch_add(1, Ordering::Release);
-        adapt::sleep(core::time::Duration::from_millis(3)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(3)).unwrap();
     }
 }
 

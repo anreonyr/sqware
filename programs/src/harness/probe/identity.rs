@@ -8,7 +8,6 @@ use runtime::core::res::port::{self, Access, Policy};
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
 use env::pie;
-use runtime::core::adapt;
 use runtime::core::res::pie::{HolePie, inspect, reserve};
 
 pub(crate) fn supply_to(
@@ -27,7 +26,7 @@ pub(crate) fn supply_to(
         } else {
             Access::STORE
         };
-        port::ship(&HolePie::from_token(token), task, access, Policy::NONE)
+        port::ship(token, task, access, Policy::NONE)
             .map_err(|_| "rule verification supply")?;
     }
     if program.name() == "system-dependent" {
@@ -49,7 +48,7 @@ pub(crate) fn supply_to(
         }
         // Transfer an entry copy, not the installer's kernel sender identity.
         port::ship(
-            &HolePie::from_token(token),
+            token,
             task,
             Access::FETCH | Access::STORE,
             Policy::NONE,
@@ -78,7 +77,7 @@ pub fn timeout() {
         let owner = env::TaskId::new(raw_owner);
         let entry = establish::claim(owner, Grant::Resolve.mark(), Wait::AtMost(1000)).unwrap();
         while !release_reader.load(Ordering::Acquire) {
-            adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let mut bytes = [0; MAX_FRAME];
         let (n, from) = HolePie::from_token(entry)
@@ -91,7 +90,7 @@ pub fn timeout() {
         );
     });
     port::ship(
-        &HolePie::from_token(entry),
+        entry,
         reader.id(),
         Access::FETCH,
         Policy::NONE,
@@ -504,7 +503,7 @@ fn activation_boundary(
         let entry = establish::claim(owner, activation::ENTRY, Wait::AtMost(1000)).unwrap();
         assert!(
             port::ship(
-                &HolePie::from_token(entry),
+                entry,
                 hub,
                 Access::STORE,
                 Policy::NONE
@@ -519,7 +518,7 @@ fn activation_boundary(
         finished.store(true, Ordering::Release);
     });
     port::ship(
-        &HolePie::from_token(entry),
+        entry,
         caller.id(),
         Access::STORE,
         Policy::NONE,
@@ -537,7 +536,7 @@ fn activation_boundary(
             env::chrono::clock() < until,
             "activation boundary never answered"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
 }
@@ -568,6 +567,6 @@ fn ready_driver(
             env::chrono::clock() < until,
             "identity: driver never republished"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }

@@ -296,7 +296,7 @@ impl Client {
             return Err(Fail::Denied);
         }
         let seed = runtime::core::res::port::ship(
-            &HolePie::from_token(entry),
+            entry,
             self.control,
             runtime::core::res::port::Access::FETCH | runtime::core::res::port::Access::STORE,
             runtime::core::res::port::Policy::VEST,

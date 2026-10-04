@@ -19,7 +19,7 @@ use super::super::hand::{Receiver, Sender};
 use super::super::{deadline, remain};
 use crate::wire::message::Message;
 use env::pie;
-use runtime::core::res::pie::{AnyPie, HolePie, pies, reserve};
+use runtime::core::res::pie::{pies, reserve};
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -142,10 +142,9 @@ pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
 /// 而孔是单手，谁先读谁吃掉
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
     let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
-    let pie = HolePie::from_token(hole);
-    port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::NONE)
+    port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE)
         .map_err(|_| EstablishFail::NoSeed)?;
-    pie.narrow(Permission::STORE)
+    env::pie::narrow(hole, Permission::STORE)
         .map_err(|_| EstablishFail::NoSeed)?;
     Ok(hole)
 }
@@ -184,8 +183,7 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
     let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
-    let pie = HolePie::from_token(hole);
-    match port::ship(&pie, to, Access::FETCH | Access::STORE, Policy::VEST) {
+    match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::VEST) {
         Ok(at) => Ok((hole, at.seed())),
         Err(_) => {
             // **交不出去就当场放回来**：不留一枚没人认得的孔在本端表里。
@@ -202,7 +200,7 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
     let host = opened_by(entry).ok_or(())?;
     let back = pie::unseal_hole(mark).map_err(|_| ())?;
     match port::ship(
-        &HolePie::from_token(back),
+        back,
         host,
         Access::STORE,
         Policy::NONE,

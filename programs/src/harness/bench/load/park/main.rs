@@ -13,14 +13,12 @@ extern crate programs;
 
 use core::time::Duration;
 
-use runtime::core::adapt;
-
 /// 每轮睡多久（毫秒）——就是被测的那个 `millis`
 const MS: u64 = 1;
 
 #[programs::entry]
 fn main() -> ! {
     loop {
-        let _ = adapt::sleep(Duration::from_millis(MS));
+        let _ = runtime::core::task::sleep(Duration::from_millis(MS));
     }
 }

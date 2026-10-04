@@ -1,6 +1,6 @@
 //! Bell — **Nole 的 runtime 封装**：把一枚 Nole 当门铃用。
 //!
-//! 内核里它**仍是一枚 Nole**（`AnyPie::Nole`，没有第四种资源）：Nole 上多了"听者面"
+//! 内核里它**仍是一枚 Nole**（Nole，没有第四种资源）：Nole 上多了"听者面"
 //! ——`id` / `life` / `ring` 一位——而"怎么用"封装在这一层。与 `Port` 包着
 //! `HolePie` 同构：**种类归内核，用法归 runtime**。
 //!
@@ -33,32 +33,40 @@
 //! 铃只有一条方向（有事/没事）。签名少一个参数就把这件事说完了，不必写注释解释
 //! "为什么只有 Pull"。
 
-use env::{MailResult, Wait};
+use env::{HoleDir, MailResult, PieResult, PieToken, Wait};
 
-use crate::core::res::pie::NolePie;
+use crate::core::res::pie;
 
 /// 门铃：一枚 Nole + "怎么用它"。
 pub struct Bell {
-    pie: NolePie,
+    pie: PieToken,
 }
 
 impl Bell {
+    /// 创建一枚门铃。
+    pub fn unseal() -> PieResult<Self> {
+        Ok(Self::new(env::pie::unseal_nole()?))
+    }
+
+    pub fn token(&self) -> PieToken {
+        self.pie
+    }
+
     /// 收下一枚已经在对端的 Nole 门闩（调用方递过来的 token）。
-    pub fn new(pie: NolePie) -> Bell {
+    pub fn new(pie: PieToken) -> Bell {
         Bell { pie }
     }
 
     /// 等铃响：`millis`（上限族，`Wait`）。
     ///
-    /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（挂起过、或超时
-    /// ——两者不分）。**不清**那一位，见模块头。
+    /// 返回 `true` = 就绪，`false` = 预算走完仍未就绪。**不清**那一位。
     pub fn wait(&self, millis: Wait) -> MailResult<bool> {
-        self.pie.wait(millis)
+        pie::wait(self.pie, HoleDir::Pull, millis)
     }
 
     /// 应铃：清掉"有待取之事"。未响返 `Busy`（没有可取之事）。
     pub fn hush(&self) -> MailResult<()> {
-        self.pie.hush()
+        env::mail::hush(self.pie)
     }
 
     /// 自响：置"有待取之事"并唤醒听者。已响返 `Busy`。
@@ -68,6 +76,6 @@ impl Bell {
     /// （见 `driver/router/adapt/resident.rs`）。留着它是因为"自己叫自己"是正当写法——
     /// 响者由持铃者决定，不是内核的特权。
     pub fn ring(&self) -> MailResult<()> {
-        self.pie.ring()
+        env::mail::ring(self.pie)
     }
 }

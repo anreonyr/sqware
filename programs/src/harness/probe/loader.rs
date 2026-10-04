@@ -7,10 +7,7 @@ use protocol::{
     communication::session::establish,
     system::{control, loader as call, operator::client::Face as Operator},
 };
-use runtime::core::{
-    adapt,
-    res::pie::{AnyPie, HolePie, PolePie},
-};
+use runtime::core::res::pie::HolePie;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
@@ -137,7 +134,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             env::chrono::clock() < deadline,
             "loader: IPC fixture timed out"
         );
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     worker.join();
     peer.join();
@@ -158,7 +155,7 @@ fn until(mut ready: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 5_000_000_000;
     while !ready() {
         assert!(env::chrono::clock() < deadline, "loader: waiting timed out");
-        adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
@@ -170,16 +167,16 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         env::unit::build(env::ProgramKind::User).is_err(),
         "loader: caller received Build authority"
     );
-    let image = PolePie::unseal(8192).unwrap();
+    let image = env::pie::unseal_pole(8192, true).unwrap();
     let bytes = image_bytes();
-    let (at, size) = image.open().unwrap();
+    let (at, size) = runtime::core::res::pie::open(image).unwrap();
     // SAFETY: the locally owned writable Pole covers the complete test ELF.
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
     }
     let build = || {
         loader
-            .build(&image, 0, bytes.len(), &[7, 11], 0, WAIT)
+            .build(image, 0, bytes.len(), &[7, 11], 0, WAIT)
             .unwrap()
     };
     let first = build();
@@ -231,7 +228,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         control::State::Debarked
     );
     assert!(matches!(
-        loader.build(&image, size, 1, &[], 0, WAIT),
+        loader.build(image, size, 1, &[], 0, WAIT),
         Err(call::Fail::BadImage)
     ));
     // SAFETY: the caller retains write access while the service uses an independent snapshot.
@@ -239,7 +236,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         *(at as *mut u8) = 0;
     }
     assert!(matches!(
-        loader.build(&image, 0, bytes.len(), &[], 0, WAIT),
+        loader.build(image, 0, bytes.len(), &[], 0, WAIT),
         Err(call::Fail::BadImage)
     ));
     assert_eq!(
@@ -250,8 +247,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy = image
-        .accord(root, Permission::FETCH, call::frame::IMAGE)
+    let image_copy = env::pie::accord(image, root, Permission::FETCH, call::frame::IMAGE)
         .unwrap();
     let (back, seed) = establish::lend_out(entry, call::frame::BACK).unwrap();
     let ask = call::frame::Ask {
@@ -278,8 +274,8 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     let _ = env::pie::release(back);
     // Leave the result unclaimed while keeping its requester alive.
     until(|| state.instance(said.task).state(WAIT) == Ok(control::State::Dead));
-    image.shut().unwrap();
-    env::pie::release(image.token()).unwrap();
+    env::pie::shut(image).unwrap();
+    env::pie::release(image).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
 }
 fn image_bytes() -> alloc::vec::Vec<u8> {

@@ -74,7 +74,7 @@ pub(super) fn arm(
     settling.0 |= desk.arm_pending(
         |who| (&MARKS).iter().find_map(|mark| (ask_of)(who, *mark)),
         |ask| {
-            pile.attach(&HolePie::from_token(ask), HoleDir::Pull)
+            pile.attach(ask, HoleDir::Pull)
                 .is_ok()
         },
     );
@@ -153,7 +153,7 @@ pub(super) fn sweep(
 ) -> Result<Progress, Fail> {
     let _ = desk.sweep_each(|gone| {
         if let Some(ask) = gone.ask {
-            let _ = pile.detach(&HolePie::from_token(ask), HoleDir::Pull);
+            let _ = pile.detach(ask, HoleDir::Pull);
         }
         if let Some(at) = outs.0.iter().position(|out| out.who == gone.who) {
             if outs.0[at].send.settle() {

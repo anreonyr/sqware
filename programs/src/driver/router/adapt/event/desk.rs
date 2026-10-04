@@ -65,7 +65,7 @@ pub fn serve(
                     plic.enable(line, LINE_PRIORITY);
                     // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `exhaust`）。
                     if let Some(lane) = lines.lane(line) {
-                        let _ = pile.attach(&HolePie::from_token(lane.rx()), HoleDir::Pull);
+                        let _ = pile.attach(lane.rx(), HoleDir::Pull);
                     }
                     debug!("router: line {line} occupied");
                     lcall::OK

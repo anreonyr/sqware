@@ -83,7 +83,7 @@ pub(super) fn apply(
                     // 要能替客人再授出，少 `VEST` ⇒ 转授那一步答 `Denied`。
                     let grant_pie = HolePie::from_token(pie);
                     grant =
-                        port::ship(&grant_pie, who, Access::FETCH | Access::STORE, Policy::VEST)
+                        port::ship(grant_pie.token(), who, Access::FETCH | Access::STORE, Policy::VEST)
                             .map(|at| seed = Some(at.seed()))
                             .map_err(|_| ocall::Fail::Unknown);
                 });

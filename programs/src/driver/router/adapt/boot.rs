@@ -22,7 +22,7 @@ use runtime::core::res::bell::Bell;
 use runtime::core::res::pile::Pile;
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{HolePie, NolePie};
+use runtime::core::res::pie::{HolePie};
 
 const SERVICE: &str = "router";
 
@@ -105,7 +105,7 @@ pub fn up() -> Result<Up, Fail> {
         sources.device_count(),
         sources.context()
     );
-    let bell = Bell::new(NolePie::from_token(irq_deed.token));
+    let bell = Bell::new(irq_deed.token);
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
@@ -127,9 +127,9 @@ pub fn up() -> Result<Up, Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = HolePie::from_token(entry);
     if pile
-        .attach(&NolePie::from_token(irq_deed.token), HoleDir::Pull)
+        .attach(irq_deed.token, HoleDir::Pull)
         .is_err()
-        || pile.attach(&entry_hole, HoleDir::Pull).is_err()
+        || pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
     {
         return Err(Fail::at(E_ROUTER, "bell"));
     }

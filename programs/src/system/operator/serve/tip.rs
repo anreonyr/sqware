@@ -35,14 +35,13 @@ pub(super) fn tip(
 ) -> Result<Progress, Fail> {
     tip.0 = pie::unseal_hole(ocall::TIP_MARK).map_err(|_| Fail::Tree)?;
     let hole = HolePie::from_token(tip.0);
-    port::ship(
-        &hole,
+    port::ship(hole.token(),
         status.control,
         Access::FETCH | Access::STORE,
         Policy::VEST,
     )
     .map_err(|_| Fail::Tree)?;
-    pile.attach(&hole, HoleDir::Pull).map_err(|_| Fail::Desk)?;
+    pile.attach(hole.token(), HoleDir::Pull).map_err(|_| Fail::Desk)?;
     Ok(Progress::Done)
 }
 pub(super) fn receive_tips(
@@ -279,7 +278,7 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(&HolePie::from_token(tip.0), HoleDir::Pull);
+    let _ = pile.detach(tip.0, HoleDir::Pull);
     let _ = pie::seal(tip.0);
     let _ = pie::release(tip.0);
     Ok(Progress::Done)

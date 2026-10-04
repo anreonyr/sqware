@@ -13,7 +13,7 @@ use crate::system::{
     run::bootstrap::Boot,
 };
 use crate::unit::{Died, UnitFile};
-use runtime::core::adapt;
+
 use protocol::common::schedule::{
     Cursor, Dispatch, Invocation, Plan, Progress, Res, ResMut, Resources as Registry, Schedule,
 };
@@ -171,7 +171,7 @@ impl Fixture {
                     };
                 }
             }
-            adapt::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;
+            runtime::core::task::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;
         }
     }
     pub fn progress(&mut self) -> Result<(), &'static str> {

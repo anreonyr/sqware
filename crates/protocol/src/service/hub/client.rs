@@ -66,7 +66,7 @@ impl Face {
         // 交出去的只是**读的那一份**（`FETCH|STORE`、不给 `VEST`）：hub 只用它 `reserve`
         // 一次（问"这一枚还在不在"），不需要再授给谁。
         let shipped = port::ship(
-            &HolePie::from_token(sensor),
+            sensor,
             self.host,
             Access::FETCH | Access::STORE,
             Policy::NONE,

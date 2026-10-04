@@ -12,7 +12,7 @@ use env::HoleDir;
 use protocol::communication::session::Endpoint;
 use protocol::debug;
 use runtime::core::res::pile::Pile;
-use runtime::core::res::pie::{HolePie, reserve};
+use runtime::core::res::pie::{reserve};
 
 /// 逐客：主人没了的那几条——拆线 + 空出格子
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
@@ -27,7 +27,7 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
             continue;
         }
         plic.unwire(line);
-        let _ = pile.detach(&HolePie::from_token(lane.rx()), HoleDir::Pull);
+        let _ = pile.detach(lane.rx(), HoleDir::Pull);
         let _ = lines.vacate(line);
         debug!("router: vacate line={line}");
     }

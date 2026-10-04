@@ -32,7 +32,7 @@ impl Activation {
         let entry = pie::unseal_hole(activation::ENTRY).map_err(|_| "hub activation hole")?;
         let owned = Self { hub, entry };
         port::ship(
-            &HolePie::from_token(entry),
+            entry,
             hub,
             Access::STORE,
             Policy::NONE,

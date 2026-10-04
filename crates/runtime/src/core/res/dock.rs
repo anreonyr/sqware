@@ -1,6 +1,6 @@
 //! dock — **Pole 的 runtime 封装**：把一枚共享页借映进本域，得到一段视图。
 //!
-//! 内核里它**仍是一枚 Pole**（`AnyPie::Pole`，没有新资源）：页块与 `Open`/`Shut`/`Narrow`
+//! 内核里它**仍是一枚 Pole**（没有新资源）：页块与 `Open`/`Shut`/`Narrow`
 //! 都在内核，"怎么用"封装在这一层。与 `Port` 包着 `HolePie` 同构：**种类归内核，用法归
 //! runtime**。
 //!
@@ -18,7 +18,7 @@
 //! ——`static UART` 配 `Uart: Copy`，两个线程各取一份（同一张页表，不需要锁）。故两个类型：
 //! [`Dock`] 不 `Copy`，[`View`] 是 `Copy` 的值。
 //!
-//! # 两条动词，与 `PolePie` 同形
+//! # 映射与撤图
 //!
 //! `open` / `shut` 就是 `PieCall::Open` / `Shut`，**本层不加新动词**——多出来的只有一件事：
 //! 把"起点 + 长度"成对地带回来。于是"一段不知道多长的内存"在类型上不存在。
@@ -33,9 +33,9 @@
 //! `shut` 只撤图，**不 `release` 门闩**——与 `Port::shut` 同一条理由：门闩的收尾是策略，
 //! 不进结构。
 
-use env::PieResult;
+use env::{PieResult, PieToken};
 
-use crate::core::res::pie::PolePie;
+use crate::core::res::pie;
 
 /// 视图：一段**已映射进本域**的内存。
 ///
@@ -64,7 +64,7 @@ impl View {
 
 /// 泊位：一枚 Pole 门闩 + 它在本域的那段视图。
 pub struct Dock {
-    pie: PolePie,
+    pie: PieToken,
     view: View,
 }
 
@@ -72,15 +72,15 @@ impl Dock {
     /// 映射：把一枚已授权的共享页借映进本域 → 视图。
     ///
     /// 收下 `pie`（本层持门闩，与 `Port` / `Bell` 同构）。同一枚门闩再开一次是幂等的
-    /// （内核返同一个 VA），但那要求另造一个句柄——本层不为此开入口。
+    /// （内核返同一个 VA），调用方仍须协调撤图。
     ///
     /// # Errors
     /// - `Denied` — 门闩不在本任务表里 / 权限不含 `FETCH`
     /// - `Dead`   — 资源已封印
     /// - `HandedOver`  — 这一枚被我交出去了（`ONLY` 资源的锚还在、接收方手里那枚还活着）
     /// - `OoM`    — 本域空间备不出这么长的一段
-    pub fn open(pie: PolePie) -> PieResult<Dock> {
-        let (base, size) = pie.open()?;
+    pub fn open(pie: PieToken) -> PieResult<Dock> {
+        let (base, size) = pie::open(pie)?;
         Ok(Dock {
             pie,
             view: View { base, size },
@@ -94,7 +94,7 @@ impl Dock {
 
     /// 这一枚页的号（**交给别人**用：共享内存那一档要把"我们看的是同一段"说出去）。
     pub fn pie_token(&self) -> env::PieToken {
-        self.pie.token()
+        self.pie
     }
 
     /// 撤图：撤掉这次映射（幂等）。**不 `release` 门闩**——它与 `self` 一起放下。
@@ -107,6 +107,6 @@ impl Dock {
     /// 不过存活闸（`envcall/pie.rs` 的 `shut` 只 `locate` + 判权 + 判锚）——资源封印之后，
     /// 已经借进来的那段映射仍然撤得掉。与 `Release`「你总得能放下手里的东西」同一条口径。
     pub fn shut(self) -> PieResult<()> {
-        self.pie.shut()
+        env::pie::shut(self.pie)
     }
 }

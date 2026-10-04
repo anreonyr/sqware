@@ -37,13 +37,13 @@ pub(super) fn faces(
     for grant in Grant::ALL {
         let (token, _) = mount::entry(grant.mark(), grant.name()).map_err(|_| Fail::Tree)?;
         port::ship(
-            &HolePie::from_token(token),
+            token,
             status.control,
             Access::FETCH | Access::STORE,
             Policy::VEST,
         )
         .map_err(|_| Fail::Tree)?;
-        pile.attach(&HolePie::from_token(token), HoleDir::Pull)
+        pile.attach(token, HoleDir::Pull)
             .map_err(|_| Fail::Desk)?;
         faces.0.push((token, grant));
     }
@@ -128,7 +128,7 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
-        let _ = pile.detach(&HolePie::from_token(*entry), HoleDir::Pull);
+        let _ = pile.detach(*entry, HoleDir::Pull);
         let _ = pie::seal(*entry);
         let _ = pie::release(*entry);
     }

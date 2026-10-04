@@ -16,8 +16,6 @@
 
 use env::{Wait, HoleDir, PieToken, Source, TaskId, ToleResult};
 
-use crate::core::res::pie::{Mate, TolePie};
-
 /// **一条状态订阅的描述**——两格的**名字与内核 `work::mail::tole::Sub` 逐字相同**。
 ///
 /// 它同时是"订阅"与"取消"的凭据：本层**不发 token**，取消就凭这同一条描述。
@@ -44,7 +42,7 @@ impl Sub {
 
 /// 一个组的使用面。
 pub struct Pile {
-    pie: TolePie,
+    pie: PieToken,
 }
 
 impl Pile {
@@ -55,45 +53,45 @@ impl Pile {
     /// 型**——放行全链，人人醒来自己按组复核）。
     pub fn unseal(shared: bool) -> ToleResult<Pile> {
         Ok(Pile {
-            pie: TolePie::unseal(shared)?,
+            pie: env::tole::unseal(shared)?,
         })
     }
 
     /// 收下一枚已经在对端的组（调用方递过来的 token）。
-    pub fn new(pie: TolePie) -> Pile {
+    pub fn new(pie: PieToken) -> Pile {
         Pile { pie }
     }
 
     /// 把一枚成员的一个方向挂进来（同成员幂等）。
-    pub fn attach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
-        self.pie.attach(mate, dir)
+    pub fn attach(&self, mate: PieToken, dir: HoleDir) -> ToleResult<()> {
+        env::tole::attach(self.pie, mate, dir)
     }
 
     /// 摘掉一格；没挂过即无事。
-    pub fn detach<M: Mate>(&self, mate: &M, dir: HoleDir) -> ToleResult<()> {
-        self.pie.detach(mate, dir)
+    pub fn detach(&self, mate: PieToken, dir: HoleDir) -> ToleResult<()> {
+        env::tole::detach(self.pie, mate, dir)
     }
 
     /// 把一个状态来源登记进组（同描述幂等）；成功即留一次待复核提示。
     pub fn subscribe(&self, sub: Sub) -> ToleResult<()> {
         let (source, target) = sub.wire();
-        self.pie.subscribe(source, target)
+        env::tole::subscribe(self.pie, source, target)
     }
 
     /// 按描述取消（同描述重复取消无事）；**不要求目标还在世**。
     pub fn unsubscribe(&self, sub: Sub) -> ToleResult<()> {
         let (source, target) = sub.wire();
-        self.pie.unsubscribe(source, target)
+        env::tole::unsubscribe(self.pie, source, target)
     }
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到
     /// （挂起过，或期限到）——**继续等就再叫一次**，别把 `None` 当成终局。
     pub fn await_(&self, millis: Wait) -> ToleResult<Option<(PieToken, HoleDir)>> {
-        let (token, dir) = self.pie.await_(millis)?;
+        let (token, dir) = env::tole::await_(self.pie, millis)?;
         Ok((token != PieToken::NONE).then_some((token, dir)))
     }
 
     pub fn token(&self) -> PieToken {
-        self.pie.token()
+        self.pie
     }
 }

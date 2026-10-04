@@ -63,7 +63,7 @@ pub fn close(
 ) -> Result<Progress, Fail> {
     if let Some(entry) = inbox.entry {
         let _ = watch.pile.detach(
-            &runtime::core::res::pie::HolePie::from_token(entry),
+            entry,
             env::HoleDir::Pull,
         );
         env::pie::seal(entry).map_err(|_| Fail::Shutdown)?;

@@ -18,7 +18,6 @@ use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;
 use env::unit;
 use env::pie;
-use runtime::core::adapt;
 
 const MS: usize = 1000;
 /// 那一块窗格 —— 与 `probe-watch-gone` 订的那条路**逐字相同**（两份文件各写一遍）。
@@ -59,7 +58,7 @@ fn main() -> Report<'static> {
             panic!("probe-watch-after: the tree stopped answering after #{i}");
         };
         drop(again);
-        let _ = adapt::sleep(Duration::from_millis(STEP_MS));
+        let _ = runtime::core::task::sleep(Duration::from_millis(STEP_MS));
     }
 
     let Ok(listing) = tree

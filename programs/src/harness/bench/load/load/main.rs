@@ -50,7 +50,6 @@ use programs::system::control::core::unit::{Announce, Table};
 use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use protocol::debug;
-use runtime::core::adapt;
 
 /// 占核者与打点者的**清单名**（programs::unit::PROGRAMS 里 `wanted_by` 含 `load` 的那两行）
 const HOG_ELF: &str = "busy";
@@ -119,7 +118,7 @@ fn main() -> Reason {
     // 台主自己：每 1 ms 让出一次核（**不许纯空转**，见头注坑 2）。
     let t0 = env::chrono::ticks();
     for _ in 0..ROUNDS {
-        let _ = adapt::sleep(Duration::from_millis(1));
+        let _ = runtime::core::task::sleep(Duration::from_millis(1));
     }
     let t1 = env::chrono::ticks();
     debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");

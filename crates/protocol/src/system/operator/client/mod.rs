@@ -20,7 +20,6 @@ use crate::communication::{deadline, remain};
 use crate::system::operator as ocall;
 use crate::system::operator::{Fail, EntryId, Grant, Listing, Where, Permit};
 use runtime::core::res::pie::{HolePie};
-use runtime::core::adapt;
 
 pub mod pane;
 pub mod tile;
@@ -166,8 +165,7 @@ impl Rein<'_> {
         wait: Wait,
     ) -> Result<EntryId, Fail> {
         let pie = HolePie::from_token(entry);
-        let shipped = port::ship(
-            &pie,
+        let shipped = port::ship(pie.token(),
             self.face.session.host,
             Access::FETCH | Access::STORE,
             Policy::VEST,
@@ -275,7 +273,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
                 }
                 rounds += 1;
                 let _ =
-                    adapt::sleep(core::time::Duration::from_millis(backoff as u64));
+                    runtime::core::task::sleep(core::time::Duration::from_millis(backoff as u64));
                 backoff = (backoff * 2).min(RETRY_MAX_MS);
                 // Do not enqueue a final request with no time left to receive its reply.
                 if remain(until) == Wait::POLL {

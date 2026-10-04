@@ -166,7 +166,7 @@ fn main() -> programs::Report<'static> {
                         name: "abandoned".into(),
                     };
                     let seed = port::ship(
-                        &HolePie::from_token(resource),
+                        resource,
                         control,
                         Access::FETCH | Access::STORE,
                         Policy::VEST,
@@ -175,7 +175,7 @@ fn main() -> programs::Report<'static> {
                     .seed();
                     let closed = pie::unseal_hole(BACK).unwrap();
                     let reply = port::ship(
-                        &HolePie::from_token(closed),
+                        closed,
                         control,
                         Access::STORE,
                         Policy::NONE,
@@ -325,7 +325,7 @@ fn main() -> programs::Report<'static> {
                     HolePie::from_token(back).push(&bytes[..n], WAIT).unwrap();
                 });
                 port::ship(
-                    &HolePie::from_token(back),
+                    back,
                     helper.id(),
                     Access::STORE,
                     Policy::NONE,

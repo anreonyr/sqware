@@ -24,7 +24,6 @@ use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
 use env::unit;
-use runtime::core::adapt;
 
 /// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
 const WANT: &str = "rtc";
@@ -108,7 +107,7 @@ fn find_face(tree: &Face) -> Option<PieToken> {
         {
             Ok(entry) => return Some(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = adapt::sleep(core::time::Duration::from_millis(1));
+                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

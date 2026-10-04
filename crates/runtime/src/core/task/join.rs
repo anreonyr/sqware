@@ -6,7 +6,6 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::{Wait, TaskId, TeamId, UnitResult};
 
-use crate::core::adapt;
 use crate::core::task::tls;
 use env::{room, unit as env_task};
 
@@ -135,7 +134,7 @@ where
     });
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let task_id = adapt::spawn(
+    let task_id = crate::core::task::spawn(
         TeamId::new(0),
         (trampoline as extern "C" fn(usize) -> !) as usize,
         &[ptr],
@@ -179,5 +178,5 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // `tls::free` 自己对还——用的是用户态既有原语 `MemoryCall::Deallocate`，
     // 不需要任何新 ABI。
     tls::deallocate();
-    adapt::exit(env::EXIT_OK, None)
+    crate::core::task::exit(env::EXIT_OK, None)
 }

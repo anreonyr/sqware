@@ -5,14 +5,15 @@ use super::{
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU64, Ordering};
 use env::pie;
-use runtime::core::res::pie::{NolePie};
+use runtime::core::res::bell::Bell;
+
 use protocol::{
     common::schedule::{Progress, Res},
     system::identity::{Mount, Reply},
 };
 #[derive(Clone)]
 pub struct Epoch(pub Arc<AtomicU64>);
-pub struct Changed(pub NolePie);
+pub struct Changed(pub Bell);
 impl Epoch {
     pub fn new() -> Self {
         Self(Arc::new(AtomicU64::new(0)))

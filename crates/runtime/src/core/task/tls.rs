@@ -3,7 +3,6 @@
 use env::MemoryResult;
 
 use crate::PAGE_SIZE;
-use crate::core::adapt;
 
 // 硬不变量：base() 仅在装配点后有效；bootstrap 仅在主线程出生点调用恰好一次。
 
@@ -21,12 +20,12 @@ pub fn base() -> usize {
 
 /// 本线程的 TLS 块（一整页）——错类型是 Memory 域的词汇（`OoM` / `NoRegion`）。
 pub fn allocate() -> MemoryResult<usize> {
-    adapt::allocate(TLS_SIZE)
+    crate::core::memory::allocate(TLS_SIZE)
 }
 
 /// 归还本线程的 TLS 块（**任务退场前必调**）。
 ///
-/// 为什么必须有：TLS 块是内核给的**一整页**（`adapt::allocate` 按页取整），
+/// 为什么必须有：TLS 块是内核给的**一整页**（`crate::core::memory::allocate` 按页取整），
 /// 内核**不认**它是谁的——`bury` 只归还 `TaskIdent` 上记着的那两个 Span（栈 /
 /// trap 帧）。于是每个 spawn 出来的任务都把一页永久留在域空间里：churn
 /// 实测就是这条（order-0 帧随任务数线性流失）。
@@ -38,7 +37,7 @@ pub fn deallocate() {
     if tp == 0 {
         return; // 未装配（理论上不可达）：不制造第二处失败
     }
-    let _ = adapt::deallocate(tp, TLS_SIZE);
+    let _ = crate::core::memory::deallocate(tp, TLS_SIZE);
 }
 
 /// # Safety

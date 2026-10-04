@@ -4,8 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use env::pie;
 use env::unit;
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use runtime::core::adapt;
-use runtime::core::res::pie::{HolePie, PolePie, pies};
+use runtime::core::res::pie::{HolePie, pies};
 
 pub fn acceptance() {
     queued();
@@ -67,7 +66,7 @@ fn queued() {
     });
     let sender = writer.id();
     runtime::core::res::port::ship(
-        &HolePie::from_token(entry),
+        entry,
         sender,
         env::Access::STORE,
         env::Policy::NONE,
@@ -136,7 +135,7 @@ fn concurrent() {
             }
         });
         runtime::core::res::port::ship(
-            &HolePie::from_token(entry),
+            entry,
             worker.id(),
             env::Access::STORE,
             env::Policy::NONE,
@@ -222,18 +221,18 @@ fn elf() {
     let source = added[0];
     let view =
         env::pie::accord(source, unit::self_id(), env::Permission::FETCH, Mark::NONE).unwrap();
-    let page = PolePie::from_token(view);
-    let (at, size) = page.open().unwrap();
+    let page = view;
+    let (at, size) = runtime::core::res::pie::open(page).unwrap();
     assert_eq!(size, 8192);
     // SAFETY: Open holds a readable mapping of size bytes until Shut.
     let data = unsafe { core::slice::from_raw_parts(at as *const u8, size) };
     assert_eq!(&data[2..6], &[0x13, 0, 0, 0]);
     assert!(data[..2].iter().chain(&data[6..]).all(|&byte| byte == 0));
     assert!(
-        adapt::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
+        runtime::core::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
         "copy: shared source can be widened"
     );
-    page.shut().unwrap();
+    env::pie::shut(page).unwrap();
     pie::release(view).unwrap();
     drop(
         loader

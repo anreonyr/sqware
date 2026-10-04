@@ -30,7 +30,6 @@ impl Fail {
 
 /// 引导那一族共用的号（"两块账读不出来"那一格）
 use crate::unit::system::E_BOOT;
-use runtime::core::res::pie::{PolePie};
 
 /// **起手要的三样东西**：两块账、那台机器的自述、那块清单
 pub struct Boot {
@@ -55,6 +54,6 @@ pub fn take() -> Result<Boot, Fail> {
 
 fn take_machine(accounts: &Accounts) -> Option<Machine> {
     let token = accounts.token(env::Name::Page(env::Page::Dtb))?;
-    let dock = Dock::open(PolePie::from_token(token)).ok()?;
+    let dock = Dock::open(token).ok()?;
     Machine::of(dock.view()).ok()
 }

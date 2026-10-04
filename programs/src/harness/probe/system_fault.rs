@@ -1,4 +1,5 @@
 //! Observe a system team's failure from an independent parent team.
+use runtime::core::res::bell::Bell;
 use crate::system::life::{Phase, Status};
 use crate::system::loader::{Image, Loader};
 use alloc::{boxed::Box, sync::Arc};
@@ -8,8 +9,7 @@ use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use protocol::communication::session::establish;
-use runtime::core::adapt;
-use runtime::core::res::pie::{HolePie, NolePie, PolePie};
+use runtime::core::res::pie::{HolePie};
 
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");
@@ -22,8 +22,8 @@ pub fn acceptance() {
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
     let payload =
-        PolePie::unseal(child.elf.len().div_ceil(runtime::PAGE_SIZE) * runtime::PAGE_SIZE).unwrap();
-    let (at, _) = payload.open().unwrap();
+        env::pie::unseal_pole(child.elf.len().div_ceil(runtime::PAGE_SIZE) * runtime::PAGE_SIZE, true).unwrap();
+    let (at, _) = runtime::core::res::pie::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
@@ -42,20 +42,20 @@ pub fn acceptance() {
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
             .unwrap();
         runtime::core::res::port::ship(
-            &HolePie::from_token(report),
+            report,
             task,
             env::Access::STORE,
             env::Policy::NONE,
         )
         .unwrap();
         runtime::core::res::port::ship(
-            &HolePie::from_token(boot),
+            boot,
             task,
             env::Access::FETCH,
             env::Policy::NONE,
         )
         .unwrap();
-        let token = env::pie::accord(payload.token(), task, Permission::FETCH, IMAGE).unwrap();
+        let token = env::pie::accord(payload, task, Permission::FETCH, IMAGE).unwrap();
         HolePie::from_token(boot)
             .push(&token.to_bytes(), Wait::AtMost(5000))
             .unwrap();
@@ -80,7 +80,7 @@ pub fn acceptance() {
                     env::chrono::clock() < until,
                     "system-fault: task survived team failure"
                 );
-                adapt::sleep(core::time::Duration::from_millis(1)).unwrap();
+                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
         }
         unit::oust(team).unwrap();
@@ -106,7 +106,7 @@ pub fn unit() {
         .unwrap();
     assert_eq!((n, from), (bytes.len(), sire));
     let payload = env::PieToken::from_bytes(&bytes).unwrap();
-    let dock = runtime::core::res::dock::Dock::open(PolePie::from_token(payload)).unwrap();
+    let dock = runtime::core::res::dock::Dock::open(payload).unwrap();
     // SAFETY: the parent supplied an immutable ELF payload of args[1] bytes.
     let elf = unsafe { core::slice::from_raw_parts(dock.view().base() as *const u8, args[1]) };
     let child = loader
@@ -128,7 +128,7 @@ pub fn unit() {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             if mode == role {
-                adapt::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
+                runtime::core::task::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
             }
             let success = if role == 1 {
                 crate::system::operator::serve::run::serve(state.clone()).is_ok()
@@ -136,7 +136,7 @@ pub fn unit() {
                 crate::system::identity::serve::run::serve(
                     state.clone(),
                     crate::system::identity::serve::revision::Epoch::new(),
-                    crate::system::identity::serve::revision::Changed(NolePie::unseal().unwrap()),
+                    crate::system::identity::serve::revision::Changed(Bell::unseal().unwrap()),
                 )
                 .is_ok()
             };
@@ -145,7 +145,7 @@ pub fn unit() {
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = adapt::spawn(
+        let task = runtime::core::task::spawn(
             TeamId::new(0),
             runtime::core::task::join::trampoline as *const () as usize,
             &[ptr as usize],
@@ -182,6 +182,6 @@ pub fn unit() {
         {
             let _ = room::doom(unit::self_id());
         }
-        adapt::sleep(core::time::Duration::from_millis(10)).unwrap();
+        runtime::core::task::sleep(core::time::Duration::from_millis(10)).unwrap();
     }
 }

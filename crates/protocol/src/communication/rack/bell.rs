@@ -19,38 +19,37 @@
 //! 四拍（见 [`super::reader`]）——重复的响本就该并成一枚，多响的那几次答 `Busy`、写端当"正好"。
 
 use env::{MailResult, PieToken, Wait};
-use runtime::core::res::pie::{PolePie};
 
 /// 一具架那一枚铃（＝**那枚页上的一位**）。
 pub(crate) struct Bell {
-    pie: PolePie,
+    pie: PieToken,
 }
 
 impl Bell {
     /// 拿那一枚页的号（架的持有者开页时就顺手有了；对端拿 `Rack::ship()` 交出的号重建）。
     pub(crate) fn from_token(page: PieToken) -> Self {
         Self {
-            pie: PolePie::from_token(page),
+            pie: page,
         }
     }
 
     /// 本端那一枚的号（要交给别人听时用）。
     pub(crate) fn token(&self) -> PieToken {
-        self.pie.token()
+        self.pie
     }
 
     /// 响一下：置"有待取之事"并唤醒听者。**已响即 `Busy`，不是错**——写端不当它是失败。
     pub(crate) fn ring(&self) -> MailResult<()> {
-        self.pie.ring()
+        env::mail::ring(self.pie)
     }
 
     /// 等铃：`true` = 当场就绪（未挂起），`false` = 期限内没等到。**不清那一位**。
     pub(crate) fn wait(&self, within: Wait) -> MailResult<bool> {
-        self.pie.wait(within)
+        runtime::core::res::pie::HolePie::from_token(self.pie).wait(env::HoleDir::Pull, within)
     }
 
     /// 应一下：清掉"有待取之事"。**已经清着 ⇒ `Busy`**（读端把它当"正好"）。
     pub(crate) fn hush(&self) -> MailResult<()> {
-        self.pie.hush()
+        env::mail::hush(self.pie)
     }
 }

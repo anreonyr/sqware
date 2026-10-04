@@ -3,7 +3,7 @@ use crate::communication::{hand::Receiver, session::establish};
 use crate::wire::message::Message;
 use env::wire::Span;
 use env::{Permission, PieToken, TaskId, TeamId, Wait, pie};
-use runtime::core::res::pie::{AnyPie, HolePie, PolePie};
+use runtime::core::res::pie::{HolePie};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Built {
@@ -23,7 +23,7 @@ impl Face {
     }
     pub fn build(
         &self,
-        image: &PolePie,
+        image: PieToken,
         offset: usize,
         len: usize,
         args: &[usize],
@@ -44,8 +44,7 @@ impl Face {
                 (env::chrono::clock().saturating_sub(started) / 1_000_000) as usize,
             )),
         };
-        let seed = image
-            .accord(self.host, Permission::FETCH, frame::IMAGE)
+        let seed = pie::accord(image, self.host, Permission::FETCH, frame::IMAGE)
             .map_err(|_| Fail::Denied)?;
         let result = (|| {
             let (back, reply) =
@@ -81,8 +80,7 @@ impl Face {
                 if said.team == 0 || said.task.get() == 0 {
                     return Err(Fail::Bad);
                 }
-                let confirm = HolePie::from_token(back)
-                    .accord(self.host, Permission::STORE, frame::BACK)
+                let confirm = pie::accord(back, self.host, Permission::STORE, frame::BACK)
                     .map_err(|_| Fail::Bad)?;
                 let claim = frame::Claim {
                     op: frame::CLAIM,
@@ -115,7 +113,7 @@ impl Face {
             let _ = pie::release(back);
             result
         })();
-        let _ = image.revoke(self.host, seed);
+        let _ = pie::revoke(self.host, seed);
         result
     }
 }

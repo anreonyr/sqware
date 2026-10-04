@@ -1,5 +1,5 @@
 use super::*;
-use crate::core::adapt::{BYTES, CALLS, FAIL};
+use crate::core::memory::{BYTES, CALLS, FAIL};
 use std::sync::{Arc, Barrier, atomic::Ordering};
 
 #[test]

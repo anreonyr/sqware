@@ -28,7 +28,6 @@ use runtime::core::res::dock::{Dock, View};
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};
 use crate::wire::message::Message;
-use runtime::core::res::pie::{PolePie};
 
 /// **读端**：一条游标 ＋ 一枚铃。
 pub struct Reader<M: Message> {
@@ -63,7 +62,7 @@ impl<M: Message> Reader<M> {
     /// 同形）。页映不进来 ⇒ `None`（此后 `try_recv` 一律答 `RecvFail::Mail(Denied)`，不猜地址）。
     pub fn from_token(page: PieToken) -> Option<Self> {
         exact::<M>();
-        let dock = Dock::open(PolePie::from_token(page)).ok()?;
+        let dock = Dock::open(page).ok()?;
         let view = dock.view();
         Some(Self {
             ring: ring(view),

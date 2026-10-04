@@ -25,7 +25,6 @@ use core::time::Duration;
 
 use protocol::debug;
 use env::chrono;
-use runtime::core::adapt;
 
 /// 每轮要的周期（毫秒）
 const PERIOD_MS: u64 = 5;
@@ -43,7 +42,7 @@ fn main() {
     let mut min: i64 = i64::MAX;
     for _ in 0..N {
         let t0 = now_ns();
-        let _ = adapt::sleep(Duration::from_millis(PERIOD_MS));
+        let _ = runtime::core::task::sleep(Duration::from_millis(PERIOD_MS));
         let t1 = now_ns();
         let drift = t1.saturating_sub(t0) as i64 - period_ns as i64;
         sum += drift;

@@ -29,7 +29,7 @@ use protocol::system::control::Scope;
 
 use self::sweep::alive;
 use env::pie;
-use runtime::core::res::pie::{HolePie, NolePie, PolePie, reserve};
+use runtime::core::res::pie::{HolePie, reserve};
 
 const MS: usize = 1000;
 
@@ -178,7 +178,7 @@ pub fn serve() -> Result<(), Start> {
     //     三枚"推出来，认台靠**这一枚孔自己**）。
     let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
     for token in &doors {
-        pile.attach(&HolePie::from_token(*token), HoleDir::Pull)
+        pile.attach(*token, HoleDir::Pull)
             .map_err(|_| Start::Desk(E_HUB))?;
     }
     let mut buf: Vec<u8> = Vec::new();
@@ -298,8 +298,8 @@ pub(super) fn ship(
     policy: Policy,
 ) -> Result<PieToken, ()> {
     let shipped = match kind {
-        PieKind::Pole => port::ship(&PolePie::from_token(entry.page), to, access, policy),
-        PieKind::Nole => port::ship(&NolePie::from_token(entry.page), to, access, policy),
+        PieKind::Pole => port::ship(entry.page, to, access, policy),
+        PieKind::Nole => port::ship(entry.page, to, access, policy),
         PieKind::Hole | PieKind::Tole => return Err(()),
     };
     shipped.map(|seat| seat.seed()).map_err(|_| ())
@@ -334,7 +334,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
     let Some(dtb) = record(enroll, Name::Page(env::Page::Dtb)) else {
         return Err(Start::Load(E_HUB));
     };
-    let dock = Dock::open(PolePie::from_token(dtb.token())).map_err(|_| Start::Load(E_HUB))?;
+    let dock = Dock::open(dtb.token()).map_err(|_| Start::Load(E_HUB))?;
     let machine = Machine::of(dock.view()).map_err(|_| Start::Load(E_HUB))?;
     let devices = machine.devices().ok_or(Start::Load(E_HUB))?;
     // 二、逐条对：坐标 → 那一台（**对不上的跳过**：装配者按同一张表枚举，对不上说明那一条

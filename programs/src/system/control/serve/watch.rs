@@ -30,7 +30,6 @@ impl Watch {
 }
 
 use protocol::common::schedule::{Progress, Res, ResMut};
-use runtime::core::res::pie::HolePie;
 pub struct Interests {
     pub tokens: Vec<PieToken>,
     pub subs: Vec<Sub>,
@@ -109,7 +108,7 @@ pub fn apply(
             let token = watch.members.swap_remove(at);
             let _ = watch
                 .pile
-                .detach(&HolePie::from_token(token), HoleDir::Pull);
+                .detach(token, HoleDir::Pull);
         }
     }
     for &token in &wanted.tokens {
@@ -118,7 +117,7 @@ pub fn apply(
         }
         if watch
             .pile
-            .attach(&HolePie::from_token(token), HoleDir::Pull)
+            .attach(token, HoleDir::Pull)
             .is_err()
         {
             return Ok(Progress::Done);

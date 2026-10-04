@@ -13,7 +13,6 @@ use crate::unit::Died;
 
 use crate::driver::shared::fail::Fail;
 use env::pie;
-use runtime::core::res::pie::{PolePie};
 
 /// 它是**声明**（`const` 可造：三格全是字面量 / 枚举），各驱动写在**自己那一域**里——装配表
 #[derive(Clone, Copy)]
@@ -125,7 +124,7 @@ impl Device {
     /// 契里那一枚门闩 → 一页映射
     /// **失败那一格由调用方命名**（`"device open failed"` / `"docks"`——**步名**
     pub fn open(page: PieToken) -> Result<Device, ()> {
-        let dock = Dock::open(PolePie::from_token(page)).map_err(|_| ())?;
+        let dock = Dock::open(page).map_err(|_| ())?;
         Ok(Device { dock })
     }
 

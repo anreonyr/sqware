@@ -23,7 +23,6 @@ use protocol::communication::session::Session;
 use protocol::system::operator::{Grant, Face as Face};
 use protocol::system::operator::client as operator;
 use env::unit;
-use runtime::core::adapt;
 
 const MS: usize = 1000;
 /// 订的那条路 —— 与 `probe-watch-after` 改的那条**逐字相同**（两份文件各写一遍：各是独立 bin）。
@@ -45,7 +44,7 @@ fn main() -> Report<'static> {
         .watch(&road, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-watch-gone: subscribe refused: {fail:?}"));
     let _ = watch.road();
-    let _ = adapt::sleep(Duration::from_millis(HOLD_MS));
+    let _ = runtime::core::task::sleep(Duration::from_millis(HOLD_MS));
     drop(watch);
     Report::note(env::EXIT_OK, OK_NOTE)
 }

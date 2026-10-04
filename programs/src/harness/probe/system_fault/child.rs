@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-use runtime::core::adapt;
-
 extern crate programs;
 
 #[programs::entry]
@@ -16,7 +14,7 @@ fn main() -> programs::Report<'static> {
         .expect("system-child: ready"),
     );
     loop {
-        adapt::sleep(core::time::Duration::from_millis(100))
+        runtime::core::task::sleep(core::time::Duration::from_millis(100))
             .expect("system-child: wait");
     }
 }

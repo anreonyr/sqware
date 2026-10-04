@@ -31,9 +31,9 @@ pub fn run(
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
     let entry_hole = HolePie::from_token(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
-    if pile.attach(&entry_hole, HoleDir::Pull).is_err()
+    if pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
         || pile
-            .attach(&HolePie::from_token(lane), HoleDir::Pull)
+            .attach(lane, HoleDir::Pull)
             .is_err()
     {
         return Err(Fail::at(E_RTC, "desk"));

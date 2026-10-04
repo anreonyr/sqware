@@ -28,7 +28,6 @@ use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
 use programs::unit::uart::E_UART;
 use runtime::core::res::pile::Pile;
-use runtime::core::res::pie::{HolePie, PolePie};
 
 const MS: usize = 1000;
 
@@ -42,10 +41,10 @@ fn main() -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile
-        .attach(&PolePie::from_token(desk.tx.ship()), HoleDir::Pull)
+        .attach(desk.tx.ship(), HoleDir::Pull)
         .is_err()
         || pile
-            .attach(&HolePie::from_token(lane), HoleDir::Pull)
+            .attach(lane, HoleDir::Pull)
             .is_err()
     {
         return Err(Fail::at(E_UART, "desk"));

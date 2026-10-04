@@ -11,7 +11,6 @@ use crate::communication::hand::Sender;
 use crate::communication::session::establish::{self, Held};
 use env::pie;
 use runtime::core::res::pie::{HolePie};
-use runtime::core::adapt;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
@@ -52,7 +51,7 @@ impl Line {
         };
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
         if port::ship(
-            &HolePie::from_token(back),
+            back,
             host,
             Access::FETCH | Access::STORE,
             Policy::NONE,
@@ -78,7 +77,7 @@ impl Line {
             if spent >= budget {
                 break;
             }
-            let _ = adapt::sleep(core::time::Duration::from_millis(1));
+            let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
         }
         if spent >= budget {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。

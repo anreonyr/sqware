@@ -7,7 +7,6 @@ use core::panic::PanicInfo;
 
 use env::NOTE_MAX;
 use runtime::core::exit::{Exit, finish};
-use runtime::core::adapt;
 
 global_asm!(
     ".section .text._start",
@@ -80,7 +79,7 @@ impl fmt::Write for Note {
 /// 现场的三笔账因此各有出处：谁/何时/为何 = trace 的 `RoomEvent::Exit`；`哪里` =
 /// 这句话里的 `file:line:col`；寄存器现场 = 内核故障路径自己留的痕。
 /// **它不走 `Exit`**：panic 物理上必须 `!`，装不进"返回值"那条路——它直接调出口原语
-/// （带 note 那一支），与 [`entry`] 同住这个文件、同归 `adapt::exit` 一处。
+/// （带 note 那一支），与 [`entry`] 同住这个文件、同归 `runtime::core::task::exit` 一处。
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     let mut note = Note::new();
@@ -88,5 +87,5 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(at) = info.location() {
         let _ = write!(note, " at {}:{}:{}", at.file(), at.line(), at.column());
     }
-    adapt::exit(env::EXIT_PANIC, Some(note.as_str()))
+    runtime::core::task::exit(env::EXIT_PANIC, Some(note.as_str()))
 }

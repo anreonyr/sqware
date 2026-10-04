@@ -39,8 +39,7 @@ use env::room;
 use env::unit;
 use env::{PieToken, TaskId};
 use protocol::debug;
-use runtime::core::adapt;
-use runtime::core::res::pie::{HolePie, TolePie};
+use runtime::core::res::pie::{HolePie};
 use runtime::core::res::pile::Pile;
 use runtime::core::res::port::{self, Access, Policy};
 
@@ -121,11 +120,11 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authority: Pi
         }
         true
     };
-    let _ = adapt::sleep(core::time::Duration::from_millis(100));
+    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(100));
     let Ok(left) = join::try_closure(worker) else {
         return false;
     };
-    let _ = adapt::sleep(core::time::Duration::from_millis(10));
+    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(10));
     let Ok(right) = join::try_closure(worker) else {
         return false;
     };
@@ -187,12 +186,10 @@ fn main() -> Reason {
         tasks[i] = task;
         // 三枚都按 `FETCH | STORE | VEST` 交出去：够"挂 + 等 + 取 + 回报"这件事本身，
         // 而**两种资源的形态事实都不带 `ONLY`**（共享组与用户态铸的孔）。
-        let group_pie = TolePie::from_token(group);
-        let report_pie = HolePie::from_token(report[i]);
         let form = Policy::VEST;
-        if port::ship(&group_pie, task, Access::FETCH_STORE, form).is_err()
-            || port::ship(&member, task, Access::FETCH_STORE, form).is_err()
-            || port::ship(&report_pie, task, Access::FETCH_STORE, form).is_err()
+        if port::ship(group, task, Access::FETCH_STORE, form).is_err()
+            || port::ship(member.token(), task, Access::FETCH_STORE, form).is_err()
+            || port::ship(report[i], task, Access::FETCH_STORE, form).is_err()
         {
             return die("group: accord");
         }
@@ -215,7 +212,7 @@ fn main() -> Reason {
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：HolePie::push
     // **递出即返，交付由取的一方做**。
-    let _ = adapt::sleep(core::time::Duration::from_millis(SETTLE));
+    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(SETTLE));
     let _ = HolePie::from_token(member.token()).push(b"x", Wait::POLL);
 
     let mut woke = 0usize;
@@ -265,9 +262,9 @@ fn sole_refused(dst: TaskId) -> bool {
     };
     // 同一个子集，只是写成两族：`FETCH | STORE` ＋ `VEST | ONLY`。句柄现造（见 ④ 的注）。
     let form = Policy::VEST | Policy::ONLY;
-    let pie = TolePie::from_token(sole.token());
-    let first = port::ship(&pie, dst, Access::FETCH_STORE, form);
-    let second = port::ship(&pie, dst, Access::FETCH_STORE, form);
+    let pie = sole.token();
+    let first = port::ship(pie, dst, Access::FETCH_STORE, form);
+    let second = port::ship(pie, dst, Access::FETCH_STORE, form);
     first.is_ok() && second.is_err()
 }
 

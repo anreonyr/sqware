@@ -20,7 +20,6 @@ use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit
 use protocol::driver;
 use env::unit;
 use env::pie;
-use runtime::core::adapt;
 
 /// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
@@ -168,7 +167,7 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
             return Ok(EntryId::new(0));
         }
-        let _ = adapt::sleep(core::time::Duration::from_millis(1));
+        let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
     }
     Err(Fail::Unknown)
 }
@@ -184,7 +183,7 @@ fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
         match root.tile(road, Wait::AtMost(MS)) {
             Ok(entry) => return Some(entry.id()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = adapt::sleep(core::time::Duration::from_millis(1));
+                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

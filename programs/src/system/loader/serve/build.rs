@@ -13,7 +13,7 @@ use crate::system::{
 use alloc::vec::Vec;
 use env::{ProgramKind, UnitFail, VirtAddr, Wait, pie};
 use protocol::system::loader::{Built, frame};
-use runtime::core::res::pie::{HolePie, PolePie, inspect};
+use runtime::core::res::pie::{HolePie, inspect};
 
 fn snapshot(incoming: &Incoming) -> Result<Vec<u8>, frame::Fail> {
     let ask = &incoming.ask;
@@ -26,8 +26,8 @@ fn snapshot(incoming: &Incoming) -> Result<Vec<u8>, frame::Fail> {
     if len == 0 || len > frame::MAX_IMAGE {
         return Err(frame::Fail::BadImage);
     }
-    let page = PolePie::from_token(ask.image);
-    let (at, size) = page.open().map_err(|_| frame::Fail::Denied)?;
+    let page = ask.image;
+    let (at, size) = runtime::core::res::pie::open(page).map_err(|_| frame::Fail::Denied)?;
     let result = (|| {
         if offset.checked_add(len).is_none_or(|end| end > size) {
             return Err(frame::Fail::BadImage);
@@ -53,7 +53,7 @@ fn snapshot(incoming: &Incoming) -> Result<Vec<u8>, frame::Fail> {
         let _ = pie::release(copy);
         result
     })();
-    let _ = page.shut();
+    let _ = pie::shut(page);
     result
 }
 pub(super) fn construct(

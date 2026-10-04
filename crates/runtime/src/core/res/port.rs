@@ -20,7 +20,7 @@ use env::{
     Wait, HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail,
 };
 
-use crate::core::res::pie::{self, AnyPie, HolePie};
+use crate::core::res::pie::{self, HolePie};
 
 /// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
 fn denied_mail() -> erra::Error<MailFail> {
@@ -75,8 +75,7 @@ impl To {
 /// envcall）。调用点从此写不出裸子集——一份子集写错就是一份多余授权，而
 /// `Access`/`Policy` 让"该授什么"在签名上就说清楚了。
 ///
-/// 泛型于 [`AnyPie`]：三种资源都有授出点（回信孔是 `HolePie`、设备门闩是
-/// `PolePie`、门铃是 `NolePie`），权柄操作本就与资源种类无关。
+/// 权柄操作与资源种类无关，按 token 授出。
 ///
 /// # Errors
 /// - `Denied` — 空集（本地拒）/ 源枚不持 `VEST` / 子集越界 / `ONLY` 与源枚不一致 /
@@ -87,14 +86,14 @@ impl To {
 ///
 /// 四个码都不折平（内核 `gate::accord` 的判决原样过线）："已被关住"的码是
 /// `HandedOver`(-7)，**不是** `Denied`——两者不要混。
-pub fn ship<P: AnyPie>(pie: &P, peer: TaskId, access: Access, policy: Policy) -> PieResult<To> {
+pub fn ship(pie: PieToken, peer: TaskId, access: Access, policy: Policy) -> PieResult<To> {
     let subset = access.bits() | policy.bits();
     if subset.is_empty() {
         return Err(denied_pie());
     }
     // 记号**照源枚**（`Mark::NONE`）：授出这一手不改记号——记号是"哪条路"，
     // 两端认的就是同一枚（`PieCall::Accord` 那一格是给"另刻一枚"留的口）。
-    let seed = pie.accord(peer, subset, Mark::NONE)?;
+    let seed = env::pie::accord(pie, peer, subset, Mark::NONE)?;
     Ok(To::new(peer, seed))
 }
 
@@ -126,7 +125,7 @@ impl Port {
             return Err(denied_pie());
         }
         let reply = HolePie::unseal(env::Mark::of("back"))?;
-        let to = ship(&reply, peer, Access::STORE, Policy::NONE)?;
+        let to = ship(reply.token(), peer, Access::STORE, Policy::NONE)?;
         Ok(Port {
             to,
             entry: HolePie::from_token(entry.token()),
@@ -159,7 +158,7 @@ impl Port {
 
     /// 关：只放下回信孔（级联已含对端那枚副本），**不碰 `entry`**。
     pub fn shut(self) -> PieResult<()> {
-        self.reply.release()
+        env::pie::release(self.reply.token())
     }
 
     /// 借来一条会话：对端坐标 + 入口门闩 + **对端开的**回信孔。
