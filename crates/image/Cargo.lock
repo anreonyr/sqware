@@ -9,6 +9,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
+name = "elf"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "55dd888a213fc57e957abf2aa305ee3e8a28dbe05687a251f33b637cd46b0070"
+
+[[package]]
 name = "env"
 version = "0.1.0"
 dependencies = [
@@ -27,14 +33,7 @@ checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 name = "image"
 version = "0.1.0"
 dependencies = [
- "env",
- "loader",
-]
-
-[[package]]
-name = "loader"
-version = "0.1.0"
-dependencies = [
+ "elf",
  "env",
 ]
 

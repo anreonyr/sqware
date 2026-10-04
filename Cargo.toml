@@ -21,7 +21,6 @@ members = [
     "crates/env",
     "crates/protocol",
     "crates/runtime",
-    "crates/loader",
     "crates/sbi",
     "crates/mold",
 ]

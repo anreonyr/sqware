@@ -1,11 +1,8 @@
-#![no_std]
-extern crate alloc;
-
-use alloc::vec::Vec;
+use elf::{ElfBytes, endian::LittleEndian, file::Class};
 use env::ledger::capsule::{HEADER, MAGIC, PAGE, RECORD};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
+#[derive(Debug)]
+pub(crate) enum Error {
     Format,
     Unsupported,
     Range,
@@ -16,73 +13,55 @@ pub enum Error {
 }
 
 #[derive(Debug)]
-pub struct Region {
-    pub va: usize,
-    pub size: usize,
-    pub data_size: usize,
-    pub flags: u64,
-    pub file_offset: usize,
-    pub file_size: usize,
-    pub prefix: usize,
+struct Region {
+    va: usize,
+    size: usize,
+    data_size: usize,
+    flags: u64,
+    file_offset: usize,
+    file_size: usize,
+    prefix: usize,
 }
 
-pub struct Plan {
-    pub entry: usize,
-    pub regions: Vec<Region>,
+struct Plan {
+    entry: usize,
+    regions: Vec<Region>,
 }
 
-fn number(bytes: &[u8], offset: usize, width: usize) -> Result<usize, Error> {
-    let mut raw = [0u8; 8];
-    raw[..width].copy_from_slice(
-        bytes
-            .get(offset..offset.checked_add(width).ok_or(Error::Range)?)
-            .ok_or(Error::Format)?,
-    );
-    usize::try_from(u64::from_le_bytes(raw)).map_err(|_| Error::Range)
-}
-
-pub fn parse(bytes: &[u8]) -> Result<Plan, Error> {
-    if bytes.len() < 64 || bytes[..6] != [0x7f, b'E', b'L', b'F', 2, 1] {
-        return Err(Error::Format);
-    }
-    if bytes[6] != 1
-        || number(bytes, 16, 2)? != 2
-        || number(bytes, 18, 2)? != 243
-        || number(bytes, 20, 4)? != 1
-        || number(bytes, 52, 2)? != 64
+fn parse(bytes: &[u8]) -> Result<Plan, Error> {
+    let file = ElfBytes::<LittleEndian>::minimal_parse(bytes).map_err(|_| Error::Format)?;
+    let header = &file.ehdr;
+    if header.class != Class::ELF64
+        || header.e_type != elf::abi::ET_EXEC
+        || header.e_machine != elf::abi::EM_RISCV
+        || header.version != 1
+        || header.e_ehsize != 64
+        || header.e_phentsize != 56
+        || header.e_phnum == 0
     {
         return Err(Error::Unsupported);
     }
-    let entry = number(bytes, 24, 8)?;
-    let phoff = number(bytes, 32, 8)?;
-    let stride = number(bytes, 54, 2)?;
-    let count = number(bytes, 56, 2)?;
-    if stride != 56
-        || count == 0
-        || phoff
-            .checked_add(count.checked_mul(stride).ok_or(Error::Range)?)
-            .is_none_or(|end| end > bytes.len())
-    {
-        return Err(Error::Format);
-    }
+    let entry = usize::try_from(header.e_entry).map_err(|_| Error::Range)?;
+    let segments = file.segments().ok_or(Error::Format)?;
+    let count = usize::from(header.e_phnum);
     let mut regions: Vec<Region> = Vec::new();
     regions.try_reserve(count).map_err(|_| Error::Memory)?;
     let mut valid_entry = false;
     for i in 0..count {
-        let at = phoff + i * stride;
-        let kind = number(bytes, at, 4)?;
-        if kind == 2 || kind == 3 {
+        let segment = segments.get(i).map_err(|_| Error::Format)?;
+        let kind = segment.p_type;
+        if kind == elf::abi::PT_DYNAMIC || kind == elf::abi::PT_INTERP {
             return Err(Error::Unsupported);
         }
-        if kind != 1 {
+        if kind != elf::abi::PT_LOAD {
             continue;
         }
-        let permissions = number(bytes, at + 4, 4)?;
-        let offset = number(bytes, at + 8, 8)?;
-        let address = number(bytes, at + 16, 8)?;
-        let file_size = number(bytes, at + 32, 8)?;
-        let memory_size = number(bytes, at + 40, 8)?;
-        let alignment = number(bytes, at + 48, 8)?;
+        let permissions = usize::try_from(segment.p_flags).map_err(|_| Error::Range)?;
+        let offset = usize::try_from(segment.p_offset).map_err(|_| Error::Range)?;
+        let address = usize::try_from(segment.p_vaddr).map_err(|_| Error::Range)?;
+        let file_size = usize::try_from(segment.p_filesz).map_err(|_| Error::Range)?;
+        let memory_size = usize::try_from(segment.p_memsz).map_err(|_| Error::Range)?;
+        let alignment = usize::try_from(segment.p_align).map_err(|_| Error::Range)?;
         if memory_size < file_size
             || offset
                 .checked_add(file_size)
@@ -149,7 +128,7 @@ pub fn parse(bytes: &[u8]) -> Result<Plan, Error> {
     Ok(Plan { entry, regions })
 }
 
-pub fn capsule(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+pub(crate) fn encode(bytes: &[u8]) -> Result<Vec<u8>, Error> {
     let plan = parse(bytes)?;
     let table = HEADER
         .checked_add(plan.regions.len().checked_mul(RECORD).ok_or(Error::Range)?)

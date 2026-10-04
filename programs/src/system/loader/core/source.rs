@@ -1,3 +1,4 @@
+use crate::system::loader::core::elf;
 use env::PieToken;
 
 pub(in crate::system::loader) struct Cached {
@@ -11,7 +12,7 @@ pub(in crate::system::loader) struct Source {
 }
 
 impl Source {
-    pub(in crate::system::loader) fn matches(&self, bytes: &[u8], region: &loader::Region) -> bool {
+    pub(in crate::system::loader) fn matches(&self, bytes: &[u8], region: &elf::Region) -> bool {
         let Some((at, size)) = self.mapping else {
             return false;
         };

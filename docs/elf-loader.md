@@ -21,7 +21,7 @@ Memory 的 team=0 为当前域；非零必须是调用者自己的 Constructing 
 
 ## 装载路径
 
-`crates/loader` 提供无内核依赖的 ELF64 RISC-V 静态镜像解析、页计划和 capsule 编码。宿主与用户态共享页化及入口校验：入口先限制在原文件的 executable 内容内，再补零。RX 的整个区域都成为 payload；R/RW 的纯零尾保持对应权限，使用 lazy-zero。
+`programs/src/system/loader/core/elf.rs` 提供无内核依赖的 ELF64 RISC-V 静态镜像解析和页计划。镜像工具使用 crates.io 的 `elf` 解析器，由 `crates/image/src/capsule.rs` 编码引导 capsule。两侧保持相同的页化及入口规则：入口先限制在原文件的 executable 内容内，再补零。RX 的整个区域都成为 payload；R/RW 的纯零尾保持对应权限，使用 lazy-zero。
 
 宿主保留普通 ELF 清单，另外生成引导 capsule。内核启动只安装 capsule；普通 Build 只创建空的 Constructing Team，内核 ELF parser/loader 已移除。`system::loader::Unit` 持有构造和私有源枚的清理责任，首次 Spawn 成功后解除守卫。服务启动及 group 场景已迁移到此路径。
 

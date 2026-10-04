@@ -1,3 +1,4 @@
+use crate::system::loader::core::elf;
 use super::{fail, source::initialize};
 use crate::system::loader::{Image, Loader, Unit};
 use alloc::vec::Vec;
@@ -24,8 +25,8 @@ impl Drop for Unit {
 impl Loader {
     pub fn build(&mut self, image: Image<'_>) -> UnitResult<Unit> {
         let Image { bytes, kind } = image;
-        let plan = loader::parse(bytes).map_err(|error| {
-            if error == loader::Error::Memory {
+        let plan = elf::parse(bytes).map_err(|error| {
+            if error == elf::Error::Memory {
                 fail(UnitFail::OoM)
             } else {
                 fail(UnitFail::BadImage)

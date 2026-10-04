@@ -4,6 +4,8 @@
 //! RX payload 包含完整补零页；内核只消费 capsule，不解析 ELF。
 //! 入包 ELF 剥除符号与调试节，宿主调试产物仍保留这些内容。
 
+mod capsule;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,7 +18,7 @@ fn root() -> PathBuf {
     at.canonicalize().unwrap_or(at)
 }
 
-/// **唯一的宿主桥**：文本包含 `programs` 那份**宿主安全**的声明模块（`UnitFile` 类型 +
+/// **宿主装配表**：文本包含 `programs` 那份**宿主安全**的声明模块（`UnitFile` 类型 +
 /// `PROGRAMS` 注册表 + 各台自己的 `program.rs`）。
 ///
 /// # 为什么是 `#[path]` 而不是一条依赖
@@ -160,7 +162,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("initrd: 景 {scenario} 的引导镜像 {entry} 不在这一景的清单里"))?;
     let mut blob = env::ledger::manifest::pack(&items, entry_at)
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
-    let capsule = loader::capsule(items[entry_at].2)
+    let capsule = capsule::encode(items[entry_at].2)
         .map_err(|error| format!("bootstrap {entry}: {error:?}"))?;
     let offset = blob.len().checked_next_multiple_of(env::ledger::capsule::PAGE)
         .ok_or_else(|| "initrd: capsule offset overflow".to_string())?;

@@ -1,3 +1,4 @@
+use crate::system::loader::core::elf;
 use super::fail;
 use crate::system::loader::core::source::Source;
 use env::{PieToken, TeamId, UnitFail, UnitResult, pie};
@@ -13,7 +14,7 @@ impl Drop for Source {
     }
 }
 
-pub(super) fn initialize(bytes: &[u8], region: &loader::Region) -> UnitResult<Source> {
+pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Source> {
     let private = region.flags & 4 != 0;
     let token = if private {
         pie::unseal_pole(region.data_size, false)

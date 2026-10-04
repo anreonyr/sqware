@@ -1,3 +1,4 @@
+use crate::system::loader::core::elf;
 use super::source::{Cached, Source};
 use alloc::vec::Vec;
 use env::PieToken;
@@ -19,13 +20,13 @@ impl Cache {
         self.entries.clear();
         self.pages = 0;
     }
-    pub fn find(&self, bytes: &[u8], region: &loader::Region) -> Option<PieToken> {
+    pub fn find(&self, bytes: &[u8], region: &elf::Region) -> Option<PieToken> {
         self.entries
             .iter()
             .find(|item| item.flags == region.flags && item.source.matches(bytes, region))
             .map(|item| item.source.token)
     }
-    pub fn insert(&mut self, region: &loader::Region, source: Source) -> Result<(), Source> {
+    pub fn insert(&mut self, region: &elf::Region, source: Source) -> Result<(), Source> {
         let pages = region.data_size / runtime::PAGE_SIZE;
         if pages > self.limit || self.entries.try_reserve(1).is_err() {
             return Err(source);
