@@ -25,7 +25,25 @@ Memory 的 team=0 为当前域；非零必须是调用者自己的 Constructing 
 
 宿主保留普通 ELF 清单，另外生成引导 capsule。内核启动只安装 capsule；普通 Build 只创建空的 Constructing Team，内核 ELF parser/loader 已移除。`system::loader::Unit` 持有构造和私有源枚的清理责任，首次 Spawn 成功后解除守卫。服务启动及 group 场景已迁移到此路径。
 
-`Control` 持有 `system::loader::Loader`，通过 `mint(Image)` 构造 `Unit`，再调用 `Unit::spawn` 创建 Held Task。只读缓存由 Loader 实例持有，以 VA、权限及实际补零 payload 匹配；同一实例的重复装载复用 backing。Loader 析构时释放缓存映射与源枚，已安装程序 Map 继续持有 backing。Loader 与 Unit 不跨任务传递，runtime 不再包含装载执行或退出清理钩子。
+`Control` 持有 `system::loader::Loader`，通过 `build(Image)` 构造 `Unit`，再调用 `Unit::spawn` 创建 Held Task。只读缓存由 Loader 实例持有，以权限及实际补零 payload 匹配，忽略 VA 和文件名；同一实例的重复装载复用 backing。Loader 析构时释放缓存映射与源枚，已安装程序 Map 继续持有 backing。Loader 与 Unit 不跨任务传递，runtime 不再包含装载执行或退出清理钩子。
+
+## 运行时程序
+
+`/svc/sys/loader/build` 是 operator 上的一面独立入口，使用既有 `table!` 和 `Frame` 宏定义。入口默认只授予 control 身份；持有入口副本的请求者可以提交自己的 ELF Pole，不需要清单名字或 Build authority。外部请求只能构造 User 程序，内部 `Loader::build(Image)` 保留 Supervisor 装载能力。
+
+```rust
+let loader = protocol::system::loader::Face::of(entry)?;
+let built = loader.build(&image, offset, len, &args, stack, wait)?;
+control.instance(built.task).embark(wait)?;
+```
+
+`control` 必须取自对应的 embark 面；state、debark、ruin 同样使用各自的面。现有按名字管理服务的协议继续使用原报文；新增的实例报文以 TaskId 定位。system control 是实例的内核父方，实例记录绑定请求者；其他请求者即使知道 TaskId 也不能操作或查询它。
+
+服务端校验转授来源、镜像范围和参数数量，通过现有 Mail Push/Pull 的内核复制取得自有快照，随后解析和装载。复制持有映射锁；调用方撤销页映射会使复制失败，不会让服务端直接解引用失效地址。调用方后续修改镜像不会改变已构造程序。参数最多 64 个，只搬运标量；镜像上限 16 MiB。
+
+成功返回 `Built { team, task }`，Task 仍 Held，协议状态为 Debarked。客户端在同一 build 入口确认领取，并等待领取回复；未确认结果在 3 秒后回收，回复失败直接进入回收。请求者退出会清理它的全部实例。Embark、Debark、Ruin 和 State 通过 control 实例接口完成；Ruin 等待 Team 清理完成才回复。身份继承请求者，运行时资源接入现有登记和退休路径。记录最多 256 个，满时先淘汰已回收记录，否则返回 Full；被淘汰的旧 TaskId 查询返回 Unknown。
+
+只读缓存预算为 256 页。FIFO 淘汰释放源 token 与本地映射；已经安装的程序 Map 独立持有 backing。超过预算的单段不入缓存，但仍可成功装载。可写段和 BSS 不共享；文件名、目标 VA 与共享库名字均不参与匹配。共享库的只读页复用遵循同一规则；动态链接、符号解析和重定位尚未实现。
 
 ## 授权与资源
 
@@ -89,3 +107,9 @@ Control 请求面、Hub 激活入口与发布入口加入同一只独占 Pile，
 沿用四 hart、seed=12345、无 icount、启动两秒后采样四秒的交替三轮测量：基线 47.25/45.75/45.50%，本轮 3.75/3.75/4.00%，均值 46.17→3.83%，进程 CPU 时间减少约 91.7%。六轮均正常退出且无 panic。仅合并重复存活查询、保持 10 ms 间隔时，另外两轮为 28.50/27.75%，说明剩余空闲开销主要来自周期性监督查询。上述比例仍以一个逻辑核=100% 计，仅代表 product 场景的稳定采样窗口。
 
 本轮 `cargo check -p kernel -p programs` 通过；关闭 icount 的 accept/product/again/load/group/beat/rig/identity-replacement 八个 release 整机场景全部通过。
+
+### Loader 服务验证
+
+- 工作区编译检查通过。
+- system-fault 整机验收包含 loader 的真实 RPC：operator 入口发布、提交清单外 ELF、多个独立实例、Held 后启停、按请求者隔离、畸形镜像及范围拒绝、未领取结果超时回收、请求者退出清理及运行时资源登记。
+- copy 探针验证内容相同但 VA 不同的缓存命中、256 页容量淘汰、超大段不入缓存，以及淘汰源 token 后已经构造的程序仍能 Spawn。

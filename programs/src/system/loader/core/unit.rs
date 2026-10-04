@@ -1,4 +1,4 @@
-use super::source::Cached;
+use super::cache::Cache;
 use alloc::vec::Vec;
 use env::{PieToken, ProgramKind, TeamId};
 
@@ -7,12 +7,16 @@ pub struct Image<'a> {
     pub kind: ProgramKind,
 }
 
+const CACHE_PAGES: usize = 256;
+
 pub struct Loader {
-    pub(in crate::system::loader) cache: Vec<Cached>,
+    pub(in crate::system::loader) cache: Cache,
 }
 impl Loader {
     pub fn new() -> Self {
-        Self { cache: Vec::new() }
+        Self {
+            cache: Cache::new(CACHE_PAGES),
+        }
     }
 }
 

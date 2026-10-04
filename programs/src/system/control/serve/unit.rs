@@ -16,6 +16,7 @@ pub struct Control {
     pub(crate) status: Arc<Status>,
     pub(crate) table: Table,
     pub(crate) loader: crate::system::loader::Loader,
+    pub(crate) instances: Vec<crate::system::control::core::instance::Instance>,
     pub(crate) pending: Vec<Pending>,
 }
 pub(crate) struct Pending {
@@ -29,6 +30,7 @@ impl Control {
             table: Table::new(),
             loader: crate::system::loader::Loader::new(),
             pending: Vec::new(),
+            instances: Vec::new(),
         }
     }
     pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
@@ -95,14 +97,30 @@ impl Control {
             Slot::None => None,
         }
     }
+    pub(crate) fn live(&self, task: TaskId) -> bool {
+        (task == env::unit::self_id() || self.tasks().any(|known| known == task))
+            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
+    }
     pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
-        self.table.living().filter_map(|row| match row.slot {
-            Slot::Live { task, .. }
-                if matches!(row.state, State::Starting | State::Ready | State::Debarked) =>
-            {
-                Some(task)
-            }
-            _ => None,
-        })
+        self.table
+            .living()
+            .filter_map(|row| match row.slot {
+                Slot::Live { task, .. }
+                    if matches!(row.state, State::Starting | State::Ready | State::Debarked) =>
+                {
+                    Some(task)
+                }
+                _ => None,
+            })
+            .chain(
+                self.instances
+                    .iter()
+                    .filter(|item| {
+                        item.claimed
+                            && item.team.is_some()
+                            && matches!(item.state, State::Ready | State::Debarked)
+                    })
+                    .map(|item| item.task),
+            )
     }
 }

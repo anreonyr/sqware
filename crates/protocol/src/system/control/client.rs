@@ -2,16 +2,15 @@
 
 use crate::wire::message::Message;
 use alloc::string::String;
-use env::{Wait, HoleDir, PieToken, TaskId};
+use env::{PieToken, TaskId, Wait};
 
 use crate::communication::hand::{Receiver, RecvFail};
 use crate::communication::session::{Berth, establish};
 
 use super::Fail;
 use super::frame::{self, BACK, State};
-use env::wire::Span as _;
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use runtime::core::res::pie::HolePie;
 
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
 /// （frame::ASK_MARK）
@@ -57,6 +56,10 @@ impl Face {
         Service { face: self, name }
     }
 
+    pub fn instance(&self, task: TaskId) -> Instance<'_> {
+        Instance { face: self, task }
+    }
+
     /// 问一句、取一句答
     /// **传输失败折进 Fail::Bad**：借不出回信孔 / 超时 / 答话长度不对——三件事都答
     /// 在**对面**：语义格是持表那一侧真会答的码，"没走到"是本端自己在码表之外判的
@@ -70,12 +73,13 @@ impl Face {
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
         let mut frame = [0u8; frame::Ask::LEN];
-        let n = act
-            .ask(seed)
-            .store_at(&mut frame, 0)
-            .ok_or_else(|| deny("encode"))?;
+        let Some(n) = act.store(seed, &mut frame) else {
+            let _ = pie::seal(back);
+            let _ = pie::release(back);
+            return Err(deny("encode"));
+        };
         let door = HolePie::from_token(self.entry);
-        if door.push(&frame[..n], Wait::Forever).is_err() {
+        if door.push(&frame[..n], wait).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
             let _ = pie::release(back);
@@ -94,7 +98,6 @@ impl Face {
                     Fail::Bad
                 }
             });
-        let _ = door.wait(HoleDir::Push, Wait::Forever);
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
         let _ = pie::release(back);
@@ -185,5 +188,33 @@ fn read(said: frame::Said) -> Result<frame::Said, Fail> {
         Some(fail) => Err(fail),
         // 表外那一格（连 `OK` 都没读成）⇒ 与"没走到"同一格。
         None => Err(Fail::Bad),
+    }
+}
+
+pub struct Instance<'a> {
+    face: &'a Face,
+    task: TaskId,
+}
+impl Instance<'_> {
+    pub fn embark(&self, wait: Wait) -> Result<(), Fail> {
+        read(
+            self.face
+                .call(frame::Req::EmbarkInstance(self.task), wait)?,
+        )
+        .map(|_| ())
+    }
+    pub fn debark(&self, wait: Wait) -> Result<(), Fail> {
+        read(
+            self.face
+                .call(frame::Req::DebarkInstance(self.task), wait)?,
+        )
+        .map(|_| ())
+    }
+    pub fn ruin(&self, wait: Wait) -> Result<(), Fail> {
+        read(self.face.call(frame::Req::RuinInstance(self.task), wait)?).map(|_| ())
+    }
+    pub fn state(&self, wait: Wait) -> Result<State, Fail> {
+        State::of_code(read(self.face.call(frame::Req::StateInstance(self.task), wait)?)?.a)
+            .ok_or(Fail::Bad)
     }
 }

@@ -8,8 +8,8 @@ use runtime::core::res::port::{self, Access, Policy};
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
 use env::pie;
-use runtime::core::res::pie::{HolePie, inspect, reserve};
 use runtime::core::adapt;
+use runtime::core::res::pie::{HolePie, inspect, reserve};
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -202,6 +202,7 @@ pub fn acceptance() {
             talk,
             host,
         });
+    super::loader::acceptance(&mut assembly, &operator);
     let protected = || {
         operator
             .tile(
@@ -403,10 +404,7 @@ fn revision(assembly: &mut Fixture) {
     )
     .unwrap();
     assert!(matches!(
-        query.call(
-            Wire::Resolve(env::unit::self_id()),
-            Wait::AtMost(1000)
-        ),
+        query.call(Wire::Resolve(env::unit::self_id()), Wait::AtMost(1000)),
         Ok(Reply::Binding(Some(_)))
     ));
     assert_eq!(

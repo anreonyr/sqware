@@ -30,7 +30,7 @@ impl Watch {
 }
 
 use protocol::common::schedule::{Progress, Res, ResMut};
-use runtime::core::res::pie::{HolePie};
+use runtime::core::res::pie::HolePie;
 pub struct Interests {
     pub tokens: Vec<PieToken>,
     pub subs: Vec<Sub>,
@@ -39,6 +39,7 @@ pub struct Interests {
 pub fn entries(
     watch: Res<Watch>,
     names: Res<Names>,
+    loader: Res<crate::system::loader::serve::answer::Inbox>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, super::Fail> {
     wanted.tokens.clear();
@@ -50,6 +51,7 @@ pub fn entries(
         .map_err(|_| super::Fail::Room)?;
     wanted.tokens.extend(watch.faces.iter().flatten().copied());
     wanted.tokens.extend(names.entries());
+    wanted.tokens.extend(loader.entry);
     Ok(Progress::Done)
 }
 pub fn publication(
@@ -74,7 +76,7 @@ pub fn tasks(
 ) -> Result<Progress, super::Fail> {
     wanted
         .subs
-        .try_reserve(control.table.living().count() + 3)
+        .try_reserve(control.table.living().count() + control.instances.len() * 2 + 3)
         .map_err(|_| super::Fail::Room)?;
     wanted
         .subs
@@ -88,6 +90,12 @@ pub fn tasks(
     wanted.subs.push(Sub::TaskCompleted(
         control.task("identity").ok_or(super::Fail::Dead)?,
     ));
+    for item in &control.instances {
+        if item.team.is_some() {
+            wanted.subs.push(Sub::TaskCompleted(item.task));
+        }
+        wanted.subs.push(Sub::TaskCompleted(item.owner));
+    }
     wanted.subs.push(Sub::Capabilities);
     Ok(Progress::Done)
 }

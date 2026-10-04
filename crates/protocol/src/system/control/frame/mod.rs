@@ -27,6 +27,13 @@ pub struct Ask {
     pub back: PieToken,
 }
 
+#[derive(env::Frame)]
+pub struct InstanceAsk {
+    pub op: u8,
+    pub task: TaskId,
+    pub back: PieToken,
+}
+
 /// 答话那一格：状态 ＋ 答案那一格 ＋ **那一条的身子**
 /// 定长一形（**不改多变**）：`mint` / `debark` 只看状态，`state` 再看第二格，`embark` 看第三格——
 /// 每一问都只需要这三格里属于它的那一格，故不需要 operator 那一族那种"一答多形"
@@ -79,18 +86,33 @@ pub enum Req {
     Ruin(String),
     /// `STATE`：这一条此刻处于哪个阶段
     State(String),
+    EmbarkInstance(TaskId),
+    DebarkInstance(TaskId),
+    RuinInstance(TaskId),
+    StateInstance(TaskId),
 }
 
 impl Req {
-    pub fn ask(self, back: PieToken) -> Ask {
+    pub fn store(self, back: PieToken, out: &mut [u8]) -> Option<usize> {
+        let instance = match &self {
+            Req::EmbarkInstance(task) => Some((INSTANCE_EMBARK, *task)),
+            Req::DebarkInstance(task) => Some((INSTANCE_DEBARK, *task)),
+            Req::RuinInstance(task) => Some((INSTANCE_RUIN, *task)),
+            Req::StateInstance(task) => Some((INSTANCE_STATE, *task)),
+            _ => None,
+        };
+        if let Some((op, task)) = instance {
+            return InstanceAsk { op, task, back }.store_at(out, 0);
+        }
         let (op, name) = match self {
             Req::Mint(name) => (MINT, name),
             Req::Embark(name) => (EMBARK, name),
             Req::Debark(name) => (DEBARK, name),
             Req::Ruin(name) => (RUIN, name),
             Req::State(name) => (STATE, name),
+            _ => return None,
         };
-        Ask { op, name, back }
+        Ask { op, name, back }.store_at(out, 0)
     }
 }
 
@@ -105,11 +127,29 @@ pub enum Wire {
     Debark(String),
     Ruin(String),
     State(String),
+    EmbarkInstance(TaskId),
+    DebarkInstance(TaskId),
+    RuinInstance(TaskId),
+    StateInstance(TaskId),
 }
 
 impl Wire {
     /// 解一问：`(读出来的动作, 回信孔那一格)`
     pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
+        if matches!(bytes.first(), Some(INSTANCE_EMBARK..=INSTANCE_STATE)) {
+            let (q, at) = InstanceAsk::fetch_at(bytes, 0)?;
+            if at != bytes.len() {
+                return None;
+            }
+            let wire = match q.op {
+                INSTANCE_EMBARK => Wire::EmbarkInstance(q.task),
+                INSTANCE_DEBARK => Wire::DebarkInstance(q.task),
+                INSTANCE_RUIN => Wire::RuinInstance(q.task),
+                INSTANCE_STATE => Wire::StateInstance(q.task),
+                _ => return None,
+            };
+            return Some((Some(wire), q.back));
+        }
         // **"恰好"按游标判**：名字那一格是变长的，帧长不再等于 Ask::LEN（那是上界）。
         let (q, at) = Ask::fetch_at(bytes, 0)?;
         if at != bytes.len() {

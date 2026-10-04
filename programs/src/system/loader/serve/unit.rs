@@ -1,7 +1,7 @@
 use super::{fail, source::initialize};
 use crate::system::loader::{Image, Loader, Unit};
 use alloc::vec::Vec;
-use env::{PieToken, TaskId, UnitFail, UnitResult, pie, unit};
+use env::{Permission, PieToken, TaskId, UnitFail, UnitResult, pie, unit};
 use runtime::core::adapt;
 
 impl Unit {
@@ -23,7 +23,7 @@ impl Drop for Unit {
 }
 
 impl Loader {
-    pub fn mint(&mut self, image: Image<'_>) -> UnitResult<Unit> {
+    pub fn build(&mut self, image: Image<'_>) -> UnitResult<Unit> {
         let Image { bytes, kind } = image;
         let plan = loader::parse(bytes).map_err(|error| {
             if error == loader::Error::Memory {
@@ -44,15 +44,20 @@ impl Loader {
         };
         for region in &plan.regions {
             if region.data_size != 0 {
-                let token = if region.flags & 4 != 0 {
-                    let mut source = initialize(bytes, region)?;
-                    let token = source.token;
-                    minted.private.push(token);
-                    source.token = PieToken::NONE;
-                    token
+                let cached = if region.flags & 4 == 0 {
+                    self.cache.find(bytes, region)
                 } else {
-                    self.shared(bytes, region)?
+                    None
                 };
+                let mut source = match cached {
+                    Some(_) => None,
+                    None => Some(initialize(bytes, region)?),
+                };
+                let token = cached.unwrap_or_else(|| source.as_ref().unwrap().token);
+                if region.flags & 4 == 0 && cached.is_none() {
+                    pie::narrow(token, Permission::FETCH | Permission::VEST)
+                        .map_err(|_| fail(UnitFail::Denied))?;
+                }
                 adapt::map(
                     minted.team,
                     region.va,
@@ -68,6 +73,15 @@ impl Loader {
                         fail(UnitFail::Denied)
                     }
                 })?;
+                if let Some(mut source) = source.take() {
+                    if region.flags & 4 != 0 {
+                        minted.private.push(token);
+                        source.token = PieToken::NONE;
+                    } else {
+                        // The destination mapping owns its backing even when admission fails.
+                        let _ = self.cache.insert(region, source);
+                    }
+                }
             }
             if region.data_size < region.size {
                 adapt::map(

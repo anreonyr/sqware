@@ -24,7 +24,7 @@ pub fn capture(
     living.tasks.clear();
     living
         .tasks
-        .try_reserve(control.table.living().count() + 3)
+        .try_reserve(control.table.living().count() + control.instances.len() + 3)
         .map_err(|_| "live task capacity")?;
     living.tasks.push(env::unit::self_id());
 
@@ -39,6 +39,13 @@ pub fn capture(
             living.tasks.push(task);
         }
     }
+    living.tasks.extend(
+        control
+            .instances
+            .iter()
+            .filter(|item| control.live(item.task))
+            .map(|item| item.task),
+    );
     Ok(Progress::Done)
 }
 

@@ -3,13 +3,13 @@ use crate::system::life::{Phase, Status};
 use crate::system::loader::{Image, Loader};
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
-use env::{Mark, Permission, TaskId, TeamId, Wait};
-use protocol::communication::session::establish;
+use env::pie;
 use env::room;
 use env::unit;
-use env::pie;
-use runtime::core::res::pie::{HolePie, NolePie, PolePie};
+use env::{Mark, Permission, TaskId, TeamId, Wait};
+use protocol::communication::session::establish;
 use runtime::core::adapt;
+use runtime::core::res::pie::{HolePie, NolePie, PolePie};
 
 const REPORT: Mark = Mark::of("system-fault-report");
 const BOOT: Mark = Mark::of("system-fault-boot");
@@ -31,7 +31,12 @@ pub fn acceptance() {
     let report = pie::unseal_hole(REPORT).unwrap();
     let boot = pie::unseal_hole(BOOT).unwrap();
     for mode in 0..3 {
-        let image = loader.mint(Image { bytes: victim.elf, kind: victim.kind }).unwrap();
+        let image = loader
+            .build(Image {
+                bytes: victim.elf,
+                kind: victim.kind,
+            })
+            .unwrap();
         let team = image.team();
         let task = image
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
@@ -104,7 +109,12 @@ pub fn unit() {
     let dock = runtime::core::res::dock::Dock::open(PolePie::from_token(payload)).unwrap();
     // SAFETY: the parent supplied an immutable ELF payload of args[1] bytes.
     let elf = unsafe { core::slice::from_raw_parts(dock.view().base() as *const u8, args[1]) };
-    let child = loader.mint(Image { bytes: elf, kind: env::ProgramKind::User }).unwrap();
+    let child = loader
+        .build(Image {
+            bytes: elf,
+            kind: env::ProgramKind::User,
+        })
+        .unwrap();
     let child_team = child.team();
     let descendant = child.spawn(&[], 0).unwrap();
     unit::embark(descendant).unwrap();
@@ -126,9 +136,7 @@ pub fn unit() {
                 crate::system::identity::serve::run::serve(
                     state.clone(),
                     crate::system::identity::serve::revision::Epoch::new(),
-                    crate::system::identity::serve::revision::Changed(
-                        NolePie::unseal().unwrap(),
-                    ),
+                    crate::system::identity::serve::revision::Changed(NolePie::unseal().unwrap()),
                 )
                 .is_ok()
             };

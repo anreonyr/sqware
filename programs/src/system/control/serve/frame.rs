@@ -181,7 +181,10 @@ pub fn done(
     operations: Res<Operations>,
     mut flow: ResMut<Flow>,
 ) -> Result<Progress, Fail> {
-    flow.done = flow.settling && core::done(&control.table) && operations.0.is_empty();
+    flow.done = flow.settling
+        && core::done(&control.table)
+        && operations.0.is_empty()
+        && control.instances.iter().all(|item| item.team.is_none());
     if flow.done && flow.forced {
         return Err(Fail::Idle);
     }
@@ -198,16 +201,19 @@ pub fn bound(
         Wait::Forever
     } else {
         Wait::AtMost(
-            (10_000_000_000u64
-                .saturating_sub(env::chrono::clock().saturating_sub(activity.quiet)))
-            .div_ceil(1_000_000)
-            .max(1) as usize,
+            (10_000_000_000u64.saturating_sub(env::chrono::clock().saturating_sub(activity.quiet)))
+                .div_ceil(1_000_000)
+                .max(1) as usize,
         )
     };
     Ok(Progress::Done)
 }
-pub fn pending(operations: Res<Operations>, mut bound: ResMut<Bound>) -> Result<Progress, Fail> {
-    if !operations.0.is_empty() {
+pub fn pending(
+    operations: Res<Operations>,
+    inbox: Res<super::answer::Inbox>,
+    mut bound: ResMut<Bound>,
+) -> Result<Progress, Fail> {
+    if !operations.0.is_empty() || !inbox.0.is_empty() {
         bound.0 = Wait::AtMost(1);
     }
     Ok(Progress::Done)

@@ -1,6 +1,6 @@
-use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 use env::room;
 use env::unit;
+use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 
 use crate::system::control::core::unit::{Announce, Service, Slot, State, Table};
 use crate::system::control::core::verdict::{Fail, Ready, Reaped, admit_mint, probe_ready};
@@ -98,15 +98,11 @@ pub fn mint(
     loader: &mut crate::system::loader::Loader,
     image: Image<'_>,
 ) -> Result<TaskId, Fail> {
-    let Image {
-        name,
-        bytes,
-        kind,
-    } = image;
+    let Image { name, bytes, kind } = image;
     admit_mint(table, name)?;
 
     let minted = loader
-        .mint(crate::system::loader::Image { bytes, kind })
+        .build(crate::system::loader::Image { bytes, kind })
         .map_err(unit_fail)?;
     let team = minted.team();
     let Ok(task) = minted.spawn(&[], 0) else {

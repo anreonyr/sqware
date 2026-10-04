@@ -1,7 +1,6 @@
 use env::PieToken;
 
 pub(in crate::system::loader) struct Cached {
-    pub va: usize,
     pub flags: u64,
     pub source: Source,
 }

@@ -5,6 +5,8 @@ use crate::system::control;
 
 /// **面之外那几枚记号**（不归某族"面"那一族、却被当记号用的）
 const LOOSE: &[env::Mark] = &[
+    crate::system::loader::frame::BACK,
+    crate::system::loader::frame::IMAGE,
     crate::driver::ENTRY_MARK,
     crate::system::operator::TIP_MARK,
     crate::system::operator::TIP_BACK,
@@ -16,9 +18,10 @@ const LOOSE: &[env::Mark] = &[
 
 /// **全协议任两枚记号不许撞**：三族的面 × 别族的面 × 上面那几枚散记号，逐对判一次
 const _: () = {
-    let fams: [&[env::Mark]; 3] = [
+    let fams: [&[env::Mark]; 4] = [
         &crate::system::identity::Grant::MARKS,
         &control::Grant::MARKS,
+        &crate::system::loader::Grant::MARKS,
         &crate::system::operator::Grant::MARKS,
     ];
     let mut f = 0;

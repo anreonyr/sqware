@@ -1,25 +1,33 @@
 use crate::system::loader::{Image, Loader};
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
-use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use env::unit;
 use env::pie;
-use runtime::core::res::pie::{HolePie, PolePie, pies};
+use env::unit;
+use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
 use runtime::core::adapt;
+use runtime::core::res::pie::{HolePie, PolePie, pies};
 
 pub fn acceptance() {
     queued();
     concurrent();
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
-    let build = crate::boot::Accounts::take().unwrap()
-        .token(env::Name::Call(env::Call::Build)).unwrap();
+    let build = crate::boot::Accounts::take()
+        .unwrap()
+        .token(env::Name::Call(env::Call::Build))
+        .unwrap();
     let mark = Mark::of("copy-build");
     let worker = runtime::core::task::join::closure(move || {
-        assert!(protocol::communication::session::establish::claim(
-            env::TaskId::new(0), mark, Wait::AtMost(2000),
-        ).is_some());
+        assert!(
+            protocol::communication::session::establish::claim(
+                env::TaskId::new(0),
+                mark,
+                Wait::AtMost(2000),
+            )
+            .is_some()
+        );
         elf();
+        cache_limits();
         finished.store(true, Ordering::Release);
     });
     env::pie::accord(build, worker.id(), env::Permission::FETCH, mark).unwrap();
@@ -196,7 +204,14 @@ fn elf() {
     let mut loader = Loader::new();
     let mut bytes = image();
     let before = tokens();
-    drop(loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap());
+    drop(
+        loader
+            .build(Image {
+                bytes: &bytes,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
     let cached = tokens();
     let added: Vec<_> = cached
         .iter()
@@ -220,7 +235,14 @@ fn elf() {
     );
     page.shut().unwrap();
     pie::release(view).unwrap();
-    drop(loader.mint(Image { bytes: &bytes.clone(), kind: ProgramKind::User }).unwrap());
+    drop(
+        loader
+            .build(Image {
+                bytes: &bytes.clone(),
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
     assert_eq!(
         tokens(),
         cached,
@@ -228,14 +250,40 @@ fn elf() {
     );
     let mut shifted = bytes.clone();
     segment(&mut shifted, 64, [5, 4096, 0x10000, 6, 4103]);
-    drop(loader.mint(Image { bytes: &shifted, kind: ProgramKind::User }).unwrap());
+    drop(
+        loader
+            .build(Image {
+                bytes: &shifted,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
     assert_eq!(
         tokens(),
         cached,
         "copy: equivalent zero padding missed cache"
     );
+    let mut relocated = bytes.clone();
+    relocated[24..32].copy_from_slice(&0x30002u64.to_le_bytes());
+    segment(&mut relocated, 64, [5, 4098, 0x30002, 4, 4101]);
+    drop(
+        loader
+            .build(Image {
+                bytes: &relocated,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
+    assert_eq!(tokens(), cached, "copy: destination VA split shared cache");
     bytes[4098] = 0x93;
-    drop(loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap());
+    drop(
+        loader
+            .build(Image {
+                bytes: &bytes,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
     assert_eq!(
         tokens().len(),
         cached.len() + 1,
@@ -246,7 +294,12 @@ fn elf() {
     bytes[56..58].copy_from_slice(&2u16.to_le_bytes());
     segment(&mut bytes, 120, [6, 8193, 0x20001, 3, 4101]);
     bytes[8193..8196].copy_from_slice(&[7, 8, 9]);
-    let writable = loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap();
+    let writable = loader
+        .build(Image {
+            bytes: &bytes,
+            kind: ProgramKind::User,
+        })
+        .unwrap();
     assert_eq!(
         tokens().len(),
         stable.len() + 1,
@@ -263,15 +316,78 @@ fn elf() {
 
     let mut loader = Loader::new();
     let heirs = unit::heir_count();
-    assert!(loader.mint(Image { bytes: b"invalid", kind: ProgramKind::User })
-        .is_err_and(|e| e.source == env::UnitFail::BadImage));
+    assert!(
+        loader
+            .build(Image {
+                bytes: b"invalid",
+                kind: ProgramKind::User
+            })
+            .is_err_and(|e| e.source == env::UnitFail::BadImage)
+    );
     assert_eq!(unit::heir_count(), heirs);
-    let minted = loader.mint(Image { bytes: &bytes, kind: ProgramKind::User }).unwrap();
+    let minted = loader
+        .build(Image {
+            bytes: &bytes,
+            kind: ProgramKind::User,
+        })
+        .unwrap();
     let team = minted.team();
     drop(loader);
     let task = minted.spawn(&[], 0).unwrap();
-    assert_eq!(tokens(), before, "copy: committed sources survived loader drop");
+    assert_eq!(
+        tokens(),
+        before,
+        "copy: committed sources survived loader drop"
+    );
     env::room::doom(task).unwrap();
     assert!(unit::join(task, Wait::AtMost(2000)).unwrap());
     unit::oust(team).unwrap();
+}
+
+fn cache_limits() {
+    let before = tokens();
+    let mut loader = Loader::new();
+    let small = image();
+    let held = loader
+        .build(Image {
+            bytes: &small,
+            kind: ProgramKind::User,
+        })
+        .unwrap();
+    let mut large = small.clone();
+    segment(&mut large, 64, [5, 4098, 0x10002, 4, 256 * 4096 - 2]);
+    drop(
+        loader
+            .build(Image {
+                bytes: &large,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
+    assert_eq!(
+        tokens().len(),
+        before.len() + 1,
+        "copy: cache exceeded page budget"
+    );
+    segment(&mut large, 64, [5, 4098, 0x10002, 4, 257 * 4096 - 2]);
+    drop(
+        loader
+            .build(Image {
+                bytes: &large,
+                kind: ProgramKind::User,
+            })
+            .unwrap(),
+    );
+    assert_eq!(
+        tokens().len(),
+        before.len() + 1,
+        "copy: oversized source entered cache"
+    );
+    let team = held.team();
+    let task = held.spawn(&[], 0).unwrap();
+    env::room::doom(task).unwrap();
+    assert!(unit::join(task, Wait::AtMost(2000)).unwrap());
+    unit::oust(team).unwrap();
+    drop(loader);
+    assert_eq!(tokens(), before, "copy: cache eviction leaked roots");
 }

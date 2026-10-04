@@ -23,5 +23,6 @@ pub(crate) mod driver;
 pub mod frame;
 pub mod lifecycle;
 
+pub mod instance;
 pub mod run;
 pub mod schedule;

@@ -3,9 +3,9 @@ use super::{
     unit::Control,
 };
 use crate::system::control::core::unit::State;
+use env::pie;
 use env::{PieToken, Wait};
 use protocol::{communication::hand::Sender, system::control as ccall};
-use env::pie;
 use runtime::core::res::pie::{HolePie, reserve};
 
 pub struct Incoming {
@@ -77,7 +77,9 @@ pub fn enqueue(
     mut operations: protocol::common::schedule::ResMut<Operations>,
     mut inbox: protocol::common::schedule::ResMut<Inbox>,
 ) -> Result<protocol::common::schedule::Progress, super::Fail> {
-    while let Some(incoming) = inbox.0.pop_front() {
+    let count = inbox.0.len();
+    for _ in 0..count {
+        let incoming = inbox.0.pop_front().ok_or(super::Fail::Room)?;
         let (name, action) = match incoming.wire {
             ccall::frame::Wire::Mint(name) => (name, Action::Mint),
             ccall::frame::Wire::Embark(name) => (
@@ -89,6 +91,10 @@ pub fn enqueue(
             ccall::frame::Wire::Debark(name) => (name, Action::Debark),
             ccall::frame::Wire::Ruin(name) => (name, Action::Ruin),
             ccall::frame::Wire::State(_) => return Err(super::Fail::Room),
+            _ => {
+                inbox.0.push_back(incoming);
+                continue;
+            }
         };
         if let Err(fail) = operations.push(Request {
             name,
@@ -119,7 +125,7 @@ pub(crate) fn complete(operation: &Operation) {
 fn status(fail: crate::system::control::core::verdict::Fail) -> ccall::frame::Said {
     ccall::frame::said_status(ccall::frame::fail_to_code(Some(wire_fail(fail))))
 }
-fn reply(back: PieToken, said: ccall::frame::Said) {
+pub(super) fn reply(back: PieToken, said: ccall::frame::Said) {
     {
         let mut tx = Sender::<ccall::frame::Said>::from_token(back);
         let _ = tx.send(said);
@@ -135,7 +141,7 @@ fn wire_fail(fail: crate::system::control::core::verdict::Fail) -> ccall::Fail {
         Model::NotReady => ccall::Fail::NotReady,
     }
 }
-fn wire_state(state: State) -> ccall::State {
+pub(super) fn wire_state(state: State) -> ccall::State {
     match state {
         State::NeverStarted => ccall::State::NeverStarted,
         State::Starting => ccall::State::Starting,

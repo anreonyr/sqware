@@ -19,3 +19,4 @@ pub mod lifecycle;
 pub mod copy;
 
 pub mod heap;
+pub mod loader;

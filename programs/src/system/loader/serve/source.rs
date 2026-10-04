@@ -1,7 +1,6 @@
 use super::fail;
-use crate::system::loader::Loader;
-use crate::system::loader::core::source::{Cached, Source};
-use env::{Permission, PieToken, TeamId, UnitFail, UnitResult, pie};
+use crate::system::loader::core::source::Source;
+use env::{PieToken, TeamId, UnitFail, UnitResult, pie};
 use runtime::core::adapt;
 
 impl Drop for Source {
@@ -55,25 +54,4 @@ pub(super) fn initialize(bytes: &[u8], region: &loader::Region) -> UnitResult<So
         source.mapping = None;
     }
     Ok(source)
-}
-
-impl Loader {
-    pub(super) fn shared(&mut self, bytes: &[u8], region: &loader::Region) -> UnitResult<PieToken> {
-        if let Some(item) = self.cache.iter().find(|item| {
-            item.va == region.va && item.flags == region.flags && item.source.matches(bytes, region)
-        }) {
-            return Ok(item.source.token);
-        }
-        let source = initialize(bytes, region)?;
-        let token = source.token;
-        pie::narrow(token, Permission::FETCH | Permission::VEST)
-            .map_err(|_| fail(UnitFail::Denied))?;
-        self.cache.try_reserve(1).map_err(|_| fail(UnitFail::OoM))?;
-        self.cache.push(Cached {
-            va: region.va,
-            flags: region.flags,
-            source,
-        });
-        Ok(token)
-    }
 }

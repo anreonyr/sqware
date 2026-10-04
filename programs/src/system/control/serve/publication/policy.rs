@@ -1,12 +1,11 @@
 use crate::system::common::machine::Machine;
-use crate::system::control::core::unit::{Slot, State, Table};
+use crate::system::control::core::unit::Slot;
 use crate::system::control::serve::resource::Resources;
 use crate::system::control::serve::unit::Control;
 use crate::system::identity::serve::install::Roster;
 use crate::system::identity::serve::query::validate_permit;
 use crate::system::operator::core::Tile;
 use crate::system::operator::serve::plate::Placement;
-use env::{TaskId, Wait};
 use protocol::common::path::Path;
 use protocol::common::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Scope, Target};
@@ -14,20 +13,7 @@ use protocol::system::identity::Selector;
 use protocol::system::operator::{Fail, Permit};
 
 use super::{Approved, Decision, Request};
-use runtime::core::res::pie::{inspect};
-fn live(table: &Table, task: TaskId) -> bool {
-    if task == env::unit::self_id() {
-        return true;
-    }
-    table.living().any(|row| {
-        matches!(row.slot, Slot::Live { task: known, .. } if known == task)
-            && matches!(
-                row.state,
-                State::NeverStarted | State::Starting | State::Ready | State::Debarked
-            )
-            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
-    })
-}
+use runtime::core::res::pie::inspect;
 pub fn source(
     request: Res<Request>,
     control: Res<Control>,
@@ -38,10 +24,10 @@ pub fn source(
         return Ok(Progress::Done);
     }
     let target_live = match request.frame.target() {
-        Some(Target::RuntimeResource { task, .. }) => live(&control.table, task),
+        Some(Target::RuntimeResource { task, .. }) => control.live(task),
         _ => true,
     };
-    if !live(&control.table, request.from)
+    if !control.live(request.from)
         || !target_live
         || !matches!(inspect(request.frame.entry), Ok((vestor, owner, _)) if vestor == request.from && owner == request.from)
     {
@@ -77,9 +63,7 @@ pub fn service(
                 .copied()
                 .find(|p| p.name() == row.name)
         });
-    let mark = inspect(request.frame.entry)
-        .map(|(_, _, mark)| mark)
-        .ok();
+    let mark = inspect(request.frame.entry).map(|(_, _, mark)| mark).ok();
     let mut road = None;
     if let (Some(program), Some(mark)) = (program, mark) {
         for rule in program.publication {
@@ -156,7 +140,11 @@ pub fn device(
         unreachable!()
     };
     let valid = (group == protocol::service::hub::BOOT
-        && [protocol::service::hub::DTB, protocol::service::hub::SUPERVISOR_EXTERNAL].contains(&name.as_str()))
+        && [
+            protocol::service::hub::DTB,
+            protocol::service::hub::SUPERVISOR_EXTERNAL,
+        ]
+        .contains(&name.as_str()))
         || machine.devices().is_some_and(|devices| {
             devices
                 .iter()

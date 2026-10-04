@@ -13,13 +13,13 @@ use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
+use env::unit;
 use protocol::communication::session::Session;
 use protocol::debug;
 use protocol::system::control as ccall;
 use protocol::system::operator::Fail;
 use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
-use env::unit;
 
 const MS: usize = 1000;
 
@@ -117,6 +117,18 @@ fn main() -> Report<'static> {
         debug!("probe-control: {}=err:{got:?}", grant.name());
         denied_cells[i] = matches!(got, Err(Fail::Denied));
     }
+
+    let loader_road = protocol::system::loader::DIR
+        .try_join(protocol::system::loader::Grant::Build.name())
+        .unwrap();
+    assert!(
+        matches!(
+            tree.tile(&loader_road, Wait::AtMost(MS))
+                .and_then(|tile| tile.token(Wait::AtMost(MS))),
+            Err(Fail::Denied)
+        ),
+        "probe-control: loader entry exposed to an unauthorized principal"
+    );
 
     //     走到了对面，是对面**说得清清楚楚**地拒的）。
     let write_mint = control.mint(nobody.clone(), Wait::AtMost(MS)).err();

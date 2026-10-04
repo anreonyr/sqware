@@ -222,6 +222,19 @@ pub(crate) fn candidates(
             .map_err(|_| "runtime capacity")?;
         pending.requests.push((task, team));
     }
+    for item in &control.instances {
+        let Some(team) = item.team else {
+            continue;
+        };
+        if !control.live(item.task) || resources.runs.iter().any(|run| run.task == item.task) {
+            continue;
+        }
+        pending
+            .requests
+            .try_reserve(1)
+            .map_err(|_| "runtime capacity")?;
+        pending.requests.push((item.task, team));
+    }
     Ok(Progress::Done)
 }
 pub(crate) fn prepare(
@@ -233,16 +246,28 @@ pub(crate) fn prepare(
         return Ok(Progress::Done);
     }
     let revision = epoch.0.load(core::sync::atomic::Ordering::Acquire);
-    // Only an identity change can make an unbound candidate eligible.
-    if pending.seen == revision {
-        pending.requests.clear();
-        return Ok(Progress::Done);
+    if pending.seen != revision {
+        pending.seen = revision;
+        pending.checked.clear();
+    } else {
+        let mut at = 0;
+        while at < pending.requests.len() {
+            if pending.checked.contains(&pending.requests[at].0) {
+                pending.requests.remove(at);
+            } else {
+                at += 1;
+            }
+        }
     }
-    pending.seen = revision;
     if current_authority(&roster).is_none() {
         pending.requests.clear();
         return Ok(Progress::Done);
     }
+    let count = pending.requests.len();
+    pending
+        .checked
+        .try_reserve(count)
+        .map_err(|_| "runtime identity capacity")?;
     let mut at = 0;
     while at < pending.requests.len() {
         if binding(&roster, pending.requests[at].0)
@@ -251,7 +276,8 @@ pub(crate) fn prepare(
         {
             at += 1;
         } else {
-            pending.requests.remove(at);
+            let (task, _) = pending.requests.remove(at);
+            pending.checked.push(task);
         }
     }
     Ok(Progress::Done)
@@ -259,6 +285,7 @@ pub(crate) fn prepare(
 pub struct Runtimes {
     pub requests: Vec<(TaskId, TeamId)>,
     pub seen: u64,
+    pub checked: Vec<TaskId>,
 }
 pub(crate) fn install(
     mut pending: ResMut<Runtimes>,

@@ -125,6 +125,7 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.add_system("operator.faces", 8, boot::operator_faces)?;
     start.add_system("publication.face", 9, boot::publication_face)?;
     start.add_system("control.faces", 10, boot::control_faces)?;
+    start.add_system("loader", 10, crate::system::loader::serve::install::install)?;
     start.add_system("publish", 11, boot::publish)?;
     let mut units = Schedule::new();
     units.add_system("begin", 0u8, serve::frame::startup)?;
@@ -149,7 +150,16 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.add_system("reap", 2, serve::reap::sweep)?;
     frame.add_system("requests.receive", 3, answer::receive)?;
     frame.add_system("requests.state", 4, answer::state)?;
+    frame.add_system("requests.instances", 5, serve::instance::answer)?;
     frame.add_system("requests.enqueue", 5, answer::enqueue)?;
+    frame.before("requests.instances", "requests.enqueue")?;
+    frame.add_plan(
+        "loader",
+        5,
+        crate::system::loader::serve::schedule::frame()?,
+    )?;
+    frame.before("loader", "requests.instances")?;
+    frame.add_system("instances.reap", 8, serve::instance::reap)?;
     frame.add_plan("lifecycle", 6, actions(lifecycle()?)?)?;
     frame.add_plan(
         "maintain.after",
@@ -172,6 +182,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.add_system("stopping.bound", 18, f::stopping_bound)?;
     frame.before("bound", "stopping.bound")?;
     frame.add_system("pending", 19, f::pending)?;
+    frame.add_system("instances.pending", 19, serve::instance::pending)?;
     frame.add_system("watch.entries", 20, watch::entries)?;
     frame.add_system("watch.publication", 21, watch::publication)?;
     frame.add_system("watch.identity", 21, watch::identity_changes)?;

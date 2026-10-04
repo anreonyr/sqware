@@ -27,22 +27,22 @@
 extern crate alloc;
 extern crate programs;
 
-use programs::system::loader::{Image, Loader};
 use env::Wait;
 use programs::Reason;
+use programs::system::loader::{Image, Loader};
 
 use env::Mark;
 use programs::boot::{Accounts, Catalog};
 
-use env::{PieToken, TaskId};
-use protocol::debug;
-use runtime::core::res::pile::Pile;
-use runtime::core::res::port::{self, Access, Policy};
+use env::pie;
 use env::room;
 use env::unit;
-use env::pie;
-use runtime::core::res::pie::{HolePie, TolePie};
+use env::{PieToken, TaskId};
+use protocol::debug;
 use runtime::core::adapt;
+use runtime::core::res::pie::{HolePie, TolePie};
+use runtime::core::res::pile::Pile;
+use runtime::core::res::port::{self, Access, Policy};
 
 /// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）
 const WAITER: &str = "waiter";
@@ -61,8 +61,12 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authority: Pi
     let mark = Mark::of("group-build");
     let worker = move || {
         if protocol::communication::session::establish::claim(
-            TaskId::new(0), mark, Wait::AtMost(MS),
-        ).is_none() {
+            TaskId::new(0),
+            mark,
+            Wait::AtMost(MS),
+        )
+        .is_none()
+        {
             return false;
         }
         BUILDERS.fetch_add(1, Ordering::AcqRel);
@@ -82,7 +86,7 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authority: Pi
         }
         let mut residents = 0;
         for index in 0..32 {
-            let Ok(image) = loader.mint(Image { bytes: elf, kind }) else {
+            let Ok(image) = loader.build(Image { bytes: elf, kind }) else {
                 return false;
             };
             let team = image.team();
@@ -174,7 +178,7 @@ fn main() -> Reason {
     // ④ 两个子域、各一枚线程、各收一份（组 + 成员 + 自己那枚回报孔），放行。
     let mut tasks = [TaskId::new(0); WAITERS];
     for i in 0..WAITERS {
-        let Ok(image) = loader.mint(Image { bytes: elf, kind }) else {
+        let Ok(image) = loader.build(Image { bytes: elf, kind }) else {
             return die("group: build");
         };
         let Ok(task) = image.spawn(&[], 0) else {
