@@ -2,7 +2,8 @@
 
 本轮重构消除中央 protocol 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
-当前状态：设计与实施计划已整理，兼容基线和本轮代码迁移尚未开始。文中的目录和 API 表示目标结构。
+当前状态：设计与实施计划已整理，Loader 宿主兼容基线已落盘并通过 8 个测试。
+其余接口基线与本轮代码迁移尚未开始。文中的目录和 API 表示目标结构。
 
 ## 当前问题
 
@@ -150,6 +151,23 @@ Mark 从稳定的接口 ID、角色 key 或授权面 key 生成。旧接口保�
 
 完成条件：后续实现能证明新旧的通信结果一致，不能通过同时修改期望掩盖变化。
 
+Loader 基线位于 `crates/protocol/src/system/loader/tests`，直接编译现有帧、Grant、Mark 和错误码定义，不复制实现。
+测试中的固定字节样本和 Mark 裸值独立于被测编码器；替换生成器时应保留这些期望。
+
+| 固定项目 | 当前值 |
+| --- | --- |
+| Build / Claim 操作码 | 1 / 2；共用 Build Grant，授权码 1 |
+| 请求长度 | Build 为 42 + 8 × 参数数，最多 554 字节；Claim 为 17 字节 |
+| 回复布局 | status:u8、team:u64 LE、task:u64 LE，共 17 字节 |
+| 回复状态 | 成功 0；Unknown 1、BadImage 2、Full 3、NotReady 4、Bad 5、Denied 6；未知状态映射 Bad |
+| 回信 Mark | loader-back：0xc1bc7bad2c8f22ca |
+| 镜像 Mark | loader-image：0x280b1d49733b5ae2 |
+| 授权入口 Mark | loader-entry-build：0xa1c2ab202871949a |
+| 限制与发现路径 | 参数最多 64，镜像最多 16 MiB，Claim 期限 3000 ms；svc/sys/loader |
+
+测试还覆盖请求与回复的截断、尾部多余字节、非法请求动作、参数数 0/64/65，以及失败回复的零 task/team。
+这些是纯通信兼容检查，不执行资源授予、构建、Claim 交付或 QEMU 场景。
+
 ### 2. 建立最小生成基础，贯通 Loader
 
 提取最少的纯编码和接口描述基础；原 protocol 临时重导出这些类型。
@@ -224,6 +242,7 @@ cargo check -p programs --all-targets --offline
 cargo test --manifest-path crates/runtime/src/schedule/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 nu scripts/qtest.nu --package kernel --scene accept
 nu scripts/qtest.nu --package kernel --scene product

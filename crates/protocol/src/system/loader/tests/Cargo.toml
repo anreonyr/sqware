@@ -1,0 +1,10 @@
+[package]
+name = "loader-compat-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[dependencies]
+env = { path = "../../../../../env" }
+[lib]
+path = "lib.rs"
