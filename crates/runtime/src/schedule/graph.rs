@@ -64,7 +64,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         self.node(
             name,
             phase,
-            System::new([None; super::system::MAX_PARAMS], Nested { plan }),
+            super::compose::nested(plan),
         )
     }
     pub fn add_subplans<K: PartialEq + 'static, C: 'static, M, N>(
@@ -96,15 +96,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         self.node(
             name,
             phase,
-            System::new(
-                [None; super::system::MAX_PARAMS],
-                Subplans {
-                    select,
-                    children,
-                    finish,
-                    slot: usize::MAX,
-                },
-            ),
+            super::compose::subplans(select, children, finish),
         )
     }
     fn node(&mut self, name: &'static str, phase: L, system: System<E>) -> Result<(), BuildError> {
@@ -145,101 +137,11 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
                             *b == n.name && self.nodes.iter().any(|other| other.name == *a)
                         })
                 })
-                .min_by_key(|(_, n)| n.name)
+                .next()
                 .map(|(i, _)| i)
                 .ok_or(BuildError::Cycle)?;
             steps.push(self.nodes.remove(pick).system);
         }
         Ok(Plan { steps })
-    }
-}
-
-struct Nested<E> {
-    plan: Plan<E>,
-}
-impl<E> super::system::Runner<E> for Nested<E> {
-    fn prepare(&mut self, resources: &super::Resources<'_>) {
-        self.plan.prepare(resources);
-    }
-    fn run(
-        &mut self,
-        resources: &super::Resources<'_>,
-        cursor: &mut super::Cursor,
-        _: &[usize; super::system::MAX_PARAMS],
-    ) -> Result<super::Progress, super::RunError<E>> {
-        let nested = cursor.nested.get_or_insert_with(Default::default);
-        self.plan.advance(nested, resources)
-    }
-}
-struct Subplans<K, C, E> {
-    select: System<E>,
-    children: Vec<(K, Plan<C>)>,
-    finish: System<E>,
-    slot: usize,
-}
-impl<K: PartialEq + 'static, C: 'static, E> super::system::Runner<E> for Subplans<K, C, E> {
-    fn prepare(&mut self, resources: &super::Resources<'_>) {
-        self.slot = resources
-            .index(core::any::TypeId::of::<super::Dispatch<K, C>>(), self.slot)
-            .unwrap_or(usize::MAX);
-        self.select.prepare(resources);
-        self.finish.prepare(resources);
-        for (_, plan) in &mut self.children {
-            plan.prepare(resources);
-        }
-    }
-    fn run(
-        &mut self,
-        resources: &super::Resources<'_>,
-        cursor: &mut super::Cursor,
-        _: &[usize; super::system::MAX_PARAMS],
-    ) -> Result<super::Progress, super::RunError<E>> {
-        self.slot = resources
-            .index(core::any::TypeId::of::<super::Dispatch<K, C>>(), self.slot)
-            .map_err(super::RunError::Resource)?;
-        loop {
-            if cursor.finishing {
-                if self.finish.execute(resources, cursor)? == super::Progress::Pending {
-                    return Ok(super::Progress::Pending);
-                }
-                cursor.finishing = false;
-            }
-            if resources
-                .read_at::<super::Dispatch<K, C>>(self.slot)
-                .map_err(super::RunError::Resource)?
-                .budget
-                == 0
-            {
-                break;
-            }
-            if self.select.execute(resources, cursor)? == super::Progress::Pending {
-                return Ok(super::Progress::Pending);
-            }
-            let invocation = resources
-                .write_at::<super::Dispatch<K, C>>(self.slot)
-                .map_err(super::RunError::Resource)?
-                .current
-                .take();
-            let Some(mut invocation) = invocation else {
-                break;
-            };
-            let plan = self
-                .children
-                .iter_mut()
-                .find(|(key, _)| *key == invocation.key)
-                .map(|(_, plan)| plan)
-                .ok_or(super::RunError::UnknownPlan)?;
-            let result = plan.advance(&mut invocation.cursor, resources);
-            {
-                let mut dispatch = resources
-                    .write_at::<super::Dispatch<K, C>>(self.slot)
-                    .map_err(super::RunError::Resource)?;
-                dispatch.current = Some(invocation);
-                dispatch.result = Some(result);
-                dispatch.budget -= 1;
-            }
-            cursor.finishing = true;
-        }
-        Ok(super::Progress::Done)
     }
 }

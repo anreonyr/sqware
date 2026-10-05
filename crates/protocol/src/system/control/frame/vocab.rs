@@ -1,7 +1,6 @@
 //! :frame 的词汇那一半：状态（State）· 失败词汇（Fail）与两向换算 · 四手码 ·
 //! 状态码 · 记号与那一段路（`LINK`/`NAME`/`ASK_MARK`/`BACK`/`DIR`）。
 
-use env::Mark;
 
 use crate::common::path::Path;
 use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
@@ -86,7 +85,7 @@ pub const STATE: u8 = 4;
 pub const RUIN: u8 = 5;
 
 /// 这条路叫什么（泊位那一格）：**两侧同一个**
-pub const LINK: &str = "control";
+pub use crate::system::control::marks::LINK;
 
 /// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 LINK 同一个串**——"泊位叫 `control`"
 /// 与"它挂在哪一格"是同一件事的两层，重名不是重名
@@ -94,9 +93,9 @@ pub const NAME: &str = "control";
 
 /// 问话孔那一枚上的记号。**带面名**（`control-ask`）：认领键是"谁开的 + 记号"，而同一枚任务
 /// 可能同时是两面的客人——两枚孔都铸在它自己那张表里，记号再一样就分不开（理由与实测见
-pub const ASK_MARK: Mark = Mark::of("control-ask");
+pub use crate::system::control::marks::ASK_MARK;
 
-pub const BACK: Mark = Mark::of("control-back");
+pub use crate::system::control::marks::BACK;
 
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
 /// coalition）

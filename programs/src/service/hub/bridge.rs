@@ -1,6 +1,6 @@
 //! Control owns this private installation face; only the live Hub can ask through it.
 use env::{Access, PieToken, Policy, TaskId, Wait};
-use protocol::common::schedule::{Progress, Res};
+use runtime::schedule::{Progress, Res};
 use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
 use protocol::service::hub::{
@@ -44,7 +44,7 @@ impl Activation {
     pub fn poll(
         &self,
         control: &Control,
-        roster: &crate::system::identity::serve::install::Roster,
+        roster: &crate::system::identity::client::install::Roster,
     ) {
         let mut bytes = [0; runtime::PAGE_SIZE];
         while let Ok((len, from)) = HolePie::from_token(self.entry).pull(&mut bytes, Wait::POLL) {
@@ -122,7 +122,7 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
 pub(crate) fn maintain(
     activation: Res<Option<Activation>>,
     control: Res<crate::system::control::serve::unit::Control>,
-    roster: Res<crate::system::identity::serve::install::Roster>,
+    roster: Res<crate::system::identity::client::install::Roster>,
 ) -> Result<Progress, &'static str> {
     if let Some(activation) = activation.as_ref() {
         activation.poll(&control, &roster);

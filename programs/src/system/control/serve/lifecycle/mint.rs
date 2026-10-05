@@ -5,7 +5,7 @@ use super::super::{
 use super::{Active, Instance};
 use crate::system::control::core::{unit::State, verdict::Fail};
 use alloc::vec::Vec;
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 
 pub fn pre(
     active: Res<Active>,
@@ -54,7 +54,7 @@ pub fn post(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let instance = job.execution.instance.as_ref().ok_or(Fail::NotReady)?;
-    crate::system::run::publication::receive::inject(images.entry, instance.service.0)
+    images.inject(instance.service.0)
         .map_err(|_| Fail::Full)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
     control.pending.push(Pending {

@@ -5,7 +5,7 @@ use alloc::collections::VecDeque;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::service::terminal::frame::{self, Command, Input, Reply};
 use protocol::system::{
     control::publication::{Client, Scope, Target},

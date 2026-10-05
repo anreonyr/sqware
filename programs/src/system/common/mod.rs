@@ -4,3 +4,4 @@
 
 pub mod face;
 pub mod machine;
+pub mod timing;

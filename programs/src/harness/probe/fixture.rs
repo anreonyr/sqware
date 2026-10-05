@@ -9,12 +9,12 @@ use crate::system::{
             unit::Control,
         },
     },
-    identity::serve::install::Roster,
+    identity::client::install::Roster,
     run::bootstrap::Boot,
 };
 use crate::unit::{Died, UnitFile};
 
-use protocol::common::schedule::{
+use runtime::schedule::{
     Cursor, Dispatch, Invocation, Plan, Progress, Res, ResMut, Resources as Registry, Schedule,
 };
 pub struct Fault {
@@ -45,23 +45,25 @@ fn probe(
     fault: Res<Fault>,
     mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
-    dispatch.budget = usize::from(fault.armed);
+    dispatch.begin(usize::from(fault.armed)).map_err(|_| verdict::Fail::NotReady)?;
     Ok(Progress::Done)
 }
 fn select_probe(
     mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
-    dispatch.current = Some(Invocation {
+    dispatch.select(Invocation {
         key: (),
         cursor: Default::default(),
-    });
+    }).map_err(|_| verdict::Fail::NotReady)?;
     Ok(Progress::Done)
 }
 fn inject(
     active: Res<Active>,
     resources: Res<Resources>,
     mut fault: ResMut<Fault>,
+    mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
+    dispatch.take_result().map_err(|_| verdict::Fail::NotReady)?;
     if fault.armed {
         fault.armed = false;
         fault.task = active.0.as_ref().and_then(|job| job.execution.task);
@@ -187,7 +189,7 @@ impl Fixture {
     pub fn supervise(&mut self) -> Result<(), serve::Fail> {
         while !self
             .resources
-            .read::<serve::frame::Flow>()
+            .read::<crate::system::run::frame::Flow>()
             .map_err(|_| serve::Fail::Room)?
             .done
         {

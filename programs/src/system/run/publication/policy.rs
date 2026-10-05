@@ -1,13 +1,13 @@
 use crate::system::common::machine::Machine;
 use crate::system::control::core::unit::Slot;
 use crate::system::control::serve::unit::Control;
-use crate::system::identity::serve::install::Roster;
-use crate::system::identity::serve::query::validate_permit;
+use crate::system::identity::client::install::Roster;
+use crate::system::identity::client::query::validate_permit;
 use crate::system::operator::core::Tile;
-use crate::system::operator::serve::plate::Placement;
+use crate::system::operator::Placement;
 use crate::system::run::resource::Resources;
 use protocol::common::path::Path;
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{Fail, Permit};
@@ -202,7 +202,7 @@ pub fn identity(
             let mut result = validate_permit(&roster, permit);
             if matches!(&old, Decision::OwnHole(_)) {
                 result = result.and_then(|_| {
-                    let principal = crate::system::identity::serve::query::binding(
+                    let principal = crate::system::identity::client::query::binding(
                         &roster,
                         approved.publisher,
                     )?
@@ -227,7 +227,7 @@ pub fn identity(
                     let Permit::Identity(Selector::MemberOf(coalition)) = permit else {
                         return Err(Fail::Denied);
                     };
-                    let subject = crate::system::identity::serve::query::binding(
+                    let subject = crate::system::identity::client::query::binding(
                         &roster,
                         approved.publisher,
                     )?

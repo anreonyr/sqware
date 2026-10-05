@@ -1,7 +1,7 @@
+use runtime::schedule::{Progress, ResMut};
 use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait, pie};
 use protocol::{
-    common::schedule::{Progress, ResMut},
     system::loader::frame::{self, Ask, Said, Wire},
 };
 use runtime::core::res::pie::{HolePie, inspect, reserve};

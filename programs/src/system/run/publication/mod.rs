@@ -1,4 +1,4 @@
-use crate::system::operator::serve::plate::Placement;
+use crate::system::operator::Placement;
 use env::{PieToken, TaskId};
 use protocol::{
     common::path::PathBuf,
@@ -8,6 +8,8 @@ use protocol::{
     },
 };
 pub mod install;
+pub mod identity;
+pub mod operator;
 pub mod internal;
 pub mod policy;
 pub mod receive;

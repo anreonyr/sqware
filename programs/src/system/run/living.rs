@@ -1,10 +1,10 @@
-use super::unit::Control;
+use crate::system::control::serve::unit::Control;
 use crate::system::control::core::unit::{Slot, State};
-use crate::system::identity::serve::{install::Roster, query::current_authority};
-use crate::system::operator::serve::install::Tree;
+use crate::system::identity::client::{install::Roster, query::current_authority};
+use crate::system::operator::client::Tree;
 use alloc::vec::Vec;
 use env::{TaskId, Wait};
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 
 pub struct Living {
     tasks: Vec<TaskId>,

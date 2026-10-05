@@ -1,3 +1,4 @@
+use runtime::schedule::{Progress, Res, ResMut};
 use super::{Fail, answer::Output};
 use crate::system::{
     common::face::desk::{Desk, Guest},
@@ -6,7 +7,6 @@ use crate::system::{
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     communication::hand::Sender,
     debug,
     system::operator as ocall,

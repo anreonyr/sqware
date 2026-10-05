@@ -1,7 +1,7 @@
+use runtime::schedule::{Progress, ResMut};
 use super::session::Request;
 use crate::system::operator::core::{Location, Tile, Key, Operator};
 use protocol::{
-    common::schedule::{Progress, ResMut},
     system::operator as ocall,
 };
 use runtime::core::res::pie::HolePie;

@@ -1,5 +1,5 @@
 use super::answer::Inbox;
-use protocol::common::schedule::Resources;
+use runtime::schedule::Resources;
 pub fn resources(resources: &mut Resources<'static>) -> Result<(), &'static str> {
     resources
         .insert(Inbox::new())

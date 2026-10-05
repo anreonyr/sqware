@@ -26,10 +26,10 @@ pub enum Fail {
 pub const OCCUPY: u8 = 1;
 
 /// 线泊位的记号（两侧同一个）
-pub const LANE: &str = "line";
+pub use crate::driver::marks::LANE;
 
 /// 回信孔的记号（登记那一答从它回来）
-pub const BACK_MARK: Mark = Mark::of("line-back");
+pub use crate::driver::marks::LINE_BACK as BACK_MARK;
 
 const _: () = assert!(BACK_MARK.get() != Mark::of(LANE).get());
 const _: () = assert!(BACK_MARK.get() != Mark::of("line-tip").get());

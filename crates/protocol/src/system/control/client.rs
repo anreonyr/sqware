@@ -18,7 +18,7 @@ pub const INSTANCE: &crate::common::path::Path = crate::common::path::Path::new(
 /// （frame::ASK_MARK）
 /// 开会话那一手（Session::open）要它——control 那一侧上树 / 装配者转授时用同一格
 pub const BERTH: Berth = Berth {
-    link: env::Mark::of(frame::LINK),
+    link: super::marks::LINK_MARK,
     ask: frame::ASK_MARK,
 };
 

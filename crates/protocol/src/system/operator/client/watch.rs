@@ -18,7 +18,7 @@
 
 use alloc::string::String;
 
-use env::{MailFail, Mark, Wait};
+use env::{MailFail, Wait};
 
 use runtime::core::res::port::{self, Access, Policy};
 
@@ -33,7 +33,7 @@ use crate::system::operator as ocall;
 use runtime::core::res::pie::{HolePie};
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
-const HOLE_MARK: &str = "operator-watch";
+use crate::system::operator::marks::WATCH_MARK;
 
 /// **一位订户的柄**：那一枚孔（本端持有）＋ 那条订过的路 ＋ 已读到哪一号。
 ///
@@ -56,7 +56,7 @@ pub struct Watch<'a> {
 impl<'a> Watch<'a> {
     /// **订一条子树**：本端铸一枚孔，把它交给持树者，等它记下这一位。
     pub fn of(face: &'a Face, road: &Path, wait: Wait) -> Result<Watch<'a>, Fail> {
-        let hole = HolePie::unseal(Mark::of(HOLE_MARK)).map_err(|_| Fail::Unknown)?;
+        let hole = HolePie::unseal(WATCH_MARK).map_err(|_| Fail::Unknown)?;
         // **那一枚孔要交给持树者**：它得推得进来（`Push` 是"把发送方那段登记到孔上"⇒ 要写权）。
         // `Policy::NONE`：接过来的人不必再授出（事件只有持树者递）。
         let shipped = port::ship(hole.token(), face.host(), Access::STORE, Policy::NONE)

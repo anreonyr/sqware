@@ -1,47 +1,26 @@
+use runtime::schedule::{Progress, Res};
 use super::{
     Fail,
-    face::{Current, Response},
+    face::Current,
 };
-use alloc::sync::Arc;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::Ordering;
 use env::pie;
-use runtime::core::res::bell::Bell;
+use crate::system::identity::revision::{Epoch, Changed};
 
-use protocol::{
-    common::schedule::{Progress, Res},
-    system::identity::{Mount, Reply},
-};
-#[derive(Clone)]
-pub struct Epoch(pub Arc<AtomicU64>);
-pub struct Changed(pub Bell);
-impl Epoch {
-    pub fn new() -> Self {
-        Self(Arc::new(AtomicU64::new(0)))
-    }
-}
-fn mutated(current: &Current, response: &Response) -> bool {
-    current
-        .0
-        .as_ref()
-        .is_some_and(|incoming| incoming.request.grant.mount() != Mount::Public)
-        && matches!(response.0, Some(reply) if !matches!(reply, Reply::Fail(_)))
-}
 pub(super) fn publish(
     current: Res<Current>,
-    response: Res<Response>,
     epoch: Res<Epoch>,
 ) -> Result<Progress, Fail> {
-    if mutated(&current, &response) {
+    if current.mutated() {
         epoch.0.fetch_add(1, Ordering::Release);
     }
     Ok(Progress::Done)
 }
 pub(super) fn notify(
     current: Res<Current>,
-    response: Res<Response>,
     changed: Res<Changed>,
 ) -> Result<Progress, Fail> {
-    if mutated(&current, &response) {
+    if current.mutated() {
         match changed.0.ring() {
             Ok(()) => {}
             Err(error) if error.source.is_busy() => {}

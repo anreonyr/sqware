@@ -1,7 +1,7 @@
 use super::super::unit::Control;
 use super::Active;
 use crate::system::control::core::{unit::State, verdict::Fail};
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 
 pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;

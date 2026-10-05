@@ -18,7 +18,7 @@ const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = programs::system::identity::serve::source::authority()
+    let authority = programs::system::identity::client::source::authority()
         .expect("member: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()

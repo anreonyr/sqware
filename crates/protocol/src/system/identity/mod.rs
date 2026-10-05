@@ -2,6 +2,7 @@
 //! IDs survive transport, not authority restart. Subjects are bounded snapshots, never credentials.
 pub mod client;
 pub mod frame;
+pub mod marks;
 pub mod grant;
 pub mod limits;
 

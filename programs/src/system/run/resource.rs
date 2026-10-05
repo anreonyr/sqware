@@ -1,17 +1,18 @@
 use crate::system::control::core::unit::{Slot, State, Table};
-use crate::system::control::serve::{living::Living, unit::Control};
-use crate::system::identity::serve::install::Roster;
-use crate::system::identity::serve::query::{binding, current_authority};
+use crate::system::control::serve::unit::Control;
+use super::living::Living;
+use crate::system::identity::client::install::Roster;
+use crate::system::identity::client::query::{binding, current_authority};
 use crate::system::operator::core::Tile;
-use crate::system::operator::serve::install::Tree;
-use crate::system::operator::serve::plate::Placement;
+use crate::system::operator::client::Tree;
+use crate::system::operator::Placement;
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
 use env::{TaskId, TeamId, Wait};
 use protocol::common::path::{Path, PathBuf};
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::system::operator::{EntryId, Fail, Permit};
 struct Run {
     task: TaskId,
@@ -239,7 +240,7 @@ pub(crate) fn candidates(
 }
 pub(crate) fn prepare(
     roster: Res<Roster>,
-    epoch: Res<crate::system::identity::serve::revision::Epoch>,
+    epoch: Res<crate::system::identity::revision::Epoch>,
     mut pending: ResMut<Runtimes>,
 ) -> Result<Progress, &'static str> {
     if pending.requests.is_empty() {

@@ -76,6 +76,7 @@ impl<E, F, M: Fn(E) -> F> super::system::Runner<F> for Mapped<E, F, M> {
                 RunError::Step(error) => RunError::Step((self.map)(error)),
                 RunError::Resource(error) => RunError::Resource(error),
                 RunError::UnknownPlan => RunError::UnknownPlan,
+                RunError::Dispatch(error) => RunError::Dispatch(error),
             })
     }
 }

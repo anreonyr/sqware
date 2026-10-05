@@ -8,7 +8,7 @@ pub struct Instance {
     pub state: State,
     pub claimed: bool,
     pub claim_until: u64,
-    pub hook: protocol::common::schedule::Cursor,
+    pub hook: runtime::schedule::Cursor,
 }
 
 impl Instance {

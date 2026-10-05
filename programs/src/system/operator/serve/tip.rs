@@ -1,3 +1,4 @@
+use runtime::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use super::{Fail, answer::Output, plate, session::{Late, LateGuests}};
 use crate::system::operator::core::Tile;
 use crate::system::{
@@ -10,7 +11,6 @@ use env::{HoleDir, PieToken, TaskId, Wait};
 use env::pie;
 use runtime::core::res::pie::{HolePie, reserve};
 use protocol::{
-    common::schedule::{Dispatch, Invocation, Progress, Res, ResMut},
     debug,
     system::{identity::client::TaskQuery, operator as ocall},
 };
@@ -66,7 +66,7 @@ pub(super) fn budget(
     tips: Res<Tips>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    dispatch.budget = tips.0.len();
+    dispatch.begin(tips.0.len()).map_err(|_| Fail::Room)?;
     Ok(Progress::Done)
 }
 pub(super) fn select(
@@ -76,10 +76,10 @@ pub(super) fn select(
 ) -> Result<Progress, Fail> {
     current.0 = tips.0.pop_front();
     if current.0.is_some() {
-        dispatch.current = Some(Invocation {
+        dispatch.select(Invocation {
             key: (),
             cursor: Default::default(),
-        });
+        }).map_err(|_| Fail::Room)?;
     }
     Ok(Progress::Done)
 }
@@ -163,7 +163,7 @@ pub(super) fn mutate(
             }
             match plate::plate(
                 &mut tree,
-                &plate::Placement {
+                &crate::system::operator::Placement {
                     road,
                     tile: Tile {
                         pie: leaf,
@@ -271,10 +271,9 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
-    if dispatch.result.take().is_some_and(|result| result.is_err()) {
+    if dispatch.take_result().map_err(|_| Fail::Room)?.result.is_err() {
         return Err(Fail::Tree);
     }
-    dispatch.current = None;
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {

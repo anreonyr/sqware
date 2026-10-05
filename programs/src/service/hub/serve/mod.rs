@@ -377,7 +377,7 @@ fn record(enroll: &Enroll, key: Name) -> Option<ResourceEntry> {
 
 /// Discover Identity through the authority anchor issued directly by Control.
 fn find_league(tree: &Face) -> Option<League> {
-    let authority = crate::system::identity::serve::source::authority()?;
+    let authority = crate::system::identity::client::source::authority()?;
     Some(League {
         query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,

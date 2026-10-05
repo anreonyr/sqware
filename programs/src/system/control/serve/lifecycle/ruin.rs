@@ -6,10 +6,10 @@ use crate::system::{
         unit::{Slot, State},
         verdict::Fail,
     },
-    identity::serve::install::Roster,
+    identity::client::install::Roster,
 };
 use env::Wait;
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 
 pub fn pre(
     mut active: ResMut<Active>,

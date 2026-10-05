@@ -1,7 +1,8 @@
+//! Supervisor publication of Operator's request faces.
+use runtime::schedule::{Progress, Res, ResMut};
 use crate::system::{boot::Mounts, common::face::mount, life::Status, run::publication::Internal};
 use alloc::sync::Arc;
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     system::operator as op,
 };
 pub fn faces(

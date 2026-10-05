@@ -9,12 +9,9 @@ pub enum Fail {
 mod answer;
 mod door;
 mod frame;
-pub mod install;
 pub(crate) mod plate;
 pub mod run;
 mod schedule;
 mod session;
 mod tip;
 mod watch;
-
-pub mod publication;

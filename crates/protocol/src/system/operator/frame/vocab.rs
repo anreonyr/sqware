@@ -125,16 +125,16 @@ pub const SEEK: u8 = 7;
 pub const WATCH: u8 = 8;
 
 /// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）
-pub const LINK: &str = "operator";
+pub use crate::system::operator::marks::LINK;
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）
 /// **带面名**（本族那一枚是 `operator-ask`，提示那一枚是 `*-tip`）：问话孔的认领键是
 /// "**谁开的 + 记号**"，而**同一枚任务可能同时是两族的客人**（`terminal` / `guest` / `principal`
 /// …都是）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了
-pub const ASK_MARK: Mark = Mark::of("operator-ask");
+pub use crate::system::operator::marks::ASK_MARK;
 
 /// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）
-pub const TIP_MARK: Mark = Mark::of("tip");
+pub use crate::system::operator::marks::TIP_MARK;
 
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 

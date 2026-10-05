@@ -1,5 +1,5 @@
 use super::install::Roster;
-use crate::system::control::serve::start::BOOT_MS;
+use crate::system::common::timing::BOOT_MS;
 use env::{TaskId, Wait};
 use protocol::communication::session::establish;
 use protocol::system::control::Object;

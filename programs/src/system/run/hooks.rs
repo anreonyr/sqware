@@ -1,29 +1,30 @@
 use crate::system::{
     control::serve::hook::{self, Active, Key},
-    identity::serve::{install::Roster, names},
+    identity::client::install::Roster,
+    run::names,
 };
-use protocol::common::schedule::{BuildError, Plan, Progress, Res, Schedule};
+use runtime::schedule::{BuildError, Plan, Progress, Res, Schedule};
 pub fn instance() -> Result<Plan<crate::system::control::serve::Fail>, BuildError> {
     hook::plan(children()?)
 }
 pub fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, BuildError> {
-    use crate::system::control::serve::living;
-    let mut prepare = Schedule::new();
-    prepare.add_system("identity", 0u8, bind)?;
-    prepare.add_system("runtime.candidates", 1, super::resource::candidates)?;
-    prepare.add_system("runtime.prepare", 2, super::resource::prepare)?;
-    prepare.add_system("runtime.install", 3, super::resource::install)?;
-    prepare.add_system("runtime.ready", 4, ready)?;
-    let mut retire = Schedule::new();
-    retire.add_system("living", 0u8, living::capture)?;
-    retire.add_system("authority", 1, living::authority)?;
-    retire.add_system("operator", 2, living::operator)?;
-    retire.add_system("publications", 3, super::publication::retire::retire)?;
-    retire.add_system("names.expired", 4, names::expired)?;
-    retire.add_system("names.retire", 5, names::retire)?;
-    retire.add_system("runtime", 6, super::resource::retire)?;
-    retire.add_system("identity", 7, unbind)?;
-    retire.add_system("reclaim", 8, hook::reclaim)?;
+    use crate::system::run::living;
+    let mut prepare = Schedule::sequence();
+    prepare.system("identity", bind)?;
+    prepare.system("runtime.candidates", super::resource::candidates)?;
+    prepare.system("runtime.prepare", super::resource::prepare)?;
+    prepare.system("runtime.install", super::resource::install)?;
+    prepare.system("runtime.ready", ready)?;
+    let mut retire = Schedule::sequence();
+    retire.system("living", living::capture)?;
+    retire.system("authority", living::authority)?;
+    retire.system("operator", living::operator)?;
+    retire.system("publications", super::publication::retire::retire)?;
+    retire.system("names.expired", names::expired)?;
+    retire.system("names.retire", names::retire)?;
+    retire.system("runtime", super::resource::retire)?;
+    retire.system("identity", unbind)?;
+    retire.system("reclaim", hook::reclaim)?;
     Ok(alloc::vec![
         (Key::Prepare, prepare.build()?),
         (Key::Retire, retire.build()?)

@@ -12,6 +12,7 @@
 //!    （"多个驱动都用" ≠ "该进 protocol"）。
 
 pub mod line;
+pub mod marks;
 
 use crate::common::path::Path;
 
@@ -29,4 +30,4 @@ pub const DIR: &str = "drv";
 pub const ROAD: &Path = Path::new("svc/drv");
 
 /// **域的服务入口那一枚孔的记号**（`"entry"`）
-pub const ENTRY_MARK: env::Mark = env::Mark::of("entry");
+pub use marks::ENTRY_MARK;

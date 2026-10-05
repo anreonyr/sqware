@@ -86,6 +86,12 @@ macro_rules! table {
 
 /// **本族所有面的记号**（一行一族）——"**全协议记号两两不相撞**"那一张总表读它
             pub const MARKS: [$crate::common::table::Mark; Self::COUNT] = [$( $Grant::$Variant.mark(), )*];
+            pub const DECLARATIONS: [$crate::common::marks::Definition; Self::COUNT] = [
+                $($crate::common::marks::Definition {
+                    name: concat!($stem, $name),
+                    mark: $Grant::$Variant.mark(),
+                },)*
+            ];
         }
 
 /// **认面**：这枚记号是哪一面

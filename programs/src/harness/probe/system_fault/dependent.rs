@@ -27,7 +27,7 @@ fn main() -> programs::Report<'static> {
     let session = Session::open(control, operator::BERTH, WAIT)
         .unwrap_or_else(|_| panic!("hierarchy operator session"));
     let tree = Face::of(session);
-    let authority = programs::system::identity::serve::source::authority().unwrap();
+    let authority = programs::system::identity::client::source::authority().unwrap();
     let query = Query::discover(&tree, authority, WAIT).unwrap();
     let self_ops = SelfOps::discover(&tree, authority, WAIT).unwrap();
     let client = Client::injected().unwrap();

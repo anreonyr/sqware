@@ -1,5 +1,7 @@
 //! 一份由装配者接入的 Resolve / Matches / Same 查询束；不按 mark 猜权威。
 
+use runtime::schedule::{Progress, Res, ResMut};
+
 use env::{TaskId, Wait};
 use protocol::system::identity::{TaskQuery, Match, Selector};
 use protocol::system::operator::{EntryId, Permit};
@@ -53,10 +55,10 @@ impl Facts for Court<'_> {
 }
 
 pub(super) fn authorize(
-    tree: protocol::common::schedule::Res<Operator>,
-    query: protocol::common::schedule::Res<Option<TaskQuery>>,
-    mut judgment: protocol::common::schedule::ResMut<Judgment>,
-) -> Result<protocol::common::schedule::Progress, super::Fail> {
+    tree: runtime::schedule::Res<Operator>,
+    query: runtime::schedule::Res<Option<TaskQuery>>,
+    mut judgment: runtime::schedule::ResMut<Judgment>,
+) -> Result<runtime::schedule::Progress, super::Fail> {
     if let Some((who, permit, ruling)) = judgment.0 {
         if ruling.passed() {
             judgment.0 = Some((
@@ -73,14 +75,13 @@ pub(super) fn authorize(
             ));
         }
     }
-    Ok(protocol::common::schedule::Progress::Done)
+    Ok(runtime::schedule::Progress::Done)
 }
 
 use super::{answer::Output, session::Request};
 use crate::system::life::Status;
 use alloc::sync::Arc;
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     system::operator as ocall,
 };
 pub(super) struct Judgment(pub Option<(TaskId, Permit, Code)>);

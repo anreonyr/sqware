@@ -5,5 +5,6 @@
 extern crate alloc;
 
 pub mod core;
+pub mod schedule;
 
 pub const PAGE_SIZE: usize = 4096;

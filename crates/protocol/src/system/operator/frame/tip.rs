@@ -9,7 +9,7 @@ use crate::common::path::{Path, PathBuf};
 use env::wire::Span as _;
 
 /// Bootstrap acknowledgements are separate from ordinary Operator sessions.
-pub const TIP_BACK: env::Mark = env::Mark::of("operator-tip-back");
+pub use crate::system::operator::marks::TIP_BACK;
 
 /// 提示之路上的两个 `kind`（首格；表外 ⇒ 这一帧读不懂）
 const TIP_PLATE: u8 = 1;

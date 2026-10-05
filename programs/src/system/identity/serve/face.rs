@@ -1,10 +1,10 @@
+use runtime::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use super::{Fail, answer::Request as IdentityRequest};
 use crate::system::{common::face::mount, life::Status};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::{HoleDir, PieToken, Wait};
 use env::pie;
 use protocol::{
-    common::schedule::{Dispatch, Invocation, Progress, Res, ResMut},
     communication::hand::Sender,
     system::identity::{self as api, Grant, Reply, Wire},
 };
@@ -22,8 +22,18 @@ pub(super) struct Incoming {
     pub request: IdentityRequest,
     pub back: PieToken,
 }
-pub(super) struct Current(pub Option<Incoming>);
-pub(super) struct Response(pub Option<Reply>);
+pub(super) enum Current {
+    Empty,
+    Received(Incoming),
+    Answered { incoming: Incoming, reply: Reply },
+}
+impl Current {
+    pub(super) fn mutated(&self) -> bool {
+        matches!(self, Self::Answered { incoming, reply }
+            if incoming.request.grant.mount() != api::Mount::Public
+                && !matches!(reply, Reply::Fail(_)))
+    }
+}
 pub(super) struct Ready(pub Option<(PieToken, Grant)>);
 pub(super) fn faces(
     status: Res<Arc<Status>>,
@@ -91,7 +101,7 @@ pub(super) fn budget(
     inbox: Res<Inbox>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    dispatch.budget = inbox.0.len();
+    dispatch.begin(inbox.0.len()).map_err(|_| Fail::Room)?;
     Ok(Progress::Done)
 }
 pub(super) fn select(
@@ -99,31 +109,29 @@ pub(super) fn select(
     mut current: ResMut<Current>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    current.0 = inbox.0.pop_front();
-    if current.0.is_some() {
-        dispatch.current = Some(Invocation {
+    *current = inbox.0.pop_front().map(Current::Received).unwrap_or(Current::Empty);
+    if matches!(*current, Current::Received(_)) {
+        dispatch.select(Invocation {
             key: (),
             cursor: Default::default(),
-        });
+        }).map_err(|_| Fail::Room)?;
     }
     Ok(Progress::Done)
 }
 pub(super) fn reply(
     mut current: ResMut<Current>,
-    mut response: ResMut<Response>,
 ) -> Result<Progress, Fail> {
-    let incoming = current.0.take().ok_or(Fail::Book)?;
-    if let Some(response) = response.0.take() {
-        let _ = Sender::<Reply>::from_token(incoming.back).send(response);
-    }
+    if !matches!(*current, Current::Answered { .. }) { return Err(Fail::Book); }
+    let Current::Answered { incoming, reply } = core::mem::replace(&mut *current, Current::Empty)
+        else { unreachable!() };
+    let _ = Sender::<Reply>::from_token(incoming.back).send(reply);
     let _ = pie::release(incoming.back);
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
-    if dispatch.result.take().is_some_and(|result| result.is_err()) {
+    if dispatch.take_result().map_err(|_| Fail::Room)?.result.is_err() {
         return Err(Fail::Book);
     }
-    dispatch.current = None;
     Ok(Progress::Done)
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {

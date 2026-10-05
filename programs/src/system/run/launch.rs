@@ -1,3 +1,4 @@
+use runtime::schedule::{Progress, ResMut};
 use crate::system::{
     control::serve::unit::Control,
     loader::{Image, serve::build::Spawn},
@@ -6,7 +7,6 @@ use alloc::vec::Vec;
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait, pie};
 use protocol::{
-    common::schedule::{Progress, ResMut},
     system::{
         control::Fail,
         identity::Install,

@@ -14,6 +14,7 @@
 //! 也就是同一枚线程。
 
 pub mod frame;
+pub mod marks;
 
 pub use frame::{EntryId, Fail, Where};
 

@@ -5,11 +5,7 @@ use protocol::system::operator::{EntryId, Fail, Where};
 use env::pie;
 use runtime::core::res::pie::{alive};
 
-pub struct Placement {
-    pub road: protocol::common::path::PathBuf,
-    pub tile: Tile,
-    pub replace: bool,
-}
+use crate::system::operator::Placement;
 
 pub(super) fn plate(
     tree: &mut Operator,

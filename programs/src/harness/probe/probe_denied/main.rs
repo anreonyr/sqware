@@ -35,7 +35,7 @@ fn main() -> Report<'static> {
             .expect("probe-denied: transient wait");
         drop(request);
     }
-    let authority = programs::system::identity::serve::source::authority()
+    let authority = programs::system::identity::client::source::authority()
         .expect("probe-denied: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()

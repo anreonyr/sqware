@@ -2,7 +2,7 @@
 //! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
 //! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
-use env::{Wait, HoleDir, Mark, PieToken};
+use env::{Wait, HoleDir, PieToken};
 use runtime::core::res::port::{self, Access, Policy};
 
 use super::frame;
@@ -40,7 +40,7 @@ impl Line {
         // **有主地建**：那一格"有主"由类型说出来——`Held(endpoint(..)?)`（没有 `hold` 那一手：
         // 它只是这一个字面量）。这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
         // 也由它的 `Drop` 代劳（下面三处 `return` 一个字都不用写）。
-        let mut pair = match establish::endpoint(host, Mark::of(frame::LANE), Wait::POLL) {
+        let mut pair = match establish::endpoint(host, crate::driver::marks::LINE_MARK, Wait::POLL) {
             Ok(ep) => Held(ep),
             Err(_) => return Err(deny(2, 0)),
         };
@@ -104,7 +104,7 @@ impl Line {
             });
         }
         // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        if !pair.claim(host, Mark::of(frame::LANE), millis) {
+        if !pair.claim(host, crate::driver::marks::LINE_MARK, millis) {
             return Err(deny(7, 0));
         }
         Ok(Line { pair })

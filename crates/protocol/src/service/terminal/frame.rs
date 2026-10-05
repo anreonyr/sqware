@@ -1,13 +1,13 @@
 use crate::wire::message::Message;
 use env::wire::Span as _;
-use env::{Mark, PieToken, TaskId};
+use env::{PieToken, TaskId};
 
-pub const ENTRY: Mark = Mark::of("terminal-attach");
-pub const AUTHORITY: Mark = Mark::of("terminal-authority");
-pub const BACK: Mark = Mark::of("terminal-back");
-pub const INPUT: Mark = Mark::of("terminal-input");
-pub const OUTPUT: Mark = Mark::of("terminal-output");
-pub const CONTROL: Mark = Mark::of("terminal-control");
+pub use super::marks::ENTRY;
+pub use super::marks::AUTHORITY;
+pub use super::marks::BACK;
+pub use super::marks::INPUT;
+pub use super::marks::OUTPUT;
+pub use super::marks::CONTROL;
 pub const ATTACH: u8 = 1;
 pub const FOREGROUND: u8 = 2;
 pub const DETACH: u8 = 3;

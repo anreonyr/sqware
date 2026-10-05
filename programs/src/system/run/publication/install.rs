@@ -1,8 +1,8 @@
-use crate::system::identity::serve::names::Names;
-use crate::system::operator::serve::install::Tree;
+use crate::system::run::names::Names;
+use crate::system::operator::client::Tree;
 use crate::system::run::publication::book::{Address, Installation, Publications, Record, Source};
 use crate::system::run::resource::Resources;
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Object, Reply, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{EntryId, Fail, Permit};
@@ -202,7 +202,7 @@ pub fn alias(
                 if names
                     .register(
                         &mut tree,
-                        crate::system::identity::serve::names::Registration {
+                        crate::system::run::names::Registration {
                             name: group.clone(),
                             object: Object::Coalition(c),
                             lifetime: Some(approved.publisher),

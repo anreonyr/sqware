@@ -3,7 +3,7 @@ use super::{E_TERMINAL, server::Server};
 use crate::core::mode::{ECHO_MAX, Input, Mode};
 use env::Wait;
 use programs::driver::uart::{client::Console, core::frame::{Bytes, MAX}};
-use protocol::common::schedule::{Progress, ResMut};
+use runtime::schedule::{Progress, ResMut};
 use protocol::service::terminal::frame as stream;
 use runtime::core::res::pie::HolePie;
 

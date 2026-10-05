@@ -1,9 +1,9 @@
+use runtime::schedule::{Cursor, Progress, Schedule};
 use super::fixture::Fixture;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
 use protocol::{
-    common::schedule::{Cursor, Progress, Schedule},
     communication::session::establish,
     system::{control, loader as call, operator::client::Face as Operator},
 };
@@ -72,7 +72,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();
@@ -96,7 +96,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         )
         .unwrap();
     schedule
-        .add_system("reap", 3, crate::system::control::serve::instance::reap)
+        .add_system("reap", 3, crate::system::run::instances::reap)
         .unwrap();
     schedule
         .add_plan(

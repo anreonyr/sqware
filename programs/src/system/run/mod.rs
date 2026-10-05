@@ -1,6 +1,10 @@
 pub mod account;
+pub mod connections;
 pub mod bootstrap;
 pub mod execute;
+pub mod frame;
+pub mod instances;
+pub mod watch;
 pub mod hooks;
 pub mod install;
 pub mod launch;
@@ -9,4 +13,5 @@ pub mod publication;
 pub mod resource;
 pub mod scene;
 pub mod schedule;
-pub mod source;
+pub mod names;
+pub mod living;

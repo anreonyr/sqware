@@ -3,16 +3,16 @@ use crate::system::control::core::{
     unit::{Slot, State, Table},
     verdict::Reaped,
 };
-use crate::system::identity::serve::install::Roster;
+use crate::system::identity::client::install::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
 use protocol::debug;
 use env::unit;
 pub(crate) fn sweep(
-    mut control: protocol::common::schedule::ResMut<Control>,
-    roster: protocol::common::schedule::Res<Roster>,
-    operations: protocol::common::schedule::Res<super::lifecycle::Operations>,
-) -> Result<protocol::common::schedule::Progress, super::Fail> {
+    mut control: runtime::schedule::ResMut<Control>,
+    roster: runtime::schedule::Res<Roster>,
+    operations: runtime::schedule::Res<super::lifecycle::Operations>,
+) -> Result<runtime::schedule::Progress, super::Fail> {
     let gone: Vec<String> = control
         .table
         .living()
@@ -37,7 +37,7 @@ pub(crate) fn sweep(
         }
         mark_dead(&mut control.table, name.as_str(), Reaped::Now);
     }
-    Ok(protocol::common::schedule::Progress::Done)
+    Ok(runtime::schedule::Progress::Done)
 }
 fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
     let Some(row) = table.find(name) else {

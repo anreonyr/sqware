@@ -2,7 +2,7 @@
 use super::{Fail, unit::Control};
 use crate::system::control::core::unit::State;
 use env::{TaskId, Wait, unit};
-use protocol::common::schedule::{
+use runtime::schedule::{
     BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule,
 };
 #[derive(Clone, Copy, PartialEq)]
@@ -18,9 +18,9 @@ pub struct Active {
 pub fn plan(
     children: alloc::vec::Vec<(Key, Plan<&'static str>)>,
 ) -> Result<Plan<Fail>, BuildError> {
-    let mut plan = Schedule::new();
-    plan.add_system("budget", 0u8, budget)?;
-    plan.add_subplans("hooks", 1, select, children, finish)?;
+    let mut plan = Schedule::sequence();
+    plan.system("budget", budget)?;
+    plan.subplans("hooks", select, children, finish)?;
     plan.build()
 }
 pub fn budget(
@@ -29,7 +29,7 @@ pub fn budget(
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
     active.next = 0;
-    dispatch.budget = control.instances.len();
+    dispatch.begin(control.instances.len()).map_err(|_| Fail::Room)?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -45,13 +45,13 @@ pub fn select(
             _ => continue,
         };
         active.task = Some(item.task);
-        dispatch.current = Some(Invocation {
+        dispatch.select(Invocation {
             key,
             cursor: core::mem::take(&mut item.hook),
-        });
+        }).map_err(|_| Fail::Room)?;
         return Ok(Progress::Done);
     }
-    dispatch.budget = 0;
+    dispatch.stop().map_err(|_| Fail::Room)?;
     Ok(Progress::Done)
 }
 pub fn finish(
@@ -59,13 +59,14 @@ pub fn finish(
     active: Res<Active>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    let invocation = dispatch.current.take().ok_or(Fail::Room)?;
+    let completion = dispatch.take_result().map_err(|_| Fail::Room)?;
+    let invocation = completion.invocation;
     let item = control
         .instances
         .iter_mut()
         .find(|item| Some(item.task) == active.task)
         .ok_or(Fail::Room)?;
-    match dispatch.result.take().ok_or(Fail::Room)? {
+    match completion.result {
         Ok(Progress::Pending) => item.hook = invocation.cursor,
         Ok(Progress::Done) => {
             item.hook.reset();

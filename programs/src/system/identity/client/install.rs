@@ -10,7 +10,7 @@ use protocol::system::identity::{Grant, Install, Installer, PrincipalId, Subject
 use runtime::core::res::port;
 
 use super::source::face_of;
-use crate::system::control::serve::start::BOOT_MS;
+use crate::system::common::timing::BOOT_MS;
 
 const _: () = assert!(Grant::ALL.len() <= protocol::system::operator::frame::PANE_CAP);
 

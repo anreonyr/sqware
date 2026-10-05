@@ -7,7 +7,7 @@ use crate::system::control::{
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Permission, TaskId, Wait, unit};
-use protocol::common::schedule::{Cursor, Progress, Schedule};
+use runtime::schedule::{Cursor, Progress, Schedule};
 use protocol::system::control::{self, Face, State, account::Client};
 
 const WAIT: Wait = Wait::AtMost(2000);
@@ -21,9 +21,9 @@ struct HookFault {
     signals: Option<Arc<Signals>>,
 }
 fn fail_prepare(
-    mut fault: protocol::common::schedule::ResMut<HookFault>,
-    active: protocol::common::schedule::Res<serve::hook::Active>,
-    resources: protocol::common::schedule::Res<crate::system::run::resource::Resources>,
+    mut fault: runtime::schedule::ResMut<HookFault>,
+    active: runtime::schedule::Res<serve::hook::Active>,
+    resources: runtime::schedule::Res<crate::system::run::resource::Resources>,
 ) -> Result<Progress, &'static str> {
     if fault.prepare {
         let task = active.task.ok_or("probe hook target")?;
@@ -38,9 +38,9 @@ fn fail_prepare(
     Ok(Progress::Done)
 }
 fn delay_retire(
-    mut fault: protocol::common::schedule::ResMut<HookFault>,
-    active: protocol::common::schedule::Res<serve::hook::Active>,
-    control: protocol::common::schedule::Res<serve::unit::Control>,
+    mut fault: runtime::schedule::ResMut<HookFault>,
+    active: runtime::schedule::Res<serve::hook::Active>,
+    control: runtime::schedule::Res<serve::unit::Control>,
 ) -> Result<Progress, &'static str> {
     let item = control
         .instances
@@ -83,7 +83,7 @@ fn delay_retire(
     }
     Ok(Progress::Done)
 }
-fn hooks() -> protocol::common::schedule::Plan<serve::Fail> {
+fn hooks() -> runtime::schedule::Plan<serve::Fail> {
     let children = crate::system::run::hooks::children().unwrap();
     let mut wrapped = alloc::vec::Vec::new();
     for (key, child) in children {
@@ -335,11 +335,11 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     let login_subject = {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();
-        crate::system::identity::serve::query::binding(&roster, worker.id())
+        crate::system::identity::client::query::binding(&roster, worker.id())
             .unwrap()
             .unwrap()
             .current
@@ -362,7 +362,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
         .add_system("instances.answer", 2, serve::instance::answer)
         .unwrap();
     schedule
-        .add_system("instances.reap", 3, serve::instance::reap)
+        .add_system("instances.reap", 3, crate::system::run::instances::reap)
         .unwrap();
     schedule.add_plan("instance.hooks", 4, hooks()).unwrap();
     schedule
@@ -407,9 +407,9 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
         if stage != 0 && stage != observed {
             let roster = assembly
                 .resources
-                .read::<crate::system::identity::serve::install::Roster>()
+                .read::<crate::system::identity::client::install::Roster>()
                 .unwrap();
-            let binding = crate::system::identity::serve::query::binding(&roster, target).unwrap();
+            let binding = crate::system::identity::client::query::binding(&roster, target).unwrap();
             let runtime = assembly
                 .resources
                 .read::<crate::system::run::resource::Resources>()
@@ -474,13 +474,13 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap();
         roster.unbind(worker_id).unwrap();
         roster.unbind(peer_id).unwrap();
         let target = TaskId::new(signals.target.load(Ordering::Acquire));
         assert!(
-            crate::system::identity::serve::query::binding(&roster, target)
+            crate::system::identity::client::query::binding(&roster, target)
                 .unwrap()
                 .is_none()
         );

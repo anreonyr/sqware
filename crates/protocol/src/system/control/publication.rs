@@ -7,13 +7,13 @@ use crate::system::operator::{EntryId, Fail, Permit};
 use crate::wire::message::Message;
 use alloc::string::String;
 use env::wire::Span as _;
-use env::{Mark, PieToken, TaskId, Wait};
+use env::{PieToken, TaskId, Wait};
 use env::pie;
 use runtime::core::res::pie::{HolePie, inspect, reserve};
 
-pub const ENTRY: Mark = Mark::of("control-publication");
-pub const BACK: Mark = Mark::of("control-publication-back");
-pub const REF: Mark = Mark::of("control-identity-ref");
+pub use super::marks::PUBLICATION_ENTRY as ENTRY;
+pub use super::marks::PUBLICATION_BACK as BACK;
+pub use super::marks::IDENTITY_REF as REF;
 pub const PUBLISH: u8 = 1;
 pub const UNPUBLISH: u8 = 2;
 pub const RESOLVE: u8 = 3;

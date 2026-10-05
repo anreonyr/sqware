@@ -1,10 +1,14 @@
+#![allow(dead_code, unused_imports)]
 extern crate alloc;
 #[path = "../mod.rs"]
 mod schedule;
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Phase { PreMint, Mint, PostMint }
+
 #[cfg(test)]
 mod tests {
-    use super::schedule::{*, resource::AccessError};
+    use super::{Phase, schedule::{*, resource::AccessError}};
     #[derive(Default)] struct Trace(Vec<&'static str>);
     #[derive(Default)] struct Gate(bool);
     fn pre(mut trace: ResMut<Trace>) -> Result<Progress, &'static str> { trace.0.push("pre"); Ok(Progress::Done) }
@@ -82,17 +86,62 @@ mod tests {
         assert!(resources.read::<Gate>().unwrap().0); assert!(resources.write::<Gate>().is_err());
     }
 
+    #[test] fn sequence_uses_declaration_order_and_preserves_pending_position() {
+        let mut sequence = Schedule::sequence();
+        sequence.system("z.prepare", pre).unwrap();
+        sequence.system("a.wait", wait).unwrap();
+        sequence.system("m.finish", post).unwrap();
+        let resources = resource_set(); let mut cursor = Cursor::default();
+        let mut plan = sequence.build().unwrap();
+        assert_eq!(plan.advance(&mut cursor, &resources), Ok(Progress::Pending));
+        resources.write::<Gate>().unwrap().0 = true;
+        assert_eq!(plan.advance(&mut cursor, &resources), Ok(Progress::Done));
+        assert_eq!(resources.read::<Trace>().unwrap().0, ["pre", "wait", "wait", "post"]);
+    }
+    #[test] fn unconstrained_graph_ties_follow_registration_order() {
+        let mut graph = Schedule::new();
+        graph.add_system("z", (), pre).unwrap();
+        graph.add_system("a", (), post).unwrap();
+        let resources = resource_set();
+        graph.build().unwrap().advance(&mut Cursor::default(), &resources).unwrap();
+        assert_eq!(resources.read::<Trace>().unwrap().0, ["pre", "post"]);
+    }
+    #[test] fn dispatch_rejects_overlap_and_consumes_completion_atomically() {
+        let mut dispatch = Dispatch::<u8, &'static str>::new();
+        assert_eq!(dispatch.skip(), Err(DispatchError::Exhausted));
+        dispatch.begin(2).unwrap();
+        dispatch.select(Invocation { key: 3, cursor: Cursor::default() }).unwrap();
+        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
+        assert_eq!(dispatch.skip(), Err(DispatchError::Busy));
+        assert_eq!(dispatch.stop(), Err(DispatchError::Busy));
+        assert!(matches!(dispatch.take_result(), Err(DispatchError::NoResult)));
+        let invocation = dispatch.take_selected().unwrap();
+        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
+        assert_eq!(dispatch.skip(), Err(DispatchError::Busy));
+        dispatch.complete(Completion { invocation, result: Err(RunError::Step("failed")) }).unwrap();
+        assert_eq!(dispatch.remaining(), 1);
+        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
+        let completion = dispatch.take_result().unwrap();
+        assert_eq!(completion.invocation.key, 3);
+        assert_eq!(completion.result, Err(RunError::Step("failed")));
+        assert!(matches!(dispatch.take_result(), Err(DispatchError::NoResult)));
+        dispatch.skip().unwrap();
+        assert_eq!(dispatch.remaining(), 0);
+        assert_eq!(dispatch.select(Invocation { key: 0, cursor: Cursor::default() }), Err(DispatchError::Exhausted));
+    }
+
     #[derive(Default)] struct Queue(alloc::collections::VecDeque<(u8, Cursor)>);
     #[derive(Default)] struct Calls { picks: usize, finishes: usize, fail_once: bool }
-    fn round(queue: Res<Queue>, mut dispatch: ResMut<Dispatch<u8, &'static str>>) -> Result<Progress, &'static str> { dispatch.budget = queue.0.len(); Ok(Progress::Done) }
+    fn round(queue: Res<Queue>, mut dispatch: ResMut<Dispatch<u8, &'static str>>) -> Result<Progress, &'static str> { dispatch.begin(queue.0.len()).unwrap(); Ok(Progress::Done) }
     fn choose(mut queue: ResMut<Queue>, mut dispatch: ResMut<Dispatch<u8, &'static str>>, mut calls: ResMut<Calls>) -> Result<Progress, &'static str> {
         calls.picks += 1;
-        dispatch.current = queue.0.pop_front().map(|(key, cursor)| Invocation { key, cursor }); Ok(Progress::Done)
+        if let Some((key, cursor)) = queue.0.pop_front() { dispatch.select(Invocation { key, cursor }).unwrap(); } Ok(Progress::Done)
     }
     fn finish(mut queue: ResMut<Queue>, mut dispatch: ResMut<Dispatch<u8, &'static str>>, mut calls: ResMut<Calls>) -> Result<Progress, &'static str> {
         calls.finishes += 1;
-        let mut invocation = dispatch.current.take().unwrap();
-        match dispatch.result.take().unwrap() {
+        let completion = dispatch.take_result().unwrap();
+        let mut invocation = completion.invocation;
+        match completion.result {
             Ok(Progress::Done) => {},
             Ok(Progress::Pending) => queue.0.push_back((invocation.key, invocation.cursor)),
             Err(RunError::Step("failed")) => { invocation.cursor.reset(); queue.0.push_back((1, invocation.cursor)); },
@@ -149,10 +198,28 @@ mod tests {
         assert_eq!(plan.advance(&mut Cursor::default(), &resources), Err(RunError::UnknownPlan));
         assert_eq!(resources.read::<Calls>().unwrap().finishes, 0);
     }
+    #[test] fn unknown_subplan_retains_invocation_without_reselecting() {
+        let resources = queued(&[3]); let mut plan = dispatcher(alloc::vec![(0, waiting())]);
+        let mut cursor = Cursor::default();
+        for _ in 0..2 {
+            assert_eq!(plan.advance(&mut cursor, &resources), Err(RunError::UnknownPlan));
+        }
+        assert_eq!(resources.read::<Calls>().unwrap().picks, 1);
+        assert_eq!(resources.read::<Dispatch<u8, &'static str>>().unwrap().remaining(), 1);
+    }
+    #[test] fn finisher_must_consume_completion_even_when_budget_is_exhausted() {
+        fn forget() -> Result<Progress, &'static str> { Ok(Progress::Done) }
+        let resources = queued(&[0]); let mut parent = Schedule::sequence();
+        parent.system("round", round).unwrap();
+        let empty: Plan<&'static str> = Schedule::sequence().build().unwrap();
+        parent.subplans("children", choose, alloc::vec![(0u8, empty)], forget).unwrap();
+        assert_eq!(parent.build().unwrap().advance(&mut Cursor::default(), &resources), Err(RunError::Dispatch(DispatchError::Busy)));
+        assert_eq!(resources.write::<Dispatch<u8, &'static str>>().unwrap().take_result().unwrap().result, Ok(Progress::Done));
+    }
     fn pause_finish(mut calls: ResMut<Calls>, mut dispatch: ResMut<Dispatch<u8, &'static str>>) -> Result<Progress, &'static str> {
         calls.finishes += 1;
         if calls.finishes == 1 { return Ok(Progress::Pending); }
-        assert_eq!(dispatch.result.take(), Some(Ok(Progress::Done))); dispatch.current = None; Ok(Progress::Done)
+        assert_eq!(dispatch.take_result().unwrap().result, Ok(Progress::Done)); Ok(Progress::Done)
     }
     #[test] fn pending_finisher_resumes_without_selecting_or_advancing_child_again() {
         let resources = queued(&[0]); let mut child = Schedule::new(); child.add_system("post", 0u8, post).unwrap();
@@ -177,7 +244,7 @@ mod tests {
     }
     #[test] fn child_resource_errors_are_delivered_without_erasing_their_kind() {
         fn resource_error(mut dispatch: ResMut<Dispatch<u8, &'static str>>) -> Result<Progress, &'static str> {
-            assert_eq!(dispatch.result.take(), Some(Err(RunError::Resource(AccessError::Missing)))); dispatch.current = None; Ok(Progress::Done)
+            assert_eq!(dispatch.take_result().unwrap().result, Err(RunError::Resource(AccessError::Missing))); Ok(Progress::Done)
         }
         let resources = queued(&[0]);
         fn missing(_: Res<u64>) -> Result<Progress, &'static str> { Ok(Progress::Done) }
@@ -317,17 +384,16 @@ mod regression {
         fn choose(
             mut dispatch: ResMut<Dispatch<u8, &'static str>>,
         ) -> Result<Progress, &'static str> {
-            dispatch.current = Some(Invocation {
+            dispatch.select(Invocation {
                 key: 0,
                 cursor: Cursor::default(),
-            });
+            }).unwrap();
             Ok(Progress::Done)
         }
         fn finish(
             mut dispatch: ResMut<Dispatch<u8, &'static str>>,
         ) -> Result<Progress, &'static str> {
-            assert_eq!(dispatch.result.take(), Some(Ok(Progress::Done)));
-            dispatch.current = None;
+            assert_eq!(dispatch.take_result().unwrap().result, Ok(Progress::Done));
             Ok(Progress::Done)
         }
         fn done() -> Result<Progress, &'static str> {
@@ -352,7 +418,7 @@ mod regression {
             .unwrap();
         let mut resources = Resources::new();
         let mut dispatch = Dispatch::<u8, &'static str>::new();
-        dispatch.budget = 1;
+        dispatch.begin(1).unwrap();
         resources.insert(dispatch).unwrap();
         let mut plan = parent.build().unwrap();
         plan.prepare(&resources);

@@ -166,7 +166,7 @@ pub fn acceptance() {
     }
     let old_authority = assembly
         .resources
-        .read::<crate::system::identity::serve::install::Roster>()
+        .read::<crate::system::identity::client::install::Roster>()
         .unwrap()
         .authority()
         .unwrap();
@@ -174,7 +174,7 @@ pub fn acceptance() {
     let me = env::unit::self_id();
     let host = assembly
         .resources
-        .read::<crate::system::operator::serve::install::Tree>()
+        .read::<crate::system::operator::client::Tree>()
         .unwrap()
         .host()
         .unwrap();
@@ -252,7 +252,7 @@ pub fn acceptance() {
     assert!(
         assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap()
             .activate(old_dependent, coalition)
             .is_err(),
@@ -363,7 +363,7 @@ pub fn acceptance() {
     protocol::debug::put("system: identity, device and publication acceptance passed");
     assembly
         .resources
-        .write::<crate::system::control::serve::frame::Flow>()
+        .write::<crate::system::run::frame::Flow>()
         .unwrap()
         .settling = true;
     assert!(
@@ -373,10 +373,7 @@ pub fn acceptance() {
 }
 
 fn revision(assembly: &mut Fixture) {
-    use crate::system::identity::serve::{
-        install::Roster,
-        revision::{Changed, Epoch},
-    };
+    use crate::system::identity::{client::install::Roster, revision::{Changed, Epoch}};
     use core::sync::atomic::Ordering;
     use protocol::system::identity::{
         PrincipalId, Reply, Wire,
@@ -459,7 +456,7 @@ fn revision(assembly: &mut Fixture) {
     assert_eq!(
         assembly
             .resources
-            .read::<crate::system::identity::serve::names::Registrations>()
+            .read::<crate::system::run::names::Registrations>()
             .unwrap()
             .seen,
         before + 1

@@ -139,8 +139,8 @@ pub fn unit() {
             } else {
                 crate::system::identity::serve::run::serve(
                     state.clone(),
-                    crate::system::identity::serve::revision::Epoch::new(),
-                    crate::system::identity::serve::revision::Changed(Bell::unseal().unwrap()),
+                    crate::system::identity::revision::Epoch::new(),
+                    crate::system::identity::revision::Changed(Bell::unseal().unwrap()),
                 )
                 .is_ok()
             };

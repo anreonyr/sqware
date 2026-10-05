@@ -1,12 +1,12 @@
 //! Private Hub → Control device-identity installation, never an Operator tile.
-use env::{Mark, PieToken, TaskId};
+use env::{PieToken, TaskId};
 
 use crate::system::identity::{CoalitionId, PageId};
 use crate::wire::message::Message;
 use env::wire::Span as _;
 
-pub const ENTRY: Mark = Mark::of("hub-activate");
-pub const BACK: Mark = Mark::of("hub-activate-back");
+pub use super::marks::ACTIVATE_ENTRY as ENTRY;
+pub use super::marks::ACTIVATE_BACK as BACK;
 
 /// 一趟最多几枚盟：**与入册那一段同一格**（一张装配单上"类"的条数上界）
 pub const ACTIVATE_MAX: usize = super::frame::ENROLL_MAX;

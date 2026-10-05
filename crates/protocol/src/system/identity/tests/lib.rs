@@ -9,8 +9,13 @@ mod limits;
 pub mod message;
 #[path = "../../../common/table.rs"]
 pub mod table;
+#[path = "../../../common/marks.rs"]
+pub mod mark_definitions;
+#[path = "../marks.rs"]
+pub mod marks;
 mod common {
     pub use crate::table;
+    pub use crate::mark_definitions as marks;
 }
 mod wire {
     pub const OK: u8 = 0;

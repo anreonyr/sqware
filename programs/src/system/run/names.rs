@@ -1,13 +1,14 @@
-use crate::system::control::serve::{living::Living, unit::Control};
-use crate::system::identity::serve::install::Roster;
-use crate::system::identity::serve::query::{current_authority, validate};
+use super::living::Living;
+use crate::system::control::serve::unit::Control;
+use crate::system::identity::client::install::Roster;
+use crate::system::identity::client::query::{current_authority, validate};
 use crate::system::operator::core::Tile;
-use crate::system::operator::serve::install::Tree;
-use crate::system::operator::serve::plate::Placement;
+use crate::system::operator::client::Tree;
+use crate::system::operator::Placement;
 use alloc::{string::String, vec::Vec};
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use env::pie;
@@ -148,8 +149,8 @@ pub struct Registrations {
     pub dirty: bool,
 }
 pub(crate) fn changes(
-    epoch: Res<super::revision::Epoch>,
-    changed: Res<super::revision::Changed>,
+    epoch: Res<crate::system::identity::revision::Epoch>,
+    changed: Res<crate::system::identity::revision::Changed>,
     mut pending: ResMut<Registrations>,
 ) -> Result<Progress, &'static str> {
     // Clear before observing the epoch so a later mutation leaves the bell armed.
@@ -223,7 +224,8 @@ pub(crate) fn prepare(
             continue;
         }
         if let Some(binding) =
-            super::query::binding(&roster, task).map_err(|_| "alias identity query")?
+            crate::system::identity::client::query::binding(&roster, task)
+                .map_err(|_| "alias identity query")?
         {
             pending
                 .requests

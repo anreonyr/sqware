@@ -9,7 +9,7 @@
 use alloc::string::String;
 
 use crate::wire::message::Message;
-use env::{Mark, Wait, PieToken, TaskId};
+use env::{Wait, PieToken, TaskId};
 use runtime::core::res::port::{self, Access, Policy};
 
 use crate::common::path::Path;
@@ -31,7 +31,7 @@ pub use self::watch::Watch;
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）
 /// 开会话那一手（Session::open）要它；本层只把这两格交出去，不替调用方开会话
 pub const BERTH: Berth = Berth {
-    link: Mark::of(crate::system::operator::LINK),
+    link: super::marks::LINK_MARK,
     ask: crate::system::operator::ASK_MARK,
 };
 
@@ -39,7 +39,7 @@ pub const BERTH: Berth = Berth {
 /// 故"客人开哪一面"就是"它手里那一枚问话孔刻的是哪一位"——**请求里没有可填的格**
 pub const fn granted_berth(grant: Grant) -> Berth {
     Berth {
-        link: Mark::of(crate::system::operator::LINK),
+        link: super::marks::LINK_MARK,
         ask: grant.mark(),
     }
 }

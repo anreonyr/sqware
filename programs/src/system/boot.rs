@@ -1,20 +1,18 @@
+use runtime::schedule::{Progress, Res, ResMut};
 use crate::system::{
     control::serve::start::BOOT_MS,
     identity,
-    identity::serve::{
-        install::Roster,
-        names::{Names, Registration},
-    },
+    identity::client::install::Roster,
+    run::names::{Names, Registration},
     life::{Phase, Status},
     operator,
-    operator::serve::install::{Tree, Wiring},
+    operator::client::{Tree, Wiring},
     run::publication::{Internal, book::Publications},
 };
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     debug,
     system::identity as id,
 };
@@ -31,8 +29,8 @@ pub fn status() -> Arc<Status> {
 }
 pub fn spawn(
     status: Res<Arc<Status>>,
-    epoch: Res<identity::serve::revision::Epoch>,
-    changed: Res<identity::serve::revision::Changed>,
+    epoch: Res<identity::revision::Epoch>,
+    changed: Res<identity::revision::Changed>,
 ) -> Result<Progress, &'static str> {
     let signal = Arc::new(AtomicUsize::new(0));
     // Publish both task identities before either task is released.
@@ -47,7 +45,7 @@ pub fn spawn(
                 identity::serve::run::serve(
                     state.clone(),
                     version,
-                    identity::serve::revision::Changed(Bell::new(
+                    identity::revision::Changed(Bell::new(
                         PieToken::from_bytes(&(bell.load(Ordering::Acquire) as u64).to_le_bytes())
                             .unwrap(),
                     )),
@@ -114,7 +112,7 @@ pub fn identity(
     mut roster: ResMut<Roster>,
     mut faces: ResMut<Faces>,
 ) -> Result<Progress, &'static str> {
-    faces.0 = identity::serve::install::install(
+    faces.0 = identity::client::install::install(
         &mut roster,
         TaskId::new(status.operator.load(Ordering::Acquire)),
         TaskId::new(status.identity.load(Ordering::Acquire)),
@@ -128,7 +126,7 @@ pub fn wire(
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
     tree.wire(Wiring {
-        authority: identity::serve::query::current_authority(&roster)
+        authority: identity::client::query::current_authority(&roster)
             .ok_or("identity authority")?,
         faces: [
             faces.0[id::Grant::Resolve.index()],
@@ -147,7 +145,7 @@ pub fn name(
     let object = protocol::system::control::publication::Object::Principal(
         roster.control().ok_or("Control identity missing")?,
     );
-    identity::serve::query::validate(&roster, object).map_err(|_| "Control identity source")?;
+    identity::client::query::validate(&roster, object).map_err(|_| "Control identity source")?;
     names.register(
         &mut tree,
         Registration {

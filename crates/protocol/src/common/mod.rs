@@ -5,6 +5,5 @@ pub mod path;
 pub mod svc;
 pub mod table;
 
-pub mod schedule;
 
 pub mod name;

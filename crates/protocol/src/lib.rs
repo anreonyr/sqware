@@ -7,6 +7,7 @@
 extern crate alloc;
 
 pub mod common;
+mod marks;
 /// `#[derive(crate::WireCodes)]`（驱动那一侧 `#[derive(protocol::WireCodes)]`）
 pub use env::WireCodes;
 

@@ -8,17 +8,18 @@ use crate::system::{
     control::{
         core::verdict,
         serve::{
-            answer, frame, lifecycle, living::Living, material::Supplies, start::Images,
+            answer, lifecycle, material::Supplies, start::Images,
             unit::Control, watch,
         },
     },
-    identity::serve::{install::Roster, names},
+    identity::client::install::Roster,
+    run::{frame, names, living::Living},
     life,
-    operator::serve::install::Tree,
+    operator::client::Tree,
 };
 use alloc::{collections::VecDeque, vec::Vec};
 use env::pie;
-use protocol::common::schedule::{Dispatch, Resources as Registry};
+use runtime::schedule::{Dispatch, Resources as Registry};
 use runtime::core::res::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();
@@ -32,8 +33,8 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
                 .map_err(|_| "system resource capacity")?
         };
     }
-    put!(crate::system::identity::serve::revision::Epoch::new());
-    put!(crate::system::identity::serve::revision::Changed(
+    put!(crate::system::identity::revision::Epoch::new());
+    put!(crate::system::identity::revision::Changed(
         Bell::unseal().map_err(|_| "identity change bell")?
     ));
     put!(Control::new(status.clone()));
@@ -56,7 +57,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(Supplies::new(boot.machine, boot.accounts));
     put!(Roster::default());
     put!(Tree::default());
-    put!(crate::system::operator::serve::install::Connections(
+    put!(crate::system::run::connections::Connections(
         Vec::new()
     ));
     put!(watch::Watch::new().map_err(|_| "control watch")?);
@@ -97,7 +98,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(frame::Shutoff(None));
     put!(answer::Inbox(VecDeque::new()));
     put!(answer::Buffer(alloc::vec![0; runtime::PAGE_SIZE]));
-    put!(watch::Interests {
+    put!(super::watch::Interests {
         tokens: Vec::new(),
         subs: Vec::new(),
         armed: false

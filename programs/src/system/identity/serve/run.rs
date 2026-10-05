@@ -1,17 +1,17 @@
 use super::{
     Fail,
     book::Book,
-    face::{Buffer, Current, Faces, Inbox, Ready, Response},
+    face::{Buffer, Current, Faces, Inbox, Ready},
     frame::Running,
 };
 use crate::system::life::Status;
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
-use protocol::common::schedule::{Cursor, Dispatch, Progress, Resources};
+use runtime::schedule::{Cursor, Dispatch, Progress, Resources};
 use runtime::core::res::pile::Pile;
 pub fn serve(
     status: Arc<Status>,
-    epoch: super::revision::Epoch,
-    changed: super::revision::Changed,
+    epoch: crate::system::identity::revision::Epoch,
+    changed: crate::system::identity::revision::Changed,
 ) -> Result<(), Fail> {
     let mut resources = Resources::new();
     resources.insert(epoch).map_err(|_| Fail::Room)?;
@@ -30,8 +30,7 @@ pub fn serve(
     resources
         .insert(Inbox(VecDeque::new()))
         .map_err(|_| Fail::Room)?;
-    resources.insert(Current(None)).map_err(|_| Fail::Room)?;
-    resources.insert(Response(None)).map_err(|_| Fail::Room)?;
+    resources.insert(Current::Empty).map_err(|_| Fail::Room)?;
     resources.insert(Ready(None)).map_err(|_| Fail::Room)?;
     resources.insert(Running(true)).map_err(|_| Fail::Room)?;
     resources

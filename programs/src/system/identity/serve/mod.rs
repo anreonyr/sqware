@@ -11,12 +11,6 @@ mod answer;
 mod book;
 mod face;
 mod frame;
-pub mod install;
-pub mod names;
-pub mod query;
 pub mod revision;
 pub mod run;
 mod schedule;
-pub mod source;
-
-pub mod publication;

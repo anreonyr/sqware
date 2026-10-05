@@ -1,7 +1,7 @@
 use crate::system::run::publication::book::Publications;
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
-use protocol::common::schedule::{Progress, Res, ResMut};
+use runtime::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Reply};
 use protocol::system::operator::Fail;
 
@@ -18,15 +18,10 @@ fn reply(back: PieToken, reply: Reply) {
     }
     let _ = pie::release(back);
 }
-pub(crate) fn inject(entry: env::PieToken, task: env::TaskId) -> Result<(), &'static str> {
-    runtime::core::res::port::ship(entry, task, env::Access::STORE, env::Policy::NONE)
-        .map(|_| ())
-        .map_err(|_| "publication inject")
-}
 pub fn receive(
     images: Res<crate::system::control::serve::start::Images>,
     mut inbox: ResMut<Inbox>,
-    mut dispatch: ResMut<protocol::common::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
     while let Ok((n, from)) = HolePie::from_token(images.entry).pull(&mut bytes, Wait::POLL) {
@@ -54,20 +49,20 @@ pub fn receive(
             admitted: true,
         });
     }
-    dispatch.budget = inbox.0.len();
+    dispatch.begin(inbox.0.len()).map_err(|_| "publication scheduling error")?;
     Ok(Progress::Done)
 }
 pub fn select(
     mut inbox: ResMut<Inbox>,
     mut request: ResMut<Request>,
-    mut dispatch: ResMut<protocol::common::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     request.0 = inbox.0.pop_front();
     if let Some(incoming) = &request.0 {
-        dispatch.current = Some(protocol::common::schedule::Invocation {
+        dispatch.select(runtime::schedule::Invocation {
             key: 0,
             cursor: Default::default(),
-        });
+        }).map_err(|_| "publication scheduling error")?;
         let _ = incoming;
     }
     Ok(Progress::Done)
@@ -98,12 +93,11 @@ pub fn finish(
     Ok(Progress::Done)
 }
 pub fn completed(
-    mut dispatch: ResMut<protocol::common::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
-    dispatch.current = None;
-    match dispatch.result.take() {
-        Some(Ok(Progress::Done)) => Ok(Progress::Done),
-        Some(Err(protocol::common::schedule::RunError::Step(why))) => Err(why),
+    match dispatch.take_result().map_err(|_| "publication scheduling error")?.result {
+        Ok(Progress::Done) => Ok(Progress::Done),
+        Err(runtime::schedule::RunError::Step(why)) => Err(why),
         _ => Err("publication scheduling error"),
     }
 }

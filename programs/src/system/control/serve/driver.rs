@@ -7,13 +7,13 @@ use crate::system::control::core::{
     unit::{Slot, State},
     verdict::Fail,
 };
-use protocol::common::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
+use runtime::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
 
 pub fn budget(
     operations: Res<Operations>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, super::Fail> {
-    dispatch.budget = operations.0.len();
+    dispatch.begin(operations.0.len()).map_err(|_| super::Fail::Room)?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -23,15 +23,15 @@ pub fn select(
 ) -> Result<Progress, super::Fail> {
     let tracked = loop {
         let Some(tracked) = operations.0.pop_front() else {
-            dispatch.budget = 0;
+            dispatch.stop().map_err(|_| super::Fail::Room)?;
             return Ok(Progress::Done);
         };
         if !tracked.complete {
             break tracked;
         }
         operations.0.push_back(tracked);
-        dispatch.budget -= 1;
-        if dispatch.budget == 0 {
+        dispatch.skip().map_err(|_| super::Fail::Room)?;
+        if dispatch.remaining() == 0 {
             return Ok(Progress::Done);
         }
     };
@@ -42,10 +42,10 @@ pub fn select(
         Action::Ruin => Key::Ruin,
     };
     active.0 = Some(tracked.operation);
-    dispatch.current = Some(Invocation {
+    dispatch.select(Invocation {
         key,
         cursor: tracked.cursor,
-    });
+    }).map_err(|_| super::Fail::Room)?;
     Ok(Progress::Done)
 }
 pub fn finish(
@@ -53,13 +53,14 @@ pub fn finish(
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, super::Fail> {
-    let invocation = dispatch.current.take().ok_or(super::Fail::Room)?;
+    let completion = dispatch.take_result().map_err(|_| super::Fail::Room)?;
+    let invocation = completion.invocation;
     let mut tracked = Tracked {
         operation: active.0.take().ok_or(super::Fail::Room)?,
         cursor: invocation.cursor,
         complete: false,
     };
-    match dispatch.result.take().ok_or(super::Fail::Room)? {
+    match completion.result {
         Ok(Progress::Done) => tracked.complete = true,
         Ok(Progress::Pending) => {}
         Err(error) => {

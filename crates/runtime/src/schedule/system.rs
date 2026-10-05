@@ -15,6 +15,7 @@ pub enum RunError<E> {
     Resource(AccessError),
     Step(E),
     UnknownPlan,
+    Dispatch(super::DispatchError),
 }
 pub(crate) const MAX_PARAMS: usize = 10;
 pub(crate) type Accesses = [Option<Access>; MAX_PARAMS];

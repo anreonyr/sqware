@@ -1,4 +1,4 @@
-use crate::system::control::serve::start::{BOOT_MS, RETRY_MS};
+use crate::system::common::timing::{BOOT_MS, RETRY_MS};
 use core::time::Duration;
 use env::{PieToken, TaskId};
 use protocol::communication::session::establish;

@@ -1,10 +1,11 @@
+//! Supervisor publication of Identity's authorized faces.
+use runtime::schedule::{Progress, Res, ResMut};
 use crate::system::{
     boot::{Faces, Mounts},
-    identity::serve::{install::Roster, query},
+    identity::client::{install::Roster, query},
     run::publication::Internal,
 };
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     system::{identity as id, operator as op},
 };
 pub fn faces(

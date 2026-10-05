@@ -1,10 +1,10 @@
+use runtime::schedule::{Progress, Res, ResMut};
 use super::Fail;
 use crate::system::life::{Phase, Status};
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use env::{TaskId, Wait};
 use protocol::{
-    common::schedule::{Progress, Res, ResMut},
     system::identity::client::TaskQuery,
 };
 pub(super) struct Running(pub bool);

@@ -17,13 +17,13 @@ pub const CLAIM: u8 = 3;
 pub const LIST_MAX: usize = 4;
 
 /// 回信孔那一枚上的记号。**三条问共用**：回信孔是每一趟自带的，与面无关
-pub const BACK_MARK: env::Mark = env::Mark::of("hub-back");
+pub use crate::service::hub::marks::BACK_MARK;
 
 /// **报活孔**那一枚上的记号：主人（认领那一台的那位）铸一枚、**交一份给 hub**、此后一直开着
 /// hub 扫账时按它问"主人还在不在"（mail::reserve——与线路由者那条探活同一手）。内核那一问
 /// （UnitCall::Join）只许**同队或父域**，而 hub 与驱动是**兄弟** ⇒ 主人那一枚只能由主人
 /// 自己交过来
-pub const ALIVE_MARK: env::Mark = env::Mark::of("hub-alive");
+pub use crate::service::hub::marks::ALIVE_MARK;
 
 /// **设备那一轴在树上的路**：`/dev`（`/dev/<类>/<名>` 的头一段）
 pub const DEV_ROAD: &Path = Path::new("dev");

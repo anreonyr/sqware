@@ -3,7 +3,7 @@ use super::{
     unit::{Control, Service},
 };
 use crate::system::control::serve::task::Image;
-use crate::system::run::source::Source;
+use crate::system::control::serve::source::Source;
 use crate::{
     boot::Catalog,
     unit::{Died, PROGRAMS, UnitFile},
@@ -11,8 +11,7 @@ use crate::{
 use alloc::{string::ToString, vec::Vec};
 use env::{Mark, Wait};
 use protocol::communication::session::establish;
-pub const RETRY_MS: usize = 1;
-pub const BOOT_MS: usize = 5000;
+pub use crate::system::common::timing::{BOOT_MS, RETRY_MS};
 
 pub const E_MANIFEST: Died = 2;
 pub const E_PROGRAM: Died = 3;
@@ -42,6 +41,13 @@ impl Error {
 pub struct Images {
     pub catalog: Catalog<'static>,
     pub entry: env::PieToken,
+}
+impl Images {
+    pub fn inject(&self, task: env::TaskId) -> Result<(), &'static str> {
+        runtime::core::res::port::ship(self.entry, task, env::Access::STORE, env::Policy::NONE)
+            .map(|_| ())
+            .map_err(|_| "publication inject")
+    }
 }
 impl Control {
     pub fn spawn(&mut self, program: &UnitFile, images: &Images) -> Result<Service, Error> {

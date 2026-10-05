@@ -43,7 +43,7 @@ pub(crate) fn command(
                 let wrong = env::TaskId::new(
                     assembly
                         .resources
-                        .read::<crate::system::identity::serve::install::Roster>()
+                        .read::<crate::system::identity::client::install::Roster>()
                         .unwrap()
                         .authority()
                         .unwrap()
@@ -121,27 +121,27 @@ pub(crate) fn exercise(
     organization.admit(coalition, p, wait).unwrap();
     assembly
         .resources
-        .read::<crate::system::identity::serve::install::Roster>()
+        .read::<crate::system::identity::client::install::Roster>()
         .unwrap()
         .activate(service, coalition)
         .unwrap();
     assembly
         .resources
-        .read::<crate::system::identity::serve::install::Roster>()
+        .read::<crate::system::identity::client::install::Roster>()
         .unwrap()
         .activate(target, coalition)
         .unwrap();
     {
         {
-            let registration = crate::system::identity::serve::names::Registration {
+            let registration = crate::system::run::names::Registration {
                 name: ("named-subject").into(),
                 object: Object::Principal(p),
                 lifetime: None,
             };
-            crate::system::identity::serve::query::validate(
+            crate::system::identity::client::query::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::serve::install::Roster>()
+                    .read::<crate::system::identity::client::install::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -149,12 +149,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::identity::serve::names::Names>()
+                    .write::<crate::system::run::names::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::serve::install::Tree>()
+                            .write::<crate::system::operator::client::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -162,15 +162,15 @@ pub(crate) fn exercise(
         }
         .unwrap();
         {
-            let registration = crate::system::identity::serve::names::Registration {
+            let registration = crate::system::run::names::Registration {
                 name: ("named-league").into(),
                 object: Object::Coalition(coalition),
                 lifetime: None,
             };
-            crate::system::identity::serve::query::validate(
+            crate::system::identity::client::query::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::serve::install::Roster>()
+                    .read::<crate::system::identity::client::install::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -178,12 +178,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::identity::serve::names::Names>()
+                    .write::<crate::system::run::names::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::serve::install::Tree>()
+                            .write::<crate::system::operator::client::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -191,15 +191,15 @@ pub(crate) fn exercise(
         }
         .unwrap();
         {
-            let registration = crate::system::identity::serve::names::Registration {
+            let registration = crate::system::run::names::Registration {
                 name: ("named-league").into(),
                 object: Object::Coalition(coalition),
                 lifetime: None,
             };
-            crate::system::identity::serve::query::validate(
+            crate::system::identity::client::query::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::serve::install::Roster>()
+                    .read::<crate::system::identity::client::install::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -207,12 +207,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::identity::serve::names::Names>()
+                    .write::<crate::system::run::names::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::serve::install::Tree>()
+                            .write::<crate::system::operator::client::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -222,15 +222,15 @@ pub(crate) fn exercise(
         let other = organization.found(wait).unwrap();
         assert!(
             {
-                let registration = crate::system::identity::serve::names::Registration {
+                let registration = crate::system::run::names::Registration {
                     name: ("named-league").into(),
                     object: Object::Coalition(other),
                     lifetime: None,
                 };
-                crate::system::identity::serve::query::validate(
+                crate::system::identity::client::query::validate(
                     &assembly
                         .resources
-                        .read::<crate::system::identity::serve::install::Roster>()
+                        .read::<crate::system::identity::client::install::Roster>()
                         .unwrap(),
                     registration.object,
                 )
@@ -238,12 +238,12 @@ pub(crate) fn exercise(
                 .and_then(|_| {
                     assembly
                         .resources
-                        .write::<crate::system::identity::serve::names::Names>()
+                        .write::<crate::system::run::names::Names>()
                         .unwrap()
                         .register(
                             &mut assembly
                                 .resources
-                                .write::<crate::system::operator::serve::install::Tree>()
+                                .write::<crate::system::operator::client::Tree>()
                                 .unwrap(),
                             registration,
                         )
@@ -253,15 +253,15 @@ pub(crate) fn exercise(
         );
         assert!(
             {
-                let registration = crate::system::identity::serve::names::Registration {
+                let registration = crate::system::run::names::Registration {
                     name: ("bad/name").into(),
                     object: Object::Principal(p),
                     lifetime: None,
                 };
-                crate::system::identity::serve::query::validate(
+                crate::system::identity::client::query::validate(
                     &assembly
                         .resources
-                        .read::<crate::system::identity::serve::install::Roster>()
+                        .read::<crate::system::identity::client::install::Roster>()
                         .unwrap(),
                     registration.object,
                 )
@@ -269,12 +269,12 @@ pub(crate) fn exercise(
                 .and_then(|_| {
                     assembly
                         .resources
-                        .write::<crate::system::identity::serve::names::Names>()
+                        .write::<crate::system::run::names::Names>()
                         .unwrap()
                         .register(
                             &mut assembly
                                 .resources
-                                .write::<crate::system::operator::serve::install::Tree>()
+                                .write::<crate::system::operator::client::Tree>()
                                 .unwrap(),
                             registration,
                         )
@@ -316,7 +316,7 @@ pub(crate) fn exercise(
             .internal(
                 &mut assembly
                     .resources
-                    .write::<crate::system::operator::serve::install::Tree>()
+                    .write::<crate::system::operator::client::Tree>()
                     .unwrap(),
                 &crate::system::run::publication::Internal {
                     road: (protocol::common::path::Path::new("svc/fixtures/stale")).to_path_buf(),
@@ -736,7 +736,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     let control = env::unit::self_id();
     let host = assembly
         .resources
-        .read::<crate::system::operator::serve::install::Tree>()
+        .read::<crate::system::operator::client::Tree>()
         .unwrap()
         .host()
         .unwrap();
@@ -790,7 +790,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         });
         assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
@@ -801,7 +801,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         while !done.load(Ordering::Acquire) {
             assembly
                 .resources
-                .write::<crate::system::operator::serve::install::Connections>()
+                .write::<crate::system::run::connections::Connections>()
                 .unwrap()
                 .0
                 .push(caller.id());
@@ -816,7 +816,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         caller.join();
         assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::identity::client::install::Roster>()
             .unwrap()
             .unbind(caller_id)
             .unwrap();

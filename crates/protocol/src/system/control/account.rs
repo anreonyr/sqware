@@ -7,10 +7,10 @@ use crate::system::{
     operator::Face,
 };
 use env::wire::Span as _;
-use env::{Mark, PieToken, TaskId, TeamId, Wait, pie};
+use env::{PieToken, TaskId, TeamId, Wait, pie};
 use runtime::core::res::pie::{HolePie, reserve};
-pub const ENTRY: Mark = Mark::of("control-account");
-pub const BACK: Mark = Mark::of("control-account-back");
+pub use super::marks::ACCOUNT_ENTRY as ENTRY;
+pub use super::marks::ACCOUNT_BACK as BACK;
 pub const DIR: &Path = Path::new("/svc/sys/control/account");
 pub mod frame;
 pub use frame::Request;
