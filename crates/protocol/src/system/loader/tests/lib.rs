@@ -1,41 +1,25 @@
 #![allow(dead_code)]
 extern crate alloc;
-pub use env::WireCodes;
 #[path = "../../../common/path.rs"]
 pub mod path;
-#[path = "../../../common/marks.rs"]
-pub mod mark_definitions;
-#[path = "../../../common/table.rs"]
-pub mod table;
 #[path = "../../../wire/message.rs"]
 pub mod message;
 #[path = "../../../wire/ok.rs"]
 pub mod ok;
-#[path = "../../control/marks.rs"]
-pub mod control_marks;
-#[path = "../../control/frame/vocab.rs"]
-pub mod control_vocab;
 #[path = "../frame.rs"]
 pub mod frame;
 #[path = "../grant.rs"]
 pub mod grant;
-#[path = "../marks.rs"]
-pub mod marks;
 mod common {
-    pub use crate::{mark_definitions as marks, path, table};
-}
-mod wire {
-    pub use crate::{message, ok::OK};
-}
-mod system {
-    pub mod control {
-        pub use crate::{control_marks as marks, control_vocab::Fail};
-    }
+    pub use crate::path;
 }
 
 #[cfg(test)]
+mod generation;
+
+#[cfg(test)]
 mod tests {
-    use super::{control_vocab, frame::*, grant::*, message::Message, ok::OK};
+    use super::{frame::*, grant::*, message::Message, ok::OK};
     use env::{PieToken, TaskId, wire::Span};
 
     // Fixed little-endian samples independent of the codec under test.
@@ -92,15 +76,15 @@ mod tests {
     #[test]
     fn error_codes_and_unknown_fallback_are_fixed() {
         use Fail::*;
-        assert_eq!(control_vocab::fail_to_code(None), 0);
-        assert_eq!(control_vocab::code_to_fail(0), None);
+        assert_eq!(fail_to_code(None), 0);
+        assert_eq!(code_to_fail(0), None);
         for (code, fail) in [(1, Unknown), (2, BadImage), (3, Full),
             (4, NotReady), (5, Bad), (6, Denied)] {
-            assert_eq!(control_vocab::fail_to_code(Some(fail)), code);
-            assert_eq!(control_vocab::code_to_fail(code), Some(fail));
+            assert_eq!(fail_to_code(Some(fail)), code);
+            assert_eq!(code_to_fail(code), Some(fail));
         }
         for code in 7..=255 {
-            assert_eq!(control_vocab::code_to_fail(code), Some(Bad));
+            assert_eq!(code_to_fail(code), Some(Bad));
         }
     }
 
@@ -187,6 +171,20 @@ mod tests {
                 assert!(Wire::take(&bytes).is_none());
             }
         }
+    }
+
+    #[test]
+    fn generated_dispatch_encoding_checks_the_selected_operation() {
+        let mut out = [0; 554];
+        let n = Wire::Build(build()).store(&mut out).unwrap();
+        assert_eq!(&out[..n], BUILD_BYTES);
+        let mut mismatched = build();
+        mismatched.op = 2;
+        assert!(Wire::Build(mismatched).store(&mut out).is_none());
+        let claim = Claim { op: 2, task: TaskId::new(0x0102030405060708),
+            back: token(0x6162636465666768) };
+        let n = Wire::Claim(claim).store(&mut out).unwrap();
+        assert_eq!(&out[..n], CLAIM_BYTES);
     }
 
     #[test]

@@ -21,6 +21,8 @@ doctest = false
 
 [dependencies]
 env = { path = "../env" }
+wire = { path = "../wire" }
+system-api = { path = "../../programs/src/system/api" }
 # 协议的用户态实现要用**机制**（门闩 `HolePie`、回信通道 `Channel`）——机制在 runtime。
 # 这条边就是"机制在运行时、语义在协议"的编译期形态（那条临时的边在这里翻正）。
 runtime = { path = "../runtime" }

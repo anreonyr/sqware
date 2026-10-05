@@ -9,7 +9,7 @@ mod identity;
 #[path = "../../../system/operator/marks.rs"]
 mod operator;
 #[path = "../../../system/loader/marks.rs"]
-mod loader;
+pub mod loader;
 #[path = "../../../driver/marks.rs"]
 mod driver;
 #[path = "../../../service/hub/marks.rs"]

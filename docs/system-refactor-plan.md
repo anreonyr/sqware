@@ -2,8 +2,8 @@
 
 本轮重构消除中央 protocol 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
-当前状态：设计与实施计划已整理，Loader 宿主兼容基线已落盘并通过 8 个测试。
-其余接口基线与本轮代码迁移尚未开始。文中的目录和 API 表示目标结构。
+当前状态：Loader 兼容基线与接口生成试点已完成。原有 8 个固定基线继续通过，另有生成行为和宏声明检查。
+其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除 Loader 试点外表示目标结构。
 
 ## 当前问题
 
@@ -54,7 +54,7 @@ System 实现     → system-api + system-client + ipc + runtime
 image           → 各软件的纯 API       # 装配检查和公共入口描述
 ```
 
-wire 的名字为暂定；其中只放实际共用的 Message、接口元数据和相关纯工具，不接收所有 common 内容。
+wire 已建立，包含 Message、OK、Mark 定义元数据与碰撞检查；其他 common 内容按职责迁移。
 env 的内核 ABI 类型与已有 Span 不因目录整理而整体迁移。
 API 之间可以保留真实的数据依赖，例如 Hub 引用 System 的公共身份类型。
 
@@ -179,6 +179,22 @@ Loader 基线位于 `crates/protocol/src/system/loader/tests`，直接编译现�
 完成条件：生成的 Loader 客户端和实际服务端贯通；兼容测试和真实构建/Claim 流程通过。
 该接口只有一份权威声明；旧路径只重导出新定义，不保留另一份手写协议实现。
 
+本批已落地：
+
+- `programs/src/system/api` 是纯 system-api 库，依赖 env、wire 和编译期 mold，不依赖 runtime、protocol 或程序实现。
+- `api/src/lib.rs` 中的 Loader 内联模块用 `#[mold::interface(id = "sqware.system.loader.v1")]` 声明。
+  通道声明稳定 key 和旧名称，Grant 声明固定授权码，具名请求变体声明操作码、Grant 和兼容帧名。
+- 宏生成 Ask/Claim 帧、操作常量、Wire 编解码分派、回复 Message、Grant 查询、Mark 与 REGISTRY。
+  字段编码复用 Frame/Span，错误编码复用 WireCodes。原有 frame/grant/marks 路径只引用新定义。
+- Loader 客户端调用生成的 Wire::store，服务端队列调用生成的 Wire::take。
+  资源授予、Build→Claim、时间预算、清理和 schedule 仍由现有显式流程推进。
+- Loader 独立拥有 Fail；与 Control 交界处显式转换。Mark 根检查读取生成的完整 REGISTRY。
+- 提取公共 Message 后，Identity 元组请求改为具名 Request 包装；宿主测试检查包装与旧请求字节一致。
+
+当前宏覆盖具名请求变体和回复结构，尚未生成传输 I/O 或多形回复；这些随下一批接口与客户端迁移扩展。
+本批相关宿主测试共 32 项：Loader 10、生成宏 5、Identity 7、Mark 3、System 边界 7。
+programs 全目标编译和 QEMU accept、product、system-fault 均通过。
+
 ### 3. 分离通用传输，迁公共接口
 
 将 hand/rack/session 迁 ipc，依赖纯 wire 和 runtime；调试输出归 runtime。
@@ -239,6 +255,8 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 ```sh
 cargo check -p programs --all-targets --offline
+cargo check -p system-api --target x86_64-unknown-linux-gnu --offline
+cargo test -p mold --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/runtime/src/schedule/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline

@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 env = { path = "../../../../../env" }
+wire = { path = "../../../../../wire" }
 
 [lib]
 path = "lib.rs"

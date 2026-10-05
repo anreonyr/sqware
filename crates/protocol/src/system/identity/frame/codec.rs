@@ -178,7 +178,9 @@ impl Wire {
     }
 }
 
-impl Message for (Wire, PieToken) {
+pub struct Request(pub Wire, pub PieToken);
+
+impl Message for Request {
     type In = (Option<Wire>, PieToken);
     type Buf = [u8; MAX_FRAME];
     const EMPTY: Self::Buf = [0; MAX_FRAME];

@@ -1,4 +1,2 @@
-crate::marks! {
-    pub const BACK = "loader-back";
-    pub const IMAGE = "loader-image";
-}
+pub use system_api::loader::{BACK, IMAGE};
+pub const DECLARATIONS: &[::wire::marks::Definition] = system_api::loader::CHANNELS;

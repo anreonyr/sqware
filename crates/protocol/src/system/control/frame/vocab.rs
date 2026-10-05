@@ -74,6 +74,20 @@ pub enum Fail {
     Denied,
 }
 
+impl From<system_api::loader::Fail> for Fail {
+    fn from(fail: system_api::loader::Fail) -> Self {
+        use system_api::loader::Fail as Loader;
+        match fail {
+            Loader::Unknown => Self::Unknown,
+            Loader::BadImage => Self::BadImage,
+            Loader::Full => Self::Full,
+            Loader::NotReady => Self::NotReady,
+            Loader::Bad => Self::Bad,
+            Loader::Denied => Self::Denied,
+        }
+    }
+}
+
 pub const MINT: u8 = 1;
 
 pub const EMBARK: u8 = 2;

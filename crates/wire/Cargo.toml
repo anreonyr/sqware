@@ -1,0 +1,12 @@
+[package]
+name = "wire"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../env" }

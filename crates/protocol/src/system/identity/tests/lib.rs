@@ -40,6 +40,11 @@ mod tests {
         let mut bytes = [0; MAX_FRAME];
         let back = PieToken::from_bytes(&17u64.to_le_bytes()).unwrap();
         let n = wire.store(back, &mut bytes).unwrap();
+        let mut envelope = [0; MAX_FRAME];
+        let request = Request(wire, back);
+        assert_eq!(request.store(&mut envelope), Some(n));
+        assert_eq!(&envelope[..n], &bytes[..n]);
+        assert_eq!(Request::fetch(&envelope[..n]), Wire::take(&bytes[..n]));
         assert_eq!(&bytes[..8], &17u64.to_le_bytes());
         assert_eq!(bytes[8], Grant::of_wire(&wire));
         assert_eq!(Wire::take(&bytes[..n]), Some((Some(wire), back)));

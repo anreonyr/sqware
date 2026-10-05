@@ -1,22 +1,11 @@
-//! mold —— 五个过程宏：`#[derive(Frame)]`（**帧**）、`#[derive(Envcall)]`（**环境调用
-//! 枚举**）、`#[derive(Fail)]`（**域失败词汇**：域内自 `-1` 起）、`#[derive(WireCodes)]`
-//! （**线上那一格**：失败域 ↔ 答话那一格）、`#[entry]`（**入口那一手**）。
-//!
-//! 五者互不相干，**各占一个文件**（[`frame`] / [`envcall`] / [`fail`] / [`codes`] / [`entry`]）
-//! ——本文件只有 crate 头注与五个入口，每个入口一句"吃什么、吐什么"，正文在各自那个文件里；
-//! **五者之间一行都不共享**。
-//!
-//! **形态不同，各由"它要产出什么"定死**：四个 derive 产出的都是"**附属在你手写的那枚 item
-//! 上的**东西"（`Frame` → 那枚结构体的 `LEN` 与一条 `impl Span`；`Envcall` → 那枚枚举的 `impl` 与一枚
-//! 新枚举、每格一个入口；`Fail` → 那枚词表的域内码与读法；`WireCodes` → 那枚词表的线上码、
-//! 两向读法与编译期断言）；`#[entry]` 则要**改写**自己挂着的那一项（原函数留着、
-//! 另加一个符号），故只能是 attribute。
+//! 编码、通信接口、环境调用与程序入口的过程宏。
 
 mod codes;
 mod entry;
 mod envcall;
 mod fail;
 mod frame;
+mod interface;
 
 use proc_macro::TokenStream;
 
@@ -76,4 +65,10 @@ pub fn derive_wire_codes(input: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
     entry::expand(item.into()).into()
+}
+
+/// Generate request frames, replies, grants and marks from an inline interface module.
+#[proc_macro_attribute]
+pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
+    interface::expand(attr.into(), item.into()).into()
 }

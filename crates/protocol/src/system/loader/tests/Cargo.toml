@@ -6,5 +6,8 @@ publish = false
 [workspace]
 [dependencies]
 env = { path = "../../../../../env" }
+wire = { path = "../../../../../wire" }
+system-api = { path = "../../../../../../programs/src/system/api" }
+mold = { path = "../../../../../mold" }
 [lib]
 path = "lib.rs"

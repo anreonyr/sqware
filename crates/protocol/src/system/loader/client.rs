@@ -1,7 +1,6 @@
 use super::frame::{self, Ask, Fail, Said};
 use crate::communication::{hand::Receiver, session::establish};
 use crate::wire::message::Message;
-use env::wire::Span;
 use env::{Permission, PieToken, TaskId, TeamId, Wait, pie};
 use runtime::core::res::pie::{HolePie};
 
@@ -65,7 +64,7 @@ impl Face {
                     back: reply,
                 };
                 let mut bytes = [0; Ask::LEN];
-                let n = ask.store_at(&mut bytes, 0).ok_or(Fail::Bad)?;
+                let n = frame::Wire::Build(ask).store(&mut bytes).ok_or(Fail::Bad)?;
                 HolePie::from_token(self.entry)
                     .push(&bytes[..n], remaining())
                     .map_err(|_| Fail::Bad)?;
@@ -74,7 +73,7 @@ impl Face {
                     .recv(&mut buf, remaining())
                     .map_err(|_| Fail::Bad)?;
                 if said.status != crate::wire::OK {
-                    return Err(crate::system::control::frame::code_to_fail(said.status)
+                    return Err(frame::code_to_fail(said.status)
                         .unwrap_or(Fail::Bad));
                 }
                 if said.team == 0 || said.task.get() == 0 {
@@ -88,7 +87,7 @@ impl Face {
                     back: confirm,
                 };
                 let mut receipt = [0; frame::Claim::LEN];
-                let n = claim.store_at(&mut receipt, 0).ok_or(Fail::Bad)?;
+                let n = frame::Wire::Claim(claim).store(&mut receipt).ok_or(Fail::Bad)?;
                 HolePie::from_token(self.entry)
                     .push(&receipt[..n], remaining())
                     .map_err(|_| Fail::Bad)?;
@@ -97,7 +96,7 @@ impl Face {
                     .map_err(|_| Fail::Bad)?;
                 if confirmed.status != crate::wire::OK {
                     return Err(
-                        crate::system::control::frame::code_to_fail(confirmed.status)
+                        frame::code_to_fail(confirmed.status)
                             .unwrap_or(Fail::Bad),
                     );
                 }

@@ -23,6 +23,8 @@ members = [
     "crates/runtime",
     "crates/sbi",
     "crates/mold",
+    "crates/wire",
+    "programs/src/system/api",
 ]
 default-members = ["kernel"]
 resolver = "3"

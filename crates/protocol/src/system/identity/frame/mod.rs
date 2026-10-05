@@ -1,5 +1,6 @@
 //! Strict, variable-length framing; no allocation or ignored trailing bytes.
 mod codec;
+pub use codec::Request;
 mod data;
 pub mod vocab;
 
