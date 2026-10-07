@@ -1,10 +1,8 @@
 //! One validated authority-owned entry and its one-shot reply transport.
-use super::super::{BACK, DIR, Fail, Grant, Reply, Wire};
-use ipc::{hand::{Receiver, RecvFail, Sender}, session::establish};
-use crate::wire::message::Message;
+use super::super::{DIR, Fail, Grant, Reply, Wire, frame::Request, rpc::Contract};
+use ::resource::raw::reserve;
 use env::{PieToken, TaskId, Wait};
-use env::pie;
-use ::resource::raw::{reserve};
+use ipc::{rpc, time::Deadline};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallError {
@@ -65,60 +63,47 @@ impl Face {
         if Grant::for_wire(&wire) != self.grant {
             return Err(CallError::WrongGrant);
         }
+        let deadline = Deadline::new(wait);
         // Revalidate the reference before lending a reply hole.
         Self::direct(self.authority, self.grant, self.entry)?;
-        let (back, seed) =
-            establish::lend_out(self.entry, BACK).map_err(|_| CallError::Transport)?;
-        struct Back(PieToken);
-        impl Drop for Back {
-            fn drop(&mut self) {
-                let _ = pie::seal(self.0);
-                let _ = pie::release(self.0);
-            }
-        }
-        let _back = Back(back);
-        let mut request = Sender::<super::super::frame::Request>::from_raw(self.entry);
-        request
-            .send_within(super::super::frame::Request(wire, seed), wait)
+        let request = rpc::request::Sender::<Contract>::from_raw(self.entry)
             .map_err(|_| CallError::Transport)?;
-        let mut bytes = Reply::EMPTY;
-        let reply = Receiver::<Reply>::from_raw(back)
-            .recv(&mut bytes, wait)
-            .map_err(|error| match error {
-                RecvFail::Unread(_) => CallError::Malformed,
-                RecvFail::Mail(_) => CallError::Transport,
-            })?;
+        let reply =
+            request
+                .call(deadline, |back| Request(wire, back))
+                .map_err(|error| match error {
+                    rpc::Fail::Decode => CallError::Malformed,
+                    rpc::Fail::WrongSource => CallError::WrongAuthority,
+                    _ => CallError::Transport,
+                })?;
         if let Reply::Fail(fail) = reply {
             return Err(CallError::Service(fail));
         }
-        if !reply.belongs_to(self.authority) {
+        if !belongs_to(reply, self.authority) {
             return Err(CallError::WrongAuthority);
         }
         Ok(reply)
     }
 }
-impl Reply {
-    fn belongs_to(self, authority: TaskId) -> bool {
-        match self {
-            Self::Binding(Some(b)) => {
-                b.origin.principal.authority == authority
-                    && b.current.principal.authority == authority
-            }
-            Self::Principal(Some(p)) => p.authority == authority,
-            Self::Coalition(c) => c.authority == authority,
-            Self::Members(page) => {
-                page.iter().all(|p| p.authority == authority)
-                    && page
-                        .next()
-                        .is_none_or(|c| c.target.authority() == authority)
-            }
-            Self::Memberships(page) => {
-                page.iter().all(|c| c.authority == authority)
-                    && page
-                        .next()
-                        .is_none_or(|c| c.target.authority() == authority)
-            }
-            _ => true,
+fn belongs_to(reply: Reply, authority: TaskId) -> bool {
+    match reply {
+        Reply::Binding(Some(b)) => {
+            b.origin.principal.authority == authority && b.current.principal.authority == authority
         }
+        Reply::Principal(Some(p)) => p.authority == authority,
+        Reply::Coalition(c) => c.authority == authority,
+        Reply::Members(page) => {
+            page.iter().all(|p| p.authority == authority)
+                && page
+                    .next()
+                    .is_none_or(|c| c.target.authority() == authority)
+        }
+        Reply::Memberships(page) => {
+            page.iter().all(|c| c.authority == authority)
+                && page
+                    .next()
+                    .is_none_or(|c| c.target.authority() == authority)
+        }
+        _ => true,
     }
 }

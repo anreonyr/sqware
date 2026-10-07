@@ -1,7 +1,7 @@
 //! Face admission precedes every state read or write.
 use crate::system::identity::core::{Anchor, IdentityBook};
 use env::TaskId;
-use protocol::system::identity::{Fail, Grant, PageTarget, Reply, Wire};
+use system_api::identity::{Fail, Grant, PageTarget, Reply, Wire};
 
 pub struct Request {
     pub from: TaskId,

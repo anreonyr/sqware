@@ -1,7 +1,7 @@
 use env::TaskId;
-use protocol::system::identity::{Binding, Fail, Install, Match, Selector, Subject, limits};
+use system_api::identity::{Binding, Fail, Install, Match, Selector, Subject};
 
-use super::IdentityBook;
+use super::{IdentityBook, limits};
 
 pub(super) struct BindingRow {
     pub(super) task: TaskId,

@@ -31,6 +31,7 @@ schedule = { path = "../crates/schedule" }
 # （`protocol::message::Message`：rtc 那一族的答那两形要上船台）。驱动自己的协议住本 crate。
 protocol = { path = "../crates/protocol" }
 ipc = { path = "../crates/ipc" }
+system-api = { path = "src/system/api" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }

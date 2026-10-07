@@ -1,6 +1,6 @@
 use super::*;
-use protocol::system::identity::{
-    CoalitionSet, Cursor, Install, Match, PageTarget, Selector, Subject, limits,
+use system_api::identity::{
+    CoalitionSet, Cursor, Install, Match, PageTarget, Selector, Subject,
 };
 
 fn subject(p: PrincipalId, coalitions: &[CoalitionId]) -> Subject {

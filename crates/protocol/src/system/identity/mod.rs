@@ -5,10 +5,12 @@ pub mod frame;
 pub mod marks;
 pub mod grant;
 pub mod limits;
+pub mod rpc;
 
 pub use client::{CallError, Installer, Organization, Query, SelfOps, TaskQuery};
 pub use frame::vocab::*;
 pub use frame::{BACK, Fail, Reply, Wire};
 pub use grant::{Grant, Mount, grant_of};
+pub use system_api::identity::REGISTRY;
 
 pub const DIR: &crate::common::path::Path = crate::common::path::Path::new(frame::DIR);

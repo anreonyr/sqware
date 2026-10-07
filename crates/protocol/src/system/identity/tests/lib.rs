@@ -5,26 +5,13 @@ pub mod frame;
 mod grant;
 #[path = "../limits.rs"]
 mod limits;
-#[path = "../../../wire/message.rs"]
-pub mod message;
-#[path = "../../../common/table.rs"]
-pub mod table;
-#[path = "../../../common/marks.rs"]
-pub mod mark_definitions;
 #[path = "../marks.rs"]
 pub mod marks;
-mod common {
-    pub use crate::table;
-    pub use crate::mark_definitions as marks;
-}
-mod wire {
-    pub const OK: u8 = 0;
-    pub use super::message;
-}
 
 #[cfg(test)]
 mod tests {
-    use super::{frame::*, frame::vocab::*, grant::*, wire::message::Message};
+    use super::{frame::*, frame::vocab::*, grant::*};
+    use wire::message::Message;
     use env::{PieToken, TaskId};
 
     fn p(slot: u64) -> PrincipalId {

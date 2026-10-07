@@ -303,6 +303,24 @@ mod tests {
     }
 
     #[test]
+    fn receive_can_drain_a_frame_larger_than_the_contract_buffer() {
+        test_backend::reset();
+        let entry = PieToken::mint(1);
+        let caller = TaskId::new(7);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let mut buffer = [0; 16];
+        replies_for(entry, &[0; 10], caller);
+        assert!(matches!(receiver.receive(&mut buffer, Wait::POLL),
+            Err(rpc::request::Rejected { fail: rpc::Fail::Decode, incoming: None })));
+        assert!(!test_backend::with(|state| state.replies.contains_key(&entry)));
+        let request = Request { seed: PieToken::mint(55), fail_encode: false };
+        let n = request.store(&mut buffer).unwrap();
+        replies_for(entry, &buffer[..n], caller);
+        let incoming = receiver.receive(&mut buffer, Wait::POLL).unwrap();
+        assert_eq!(incoming.request.seed, request.seed);
+    }
+
+    #[test]
     fn abandoning_split_reply_endpoint_cleans_up_without_receiving() {
         test_backend::reset();
         let client = client();

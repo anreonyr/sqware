@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC 与 Loader RPC 已落地；其余接口迁移与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC、Loader RPC 及 Identity API/RPC 已落地；公共客户端独立成 crate、其余接口迁移与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -341,7 +341,16 @@ RPC 的对偶按交互步骤划分：
 整合原 port 与 hand/rack/session；两端关系归 resource::port，类型化通信和交互归 ipc，依赖 wire 与 resource。
 调试调用的原始契约留 env，格式化与输出循环按实际调用方归位，不迁入纯 schedule。
 system-client 接入新传输；逐个迁 Identity、Operator、Control 的接口声明和客户端。
-Identity 作为较复杂的第二例，验证有界变长数据、分页、多个授权入口和权威验证。
+Identity 已作为第二例迁移：
+
+- `system-api::identity` 拥有领域词汇、请求与应答 codec、错误码、17 个 Grant、回程 Mark 和四个线上限额；仅依赖现有 env、wire、mold。protocol 的对应模块只重导出同一实现。
+- Grant 的动作码、名称、Mount、Wire 匹配和 Mark 来自提供方局部的一张声明表；保持原 1..17 动作码和 `identity-*` 记号。全局 Mark 碰撞检查继续覆盖该表。
+- authority 的 principal、coalition、membership、binding 容量及创建配额归 `identity/core/limits`；模型与应答逻辑直接依赖提供方 API，不把存储策略放在线上契约里。
+- 公共客户端保留领域与发现接口，改用固定 Request/Reply 契约的 RPC。每次调用重验入口 owner/Grant，共享一次 Deadline；实际回复来源与返回身份数据的 authority 分别验证。
+- 服务端入口统一导入已验证的应答发送权，队列与 Current 持有该权利；回复或放弃均自动释放。Grant 与动作的匹配、权限判决、状态更新和 revision 仍归 authority 模型。
+- 完整请求头但损坏动作载荷仍解码为 `None`，合法回程收到 `Bad`；不可信回程直接拒绝。保留一页收件缓冲，rpc 接收允许调用方提供字节切片，由 codec 判断合法帧上限，避免超长帧阻塞后续请求。
+- 本批 64 项宿主检查通过：Identity codec 7、authority 模型 11、Identity 客户端与契约 9、IPC 16、Mark 3、Loader 11、System 边界 7。客户端测具使用真实源码与 codec，模拟发现、资源查询和 IPC 边界；真实 RPC 生命周期另由 IPC 测具验证。
+- programs 全目标编译与 QEMU accept、product、system-fault 均通过。公共客户端实现与 RPC 契约绑定暂留 protocol；移入 system-client 并删除兼容导出属于后续批次。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 
@@ -394,7 +403,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec、通用 IPC 和 Loader RPC 已完成；接下来迁 Identity 的纯契约与公共客户端。
+第 6 批的纯 codec、通用 IPC、Loader RPC 与 Identity API/RPC 已完成；接下来迁 Operator，再迁 Control，并收拢独立 system-client。
 
 ## 迁移后的命名口径
 
@@ -427,6 +436,8 @@ cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --t
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+sh programs/src/system/identity/core/test-host.sh
 nu scripts/qtest.nu --package kernel --scene accept
 nu scripts/qtest.nu --package kernel --scene product
 nu scripts/qtest.nu --package kernel --scene system-fault

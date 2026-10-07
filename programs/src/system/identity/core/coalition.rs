@@ -1,7 +1,7 @@
 use env::TaskId;
-use protocol::system::identity::{CoalitionId, Fail, PrincipalId, limits};
+use system_api::identity::{CoalitionId, Fail, PrincipalId};
 
-use super::IdentityBook;
+use super::{IdentityBook, limits};
 
 pub(super) struct CoalitionNode {
     pub(super) manager: PrincipalId,

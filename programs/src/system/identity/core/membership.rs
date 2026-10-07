@@ -1,10 +1,10 @@
 //! Membership: who is in a coalition, and the one paged scan of that relation.
 use env::TaskId;
-use protocol::system::identity::{
-    CoalitionId, Cursor, Fail, Page, PageId, PageTarget, PrincipalId, limits,
+use system_api::identity::{
+    CoalitionId, Cursor, Fail, Page, PageId, PageTarget, PrincipalId,
 };
 
-use super::IdentityBook;
+use super::{IdentityBook, limits};
 
 /// An id axis of the book: the slots a page scans, and when a slot joins the membership set.
 pub(crate) trait Axis: PageId {

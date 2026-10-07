@@ -89,14 +89,14 @@ pub mod request {
         /// Receive, decode, and validate the reply route embedded in one request.
         pub fn receive(
             &self,
-            buffer: &mut <C::Request as Message>::Buf,
+            buffer: &mut [u8],
             within: Wait,
         ) -> Result<Incoming<C>, Rejected<<C::Request as Message>::In>> {
-            let (len, from) = match raw::Hole::from_raw(self.entry).pull(buffer.as_mut(), within) {
+            let (len, from) = match raw::Hole::from_raw(self.entry).pull(buffer, within) {
                 Ok(received) => received,
                 Err(error) => return Err(Rejected { fail: Fail::Receive(error.source), incoming: None }),
             };
-            let bytes = match buffer.as_ref().get(..len) {
+            let bytes = match buffer.get(..len) {
                 Some(bytes) => bytes,
                 None => return Err(Rejected { fail: Fail::Decode, incoming: None }),
             };

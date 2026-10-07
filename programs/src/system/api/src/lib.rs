@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod identity;
+
 #[mold::interface(id = "sqware.system.loader.v1")]
 pub mod loader {
     use env::{PieToken, TaskId};

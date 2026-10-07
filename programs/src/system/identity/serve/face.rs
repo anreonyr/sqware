@@ -4,10 +4,10 @@ use crate::system::{common::face::mount, life::Status};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::{HoleDir, PieToken, Wait};
 use env::pie;
-use ipc::hand::Sender;
-use protocol::system::identity::{self as api, Grant, Reply, Wire};
+use ipc::rpc;
+use system_api::identity::{self as api, Grant, Reply};
+use protocol::system::identity::rpc::Contract;
 use ::resource::{
-    raw::{Hole, reserve},
     pile::Pile,
     port::{self, Access, Policy},
 };
@@ -16,7 +16,7 @@ pub(super) struct Buffer(pub Vec<u8>);
 pub(super) struct Inbox(pub VecDeque<Incoming>);
 pub(super) struct Incoming {
     pub request: IdentityRequest,
-    pub back: PieToken,
+    pub back: rpc::reply::Sender<Reply>,
 }
 pub(super) enum Current {
     Empty,
@@ -72,22 +72,22 @@ pub(super) fn receive(
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
     if let Some((entry, grant)) = &ready.0 {
-        while let Ok((n, from)) = Hole::from_raw(*entry).pull(&mut buffer.0, Wait::POLL) {
-            let Some((wire, back)) = Wire::take(&buffer.0[..n]) else {
-                continue;
+        let receiver = rpc::request::Receiver::<Contract>::from_raw(*entry);
+        loop {
+            let incoming = match receiver.receive(&mut buffer.0, Wait::POLL) {
+                Ok(incoming) => incoming,
+                Err(rejected) if matches!(rejected.fail, rpc::Fail::Receive(_)) => break,
+                Err(_) => continue,
             };
-            if !matches!(reserve(back), Ok((_, owner, mark)) if owner == from && mark == api::BACK)
-            {
-                continue;
-            }
+            let (wire, _) = incoming.request;
             inbox.0.try_reserve(1).map_err(|_| Fail::Room)?;
             inbox.0.push_back(Incoming {
                 request: IdentityRequest {
-                    from,
+                    from: incoming.from,
                     grant: *grant,
                     wire,
                 },
-                back,
+                back: incoming.reply,
             });
         }
     }
@@ -120,8 +120,7 @@ pub(super) fn reply(
     if !matches!(*current, Current::Answered { .. }) { return Err(Fail::Book); }
     let Current::Answered { incoming, reply } = core::mem::replace(&mut *current, Current::Empty)
         else { unreachable!() };
-    let _ = Sender::<Reply>::from_raw(incoming.back).send(reply);
-    let _ = pie::release(incoming.back);
+    let _ = incoming.back.send(reply);
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {

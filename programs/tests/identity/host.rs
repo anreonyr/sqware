@@ -1,25 +1,8 @@
-//! Standalone host entry: real ABI and protocol types, no runtime dependency.
+//! Standalone host entry for the authority model and provider-owned API.
 extern crate alloc;
 extern crate self as protocol;
 
-#[path = "../../../../../crates/protocol/src/common/table.rs"]
-pub mod table;
-pub mod common {
-    pub use crate::table;
-}
-
-#[path = "../../../../../crates/protocol/src/wire/message.rs"]
-pub mod message;
-pub mod wire {
-    pub use crate::message;
-    pub const OK: u8 = 0;
-}
-#[path = "../../../../../crates/protocol/src/system/identity/limits.rs"]
-pub mod limits;
-#[path = "../../../../../crates/protocol/src/system/identity/grant.rs"]
-pub mod grant;
-#[path = "../../../../../crates/protocol/src/system/identity/frame/mod.rs"]
-pub mod frame;
+pub use system_api::identity::{frame, grant, limits};
 pub mod system {
     pub mod identity {
         pub use crate::book as core;

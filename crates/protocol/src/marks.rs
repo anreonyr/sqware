@@ -3,7 +3,7 @@ use crate::common::marks::{Definition, conflict};
 pub(crate) const GROUPS: &[&[Definition]] = &[
     crate::system::control::marks::DECLARATIONS,
     &crate::system::control::Grant::DECLARATIONS,
-    crate::system::identity::marks::DECLARATIONS,
+    &crate::system::identity::marks::DECLARATIONS,
     &crate::system::identity::Grant::DECLARATIONS,
     crate::system::operator::marks::DECLARATIONS,
     &crate::system::operator::Grant::DECLARATIONS,

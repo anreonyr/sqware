@@ -389,6 +389,7 @@ dependencies = [
  "protocol",
  "resource",
  "schedule",
+ "system-api",
  "zeroize",
 ]
 

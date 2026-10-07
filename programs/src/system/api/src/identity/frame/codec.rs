@@ -6,7 +6,7 @@ use super::{
     data::{Back, Optional, Task, valid_selector},
     vocab::*,
 };
-use crate::wire::message::Message;
+use wire::message::Message;
 use env::{PieToken, wire::Span};
 
 #[derive(env::Frame)]
@@ -36,7 +36,7 @@ fn get<T: Span>(bytes: &[u8], at: &mut usize) -> Option<T> {
 }
 
 impl Span for Install {
-    const MAX: Option<usize> = env::wire::total(&[<u8 as Span>::MAX, Some(Restricted::LEN)]);
+    const MAX: Option<usize> = wire::total(&[<u8 as Span>::MAX, Some(Restricted::LEN)]);
     fn store_at(&self, bytes: &mut [u8], mut at: usize) -> Option<usize> {
         match *self {
             Self::Authorized(subject) => {

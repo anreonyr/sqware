@@ -2,7 +2,7 @@ use super::super::limits::{MAX_ACTIVE_COALITIONS, MAX_PAGE_ITEMS};
 use env::TaskId;
 use env::wire::Span;
 
-pub use crate::wire::OK;
+pub use wire::OK;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, env::WireCodes)]
 pub enum Fail {

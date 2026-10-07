@@ -1,7 +1,7 @@
 use env::TaskId;
-use protocol::system::identity::{Fail, PrincipalId, limits};
+use system_api::identity::{Fail, PrincipalId};
 
-use super::IdentityBook;
+use super::{IdentityBook, limits};
 
 pub(super) struct PrincipalNode {
     pub(super) parent: Option<PrincipalId>,
