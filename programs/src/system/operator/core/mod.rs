@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
 
-use protocol::common::path::{Path, PathBuf};
+use system_api::operator::path::{Path, PathBuf};
 use ipc::session::{alive, opened_by};
-use protocol::system::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
+use system_api::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
 use env::pie;
 use ::resource::raw::{pies};
 
@@ -489,10 +489,10 @@ impl Operator {
     }
 }
 
-// 真正的对照表只有一份（protocol::system::operator::frame）；`gate` 为了"不带载体"自己
+// 真正的对照表只有一份（system_api::operator::frame）；`gate` 为了"不带载体"自己
 // 看得见 `gate` 与 `frame`。
 const _: () = {
-    use protocol::system::operator::frame;
+    use system_api::operator::frame;
     assert!(gate::WIRE_OK == frame::OK);
     assert!(gate::WIRE_DENIED == frame::DENIED);
     assert!(gate::WIRE_UNJUDGED == frame::UNJUDGED);

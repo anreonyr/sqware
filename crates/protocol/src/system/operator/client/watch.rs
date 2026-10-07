@@ -23,14 +23,14 @@ use env::{MailFail, Wait};
 use ::resource::port::{self, Access, Policy};
 
 use crate::common::path::{Path, PathBuf};
-use ipc::hand::{Receiver, RecvFail};
 use crate::system::operator::frame::Event;
 use crate::system::operator::frame::watch::EventFrame;
 use crate::system::operator::{EntryId, Fail};
+use ipc::hand::{Receiver, RecvFail, SourceFail};
 
 use super::{Face, map_code};
 use crate::system::operator as ocall;
-use ::resource::raw::{Hole};
+use ::resource::raw::Hole;
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
 use crate::system::operator::marks::WATCH_MARK;
@@ -92,19 +92,28 @@ impl<'a> Watch<'a> {
     ///
     /// 取回来的是**持树者那一格的载荷**：号前进了 ⇒ 收下（中间丢了几条自己算）；号没前进 ⇒
     /// 这一条读过，丢掉再看。到期仍没有 ⇒ `Err(RecvFail::Mail(Busy))`（与 `Receiver` 同一套词）。
-    pub fn next(&mut self, within: Wait) -> Result<Event, RecvFail> {
+    pub fn next(&mut self, within: Wait) -> Result<Event, SourceFail> {
         let until = ipc::time::deadline(within);
         loop {
-            if let Ok(ev) = self.read.recv(&mut self.buf, Wait::POLL)
-                && let Some(ev) = self.accept(ev)
+            match self
+                .read
+                .recv_from(self.face.host(), &mut self.buf, Wait::POLL)
             {
-                return Ok(ev);
+                Ok(ev) => {
+                    if let Some(ev) = self.accept(ev) {
+                        return Ok(ev);
+                    }
+                }
+                Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy))) => {}
+                Err(error) => return Err(error),
             }
             let remain = ipc::time::remain(until);
             if remain == Wait::POLL {
-                return Err(RecvFail::Mail(MailFail::Busy));
+                return Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy)));
             }
-            let ev = self.read.recv(&mut self.buf, remain)?;
+            let ev = self
+                .read
+                .recv_from(self.face.host(), &mut self.buf, remain)?;
             if let Some(ev) = self.accept(ev) {
                 return Ok(ev);
             }
@@ -112,14 +121,17 @@ impl<'a> Watch<'a> {
     }
 
     /// 看一眼：**不前进**（孔上没手就答 `None`）。
-    pub fn try_next(&mut self) -> Result<Option<Event>, RecvFail> {
+    pub fn try_next(&mut self) -> Result<Option<Event>, SourceFail> {
         loop {
-            match self.read.recv(&mut self.buf, Wait::POLL) {
+            match self
+                .read
+                .recv_from(self.face.host(), &mut self.buf, Wait::POLL)
+            {
                 Ok(ev) => match self.accept(ev) {
                     Some(ev) => return Ok(Some(ev)),
                     None => continue,
                 },
-                Err(RecvFail::Mail(MailFail::Busy)) => return Ok(None),
+                Err(SourceFail::Receive(RecvFail::Mail(MailFail::Busy))) => return Ok(None),
                 Err(e) => return Err(e),
             }
         }

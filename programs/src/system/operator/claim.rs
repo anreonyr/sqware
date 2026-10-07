@@ -6,7 +6,7 @@
 use env::{Mark, PieToken, TaskId};
 use ipc::session::establish;
 use protocol::debug;
-use protocol::system::operator::LINK;
+use system_api::operator::LINK;
 use ::resource::raw::{pies};
 
 /// 读不出（不在本表里 / 不是孔 / 已封印）⇒ Mark::NONE——它不是任何一面，故

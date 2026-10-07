@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC、Loader RPC 及 Identity API/RPC 已落地；公共客户端独立成 crate、其余接口迁移与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC、Loader RPC、Identity API/RPC 及 Operator API/会话调用已落地；公共客户端独立成 crate、Control 接口迁移与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -351,6 +351,17 @@ Identity 已作为第二例迁移：
 - 完整请求头但损坏动作载荷仍解码为 `None`，合法回程收到 `Bad`；不可信回程直接拒绝。保留一页收件缓冲，rpc 接收允许调用方提供字节切片，由 codec 判断合法帧上限，避免超长帧阻塞后续请求。
 - 本批 64 项宿主检查通过：Identity codec 7、authority 模型 11、Identity 客户端与契约 9、IPC 16、Mark 3、Loader 11、System 边界 7。客户端测具使用真实源码与 codec，模拟发现、资源查询和 IPC 边界；真实 RPC 生命周期另由 IPC 测具验证。
 - programs 全目标编译与 QEMU accept、product、system-fault 均通过。公共客户端实现与 RPC 契约绑定暂留 protocol；移入 system-client 并删除兼容导出属于后续批次。
+
+Operator 的提供方 API 与会话调用已迁移：
+
+- `system-api::operator` 拥有请求／应答、bootstrap 提示、事件记录、Permit、错误码、8 个 Grant、Mark 和 Path/PathBuf；原 protocol 的 frame、grant、marks、common path/name 只重导出同一实现。
+- 保持线上动作码、Grant 位次与记号原值；动作码 Land=1/Part=2 与 Grant Part=1/Land=2 是不同轴，不在提取时互换。EntryId 的 8 字节小端实现归 API，旧 Id trait 仅在 protocol 做兼容适配。
+- 持久会话的请求不携带回程字段，继续使用已建立的 Session。`ipc::session::Contract` 固定 Req/Union，`Session::call` 从 talk 发请求、从 link 接收应答，两步共享一次 Deadline，不自动重发。
+- `hand::Receiver::recv_from` 在解码前验证内核发送者；会话应答、服务端请求和 Watch 事件均使用该入口。SourceFail 区分来源错误与原 RecvFail，未校验来源的既有 recv 接口保持原样。
+- 模型与服务端直接依赖提供方 API。Grant 判定、Control 修改权限、Permit 判决、能力转授、bootstrap 接线和事件序号／路径过滤仍归各自原模块；没有把订阅改为一次性 RPC。
+- 一次性 RPC 的独立回程隔离不适用于持久 Session；现有会话报文没有调用关联号，本批未解决超时后迟到应答的配对。这一项须在会话生命周期迁移时明确处理。
+- Operator 专属宿主检查覆盖八条请求与各类应答的固定字节、Permit authority、Path 规范化、bootstrap／事件形状和真实权限判决；IPC 会话测具检查 talk/link 路由、共享预算、来源验证顺序、错误分类及大缓冲收件。
+- 本批 61 项宿主检查通过：Operator API/判决 10、IPC 会话 7、一次性 RPC 16、Identity codec 7、Mark 3、Loader 11、System 边界 7；programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 
@@ -403,7 +414,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec、通用 IPC、Loader RPC 与 Identity API/RPC 已完成；接下来迁 Operator，再迁 Control，并收拢独立 system-client。
+第 6 批的纯 codec、通用 IPC、Loader RPC、Identity API/RPC 与 Operator API/会话调用已完成；接下来迁 Control，并收拢独立 system-client。
 
 ## 迁移后的命名口径
 
@@ -437,6 +448,8 @@ cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml 
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 sh programs/src/system/identity/core/test-host.sh
 nu scripts/qtest.nu --package kernel --scene accept
 nu scripts/qtest.nu --package kernel --scene product

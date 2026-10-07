@@ -7,9 +7,8 @@ use super::{
 use crate::system::{common::face::desk::Desk, life::Status, operator::core::Operator};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::PieToken;
-use protocol::{
-    system::{identity::client::TaskQuery, operator as ocall},
-};
+use protocol::system::identity::client::TaskQuery;
+use system_api::operator as ocall;
 use ::resource::pile::Pile;
 pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     let mut resources = Resources::new();

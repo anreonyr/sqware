@@ -23,7 +23,7 @@ mod tests {
     use definitions::{Definition, conflict};
     #[test]
     fn declared_domains_are_unique_and_existing_values_are_preserved() {
-        let groups = [control::DECLARATIONS, &identity::DECLARATIONS, operator::DECLARATIONS,
+        let groups = [control::DECLARATIONS, &identity::DECLARATIONS, &operator::DECLARATIONS,
             loader::DECLARATIONS, driver::DECLARATIONS, hub::DECLARATIONS, terminal::DECLARATIONS];
         assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 29);
         assert_eq!(conflict(&groups), None);

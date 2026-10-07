@@ -5,7 +5,7 @@ pub(crate) const GROUPS: &[&[Definition]] = &[
     &crate::system::control::Grant::DECLARATIONS,
     &crate::system::identity::marks::DECLARATIONS,
     &crate::system::identity::Grant::DECLARATIONS,
-    crate::system::operator::marks::DECLARATIONS,
+    &crate::system::operator::marks::DECLARATIONS,
     &crate::system::operator::Grant::DECLARATIONS,
     crate::system::loader::REGISTRY,
     crate::driver::marks::DECLARATIONS,

@@ -8,5 +8,5 @@
 pub mod receiver;
 pub mod sender;
 
-pub use receiver::{Receiver, RecvFail};
+pub use receiver::{Receiver, RecvFail, SourceFail};
 pub use sender::{SendFail, Sender};

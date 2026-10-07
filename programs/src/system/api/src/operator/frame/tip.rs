@@ -5,11 +5,11 @@ use env::wire::Field;
 use env::{PieToken, TaskId};
 
 use super::{EntryId, Permit};
-use crate::common::path::{Path, PathBuf};
+use crate::operator::path::{Path, PathBuf};
 use env::wire::Span as _;
 
 /// Bootstrap acknowledgements are separate from ordinary Operator sessions.
-pub use crate::system::operator::marks::TIP_BACK;
+pub use crate::operator::marks::TIP_BACK;
 
 /// 提示之路上的两个 `kind`（首格；表外 ⇒ 这一帧读不懂）
 const TIP_PLATE: u8 = 1;
@@ -180,7 +180,7 @@ impl Tip {
     }
 }
 
-impl crate::wire::message::Message for Tip {
+impl wire::message::Message for Tip {
     type In = TipIn;
     type Buf = [u8; TIP_LEN];
     const EMPTY: Self::Buf = [0; TIP_LEN];

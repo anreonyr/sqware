@@ -7,8 +7,8 @@ use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId, Wait};
-use protocol::common::path::{Path, PathBuf};
-use protocol::system::operator::Event;
+use system_api::operator::path::{Path, PathBuf};
+use system_api::operator::Event;
 use protocol::wire::message::Message;
 
 use crate::system::operator::core::Operator;
@@ -154,9 +154,7 @@ pub fn event_at(tree: &Operator, change: crate::system::operator::core::Change) 
 }
 
 use super::{Fail, answer::Output, session::Request};
-use protocol::{
-    system::operator as ocall,
-};
+use system_api::operator as ocall;
 pub(super) fn subscribe(
     mut request: ResMut<Request>,
     mut watchers: ResMut<Watchers>,

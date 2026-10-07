@@ -4,9 +4,7 @@ use super::{
     tip::{self, Ack},
     watch,
 };
-use protocol::{
-    system::operator as ocall,
-};
+use system_api::operator as ocall;
 pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     let mut start = Schedule::sequence();
     start.system("tip", tip::tip)?;

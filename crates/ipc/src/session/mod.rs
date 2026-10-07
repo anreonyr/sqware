@@ -4,6 +4,8 @@
 
 pub mod establish;
 pub use establish::{Endpoint, Held, alive, opened_by};
+pub mod exchange;
+pub use exchange::{CallFail, Contract};
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
@@ -37,6 +39,15 @@ pub enum Fail {
 }
 
 impl Session {
+    /// Send one typed request and receive its typed response within one shared budget.
+    pub fn call<C: Contract>(
+        &self,
+        request: C::Request,
+        within: Wait,
+    ) -> Result<<C::Response as wire::Message>::In, CallFail> {
+        exchange::call::<C>(self, request, within)
+    }
+
     /// 开一条到 `berth` 那条路的会话
     /// `holder` = 客人认的对端 = **它的生我者**：孔交给它，它再转授给那条路上真正的服务
     pub fn open(holder: TaskId, berth: Berth, millis: Wait) -> Result<Session, Fail> {

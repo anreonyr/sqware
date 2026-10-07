@@ -3,13 +3,12 @@
 use alloc::string::String;
 use env::PieToken;
 
-use crate::common::path::{Path, PathBuf};
+use crate::operator::path::{Path, PathBuf};
 
-use crate::wire::id::Id as _;
-use crate::wire::message::Message;
+use wire::message::Message;
 
 use super::vocab::{BAD, EntryId, PANE_CAP, Permit, Where};
-use crate::wire::OK;
+use wire::OK;
 use env::wire::Span as _;
 
 /// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）

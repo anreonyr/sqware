@@ -1,7 +1,7 @@
 use crate::system::operator::core::{Change, Location, Operator, Tile};
 use alloc::{string::ToString, vec::Vec};
 use env::{PieToken, TaskId};
-use protocol::system::operator::{EntryId, Fail, Where};
+use system_api::operator::{EntryId, Fail, Where};
 use env::pie;
 use ::resource::raw::{alive};
 

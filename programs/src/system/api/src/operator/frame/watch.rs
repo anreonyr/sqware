@@ -16,8 +16,8 @@
 use env::TaskId;
 use env::wire::Field as _;
 
-use crate::common::path::{Path, PathBuf};
-use crate::wire::message::Message;
+use crate::operator::path::{Path, PathBuf};
+use wire::message::Message;
 
 use super::vocab::EntryId;
 use env::wire::Span as _;

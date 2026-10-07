@@ -38,6 +38,26 @@ impl<M: Message> Receiver<M> {
         M::fetch(bytes).ok_or(RecvFail::Unread(n))
     }
 
+    /// Receive a frame only from the expected task. The frame is consumed before its
+    /// source is checked, and source checking happens before decoding.
+    pub fn recv_from(
+        &self,
+        expected: env::TaskId,
+        buffer: &mut [u8],
+        wait: Wait,
+    ) -> Result<M::In, SourceFail> {
+        let (n, from) = Hole::from_raw(self.hole)
+            .pull(buffer, wait)
+            .map_err(|e| SourceFail::Receive(RecvFail::Mail(e.source)))?;
+        if from != expected {
+            return Err(SourceFail::WrongSource);
+        }
+        let bytes = buffer
+            .get(..n)
+            .ok_or(SourceFail::Receive(RecvFail::Unread(n)))?;
+        M::fetch(bytes).ok_or(SourceFail::Receive(RecvFail::Unread(n)))
+    }
+
     /// **队里还排着几手**（`Peek` 的第三格；空队答 **0**，不是错误）。
     ///
     /// 孔上可以排着至多 `QUEUE_CAP` 只手：读者据此知道"还有几条要取"（取干为止的那一圈
@@ -63,4 +83,11 @@ pub enum RecvFail {
     Mail(MailFail),
     /// 收到了 `len` 字节，解不动（`buffer` 前 `len` 字节就是那一条原始帧）
     Unread(usize),
+}
+
+/// Failure of a receive which requires a particular sender.
+#[derive(Debug)]
+pub enum SourceFail {
+    Receive(RecvFail),
+    WrongSource,
 }

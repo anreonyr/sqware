@@ -23,6 +23,7 @@ pub use frame::{EntryId, Fail, Where};
 pub use crate::common::path::Path;
 
 pub mod client;
+pub mod exchange;
 
 /// **操作面那一维**：一枚 `Grant` = 一枚操作（`part` / `land` / …）。
 ///

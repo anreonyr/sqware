@@ -165,6 +165,7 @@ impl<M: Message> Drop for Sender<M> {
 /// - SendFail::Unbound = **没有写端**（对端那一枚还没认到）
 /// - SendFail::Mail = **搬不动**，原样的域词汇（`Busy` / `Dead` / `Denied` / `Gone`）
 /// **不另造一套码**：Mail 域的词表是它的失败域，这一层只把"哪一步失败"说清，不换词
+#[derive(Debug)]
 pub enum SendFail {
     Unbound,
     TooLong,

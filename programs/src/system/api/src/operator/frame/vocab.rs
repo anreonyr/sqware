@@ -3,8 +3,8 @@
 
 use env::Mark;
 
-use crate::system::identity::Selector;
-use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use crate::identity::Selector;
+use wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// 一枚条目的**号**：机器用的那一个
 /// **裸号**：与 PrincipalId / CoalitionId
@@ -21,9 +21,11 @@ impl EntryId {
     }
 
     /// 裸号
-    pub const fn get(self) -> usize {
-        self.0
-    }
+    pub const fn get(self) -> usize { self.0 }
+
+    pub const fn to_bytes(self) -> [u8; 8] { (self.0 as u64).to_le_bytes() }
+
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self { Self(u64::from_le_bytes(bytes) as usize) }
 }
 
 /// 一块 Pane 的有界容量；必须容纳统一 Identity 的 17 个独立动作面。
@@ -49,7 +51,7 @@ pub enum Where {
 /// **后两格（Fail::Denied / Fail::Unjudged）来自门外那一问**：核心一个字节都不知道
 /// 它们，但它们同样是**客侧要按下一步区分**的
 /// 答案 ⇒ 与前面六格同住这一枚类型
-#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, env::WireCodes)]
 #[wire(also(BAD = 7))]
 pub enum Fail {
     /// 那一号/那一格不在树上 ⇒ 换个名字重来，或者先把中间那一层分出来
@@ -125,16 +127,16 @@ pub const SEEK: u8 = 7;
 pub const WATCH: u8 = 8;
 
 /// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）
-pub use crate::system::operator::marks::LINK;
+pub use crate::operator::marks::LINK;
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）
 /// **带面名**（本族那一枚是 `operator-ask`，提示那一枚是 `*-tip`）：问话孔的认领键是
 /// "**谁开的 + 记号**"，而**同一枚任务可能同时是两族的客人**（`terminal` / `guest` / `principal`
 /// …都是）——两枚孔都铸在**它自己那张表**里，记号再一样就分不开了
-pub use crate::system::operator::marks::ASK_MARK;
+pub use crate::operator::marks::ASK_MARK;
 
 /// 提示孔那一枚上的记号（持树者铸它时刻上去的；装配者按它认领那一枚）
-pub use crate::system::operator::marks::TIP_MARK;
+pub use crate::operator::marks::TIP_MARK;
 
 const _: () = assert!(ASK_MARK.get() != Mark::of("ask").get());
 
@@ -151,6 +153,7 @@ const PERMIT_IDENTITY: u8 = 2;
 const PERMIT_OPENER: u8 = 3;
 
 /// **容器坐标那一格是"记 ＋ 号"**（9 字节）：`0` = 根（后面 8 字节**照写零**）、`1` = 某一号
+
 impl env::wire::Field for Where {
     const WIDTH: usize = 1 + <EntryId as env::wire::Field>::WIDTH;
 
@@ -210,7 +213,7 @@ impl env::wire::Field for Permit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::identity::{CoalitionId, PrincipalId};
+    use crate::identity::{CoalitionId, PrincipalId};
     use env::{TaskId, wire::Field};
 
     #[test]

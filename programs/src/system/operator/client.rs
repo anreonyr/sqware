@@ -8,13 +8,13 @@ use ::resource::port::{self, Access, Policy};
 
 use crate::system::common::timing::BOOT_MS;
 
-use protocol::common::path::Path;
+use system_api::operator::Path;
 use ipc::hand::Sender;
 use ipc::session::establish;
-use protocol::system::operator::{EntryId, Tip};
+use system_api::operator::{EntryId, Tip};
 use env::pie;
 use ::resource::raw::{Hole, pies, reserve};
-pub use protocol::system::operator::{LINK, TIP_MARK};
+pub use system_api::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
@@ -26,7 +26,7 @@ fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
 /// Consuming a bootstrap request does not prove its mutation succeeded.
 fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId, &'static str> {
     let host = establish::opened_by(into).ok_or("operator:tip source")?;
-    let (back, seed) = establish::lend_out(into, protocol::system::operator::TIP_BACK)
+    let (back, seed) = establish::lend_out(into, system_api::operator::TIP_BACK)
         .map_err(|_| "operator:tip reply")?;
     struct Back(PieToken);
     impl Drop for Back {
@@ -45,7 +45,7 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
         let (len, from) = Hole::from_raw(back)
             .pull(&mut status, Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip ack")?;
-        if len != 9 || from != host || status[0] != protocol::system::operator::OK {
+        if len != 9 || from != host || status[0] != system_api::operator::OK {
             return Err("operator:tip rejected");
         }
         Ok(EntryId::new(

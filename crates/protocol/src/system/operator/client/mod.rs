@@ -8,18 +8,15 @@
 
 use alloc::string::String;
 
-use crate::wire::message::Message;
-use env::{Wait, PieToken, TaskId};
 use ::resource::port::{self, Access, Policy};
+use env::{PieToken, TaskId, Wait};
 
 use crate::common::path::Path;
-use ipc::hand::Sender;
-use ipc::session::establish::Endpoint;
+use crate::system::operator as ocall;
+use crate::system::operator::{EntryId, Fail, Grant, Listing, Permit, Where};
+use ::resource::raw::Hole;
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
-use crate::system::operator as ocall;
-use crate::system::operator::{Fail, EntryId, Grant, Listing, Where, Permit};
-use ::resource::raw::{Hole};
 
 pub mod pane;
 pub mod tile;
@@ -125,7 +122,9 @@ impl Face {
 
     /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。**一处实现**：`Pane` / `Rein` 都走它
     fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
-        call(self.session.talk, &self.session.link, ask, wait)
+        self.session
+            .call::<super::exchange::Contract>(ask, wait)
+            .map_err(|_| Fail::Unknown)
     }
 }
 
@@ -165,7 +164,8 @@ impl Rein<'_> {
         wait: Wait,
     ) -> Result<EntryId, Fail> {
         let pie = Hole::from_raw(entry);
-        let shipped = port::ship(pie.token(),
+        let shipped = port::ship(
+            pie.token(),
             self.face.session.host,
             Access::FETCH | Access::STORE,
             Policy::VEST,
@@ -234,24 +234,6 @@ const RETRY_MIN_MS: usize = 10;
 /// 退避的封顶（毫秒）
 const RETRY_MAX_MS: usize = 100;
 
-/// 客侧第二步（内里那一手）：**编好的一问推上去，收一句答**
-/// 问话推 `say`（开会话那一手铸的问话孔，持树者读），答话从本端这条树路读（持树者写）
-/// 返**收进来的那一答**（ocall::Said）——**形状由问的人自己读**（答的四种形状在线上分不开
-fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
-    // 发：装上、递出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
-    let mut tx = Sender::<ocall::Req>::from_raw(say);
-    tx.send(ask).map_err(|_| Fail::Unknown)?;
-    // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
-    let mut buf = ocall::Union::EMPTY;
-    let said = link
-        .receiver::<ocall::Union>()
-        .recv(buf.as_mut(), wait)
-        // 两格失败（没收到 / 解不动）在这一侧落同一格：对本端是同一个下一步。
-        .map_err(|_| Fail::Unknown);
-    // Push 已把问话复制进内核队列，答话超时后发送缓冲可以直接销毁。
-    said
-}
-
 /// 沿一条路译成号：**译不出（`UNKNOWN`）就等一拍再来**——那几格可能由别的域落下，它可能落得比
 /// **`Forever` 就是一直等**（那道护栏留在类型上，不折成"很大的毫秒数"）；`AtMost(0)` = "不再等"
 /// ⇒ 就地问一次；**节拍退避**（见 RETRY_MIN_MS）——故一趟注定译不出的路最多十来次往返
@@ -261,7 +243,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
     let mut backoff = RETRY_MIN_MS;
     let mut rounds: usize = 0;
     loop {
-        match route(session.talk, &session.link, road, remain(until)) {
+        match route(session, road, remain(until)) {
             Ok(id) => return Ok(id),
             Err(Fail::Unknown) => {
                 // 到点（或本就是"不再等"）⇒ 原样交回最后一次的答案。
@@ -272,8 +254,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
                     return Err(Fail::Unknown);
                 }
                 rounds += 1;
-                let _ =
-                    execution::room::park(core::time::Duration::from_millis(backoff as u64));
+                let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
                 backoff = (backoff * 2).min(RETRY_MAX_MS);
                 // Do not enqueue a final request with no time left to receive its reply.
                 if remain(until) == Wait::POLL {
@@ -285,14 +266,11 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
     }
 }
 
-/// **一条路上两条腿的口径**，一处照实写：译号这一腿带退避重试（road_to_id），取门闩那一问
-/// （Tile::token）就地问一次——两条腿各管自己那一问，没有"合起来算额度"的函数
-/// **它仍不是"整趟时限"**：连"推得进去"都不保证——`call` 那一步是 `Sender::send(ask)`
-/// （**一次尝试**，Wait::POLL），孔是单槽，槽里压着未读问话就答 `Busy`（那一位可能正被别的
-
 /// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**
-fn route(say: PieToken, link: &Endpoint, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-    let said = call(say, link, ocall::Req::Road(road.to_path_buf()), wait)?;
+fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
+    let said = session
+        .call::<super::exchange::Contract>(ocall::Req::Road(road.to_path_buf()), wait)
+        .map_err(|_| Fail::Unknown)?;
     said.entry().map_err(map_code)
 }
 

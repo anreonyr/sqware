@@ -4,7 +4,7 @@ use ::schedule::{Progress, Res, ResMut};
 
 use env::{TaskId, Wait};
 use protocol::system::identity::{TaskQuery, Match, Selector};
-use protocol::system::operator::{EntryId, Permit};
+use system_api::operator::{EntryId, Permit};
 
 use crate::system::operator::core::Operator;
 use crate::system::operator::core::gate::{Code, verdict};
@@ -81,9 +81,7 @@ pub(super) fn authorize(
 use super::{answer::Output, session::Request};
 use crate::system::life::Status;
 use alloc::sync::Arc;
-use protocol::{
-    system::operator as ocall,
-};
+use system_api::operator as ocall;
 pub(super) struct Judgment(pub Option<(TaskId, Permit, Code)>);
 pub(super) fn validate(
     status: Res<Arc<Status>>,

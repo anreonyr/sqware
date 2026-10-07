@@ -3,7 +3,7 @@
 
 use env::TaskId;
 
-use protocol::system::operator::{Permit, Ruling};
+use system_api::operator::{Permit, Ruling};
 
 use super::judge::{Facts, judge};
 

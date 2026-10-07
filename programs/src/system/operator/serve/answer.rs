@@ -1,9 +1,7 @@
 use ::schedule::{Progress, ResMut};
 use super::session::Request;
 use crate::system::operator::core::{Location, Tile, Key, Operator};
-use protocol::{
-    system::operator as ocall,
-};
+use system_api::operator as ocall;
 use ::resource::raw::Hole;
 use ::resource::port::{self, Access, Policy};
 pub(super) struct Output<T> {

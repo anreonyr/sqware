@@ -6,9 +6,9 @@ use crate::system::{
 };
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
-use ipc::hand::Sender;
-use protocol::{debug, system::operator as ocall};
-use ::resource::raw::Hole;
+use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
+use protocol::debug;
+use system_api::operator as ocall;
 use ::resource::pile::Pile;
 const SETTLE_MS: usize = 1;
 const LATE_MS: usize = 1000;
@@ -104,12 +104,11 @@ pub(super) fn receive(
     request.0 = None;
     if let Some(guest) = selected.0 {
         if let Some(ask) = guest.ask() {
-            let decoded = match Hole::from_raw(ask).pull(&mut buffer.0, Wait::POLL) {
-                Ok((n, from)) if from == guest.who() => {
-                    <ocall::Req as protocol::wire::message::Message>::fetch(&buffer.0[..n])
-                }
-                Ok(_) => return Ok(Progress::Done),
-                Err(_) => None,
+            let decoded = match Receiver::<ocall::Req>::from_raw(ask)
+                .recv_from(guest.who(), &mut buffer.0, Wait::POLL) {
+                Ok(wire) => Some(wire),
+                Err(SourceFail::Receive(RecvFail::Unread(_))) => None,
+                Err(_) => return Ok(Progress::Done),
             };
             request.0 = Some(Incoming {
                 guest,
