@@ -2,7 +2,7 @@ use ::schedule::{Progress, Res, ResMut};
 use crate::system::{
     control::serve::start::BOOT_MS,
     identity,
-    identity::client::install::Roster,
+    control::identity::Roster,
     run::names::{Names, Registration},
     life::{Phase, Status},
     operator,
@@ -107,12 +107,12 @@ pub fn adopt(status: Res<Arc<Status>>, mut tree: ResMut<Tree>) -> Result<Progres
     )?;
     Ok(Progress::Done)
 }
-pub fn identity(
+pub(crate) fn identity(
     status: Res<Arc<Status>>,
     mut roster: ResMut<Roster>,
     mut faces: ResMut<Faces>,
 ) -> Result<Progress, &'static str> {
-    faces.0 = identity::client::install::install(
+    faces.0 = crate::system::control::identity::install(
         &mut roster,
         TaskId::new(status.operator.load(Ordering::Acquire)),
         TaskId::new(status.identity.load(Ordering::Acquire)),
@@ -120,13 +120,13 @@ pub fn identity(
     .to_vec();
     Ok(Progress::Done)
 }
-pub fn wire(
+pub(crate) fn wire(
     roster: Res<Roster>,
     faces: Res<Faces>,
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
     tree.wire(Wiring {
-        authority: identity::client::query::current_authority(&roster)
+        authority: crate::system::control::identity::current_authority(&roster)
             .ok_or("identity authority")?,
         faces: [
             faces.0[id::Grant::Resolve.index()],
@@ -137,7 +137,7 @@ pub fn wire(
     Ok(Progress::Done)
 }
 
-pub fn name(
+pub(crate) fn name(
     roster: Res<Roster>,
     mut names: ResMut<Names>,
     mut tree: ResMut<Tree>,
@@ -145,7 +145,7 @@ pub fn name(
     let object = system_client::control::publication::Object::Principal(
         roster.control().ok_or("Control identity missing")?,
     );
-    identity::client::query::validate(&roster, object).map_err(|_| "Control identity source")?;
+    crate::system::control::identity::validate(&roster, object).map_err(|_| "Control identity source")?;
     names.register(
         &mut tree,
         Registration {

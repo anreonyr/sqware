@@ -4,7 +4,7 @@ use crate::system::{
     boot::Mounts,
     common::face::mount,
     control::serve::{start::Images, watch::Watch},
-    identity::client::install::Roster,
+    control::identity::Roster,
 };
 use system_api::operator::Path;
 use system_client::{identity as id, operator as op};
@@ -19,7 +19,7 @@ pub fn publication_face(
     });
     Ok(Progress::Done)
 }
-pub fn faces(
+pub(crate) fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,
     mut watch: ResMut<Watch>,

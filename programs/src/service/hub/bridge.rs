@@ -41,10 +41,10 @@ impl Activation {
         Ok(owned)
     }
 
-    pub fn poll(
+    pub(crate) fn poll(
         &self,
         control: &Control,
-        roster: &crate::system::identity::client::install::Roster,
+        roster: &crate::system::control::identity::Roster,
     ) {
         let mut bytes = [0; env::PAGE_SIZE];
         while let Ok((len, from)) = Hole::from_raw(self.entry).pull(&mut bytes, Wait::POLL) {
@@ -122,7 +122,7 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
 pub(crate) fn maintain(
     activation: Res<Option<Activation>>,
     control: Res<crate::system::control::serve::unit::Control>,
-    roster: Res<crate::system::identity::client::install::Roster>,
+    roster: Res<crate::system::control::identity::Roster>,
 ) -> Result<Progress, &'static str> {
     if let Some(activation) = activation.as_ref() {
         activation.poll(&control, &roster);

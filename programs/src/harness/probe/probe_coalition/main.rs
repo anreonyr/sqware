@@ -45,7 +45,7 @@ fn main() -> Report<'static> {
 
     assert_eq!(icall::Grant::ALL.len(), 17);
     step(&tree, "identity", icall::DIR, icall::Grant::ALL.len());
-    let authority = programs::system::identity::client::source::authority()
+    let authority = system_client::identity::authority()
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in icall::Grant::ALL {
         let entry = if grant.mount() == icall::Mount::Installer {

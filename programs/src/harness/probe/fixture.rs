@@ -9,7 +9,7 @@ use crate::system::{
             unit::Control,
         },
     },
-    identity::client::install::Roster,
+    control::identity::Roster,
     run::bootstrap::Boot,
 };
 use crate::unit::{Died, UnitFile};

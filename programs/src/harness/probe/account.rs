@@ -335,11 +335,11 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     let login_subject = {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();
-        crate::system::identity::client::query::binding(&roster, worker.id())
+        crate::system::control::identity::binding(&roster, worker.id())
             .unwrap()
             .unwrap()
             .current
@@ -407,9 +407,9 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         if stage != 0 && stage != observed {
             let roster = assembly
                 .resources
-                .read::<crate::system::identity::client::install::Roster>()
+                .read::<crate::system::control::identity::Roster>()
                 .unwrap();
-            let binding = crate::system::identity::client::query::binding(&roster, target).unwrap();
+            let binding = crate::system::control::identity::binding(&roster, target).unwrap();
             let runtime = assembly
                 .resources
                 .read::<crate::system::run::resource::Resources>()
@@ -474,13 +474,13 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap();
         roster.unbind(worker_id).unwrap();
         roster.unbind(peer_id).unwrap();
         let target = TaskId::new(signals.target.load(Ordering::Acquire));
         assert!(
-            crate::system::identity::client::query::binding(&roster, target)
+            crate::system::control::identity::binding(&roster, target)
                 .unwrap()
                 .is_none()
         );

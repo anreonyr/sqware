@@ -43,7 +43,7 @@ pub(crate) fn command(
                 let wrong = env::TaskId::new(
                     assembly
                         .resources
-                        .read::<crate::system::identity::client::install::Roster>()
+                        .read::<crate::system::control::identity::Roster>()
                         .unwrap()
                         .authority()
                         .unwrap()
@@ -121,13 +121,13 @@ pub(crate) fn exercise(
     organization.admit(coalition, p, wait).unwrap();
     assembly
         .resources
-        .read::<crate::system::identity::client::install::Roster>()
+        .read::<crate::system::control::identity::Roster>()
         .unwrap()
         .activate(service, coalition)
         .unwrap();
     assembly
         .resources
-        .read::<crate::system::identity::client::install::Roster>()
+        .read::<crate::system::control::identity::Roster>()
         .unwrap()
         .activate(target, coalition)
         .unwrap();
@@ -138,10 +138,10 @@ pub(crate) fn exercise(
                 object: Object::Principal(p),
                 lifetime: None,
             };
-            crate::system::identity::client::query::validate(
+            crate::system::control::identity::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::client::install::Roster>()
+                    .read::<crate::system::control::identity::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -167,10 +167,10 @@ pub(crate) fn exercise(
                 object: Object::Coalition(coalition),
                 lifetime: None,
             };
-            crate::system::identity::client::query::validate(
+            crate::system::control::identity::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::client::install::Roster>()
+                    .read::<crate::system::control::identity::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -196,10 +196,10 @@ pub(crate) fn exercise(
                 object: Object::Coalition(coalition),
                 lifetime: None,
             };
-            crate::system::identity::client::query::validate(
+            crate::system::control::identity::validate(
                 &assembly
                     .resources
-                    .read::<crate::system::identity::client::install::Roster>()
+                    .read::<crate::system::control::identity::Roster>()
                     .unwrap(),
                 registration.object,
             )
@@ -227,10 +227,10 @@ pub(crate) fn exercise(
                     object: Object::Coalition(other),
                     lifetime: None,
                 };
-                crate::system::identity::client::query::validate(
+                crate::system::control::identity::validate(
                     &assembly
                         .resources
-                        .read::<crate::system::identity::client::install::Roster>()
+                        .read::<crate::system::control::identity::Roster>()
                         .unwrap(),
                     registration.object,
                 )
@@ -258,10 +258,10 @@ pub(crate) fn exercise(
                     object: Object::Principal(p),
                     lifetime: None,
                 };
-                crate::system::identity::client::query::validate(
+                crate::system::control::identity::validate(
                     &assembly
                         .resources
-                        .read::<crate::system::identity::client::install::Roster>()
+                        .read::<crate::system::control::identity::Roster>()
                         .unwrap(),
                     registration.object,
                 )
@@ -785,7 +785,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         });
         assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
@@ -811,7 +811,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         caller.join();
         assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap()
             .unbind(caller_id)
             .unwrap();

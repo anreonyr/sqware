@@ -3,7 +3,7 @@ use crate::system::control::core::{
     unit::{Slot, State, Table},
     verdict::Reaped,
 };
-use crate::system::identity::client::install::Roster;
+use crate::system::control::identity::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
 use programs::debug;

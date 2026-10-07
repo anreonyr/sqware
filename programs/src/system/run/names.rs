@@ -1,7 +1,7 @@
 use super::living::Living;
 use crate::system::control::serve::unit::Control;
-use crate::system::identity::client::install::Roster;
-use crate::system::identity::client::query::{current_authority, validate};
+use crate::system::control::identity::Roster;
+use crate::system::control::identity::{current_authority, validate};
 use crate::system::operator::core::Tile;
 use crate::system::operator::client::Tree;
 use crate::system::operator::Placement;
@@ -213,7 +213,7 @@ pub(crate) fn prepare(
             continue;
         }
         if let Some(binding) =
-            crate::system::identity::client::query::binding(&roster, task)
+            crate::system::control::identity::binding(&roster, task)
                 .map_err(|_| "alias identity query")?
         {
             pending

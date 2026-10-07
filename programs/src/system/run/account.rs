@@ -1,7 +1,7 @@
 //! Boot account identities and trusted Login construction.
 use super::names::{Names, Registration};
 use crate::system::control::serve::{Fail, unit::Control};
-use crate::system::identity::client::install::Roster;
+use crate::system::control::identity::Roster;
 use crate::system::operator::client::Tree;
 use ::schedule::{Progress, Res, ResMut};
 use env::{PieToken, Wait, pie, unit};
@@ -26,7 +26,7 @@ impl Accounts {
         })
     }
 }
-pub fn initialize(
+pub(crate) fn initialize(
     mut accounts: ResMut<Accounts>,
     roster: Res<Roster>,
 ) -> Result<Progress, &'static str> {

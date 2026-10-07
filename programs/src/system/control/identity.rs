@@ -9,13 +9,15 @@ use env::{Access, PieToken, Policy, TaskId, Wait};
 use system_client::identity::{Grant, Install, Installer, PrincipalId, Subject};
 use ::resource::port;
 
-use super::source::face_of;
-use crate::system::common::timing::BOOT_MS;
+use crate::system::common::timing::{BOOT_MS, RETRY_MS};
+use core::time::Duration;
+use ipc::session::establish;
+use resource::raw::reserve;
 
 const _: () = assert!(Grant::ALL.len() <= system_client::operator::frame::PANE_CAP);
 
 #[derive(Default)]
-pub struct Roster {
+pub(crate) struct Roster {
     installer: Option<Installer>,
     control: Option<PrincipalId>,
     resolve: Option<PieToken>,
@@ -26,7 +28,7 @@ impl Roster {
         *self = Self::default();
     }
 
-    pub fn control(&self) -> Option<PrincipalId> {
+    pub(crate) fn control(&self) -> Option<PrincipalId> {
         self.control
     }
 
@@ -35,7 +37,7 @@ impl Roster {
     }
 
     /// Give an external unit its own root-derived principal before embark.
-    pub fn authorize(&self, task: TaskId) -> Result<(), &'static str> {
+    pub(crate) fn authorize(&self, task: TaskId) -> Result<(), &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let root = PrincipalId::root(installer.authority());
         let principal = installer
@@ -48,7 +50,7 @@ impl Roster {
         self.inject(task)
     }
 
-    pub fn derive_subject(&self) -> Result<Subject, &'static str> {
+    pub(crate) fn derive_subject(&self) -> Result<Subject, &'static str> {
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let principal = installer
             .derive(
@@ -59,7 +61,7 @@ impl Roster {
         Subject::new(principal, &[]).map_err(|_| "derived subject")
     }
 
-    pub fn install(&self, task: TaskId, identity: Install) -> Result<(), &'static str> {
+    pub(crate) fn install(&self, task: TaskId, identity: Install) -> Result<(), &'static str> {
         self.installer
             .as_ref()
             .ok_or("identity not installed")?
@@ -68,7 +70,7 @@ impl Roster {
         self.inject(task)
     }
 
-    pub fn inherit(&self, task: TaskId, parent: TaskId) -> Result<(), &'static str> {
+    pub(crate) fn inherit(&self, task: TaskId, parent: TaskId) -> Result<(), &'static str> {
         self.install(task, Install::Inherit { parent })
     }
 
@@ -134,7 +136,7 @@ impl Roster {
             .map_err(|_| "device identity activate")
     }
 
-    pub fn unbind(&self, task: TaskId) -> Result<(), &'static str> {
+    pub(crate) fn unbind(&self, task: TaskId) -> Result<(), &'static str> {
         let Some(installer) = self.installer.as_ref() else {
             return Ok(());
         };
@@ -187,4 +189,80 @@ pub(crate) fn install(
         resolve: Some(face(Grant::Resolve)?),
     };
     Ok(core::array::from_fn(|i| faces[i].unwrap()))
+}
+
+mod query {
+    use super::Roster;
+    use crate::system::common::timing::BOOT_MS;
+    use env::{TaskId, Wait};
+    use ipc::session::establish;
+    use system_client::control::Object;
+    use system_client::identity::{Grant, Selector, Wire, client::Face};
+    use system_client::operator::{Fail, Permit};
+
+    pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
+        roster
+            .authority()
+            .filter(|authority| !env::unit::join(*authority, Wait::POLL).unwrap_or(true))
+    }
+    fn face(roster: &Roster, grant: Grant) -> Result<Face, Fail> {
+        let authority = roster.authority().ok_or(Fail::Unjudged)?;
+        let entry = establish::find(authority, grant.mark()).ok_or(Fail::Unjudged)?;
+        Face::direct(authority, grant, entry).map_err(|_| Fail::Unjudged)
+    }
+    pub(crate) fn binding(
+        roster: &Roster,
+        task: TaskId,
+    ) -> Result<Option<system_client::identity::Binding>, Fail> {
+        match face(roster, Grant::Resolve)?
+            .call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
+            .map_err(|_| Fail::Unjudged)?
+        {
+            system_client::identity::Reply::Binding(b) => Ok(b),
+            _ => Err(Fail::Unjudged),
+        }
+    }
+    pub(crate) fn validate(roster: &Roster, object: Object) -> Result<(), Fail> {
+        if roster.authority() != Some(object.authority()) {
+            return Err(Fail::Unjudged);
+        }
+        let (grant, wire) = match object {
+            Object::Principal(p) => (Grant::Heir, Wire::Heir(p, p)),
+            Object::Coalition(c) => (Grant::Members, Wire::Members(c, None)),
+        };
+        face(roster, grant)?
+            .call(wire, Wait::AtMost(BOOT_MS))
+            .map(|_| ())
+            .map_err(|_| Fail::Unjudged)
+    }
+    pub(crate) fn validate_permit(roster: &Roster, permit: Permit) -> Result<(), Fail> {
+        match permit {
+            Permit::Identity(Selector::Exact(p) | Selector::DescendantOf(p)) => {
+                validate(roster, Object::Principal(p))
+            }
+            Permit::Identity(Selector::MemberOf(c)) => validate(roster, Object::Coalition(c)),
+            _ => Ok(()),
+        }
+    }
+}
+
+pub(crate) use query::{binding, current_authority, validate, validate_permit};
+
+fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'static str> {
+    let mut left = BOOT_MS;
+    loop {
+        if let Some(entry) = establish::find(authority, grant.mark()) {
+            if matches!(reserve(entry), Ok((_, owner, mark))
+                if owner == authority && mark == grant.mark())
+            {
+                return Ok(entry);
+            }
+            return Err("identity face source");
+        }
+        if left == 0 {
+            return Err("identity face missing");
+        }
+        execution::room::park(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
+        left = left.saturating_sub(RETRY_MS);
+    }
 }

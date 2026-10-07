@@ -1,6 +1,6 @@
 use crate::system::control::serve::unit::Control;
 use crate::system::control::core::unit::{Slot, State};
-use crate::system::identity::client::{install::Roster, query::current_authority};
+use crate::system::control::identity::{Roster, current_authority};
 use crate::system::operator::client::Tree;
 use alloc::vec::Vec;
 use env::{TaskId, Wait};
@@ -49,7 +49,7 @@ pub fn capture(
     Ok(Progress::Done)
 }
 
-pub fn authority(
+pub(crate) fn authority(
     roster: Res<Roster>,
     mut living: ResMut<Living>,
 ) -> Result<Progress, &'static str> {

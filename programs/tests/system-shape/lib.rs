@@ -171,6 +171,23 @@ mod boundaries {
         assert!(dependencies.0.is_empty(), "{}", dependencies.0.join("\n"));
     }
     #[test]
+    fn identity_authority_does_not_own_control_installation_state() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let identity = repo.join("programs/src/system/identity");
+        assert!(!identity.join("client").exists());
+        let mut paths = References::default();
+        references(&identity, &mut paths);
+        assert!(!paths.0.iter().any(|path| path.contains("control::identity") || path.ends_with("::Roster")));
+        let source = fs::read_to_string(repo.join("programs/src/system/control/identity.rs")).unwrap();
+        let syntax = syn::parse_file(&source).unwrap();
+        let roster = syntax.items.iter().find_map(|item| match item {
+            syn::Item::Struct(item) if item.ident == "Roster" => Some(item),
+            _ => None,
+        }).expect("Control installation state");
+        assert!(matches!(&roster.vis, syn::Visibility::Restricted(vis) if vis.path.is_ident("crate")));
+        assert!(roster.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)));
+    }
+    #[test]
     fn global_composition_and_login_policy_are_outside_control() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for name in [

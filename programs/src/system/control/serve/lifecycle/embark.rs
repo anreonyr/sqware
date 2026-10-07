@@ -4,13 +4,13 @@ use crate::service::hub::bridge::Activation;
 use crate::system::control::serve::task::Readiness;
 use crate::system::{
     control::core::{unit::State, verdict::Fail},
-    identity::client::install::Roster,
+    control::identity::Roster,
 };
 use alloc::vec::Vec;
 use env::{Mark, Wait};
 use ::schedule::{Progress, Res, ResMut};
 
-pub fn pre(
+pub(crate) fn pre(
     mut active: ResMut<Active>,
     mut control: ResMut<Control>,
     roster: Res<Roster>,

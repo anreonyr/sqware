@@ -385,8 +385,8 @@ Control 的提供方 API 与三种 RPC 已迁移：
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 
-共享 injected authority 识别进入 System 客户端库，保留现有验证。
-System 的身份安装、启动重试和授权策略留在实现。
+共享 injected authority 识别已进入 system-client::identity::authority，保留 Sire、授予者和唯一原所有者的验证。
+System 的身份安装、启动重试和授权策略留在 Control 实现。
 拆 Hub bridge：公共调用归 Hub 客户端，System 接收授权归 launch。
 
 Terminal、Hub、驱动和测具的资源调用以及旧 runtime 删除已在前批完成。
@@ -423,6 +423,15 @@ protocol 删除已落地：
 - 15 项宿主检查及 QEMU accept、product、system-fault 均通过，覆盖别名、迟到／已排队重复回执、并发拒绝、发送失败复用、seal 失败及展开清理。
 
 ### 8. 收拢 System 的状态、计划和目录
+
+第一个职责切片已落地：
+
+- Control 的任务身份管理集中到 `system/control/identity.rs`：Roster、安装／继承／撤销、当前 authority 观察以及 Object/Permit 校验。状态字段私有，管理类型与方法仅 crate 内可见；内部调度 callbacks 同步收窄，不对外暴露 Roster。
+- Identity 权威服务保留 IdentityBook、原有 Grant 准入及请求处理，不拥有 Control 的安装状态。旧 identity/client 目录及 install/query/source 路径全部删除。
+- 普通使用方从 system-client::identity::authority 获取受信注入的 authority；等待管理入口的启动重试归 Control 私有 face_of，不进入公共发现函数。
+- 10 项 Identity 客户端/发现检查、9 项 System 职责边界检查、11 项 Identity authority 模型检查通过；全程序编译无警告，QEMU accept、product、system-fault 均通过。
+
+下一步仍需完成：
 
 Control 收起任务表、实例和 Loader 字段，提供必要的操作、观察和 hook 组合入口。
 launch 拥有准备与交付请求，不复制任务状态；app 注入必要子计划，打断循环依赖。

@@ -4,12 +4,12 @@ use crate::system::{
     boot::Mounts,
     common::face::mount,
     control::serve::Fail,
-    identity::client::install::Roster,
+    control::identity::Roster,
     operator::client::Tree,
     run::publication::{Internal, book::Publications},
 };
 use system_client::{identity, loader as call, operator};
-pub fn faces(
+pub(crate) fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,
     mut inbox: ResMut<Inbox>,

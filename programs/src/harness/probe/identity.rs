@@ -166,7 +166,7 @@ pub fn acceptance() {
     }
     let old_authority = assembly
         .resources
-        .read::<crate::system::identity::client::install::Roster>()
+        .read::<crate::system::control::identity::Roster>()
         .unwrap()
         .authority()
         .unwrap();
@@ -251,7 +251,7 @@ pub fn acceptance() {
     assert!(
         assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap()
             .activate(old_dependent, coalition)
             .is_err(),
@@ -372,7 +372,7 @@ pub fn acceptance() {
 }
 
 fn revision(assembly: &mut Fixture) {
-    use crate::system::identity::{client::install::Roster, revision::{Changed, Epoch}};
+    use crate::system::{control::identity::Roster, identity::revision::{Changed, Epoch}};
     use core::sync::atomic::Ordering;
     use system_client::identity::{
         PrincipalId, Reply, Wire,

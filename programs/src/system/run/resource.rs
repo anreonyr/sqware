@@ -1,8 +1,8 @@
 use crate::system::control::core::unit::{Slot, State, Table};
 use crate::system::control::serve::unit::Control;
 use super::living::Living;
-use crate::system::identity::client::install::Roster;
-use crate::system::identity::client::query::{binding, current_authority};
+use crate::system::control::identity::Roster;
+use crate::system::control::identity::{binding, current_authority};
 use crate::system::operator::core::Tile;
 use crate::system::operator::client::Tree;
 use crate::system::operator::Placement;
@@ -84,7 +84,7 @@ impl Resources {
         Ok(())
     }
 
-    pub fn policy(
+    pub(crate) fn policy(
         &self,
         incoming: &crate::system::run::publication::Incoming,
     ) -> Result<crate::system::run::publication::Decision, Fail> {

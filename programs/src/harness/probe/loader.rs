@@ -70,7 +70,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::client::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();

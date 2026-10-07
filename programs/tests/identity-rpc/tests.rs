@@ -22,6 +22,25 @@ fn reply(value: Reply) {
 }
 
 #[test]
+fn injected_authority_requires_parent_transfer_and_unique_original_owner() {
+    let parent = TaskId::new(2);
+    let trusted = TaskId::new(4);
+    let foreign = TaskId::new(5);
+    test_state::reset();
+    test_state::set_sire(parent);
+    test_state::authorize(entry(), foreign, trusted, Grant::Resolve.mark());
+    assert_eq!(identity::authority(), None);
+    test_state::authorize(entry(), parent, parent, Grant::Resolve.mark());
+    assert_eq!(identity::authority(), None);
+    test_state::authorize(entry(), parent, trusted, Grant::Resolve.mark());
+    assert_eq!(identity::authority(), Some(trusted));
+    test_state::authorize(PieToken::mint(72), parent, trusted, Grant::Resolve.mark());
+    assert_eq!(identity::authority(), Some(trusted));
+    test_state::authorize(PieToken::mint(73), parent, foreign, Grant::Resolve.mark());
+    assert_eq!(identity::authority(), None);
+}
+
+#[test]
 fn direct_validates_authority_and_grant_mark() {
     test_state::reset();
     let token = entry();

@@ -2,17 +2,17 @@
 use ::schedule::{Progress, Res, ResMut};
 use crate::system::{
     boot::{Faces, Mounts},
-    identity::client::{install::Roster, query},
+    control::identity::{Roster, current_authority},
     run::publication::Internal,
 };
 use system_client::{identity as id, operator as op};
-pub fn faces(
+pub(crate) fn faces(
     roster: Res<Roster>,
     faces: Res<Faces>,
     mut mounts: ResMut<Mounts>,
 ) -> Result<Progress, &'static str> {
     let principal = roster.control().ok_or("Control identity missing")?;
-    let authority = query::current_authority(&roster).ok_or("identity authority")?;
+    let authority = current_authority(&roster).ok_or("identity authority")?;
     for grant in id::Grant::ALL {
         let permit = match grant.mount() {
             id::Mount::Public => op::Permit::Public,
