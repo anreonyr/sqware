@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-# Independent host harness: compile the actual pure codec without runtime's RISC-V assembly.
+# Independent host harness: compile the pure codec without execution's RISC-V assembly.
 [workspace]
 
 [dependencies]

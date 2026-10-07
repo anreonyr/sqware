@@ -5,7 +5,7 @@ use crate::system::common::machine::Machine;
 use env::{Access, Name, Mark, Entry, PieKind, Policy, Wait};
 use protocol::debug;
 use protocol::service::hub::{ENROLL_MAX, Enroll};
-use runtime::core::res::port;
+use ::resource::port;
 
 pub struct Supplies {
     pub machine: Machine,

@@ -4,7 +4,7 @@ use env::{PieToken, TaskId};
 use protocol::communication::session::establish;
 use protocol::system::identity::Grant;
 use env::unit;
-use runtime::core::res::pie::{pies, reserve};
+use ::resource::raw::{pies, reserve};
 
 /// Obtain the startup authority from a Control-injected face, not a marked public entry.
 /// Kernel Sire and vestor anchor the trust decision; the original owner is the Identity
@@ -44,7 +44,7 @@ pub(crate) fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'sta
         if left == 0 {
             return Err("identity face missing");
         }
-        runtime::core::task::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
+        execution::room::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
         left = left.saturating_sub(RETRY_MS);
     }
 }

@@ -7,7 +7,7 @@ use env::{Mark, PieToken, TaskId};
 use protocol::communication::session::establish;
 use protocol::debug;
 use protocol::system::operator::LINK;
-use runtime::core::res::pie::{pies};
+use ::resource::raw::{pies};
 
 /// 读不出（不在本表里 / 不是孔 / 已封印）⇒ Mark::NONE——它不是任何一面，故
 /// grant_of 答 `None`、ask_of 也认不回它

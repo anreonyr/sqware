@@ -17,12 +17,12 @@ use programs::unit::router::{E_ROUTER, PLIC_CLASS};
 use protocol::debug;
 use protocol::service::hub as hcall;
 use protocol::system::operator::client as operator;
-use runtime::PAGE_SIZE;
-use runtime::core::res::bell::Bell;
-use runtime::core::res::pile::Pile;
+use env::PAGE_SIZE;
+use ::resource::bell::Bell;
+use ::resource::pile::Pile;
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 const SERVICE: &str = "router";
 

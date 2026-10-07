@@ -44,7 +44,7 @@ pub struct Images {
 }
 impl Images {
     pub fn inject(&self, task: env::TaskId) -> Result<(), &'static str> {
-        runtime::core::res::port::ship(self.entry, task, env::Access::STORE, env::Policy::NONE)
+        ::resource::port::ship(self.entry, task, env::Access::STORE, env::Policy::NONE)
             .map(|_| ())
             .map_err(|_| "publication inject")
     }

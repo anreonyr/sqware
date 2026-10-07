@@ -7,9 +7,9 @@ use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
 use protocol::communication::hand::Sender;
 use protocol::debug;
-use runtime::core::res::dock::View;
+use ::resource::dock::View;
 use env::pie;
-use runtime::core::res::pie::{reserve};
+use ::resource::raw::{reserve};
 
 /// 认那枚孔靠**帧里那一格** ＋ **一次 reserve 验**：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人

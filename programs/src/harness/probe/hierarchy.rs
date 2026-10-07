@@ -1,10 +1,10 @@
 use env::pie;
-use runtime::core::res::pie::{HolePie, pies, reserve};
+use ::resource::raw::{HolePie, pies, reserve};
 
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
 pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
-    use runtime::core::res::port::{self, Access, Policy};
+    use ::resource::port::{self, Access, Policy};
     let me = env::unit::self_id();
     for (mark, access) in [(COMMAND, Access::FETCH), (ANSWER, Access::STORE)] {
         let token = protocol::communication::session::establish::find(me, mark)
@@ -78,7 +78,7 @@ pub(crate) fn command(
             env::chrono::clock() < until,
             "hierarchy worker did not finish command {code}"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 
@@ -337,11 +337,11 @@ pub(crate) fn exercise(
     sender_boundary(assembly);
     command(assembly, target, 1);
     let fake = pie::unseal_hole(protocol::system::control::publication::REF).unwrap();
-    runtime::core::res::port::ship(
+    ::resource::port::ship(
         fake,
         service,
-        runtime::core::res::port::Access::STORE,
-        runtime::core::res::port::Policy::NONE,
+        ::resource::port::Access::STORE,
+        ::resource::port::Policy::NONE,
     )
     .unwrap();
     command(assembly, target, 5);
@@ -562,7 +562,7 @@ pub fn reference_lifetime() {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use env::{Mark, Wait};
-    use runtime::core::res::port::{self, Access, Policy};
+    use ::resource::port::{self, Access, Policy};
     let me = env::unit::self_id();
     let source = pie::unseal_hole(Mark::of("forget-source")).unwrap();
     assert!(
@@ -600,7 +600,7 @@ pub fn reference_lifetime() {
         let stage = Arc::new(AtomicUsize::new(0));
         let progress = stage.clone();
         let root_id = me.get();
-        let worker = runtime::core::task::join::closure(move || {
+        let worker = execution::unit::join::closure(move || {
             let middle = protocol::communication::session::establish::claim(
                 env::TaskId::new(root_id),
                 Mark::of("forget-race"),
@@ -610,14 +610,14 @@ pub fn reference_lifetime() {
             let me = env::unit::self_id();
             progress.store(1, Ordering::Release);
             while progress.load(Ordering::Acquire) < 2 {
-                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             for _ in 0..32 {
                 port::ship(middle, me, Access::STORE, Policy::NONE).unwrap();
             }
             progress.store(3, Ordering::Release);
             while progress.load(Ordering::Acquire) < 4 {
-                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             assert!(
                 !pies().any(|p| p.mark == Mark::of("forget-race")),
@@ -633,12 +633,12 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
         while stage.load(Ordering::Acquire) < 1 {
-            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         stage.store(2, Ordering::Release);
         pie::forget(middle).unwrap();
         while stage.load(Ordering::Acquire) < 3 {
-            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         if round % 2 == 0 {
             pie::revoke(worker.id(), downstream).unwrap();
@@ -665,13 +665,13 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use env::Wait;
     use protocol::system::control::publication::{Client, ENTRY, Frame, Scope, Target};
     use protocol::system::operator::{Fail, Permit};
-    use runtime::core::res::port::{self, Access, Policy};
+    use ::resource::port::{self, Access, Policy};
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
     let control = env::unit::self_id().get();
     let protected = pie::unseal_hole(env::Mark::of("source-validation")).unwrap();
     let raw = protected.get();
-    let caller = runtime::core::task::join::closure(move || {
+    let caller = execution::unit::join::closure(move || {
         let control = env::TaskId::new(control);
         let entry =
             protocol::communication::session::establish::claim(control, ENTRY, Wait::AtMost(1000))
@@ -709,7 +709,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     while !done.load(Ordering::Acquire) {
         assembly.progress().unwrap();
         assert!(env::chrono::clock() < until, "sender boundary timeout");
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
     assert!(
@@ -732,7 +732,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         EntryId, Fail, Grant, Where,
         client::{self as operator, Face},
     };
-    use runtime::core::res::port::{self, Access, Policy};
+    use ::resource::port::{self, Access, Policy};
     let control = env::unit::self_id();
     let host = assembly
         .resources
@@ -746,9 +746,9 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         let released = Arc::new(AtomicBool::new(false));
         let gate = released.clone();
         let root = control.get();
-        let caller = runtime::core::task::join::closure(move || {
+        let caller = execution::unit::join::closure(move || {
             while !gate.load(Ordering::Acquire) {
-                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
             let control = env::TaskId::new(root);
             let session =
@@ -810,7 +810,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 env::chrono::clock() < until,
                 "standalone raw mutation timeout"
             );
-            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let caller_id = caller.id();
         caller.join();

@@ -84,7 +84,7 @@ fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<Pie
         {
             Ok(entry) => return Ok(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

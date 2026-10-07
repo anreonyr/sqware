@@ -173,6 +173,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
+name = "execution"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "spinning_top",
+ "talc",
+]
+
+[[package]]
 name = "fack"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -363,10 +372,11 @@ dependencies = [
  "argon2",
  "env",
  "erra",
+ "execution",
  "fdt",
  "mold",
  "protocol",
- "runtime",
+ "resource",
  "schedule",
  "zeroize",
 ]
@@ -377,7 +387,8 @@ version = "0.1.0"
 dependencies = [
  "env",
  "erra",
- "runtime",
+ "execution",
+ "resource",
  "system-api",
  "wire",
 ]
@@ -396,6 +407,14 @@ name = "rand_core"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
+
+[[package]]
+name = "resource"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "erra",
+]
 
 [[package]]
 name = "riscv"
@@ -426,16 +445,6 @@ name = "riscv-types"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3f2ad9f15a07f4a0e1677124f9120ce7e83ab7e1ca7186af0ca9da529b62e80"
-
-[[package]]
-name = "runtime"
-version = "0.1.0"
-dependencies = [
- "env",
- "erra",
- "spinning_top",
- "talc",
-]
 
 [[package]]
 name = "rustc-std-workspace-alloc"

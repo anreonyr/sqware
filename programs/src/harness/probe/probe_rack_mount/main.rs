@@ -32,7 +32,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face, Fail, Grant, Permit};
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{inspect};
+use ::resource::raw::{inspect};
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;

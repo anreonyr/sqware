@@ -10,7 +10,7 @@ use env::PieToken;
 use protocol::{
     system::{identity::client::TaskQuery, operator as ocall},
 };
-use runtime::core::res::pile::Pile;
+use ::resource::pile::Pile;
 pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     let mut resources = Resources::new();
     resources.insert(status).map_err(|_| Fail::Room)?;
@@ -53,7 +53,7 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     resources.insert(Request(None)).map_err(|_| Fail::Room)?;
     resources.insert(Judgment(None)).map_err(|_| Fail::Room)?;
     resources
-        .insert(Buffer(alloc::vec![0; runtime::PAGE_SIZE]))
+        .insert(Buffer(alloc::vec![0; env::PAGE_SIZE]))
         .map_err(|_| Fail::Room)?;
     resources.insert(Hit(None)).map_err(|_| Fail::Room)?;
     resources.insert(Selected(None)).map_err(|_| Fail::Room)?;

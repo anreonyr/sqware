@@ -9,7 +9,7 @@ edition.workspace = true
 #
 # 宿主侧的用例**今天没有**：那台编外宿主靶与 `crates/gate` 的 `host` 那一门已删。
 # **也不能**在本 crate 里加集成测试：那要链接本 crate，
-# 而本 crate 依赖 `runtime`，`runtime` 里那两处 riscv 内联汇编在宿主上编不过
+# 而本 crate 依赖 `execution`，其中的 riscv 内联汇编在宿主上不能执行
 # （`cargo test -p protocol --target x86_64-unknown-linux-gnu` ⇒
 # `invalid instruction mnemonic 'mv'`；而 `cargo check` 同一个目标是过的——它不做代码生成）。
 # ⇒ 这一层**今天一条判据都没有**。
@@ -23,8 +23,8 @@ doctest = false
 env = { path = "../env" }
 wire = { path = "../wire" }
 system-api = { path = "../../programs/src/system/api" }
-# 协议的用户态实现要用**机制**（门闩 `HolePie`、回信通道 `Channel`）——机制在 runtime。
-# 这条边就是"机制在运行时、语义在协议"的编译期形态（那条临时的边在这里翻正）。
-runtime = { path = "../runtime" }
-# 错误容器：客户端把协议负码包成 `erra::Error<EnvError>`（与 runtime 同款）。
+# 用户态通信依赖资源机制，执行支持用于客户端等待。
+resource = { path = "../resource" }
+execution = { path = "../execution" }
+# 客户端错误容器。
 erra = { version = "0.2.0", default-features = false }

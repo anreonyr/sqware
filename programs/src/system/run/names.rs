@@ -12,7 +12,7 @@ use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 
 pub struct Registration {
     pub name: String,

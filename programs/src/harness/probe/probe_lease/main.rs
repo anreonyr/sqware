@@ -16,7 +16,7 @@ use protocol::system::operator::client as operator;
 
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{reserve};
+use ::resource::raw::{reserve};
 
 const MS: usize = 1000;
 

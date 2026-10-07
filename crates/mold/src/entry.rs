@@ -45,7 +45,7 @@ pub fn expand(item: TokenStream) -> TokenStream {
     if !func.sig.inputs.is_empty() {
         return syn::Error::new_spanned(
             &func.sig.inputs,
-            "#[entry] 的 main 不收参数（参数从 `runtime::core::task::args::args()` 取）",
+            "#[entry] 的 main 不收参数（参数从 `execution::boot::args::args()` 取）",
         )
         .to_compile_error();
     }

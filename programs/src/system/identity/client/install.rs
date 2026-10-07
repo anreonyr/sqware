@@ -7,7 +7,7 @@
 use env::unit;
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use protocol::system::identity::{Grant, Install, Installer, PrincipalId, Subject};
-use runtime::core::res::port;
+use ::resource::port;
 
 use super::source::face_of;
 use crate::system::common::timing::BOOT_MS;

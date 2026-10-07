@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use protocol::communication::session::Held;
 use protocol::driver::line::Fail;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）
 enum Cell {

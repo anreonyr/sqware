@@ -10,7 +10,7 @@ use core::marker::PhantomData;
 use env::{MailFail, PieToken, Wait};
 
 use crate::wire::message::Message;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// **我收的那一枚孔** ＋ 这一路流的那一种报（类型）
 pub struct Receiver<M: Message> {

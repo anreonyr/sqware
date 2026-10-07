@@ -7,7 +7,7 @@ use protocol::common::path::Path;
 use protocol::service::hub;
 use protocol::service::hub::Deed;
 use protocol::system::operator::Face;
-use runtime::core::res::dock::{Dock, View};
+use ::resource::dock::{Dock, View};
 
 use crate::unit::Died;
 

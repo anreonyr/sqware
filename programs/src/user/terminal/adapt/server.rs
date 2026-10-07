@@ -12,8 +12,8 @@ use protocol::system::{
     operator::Permit,
 };
 use protocol::wire::message::Message;
-use runtime::core::res::{
-    pie::{HolePie, inspect, reserve},
+use ::resource::{
+    raw::{HolePie, inspect, reserve},
     pile::{Pile, Sub},
 };
 
@@ -254,7 +254,7 @@ pub(super) fn requests(
         server.detach();
         mode.reset();
     }
-    let mut bytes = [0; runtime::PAGE_SIZE];
+    let mut bytes = [0; env::PAGE_SIZE];
     // Each turn admits at most the current bounded queue, keeping UART and output progressing.
     for _ in 0..4 {
         let Ok((n, from)) = HolePie::from_token(server.entry).pull(&mut bytes, Wait::POLL) else {

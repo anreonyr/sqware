@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use env::{HoleDir, PieToken};
 use protocol::system::control as ccall;
-use runtime::core::res::pile::{Pile, Sub};
+use ::resource::pile::{Pile, Sub};
 
 pub struct Watch {
     pub(crate) instance: Option<PieToken>,

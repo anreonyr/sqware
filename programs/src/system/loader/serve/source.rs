@@ -6,7 +6,7 @@ use env::{PieToken, TeamId, UnitFail, UnitResult, pie};
 impl Drop for Source {
     fn drop(&mut self) {
         if let Some((at, size)) = self.mapping.take() {
-            let _ = runtime::core::memory::munmap(at, size);
+            let _ = execution::memory::munmap(at, size);
         }
         if self.token != PieToken::NONE {
             let _ = pie::release(self.token);
@@ -33,7 +33,7 @@ pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Sourc
         mapping: None,
     };
     pie::shut(token).map_err(|_| fail(UnitFail::Denied))?;
-    let at = runtime::core::memory::map(TeamId::new(0), 0, region.data_size, token, 0, 6).map_err(|e| {
+    let at = execution::memory::map(TeamId::new(0), 0, region.data_size, token, 0, 6).map_err(|e| {
         if matches!(e.source, env::MemoryFail::OoM) {
             fail(UnitFail::OoM)
         } else {
@@ -50,7 +50,7 @@ pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Sourc
         )
     };
     if private {
-        runtime::core::memory::munmap(at, region.data_size).map_err(|_| fail(UnitFail::Denied))?;
+        execution::memory::munmap(at, region.data_size).map_err(|_| fail(UnitFail::Denied))?;
         source.mapping = None;
     }
     Ok(source)

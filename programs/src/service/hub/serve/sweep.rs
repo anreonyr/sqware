@@ -1,6 +1,6 @@
 //! 钟到问一枚门铃，主人没了的格空出来。
 
-use runtime::core::res::pie::reserve;
+use ::resource::raw::reserve;
 
 use super::*;
 

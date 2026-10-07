@@ -11,8 +11,8 @@ use protocol::{
     debug,
     system::operator as ocall,
 };
-use runtime::core::res::pie::HolePie;
-use runtime::core::res::pile::Pile;
+use ::resource::raw::HolePie;
+use ::resource::pile::Pile;
 const SETTLE_MS: usize = 1;
 const LATE_MS: usize = 1000;
 const MARKS: [Mark; ocall::Grant::COUNT + 1] = {

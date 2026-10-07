@@ -7,7 +7,7 @@ use protocol::system::operator::Fail;
 
 use super::{Inbox, Incoming, Outcome, Request};
 use env::pie;
-use runtime::core::res::pie::{HolePie, inspect, reserve};
+use ::resource::raw::{HolePie, inspect, reserve};
 fn valid_back(back: PieToken, from: TaskId) -> bool {
     matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
 }

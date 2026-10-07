@@ -1,0 +1,15 @@
+[package]
+name = "execution"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../env" }
+talc = { version = "=5.1.1", default-features = false }
+spinning_top = { version = "=0.3.0", default-features = false }

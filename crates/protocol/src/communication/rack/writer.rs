@@ -9,7 +9,7 @@
 use core::marker::PhantomData;
 
 use env::{PieToken, Wait};
-use runtime::core::res::dock::{Dock, View};
+use ::resource::dock::{Dock, View};
 
 use super::Mode;
 use super::bell::Bell;

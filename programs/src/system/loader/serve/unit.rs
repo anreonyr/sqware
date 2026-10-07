@@ -6,7 +6,7 @@ use env::{Permission, PieToken, TaskId, UnitFail, UnitResult, pie, unit};
 
 impl Unit {
     pub fn spawn(mut self, args: &[usize], stack: usize) -> UnitResult<TaskId> {
-        let task = runtime::core::task::spawn(self.team, self.entry, args, stack)?;
+        let task = execution::unit::spawn(self.team, self.entry, args, stack)?;
         self.committed = true;
         Ok(task)
     }
@@ -58,7 +58,7 @@ impl Loader {
                     pie::narrow(token, Permission::FETCH | Permission::VEST)
                         .map_err(|_| fail(UnitFail::Denied))?;
                 }
-                runtime::core::memory::map(
+                execution::memory::map(
                     minted.team,
                     region.va,
                     region.data_size,
@@ -84,7 +84,7 @@ impl Loader {
                 }
             }
             if region.data_size < region.size {
-                runtime::core::memory::map(
+                execution::memory::map(
                     minted.team,
                     region.va + region.data_size,
                     region.size - region.data_size,

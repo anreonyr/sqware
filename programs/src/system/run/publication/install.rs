@@ -9,7 +9,7 @@ use protocol::system::operator::{EntryId, Fail, Permit};
 
 use super::{Decision, Kind, Outcome, Request};
 use env::pie;
-use runtime::core::res::pie::pies;
+use ::resource::raw::pies;
 impl Publications {
     pub(super) fn remove(&mut self, tree: &mut Tree, at: usize) -> Result<(), &'static str> {
         let r = &self.records[at];

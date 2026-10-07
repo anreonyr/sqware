@@ -39,9 +39,9 @@ use env::room;
 use env::unit;
 use env::{PieToken, TaskId};
 use protocol::debug;
-use runtime::core::res::pie::{HolePie};
-use runtime::core::res::pile::Pile;
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::raw::{HolePie};
+use ::resource::pile::Pile;
+use ::resource::port::{self, Access, Policy};
 
 /// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）
 const WAITER: &str = "waiter";
@@ -56,7 +56,7 @@ static BUILDERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsi
 
 fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: [PieToken; 2]) -> bool {
     use core::sync::atomic::Ordering;
-    use runtime::core::task::join;
+    use execution::unit::join;
     let marks = [Mark::of("group-build"), Mark::of("group-doom")];
     let worker = move || {
         for mark in marks {
@@ -92,10 +92,10 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: 
             };
             children.push((team, task));
             if index == 0 {
-                residents = runtime::core::res::pie::table_size();
+                residents = ::resource::raw::table_size();
             }
         }
-        let current = runtime::core::res::pie::table_size();
+        let current = ::resource::raw::table_size();
         if current != residents {
             debug::put(&alloc::format!(
                 "group: builder roots {residents}->{current}"
@@ -118,11 +118,11 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: 
         }
         true
     };
-    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(100));
+    let _ = execution::room::sleep(core::time::Duration::from_millis(100));
     let Ok(left) = join::try_closure(worker) else {
         return false;
     };
-    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(10));
+    let _ = execution::room::sleep(core::time::Duration::from_millis(10));
     let Ok(right) = join::try_closure(worker) else {
         return false;
     };
@@ -215,7 +215,7 @@ fn main() -> Reason {
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
     // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：HolePie::push
     // **递出即返，交付由取的一方做**。
-    let _ = runtime::core::task::sleep(core::time::Duration::from_millis(SETTLE));
+    let _ = execution::room::sleep(core::time::Duration::from_millis(SETTLE));
     let _ = HolePie::from_token(member.token()).push(b"x", Wait::POLL);
 
     let mut woke = 0usize;

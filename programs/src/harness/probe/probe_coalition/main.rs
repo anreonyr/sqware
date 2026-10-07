@@ -22,7 +22,7 @@ use protocol::system::operator::Grant;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::Face;
 use env::unit;
-use runtime::core::res::pie::{reserve};
+use ::resource::raw::{reserve};
 
 const MS: usize = 1000;
 

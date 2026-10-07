@@ -1,9 +1,9 @@
-# System、接口生成与 Mark 重构
+# System、接口生成与用户态基础重构
 
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
-当前状态：Loader 兼容基线、接口生成试点及 schedule 独立迁移已落地。原有 8 个固定 Loader 基线继续通过，另有生成行为和宏声明检查。
-runtime 的执行支持与资源拆解、其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
+当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
+其余接口迁移、通用通信分离与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -258,6 +258,15 @@ programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 
 完成条件：执行支持不引用 runtime 旧实现；验证程序启动退出、域内并发结果与内存回收。
 
+本批已落地：
+
+- `crates/execution` 公开 room、unit、memory、lock、boot，直接依赖 env、talc、spinning_top。
+- heap、TLS、闭包执行与结果仲裁、启动参数和退出结果适配从原 runtime 迁入；TLS 留在 unit 私有模块。
+- programs 只保留汇编启动和 panic 链接装配，通用返回结果适配调用 execution::boot；mold 入口提示与所有调用方路径同步更新。
+- 页粒度由 env::PAGE_SIZE 定义，capsule 与执行、资源、装配代码共享，不产生 execution/resource 的交叉依赖。
+- `crates/execution/tests` 的 2 项宿主测试检查堆分配、失败、回收、并发释放以及初始参数指针和计数。
+- TLS、闭包执行与任务退场的实际运行由 accept、product、system-fault 场景验证。
+
 ### 5. 用 Loader 确立资源边界
 
 建立 resource 的私有句柄基础和 dock/port/bell/pile，优先贯通 Loader 所需的内存、发送端、回信端和派生授予。
@@ -266,6 +275,21 @@ programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 保留映像快照、Build→Claim、等待交付及回收语义；线上资源编号和 Mark 不作为授权证明。
 
 完成条件：Loader 主流程不散落裸句柄构造和清理；覆盖授权失败、构建失败、Claim 超时、对端退出和映像撤销。
+
+本批已落地：
+
+- `crates/resource` 保留 dock、port、bell、pile；正式模块使用私有 Hole，原始查询和未验证适配集中在 raw。
+- Port 的公开构造不依赖万能 HolePie；open 导入并识别入口，borrow_raw 明确接收原始编号。
+- port::Sender 导入时识别服务对端，只有发送操作；实际权限与资源存活仍由内核检查。
+- Owned 只释放本地创建的能力，Grant 借用源并只撤销指定对端的派生能力；显式清理可返回错误，Drop 提供非阻塞兜底。
+- port::Reply 拥有回信端、核对回复来源，并明确按 seal、release 收尾。Loader 使用 Sender/Reply/Grant，保持 Build→Claim 和统一预算。
+- dock 保留裸地址 View 的已有约束，不增加跨撤销仍有效的安全 slice；Loader 的内核保护快照与服务端来源、角色验证继续保留。
+- 所有驱动、服务、客户端和测具的原资源调用均已迁移，旧 runtime 完全退出；显式 raw 仍用于协议和硬件边界，不表示已获业务授权。
+- 9 项资源宿主测试编译实际实现，用环境调用替身验证清理范围、顺序、错误和来源拒绝；真实内核行为由三个 QEMU 场景补齐。
+
+本批最终验证：29 项调度、7 项 System 边界、10 项 Loader 兼容、2 项执行支持、9 项资源测试共 57 项均通过。
+programs 全目标编译、resource 宿主编译、image 宿主装配编译及 QEMU accept、product、system-fault 均通过。
+Cargo 元数据确认无 runtime 成员或依赖，execution/resource 互不依赖，schedule 无依赖。
 
 ### 6. 分离通用通信，迁公共接口
 
@@ -280,8 +304,8 @@ Account 不再借 Loader 客户端类型表达自己的创建结果。
 System 的身份安装、启动重试和授权策略留在实现。
 拆 Hub bridge：公共调用归 Hub 客户端，System 接收授权归 launch。
 
-迁移 Terminal、Hub、驱动和测具的剩余资源调用，删除 runtime crate、工作区成员、依赖与兼容重导出。
-测具需要的原始环境调用保留明确专用入口，不扩大正式资源 API。
+Terminal、Hub、驱动和测具的资源调用以及旧 runtime 删除已在前批完成。
+本批继续迁移通用通信和提供方客户端；测具的原始环境调用不扩大正式资源 API。
 
 完成条件：System 的纯 API 不依赖 resource/execution/schedule/ipc/程序实现，可直接运行宿主编码测试；用户态 runtime 完全退出。
 
@@ -324,7 +348,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 - schedule 不依赖环境或执行库；runtime 与 protocol 均无工作区成员、用户态依赖或旧导入残留。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
-第 1、2、3 批已完成；下一份实现迁 execution，然后以 Loader 确立资源边界。
+第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
 
 ## 当前可用的验证命令
 
@@ -334,8 +358,12 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 cargo check -p programs --all-targets --offline
 cargo check -p system-api --target x86_64-unknown-linux-gnu --offline
 cargo check -p schedule --target x86_64-unknown-linux-gnu --offline
+cargo check -p resource --target x86_64-unknown-linux-gnu --offline
+cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test -p mold --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/schedule/src/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/resource/tests/scope/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline

@@ -3,7 +3,7 @@
 //! （slot 编码 + 载荷 codec + 线类型 + 发起骨架），加门闩权限（位掩码 + 两族视图）。
 //!
 //! **不含服务目录协议**（`Request`/`Reply`/`MSG_LEN`）——那是纯用户态协议，住在
-//! `crates/protocol`（内核零引用；依赖方向 `kernel → env → runtime → protocol → programs`）。
+//! 提供方 API 与 `crates/protocol`（内核零引用）。用户态资源和执行支持分别由 resource、execution 提供。
 //!
 //! 方案 3（typed payload）：各调用域枚举（`RoomCall` 等）是带类型载荷的 variant，
 //! 字段类型为语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量；
@@ -44,6 +44,7 @@ pub use abi::call::{
 pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};
 pub use abi::wait::Wait;
+pub use abi::call::memory::PAGE_SIZE;
 pub use ecall::{FailCode, make_fail};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。

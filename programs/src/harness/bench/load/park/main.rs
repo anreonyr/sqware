@@ -19,6 +19,6 @@ const MS: u64 = 1;
 #[programs::entry]
 fn main() -> ! {
     loop {
-        let _ = runtime::core::task::sleep(Duration::from_millis(MS));
+        let _ = execution::room::sleep(Duration::from_millis(MS));
     }
 }

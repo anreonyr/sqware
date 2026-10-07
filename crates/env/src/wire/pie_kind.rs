@@ -3,7 +3,7 @@
 //! # 为什么它住 `env`
 //!
 //! 装配那一侧要**两侧读**——内核的 `build.rs`（宿主）与编排域（riscv）——而 `programs` /
-//! `protocol` 都拖着 `runtime`（riscv 内联汇编，宿主上编不过）。故凡是"装配那一侧要摆出来的
+//! `protocol` 都依赖 execution（含 riscv 内联汇编）。故凡是"装配那一侧要摆出来的
 //! 东西"，定义都得住 `env`。
 
 const KIND_POLE: u8 = PieKind::Pole as u8;

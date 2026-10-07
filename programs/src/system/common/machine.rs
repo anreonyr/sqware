@@ -4,7 +4,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use env::{Name, Page};
-use runtime::core::res::dock::View;
+use ::resource::dock::View;
 
 use crate::unit::router::PLIC_CLASS;
 

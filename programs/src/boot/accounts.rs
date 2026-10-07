@@ -8,7 +8,7 @@ pub struct Accounts {
 }
 impl Accounts {
     pub fn take() -> Option<Self> {
-        let a = runtime::core::task::args::args();
+        let a = execution::boot::args::args();
         if a.len() < boot_args::LEN {
             return None;
         }

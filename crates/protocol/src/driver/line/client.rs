@@ -3,14 +3,14 @@
 //! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
 use env::{Wait, HoleDir, PieToken};
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::port::{self, Access, Policy};
 
 use super::frame;
 use super::frame::Fail;
 use crate::communication::hand::Sender;
 use crate::communication::session::establish::{self, Held};
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
@@ -77,7 +77,7 @@ impl Line {
             if spent >= budget {
                 break;
             }
-            let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+            let _ = execution::room::sleep(core::time::Duration::from_millis(1));
         }
         if spent >= budget {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。

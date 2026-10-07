@@ -10,7 +10,7 @@ use crate::communication::session::{Berth, establish};
 use super::Fail;
 use super::frame::{self, BACK, State};
 use env::pie;
-use runtime::core::res::pie::HolePie;
+use ::resource::raw::HolePie;
 
 pub const INSTANCE: &crate::common::path::Path = crate::common::path::Path::new("/svc/sys/control/instance");
 

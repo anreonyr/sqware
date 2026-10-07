@@ -6,7 +6,7 @@ use core::fmt::{self, Write};
 use core::panic::PanicInfo;
 
 use env::NOTE_MAX;
-use runtime::core::exit::{Exit, finish};
+pub use execution::boot::entry;
 
 global_asm!(
     ".section .text._start",
@@ -22,16 +22,7 @@ global_asm!(
 
 #[unsafe(no_mangle)]
 extern "C" fn tls_bootstrap() {
-    unsafe { runtime::core::task::tls::bootstrap() }
-}
-
-/// **入口那一手**：`bare` 是 bin 自己那个 `main`（当**函数项**传进来，不在这里调用——
-/// 于是 `R = !` 那一档由类型系统自己落定，生成物里没有"调用之后还写了东西"的死码）。
-/// 生成物里的 `clean_ret` 只写一句 `entry(crate::main)`；泛型那一层的不透明性因此不泄漏给
-/// 写程序的人。折码与送内核在 `runtime::core::exit`（[`finish`]）。
-#[inline(always)]
-pub fn entry<R: Exit>(bare: fn() -> R) -> ! {
-    finish(bare().report())
+    unsafe { execution::boot::bootstrap() }
 }
 
 /// panic 现场的**那句话**：栈上拼，**不分配**（panic 现场禁忌照旧——`format!` 会分配，
@@ -79,7 +70,7 @@ impl fmt::Write for Note {
 /// 现场的三笔账因此各有出处：谁/何时/为何 = trace 的 `RoomEvent::Exit`；`哪里` =
 /// 这句话里的 `file:line:col`；寄存器现场 = 内核故障路径自己留的痕。
 /// **它不走 `Exit`**：panic 物理上必须 `!`，装不进"返回值"那条路——它直接调出口原语
-/// （带 note 那一支），与 [`entry`] 同住这个文件、同归 `runtime::core::task::exit` 一处。
+/// （带 note 那一支），与 [`entry`] 同住这个文件、同归 `execution::room::reap` 一处。
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     let mut note = Note::new();
@@ -87,5 +78,5 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(at) = info.location() {
         let _ = write!(note, " at {}:{}:{}", at.file(), at.line(), at.column());
     }
-    runtime::core::task::exit(env::EXIT_PANIC, Some(note.as_str()))
+    execution::room::reap(env::EXIT_PANIC, Some(note.as_str()))
 }

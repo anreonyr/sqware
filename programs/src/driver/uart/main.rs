@@ -27,7 +27,7 @@ use env::{HoleDir, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
 use programs::unit::uart::E_UART;
-use runtime::core::res::pile::Pile;
+use ::resource::pile::Pile;
 
 const MS: usize = 1000;
 

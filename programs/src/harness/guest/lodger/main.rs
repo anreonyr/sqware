@@ -30,7 +30,7 @@ use env::{Access, PieKind, PieToken, Policy};
 use protocol::driver::line;
 use protocol::driver::line::frame as lcall;
 use env::unit;
-use runtime::core::res::pie::{table_size};
+use ::resource::raw::{table_size};
 
 /// 领上就死
 const ASK: Ask = Ask {
@@ -138,7 +138,7 @@ fn find_router(tree: &Face) -> Option<PieToken> {
         {
             Ok(entry) => return Some(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

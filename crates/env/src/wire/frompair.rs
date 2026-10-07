@@ -73,7 +73,7 @@ impl FromPair for (usize, TaskId) {
 /// `Reserve` 的返回：两格**原样**交出——`a0` = owner 高 32 位 | vestor 低 32 位、
 /// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::abi::call` 的 `Reserve` 那一格的注里）。
 ///
-/// 本层**不拆**：拆法属于调用点（`runtime::core::res::pie::reserve`），同一对寄存器不许有两种
+/// 本层**不拆**：拆法属于调用点（`resource::raw::reserve`），同一对寄存器不许有两种
 /// 解释——这一对寄存器只有这一种解释。
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {

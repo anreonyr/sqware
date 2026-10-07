@@ -23,7 +23,7 @@ use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;
 use env::unit;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 const MS: usize = 1000;
 

@@ -13,7 +13,7 @@ use protocol::system::identity::Selector;
 use protocol::system::operator::{Fail, Permit};
 
 use super::{Approved, Decision, Request};
-use runtime::core::res::pie::inspect;
+use ::resource::raw::inspect;
 pub fn source(
     request: Res<Request>,
     control: Res<Control>,

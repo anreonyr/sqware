@@ -10,9 +10,9 @@ fn main() -> Result<(), env::Reason> {
     run().map_err(|_| 1)
 }
 fn run() -> Result<(), ()> {
-    let owner = TaskId::new(*runtime::core::task::args::args().first().ok_or(())?);
+    let owner = TaskId::new(*execution::boot::args::args().first().ok_or(())?);
     let io = Io::injected(owner)?;
-    let entry = runtime::core::res::pie::pies()
+    let entry = ::resource::raw::pies()
         .find(|pie| pie.mark == Grant::Resolve.mark())
         .ok_or(())?;
     let resolver = Face::direct(entry.owner, Grant::Resolve, entry.token).map_err(|_| ())?;

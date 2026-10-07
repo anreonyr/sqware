@@ -2,7 +2,7 @@ use crate::system::loader::{Image, Loader};
 use alloc::vec::Vec;
 use env::{UnitFail, VirtAddr, Wait, pie};
 use protocol::system::loader::{Built, frame};
-use runtime::core::res::pie::{HolePie, inspect};
+use ::resource::raw::{HolePie, inspect};
 
 pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
     let ask = source.ask;
@@ -16,7 +16,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
         return Err(frame::Fail::BadImage);
     }
     let page = ask.image;
-    let (at, size) = runtime::core::res::pie::open(page).map_err(|_| frame::Fail::Denied)?;
+    let (at, size) = ::resource::raw::open(page).map_err(|_| frame::Fail::Denied)?;
     let result = (|| {
         if offset.checked_add(len).is_none_or(|end| end > size) {
             return Err(frame::Fail::BadImage);

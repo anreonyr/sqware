@@ -1,4 +1,4 @@
-use runtime::core::res::dock::Dock;
+use ::resource::dock::Dock;
 
 use crate::boot::{Accounts, Catalog};
 use crate::system::common::machine::Machine;

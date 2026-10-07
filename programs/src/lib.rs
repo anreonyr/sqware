@@ -16,7 +16,7 @@ pub mod user;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的
 // `main` 返回类型也写 `programs::Report` / `programs::Exit`，故这几个名字得在 crate 根上
-pub use runtime::core::exit::{Exit, Report};
+pub use execution::boot::{Exit, Report};
 
 pub use env::Reason;
 

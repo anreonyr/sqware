@@ -21,7 +21,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";

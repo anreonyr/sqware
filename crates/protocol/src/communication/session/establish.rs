@@ -13,13 +13,13 @@
 use core::ops::{Deref, DerefMut};
 
 use env::{Mark, Permission, PieToken, TaskId, Wait};
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::port::{self, Access, Policy};
 
 use super::super::hand::{Receiver, Sender};
 use super::super::{deadline, remain};
 use crate::wire::message::Message;
 use env::pie;
-use runtime::core::res::pie::{pies, reserve};
+use ::resource::raw::{pies, reserve};
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -223,7 +223,7 @@ pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()>
 ///
 /// **不失败**：不在表里 / 已封印 / 号是野的 —— 一律 `false`。
 pub fn alive(entry: env::PieToken) -> bool {
-    runtime::core::res::pie::alive(entry)
+    ::resource::raw::alive(entry)
 }
 
 /// **这枚是谁授的**（`Reserve` 第一格）

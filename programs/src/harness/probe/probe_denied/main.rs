@@ -14,7 +14,7 @@ use protocol::system::identity;
 use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
 use protocol::system::operator::client as operator;
 use env::unit;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 
 const MS: usize = 1000;
 
@@ -31,7 +31,7 @@ fn main() -> Report<'static> {
             )
             .expect("probe-denied: transient LINK"),
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(delay))
+        execution::room::sleep(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");
         drop(request);
     }

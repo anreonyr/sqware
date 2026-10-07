@@ -167,7 +167,7 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
             return Ok(EntryId::new(0));
         }
-        let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+        let _ = execution::room::sleep(core::time::Duration::from_millis(1));
     }
     Err(Fail::Unknown)
 }
@@ -183,7 +183,7 @@ fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
         match root.tile(road, Wait::AtMost(MS)) {
             Ok(entry) => return Some(entry.id()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::sleep(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

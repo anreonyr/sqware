@@ -13,7 +13,7 @@
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
 //! Chrono=4, Mail=5, Control=6, **Pie=7**, Debug=8, **Tole=9**。命名与调度词族
-//! （conductor）、`runtime::chrono` 域及用户侧 `runtime::core` 同词。
+//! （conductor）、内核 `runtime::chrono` 域及用户侧 execution 同词。
 //!
 //! **class 3 空着不补**：设备不是内核的事——域持门闩、自己读写寄存器，控制台是服务。
 //! **判别号是声明顺序**，把 4..9 挪下来只会在 ABI 里制造一次无意义的位移。

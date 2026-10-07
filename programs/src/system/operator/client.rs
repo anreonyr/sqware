@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use env::{Mark, Wait, HoleDir, PieToken, TaskId};
 use env::wire::Field;
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::port::{self, Access, Policy};
 
 use crate::system::common::timing::BOOT_MS;
 
@@ -13,7 +13,7 @@ use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
 use protocol::system::operator::{EntryId, Tip};
 use env::pie;
-use runtime::core::res::pie::{HolePie, pies, reserve};
+use ::resource::raw::{HolePie, pies, reserve};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）

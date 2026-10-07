@@ -1,7 +1,7 @@
 //! 最小设备面：够四件事——开"收到字节就拉线"、问"有没有字节"、把字节取走、
 //! 把一条字塞出去。
 
-use runtime::core::res::dock::View;
+use ::resource::dock::View;
 
 /// `RBR` = 接收缓冲：**读它就是取走一个字节**（`LSR.DR` 随之落）
 const RBR: usize = 0;

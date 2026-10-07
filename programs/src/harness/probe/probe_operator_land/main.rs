@@ -8,7 +8,7 @@ use programs::Report;
 use protocol::communication::session::Session;
 use protocol::system::control::{Client, Scope, Target};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 use protocol::system::operator::{
     EntryId, Fail, Grant, Permit, Where,
     client::{self as operator, Face, Mine},

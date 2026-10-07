@@ -12,7 +12,7 @@ use protocol::system::operator::Event;
 use protocol::wire::message::Message;
 
 use crate::system::operator::core::Operator;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// **一位订阅者**：它是谁 ＋ 它订哪条路 ＋ 事件往哪一枚孔上递。
 struct Subscriber {

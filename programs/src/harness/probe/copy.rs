@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use env::pie;
 use env::unit;
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use runtime::core::res::pie::{HolePie, pies};
+use ::resource::raw::{HolePie, pies};
 
 pub fn acceptance() {
     queued();
@@ -19,7 +19,7 @@ pub fn acceptance() {
         .token(env::Name::Call(env::Call::Doom)).unwrap();
     let doom_mark = Mark::of("copy-doom");
     let mark = Mark::of("copy-build");
-    let worker = runtime::core::task::join::closure(move || {
+    let worker = execution::unit::join::closure(move || {
         assert!(
             protocol::communication::session::establish::claim(
                 env::TaskId::new(0),
@@ -51,7 +51,7 @@ fn queued() {
     let owner = unit::self_id();
     let entry = pie::unseal_hole(Mark::of("copy-queued")).unwrap();
     let raw_owner = owner.get();
-    let writer = runtime::core::task::join::closure(move || {
+    let writer = execution::unit::join::closure(move || {
         let entry = protocol::communication::session::establish::claim(
             env::TaskId::new(raw_owner),
             Mark::of("copy-queued"),
@@ -72,7 +72,7 @@ fn queued() {
         data.fill(255);
     });
     let sender = writer.id();
-    runtime::core::res::port::ship(
+    ::resource::port::ship(
         entry,
         sender,
         env::Access::STORE,
@@ -128,7 +128,7 @@ fn concurrent() {
     let entry = pie::unseal_hole(Mark::of("copy-concurrent")).unwrap();
     let mut workers = Vec::new();
     for producer in 0..4u8 {
-        let worker = runtime::core::task::join::closure(move || {
+        let worker = execution::unit::join::closure(move || {
             let token = protocol::communication::session::establish::claim(
                 owner,
                 Mark::of("copy-concurrent"),
@@ -141,7 +141,7 @@ fn concurrent() {
                     .unwrap();
             }
         });
-        runtime::core::res::port::ship(
+        ::resource::port::ship(
             entry,
             worker.id(),
             env::Access::STORE,
@@ -229,14 +229,14 @@ fn elf() {
     let view =
         env::pie::accord(source, unit::self_id(), env::Permission::FETCH, Mark::NONE).unwrap();
     let page = view;
-    let (at, size) = runtime::core::res::pie::open(page).unwrap();
+    let (at, size) = ::resource::raw::open(page).unwrap();
     assert_eq!(size, 8192);
     // SAFETY: Open holds a readable mapping of size bytes until Shut.
     let data = unsafe { core::slice::from_raw_parts(at as *const u8, size) };
     assert_eq!(&data[2..6], &[0x13, 0, 0, 0]);
     assert!(data[..2].iter().chain(&data[6..]).all(|&byte| byte == 0));
     assert!(
-        runtime::core::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
+        execution::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
         "copy: shared source can be widened"
     );
     env::pie::shut(page).unwrap();

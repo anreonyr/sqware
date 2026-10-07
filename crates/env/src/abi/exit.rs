@@ -1,7 +1,7 @@
 //! 退场**原因码**：**内核与域共用的一张表**。
 //!
 //! `Reap { reason }` 送的就是这里的 [`Reason`]——内核只把它记进 trace、**不解释语义**
-//! （见 `runtime::core::task::exit`）。约定：
+//! （见 `execution::room::reap`）。约定：
 //!
 //! - `0`（[`EXIT_OK`]）= 自愿/正常结束；
 //! - `1..` 小整数 = **域自己的**诊断编号（各 bin 用 `1`、`2`… 标明死在启动握手的哪一步；
@@ -10,11 +10,11 @@
 //!   读 trace 的人一眼能分出"启动没走通"与"域自己炸了"。
 //!
 //! **域侧的"出口形状"不在本文件**：`main` 的返回类型 `Report`、那个 `Exit`
-//! trait，加"把它送进内核"的 `finish`——三者住 `runtime::core::exit`（那边是 `runtime`，
+//! trait，加"把它送进内核"的 `finish`——三者住 `execution::boot`（单独的 execution crate，
 //! 本 crate 够不着，故这里只写路径、不做链接）。分界只有一条，而且是可 grep 的：
 //! **本文件只放内核也读的东西**。内核读 [`Reason`] 与 [`EXIT_FAULT`]
 //! （`kernel/src/work/room/messenger/mod.rs` 直接 `pub(crate) use env::EXIT_FAULT`），
-//! 而内核**不依赖 `runtime`**（方向 `kernel → env → runtime`）⇒ 码表必须住本 crate；
+//! 内核和 execution 都依赖 env，码表属于共享环境契约；
 //! 反过来"码从哪来、话怎么带、往哪送"是域自己的事，内核一处也不碰。
 
 /// 退场原因码——`usize`，直接就是 `Reap { reason }` 送出去的那个数。

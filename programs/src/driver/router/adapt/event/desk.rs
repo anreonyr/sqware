@@ -11,9 +11,9 @@ use protocol::communication::session::establish::{self, Held};
 use protocol::debug;
 use protocol::driver::line::frame as lcall;
 use protocol::wire::message::Message;
-use runtime::core::res::pile::Pile;
+use ::resource::pile::Pile;
 use env::pie;
-use runtime::core::res::pie::{HolePie, table_size};
+use ::resource::raw::{HolePie, table_size};
 
 /// 装泊位 / 认泊位的期限（毫秒）
 const QUAY_MS: usize = 1000;

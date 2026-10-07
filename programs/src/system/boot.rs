@@ -16,7 +16,7 @@ use protocol::{
     debug,
     system::identity as id,
 };
-use runtime::core::res::bell::Bell;
+use ::resource::bell::Bell;
 pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
 pub fn status() -> Arc<Status> {
@@ -58,9 +58,9 @@ pub fn spawn(
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = match runtime::core::task::spawn(
+        let task = match execution::unit::spawn(
             env::TeamId::new(0),
-            runtime::core::task::join::trampoline as *const () as usize,
+            execution::unit::join::trampoline as *const () as usize,
             &[ptr as usize],
             0,
         ) {
@@ -76,7 +76,7 @@ pub fn spawn(
         };
         slot.store(task.get(), Ordering::Release);
         if !operator {
-            let seed = runtime::core::res::port::ship(
+            let seed = ::resource::port::ship(
                 changed.0.token(),
                 task,
                 env::Access::STORE,

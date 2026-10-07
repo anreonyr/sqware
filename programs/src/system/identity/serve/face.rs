@@ -8,12 +8,10 @@ use protocol::{
     communication::hand::Sender,
     system::identity::{self as api, Grant, Reply, Wire},
 };
-use runtime::{
-    core::res::{
-        pie::{HolePie, reserve},
-        pile::Pile,
-        port::{self, Access, Policy},
-    },
+use ::resource::{
+    raw::{HolePie, reserve},
+    pile::Pile,
+    port::{self, Access, Policy},
 };
 pub(super) struct Faces(pub Vec<(PieToken, Grant)>);
 pub(super) struct Buffer(pub Vec<u8>);

@@ -9,14 +9,14 @@ use protocol::service::hub::{
     frame::Said,
 };
 use protocol::system::identity::CoalitionId;
-use runtime::core::res::port;
+use ::resource::port;
 use env::unit;
 
 use crate::system::control::serve::start::BOOT_MS;
 use crate::system::control::serve::unit::Control;
 use env::wire::Span as _;
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 
 pub struct Activation {
     hub: TaskId,
@@ -46,7 +46,7 @@ impl Activation {
         control: &Control,
         roster: &crate::system::identity::client::install::Roster,
     ) {
-        let mut bytes = [0; runtime::PAGE_SIZE];
+        let mut bytes = [0; env::PAGE_SIZE];
         while let Ok((len, from)) = HolePie::from_token(self.entry).pull(&mut bytes, Wait::POLL) {
             let Some(ask) = Activate::fetch_at(&bytes[..len], 0).map(|one| one.0) else {
                 continue;

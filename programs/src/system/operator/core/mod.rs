@@ -9,7 +9,7 @@ use protocol::common::path::{Path, PathBuf};
 use protocol::communication::session::{alive, opened_by};
 use protocol::system::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
 use env::pie;
-use runtime::core::res::pie::{pies};
+use ::resource::raw::{pies};
 
 pub mod gate;
 pub mod judge;

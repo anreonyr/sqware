@@ -42,7 +42,7 @@ pub mod writer;
 use core::marker::PhantomData;
 
 use env::{PieResult, PieToken};
-use runtime::core::res::dock::Dock;
+use ::resource::dock::Dock;
 
 use crate::wire::message::Message;
 

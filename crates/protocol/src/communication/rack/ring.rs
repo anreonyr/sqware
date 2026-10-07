@@ -25,8 +25,8 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
-use runtime::PAGE_SIZE;
-use runtime::core::res::dock::View;
+use env::PAGE_SIZE;
+use ::resource::dock::View;
 
 use super::Mode;
 use crate::wire::message::Message;

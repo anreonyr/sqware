@@ -7,7 +7,7 @@ use protocol::{
     communication::session::establish,
     system::{control, loader as call, operator::client::Face as Operator},
 };
-use runtime::core::res::pie::HolePie;
+use ::resource::raw::HolePie;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
@@ -26,7 +26,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let r = ready.clone();
     let t = target.clone();
     let d = denied.clone();
-    let peer = runtime::core::task::join::closure(move || {
+    let peer = execution::unit::join::closure(move || {
         until(|| r.load(Ordering::Acquire) && t.load(Ordering::Acquire) != 0);
         let face = control::Face::of(establish::find(root, control::Grant::State.mark()).unwrap())
             .unwrap();
@@ -40,7 +40,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let r = ready.clone();
     let worker_done = done.clone();
     let worker_target = target.clone();
-    let worker = runtime::core::task::join::closure(move || {
+    let worker = execution::unit::join::closure(move || {
         until(|| r.load(Ordering::Acquire));
         exercise(root, &worker_target, &denied);
         worker_done.store(true, Ordering::Release);
@@ -144,7 +144,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             env::chrono::clock() < deadline,
             "loader: IPC fixture timed out"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     worker.join();
     peer.join();
@@ -165,7 +165,7 @@ fn until(mut ready: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 5_000_000_000;
     while !ready() {
         assert!(env::chrono::clock() < deadline, "loader: waiting timed out");
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
@@ -179,7 +179,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     );
     let image = env::pie::unseal_pole(8192, true).unwrap();
     let bytes = image_bytes();
-    let (at, size) = runtime::core::res::pie::open(image).unwrap();
+    let (at, size) = ::resource::raw::open(image).unwrap();
     // SAFETY: the locally owned writable Pole covers the complete test ELF.
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());

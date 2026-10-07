@@ -3,7 +3,7 @@ use alloc::{string::ToString, vec::Vec};
 use env::{PieToken, TaskId};
 use protocol::system::operator::{EntryId, Fail, Where};
 use env::pie;
-use runtime::core::res::pie::{alive};
+use ::resource::raw::{alive};
 
 use crate::system::operator::Placement;
 

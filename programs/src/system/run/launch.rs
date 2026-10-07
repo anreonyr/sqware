@@ -65,7 +65,7 @@ pub(super) fn reply(back: PieToken, result: Result<Built, Fail>) -> bool {
     };
     let mut bytes = [0; Said::LEN];
     let sent = value.store_at(&mut bytes, 0).is_some_and(|n| {
-        runtime::core::res::pie::HolePie::from_token(back)
+        ::resource::raw::HolePie::from_token(back)
             .push(&bytes[..n], Wait::POLL)
             .is_ok()
     });

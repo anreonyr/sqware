@@ -24,7 +24,7 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
                 continue;
             }
         };
-        if !runtime::core::res::pie::alive(incoming.back) {
+        if !::resource::raw::alive(incoming.back) {
             let _ = env::pie::release(incoming.back);
             continue;
         }
@@ -101,14 +101,14 @@ pub fn receive(
     };
     for _ in 0..16 {
         let Ok((len, from)) =
-            runtime::core::res::pie::HolePie::from_token(entry).pull(&mut buffer.0, Wait::POLL)
+            ::resource::raw::HolePie::from_token(entry).pull(&mut buffer.0, Wait::POLL)
         else {
             break;
         };
         let Some((wire, back)) = call::frame::Wire::take(&buffer.0[..len]) else {
             continue;
         };
-        if !matches!(runtime::core::res::pie::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == call::BACK)
+        if !matches!(::resource::raw::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == call::BACK)
         {
             continue;
         }

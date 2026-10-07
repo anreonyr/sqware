@@ -8,7 +8,7 @@ use crate::system::{
 };
 use env::wire::Span as _;
 use env::{PieToken, TaskId, TeamId, Wait, pie};
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 pub use super::marks::ACCOUNT_ENTRY as ENTRY;
 pub use super::marks::ACCOUNT_BACK as BACK;
 pub const DIR: &Path = Path::new("/svc/sys/control/account");

@@ -4,8 +4,8 @@ use crate::system::operator::core::{Location, Tile, Key, Operator};
 use protocol::{
     system::operator as ocall,
 };
-use runtime::core::res::pie::HolePie;
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::raw::HolePie;
+use ::resource::port::{self, Access, Policy};
 pub(super) struct Output<T> {
     pub reply: Option<T>,
     pub changes: alloc::vec::Vec<crate::system::operator::core::Change>,

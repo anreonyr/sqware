@@ -7,7 +7,7 @@ use super::{
 use crate::system::life::Status;
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use ::schedule::{Cursor, Dispatch, Progress, Resources};
-use runtime::core::res::pile::Pile;
+use ::resource::pile::Pile;
 pub fn serve(
     status: Arc<Status>,
     epoch: crate::system::identity::revision::Epoch,
@@ -25,7 +25,7 @@ pub fn serve(
         .insert(Pile::unseal(false).map_err(|_| Fail::Desk)?)
         .map_err(|_| Fail::Room)?;
     resources
-        .insert(Buffer(alloc::vec![0; runtime::PAGE_SIZE]))
+        .insert(Buffer(alloc::vec![0; env::PAGE_SIZE]))
         .map_err(|_| Fail::Room)?;
     resources
         .insert(Inbox(VecDeque::new()))

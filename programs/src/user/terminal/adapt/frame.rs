@@ -5,7 +5,7 @@ use env::Wait;
 use programs::driver::uart::{client::Console, core::frame::{Bytes, MAX}};
 use ::schedule::{Progress, ResMut};
 use protocol::service::terminal::frame as stream;
-use runtime::core::res::pie::HolePie;
+use ::resource::raw::HolePie;
 
 pub(super) struct Frame {
     incoming: Option<Bytes>,

@@ -3,7 +3,7 @@
 //! ——**控制器按类**（`compatible`：设备账读树把类定成那一段区），**设备树本体与门铃按名字点名**
 
 use crate::core::sources::Sources;
-use runtime::core::res::dock::View;
+use ::resource::dock::View;
 
 /// 一条线的优先级：恒 1。**0 是"静音"**（见 Plic::disable），故本值不能是 0
 pub const LINE_PRIORITY: u32 = 1;

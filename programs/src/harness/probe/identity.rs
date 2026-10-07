@@ -3,12 +3,12 @@
 use env::Wait;
 use protocol::communication::session::establish;
 use protocol::system::identity::Grant;
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::port::{self, Access, Policy};
 
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
 use env::pie;
-use runtime::core::res::pie::{HolePie, inspect, reserve};
+use ::resource::raw::{HolePie, inspect, reserve};
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -73,11 +73,11 @@ pub fn timeout() {
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
-    let reader = runtime::core::task::join::closure(move || {
+    let reader = execution::unit::join::closure(move || {
         let owner = env::TaskId::new(raw_owner);
         let entry = establish::claim(owner, Grant::Resolve.mark(), Wait::AtMost(1000)).unwrap();
         while !release_reader.load(Ordering::Acquire) {
-            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
         }
         let mut bytes = [0; MAX_FRAME];
         let (n, from) = HolePie::from_token(entry)
@@ -493,7 +493,7 @@ fn activation_boundary(
         coalition.authority.get(),
         coalition.slot,
     );
-    let caller = runtime::core::task::join::closure(move || {
+    let caller = execution::unit::join::closure(move || {
         let owner = env::TaskId::new(owner);
         let hub = env::TaskId::new(hub);
         let coalition =
@@ -534,7 +534,7 @@ fn activation_boundary(
             env::chrono::clock() < until,
             "activation boundary never answered"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
 }
@@ -565,6 +565,6 @@ fn ready_driver(
             env::chrono::clock() < until,
             "identity: driver never republished"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
     }
 }

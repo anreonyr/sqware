@@ -23,7 +23,7 @@
 use core::marker::PhantomData;
 
 use env::{MailFail, PieToken, Wait};
-use runtime::core::res::dock::{Dock, View};
+use ::resource::dock::{Dock, View};
 
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};

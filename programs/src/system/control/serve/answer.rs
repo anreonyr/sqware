@@ -6,7 +6,7 @@ use crate::system::control::core::unit::State;
 use env::pie;
 use env::{PieToken, Wait};
 use protocol::{communication::hand::Sender, system::control as ccall};
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,

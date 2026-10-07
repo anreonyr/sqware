@@ -4,7 +4,7 @@ use super::names::Names;
 use alloc::vec::Vec;
 use env::{PieToken, Wait};
 use protocol::system::control as ccall;
-use runtime::core::res::pile::Sub;
+use ::resource::pile::Sub;
 
 use ::schedule::{Progress, Res, ResMut};
 pub struct Interests {

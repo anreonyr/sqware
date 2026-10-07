@@ -7,7 +7,7 @@ pub use establish::{Endpoint, Held, alive, opened_by};
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）

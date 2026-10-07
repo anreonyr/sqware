@@ -7,7 +7,7 @@
 
 use alloc::string::String;
 use env::{Access, Policy, HoleDir, PieKind, PieToken, TaskId, Wait};
-use runtime::core::res::port;
+use ::resource::port;
 
 use crate::communication::hand::{Receiver, RecvFail};
 use crate::communication::session::establish;
@@ -16,7 +16,7 @@ use crate::wire::message::Message;
 use super::Fail;
 use super::frame::{self, BACK_MARK};
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）
 pub struct Face {

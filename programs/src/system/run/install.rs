@@ -20,7 +20,7 @@ use crate::system::{
 use alloc::{collections::VecDeque, vec::Vec};
 use env::pie;
 use ::schedule::{Dispatch, Resources as Registry};
-use runtime::core::res::bell::Bell;
+use ::resource::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();
     let entry = pie::unseal_hole(protocol::system::control::publication::ENTRY)
@@ -97,7 +97,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(frame::Bound(env::Wait::POLL));
     put!(frame::Shutoff(None));
     put!(answer::Inbox(VecDeque::new()));
-    put!(answer::Buffer(alloc::vec![0; runtime::PAGE_SIZE]));
+    put!(answer::Buffer(alloc::vec![0; env::PAGE_SIZE]));
     put!(super::watch::Interests {
         tokens: Vec::new(),
         subs: Vec::new(),

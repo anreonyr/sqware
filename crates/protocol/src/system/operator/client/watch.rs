@@ -20,7 +20,7 @@ use alloc::string::String;
 
 use env::{MailFail, Wait};
 
-use runtime::core::res::port::{self, Access, Policy};
+use ::resource::port::{self, Access, Policy};
 
 use crate::common::path::{Path, PathBuf};
 use crate::communication::hand::{Receiver, RecvFail};
@@ -30,7 +30,7 @@ use crate::system::operator::{EntryId, Fail};
 
 use super::{Face, map_code};
 use crate::system::operator as ocall;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
 use crate::system::operator::marks::WATCH_MARK;

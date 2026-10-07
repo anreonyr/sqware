@@ -1,5 +1,5 @@
 //! Observe a system team's failure from an independent parent team.
-use runtime::core::res::bell::Bell;
+use ::resource::bell::Bell;
 use crate::system::life::{Phase, Status};
 use crate::system::loader::{Image, Loader};
 use alloc::{boxed::Box, sync::Arc};
@@ -9,7 +9,7 @@ use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use protocol::communication::session::establish;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{HolePie};
 
 const DOOM: Mark = Mark::of("system-fault-doom");
 const REPORT: Mark = Mark::of("system-fault-report");
@@ -23,8 +23,8 @@ pub fn acceptance() {
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
     let payload =
-        env::pie::unseal_pole(child.elf.len().div_ceil(runtime::PAGE_SIZE) * runtime::PAGE_SIZE, true).unwrap();
-    let (at, _) = runtime::core::res::pie::open(payload).unwrap();
+        env::pie::unseal_pole(child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, true).unwrap();
+    let (at, _) = ::resource::raw::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
@@ -42,14 +42,14 @@ pub fn acceptance() {
         let task = image
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
             .unwrap();
-        runtime::core::res::port::ship(
+        ::resource::port::ship(
             report,
             task,
             env::Access::STORE,
             env::Policy::NONE,
         )
         .unwrap();
-        runtime::core::res::port::ship(
+        ::resource::port::ship(
             boot,
             task,
             env::Access::FETCH,
@@ -83,7 +83,7 @@ pub fn acceptance() {
                     env::chrono::clock() < until,
                     "system-fault: task survived team failure"
                 );
-                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
             }
         }
         unit::oust(team).unwrap();
@@ -99,7 +99,7 @@ pub fn acceptance() {
 
 pub fn unit() {
     let mut loader = Loader::new();
-    let args = runtime::core::task::args::args();
+    let args = execution::boot::args::args();
     let doom = establish::claim(TaskId::new(0), DOOM, Wait::AtMost(5000)).unwrap();
     let mode = args[0];
     let sire = TaskId::new(args[2]);
@@ -110,7 +110,7 @@ pub fn unit() {
         .unwrap();
     assert_eq!((n, from), (bytes.len(), sire));
     let payload = env::PieToken::from_bytes(&bytes).unwrap();
-    let dock = runtime::core::res::dock::Dock::open(payload).unwrap();
+    let dock = ::resource::dock::Dock::open(payload).unwrap();
     // SAFETY: the parent supplied an immutable ELF payload of args[1] bytes.
     let elf = unsafe { core::slice::from_raw_parts(dock.view().base() as *const u8, args[1]) };
     let child = loader
@@ -132,7 +132,7 @@ pub fn unit() {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             if mode == role {
-                runtime::core::task::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
+                execution::room::reap(env::EXIT_OK, Some("system-fault: injected task exit"));
             }
             let success = if role == 1 {
                 crate::system::operator::serve::run::serve(state.clone()).is_ok()
@@ -149,9 +149,9 @@ pub fn unit() {
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = runtime::core::task::spawn(
+        let task = execution::unit::spawn(
             TeamId::new(0),
-            runtime::core::task::join::trampoline as *const () as usize,
+            execution::unit::join::trampoline as *const () as usize,
             &[ptr as usize],
             0,
         )
@@ -187,6 +187,6 @@ pub fn unit() {
         {
             let _ = room::doom(unit::self_id());
         }
-        runtime::core::task::sleep(core::time::Duration::from_millis(10)).unwrap();
+        execution::room::sleep(core::time::Duration::from_millis(10)).unwrap();
     }
 }

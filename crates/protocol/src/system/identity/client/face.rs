@@ -9,7 +9,7 @@ use crate::{
 };
 use env::{PieToken, TaskId, Wait};
 use env::pie;
-use runtime::core::res::pie::{reserve};
+use ::resource::raw::{reserve};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallError {

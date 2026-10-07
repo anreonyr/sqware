@@ -6,13 +6,11 @@ use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, p
 use protocol::communication::session::{Session, establish};
 use protocol::service::terminal::{Connection, Terminal, frame};
 use protocol::system::operator::{self, Face};
-use runtime::core::{
-    res::pie::{HolePie, inspect},
-    task,
-};
+use ::resource::raw::{HolePie, inspect};
+use execution::{room, unit as task};
 
 extern "C" fn unused(_: usize) -> ! {
-    task::exit(0, None)
+    room::reap(0, None)
 }
 fn held() -> TaskId {
     task::spawn(TeamId::new(0), unused as *const () as usize, &[], 0).unwrap()

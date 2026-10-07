@@ -40,7 +40,7 @@
 //! （`programs::unit` 那一张）是编译期常量表），**运行期写 `|`**（与另两位同形，不必记一个
 //! 专门的名字）。两条都留着不是"多一条路"：`BitOr` 给运行期，那个 `const` 给常量表。
 //!
-//! `runtime::core::res::port` 里 `pub use env::{Access, Policy};` 把名字照旧转出去（调用点不动）。
+//! `resource::port` 里 `pub use env::{Access, Policy};` 把名字照旧转出去（调用点不动）。
 //!
 //! `impl Wire for Permission` 仍住 `wire/mod.rs`（与另两个"类型在外、impl 在此"的
 //! `HoleDir` / `ProgramKind` 并排）：那是本仓"**非法位校验只有一处**"的落点

@@ -9,16 +9,14 @@ use crate::system::{
 use alloc::{collections::VecDeque, sync::Arc};
 use env::{HoleDir, PieToken, TaskId, Wait};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 use protocol::{
     debug,
     system::{identity::client::TaskQuery, operator as ocall},
 };
-use runtime::{
-    core::res::{
-        pile::Pile,
-        port::{self, Access, Policy},
-    },
+use ::resource::{
+    pile::Pile,
+    port::{self, Access, Policy},
 };
 pub(super) struct Tip(pub PieToken);
 pub(super) struct Tips(pub VecDeque<(ocall::TipIn, TaskId)>);

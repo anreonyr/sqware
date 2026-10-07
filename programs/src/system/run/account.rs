@@ -9,7 +9,7 @@ use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::{self as control_call, Object, account as call};
 use protocol::system::identity::Subject;
 use protocol::system::operator::Permit;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 pub const ACCOUNT: &str = "anran";
 pub struct Accounts {
     pub entry: PieToken,

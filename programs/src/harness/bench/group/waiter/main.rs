@@ -21,8 +21,8 @@ use programs::Reason;
 
 use env::{HoleDir, Mark, PieToken};
 use protocol::debug;
-use runtime::core::res::pile::Pile;
-use runtime::core::res::pie::{HolePie, pies};
+use ::resource::pile::Pile;
+use ::resource::raw::{HolePie, pies};
 
 #[programs::entry]
 fn main() -> Reason {

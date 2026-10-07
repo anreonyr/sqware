@@ -9,7 +9,7 @@ use alloc::string::String;
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
 use env::pie;
-use runtime::core::res::pie::{HolePie, inspect, reserve};
+use ::resource::raw::{HolePie, inspect, reserve};
 
 pub use super::marks::PUBLICATION_ENTRY as ENTRY;
 pub use super::marks::PUBLICATION_BACK as BACK;
@@ -289,11 +289,11 @@ impl Client {
         {
             return Err(Fail::Denied);
         }
-        let seed = runtime::core::res::port::ship(
+        let seed = ::resource::port::ship(
             entry,
             self.control,
-            runtime::core::res::port::Access::FETCH | runtime::core::res::port::Access::STORE,
-            runtime::core::res::port::Policy::VEST,
+            ::resource::port::Access::FETCH | ::resource::port::Access::STORE,
+            ::resource::port::Policy::VEST,
         )
         .map_err(|_| Fail::Denied)?
         .seed();

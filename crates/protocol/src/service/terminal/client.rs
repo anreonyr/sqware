@@ -4,8 +4,8 @@ use crate::system::operator::Face;
 use crate::wire::message::Message;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
-use runtime::core::res::{
-    pie::{HolePie, reserve},
+use ::resource::{
+    raw::{HolePie, reserve},
     pile::Pile,
 };
 

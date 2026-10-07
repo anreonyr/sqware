@@ -9,7 +9,7 @@ use protocol::communication::session::{Session, establish};
 use protocol::system::control::{Client, Object, Target};
 use protocol::system::identity::{Selector, Query, SelfOps};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
+use ::resource::raw::{HolePie, reserve};
 use protocol::system::operator::{
     Fail, Permit,
     client::{self as operator, Face},
@@ -159,7 +159,7 @@ fn main() -> programs::Report<'static> {
                 assert!(tree.tile(&ownroad, WAIT).unwrap().token(WAIT).is_ok());
                 {
                     use protocol::system::control::publication::{BACK, ENTRY, Frame};
-                    use runtime::core::res::port::{self, Access, Policy};
+                    use ::resource::port::{self, Access, Policy};
                     let abandoned = Target::RuntimeResource {
                         task: me,
                         kind: "public".into(),
@@ -304,7 +304,7 @@ fn main() -> programs::Report<'static> {
             }
             5 => {
                 use protocol::system::control::publication::{BACK, REF, Reply};
-                use runtime::core::res::port::{self, Access, Policy};
+                use ::resource::port::{self, Access, Policy};
                 let fake = establish::find(control, REF).unwrap();
                 assert_eq!(
                     Client::reference_direct(control, authority, fake, 1, "wrong-authority", WAIT),
@@ -312,7 +312,7 @@ fn main() -> programs::Report<'static> {
                 );
                 let back = pie::unseal_hole(BACK).unwrap();
                 let from = me.get();
-                let helper = runtime::core::task::join::closure(move || {
+                let helper = execution::unit::join::closure(move || {
                     let back = establish::claim(TaskId::new(from), BACK, WAIT).unwrap();
                     let reply = Reply {
                         status: 0,
