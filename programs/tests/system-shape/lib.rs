@@ -199,6 +199,33 @@ mod boundaries {
             );
         }
     }
+    #[test]
+    fn provider_api_and_public_clients_keep_one_way_dependencies() {
+        fn dependencies(path: &Path) -> Vec<String> {
+            let source = fs::read_to_string(path).unwrap();
+            let mut result = Vec::new();
+            let mut dependency_section = false;
+            for line in source.lines().map(str::trim) {
+                if line.starts_with('[') {
+                    dependency_section = line.contains("dependencies");
+                } else if dependency_section {
+                    if let Some((name, _)) = line.split_once('=') {
+                        result.push(name.trim().to_owned());
+                    }
+                }
+            }
+            result
+        }
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let api = dependencies(&repo.join("programs/src/system/api/Cargo.toml"));
+        assert!(api.iter().all(|name| ["env", "wire", "mold"].contains(&name.as_str())));
+        let clients = dependencies(&repo.join("crates/system-client/Cargo.toml"));
+        assert!(clients.iter().any(|name| name == "system-api"));
+        assert!(!clients.iter().any(|name| name == "protocol" || name == "programs"));
+        let mut paths = References::default();
+        references(&repo.join("crates/system-client/src"), &mut paths);
+        assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
+    }
     #[derive(Default)]
     struct References(Vec<String>);
     impl<'a> Visit<'a> for References {

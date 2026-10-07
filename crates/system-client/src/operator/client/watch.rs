@@ -22,18 +22,18 @@ use env::{MailFail, Wait};
 
 use ::resource::port::{self, Access, Policy};
 
-use crate::common::path::{Path, PathBuf};
-use crate::system::operator::frame::Event;
-use crate::system::operator::frame::watch::EventFrame;
-use crate::system::operator::{EntryId, Fail};
+use crate::operator::path::{Path, PathBuf};
+use crate::operator::frame::Event;
+use crate::operator::frame::watch::EventFrame;
+use crate::operator::{EntryId, Fail};
 use ipc::hand::{Receiver, RecvFail, SourceFail};
 
 use super::{Face, map_code};
-use crate::system::operator as ocall;
+use crate::operator as ocall;
 use ::resource::raw::Hole;
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
-use crate::system::operator::marks::WATCH_MARK;
+use crate::operator::marks::WATCH_MARK;
 
 /// **一位订户的柄**：那一枚孔（本端持有）＋ 那条订过的路 ＋ 已读到哪一号。
 ///
@@ -82,7 +82,7 @@ impl<'a> Watch<'a> {
             }),
             // 那一格码原样说出去（`OK` 以外的每一档各有成因，别折成同一个 `Unknown`）。
             code => {
-                crate::debug!("operator: watch refused code={code}");
+                crate::debug::put(&alloc::format!("operator: watch refused code={code}"));
                 Err(map_code(code))
             }
         }

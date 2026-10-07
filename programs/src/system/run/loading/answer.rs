@@ -1,10 +1,10 @@
 use ::schedule::{Progress, ResMut};
 use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait, pie};
-use protocol::system::loader::frame::{self, Ask, Said, Wire};
+use system_client::loader::frame::{self, Ask, Said, Wire};
 use protocol::wire::message::Message;
 use ipc::rpc::{self, reply::Sender};
-use protocol::system::loader::rpc::Contract;
+use system_client::loader::rpc::Contract;
 use ::resource::raw::inspect;
 
 pub struct Incoming {
@@ -54,7 +54,7 @@ pub fn receive(
                     status: if accepted.is_some() {
                         protocol::wire::OK
                     } else {
-                        protocol::system::control::frame::NOTREADY
+                        system_client::control::frame::NOTREADY
                     },
                     team: accepted.map_or(0, |team| team.get() as u64),
                     task: claim.task,
@@ -67,7 +67,7 @@ pub fn receive(
                 if inbox.requests.len() >= 16 || inbox.requests.try_reserve(1).is_err() {
                     release_image(&ask, from);
                     reply(back, Said {
-                        status: protocol::system::control::frame::FULL,
+                        status: system_client::control::frame::FULL,
                         team: 0,
                         task: TaskId::new(0),
                     });
@@ -95,7 +95,7 @@ pub(super) fn reject(inbox: &mut Inbox) {
         reply(
             incoming.back,
             Said {
-                status: protocol::system::control::frame::NOTREADY,
+                status: system_client::control::frame::NOTREADY,
                 team: 0,
                 task: TaskId::new(0),
             },

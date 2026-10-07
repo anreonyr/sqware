@@ -12,8 +12,8 @@ use programs::Report;
 use protocol::common::path::PathBuf;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
+use system_client::operator::client as operator;
+use system_client::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
 use env::unit;
 use env::pie;
 
@@ -148,12 +148,12 @@ fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
     let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let target = system_client::control::publication::Target::Service {
+        scope: system_client::control::publication::Scope::Fixture,
         group: group.into(),
         name: name.into(),
     };
-    let id = protocol::system::control::publication::Client::injected()
+    let id = system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target, entry, Permit::Public, Wait::AtMost(MS))
         .unwrap();

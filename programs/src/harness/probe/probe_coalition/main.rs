@@ -17,10 +17,10 @@ use programs::harness::probe;
 use protocol::common::path::Path;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::identity as icall;
-use protocol::system::operator::Grant;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::Face;
+use system_client::identity as icall;
+use system_client::operator::Grant;
+use system_client::operator::client as operator;
+use system_client::operator::Face;
 use env::unit;
 use ::resource::raw::{reserve};
 
@@ -56,7 +56,7 @@ fn main() -> Report<'static> {
                 tree.tile(&road, Wait::AtMost(MS))
                     .unwrap()
                     .token(Wait::AtMost(MS)),
-                Err(protocol::system::operator::Fail::Denied),
+                Err(system_client::operator::Fail::Denied),
                 "installer discovery must deny an ordinary principal"
             );
             let entry = ipc::session::establish::find(authority, grant.mark())

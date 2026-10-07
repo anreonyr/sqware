@@ -14,9 +14,9 @@ use env::{PieToken, TaskId, Wait};
 use ipc::session::Session;
 use protocol::debug;
 use protocol::driver::line::Line;
-use protocol::system::control::Scope;
-use protocol::system::operator::Permit;
-use protocol::system::operator::client as operator;
+use system_client::control::Scope;
+use system_client::operator::Permit;
+use system_client::operator::client as operator;
 
 /// 要找的那位服务（线路由者）在树上的名字
 const ROUTER: &str = "router";
@@ -39,9 +39,9 @@ impl Context {
 
     /// 上树落**一枚门牌**（`entry` = 这一域自己铸的那一枚孔）。
     pub fn plate(&self, entry: PieToken, me: &str, ms: Wait) {
-        let client = protocol::system::control::publication::Client::injected()
+        let client = system_client::control::publication::Client::injected()
             .expect("driver: publication entry");
-        let target = protocol::system::control::publication::Target::Service {
+        let target = system_client::control::publication::Target::Service {
             scope: Scope::Driver,
             group: "".into(),
             name: me.into(),

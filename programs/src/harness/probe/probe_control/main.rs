@@ -16,10 +16,10 @@ use programs::harness::probe;
 use env::unit;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::control as ccall;
-use protocol::system::operator::Fail;
-use protocol::system::operator::Grant;
-use protocol::system::operator::client as operator;
+use system_client::control as ccall;
+use system_client::operator::Fail;
+use system_client::operator::Grant;
+use system_client::operator::client as operator;
 
 const MS: usize = 1000;
 
@@ -135,8 +135,8 @@ fn main() -> Report<'static> {
         instance.service("terminal".into()).ruin(Wait::AtMost(MS)),
         Err(ccall::Fail::Denied)
     ));
-    let loader_road = protocol::system::loader::DIR
-        .try_join(protocol::system::loader::Grant::Build.name())
+    let loader_road = system_client::loader::DIR
+        .try_join(system_client::loader::Grant::Build.name())
         .unwrap();
     assert!(
         matches!(

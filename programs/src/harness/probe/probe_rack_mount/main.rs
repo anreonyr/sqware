@@ -27,9 +27,9 @@ use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
 use ipc::rack::{Mode, Rack};
 use ipc::session::{Session, establish};
-use protocol::system::control::{Client, Scope, Target};
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face, Fail, Grant, Permit};
+use system_client::control::{Client, Scope, Target};
+use system_client::operator::client as operator;
+use system_client::operator::{Face, Fail, Grant, Permit};
 use env::unit;
 use env::pie;
 use ::resource::raw::{inspect};
@@ -153,7 +153,7 @@ fn open(mode: Mode) -> Rack<Bytes> {
 
 /// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Public`：谁都能查、谁都能取，
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
-fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<protocol::system::operator::EntryId> {
+fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<system_client::operator::EntryId> {
     let road = rig::road().expect("probe-rack-mount: road");
     let publisher = Client::injected().expect("probe-rack-mount: publication entry");
     let mut mounts = Vec::new();

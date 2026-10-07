@@ -10,8 +10,8 @@ use protocol::{
     common::{
         path::Path,
     },
-    system::{identity as id, operator as op},
 };
+use system_client::{identity as id, operator as op};
 pub fn publication_face(
     images: Res<Images>,
     mut mounts: ResMut<Mounts>,

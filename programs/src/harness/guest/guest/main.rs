@@ -16,9 +16,9 @@ use programs::Report;
 use env::PieToken;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::{Fail, Face};
-use protocol::system::operator::client as operator;
+use system_client::operator as ocall;
+use system_client::operator::{Fail, Face};
+use system_client::operator::client as operator;
 use env::unit;
 
 const WANT: &str = "router";
@@ -74,7 +74,7 @@ fn main() -> Report<'static> {
     );
 }
 
-fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &system_client::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {

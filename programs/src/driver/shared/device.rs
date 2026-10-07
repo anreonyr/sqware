@@ -6,7 +6,7 @@ use env::{Access, Policy, PieKind, PieToken, Wait};
 use protocol::common::path::Path;
 use protocol::service::hub;
 use protocol::service::hub::Deed;
-use protocol::system::operator::Face;
+use system_client::operator::Face;
 use ::resource::dock::{Dock, View};
 
 use crate::unit::Died;

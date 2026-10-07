@@ -8,7 +8,7 @@ use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Permission, TaskId, Wait, unit};
 use ::schedule::{Cursor, Progress, Schedule};
-use protocol::system::control::{self, Face, State, account::Client};
+use system_client::control::{self, Face, State, account::Client};
 
 const WAIT: Wait = Wait::AtMost(2000);
 #[derive(Default)]
@@ -130,12 +130,12 @@ fn reference(root: TaskId) -> control::Object {
     let entry =
         ipc::session::establish::find(root, control::publication::REF).unwrap();
     let authority = ::resource::raw::pies()
-        .find(|pie| pie.mark == protocol::system::identity::Grant::Resolve.mark())
+        .find(|pie| pie.mark == system_client::identity::Grant::Resolve.mark())
         .unwrap()
         .owner;
     control::Client::reference_direct(root, authority, entry, 1, "anran", WAIT).unwrap()
 }
-pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator::Face) {
+pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
     let heirs = unit::heir_count();
     let signals = Arc::new(Signals {

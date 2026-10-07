@@ -25,7 +25,7 @@ impl TaskQuery {
         })
     }
     pub fn discover(
-        operator: &crate::system::operator::client::Face,
+        operator: &crate::operator::client::Face,
         authority: TaskId,
         wait: Wait,
     ) -> Result<Self, CallError> {
@@ -81,7 +81,7 @@ pub struct Query {
 }
 impl Query {
     pub fn discover(
-        operator: &crate::system::operator::client::Face,
+        operator: &crate::operator::client::Face,
         authority: TaskId,
         wait: Wait,
     ) -> Result<Self, CallError> {

@@ -14,8 +14,8 @@ use alloc::string::ToString;
 use protocol::common::path::Path;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
+use system_client::operator::client as operator;
+use system_client::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 
 use protocol::driver;
 use env::unit;

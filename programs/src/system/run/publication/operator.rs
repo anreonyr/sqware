@@ -2,9 +2,7 @@
 use ::schedule::{Progress, Res, ResMut};
 use crate::system::{boot::Mounts, common::face::mount, life::Status, run::publication::Internal};
 use alloc::sync::Arc;
-use protocol::{
-    system::operator as op,
-};
+use system_client::operator as op;
 pub fn faces(
     status: Res<Arc<Status>>,
     mut mounts: ResMut<Mounts>,

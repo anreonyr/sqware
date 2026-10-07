@@ -2,8 +2,8 @@ use crate::system::run::publication::book::Publications;
 use ::schedule::{Progress, Res, ResMut};
 use env::Wait;
 use ipc::rpc;
-use protocol::system::control::rpc::Publication;
-use protocol::system::operator::Fail;
+use system_client::control::rpc::Publication;
+use system_client::operator::Fail;
 use system_api::control::publication::{self as pubcall, Frame, Reply};
 
 use super::{Inbox, Incoming, Outcome, Request};

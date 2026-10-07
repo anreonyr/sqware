@@ -27,10 +27,10 @@ pub fn build(
                 Err(fail) => return Err((fail.into(), back)),
             };
             let count = ask.count as usize;
-            if count > protocol::system::loader::frame::MAX_ARGS {
-                return Err((protocol::system::control::Fail::Bad, back));
+            if count > system_client::loader::frame::MAX_ARGS {
+                return Err((system_client::control::Fail::Bad, back));
             }
-            let mut args = [0; protocol::system::loader::frame::MAX_ARGS];
+            let mut args = [0; system_client::loader::frame::MAX_ARGS];
             for (to, from) in args.iter_mut().zip(&ask.args[..count]) {
                 *to = *from as usize;
             }
@@ -48,7 +48,7 @@ pub fn build(
                     },
                     delivery: super::super::launch::Delivery {
                         owner: from,
-                        identity: protocol::system::identity::Install::Inherit { parent: from },
+                        identity: system_client::identity::Install::Inherit { parent: from },
                         back,
                     },
                 },

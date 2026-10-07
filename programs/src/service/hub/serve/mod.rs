@@ -10,9 +10,9 @@ use ipc::hand::{Sender, Receiver, RecvFail};
 use ipc::session::{Session, establish};
 use protocol::debug;
 use protocol::service::hub::{Wire, Said, Window, self, Deed, Enroll, Grant};
-use protocol::system::identity::{Organization, Query, CoalitionId, PageId as _, Selector};
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
+use system_client::identity::{Organization, Query, CoalitionId, PageId as _, Selector};
+use system_client::operator::{Permit, Face as Face};
+use system_client::operator::client as operator;
 use protocol::wire::message::Message;
 use env::PAGE_SIZE;
 use ::resource::dock::Dock;
@@ -25,7 +25,7 @@ use crate::system::common::face::mount;
 use crate::system::common::machine::Machine;
 use crate::system::control::serve::task::Start;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
-use protocol::system::control::Scope;
+use system_client::control::Scope;
 
 use self::sweep::alive;
 use env::pie;
@@ -113,14 +113,14 @@ pub fn serve() -> Result<(), Start> {
         let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
             .map_err(|_| Start::Tree(E_HUB))?;
         // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
-        let publisher = protocol::system::control::publication::Client::injected()
+        let publisher = system_client::control::publication::Client::injected()
             .map_err(|_| Start::Tree(E_HUB))?;
         for (name, entry) in [
             (bond_name.as_str(), bond),
             (list_name.as_str(), list),
             (claim_name.as_str(), claim),
         ] {
-            let target = protocol::system::control::publication::Target::Service {
+            let target = system_client::control::publication::Target::Service {
                 scope: Scope::Hub,
                 group: "".into(),
                 name: name.into(),
@@ -141,7 +141,7 @@ pub fn serve() -> Result<(), Start> {
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
             for (name, entry) in doors {
-                let target = protocol::system::control::publication::Target::Service {
+                let target = system_client::control::publication::Target::Service {
                     scope: Scope::Device,
                     group: class.clone(),
                     name: name.into(),

@@ -9,8 +9,8 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use ipc::session::Session;
-use protocol::system::identity::{CallError, Query, SelfOps, Fail, PrincipalId, Subject};
-use protocol::system::operator::client as operator;
+use system_client::identity::{CallError, Query, SelfOps, Fail, PrincipalId, Subject};
+use system_client::operator::client as operator;
 use env::unit;
 
 const MS: usize = 1000;

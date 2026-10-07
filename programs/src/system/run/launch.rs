@@ -6,13 +6,11 @@ use crate::system::{
 use alloc::vec::Vec;
 use env::TaskId;
 use ipc::rpc::reply::Sender;
-use protocol::{
-    system::{
+use system_client::{
         control::Fail,
         identity::Install,
         loader::{Built, frame::Said},
-    },
-};
+    };
 #[derive(Default)]
 pub struct Pending(pub Vec<Launch>);
 pub struct Launch {

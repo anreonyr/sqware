@@ -1,3 +1,3 @@
-#[path = "../../../../../crates/protocol/src/system/identity/client/face.rs"]
+#[path = "../../../../../crates/system-client/src/identity/client/face.rs"]
 pub mod face;
 pub use face::*;

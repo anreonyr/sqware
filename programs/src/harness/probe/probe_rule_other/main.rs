@@ -27,13 +27,13 @@ use programs::Report;
 use protocol::common::path::Path;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::{Fail, Face as Face};
-use protocol::system::operator::client as operator;
+use system_client::operator::{Fail, Face as Face};
+use system_client::operator::client as operator;
 use env::unit;
 use ::resource::raw::{Hole};
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
-const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
+const DIR: &system_client::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";

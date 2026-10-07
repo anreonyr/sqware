@@ -12,8 +12,8 @@ use env::pie;
 use ::resource::raw::{Hole, reserve};
 use protocol::{
     debug,
-    system::identity::client::TaskQuery,
 };
+use system_client::identity::client::TaskQuery;
 use system_api::operator as ocall;
 use ::resource::{
     pile::Pile,

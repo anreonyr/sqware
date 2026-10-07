@@ -35,7 +35,7 @@ pub(crate) fn command(
     loop {
         assembly.progress().expect("hierarchy progress");
         if code == 5 {
-            use protocol::system::control::publication::{Frame, Object, REF, Reply};
+            use system_client::control::publication::{Frame, Object, REF, Reply};
             let fake = establish::find(me, REF).unwrap();
             let mut request = [0; Frame::LEN];
             if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
@@ -51,7 +51,7 @@ pub(crate) fn command(
                         + 10000,
                 );
                 let reply = Reply::object(Object::Principal(
-                    protocol::system::identity::PrincipalId::new(wrong, 0),
+                    system_client::identity::PrincipalId::new(wrong, 0),
                 ));
                 let mut encoded = [0; Reply::LEN];
                 let n = reply.store_at(&mut encoded, 0).unwrap();
@@ -84,17 +84,17 @@ pub(crate) fn command(
 
 pub(crate) fn exercise(
     assembly: &mut crate::harness::probe::fixture::Fixture,
-    operator: &protocol::system::operator::client::Face,
+    operator: &system_client::operator::client::Face,
     authority: env::TaskId,
     service: env::TaskId,
     target: env::TaskId,
-) -> protocol::system::identity::CoalitionId {
+) -> system_client::identity::CoalitionId {
     use env::Wait;
     use ipc::session::establish;
-    use protocol::system::control::publication::Object;
-    use protocol::system::identity::client::{Face, Installer, Organization};
-    use protocol::system::identity::{Grant, Install, Reply, Selector, Subject, Wire};
-    use protocol::system::operator::{Fail, Permit};
+    use system_client::control::publication::Object;
+    use system_client::identity::client::{Face, Installer, Organization};
+    use system_client::identity::{Grant, Install, Reply, Selector, Subject, Wire};
+    use system_client::operator::{Fail, Permit};
     let wait = Wait::AtMost(3000);
     let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
     let face = |g| Face::direct(authority, g, entry(g)).unwrap();
@@ -336,7 +336,7 @@ pub(crate) fn exercise(
     ));
     sender_boundary(assembly);
     command(assembly, target, 1);
-    let fake = pie::unseal_hole(protocol::system::control::publication::REF).unwrap();
+    let fake = pie::unseal_hole(system_client::control::publication::REF).unwrap();
     ::resource::port::ship(
         fake,
         service,
@@ -463,11 +463,11 @@ pub(crate) fn exercise(
 pub fn codecs() {
     use env::wire::Span as _;
     use env::{PieToken, TaskId};
-    use protocol::system::control::publication::{Frame, Object, Reply, Scope, Target};
-    use protocol::system::operator::{EntryId, Permit, Tip, TipIn};
+    use system_client::control::publication::{Frame, Object, Reply, Scope, Target};
+    use system_client::operator::{EntryId, Permit, Tip, TipIn};
     let a = TaskId::new(77);
     let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
-    let p = protocol::system::identity::PrincipalId::new(a, 19);
+    let p = system_client::identity::PrincipalId::new(a, 19);
     for target in [
         Target::Service {
             scope: Scope::Driver,
@@ -508,7 +508,7 @@ pub fn codecs() {
             .identity(TaskId::new(78))
             .is_err()
     );
-    let mut bytes = [0; protocol::system::operator::TIP_LEN + 1];
+    let mut bytes = [0; system_client::operator::TIP_LEN + 1];
     let tip = Tip::Plate {
         road: protocol::common::path::Path::new("svc/test/entry").to_path_buf(),
         leaf: b,
@@ -658,8 +658,8 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use protocol::system::control::publication::{Client, ENTRY, Frame, Scope, Target};
-    use protocol::system::operator::{Fail, Permit};
+    use system_client::control::publication::{Client, ENTRY, Frame, Scope, Target};
+    use system_client::operator::{Fail, Permit};
     use ::resource::port::{self, Access, Policy};
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
@@ -723,7 +723,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
     use ipc::session::{Session, establish};
-    use protocol::system::operator::{
+    use system_client::operator::{
         EntryId, Fail, Grant, Where,
         client::{self as operator, Face},
     };
@@ -764,19 +764,19 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             }
             let private = establish::claim(
                 env::TaskId::new(host.get()),
-                protocol::system::operator::TIP_MARK,
+                system_client::operator::TIP_MARK,
                 Wait::AtMost(1000),
             )
             .unwrap();
-            let tip = protocol::system::operator::Tip::Plate {
+            let tip = system_client::operator::Tip::Plate {
                 road: protocol::common::path::Path::new("idt/principal/forged/ref").to_path_buf(),
                 leaf: env::PieToken::NONE,
-                permit: protocol::system::operator::Permit::Public,
+                permit: system_client::operator::Permit::Public,
                 owner: control,
                 replace: false,
                 back: env::PieToken::NONE,
             };
-            let mut bytes = [0; protocol::system::operator::TIP_LEN];
+            let mut bytes = [0; system_client::operator::TIP_LEN];
             let n = tip.store(&mut bytes).unwrap();
             Hole::from_raw(private)
                 .push(&bytes[..n], Wait::AtMost(1000))
@@ -789,7 +789,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
-        let private = establish::find(host, protocol::system::operator::TIP_MARK).unwrap();
+        let private = establish::find(host, system_client::operator::TIP_MARK).unwrap();
         port::ship(private, caller.id(), Access::STORE, Policy::NONE).unwrap();
         released.store(true, Ordering::Release);
         let until = env::chrono::clock() + 10_000_000_000;

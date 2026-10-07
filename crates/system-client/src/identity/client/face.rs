@@ -38,7 +38,7 @@ impl Face {
         }
     }
     pub fn discover(
-        operator: &crate::system::operator::client::Face,
+        operator: &crate::operator::client::Face,
         authority: TaskId,
         grant: Grant,
         wait: Wait,

@@ -1,16 +1,8 @@
-//! One authority owns lineage, membership qualifications and effective task identities.
-//! IDs survive transport, not authority restart. Subjects are bounded snapshots, never credentials.
+//! Compatibility facade for the Identity API and client.
 pub mod client;
 pub mod frame;
-pub mod marks;
 pub mod grant;
 pub mod limits;
+pub mod marks;
 pub mod rpc;
-
-pub use client::{CallError, Installer, Organization, Query, SelfOps, TaskQuery};
-pub use frame::vocab::*;
-pub use frame::{BACK, Fail, Reply, Wire};
-pub use grant::{Grant, Mount, grant_of};
-pub use system_api::identity::REGISTRY;
-
-pub const DIR: &crate::common::path::Path = crate::common::path::Path::new(frame::DIR);
+pub use system_client::identity::*;

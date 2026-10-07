@@ -9,10 +9,10 @@ use alloc::{string::String, vec::Vec};
 use env::{PieToken, TaskId, Wait};
 use ::schedule::{Progress, Res, ResMut};
 use system_api::control::publication::{self as pubcall, Frame, Object, Reply};
-use protocol::system::operator::{EntryId, Fail, Permit};
+use system_client::operator::{EntryId, Fail, Permit};
 use env::pie;
 use ipc::rpc;
-use protocol::system::control::rpc::Publication;
+use system_client::control::rpc::Publication;
 
 pub struct Registration {
     pub name: String,

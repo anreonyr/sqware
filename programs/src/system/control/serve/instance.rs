@@ -8,7 +8,7 @@ use crate::system::control::core::unit::State;
 use env::{Wait, unit};
 use ipc::rpc::{self, request::Receiver as RequestReceiver};
 use system_api::control as call;
-use protocol::system::control::rpc::Control as ControlContract;
+use system_client::control::rpc::Control as ControlContract;
 
 pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<Progress, Fail> {
     let count = inbox.0.len();

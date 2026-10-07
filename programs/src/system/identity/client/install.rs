@@ -6,13 +6,13 @@
 
 use env::unit;
 use env::{Access, PieToken, Policy, TaskId, Wait};
-use protocol::system::identity::{Grant, Install, Installer, PrincipalId, Subject};
+use system_client::identity::{Grant, Install, Installer, PrincipalId, Subject};
 use ::resource::port;
 
 use super::source::face_of;
 use crate::system::common::timing::BOOT_MS;
 
-const _: () = assert!(Grant::ALL.len() <= protocol::system::operator::frame::PANE_CAP);
+const _: () = assert!(Grant::ALL.len() <= system_client::operator::frame::PANE_CAP);
 
 #[derive(Default)]
 pub struct Roster {
@@ -83,10 +83,10 @@ impl Roster {
     pub(crate) fn activate(
         &self,
         task: TaskId,
-        coalition: protocol::system::identity::CoalitionId,
+        coalition: system_client::identity::CoalitionId,
     ) -> Result<(), &'static str> {
-        use protocol::system::identity::client::Face;
-        use protocol::system::identity::{Reply, Wire, limits::MAX_ACTIVE_COALITIONS};
+        use system_client::identity::client::Face;
+        use system_client::identity::{Reply, Wire, limits::MAX_ACTIVE_COALITIONS};
 
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let authority = installer.authority();

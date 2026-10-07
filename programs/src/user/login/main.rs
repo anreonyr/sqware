@@ -6,7 +6,7 @@ mod auth;
 use env::{Wait, unit};
 use ipc::session::Session;
 use protocol::service::terminal::{Connection, Io, Read, Terminal};
-use protocol::system::{
+use system_client::{
     control::{Face as Lifecycle, State, account::Client},
     operator::{self, Face},
 };
@@ -88,7 +88,7 @@ fn run() -> Result<(), &'static str> {
     let tree = Face::of(session);
     let client = Client::find(&tree, WAIT).map_err(|_| "login: account endpoint")?;
     let lifecycle = Lifecycle::of(
-        tree.tile(protocol::system::control::client::INSTANCE, WAIT)
+        tree.tile(system_client::control::client::INSTANCE, WAIT)
             .and_then(|tile| tile.token(WAIT))
             .map_err(|_| "login: instance endpoint")?,
     )

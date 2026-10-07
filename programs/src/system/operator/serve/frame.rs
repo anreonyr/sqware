@@ -4,9 +4,7 @@ use crate::system::life::{Phase, Status};
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use env::{TaskId, Wait};
-use protocol::{
-    system::identity::client::TaskQuery,
-};
+use system_client::identity::client::TaskQuery;
 pub(super) struct Running(pub bool);
 pub(super) fn health(
     status: Res<Arc<Status>>,

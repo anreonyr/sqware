@@ -87,7 +87,7 @@ impl Tree {
             authority,
             faces: [resolve, matches, same],
         } = wiring;
-        use protocol::system::identity::Grant;
+        use system_client::identity::Grant;
         let host = self.host.ok_or("no tree yet")?;
         let Some(tip) = self.tip else {
             return Err("no tip");

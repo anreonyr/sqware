@@ -1,6 +1,6 @@
 //! 树这一侧要用到的孔各有各的记号（答话路 / 问话孔 / 门牌），而认领的判据只有一条：
 //! `owner == who` 且 `mark == 记号`。这一份是那条判据的唯一正文——super::server（收那三句话）
-//! 记号那一侧是调用方给的（protocol::system::operator 的 `LINK` / `ASK_MARK` / 每一位各一枚，
+//! 记号那一侧是调用方给的（system_client::operator 的 `LINK` / `ASK_MARK` / 每一位各一枚，
 //! 以及各族交过来的门牌：名册那一族**两面各一枚**、盟册那一族仍是通用那枚 `entry`）。
 
 use env::{Mark, PieToken, TaskId};

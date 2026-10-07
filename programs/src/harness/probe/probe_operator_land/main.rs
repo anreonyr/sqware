@@ -6,10 +6,10 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 use ipc::session::Session;
-use protocol::system::control::{Client, Scope, Target};
+use system_client::control::{Client, Scope, Target};
 use env::pie;
 use ::resource::raw::{Hole, reserve};
-use protocol::system::operator::{
+use system_client::operator::{
     EntryId, Fail, Grant, Permit, Where,
     client::{self as operator, Face, Mine},
 };

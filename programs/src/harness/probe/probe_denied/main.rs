@@ -10,9 +10,9 @@ use env::{PieToken, Wait};
 use programs::Report;
 use ipc::hand::Receiver;
 use ipc::session::{Session, establish};
-use protocol::system::identity;
-use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
-use protocol::system::operator::client as operator;
+use system_client::identity;
+use system_client::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
+use system_client::operator::client as operator;
 use env::unit;
 use ::resource::raw::{Hole, reserve};
 
@@ -26,7 +26,7 @@ fn main() -> Report<'static> {
         let request = establish::Held(
             establish::endpoint(
                 unit::sire(),
-                env::Mark::of(protocol::system::operator::LINK),
+                env::Mark::of(system_client::operator::LINK),
                 Wait::POLL,
             )
             .expect("probe-denied: transient LINK"),

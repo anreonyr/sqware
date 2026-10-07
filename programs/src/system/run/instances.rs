@@ -62,7 +62,7 @@ pub fn publication(
     mounts.0.push(crate::system::run::publication::Internal {
         road: call::INSTANCE.to_path_buf(),
         entry,
-        access: (protocol::system::operator::Permit::Bound, unit::self_id()),
+        access: (system_client::operator::Permit::Bound, unit::self_id()),
     });
     Ok(Progress::Done)
 }

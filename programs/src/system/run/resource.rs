@@ -13,7 +13,7 @@ use alloc::{
 use env::{TaskId, TeamId, Wait};
 use protocol::common::path::{Path, PathBuf};
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::operator::{EntryId, Fail, Permit};
+use system_client::operator::{EntryId, Fail, Permit};
 struct Run {
     task: TaskId,
     team: TeamId,

@@ -14,8 +14,8 @@ use programs::Report;
 use protocol::common::path::PathBuf;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
+use system_client::operator::{Permit, Face as Face};
+use system_client::operator::client as operator;
 use env::unit;
 use env::pie;
 
@@ -38,9 +38,9 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
-    let client = protocol::system::control::publication::Client::injected().unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let client = system_client::control::publication::Client::injected().unwrap();
+    let target = system_client::control::publication::Target::Service {
+        scope: system_client::control::publication::Scope::Fixture,
         group: "probe-swatch".into(),
         name: IN.into(),
     };

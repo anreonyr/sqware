@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC，以及 Loader、Identity、Operator、Control 的提供方 API 与通信迁移已落地；公共客户端独立成 crate、protocol 删除与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC，以及四个 System 提供方 API 与独立 system-client 已落地；protocol 删除与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -53,7 +53,7 @@ execution       → env                 # room、unit、memory、lock、boot
 schedule                              # 纯计划执行；不依赖 env 或执行库
 ipc             → wire + resource + env # 通用通信、RPC 与环境时间，不收集软件客户端
 system-api      → wire + env           # 普通数据、接口声明与生成契约
-system-client   → system-api + ipc + resource
+system-client   → system-api + ipc + resource + env + wire + execution
 System 实现     → system-api + system-client + ipc + resource + execution + schedule
 image           → 各软件的纯 API       # 装配检查和公共入口描述
 ```
@@ -350,7 +350,7 @@ Identity 已作为第二例迁移：
 - 服务端入口统一导入已验证的应答发送权，队列与 Current 持有该权利；回复或放弃均自动释放。Grant 与动作的匹配、权限判决、状态更新和 revision 仍归 authority 模型。
 - 完整请求头但损坏动作载荷仍解码为 `None`，合法回程收到 `Bad`；不可信回程直接拒绝。保留一页收件缓冲，rpc 接收允许调用方提供字节切片，由 codec 判断合法帧上限，避免超长帧阻塞后续请求。
 - 本批 64 项宿主检查通过：Identity codec 7、authority 模型 11、Identity 客户端与契约 9、IPC 16、Mark 3、Loader 11、System 边界 7。客户端测具使用真实源码与 codec，模拟发现、资源查询和 IPC 边界；真实 RPC 生命周期另由 IPC 测具验证。
-- programs 全目标编译与 QEMU accept、product、system-fault 均通过。公共客户端实现与 RPC 契约绑定暂留 protocol；移入 system-client 并删除兼容导出属于后续批次。
+- programs 全目标编译与 QEMU accept、product、system-fault 均通过。公共客户端实现与 RPC 契约绑定已在后续批次移入 system-client；protocol 的兼容导出将在第 7 批删除。
 
 Operator 的提供方 API 与会话调用已迁移：
 
@@ -370,9 +370,18 @@ Control 的提供方 API 与三种 RPC 已迁移：
 - 普通请求保留完整头里的未知动作回程，服务端返回 Bad；account 解码保留头完整性标志，授权检查后再验证完整帧与账号名称，非法尾巴仍能返回 Bad。
 - inbox 和生命周期 Request 持有一次性的 `reply::Sender<Said>`；排队失败返回原 Request，保留回复 Full/NotReady 的权利。完成仍在原 run/frame 回复阶段消费 Option，不提前回复，不改变回滚与实例操作顺序。实例重排队通过回复对象查询存活，不暴露裸回程 token。
 - publication 的准入由已验证的回复权表示；不可信回程携带的来源能力仍通过原索引做清理，避免遗忘既有发布引用。客户端在 RPC send 成功后记录交付，接收失败不会撤销已经交付的能力；发送失败才撤销本次授予。
-- publication 构造器把能力与许可作为一对参数，符合 System 三参数限制；原线上帧布局与固定状态码保持不变。业务策略与客户端实现暂留原模块，后续独立 system-client 与软件目录重组时归位。
+- publication 构造器把能力与许可作为一对参数，符合 System 三参数限制；原线上帧布局与固定状态码保持不变。公共客户端已在后续批次移入 system-client；业务策略继续留软件实现，随目录重组归位。
 - 本批 53 项宿主检查通过：Control API 4、Control/publication 客户端与契约 4、IPC 17、Identity codec 7、Mark 3、Loader 11、System 边界 7。客户端测具模拟 IPC/资源边界并使用真实源码与 codec；异步生命周期队列未新增独立宿主夹具，由全目标编译、RPC 生命周期检查与真实系统场景共同验证。
 - programs 全目标编译及 QEMU accept、product、system-fault 均通过。
+
+公共客户端独立已落地：
+
+- `crates/system-client` 的四个模块分别拥有 Loader、Identity、Operator、Control 客户端流程及 RPC/会话绑定；帧、状态码、Grant、Mark 和路径仍重用 system-api 的同一类型，无第二份 codec。
+- 客户端不依赖 protocol 或程序实现，system-api 只依赖 env、wire、mold，不反向依赖客户端。客户端依赖 execution 仅用于 Operator 路径发现的退避等待；调试输出为私有实现，不成为公共使用接口。
+- programs 的四域调用与服务端契约绑定全部改用 system-client 路径；Operator 模型直接使用纯 API 的 Selector。protocol 原客户端正文全部迁出，只保留对应兼容导出，供尚未迁移的软件接口使用。
+- Identity/Control 宿主测具已直接编译新客户端源码；9 项 Identity、4 项 Control/publication、8 项 System 边界检查通过。新增边界检查约束纯 API 依赖集合及客户端与 protocol 的独立关系。
+- 所有客户端流程、字节格式、能力清理、预算和回复配对保持既有实现；持久 Session 的迟到应答配对仍为前述未完成项。
+- programs 全目标编译、system-client RISC-V 检查与 QEMU accept、product、system-fault 均通过；依赖闭包检查确认 system-client 不含 protocol。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 
@@ -425,7 +434,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec、通用 IPC 与四个 System 提供方 API/通信迁移已完成；接下来收拢独立 system-client，并迁出 protocol 剩余的软件接口及兼容导出。
+第 6 批的纯 codec、通用 IPC、四个 System 提供方 API/通信迁移与独立 system-client 已完成；接下来迁出 protocol 剩余的软件接口及兼容导出。
 
 ## 迁移后的命名口径
 

@@ -27,6 +27,7 @@ members = [
     "crates/mold",
     "crates/wire",
     "crates/ipc",
+    "crates/system-client",
     "programs/src/system/api",
 ]
 default-members = ["kernel"]

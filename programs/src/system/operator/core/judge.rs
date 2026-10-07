@@ -1,7 +1,7 @@
 //! 身份查询束与树——判一格要问的全部事实。
 
 use env::TaskId;
-use protocol::system::identity::Selector;
+use system_api::identity::Selector;
 use system_api::operator::{EntryId, Permit, Ruling};
 
 /// 所有身份事实必须来自同一份可信、来源绑定的查询束。
@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn identity_uses_one_atomic_match_not_resolve() {
-        use protocol::system::identity::PrincipalId;
+        use system_api::identity::PrincipalId;
         let selector = Selector::Exact(PrincipalId::new(TaskId::new(9), 0));
         let mut facts = Answers {
             bound: Err(()),

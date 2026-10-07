@@ -23,7 +23,7 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
 use protocol::debug;
 use protocol::driver::ENTRY_MARK;
-use protocol::system::operator::client as operator;
+use system_client::operator::client as operator;
 use env::unit;
 use env::pie;
 

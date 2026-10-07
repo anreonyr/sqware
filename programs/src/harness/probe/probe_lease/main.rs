@@ -11,8 +11,8 @@ use programs::Report;
 
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
+use system_client::operator::{Permit, Face as Face};
+use system_client::operator::client as operator;
 
 use env::unit;
 use env::pie;
@@ -35,12 +35,12 @@ fn main() -> Report<'static> {
     };
     let tree = Face::of(session);
     let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let target = system_client::control::publication::Target::Service {
+        scope: system_client::control::publication::Scope::Fixture,
         group: "fixtures".into(),
         name: "lease".into(),
     };
-    let id = protocol::system::control::publication::Client::injected()
+    let id = system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target, entry, Permit::Public, Wait::AtMost(MS))
         .unwrap();

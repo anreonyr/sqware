@@ -1,8 +1,2 @@
-//! Operator request/reply binding for an established session.
-
-pub struct Contract;
-
-impl ipc::session::Contract for Contract {
-    type Request = super::Req;
-    type Response = super::Union;
-}
+//! Compatibility reexports for the Operator session adapter.
+pub use system_client::operator::exchange::*;

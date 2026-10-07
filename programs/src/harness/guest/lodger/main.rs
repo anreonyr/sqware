@@ -23,8 +23,8 @@ use programs::unit::lodger::E_LODGER;
 
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::{Fail, Face};
-use protocol::system::operator::client as operator;
+use system_client::operator::{Fail, Face};
+use system_client::operator::client as operator;
 
 use env::{Access, PieKind, PieToken, Policy};
 use protocol::driver::line;

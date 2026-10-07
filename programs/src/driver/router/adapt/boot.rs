@@ -16,7 +16,7 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::router::{E_ROUTER, PLIC_CLASS};
 use protocol::debug;
 use protocol::service::hub as hcall;
-use protocol::system::operator::client as operator;
+use system_client::operator::client as operator;
 use env::PAGE_SIZE;
 use ::resource::bell::Bell;
 use ::resource::pile::Pile;

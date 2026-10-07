@@ -2,9 +2,9 @@ use super::install::Roster;
 use crate::system::common::timing::BOOT_MS;
 use env::{TaskId, Wait};
 use ipc::session::establish;
-use protocol::system::control::Object;
-use protocol::system::identity::{Grant, Selector, Wire, client::Face};
-use protocol::system::operator::{Fail, Permit};
+use system_client::control::Object;
+use system_client::identity::{Grant, Selector, Wire, client::Face};
+use system_client::operator::{Fail, Permit};
 
 pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
     roster
@@ -19,12 +19,12 @@ fn face(roster: &Roster, grant: Grant) -> Result<Face, Fail> {
 pub(crate) fn binding(
     roster: &Roster,
     task: TaskId,
-) -> Result<Option<protocol::system::identity::Binding>, Fail> {
+) -> Result<Option<system_client::identity::Binding>, Fail> {
     match face(roster, Grant::Resolve)?
         .call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
         .map_err(|_| Fail::Unjudged)?
     {
-        protocol::system::identity::Reply::Binding(b) => Ok(b),
+        system_client::identity::Reply::Binding(b) => Ok(b),
         _ => Err(Fail::Unjudged),
     }
 }

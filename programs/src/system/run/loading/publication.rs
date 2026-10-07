@@ -8,9 +8,7 @@ use crate::system::{
     operator::client::Tree,
     run::publication::{Internal, book::Publications},
 };
-use protocol::{
-    system::{identity, loader as call, operator},
-};
+use system_client::{identity, loader as call, operator};
 pub fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,

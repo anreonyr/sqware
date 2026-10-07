@@ -2,7 +2,7 @@ use crate::system::common::timing::{BOOT_MS, RETRY_MS};
 use core::time::Duration;
 use env::{PieToken, TaskId};
 use ipc::session::establish;
-use protocol::system::identity::Grant;
+use system_client::identity::Grant;
 use env::unit;
 use ::resource::raw::{pies, reserve};
 

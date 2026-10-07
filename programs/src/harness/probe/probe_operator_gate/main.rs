@@ -12,8 +12,8 @@ use programs::harness::probe;
 
 use protocol::common::path::Path;
 use ipc::session::{Session, establish};
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
+use system_client::operator::client as operator;
+use system_client::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
 use env::unit;
 use env::pie;
 
@@ -48,11 +48,11 @@ fn main() -> Report<'static> {
     //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来），
     //       故这一步同时也在量"这一位拿得到那一柄权"。
     let rein = tree.rein(Grant::Watch);
-    let mut watch = match rein.watch(&protocol::system::operator::DIR, Wait::AtMost(MS)) {
+    let mut watch = match rein.watch(&system_client::operator::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-operator-gate: subscribe /svc/sys/operator failed: {fail:?}"),
     };
-    let Some(operator_id) = walk(&tree, &protocol::system::operator::DIR, &mut watch) else {
+    let Some(operator_id) = walk(&tree, &system_client::operator::DIR, &mut watch) else {
         panic!("probe-operator-gate: /svc/sys/operator is not a pane");
     };
     let operator_pane = Pane::of(&tree, operator_id);
@@ -69,7 +69,7 @@ fn main() -> Report<'static> {
 
     // 四、`/svc/sys/operator/land`：**整条路**译号 → **取回那一枚入口**（`find` 把它授进本表）。
     //    Face::tile 收的是**从根写起**的那条路（见 `client.rs` 的 Pane::tile 那一节）
-    let road = protocol::system::operator::DIR
+    let road = system_client::operator::DIR
         .try_join("land")
         .expect("probe-operator-gate: bad name");
     let Ok(tile) = tree.tile(&road, Wait::AtMost(MS)) else {

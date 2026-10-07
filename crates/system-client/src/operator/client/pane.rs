@@ -5,9 +5,9 @@ use alloc::string::String;
 use env::{PieToken, Wait};
 use ::resource::port::{self, Access, Policy};
 
-use crate::common::path::Path;
-use crate::system::operator as ocall;
-use crate::system::operator::{Fail, EntryId, Listing, Where, Permit};
+use crate::operator::Path;
+use crate::operator as ocall;
+use crate::operator::{Fail, EntryId, Listing, Where, Permit};
 
 use super::tile::Tile;
 use super::{Face, Mine, map_code};

@@ -7,7 +7,7 @@ use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
 use ::schedule::{Progress, Res, ResMut};
 use protocol::service::terminal::frame::{self, Command, Input, Reply};
-use protocol::system::{
+use system_client::{
     control::publication::{Client, Scope, Target},
     operator::Permit,
 };

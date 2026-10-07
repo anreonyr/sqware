@@ -3,7 +3,7 @@
 use ::schedule::{Progress, Res, ResMut};
 
 use env::{TaskId, Wait};
-use protocol::system::identity::{TaskQuery, Match, Selector};
+use system_client::identity::{TaskQuery, Match, Selector};
 use system_api::operator::{EntryId, Permit};
 
 use crate::system::operator::core::Operator;

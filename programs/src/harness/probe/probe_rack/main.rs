@@ -25,7 +25,7 @@ use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use ipc::rack::{CAP, Mode, Rack, SendFail};
 use ipc::session::Session;
-use protocol::system::operator::client as operator;
+use system_client::operator::client as operator;
 use env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）

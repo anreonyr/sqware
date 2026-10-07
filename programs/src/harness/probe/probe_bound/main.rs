@@ -20,8 +20,8 @@ use programs::Report;
 use env::PieToken;
 use ipc::session::{Session, Endpoint};
 use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
+use system_client::operator as ocall;
+use system_client::operator::client as operator;
 use env::unit;
 use ::resource::raw::{Hole};
 

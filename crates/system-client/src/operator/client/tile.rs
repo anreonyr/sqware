@@ -4,8 +4,8 @@ use alloc::string::String;
 
 use env::{PieToken, Wait};
 
-use crate::system::operator as ocall;
-use crate::system::operator::{EntryId, Fail};
+use crate::operator as ocall;
+use crate::operator::{EntryId, Fail};
 
 use super::pane::Pane;
 use super::{Face, map_code};

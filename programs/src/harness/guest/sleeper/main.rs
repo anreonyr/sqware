@@ -16,8 +16,8 @@ use programs::Report;
 
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::operator::{Fail, Face};
-use protocol::system::operator::client as operator;
+use system_client::operator::{Fail, Face};
+use system_client::operator::client as operator;
 
 use env::PieToken;
 use programs::driver::rtc::client as clock;

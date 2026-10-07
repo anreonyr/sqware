@@ -47,6 +47,48 @@ pub mod raw {
         Ok((TaskId::new(1), TaskId::new(1), Mark::NONE))
     }
 }
+
+pub mod control {
+    pub use system_api::control::{frame, marks, publication, Fail, Grant, Req, Request, Said, State, Wire};
+    pub mod account { pub use system_api::control::account::*; }
+    pub mod rpc {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/system-client/src/control/rpc.rs"));
+    }
+    pub mod client {
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/system-client/src/control/client.rs"));
+    }
+}
+
+pub mod identity {
+    pub use system_api::identity::{CoalitionId, PrincipalId};
+}
+
+pub mod loader {
+    use crate::TaskId;
+    pub mod frame { pub use system_api::loader::Said; }
+    pub struct Built { pub task: TaskId, pub team: abi_env::TeamId }
+}
+
+pub mod operator {
+    pub use system_api::operator::{EntryId, Fail, Permit, path::{Path, PathBuf}};
+    pub mod client {
+        pub struct Face;
+        pub struct Root;
+        pub struct Tile;
+        impl Face { pub fn root(&self) -> Root { Root } }
+        impl Root {
+            pub fn tile(&self, _: &system_api::operator::path::PathBuf, _: env::Wait)
+                -> Result<Tile, system_api::operator::Fail> { Err(system_api::operator::Fail::Unknown) }
+        }
+        impl Tile {
+            pub fn token(&self, _: env::Wait) -> Result<env::PieToken, system_api::operator::Fail> {
+                Err(system_api::operator::Fail::Unknown)
+            }
+        }
+    }
+}
+
+pub mod debug { pub fn put(_: &str) {} }
 pub mod port {
     use crate::{PieToken, TaskId, PUBLICATION};
     #[derive(Clone, Copy)] pub struct Access;
@@ -75,7 +117,7 @@ pub mod rpc {
 
     #[derive(Debug)]
     pub enum Fail { Open(()), Grant(()), Encode, Decode, Send(()), Receive(()), Untrusted, WrongSource }
-    pub use crate::system::control::rpc::{Account, Control, Publication};
+    pub use crate::control::rpc::{Account, Control, Publication};
 
     pub mod request {
         use super::*;
@@ -158,41 +200,17 @@ pub mod common {
 
 pub mod system {
     pub mod control {
-        pub use system_api::control::{Fail, frame, marks, publication};
+        pub use crate::control::{Fail, frame, marks, publication};
         pub mod account {
             pub use system_api::control::account::*;
             pub use system_api::control::marks::ACCOUNT_BACK as BACK;
         }
-        pub mod rpc {
-            include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/protocol/src/system/control/rpc.rs"));
-        }
-        pub mod client {
-            include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/protocol/src/system/control/client.rs"));
-        }
+        pub use crate::control::{client, rpc};
     }
-    pub mod loader { pub mod frame { pub use system_api::loader::Said; } }
-    pub mod identity { pub use system_api::identity::{CoalitionId, PrincipalId}; }
-    pub mod operator {
-        pub use system_api::operator::{EntryId, Fail, Permit};
-        pub mod client {
-            pub struct Face;
-            pub struct Root;
-            pub struct Tile;
-            impl Face { pub fn root(&self) -> Root { Root } }
-            impl Root {
-                pub fn tile(&self, _: &system_api::operator::path::PathBuf, _: env::Wait)
-                    -> Result<Tile, system_api::operator::Fail> { Err(system_api::operator::Fail::Unknown) }
-            }
-            impl Tile {
-                pub fn token(&self, _: env::Wait) -> Result<env::PieToken, system_api::operator::Fail> {
-                    Err(system_api::operator::Fail::Unknown)
-                }
-            }
-        }
-    }
+    pub use crate::{identity, loader, operator};
 }
 
-#[path = "../../../crates/protocol/src/system/control/publication.rs"]
+#[path = "../../../crates/system-client/src/control/publication.rs"]
 pub mod publication_client;
 
 #[macro_export]

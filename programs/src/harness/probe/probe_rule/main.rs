@@ -14,16 +14,16 @@ use programs::Report;
 use protocol::common::path::Path;
 use ipc::session::Session;
 use protocol::debug;
-use protocol::system::control::publication;
-use protocol::system::identity as icall;
-use protocol::system::identity::{Organization, Query, SelfOps, Selector, Subject};
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
+use system_client::control::publication;
+use system_client::identity as icall;
+use system_client::identity::{Organization, Query, SelfOps, Selector, Subject};
+use system_client::operator::client as operator;
+use system_client::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 use env::unit;
 use env::pie;
 use ::resource::raw::{Hole};
 
-const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
+const DIR: &system_client::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）
 const IS: &str = "is";

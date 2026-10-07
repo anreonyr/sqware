@@ -80,6 +80,10 @@ pub mod common {
     }
 }
 
+#[path = "../../../crates/system-client/src/identity/mod.rs"]
+pub mod identity;
+pub use system::operator;
+
 pub mod system;
 
 pub mod test_state {

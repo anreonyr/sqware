@@ -3,7 +3,7 @@ use super::fixture::Fixture;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
-use protocol::system::{control, loader as call, operator::client::Face as Operator};
+use system_client::{control, loader as call, operator::client::Face as Operator};
 use ipc::session::establish;
 use ::resource::raw::Hole;
 

@@ -6,7 +6,7 @@ use crate::system::control::core::unit::State;
 use env::Wait;
 use ipc::rpc::{self, reply::Sender as ReplySender, request::Receiver as RequestReceiver};
 use system_api::control as ccall;
-use protocol::system::control::rpc::Control as ControlContract;
+use system_client::control::rpc::Control as ControlContract;
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,

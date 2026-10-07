@@ -23,6 +23,7 @@ doctest = false
 env = { path = "../env" }
 wire = { path = "../wire" }
 system-api = { path = "../../programs/src/system/api" }
+system-client = { path = "../system-client" }
 # 用户态通信依赖资源机制，执行支持用于客户端等待。
 resource = { path = "../resource" }
 execution = { path = "../execution" }

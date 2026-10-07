@@ -14,8 +14,8 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
 use protocol::{
     debug,
-    system::identity as id,
 };
+use system_client::identity as id;
 use ::resource::bell::Bell;
 pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
@@ -142,7 +142,7 @@ pub fn name(
     mut names: ResMut<Names>,
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
-    let object = protocol::system::control::publication::Object::Principal(
+    let object = system_client::control::publication::Object::Principal(
         roster.control().ok_or("Control identity missing")?,
     );
     identity::client::query::validate(&roster, object).map_err(|_| "Control identity source")?;

@@ -8,7 +8,7 @@ use protocol::service::hub::{
     activation::{self, Activate},
     frame::Said,
 };
-use protocol::system::identity::CoalitionId;
+use system_client::identity::CoalitionId;
 use ::resource::port;
 use env::unit;
 

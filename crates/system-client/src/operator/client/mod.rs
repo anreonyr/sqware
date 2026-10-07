@@ -11,9 +11,9 @@ use alloc::string::String;
 use ::resource::port::{self, Access, Policy};
 use env::{PieToken, TaskId, Wait};
 
-use crate::common::path::Path;
-use crate::system::operator as ocall;
-use crate::system::operator::{EntryId, Fail, Grant, Listing, Permit, Where};
+use crate::operator::Path;
+use crate::operator as ocall;
+use crate::operator::{EntryId, Fail, Grant, Listing, Permit, Where};
 use ::resource::raw::Hole;
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
@@ -29,7 +29,7 @@ pub use self::watch::Watch;
 /// 开会话那一手（Session::open）要它；本层只把这两格交出去，不替调用方开会话
 pub const BERTH: Berth = Berth {
     link: super::marks::LINK_MARK,
-    ask: crate::system::operator::ASK_MARK,
+    ask: crate::operator::ASK_MARK,
 };
 
 /// 对偶：服务端判面那一句是 Grant::at（从**它自己表里那枚问话孔**的记号读回面）
@@ -248,9 +248,9 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
             Err(Fail::Unknown) => {
                 // 到点（或本就是"不再等"）⇒ 原样交回最后一次的答案。
                 if remain(until) == Wait::POLL {
-                    crate::debug!(
+                    crate::debug::put(&alloc::format!(
                         "operator: road retry gave up rounds={rounds} backoff={backoff}ms road={road}"
-                    );
+                    ));
                     return Err(Fail::Unknown);
                 }
                 rounds += 1;

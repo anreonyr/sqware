@@ -12,7 +12,7 @@ use adapt::{E_NO_CONSOLE, MS};
 use env::{Wait, unit};
 use programs::driver::uart::client;
 use ipc::{rack::Mode, session::Session};
-use protocol::system::operator::{self, Face};
+use system_client::operator::{self, Face};
 
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {

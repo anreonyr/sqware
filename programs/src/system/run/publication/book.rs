@@ -2,7 +2,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 use protocol::common::path::PathBuf;
 use system_api::control::Target;
-use protocol::system::operator::{EntryId, Permit};
+use system_client::operator::{EntryId, Permit};
 
 pub(crate) struct Address {
     pub(crate) road: PathBuf,

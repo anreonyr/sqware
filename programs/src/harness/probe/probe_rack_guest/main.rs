@@ -21,8 +21,8 @@ use programs::driver::uart::client;
 use programs::harness::probe::rack as rig;
 use ipc::rack::Mode;
 use ipc::session::Session;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::Face;
+use system_client::operator::client as operator;
+use system_client::operator::Face;
 use env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）

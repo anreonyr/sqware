@@ -1,6 +1,6 @@
 use super::frame::{self, Command, Input, Reply};
 use crate::common::path::Path;
-use crate::system::operator::Face;
+use system_client::operator::Face;
 use crate::wire::message::Message;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};

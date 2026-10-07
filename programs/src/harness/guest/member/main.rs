@@ -8,10 +8,10 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use ipc::session::Session;
-use protocol::system::identity::{
+use system_client::identity::{
     CallError, Organization, Query, SelfOps, CoalitionId, Fail, Match, Selector, Subject,
 };
-use protocol::system::operator::client as operator;
+use system_client::operator::client as operator;
 use env::unit;
 
 const MS: usize = 1000;
@@ -125,7 +125,7 @@ fn main() -> Report<'static> {
     // invalidate that revision-bound cursor rather than silently continuing a new list.
     let mut cursor = None;
     let mut last = q;
-    for _ in 0..=protocol::system::identity::limits::PAGE_ITEMS {
+    for _ in 0..=system_client::identity::limits::PAGE_ITEMS {
         let page = query
             .members(c0, None, Wait::AtMost(MS))
             .expect("member: page failed");

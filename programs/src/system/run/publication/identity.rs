@@ -5,9 +5,7 @@ use crate::system::{
     identity::client::{install::Roster, query},
     run::publication::Internal,
 };
-use protocol::{
-    system::{identity as id, operator as op},
-};
+use system_client::{identity as id, operator as op};
 pub fn faces(
     roster: Res<Roster>,
     faces: Res<Faces>,

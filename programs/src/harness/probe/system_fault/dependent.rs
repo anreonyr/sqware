@@ -6,11 +6,11 @@ use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use ipc::session::{Session, establish};
-use protocol::system::control::{Client, Object, Target};
-use protocol::system::identity::{Selector, Query, SelfOps};
+use system_client::control::{Client, Object, Target};
+use system_client::identity::{Selector, Query, SelfOps};
 use env::pie;
 use ::resource::raw::{Hole, reserve};
-use protocol::system::operator::{
+use system_client::operator::{
     Fail, Permit,
     client::{self as operator, Face},
 };
@@ -77,7 +77,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        pie::unseal_hole(protocol::system::control::publication::REF).unwrap(),
+                        pie::unseal_hole(system_client::control::publication::REF).unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -158,7 +158,7 @@ fn main() -> programs::Report<'static> {
                     .unwrap();
                 assert!(tree.tile(&ownroad, WAIT).unwrap().token(WAIT).is_ok());
                 {
-                    use protocol::system::control::publication::{BACK, ENTRY, Frame};
+                    use system_client::control::publication::{BACK, ENTRY, Frame};
                     use ::resource::port::{self, Access, Policy};
                     let abandoned = Target::RuntimeResource {
                         task: me,
@@ -303,7 +303,7 @@ fn main() -> programs::Report<'static> {
                 );
             }
             5 => {
-                use protocol::system::control::publication::{BACK, REF, Reply};
+                use system_client::control::publication::{BACK, REF, Reply};
                 use ::resource::port::{self, Access, Policy};
                 let fake = establish::find(control, REF).unwrap();
                 assert_eq!(

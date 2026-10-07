@@ -6,7 +6,7 @@ use env::{HoleDir, PieToken, Wait};
 use env::pie;
 use ipc::rpc;
 use system_api::identity::{self as api, Grant, Reply};
-use protocol::system::identity::rpc::Contract;
+use system_client::identity::rpc::Contract;
 use ::resource::{
     pile::Pile,
     port::{self, Access, Policy},

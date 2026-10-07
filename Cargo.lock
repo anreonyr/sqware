@@ -390,6 +390,7 @@ dependencies = [
  "resource",
  "schedule",
  "system-api",
+ "system-client",
  "wire",
  "zeroize",
 ]
@@ -404,6 +405,7 @@ dependencies = [
  "ipc",
  "resource",
  "system-api",
+ "system-client",
  "wire",
 ]
 
@@ -582,6 +584,18 @@ version = "0.1.0"
 dependencies = [
  "env",
  "mold",
+ "wire",
+]
+
+[[package]]
+name = "system-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "execution",
+ "ipc",
+ "resource",
+ "system-api",
  "wire",
 ]
 

@@ -4,8 +4,8 @@ use crate::system::run::publication::book::{Address, Installation, Publications,
 use crate::system::run::resource::Resources;
 use ::schedule::{Progress, Res, ResMut};
 use system_api::control::publication::{self as pubcall, Object, Reply, Scope, Target};
-use protocol::system::identity::Selector;
-use protocol::system::operator::{EntryId, Fail, Permit};
+use system_client::identity::Selector;
+use system_client::operator::{EntryId, Fail, Permit};
 
 use super::{Decision, Kind, Outcome, Request};
 use env::pie;
