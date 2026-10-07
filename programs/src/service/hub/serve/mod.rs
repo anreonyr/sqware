@@ -6,8 +6,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use env::{HoleDir, Access, Name, MailFail, Mark, Entry as ResourceEntry, PieKind, PieToken, Policy, TaskId, Wait};
-use protocol::communication::hand::{Sender, Receiver, RecvFail};
-use protocol::communication::session::{Session, establish};
+use ipc::hand::{Sender, Receiver, RecvFail};
+use ipc::session::{Session, establish};
 use protocol::debug;
 use protocol::service::hub::{Wire, Said, Window, self, Deed, Enroll, Grant};
 use protocol::system::identity::{Organization, Query, CoalitionId, PageId as _, Selector};

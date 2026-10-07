@@ -26,5 +26,6 @@ system-api = { path = "../../programs/src/system/api" }
 # 用户态通信依赖资源机制，执行支持用于客户端等待。
 resource = { path = "../resource" }
 execution = { path = "../execution" }
+ipc = { path = "../ipc" }
 # 客户端错误容器。
 erra = { version = "0.2.0", default-features = false }

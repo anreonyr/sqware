@@ -5,7 +5,7 @@ use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
 use programs::unit::uart::E_UART;
-use protocol::communication::rack::{Mode, Rack, Reader, Writer};
+use ipc::rack::{Mode, Rack, Reader, Writer};
 use protocol::debug;
 use protocol::driver::line::Line;
 use protocol::system::control::Scope;
@@ -69,7 +69,7 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     plate(&rx, &tx, ms);
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = protocol::communication::session::establish::endpoint(
+    let _ = ipc::session::establish::endpoint(
         env::unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,

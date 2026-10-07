@@ -25,7 +25,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator::{Fail, Face as Face};
 use protocol::system::operator::client as operator;
@@ -78,7 +78,7 @@ fn main() -> Report<'static> {
         assert_eq!(foreign, Err(Fail::Denied))
     }
 
-    let complete = protocol::communication::session::establish::claim(
+    let complete = ipc::session::establish::claim(
         sire,
         env::Mark::of("probe-rule-verified"),
         Wait::AtMost(MS),

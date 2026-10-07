@@ -16,8 +16,8 @@ use env::{Mark, Permission, PieToken, TaskId, Wait};
 use ::resource::port::{self, Access, Policy};
 
 use super::super::hand::{Receiver, Sender};
-use super::super::{deadline, remain};
-use crate::wire::message::Message;
+use crate::time::{deadline, remain};
+use wire::Message;
 use env::pie;
 use ::resource::raw::{pies, reserve};
 

@@ -1,12 +1,7 @@
 //! One validated authority-owned entry and its one-shot reply transport.
 use super::super::{BACK, DIR, Fail, Grant, Reply, Wire};
-use crate::{
-    communication::{
-        hand::{Receiver, RecvFail, Sender},
-        session::establish,
-    },
-    wire::message::Message,
-};
+use ipc::{hand::{Receiver, RecvFail, Sender}, session::establish};
+use crate::wire::message::Message;
 use env::{PieToken, TaskId, Wait};
 use env::pie;
 use ::resource::raw::{reserve};

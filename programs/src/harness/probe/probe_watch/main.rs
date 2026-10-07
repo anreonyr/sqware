@@ -10,7 +10,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::common::path::PathBuf;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};

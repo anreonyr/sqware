@@ -5,7 +5,7 @@ extern crate alloc;
 extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::system::control::{Client, Scope, Target};
 use env::pie;
 use ::resource::raw::{Hole, reserve};

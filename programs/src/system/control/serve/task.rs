@@ -4,7 +4,7 @@ use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wa
 
 use crate::system::control::core::unit::{Announce, Service, Slot, State, Table};
 use crate::system::control::core::verdict::{Fail, Ready, Reaped, admit_mint, probe_ready};
-use protocol::communication::session::Endpoint;
+use ipc::session::Endpoint;
 
 use crate::unit::{Died, hub::E_HUB};
 use env::pie;

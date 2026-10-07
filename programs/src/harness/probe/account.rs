@@ -128,7 +128,7 @@ fn closed(client: &Face, task: TaskId) {
 }
 fn reference(root: TaskId) -> control::Object {
     let entry =
-        protocol::communication::session::establish::find(root, control::publication::REF).unwrap();
+        ipc::session::establish::find(root, control::publication::REF).unwrap();
     let authority = ::resource::raw::pies()
         .find(|pie| pie.mark == protocol::system::identity::Grant::Resolve.mark())
         .unwrap()
@@ -151,12 +151,12 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     let worker = execution::unit::task::spawn(move || {
         until(|| s.entry.load(Ordering::Acquire) != 0);
         let client = Client::of(
-            protocol::communication::session::establish::find(root, control::account::ENTRY)
+            ipc::session::establish::find(root, control::account::ENTRY)
                 .unwrap(),
         )
         .unwrap();
         let lifecycle = Face::of(
-            protocol::communication::session::establish::find(root, control::ASK_MARK).unwrap(),
+            ipc::session::establish::find(root, control::ASK_MARK).unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -255,12 +255,12 @@ pub fn acceptance(assembly: &mut Fixture, operator: &protocol::system::operator:
     let peer = execution::unit::task::spawn(move || {
         until(|| p.stage.load(Ordering::Acquire) == 1 && token.load(Ordering::Acquire) != 0);
         let client = Client::of(
-            protocol::communication::session::establish::find(root, control::account::ENTRY)
+            ipc::session::establish::find(root, control::account::ENTRY)
                 .unwrap(),
         )
         .unwrap();
         let lifecycle = Face::of(
-            protocol::communication::session::establish::find(root, control::ASK_MARK).unwrap(),
+            ipc::session::establish::find(root, control::ASK_MARK).unwrap(),
         )
         .unwrap();
         let target = TaskId::new(p.target.load(Ordering::Acquire));

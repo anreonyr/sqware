@@ -6,11 +6,8 @@ use crate::system::{
 };
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
-use protocol::{
-    communication::hand::Sender,
-    debug,
-    system::operator as ocall,
-};
+use ipc::hand::Sender;
+use protocol::{debug, system::operator as ocall};
 use ::resource::raw::Hole;
 use ::resource::pile::Pile;
 const SETTLE_MS: usize = 1;

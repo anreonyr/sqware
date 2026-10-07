@@ -4,8 +4,8 @@ use crate::system::{
     loader::{Image, serve::build::Spawn},
 };
 use alloc::vec::Vec;
-use env::wire::Span as _;
-use env::{PieToken, TaskId, Wait, pie};
+use env::TaskId;
+use ipc::rpc::ReplyTo;
 use protocol::{
     system::{
         control::Fail,
@@ -18,7 +18,7 @@ pub struct Pending(pub Vec<Launch>);
 pub struct Launch {
     pub task: TaskId,
     pub identity: Install,
-    back: PieToken,
+    back: ReplyTo,
 }
 pub struct Build<'a> {
     pub image: Image<'a>,
@@ -28,29 +28,37 @@ pub struct Build<'a> {
 pub struct Delivery {
     pub owner: TaskId,
     pub identity: Install,
-    pub back: PieToken,
+    pub back: ReplyTo,
 }
 pub fn construct(
     control: &mut Control,
     pending: &mut Pending,
     build: Build<'_>,
-) -> Result<Built, Fail> {
-    pending.0.try_reserve(1).map_err(|_| Fail::Full)?;
-    control.reserve_instance()?;
-    let built = crate::system::loader::serve::build::construct(
+) -> Result<Built, (Fail, ReplyTo)> {
+    let Build { image, spawn, delivery } = build;
+    if pending.0.try_reserve(1).is_err() {
+        return Err((Fail::Full, delivery.back));
+    }
+    if let Err(fail) = control.reserve_instance() {
+        return Err((fail, delivery.back));
+    }
+    let built = match crate::system::loader::serve::build::construct(
         &mut control.loader,
-        build.image,
-        build.spawn,
-    )?;
-    control.register_instance(built, build.delivery.owner);
+        image,
+        spawn,
+    ) {
+        Ok(built) => built,
+        Err(fail) => return Err((fail.into(), delivery.back)),
+    };
+    control.register_instance(built, delivery.owner);
     pending.0.push(Launch {
         task: built.task,
-        identity: build.delivery.identity,
-        back: build.delivery.back,
+        identity: delivery.identity,
+        back: delivery.back,
     });
     Ok(built)
 }
-pub(super) fn reply(back: PieToken, result: Result<Built, Fail>) -> bool {
+pub(super) fn reply(back: ReplyTo, result: Result<Built, Fail>) -> bool {
     let value = match result {
         Ok(built) => Said {
             status: protocol::wire::OK,
@@ -63,14 +71,7 @@ pub(super) fn reply(back: PieToken, result: Result<Built, Fail>) -> bool {
             team: 0,
         },
     };
-    let mut bytes = [0; Said::LEN];
-    let sent = value.store_at(&mut bytes, 0).is_some_and(|n| {
-        ::resource::raw::Hole::from_raw(back)
-            .push(&bytes[..n], Wait::POLL)
-            .is_ok()
-    });
-    let _ = pie::release(back);
-    sent
+    back.send(value).is_ok()
 }
 pub fn completed(
     mut pending: ResMut<Pending>,
@@ -79,11 +80,8 @@ pub fn completed(
     use crate::system::control::core::unit::State;
     let mut index = 0;
     while index < pending.0.len() {
-        let launch = &pending.0[index];
-        let item = control
-            .instances
-            .iter()
-            .find(|item| item.task == launch.task);
+        let task = pending.0[index].task;
+        let item = control.instances.iter().find(|item| item.task == task);
         let result = match item {
             Some(item) if item.state == State::Debarked => Ok(Built {
                 task: item.task,
@@ -95,10 +93,10 @@ pub fn completed(
             }
             _ => Err(Fail::NotReady),
         };
+        let launch = pending.0.remove(index);
         if !reply(launch.back, result) {
             control.stop_instance(launch.task);
         }
-        pending.0.remove(index);
     }
     Ok(Progress::Done)
 }

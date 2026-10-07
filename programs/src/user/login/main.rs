@@ -4,7 +4,7 @@ extern crate alloc;
 extern crate programs;
 mod auth;
 use env::{Wait, unit};
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::service::terminal::{Connection, Io, Read, Terminal};
 use protocol::system::{
     control::{Face as Lifecycle, State, account::Client},

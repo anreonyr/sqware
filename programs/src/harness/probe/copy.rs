@@ -21,14 +21,14 @@ pub fn acceptance() {
     let mark = Mark::of("copy-build");
     let worker = execution::unit::task::spawn(move || {
         assert!(
-            protocol::communication::session::establish::claim(
+            ipc::session::establish::claim(
                 env::TaskId::new(0),
                 mark,
                 Wait::AtMost(2000),
             )
             .is_some()
         );
-        assert!(protocol::communication::session::establish::claim(
+        assert!(ipc::session::establish::claim(
             env::TaskId::new(0), doom_mark, Wait::AtMost(2000),
         ).is_some());
         elf();
@@ -52,7 +52,7 @@ fn queued() {
     let entry = pie::unseal_hole(Mark::of("copy-queued")).unwrap();
     let raw_owner = owner.get();
     let writer = execution::unit::task::spawn(move || {
-        let entry = protocol::communication::session::establish::claim(
+        let entry = ipc::session::establish::claim(
             env::TaskId::new(raw_owner),
             Mark::of("copy-queued"),
             Wait::AtMost(1000),
@@ -129,7 +129,7 @@ fn concurrent() {
     let mut workers = Vec::new();
     for producer in 0..4u8 {
         let worker = execution::unit::task::spawn(move || {
-            let token = protocol::communication::session::establish::claim(
+            let token = ipc::session::establish::claim(
                 owner,
                 Mark::of("copy-concurrent"),
                 Wait::AtMost(2000),

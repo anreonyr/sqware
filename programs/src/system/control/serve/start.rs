@@ -10,7 +10,7 @@ use crate::{
 };
 use alloc::{string::ToString, vec::Vec};
 use env::{Mark, Wait};
-use protocol::communication::session::establish;
+use ipc::session::establish;
 pub use crate::system::common::timing::{BOOT_MS, RETRY_MS};
 
 pub const E_MANIFEST: Died = 2;

@@ -15,7 +15,7 @@ use programs::Report;
 use programs::harness::probe;
 
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::identity as icall;
 use protocol::system::operator::Grant;
@@ -59,7 +59,7 @@ fn main() -> Report<'static> {
                 Err(protocol::system::operator::Fail::Denied),
                 "installer discovery must deny an ordinary principal"
             );
-            let entry = protocol::communication::session::establish::find(authority, grant.mark())
+            let entry = ipc::session::establish::find(authority, grant.mark())
                 .expect("probe-coalition: missing explicit installer face copy");
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry

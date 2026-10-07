@@ -1,7 +1,7 @@
 //! Trusted Login requests construction under a configured account identity.
 use super::Fail;
 use crate::common::path::Path;
-use crate::communication::session::establish;
+use ipc::session::establish;
 use crate::system::{
     loader::{Built, frame::Said},
     operator::Face,

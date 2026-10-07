@@ -23,7 +23,7 @@ use env::{MailFail, Wait};
 use ::resource::port::{self, Access, Policy};
 
 use crate::common::path::{Path, PathBuf};
-use crate::communication::hand::{Receiver, RecvFail};
+use ipc::hand::{Receiver, RecvFail};
 use crate::system::operator::frame::Event;
 use crate::system::operator::frame::watch::EventFrame;
 use crate::system::operator::{EntryId, Fail};
@@ -93,14 +93,14 @@ impl<'a> Watch<'a> {
     /// 取回来的是**持树者那一格的载荷**：号前进了 ⇒ 收下（中间丢了几条自己算）；号没前进 ⇒
     /// 这一条读过，丢掉再看。到期仍没有 ⇒ `Err(RecvFail::Mail(Busy))`（与 `Receiver` 同一套词）。
     pub fn next(&mut self, within: Wait) -> Result<Event, RecvFail> {
-        let until = crate::communication::deadline(within);
+        let until = ipc::time::deadline(within);
         loop {
             if let Ok(ev) = self.read.recv(&mut self.buf, Wait::POLL)
                 && let Some(ev) = self.accept(ev)
             {
                 return Ok(ev);
             }
-            let remain = crate::communication::remain(until);
+            let remain = ipc::time::remain(until);
             if remain == Wait::POLL {
                 return Err(RecvFail::Mail(MailFail::Busy));
             }

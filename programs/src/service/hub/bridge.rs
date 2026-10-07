@@ -1,8 +1,8 @@
 //! Control owns this private installation face; only the live Hub can ask through it.
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use ::schedule::{Progress, Res};
-use protocol::communication::hand::Sender;
-use protocol::communication::session::establish;
+use ipc::hand::Sender;
+use ipc::session::establish;
 use protocol::service::hub::{
     self,
     activation::{self, Activate},

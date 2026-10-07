@@ -13,10 +13,10 @@ use env::{Wait, PieToken, TaskId};
 use ::resource::port::{self, Access, Policy};
 
 use crate::common::path::Path;
-use crate::communication::hand::Sender;
-use crate::communication::session::establish::Endpoint;
-use crate::communication::session::{Berth, Session};
-use crate::communication::{deadline, remain};
+use ipc::hand::Sender;
+use ipc::session::establish::Endpoint;
+use ipc::session::{Berth, Session};
+use ipc::time::{deadline, remain};
 use crate::system::operator as ocall;
 use crate::system::operator::{Fail, EntryId, Grant, Listing, Where, Permit};
 use ::resource::raw::{Hole};

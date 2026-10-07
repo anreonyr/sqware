@@ -139,7 +139,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &probe_watch_gone::PROBE_WATCH_GONE,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
-    // 共享内存那一具架（`communication::rack`）：单域那一台量**队列语义与唤醒协议**；
+    // 共享内存那一具架（`ipc::rack`）：单域那一台量**队列语义与唤醒协议**；
     // 另两台一对，量**跨域共映射**（页与铃当门牌过树，对端用产品同一条客人面取回）。
     &probe_rack::PROBE_RACK,
     &probe_rack_mount::PROBE_RACK_MOUNT,

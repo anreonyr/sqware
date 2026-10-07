@@ -72,7 +72,7 @@ fn main() -> Result<(), Fail> {
     ctx.plate(entry, ME, Wait::AtMost(MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = protocol::communication::session::establish::endpoint(
+    let _ = ipc::session::establish::endpoint(
         env::unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,

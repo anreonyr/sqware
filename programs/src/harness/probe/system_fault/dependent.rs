@@ -5,7 +5,7 @@ extern crate programs;
 use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
-use protocol::communication::session::{Session, establish};
+use ipc::session::{Session, establish};
 use protocol::system::control::{Client, Object, Target};
 use protocol::system::identity::{Selector, Query, SelfOps};
 use env::pie;
@@ -185,7 +185,7 @@ fn main() -> programs::Report<'static> {
                     pie::seal(closed).unwrap();
                     let mut frame = Frame::new(1, abandoned.clone(), seed, Permit::Public);
                     frame.back = reply;
-                    protocol::communication::hand::Sender::<Frame>::from_raw(
+                    ipc::hand::Sender::<Frame>::from_raw(
                         establish::find(control, ENTRY).unwrap(),
                     )
                     .send_within(frame, WAIT)

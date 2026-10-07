@@ -1,7 +1,7 @@
 use super::install::Roster;
 use crate::system::common::timing::BOOT_MS;
 use env::{TaskId, Wait};
-use protocol::communication::session::establish;
+use ipc::session::establish;
 use protocol::system::control::Object;
 use protocol::system::identity::{Grant, Selector, Wire, client::Face};
 use protocol::system::operator::{Fail, Permit};

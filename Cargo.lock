@@ -258,6 +258,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
+name = "ipc"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "resource",
+ "wire",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -375,6 +384,7 @@ dependencies = [
  "erra",
  "execution",
  "fdt",
+ "ipc",
  "mold",
  "protocol",
  "resource",
@@ -389,6 +399,7 @@ dependencies = [
  "env",
  "erra",
  "execution",
+ "ipc",
  "resource",
  "system-api",
  "wire",

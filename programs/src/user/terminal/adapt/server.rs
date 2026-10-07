@@ -128,7 +128,7 @@ impl Server {
                 Wait::AtMost(1000),
             )
             .map_err(|_| E_TERMINAL)?;
-        let _ = protocol::communication::session::establish::endpoint(
+        let _ = ipc::session::establish::endpoint(
             env::unit::sire(),
             env::Mark::of(programs::unit::READY),
             Wait::POLL,
@@ -242,14 +242,14 @@ pub(super) fn requests(
     console: Res<Console>,
 ) -> Result<Progress, env::Reason> {
     server.active = false;
-    if !protocol::communication::session::alive(console.rx.bell()) {
+    if !ipc::session::alive(console.rx.bell()) {
         server.running = false;
         return Ok(Progress::Pending);
     }
     if server
         .attachment
         .as_ref()
-        .is_some_and(|a| !protocol::communication::session::alive(a.authority))
+        .is_some_and(|a| !ipc::session::alive(a.authority))
     {
         server.detach();
         mode.reset();

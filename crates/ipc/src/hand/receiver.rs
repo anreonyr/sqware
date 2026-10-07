@@ -9,7 +9,7 @@ use core::marker::PhantomData;
 
 use env::{MailFail, PieToken, Wait};
 
-use crate::wire::message::Message;
+use wire::Message;
 use ::resource::raw::{Hole};
 
 /// **我收的那一枚孔** ＋ 这一路流的那一种报（类型）

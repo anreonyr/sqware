@@ -8,8 +8,8 @@ extern crate programs;
 
 use env::{PieToken, Wait};
 use programs::Report;
-use protocol::communication::hand::Receiver;
-use protocol::communication::session::{Session, establish};
+use ipc::hand::Receiver;
+use ipc::session::{Session, establish};
 use protocol::system::identity;
 use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
 use protocol::system::operator::client as operator;

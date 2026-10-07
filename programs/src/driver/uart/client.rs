@@ -19,7 +19,7 @@
 
 use env::{PieToken, Wait};
 use protocol::common::path::{Path, PathBuf};
-use protocol::communication::rack::{Mode, Reader, Writer};
+use ipc::rack::{Mode, Reader, Writer};
 use protocol::driver;
 use protocol::system::operator::Face;
 

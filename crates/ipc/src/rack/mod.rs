@@ -1,8 +1,8 @@
 //! 一具寄存架：一枚页上 N 格，满了按策略丢。
 //!
-//! 与 `communication::hand` 的关系：那边是**一手**（一枚孔上一条报，交完即走，满了只答
+//! 与 `ipc::hand` 的关系：那边是**一手**（一枚孔上一条报，交完即走，满了只答
 //! `Busy`）；这边把"同样的字节过边界"换成一枚**页**上的有界环（寄存），满了**按 `Mode`
-//! 丢一头**并把丢掉的数记在册。两档共用 `crate::wire::message::Message` 那四样
+//! 丢一头**并把丢掉的数记在册。两档共用 `wire::Message` 那四样
 //! （`Buf` / `EMPTY` / `store` / `fetch`），但**不共用类型**：失败域不同（`Full` 对 `Unbound`）。
 //!
 //! **一具架只有一枚 Pie**：那枚页上带着"有事"这一位（`Ring`/`Hush`/`Wait` 都认它，见
@@ -44,7 +44,7 @@ use core::marker::PhantomData;
 use env::{PieResult, PieToken};
 use ::resource::dock::Dock;
 
-use crate::wire::message::Message;
+use wire::Message;
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::ring::{CAP, SIZE};

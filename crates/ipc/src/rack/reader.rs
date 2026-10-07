@@ -27,7 +27,7 @@ use ::resource::dock::{Dock, View};
 
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};
-use crate::wire::message::Message;
+use wire::Message;
 
 /// **读端**：一条游标 ＋ 一枚铃。
 pub struct Reader<M: Message> {
@@ -110,7 +110,7 @@ impl<M: Message> Reader<M> {
     /// 到期仍没有 ⇒ `RecvFail::Empty`。**读空那一趟会把铃应掉**（见文件头那三拍），
     /// 故"读干"那一圈用它也不会空转、也不会丢唤醒。
     pub fn recv(&mut self, within: Wait) -> Result<M::In, RecvFail> {
-        let until = crate::communication::deadline(within);
+        let until = crate::time::deadline(within);
         loop {
             if let Some(one) = self.try_recv()? {
                 return Ok(one);
@@ -121,7 +121,7 @@ impl<M: Message> Reader<M> {
             if let Some(one) = self.try_recv()? {
                 return Ok(one);
             }
-            let remain = crate::communication::remain(until);
+            let remain = crate::time::remain(until);
             if remain == Wait::POLL {
                 return Err(RecvFail::Empty);
             }

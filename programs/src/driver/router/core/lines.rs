@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use protocol::communication::session::Held;
+use ipc::session::Held;
 use protocol::driver::line::Fail;
 use ::resource::raw::{Hole};
 

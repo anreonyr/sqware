@@ -18,7 +18,7 @@ use env::wire::Field;
 use programs::Report;
 
 use env::PieToken;
-use protocol::communication::session::{Session, Endpoint};
+use ipc::session::{Session, Endpoint};
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::client as operator;

@@ -1,7 +1,7 @@
 //! Trusted setup for the two Identity probes, not a product capability declaration.
 
 use env::Wait;
-use protocol::communication::session::establish;
+use ipc::session::establish;
 use protocol::system::identity::Grant;
 use ::resource::port::{self, Access, Policy};
 
@@ -196,7 +196,7 @@ pub fn acceptance() {
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
     let operator =
-        protocol::system::operator::client::Face::of(protocol::communication::session::Session {
+        protocol::system::operator::client::Face::of(ipc::session::Session {
             link,
             talk,
             host,

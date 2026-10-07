@@ -3,10 +3,8 @@ use super::fixture::Fixture;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
-use protocol::{
-    communication::session::establish,
-    system::{control, loader as call, operator::client::Face as Operator},
-};
+use protocol::system::{control, loader as call, operator::client::Face as Operator};
+use ipc::session::establish;
 use ::resource::raw::Hole;
 
 const WAIT: Wait = Wait::AtMost(2000);
@@ -275,7 +273,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         .push(&request[..n], WAIT)
         .unwrap();
     let mut reply = call::frame::Said::EMPTY;
-    let said = protocol::communication::hand::Receiver::<call::frame::Said>::from_raw(back)
+    let said = ipc::hand::Receiver::<call::frame::Said>::from_raw(back)
         .recv(&mut reply, WAIT)
         .unwrap();
     assert_eq!(said.status, protocol::wire::OK);

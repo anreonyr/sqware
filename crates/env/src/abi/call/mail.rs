@@ -33,7 +33,7 @@ pub type MailResult<T> = Result<T, erra::Error<MailFail>>;
 /// 作用在一枚 Hole（孔）上：`Push` 递出一只手、`Pull` 取走一只手、`Peek` 只看一眼、
 /// `Ring`／`Hush` 置／清孔上那一位、`Wait` 等方向就绪；
 /// 后两个动词也作用在一枚 Nole（门铃）上：`Ring` 响铃、`Hush` 应铃；
-/// 也作用在**页上那一位**（class 7 的 [`Pole`](crate::PieCall)）：架（`communication::rack`）
+/// 也作用在**页上那一位**（class 7 的 [`Pole`](crate::PieCall)）：架（`ipc::rack`）
 /// 把铃并进页之后，一枚页就是一具完整的架——树上一格门牌正好挂得下它。
 /// 权柄的生死与流动不在此类，见 [`PieCall`]（class 7）。
 ///

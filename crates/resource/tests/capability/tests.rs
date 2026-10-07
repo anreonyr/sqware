@@ -1,6 +1,6 @@
 use crate::{
     Mark, MailFail, Permission, PieToken, TaskId, Wait,
-    raw::Hole, reply::Reply, capability::Capability,
+    raw::Hole, reply::{Reply, ReplyError}, capability::Capability,
     test_backend::{self, Event, Op},
 };
 
@@ -91,7 +91,7 @@ fn reply_checks_peer_and_seals_then_releases_on_drop() {
     let mut buffer = [0; 8];
     test_backend::queue_message(b"wrong", TaskId::new(9));
     let denied = reply.pull(&mut buffer, Wait::POLL).unwrap_err();
-    assert_eq!(denied.source, MailFail::Denied);
+    assert_eq!(denied, ReplyError::WrongSource);
     test_backend::queue_message(b"right", peer());
     assert_eq!(reply.pull(&mut buffer, Wait::POLL).unwrap(), b"right");
     drop(reply);
@@ -113,6 +113,14 @@ fn reply_loan_failure_still_seals_and_releases() {
     assert_eq!(events[2], Event::Seal(local));
     assert_eq!(events[3], Event::Release(local));
     assert!(!events.iter().any(|event| matches!(event, Event::Revoke(..))));
+}
+
+#[test]
+fn native_receive_denial_is_distinct_from_wrong_source() {
+    test_backend::reset();
+    let reply = Reply::open(peer(), Mark::of("back")).unwrap();
+    test_backend::queue_message(b"oversized", peer());
+    assert_eq!(reply.pull(&mut [0; 1], Wait::POLL), Err(ReplyError::Mail(MailFail::Denied)));
 }
 
 #[test]

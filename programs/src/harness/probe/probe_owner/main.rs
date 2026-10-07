@@ -12,7 +12,7 @@ use programs::Report;
 use alloc::format;
 use alloc::string::ToString;
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};

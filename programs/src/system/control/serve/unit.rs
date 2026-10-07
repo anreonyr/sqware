@@ -9,7 +9,7 @@ use alloc::{
     vec::Vec,
 };
 use env::{TaskId, Wait};
-use protocol::communication::session::Endpoint;
+use ipc::session::Endpoint;
 
 pub type Service = (TaskId, Vec<Endpoint>);
 pub struct Control {

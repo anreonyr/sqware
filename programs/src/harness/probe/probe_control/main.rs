@@ -14,7 +14,7 @@ use programs::Report;
 use programs::harness::probe;
 
 use env::unit;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::control as ccall;
 use protocol::system::operator::Fail;

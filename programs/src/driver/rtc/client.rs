@@ -6,8 +6,8 @@
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
 use env::{PieToken, HoleDir, Wait};
-use protocol::communication::hand::Receiver;
-use protocol::communication::session::establish;
+use ipc::hand::Receiver;
+use ipc::session::establish;
 use protocol::debug;
 use protocol::wire::message::Message;
 
@@ -95,10 +95,10 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             // **（临时读数）"没等到"与"读不懂"在这里分开**（`RecvFail` 两格），再把这一趟花了
             // 多少毫秒带上——它是"预算到期"与"答话不成形"的唯一分界。前 20 次。
             match e {
-                protocol::communication::hand::RecvFail::Mail(f) => {
+                ipc::hand::RecvFail::Mail(f) => {
                     why("recv-mail", ms, &alloc::format!("fail={f:?}"))
                 }
-                protocol::communication::hand::RecvFail::Unread(len) => {
+                ipc::hand::RecvFail::Unread(len) => {
                     why("recv-unread", ms, &alloc::format!("len={len}"))
                 }
             }

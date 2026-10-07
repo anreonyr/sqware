@@ -14,7 +14,7 @@ use env::Wait;
 use programs::Report;
 
 use env::PieToken;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator as ocall;
 use protocol::system::operator::{Fail, Face};

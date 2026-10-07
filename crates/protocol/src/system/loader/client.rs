@@ -1,22 +1,24 @@
-use super::frame::{self, Ask, Fail, Said};
-use crate::wire::message::Message;
+use super::frame::{self, Ask, Fail, Said, Wire};
 use env::{Permission, PieToken, TaskId, TeamId, Wait};
-use ::resource::{port::{Reply, Sender}, raw::Loan};
+use resource::raw::Loan;
+use ipc::{rpc, time::Deadline};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Built {
     pub team: TeamId,
     pub task: TaskId,
 }
+
 pub struct Face {
-    entry: Sender,
+    rpc: rpc::Client,
 }
 impl Face {
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         Ok(Self {
-            entry: Sender::import(entry).map_err(|_| Fail::Bad)?,
+            rpc: rpc::Client::from_raw(entry, frame::BACK).map_err(|_| Fail::Bad)?,
         })
     }
+
     pub fn build(
         &self,
         image: PieToken,
@@ -33,76 +35,50 @@ impl Face {
         {
             return Err(Fail::Bad);
         }
-        let started = env::chrono::clock();
-        let remaining = || match wait {
-            Wait::Forever => Wait::Forever,
-            Wait::AtMost(ms) => Wait::AtMost(ms.saturating_sub(
-                (env::chrono::clock().saturating_sub(started) / 1_000_000) as usize,
-            )),
-        };
-        let image_loan = Loan::accord(&image, self.entry.peer(), Permission::FETCH, frame::IMAGE)
+        // Build and Claim share one absolute budget, including image capability preparation.
+        let deadline = Deadline::new(wait);
+        let image_loan = Loan::accord(&image, self.rpc.peer(), Permission::FETCH, frame::IMAGE)
             .map_err(|_| Fail::Denied)?;
-        let result = (|| {
-            let back = Reply::open(self.entry.peer(), frame::BACK).map_err(|_| Fail::Bad)?;
-            let build_loan = back.grant().map_err(|_| Fail::Bad)?;
-            (|| {
-                let mut words = [0; frame::MAX_ARGS];
-                for (to, from) in words.iter_mut().zip(args) {
-                    *to = *from as u64;
-                }
-                let ask = Ask {
-                    op: frame::BUILD,
-                    image: image_loan.remote(),
-                    offset: offset as u64,
-                    len: len as u64,
-                    stack: stack as u64,
-                    count: args.len() as u8,
-                    args: words,
-                    back: build_loan.remote(),
-                };
-                let mut bytes = [0; Ask::LEN];
-                let n = frame::Wire::Build(ask).store(&mut bytes).ok_or(Fail::Bad)?;
-                self.entry
-                    .push(&bytes[..n], remaining())
-                    .map_err(|_| Fail::Bad)?;
-                let mut buf = Said::EMPTY;
-                let said = Said::fetch(back.pull(&mut buf, remaining()).map_err(|_| Fail::Bad)?)
-                    .ok_or(Fail::Bad)?;
-                if said.status != crate::wire::OK {
-                    return Err(frame::code_to_fail(said.status)
-                        .unwrap_or(Fail::Bad));
-                }
-                if said.team == 0 || said.task.get() == 0 {
-                    return Err(Fail::Bad);
-                }
-                let claim_loan = back.grant().map_err(|_| Fail::Bad)?;
-                let claim = frame::Claim {
-                    op: frame::CLAIM,
-                    task: said.task,
-                    back: claim_loan.remote(),
-                };
-                let mut receipt = [0; frame::Claim::LEN];
-                let n = frame::Wire::Claim(claim).store(&mut receipt).ok_or(Fail::Bad)?;
-                self.entry
-                    .push(&receipt[..n], remaining())
-                    .map_err(|_| Fail::Bad)?;
-                let confirmed = Said::fetch(back.pull(&mut buf, remaining()).map_err(|_| Fail::Bad)?)
-                    .ok_or(Fail::Bad)?;
-                if confirmed.status != crate::wire::OK {
-                    return Err(
-                        frame::code_to_fail(confirmed.status)
-                            .unwrap_or(Fail::Bad),
-                    );
-                }
-                if confirmed.task != said.task || confirmed.team != said.team {
-                    return Err(Fail::Bad);
-                }
-                Ok(Built {
-                    team: TeamId::new(said.team as usize),
-                    task: said.task,
-                })
-            })()
-        })();
-        result
+
+        let said = self.rpc.call::<Wire, Said>(&deadline, |back| {
+            let mut words = [0; frame::MAX_ARGS];
+            for (to, from) in words.iter_mut().zip(args) {
+                *to = *from as u64;
+            }
+            Wire::Build(Ask {
+                op: frame::BUILD,
+                image: image_loan.remote(),
+                offset: offset as u64,
+                len: len as u64,
+                stack: stack as u64,
+                count: args.len() as u8,
+                args: words,
+                back,
+            })
+        }).map_err(|_| Fail::Bad)?;
+        if said.status != crate::wire::OK {
+            return Err(frame::code_to_fail(said.status).unwrap_or(Fail::Bad));
+        }
+        if said.team == 0 || said.task.get() == 0 {
+            return Err(Fail::Bad);
+        }
+
+        let confirmed = self.rpc.call::<Wire, Said>(&deadline, |back| {
+            Wire::Claim(frame::Claim {
+                op: frame::CLAIM,
+                task: said.task,
+                back,
+            })
+        }).map_err(|_| Fail::Bad)?;
+        if confirmed.status != crate::wire::OK {
+            return Err(frame::code_to_fail(confirmed.status).unwrap_or(Fail::Bad));
+        }
+        if confirmed.task != said.task || confirmed.team != said.team {
+            return Err(Fail::Bad);
+        }
+        Ok(Built {
+            team: TeamId::new(said.team as usize),
+            task: said.task,
+        })
     }
 }

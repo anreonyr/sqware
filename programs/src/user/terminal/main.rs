@@ -11,7 +11,7 @@ use programs::user::terminal::core;
 use adapt::{E_NO_CONSOLE, MS};
 use env::{Wait, unit};
 use programs::driver::uart::client;
-use protocol::communication::{rack::Mode, session::Session};
+use ipc::{rack::Mode, session::Session};
 use protocol::system::operator::{self, Face};
 
 #[programs::entry]

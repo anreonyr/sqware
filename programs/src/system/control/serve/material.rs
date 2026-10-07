@@ -10,14 +10,14 @@ use ::resource::port;
 pub struct Supplies {
     pub machine: Machine,
     pub(super) accounts: Accounts,
-    pub(super) out: protocol::communication::hand::Sender<protocol::service::hub::Enroll>,
+    pub(super) out: ipc::hand::Sender<protocol::service::hub::Enroll>,
 }
 impl Supplies {
     pub fn new(machine: Machine, accounts: Accounts) -> Self {
         Self {
             machine,
             accounts,
-            out: protocol::communication::hand::Sender::new(),
+            out: ipc::hand::Sender::new(),
         }
     }
 }
@@ -94,7 +94,7 @@ impl Supplies {
         let Some(enroll) = Enroll::of(&records[..got]) else {
             return Err(Error::Step("too many devices"));
         };
-        self.out = protocol::communication::hand::Sender::<Enroll>::from_raw(tx);
+        self.out = ipc::hand::Sender::<Enroll>::from_raw(tx);
         if self.out.send(enroll).is_err() {
             return Err(Error::Step("no channel"));
         }

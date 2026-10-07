@@ -5,7 +5,7 @@ use crate::dev::rtc;
 use env::{PieToken, TaskId};
 use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
-use protocol::communication::hand::Sender;
+use ipc::hand::Sender;
 use protocol::debug;
 use ::resource::dock::View;
 use env::pie;

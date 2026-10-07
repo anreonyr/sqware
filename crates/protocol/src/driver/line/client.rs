@@ -7,8 +7,8 @@ use ::resource::port::{self, Access, Policy};
 
 use super::frame;
 use super::frame::Fail;
-use crate::communication::hand::Sender;
-use crate::communication::session::establish::{self, Held};
+use ipc::hand::Sender;
+use ipc::session::establish::{self, Held};
 use env::pie;
 use ::resource::raw::{Hole};
 

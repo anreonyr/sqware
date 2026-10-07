@@ -7,7 +7,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
     use ::resource::port::{self, Access, Policy};
     let me = env::unit::self_id();
     for (mark, access) in [(COMMAND, Access::FETCH), (ANSWER, Access::STORE)] {
-        let token = protocol::communication::session::establish::find(me, mark)
+        let token = ipc::session::establish::find(me, mark)
             .or_else(|| pie::unseal_hole(mark).ok())
             .ok_or("hierarchy fixture channel")?;
         port::ship(token, task, access, Policy::NONE).map_err(|_| "hierarchy fixture ship")?;
@@ -22,7 +22,7 @@ pub(crate) fn command(
 ) {
     use env::Wait;
     use env::wire::Span as _;
-    use protocol::communication::session::establish;
+    use ipc::session::establish;
     let me = env::unit::self_id();
     let command = establish::find(me, COMMAND).unwrap();
     let answer = establish::find(me, ANSWER).unwrap();
@@ -90,7 +90,7 @@ pub(crate) fn exercise(
     target: env::TaskId,
 ) -> protocol::system::identity::CoalitionId {
     use env::Wait;
-    use protocol::communication::session::establish;
+    use ipc::session::establish;
     use protocol::system::control::publication::Object;
     use protocol::system::identity::client::{Face, Installer, Organization};
     use protocol::system::identity::{Grant, Install, Reply, Selector, Subject, Wire};
@@ -601,7 +601,7 @@ pub fn reference_lifetime() {
         let progress = stage.clone();
         let root_id = me.get();
         let worker = execution::unit::task::spawn(move || {
-            let middle = protocol::communication::session::establish::claim(
+            let middle = ipc::session::establish::claim(
                 env::TaskId::new(root_id),
                 Mark::of("forget-race"),
                 Wait::AtMost(1000),
@@ -674,7 +674,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     let caller = execution::unit::task::spawn(move || {
         let control = env::TaskId::new(control);
         let entry =
-            protocol::communication::session::establish::claim(control, ENTRY, Wait::AtMost(1000))
+            ipc::session::establish::claim(control, ENTRY, Wait::AtMost(1000))
                 .unwrap();
         let client = Client::direct(control, entry).unwrap();
         let target = Target::Service {
@@ -727,7 +727,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use protocol::communication::session::{Session, establish};
+    use ipc::session::{Session, establish};
     use protocol::system::operator::{
         EntryId, Fail, Grant, Where,
         client::{self as operator, Face},

@@ -1,6 +1,6 @@
 //! 一次交互使用的自有回信端。
 
-use env::{MailFail, MailResult, Mark, Permission, PieResult, TaskId, Wait, make_fail};
+use env::{MailFail, Mark, Permission, PieResult, TaskId, Wait};
 use crate::{hole::Hole, capability::{Loan, Capability}};
 
 /// 自有回信端；只接收指定对端的回复，结束时封印并释放。
@@ -8,6 +8,12 @@ pub struct Reply {
     local: Capability,
     peer: TaskId,
     mark: Mark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReplyError {
+    Mail(MailFail),
+    WrongSource,
 }
 
 impl Reply {
@@ -19,10 +25,11 @@ impl Reply {
         self.local.grant(self.peer, Permission::STORE, self.mark)
     }
 
-    pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> MailResult<&'a [u8]> {
-        let (len, from) = Hole::from_raw(self.local.token()).pull(buffer, within)?;
-        if from != self.peer { return Err(make_fail(MailFail::Denied)); }
-        buffer.get(..len).ok_or_else(|| make_fail(MailFail::Denied))
+    pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> Result<&'a [u8], ReplyError> {
+        let (len, from) = Hole::from_raw(self.local.token()).pull(buffer, within)
+            .map_err(|error| ReplyError::Mail(error.source))?;
+        if from != self.peer { return Err(ReplyError::WrongSource); }
+        buffer.get(..len).ok_or(ReplyError::Mail(MailFail::Denied))
     }
 }
 

@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId};
 
 use protocol::common::path::{Path, PathBuf};
-use protocol::communication::session::{alive, opened_by};
+use ipc::session::{alive, opened_by};
 use protocol::system::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
 use env::pie;
 use ::resource::raw::{pies};

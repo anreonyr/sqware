@@ -9,8 +9,8 @@ use ::resource::port::{self, Access, Policy};
 use crate::system::common::timing::BOOT_MS;
 
 use protocol::common::path::Path;
-use protocol::communication::hand::Sender;
-use protocol::communication::session::establish;
+use ipc::hand::Sender;
+use ipc::session::establish;
 use protocol::system::operator::{EntryId, Tip};
 use env::pie;
 use ::resource::raw::{Hole, pies, reserve};
@@ -222,7 +222,7 @@ fn attach(
     let _ = host_of(host, Wait::POLL, tip)?;
     hand(reply, host).map_err(|()| "operator:hand")?;
     // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节**裸号**——那条路的读者是
-    // communication::session::hear，见 tell）。
+    // ipc::session::hear，见 tell）。
     tell(host, reply).map_err(|()| "operator:who")?;
     // 提示在**转授之后**：持树者据此可以按"提示一到，答话路必已在本表里"办事。
     // The counterpart remains owned until the client closes or replaces this LINK.

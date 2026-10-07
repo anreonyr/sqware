@@ -14,7 +14,7 @@ use ::resource::dock::{Dock, View};
 use super::Mode;
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, depth, dropped, exact, lost, push, ring};
-use crate::wire::message::Message;
+use wire::Message;
 
 /// **写端**：一枚页上的环 ＋ 一枚铃 ＋ 本族那只编报缓冲。
 ///

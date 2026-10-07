@@ -49,7 +49,7 @@ use programs::system::control::core::unit::{Announce, Slot, Table};
 use programs::system::control::core::verdict::Reaped;
 use programs::system::control::serve::task as service;
 use programs::unit::Ending;
-use protocol::communication::session::establish::{self, Endpoint, Held};
+use ipc::session::establish::{self, Endpoint, Held};
 use protocol::debug;
 use env::unit;
 use ::resource::raw::{Hole};

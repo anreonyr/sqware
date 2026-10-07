@@ -22,7 +22,7 @@ use env::{
 
 use crate::{hole::Hole, raw};
 
-pub use crate::reply::Reply;
+pub use crate::reply::{Reply, ReplyError};
 
 /// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
 fn denied_mail() -> erra::Error<MailFail> {

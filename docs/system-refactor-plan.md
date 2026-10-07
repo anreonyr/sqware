@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec 已分离；其余接口迁移、通用通信与 RPC 分离、System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC 与 Loader RPC 已落地；其余接口迁移与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -51,7 +51,7 @@ env             → wire                # ABI 与环境类型自己的 codec、M
 resource        → env                 # dock、port、bell、pile 与私有句柄基础
 execution       → env                 # room、unit、memory、lock、boot
 schedule                              # 纯计划执行；不依赖 env 或执行库
-ipc             → wire + resource     # 通用通信，不收集软件客户端
+ipc             → wire + resource + env # 通用通信、RPC 与环境时间，不收集软件客户端
 system-api      → wire + env           # 普通数据、接口声明与生成契约
 system-client   → system-api + ipc + resource
 System 实现     → system-api + system-client + ipc + resource + execution + schedule
@@ -312,6 +312,20 @@ codec 基础已落地：
 - 5 项 wire、10 项 Loader、7 项 Identity、3 项 Mark、5 项生成宏测试共 30 项通过；programs 全目标、wire 与 image 宿主编译通过。
 - 依赖元数据确认 wire 无 env 依赖、env 单向依赖 wire；QEMU accept、product、system-fault 均通过。
 
+通信与 Loader RPC 已落地：
+
+- `crates/ipc` 拥有 hand、rack、session、rpc 和时间预算；仅依赖 env、wire、resource，不依赖执行库或软件实现。
+- 原 communication 正文全部迁出；protocol 只保留指向同一实现的兼容重导出，所有直接调用方使用 ipc 路径。
+- rpc::Client::call 接收类型化请求构造器，在内部编码、发送、核对来源和解码；生成 Wire 请求实现 Message，固定 Build/Claim 字节保持不变。
+- 每次 call 独占新的 Reply/Loan，成功、错误或超时均关闭；下一次 call 不可能消费前一次回信端中的旧回复，不添加新的线上关联字段。
+- Loader 在镜像授权前创建一次 Deadline，Build 与 Claim 共享预算；镜像 Loan、服务状态及 task/team 核对仍显式归客户端。
+- rpc::receive 保留内核发送者；ReplyTo 校验授予者、资源创建者、调用者和角色后移交原有队列及 launch，完成后仅发送一次并释放。
+- Claim 仍按 owner/task 验证；Build 保留异步准备和交付，回复失败仍触发原有实例停止与回收。
+- resource::ReplyError 将内核接收错误与错误来源分开；普通 Denied 不再被误报成 WrongSource。
+- 10 项 RPC、11 项 Loader、7 项 Identity、3 项 Mark、10 项资源、5 项宏、7 项 System 边界测试共 53 项通过；programs 全目标和 image 宿主构建通过。
+- QEMU accept、product、system-fault 均通过；依赖检查确认 ipc 不依赖 protocol、execution 或软件 API。
+- 兼容重导出将在删除 protocol 的第 7 批移除；其他服务客户端暂保留原有交互流程，后续逐个迁纯 API 与领域调用。
+
 整合原 port 与 hand/rack/session；两端关系归 resource::port，类型化通信和交互归 ipc，依赖 wire 与 resource。
 调试调用的原始契约留 env，格式化与输出循环按实际调用方归位，不迁入纯 schedule。
 system-client 接入新传输；逐个迁 Identity、Operator、Control 的接口声明和客户端。
@@ -368,7 +382,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec 基础已完成；接下来以 Loader 贯通 ipc::rpc 的单次 Build/Claim，再迁 Identity。
+第 6 批的纯 codec、通用 IPC 和 Loader RPC 已完成；接下来迁 Identity 的纯契约与公共客户端。
 
 ## 迁移后的命名口径
 
@@ -389,12 +403,14 @@ cargo check -p system-api --target x86_64-unknown-linux-gnu --offline
 cargo check -p schedule --target x86_64-unknown-linux-gnu --offline
 cargo check -p resource --target x86_64-unknown-linux-gnu --offline
 cargo check -p wire --target x86_64-unknown-linux-gnu --offline
+cargo check -p ipc --offline
 cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test -p mold --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/schedule/src/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/resource/tests/capability/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/wire/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/ipc/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline

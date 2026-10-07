@@ -12,7 +12,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::common::path::Path;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::control::publication;
 use protocol::system::identity as icall;
@@ -129,7 +129,7 @@ fn main() -> Report<'static> {
 
     // **报"答得动了"**（Setup::Ready）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
     // （与三台驱动、三台服务那几处**同一手**）。
-    let _ = protocol::communication::session::establish::endpoint(
+    let _ = ipc::session::establish::endpoint(
         unit::sire(),
         env::Mark::of(programs::unit::READY),
         env::Wait::POLL,
@@ -259,7 +259,7 @@ fn main() -> Report<'static> {
         assert_eq!(keep, Ok(()), "归属记的是命，换代表照样改得")
     }
 
-    let complete = protocol::communication::session::establish::claim(
+    let complete = ipc::session::establish::claim(
         sire,
         env::Mark::of("probe-rule-verified"),
         Wait::AtMost(MS),

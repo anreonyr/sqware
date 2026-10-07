@@ -7,7 +7,7 @@ extern crate programs;
 
 use env::Wait;
 use programs::Report;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::system::identity::{
     CallError, Organization, Query, SelfOps, CoalitionId, Fail, Match, Selector, Subject,
 };

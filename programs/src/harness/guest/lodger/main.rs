@@ -21,7 +21,7 @@ use programs::Report;
 use programs::driver::shared::device::{Ask, Hub};
 use programs::unit::lodger::E_LODGER;
 
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator::{Fail, Face};
 use protocol::system::operator::client as operator;

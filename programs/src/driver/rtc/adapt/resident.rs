@@ -8,7 +8,7 @@ use programs::driver::rtc::core::host::{Host, Ring};
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
-use protocol::communication::hand::Sender;
+use ipc::hand::Sender;
 use protocol::debug;
 use protocol::driver::line;
 use env::PAGE_SIZE;

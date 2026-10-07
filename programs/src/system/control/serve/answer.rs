@@ -5,7 +5,8 @@ use super::{
 use crate::system::control::core::unit::State;
 use env::pie;
 use env::{PieToken, Wait};
-use protocol::{communication::hand::Sender, system::control as ccall};
+use ipc::hand::Sender;
+use protocol::system::control as ccall;
 use ::resource::raw::{Hole, reserve};
 
 pub struct Incoming {

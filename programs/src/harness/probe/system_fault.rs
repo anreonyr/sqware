@@ -8,7 +8,7 @@ use env::pie;
 use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
-use protocol::communication::session::establish;
+use ipc::session::establish;
 use ::resource::raw::{Hole};
 
 const DOOM: Mark = Mark::of("system-fault-doom");

@@ -218,7 +218,7 @@ impl Io {
         Ok(io)
     }
     pub fn injected(owner: TaskId) -> Result<Self, ()> {
-        let find = |mark| crate::communication::session::establish::find(owner, mark).ok_or(());
+        let find = |mark| ipc::session::establish::find(owner, mark).ok_or(());
         Self::of(
             find(frame::INPUT)?,
             find(frame::OUTPUT)?,

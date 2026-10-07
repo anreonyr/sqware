@@ -9,7 +9,7 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::system::operator::{Permit, Face as Face};
 use protocol::system::operator::client as operator;

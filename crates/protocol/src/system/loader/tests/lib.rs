@@ -121,6 +121,27 @@ mod tests {
     }
 
     #[test]
+    fn generated_request_message_preserves_the_fixed_rpc_payloads() {
+        assert_eq!(<Wire as Message>::MAX, 554);
+        let mut out = <Wire as Message>::EMPTY;
+        let request = Wire::Build(build());
+        let n = <Wire as Message>::store(&request, &mut out).unwrap();
+        assert_eq!(&out[..n], BUILD_BYTES);
+        assert!(matches!(<Wire as Message>::fetch(BUILD_BYTES), Some(Wire::Build(_))));
+        let claim = Wire::Claim(Claim { op: 2, task: TaskId::new(0x0102030405060708),
+            back: token(0x6162636465666768) });
+        let n = <Wire as Message>::store(&claim, &mut out).unwrap();
+        assert_eq!(&out[..n], CLAIM_BYTES);
+        assert!(matches!(<Wire as Message>::fetch(CLAIM_BYTES), Some(Wire::Claim(_))));
+        for sample in [BUILD_BYTES, CLAIM_BYTES] {
+            let mut extra = sample.to_vec();
+            extra.push(0);
+            assert!(<Wire as Message>::fetch(&extra).is_none());
+            assert!(<Wire as Message>::fetch(&sample[..sample.len() - 1]).is_none());
+        }
+    }
+
+    #[test]
     fn replies_match_fixed_bytes_for_success_and_errors() {
         for status in 0..=6 {
             let said = Said { status, team: 0x1112131415161718,

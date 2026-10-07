@@ -11,7 +11,7 @@ use programs::Report;
 use programs::harness::probe;
 
 use protocol::common::path::Path;
-use protocol::communication::session::{Session, establish};
+use ipc::session::{Session, establish};
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
 use env::unit;

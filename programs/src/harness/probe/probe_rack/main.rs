@@ -23,8 +23,8 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
-use protocol::communication::rack::{CAP, Mode, Rack, SendFail};
-use protocol::communication::session::Session;
+use ipc::rack::{CAP, Mode, Rack, SendFail};
+use ipc::session::Session;
 use protocol::system::operator::client as operator;
 use env::unit;
 

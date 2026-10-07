@@ -1,7 +1,7 @@
 //! Control owns publication policy; clients submit typed objects, never absolute paths.
 use crate::common::path::{Path, PathBuf};
-use crate::communication::hand::Sender;
-use crate::communication::session::establish;
+use ipc::hand::Sender;
+use ipc::session::establish;
 use crate::system::identity::{CoalitionId, PrincipalId};
 use crate::system::operator::{EntryId, Fail, Permit};
 use crate::wire::message::Message;

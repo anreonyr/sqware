@@ -232,6 +232,11 @@ fn generate(attr: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
             #(pub const #opconsts: u8 = #opcodes;)*
             #(#wattrs)* #vis enum #wire { #(#wvariants(#ftypes),)* }
             impl #wire {
+                pub const LEN: usize = {
+                    let mut len = 0;
+                    #(if #ftypes::LEN > len { len = #ftypes::LEN; })*
+                    len
+                };
                 pub fn take(bytes: &[u8]) -> Option<Self> {
                     match *bytes.first()? {
                         #(#opcodes => {
@@ -248,6 +253,15 @@ fn generate(attr: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
                         _ => None,
                     }
                 }
+            }
+            impl ::wire::Message for #wire {
+                type In = Self;
+                type Buf = [u8; Self::LEN];
+                const EMPTY: Self::Buf = [0; Self::LEN];
+                fn store(&self, out: &mut [u8]) -> Option<usize> {
+                    #wire::store(self, out)
+                }
+                fn fetch(bytes: &[u8]) -> Option<Self> { #wire::take(bytes) }
             }
             #[derive(Clone, Copy, PartialEq, Eq, Debug)] #channel
             impl #ctype {

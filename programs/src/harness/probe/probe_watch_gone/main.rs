@@ -19,7 +19,7 @@ use env::Wait;
 use programs::Report;
 
 use protocol::common::path::PathBuf;
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::system::operator::{Grant, Face as Face};
 use protocol::system::operator::client as operator;
 use env::unit;

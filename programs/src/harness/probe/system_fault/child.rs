@@ -5,8 +5,8 @@ extern crate programs;
 
 #[programs::entry]
 fn main() -> programs::Report<'static> {
-    let _ready = protocol::communication::session::establish::Held(
-        protocol::communication::session::establish::endpoint(
+    let _ready = ipc::session::establish::Held(
+        ipc::session::establish::endpoint(
             env::unit::sire(),
             env::Mark::of(programs::unit::READY),
             env::Wait::POLL,

@@ -29,7 +29,7 @@ use env::PAGE_SIZE;
 use ::resource::dock::View;
 
 use super::Mode;
-use crate::wire::message::Message;
+use wire::Message;
 
 /// 架那一段：**连续四页**（`Pole::unseal` 只要求页对齐）。
 ///

@@ -11,7 +11,7 @@
 //! `POLL` 那两半）的化身；两条路都改成一具架之后，谁也不等对方，故它们没有读者了。
 
 use env::{PieToken, TaskId, Wait};
-use protocol::communication::session::Session;
+use ipc::session::Session;
 use protocol::debug;
 use protocol::driver::line::Line;
 use protocol::system::control::Scope;

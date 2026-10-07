@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 
 use env::{HoleDir, MailFail, MailResult, PieToken, Wait};
 
-use crate::wire::message::Message;
+use wire::Message;
 use ::resource::raw::{Hole};
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）＋ 那一格缓冲 ＋ **我还排着几只**。
@@ -120,11 +120,13 @@ impl<M: Message> Sender<M> {
         }
         let r = Hole::from_raw(hole).wait(HoleDir::Push, Wait::Forever);
         if let Err(e) = &r {
-            crate::debug!(
-                "mail: reclaim miss hole={} code={}",
-                hole.get(),
-                e.source.code()
-            );
+            if cfg!(debug_assertions) {
+                crate::debug::put(&alloc::format!(
+                    "mail: reclaim miss hole={} code={}",
+                    hole.get(),
+                    e.source.code()
+                ));
+            }
         }
         self.outstanding = 0;
         r.map(|_| ())

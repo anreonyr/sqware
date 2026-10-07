@@ -18,19 +18,20 @@ pub fn build(
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
     for incoming in inbox.requests.drain(..) {
+        let super::answer::Incoming { ask, from, back } = incoming;
         let result = (|| {
-            let bytes = crate::system::loader::serve::build::snapshot(
-                crate::system::loader::serve::build::Source {
-                    from: incoming.from,
-                    ask: &incoming.ask,
-                },
-            )?;
-            let count = incoming.ask.count as usize;
+            let bytes = match crate::system::loader::serve::build::snapshot(
+                crate::system::loader::serve::build::Source { from, ask: &ask },
+            ) {
+                Ok(bytes) => bytes,
+                Err(fail) => return Err((fail.into(), back)),
+            };
+            let count = ask.count as usize;
             if count > protocol::system::loader::frame::MAX_ARGS {
-                return Err(protocol::system::control::Fail::Bad);
+                return Err((protocol::system::control::Fail::Bad, back));
             }
             let mut args = [0; protocol::system::loader::frame::MAX_ARGS];
-            for (to, from) in args.iter_mut().zip(&incoming.ask.args[..count]) {
+            for (to, from) in args.iter_mut().zip(&ask.args[..count]) {
                 *to = *from as usize;
             }
             super::super::launch::construct(
@@ -43,22 +44,20 @@ pub fn build(
                     },
                     spawn: crate::system::loader::serve::build::Spawn {
                         args: &args[..count],
-                        stack: incoming.ask.stack as usize,
+                        stack: ask.stack as usize,
                     },
                     delivery: super::super::launch::Delivery {
-                        owner: incoming.from,
-                        identity: protocol::system::identity::Install::Inherit {
-                            parent: incoming.from,
-                        },
-                        back: incoming.ask.back,
+                        owner: from,
+                        identity: protocol::system::identity::Install::Inherit { parent: from },
+                        back,
                     },
                 },
-            )?;
-            Ok::<_, protocol::system::control::Fail>(())
+            )
+            .map(|_| ())
         })();
-        answer::release_image(&incoming.ask, incoming.from);
-        if let Err(fail) = result {
-            super::super::launch::reply(incoming.ask.back, Err(fail));
+        answer::release_image(&ask, from);
+        if let Err((fail, back)) = result {
+            super::super::launch::reply(back, Err(fail));
         }
     }
     Ok(Progress::Done)

@@ -19,7 +19,7 @@ use programs::Reason;
 
 use programs::harness::tick;
 
-use protocol::communication::session::establish;
+use ipc::session::establish;
 use protocol::debug;
 use env::unit;
 use ::resource::raw::{Hole};

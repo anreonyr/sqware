@@ -9,8 +9,8 @@ use alloc::string::String;
 use env::{Access, Policy, HoleDir, PieKind, PieToken, TaskId, Wait};
 use ::resource::port;
 
-use crate::communication::hand::{Receiver, RecvFail};
-use crate::communication::session::establish;
+use ipc::hand::{Receiver, RecvFail};
+use ipc::session::establish;
 use crate::wire::message::Message;
 
 use super::Fail;

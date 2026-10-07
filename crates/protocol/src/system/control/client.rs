@@ -4,8 +4,8 @@ use crate::wire::message::Message;
 use alloc::string::String;
 use env::{PieToken, TaskId, Wait};
 
-use crate::communication::hand::{Receiver, RecvFail};
-use crate::communication::session::{Berth, establish};
+use ipc::hand::{Receiver, RecvFail};
+use ipc::session::{Berth, establish};
 
 use super::Fail;
 use super::frame::{self, BACK, State};
@@ -70,7 +70,7 @@ impl Face {
             crate::debug!("control: call deny={step}");
             Fail::Bad
         }
-        // **先铸、先交，再推**（次序是契约的一半，见 communication::session::establish::lend_out）：
+        // **先铸、先交，再推**（次序是契约的一半，见 ipc::session::establish::lend_out）：
         // 那一枚"种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫表。
         let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
         // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。

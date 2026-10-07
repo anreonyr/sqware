@@ -9,7 +9,7 @@
 use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
 use env::HoleDir;
-use protocol::communication::session::Endpoint;
+use ipc::session::Endpoint;
 use protocol::debug;
 use ::resource::pile::Pile;
 use ::resource::raw::{reserve};

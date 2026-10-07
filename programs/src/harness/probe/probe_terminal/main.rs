@@ -3,7 +3,7 @@
 extern crate programs;
 
 use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, pie, unit};
-use protocol::communication::session::{Session, establish};
+use ipc::session::{Session, establish};
 use protocol::service::terminal::{Connection, Terminal, frame};
 use protocol::system::operator::{self, Face};
 use ::resource::raw::{Hole, inspect};

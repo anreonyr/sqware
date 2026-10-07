@@ -25,8 +25,8 @@ use env::{Mark, Wait};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use protocol::communication::rack::{Mode, Rack};
-use protocol::communication::session::{Session, establish};
+use ipc::rack::{Mode, Rack};
+use ipc::session::{Session, establish};
 use protocol::system::control::{Client, Scope, Target};
 use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face, Fail, Grant, Permit};
@@ -102,7 +102,7 @@ fn main() -> Report<'static> {
         .unwrap()
         .token(Wait::AtMost(MS))
         .unwrap();
-    let mut reader = protocol::communication::rack::Reader::<Bytes>::from_raw(retained).unwrap();
+    let mut reader = ipc::rack::Reader::<Bytes>::from_raw(retained).unwrap();
     client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
     assert_eq!(
         tree.root()

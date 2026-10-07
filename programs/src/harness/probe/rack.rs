@@ -13,7 +13,7 @@
 
 use env::PieToken;
 use protocol::common::path::PathBuf;
-use protocol::communication::rack::{CAP, Rack};
+use ipc::rack::{CAP, Rack};
 
 use crate::driver::uart::core::frame::{self, Bytes};
 

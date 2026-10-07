@@ -4,10 +4,8 @@ use crate::system::{common::face::mount, life::Status};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::{HoleDir, PieToken, Wait};
 use env::pie;
-use protocol::{
-    communication::hand::Sender,
-    system::identity::{self as api, Grant, Reply, Wire},
-};
+use ipc::hand::Sender;
+use protocol::system::identity::{self as api, Grant, Reply, Wire};
 use ::resource::{
     raw::{Hole, reserve},
     pile::Pile,

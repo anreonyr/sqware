@@ -193,7 +193,7 @@ impl Desk {
         let mut gone = 0;
         for cell in self.guests.iter_mut() {
             if let Some(guest) = cell
-                && protocol::communication::session::establish::vested_by(guest.reply).is_none()
+                && ipc::session::establish::vested_by(guest.reply).is_none()
             {
                 f(Gone {
                     who: guest.who(),

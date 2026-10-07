@@ -60,7 +60,7 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: 
     let marks = [Mark::of("group-build"), Mark::of("group-doom")];
     let worker = move || {
         for mark in marks {
-            if protocol::communication::session::establish::claim(
+            if ipc::session::establish::claim(
                 TaskId::new(0), mark, Wait::AtMost(MS),
             ).is_none() {
                 return false;

@@ -4,7 +4,7 @@
 //! 以及各族交过来的门牌：名册那一族**两面各一枚**、盟册那一族仍是通用那枚 `entry`）。
 
 use env::{Mark, PieToken, TaskId};
-use protocol::communication::session::establish;
+use ipc::session::establish;
 use protocol::debug;
 use protocol::system::operator::LINK;
 use ::resource::raw::{pies};
