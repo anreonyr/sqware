@@ -1,5 +1,5 @@
 //! Mark declarations and collision checks, independent of protocol domains.
-pub use ::wire::marks::{Definition, conflict};
+pub use ::env::marks::{Definition, conflict};
 
 #[macro_export]
 macro_rules! marks {

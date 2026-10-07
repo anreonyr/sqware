@@ -12,3 +12,4 @@ doctest = false
 bitflags = "2"
 erra = { version = "0.2.0", default-features = false }
 mold = { path = "../mold" }
+wire = { path = "../wire" }

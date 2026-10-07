@@ -7,6 +7,3 @@ edition.workspace = true
 test = false
 bench = false
 doctest = false
-
-[dependencies]
-env = { path = "../env" }

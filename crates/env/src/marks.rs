@@ -1,12 +1,15 @@
-use env::Mark;
+//! Mark declarations and collision checks for environment interfaces.
 
-#[derive(Clone, Copy)]
+use crate::Mark;
+
+/// A named mark used to identify an interface channel or grant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Definition {
     pub name: &'static str,
     pub mark: Mark,
 }
 
-/// Return the names of the first colliding definitions.
+/// Return the first pair of declarations that share a mark value.
 pub const fn conflict(groups: &[&[Definition]]) -> Option<(&'static str, &'static str)> {
     let mut g = 0;
     while g < groups.len() {

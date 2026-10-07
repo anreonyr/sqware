@@ -256,8 +256,8 @@ fn generate(attr: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
                 }
             }
             #(pub const #cconsts: env::Mark = #ctype::#cvariants.mark();)*
-            pub const CHANNELS: &[::wire::marks::Definition] = &[
-                #(::wire::marks::Definition { name: #cnames, mark: #cconsts },)*
+            pub const CHANNELS: &[::env::marks::Definition] = &[
+                #(::env::marks::Definition { name: #cnames, mark: #cconsts },)*
             ];
             #[derive(Clone, Copy, PartialEq, Eq, Debug)] #grant
             impl #gtype {
@@ -275,16 +275,16 @@ fn generate(attr: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
                 }
                 pub const fn of_wire(value: &#wire) -> u8 { Self::for_wire(value).at() }
                 pub const MARKS: [env::Mark; #n] = [#(Self::#gvariants.mark(),)*];
-                pub const DECLARATIONS: [::wire::marks::Definition; #n] = [
-                    #(::wire::marks::Definition { name: #gnames, mark: Self::#gvariants.mark() },)*
+                pub const DECLARATIONS: [::env::marks::Definition; #n] = [
+                    #(::env::marks::Definition { name: #gnames, mark: Self::#gvariants.mark() },)*
                 ];
             }
             pub fn grant_of(mark: env::Mark) -> Option<#gtype> {
                 #gtype::ALL.into_iter().find(|grant| grant.mark() == mark)
             }
-            pub const REGISTRY: &[::wire::marks::Definition] = &[
-                #(::wire::marks::Definition { name: #cnames, mark: #cconsts },)*
-                #(::wire::marks::Definition { name: #gnames, mark: #gtype::#gvariants.mark() },)*
+            pub const REGISTRY: &[::env::marks::Definition] = &[
+                #(::env::marks::Definition { name: #cnames, mark: #cconsts },)*
+                #(::env::marks::Definition { name: #gnames, mark: #gtype::#gvariants.mark() },)*
             ];
             const _: () = {
                 let mut i = 0;
@@ -292,7 +292,7 @@ fn generate(attr: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
                     assert!(REGISTRY[i].mark.get() != env::Mark::NONE.get(), "reserved empty mark");
                     i += 1;
                 }
-                assert!(::wire::marks::conflict(&[REGISTRY]).is_none(), "interface mark collision");
+                assert!(::env::marks::conflict(&[REGISTRY]).is_none(), "interface mark collision");
             };
         }
     })

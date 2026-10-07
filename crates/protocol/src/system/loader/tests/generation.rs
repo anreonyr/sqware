@@ -48,5 +48,5 @@ fn explicit_codes_and_stable_keys_are_independent_of_declaration_order() {
         "test.interface.v1/grant/first",
     ]);
     assert_eq!(RENAMED, env::Mark::of("test.interface.v1/channel/response"));
-    assert!(wire::marks::conflict(&[REGISTRY]).is_none());
+    assert!(env::marks::conflict(&[REGISTRY]).is_none());
 }

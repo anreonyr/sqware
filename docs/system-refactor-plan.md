@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-其余接口迁移、通用通信分离与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec 已分离；其余接口迁移、通用通信与 RPC 分离、System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -46,7 +46,8 @@ Hub、Terminal 和驱动的 API 放在各自提供方目录。无需给没有公
 依赖目标：
 
 ```text
-wire            → env                 # 小型纯编码与接口描述基础
+wire                                  # 纯字节 codec 与 Message，不依赖环境类型
+env             → wire                # ABI 与环境类型自己的 codec、Mark 登记
 resource        → env                 # dock、port、bell、pile 与私有句柄基础
 execution       → env                 # room、unit、memory、lock、boot
 schedule                              # 纯计划执行；不依赖 env 或执行库
@@ -57,8 +58,9 @@ System 实现     → system-api + system-client + ipc + resource + execution + 
 image           → 各软件的纯 API       # 装配检查和公共入口描述
 ```
 
-wire 已建立，包含 Message、OK、Mark 定义元数据与碰撞检查；其他 common 内容按职责迁移。
-env 的内核 ABI 类型与已有 Span 不因目录整理而整体迁移。
+wire 承载通用 Field/Span、基本字段与变长数据的字节编码、游标和长度辅助、Message。
+env 保留寄存器 Wire/FromPair、环境句柄自己的字段实现和 Mark 元数据及碰撞检查；角色常量仍由提供方声明。
+旧 env 字节 codec 路径可重导出 wire 的同一实现，不保留第二份 trait 或编解码正文。
 API 之间可以保留真实的数据依赖，例如 Hub 引用 System 的公共身份类型。
 
 ## env 与用户态基础的边界
@@ -66,7 +68,8 @@ API 之间可以保留真实的数据依赖，例如 Hub 引用 System 的公共
 env 定义内核与任务共享的环境契约及发起环境调用的薄入口：调用号、参数与返回布局、失败码、权限位、原始句柄和调用骨架。
 ledger 的启动参数、资源目录、manifest 与 capsule 格式继续属于 env；实际程序装配和资源分配策略属于镜像工具及启动代码。
 env 不管理等待重试、资源对象收尾、通信会话、服务发现或业务授权。Mark 的值类型属于 env，具体接口角色由提供方 API 声明。
-Field/Span 等编码工具继续保持现有兼容路径；后续抽离需单独处理依赖方向，不引入 env 与 wire 的循环依赖。
+通用 Field/Span 属于 wire；env 的兼容路径只重导出。生成器支持显式 codec 路径，使纯数据帧不必依赖 env。
+字节 codec 与寄存器打包分别定义，不引入 env 与 wire 的循环依赖。
 
 resource 保留 dock、port、bell、pile 的模块名和类型名：
 
@@ -293,6 +296,22 @@ Cargo 元数据确认无 runtime 成员或依赖，execution/resource 互不依�
 
 ### 6. 分离通用通信，迁公共接口
 
+先完成纯 wire codec 分离及生成器接入，再迁通信和 RPC。
+wire 不承担收发、对端识别、期限或业务角色；提供方 api 定义布局，ipc::rpc 使用同一 codec 处理单次请求回复。
+RPC 明确管理回复配对、来源、回信端与统一期限，取消后隔离迟到回复；不自动重试有副作用的调用。
+服务端可以入队并延迟回复，Build→Claim、资源角色与授权策略仍是提供方流程。
+
+codec 基础已落地：
+
+- wire 无 Cargo 依赖，承载 Field/Span、既有基本类型和 String 的编码、游标与数组辅助、Message。
+- env 依赖 wire；TaskId/PieToken 的字段实现和寄存器编码仍归 env，旧字节路径仅重导出同一 trait 和函数。
+- Mark 定义描述与碰撞检查迁到 env::marks，接口生成器和兼容入口直接引用它；固定角色字符串与裸值未变。
+- Frame 默认使用 env 的兼容重导出，显式 `#[frame(codec = ::wire)]` 支持纯 wire 消费者，不要求引入 env。
+- 长度求和与乘法溢出返回 None，避免 debug panic 或 release 回绕；普通有效帧布局保持不变。
+- 独立 wire 测具没有 env 依赖，通过真实派生检查默认兼容路径与显式 codec 的字节一致、UTF-8、255/256 长度、游标溢出和数组计数边界。
+- 5 项 wire、10 项 Loader、7 项 Identity、3 项 Mark、5 项生成宏测试共 30 项通过；programs 全目标、wire 与 image 宿主编译通过。
+- 依赖元数据确认 wire 无 env 依赖、env 单向依赖 wire；QEMU accept、product、system-fault 均通过。
+
 整合原 port 与 hand/rack/session；两端关系归 resource::port，类型化通信和交互归 ipc，依赖 wire 与 resource。
 调试调用的原始契约留 env，格式化与输出循环按实际调用方归位，不迁入纯 schedule。
 system-client 接入新传输；逐个迁 Identity、Operator、Control 的接口声明和客户端。
@@ -349,6 +368,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
+第 6 批的纯 codec 基础已完成；接下来以 Loader 贯通 ipc::rpc 的单次 Build/Claim，再迁 Identity。
 
 ## 迁移后的命名口径
 
@@ -368,11 +388,13 @@ cargo check -p programs --all-targets --offline
 cargo check -p system-api --target x86_64-unknown-linux-gnu --offline
 cargo check -p schedule --target x86_64-unknown-linux-gnu --offline
 cargo check -p resource --target x86_64-unknown-linux-gnu --offline
+cargo check -p wire --target x86_64-unknown-linux-gnu --offline
 cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test -p mold --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/schedule/src/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/resource/tests/capability/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/wire/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
