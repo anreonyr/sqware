@@ -1,9 +1,9 @@
 # System、接口生成与 Mark 重构
 
-本轮重构消除中央 protocol 库和手写的重复协议表示。
+本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线与接口生成试点已完成。原有 8 个固定基线继续通过，另有生成行为和宏声明检查。
-其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除 Loader 试点外表示目标结构。
+runtime 拆解、其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除 Loader 试点外表示目标结构。
 
 ## 当前问题
 
@@ -14,11 +14,12 @@
 - Hub bridge 混合公共客户端与 System 私有授权流程，形成反向依赖。
 - protocol 集中契约、传输和客户端，同一操作被重复写进多套表示。
 - Mark 数值已自动计算，但角色字符串、Grant 表、根登记和程序清单仍需手工同步。
+- runtime 混合程序入口、堆、TLS、域内并发、资源生命周期、通信连接和计划执行；port 与 session 重复管理连接关系。
 
 ## 目标与范围
 
-这轮同时解决三个问题：System 的状态与流程归属、通信接口的单一声明、Mark 的自动生成与装配检查。
-验收要求是旧 core/serve/run 分类和中央 protocol 退出，调用方不再手抄接口 Mark。
+这轮解决 System 的状态与流程归属、runtime 的职责分离、通信接口的单一声明、Mark 的自动生成与装配检查。
+验收要求是旧 core/serve/run 分类、中央 protocol 和总括 runtime 退出，调用方不再手抄接口 Mark。
 不顺带重写内核 ABI、替换资源模型、改变任务生命周期或引入新的组件框架。
 先保留当前 programs 的多 binary 打包方式；软件目录的职责边界与 Cargo 包装分别处理。
 
@@ -46,17 +47,55 @@ Hub、Terminal 和驱动的 API 放在各自提供方目录。无需给没有公
 
 ```text
 wire            → env                 # 小型纯编码与接口描述基础
-runtime         → env                 # 任务、资源、内存、schedule
-ipc             → wire + runtime      # 通用传输，不收集软件客户端
+resource        → env                 # dock、port、bell、pile 与私有句柄基础
+execution       → env                 # room、unit、memory、lock、boot
+schedule                              # 纯计划执行；不依赖 env 或执行库
+ipc             → wire + resource     # 通用通信，不收集软件客户端
 system-api      → wire + env           # 普通数据、接口声明与生成契约
-system-client   → system-api + ipc     # 公共调用与资源交互
-System 实现     → system-api + system-client + ipc + runtime
+system-client   → system-api + ipc + resource
+System 实现     → system-api + system-client + ipc + resource + execution + schedule
 image           → 各软件的纯 API       # 装配检查和公共入口描述
 ```
 
 wire 已建立，包含 Message、OK、Mark 定义元数据与碰撞检查；其他 common 内容按职责迁移。
 env 的内核 ABI 类型与已有 Span 不因目录整理而整体迁移。
 API 之间可以保留真实的数据依赖，例如 Hub 引用 System 的公共身份类型。
+
+## env 与用户态基础的边界
+
+env 定义内核与任务共享的环境契约及发起环境调用的薄入口：调用号、参数与返回布局、失败码、权限位、原始句柄和调用骨架。
+ledger 的启动参数、资源目录、manifest 与 capsule 格式继续属于 env；实际程序装配和资源分配策略属于镜像工具及启动代码。
+env 不管理等待重试、资源对象收尾、通信会话、服务发现或业务授权。Mark 的值类型属于 env，具体接口角色由提供方 API 声明。
+Field/Span 等编码工具继续保持现有兼容路径；后续抽离需单独处理依赖方向，不引入 env 与 wire 的循环依赖。
+
+resource 保留 dock、port、bell、pile 的模块名和类型名：
+
+| 模块 | 职责 |
+| --- | --- |
+| dock | 内存能力和映射；区分撤图、能力释放及外来资源失效 |
+| port | 通信两端配对、对端识别和字节收发；明确入口与回信端所有权 |
+| bell | 通知等待、响铃和确认；保留中断确认语义 |
+| pile | 多路等待与状态订阅；返回就绪提示，由调用方复核状态 |
+
+原始句柄构造集中在创建及导入边界，不提供任意 token 到可信对象的普通转换。
+本地持有、借用和派生授予分别承担 release、撤图及 revoke；seal 不作为通用对象析构。
+类型限制合法操作，但撤销、对端退出和内核拒绝仍是运行时结果。
+外来内存不能仅凭本地 Rust 借用就提供长期有效的安全 slice；Loader 保留受控快照与撤销失败语义。
+port 拥有两端关系；ipc 的类型化消息、会话交互和共享缓冲建立在资源对象上，避免复制连接状态。
+请求回复、订阅与共享缓冲保留各自的背压和生命周期，不强制使用同一种 RPC。
+
+execution 的公开子模块使用内核词汇，不另设 thread/sync/exit 顶层分类：
+
+| 模块 | 职责与迁入内容 |
+| --- | --- |
+| room | 当前任务运行控制；park、wait/wake、reap 与用户态组合 |
+| unit | 执行单元创建、放行和等待结束；task 的闭包结果回收及私有 TLS 支持 |
+| memory | 程序内存分配与归还、allocator；能力映射仍归 dock |
+| lock | 用户态同步原语 |
+| boot | 程序入口、初始参数、初始化和 main 返回结果适配 |
+
+同名 env 模块提供单次调用契约，execution 提供用户态组合和生命周期管理。
+不复制内核 scheduler/conductor/messenger 的实现目录。Control 的任务登记和 launch 的跨软件启动流程仍属于 System。
 
 ## System 的状态与流程归属
 
@@ -101,7 +140,7 @@ Control 提供 hook 组合点，由 app 注入 launch 子计划；组件交出�
 
 ## 保留的 schedule 约束
 
-runtime::schedule 继续提供资源注入、依赖图、顺序编排和可恢复执行。
+schedule 独立后继续提供资源注入、依赖图、顺序编排和可恢复执行。
 顺序流程用 Schedule::sequence，局部依赖图用 Schedule::new 和 before；同阶段无依赖节点按注册顺序执行。
 节点名称用于标识，不通过名称排序决定执行行为。
 
@@ -191,13 +230,39 @@ Loader 基线位于 `crates/protocol/src/system/loader/tests`，直接编译现�
 - Loader 独立拥有 Fail；与 Control 交界处显式转换。Mark 根检查读取生成的完整 REGISTRY。
 - 提取公共 Message 后，Identity 元组请求改为具名 Request 包装；宿主测试检查包装与旧请求字节一致。
 
-当前宏覆盖具名请求变体和回复结构，尚未生成传输 I/O 或多形回复；这些随下一批接口与客户端迁移扩展。
+当前宏覆盖具名请求变体和回复结构，尚未生成传输 I/O 或多形回复；这些随资源边界确立后的接口与客户端迁移扩展。
 本批相关宿主测试共 32 项：Loader 10、生成宏 5、Identity 7、Mark 3、System 边界 7。
 programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 
-### 3. 分离通用传输，迁公共接口
+### 3. 独立 schedule
 
-将 hand/rack/session 迁 ipc，依赖纯 wire 和 runtime；调试输出归 runtime。
+将 runtime/src/schedule 迁为独立 schedule 库，保持现有语义和宿主测试。
+迁移全部用户态调用方、System 边界测具与测试路径；不改内核内部的同名 runtime 模块。
+不在此批改节点排序、Cursor、Dispatch 或组件工作流。
+
+完成条件：schedule 不依赖 env/resource/ipc/execution；调用方不再引用 runtime::schedule；原有调度测试与程序编译通过。
+
+### 4. 迁程序执行支持
+
+按 room/unit/memory/lock/boot 归位现有 task、heap、TLS、exit 和程序入口支持。
+同步迁移 #[entry] 生成路径、programs 入口装配及测具；明确 TLS 由任务创建与退场流程成对管理。
+保留启动、等待、退出、分配与回收行为，不把 System 任务管理状态迁入 execution。
+
+完成条件：执行支持不引用 runtime 旧实现；验证程序启动退出、域内并发结果与内存回收。
+
+### 5. 用 Loader 确立资源边界
+
+建立 resource 的私有句柄基础和 dock/port/bell/pile，优先贯通 Loader 所需的内存、发送端、回信端和派生授予。
+列清每种对象的创建者、持有者、借用者和收尾动作，再迁接口；不直接给全部旧句柄补统一 Drop。
+客户端收拢授权、期限和失败清理；服务端把外来报文及内核来源转换为经过验证的内部请求。
+保留映像快照、Build→Claim、等待交付及回收语义；线上资源编号和 Mark 不作为授权证明。
+
+完成条件：Loader 主流程不散落裸句柄构造和清理；覆盖授权失败、构建失败、Claim 超时、对端退出和映像撤销。
+
+### 6. 分离通用通信，迁公共接口
+
+整合原 port 与 hand/rack/session；两端关系归 resource::port，类型化通信和交互归 ipc，依赖 wire 与 resource。
+调试调用的原始契约留 env，格式化与输出循环按实际调用方归位，不迁入纯 schedule。
 system-client 接入新传输；逐个迁 Identity、Operator、Control 的接口声明和客户端。
 Identity 作为较复杂的第二例，验证有界变长数据、分页、多个授权入口和权威验证。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
@@ -207,9 +272,12 @@ Account 不再借 Loader 客户端类型表达自己的创建结果。
 System 的身份安装、启动重试和授权策略留在实现。
 拆 Hub bridge：公共调用归 Hub 客户端，System 接收授权归 launch。
 
-完成条件：System 的纯 API 不依赖 runtime/ipc/程序实现，可直接运行宿主编码测试。
+迁移 Terminal、Hub、驱动和测具的剩余资源调用，删除 runtime crate、工作区成员、依赖与兼容重导出。
+测具需要的原始环境调用保留明确专用入口，不扩大正式资源 API。
 
-### 4. 消除中央 protocol 与手抄 Mark
+完成条件：System 的纯 API 不依赖 resource/execution/schedule/ipc/程序实现，可直接运行宿主编码测试；用户态 runtime 完全退出。
+
+### 7. 消除中央 protocol 与手抄 Mark
 
 把 Hub、Terminal 和驱动接口声明迁到各自提供方，客户端随提供方维护。
 逐项处理原 common：路径、名称和身份等内容按真实拥有者与复用关系归位，不整体改名搬进 wire。
@@ -220,7 +288,7 @@ image 及其 #[path] 编译的 program.rs 直接依赖纯 API，引用生成的�
 完成条件：删除 protocol crate、工作区成员、Cargo 依赖和所有旧导入；兼容重导出也删除。
 公共接口无需另写 marks.rs、Grant 表或根 GROUPS 清单。
 
-### 5. 收拢 System 的状态、计划和目录
+### 8. 收拢 System 的状态、计划和目录
 
 Control 收起任务表、实例和 Loader 字段，提供必要的操作、观察和 hook 组合入口。
 launch 拥有准备与交付请求，不复制任务状态；app 注入必要子计划，打断循环依赖。
@@ -232,7 +300,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 完成条件：顶层安装和计划不引用私有 Request/Decision/Dispatch；组件内部修改不要求同步修改 app。
 
-### 6. 收缩公开面并完成验收
+### 9. 收缩公开面并完成验收
 
 叶子模块私有，组件根只暴露必要入口。共享 Machine/face 支持不再由 System 私有目录提供。
 测具通过窄的 fixture 接口观察状态、提交操作和注入故障，不直接改组件字段。
@@ -245,9 +313,10 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 - programs 全目标编译，System 调度与模块边界测试。
 - QEMU accept、product、system-fault 场景。
 - 依赖检查：纯 API 不依赖执行库，ipc 不依赖软件实现，普通调用方不进入 System 私有目录。
+- schedule 不依赖环境或执行库；runtime 与 protocol 均无工作区成员、用户态依赖或旧导入残留。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
-第 2 批是第一份可独立审阅的实现：生成 Loader 接口并通过真实调用，而非先全树移动目录。
+第 1、2 批已完成；下一份实现独立 schedule，然后迁 execution，再以 Loader 确立资源边界。
 
 ## 当前可用的验证命令
 
