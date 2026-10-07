@@ -120,7 +120,7 @@ pub fn mint(
         return Err(fail);
     }
     table.set_state(name, State::Starting);
-    protocol::debug::put(&alloc::format!("system: minted {name} tid={}", task.get()));
+    programs::debug::put(&alloc::format!("system: minted {name} tid={}", task.get()));
     Ok(task)
 }
 

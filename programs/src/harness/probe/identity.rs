@@ -103,7 +103,7 @@ pub fn timeout() {
     reader.join();
     let _ = pie::seal(entry);
     let _ = pie::release(entry);
-    protocol::debug::put("identity-timeout: queued request decoded after client timeout");
+    programs::debug::put("identity-timeout: queued request decoded after client timeout");
 }
 
 /// Isolated supervisor fixture. Every observation goes over the real Identity IPC faces.
@@ -206,7 +206,7 @@ pub fn acceptance() {
     let protected = || {
         operator
             .tile(
-                protocol::common::path::Path::new("/svc/sys/control/mint"),
+                system_api::operator::path::Path::new("/svc/sys/control/mint"),
                 Wait::AtMost(1000),
             )
             .expect("identity: protected tile")
@@ -217,7 +217,7 @@ pub fn acceptance() {
     );
     let public = operator
         .tile(
-            protocol::common::path::Path::new("/svc/sys/control/state"),
+            system_api::operator::path::Path::new("/svc/sys/control/state"),
             Wait::AtMost(1000),
         )
         .expect("identity: public tile");
@@ -350,7 +350,7 @@ pub fn acceptance() {
         );
     }
 
-    protocol::debug::put("identity: three Debark/Embark rounds preserve task and binding");
+    programs::debug::put("identity: three Debark/Embark rounds preserve task and binding");
     assert_eq!(old.current.principal.authority, old_authority);
     let dynamic = super::hierarchy::exercise(
         &mut assembly,
@@ -360,7 +360,7 @@ pub fn acceptance() {
         child,
     );
     let _ = dynamic;
-    protocol::debug::put("system: identity, device and publication acceptance passed");
+    programs::debug::put("system: identity, device and publication acceptance passed");
     assembly
         .resources
         .write::<crate::system::run::frame::Flow>()
@@ -471,7 +471,7 @@ fn revision(assembly: &mut Fixture) {
             .unwrap(),
         "identity: mutation notification not consumed"
     );
-    protocol::debug::put("identity: only successful mutations wake maintenance");
+    programs::debug::put("identity: only successful mutations wake maintenance");
 }
 
 fn activation_boundary(
@@ -481,7 +481,7 @@ fn activation_boundary(
 ) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use protocol::service::hub::activation;
+    use hub_api::activation;
 
     let owner = env::unit::self_id();
     let entry = establish::find(owner, activation::ENTRY).unwrap();
@@ -548,7 +548,7 @@ fn ready_driver(
     let until = env::chrono::clock() + 5_000_000_000;
     loop {
         if let Ok(entry) = operator
-            .tile(protocol::common::path::Path::new(road), Wait::AtMost(1000))
+            .tile(system_api::operator::path::Path::new(road), Wait::AtMost(1000))
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
             if matches!(inspect(entry), Ok((_, owner, _)) if owner == task) {

@@ -3,7 +3,7 @@
 //! （slot 编码 + 载荷 codec + 线类型 + 发起骨架），加门闩权限（位掩码 + 两族视图）。
 //!
 //! **不含服务目录协议**（`Request`/`Reply`/`MSG_LEN`）——那是纯用户态协议，住在
-//! 提供方 API 与 `crates/protocol`（内核零引用）。用户态资源和执行支持分别由 resource、execution 提供。
+//! 提供方 API（内核零引用）。用户态资源和执行支持分别由 resource、execution 提供。
 //!
 //! 方案 3（typed payload）：各调用域枚举（`RoomCall` 等）是带类型载荷的 variant，
 //! 字段类型为语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量；
@@ -48,10 +48,10 @@ pub use abi::wait::Wait;
 pub use abi::call::memory::PAGE_SIZE;
 pub use ecall::{FailCode, make_fail};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
-/// ——故调用点写 `#[derive(env::Frame)]`（`protocol` 不依赖 `mold`，只能经这里取）。
+/// 兼容环境类型及现有调用方的派生路径。
 pub use mold::Frame;
 /// **`WireCodes`**：失败域 ↔ 线上那一格的码表（实现在 `mold`，这里只转出来——与上面的
-/// `Frame` 同一条：`protocol` 不依赖 `mold`，只能经这里取）。
+/// `Frame` 同一条兼容路径）。
 pub use mold::WireCodes;
 pub use wire::pie_kind::PieKind;
 pub use wire::program_kind::ProgramKind;

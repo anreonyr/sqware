@@ -5,7 +5,7 @@ extern crate programs;
 mod auth;
 use env::{Wait, unit};
 use ipc::session::Session;
-use protocol::service::terminal::{Connection, Io, Read, Terminal};
+use terminal_client::{Connection, Io, Read, Terminal};
 use system_client::{
     control::{Face as Lifecycle, State, account::Client},
     operator::{self, Face},
@@ -15,7 +15,7 @@ const WAIT: Wait = Wait::AtMost(5000);
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     run().map_err(|step| {
-        protocol::debug::put(step);
+        programs::debug::put(step);
         1
     })
 }

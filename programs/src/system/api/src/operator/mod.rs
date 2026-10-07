@@ -16,6 +16,7 @@ pub use marks::{DECLARATIONS as MARK_DECLARATIONS, LINK_MARK, WATCH_MARK};
 pub use path::{Path, PathBuf};
 
 pub const NAME: &str = "operator";
+pub const SVC: &Path = Path::new("svc");
 pub const DIR: &Path = Path::new("svc/sys/operator");
 pub const REGISTRY: &[&[env::marks::Definition]] = &[
     &marks::DECLARATIONS,

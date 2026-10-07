@@ -20,7 +20,7 @@ use env::Wait;
 use programs::Reason;
 
 use env::{HoleDir, Mark, PieToken};
-use protocol::debug;
+use programs::debug;
 use ::resource::pile::Pile;
 use ::resource::raw::{Hole, pies};
 

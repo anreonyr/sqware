@@ -87,7 +87,7 @@ pub fn acceptance() {
             }
         }
         unit::oust(team).unwrap();
-        protocol::debug::put(&alloc::format!(
+        programs::debug::put(&alloc::format!(
             "system-fault: role={mode}; three tasks and descendant reclaimed"
         ));
     }

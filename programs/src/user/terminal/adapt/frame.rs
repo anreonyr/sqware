@@ -4,7 +4,7 @@ use crate::core::mode::{ECHO_MAX, Input, Mode};
 use env::Wait;
 use programs::driver::uart::{client::Console, core::frame::{Bytes, MAX}};
 use ::schedule::{Progress, ResMut};
-use protocol::service::terminal::frame as stream;
+use terminal_api::frame as stream;
 use ::resource::raw::Hole;
 
 pub(super) struct Frame {
@@ -61,7 +61,7 @@ pub(super) fn feed(
     if skipped != counters.seen {
         counters.seen = skipped;
         mode.reset();
-        protocol::debug::put(&alloc::format!("terminal: rx gap skipped={skipped}"));
+        programs::debug::put(&alloc::format!("terminal: rx gap skipped={skipped}"));
     }
     if server.attachment.is_none() { mode.reset(); return Ok(Progress::Done); }
     for &b in batch.bytes() {
@@ -96,7 +96,7 @@ pub(super) fn flush(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut 
     let lost = console.tx.lost();
     if lost != counters.lost {
         counters.lost = lost;
-        protocol::debug::put(&alloc::format!("terminal: tx lost={lost}"));
+        programs::debug::put(&alloc::format!("terminal: tx lost={lost}"));
     }
     Ok(Progress::Done)
 }

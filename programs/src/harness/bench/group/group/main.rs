@@ -38,7 +38,7 @@ use env::pie;
 use env::room;
 use env::unit;
 use env::{PieToken, TaskId};
-use protocol::debug;
+use programs::debug;
 use ::resource::raw::{Hole};
 use ::resource::pile::Pile;
 use ::resource::port::{self, Access, Policy};

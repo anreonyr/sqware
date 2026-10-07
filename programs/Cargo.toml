@@ -26,18 +26,21 @@ env = { path = "../crates/env" }
 resource = { path = "../crates/resource" }
 execution = { path = "../crates/execution" }
 schedule = { path = "../crates/schedule" }
-# 协议层：**协议定义的唯一来源**。取它有三处——
-# 服务表（`protocol::system`）、码表宏（`protocol::fail_codes!`）与报文那一条约定
-# （`protocol::message::Message`：rtc 那一族的答那两形要上船台）。驱动自己的协议住本 crate。
-protocol = { path = "../crates/protocol" }
+# 通信机制与提供方拥有的接口、客户端。
 ipc = { path = "../crates/ipc" }
 wire = { path = "../crates/wire" }
 system-api = { path = "src/system/api" }
 system-client = { path = "../crates/system-client" }
+hub-api = { path = "src/service/hub/api" }
+hub-client = { path = "src/service/hub/client" }
+terminal-api = { path = "src/user/terminal/api" }
+terminal-client = { path = "src/user/terminal/client" }
+router-api = { path = "src/driver/router/api" }
+router-client = { path = "src/driver/router/client" }
 # 设备树解析：**驱动自己读自描述**（内核不代劳，`platform/devices.rs` 只原样搬运）。
 # 使用者目前只有 `prog-router`（要数自己的 context、列自己要接的线）。
 fdt = { version = "0.1.5", default-features = false }
-# 错误容器：`system::server` 把内核负码包成 `erra::Error<EnvError>`（与 protocol 同款）。
+# 环境调用错误容器。
 erra = { version = "0.2.0", default-features = false }
 
 [[bin]]

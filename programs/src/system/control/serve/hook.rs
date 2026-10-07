@@ -79,7 +79,7 @@ pub fn finish(
             }
         }
         Err(error) => {
-            protocol::debug::put(&alloc::format!(
+            programs::debug::put(&alloc::format!(
                 "control: instance {} hook failed {:?}",
                 item.task.get(),
                 error

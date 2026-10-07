@@ -12,8 +12,8 @@
 
 use env::{PieToken, TaskId, Wait};
 use ipc::session::Session;
-use protocol::debug;
-use protocol::driver::line::Line;
+use programs::debug;
+use router_client::Line;
 use system_client::control::Scope;
 use system_client::operator::Permit;
 use system_client::operator::client as operator;
@@ -55,7 +55,7 @@ impl Context {
     /// 编自己那两面），故 operator::Face::from 按值取一份视图（树那三格是 `Copy`）
     pub fn line(&self, line: u32, ms: Wait) -> Result<Line, ()> {
         // 路是**驱动那一族的常量**（`/svc/drv`）接上服务名——一处都不自己拼。
-        let road = protocol::driver::ROAD.try_join(ROUTER).ok_or(());
+        let road = router_api::ROAD.try_join(ROUTER).ok_or(());
         let Ok(road) = road else { return Err(()) };
         let tree = operator::Face::from(&self.session);
         let entry = match tree.tile(&road, ms) {
@@ -77,7 +77,7 @@ impl Context {
             // **那一手自己记了"死在哪一格"**（`deny(cause, code)` 两个静态）：它把七个出口折成
             // 同一个 Fail::Denied，而那两个数就是这七格的钥匙——探子把它们印出来。
             use core::sync::atomic::Ordering;
-            use protocol::driver::line::client::{OCCUPY_CODE, OCCUPY_DENY};
+            use router_client::client::{OCCUPY_CODE, OCCUPY_DENY};
             debug::put(&alloc::format!(
                 "line: occupy failed line={line} entry={} cause={} code={}",
                 entry.get(),

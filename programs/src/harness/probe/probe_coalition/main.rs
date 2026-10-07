@@ -14,9 +14,9 @@ use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
-use protocol::common::path::Path;
+use system_api::operator::path::Path;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::identity as icall;
 use system_client::operator::Grant;
 use system_client::operator::client as operator;

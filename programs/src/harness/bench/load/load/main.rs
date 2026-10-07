@@ -49,7 +49,7 @@ use core::time::Duration;
 use programs::system::control::core::unit::{Announce, Table};
 use programs::system::control::serve::task as service;
 use programs::unit::Ending;
-use protocol::debug;
+use programs::debug;
 
 /// 占核者与打点者的**清单名**（programs::unit::PROGRAMS 里 `wanted_by` 含 `load` 的那两行）
 const HOG_ELF: &str = "busy";

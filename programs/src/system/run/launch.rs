@@ -59,7 +59,7 @@ pub fn construct(
 pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
     let value = match result {
         Ok(built) => Said {
-            status: protocol::wire::OK,
+            status: wire::OK,
             task: built.task,
             team: built.team.get() as u64,
         },

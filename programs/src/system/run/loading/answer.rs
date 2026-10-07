@@ -2,7 +2,7 @@ use ::schedule::{Progress, ResMut};
 use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait, pie};
 use system_client::loader::frame::{self, Ask, Said, Wire};
-use protocol::wire::message::Message;
+use wire::Message;
 use ipc::rpc::{self, reply::Sender};
 use system_client::loader::rpc::Contract;
 use ::resource::raw::inspect;
@@ -52,7 +52,7 @@ pub fn receive(
                 let accepted = control.claim_instance(from, claim.task);
                 let said = Said {
                     status: if accepted.is_some() {
-                        protocol::wire::OK
+                        wire::OK
                     } else {
                         system_client::control::frame::NOTREADY
                     },

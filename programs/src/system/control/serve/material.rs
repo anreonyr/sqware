@@ -3,14 +3,14 @@ use super::unit::Service;
 use crate::boot::Accounts;
 use crate::system::common::machine::Machine;
 use env::{Access, Name, Mark, Entry, PieKind, Policy, Wait};
-use protocol::debug;
-use protocol::service::hub::{ENROLL_MAX, Enroll};
+use programs::debug;
+use hub_api::{ENROLL_MAX, Enroll};
 use ::resource::port;
 
 pub struct Supplies {
     pub machine: Machine,
     pub(super) accounts: Accounts,
-    pub(super) out: ipc::hand::Sender<protocol::service::hub::Enroll>,
+    pub(super) out: ipc::hand::Sender<hub_api::Enroll>,
 }
 impl Supplies {
     pub fn new(machine: Machine, accounts: Accounts) -> Self {

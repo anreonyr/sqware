@@ -9,9 +9,9 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::PathBuf;
+use system_api::operator::path::PathBuf;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::client as operator;
 use system_client::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
 use env::unit;
@@ -121,7 +121,7 @@ fn main() -> Report<'static> {
         "队列那一条没量到：这条路上 {EVENTS} 条事件、读到 {got} 条（0 = 一条没收到，= {EVENTS} = 一条没丢）"
     );
     // **读数**（`debug!` 在 release 是空操作，故这一行走 `debug::put`）。
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-watch: queued got={got} of={EVENTS} last_seq={last}"
     ));
 

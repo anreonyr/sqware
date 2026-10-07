@@ -200,7 +200,7 @@ fn main() -> programs::Report<'static> {
                         .unwrap();
                     client.unpublish(abandoned, WAIT).unwrap();
                     let _ = pie::release(closed);
-                    protocol::debug::put(
+                    programs::debug::put(
                         "hierarchy: abandoned request with closed reply channel drops its borrowed source and leaves no claim",
                     );
                 }
@@ -227,13 +227,13 @@ fn main() -> programs::Report<'static> {
                 for i in 1..33 {
                     client.unpublish(full(i), WAIT).unwrap();
                 }
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: full mount failure leaves no registry claim; retry after freeing capacity succeeds",
                 );
                 c = Some(coalition);
                 target = Some(proxy);
                 road = Some(resource_road);
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: named full IDs -> Identity lineage/member queries -> MemberOf Find allowed",
                 );
             }
@@ -274,7 +274,7 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap();
                 resource = other;
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: expel -> Find denied -> waive still denied; unpublish keeps delivered capability; close invalidates it",
                 );
             }
@@ -298,7 +298,7 @@ fn main() -> programs::Report<'static> {
                     reserve(resource).is_ok(),
                     "target exit must not close proxy service resource"
                 );
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: actual team/task proxy registration and child-first target exit cleanup passed",
                 );
             }
@@ -341,7 +341,7 @@ fn main() -> programs::Report<'static> {
                 helper.join();
                 let _ = pie::seal(back);
                 let _ = pie::release(back);
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: real ref IPC rejects wrong authority; shared reply validator rejects actual forged sender",
                 );
             }
@@ -366,7 +366,7 @@ fn main() -> programs::Report<'static> {
                     p,
                     query.resolve(me, WAIT).unwrap().unwrap().origin.principal
                 );
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: fresh static ref has new authority; dynamic names did not rebind",
                 );
             }

@@ -7,7 +7,7 @@ use crate::system::{
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
-use protocol::debug;
+use programs::debug;
 use system_api::operator as ocall;
 use ::resource::pile::Pile;
 const SETTLE_MS: usize = 1;

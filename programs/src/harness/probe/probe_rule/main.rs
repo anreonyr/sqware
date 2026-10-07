@@ -11,9 +11,9 @@ use alloc::string::ToString;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::Path;
+use system_api::operator::path::Path;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::control::publication;
 use system_client::identity as icall;
 use system_client::identity::{Organization, Query, SelfOps, Selector, Subject};
@@ -23,7 +23,7 @@ use env::unit;
 use env::pie;
 use ::resource::raw::{Hole};
 
-const DIR: &system_client::operator::Path = protocol::common::svc::SVC;
+const DIR: &system_client::operator::Path = system_api::operator::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）
 const IS: &str = "is";

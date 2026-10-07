@@ -6,12 +6,12 @@ use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
 use ::schedule::{Progress, Res, ResMut};
-use protocol::service::terminal::frame::{self, Command, Input, Reply};
+use terminal_api::frame::{self, Command, Input, Reply};
 use system_client::{
     control::publication::{Client, Scope, Target},
     operator::Permit,
 };
-use protocol::wire::message::Message;
+use wire::Message;
 use ::resource::{
     raw::{Hole, inspect, reserve},
     pile::{Pile, Sub},

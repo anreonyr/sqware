@@ -6,7 +6,7 @@ use env::{PieToken, TaskId};
 use programs::driver::rtc::core::frame::{self, Status, Time};
 use programs::driver::rtc::core::host::{Answer, Host};
 use ipc::hand::Sender;
-use protocol::debug;
+use programs::debug;
 use ::resource::dock::View;
 use env::pie;
 use ::resource::raw::{reserve};

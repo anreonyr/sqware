@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use env::{PieToken, TaskId};
-use protocol::common::path::PathBuf;
+use system_api::operator::path::PathBuf;
 use system_api::control::Target;
 use system_client::operator::{EntryId, Permit};
 

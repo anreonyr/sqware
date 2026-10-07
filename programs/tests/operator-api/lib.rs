@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-extern crate self as protocol;
 pub mod system {
     pub mod identity {
         pub use system_api::identity::*;

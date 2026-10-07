@@ -3,14 +3,14 @@
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 root=$(CDPATH= cd -- "$here/../../../../.." && pwd)
-protocol_root=${1:-$root}
+api_root=${1:-$root}
 host=${HOST_TARGET:-x86_64-unknown-linux-gnu}
 cd "$root"
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT HUP INT TERM
-python3 - "$here" "$protocol_root" "$temporary" "$root" <<'PY'
+python3 - "$here" "$api_root" "$temporary" "$root" <<'PY'
 import pathlib, sys
-here, protocol, temporary, root = map(pathlib.Path, sys.argv[1:])
+here, api, temporary, root = map(pathlib.Path, sys.argv[1:])
 source = (root / "programs/tests/identity/host.rs").read_text()
 source = source.replace('#[path = "mod.rs"]', f'#[path = "{here / "mod.rs"}"]')
 source = source.replace('#[path = "../serve/answer.rs"]', f'#[path = "{here / "../serve/answer.rs"}"]')
@@ -26,7 +26,7 @@ path = "host.rs"
 doctest = false
 [dependencies]
 env = {{ path = "{root / "crates/env"}" }}
-system-api = {{ path = "{protocol / "programs/src/system/api"}" }}
+system-api = {{ path = "{api / "programs/src/system/api"}" }}
 ''')
 PY
 cargo test --manifest-path "$temporary/Cargo.toml" --target "$host" \

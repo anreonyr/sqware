@@ -70,7 +70,7 @@ pub fn finish(
             };
             let job = &mut tracked.operation;
             if matches!(job.request.action, Action::Ruin) && job.execution.task.is_some() {
-                protocol::debug::put(&alloc::format!(
+                programs::debug::put(&alloc::format!(
                     "system: ruin {} failed {:?}",
                     job.request.name,
                     fail

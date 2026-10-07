@@ -12,7 +12,7 @@ use crate::system::{
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
-use protocol::{
+use programs::{
     debug,
 };
 use system_client::identity as id;

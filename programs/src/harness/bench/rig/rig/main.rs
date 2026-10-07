@@ -50,7 +50,7 @@ use programs::system::control::core::verdict::Reaped;
 use programs::system::control::serve::task as service;
 use programs::unit::Ending;
 use ipc::session::establish::{self, Endpoint, Held};
-use protocol::debug;
+use programs::debug;
 use env::unit;
 use ::resource::raw::{Hole};
 

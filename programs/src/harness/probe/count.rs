@@ -67,7 +67,7 @@ pub fn count_under(pane: &Pane<'_>, want: usize, watch: &mut Watch<'_>, budget: 
     }
     if seen < want {
         // **只在数不满时报**（release 也看得见）：两种成因分得开，下一轮才查得下去。
-        protocol::debug::put(&alloc::format!(
+        programs::debug::put(&alloc::format!(
             "probe: count short seen={seen} want={want} blind={blind} quiet={quiet}"
         ));
     }

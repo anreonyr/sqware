@@ -6,8 +6,7 @@ publish = false
 [workspace]
 [lib]
 path = "lib.rs"
-[dependencies]
-env = { path = "../../../crates/env" }
-
 [dev-dependencies]
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
+env = { path = "../../../crates/env" }
+system-api = { path = "../../src/system/api" }

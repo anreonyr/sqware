@@ -3,8 +3,8 @@ use env::{Access, PieToken, Policy, TaskId, Wait};
 use ::schedule::{Progress, Res};
 use ipc::hand::Sender;
 use ipc::session::establish;
-use protocol::service::hub::{
-    self,
+use hub_api::{
+    self as hub,
     activation::{self, Activate},
     frame::Said,
 };

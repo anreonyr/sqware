@@ -6,7 +6,7 @@ use crate::system::identity::client::query::validate_permit;
 use crate::system::operator::core::Tile;
 use crate::system::operator::Placement;
 use crate::system::run::resource::Resources;
-use protocol::common::path::Path;
+use system_api::operator::path::Path;
 use ::schedule::{Progress, Res, ResMut};
 use system_api::control::publication::{self as pubcall, Scope, Target};
 use system_client::identity::Selector;
@@ -70,7 +70,7 @@ pub fn service(
             match rule {
                 crate::unit::Publish::Devices
                     if *scope == Scope::Device
-                        && mark == protocol::service::hub::Grant::Claim.mark() =>
+                        && mark == hub_api::Grant::Claim.mark() =>
                 {
                     if matches!(
                         request.frame.permit,
@@ -140,10 +140,10 @@ pub fn device(
     let Target::Service { group, name, .. } = &target else {
         unreachable!()
     };
-    let valid = (group == protocol::service::hub::BOOT
+    let valid = (group == hub_api::BOOT
         && [
-            protocol::service::hub::DTB,
-            protocol::service::hub::SUPERVISOR_EXTERNAL,
+            hub_api::DTB,
+            hub_api::SUPERVISOR_EXTERNAL,
         ]
         .contains(&name.as_str()))
         || machine.devices().is_some_and(|devices| {

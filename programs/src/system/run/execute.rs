@@ -27,7 +27,7 @@ pub fn run() -> Result<(), env::Reason> {
             startup
                 .advance(&mut starting, &resources)
                 .map_err(|error| {
-                    protocol::debug::put(&alloc::format!("system: startup {:?}", error));
+                    programs::debug::put(&alloc::format!("system: startup {:?}", error));
                     start::E_TABLE
                 })?;
             if resources
@@ -38,7 +38,7 @@ pub fn run() -> Result<(), env::Reason> {
                 break;
             }
             if frame.advance(&mut cursor, &resources).map_err(|error| {
-                protocol::debug::put(&alloc::format!("system: frame {:?}", error));
+                programs::debug::put(&alloc::format!("system: frame {:?}", error));
                 9usize
             })? == Progress::Done
             {

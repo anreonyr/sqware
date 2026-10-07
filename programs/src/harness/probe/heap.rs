@@ -5,7 +5,7 @@ pub fn acceptance() {
     pooling();
     layouts();
     concurrent();
-    protocol::debug::put("heap: pooled pages, aligned zeroing, realloc and cross-task release passed");
+    programs::debug::put("heap: pooled pages, aligned zeroing, realloc and cross-task release passed");
 }
 
 fn pooling() {

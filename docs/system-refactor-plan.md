@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC，以及四个 System 提供方 API 与独立 system-client 已落地；protocol 删除与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC、四个 System 提供方 API/客户端及 Hub、Terminal、Router 接口归位已落地；protocol crate 与兼容层已删除。System 状态和目录重组、持久会话生命周期仍未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -402,8 +402,16 @@ image 及其 #[path] 编译的 program.rs 直接依赖纯 API，引用生成的�
 启动与部署关系仍在程序清单，只有通道/入口标识改为共享描述。
 装配处检查跨 API 的 Mark；动态名称的使用与静态定义检查分开。
 
-完成条件：删除 protocol crate、工作区成员、Cargo 依赖和所有旧导入；兼容重导出也删除。
-公共接口无需另写 marks.rs、Grant 表或根 GROUPS 清单。
+protocol 删除已落地：
+
+- Hub、Terminal、Router 的纯 API 与公共客户端分别归提供方目录，形成 hub-api/client、terminal-api/client、router-api/client；System 四域继续使用 system-api/client。API 不依赖客户端，所有包均不依赖 protocol。
+- 旧接口、客户端与握手实现保留字节格式和资源生命周期；DTO 直接使用 wire::Message、环境类型使用 env，宏直接依赖 mold。诊断输出归 programs::debug，命名树服务前缀归提供方命名 API。
+- 通道 Mark 和 Grant 从提供方单表声明生成。装配层的 unit/interfaces 只组合各 API 的 REGISTRY，env::marks::conflict_between 检查组内及跨提供方冲突，不手抄所有通道和 Grant 的 GROUPS 清单。
+- 删除 crates/protocol 目录、工作区成员、依赖、正文和兼容导出。Cargo metadata 确认没有 protocol 包或依赖；程序代码没有旧导入。
+- 原 Loader、Identity、Mark 宿主套件迁到 programs/tests/loader-api、identity-api、interface-marks；既有 Terminal/Login 测具直接使用纯 API，保留原测试体。
+- 本批 48 项相关宿主检查通过：Loader 11、Identity 7、Mark 4、Hub API 3、Terminal/Router API 4、System 边界 8、Terminal 行为 9、Login 2。全程序编译及 QEMU accept、product、system-fault 均通过。
+
+剩余装配工作：image 与 program.rs 的入口声明继续按提供方描述归位，避免字符串元数据与接口声明重复。该部分及持久 Session 的迟到应答配对不因 protocol 删除而自动完成。
 
 ### 8. 收拢 System 的状态、计划和目录
 
@@ -434,7 +442,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec、通用 IPC、四个 System 提供方 API/通信迁移与独立 system-client 已完成；接下来迁出 protocol 剩余的软件接口及兼容导出。
+第 6 批与第 7 批接口归位、protocol 删除已完成；接下来收拢 System 状态与目录，并处理前述装配元数据和持久 Session 生命周期。
 
 ## 迁移后的命名口径
 
@@ -463,9 +471,13 @@ cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unk
 cargo test --manifest-path crates/resource/tests/capability/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/wire/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
-cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
-cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
-cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/interface-marks/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/identity-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/loader-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/hub-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/device-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/terminal/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/login/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline

@@ -6,11 +6,7 @@ use crate::system::{
     control::serve::{start::Images, watch::Watch},
     identity::client::install::Roster,
 };
-use protocol::{
-    common::{
-        path::Path,
-    },
-};
+use system_api::operator::Path;
 use system_client::{identity as id, operator as op};
 pub fn publication_face(
     images: Res<Images>,

@@ -17,7 +17,7 @@
 //! 类型的纪律，不是某一处的检查。
 
 use env::wire::{fetch_bytes, store_bytes};
-use protocol::wire::message::Message;
+use wire::Message;
 
 /// 一次排空最多搬走多少字节。设备 FIFO 只有 16 字节，取四倍宽；满了剩下的还在设备里。
 pub const DRAIN_MAX: usize = 64;

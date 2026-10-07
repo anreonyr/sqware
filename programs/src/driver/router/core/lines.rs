@@ -4,7 +4,7 @@
 use alloc::vec::Vec;
 
 use ipc::session::Held;
-use protocol::driver::line::Fail;
+use router_api::Fail;
 use ::resource::raw::{Hole};
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）

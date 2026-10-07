@@ -19,7 +19,7 @@ use programs::Report;
 
 use env::PieToken;
 use ipc::session::{Session, Endpoint};
-use protocol::debug;
+use programs::debug;
 use system_client::operator as ocall;
 use system_client::operator::client as operator;
 use env::unit;
@@ -103,7 +103,7 @@ fn main() -> Report<'static> {
     let (tree, hedge, _) = (&session.link, session.talk, session.host);
     // **正经那一问要一面 `Face`**，而它是**借**一条会话：
     let face = operator::Face::from(&session);
-    let Some(dir) = protocol::common::svc::SVC.file_name() else {
+    let Some(dir) = system_api::operator::SVC.file_name() else {
         return bail("probe-bound: bad name");
     };
 

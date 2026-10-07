@@ -94,7 +94,7 @@ pub fn acceptance() {
     until(|| unit::join(held, Wait::POLL).unwrap_or(true));
     finish.store(true, Ordering::Release);
     peer.join();
-    protocol::debug::put(
+    programs::debug::put(
         "lifecycle: Debark preserves context, Embark resumes, Slay preserves same-team peer",
     );
 }

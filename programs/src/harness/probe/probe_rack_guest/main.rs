@@ -68,7 +68,7 @@ fn main() -> Report<'static> {
             "probe-rack-guest: B 第 {i} 条没落进去"
         );
     }
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-rack-guest: read={} wrote={}",
         rig::count(),
         rig::count()

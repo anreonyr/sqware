@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::Wait;
-use protocol::debug;
+use programs::debug;
 
 #[repr(u8)]
 #[derive(Clone, Copy)]

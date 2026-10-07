@@ -1,6 +1,6 @@
 use env::ledger::{args as boot_args, entry::Entries, manifest};
 use env::{Name, PieToken};
-use protocol::debug;
+use programs::debug;
 
 pub struct Accounts {
     view: &'static [u8],

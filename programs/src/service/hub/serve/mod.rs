@@ -8,12 +8,12 @@ use alloc::vec::Vec;
 use env::{HoleDir, Access, Name, MailFail, Mark, Entry as ResourceEntry, PieKind, PieToken, Policy, TaskId, Wait};
 use ipc::hand::{Sender, Receiver, RecvFail};
 use ipc::session::{Session, establish};
-use protocol::debug;
-use protocol::service::hub::{Wire, Said, Window, self, Deed, Enroll, Grant};
+use programs::debug;
+use hub_api::{Wire, Said, Window, self as hub, Deed, Enroll, Grant};
 use system_client::identity::{Organization, Query, CoalitionId, PageId as _, Selector};
 use system_client::operator::{Permit, Face as Face};
 use system_client::operator::client as operator;
-use protocol::wire::message::Message;
+use wire::Message;
 use env::PAGE_SIZE;
 use ::resource::dock::Dock;
 use ::resource::pile::Pile;
@@ -51,7 +51,7 @@ struct League {
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
 /// 的早退步，失败域在末尾**折一次**
 pub fn serve() -> Result<(), Start> {
-    protocol::debug::put("hub: serve enter");
+    programs::debug::put("hub: serve enter");
     // 一～七：起手。
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = unit::sire();

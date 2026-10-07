@@ -2,7 +2,7 @@
 
 use alloc::vec::Vec;
 
-use protocol::debug;
+use programs::debug;
 
 use crate::boot::Catalog;
 use crate::system::control::serve::start::Error;

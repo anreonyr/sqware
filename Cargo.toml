@@ -19,7 +19,6 @@ members = [
     "kernel",
     "programs",
     "crates/env",
-    "crates/protocol",
     "crates/resource",
     "crates/execution",
     "crates/schedule",
@@ -29,6 +28,12 @@ members = [
     "crates/ipc",
     "crates/system-client",
     "programs/src/system/api",
+    "programs/src/service/hub/api",
+    "programs/src/service/hub/client",
+    "programs/src/user/terminal/api",
+    "programs/src/user/terminal/client",
+    "programs/src/driver/router/api",
+    "programs/src/driver/router/client",
 ]
 default-members = ["kernel"]
 resolver = "3"

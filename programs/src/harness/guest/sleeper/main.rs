@@ -15,7 +15,7 @@ use env::Wait;
 use programs::Report;
 
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::{Fail, Face};
 use system_client::operator::client as operator;
 
@@ -96,7 +96,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 }
 
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let road = protocol::driver::ROAD.try_join(WANT)?;
+    let road = router_api::ROAD.try_join(WANT)?;
     // Pane::tile 与 Tile::token 上。
     let root = tree.root();
     let mut left = MS;

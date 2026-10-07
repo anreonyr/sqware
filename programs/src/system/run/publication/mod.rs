@@ -1,8 +1,6 @@
 use crate::system::operator::Placement;
 use env::{PieToken, TaskId};
-use protocol::{
-    common::path::PathBuf,
-};
+use system_api::operator::PathBuf;
 use system_client::{
         control::publication::{Frame, Reply, Target},
         operator::{EntryId, Fail, Permit},

@@ -2,7 +2,7 @@
 #![no_main]
 
 //! # 为什么两条路都走
-//! （protocol::driver::ROAD 那段目录）。
+//! （router_api::ROAD 那段目录）。
 //! # 一问一答由这两趟各自证
 //! 自己的客人（`lodger`：占一条线就死、失败那趟也走一遍）。
 //! # 特权级由清单定
@@ -15,7 +15,7 @@ use programs::Report;
 
 use env::PieToken;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator as ocall;
 use system_client::operator::{Fail, Face};
 use system_client::operator::client as operator;
@@ -38,7 +38,7 @@ fn main() -> Report<'static> {
         return bail("guest: no tree link");
     };
     let tree = Face::of(session);
-    let Some(road) = protocol::driver::ROAD.try_join(WANT) else {
+    let Some(road) = router_api::ROAD.try_join(WANT) else {
         return bail("guest: bad name");
     };
 

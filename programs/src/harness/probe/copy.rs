@@ -42,7 +42,7 @@ pub fn acceptance() {
         done.load(Ordering::Acquire),
         "copy: loader checks did not complete"
     );
-    protocol::debug::put(
+    programs::debug::put(
         "copy: queued ownership, ELF cache identity, zero padding and private rollback passed",
     );
 }
@@ -169,7 +169,7 @@ fn concurrent() {
     }
     pie::seal(entry).unwrap();
     pie::release(entry).unwrap();
-    protocol::debug::put(
+    programs::debug::put(
         "copy: four concurrent producers delivered 128 frames in producer FIFO order",
     );
 }

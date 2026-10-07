@@ -216,7 +216,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         .entry;
     let alias = operator
         .tile(
-            protocol::common::path::Path::new("/idt/principal/anran/ref"),
+            system_api::operator::path::Path::new("/idt/principal/anran/ref"),
             WAIT,
         )
         .unwrap()
@@ -496,7 +496,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     assert!(
         operator
             .tile(
-                protocol::common::path::Path::new("/idt/principal/anran/ref"),
+                system_api::operator::path::Path::new("/idt/principal/anran/ref"),
                 WAIT
             )
             .unwrap()
@@ -515,7 +515,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         heirs,
         "account-instance: runtime team leaked"
     );
-    protocol::debug::put(
+    programs::debug::put(
         "account-instance: hook wait/failure rollback, foreign caller, expiry, start failure and owner death cleaned",
     );
 }

@@ -1,6 +1,5 @@
 //! Standalone host entry for the authority model and provider-owned API.
 extern crate alloc;
-extern crate self as protocol;
 
 pub use system_api::identity::{frame, grant, limits};
 pub mod system {

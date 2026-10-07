@@ -4,7 +4,8 @@ extern crate programs;
 
 use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, pie, unit};
 use ipc::session::{Session, establish};
-use protocol::service::terminal::{Connection, Terminal, frame};
+use terminal_client::{Connection, Terminal};
+use terminal_api::frame;
 use system_client::operator::{self, Face};
 use ::resource::raw::{Hole, inspect};
 use execution::{room, unit as task};

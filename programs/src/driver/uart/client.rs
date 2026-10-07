@@ -18,9 +18,9 @@
 //! [`find`]（只是把 `road` 换成它们自己的试验场），故真机量到的就是客人这条路本身。
 
 use env::{PieToken, Wait};
-use protocol::common::path::{Path, PathBuf};
+use system_api::operator::path::{Path, PathBuf};
 use ipc::rack::{Mode, Reader, Writer};
-use protocol::driver;
+use router_api as driver;
 use system_client::operator::Face;
 
 use crate::driver::uart::core::frame::{self, Bytes};
@@ -34,7 +34,7 @@ pub struct Console {
 }
 
 /// 控制台那一块窗格在树上的路（`/svc/drv/uart`）——**一处说全**（名字住 [`frame`]，
-/// 路头住 `protocol::driver::ROAD`；两边都不自己拼）。
+/// 路头住 `router_api::ROAD`；两边都不自己拼）。
 pub fn road() -> Option<PathBuf> {
     driver::ROAD.try_join(frame::ME)
 }

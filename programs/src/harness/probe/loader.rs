@@ -155,7 +155,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         heirs,
         "loader: runtime team leaked"
     );
-    protocol::debug::put(
+    programs::debug::put(
         "loader: operator entry, submitted ELF, instances, owner checks and unclaimed cleanup passed",
     );
 }
@@ -168,7 +168,7 @@ fn until(mut ready: impl FnMut() -> bool) {
 }
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     use env::wire::Span;
-    use protocol::wire::message::Message;
+    use wire::Message;
     let entry = establish::find(root, call::Grant::Build.mark()).unwrap();
     let loader = call::Face::of(entry).unwrap();
     assert!(
@@ -276,7 +276,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     let said = ipc::hand::Receiver::<call::frame::Said>::from_raw(back)
         .recv(&mut reply, WAIT)
         .unwrap();
-    assert_eq!(said.status, protocol::wire::OK);
+    assert_eq!(said.status, wire::OK);
     let _ = env::pie::seal(back);
     let _ = env::pie::release(back);
     // Leave the result unclaimed while keeping its requester alive.

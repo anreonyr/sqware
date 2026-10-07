@@ -222,9 +222,35 @@ mod boundaries {
         let clients = dependencies(&repo.join("crates/system-client/Cargo.toml"));
         assert!(clients.iter().any(|name| name == "system-api"));
         assert!(!clients.iter().any(|name| name == "protocol" || name == "programs"));
+        let terminal_api = dependencies(&repo.join("programs/src/user/terminal/api/Cargo.toml"));
+        assert!(terminal_api.iter().all(|name| ["env", "wire"].contains(&name.as_str())));
+        let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
+        assert!(router_api.iter().all(|name| ["env", "wire", "system-api"].contains(&name.as_str())));
+        let terminal_client = dependencies(&repo.join("programs/src/user/terminal/client/Cargo.toml"));
+        assert!(terminal_client.iter().all(|name| ["env", "wire", "resource", "ipc", "system-client", "terminal-api"].contains(&name.as_str())));
+        assert!(terminal_client.contains(&"system-client".to_owned()));
+        let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
+        assert!(router_client.iter().all(|name| ["env", "wire", "resource", "ipc", "router-api"].contains(&name.as_str())));
+        let hub_api = dependencies(&repo.join("programs/src/service/hub/api/Cargo.toml"));
+        assert!(hub_api.iter().all(|name| ["env", "wire", "mold", "system-api"].contains(&name.as_str())));
+        let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
+        assert!(hub_client.iter().all(|name| ["env", "wire", "resource", "ipc", "hub-api"].contains(&name.as_str())));
+        for dependencies in [&terminal_api, &router_api, &hub_api, &terminal_client, &router_client, &hub_client] {
+            assert!(!dependencies.iter().any(|name| name == "protocol"));
+        }
         let mut paths = References::default();
         references(&repo.join("crates/system-client/src"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
+        for source in [
+            repo.join("programs/src/user/terminal/api/src"),
+            repo.join("programs/src/user/terminal/client/src"),
+            repo.join("programs/src/driver/router/api/src"),
+            repo.join("programs/src/driver/router/client/src"),
+        ] {
+            let mut paths = References::default();
+            references(&source, &mut paths);
+            assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
+        }
     }
     #[derive(Default)]
     struct References(Vec<String>);
@@ -273,49 +299,91 @@ mod boundaries {
         }
     }
     #[test]
-    fn execution_mechanism_is_outside_protocol_and_common_marks_have_no_domain_dependencies() {
+    fn execution_mechanism_and_environment_marks_have_no_domain_dependencies() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        assert!(!repo.join("crates/protocol/src/common/schedule").exists());
         let mut paths = References::default();
         references(&repo.join("crates/schedule/src"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
-        let source = fs::read_to_string(repo.join("crates/protocol/src/common/marks.rs")).unwrap();
+        let schedule_manifest = fs::read_to_string(repo.join("crates/schedule/Cargo.toml")).unwrap();
+        assert!(!schedule_manifest.contains("protocol"));
+        let source = fs::read_to_string(repo.join("crates/env/src/marks.rs")).unwrap();
         let mut paths = References::default();
         paths.visit_file(&syn::parse_file(&source).unwrap());
-        assert!(!paths.0.iter().any(|path| path.starts_with("crate::system") || path.starts_with("crate::driver") || path.starts_with("crate::service")));
+        assert!(!paths.0.iter().any(|path| {
+            path.starts_with("crate::system")
+                || path.starts_with("crate::driver")
+                || path.starts_with("crate::service")
+                || path.starts_with("protocol::")
+        }));
     }
     #[test]
     fn mark_declarations_cannot_bypass_the_registry() {
-        fn inspect(root: &Path, file: &Path, registry: &str) {
-            if file.is_dir() {
-                if file.file_name().is_some_and(|name| name == "tests" || name == "target") { return; }
-                for entry in fs::read_dir(file).unwrap() { inspect(root, &entry.unwrap().path(), registry); }
-            } else if file.extension().is_some_and(|extension| extension == "rs") {
-                let source = fs::read_to_string(file).unwrap();
-                let syntax = syn::parse_file(&source).unwrap();
-                for item in syntax.items {
-                    match item {
-                        syn::Item::Macro(item) if item.mac.path.segments.last().is_some_and(|name| name.ident == "marks" || name.ident == "table") => {
-                            let domain = file.parent().unwrap().strip_prefix(root).unwrap()
-                                .components().map(|part| part.as_os_str().to_str().unwrap()).collect::<Vec<_>>().join("::");
-                            let collection = if item.mac.path.segments.last().unwrap().ident == "marks" {
-                                "marks::DECLARATIONS"
-                            } else { "Grant::DECLARATIONS" };
-                            assert!(registry.contains(&format!("crate::{domain}::{collection}")),
-                                "{} is absent from the global mark registry", file.display());
-                        }
-                        syn::Item::Const(item) => if let syn::Type::Path(ty) = &*item.ty {
-                            assert!(!ty.path.segments.last().is_some_and(|name| name.ident == "Mark"),
-                                "{} declares {} outside marks!", file.display(), item.ident);
-                        },
-                        _ => {}
-                    }
-                }
+        fn expression<'a>(syntax: &'a syn::File, name: &str) -> &'a syn::Expr {
+            syntax.items.iter().find_map(|item| match item {
+                syn::Item::Const(item) if item.ident == name => Some(&*item.expr),
+                _ => None,
+            }).unwrap_or_else(|| panic!("missing const {name}"))
+        }
+        #[derive(Default)]
+        struct Paths(Vec<String>);
+        impl<'ast> Visit<'ast> for Paths {
+            fn visit_expr_path(&mut self, path: &'ast syn::ExprPath) {
+                self.0.push(path.path.segments.iter().map(|part| part.ident.to_string())
+                    .collect::<Vec<_>>().join("::"));
+                visit::visit_expr_path(self, path);
             }
         }
-        let protocol = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../crates/protocol/src");
-        let registry = fs::read_to_string(protocol.join("marks.rs")).unwrap();
-        inspect(&protocol, &protocol, &registry);
+        #[derive(Default)]
+        struct TypePaths(Vec<String>);
+        impl<'ast> Visit<'ast> for TypePaths {
+            fn visit_type_path(&mut self, path: &'ast syn::TypePath) {
+                self.0.push(path.path.segments.iter().map(|part| part.ident.to_string())
+                    .collect::<Vec<_>>().join("::"));
+                visit::visit_type_path(self, path);
+            }
+        }
+
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let assembly = syn::parse_file(&fs::read_to_string(repo.join("programs/src/unit/interfaces.rs")).unwrap()).unwrap();
+        let mut registered = Paths::default();
+        registered.visit_expr(expression(&assembly, "APIS"));
+        for provider in [
+            "LOADER",
+            "system_api::identity::REGISTRY",
+            "system_api::operator::REGISTRY",
+            "system_api::control::REGISTRY",
+            "hub_api::REGISTRY",
+            "terminal_api::REGISTRY",
+            "router_api::REGISTRY",
+        ] {
+            assert!(registered.0.iter().any(|path| path == provider),
+                "unit interface registry omits provider {provider}");
+        }
+        let mut loader = Paths::default();
+        loader.visit_expr(expression(&assembly, "LOADER"));
+        assert!(loader.0.iter().any(|path| path == "system_api::loader::REGISTRY"),
+            "Loader provider registry is not assembled");
+
+        for (api, mark_module) in [
+            ("programs/src/user/terminal/api/src/lib.rs", "terminal"),
+            ("programs/src/driver/router/api/src/lib.rs", "router"),
+            ("programs/src/service/hub/api/src/lib.rs", "hub"),
+        ] {
+            let source = fs::read_to_string(repo.join(api)).unwrap();
+            let syntax = syn::parse_file(&source).unwrap();
+            let mut registry = Paths::default();
+            registry.visit_expr(expression(&syntax, "REGISTRY"));
+            assert!(registry.0.iter().any(|path| path == "marks::DECLARATIONS"),
+                "{mark_module} provider does not add its mark declarations to REGISTRY");
+            let item = syntax.items.iter().find_map(|item| match item {
+                syn::Item::Const(item) if item.ident == "REGISTRY" => Some(item),
+                _ => None,
+            }).unwrap();
+            let mut types = TypePaths::default();
+            types.visit_type(&item.ty);
+            assert!(types.0.iter().any(|path| path == "env::marks::Definition"),
+                "{mark_module} provider registry no longer uses typed mark metadata");
+        }
     }
     #[test]
     fn loader_frame_and_shutdown_keep_their_distinct_steps() {

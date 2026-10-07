@@ -15,7 +15,7 @@ use programs::harness::probe;
 
 use env::unit;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::control as ccall;
 use system_client::operator::Fail;
 use system_client::operator::Grant;

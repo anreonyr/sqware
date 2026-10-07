@@ -119,7 +119,7 @@ fn main() -> Report<'static> {
         rig::payload(99).bytes()
     );
     assert_eq!(inspect(retained).unwrap().1, unit::self_id());
-    protocol::debug::put(
+    programs::debug::put(
         "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
     );
 
@@ -134,7 +134,7 @@ fn main() -> Report<'static> {
         Err(Fail::Dead) => {}
         other => panic!("probe-rack-mount: 封印之后那一格该答 Dead，实测 {other:?}"),
     }
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-rack-mount: landed={} wrote={} read={} sealed=pruned",
         plated.len(),
         rig::count(),

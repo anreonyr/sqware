@@ -11,13 +11,13 @@ use programs::Report;
 
 use alloc::format;
 use alloc::string::ToString;
-use protocol::common::path::Path;
+use system_api::operator::path::Path;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::client as operator;
 use system_client::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 
-use protocol::driver;
+use router_api as driver;
 use env::unit;
 use env::pie;
 

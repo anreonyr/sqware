@@ -5,7 +5,7 @@
 
 use env::{Mark, PieToken, TaskId};
 use ipc::session::establish;
-use protocol::debug;
+use programs::debug;
 use system_api::operator::LINK;
 use ::resource::raw::{pies};
 

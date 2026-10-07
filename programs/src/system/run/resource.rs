@@ -11,7 +11,7 @@ use alloc::{
     vec::Vec,
 };
 use env::{TaskId, TeamId, Wait};
-use protocol::common::path::{Path, PathBuf};
+use system_api::operator::path::{Path, PathBuf};
 use ::schedule::{Progress, Res, ResMut};
 use system_client::operator::{EntryId, Fail, Permit};
 struct Run {

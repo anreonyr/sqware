@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
-use protocol::service::hub::{Fail, LIST_MAX, Window};
+use hub_api::{Fail, LIST_MAX, Window};
 
 use super::league::League;
 

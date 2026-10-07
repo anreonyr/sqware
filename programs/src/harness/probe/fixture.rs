@@ -20,7 +20,7 @@ use ::schedule::{
 pub struct Fault {
     pub armed: bool,
     pub task: Option<env::TaskId>,
-    pub road: Option<protocol::common::path::PathBuf>,
+    pub road: Option<system_api::operator::path::PathBuf>,
 }
 pub struct Fixture {
     pub resources: Registry<'static>,
@@ -196,7 +196,7 @@ impl Fixture {
             if self.plans[2]
                 .advance(&mut self.cursors[2], &self.resources)
                 .map_err(|error| {
-                    protocol::debug::put(&alloc::format!("fixture: frame {:?}", error));
+                    programs::debug::put(&alloc::format!("fixture: frame {:?}", error));
                     serve::Fail::Shutdown
                 })?
                 == Progress::Done

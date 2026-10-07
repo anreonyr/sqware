@@ -10,7 +10,7 @@ use env::Wait;
 use programs::Report;
 
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::{Permit, Face as Face};
 use system_client::operator::client as operator;
 
@@ -46,7 +46,7 @@ fn main() -> Report<'static> {
         .unwrap();
     let cap = tree
         .tile(
-            protocol::common::path::Path::new("svc/fixtures/lease"),
+            system_api::operator::path::Path::new("svc/fixtures/lease"),
             Wait::AtMost(MS),
         )
         .unwrap()

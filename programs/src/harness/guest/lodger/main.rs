@@ -4,7 +4,7 @@
 //! 占住一条线、直接死（不说再见）。
 //! 它是路由者那一手探活（`sweep`）的**读数程序**：`passer` 喂的是板那本账（"那一枚入口还答得
 //! # 为什么它要真领那枚门闩
-//! 线路由者**不验属主**（那是下来的代价，见 protocol::driver::line），故"只报名、
+//! 线路由者**不验属主**（那是下来的代价，见 router_client），故"只报名、
 //! 那台设备，只是从不碰它（需求单上因此只要最小的一格权）。
 //! # 名字与线号
 //! （`virtio,mmio`），**哪一台由设备账回答**（列册的头一条）；线号由**契**给（区→线那条权威
@@ -22,13 +22,13 @@ use programs::driver::shared::device::{Ask, Hub};
 use programs::unit::lodger::E_LODGER;
 
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::{Fail, Face};
 use system_client::operator::client as operator;
 
 use env::{Access, PieKind, PieToken, Policy};
-use protocol::driver::line;
-use protocol::driver::line::frame as lcall;
+use router_client as line;
+use router_api::frame as lcall;
 use env::unit;
 use ::resource::raw::{table_size};
 
@@ -74,14 +74,14 @@ fn main() -> Report<'static> {
     // 4. 三趟登记：占上 / 同一条线再来一次 / **报一台没有线的设备**（`line = 0`）。
     let line = deed.line;
     let (ok, held) = attempt(entry, line);
-    // `Denied`，故它自己那一格码说不清（详见 protocol::driver::line::client 那两格的注）。
+    // `Denied`，故它自己那一格码说不清（详见 router_client::client 那两格的注）。
     //   cause: 1 门牌读不出开者 · 2 铸/交不出本端那一半 · 3 铸不出回信孔 · 4 回信孔交不出去
     //          5 登记那句推不出去 · 6 路由者答的不是 OK（`phrase` 是它答的原码）· 7 认不下对端
     if ok != lcall::OK {
-        protocol::debug::put(&alloc::format!(
+        programs::debug::put(&alloc::format!(
             "lodger: occupy deny cause={} phrase={} line={}",
-            protocol::driver::line::client::OCCUPY_DENY.load(core::sync::atomic::Ordering::Relaxed),
-            protocol::driver::line::client::OCCUPY_CODE.load(core::sync::atomic::Ordering::Relaxed),
+            router_client::client::OCCUPY_DENY.load(core::sync::atomic::Ordering::Relaxed),
+            router_client::client::OCCUPY_CODE.load(core::sync::atomic::Ordering::Relaxed),
             line,
         ));
     }
@@ -128,7 +128,7 @@ fn main() -> Report<'static> {
 /// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须按
 fn find_router(tree: &Face) -> Option<PieToken> {
     // 先拼路（`/svc/drv/router`：驱动那一族的常量接上服务名），再沿那条路取入口
-    let road = protocol::driver::ROAD.try_join(SERVICE)?;
+    let road = router_api::ROAD.try_join(SERVICE)?;
     let root = tree.root();
     let mut left = MS;
     loop {

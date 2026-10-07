@@ -8,8 +8,8 @@
 use env::{PieToken, HoleDir, Wait};
 use ipc::hand::Receiver;
 use ipc::session::establish;
-use protocol::debug;
-use protocol::wire::message::Message;
+use programs::debug;
+use wire::Message;
 
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};

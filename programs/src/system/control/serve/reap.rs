@@ -6,7 +6,7 @@ use crate::system::control::core::{
 use crate::system::identity::client::install::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
-use protocol::debug;
+use programs::debug;
 use env::unit;
 pub(crate) fn sweep(
     mut control: ::schedule::ResMut<Control>,

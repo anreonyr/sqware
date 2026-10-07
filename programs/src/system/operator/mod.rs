@@ -4,7 +4,7 @@ pub mod serve;
 pub mod client;
 
 pub struct Placement {
-    pub road: protocol::common::path::PathBuf,
+    pub road: system_api::operator::path::PathBuf,
     pub tile: core::Tile,
     pub replace: bool,
 }

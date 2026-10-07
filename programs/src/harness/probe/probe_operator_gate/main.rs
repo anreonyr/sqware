@@ -10,7 +10,7 @@ use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
-use protocol::common::path::Path;
+use system_api::operator::path::Path;
 use ipc::session::{Session, establish};
 use system_client::operator::client as operator;
 use system_client::operator::{Face as Face, Mine, Pane, Watch, EntryId, Fail, Grant, Permit};
@@ -105,7 +105,7 @@ fn main() -> Report<'static> {
         root.trim(land_id, Wait::AtMost(MS)),
         Err(Fail::Denied)
     ));
-    protocol::debug::put("hierarchy: generic Part/Land/Trim denied for bound Task");
+    programs::debug::put("hierarchy: generic Part/Land/Trim denied for bound Task");
     Report::note(env::EXIT_OK, OK_NOTE)
 }
 

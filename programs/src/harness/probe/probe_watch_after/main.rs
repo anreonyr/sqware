@@ -11,9 +11,9 @@ use core::time::Duration;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::PathBuf;
+use system_api::operator::path::PathBuf;
 use ipc::session::Session;
-use protocol::debug;
+use programs::debug;
 use system_client::operator::{Permit, Face as Face};
 use system_client::operator::client as operator;
 use env::unit;

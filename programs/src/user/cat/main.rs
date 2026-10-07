@@ -3,7 +3,7 @@
 extern crate alloc;
 extern crate programs;
 use env::{TaskId, Wait, unit};
-use protocol::service::terminal::{Io, Read};
+use terminal_client::{Io, Read};
 use system_client::identity::{Grant, Reply, Wire, client::Face};
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {

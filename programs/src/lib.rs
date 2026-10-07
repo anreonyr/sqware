@@ -4,6 +4,11 @@
 //! 分档按特权级（[`system`] 是 S 态，[`user`] 是 U 态）；**两档都不算"特权"——只是"哪个域跑"**。
 
 extern crate alloc;
+extern crate self as programs;
+
+#[doc(hidden)]
+pub use alloc::format as __format;
+pub mod debug;
 
 pub mod boot;
 pub mod driver;
@@ -12,6 +17,8 @@ pub mod harness;
 pub mod service;
 pub mod system;
 pub mod unit;
+#[path = "unit/interfaces.rs"]
+mod interfaces;
 pub mod user;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的

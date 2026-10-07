@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait};
 use system_api::operator::path::{Path, PathBuf};
 use system_api::operator::Event;
-use protocol::wire::message::Message;
+use wire::Message;
 
 use crate::system::operator::core::Operator;
 use ::resource::raw::{Hole};
@@ -61,7 +61,7 @@ impl Watchers {
         // **收下了就报一行（release 也看得见）**：这一行是"树上真记下了这一位"的唯一直接证据
         // ——订阅者手里那一句 `OK` 只能证明"对面答了"，证明不了"它记在哪一格上"。
         let at = self.list.len() - 1;
-        protocol::debug::put(&alloc::format!(
+        programs::debug::put(&alloc::format!(
             "operator: watch joined who={} road={} watchers={}",
             who.get(),
             self.list[at].filter,
@@ -75,7 +75,7 @@ impl Watchers {
         self.seq += 1;
         ev.seq = self.seq;
         let Some(size) = ev.store(&mut self.buffer) else {
-            protocol::debug::put(&alloc::format!(
+            programs::debug::put(&alloc::format!(
                 "operator: watch event too long seq={}",
                 ev.seq
             ));
@@ -101,7 +101,7 @@ impl Watchers {
         // 从后往前摘（下标不动）：**摘完之后再报**——读数里的 `watchers` 才是摘完的册。
         for at in dead.into_iter().rev() {
             let one = self.list.swap_remove(at);
-            protocol::debug::put(&alloc::format!(
+            programs::debug::put(&alloc::format!(
                 "operator: watch dropped who={} watchers={}",
                 one.who.get(),
                 self.list.len()

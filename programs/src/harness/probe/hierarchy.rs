@@ -319,7 +319,7 @@ pub(crate) fn exercise(
                     .write::<crate::system::operator::client::Tree>()
                     .unwrap(),
                 &crate::system::run::publication::Internal {
-                    road: (protocol::common::path::Path::new("svc/fixtures/stale")).to_path_buf(),
+                    road: (system_api::operator::path::Path::new("svc/fixtures/stale")).to_path_buf(),
                     entry: source,
                     access: (Permit::Identity(Selector::MemberOf(coalition)), me),
                 },
@@ -329,7 +329,7 @@ pub(crate) fn exercise(
     standalone_mutations(assembly);
     assert!(matches!(
         operator.root().tile(
-            protocol::common::path::Path::new("idt/principal/forged/ref"),
+            system_api::operator::path::Path::new("idt/principal/forged/ref"),
             wait
         ),
         Err(Fail::Unknown)
@@ -380,7 +380,7 @@ pub(crate) fn exercise(
     installer
         .bind(me, Install::Authorized(saved.current), wait)
         .unwrap();
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: runtime Exact permit allows another Task with same principal and denies different principal",
     );
     organization.expel(coalition, p, wait).unwrap();
@@ -454,7 +454,7 @@ pub(crate) fn exercise(
         face(Grant::Resolve).call(Wire::Resolve(failed_task), wait),
         Ok(Reply::Binding(None))
     ));
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: failed launch after identity/runtime preparation compensates bind and directories",
     );
     coalition
@@ -510,7 +510,7 @@ pub fn codecs() {
     );
     let mut bytes = [0; system_client::operator::TIP_LEN + 1];
     let tip = Tip::Plate {
-        road: protocol::common::path::Path::new("svc/test/entry").to_path_buf(),
+        road: system_api::operator::path::Path::new("svc/test/entry").to_path_buf(),
         leaf: b,
         permit: Permit::Public,
         owner: a,
@@ -529,7 +529,7 @@ pub fn codecs() {
     assert!(TipIn::fetch(&bytes[..n]).is_none());
     for tip in [
         Tip::Abort {
-            road: protocol::common::path::Path::new("svc/test/entry").to_path_buf(),
+            road: system_api::operator::path::Path::new("svc/test/entry").to_path_buf(),
             leaf: b,
             back: b,
         },
@@ -538,7 +538,7 @@ pub fn codecs() {
             back: b,
         },
         Tip::Empty {
-            road: protocol::common::path::Path::new("uit/1/2").to_path_buf(),
+            road: system_api::operator::path::Path::new("uit/1/2").to_path_buf(),
             back: b,
         },
     ] {
@@ -548,7 +548,7 @@ pub fn codecs() {
             assert!(TipIn::fetch(&bytes[..end]).is_none());
         }
     }
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: typed publication/ref/private mount codecs reject malformed and truncated frames",
     );
 }
@@ -649,7 +649,7 @@ pub fn reference_lifetime() {
     let _ = pie::release(source);
     let _ = pie::seal(other);
     let _ = pie::release(other);
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: Forget preserves delivered capabilities, Same distinguishes objects, concurrent Accord keeps upstream revoke/release effective",
     );
 }
@@ -713,7 +713,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     );
     let _ = pie::seal(protected);
     let _ = pie::release(protected);
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: real kernel sender and transferred source checks reject unregistered caller and forged source",
     );
 }
@@ -769,7 +769,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             )
             .unwrap();
             let tip = system_client::operator::Tip::Plate {
-                road: protocol::common::path::Path::new("idt/principal/forged/ref").to_path_buf(),
+                road: system_api::operator::path::Path::new("idt/principal/forged/ref").to_path_buf(),
                 leaf: env::PieToken::NONE,
                 permit: system_client::operator::Permit::Public,
                 owner: control,
@@ -816,7 +816,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             .unbind(caller_id)
             .unwrap();
     }
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: standalone Part/Trim deny bound same-subject callers; private Plate still requires actual Control sender",
     );
 }

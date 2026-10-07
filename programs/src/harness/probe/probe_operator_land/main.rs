@@ -39,7 +39,7 @@ fn main() -> Report<'static> {
     assert_eq!(land.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
     assert_eq!(land.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
     assert!(matches!(
-        land.seek(protocol::common::path::Path::new("svc"), MS),
+        land.seek(system_api::operator::path::Path::new("svc"), MS),
         Err(Fail::Denied)
     ));
     assert!(matches!(land.find(EntryId::new(0), MS), Err(Fail::Denied)));
@@ -108,7 +108,7 @@ fn main() -> Report<'static> {
         id
     );
     client.unpublish(target, MS).unwrap();
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: publication duplicate/conflict/retirement and raw grant denial passed",
     );
     Report::note(

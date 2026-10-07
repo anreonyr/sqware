@@ -252,6 +252,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "hub-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
+name = "hub-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "hub-api",
+ "ipc",
+ "resource",
+ "wire",
+]
+
+[[package]]
 name = "ident_case"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -384,29 +405,20 @@ dependencies = [
  "erra",
  "execution",
  "fdt",
+ "hub-api",
+ "hub-client",
  "ipc",
  "mold",
- "protocol",
  "resource",
+ "router-api",
+ "router-client",
  "schedule",
  "system-api",
  "system-client",
+ "terminal-api",
+ "terminal-client",
  "wire",
  "zeroize",
-]
-
-[[package]]
-name = "protocol"
-version = "0.1.0"
-dependencies = [
- "env",
- "erra",
- "execution",
- "ipc",
- "resource",
- "system-api",
- "system-client",
- "wire",
 ]
 
 [[package]]
@@ -461,6 +473,26 @@ name = "riscv-types"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d3f2ad9f15a07f4a0e1677124f9120ce7e83ab7e1ca7186af0ca9da529b62e80"
+
+[[package]]
+name = "router-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "system-api",
+ "wire",
+]
+
+[[package]]
+name = "router-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "ipc",
+ "resource",
+ "router-api",
+ "wire",
+]
 
 [[package]]
 name = "rustc-std-workspace-alloc"
@@ -607,6 +639,26 @@ checksum = "53f8ad14fa1c1b8635114abf9721076fe1e869572a5f26a52690f407292c80dc"
 dependencies = [
  "allocator-api2",
  "lock_api",
+]
+
+[[package]]
+name = "terminal-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "wire",
+]
+
+[[package]]
+name = "terminal-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "ipc",
+ "resource",
+ "system-client",
+ "terminal-api",
+ "wire",
 ]
 
 [[package]]

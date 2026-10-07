@@ -23,7 +23,7 @@ extern crate programs;
 
 use core::time::Duration;
 
-use protocol::debug;
+use programs::debug;
 use env::chrono;
 
 /// 每轮要的周期（毫秒）

@@ -10,7 +10,7 @@ use alloc::{collections::VecDeque, sync::Arc};
 use env::{HoleDir, PieToken, TaskId, Wait};
 use env::pie;
 use ::resource::raw::{Hole, reserve};
-use protocol::{
+use programs::{
     debug,
 };
 use system_client::identity::client::TaskQuery;

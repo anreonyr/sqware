@@ -1,0 +1,335 @@
+//! 三面各一形，加一张失败域与状态码的双射表。
+//! **一原语一面**：三条问各有自己的门（`bond` / `list` 挂在 `/svc/hub` 下，`claim` 挂在**每台
+//! 设备那一格**上），故**没有"一答多形"的 `Union`**——每一面的答各是一个定形。这与 operator
+//! 那一族正相反：那边每一位原语共用一扇门，答话才要四种形状。
+
+use alloc::string::String;
+use env::{Entry, PieToken};
+
+use wire::message::Message;
+
+pub use wire::OK;
+use env::wire::Span as _;
+
+pub mod bond;
+pub mod claim;
+pub mod list;
+pub mod vocab;
+
+pub use self::bond::*;
+pub use self::claim::*;
+pub use self::list::*;
+pub use self::vocab::*;
+impl Message for Bond {
+    type In = Bond;
+    type Buf = [u8; Bond::LEN];
+    const EMPTY: Self::Buf = [0u8; Bond::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// **恰好**（按游标判：名字变长，帧长不再等于 Bond::LEN——那是上界）且动作码是 BOND
+    fn fetch(bytes: &[u8]) -> Option<Bond> {
+        let (q, at) = Bond::fetch_at(bytes, 0)?;
+        (at == bytes.len() && q.op == BOND).then_some(q)
+    }
+}
+
+impl Message for ListReq {
+    type In = ListReq;
+    type Buf = [u8; ListReq::LEN];
+    const EMPTY: Self::Buf = [0u8; ListReq::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// **恰好**（按游标判：`class` 变长）
+    fn fetch(bytes: &[u8]) -> Option<ListReq> {
+        let (q, at) = ListReq::fetch_at(bytes, 0)?;
+        (at == bytes.len() && q.op == LIST).then_some(q)
+    }
+}
+
+impl Message for Claim {
+    type In = Claim;
+    type Buf = [u8; Claim::LEN];
+    const EMPTY: Self::Buf = [0u8; Claim::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Claim> {
+        if bytes.len() != Claim::LEN {
+            return None;
+        }
+        let q = Claim::fetch_at(bytes, 0)?.0;
+        (q.op == CLAIM).then_some(q)
+    }
+}
+
+/// **收进来的一问**（与 control 那一族的 `Wire` 同形）
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Wire {
+    Bond(String),
+    List(String, u32),
+    Claim {
+        kind: u8,
+        access: u32,
+        policy: u32,
+        sensor: PieToken,
+    },
+}
+
+impl Wire {
+    /// 解一问：`(读出来的动作, 回信孔那一格)`
+    /// **不认得的码 ⇒ `None`**（不回话）：三形长度不同，读不出"往哪回"那一格——不猜
+    pub fn take(bytes: &[u8]) -> Option<(Option<Wire>, PieToken)> {
+        match bytes.first().copied()? {
+            BOND => {
+                let q = Bond::fetch(bytes)?;
+                Some((Some(Wire::Bond(q.class)), q.back))
+            }
+            LIST => {
+                let q = ListReq::fetch(bytes)?;
+                Some((Some(Wire::List(q.class, q.from)), q.back))
+            }
+            CLAIM => {
+                let q = Claim::fetch(bytes)?;
+                Some((
+                    Some(Wire::Claim {
+                        kind: q.kind,
+                        access: q.access,
+                        policy: q.policy,
+                        sensor: q.sensor,
+                    }),
+                    q.back,
+                ))
+            }
+            _ => None,
+        }
+    }
+}
+
+// 那一次出现）。可它必须说得出形状——条数就在帧里，因为**收的那一侧数不出"还有没有下一条"**。
+
+/// 一段入册最多几台。**它是个旋钮，不是契约**——上界对着**内核那一侧的配对块**
+/// `kernel/src/platform/devices.rs::MAX_PAIRS = 64`（那里一张门闩一行，装不下更多）
+pub const ENROLL_MAX: usize = 64;
+
+pub const ENROLL_CAP: usize = Enroll::LEN;
+
+/// 资源登记：条数与收方持有的统一资源记录。
+#[derive(env::Frame, Clone, Copy)]
+pub struct Enroll {
+    n: u8,
+    #[frame(count = n, fill = Entry::NONE)]
+    records: [Entry; ENROLL_MAX],
+}
+
+const _: () = assert!(Enroll::LEN == 1 + env::ENTRY_LEN * ENROLL_MAX);
+
+impl Enroll {
+    /// 拒绝超出容量、重复或无效的记录。
+    pub fn of(records: &[Entry]) -> Option<Enroll> {
+        let n = records.len();
+        if n > ENROLL_MAX || records.iter().enumerate().any(|(i, entry)| {
+            !entry.valid() || records[..i].iter().any(|prior| prior.name() == entry.name())
+        }) {
+            return None;
+        }
+        let mut held = [Entry::NONE; ENROLL_MAX];
+        held.get_mut(..n)?.copy_from_slice(records);
+        Some(Enroll {
+            n: n as u8,
+            records: held,
+        })
+    }
+
+    /// 几条
+    pub fn len(&self) -> usize {
+        self.n as usize
+    }
+
+    pub fn record(&self, i: usize) -> Option<Entry> {
+        (i < self.len()).then(|| self.records[i])
+    }
+}
+
+impl Message for Enroll {
+    /// **写法与读法是同一个**：这一形只有一份
+    type In = Enroll;
+    type Buf = [u8; ENROLL_CAP];
+    const EMPTY: Self::Buf = [0u8; ENROLL_CAP];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// 精确匹配长度，并检查类型与重复名称。
+    fn fetch(bytes: &[u8]) -> Option<Enroll> {
+        let (enroll, at) = Enroll::fetch_at(bytes, 0)?;
+        if at != bytes.len() { return None; }
+        for i in 0..enroll.len() {
+            let record = enroll.record(i)?;
+            if !record.valid() || (0..i).any(|j| enroll.records[j].name() == record.name()) {
+                return None;
+            }
+        }
+        Some(enroll)
+    }
+}
+
+/// 报名的答：只有状态那一格
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Said {
+    pub status: u8,
+}
+
+impl Said {
+    /// 编一答
+    pub const fn of(status: u8) -> Said {
+        Said { status }
+    }
+}
+
+impl Message for Said {
+    type In = Said;
+    type Buf = [u8; Said::LEN];
+    const EMPTY: Self::Buf = [0u8; Said::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// 恰好 Said::LEN（长短都不认）
+    fn fetch(bytes: &[u8]) -> Option<Said> {
+        if bytes.len() != Said::LEN {
+            return None;
+        }
+        Said::fetch_at(bytes, 0).map(|one| one.0)
+    }
+}
+
+/// **契**：认领那一答。**是扁平的一形**（状态 ＋ 名字 ＋ 线号 ＋ 号）——本仓的答话都不嵌套
+/// 另一枚帧（`Field` 只管一格多宽，不认复合），故"契"与"状态"同住这一枚
+/// 三格各有各的消费者：`token` → Device::open（那一页在这一域表里是几号）；`line` →
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 45)]
+pub struct Deed {
+    pub status: u8,
+    pub name: String,
+    pub line: u32,
+    pub token: PieToken,
+}
+
+impl Deed {
+    /// 空的一张：失败时那一答用它（`token` 是 PieToken::NONE）
+    pub const NONE: Deed = Deed {
+        status: 0,
+        name: String::new(),
+        line: 0,
+        token: PieToken::NONE,
+    };
+
+    /// 编一答：只有状态那一格（失败，或读不懂）
+    pub const fn of(status: u8) -> Deed {
+        Deed {
+            status,
+            name: String::new(),
+            line: 0,
+            token: PieToken::NONE,
+        }
+    }
+
+    /// 编一答：成了 ＋ 那张契
+    pub const fn granted(name: String, line: u32, token: PieToken) -> Deed {
+        Deed {
+            status: OK,
+            name,
+            line,
+            token,
+        }
+    }
+}
+
+impl Message for Deed {
+    type In = Deed;
+    type Buf = [u8; Deed::LEN];
+    const EMPTY: Self::Buf = [0u8; Deed::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// **恰好**（按游标判：`name` 变长；长短都不认）
+    fn fetch(bytes: &[u8]) -> Option<Deed> {
+        let (q, at) = Deed::fetch_at(bytes, 0)?;
+        (at == bytes.len()).then_some(q)
+    }
+}
+
+/// **一窗**：状态 ＋ 游标 ＋ 条数 ＋ 有主那一位掩码 ＋ 至多 LIST_MAX 段名字
+/// **两条一次说清**：`names[..n]` 是这一窗真正答出来的那些；`held` 的第 `i` 位对应 `names[i]`
+/// （`1` = 这一台此刻有主）
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 142)]
+pub struct Window {
+    pub status: u8,
+    pub from: u32,
+    pub n: u8,
+    pub held: [u8; 8],
+    #[frame(count = n, fill = String::new())]
+    pub names: [String; LIST_MAX],
+}
+
+/// **线上一个字节都不许动**：这一窗那一形照文件头那张表钉住
+/// 这一句先红
+
+const _: () = assert!(Window::LEN == 1 + 4 + 1 + 8 + 32 * LIST_MAX);
+
+impl Window {
+    /// 空的一窗（失败，或这一类里一台都没有）
+    pub const EMPTY: Window = Window {
+        status: OK,
+        from: 0,
+        n: 0,
+        held: [0u8; 8],
+        names: [const { String::new() }; LIST_MAX],
+    };
+
+    /// 第 `i` 条（`i < n` 才有）
+    pub fn name(&self, i: usize) -> Option<&String> {
+        (i < self.n as usize).then(|| &self.names[i])
+    }
+
+    /// 第 `i` 条此刻有没有主
+    pub fn held(&self, i: usize) -> bool {
+        self.held
+            .get(i / 8)
+            .is_some_and(|b| (b >> (i % 8)) & 1 == 1)
+    }
+}
+
+/// **这一窗的缓冲那一格**：**最长那一形**（头 ＋ 满窗的名字，同一张表求和）
+/// 它是 `Buf` 的容量（收的那一侧备一只满的，装得下最宽那一窗），**不是线格式的长度**
+pub const WINDOW_LEN: usize = Window::LEN;
+
+impl Message for Window {
+    type In = Window;
+    type Buf = [u8; WINDOW_LEN];
+    const EMPTY: Self::Buf = [0u8; WINDOW_LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    /// **恰好** 头 ＋ `n` 段名字（条数越界由那一格自己拦；长度与条数对不上答 `None`——
+    /// 这条判据是**本族的**，derive 不替它判）
+    fn fetch(bytes: &[u8]) -> Option<Window> {
+        let (window, at) = Window::fetch_at(bytes, 0)?;
+        (at == bytes.len()).then_some(window)
+    }
+}
