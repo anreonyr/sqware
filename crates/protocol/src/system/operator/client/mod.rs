@@ -19,7 +19,7 @@ use crate::communication::session::{Berth, Session};
 use crate::communication::{deadline, remain};
 use crate::system::operator as ocall;
 use crate::system::operator::{Fail, EntryId, Grant, Listing, Where, Permit};
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 pub mod pane;
 pub mod tile;
@@ -164,7 +164,7 @@ impl Rein<'_> {
         mine: Mine,
         wait: Wait,
     ) -> Result<EntryId, Fail> {
-        let pie = HolePie::from_token(entry);
+        let pie = Hole::from_raw(entry);
         let shipped = port::ship(pie.token(),
             self.face.session.host,
             Access::FETCH | Access::STORE,
@@ -239,7 +239,7 @@ const RETRY_MAX_MS: usize = 100;
 /// 返**收进来的那一答**（ocall::Said）——**形状由问的人自己读**（答的四种形状在线上分不开
 fn call(say: PieToken, link: &Endpoint, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
     // 发：装上、递出去——**一帧＝一条报**（偏移与长度不在这层：字段表与 `Message` 说）。
-    let mut tx = Sender::<ocall::Req>::from_token(say);
+    let mut tx = Sender::<ocall::Req>::from_raw(say);
     tx.send(ask).map_err(|_| Fail::Unknown)?;
     // 收：答话走本端这条树路——缓冲由调用方给：这条树路只有持树者会写 ⇒ 本族那只空缓冲就够。
     let mut buf = ocall::Union::EMPTY;
@@ -273,7 +273,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
                 }
                 rounds += 1;
                 let _ =
-                    execution::room::sleep(core::time::Duration::from_millis(backoff as u64));
+                    execution::room::park(core::time::Duration::from_millis(backoff as u64));
                 backoff = (backoff * 2).min(RETRY_MAX_MS);
                 // Do not enqueue a final request with no time left to receive its reply.
                 if remain(until) == Wait::POLL {

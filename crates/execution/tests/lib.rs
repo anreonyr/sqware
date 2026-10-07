@@ -32,8 +32,8 @@ mod memory {
         }
 }
 
-#[path = "../src/memory/heap.rs"]
-mod heap;
+#[path = "../src/memory/allocator.rs"]
+mod allocator;
 
 #[path = "../src/boot/args.rs"]
 mod args;

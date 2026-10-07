@@ -2,7 +2,7 @@ use crate::system::loader::{Image, Loader};
 use alloc::vec::Vec;
 use env::{UnitFail, VirtAddr, Wait, pie};
 use protocol::system::loader::{Built, frame};
-use ::resource::raw::{HolePie, inspect};
+use ::resource::raw::{Hole, inspect};
 
 pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
     let ask = source.ask;
@@ -31,7 +31,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
             // Kernel copying holds the mapping lock; revocation becomes a copy error.
             env::mail::push(copy, VirtAddr::new(at + offset), len)
                 .map_err(|_| frame::Fail::BadImage)?;
-            let (n, _) = HolePie::from_token(copy)
+            let (n, _) = Hole::from_raw(copy)
                 .pull(&mut bytes, Wait::POLL)
                 .map_err(|_| frame::Fail::BadImage)?;
             if n != len {

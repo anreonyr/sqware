@@ -56,7 +56,7 @@ fn concurrent() {
     let mut workers = Vec::new();
     for byte in 0..4u8 {
         let input = alloc::vec![byte; 257];
-        workers.push(execution::unit::join::closure(move || {
+        workers.push(execution::unit::task::spawn(move || {
             assert!(input.iter().all(|&b| b == byte));
             drop(input);
             for size in [8, 64, 257, 2048, 4097] {

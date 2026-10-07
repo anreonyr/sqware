@@ -11,7 +11,7 @@ use crate::system::operator::{Fail, EntryId, Listing, Where, Permit};
 
 use super::tile::Tile;
 use super::{Face, Mine, map_code};
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它
 /// 它能继续分 / 落 / 列——正是"一个值决定后续操作的宾语"那一格，故给它一个柄；一枚砖只需
@@ -70,7 +70,7 @@ impl<'a> Pane<'a> {
         mine: Mine,
         wait: Wait,
     ) -> Result<Tile<'_>, Fail> {
-        let pie = HolePie::from_token(e);
+        let pie = Hole::from_raw(e);
         let shipped = port::ship(pie.token(),
             self.face.session.host,
             Access::FETCH | Access::STORE,

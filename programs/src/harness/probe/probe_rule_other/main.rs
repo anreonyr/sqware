@@ -30,7 +30,7 @@ use protocol::debug;
 use protocol::system::operator::{Fail, Face as Face};
 use protocol::system::operator::client as operator;
 use env::unit;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
@@ -84,7 +84,7 @@ fn main() -> Report<'static> {
         Wait::AtMost(MS),
     )
     .expect("probe-other: completion channel");
-    HolePie::from_token(complete)
+    Hole::from_raw(complete)
         .push(&[1], Wait::AtMost(MS))
         .expect("probe-other: completion reply");
     return Report::note(E_OK, OK_NOTE);
@@ -106,7 +106,7 @@ fn denied(tree: &Face, base: &Path, leaf: &str) -> Result<(), Fail> {
         {
             Ok(()) => return Ok(()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = execution::room::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

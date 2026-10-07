@@ -1,11 +1,11 @@
 //! 显式原始资源适配：孔 token 操作与能力表查询。
 //!
-//! 借入的 token 未经本模块验证，HolePie 不拥有资源。Owned 管理本地创建的能力，Grant
+//! 借入的 token 未经本模块验证，Hole 不拥有资源。Capability 管理本地创建的能力，Loan
 //! 管理指定对端的派生授予；这些入口用于协议、硬件和测具边界。
 
 use env::{Wait, HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId, VirtAddr};
 
-pub use crate::scope::{Grant, Owned};
+pub use crate::capability::{Loan, Capability};
 
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。
 fn now_ns() -> u64 {
@@ -41,11 +41,11 @@ fn get(token: PieToken, buf: &mut [u8]) -> MailResult<(usize, TaskId)> {
 }
 
 /// Hole 门闩用户态句柄——**数据面那一枚**。
-pub struct HolePie {
+pub struct Hole {
     token: PieToken,
 }
 
-impl HolePie {
+impl Hole {
     /// 解封 Hole：**记号必填**（`mark` = 这枚孔干什么用的）。
     pub fn unseal(mark: Mark) -> PieResult<Self> {
         Ok(Self {
@@ -56,7 +56,7 @@ impl HolePie {
     /// 由原始 token 重建句柄（用于协议边界接收 accord 来的 pie）。
     ///
     /// 不验证 token 是否存活、属于本任务或为 Hole；调用操作时由内核返回判决。
-    pub fn from_token(token: PieToken) -> Self {
+    pub fn from_raw(token: PieToken) -> Self {
         Self { token }
     }
 
@@ -71,7 +71,7 @@ impl HolePie {
     ///   - `Wait::POLL` = 只试一次：孔上已有手 ⇒ `Busy`（"递完即走"那一半）；
     ///   - `AtMost(n)` / `Forever` = 等到**轮到我**（孔空）再递；预算内一直等不到 ⇒ 原样答 `Busy`。
     ///
-    /// **`Ok` = 内核收下了这只手**，不是送达。送达（这只手被对侧取走）要 [`HolePie::wait`]：
+    /// **`Ok` = 内核收下了这只手**，不是送达。送达（这只手被对侧取走）要 [`Hole::wait`]：
     /// `wait(HoleDir::Push, …)` 报的就是"孔空了"。**这一手不等自己那只手**——推的与取的是
     /// 同一个条件（见文件头），替调用方等会把"谁等谁"这条契约藏起来；要等就明写。
     pub fn push(&self, msg: &[u8], within: Wait) -> MailResult<()> {
@@ -101,7 +101,7 @@ impl HolePie {
     /// `AtMost(n)` / `Forever` = 等到**有东西**（`Wait{HoleDir::Pull}` 就绪）。
     ///
     /// 装不下（`len > buf.len()`）返 `Denied`，**手原样留在孔上**——换够大的缓冲再来取，不丢消息。
-    /// 要问长度用 [`HolePie::peek`]。
+    /// 要问长度用 [`Hole::peek`]。
     ///
     /// **发送者由内核在 `Push` 时盖章**——身份不可伪造，不必再从报文里猜；「有界等」与「认来源」
     /// 是同一次收的两个事实，分成两趟取会把竞态留在中间，故这一手一并返回来。
@@ -144,7 +144,7 @@ impl HolePie {
     /// **只看一眼**：孔上那只手的**长度、发送者、队里排着几只**，**一个字节都不取**（孔留原样）。
     ///
     /// 不动孔的状态（取用中的那只也照报），也不唤醒任何人。**不是取消息的前一步**：取走就是一次
-    /// [`HolePie::pull`]，够不够由 `buf.len()` 判。它的读者是"等之前先看一眼"那一格
+    /// [`Hole::pull`]，够不够由 `buf.len()` 判。它的读者是"等之前先看一眼"那一格
     /// （`harness` 的 waiter：多个等待者挂在同一只组键上，要**非破坏性**地判"有货"）。
     /// 手上没东西 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
     pub fn peek(&self) -> MailResult<(usize, TaskId, usize)> {

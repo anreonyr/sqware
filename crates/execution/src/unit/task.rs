@@ -1,4 +1,4 @@
-//! unit::join — **域内并发**：`closure` / `Join`（跑一个闭包、取回结果）。
+//! 域内任务创建与结果回收：spawn、try_spawn 与 Join。
 //! 生成用 `Spawn`/`Embark`，结果经共享空间的 `Completion` 槽交回（不占权限表）。
 
 use alloc::boxed::Box;
@@ -84,7 +84,7 @@ impl<T> Drop for Join<T> {
     /// 释放盒子，否则留给子任务释放。子任务随后的 `wake(slot)` 只把地址当**键**
     /// 用、不解引用，故先释放亦安全。
     fn drop(&mut self) {
-        // SAFETY: slot 由 closure 分配、生命周期由本仲裁协议管辖。
+        // SAFETY: slot 由 spawn 分配、生命周期由本仲裁协议管辖。
         let prev = unsafe { (*self.slot).state.fetch_or(LEFT, Ordering::AcqRel) };
         if prev & DONE != 0 {
             unsafe { drop(Box::from_raw(self.slot)) };
@@ -99,27 +99,27 @@ impl<T> Drop for Join<T> {
 ///
 /// **生成失败即 panic**（`expect`）：本函数是「产线程」这条语义的便捷面，
 /// 调用点当它不会失败。要**观测**失败（压测/自检要分辨「没生出来」与
-/// 「生出来且回收干净」）用 [`try_closure`]——两者的成功路径是同一份装配。
+/// 「生出来且回收干净」）用 [`try_spawn`]——两者的成功路径是同一份装配。
 ///
 /// `T: Send` 是**结果也要过线程边界**这句话：句柄（`PieToken`）是**表**的、
 /// 标着 `!Send`，故"生出来的线程把一枚号交回来"在这里就是**编译不过**——
 /// 跨线程要交的从来不是号，是 `ship` 出去的那一枚副本（`env::wire::handle`）。
-pub fn closure<F, T>(f: F) -> Join<T>
+pub fn spawn<F, T>(f: F) -> Join<T>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send,
 {
-    try_closure(f).expect("task spawn failed")
+    try_spawn(f).expect("task spawn failed")
 }
 
-/// [`closure`] 的可失败版：把 `Spawn` / `Embark` 的错误原样交回调用方。
+/// [`spawn`] 的可失败版：把 `Spawn` / `Embark` 的错误原样交回调用方。
 ///
 /// 失败时的残骸归属：`Spawn` 失败 ⇒ 只有 `Completion` 槽与闭包装箱两笔本地
 /// 堆分配，随 `Err` 返回由调用方的作用域照常回收；`Embark` 失败 ⇒ 任务已产生
 /// （在 `Team.held` 里）但未放行，本函数**只可能**在父方被 doom 级联扑杀的
 /// 窗口里走到，那时该任务已随父域停摆、由级联的 `reap` 收尾——故此处不留孤儿。
 /// 不在这里 `kill`：本模块不该认识「杀」这条路径（它属 room）。
-pub fn try_closure<F, T>(f: F) -> UnitResult<Join<T>>
+pub fn try_spawn<F, T>(f: F) -> UnitResult<Join<T>>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send,

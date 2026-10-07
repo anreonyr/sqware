@@ -5,7 +5,7 @@
 //! [`Console::tx`]（本端写、对面读）。
 //!
 //! **一枚门牌后面是一具完整的架**：那一枚号既是页（字节）也是铃（页上那一位"有事"），
-//! 故 [`Reader::from_token`] / [`Writer::from_token`] 各只收**一枚号**（不像页＋铃那一版要两枚）。
+//! 故 [`Reader::from_raw`] / [`Writer::from_raw`] 各只收**一枚号**（不像页＋铃那一版要两枚）。
 //!
 //! **两端的 `mode` 各归各的写端**：`rx` 那一侧满了丢哪一头是**对面**（驱动）的规矩，
 //! 本端不必知道；`tx` 这一侧是本端自己写，故由调用方把 `tx_mode` 递进来——本层不替谁定策略。
@@ -46,8 +46,8 @@ pub fn road() -> Option<PathBuf> {
 pub fn find(tree: &Face, road: &Path, tx_mode: Mode, within: Wait) -> Option<Console> {
     let rx_page = token_of(tree, road, frame::RX, within)?;
     let tx_page = token_of(tree, road, frame::TX, within)?;
-    let rx = Reader::<Bytes>::from_token(rx_page)?;
-    let tx = Writer::<Bytes>::from_token(tx_page, tx_mode)?;
+    let rx = Reader::<Bytes>::from_raw(rx_page)?;
+    let tx = Writer::<Bytes>::from_raw(tx_page, tx_mode)?;
     Some(Console { rx, tx })
 }
 

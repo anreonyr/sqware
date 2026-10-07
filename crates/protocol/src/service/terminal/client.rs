@@ -5,7 +5,7 @@ use crate::wire::message::Message;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use ::resource::{
-    raw::{HolePie, reserve},
+    raw::{Hole, reserve},
     pile::Pile,
 };
 
@@ -37,14 +37,14 @@ impl Terminal {
                 pie::accord(back, self.host, Permission::STORE, frame::BACK).map_err(|_| ())?;
             let mut bytes = [0; Command::LEN];
             let n = command.store_at(&mut bytes, 0).ok_or(())?;
-            HolePie::from_token(self.entry)
+            Hole::from_raw(self.entry)
                 .push(&bytes[..n], MS)
                 .map_err(|error| {
                     crate::debug::put(&alloc::format!("terminal client: command push {:?}", error));
                     ()
                 })?;
             let mut bytes = [0; Reply::LEN];
-            let (n, from) = HolePie::from_token(back)
+            let (n, from) = Hole::from_raw(back)
                 .pull(&mut bytes, MS)
                 .map_err(|_| ())?;
             let (reply, end) = Reply::fetch_at(&bytes[..n], 0).ok_or(())?;
@@ -228,12 +228,12 @@ impl Io {
     pub fn read(&self) -> Result<Read, ()> {
         let mut bytes = [0; Input::LEN];
         loop {
-            match HolePie::from_token(self.control).pull(&mut bytes, Wait::POLL) {
+            match Hole::from_raw(self.control).pull(&mut bytes, Wait::POLL) {
                 Ok((1, _)) if bytes[0] == frame::INTERRUPT => return Ok(Read::Interrupt),
                 Err(error) if error.source.is_busy() => {}
                 _ => return Err(()),
             }
-            match HolePie::from_token(self.input).pull(&mut bytes, Wait::POLL) {
+            match Hole::from_raw(self.input).pull(&mut bytes, Wait::POLL) {
                 Ok((n, _)) => {
                     let input = Input::fetch(&bytes[..n]).ok_or(())?;
                     return Ok(if input.kind == frame::EOF {
@@ -250,14 +250,14 @@ impl Io {
     }
     pub fn write(&self, bytes: &[u8]) -> Result<(), ()> {
         for chunk in bytes.chunks(frame::MAX) {
-            HolePie::from_token(self.output)
+            Hole::from_raw(self.output)
                 .push(chunk, MS)
                 .map_err(|_| ())?;
         }
         Ok(())
     }
     pub fn drain(&self) -> Result<(), ()> {
-        HolePie::from_token(self.output)
+        Hole::from_raw(self.output)
             .wait(HoleDir::Push, MS)
             .map_err(|_| ())?
             .then_some(())

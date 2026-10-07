@@ -8,7 +8,7 @@ use crate::system::{
 };
 use env::wire::Span as _;
 use env::{PieToken, TaskId, TeamId, Wait, pie};
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 pub use super::marks::ACCOUNT_ENTRY as ENTRY;
 pub use super::marks::ACCOUNT_BACK as BACK;
 pub const DIR: &Path = Path::new("/svc/sys/control/account");
@@ -45,11 +45,11 @@ impl Client {
             };
             let mut bytes = [0; Request::LEN];
             let n = request.store_at(&mut bytes, 0).ok_or(Fail::Bad)?;
-            HolePie::from_token(self.entry)
+            Hole::from_raw(self.entry)
                 .push(&bytes[..n], wait)
                 .map_err(|_| Fail::Bad)?;
             let mut bytes = [0; Said::LEN];
-            let (n, from) = HolePie::from_token(back)
+            let (n, from) = Hole::from_raw(back)
                 .pull(&mut bytes, wait)
                 .map_err(|_| Fail::Bad)?;
             let (reply, end) = Said::fetch_at(&bytes[..n], 0).ok_or(Fail::Bad)?;

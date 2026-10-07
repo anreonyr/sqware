@@ -12,7 +12,7 @@ use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 
 pub struct Registration {
     pub name: String,
@@ -134,7 +134,7 @@ fn valid_back(back: PieToken, from: TaskId) -> bool {
 fn reply(back: PieToken, reply: Reply) {
     let mut bytes = [0; Reply::LEN];
     if let Some(n) = reply.store_at(&mut bytes, 0) {
-        let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
+        let _ = Hole::from_raw(back).push(&bytes[..n], Wait::POLL);
     }
     let _ = pie::release(back);
 }
@@ -287,7 +287,7 @@ pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress
     let mut bytes = [0; Frame::LEN];
     // Ref answers read only the verified index and never wait for Operator.
     for alias in &names.aliases {
-        while let Ok((n, from)) = HolePie::from_token(alias.entry).pull(&mut bytes, Wait::POLL) {
+        while let Ok((n, from)) = Hole::from_raw(alias.entry).pull(&mut bytes, Wait::POLL) {
             let Some(frame) = Frame::take(&bytes[..n]) else {
                 continue;
             };

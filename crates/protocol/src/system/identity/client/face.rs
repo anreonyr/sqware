@@ -82,12 +82,12 @@ impl Face {
             }
         }
         let _back = Back(back);
-        let mut request = Sender::<super::super::frame::Request>::from_token(self.entry);
+        let mut request = Sender::<super::super::frame::Request>::from_raw(self.entry);
         request
             .send_within(super::super::frame::Request(wire, seed), wait)
             .map_err(|_| CallError::Transport)?;
         let mut bytes = Reply::EMPTY;
-        let reply = Receiver::<Reply>::from_token(back)
+        let reply = Receiver::<Reply>::from_raw(back)
             .recv(&mut bytes, wait)
             .map_err(|error| match error {
                 RecvFail::Unread(_) => CallError::Malformed,

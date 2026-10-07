@@ -9,7 +9,7 @@ use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use protocol::communication::session::establish;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 const DOOM: Mark = Mark::of("system-fault-doom");
 const REPORT: Mark = Mark::of("system-fault-report");
@@ -57,7 +57,7 @@ pub fn acceptance() {
         )
         .unwrap();
         let token = env::pie::accord(payload, task, Permission::FETCH, IMAGE).unwrap();
-        HolePie::from_token(boot)
+        Hole::from_raw(boot)
             .push(&token.to_bytes(), Wait::AtMost(5000))
             .unwrap();
         let build = accounts.token(env::Name::Call(env::Call::Build)).unwrap();
@@ -66,7 +66,7 @@ pub fn acceptance() {
         env::pie::accord(doom, task, Permission::FETCH | Permission::VEST, DOOM).unwrap();
         unit::embark(task).unwrap();
         let mut bytes = [0; 40];
-        let (n, from) = HolePie::from_token(report)
+        let (n, from) = Hole::from_raw(report)
             .pull(&mut bytes, Wait::AtMost(5000))
             .unwrap();
         assert_eq!(from, task);
@@ -83,7 +83,7 @@ pub fn acceptance() {
                     env::chrono::clock() < until,
                     "system-fault: task survived team failure"
                 );
-                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
         }
         unit::oust(team).unwrap();
@@ -105,7 +105,7 @@ pub fn unit() {
     let sire = TaskId::new(args[2]);
     let boot = establish::find(sire, BOOT).unwrap();
     let mut bytes = [0; 8];
-    let (n, from) = HolePie::from_token(boot)
+    let (n, from) = Hole::from_raw(boot)
         .pull(&mut bytes, Wait::AtMost(5000))
         .unwrap();
     assert_eq!((n, from), (bytes.len(), sire));
@@ -151,7 +151,7 @@ pub fn unit() {
         let ptr = Box::into_raw(Box::new(body));
         let task = execution::unit::spawn(
             TeamId::new(0),
-            execution::unit::join::trampoline as *const () as usize,
+            execution::unit::task::trampoline as *const () as usize,
             &[ptr as usize],
             0,
         )
@@ -172,7 +172,7 @@ pub fn unit() {
     ]) {
         slot.copy_from_slice(&(id as u64).to_le_bytes());
     }
-    HolePie::from_token(report)
+    Hole::from_raw(report)
         .push(&bytes, Wait::AtMost(5000))
         .unwrap();
     unit::embark(TaskId::new(operator)).unwrap();
@@ -187,6 +187,6 @@ pub fn unit() {
         {
             let _ = room::doom(unit::self_id());
         }
-        execution::room::sleep(core::time::Duration::from_millis(10)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(10)).unwrap();
     }
 }

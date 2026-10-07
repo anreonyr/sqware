@@ -39,7 +39,7 @@ pub fn join(
             if env::chrono::clock() >= deadline.0 {
                 return Err(crate::system::control::serve::Fail::Shutdown);
             }
-            execution::room::sleep(core::time::Duration::from_millis(1))
+            execution::room::park(core::time::Duration::from_millis(1))
                 .map_err(|_| crate::system::control::serve::Fail::Wait)?;
             return Ok(::schedule::Progress::Pending);
         }

@@ -5,7 +5,7 @@ use env::Wait;
 use programs::driver::uart::{client::Console, core::frame::{Bytes, MAX}};
 use ::schedule::{Progress, ResMut};
 use protocol::service::terminal::frame as stream;
-use ::resource::raw::HolePie;
+use ::resource::raw::Hole;
 
 pub(super) struct Frame {
     incoming: Option<Bytes>,
@@ -27,7 +27,7 @@ impl Counters {
 pub(super) fn output(mut server: ResMut<Server>, mut frame: ResMut<Frame>, mut counters: ResMut<Counters>) -> Result<Progress, env::Reason> {
     let Some((token, foreground)) = server.attachment.as_ref().map(|a| (a.endpoints.output, a.foreground)) else { return Ok(Progress::Done); };
     let mut bytes = [0; stream::MAX];
-    if let Ok((n, from)) = HolePie::from_token(token).pull(&mut bytes, Wait::POLL) {
+    if let Ok((n, from)) = Hole::from_raw(token).pull(&mut bytes, Wait::POLL) {
         server.active = true;
         if from == foreground {
             for &b in &bytes[..n] {

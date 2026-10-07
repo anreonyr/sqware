@@ -7,14 +7,14 @@ use protocol::system::operator::Fail;
 
 use super::{Inbox, Incoming, Outcome, Request};
 use env::pie;
-use ::resource::raw::{HolePie, inspect, reserve};
+use ::resource::raw::{Hole, inspect, reserve};
 fn valid_back(back: PieToken, from: TaskId) -> bool {
     matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
 }
 fn reply(back: PieToken, reply: Reply) {
     let mut bytes = [0; Reply::LEN];
     if let Some(n) = reply.store_at(&mut bytes, 0) {
-        let _ = HolePie::from_token(back).push(&bytes[..n], Wait::POLL);
+        let _ = Hole::from_raw(back).push(&bytes[..n], Wait::POLL);
     }
     let _ = pie::release(back);
 }
@@ -24,7 +24,7 @@ pub fn receive(
     mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
-    while let Ok((n, from)) = HolePie::from_token(images.entry).pull(&mut bytes, Wait::POLL) {
+    while let Ok((n, from)) = Hole::from_raw(images.entry).pull(&mut bytes, Wait::POLL) {
         let Some(frame) = Frame::take(&bytes[..n]) else {
             continue;
         };

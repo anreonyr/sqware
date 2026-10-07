@@ -27,7 +27,7 @@ pub(crate) struct Bell {
 
 impl Bell {
     /// 拿那一枚页的号（架的持有者开页时就顺手有了；对端拿 `Rack::ship()` 交出的号重建）。
-    pub(crate) fn from_token(page: PieToken) -> Self {
+    pub(crate) fn from_raw(page: PieToken) -> Self {
         Self {
             pie: page,
         }
@@ -45,7 +45,7 @@ impl Bell {
 
     /// 等铃：`true` = 当场就绪（未挂起），`false` = 期限内没等到。**不清那一位**。
     pub(crate) fn wait(&self, within: Wait) -> MailResult<bool> {
-        ::resource::raw::HolePie::from_token(self.pie).wait(env::HoleDir::Pull, within)
+        ::resource::raw::Hole::from_raw(self.pie).wait(env::HoleDir::Pull, within)
     }
 
     /// 应一下：清掉"有待取之事"。**已经清着 ⇒ `Busy`**（读端把它当"正好"）。

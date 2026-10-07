@@ -101,7 +101,7 @@ pub fn receive(
     };
     for _ in 0..16 {
         let Ok((len, from)) =
-            ::resource::raw::HolePie::from_token(entry).pull(&mut buffer.0, Wait::POLL)
+            ::resource::raw::Hole::from_raw(entry).pull(&mut buffer.0, Wait::POLL)
         else {
             break;
         };

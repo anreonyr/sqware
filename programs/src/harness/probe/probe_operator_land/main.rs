@@ -8,7 +8,7 @@ use programs::Report;
 use protocol::communication::session::Session;
 use protocol::system::control::{Client, Scope, Target};
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 use protocol::system::operator::{
     EntryId, Fail, Grant, Permit, Where,
     client::{self as operator, Face, Mine},
@@ -94,10 +94,10 @@ fn main() -> Report<'static> {
         reserve(source).is_ok(),
         "unpublish must preserve the source resource"
     );
-    HolePie::from_token(source).push(b"live", MS).unwrap();
+    Hole::from_raw(source).push(b"live", MS).unwrap();
     let mut bytes = [0; 4];
     assert_eq!(
-        HolePie::from_token(source).pull(&mut bytes, MS).unwrap().0,
+        Hole::from_raw(source).pull(&mut bytes, MS).unwrap().0,
         4
     );
     assert_eq!(&bytes, b"live");

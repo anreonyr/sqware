@@ -12,7 +12,7 @@ use protocol::system::operator::Event;
 use protocol::wire::message::Message;
 
 use crate::system::operator::core::Operator;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// **一位订阅者**：它是谁 ＋ 它订哪条路 ＋ 事件往哪一枚孔上递。
 struct Subscriber {
@@ -90,7 +90,7 @@ impl Watchers {
             if !prefix_of(&one.filter, road) {
                 continue;
             }
-            match HolePie::from_token(one.hole).push(bytes, Wait::POLL) {
+            match Hole::from_raw(one.hole).push(bytes, Wait::POLL) {
                 Ok(()) => sent += 1,
                 // 队列满：这一次对这位丢。**不摘他**——他还在，只是没跟上（醒来 `list` 即可）。
                 Err(e) if e.source.is_busy() => {}

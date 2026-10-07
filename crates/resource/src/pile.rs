@@ -57,8 +57,8 @@ impl Pile {
         })
     }
 
-    /// 收下一枚已经在对端的组（调用方递过来的 token）。
-    pub fn new(pie: PieToken) -> Pile {
+    /// 借用本任务能力表中的原始编号；操作时由内核检查。
+    pub fn from_raw(pie: PieToken) -> Pile {
         Pile { pie }
     }
 

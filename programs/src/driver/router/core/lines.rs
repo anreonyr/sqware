@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 
 use protocol::communication::session::Held;
 use protocol::driver::line::Fail;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 一格：没主，或者有主（**那条路的持有者** ＋ 忙不忙）
 enum Cell {
@@ -55,7 +55,7 @@ impl Lines {
         match self.cells.get_mut(line as usize) {
             Some(Cell::Owned { lane, busy }) => {
                 let at_peer = lane.tx().ok_or(Fail::Denied)?;
-                match HolePie::from_token(at_peer).ring() {
+                match Hole::from_raw(at_peer).ring() {
                     Ok(()) => {}
                     Err(e) if e.source.is_busy() => {}
                     Err(_) => return Err(Fail::Denied),

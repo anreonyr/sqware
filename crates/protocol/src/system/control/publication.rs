@@ -9,7 +9,7 @@ use alloc::string::String;
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
 use env::pie;
-use ::resource::raw::{HolePie, inspect, reserve};
+use ::resource::raw::{Hole, inspect, reserve};
 
 pub use super::marks::PUBLICATION_ENTRY as ENTRY;
 pub use super::marks::PUBLICATION_BACK as BACK;
@@ -400,12 +400,12 @@ fn exchange(
     }
     let _back = Back(back);
     frame.back = seed;
-    Sender::<Frame>::from_token(entry)
+    Sender::<Frame>::from_raw(entry)
         .send_within(frame.clone(), wait)
         .map_err(|_| Fail::Unknown)?;
     *admitted = true;
     let mut bytes = [0; Reply::LEN];
-    let (n, from) = HolePie::from_token(back)
+    let (n, from) = Hole::from_raw(back)
         .pull(&mut bytes, wait)
         .map_err(|_| Fail::Unknown)?;
     Reply::from_sender(control, from, &bytes[..n])

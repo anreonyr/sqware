@@ -45,16 +45,16 @@ pub struct Bell {
 impl Bell {
     /// 创建一枚门铃。
     pub fn unseal() -> PieResult<Self> {
-        Ok(Self::new(env::pie::unseal_nole()?))
+        Ok(Self::from_raw(env::pie::unseal_nole()?))
     }
 
     pub fn token(&self) -> PieToken {
         self.hole.token()
     }
 
-    /// 收下一枚已经在对端的 Nole 门闩（调用方递过来的 token）。
-    pub fn new(pie: PieToken) -> Bell {
-        Bell { hole: Hole::from_token(pie) }
+    /// 借用本任务能力表中的原始编号；操作时由内核检查。
+    pub fn from_raw(pie: PieToken) -> Bell {
+        Bell { hole: Hole::from_raw(pie) }
     }
 
     /// 等铃响：`millis`（上限族，`Wait`）。

@@ -94,7 +94,7 @@ impl Supplies {
         let Some(enroll) = Enroll::of(&records[..got]) else {
             return Err(Error::Step("too many devices"));
         };
-        self.out = protocol::communication::hand::Sender::<Enroll>::from_token(tx);
+        self.out = protocol::communication::hand::Sender::<Enroll>::from_raw(tx);
         if self.out.send(enroll).is_err() {
             return Err(Error::Step("no channel"));
         }

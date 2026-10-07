@@ -14,7 +14,7 @@ use protocol::system::identity;
 use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
 use protocol::system::operator::client as operator;
 use env::unit;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 
 const MS: usize = 1000;
 
@@ -31,7 +31,7 @@ fn main() -> Report<'static> {
             )
             .expect("probe-denied: transient LINK"),
         );
-        execution::room::sleep(core::time::Duration::from_millis(delay))
+        execution::room::park(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");
         drop(request);
     }
@@ -129,10 +129,10 @@ fn raw(entry: PieToken, wire: Wire) -> Reply {
     let n = wire
         .store(seed, &mut frame)
         .expect("probe-denied: action encode failed");
-    HolePie::from_token(entry)
+    Hole::from_raw(entry)
         .push(&frame[..n], Wait::AtMost(MS))
         .expect("probe-denied: action push failed");
-    Receiver::<Reply>::from_token(back)
+    Receiver::<Reply>::from_raw(back)
         .recv(&mut frame, Wait::AtMost(MS))
         .expect("probe-denied: no reply")
 }

@@ -9,7 +9,7 @@ use crate::system::{
 use alloc::{collections::VecDeque, sync::Arc};
 use env::{HoleDir, PieToken, TaskId, Wait};
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 use protocol::{
     debug,
     system::{identity::client::TaskQuery, operator as ocall},
@@ -32,7 +32,7 @@ pub(super) fn tip(
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
     tip.0 = pie::unseal_hole(ocall::TIP_MARK).map_err(|_| Fail::Tree)?;
-    let hole = HolePie::from_token(tip.0);
+    let hole = Hole::from_raw(tip.0);
     port::ship(hole.token(),
         status.control,
         Access::FETCH | Access::STORE,
@@ -48,7 +48,7 @@ pub(super) fn receive_tips(
     mut tips: ResMut<Tips>,
 ) -> Result<Progress, Fail> {
     let mut frame = [0; ocall::TIP_LEN];
-    while let Ok((n, from)) = HolePie::from_token(tip.0).pull(&mut frame, Wait::POLL) {
+    while let Ok((n, from)) = Hole::from_raw(tip.0).pull(&mut frame, Wait::POLL) {
         if from != status.control {
             debug::put("operator: foreign bootstrap tip");
             continue;
@@ -263,7 +263,7 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
         let mut bytes = [0; 9];
         bytes[0] = status;
         bytes[1..].copy_from_slice(&(id.get() as u64).to_le_bytes());
-        let _ = HolePie::from_token(back).push(&bytes, Wait::AtMost(1000));
+        let _ = Hole::from_raw(back).push(&bytes, Wait::AtMost(1000));
         let _ = pie::release(back);
     }
     Ok(Progress::Done)

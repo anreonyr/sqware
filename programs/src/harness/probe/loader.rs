@@ -7,7 +7,7 @@ use protocol::{
     communication::session::establish,
     system::{control, loader as call, operator::client::Face as Operator},
 };
-use ::resource::raw::HolePie;
+use ::resource::raw::Hole;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
@@ -26,7 +26,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let r = ready.clone();
     let t = target.clone();
     let d = denied.clone();
-    let peer = execution::unit::join::closure(move || {
+    let peer = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire) && t.load(Ordering::Acquire) != 0);
         let face = control::Face::of(establish::find(root, control::Grant::State.mark()).unwrap())
             .unwrap();
@@ -40,7 +40,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let r = ready.clone();
     let worker_done = done.clone();
     let worker_target = target.clone();
-    let worker = execution::unit::join::closure(move || {
+    let worker = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire));
         exercise(root, &worker_target, &denied);
         worker_done.store(true, Ordering::Release);
@@ -144,7 +144,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             env::chrono::clock() < deadline,
             "loader: IPC fixture timed out"
         );
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     worker.join();
     peer.join();
@@ -165,7 +165,7 @@ fn until(mut ready: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 5_000_000_000;
     while !ready() {
         assert!(env::chrono::clock() < deadline, "loader: waiting timed out");
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
@@ -271,11 +271,11 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     };
     let mut request = [0; call::frame::Ask::LEN];
     let n = ask.store_at(&mut request, 0).unwrap();
-    HolePie::from_token(entry)
+    Hole::from_raw(entry)
         .push(&request[..n], WAIT)
         .unwrap();
     let mut reply = call::frame::Said::EMPTY;
-    let said = protocol::communication::hand::Receiver::<call::frame::Said>::from_token(back)
+    let said = protocol::communication::hand::Receiver::<call::frame::Said>::from_raw(back)
         .recv(&mut reply, WAIT)
         .unwrap();
     assert_eq!(said.status, protocol::wire::OK);

@@ -28,7 +28,7 @@ use super::{Decode, Wire};
 /// `PhantomData<*const ()>` 是这条规矩的**机制**，不是装饰：它让本类型 `!Send + !Sync`。于是
 ///
 ///   - 跨线程共享的账（`static`、`Arc`、`SpinLock<T>`）都要求 `Send`/`Sync` ⇒ **句柄装不进去**；
-///   - 产线程的闭包要求 `Send`、其结果也要求 `Send`（`execution::unit::join::closure`）
+///   - 产线程的闭包要求 `Send`、其结果也要求 `Send`（`execution::unit::task::spawn`）
 ///     ⇒ **捕获不进别的线程，也交不回来**。
 ///
 /// 跨线程只剩一条合法的路：`ship`——显式 `.get()` 变裸值过线，对端在自己的表里另落一枚。

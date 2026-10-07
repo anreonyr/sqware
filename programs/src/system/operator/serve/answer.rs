@@ -4,7 +4,7 @@ use crate::system::operator::core::{Location, Tile, Key, Operator};
 use protocol::{
     system::operator as ocall,
 };
-use ::resource::raw::HolePie;
+use ::resource::raw::Hole;
 use ::resource::port::{self, Access, Policy};
 pub(super) struct Output<T> {
     pub reply: Option<T>,
@@ -81,7 +81,7 @@ pub(super) fn apply(
                 let said = tree.find(id, |pie| {
                     // **交出那一手就是 port::ship**（`R|W` ＋ 一格 `VEST`）：捡到的那一枚砖
                     // 要能替客人再授出，少 `VEST` ⇒ 转授那一步答 `Denied`。
-                    let grant_pie = HolePie::from_token(pie);
+                    let grant_pie = Hole::from_raw(pie);
                     grant =
                         port::ship(grant_pie.token(), who, Access::FETCH | Access::STORE, Policy::VEST)
                             .map(|at| seed = Some(at.seed()))

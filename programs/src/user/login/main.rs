@@ -68,7 +68,7 @@ fn run_cat(
             if lifecycle.instance(built.task).state(WAIT).map_err(|_| ())? == State::Dead {
                 break;
             }
-            execution::room::sleep(core::time::Duration::from_millis(10)).map_err(|_| ())?;
+            execution::room::park(core::time::Duration::from_millis(10)).map_err(|_| ())?;
         }
         Ok(())
     })();

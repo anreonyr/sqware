@@ -16,7 +16,7 @@ use crate::wire::message::Message;
 use super::Fail;
 use super::frame::{self, BACK_MARK};
 use env::pie;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）
 pub struct Face {
@@ -117,7 +117,7 @@ impl Face {
             report("encode");
             return Err(Fail::Bad);
         };
-        let door = HolePie::from_token(self.entry);
+        let door = Hole::from_raw(self.entry);
         if door.push(&ask.as_ref()[..n], Wait::Forever).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
@@ -126,7 +126,7 @@ impl Face {
             return Err(Fail::Dead);
         }
         let mut said = R::EMPTY;
-        let got = match Receiver::<R>::from_token(back).recv(said.as_mut(), wait) {
+        let got = match Receiver::<R>::from_raw(back).recv(said.as_mut(), wait) {
             Ok(one) => Ok(one),
             Err(RecvFail::Mail(e)) if !matches!(e, env::MailFail::Dead | env::MailFail::Denied) => {
                 report("recv");

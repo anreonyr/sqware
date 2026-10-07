@@ -1,6 +1,6 @@
 //! Task creation and domain-local closure execution.
 
-pub mod join;
+pub mod task;
 mod tls;
 
 use env::{TaskId, TeamId, UnitResult, VirtAddr};

@@ -11,7 +11,7 @@ use protocol::{
     debug,
     system::operator as ocall,
 };
-use ::resource::raw::HolePie;
+use ::resource::raw::Hole;
 use ::resource::pile::Pile;
 const SETTLE_MS: usize = 1;
 const LATE_MS: usize = 1000;
@@ -107,7 +107,7 @@ pub(super) fn receive(
     request.0 = None;
     if let Some(guest) = selected.0 {
         if let Some(ask) = guest.ask() {
-            let decoded = match HolePie::from_token(ask).pull(&mut buffer.0, Wait::POLL) {
+            let decoded = match Hole::from_raw(ask).pull(&mut buffer.0, Wait::POLL) {
                 Ok((n, from)) if from == guest.who() => {
                     <ocall::Req as protocol::wire::message::Message>::fetch(&buffer.0[..n])
                 }
@@ -136,7 +136,7 @@ pub(super) fn reply(
             outs.0.try_reserve(1).map_err(|_| Fail::Room)?;
             outs.0.push(Outbox {
                 who: guest.who(),
-                send: Sender::from_token(guest.reply()),
+                send: Sender::from_raw(guest.reply()),
             });
             outs.0.len() - 1
         };

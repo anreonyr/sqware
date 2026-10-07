@@ -3,8 +3,8 @@
 pub use env::PAGE_SIZE;
 use env::{MemoryResult, PieToken, TeamId, VirtAddr};
 
-#[path = "memory/heap.rs"]
-mod heap;
+#[path = "memory/allocator.rs"]
+mod allocator;
 
 /// Allocate page-rounded memory in the current domain.
 pub fn allocate(size: usize) -> MemoryResult<usize> {

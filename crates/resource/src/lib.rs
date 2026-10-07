@@ -5,7 +5,7 @@
 //! 管理释放和撤销；正式使用面是 `dock`、`port`、`bell` 与 `pile`。
 
 mod hole;
-mod scope;
+mod capability;
 mod reply;
 pub mod bell;
 pub mod dock;

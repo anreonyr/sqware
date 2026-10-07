@@ -9,7 +9,7 @@ use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::{self as control_call, Object, account as call};
 use protocol::system::identity::Subject;
 use protocol::system::operator::Permit;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 pub const ACCOUNT: &str = "anran";
 pub struct Accounts {
     pub entry: PieToken,
@@ -66,7 +66,7 @@ pub fn receive(
 ) -> Result<Progress, Fail> {
     let mut bytes = [0; call::Request::LEN];
     for _ in 0..16 {
-        let Ok((n, from)) = HolePie::from_token(accounts.entry).pull(&mut bytes, Wait::POLL) else {
+        let Ok((n, from)) = Hole::from_raw(accounts.entry).pull(&mut bytes, Wait::POLL) else {
             break;
         };
         let Some((raw, _)) = call::Request::fetch_at(&bytes[..n], 0) else {

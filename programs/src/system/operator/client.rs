@@ -13,12 +13,12 @@ use protocol::communication::hand::Sender;
 use protocol::communication::session::establish;
 use protocol::system::operator::{EntryId, Tip};
 use env::pie;
-use ::resource::raw::{HolePie, pies, reserve};
+use ::resource::raw::{Hole, pies, reserve};
 pub use protocol::system::operator::{LINK, TIP_MARK};
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
-    Sender::<Tip>::from_token(into)
+    Sender::<Tip>::from_raw(into)
         .send_within(tip, Wait::AtMost(BOOT_MS))
         .map_err(|_| ())
 }
@@ -37,12 +37,12 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
     }
     let _back = Back(back);
     let result = (|| {
-        let mut request = Sender::<Tip>::from_token(into);
+        let mut request = Sender::<Tip>::from_raw(into);
         request
             .send_within(make(seed), Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip send")?;
         let mut status = [0xff; 9];
-        let (len, from) = HolePie::from_token(back)
+        let (len, from) = Hole::from_raw(back)
             .pull(&mut status, Wait::AtMost(BOOT_MS))
             .map_err(|_| "operator:tip ack")?;
         if len != 9 || from != host || status[0] != protocol::system::operator::OK {
@@ -59,7 +59,7 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
 pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
     let mut rec = [0u8; TaskId::WIDTH];
     who.store(&mut rec);
-    let road = HolePie::from_token(into);
+    let road = Hole::from_raw(into);
     road.push(&rec, Wait::AtMost(BOOT_MS)).map_err(|_| ())?;
     road.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
     Ok(())
@@ -253,7 +253,7 @@ pub fn host_of(
 /// 转授的是"客人开的那扇门"（`owner` 是客人），持树者那侧认领时认的正是它
 /// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多
 pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
-    let hole = HolePie::from_token(reply);
+    let hole = Hole::from_raw(reply);
     port::ship(hole.token(), host, Access::FETCH | Access::STORE, Policy::NONE)
         .map(|_| ())
         .map_err(|_| ())

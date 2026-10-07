@@ -63,12 +63,12 @@ impl Endpoint {
 
     /// 类型化的收端（读面）
     pub fn receiver<M: Message>(&self) -> Receiver<M> {
-        Receiver::from_token(self.rx)
+        Receiver::from_raw(self.rx)
     }
 
     /// 类型化的发端（写面）；**还没认到 = `None`**
     pub fn sender<M: Message>(&self) -> Option<Sender<M>> {
-        self.tx.map(Sender::from_token)
+        self.tx.map(Sender::from_raw)
     }
 
     /// **延迟认领**：先把这一枚铸出去、说上话，之后再认对端那一枚（`null` 那一档的次序是契约）

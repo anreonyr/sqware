@@ -29,7 +29,7 @@ use protocol::system::control::Scope;
 
 use self::sweep::alive;
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 
 const MS: usize = 1000;
 
@@ -190,7 +190,7 @@ pub fn serve() -> Result<(), Start> {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
             Ok(Some((token, _))) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-                let hole = HolePie::from_token(token);
+                let hole = Hole::from_raw(token);
                 while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
                     turn(&mut ledger, &league, plates, token, from, &buf[..len]);
                 }
@@ -249,13 +249,13 @@ fn turn(
 }
 
 pub(super) fn put_said(back: PieToken, status: u8) {
-    let mut tx = Sender::<Said>::from_token(back);
+    let mut tx = Sender::<Said>::from_raw(back);
     let _ = tx.send(Said::of(status));
 }
 
 /// 递一句 `Deed`（同上）
 pub(super) fn put_deed(back: PieToken, deed: Deed) {
-    let mut tx = Sender::<Deed>::from_token(back);
+    let mut tx = Sender::<Deed>::from_raw(back);
     let _ = tx.send(deed);
 }
 
@@ -263,7 +263,7 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
     match mine {
         Grant::Bond => put_said(back, status),
         Grant::List => {
-            let mut tx = Sender::<Window>::from_token(back);
+            let mut tx = Sender::<Window>::from_raw(back);
             let _ = tx.send(Window {
                 status,
                 ..Window::EMPTY
@@ -307,7 +307,7 @@ pub(super) fn ship(
 
 /// **三格失败分得开**（RecvFail）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
 fn take(rx: PieToken) -> Option<Enroll> {
-    let receiver = Receiver::<Enroll>::from_token(rx);
+    let receiver = Receiver::<Enroll>::from_raw(rx);
     let mut buf = Enroll::EMPTY;
     let mut left = LOAD_TRIES;
     loop {

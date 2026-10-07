@@ -39,5 +39,5 @@ unsafe impl GlobalAlloc for Pages {
 static HEAP: Heap = Heap::new(GlobalAllocSource::with_block_size(Pages, BLOCK_SIZE));
 
 #[cfg(test)]
-#[path = "heap/tests.rs"]
+#[path = "allocator/tests.rs"]
 mod tests;

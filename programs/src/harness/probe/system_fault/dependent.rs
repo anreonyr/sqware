@@ -9,7 +9,7 @@ use protocol::communication::session::{Session, establish};
 use protocol::system::control::{Client, Object, Target};
 use protocol::system::identity::{Selector, Query, SelfOps};
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 use protocol::system::operator::{
     Fail, Permit,
     client::{self as operator, Face},
@@ -38,7 +38,7 @@ fn main() -> programs::Report<'static> {
     let mut road = None;
     loop {
         let mut bytes = [0; 9];
-        let (n, sender) = HolePie::from_token(command)
+        let (n, sender) = Hole::from_raw(command)
             .pull(&mut bytes, Wait::Forever)
             .unwrap();
         assert_eq!(n, 9);
@@ -185,7 +185,7 @@ fn main() -> programs::Report<'static> {
                     pie::seal(closed).unwrap();
                     let mut frame = Frame::new(1, abandoned.clone(), seed, Permit::Public);
                     frame.back = reply;
-                    protocol::communication::hand::Sender::<Frame>::from_token(
+                    protocol::communication::hand::Sender::<Frame>::from_raw(
                         establish::find(control, ENTRY).unwrap(),
                     )
                     .send_within(frame, WAIT)
@@ -252,10 +252,10 @@ fn main() -> programs::Report<'static> {
                     .unpublish(target.as_ref().unwrap().clone(), WAIT)
                     .unwrap();
                 assert!(matches!(tree.root().tile(road, WAIT), Err(Fail::Unknown)));
-                HolePie::from_token(acquired).push(b"kept", WAIT).unwrap();
+                Hole::from_raw(acquired).push(b"kept", WAIT).unwrap();
                 let mut read = [0; 4];
                 assert_eq!(
-                    HolePie::from_token(resource).pull(&mut read, WAIT).unwrap(),
+                    Hole::from_raw(resource).pull(&mut read, WAIT).unwrap(),
                     (4, me)
                 );
                 assert_eq!(&read, b"kept");
@@ -312,7 +312,7 @@ fn main() -> programs::Report<'static> {
                 );
                 let back = pie::unseal_hole(BACK).unwrap();
                 let from = me.get();
-                let helper = execution::unit::join::closure(move || {
+                let helper = execution::unit::task::spawn(move || {
                     let back = establish::claim(TaskId::new(from), BACK, WAIT).unwrap();
                     let reply = Reply {
                         status: 0,
@@ -322,7 +322,7 @@ fn main() -> programs::Report<'static> {
                     };
                     let mut bytes = [0; Reply::LEN];
                     let n = reply.store_at(&mut bytes, 0).unwrap();
-                    HolePie::from_token(back).push(&bytes[..n], WAIT).unwrap();
+                    Hole::from_raw(back).push(&bytes[..n], WAIT).unwrap();
                 });
                 port::ship(
                     back,
@@ -332,7 +332,7 @@ fn main() -> programs::Report<'static> {
                 )
                 .unwrap();
                 let mut encoded = [0; Reply::LEN];
-                let (n, actual) = HolePie::from_token(back).pull(&mut encoded, WAIT).unwrap();
+                let (n, actual) = Hole::from_raw(back).pull(&mut encoded, WAIT).unwrap();
                 assert_eq!(actual, helper.id());
                 assert_eq!(
                     Reply::from_sender(control, actual, &encoded[..n]),
@@ -372,6 +372,6 @@ fn main() -> programs::Report<'static> {
             }
             _ => panic!("unknown hierarchy command"),
         }
-        HolePie::from_token(answer).push(&bytes[..1], WAIT).unwrap();
+        Hole::from_raw(answer).push(&bytes[..1], WAIT).unwrap();
     }
 }

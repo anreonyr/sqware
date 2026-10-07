@@ -4,7 +4,7 @@ use env::{PieToken, TaskId, Wait, pie};
 use protocol::{
     system::loader::frame::{self, Ask, Said, Wire},
 };
-use ::resource::raw::{HolePie, inspect, reserve};
+use ::resource::raw::{Hole, inspect, reserve};
 pub struct Incoming {
     pub ask: Ask,
     pub from: TaskId,
@@ -31,7 +31,7 @@ pub fn receive(
         return Ok(Progress::Done);
     };
     for _ in 0..16 {
-        let Ok((n, from)) = HolePie::from_token(entry).pull(&mut inbox.buffer, Wait::POLL) else {
+        let Ok((n, from)) = Hole::from_raw(entry).pull(&mut inbox.buffer, Wait::POLL) else {
             break;
         };
         let ask = match Wire::take(&inbox.buffer[..n]) {
@@ -86,7 +86,7 @@ pub(super) fn release_image(ask: &Ask, from: TaskId) {
     }
 }
 pub(super) fn reply(back: PieToken, said: Said) -> bool {
-    let result = protocol::communication::hand::Sender::<Said>::from_token(back)
+    let result = protocol::communication::hand::Sender::<Said>::from_raw(back)
         .send(said)
         .is_ok();
     let _ = pie::release(back);

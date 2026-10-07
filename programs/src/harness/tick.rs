@@ -44,7 +44,7 @@ fn now() -> usize {
 pub fn calibrate() -> (usize, usize) {
     // 一格多少毫秒：睡 200 ms，看计数动了几格。
     let t0 = now();
-    let _ = execution::room::sleep(Duration::from_millis(200));
+    let _ = execution::room::park(Duration::from_millis(200));
     let t1 = now();
     let spent = t1.saturating_sub(t0).max(1);
     let ms_per_tick = (200 / spent).max(1);

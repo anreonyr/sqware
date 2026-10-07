@@ -6,7 +6,7 @@ use crate::system::control::core::unit::State;
 use env::pie;
 use env::{PieToken, Wait};
 use protocol::{communication::hand::Sender, system::control as ccall};
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,
@@ -25,7 +25,7 @@ pub fn receive(
         let Some(face) = watch.faces[grant.index()] else {
             continue;
         };
-        let hole = HolePie::from_token(face);
+        let hole = Hole::from_raw(face);
         while let Ok((len, from)) = hole.pull(&mut buffer.0, Wait::POLL) {
             let Some((ask, back)) = ccall::frame::Wire::take(&buffer.0[..len]) else {
                 continue;
@@ -127,7 +127,7 @@ fn status(fail: crate::system::control::core::verdict::Fail) -> ccall::frame::Sa
 }
 pub(super) fn reply(back: PieToken, said: ccall::frame::Said) {
     {
-        let mut tx = Sender::<ccall::frame::Said>::from_token(back);
+        let mut tx = Sender::<ccall::frame::Said>::from_raw(back);
         let _ = tx.send(said);
     }
     let _ = pie::release(back);

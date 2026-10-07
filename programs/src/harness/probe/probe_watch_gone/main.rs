@@ -44,7 +44,7 @@ fn main() -> Report<'static> {
         .watch(&road, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-watch-gone: subscribe refused: {fail:?}"));
     let _ = watch.road();
-    let _ = execution::room::sleep(Duration::from_millis(HOLD_MS));
+    let _ = execution::room::park(Duration::from_millis(HOLD_MS));
     drop(watch);
     Report::note(env::EXIT_OK, OK_NOTE)
 }

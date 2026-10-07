@@ -134,8 +134,8 @@ pub mod raw;
 #[path = "../../src/hole.rs"]
 #[allow(dead_code)]
 pub(crate) mod hole;
-#[path = "../../src/scope.rs"]
-pub mod scope;
+#[path = "../../src/capability.rs"]
+pub mod capability;
 #[path = "../../src/reply.rs"]
 pub mod reply;
 

@@ -13,7 +13,7 @@ use protocol::system::{
 };
 use protocol::wire::message::Message;
 use ::resource::{
-    raw::{HolePie, inspect, reserve},
+    raw::{Hole, inspect, reserve},
     pile::{Pile, Sub},
 };
 
@@ -155,7 +155,7 @@ impl Server {
                 attachment.endpoints.control,
                 attachment.endpoints.output,
             ] {
-                while HolePie::from_token(token)
+                while Hole::from_raw(token)
                     .pull(&mut bytes, Wait::POLL)
                     .is_ok()
                 {}
@@ -257,7 +257,7 @@ pub(super) fn requests(
     let mut bytes = [0; env::PAGE_SIZE];
     // Each turn admits at most the current bounded queue, keeping UART and output progressing.
     for _ in 0..4 {
-        let Ok((n, from)) = HolePie::from_token(server.entry).pull(&mut bytes, Wait::POLL) else {
+        let Ok((n, from)) = Hole::from_raw(server.entry).pull(&mut bytes, Wait::POLL) else {
             break;
         };
         server.active = true;
@@ -293,7 +293,7 @@ pub(super) fn requests(
         };
         let mut ack = [0; Reply::LEN];
         if let Some(n) = reply.store_at(&mut ack, 0) {
-            let _ = HolePie::from_token(command.back).push(&ack[..n], Wait::POLL);
+            let _ = Hole::from_raw(command.back).push(&ack[..n], Wait::POLL);
         }
         let _ = pie::release(command.back);
     }
@@ -309,7 +309,7 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
         return Ok(Progress::Done);
     };
     if server.interrupt {
-        match HolePie::from_token(control).push(&[frame::INTERRUPT], Wait::POLL) {
+        match Hole::from_raw(control).push(&[frame::INTERRUPT], Wait::POLL) {
             Ok(()) => {
                 server.interrupt = false;
                 server.active = true;
@@ -324,7 +324,7 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
     let mut bytes = [0; Input::LEN];
     while let Some(event) = server.pending.front() {
         let n = event.store(&mut bytes).ok_or(E_TERMINAL)?;
-        match HolePie::from_token(input).push(&bytes[..n], Wait::POLL) {
+        match Hole::from_raw(input).push(&bytes[..n], Wait::POLL) {
             Ok(()) => {
                 server.pending.pop_front();
                 server.active = true;

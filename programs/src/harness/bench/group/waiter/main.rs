@@ -22,7 +22,7 @@ use programs::Reason;
 use env::{HoleDir, Mark, PieToken};
 use protocol::debug;
 use ::resource::pile::Pile;
-use ::resource::raw::{HolePie, pies};
+use ::resource::raw::{Hole, pies};
 
 #[programs::entry]
 fn main() -> Reason {
@@ -30,9 +30,9 @@ fn main() -> Reason {
         return bail("waiter: table incomplete");
     };
 
-    let pile = Pile::new(group);
-    let member = HolePie::from_token(member);
-    let report = HolePie::from_token(report);
+    let pile = Pile::from_raw(group);
+    let member = Hole::from_raw(member);
+    let report = Hole::from_raw(report);
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
     if pile.attach(member.token(), HoleDir::Pull).is_err() {

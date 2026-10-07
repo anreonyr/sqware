@@ -7,7 +7,7 @@ pub use establish::{Endpoint, Held, alive, opened_by};
 
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）
@@ -55,7 +55,7 @@ impl Session {
 /// 宽度与字节序归 Field 给 TaskId 那一对 `store` / `fetch`
 fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
     let mut buf = [0u8; TaskId::WIDTH];
-    match HolePie::from_token(link.rx()).pull(&mut buf, millis) {
+    match Hole::from_raw(link.rx()).pull(&mut buf, millis) {
         Ok((n, _)) if n == TaskId::WIDTH => TaskId::fetch(&buf),
         _ => None,
     }

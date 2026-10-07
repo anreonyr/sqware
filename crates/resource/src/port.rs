@@ -34,13 +34,7 @@ fn denied_pie() -> erra::Error<PieFail> {
     make_fail(PieFail::Denied)
 }
 
-// ── 两族视图：**搬家后的名字照旧** ─────────────────────────
-//
-// `Access` / `Policy` 现在住 `env`（与 `Permission` 同层，见 `env::permission`）——
-// 它们只认 `Permission`，一处也不碰内核；过线那几格荷载（设备账认领那一帧、入册那一段）
-// 都带着它们，故住这一层（协议层看得见它）。
-// 这里把名字**转出去**：下面 `ship` 的签名与**全部调用点**（22 个文件里的
-// `resource::port::{Access, Policy}`）都照旧。
+/// 访问权限与转授策略的共享 ABI 词汇。
 pub use env::{Access, Policy};
 
 /// 已识别对端的字节发送端。操作权限与存活仍由内核检查。
@@ -54,7 +48,7 @@ impl Sender {
     pub fn import(entry: PieToken) -> PieResult<Self> {
         let (_, peer, _) = raw::reserve(entry)?;
         if peer.get() == 0 { return Err(denied_pie()); }
-        Ok(Self { entry: Hole::from_token(entry), peer })
+        Ok(Self { entry: Hole::from_raw(entry), peer })
     }
 
     pub fn peer(&self) -> TaskId { self.peer }
@@ -151,7 +145,7 @@ impl Port {
         let to = ship(reply.token(), peer, Access::STORE, Policy::NONE)?;
         Ok(Port {
             to,
-            entry: Hole::from_token(entry),
+            entry: Hole::from_raw(entry),
             reply,
         })
     }
@@ -198,8 +192,8 @@ impl Port {
                 peer,
                 seed: reply,
             },
-            entry: Hole::from_token(entry),
-            reply: Hole::from_token(reply),
+            entry: Hole::from_raw(entry),
+            reply: Hole::from_raw(reply),
         }
     }
 }

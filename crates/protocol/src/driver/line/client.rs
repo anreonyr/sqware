@@ -10,7 +10,7 @@ use super::frame::Fail;
 use crate::communication::hand::Sender;
 use crate::communication::session::establish::{self, Held};
 use env::pie;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
@@ -65,7 +65,7 @@ impl Line {
         }
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
         // 推完就落地等于"等对面来取"，会卡住回话。
-        let mut out = Sender::<frame::Occupy>::from_token(entry);
+        let mut out = Sender::<frame::Occupy>::from_raw(entry);
         let budget = match millis {
             Wait::POLL => 1,
             Wait::AtMost(ms) => ms,
@@ -77,7 +77,7 @@ impl Line {
             if spent >= budget {
                 break;
             }
-            let _ = execution::room::sleep(core::time::Duration::from_millis(1));
+            let _ = execution::room::park(core::time::Duration::from_millis(1));
         }
         if spent >= budget {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
@@ -86,7 +86,7 @@ impl Line {
             return Err(deny(5, 0));
         }
         let mut one = [0u8; 1];
-        let code = match HolePie::from_token(back).pull(&mut one, millis) {
+        let code = match Hole::from_raw(back).pull(&mut one, millis) {
             Ok((1, _)) => one[0],
             _ => frame::BAD,
         };
@@ -113,11 +113,11 @@ impl Line {
     /// 收一帧投递。`Err(())` = 期限内没等到
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
-        if HolePie::from_token(rx)
+        if Hole::from_raw(rx)
             .wait(HoleDir::Pull, millis)
             .map_err(|_| ())?
         {
-            HolePie::from_token(rx).hush().map_err(|_| ())
+            Hole::from_raw(rx).hush().map_err(|_| ())
         } else {
             Err(())
         }
@@ -131,7 +131,7 @@ impl Line {
             return Err(());
         };
         // 置位即返：已响 = "这一条我处理完了"这件**状态**已经有了 ⇒ 也算说过。
-        match HolePie::from_token(tx).ring() {
+        match Hole::from_raw(tx).ring() {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(()),

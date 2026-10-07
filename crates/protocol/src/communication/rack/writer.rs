@@ -43,16 +43,16 @@ impl<M: Message> Writer<M> {
             _dock: None,
             buf: M::EMPTY,
             mode,
-            bell: Bell::from_token(page),
+            bell: Bell::from_raw(page),
             _m: PhantomData,
         }
     }
 
-    /// **对端**那边的写端：拿 [`super::Rack::ship`] 交出的**那一枚号**重建（与 `Sender::from_token` 同形）。
+    /// **对端**那边的写端：拿 [`super::Rack::ship`] 交出的**那一枚号**重建（与 `Sender::from_raw` 同形）。
     ///
     /// 本端自己开一份映射并**持着它**（与驱动那一侧 `Dock::open` 同一条手：谁 open 谁持有）。
     /// 页映不进来 ⇒ `None`——此后 `send` 一律答 `SendFail::Mail(Denied)`，不猜地址。
-    pub fn from_token(page: PieToken, mode: Mode) -> Option<Self> {
+    pub fn from_raw(page: PieToken, mode: Mode) -> Option<Self> {
         exact::<M>();
         let dock = match Dock::open(page) {
             Ok(dock) => dock,
@@ -68,7 +68,7 @@ impl<M: Message> Writer<M> {
             _dock: Some(dock),
             buf: M::EMPTY,
             mode,
-            bell: Bell::from_token(page),
+            bell: Bell::from_raw(page),
             _m: PhantomData,
         })
     }

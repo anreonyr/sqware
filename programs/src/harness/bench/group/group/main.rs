@@ -39,7 +39,7 @@ use env::room;
 use env::unit;
 use env::{PieToken, TaskId};
 use protocol::debug;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 use ::resource::pile::Pile;
 use ::resource::port::{self, Access, Policy};
 
@@ -56,7 +56,7 @@ static BUILDERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsi
 
 fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: [PieToken; 2]) -> bool {
     use core::sync::atomic::Ordering;
-    use execution::unit::join;
+    use execution::unit::task;
     let marks = [Mark::of("group-build"), Mark::of("group-doom")];
     let worker = move || {
         for mark in marks {
@@ -118,12 +118,12 @@ fn concurrent_builders(elf: &'static [u8], kind: env::ProgramKind, authorities: 
         }
         true
     };
-    let _ = execution::room::sleep(core::time::Duration::from_millis(100));
-    let Ok(left) = join::try_closure(worker) else {
+    let _ = execution::room::park(core::time::Duration::from_millis(100));
+    let Ok(left) = task::try_spawn(worker) else {
         return false;
     };
-    let _ = execution::room::sleep(core::time::Duration::from_millis(10));
-    let Ok(right) = join::try_closure(worker) else {
+    let _ = execution::room::park(core::time::Duration::from_millis(10));
+    let Ok(right) = task::try_spawn(worker) else {
         return false;
     };
     for task in [left.id(), right.id()] {
@@ -166,7 +166,7 @@ fn main() -> Reason {
     let Ok(member) = pie::unseal_hole(Mark::of("member")) else {
         return die("group: member hole");
     };
-    let member = HolePie::from_token(member);
+    let member = Hole::from_raw(member);
     // ③ 回报孔**一人一枚**：孔是单槽，共用一枚时第二条会撞 `Busy`（那是台子的噪声，
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
@@ -213,10 +213,10 @@ fn main() -> Reason {
     let control = sole_refused(tasks[0]);
 
     // ⑦ 稳压 → 一次投信 → 两个都该醒。
-    // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：HolePie::push
+    // `peek`，取走是下面第 ⑧ 步台主做的）。孔上那一格要的是一只**递出的手**：Hole::push
     // **递出即返，交付由取的一方做**。
-    let _ = execution::room::sleep(core::time::Duration::from_millis(SETTLE));
-    let _ = HolePie::from_token(member.token()).push(b"x", Wait::POLL);
+    let _ = execution::room::park(core::time::Duration::from_millis(SETTLE));
+    let _ = Hole::from_raw(member.token()).push(b"x", Wait::POLL);
 
     let mut woke = 0usize;
     for i in 0..WAITERS {
@@ -249,7 +249,7 @@ fn main() -> Reason {
 
 /// 从一枚回报孔取一字节（有界等待；槽空即超时 ⇒ `None`）
 fn pull_byte(tok: PieToken) -> Option<u8> {
-    let pie = HolePie::from_token(tok);
+    let pie = Hole::from_raw(tok);
     let mut buf = [0u8; 1];
     match pie.pull(&mut buf, Wait::AtMost(MS)) {
         Ok((1, _)) => Some(buf[0]),

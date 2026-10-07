@@ -10,7 +10,7 @@ use crate::communication::session::{Berth, establish};
 use super::Fail;
 use super::frame::{self, BACK, State};
 use env::pie;
-use ::resource::raw::HolePie;
+use ::resource::raw::Hole;
 
 pub const INSTANCE: &crate::common::path::Path = crate::common::path::Path::new("/svc/sys/control/instance");
 
@@ -80,7 +80,7 @@ impl Face {
             let _ = pie::release(back);
             return Err(deny("encode"));
         };
-        let door = HolePie::from_token(self.entry);
+        let door = Hole::from_raw(self.entry);
         if door.push(&frame[..n], wait).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
@@ -88,7 +88,7 @@ impl Face {
             return Err(deny("push"));
         }
         let mut buf = frame::Said::EMPTY;
-        let got = Receiver::<frame::Said>::from_token(back)
+        let got = Receiver::<frame::Said>::from_raw(back)
             .recv(buf.as_mut(), wait)
             .map_err(|e| match e {
                 RecvFail::Unread(len) => {

@@ -6,7 +6,7 @@
 //! 页里那枚 `lost` 由写端记（见 [`super::ring`]）。
 //!
 //! # 游标从页里起
-//! [`Reader::of`] / [`Reader::from_token`] 的起始号取自页里的 `read`（**不是从 1 起**）：
+//! [`Reader::of`] / [`Reader::from_raw`] 的起始号取自页里的 `read`（**不是从 1 起**）：
 //! 同一具架换一个读端（重启、重建）时不重放已经取走的消息。
 //!
 //! # 唤醒那一套（为什么不是"读不到就睡"）
@@ -53,14 +53,14 @@ impl<M: Message> Reader<M> {
             _dock: None,
             next: cursor(ring(view)),
             skipped: 0,
-            bell: Bell::from_token(page),
+            bell: Bell::from_raw(page),
             _m: PhantomData,
         }
     }
 
-    /// **对端**那边的读端：拿 [`super::Rack::ship`] 交出的**那一枚号**重建（与 `Receiver::from_token`
+    /// **对端**那边的读端：拿 [`super::Rack::ship`] 交出的**那一枚号**重建（与 `Receiver::from_raw`
     /// 同形）。页映不进来 ⇒ `None`（此后 `try_recv` 一律答 `RecvFail::Mail(Denied)`，不猜地址）。
-    pub fn from_token(page: PieToken) -> Option<Self> {
+    pub fn from_raw(page: PieToken) -> Option<Self> {
         exact::<M>();
         let dock = Dock::open(page).ok()?;
         let view = dock.view();
@@ -69,7 +69,7 @@ impl<M: Message> Reader<M> {
             _dock: Some(dock),
             next: cursor(ring(view)),
             skipped: 0,
-            bell: Bell::from_token(page),
+            bell: Bell::from_raw(page),
             _m: PhantomData,
         })
     }

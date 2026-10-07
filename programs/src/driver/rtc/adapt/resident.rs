@@ -14,7 +14,7 @@ use protocol::driver::line;
 use env::PAGE_SIZE;
 use ::resource::pile::Pile;
 use env::pie;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 常驻：**一只组等两个源**——门上有请求、线上有投递
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限
@@ -29,7 +29,7 @@ pub fn run(
     host: &mut Host,
 ) -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
-    let entry_hole = HolePie::from_token(entry);
+    let entry_hole = Hole::from_raw(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
     if pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
         || pile
@@ -65,7 +65,7 @@ pub fn run(
             if let Ring::Rang { back, now } = host.ring(now) {
                 // 那一声**走 `Sender`**（答那一形：一个时刻）——与客人收它走的是同一张表。
                 {
-                    let mut tx = Sender::<Time>::from_token(back);
+                    let mut tx = Sender::<Time>::from_raw(back);
                     match tx.send(Time::of(now)) {
                         Ok(()) => debug!("rtc: rang n={} now={now}", host.heard()),
                         Err(_) => debug!("rtc: notify failed"),

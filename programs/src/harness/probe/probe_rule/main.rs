@@ -21,7 +21,7 @@ use protocol::system::operator::client as operator;
 use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
 use env::unit;
 use env::pie;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
 const PANE: &str = "rule";
@@ -266,7 +266,7 @@ fn main() -> Report<'static> {
     )
     .expect("probe-rule: peer completion channel");
     let mut verified = [0];
-    HolePie::from_token(complete)
+    Hole::from_raw(complete)
         .pull(&mut verified, Wait::AtMost(10_000))
         .expect("probe-rule: peer did not verify before retirement");
     return Report::note(E_OK, OK_NOTE);

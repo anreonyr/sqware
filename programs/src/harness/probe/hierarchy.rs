@@ -1,5 +1,5 @@
 use env::pie;
-use ::resource::raw::{HolePie, pies, reserve};
+use ::resource::raw::{Hole, pies, reserve};
 
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
@@ -28,7 +28,7 @@ pub(crate) fn command(
     let answer = establish::find(me, ANSWER).unwrap();
     let mut bytes = [code; 9];
     bytes[1..].copy_from_slice(&(task.get() as u64).to_le_bytes());
-    HolePie::from_token(command)
+    Hole::from_raw(command)
         .push(&bytes, Wait::AtMost(1000))
         .unwrap();
     let until = env::chrono::clock() + 10_000_000_000;
@@ -38,7 +38,7 @@ pub(crate) fn command(
             use protocol::system::control::publication::{Frame, Object, REF, Reply};
             let fake = establish::find(me, REF).unwrap();
             let mut request = [0; Frame::LEN];
-            if let Ok((n, _)) = HolePie::from_token(fake).pull(&mut request, Wait::POLL) {
+            if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
                 let frame = Frame::take(&request[..n]).unwrap();
                 let wrong = env::TaskId::new(
                     assembly
@@ -55,13 +55,13 @@ pub(crate) fn command(
                 ));
                 let mut encoded = [0; Reply::LEN];
                 let n = reply.store_at(&mut encoded, 0).unwrap();
-                HolePie::from_token(frame.back)
+                Hole::from_raw(frame.back)
                     .push(&encoded[..n], Wait::AtMost(1000))
                     .unwrap();
                 let _ = pie::release(frame.back);
             }
         }
-        if let Ok((1, from)) = HolePie::from_token(answer).pull(&mut bytes, Wait::POLL) {
+        if let Ok((1, from)) = Hole::from_raw(answer).pull(&mut bytes, Wait::POLL) {
             assert_eq!(
                 from,
                 assembly
@@ -78,7 +78,7 @@ pub(crate) fn command(
             env::chrono::clock() < until,
             "hierarchy worker did not finish command {code}"
         );
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 
@@ -579,10 +579,10 @@ pub fn reference_lifetime() {
     let other = pie::unseal_hole(Mark::of("forget-source")).unwrap();
     assert_eq!(pie::same(source, other), Ok(false));
     pie::forget(borrowed).unwrap();
-    HolePie::from_token(child).push(b"ok", Wait::POLL).unwrap();
+    Hole::from_raw(child).push(b"ok", Wait::POLL).unwrap();
     let mut bytes = [0; 2];
     assert_eq!(
-        HolePie::from_token(source)
+        Hole::from_raw(source)
             .pull(&mut bytes, Wait::POLL)
             .unwrap(),
         (2, me)
@@ -600,7 +600,7 @@ pub fn reference_lifetime() {
         let stage = Arc::new(AtomicUsize::new(0));
         let progress = stage.clone();
         let root_id = me.get();
-        let worker = execution::unit::join::closure(move || {
+        let worker = execution::unit::task::spawn(move || {
             let middle = protocol::communication::session::establish::claim(
                 env::TaskId::new(root_id),
                 Mark::of("forget-race"),
@@ -610,14 +610,14 @@ pub fn reference_lifetime() {
             let me = env::unit::self_id();
             progress.store(1, Ordering::Release);
             while progress.load(Ordering::Acquire) < 2 {
-                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
             for _ in 0..32 {
                 port::ship(middle, me, Access::STORE, Policy::NONE).unwrap();
             }
             progress.store(3, Ordering::Release);
             while progress.load(Ordering::Acquire) < 4 {
-                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
             assert!(
                 !pies().any(|p| p.mark == Mark::of("forget-race")),
@@ -633,12 +633,12 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
         while stage.load(Ordering::Acquire) < 1 {
-            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         stage.store(2, Ordering::Release);
         pie::forget(middle).unwrap();
         while stage.load(Ordering::Acquire) < 3 {
-            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         if round % 2 == 0 {
             pie::revoke(worker.id(), downstream).unwrap();
@@ -671,7 +671,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     let control = env::unit::self_id().get();
     let protected = pie::unseal_hole(env::Mark::of("source-validation")).unwrap();
     let raw = protected.get();
-    let caller = execution::unit::join::closure(move || {
+    let caller = execution::unit::task::spawn(move || {
         let control = env::TaskId::new(control);
         let entry =
             protocol::communication::session::establish::claim(control, ENTRY, Wait::AtMost(1000))
@@ -709,7 +709,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     while !done.load(Ordering::Acquire) {
         assembly.progress().unwrap();
         assert!(env::chrono::clock() < until, "sender boundary timeout");
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
     assert!(
@@ -746,9 +746,9 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         let released = Arc::new(AtomicBool::new(false));
         let gate = released.clone();
         let root = control.get();
-        let caller = execution::unit::join::closure(move || {
+        let caller = execution::unit::task::spawn(move || {
             while !gate.load(Ordering::Acquire) {
-                execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
             let control = env::TaskId::new(root);
             let session =
@@ -783,7 +783,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             };
             let mut bytes = [0; protocol::system::operator::TIP_LEN];
             let n = tip.store(&mut bytes).unwrap();
-            HolePie::from_token(private)
+            Hole::from_raw(private)
                 .push(&bytes[..n], Wait::AtMost(1000))
                 .unwrap();
             complete.store(true, Ordering::Release);
@@ -810,7 +810,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 env::chrono::clock() < until,
                 "standalone raw mutation timeout"
             );
-            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         let caller_id = caller.id();
         caller.join();

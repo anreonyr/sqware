@@ -6,7 +6,7 @@ use core::marker::PhantomData;
 use env::{HoleDir, MailFail, MailResult, PieToken, Wait};
 
 use crate::wire::message::Message;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）＋ 那一格缓冲 ＋ **我还排着几只**。
 pub struct Sender<M: Message> {
@@ -39,7 +39,7 @@ impl<M: Message> Sender<M> {
     }
 
     /// 认下一枚**别人给的**号（服务端那一侧：孔是对方铸的、交给我的）
-    pub fn from_token(hole: PieToken) -> Self {
+    pub fn from_raw(hole: PieToken) -> Self {
         Self {
             hole: Some(hole),
             buf: M::EMPTY,
@@ -64,7 +64,7 @@ impl<M: Message> Sender<M> {
             return Err(SendFail::TooLong);
         };
         let bytes = self.buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
-        HolePie::from_token(hole)
+        Hole::from_raw(hole)
             .push(bytes, within)
             .map_err(|e| SendFail::Mail(e.source))?;
         self.outstanding += 1;
@@ -81,7 +81,7 @@ impl<M: Message> Sender<M> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);
         };
-        HolePie::from_token(hole)
+        Hole::from_raw(hole)
             .push(bytes, Wait::POLL)
             .map_err(|e| SendFail::Mail(e.source))?;
         self.outstanding += 1;
@@ -94,7 +94,7 @@ impl<M: Message> Sender<M> {
         let Some(hole) = self.hole else {
             return Err(SendFail::Unbound);
         };
-        let depth = HolePie::from_token(hole)
+        let depth = Hole::from_raw(hole)
             .depth()
             .map_err(|e| SendFail::Mail(e.source))?;
         self.outstanding = depth;
@@ -118,7 +118,7 @@ impl<M: Message> Sender<M> {
         if self.outstanding == 0 {
             return Ok(());
         }
-        let r = HolePie::from_token(hole).wait(HoleDir::Push, Wait::Forever);
+        let r = Hole::from_raw(hole).wait(HoleDir::Push, Wait::Forever);
         if let Err(e) = &r {
             crate::debug!(
                 "mail: reclaim miss hole={} code={}",

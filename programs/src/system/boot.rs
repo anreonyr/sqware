@@ -45,7 +45,7 @@ pub fn spawn(
                 identity::serve::run::serve(
                     state.clone(),
                     version,
-                    identity::revision::Changed(Bell::new(
+                    identity::revision::Changed(Bell::from_raw(
                         PieToken::from_bytes(&(bell.load(Ordering::Acquire) as u64).to_le_bytes())
                             .unwrap(),
                     )),
@@ -60,7 +60,7 @@ pub fn spawn(
         let ptr = Box::into_raw(Box::new(body));
         let task = match execution::unit::spawn(
             env::TeamId::new(0),
-            execution::unit::join::trampoline as *const () as usize,
+            execution::unit::task::trampoline as *const () as usize,
             &[ptr as usize],
             0,
         ) {

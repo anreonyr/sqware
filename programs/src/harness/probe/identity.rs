@@ -8,7 +8,7 @@ use ::resource::port::{self, Access, Policy};
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
 use env::pie;
-use ::resource::raw::{HolePie, inspect, reserve};
+use ::resource::raw::{Hole, inspect, reserve};
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -73,14 +73,14 @@ pub fn timeout() {
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
-    let reader = execution::unit::join::closure(move || {
+    let reader = execution::unit::task::spawn(move || {
         let owner = env::TaskId::new(raw_owner);
         let entry = establish::claim(owner, Grant::Resolve.mark(), Wait::AtMost(1000)).unwrap();
         while !release_reader.load(Ordering::Acquire) {
-            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         let mut bytes = [0; MAX_FRAME];
-        let (n, from) = HolePie::from_token(entry)
+        let (n, from) = Hole::from_raw(entry)
             .pull(&mut bytes, Wait::AtMost(1000))
             .unwrap();
         assert_eq!(from, owner);
@@ -192,7 +192,7 @@ pub fn acceptance() {
     let n = protocol::system::operator::Tip::Guest(me)
         .store(&mut record)
         .unwrap();
-    HolePie::from_token(tip)
+    Hole::from_raw(tip)
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
     let operator =
@@ -493,7 +493,7 @@ fn activation_boundary(
         coalition.authority.get(),
         coalition.slot,
     );
-    let caller = execution::unit::join::closure(move || {
+    let caller = execution::unit::task::spawn(move || {
         let owner = env::TaskId::new(owner);
         let hub = env::TaskId::new(hub);
         let coalition =
@@ -534,7 +534,7 @@ fn activation_boundary(
             env::chrono::clock() < until,
             "activation boundary never answered"
         );
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
 }
@@ -565,6 +565,6 @@ fn ready_driver(
             env::chrono::clock() < until,
             "identity: driver never republished"
         );
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }

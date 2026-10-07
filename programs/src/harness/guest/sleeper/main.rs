@@ -107,7 +107,7 @@ fn find_face(tree: &Face) -> Option<PieToken> {
         {
             Ok(entry) => return Some(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = execution::room::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

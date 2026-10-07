@@ -10,7 +10,7 @@ fn until(mut done: impl FnMut() -> bool) {
             env::chrono::clock() < deadline,
             "lifecycle: timed out"
         );
-        execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn debark(task: env::TaskId) {
@@ -35,17 +35,17 @@ pub fn acceptance() {
     unit::embark(worker).unwrap();
     let sib = sibling.clone();
     let ending = finish.clone();
-    let peer = execution::unit::join::closure(move || {
+    let peer = execution::unit::task::spawn(move || {
         while !ending.load(Ordering::Acquire) {
             sib.fetch_add(1, Ordering::Release);
-            execution::room::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
     });
     until(|| count.load(Ordering::Acquire) > 1);
     for _ in 0..3 {
         debark(worker);
         let stopped = count.load(Ordering::Acquire);
-        execution::room::sleep(core::time::Duration::from_millis(12)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(12)).unwrap();
         assert_eq!(
             count.load(Ordering::Acquire),
             stopped,
@@ -73,7 +73,7 @@ pub fn acceptance() {
     until(|| count.load(Ordering::Acquire) > held);
     debark(running);
     let stopped = count.load(Ordering::Acquire);
-    execution::room::sleep(core::time::Duration::from_millis(12)).unwrap();
+    execution::room::park(core::time::Duration::from_millis(12)).unwrap();
     assert_eq!(
         count.load(Ordering::Acquire),
         stopped,
@@ -105,7 +105,7 @@ extern "C" fn tick(args: usize) -> ! {
     let count = unsafe { &*(*(args as *const usize) as *const AtomicUsize) };
     loop {
         count.fetch_add(1, Ordering::Release);
-        execution::room::sleep(core::time::Duration::from_millis(3)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(3)).unwrap();
     }
 }
 

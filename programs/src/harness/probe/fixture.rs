@@ -173,7 +173,7 @@ impl Fixture {
                     };
                 }
             }
-            execution::room::sleep(core::time::Duration::from_millis(1)).map_err(|_| ())?;
+            execution::room::park(core::time::Duration::from_millis(1)).map_err(|_| ())?;
         }
     }
     pub fn progress(&mut self) -> Result<(), &'static str> {

@@ -118,7 +118,7 @@ fn main() -> Reason {
     // 台主自己：每 1 ms 让出一次核（**不许纯空转**，见头注坑 2）。
     let t0 = env::chrono::ticks();
     for _ in 0..ROUNDS {
-        let _ = execution::room::sleep(Duration::from_millis(1));
+        let _ = execution::room::park(Duration::from_millis(1));
     }
     let t1 = env::chrono::ticks();
     debug!("load: ran rounds={ROUNDS} ticks={t0}→{t1}");

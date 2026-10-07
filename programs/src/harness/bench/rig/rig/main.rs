@@ -52,7 +52,7 @@ use programs::unit::Ending;
 use protocol::communication::session::establish::{self, Endpoint, Held};
 use protocol::debug;
 use env::unit;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 受害者的清单名（programs::unit::PROGRAMS 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
@@ -311,7 +311,7 @@ fn body(
     let burst = iters_per_ms.saturating_mul(STAGE_MS);
     // 临时值，不等它下线就返回，受害者会复制到一段死栈。
     let bytes = burst.to_le_bytes();
-    let door = HolePie::from_token(at_peer);
+    let door = Hole::from_raw(at_peer);
     door.push(&bytes, Wait::Forever).map_err(|_| "post")?;
     door.wait(env::HoleDir::Push, Wait::Forever)
         .map_err(|_| "post")?;
@@ -320,7 +320,7 @@ fn body(
     // 跳上去——跳到"几乎每轮"就说明卡点是"源核（台主）空转不 yield"（`kick` 的兜底正是
     // "源核下次 yield 自取"，而 S 态域任务空转不吃陷阱 ⇒ 永不 yield）。
     if YIELD_AFTER_PUSH {
-        let _ = execution::room::sleep(Duration::from_millis(1));
+        let _ = execution::room::park(Duration::from_millis(1));
     }
 
     // 扫时序：空转 `delay_us` 微秒再下令（受害者此刻在它"在台上"那一段的某一点上）。

@@ -102,7 +102,7 @@ fn main() -> Report<'static> {
         .unwrap()
         .token(Wait::AtMost(MS))
         .unwrap();
-    let mut reader = protocol::communication::rack::Reader::<Bytes>::from_token(retained).unwrap();
+    let mut reader = protocol::communication::rack::Reader::<Bytes>::from_raw(retained).unwrap();
     client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
     assert_eq!(
         tree.root()

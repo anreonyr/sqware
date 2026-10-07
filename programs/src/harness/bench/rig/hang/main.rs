@@ -22,7 +22,7 @@ use programs::harness::tick;
 use protocol::communication::session::establish;
 use protocol::debug;
 use env::unit;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它
 const MARK: &str = "wake";
@@ -43,7 +43,7 @@ fn main() -> Reason {
     let Ok(pair) = establish::endpoint(sire, env::Mark::of(MARK), Wait::POLL) else {
         return bail("hang: seat");
     };
-    let pie = HolePie::from_token(pair.rx());
+    let pie = Hole::from_raw(pair.rx());
 
     // 第一句 = "在台上跑多少轮"（前 4 字节小端）。拿不到就退化成"在台上不占时间"。
     let mut buf = [0u8; 8];

@@ -1,7 +1,7 @@
 use super::frame::{self, Ask, Fail, Said};
 use crate::wire::message::Message;
 use env::{Permission, PieToken, TaskId, TeamId, Wait};
-use ::resource::{port::{Reply, Sender}, raw::Grant};
+use ::resource::{port::{Reply, Sender}, raw::Loan};
 
 #[derive(Clone, Copy, Debug)]
 pub struct Built {
@@ -40,11 +40,11 @@ impl Face {
                 (env::chrono::clock().saturating_sub(started) / 1_000_000) as usize,
             )),
         };
-        let image_grant = Grant::accord(&image, self.entry.peer(), Permission::FETCH, frame::IMAGE)
+        let image_loan = Loan::accord(&image, self.entry.peer(), Permission::FETCH, frame::IMAGE)
             .map_err(|_| Fail::Denied)?;
         let result = (|| {
             let back = Reply::open(self.entry.peer(), frame::BACK).map_err(|_| Fail::Bad)?;
-            let reply = back.grant().map_err(|_| Fail::Bad)?;
+            let build_loan = back.grant().map_err(|_| Fail::Bad)?;
             (|| {
                 let mut words = [0; frame::MAX_ARGS];
                 for (to, from) in words.iter_mut().zip(args) {
@@ -52,13 +52,13 @@ impl Face {
                 }
                 let ask = Ask {
                     op: frame::BUILD,
-                    image: image_grant.remote(),
+                    image: image_loan.remote(),
                     offset: offset as u64,
                     len: len as u64,
                     stack: stack as u64,
                     count: args.len() as u8,
                     args: words,
-                    back: reply.remote(),
+                    back: build_loan.remote(),
                 };
                 let mut bytes = [0; Ask::LEN];
                 let n = frame::Wire::Build(ask).store(&mut bytes).ok_or(Fail::Bad)?;
@@ -75,11 +75,11 @@ impl Face {
                 if said.team == 0 || said.task.get() == 0 {
                     return Err(Fail::Bad);
                 }
-                let confirm = back.grant().map_err(|_| Fail::Bad)?;
+                let claim_loan = back.grant().map_err(|_| Fail::Bad)?;
                 let claim = frame::Claim {
                     op: frame::CLAIM,
                     task: said.task,
-                    back: confirm.remote(),
+                    back: claim_loan.remote(),
                 };
                 let mut receipt = [0; frame::Claim::LEN];
                 let n = frame::Wire::Claim(claim).store(&mut receipt).ok_or(Fail::Bad)?;

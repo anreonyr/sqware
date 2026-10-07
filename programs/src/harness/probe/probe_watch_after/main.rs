@@ -58,7 +58,7 @@ fn main() -> Report<'static> {
             panic!("probe-watch-after: the tree stopped answering after #{i}");
         };
         drop(again);
-        let _ = execution::room::sleep(Duration::from_millis(STEP_MS));
+        let _ = execution::room::park(Duration::from_millis(STEP_MS));
     }
 
     let Ok(listing) = tree

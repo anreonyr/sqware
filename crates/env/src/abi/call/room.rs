@@ -56,7 +56,7 @@ pub enum RoomCall {
     ///
     /// **域侧换算必须向上取整**：把时长换成 `millis` 时，"至少"要求 **ceil**
     /// （`500µs → 1`、`1.5ms → 2`），否则 `Park{0}` 会把一次亚毫秒睡眠静默变成"让出"。
-    /// 见 `execution::room::sleep` 。
+    /// 见 `execution::room::park` 。
     #[ret(())]
     Park { millis: usize },
     /// 退出当前任务（不返回；词族 reap）。发散，无 Ret。

@@ -13,7 +13,7 @@ use protocol::driver::line::frame as lcall;
 use protocol::wire::message::Message;
 use ::resource::pile::Pile;
 use env::pie;
-use ::resource::raw::{HolePie, table_size};
+use ::resource::raw::{Hole, table_size};
 
 /// 装泊位 / 认泊位的期限（毫秒）
 const QUAY_MS: usize = 1000;
@@ -80,7 +80,7 @@ pub fn serve(
             },
         };
         if let Some(back) = establish::find(from, lcall::BACK_MARK) {
-            let reply = HolePie::from_token(back);
+            let reply = Hole::from_raw(back);
             // **一个字节住进"跟着客人走"的那一格**（见 Reply），**推完就走**：
             match replies.slot(from) {
                 Some(slot) => {

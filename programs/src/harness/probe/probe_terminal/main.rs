@@ -6,7 +6,7 @@ use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, p
 use protocol::communication::session::{Session, establish};
 use protocol::service::terminal::{Connection, Terminal, frame};
 use protocol::system::operator::{self, Face};
-use ::resource::raw::{HolePie, inspect};
+use ::resource::raw::{Hole, inspect};
 use execution::{room, unit as task};
 
 extern "C" fn unused(_: usize) -> ! {
@@ -19,11 +19,11 @@ fn denied(input: PieToken, output: PieToken, control: PieToken) {
     let mut bytes = [0; frame::Input::LEN];
     for token in [input, control] {
         assert!(
-            matches!(HolePie::from_token(token).pull(&mut bytes, Wait::POLL), Err(e) if e.source == MailFail::Denied)
+            matches!(Hole::from_raw(token).pull(&mut bytes, Wait::POLL), Err(e) if e.source == MailFail::Denied)
         );
     }
     assert!(
-        matches!(HolePie::from_token(output).push(b"blocked", Wait::POLL), Err(e) if e.source == MailFail::Denied)
+        matches!(Hole::from_raw(output).push(b"blocked", Wait::POLL), Err(e) if e.source == MailFail::Denied)
     );
 }
 #[programs::entry]

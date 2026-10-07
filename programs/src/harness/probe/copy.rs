@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use env::pie;
 use env::unit;
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use ::resource::raw::{HolePie, pies};
+use ::resource::raw::{Hole, pies};
 
 pub fn acceptance() {
     queued();
@@ -19,7 +19,7 @@ pub fn acceptance() {
         .token(env::Name::Call(env::Call::Doom)).unwrap();
     let doom_mark = Mark::of("copy-doom");
     let mark = Mark::of("copy-build");
-    let worker = execution::unit::join::closure(move || {
+    let worker = execution::unit::task::spawn(move || {
         assert!(
             protocol::communication::session::establish::claim(
                 env::TaskId::new(0),
@@ -51,7 +51,7 @@ fn queued() {
     let owner = unit::self_id();
     let entry = pie::unseal_hole(Mark::of("copy-queued")).unwrap();
     let raw_owner = owner.get();
-    let writer = execution::unit::join::closure(move || {
+    let writer = execution::unit::task::spawn(move || {
         let entry = protocol::communication::session::establish::claim(
             env::TaskId::new(raw_owner),
             Mark::of("copy-queued"),
@@ -61,10 +61,10 @@ fn queued() {
         let mut data = alloc::vec![0; 128];
         for sequence in 0..4u8 {
             data.fill(sequence);
-            HolePie::from_token(entry).push(&data, Wait::POLL).unwrap();
+            Hole::from_raw(entry).push(&data, Wait::POLL).unwrap();
         }
         assert!(
-            HolePie::from_token(entry)
+            Hole::from_raw(entry)
                 .push(&data, Wait::POLL)
                 .is_err_and(|error| error.source.is_busy()),
             "copy: queue lost its bound"
@@ -82,14 +82,14 @@ fn queued() {
     writer.join();
     let mut short = [0; 4];
     assert!(
-        HolePie::from_token(entry)
+        Hole::from_raw(entry)
             .pull(&mut short, Wait::POLL)
             .is_err()
     );
     let mut bytes = [0; 128];
     for sequence in 0..4u8 {
         assert_eq!(
-            HolePie::from_token(entry)
+            Hole::from_raw(entry)
                 .pull(&mut bytes, Wait::POLL)
                 .unwrap(),
             (bytes.len(), sender)
@@ -99,7 +99,7 @@ fn queued() {
             "copy: queued bytes changed after sender exit"
         );
     }
-    let hole = HolePie::from_token(entry);
+    let hole = Hole::from_raw(entry);
     for cycle in 0..16u8 {
         assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
         assert!(!hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
@@ -128,7 +128,7 @@ fn concurrent() {
     let entry = pie::unseal_hole(Mark::of("copy-concurrent")).unwrap();
     let mut workers = Vec::new();
     for producer in 0..4u8 {
-        let worker = execution::unit::join::closure(move || {
+        let worker = execution::unit::task::spawn(move || {
             let token = protocol::communication::session::establish::claim(
                 owner,
                 Mark::of("copy-concurrent"),
@@ -136,7 +136,7 @@ fn concurrent() {
             )
             .unwrap();
             for sequence in 0..32u8 {
-                HolePie::from_token(token)
+                Hole::from_raw(token)
                     .push(&[producer, sequence], Wait::AtMost(2000))
                     .unwrap();
             }
@@ -153,7 +153,7 @@ fn concurrent() {
     let mut counts = [0u8; 4];
     let mut bytes = [0; 2];
     for _ in 0..128 {
-        let (size, sender) = HolePie::from_token(entry)
+        let (size, sender) = Hole::from_raw(entry)
             .pull(&mut bytes, Wait::AtMost(2000))
             .unwrap();
         assert_eq!(size, 2);

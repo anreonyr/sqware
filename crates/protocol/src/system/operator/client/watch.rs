@@ -30,7 +30,7 @@ use crate::system::operator::{EntryId, Fail};
 
 use super::{Face, map_code};
 use crate::system::operator as ocall;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 本端铸的那一枚孔叫什么（记号只在本地认领那一格用；持树者认的是**号**，不是记号）。
 use crate::system::operator::marks::WATCH_MARK;
@@ -44,7 +44,7 @@ pub struct Watch<'a> {
     /// 订的那条路（读数与撤订用）。
     road: String,
     /// **本端那一枚孔**：持着它，退场即作废（树上那一侧下一次递手就把他摘掉）。
-    _hole: HolePie,
+    _hole: Hole,
     /// 收那一侧：等"有手"＋ 取一手 ＋ 解一条。
     read: Receiver<Event>,
     /// 取回来那一手的落点（`Receiver::recv` 要调用方给缓冲）。
@@ -56,7 +56,7 @@ pub struct Watch<'a> {
 impl<'a> Watch<'a> {
     /// **订一条子树**：本端铸一枚孔，把它交给持树者，等它记下这一位。
     pub fn of(face: &'a Face, road: &Path, wait: Wait) -> Result<Watch<'a>, Fail> {
-        let hole = HolePie::unseal(WATCH_MARK).map_err(|_| Fail::Unknown)?;
+        let hole = Hole::unseal(WATCH_MARK).map_err(|_| Fail::Unknown)?;
         // **那一枚孔要交给持树者**：它得推得进来（`Push` 是"把发送方那段登记到孔上"⇒ 要写权）。
         // `Policy::NONE`：接过来的人不必再授出（事件只有持树者递）。
         let shipped = port::ship(hole.token(), face.host(), Access::STORE, Policy::NONE)
@@ -75,7 +75,7 @@ impl<'a> Watch<'a> {
             ocall::OK => Ok(Watch {
                 face,
                 road: String::from(road.as_str()),
-                read: Receiver::from_token(hole.token()),
+                read: Receiver::from_raw(hole.token()),
                 _hole: hole,
                 buf: [0u8; EventFrame::LEN],
                 seq: 0,

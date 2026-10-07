@@ -281,8 +281,8 @@ programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 - `crates/resource` 保留 dock、port、bell、pile；正式模块使用私有 Hole，原始查询和未验证适配集中在 raw。
 - Port 的公开构造不依赖万能 HolePie；open 导入并识别入口，borrow_raw 明确接收原始编号。
 - port::Sender 导入时识别服务对端，只有发送操作；实际权限与资源存活仍由内核检查。
-- Owned 只释放本地创建的能力，Grant 借用源并只撤销指定对端的派生能力；显式清理可返回错误，Drop 提供非阻塞兜底。
-- port::Reply 拥有回信端、核对回复来源，并明确按 seal、release 收尾。Loader 使用 Sender/Reply/Grant，保持 Build→Claim 和统一预算。
+- Capability 只释放本地创建的能力，Loan 借用源并只撤销指定对端的派生能力；显式清理可返回错误，Drop 提供非阻塞兜底。
+- port::Reply 拥有回信端、核对回复来源，并明确按 seal、release 收尾。Loader 使用 Sender/Reply/Loan，保持 Build→Claim 和统一预算。
 - dock 保留裸地址 View 的已有约束，不增加跨撤销仍有效的安全 slice；Loader 的内核保护快照与服务端来源、角色验证继续保留。
 - 所有驱动、服务、客户端和测具的原资源调用均已迁移，旧 runtime 完全退出；显式 raw 仍用于协议和硬件边界，不表示已获业务授权。
 - 9 项资源宿主测试编译实际实现，用环境调用替身验证清理范围、顺序、错误和来源拒绝；真实内核行为由三个 QEMU 场景补齐。
@@ -350,6 +350,15 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
 
+## 迁移后的命名口径
+
+- execution::room::park 接收 Duration，保持向上取整；env::room::park 保留单次调用的毫秒参数，不另留 sleep 别名。
+- 域内任务创建和结果回收位于 unit::task，以 spawn/try_spawn 创建并放行，Join::join 回收结果；unit::spawn 仍创建 Held 任务。
+- memory 的私有分配后端归 allocator，保留 Heap 等实际堆结构名称。
+- 原始编号导入统一 from_raw，和 unseal 创建区分；raw::Hole 替代旧 HolePie，不表示已验证的能力。
+- 私有 capability 模块中的 Capability 管理本地释放，Loan 管理派生撤销；提供方授权分类继续叫 Grant。
+- 保留 dock、port、bell、pile 和线上角色、操作码、Mark、路径及符号，不用兼容别名维持两套词汇。
+
 ## 当前可用的验证命令
 
 以下命令对应当前仓库；接口与测试迁移时同步更新路径。
@@ -363,7 +372,7 @@ cargo check --manifest-path crates/image/Cargo.toml --target x86_64-unknown-linu
 cargo test -p mold --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/schedule/src/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/execution/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
-cargo test --manifest-path crates/resource/tests/scope/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/resource/tests/capability/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline

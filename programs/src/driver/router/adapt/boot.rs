@@ -22,7 +22,7 @@ use ::resource::bell::Bell;
 use ::resource::pile::Pile;
 use env::unit;
 use env::pie;
-use ::resource::raw::{HolePie};
+use ::resource::raw::{Hole};
 
 const SERVICE: &str = "router";
 
@@ -63,7 +63,7 @@ pub struct Up {
     pub pile: Pile,
     /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）
     pub buf: Vec<u8>,
-    pub entry: HolePie,
+    pub entry: Hole,
     pub replies: Replies,
 }
 
@@ -105,7 +105,7 @@ pub fn up() -> Result<Up, Fail> {
         sources.device_count(),
         sources.context()
     );
-    let bell = Bell::new(irq_deed.token);
+    let bell = Bell::from_raw(irq_deed.token);
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
@@ -125,7 +125,7 @@ pub fn up() -> Result<Up, Fail> {
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
-    let entry_hole = HolePie::from_token(entry);
+    let entry_hole = Hole::from_raw(entry);
     if pile
         .attach(irq_deed.token, HoleDir::Pull)
         .is_err()

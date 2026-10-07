@@ -16,7 +16,7 @@ use crate::system::control::serve::start::BOOT_MS;
 use crate::system::control::serve::unit::Control;
 use env::wire::Span as _;
 use env::pie;
-use ::resource::raw::{HolePie, reserve};
+use ::resource::raw::{Hole, reserve};
 
 pub struct Activation {
     hub: TaskId,
@@ -47,7 +47,7 @@ impl Activation {
         roster: &crate::system::identity::client::install::Roster,
     ) {
         let mut bytes = [0; env::PAGE_SIZE];
-        while let Ok((len, from)) = HolePie::from_token(self.entry).pull(&mut bytes, Wait::POLL) {
+        while let Ok((len, from)) = Hole::from_raw(self.entry).pull(&mut bytes, Wait::POLL) {
             let Some(ask) = Activate::fetch_at(&bytes[..len], 0).map(|one| one.0) else {
                 continue;
             };
@@ -70,7 +70,7 @@ impl Activation {
             } else {
                 hub::DENIED
             };
-            let mut reply = Sender::<Said>::from_token(ask.back);
+            let mut reply = Sender::<Said>::from_raw(ask.back);
             let _ = reply.send(Said::of(status));
             drop(reply);
             let _ = pie::release(ask.back);
@@ -105,12 +105,12 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
     }
     let _back = Back(back);
     let frame = Activate::of(task, coalitions, seed).ok_or(())?;
-    let mut request = Sender::<Activate>::from_token(entry);
+    let mut request = Sender::<Activate>::from_raw(entry);
     request
         .send_within(frame, Wait::AtMost(BOOT_MS))
         .map_err(|_| ())?;
     let mut bytes = [0; Said::LEN];
-    let (n, from) = HolePie::from_token(back)
+    let (n, from) = Hole::from_raw(back)
         .pull(&mut bytes, Wait::AtMost(BOOT_MS))
         .map_err(|_| ())?;
     let said = Said::fetch_at(&bytes[..n], 0).map(|one| one.0).ok_or(())?;

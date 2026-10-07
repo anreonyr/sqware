@@ -65,7 +65,7 @@ pub enum Mode {
 /// 读者等它）。**铃并进页之后一具架只剩一枚 Pie** ⇒ 树上一格门牌挂得下的正是它（见
 /// `env::abi::call` 的 `Ring`/`Hush`/`Wait` 与 `pole::PoleMeta` 那一节）。
 /// 两端由这一具架取（`writer()` / `reader()`），或由 [`Rack::ship`] 交出的**那一枚号**在对端
-/// 重建（[`Writer::from_token`] / [`Reader::from_token`]，与 `Sender::from_token` 同形）。
+/// 重建（[`Writer::from_raw`] / [`Reader::from_raw`]，与 `Sender::from_raw` 同形）。
 pub struct Rack<M: Message> {
     /// 页（借映进本域，与 `Dock` 同一条手：`open` 返视图、`shut` 撤图）。
     dock: Dock,

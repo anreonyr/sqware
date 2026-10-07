@@ -9,7 +9,7 @@ use protocol::{
     system::identity::{self as api, Grant, Reply, Wire},
 };
 use ::resource::{
-    raw::{HolePie, reserve},
+    raw::{Hole, reserve},
     pile::Pile,
     port::{self, Access, Policy},
 };
@@ -74,7 +74,7 @@ pub(super) fn receive(
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
     if let Some((entry, grant)) = &ready.0 {
-        while let Ok((n, from)) = HolePie::from_token(*entry).pull(&mut buffer.0, Wait::POLL) {
+        while let Ok((n, from)) = Hole::from_raw(*entry).pull(&mut buffer.0, Wait::POLL) {
             let Some((wire, back)) = Wire::take(&buffer.0[..n]) else {
                 continue;
             };
@@ -122,7 +122,7 @@ pub(super) fn reply(
     if !matches!(*current, Current::Answered { .. }) { return Err(Fail::Book); }
     let Current::Answered { incoming, reply } = core::mem::replace(&mut *current, Current::Empty)
         else { unreachable!() };
-    let _ = Sender::<Reply>::from_token(incoming.back).send(reply);
+    let _ = Sender::<Reply>::from_raw(incoming.back).send(reply);
     let _ = pie::release(incoming.back);
     Ok(Progress::Done)
 }

@@ -61,12 +61,12 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
 
 /// 把那一声答出去（一个时刻）
 fn ship_time(back: PieToken, now: u64) {
-    let mut tx = Sender::<Time>::from_token(back);
+    let mut tx = Sender::<Time>::from_raw(back);
     let _ = tx.send(Time::of(now));
 }
 
 /// 把那一格码答出去
 fn ship_code(back: PieToken, code: u8) {
-    let mut tx = Sender::<Status>::from_token(back);
+    let mut tx = Sender::<Status>::from_raw(back);
     let _ = tx.send(Status::of(code));
 }

@@ -14,7 +14,7 @@ fn main() -> programs::Report<'static> {
         .expect("system-child: ready"),
     );
     loop {
-        execution::room::sleep(core::time::Duration::from_millis(100))
+        execution::room::park(core::time::Duration::from_millis(100))
             .expect("system-child: wait");
     }
 }

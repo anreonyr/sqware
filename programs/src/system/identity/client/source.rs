@@ -44,7 +44,7 @@ pub(crate) fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'sta
         if left == 0 {
             return Err("identity face missing");
         }
-        execution::room::sleep(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
+        execution::room::park(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
         left = left.saturating_sub(RETRY_MS);
     }
 }
