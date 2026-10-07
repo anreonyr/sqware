@@ -6,6 +6,7 @@
 
 pub mod client;
 pub mod frame;
+pub mod rpc;
 pub mod marks;
 pub mod grant;
 pub mod publication;

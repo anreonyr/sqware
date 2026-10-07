@@ -66,7 +66,7 @@ pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
             team: built.team.get() as u64,
         },
         Err(fail) => Said {
-            status: protocol::system::control::frame::fail_to_code(Some(fail)),
+            status: system_api::control::frame::fail_to_code(Some(fail)),
             task: TaskId::new(0),
             team: 0,
         },

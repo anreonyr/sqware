@@ -1,55 +1,46 @@
 use crate::system::run::publication::book::Publications;
-use env::wire::Span as _;
-use env::{PieToken, TaskId, Wait};
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::control::publication::{self as pubcall, Frame, Reply};
+use env::Wait;
+use ipc::rpc;
+use protocol::system::control::rpc::Publication;
 use protocol::system::operator::Fail;
+use system_api::control::publication::{self as pubcall, Frame, Reply};
 
 use super::{Inbox, Incoming, Outcome, Request};
+use ::resource::raw::inspect;
 use env::pie;
-use ::resource::raw::{Hole, inspect, reserve};
-fn valid_back(back: PieToken, from: TaskId) -> bool {
-    matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
-}
-fn reply(back: PieToken, reply: Reply) {
-    let mut bytes = [0; Reply::LEN];
-    if let Some(n) = reply.store_at(&mut bytes, 0) {
-        let _ = Hole::from_raw(back).push(&bytes[..n], Wait::POLL);
-    }
-    let _ = pie::release(back);
-}
 pub fn receive(
     images: Res<crate::system::control::serve::start::Images>,
     mut inbox: ResMut<Inbox>,
     mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
-    while let Ok((n, from)) = Hole::from_raw(images.entry).pull(&mut bytes, Wait::POLL) {
-        let Some(frame) = Frame::take(&bytes[..n]) else {
-            continue;
-        };
-        if !valid_back(frame.back, from) {
-            if frame.op == pubcall::PUBLISH
-                && matches!(inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from)
-            {
-                // Existing publications may still own an equivalent reference; cleanup runs with the index.
-                inbox.0.try_reserve(1).map_err(|_| "publication capacity")?;
-                inbox.0.push_back(Incoming {
-                    frame,
-                    from,
-                    admitted: false,
-                });
+    let receiver = rpc::request::Receiver::<Publication>::from_raw(images.entry);
+    loop {
+        let (frame, from, back) = match receiver.receive(&mut bytes, Wait::POLL) {
+            Ok(incoming) => (incoming.request, incoming.from, Some(incoming.reply)),
+            Err(rejected) => {
+                if matches!(rejected.fail, rpc::Fail::Receive(_)) {
+                    break;
+                }
+                let Some((from, frame)) = rejected.incoming else {
+                    continue;
+                };
+                if frame.op != pubcall::PUBLISH
+                    || !matches!(inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from)
+                {
+                    continue;
+                }
+                // Cleanup consults the index before forgetting an existing reference.
+                (frame, from, None)
             }
-            continue;
-        }
+        };
         inbox.0.try_reserve(1).map_err(|_| "publication capacity")?;
-        inbox.0.push_back(Incoming {
-            frame,
-            from,
-            admitted: true,
-        });
+        inbox.0.push_back(Incoming { frame, from, back });
     }
-    dispatch.begin(inbox.0.len()).map_err(|_| "publication scheduling error")?;
+    dispatch
+        .begin(inbox.0.len())
+        .map_err(|_| "publication scheduling error")?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -59,10 +50,12 @@ pub fn select(
 ) -> Result<Progress, &'static str> {
     request.0 = inbox.0.pop_front();
     if let Some(incoming) = &request.0 {
-        dispatch.select(::schedule::Invocation {
-            key: 0,
-            cursor: Default::default(),
-        }).map_err(|_| "publication scheduling error")?;
+        dispatch
+            .select(::schedule::Invocation {
+                key: 0,
+                cursor: Default::default(),
+            })
+            .map_err(|_| "publication scheduling error")?;
         let _ = incoming;
     }
     Ok(Progress::Done)
@@ -79,11 +72,10 @@ pub fn finish(
     {
         let _ = pie::forget(incoming.frame.entry);
     }
-    if !incoming.admitted {
+    let Some(back) = incoming.back else {
         return Ok(Progress::Done);
-    }
-    reply(
-        incoming.frame.back,
+    };
+    let _ = back.send(
         outcome
             .0
             .take()
@@ -95,7 +87,11 @@ pub fn finish(
 pub fn completed(
     mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
-    match dispatch.take_result().map_err(|_| "publication scheduling error")?.result {
+    match dispatch
+        .take_result()
+        .map_err(|_| "publication scheduling error")?
+        .result
+    {
         Ok(Progress::Done) => Ok(Progress::Done),
         Err(::schedule::RunError::Step(why)) => Err(why),
         _ => Err("publication scheduling error"),

@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use env::{HoleDir, PieToken};
-use protocol::system::control as ccall;
+use system_api::control as ccall;
 use ::resource::pile::{Pile, Sub};
 
 pub struct Watch {

@@ -29,15 +29,15 @@ pub fn faces(
     mut watch: ResMut<Watch>,
 ) -> Result<Progress, &'static str> {
     let principal = roster.control().ok_or("Control identity missing")?;
-    for grant in protocol::system::control::Grant::ALL {
-        let permit = if grant == protocol::system::control::Grant::State {
+    for grant in system_api::control::Grant::ALL {
+        let permit = if grant == system_api::control::Grant::State {
             op::Permit::Public
         } else {
             op::Permit::Identity(id::Selector::Exact(principal))
         };
         let (entry, _) = mount::entry(grant.mark(), grant.name())?;
         mounts.0.push(Internal {
-            road: protocol::system::control::DIR
+            road: system_api::control::DIR
                 .try_join(grant.name())
                 .ok_or("Control path")?,
             entry,

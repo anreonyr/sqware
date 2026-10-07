@@ -6,13 +6,13 @@ use crate::system::operator::core::Tile;
 use crate::system::operator::client::Tree;
 use crate::system::operator::Placement;
 use alloc::{string::String, vec::Vec};
-use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
+use system_api::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use env::pie;
-use ::resource::raw::{Hole, reserve};
+use ipc::rpc;
+use protocol::system::control::rpc::Publication;
 
 pub struct Registration {
     pub name: String,
@@ -128,17 +128,6 @@ impl Names {
         Ok(())
     }
 }
-fn valid_back(back: PieToken, from: TaskId) -> bool {
-    matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == pubcall::BACK)
-}
-fn reply(back: PieToken, reply: Reply) {
-    let mut bytes = [0; Reply::LEN];
-    if let Some(n) = reply.store_at(&mut bytes, 0) {
-        let _ = Hole::from_raw(back).push(&bytes[..n], Wait::POLL);
-    }
-    let _ = pie::release(back);
-}
-
 pub enum AliasRequest {
     Candidate { task: TaskId, object: Object },
     Install(Registration),
@@ -287,19 +276,19 @@ pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress
     let mut bytes = [0; Frame::LEN];
     // Ref answers read only the verified index and never wait for Operator.
     for alias in &names.aliases {
-        while let Ok((n, from)) = Hole::from_raw(alias.entry).pull(&mut bytes, Wait::POLL) {
-            let Some(frame) = Frame::take(&bytes[..n]) else {
-                continue;
+        let receiver = rpc::request::Receiver::<Publication>::from_raw(alias.entry);
+        loop {
+            let incoming = match receiver.receive(&mut bytes, Wait::POLL) {
+                Ok(incoming) => incoming,
+                Err(rejected) if matches!(rejected.fail, rpc::Fail::Receive(_)) => break,
+                Err(_) => continue,
             };
-            if !valid_back(frame.back, from) {
-                continue;
-            }
+            let frame = incoming.request;
             let accepted = frame.op == pubcall::RESOLVE
                 && frame.name == alias.name
                 && frame.kind == 10 + alias.object.kind()
                 && Some(alias.object.authority()) == current_authority(roster);
-            reply(
-                frame.back,
+            let _ = incoming.reply.send(
                 if accepted {
                     Reply::object(alias.object)
                 } else {

@@ -8,7 +8,7 @@ use crate::system::operator::Placement;
 use crate::system::run::resource::Resources;
 use protocol::common::path::Path;
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::control::publication::{self as pubcall, Scope, Target};
+use system_api::control::publication::{self as pubcall, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{Fail, Permit};
 
@@ -20,7 +20,7 @@ pub fn source(
     mut decision: ResMut<Decision>,
 ) -> Result<Progress, &'static str> {
     let request = request.0.as_ref().ok_or("publication request")?;
-    if !request.admitted || request.frame.op != pubcall::PUBLISH {
+    if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
         return Ok(Progress::Done);
     }
     let target_live = match request.frame.target() {
@@ -44,7 +44,7 @@ pub fn service(
         return Ok(Progress::Done);
     }
     let request = request.0.as_ref().ok_or("publication request")?;
-    if !request.admitted || request.frame.op != pubcall::PUBLISH {
+    if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
         return Ok(Progress::Done);
     }
     let Some(target @ Target::Service { .. }) = request.frame.target() else {
@@ -185,7 +185,7 @@ pub fn runtime(
         return Ok(Progress::Done);
     }
     let request = request.0.as_ref().ok_or("publication request")?;
-    if !request.admitted || request.frame.op != pubcall::PUBLISH {
+    if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
         return Ok(Progress::Done);
     }
     *decision = resources.policy(request).unwrap_or_else(Decision::Failed);

@@ -183,7 +183,7 @@ fn main() -> programs::Report<'static> {
                     .unwrap()
                     .seed();
                     pie::seal(closed).unwrap();
-                    let mut frame = Frame::new(1, abandoned.clone(), seed, Permit::Public);
+                    let mut frame = Frame::new(1, abandoned.clone(), (seed, Permit::Public));
                     frame.back = reply;
                     ipc::hand::Sender::<Frame>::from_raw(
                         establish::find(control, ENTRY).unwrap(),

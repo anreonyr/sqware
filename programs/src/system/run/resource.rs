@@ -89,7 +89,7 @@ impl Resources {
         incoming: &crate::system::run::publication::Incoming,
     ) -> Result<crate::system::run::publication::Decision, Fail> {
         use crate::system::run::publication::{Approved, Decision};
-        use protocol::system::control::publication::Target;
+        use system_api::control::publication::Target;
         let target = incoming.frame.target().ok_or(Fail::Denied)?;
         let Target::RuntimeResource { task, kind, name } = &target else {
             return Err(Fail::Denied);

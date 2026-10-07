@@ -23,7 +23,7 @@ mod tests {
     use definitions::{Definition, conflict};
     #[test]
     fn declared_domains_are_unique_and_existing_values_are_preserved() {
-        let groups = [control::DECLARATIONS, &identity::DECLARATIONS, &operator::DECLARATIONS,
+        let groups = [&control::DECLARATIONS[..], &identity::DECLARATIONS[..], &operator::DECLARATIONS[..],
             loader::DECLARATIONS, driver::DECLARATIONS, hub::DECLARATIONS, terminal::DECLARATIONS];
         assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 29);
         assert_eq!(conflict(&groups), None);
@@ -48,7 +48,7 @@ mod tests {
     #[test]
     fn publication_marks_are_checked_against_other_domains() {
         let collision = [Definition { name: "foreign", mark: control::PUBLICATION_BACK }];
-        assert_eq!(conflict(&[control::DECLARATIONS, &collision]),
+        assert_eq!(conflict(&[&control::DECLARATIONS[..], &collision]),
             Some(("control-publication-back", "foreign")));
     }
 }

@@ -6,9 +6,9 @@ use super::{
 };
 use crate::system::control::core::unit::State;
 use env::{Wait, unit};
-use protocol::{
-    system::control::{self as call},
-};
+use ipc::rpc::{self, request::Receiver as RequestReceiver};
+use system_api::control as call;
+use protocol::system::control::rpc::Control as ControlContract;
 
 pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<Progress, Fail> {
     let count = inbox.0.len();
@@ -24,8 +24,8 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
                 continue;
             }
         };
-        if !::resource::raw::alive(incoming.back) {
-            let _ = env::pie::release(incoming.back);
+        if !incoming.reply.is_alive() {
+            drop(incoming.reply);
             continue;
         }
         let result = (|| {
@@ -80,10 +80,10 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
             Ok(Some(call::frame::said_status(call::frame::OK)))
         })();
         match result {
-            Ok(Some(said)) => answer::reply(incoming.back, said),
+            Ok(Some(said)) => answer::reply(incoming.reply, said),
             Ok(None) => inbox.0.push_back(incoming),
             Err(fail) => answer::reply(
-                incoming.back,
+                incoming.reply,
                 call::frame::said_status(call::frame::fail_to_code(Some(fail))),
             ),
         }
@@ -99,19 +99,18 @@ pub fn receive(
     let Some(entry) = watch.instance else {
         return Ok(Progress::Done);
     };
+    let receiver = RequestReceiver::<ControlContract>::from_raw(entry);
     for _ in 0..16 {
-        let Ok((len, from)) =
-            ::resource::raw::Hole::from_raw(entry).pull(&mut buffer.0, Wait::POLL)
-        else {
-            break;
+        let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
+            Ok(request) => request,
+            Err(rejected) => match rejected.fail {
+                rpc::Fail::Receive(_) => break,
+                _ => continue,
+            },
         };
-        let Some((wire, back)) = call::frame::Wire::take(&buffer.0[..len]) else {
-            continue;
-        };
-        if !matches!(::resource::raw::reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == call::BACK)
-        {
-            continue;
-        }
+        let from = request.from;
+        let (wire, _) = request.request;
+        let reply = request.reply;
         match wire {
             Some(
                 wire @ (call::frame::Wire::EmbarkInstance(_)
@@ -120,12 +119,12 @@ pub fn receive(
                 | call::frame::Wire::StateInstance(_)),
             ) => {
                 if inbox.0.try_reserve(1).is_err() {
-                    answer::reply(back, call::frame::said_status(call::frame::FULL));
+                    answer::reply(reply, call::frame::said_status(call::frame::FULL));
                 } else {
-                    inbox.0.push_back(answer::Incoming { wire, from, back });
+                    inbox.0.push_back(answer::Incoming { wire, from, reply });
                 }
             }
-            _ => answer::reply(back, call::frame::said_status(call::frame::DENIED)),
+            _ => answer::reply(reply, call::frame::said_status(call::frame::DENIED)),
         }
     }
     Ok(Progress::Done)

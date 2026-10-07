@@ -1,251 +1,19 @@
-//! Control owns publication policy; clients submit typed objects, never absolute paths.
-use crate::common::path::{Path, PathBuf};
-use ipc::hand::Sender;
-use ipc::session::establish;
+//! Control publication client. Wire types live in system-api.
+
+use crate::common::path::PathBuf;
 use crate::system::identity::{CoalitionId, PrincipalId};
-use crate::system::operator::{EntryId, Fail, Permit};
-use crate::wire::message::Message;
-use alloc::string::String;
-use env::wire::Span as _;
-use env::{PieToken, TaskId, Wait};
+use crate::system::operator::Fail;
+use crate::system::operator::{EntryId, Permit};
+use ::resource::raw::{inspect, reserve};
 use env::pie;
-use ::resource::raw::{Hole, inspect, reserve};
+use env::{PieToken, TaskId, Wait};
+use ipc::session::establish;
+use ipc::{rpc, time::Deadline};
 
-pub use super::marks::PUBLICATION_ENTRY as ENTRY;
-pub use super::marks::PUBLICATION_BACK as BACK;
-pub use super::marks::IDENTITY_REF as REF;
-pub const PUBLISH: u8 = 1;
-pub const UNPUBLISH: u8 = 2;
-pub const RESOLVE: u8 = 3;
-pub const RUNTIME: u8 = 4;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scope {
-    Driver = 1,
-    Hub = 2,
-    Device = 3,
-    Fixture = 4,
-    Terminal = 5,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Target {
-    Service {
-        scope: Scope,
-        group: String,
-        name: String,
-    },
-    IdentityName {
-        object: Object,
-        name: String,
-    },
-    RuntimeResource {
-        task: TaskId,
-        kind: String,
-        name: String,
-    },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Object {
-    Principal(PrincipalId),
-    Coalition(CoalitionId),
-}
-impl Object {
-    pub fn authority(self) -> TaskId {
-        match self {
-            Self::Principal(p) => p.authority,
-            Self::Coalition(c) => c.authority,
-        }
-    }
-    pub fn slot(self) -> u64 {
-        match self {
-            Self::Principal(p) => p.slot,
-            Self::Coalition(c) => c.slot,
-        }
-    }
-    pub fn kind(self) -> u8 {
-        match self {
-            Self::Principal(_) => 1,
-            Self::Coalition(_) => 2,
-        }
-    }
-    pub fn road(self, name: &str) -> Option<PathBuf> {
-        if !valid_name(name) {
-            return None;
-        }
-        let base = match self {
-            Self::Principal(_) => Path::new("idt/principal"),
-            Self::Coalition(_) => Path::new("idt/coalition"),
-        };
-        base.try_join(name)?.try_join("ref")
-    }
-}
-
-pub use crate::common::name::valid as valid_name;
-
-#[derive(env::Frame, Clone, Debug, PartialEq, Eq)]
-#[frame(len = 160)]
-pub struct Frame {
-    pub op: u8,
-    pub kind: u8,
-    pub group: String,
-    pub name: String,
-    pub task: TaskId,
-    pub number: u64,
-    pub entry: PieToken,
-    pub permit: Permit,
-    pub back: PieToken,
-}
-impl Frame {
-    pub fn new(op: u8, target: Target, entry: PieToken, permit: Permit) -> Self {
-        let (kind, group, name, task, number) = match target {
-            Target::Service { scope, group, name } => (scope as u8, group, name, TaskId::new(0), 0),
-            Target::IdentityName { object, name } => (
-                10 + object.kind(),
-                String::new(),
-                name,
-                object.authority(),
-                object.slot(),
-            ),
-            Target::RuntimeResource { task, kind, name } => (20, kind, name, task, 0),
-        };
-        Self {
-            op,
-            kind,
-            group,
-            name,
-            task,
-            number,
-            entry,
-            permit,
-            back: PieToken::NONE,
-        }
-    }
-    pub fn target(&self) -> Option<Target> {
-        if !valid_name(&self.name) || (!self.group.is_empty() && !valid_name(&self.group)) {
-            return None;
-        }
-        let object = match self.kind {
-            11 => Some(Object::Principal(PrincipalId::new(self.task, self.number))),
-            12 => Some(Object::Coalition(CoalitionId::new(self.task, self.number))),
-            _ => None,
-        };
-        if let Some(object) = object {
-            if !self.group.is_empty() {
-                return None;
-            }
-            return Some(Target::IdentityName {
-                object,
-                name: self.name.clone(),
-            });
-        }
-        if self.kind == 20 {
-            if self.number != 0 || self.group.is_empty() || self.task.get() == 0 {
-                return None;
-            }
-            return Some(Target::RuntimeResource {
-                task: self.task,
-                kind: self.group.clone(),
-                name: self.name.clone(),
-            });
-        }
-        let scope = match self.kind {
-            1 => Scope::Driver,
-            2 => Scope::Hub,
-            3 => Scope::Device,
-            4 => Scope::Fixture,
-            5 => Scope::Terminal,
-            _ => return None,
-        };
-        (self.task.get() == 0 && self.number == 0).then(|| Target::Service {
-            scope,
-            group: self.group.clone(),
-            name: self.name.clone(),
-        })
-    }
-    pub fn take(bytes: &[u8]) -> Option<Self> {
-        let (frame, at) = Self::fetch_at(bytes, 0)?;
-        (at == bytes.len()).then_some(frame)
-    }
-}
-impl Message for Frame {
-    type In = Self;
-    type Buf = [u8; Self::LEN];
-    const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, bytes: &mut [u8]) -> Option<usize> {
-        self.store_at(bytes, 0)
-    }
-    fn fetch(bytes: &[u8]) -> Option<Self> {
-        Self::take(bytes)
-    }
-}
-
-#[derive(env::Frame, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Reply {
-    pub status: u8,
-    pub kind: u8,
-    pub task: TaskId,
-    pub number: u64,
-}
-impl Reply {
-    pub fn from_sender(control: TaskId, from: TaskId, bytes: &[u8]) -> Result<Self, Fail> {
-        if bytes.len() != Self::LEN || from != control {
-            return Err(Fail::Denied);
-        }
-        Self::fetch_at(bytes, 0)
-            .map(|one| one.0)
-            .ok_or(Fail::Unknown)
-    }
-    pub fn mount(id: EntryId) -> Self {
-        Self {
-            status: 0,
-            kind: 0,
-            task: TaskId::new(0),
-            number: id.get() as u64,
-        }
-    }
-    pub fn object(object: Object) -> Self {
-        Self {
-            status: 0,
-            kind: object.kind(),
-            task: object.authority(),
-            number: object.slot(),
-        }
-    }
-    pub fn fail(fail: Fail) -> Self {
-        Self {
-            status: crate::system::operator::fail_to_code(Some(fail)),
-            kind: 0,
-            task: TaskId::new(0),
-            number: 0,
-        }
-    }
-    pub fn result(self) -> Result<Self, Fail> {
-        if self.status == 0 {
-            Ok(self)
-        } else {
-            Err(crate::system::operator::code_to_fail(self.status).unwrap_or(Fail::Unknown))
-        }
-    }
-    pub fn identity(self, authority: TaskId) -> Result<Object, Fail> {
-        let reply = self.result()?;
-        if reply.task != authority {
-            return Err(Fail::Unjudged);
-        }
-        match reply.kind {
-            1 => Ok(Object::Principal(PrincipalId::new(
-                reply.task,
-                reply.number,
-            ))),
-            2 => Ok(Object::Coalition(CoalitionId::new(
-                reply.task,
-                reply.number,
-            ))),
-            _ => Err(Fail::Unknown),
-        }
-    }
-}
+pub use system_api::control::publication::{
+    BACK, ENTRY, Frame, Object, PUBLISH, REF, RESOLVE, RUNTIME, Reply, Scope, Target, UNPUBLISH,
+    valid_name,
+};
 
 #[derive(Clone, Copy)]
 pub struct Client {
@@ -254,8 +22,7 @@ pub struct Client {
 }
 impl Client {
     pub fn direct(control: TaskId, entry: PieToken) -> Result<Self, Fail> {
-        if !matches!(reserve(entry), Ok((_, owner, mark)) if owner == control && mark == ENTRY)
-        {
+        if !matches!(reserve(entry), Ok((_, owner, mark)) if owner == control && mark == ENTRY) {
             return Err(Fail::Denied);
         }
         Ok(Self { control, entry })
@@ -280,13 +47,12 @@ impl Client {
         permit: Permit,
         wait: Wait,
     ) -> Result<EntryId, Fail> {
-        let mut frame = Frame::new(PUBLISH, target, entry, permit);
+        let mut frame = Frame::new(PUBLISH, target, (entry, permit));
         if frame.target().is_none() {
             return Err(Fail::Denied);
         }
         Self::direct(self.control, self.entry)?;
-        if !matches!(inspect(entry), Ok((_, owner, _)) if owner == env::unit::self_id())
-        {
+        if !matches!(inspect(entry), Ok((_, owner, _)) if owner == env::unit::self_id()) {
             return Err(Fail::Denied);
         }
         let seed = ::resource::port::ship(
@@ -311,7 +77,7 @@ impl Client {
 
     pub fn unpublish(&self, target: Target, wait: Wait) -> Result<(), Fail> {
         self.call(
-            Frame::new(UNPUBLISH, target, PieToken::NONE, Permit::Public),
+            Frame::new(UNPUBLISH, target, (PieToken::NONE, Permit::Public)),
             wait,
         )
         .map(|_| ())
@@ -324,8 +90,7 @@ impl Client {
                 kind: "hole".into(),
                 name: "directory".into(),
             },
-            PieToken::NONE,
-            Permit::Public,
+            (PieToken::NONE, Permit::Public),
         );
         let reply = self.call(frame, wait)?;
         PathBuf::try_new(&alloc::format!("uit/{}/{}", reply.number, reply.task.get()))
@@ -372,8 +137,7 @@ impl Client {
                 object,
                 name: name.into(),
             },
-            PieToken::NONE,
-            Permit::Public,
+            (PieToken::NONE, Permit::Public),
         );
         let reply = exchange(control, entry, &mut frame, wait, &mut false)?;
         if reply.status == 0 && reply.kind != kind {
@@ -390,23 +154,20 @@ fn exchange(
     wait: Wait,
     admitted: &mut bool,
 ) -> Result<Reply, Fail> {
-    let (back, seed) = establish::lend_out(entry, BACK).map_err(|_| Fail::Unknown)?;
-    struct Back(PieToken);
-    impl Drop for Back {
-        fn drop(&mut self) {
-            let _ = pie::seal(self.0);
-            let _ = pie::release(self.0);
-        }
+    let sender = rpc::request::Sender::<super::rpc::Publication>::from_raw(entry)
+        .map_err(|_| Fail::Unknown)?;
+    if sender.peer() != control {
+        return Err(Fail::Denied);
     }
-    let _back = Back(back);
-    frame.back = seed;
-    Sender::<Frame>::from_raw(entry)
-        .send_within(frame.clone(), wait)
+    let response = sender
+        .send(Deadline::new(wait), |back| {
+            frame.back = back;
+            frame.clone()
+        })
         .map_err(|_| Fail::Unknown)?;
     *admitted = true;
-    let mut bytes = [0; Reply::LEN];
-    let (n, from) = Hole::from_raw(back)
-        .pull(&mut bytes, wait)
-        .map_err(|_| Fail::Unknown)?;
-    Reply::from_sender(control, from, &bytes[..n])
+    response.receive().map_err(|error| match error {
+        rpc::Fail::WrongSource | rpc::Fail::Decode => Fail::Denied,
+        _ => Fail::Unknown,
+    })
 }

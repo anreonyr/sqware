@@ -3,7 +3,7 @@ use crate::system::operator::client::Tree;
 use crate::system::run::publication::book::{Address, Installation, Publications, Record, Source};
 use crate::system::run::resource::Resources;
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::control::publication::{self as pubcall, Object, Reply, Scope, Target};
+use system_api::control::publication::{self as pubcall, Object, Reply, Scope, Target};
 use protocol::system::identity::Selector;
 use protocol::system::operator::{EntryId, Fail, Permit};
 
@@ -44,7 +44,7 @@ pub fn simple(
     mut outcome: ResMut<Outcome>,
 ) -> Result<Progress, &'static str> {
     let request = request.0.as_ref().ok_or("publication request")?;
-    if !request.admitted {
+    if request.back.is_none() {
         return Ok(Progress::Done);
     }
     match (request.frame.op, request.frame.target()) {
@@ -68,7 +68,7 @@ pub fn unpublish(
     mut decision: ResMut<Decision>,
 ) -> Result<Progress, &'static str> {
     let request = request.0.as_ref().ok_or("publication request")?;
-    if !request.admitted || request.frame.op != pubcall::UNPUBLISH {
+    if request.back.is_none() || request.frame.op != pubcall::UNPUBLISH {
         return Ok(Progress::Done);
     }
     let Some(target) = request.frame.target() else {

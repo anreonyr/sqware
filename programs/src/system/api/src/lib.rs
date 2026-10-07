@@ -3,6 +3,7 @@
 extern crate alloc;
 
 pub mod identity;
+pub mod control;
 pub mod operator;
 
 #[mold::interface(id = "sqware.system.loader.v1")]

@@ -92,9 +92,9 @@ pub fn startup(
 pub fn reply(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
     let count = operations.0.len();
     for _ in 0..count {
-        if let Some(tracked) = operations.0.pop_front() {
+        if let Some(mut tracked) = operations.0.pop_front() {
             if tracked.complete && tracked.operation.request.back.is_some() {
-                crate::system::control::serve::answer::complete(&tracked.operation);
+                crate::system::control::serve::answer::complete(&mut tracked.operation);
             } else {
                 operations.0.push_back(tracked);
             }

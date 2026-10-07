@@ -1,7 +1,9 @@
 use super::{start, unit::Service};
 use crate::system::control::core::verdict::Fail;
 use alloc::{collections::VecDeque, string::String, vec::Vec};
-use env::{Mark, PieToken, TaskId};
+use env::{Mark, TaskId};
+use ipc::rpc::reply::Sender as ReplySender;
+use system_api::control::frame::Said;
 use ::schedule::Cursor;
 
 pub mod debark;
@@ -26,7 +28,7 @@ pub enum Action {
 pub struct Request {
     pub name: String,
     pub action: Action,
-    pub back: Option<PieToken>,
+    pub back: Option<ReplySender<Said>>,
 }
 pub struct Instance {
     pub service: Service,
@@ -54,15 +56,17 @@ impl Operations {
     pub fn new() -> Self {
         Self(VecDeque::new())
     }
-    pub fn push(&mut self, request: Request) -> Result<(), Fail> {
+    pub fn push(&mut self, request: Request) -> Result<(), (Fail, Request)> {
         if self
             .0
             .iter()
             .any(|j| !j.complete && j.operation.request.name == request.name)
         {
-            return Err(Fail::NotReady);
+            return Err((Fail::NotReady, request));
         }
-        self.0.try_reserve(1).map_err(|_| Fail::Full)?;
+        if self.0.try_reserve(1).is_err() {
+            return Err((Fail::Full, request));
+        }
         self.0.push_back(Tracked {
             operation: Operation {
                 request,

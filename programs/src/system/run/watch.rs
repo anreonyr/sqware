@@ -3,7 +3,7 @@ use crate::system::control::{core::unit::Slot, serve::{Fail, unit::Control, watc
 use super::names::Names;
 use alloc::vec::Vec;
 use env::{PieToken, Wait};
-use protocol::system::control as ccall;
+use system_api::control as ccall;
 use ::resource::pile::Sub;
 
 use ::schedule::{Progress, Res, ResMut};

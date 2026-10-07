@@ -1,7 +1,7 @@
 use ::schedule::{Progress, Res, ResMut};
 use crate::system::control::{core::unit::State, serve::{Fail, unit::Control}};
 use env::{Wait, unit};
-use protocol::system::control as call;
+use system_api::control as call;
 
 pub fn reap(mut control: ResMut<Control>, flow: Res<super::frame::Flow>) -> Result<Progress, Fail> {
     for item in &mut control.instances {
@@ -60,7 +60,7 @@ pub fn publication(
     let entry = env::pie::unseal_hole(call::ASK_MARK).map_err(|_| "instance entry")?;
     watch.instance = Some(entry);
     mounts.0.push(crate::system::run::publication::Internal {
-        road: call::client::INSTANCE.to_path_buf(),
+        road: call::INSTANCE.to_path_buf(),
         entry,
         access: (protocol::system::operator::Permit::Bound, unit::self_id()),
     });

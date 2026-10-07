@@ -149,6 +149,11 @@ pub mod reply {
             }
         }
 
+        /// Whether this imported reply route still names a live hole.
+        pub fn is_alive(&self) -> bool {
+            raw::alive(self.token)
+        }
+
         /// Encode and send exactly one response, then release the imported route.
         pub fn send(mut self, response: R) -> Result<(), Fail> {
             let result = HandSender::<R>::from_raw(self.token)

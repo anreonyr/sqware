@@ -3,16 +3,15 @@ use super::{
     unit::Control,
 };
 use crate::system::control::core::unit::State;
-use env::pie;
-use env::{PieToken, Wait};
-use ipc::hand::Sender;
-use protocol::system::control as ccall;
-use ::resource::raw::{Hole, reserve};
+use env::Wait;
+use ipc::rpc::{self, reply::Sender as ReplySender, request::Receiver as RequestReceiver};
+use system_api::control as ccall;
+use protocol::system::control::rpc::Control as ControlContract;
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,
     pub from: env::TaskId,
-    pub back: PieToken,
+    pub reply: ReplySender<ccall::frame::Said>,
 }
 pub struct Inbox(pub alloc::collections::VecDeque<Incoming>);
 pub struct Buffer(pub alloc::vec::Vec<u8>);
@@ -26,31 +25,34 @@ pub fn receive(
         let Some(face) = watch.faces[grant.index()] else {
             continue;
         };
-        let hole = Hole::from_raw(face);
-        while let Ok((len, from)) = hole.pull(&mut buffer.0, Wait::POLL) {
-            let Some((ask, back)) = ccall::frame::Wire::take(&buffer.0[..len]) else {
-                continue;
+        let receiver = RequestReceiver::<ControlContract>::from_raw(face);
+        loop {
+            let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
+                Ok(request) => request,
+                Err(rejected) => match rejected.fail {
+                    rpc::Fail::Receive(_) => break,
+                    _ => continue,
+                },
             };
-            if !matches!(reserve(back), Ok((_, owner, mark)) if owner == from && mark == ccall::BACK)
-            {
-                continue;
-            }
+            let from = request.from;
+            let (ask, _) = request.request;
+            let reply_tx = request.reply;
             let Some(wire) = ask else {
-                reply(back, ccall::frame::said_status(ccall::frame::BAD));
+                reply(reply_tx, ccall::frame::said_status(ccall::frame::BAD));
                 continue;
             };
             if ccall::Grant::for_wire(&wire) != grant {
-                reply(back, ccall::frame::said_status(ccall::frame::DENIED));
+                reply(reply_tx, ccall::frame::said_status(ccall::frame::DENIED));
                 continue;
             }
             if inbox.0.try_reserve(1).is_err() {
                 reply(
-                    back,
+                    reply_tx,
                     status(crate::system::control::core::verdict::Fail::Full),
                 );
                 continue;
             }
-            inbox.0.push_back(Incoming { wire, from, back });
+            inbox.0.push_back(Incoming { wire, from, reply: reply_tx });
         }
     }
     Ok(::schedule::Progress::Done)
@@ -67,7 +69,7 @@ pub fn state(
                 Ok(state) => ccall::frame::said_state(wire_state(state)),
                 Err(fail) => status(fail),
             };
-            reply(incoming.back, said);
+            reply(incoming.reply, said);
         } else {
             inbox.0.push_back(incoming);
         }
@@ -97,18 +99,20 @@ pub fn enqueue(
                 continue;
             }
         };
-        if let Err(fail) = operations.push(Request {
+        if let Err((fail, request)) = operations.push(Request {
             name,
             action,
-            back: Some(incoming.back),
+            back: Some(incoming.reply),
         }) {
-            reply(incoming.back, status(fail));
+            if let Some(reply_tx) = request.back {
+                reply(reply_tx, status(fail));
+            }
         }
     }
     Ok(::schedule::Progress::Done)
 }
-pub(crate) fn complete(operation: &Operation) {
-    let Some(back) = operation.request.back else {
+pub(crate) fn complete(operation: &mut Operation) {
+    let Some(back) = operation.request.back.take() else {
         return;
     };
     let said = match operation.failure {
@@ -126,12 +130,8 @@ pub(crate) fn complete(operation: &Operation) {
 fn status(fail: crate::system::control::core::verdict::Fail) -> ccall::frame::Said {
     ccall::frame::said_status(ccall::frame::fail_to_code(Some(wire_fail(fail))))
 }
-pub(super) fn reply(back: PieToken, said: ccall::frame::Said) {
-    {
-        let mut tx = Sender::<ccall::frame::Said>::from_raw(back);
-        let _ = tx.send(said);
-    }
-    let _ = pie::release(back);
+pub(super) fn reply(back: ReplySender<ccall::frame::Said>, said: ccall::frame::Said) {
+    let _ = back.send(said);
 }
 fn wire_fail(fail: crate::system::control::core::verdict::Fail) -> ccall::Fail {
     use crate::system::control::core::verdict::Fail as Model;

@@ -23,7 +23,7 @@ use ::schedule::{Dispatch, Resources as Registry};
 use ::resource::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();
-    let entry = pie::unseal_hole(protocol::system::control::publication::ENTRY)
+    let entry = pie::unseal_hole(system_api::control::publication::ENTRY)
         .map_err(|_| "publication entry")?;
     let mut resources = Registry::new();
     macro_rules! put {

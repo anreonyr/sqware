@@ -1,16 +1,16 @@
 //! Boot account identities and trusted Login construction.
+use super::names::{Names, Registration};
 use crate::system::control::serve::{Fail, unit::Control};
 use crate::system::identity::client::install::Roster;
-use super::names::{Names, Registration};
 use crate::system::operator::client::Tree;
-use env::wire::Span as _;
-use env::{PieToken, Wait, pie, unit};
 use ::schedule::{Progress, Res, ResMut};
-use protocol::system::control::{self as control_call, Object, account as call};
+use env::{PieToken, Wait, pie, unit};
+use ipc::rpc;
+use protocol::system::control::rpc::Account;
 use protocol::system::identity::Subject;
 use protocol::system::operator::Permit;
-use ::resource::raw::Hole;
-use ipc::rpc::reply::Sender;
+use system_api::control::{self as control_call, Object, account as call};
+use wire::Message;
 pub const ACCOUNT: &str = "anran";
 pub struct Accounts {
     pub entry: PieToken,
@@ -65,23 +65,24 @@ pub fn receive(
     mut control: ResMut<Control>,
     mut pending: ResMut<super::launch::Pending>,
 ) -> Result<Progress, Fail> {
-    let mut bytes = [0; call::Request::LEN];
+    let mut bytes = call::Request::EMPTY;
+    let receiver = rpc::request::Receiver::<Account>::from_raw(accounts.entry);
     for _ in 0..16 {
-        let Ok((n, from)) = Hole::from_raw(accounts.entry).pull(&mut bytes, Wait::POLL) else {
-            break;
+        let incoming = match receiver.receive(&mut bytes, Wait::POLL) {
+            Ok(incoming) => incoming,
+            Err(rejected) if matches!(rejected.fail, rpc::Fail::Receive(_)) => break,
+            Err(_) => continue,
         };
-        let Some((raw, _)) = call::Request::fetch_at(&bytes[..n], 0) else {
-            continue;
-        };
-        let Ok(back) = Sender::<protocol::system::loader::frame::Said>::from_raw(raw.back, from, call::BACK) else {
-            continue;
-        };
-        let mut back = Some(back);
+        let from = incoming.from;
+        let (request, exact) = incoming.request;
+        let mut back = Some(incoming.reply);
         let result = (|| {
             if control.task("login") != Some(from) || !control.live(from) {
                 return Err(control_call::Fail::Denied);
             }
-            let request = call::Request::take(&bytes[..n]).ok_or(control_call::Fail::Bad)?;
+            if !exact || !system_api::operator::name::valid(&request.account) {
+                return Err(control_call::Fail::Bad);
+            }
             if request.account != ACCOUNT {
                 return Err(control_call::Fail::Unknown);
             }

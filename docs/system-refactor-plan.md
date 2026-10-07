@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC、Loader RPC、Identity API/RPC 及 Operator API/会话调用已落地；公共客户端独立成 crate、Control 接口迁移与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC，以及 Loader、Identity、Operator、Control 的提供方 API 与通信迁移已落地；公共客户端独立成 crate、protocol 删除与 System 目录重组尚未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -362,6 +362,17 @@ Operator 的提供方 API 与会话调用已迁移：
 - 一次性 RPC 的独立回程隔离不适用于持久 Session；现有会话报文没有调用关联号，本批未解决超时后迟到应答的配对。这一项须在会话生命周期迁移时明确处理。
 - Operator 专属宿主检查覆盖八条请求与各类应答的固定字节、Permit authority、Path 规范化、bootstrap／事件形状和真实权限判决；IPC 会话测具检查 talk/link 路由、共享预算、来源验证顺序、错误分类及大缓冲收件。
 - 本批 61 项宿主检查通过：Operator API/判决 10、IPC 会话 7、一次性 RPC 16、Identity codec 7、Mark 3、Loader 11、System 边界 7；programs 全目标编译和 QEMU accept、product、system-fault 均通过。
+
+Control 的提供方 API 与三种 RPC 已迁移：
+
+- `system-api::control` 拥有生命周期请求与应答、State、错误码、五个 Grant、单表生成的八个 Mark、入口路径，以及 publication/account 类型与 codec。protocol 的对应数据模块只重导出同一实现。
+- 普通生命周期、publication 和 account 分别绑定固定请求／应答契约，客户端使用独立回程端与共享 Deadline。名称引用入口复用 publication 契约，authority 与实际发送者仍分别验证。
+- 普通请求保留完整头里的未知动作回程，服务端返回 Bad；account 解码保留头完整性标志，授权检查后再验证完整帧与账号名称，非法尾巴仍能返回 Bad。
+- inbox 和生命周期 Request 持有一次性的 `reply::Sender<Said>`；排队失败返回原 Request，保留回复 Full/NotReady 的权利。完成仍在原 run/frame 回复阶段消费 Option，不提前回复，不改变回滚与实例操作顺序。实例重排队通过回复对象查询存活，不暴露裸回程 token。
+- publication 的准入由已验证的回复权表示；不可信回程携带的来源能力仍通过原索引做清理，避免遗忘既有发布引用。客户端在 RPC send 成功后记录交付，接收失败不会撤销已经交付的能力；发送失败才撤销本次授予。
+- publication 构造器把能力与许可作为一对参数，符合 System 三参数限制；原线上帧布局与固定状态码保持不变。业务策略与客户端实现暂留原模块，后续独立 system-client 与软件目录重组时归位。
+- 本批 53 项宿主检查通过：Control API 4、Control/publication 客户端与契约 4、IPC 17、Identity codec 7、Mark 3、Loader 11、System 边界 7。客户端测具模拟 IPC/资源边界并使用真实源码与 codec；异步生命周期队列未新增独立宿主夹具，由全目标编译、RPC 生命周期检查与真实系统场景共同验证。
+- programs 全目标编译及 QEMU accept、product、system-fault 均通过。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 
@@ -414,7 +425,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
 第 1 至 5 批已落地，runtime 迁移完成；下一份实现分离通用通信并迁移其余提供方接口。
-第 6 批的纯 codec、通用 IPC、Loader RPC、Identity API/RPC 与 Operator API/会话调用已完成；接下来迁 Control，并收拢独立 system-client。
+第 6 批的纯 codec、通用 IPC 与四个 System 提供方 API/通信迁移已完成；接下来收拢独立 system-client，并迁出 protocol 剩余的软件接口及兼容导出。
 
 ## 迁移后的命名口径
 
@@ -449,6 +460,8 @@ cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 sh programs/src/system/identity/core/test-host.sh
 nu scripts/qtest.nu --package kernel --scene accept

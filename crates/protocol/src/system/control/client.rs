@@ -1,18 +1,17 @@
-//! 这条路叫什么，以及一条服务的四手。
+/// 这条路叫什么，以及一条服务的四手。
 
-use crate::wire::message::Message;
 use alloc::string::String;
 use env::{PieToken, TaskId, Wait};
 
-use ipc::hand::{Receiver, RecvFail};
 use ipc::session::{Berth, establish};
+use ipc::rpc::{request::Sender, Fail as RpcFail};
+use ipc::time::Deadline;
 
 use super::Fail;
-use super::frame::{self, BACK, State};
-use env::pie;
-use ::resource::raw::Hole;
+use super::frame::{self, State};
+use crate::system::control::rpc::Control;
 
-pub const INSTANCE: &crate::common::path::Path = crate::common::path::Path::new("/svc/sys/control/instance");
+pub use system_api::control::INSTANCE;
 
 /// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
 /// （frame::ASK_MARK）
@@ -25,7 +24,7 @@ pub const BERTH: Berth = Berth {
 /// 一面生命周期服务：**树上查回来的门牌** + 它的开者（对端）
 /// **它不出编排域**：外面那几枚 `Session` / `Endpoint` / `Receiver` 一个都不露
 pub struct Face {
-    entry: PieToken,
+    sender: Sender<Control>,
     host: TaskId,
 }
 
@@ -35,7 +34,11 @@ impl Face {
     /// 不是本端开的
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Bad)?;
-        Ok(Face { entry, host })
+        let sender = Sender::<Control>::from_raw(entry).map_err(|_| Fail::Bad)?;
+        if sender.peer() != host {
+            return Err(Fail::Bad);
+        }
+        Ok(Face { sender, host })
     }
 
     /// 对端是谁（读数用）
@@ -70,40 +73,18 @@ impl Face {
             crate::debug!("control: call deny={step}");
             Fail::Bad
         }
-        // **先铸、先交，再推**（次序是契约的一半，见 ipc::session::establish::lend_out）：
-        // 那一枚"种在对端表里的号"随帧一起过去 ⇒ 对端一次 `Reserve` 就认得出，不必扫表。
-        let (back, seed) = establish::lend_out(self.entry, BACK).map_err(|()| deny("borrow"))?;
-        // 编一问：**一张表 ＋ 一处编**（`back` 是运输那一格，随动作一起进帧）。
-        let mut frame = [0u8; frame::Ask::LEN];
-        let Some(n) = act.store(seed, &mut frame) else {
-            let _ = pie::seal(back);
-            let _ = pie::release(back);
-            return Err(deny("encode"));
-        };
-        let door = Hole::from_raw(self.entry);
-        if door.push(&frame[..n], wait).is_err() {
-            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = pie::seal(back);
-            let _ = pie::release(back);
-            return Err(deny("push"));
-        }
-        let mut buf = frame::Said::EMPTY;
-        let got = Receiver::<frame::Said>::from_raw(back)
-            .recv(buf.as_mut(), wait)
-            .map_err(|e| match e {
-                RecvFail::Unread(len) => {
-                    crate::debug!("control: call deny=recv-unread len={len}");
-                    Fail::Bad
-                }
-                RecvFail::Mail(m) => {
-                    crate::debug!("control: call deny=recv:{}", m.code());
-                    Fail::Bad
-                }
-            });
-        // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-        let _ = pie::seal(back);
-        let _ = pie::release(back);
-        got
+        self.sender
+            .call(Deadline::new(wait), |back| frame::Request(act, back))
+            .map_err(|fail| {
+                let step = match fail {
+                    RpcFail::Open(_) | RpcFail::Grant(_) => "borrow",
+                    RpcFail::Encode => "encode",
+                    RpcFail::Send(_) => "push",
+                    RpcFail::Receive(_) | RpcFail::WrongSource => "receive",
+                    RpcFail::Decode | RpcFail::Untrusted => "decode",
+                };
+                deny(step)
+            })
     }
 }
 

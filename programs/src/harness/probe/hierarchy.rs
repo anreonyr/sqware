@@ -484,7 +484,7 @@ pub fn codecs() {
             name: "entry".into(),
         },
     ] {
-        let frame = Frame::new(1, target.clone(), b, Permit::Public);
+        let frame = Frame::new(1, target.clone(), (b, Permit::Public));
         let mut bytes = [0; Frame::LEN + 1];
         let n = frame.store_at(&mut bytes, 0).unwrap();
         assert_eq!(Frame::take(&bytes[..n]), Some(frame.clone()));
@@ -494,16 +494,11 @@ pub fn codecs() {
             assert!(Frame::take(&bytes[..end]).is_none());
         }
     }
-    let mut bad = Frame::new(
-        1,
-        Target::Service {
+    let mut bad = Frame::new(1, Target::Service {
             scope: Scope::Fixture,
             group: "bad/name".into(),
             name: "x".into(),
-        },
-        b,
-        Permit::Public,
-    );
+        }, (b, Permit::Public));
     assert!(bad.target().is_none());
     bad.group = "legal".into();
     bad.kind = 99;
@@ -691,7 +686,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         let other = env::PieToken::from_bytes(&(raw as u64).to_le_bytes()).unwrap();
         assert_eq!(
             client.call(
-                Frame::new(1, target, other, Permit::Public),
+                Frame::new(1, target, (other, Permit::Public)),
                 Wait::AtMost(3000)
             ),
             Err(Fail::Denied),

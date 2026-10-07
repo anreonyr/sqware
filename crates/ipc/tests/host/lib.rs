@@ -40,6 +40,7 @@ mod test_backend {
         pub fail_send: bool,
         pub fail_pull: bool,
         pub fail_hand_send: bool,
+        pub alive: bool,
         pub reply_error: Option<port::ReplyError>,
         pub push_advance_ns: u64,
     }
@@ -49,7 +50,7 @@ mod test_backend {
             Self { next: 100, now: 0, peer: TaskId::new(7), reservation: None, events: Vec::new(), opened: Vec::new(),
                 remotes: HashMap::new(), last_remote: None, replies: HashMap::new(), automatic_reply: None,
                 fail_open: false, fail_grant: false, fail_send: false, fail_pull: false,
-                fail_hand_send: false, reply_error: None, push_advance_ns: 0 }
+                fail_hand_send: false, alive: true, reply_error: None, push_advance_ns: 0 }
         }
     }
 
@@ -101,6 +102,7 @@ pub mod raw {
     pub fn reserve(_: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
         Ok(with(|state| state.reservation.unwrap_or((state.peer, state.peer, Mark::of("back")))))
     }
+    pub fn alive(_: PieToken) -> bool { with(|state| state.alive) }
 }
 
 pub mod port {
@@ -545,5 +547,28 @@ mod tests {
                 assert!(events.contains(&test_backend::Event::Release(local)), "{stage}");
             }
         }
+    }
+
+    #[test]
+    fn queued_reply_sender_reports_dead_route_and_releases_on_drop() {
+        test_backend::reset();
+        let token = PieToken::mint(58);
+        let reply = rpc::reply::Sender::<Response>::from_raw(
+            token,
+            TaskId::new(7),
+            Mark::of("back"),
+        )
+        .unwrap();
+        assert!(reply.is_alive());
+        test_backend::with(|state| state.alive = false);
+        assert!(!reply.is_alive());
+        drop(reply);
+        assert_eq!(
+            events()
+                .iter()
+                .filter(|event| matches!(event, test_backend::Event::Release(value) if *value == token))
+                .count(),
+            1,
+        );
     }
 }

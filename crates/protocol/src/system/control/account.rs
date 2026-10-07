@@ -1,17 +1,10 @@
 //! Trusted Login requests construction under a configured account identity.
 use super::Fail;
-use crate::common::path::Path;
-use ipc::session::establish;
-use crate::system::{
-    loader::{Built, frame::Said},
-    operator::Face,
-};
-use env::wire::Span as _;
+use crate::system::{loader::Built, operator::Face};
+use ::resource::raw::reserve;
 use env::{PieToken, TaskId, TeamId, Wait, pie};
-use ::resource::raw::{Hole, reserve};
-pub use super::marks::ACCOUNT_ENTRY as ENTRY;
-pub use super::marks::ACCOUNT_BACK as BACK;
-pub const DIR: &Path = Path::new("/svc/sys/control/account");
+use ipc::{rpc, time::Deadline};
+pub use system_api::control::account::{BACK, DIR, ENTRY};
 pub mod frame;
 pub use frame::Request;
 pub struct Client {
@@ -37,39 +30,28 @@ impl Client {
         Ok(Self { entry, host })
     }
     pub fn create(&self, account: &str, wait: Wait) -> Result<Built, Fail> {
-        let (back, token) = establish::lend_out(self.entry, BACK).map_err(|_| Fail::Bad)?;
-        let result = (|| {
-            let request = Request {
+        let deadline = Deadline::new(wait);
+        let sender = rpc::request::Sender::<super::rpc::Account>::from_raw(self.entry)
+            .map_err(|_| Fail::Bad)?;
+        if sender.peer() != self.host {
+            return Err(Fail::Bad);
+        }
+        let reply = sender
+            .call(deadline, |back| Request {
                 account: account.into(),
-                back: token,
-            };
-            let mut bytes = [0; Request::LEN];
-            let n = request.store_at(&mut bytes, 0).ok_or(Fail::Bad)?;
-            Hole::from_raw(self.entry)
-                .push(&bytes[..n], wait)
-                .map_err(|_| Fail::Bad)?;
-            let mut bytes = [0; Said::LEN];
-            let (n, from) = Hole::from_raw(back)
-                .pull(&mut bytes, wait)
-                .map_err(|_| Fail::Bad)?;
-            let (reply, end) = Said::fetch_at(&bytes[..n], 0).ok_or(Fail::Bad)?;
-            if from != self.host || n != end {
-                return Err(Fail::Bad);
-            }
-            if reply.status != super::frame::OK {
-                return Err(super::frame::code_to_fail(reply.status).unwrap_or(Fail::Bad));
-            }
-            if reply.task.get() == 0 || reply.team == 0 {
-                return Err(Fail::Bad);
-            }
-            Ok(Built {
-                task: reply.task,
-                team: TeamId::new(reply.team as usize),
+                back,
             })
-        })();
-        let _ = pie::seal(back);
-        let _ = pie::release(back);
-        result
+            .map_err(|_| Fail::Bad)?;
+        if reply.status != super::frame::OK {
+            return Err(super::frame::code_to_fail(reply.status).unwrap_or(Fail::Bad));
+        }
+        if reply.task.get() == 0 || reply.team == 0 {
+            return Err(Fail::Bad);
+        }
+        Ok(Built {
+            task: reply.task,
+            team: TeamId::new(reply.team as usize),
+        })
     }
 }
 impl Drop for Client {

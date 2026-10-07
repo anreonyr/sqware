@@ -128,7 +128,7 @@ impl Control {
 }
 
 impl Control {
-    pub(crate) fn reserve_instance(&mut self) -> Result<(), protocol::system::control::Fail> {
+    pub(crate) fn reserve_instance(&mut self) -> Result<(), system_api::control::Fail> {
         use crate::system::control::core::instance::INSTANCE_CAP;
         if self.instances.len() >= INSTANCE_CAP {
             if let Some(at) = self
@@ -138,12 +138,12 @@ impl Control {
             {
                 self.instances.remove(at);
             } else {
-                return Err(protocol::system::control::Fail::Full);
+                return Err(system_api::control::Fail::Full);
             }
         }
         self.instances
             .try_reserve(1)
-            .map_err(|_| protocol::system::control::Fail::Full)
+            .map_err(|_| system_api::control::Fail::Full)
     }
     pub(crate) fn register_instance(
         &mut self,

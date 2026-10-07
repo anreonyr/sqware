@@ -2,8 +2,8 @@
 //! 状态码 · 记号与那一段路（`LINK`/`NAME`/`ASK_MARK`/`BACK`/`DIR`）。
 
 
-use crate::common::path::Path;
-use crate::wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use crate::operator::path::Path;
+use wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// 五格与 `programs/src/system/common/face/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**
 /// `crates/protocol/src/system/mod.rs` 的"预算与放弃"）
@@ -50,7 +50,7 @@ impl State {
 
 /// 失败域：五格，**前四格各对应一个不同的下一步**（照实抄 `programs/src/system/core.rs` 那四格）
 /// 它是**协议这一侧**的名字：调度侧那四格是 `Unknown` / `BadImage` / `Full` / `NotReady`
-#[derive(Clone, Copy, PartialEq, Eq, Debug, crate::WireCodes)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, env::WireCodes)]
 #[wire(fallback = Bad)]
 pub enum Fail {
     /// 表里没这个名字，或它已经登记过
@@ -74,9 +74,9 @@ pub enum Fail {
     Denied,
 }
 
-impl From<system_api::loader::Fail> for Fail {
-    fn from(fail: system_api::loader::Fail) -> Self {
-        use system_api::loader::Fail as Loader;
+impl From<crate::loader::Fail> for Fail {
+    fn from(fail: crate::loader::Fail) -> Self {
+        use crate::loader::Fail as Loader;
         match fail {
             Loader::Unknown => Self::Unknown,
             Loader::BadImage => Self::BadImage,
@@ -99,7 +99,7 @@ pub const STATE: u8 = 4;
 pub const RUIN: u8 = 5;
 
 /// 这条路叫什么（泊位那一格）：**两侧同一个**
-pub use crate::system::control::marks::LINK;
+pub use crate::control::marks::LINK;
 
 /// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 LINK 同一个串**——"泊位叫 `control`"
 /// 与"它挂在哪一格"是同一件事的两层，重名不是重名
@@ -107,9 +107,9 @@ pub const NAME: &str = "control";
 
 /// 问话孔那一枚上的记号。**带面名**（`control-ask`）：认领键是"谁开的 + 记号"，而同一枚任务
 /// 可能同时是两面的客人——两枚孔都铸在它自己那张表里，记号再一样就分不开（理由与实测见
-pub use crate::system::control::marks::ASK_MARK;
+pub use crate::control::marks::ASK_MARK;
 
-pub use crate::system::control::marks::BACK;
+pub use crate::control::marks::BACK;
 
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
 /// coalition）

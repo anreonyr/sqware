@@ -390,6 +390,7 @@ dependencies = [
  "resource",
  "schedule",
  "system-api",
+ "wire",
  "zeroize",
 ]
 
