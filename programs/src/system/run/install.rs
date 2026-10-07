@@ -19,7 +19,7 @@ use crate::system::{
 };
 use alloc::{collections::VecDeque, vec::Vec};
 use env::pie;
-use runtime::schedule::{Dispatch, Resources as Registry};
+use ::schedule::{Dispatch, Resources as Registry};
 use runtime::core::res::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();

@@ -5,7 +5,7 @@ use super::{
 };
 use crate::system::{identity::core::IdentityBook, life::Status};
 use alloc::sync::Arc;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 pub(super) struct Book(pub Option<IdentityBook>);
 pub(super) fn initialize(
     status: Res<Arc<Status>>,

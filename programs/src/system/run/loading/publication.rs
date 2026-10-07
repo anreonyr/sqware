@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use super::answer::Inbox;
 use crate::system::{
     boot::Mounts,

@@ -2,8 +2,8 @@
 
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
-当前状态：Loader 兼容基线与接口生成试点已完成。原有 8 个固定基线继续通过，另有生成行为和宏声明检查。
-runtime 拆解、其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除 Loader 试点外表示目标结构。
+当前状态：Loader 兼容基线、接口生成试点及 schedule 独立迁移已落地。原有 8 个固定 Loader 基线继续通过，另有生成行为和宏声明检查。
+runtime 的执行支持与资源拆解、其余接口迁移、传输分离与 System 目录重组尚未开始。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -242,6 +242,14 @@ programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 
 完成条件：schedule 不依赖 env/resource/ipc/execution；调用方不再引用 runtime::schedule；原有调度测试与程序编译通过。
 
+本批已落地：
+
+- 独立 `crates/schedule` 采用 no_std 库入口，无 Cargo 依赖；原调度实现保持不变。
+- programs 的所有调用方直接依赖 schedule；删除 runtime 的原模块和兼容路径，内核内部 runtime 不变。
+- 29 项既有调度测试迁到 `crates/schedule/src/tests`，保持测试内容与私有状态检查；System 边界检查扫描新库。
+- programs 全目标编译、29 项调度测试和 7 项 System 边界测试通过。
+- schedule 独立宿主编译、无依赖检查及 QEMU accept、product、system-fault 均通过。
+
 ### 4. 迁程序执行支持
 
 按 room/unit/memory/lock/boot 归位现有 task、heap、TLS、exit 和程序入口支持。
@@ -316,7 +324,7 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 - schedule 不依赖环境或执行库；runtime 与 protocol 均无工作区成员、用户态依赖或旧导入残留。
 
 各批次验证通过后提交，再继续下一批。临时重导出必须有明确删除阶段。
-第 1、2 批已完成；下一份实现独立 schedule，然后迁 execution，再以 Loader 确立资源边界。
+第 1、2、3 批已完成；下一份实现迁 execution，然后以 Loader 确立资源边界。
 
 ## 当前可用的验证命令
 
@@ -325,8 +333,9 @@ account 保留当前行为，把帐号/镜像选择与运行机制分开。
 ```sh
 cargo check -p programs --all-targets --offline
 cargo check -p system-api --target x86_64-unknown-linux-gnu --offline
+cargo check -p schedule --target x86_64-unknown-linux-gnu --offline
 cargo test -p mold --target x86_64-unknown-linux-gnu --offline
-cargo test --manifest-path crates/runtime/src/schedule/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/schedule/src/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/common/marks/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/identity/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/protocol/src/system/loader/tests/Cargo.toml --target x86_64-unknown-linux-gnu --offline

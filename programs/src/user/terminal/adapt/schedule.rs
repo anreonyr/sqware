@@ -1,5 +1,5 @@
 use super::{frame, server};
-use runtime::schedule::{BuildError, Plan, Schedule};
+use ::schedule::{BuildError, Plan, Schedule};
 
 pub(super) fn frame() -> Result<Plan<env::Reason>, BuildError> {
     let mut frame = Schedule::new();

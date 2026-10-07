@@ -1,4 +1,4 @@
-use runtime::schedule::{Cursor, Progress, Schedule};
+use ::schedule::{Cursor, Progress, Schedule};
 use super::fixture::Fixture;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

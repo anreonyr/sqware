@@ -5,7 +5,7 @@ use super::names::{Names, Registration};
 use crate::system::operator::client::Tree;
 use env::wire::Span as _;
 use env::{PieToken, Wait, pie, unit};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::{self as control_call, Object, account as call};
 use protocol::system::identity::Subject;
 use protocol::system::operator::Permit;

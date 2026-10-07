@@ -250,7 +250,7 @@ mod boundaries {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         assert!(!repo.join("crates/protocol/src/common/schedule").exists());
         let mut paths = References::default();
-        references(&repo.join("crates/runtime/src/schedule"), &mut paths);
+        references(&repo.join("crates/schedule/src"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         let source = fs::read_to_string(repo.join("crates/protocol/src/common/marks.rs")).unwrap();
         let mut paths = References::default();

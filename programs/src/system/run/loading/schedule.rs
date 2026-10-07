@@ -1,5 +1,5 @@
 use crate::system::control::serve::Fail;
-use runtime::schedule::{BuildError, Plan, Schedule};
+use ::schedule::{BuildError, Plan, Schedule};
 pub fn frame() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();
     schedule.system("receive", super::answer::receive)?;

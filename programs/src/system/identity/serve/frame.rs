@@ -3,7 +3,7 @@ use crate::system::life::{Phase, Status};
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use env::{TaskId, Wait};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub(super) struct Running(pub bool);
 pub(super) fn health(

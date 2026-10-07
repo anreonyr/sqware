@@ -7,7 +7,7 @@ use crate::system::control::core::{
     unit::{Slot, State},
     verdict::Fail,
 };
-use runtime::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
+use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
 
 pub fn budget(
     operations: Res<Operations>,

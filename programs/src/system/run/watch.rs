@@ -6,7 +6,7 @@ use env::{PieToken, Wait};
 use protocol::system::control as ccall;
 use runtime::core::res::pile::Sub;
 
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 pub struct Interests {
     pub tokens: Vec<PieToken>,
     pub subs: Vec<Sub>,

@@ -7,7 +7,7 @@ use crate::system::control::{
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Permission, TaskId, Wait, unit};
-use runtime::schedule::{Cursor, Progress, Schedule};
+use ::schedule::{Cursor, Progress, Schedule};
 use protocol::system::control::{self, Face, State, account::Client};
 
 const WAIT: Wait = Wait::AtMost(2000);
@@ -21,9 +21,9 @@ struct HookFault {
     signals: Option<Arc<Signals>>,
 }
 fn fail_prepare(
-    mut fault: runtime::schedule::ResMut<HookFault>,
-    active: runtime::schedule::Res<serve::hook::Active>,
-    resources: runtime::schedule::Res<crate::system::run::resource::Resources>,
+    mut fault: ::schedule::ResMut<HookFault>,
+    active: ::schedule::Res<serve::hook::Active>,
+    resources: ::schedule::Res<crate::system::run::resource::Resources>,
 ) -> Result<Progress, &'static str> {
     if fault.prepare {
         let task = active.task.ok_or("probe hook target")?;
@@ -38,9 +38,9 @@ fn fail_prepare(
     Ok(Progress::Done)
 }
 fn delay_retire(
-    mut fault: runtime::schedule::ResMut<HookFault>,
-    active: runtime::schedule::Res<serve::hook::Active>,
-    control: runtime::schedule::Res<serve::unit::Control>,
+    mut fault: ::schedule::ResMut<HookFault>,
+    active: ::schedule::Res<serve::hook::Active>,
+    control: ::schedule::Res<serve::unit::Control>,
 ) -> Result<Progress, &'static str> {
     let item = control
         .instances
@@ -83,7 +83,7 @@ fn delay_retire(
     }
     Ok(Progress::Done)
 }
-fn hooks() -> runtime::schedule::Plan<serve::Fail> {
+fn hooks() -> ::schedule::Plan<serve::Fail> {
     let children = crate::system::run::hooks::children().unwrap();
     let mut wrapped = alloc::vec::Vec::new();
     for (key, child) in children {

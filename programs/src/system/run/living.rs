@@ -4,7 +4,7 @@ use crate::system::identity::client::{install::Roster, query::current_authority}
 use crate::system::operator::client::Tree;
 use alloc::vec::Vec;
 use env::{TaskId, Wait};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub struct Living {
     tasks: Vec<TaskId>,

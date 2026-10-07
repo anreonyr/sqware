@@ -8,7 +8,7 @@ use crate::system::operator::Placement;
 use alloc::{string::String, vec::Vec};
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Object, Reply};
 use protocol::system::operator::{EntryId, Fail, Permit};
 use env::pie;

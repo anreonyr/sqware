@@ -9,10 +9,10 @@ use env::Wait;
 use protocol::debug;
 use env::unit;
 pub(crate) fn sweep(
-    mut control: runtime::schedule::ResMut<Control>,
-    roster: runtime::schedule::Res<Roster>,
-    operations: runtime::schedule::Res<super::lifecycle::Operations>,
-) -> Result<runtime::schedule::Progress, super::Fail> {
+    mut control: ::schedule::ResMut<Control>,
+    roster: ::schedule::Res<Roster>,
+    operations: ::schedule::Res<super::lifecycle::Operations>,
+) -> Result<::schedule::Progress, super::Fail> {
     let gone: Vec<String> = control
         .table
         .living()
@@ -37,7 +37,7 @@ pub(crate) fn sweep(
         }
         mark_dead(&mut control.table, name.as_str(), Reaped::Now);
     }
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
     let Some(row) = table.find(name) else {

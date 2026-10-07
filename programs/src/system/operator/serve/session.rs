@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use super::{Fail, answer::Output};
 use crate::system::{
     common::face::desk::{Desk, Guest},

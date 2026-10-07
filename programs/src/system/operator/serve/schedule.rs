@@ -1,4 +1,4 @@
-use runtime::schedule::{Plan, Schedule};
+use ::schedule::{Plan, Schedule};
 use super::{
     Fail, answer, door, frame, session,
     tip::{self, Ack},
@@ -7,7 +7,7 @@ use super::{
 use protocol::{
     system::operator as ocall,
 };
-pub(super) fn plans() -> Result<[Plan<Fail>; 3], runtime::schedule::BuildError> {
+pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     let mut start = Schedule::sequence();
     start.system("tip", tip::tip)?;
     let mut hints = Schedule::sequence();

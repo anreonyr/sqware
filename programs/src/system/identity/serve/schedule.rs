@@ -1,6 +1,6 @@
 use super::{Fail, book, face, frame};
-use runtime::schedule::{Plan, Schedule};
-pub(super) fn plans() -> Result<[Plan<Fail>; 3], runtime::schedule::BuildError> {
+use ::schedule::{Plan, Schedule};
+pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     let mut start = Schedule::sequence();
     start.system("book", book::initialize)?;
     start.system("faces", face::faces)?;

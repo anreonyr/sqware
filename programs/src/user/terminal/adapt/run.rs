@@ -1,7 +1,7 @@
 use super::{E_TERMINAL, frame::{Counters, Frame}, schedule, server::Server};
 use crate::core::mode::Mode;
 use programs::driver::uart::client::Console;
-use runtime::schedule::{Cursor, Progress, Resources};
+use ::schedule::{Cursor, Progress, Resources};
 
 pub fn run(console: &mut Console) -> Result<(), env::Reason> {
     let server = Server::open(console)?;

@@ -14,7 +14,7 @@ use crate::system::{
 };
 use crate::unit::{Died, UnitFile};
 
-use runtime::schedule::{
+use ::schedule::{
     Cursor, Dispatch, Invocation, Plan, Progress, Res, ResMut, Resources as Registry, Schedule,
 };
 pub struct Fault {

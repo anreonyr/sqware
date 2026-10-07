@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use super::Internal;
 use crate::system::{
     boot::Mounts,

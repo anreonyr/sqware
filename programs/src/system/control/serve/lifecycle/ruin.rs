@@ -9,7 +9,7 @@ use crate::system::{
     identity::client::install::Roster,
 };
 use env::Wait;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(
     mut active: ResMut<Active>,

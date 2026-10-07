@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use super::Fail;
 use crate::system::life::{Phase, Status};
 use alloc::sync::Arc;

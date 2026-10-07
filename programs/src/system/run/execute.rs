@@ -2,7 +2,7 @@ use super::{install, schedule};
 use crate::system::control::serve::start;
 use super::frame;
 use crate::system::run::{bootstrap, scene};
-use runtime::schedule::{Cursor, Progress};
+use ::schedule::{Cursor, Progress};
 pub fn run() -> Result<(), env::Reason> {
     let boot = bootstrap::take().map_err(|e| e.code())?;
     let list = scene::programs(&boot.catalog).map_err(|_| start::E_PROGRAM)?;

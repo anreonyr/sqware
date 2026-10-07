@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res};
+use ::schedule::{Progress, Res};
 use super::{
     Fail,
     face::Current,

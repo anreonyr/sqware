@@ -1,7 +1,7 @@
 use crate::system::run::living::Living;
 use crate::system::operator::client::Tree;
 use crate::system::run::publication::book::Publications;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub(crate) fn retire(
     living: Res<Living>,

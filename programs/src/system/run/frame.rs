@@ -14,7 +14,7 @@ use ::core::sync::atomic::Ordering;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::Wait;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub struct Startup {
     pub list: Vec<&'static crate::unit::UnitFile>,

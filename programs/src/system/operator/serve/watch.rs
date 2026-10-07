@@ -2,7 +2,7 @@
 //! 事件编码一次；每次 Push 将字节复制进内核，编码缓冲可立即复用。
 //! 满队列丢弃本次通知，失效孔移除订阅者。
 
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 use alloc::vec::Vec;
 

@@ -6,7 +6,7 @@ use super::{
 };
 use crate::system::life::Status;
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
-use runtime::schedule::{Cursor, Dispatch, Progress, Resources};
+use ::schedule::{Cursor, Dispatch, Progress, Resources};
 use runtime::core::res::pile::Pile;
 pub fn serve(
     status: Arc<Status>,

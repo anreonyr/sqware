@@ -17,10 +17,10 @@ pub struct Inbox(pub alloc::collections::VecDeque<Incoming>);
 pub struct Buffer(pub alloc::vec::Vec<u8>);
 
 pub fn receive(
-    watch: runtime::schedule::Res<super::watch::Watch>,
-    mut buffer: runtime::schedule::ResMut<Buffer>,
-    mut inbox: runtime::schedule::ResMut<Inbox>,
-) -> Result<runtime::schedule::Progress, super::Fail> {
+    watch: ::schedule::Res<super::watch::Watch>,
+    mut buffer: ::schedule::ResMut<Buffer>,
+    mut inbox: ::schedule::ResMut<Inbox>,
+) -> Result<::schedule::Progress, super::Fail> {
     for grant in ccall::Grant::ALL {
         let Some(face) = watch.faces[grant.index()] else {
             continue;
@@ -52,12 +52,12 @@ pub fn receive(
             inbox.0.push_back(Incoming { wire, from, back });
         }
     }
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 pub fn state(
-    control: runtime::schedule::Res<Control>,
-    mut inbox: runtime::schedule::ResMut<Inbox>,
-) -> Result<runtime::schedule::Progress, super::Fail> {
+    control: ::schedule::Res<Control>,
+    mut inbox: ::schedule::ResMut<Inbox>,
+) -> Result<::schedule::Progress, super::Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(super::Fail::Room)?;
@@ -71,12 +71,12 @@ pub fn state(
             inbox.0.push_back(incoming);
         }
     }
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 pub fn enqueue(
-    mut operations: runtime::schedule::ResMut<Operations>,
-    mut inbox: runtime::schedule::ResMut<Inbox>,
-) -> Result<runtime::schedule::Progress, super::Fail> {
+    mut operations: ::schedule::ResMut<Operations>,
+    mut inbox: ::schedule::ResMut<Inbox>,
+) -> Result<::schedule::Progress, super::Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(super::Fail::Room)?;
@@ -104,7 +104,7 @@ pub fn enqueue(
             reply(incoming.back, status(fail));
         }
     }
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 pub(crate) fn complete(operation: &Operation) {
     let Some(back) = operation.request.back else {

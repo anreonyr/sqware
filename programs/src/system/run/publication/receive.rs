@@ -1,7 +1,7 @@
 use crate::system::run::publication::book::Publications;
 use env::wire::Span as _;
 use env::{PieToken, TaskId, Wait};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use protocol::system::control::publication::{self as pubcall, Frame, Reply};
 use protocol::system::operator::Fail;
 
@@ -21,7 +21,7 @@ fn reply(back: PieToken, reply: Reply) {
 pub fn receive(
     images: Res<crate::system::control::serve::start::Images>,
     mut inbox: ResMut<Inbox>,
-    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
     while let Ok((n, from)) = HolePie::from_token(images.entry).pull(&mut bytes, Wait::POLL) {
@@ -55,11 +55,11 @@ pub fn receive(
 pub fn select(
     mut inbox: ResMut<Inbox>,
     mut request: ResMut<Request>,
-    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     request.0 = inbox.0.pop_front();
     if let Some(incoming) = &request.0 {
-        dispatch.select(runtime::schedule::Invocation {
+        dispatch.select(::schedule::Invocation {
             key: 0,
             cursor: Default::default(),
         }).map_err(|_| "publication scheduling error")?;
@@ -93,11 +93,11 @@ pub fn finish(
     Ok(Progress::Done)
 }
 pub fn completed(
-    mut dispatch: ResMut<runtime::schedule::Dispatch<u8, &'static str>>,
+    mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     match dispatch.take_result().map_err(|_| "publication scheduling error")?.result {
         Ok(Progress::Done) => Ok(Progress::Done),
-        Err(runtime::schedule::RunError::Step(why)) => Err(why),
+        Err(::schedule::RunError::Step(why)) => Err(why),
         _ => Err("publication scheduling error"),
     }
 }

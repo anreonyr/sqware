@@ -1,6 +1,6 @@
 //! 一份由装配者接入的 Resolve / Matches / Same 查询束；不按 mark 猜权威。
 
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 use env::{TaskId, Wait};
 use protocol::system::identity::{TaskQuery, Match, Selector};
@@ -55,10 +55,10 @@ impl Facts for Court<'_> {
 }
 
 pub(super) fn authorize(
-    tree: runtime::schedule::Res<Operator>,
-    query: runtime::schedule::Res<Option<TaskQuery>>,
-    mut judgment: runtime::schedule::ResMut<Judgment>,
-) -> Result<runtime::schedule::Progress, super::Fail> {
+    tree: ::schedule::Res<Operator>,
+    query: ::schedule::Res<Option<TaskQuery>>,
+    mut judgment: ::schedule::ResMut<Judgment>,
+) -> Result<::schedule::Progress, super::Fail> {
     if let Some((who, permit, ruling)) = judgment.0 {
         if ruling.passed() {
             judgment.0 = Some((
@@ -75,7 +75,7 @@ pub(super) fn authorize(
             ));
         }
     }
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 
 use super::{answer::Output, session::Request};

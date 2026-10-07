@@ -8,7 +8,7 @@ use crate::system::{
 };
 use alloc::vec::Vec;
 use env::{Mark, Wait};
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(
     mut active: ResMut<Active>,

@@ -1,5 +1,5 @@
 //! Supervisor publication of Identity's authorized faces.
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use crate::system::{
     boot::{Faces, Mounts},
     identity::client::{install::Roster, query},

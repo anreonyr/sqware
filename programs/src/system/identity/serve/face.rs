@@ -1,4 +1,4 @@
-use runtime::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
+use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use super::{Fail, answer::Request as IdentityRequest};
 use crate::system::{common::face::mount, life::Status};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};

@@ -5,7 +5,7 @@ use super::super::{
 use super::{Active, Instance};
 use crate::system::control::core::{unit::State, verdict::Fail};
 use alloc::vec::Vec;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(
     active: Res<Active>,

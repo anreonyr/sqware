@@ -3,7 +3,7 @@ use crate::system::{
     identity::client::install::Roster,
     run::names,
 };
-use runtime::schedule::{BuildError, Plan, Progress, Res, Schedule};
+use ::schedule::{BuildError, Plan, Progress, Res, Schedule};
 pub fn instance() -> Result<Plan<crate::system::control::serve::Fail>, BuildError> {
     hook::plan(children()?)
 }

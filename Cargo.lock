@@ -367,6 +367,7 @@ dependencies = [
  "mold",
  "protocol",
  "runtime",
+ "schedule",
  "zeroize",
 ]
 
@@ -449,6 +450,10 @@ dependencies = [
  "erra",
  "fack",
 ]
+
+[[package]]
+name = "schedule"
+version = "0.1.0"
 
 [[package]]
 name = "scopeguard"

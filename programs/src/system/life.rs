@@ -19,18 +19,18 @@ pub struct Status {
 
 pub struct Deadline(pub u64);
 pub fn stopping(
-    status: runtime::schedule::Res<alloc::sync::Arc<Status>>,
-    mut deadline: runtime::schedule::ResMut<Deadline>,
-) -> Result<runtime::schedule::Progress, crate::system::control::serve::Fail> {
+    status: ::schedule::Res<alloc::sync::Arc<Status>>,
+    mut deadline: ::schedule::ResMut<Deadline>,
+) -> Result<::schedule::Progress, crate::system::control::serve::Fail> {
     status.phase.store(Phase::Stopping as u8, Ordering::Release);
     deadline.0 = env::chrono::clock()
         + crate::system::control::serve::start::BOOT_MS as u64 * 1_000_000;
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }
 pub fn join(
-    status: runtime::schedule::Res<alloc::sync::Arc<Status>>,
-    deadline: runtime::schedule::Res<Deadline>,
-) -> Result<runtime::schedule::Progress, crate::system::control::serve::Fail> {
+    status: ::schedule::Res<alloc::sync::Arc<Status>>,
+    deadline: ::schedule::Res<Deadline>,
+) -> Result<::schedule::Progress, crate::system::control::serve::Fail> {
     for task in [
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),
@@ -41,9 +41,9 @@ pub fn join(
             }
             runtime::core::task::sleep(core::time::Duration::from_millis(1))
                 .map_err(|_| crate::system::control::serve::Fail::Wait)?;
-            return Ok(runtime::schedule::Progress::Pending);
+            return Ok(::schedule::Progress::Pending);
         }
     }
     debug::put("system: internal tasks stopped");
-    Ok(runtime::schedule::Progress::Done)
+    Ok(::schedule::Progress::Done)
 }

@@ -6,7 +6,7 @@ use crate::system::control::{
     },
 };
 use alloc::vec::Vec;
-use runtime::schedule::{BuildError, Plan, Schedule};
+use ::schedule::{BuildError, Plan, Schedule};
 pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     let mut mint = Schedule::sequence();
     mint.system("validate", work::mint::pre)?;

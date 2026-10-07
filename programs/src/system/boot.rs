@@ -1,4 +1,4 @@
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use crate::system::{
     control::serve::start::BOOT_MS,
     identity,

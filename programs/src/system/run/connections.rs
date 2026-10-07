@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 use env::TaskId;
-use runtime::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, Res, ResMut};
 use crate::system::operator::client::Tree;
 
 pub struct Connections(pub Vec<TaskId>);
