@@ -3,7 +3,7 @@
 本轮重构消除中央 protocol 库、总括的 runtime 库和手写的重复协议表示。
 契约由接口提供方声明，通信代码由工具生成；System 按状态和流程归属组织，保留 schedule 和现有产品行为。
 当前状态：Loader 兼容基线、接口生成试点、schedule 独立及 runtime 全部迁移已完成。execution 与 resource 已接入全部调用方，旧 runtime crate、工作区成员、依赖和源目录已删除。
-纯 wire 字节 codec、通用 IPC、四个 System 提供方 API/客户端及 Hub、Terminal、Router 接口归位已落地；protocol crate 与兼容层已删除。System 状态和目录重组、持久会话生命周期仍未完成。文中的目录和 API 除已落地内容外表示目标结构。
+纯 wire 字节 codec、通用 IPC、提供方 API/客户端归位及持久会话失败隔离已落地；protocol crate 与兼容层已删除。System 状态和目录重组仍未完成。文中的目录和 API 除已落地内容外表示目标结构。
 
 ## 当前问题
 
@@ -359,7 +359,7 @@ Operator 的提供方 API 与会话调用已迁移：
 - 持久会话的请求不携带回程字段，继续使用已建立的 Session。`ipc::session::Contract` 固定 Req/Union，`Session::call` 从 talk 发请求、从 link 接收应答，两步共享一次 Deadline，不自动重发。
 - `hand::Receiver::recv_from` 在解码前验证内核发送者；会话应答、服务端请求和 Watch 事件均使用该入口。SourceFail 区分来源错误与原 RecvFail，未校验来源的既有 recv 接口保持原样。
 - 模型与服务端直接依赖提供方 API。Grant 判定、Control 修改权限、Permit 判决、能力转授、bootstrap 接线和事件序号／路径过滤仍归各自原模块；没有把订阅改为一次性 RPC。
-- 一次性 RPC 的独立回程隔离不适用于持久 Session；现有会话报文没有调用关联号，本批未解决超时后迟到应答的配对。这一项须在会话生命周期迁移时明确处理。
+- 一次性 RPC 的独立回程隔离不适用于持久 Session；会话报文仍无调用关联号。后续批次通过共享状态与失败关闭处理超时后迟到应答，保留每个请求恰好回复一次的服务端契约。
 - Operator 专属宿主检查覆盖八条请求与各类应答的固定字节、Permit authority、Path 规范化、bootstrap／事件形状和真实权限判决；IPC 会话测具检查 talk/link 路由、共享预算、来源验证顺序、错误分类及大缓冲收件。
 - 本批 61 项宿主检查通过：Operator API/判决 10、IPC 会话 7、一次性 RPC 16、Identity codec 7、Mark 3、Loader 11、System 边界 7；programs 全目标编译和 QEMU accept、product、system-fault 均通过。
 
@@ -380,7 +380,7 @@ Control 的提供方 API 与三种 RPC 已迁移：
 - 客户端不依赖 protocol 或程序实现，system-api 只依赖 env、wire、mold，不反向依赖客户端。客户端依赖 execution 仅用于 Operator 路径发现的退避等待；调试输出为私有实现，不成为公共使用接口。
 - programs 的四域调用与服务端契约绑定全部改用 system-client 路径；Operator 模型直接使用纯 API 的 Selector。protocol 原客户端正文全部迁出，只保留对应兼容导出，供尚未迁移的软件接口使用。
 - Identity/Control 宿主测具已直接编译新客户端源码；9 项 Identity、4 项 Control/publication、8 项 System 边界检查通过。新增边界检查约束纯 API 依赖集合及客户端与 protocol 的独立关系。
-- 所有客户端流程、字节格式、能力清理、预算和回复配对保持既有实现；持久 Session 的迟到应答配对仍为前述未完成项。
+- 客户端提取保持字节格式、能力清理和预算；持久 Session 的失败隔离已在后续批次落实。
 - programs 全目标编译、system-client RISC-V 检查与 QEMU accept、product、system-fault 均通过；依赖闭包检查确认 system-client 不含 protocol。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
@@ -411,7 +411,16 @@ protocol 删除已落地：
 - 原 Loader、Identity、Mark 宿主套件迁到 programs/tests/loader-api、identity-api、interface-marks；既有 Terminal/Login 测具直接使用纯 API，保留原测试体。
 - 本批 48 项相关宿主检查通过：Loader 11、Identity 7、Mark 4、Hub API 3、Terminal/Router API 4、System 边界 8、Terminal 行为 9、Login 2。全程序编译及 QEMU accept、product、system-fault 均通过。
 
-剩余装配工作：image 与 program.rs 的入口声明继续按提供方描述归位，避免字符串元数据与接口声明重复。该部分及持久 Session 的迟到应答配对不因 protocol 删除而自动完成。
+剩余装配工作：image 与 program.rs 的入口声明继续按提供方描述归位，避免字符串元数据与接口声明重复。
+
+持久 Session 的失败隔离已落地：
+
+- Session 私有化端点字段，Clone 共享 Ready/Busy/Closed 状态；Operator 借用面使用共享别名，不再复制三个裸字段。
+- 原始导入验证本地回信孔仍存活且由本任务创建。调用前检查两端存活、回执队列为空；并发别名返回 Busy，不发第二个请求。
+- 发送前错误恢复 Ready；请求已入队后，超时、错误来源、非法回复或展开中断都先标 Closed，再封印自有回信孔。即使 seal 失败，本地别名仍拒绝后续调用，不读取迟到回复。
+- 已排队的重复／旧回复在新请求发送前触发关闭。所有检查、发送和接收共用一次 Deadline；不重发、不自动重建会话，不释放仍被别名借用的端点。
+- 没有新增线上关联字段，服务端仍须对每个请求恰好回复一次；任意延迟的重复成功回执无法在该字节格式下与新应答区分。原始导入用于新的能力边界，普通别名必须 Clone 共享状态。
+- 15 项宿主检查及 QEMU accept、product、system-fault 均通过，覆盖别名、迟到／已排队重复回执、并发拒绝、发送失败复用、seal 失败及展开清理。
 
 ### 8. 收拢 System 的状态、计划和目录
 

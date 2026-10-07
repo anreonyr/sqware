@@ -66,21 +66,16 @@ impl Face {
         Face { session }
     }
 
-    /// 同一面，**借**一条会话而不是收走它：那三格按值复制（`Endpoint` 无 `Drop`）
-    /// 留给"会话还要留给别人用"的调用点——本手不改变原会话的归属
+    /// 借用同一条会话；别名共享调用状态，端点仍归原任务。
     pub fn from(session: &Session) -> Self {
         Face {
-            session: Session {
-                link: session.link,
-                talk: session.talk,
-                host: session.host,
-            },
+            session: session.clone(),
         }
     }
 
     /// 对端是谁（持树者的号；读数用）
     pub fn host(&self) -> TaskId {
-        self.session.host
+        self.session.host()
     }
 
     /// 这棵树的**根**（`/`）
@@ -166,7 +161,7 @@ impl Rein<'_> {
         let pie = Hole::from_raw(entry);
         let shipped = port::ship(
             pie.token(),
-            self.face.session.host,
+            self.face.session.host(),
             Access::FETCH | Access::STORE,
             Policy::VEST,
         )

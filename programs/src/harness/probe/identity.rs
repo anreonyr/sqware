@@ -196,11 +196,10 @@ pub fn acceptance() {
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
     let operator =
-        system_client::operator::client::Face::of(ipc::session::Session {
-            link,
-            talk,
-            host,
-        });
+        system_client::operator::client::Face::of(
+            ipc::session::Session::from_raw(link, talk, host)
+                .unwrap_or_else(|_| panic!("identity: owned Operator session")),
+        );
     super::loader::acceptance(&mut assembly, &operator);
     super::account::acceptance(&mut assembly, &operator);
     let protected = || {

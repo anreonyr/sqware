@@ -72,7 +72,7 @@ impl<'a> Pane<'a> {
     ) -> Result<Tile<'_>, Fail> {
         let pie = Hole::from_raw(e);
         let shipped = port::ship(pie.token(),
-            self.face.session.host,
+            self.face.session.host(),
             Access::FETCH | Access::STORE,
             Policy::VEST,
         )

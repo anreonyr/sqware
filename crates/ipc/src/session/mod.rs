@@ -6,10 +6,13 @@ pub mod establish;
 pub use establish::{Endpoint, Held, alive, opened_by};
 pub mod exchange;
 pub use exchange::{CallFail, Contract};
+mod state;
 
+extern crate alloc;
+use alloc::sync::Arc;
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
-use ::resource::raw::{Hole};
+use ::resource::raw::Hole;
 
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）
@@ -22,13 +25,15 @@ pub struct Berth {
 }
 
 /// 一条装好的会话：本端那一对孔（答话走 `link`、问话走 `talk`）＋ **对端的号**（`host`）
+#[derive(Clone)]
 pub struct Session {
     /// 本端**答话**那一枚（本端读）
-    pub link: Endpoint,
+    link: Endpoint,
     /// **问话**那一枚（本端写、对端读）
-    pub talk: PieToken,
+    talk: PieToken,
     /// **对端的号**（"答话的是谁"）
-    pub host: TaskId,
+    host: TaskId,
+    state: Arc<state::State>,
 }
 
 pub enum Fail {
@@ -39,6 +44,23 @@ pub enum Fail {
 }
 
 impl Session {
+    /// The peer that owns the response side of this session.
+    pub const fn host(&self) -> TaskId { self.host }
+
+    /// The request hole used by this session.
+    pub const fn talk(&self) -> PieToken { self.talk }
+
+    /// The local response endpoint shared by aliases of this session.
+    pub const fn link(&self) -> Endpoint { self.link }
+
+    /// Import raw endpoint capabilities after verifying ownership of the local reply hole.
+    pub fn from_raw(link: Endpoint, talk: PieToken, host: TaskId) -> Result<Self, Fail> {
+        if !state::valid_reply(link.rx(), host) {
+            return Err(Fail::Link);
+        }
+        Ok(Self { link, talk, host, state: state::new_state() })
+    }
+
     /// Send one typed request and receive its typed response within one shared budget.
     pub fn call<C: Contract>(
         &self,
@@ -58,7 +80,7 @@ impl Session {
         }
         let host = hear(&link, millis).ok_or(Fail::Link)?;
         let talk = ask(host, berth.ask).map_err(|_| Fail::Ask)?;
-        Ok(Session { link, talk, host })
+        Session::from_raw(link, talk, host)
     }
 }
 
