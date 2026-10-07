@@ -316,15 +316,27 @@ codec 基础已落地：
 
 - `crates/ipc` 拥有 hand、rack、session、rpc 和时间预算；仅依赖 env、wire、resource，不依赖执行库或软件实现。
 - 原 communication 正文全部迁出；protocol 只保留指向同一实现的兼容重导出，所有直接调用方使用 ipc 路径。
-- rpc::Client::call 接收类型化请求构造器，在内部编码、发送、核对来源和解码；生成 Wire 请求实现 Message，固定 Build/Claim 字节保持不变。
-- 每次 call 独占新的 Reply/Loan，成功、错误或超时均关闭；下一次 call 不可能消费前一次回信端中的旧回复，不添加新的线上关联字段。
+- rpc::Contract 固定 Request、Response、回程 Mark 和显式回程字段访问；纯 API 仍只声明字节布局，Loader 的传输绑定归客户端所在模块。
+- request::Sender/Receiver 和 reply::Sender/Receiver 分别提供 send/receive；发送请求返回一次性的应答接收权，接收请求返回调用者、请求与已验证的一次性应答发送权。call 只组合请求发送与应答接收。
+- 每次 send 独占新的 Reply，由资源层持有并撤销远端授权；成功、错误、超时或放弃接收均关闭。接收权捕获发送时的 Deadline，等待回复不能重置预算；下一次调用不可能消费前一次回信端中的旧回复，不添加新的线上关联字段。
 - Loader 在镜像授权前创建一次 Deadline，Build 与 Claim 共享预算；镜像 Loan、服务状态及 task/team 核对仍显式归客户端。
-- rpc::receive 保留内核发送者；ReplyTo 校验授予者、资源创建者、调用者和角色后移交原有队列及 launch，完成后仅发送一次并释放。
+- request::Receiver 在入口校验回程的授予者、资源创建者、调用者和角色，再移交原有队列及 launch；reply::Sender 绑定应答类型，send 消费发送权并释放。接收失败保留已解码的未信任请求，供领域层清理镜像授权；未验证的回程编号不释放。
 - Claim 仍按 owner/task 验证；Build 保留异步准备和交付，回复失败仍触发原有实例停止与回收。
 - resource::ReplyError 将内核接收错误与错误来源分开；普通 Denied 不再被误报成 WrongSource。
-- 10 项 RPC、11 项 Loader、7 项 Identity、3 项 Mark、10 项资源、5 项宏、7 项 System 边界测试共 53 项通过；programs 全目标和 image 宿主构建通过。
+- RPC 对偶收拢的 43 项宿主检查通过：IPC 15、资源 10、Loader 11、System 边界 7。覆盖独立收发、入口拒绝、放弃接收、延迟预算和双方失败清理；programs 全目标编译通过。
 - QEMU accept、product、system-fault 均通过；依赖检查确认 ipc 不依赖 protocol、execution 或软件 API。
 - 兼容重导出将在删除 protocol 的第 7 批移除；其他服务客户端暂保留原有交互流程，后续逐个迁纯 API 与领域调用。
+
+RPC 的对偶按交互步骤划分：
+
+| 步骤 | 发送端 | 接收端 |
+| --- | --- | --- |
+| 请求 | `request::Sender<C>::send(deadline, build)` → `reply::Receiver<C::Response>` | `request::Receiver<C>::receive(buffer, within)` → `Incoming<C>` |
+| 应答 | `reply::Sender<R>::send(self, response)` → 完成并释放 | `reply::Receiver<R>::receive(self)` → 已解码应答并关闭 |
+
+请求端持有可重复使用的入口；每次请求产生独立、不可复制的一次性应答权。
+接收请求成功才产生应答发送权，业务层可保留该权利并延迟应答。
+两端共享 Encode、Decode、Send、Receive 等错误阶段，但本地端点所有权与远端发送能力仍分别收尾。
 
 整合原 port 与 hand/rack/session；两端关系归 resource::port，类型化通信和交互归 ipc，依赖 wire 与 resource。
 调试调用的原始契约留 env，格式化与输出循环按实际调用方归位，不迁入纯 schedule。

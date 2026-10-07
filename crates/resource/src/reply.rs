@@ -1,13 +1,14 @@
 //! 一次交互使用的自有回信端。
 
-use env::{MailFail, Mark, Permission, PieResult, TaskId, Wait};
-use crate::{hole::Hole, capability::{Loan, Capability}};
+use env::{MailFail, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, pie};
+use crate::{hole::Hole, capability::Capability};
 
-/// 自有回信端；只接收指定对端的回复，结束时封印并释放。
+/// 自有回信端；只接收指定对端的回复，结束时撤销授出并封印释放本地孔。
 pub struct Reply {
     local: Capability,
     peer: TaskId,
     mark: Mark,
+    remote: Option<PieToken>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,11 +19,17 @@ pub enum ReplyError {
 
 impl Reply {
     pub fn open(peer: TaskId, mark: Mark) -> PieResult<Self> {
-        Ok(Self { local: Capability::unseal_hole(mark)?, peer, mark })
+        Ok(Self { local: Capability::unseal_hole(mark)?, peer, mark, remote: None })
     }
 
-    pub fn grant(&self) -> PieResult<Loan<'_>> {
-        self.local.grant(self.peer, Permission::STORE, self.mark)
+    /// Create one grant owned by this reply endpoint and return its remote token.
+    pub fn grant(&mut self) -> PieResult<PieToken> {
+        if self.remote.is_some() {
+            return Err(make_fail(PieFail::Denied));
+        }
+        let remote = pie::accord(self.local.token(), self.peer, Permission::STORE, self.mark)?;
+        self.remote = Some(remote);
+        Ok(remote)
     }
 
     pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> Result<&'a [u8], ReplyError> {
@@ -34,5 +41,10 @@ impl Reply {
 }
 
 impl Drop for Reply {
-    fn drop(&mut self) { let _ = self.local.seal(); }
+    fn drop(&mut self) {
+        if let Some(remote) = self.remote.take() {
+            let _ = pie::revoke(self.peer, remote);
+        }
+        let _ = self.local.seal();
+    }
 }

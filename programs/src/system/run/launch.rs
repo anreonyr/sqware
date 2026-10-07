@@ -5,7 +5,7 @@ use crate::system::{
 };
 use alloc::vec::Vec;
 use env::TaskId;
-use ipc::rpc::ReplyTo;
+use ipc::rpc::reply::Sender;
 use protocol::{
     system::{
         control::Fail,
@@ -18,7 +18,7 @@ pub struct Pending(pub Vec<Launch>);
 pub struct Launch {
     pub task: TaskId,
     pub identity: Install,
-    back: ReplyTo,
+    back: Sender<Said>,
 }
 pub struct Build<'a> {
     pub image: Image<'a>,
@@ -28,13 +28,13 @@ pub struct Build<'a> {
 pub struct Delivery {
     pub owner: TaskId,
     pub identity: Install,
-    pub back: ReplyTo,
+    pub back: Sender<Said>,
 }
 pub fn construct(
     control: &mut Control,
     pending: &mut Pending,
     build: Build<'_>,
-) -> Result<Built, (Fail, ReplyTo)> {
+) -> Result<Built, (Fail, Sender<Said>)> {
     let Build { image, spawn, delivery } = build;
     if pending.0.try_reserve(1).is_err() {
         return Err((Fail::Full, delivery.back));
@@ -58,7 +58,7 @@ pub fn construct(
     });
     Ok(built)
 }
-pub(super) fn reply(back: ReplyTo, result: Result<Built, Fail>) -> bool {
+pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
     let value = match result {
         Ok(built) => Said {
             status: protocol::wire::OK,

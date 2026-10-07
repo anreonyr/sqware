@@ -1,15 +1,16 @@
 use ::schedule::{Progress, ResMut};
 use alloc::vec::Vec;
-use env::{MailFail, PieToken, TaskId, Wait, pie};
+use env::{PieToken, TaskId, Wait, pie};
 use protocol::system::loader::frame::{self, Ask, Said, Wire};
 use protocol::wire::message::Message;
-use ipc::rpc::{self, ReplyTo};
+use ipc::rpc::{self, reply::Sender};
+use protocol::system::loader::rpc::Contract;
 use ::resource::raw::inspect;
 
 pub struct Incoming {
     pub ask: Ask,
     pub from: TaskId,
-    pub back: ReplyTo,
+    pub back: Sender<Said>,
 }
 pub struct Inbox {
     pub entry: Option<PieToken>,
@@ -32,19 +33,22 @@ pub fn receive(
     let Some(entry) = inbox.entry else {
         return Ok(Progress::Done);
     };
+    let receiver = rpc::request::Receiver::<Contract>::from_raw(entry);
     for _ in 0..16 {
-        let incoming = match rpc::receive::<Wire>(entry, &mut inbox.buffer, Wait::POLL) {
+        let incoming = match receiver.receive(&mut inbox.buffer, Wait::POLL) {
             Ok(incoming) => incoming,
-            Err(rpc::ReceiveFail::Mail(MailFail::Busy)) => break,
-            Err(rpc::ReceiveFail::Mail(_)) => break,
-            Err(rpc::ReceiveFail::Malformed(_)) => continue,
+            Err(rejected) => {
+                if let Some((from, Wire::Build(ask))) = rejected.incoming {
+                    release_image(&ask, from);
+                }
+                if matches!(rejected.fail, rpc::Fail::Receive(_)) { break; }
+                continue;
+            }
         };
         let from = incoming.from;
+        let back = incoming.reply;
         match incoming.request {
             Wire::Claim(claim) => {
-                let Ok(back) = ReplyTo::from_raw(claim.back, from, frame::BACK) else {
-                    continue;
-                };
                 let accepted = control.claim_instance(from, claim.task);
                 let said = Said {
                     status: if accepted.is_some() {
@@ -60,10 +64,6 @@ pub fn receive(
                 }
             }
             Wire::Build(ask) => {
-                let Ok(back) = ReplyTo::from_raw(ask.back, from, frame::BACK) else {
-                    release_image(&ask, from);
-                    continue;
-                };
                 if inbox.requests.len() >= 16 || inbox.requests.try_reserve(1).is_err() {
                     release_image(&ask, from);
                     reply(back, Said {
@@ -85,7 +85,7 @@ pub(super) fn release_image(ask: &Ask, from: TaskId) {
         let _ = pie::release(ask.image);
     }
 }
-pub(super) fn reply(back: ReplyTo, said: Said) -> bool {
+pub(super) fn reply(back: Sender<Said>, said: Said) -> bool {
     back.send(said).is_ok()
 }
 

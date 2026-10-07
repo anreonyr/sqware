@@ -10,7 +10,7 @@ use protocol::system::control::{self as control_call, Object, account as call};
 use protocol::system::identity::Subject;
 use protocol::system::operator::Permit;
 use ::resource::raw::Hole;
-use ipc::rpc::ReplyTo;
+use ipc::rpc::reply::Sender;
 pub const ACCOUNT: &str = "anran";
 pub struct Accounts {
     pub entry: PieToken,
@@ -73,7 +73,7 @@ pub fn receive(
         let Some((raw, _)) = call::Request::fetch_at(&bytes[..n], 0) else {
             continue;
         };
-        let Ok(back) = ReplyTo::from_raw(raw.back, from, call::BACK) else {
+        let Ok(back) = Sender::<protocol::system::loader::frame::Said>::from_raw(raw.back, from, call::BACK) else {
             continue;
         };
         let mut back = Some(back);

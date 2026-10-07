@@ -39,6 +39,7 @@ mod test_backend {
         pub fail_grant: bool,
         pub fail_send: bool,
         pub fail_pull: bool,
+        pub fail_hand_send: bool,
         pub reply_error: Option<port::ReplyError>,
         pub push_advance_ns: u64,
     }
@@ -48,7 +49,7 @@ mod test_backend {
             Self { next: 100, now: 0, peer: TaskId::new(7), reservation: None, events: Vec::new(), opened: Vec::new(),
                 remotes: HashMap::new(), last_remote: None, replies: HashMap::new(), automatic_reply: None,
                 fail_open: false, fail_grant: false, fail_send: false, fail_pull: false,
-                reply_error: None, push_advance_ns: 0 }
+                fail_hand_send: false, reply_error: None, push_advance_ns: 0 }
         }
     }
 
@@ -107,7 +108,6 @@ pub mod port {
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum ReplyError { Mail(MailFail), WrongSource }
-    use std::marker::PhantomData;
 
     pub struct Sender { entry: PieToken, peer: TaskId }
     impl Sender {
@@ -134,20 +134,21 @@ pub mod port {
         }
     }
 
-    pub struct Reply { local: PieToken, peer: TaskId, mark: Mark }
+    pub struct Reply { local: PieToken, peer: TaskId, remote: Option<PieToken> }
     impl Reply {
         pub fn open(peer: TaskId, mark: Mark) -> PieResult<Self> {
             let fail = with(|state| state.fail_open);
             if fail { return Err(make_fail(PieFail::Denied)); }
             let local = token();
             with(|state| { state.opened.push(local); state.events.push(Event::Open(local, mark)); });
-            Ok(Self { local, peer, mark })
+            Ok(Self { local, peer, remote: None })
         }
-        pub fn grant(&self) -> PieResult<Loan<'_>> {
-            if with(|state| state.fail_grant) { return Err(make_fail(PieFail::Denied)); }
+        pub fn grant(&mut self) -> PieResult<PieToken> {
+            if self.remote.is_some() || with(|state| state.fail_grant) { return Err(make_fail(PieFail::Denied)); }
             let remote = token();
             with(|state| { state.remotes.insert(remote, self.local); state.last_remote = Some(remote); state.events.push(Event::Grant(self.local, self.peer, remote)); });
-            Ok(Loan { peer: self.peer, remote, _reply: PhantomData })
+            self.remote = Some(remote);
+            Ok(remote)
         }
         pub fn pull<'a>(&self, buffer: &'a mut [u8], wait: Wait) -> Result<&'a [u8], ReplyError> {
             let result = with(|state| {
@@ -165,13 +166,11 @@ pub mod port {
     }
     impl Drop for Reply {
         fn drop(&mut self) {
+            if let Some(remote) = self.remote.take() { let _ = crate::pie::revoke(self.peer, remote); }
             with(|state| state.events.push(Event::Seal(self.local)));
             let _ = crate::pie::release(self.local);
         }
     }
-    pub struct Loan<'a> { peer: TaskId, remote: PieToken, _reply: PhantomData<&'a Reply> }
-    impl Loan<'_> { pub fn remote(&self) -> PieToken { self.remote } }
-    impl Drop for Loan<'_> { fn drop(&mut self) { let _ = crate::pie::revoke(self.peer, self.remote); } }
 }
 
 mod hand {
@@ -186,6 +185,9 @@ mod hand {
             let len = message.store(buffer.as_mut()).ok_or(SendFail::TooLong)?;
             let bytes = buffer.as_ref().get(..len).ok_or(SendFail::TooLong)?;
             event(Event::HandSend(self.token, bytes.to_vec(), wait));
+            if crate::test_backend::with(|state| state.fail_hand_send) {
+                return Err(SendFail::Mail(MailFail::Busy));
+            }
             Ok(())
         }
     }
@@ -212,9 +214,18 @@ mod tests {
         fn fetch(bytes: &[u8]) -> Option<Self> { Some(Self(*bytes.first()?)).filter(|_| bytes.len() == 1) }
     }
 
-    fn client() -> rpc::Client {
-        rpc::Client::from_raw(PieToken::mint(1), Mark::of("back")).unwrap()
+    struct TestContract;
+    impl rpc::Contract for TestContract {
+        type Request = Request;
+        type Response = Response;
+        const BACK: Mark = Mark::of("back");
+        fn back(request: &Request) -> PieToken { request.seed }
     }
+
+    fn client() -> rpc::request::Sender<TestContract> {
+        rpc::request::Sender::from_raw(PieToken::mint(1)).unwrap()
+    }
+    #[derive(Debug)]
     struct Request { seed: PieToken, fail_encode: bool }
     impl Message for Request {
         type In = Self;
@@ -231,8 +242,8 @@ mod tests {
             Some(Self { seed: PieToken::from_bytes(bytes[1..9].try_into().ok()?)?, fail_encode: false })
         }
     }
-    fn call(client: &rpc::Client, deadline: &time::Deadline) -> Result<Response, rpc::CallFail> {
-        client.call::<Request, Response>(deadline, |seed| Request { seed, fail_encode: false })
+    fn call(client: &rpc::request::Sender<TestContract>, deadline: time::Deadline) -> Result<Response, rpc::Fail> {
+        client.call(deadline, |seed| Request { seed, fail_encode: false })
     }
     fn events() -> Vec<test_backend::Event> { test_backend::with(|state| state.events.clone()) }
     fn replies_for(token: PieToken, bytes: &[u8], from: TaskId) {
@@ -256,16 +267,52 @@ mod tests {
         test_backend::reset();
         let entry = PieToken::mint(1);
         let caller = TaskId::new(42);
+        test_backend::with(|state| state.reservation = Some((caller, caller, <TestContract as rpc::Contract>::BACK)));
         let request = Request { seed: PieToken::mint(55), fail_encode: false };
         let mut bytes = Request::EMPTY;
         request.store(&mut bytes).unwrap();
         replies_for(entry, &bytes, caller);
-        let incoming = rpc::receive::<Request>(entry, &mut bytes, Wait::POLL).unwrap();
+        let incoming = rpc::request::Receiver::<TestContract>::from_raw(entry).receive(&mut bytes, Wait::POLL).unwrap();
         assert_eq!(incoming.from, caller);
         assert_eq!(incoming.request.seed, request.seed);
+        incoming.reply.send(Response(8)).unwrap();
         replies_for(entry, &[0; 9], caller);
-        assert!(matches!(rpc::receive::<Request>(entry, &mut bytes, Wait::POLL),
-            Err(rpc::ReceiveFail::Malformed(9))));
+        assert!(matches!(rpc::request::Receiver::<TestContract>::from_raw(entry).receive(&mut bytes, Wait::POLL),
+            Err(rpc::request::Rejected { fail: rpc::Fail::Decode, incoming: None })));
+    }
+
+    #[test]
+    fn split_send_captures_budget_and_drop_revokes_before_seal_release() {
+        test_backend::reset();
+        test_backend::with(|state| {
+            state.push_advance_ns = 20_000_000;
+            state.automatic_reply = Some((vec![5], TaskId::new(7)));
+        });
+        let client = client();
+        let deadline = time::Deadline::new(Wait::AtMost(100));
+        let receiver = client.send(deadline, |seed| Request { seed, fail_encode: false }).unwrap();
+        let local = test_backend::with(|state| state.opened[0]);
+        let remote = test_backend::with(|state| state.last_remote.unwrap());
+        test_backend::with(|state| state.now += 30_000_000);
+        assert_eq!(receiver.receive(), Ok(Response(5)));
+        let events = events();
+        assert!(events.iter().any(|event| matches!(event, test_backend::Event::Push(_, bytes, Wait::AtMost(100)) if bytes[0] == 7)));
+        assert!(events.contains(&test_backend::Event::Pull(local, Wait::AtMost(50))));
+        let tail = &events[events.len() - 3..];
+        assert_eq!(tail, [test_backend::Event::Revoke(TaskId::new(7), remote), test_backend::Event::Seal(local), test_backend::Event::Release(local)]);
+    }
+
+    #[test]
+    fn abandoning_split_reply_endpoint_cleans_up_without_receiving() {
+        test_backend::reset();
+        let client = client();
+        let receiver = client.send(time::Deadline::new(Wait::AtMost(20)), |seed| Request { seed, fail_encode: false }).unwrap();
+        let local = test_backend::with(|state| state.opened[0]);
+        let remote = test_backend::with(|state| state.last_remote.unwrap());
+        drop(receiver);
+        let events = events();
+        assert!(!events.iter().any(|event| matches!(event, test_backend::Event::Pull(..))));
+        assert_eq!(&events[events.len() - 3..], [test_backend::Event::Revoke(TaskId::new(7), remote), test_backend::Event::Seal(local), test_backend::Event::Release(local)]);
     }
 
     #[test]
@@ -278,7 +325,7 @@ mod tests {
         });
         let client = client();
         let deadline = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&client, &deadline), Ok(Response(42)));
+        assert_eq!(call(&client, deadline), Ok(Response(42)));
         let events = events();
         assert!(events.iter().any(|event| matches!(event, test_backend::Event::Push(_, bytes, Wait::AtMost(100)) if bytes[0] == 7)));
         assert!(events.iter().any(|event| matches!(event, test_backend::Event::Pull(_, Wait::AtMost(70)) )));
@@ -297,7 +344,7 @@ mod tests {
         test_backend::with(|state| state.reply_error = Some(port::ReplyError::WrongSource));
         let client = client();
         let deadline = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&client, &deadline), Err(rpc::CallFail::WrongSource));
+        assert_eq!(call(&client, deadline), Err(rpc::Fail::WrongSource));
         let events = events();
         let local = events.iter().find_map(|event| match event { test_backend::Event::Open(local, _) => Some(*local), _ => None }).unwrap();
         assert!(events.contains(&test_backend::Event::Seal(local)));
@@ -311,12 +358,12 @@ mod tests {
         test_backend::with(|state| state.reply_error = Some(port::ReplyError::Mail(MailFail::Denied)));
         let denied_client = client();
         let deadline = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&denied_client, &deadline), Err(rpc::CallFail::Receive(MailFail::Denied)));
+        assert_eq!(call(&denied_client, deadline), Err(rpc::Fail::Receive(MailFail::Denied)));
 
         test_backend::reset();
         test_backend::with(|state| state.automatic_reply = Some((vec![], TaskId::new(7))));
         let malformed_client = client();
-        assert_eq!(call(&malformed_client, &deadline), Err(rpc::CallFail::Malformed));
+        assert_eq!(call(&malformed_client, deadline), Err(rpc::Fail::Decode));
     }
 
     #[test]
@@ -328,10 +375,10 @@ mod tests {
         });
         let client = client();
         let deadline = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&client, &deadline), Ok(Response(42)));
+        assert_eq!(call(&client, deadline), Ok(Response(42)));
         let old_local = test_backend::with(|state| state.opened[0]);
         replies_for(old_local, &[99], TaskId::new(7));
-        assert_eq!(call(&client, &deadline), Ok(Response(42)));
+        assert_eq!(call(&client, deadline), Ok(Response(42)));
         let pushes: Vec<_> = events().iter().filter_map(|event| match event {
             test_backend::Event::Push(_, _, wait) => Some(*wait), _ => None,
         }).collect();
@@ -348,12 +395,12 @@ mod tests {
         test_backend::reset();
         let client = client();
         let deadline = time::Deadline::new(Wait::AtMost(0));
-        assert_eq!(call(&client, &deadline), Err(rpc::CallFail::Receive(MailFail::Busy)));
+        assert_eq!(call(&client, deadline), Err(rpc::Fail::Receive(MailFail::Busy)));
         let old = test_backend::with(|state| state.opened[0]);
         replies_for(old, &[11], TaskId::new(7));
         test_backend::with(|state| state.automatic_reply = Some((vec![42], TaskId::new(7))));
         let next = time::Deadline::new(Wait::AtMost(100));
-        assert_eq!(call(&client, &next), Ok(Response(42)));
+        assert_eq!(call(&client, next), Ok(Response(42)));
         let opened = test_backend::with(|state| state.opened.clone());
         assert_eq!(opened.len(), 2);
         assert_ne!(opened[0], opened[1]);
@@ -364,14 +411,81 @@ mod tests {
     fn reply_tokens_are_source_checked_and_consumed_once() {
         test_backend::reset();
         let token = PieToken::mint(55);
-        assert!(matches!(rpc::ReplyTo::from_raw(token, TaskId::new(8), Mark::of("back")), Err(rpc::ReplyFail::Untrusted)));
+        assert!(matches!(rpc::reply::Sender::<Response>::from_raw(token, TaskId::new(8), Mark::of("back")), Err(rpc::Fail::Untrusted)));
         assert!(!events().contains(&test_backend::Event::Release(token)));
 
-        let reply = rpc::ReplyTo::from_raw(token, TaskId::new(7), Mark::of("back")).unwrap();
+        let reply = rpc::reply::Sender::<Response>::from_raw(token, TaskId::new(7), Mark::of("back")).unwrap();
         assert_eq!(reply.send(Response(9)), Ok(()));
         let events = events();
         assert_eq!(events.iter().filter(|event| matches!(event, test_backend::Event::HandSend(..))).count(), 1);
         assert_eq!(events.iter().filter(|event| matches!(event, test_backend::Event::Release(released) if *released == token)).count(), 1);
+    }
+
+    #[test]
+    fn server_rejects_untrusted_back_and_retains_decoded_request_without_releasing_it() {
+        test_backend::reset();
+        let entry = PieToken::mint(2);
+        let caller = TaskId::new(7);
+        let remote_back = PieToken::mint(67);
+        test_backend::with(|state| state.reservation = Some((TaskId::new(8), caller, <TestContract as rpc::Contract>::BACK)));
+        let request = Request { seed: remote_back, fail_encode: false };
+        let mut bytes = Request::EMPTY;
+        request.store(&mut bytes).unwrap();
+        replies_for(entry, &bytes, caller);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let rejected = match receiver.receive(&mut bytes, Wait::POLL) {
+            Ok(_) => panic!("untrusted reply route accepted"),
+            Err(rejected) => rejected,
+        };
+        assert_eq!(rejected.fail, rpc::Fail::Untrusted);
+        let (from, decoded) = rejected.incoming.unwrap();
+        assert_eq!(from, caller);
+        assert_eq!(decoded.seed, remote_back);
+        assert!(!events().contains(&test_backend::Event::Release(remote_back)));
+    }
+
+    #[test]
+    fn dropping_a_queued_server_reply_releases_its_imported_route() {
+        test_backend::reset();
+        let entry = PieToken::mint(1);
+        let caller = TaskId::new(7);
+        let back = PieToken::mint(66);
+        test_backend::with(|state| state.reservation = Some((caller, caller, <TestContract as rpc::Contract>::BACK)));
+        let request = Request { seed: back, fail_encode: false };
+        let mut bytes = Request::EMPTY;
+        request.store(&mut bytes).unwrap();
+        replies_for(entry, &bytes, caller);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let incoming = receiver.receive(&mut bytes, Wait::POLL).unwrap();
+        assert!(!events().contains(&test_backend::Event::Release(back)));
+        drop(incoming);
+        let events = events();
+        assert_eq!(events.iter().filter(|event| matches!(event, test_backend::Event::Release(token) if *token == back)).count(), 1);
+    }
+
+    #[test]
+    fn typed_reply_encode_and_send_failures_release_the_imported_route_once() {
+        struct BadResponse;
+        impl Message for BadResponse {
+            type In = Self;
+            type Buf = [u8; 1];
+            const EMPTY: Self::Buf = [0];
+            fn store(&self, _: &mut [u8]) -> Option<usize> { None }
+            fn fetch(_: &[u8]) -> Option<Self> { None }
+        }
+
+        test_backend::reset();
+        let token = PieToken::mint(56);
+        let reply = rpc::reply::Sender::<BadResponse>::from_raw(token, TaskId::new(7), Mark::of("back")).unwrap();
+        assert!(matches!(reply.send(BadResponse), Err(rpc::Fail::Encode)));
+        assert_eq!(events().iter().filter(|event| matches!(event, test_backend::Event::Release(value) if *value == token)).count(), 1);
+
+        test_backend::reset();
+        test_backend::with(|state| state.fail_hand_send = true);
+        let token = PieToken::mint(57);
+        let reply = rpc::reply::Sender::<Response>::from_raw(token, TaskId::new(7), Mark::of("back")).unwrap();
+        assert_eq!(reply.send(Response(3)), Err(rpc::Fail::Send(MailFail::Busy)));
+        assert_eq!(events().iter().filter(|event| matches!(event, test_backend::Event::Release(value) if *value == token)).count(), 1);
     }
 
     #[test]
@@ -384,7 +498,7 @@ mod tests {
             test_backend::reset();
             test_backend::with(|state| state.reservation = Some(facts));
             let token = PieToken::mint(55);
-            assert!(matches!(rpc::ReplyTo::from_raw(token, caller, mark), Err(rpc::ReplyFail::Untrusted)));
+            assert!(matches!(rpc::reply::Sender::<Response>::from_raw(token, caller, mark), Err(rpc::Fail::Untrusted)));
             assert!(!events().contains(&test_backend::Event::Release(token)));
         }
     }
@@ -400,8 +514,7 @@ mod tests {
                 _ => {}
             });
             let client = client();
-            let deadline = time::Deadline::new(Wait::AtMost(20));
-            let result = client.call::<Request, Response>(&deadline, |seed| Request {
+            let result = client.call(time::Deadline::new(Wait::AtMost(20)), |seed| Request {
                 seed,
                 fail_encode: stage == "encode",
             });

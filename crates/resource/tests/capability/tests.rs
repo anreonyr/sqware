@@ -101,9 +101,9 @@ fn reply_checks_peer_and_seals_then_releases_on_drop() {
 }
 
 #[test]
-fn reply_loan_failure_still_seals_and_releases() {
+fn reply_grant_failure_still_seals_and_releases() {
     test_backend::reset();
-    let reply = Reply::open(peer(), Mark::of("claim-back")).unwrap();
+    let mut reply = Reply::open(peer(), Mark::of("claim-back")).unwrap();
     test_backend::fail_next(Op::Accord);
     assert!(reply.grant().is_err());
     drop(reply);
@@ -124,20 +124,16 @@ fn native_receive_denial_is_distinct_from_wrong_source() {
 }
 
 #[test]
-fn claim_loan_failure_cleans_up_the_previous_reply_loan() {
+fn duplicate_reply_grant_is_rejected_and_cleans_up_once() {
     test_backend::reset();
-    fn build_then_claim() -> crate::PieResult<()> {
-        let reply = Reply::open(peer(), Mark::of("back"))?;
-        let _build = reply.grant()?;
-        test_backend::fail_next(Op::Accord);
-        let _claim = reply.grant()?;
-        Ok(())
-    }
-    assert!(build_then_claim().is_err());
+    let mut reply = Reply::open(peer(), Mark::of("back")).unwrap();
+    let _remote = reply.grant().unwrap();
+    assert!(reply.grant().is_err());
+    drop(reply);
     let events = test_backend::events();
     let local = match events[0] { Event::Unseal(token, _) => token, _ => unreachable!() };
     let remote = match events[1] { Event::Accord(_, _, _, _, token) => token, _ => unreachable!() };
-    assert_eq!(events[3..], [Event::Revoke(peer(), remote), Event::Seal(local), Event::Release(local)]);
+    assert_eq!(events[2..], [Event::Revoke(peer(), remote), Event::Seal(local), Event::Release(local)]);
 }
 
 #[test]

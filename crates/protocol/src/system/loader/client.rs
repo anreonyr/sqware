@@ -1,4 +1,4 @@
-use super::frame::{self, Ask, Fail, Said, Wire};
+use super::{frame::{self, Ask, Fail, Wire}, rpc::Contract};
 use env::{Permission, PieToken, TaskId, TeamId, Wait};
 use resource::raw::Loan;
 use ipc::{rpc, time::Deadline};
@@ -10,12 +10,12 @@ pub struct Built {
 }
 
 pub struct Face {
-    rpc: rpc::Client,
+    rpc: rpc::request::Sender<Contract>,
 }
 impl Face {
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         Ok(Self {
-            rpc: rpc::Client::from_raw(entry, frame::BACK).map_err(|_| Fail::Bad)?,
+            rpc: rpc::request::Sender::from_raw(entry).map_err(|_| Fail::Bad)?,
         })
     }
 
@@ -40,7 +40,7 @@ impl Face {
         let image_loan = Loan::accord(&image, self.rpc.peer(), Permission::FETCH, frame::IMAGE)
             .map_err(|_| Fail::Denied)?;
 
-        let said = self.rpc.call::<Wire, Said>(&deadline, |back| {
+        let said = self.rpc.call(deadline, |back| {
             let mut words = [0; frame::MAX_ARGS];
             for (to, from) in words.iter_mut().zip(args) {
                 *to = *from as u64;
@@ -63,7 +63,7 @@ impl Face {
             return Err(Fail::Bad);
         }
 
-        let confirmed = self.rpc.call::<Wire, Said>(&deadline, |back| {
+        let confirmed = self.rpc.call(deadline, |back| {
             Wire::Claim(frame::Claim {
                 op: frame::CLAIM,
                 task: said.task,
