@@ -51,9 +51,6 @@ pub mod raw {
 pub mod control {
     pub use system_api::control::{frame, marks, publication, Fail, Grant, Req, Request, Said, State, Wire};
     pub mod account { pub use system_api::control::account::*; }
-    pub mod rpc {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/system-client/src/control/rpc.rs"));
-    }
     pub mod client {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/system-client/src/control/client.rs"));
     }
@@ -86,6 +83,7 @@ pub mod operator {
             }
         }
     }
+    pub use client::Face;
 }
 
 pub mod debug { pub fn put(_: &str) {} }
@@ -108,23 +106,15 @@ pub mod port {
 pub mod rpc {
     use super::*;
 
-    pub trait Contract {
-        type Request: Message;
-        type Response: Message;
-        const BACK: Mark;
-        fn back(request: &<Self::Request as Message>::In) -> PieToken;
-    }
-
     #[derive(Debug)]
     pub enum Fail { Open(()), Grant(()), Encode, Decode, Send(()), Receive(()), Untrusted, WrongSource }
-    pub use crate::control::rpc::{Account, Control, Publication};
 
     pub mod request {
         use super::*;
 
-        pub struct Sender<C: Contract> { entry: PieToken, _contract: PhantomData<C> }
-        impl<C: Contract> Sender<C> {
-            pub fn from_raw(entry: PieToken) -> Result<Self, Fail> {
+        pub struct Sender<C: wire::Contract> { entry: PieToken, _contract: PhantomData<C> }
+        impl<C: wire::Contract> Sender<C> {
+            pub fn from_raw(entry: PieToken, _: Mark) -> Result<Self, Fail> {
                 Ok(Self { entry, _contract: PhantomData })
             }
             pub fn peer(&self) -> TaskId { TaskId::new(7) }
@@ -205,7 +195,7 @@ pub mod system {
             pub use system_api::control::account::*;
             pub use system_api::control::marks::ACCOUNT_BACK as BACK;
         }
-        pub use crate::control::{client, rpc};
+        pub use crate::control::client;
     }
     pub use crate::{identity, loader, operator};
 }
@@ -220,7 +210,7 @@ macro_rules! debug { ($($arg:tt)*) => {{ let _ = core::format_args!($($arg)*); }
 mod tests {
     use super::*;
     use alloc::string::String;
-    use system::control::{client::Face, frame::{self, Req, Request, Wire}, rpc};
+    use system::control::{client::Face, frame::{self, Req, Request, Wire}};
 
     fn token(value: u64) -> PieToken { PieToken::from_bytes(&value.to_le_bytes()).unwrap() }
 
@@ -242,19 +232,22 @@ mod tests {
         let mut bytes = Request::EMPTY;
         let n = request.store(&mut bytes).unwrap();
         let decoded = Request::fetch(&bytes[..n]).unwrap();
-        assert_eq!(<rpc::Control as crate::rpc::Contract>::back(&decoded), back);
-        assert_eq!(<rpc::Control as crate::rpc::Contract>::BACK, frame::BACK);
+        assert_eq!(system_api::control::Call::back(&decoded), back);
+        assert_eq!(system_api::control::Call::BACK, frame::BACK);
 
         let account = system_api::control::account::Request { account: String::from("."), back };
         let mut bytes = system_api::control::account::Request::EMPTY;
         let n = account.store(&mut bytes).unwrap();
         let decoded = system_api::control::account::Request::fetch(&bytes[..n]).unwrap();
-        assert_eq!(<rpc::Account as crate::rpc::Contract>::back(&decoded), back);
+        assert_eq!(system_api::control::account::Call::back(&decoded), back);
         assert!(decoded.1, "well-formed trailing boundary is retained for server validation");
-        assert_eq!(<rpc::Account as crate::rpc::Contract>::BACK, system_api::control::account::BACK);
+        assert_eq!(
+            system_api::control::account::Call::BACK,
+            system_api::control::marks::ACCOUNT_BACK,
+        );
         let decoded_with_tail = system_api::control::account::Request::fetch(&bytes[..n + 1]).unwrap();
         assert!(!decoded_with_tail.1);
-        assert_eq!(<rpc::Account as crate::rpc::Contract>::back(&decoded_with_tail), back);
+        assert_eq!(system_api::control::account::Call::back(&decoded_with_tail), back);
 
         let frame = system_api::control::publication::Frame::new(
             system_api::control::publication::PUBLISH,
@@ -268,8 +261,11 @@ mod tests {
         let mut bytes = system_api::control::publication::Frame::EMPTY;
         let n = frame.store(&mut bytes).unwrap();
         let decoded = system_api::control::publication::Frame::fetch(&bytes[..n]).unwrap();
-        assert_eq!(<rpc::Publication as crate::rpc::Contract>::back(&decoded), frame.back);
-        assert_eq!(<rpc::Publication as crate::rpc::Contract>::BACK, system_api::control::publication::BACK);
+        assert_eq!(system_api::control::publication::Call::back(&decoded), frame.back);
+        assert_eq!(
+            system_api::control::publication::Call::BACK,
+            system_api::control::marks::PUBLICATION_BACK,
+        );
     }
 
     fn publication_client(fail_send: bool, fail_receive: bool) -> publication_client::Client {

@@ -1,21 +1,16 @@
-use super::{frame::{self, Ask, Fail, Wire}, rpc::Contract};
-use env::{Permission, PieToken, TaskId, TeamId, Wait};
+use super::frame::{self, Ask, Fail, Wire};
+use env::{Permission, PieToken, TeamId, Wait};
 use resource::raw::Loan;
 use ipc::{rpc, time::Deadline};
-
-#[derive(Clone, Copy, Debug)]
-pub struct Built {
-    pub team: TeamId,
-    pub task: TaskId,
-}
+use system_api::loader::{Built, Call};
 
 pub struct Face {
-    rpc: rpc::request::Sender<Contract>,
+    rpc: rpc::request::Sender<Call>,
 }
 impl Face {
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         Ok(Self {
-            rpc: rpc::request::Sender::from_raw(entry).map_err(|_| Fail::Bad)?,
+            rpc: rpc::request::Sender::from_raw(entry, Call::BACK).map_err(|_| Fail::Bad)?,
         })
     }
 

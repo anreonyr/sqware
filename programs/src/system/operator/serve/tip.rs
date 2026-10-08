@@ -13,7 +13,7 @@ use ::resource::raw::{Hole, reserve};
 use programs::{
     debug,
 };
-use system_client::identity::client::TaskQuery;
+use system_client::identity::TaskQuery;
 use system_api::operator as ocall;
 use ::resource::{
     pile::Pile,

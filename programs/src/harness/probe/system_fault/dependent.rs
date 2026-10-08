@@ -6,14 +6,18 @@ use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use ipc::session::{Session, establish};
-use system_client::control::{Client, Object, Target};
-use system_client::identity::{Selector, Query, SelfOps};
+use system_client::control::publication::Client;
+use system_api::control::Object;
+use system_api::control::Target;
+use system_api::identity::Selector;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
 use env::pie;
 use ::resource::raw::{Hole, reserve};
-use system_client::operator::{
-    Fail, Permit,
-    client::{self as operator, Face},
-};
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_client::operator as operator;
+use system_client::operator::Face;
 const WAIT: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> programs::Report<'static> {
@@ -77,7 +81,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        pie::unseal_hole(system_client::control::publication::REF).unwrap(),
+                        pie::unseal_hole(system_api::control::publication::REF).unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -158,7 +162,9 @@ fn main() -> programs::Report<'static> {
                     .unwrap();
                 assert!(tree.tile(&ownroad, WAIT).unwrap().token(WAIT).is_ok());
                 {
-                    use system_client::control::publication::{BACK, ENTRY, Frame};
+                    use system_api::control::publication::BACK;
+use system_api::control::publication::ENTRY;
+use system_api::control::publication::Frame;
                     use ::resource::port::{self, Access, Policy};
                     let abandoned = Target::RuntimeResource {
                         task: me,
@@ -303,7 +309,9 @@ fn main() -> programs::Report<'static> {
                 );
             }
             5 => {
-                use system_client::control::publication::{BACK, REF, Reply};
+                use system_api::control::publication::BACK;
+use system_api::control::publication::REF;
+use system_api::control::publication::Reply;
                 use ::resource::port::{self, Access, Policy};
                 let fake = establish::find(control, REF).unwrap();
                 assert_eq!(

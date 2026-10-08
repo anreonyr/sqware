@@ -8,20 +8,19 @@ use crate::system::{
     operator::client::Tree,
     run::publication::{Internal, book::Publications},
 };
-use system_client::{identity, loader as call, operator};
 pub(crate) fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, &'static str> {
     let principal = roster.control().ok_or("Control identity missing")?;
-    let grant = call::Grant::Build;
+    let grant = system_api::loader::Grant::Build;
     let (entry, _) = mount::entry(grant.mark(), grant.name())?;
     mounts.0.push(Internal {
-        road: call::DIR.try_join(grant.name()).ok_or("Loader path")?,
+        road: system_api::operator::Path::new(system_api::loader::DIR).try_join(grant.name()).ok_or("Loader path")?,
         entry,
         access: (
-            operator::Permit::Identity(identity::Selector::Exact(principal)),
+            system_api::operator::Permit::Identity(system_api::identity::Selector::Exact(principal)),
             env::unit::self_id(),
         ),
     });

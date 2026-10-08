@@ -10,9 +10,15 @@ use env::{PieToken, Wait};
 use programs::Report;
 use ipc::hand::Receiver;
 use ipc::session::{Session, establish};
-use system_client::identity;
-use system_client::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
-use system_client::operator::client as operator;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_api::identity::Fail;
+use system_api::identity::Grant;
+use system_api::identity::Install;
+use system_client::operator;
 use env::unit;
 use ::resource::raw::{Hole, reserve};
 
@@ -26,7 +32,7 @@ fn main() -> Report<'static> {
         let request = establish::Held(
             establish::endpoint(
                 unit::sire(),
-                env::Mark::of(system_client::operator::LINK),
+                env::Mark::of(system_api::operator::LINK),
                 Wait::POLL,
             )
             .expect("probe-denied: transient LINK"),
@@ -108,7 +114,7 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
         assert_eq!(mark, grant.mark());
         return entry;
     }
-    let road = identity::DIR
+    let road = system_api::operator::Path::new(system_api::identity::DIR)
         .try_join(grant.name())
         .expect("probe-denied: bad action name");
     let entry = tree
@@ -124,8 +130,8 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
 
 fn raw(entry: PieToken, wire: Wire) -> Reply {
     let (back, seed) =
-        establish::lend_out(entry, identity::BACK).expect("probe-denied: cannot establish reply");
-    let mut frame = [0u8; identity::limits::MAX_FRAME];
+        establish::lend_out(entry, system_api::identity::BACK).expect("probe-denied: cannot establish reply");
+    let mut frame = [0u8; system_api::identity::limits::MAX_FRAME];
     let n = wire
         .store(seed, &mut frame)
         .expect("probe-denied: action encode failed");

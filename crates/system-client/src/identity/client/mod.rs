@@ -32,8 +32,3 @@ fn principal(reply: Reply) -> Result<PrincipalId, CallError> {
         _ => Err(CallError::Malformed),
     }
 }
-
-pub type IdentityQuery = Query;
-pub type IdentitySelf = SelfOps;
-pub type IdentityOrganization = Organization;
-pub type IdentityInstaller = Installer;

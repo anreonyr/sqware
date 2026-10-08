@@ -7,7 +7,6 @@ use crate::system::{
     control::identity::Roster,
 };
 use system_api::operator::Path;
-use system_client::{identity as id, operator as op};
 pub fn publication_face(
     images: Res<Images>,
     mut mounts: ResMut<Mounts>,
@@ -15,7 +14,7 @@ pub fn publication_face(
     mounts.0.push(Internal {
         road: Path::new("svc/sys/control/publish").to_path_buf(),
         entry: images.entry,
-        access: (op::Permit::Public, env::unit::self_id()),
+        access: (system_api::operator::Permit::Public, env::unit::self_id()),
     });
     Ok(Progress::Done)
 }
@@ -27,9 +26,9 @@ pub(crate) fn faces(
     let principal = roster.control().ok_or("Control identity missing")?;
     for grant in system_api::control::Grant::ALL {
         let permit = if grant == system_api::control::Grant::State {
-            op::Permit::Public
+            system_api::operator::Permit::Public
         } else {
-            op::Permit::Identity(id::Selector::Exact(principal))
+            system_api::operator::Permit::Identity(system_api::identity::Selector::Exact(principal))
         };
         let (entry, _) = mount::entry(grant.mark(), grant.name())?;
         mounts.0.push(Internal {

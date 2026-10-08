@@ -20,8 +20,7 @@ use programs::Report;
 use env::PieToken;
 use ipc::session::{Session, Endpoint};
 use programs::debug;
-use system_client::operator as ocall;
-use system_client::operator::client as operator;
+use system_client::operator;
 use env::unit;
 use ::resource::raw::{Hole};
 
@@ -63,7 +62,7 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     f[10] = 1; // 名字长度那一字节
     f[11] = b'x'; // 名字那一个字节
     f[20] = 0; // `mine = false`
-    ocall::Permit::Public.store(&mut f[21..]);
+    system_api::operator::Permit::Public.store(&mut f[21..]);
     f[21] = permit_tag; // **这一格是唯一要试的那一格**
     f
 }
@@ -90,7 +89,7 @@ const LAND_PERMIT_UNKNOWN: u8 = 9;
 const LAND_PERMIT_KNOWN: u8 = 0;
 
 /// Prefix offset remains a raw-frame acceptance check; Permit width follows its codec.
-const LAND_LEN: usize = 21 + ocall::Permit::WIDTH;
+const LAND_LEN: usize = 21 + system_api::operator::Permit::WIDTH;
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -204,11 +203,11 @@ fn junk_trip(
         back[0]
     );
     let said = pulled.ok();
-    let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
+    let bad = matches!(said, Some(1) if back[0] == system_api::operator::BAD);
 
     // 正经的一问：**门还在答**。
     let root = face.root();
-    let after = matches!(root.open(dir, Wait::AtMost(MS)), Err(ocall::Fail::Denied));
+    let after = matches!(root.open(dir, Wait::AtMost(MS)), Err(system_api::operator::Fail::Denied));
     (pushed, bad, after)
 }
 

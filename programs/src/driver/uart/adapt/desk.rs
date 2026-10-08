@@ -8,9 +8,9 @@ use programs::unit::uart::E_UART;
 use ipc::rack::{Mode, Rack, Reader, Writer};
 use programs::debug;
 use router_client::Line;
-use system_client::control::Scope;
-use system_client::operator::Permit;
-use system_client::operator::client as operator;
+use system_api::control::Scope;
+use system_api::operator::Permit;
+use system_client::operator;
 use env::unit;
 
 const ASK: Ask = Ask {
@@ -92,7 +92,7 @@ fn plate(rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
     let client = system_client::control::publication::Client::injected()
         .expect("uart: publication entry");
     for (name, entry) in [(RX, rx.ship()), (TX, tx.ship())] {
-        let target = system_client::control::publication::Target::Service {
+        let target = system_api::control::publication::Target::Service {
             scope: Scope::Driver,
             group: "uart".into(),
             name: name.into(),

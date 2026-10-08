@@ -1,5 +1,6 @@
 use terminal_api::frame::{self, Command, Input, Reply};
-use system_client::operator::{Face, Path};
+use system_client::operator::Face;
+use system_api::operator::Path;
 use wire::message::Message;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};

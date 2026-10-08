@@ -14,8 +14,9 @@ use programs::Report;
 use system_api::operator::path::PathBuf;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator::{Permit, Face as Face};
-use system_client::operator::client as operator;
+use system_api::operator::Permit;
+use system_client::operator::Face as Face;
+use system_client::operator;
 use env::unit;
 use env::pie;
 
@@ -39,8 +40,8 @@ fn main() -> Report<'static> {
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
     let client = system_client::control::publication::Client::injected().unwrap();
-    let target = system_client::control::publication::Target::Service {
-        scope: system_client::control::publication::Scope::Fixture,
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope::Fixture,
         group: "probe-swatch".into(),
         name: IN.into(),
     };

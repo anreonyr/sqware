@@ -6,7 +6,7 @@ use crate::system::control::core::unit::State;
 use env::Wait;
 use ipc::rpc::{self, reply::Sender as ReplySender, request::Receiver as RequestReceiver};
 use system_api::control as ccall;
-use system_client::control::rpc::Control as ControlContract;
+use system_api::control::Call as ControlContract;
 
 pub struct Incoming {
     pub wire: ccall::frame::Wire,
@@ -25,7 +25,7 @@ pub fn receive(
         let Some(face) = watch.faces[grant.index()] else {
             continue;
         };
-        let receiver = RequestReceiver::<ControlContract>::from_raw(face);
+        let receiver = RequestReceiver::<ControlContract>::from_raw(face, ControlContract::BACK, ControlContract::back);
         loop {
             let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
                 Ok(request) => request,

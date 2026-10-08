@@ -6,7 +6,8 @@ use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, p
 use ipc::session::{Session, establish};
 use terminal_client::{Connection, Terminal};
 use terminal_api::frame;
-use system_client::operator::{self, Face};
+use system_client::operator;
+use system_client::operator::Face;
 use ::resource::raw::{Hole, inspect};
 use execution::{room, unit as task};
 
@@ -29,7 +30,7 @@ fn denied(input: PieToken, output: PieToken, control: PieToken) {
 }
 #[programs::entry]
 fn main() -> programs::Report<'static> {
-    let session = Session::open(unit::sire(), operator::client::BERTH, Wait::AtMost(1000))
+    let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(1000))
         .ok()
         .expect("probe-terminal: session");
     let terminal = Terminal::find(&Face::of(session)).unwrap();

@@ -1,5 +1,10 @@
 use env::TaskId;
-use system_api::identity::{Binding, Fail, Install, Match, Selector, Subject};
+use system_api::identity::Binding;
+use system_api::identity::Fail;
+use system_api::identity::Install;
+use system_api::identity::Match;
+use system_api::identity::Selector;
+use system_api::identity::Subject;
 
 use super::{IdentityBook, limits};
 

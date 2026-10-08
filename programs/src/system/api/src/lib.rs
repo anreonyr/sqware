@@ -9,6 +9,11 @@ pub mod operator;
 #[mold::interface(id = "sqware.system.loader.v1")]
 pub mod loader {
     use env::{PieToken, TaskId};
+    #[derive(Clone, Copy, Debug)]
+    pub struct Built {
+        pub team: env::TeamId,
+        pub task: TaskId,
+    }
     pub use wire::OK;
 
     pub const DIR: &str = "svc/sys/loader";
@@ -67,5 +72,17 @@ pub mod loader {
         #[code(4)] NotReady,
         #[code(5)] Bad,
         #[code(6)] Denied,
+    }
+    /// The provider-declared request and response pair.
+    pub struct Call;
+    impl wire::Contract for Call {
+        type Request = crate::loader::Wire;
+        type Response = crate::loader::Said;
+    }
+    impl Call {
+        pub const BACK: env::Mark = crate::loader::BACK;
+        pub fn back(request: &crate::loader::Wire) -> PieToken {
+            match request { crate::loader::Wire::Build(ask) => ask.back, crate::loader::Wire::Claim(claim) => claim.back }
+        }
     }
 }

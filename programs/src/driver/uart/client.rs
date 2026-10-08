@@ -18,7 +18,8 @@
 //! [`find`]（只是把 `road` 换成它们自己的试验场），故真机量到的就是客人这条路本身。
 
 use env::{PieToken, Wait};
-use system_api::operator::path::{Path, PathBuf};
+use system_api::operator::path::Path;
+use system_api::operator::path::PathBuf;
 use ipc::rack::{Mode, Reader, Writer};
 use router_api as driver;
 use system_client::operator::Face;

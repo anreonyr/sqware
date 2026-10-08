@@ -11,10 +11,12 @@ use crate::system::common::timing::BOOT_MS;
 use system_api::operator::Path;
 use ipc::hand::Sender;
 use ipc::session::establish;
-use system_api::operator::{EntryId, Tip};
+use system_api::operator::EntryId;
+use system_api::operator::Tip;
 use env::pie;
 use ::resource::raw::{Hole, pies, reserve};
-pub use system_api::operator::{LINK, TIP_MARK};
+pub use system_api::operator::LINK;
+use system_api::operator::TIP_MARK;
 
 /// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
 fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
@@ -87,7 +89,7 @@ impl Tree {
             authority,
             faces: [resolve, matches, same],
         } = wiring;
-        use system_client::identity::Grant;
+        use system_api::identity::Grant;
         let host = self.host.ok_or("no tree yet")?;
         let Some(tip) = self.tip else {
             return Err("no tip");

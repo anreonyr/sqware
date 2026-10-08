@@ -1,7 +1,9 @@
 //! One authority owns the principal tree, coalitions, membership, and atomic task identity snapshots.
 use alloc::vec::Vec;
 use env::TaskId;
-use system_api::identity::{CoalitionId, Fail, PrincipalId};
+use system_api::identity::CoalitionId;
+use system_api::identity::Fail;
+use system_api::identity::PrincipalId;
 
 mod coalition;
 mod limits;

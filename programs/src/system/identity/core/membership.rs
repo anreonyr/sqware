@@ -1,8 +1,12 @@
 //! Membership: who is in a coalition, and the one paged scan of that relation.
 use env::TaskId;
-use system_api::identity::{
-    CoalitionId, Cursor, Fail, Page, PageId, PageTarget, PrincipalId,
-};
+use system_api::identity::CoalitionId;
+use system_api::identity::Cursor;
+use system_api::identity::Fail;
+use system_api::identity::Page;
+use system_api::identity::PageId;
+use system_api::identity::PageTarget;
+use system_api::identity::PrincipalId;
 
 use super::{IdentityBook, limits};
 

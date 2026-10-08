@@ -3,18 +3,10 @@
 use core::marker::PhantomData;
 use env::{MailFail, Mark, PieFail, PieToken, TaskId, Wait, pie};
 use resource::{port::{Reply, ReplyError, Sender as PortSender}, raw};
+pub use wire::Contract;
 use wire::Message;
 
 use crate::{hand::{Sender as HandSender, SendFail}, time::Deadline};
-
-/// A request/response pair and the reply-token field shared by both endpoints.
-pub trait Contract {
-    type Request: Message;
-    type Response: Message;
-    const BACK: Mark;
-
-    fn back(request: &<Self::Request as Message>::In) -> PieToken;
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
@@ -34,13 +26,14 @@ pub mod request {
     /// Client endpoint bound to one typed request/response contract.
     pub struct Sender<C: Contract> {
         entry: PortSender,
+        back: Mark,
         _contract: PhantomData<fn() -> C>,
     }
 
     impl<C: Contract> Sender<C> {
-        pub fn from_raw(entry: PieToken) -> Result<Self, Fail> {
+        pub fn from_raw(entry: PieToken, back: Mark) -> Result<Self, Fail> {
             let entry = PortSender::import(entry).map_err(|error| Fail::Open(error.source))?;
-            Ok(Self { entry, _contract: PhantomData })
+            Ok(Self { entry, back, _contract: PhantomData })
         }
 
         pub fn peer(&self) -> TaskId {
@@ -53,7 +46,7 @@ pub mod request {
             deadline: Deadline,
             build: impl FnOnce(PieToken) -> C::Request,
         ) -> Result<super::reply::Receiver<C::Response>, Fail> {
-            let mut reply = Reply::open(self.peer(), C::BACK).map_err(|error| Fail::Open(error.source))?;
+            let mut reply = Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
             let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
             let request = build(remote);
             let mut buffer = C::Request::EMPTY;
@@ -78,12 +71,18 @@ pub mod request {
     /// Server endpoint bound to one typed request/response contract.
     pub struct Receiver<C: Contract> {
         entry: PieToken,
+        back: Mark,
+        route: fn(&<C::Request as Message>::In) -> PieToken,
         _contract: PhantomData<fn() -> C>,
     }
 
     impl<C: Contract> Receiver<C> {
-        pub fn from_raw(entry: PieToken) -> Self {
-            Self { entry, _contract: PhantomData }
+        pub fn from_raw(
+            entry: PieToken,
+            back: Mark,
+            route: fn(&<C::Request as Message>::In) -> PieToken,
+        ) -> Self {
+            Self { entry, back, route, _contract: PhantomData }
         }
 
         /// Receive, decode, and validate the reply route embedded in one request.
@@ -104,8 +103,8 @@ pub mod request {
                 Some(request) => request,
                 None => return Err(Rejected { fail: Fail::Decode, incoming: None }),
             };
-            let token = C::back(&request);
-            let reply = match super::reply::Sender::<C::Response>::from_raw(token, from, C::BACK) {
+            let token = (self.route)(&request);
+            let reply = match super::reply::Sender::<C::Response>::from_raw(token, from, self.back) {
                 Ok(reply) => reply,
                 Err(fail) => return Err(Rejected { fail, incoming: Some((from, request)) }),
             };

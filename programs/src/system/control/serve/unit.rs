@@ -147,7 +147,7 @@ impl Control {
     }
     pub(crate) fn register_instance(
         &mut self,
-        built: system_client::loader::Built,
+        built: system_api::loader::Built,
         owner: TaskId,
     ) {
         self.instances
@@ -158,7 +158,7 @@ impl Control {
                 state: State::Starting,
                 claimed: false,
                 claim_until: env::chrono::clock()
-                    + system_client::loader::frame::CLAIM_MS as u64 * 1_000_000,
+                    + system_api::loader::CLAIM_MS as u64 * 1_000_000,
                 hook: Default::default(),
             });
     }

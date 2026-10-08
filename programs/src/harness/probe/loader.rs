@@ -3,14 +3,15 @@ use super::fixture::Fixture;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
-use system_client::{control, loader as call, operator::client::Face as Operator};
+use system_client::loader as call;
+use system_client::operator::Face as Operator;
 use ipc::session::establish;
 use ::resource::raw::Hole;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
 pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
-    let road = call::DIR.try_join(call::Grant::Build.name()).unwrap();
+    let road = system_api::operator::Path::new(system_api::loader::DIR).try_join(system_api::loader::Grant::Build.name()).unwrap();
     assert!(
         operator.tile(&road, WAIT).unwrap().token(WAIT).is_ok(),
         "loader: operator entry missing"
@@ -26,12 +27,12 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let d = denied.clone();
     let peer = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire) && t.load(Ordering::Acquire) != 0);
-        let face = control::Face::of(establish::find(root, control::Grant::State.mark()).unwrap())
+        let face = system_client::control::Face::of(establish::find(root, system_api::control::Grant::State.mark()).unwrap())
             .unwrap();
         assert_eq!(
             face.instance(TaskId::new(t.load(Ordering::Acquire)))
                 .state(WAIT),
-            Err(control::Fail::Denied)
+            Err(system_api::control::Fail::Denied)
         );
         d.store(true, Ordering::Release);
     });
@@ -51,10 +52,10 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .unwrap();
     env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
     for grant in [
-        control::Grant::State,
-        control::Grant::Embark,
-        control::Grant::Debark,
-        control::Grant::Ruin,
+        system_api::control::Grant::State,
+        system_api::control::Grant::Embark,
+        system_api::control::Grant::Debark,
+        system_api::control::Grant::Ruin,
     ] {
         let entry = assembly
             .resources
@@ -63,7 +64,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             .faces[grant.index()]
         .unwrap();
         env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
-        if grant == control::Grant::State {
+        if grant == system_api::control::Grant::State {
             env::pie::accord(entry, peer.id(), Permission::STORE, Mark::NONE).unwrap();
         }
     }
@@ -169,7 +170,7 @@ fn until(mut ready: impl FnMut() -> bool) {
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     use env::wire::Span;
     use wire::Message;
-    let entry = establish::find(root, call::Grant::Build.mark()).unwrap();
+    let entry = establish::find(root, system_api::loader::Grant::Build.mark()).unwrap();
     let loader = call::Face::of(entry).unwrap();
     assert!(
         env::unit::build(env::ProgramKind::User).is_err(),
@@ -193,51 +194,51 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     assert_ne!(first.team, second.team);
     target.store(first.task.get(), Ordering::Release);
     until(|| denied.load(Ordering::Acquire));
-    let face = |grant: control::Grant| {
-        control::Face::of(establish::find(root, grant.mark()).unwrap()).unwrap()
+    let face = |grant: system_api::control::Grant| {
+        system_client::control::Face::of(establish::find(root, grant.mark()).unwrap()).unwrap()
     };
-    let state = face(control::Grant::State);
+    let state = face(system_api::control::Grant::State);
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     assert!(
         env::unit::join(first.task, Wait::POLL).is_err_and(|e| e.source == env::UnitFail::Denied)
     );
-    face(control::Grant::Embark)
+    face(system_api::control::Grant::Embark)
         .instance(first.task)
         .embark(WAIT)
         .unwrap();
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Ready
+        system_api::control::State::Ready
     );
     until(|| {
-        face(control::Grant::Debark)
+        face(system_api::control::Grant::Debark)
             .instance(first.task)
             .debark(WAIT)
             .is_ok()
     });
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
-    face(control::Grant::Embark)
+    face(system_api::control::Grant::Embark)
         .instance(first.task)
         .embark(WAIT)
         .unwrap();
-    face(control::Grant::Ruin)
+    face(system_api::control::Grant::Ruin)
         .instance(first.task)
         .ruin(WAIT)
         .unwrap();
-    until(|| state.instance(first.task).state(WAIT) == Ok(control::State::Dead));
+    until(|| state.instance(first.task).state(WAIT) == Ok(system_api::control::State::Dead));
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     assert!(matches!(
         loader.build(image, size, 1, &[], 0, WAIT),
-        Err(call::Fail::BadImage)
+        Err(system_api::loader::Fail::BadImage)
     ));
     // SAFETY: the caller retains write access while the service uses an independent snapshot.
     unsafe {
@@ -245,42 +246,42 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     }
     assert!(matches!(
         loader.build(image, 0, bytes.len(), &[], 0, WAIT),
-        Err(call::Fail::BadImage)
+        Err(system_api::loader::Fail::BadImage)
     ));
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     unsafe {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy = env::pie::accord(image, root, Permission::FETCH, call::frame::IMAGE).unwrap();
-    let (back, seed) = establish::lend_out(entry, call::frame::BACK).unwrap();
-    let ask = call::frame::Ask {
-        op: call::frame::BUILD,
+    let image_copy = env::pie::accord(image, root, Permission::FETCH, system_api::loader::IMAGE).unwrap();
+    let (back, seed) = establish::lend_out(entry, system_api::loader::BACK).unwrap();
+    let ask = system_api::loader::Ask {
+        op: system_api::loader::BUILD,
         image: image_copy,
         offset: 0,
         len: bytes.len() as u64,
         stack: 0,
         count: 0,
-        args: [0; call::frame::MAX_ARGS],
+        args: [0; system_api::loader::MAX_ARGS],
         back: seed,
     };
-    let mut request = [0; call::frame::Ask::LEN];
+    let mut request = [0; system_api::loader::Ask::LEN];
     let n = ask.store_at(&mut request, 0).unwrap();
     Hole::from_raw(entry)
         .push(&request[..n], WAIT)
         .unwrap();
-    let mut reply = call::frame::Said::EMPTY;
-    let said = ipc::hand::Receiver::<call::frame::Said>::from_raw(back)
+    let mut reply = system_api::loader::Said::EMPTY;
+    let said = ipc::hand::Receiver::<system_api::loader::Said>::from_raw(back)
         .recv(&mut reply, WAIT)
         .unwrap();
     assert_eq!(said.status, wire::OK);
     let _ = env::pie::seal(back);
     let _ = env::pie::release(back);
     // Leave the result unclaimed while keeping its requester alive.
-    until(|| state.instance(said.task).state(WAIT) == Ok(control::State::Dead));
+    until(|| state.instance(said.task).state(WAIT) == Ok(system_api::control::State::Dead));
     env::pie::shut(image).unwrap();
     env::pie::release(image).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.

@@ -32,14 +32,7 @@ pub mod time {
 pub mod rpc {
     use core::marker::PhantomData;
     use crate::{PieToken, time::Deadline};
-    use wire::Message;
-
-    pub trait Contract {
-        type Request: Message;
-        type Response: Message<In = system_api::identity::Reply>;
-        const BACK: crate::Mark;
-        fn back(request: &<Self::Request as Message>::In) -> PieToken;
-    }
+    use wire::{Contract, Message};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Fail { Encode, Decode, WrongSource, Other }
@@ -47,10 +40,13 @@ pub mod rpc {
     pub mod request {
         use super::*;
 
-        pub struct Sender<C: Contract> { entry: PieToken, _contract: PhantomData<fn() -> C> }
+        pub struct Sender<C: Contract<Request = system_api::identity::Request, Response = system_api::identity::Reply>> {
+            entry: PieToken,
+            _contract: PhantomData<fn() -> C>,
+        }
 
-        impl<C: Contract> Sender<C> {
-            pub fn from_raw(entry: PieToken) -> Result<Self, Fail> {
+        impl<C: Contract<Request = system_api::identity::Request, Response = system_api::identity::Reply>> Sender<C> {
+            pub fn from_raw(entry: PieToken, _: crate::Mark) -> Result<Self, Fail> {
                 Ok(Self { entry, _contract: PhantomData })
             }
 
@@ -65,7 +61,7 @@ pub mod rpc {
                 let len = request.store(buffer.as_mut()).ok_or(Fail::Encode)?;
                 let bytes = buffer.as_ref().get(..len).ok_or(Fail::Encode)?;
                 let decoded = C::Request::fetch(bytes).ok_or(Fail::Decode)?;
-                let extracted = C::back(&decoded);
+                let extracted = system_api::identity::Call::back(&decoded);
                 crate::test_state::sent(self.entry, back, extracted, deadline.0);
                 let response = crate::test_state::rpc_result()?;
                 let mut response_buffer = C::Response::EMPTY;

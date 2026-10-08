@@ -23,8 +23,9 @@ use programs::unit::lodger::E_LODGER;
 
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator::{Fail, Face};
-use system_client::operator::client as operator;
+use system_api::operator::Fail;
+use system_client::operator::Face;
+use system_client::operator;
 
 use env::{Access, PieKind, PieToken, Policy};
 use router_client as line;

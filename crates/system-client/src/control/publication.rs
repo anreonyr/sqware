@@ -1,17 +1,16 @@
 //! Control publication client. Wire types live in system-api.
 
-use crate::operator::PathBuf;
-use crate::identity::{CoalitionId, PrincipalId};
-use crate::operator::Fail;
-use crate::operator::{EntryId, Permit};
+use system_api::operator::{EntryId, Fail, PathBuf, Permit};
+use system_api::identity::{CoalitionId, PrincipalId};
 use ::resource::raw::{inspect, reserve};
 use env::pie;
 use env::{PieToken, TaskId, Wait};
 use ipc::session::establish;
 use ipc::{rpc, time::Deadline};
+use system_api::control::publication::Call;
 
-pub use system_api::control::publication::{
-    BACK, ENTRY, Frame, Object, PUBLISH, REF, RESOLVE, RUNTIME, Reply, Scope, Target, UNPUBLISH,
+use system_api::control::publication::{
+    ENTRY, Frame, Object, PUBLISH, REF, RESOLVE, RUNTIME, Reply, Target, UNPUBLISH,
     valid_name,
 };
 
@@ -36,7 +35,7 @@ impl Client {
         }
         Self::direct(control, entry)
     }
-    pub fn call(&self, mut frame: Frame, wait: Wait) -> Result<Reply, Fail> {
+    fn call(&self, mut frame: Frame, wait: Wait) -> Result<Reply, Fail> {
         Self::direct(self.control, self.entry)?;
         exchange(self.control, self.entry, &mut frame, wait, &mut false)?.result()
     }
@@ -98,7 +97,7 @@ impl Client {
     }
     pub fn reference(
         &self,
-        operator: &crate::operator::client::Face,
+        operator: &crate::operator::Face,
         authority: TaskId,
         kind: u8,
         name: &str,
@@ -154,7 +153,7 @@ fn exchange(
     wait: Wait,
     admitted: &mut bool,
 ) -> Result<Reply, Fail> {
-    let sender = rpc::request::Sender::<super::rpc::Publication>::from_raw(entry)
+    let sender = rpc::request::Sender::<Call>::from_raw(entry, Call::BACK)
         .map_err(|_| Fail::Unknown)?;
     if sender.peer() != control {
         return Err(Fail::Denied);

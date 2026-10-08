@@ -17,9 +17,8 @@ use programs::harness::probe;
 use system_api::operator::path::Path;
 use ipc::session::Session;
 use programs::debug;
-use system_client::identity as icall;
-use system_client::operator::Grant;
-use system_client::operator::client as operator;
+use system_api::operator::Grant;
+use system_client::operator;
 use system_client::operator::Face;
 use env::unit;
 use ::resource::raw::{reserve};
@@ -43,20 +42,20 @@ fn main() -> Report<'static> {
     };
     let tree = Face::from(&session);
 
-    assert_eq!(icall::Grant::ALL.len(), 17);
-    step(&tree, "identity", icall::DIR, icall::Grant::ALL.len());
+    assert_eq!(system_api::identity::Grant::ALL.len(), 17);
+    step(&tree, "identity", system_api::operator::Path::new(system_api::identity::DIR), system_api::identity::Grant::ALL.len());
     let authority = system_client::identity::authority()
         .expect("probe-coalition: no Control-issued identity authority");
-    for grant in icall::Grant::ALL {
-        let entry = if grant.mount() == icall::Mount::Installer {
-            let road = icall::DIR
+    for grant in system_api::identity::Grant::ALL {
+        let entry = if grant.mount() == system_api::identity::Mount::Installer {
+            let road = system_api::operator::Path::new(system_api::identity::DIR)
                 .try_join(grant.name())
                 .expect("probe-coalition: bad face name");
             assert_eq!(
                 tree.tile(&road, Wait::AtMost(MS))
                     .unwrap()
                     .token(Wait::AtMost(MS)),
-                Err(system_client::operator::Fail::Denied),
+                Err(system_api::operator::Fail::Denied),
                 "installer discovery must deny an ordinary principal"
             );
             let entry = ipc::session::establish::find(authority, grant.mark())
@@ -64,7 +63,7 @@ fn main() -> Report<'static> {
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
-            fetch(&tree, icall::DIR, grant.name(), "identity")
+            fetch(&tree, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
         };
         let (_, owner, mark) = reserve(entry)
             .expect("probe-coalition: identity entry cannot be reserved");

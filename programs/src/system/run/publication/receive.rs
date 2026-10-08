@@ -2,9 +2,11 @@ use crate::system::run::publication::book::Publications;
 use ::schedule::{Progress, Res, ResMut};
 use env::Wait;
 use ipc::rpc;
-use system_client::control::rpc::Publication;
-use system_client::operator::Fail;
-use system_api::control::publication::{self as pubcall, Frame, Reply};
+use system_api::control::publication::Call as Publication;
+use system_api::operator::Fail;
+use system_api::control::publication::self as pubcall;
+use system_api::control::publication::Frame;
+use system_api::control::publication::Reply;
 
 use super::{Inbox, Incoming, Outcome, Request};
 use ::resource::raw::inspect;
@@ -15,7 +17,7 @@ pub fn receive(
     mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
-    let receiver = rpc::request::Receiver::<Publication>::from_raw(images.entry);
+    let receiver = rpc::request::Receiver::<Publication>::from_raw(images.entry, Publication::BACK, Publication::back);
     loop {
         let (frame, from, back) = match receiver.receive(&mut bytes, Wait::POLL) {
             Ok(incoming) => (incoming.request, incoming.from, Some(incoming.reply)),

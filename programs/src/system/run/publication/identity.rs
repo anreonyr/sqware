@@ -5,7 +5,6 @@ use crate::system::{
     control::identity::{Roster, current_authority},
     run::publication::Internal,
 };
-use system_client::{identity as id, operator as op};
 pub(crate) fn faces(
     roster: Res<Roster>,
     faces: Res<Faces>,
@@ -13,14 +12,14 @@ pub(crate) fn faces(
 ) -> Result<Progress, &'static str> {
     let principal = roster.control().ok_or("Control identity missing")?;
     let authority = current_authority(&roster).ok_or("identity authority")?;
-    for grant in id::Grant::ALL {
+    for grant in system_api::identity::Grant::ALL {
         let permit = match grant.mount() {
-            id::Mount::Public => op::Permit::Public,
-            id::Mount::Bound => op::Permit::Bound,
-            id::Mount::Installer => op::Permit::Identity(id::Selector::Exact(principal)),
+            system_api::identity::Mount::Public => system_api::operator::Permit::Public,
+            system_api::identity::Mount::Bound => system_api::operator::Permit::Bound,
+            system_api::identity::Mount::Installer => system_api::operator::Permit::Identity(system_api::identity::Selector::Exact(principal)),
         };
         mounts.0.push(Internal {
-            road: id::DIR.try_join(grant.name()).ok_or("Identity path")?,
+            road: system_api::operator::Path::new(system_api::identity::DIR).try_join(grant.name()).ok_or("Identity path")?,
             entry: faces.0[grant.index()],
             access: (permit, authority),
         });

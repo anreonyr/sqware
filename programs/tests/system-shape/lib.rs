@@ -188,6 +188,31 @@ mod boundaries {
         assert!(roster.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)));
     }
     #[test]
+    fn public_clients_do_not_export_wire_data_or_server_bindings() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        for domain in ["loader", "identity", "operator", "control"] {
+            let path = repo.join("crates/system-client/src").join(domain).join("mod.rs");
+            let syntax = syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap();
+            for item in syntax.items {
+                match item {
+                    syn::Item::Mod(item) => if matches!(item.vis, syn::Visibility::Public(_)) {
+                        assert!(!["client", "rpc", "exchange", "frame", "marks", "grant"].contains(&item.ident.to_string().as_str()));
+                    },
+                    syn::Item::Use(item) => if matches!(item.vis, syn::Visibility::Public(_)) {
+                        let mut paths = References::default();
+                        paths.visit_item_use(&item);
+                        assert!(paths.0.iter().all(|path| !path.starts_with("system_api::") || path == "system_api::loader::Built"));
+                    },
+                    _ => {},
+                }
+            }
+        }
+        for path in ["identity/serve/face.rs", "control/serve/answer.rs", "control/serve/instance.rs", "run/loading/answer.rs", "run/account.rs", "run/publication/receive.rs", "run/names.rs"] {
+            let source = fs::read_to_string(repo.join("programs/src/system").join(path)).unwrap();
+            assert!(!source.contains("system_client::"), "own service binding depends on client: {path}");
+        }
+    }
+    #[test]
     fn global_composition_and_login_policy_are_outside_control() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for name in [
@@ -244,7 +269,7 @@ mod boundaries {
         let router_api = dependencies(&repo.join("programs/src/driver/router/api/Cargo.toml"));
         assert!(router_api.iter().all(|name| ["env", "wire", "system-api"].contains(&name.as_str())));
         let terminal_client = dependencies(&repo.join("programs/src/user/terminal/client/Cargo.toml"));
-        assert!(terminal_client.iter().all(|name| ["env", "wire", "resource", "ipc", "system-client", "terminal-api"].contains(&name.as_str())));
+        assert!(terminal_client.iter().all(|name| ["env", "wire", "resource", "ipc", "system-client", "system-api", "terminal-api"].contains(&name.as_str())));
         assert!(terminal_client.contains(&"system-client".to_owned()));
         let router_client = dependencies(&repo.join("programs/src/driver/router/client/Cargo.toml"));
         assert!(router_client.iter().all(|name| ["env", "wire", "resource", "ipc", "router-api"].contains(&name.as_str())));

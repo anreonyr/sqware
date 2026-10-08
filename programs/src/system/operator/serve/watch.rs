@@ -7,7 +7,8 @@ use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId, Wait};
-use system_api::operator::path::{Path, PathBuf};
+use system_api::operator::path::Path;
+use system_api::operator::path::PathBuf;
 use system_api::operator::Event;
 use wire::Message;
 

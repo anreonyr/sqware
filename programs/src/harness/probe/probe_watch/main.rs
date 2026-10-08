@@ -12,8 +12,13 @@ use programs::Report;
 use system_api::operator::path::PathBuf;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator::client as operator;
-use system_client::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
+use system_client::operator;
+use system_client::operator::Face as Face;
+use system_api::operator::Event;
+use system_api::operator::Kind;
+use system_api::operator::EntryId;
+use system_api::operator::Grant;
+use system_api::operator::Permit;
 use env::unit;
 use env::pie;
 
@@ -148,8 +153,8 @@ fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
     let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
-    let target = system_client::control::publication::Target::Service {
-        scope: system_client::control::publication::Scope::Fixture,
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope::Fixture,
         group: group.into(),
         name: name.into(),
     };

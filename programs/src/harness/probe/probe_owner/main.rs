@@ -14,8 +14,13 @@ use alloc::string::ToString;
 use system_api::operator::path::Path;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator::client as operator;
-use system_client::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
+use system_client::operator;
+use system_client::operator::Face as Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
 
 use router_api as driver;
 use env::unit;

@@ -12,3 +12,14 @@ pub const DIR: &str = frame::DIR;
 pub const REGISTRY: &[&[env::marks::Definition]] = &[&marks::DECLARATIONS, &Grant::DECLARATIONS];
 
 const _: () = assert!(env::marks::conflict(REGISTRY).is_none(), "identity mark collision");
+
+/// The provider-declared request and response pair.
+pub struct Call;
+impl wire::Contract for Call {
+    type Request = crate::identity::Request;
+    type Response = crate::identity::Reply;
+}
+impl Call {
+    pub const BACK: env::Mark = crate::identity::BACK;
+    pub fn back(request: &(Option<crate::identity::Wire>, env::PieToken)) -> env::PieToken { request.1 }
+}

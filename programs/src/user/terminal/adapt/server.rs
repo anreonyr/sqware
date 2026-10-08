@@ -7,10 +7,10 @@ use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
 use ::schedule::{Progress, Res, ResMut};
 use terminal_api::frame::{self, Command, Input, Reply};
-use system_client::{
-    control::publication::{Client, Scope, Target},
-    operator::Permit,
-};
+use system_client::control::publication::Client;
+use system_api::control::publication::Scope;
+use system_api::control::publication::Target;
+use system_api::operator::Permit;
 use wire::Message;
 use ::resource::{
     raw::{Hole, inspect, reserve},

@@ -1,5 +1,6 @@
 use env::TaskId;
-use system_api::identity::{Fail, PrincipalId};
+use system_api::identity::Fail;
+use system_api::identity::PrincipalId;
 
 use super::{IdentityBook, limits};
 

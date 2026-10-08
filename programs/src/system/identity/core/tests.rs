@@ -1,7 +1,11 @@
 use super::*;
-use system_api::identity::{
-    CoalitionSet, Cursor, Install, Match, PageTarget, Selector, Subject,
-};
+use system_api::identity::CoalitionSet;
+use system_api::identity::Cursor;
+use system_api::identity::Install;
+use system_api::identity::Match;
+use system_api::identity::PageTarget;
+use system_api::identity::Selector;
+use system_api::identity::Subject;
 
 fn subject(p: PrincipalId, coalitions: &[CoalitionId]) -> Subject {
     Subject {

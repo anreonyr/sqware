@@ -220,12 +220,12 @@ mod tests {
     impl rpc::Contract for TestContract {
         type Request = Request;
         type Response = Response;
-        const BACK: Mark = Mark::of("back");
-        fn back(request: &Request) -> PieToken { request.seed }
     }
+    const BACK: Mark = Mark::of("back");
+    fn route(request: &Request) -> PieToken { request.seed }
 
     fn client() -> rpc::request::Sender<TestContract> {
-        rpc::request::Sender::from_raw(PieToken::mint(1)).unwrap()
+        rpc::request::Sender::from_raw(PieToken::mint(1), BACK).unwrap()
     }
     #[derive(Debug)]
     struct Request { seed: PieToken, fail_encode: bool }
@@ -269,17 +269,17 @@ mod tests {
         test_backend::reset();
         let entry = PieToken::mint(1);
         let caller = TaskId::new(42);
-        test_backend::with(|state| state.reservation = Some((caller, caller, <TestContract as rpc::Contract>::BACK)));
+        test_backend::with(|state| state.reservation = Some((caller, caller, BACK)));
         let request = Request { seed: PieToken::mint(55), fail_encode: false };
         let mut bytes = Request::EMPTY;
         request.store(&mut bytes).unwrap();
         replies_for(entry, &bytes, caller);
-        let incoming = rpc::request::Receiver::<TestContract>::from_raw(entry).receive(&mut bytes, Wait::POLL).unwrap();
+        let incoming = rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route).receive(&mut bytes, Wait::POLL).unwrap();
         assert_eq!(incoming.from, caller);
         assert_eq!(incoming.request.seed, request.seed);
         incoming.reply.send(Response(8)).unwrap();
         replies_for(entry, &[0; 9], caller);
-        assert!(matches!(rpc::request::Receiver::<TestContract>::from_raw(entry).receive(&mut bytes, Wait::POLL),
+        assert!(matches!(rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route).receive(&mut bytes, Wait::POLL),
             Err(rpc::request::Rejected { fail: rpc::Fail::Decode, incoming: None })));
     }
 
@@ -309,7 +309,7 @@ mod tests {
         test_backend::reset();
         let entry = PieToken::mint(1);
         let caller = TaskId::new(7);
-        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route);
         let mut buffer = [0; 16];
         replies_for(entry, &[0; 10], caller);
         assert!(matches!(receiver.receive(&mut buffer, Wait::POLL),
@@ -447,12 +447,12 @@ mod tests {
         let entry = PieToken::mint(2);
         let caller = TaskId::new(7);
         let remote_back = PieToken::mint(67);
-        test_backend::with(|state| state.reservation = Some((TaskId::new(8), caller, <TestContract as rpc::Contract>::BACK)));
+        test_backend::with(|state| state.reservation = Some((TaskId::new(8), caller, BACK)));
         let request = Request { seed: remote_back, fail_encode: false };
         let mut bytes = Request::EMPTY;
         request.store(&mut bytes).unwrap();
         replies_for(entry, &bytes, caller);
-        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route);
         let rejected = match receiver.receive(&mut bytes, Wait::POLL) {
             Ok(_) => panic!("untrusted reply route accepted"),
             Err(rejected) => rejected,
@@ -470,12 +470,12 @@ mod tests {
         let entry = PieToken::mint(1);
         let caller = TaskId::new(7);
         let back = PieToken::mint(66);
-        test_backend::with(|state| state.reservation = Some((caller, caller, <TestContract as rpc::Contract>::BACK)));
+        test_backend::with(|state| state.reservation = Some((caller, caller, BACK)));
         let request = Request { seed: back, fail_encode: false };
         let mut bytes = Request::EMPTY;
         request.store(&mut bytes).unwrap();
         replies_for(entry, &bytes, caller);
-        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry);
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route);
         let incoming = receiver.receive(&mut bytes, Wait::POLL).unwrap();
         assert!(!events().contains(&test_backend::Event::Release(back)));
         drop(incoming);

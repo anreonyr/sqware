@@ -23,3 +23,10 @@ pub const REGISTRY: &[&[env::marks::Definition]] = &[
     &Grant::DECLARATIONS,
 ];
 const _: () = assert!(env::marks::conflict(REGISTRY).is_none());
+
+/// The provider-declared request and response pair.
+pub struct Call;
+impl wire::Contract for Call {
+    type Request = crate::operator::Req;
+    type Response = crate::operator::Union;
+}

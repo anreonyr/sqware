@@ -4,7 +4,10 @@ extern crate alloc;
 extern crate programs;
 use env::{TaskId, Wait, unit};
 use terminal_client::{Io, Read};
-use system_client::identity::{Grant, Reply, Wire, client::Face};
+use system_api::identity::Grant;
+use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_client::identity::Face;
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     run().map_err(|_| 1)

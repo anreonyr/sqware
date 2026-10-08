@@ -20,7 +20,8 @@
 
 use env::Wait;
 
-use system_client::operator::{Pane, Watch};
+use system_client::operator::Pane;
+use system_client::operator::Watch;
 
 /// **一问的期限**（毫秒）：`list` 那一趟的额度。它**不是节拍**——等事实那一段等的是事件。
 const LOOK_MS: usize = 1_000;

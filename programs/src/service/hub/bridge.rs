@@ -8,7 +8,7 @@ use hub_api::{
     activation::{self, Activate},
     frame::Said,
 };
-use system_client::identity::CoalitionId;
+use system_api::identity::CoalitionId;
 use ::resource::port;
 use env::unit;
 

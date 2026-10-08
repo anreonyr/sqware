@@ -15,7 +15,6 @@ use env::{PieToken, TaskId, Wait};
 use programs::{
     debug,
 };
-use system_client::identity as id;
 use ::resource::bell::Bell;
 pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
@@ -129,9 +128,9 @@ pub(crate) fn wire(
         authority: crate::system::control::identity::current_authority(&roster)
             .ok_or("identity authority")?,
         faces: [
-            faces.0[id::Grant::Resolve.index()],
-            faces.0[id::Grant::Matches.index()],
-            faces.0[id::Grant::Same.index()],
+            faces.0[system_api::identity::Grant::Resolve.index()],
+            faces.0[system_api::identity::Grant::Matches.index()],
+            faces.0[system_api::identity::Grant::Same.index()],
         ],
     })?;
     Ok(Progress::Done)
@@ -142,7 +141,7 @@ pub(crate) fn name(
     mut names: ResMut<Names>,
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
-    let object = system_client::control::publication::Object::Principal(
+    let object = system_api::control::publication::Object::Principal(
         roster.control().ok_or("Control identity missing")?,
     );
     crate::system::control::identity::validate(&roster, object).map_err(|_| "Control identity source")?;

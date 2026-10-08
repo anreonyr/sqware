@@ -5,7 +5,8 @@
 pub mod establish;
 pub use establish::{Endpoint, Held, alive, opened_by};
 pub mod exchange;
-pub use exchange::{CallFail, Contract};
+pub use exchange::CallFail;
+pub use wire::Contract;
 mod state;
 
 extern crate alloc;

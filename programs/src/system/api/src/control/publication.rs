@@ -176,3 +176,14 @@ impl Message for Reply {
         Self::fetch_at(bytes, 0).map(|one| one.0)
     }
 }
+
+/// The provider-declared request and response pair.
+pub struct Call;
+impl wire::Contract for Call {
+    type Request = crate::control::publication::Frame;
+    type Response = crate::control::publication::Reply;
+}
+impl Call {
+    pub const BACK: env::Mark = crate::control::publication::BACK;
+    pub fn back(request: &crate::control::publication::Frame) -> env::PieToken { request.back }
+}

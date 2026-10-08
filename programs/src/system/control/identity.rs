@@ -6,7 +6,11 @@
 
 use env::unit;
 use env::{Access, PieToken, Policy, TaskId, Wait};
-use system_client::identity::{Grant, Install, Installer, PrincipalId, Subject};
+use system_api::identity::Grant;
+use system_api::identity::Install;
+use system_client::identity::Installer;
+use system_api::identity::PrincipalId;
+use system_api::identity::Subject;
 use ::resource::port;
 
 use crate::system::common::timing::{BOOT_MS, RETRY_MS};
@@ -14,7 +18,7 @@ use core::time::Duration;
 use ipc::session::establish;
 use resource::raw::reserve;
 
-const _: () = assert!(Grant::ALL.len() <= system_client::operator::frame::PANE_CAP);
+const _: () = assert!(Grant::ALL.len() <= system_api::operator::frame::PANE_CAP);
 
 #[derive(Default)]
 pub(crate) struct Roster {
@@ -85,10 +89,12 @@ impl Roster {
     pub(crate) fn activate(
         &self,
         task: TaskId,
-        coalition: system_client::identity::CoalitionId,
+        coalition: system_api::identity::CoalitionId,
     ) -> Result<(), &'static str> {
-        use system_client::identity::client::Face;
-        use system_client::identity::{Reply, Wire, limits::MAX_ACTIVE_COALITIONS};
+        use system_client::identity::Face;
+        use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_api::identity::limits::MAX_ACTIVE_COALITIONS;
 
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let authority = installer.authority();
@@ -196,9 +202,13 @@ mod query {
     use crate::system::common::timing::BOOT_MS;
     use env::{TaskId, Wait};
     use ipc::session::establish;
-    use system_client::control::Object;
-    use system_client::identity::{Grant, Selector, Wire, client::Face};
-    use system_client::operator::{Fail, Permit};
+    use system_api::control::Object;
+    use system_api::identity::Grant;
+use system_api::identity::Selector;
+use system_api::identity::Wire;
+use system_client::identity::Face;
+    use system_api::operator::Fail;
+use system_api::operator::Permit;
 
     pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
         roster
@@ -213,12 +223,12 @@ mod query {
     pub(crate) fn binding(
         roster: &Roster,
         task: TaskId,
-    ) -> Result<Option<system_client::identity::Binding>, Fail> {
+    ) -> Result<Option<system_api::identity::Binding>, Fail> {
         match face(roster, Grant::Resolve)?
             .call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
             .map_err(|_| Fail::Unjudged)?
         {
-            system_client::identity::Reply::Binding(b) => Ok(b),
+            system_api::identity::Reply::Binding(b) => Ok(b),
             _ => Err(Fail::Unjudged),
         }
     }

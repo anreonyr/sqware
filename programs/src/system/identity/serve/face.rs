@@ -5,8 +5,10 @@ use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::{HoleDir, PieToken, Wait};
 use env::pie;
 use ipc::rpc;
-use system_api::identity::{self as api, Grant, Reply};
-use system_client::identity::rpc::Contract;
+use system_api::identity as api;
+use system_api::identity::Grant;
+use system_api::identity::Reply;
+use system_api::identity::Call as Contract;
 use ::resource::{
     pile::Pile,
     port::{self, Access, Policy},
@@ -72,7 +74,7 @@ pub(super) fn receive(
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
     if let Some((entry, grant)) = &ready.0 {
-        let receiver = rpc::request::Receiver::<Contract>::from_raw(*entry);
+        let receiver = rpc::request::Receiver::<Contract>::from_raw(*entry, Contract::BACK, Contract::back);
         loop {
             let incoming = match receiver.receive(&mut buffer.0, Wait::POLL) {
                 Ok(incoming) => incoming,

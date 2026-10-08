@@ -316,7 +316,7 @@ codec 基础已落地：
 
 - `crates/ipc` 拥有 hand、rack、session、rpc 和时间预算；仅依赖 env、wire、resource，不依赖执行库或软件实现。
 - 原 communication 正文全部迁出；protocol 只保留指向同一实现的兼容重导出，所有直接调用方使用 ipc 路径。
-- rpc::Contract 固定 Request、Response、回程 Mark 和显式回程字段访问；纯 API 仍只声明字节布局，Loader 的传输绑定归客户端所在模块。
+- wire::Contract 固定 Request/Response 的字节配对；提供方 API 在自己的 Call 声明中拥有配对、回程 Mark 与字段访问。RPC 端点构造时接收角色与访问函数，不在客户端库定义服务端绑定。
 - request::Sender/Receiver 和 reply::Sender/Receiver 分别提供 send/receive；发送请求返回一次性的应答接收权，接收请求返回调用者、请求与已验证的一次性应答发送权。call 只组合请求发送与应答接收。
 - 每次 send 独占新的 Reply，由资源层持有并撤销远端授权；成功、错误、超时或放弃接收均关闭。接收权捕获发送时的 Deadline，等待回复不能重置预算；下一次调用不可能消费前一次回信端中的旧回复，不添加新的线上关联字段。
 - Loader 在镜像授权前创建一次 Deadline，Build 与 Claim 共享预算；镜像 Loan、服务状态及 task/team 核对仍显式归客户端。
@@ -376,12 +376,20 @@ Control 的提供方 API 与三种 RPC 已迁移：
 
 公共客户端独立已落地：
 
-- `crates/system-client` 的四个模块分别拥有 Loader、Identity、Operator、Control 客户端流程及 RPC/会话绑定；帧、状态码、Grant、Mark 和路径仍重用 system-api 的同一类型，无第二份 codec。
+- `crates/system-client` 的四个模块仅拥有 Loader、Identity、Operator、Control 的语义客户端流程；帧、状态码、Grant、Mark、路径和 Call 配对由 system-api 定义，客户端不再提供它们的公开重导出。
 - 客户端不依赖 protocol 或程序实现，system-api 只依赖 env、wire、mold，不反向依赖客户端。客户端依赖 execution 仅用于 Operator 路径发现的退避等待；调试输出为私有实现，不成为公共使用接口。
-- programs 的四域调用与服务端契约绑定全部改用 system-client 路径；Operator 模型直接使用纯 API 的 Selector。protocol 原客户端正文全部迁出，只保留对应兼容导出，供尚未迁移的软件接口使用。
+- programs 的调用对象来自 system-client，数据与契约来自 system-api。服务端直接使用 system-api::Call 构造通用 IPC 接收端；只有确实访问其它服务的流程才使用公共客户端。protocol 正文及兼容导出已删除。
 - Identity/Control 宿主测具已直接编译新客户端源码；9 项 Identity、4 项 Control/publication、8 项 System 边界检查通过。新增边界检查约束纯 API 依赖集合及客户端与 protocol 的独立关系。
 - 客户端提取保持字节格式、能力清理和预算；持久 Session 的失败隔离已在后续批次落实。
 - programs 全目标编译、system-client RISC-V 检查与 QEMU accept、product、system-fault 均通过；依赖闭包检查确认 system-client 不含 protocol。
+
+system-client 公开面收拢已落地：
+
+- 移除公开 client/frame/grant/marks/rpc/exchange 汇总路径。只暴露语义对象、专用客户端、调用错误及必要会话入口；Loader 的 Built 是提供方拥有的结果 DTO，可由客户端重导出，但服务实现直接使用 API 类型。
+- wire 的 Contract 只包含请求和应答 Message 关联类型，保持零环境依赖。回程资源角色不进入 wire；各 API Call 通过纯数据常量和字段函数描述，IPC 不依赖任何软件实现。
+- RPC Sender 使用固定配对与回程 Mark，Receiver 使用固定配对、Mark 与回程字段函数；二者构造后不可每次调用任意切换返回类型。原字节格式、来源校验、共享预算及清理职责不变。
+- 删除 system-client 内软件专用 RPC/会话绑定。Control publication 的裸 Frame call 收为私有，恶意帧探针改为显式原始 IPC 边界，不扩大普通客户端接口。
+- 新结构检查限制客户端的数据重导出与服务端依赖；78 项相关宿主检查通过：Identity 客户端 10、Control 客户端 4、RPC 17、Session 15、结构边界 10、Loader API 11、Control API 4、Identity API 7。全程序编译及 QEMU 三景通过。
 各域自行拥有错误与回复；保持原数值和布局，程序显式做域间转换。
 Account 不再借 Loader 客户端类型表达自己的创建结果。
 

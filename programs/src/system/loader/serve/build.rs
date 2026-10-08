@@ -1,7 +1,8 @@
 use crate::system::loader::{Image, Loader};
 use alloc::vec::Vec;
 use env::{UnitFail, VirtAddr, Wait, pie};
-use system_client::loader::{Built, frame};
+use system_api::loader::Built;
+use system_api::loader as frame;
 use ::resource::raw::{Hole, inspect};
 
 pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {

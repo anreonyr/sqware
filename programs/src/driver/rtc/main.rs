@@ -23,7 +23,7 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
 use programs::debug;
 use router_api::ENTRY_MARK;
-use system_client::operator::client as operator;
+use system_client::operator;
 use env::unit;
 use env::pie;
 

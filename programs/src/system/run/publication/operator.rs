@@ -2,20 +2,19 @@
 use ::schedule::{Progress, Res, ResMut};
 use crate::system::{boot::Mounts, common::face::mount, life::Status, run::publication::Internal};
 use alloc::sync::Arc;
-use system_client::operator as op;
 pub fn faces(
     status: Res<Arc<Status>>,
     mut mounts: ResMut<Mounts>,
 ) -> Result<Progress, &'static str> {
-    for grant in op::Grant::ALL {
+    for grant in system_api::operator::Grant::ALL {
         let (entry, _) = mount::entry(grant.mark(), grant.name())?;
-        let permit = if matches!(grant, op::Grant::Part | op::Grant::Land | op::Grant::Trim) {
-            op::Permit::Bound
+        let permit = if matches!(grant, system_api::operator::Grant::Part | system_api::operator::Grant::Land | system_api::operator::Grant::Trim) {
+            system_api::operator::Permit::Bound
         } else {
-            op::Permit::Public
+            system_api::operator::Permit::Public
         };
         mounts.0.push(Internal {
-            road: op::DIR.try_join(grant.name()).ok_or("Operator path")?,
+            road: system_api::operator::DIR.try_join(grant.name()).ok_or("Operator path")?,
             entry,
             access: (permit, status.control),
         });

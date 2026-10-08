@@ -16,9 +16,9 @@ use programs::Report;
 use env::PieToken;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator as ocall;
-use system_client::operator::{Fail, Face};
-use system_client::operator::client as operator;
+use system_api::operator::Fail;
+use system_client::operator::Face;
+use system_client::operator;
 use env::unit;
 
 const WANT: &str = "router";
@@ -47,15 +47,15 @@ fn main() -> Report<'static> {
     // **`BAD` / `UNKNOWN` / 没走到是同一格** Fail::Unknown）。
     // `AtMost(MS)` 是**额度不是整趟时限**（往返耗时不计账、推不进去还会等在门外）。
     let (find, at) = match find_face(&tree, &road) {
-        Ok(entry) => (ocall::OK, entry),
-        Err(fail) => (ocall::fail_to_code(Some(fail)), none),
+        Ok(entry) => (system_api::operator::OK, entry),
+        Err(fail) => (system_api::operator::fail_to_code(Some(fail)), none),
     };
 
     debug!("guest: find={find} entry={}", at.get());
 
     // 此刻就知道的期望。
     {
-        assert_eq!(find, ocall::OK)
+        assert_eq!(find, system_api::operator::OK)
     }
     {
         {
@@ -63,7 +63,7 @@ fn main() -> Report<'static> {
         }
     }
 
-    let walked = find == ocall::OK && at != none;
+    let walked = find == system_api::operator::OK && at != none;
     return Report::note(
         if walked { E_OK } else { E_TRIP },
         if walked {
@@ -74,7 +74,7 @@ fn main() -> Report<'static> {
     );
 }
 
-fn find_face(tree: &Face, road: &system_client::operator::Path) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &system_api::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {

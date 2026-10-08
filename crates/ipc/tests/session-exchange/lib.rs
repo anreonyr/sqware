@@ -34,6 +34,10 @@ pub trait Message {
     fn store(&self, out: &mut [u8]) -> Option<usize>;
     fn fetch(bytes: &[u8]) -> Option<Self::In>;
 }
+pub trait Contract {
+    type Request: Message;
+    type Response: Message;
+}
 pub struct Number(pub u8);
 impl Message for Number {
     type In = u8;
@@ -166,6 +170,7 @@ pub mod time;
 
 pub mod session {
     use crate::{hand::{Receiver, Sender}, Message, PieToken, TaskId};
+    pub use crate::Contract;
     use alloc::sync::Arc;
     pub mod state {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/session/state.rs"));
@@ -196,7 +201,7 @@ pub mod session {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use session::{exchange::{self, CallFail, Contract}, Endpoint, Session};
+    use session::{exchange::{self, CallFail}, Contract, Endpoint, Session};
     struct ContractNum;
     impl Contract for ContractNum { type Request = Number; type Response = Number; }
     fn session(sender: Option<PieToken>) -> Session {

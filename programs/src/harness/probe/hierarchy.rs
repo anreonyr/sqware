@@ -35,7 +35,10 @@ pub(crate) fn command(
     loop {
         assembly.progress().expect("hierarchy progress");
         if code == 5 {
-            use system_client::control::publication::{Frame, Object, REF, Reply};
+            use system_api::control::publication::Frame;
+use system_api::control::publication::Object;
+use system_api::control::publication::REF;
+use system_api::control::publication::Reply;
             let fake = establish::find(me, REF).unwrap();
             let mut request = [0; Frame::LEN];
             if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
@@ -51,7 +54,7 @@ pub(crate) fn command(
                         + 10000,
                 );
                 let reply = Reply::object(Object::Principal(
-                    system_client::identity::PrincipalId::new(wrong, 0),
+                    system_api::identity::PrincipalId::new(wrong, 0),
                 ));
                 let mut encoded = [0; Reply::LEN];
                 let n = reply.store_at(&mut encoded, 0).unwrap();
@@ -84,17 +87,25 @@ pub(crate) fn command(
 
 pub(crate) fn exercise(
     assembly: &mut crate::harness::probe::fixture::Fixture,
-    operator: &system_client::operator::client::Face,
+    operator: &system_client::operator::Face,
     authority: env::TaskId,
     service: env::TaskId,
     target: env::TaskId,
-) -> system_client::identity::CoalitionId {
+) -> system_api::identity::CoalitionId {
     use env::Wait;
     use ipc::session::establish;
-    use system_client::control::publication::Object;
-    use system_client::identity::client::{Face, Installer, Organization};
-    use system_client::identity::{Grant, Install, Reply, Selector, Subject, Wire};
-    use system_client::operator::{Fail, Permit};
+    use system_api::control::publication::Object;
+    use system_client::identity::Face;
+use system_client::identity::Installer;
+use system_client::identity::Organization;
+    use system_api::identity::Grant;
+use system_api::identity::Install;
+use system_api::identity::Reply;
+use system_api::identity::Selector;
+use system_api::identity::Subject;
+use system_api::identity::Wire;
+    use system_api::operator::Fail;
+use system_api::operator::Permit;
     let wait = Wait::AtMost(3000);
     let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
     let face = |g| Face::direct(authority, g, entry(g)).unwrap();
@@ -336,7 +347,7 @@ pub(crate) fn exercise(
     ));
     sender_boundary(assembly);
     command(assembly, target, 1);
-    let fake = pie::unseal_hole(system_client::control::publication::REF).unwrap();
+    let fake = pie::unseal_hole(system_api::control::publication::REF).unwrap();
     ::resource::port::ship(
         fake,
         service,
@@ -463,11 +474,18 @@ pub(crate) fn exercise(
 pub fn codecs() {
     use env::wire::Span as _;
     use env::{PieToken, TaskId};
-    use system_client::control::publication::{Frame, Object, Reply, Scope, Target};
-    use system_client::operator::{EntryId, Permit, Tip, TipIn};
+    use system_api::control::publication::Frame;
+use system_api::control::publication::Object;
+use system_api::control::publication::Reply;
+use system_api::control::publication::Scope;
+use system_api::control::publication::Target;
+    use system_api::operator::EntryId;
+use system_api::operator::Permit;
+use system_api::operator::Tip;
+use system_api::operator::TipIn;
     let a = TaskId::new(77);
     let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
-    let p = system_client::identity::PrincipalId::new(a, 19);
+    let p = system_api::identity::PrincipalId::new(a, 19);
     for target in [
         Target::Service {
             scope: Scope::Driver,
@@ -508,7 +526,7 @@ pub fn codecs() {
             .identity(TaskId::new(78))
             .is_err()
     );
-    let mut bytes = [0; system_client::operator::TIP_LEN + 1];
+    let mut bytes = [0; system_api::operator::TIP_LEN + 1];
     let tip = Tip::Plate {
         road: system_api::operator::path::Path::new("svc/test/entry").to_path_buf(),
         leaf: b,
@@ -658,8 +676,13 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use system_client::control::publication::{Client, ENTRY, Frame, Scope, Target};
-    use system_client::operator::{Fail, Permit};
+    use system_client::control::publication::Client;
+use system_api::control::publication::ENTRY;
+use system_api::control::publication::Frame;
+use system_api::control::publication::Scope;
+use system_api::control::publication::Target;
+    use system_api::operator::Fail;
+use system_api::operator::Permit;
     use ::resource::port::{self, Access, Policy};
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
@@ -684,11 +707,16 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
             "holding the entry does not install a trusted publisher record"
         );
         let other = env::PieToken::from_bytes(&(raw as u64).to_le_bytes()).unwrap();
+        let sender = ipc::rpc::request::Sender::<system_api::control::publication::Call>::from_raw(
+            entry, system_api::control::publication::Call::BACK,
+        ).unwrap();
+        let raw_result = sender.call(ipc::time::Deadline::new(Wait::AtMost(3000)), |back| {
+            let mut request = Frame::new(1, target, (other, Permit::Public));
+            request.back = back;
+            request
+        }).unwrap().result();
         assert_eq!(
-            client.call(
-                Frame::new(1, target, (other, Permit::Public)),
-                Wait::AtMost(3000)
-            ),
+            raw_result,
             Err(Fail::Denied),
             "source reference must come from the actual sender"
         );
@@ -723,10 +751,12 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
     use ipc::session::{Session, establish};
-    use system_client::operator::{
-        EntryId, Fail, Grant, Where,
-        client::{self as operator, Face},
-    };
+    use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Grant;
+use system_api::operator::Where;
+use system_client::operator as operator;
+use system_client::operator::Face;
     use ::resource::port::{self, Access, Policy};
     let control = env::unit::self_id();
     let host = assembly
@@ -764,19 +794,19 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             }
             let private = establish::claim(
                 env::TaskId::new(host.get()),
-                system_client::operator::TIP_MARK,
+                system_api::operator::TIP_MARK,
                 Wait::AtMost(1000),
             )
             .unwrap();
-            let tip = system_client::operator::Tip::Plate {
+            let tip = system_api::operator::Tip::Plate {
                 road: system_api::operator::path::Path::new("idt/principal/forged/ref").to_path_buf(),
                 leaf: env::PieToken::NONE,
-                permit: system_client::operator::Permit::Public,
+                permit: system_api::operator::Permit::Public,
                 owner: control,
                 replace: false,
                 back: env::PieToken::NONE,
             };
-            let mut bytes = [0; system_client::operator::TIP_LEN];
+            let mut bytes = [0; system_api::operator::TIP_LEN];
             let n = tip.store(&mut bytes).unwrap();
             Hole::from_raw(private)
                 .push(&bytes[..n], Wait::AtMost(1000))
@@ -789,7 +819,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
-        let private = establish::find(host, system_client::operator::TIP_MARK).unwrap();
+        let private = establish::find(host, system_api::operator::TIP_MARK).unwrap();
         port::ship(private, caller.id(), Access::STORE, Policy::NONE).unwrap();
         released.store(true, Ordering::Release);
         let until = env::chrono::clock() + 10_000_000_000;

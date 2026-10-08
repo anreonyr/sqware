@@ -18,3 +18,14 @@ pub const REGISTRY: &[&[env::marks::Definition]] = &[
     &Grant::DECLARATIONS,
 ];
 const _: () = assert!(env::marks::conflict(REGISTRY).is_none());
+
+/// The provider-declared request and response pair.
+pub struct Call;
+impl wire::Contract for Call {
+    type Request = crate::control::Request;
+    type Response = crate::control::Said;
+}
+impl Call {
+    pub const BACK: env::Mark = crate::control::BACK;
+    pub fn back(request: &(Option<crate::control::Wire>, env::PieToken)) -> env::PieToken { request.1 }
+}

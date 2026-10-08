@@ -5,9 +5,15 @@ use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
 
-use system_api::operator::path::{Path, PathBuf};
+use system_api::operator::path::Path;
+use system_api::operator::path::PathBuf;
 use ipc::session::{alive, opened_by};
-use system_api::operator::{PANE_CAP, Kind, EntryId, Fail, Permit, Where};
+use system_api::operator::PANE_CAP;
+use system_api::operator::Kind;
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_api::operator::Where;
 use env::pie;
 use ::resource::raw::{pies};
 

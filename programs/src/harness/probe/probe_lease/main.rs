@@ -11,8 +11,9 @@ use programs::Report;
 
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator::{Permit, Face as Face};
-use system_client::operator::client as operator;
+use system_api::operator::Permit;
+use system_client::operator::Face as Face;
+use system_client::operator;
 
 use env::unit;
 use env::pie;
@@ -35,8 +36,8 @@ fn main() -> Report<'static> {
     };
     let tree = Face::of(session);
     let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
-    let target = system_client::control::publication::Target::Service {
-        scope: system_client::control::publication::Scope::Fixture,
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope::Fixture,
         group: "fixtures".into(),
         name: "lease".into(),
     };

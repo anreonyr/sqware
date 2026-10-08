@@ -3,28 +3,19 @@
 use alloc::string::String;
 use env::{PieToken, TaskId, Wait};
 
-use ipc::session::{Berth, establish};
+use ipc::session::establish;
 use ipc::rpc::{request::Sender, Fail as RpcFail};
 use ipc::time::Deadline;
 
 use super::Fail;
 use super::frame::{self, State};
-use crate::control::rpc::Control;
-
-pub use system_api::control::INSTANCE;
-
-/// **这条路叫什么**：泊位那一格（frame::LINK = `control`）＋ 问话孔那一格
-/// （frame::ASK_MARK）
-/// 开会话那一手（Session::open）要它——control 那一侧上树 / 装配者转授时用同一格
-pub const BERTH: Berth = Berth {
-    link: super::marks::LINK_MARK,
-    ask: frame::ASK_MARK,
-};
+use system_api::control::Call;
+use system_api::control::frame::{code_to_fail, OK};
 
 /// 一面生命周期服务：**树上查回来的门牌** + 它的开者（对端）
 /// **它不出编排域**：外面那几枚 `Session` / `Endpoint` / `Receiver` 一个都不露
 pub struct Face {
-    sender: Sender<Control>,
+    sender: Sender<Call>,
     host: TaskId,
 }
 
@@ -34,7 +25,7 @@ impl Face {
     /// 不是本端开的
     pub fn of(entry: PieToken) -> Result<Self, Fail> {
         let host = establish::opened_by(entry).ok_or(Fail::Bad)?;
-        let sender = Sender::<Control>::from_raw(entry).map_err(|_| Fail::Bad)?;
+        let sender = Sender::<Call>::from_raw(entry, Call::BACK).map_err(|_| Fail::Bad)?;
         if sender.peer() != host {
             return Err(Fail::Bad);
         }
@@ -166,8 +157,8 @@ impl Embarked<'_> {
 /// 一句答拆开：**状态先过码表**，`OK` 才把整个答话交出来
 /// 状态过码表），不留第二个入口
 fn read(said: frame::Said) -> Result<frame::Said, Fail> {
-    match frame::code_to_fail(said.status) {
-        None if said.status == frame::OK => Ok(said),
+    match code_to_fail(said.status) {
+        None if said.status == OK => Ok(said),
         Some(fail) => Err(fail),
         // 表外那一格（连 `OK` 都没读成）⇒ 与"没走到"同一格。
         None => Err(Fail::Bad),

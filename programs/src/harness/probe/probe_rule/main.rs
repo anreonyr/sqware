@@ -14,16 +14,24 @@ use programs::Report;
 use system_api::operator::path::Path;
 use ipc::session::Session;
 use programs::debug;
-use system_client::control::publication;
-use system_client::identity as icall;
-use system_client::identity::{Organization, Query, SelfOps, Selector, Subject};
-use system_client::operator::client as operator;
-use system_client::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
+use system_api::control::publication;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_api::identity::Selector;
+use system_api::identity::Subject;
+use system_client::operator;
+use system_client::operator::Face as Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
 use env::unit;
 use env::pie;
 use ::resource::raw::{Hole};
 
-const DIR: &system_client::operator::Path = system_api::operator::SVC;
+const DIR: &system_api::operator::Path = system_api::operator::SVC;
 const PANE: &str = "rule";
 /// 三格的名字（各挂一条规矩）
 const IS: &str = "is";
@@ -106,8 +114,8 @@ fn main() -> Report<'static> {
     // 门闩——Pane::tile 就地问一次（不重试），Face::tile 带额度重试。本格用前者：这一台
     // 变松（见 denied 那边量同一件事的那一台）。
     // 这一问要的是**名册问面**那一格自己的号（规矩里那个 `Opener` 指它）。
-    let foreign = icall::DIR
-        .try_join(icall::Grant::Resolve.name())
+    let foreign = system_api::operator::Path::new(system_api::identity::DIR)
+        .try_join(system_api::identity::Grant::Resolve.name())
         .and_then(|road| root.tile(&road, Wait::AtMost(MS)).map(|e| e.id()).ok());
     if let Some(principal) = foreign {
         let _ = plate(FOREIGN, Permit::Opener(principal));
@@ -116,7 +124,7 @@ fn main() -> Report<'static> {
     let _ = plate(AT_PANE, Permit::Opener(sys.id()));
     let temp_id = plate(TEMP, Permit::Public);
     let trimmed = temp_id.get() != 0
-        && publication::Client::injected()
+        && system_client::control::publication::Client::injected()
             .unwrap()
             .unpublish(target(TEMP), Wait::AtMost(MS))
             .is_ok();
@@ -166,7 +174,7 @@ fn main() -> Report<'static> {
         Wait::AtMost(MS),
     );
     assert!(matches!(raw, Err(Fail::Denied)));
-    let publisher = publication::Client::injected().unwrap();
+    let publisher = system_client::control::publication::Client::injected().unwrap();
     let keep = publisher.unpublish(target(MINE), Wait::AtMost(MS));
     assert_ne!(
         plate(MINE, Permit::Bound),
@@ -283,7 +291,7 @@ fn target(name: &str) -> publication::Target {
 }
 fn plate(name: &str, permit: Permit) -> EntryId {
     let entry = pie::unseal_hole(env::Mark::of("rule-entry")).unwrap();
-    publication::Client::injected()
+    system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target(name), entry, permit, Wait::AtMost(MS))
         .unwrap()

@@ -1,15 +1,13 @@
 use crate::{
     PieToken, TaskId, Wait,
-    rpc::{Contract, Fail as RpcFail},
-    system::{identity::{self, Grant, Reply, Wire}, operator::client::Face as OperatorFace},
+    rpc::Fail as RpcFail,
+    system::{identity, operator::Face as OperatorFace},
     test_state,
 };
-use system_api::identity::{
-    Binding, CoalitionId, Cursor, Fail, Page, PageTarget, PrincipalId, Subject,
-};
+use system_api::identity::{Binding, CoalitionId, Cursor, Fail, Grant, Page, PageTarget, PrincipalId, Reply, Subject, Wire};
 use wire::Message;
 
-use identity::client::{CallError, Face};
+use identity::{CallError, Face};
 
 fn authority() -> TaskId { TaskId::new(4) }
 fn entry() -> PieToken { PieToken::mint(71) }
@@ -172,5 +170,5 @@ fn back_contract_preserves_the_route_when_wire_decode_returns_none() {
     let (wire, decoded_back) = system_api::identity::Request::fetch(&bytes[..PieToken::WIDTH + 1]).unwrap();
     assert_eq!(wire, None);
     assert_eq!(decoded_back, back);
-    assert_eq!(<identity::rpc::Contract as Contract>::back(&(wire, decoded_back)), back);
+    assert_eq!(system_api::identity::Call::back(&(wire, decoded_back)), back);
 }

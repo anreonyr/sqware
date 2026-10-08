@@ -1,8 +1,9 @@
 //! One validated authority-owned entry and its one-shot reply transport.
-use super::super::{DIR, Fail, Grant, Reply, Wire, frame::Request, rpc::Contract};
+use super::super::{DIR, Fail, Grant, Reply, Wire, frame::Request};
 use ::resource::raw::reserve;
 use env::{PieToken, TaskId, Wait};
 use ipc::{rpc, time::Deadline};
+use system_api::identity::Call;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CallError {
@@ -38,7 +39,7 @@ impl Face {
         }
     }
     pub fn discover(
-        operator: &crate::operator::client::Face,
+        operator: &crate::operator::Face,
         authority: TaskId,
         grant: Grant,
         wait: Wait,
@@ -66,7 +67,7 @@ impl Face {
         let deadline = Deadline::new(wait);
         // Revalidate the reference before lending a reply hole.
         Self::direct(self.authority, self.grant, self.entry)?;
-        let request = rpc::request::Sender::<Contract>::from_raw(self.entry)
+        let request = rpc::request::Sender::<Call>::from_raw(self.entry, Call::BACK)
             .map_err(|_| CallError::Transport)?;
         let reply =
             request

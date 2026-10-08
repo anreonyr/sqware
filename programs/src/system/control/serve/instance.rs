@@ -8,7 +8,7 @@ use crate::system::control::core::unit::State;
 use env::{Wait, unit};
 use ipc::rpc::{self, request::Receiver as RequestReceiver};
 use system_api::control as call;
-use system_client::control::rpc::Control as ControlContract;
+use system_api::control::Call as ControlContract;
 
 pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<Progress, Fail> {
     let count = inbox.0.len();
@@ -99,7 +99,7 @@ pub fn receive(
     let Some(entry) = watch.instance else {
         return Ok(Progress::Done);
     };
-    let receiver = RequestReceiver::<ControlContract>::from_raw(entry);
+    let receiver = RequestReceiver::<ControlContract>::from_raw(entry, ControlContract::BACK, ControlContract::back);
     for _ in 0..16 {
         let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
             Ok(request) => request,

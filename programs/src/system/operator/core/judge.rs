@@ -2,7 +2,9 @@
 
 use env::TaskId;
 use system_api::identity::Selector;
-use system_api::operator::{EntryId, Permit, Ruling};
+use system_api::operator::EntryId;
+use system_api::operator::Permit;
+use system_api::operator::Ruling;
 
 /// 所有身份事实必须来自同一份可信、来源绑定的查询束。
 pub trait Facts {

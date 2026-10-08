@@ -1,18 +1,12 @@
 /// Typed request/response exchange over a session's existing endpoint.
 
 use env::Wait;
-use wire::Message;
+use wire::{Contract, Message};
 
 use crate::hand::{Sender, SendFail, SourceFail};
 use crate::time::Deadline;
 
 use super::Session;
-
-/// Message types which form one request/response exchange.
-pub trait Contract {
-    type Request: Message;
-    type Response: Message;
-}
 
 /// The stage at which a session exchange failed.
 #[derive(Debug)]

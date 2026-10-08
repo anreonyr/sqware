@@ -20,8 +20,9 @@ use programs::Report;
 
 use system_api::operator::path::PathBuf;
 use ipc::session::Session;
-use system_client::operator::{Grant, Face as Face};
-use system_client::operator::client as operator;
+use system_api::operator::Grant;
+use system_client::operator::Face as Face;
+use system_client::operator;
 use env::unit;
 
 const MS: usize = 1000;

@@ -24,7 +24,7 @@ impl SelfOps {
         })
     }
     pub fn discover(
-        operator: &crate::operator::client::Face,
+        operator: &crate::operator::Face,
         authority: TaskId,
         wait: Wait,
     ) -> Result<Self, CallError> {

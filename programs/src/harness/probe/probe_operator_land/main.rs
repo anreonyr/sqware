@@ -6,13 +6,19 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 use ipc::session::Session;
-use system_client::control::{Client, Scope, Target};
+use system_client::control::publication::Client;
+use system_api::control::Scope;
+use system_api::control::Target;
 use env::pie;
 use ::resource::raw::{Hole, reserve};
-use system_client::operator::{
-    EntryId, Fail, Grant, Permit, Where,
-    client::{self as operator, Face, Mine},
-};
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Grant;
+use system_api::operator::Permit;
+use system_api::operator::Where;
+use system_client::operator as operator;
+use system_client::operator::Face;
+use system_client::operator::Mine;
 const MS: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> Report<'static> {

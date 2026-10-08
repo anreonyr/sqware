@@ -10,9 +10,14 @@ use ipc::hand::{Sender, Receiver, RecvFail};
 use ipc::session::{Session, establish};
 use programs::debug;
 use hub_api::{Wire, Said, Window, self as hub, Deed, Enroll, Grant};
-use system_client::identity::{Organization, Query, CoalitionId, PageId as _, Selector};
-use system_client::operator::{Permit, Face as Face};
-use system_client::operator::client as operator;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_api::identity::CoalitionId;
+use system_api::identity::PageId as _;
+use system_api::identity::Selector;
+use system_api::operator::Permit;
+use system_client::operator::Face as Face;
+use system_client::operator;
 use wire::Message;
 use env::PAGE_SIZE;
 use ::resource::dock::Dock;
@@ -25,7 +30,7 @@ use crate::system::common::face::mount;
 use crate::system::common::machine::Machine;
 use crate::system::control::serve::task::Start;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
-use system_client::control::Scope;
+use system_api::control::Scope;
 
 use self::sweep::alive;
 use env::pie;
@@ -120,7 +125,7 @@ pub fn serve() -> Result<(), Start> {
             (list_name.as_str(), list),
             (claim_name.as_str(), claim),
         ] {
-            let target = system_client::control::publication::Target::Service {
+            let target = system_api::control::publication::Target::Service {
                 scope: Scope::Hub,
                 group: "".into(),
                 name: name.into(),
@@ -141,7 +146,7 @@ pub fn serve() -> Result<(), Start> {
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
             for (name, entry) in doors {
-                let target = system_client::control::publication::Target::Service {
+                let target = system_api::control::publication::Target::Service {
                     scope: Scope::Device,
                     group: class.clone(),
                     name: name.into(),

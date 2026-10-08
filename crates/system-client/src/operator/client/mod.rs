@@ -14,6 +14,7 @@ use env::{PieToken, TaskId, Wait};
 use crate::operator::Path;
 use crate::operator as ocall;
 use crate::operator::{EntryId, Fail, Grant, Listing, Permit, Where};
+use system_api::operator::Call;
 use ::resource::raw::Hole;
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
@@ -118,7 +119,7 @@ impl Face {
     /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。**一处实现**：`Pane` / `Rein` 都走它
     fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
         self.session
-            .call::<super::exchange::Contract>(ask, wait)
+            .call::<Call>(ask, wait)
             .map_err(|_| Fail::Unknown)
     }
 }
@@ -264,7 +265,7 @@ fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fai
 /// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**
 fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
     let said = session
-        .call::<super::exchange::Contract>(ocall::Req::Road(road.to_path_buf()), wait)
+        .call::<Call>(ocall::Req::Road(road.to_path_buf()), wait)
         .map_err(|_| Fail::Unknown)?;
     said.entry().map_err(map_code)
 }

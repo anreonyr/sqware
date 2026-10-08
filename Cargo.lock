@@ -656,6 +656,7 @@ dependencies = [
  "env",
  "ipc",
  "resource",
+ "system-api",
  "system-client",
  "terminal-api",
  "wire",
