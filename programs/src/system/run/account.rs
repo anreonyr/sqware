@@ -1,17 +1,17 @@
 //! Boot account identities and trusted Login construction.
 use super::names::{Names, Registration};
-use crate::system::control::serve::{Fail, unit::Control};
 use crate::system::control::identity::Roster;
+use crate::system::control::serve::{Fail, unit::Control};
 use crate::system::operator::client::Tree;
 use ::schedule::{Progress, Res, ResMut};
 use env::{PieToken, Wait, pie, unit};
 use ipc::rpc;
-use system_api::control::account::Call as Account;
-use system_api::identity::Subject;
-use system_api::operator::Permit;
 use system_api::control as control_call;
 use system_api::control::Object;
 use system_api::control::account as call;
+use system_api::control::account::Call as Account;
+use system_api::identity::Subject;
+use system_api::operator::Permit;
 use wire::Message;
 pub const ACCOUNT: &str = "anran";
 pub struct Accounts {
@@ -68,7 +68,8 @@ pub fn receive(
     mut pending: ResMut<super::launch::Pending>,
 ) -> Result<Progress, Fail> {
     let mut bytes = call::Request::EMPTY;
-    let receiver = rpc::request::Receiver::<Account>::from_raw(accounts.entry, Account::BACK, Account::back);
+    let receiver =
+        rpc::request::Receiver::<Account>::from_raw(accounts.entry, Account::BACK, Account::back);
     for _ in 0..16 {
         let incoming = match receiver.receive(&mut bytes, Wait::POLL) {
             Ok(incoming) => incoming,
@@ -88,11 +89,7 @@ pub fn receive(
             if request.account != ACCOUNT {
                 return Err(control_call::Fail::Unknown);
             }
-            if control
-                .instances
-                .iter()
-                .any(|item| item.owner == from && item.team.is_some())
-            {
+            if control.owns_team_instance(from) {
                 return Err(control_call::Fail::NotReady);
             }
             let subject = accounts.subject.ok_or(control_call::Fail::NotReady)?;

@@ -1,22 +1,22 @@
-use crate::system::control::core::unit::{Slot, State, Table};
-use crate::system::control::serve::unit::Control;
 use super::living::Living;
+use crate::system::control::core::unit::{Slot, State};
 use crate::system::control::identity::Roster;
 use crate::system::control::identity::{binding, current_authority};
-use crate::system::operator::core::Tile;
-use crate::system::operator::client::Tree;
+use crate::system::control::serve::unit::Control;
 use crate::system::operator::Placement;
+use crate::system::operator::client::Tree;
+use crate::system::operator::core::Tile;
+use ::schedule::{Progress, Res, ResMut};
 use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use env::{TaskId, TeamId, Wait};
-use system_api::operator::path::Path;
-use system_api::operator::path::PathBuf;
-use ::schedule::{Progress, Res, ResMut};
+use env::{TaskId, TeamId};
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
+use system_api::operator::path::Path;
+use system_api::operator::path::PathBuf;
 struct Run {
     task: TaskId,
     team: TeamId,
@@ -146,20 +146,6 @@ impl Resources {
         })
     }
 }
-fn live(table: &Table, task: TaskId) -> bool {
-    if task == env::unit::self_id() {
-        return true;
-    }
-    table.living().any(|row| {
-        matches!(row.slot, Slot::Live { task: known, .. } if known == task)
-            && matches!(
-                row.state,
-                State::NeverStarted | State::Starting | State::Ready | State::Debarked
-            )
-            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
-    })
-}
-
 pub(crate) fn retire(
     living: Res<Living>,
     mut resources: ResMut<Resources>,
@@ -203,7 +189,7 @@ pub(crate) fn candidates(
     mut pending: ResMut<Runtimes>,
 ) -> Result<Progress, &'static str> {
     pending.requests.clear();
-    for row in control.table.living() {
+    for row in control.living() {
         let Slot::Live {
             task,
             team: Some(team),
@@ -216,7 +202,7 @@ pub(crate) fn candidates(
                 row.state,
                 State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
-            || !live(&control.table, task)
+            || !control.live_service(task)
         {
             continue;
         }
@@ -226,7 +212,7 @@ pub(crate) fn candidates(
             .map_err(|_| "runtime capacity")?;
         pending.requests.push((task, team));
     }
-    for item in &control.instances {
+    for item in control.instances() {
         let Some(team) = item.team else {
             continue;
         };

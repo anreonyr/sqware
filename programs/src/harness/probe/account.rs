@@ -1,16 +1,13 @@
 //! Real IPC authorized construction and instance failures exercised against an isolated Control fixture.
 use super::fixture::Fixture;
-use crate::system::control::{
-    core::unit::{Slot, State as UnitState},
-    serve,
-};
+use crate::system::control::{core::unit::State as UnitState, serve};
+use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Permission, TaskId, Wait, unit};
-use ::schedule::{Cursor, Progress, Schedule};
 use system_api::control;
-use system_client::control::Face;
 use system_api::control::State;
+use system_client::control::Face;
 use system_client::control::account::Client;
 
 const WAIT: Wait = Wait::AtMost(2000);
@@ -46,8 +43,7 @@ fn delay_retire(
     control: ::schedule::Res<serve::unit::Control>,
 ) -> Result<Progress, &'static str> {
     let item = control
-        .instances
-        .iter()
+        .instances()
         .find(|item| Some(item.task) == active.task)
         .unwrap();
     assert_eq!(item.state, UnitState::Stopping);
@@ -130,13 +126,15 @@ fn closed(client: &Face, task: TaskId) {
     until(|| client.instance(task).state(WAIT).unwrap() == State::Dead);
 }
 fn reference(root: TaskId) -> control::Object {
-    let entry =
-        ipc::session::establish::find(root, control::publication::REF).unwrap();
+    let entry = ipc::session::establish::find(root, control::publication::REF).unwrap();
     let authority = ::resource::raw::pies()
         .find(|pie| pie.mark == system_api::identity::Grant::Resolve.mark())
         .unwrap()
         .owner;
-    system_client::control::publication::Client::reference_direct(root, authority, entry, 1, "anran", WAIT).unwrap()
+    system_client::control::publication::Client::reference_direct(
+        root, authority, entry, 1, "anran", WAIT,
+    )
+    .unwrap()
 }
 pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
@@ -153,15 +151,11 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     let s = signals.clone();
     let worker = execution::unit::task::spawn(move || {
         until(|| s.entry.load(Ordering::Acquire) != 0);
-        let client = Client::of(
-            ipc::session::establish::find(root, control::account::ENTRY)
-                .unwrap(),
-        )
-        .unwrap();
-        let lifecycle = Face::of(
-            ipc::session::establish::find(root, control::ASK_MARK).unwrap(),
-        )
-        .unwrap();
+        let client =
+            Client::of(ipc::session::establish::find(root, control::account::ENTRY).unwrap())
+                .unwrap();
+        let lifecycle =
+            Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();
         assert_eq!(
             client.create("unknown", WAIT).err(),
             Some(control::Fail::Unknown)
@@ -257,15 +251,11 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     let token = peer_token.clone();
     let peer = execution::unit::task::spawn(move || {
         until(|| p.stage.load(Ordering::Acquire) == 1 && token.load(Ordering::Acquire) != 0);
-        let client = Client::of(
-            ipc::session::establish::find(root, control::account::ENTRY)
-                .unwrap(),
-        )
-        .unwrap();
-        let lifecycle = Face::of(
-            ipc::session::establish::find(root, control::ASK_MARK).unwrap(),
-        )
-        .unwrap();
+        let client =
+            Client::of(ipc::session::establish::find(root, control::account::ENTRY).unwrap())
+                .unwrap();
+        let lifecycle =
+            Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();
         let target = TaskId::new(p.target.load(Ordering::Acquire));
         assert!(matches!(
             client.create("anran", WAIT),
@@ -310,30 +300,12 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     peer_token.store(peer_grant.get(), Ordering::Release);
     {
         let mut system = assembly.resources.write::<serve::unit::Control>().unwrap();
-        system.enlist(&crate::unit::login::PROGRAM).unwrap();
         system
-            .table
-            .attach(
-                "login",
-                Slot::Live {
-                    task: worker.id(),
-                    team: None,
-                },
-            )
+            .fixture_attach_unit(&crate::unit::login::PROGRAM, worker.id())
             .unwrap();
-        system.table.set_state("login", UnitState::Ready);
-        system.enlist(&crate::unit::terminal::PROGRAM).unwrap();
         system
-            .table
-            .attach(
-                "terminal",
-                Slot::Live {
-                    task: peer.id(),
-                    team: None,
-                },
-            )
+            .fixture_attach_unit(&crate::unit::terminal::PROGRAM, peer.id())
             .unwrap();
-        system.table.set_state("terminal", UnitState::Ready);
     }
     let login_subject = {
         let roster = assembly
@@ -400,9 +372,8 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
                 .expect("preparation failure was not injected");
             let control = assembly.resources.read::<serve::unit::Control>().unwrap();
             if !control
-                .instances
-                .iter()
-                .any(|item| item.task == target && item.state == UnitState::Dead)
+                .instance(target)
+                .is_some_and(|item| item.state == UnitState::Dead)
             {
                 continue;
             }
@@ -448,8 +419,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
             .resources
             .read::<serve::unit::Control>()
             .unwrap()
-            .instances
-            .iter()
+            .instances()
             .all(|item| item.team.is_none());
         let registered = assembly
             .resources
@@ -490,10 +460,8 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     }
     {
         let mut system = assembly.resources.write::<serve::unit::Control>().unwrap();
-        system.table.detach("login");
-        system.table.set_state("login", UnitState::Dead);
-        system.table.detach("terminal");
-        system.table.set_state("terminal", UnitState::Dead);
+        system.fixture_detach_unit("login");
+        system.fixture_detach_unit("terminal");
     }
     assembly.progress().unwrap();
     assert!(

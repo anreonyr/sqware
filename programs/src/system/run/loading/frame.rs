@@ -75,6 +75,6 @@ pub fn close(
         inbox.entry = None;
     }
     answer::reject(&mut inbox);
-    control.loader.clear();
+    control.clear_images();
     Ok(Progress::Done)
 }

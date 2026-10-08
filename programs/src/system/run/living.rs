@@ -1,10 +1,10 @@
-use crate::system::control::serve::unit::Control;
 use crate::system::control::core::unit::{Slot, State};
 use crate::system::control::identity::{Roster, current_authority};
+use crate::system::control::serve::unit::Control;
 use crate::system::operator::client::Tree;
+use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 use env::{TaskId, Wait};
-use ::schedule::{Progress, Res, ResMut};
 
 pub struct Living {
     tasks: Vec<TaskId>,
@@ -24,11 +24,11 @@ pub fn capture(
     living.tasks.clear();
     living
         .tasks
-        .try_reserve(control.table.living().count() + control.instances.len() + 3)
+        .try_reserve(control.living_count() + control.instances().count() + 3)
         .map_err(|_| "live task capacity")?;
     living.tasks.push(env::unit::self_id());
 
-    for row in control.table.living() {
+    for row in control.living() {
         if let Slot::Live { task, .. } = row.slot
             && matches!(
                 row.state,
@@ -41,8 +41,7 @@ pub fn capture(
     }
     living.tasks.extend(
         control
-            .instances
-            .iter()
+            .instances()
             .filter(|item| control.live(item.task))
             .map(|item| item.task),
     );

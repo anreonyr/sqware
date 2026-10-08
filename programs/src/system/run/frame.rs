@@ -1,20 +1,14 @@
 use crate::system::control::serve::{
     Fail,
-    lifecycle::{Action, Operations, Request},
+    lifecycle::{Action, Operations},
     unit::Control,
 };
-use crate::system::{
-    control::core::{
-        unit::{Slot, State},
-        verdict as core,
-    },
-    life::{Phase, Status},
-};
+use crate::system::life::{Phase, Status};
 use ::core::sync::atomic::Ordering;
+use ::schedule::{Progress, Res, ResMut};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::Wait;
-use ::schedule::{Progress, Res, ResMut};
 
 pub struct Startup {
     pub list: Vec<&'static crate::unit::UnitFile>,
@@ -53,15 +47,9 @@ pub fn startup(
     if flow.settling || startup.at == startup.list.len() {
         return Ok(Progress::Done);
     }
-    if let Some(job) = operations
-        .0
-        .iter()
-        .find(|job| job.complete && job.operation.request.back.is_none())
-    {
-        if job.operation.failure.is_some() {
-            return Err(Fail::Shutdown);
-        }
-        let action = match job.operation.request.action {
+    if let Some(result) = operations.completed_local_action() {
+        let completed = result.map_err(|_| Fail::Shutdown)?;
+        let action = match completed {
             Action::Mint => Action::Embark { parent: None },
             Action::Embark { .. } => {
                 startup.at += 1;
@@ -71,48 +59,31 @@ pub fn startup(
         };
         if let Some(program) = startup.list.get(startup.at) {
             operations
-                .push(Request {
-                    name: program.name().into(),
-                    action,
-                    back: None,
-                })
+                .submit(program.name().into(), action)
                 .map_err(|_| Fail::Room)?;
         }
-    } else if operations.0.is_empty() {
+    } else if operations.is_empty() {
         operations
-            .push(Request {
-                name: startup.list[startup.at].name().into(),
-                action: Action::Mint,
-                back: None,
-            })
+            .submit(startup.list[startup.at].name().into(), Action::Mint)
             .map_err(|_| Fail::Room)?;
     }
     Ok(Progress::Done)
 }
 pub fn reply(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
-    let count = operations.0.len();
-    for _ in 0..count {
-        if let Some(mut tracked) = operations.0.pop_front() {
-            if tracked.complete && tracked.operation.request.back.is_some() {
-                crate::system::control::serve::answer::complete(&mut tracked.operation);
-            } else {
-                operations.0.push_back(tracked);
-            }
-        }
-    }
+    operations.reply_completed();
     Ok(Progress::Done)
 }
 pub fn activity(control: Res<Control>, mut activity: ResMut<Activity>) -> Result<Progress, Fail> {
-    let living = control.table.living().count();
+    let living = control.living_count();
     if activity.owed == 0 || living < activity.owed {
         activity.quiet = env::chrono::clock();
     }
     activity.owed = living;
-    activity.walking = core::walking(&control.table);
+    activity.walking = control.walking();
     Ok(Progress::Done)
 }
 pub fn eligibility(control: Res<Control>, mut startup: ResMut<Startup>) -> Result<Progress, Fail> {
-    startup.eligible = startup.at == startup.list.len() && core::due(&control.table);
+    startup.eligible = startup.at == startup.list.len() && control.due();
     Ok(Progress::Done)
 }
 pub fn settle(
@@ -120,7 +91,7 @@ pub fn settle(
     operations: Res<Operations>,
     mut flow: ResMut<Flow>,
 ) -> Result<Progress, Fail> {
-    if startup.eligible && operations.0.is_empty() {
+    if startup.eligible && operations.is_empty() {
         flow.settling = true;
     }
     Ok(Progress::Done)
@@ -156,20 +127,10 @@ pub fn ruin_rest(
     mut operations: ResMut<Operations>,
 ) -> Result<Progress, Fail> {
     if flow.settling {
-        for row in control.table.living() {
-            if matches!(row.state, State::Starting | State::Ready | State::Debarked)
-                && matches!(row.slot, Slot::Live { team: Some(_), .. })
-                && !operations
-                    .0
-                    .iter()
-                    .any(|job| job.operation.request.name == row.name)
-            {
+        for name in control.closing_service_names() {
+            if !operations.contains(name) {
                 operations
-                    .push(Request {
-                        name: row.name.clone(),
-                        action: Action::Ruin,
-                        back: None,
-                    })
+                    .submit(name.into(), Action::Ruin)
                     .map_err(|_| Fail::Room)?;
             }
         }
@@ -182,9 +143,9 @@ pub fn done(
     mut flow: ResMut<Flow>,
 ) -> Result<Progress, Fail> {
     flow.done = flow.settling
-        && core::done(&control.table)
-        && operations.0.is_empty()
-        && control.instances.iter().all(|item| item.team.is_none());
+        && control.done()
+        && operations.is_empty()
+        && control.instances().all(|item| item.team.is_none());
     if flow.done && flow.forced {
         return Err(Fail::Idle);
     }
@@ -213,7 +174,7 @@ pub fn pending(
     inbox: Res<crate::system::control::serve::answer::Inbox>,
     mut bound: ResMut<Bound>,
 ) -> Result<Progress, Fail> {
-    if !operations.0.is_empty() || !inbox.0.is_empty() {
+    if !operations.is_empty() || !inbox.0.is_empty() {
         bound.0 = Wait::AtMost(1);
     }
     Ok(Progress::Done)
@@ -224,7 +185,7 @@ pub fn running(
     status: Res<Arc<Status>>,
 ) -> Result<Progress, Fail> {
     if startup.at == startup.list.len()
-        && operations.0.is_empty()
+        && operations.is_empty()
         && status.phase.load(Ordering::Acquire) == Phase::Starting as u8
     {
         status.phase.store(Phase::Running as u8, Ordering::Release);
@@ -248,8 +209,6 @@ pub fn stopping_bound(
 }
 
 pub fn retire_static(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
-    operations
-        .0
-        .retain(|job| !job.complete || job.operation.request.back.is_some());
+    operations.retire_local_completed();
     Ok(Progress::Done)
 }

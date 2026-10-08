@@ -1,19 +1,18 @@
 use crate::system::common::machine::Machine;
-use crate::system::control::core::unit::Slot;
-use crate::system::control::serve::unit::Control;
 use crate::system::control::identity::Roster;
 use crate::system::control::identity::validate_permit;
-use crate::system::operator::core::Tile;
+use crate::system::control::serve::unit::Control;
 use crate::system::operator::Placement;
+use crate::system::operator::core::Tile;
 use crate::system::run::resource::Resources;
-use system_api::operator::path::Path;
 use ::schedule::{Progress, Res, ResMut};
-use system_api::control::publication::self as pubcall;
+use system_api::control::publication as pubcall;
 use system_api::control::publication::Scope;
 use system_api::control::publication::Target;
 use system_api::identity::Selector;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
+use system_api::operator::path::Path;
 
 use super::{Approved, Decision, Request};
 use ::resource::raw::inspect;
@@ -56,24 +55,19 @@ pub fn service(
     let Target::Service { scope, group, name } = &target else {
         unreachable!()
     };
-    let program = control
-        .table
-        .living()
-        .find(|row| matches!(row.slot, Slot::Live { task, .. } if task == request.from))
-        .and_then(|row| {
-            crate::unit::PROGRAMS
-                .iter()
-                .copied()
-                .find(|p| p.name() == row.name)
-        });
+    let program = control.find_named_task(request.from).and_then(|row| {
+        crate::unit::PROGRAMS
+            .iter()
+            .copied()
+            .find(|p| p.name() == row.name)
+    });
     let mark = inspect(request.frame.entry).map(|(_, _, mark)| mark).ok();
     let mut road = None;
     if let (Some(program), Some(mark)) = (program, mark) {
         for rule in program.publication {
             match rule {
                 crate::unit::Publish::Devices
-                    if *scope == Scope::Device
-                        && mark == hub_api::Grant::Claim.mark() =>
+                    if *scope == Scope::Device && mark == hub_api::Grant::Claim.mark() =>
                 {
                     if matches!(
                         request.frame.permit,
@@ -144,11 +138,7 @@ pub fn device(
         unreachable!()
     };
     let valid = (group == hub_api::BOOT
-        && [
-            hub_api::DTB,
-            hub_api::SUPERVISOR_EXTERNAL,
-        ]
-        .contains(&name.as_str()))
+        && [hub_api::DTB, hub_api::SUPERVISOR_EXTERNAL].contains(&name.as_str()))
         || machine.devices().is_some_and(|devices| {
             devices
                 .iter()
@@ -205,13 +195,11 @@ pub(crate) fn identity(
             let mut result = validate_permit(&roster, permit);
             if matches!(&old, Decision::OwnHole(_)) {
                 result = result.and_then(|_| {
-                    let principal = crate::system::control::identity::binding(
-                        &roster,
-                        approved.publisher,
-                    )?
-                    .ok_or(Fail::Denied)?
-                    .current
-                    .principal;
+                    let principal =
+                        crate::system::control::identity::binding(&roster, approved.publisher)?
+                            .ok_or(Fail::Denied)?
+                            .current
+                            .principal;
                     if permit == Permit::Identity(Selector::Exact(principal)) {
                         Ok(())
                     } else {
@@ -230,12 +218,10 @@ pub(crate) fn identity(
                     let Permit::Identity(Selector::MemberOf(coalition)) = permit else {
                         return Err(Fail::Denied);
                     };
-                    let subject = crate::system::control::identity::binding(
-                        &roster,
-                        approved.publisher,
-                    )?
-                    .ok_or(Fail::Denied)?
-                    .current;
+                    let subject =
+                        crate::system::control::identity::binding(&roster, approved.publisher)?
+                            .ok_or(Fail::Denied)?
+                            .current;
                     if subject.coalitions.contains(coalition) {
                         Ok(())
                     } else {

@@ -1,8 +1,8 @@
-use ::schedule::{Progress, ResMut};
 use crate::system::{
     control::serve::unit::Control,
     loader::{Image, serve::build::Spawn},
 };
+use ::schedule::{Progress, ResMut};
 use alloc::vec::Vec;
 use env::TaskId;
 use ipc::rpc::reply::Sender;
@@ -32,22 +32,22 @@ pub fn construct(
     pending: &mut Pending,
     build: Build<'_>,
 ) -> Result<Built, (Fail, Sender<Said>)> {
-    let Build { image, spawn, delivery } = build;
+    let Build {
+        image,
+        spawn,
+        delivery,
+    } = build;
     if pending.0.try_reserve(1).is_err() {
         return Err((Fail::Full, delivery.back));
     }
-    if let Err(fail) = control.reserve_instance() {
-        return Err((fail, delivery.back));
-    }
-    let built = match crate::system::loader::serve::build::construct(
-        &mut control.loader,
+    let built = match control.create_instance(crate::system::control::serve::create::Creation {
         image,
         spawn,
-    ) {
+        owner: delivery.owner,
+    }) {
         Ok(built) => built,
         Err(fail) => return Err((fail.into(), delivery.back)),
     };
-    control.register_instance(built, delivery.owner);
     pending.0.push(Launch {
         task: built.task,
         identity: delivery.identity,
@@ -74,21 +74,15 @@ pub fn completed(
     mut pending: ResMut<Pending>,
     mut control: ResMut<Control>,
 ) -> Result<Progress, crate::system::control::serve::Fail> {
-    use crate::system::control::core::unit::State;
     let mut index = 0;
     while index < pending.0.len() {
         let task = pending.0[index].task;
-        let item = control.instances.iter().find(|item| item.task == task);
-        let result = match item {
-            Some(item) if item.state == State::Debarked => Ok(Built {
-                task: item.task,
-                team: item.team.ok_or(crate::system::control::serve::Fail::Room)?,
-            }),
-            Some(item) if item.state == State::Starting => {
+        let result = match control.instance_result(task)? {
+            Some(result) => result,
+            None => {
                 index += 1;
                 continue;
             }
-            _ => Err(Fail::NotReady),
         };
         let launch = pending.0.remove(index);
         if !reply(launch.back, result) {

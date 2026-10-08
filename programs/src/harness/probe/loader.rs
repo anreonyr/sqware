@@ -1,17 +1,19 @@
-use ::schedule::{Cursor, Progress, Schedule};
 use super::fixture::Fixture;
+use ::resource::raw::Hole;
+use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
+use ipc::session::establish;
 use system_client::loader as call;
 use system_client::operator::Face as Operator;
-use ipc::session::establish;
-use ::resource::raw::Hole;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
 pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
-    let road = system_api::operator::Path::new(system_api::loader::DIR).try_join(system_api::loader::Grant::Build.name()).unwrap();
+    let road = system_api::operator::Path::new(system_api::loader::DIR)
+        .try_join(system_api::loader::Grant::Build.name())
+        .unwrap();
     assert!(
         operator.tile(&road, WAIT).unwrap().token(WAIT).is_ok(),
         "loader: operator entry missing"
@@ -27,8 +29,10 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let d = denied.clone();
     let peer = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire) && t.load(Ordering::Acquire) != 0);
-        let face = system_client::control::Face::of(establish::find(root, system_api::control::Grant::State.mark()).unwrap())
-            .unwrap();
+        let face = system_client::control::Face::of(
+            establish::find(root, system_api::control::Grant::State.mark()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             face.instance(TaskId::new(t.load(Ordering::Acquire)))
                 .state(WAIT),
@@ -133,8 +137,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             .resources
             .read::<crate::system::control::serve::unit::Control>()
             .unwrap()
-            .instances
-            .iter()
+            .instances()
             .all(|item| item.team.is_none());
         if done.load(Ordering::Acquire) && clean {
             break;
@@ -256,7 +259,8 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy = env::pie::accord(image, root, Permission::FETCH, system_api::loader::IMAGE).unwrap();
+    let image_copy =
+        env::pie::accord(image, root, Permission::FETCH, system_api::loader::IMAGE).unwrap();
     let (back, seed) = establish::lend_out(entry, system_api::loader::BACK).unwrap();
     let ask = system_api::loader::Ask {
         op: system_api::loader::BUILD,
@@ -270,9 +274,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     };
     let mut request = [0; system_api::loader::Ask::LEN];
     let n = ask.store_at(&mut request, 0).unwrap();
-    Hole::from_raw(entry)
-        .push(&request[..n], WAIT)
-        .unwrap();
+    Hole::from_raw(entry).push(&request[..n], WAIT).unwrap();
     let mut reply = system_api::loader::Said::EMPTY;
     let said = ipc::hand::Receiver::<system_api::loader::Said>::from_raw(back)
         .recv(&mut reply, WAIT)

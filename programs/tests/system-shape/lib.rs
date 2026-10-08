@@ -135,6 +135,32 @@ mod tests {
 mod boundaries {
     use std::{fs, path::Path};
     use syn::visit::{self, Visit};
+    #[test]
+    fn control_state_and_operation_queue_are_private_to_control() {
+        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
+        for (path, name) in [
+            ("control/serve/unit.rs", "Control"),
+            ("control/serve/lifecycle/mod.rs", "Operations"),
+        ] {
+            let syntax = syn::parse_file(&fs::read_to_string(system.join(path)).unwrap()).unwrap();
+            let state = syntax.items.iter().find_map(|item| match item {
+                syn::Item::Struct(item) if item.ident == name => Some(item),
+                _ => None,
+            }).unwrap();
+            assert!(!state.fields.is_empty());
+            for field in &state.fields {
+                match &field.vis {
+                    syn::Visibility::Inherited => {},
+                    syn::Visibility::Restricted(vis) => assert_eq!(
+                        vis.path.segments.iter().map(|part| part.ident.to_string()).collect::<Vec<_>>(),
+                        ["crate", "system", "control"],
+                        "{name} exposes mutable state outside Control",
+                    ),
+                    _ => panic!("{name} exposes public mutable state"),
+                }
+            }
+        }
+    }
     #[derive(Default)]
     struct LoaderDependencies(Vec<String>);
     impl<'a> Visit<'a> for LoaderDependencies {

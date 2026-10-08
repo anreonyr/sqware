@@ -1,15 +1,15 @@
 use crate::system::run::resource::Resources;
 use crate::system::run::schedule;
 use crate::system::{
+    control::identity::Roster,
     control::{
         core::verdict,
         serve::{
             self,
-            lifecycle::{Action, Active, Key, Operations, Request},
+            lifecycle::{Action, Active, Key, Operations},
             unit::Control,
         },
     },
-    control::identity::Roster,
     run::bootstrap::Boot,
 };
 use crate::unit::{Died, UnitFile};
@@ -45,16 +45,20 @@ fn probe(
     fault: Res<Fault>,
     mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
-    dispatch.begin(usize::from(fault.armed)).map_err(|_| verdict::Fail::NotReady)?;
+    dispatch
+        .begin(usize::from(fault.armed))
+        .map_err(|_| verdict::Fail::NotReady)?;
     Ok(Progress::Done)
 }
 fn select_probe(
     mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
-    dispatch.select(Invocation {
-        key: (),
-        cursor: Default::default(),
-    }).map_err(|_| verdict::Fail::NotReady)?;
+    dispatch
+        .select(Invocation {
+            key: (),
+            cursor: Default::default(),
+        })
+        .map_err(|_| verdict::Fail::NotReady)?;
     Ok(Progress::Done)
 }
 fn inject(
@@ -63,7 +67,9 @@ fn inject(
     mut fault: ResMut<Fault>,
     mut dispatch: ResMut<Dispatch<(), verdict::Fail>>,
 ) -> Result<Progress, verdict::Fail> {
-    dispatch.take_result().map_err(|_| verdict::Fail::NotReady)?;
+    dispatch
+        .take_result()
+        .map_err(|_| verdict::Fail::NotReady)?;
     if fault.armed {
         fault.armed = false;
         fault.task = active.0.as_ref().and_then(|job| job.execution.task);
@@ -143,11 +149,7 @@ impl Fixture {
         self.resources
             .write::<Operations>()
             .map_err(|_| ())?
-            .push(Request {
-                name: name.into(),
-                action,
-                back: None,
-            })
+            .submit(name.into(), action)
             .map_err(|_| ())?;
         loop {
             if self.plans[1]
@@ -160,17 +162,8 @@ impl Fixture {
             self.progress().map_err(|_| ())?;
             {
                 let mut operations = self.resources.write::<Operations>().map_err(|_| ())?;
-                if let Some(at) = operations
-                    .0
-                    .iter()
-                    .position(|job| job.complete && job.operation.request.name == name)
-                {
-                    let job = operations.0.remove(at).ok_or(())?;
-                    return if job.operation.failure.is_some() {
-                        Err(())
-                    } else {
-                        Ok(job.operation.execution.task)
-                    };
+                if let Some(result) = operations.take_local_completion(name) {
+                    return result.map_err(|_| ());
                 }
             }
             execution::room::park(core::time::Duration::from_millis(1)).map_err(|_| ())?;

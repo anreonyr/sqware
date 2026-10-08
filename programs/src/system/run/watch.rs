@@ -1,10 +1,13 @@
 //! Supervisor interest selection and wait policy.
-use crate::system::control::{core::unit::Slot, serve::{Fail, unit::Control, watch::Watch}};
 use super::names::Names;
+use crate::system::control::{
+    core::unit::Slot,
+    serve::{Fail, unit::Control, watch::Watch},
+};
+use ::resource::pile::Sub;
 use alloc::vec::Vec;
 use env::{PieToken, Wait};
 use system_api::control as ccall;
-use ::resource::pile::Sub;
 
 use ::schedule::{Progress, Res, ResMut};
 pub struct Interests {
@@ -44,17 +47,14 @@ pub fn activation(
     }
     Ok(Progress::Done)
 }
-pub fn tasks(
-    control: Res<Control>,
-    mut wanted: ResMut<Interests>,
-) -> Result<Progress, Fail> {
+pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
     wanted
         .subs
-        .try_reserve(control.table.living().count() + control.instances.len() * 2 + 3)
+        .try_reserve(control.living_count() + control.instances().count() * 2 + 3)
         .map_err(|_| Fail::Room)?;
     wanted
         .subs
-        .extend(control.table.living().filter_map(|row| match row.slot {
+        .extend(control.living().filter_map(|row| match row.slot {
             Slot::Live { task, .. } => Some(Sub::TaskCompleted(task)),
             _ => None,
         }));
@@ -64,7 +64,7 @@ pub fn tasks(
     wanted.subs.push(Sub::TaskCompleted(
         control.task("identity").ok_or(Fail::Dead)?,
     ));
-    for item in &control.instances {
+    for item in control.instances() {
         if item.team.is_some() {
             wanted.subs.push(Sub::TaskCompleted(item.task));
         }
@@ -73,10 +73,7 @@ pub fn tasks(
     wanted.subs.push(Sub::Capabilities);
     Ok(Progress::Done)
 }
-pub fn apply(
-    mut watch: ResMut<Watch>,
-    mut wanted: ResMut<Interests>,
-) -> Result<Progress, Fail> {
+pub fn apply(mut watch: ResMut<Watch>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
     wanted.armed = watch.apply(&wanted.tokens, &wanted.subs);
     Ok(Progress::Done)
 }

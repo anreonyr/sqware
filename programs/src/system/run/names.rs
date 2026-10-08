@@ -1,23 +1,23 @@
 use super::living::Living;
-use crate::system::control::serve::unit::Control;
 use crate::system::control::identity::Roster;
 use crate::system::control::identity::{current_authority, validate};
-use crate::system::operator::core::Tile;
-use crate::system::operator::client::Tree;
+use crate::system::control::serve::unit::Control;
 use crate::system::operator::Placement;
-use alloc::{string::String, vec::Vec};
-use env::{PieToken, TaskId, Wait};
+use crate::system::operator::client::Tree;
+use crate::system::operator::core::Tile;
 use ::schedule::{Progress, Res, ResMut};
-use system_api::control::publication::self as pubcall;
+use alloc::{string::String, vec::Vec};
+use env::pie;
+use env::{PieToken, TaskId, Wait};
+use ipc::rpc;
+use system_api::control::publication as pubcall;
+use system_api::control::publication::Call as Publication;
 use system_api::control::publication::Frame;
 use system_api::control::publication::Object;
 use system_api::control::publication::Reply;
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
-use env::pie;
-use ipc::rpc;
-use system_api::control::publication::Call as Publication;
 
 pub struct Registration {
     pub name: String,
@@ -202,7 +202,7 @@ pub(crate) fn prepare(
     if current_authority(&roster).is_none() {
         return Ok(Progress::Done);
     }
-    for row in control.table.living() {
+    for row in control.living() {
         if !row.named
             || !matches!(
                 row.state,
@@ -217,9 +217,8 @@ pub(crate) fn prepare(
         if env::unit::join(task, Wait::POLL).unwrap_or(true) {
             continue;
         }
-        if let Some(binding) =
-            crate::system::control::identity::binding(&roster, task)
-                .map_err(|_| "alias identity query")?
+        if let Some(binding) = crate::system::control::identity::binding(&roster, task)
+            .map_err(|_| "alias identity query")?
         {
             pending
                 .requests
@@ -239,10 +238,24 @@ pub(crate) fn select(
     mut pending: ResMut<Registrations>,
 ) -> Result<Progress, &'static str> {
     pending.requests.retain_mut(|request| {
-        let AliasRequest::Candidate { task, object } = *request else { return true; };
-        let Some(row) = control.table.living().find(|row| matches!(row.slot, crate::system::control::core::unit::Slot::Live { task: known, .. } if known == task)) else { return false; };
-        if names.aliases.iter().any(|alias| alias.name == row.name && alias.object == object) { return false; }
-        *request = AliasRequest::Install(Registration { name: row.name.clone(), object, lifetime: Some(task) });
+        let AliasRequest::Candidate { task, object } = *request else {
+            return true;
+        };
+        let Some(row) = control.find_named_task(task) else {
+            return false;
+        };
+        if names
+            .aliases
+            .iter()
+            .any(|alias| alias.name == row.name && alias.object == object)
+        {
+            return false;
+        }
+        *request = AliasRequest::Install(Registration {
+            name: row.name.clone(),
+            object,
+            lifetime: Some(task),
+        });
         true
     });
     Ok(Progress::Done)
@@ -281,7 +294,11 @@ pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress
     let mut bytes = [0; Frame::LEN];
     // Ref answers read only the verified index and never wait for Operator.
     for alias in &names.aliases {
-        let receiver = rpc::request::Receiver::<Publication>::from_raw(alias.entry, Publication::BACK, Publication::back);
+        let receiver = rpc::request::Receiver::<Publication>::from_raw(
+            alias.entry,
+            Publication::BACK,
+            Publication::back,
+        );
         loop {
             let incoming = match receiver.receive(&mut bytes, Wait::POLL) {
                 Ok(incoming) => incoming,
@@ -293,13 +310,11 @@ pub(crate) fn receive(roster: Res<Roster>, names: Res<Names>) -> Result<Progress
                 && frame.name == alias.name
                 && frame.kind == 10 + alias.object.kind()
                 && Some(alias.object.authority()) == current_authority(roster);
-            let _ = incoming.reply.send(
-                if accepted {
-                    Reply::object(alias.object)
-                } else {
-                    Reply::fail(Fail::Unjudged)
-                },
-            );
+            let _ = incoming.reply.send(if accepted {
+                Reply::object(alias.object)
+            } else {
+                Reply::fail(Fail::Unjudged)
+            });
         }
     }
     Ok(Progress::Done)
