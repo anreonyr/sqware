@@ -9,6 +9,7 @@ programs/src/
 ├── support/                 # 共享 face、Machine、启动时间常量
 ├── system/
 │   ├── api/                 # 独立 system-api：提供方契约
+│   ├── client/              # 独立 system-client：公共语义客户端
 │   ├── app/                 # 引导、配置、程序阶段、组合计划、总等待器
 │   ├── control/
 │   │   ├── unit/            # 任务登记、镜像缓存、启动物料、就绪与收割
@@ -32,7 +33,6 @@ programs/src/
     ├── api/                 # 软件自己的接口声明和生成元数据
     └── client/              # 软件自己的公共使用库
 
-crates/system-client/        # System 公共语义客户端
 ```
 
 System 只对独立程序开放 app::run；实现组件限制在 crate 内。普通驱动、服务和用户程序使用公共 API/客户端及 support，不导入 System 私有目录。压测与 accept 的独立二进制为薄入口，具体测具留在 harness。

@@ -52,7 +52,7 @@ pub mod control {
     pub use system_api::control::{frame, marks, publication, Fail, Grant, Req, Request, Said, State, Wire};
     pub mod account { pub use system_api::control::account::*; }
     pub mod client {
-        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../crates/system-client/src/control/client.rs"));
+        include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/system/client/src/control/client.rs"));
     }
 }
 
@@ -200,7 +200,7 @@ pub mod system {
     pub use crate::{identity, loader, operator};
 }
 
-#[path = "../../../crates/system-client/src/control/publication.rs"]
+#[path = "../../src/system/client/src/control/publication.rs"]
 pub mod publication_client;
 
 #[macro_export]

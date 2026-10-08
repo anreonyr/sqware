@@ -237,7 +237,7 @@ pub mod loader {
     pub mod client {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../crates/system-client/src/loader/client.rs"
+            "/../../src/system/client/src/loader/client.rs"
         ));
     }
     pub use client::Face;

@@ -100,7 +100,9 @@ mod tests {
         for entry in fs::read_dir(path).unwrap() {
             let path = entry.unwrap().path();
             if path.is_dir() {
-                count += inspect(&path, violations);
+                if !path.join("Cargo.toml").is_file() {
+                    count += inspect(&path, violations);
+                }
             } else if path.extension().is_some_and(|ext| ext == "rs") {
                 let source = fs::read_to_string(&path).unwrap();
                 let syntax = syn::parse_file(&source)
@@ -119,7 +121,7 @@ mod tests {
         count
     }
     #[test]
-    fn every_system_function_has_at_most_three_parameters() {
+    fn every_system_implementation_function_has_at_most_three_parameters() {
         let mut violations = Vec::new();
         let count = inspect(
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system"),
@@ -271,7 +273,7 @@ mod boundaries {
     fn public_clients_do_not_export_wire_data_or_server_bindings() {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         for domain in ["loader", "identity", "operator", "control"] {
-            let path = repo.join("crates/system-client/src").join(domain).join("mod.rs");
+            let path = repo.join("programs/src/system/client/src").join(domain).join("mod.rs");
             let syntax = syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap();
             for item in syntax.items {
                 match item {
@@ -355,7 +357,7 @@ mod boundaries {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let api = dependencies(&repo.join("programs/src/system/api/Cargo.toml"));
         assert!(api.iter().all(|name| ["env", "wire", "mold"].contains(&name.as_str())));
-        let clients = dependencies(&repo.join("crates/system-client/Cargo.toml"));
+        let clients = dependencies(&repo.join("programs/src/system/client/Cargo.toml"));
         assert!(clients.iter().any(|name| name == "system-api"));
         assert!(!clients.iter().any(|name| name == "protocol" || name == "programs"));
         let terminal_api = dependencies(&repo.join("programs/src/user/terminal/api/Cargo.toml"));
@@ -375,7 +377,7 @@ mod boundaries {
             assert!(!dependencies.iter().any(|name| name == "protocol"));
         }
         let mut paths = References::default();
-        references(&repo.join("crates/system-client/src"), &mut paths);
+        references(&repo.join("programs/src/system/client/src"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("protocol::")));
         for source in [
             repo.join("programs/src/user/terminal/api/src"),

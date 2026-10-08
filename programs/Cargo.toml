@@ -30,7 +30,7 @@ schedule = { path = "../crates/schedule" }
 ipc = { path = "../crates/ipc" }
 wire = { path = "../crates/wire" }
 system-api = { path = "src/system/api" }
-system-client = { path = "../crates/system-client" }
+system-client = { path = "src/system/client" }
 hub-api = { path = "src/service/hub/api" }
 hub-client = { path = "src/service/hub/client" }
 terminal-api = { path = "src/user/terminal/api" }

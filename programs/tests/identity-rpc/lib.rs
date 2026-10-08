@@ -84,7 +84,7 @@ pub mod common {
     }
 }
 
-#[path = "../../../crates/system-client/src/identity/mod.rs"]
+#[path = "../../src/system/client/src/identity/mod.rs"]
 pub mod identity;
 pub use system::operator;
 

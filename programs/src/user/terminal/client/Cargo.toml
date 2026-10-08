@@ -14,5 +14,5 @@ env = { path = "../../../../../crates/env" }
 wire = { path = "../../../../../crates/wire" }
 resource = { path = "../../../../../crates/resource" }
 ipc = { path = "../../../../../crates/ipc" }
-system-client = { path = "../../../../../crates/system-client" }
+system-client = { path = "../../../system/client" }
 system-api = { path = "../../../system/api" }
