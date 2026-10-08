@@ -172,3 +172,136 @@ nu scripts/qtest.nu --package kernel --scene system-fault
 ```
 
 Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无依赖，纯 API 无执行库依赖，ipc 无软件实现依赖。内核内部 runtime 不在这次用户态迁移范围内。
+
+
+## 下一轮：Mark 的职责与发现规则重构计划
+
+状态：第1阶段基线已落地，第2至6阶段尚待实施。下面保留迁移约束与各阶段完成条件。
+
+### 目标与范围
+
+服务实例通过运行时名称和能力发布；发布资格由命名空间与授权策略判断。接口协议独立定义，客户端按其协议操作已获得的能力。Mark 只在必要的能力交付、启动发现和外来能力导入边界标记角色。
+
+不要求每个服务实例生成 Mark，不要求新实例进入编译期登记表，不根据调用方自行选择的 Mark 授权。保留内核的 Mark ABI 与 capability badge 语义：Mark 附在每份能力引用上，转授时 NONE 表示继承，非 NONE 可给派生能力重新标记。
+
+本轮不修改 Kernel ABI、资源模型、任务生命周期或 schedule 语义。既有接口的 Mark 裸值、操作码和失败码先固定；接入握手若确实需要增加字段，明确修改用户态协议与全部调用方，不把布局变化伪装成透明重构。
+
+### 职责划分
+
+| 内容 | 拥有者 | 确定时机 | 判断依据 |
+| --- | --- | --- | --- |
+| 服务实例名称与路径 | publication / Operator 命名树 | 运行时 | 命名空间权利、名称合法性、冲突和生命周期 |
+| 入口能力 | resource 与提供方 | 创建／交付时 | 类型、存活、来源、所有者、实际权限 |
+| 请求与回复协议 | 提供方 API | 接口定义时 | codec、操作码、版本与边界校验 |
+| 发布及调用授权 | publication / 对应服务 | 每次准入或受限会话建立时 | 可信来源、身份、Permit、可信方签发的允许范围 |
+| Mark 角色 | 提供方 API 或私有交付流程 | 必要识别边界 | 明示角色与来源；不承担服务身份或授权 |
+
+两个实例可以实现同一个接口并使用相同的角色声明；明确交付的实例入口也可以是 Mark::NONE。类型封装提供调用形式与本地限制，不能把调用方自己构造的 Rust 类型或标签当成服务端授权证据。
+
+### 1. 固定实际基线并建立用途清单
+
+从现有定义、创建、转授、发现和导入调用反向整理每个生产 Mark 的用途，列出创建者、预期持有者、交付途径、来源检查和实例范围。区分：
+
+- 启动时只能通过能力目录发现的角色。
+- 已通过参数／报文交付 token 或 seed 的角色。
+- Operator 当前用于区分操作面的请求标签。
+- 测具的故意错误标签和普通无标记能力。
+
+重点文件：env/wire/handle.rs、mold/interface.rs、API 声明、resource/port.rs、ipc/session/establish.rs、Operator service/claim.rs、publication/policy.rs 和 unit/mod.rs。
+
+保留现有固定数值及字节黄金期望。补基线证明：转授可重新标记但不能扩大实际权限；相同 owner/Mark 的多个实例确实可能存在；Mark::NONE 能力可被合法持有和使用；Operator 的请求 Mark 由调用方选择而不是可信授权者签发。
+
+完成条件：每个生产用途都有明确来源与范围，不新增逐个服务实例的全局登记或新的中央管理库。
+
+### 第一阶段用途清单与冻结基线
+
+七个提供方共 63 个登记角色：29 个 Channel、34 个 Grant。`programs/tests/interface-marks/baseline.rs` 固定完整 legacy 名称及 64 位数值，测试直接比较实际 REGISTRY；不通过当前生成器或被测 Mark::of 重算期望。新增或删除角色时必须明确其兼容处理，不能静默重生成黄金数据。
+
+| 角色集合 | 创建／预期持有者与交付 | 当前识别和来源验证 | 实例范围与迁移决定 |
+| --- | --- | --- | --- |
+| Loader Build 入口、IMAGE、BACK（3） | 入口由 System 创建；调用方授出映像副本并新建回信端；Control/Loader 收明确 seed | 客户端验证入口角色；服务端核映像 vestor/from、类型／范围；回复核来源与回信能力 | Build 入口按预期 authority 发现；映像与回信可多实例，显式交付优先 |
+| Identity BACK + 17 个 Grant（18） | 权威任务创建分面入口；调用方每次创建回信端；入口经安装／命名交付，回信随报文 | 注入 authority 验 Sire/vestor/owner，入口核 Grant；服务端继续按实际调用者及模型授权 | 分面入口需在确定 authority 下定位；每次回信不要求全局唯一 |
+| Control ASK、BACK、LINK、ACCOUNT_ENTRY/BACK、PUBLICATION_ENTRY/BACK、IDENTITY_REF + 5 个 Grant（13） | System 创建服务入口；调用方授出回信；对象引用由可信发布／名称机制生成 | 入口核来源与角色；请求端核 native 发件人，实例命令核 owner；Object/Permit 核 authority | ASK 对应实例接入；BACK 可多实例；LINK 仅保留兼容定义／断言，阶段5复核删除；其他入口按实际授权方式交付 |
+| Operator ASK/LINK、8 个操作面标签（10） | 普通客户端自己选择问话标签、创建会话两端并交给持树者 | 目前 server 用 owner/Mark 扫表后推断操作面；实际写权限另查 Control 调用者与 Permit | 当前会话识别限制一任务／角色一对，且首末枚规则不一致；阶段3/4改明确会话交付，标签不能视为可信 Grant |
+| Operator TIP/TIP_BACK/WATCH（3） | 管理端创建 TIP；请求方创建 TIP_BACK；每个订阅方创建事件端并传 seed | 管理请求验证来源及回信 vestor/owner/Mark；WATCH 以报文中明确能力建立订阅 | TIP 是私有管理单例；回信和订阅端可多实例，不能全局排重 |
+| Hub LIST/CLAIM/BOND、BACK/ALIVE/ACTIVATE_ENTRY/ACTIVATE_BACK（7） | Hub 创建公共入口；设备创建存活通知；System launch 创建私有 activation；回信由调用方建 | 公共客户端核入口／来源；activation核真实 live Hub 身份及任务关系；设备与组织准入另查 Identity | 公共服务名与角色解绑；设备通知及回信是明确交付能力；私有入口只在启动关系内发现 |
+| Terminal ENTRY/AUTHORITY/BACK/INPUT/OUTPUT/CONTROL（6） | Terminal 提供 attach 入口，建立每个 attachment 的流端点；可信 capability 作为AUTHORITY交付 | attach/流握手检查对端；authority查 vestor/from；流端点在每个 attachment 关系内认领 | 同一角色允许多个 attachment；阶段3优先交付明确句柄，不能按全任务首末枚选取 |
+| Router ENTRY/LINE_MARK/LINE_BACK（3） | Router 建服务入口；客户端/驱动创建每条 line 关系并授出能力 | 核 host/creator及对应角色；绑定消息／pair维护关系 | ENTRY 供启动／命名发现；lane/back是连接角色，允许独立 line 关系 |
+| 通用 Port 的 `back`（未进入API REGISTRY） | Port::open 为已知对端新建回信端，seed已显式交付 | Port 保存自己的 reply，native权限和对端决定收发 | 每次端口一枚，不应参与全局发现；阶段5确认能否直接使用NONE |
+| Hub `hub`/`hub-ready` 与共享 `ready`（启动角色） | Control按Setup创建load端点；服务按启动约定创建ready并转授Control | Control按实际已spawn task/role等待，副本来源随native事实核对 | 同一READY可由不同task使用；是启动协调标签，不是服务发布条件 |
+| RTC私有 `rtc-back`（未进入API REGISTRY） | RTC请求方每次创建回信能力并传入报文 | 由具体请求的能力与来源维护回复关系 | 纳入阶段5角色复核，不新增运行时中心；明确交付能力无需静态实例登记 |
+| Mark::NONE 与测具自有标签 | NONE表示无角色，转授参数中表示继承；测具标签仅隔离测试 | NONE能力仍由native来源／权限控制；错误标签不代替真实授权负证据 | 不进入生产角色唯一性表；可有任意多独立能力实例 |
+
+发现基线：Operator claim 当前取第一枚并最多告警，通用 establish::find 当前取最后一枚；两者都不是唯一性验证。kernel允许多个相同 owner/Mark 实例，因此阶段3须显式区分单实例发现与多实例交付，不能靠目录顺序解决。
+
+真实目标探针 `harness/probe/marks.rs` 验证重新标记不修改源引用、NONE继承、重标记不扩大FETCH-only权限、同owner/Mark多实例、NONE孔收发，以及正常seal/release后资源表回到基线；它还调用生产 `granted_berth` 验证请求标签确实由客户端选择。纯API宿主黄金测试与真实内核探针各自验证对应边界。
+
+### 2. 服务发布解除 Mark 准入绑定
+
+调整 publication::policy::service，删除普通服务入口的 Mark 匹配条件。发布准入改为校验发布者获准的 scope/group/path 范围、合法名称、入口来源／权限／存活、访问策略和现有挂载冲突。
+
+将 unit::PublishEntry 中入口名称与 Mark 的捆绑拆开。产品配置可以保留固定系统入口与保留路径，其他获准命名空间允许运行时命名的实例。权限按边界限定，不能把动态发布扩大成任意写入整棵树。
+
+mold 的 PUBLICATIONS 不再以 env::marks::Definition 作为发布权利的表示。名称提示或默认部署描述与角色登记分别生成／维护，拥有接口描述不等于获准发布。
+
+本阶段保留现有 publication 报文字段和 Operator 挂载格式，先改变准入依据，避免同时升级传输。
+
+验收：
+
+- 同一允许命名空间可注册两个不同运行时名称的服务实例，无需添加静态 Mark／入口声明。
+- Mark::NONE 的合法入口可发布并通过路径获得。
+- 正确 Mark 但无命名空间权利、越界路径、错误来源或权限不足仍被拒绝。
+- 保留系统路径不能被普通发布者覆盖；重名、撤销、重新发布和事件交付保持既有规则。
+- 动态能力的运行时有效性仍需验证，不以移除 Mark 检查为由跳过 native 事实检查。
+
+第1阶段验收：完整角色黄金值与现有碰撞检查通过，真实system-fault探针验证原生标记继承、重标记与权限边界，含新建能力vestor为0、转授副本vestor为授予者的区分。
+
+### 3. 显式交付优先，统一扫描发现的歧义结果
+
+盘点并迁移已有 token/seed 却仍扫描能力目录的路径。启动参数或握手明确交付入口、请求端和回信端，接收端在导入边界验证，建立后保存连接上下文。
+
+保留必要的 bootstrap 查找，但不继续用首枚／末枚表达选择策略。为单实例查找引入明确结果：Missing、Unique、Ambiguous；等待只对 Missing 重试，Ambiguous 立即失败，不释放不属于本次导入的能力。
+
+先迁移通用 ipc/session/establish 与 Operator claim 的实际调用方，再删除旧的首枚／末枚查找入口。测试期间可以分批适配，最终不保留语义不同的并行查找 API。
+
+唯一性以明确的发现范围判断。多个 RPC 回信端、多订阅和多服务实例不能因相同角色 Mark 被全局判为非法；这类连接必须依靠明确交付和会话上下文区分。
+
+验收：目录顺序不改变发现结果；多个匹配不能被任意选中；已有显式 seed 的流程不重新扫表；重复／错误来源、对端退出、导入失败与正常多会话均有测试。
+
+### 4. Operator 的操作选择与授权分离
+
+Operator 请求由操作码分派，Mark 不再决定调用方获准执行的操作。将当前 Grant 概念按实际作用整理：操作枚举表达请求，实际权限由可信身份、入口／会话来源及 Permit 判断。
+
+普通会话使用统一接入约定；移除每个操作单独打请求 Mark 的要求及 granted_berth 带来的授权误读。创建／销毁等已有 Control 专属操作仍检查可信调用者，不能在合并入口时放宽。
+
+若产品确需只读或限定操作的可委托会话，由可信管理方或 Operator 签发对应入口／会话，并保存真实允许范围。调用方只能持有和使用，不能通过自行改 Mark、提交请求字段或构造客户端包装扩权。内核当前不把派生 badge 作为每条消息的发送者标签返回，因此不提出依赖新增 message badge ABI 的方案。
+
+明确请求／回信能力由握手交付，双方保持对偶关系、统一期限、一次响应及失败隔离。调整 Face/Rein 等客户端表面与相应探针，保留树、订阅及事件语义。已有操作码和数据帧不因删除操作面标签而重排；若握手变更，单独固定其新旧边界。
+
+验收：
+
+- 自己选择或重新打标签不能获得写权限。
+- 普通会话可以正常完成查询和订阅，多会话相互独立。
+- Control 专属操作仍拒绝非 Control 调用者。
+- 限定操作委托如存在，调用方改变标签或包装仍不能绕过服务端允许范围。
+- 错误来源、迟到／重复回复、忙碌别名、对端退出及订阅者退场继续受现有客户端／Session 检查保护。
+
+### 5. 收敛角色声明与 import 验证
+
+将仍需要 Mark 的生产角色集中在所属 API 或明确的私有交付边界，通过生成常量使用；普通调用方不再现场计算协议字符串。
+
+对明确传入能力且无需扫描识别的用途，删除无作用的 Mark，例如评估 Port 内部固定的 "back" 标签是否可用 NONE。保留或删除必须由实际导入验证与交付关系证明，不按字符串相似性合并不同角色。
+
+保留编译期 REGISTRY 对已声明角色的碰撞检查。提供方声明或其局部 import 函数表达预期用途与来源检查，不再让 Definition 的名字／数值承担授权。无需为了服务实例扩大编译期根登记，也不另造接口类型或服务 ID 的全局运行时登记中心。
+
+验收：每个剩余 Mark 都有实际识别用途；每个外来能力导入都有明确的 native 验证；旧 bare-string／重复 Mark 计算路径及歧义发现兼容层删除；角色重复实例的规则与公共客户端封装一致。
+
+### 6. 收尾与完整验收
+
+更新这份文档的当前架构和边界描述，将本节待实施状态改为实际结果。每个实现阶段验证通过后提交，不以尚未迁移的旧机制支持最终完成声明。
+
+既有套件全部保留，尤其 API 黄金字节、interface-marks、Operator gate/judge、Control/Identity/Loader 客户端、资源 capability、Session 与 system-shape。新增行为验收针对动态服务、NONE 入口、命名空间拒绝、查找歧义、显式交付和不可自授操作权限。
+
+程序全目标编译及 image 纯 API 构建通过，QEMU accept、product、system-fault 验证正常发布、动态实例、授权拒绝、故障回收和订阅退场。最终检查 Kernel ABI 未变、操作／失败码未重排、schedule 行为未变，System 使用方未重新依赖私有实现。
+
+阶段顺序为 1 → 2 → 3 → 4 → 5 → 6。先解除发布绑定，再改变发现和 Operator 接入，避免把注册政策、握手和授权改动混成一批。第4阶段的权限选择以真实使用需求和可信签发路径决定，不把调用方本地限制冒充权限。

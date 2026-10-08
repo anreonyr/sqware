@@ -3,6 +3,8 @@
 #[path = "../../src/unit/interfaces.rs"]
 mod interfaces;
 
+mod baseline;
+
 #[cfg(test)]
 mod tests {
     use env::marks::Definition;
@@ -30,6 +32,20 @@ mod tests {
         assert_eq!(control::marks::IDENTITY_REF, env::Mark::of("control-identity-ref"));
         assert_eq!(router_api::marks::LINE_BACK, env::Mark::of("line-back"));
         assert_eq!(operator::marks::TIP_MARK, env::Mark::of("tip"));
+    }
+
+    #[test]
+    fn all_registered_roles_keep_the_fixed_legacy_values() {
+        let actual: Vec<_> = crate::interfaces::APIS.iter()
+            .flat_map(|registry| registry.iter())
+            .flat_map(|group| group.iter())
+            .collect();
+        assert_eq!(actual.len(), crate::baseline::VALUES.len());
+        for &(name, value) in crate::baseline::VALUES {
+            let matches: Vec<_> = actual.iter().filter(|definition| definition.name == name).collect();
+            assert_eq!(matches.len(), 1, "role missing or duplicated: {name}");
+            assert_eq!(matches[0].mark.get(), value, "legacy value changed: {name}");
+        }
     }
 
     #[test]
