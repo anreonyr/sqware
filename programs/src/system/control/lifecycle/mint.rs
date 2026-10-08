@@ -45,7 +45,7 @@ pub fn run(
             start::Error::Missing => Fail::BadImage,
             _ => Fail::Full,
         })?;
-    job.execution.task = Some(service.0);
+    job.execution.task = Some(service.task());
     job.execution.instance = Some(Instance {
         service,
         marks: Vec::new(),
@@ -60,7 +60,9 @@ pub fn post(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let instance = job.execution.instance.as_ref().ok_or(Fail::NotReady)?;
-    images.inject(instance.service.0).map_err(|_| Fail::Full)?;
+    images
+        .inject(instance.service.task())
+        .map_err(|_| Fail::Full)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
     control.pending.push(Pending {
         name: super::super::unit::start::program_of(&job.request.name)?.name(),

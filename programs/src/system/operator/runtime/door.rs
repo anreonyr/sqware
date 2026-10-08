@@ -9,9 +9,9 @@ use system_api::operator::EntryId;
 use system_api::operator::Permit;
 use system_client::identity::TaskQuery;
 
+use crate::system::operator::tree::Facts;
 use crate::system::operator::tree::Operator;
-use crate::system::operator::tree::gate::{Code, verdict};
-use crate::system::operator::tree::judge::Facts;
+use crate::system::operator::tree::{Code, verdict};
 
 const MS: usize = 1000;
 
@@ -81,7 +81,7 @@ pub(super) fn authorize(
     Ok(::schedule::Progress::Done)
 }
 
-use super::{answer::Output, session::Request};
+use super::{answer::Output, exchange::Request};
 use crate::system::app::life::Status;
 use alloc::sync::Arc;
 use system_api::operator as ocall;

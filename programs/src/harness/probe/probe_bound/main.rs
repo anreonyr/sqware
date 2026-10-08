@@ -99,7 +99,11 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
-    let (tree, hedge, _) = (&session.link(), session.talk(), session.host());
+    let (tree, hedge, _) = (
+        &unsafe { session.raw_link() },
+        unsafe { session.raw_talk() },
+        session.host(),
+    );
     // **正经那一问要一面 `Face`**，而它是**借**一条会话：
     let face = operator::Face::from(&session);
     let Some(dir) = system_api::operator::SVC.file_name() else {

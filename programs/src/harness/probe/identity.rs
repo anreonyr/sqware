@@ -200,7 +200,7 @@ pub fn acceptance() {
         .expect("identity: Operator admission acknowledgement");
     assert_eq!((len, from, ack[0]), (1, host, system_api::operator::OK));
     let operator = system_client::operator::Face::of(
-        ipc::session::Session::from_raw(link, talk, host)
+        unsafe { ipc::session::Session::from_raw(link, talk, host) }
             .unwrap_or_else(|_| panic!("identity: owned Operator session")),
     );
     super::loader::acceptance(&mut assembly, &operator);

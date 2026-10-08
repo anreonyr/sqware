@@ -2,7 +2,7 @@ use super::lifecycle::Action;
 use super::unit::Control;
 use super::{
     lifecycle::{self, Operations},
-    service::{answer, instance},
+    endpoint::{request as answer, self},
 };
 use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};
@@ -10,14 +10,14 @@ use env::Wait;
 pub(crate) fn poll() -> Result<Plan<Fail>, BuildError> {
     let mut plan = Schedule::sequence();
     plan.system("reap", super::unit::reap::sweep)?;
-    plan.system("instances.receive", instance::receive)?;
+    plan.system("instances.receive", endpoint::receive_instances)?;
     plan.system("requests.receive", answer::receive)?;
     plan.system("requests.state", answer::state)?;
     plan.build()
 }
 pub(crate) fn commands(hooks: super::ActivationHooks) -> Result<Plan<Fail>, BuildError> {
     let mut plan = Schedule::sequence();
-    plan.system("instances.answer", instance::answer)?;
+    plan.system("instances.answer", endpoint::answer_instances)?;
     plan.system("requests.enqueue", answer::enqueue)?;
     plan.plan(
         "lifecycle",
@@ -31,7 +31,7 @@ pub fn reply(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
 }
 pub fn pending(
     operations: Res<Operations>,
-    inbox: Res<crate::system::control::service::answer::Inbox>,
+    inbox: Res<crate::system::control::endpoint::request::Inbox>,
     mut bound: ResMut<crate::system::app::policy::Bound>,
 ) -> Result<Progress, Fail> {
     if !operations.is_empty() || !inbox.0.is_empty() {

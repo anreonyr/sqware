@@ -64,18 +64,33 @@ impl Session {
         self.host
     }
 
-    /// The request hole used by this session.
-    pub const fn talk(&self) -> PieToken {
+    /// Raw request capability; use `clone` to share the session.
+    ///
+    /// # Safety
+    /// Coordinate raw sends with every alias: never overlap an exchange, and leave
+    /// no unconsumed response before the next call. Do not create independent session state.
+    pub const unsafe fn raw_talk(&self) -> PieToken {
         self.talk
     }
 
-    /// The local response endpoint shared by aliases of this session.
-    pub const fn link(&self) -> Endpoint {
+    /// Raw response endpoint; use `clone` to share the session.
+    ///
+    /// # Safety
+    /// Coordinate raw receives with every alias: never overlap an exchange, and leave
+    /// the response queue empty before the next call. Do not create independent session state.
+    pub const unsafe fn raw_link(&self) -> Endpoint {
         self.link
     }
 
-    /// Import raw endpoint capabilities after verifying ownership of the local reply hole.
-    pub fn from_raw(link: Endpoint, talk: PieToken, host: TaskId) -> Result<Self, Fail> {
+    /// Borrow externally managed endpoint capabilities.
+    ///
+    /// # Safety
+    /// The reply and request capabilities must have no other independent exchange state.
+    /// All aliases must be made with `clone`, and the caller must keep both capabilities
+    /// alive until the last alias is dropped. No external sender or receiver may exchange
+    /// on these endpoints while the session exists. Native metadata validation does not
+    /// establish this exclusivity.
+    pub unsafe fn from_raw(link: Endpoint, talk: PieToken, host: TaskId) -> Result<Self, Fail> {
         if !state::valid_reply(link.rx(), host) {
             return Err(Fail::Link);
         }

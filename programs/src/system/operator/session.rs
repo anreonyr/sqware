@@ -85,6 +85,7 @@ impl Desk {
             .any(|guest| guest.reply == reply)
     }
 
+    #[cfg(test)]
     pub fn occupied(&self) -> usize {
         self.guests.iter().flatten().count()
     }

@@ -10,7 +10,7 @@ mod gate;
 #[path = "../../src/system/operator/tree/judge.rs"]
 mod judge;
 
-#[path = "../../src/system/operator/service/admission.rs"]
+#[path = "../../src/system/operator/runtime/admission.rs"]
 mod admission;
 
 #[cfg(test)]
@@ -309,7 +309,7 @@ mod tests {
     fn sdk_uses_one_face_without_grant_selected_handles() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../src/system/client/src/operator");
-        let client = std::fs::read_to_string(root.join("client/mod.rs")).unwrap();
+        let client = std::fs::read_to_string(root.join("face.rs")).unwrap();
         let module = std::fs::read_to_string(root.join("mod.rs")).unwrap();
         for method in [
             "part", "land", "find", "trim", "list", "seek", "name", "watch",

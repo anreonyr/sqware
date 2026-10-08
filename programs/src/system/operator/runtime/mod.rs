@@ -1,14 +1,30 @@
-use super::{
-    Fail,
+//! Operator owns the namespace, guest capabilities and subscriptions.
+#[derive(Debug)]
+pub enum Fail {
+    Tree,
+    Desk,
+    Room,
+    Dead,
+}
+mod admission;
+mod answer;
+mod door;
+mod events;
+mod exchange;
+mod frame;
+mod import;
+mod management;
+mod schedule;
+
+use self::{
     answer::Output,
     door::Judgment,
+    exchange::{Buffer, Hit, Outboxes, Request, Selected},
     frame::Running,
-    session::{Buffer, Hit, Outboxes, Request, Selected},
-    tip::{Ack, CurrentTip, Tip, Tips},
-    watch,
+    management::{Ack, CurrentTip, Tip, Tips},
 };
-use crate::support::face::desk::Desk;
 use crate::system::app::life::Status;
+use crate::system::operator::session::Desk;
 use crate::system::operator::tree::Operator;
 use ::resource::pile::Pile;
 use ::schedule::{Cursor, Dispatch, Progress, Resources};
@@ -27,7 +43,7 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .map_err(|_| Fail::Room)?;
     resources.insert(Operator::new()).map_err(|_| Fail::Room)?;
     resources
-        .insert(watch::Watchers::new())
+        .insert(events::Watchers::new())
         .map_err(|_| Fail::Room)?;
     resources.insert(Desk::new()).map_err(|_| Fail::Room)?;
     resources
@@ -63,7 +79,7 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     resources
         .insert(Dispatch::<(), Fail>::new())
         .map_err(|_| Fail::Room)?;
-    let [mut start, mut frame, mut stop] = super::schedule::plans().map_err(|_| Fail::Room)?;
+    let [mut start, mut frame, mut stop] = schedule::plans().map_err(|_| Fail::Room)?;
     start.prepare(&resources);
     frame.prepare(&resources);
     stop.prepare(&resources);

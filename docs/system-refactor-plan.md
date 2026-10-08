@@ -15,7 +15,7 @@ programs/src/
 │   │   ├── unit/            # 任务登记、镜像缓存、启动物料、就绪与收割
 │   │   ├── instance/        # 实例命令、认领、超时、Prepare/Retire 扩展
 │   │   ├── lifecycle/       # Mint/Embark/Debark/Ruin、队列、游标、补偿
-│   │   ├── service/         # Control 请求接入、解码、回复
+│   │   ├── endpoint/        # 拥有私有入口登记；子模块适配请求／实例命令
 │   │   └── identity.rs      # 任务身份安装账、继承、绑定与回收
 │   ├── identity/
 │   │   ├── book/            # 主体、联盟、成员关系、身份快照
@@ -23,7 +23,10 @@ programs/src/
 │   │   └── revision.rs      # 身份修订信号
 │   ├── operator/
 │   │   ├── tree/            # 命名树、条目与授权判据
-│   │   ├── service/         # 请求、会话、订阅、事件交付
+│   │   ├── session.rs       # 完整会话账；字段私有
+│   │   ├── watch.rs         # 经导入核验的订阅状态与事件投递
+│   │   ├── connection.rs    # Control侧非阻塞接入状态与期限
+│   │   ├── runtime/         # 注册运行资源、组合计划与报文适配
 │   │   └── management.rs    # System 私有命名管理通道
 │   ├── loader/              # 映像、缓存、映射、构建、任务与私有服务
 │   ├── publication/         # 发布账、名称注册、运行时命名空间、撤销
@@ -41,7 +44,7 @@ Control 唯一持有任务表、实例表、待放行任务和 Loader 缓存，�
 
 IdentityBook 只拥有权威身份模型。Control 的 Roster 拥有安装账，普通调用方的受信 authority 发现归 system-client。Operator management 是私有管理入口，不承担公共客户端职责。
 
-publication 拥有发布、名称、连接与运行时命名空间的账。launch 只持有等待交付的请求，通过 Control 查询实例结果，不复制实例状态。account 根据注入的帐号与镜像配置处理可信 Login 请求。
+publication 拥有发布、名称与运行时命名空间的账；Operator 自己拥有会话接入，publication 不再保存连接候选账。launch 只持有等待交付的请求，通过 Control 查询实例结果，不复制实例状态。account 根据注入的帐号与镜像配置处理可信 Login 请求。
 
 Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装归 launch。Control 接受 activation 和实例 Prepare/Retire 子计划，由 app 注入 launch 流程；Control 不依赖 launch、publication 或 account 的实现。
 
@@ -97,7 +100,7 @@ request/reply 是成对的通用端点，绑定同一个 wire::Contract。接收
 
 Capability 负责本地 release；Loan 负责指定 peer 的派生撤销；Reply 校验归属并 seal→release。seal 不用作所有资源的通用析构。授权失败不形成撤销责任，显式清理失败不自动重复执行。
 
-每次 Session::open 新建独立请求端与回复端，接入确认后才返回；Clone 共享 Ready/Busy/Closed 及所有权，最后一份释放本次创建的本地端点。Session::from_raw保持借用，不能凭包装接管外来能力。发送前失败恢复 Ready；请求已入队后的超时、非法来源／回复或展开中断先标 Closed，再封印本地回信孔。并发别名不发第二个请求，已排队旧回复关闭会话；不重发、不自动重建。
+每次 Session::open 新建独立请求端与回复端，接入确认后才返回；Clone 共享 Ready/Busy/Closed 及所有权，最后一份释放本次创建的本地端点。Session::from_raw保持借用，并以unsafe契约要求对端点交换状态有独占控制；安全别名通过Clone建立。发送前失败恢复 Ready；请求已入队后的超时、非法来源／回复或展开中断先标 Closed，再封印本地回信孔。并发别名不发第二个请求，已排队旧回复关闭会话；不重发、不自动重建。
 
 线上格式没有关联字段，服务端须对每个请求恰好回复一次；任意延迟的重复成功回执不能与新回执区分。这是保留既有字节格式的边界，不宣称已消除。
 
@@ -154,6 +157,7 @@ cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target
 cargo test --manifest-path crates/ipc/tests/session-establish/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/interface-marks/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/publication-admission/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/capability-import/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/loader-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/hub-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
@@ -164,10 +168,13 @@ cargo test --manifest-path programs/tests/login/Cargo.toml --target x86_64-unkno
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/operator-client/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-handoff/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/operator-connection/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-instance/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-lifetime/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/loader-client/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 sh programs/src/system/identity/book/test-host.sh
 nu scripts/qtest.nu --package kernel --scene accept
@@ -226,7 +233,7 @@ Session握手各步共用一个截止期限。give_at明确返回收件方seed�
 
 其余回信、映像、authority和流标签保留，因为所属接口实际核验它们以分类、防止误用，不能把它们当作调用者授权。RTC的rtc-back属于私有导入边界，校验owner、角色及vestor=真实发件人，不参与实例登记。通用ready与Hub的hub／hub-ready各自集中常量，值和原启动关系不变，不能按名字相似合并。Control只在部署／配置边界转换load/ready名称，普通服务与驱动使用声明常量。
 
-### 最终验收
+### 首轮 Mark 迁移验收
 
 全部宿主套件共237项通过；mold的6个文档示例保持原有ignored状态，不计入通过数。programs全目标、各基础库、system-api与image宿主构建通过。QEMU accept、product、system-fault在最终实现提交41d25a1上均通过，收尾仅更新本文档，没有继续修改实现。
 
@@ -235,3 +242,25 @@ Session握手各步共用一个截止期限。give_at明确返回收件方seed�
 对Mark迁移前的88c217c核对：kernel、schedule、wire实现没有变化；env差异只涉及Mark注释，ABI类型／布局和envcall语义不变。依赖图没有用户态protocol/runtime包；wire、schedule零依赖；image只经纯API依赖env／wire／mold；System实现仍限制在crate内。publication/runtime.rs是局部运行时命名空间，不是被移除的总括runtime库。
 
 文档目录仅保留本文件。阶段1至6的工作已完成，后续新设计单独确定范围，不继续保留待实施阶段或旧操作兼容入口。
+
+## Review 修复与模块层次
+
+这轮同时修复review问题与暴露这些问题的状态边界。目录层次按“功能拥有者 → 完整操作 → 接入适配”确定；父模块拥有状态或完整构造，子模块封装独立机制。纯聚合／转发不额外占一层，模型不依赖运行接入模块。
+
+| 范围 | 拥有者与父子边界 |
+| --- | --- |
+| Operator | tree拥有命名状态、完整放置／回滚及授权契约；session拥有会话账；watch拥有已核验订阅；connection拥有Control侧接入。runtime注册并适配这些功能，不直接构造未经核验的订阅，不深入tree的内部gate/judge模块。原service/run转发层删除。 |
+| Control | unit::Service封装任务与供给端点，提供task/connect/ready/claim_supply并承担Drop；lifecycle通过完整操作推进，不访问裸tuple。endpoint父模块拥有私有Entries，request/instance子模块通过方法适配，不直接改入口字段。 |
+| Operator SDK | operator父模块聚合Face、Pane、Tile、Watch，Face私有持有Session；折掉operator/client重复层，兄弟模块通过窄方法协作。 |
+
+半开LINK接入改为有期限的Offer／Request／Handoff状态，每轮只使用POLL。Control维护不等待客户端，失败或过期LINK在原能力退场前不重新接入。等待器监听pending transport并合并其最早期限，忙碌TIP排队仍有界，失败只撤销本次交付和释放本地transport。
+
+Watch登记前核验Hole类型、存活、native giver/owner对应请求者和WATCH_MARK；Hub认领前核验报活端点的相同事实及ALIVE_MARK。错误token不释放，旧账不变，合法认领者退场仍可回收设备。
+
+Service建立供给端点使用事务暂存，部分失败和旧连接替换立即释放本地端点；成功／失败流程离开作用域也由拥有者回收。退出等待的Waited／Unsettled判决已纠正。
+
+Land与Pane::bind共用Loan补偿：Busy／Closed／发送失败和明确拒绝撤销本次转授；明确接纳或已入队后回复丢失则保留，避免误撤服务端已经接纳的能力。无法确认接纳的丢回复仍是明确的责任边界，不能声称全部失败都可立即清零。
+
+Session原始导入与raw访问器显式标为unsafe，要求协调端点交换且不能为同一pair建立并发独立State；from_raw仍不接管释放责任。Clone共享状态及寿命的安全使用保持不变。
+
+新增生产代码回归：operator-connection、capability-import、control-lifetime、operator-client，以及Session导入契约和结构守卫。真实accept额外保留半开LINK并验证健康会话不等待它的5秒期限，还验证错误Watch角色被明确拒绝、源能力保留且后续调用正常。普通操作／失败码、Mark值、Kernel ABI与schedule引擎未改。本轮最终宿主回归257项通过；programs全目标、image宿主构建及QEMU accept、product、system-fault通过。6个具体review问题已修复，原始Session导入的契约风险以unsafe边界收紧；结构守卫约束新的状态所有权、父模块接口和依赖方向。

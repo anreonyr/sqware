@@ -1,10 +1,15 @@
+//! Control endpoint registration and request adaptation.
+mod instance;
+pub(super) mod request;
+pub(crate) use instance::{answer as answer_instances, receive as receive_instances};
+
 use env::PieToken;
 use system_api::control as ccall;
-pub(crate) struct Watch {
-    pub(in crate::system::control) instance: Option<PieToken>,
-    pub(in crate::system::control) faces: [Option<PieToken>; ccall::Grant::ALL.len()],
+pub(crate) struct Entries {
+    instance: Option<PieToken>,
+    faces: [Option<PieToken>; ccall::Grant::ALL.len()],
 }
-impl Watch {
+impl Entries {
     pub(crate) fn new() -> Self {
         Self {
             instance: None,

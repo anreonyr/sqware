@@ -102,3 +102,21 @@ pub fn identity_changes(
     wanted.tokens.push(changed.0.token());
     Ok(Progress::Done)
 }
+
+/// Admission contributes its own transport interest and expiry to the supervisor wait.
+pub(super) fn connections(
+    tree: Res<crate::system::operator::management::Tree>,
+    mut wanted: ResMut<Interests>,
+    mut bound: ResMut<super::policy::Bound>,
+) -> Result<Progress, Fail> {
+    wanted
+        .tokens
+        .try_reserve(tree.connection_entries().count())
+        .map_err(|_| Fail::Room)?;
+    wanted.tokens.extend(tree.connection_entries());
+    bound.0 = match (bound.0, tree.connection_budget()) {
+        (Wait::Forever, value) | (value, Wait::Forever) => value,
+        (Wait::AtMost(left), Wait::AtMost(right)) => Wait::AtMost(left.min(right)),
+    };
+    Ok(Progress::Done)
+}

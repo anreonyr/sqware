@@ -6,5 +6,6 @@ use super::*;
 
 /// 与线路由者那条探活同一手
 pub(super) fn alive(sensor: PieToken) -> bool {
-    reserve(sensor).is_ok()
+    ::resource::raw::alive(sensor)
+        && matches!(reserve(sensor), Ok((_, _, mark)) if mark == hub::ALIVE_MARK)
 }

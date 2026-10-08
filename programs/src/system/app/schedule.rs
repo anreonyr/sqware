@@ -88,6 +88,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     frame.system("watch.publication", watch::publication)?;
     frame.system("watch.activation", watch::activation)?;
     frame.system("watch.tasks", watch::tasks)?;
+    frame.system("watch.connections", watch::connections)?;
     frame.system("watch.apply", watch::apply)?;
     frame.system("wait", watch::wait)?;
     frame.build()

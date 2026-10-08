@@ -1,31 +1,18 @@
-//! 一面持树者，以及它的两个柄（Pane / Tile）。
-//! ```text
-//! :of(会话)                session: Session（持有）或 Face::from(&Session)（借用
-//! :root()                  树的根
-//! :pane(路) / tile(路)      一条路 → 一块窗格 / 一枚砖（都带退避重试
-//! :open / bind / list / trim / name    这一块窗格自己那几手
-//! :tile(路)                            这一块底下的路 → 一枚砖（就地问一次
+//! Operator会话与命名树的语义操作。
 
 use alloc::string::String;
 
-use ::resource::port::{self, Access, Policy};
+use super::handoff;
 use env::{PieToken, TaskId, Wait};
 
 use crate::operator as ocall;
 use crate::operator::Path;
 use crate::operator::{EntryId, Fail, Listing, Permit, Where};
-use ::resource::raw::Hole;
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
 use system_api::operator::Call;
 
-pub mod pane;
-pub mod tile;
-pub mod watch;
-
-pub use self::pane::*;
-pub use self::tile::*;
-pub use self::watch::Watch;
+use super::{Pane, Tile, Watch};
 /// **这条路叫什么**：泊位那一格（`LINK` = `operator`）＋ 问话孔那一格（`ASK_MARK`）
 /// 开会话那一手（Session::open）要它；本层只把这两格交出去，不替调用方开会话
 pub const BERTH: Berth = Berth {
@@ -41,13 +28,7 @@ pub enum Mine {
     No,
 }
 
-/// **一面持树者**：一条装好的会话（对端 = 持树者）
-/// **包住的是 Session，不是门牌**：树不像 principal / coalition 那样"一枚门牌即可"——
-/// 它要一条装好的会话（问话孔 + 答话路 + 对端号），故 Face::of 的入参就是 Session
-/// 已经持有 `Session`、还要在**同一条会话**上编自己那两枚门牌的地方（`driver/uart/adapt/desk.rs`、
-/// 两份 `serve_tree`）走 Face::from——它按值复制那三格（`Endpoint` 是 `Copy`、放下无事）
-/// **它不再往下漏别的**：调用方拿到的只有 Pane / Tile 与 Face::host
-/// `Endpoint` / `Sender` / `Receiver` / `Where` 一个都不出
+/// 共享调用状态和端点寿命的命名树会话。
 pub struct Face {
     session: Session,
 }
@@ -101,7 +82,7 @@ impl Face {
     }
 
     /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。
-    fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
+    pub(super) fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
         self.session
             .call::<Call>(ask, wait)
             .map_err(|_| Fail::Unknown)
@@ -114,9 +95,7 @@ impl Face {
         said.entry().map_err(map_code)
     }
 
-    /// **落**：在 `at` 那一块里给 `name` 贴一枚 `Tile`；答那一格自己的号
-    /// **两件事都要**：面判（这一柄权许不许 `land`）＋ 那一格自己的 `mine` 那一轴
-    /// （Operator::claimable，见 `programs/src/system/operator/core/mod.rs`）。四格条件与
+    /// 在容器中发布能力；明确拒绝时撤回本次转授。
     pub fn land(
         &self,
         at: Where,
@@ -126,25 +105,21 @@ impl Face {
         mine: Mine,
         wait: Wait,
     ) -> Result<EntryId, Fail> {
-        let pie = Hole::from_raw(entry);
-        let shipped = port::ship(
-            pie.token(),
-            self.session.host(),
-            Access::FETCH | Access::STORE,
-            Policy::VEST,
-        )
-        .map(|to| to.seed())
+        let said = handoff::offer(&entry, self.session.host(), |shipped| {
+            self.session
+                .call::<Call>(
+                    ocall::Req::Land {
+                        at,
+                        name,
+                        entry: shipped,
+                        permit,
+                        mine: matches!(mine, Mine::Yes),
+                    },
+                    wait,
+                )
+                .map(|said| (said.entry().is_ok(), said))
+        })
         .map_err(|_| Fail::Unknown)?;
-        let said = self.call(
-            ocall::Req::Land {
-                at,
-                name,
-                entry: shipped,
-                permit,
-                mine: matches!(mine, Mine::Yes),
-            },
-            wait,
-        )?;
         said.entry().map_err(map_code)
     }
 
@@ -238,6 +213,6 @@ fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
 /// 线上那一格码 → 失败域；表外（含 `BAD`）折 Fail::Unknown
 /// 这是**唯一**一处 `u8 → Fail`：`Said` 那几个读法答的是 wire 那一层的码，本族在客侧把它们
 /// 收进语义那一格
-fn map_code(code: u8) -> Fail {
+pub(super) fn map_code(code: u8) -> Fail {
     ocall::code_to_fail(code).unwrap_or(Fail::Unknown)
 }

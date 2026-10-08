@@ -1,5 +1,3 @@
-//! 挂面（mount）· 一只组守 N 枚门牌（carrier）·
-//! 待客账（desk）。
+//! 公共接口的入口创建。
 
-pub mod desk;
 pub mod mount;

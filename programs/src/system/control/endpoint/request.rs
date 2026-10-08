@@ -15,12 +15,12 @@ pub struct Inbox(pub alloc::collections::VecDeque<Incoming>);
 pub struct Buffer(pub alloc::vec::Vec<u8>);
 
 pub fn receive(
-    watch: ::schedule::Res<super::watch::Watch>,
+    watch: ::schedule::Res<super::Entries>,
     mut buffer: ::schedule::ResMut<Buffer>,
     mut inbox: ::schedule::ResMut<Inbox>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
     for grant in ccall::Grant::ALL {
-        let Some(face) = watch.faces[grant.index()] else {
+        let Some(face) = watch.face(grant) else {
             continue;
         };
         let receiver = RequestReceiver::<ControlContract>::from_raw(

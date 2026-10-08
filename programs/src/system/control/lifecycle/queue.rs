@@ -82,7 +82,7 @@ impl Operations {
         for _ in 0..count {
             if let Some(mut tracked) = self.0.pop_front() {
                 if tracked.complete && tracked.operation.request.back.is_some() {
-                    super::super::service::answer::complete(&mut tracked.operation);
+                    super::super::endpoint::request::complete(&mut tracked.operation);
                 } else {
                     self.0.push_back(tracked);
                 }

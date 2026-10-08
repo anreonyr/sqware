@@ -26,7 +26,9 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-operator-gate: no tree link");
     };
+    let requests = session.clone();
     let tree = Face::of(session);
+    reject_wrong_watch_role(&requests);
 
     for operation in [
         "part", "land", "find", "trim", "list", "seek", "name", "watch",
@@ -73,14 +75,23 @@ fn main() -> Report<'static> {
 fn independent_sessions() {
     use ::resource::raw::{alive, table_size};
     let before = table_size();
+    let stalled = ipc::session::Held(
+        ipc::session::establish::lend(unit::sire(), system_api::operator::LINK_MARK)
+            .expect("half-open LINK"),
+    );
+    let started = env::chrono::clock();
     let first = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .unwrap_or_else(|_| panic!("independent Operator session"));
-    let first_reply = first.link().rx();
-    let first_request = first.talk();
+    assert!(
+        env::chrono::clock().saturating_sub(started) < 5_000_000_000,
+        "half-open peer must not impose the bootstrap timeout on healthy sessions"
+    );
+    let first_reply = unsafe { first.raw_link() }.rx();
+    let first_request = unsafe { first.raw_talk() };
     let second = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .unwrap_or_else(|_| panic!("independent Operator session"));
-    assert_ne!(first_reply, second.link().rx());
-    assert_ne!(first_request, second.talk());
+    assert_ne!(first_reply, unsafe { second.raw_link() }.rx());
+    assert_ne!(first_request, unsafe { second.raw_talk() });
     let alias = first.clone();
     drop(first);
     assert!(alive(first_reply) && alive(first_request));
@@ -118,6 +129,7 @@ fn independent_sessions() {
     );
     drop(third);
     drop(second);
+    drop(stalled);
     let budget = ipc::time::Deadline::new(Wait::AtMost(MS));
     while table_size() != before && budget.remaining() != Wait::POLL {
         execution::room::park(core::time::Duration::from_millis(1)).unwrap();
@@ -128,4 +140,36 @@ fn independent_sessions() {
         "closed sessions must return the native table to baseline"
     );
     programs::debug::put("operator: same-task sessions, aliases and independent retirement passed");
+}
+
+/// A valid transferred Hole is not a Watch endpoint unless its declared role matches.
+fn reject_wrong_watch_role(session: &Session) {
+    let local = pie::unseal_hole(env::Mark::NONE).unwrap();
+    let borrowed =
+        ::resource::port::ship(local, session.host(), env::Access::STORE, env::Policy::NONE)
+            .unwrap();
+    let said = session
+        .call::<system_api::operator::Call>(
+            system_api::operator::Req::Watch {
+                road: system_api::operator::Path::ROOT.to_path_buf(),
+                hole: borrowed.seed(),
+            },
+            Wait::AtMost(MS),
+        )
+        .unwrap_or_else(|_| panic!("watch import refusal must produce a reply"));
+    assert_eq!(said.code(), system_api::operator::DENIED);
+    assert!(
+        ::resource::raw::alive(local),
+        "refusing Watch must preserve the caller's source"
+    );
+    pie::release(local).unwrap();
+    assert!(
+        session
+            .call::<system_api::operator::Call>(
+                system_api::operator::Req::List(system_api::operator::Where::Root),
+                Wait::AtMost(MS),
+            )
+            .is_ok(),
+        "invalid Watch must not poison the request session"
+    );
 }

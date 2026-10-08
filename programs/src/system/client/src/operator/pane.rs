@@ -3,15 +3,14 @@
 use alloc::string::String;
 
 use env::{PieToken, Wait};
-use ::resource::port::{self, Access, Policy};
 
-use crate::operator::Path;
 use crate::operator as ocall;
-use crate::operator::{Fail, EntryId, Listing, Where, Permit};
+use crate::operator::Path;
+use crate::operator::{EntryId, Fail, Listing, Permit, Where};
 
+use super::face::map_code;
 use super::tile::Tile;
-use super::{Face, Mine, map_code};
-use ::resource::raw::{Hole};
+use super::{Face, Mine};
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它
 /// 它能继续分 / 落 / 列——正是"一个值决定后续操作的宾语"那一格，故给它一个柄；一枚砖只需
@@ -70,26 +69,7 @@ impl<'a> Pane<'a> {
         mine: Mine,
         wait: Wait,
     ) -> Result<Tile<'_>, Fail> {
-        let pie = Hole::from_raw(e);
-        let shipped = port::ship(pie.token(),
-            self.face.session.host(),
-            Access::FETCH | Access::STORE,
-            Policy::VEST,
-        )
-        .map(|to| to.seed())
-        .map_err(|_| Fail::Unknown)?;
-        let said = self.face.call(
-            ocall::Req::Land {
-                at: self.at,
-                name,
-                entry: shipped,
-                permit,
-                // **归不归自己**是语义；编成那一格 bit 只在这一句（`Mine` 不中途降成 `bool`）。
-                mine: matches!(mine, Mine::Yes),
-            },
-            wait,
-        )?;
-        let id = said.entry().map_err(map_code)?;
+        let id = self.face.land(self.at, name, e, permit, mine, wait)?;
         Ok(Tile {
             face: self.face,
             id,

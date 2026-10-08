@@ -2,7 +2,6 @@ use ::schedule::{BuildError, Plan, Schedule};
 
 pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     use crate::system::{
-        publication::connections,
         publication::living,
         publication::names,
         publication::{self as p, runtime as resource},
@@ -25,8 +24,7 @@ pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     request.system("commit", p::install::commit)?;
     request.system("reply", p::receive::finish)?;
     let mut schedule = Schedule::sequence();
-    schedule.system("candidates", connections::candidates)?;
-    schedule.system("connect", connections::connect)?;
+    schedule.system("connect", crate::system::operator::connect)?;
     schedule.system("living", living::capture)?;
     schedule.system("authority", living::authority)?;
     schedule.system("operator", living::operator)?;

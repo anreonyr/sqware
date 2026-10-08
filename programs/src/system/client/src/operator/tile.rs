@@ -7,8 +7,9 @@ use env::{PieToken, Wait};
 use crate::operator as ocall;
 use crate::operator::{EntryId, Fail};
 
+use super::Face;
+use super::face::map_code;
 use super::pane::Pane;
-use super::{Face, map_code};
 
 /// **一枚砖**：`EntryId` 是固定下来的宾语，那一枚门闩是它背后的东西（到头了）
 /// 它与 Pane 是**同一格的两个方向**，不是一个"二选一"的包装：想往里走就 Tile::pane

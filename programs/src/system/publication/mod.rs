@@ -50,7 +50,6 @@ mod faces;
 
 mod book;
 
-mod connections;
 mod living;
 mod names;
 mod runtime;
@@ -74,13 +73,4 @@ pub(crate) fn observed_revision(
         .read::<names::Registrations>()
         .map_err(|_| "publication names not installed")?
         .seen)
-}
-pub(crate) fn connect_task(
-    resources: &::schedule::Resources<'_>,
-    task: env::TaskId,
-) -> Result<(), &'static str> {
-    resources
-        .write::<connections::Connections>()
-        .map_err(|_| "publication connections not installed")?
-        .request(task)
 }

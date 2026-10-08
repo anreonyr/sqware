@@ -196,7 +196,7 @@ mod boundaries {
     fn control_request_handlers_do_not_own_registration_or_instance_effects() {
         let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
         for old in ["unit.rs", "instances.rs", "create.rs", "fixture.rs", "observe.rs", "start.rs", "source.rs", "task.rs", "material.rs", "reap.rs", "hook.rs"] {
-            assert!(!control.join("service").join(old).exists(), "request handling owns {old}");
+            assert!(!control.join("endpoint").join(old).exists(), "request handling owns {old}");
         }
         for domain in ["unit", "instance"] {
             let mut paths = References::default();
@@ -204,7 +204,7 @@ mod boundaries {
             assert!(!paths.0.iter().any(|path| path.contains("control::serve")), "{domain} depends on request handling");
         }
         let mut paths = References::default();
-        references(&control.join("service"), &mut paths);
+        references(&control.join("endpoint"), &mut paths);
         assert!(!paths.0.iter().any(|path| path.starts_with("env::unit::") || path.starts_with("env::room::")), "request handler executes instance effects");
         #[derive(Default)]
         struct StateFields(Vec<String>);
@@ -218,8 +218,8 @@ mod boundaries {
                 visit::visit_expr_field(self, field);
             }
         }
-        for name in ["answer.rs", "instance.rs"] {
-            let source = fs::read_to_string(control.join("service").join(name)).unwrap();
+        for name in ["request.rs", "instance.rs"] {
+            let source = fs::read_to_string(control.join("endpoint").join(name)).unwrap();
             let mut fields = StateFields::default();
             fields.visit_file(&syn::parse_file(&source).unwrap());
             assert!(fields.0.is_empty(), "{name} accesses Control state directly: {:?}", fields.0);
@@ -289,7 +289,7 @@ mod boundaries {
                 }
             }
         }
-        for path in ["identity/service/face.rs", "control/service/answer.rs", "control/service/instance.rs", "loader/service/answer.rs", "account/mod.rs", "publication/receive.rs", "publication/names.rs"] {
+        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs", "account/mod.rs", "publication/receive.rs", "publication/names.rs"] {
             let source = fs::read_to_string(repo.join("programs/src/system").join(path)).unwrap();
             assert!(!source.contains("system_client::"), "own service binding depends on client: {path}");
         }
@@ -304,7 +304,7 @@ mod boundaries {
             assert!(!system.join(old).exists(), "legacy classification remains: {old}");
         }
         for name in ["account.rs", "resource.rs", "publication", "install.rs", "run.rs"] {
-            assert!(!system.join("control/service").join(name).exists(), "Control owns composition {name}");
+            assert!(!system.join("control/endpoint").join(name).exists(), "Control owns composition {name}");
         }
         let mut paths = References::default();
         for name in ["install.rs", "schedule.rs"] {
@@ -420,11 +420,41 @@ mod boundaries {
         }
     }
     #[test]
+    fn functional_owners_are_private_and_runtime_adapts_them() {
+        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
+        for old in ["operator/service", "client/src/operator/client", "control/service"] {
+            assert!(!system.join(old).exists(), "redundant adapter nesting remains: {old}");
+        }
+        for (file, owners) in [
+            ("operator/session.rs", &["Guest", "Desk"][..]),
+            ("operator/watch.rs", &["Subscription", "Subscriber", "Watchers"][..]),
+            ("control/unit/service.rs", &["Service"][..]),
+            ("control/endpoint/mod.rs", &["Entries"][..]),
+        ] {
+            let syntax = syn::parse_file(&fs::read_to_string(system.join(file)).unwrap()).unwrap();
+            for name in owners {
+                let owner = syntax.items.iter().find_map(|item| match item {
+                    syn::Item::Struct(item) if item.ident == *name => Some(item), _ => None,
+                }).unwrap_or_else(|| panic!("missing owner {file}::{name}"));
+                assert!(owner.fields.iter().all(|field| matches!(field.vis, syn::Visibility::Inherited)),
+                    "{file}::{name} leaks state instead of operations");
+            }
+            let mut paths = References::default(); paths.visit_file(&syntax);
+            assert!(!paths.0.iter().any(|path| path.starts_with("crate::system::operator::runtime::")),
+                "functional owner depends on runtime adapter: {file}");
+        }
+        let admission = fs::read_to_string(system.join("operator/connection.rs")).unwrap();
+        assert!(!admission.contains(".pull(&mut bytes, budget.remaining())"));
+        assert!(system.join("operator/runtime/mod.rs").is_file());
+        assert!(!system.join("operator/runtime/run.rs").exists());
+    }
+    #[test]
     fn request_servers_do_not_depend_on_supervisor_or_client_implementations() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for domain in ["identity", "operator", "control"] {
             let mut paths = References::default();
-            references(&system.join(domain).join("service"), &mut paths);
+            let adapter = match domain { "operator" => "runtime", "control" => "endpoint", _ => "service" };
+            references(&system.join(domain).join(adapter), &mut paths);
             for path in paths.0 {
                 assert!(!path.starts_with("crate::system::app::execute") && !path.starts_with("crate::system::app::boot"),
                     "{domain} server depends on supervisor: {path}");

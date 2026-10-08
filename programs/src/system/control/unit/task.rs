@@ -187,18 +187,7 @@ pub fn until(table: &Table, name: &str, millis: Wait) -> Result<Reaped, Fail> {
     let Some(task) = live_task(table, name) else {
         return Err(Fail::Unknown);
     };
-    if unit::join(task, Wait::POLL).unwrap_or(true) {
-        return Ok(Reaped::Now);
-    }
-    if millis == Wait::POLL {
-        return Ok(Reaped::Unsettled);
-    }
-    let _ = unit::join(task, millis);
-    if unit::join(task, Wait::POLL).unwrap_or(true) {
-        Ok(Reaped::Unsettled)
-    } else {
-        Ok(Reaped::Waited)
-    }
+    Ok(super::wait::until(task, millis))
 }
 
 fn live_task(table: &Table, name: &str) -> Option<TaskId> {

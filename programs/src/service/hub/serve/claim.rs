@@ -12,6 +12,10 @@ pub(super) fn claim(
     policy: u32,
     back: PieToken,
 ) {
+    if !sensor_from(from, sensor) {
+        put_deed(back, Deed::of(hub::DENIED));
+        return;
+    }
     let deed = {
         let (Some(kind), Some(access), Some(policy)) = (
             PieKind::of(kind),
@@ -32,4 +36,11 @@ pub(super) fn claim(
         }
     };
     put_deed(back, deed);
+}
+
+/// 接入只接受实际发件人直接转授的报活孔。
+fn sensor_from(from: TaskId, sensor: PieToken) -> bool {
+    ::resource::raw::alive(sensor)
+        && matches!(::resource::raw::reserve(sensor), Ok((giver, owner, mark))
+            if giver == from && owner == from && mark == hub::ALIVE_MARK)
 }

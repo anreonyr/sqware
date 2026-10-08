@@ -1,4 +1,4 @@
-use super::answer::{self, Inbox};
+use super::request::{self as answer, Inbox};
 use crate::system::app::Fault as Fail;
 use crate::system::control::instance::Command;
 use crate::system::control::unit::Control;
@@ -47,11 +47,11 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
 }
 
 pub fn receive(
-    watch: Res<super::watch::Watch>,
+    watch: Res<super::Entries>,
     mut buffer: ResMut<answer::Buffer>,
     mut inbox: ResMut<Inbox>,
 ) -> Result<Progress, Fail> {
-    let Some(entry) = watch.instance else {
+    let Some(entry) = watch.instance() else {
         return Ok(Progress::Done);
     };
     let receiver = RequestReceiver::<ControlContract>::from_raw(

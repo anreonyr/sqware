@@ -863,7 +863,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         released.store(true, Ordering::Release);
         let until = env::chrono::clock() + 10_000_000_000;
         while !done.load(Ordering::Acquire) {
-            crate::system::publication::connect_task(&assembly.resources, caller.id()).unwrap();
+            crate::system::operator::connect_task(&assembly.resources, caller.id()).unwrap();
             assembly.progress().unwrap();
             assert!(
                 env::chrono::clock() < until,

@@ -9,9 +9,10 @@ use alloc::{
     vec::Vec,
 };
 use env::{TaskId, Wait};
-use ipc::session::Endpoint;
 
-pub type Service = (TaskId, Vec<Endpoint>);
+mod service;
+pub use service::Service;
+mod wait;
 pub struct Control {
     pub(in crate::system::control) status: Arc<Status>,
     pub(in crate::system::control) table: Table,

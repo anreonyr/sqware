@@ -10,16 +10,23 @@ pub struct Capability {
 
 impl Capability {
     pub fn unseal_hole(mark: Mark) -> PieResult<Self> {
-        Ok(Self { token: pie::unseal_hole(mark)?, active: true })
+        Ok(Self {
+            token: pie::unseal_hole(mark)?,
+            active: true,
+        })
     }
 
-    pub fn token(&self) -> PieToken { self.token }
+    pub fn token(&self) -> PieToken {
+        self.token
+    }
 
     pub fn grant(&self, peer: TaskId, permission: Permission, mark: Mark) -> PieResult<Loan<'_>> {
         Loan::accord(&self.token, peer, permission, mark)
     }
 
-    pub fn seal(&self) -> PieResult<()> { pie::seal(self.token) }
+    pub fn seal(&self) -> PieResult<()> {
+        pie::seal(self.token)
+    }
 
     pub fn release(mut self) -> PieResult<()> {
         self.active = false;
@@ -29,7 +36,9 @@ impl Capability {
 
 impl Drop for Capability {
     fn drop(&mut self) {
-        if self.active { let _ = pie::release(self.token); }
+        if self.active {
+            let _ = pie::release(self.token);
+        }
     }
 }
 
@@ -42,13 +51,31 @@ pub struct Loan<'a> {
 }
 
 impl<'a> Loan<'a> {
-    pub fn accord(source: &'a PieToken, peer: TaskId, permission: Permission, mark: Mark) -> PieResult<Self> {
+    pub fn accord(
+        source: &'a PieToken,
+        peer: TaskId,
+        permission: Permission,
+        mark: Mark,
+    ) -> PieResult<Self> {
         let remote = pie::accord(*source, peer, permission, mark)?;
-        Ok(Self { _source: source, peer, remote, active: true })
+        Ok(Self {
+            _source: source,
+            peer,
+            remote,
+            active: true,
+        })
     }
 
     /// 仅供写入对端解释的报文，不是本地可操作句柄。
-    pub fn remote(&self) -> PieToken { self.remote }
+    pub fn remote(&self) -> PieToken {
+        self.remote
+    }
+
+    /// Leave the delivered capability with its recipient.
+    pub fn keep(mut self) -> PieToken {
+        self.active = false;
+        self.remote
+    }
 
     pub fn revoke(mut self) -> PieResult<()> {
         self.active = false;
@@ -58,6 +85,8 @@ impl<'a> Loan<'a> {
 
 impl Drop for Loan<'_> {
     fn drop(&mut self) {
-        if self.active { let _ = pie::revoke(self.peer, self.remote); }
+        if self.active {
+            let _ = pie::revoke(self.peer, self.remote);
+        }
     }
 }

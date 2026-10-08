@@ -1,4 +1,4 @@
-use super::{Mounts, book::Publications, connections::Connections, living::Living, names, runtime};
+use super::{Mounts, book::Publications, living::Living, names, runtime};
 use crate::system::operator::management::Tree;
 use ::schedule::{Dispatch, Resources};
 use alloc::{collections::VecDeque, vec::Vec};
@@ -14,7 +14,6 @@ pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToke
     }
     put!(Mounts(Vec::new()));
     put!(Tree::default());
-    put!(Connections::new());
     put!(Publications::new());
     put!(runtime::Resources::new());
     put!(runtime::Runtimes {

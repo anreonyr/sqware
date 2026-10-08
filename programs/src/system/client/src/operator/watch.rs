@@ -22,13 +22,14 @@ use env::{MailFail, Wait};
 
 use ::resource::port::{self, Access, Policy};
 
-use crate::operator::path::{Path, PathBuf};
 use crate::operator::frame::Event;
 use crate::operator::frame::watch::EventFrame;
+use crate::operator::path::{Path, PathBuf};
 use crate::operator::{EntryId, Fail};
 use ipc::hand::{Receiver, RecvFail, SourceFail};
 
-use super::{Face, map_code};
+use super::Face;
+use super::face::map_code;
 use crate::operator as ocall;
 use ::resource::raw::Hole;
 

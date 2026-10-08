@@ -5,9 +5,6 @@ use crate::{
     boot::Catalog,
     unit::{Died, PROGRAMS, UnitFile},
 };
-use alloc::vec::Vec;
-use env::{Mark, Wait};
-use ipc::session::establish;
 
 pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
@@ -45,22 +42,8 @@ impl Control {
             },
         )
         .map_err(|_| Error::Spawn)?;
-        Ok((task, Vec::new()))
+        Ok(Service::new(task))
     }
-}
-pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Error> {
-    for s in program.supply() {
-        for ch in [Some(s.channel()), s.ready()].into_iter().flatten() {
-            service
-                .1
-                .try_reserve(1)
-                .map_err(|_| Error::Step("no room for channels"))?;
-            let channel = establish::endpoint(service.0, Mark::of(ch), Wait::POLL)
-                .map_err(|_| Error::Step("connect failed"))?;
-            service.1.push(channel);
-        }
-    }
-    Ok(())
 }
 pub(crate) fn program_of(
     name: &str,

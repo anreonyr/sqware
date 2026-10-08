@@ -52,9 +52,9 @@ pub mod session {
         }
     }
 }
-#[path = "../../src/system/operator/service/claim.rs"]
+#[path = "../../src/system/operator/runtime/import.rs"]
 mod claim;
-#[path = "../../src/support/face/desk.rs"]
+#[path = "../../src/system/operator/session.rs"]
 mod desk;
 #[cfg(test)]
 mod tests {
@@ -120,11 +120,11 @@ mod tests {
     #[test]
     fn operator_request_dispatch_does_not_select_a_grant_from_the_session() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/system/operator/service");
-        let session = std::fs::read_to_string(root.join("session.rs")).unwrap();
+            .join("../../src/system/operator/runtime");
+        let session = std::fs::read_to_string(root.join("exchange.rs")).unwrap();
         assert!(session.contains("pub(super) struct Incoming"));
         assert!(!session.contains("grant:"));
-        for file in ["session.rs", "run.rs", "claim.rs"] {
+        for file in ["exchange.rs", "mod.rs", "import.rs"] {
             let source = std::fs::read_to_string(root.join(file)).unwrap();
             assert!(
                 !source.contains("grant_of"),
@@ -221,13 +221,13 @@ mod tests {
     #[test]
     fn operator_outboxes_are_keyed_by_reply_capability() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/system/operator/service");
-        let session = std::fs::read_to_string(root.join("session.rs")).unwrap();
+            .join("../../src/system/operator/runtime");
+        let session = std::fs::read_to_string(root.join("exchange.rs")).unwrap();
         assert!(session.contains("pub reply: PieToken"));
         assert!(session.contains("position(|out| out.reply == reply_token)"));
         assert!(!session.contains("position(|out| out.who =="));
         assert!(session.contains("out.reply == gone.reply"));
-        let tip = std::fs::read_to_string(root.join("tip.rs")).unwrap();
+        let tip = std::fs::read_to_string(root.join("management.rs")).unwrap();
         assert!(tip.contains("if !desk.contains_reply(*reply)"));
         assert!(tip.contains("Err(DeskFail::Conflict) => return Ok(Progress::Done)"));
     }

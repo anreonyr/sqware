@@ -1,5 +1,5 @@
 use super::{Fail, answer::Output};
-use crate::support::face::desk::{Desk, Gone, Guest};
+use crate::system::operator::session::{Desk, Gone, Guest};
 use ::resource::pile::Pile;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;

@@ -17,8 +17,11 @@ use system_api::operator::Where;
 use system_api::operator::path::Path;
 use system_api::operator::path::PathBuf;
 
-pub(super) mod gate;
-pub(super) mod judge;
+mod gate;
+mod judge;
+mod placement;
+pub(super) use gate::{Code, verdict};
+pub(super) use judge::Facts;
 
 /// **一格**：名字 + 去处。它住在 Operator::slots 里，**下标就是它的号**
 /// 名字只是一段（String：不长于 255 字节那一格由**编帧**那一刻判），不是整条路——路那一层只剩
@@ -498,3 +501,13 @@ const _: () = {
     assert!(gate::WIRE_DENIED == frame::DENIED);
     assert!(gate::WIRE_UNJUDGED == frame::UNJUDGED);
 };
+
+impl Operator {
+    /// Apply a whole placement with rollback inside the namespace model.
+    pub(super) fn place(
+        &mut self,
+        request: &super::Placement,
+    ) -> Result<(EntryId, Vec<Change>), Fail> {
+        placement::plate(self, request)
+    }
+}

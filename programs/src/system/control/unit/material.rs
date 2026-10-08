@@ -36,7 +36,7 @@ impl Supplies {
         service: &mut Service,
         program: &crate::unit::UnitFile,
     ) -> Result<(), Error> {
-        let (task, channels) = service;
+        let task = service.task();
         let name = program.name();
         let load = program
             .supply()
@@ -44,22 +44,7 @@ impl Supplies {
             .find(|setup| setup.machine())
             .map(crate::unit::Setup::channel)
             .ok_or(Error::Step("no machine supply"))?;
-        let Some(link) = channels.first_mut() else {
-            return Err(Error::Step("no channel"));
-        };
-        match link.claim(*task, Mark::of(load), Wait::AtMost(BOOT_MS)) {
-            Ok(true) => {}
-            Ok(false) => return Err(Error::Step("no channel")),
-            Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
-                return Err(Error::Step("ambiguous channel"));
-            }
-            Err(ipc::session::establish::DiscoveryFail::Missing) => {
-                return Err(Error::Step("no channel"));
-            }
-        }
-        let Some(tx) = link.tx() else {
-            return Err(Error::Step("no channel"));
-        };
+        let tx = service.claim_supply(Mark::of(load), Wait::AtMost(BOOT_MS))?;
 
         let devices = self
             .machine
@@ -74,8 +59,8 @@ impl Supplies {
         let mut got = 0usize;
         let mut put = |key: Name, kind: PieKind, access: Access, policy: Policy| {
             let shipped = self.accounts.token(key).and_then(|src| match kind {
-                PieKind::Pole => port::ship(src, *task, access, policy).ok(),
-                PieKind::Nole => port::ship(src, *task, access, policy).ok(),
+                PieKind::Pole => port::ship(src, task, access, policy).ok(),
+                PieKind::Nole => port::ship(src, task, access, policy).ok(),
                 PieKind::Hole | PieKind::Tole => None,
             });
             match shipped {

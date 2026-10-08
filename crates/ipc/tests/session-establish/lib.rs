@@ -518,7 +518,7 @@ mod tests {
         let second = session::Session::open(TaskId(9), berth, Wait::AtMost(20)).unwrap();
         assert_eq!(first.host(), TaskId(11));
         assert_eq!(second.host(), TaskId(12));
-        assert_ne!(first.talk(), second.talk());
+        assert_ne!(unsafe { first.raw_talk() }, unsafe { second.raw_talk() });
         assert_eq!(fake::scans(), 0);
         drop(first);
         assert!(fake::released().is_empty());
@@ -661,12 +661,54 @@ mod tests {
         assert_eq!(fake::clean(), vec![(TaskId(9), PieToken(101))]);
     }
 
+    struct Byte;
+    impl wire::Message for Byte {
+        type In = u8;
+        type Buf = [u8; 1];
+        const EMPTY: Self::Buf = [0];
+        fn store(&self, bytes: &mut [u8]) -> Option<usize> {
+            *bytes.first_mut()? = 1;
+            Some(1)
+        }
+        fn fetch(bytes: &[u8]) -> Option<u8> {
+            (bytes.len() == 1).then(|| bytes[0])
+        }
+    }
+    struct ByteCall;
+    impl wire::Contract for ByteCall {
+        type Request = Byte;
+        type Response = Byte;
+    }
+
+    #[test]
+    fn imported_session_aliases_share_closed_state_and_borrowed_ownership() {
+        fake::reset();
+        let link = establish::lend(TaskId(9), Mark(4)).unwrap();
+        let (talk, _) = establish::give_at(TaskId(11), Mark(5)).unwrap();
+        // These fresh endpoints have no other sender, receiver, or session state.
+        let imported = unsafe { session::Session::from_raw(link, talk, TaskId(11)) }.unwrap();
+        let alias = imported.clone();
+        assert!(matches!(
+            imported.call::<ByteCall>(Byte, Wait::POLL),
+            Err(session::CallFail::Receive(_))
+        ));
+        let sent = fake::PUSHES.with(|p| p.borrow().len());
+        assert!(matches!(
+            alias.call::<ByteCall>(Byte, Wait::POLL),
+            Err(session::CallFail::Closed)
+        ));
+        assert_eq!(fake::PUSHES.with(|p| p.borrow().len()), sent);
+        drop(imported);
+        drop(alias);
+        assert!(fake::released().is_empty());
+    }
+
     #[test]
     fn from_raw_does_not_take_ownership_of_borrowed_capabilities() {
         fake::reset();
         let link = establish::lend(TaskId(9), Mark(4)).unwrap();
         let (talk, _) = establish::give_at(TaskId(11), Mark(5)).unwrap();
-        let borrowed = session::Session::from_raw(link, talk, TaskId(11)).unwrap();
+        let borrowed = unsafe { session::Session::from_raw(link, talk, TaskId(11)) }.unwrap();
         let alias = borrowed.clone();
         drop(borrowed);
         drop(alias);
