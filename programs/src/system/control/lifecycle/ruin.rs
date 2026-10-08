@@ -1,12 +1,11 @@
 use super::super::unit::Control;
 use super::Active;
-use crate::service::hub::bridge::Activation;
 use crate::system::{
-    control::core::{
-        unit::{Slot, State},
+    control::identity::Roster,
+    control::unit::{
+        table::{Slot, State},
         verdict::Fail,
     },
-    control::identity::Roster,
 };
 use ::schedule::{Progress, Res, ResMut};
 use env::Wait;
@@ -77,19 +76,5 @@ pub fn post(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<
     control.table.detach(&job.request.name);
     control.table.set_state(&job.request.name, State::Dead);
     job.execution.instance = None;
-    Ok(Progress::Done)
-}
-
-pub fn activation(
-    active: Res<Active>,
-    mut activation: ResMut<Option<Activation>>,
-) -> Result<Progress, Fail> {
-    if active
-        .0
-        .as_ref()
-        .is_some_and(|job| job.request.name == "hub")
-    {
-        *activation = None;
-    }
     Ok(Progress::Done)
 }

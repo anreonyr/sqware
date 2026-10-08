@@ -95,7 +95,7 @@ pub fn timeout() {
 
 /// Isolated supervisor fixture. Every observation goes over the real Identity IPC faces.
 pub fn acceptance() {
-    use crate::system::run::{bootstrap, scene};
+    use crate::system::app::{bootstrap, scene};
     use system_client::identity::TaskQuery;
 
     super::hierarchy::codecs();
@@ -148,7 +148,7 @@ pub fn acceptance() {
                 .unwrap()
                 .state(name.into())
                 .unwrap(),
-            crate::system::control::core::unit::State::Ready
+            crate::system::control::unit::table::State::Ready
         );
     }
     let old_authority = assembly
@@ -161,7 +161,7 @@ pub fn acceptance() {
     let me = env::unit::self_id();
     let host = assembly
         .resources
-        .read::<crate::system::operator::client::Tree>()
+        .read::<crate::system::operator::management::Tree>()
         .unwrap()
         .host()
         .unwrap();
@@ -303,7 +303,7 @@ pub fn acceptance() {
                 .unwrap()
                 .state("system-child".into())
                 .unwrap(),
-            crate::system::control::core::unit::State::Debarked
+            crate::system::control::unit::table::State::Debarked
         );
         assert_eq!(
             old_query
@@ -342,11 +342,7 @@ pub fn acceptance() {
     );
     let _ = dynamic;
     programs::debug::put("system: identity, device and publication acceptance passed");
-    assembly
-        .resources
-        .write::<crate::system::run::frame::Flow>()
-        .unwrap()
-        .settling = true;
+    assembly.settle();
     assert!(
         assembly.supervise().is_ok(),
         "system: normal team shutdown failed"
@@ -439,11 +435,7 @@ fn revision(assembly: &mut Fixture) {
     drop(changed);
     assembly.progress().expect("identity: changed maintenance");
     assert_eq!(
-        assembly
-            .resources
-            .read::<crate::system::run::names::Registrations>()
-            .unwrap()
-            .seen,
+        crate::system::publication::observed_revision(&assembly.resources).unwrap(),
         before + 1
     );
     assert!(
@@ -488,7 +480,7 @@ fn activation_boundary(
             "activation copy unexpectedly transferable"
         );
         assert!(
-            crate::service::hub::bridge::activate(hub, &[coalition]).is_err(),
+            hub_client::activate(hub, &[coalition]).is_err(),
             "activation accepted a non-Hub kernel sender"
         );
         finished.store(true, Ordering::Release);
@@ -496,7 +488,7 @@ fn activation_boundary(
     port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        crate::service::hub::bridge::maintain(
+        crate::system::launch::activation::maintain(
             assembly.resources.read().unwrap(),
             assembly.resources.read().unwrap(),
             assembly.resources.read().unwrap(),

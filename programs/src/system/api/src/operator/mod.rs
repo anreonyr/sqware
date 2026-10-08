@@ -7,26 +7,55 @@ pub mod name;
 pub mod path;
 
 pub use frame::{
-    ASK_MARK, BAD, DENIED, FULL, LINK, Listing, OK, Req, Said, TIP_BACK, TIP_LEN, TIP_MARK,
-    Tip, TipIn, UNJUDGED, UNKNOWN, Union, Wire, code_to_fail, fail_to_code, Permit, Ruling,
-    Event, Kind, PANE_CAP, EntryId, Fail, Where,
+    ASK_MARK, BAD, DENIED, EntryId, Event, FULL, Fail, Kind, LINK, Listing, OK, PANE_CAP, Permit,
+    Req, Ruling, Said, TIP_BACK, TIP_LEN, TIP_MARK, Tip, TipIn, UNJUDGED, UNKNOWN, Union, Where,
+    Wire, code_to_fail, fail_to_code,
 };
 pub use grant::{Grant, grant_of};
+pub use interface::{INTERFACE_ID, REGISTRY};
 pub use marks::{DECLARATIONS as MARK_DECLARATIONS, LINK_MARK, WATCH_MARK};
 pub use path::{Path, PathBuf};
 
 pub const NAME: &str = "operator";
 pub const SVC: &Path = Path::new("svc");
 pub const DIR: &Path = Path::new("svc/sys/operator");
-pub const REGISTRY: &[&[env::marks::Definition]] = &[
-    &marks::DECLARATIONS,
-    &Grant::DECLARATIONS,
-];
-const _: () = assert!(env::marks::conflict(REGISTRY).is_none());
 
-/// The provider-declared request and response pair.
-pub struct Call;
-impl wire::Contract for Call {
-    type Request = crate::operator::Req;
-    type Response = crate::operator::Union;
+#[mold::interface(id = "sqware.system.operator.v1", metadata)]
+mod interface {
+    #[channels]
+    pub enum Channel {
+        #[channel(key = "ask", legacy = "operator-ask", constant = ASK_MARK)]
+        Ask,
+        #[channel(key = "tip", legacy = "tip", constant = TIP_MARK)]
+        Tip,
+        #[channel(key = "tip-back", legacy = "operator-tip-back", constant = TIP_BACK)]
+        TipBack,
+        #[channel(key = "link", legacy = "operator", constant = LINK_MARK)]
+        Link,
+        #[channel(key = "watch", legacy = "operator-watch", constant = WATCH_MARK)]
+        Watch,
+    }
+
+    #[grants]
+    pub enum Grant {
+        #[grant(code = 1, key = "part", legacy = "operator-ask-part")]
+        Part,
+        #[grant(code = 2, key = "land", legacy = "operator-ask-land")]
+        Land,
+        #[grant(code = 3, key = "find", legacy = "operator-ask-find")]
+        Find,
+        #[grant(code = 4, key = "trim", legacy = "operator-ask-trim")]
+        Trim,
+        #[grant(code = 5, key = "list", legacy = "operator-ask-list")]
+        List,
+        #[grant(code = 6, key = "seek", legacy = "operator-ask-seek")]
+        Seek,
+        #[grant(code = 7, key = "name", legacy = "operator-ask-name")]
+        Name,
+        #[grant(code = 8, key = "watch", legacy = "operator-ask-watch")]
+        Watch,
+    }
 }
+
+#[mold::contract(request = Req, response = Union)]
+pub struct Call;

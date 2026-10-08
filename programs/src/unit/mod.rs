@@ -230,6 +230,30 @@ pub struct PublishEntry {
     pub mark: Option<env::Mark>,
 }
 
+impl PublishEntry {
+    const fn from_definition(definition: env::marks::Definition) -> Self {
+        Self {
+            name: definition.name,
+            mark: Some(definition.mark),
+        }
+    }
+
+    pub(crate) const fn from_definitions<const N: usize>(
+        definitions: [env::marks::Definition; N],
+    ) -> [Self; N] {
+        let mut entries = [Self {
+            name: "",
+            mark: None,
+        }; N];
+        let mut index = 0;
+        while index < N {
+            entries[index] = Self::from_definition(definitions[index]);
+            index += 1;
+        }
+        entries
+    }
+}
+
 #[derive(Clone, Copy)]
 pub enum Publish {
     Entries {

@@ -5,8 +5,8 @@ use env::PieToken;
 
 use crate::operator::path::PathBuf;
 
-use wire::message::Message;
 use env::wire::Span as _;
+use wire::message::Message;
 
 pub mod road;
 pub mod tip;

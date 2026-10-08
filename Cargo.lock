@@ -269,6 +269,7 @@ dependencies = [
  "hub-api",
  "ipc",
  "resource",
+ "system-api",
  "wire",
 ]
 
@@ -479,6 +480,7 @@ name = "router-api"
 version = "0.1.0"
 dependencies = [
  "env",
+ "mold",
  "system-api",
  "wire",
 ]
@@ -646,6 +648,7 @@ name = "terminal-api"
 version = "0.1.0"
 dependencies = [
  "env",
+ "mold",
  "wire",
 ]
 

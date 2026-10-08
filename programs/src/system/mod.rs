@@ -1,8 +1,8 @@
-pub mod boot;
-pub mod common;
-pub mod control;
-pub mod identity;
-pub mod life;
-pub mod operator;
-pub mod run;
-pub mod loader;
+pub(crate) mod account;
+pub mod app;
+pub(crate) mod control;
+pub(crate) mod identity;
+pub(crate) mod launch;
+pub(crate) mod loader;
+pub(crate) mod operator;
+pub(crate) mod publication;

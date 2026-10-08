@@ -144,7 +144,7 @@ pub(crate) fn exercise(
         .unwrap();
     {
         {
-            let registration = crate::system::run::names::Registration {
+            let registration = crate::system::publication::Registration {
                 name: ("named-subject").into(),
                 object: Object::Principal(p),
                 lifetime: None,
@@ -160,12 +160,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::run::names::Names>()
+                    .write::<crate::system::publication::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::client::Tree>()
+                            .write::<crate::system::operator::management::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -173,7 +173,7 @@ pub(crate) fn exercise(
         }
         .unwrap();
         {
-            let registration = crate::system::run::names::Registration {
+            let registration = crate::system::publication::Registration {
                 name: ("named-league").into(),
                 object: Object::Coalition(coalition),
                 lifetime: None,
@@ -189,12 +189,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::run::names::Names>()
+                    .write::<crate::system::publication::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::client::Tree>()
+                            .write::<crate::system::operator::management::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -202,7 +202,7 @@ pub(crate) fn exercise(
         }
         .unwrap();
         {
-            let registration = crate::system::run::names::Registration {
+            let registration = crate::system::publication::Registration {
                 name: ("named-league").into(),
                 object: Object::Coalition(coalition),
                 lifetime: None,
@@ -218,12 +218,12 @@ pub(crate) fn exercise(
             .and_then(|_| {
                 assembly
                     .resources
-                    .write::<crate::system::run::names::Names>()
+                    .write::<crate::system::publication::Names>()
                     .unwrap()
                     .register(
                         &mut assembly
                             .resources
-                            .write::<crate::system::operator::client::Tree>()
+                            .write::<crate::system::operator::management::Tree>()
                             .unwrap(),
                         registration,
                     )
@@ -233,7 +233,7 @@ pub(crate) fn exercise(
         let other = organization.found(wait).unwrap();
         assert!(
             {
-                let registration = crate::system::run::names::Registration {
+                let registration = crate::system::publication::Registration {
                     name: ("named-league").into(),
                     object: Object::Coalition(other),
                     lifetime: None,
@@ -249,12 +249,12 @@ pub(crate) fn exercise(
                 .and_then(|_| {
                     assembly
                         .resources
-                        .write::<crate::system::run::names::Names>()
+                        .write::<crate::system::publication::Names>()
                         .unwrap()
                         .register(
                             &mut assembly
                                 .resources
-                                .write::<crate::system::operator::client::Tree>()
+                                .write::<crate::system::operator::management::Tree>()
                                 .unwrap(),
                             registration,
                         )
@@ -264,7 +264,7 @@ pub(crate) fn exercise(
         );
         assert!(
             {
-                let registration = crate::system::run::names::Registration {
+                let registration = crate::system::publication::Registration {
                     name: ("bad/name").into(),
                     object: Object::Principal(p),
                     lifetime: None,
@@ -280,12 +280,12 @@ pub(crate) fn exercise(
                 .and_then(|_| {
                     assembly
                         .resources
-                        .write::<crate::system::run::names::Names>()
+                        .write::<crate::system::publication::Names>()
                         .unwrap()
                         .register(
                             &mut assembly
                                 .resources
-                                .write::<crate::system::operator::client::Tree>()
+                                .write::<crate::system::operator::management::Tree>()
                                 .unwrap(),
                             registration,
                         )
@@ -295,9 +295,9 @@ pub(crate) fn exercise(
         );
         assembly
             .resources
-            .write::<crate::system::run::resource::Resources>()
+            .write::<crate::system::publication::RuntimeNamespace>()
             .unwrap()
-            .approve(crate::system::run::resource::Approval {
+            .approve(crate::system::publication::RuntimeApproval {
                 service,
                 task: target,
                 kind: "test".into(),
@@ -308,9 +308,9 @@ pub(crate) fn exercise(
         for i in 0..33 {
             assembly
                 .resources
-                .write::<crate::system::run::resource::Resources>()
+                .write::<crate::system::publication::RuntimeNamespace>()
                 .unwrap()
-                .approve(crate::system::run::resource::Approval {
+                .approve(crate::system::publication::RuntimeApproval {
                     service,
                     task: target,
                     kind: "full".into(),
@@ -322,14 +322,14 @@ pub(crate) fn exercise(
         let source = pie::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
         assembly
             .resources
-            .write::<crate::system::run::publication::book::Publications>()
+            .write::<crate::system::publication::Publications>()
             .unwrap()
             .internal(
                 &mut assembly
                     .resources
-                    .write::<crate::system::operator::client::Tree>()
+                    .write::<crate::system::operator::management::Tree>()
                     .unwrap(),
-                &crate::system::run::publication::Internal {
+                &crate::system::publication::Internal {
                     road: (system_api::operator::path::Path::new("svc/fixtures/stale"))
                         .to_path_buf(),
                     entry: source,
@@ -361,7 +361,7 @@ pub(crate) fn exercise(
     let _ = pie::release(fake);
     let service_road = assembly
         .resources
-        .read::<crate::system::run::resource::Resources>()
+        .read::<crate::system::publication::RuntimeNamespace>()
         .unwrap()
         .runtime_road(service)
         .unwrap();
@@ -399,7 +399,7 @@ pub(crate) fn exercise(
     command(assembly, target, 2);
     let target_road = assembly
         .resources
-        .read::<crate::system::run::resource::Resources>()
+        .read::<crate::system::publication::RuntimeNamespace>()
         .unwrap()
         .runtime_road(target)
         .unwrap();
@@ -453,7 +453,7 @@ pub(crate) fn exercise(
     assert!(
         assembly
             .resources
-            .read::<crate::system::run::resource::Resources>()
+            .read::<crate::system::publication::RuntimeNamespace>()
             .unwrap()
             .runtime_road(failed_task)
             .is_none()
@@ -767,7 +767,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     let control = env::unit::self_id();
     let host = assembly
         .resources
-        .read::<crate::system::operator::client::Tree>()
+        .read::<crate::system::operator::management::Tree>()
         .unwrap()
         .host()
         .unwrap();
@@ -831,12 +831,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         released.store(true, Ordering::Release);
         let until = env::chrono::clock() + 10_000_000_000;
         while !done.load(Ordering::Acquire) {
-            assembly
-                .resources
-                .write::<crate::system::run::connections::Connections>()
-                .unwrap()
-                .0
-                .push(caller.id());
+            crate::system::publication::connect_task(&assembly.resources, caller.id()).unwrap();
             assembly.progress().unwrap();
             assert!(
                 env::chrono::clock() < until,

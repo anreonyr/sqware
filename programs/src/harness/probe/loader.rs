@@ -1,4 +1,5 @@
 use super::fixture::Fixture;
+use crate::system::loader::{Image, Loader};
 use ::resource::raw::Hole;
 use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
@@ -10,7 +11,7 @@ use system_client::operator::Face as Operator;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
-pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
+pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let road = system_api::operator::Path::new(system_api::loader::DIR)
         .try_join(system_api::loader::Grant::Build.name())
         .unwrap();
@@ -48,12 +49,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         exercise(root, &worker_target, &denied);
         worker_done.store(true, Ordering::Release);
     });
-    let entry = assembly
-        .resources
-        .read::<crate::system::run::loading::answer::Inbox>()
-        .unwrap()
-        .entry
-        .unwrap();
+    let entry = crate::system::loader::entry(&assembly.resources).unwrap();
     env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
     for grant in [
         system_api::control::Grant::State,
@@ -61,12 +57,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         system_api::control::Grant::Debark,
         system_api::control::Grant::Ruin,
     ] {
-        let entry = assembly
-            .resources
-            .read::<crate::system::control::serve::watch::Watch>()
-            .unwrap()
-            .faces[grant.index()]
-        .unwrap();
+        let entry = crate::system::control::entry(&assembly.resources, grant).unwrap();
         env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
         if grant == system_api::control::Grant::State {
             env::pie::accord(entry, peer.id(), Permission::STORE, Mark::NONE).unwrap();
@@ -82,34 +73,26 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     }
     let mut schedule = Schedule::new();
     schedule
-        .add_plan(
-            "loader",
-            0u8,
-            crate::system::run::loading::schedule::frame().unwrap(),
-        )
+        .add_plan("loader", 0u8, crate::system::loader::frame().unwrap())
         .unwrap();
     schedule
-        .add_system("receive", 1, crate::system::control::serve::answer::receive)
+        .add_system("receive", 1, crate::system::control::receive)
         .unwrap();
     schedule
-        .add_system(
-            "instances",
-            2,
-            crate::system::control::serve::instance::answer,
-        )
+        .add_system("instances", 2, crate::system::control::answer_instances)
         .unwrap();
     schedule
-        .add_system("reap", 3, crate::system::run::instances::reap)
+        .add_system("reap", 3, crate::system::control::instance::schedule::reap)
         .unwrap();
     schedule
         .add_plan(
             "instance.hooks",
             4,
-            crate::system::run::hooks::instance().unwrap(),
+            crate::system::launch::hooks::instance().unwrap(),
         )
         .unwrap();
     schedule
-        .add_system("launch.completed", 5, crate::system::run::launch::completed)
+        .add_system("launch.completed", 5, crate::system::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -126,7 +109,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         if task.get() != 0
             && assembly
                 .resources
-                .read::<crate::system::run::resource::Resources>()
+                .read::<crate::system::publication::RuntimeNamespace>()
                 .unwrap()
                 .runtime_road(task)
                 .is_some()
@@ -159,6 +142,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         heirs,
         "loader: runtime team leaked"
     );
+    cache_clear();
     programs::debug::put(
         "loader: operator entry, submitted ELF, instances, owner checks and unclaimed cleanup passed",
     );
@@ -280,6 +264,13 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         .recv(&mut reply, WAIT)
         .unwrap();
     assert_eq!(said.status, wire::OK);
+    assert!(
+        matches!(
+            env::pie::revoke(root, image_copy),
+            Err(error) if error.source == env::PieFail::Denied
+        ),
+        "loader: service did not release the remote image loan"
+    );
     let _ = env::pie::seal(back);
     let _ = env::pie::release(back);
     // Leave the result unclaimed while keeping its requester alive.
@@ -288,6 +279,40 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     env::pie::release(image).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
 }
+
+fn cache_clear() {
+    let bytes = image_bytes();
+    let before = ::resource::raw::table_size();
+    let mut loader = Loader::new();
+    let image = loader
+        .build(Image {
+            bytes: &bytes,
+            kind: env::ProgramKind::User,
+        })
+        .expect("loader: cache fixture image");
+    drop(image);
+    assert_eq!(
+        loader.cached_entries(),
+        1,
+        "loader: cache fixture not retained"
+    );
+    let cached = ::resource::raw::table_size();
+    assert!(
+        cached > before,
+        "loader: cached pole missing from resource table"
+    );
+    loader.clear_images();
+    assert_eq!(
+        loader.cached_entries(),
+        0,
+        "loader: clear retained cache entry"
+    );
+    assert!(
+        ::resource::raw::table_size() < cached,
+        "loader: cache clear did not release its mapped source"
+    );
+}
+
 fn image_bytes() -> alloc::vec::Vec<u8> {
     let mut bytes = alloc::vec![0; 4100];
     bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1]);

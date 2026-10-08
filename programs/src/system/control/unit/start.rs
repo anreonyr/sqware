@@ -1,5 +1,5 @@
 use super::{Control, Service, task as service};
-pub use crate::system::common::timing::{BOOT_MS, RETRY_MS};
+pub use crate::support::timing::BOOT_MS;
 use crate::system::control::unit::task::Image;
 use crate::{
     boot::Catalog,
@@ -9,29 +9,15 @@ use alloc::vec::Vec;
 use env::{Mark, Wait};
 use ipc::session::establish;
 
-pub const E_MANIFEST: Died = 2;
 pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Error {
-    Manifest,
     Missing,
     Table,
     Spawn,
     Step(&'static str),
-}
-
-impl Error {
-    pub fn said(self) -> &'static str {
-        match self {
-            Error::Manifest => "bad name",
-            Error::Missing => "not in catalog",
-            Error::Table => "no table row",
-            Error::Spawn => "spawn failed",
-            Error::Step(what) => what,
-        }
-    }
 }
 
 pub struct Images {
@@ -78,10 +64,10 @@ pub fn connect_all(program: &UnitFile, service: &mut Service) -> Result<(), Erro
 }
 pub(crate) fn program_of(
     name: &str,
-) -> Result<&'static UnitFile, crate::system::control::core::verdict::Fail> {
+) -> Result<&'static UnitFile, crate::system::control::unit::verdict::Fail> {
     PROGRAMS
         .iter()
         .copied()
         .find(|p| p.relation.after.is_some() && p.name() == name)
-        .ok_or(crate::system::control::core::verdict::Fail::Unknown)
+        .ok_or(crate::system::control::unit::verdict::Fail::Unknown)
 }

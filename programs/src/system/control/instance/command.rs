@@ -1,4 +1,4 @@
-use crate::system::control::{core::unit::State, unit::Control};
+use crate::system::control::{unit::Control, unit::table::State};
 use env::{TaskId, unit};
 use system_api::control::Fail;
 

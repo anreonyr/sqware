@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod tests {
-    use env::{Mark, PieToken, TaskId};
     use env::wire::Span as _;
+    use env::{Mark, PieToken, TaskId};
     use terminal_api::frame as terminal;
     use wire::message::Message;
 
@@ -23,12 +23,13 @@ mod tests {
         let mut bytes = [0; terminal::Command::LEN];
         let n = command.store_at(&mut bytes, 0).unwrap();
         assert_eq!(n, bytes.len());
-        assert_eq!(&bytes, &[
-            1,
-            1, 2, 3, 4, 5, 6, 7, 8,
-            0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
-            0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
-        ]);
+        assert_eq!(
+            &bytes,
+            &[
+                1, 1, 2, 3, 4, 5, 6, 7, 8, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x21,
+                0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28,
+            ]
+        );
         let (decoded, end) = terminal::Command::fetch_at(&bytes, 0).unwrap();
         assert_eq!(end, n);
         assert_eq!(decoded.op, command.op);
@@ -36,7 +37,10 @@ mod tests {
         assert_eq!(decoded.authority, command.authority);
         assert_eq!(decoded.back, command.back);
 
-        let reply = terminal::Reply { status: 0, authority: token(0x0807_0605_0403_0201) };
+        let reply = terminal::Reply {
+            status: 0,
+            authority: token(0x0807_0605_0403_0201),
+        };
         assert_eq!(terminal::Reply::LEN, 9);
         let mut bytes = [0; terminal::Reply::LEN];
         let n = reply.store_at(&mut bytes, 0).unwrap();
@@ -75,8 +79,14 @@ mod tests {
         let mut bytes = router_api::frame::Occupy::EMPTY;
         let n = request.store(&mut bytes).unwrap();
         assert_eq!(router_api::frame::Occupy::LEN, 5);
-        assert_eq!(&bytes[..n], &[router_api::frame::OCCUPY, 0x44, 0x33, 0x22, 0x11]);
-        assert_eq!(router_api::frame::Occupy::fetch(&bytes[..n]), Some(0x1122_3344));
+        assert_eq!(
+            &bytes[..n],
+            &[router_api::frame::OCCUPY, 0x44, 0x33, 0x22, 0x11]
+        );
+        assert_eq!(
+            router_api::frame::Occupy::fetch(&bytes[..n]),
+            Some(0x1122_3344)
+        );
         assert!(router_api::frame::Occupy::fetch(&bytes[..n - 1]).is_none());
         let mut extra = [0; router_api::frame::Occupy::LEN + 1];
         extra[..n].copy_from_slice(&bytes[..n]);
@@ -88,7 +98,10 @@ mod tests {
     #[test]
     fn device_marks_are_stable_and_all_provider_registries_are_collision_free() {
         assert_eq!(terminal_api::marks::ENTRY, Mark::of("terminal-attach"));
-        assert_eq!(terminal_api::marks::AUTHORITY, Mark::of("terminal-authority"));
+        assert_eq!(
+            terminal_api::marks::AUTHORITY,
+            Mark::of("terminal-authority")
+        );
         assert_eq!(terminal_api::marks::BACK, Mark::of("terminal-back"));
         assert_eq!(terminal_api::marks::INPUT, Mark::of("terminal-input"));
         assert_eq!(terminal_api::marks::OUTPUT, Mark::of("terminal-output"));
@@ -98,6 +111,38 @@ mod tests {
         assert_eq!(router_api::LINE_MARK, Mark::of("line"));
         assert_eq!(router_api::frame::BACK_MARK, router_api::LINE_BACK);
         assert_eq!(router_api::frame::LANE, router_api::LANE);
+
+        assert_eq!(
+            hub_api::PUBLICATIONS,
+            [
+                env::marks::Definition {
+                    name: "bond",
+                    mark: Mark::of("hub-entry-bond")
+                },
+                env::marks::Definition {
+                    name: "list",
+                    mark: Mark::of("hub-entry-list")
+                },
+                env::marks::Definition {
+                    name: "claim",
+                    mark: Mark::of("hub-entry-claim")
+                },
+            ]
+        );
+        assert_eq!(
+            terminal_api::PUBLICATIONS,
+            [env::marks::Definition {
+                name: "attach",
+                mark: Mark::of("terminal-attach")
+            }]
+        );
+        assert_eq!(
+            router_api::PUBLICATIONS,
+            [env::marks::Definition {
+                name: "router",
+                mark: Mark::of("entry")
+            }]
+        );
 
         let registries: &[&[&[env::marks::Definition]]] = &[
             &[system_api::loader::REGISTRY],

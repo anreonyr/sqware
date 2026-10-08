@@ -14,7 +14,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         road: "svc/drv",
         entries: &[crate::unit::PublishEntry {
             name: "rtc",
-            mark: Some(env::Mark::of("entry")),
+            mark: Some(router_api::ENTRY_MARK),
         }],
         public: true,
     }],

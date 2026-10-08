@@ -12,3 +12,4 @@ doctest = false
 env = { path = "../../../../../crates/env" }
 wire = { path = "../../../../../crates/wire" }
 system-api = { path = "../../../system/api" }
+mold = { path = "../../../../../crates/mold" }

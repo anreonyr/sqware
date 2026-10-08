@@ -14,11 +14,12 @@ pub mod boot;
 pub mod driver;
 pub mod entry;
 pub mod harness;
-pub mod service;
-pub mod system;
-pub mod unit;
 #[path = "unit/interfaces.rs"]
 mod interfaces;
+pub mod service;
+pub mod support;
+pub mod system;
+pub mod unit;
 pub mod user;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的

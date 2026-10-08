@@ -8,8 +8,8 @@ use env::{Entry, PieToken};
 
 use wire::message::Message;
 
-pub use wire::OK;
 use env::wire::Span as _;
+pub use wire::OK;
 
 pub mod bond;
 pub mod claim;
@@ -135,9 +135,14 @@ impl Enroll {
     /// 拒绝超出容量、重复或无效的记录。
     pub fn of(records: &[Entry]) -> Option<Enroll> {
         let n = records.len();
-        if n > ENROLL_MAX || records.iter().enumerate().any(|(i, entry)| {
-            !entry.valid() || records[..i].iter().any(|prior| prior.name() == entry.name())
-        }) {
+        if n > ENROLL_MAX
+            || records.iter().enumerate().any(|(i, entry)| {
+                !entry.valid()
+                    || records[..i]
+                        .iter()
+                        .any(|prior| prior.name() == entry.name())
+            })
+        {
             return None;
         }
         let mut held = [Entry::NONE; ENROLL_MAX];
@@ -171,7 +176,9 @@ impl Message for Enroll {
     /// 精确匹配长度，并检查类型与重复名称。
     fn fetch(bytes: &[u8]) -> Option<Enroll> {
         let (enroll, at) = Enroll::fetch_at(bytes, 0)?;
-        if at != bytes.len() { return None; }
+        if at != bytes.len() {
+            return None;
+        }
         for i in 0..enroll.len() {
             let record = enroll.record(i)?;
             if !record.valid() || (0..i).any(|j| enroll.records[j].name() == record.name()) {

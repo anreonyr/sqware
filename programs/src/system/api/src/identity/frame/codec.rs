@@ -6,8 +6,8 @@ use super::{
     data::{Back, Optional, Task, valid_selector},
     vocab::*,
 };
-use wire::message::Message;
 use env::{PieToken, wire::Span};
+use wire::message::Message;
 
 #[derive(env::Frame)]
 struct Header {

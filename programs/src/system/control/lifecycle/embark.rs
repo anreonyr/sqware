@@ -1,10 +1,9 @@
 use super::super::unit::{Control, material::Supplies, start, task};
 use super::{Action, Active, Instance};
-use crate::service::hub::bridge::Activation;
 use crate::system::control::unit::task::Readiness;
 use crate::system::{
-    control::core::{unit::State, verdict::Fail},
     control::identity::Roster,
+    control::unit::{table::State, verdict::Fail},
 };
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
@@ -58,25 +57,7 @@ pub(crate) fn pre(
     }
     Ok(Progress::Done)
 }
-pub fn activation(
-    active: Res<Active>,
-    mut activation: ResMut<Option<Activation>>,
-) -> Result<Progress, Fail> {
-    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    if job
-        .execution
-        .instance
-        .as_ref()
-        .is_some_and(|instance| !instance.launched)
-        && job.request.name == "hub"
-    {
-        *activation = Some(
-            Activation::open(job.execution.task.ok_or(Fail::Unknown)?)
-                .map_err(|_| Fail::NotReady)?,
-        );
-    }
-    Ok(Progress::Done)
-}
+
 pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.execution.instance.as_mut() {

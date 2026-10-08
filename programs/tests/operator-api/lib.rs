@@ -5,9 +5,9 @@ pub mod system {
         pub use system_api::identity::*;
     }
 }
-#[path = "../../src/system/operator/core/gate.rs"]
+#[path = "../../src/system/operator/tree/gate.rs"]
 mod gate;
-#[path = "../../src/system/operator/core/judge.rs"]
+#[path = "../../src/system/operator/tree/judge.rs"]
 mod judge;
 
 #[cfg(test)]

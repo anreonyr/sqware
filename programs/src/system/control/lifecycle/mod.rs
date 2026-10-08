@@ -1,5 +1,5 @@
 use super::unit::Service;
-use crate::system::control::core::verdict::Fail;
+use crate::system::control::unit::verdict::Fail;
 use ::schedule::Cursor;
 use alloc::{string::String, vec::Vec};
 use env::{Mark, TaskId};
@@ -55,3 +55,30 @@ mod dispatch;
 mod queue;
 pub(crate) mod schedule;
 pub(crate) use queue::Operations;
+
+impl Active {
+    pub(crate) fn is_launching(
+        &self,
+        name: &str,
+    ) -> Result<bool, crate::system::control::unit::verdict::Fail> {
+        let job = self
+            .0
+            .as_ref()
+            .ok_or(crate::system::control::unit::verdict::Fail::Unknown)?;
+        Ok(job.request.name == name
+            && job
+                .execution
+                .instance
+                .as_ref()
+                .is_some_and(|instance| !instance.launched))
+    }
+    pub(crate) fn is_named(&self, name: &str) -> bool {
+        self.0.as_ref().is_some_and(|job| job.request.name == name)
+    }
+    pub(crate) fn task(&self) -> Option<TaskId> {
+        self.0.as_ref().and_then(|job| job.execution.task)
+    }
+}
+
+mod startup;
+pub(crate) use startup::{Startup, eligibility, startup};

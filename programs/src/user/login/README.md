@@ -19,4 +19,4 @@ nu scripts/qtest.nu --package kernel --scene system-fault
 
 system-fault 中的隔离探针验证外部调用拒绝、领取超时、放行失败和 Login 死亡清理。
 
-System 装配位于 `system::run`。账户与启动程序选择由装配策略提供，Loader 只装载镜像并构造暂停任务，Control 独占实例登记与状态推进。身份安装和 `/uit` 登记作为 Prepare hook 接入；发布撤销、目录移除、身份解绑和域回收作为 Retire hook 接入。每个实例保存独立 schedule 游标，Pending 不阻塞其他实例；准备失败转入回收，清理失败保留 Stopping 并重试，完成后才报告 Dead。
+System 装配位于 `system::app`。账户与启动程序选择由装配策略提供，Loader 只装载镜像并构造暂停任务，Control 独占实例登记与状态推进。身份安装和 `/uit` 登记作为 Prepare hook 接入；发布撤销、目录移除、身份解绑和域回收作为 Retire hook 接入。每个实例保存独立 schedule 游标，Pending 不阻塞其他实例；准备失败转入回收，清理失败保留 Stopping 并重试，完成后才报告 Dead。

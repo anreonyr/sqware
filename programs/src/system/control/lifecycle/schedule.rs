@@ -1,15 +1,21 @@
 use super::{self as work, Key, dispatch};
-use crate::system::control::{Fail as ControlFail, core::verdict::Fail};
+use crate::system::app::Fault as ControlFail;
+use crate::system::control::unit::verdict::Fail;
+
 use ::schedule::{BuildError, Plan, Schedule};
 use alloc::vec::Vec;
-pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
+pub(crate) struct ActivationHooks {
+    pub prepare: Plan<Fail>,
+    pub retire: Plan<Fail>,
+}
+pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     let mut mint = Schedule::sequence();
     mint.system("validate", work::mint::pre)?;
     mint.system("create", work::mint::run)?;
     mint.system("commit", work::mint::post)?;
     let mut embark = Schedule::sequence();
     embark.system("bind", work::embark::pre)?;
-    embark.system("activation", work::embark::activation)?;
+    embark.plan("activation", hooks.prepare)?;
     embark.system("run", work::embark::run)?;
     embark.system("supply", work::embark::supply)?;
     embark.system("ready", work::embark::ready)?;
@@ -19,7 +25,7 @@ pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     debark.system("pause", work::debark::run)?;
     debark.system("commit", work::debark::post)?;
     let mut ruin = Schedule::sequence();
-    ruin.system("activation", work::ruin::activation)?;
+    ruin.plan("activation", hooks.retire)?;
     ruin.system("retire", work::ruin::pre)?;
     ruin.system("destroy", work::ruin::run)?;
     ruin.system("reclaim", work::ruin::post)?;

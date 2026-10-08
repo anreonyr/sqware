@@ -1,7 +1,8 @@
 //! Observe a system team's failure from an independent parent team.
-use ::resource::bell::Bell;
-use crate::system::life::{Phase, Status};
+use crate::system::app::life::{Phase, Status};
 use crate::system::loader::{Image, Loader};
+use ::resource::bell::Bell;
+use ::resource::raw::Hole;
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::pie;
@@ -9,7 +10,6 @@ use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
 use ipc::session::establish;
-use ::resource::raw::{Hole};
 
 const DOOM: Mark = Mark::of("system-fault-doom");
 const REPORT: Mark = Mark::of("system-fault-report");
@@ -22,8 +22,11 @@ pub fn acceptance() {
     let catalog = crate::boot::Catalog::of_boot(&accounts).unwrap();
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
-    let payload =
-        env::pie::unseal_pole(child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, true).unwrap();
+    let payload = env::pie::unseal_pole(
+        child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE,
+        true,
+    )
+    .unwrap();
     let (at, _) = ::resource::raw::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.
     unsafe {
@@ -42,20 +45,8 @@ pub fn acceptance() {
         let task = image
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
             .unwrap();
-        ::resource::port::ship(
-            report,
-            task,
-            env::Access::STORE,
-            env::Policy::NONE,
-        )
-        .unwrap();
-        ::resource::port::ship(
-            boot,
-            task,
-            env::Access::FETCH,
-            env::Policy::NONE,
-        )
-        .unwrap();
+        ::resource::port::ship(report, task, env::Access::STORE, env::Policy::NONE).unwrap();
+        ::resource::port::ship(boot, task, env::Access::FETCH, env::Policy::NONE).unwrap();
         let token = env::pie::accord(payload, task, Permission::FETCH, IMAGE).unwrap();
         Hole::from_raw(boot)
             .push(&token.to_bytes(), Wait::AtMost(5000))
@@ -135,9 +126,9 @@ pub fn unit() {
                 execution::room::reap(env::EXIT_OK, Some("system-fault: injected task exit"));
             }
             let success = if role == 1 {
-                crate::system::operator::serve::run::serve(state.clone()).is_ok()
+                crate::system::operator::run(state.clone()).is_ok()
             } else {
-                crate::system::identity::serve::run::serve(
+                crate::system::identity::run(
                     state.clone(),
                     crate::system::identity::revision::Epoch::new(),
                     crate::system::identity::revision::Changed(Bell::unseal().unwrap()),

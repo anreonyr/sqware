@@ -28,10 +28,10 @@ use system_client::operator;
 use system_client::operator::Face;
 use wire::Message;
 
+use super::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
-use crate::system::common::face::mount;
-use crate::system::common::machine::Machine;
-use crate::system::control::unit::task::Start;
+use crate::support::face::mount;
+use crate::support::machine::Machine;
 use crate::unit::hub::{CHANNEL, E_HUB, READY};
 use system_api::control::Scope;
 
@@ -112,7 +112,7 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        crate::service::hub::bridge::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
+        hub_client::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;

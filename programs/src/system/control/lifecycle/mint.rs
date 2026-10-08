@@ -3,8 +3,8 @@ use super::super::unit::{
     {Control, Pending},
 };
 use super::{Action, Active, Instance, Operations};
-use crate::system::control::core::{
-    unit::{Slot, State},
+use crate::system::control::unit::{
+    table::{Slot, State},
     verdict::Fail,
 };
 use ::schedule::{Progress, Res, ResMut};
@@ -72,7 +72,7 @@ pub fn post(
 pub fn failed(
     operations: Res<Operations>,
     mut control: ResMut<Control>,
-) -> Result<Progress, super::super::Fail> {
+) -> Result<Progress, crate::system::app::Fault> {
     for tracked in &operations.0 {
         let job = &tracked.operation;
         if tracked.complete

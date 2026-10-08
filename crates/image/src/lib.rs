@@ -28,10 +28,8 @@ fn root() -> PathBuf {
 /// 而装配表只有一份——每台程序自己那份 `program.rs`。故那一份源码由**两侧各编一次**：
 /// `programs` 编它给运行时用，本 crate 编它给打包用。
 ///
-/// 它能成立的前提只有一条：`programs/src/unit/` 与它 `#[path]` 拉进来的每一份声明
-/// **只引 `env`**（宿主与 riscv 都编得过的那一层）。那条纪律写在 `programs/src/unit/mod.rs`
-/// 的头注里——**这里就是它的报警器**：谁往声明里塞了 execution / protocol 的引用，本 crate
-/// 当场编不过。
+/// 装配声明只依赖 `env` 和纯 provider API crates（hub / terminal / router）；这些 API 不依赖
+/// execution 或 protocol。`programs/src/unit/mod.rs` 与这份宿主 crate 的依赖图一起检查这条边界。
 #[allow(dead_code)]
 #[path = "../../../programs/src/unit/mod.rs"]
 mod unit;
@@ -91,9 +89,9 @@ fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
         unit::DepsFail::Unknown(name) => {
             format!("景 {scenario} 的 deps 里有一个名字不在本景：{name}")
         }
-        unit::DepsFail::NoEvidence(name) => format!(
-            "景 {scenario} 的 deps 指着 {name}，而它没有'我答得动'的凭据（`setup` 空）"
-        ),
+        unit::DepsFail::NoEvidence(name) => {
+            format!("景 {scenario} 的 deps 指着 {name}，而它没有'我答得动'的凭据（`setup` 空）")
+        }
         unit::DepsFail::Cycle(name) => {
             format!("景 {scenario} 的 deps 有环（取不出可排的台，卡在 {name}）")
         }
@@ -154,8 +152,12 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
     // 引导镜像由 entry 声明选择，并且必须包含在本景清单中。
-    let entry = entry_of(scenario)
-        .ok_or_else(|| format!("initrd: 不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
+    let entry = entry_of(scenario).ok_or_else(|| {
+        format!(
+            "initrd: 不认得的景 {scenario}（认得的：{}）",
+            scenes().join(" / ")
+        )
+    })?;
     let entry_at = bins
         .iter()
         .position(|(name, _)| *name == entry)
@@ -164,11 +166,16 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| "initrd: 清单越界（条数 / 名字长度 / 空镜像）".to_string())?;
     let capsule = capsule::encode(items[entry_at].2)
         .map_err(|error| format!("bootstrap {entry}: {error:?}"))?;
-    let offset = blob.len().checked_next_multiple_of(env::ledger::capsule::PAGE)
+    let offset = blob
+        .len()
+        .checked_next_multiple_of(env::ledger::capsule::PAGE)
         .ok_or_else(|| "initrd: capsule offset overflow".to_string())?;
-    let total = offset.checked_add(capsule.len()).filter(|n| *n <= u32::MAX as usize)
+    let total = offset
+        .checked_add(capsule.len())
+        .filter(|n| *n <= u32::MAX as usize)
         .ok_or_else(|| "initrd: capsule exceeds u32 range".to_string())?;
-    blob.try_reserve(total - blob.len()).map_err(|_| "initrd: no memory".to_string())?;
+    blob.try_reserve(total - blob.len())
+        .map_err(|_| "initrd: no memory".to_string())?;
     blob.resize(offset, 0);
     blob.extend_from_slice(&capsule);
     blob[..4].copy_from_slice(&(offset as u32).to_le_bytes());
@@ -219,7 +226,10 @@ fn slim(src: &Path, out: &Path) -> Result<Vec<u8>, String> {
                 )
             })?;
         if !status.success() {
-            return Err(format!("llvm-objcopy 对 {} 报错（{status}）", src.display()));
+            return Err(format!(
+                "llvm-objcopy 对 {} 报错（{status}）",
+                src.display()
+            ));
         }
         std::fs::read(&dst).map_err(|e| format!("读瘦好的 {} 失败：{e}", dst.display()))
     })();

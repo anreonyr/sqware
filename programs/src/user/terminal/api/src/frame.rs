@@ -1,13 +1,13 @@
-use wire::message::Message;
 use env::wire::Span as _;
 use env::{PieToken, TaskId};
+use wire::message::Message;
 
-pub use super::marks::ENTRY;
 pub use super::marks::AUTHORITY;
 pub use super::marks::BACK;
+pub use super::marks::CONTROL;
+pub use super::marks::ENTRY;
 pub use super::marks::INPUT;
 pub use super::marks::OUTPUT;
-pub use super::marks::CONTROL;
 pub const ATTACH: u8 = 1;
 pub const FOREGROUND: u8 = 2;
 pub const DETACH: u8 = 3;

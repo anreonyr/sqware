@@ -67,6 +67,7 @@ name = "terminal-api"
 version = "0.1.0"
 dependencies = [
  "env",
+ "mold",
  "wire",
 ]
 

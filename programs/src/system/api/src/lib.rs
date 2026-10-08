@@ -2,8 +2,8 @@
 
 extern crate alloc;
 
-pub mod identity;
 pub mod control;
+pub mod identity;
 pub mod operator;
 
 #[mold::interface(id = "sqware.system.loader.v1")]
@@ -49,10 +49,7 @@ pub mod loader {
             back: PieToken,
         },
         #[operation(code = 2, grant = Build, frame = Claim)]
-        Claim {
-            task: TaskId,
-            back: PieToken,
-        },
+        Claim { task: TaskId, back: PieToken },
     }
 
     #[reply]
@@ -66,23 +63,26 @@ pub mod loader {
     #[derive(Clone, Copy, PartialEq, Eq, Debug, mold::WireCodes)]
     #[wire(fallback = Bad)]
     pub enum Fail {
-        #[code(1)] Unknown,
-        #[code(2)] BadImage,
-        #[code(3)] Full,
-        #[code(4)] NotReady,
-        #[code(5)] Bad,
-        #[code(6)] Denied,
+        #[code(1)]
+        Unknown,
+        #[code(2)]
+        BadImage,
+        #[code(3)]
+        Full,
+        #[code(4)]
+        NotReady,
+        #[code(5)]
+        Bad,
+        #[code(6)]
+        Denied,
     }
-    /// The provider-declared request and response pair.
-    pub struct Call;
-    impl wire::Contract for Call {
-        type Request = crate::loader::Wire;
-        type Response = crate::loader::Said;
-    }
-    impl Call {
-        pub const BACK: env::Mark = crate::loader::BACK;
-        pub fn back(request: &crate::loader::Wire) -> PieToken {
-            match request { crate::loader::Wire::Build(ask) => ask.back, crate::loader::Wire::Claim(claim) => claim.back }
+    fn reply_to(request: &Wire) -> PieToken {
+        match request {
+            Wire::Build(ask) => ask.back,
+            Wire::Claim(claim) => claim.back,
         }
     }
+
+    #[mold::contract(request = Wire, response = Said, mark = BACK, back = reply_to)]
+    pub struct Call;
 }

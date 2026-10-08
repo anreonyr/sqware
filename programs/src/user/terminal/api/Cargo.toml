@@ -11,3 +11,4 @@ doctest = false
 [dependencies]
 env = { path = "../../../../../crates/env" }
 wire = { path = "../../../../../crates/wire" }
+mold = { path = "../../../../../crates/mold" }

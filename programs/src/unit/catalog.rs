@@ -14,14 +14,8 @@ pub mod again;
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
-#[path = "../user/terminal/program.rs"]
-pub mod terminal;
-#[path = "../harness/probe/probe_terminal/program.rs"]
-pub mod probe_terminal;
 #[path = "../user/cat/program.rs"]
 pub mod cat;
-#[path = "../user/login/program.rs"]
-pub mod login;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
 #[path = "../harness/bench/group/group/program.rs"]
@@ -38,6 +32,8 @@ pub mod hub;
 pub mod load;
 #[path = "../harness/guest/lodger/program.rs"]
 pub mod lodger;
+#[path = "../user/login/program.rs"]
+pub mod login;
 #[path = "../harness/guest/member/program.rs"]
 pub mod member;
 #[path = "../harness/bench/load/park/program.rs"]
@@ -70,6 +66,8 @@ pub mod probe_rack_mount;
 pub mod probe_rule;
 #[path = "../harness/probe/probe_rule_other/program.rs"]
 pub mod probe_rule_other;
+#[path = "../harness/probe/probe_terminal/program.rs"]
+pub mod probe_terminal;
 #[path = "../harness/probe/probe_watch/program.rs"]
 pub mod probe_watch;
 #[path = "../harness/probe/probe_watch_after/program.rs"]
@@ -90,6 +88,8 @@ pub mod subject;
 pub mod system;
 #[path = "../harness/probe/system_fault/program.rs"]
 pub mod system_fault;
+#[path = "../user/terminal/program.rs"]
+pub mod terminal;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
 #[path = "../harness/bench/group/waiter/program.rs"]

@@ -1,8 +1,8 @@
 //! Real IPC authorized construction and instance failures exercised against an isolated Control fixture.
 use super::fixture::Fixture;
-use crate::system::control::{
-    Fail, core::unit::State as UnitState, instance::hook, serve, unit::Control,
-};
+use crate::system::app::Fault as Fail;
+use crate::system::control::{instance::hook, unit::Control, unit::table::State as UnitState};
+
 use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -25,7 +25,7 @@ struct HookFault {
 fn fail_prepare(
     mut fault: ::schedule::ResMut<HookFault>,
     active: ::schedule::Res<hook::Active>,
-    resources: ::schedule::Res<crate::system::run::resource::Resources>,
+    resources: ::schedule::Res<crate::system::publication::RuntimeNamespace>,
 ) -> Result<Progress, &'static str> {
     if fault.prepare {
         let task = active.task.ok_or("probe hook target")?;
@@ -85,7 +85,7 @@ fn delay_retire(
     Ok(Progress::Done)
 }
 fn hooks() -> ::schedule::Plan<Fail> {
-    let children = crate::system::run::hooks::children().unwrap();
+    let children = crate::system::launch::hooks::children().unwrap();
     let mut wrapped = alloc::vec::Vec::new();
     for (key, child) in children {
         let mut wrap = Schedule::new();
@@ -138,7 +138,7 @@ fn reference(root: TaskId) -> control::Object {
     )
     .unwrap()
 }
-pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
+pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
     let heirs = unit::heir_count();
     let signals = Arc::new(Signals {
@@ -208,11 +208,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
     let s = signals.clone();
-    let entry = assembly
-        .resources
-        .read::<crate::system::run::account::Accounts>()
-        .unwrap()
-        .entry;
+    let entry = crate::system::account::entry(&assembly.resources).unwrap();
     let alias = operator
         .tile(
             system_api::operator::path::Path::new("/idt/principal/anran/ref"),
@@ -235,12 +231,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         control::account::ENTRY,
     )
     .unwrap();
-    let instance_entry = assembly
-        .resources
-        .read::<serve::watch::Watch>()
-        .unwrap()
-        .instance
-        .unwrap();
+    let instance_entry = crate::system::control::instance_entry(&assembly.resources).unwrap();
     env::pie::accord(
         instance_entry,
         worker.id(),
@@ -330,20 +321,32 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         .unwrap();
     let mut schedule = Schedule::new();
     schedule
-        .add_system("account.receive", 0u8, crate::system::run::account::receive)
+        .add_system("account.receive", 0u8, crate::system::account::receive)
         .unwrap();
     schedule
-        .add_system("instances.receive", 1, serve::instance::receive)
+        .add_system(
+            "instances.receive",
+            1,
+            crate::system::control::receive_instances,
+        )
         .unwrap();
     schedule
-        .add_system("instances.answer", 2, serve::instance::answer)
+        .add_system(
+            "instances.answer",
+            2,
+            crate::system::control::answer_instances,
+        )
         .unwrap();
     schedule
-        .add_system("instances.reap", 3, crate::system::run::instances::reap)
+        .add_system(
+            "instances.reap",
+            3,
+            crate::system::control::instance::schedule::reap,
+        )
         .unwrap();
     schedule.add_plan("instance.hooks", 4, hooks()).unwrap();
     schedule
-        .add_system("launch.completed", 5, crate::system::run::launch::completed)
+        .add_system("launch.completed", 5, crate::system::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -388,7 +391,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
             let binding = crate::system::control::identity::binding(&roster, target).unwrap();
             let runtime = assembly
                 .resources
-                .read::<crate::system::run::resource::Resources>()
+                .read::<crate::system::publication::RuntimeNamespace>()
                 .unwrap()
                 .runtime_road(target);
             if stage < 10 {
@@ -425,7 +428,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
             .all(|item| item.team.is_none());
         let registered = assembly
             .resources
-            .read::<crate::system::run::resource::Resources>()
+            .read::<crate::system::publication::RuntimeNamespace>()
             .unwrap()
             .runtime_road(target)
             .is_some();

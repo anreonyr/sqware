@@ -21,11 +21,17 @@ impl EntryId {
     }
 
     /// 裸号
-    pub const fn get(self) -> usize { self.0 }
+    pub const fn get(self) -> usize {
+        self.0
+    }
 
-    pub const fn to_bytes(self) -> [u8; 8] { (self.0 as u64).to_le_bytes() }
+    pub const fn to_bytes(self) -> [u8; 8] {
+        (self.0 as u64).to_le_bytes()
+    }
 
-    pub const fn from_bytes(bytes: [u8; 8]) -> Self { Self(u64::from_le_bytes(bytes) as usize) }
+    pub const fn from_bytes(bytes: [u8; 8]) -> Self {
+        Self(u64::from_le_bytes(bytes) as usize)
+    }
 }
 
 /// 一块 Pane 的有界容量；必须容纳统一 Identity 的 17 个独立动作面。

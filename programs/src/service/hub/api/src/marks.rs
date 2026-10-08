@@ -1,21 +1,5 @@
-use env::{Mark, marks::Definition};
+//! Hub channel marks generated from the provider declaration.
 
-macro_rules! channels {
-    ($($symbol:ident = $value:literal;)+) => {
-        $(pub const $symbol: Mark = Mark::of($value);)+
-        pub const DECLARATIONS: &[Definition] = &[
-            $(Definition { name: $value, mark: $symbol },)+
-        ];
-        const _: () = {
-            assert!(env::marks::conflict(&[DECLARATIONS]).is_none());
-            $(assert!($symbol.get() != Mark::NONE.get());)+
-        };
-    };
-}
-
-channels! {
-    BACK_MARK = "hub-back";
-    ALIVE_MARK = "hub-alive";
-    ACTIVATE_ENTRY = "hub-activate";
-    ACTIVATE_BACK = "hub-activate-back";
-}
+pub use super::interface::{
+    ACTIVATE_BACK, ACTIVATE_ENTRY, ALIVE_MARK, BACK_MARK, CHANNELS as DECLARATIONS,
+};

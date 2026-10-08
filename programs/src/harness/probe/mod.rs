@@ -12,7 +12,22 @@ pub mod rack;
 pub mod hierarchy;
 pub mod system_fault;
 
-pub mod fixture;
+pub(crate) mod fixture;
+
+/// Run the full system acceptance image from the in-crate fixture.
+pub fn acceptance() -> crate::Report<'static> {
+    use crate::harness::probe::fixture::Fixture;
+    use crate::system::app::{bootstrap, scene};
+
+    let boot = bootstrap::take().expect("accept: bootstrap");
+    let list = scene::programs(&boot.catalog).expect("accept: scene");
+    let mut fixture = Fixture::new(boot).ok().expect("accept: setup");
+    for program in list {
+        fixture.assemble(program).expect("accept: install unit");
+    }
+    fixture.supervise().expect("accept: shutdown");
+    crate::Report::note(env::EXIT_OK, "accept: done")
+}
 
 pub mod lifecycle;
 

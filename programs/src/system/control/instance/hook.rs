@@ -1,6 +1,8 @@
 //! Instance lifecycle extension points executed as bounded schedule subplans.
-use crate::system::control::core::unit::State;
-use crate::system::control::{Fail, unit::Control};
+use crate::system::app::Fault as Fail;
+use crate::system::control::unit::Control;
+use crate::system::control::unit::table::State;
+
 use ::schedule::{BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule};
 use env::{TaskId, Wait, unit};
 #[derive(Clone, Copy, PartialEq)]

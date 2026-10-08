@@ -20,7 +20,9 @@ impl Message for Request {
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
 
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
 
     fn fetch(bytes: &[u8]) -> Option<Self::In> {
         let (request, end) = Self::fetch_at(bytes, 0)?;

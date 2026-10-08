@@ -2,8 +2,8 @@
 
 use env::Mark;
 
-use wire::message::Message;
 use env::wire::Span as _;
+use wire::message::Message;
 
 /// 四个原语会失败在哪一格。**一格对应一个不同的下一步**
 /// （`UNKNOWN`/`TAKEN`/`DENIED` ＋ 只有码的 `BAD`，加两向读法）。账那一边（`Lines` 的四原语）

@@ -18,3 +18,6 @@ pub mod tick;
 /// 各自的 `Grant::ALL.len()` 说）。各台仍是独立 bin，身子在 `probe/<名>/main.rs`；
 /// 共享件住本目录顶层，由各 bin 各自 `use programs::harness::probe::count` 取一次。
 pub mod probe;
+
+/// 独立压测镜像共用的执行主体。
+pub mod bench;

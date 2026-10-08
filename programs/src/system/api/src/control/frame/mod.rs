@@ -10,8 +10,8 @@
 use alloc::string::String;
 use env::{Mark, PieToken, TaskId};
 
-use wire::message::Message;
 use env::wire::Span as _;
+use wire::message::Message;
 
 pub mod vocab;
 

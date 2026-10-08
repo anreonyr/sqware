@@ -1,7 +1,7 @@
 use self::start::Error;
-use crate::system::control::core::unit::{Declaration, Slot, State, Table};
-use crate::system::control::core::verdict::Fail;
-use crate::system::life::{Phase, Status};
+use crate::system::app::life::{Phase, Status};
+use crate::system::control::unit::table::{Declaration, Slot, State, Table};
+use crate::system::control::unit::verdict::Fail;
 use crate::unit::UnitFile;
 use alloc::{
     string::{String, ToString},
@@ -16,7 +16,8 @@ pub struct Control {
     pub(in crate::system::control) status: Arc<Status>,
     pub(in crate::system::control) table: Table,
     pub(in crate::system::control) loader: crate::system::loader::Loader,
-    pub(in crate::system::control) instances: Vec<crate::system::control::core::instance::Instance>,
+    pub(in crate::system::control) instances:
+        Vec<crate::system::control::instance::state::Instance>,
     pub(in crate::system::control) pending: Vec<Pending>,
 }
 pub(crate) struct Pending {
@@ -40,9 +41,9 @@ impl Control {
             .register(Declaration {
                 name,
                 announce: if program.supply().is_empty() {
-                    crate::system::control::core::unit::Announce::None
+                    crate::system::control::unit::table::Announce::None
                 } else {
-                    crate::system::control::core::unit::Announce::Channel
+                    crate::system::control::unit::table::Announce::Channel
                 },
                 restart,
             })
@@ -133,3 +134,6 @@ mod observe;
 pub(crate) mod reap;
 pub mod start;
 pub mod task;
+
+pub mod table;
+pub(crate) mod verdict;

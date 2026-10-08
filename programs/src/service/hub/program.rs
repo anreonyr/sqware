@@ -17,20 +17,7 @@ pub static PROGRAM: UnitFile = UnitFile {
             scope: crate::unit::PublishScope::Hub,
             group: "",
             road: "svc/hub",
-            entries: &[
-                crate::unit::PublishEntry {
-                    name: "bond",
-                    mark: Some(env::Mark::of("hub-entry-bond")),
-                },
-                crate::unit::PublishEntry {
-                    name: "list",
-                    mark: Some(env::Mark::of("hub-entry-list")),
-                },
-                crate::unit::PublishEntry {
-                    name: "claim",
-                    mark: Some(env::Mark::of("hub-entry-claim")),
-                },
-            ],
+            entries: &crate::unit::PublishEntry::from_definitions(hub_api::PUBLICATIONS),
             public: true,
         },
         crate::unit::Publish::Devices,

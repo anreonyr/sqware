@@ -1,6 +1,6 @@
 use super::super::unit::Control;
 use super::Active;
-use crate::system::control::core::{unit::State, verdict::Fail};
+use crate::system::control::unit::{table::State, verdict::Fail};
 use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(mut active: ResMut<Active>, control: Res<Control>) -> Result<Progress, Fail> {

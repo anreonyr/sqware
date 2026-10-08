@@ -1,9 +1,9 @@
 use super::Control;
-use crate::system::control::core::{
-    unit::{Slot, State, Table},
+use crate::system::control::identity::Roster;
+use crate::system::control::unit::{
+    table::{Slot, State, Table},
     verdict::Reaped,
 };
-use crate::system::control::identity::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
 use env::unit;
@@ -12,7 +12,7 @@ pub(crate) fn sweep(
     mut control: ::schedule::ResMut<Control>,
     roster: ::schedule::Res<Roster>,
     operations: ::schedule::Res<crate::system::control::lifecycle::Operations>,
-) -> Result<::schedule::Progress, crate::system::control::Fail> {
+) -> Result<::schedule::Progress, crate::system::app::Fault> {
     let gone: Vec<String> = control
         .table
         .living()

@@ -1,5 +1,5 @@
 use super::Control;
-use crate::system::control::core::unit::{Service, Slot, State};
+use crate::system::control::unit::table::{Service, Slot, State};
 use env::{TaskId, Wait};
 
 impl Control {
@@ -17,15 +17,15 @@ impl Control {
     }
 
     pub(crate) fn walking(&self) -> bool {
-        crate::system::control::core::verdict::walking(&self.table)
+        crate::system::control::unit::verdict::walking(&self.table)
     }
 
     pub(crate) fn due(&self) -> bool {
-        crate::system::control::core::verdict::due(&self.table)
+        crate::system::control::unit::verdict::due(&self.table)
     }
 
     pub(crate) fn done(&self) -> bool {
-        crate::system::control::core::verdict::done(&self.table)
+        crate::system::control::unit::verdict::done(&self.table)
     }
 
     pub(crate) fn closing_service_names(&self) -> impl Iterator<Item = &str> {

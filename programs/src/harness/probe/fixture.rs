@@ -1,14 +1,14 @@
-use crate::system::run::resource::Resources;
-use crate::system::run::schedule;
+use crate::system::app::Fault as Fail;
+use crate::system::app::schedule;
+use crate::system::publication::RuntimeNamespace as Resources;
 use crate::system::{
+    app::bootstrap::Boot,
     control::identity::Roster,
     control::{
-        Fail,
-        core::verdict,
         lifecycle::{Action, Active, Key, Operations, schedule as lifecycle},
+        unit::verdict,
         unit::{Control, start},
     },
-    run::bootstrap::Boot,
 };
 use crate::unit::{Died, UnitFile};
 
@@ -20,7 +20,7 @@ pub struct Fault {
     pub task: Option<env::TaskId>,
     pub road: Option<system_api::operator::path::PathBuf>,
 }
-pub struct Fixture {
+pub(crate) struct Fixture {
     pub resources: Registry<'static>,
     plans: [Plan<Fail>; 4],
     cursors: [Cursor; 4],
@@ -77,8 +77,8 @@ fn inject(
     Ok(Progress::Done)
 }
 impl Fixture {
-    pub fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::run::install::resources(boot).map_err(|_| ())?;
+    pub(crate) fn new(boot: Boot) -> Result<Self, ()> {
+        let mut resources = crate::system::app::install::resources(boot).map_err(|_| ())?;
         resources
             .insert(Fault {
                 armed: false,
@@ -90,7 +90,9 @@ impl Fixture {
             .insert(Dispatch::<(), verdict::Fail>::new())
             .map_err(|_| ())?;
         let mut start = schedule::startup().map_err(|_| ())?;
-        let mut children = lifecycle::lifecycle().map_err(|_| ())?;
+        let mut children =
+            lifecycle::lifecycle(crate::system::launch::activation::hooks().map_err(|_| ())?)
+                .map_err(|_| ())?;
         let at = children
             .iter()
             .position(|(key, _)| *key == Key::Embark)
@@ -136,14 +138,14 @@ impl Fixture {
             cursors: core::array::from_fn(|_| Cursor::default()),
         })
     }
-    pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
+    pub(crate) fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
         self.action(program.name(), Action::Mint)
             .map_err(|_| start::E_PROGRAM)?;
         self.action(program.name(), Action::Embark { parent: None })
             .map_err(|_| start::E_PROGRAM)?;
         Ok(())
     }
-    pub fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
+    pub(crate) fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
         self.resources
             .write::<Operations>()
             .map_err(|_| ())?
@@ -167,7 +169,7 @@ impl Fixture {
             execution::room::park(core::time::Duration::from_millis(1)).map_err(|_| ())?;
         }
     }
-    pub fn progress(&mut self) -> Result<(), &'static str> {
+    pub(crate) fn progress(&mut self) -> Result<(), &'static str> {
         if self.plans[0]
             .advance(&mut self.cursors[0], &self.resources)
             .map_err(|_| "fixture maintenance")?
@@ -177,10 +179,16 @@ impl Fixture {
         }
         Ok(())
     }
-    pub fn supervise(&mut self) -> Result<(), Fail> {
+    pub(crate) fn settle(&mut self) {
+        self.resources
+            .write::<crate::system::app::policy::Flow>()
+            .unwrap()
+            .settling = true;
+    }
+    pub(crate) fn supervise(&mut self) -> Result<(), Fail> {
         while !self
             .resources
-            .read::<crate::system::run::frame::Flow>()
+            .read::<crate::system::app::policy::Flow>()
             .map_err(|_| Fail::Room)?
             .done
         {

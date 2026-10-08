@@ -60,23 +60,21 @@ pub mod room {
 }
 pub mod system {
     pub mod control {
-        pub mod core {
-            pub mod unit {
+        pub mod unit {
+            pub mod table {
                 pub use system_api::control::State;
             }
-            pub mod instance {
-                include!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../../src/system/control/core/instance.rs"
-                ));
-            }
-        }
-        pub mod unit {
             pub struct Control {
-                pub instances: alloc::vec::Vec<super::core::instance::Instance>,
+                pub instances: alloc::vec::Vec<super::instance::state::Instance>,
             }
         }
         pub mod instance {
+            pub mod state {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/instance/state.rs"
+                ));
+            }
             #[cfg(test)]
             pub(crate) use command::Command;
             mod command {
@@ -93,9 +91,7 @@ pub mod system {
 mod tests {
     use super::*;
     use system::control::{
-        core::{instance::Instance, unit::State},
-        instance::Command,
-        unit::Control,
+        instance::Command, instance::state::Instance, unit::Control, unit::table::State,
     };
     use system_api::control::Fail;
 

@@ -1,6 +1,7 @@
 //! 编码、通信接口、环境调用与程序入口的过程宏。
 
 mod codes;
+mod contract;
 mod entry;
 mod envcall;
 mod fail;
@@ -71,4 +72,10 @@ pub fn entry(_attr: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn interface(attr: TokenStream, item: TokenStream) -> TokenStream {
     interface::expand(attr.into(), item.into()).into()
+}
+
+/// Declare a typed wire request/response pair and, when present, its explicit reply path.
+#[proc_macro_attribute]
+pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
+    contract::expand(attr.into(), item.into()).into()
 }

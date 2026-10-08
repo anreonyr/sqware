@@ -4,16 +4,16 @@
 //! children inherit the kernel sender's current snapshot before embark. An unavailable
 //! authority is not a reason to release a child without an identity.
 
+use ::resource::port;
 use env::unit;
 use env::{Access, PieToken, Policy, TaskId, Wait};
 use system_api::identity::Grant;
 use system_api::identity::Install;
-use system_client::identity::Installer;
 use system_api::identity::PrincipalId;
 use system_api::identity::Subject;
-use ::resource::port;
+use system_client::identity::Installer;
 
-use crate::system::common::timing::{BOOT_MS, RETRY_MS};
+use crate::support::timing::{BOOT_MS, RETRY_MS};
 use core::time::Duration;
 use ipc::session::establish;
 use resource::raw::reserve;
@@ -91,10 +91,10 @@ impl Roster {
         task: TaskId,
         coalition: system_api::identity::CoalitionId,
     ) -> Result<(), &'static str> {
-        use system_client::identity::Face;
         use system_api::identity::Reply;
-use system_api::identity::Wire;
-use system_api::identity::limits::MAX_ACTIVE_COALITIONS;
+        use system_api::identity::Wire;
+        use system_api::identity::limits::MAX_ACTIVE_COALITIONS;
+        use system_client::identity::Face;
 
         let installer = self.installer.as_ref().ok_or("identity not installed")?;
         let authority = installer.authority();
@@ -199,16 +199,16 @@ pub(crate) fn install(
 
 mod query {
     use super::Roster;
-    use crate::system::common::timing::BOOT_MS;
+    use crate::support::timing::BOOT_MS;
     use env::{TaskId, Wait};
     use ipc::session::establish;
     use system_api::control::Object;
     use system_api::identity::Grant;
-use system_api::identity::Selector;
-use system_api::identity::Wire;
-use system_client::identity::Face;
+    use system_api::identity::Selector;
+    use system_api::identity::Wire;
     use system_api::operator::Fail;
-use system_api::operator::Permit;
+    use system_api::operator::Permit;
+    use system_client::identity::Face;
 
     pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
         roster
@@ -272,7 +272,8 @@ fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'static str> {
         if left == 0 {
             return Err("identity face missing");
         }
-        execution::room::park(Duration::from_millis(RETRY_MS as u64)).map_err(|_| "identity wait")?;
+        execution::room::park(Duration::from_millis(RETRY_MS as u64))
+            .map_err(|_| "identity wait")?;
         left = left.saturating_sub(RETRY_MS);
     }
 }

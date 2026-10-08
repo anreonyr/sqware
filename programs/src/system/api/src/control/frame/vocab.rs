@@ -1,12 +1,10 @@
 //! :frame 的词汇那一半：状态（State）· 失败词汇（Fail）与两向换算 · 四手码 ·
 //! 状态码 · 记号与那一段路（`LINK`/`NAME`/`ASK_MARK`/`BACK`/`DIR`）。
 
-
 use crate::operator::path::Path;
 use wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
 /// 五格与 `programs/src/system/common/face/desk.rs` 的 `State` 逐格对应，且**只描述实例的生命阶段**
-/// `crates/protocol/src/system/mod.rs` 的"预算与放弃"）
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum State {
     /// 表里有这一行，但还没起过
@@ -48,7 +46,7 @@ impl State {
     }
 }
 
-/// 失败域：五格，**前四格各对应一个不同的下一步**（照实抄 `programs/src/system/core.rs` 那四格）
+/// 前四个失败码对应任务管理失败，Bad 表示非法报文。
 /// 它是**协议这一侧**的名字：调度侧那四格是 `Unknown` / `BadImage` / `Full` / `NotReady`
 #[derive(Clone, Copy, PartialEq, Eq, Debug, env::WireCodes)]
 #[wire(fallback = Bad)]
