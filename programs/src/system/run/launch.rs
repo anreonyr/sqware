@@ -1,5 +1,5 @@
 use crate::system::{
-    control::serve::unit::Control,
+    control::unit::Control,
     loader::{Image, serve::build::Spawn},
 };
 use ::schedule::{Progress, ResMut};
@@ -40,7 +40,7 @@ pub fn construct(
     if pending.0.try_reserve(1).is_err() {
         return Err((Fail::Full, delivery.back));
     }
-    let built = match control.create_instance(crate::system::control::serve::create::Creation {
+    let built = match control.create_instance(crate::system::control::instance::create::Creation {
         image,
         spawn,
         owner: delivery.owner,
@@ -73,7 +73,7 @@ pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
 pub fn completed(
     mut pending: ResMut<Pending>,
     mut control: ResMut<Control>,
-) -> Result<Progress, crate::system::control::serve::Fail> {
+) -> Result<Progress, crate::system::control::Fail> {
     let mut index = 0;
     while index < pending.0.len() {
         let task = pending.0[index].task;

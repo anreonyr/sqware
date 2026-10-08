@@ -1,10 +1,10 @@
 use crate::system::{
-    control::serve::hook::{self, Active, Key},
     control::identity::Roster,
+    control::instance::hook::{self, Active, Key},
     run::names,
 };
 use ::schedule::{BuildError, Plan, Progress, Res, Schedule};
-pub fn instance() -> Result<Plan<crate::system::control::serve::Fail>, BuildError> {
+pub fn instance() -> Result<Plan<crate::system::control::Fail>, BuildError> {
     hook::plan(children()?)
 }
 pub fn children() -> Result<alloc::vec::Vec<(Key, Plan<&'static str>)>, BuildError> {

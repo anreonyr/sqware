@@ -1,17 +1,13 @@
-use super::{
-    task as service,
-    unit::{Control, Service},
-};
-use crate::system::control::serve::task::Image;
-use crate::system::control::serve::source::Source;
+use super::{Control, Service, task as service};
+pub use crate::system::common::timing::{BOOT_MS, RETRY_MS};
+use crate::system::control::unit::task::Image;
 use crate::{
     boot::Catalog,
     unit::{Died, PROGRAMS, UnitFile},
 };
-use alloc::{string::ToString, vec::Vec};
+use alloc::vec::Vec;
 use env::{Mark, Wait};
 use ipc::session::establish;
-pub use crate::system::common::timing::{BOOT_MS, RETRY_MS};
 
 pub const E_MANIFEST: Died = 2;
 pub const E_PROGRAM: Died = 3;
@@ -51,17 +47,14 @@ impl Images {
 }
 impl Control {
     pub fn spawn(&mut self, program: &UnitFile, images: &Images) -> Result<Service, Error> {
-        let name = program.name().to_string();
-        let entry = images.catalog.find(name.as_str()).ok_or(Error::Missing)?;
-        let Some(image) = Source::initrd(images.catalog).image(name.clone()) else {
-            return Err(Error::Missing);
-        };
+        let name = program.name();
+        let entry = images.catalog.find(name).ok_or(Error::Missing)?;
         let task = service::mint(
             &mut self.table,
             &mut self.loader,
             Image {
-                name: name.as_str(),
-                bytes: image,
+                name,
+                bytes: entry.elf,
                 kind: entry.kind,
             },
         )

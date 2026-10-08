@@ -1,5 +1,5 @@
 use super::{self as work, Key, dispatch};
-use crate::system::control::{core::verdict::Fail, serve};
+use crate::system::control::{Fail as ControlFail, core::verdict::Fail};
 use ::schedule::{BuildError, Plan, Schedule};
 use alloc::vec::Vec;
 pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
@@ -30,7 +30,7 @@ pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
         (Key::Ruin, ruin.build()?)
     ])
 }
-pub fn actions(children: Vec<(Key, Plan<Fail>)>) -> Result<Plan<serve::Fail>, BuildError> {
+pub fn actions(children: Vec<(Key, Plan<Fail>)>) -> Result<Plan<ControlFail>, BuildError> {
     let mut plan = Schedule::sequence();
     plan.system("budget", dispatch::budget)?;
     plan.subplans("lifecycle", dispatch::select, children, dispatch::finish)?;

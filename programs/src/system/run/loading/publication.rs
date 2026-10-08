@@ -1,13 +1,13 @@
-use ::schedule::{Progress, Res, ResMut};
 use super::answer::Inbox;
 use crate::system::{
     boot::Mounts,
     common::face::mount,
-    control::serve::Fail,
+    control::Fail,
     control::identity::Roster,
     operator::client::Tree,
     run::publication::{Internal, book::Publications},
 };
+use ::schedule::{Progress, Res, ResMut};
 pub(crate) fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,
@@ -17,10 +17,14 @@ pub(crate) fn faces(
     let grant = system_api::loader::Grant::Build;
     let (entry, _) = mount::entry(grant.mark(), grant.name())?;
     mounts.0.push(Internal {
-        road: system_api::operator::Path::new(system_api::loader::DIR).try_join(grant.name()).ok_or("Loader path")?,
+        road: system_api::operator::Path::new(system_api::loader::DIR)
+            .try_join(grant.name())
+            .ok_or("Loader path")?,
         entry,
         access: (
-            system_api::operator::Permit::Identity(system_api::identity::Selector::Exact(principal)),
+            system_api::operator::Permit::Identity(system_api::identity::Selector::Exact(
+                principal,
+            )),
             env::unit::self_id(),
         ),
     });

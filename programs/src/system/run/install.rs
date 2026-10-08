@@ -9,7 +9,8 @@ use crate::system::{
     control::{
         core::verdict,
         lifecycle,
-        serve::{answer, material::Supplies, start::Images, unit::Control, watch},
+        serve::{answer, watch},
+        unit::{Control, material::Supplies, start::Images},
     },
     life,
     operator::client::Tree,
@@ -37,9 +38,9 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     ));
     put!(Control::new(status.clone()));
     put!(super::launch::Pending::default());
-    put!(crate::system::control::serve::hook::Active::default());
+    put!(crate::system::control::instance::hook::Active::default());
     put!(Dispatch::<
-        crate::system::control::serve::hook::Key,
+        crate::system::control::instance::hook::Key,
         &'static str,
     >::new());
     put!(super::account::Accounts::new(boot.catalog)?);

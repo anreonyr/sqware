@@ -1,7 +1,7 @@
 //! Boot account identities and trusted Login construction.
 use super::names::{Names, Registration};
 use crate::system::control::identity::Roster;
-use crate::system::control::serve::{Fail, unit::Control};
+use crate::system::control::{Fail, unit::Control};
 use crate::system::operator::client::Tree;
 use ::schedule::{Progress, Res, ResMut};
 use env::{PieToken, Wait, pie, unit};

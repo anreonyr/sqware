@@ -1,6 +1,6 @@
 use crate::system::control::core::unit::{Slot, State};
 use crate::system::control::identity::{Roster, current_authority};
-use crate::system::control::serve::unit::Control;
+use crate::system::control::unit::Control;
 use crate::system::operator::client::Tree;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;

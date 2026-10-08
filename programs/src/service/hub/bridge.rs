@@ -1,22 +1,22 @@
 //! Control owns this private installation face; only the live Hub can ask through it.
-use env::{Access, PieToken, Policy, TaskId, Wait};
+use ::resource::port;
 use ::schedule::{Progress, Res};
-use ipc::hand::Sender;
-use ipc::session::establish;
+use env::unit;
+use env::{Access, PieToken, Policy, TaskId, Wait};
 use hub_api::{
     self as hub,
     activation::{self, Activate},
     frame::Said,
 };
+use ipc::hand::Sender;
+use ipc::session::establish;
 use system_api::identity::CoalitionId;
-use ::resource::port;
-use env::unit;
 
-use crate::system::control::serve::start::BOOT_MS;
-use crate::system::control::serve::unit::Control;
-use env::wire::Span as _;
-use env::pie;
+use crate::system::control::unit::Control;
+use crate::system::control::unit::start::BOOT_MS;
 use ::resource::raw::{Hole, reserve};
+use env::pie;
+use env::wire::Span as _;
 
 pub struct Activation {
     hub: TaskId,
@@ -31,13 +31,8 @@ impl Activation {
     pub fn open(hub: TaskId) -> Result<Self, &'static str> {
         let entry = pie::unseal_hole(activation::ENTRY).map_err(|_| "hub activation hole")?;
         let owned = Self { hub, entry };
-        port::ship(
-            entry,
-            hub,
-            Access::STORE,
-            Policy::NONE,
-        )
-        .map_err(|_| "hub activation injection")?;
+        port::ship(entry, hub, Access::STORE, Policy::NONE)
+            .map_err(|_| "hub activation injection")?;
         Ok(owned)
     }
 
@@ -121,7 +116,7 @@ pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
 
 pub(crate) fn maintain(
     activation: Res<Option<Activation>>,
-    control: Res<crate::system::control::serve::unit::Control>,
+    control: Res<crate::system::control::unit::Control>,
     roster: Res<crate::system::control::identity::Roster>,
 ) -> Result<Progress, &'static str> {
     if let Some(activation) = activation.as_ref() {

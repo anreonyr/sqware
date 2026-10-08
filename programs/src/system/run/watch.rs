@@ -1,9 +1,6 @@
 //! Supervisor interest selection and wait policy.
 use super::names::Names;
-use crate::system::control::{
-    core::unit::Slot,
-    serve::{Fail, unit::Control, watch::Watch},
-};
+use crate::system::control::{Fail, core::unit::Slot, serve::watch::Watch, unit::Control};
 use ::resource::pile::Sub;
 use alloc::vec::Vec;
 use env::{PieToken, Wait};
@@ -32,7 +29,7 @@ pub fn entries(
     Ok(Progress::Done)
 }
 pub fn publication(
-    images: Res<crate::system::control::serve::start::Images>,
+    images: Res<crate::system::control::unit::start::Images>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
     wanted.tokens.push(images.entry);

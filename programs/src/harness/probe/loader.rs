@@ -135,7 +135,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         }
         let clean = assembly
             .resources
-            .read::<crate::system::control::serve::unit::Control>()
+            .read::<crate::system::control::unit::Control>()
             .unwrap()
             .instances()
             .all(|item| item.team.is_none());

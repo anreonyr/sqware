@@ -3,9 +3,10 @@ use crate::system::run::schedule;
 use crate::system::{
     control::identity::Roster,
     control::{
+        Fail,
         core::verdict,
         lifecycle::{Action, Active, Key, Operations, schedule as lifecycle},
-        serve::{self, unit::Control},
+        unit::{Control, start},
     },
     run::bootstrap::Boot,
 };
@@ -21,7 +22,7 @@ pub struct Fault {
 }
 pub struct Fixture {
     pub resources: Registry<'static>,
-    plans: [Plan<serve::Fail>; 4],
+    plans: [Plan<Fail>; 4],
     cursors: [Cursor; 4],
 }
 fn supply(
@@ -30,7 +31,7 @@ fn supply(
     control: Res<Control>,
 ) -> Result<Progress, verdict::Fail> {
     let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
-    let program = serve::start::program_of(&job.request.name)?;
+    let program = start::program_of(&job.request.name)?;
     let task = control
         .task(&job.request.name)
         .ok_or(verdict::Fail::Unknown)?;
@@ -117,7 +118,7 @@ impl Fixture {
         let mut plans = [
             schedule::maintenance()
                 .map_err(|_| ())?
-                .map_error(|_| serve::Fail::Publication),
+                .map_error(|_| Fail::Publication),
             lifecycle::actions(children).map_err(|_| ())?,
             schedule::frame().map_err(|_| ())?,
             schedule::shutdown().map_err(|_| ())?,
@@ -137,9 +138,9 @@ impl Fixture {
     }
     pub fn assemble(&mut self, program: &UnitFile) -> Result<(), Died> {
         self.action(program.name(), Action::Mint)
-            .map_err(|_| serve::start::E_PROGRAM)?;
+            .map_err(|_| start::E_PROGRAM)?;
         self.action(program.name(), Action::Embark { parent: None })
-            .map_err(|_| serve::start::E_PROGRAM)?;
+            .map_err(|_| start::E_PROGRAM)?;
         Ok(())
     }
     pub fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
@@ -176,18 +177,18 @@ impl Fixture {
         }
         Ok(())
     }
-    pub fn supervise(&mut self) -> Result<(), serve::Fail> {
+    pub fn supervise(&mut self) -> Result<(), Fail> {
         while !self
             .resources
             .read::<crate::system::run::frame::Flow>()
-            .map_err(|_| serve::Fail::Room)?
+            .map_err(|_| Fail::Room)?
             .done
         {
             if self.plans[2]
                 .advance(&mut self.cursors[2], &self.resources)
                 .map_err(|error| {
                     programs::debug::put(&alloc::format!("fixture: frame {:?}", error));
-                    serve::Fail::Shutdown
+                    Fail::Shutdown
                 })?
                 == Progress::Done
             {
@@ -196,7 +197,7 @@ impl Fixture {
         }
         while self.plans[3]
             .advance(&mut self.cursors[3], &self.resources)
-            .map_err(|_| serve::Fail::Shutdown)?
+            .map_err(|_| Fail::Shutdown)?
             == Progress::Pending
         {}
         Ok(())

@@ -1,8 +1,8 @@
-use super::{Fail as ServeFail, unit::Control};
 use crate::system::control::core::{
     instance::{self, Instance},
     unit::State,
 };
+use crate::system::control::{Fail as ControlFail, unit::Control};
 use env::{TaskId, Wait, unit};
 use system_api::{control::Fail, loader::Built};
 
@@ -24,7 +24,7 @@ impl Control {
     pub(crate) fn instance_result(
         &self,
         task: TaskId,
-    ) -> Result<Option<Result<Built, Fail>>, ServeFail> {
+    ) -> Result<Option<Result<Built, Fail>>, ControlFail> {
         let Some(item) = self.instance(task) else {
             return Ok(Some(Err(Fail::NotReady)));
         };
@@ -35,7 +35,7 @@ impl Control {
                     task: item.task,
                     team,
                 }))),
-                None => Err(ServeFail::Room),
+                None => Err(ControlFail::Room),
             },
             _ => Ok(Some(Err(Fail::NotReady))),
         }
@@ -143,3 +143,9 @@ fn min_wait(a: Wait, b: Wait) -> Wait {
         (Wait::Forever, Wait::Forever) => Wait::Forever,
     }
 }
+
+pub(crate) mod create;
+pub(crate) mod hook;
+
+mod command;
+pub(crate) use command::Command;

@@ -1,11 +1,11 @@
+use crate::system::operator::client::Tree;
+use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 use env::TaskId;
-use ::schedule::{Progress, Res, ResMut};
-use crate::system::operator::client::Tree;
 
 pub struct Connections(pub Vec<TaskId>);
 pub(crate) fn candidates(
-    control: Res<crate::system::control::serve::unit::Control>,
+    control: Res<crate::system::control::unit::Control>,
     mut connections: ResMut<Connections>,
 ) -> Result<Progress, &'static str> {
     for task in control.tasks() {

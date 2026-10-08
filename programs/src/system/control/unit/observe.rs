@@ -1,4 +1,4 @@
-use super::unit::Control;
+use super::Control;
 use crate::system::control::core::unit::{Service, Slot, State};
 use env::{TaskId, Wait};
 

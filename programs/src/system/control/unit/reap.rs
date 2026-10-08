@@ -1,4 +1,4 @@
-use super::unit::Control;
+use super::Control;
 use crate::system::control::core::{
     unit::{Slot, State, Table},
     verdict::Reaped,
@@ -12,7 +12,7 @@ pub(crate) fn sweep(
     mut control: ::schedule::ResMut<Control>,
     roster: ::schedule::Res<Roster>,
     operations: ::schedule::Res<crate::system::control::lifecycle::Operations>,
-) -> Result<::schedule::Progress, super::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     let gone: Vec<String> = control
         .table
         .living()

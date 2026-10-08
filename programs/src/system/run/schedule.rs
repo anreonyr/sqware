@@ -1,4 +1,4 @@
-use crate::system::control::{lifecycle::schedule as lifecycle, serve};
+use crate::system::control::{Fail, lifecycle::schedule as lifecycle, serve};
 use ::schedule::{BuildError, Plan, Schedule};
 pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     use crate::system::{
@@ -92,17 +92,17 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.system("running", boot::await_running)?;
     start.build()
 }
-pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
+pub fn frame() -> Result<Plan<Fail>, BuildError> {
     use super::frame as f;
     use super::watch;
     use serve::answer;
     let mut frame = Schedule::sequence();
     frame.plan(
         "maintain.before",
-        maintenance()?.map_error(|_| serve::Fail::Publication),
+        maintenance()?.map_error(|_| Fail::Publication),
     )?;
     frame.system("health", f::health)?;
-    frame.system("reap", serve::reap::sweep)?;
+    frame.system("reap", crate::system::control::unit::reap::sweep)?;
     frame.system("instances.receive", serve::instance::receive)?;
     frame.system("requests.receive", answer::receive)?;
     frame.system("requests.state", answer::state)?;
@@ -113,7 +113,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.plan("lifecycle", lifecycle::actions(lifecycle::lifecycle()?)?)?;
     frame.plan(
         "maintain.after",
-        maintenance()?.map_error(|_| serve::Fail::Publication),
+        maintenance()?.map_error(|_| Fail::Publication),
     )?;
     frame.system("instances.reap", crate::system::run::instances::reap)?;
     frame.system("replies", f::reply)?;
@@ -144,7 +144,7 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.system("wait", watch::wait)?;
     frame.build()
 }
-pub fn shutdown() -> Result<Plan<serve::Fail>, BuildError> {
+pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut stop = Schedule::sequence();
     stop.plan(
         "loader.close",

@@ -1,11 +1,11 @@
+use super::Service;
 use super::start::{BOOT_MS, Error};
-use super::unit::Service;
 use crate::boot::Accounts;
 use crate::system::common::machine::Machine;
-use env::{Access, Name, Mark, Entry, PieKind, Policy, Wait};
-use programs::debug;
-use hub_api::{ENROLL_MAX, Enroll};
 use ::resource::port;
+use env::{Access, Entry, Mark, Name, PieKind, Policy, Wait};
+use hub_api::{ENROLL_MAX, Enroll};
+use programs::debug;
 
 pub struct Supplies {
     pub machine: Machine,
@@ -23,7 +23,10 @@ impl Supplies {
 }
 impl Supplies {
     pub fn grant_call(&self, call: env::Call, task: env::TaskId) -> Result<(), &'static str> {
-        let token = self.accounts.token(Name::Call(call)).ok_or("Call authority missing")?;
+        let token = self
+            .accounts
+            .token(Name::Call(call))
+            .ok_or("Call authority missing")?;
         env::pie::accord(token, task, env::Permission::FETCH, Mark::NONE)
             .map_err(|_| "Call authority grant")?;
         Ok(())
@@ -80,8 +83,18 @@ impl Supplies {
                 ),
             }
         };
-        put(Name::Page(env::Page::Dtb), PieKind::Pole, Access::FETCH, Policy::VEST);
-        put(Name::Trap(env::Trap::SupervisorExternal), PieKind::Nole, Access::FETCH, Policy::VEST);
+        put(
+            Name::Page(env::Page::Dtb),
+            PieKind::Pole,
+            Access::FETCH,
+            Policy::VEST,
+        );
+        put(
+            Name::Trap(env::Trap::SupervisorExternal),
+            PieKind::Nole,
+            Access::FETCH,
+            Policy::VEST,
+        );
         for device in &devices {
             put(
                 device.resource,

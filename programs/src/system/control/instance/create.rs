@@ -1,6 +1,6 @@
 //! Instance creation and image-cache ownership.
 
-use super::unit::Control;
+use crate::system::control::unit::Control;
 use crate::system::loader::{Image, serve::build::Spawn};
 use env::TaskId;
 use system_api::{control::Fail, loader::Built};

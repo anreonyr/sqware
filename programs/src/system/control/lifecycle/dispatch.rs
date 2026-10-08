@@ -1,31 +1,31 @@
 use super::{Action, Active, Key, Operations, Tracked};
-use crate::system::control::{core::verdict::Fail, serve::Fail as ServeFail};
+use crate::system::control::{Fail as ControlFail, core::verdict::Fail};
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
 
 pub fn budget(
     operations: Res<Operations>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
-) -> Result<Progress, ServeFail> {
+) -> Result<Progress, ControlFail> {
     dispatch
         .begin(operations.0.len())
-        .map_err(|_| ServeFail::Room)?;
+        .map_err(|_| ControlFail::Room)?;
     Ok(Progress::Done)
 }
 pub fn select(
     mut operations: ResMut<Operations>,
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
-) -> Result<Progress, ServeFail> {
+) -> Result<Progress, ControlFail> {
     let tracked = loop {
         let Some(tracked) = operations.0.pop_front() else {
-            dispatch.stop().map_err(|_| ServeFail::Room)?;
+            dispatch.stop().map_err(|_| ControlFail::Room)?;
             return Ok(Progress::Done);
         };
         if !tracked.complete {
             break tracked;
         }
         operations.0.push_back(tracked);
-        dispatch.skip().map_err(|_| ServeFail::Room)?;
+        dispatch.skip().map_err(|_| ControlFail::Room)?;
         if dispatch.remaining() == 0 {
             return Ok(Progress::Done);
         }
@@ -42,18 +42,18 @@ pub fn select(
             key,
             cursor: tracked.cursor,
         })
-        .map_err(|_| ServeFail::Room)?;
+        .map_err(|_| ControlFail::Room)?;
     Ok(Progress::Done)
 }
 pub fn finish(
     mut operations: ResMut<Operations>,
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
-) -> Result<Progress, ServeFail> {
-    let completion = dispatch.take_result().map_err(|_| ServeFail::Room)?;
+) -> Result<Progress, ControlFail> {
+    let completion = dispatch.take_result().map_err(|_| ControlFail::Room)?;
     let invocation = completion.invocation;
     let mut tracked = Tracked {
-        operation: active.0.take().ok_or(ServeFail::Room)?,
+        operation: active.0.take().ok_or(ControlFail::Room)?,
         cursor: invocation.cursor,
         complete: false,
     };

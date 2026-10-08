@@ -1,4 +1,4 @@
-use crate::system::control::serve::Fail;
+use crate::system::control::Fail;
 use ::schedule::{BuildError, Plan, Schedule};
 pub fn frame() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();

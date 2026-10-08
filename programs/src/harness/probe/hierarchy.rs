@@ -69,7 +69,7 @@ pub(crate) fn command(
                 from,
                 assembly
                     .resources
-                    .read::<crate::system::control::serve::unit::Control>()
+                    .read::<crate::system::control::unit::Control>()
                     .unwrap()
                     .task("system-dependent")
                     .unwrap()
@@ -424,7 +424,7 @@ pub(crate) fn exercise(
         .unwrap();
     let failed_task = assembly
         .resources
-        .read::<crate::system::control::serve::unit::Control>()
+        .read::<crate::system::control::unit::Control>()
         .unwrap()
         .task("system-child")
         .unwrap();
@@ -730,7 +730,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     });
     let entry = assembly
         .resources
-        .read::<crate::system::control::serve::start::Images>()
+        .read::<crate::system::control::unit::start::Images>()
         .unwrap()
         .entry;
     port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();

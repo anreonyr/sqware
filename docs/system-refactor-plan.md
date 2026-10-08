@@ -474,6 +474,8 @@ Control 的任务表、实例表、Loader 缓存和操作队列已限制在 Cont
 
 受管服务的 Mint/Embark/Debark/Ruin、操作队列和局部计划已归入 control/lifecycle。dispatch 只适配 schedule 的选择与完成协议；queue 处理成功、挂起、失败补偿和游标重置；Mint 阶段修正未创建任务的失败状态。四个动作的阶段顺序、补偿期限、致命回收失败和回复时机保持不变。后续继续归位 Control 的登记与实例管理、System 引导装配和发布状态。
 
+Control 状态入口、受管任务登记、镜像目录消费、启动物料、就绪观察和收割已归入 control/unit；匿名实例的创建、认领、命令、等待与 Prepare/Retire 扩展流程归入 control/instance。serve 仅保留请求接入、回复和入口观察。实例命令不依赖线上 Wire，所有者检查与状态推进由 Control 完成；待完成请求仍由接入层保留。删除重复查询镜像目录的 Source 包装，启动直接消费目录条目。System 引导装配与发布状态继续迁移。
+
 ## 迁移后的命名口径
 
 - execution::room::park 接收 Duration，保持向上取整；env::room::park 保留单次调用的毫秒参数，不另留 sleep 别名。
@@ -513,6 +515,7 @@ cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_6
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/control-instance/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 sh programs/src/system/identity/core/test-host.sh
 nu scripts/qtest.nu --package kernel --scene accept

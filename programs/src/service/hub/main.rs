@@ -10,7 +10,7 @@
 extern crate programs;
 
 use programs::service::hub;
-use programs::system::control::serve::task as core;
+use programs::system::control::unit::task as core;
 
 #[programs::entry]
 fn main() -> Result<(), core::Start> {

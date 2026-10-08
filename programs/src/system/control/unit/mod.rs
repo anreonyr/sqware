@@ -1,4 +1,4 @@
-use super::start::Error;
+use self::start::Error;
 use crate::system::control::core::unit::{Declaration, Slot, State, Table};
 use crate::system::control::core::verdict::Fail;
 use crate::system::life::{Phase, Status};
@@ -126,3 +126,10 @@ impl Control {
             )
     }
 }
+
+mod fixture;
+pub mod material;
+mod observe;
+pub(crate) mod reap;
+pub mod start;
+pub mod task;

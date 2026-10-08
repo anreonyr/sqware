@@ -1,10 +1,8 @@
 //! Instance lifecycle extension points executed as bounded schedule subplans.
-use super::{Fail, unit::Control};
 use crate::system::control::core::unit::State;
+use crate::system::control::{Fail, unit::Control};
+use ::schedule::{BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule};
 use env::{TaskId, Wait, unit};
-use ::schedule::{
-    BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule,
-};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Key {
     Prepare,
@@ -29,7 +27,9 @@ pub fn budget(
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
     active.next = 0;
-    dispatch.begin(control.instances.len()).map_err(|_| Fail::Room)?;
+    dispatch
+        .begin(control.instances.len())
+        .map_err(|_| Fail::Room)?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -45,10 +45,12 @@ pub fn select(
             _ => continue,
         };
         active.task = Some(item.task);
-        dispatch.select(Invocation {
-            key,
-            cursor: core::mem::take(&mut item.hook),
-        }).map_err(|_| Fail::Room)?;
+        dispatch
+            .select(Invocation {
+                key,
+                cursor: core::mem::take(&mut item.hook),
+            })
+            .map_err(|_| Fail::Room)?;
         return Ok(Progress::Done);
     }
     dispatch.stop().map_err(|_| Fail::Room)?;

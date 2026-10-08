@@ -1,11 +1,9 @@
+use super::answer::{self, Inbox};
+use crate::system::control::Fail;
+use crate::system::control::instance::Command;
+use crate::system::control::unit::Control;
 use ::schedule::{Progress, Res, ResMut};
-use super::{
-    Fail,
-    answer::{self, Inbox},
-    unit::Control,
-};
-use crate::system::control::core::unit::State;
-use env::{Wait, unit};
+use env::Wait;
 use ipc::rpc::{self, request::Receiver as RequestReceiver};
 use system_api::control as call;
 use system_api::control::Call as ControlContract;
@@ -14,11 +12,11 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(Fail::Room)?;
-        let task = match &incoming.wire {
-            call::frame::Wire::EmbarkInstance(task)
-            | call::frame::Wire::DebarkInstance(task)
-            | call::frame::Wire::RuinInstance(task)
-            | call::frame::Wire::StateInstance(task) => *task,
+        let command = match &incoming.wire {
+            call::frame::Wire::EmbarkInstance(task) => Command::Embark(*task),
+            call::frame::Wire::DebarkInstance(task) => Command::Debark(*task),
+            call::frame::Wire::RuinInstance(task) => Command::Ruin(*task),
+            call::frame::Wire::StateInstance(task) => Command::State(*task),
             _ => {
                 inbox.0.push_back(incoming);
                 continue;
@@ -28,59 +26,16 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
             drop(incoming.reply);
             continue;
         }
-        let result = (|| {
-            let item = control
-                .instances
-                .iter_mut()
-                .find(|item| item.task == task)
-                .ok_or(call::Fail::Unknown)?;
-            if item.owner != incoming.from {
-                return Err(call::Fail::Denied);
-            }
-            if item.team.is_some()
-                && !item.claimed
-                && matches!(incoming.wire, call::frame::Wire::EmbarkInstance(_))
-                && (env::chrono::clock() >= item.claim_until)
-            {
-                item.stop();
-                return Err(call::Fail::NotReady);
-            }
-            match incoming.wire {
-                call::frame::Wire::StateInstance(_) => {
-                    return Ok(Some(call::frame::said_state(answer::wire_state(
-                        item.state,
-                    ))));
-                }
-                call::frame::Wire::EmbarkInstance(_) if item.state == State::Debarked => {
-                    if unit::embark(task).is_err() {
-                        item.stop();
-                        return Err(call::Fail::NotReady);
-                    }
-                    item.claimed = true;
-                    item.state = State::Ready;
-                }
-                call::frame::Wire::EmbarkInstance(_) if item.state == State::Ready => {}
-                call::frame::Wire::DebarkInstance(_) if item.state == State::Ready => {
-                    match unit::debark(task) {
-                        Ok(()) => {}
-                        Err(e) if e.source == env::UnitFail::Busy => return Ok(None),
-                        Err(_) => return Err(call::Fail::NotReady),
-                    }
-                    item.state = State::Debarked;
-                }
-                call::frame::Wire::RuinInstance(_) => {
-                    if item.team.is_some() {
-                        item.stop();
-                        let _ = env::room::doom(task);
-                        return Ok(None);
-                    }
-                }
-                _ => return Err(call::Fail::NotReady),
-            }
-            Ok(Some(call::frame::said_status(call::frame::OK)))
-        })();
+        let result = control.command_instance(incoming.from, command);
         match result {
-            Ok(Some(said)) => answer::reply(incoming.reply, said),
+            Ok(Some(state)) => {
+                let said = if matches!(command, Command::State(_)) {
+                    call::frame::said_state(answer::wire_state(state))
+                } else {
+                    call::frame::said_status(call::frame::OK)
+                };
+                answer::reply(incoming.reply, said);
+            }
             Ok(None) => inbox.0.push_back(incoming),
             Err(fail) => answer::reply(
                 incoming.reply,
@@ -99,7 +54,11 @@ pub fn receive(
     let Some(entry) = watch.instance else {
         return Ok(Progress::Done);
     };
-    let receiver = RequestReceiver::<ControlContract>::from_raw(entry, ControlContract::BACK, ControlContract::back);
+    let receiver = RequestReceiver::<ControlContract>::from_raw(
+        entry,
+        ControlContract::BACK,
+        ControlContract::back,
+    );
     for _ in 0..16 {
         let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
             Ok(request) => request,

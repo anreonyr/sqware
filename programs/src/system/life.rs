@@ -21,26 +21,26 @@ pub struct Deadline(pub u64);
 pub fn stopping(
     status: ::schedule::Res<alloc::sync::Arc<Status>>,
     mut deadline: ::schedule::ResMut<Deadline>,
-) -> Result<::schedule::Progress, crate::system::control::serve::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     status.phase.store(Phase::Stopping as u8, Ordering::Release);
-    deadline.0 = env::chrono::clock()
-        + crate::system::control::serve::start::BOOT_MS as u64 * 1_000_000;
+    deadline.0 =
+        env::chrono::clock() + crate::system::control::unit::start::BOOT_MS as u64 * 1_000_000;
     Ok(::schedule::Progress::Done)
 }
 pub fn join(
     status: ::schedule::Res<alloc::sync::Arc<Status>>,
     deadline: ::schedule::Res<Deadline>,
-) -> Result<::schedule::Progress, crate::system::control::serve::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     for task in [
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),
     ] {
         if !env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
             if env::chrono::clock() >= deadline.0 {
-                return Err(crate::system::control::serve::Fail::Shutdown);
+                return Err(crate::system::control::Fail::Shutdown);
             }
             execution::room::park(core::time::Duration::from_millis(1))
-                .map_err(|_| crate::system::control::serve::Fail::Wait)?;
+                .map_err(|_| crate::system::control::Fail::Wait)?;
             return Ok(::schedule::Progress::Pending);
         }
     }

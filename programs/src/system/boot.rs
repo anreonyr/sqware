@@ -1,21 +1,19 @@
-use ::schedule::{Progress, Res, ResMut};
 use crate::system::{
-    control::serve::start::BOOT_MS,
-    identity,
     control::identity::Roster,
-    run::names::{Names, Registration},
+    control::unit::start::BOOT_MS,
+    identity,
     life::{Phase, Status},
     operator,
     operator::client::{Tree, Wiring},
+    run::names::{Names, Registration},
     run::publication::{Internal, book::Publications},
 };
+use ::resource::bell::Bell;
+use ::schedule::{Progress, Res, ResMut};
 use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
-use programs::{
-    debug,
-};
-use ::resource::bell::Bell;
+use programs::debug;
 pub struct Faces(pub Vec<PieToken>);
 pub struct Mounts(pub Vec<Internal>);
 pub fn status() -> Arc<Status> {
@@ -90,7 +88,7 @@ pub fn spawn(
 }
 pub fn embark(
     status: Res<Arc<Status>>,
-    supplies: Res<crate::system::control::serve::material::Supplies>,
+    supplies: Res<crate::system::control::unit::material::Supplies>,
 ) -> Result<Progress, &'static str> {
     for slot in [&status.operator, &status.identity] {
         let task = TaskId::new(slot.load(Ordering::Acquire));
@@ -144,7 +142,8 @@ pub(crate) fn name(
     let object = system_api::control::publication::Object::Principal(
         roster.control().ok_or("Control identity missing")?,
     );
-    crate::system::control::identity::validate(&roster, object).map_err(|_| "Control identity source")?;
+    crate::system::control::identity::validate(&roster, object)
+        .map_err(|_| "Control identity source")?;
     names.register(
         &mut tree,
         Registration {

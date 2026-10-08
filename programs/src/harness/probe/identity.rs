@@ -108,7 +108,7 @@ pub fn acceptance() {
         if program.name() == "system-child" {
             assembly
                 .resources
-                .write::<crate::system::control::serve::unit::Control>()
+                .write::<crate::system::control::unit::Control>()
                 .unwrap()
                 .enlist(program)
                 .expect("identity: runtime declaration");
@@ -144,7 +144,7 @@ pub fn acceptance() {
         assert_eq!(
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .state(name.into())
                 .unwrap(),
@@ -206,13 +206,13 @@ pub fn acceptance() {
     let old = old_query.resolve(me, Wait::AtMost(1000)).unwrap().unwrap();
     let old_dependent = assembly
         .resources
-        .read::<crate::system::control::serve::unit::Control>()
+        .read::<crate::system::control::unit::Control>()
         .unwrap()
         .task("system-dependent")
         .unwrap();
     let old_hub = assembly
         .resources
-        .read::<crate::system::control::serve::unit::Control>()
+        .read::<crate::system::control::unit::Control>()
         .unwrap()
         .task("hub")
         .unwrap();
@@ -255,7 +255,7 @@ pub fn acceptance() {
             &old_query,
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .task(name)
                 .unwrap(),
@@ -299,7 +299,7 @@ pub fn acceptance() {
         assert_eq!(
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .state("system-child".into())
                 .unwrap(),

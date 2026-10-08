@@ -1,6 +1,6 @@
-use super::unit::Control;
 use crate::system::control::core::unit::State;
 use crate::system::control::lifecycle::{Action, Operation, Operations, Request};
+use crate::system::control::unit::Control;
 use env::Wait;
 use ipc::rpc::{self, reply::Sender as ReplySender, request::Receiver as RequestReceiver};
 use system_api::control as ccall;
@@ -18,7 +18,7 @@ pub fn receive(
     watch: ::schedule::Res<super::watch::Watch>,
     mut buffer: ::schedule::ResMut<Buffer>,
     mut inbox: ::schedule::ResMut<Inbox>,
-) -> Result<::schedule::Progress, super::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     for grant in ccall::Grant::ALL {
         let Some(face) = watch.faces[grant.index()] else {
             continue;
@@ -66,10 +66,13 @@ pub fn receive(
 pub fn state(
     control: ::schedule::Res<Control>,
     mut inbox: ::schedule::ResMut<Inbox>,
-) -> Result<::schedule::Progress, super::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
-        let incoming = inbox.0.pop_front().ok_or(super::Fail::Room)?;
+        let incoming = inbox
+            .0
+            .pop_front()
+            .ok_or(crate::system::control::Fail::Room)?;
         if let ccall::frame::Wire::State(name) = incoming.wire {
             let said = match control.state(name) {
                 Ok(state) => ccall::frame::said_state(wire_state(state)),
@@ -85,10 +88,13 @@ pub fn state(
 pub fn enqueue(
     mut operations: ::schedule::ResMut<Operations>,
     mut inbox: ::schedule::ResMut<Inbox>,
-) -> Result<::schedule::Progress, super::Fail> {
+) -> Result<::schedule::Progress, crate::system::control::Fail> {
     let count = inbox.0.len();
     for _ in 0..count {
-        let incoming = inbox.0.pop_front().ok_or(super::Fail::Room)?;
+        let incoming = inbox
+            .0
+            .pop_front()
+            .ok_or(crate::system::control::Fail::Room)?;
         let (name, action) = match incoming.wire {
             ccall::frame::Wire::Mint(name) => (name, Action::Mint),
             ccall::frame::Wire::Embark(name) => (
@@ -99,7 +105,7 @@ pub fn enqueue(
             ),
             ccall::frame::Wire::Debark(name) => (name, Action::Debark),
             ccall::frame::Wire::Ruin(name) => (name, Action::Ruin),
-            ccall::frame::Wire::State(_) => return Err(super::Fail::Room),
+            ccall::frame::Wire::State(_) => return Err(crate::system::control::Fail::Room),
             _ => {
                 inbox.0.push_back(incoming);
                 continue;

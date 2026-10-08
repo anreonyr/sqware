@@ -35,7 +35,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 use programs::system::control::core::unit::Declaration;
-use programs::system::control::serve::task::{Image, Launch, Readiness};
+use programs::system::control::unit::task::{Image, Launch, Readiness};
 
 use env::Mark;
 use programs::harness::tick;
@@ -44,15 +44,15 @@ use programs::boot::{Accounts, Catalog};
 
 use core::time::Duration;
 
+use ::resource::raw::Hole;
 use alloc::string::{String, ToString};
-use programs::system::control::core::unit::{Announce, Slot, Table};
-use programs::system::control::core::verdict::Reaped;
-use programs::system::control::serve::task as service;
-use programs::unit::Ending;
+use env::unit;
 use ipc::session::establish::{self, Endpoint, Held};
 use programs::debug;
-use env::unit;
-use ::resource::raw::{Hole};
+use programs::system::control::core::unit::{Announce, Slot, Table};
+use programs::system::control::core::verdict::Reaped;
+use programs::system::control::unit::task as service;
+use programs::unit::Ending;
 
 /// 受害者的清单名（programs::unit::PROGRAMS 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
@@ -130,7 +130,15 @@ fn main() -> Reason {
     while d_us <= DELAY_MAX_US {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(&mut loader, name.clone(), link.clone(), elf, kind, d_us, iters_per_ms) {
+            match trial(
+                &mut loader,
+                name.clone(),
+                link.clone(),
+                elf,
+                kind,
+                d_us,
+                iters_per_ms,
+            ) {
                 Ok(verdict) => {
                     t.n += 1;
                     match verdict {
@@ -168,7 +176,15 @@ fn main() -> Reason {
     while b_us <= 20_500 {
         let mut t = Tally::default();
         for _ in 0..PER_DELAY {
-            match trial(&mut loader, name.clone(), link.clone(), elf, kind, b_us, iters_per_ms) {
+            match trial(
+                &mut loader,
+                name.clone(),
+                link.clone(),
+                elf,
+                kind,
+                b_us,
+                iters_per_ms,
+            ) {
                 Ok(v) => {
                     t.n += 1;
                     match v {

@@ -1,6 +1,6 @@
-use super::super::serve::{
+use super::super::unit::{
     start::{self, Images},
-    unit::{Control, Pending},
+    {Control, Pending},
 };
 use super::{Action, Active, Instance, Operations};
 use crate::system::control::core::{
@@ -16,7 +16,7 @@ pub fn pre(
     images: Res<Images>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    let p = super::super::serve::start::program_of(&job.request.name)?;
+    let p = super::super::unit::start::program_of(&job.request.name)?;
     if images.catalog.find(p.name()).is_none() {
         return Err(Fail::BadImage);
     }
@@ -38,7 +38,7 @@ pub fn run(
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let service = control
         .spawn(
-            super::super::serve::start::program_of(&job.request.name)?,
+            super::super::unit::start::program_of(&job.request.name)?,
             &images,
         )
         .map_err(|e| match e {
@@ -63,7 +63,7 @@ pub fn post(
     images.inject(instance.service.0).map_err(|_| Fail::Full)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
     control.pending.push(Pending {
-        name: super::super::serve::start::program_of(&job.request.name)?.name(),
+        name: super::super::unit::start::program_of(&job.request.name)?.name(),
         service: instance.service,
     });
     Ok(Progress::Done)
@@ -72,7 +72,7 @@ pub fn post(
 pub fn failed(
     operations: Res<Operations>,
     mut control: ResMut<Control>,
-) -> Result<Progress, super::super::serve::Fail> {
+) -> Result<Progress, super::super::Fail> {
     for tracked in &operations.0 {
         let job = &tracked.operation;
         if tracked.complete

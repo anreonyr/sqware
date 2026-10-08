@@ -1,6 +1,8 @@
 //! Real IPC authorized construction and instance failures exercised against an isolated Control fixture.
 use super::fixture::Fixture;
-use crate::system::control::{core::unit::State as UnitState, serve};
+use crate::system::control::{
+    Fail, core::unit::State as UnitState, instance::hook, serve, unit::Control,
+};
 use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -22,7 +24,7 @@ struct HookFault {
 }
 fn fail_prepare(
     mut fault: ::schedule::ResMut<HookFault>,
-    active: ::schedule::Res<serve::hook::Active>,
+    active: ::schedule::Res<hook::Active>,
     resources: ::schedule::Res<crate::system::run::resource::Resources>,
 ) -> Result<Progress, &'static str> {
     if fault.prepare {
@@ -39,8 +41,8 @@ fn fail_prepare(
 }
 fn delay_retire(
     mut fault: ::schedule::ResMut<HookFault>,
-    active: ::schedule::Res<serve::hook::Active>,
-    control: ::schedule::Res<serve::unit::Control>,
+    active: ::schedule::Res<hook::Active>,
+    control: ::schedule::Res<Control>,
 ) -> Result<Progress, &'static str> {
     let item = control
         .instances()
@@ -82,21 +84,21 @@ fn delay_retire(
     }
     Ok(Progress::Done)
 }
-fn hooks() -> ::schedule::Plan<serve::Fail> {
+fn hooks() -> ::schedule::Plan<Fail> {
     let children = crate::system::run::hooks::children().unwrap();
     let mut wrapped = alloc::vec::Vec::new();
     for (key, child) in children {
         let mut wrap = Schedule::new();
-        if key == serve::hook::Key::Retire {
+        if key == hook::Key::Retire {
             wrap.add_system("delay", 0u8, delay_retire).unwrap();
         }
         wrap.add_plan("registered", 1u8, child).unwrap();
-        if key == serve::hook::Key::Prepare {
+        if key == hook::Key::Prepare {
             wrap.add_system("fail", 2u8, fail_prepare).unwrap();
         }
         wrapped.push((key, wrap.build().unwrap()));
     }
-    serve::hook::plan(wrapped).unwrap()
+    hook::plan(wrapped).unwrap()
 }
 struct Signals {
     pings: AtomicUsize,
@@ -299,7 +301,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
     .unwrap();
     peer_token.store(peer_grant.get(), Ordering::Release);
     {
-        let mut system = assembly.resources.write::<serve::unit::Control>().unwrap();
+        let mut system = assembly.resources.write::<Control>().unwrap();
         system
             .fixture_attach_unit(&crate::unit::login::PROGRAM, worker.id())
             .unwrap();
@@ -370,7 +372,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
                 .unwrap()
                 .failed_task
                 .expect("preparation failure was not injected");
-            let control = assembly.resources.read::<serve::unit::Control>().unwrap();
+            let control = assembly.resources.read::<Control>().unwrap();
             if !control
                 .instance(target)
                 .is_some_and(|item| item.state == UnitState::Dead)
@@ -417,7 +419,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         }
         let reclaimed = assembly
             .resources
-            .read::<serve::unit::Control>()
+            .read::<Control>()
             .unwrap()
             .instances()
             .all(|item| item.team.is_none());
@@ -459,7 +461,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Fa
         );
     }
     {
-        let mut system = assembly.resources.write::<serve::unit::Control>().unwrap();
+        let mut system = assembly.resources.write::<Control>().unwrap();
         system.fixture_detach_unit("login");
         system.fixture_detach_unit("terminal");
     }

@@ -139,7 +139,7 @@ mod boundaries {
     fn control_state_and_operation_queue_are_private_to_control() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for (path, name) in [
-            ("control/serve/unit.rs", "Control"),
+            ("control/unit/mod.rs", "Control"),
             ("control/lifecycle/queue.rs", "Operations"),
         ] {
             let syntax = syn::parse_file(&fs::read_to_string(system.join(path)).unwrap()).unwrap();
@@ -189,6 +189,39 @@ mod boundaries {
         let mut fields = StateFields::default();
         fields.visit_file(&syn::parse_file(&source).unwrap());
         assert!(fields.0.is_empty(), "dispatch mutates domain state: {:?}", fields.0);
+    }
+    #[test]
+    fn control_request_handlers_do_not_own_registration_or_instance_effects() {
+        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
+        for old in ["unit.rs", "instances.rs", "create.rs", "fixture.rs", "observe.rs", "start.rs", "source.rs", "task.rs", "material.rs", "reap.rs", "hook.rs"] {
+            assert!(!control.join("serve").join(old).exists(), "request handling owns {old}");
+        }
+        for domain in ["unit", "instance"] {
+            let mut paths = References::default();
+            references(&control.join(domain), &mut paths);
+            assert!(!paths.0.iter().any(|path| path.contains("control::serve")), "{domain} depends on request handling");
+        }
+        let mut paths = References::default();
+        references(&control.join("serve"), &mut paths);
+        assert!(!paths.0.iter().any(|path| path.starts_with("env::unit::") || path.starts_with("env::room::")), "request handler executes instance effects");
+        #[derive(Default)]
+        struct StateFields(Vec<String>);
+        impl<'a> Visit<'a> for StateFields {
+            fn visit_expr_field(&mut self, field: &'a syn::ExprField) {
+                if let syn::Member::Named(name) = &field.member {
+                    if ["table", "instances", "loader"].contains(&name.to_string().as_str()) {
+                        self.0.push(name.to_string());
+                    }
+                }
+                visit::visit_expr_field(self, field);
+            }
+        }
+        for name in ["answer.rs", "instance.rs"] {
+            let source = fs::read_to_string(control.join("serve").join(name)).unwrap();
+            let mut fields = StateFields::default();
+            fields.visit_file(&syn::parse_file(&source).unwrap());
+            assert!(fields.0.is_empty(), "{name} accesses Control state directly: {:?}", fields.0);
+        }
     }
     #[derive(Default)]
     struct LoaderDependencies(Vec<String>);
