@@ -1,14 +1,14 @@
 //! Trusted setup for the two Identity probes, not a product capability declaration.
 
+use ::resource::port::{self, Access, Policy};
 use env::Wait;
 use ipc::session::establish;
 use system_api::identity::Grant;
-use ::resource::port::{self, Access, Policy};
 
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
-use env::pie;
 use ::resource::raw::{Hole, inspect, reserve};
+use env::pie;
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -26,8 +26,7 @@ pub(crate) fn supply_to(
         } else {
             Access::STORE
         };
-        port::ship(token, task, access, Policy::NONE)
-            .map_err(|_| "rule verification supply")?;
+        port::ship(token, task, access, Policy::NONE).map_err(|_| "rule verification supply")?;
     }
     if program.name() == "system-dependent" {
         super::hierarchy::supply(task)?;
@@ -47,13 +46,8 @@ pub(crate) fn supply_to(
             return Err("identity fixture source");
         }
         // Transfer an entry copy, not the installer's kernel sender identity.
-        port::ship(
-            token,
-            task,
-            Access::FETCH | Access::STORE,
-            Policy::NONE,
-        )
-        .map_err(|_| "identity fixture transfer")?;
+        port::ship(token, task, Access::FETCH | Access::STORE, Policy::NONE)
+            .map_err(|_| "identity fixture transfer")?;
     }
     Ok(())
 }
@@ -63,9 +57,9 @@ pub fn timeout() {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use system_api::identity::Wire;
-use system_client::identity::CallError;
-use system_client::identity::Face;
-use system_api::identity::limits::MAX_FRAME;
+    use system_api::identity::limits::MAX_FRAME;
+    use system_client::identity::CallError;
+    use system_client::identity::Face;
 
     let owner = env::unit::self_id();
     let entry = pie::unseal_hole(Grant::Resolve.mark()).unwrap();
@@ -88,13 +82,7 @@ use system_api::identity::limits::MAX_FRAME;
             Some(Wire::Resolve(owner))
         );
     });
-    port::ship(
-        entry,
-        reader.id(),
-        Access::FETCH,
-        Policy::NONE,
-    )
-    .unwrap();
+    port::ship(entry, reader.id(), Access::FETCH, Policy::NONE).unwrap();
     let face = Face::direct(owner, Grant::Resolve, entry).unwrap();
     let result = face.call(Wire::Resolve(owner), Wait::AtMost(1));
     timed_out.store(true, Ordering::Release);
@@ -145,12 +133,12 @@ pub fn acceptance() {
     for name in ["operator", "identity"] {
         assert!(
             assembly
-                .action(name, crate::system::control::serve::lifecycle::Action::Mint)
+                .action(name, crate::system::control::lifecycle::Action::Mint)
                 .is_err()
         );
         assert!(
             assembly
-                .action(name, crate::system::control::serve::lifecycle::Action::Ruin)
+                .action(name, crate::system::control::lifecycle::Action::Ruin)
                 .is_err()
         );
         assert_eq!(
@@ -177,14 +165,10 @@ pub fn acceptance() {
         .unwrap()
         .host()
         .unwrap();
-    let link = establish::endpoint(
-        host,
-        env::Mark::of(system_api::operator::LINK),
-        Wait::POLL,
-    )
-    .expect("identity: operator request");
-    let talk = establish::give(host, system_api::operator::ASK_MARK)
-        .expect("identity: operator ask");
+    let link = establish::endpoint(host, env::Mark::of(system_api::operator::LINK), Wait::POLL)
+        .expect("identity: operator request");
+    let talk =
+        establish::give(host, system_api::operator::ASK_MARK).expect("identity: operator ask");
     let tip = establish::find(host, system_api::operator::TIP_MARK)
         .expect("identity: trusted operator tip");
     let mut record = [0u8; system_api::operator::TIP_LEN];
@@ -194,11 +178,10 @@ pub fn acceptance() {
     Hole::from_raw(tip)
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
-    let operator =
-        system_client::operator::Face::of(
-            ipc::session::Session::from_raw(link, talk, host)
-                .unwrap_or_else(|_| panic!("identity: owned Operator session")),
-        );
+    let operator = system_client::operator::Face::of(
+        ipc::session::Session::from_raw(link, talk, host)
+            .unwrap_or_else(|_| panic!("identity: owned Operator session")),
+    );
     super::loader::acceptance(&mut assembly, &operator);
     super::account::acceptance(&mut assembly, &operator);
     let protected = || {
@@ -279,7 +262,7 @@ pub fn acceptance() {
             road,
         );
     }
-    use crate::system::control::serve::lifecycle::Action;
+    use crate::system::control::lifecycle::Action;
     assert!(
         assembly.action("absent-unit", Action::Ruin).is_err(),
         "unknown Ruin must fail without terminating System"
@@ -371,13 +354,16 @@ pub fn acceptance() {
 }
 
 fn revision(assembly: &mut Fixture) {
-    use crate::system::{control::identity::Roster, identity::revision::{Changed, Epoch}};
+    use crate::system::{
+        control::identity::Roster,
+        identity::revision::{Changed, Epoch},
+    };
     use core::sync::atomic::Ordering;
     use system_api::identity::PrincipalId;
-use system_api::identity::Reply;
-use system_api::identity::Wire;
-use system_client::identity::CallError;
-use system_client::identity::Face;
+    use system_api::identity::Reply;
+    use system_api::identity::Wire;
+    use system_client::identity::CallError;
+    use system_client::identity::Face;
 
     assembly.progress().expect("identity: initial maintenance");
     let authority = assembly
@@ -495,17 +481,10 @@ fn activation_boundary(
     let caller = execution::unit::task::spawn(move || {
         let owner = env::TaskId::new(owner);
         let hub = env::TaskId::new(hub);
-        let coalition =
-            system_api::identity::CoalitionId::new(env::TaskId::new(authority), slot);
+        let coalition = system_api::identity::CoalitionId::new(env::TaskId::new(authority), slot);
         let entry = establish::claim(owner, activation::ENTRY, Wait::AtMost(1000)).unwrap();
         assert!(
-            port::ship(
-                entry,
-                hub,
-                Access::STORE,
-                Policy::NONE
-            )
-            .is_err(),
+            port::ship(entry, hub, Access::STORE, Policy::NONE).is_err(),
             "activation copy unexpectedly transferable"
         );
         assert!(
@@ -514,13 +493,7 @@ fn activation_boundary(
         );
         finished.store(true, Ordering::Release);
     });
-    port::ship(
-        entry,
-        caller.id(),
-        Access::STORE,
-        Policy::NONE,
-    )
-    .unwrap();
+    port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
         crate::service::hub::bridge::maintain(
@@ -547,7 +520,10 @@ fn ready_driver(
     let until = env::chrono::clock() + 5_000_000_000;
     loop {
         if let Ok(entry) = operator
-            .tile(system_api::operator::path::Path::new(road), Wait::AtMost(1000))
+            .tile(
+                system_api::operator::path::Path::new(road),
+                Wait::AtMost(1000),
+            )
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
             if matches!(inspect(entry), Ok((_, owner, _)) if owner == task) {

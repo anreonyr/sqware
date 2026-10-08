@@ -72,7 +72,7 @@ impl Control {
             .ok_or(Fail::Unknown)
     }
 
-    pub(super) fn resume(&mut self, name: &str) -> Result<(), Fail> {
+    pub(in crate::system::control) fn resume(&mut self, name: &str) -> Result<(), Fail> {
         let task = self.task(name).ok_or(Fail::Unknown)?;
         if self
             .table

@@ -1,12 +1,7 @@
-use crate::system::control::{
-    core::verdict::Fail,
-    serve::{
-        self,
-        lifecycle::{self as work, Key},
-    },
-};
-use alloc::vec::Vec;
+use super::{self as work, Key, dispatch};
+use crate::system::control::{core::verdict::Fail, serve};
 use ::schedule::{BuildError, Plan, Schedule};
+use alloc::vec::Vec;
 pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     let mut mint = Schedule::sequence();
     mint.system("validate", work::mint::pre)?;
@@ -37,8 +32,8 @@ pub fn lifecycle() -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
 }
 pub fn actions(children: Vec<(Key, Plan<Fail>)>) -> Result<Plan<serve::Fail>, BuildError> {
     let mut plan = Schedule::sequence();
-    plan.system("budget", serve::driver::budget)?;
-    plan.subplans("lifecycle", serve::driver::select, children, serve::driver::finish)?;
-    plan.system("failed.mint", serve::driver::failed_mint)?;
+    plan.system("budget", dispatch::budget)?;
+    plan.subplans("lifecycle", dispatch::select, children, dispatch::finish)?;
+    plan.system("failed.mint", work::mint::failed)?;
     plan.build()
 }

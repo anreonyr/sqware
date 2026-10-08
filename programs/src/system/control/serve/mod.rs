@@ -21,10 +21,6 @@ pub enum Fail {
     Shutdown,
 }
 
-pub(crate) mod driver;
-pub mod lifecycle;
-
 pub mod instance;
-pub mod schedule;
 
 pub mod hook;

@@ -6,12 +6,12 @@ use crate::system::control::core::{
 use crate::system::control::identity::Roster;
 use alloc::{string::String, vec::Vec};
 use env::Wait;
-use programs::debug;
 use env::unit;
+use programs::debug;
 pub(crate) fn sweep(
     mut control: ::schedule::ResMut<Control>,
     roster: ::schedule::Res<Roster>,
-    operations: ::schedule::Res<super::lifecycle::Operations>,
+    operations: ::schedule::Res<crate::system::control::lifecycle::Operations>,
 ) -> Result<::schedule::Progress, super::Fail> {
     let gone: Vec<String> = control
         .table

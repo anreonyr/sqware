@@ -1,8 +1,6 @@
-use super::{
-    lifecycle::{Action, Operation, Operations, Request},
-    unit::Control,
-};
+use super::unit::Control;
 use crate::system::control::core::unit::State;
+use crate::system::control::lifecycle::{Action, Operation, Operations, Request};
 use env::Wait;
 use ipc::rpc::{self, reply::Sender as ReplySender, request::Receiver as RequestReceiver};
 use system_api::control as ccall;
@@ -25,7 +23,11 @@ pub fn receive(
         let Some(face) = watch.faces[grant.index()] else {
             continue;
         };
-        let receiver = RequestReceiver::<ControlContract>::from_raw(face, ControlContract::BACK, ControlContract::back);
+        let receiver = RequestReceiver::<ControlContract>::from_raw(
+            face,
+            ControlContract::BACK,
+            ControlContract::back,
+        );
         loop {
             let request = match receiver.receive(&mut buffer.0, Wait::POLL) {
                 Ok(request) => request,
@@ -52,7 +54,11 @@ pub fn receive(
                 );
                 continue;
             }
-            inbox.0.push_back(Incoming { wire, from, reply: reply_tx });
+            inbox.0.push_back(Incoming {
+                wire,
+                from,
+                reply: reply_tx,
+            });
         }
     }
     Ok(::schedule::Progress::Done)

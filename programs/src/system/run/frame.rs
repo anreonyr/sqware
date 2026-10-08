@@ -1,8 +1,5 @@
-use crate::system::control::serve::{
-    Fail,
-    lifecycle::{Action, Operations},
-    unit::Control,
-};
+use crate::system::control::lifecycle::{Action, Operations};
+use crate::system::control::serve::{Fail, unit::Control};
 use crate::system::life::{Phase, Status};
 use ::core::sync::atomic::Ordering;
 use ::schedule::{Progress, Res, ResMut};

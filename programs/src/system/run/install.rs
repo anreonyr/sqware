@@ -5,22 +5,20 @@ use super::{
 use crate::system::run::bootstrap::Boot;
 use crate::system::{
     boot,
+    control::identity::Roster,
     control::{
         core::verdict,
-        serve::{
-            answer, lifecycle, material::Supplies, start::Images,
-            unit::Control, watch,
-        },
+        lifecycle,
+        serve::{answer, material::Supplies, start::Images, unit::Control, watch},
     },
-    control::identity::Roster,
-    run::{frame, names, living::Living},
     life,
     operator::client::Tree,
+    run::{frame, living::Living, names},
 };
+use ::resource::bell::Bell;
+use ::schedule::{Dispatch, Resources as Registry};
 use alloc::{collections::VecDeque, vec::Vec};
 use env::pie;
-use ::schedule::{Dispatch, Resources as Registry};
-use ::resource::bell::Bell;
 pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     let status = boot::status();
     let entry = pie::unseal_hole(system_api::control::publication::ENTRY)
@@ -57,9 +55,7 @@ pub fn resources(boot: Boot) -> Result<Registry<'static>, &'static str> {
     put!(Supplies::new(boot.machine, boot.accounts));
     put!(Roster::default());
     put!(Tree::default());
-    put!(crate::system::run::connections::Connections(
-        Vec::new()
-    ));
+    put!(crate::system::run::connections::Connections(Vec::new()));
     put!(watch::Watch::new().map_err(|_| "control watch")?);
     put!(Publications::new());
     put!(resource::Resources::new());

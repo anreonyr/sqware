@@ -1,4 +1,4 @@
-use super::super::{material::Supplies, start, task, unit::Control};
+use super::super::serve::{material::Supplies, start, task, unit::Control};
 use super::{Action, Active, Instance};
 use crate::service::hub::bridge::Activation;
 use crate::system::control::serve::task::Readiness;
@@ -6,9 +6,9 @@ use crate::system::{
     control::core::{unit::State, verdict::Fail},
     control::identity::Roster,
 };
+use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 use env::{Mark, Wait};
-use ::schedule::{Progress, Res, ResMut};
 
 pub(crate) fn pre(
     mut active: ResMut<Active>,
@@ -16,7 +16,7 @@ pub(crate) fn pre(
     roster: Res<Roster>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let p = super::super::start::program_of(&job.request.name)?;
+    let p = super::super::serve::start::program_of(&job.request.name)?;
     if control
         .table
         .find(p.name())
@@ -95,7 +95,7 @@ pub fn supply(
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.execution.instance.as_mut() {
-        let program = super::super::start::program_of(&job.request.name)?;
+        let program = super::super::serve::start::program_of(&job.request.name)?;
         if program.supply().iter().any(|setup| setup.machine()) {
             supplies
                 .enroll(&mut instance.service, program)
@@ -109,7 +109,7 @@ pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result
     let Some(instance) = job.execution.instance.as_mut() else {
         return Ok(Progress::Done);
     };
-    let p = super::super::start::program_of(&job.request.name)?;
+    let p = super::super::serve::start::program_of(&job.request.name)?;
     match task::ready(
         &mut control.table,
         Readiness {
@@ -128,9 +128,7 @@ pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result
         {
             Ok(Progress::Done)
         }
-        Ok(false) if env::chrono::clock() < job.execution.deadline => {
-            Ok(Progress::Pending)
-        }
+        Ok(false) if env::chrono::clock() < job.execution.deadline => Ok(Progress::Pending),
         _ => Err(Fail::NotReady),
     }
 }

@@ -1,10 +1,10 @@
-use crate::system::control::serve;
+use crate::system::control::{lifecycle::schedule as lifecycle, serve};
 use ::schedule::{BuildError, Plan, Schedule};
 pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     use crate::system::{
+        run::connections,
         run::living,
         run::names,
-        run::connections,
         run::{publication as p, resource},
     };
     let mut request = Schedule::sequence();
@@ -61,11 +61,20 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.system("adopt", boot::adopt)?;
     start.system("identity", boot::identity)?;
     start.system("wire", boot::wire)?;
-    start.system("identity.faces", crate::system::run::publication::identity::faces)?;
+    start.system(
+        "identity.faces",
+        crate::system::run::publication::identity::faces,
+    )?;
     start.system("identity.publish", boot::publish)?;
     start.system("control.name", boot::name)?;
-    start.system("operator.faces", crate::system::run::publication::operator::faces)?;
-    start.system("publication.face", super::publication::faces::publication_face)?;
+    start.system(
+        "operator.faces",
+        crate::system::run::publication::operator::faces,
+    )?;
+    start.system(
+        "publication.face",
+        super::publication::faces::publication_face,
+    )?;
     start.system("account.initialize", super::account::initialize)?;
     start.system("account.identity", super::account::account)?;
     start.system("account.publication", super::account::publication)?;
@@ -76,16 +85,22 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     let mut units = Schedule::sequence();
     units.system("begin", crate::system::run::frame::startup)?;
     units.system("running", crate::system::run::frame::running)?;
-    start.plan("static", units.build()?.map_error(|_| "static unit startup"))?;
+    start.plan(
+        "static",
+        units.build()?.map_error(|_| "static unit startup"),
+    )?;
     start.system("running", boot::await_running)?;
     start.build()
 }
 pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
-    use serve::answer;
-    use super::watch;
     use super::frame as f;
+    use super::watch;
+    use serve::answer;
     let mut frame = Schedule::sequence();
-    frame.plan("maintain.before", maintenance()?.map_error(|_| serve::Fail::Publication))?;
+    frame.plan(
+        "maintain.before",
+        maintenance()?.map_error(|_| serve::Fail::Publication),
+    )?;
     frame.system("health", f::health)?;
     frame.system("reap", serve::reap::sweep)?;
     frame.system("instances.receive", serve::instance::receive)?;
@@ -95,8 +110,11 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
     frame.plan("loader", crate::system::run::loading::schedule::frame()?)?;
     frame.system("requests.instances", serve::instance::answer)?;
     frame.system("requests.enqueue", answer::enqueue)?;
-    frame.plan("lifecycle", serve::schedule::actions(serve::schedule::lifecycle()?)?)?;
-    frame.plan("maintain.after", maintenance()?.map_error(|_| serve::Fail::Publication))?;
+    frame.plan("lifecycle", lifecycle::actions(lifecycle::lifecycle()?)?)?;
+    frame.plan(
+        "maintain.after",
+        maintenance()?.map_error(|_| serve::Fail::Publication),
+    )?;
     frame.system("instances.reap", crate::system::run::instances::reap)?;
     frame.system("replies", f::reply)?;
     frame.plan("instance.hooks", super::hooks::instance()?)?;
@@ -128,7 +146,10 @@ pub fn frame() -> Result<Plan<serve::Fail>, BuildError> {
 }
 pub fn shutdown() -> Result<Plan<serve::Fail>, BuildError> {
     let mut stop = Schedule::sequence();
-    stop.plan("loader.close", crate::system::run::loading::schedule::shutdown()?)?;
+    stop.plan(
+        "loader.close",
+        crate::system::run::loading::schedule::shutdown()?,
+    )?;
     stop.system("stopping", crate::system::life::stopping)?;
     stop.system("join", crate::system::life::join)?;
     stop.build()

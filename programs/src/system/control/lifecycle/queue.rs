@@ -1,56 +1,9 @@
-use super::{start, unit::Service};
-use crate::system::control::core::verdict::Fail;
-use ::schedule::Cursor;
-use alloc::{collections::VecDeque, string::String, vec::Vec};
-use env::{Mark, TaskId};
-use ipc::rpc::reply::Sender as ReplySender;
-use system_api::control::frame::Said;
+use super::{Action, Execution, Operation, Request, Tracked};
+use crate::system::control::{core::verdict::Fail, serve::start};
+use ::schedule::{Cursor, Progress};
+use alloc::{collections::VecDeque, string::String};
+use env::TaskId;
 
-pub mod debark;
-pub mod embark;
-pub mod mint;
-pub mod ruin;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Key {
-    Mint,
-    Embark,
-    Debark,
-    Ruin,
-}
-#[derive(Clone, Copy)]
-pub enum Action {
-    Mint,
-    Embark { parent: Option<TaskId> },
-    Debark,
-    Ruin,
-}
-pub struct Request {
-    pub name: String,
-    pub action: Action,
-    pub back: Option<ReplySender<Said>>,
-}
-pub struct Instance {
-    pub service: Service,
-    pub marks: Vec<Mark>,
-    pub launched: bool,
-}
-pub struct Execution {
-    pub instance: Option<Instance>,
-    pub task: Option<TaskId>,
-    pub deadline: u64,
-}
-pub struct Operation {
-    pub request: Request,
-    pub execution: Execution,
-    pub failure: Option<Fail>,
-}
-pub struct Active(pub Option<Operation>);
-pub struct Tracked {
-    pub operation: Operation,
-    pub cursor: Cursor,
-    pub complete: bool,
-}
 pub struct Operations(pub(in crate::system::control) VecDeque<Tracked>);
 impl Operations {
     pub fn new() -> Self {
@@ -129,7 +82,7 @@ impl Operations {
         for _ in 0..count {
             if let Some(mut tracked) = self.0.pop_front() {
                 if tracked.complete && tracked.operation.request.back.is_some() {
-                    super::answer::complete(&mut tracked.operation);
+                    super::super::serve::answer::complete(&mut tracked.operation);
                 } else {
                     self.0.push_back(tracked);
                 }
@@ -139,5 +92,40 @@ impl Operations {
     pub(crate) fn retire_local_completed(&mut self) {
         self.0
             .retain(|job| !job.complete || job.operation.request.back.is_some());
+    }
+}
+
+impl Tracked {
+    pub(super) fn finish(
+        &mut self,
+        result: Result<Progress, Fail>,
+    ) -> Result<(), crate::system::control::serve::Fail> {
+        match result {
+            Ok(Progress::Done) => self.complete = true,
+            Ok(Progress::Pending) => {}
+            Err(fail) => {
+                let job = &mut self.operation;
+                if matches!(job.request.action, Action::Ruin) && job.execution.task.is_some() {
+                    programs::debug::put(&alloc::format!(
+                        "system: ruin {} failed {:?}",
+                        job.request.name,
+                        fail
+                    ));
+                    return Err(crate::system::control::serve::Fail::Shutdown);
+                }
+                job.failure = Some(fail);
+                if matches!(job.request.action, Action::Mint | Action::Embark { .. })
+                    && job.execution.instance.is_some()
+                {
+                    job.request.action = Action::Ruin;
+                    job.execution.deadline =
+                        env::chrono::clock() + start::BOOT_MS as u64 * 1_000_000;
+                    self.cursor.reset();
+                } else {
+                    self.complete = true;
+                }
+            }
+        }
+        Ok(())
     }
 }

@@ -140,7 +140,7 @@ mod boundaries {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for (path, name) in [
             ("control/serve/unit.rs", "Control"),
-            ("control/serve/lifecycle/mod.rs", "Operations"),
+            ("control/lifecycle/queue.rs", "Operations"),
         ] {
             let syntax = syn::parse_file(&fs::read_to_string(system.join(path)).unwrap()).unwrap();
             let state = syntax.items.iter().find_map(|item| match item {
@@ -160,6 +160,35 @@ mod boundaries {
                 }
             }
         }
+    }
+    #[test]
+    fn lifecycle_dispatch_does_not_own_task_state_or_compensation() {
+        let control = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system/control");
+        for old in ["serve/lifecycle", "serve/driver.rs", "serve/schedule.rs"] {
+            assert!(!control.join(old).exists(), "lifecycle remains under request handling: {old}");
+        }
+        let mut paths = References::default();
+        let source = fs::read_to_string(control.join("lifecycle/dispatch.rs")).unwrap();
+        paths.visit_file(&syn::parse_file(&source).unwrap());
+        assert!(!paths.0.iter().any(|path| {
+            path.ends_with("::Control") || path.ends_with("::State")
+                || path.ends_with("::Slot") || path.starts_with("env::")
+        }), "dispatch owns domain effects: {:?}", paths.0);
+        #[derive(Default)]
+        struct StateFields(Vec<String>);
+        impl<'a> Visit<'a> for StateFields {
+            fn visit_expr_field(&mut self, field: &'a syn::ExprField) {
+                if let syn::Member::Named(name) = &field.member {
+                    if ["table", "instances", "loader", "pending", "failure", "deadline"].contains(&name.to_string().as_str()) {
+                        self.0.push(name.to_string());
+                    }
+                }
+                visit::visit_expr_field(self, field);
+            }
+        }
+        let mut fields = StateFields::default();
+        fields.visit_file(&syn::parse_file(&source).unwrap());
+        assert!(fields.0.is_empty(), "dispatch mutates domain state: {:?}", fields.0);
     }
     #[derive(Default)]
     struct LoaderDependencies(Vec<String>);

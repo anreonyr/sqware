@@ -1,5 +1,5 @@
-use env::pie;
 use ::resource::raw::{Hole, pies, reserve};
+use env::pie;
 
 pub const COMMAND: env::Mark = env::Mark::of("hierarchy-command");
 pub const ANSWER: env::Mark = env::Mark::of("hierarchy-answer");
@@ -36,9 +36,9 @@ pub(crate) fn command(
         assembly.progress().expect("hierarchy progress");
         if code == 5 {
             use system_api::control::publication::Frame;
-use system_api::control::publication::Object;
-use system_api::control::publication::REF;
-use system_api::control::publication::Reply;
+            use system_api::control::publication::Object;
+            use system_api::control::publication::REF;
+            use system_api::control::publication::Reply;
             let fake = establish::find(me, REF).unwrap();
             let mut request = [0; Frame::LEN];
             if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
@@ -95,17 +95,17 @@ pub(crate) fn exercise(
     use env::Wait;
     use ipc::session::establish;
     use system_api::control::publication::Object;
-    use system_client::identity::Face;
-use system_client::identity::Installer;
-use system_client::identity::Organization;
     use system_api::identity::Grant;
-use system_api::identity::Install;
-use system_api::identity::Reply;
-use system_api::identity::Selector;
-use system_api::identity::Subject;
-use system_api::identity::Wire;
+    use system_api::identity::Install;
+    use system_api::identity::Reply;
+    use system_api::identity::Selector;
+    use system_api::identity::Subject;
+    use system_api::identity::Wire;
     use system_api::operator::Fail;
-use system_api::operator::Permit;
+    use system_api::operator::Permit;
+    use system_client::identity::Face;
+    use system_client::identity::Installer;
+    use system_client::identity::Organization;
     let wait = Wait::AtMost(3000);
     let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
     let face = |g| Face::direct(authority, g, entry(g)).unwrap();
@@ -330,7 +330,8 @@ use system_api::operator::Permit;
                     .write::<crate::system::operator::client::Tree>()
                     .unwrap(),
                 &crate::system::run::publication::Internal {
-                    road: (system_api::operator::path::Path::new("svc/fixtures/stale")).to_path_buf(),
+                    road: (system_api::operator::path::Path::new("svc/fixtures/stale"))
+                        .to_path_buf(),
                     entry: source,
                     access: (Permit::Identity(Selector::MemberOf(coalition)), me),
                 },
@@ -405,7 +406,7 @@ use system_api::operator::Permit;
     assembly
         .action(
             "system-child",
-            crate::system::control::serve::lifecycle::Action::Ruin,
+            crate::system::control::lifecycle::Action::Ruin,
         )
         .expect("hierarchy: scheduled ruin");
     assert!(env::unit::join(target, wait).unwrap_or(true));
@@ -418,7 +419,7 @@ use system_api::operator::Permit;
     assembly
         .action(
             "system-child",
-            crate::system::control::serve::lifecycle::Action::Mint,
+            crate::system::control::lifecycle::Action::Mint,
         )
         .unwrap();
     let failed_task = assembly
@@ -436,7 +437,7 @@ use system_api::operator::Permit;
         assembly
             .action(
                 "system-child",
-                crate::system::control::serve::lifecycle::Action::Embark {
+                crate::system::control::lifecycle::Action::Embark {
                     parent: Some(service)
                 }
             )
@@ -475,14 +476,14 @@ pub fn codecs() {
     use env::wire::Span as _;
     use env::{PieToken, TaskId};
     use system_api::control::publication::Frame;
-use system_api::control::publication::Object;
-use system_api::control::publication::Reply;
-use system_api::control::publication::Scope;
-use system_api::control::publication::Target;
+    use system_api::control::publication::Object;
+    use system_api::control::publication::Reply;
+    use system_api::control::publication::Scope;
+    use system_api::control::publication::Target;
     use system_api::operator::EntryId;
-use system_api::operator::Permit;
-use system_api::operator::Tip;
-use system_api::operator::TipIn;
+    use system_api::operator::Permit;
+    use system_api::operator::Tip;
+    use system_api::operator::TipIn;
     let a = TaskId::new(77);
     let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
     let p = system_api::identity::PrincipalId::new(a, 19);
@@ -512,11 +513,15 @@ use system_api::operator::TipIn;
             assert!(Frame::take(&bytes[..end]).is_none());
         }
     }
-    let mut bad = Frame::new(1, Target::Service {
+    let mut bad = Frame::new(
+        1,
+        Target::Service {
             scope: Scope::Fixture,
             group: "bad/name".into(),
             name: "x".into(),
-        }, (b, Permit::Public));
+        },
+        (b, Permit::Public),
+    );
     assert!(bad.target().is_none());
     bad.group = "legal".into();
     bad.kind = 99;
@@ -572,10 +577,10 @@ use system_api::operator::TipIn;
 }
 
 pub fn reference_lifetime() {
+    use ::resource::port::{self, Access, Policy};
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicUsize, Ordering};
     use env::{Mark, Wait};
-    use ::resource::port::{self, Access, Policy};
     let me = env::unit::self_id();
     let source = pie::unseal_hole(Mark::of("forget-source")).unwrap();
     assert!(
@@ -595,9 +600,7 @@ pub fn reference_lifetime() {
     Hole::from_raw(child).push(b"ok", Wait::POLL).unwrap();
     let mut bytes = [0; 2];
     assert_eq!(
-        Hole::from_raw(source)
-            .pull(&mut bytes, Wait::POLL)
-            .unwrap(),
+        Hole::from_raw(source).pull(&mut bytes, Wait::POLL).unwrap(),
         (2, me)
     );
     pie::revoke(me, child).unwrap();
@@ -673,17 +676,17 @@ pub fn reference_lifetime() {
 }
 
 fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
+    use ::resource::port::{self, Access, Policy};
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
-    use system_client::control::publication::Client;
-use system_api::control::publication::ENTRY;
-use system_api::control::publication::Frame;
-use system_api::control::publication::Scope;
-use system_api::control::publication::Target;
+    use system_api::control::publication::ENTRY;
+    use system_api::control::publication::Frame;
+    use system_api::control::publication::Scope;
+    use system_api::control::publication::Target;
     use system_api::operator::Fail;
-use system_api::operator::Permit;
-    use ::resource::port::{self, Access, Policy};
+    use system_api::operator::Permit;
+    use system_client::control::publication::Client;
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
     let control = env::unit::self_id().get();
@@ -691,9 +694,7 @@ use system_api::operator::Permit;
     let raw = protected.get();
     let caller = execution::unit::task::spawn(move || {
         let control = env::TaskId::new(control);
-        let entry =
-            ipc::session::establish::claim(control, ENTRY, Wait::AtMost(1000))
-                .unwrap();
+        let entry = ipc::session::establish::claim(control, ENTRY, Wait::AtMost(1000)).unwrap();
         let client = Client::direct(control, entry).unwrap();
         let target = Target::Service {
             scope: Scope::Fixture,
@@ -708,13 +709,18 @@ use system_api::operator::Permit;
         );
         let other = env::PieToken::from_bytes(&(raw as u64).to_le_bytes()).unwrap();
         let sender = ipc::rpc::request::Sender::<system_api::control::publication::Call>::from_raw(
-            entry, system_api::control::publication::Call::BACK,
-        ).unwrap();
-        let raw_result = sender.call(ipc::time::Deadline::new(Wait::AtMost(3000)), |back| {
-            let mut request = Frame::new(1, target, (other, Permit::Public));
-            request.back = back;
-            request
-        }).unwrap().result();
+            entry,
+            system_api::control::publication::Call::BACK,
+        )
+        .unwrap();
+        let raw_result = sender
+            .call(ipc::time::Deadline::new(Wait::AtMost(3000)), |back| {
+                let mut request = Frame::new(1, target, (other, Permit::Public));
+                request.back = back;
+                request
+            })
+            .unwrap()
+            .result();
         assert_eq!(
             raw_result,
             Err(Fail::Denied),
@@ -747,17 +753,17 @@ use system_api::operator::Permit;
 }
 
 fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) {
+    use ::resource::port::{self, Access, Policy};
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
     use ipc::session::{Session, establish};
     use system_api::operator::EntryId;
-use system_api::operator::Fail;
-use system_api::operator::Grant;
-use system_api::operator::Where;
-use system_client::operator as operator;
-use system_client::operator::Face;
-    use ::resource::port::{self, Access, Policy};
+    use system_api::operator::Fail;
+    use system_api::operator::Grant;
+    use system_api::operator::Where;
+    use system_client::operator;
+    use system_client::operator::Face;
     let control = env::unit::self_id();
     let host = assembly
         .resources
@@ -799,7 +805,8 @@ use system_client::operator::Face;
             )
             .unwrap();
             let tip = system_api::operator::Tip::Plate {
-                road: system_api::operator::path::Path::new("idt/principal/forged/ref").to_path_buf(),
+                road: system_api::operator::path::Path::new("idt/principal/forged/ref")
+                    .to_path_buf(),
                 leaf: env::PieToken::NONE,
                 permit: system_api::operator::Permit::Public,
                 owner: control,
