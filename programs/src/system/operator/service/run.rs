@@ -3,7 +3,7 @@ use super::{
     answer::Output,
     door::Judgment,
     frame::Running,
-    session::{Buffer, Hit, Outboxes, Request, Selected, Settling},
+    session::{Buffer, Hit, Outboxes, Request, Selected},
     tip::{Ack, CurrentTip, Tip, Tips},
     watch,
 };
@@ -59,7 +59,6 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .map_err(|_| Fail::Room)?;
     resources.insert(Hit(None)).map_err(|_| Fail::Room)?;
     resources.insert(Selected(None)).map_err(|_| Fail::Room)?;
-    resources.insert(Settling(false)).map_err(|_| Fail::Room)?;
     resources.insert(Running(true)).map_err(|_| Fail::Room)?;
     resources
         .insert(Dispatch::<(), Fail>::new())

@@ -67,21 +67,27 @@ mod tests {
         let request = Tip::Guest {
             who: TaskId::new(7),
             reply: PieToken::mint(9),
+            ask: PieToken::mint(11),
         };
         let mut expected = vec![2];
         word(&mut expected, 7);
         word(&mut expected, 9);
+        word(&mut expected, 11);
         let mut bytes = vec![0; TIP_LEN];
         let used = request.store(&mut bytes).unwrap();
-        assert_eq!(used, 17);
+        assert_eq!(used, 25);
         assert_eq!(&bytes[..used], expected.as_slice());
         assert!(
-            matches!(TipIn::fetch(&expected), Some(TipIn::Guest { who, reply })
-            if who == TaskId::new(7) && reply == PieToken::mint(9))
+            matches!(TipIn::fetch(&expected), Some(TipIn::Guest { who, reply, ask })
+            if who == TaskId::new(7) && reply == PieToken::mint(9) && ask == PieToken::mint(11))
         );
         assert!(
             TipIn::fetch(&expected[..9]).is_none(),
             "implicit legacy handoff must not rescan"
+        );
+        assert!(
+            TipIn::fetch(&expected[..17]).is_none(),
+            "reply-only handoff cannot bind a session"
         );
         expected.push(0);
         assert!(TipIn::fetch(&expected).is_none());

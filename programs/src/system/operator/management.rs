@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 
 use ::resource::port::{self, Access, Policy};
 use env::wire::Field;
-use env::{HoleDir, PieToken, TaskId, Wait};
+use env::{PieToken, TaskId, Wait};
 
 use crate::support::timing::BOOT_MS;
 
@@ -16,13 +16,6 @@ use system_api::operator::EntryId;
 use system_api::operator::Path;
 use system_api::operator::TIP_MARK;
 use system_api::operator::Tip;
-
-/// **只走提示之路**：那条路上三形各带一格 `kind`（读者是持树者，它按首格认形状）
-fn push(into: PieToken, tip: Tip) -> Result<(), ()> {
-    Sender::<Tip>::from_raw(into)
-        .send_within(tip, Wait::AtMost(BOOT_MS))
-        .map_err(|_| ())
-}
 
 /// Consuming a bootstrap request does not prove its mutation succeeded.
 fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId, &'static str> {
@@ -56,14 +49,12 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
     result
 }
 
-/// **把一个号推过去**（`TaskId`，8 字节小端）——**树路上那一格**：告客人"答话的是谁"
-pub(crate) fn tell(who: TaskId, into: PieToken) -> Result<(), ()> {
-    let mut rec = [0u8; TaskId::WIDTH];
-    who.store(&mut rec);
-    let road = Hole::from_raw(into);
-    road.push(&rec, Wait::AtMost(BOOT_MS)).map_err(|_| ())?;
-    road.wait(HoleDir::Push, Wait::Forever).map_err(|_| ())?;
-    Ok(())
+/// Deliver the host and the exact Control-side transport seed for this session.
+pub(crate) fn tell(info: (TaskId, PieToken), into: PieToken, wait: Wait) -> Result<(), ()> {
+    let mut record = [0u8; TaskId::WIDTH + PieToken::WIDTH];
+    info.0.store(&mut record[..TaskId::WIDTH]);
+    info.1.store(&mut record[TaskId::WIDTH..]);
+    Hole::from_raw(into).push(&record, wait).map_err(|_| ())
 }
 
 /// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路
@@ -174,15 +165,10 @@ impl Tree {
     }
 }
 
-/// 把持树者接上一位客人（装配者调用）：**三步**
-/// `host` = 持树者的号（service::spawn 交回来的那个，装配者本来就知道它）
-/// `tip` = 提示之路在**本task表里**的那一枚（第一次用时认下来，此后逐条传下去）
-/// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
-/// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格
 fn current_request(client: TaskId, reply: PieToken) -> bool {
     alive(reply)
-        && matches!(reserve(reply), Ok((_, owner, mark))
-        if owner == client && mark == system_api::operator::LINK_MARK)
+        && matches!(reserve(reply), Ok((vestor, owner, mark))
+        if vestor == client && owner == client && mark == system_api::operator::LINK_MARK)
 }
 
 fn attach(
@@ -191,29 +177,41 @@ fn attach(
     tip: &mut Option<PieToken>,
 ) -> Result<establish::Held, &'static str> {
     let (client, reply) = request;
-    //      答话从客人自己那枚走）＋ 认领**这位客人**交出来的那一枚（记号 = 这条路的名字）。
-    //      判据两格（`owner == client` ＋ 记号）与原 `seat` ＋ `claim` 逐字同源。
     if !current_request(client, reply) {
         return Err("operator:gone request");
     }
+    host_of(host, Wait::POLL, tip)?;
+    let budget = ipc::time::Deadline::new(Wait::AtMost(BOOT_MS));
     let link = establish::Held(establish::accept(reply).map_err(|_| "operator:seat")?);
-    // 3. 提示孔（只认一次）→ 把客人那一枚转授给持树者 → 告两边。
-    //    要推的正是它（**不是** `host`：那是持树者的号，推不动）。
-    let _ = host_of(host, Wait::POLL, tip)?;
     let delivered = hand(reply, host).map_err(|()| "operator:hand")?;
-    // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节**裸号**——那条路的读者是
-    // ipc::session::hear，见 tell）。
-    tell(host, reply).map_err(|()| "operator:who")?;
-    // 提示在**转授之后**：持树者据此可以按"提示一到，答话路必已在本表里"办事。
-    // The counterpart remains owned until the client closes or replaces this LINK.
-    push(
-        (*tip).ok_or("operator:tip")?,
-        Tip::Guest {
-            who: client,
-            reply: delivered,
-        },
-    )
-    .map_err(|()| "operator:tell")?;
+    let result = (|| {
+        tell((host, link.seed()), reply, budget.remaining()).map_err(|()| "operator:who")?;
+        let mut bytes = [0; PieToken::WIDTH];
+        let (len, from) = Hole::from_raw(link.rx())
+            .pull(&mut bytes, budget.remaining())
+            .map_err(|_| "operator:request endpoint")?;
+        if from != client || len != PieToken::WIDTH {
+            return Err("operator:request source");
+        }
+        let ask = PieToken::fetch(&bytes).ok_or("operator:request encoding")?;
+        if ask == PieToken::NONE {
+            return Err("operator:request missing");
+        }
+        Sender::<Tip>::from_raw((*tip).ok_or("operator:tip")?)
+            .send_within(
+                Tip::Guest {
+                    who: client,
+                    reply: delivered,
+                    ask,
+                },
+                budget.remaining(),
+            )
+            .map_err(|_| "operator:session handoff")
+    })();
+    if result.is_err() {
+        let _ = pie::revoke(host, delivered);
+    }
+    result?;
     Ok(link)
 }
 
@@ -264,46 +262,25 @@ impl Tree {
         self.clients
             .retain(|(_, link)| link.tx().is_some_and(alive));
         for client in connections.drain(..) {
-            if self.clients.iter().any(|(known, link)| {
-                *known == client
-                    && link
-                        .tx()
-                        .is_some_and(|reply| current_request(client, reply))
-            }) {
-                continue;
-            }
-            let reply = match establish::find(client, system_api::operator::LINK_MARK) {
-                Ok(reply) => reply,
-                Err(establish::DiscoveryFail::Missing) => continue,
-                Err(establish::DiscoveryFail::Ambiguous) => {
-                    programs::debug::put("operator: ambiguous client link");
-                    continue;
-                }
-            };
-            let old = self.clients.iter().position(|(task, _)| *task == client);
-            if old.is_some_and(|at| self.clients[at].1.tx() == Some(reply)) {
-                continue;
-            }
-            if old.is_none() {
-                self.clients
-                    .try_reserve(1)
-                    .map_err(|_| "operator:client capacity")?;
-            }
-            let link = match attach((client, reply), host, &mut self.tip) {
-                Ok(link) if current_request(client, reply) => link,
-                Ok(_) => continue,
-                Err(_)
-                    if !current_request(client, reply)
-                        || env::unit::join(client, Wait::POLL).unwrap_or(true) =>
+            // Every live LINK is a separate bootstrap request, not a singleton role lookup.
+            for candidate in ::resource::raw::pies() {
+                let reply = candidate.token;
+                if !current_request(client, reply)
+                    || self
+                        .clients
+                        .iter()
+                        .any(|(_, link)| link.tx() == Some(reply))
                 {
                     continue;
                 }
-                Err(why) => return Err(why),
-            };
-            if let Some(at) = old {
-                self.clients[at].1 = link;
-            } else {
-                self.clients.push((client, link));
+                self.clients
+                    .try_reserve(1)
+                    .map_err(|_| "operator:client capacity")?;
+                match attach((client, reply), host, &mut self.tip) {
+                    Ok(link) if current_request(client, reply) => self.clients.push((client, link)),
+                    Ok(_) => {}
+                    Err(_) => programs::debug::put("operator: rejected session bootstrap"),
+                }
             }
         }
         Ok(())

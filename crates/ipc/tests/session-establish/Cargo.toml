@@ -8,3 +8,6 @@ publish = false
 path = "lib.rs"
 
 [workspace]
+
+[dependencies]
+wire = { path = "../../../wire" }

@@ -179,11 +179,25 @@ pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
 /// **`narrow` 那一手不能省**：一条路上只有一个读者——不窄下来，本端与对端都能读同一枚孔
 /// 而孔是单手，谁先读谁吃掉
 pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
+    give_at(to, mark).map(|(local, _remote)| local)
+}
+
+/// Create a one-way ask hole: local STORE capability and the peer's FETCH seed.
+pub fn give_at(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
     let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
-    port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE)
-        .map_err(|_| EstablishFail::NoSeed)?;
-    env::pie::narrow(hole, Permission::STORE).map_err(|_| EstablishFail::NoSeed)?;
-    Ok(hole)
+    let remote = match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE) {
+        Ok(at) => at.seed(),
+        Err(_) => {
+            let _ = pie::release(hole);
+            return Err(EstablishFail::NoSeed);
+        }
+    };
+    if env::pie::narrow(hole, Permission::STORE).is_err() {
+        let _ = pie::revoke(to, remote);
+        let _ = pie::release(hole);
+        return Err(EstablishFail::NoSeed);
+    }
+    Ok((hole, remote))
 }
 
 /// Find the unique live resource matching its kernel-verified owner and mark.

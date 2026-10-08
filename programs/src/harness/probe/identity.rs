@@ -178,8 +178,8 @@ pub fn acceptance() {
         .unwrap();
     let link = establish::endpoint(host, env::Mark::of(system_api::operator::LINK), Wait::POLL)
         .expect("identity: operator request");
-    let talk =
-        establish::give(host, system_api::operator::ASK_MARK).expect("identity: operator ask");
+    let (talk, ask) =
+        establish::give_at(host, system_api::operator::ASK_MARK).expect("identity: operator ask");
     let tip = establish::find(host, system_api::operator::TIP_MARK)
         .unwrap_or_else(|_| panic!("identity: trusted operator tip missing or ambiguous"));
     let mut record = [0u8; system_api::operator::TIP_LEN];
@@ -187,12 +187,18 @@ pub fn acceptance() {
     let n = system_api::operator::Tip::Guest {
         who: me,
         reply: explicit_reply,
+        ask,
     }
     .store(&mut record)
     .unwrap();
     Hole::from_raw(tip)
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
+    let mut ack = [0; 1];
+    let (len, from) = Hole::from_raw(link.rx())
+        .pull(&mut ack, Wait::AtMost(1000))
+        .expect("identity: Operator admission acknowledgement");
+    assert_eq!((len, from, ack[0]), (1, host, system_api::operator::OK));
     let operator = system_client::operator::Face::of(
         ipc::session::Session::from_raw(link, talk, host)
             .unwrap_or_else(|_| panic!("identity: owned Operator session")),

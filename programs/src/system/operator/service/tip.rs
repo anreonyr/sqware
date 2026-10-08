@@ -2,7 +2,10 @@ use super::{Fail, answer::Output, plate};
 use crate::support::face::desk::{Desk, DeskFail};
 use crate::system::app::life::Status;
 use crate::system::operator::tree::Tile;
-use crate::system::operator::{service::claim::valid_reply, tree::Operator};
+use crate::system::operator::{
+    service::claim::{valid_reply, valid_request},
+    tree::Operator,
+};
 use ::resource::raw::{Hole, reserve};
 use ::resource::{
     pile::Pile,
@@ -119,16 +122,45 @@ pub(super) fn wired(
     }
     Ok(Progress::Done)
 }
-pub(super) fn guest(current: Res<CurrentTip>, mut desk: ResMut<Desk>) -> Result<Progress, Fail> {
-    if let Some((ocall::TipIn::Guest { who, reply }, from)) = &current.0 {
-        if !valid_reply(*who, *reply, *from) {
-            debug::put("operator: invalid explicit guest reply");
+pub(super) fn guest(
+    current: Res<CurrentTip>,
+    mut desk: ResMut<Desk>,
+    pile: Res<Pile>,
+) -> Result<Progress, Fail> {
+    let Some((ocall::TipIn::Guest { who, reply, ask }, from)) = &current.0 else {
+        return Ok(Progress::Done);
+    };
+    if !valid_reply(*who, *reply, *from) {
+        debug::put("operator: invalid explicit guest reply");
+        return Ok(Progress::Done);
+    }
+    if !valid_request(*who, *ask, *who) {
+        if !desk.contains_reply(*reply) {
+            let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
+        }
+        return Ok(Progress::Done);
+    }
+    match desk.admit(*who, (*reply, *ask)) {
+        Ok(_) => {}
+        Err(DeskFail::Already) => return Ok(Progress::Done),
+        Err(DeskFail::Conflict) => return Ok(Progress::Done),
+        Err(DeskFail::Full) => {
+            let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
             return Ok(Progress::Done);
         }
-        match desk.admit(*who, *reply) {
-            Ok(_) | Err(DeskFail::Already) => {}
-            Err(DeskFail::Full) => debug::put("operator: desk full"),
-        }
+    }
+    if pile.attach(*ask, HoleDir::Pull).is_err() {
+        desk.evict(*who, (*reply, *ask));
+        let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
+        return Ok(Progress::Done);
+    }
+    if Hole::from_raw(*reply)
+        .push(&[ocall::OK], Wait::POLL)
+        .is_err()
+    {
+        debug::put("operator: guest acknowledgement failed");
+        desk.evict(*who, (*reply, *ask));
+        let _ = pile.detach(*ask, HoleDir::Pull);
     }
     Ok(Progress::Done)
 }

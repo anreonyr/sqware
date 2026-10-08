@@ -1,9 +1,10 @@
 #![allow(dead_code)]
+extern crate alloc;
 extern crate self as env;
 extern crate self as resource;
-extern crate self as wire;
+pub use ::wire::{Contract, Message};
 
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::VecDeque};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wait {
     AtMost(usize),
@@ -16,10 +17,23 @@ impl Wait {
 pub struct PieToken(pub usize);
 impl PieToken {
     pub const NONE: Self = Self(0);
+    pub const WIDTH: usize = 8;
+    pub fn to_bytes(self) -> [u8; 8] {
+        (self.0 as u64).to_le_bytes()
+    }
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        Some(Self(
+            u64::from_le_bytes(bytes.get(..8)?.try_into().ok()?) as usize
+        ))
+    }
+    pub const fn get(self) -> usize {
+        self.0
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskId(pub usize);
 impl TaskId {
+    pub const WIDTH: usize = 8;
     pub const fn new(x: usize) -> Self {
         Self(x)
     }
@@ -50,7 +64,18 @@ pub enum MailFail {
     Busy,
     Dead,
 }
-pub type MailResult<T> = Result<T, MailFail>;
+impl MailFail {
+    pub const fn code(self) -> isize {
+        match self {
+            Self::Busy => -1,
+            Self::Dead => -2,
+        }
+    }
+}
+pub struct MailError {
+    pub source: MailFail,
+}
+pub type MailResult<T> = Result<T, MailError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HoleDir {
     Pull,
@@ -62,6 +87,33 @@ impl VirtAddr {
     pub fn new(x: usize) -> Self {
         Self(x)
     }
+}
+
+impl wire::Field for TaskId {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&(self.0 as u64).to_le_bytes())
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Some(Self(
+            u64::from_le_bytes(bytes.get(..8)?.try_into().ok()?) as usize
+        ))
+    }
+}
+impl wire::Field for PieToken {
+    const WIDTH: usize = 8;
+    fn store(&self, out: &mut [u8]) {
+        out.copy_from_slice(&self.to_bytes())
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Self::from_bytes(bytes)
+    }
+}
+pub mod wire {
+    pub use ::wire::{Contract, Field, Message};
+}
+pub mod debug {
+    pub fn put(_: &str) {}
 }
 
 pub mod chrono {
@@ -116,6 +168,16 @@ pub mod fake {
         pub hole: bool,
         pub query: Option<(TaskId, TaskId, Mark)>,
     }
+    #[derive(Clone)]
+    pub struct Handshake {
+        pub host: TaskId,
+        pub transport: PieToken,
+        pub bootstrap: Option<Vec<u8>>,
+        pub bootstrap_sender: TaskId,
+        pub ack: Vec<u8>,
+        pub ack_sender: TaskId,
+        pub advance_ms: usize,
+    }
     thread_local! {
       pub static CANDIDATES:RefCell<Vec<Candidate>>=const{RefCell::new(Vec::new())};
       pub static OWN:RefCell<TaskId>=const{RefCell::new(TaskId(1))};
@@ -126,9 +188,15 @@ pub mod fake {
       pub static CLEAN:RefCell<Vec<(TaskId,PieToken)>>=const{RefCell::new(Vec::new())};
       pub static RELEASE:RefCell<Vec<PieToken>>=const{RefCell::new(Vec::new())};
       pub static SHIP_FAIL:RefCell<bool>=const{RefCell::new(false)};
+      pub static NARROW_FAIL:RefCell<bool>=const{RefCell::new(false)};
       pub static UNSEAL_FAIL:RefCell<bool>=const{RefCell::new(false)};
       pub static SHIPS:RefCell<Vec<(PieToken,TaskId)>>=const{RefCell::new(Vec::new())};
       pub static SCANS:RefCell<usize>=const{RefCell::new(0)};
+      pub static INBOX:RefCell<VecDeque<(PieToken,Vec<u8>,TaskId)>>=const{RefCell::new(VecDeque::new())};
+      pub static HANDSHAKES:RefCell<VecDeque<Handshake>>=const{RefCell::new(VecDeque::new())};
+      pub static ACTIVE:RefCell<Option<(PieToken,Handshake,bool)>>=const{RefCell::new(None)};
+      pub static WAITS:RefCell<Vec<Wait>>=const{RefCell::new(Vec::new())};
+      pub static PUSHES:RefCell<Vec<(PieToken,Vec<u8>)>>=const{RefCell::new(Vec::new())};
     }
     pub fn reset() {
         CANDIDATES.with(|x| x.borrow_mut().clear());
@@ -141,21 +209,43 @@ pub mod fake {
         RELEASE.with(|x| x.borrow_mut().clear());
         SHIP_FAIL.with(|x| *x.borrow_mut() = false);
         UNSEAL_FAIL.with(|x| *x.borrow_mut() = false);
+        NARROW_FAIL.with(|x| *x.borrow_mut() = false);
         SHIPS.with(|x| x.borrow_mut().clear());
         SCANS.with(|x| *x.borrow_mut() = 0);
+        INBOX.with(|x| x.borrow_mut().clear());
+        HANDSHAKES.with(|x| x.borrow_mut().clear());
+        ACTIVE.with(|x| *x.borrow_mut() = None);
+        WAITS.with(|x| x.borrow_mut().clear());
+        PUSHES.with(|x| x.borrow_mut().clear());
     }
     pub fn add(token: usize, alive: bool, owner: usize, mark: usize) {
         add_resource(token, alive, true, owner, mark);
     }
     pub fn add_resource(token: usize, alive: bool, hole: bool, owner: usize, mark: usize) {
+        add_transfer(token, alive, hole, 1, owner, mark);
+    }
+    pub fn add_transfer(
+        token: usize,
+        alive: bool,
+        hole: bool,
+        vestor: usize,
+        owner: usize,
+        mark: usize,
+    ) {
         CANDIDATES.with(|x| {
             x.borrow_mut().push(Candidate {
                 token: PieToken(token),
                 alive,
                 hole,
-                query: Some((TaskId(1), TaskId(owner), Mark(mark))),
+                query: Some((TaskId(vestor), TaskId(owner), Mark(mark))),
             })
         });
+    }
+    pub fn handshake(h: Handshake) {
+        HANDSHAKES.with(|x| x.borrow_mut().push_back(h));
+    }
+    pub fn push_message(token: PieToken, bytes: Vec<u8>, from: TaskId) {
+        INBOX.with(|x| x.borrow_mut().push_back((token, bytes, from)));
     }
     pub fn falls() -> usize {
         FALLS.with(|x| *x.borrow())
@@ -197,15 +287,64 @@ pub mod raw {
         pub fn from_raw(t: PieToken) -> Self {
             Self(t)
         }
-        pub fn pull(&self, _: &mut [u8], _: Wait) -> Result<(usize, TaskId), PullError> {
-            Err(PullError)
+        pub fn pull(&self, buffer: &mut [u8], wait: Wait) -> Result<(usize, TaskId), PullError> {
+            fake::WAITS.with(|x| x.borrow_mut().push(wait));
+            let frame = fake::INBOX
+                .with(|x| {
+                    let mut q = x.borrow_mut();
+                    let i = q.iter().position(|(t, _, _)| *t == self.0)?;
+                    q.remove(i)
+                })
+                .ok_or(PullError {
+                    source: MailFail::Busy,
+                })?;
+            if frame.1.len() > buffer.len() {
+                return Err(PullError {
+                    source: MailFail::Dead,
+                });
+            }
+            buffer[..frame.1.len()].copy_from_slice(&frame.1);
+            let advance = fake::ACTIVE.with(|x| {
+                x.borrow()
+                    .as_ref()
+                    .and_then(|(rx, h, done)| (*rx == self.0 && !*done).then_some(h.advance_ms))
+            });
+            if let Some(ms) = advance {
+                fake::NOW.with(|x| *x.borrow_mut() += (ms as u64) * 1_000_000);
+                fake::ACTIVE.with(|x| {
+                    if let Some((_, _, done)) = x.borrow_mut().as_mut() {
+                        *done = true;
+                    }
+                });
+            }
+            Ok((frame.1.len(), frame.2))
         }
-        pub fn push(&self, _: &[u8], _: Wait) -> Result<(), PushError> {
-            Err(PushError)
+        pub fn push(&self, bytes: &[u8], _: Wait) -> Result<(), PushError> {
+            fake::PUSHES.with(|x| x.borrow_mut().push((self.0, bytes.to_vec())));
+            if let Some((rx, h, _)) = fake::ACTIVE
+                .with(|x| x.borrow().clone())
+                .filter(|(_, h, _)| h.transport == self.0)
+            {
+                fake::push_message(rx, h.ack, h.ack_sender);
+            }
+            let _ = bytes;
+            Ok(())
+        }
+        pub fn depth(&self) -> Result<usize, PullError> {
+            Ok(fake::INBOX.with(|x| x.borrow().iter().filter(|(t, _, _)| *t == self.0).count()))
+        }
+        pub fn wait(&self, _: HoleDir, _: Wait) -> MailResult<bool> {
+            Ok(false)
         }
     }
-    pub struct PullError;
-    pub struct PushError;
+    #[derive(Debug)]
+    pub struct PullError {
+        pub source: MailFail,
+    }
+    #[derive(Debug)]
+    pub struct PushError {
+        pub source: MailFail,
+    }
     pub fn pies() -> Pies {
         fake::SCANS.with(|x| *x.borrow_mut() += 1);
         Pies { i: 0 }
@@ -239,6 +378,9 @@ pub mod raw {
 }
 pub mod pie {
     use super::*;
+    pub fn seal(_: PieToken) -> PieResult<()> {
+        Ok(())
+    }
     pub fn release(t: PieToken) -> PieResult<()> {
         fake::RELEASE.with(|x| x.borrow_mut().push(t));
         Ok(())
@@ -261,13 +403,17 @@ pub mod pie {
                 token: t,
                 alive: true,
                 hole: true,
-                query: Some((TaskId(1), TaskId(0), mark)),
+                query: Some((TaskId(0), TaskId(1), mark)),
             })
         });
         Ok(t)
     }
     pub fn narrow(_: PieToken, _: Permission) -> PieResult<()> {
-        Ok(())
+        if fake::NARROW_FAIL.with(|x| x.replace(false)) {
+            Err(PieError)
+        } else {
+            Ok(())
+        }
     }
 }
 pub mod port {
@@ -296,7 +442,7 @@ pub mod port {
             self.0
         }
     }
-    pub fn ship(t: PieToken, to: TaskId, _: Access, _: Policy) -> Result<To, ()> {
+    pub fn ship(t: PieToken, to: TaskId, _: Access, policy: Policy) -> Result<To, ()> {
         if fake::SHIP_FAIL.with(|x| x.replace(false)) {
             return Err(());
         }
@@ -306,60 +452,227 @@ pub mod port {
             PieToken(n)
         });
         fake::SHIPS.with(|x| x.borrow_mut().push((t, to)));
+        if policy.0 == 1 {
+            if let Some(h) = fake::HANDSHAKES.with(|x| x.borrow_mut().pop_front()) {
+                let bootstrap = h.bootstrap.clone().unwrap_or_else(|| {
+                    let mut v = Vec::new();
+                    v.extend_from_slice(&(h.host.0 as u64).to_le_bytes());
+                    v.extend_from_slice(&h.transport.to_bytes());
+                    v
+                });
+                fake::push_message(t, bootstrap, h.bootstrap_sender);
+                fake::ACTIVE.with(|x| *x.borrow_mut() = Some((t, h, false)));
+            }
+        }
         Ok(To(seed))
     }
 }
-pub trait Message {
-    type In;
-    type Buf: AsRef<[u8]> + AsMut<[u8]>;
-    const EMPTY: Self::Buf;
-    fn store(&self, out: &mut [u8]) -> Option<usize>;
-    fn fetch(bytes: &[u8]) -> Option<Self::In>;
-}
+#[path = "../../src/hand/receiver.rs"]
+mod production_receiver;
+#[path = "../../src/hand/sender.rs"]
+mod production_sender;
 pub mod hand {
-    use super::*;
-    pub struct Receiver<M: Message>(PieToken, std::marker::PhantomData<M>);
-    impl<M: Message> Receiver<M> {
-        pub fn from_raw(t: PieToken) -> Self {
-            Self(t, std::marker::PhantomData)
-        }
-    }
-    pub struct Sender<M: Message>(PieToken, std::marker::PhantomData<M>);
-    impl<M: Message> Sender<M> {
-        pub fn from_raw(t: PieToken) -> Self {
-            Self(t, std::marker::PhantomData)
-        }
-    }
+    pub use crate::production_receiver::{Receiver, RecvFail, SourceFail};
+    pub use crate::production_sender::{SendFail, Sender};
 }
-pub mod time {
-    use super::Wait;
-    pub fn deadline(w: Wait) -> u64 {
-        match w {
-            Wait::Forever => u64::MAX,
-            Wait::AtMost(n) => super::chrono::clock().saturating_add(n as u64 * 1_000_000),
-        }
-    }
-    pub fn remain(d: u64) -> Wait {
-        if d == u64::MAX {
-            Wait::Forever
-        } else {
-            let n = d.saturating_sub(super::chrono::clock()) / 1_000_000;
-            Wait::AtMost(n as usize)
-        }
-    }
-}
-pub mod session {
-    #[path = "../../../src/session/establish.rs"]
-    pub mod establish;
-}
+#[path = "../../src/session/mod.rs"]
+pub mod session;
+#[path = "../../src/time.rs"]
+pub mod time;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use session::establish::{self, DiscoveryFail, EstablishFail};
+    use session::{
+        self, Berth, establish,
+        establish::{DiscoveryFail, EstablishFail},
+    };
     fn matching(t: usize) {
         fake::add(t, true, 9, 4)
     }
+    fn ready_handshake(host: usize, transport: usize, link_mark: usize, ask_mark: usize) {
+        fake::add_transfer(transport, true, true, 9, 9, link_mark);
+        fake::handshake(fake::Handshake {
+            host: TaskId(host),
+            transport: PieToken(transport),
+            bootstrap: None,
+            bootstrap_sender: TaskId(9),
+            ack: vec![0],
+            ack_sender: TaskId(host),
+            advance_ms: 0,
+        });
+        let _ = ask_mark;
+    }
+
+    #[test]
+    fn each_open_mints_fresh_pair_without_directory_scans_and_aliases_share_cleanup() {
+        fake::reset();
+        ready_handshake(11, 50, 4, 5);
+        ready_handshake(12, 51, 4, 5);
+        let berth = Berth {
+            link: Mark(4),
+            ask: Mark(5),
+        };
+        let first = session::Session::open(TaskId(9), berth, Wait::AtMost(20)).unwrap();
+        let first_alias = first.clone();
+        let second = session::Session::open(TaskId(9), berth, Wait::AtMost(20)).unwrap();
+        assert_eq!(first.host(), TaskId(11));
+        assert_eq!(second.host(), TaskId(12));
+        assert_ne!(first.talk(), second.talk());
+        assert_eq!(fake::scans(), 0);
+        drop(first);
+        assert!(fake::released().is_empty());
+        drop(first_alias);
+        assert_eq!(fake::released(), vec![PieToken(102), PieToken(100)]);
+        drop(second);
+        assert_eq!(
+            fake::released(),
+            vec![PieToken(102), PieToken(100), PieToken(106), PieToken(104)]
+        );
+    }
+
+    #[test]
+    fn open_uses_one_budget_for_bootstrap_and_ack() {
+        fake::reset();
+        ready_handshake(11, 50, 4, 5);
+        fake::ACTIVE.with(|_| {});
+        fake::HANDSHAKES.with(|q| {
+            let mut q = q.borrow_mut();
+            let mut h = q.pop_front().unwrap();
+            h.advance_ms = 3;
+            q.push_back(h);
+        });
+        let session = session::Session::open(
+            TaskId(9),
+            Berth {
+                link: Mark(4),
+                ask: Mark(5),
+            },
+            Wait::AtMost(10),
+        )
+        .unwrap();
+        let waits = fake::WAITS.with(|x| x.borrow().clone());
+        assert_eq!(waits, [Wait::AtMost(10), Wait::AtMost(7)]);
+        drop(session);
+    }
+
+    #[test]
+    fn open_rejects_malformed_or_wrong_source_bootstrap_and_releases_local_reply() {
+        for (bytes, source) in [(Some(vec![0; 15]), TaskId(9)), (None, TaskId(8))] {
+            fake::reset();
+            ready_handshake(11, 50, 4, 5);
+            fake::HANDSHAKES.with(|q| {
+                let mut q = q.borrow_mut();
+                let mut h = q.pop_front().unwrap();
+                h.bootstrap = bytes;
+                h.bootstrap_sender = source;
+                q.push_back(h);
+            });
+            assert!(
+                session::Session::open(
+                    TaskId(9),
+                    Berth {
+                        link: Mark(4),
+                        ask: Mark(5)
+                    },
+                    Wait::POLL
+                )
+                .is_err()
+            );
+            assert_eq!(fake::released(), vec![PieToken(100)]);
+        }
+    }
+
+    #[test]
+    fn open_rejects_bad_ack_source_or_code_and_releases_both_local_capabilities() {
+        for (ack, source) in [
+            (vec![1], TaskId(11)),
+            (vec![0], TaskId(9)),
+            (vec![0, 0], TaskId(11)),
+        ] {
+            fake::reset();
+            ready_handshake(11, 50, 4, 5);
+            fake::HANDSHAKES.with(|q| {
+                let mut q = q.borrow_mut();
+                let mut h = q.pop_front().unwrap();
+                h.ack = ack;
+                h.ack_sender = source;
+                q.push_back(h);
+            });
+            assert!(
+                session::Session::open(
+                    TaskId(9),
+                    Berth {
+                        link: Mark(4),
+                        ask: Mark(5)
+                    },
+                    Wait::POLL
+                )
+                .is_err()
+            );
+            assert_eq!(fake::released(), vec![PieToken(102), PieToken(100)]);
+        }
+    }
+    #[test]
+    fn transport_import_rejects_wrong_native_facts_without_releasing_the_foreign_capability() {
+        for invalid in 0..5 {
+            fake::reset();
+            ready_handshake(11, 50, 4, 5);
+            fake::CANDIDATES.with(|candidates| {
+                let mut candidates = candidates.borrow_mut();
+                let transport = candidates
+                    .iter_mut()
+                    .find(|candidate| candidate.token == PieToken(50))
+                    .unwrap();
+                match invalid {
+                    0 => transport.alive = false,
+                    1 => transport.hole = false,
+                    2 => transport.query.as_mut().unwrap().0 = TaskId(8),
+                    3 => transport.query.as_mut().unwrap().1 = TaskId(8),
+                    _ => transport.query.as_mut().unwrap().2 = Mark(99),
+                }
+            });
+            assert!(
+                session::Session::open(
+                    TaskId(9),
+                    Berth {
+                        link: Mark(4),
+                        ask: Mark(5)
+                    },
+                    Wait::POLL
+                )
+                .is_err()
+            );
+            assert_eq!(fake::released(), vec![PieToken(100)]);
+            assert!(fake::clean().is_empty());
+        }
+    }
+
+    #[test]
+    fn give_at_narrow_failure_revokes_only_its_delivery_and_releases_its_local_hole() {
+        fake::reset();
+        matching(2);
+        fake::NARROW_FAIL.with(|fail| *fail.borrow_mut() = true);
+        assert_eq!(
+            establish::give_at(TaskId(9), Mark(4)),
+            Err(EstablishFail::NoSeed)
+        );
+        assert_eq!(fake::released(), vec![PieToken(100)]);
+        assert_eq!(fake::clean(), vec![(TaskId(9), PieToken(101))]);
+    }
+
+    #[test]
+    fn from_raw_does_not_take_ownership_of_borrowed_capabilities() {
+        fake::reset();
+        let link = establish::lend(TaskId(9), Mark(4)).unwrap();
+        let (talk, _) = establish::give_at(TaskId(11), Mark(5)).unwrap();
+        let borrowed = session::Session::from_raw(link, talk, TaskId(11)).unwrap();
+        let alias = borrowed.clone();
+        drop(borrowed);
+        drop(alias);
+        assert!(fake::released().is_empty());
+    }
+
     #[test]
     fn unique_result_is_independent_of_candidate_order_and_checks_reserve() {
         for order in [[2, 3], [3, 2]] {

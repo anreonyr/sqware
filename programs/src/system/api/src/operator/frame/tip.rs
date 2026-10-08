@@ -26,6 +26,7 @@ pub struct GuestFrame {
     pub kind: u8,
     pub who: TaskId,
     pub reply: PieToken,
+    pub ask: PieToken,
 }
 
 /// 门禁接线：可信装配者指定 authority 与三枚收件者表中的查询入口。
@@ -86,6 +87,7 @@ pub enum Tip {
     Guest {
         who: TaskId,
         reply: PieToken,
+        ask: PieToken,
     },
     Abort {
         road: PathBuf,
@@ -160,10 +162,11 @@ impl Tip {
                 at += PieToken::WIDTH;
                 Some(at)
             }
-            Tip::Guest { who, reply } => GuestFrame {
+            Tip::Guest { who, reply, ask } => GuestFrame {
                 kind: TIP_GUEST,
                 who: *who,
                 reply: *reply,
+                ask: *ask,
             }
             .store_at(out, 0),
             Tip::Wired {
@@ -213,6 +216,7 @@ pub enum TipIn {
     Guest {
         who: TaskId,
         reply: PieToken,
+        ask: PieToken,
     },
     Abort {
         road: PathBuf,
@@ -290,6 +294,7 @@ impl TipIn {
                 Some(TipIn::Guest {
                     who: frame.who,
                     reply: frame.reply,
+                    ask: frame.ask,
                 })
             }
             TIP_WIRED if bytes.len() == WiredFrame::LEN => {

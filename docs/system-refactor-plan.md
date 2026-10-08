@@ -180,7 +180,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 ## 下一轮：Mark 的职责与发现规则重构计划
 
-状态：第1阶段基线、第2阶段发布准入与第3阶段唯一发现／显式交付已落地，第4阶段正在迁移操作面，第5／6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
+状态：第1至4阶段已落地，第5／6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
 
 ### 目标与范围
 
@@ -276,7 +276,7 @@ mold 的 PUBLICATIONS 不再以 env::marks::Definition 作为发布权利的表�
 
 第3阶段实现记录：`establish::find/claim` 统一返回唯一 token 或 `Missing/Ambiguous`。发现使用内核 inspect 的 owner/Mark 与存活事实，支持 owner=0 的普通能力；Endpoint 的通信绑定另外使用 reserve 验证孔类型。仅缺失等待，歧义立即失败；已有 tx 只检查原绑定，退出后不自动扫描替代能力。构造失败只撤销／释放本次创建的能力，不能清理扫描中发现的其他实例。
 
-Operator 的私有 `Tip::Guest` 仍使用 opcode=2，但由原9字节改为17字节，增加接收方表中的明确 reply token；旧9字节被拒绝。管理端转授后携带 seed，服务端检查存活、vestor=Control、owner=客人和 LINK 角色后保存，删除按角色查找 reply 的延期重试。Bootstrap 请求仍要求在发现范围内唯一，已接入的请求只核验原绑定。当前 Desk 仍按 task 管理客人、请求 Mark 仍区分操作面；同任务独立 Operator 多会话由第4阶段继续处理。
+Operator 的私有 `Tip::Guest` 仍使用 opcode=2，但由原9字节改为17字节，增加接收方表中的明确 reply token；旧9字节被拒绝。管理端转授后携带 seed，服务端检查存活、vestor=Control、owner=客人和 LINK 角色后保存，删除按角色查找 reply 的延期重试。Bootstrap 请求仍要求在发现范围内唯一，已接入的请求只核验原绑定。第3阶段提交时 Desk 仍按 task 管理客人、请求 Mark 仍区分操作面；这两项已由第4阶段替代。
 
 Router 新增 opcode=2 的 `OccupyLane`：21字节请求显式交付 line、lane seed、back seed，9字节应答交付状态和反向 lane seed。发起端使用仅创建并转授的 lend，不预扫描对端。双方验证实际应答者、能力来源、owner、存活与角色后保存明确 token，不再按 LINE_MARK／LINE_BACK 扫表。旧 opcode=1 的5字节 Occupy 仅保留固定 codec 黄金，生产服务不接受旧握手。普通操作和失败码、63个既有角色数值、Kernel ABI 与 schedule 语义保持不变；这些用户态握手的布局升级有独立字节黄金。
 
@@ -302,9 +302,17 @@ Operator 请求由操作码分派，Mark 不再决定调用方获准执行的操
 
 第4阶段第一批实现：普通 Operator 会话统一使用 ASK，服务端不再从请求能力 Mark 解出 Grant，也不以其约束请求操作。SDK 删除 granted_berth、Rein 与调用者自选 Grant 字段；Face 的语义方法直接构造 Req，Wire 本身承担操作选择，不另建重复操作枚举。实际发件人仍由 Receiver::recv_from 校验；Part／Land／Trim 的 native 调用者必须是 Control。Find 的条目 Permit、Watch 的身份绑定与 mutation 的归属校验仍按原流程执行。
 
-旧8个操作角色的数值／API登记及目录暂时保留兼容基线，已不参与请求接入或授权；其保留价值由第5阶段清理，不能把目录中的标签入口描述成可委托操作权限。本批没有签发限定操作委托，不存在由调用方标签或本地包装生成授权的路径。同任务多会话仍受旧 Desk／Session bootstrap 限制，下一批迁移显式会话接入后才能完成第4阶段验收。
+旧8个操作角色的数值／API登记及目录暂时保留兼容基线，已不参与请求接入或授权；其保留价值由第5阶段清理，不能把目录中的标签入口描述成可委托操作权限。本批没有签发限定操作委托，不存在由调用方标签或本地包装生成授权的路径。本批提交时同任务多会话仍受旧 Desk／Session bootstrap 限制；第二批已迁移显式会话接入，见下文。
 
 本批验收：68项相关宿主测试、programs全目标编译，以及QEMU accept、product、system-fault均通过。真实探针验证统一会话的查询成功、非Control的Part／Land／Trim被拒绝；SDK与服务端守卫防止恢复Rein、granted_berth和按Mark选择操作面的路径。普通请求／应答布局、操作码、失败码及既有角色数值不变。
+
+第4阶段第二批实现：每次 Session::open 都新建独立 LINK 和 ASK，不复用同任务／角色的请求端。Control 把每个经存活、owner、vestor、LINK角色核验的请求逐条处理，以16字节 bootstrap交付host与Control transport seed；客户端核验真实bootstrap发件人和transport事实，创建新ASK并发回其在Operator表中的8字节seed。Control的私有Guest仍使用opcode=2，但由17字节升级为25字节，明确携带who、reply、ask；9／17字节旧形都被拒绝。Operator核验reply来自Control、ask由who直接交付及其native事实，记录完整端点对、挂载后回1字节OK，客户端核验确认来自host后才返回。普通请求／应答布局、Mark裸值与Kernel ABI不变，握手升级有独立黄金与真实测具。
+
+Desk以(who,reply,ask)区分会话，同task可有多条；共享任一端点的冲突不能替换既有项，精确重放不重复发ACK，拒绝消息不能污染已有回复端。删除pending发现、arm与Settling；outbox以reply索引。任一端失效只移除相应会话、监听和outbox，挂载／ACK失败回滚本次接入。Control也以实际LINK区分接入，单条bootstrap失败不终止整个System。
+
+Session::open使用同一截止期限覆盖握手各步；克隆共享调用状态与所有权，最后一份释放本次创建的本地reply／talk，失败路径只回收自己创建的资源。Session::from_raw保持借用，不接管外来能力；give_at显式返回收件方seed，转授或窄化失败撤销本次交付并释放本地资源。必要的bootstrap单实例find仍保持Missing／Ambiguous规则，多会话不用它选端点。
+
+本批验收：92项相关宿主测试、programs全目标编译，以及QEMU accept、product、system-fault均通过。真实accept在任务原会话存活时连续打开多条会话，验证别名不提前回收、独立查询、关闭一条后另一条继续工作、再次接入和最终资源表回到基线；直接导入的私有故障测具显式消费新增ACK。第4阶段完成，第5／6阶段待实施，旧8个操作角色的声明／目录仍属于下一阶段复核范围。
 
 ### 5. 收敛角色声明与 import 验证
 

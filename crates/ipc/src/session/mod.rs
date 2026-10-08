@@ -1,6 +1,4 @@
-//! 关系那一支：**装一条路 → 认对端 → 要一枚问话孔**，以及它底下"两枚孔怎么到手"（`establish`）。
-//! 两者合成一支，是因为 `Session::open` 就是 `endpoint()` ＋ `hear` ＋ `ask` ——
-//! "两枚孔到手"与"一条路装上"是同一件事的两段（见 `establish` 头注那"一手"）。
+//! A session uses a fresh transport handshake and a fresh request capability per open.
 
 pub mod establish;
 pub use establish::{DiscoveryFail, Endpoint, Held, alive, opened_by};
@@ -10,8 +8,9 @@ pub use wire::Contract;
 mod state;
 
 extern crate alloc;
-use ::resource::raw::Hole;
+use ::resource::raw::{self, Hole};
 use alloc::sync::Arc;
+use env::pie;
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
 
@@ -34,8 +33,24 @@ pub struct Session {
     /// **对端的号**（"答话的是谁"）
     host: TaskId,
     state: Arc<state::State>,
+    _owned: Option<Arc<Owned>>,
 }
 
+struct Owned {
+    rx: PieToken,
+    talk: PieToken,
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        if self.talk != PieToken::NONE {
+            let _ = pie::release(self.talk);
+        }
+        let _ = pie::release(self.rx);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     /// 这条路没接上：装泊位 / 认对端那一枚 / 收"答话的是谁"——三步任一没成
     Link,
@@ -69,6 +84,7 @@ impl Session {
             talk,
             host,
             state: state::new_state(),
+            _owned: None,
         })
     }
 
@@ -82,45 +98,56 @@ impl Session {
     }
 
     /// 开一条到 `berth` 那条路的会话
-    /// `holder` = 客人认的对端 = **它的生我者**：孔交给它，它再转授给那条路上真正的服务
+    /// Each call creates a new local reply hole and a new request hole.
     pub fn open(holder: TaskId, berth: Berth, millis: Wait) -> Result<Session, Fail> {
-        let link = establish::endpoint(holder, berth.link, millis).map_err(|_| Fail::Link)?;
-        // **认不到对端那一枚 = 这条路没接上**：两侧各装一条、凑齐才算通。
-        if link.tx().is_none() {
+        let until = crate::time::deadline(millis);
+        let link = establish::lend(holder, berth.link).map_err(|_| Fail::Link)?;
+        let mut owned = Owned {
+            rx: link.rx(),
+            talk: PieToken::NONE,
+        };
+
+        // Bootstrap is exactly (selected host, local transport token), both fixed-width fields.
+        let mut bootstrap = [0u8; TaskId::WIDTH + PieToken::WIDTH];
+        let (len, sender) = Hole::from_raw(link.rx())
+            .pull(&mut bootstrap, crate::time::remain(until))
+            .map_err(|_| Fail::Link)?;
+        if len != bootstrap.len() || sender != holder {
             return Err(Fail::Link);
         }
-        let host = hear(&link, millis).ok_or(Fail::Link)?;
-        let talk = ask(host, berth.ask).map_err(|_| Fail::Ask)?;
-        Session::from_raw(link, talk, host)
-    }
-}
+        let host = TaskId::fetch(&bootstrap[..TaskId::WIDTH]).ok_or(Fail::Link)?;
+        let transport = PieToken::fetch(&bootstrap[TaskId::WIDTH..]).ok_or(Fail::Link)?;
+        if host == TaskId::new(0) || !raw::alive(transport) {
+            return Err(Fail::Link);
+        }
+        if !matches!(raw::reserve(transport), Ok((vestor, owner, mark))
+            if vestor == holder && owner == holder && mark == berth.link)
+        {
+            return Err(Fail::Link);
+        }
 
-/// 收下路上那一格：**答话的是谁**（装配侧 `bridge.rs` 的 `tell` 的对偶）
-/// 宽度与字节序归 Field 给 TaskId 那一对 `store` / `fetch`
-fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
-    let mut buf = [0u8; TaskId::WIDTH];
-    match Hole::from_raw(link.rx()).pull(&mut buf, millis) {
-        Ok((n, _)) if n == TaskId::WIDTH => TaskId::fetch(&buf),
-        _ => None,
-    }
-}
+        let (talk, ask_seed) = establish::give_at(host, berth.ask).map_err(|_| Fail::Ask)?;
+        owned.talk = talk;
+        let mut ask_bytes = [0u8; PieToken::WIDTH];
+        ask_seed.store(&mut ask_bytes);
+        Hole::from_raw(transport)
+            .push(&ask_bytes, crate::time::remain(until))
+            .map_err(|_| Fail::Link)?;
 
-/// 铸**问话孔**并交给对端（本端随即自窄到只写）
-/// **一个域一条路只铸一枚**——先找我表里那一枚，有就不铸第二枚。认的是"**本端开的** ＋ 记号"
-/// 两格。于是"只铸一枚"从**纪律**变成
-/// **构造**：这条路上再也生不出第二枚，而第二枚的症状是"多出来的那枚永远没人读它的推"
-fn ask(host: TaskId, mark: Mark) -> Result<PieToken, ()> {
-    match establish::find(me(), mark) {
-        Ok(have) => return Ok(have),
-        Err(establish::DiscoveryFail::Ambiguous) => return Err(()),
-        Err(establish::DiscoveryFail::Missing) => {}
-    }
-    // 铸 + 交出读端 + 本端窄到只写：一手就是 establish::give。
-    establish::give(host, mark).map_err(|_| ())
-}
+        let mut ack = [0u8; 1];
+        let (len, sender) = Hole::from_raw(link.rx())
+            .pull(&mut ack, crate::time::remain(until))
+            .map_err(|_| Fail::Link)?;
+        if len != 1 || ack[0] != wire::OK || sender != host {
+            return Err(Fail::Link);
+        }
 
-/// **本端是哪一枚线程**——"这一枚孔是谁开的"那一问要它
-/// 不返 `Result`：`SelfId` 那一格恒写 id（生成的入口标了 `#[infallible]`）
-fn me() -> TaskId {
-    env::unit::self_id()
+        Ok(Session {
+            link,
+            talk,
+            host,
+            state: state::new_state(),
+            _owned: Some(Arc::new(owned)),
+        })
+    }
 }

@@ -1,6 +1,5 @@
-//! Operator bootstrap imports explicit replies and discovers only unique request roles.
+//! Native facts required for the explicitly delivered session endpoints.
 use env::{PieToken, TaskId};
-use ipc::session::establish::{self, DiscoveryFail};
 
 pub(super) fn valid_reply(who: TaskId, reply: PieToken, from: TaskId) -> bool {
     ::resource::raw::alive(reply)
@@ -8,6 +7,8 @@ pub(super) fn valid_reply(who: TaskId, reply: PieToken, from: TaskId) -> bool {
         if vestor == from && owner == who && mark == system_api::operator::LINK_MARK)
 }
 
-pub(super) fn ask_of(who: TaskId) -> Result<PieToken, DiscoveryFail> {
-    establish::find(who, system_api::operator::ASK_MARK)
+pub(super) fn valid_request(who: TaskId, ask: PieToken, from: TaskId) -> bool {
+    ::resource::raw::alive(ask)
+        && matches!(::resource::raw::reserve(ask), Ok((vestor, owner, mark))
+        if from == who && vestor == from && owner == who && mark == system_api::operator::ASK_MARK)
 }

@@ -25,7 +25,6 @@ pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
         alloc::vec![((), hints.build()?)],
         tip::finish,
     )?;
-    frame.system("arm", session::arm)?;
     frame.system("wait", session::wait)?;
     frame.system("guest.select", session::select_guest)?;
     frame.system("receive", session::receive)?;
