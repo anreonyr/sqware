@@ -18,9 +18,15 @@ pub(crate) fn supply_to(
     if matches!(program.name(), "probe-rule" | "probe-rule-other") {
         let mark = env::Mark::of("probe-rule-verified");
         let owner = env::unit::self_id();
-        let token = establish::find(owner, mark)
-            .or_else(|| pie::unseal_hole(mark).ok())
-            .ok_or("rule verification channel")?;
+        let token = match establish::find(owner, mark) {
+            Ok(token) => token,
+            Err(establish::DiscoveryFail::Missing) => {
+                pie::unseal_hole(mark).map_err(|_| "rule verification channel")?
+            }
+            Err(establish::DiscoveryFail::Ambiguous) => {
+                return Err("rule verification channel ambiguous");
+            }
+        };
         let access = if program.name() == "probe-rule" {
             Access::FETCH
         } else {
@@ -39,7 +45,12 @@ pub(crate) fn supply_to(
     let authority = authority.ok_or("identity fixture authority")?;
     for grant in [Grant::Bind, Grant::Unbind] {
         let token =
-            establish::claim(authority, grant.mark(), Wait::POLL).ok_or("identity fixture face")?;
+            establish::claim(authority, grant.mark(), Wait::POLL).map_err(
+                |failure| match failure {
+                    establish::DiscoveryFail::Missing => "identity fixture face",
+                    establish::DiscoveryFail::Ambiguous => "identity fixture face ambiguous",
+                },
+            )?;
         if !matches!(reserve(token), Ok((_, owner, mark))
             if owner == authority && mark == grant.mark())
         {
@@ -170,11 +181,15 @@ pub fn acceptance() {
     let talk =
         establish::give(host, system_api::operator::ASK_MARK).expect("identity: operator ask");
     let tip = establish::find(host, system_api::operator::TIP_MARK)
-        .expect("identity: trusted operator tip");
+        .unwrap_or_else(|_| panic!("identity: trusted operator tip missing or ambiguous"));
     let mut record = [0u8; system_api::operator::TIP_LEN];
-    let n = system_api::operator::Tip::Guest(me)
-        .store(&mut record)
-        .unwrap();
+    let explicit_reply = link.seed();
+    let n = system_api::operator::Tip::Guest {
+        who: me,
+        reply: explicit_reply,
+    }
+    .store(&mut record)
+    .unwrap();
     Hole::from_raw(tip)
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");

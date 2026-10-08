@@ -25,6 +25,7 @@ const TIP_ABORT: u8 = 6;
 pub struct GuestFrame {
     pub kind: u8,
     pub who: TaskId,
+    pub reply: PieToken,
 }
 
 /// 门禁接线：可信装配者指定 authority 与三枚收件者表中的查询入口。
@@ -82,7 +83,10 @@ pub enum Tip {
         back: PieToken,
     },
     /// **这一位是客人**
-    Guest(TaskId),
+    Guest {
+        who: TaskId,
+        reply: PieToken,
+    },
     Abort {
         road: PathBuf,
         leaf: PieToken,
@@ -156,9 +160,10 @@ impl Tip {
                 at += PieToken::WIDTH;
                 Some(at)
             }
-            Tip::Guest(who) => GuestFrame {
+            Tip::Guest { who, reply } => GuestFrame {
                 kind: TIP_GUEST,
                 who: *who,
+                reply: *reply,
             }
             .store_at(out, 0),
             Tip::Wired {
@@ -205,7 +210,10 @@ pub enum TipIn {
         back: PieToken,
     },
     /// 这一位是客人
-    Guest(TaskId),
+    Guest {
+        who: TaskId,
+        reply: PieToken,
+    },
     Abort {
         road: PathBuf,
         leaf: PieToken,
@@ -278,7 +286,11 @@ impl TipIn {
                 })
             }
             TIP_GUEST if bytes.len() == GuestFrame::LEN => {
-                Some(TipIn::Guest(GuestFrame::fetch_at(bytes, 0)?.0.who))
+                let frame = GuestFrame::fetch_at(bytes, 0)?.0;
+                Some(TipIn::Guest {
+                    who: frame.who,
+                    reply: frame.reply,
+                })
             }
             TIP_WIRED if bytes.len() == WiredFrame::LEN => {
                 let frame = WiredFrame::fetch_at(bytes, 0)?.0;

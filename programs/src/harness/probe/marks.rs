@@ -64,6 +64,17 @@ pub fn acceptance() {
         (env::TaskId::new(0), owner, DUPLICATE)
     );
 
+    assert_eq!(
+        ipc::session::establish::find(owner, DUPLICATE),
+        Err(ipc::session::establish::DiscoveryFail::Ambiguous)
+    );
+    assert_eq!(
+        ipc::session::establish::claim(owner, DUPLICATE, Wait::AtMost(1000)),
+        Err(ipc::session::establish::DiscoveryFail::Ambiguous)
+    );
+    pie::release(second).unwrap();
+    assert_eq!(ipc::session::establish::find(owner, DUPLICATE), Ok(first));
+
     let unmarked = pie::unseal_hole(Mark::NONE).unwrap();
     assert_eq!(
         reserve(unmarked).unwrap(),
@@ -83,7 +94,7 @@ pub fn acceptance() {
 
     pie::revoke(owner, relabeled).unwrap();
     pie::revoke(owner, inherited).unwrap();
-    for token in [first, second, unmarked, source] {
+    for token in [first, unmarked, source] {
         pie::seal(token).unwrap();
         pie::release(token).unwrap();
         assert!(reserve(token).is_err());

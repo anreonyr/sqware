@@ -139,15 +139,25 @@ pub fn ready(
         return Err(Fail::NotReady);
     }
 
-    if !marks.is_empty()
-        && channels.len() == marks.len()
-        && channels
-            .iter_mut()
-            .zip(marks)
-            .all(|(channel, mark)| channel.claim(task, *mark, millis))
-    {
-        table.set_state(name, State::Ready);
-        return Ok(false);
+    if !marks.is_empty() && channels.len() == marks.len() {
+        let mut claimed = true;
+        for (channel, mark) in channels.iter_mut().zip(marks) {
+            match channel.claim(task, *mark, millis) {
+                Ok(true) => {}
+                Ok(false) => {
+                    claimed = false;
+                    break;
+                }
+                Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                    return Err(Fail::Unknown);
+                }
+                Err(ipc::session::establish::DiscoveryFail::Missing) => return Err(Fail::NotReady),
+            }
+        }
+        if claimed {
+            table.set_state(name, State::Ready);
+            return Ok(false);
+        }
     }
     if unit::join(task, Wait::POLL).unwrap_or(true) {
         table.set_state(name, State::Dead);

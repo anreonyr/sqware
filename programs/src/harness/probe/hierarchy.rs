@@ -7,9 +7,15 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
     use ::resource::port::{self, Access, Policy};
     let me = env::unit::self_id();
     for (mark, access) in [(COMMAND, Access::FETCH), (ANSWER, Access::STORE)] {
-        let token = ipc::session::establish::find(me, mark)
-            .or_else(|| pie::unseal_hole(mark).ok())
-            .ok_or("hierarchy fixture channel")?;
+        let token = match ipc::session::establish::find(me, mark) {
+            Ok(token) => token,
+            Err(ipc::session::establish::DiscoveryFail::Missing) => {
+                pie::unseal_hole(mark).map_err(|_| "hierarchy fixture channel")?
+            }
+            Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                return Err("hierarchy fixture channel ambiguous");
+            }
+        };
         port::ship(token, task, access, Policy::NONE).map_err(|_| "hierarchy fixture ship")?;
     }
     Ok(())
@@ -20,14 +26,47 @@ pub(crate) fn command(
     task: env::TaskId,
     code: u8,
 ) {
+    execute(assembly, task, (code, None));
+}
+
+fn reference_probe(
+    assembly: &mut crate::harness::probe::fixture::Fixture,
+    task: env::TaskId,
+    entry: env::PieToken,
+) {
+    execute(assembly, task, (5, Some(entry)));
+}
+
+fn execute(
+    assembly: &mut crate::harness::probe::fixture::Fixture,
+    task: env::TaskId,
+    request: (u8, Option<env::PieToken>),
+) {
+    let (code, reference) = request;
     use env::Wait;
     use env::wire::Span as _;
     use ipc::session::establish;
     let me = env::unit::self_id();
     let command = establish::find(me, COMMAND).unwrap();
     let answer = establish::find(me, ANSWER).unwrap();
-    let mut bytes = [code; 9];
-    bytes[1..].copy_from_slice(&(task.get() as u64).to_le_bytes());
+    let receiver = assembly
+        .resources
+        .read::<crate::system::control::unit::Control>()
+        .unwrap()
+        .task("system-dependent")
+        .unwrap();
+    let seed = match reference {
+        Some(entry) => {
+            ::resource::port::ship(entry, receiver, env::Access::FETCH_STORE, env::Policy::VEST)
+                .unwrap()
+                .seed()
+        }
+        None => env::PieToken::NONE,
+    };
+    let mut bytes = [0u8; 17];
+    bytes[0] = code;
+    bytes[1..9].copy_from_slice(&(task.get() as u64).to_le_bytes());
+    bytes[9..17].copy_from_slice(&seed.to_bytes());
     Hole::from_raw(command)
         .push(&bytes, Wait::AtMost(1000))
         .unwrap();
@@ -39,7 +78,11 @@ pub(crate) fn command(
             use system_api::control::publication::Object;
             use system_api::control::publication::REF;
             use system_api::control::publication::Reply;
-            let fake = establish::find(me, REF).unwrap();
+            assert_eq!(
+                establish::find(me, REF),
+                Err(establish::DiscoveryFail::Ambiguous)
+            );
+            let fake = reference.expect("explicit reference probe entry");
             let mut request = [0; Frame::LEN];
             if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
                 let frame = Frame::take(&request[..n]).unwrap();
@@ -349,14 +392,7 @@ pub(crate) fn exercise(
     sender_boundary(assembly);
     command(assembly, target, 1);
     let fake = pie::unseal_hole(system_api::control::publication::REF).unwrap();
-    ::resource::port::ship(
-        fake,
-        service,
-        ::resource::port::Access::STORE,
-        ::resource::port::Policy::NONE,
-    )
-    .unwrap();
-    command(assembly, target, 5);
+    reference_probe(assembly, target, fake);
     let _ = pie::seal(fake);
     let _ = pie::release(fake);
     let service_road = assembly

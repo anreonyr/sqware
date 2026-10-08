@@ -47,8 +47,15 @@ impl Supplies {
         let Some(link) = channels.first_mut() else {
             return Err(Error::Step("no channel"));
         };
-        if !link.claim(*task, Mark::of(load), Wait::AtMost(BOOT_MS)) {
-            return Err(Error::Step("no channel"));
+        match link.claim(*task, Mark::of(load), Wait::AtMost(BOOT_MS)) {
+            Ok(true) => {}
+            Ok(false) => return Err(Error::Step("no channel")),
+            Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                return Err(Error::Step("ambiguous channel"));
+            }
+            Err(ipc::session::establish::DiscoveryFail::Missing) => {
+                return Err(Error::Step("no channel"));
+            }
         }
         let Some(tx) = link.tx() else {
             return Err(Error::Step("no channel"));

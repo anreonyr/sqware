@@ -14,14 +14,14 @@ use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
-use system_api::operator::path::Path;
+use ::resource::raw::reserve;
+use env::unit;
 use ipc::session::Session;
 use programs::debug;
 use system_api::operator::Grant;
+use system_api::operator::path::Path;
 use system_client::operator;
 use system_client::operator::Face;
-use env::unit;
-use ::resource::raw::{reserve};
 
 const MS: usize = 1000;
 
@@ -43,7 +43,12 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
 
     assert_eq!(system_api::identity::Grant::ALL.len(), 17);
-    step(&tree, "identity", system_api::operator::Path::new(system_api::identity::DIR), system_api::identity::Grant::ALL.len());
+    step(
+        &tree,
+        "identity",
+        system_api::operator::Path::new(system_api::identity::DIR),
+        system_api::identity::Grant::ALL.len(),
+    );
     let authority = system_client::identity::authority()
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in system_api::identity::Grant::ALL {
@@ -59,14 +64,19 @@ fn main() -> Report<'static> {
                 "installer discovery must deny an ordinary principal"
             );
             let entry = ipc::session::establish::find(authority, grant.mark())
-                .expect("probe-coalition: missing explicit installer face copy");
+                .unwrap_or_else(|_| panic!("probe-coalition: installer face missing or ambiguous"));
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
-            fetch(&tree, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
+            fetch(
+                &tree,
+                system_api::operator::Path::new(system_api::identity::DIR),
+                grant.name(),
+                "identity",
+            )
         };
-        let (_, owner, mark) = reserve(entry)
-            .expect("probe-coalition: identity entry cannot be reserved");
+        let (_, owner, mark) =
+            reserve(entry).expect("probe-coalition: identity entry cannot be reserved");
         assert_eq!(mark, grant.mark(), "identity action mark mismatch");
         assert_eq!(owner, authority, "identity action has foreign owner");
     }

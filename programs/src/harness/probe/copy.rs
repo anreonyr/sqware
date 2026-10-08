@@ -1,10 +1,10 @@
 use crate::system::loader::{Image, Loader};
+use ::resource::raw::{Hole, pies};
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 use env::pie;
 use env::unit;
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use ::resource::raw::{Hole, pies};
 
 pub fn acceptance() {
     queued();
@@ -15,22 +15,20 @@ pub fn acceptance() {
         .unwrap()
         .token(env::Name::Call(env::Call::Build))
         .unwrap();
-    let doom = crate::boot::Accounts::take().unwrap()
-        .token(env::Name::Call(env::Call::Doom)).unwrap();
+    let doom = crate::boot::Accounts::take()
+        .unwrap()
+        .token(env::Name::Call(env::Call::Doom))
+        .unwrap();
     let doom_mark = Mark::of("copy-doom");
     let mark = Mark::of("copy-build");
     let worker = execution::unit::task::spawn(move || {
         assert!(
-            ipc::session::establish::claim(
-                env::TaskId::new(0),
-                mark,
-                Wait::AtMost(2000),
-            )
-            .is_some()
+            ipc::session::establish::claim(env::TaskId::new(0), mark, Wait::AtMost(2000),).is_ok()
         );
-        assert!(ipc::session::establish::claim(
-            env::TaskId::new(0), doom_mark, Wait::AtMost(2000),
-        ).is_some());
+        assert!(
+            ipc::session::establish::claim(env::TaskId::new(0), doom_mark, Wait::AtMost(2000),)
+                .is_ok()
+        );
         elf();
         cache_limits();
         finished.store(true, Ordering::Release);
@@ -72,26 +70,14 @@ fn queued() {
         data.fill(255);
     });
     let sender = writer.id();
-    ::resource::port::ship(
-        entry,
-        sender,
-        env::Access::STORE,
-        env::Policy::NONE,
-    )
-    .unwrap();
+    ::resource::port::ship(entry, sender, env::Access::STORE, env::Policy::NONE).unwrap();
     writer.join();
     let mut short = [0; 4];
-    assert!(
-        Hole::from_raw(entry)
-            .pull(&mut short, Wait::POLL)
-            .is_err()
-    );
+    assert!(Hole::from_raw(entry).pull(&mut short, Wait::POLL).is_err());
     let mut bytes = [0; 128];
     for sequence in 0..4u8 {
         assert_eq!(
-            Hole::from_raw(entry)
-                .pull(&mut bytes, Wait::POLL)
-                .unwrap(),
+            Hole::from_raw(entry).pull(&mut bytes, Wait::POLL).unwrap(),
             (bytes.len(), sender)
         );
         assert!(
@@ -141,13 +127,7 @@ fn concurrent() {
                     .unwrap();
             }
         });
-        ::resource::port::ship(
-            entry,
-            worker.id(),
-            env::Access::STORE,
-            env::Policy::NONE,
-        )
-        .unwrap();
+        ::resource::port::ship(entry, worker.id(), env::Access::STORE, env::Policy::NONE).unwrap();
         workers.push(worker);
     }
     let mut counts = [0u8; 4];

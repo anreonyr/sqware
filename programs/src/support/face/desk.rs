@@ -142,7 +142,7 @@ impl Desk {
     /// 并报"还没补齐"
     pub fn arm_pending(
         &mut self,
-        find: impl Fn(TaskId) -> Option<PieToken>,
+        mut find: impl FnMut(TaskId) -> Option<PieToken>,
         mut attach: impl FnMut(PieToken) -> bool,
     ) -> bool {
         let mut pending = false;

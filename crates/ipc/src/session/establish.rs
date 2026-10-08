@@ -1,25 +1,19 @@
-//! 那两枚孔从"谁也没有"到"两头都在各自手里"。
-//! # 为什么是"一手"
-//! Mail 是单向的 ⇒ 一段关系的两半是同一件事的两面：**我铸一枚**（我读、对方往它推）＋
-//! **认下对方铸的那一枚**（我写、往它推）。两件都对着同一个对端、同一条路，故是**一个动作**，
-//! 不是一个流程。三种用法差别只在**要哪一半**：
-//! **判据两格**（`owner` ＋ `mark`），都读内核查得到的事实。编号分不开"同一位开的多枚孔"
-//! ——同一个域里两枚线程各有一张表、同一个号在别人表里解析不动——记号才分得开（铸孔那一刻
-//! 刻上去，随副本过线、转手不变）。这一条是原 Quay::claim 的正文，判据一字未改；**一律按
-//! 两格问**：只按记号扫表会把"同一张表里另一枚同记号的孔"认进来。
-//! # 归属：两个寿命，**两个类型**——错的那个动作在 API 上不存在
-//! 孔的活命跟着它所在那张表（内核的规矩：pie::release 放下**并连派生边一起摘下**，
+//! 单向通信能力的配对、显式导入和必要的唯一发现。
+//!
+//! 发现比较内核返回的 owner/mark 并只接受存活候选；缺失可以等待，歧义立即失败。
+//! 明确交付的 token 不重新扫描，已有 tx 只核验原绑定，不自动选替代能力。
+//! Mark 是每份能力引用的标签，转授可以重标记；类型、来源和权限另行验证。
 
 use core::ops::{Deref, DerefMut};
 
-use env::{Mark, Permission, PieToken, TaskId, Wait};
 use ::resource::port::{self, Access, Policy};
+use env::{Mark, Permission, PieToken, TaskId, Wait};
 
 use super::super::hand::{Receiver, Sender};
 use crate::time::{deadline, remain};
-use wire::Message;
+use ::resource::raw::{alive as raw_alive, inspect, pies, reserve};
 use env::pie;
-use ::resource::raw::{pies, reserve};
+use wire::Message;
 
 /// 两枚孔**还没要齐**：坏在哪一步，两格分得开
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -28,6 +22,14 @@ pub enum EstablishFail {
     NoHole,
     /// 这枚交不出去（没资格交 / 子集越界 / 对端已不在）
     NoSeed,
+    /// More than one live resource matched the requested role.
+    Ambiguous,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DiscoveryFail {
+    Missing,
+    Ambiguous,
 }
 
 /// **归域的一对号**：我收的那一枚 ＋ （认到之后）我推的那一枚
@@ -72,16 +74,31 @@ impl Endpoint {
     }
 
     /// **延迟认领**：先把这一枚铸出去、说上话，之后再认对端那一枚（`null` 那一档的次序是契约）
-    /// 返 `true` = 到手了。**认不到不是错误**（与 endpoint 同一条口径）
-    pub fn claim(&mut self, of: TaskId, mark: Mark, wait: Wait) -> bool {
+    /// 未绑定且缺失返回 false；歧义或已有绑定失效立即失败。
+    pub fn claim(&mut self, of: TaskId, mark: Mark, wait: Wait) -> Result<bool, DiscoveryFail> {
+        if let Some(token) = self.tx {
+            return if bound_matches(token, of, mark) {
+                Ok(true)
+            } else {
+                Err(DiscoveryFail::Missing)
+            };
+        }
         match claim(of, mark, wait) {
-            Some(token) => {
+            Ok(token) if bound_matches(token, of, mark) => {
                 self.tx = Some(token);
-                true
+                Ok(true)
             }
-            None => false,
+            Ok(_) => Err(DiscoveryFail::Missing),
+            Err(DiscoveryFail::Missing) => Ok(false),
+            Err(error @ DiscoveryFail::Ambiguous) => Err(error),
         }
     }
+}
+
+fn bound_matches(token: PieToken, of: TaskId, mark: Mark) -> bool {
+    raw_alive(token)
+        && reserve(token)
+            .is_ok_and(|(_vestor, owner, actual_mark)| owner == of && actual_mark == mark)
 }
 
 /// **有主的一对号**：**作用域寿命**——落出作用域就放下本端那一枚
@@ -112,19 +129,40 @@ impl Drop for Held {
 /// `claim_for` = **等对方那一枚等多久**（不是收发期限；收发期限在 `send` / `recv` 上，每次调用
 /// 各给一格）。Wait::POLL = 只扫一遍、不等——那一档的 `tx` 因此没有写端
 /// **认不到不是失败**：一段关系可以只有收的方向（单向那一档就是这么用的），故 `tx` 只是没有
-/// 写端（`send` 答 SendFail::Unbound），而 `Err` 只留给"铸不出 / 交不出去"
+/// 写端（`send` 答 SendFail::Unbound）；歧义、类型不符或创建／转授失败返回错误。
 /// **它不"持有"什么**：返的 Endpoint 只是把本端铸的那一枚记下来（Copy 的号束）
 pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, EstablishFail> {
     let (rx, seed) = seal_and_ship(to, mark)?;
-    Ok(Endpoint {
-        rx,
-        tx: claim(to, mark, claim_for),
-        seed,
-    })
+    let tx = match claim(to, mark, claim_for) {
+        Ok(token) if bound_matches(token, to, mark) => Some(token),
+        Ok(_) => {
+            let _ = pie::revoke(to, seed);
+            let _ = pie::release(rx);
+            return Err(EstablishFail::NoSeed);
+        }
+        Err(DiscoveryFail::Missing) => None,
+        Err(DiscoveryFail::Ambiguous) => {
+            let _ = pie::revoke(to, seed);
+            let _ = pie::release(rx);
+            return Err(EstablishFail::Ambiguous);
+        }
+    };
+    Ok(Endpoint { rx, tx, seed })
+}
+
+/// Ship a fresh endpoint without searching for the peer's matching endpoint.
+/// The returned endpoint has a receive side but no bound sender; the peer can
+/// explicitly return the seed created by its later `accept` call.
+pub fn lend(to: TaskId, mark: Mark) -> Result<Endpoint, EstablishFail> {
+    let (rx, seed) = seal_and_ship(to, mark)?;
+    Ok(Endpoint { rx, tx: None, seed })
 }
 
 /// Answer an already observed live endpoint; do not rescan for a replacement.
 pub fn accept(entry: PieToken) -> Result<Endpoint, EstablishFail> {
+    if !raw_alive(entry) {
+        return Err(EstablishFail::NoSeed);
+    }
     let (_, owner, mark) = reserve(entry).map_err(|_| EstablishFail::NoSeed)?;
     let (rx, seed) = seal_and_ship(owner, mark)?;
     Ok(Endpoint {
@@ -144,33 +182,41 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
     let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
     port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE)
         .map_err(|_| EstablishFail::NoSeed)?;
-    env::pie::narrow(hole, Permission::STORE)
-        .map_err(|_| EstablishFail::NoSeed)?;
+    env::pie::narrow(hole, Permission::STORE).map_err(|_| EstablishFail::NoSeed)?;
     Ok(hole)
 }
 
-/// **扫表认领**：按 `owner` ＋ `mark` 两格找回别人交来的那一枚，**只扫一遍、不等**
-/// 它答的是我表里**这位开的、刻着那个记号的那一枚**。**多枚时给最后那一枚**——表内次序是
-/// 次序是契约的一半，不是实现细节
-pub fn find(of: TaskId, mark: Mark) -> Option<PieToken> {
+/// Find the unique live resource matching its kernel-verified owner and mark.
+pub fn find(of: TaskId, mark: Mark) -> Result<PieToken, DiscoveryFail> {
     let mut found = None;
     for p in pies() {
-        if p.owner == of && p.mark == mark {
+        if !raw_alive(p.token) {
+            continue;
+        }
+        if let Ok((_vestor, owner, actual_mark)) = inspect(p.token) {
+            if owner != of || actual_mark != mark {
+                continue;
+            }
+            if found.is_some() {
+                return Err(DiscoveryFail::Ambiguous);
+            }
             found = Some(p.token);
         }
     }
-    found
+    found.ok_or(DiscoveryFail::Missing)
 }
 
-pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Option<PieToken> {
+pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Result<PieToken, DiscoveryFail> {
     let until = deadline(wait);
     loop {
-        if let Some(token) = find(of, mark) {
-            return Some(token);
+        match find(of, mark) {
+            Ok(token) => return Ok(token),
+            Err(DiscoveryFail::Ambiguous) => return Err(DiscoveryFail::Ambiguous),
+            Err(DiscoveryFail::Missing) => {}
         }
         let remain = remain(until);
         if remain == Wait::POLL {
-            return None;
+            return Err(DiscoveryFail::Missing);
         }
         let _ = env::unit::fall(remain);
     }
@@ -199,12 +245,7 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
     let back = pie::unseal_hole(mark).map_err(|_| ())?;
-    match port::ship(
-        back,
-        host,
-        Access::STORE,
-        Policy::NONE,
-    ) {
+    match port::ship(back, host, Access::STORE, Policy::NONE) {
         Ok(to) => Ok((back, to.seed())),
         Err(_) => {
             let _ = pie::release(back);
@@ -228,9 +269,7 @@ pub fn alive(entry: env::PieToken) -> bool {
 
 /// **这枚是谁授的**（`Reserve` 第一格）
 pub fn vested_by(entry: env::PieToken) -> Option<env::TaskId> {
-    reserve(entry)
-        .ok()
-        .map(|(vestor, _owner, _mark)| vestor)
+    reserve(entry).ok().map(|(vestor, _owner, _mark)| vestor)
 }
 
 /// **这扇门是谁开的**（`Reserve` 第二格）。副本共享同一事实，转手不变
@@ -244,7 +283,7 @@ pub fn opened_by(hole: env::PieToken) -> Option<env::TaskId> {
     }
 }
 
-/// **这枚被标成什么记号**（`Reserve` 第三格）。铸者刻在孔上，副本共享、转手不变
+/// 查询这份 Hole 能力引用当前携带的标记；派生引用可以使用不同标记。
 /// **为什么另开一手、而不是折进 opened_by 那一格**：`opened_by` 在 `owner == 0`
 /// （引导期那批设备门闩）时把整条候选判成"不成立"、连记号一起丢；而"这一枚是不是
 /// `entry`"在 owner 0 的那批门闩上照样要答得出

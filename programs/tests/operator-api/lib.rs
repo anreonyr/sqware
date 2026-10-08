@@ -22,6 +22,31 @@ mod tests {
     }
 
     #[test]
+    fn guest_handoff_carries_an_explicit_recipient_token() {
+        let request = Tip::Guest {
+            who: TaskId::new(7),
+            reply: PieToken::mint(9),
+        };
+        let mut expected = vec![2];
+        word(&mut expected, 7);
+        word(&mut expected, 9);
+        let mut bytes = vec![0; TIP_LEN];
+        let used = request.store(&mut bytes).unwrap();
+        assert_eq!(used, 17);
+        assert_eq!(&bytes[..used], expected.as_slice());
+        assert!(
+            matches!(TipIn::fetch(&expected), Some(TipIn::Guest { who, reply })
+            if who == TaskId::new(7) && reply == PieToken::mint(9))
+        );
+        assert!(
+            TipIn::fetch(&expected[..9]).is_none(),
+            "implicit legacy handoff must not rescan"
+        );
+        expected.push(0);
+        assert!(TipIn::fetch(&expected).is_none());
+    }
+
+    #[test]
     fn request_goldens_preserve_action_codes_and_distinct_grant_order() {
         let road = Path::new("svc").to_path_buf();
         let root = vec![0; 9];

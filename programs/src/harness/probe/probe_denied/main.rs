@@ -6,21 +6,21 @@
 
 extern crate programs;
 
+use ::resource::raw::{Hole, reserve};
+use env::unit;
 use env::{PieToken, Wait};
-use programs::Report;
 use ipc::hand::Receiver;
 use ipc::session::{Session, establish};
-use system_client::identity::Organization;
-use system_client::identity::Query;
-use system_client::identity::SelfOps;
-use system_api::identity::Reply;
-use system_api::identity::Wire;
+use programs::Report;
 use system_api::identity::Fail;
 use system_api::identity::Grant;
 use system_api::identity::Install;
+use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
 use system_client::operator;
-use env::unit;
-use ::resource::raw::{Hole, reserve};
 
 const MS: usize = 1000;
 
@@ -107,7 +107,7 @@ fn main() -> Report<'static> {
 fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToken {
     if matches!(grant, Grant::Bind | Grant::Unbind) {
         let entry = establish::find(authority, grant.mark())
-            .expect("probe-denied: missing explicitly injected installer face");
+            .unwrap_or_else(|_| panic!("probe-denied: installer face missing or ambiguous"));
         let (vestor, owner, mark) = reserve(entry).unwrap();
         assert_eq!(vestor, unit::sire());
         assert_eq!(owner, authority);
@@ -129,8 +129,8 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
 }
 
 fn raw(entry: PieToken, wire: Wire) -> Reply {
-    let (back, seed) =
-        establish::lend_out(entry, system_api::identity::BACK).expect("probe-denied: cannot establish reply");
+    let (back, seed) = establish::lend_out(entry, system_api::identity::BACK)
+        .expect("probe-denied: cannot establish reply");
     let mut frame = [0u8; system_api::identity::limits::MAX_FRAME];
     let n = wire
         .store(seed, &mut frame)

@@ -151,17 +151,20 @@ cargo test --manifest-path crates/resource/tests/capability/Cargo.toml --target 
 cargo test --manifest-path crates/wire/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path crates/ipc/tests/session-establish/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/interface-marks/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/publication-admission/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/loader-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/hub-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/device-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/router-handoff/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/terminal/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/login/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/operator-handoff/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-instance/Cargo.toml --target x86_64-unknown-linux-gnu --offline
@@ -177,7 +180,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 ## 下一轮：Mark 的职责与发现规则重构计划
 
-状态：第1阶段基线与第2阶段发布准入已落地，第3至6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
+状态：第1阶段基线、第2阶段发布准入与第3阶段唯一发现／显式交付已落地，第4至6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
 
 ### 目标与范围
 
@@ -233,7 +236,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 | RTC私有 `rtc-back`（未进入API REGISTRY） | RTC请求方每次创建回信能力并传入报文 | 由具体请求的能力与来源维护回复关系 | 纳入阶段5角色复核，不新增运行时中心；明确交付能力无需静态实例登记 |
 | Mark::NONE 与测具自有标签 | NONE表示无角色，转授参数中表示继承；测具标签仅隔离测试 | NONE能力仍由native来源／权限控制；错误标签不代替真实授权负证据 | 不进入生产角色唯一性表；可有任意多独立能力实例 |
 
-发现基线：Operator claim 当前取第一枚并最多告警，通用 establish::find 当前取最后一枚；两者都不是唯一性验证。kernel允许多个相同 owner/Mark 实例，因此阶段3须显式区分单实例发现与多实例交付，不能靠目录顺序解决。
+第1阶段记录的发现基线：Operator claim 取第一枚并最多告警，通用 establish::find 取最后一枚；两者都不是唯一性验证。kernel允许多个相同 owner/Mark 实例，因此阶段3须显式区分单实例发现与多实例交付，不能靠目录顺序解决。
 
 真实目标探针 `harness/probe/marks.rs` 验证重新标记不修改源引用、NONE继承、重标记不扩大FETCH-only权限、同owner/Mark多实例、NONE孔收发，以及正常seal/release后资源表回到基线；它还调用生产 `granted_berth` 验证请求标签确实由客户端选择。纯API宿主黄金测试与真实内核探针各自验证对应边界。
 
@@ -257,7 +260,7 @@ mold 的 PUBLICATIONS 不再以 env::marks::Definition 作为发布权利的表�
 
 第1／2阶段实现记录：63个既有角色的黄金数值保持不变；Mark真实探针固定原生继承／重标记／权限边界。PUBLICATIONS现为固定名称数组，unit::PublishEntry只表达名称提示，既有产品固定名策略不扩张；运行时准入归publication私有admission模块，unit保持纯部署元数据，image不引入服务实现依赖。Namespace仅开放声明的scope/group/base-path；普通发布不读取入口Mark，native来源、owner、存活、访问策略与挂载冲突校验保留。Devices以Control登记的可信Hub、MemberOf Permit、设备白名单与实际联盟资格准入。
 
-真实accept probe已发布并取回两个未列入静态entries的NONE入口，验证错误group、越界名称和仅有已知API Mark而无namespace权利均被拒绝；撤销一个实例不影响另一实例。system-fault的Mark基线探针验证无权限扩张、重复角色实例和正常释放。product保留原有Hub/Terminal/UART/RTC路径与名称行为。阶段3尚未改变首枚／末枚发现规则，阶段4尚未移除Operator操作面标签。
+真实accept probe已发布并取回两个未列入静态entries的NONE入口，验证错误group、越界名称和仅有已知API Mark而无namespace权利均被拒绝；撤销一个实例不影响另一实例。system-fault的Mark基线探针验证无权限扩张、重复角色实例和正常释放。product保留原有Hub/Terminal/UART/RTC路径与名称行为。第3阶段的发现规则变化见下文；第4阶段尚未移除Operator操作面标签。
 
 ### 3. 显式交付优先，统一扫描发现的歧义结果
 
@@ -270,6 +273,14 @@ mold 的 PUBLICATIONS 不再以 env::marks::Definition 作为发布权利的表�
 唯一性以明确的发现范围判断。多个 RPC 回信端、多订阅和多服务实例不能因相同角色 Mark 被全局判为非法；这类连接必须依靠明确交付和会话上下文区分。
 
 验收：目录顺序不改变发现结果；多个匹配不能被任意选中；已有显式 seed 的流程不重新扫表；重复／错误来源、对端退出、导入失败与正常多会话均有测试。
+
+第3阶段实现记录：`establish::find/claim` 统一返回唯一 token 或 `Missing/Ambiguous`。发现使用内核 inspect 的 owner/Mark 与存活事实，支持 owner=0 的普通能力；Endpoint 的通信绑定另外使用 reserve 验证孔类型。仅缺失等待，歧义立即失败；已有 tx 只检查原绑定，退出后不自动扫描替代能力。构造失败只撤销／释放本次创建的能力，不能清理扫描中发现的其他实例。
+
+Operator 的私有 `Tip::Guest` 仍使用 opcode=2，但由原9字节改为17字节，增加接收方表中的明确 reply token；旧9字节被拒绝。管理端转授后携带 seed，服务端检查存活、vestor=Control、owner=客人和 LINK 角色后保存，删除按角色查找 reply 的延期重试。Bootstrap 请求仍要求在发现范围内唯一，已接入的请求只核验原绑定。当前 Desk 仍按 task 管理客人、请求 Mark 仍区分操作面；同任务独立 Operator 多会话由第4阶段继续处理。
+
+Router 新增 opcode=2 的 `OccupyLane`：21字节请求显式交付 line、lane seed、back seed，9字节应答交付状态和反向 lane seed。发起端使用仅创建并转授的 lend，不预扫描对端。双方验证实际应答者、能力来源、owner、存活与角色后保存明确 token，不再按 LINE_MARK／LINE_BACK 扫表。旧 opcode=1 的5字节 Occupy 仅保留固定 codec 黄金，生产服务不接受旧握手。普通操作和失败码、63个既有角色数值、Kernel ABI 与 schedule 语义保持不变；这些用户态握手的布局升级有独立字节黄金。
+
+故障测具也显式交付 REF seed，保留同角色重复实例与错误 authority 的拒绝断言。新增 session-establish、operator-handoff、router-handoff 宿主套件覆盖目录顺序、歧义、失效绑定、明确实例、导入来源和失败清理；accept 的重复占线仍要求 TAKEN，未知线仍要求 UNKNOWN，并检查资源回到基线。本阶段相关宿主测试共130项通过；programs全目标与image宿主构建通过，QEMU accept、product、system-fault均通过。第4至6阶段保持待实施状态。
 
 ### 4. Operator 的操作选择与授权分离
 

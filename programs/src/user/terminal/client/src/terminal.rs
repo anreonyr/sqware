@@ -1,13 +1,13 @@
-use terminal_api::frame::{self, Command, Input, Reply};
-use system_client::operator::Face;
-use system_api::operator::Path;
-use wire::message::Message;
+use ::resource::{
+    pile::Pile,
+    raw::{Hole, reserve},
+};
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
-use ::resource::{
-    raw::{Hole, reserve},
-    pile::Pile,
-};
+use system_api::operator::Path;
+use system_client::operator::Face;
+use terminal_api::frame::{self, Command, Input, Reply};
+use wire::message::Message;
 
 const MS: Wait = Wait::AtMost(1000);
 
@@ -44,9 +44,7 @@ impl Terminal {
                     ()
                 })?;
             let mut bytes = [0; Reply::LEN];
-            let (n, from) = Hole::from_raw(back)
-                .pull(&mut bytes, MS)
-                .map_err(|_| ())?;
+            let (n, from) = Hole::from_raw(back).pull(&mut bytes, MS).map_err(|_| ())?;
             let (reply, end) = Reply::fetch_at(&bytes[..n], 0).ok_or(())?;
             if from == self.host && n == end && reply.status == 0 {
                 Ok(reply)
@@ -154,7 +152,14 @@ impl Connection {
         }
     }
     pub fn set_echo(&self, enabled: bool) -> Result<(), ()> {
-        self.command(if enabled { frame::ECHO_ON } else { frame::ECHO_OFF }, env::unit::self_id())
+        self.command(
+            if enabled {
+                frame::ECHO_ON
+            } else {
+                frame::ECHO_OFF
+            },
+            env::unit::self_id(),
+        )
     }
     pub fn close(&self) -> Result<(), ()> {
         self.command(frame::DETACH, env::unit::self_id())
@@ -218,7 +223,7 @@ impl Io {
         Ok(io)
     }
     pub fn injected(owner: TaskId) -> Result<Self, ()> {
-        let find = |mark| ipc::session::establish::find(owner, mark).ok_or(());
+        let find = |mark| ipc::session::establish::find(owner, mark).map_err(|_| ());
         Self::of(
             find(frame::INPUT)?,
             find(frame::OUTPUT)?,

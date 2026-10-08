@@ -1,15 +1,13 @@
 use super::{Fail, answer::Output};
 use crate::support::face::desk::{Desk, Guest};
-use crate::system::operator::service::claim::{ask_of, mark_of, reply_of};
+use crate::system::operator::service::claim::{ask_of, mark_of};
 use ::resource::pile::Pile;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 use env::{HoleDir, Mark, PieToken, TaskId, Wait};
 use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
-use programs::debug;
 use system_api::operator as ocall;
 const SETTLE_MS: usize = 1;
-const LATE_MS: usize = 1000;
 const MARKS: [Mark; ocall::Grant::COUNT + 1] = {
     let mut marks = [ocall::ASK_MARK; ocall::Grant::COUNT + 1];
     let mut i = 0;
@@ -19,11 +17,6 @@ const MARKS: [Mark; ocall::Grant::COUNT + 1] = {
     }
     marks
 };
-pub(super) struct Late {
-    pub who: TaskId,
-    pub since: u64,
-}
-pub(super) struct LateGuests(pub Vec<Late>);
 pub(super) struct Outbox {
     pub who: TaskId,
     pub send: Sender<ocall::Union>,
@@ -39,37 +32,40 @@ pub(super) struct Buffer(pub Vec<u8>);
 pub(super) struct Hit(pub Option<PieToken>);
 pub(super) struct Selected(pub Option<Guest>);
 pub(super) struct Settling(pub bool);
-pub(super) fn retry(
-    mut desk: ResMut<Desk>,
-    mut late: ResMut<LateGuests>,
-    mut settling: ResMut<Settling>,
-) -> Result<Progress, Fail> {
-    let now = env::chrono::clock();
-    let mut at = 0;
-    while at < late.0.len() {
-        let who = late.0[at].who;
-        if let Some(reply) = reply_of(who) {
-            let _ = desk.admit(who, reply);
-            late.0.swap_remove(at);
-        } else if now.saturating_sub(late.0[at].since) >= LATE_MS as u64 * 1_000_000 {
-            debug!("operator: no reply who={} gave up", who.get());
-            late.0.swap_remove(at);
-        } else {
-            at += 1;
-        }
-    }
-    settling.0 = !late.0.is_empty();
-    Ok(Progress::Done)
-}
 pub(super) fn arm(
     mut desk: ResMut<Desk>,
     pile: Res<Pile>,
     mut settling: ResMut<Settling>,
 ) -> Result<Progress, Fail> {
-    settling.0 |= desk.arm_pending(
-        |who| (&MARKS).iter().find_map(|mark| (ask_of)(who, *mark)),
+    let mut rejected = Vec::new();
+    let mut full = false;
+    settling.0 = desk.arm_pending(
+        |who| {
+            for mark in MARKS {
+                match ask_of(who, mark) {
+                    Ok(token) => return Some(token),
+                    Err(ipc::session::establish::DiscoveryFail::Missing) => {}
+                    Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                        if rejected.try_reserve(1).is_err() {
+                            full = true;
+                        } else {
+                            rejected.push(who);
+                        }
+                        return None;
+                    }
+                }
+            }
+            None
+        },
         |ask| pile.attach(ask, HoleDir::Pull).is_ok(),
     );
+    if full {
+        return Err(Fail::Room);
+    }
+    for who in rejected {
+        desk.evict(who);
+        programs::debug::put("operator: ambiguous guest request");
+    }
     Ok(Progress::Done)
 }
 pub(super) fn wait(

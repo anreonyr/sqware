@@ -96,6 +96,92 @@ mod tests {
     }
 
     #[test]
+    fn router_handoff_carries_exact_recipient_seeds_in_a_distinct_frame() {
+        let request = router_api::frame::OccupyLane::of(
+            0x1122_3344,
+            token(0x0807_0605_0403_0201),
+            token(0x1817_1615_1413_1211),
+        );
+        assert_eq!(router_api::frame::Occupy::LEN, 5);
+        assert_eq!(router_api::frame::OccupyLane::LEN, 21);
+        let mut bytes = router_api::frame::OccupyLane::EMPTY;
+        let n = request.store(&mut bytes).unwrap();
+        assert_eq!(
+            &bytes[..n],
+            &[
+                router_api::frame::OCCUPY_LANE,
+                0x44,
+                0x33,
+                0x22,
+                0x11,
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                0x11,
+                0x12,
+                0x13,
+                0x14,
+                0x15,
+                0x16,
+                0x17,
+                0x18,
+            ]
+        );
+        assert_eq!(
+            router_api::frame::OccupyLane::fetch(&bytes[..n]),
+            Some((
+                0x1122_3344,
+                token(0x0807_0605_0403_0201),
+                token(0x1817_1615_1413_1211),
+            ))
+        );
+        assert!(router_api::frame::OccupyLane::fetch(&bytes[..n - 1]).is_none());
+        assert!(router_api::frame::OccupyLane::fetch(&[0; 5]).is_none());
+        let mut extra = [0; router_api::frame::OccupyLane::LEN + 1];
+        extra[..n].copy_from_slice(&bytes[..n]);
+        assert!(router_api::frame::OccupyLane::fetch(&extra).is_none());
+        bytes[0] = router_api::frame::OCCUPY;
+        assert!(router_api::frame::OccupyLane::fetch(&bytes[..n]).is_none());
+
+        let reply =
+            router_api::frame::OccupyReply::of(router_api::frame::OK, token(0x2827_2625_2423_2221));
+        assert_eq!(router_api::frame::OccupyReply::LEN, 9);
+        let mut bytes = router_api::frame::OccupyReply::EMPTY;
+        let n = reply.store(&mut bytes).unwrap();
+        assert_eq!(
+            &bytes[..n],
+            &[
+                router_api::frame::OK,
+                0x21,
+                0x22,
+                0x23,
+                0x24,
+                0x25,
+                0x26,
+                0x27,
+                0x28
+            ]
+        );
+        assert_eq!(
+            router_api::frame::OccupyReply::fetch(&bytes[..n]),
+            Some((router_api::frame::OK, token(0x2827_2625_2423_2221)))
+        );
+        assert!(router_api::frame::OccupyReply::fetch(&bytes[..n - 1]).is_none());
+        assert!(router_api::frame::OccupyReply::fetch(&[router_api::frame::DENIED; 1]).is_none());
+        let failure = router_api::frame::OccupyReply::of(router_api::frame::DENIED, PieToken::NONE);
+        let n = failure.store(&mut bytes).unwrap();
+        assert_eq!(
+            &bytes[..n],
+            &[router_api::frame::DENIED, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
     fn device_marks_are_stable_and_all_provider_registries_are_collision_free() {
         assert_eq!(terminal_api::marks::ENTRY, Mark::of("terminal-attach"));
         assert_eq!(
@@ -112,18 +198,9 @@ mod tests {
         assert_eq!(router_api::frame::BACK_MARK, router_api::LINE_BACK);
         assert_eq!(router_api::frame::LANE, router_api::LANE);
 
-        assert_eq!(
-            hub_api::PUBLICATIONS,
-            ["bond", "list", "claim"]
-        );
-        assert_eq!(
-            terminal_api::PUBLICATIONS,
-            ["attach"]
-        );
-        assert_eq!(
-            router_api::PUBLICATIONS,
-            ["router"]
-        );
+        assert_eq!(hub_api::PUBLICATIONS, ["bond", "list", "claim"]);
+        assert_eq!(terminal_api::PUBLICATIONS, ["attach"]);
+        assert_eq!(router_api::PUBLICATIONS, ["router"]);
 
         let registries: &[&[&[env::marks::Definition]]] = &[
             &[system_api::loader::REGISTRY],

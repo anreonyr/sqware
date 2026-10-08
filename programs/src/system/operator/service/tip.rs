@@ -1,13 +1,8 @@
-use super::{
-    Fail,
-    answer::Output,
-    plate,
-    session::{Late, LateGuests},
-};
+use super::{Fail, answer::Output, plate};
 use crate::support::face::desk::{Desk, DeskFail};
 use crate::system::app::life::Status;
 use crate::system::operator::tree::Tile;
-use crate::system::operator::{service::claim::reply_of, tree::Operator};
+use crate::system::operator::{service::claim::valid_reply, tree::Operator};
 use ::resource::raw::{Hole, reserve};
 use ::resource::{
     pile::Pile,
@@ -124,23 +119,15 @@ pub(super) fn wired(
     }
     Ok(Progress::Done)
 }
-pub(super) fn guest(
-    current: Res<CurrentTip>,
-    mut desk: ResMut<Desk>,
-    mut late: ResMut<LateGuests>,
-) -> Result<Progress, Fail> {
-    if let Some((ocall::TipIn::Guest(client), _)) = &current.0 {
-        if let Some(reply) = reply_of(*client) {
-            match desk.admit(*client, reply) {
-                Ok(_) | Err(DeskFail::Already) => {}
-                Err(DeskFail::Full) => debug::put("operator: desk full"),
-            }
-        } else if !late.0.iter().any(|one| one.who == *client) {
-            late.0.try_reserve(1).map_err(|_| Fail::Room)?;
-            late.0.push(Late {
-                who: *client,
-                since: env::chrono::clock(),
-            });
+pub(super) fn guest(current: Res<CurrentTip>, mut desk: ResMut<Desk>) -> Result<Progress, Fail> {
+    if let Some((ocall::TipIn::Guest { who, reply }, from)) = &current.0 {
+        if !valid_reply(*who, *reply, *from) {
+            debug::put("operator: invalid explicit guest reply");
+            return Ok(Progress::Done);
+        }
+        match desk.admit(*who, *reply) {
+            Ok(_) | Err(DeskFail::Already) => {}
+            Err(DeskFail::Full) => debug::put("operator: desk full"),
         }
     }
     Ok(Progress::Done)

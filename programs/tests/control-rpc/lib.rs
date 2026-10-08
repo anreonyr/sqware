@@ -175,7 +175,9 @@ pub mod session {
     pub mod establish {
         use env::{Mark, PieToken, TaskId};
         pub fn opened_by(_: PieToken) -> Option<TaskId> { Some(TaskId::new(7)) }
-        pub fn find(_: TaskId, _: Mark) -> Option<PieToken> { Some(PieToken::from_bytes(&10u64.to_le_bytes()).unwrap()) }
+        pub fn find(_: TaskId, _: Mark) -> Result<PieToken, DiscoveryFail> { Ok(PieToken::from_bytes(&10u64.to_le_bytes()).unwrap()) }
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum DiscoveryFail { Missing, Ambiguous }
     }
 }
 

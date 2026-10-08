@@ -2,21 +2,23 @@
 //! 客户是**持有那台设备的人**：它**不自己算线号**——那个数来自认领那一答的契
 //! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
-use env::{Wait, HoleDir, PieToken};
 use ::resource::port::{self, Access, Policy};
+use env::{HoleDir, PieToken, Wait};
 
-use router_api::frame;
-use router_api::Fail;
+use ::resource::raw::Hole;
+use env::pie;
 use ipc::hand::Sender;
 use ipc::session::establish::{self, Held};
-use env::pie;
-use ::resource::raw::{Hole};
+use router_api::Fail;
+use router_api::frame;
+use wire::Message;
 
 /// 客户手里那一条线：一对孔（本端读投递、写排空）
 /// **归本端持有**（Held）：`Line` 落出作用域就是"这条线我不要了"——本端那一枚随 `Drop`
 /// Endpoint（那一类归域、放不下）
 pub struct Line {
     pair: Held,
+    tx: PieToken,
 }
 
 // Line::occupy 把**七条完全不同的成因**折成同一个 Fail::Denied（线上那张表里 `DENIED` 也是
@@ -40,39 +42,39 @@ impl Line {
         // **有主地建**：那一格"有主"由类型说出来——`Held(endpoint(..)?)`（没有 `hold` 那一手：
         // 它只是这一个字面量）。这一条线归本端持有，`Line` 落出作用域即放下；失败那几趟
         // 也由它的 `Drop` 代劳（下面三处 `return` 一个字都不用写）。
-        let mut pair = match establish::endpoint(host, router_api::LINE_MARK, Wait::POLL) {
+        let pair = match establish::lend(host, router_api::LINE_MARK) {
             Ok(ep) => Held(ep),
             Err(_) => return Err(deny(2, 0)),
         };
+        let lane = pair.seed();
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单手的孔只够一个方向）。
         let back = match pie::unseal_hole(frame::BACK_MARK) {
             Ok(back) => back,
             Err(_) => return Err(deny(3, 0)),
         };
         // 收**（放的是本端铸的那一枚），回信孔由本函数收（它不是本端铸的）。
-        if port::ship(
-            back,
-            host,
-            Access::FETCH | Access::STORE,
-            Policy::NONE,
-        )
-        .is_err()
-        {
-            // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
-            let _ = pie::seal(back);
-            let _ = pie::release(back);
-            return Err(deny(4, 0));
-        }
+        let back_at = match port::ship(back, host, Access::FETCH | Access::STORE, Policy::NONE) {
+            Ok(at) => at.seed(),
+            Err(_) => {
+                // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
+                let _ = pie::seal(back);
+                let _ = pie::release(back);
+                return Err(deny(4, 0));
+            }
+        };
         // 层写字节。**递出即返回**：等它下线由这一枚 `Sender` 担着（`reclaim`，`Drop` 兜底）——
         // 推完就落地等于"等对面来取"，会卡住回话。
-        let mut out = Sender::<frame::Occupy>::from_raw(entry);
+        let mut out = Sender::<frame::OccupyLane>::from_raw(entry);
         let budget = match millis {
             Wait::POLL => 1,
             Wait::AtMost(ms) => ms,
             Wait::Forever => 1000,
         };
         let mut spent = 0usize;
-        while out.send(frame::Occupy::of(line)).is_err() {
+        while out
+            .send(frame::OccupyLane::of(line, lane, back_at))
+            .is_err()
+        {
             spent += 1;
             if spent >= budget {
                 break;
@@ -85,16 +87,22 @@ impl Line {
             let _ = pie::release(back);
             return Err(deny(5, 0));
         }
-        let mut one = [0u8; 1];
-        let code = match Hole::from_raw(back).pull(&mut one, millis) {
-            Ok((1, _)) => one[0],
-            _ => frame::BAD,
+        let mut reply = [0u8; frame::OccupyReply::LEN];
+        let (code, tx, source) = match Hole::from_raw(back).pull(&mut reply, millis) {
+            Ok((n, from)) if n == reply.len() => match frame::OccupyReply::fetch(&reply[..n]) {
+                Some((code, tx)) => (code, tx, Some(from)),
+                None => (frame::BAD, PieToken::NONE, Some(from)),
+            },
+            _ => (frame::BAD, PieToken::NONE, None),
         };
         let _ = out.reclaim();
         // 这一份，路由者那一份由它自己放。
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
         let _ = pie::release(back);
+        if !super::handoff::valid_source(source, host) {
+            return Err(deny(7, 0));
+        }
         if code != frame::OK {
             deny(6, code);
             return Err(match code {
@@ -103,11 +111,10 @@ impl Line {
                 _ => Fail::Denied,
             });
         }
-        // 认下它那一枚：它另装了一条泊位的一半，本端写的那一枚从它来。
-        if !pair.claim(host, router_api::LINE_MARK, millis) {
+        if !super::handoff::valid_lane(host, tx) {
             return Err(deny(7, 0));
         }
-        Ok(Line { pair })
+        Ok(Line { pair, tx })
     }
 
     /// 收一帧投递。`Err(())` = 期限内没等到
@@ -127,11 +134,8 @@ impl Line {
     /// 而这句话说的是**状态**（那一格回闲 + 把线放回），幂等
     /// **为什么不能阻塞**：路由者投递、客户说排空，两边都是"往对方那一格上说一句"。两边都等 ⇒
     pub fn exhaust(&self) -> Result<(), ()> {
-        let Some(tx) = self.pair.tx() else {
-            return Err(());
-        };
         // 置位即返：已响 = "这一条我处理完了"这件**状态**已经有了 ⇒ 也算说过。
-        match Hole::from_raw(tx).ring() {
+        match Hole::from_raw(self.tx).ring() {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(()),

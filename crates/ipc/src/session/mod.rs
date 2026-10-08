@@ -3,18 +3,17 @@
 //! "两枚孔到手"与"一条路装上"是同一件事的两段（见 `establish` 头注那"一手"）。
 
 pub mod establish;
-pub use establish::{Endpoint, Held, alive, opened_by};
+pub use establish::{DiscoveryFail, Endpoint, Held, alive, opened_by};
 pub mod exchange;
 pub use exchange::CallFail;
 pub use wire::Contract;
 mod state;
 
 extern crate alloc;
+use ::resource::raw::Hole;
 use alloc::sync::Arc;
 use env::wire::Field;
 use env::{Mark, PieToken, TaskId, Wait};
-use ::resource::raw::Hole;
-
 
 /// 一条路的名字：**泊位那一格**（`link`）＋ **问话孔那一格**（`ask`）
 #[derive(Clone, Copy)]
@@ -46,20 +45,31 @@ pub enum Fail {
 
 impl Session {
     /// The peer that owns the response side of this session.
-    pub const fn host(&self) -> TaskId { self.host }
+    pub const fn host(&self) -> TaskId {
+        self.host
+    }
 
     /// The request hole used by this session.
-    pub const fn talk(&self) -> PieToken { self.talk }
+    pub const fn talk(&self) -> PieToken {
+        self.talk
+    }
 
     /// The local response endpoint shared by aliases of this session.
-    pub const fn link(&self) -> Endpoint { self.link }
+    pub const fn link(&self) -> Endpoint {
+        self.link
+    }
 
     /// Import raw endpoint capabilities after verifying ownership of the local reply hole.
     pub fn from_raw(link: Endpoint, talk: PieToken, host: TaskId) -> Result<Self, Fail> {
         if !state::valid_reply(link.rx(), host) {
             return Err(Fail::Link);
         }
-        Ok(Self { link, talk, host, state: state::new_state() })
+        Ok(Self {
+            link,
+            talk,
+            host,
+            state: state::new_state(),
+        })
     }
 
     /// Send one typed request and receive its typed response within one shared budget.
@@ -100,8 +110,10 @@ fn hear(link: &Endpoint, millis: Wait) -> Option<TaskId> {
 /// 两格。于是"只铸一枚"从**纪律**变成
 /// **构造**：这条路上再也生不出第二枚，而第二枚的症状是"多出来的那枚永远没人读它的推"
 fn ask(host: TaskId, mark: Mark) -> Result<PieToken, ()> {
-    if let Some(have) = establish::find(me(), mark) {
-        return Ok(have);
+    match establish::find(me(), mark) {
+        Ok(have) => return Ok(have),
+        Err(establish::DiscoveryFail::Ambiguous) => return Err(()),
+        Err(establish::DiscoveryFail::Missing) => {}
     }
     // 铸 + 交出读端 + 本端窄到只写：一手就是 establish::give。
     establish::give(host, mark).map_err(|_| ())

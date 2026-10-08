@@ -4,16 +4,15 @@ use alloc::vec::Vec;
 
 use ::resource::port::{self, Access, Policy};
 use env::wire::Field;
-use env::{HoleDir, Mark, PieToken, TaskId, Wait};
+use env::{HoleDir, PieToken, TaskId, Wait};
 
 use crate::support::timing::BOOT_MS;
 
-use ::resource::raw::{Hole, pies, reserve};
+use ::resource::raw::{Hole, alive, reserve};
 use env::pie;
 use ipc::hand::Sender;
 use ipc::session::establish;
 use system_api::operator::EntryId;
-pub use system_api::operator::LINK;
 use system_api::operator::Path;
 use system_api::operator::TIP_MARK;
 use system_api::operator::Tip;
@@ -81,8 +80,6 @@ impl Tree {
     pub fn host(&self) -> Option<TaskId> {
         self.host
     }
-
-    /// Only a live client-issued LINK requests a session; ordering is not a request.
 
     pub fn wire(&mut self, wiring: Wiring) -> Result<(), &'static str> {
         let Wiring {
@@ -183,9 +180,9 @@ impl Tree {
 /// 返 `Err(哪一步)`：名字非法 / 席位满 / 等不到客人那一枚 / 提示孔认不到……对调用方是
 /// 同一件事——**这条服务没接上树**——但"死在哪一步"正是装配诊断要的那一格
 fn current_request(client: TaskId, reply: PieToken) -> bool {
-    establish::find(client, Mark::of(LINK)) == Some(reply)
+    alive(reply)
         && matches!(reserve(reply), Ok((_, owner, mark))
-            if owner == client && mark == Mark::of(LINK))
+        if owner == client && mark == system_api::operator::LINK_MARK)
 }
 
 fn attach(
@@ -203,13 +200,20 @@ fn attach(
     // 3. 提示孔（只认一次）→ 把客人那一枚转授给持树者 → 告两边。
     //    要推的正是它（**不是** `host`：那是持树者的号，推不动）。
     let _ = host_of(host, Wait::POLL, tip)?;
-    hand(reply, host).map_err(|()| "operator:hand")?;
+    let delivered = hand(reply, host).map_err(|()| "operator:hand")?;
     // 客人那一侧的一格：**答话的是谁**（持树者的号，8 字节**裸号**——那条路的读者是
     // ipc::session::hear，见 tell）。
     tell(host, reply).map_err(|()| "operator:who")?;
     // 提示在**转授之后**：持树者据此可以按"提示一到，答话路必已在本表里"办事。
     // The counterpart remains owned until the client closes or replaces this LINK.
-    push((*tip).ok_or("operator:tip")?, Tip::Guest(client)).map_err(|()| "operator:tell")?;
+    push(
+        (*tip).ok_or("operator:tip")?,
+        Tip::Guest {
+            who: client,
+            reply: delivered,
+        },
+    )
+    .map_err(|()| "operator:tell")?;
     Ok(link)
 }
 
@@ -225,17 +229,17 @@ pub fn host_of(
         return Ok(host);
     }
     // 交给调用方拿着：同一条路上以后每次都往里推客人号 / 协调帧 / 一条路（**同一枚task**用）。
-    *tip = establish::claim(host, TIP_MARK, millis);
-    if tip.is_none() {
-        return Err("operator:tip");
-    }
+    *tip = Some(
+        establish::claim(host, TIP_MARK, millis)
+            .map_err(|_| "operator:tip missing or ambiguous")?,
+    );
     Ok(host)
 }
 
 /// 把**客人交出来的那一枚**转授给持树者
 /// 转授的是"客人开的那扇门"（`owner` 是客人），持树者那侧认领时认的正是它
 /// 子集只给 `R|W`，**不加 `VEST`**：持树者用这一枚写答话，不需要再授出——一分不多
-pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
+pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<PieToken, ()> {
     let hole = Hole::from_raw(reply);
     port::ship(
         hole.token(),
@@ -243,7 +247,7 @@ pub(crate) fn hand(reply: PieToken, host: TaskId) -> Result<(), ()> {
         Access::FETCH | Access::STORE,
         Policy::NONE,
     )
-    .map(|_| ())
+    .map(|delivered| delivered.seed())
     .map_err(|_| ())
 }
 
@@ -258,31 +262,23 @@ impl Tree {
             return Ok(());
         };
         self.clients
-            .retain(|(_, link)| link.tx().is_some_and(|token| reserve(token).is_ok()));
-        let mut requests = Vec::new();
+            .retain(|(_, link)| link.tx().is_some_and(alive));
         for client in connections.drain(..) {
-            requests
-                .try_reserve(1)
-                .map_err(|_| "operator:request capacity")?;
-            requests.push((client, None));
-        }
-        if requests.is_empty() {
-            return Ok(());
-        }
-        // Enumerate once, retaining the last matching LINK for each client.
-        for pie in pies() {
-            if pie.mark != Mark::of(LINK) {
+            if self.clients.iter().any(|(known, link)| {
+                *known == client
+                    && link
+                        .tx()
+                        .is_some_and(|reply| current_request(client, reply))
+            }) {
                 continue;
             }
-            for (client, reply) in &mut requests {
-                if pie.owner == *client {
-                    *reply = Some(pie.token);
+            let reply = match establish::find(client, system_api::operator::LINK_MARK) {
+                Ok(reply) => reply,
+                Err(establish::DiscoveryFail::Missing) => continue,
+                Err(establish::DiscoveryFail::Ambiguous) => {
+                    programs::debug::put("operator: ambiguous client link");
+                    continue;
                 }
-            }
-        }
-        for (client, reply) in requests {
-            let Some(reply) = reply else {
-                continue;
             };
             let old = self.clients.iter().position(|(task, _)| *task == client);
             if old.is_some_and(|at| self.clients[at].1.tx() == Some(reply)) {

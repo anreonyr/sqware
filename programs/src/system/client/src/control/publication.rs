@@ -1,17 +1,16 @@
 //! Control publication client. Wire types live in system-api.
 
-use system_api::operator::{EntryId, Fail, PathBuf, Permit};
-use system_api::identity::{CoalitionId, PrincipalId};
 use ::resource::raw::{inspect, reserve};
 use env::pie;
 use env::{PieToken, TaskId, Wait};
 use ipc::session::establish;
 use ipc::{rpc, time::Deadline};
 use system_api::control::publication::Call;
+use system_api::identity::{CoalitionId, PrincipalId};
+use system_api::operator::{EntryId, Fail, PathBuf, Permit};
 
 use system_api::control::publication::{
-    ENTRY, Frame, Object, PUBLISH, REF, RESOLVE, RUNTIME, Reply, Target, UNPUBLISH,
-    valid_name,
+    ENTRY, Frame, Object, PUBLISH, REF, RESOLVE, RUNTIME, Reply, Target, UNPUBLISH, valid_name,
 };
 
 #[derive(Clone, Copy)]
@@ -28,7 +27,10 @@ impl Client {
     }
     pub fn injected() -> Result<Self, Fail> {
         let control = env::unit::sire();
-        let entry = establish::find(control, ENTRY).ok_or(Fail::Unknown)?;
+        let entry = establish::find(control, ENTRY).map_err(|failure| match failure {
+            establish::DiscoveryFail::Missing => Fail::Unknown,
+            establish::DiscoveryFail::Ambiguous => Fail::Denied,
+        })?;
         if !matches!(reserve(entry), Ok((vestor, owner, _)) if vestor == control && owner == control)
         {
             return Err(Fail::Denied);
@@ -153,8 +155,8 @@ fn exchange(
     wait: Wait,
     admitted: &mut bool,
 ) -> Result<Reply, Fail> {
-    let sender = rpc::request::Sender::<Call>::from_raw(entry, Call::BACK)
-        .map_err(|_| Fail::Unknown)?;
+    let sender =
+        rpc::request::Sender::<Call>::from_raw(entry, Call::BACK).map_err(|_| Fail::Unknown)?;
     if sender.peer() != control {
         return Err(Fail::Denied);
     }

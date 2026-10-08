@@ -60,8 +60,13 @@ fn concurrent_builders(
     let marks = [Mark::of("group-build"), Mark::of("group-doom")];
     let worker = move || {
         for mark in marks {
-            if ipc::session::establish::claim(TaskId::new(0), mark, Wait::AtMost(MS)).is_none() {
-                return false;
+            match ipc::session::establish::claim(TaskId::new(0), mark, Wait::AtMost(MS)) {
+                Ok(_) => {}
+                Err(ipc::session::establish::DiscoveryFail::Missing) => return false,
+                Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                    debug::put("group: ambiguous startup capability");
+                    return false;
+                }
             }
         }
         BUILDERS.fetch_add(1, Ordering::AcqRel);

@@ -2,21 +2,21 @@
 #![no_main]
 extern crate alloc;
 extern crate programs;
+use ::resource::raw::{Hole, reserve};
+use env::pie;
 use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
-use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use ipc::session::{Session, establish};
-use system_client::control::publication::Client;
+use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
 use system_api::control::Object;
 use system_api::control::Target;
 use system_api::identity::Selector;
-use system_client::identity::Query;
-use system_client::identity::SelfOps;
-use env::pie;
-use ::resource::raw::{Hole, reserve};
 use system_api::operator::Fail;
 use system_api::operator::Permit;
-use system_client::operator as operator;
+use system_client::control::publication::Client;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_client::operator;
 use system_client::operator::Face;
 const WAIT: Wait = Wait::AtMost(3000);
 #[programs::entry]
@@ -41,13 +41,13 @@ fn main() -> programs::Report<'static> {
     let mut target = None;
     let mut road = None;
     loop {
-        let mut bytes = [0; 9];
+        let mut bytes = [0; 17];
         let (n, sender) = Hole::from_raw(command)
             .pull(&mut bytes, Wait::Forever)
             .unwrap();
-        assert_eq!(n, 9);
+        assert_eq!(n, 17);
         assert_eq!(sender, control);
-        let task = TaskId::new(u64::from_le_bytes(bytes[1..].try_into().unwrap()) as usize);
+        let task = TaskId::new(u64::from_le_bytes(bytes[1..9].try_into().unwrap()) as usize);
         match bytes[0] {
             1 => {
                 let Object::Principal(p) = client
@@ -162,10 +162,10 @@ fn main() -> programs::Report<'static> {
                     .unwrap();
                 assert!(tree.tile(&ownroad, WAIT).unwrap().token(WAIT).is_ok());
                 {
-                    use system_api::control::publication::BACK;
-use system_api::control::publication::ENTRY;
-use system_api::control::publication::Frame;
                     use ::resource::port::{self, Access, Policy};
+                    use system_api::control::publication::BACK;
+                    use system_api::control::publication::ENTRY;
+                    use system_api::control::publication::Frame;
                     let abandoned = Target::RuntimeResource {
                         task: me,
                         kind: "public".into(),
@@ -180,22 +180,15 @@ use system_api::control::publication::Frame;
                     .unwrap()
                     .seed();
                     let closed = pie::unseal_hole(BACK).unwrap();
-                    let reply = port::ship(
-                        closed,
-                        control,
-                        Access::STORE,
-                        Policy::NONE,
-                    )
-                    .unwrap()
-                    .seed();
+                    let reply = port::ship(closed, control, Access::STORE, Policy::NONE)
+                        .unwrap()
+                        .seed();
                     pie::seal(closed).unwrap();
                     let mut frame = Frame::new(1, abandoned.clone(), (seed, Permit::Public));
                     frame.back = reply;
-                    ipc::hand::Sender::<Frame>::from_raw(
-                        establish::find(control, ENTRY).unwrap(),
-                    )
-                    .send_within(frame, WAIT)
-                    .unwrap_or_else(|_| panic!("abandoned request admission"));
+                    ipc::hand::Sender::<Frame>::from_raw(establish::find(control, ENTRY).unwrap())
+                        .send_within(frame, WAIT)
+                        .unwrap_or_else(|_| panic!("abandoned request admission"));
                     client.runtime(me, WAIT).unwrap();
                     assert!(
                         pie::revoke(control, seed).is_err(),
@@ -309,11 +302,18 @@ use system_api::control::publication::Frame;
                 );
             }
             5 => {
-                use system_api::control::publication::BACK;
-use system_api::control::publication::REF;
-use system_api::control::publication::Reply;
                 use ::resource::port::{self, Access, Policy};
-                let fake = establish::find(control, REF).unwrap();
+                use system_api::control::publication::BACK;
+                use system_api::control::publication::REF;
+                use system_api::control::publication::Reply;
+                assert_eq!(
+                    establish::find(control, REF),
+                    Err(establish::DiscoveryFail::Ambiguous)
+                );
+                let fake = PieToken::from_bytes(&bytes[9..17]).unwrap();
+                assert!(
+                    matches!(reserve(fake), Ok((vestor, owner, mark)) if vestor == control && owner == control && mark == REF)
+                );
                 assert_eq!(
                     Client::reference_direct(control, authority, fake, 1, "wrong-authority", WAIT),
                     Err(Fail::Unjudged)
@@ -332,13 +332,7 @@ use system_api::control::publication::Reply;
                     let n = reply.store_at(&mut bytes, 0).unwrap();
                     Hole::from_raw(back).push(&bytes[..n], WAIT).unwrap();
                 });
-                port::ship(
-                    back,
-                    helper.id(),
-                    Access::STORE,
-                    Policy::NONE,
-                )
-                .unwrap();
+                port::ship(back, helper.id(), Access::STORE, Policy::NONE).unwrap();
                 let mut encoded = [0; Reply::LEN];
                 let (n, actual) = Hole::from_raw(back).pull(&mut encoded, WAIT).unwrap();
                 assert_eq!(actual, helper.id());

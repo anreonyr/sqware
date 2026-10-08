@@ -1,6 +1,6 @@
 //! 两句话、两份形状，加一张失败域与状态码的双射表。
 
-use env::Mark;
+use env::{Mark, PieToken};
 
 use env::wire::Span as _;
 use wire::message::Message;
@@ -24,6 +24,8 @@ pub enum Fail {
 
 /// 登记那一句的动作码
 pub const OCCUPY: u8 = 1;
+/// Explicit handoff request carrying the two receiver-side token seeds.
+pub const OCCUPY_LANE: u8 = 2;
 
 /// 线泊位的记号（两侧同一个）
 pub use crate::marks::LANE;
@@ -71,5 +73,78 @@ impl Message for Occupy {
         }
         let occupy = Occupy::fetch_at(bytes, 0)?.0;
         (occupy.op == OCCUPY).then_some(occupy.line)
+    }
+}
+
+/// A line request bound to the exact lane and reply capabilities prepared by its client.
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OccupyLane {
+    pub op: u8,
+    pub line: u32,
+    pub lane: PieToken,
+    pub back: PieToken,
+}
+
+impl OccupyLane {
+    pub fn of(line: u32, lane: PieToken, back: PieToken) -> Self {
+        Self {
+            op: OCCUPY_LANE,
+            line,
+            lane,
+            back,
+        }
+    }
+}
+
+impl Message for OccupyLane {
+    type In = (u32, PieToken, PieToken);
+    type Buf = [u8; Self::LEN];
+    const EMPTY: Self::Buf = [0; Self::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self::In> {
+        if bytes.len() != Self::LEN {
+            return None;
+        }
+        let (request, end) = Self::fetch_at(bytes, 0)?;
+        (end == bytes.len() && request.op == OCCUPY_LANE).then_some((
+            request.line,
+            request.lane,
+            request.back,
+        ))
+    }
+}
+
+/// Status plus the exact receiver-side lane seed created by the router.
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OccupyReply {
+    pub status: u8,
+    pub lane: PieToken,
+}
+
+impl OccupyReply {
+    pub fn of(status: u8, lane: PieToken) -> Self {
+        Self { status, lane }
+    }
+}
+
+impl Message for OccupyReply {
+    type In = (u8, PieToken);
+    type Buf = [u8; Self::LEN];
+    const EMPTY: Self::Buf = [0; Self::LEN];
+
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
+
+    fn fetch(bytes: &[u8]) -> Option<Self::In> {
+        if bytes.len() != Self::LEN {
+            return None;
+        }
+        let (reply, end) = Self::fetch_at(bytes, 0)?;
+        (end == bytes.len()).then_some((reply.status, reply.lane))
     }
 }

@@ -13,7 +13,7 @@ use wire::Span as _;
 /// **一趟报一批**（见 [`activation::Activate`]）：枚数写进帧里，`BACK` 那一条回话只有一个状态。
 pub fn activate(task: TaskId, coalitions: &[CoalitionId]) -> Result<(), ()> {
     let sire = unit::sire();
-    let entry = establish::find(sire, activation::ENTRY).ok_or(())?;
+    let entry = establish::find(sire, activation::ENTRY).map_err(|_| ())?;
     if !matches!(reserve(entry), Ok((vestor, owner, mark))
         if vestor == sire && owner == sire && mark == activation::ENTRY)
     {

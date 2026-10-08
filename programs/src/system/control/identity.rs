@@ -217,7 +217,10 @@ mod query {
     }
     fn face(roster: &Roster, grant: Grant) -> Result<Face, Fail> {
         let authority = roster.authority().ok_or(Fail::Unjudged)?;
-        let entry = establish::find(authority, grant.mark()).ok_or(Fail::Unjudged)?;
+        let entry = establish::find(authority, grant.mark()).map_err(|failure| match failure {
+            establish::DiscoveryFail::Missing => Fail::Unjudged,
+            establish::DiscoveryFail::Ambiguous => Fail::Denied,
+        })?;
         Face::direct(authority, grant, entry).map_err(|_| Fail::Unjudged)
     }
     pub(crate) fn binding(
@@ -261,19 +264,26 @@ pub(crate) use query::{binding, current_authority, validate, validate_permit};
 fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'static str> {
     let mut left = BOOT_MS;
     loop {
-        if let Some(entry) = establish::find(authority, grant.mark()) {
-            if matches!(reserve(entry), Ok((_, owner, mark))
-                if owner == authority && mark == grant.mark())
-            {
-                return Ok(entry);
+        let entry = match establish::find(authority, grant.mark()) {
+            Ok(entry) => entry,
+            Err(establish::DiscoveryFail::Ambiguous) => {
+                return Err("identity face ambiguous");
             }
-            return Err("identity face source");
+            Err(establish::DiscoveryFail::Missing) => {
+                if left == 0 {
+                    return Err("identity face missing");
+                }
+                execution::room::park(Duration::from_millis(RETRY_MS as u64))
+                    .map_err(|_| "identity wait")?;
+                left = left.saturating_sub(RETRY_MS);
+                continue;
+            }
+        };
+        if matches!(reserve(entry), Ok((_, owner, mark))
+            if owner == authority && mark == grant.mark())
+        {
+            return Ok(entry);
         }
-        if left == 0 {
-            return Err("identity face missing");
-        }
-        execution::room::park(Duration::from_millis(RETRY_MS as u64))
-            .map_err(|_| "identity wait")?;
-        left = left.saturating_sub(RETRY_MS);
+        return Err("identity face source");
     }
 }

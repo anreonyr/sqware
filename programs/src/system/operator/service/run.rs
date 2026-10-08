@@ -3,7 +3,7 @@ use super::{
     answer::Output,
     door::Judgment,
     frame::Running,
-    session::{Buffer, Hit, LateGuests, Outboxes, Request, Selected, Settling},
+    session::{Buffer, Hit, Outboxes, Request, Selected, Settling},
     tip::{Ack, CurrentTip, Tip, Tips},
     watch,
 };
@@ -32,9 +32,6 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     resources.insert(Desk::new()).map_err(|_| Fail::Room)?;
     resources
         .insert(None::<TaskQuery>)
-        .map_err(|_| Fail::Room)?;
-    resources
-        .insert(LateGuests(Vec::new()))
         .map_err(|_| Fail::Room)?;
     resources
         .insert(Outboxes(Vec::new()))
