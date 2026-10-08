@@ -3,36 +3,30 @@
 //! Raw mutation admission and trusted publication, using real IPC.
 extern crate alloc;
 extern crate programs;
+use ::resource::raw::{Hole, reserve};
+use env::pie;
 use env::{Mark, Wait};
-use programs::Report;
 use ipc::session::Session;
-use system_client::control::publication::Client;
+use programs::Report;
 use system_api::control::Scope;
 use system_api::control::Target;
-use env::pie;
-use ::resource::raw::{Hole, reserve};
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
-use system_api::operator::Grant;
 use system_api::operator::Permit;
 use system_api::operator::Where;
-use system_client::operator as operator;
+use system_client::control::publication::Client;
+use system_client::operator;
 use system_client::operator::Face;
 use system_client::operator::Mine;
 const MS: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> Report<'static> {
-    let session = Session::open(
-        env::unit::sire(),
-        operator::granted_berth(Grant::Land),
-        MS,
-    )
-    .unwrap_or_else(|_| panic!("no land session"));
+    let session = Session::open(env::unit::sire(), operator::BERTH, MS)
+        .unwrap_or_else(|_| panic!("no Operator session"));
     let face = Face::of(session);
-    let land = face.rein(Grant::Land);
     let source = pie::unseal_hole(Mark::of("publication-test")).unwrap();
     assert_eq!(
-        land.land(
+        face.land(
             Where::Root,
             "idt".into(),
             source,
@@ -42,15 +36,13 @@ fn main() -> Report<'static> {
         ),
         Err(Fail::Denied)
     );
-    assert_eq!(land.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
-    assert_eq!(land.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
-    assert!(matches!(
-        land.seek(system_api::operator::path::Path::new("svc"), MS),
-        Err(Fail::Denied)
-    ));
-    assert!(matches!(land.find(EntryId::new(0), MS), Err(Fail::Denied)));
-    assert!(matches!(land.list(Where::Root, MS), Err(Fail::Denied)));
-    assert!(matches!(land.name(EntryId::new(0), MS), Err(Fail::Denied)));
+    assert_eq!(face.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
+    assert_eq!(face.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
+    assert!(
+        face.seek(system_api::operator::path::Path::new("svc"), MS)
+            .is_ok()
+    );
+    assert!(face.list(Where::Root, MS).is_ok());
     let client = Client::injected().unwrap();
     let target = Target::Service {
         scope: Scope::Fixture,
@@ -102,10 +94,7 @@ fn main() -> Report<'static> {
     );
     Hole::from_raw(source).push(b"live", MS).unwrap();
     let mut bytes = [0; 4];
-    assert_eq!(
-        Hole::from_raw(source).pull(&mut bytes, MS).unwrap().0,
-        4
-    );
+    assert_eq!(Hole::from_raw(source).pull(&mut bytes, MS).unwrap().0, 4);
     assert_eq!(&bytes, b"live");
     assert_ne!(
         client

@@ -16,9 +16,8 @@ use programs::harness::probe;
 use env::unit;
 use ipc::session::Session;
 use programs::debug;
-use system_client::control as ccall;
 use system_api::operator::Fail;
-use system_api::operator::Grant;
+use system_client::control as ccall;
 use system_client::operator;
 
 const MS: usize = 1000;
@@ -46,9 +45,7 @@ fn main() -> Report<'static> {
 
     // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
     //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。
-    //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = match rein.watch(system_api::control::DIR, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch(system_api::control::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-control: /svc/sys/control 那一族订不成：{fail:?}"),
     };
@@ -65,8 +62,12 @@ fn main() -> Report<'static> {
         .pane(system_api::control::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
     // Publication, account construction and instance lifecycle are separate entries.
-    let seen =
-        probe::count::count_under(&parent, system_api::control::Grant::ALL.len() + 3, &mut watch, FACES_MS);
+    let seen = probe::count::count_under(
+        &parent,
+        system_api::control::Grant::ALL.len() + 3,
+        &mut watch,
+        FACES_MS,
+    );
     debug!(
         "probe-control: faces={seen} want={}",
         (system_api::control::Grant::ALL.len() + 3)

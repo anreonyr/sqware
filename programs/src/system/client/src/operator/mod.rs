@@ -1,4 +1,4 @@
 mod client;
 use system_api::operator::*;
 
-pub use client::{granted_berth, BERTH, Face, Mine, Pane, Rein, Tile, Watch};
+pub use client::{BERTH, Face, Mine, Pane, Tile, Watch};

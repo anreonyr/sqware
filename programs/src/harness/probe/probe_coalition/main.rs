@@ -18,7 +18,6 @@ use ::resource::raw::reserve;
 use env::unit;
 use ipc::session::Session;
 use programs::debug;
-use system_api::operator::Grant;
 use system_api::operator::path::Path;
 use system_client::operator;
 use system_client::operator::Face;
@@ -88,9 +87,7 @@ fn main() -> Report<'static> {
 fn step(tree: &Face, family: &str, dir: &Path, want: usize) {
     // **先订**（序是契约）：那一族此后每落一格都往本端这一页记一条，`Watch::of` 返回就是
     // 那个序点——故订阅排在"数一次"之前，已经到齐的族则由量具第一问当场返回。
-    // 订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = match rein.watch(dir, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch(dir, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-coalition: {family} 那一族订不成：{fail:?}"),
     };

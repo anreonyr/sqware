@@ -818,18 +818,16 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
                 execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
             let control = env::TaskId::new(root);
-            let session =
-                Session::open(control, operator::granted_berth(grant), Wait::AtMost(3000))
-                    .unwrap_or_else(|_| panic!("standalone grant session"));
+            let session = Session::open(control, operator::BERTH, Wait::AtMost(3000))
+                .unwrap_or_else(|_| panic!("standalone Operator session"));
             let tree = Face::of(session);
             match grant {
                 Grant::Part => assert_eq!(
-                    tree.rein(grant)
-                        .part(Where::Root, "idt".into(), Wait::AtMost(3000)),
+                    tree.part(Where::Root, "idt".into(), Wait::AtMost(3000)),
                     Err(Fail::Denied)
                 ),
                 Grant::Trim => assert_eq!(
-                    tree.rein(grant).trim(EntryId::new(0), Wait::AtMost(3000)),
+                    tree.trim(EntryId::new(0), Wait::AtMost(3000)),
                     Err(Fail::Denied)
                 ),
                 _ => unreachable!(),

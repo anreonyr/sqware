@@ -81,4 +81,24 @@ mod tests {
         ENTRIES.with(|entries| entries.borrow_mut().clear());
         assert!(!claim::valid_reply(who, token, control));
     }
+
+    #[test]
+    fn operator_request_dispatch_does_not_select_a_grant_from_the_session() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/system/operator/service");
+        let session = std::fs::read_to_string(root.join("session.rs")).unwrap();
+        assert!(session.contains("pub(super) struct Incoming"));
+        assert!(!session.contains("grant:"));
+        for file in ["session.rs", "run.rs", "claim.rs"] {
+            let source = std::fs::read_to_string(root.join(file)).unwrap();
+            assert!(
+                !source.contains("grant_of"),
+                "{file} selects an operation from marks"
+            );
+            assert!(
+                !source.contains("Grant::MARKS"),
+                "{file} dispatches through Grant::MARKS"
+            );
+        }
+    }
 }

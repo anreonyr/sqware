@@ -7,11 +7,6 @@ const SOURCE: Mark = Mark::of("mark-baseline-source");
 const DUPLICATE: Mark = Mark::of("mark-baseline-duplicate");
 
 pub fn acceptance() {
-    for grant in system_api::operator::Grant::ALL {
-        let selected = system_client::operator::granted_berth(grant);
-        assert_eq!(selected.ask, grant.mark());
-        assert_eq!(selected.link, system_api::operator::LINK_MARK);
-    }
     assert_eq!(
         system_client::operator::BERTH.ask,
         system_api::operator::ASK_MARK

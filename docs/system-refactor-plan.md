@@ -180,7 +180,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 ## 下一轮：Mark 的职责与发现规则重构计划
 
-状态：第1阶段基线、第2阶段发布准入与第3阶段唯一发现／显式交付已落地，第4至6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
+状态：第1阶段基线、第2阶段发布准入与第3阶段唯一发现／显式交付已落地，第4阶段正在迁移操作面，第5／6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
 
 ### 目标与范围
 
@@ -221,7 +221,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 七个提供方共 63 个登记角色：29 个 Channel、34 个 Grant。`programs/tests/interface-marks/baseline.rs` 固定完整 legacy 名称及 64 位数值，测试直接比较实际 REGISTRY；不通过当前生成器或被测 Mark::of 重算期望。新增或删除角色时必须明确其兼容处理，不能静默重生成黄金数据。
 
-| 角色集合 | 创建／预期持有者与交付 | 当前识别和来源验证 | 实例范围与迁移决定 |
+| 角色集合 | 创建／预期持有者与交付 | 第1阶段识别和来源验证基线 | 实例范围与迁移决定 |
 | --- | --- | --- | --- |
 | Loader Build 入口、IMAGE、BACK（3） | 入口由 System 创建；调用方授出映像副本并新建回信端；Control/Loader 收明确 seed | 客户端验证入口角色；服务端核映像 vestor/from、类型／范围；回复核来源与回信能力 | Build 入口按预期 authority 发现；映像与回信可多实例，显式交付优先 |
 | Identity BACK + 17 个 Grant（18） | 权威任务创建分面入口；调用方每次创建回信端；入口经安装／命名交付，回信随报文 | 注入 authority 验 Sire/vestor/owner，入口核 Grant；服务端继续按实际调用者及模型授权 | 分面入口需在确定 authority 下定位；每次回信不要求全局唯一 |
@@ -238,7 +238,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 第1阶段记录的发现基线：Operator claim 取第一枚并最多告警，通用 establish::find 取最后一枚；两者都不是唯一性验证。kernel允许多个相同 owner/Mark 实例，因此阶段3须显式区分单实例发现与多实例交付，不能靠目录顺序解决。
 
-真实目标探针 `harness/probe/marks.rs` 验证重新标记不修改源引用、NONE继承、重标记不扩大FETCH-only权限、同owner/Mark多实例、NONE孔收发，以及正常seal/release后资源表回到基线；它还调用生产 `granted_berth` 验证请求标签确实由客户端选择。纯API宿主黄金测试与真实内核探针各自验证对应边界。
+真实目标探针 `harness/probe/marks.rs` 验证重新标记不修改源引用、NONE继承、重标记不扩大FETCH-only权限、同owner/Mark多实例、NONE孔收发，以及正常seal/release后资源表回到基线；第1阶段还调用生产 `granted_berth` 验证请求标签确实由客户端选择；第4阶段删除该封装后，探针保留原生能力边界断言。纯API宿主黄金测试与真实内核探针各自验证对应边界。
 
 ### 2. 服务发布解除 Mark 准入绑定
 
@@ -299,6 +299,12 @@ Operator 请求由操作码分派，Mark 不再决定调用方获准执行的操
 - Control 专属操作仍拒绝非 Control 调用者。
 - 限定操作委托如存在，调用方改变标签或包装仍不能绕过服务端允许范围。
 - 错误来源、迟到／重复回复、忙碌别名、对端退出及订阅者退场继续受现有客户端／Session 检查保护。
+
+第4阶段第一批实现：普通 Operator 会话统一使用 ASK，服务端不再从请求能力 Mark 解出 Grant，也不以其约束请求操作。SDK 删除 granted_berth、Rein 与调用者自选 Grant 字段；Face 的语义方法直接构造 Req，Wire 本身承担操作选择，不另建重复操作枚举。实际发件人仍由 Receiver::recv_from 校验；Part／Land／Trim 的 native 调用者必须是 Control。Find 的条目 Permit、Watch 的身份绑定与 mutation 的归属校验仍按原流程执行。
+
+旧8个操作角色的数值／API登记及目录暂时保留兼容基线，已不参与请求接入或授权；其保留价值由第5阶段清理，不能把目录中的标签入口描述成可委托操作权限。本批没有签发限定操作委托，不存在由调用方标签或本地包装生成授权的路径。同任务多会话仍受旧 Desk／Session bootstrap 限制，下一批迁移显式会话接入后才能完成第4阶段验收。
+
+本批验收：68项相关宿主测试、programs全目标编译，以及QEMU accept、product、system-fault均通过。真实探针验证统一会话的查询成功、非Control的Part／Land／Trim被拒绝；SDK与服务端守卫防止恢复Rein、granted_berth和按Mark选择操作面的路径。普通请求／应答布局、操作码、失败码及既有角色数值不变。
 
 ### 5. 收敛角色声明与 import 验证
 

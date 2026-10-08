@@ -96,15 +96,10 @@ pub(super) fn validate(
     let Some(incoming) = &mut request.0 else {
         return Ok(Progress::Done);
     };
-    let denied = incoming.ask.as_ref().is_some_and(|ask| {
-        incoming
-            .grant
-            .is_some_and(|grant| grant.at() != ocall::Grant::of_wire(ask))
-            || (matches!(
-                ask,
-                ocall::Wire::Part { .. } | ocall::Wire::Land { .. } | ocall::Wire::Trim(_)
-            ) && incoming.guest.who() != status.control)
-    });
+    let denied = incoming
+        .ask
+        .as_ref()
+        .is_some_and(|ask| !super::admission::caller(incoming.guest.who(), status.control, ask));
     if denied {
         incoming.ask = None;
         out.reply = Some(ocall::Union::Status(ocall::DENIED));

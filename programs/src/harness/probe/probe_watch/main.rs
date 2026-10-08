@@ -9,18 +9,17 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 
-use system_api::operator::path::PathBuf;
+use env::pie;
+use env::unit;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator;
-use system_client::operator::Face as Face;
+use system_api::operator::EntryId;
 use system_api::operator::Event;
 use system_api::operator::Kind;
-use system_api::operator::EntryId;
-use system_api::operator::Grant;
 use system_api::operator::Permit;
-use env::unit;
-use env::pie;
+use system_api::operator::path::PathBuf;
+use system_client::operator;
+use system_client::operator::Face;
 
 const MS: usize = 1000;
 
@@ -47,9 +46,7 @@ fn main() -> Report<'static> {
 
     // 二、**订**：`watch` 那一面回 `OK` 之后，此后真变了才发得过来。
     let road = PathBuf::try_new(IN_ROAD).unwrap_or_else(|| panic!("probe-watch: bad road"));
-    // **柄先绑**：`Rein` 是"借这一面借出来的那一柄权"，临时的 `Rein` 活不过这一条绑定。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = rein
+    let mut watch = tree
         .watch(&road, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe refused: {fail:?}"));
 
@@ -100,7 +97,7 @@ fn main() -> Report<'static> {
     const EVENTS: usize = LANDED + 1;
     let qroad =
         PathBuf::try_new("svc/probe-watch-q").unwrap_or_else(|| panic!("probe-watch: bad q road"));
-    let mut queue = rein
+    let mut queue = tree
         .watch(&qroad, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
     for i in 0..LANDED {
@@ -187,7 +184,12 @@ fn main() -> Report<'static> {
         .publish(first.clone(), first_entry, Permit::Public, Wait::AtMost(MS))
         .unwrap();
     let second_id = publisher
-        .publish(second.clone(), second_entry, Permit::Public, Wait::AtMost(MS))
+        .publish(
+            second.clone(),
+            second_entry,
+            Permit::Public,
+            Wait::AtMost(MS),
+        )
         .unwrap();
     let root = tree.root();
     for (name, id) in [("one", first_id), ("two", second_id)] {

@@ -1,22 +1,13 @@
 use super::{Fail, answer::Output};
 use crate::support::face::desk::{Desk, Guest};
-use crate::system::operator::service::claim::{ask_of, mark_of};
+use crate::system::operator::service::claim::ask_of;
 use ::resource::pile::Pile;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
-use env::{HoleDir, Mark, PieToken, TaskId, Wait};
+use env::{HoleDir, PieToken, TaskId, Wait};
 use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
 use system_api::operator as ocall;
 const SETTLE_MS: usize = 1;
-const MARKS: [Mark; ocall::Grant::COUNT + 1] = {
-    let mut marks = [ocall::ASK_MARK; ocall::Grant::COUNT + 1];
-    let mut i = 0;
-    while i < ocall::Grant::COUNT {
-        marks[i + 1] = ocall::Grant::MARKS[i];
-        i += 1;
-    }
-    marks
-};
 pub(super) struct Outbox {
     pub who: TaskId,
     pub send: Sender<ocall::Union>,
@@ -25,7 +16,6 @@ pub(super) struct Outboxes(pub Vec<Outbox>);
 pub(super) struct Incoming {
     pub guest: Guest,
     pub ask: Option<ocall::Wire>,
-    pub grant: Option<ocall::Grant>,
 }
 pub(super) struct Request(pub Option<Incoming>);
 pub(super) struct Buffer(pub Vec<u8>);
@@ -40,22 +30,17 @@ pub(super) fn arm(
     let mut rejected = Vec::new();
     let mut full = false;
     settling.0 = desk.arm_pending(
-        |who| {
-            for mark in MARKS {
-                match ask_of(who, mark) {
-                    Ok(token) => return Some(token),
-                    Err(ipc::session::establish::DiscoveryFail::Missing) => {}
-                    Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
-                        if rejected.try_reserve(1).is_err() {
-                            full = true;
-                        } else {
-                            rejected.push(who);
-                        }
-                        return None;
-                    }
+        |who| match ask_of(who) {
+            Ok(token) => Some(token),
+            Err(ipc::session::establish::DiscoveryFail::Missing) => None,
+            Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
+                if rejected.try_reserve(1).is_err() {
+                    full = true;
+                } else {
+                    rejected.push(who);
                 }
+                None
             }
-            None
         },
         |ask| pile.attach(ask, HoleDir::Pull).is_ok(),
     );
@@ -107,7 +92,6 @@ pub(super) fn receive(
             request.0 = Some(Incoming {
                 guest,
                 ask: decoded,
-                grant: ocall::grant::grant_of(mark_of(ask)),
             });
         }
     }

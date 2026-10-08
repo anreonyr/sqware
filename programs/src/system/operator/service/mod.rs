@@ -6,6 +6,7 @@ pub enum Fail {
     Room,
     Dead,
 }
+mod admission;
 mod answer;
 mod claim;
 mod door;

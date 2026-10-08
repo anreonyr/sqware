@@ -10,12 +10,53 @@ mod gate;
 #[path = "../../src/system/operator/tree/judge.rs"]
 mod judge;
 
+#[path = "../../src/system/operator/service/admission.rs"]
+mod admission;
+
 #[cfg(test)]
 mod tests {
     use env::{PieToken, TaskId};
     use system_api::identity::{PrincipalId, Selector};
     use system_api::operator::*;
     use wire::{Field, Message, Span};
+
+    #[test]
+    fn native_caller_controls_mutation_on_the_unified_session() {
+        let control = TaskId::new(7);
+        let other = TaskId::new(8);
+        let requests = [
+            Req::Part {
+                at: Where::Root,
+                name: "new".into(),
+            },
+            Req::Land {
+                at: Where::Root,
+                name: "new".into(),
+                entry: PieToken::mint(9),
+                permit: Permit::Public,
+                mine: false,
+            },
+            Req::Trim(EntryId::new(0)),
+            Req::Find(EntryId::new(0)),
+            Req::List(Where::Root),
+            Req::Road(Path::new("svc").to_path_buf()),
+            Req::Name(EntryId::new(0)),
+            Req::Watch {
+                road: Path::new("svc").to_path_buf(),
+                hole: PieToken::mint(10),
+            },
+        ];
+        for (index, request) in requests.iter().enumerate() {
+            let mut bytes = Req::EMPTY;
+            let n = request.store(&mut bytes).unwrap();
+            let decoded = Req::fetch(&bytes[..n]).unwrap();
+            assert!(super::admission::caller(control, control, &decoded));
+            assert_eq!(
+                super::admission::caller(other, control, &decoded),
+                index >= 3
+            );
+        }
+    }
 
     fn word(bytes: &mut Vec<u8>, value: u64) {
         bytes.extend_from_slice(&value.to_le_bytes());
@@ -275,5 +316,26 @@ mod tests {
         assert_eq!(super::gate::Code::Ok.wire(), OK);
         assert_eq!(super::gate::Code::Denied.wire(), DENIED);
         assert_eq!(super::gate::Code::Unjudged.wire(), UNJUDGED);
+    }
+
+    #[test]
+    fn sdk_uses_one_face_without_grant_selected_handles() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/system/client/src/operator");
+        let client = std::fs::read_to_string(root.join("client/mod.rs")).unwrap();
+        let module = std::fs::read_to_string(root.join("mod.rs")).unwrap();
+        for method in [
+            "part", "land", "find", "trim", "list", "seek", "name", "watch",
+        ] {
+            assert!(
+                client.contains(&format!("pub fn {method}(")),
+                "Face::{method} missing"
+            );
+        }
+        for source in [&client, &module] {
+            assert!(!source.contains("Rein"));
+            assert!(!source.contains("granted_berth"));
+            assert!(!source.contains("fn rein("));
+        }
     }
 }

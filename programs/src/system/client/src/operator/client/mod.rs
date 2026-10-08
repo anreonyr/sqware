@@ -11,13 +11,13 @@ use alloc::string::String;
 use ::resource::port::{self, Access, Policy};
 use env::{PieToken, TaskId, Wait};
 
-use crate::operator::Path;
 use crate::operator as ocall;
-use crate::operator::{EntryId, Fail, Grant, Listing, Permit, Where};
-use system_api::operator::Call;
+use crate::operator::Path;
+use crate::operator::{EntryId, Fail, Listing, Permit, Where};
 use ::resource::raw::Hole;
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
+use system_api::operator::Call;
 
 pub mod pane;
 pub mod tile;
@@ -32,15 +32,6 @@ pub const BERTH: Berth = Berth {
     link: super::marks::LINK_MARK,
     ask: crate::operator::ASK_MARK,
 };
-
-/// 对偶：服务端判面那一句是 Grant::at（从**它自己表里那枚问话孔**的记号读回面）
-/// 故"客人开哪一面"就是"它手里那一枚问话孔刻的是哪一位"——**请求里没有可填的格**
-pub const fn granted_berth(grant: Grant) -> Berth {
-    Berth {
-        link: super::marks::LINK_MARK,
-        ask: grant.mark(),
-    }
-}
 
 /// 门牌那一格声不声明归属（Pane::bind 的最后一格）
 #[derive(Clone, Copy)]
@@ -109,41 +100,17 @@ impl Face {
         Ok(Tile { face: self, id })
     }
 
-    /// （granted_berth 就是那一手）；开在别的位上的会话，服务端判面时答拒
-    /// 它**借**这一面，不收走：同一条会话上还留着 Face::pane / Face::tile 那些全操作面
-    /// 的手（要哪一个，由调用点的处境说）
-    pub const fn rein(&self, grant: Grant) -> Rein<'_> {
-        Rein { face: self, grant }
-    }
-
-    /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。**一处实现**：`Pane` / `Rein` 都走它
+    /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。
     fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
         self.session
             .call::<Call>(ask, wait)
             .map_err(|_| Fail::Unknown)
     }
-}
-
-/// **一柄授面的权**：一枚 = 一枚操作。只见那一位的手，**没有**别的 wire 可发
-/// 那几手因此不再重复传面。它**借** Face，故同一条会话上两面都留着
-/// **一手对一条原语**（与 Pane / Tile 同一句正文）：本层不拿一个 `op` 码当参数——
-/// 发哪一条由函数名说，故 `call(Wire)` 那种"把安全边界交回调用者"的口**根本不存在**
-/// **失败域只有一格出口**：`Result<_, Fail>`（与其余两手同款）
-pub struct Rein<'a> {
-    face: &'a Face,
-    grant: Grant,
-}
-
-impl Rein<'_> {
-    /// 这是哪一位（读数用）
-    pub const fn grant(&self) -> Grant {
-        self.grant
-    }
 
     /// **分**：在 `at` 那一块 `Pane` 里给 `name` 放一块空窗格；答那一格自己的号
     /// 判据与 Pane::open 同一句（幂等 / 是一枚砖 ⇒ Fail::NotAPane / 装不下 ⇒
     pub fn part(&self, at: Where, name: String, wait: Wait) -> Result<EntryId, Fail> {
-        let said = self.face.call(ocall::Req::Part { at, name }, wait)?;
+        let said = self.call(ocall::Req::Part { at, name }, wait)?;
         said.entry().map_err(map_code)
     }
 
@@ -162,13 +129,13 @@ impl Rein<'_> {
         let pie = Hole::from_raw(entry);
         let shipped = port::ship(
             pie.token(),
-            self.face.session.host(),
+            self.session.host(),
             Access::FETCH | Access::STORE,
             Policy::VEST,
         )
         .map(|to| to.seed())
         .map_err(|_| Fail::Unknown)?;
-        let said = self.face.call(
+        let said = self.call(
             ocall::Req::Land {
                 at,
                 name,
@@ -185,13 +152,13 @@ impl Rein<'_> {
     /// **它是最敏感的一格**：这一步会**转移能力**（`find` 那一枚带 `VEST`，见
     /// operator 的"交出去的权柄收不回来"）。故 `find` 自成一位，不与
     pub fn find(&self, id: EntryId, wait: Wait) -> Result<PieToken, Fail> {
-        let said = self.face.call(ocall::Req::Find(id), wait)?;
+        let said = self.call(ocall::Req::Find(id), wait)?;
         said.seed().map_err(map_code)
     }
 
     /// **剪**：把 `id` 那一号剪掉
     pub fn trim(&self, id: EntryId, wait: Wait) -> Result<(), Fail> {
-        let said = self.face.call(ocall::Req::Trim(id), wait)?;
+        let said = self.call(ocall::Req::Trim(id), wait)?;
         match said.code() {
             ocall::OK => Ok(()),
             code => Err(map_code(code)),
@@ -200,28 +167,26 @@ impl Rein<'_> {
 
     /// **列**：`at` 那一块里有哪些号
     pub fn list(&self, at: Where, wait: Wait) -> Result<Listing, Fail> {
-        let said = self.face.call(ocall::Req::List(at), wait)?;
+        let said = self.call(ocall::Req::List(at), wait)?;
         said.list().map_err(map_code)
     }
 
     /// **译**：一条路（**从根写起**）译成号。与 Pane::tile 同一条腿，只是面不同
     pub fn seek(&self, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-        let said = self.face.call(ocall::Req::Road(road.to_path_buf()), wait)?;
+        let said = self.call(ocall::Req::Road(road.to_path_buf()), wait)?;
         said.entry().map_err(map_code)
     }
 
     /// **名**：`id` 那一号此刻叫什么
     pub fn name(&self, id: EntryId, wait: Wait) -> Result<String, Fail> {
-        let said = self.face.call(ocall::Req::Name(id), wait)?;
+        let said = self.call(ocall::Req::Name(id), wait)?;
         said.name().map_err(map_code)
     }
 
     /// **看**：订 `road` 这条子树，此后树上真变了就往本端那一页里记一条。
     ///
-    /// 与另几条同一个起手（本层不拿 `op` 码当参数）：本柄是"许不许这一类"那一维上的一枚，
-    /// 而这一枚对应的原语就是 `watch`。
     pub fn watch(&self, road: &Path, wait: Wait) -> Result<Watch<'_>, Fail> {
-        Watch::of(self.face, road, wait)
+        Watch::of(self, road, wait)
     }
 }
 

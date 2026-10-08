@@ -10,19 +10,19 @@ use env::Wait;
 use programs::Report;
 use programs::harness::probe;
 
-use system_api::operator::path::Path;
+use env::pie;
+use env::unit;
 use ipc::session::{Session, establish};
-use system_client::operator;
-use system_client::operator::Face as Face;
-use system_client::operator::Mine;
-use system_client::operator::Pane;
-use system_client::operator::Watch;
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::Grant;
 use system_api::operator::Permit;
-use env::unit;
-use env::pie;
+use system_api::operator::path::Path;
+use system_client::operator;
+use system_client::operator::Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
+use system_client::operator::Watch;
 
 const MS: usize = 1000;
 
@@ -52,10 +52,7 @@ fn main() -> Report<'static> {
     // 一·二、**先订**（序是契约）：`Watch::of` 返回就是那个序点——本台此后每一处都是
     //       "先问一次、不满才等事件"，故订阅必须排在"等那一块长出来"之前。
     //       `spot` 那一处不在这条路上：它等的是"这一趟**走到了**"（单槽孔的信），不是树变了。
-    //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来），
-    //       故这一步同时也在量"这一位拿得到那一柄权"。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = match rein.watch(&system_api::operator::DIR, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch(&system_api::operator::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-operator-gate: subscribe /svc/sys/operator failed: {fail:?}"),
     };

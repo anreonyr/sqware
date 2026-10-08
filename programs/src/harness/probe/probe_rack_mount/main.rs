@@ -21,23 +21,22 @@ extern crate programs;
 
 use alloc::vec::Vec;
 
+use ::resource::raw::inspect;
+use env::pie;
+use env::unit;
 use env::{Mark, Wait};
+use ipc::rack::{Mode, Rack};
+use ipc::session::{Session, establish};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use ipc::rack::{Mode, Rack};
-use ipc::session::{Session, establish};
-use system_client::control::publication::Client;
 use system_api::control::Scope;
 use system_api::control::Target;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_client::control::publication::Client;
 use system_client::operator;
 use system_client::operator::Face;
-use system_api::operator::Fail;
-use system_api::operator::Grant;
-use system_api::operator::Permit;
-use env::unit;
-use env::pie;
-use ::resource::raw::{inspect};
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -129,13 +128,11 @@ fn main() -> Report<'static> {
     );
 
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
-    // `find` 自成一位（那一手会转移权柄）⇒ 要 `Grant::Find` 那一柄。
     assert!(
         pie::seal(a.ship()).is_ok(),
         "probe-rack-mount: 封印自己那一枚页失败"
     );
-    let rein = tree.rein(Grant::Find);
-    match rein.find(plated[0], Wait::AtMost(MS)) {
+    match tree.find(plated[0], Wait::AtMost(MS)) {
         Err(Fail::Dead) => {}
         other => panic!("probe-rack-mount: 封印之后那一格该答 Dead，实测 {other:?}"),
     }
