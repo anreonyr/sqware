@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn request_goldens_preserve_action_codes_and_distinct_grant_order() {
+    fn request_goldens_preserve_action_codes() {
         let road = Path::new("svc").to_path_buf();
         let root = vec![0; 9];
         let mut part = vec![2];
@@ -121,7 +121,6 @@ mod tests {
                     name: "x".into(),
                 },
                 part,
-                Grant::Part,
             ),
             (
                 Req::Land {
@@ -139,37 +138,27 @@ mod tests {
                     mine: true,
                 },
                 land,
-                Grant::Land,
             ),
             (
                 Req::Find(EntryId::new(0)),
                 Wire::Find(EntryId::new(0)),
                 vec![3, 0, 0, 0, 0, 0, 0, 0, 0],
-                Grant::Find,
             ),
             (
                 Req::Trim(EntryId::new(0)),
                 Wire::Trim(EntryId::new(0)),
                 vec![4, 0, 0, 0, 0, 0, 0, 0, 0],
-                Grant::Trim,
             ),
-            (
-                Req::List(Where::Root),
-                Wire::List(Where::Root),
-                list,
-                Grant::List,
-            ),
+            (Req::List(Where::Root), Wire::List(Where::Root), list),
             (
                 Req::Road(road.clone()),
                 Wire::Road(road.clone()),
                 vec![7, 3, b's', b'v', b'c'],
-                Grant::Seek,
             ),
             (
                 Req::Name(EntryId::new(0)),
                 Wire::Name(EntryId::new(0)),
                 vec![6, 0, 0, 0, 0, 0, 0, 0, 0],
-                Grant::Name,
             ),
             (
                 Req::Watch {
@@ -181,21 +170,13 @@ mod tests {
                     hole: PieToken::mint(9),
                 },
                 watch,
-                Grant::Watch,
             ),
         ];
-        for (index, (request, decoded, expected, grant)) in cases.into_iter().enumerate() {
+        for (request, decoded, expected) in cases {
             let mut buffer = Req::EMPTY;
             let len = request.store(&mut buffer).unwrap();
             assert_eq!(&buffer[..len], expected);
             assert_eq!(Req::fetch(&expected), Some(decoded.clone()));
-            assert_eq!(Grant::for_wire(&decoded), grant);
-            assert_eq!(grant.at(), index as u8 + 1);
-            assert_eq!(Grant::from_action(grant.at()), Some(grant));
-            assert_eq!(
-                grant.mark(),
-                env::Mark::of(&format!("operator-ask-{}", grant.name()))
-            );
             let mut tailed = expected.clone();
             tailed.push(0);
             assert_eq!(Req::fetch(&tailed), None);
@@ -338,6 +319,9 @@ mod tests {
                 "Face::{method} missing"
             );
         }
+        let api = std::fs::read_to_string(root.join("../../../api/src/operator/mod.rs")).unwrap();
+        assert!(!api.contains("pub enum Grant"));
+        assert!(!api.contains("mod grant"));
         for source in [&client, &module] {
             assert!(!source.contains("Rein"));
             assert!(!source.contains("granted_berth"));

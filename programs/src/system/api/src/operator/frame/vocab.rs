@@ -133,7 +133,6 @@ pub const SEEK: u8 = 7;
 pub const WATCH: u8 = 8;
 
 /// 树那条通道的名字：**两侧同一个**（泊位自己的坐标，不进报文）
-pub use crate::operator::marks::LINK;
 
 /// 问话孔那一枚上的记号（两侧同一个：客人铸它时刻上去的，持树者按它认领那枚孔）
 /// **带面名**（本族那一枚是 `operator-ask`，提示那一枚是 `*-tip`）：问话孔的认领键是

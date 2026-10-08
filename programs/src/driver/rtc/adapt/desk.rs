@@ -2,14 +2,14 @@
 //! :reserve 认那枚回信孔、从设备读这一刻的钟、走 `Sender` 发答、放下那一枚、武装设备
 
 use crate::dev::rtc;
+use ::resource::dock::View;
+use ::resource::raw::reserve;
+use env::pie;
 use env::{PieToken, TaskId};
-use programs::driver::rtc::core::frame::{self, Status, Time};
-use programs::driver::rtc::core::host::{Answer, Host};
 use ipc::hand::Sender;
 use programs::debug;
-use ::resource::dock::View;
-use env::pie;
-use ::resource::raw::{reserve};
+use programs::driver::rtc::core::frame::{self, Status, Time};
+use programs::driver::rtc::core::host::{Answer, Host};
 
 /// 认那枚孔靠**帧里那一格** ＋ **一次 reserve 验**：那一格是"客人
 /// 交进来的那一枚**在我表里**是几号"，而"是谁给的、刻的什么"仍要当场读出来核对——否则客人
@@ -22,7 +22,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     // **一次 `reserve`，代替一次全表扫**：判据与旧那一扫**逐字同一条**（谁给的 ＋ 记号），
     if !matches!(
         reserve(back),
-        Ok((_vestor, owner, mark)) if owner == from && mark == frame::BACK
+        Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == frame::BACK
     ) {
         debug!("rtc: no back hole from {}", from.get());
         return;

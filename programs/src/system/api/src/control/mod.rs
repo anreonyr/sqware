@@ -9,7 +9,7 @@ pub mod publication;
 pub use frame::{ASK_MARK, BACK, DENIED, Fail, Req, Request, Said, State, Wire};
 pub use grant::{Grant, grant_of};
 pub use interface::{INTERFACE_ID, REGISTRY};
-pub use marks::{DECLARATIONS as MARK_DECLARATIONS, LINK, LINK_MARK};
+pub use marks::DECLARATIONS as MARK_DECLARATIONS;
 pub use publication::{Frame, Object, Reply, Scope, Target};
 pub const NAME: &str = frame::NAME;
 pub const DIR: &crate::operator::path::Path = frame::DIR;
@@ -24,8 +24,6 @@ mod interface {
         Ask,
         #[channel(key = "back", legacy = "control-back", constant = BACK)]
         Back,
-        #[channel(key = "link", legacy = "control", constant = LINK_MARK)]
-        Link,
         #[channel(key = "account", legacy = "control-account", constant = ACCOUNT_ENTRY)]
         AccountEntry,
         #[channel(key = "account-back", legacy = "control-account-back", constant = ACCOUNT_BACK)]

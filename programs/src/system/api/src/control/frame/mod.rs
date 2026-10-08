@@ -216,11 +216,7 @@ const _: () = assert!(ASK_MARK.get() != Mark::NONE.get());
 
 const _: () = assert!(ASK_MARK.get() != BACK.get());
 
-const _: () = assert!(ASK_MARK.get() != Mark::of(LINK).get());
-
 const _: () = assert!(BACK.get() != Mark::NONE.get());
-
-const _: () = assert!(BACK.get() != Mark::of(LINK).get());
 
 // **答话那一形的宽度钉在编译期**：三格之和（状态 1 ＋ 答案 1 ＋ 身子那一格）。
 

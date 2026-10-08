@@ -30,12 +30,8 @@ fn main() -> Report<'static> {
     // not evidence that an unrelated service failed to launch.
     for delay in [0, 1, 2, 0, 2, 1] {
         let request = establish::Held(
-            establish::endpoint(
-                unit::sire(),
-                env::Mark::of(system_api::operator::LINK),
-                Wait::POLL,
-            )
-            .expect("probe-denied: transient LINK"),
+            establish::endpoint(unit::sire(), system_api::operator::LINK_MARK, Wait::POLL)
+                .expect("probe-denied: transient LINK"),
         );
         execution::room::park(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");

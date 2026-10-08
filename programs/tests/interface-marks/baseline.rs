@@ -65,3 +65,16 @@ pub const VALUES: &[(&str, u64)] = &[
     ("terminal-output", 0xb5b6f17d1de172b9),
     ("tip", 0x56f2d019445fab8a),
 ];
+
+/// Retired roles remain recorded so removal cannot silently renumber surviving roles.
+pub const RETIRED: &[&str] = &[
+    "control",
+    "operator-ask-part",
+    "operator-ask-land",
+    "operator-ask-find",
+    "operator-ask-trim",
+    "operator-ask-list",
+    "operator-ask-seek",
+    "operator-ask-name",
+    "operator-ask-watch",
+];

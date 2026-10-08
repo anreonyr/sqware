@@ -18,7 +18,6 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.system("identity.faces", crate::system::publication::identity_faces)?;
     start.system("identity.publish", boot::publish)?;
     start.system("control.name", boot::name)?;
-    start.system("operator.faces", crate::system::publication::operator_faces)?;
     start.system(
         "publication.face",
         crate::system::publication::publication_face,

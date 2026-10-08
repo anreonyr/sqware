@@ -10,21 +10,21 @@
 //! ```
 //!
 //! **本层不是内核对象**：槽在内核 `mail`、权柄判定与级联在内核 `gate`、报文布局与
-//! 一次往返在 `crates/protocol`，这里只有"怎么用"。
+//! 一次往返在 `crates/ipc`，这里只有"怎么用"。
 //!
 //! **`Port` 不加新动词**：`open` / `push` / `pull` / `shut` 与 Hole 的使用面同名同形，
 //! 差别只在三件事——推的是哪一枚、收的是哪一枚、收的时候**校不校来源**。编帧、解帧、
-//! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/protocol`）。
+//! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/ipc`）。
 
 use env::{
-    Wait, HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, make_fail,
+    HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait, make_fail,
 };
 
 use crate::{hole::Hole, raw};
 
 pub use crate::reply::{Reply, ReplyError};
 
-/// D1 负码：无权 / 协议错（与 `crates/protocol` 各协议的负码同表）。
+/// D1 负码：无权 / 协议错（与 `crates/ipc` 各协议的负码同表）。
 fn denied_mail() -> erra::Error<MailFail> {
     make_fail(MailFail::Denied)
 }
@@ -47,11 +47,18 @@ impl Sender {
     /// 导入服务入口；只借用本地能力，不承担它的释放。
     pub fn import(entry: PieToken) -> PieResult<Self> {
         let (_, peer, _) = raw::reserve(entry)?;
-        if peer.get() == 0 { return Err(denied_pie()); }
-        Ok(Self { entry: Hole::from_raw(entry), peer })
+        if peer.get() == 0 {
+            return Err(denied_pie());
+        }
+        Ok(Self {
+            entry: Hole::from_raw(entry),
+            peer,
+        })
     }
 
-    pub fn peer(&self) -> TaskId { self.peer }
+    pub fn peer(&self) -> TaskId {
+        self.peer
+    }
 
     pub fn push(&self, bytes: &[u8], within: Wait) -> MailResult<()> {
         self.entry.push(bytes, within)
@@ -128,7 +135,7 @@ impl Port {
     /// 开一条会话：`entry` = 对端入口门闩在**我这一份**表里的句柄。
     ///
     /// 做三件事：问出对端是谁（`Reserve(entry).owner`——`vestor` 会被转发改写，
-    /// `owner` 不会）、自建**回信孔**（记号 `back`：与 `guest` 借出去的那一枚同用途）、
+    /// `owner` 不会）、自建无标记回信孔、
     /// 把它的 `STORE` 授给对端。回信孔只要 `STORE`：对端往它推，读的一侧是我。
     ///
     /// # Errors
@@ -141,7 +148,7 @@ impl Port {
         if peer.get() == 0 {
             return Err(denied_pie());
         }
-        let reply = Hole::unseal(env::Mark::of("back"))?;
+        let reply = Hole::unseal(Mark::NONE)?;
         let to = ship(reply.token(), peer, Access::STORE, Policy::NONE)?;
         Ok(Port {
             to,
@@ -188,10 +195,7 @@ impl Port {
     /// 这里直接导入原始 token：本方法不新增验证，也不代为释放外来资源。
     pub fn borrow_raw(peer: TaskId, entry: PieToken, reply: PieToken) -> Port {
         Port {
-            to: To {
-                peer,
-                seed: reply,
-            },
+            to: To { peer, seed: reply },
             entry: Hole::from_raw(entry),
             reply: Hole::from_raw(reply),
         }

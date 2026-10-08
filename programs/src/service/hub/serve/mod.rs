@@ -11,8 +11,8 @@ use ::resource::port;
 use env::PAGE_SIZE;
 use env::unit;
 use env::{
-    Access, Entry as ResourceEntry, HoleDir, MailFail, Mark, Name, PieKind, PieToken, Policy,
-    TaskId, Wait,
+    Access, Entry as ResourceEntry, HoleDir, MailFail, Name, PieKind, PieToken, Policy, TaskId,
+    Wait,
 };
 use hub_api::{self as hub, Deed, Enroll, Grant, Said, Window, Wire};
 use ipc::hand::{Receiver, RecvFail, Sender};
@@ -32,7 +32,7 @@ use super::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
 use crate::support::face::mount;
 use crate::support::machine::Machine;
-use crate::unit::hub::{CHANNEL, E_HUB, READY};
+use crate::unit::hub::E_HUB;
 use system_api::control::Scope;
 
 use self::sweep::alive;
@@ -64,7 +64,7 @@ pub fn serve() -> Result<(), Start> {
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = unit::sire();
 
-        let up = establish::endpoint(sire, Mark::of(CHANNEL), Wait::POLL)
+        let up = establish::endpoint(sire, crate::unit::hub::CHANNEL_MARK, Wait::POLL)
             .map_err(|_| Start::Load(E_HUB))?;
         let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
 
@@ -168,7 +168,8 @@ pub fn serve() -> Result<(), Start> {
 
         // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // （设备格都在树上、盟都立好了）。
-        establish::endpoint(sire, Mark::of(READY), Wait::POLL).map_err(|_| Start::Desk(E_HUB))?;
+        establish::endpoint(sire, crate::unit::hub::READY_MARK, Wait::POLL)
+            .map_err(|_| Start::Desk(E_HUB))?;
 
         // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
         let mut doors: Vec<PieToken> = Vec::new();

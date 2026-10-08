@@ -35,7 +35,7 @@ mod tests {
         assert_eq!(frame::DEBARK, 3);
         assert_eq!(frame::STATE, 4);
         assert_eq!(frame::RUIN, 5);
-        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 8);
+        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 7);
         assert_eq!(env::marks::conflict(system_api::control::REGISTRY), None);
     }
 

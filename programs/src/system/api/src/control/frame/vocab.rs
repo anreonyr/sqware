@@ -96,11 +96,7 @@ pub const STATE: u8 = 4;
 
 pub const RUIN: u8 = 5;
 
-/// 这条路叫什么（泊位那一格）：**两侧同一个**
-pub use crate::control::marks::LINK;
-
-/// 这一面在树上的名字（挂到 `/svc/sys/control`）：**与 LINK 同一个串**——"泊位叫 `control`"
-/// 与"它挂在哪一格"是同一件事的两层，重名不是重名
+/// Control 的运行时发布名称。
 pub const NAME: &str = "control";
 
 /// 问话孔那一枚上的记号。**带面名**（`control-ask`）：认领键是"谁开的 + 记号"，而同一枚任务

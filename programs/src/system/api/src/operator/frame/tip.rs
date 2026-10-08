@@ -73,7 +73,7 @@ pub const TIP_LEN: usize = PlateFrame::LEN;
 /// 的事实），它只答"把这一条路立出来"
 pub enum Tip {
     /// **在树上立一条路**：前缀逐段立成窗格（缺的就地造），末段按 `leaf` 落叶子或立窗格
-    /// 路是**绝对坐标**（从根起数），故 `/svc/sys/control`、`/svc/sys/operator`、`/svc/sys/operator/part`
+    /// 路是**绝对坐标**（从根起数），故 `/svc/sys/control`、`/svc/driver/uart`
     /// 三种落法**同一个形状**说得出来；再深一层、或"父底下立一块窗格"也不需要新格
     Plate {
         road: PathBuf,

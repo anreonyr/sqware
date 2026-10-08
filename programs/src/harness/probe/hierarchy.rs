@@ -796,7 +796,6 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
     use ipc::session::{Session, establish};
     use system_api::operator::EntryId;
     use system_api::operator::Fail;
-    use system_api::operator::Grant;
     use system_api::operator::Where;
     use system_client::operator;
     use system_client::operator::Face;
@@ -807,7 +806,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         .unwrap()
         .host()
         .unwrap();
-    for grant in [Grant::Part, Grant::Trim] {
+    for part in [true, false] {
         let done = Arc::new(AtomicBool::new(false));
         let complete = done.clone();
         let released = Arc::new(AtomicBool::new(false));
@@ -821,16 +820,15 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             let session = Session::open(control, operator::BERTH, Wait::AtMost(3000))
                 .unwrap_or_else(|_| panic!("standalone Operator session"));
             let tree = Face::of(session);
-            match grant {
-                Grant::Part => assert_eq!(
+            match part {
+                true => assert_eq!(
                     tree.part(Where::Root, "idt".into(), Wait::AtMost(3000)),
                     Err(Fail::Denied)
                 ),
-                Grant::Trim => assert_eq!(
+                false => assert_eq!(
                     tree.trim(EntryId::new(0), Wait::AtMost(3000)),
                     Err(Fail::Denied)
                 ),
-                _ => unreachable!(),
             }
             let private = establish::claim(
                 env::TaskId::new(host.get()),

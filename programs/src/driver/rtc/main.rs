@@ -15,17 +15,17 @@ mod adapt;
 mod dev;
 
 use dev::rtc as device;
+use env::pie;
+use env::unit;
 use env::{Access, PieKind, Policy, Wait};
+use programs::debug;
 use programs::driver::rtc::core::Host;
 use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
-use programs::debug;
 use router_api::ENTRY_MARK;
 use system_client::operator;
-use env::unit;
-use env::pie;
 
 const ASK: Ask = Ask {
     class: "google,goldfish-rtc",
@@ -74,7 +74,7 @@ fn main() -> Result<(), Fail> {
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = ipc::session::establish::endpoint(
         env::unit::sire(),
-        env::Mark::of(programs::unit::READY),
+        programs::unit::READY_MARK,
         env::Wait::POLL,
     );
 

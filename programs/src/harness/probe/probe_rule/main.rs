@@ -11,25 +11,25 @@ use alloc::string::ToString;
 use env::Wait;
 use programs::Report;
 
-use system_api::operator::path::Path;
+use ::resource::raw::Hole;
+use env::pie;
+use env::unit;
 use ipc::session::Session;
 use programs::debug;
 use system_api::control::publication;
-use system_client::identity::Organization;
-use system_client::identity::Query;
-use system_client::identity::SelfOps;
 use system_api::identity::Selector;
 use system_api::identity::Subject;
-use system_client::operator;
-use system_client::operator::Face as Face;
-use system_client::operator::Mine;
-use system_client::operator::Pane;
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
-use env::unit;
-use env::pie;
-use ::resource::raw::{Hole};
+use system_api::operator::path::Path;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_client::operator;
+use system_client::operator::Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
 
 const DIR: &system_api::operator::Path = system_api::operator::SVC;
 const PANE: &str = "rule";
@@ -139,7 +139,7 @@ fn main() -> Report<'static> {
     // （与三台驱动、三台服务那几处**同一手**）。
     let _ = ipc::session::establish::endpoint(
         unit::sire(),
-        env::Mark::of(programs::unit::READY),
+        programs::unit::READY_MARK,
         env::Wait::POLL,
     );
 

@@ -180,7 +180,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 ## 下一轮：Mark 的职责与发现规则重构计划
 
-状态：第1至4阶段已落地，第5／6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
+状态：第1至5阶段已落地，第6阶段完整审计尚未完成。下面同时保留迁移约束与各阶段完成条件。
 
 ### 目标与范围
 
@@ -323,6 +323,24 @@ Session::open使用同一截止期限覆盖握手各步；克隆共享调用状�
 保留编译期 REGISTRY 对已声明角色的碰撞检查。提供方声明或其局部 import 函数表达预期用途与来源检查，不再让 Definition 的名字／数值承担授权。无需为了服务实例扩大编译期根登记，也不另造接口类型或服务 ID 的全局运行时登记中心。
 
 验收：每个剩余 Mark 都有实际识别用途；每个外来能力导入都有明确的 native 验证；旧 bare-string／重复 Mark 计算路径及歧义发现兼容层删除；角色重复实例的规则与公共客户端封装一致。
+
+第5阶段实现记录：删除Operator的8个Grant声明、grant_of／for_wire映射、全部废操作入口及其启动发布步骤，不再发布svc/sys/operator/{part,land,find,trim,list,seek,name,watch}。删除仅存在于声明／断言中的Control LINK；Operator LINK仍参与显式接入，保留生成常量而删除重复字符串别名。API登记由63角色收敛到54：28个Channel、26个Grant。测试保留原63个固定数值，将9个退役角色显式列入RETIRED，要求它们不再登记且旧值不被重分配；存续角色不重算、不改值。
+
+| 提供方 | 存续角色 | 识别用途与导入边界 |
+| --- | --- | --- |
+| Control | 12 | 可信服务入口／实例入口、回信和Identity引用；验证native调用者、来源、owner、角色，敏感操作仍查授权与实例关系 |
+| Identity | 18 | 权威签发的17个查询／管理分面与回信；入口绑定已知authority，身份事实不由调用者Mark声明 |
+| Operator | 5 | ASK、LINK、TIP、TIP_BACK、WATCH；两端明确交付，校验来源、owner、存活和角色，操作按Wire分派 |
+| Loader | 3 | Build入口、映像和回信；明确seed、来源、资源类型／范围和接入权限 |
+| Hub | 7 | 公共入口、回信、设备存活和私有activation；native来源与可信Hub关系校验，设备准入仍查Permit／联盟 |
+| Terminal | 6 | attach入口、authority、回信及三条流；明确attachment能力，来源／角色验证，不按Mark授予业务权利 |
+| Router | 3 | 入口、lane、back；握手明确双向seed，验证发件人、vestor、owner、存活及角色 |
+
+通用Port的私有back标签没有读取方，改用NONE；正常回信仍由明确seed、peer和native消息来源确定。其余回信／映像／authority／流角色保留，因为所属接口在import边界实际核验它们，作用是分类与误用防护，不是调用者自授权限。RTC的私有rtc-back仍由adapt核验，并补齐vestor=真实发件人条件；它不参与服务实例登记。raw机制的显式原始构造仍由调用者负责，上层语义import先核验native事实。
+
+启动标签保持独立边界：通用ready、Hub的hub／hub-ready集中为各自声明中的常量，值和原启动关系不变，不能因名字相似合并。Control在部署／配置边界按load/ready名称计算角色；普通驱动和服务使用声明常量，不现场拼协议字符串。宿主测具的自有错误标签不进入生产角色登记。
+
+本批验收：相关宿主测试123项，programs全目标与image宿主构建通过；QEMU accept、product、system-fault均通过。accept检查旧路径真实返回Unknown、非Control写操作拒绝及独立多会话；缺失路径检查使用正常有界RPC预算，不以POLL超时后的关闭状态冒充服务器的Unknown回复。第5阶段完成，第6阶段仍待完整收尾审计。
 
 ### 6. 收尾与完整验收
 

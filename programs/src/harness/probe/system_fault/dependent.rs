@@ -26,7 +26,7 @@ fn main() -> programs::Report<'static> {
     let command = establish::claim(control, COMMAND, WAIT).unwrap();
     let answer = establish::claim(control, ANSWER, WAIT).unwrap();
     let _ready = establish::Held(
-        establish::endpoint(control, Mark::of(programs::unit::READY), Wait::POLL).unwrap(),
+        establish::endpoint(control, programs::unit::READY_MARK, Wait::POLL).unwrap(),
     );
     let session = Session::open(control, operator::BERTH, WAIT)
         .unwrap_or_else(|_| panic!("hierarchy operator session"));

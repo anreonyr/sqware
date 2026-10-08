@@ -176,7 +176,7 @@ pub fn acceptance() {
         .unwrap()
         .host()
         .unwrap();
-    let link = establish::endpoint(host, env::Mark::of(system_api::operator::LINK), Wait::POLL)
+    let link = establish::endpoint(host, system_api::operator::LINK_MARK, Wait::POLL)
         .expect("identity: operator request");
     let (talk, ask) =
         establish::give_at(host, system_api::operator::ASK_MARK).expect("identity: operator ask");

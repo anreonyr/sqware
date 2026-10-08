@@ -22,9 +22,9 @@ extern crate programs;
 use alloc::vec::Vec;
 
 use ::resource::raw::inspect;
+use env::Wait;
 use env::pie;
 use env::unit;
-use env::{Mark, Wait};
 use ipc::rack::{Mode, Rack};
 use ipc::session::{Session, establish};
 use programs::Report;
@@ -82,7 +82,7 @@ fn main() -> Report<'static> {
     }
 
     // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
-    let _ = establish::endpoint(unit::sire(), Mark::of(programs::unit::READY), Wait::POLL);
+    let _ = establish::endpoint(unit::sire(), programs::unit::READY_MARK, Wait::POLL);
 
     // 等 B：见到 CAP 条 = 客人已经读完 A（它那一边的次序）。
     let mut br = b.reader();

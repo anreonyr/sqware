@@ -159,6 +159,8 @@ impl Demand {
 
 /// 实例化一台要多做的一手——通道名。
 pub const READY: &str = "ready";
+/// 启动关系中的 ready 角色，不是发布权利。
+pub const READY_MARK: env::Mark = env::Mark::of(READY);
 
 #[derive(Clone, Copy)]
 pub enum Setup {

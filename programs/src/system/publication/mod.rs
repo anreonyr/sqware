@@ -11,7 +11,6 @@ mod admission;
 mod identity;
 mod install;
 mod internal;
-mod operator;
 mod policy;
 mod receive;
 mod retire;
@@ -67,7 +66,6 @@ pub(crate) use book::Publications;
 pub(crate) use faces::{faces as control_faces, instance_face, publication_face};
 pub(crate) use identity::faces as identity_faces;
 pub(crate) use names::{Names, Registration};
-pub(crate) use operator::faces as operator_faces;
 pub(crate) use runtime::{Approval as RuntimeApproval, Resources as RuntimeNamespace};
 pub(crate) fn observed_revision(
     resources: &::schedule::Resources<'_>,

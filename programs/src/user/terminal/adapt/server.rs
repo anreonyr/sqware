@@ -1,21 +1,21 @@
 //! Private task endpoints and foreground ownership; one attachment at a time.
 use super::E_TERMINAL;
 use crate::core::mode::Mode;
+use ::resource::{
+    pile::{Pile, Sub},
+    raw::{Hole, inspect, reserve},
+};
+use ::schedule::{Progress, Res, ResMut};
 use alloc::collections::VecDeque;
 use env::wire::Span as _;
 use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
-use ::schedule::{Progress, Res, ResMut};
-use terminal_api::frame::{self, Command, Input, Reply};
-use system_client::control::publication::Client;
 use system_api::control::publication::Scope;
 use system_api::control::publication::Target;
 use system_api::operator::Permit;
+use system_client::control::publication::Client;
+use terminal_api::frame::{self, Command, Input, Reply};
 use wire::Message;
-use ::resource::{
-    raw::{Hole, inspect, reserve},
-    pile::{Pile, Sub},
-};
 
 pub(super) struct Endpoints {
     pub input: PieToken,
@@ -130,7 +130,7 @@ impl Server {
             .map_err(|_| E_TERMINAL)?;
         let _ = ipc::session::establish::endpoint(
             env::unit::sire(),
-            env::Mark::of(programs::unit::READY),
+            programs::unit::READY_MARK,
             Wait::POLL,
         );
         Ok(Self {
@@ -155,10 +155,7 @@ impl Server {
                 attachment.endpoints.control,
                 attachment.endpoints.output,
             ] {
-                while Hole::from_raw(token)
-                    .pull(&mut bytes, Wait::POLL)
-                    .is_ok()
-                {}
+                while Hole::from_raw(token).pull(&mut bytes, Wait::POLL).is_ok() {}
             }
         }
     }
@@ -209,8 +206,10 @@ impl Server {
             }
             frame::ECHO_ON | frame::ECHO_OFF => {
                 let attachment = self.attachment.as_ref().ok_or(())?;
-                if from != attachment.foreground || command.task != from
-                    || !pie::same(attachment.authority, command.authority).map_err(|_| ())? {
+                if from != attachment.foreground
+                    || command.task != from
+                    || !pie::same(attachment.authority, command.authority).map_err(|_| ())?
+                {
                     return Err(());
                 }
                 self.echo = command.op == frame::ECHO_ON;
@@ -281,8 +280,11 @@ pub(super) fn requests(
             Err(())
         };
         if result.is_ok() {
-            if matches!(command.op, frame::ECHO_ON | frame::ECHO_OFF) { mode.clear(); }
-            else { mode.reset(); }
+            if matches!(command.op, frame::ECHO_ON | frame::ECHO_OFF) {
+                mode.clear();
+            } else {
+                mode.reset();
+            }
         }
         if loaned && (command.op != frame::ATTACH || result.is_err()) {
             let _ = pie::release(command.authority);
