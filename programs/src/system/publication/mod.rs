@@ -7,6 +7,7 @@ use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::PathBuf;
 use system_api::operator::Permit;
+mod admission;
 mod identity;
 mod install;
 mod internal;

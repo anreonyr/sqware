@@ -14,7 +14,6 @@ pub static PROBE_WATCH_AFTER: UnitFile = UnitFile {
         road: "svc/probe-swatch",
         entries: &[crate::unit::PublishEntry {
             name: "in",
-            mark: None,
         }],
         public: false,
     }],

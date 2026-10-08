@@ -199,6 +199,8 @@ pub use catalog::*;
 
 mod order;
 pub use order::*;
+pub(crate) mod publication;
+pub use publication::{Publish, PublishEntry, PublishScope};
 
 /// 推导出来的凭据——只有一条 `Ready`（装配者按 `after` 反查时用）。
 static READY_ONLY: &[Setup] = &[Setup::Ready];
@@ -214,54 +216,4 @@ impl UnitFile {
             &[]
         }
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PublishScope {
-    Driver,
-    Hub,
-    Fixture,
-    Terminal,
-}
-
-#[derive(Clone, Copy)]
-pub struct PublishEntry {
-    pub name: &'static str,
-    pub mark: Option<env::Mark>,
-}
-
-impl PublishEntry {
-    const fn from_definition(definition: env::marks::Definition) -> Self {
-        Self {
-            name: definition.name,
-            mark: Some(definition.mark),
-        }
-    }
-
-    pub(crate) const fn from_definitions<const N: usize>(
-        definitions: [env::marks::Definition; N],
-    ) -> [Self; N] {
-        let mut entries = [Self {
-            name: "",
-            mark: None,
-        }; N];
-        let mut index = 0;
-        while index < N {
-            entries[index] = Self::from_definition(definitions[index]);
-            index += 1;
-        }
-        entries
-    }
-}
-
-#[derive(Clone, Copy)]
-pub enum Publish {
-    Entries {
-        scope: PublishScope,
-        group: &'static str,
-        road: &'static str,
-        entries: &'static [PublishEntry],
-        public: bool,
-    },
-    Devices,
 }

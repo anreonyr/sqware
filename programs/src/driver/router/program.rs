@@ -15,7 +15,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         scope: crate::unit::PublishScope::Driver,
         group: "",
         road: "svc/drv",
-        entries: &crate::unit::PublishEntry::from_definitions(router_api::PUBLICATIONS),
+        entries: &crate::unit::PublishEntry::from_names(router_api::PUBLICATIONS),
         public: true,
     }],
     identity: Identity {

@@ -152,6 +152,7 @@ cargo test --manifest-path crates/wire/tests/host/Cargo.toml --target x86_64-unk
 cargo test --manifest-path crates/ipc/tests/host/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path crates/ipc/tests/session-exchange/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/interface-marks/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/publication-admission/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/identity-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/loader-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/hub-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
@@ -176,7 +177,7 @@ Cargo 依赖图确认没有用户态 protocol/runtime 包；wire、schedule 无�
 
 ## 下一轮：Mark 的职责与发现规则重构计划
 
-状态：第1阶段基线已落地，第2至6阶段尚待实施。下面保留迁移约束与各阶段完成条件。
+状态：第1阶段基线与第2阶段发布准入已落地，第3至6阶段尚未完成。下面同时保留迁移约束与各阶段完成条件。
 
 ### 目标与范围
 
@@ -254,7 +255,9 @@ mold 的 PUBLICATIONS 不再以 env::marks::Definition 作为发布权利的表�
 - 保留系统路径不能被普通发布者覆盖；重名、撤销、重新发布和事件交付保持既有规则。
 - 动态能力的运行时有效性仍需验证，不以移除 Mark 检查为由跳过 native 事实检查。
 
-第1阶段验收：完整角色黄金值与现有碰撞检查通过，真实system-fault探针验证原生标记继承、重标记与权限边界，含新建能力vestor为0、转授副本vestor为授予者的区分。
+第1／2阶段实现记录：63个既有角色的黄金数值保持不变；Mark真实探针固定原生继承／重标记／权限边界。PUBLICATIONS现为固定名称数组，unit::PublishEntry只表达名称提示，既有产品固定名策略不扩张；运行时准入归publication私有admission模块，unit保持纯部署元数据，image不引入服务实现依赖。Namespace仅开放声明的scope/group/base-path；普通发布不读取入口Mark，native来源、owner、存活、访问策略与挂载冲突校验保留。Devices以Control登记的可信Hub、MemberOf Permit、设备白名单与实际联盟资格准入。
+
+真实accept probe已发布并取回两个未列入静态entries的NONE入口，验证错误group、越界名称和仅有已知API Mark而无namespace权利均被拒绝；撤销一个实例不影响另一实例。system-fault的Mark基线探针验证无权限扩张、重复角色实例和正常释放。product保留原有Hub/Terminal/UART/RTC路径与名称行为。阶段3尚未改变首枚／末枚发现规则，阶段4尚未移除Operator操作面标签。
 
 ### 3. 显式交付优先，统一扫描发现的歧义结果
 

@@ -114,34 +114,15 @@ mod tests {
 
         assert_eq!(
             hub_api::PUBLICATIONS,
-            [
-                env::marks::Definition {
-                    name: "bond",
-                    mark: Mark::of("hub-entry-bond")
-                },
-                env::marks::Definition {
-                    name: "list",
-                    mark: Mark::of("hub-entry-list")
-                },
-                env::marks::Definition {
-                    name: "claim",
-                    mark: Mark::of("hub-entry-claim")
-                },
-            ]
+            ["bond", "list", "claim"]
         );
         assert_eq!(
             terminal_api::PUBLICATIONS,
-            [env::marks::Definition {
-                name: "attach",
-                mark: Mark::of("terminal-attach")
-            }]
+            ["attach"]
         );
         assert_eq!(
             router_api::PUBLICATIONS,
-            [env::marks::Definition {
-                name: "router",
-                mark: Mark::of("entry")
-            }]
+            ["router"]
         );
 
         let registries: &[&[&[env::marks::Definition]]] = &[

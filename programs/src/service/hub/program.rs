@@ -17,7 +17,7 @@ pub static PROGRAM: UnitFile = UnitFile {
             scope: crate::unit::PublishScope::Hub,
             group: "",
             road: "svc/hub",
-            entries: &crate::unit::PublishEntry::from_definitions(hub_api::PUBLICATIONS),
+            entries: &crate::unit::PublishEntry::from_names(hub_api::PUBLICATIONS),
             public: true,
         },
         crate::unit::Publish::Devices,

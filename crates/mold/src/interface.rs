@@ -213,7 +213,7 @@ fn generate_metadata(
 
     let mut publication_names = BTreeSet::new();
     let mut publication_entries = Vec::new();
-    if let Some((channel, symbols)) = &channel {
+    if let Some((_, symbols)) = &channel {
         for symbol in symbols {
             if let Some(publication) = &symbol.publication {
                 if !publication_names.insert(publication.value()) {
@@ -222,18 +222,11 @@ fn generate_metadata(
                         "duplicate publication name",
                     ));
                 }
-                let name = &channel.ident;
-                let variant = &symbol.variant;
-                publication_entries.push(quote!(
-                    ::env::marks::Definition {
-                        name: #publication,
-                        mark: #name::#variant.mark(),
-                    },
-                ));
+                publication_entries.push(quote!(#publication,));
             }
         }
     }
-    if let Some((grant, symbols)) = &grant {
+    if let Some((_, symbols)) = &grant {
         for symbol in symbols {
             if let Some(publication) = &symbol.publication {
                 if !publication_names.insert(publication.value()) {
@@ -242,14 +235,7 @@ fn generate_metadata(
                         "duplicate publication name",
                     ));
                 }
-                let name = &grant.ident;
-                let variant = &symbol.variant;
-                publication_entries.push(quote!(
-                    ::env::marks::Definition {
-                        name: #publication,
-                        mark: #name::#variant.mark(),
-                    },
-                ));
+                publication_entries.push(quote!(#publication,));
             }
         }
     }
@@ -264,7 +250,7 @@ fn generate_metadata(
             pub const INTERFACE_ID: &str = #id;
             #channel_tokens
             #grant_tokens
-            pub const PUBLICATIONS: [::env::marks::Definition; #publication_count] = [
+            pub const PUBLICATIONS: [&str; #publication_count] = [
                 #(#publication_entries)*
             ];
             pub const REGISTRY: &[&[::env::marks::Definition]] = &[
@@ -681,8 +667,8 @@ mod tests {
         assert!(output.contains("legacy-write"));
         assert!(output.contains("pub const REGISTRY"));
         assert!(output.contains("pub const PUBLICATIONS"));
-        assert!(output.contains("name : \"reply\""));
-        assert!(output.contains("name : \"read\""));
+        assert!(output.contains("\"reply\""));
+        assert!(output.contains("\"read\""));
         assert!(output.contains("conflict"));
         assert!(!output.contains("pub enum Wire"));
     }

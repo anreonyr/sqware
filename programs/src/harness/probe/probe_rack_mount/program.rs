@@ -13,11 +13,9 @@ pub static PROBE_RACK_MOUNT: UnitFile = UnitFile {
         entries: &[
             crate::unit::PublishEntry {
                 name: "rx",
-                mark: None,
             },
             crate::unit::PublishEntry {
                 name: "tx",
-                mark: None,
             },
         ],
         public: false,

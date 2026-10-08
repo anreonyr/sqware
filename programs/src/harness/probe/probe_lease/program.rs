@@ -11,7 +11,6 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
         road: "svc/fixtures",
         entries: &[crate::unit::PublishEntry {
             name: "lease",
-            mark: None,
         }],
         public: false,
     }],

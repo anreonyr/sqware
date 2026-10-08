@@ -6,7 +6,7 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Wait;
+use env::{Mark, Wait};
 use programs::Report;
 
 use system_api::operator::path::PathBuf;
@@ -129,6 +129,86 @@ fn main() -> Report<'static> {
     programs::debug::put(&alloc::format!(
         "probe-watch: queued got={got} of={EVENTS} last_seq={last}"
     ));
+
+    let publisher = system_client::control::publication::Client::injected().unwrap();
+    let dynamic = |name: &str| system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope::Fixture,
+        group: "probe-watch-dynamic".into(),
+        name: name.into(),
+    };
+    let first = dynamic("one");
+    let second = dynamic("two");
+    let first_entry = pie::unseal_hole(Mark::NONE).unwrap();
+    let second_entry = pie::unseal_hole(Mark::NONE).unwrap();
+    assert_ne!(first_entry, second_entry);
+    let denied_group = pie::unseal_hole(Mark::NONE).unwrap();
+    let denied_name = pie::unseal_hole(Mark::NONE).unwrap();
+    let marked_without_right = pie::unseal_hole(system_api::operator::Grant::Watch.mark()).unwrap();
+    assert_eq!(
+        publisher.publish(
+            system_api::control::publication::Target::Service {
+                scope: system_api::control::publication::Scope::Fixture,
+                group: "probe-watch-other".into(),
+                name: "one".into(),
+            },
+            denied_group,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    assert_eq!(
+        publisher.publish(
+            dynamic("../escape"),
+            denied_name,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    assert_eq!(
+        publisher.publish(
+            system_api::control::publication::Target::Service {
+                scope: system_api::control::publication::Scope::Fixture,
+                group: "probe-watch-other".into(),
+                name: "one".into(),
+            },
+            marked_without_right,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    for token in [denied_group, denied_name, marked_without_right] {
+        pie::seal(token).unwrap();
+        pie::release(token).unwrap();
+    }
+    let first_id = publisher
+        .publish(first.clone(), first_entry, Permit::Public, Wait::AtMost(MS))
+        .unwrap();
+    let second_id = publisher
+        .publish(second.clone(), second_entry, Permit::Public, Wait::AtMost(MS))
+        .unwrap();
+    let root = tree.root();
+    for (name, id) in [("one", first_id), ("two", second_id)] {
+        let road = PathBuf::try_new(&alloc::format!("svc/probe-watch-dynamic/{name}")).unwrap();
+        let tile = root.tile(&road, Wait::AtMost(MS)).unwrap();
+        assert_eq!(tile.id(), id);
+        let token = tile.token(Wait::AtMost(MS)).unwrap();
+        assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::NONE);
+        pie::release(token).unwrap();
+    }
+    publisher.unpublish(first, Wait::AtMost(MS)).unwrap();
+    let first_road = PathBuf::try_new("svc/probe-watch-dynamic/one").unwrap();
+    assert!(matches!(
+        root.tile(&first_road, Wait::AtMost(MS)),
+        Err(system_api::operator::Fail::Unknown)
+    ));
+    let second_road = PathBuf::try_new("svc/probe-watch-dynamic/two").unwrap();
+    assert_eq!(
+        root.tile(&second_road, Wait::AtMost(MS)).unwrap().id(),
+        second_id
+    );
 
     return Report::note(env::EXIT_OK, OK_NOTE);
 }

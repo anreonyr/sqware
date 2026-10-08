@@ -11,7 +11,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         scope: crate::unit::PublishScope::Terminal,
         group: "",
         road: "svc/terminal",
-        entries: &crate::unit::PublishEntry::from_definitions(terminal_api::PUBLICATIONS),
+        entries: &crate::unit::PublishEntry::from_names(terminal_api::PUBLICATIONS),
         public: true,
     }],
     identity: Identity {

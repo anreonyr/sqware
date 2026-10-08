@@ -52,7 +52,7 @@ pub fn service(
     let Some(target @ Target::Service { .. }) = request.frame.target() else {
         return Ok(Progress::Done);
     };
-    let Target::Service { scope, group, name } = &target else {
+    let Target::Service { scope, .. } = &target else {
         unreachable!()
     };
     let program = control.find_named_task(request.from).and_then(|row| {
@@ -61,47 +61,22 @@ pub fn service(
             .copied()
             .find(|p| p.name() == row.name)
     });
-    let mark = inspect(request.frame.entry).map(|(_, _, mark)| mark).ok();
-    let mut road = None;
-    if let (Some(program), Some(mark)) = (program, mark) {
-        for rule in program.publication {
-            match rule {
-                crate::unit::Publish::Devices
-                    if *scope == Scope::Device && mark == hub_api::Grant::Claim.mark() =>
-                {
-                    if matches!(
-                        request.frame.permit,
-                        Permit::Identity(Selector::MemberOf(_))
-                    ) {
-                        *decision = Decision::Device;
-                    }
-                }
-                crate::unit::Publish::Entries {
-                    scope: allowed,
-                    group: expected,
-                    road: base,
-                    entries,
-                    public,
-                } => {
-                    let allowed = match allowed {
-                        crate::unit::PublishScope::Driver => Scope::Driver,
-                        crate::unit::PublishScope::Hub => Scope::Hub,
-                        crate::unit::PublishScope::Fixture => Scope::Fixture,
-                        crate::unit::PublishScope::Terminal => Scope::Terminal,
-                    };
-                    if *scope == allowed
-                        && group == expected
-                        && (!*public || request.frame.permit == Permit::Public)
-                        && entries
-                            .iter()
-                            .any(|e| e.name == name && e.mark.is_none_or(|m| m == mark))
-                    {
-                        road = Path::new(base).try_join(name);
-                    }
-                }
-                _ => {}
-            }
-        }
+    let trusted_hub = program.is_some_and(|program| program.name() == "hub");
+    let road = program.and_then(|program| {
+        super::admission::service(
+            program.publication,
+            &target,
+            request.frame.permit,
+        )
+    });
+    if program.is_some_and(|program| {
+        super::admission::devices(
+            program.publication,
+            trusted_hub,
+            (*scope, request.frame.permit),
+        )
+    }) {
+        *decision = Decision::Device;
     }
     if let Some(road) = road {
         *decision = Decision::Install(Approved {

@@ -17,15 +17,15 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
             group: "probe-watch",
             road: "svc/probe-watch",
             entries: &[
-                crate::unit::PublishEntry {
-                    name: "in",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "out",
-                    mark: None,
-                },
+                crate::unit::PublishEntry { name: "in" },
+                crate::unit::PublishEntry { name: "out" },
             ],
+            public: false,
+        },
+        crate::unit::Publish::Namespace {
+            scope: crate::unit::PublishScope::Fixture,
+            group: "probe-watch-dynamic",
+            road: "svc/probe-watch-dynamic",
             public: false,
         },
         crate::unit::Publish::Entries {
@@ -33,30 +33,12 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
             group: "probe-watch-q",
             road: "svc/probe-watch-q",
             entries: &[
-                crate::unit::PublishEntry {
-                    name: "c0",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "c1",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "c2",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "c3",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "c4",
-                    mark: None,
-                },
-                crate::unit::PublishEntry {
-                    name: "c5",
-                    mark: None,
-                },
+                crate::unit::PublishEntry { name: "c0" },
+                crate::unit::PublishEntry { name: "c1" },
+                crate::unit::PublishEntry { name: "c2" },
+                crate::unit::PublishEntry { name: "c3" },
+                crate::unit::PublishEntry { name: "c4" },
+                crate::unit::PublishEntry { name: "c5" },
             ],
             public: false,
         },

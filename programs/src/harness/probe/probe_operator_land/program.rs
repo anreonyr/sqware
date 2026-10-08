@@ -13,7 +13,6 @@ pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
         road: "svc/operator-fixture",
         entries: &[crate::unit::PublishEntry {
             name: "entry",
-            mark: None,
         }],
         public: false,
     }],
