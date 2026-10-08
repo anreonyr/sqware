@@ -220,6 +220,19 @@ impl Said {
         self.bytes().first().copied().unwrap_or(BAD)
     }
 
+    /// A complete known status response, without a payload.
+    pub fn status(&self) -> Option<u8> {
+        let code = self.code();
+        (self.bytes().len() == Status::LEN
+            && (code == OK || code == BAD || super::vocab::code_to_fail(code).is_some()))
+        .then_some(code)
+    }
+
+    /// Only a complete failure status establishes that an operation was rejected.
+    pub fn failure_status(&self) -> Option<u8> {
+        self.status().filter(|code| *code != OK)
+    }
+
     /// 按「号」那一形读（`land` / `part` / `seek` 的下场）：`[status][8 字节]` → **坐标**
     /// 状态不是 OK ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`
     pub fn entry(&self) -> Result<EntryId, u8> {

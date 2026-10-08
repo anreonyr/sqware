@@ -8,9 +8,9 @@ pub mod sweep;
 fn put_deed(_: PieToken, deed: Deed) {
     crate::DEEDS.with(|d| d.borrow_mut().push(deed));
 }
-fn ship(_: Entry, _: TaskId, _: PieKind, _: Access, _: Policy) -> Result<PieToken, ()> {
-    Ok(PieToken::mint(99))
-}
+#[path = "../../src/service/hub/serve/grant.rs"]
+mod grant;
+use grant::ship;
 
 pub(crate) fn claim_device(
     ledger: &mut Ledger,

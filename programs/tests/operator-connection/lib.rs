@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{MailFail, Mark, PieToken, TaskId, Wait};
+pub use abi::{HoleDir, MailFail, Mark, PieToken, TaskId, Wait};
 pub mod wire {
     pub use abi::wire::Field;
 }
@@ -22,6 +22,8 @@ struct Backend {
     guests: Vec<(TaskId, PieToken, PieToken)>,
     waits: Vec<Wait>,
     tip_busy: bool,
+    reply_busy: bool,
+    attachments: Vec<(PieToken, HoleDir)>,
 }
 thread_local! { static BACKEND: RefCell<Backend> = RefCell::new(Backend { next: 100, ..Backend::default() }); }
 fn token(value: usize) -> PieToken {
@@ -90,9 +92,14 @@ pub mod raw {
             BACKEND.with(|b| {
                 let mut b = b.borrow_mut();
                 b.waits.push(wait);
+                if b.reply_busy {
+                    return Err(Error {
+                        source: MailFail::Busy,
+                    });
+                }
                 b.offers.push(self.0.get());
-            });
-            Ok(())
+                Ok(())
+            })
         }
         pub fn pull(&self, bytes: &mut [u8], wait: Wait) -> Result<(usize, TaskId), Error> {
             BACKEND.with(|b| {
@@ -206,8 +213,63 @@ pub mod hand {
         }
     }
 }
+pub mod pile {
+    use super::*;
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Sub {
+        Capabilities,
+    }
+    pub struct Pile;
+    impl Pile {
+        pub fn unseal(_: bool) -> Result<Self, ()> {
+            Ok(Self)
+        }
+        pub fn attach(&self, token: PieToken, direction: HoleDir) -> Result<(), ()> {
+            BACKEND.with(|b| b.borrow_mut().attachments.push((token, direction)));
+            Ok(())
+        }
+        pub fn detach(&self, token: PieToken, direction: HoleDir) -> Result<(), ()> {
+            BACKEND.with(|b| {
+                b.borrow_mut()
+                    .attachments
+                    .retain(|entry| *entry != (token, direction))
+            });
+            Ok(())
+        }
+        pub fn subscribe(&self, _: Sub) -> Result<(), ()> {
+            Ok(())
+        }
+        pub fn unsubscribe(&self, _: Sub) -> Result<(), ()> {
+            Ok(())
+        }
+        pub fn await_(&self, wait: Wait) -> Result<Option<(PieToken, HoleDir)>, ()> {
+            BACKEND.with(|b| {
+                let mut b = b.borrow_mut();
+                let event =
+                    b.attachments
+                        .iter()
+                        .copied()
+                        .find(|(token, direction)| match direction {
+                            HoleDir::Pull => {
+                                b.inbox.get(&token.get()).is_some_and(|q| !q.is_empty())
+                            }
+                            HoleDir::Push if token.get() == 50 => !b.tip_busy,
+                            HoleDir::Push => !b.reply_busy,
+                        });
+                if event.is_none() {
+                    if let Wait::AtMost(ms) = wait {
+                        b.now += ms as u64 * 1_000_000;
+                    }
+                }
+                Ok(event)
+            })
+        }
+    }
+}
 #[path = "../../src/system/operator/connection.rs"]
 mod connection;
+#[path = "../../src/system/app/waiting.rs"]
+mod waiting;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,10 +311,10 @@ mod tests {
             assert_eq!(b.guests[0].0, TaskId::new(8));
             assert!(b.waits.iter().all(|w| *w == Wait::POLL));
         });
-        assert_eq!(book.entries().count(), 1);
+        assert_eq!(book.interests(address()).count(), 1);
         BACKEND.with(|b| b.borrow_mut().now = 5_000_000_000);
         book.maintain(address()).unwrap();
-        assert_eq!(book.entries().count(), 0);
+        assert_eq!(book.interests(address()).count(), 0);
         for _ in 0..3 {
             book.request(TaskId::new(9)).unwrap();
             book.maintain(address()).unwrap();
@@ -284,6 +346,59 @@ mod tests {
         });
     }
     #[test]
+    fn recovered_tip_capacity_wakes_actual_supervisor_wait_before_deadline() {
+        reset();
+        setup(2, 9);
+        let mut book = connection::Connections::default();
+        book.request(TaskId::new(9)).unwrap();
+        book.maintain(address()).unwrap();
+        submit(2, 9, 91u64.to_le_bytes().to_vec());
+        BACKEND.with(|b| b.borrow_mut().tip_busy = true);
+        book.maintain(address()).unwrap();
+        let interests: Vec<_> = book.interests(address()).collect();
+        assert_eq!(interests, vec![(token(50), HoleDir::Push)]);
+        let mut wait = waiting::Waiting::new().unwrap();
+        assert!(wait.apply((&[], &[token(50)]), &[]));
+        BACKEND.with(|b| b.borrow_mut().tip_busy = false);
+        wait.await_(book.remaining()).unwrap();
+        book.maintain(address()).unwrap();
+        BACKEND.with(|b| {
+            let b = b.borrow();
+            assert_eq!(b.now, 0);
+            assert_eq!(b.guests.len(), 1);
+            assert!(b.revoked.is_empty());
+        });
+    }
+    #[test]
+    fn recovered_reply_capacity_wakes_offer_and_changes_interest_to_read() {
+        reset();
+        setup(2, 9);
+        BACKEND.with(|b| b.borrow_mut().reply_busy = true);
+        let mut book = connection::Connections::default();
+        book.request(TaskId::new(9)).unwrap();
+        book.maintain(address()).unwrap();
+        assert_eq!(
+            book.interests(address()).collect::<Vec<_>>(),
+            vec![(token(2), HoleDir::Push)]
+        );
+        let mut wait = waiting::Waiting::new().unwrap();
+        assert!(wait.apply((&[], &[token(2)]), &[]));
+        BACKEND.with(|b| b.borrow_mut().reply_busy = false);
+        wait.await_(book.remaining()).unwrap();
+        book.maintain(address()).unwrap();
+        let rx = BACKEND.with(|b| token(b.borrow().receivers[&2]));
+        assert_eq!(
+            book.interests(address()).collect::<Vec<_>>(),
+            vec![(rx, HoleDir::Pull)]
+        );
+        assert!(wait.apply((&[rx], &[]), &[]));
+        BACKEND.with(|b| {
+            let b = b.borrow();
+            assert_eq!(b.now, 0);
+            assert_eq!(b.attachments, vec![(rx, HoleDir::Pull)]);
+        });
+    }
+    #[test]
     fn busy_handoff_expires_and_revokes_its_delivery_once() {
         reset();
         setup(2, 9);
@@ -293,7 +408,7 @@ mod tests {
         submit(2, 9, 91u64.to_le_bytes().to_vec());
         BACKEND.with(|b| b.borrow_mut().tip_busy = true);
         book.maintain(address()).unwrap();
-        assert_eq!(book.entries().count(), 1);
+        assert_eq!(book.interests(address()).count(), 1);
         BACKEND.with(|b| b.borrow_mut().now = 5_000_000_000);
         book.maintain(address()).unwrap();
         book.maintain(address()).unwrap();

@@ -6,14 +6,15 @@ use resource::{
     port::{Access, Policy},
     raw::Loan,
 };
+use system_api::operator::Said;
 
 /// The accepted result transfers responsibility to the server. A lost reply leaves
 /// admission uncertain, so it cannot revoke a capability the server may have retained.
-pub(super) fn offer<T>(
+pub(super) fn offer(
     source: &PieToken,
     host: TaskId,
-    call: impl FnOnce(PieToken) -> Result<(bool, T), CallFail>,
-) -> Result<T, ()> {
+    call: impl FnOnce(PieToken) -> Result<Said, CallFail>,
+) -> Result<Said, ()> {
     let loan = Loan::accord(
         source,
         host,
@@ -22,8 +23,8 @@ pub(super) fn offer<T>(
     )
     .map_err(|_| ())?;
     match call(loan.remote()) {
-        Ok((accepted, response)) => {
-            if accepted {
+        Ok(response) => {
+            if response.failure_status().is_none() {
                 loan.keep();
             }
             Ok(response)

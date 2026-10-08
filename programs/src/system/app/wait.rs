@@ -12,6 +12,7 @@ use system_api::control as ccall;
 use ::schedule::{Progress, Res, ResMut};
 pub struct Interests {
     pub tokens: Vec<PieToken>,
+    pub writes: Vec<PieToken>,
     pub subs: Vec<Sub>,
     pub armed: bool,
 }
@@ -21,6 +22,7 @@ pub fn entries(
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
     wanted.tokens.clear();
+    wanted.writes.clear();
     wanted.subs.clear();
     wanted.armed = false;
     wanted
@@ -77,7 +79,7 @@ pub fn apply(
     mut waiting: ResMut<Waiting>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
-    wanted.armed = waiting.apply(&wanted.tokens, &wanted.subs);
+    wanted.armed = waiting.apply((&wanted.tokens, &wanted.writes), &wanted.subs);
     Ok(Progress::Done)
 }
 pub fn wait(
@@ -109,11 +111,15 @@ pub(super) fn connections(
     mut wanted: ResMut<Interests>,
     mut bound: ResMut<super::policy::Bound>,
 ) -> Result<Progress, Fail> {
-    wanted
-        .tokens
-        .try_reserve(tree.connection_entries().count())
-        .map_err(|_| Fail::Room)?;
-    wanted.tokens.extend(tree.connection_entries());
+    let count = tree.connection_interests().count();
+    wanted.tokens.try_reserve(count).map_err(|_| Fail::Room)?;
+    wanted.writes.try_reserve(count).map_err(|_| Fail::Room)?;
+    for (token, direction) in tree.connection_interests() {
+        match direction {
+            env::HoleDir::Pull => wanted.tokens.push(token),
+            env::HoleDir::Push => wanted.writes.push(token),
+        }
+    }
     bound.0 = match (bound.0, tree.connection_budget()) {
         (Wait::Forever, value) | (value, Wait::Forever) => value,
         (Wait::AtMost(left), Wait::AtMost(right)) => Wait::AtMost(left.min(right)),

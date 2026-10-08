@@ -34,9 +34,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "operator-client-host-tests"
+name = "operator-watch-host-tests"
 version = "0.1.0"
 dependencies = [
+ "env",
  "system-api",
  "wire",
 ]

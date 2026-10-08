@@ -26,12 +26,12 @@ pub(super) fn claim(
             return;
         };
         let owner = Owner { task: from, sensor };
-        match ledger.claim(door, owner, alive) {
-            Ok(entry) => match ship(entry.clone(), from, kind, access, policy) {
-                Ok(page) => Deed::granted(entry.name, entry.line, page),
-                Err(_) => Deed::of(hub::DENIED),
-            },
+        match ledger.claim_with(door, owner, alive, |entry| {
+            ship(entry.clone(), from, kind, access, policy).map_err(|_| hub::Fail::Denied)
+        }) {
+            Ok((entry, page)) => Deed::granted(entry.name, entry.line, page),
             Err(hub::Fail::Taken) => Deed::of(hub::TAKEN),
+            Err(hub::Fail::Denied) => Deed::of(hub::DENIED),
             Err(_) => Deed::of(hub::UNKNOWN),
         }
     };

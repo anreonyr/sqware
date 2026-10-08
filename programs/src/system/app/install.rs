@@ -48,6 +48,7 @@ pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, &'static str> 
     put!(wait::Waiting::new().map_err(|_| "app waiting pile")?);
     put!(wait::Interests {
         tokens: Vec::new(),
+        writes: Vec::new(),
         subs: Vec::new(),
         armed: false
     });

@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use env::{HoleDir, PieToken};
 pub(crate) struct Waiting {
     pile: Pile,
-    members: Vec<PieToken>,
+    members: Vec<(PieToken, HoleDir)>,
     subs: Vec<Sub>,
 }
 impl Waiting {
@@ -20,24 +20,40 @@ impl Waiting {
     pub(super) fn await_(&self, wait: env::Wait) -> Result<(), ()> {
         self.pile.await_(wait).map(|_| ()).map_err(|_| ())
     }
-    pub fn apply(&mut self, tokens: &[PieToken], subs: &[Sub]) -> bool {
+    pub fn apply(&mut self, interests: (&[PieToken], &[PieToken]), subs: &[Sub]) -> bool {
+        let (reads, writes) = interests;
+        if self
+            .members
+            .try_reserve(reads.len() + writes.len())
+            .is_err()
+            || self.subs.try_reserve(subs.len()).is_err()
+        {
+            return false;
+        }
         let mut at = 0;
         while at < self.members.len() {
-            if tokens.contains(&self.members[at]) {
+            let (token, direction) = self.members[at];
+            let wanted = match direction {
+                HoleDir::Pull => reads,
+                HoleDir::Push => writes,
+            };
+            if wanted.contains(&token) {
                 at += 1;
             } else {
-                let token = self.members.swap_remove(at);
-                let _ = self.pile.detach(token, HoleDir::Pull);
+                self.members.swap_remove(at);
+                let _ = self.pile.detach(token, direction);
             }
         }
-        for &token in tokens {
-            if self.members.contains(&token) {
-                continue;
+        for (tokens, direction) in [(reads, HoleDir::Pull), (writes, HoleDir::Push)] {
+            for &token in tokens {
+                if self.members.contains(&(token, direction)) {
+                    continue;
+                }
+                if self.pile.attach(token, direction).is_err() {
+                    return false;
+                }
+                self.members.push((token, direction));
             }
-            if self.pile.attach(token, HoleDir::Pull).is_err() {
-                return false;
-            }
-            self.members.push(token);
         }
         let mut at = 0;
         while at < self.subs.len() {

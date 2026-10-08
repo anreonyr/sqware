@@ -106,18 +106,16 @@ impl Face {
         wait: Wait,
     ) -> Result<EntryId, Fail> {
         let said = handoff::offer(&entry, self.session.host(), |shipped| {
-            self.session
-                .call::<Call>(
-                    ocall::Req::Land {
-                        at,
-                        name,
-                        entry: shipped,
-                        permit,
-                        mine: matches!(mine, Mine::Yes),
-                    },
-                    wait,
-                )
-                .map(|said| (said.entry().is_ok(), said))
+            self.session.call::<Call>(
+                ocall::Req::Land {
+                    at,
+                    name,
+                    entry: shipped,
+                    permit,
+                    mine: matches!(mine, Mine::Yes),
+                },
+                wait,
+            )
         })
         .map_err(|_| Fail::Unknown)?;
         said.entry().map_err(map_code)

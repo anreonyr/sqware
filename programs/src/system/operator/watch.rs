@@ -47,6 +47,7 @@ impl Watchers {
 
     pub(crate) fn join(&mut self, subscription: Subscription) -> Result<(), ()> {
         let Subscription { who, road, hole } = subscription;
+        self.list.retain(|subscriber| alive(subscriber.hole));
         if self
             .list
             .iter()

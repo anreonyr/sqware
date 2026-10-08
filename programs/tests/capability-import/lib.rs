@@ -16,7 +16,33 @@ struct Native {
 thread_local! {
     static ENTRIES: RefCell<Vec<Native>> = const { RefCell::new(Vec::new()) };
     static SENT: RefCell<Vec<PieToken>> = const { RefCell::new(Vec::new()) };
+    static SHIP_FAIL: RefCell<bool> = const { RefCell::new(false) };
+    static SHIP_CALLS: RefCell<usize> = const { RefCell::new(0) };
     static DEEDS: RefCell<Vec<hub_api::Deed>> = const { RefCell::new(Vec::new()) };
+}
+pub mod port {
+    use super::*;
+    pub struct Seat(PieToken);
+    impl Seat {
+        pub fn seed(&self) -> PieToken {
+            self.0
+        }
+    }
+    pub fn ship(_: PieToken, _: TaskId, _: env::Access, _: env::Policy) -> Result<Seat, ()> {
+        SHIP_CALLS.with(|n| *n.borrow_mut() += 1);
+        if SHIP_FAIL.with(|fail| *fail.borrow()) {
+            Err(())
+        } else {
+            Ok(Seat(PieToken::mint(99)))
+        }
+    }
+}
+mod service {
+    pub mod hub {
+        pub mod core {
+            pub use crate::hub_core::Entry;
+        }
+    }
 }
 pub mod debug {
     pub fn put(_: &str) {}
@@ -164,6 +190,33 @@ mod tests {
         assert_eq!(watchers.len(), 1);
         assert_eq!(SENT.with(|s| s.borrow().clone()), vec![b.token]);
     }
+    #[test]
+    fn closed_watch_can_rejoin_same_task_and_path_without_waiting_for_an_event() {
+        let old = native(WATCH_MARK);
+        let replacement = Native {
+            token: PieToken::mint(12),
+            ..old
+        };
+        ENTRIES.with(|entries| *entries.borrow_mut() = vec![old, replacement]);
+        let mut watchers = watch::Watchers::new();
+        watchers
+            .join(watch::Subscription::import(who(), Path::ROOT.to_path_buf(), old.token).unwrap())
+            .unwrap();
+        ENTRIES.with(|entries| entries.borrow_mut()[0].live = false);
+        watchers
+            .join(
+                watch::Subscription::import(who(), Path::ROOT.to_path_buf(), replacement.token)
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(watchers.len(), 1);
+        SENT.with(|sent| sent.borrow_mut().clear());
+        assert_eq!(watchers.publish(event()), 1);
+        assert_eq!(
+            SENT.with(|sent| sent.borrow().clone()),
+            vec![replacement.token]
+        );
+    }
     fn ledger() -> hub_core::Ledger {
         let mut ledger = hub_core::Ledger::new();
         ledger
@@ -178,12 +231,15 @@ mod tests {
         ledger
     }
     fn claim(ledger: &mut hub_core::Ledger, sensor: PieToken) -> u8 {
+        claim_kind(ledger, sensor, env::PieKind::Pole as u8)
+    }
+    fn claim_kind(ledger: &mut hub_core::Ledger, sensor: PieToken, kind: u8) -> u8 {
         hub_serve::claim_device(
             ledger,
             PieToken::mint(21),
             who(),
             sensor,
-            env::PieKind::Pole as u8,
+            kind,
             env::Access::FETCH.bits().bits(),
             env::Policy::NONE.bits().bits(),
             PieToken::mint(30),
@@ -254,5 +310,56 @@ mod tests {
         assert_eq!(ledger.list("class".into(), 0).held[0], 0);
         set(valid);
         assert_eq!(claim(&mut ledger, valid.token), hub_api::OK);
+    }
+    #[test]
+    fn hub_failed_delivery_preserves_vacant_cell_and_next_request_succeeds() {
+        let valid = native(hub_api::ALIVE_MARK);
+        set(valid);
+        let mut ledger = ledger();
+        SHIP_FAIL.with(|fail| *fail.borrow_mut() = true);
+        assert_eq!(claim(&mut ledger, valid.token), hub_api::DENIED);
+        assert_eq!(SHIP_CALLS.with(|n| *n.borrow()), 1);
+        assert_eq!(ledger.list("class".into(), 0).held[0], 0);
+        SHIP_FAIL.with(|fail| *fail.borrow_mut() = false);
+        assert_eq!(claim(&mut ledger, valid.token), hub_api::OK);
+        assert_eq!(ledger.list("class".into(), 0).held[0], 1);
+        assert_eq!(claim(&mut ledger, valid.token), hub_api::TAKEN);
+        assert_eq!(SHIP_CALLS.with(|n| *n.borrow()), 2);
+    }
+    #[test]
+    fn hub_unsupported_resource_kind_and_malformed_kind_do_not_claim() {
+        let valid = native(hub_api::ALIVE_MARK);
+        set(valid);
+        let mut ledger = ledger();
+        for kind in [env::PieKind::Hole, env::PieKind::Tole] {
+            assert_eq!(
+                claim_kind(&mut ledger, valid.token, kind as u8),
+                hub_api::DENIED
+            );
+            assert_eq!(ledger.list("class".into(), 0).held[0], 0);
+        }
+        assert_eq!(claim_kind(&mut ledger, valid.token, 255), hub_api::BAD);
+        assert_eq!(ledger.list("class".into(), 0).held[0], 0);
+        assert_eq!(SHIP_CALLS.with(|n| *n.borrow()), 0);
+        assert_eq!(claim(&mut ledger, valid.token), hub_api::OK);
+    }
+    #[test]
+    fn hub_dead_owner_replacement_failure_preserves_old_owner_until_vacate() {
+        let old = native(hub_api::ALIVE_MARK);
+        set(old);
+        let mut ledger = ledger();
+        assert_eq!(claim(&mut ledger, old.token), hub_api::OK);
+        let new = Native {
+            token: PieToken::mint(11),
+            ..old
+        };
+        ENTRIES.with(|entries| *entries.borrow_mut() = vec![Native { live: false, ..old }, new]);
+        SHIP_FAIL.with(|fail| *fail.borrow_mut() = true);
+        assert_eq!(claim(&mut ledger, new.token), hub_api::DENIED);
+        assert_eq!(ledger.list("class".into(), 0).held[0], 1);
+        assert_eq!(ledger.vacate(hub_serve::alive), 1);
+        assert_eq!(ledger.list("class".into(), 0).held[0], 0);
+        SHIP_FAIL.with(|fail| *fail.borrow_mut() = false);
+        assert_eq!(claim(&mut ledger, new.token), hub_api::OK);
     }
 }

@@ -29,6 +29,14 @@ fn main() -> Report<'static> {
     let requests = session.clone();
     let tree = Face::of(session);
     reject_wrong_watch_role(&requests);
+    let watch = tree
+        .watch(system_api::operator::Path::ROOT, Wait::AtMost(MS))
+        .expect("first owned Watch");
+    drop(watch);
+    let replacement = tree
+        .watch(system_api::operator::Path::ROOT, Wait::AtMost(MS))
+        .expect("closed Watch must permit same-path resubscription");
+    drop(replacement);
 
     for operation in [
         "part", "land", "find", "trim", "list", "seek", "name", "watch",

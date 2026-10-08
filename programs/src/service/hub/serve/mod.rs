@@ -7,7 +7,6 @@ use alloc::vec::Vec;
 
 use ::resource::dock::Dock;
 use ::resource::pile::Pile;
-use ::resource::port;
 use env::PAGE_SIZE;
 use env::unit;
 use env::{
@@ -47,6 +46,8 @@ const PROBE_MS: usize = 1000;
 
 pub mod bond;
 pub mod claim;
+mod grant;
+use self::grant::ship;
 pub mod list;
 pub mod sweep;
 
@@ -295,23 +296,6 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
         // 每一台那一枚门的面**也是 `Claim`**——而"认的是哪一台"靠这一枚孔自己（见 turn）。
         Grant::Claim
     }
-}
-
-/// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号
-/// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格
-pub(super) fn ship(
-    entry: Entry,
-    to: TaskId,
-    kind: PieKind,
-    access: Access,
-    policy: Policy,
-) -> Result<PieToken, ()> {
-    let shipped = match kind {
-        PieKind::Pole => port::ship(entry.page, to, access, policy),
-        PieKind::Nole => port::ship(entry.page, to, access, policy),
-        PieKind::Hole | PieKind::Tole => return Err(()),
-    };
-    shipped.map(|seat| seat.seed()).map_err(|_| ())
 }
 
 /// **三格失败分得开**（RecvFail）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动

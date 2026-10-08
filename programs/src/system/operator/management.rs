@@ -188,8 +188,13 @@ impl Tree {
         }
         Ok(())
     }
-    pub(crate) fn connection_entries(&self) -> impl Iterator<Item = PieToken> + '_ {
-        self.connections.entries()
+    pub(crate) fn connection_interests(
+        &self,
+    ) -> impl Iterator<Item = (PieToken, env::HoleDir)> + '_ {
+        self.connections.interests((
+            self.host.unwrap_or(TaskId::new(0)),
+            self.tip.unwrap_or(PieToken::NONE),
+        ))
     }
     pub(crate) fn connection_budget(&self) -> Wait {
         self.connections.remaining()

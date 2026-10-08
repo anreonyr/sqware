@@ -106,45 +106,45 @@ mod handoff;
 mod tests {
     use super::*;
     use session::CallFail;
+    use system_api::operator::{BAD, DENIED, OK, Said, Union};
+    use wire::Message;
     fn reset() {
         NATIVE.with(|n| *n.borrow_mut() = Native::default());
+    }
+    fn said(bytes: &[u8]) -> Said {
+        Union::fetch(bytes).unwrap()
+    }
+    fn offer(bytes: &[u8]) {
+        handoff::offer(&PieToken(9), TaskId(7), |_| Ok(said(bytes))).unwrap();
     }
     #[test]
     fn failed_admission_reclaims_each_grant_without_accumulating_duplicates() {
         reset();
         for step in 0..30 {
-            let result = handoff::offer(
-                &PieToken(9),
-                TaskId(7),
-                |_| -> Result<(bool, ()), CallFail> {
-                    Err(match step % 3 {
-                        0 => CallFail::Busy,
-                        1 => CallFail::Closed,
-                        _ => CallFail::Send(()),
-                    })
-                },
-            );
+            let result = handoff::offer(&PieToken(9), TaskId(7), |_| {
+                Err(match step % 3 {
+                    0 => CallFail::Busy,
+                    1 => CallFail::Closed,
+                    _ => CallFail::Send(()),
+                })
+            });
             assert!(result.is_err());
             NATIVE.with(|n| assert!(n.borrow().live.is_empty()));
         }
         NATIVE.with(|n| assert_eq!(n.borrow().revoked.len(), 30));
     }
     #[test]
-    fn normal_rejection_reclaims_delivery_even_when_response_is_well_formed() {
-        reset();
-        assert_eq!(
-            handoff::offer(&PieToken(9), TaskId(7), |_| Ok((false, 4))),
-            Ok(4)
-        );
-        NATIVE.with(|n| assert!(n.borrow().live.is_empty()));
+    fn each_known_failure_status_reclaims_delivery() {
+        for status in 1..=9 {
+            reset();
+            offer(&[status]);
+            NATIVE.with(|n| assert!(n.borrow().live.is_empty()));
+        }
     }
     #[test]
-    fn accepted_delivery_is_not_revoked() {
+    fn valid_entry_reply_keeps_delivery() {
         reset();
-        assert_eq!(
-            handoff::offer(&PieToken(9), TaskId(7), |token| Ok((true, token))),
-            Ok(PieToken(101))
-        );
+        offer(&[OK, 42, 0, 0, 0, 0, 0, 0, 0]);
         NATIVE.with(|n| {
             let n = n.borrow();
             assert_eq!(n.live.len(), 1);
@@ -152,13 +152,28 @@ mod tests {
         });
     }
     #[test]
+    fn wrong_shape_success_and_invalid_status_are_uncertain_and_keep_delivery() {
+        for bytes in [
+            &[OK][..],
+            &[OK, 1],
+            &[OK, 1, 2, 3],
+            &[255],
+            &[DENIED, 0],
+            &[BAD, 0],
+        ] {
+            reset();
+            offer(bytes);
+            NATIVE.with(|n| {
+                let n = n.borrow();
+                assert_eq!(n.live.len(), 1);
+                assert!(n.revoked.is_empty());
+            });
+        }
+    }
+    #[test]
     fn lost_reply_retains_delivery_because_server_admission_is_uncertain() {
         reset();
-        let result = handoff::offer(
-            &PieToken(9),
-            TaskId(7),
-            |_| -> Result<(bool, ()), CallFail> { Err(CallFail::Receive(())) },
-        );
+        let result = handoff::offer(&PieToken(9), TaskId(7), |_| Err(CallFail::Receive(())));
         assert!(result.is_err());
         NATIVE.with(|n| {
             let n = n.borrow();
@@ -170,11 +185,9 @@ mod tests {
     fn failed_grant_never_invokes_the_request() {
         reset();
         NATIVE.with(|n| n.borrow_mut().fail = true);
-        let result = handoff::offer(
-            &PieToken(9),
-            TaskId(7),
-            |_| -> Result<(bool, ()), CallFail> { panic!("request without delivery") },
-        );
+        let result = handoff::offer(&PieToken(9), TaskId(7), |_| {
+            panic!("request without delivery")
+        });
         assert!(result.is_err());
         NATIVE.with(|n| assert!(n.borrow().live.is_empty()));
     }

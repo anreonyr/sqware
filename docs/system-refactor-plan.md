@@ -169,6 +169,7 @@ cargo test --manifest-path programs/tests/system-shape/Cargo.toml --target x86_6
 cargo test --manifest-path programs/tests/identity-rpc/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-client/Cargo.toml --target x86_64-unknown-linux-gnu --offline
+cargo test --manifest-path programs/tests/operator-watch/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-handoff/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/operator-connection/Cargo.toml --target x86_64-unknown-linux-gnu --offline
 cargo test --manifest-path programs/tests/control-api/Cargo.toml --target x86_64-unknown-linux-gnu --offline
@@ -264,3 +265,29 @@ Land与Pane::bind共用Loan补偿：Busy／Closed／发送失败和明确拒绝�
 Session原始导入与raw访问器显式标为unsafe，要求协调端点交换且不能为同一pair建立并发独立State；from_raw仍不接管释放责任。Clone共享状态及寿命的安全使用保持不变。
 
 新增生产代码回归：operator-connection、capability-import、control-lifetime、operator-client，以及Session导入契约和结构守卫。真实accept额外保留半开LINK并验证健康会话不等待它的5秒期限，还验证错误Watch角色被明确拒绝、源能力保留且后续调用正常。普通操作／失败码、Mark值、Kernel ABI与schedule引擎未改。本轮最终宿主回归257项通过；programs全目标、image宿主构建及QEMU accept、product、system-fault通过。6个具体review问题已修复，原始Session导入的契约风险以unsafe边界收紧；结构守卫约束新的状态所有权、父模块接口和依赖方向。
+
+### 复审后的失败边界补齐
+
+握手兴趣按阶段给出方向：Offer等待调用者reply可写，Request等待本地transport可读，Handoff等待Operator TIP可写。总Waiting以(token,direction)登记/移除成员，背压解除会在截止期限前唤醒Control，不再仅靠期限或其他事件重试。回归实际执行生产Waiting与接入状态机，验证TIP/回复队列恢复及阶段换向。
+
+Hub的Ledger以claim_with封装核可用、交付及提交：实际转授成功后才记Held，错误类型、内核拒绝或死旧主替换失败不产生新活占用。旧claim入口移除；测试执行生产grant，不能用恒成功mock掩盖转授失败。
+
+Watch以Capability拥有事件根，构造任一步失败和正常Drop都封印/释放；服务器登记前摘除失活订阅，同任务同路径可立即重订。源Face/Session仍为借用。回归涵盖完整Watch构造/Drop及实际内核重订。
+
+Land对生产Said只接受完整一字节、已知失败Status为明确拒绝；错误成功形状、未知状态和失败码带尾巴按接纳不确定保留交付，避免错误撤销服务端已保留的资源。语义回执错误发生在完整帧已消费后，客户端不自动重试；下一次调用仍检查残留回复，现有无关联字段的协议限制继续成立。
+
+复审记录：首轮6个具体问题与原始导入契约修复后，第二轮发现背压唤醒、Hub转授补偿、Watch生命周期和Land回执分类4个遗漏；这些分支修复后，授权、会话及失败补偿三个独立只读审查均未发现新的可成立问题。审查结论来自生产源码、Kernel唤醒/回收链与实际执行生产逻辑的测试，不把全绿或字符串守卫作为失败路径的唯一证据。
+
+当前最终验证：267项宿主测试通过，programs全目标与image宿主构建通过；QEMU accept、product、system-fault通过。accept实际验证Watch Drop后同任务同路径立即重订，保留半开连接时正常会话继续接入；背压恢复测试实际执行Waiting和Connection，底层Pile为边界模拟，并核对Kernel出队→Push→Pile的唤醒实现。
+
+| 完成条件 | 当前证据 |
+| --- | --- |
+| 半开连接有界、不阻塞或自动重启；背压恢复可继续 | production Connection/Waiting状态机5项回归、阶段读写兴趣、真实半开探针 |
+| Watch/Hub不接受第三方能力；失败不篡改旧账 | 私有已核验Subscription、Hub事务认领、production import/grant 8项回归 |
+| Watch创建失败／Drop回收且可重订 | production Watch/Capability 3项回归、无事件重订模型、真实accept重订 |
+| 启动供给资源有明确拥有者，等待判决正确 | Service事务与Drop，control-lifetime 6项、真实启动/故障场景 |
+| Land仅明确拒绝撤销，未确定接纳不误撤 | production Said分类与Loan 6项回归，Pane复用同路径 |
+| 原始会话导入不冒充安全别名 | unsafe独占/协调契约，安全Clone共享状态，production Session回归 |
+| 层次对应功能拥有者和接入适配 | 私有字段、tree父接口、入口登记拥有者、16项架构/依赖守卫 |
+
+结论为上述范围内复审合格。原有无请求关联字段、丢回复接纳不确定、显式raw调用者协调责任等限制保留；不承诺未限定范围内不存在任何缺陷。
