@@ -262,7 +262,7 @@ pub(crate) fn spawn(
     }
     let caller_id = caller.map(|caller| caller.ident.id);
     let result = (|| -> Result<Arc<Task>, UnitFail> {
-        use crate::work::unit::gate::{self, AnyPie, Permission};
+        use crate::work::unit::gate::{self, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
         if !first {
             return prepared.publish(|| {}).map_err(map_err);
@@ -290,20 +290,21 @@ pub(crate) fn spawn(
         }
         let mut pies = caller.pies.lock();
         for item in staged.iter() {
-            let Some(AnyPie::Pole(p)) = pies.iter().find(|p| p.token() == item.token) else {
+            let Some(pie) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
             };
-            if !Arc::ptr_eq(p.meta(), &item.meta)
-                || !p.meta().alive()
-                || p.sire.is_some()
-                || p.heir.is_some()
-                || p.meta().owner() != caller.ident.id
-                || !p
+            let p = pie.snapshot().pole().ok_or(UnitFail::Denied)?;
+            if !Arc::ptr_eq(&p, &item.meta)
+                || !p.alive()
+                || pie.sire().is_some()
+                || pie.heir().is_some()
+                || p.owner() != caller.ident.id
+                || !pie
                     .permission()
                     .contains(Permission::FETCH | Permission::VEST | Permission::ONLY)
-                || p.meta().backing().reserved() != target.id.get()
-                || !p.meta().backing().unmapped()
-                || p.meta().mapped()
+                || p.backing().reserved() != target.id.get()
+                || !p.backing().unmapped()
+                || p.mapped()
             {
                 return Err(UnitFail::Denied);
             }

@@ -1,5 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieToken, TaskId};
@@ -11,8 +12,30 @@ use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
 
 pub(crate) trait Mail: Send + Sync + 'static {
-    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool where Self: Sized;
+    fn kind(&self) -> env::PieKind;
+    fn owner(&self) -> TaskId;
     fn alive(&self) -> bool;
+    fn seal(&self);
+    fn grant(
+        self: Arc<Self>,
+        mark: Mark,
+        permission: Permission,
+        sire: PieToken,
+    ) -> Result<AnyPie, env::PieFail>;
+
+    fn hole(self: Arc<Self>) -> Option<Arc<HoleMeta>> {
+        None
+    }
+    fn pole(self: Arc<Self>) -> Option<Arc<PoleMeta>> {
+        None
+    }
+    fn nole(self: Arc<Self>) -> Option<Arc<NoleMeta>> {
+        None
+    }
+    fn tole(self: Arc<Self>) -> Option<Arc<ToleMeta>> {
+        None
+    }
+
     fn permit(
         &self,
         _permission: Permission,
@@ -22,17 +45,54 @@ pub(crate) trait Mail: Send + Sync + 'static {
 }
 
 impl Mail for HoleMeta {
-    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
-        matches!(pie, AnyPie::Hole(p) if Arc::ptr_eq(p.meta(), meta))
+    fn kind(&self) -> env::PieKind {
+        env::PieKind::Hole
+    }
+    fn owner(&self) -> TaskId {
+        HoleMeta::owner(self)
     }
     fn alive(&self) -> bool {
         HoleMeta::alive(self)
     }
+    fn seal(&self) {
+        crate::work::mail::hole::seal(self);
+    }
+    fn hole(self: Arc<Self>) -> Option<Arc<HoleMeta>> {
+        Some(self)
+    }
+    fn grant(
+        self: Arc<Self>,
+        mark: Mark,
+        permission: Permission,
+        sire: PieToken,
+    ) -> Result<AnyPie, env::PieFail> {
+        boxed(try_new_pie::<Hole>(self, mark, permission, Some(sire))?)
+    }
 }
 
 impl Mail for PoleMeta {
-    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
-        matches!(pie, AnyPie::Pole(p) if Arc::ptr_eq(p.meta(), meta))
+    fn kind(&self) -> env::PieKind {
+        env::PieKind::Pole
+    }
+    fn owner(&self) -> TaskId {
+        PoleMeta::owner(self)
+    }
+    fn alive(&self) -> bool {
+        PoleMeta::alive(self)
+    }
+    fn seal(&self) {
+        crate::work::mail::pole::seal(self);
+    }
+    fn pole(self: Arc<Self>) -> Option<Arc<PoleMeta>> {
+        Some(self)
+    }
+    fn grant(
+        self: Arc<Self>,
+        mark: Mark,
+        permission: Permission,
+        sire: PieToken,
+    ) -> Result<AnyPie, env::PieFail> {
+        boxed(try_new_pie::<Pole>(self, mark, permission, Some(sire))?)
     }
     fn permit(
         &self,
@@ -43,26 +103,57 @@ impl Mail for PoleMeta {
             .map(Some)
             .map_err(|_| env::PieFail::OoM)
     }
-    fn alive(&self) -> bool {
-        PoleMeta::alive(self)
-    }
 }
 
 impl Mail for NoleMeta {
-    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
-        matches!(pie, AnyPie::Nole(p) if Arc::ptr_eq(p.meta(), meta))
+    fn kind(&self) -> env::PieKind {
+        env::PieKind::Nole
+    }
+    fn owner(&self) -> TaskId {
+        NoleMeta::owner(self)
     }
     fn alive(&self) -> bool {
         NoleMeta::alive(self)
     }
+    fn seal(&self) {
+        crate::work::mail::nole::seal(self);
+    }
+    fn nole(self: Arc<Self>) -> Option<Arc<NoleMeta>> {
+        Some(self)
+    }
+    fn grant(
+        self: Arc<Self>,
+        mark: Mark,
+        permission: Permission,
+        sire: PieToken,
+    ) -> Result<AnyPie, env::PieFail> {
+        boxed(try_new_pie::<Nole>(self, mark, permission, Some(sire))?)
+    }
 }
 
 impl Mail for ToleMeta {
-    fn same(pie: &AnyPie, meta: &Arc<Self>) -> bool {
-        matches!(pie, AnyPie::Tole(p) if Arc::ptr_eq(p.meta(), meta))
+    fn kind(&self) -> env::PieKind {
+        env::PieKind::Tole
+    }
+    fn owner(&self) -> TaskId {
+        ToleMeta::owner(self)
     }
     fn alive(&self) -> bool {
         ToleMeta::alive(self)
+    }
+    fn seal(&self) {
+        crate::work::mail::tole::seal(self);
+    }
+    fn tole(self: Arc<Self>) -> Option<Arc<ToleMeta>> {
+        Some(self)
+    }
+    fn grant(
+        self: Arc<Self>,
+        mark: Mark,
+        permission: Permission,
+        sire: PieToken,
+    ) -> Result<AnyPie, env::PieFail> {
+        boxed(try_new_pie::<Tole>(self, mark, permission, Some(sire))?)
     }
 }
 
@@ -153,171 +244,213 @@ impl<T: PieType> Pie<T> {
             .as_ref()
             .map_or(self.permission, |permit| permit.permission())
     }
-    pub(crate) fn meta(&self) -> &Arc<T::Mail> {
-        &self.meta
-    }
-
-    pub fn allows(&self, need: Need) -> bool {
-        match need {
-            Need::Fetch => self.permission().contains(Permission::FETCH),
-            Need::Store => self.permission().contains(Permission::STORE),
-            Need::Grant => self.permission().contains(Permission::VEST),
-        }
-    }
-
-    pub fn covers(&self, subset: Permission) -> bool {
-        self.permission().contains(subset) && !subset.is_empty()
-    }
 }
 
 pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
     src.contains(Permission::ONLY) == subset.contains(Permission::ONLY)
 }
 
-#[derive(Clone)]
-pub enum AnyPie {
-    Hole(Pie<Hole>),
-    Pole(Pie<Pole>),
-    Nole(Pie<Nole>),
-    Tole(Pie<Tole>),
+/// One independently mutable reference in a task's table. Resource entities
+/// remain shared; snapshots never allocate another boxed reference.
+pub(crate) type AnyPie = Box<dyn PieOps>;
+
+pub(crate) trait PieOps: Send {
+    fn token(&self) -> PieToken;
+    fn permission(&self) -> Permission;
+    fn sire(&self) -> Option<PieToken>;
+    fn lord(&self) -> &Weak<Task>;
+    fn heir(&self) -> Option<&Heir>;
+    fn mark(&self) -> Mark;
+    fn meta(&self) -> &dyn Mail;
+    fn permit(&self) -> Option<&Arc<super::super::space::Permit>>;
+    fn snapshot(&self) -> PieSnapshot;
+    fn parent(&mut self, token: PieToken, task: Weak<Task>);
+    fn set_heir(&mut self, heir: Option<Heir>);
+    fn set_permission(&mut self, subset: Permission);
+
+    fn kind(&self) -> env::PieKind {
+        self.meta().kind()
+    }
+    fn alive(&self) -> bool {
+        self.meta().alive()
+    }
+    fn owner_task(&self) -> TaskId {
+        self.meta().owner()
+    }
+    fn owner(&self) -> Option<TaskId> {
+        self.alive().then(|| self.owner_task())
+    }
+    fn allows(&self, need: Need) -> bool {
+        allows_permission(self.permission(), need)
+    }
+    fn invalidate(&self) {
+        if let Some(permit) = self.permit() {
+            permit.invalidate();
+        }
+    }
+    fn narrow(&mut self, subset: Permission) -> Result<(), env::PieFail> {
+        if !self.alive() {
+            return Err(env::PieFail::Dead);
+        }
+        let permission = self.permission();
+        if subset.is_empty()
+            || !permission.contains(subset)
+            || permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY)
+        {
+            return Err(env::PieFail::Denied);
+        }
+        self.set_permission(subset);
+        Ok(())
+    }
 }
 
-impl AnyPie {
+impl<T> PieOps for Pie<T>
+where
+    T: PieType<Mark = Mark>,
+    Pie<T>: Send + 'static,
+{
+    fn token(&self) -> PieToken {
+        self.token
+    }
+    fn permission(&self) -> Permission {
+        Pie::permission(self)
+    }
+    fn sire(&self) -> Option<PieToken> {
+        self.sire
+    }
+    fn lord(&self) -> &Weak<Task> {
+        &self.lord
+    }
+    fn heir(&self) -> Option<&Heir> {
+        self.heir.as_ref()
+    }
+    fn mark(&self) -> Mark {
+        self.mark
+    }
+    fn meta(&self) -> &dyn Mail {
+        self.meta.as_ref()
+    }
+    fn permit(&self) -> Option<&Arc<super::super::space::Permit>> {
+        self.permit.as_ref()
+    }
+    fn snapshot(&self) -> PieSnapshot {
+        PieSnapshot {
+            token: self.token,
+            permission: self.permission,
+            mark: self.mark,
+            sire: self.sire,
+            lord: self.lord.clone(),
+            heir: self.heir,
+            meta: self.meta.clone(),
+            permit: self.permit.clone(),
+        }
+    }
+    fn parent(&mut self, token: PieToken, task: Weak<Task>) {
+        self.sire = Some(token);
+        self.lord = task;
+    }
+    fn set_heir(&mut self, heir: Option<Heir>) {
+        self.heir = heir;
+    }
+    fn set_permission(&mut self, subset: Permission) {
+        self.permission = subset;
+        if let Some(permit) = &self.permit {
+            permit.narrow(subset);
+        }
+    }
+}
+
+pub(crate) fn boxed<T>(pie: Pie<T>) -> Result<AnyPie, env::PieFail>
+where
+    T: PieType<Mark = Mark>,
+    Pie<T>: Send + 'static,
+{
+    Ok(Box::try_new(pie).map_err(|_| env::PieFail::OoM)?)
+}
+
+/// Copies reference facts and shares the original resource/permit allocations.
+/// Retaining this snapshot keeps memory valid, not authority: operations still
+/// validate resource state, permits and the existing task relations.
+#[derive(Clone)]
+pub(crate) struct PieSnapshot {
+    pub(crate) token: PieToken,
+    permission: Permission,
+    mark: Mark,
+    pub(crate) sire: Option<PieToken>,
+    lord: Weak<Task>,
+    heir: Option<Heir>,
+    meta: Arc<dyn Mail>,
+    permit: Option<Arc<super::super::space::Permit>>,
+}
+
+impl PieSnapshot {
+    pub(crate) fn token(&self) -> PieToken {
+        self.token
+    }
+    pub(crate) fn permission(&self) -> Permission {
+        self.permit
+            .as_ref()
+            .map_or(self.permission, |p| p.permission())
+    }
     pub(crate) fn kind(&self) -> env::PieKind {
-        match self {
-            Self::Hole(_) => env::PieKind::Hole,
-            Self::Pole(_) => env::PieKind::Pole,
-            Self::Nole(_) => env::PieKind::Nole,
-            Self::Tole(_) => env::PieKind::Tole,
-        }
+        self.meta.kind()
     }
-
-    pub(crate) fn invalidate(&self) {
-        if let Self::Pole(p) = self {
-            if let Some(permit) = &p.permit {
-                permit.invalidate();
-            }
-        }
+    pub(crate) fn sire(&self) -> Option<PieToken> {
+        self.sire
     }
-    pub fn permission(&self) -> Permission {
-        match self {
-            AnyPie::Hole(p) => p.permission,
-            AnyPie::Pole(p) => p.permission(),
-            AnyPie::Nole(p) => p.permission,
-            AnyPie::Tole(p) => p.permission,
-        }
-    }
-
-    pub fn sire(&self) -> Option<PieToken> {
-        match self {
-            AnyPie::Hole(p) => p.sire,
-            AnyPie::Pole(p) => p.sire,
-            AnyPie::Nole(p) => p.sire,
-            AnyPie::Tole(p) => p.sire,
-        }
-    }
-
-    pub fn heir(&self) -> Option<&Heir> {
-        match self {
-            AnyPie::Hole(p) => p.heir.as_ref(),
-            AnyPie::Pole(p) => p.heir.as_ref(),
-            AnyPie::Nole(p) => p.heir.as_ref(),
-            AnyPie::Tole(p) => p.heir.as_ref(),
-        }
-    }
-
     pub(crate) fn lord(&self) -> &Weak<Task> {
-        match self {
-            Self::Hole(p) => &p.lord,
-            Self::Pole(p) => &p.lord,
-            Self::Nole(p) => &p.lord,
-            Self::Tole(p) => &p.lord,
-        }
+        &self.lord
     }
+    pub(crate) fn heir(&self) -> Option<&Heir> {
+        self.heir.as_ref()
+    }
+    pub(crate) fn mark(&self) -> Mark {
+        self.mark
+    }
+    pub(crate) fn owner_task(&self) -> TaskId {
+        self.meta.owner()
+    }
+    pub(crate) fn owner(&self) -> Option<TaskId> {
+        self.alive().then(|| self.owner_task())
+    }
+    pub(crate) fn alive(&self) -> bool {
+        self.meta.alive()
+    }
+    pub(crate) fn allows(&self, need: Need) -> bool {
+        allows_permission(self.permission(), need)
+    }
+    pub(crate) fn covers(&self, subset: Permission) -> bool {
+        self.permission().contains(subset) && !subset.is_empty()
+    }
+    pub(crate) fn hole(&self) -> Option<Arc<HoleMeta>> {
+        self.meta.clone().hole()
+    }
+    pub(crate) fn pole(&self) -> Option<Arc<PoleMeta>> {
+        self.meta.clone().pole()
+    }
+    pub(crate) fn nole(&self) -> Option<Arc<NoleMeta>> {
+        self.meta.clone().nole()
+    }
+    pub(crate) fn tole(&self) -> Option<Arc<ToleMeta>> {
+        self.meta.clone().tole()
+    }
+    pub(crate) fn seal(&self) {
+        self.meta.seal();
+    }
+    pub(crate) fn same(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.meta, &other.meta)
+    }
+    pub(crate) fn grant(&self, mark: Mark, permission: Permission) -> Result<AnyPie, env::PieFail> {
+        self.meta.clone().grant(mark, permission, self.token)
+    }
+}
 
-    pub(crate) fn parent(&mut self, token: PieToken, task: Weak<Task>) {
-        match self {
-            Self::Hole(p) => {
-                p.sire = Some(token);
-                p.lord = task;
-            }
-            Self::Pole(p) => {
-                p.sire = Some(token);
-                p.lord = task;
-            }
-            Self::Nole(p) => {
-                p.sire = Some(token);
-                p.lord = task;
-            }
-            Self::Tole(p) => {
-                p.sire = Some(token);
-                p.lord = task;
-            }
-        }
-    }
-
-    pub fn owner(&self) -> Option<TaskId> {
-        match self {
-            AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
-            AnyPie::Pole(p) => p.meta.alive().then(|| p.meta.owner()),
-            AnyPie::Nole(p) => p.meta.alive().then(|| p.meta.owner()),
-            AnyPie::Tole(p) => p.meta.alive().then(|| p.meta.owner()),
-        }
-    }
-
-    pub fn owner_task(&self) -> TaskId {
-        match self {
-            AnyPie::Hole(p) => p.meta.owner(),
-            AnyPie::Pole(p) => p.meta.owner(),
-            AnyPie::Nole(p) => p.meta.owner(),
-            AnyPie::Tole(p) => p.meta.owner(),
-        }
-    }
-
-    pub fn token(&self) -> PieToken {
-        match self {
-            AnyPie::Hole(p) => p.token,
-            AnyPie::Pole(p) => p.token,
-            AnyPie::Nole(p) => p.token,
-            AnyPie::Tole(p) => p.token,
-        }
-    }
-
-    pub fn mark(&self) -> Mark {
-        match self {
-            AnyPie::Hole(p) => p.mark,
-            AnyPie::Pole(p) => p.mark,
-            AnyPie::Nole(p) => p.mark,
-            AnyPie::Tole(p) => p.mark,
-        }
-    }
-
-    pub fn alive(&self) -> bool {
-        match self {
-            AnyPie::Hole(p) => p.meta.alive(),
-            AnyPie::Pole(p) => p.meta.alive(),
-            AnyPie::Nole(p) => p.meta.alive(),
-            AnyPie::Tole(p) => p.meta.alive(),
-        }
-    }
-
-    pub fn allows(&self, need: Need) -> bool {
-        match self {
-            AnyPie::Hole(p) => p.allows(need),
-            AnyPie::Pole(p) => p.allows(need),
-            AnyPie::Nole(p) => p.allows(need),
-            AnyPie::Tole(p) => p.allows(need),
-        }
-    }
-
-    pub fn covers(&self, subset: Permission) -> bool {
-        match self {
-            AnyPie::Hole(p) => p.covers(subset),
-            AnyPie::Pole(p) => p.covers(subset),
-            AnyPie::Nole(p) => p.covers(subset),
-            AnyPie::Tole(p) => p.covers(subset),
-        }
-    }
+fn allows_permission(permission: Permission, need: Need) -> bool {
+    permission.contains(match need {
+        Need::Fetch => Permission::FETCH,
+        Need::Store => Permission::STORE,
+        Need::Grant => Permission::VEST,
+    })
 }
 
 pub(crate) fn new_pie<T: PieType>(
@@ -347,16 +480,18 @@ pub(crate) fn try_new_pie<T: PieType>(
     })
 }
 
-pub(crate) fn locate(task: &Task, token: PieToken) -> Option<AnyPie> {
+pub(crate) fn locate(task: &Task, token: PieToken) -> Option<PieSnapshot> {
     let pies = task.pies.lock();
-    pies.iter().find(|p| p.token() == token).cloned()
+    pies.iter()
+        .find(|p| p.token() == token)
+        .map(|p| p.snapshot())
 }
 
 pub(crate) fn accede<E: GateFail>(
     task: &Arc<Task>,
     token: PieToken,
     need: Need,
-) -> Result<AnyPie, E> {
+) -> Result<PieSnapshot, E> {
     let pie = locate(task, token).ok_or_else(E::denied)?;
     if !pie.alive() {
         return Err(E::dead());
@@ -370,6 +505,9 @@ pub(crate) fn accede<E: GateFail>(
 pub(crate) fn allows<M: Mail>(task: &Task, resource: &Arc<M>, need: Need) -> bool {
     let _gate = task.gate.lock();
     task.pies.lock().iter().any(|pie| {
-        M::same(pie, resource) && pie.alive() && pie.heir().is_none() && pie.allows(need)
+        core::ptr::addr_eq(pie.meta() as *const dyn Mail, Arc::as_ptr(resource))
+            && pie.alive()
+            && pie.heir().is_none()
+            && pie.allows(need)
     })
 }

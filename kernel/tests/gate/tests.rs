@@ -41,12 +41,12 @@ unsafe impl GlobalAlloc for Allocator {
 static ALLOCATOR: Allocator = Allocator;
 
 fn root(task: &Arc<Task>, permission: Permission) -> PieToken {
-    let pie = AnyPie::Nole(gate::new_pie(
+    let pie = gate::boxed(gate::new_pie::<gate::Nole>(
         crate::work::mail::nole::NoleMeta::new(task.ident.id),
         Mark::of("gate-test"),
         permission,
         None,
-    ));
+    )).expect("pie allocation");
     let token = pie.token();
     gate::insert(task, pie).unwrap();
     token
@@ -349,10 +349,7 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
         let ab = grant(&a, token, &b).unwrap();
         grant(&b, ab, &c).unwrap();
         let own = root(&b, rights());
-        let meta = match gate::locate(&b, own).unwrap() {
-            AnyPie::Nole(p) => p.meta().clone(),
-            _ => unreachable!(),
-        };
+        let meta = gate::locate(&b, own).unwrap().nole().unwrap();
         let barrier = Arc::new(Barrier::new(2));
         thread::scope(|scope| {
             let barrier2 = barrier.clone();
@@ -431,7 +428,7 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let b = Task::new();
     let c = Task::new();
     let meta = crate::work::mail::pole::PoleMeta::new(a.ident.id);
-    let pie = AnyPie::Pole(gate::try_new_pie(meta.clone(), Mark::NONE, rights(), None).unwrap());
+    let pie = gate::boxed(gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, rights(), None).unwrap()).expect("pie allocation");
     let token = pie.token();
     gate::insert(&a, pie).unwrap();
     let ab = grant(&a, token, &b).unwrap();
@@ -518,4 +515,118 @@ fn discard_appends_to_mail_abi_without_changing_existing_calls() {
         assert_eq!(call.slot(), (5usize << 32) | index);
         assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
     }
+}
+
+#[test]
+fn locating_and_accessing_snapshots_do_not_allocate() {
+    let task = Task::new();
+    let token = root(&task, rights());
+    FAIL.with(|count| count.set(Some(0)));
+    let first = gate::locate(&task, token).unwrap();
+    let second = gate::locate(&task, token).unwrap();
+    let meta = first.nole().unwrap();
+    let same = first.same(&second);
+    let unspent = FAIL.with(|count| count.replace(None));
+    assert_eq!(unspent, Some(0));
+    assert!(same);
+    assert!(meta.alive());
+    assert!(first.hole().is_none());
+    assert!(first.pole().is_none());
+    assert!(first.tole().is_none());
+}
+
+#[test]
+fn erased_resources_keep_their_type_identity_across_grants() {
+    use crate::work::mail::{HoleMeta, NoleMeta, PoleMeta, ToleMeta};
+    let a = Task::new();
+    let b = Task::new();
+    let entries = [
+        gate::boxed(gate::new_pie::<gate::Hole>(HoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        gate::boxed(gate::new_pie::<gate::Pole>(PoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        gate::boxed(gate::new_pie::<gate::Nole>(NoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        gate::boxed(gate::new_pie::<gate::Tole>(ToleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+    ];
+    let mut previous = None;
+    for entry in entries {
+        let kind = entry.kind();
+        let token = entry.token();
+        gate::insert(&a, entry).unwrap();
+        let child = grant(&a, token, &b).unwrap();
+        let source = gate::locate(&a, token).unwrap();
+        let granted = gate::locate(&b, child).unwrap();
+        assert_eq!(source.kind(), kind);
+        assert_eq!(granted.kind(), kind);
+        assert!(source.same(&granted));
+        assert_eq!(source.owner(), Some(a.ident.id));
+        assert_eq!(usize::from(source.hole().is_some()) + usize::from(source.pole().is_some())
+            + usize::from(source.nole().is_some()) + usize::from(source.tole().is_some()), 1);
+        if let Some(previous) = &previous { assert!(!source.same(previous)); }
+        previous = Some(source);
+    }
+}
+
+#[test]
+fn granted_references_keep_independent_permissions_and_relations() {
+    let a = Task::new();
+    let b = Task::new();
+    let c = Task::new();
+    let token = root(&a, rights());
+    let badge = Mark::of("recipient");
+    let child = PieToken::mint(gate::accord(&a, token, &Arc::downgrade(&b), rights(), badge).unwrap());
+    let descendant = grant(&b, child, &c).unwrap();
+    gate::reduce(&b, child, Permission::FETCH).unwrap();
+    assert_eq!(gate::locate(&a, token).unwrap().permission(), rights());
+    assert_eq!(gate::locate(&b, child).unwrap().permission(), Permission::FETCH);
+    assert_eq!(gate::locate(&c, descendant).unwrap().permission(), rights());
+    assert_eq!(gate::locate(&b, child).unwrap().mark(), badge);
+    assert_eq!(gate::locate(&a, token).unwrap().mark(), Mark::of("gate-test"));
+    assert_eq!(gate::vestor(&b, child), Some(a.ident.id));
+    gate::forget(&b, child).unwrap();
+    assert_eq!(gate::vestor(&c, descendant), Some(a.ident.id));
+    assert!(gate::locate(&a, token).unwrap().sire().is_none());
+    assert_eq!(gate::locate(&c, descendant).unwrap().sire(), Some(token));
+    check(&a);
+    check(&b);
+    check(&c);
+}
+
+#[test]
+fn memory_snapshots_observe_permission_reduction_and_revocation() {
+    let a = Task::new();
+    let b = Task::new();
+    let meta = crate::work::mail::PoleMeta::new(a.ident.id);
+    let entry = gate::boxed(gate::new_pie::<gate::Pole>(meta.clone(), Mark::NONE, rights(), None)).unwrap();
+    let token = entry.token();
+    gate::insert(&a, entry).unwrap();
+    let child = grant(&a, token, &b).unwrap();
+    let retained = gate::locate(&b, child).unwrap();
+    gate::reduce(&b, child, Permission::FETCH).unwrap();
+    assert_eq!(retained.permission(), Permission::FETCH);
+    assert_eq!(gate::locate(&a, token).unwrap().permission(), rights());
+    gate::revoke(&a, &Arc::downgrade(&b), child).unwrap();
+    assert!(gate::locate(&b, child).is_none());
+    assert!(retained.permission().is_empty());
+    assert!(retained.alive());
+    assert!(Arc::ptr_eq(&retained.pole().unwrap(), &meta));
+}
+
+#[test]
+fn box_allocation_failure_does_not_publish_an_exclusive_grant() {
+    let a = Task::new();
+    let b = Task::new();
+    let permission = rights() | Permission::ONLY;
+    let token = root(&a, permission);
+    let before_a = a.version.load(Ordering::Relaxed);
+    let before_b = b.version.load(Ordering::Relaxed);
+    FAIL.with(|count| count.set(Some(0)));
+    let result = gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
+    FAIL.with(|count| count.set(None));
+    assert_eq!(result, Err(PieFail::OoM));
+    assert!(gate::locate(&a, token).unwrap().heir().is_none());
+    assert!(a.heirs.lock().is_empty());
+    assert!(b.pies.lock().is_empty());
+    assert_eq!(a.version.load(Ordering::Relaxed), before_a);
+    assert_eq!(b.version.load(Ordering::Relaxed), before_b);
+    check(&a);
+    check(&b);
 }

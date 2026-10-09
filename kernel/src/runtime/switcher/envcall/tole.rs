@@ -10,7 +10,7 @@ use crate::work::mail::tole::{MATE_SKIP, Mate, Sub};
 use crate::work::mail::{ToleMeta, tole};
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, AnyPie, Need, Permission, Pie};
+use crate::work::unit::gate::{self, Need, Permission, Pie, PieSnapshot};
 use crate::work::unit::life::Life;
 use crate::work::unit::task::TaskIdent;
 
@@ -51,10 +51,12 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
         }
         let pie: Pie<gate::Tole> = gate::new_pie(meta, Mark::NONE, latch, None);
         let token = pie.token;
-        gate::insert(&task, AnyPie::Tole(pie)).map_err(|error| match error {
-            env::PieFail::OoM => ToleFail::OoM,
-            _ => ToleFail::Dead,
-        })?;
+        gate::boxed(pie)
+            .and_then(|pie| gate::insert(&task, pie))
+            .map_err(|error| match error {
+                env::PieFail::OoM => ToleFail::OoM,
+                _ => ToleFail::Dead,
+            })?;
         Ok(token.get())
     })();
     answer(frame, r);
@@ -220,7 +222,7 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
             Mate::Hole(id, dir) => {
                 let Some(pie) = pies
                     .iter()
-                    .find(|p| matches!(p, AnyPie::Hole(h) if h.meta().id() == id))
+                    .find(|p| p.snapshot().hole().is_some_and(|meta| meta.id() == id))
                 else {
                     // **成员还在组里、可本域表里已经没有那一枚了** ⇒ 这一格**永远报不出就绪**。
                     // 这一格**不被吞掉**（不 `continue`）——"组里有人、读的人却一直睡"这件事
@@ -228,8 +230,10 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                     skipped += 1;
                     continue;
                 };
-                let AnyPie::Hole(h) = pie else { continue };
-                if h.meta().ready(dir) {
+                let Some(h) = pie.snapshot().hole() else {
+                    continue;
+                };
+                if h.ready(dir) {
                     meta.seek_cursor((at + 1) % count);
                     return (Some((pie.token(), dir)), skipped);
                 }
@@ -237,13 +241,15 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
             Mate::Nole(id) => {
                 let Some(pie) = pies
                     .iter()
-                    .find(|p| matches!(p, AnyPie::Nole(n) if n.meta().id() == id))
+                    .find(|p| p.snapshot().nole().is_some_and(|meta| meta.id() == id))
                 else {
                     skipped += 1;
                     continue;
                 };
-                let AnyPie::Nole(n) = pie else { continue };
-                if n.meta().ready() {
+                let Some(n) = pie.snapshot().nole() else {
+                    continue;
+                };
+                if n.ready() {
                     meta.seek_cursor((at + 1) % count);
                     return (Some((pie.token(), HoleDir::Pull)), skipped);
                 }
@@ -252,13 +258,15 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
             Mate::Pole(id) => {
                 let Some(pie) = pies
                     .iter()
-                    .find(|p| matches!(p, AnyPie::Pole(p) if p.meta().id() == id))
+                    .find(|p| p.snapshot().pole().is_some_and(|meta| meta.id() == id))
                 else {
                     skipped += 1;
                     continue;
                 };
-                let AnyPie::Pole(p) = pie else { continue };
-                if p.meta().ready() {
+                let Some(p) = pie.snapshot().pole() else {
+                    continue;
+                };
+                if p.ready() {
                     meta.seek_cursor((at + 1) % count);
                     return (Some((pie.token(), HoleDir::Pull)), skipped);
                 }
@@ -268,21 +276,23 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
     (None, skipped)
 }
 
-fn rack(pie: &AnyPie) -> Result<Arc<ToleMeta>, ToleFail> {
-    match pie {
-        AnyPie::Tole(t) => Ok(t.meta().clone()),
-        _ => Err(ToleFail::Denied),
-    }
+fn rack(pie: &PieSnapshot) -> Result<Arc<ToleMeta>, ToleFail> {
+    pie.tole().ok_or(ToleFail::Denied)
 }
 
-fn mate(pie: &AnyPie, dir: HoleDir) -> Result<(Mate, Weak<Life>), ToleFail> {
-    match pie {
-        AnyPie::Hole(h) => Ok((Mate::Hole(h.meta().id(), dir), h.meta().life())),
-        AnyPie::Nole(n) if dir == HoleDir::Pull => Ok((Mate::Nole(n.meta().id()), n.meta().life())),
-        // 页只有"有事"一条方向（与门铃同一条纪律）。
-        AnyPie::Pole(p) if dir == HoleDir::Pull => Ok((Mate::Pole(p.meta().id()), p.meta().life())),
-        _ => Err(ToleFail::Denied),
+fn mate(pie: &PieSnapshot, dir: HoleDir) -> Result<(Mate, Weak<Life>), ToleFail> {
+    if let Some(h) = pie.hole() {
+        return Ok((Mate::Hole(h.id(), dir), h.life()));
     }
+    if dir == HoleDir::Pull {
+        if let Some(n) = pie.nole() {
+            return Ok((Mate::Nole(n.id()), n.life()));
+        }
+        if let Some(p) = pie.pole() {
+            return Ok((Mate::Pole(p.id()), p.life()));
+        }
+    }
+    Err(ToleFail::Denied)
 }
 
 fn answer(frame: &mut TrapContext, r: Result<usize, ToleFail>) {

@@ -45,7 +45,7 @@ pub fn construction() {
     use crate::work::room::scheduler;
     use crate::work::unit::space::{Backing, SegmentKind, Span};
     use crate::work::unit::{
-        gate::{self, AnyPie},
+        gate::{self},
         team::{self, Staging},
     };
     use alloc::{sync::Arc, vec::Vec};
@@ -88,14 +88,14 @@ pub fn construction() {
         .enumerate()
     {
         let meta = pole::meta(PAGE_SIZE, caller.ident.id).unwrap();
-        let root: gate::Pie<gate::Pole> = gate::new_pie(
+        let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
             meta.clone(),
             Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
             None,
         );
         let token = root.token;
-        caller.pies.lock().push(AnyPie::Pole(root));
+        caller.pies.lock().push(gate::boxed(root).expect("pie allocation"));
         let open = parent
             .space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
@@ -220,7 +220,7 @@ pub fn cancellation() {
     use crate::work::mail::pole;
     use crate::work::unit::space::{SegmentKind, Span};
     use crate::work::unit::{
-        gate::{self, AnyPie},
+        gate::{self},
         team::Staging,
     };
     use alloc::sync::Arc;
@@ -236,14 +236,14 @@ pub fn cancellation() {
     .unwrap();
     caller.adopt(child.clone()).unwrap();
     let meta = pole::meta(3 * PAGE_SIZE, caller.ident.id).unwrap();
-    let root: gate::Pie<gate::Pole> = gate::new_pie(
+    let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
         meta.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
         None,
     );
     let token = root.token;
-    caller.pies.lock().push(AnyPie::Pole(root));
+    caller.pies.lock().push(gate::boxed(root).expect("pie allocation"));
     let at = VirtAddr::wrap(0x20000);
     child.space.with_flush(|inner| {
         inner

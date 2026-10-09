@@ -2,7 +2,7 @@ use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieFail, PieToken};
 
-use super::pie::{AnyPie, Heir, Need, Permission, new_pie};
+use super::pie::{Heir, Need, Permission};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
@@ -19,9 +19,10 @@ pub(crate) fn accord(
             return Err(PieFail::Dead);
         }
         let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
-        let _operation = if let AnyPie::Pole(p) = &pie {
-            let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
-            if p.meta().backing().reserved() != 0 {
+        let pole = pie.pole();
+        let _operation = if let Some(p) = &pole {
+            let operation = p.backing().operation().ok_or(PieFail::Busy)?;
+            if p.backing().reserved() != 0 {
                 return Err(PieFail::HandedOver);
             }
             Some(operation)
@@ -40,23 +41,11 @@ pub(crate) fn accord(
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
-        if let AnyPie::Tole(p) = &pie
-            && p.meta().has_subs()
-        {
+        if pie.tole().is_some_and(|p| p.has_subs()) {
             return Err(PieFail::Denied);
         }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
-        let mut granted = match &pie {
-            AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
-            AnyPie::Pole(p) => AnyPie::Pole(super::try_new_pie(
-                p.meta().clone(),
-                badge,
-                subset,
-                Some(src),
-            )?),
-            AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), badge, subset, Some(src))),
-            AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), badge, subset, Some(src))),
-        };
+        let mut granted = pie.grant(badge, subset)?;
         granted.parent(src, Arc::downgrade(caller));
         // Reserve both records before changing either side, including ONLY's heir.
         caller
@@ -81,12 +70,7 @@ pub(crate) fn accord(
                 task: target.ident.id,
                 token,
             };
-            match source {
-                AnyPie::Hole(p) => p.heir = Some(heir),
-                AnyPie::Pole(p) => p.heir = Some(heir),
-                AnyPie::Nole(p) => p.heir = Some(heir),
-                AnyPie::Tole(p) => p.heir = Some(heir),
-            }
+            source.set_heir(Some(heir));
         }
         // Block the exclusive source before publishing the recipient's token.
         target.pies.lock().push(granted);
@@ -138,12 +122,7 @@ pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) ->
     if pie.heir() != Some(&expected) {
         return false;
     }
-    match pie {
-        AnyPie::Hole(p) => p.heir = None,
-        AnyPie::Pole(p) => p.heir = None,
-        AnyPie::Nole(p) => p.heir = None,
-        AnyPie::Tole(p) => p.heir = None,
-    }
+    pie.set_heir(None);
     super::changed(task);
     true
 }

@@ -5,7 +5,7 @@ use core::sync::atomic::Ordering;
 use env::{PieFail, PieToken, TaskId};
 
 use super::pie::{AnyPie, Heir};
-use crate::work::mail::{hole, nole, pole, tole};
+use crate::work::mail::pole;
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
@@ -18,8 +18,8 @@ impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         let count = self.removed.len();
         for pie in self.removed {
-            if let AnyPie::Pole(p) = &pie {
-                pole::shut(p.meta(), p.token).expect("cull: unmap token");
+            if let Some(p) = pie.snapshot().pole() {
+                pole::shut(&p, pie.token()).expect("cull: unmap token");
             }
             drop(pie);
         }
@@ -184,9 +184,10 @@ pub(super) fn cull(
             }
             // Exit must withdraw authority even if mapping/construction is busy.
             // Normal release/revoke retain their existing Busy checks.
-            let _operation = if !closing && let AnyPie::Pole(p) = &root {
-                let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
-                if p.meta().backing().reserved() != 0 {
+            let pole = root.pole();
+            let _operation = if !closing && let Some(p) = &pole {
+                let operation = p.backing().operation().ok_or(PieFail::Busy)?;
+                if p.backing().reserved() != 0 {
                     return Err(PieFail::Busy);
                 }
                 Some(operation)
@@ -229,7 +230,7 @@ pub(crate) fn doom(task: &Arc<Task>) {
         let mut tokens = Vec::new();
         let pies = task.pies.lock();
         if tokens.try_reserve(pies.len()).is_ok() {
-            tokens.extend(pies.iter().map(AnyPie::token));
+            tokens.extend(pies.iter().map(|p| p.token()));
         }
         tokens
     };
@@ -264,17 +265,12 @@ fn seal_owned(task: &Task) {
                 .filter(|pie| pie.owner_task() == task.ident.id)
                 .filter(|pie| pie.token().get() > after)
                 .min_by_key(|pie| pie.token().get())
-                .cloned()
+                .map(|p| p.snapshot())
         };
         let Some(pie) = pie else {
             break;
         };
         after = pie.token().get();
-        match pie {
-            AnyPie::Hole(p) => hole::seal(p.meta()),
-            AnyPie::Pole(p) => pole::seal(p.meta()),
-            AnyPie::Nole(p) => nole::seal(p.meta()),
-            AnyPie::Tole(p) => tole::seal(p.meta()),
-        }
+        pie.seal();
     }
 }

@@ -11,7 +11,7 @@ use crate::runtime::switcher::{
     envcall,
 };
 use crate::work::mail::{hole, pole};
-use crate::work::unit::gate::{self, AnyPie, Need, Permission};
+use crate::work::unit::gate::{self, Need, Permission};
 use crate::work::unit::space::{SpaceBuilder, window::HeapWindow};
 use crate::work::unit::task::{Task, TaskTag};
 use crate::work::unit::team::{Team, TeamBuilder};
@@ -96,9 +96,9 @@ pub fn abi_and_privilege() {
     assert_eq!(user.task.heir_count(), heirs);
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
-    user.task.pies.lock().push(AnyPie::Nole(gate::new_pie(
+    user.task.pies.lock().push(gate::boxed(gate::new_pie::<gate::Nole>(
         ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )));
+    )).expect("pie allocation"));
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
@@ -407,9 +407,9 @@ pub fn capability() {
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
-    let pie = gate::new_pie(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie = gate::new_pie::<gate::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
-    user.task.pies.lock().push(AnyPie::Hole(pie));
+    user.task.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
     assert!(gate::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
         gate::accede::<env::PieFail>(&user.task, token, Need::Store),
@@ -474,9 +474,9 @@ pub fn resource_registration() {
     let mut registry = Registry::default();
     calls::register(&mut registry).unwrap();
     traps::register(&mut registry).unwrap();
-    let root = || AnyPie::Nole(gate::new_pie(
+    let root = || gate::boxed(gate::new_pie::<gate::Nole>(
         calls::get().build.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     let duplicate = root();
     let token = duplicate.token();
     let error = registry.register(Name::Call(Call::Build), duplicate).unwrap_err();
@@ -524,9 +524,9 @@ pub fn resource_registration() {
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
-    let invalid = AnyPie::Nole(gate::new_pie(
+    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
         dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     crate::work::mail::nole::seal(&dead);
     let frozen = match registry.freeze() { Err(e) => e, Ok(_) => panic!("accepted dead root") };
@@ -534,9 +534,9 @@ pub fn resource_registration() {
 
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let mut registry = Registry::default();
-    let invalid = AnyPie::Nole(gate::new_pie(
+    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
         dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
     crate::work::mail::nole::seal(&dead);
@@ -557,9 +557,9 @@ pub fn transfer_relations() {
     let c = Caller::new(false);
     let permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     let root = |task: &Arc<Task>, permission| {
-        let pie = AnyPie::Nole(gate::new_pie(
+        let pie = gate::boxed(gate::new_pie::<gate::Nole>(
             crate::work::mail::nole::NoleMeta::new(task.ident.id), Mark::NONE, permission, None,
-        ));
+        )).expect("pie allocation");
         let token = pie.token();
         gate::insert(task, pie).unwrap();
         token
@@ -603,7 +603,7 @@ pub fn transfer_relations() {
     // Exit also withdraws borrowed memory while a backing operation is busy.
     let d = Caller::new(false);
     let meta = pole::meta(PAGE_SIZE, a.task.ident.id).unwrap();
-    let pie = AnyPie::Pole(gate::try_new_pie(meta.clone(), Mark::NONE, permission, None).unwrap());
+    let pie = gate::boxed(gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap()).expect("pie allocation");
     let memory = pie.token();
     gate::insert(&a.task, pie).unwrap();
     let ad = grant(&a.task, memory, &d.task, permission);

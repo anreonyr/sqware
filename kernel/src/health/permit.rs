@@ -38,7 +38,7 @@ pub fn form() {
     let mark = Mark::of("permit");
     let meta = hole::meta(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
-        let mut pie = AnyPie::Hole(gate::new_pie(meta.clone(), mark, sole, sire));
+        let mut pie = gate::boxed(gate::new_pie::<gate::Hole>(meta.clone(), mark, sole, sire)).expect("pie allocation");
         crate::expect!(
             gate::narrow(&mut pie, sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
@@ -231,14 +231,14 @@ pub fn subs() {
     let dst = team.task().hold().expect("subs: hold dst");
     let meta = tole::meta(caller.ident.id);
     let token = {
-        let pie: gate::Pie<gate::Tole> = gate::new_pie(
+        let pie: gate::Pie<gate::Tole> = gate::new_pie::<gate::Tole>(
             meta.clone(),
             Mark::NONE,
             Permission::FETCH | Permission::VEST,
             None,
         );
         let token = pie.token;
-        caller.pies.lock().push(AnyPie::Tole(pie));
+        caller.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);
@@ -291,9 +291,9 @@ pub fn order() {
 
     let dead_meta = hole::meta(TaskId::new(0));
     hole::seal(&dead_meta);
-    let dead = gate::new_pie(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
+    let dead = gate::new_pie::<gate::Hole>(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
     let dead_token = dead.token;
-    let live = gate::new_pie(
+    let live = gate::new_pie::<gate::Hole>(
         hole::meta(TaskId::new(0)),
         Mark::of("live"),
         Permission::FETCH,
@@ -302,8 +302,8 @@ pub fn order() {
     let live_token = live.token;
     {
         let mut pies = task.pies.lock();
-        pies.push(AnyPie::Hole(dead));
-        pies.push(AnyPie::Hole(live));
+        pies.push(gate::boxed(dead).expect("pie allocation"));
+        pies.push(gate::boxed(live).expect("pie allocation"));
     }
 
     crate::expect!(
@@ -365,12 +365,12 @@ pub fn badge() {
     );
 
     let bell_meta = nole::NoleMeta::new(owner);
-    let bell: AnyPie = AnyPie::Nole(gate::new_pie(
+    let bell: AnyPie = gate::boxed(gate::new_pie::<gate::Nole>(
         bell_meta.clone(),
         reply,
         Permission::FETCH,
         None,
-    ));
+    )).expect("pie allocation");
     crate::expect!(bell.mark() == reply, "非孔也带记号");
     crate::expect!(
         bell.owner() == Some(owner),
@@ -385,14 +385,14 @@ pub fn badge() {
     let dst = team.task().hold().expect("badge: hold dst");
 
     let src_token = {
-        let pie = gate::new_pie(
+        let pie = gate::new_pie::<gate::Hole>(
             hole::meta(owner),
             ask,
             Permission::FETCH | Permission::VEST,
             None,
         );
         let token = pie.token;
-        caller.pies.lock().push(AnyPie::Hole(pie));
+        caller.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);

@@ -1,6 +1,7 @@
 //! Host concurrency tests compile the production gate modules. Task scheduling,
 //! resource mappings and notifications are replaced; QEMU tests cover those.
 #![allow(dead_code, unused_imports)]
+#![feature(allocator_ext)]
 extern crate alloc;
 
 mod lock {

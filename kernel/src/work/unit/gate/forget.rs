@@ -1,6 +1,5 @@
 use alloc::sync::Arc;
 
-use super::AnyPie;
 use crate::work::unit::task::Task;
 use env::{Permission, PieFail, PieToken};
 
@@ -48,8 +47,8 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             }
             result => result??,
         };
-        if let AnyPie::Pole(p) = removed {
-            let _ = crate::work::mail::pole::shut(p.meta(), token);
+        if let Some(p) = removed.snapshot().pole() {
+            let _ = crate::work::mail::pole::shut(&p, token);
         }
         for (holder, _) in tasks {
             let _ = crate::work::room::messenger::signal(
@@ -70,15 +69,9 @@ pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, P
             .find(|p| p.token() == token)
             .ok_or(PieFail::Denied)
     };
-    let (a, b) = (find(a)?, find(b)?);
+    let (a, b) = (find(a)?.snapshot(), find(b)?.snapshot());
     if !a.alive() || !b.alive() {
         return Err(PieFail::Dead);
     }
-    Ok(match (a, b) {
-        (AnyPie::Hole(a), AnyPie::Hole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Pole(a), AnyPie::Pole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Nole(a), AnyPie::Nole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Tole(a), AnyPie::Tole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        _ => false,
-    })
+    Ok(a.same(&b))
 }

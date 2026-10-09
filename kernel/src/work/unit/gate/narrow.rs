@@ -1,30 +1,8 @@
-use super::pie::{AnyPie, Mail, Permission, Pie, PieType};
+use super::pie::{AnyPie, Permission};
 use env::PieFail;
 
-fn set_perm<T: PieType>(pie: &mut Pie<T>, subset: Permission) -> Result<(), PieFail> {
-    if !pie.meta.alive() {
-        return Err(PieFail::Dead);
-    }
-    if subset.is_empty() || (subset & pie.permission) != subset {
-        return Err(PieFail::Denied);
-    }
-    if pie.permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY) {
-        return Err(PieFail::Denied);
-    }
-    pie.permission = subset;
-    if let Some(permit) = &pie.permit {
-        permit.narrow(subset);
-    }
-    Ok(())
-}
-
 pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail> {
-    match src {
-        AnyPie::Hole(p) => set_perm(p, subset),
-        AnyPie::Pole(p) => set_perm(p, subset),
-        AnyPie::Nole(p) => set_perm(p, subset),
-        AnyPie::Tole(p) => set_perm(p, subset),
-    }
+    src.narrow(subset)
 }
 
 /// Lower token-associated views and staged program ceilings before removing authority.
@@ -57,7 +35,7 @@ fn reduce_locked(
     {
         return Err(PieFail::Denied);
     }
-    if let AnyPie::Pole(p) = &pie {
+    if let Some(p) = pie.pole() {
         if !subset.contains(Permission::FETCH) {
             return Err(PieFail::Denied);
         }
@@ -67,7 +45,7 @@ fn reduce_locked(
             } else {
                 PteFlags::empty()
             };
-        let meta = p.meta();
+        let meta = &p;
         let _operation = meta.backing().operation().ok_or(PieFail::Busy)?;
         let reserved = meta.backing().reserved();
         let target = if reserved == 0 {
