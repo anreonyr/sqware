@@ -524,8 +524,8 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
             condition: MailCondition::Empty,
             millis: Wait::POLL,
         },
-        MailCall::Hush { token },
-        MailCall::Ring { token },
+        MailCall::Hush { token, bits: env::Bits::FIRST },
+        MailCall::Ring { token, bits: env::Bits::FIRST },
         MailCall::Peek { token },
     ];
     for (index, call) in mail.into_iter().enumerate() {
@@ -656,7 +656,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
         millis: Wait::POLL,
     };
     let mut regs = call.pack();
-    regs[1] = 3;
+    regs[1] = usize::BITS as usize + 3;
     assert_eq!(
         MailCall::from_wire(call.slot(), &regs),
         Err(Decode::Invalid)

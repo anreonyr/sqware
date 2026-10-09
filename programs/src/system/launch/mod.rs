@@ -20,6 +20,7 @@ pub struct Launch {
 pub struct Delivery {
     pub owner: TaskId,
     pub identity: Install,
+    pub constructor: bool,
     pub back: Sender<Said>,
 }
 pub struct Request {
@@ -111,7 +112,7 @@ pub(crate) fn dispatch(mut inbox: ResMut<crate::system::control::Construction>, 
             continue;
         }
         requests.0.push(crate::system::launch::Request { ask: request.image, from: from,
-            delivery: crate::system::launch::Delivery { owner: request.owner, identity: system_api::identity::Install::Authorized(request.subject), back: back } });
+            delivery: crate::system::launch::Delivery { owner: request.owner, identity: system_api::identity::Install::Authorized(request.subject), constructor: request.constructor, back: back } });
     }
     Ok(Progress::Done)
 }

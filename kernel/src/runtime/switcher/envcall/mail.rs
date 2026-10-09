@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 
-use env::{MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcome, TaskId, Wait};
+use env::{Bits, MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcome, TaskId, Wait};
 
 use riscv::register::sie;
 
@@ -39,8 +39,8 @@ pub(crate) fn dispatch(
             condition,
             millis,
         } => wait_dir(frame, ident, token, condition, millis),
-        MailCall::Hush { token } => hush(frame, token),
-        MailCall::Ring { token } => ring(frame, token),
+        MailCall::Hush { token, bits } => hush(frame, token, bits),
+        MailCall::Ring { token, bits } => ring(frame, token, bits),
     })
 }
 
@@ -181,21 +181,22 @@ fn wait_dir(
         Page(Arc<mail::pole::PoleMeta>),
     }
     let need = match dir {
-        MailCondition::Pull => Need::Fetch,
+        MailCondition::Pull | MailCondition::Signal(_) => Need::Fetch,
         MailCondition::Push => Need::Store,
         MailCondition::Empty => Need::Store,
     };
     let resolved = with_pie(token, need, |pie| {
         if let Some(hole) = pie.hole() {
+            if matches!(dir, MailCondition::Signal(_)) { return Err(MailFail::Denied); }
             return Ok(Ready::Hole(hole));
         }
         if dir == MailCondition::Pull {
             if let Some(nole) = pie.nole() {
                 return Ok(Ready::Bell(nole));
             }
-            if let Some(pole) = pie.pole() {
-                return Ok(Ready::Page(pole));
-            }
+        }
+        if let MailCondition::Signal(_) = dir {
+            if let Some(pole) = pie.pole() { return Ok(Ready::Page(pole)); }
         }
         Err(MailFail::Denied)
     });
@@ -208,7 +209,7 @@ fn wait_dir(
             let parked = match &ready {
                 Ready::Hole(meta) => mail::hole::wait(meta, dir, dur),
                 Ready::Bell(meta) => mail::nole::wait(meta, dur),
-                Ready::Page(meta) => mail::pole::wait(meta, dur),
+                Ready::Page(meta) => match dir { MailCondition::Signal(bit) => mail::pole::wait(meta, bit, dur), _ => Err(MailFail::Denied) },
             };
             match parked {
                 Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
@@ -220,9 +221,10 @@ fn wait_dir(
     Outcome::Resume
 }
 
-fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
+fn hush(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| {
         if let Some(nole) = pie.nole() {
+            if bits != Bits::FIRST { return Err(MailFail::Denied); }
             mail::nole::hush(&nole)?;
             // Only the Nole interrupt path reopens the external interrupt gate.
             unsafe {
@@ -231,10 +233,11 @@ fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
             return Ok(());
         }
         if let Some(hole) = pie.hole() {
+            if bits != Bits::FIRST { return Err(MailFail::Denied); }
             return mail::hole::hush(&hole);
         }
         if let Some(pole) = pie.pole() {
-            return mail::pole::hush(&pole);
+            return mail::pole::hush(&pole, bits);
         }
         Err(MailFail::Denied)
     });
@@ -248,16 +251,18 @@ fn hush(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-fn ring(frame: &mut TrapContext, token: PieToken) -> Outcome {
+fn ring(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
     let r = with_pie(token, Need::Store, |pie| {
         if let Some(nole) = pie.nole() {
+            if bits != Bits::FIRST { return Err(MailFail::Denied); }
             return mail::nole::ring(&nole);
         }
         if let Some(hole) = pie.hole() {
+            if bits != Bits::FIRST { return Err(MailFail::Denied); }
             return mail::hole::ring(&hole);
         }
         if let Some(pole) = pie.pole() {
-            return mail::pole::ring(&pole);
+            return mail::pole::ring(&pole, bits);
         }
         Err(MailFail::Denied)
     });

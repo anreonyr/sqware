@@ -17,6 +17,12 @@ bench = false
 doctest = false
 
 [dependencies]
+shell-api = { path = "src/user/shell/api" }
+shell-client = { path = "src/user/shell/client" }
+lisp = { path = "../crates/lisp" }
+stream = { path = "../crates/stream" }
+pipe-api = { path = "src/service/pipe/api" }
+pipe-client = { path = "src/service/pipe/client" }
 account-api = { path = "src/service/account/api" }
 account-client = { path = "src/service/account/client" }
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
@@ -402,6 +408,55 @@ doctest = false
 [[bin]]
 name = "prog-account"
 path = "src/service/account/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-pipe"
+path = "src/service/pipe/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-emit"
+path = "src/user/emit/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-upper"
+path = "src/user/upper/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-fail"
+path = "src/user/fail/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-spin"
+path = "src/user/spin/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-workers"
+path = "src/user/workers/main.rs"
+test = false
+bench = false
+doctest = false
+
+[[bin]]
+name = "prog-shell"
+path = "src/user/shell/main.rs"
 test = false
 bench = false
 doctest = false

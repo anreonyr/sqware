@@ -29,7 +29,7 @@ pub mod wire;
 
 pub use abi::call::memory::PAGE_SIZE;
 pub use abi::call::{
-    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
+    Bit, Bits, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall,
     MailCallRet, MailCondition, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail,
     MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult,

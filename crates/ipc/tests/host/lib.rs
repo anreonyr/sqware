@@ -605,4 +605,26 @@ mod tests {
         assert_eq!(incoming.from, TaskId::new(7));
     }
 
+    #[test]
+    fn pending_exchange_polls_without_resending_and_closes_once() {
+        test_backend::reset(); let client = client();
+        let mut pending = client.begin(time::Deadline::new(Wait::AtMost(100)), |seed| Request { seed, fail_encode: false }).unwrap();
+        let local = test_backend::with(|state| state.opened[0]);
+        assert_eq!(pending.poll(), Ok(None)); assert_eq!(pending.poll(), Ok(None));
+        assert_eq!(events().iter().filter(|event| matches!(event, test_backend::Event::Push(..))).count(), 1);
+        replies_for(local, &[9], TaskId::new(7)); assert_eq!(pending.poll(), Ok(Some(Response(9))));
+        assert_eq!(pending.poll(), Err(rpc::Fail::Untrusted)); drop(pending);
+        assert!(events().contains(&test_backend::Event::Seal(local)));
+    }
+    #[test]
+    fn pending_cancel_revokes_late_reply_and_timeout_preserves_budget() {
+        test_backend::reset(); let client = client();
+        let mut old = client.begin(time::Deadline::new(Wait::AtMost(50)), |seed| Request { seed, fail_encode: false }).unwrap();
+        assert_eq!(old.poll(), Ok(None)); let remote = test_backend::with(|state| state.last_remote.unwrap()); drop(old);
+        assert!(events().contains(&test_backend::Event::Revoke(TaskId::new(7), remote)));
+        let mut pending = client.begin(time::Deadline::new(Wait::AtMost(50)), |seed| Request { seed, fail_encode: false }).unwrap();
+        assert_eq!(pending.poll(), Ok(None)); test_backend::with(|state| state.now += 50_000_000);
+        assert_eq!(pending.poll(), Err(rpc::Fail::Receive(MailFail::Busy)));
+    }
+
 }

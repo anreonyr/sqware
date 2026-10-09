@@ -90,6 +90,44 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             }
             Outcome::Resume
         }
+        UnitCall::Observe { team } => {
+            let Some(target) = current().running_task().and_then(|me| me.heir(team)) else { return Outcome::fail(frame, UnitFail::Denied) };
+            target.observe(); frame.gpr.set_x(Gprs::A0, 0); Outcome::Resume
+        }
+        UnitCall::DebarkTeam { team } | UnitCall::EmbarkTeam { team } | UnitCall::Status { team } => {
+            let Some(me) = current().running_task() else { return Outcome::fail(frame, UnitFail::Denied) };
+            let target = if me.ident.team.id == team { me.ident.team.clone() } else {
+                match me.heir(team) { Some(team) => team, None => return Outcome::fail(frame, UnitFail::Denied) }
+            };
+            if matches!(call, UnitCall::Status { .. }) {
+                let (state, reason) = target.status(); frame.gpr.set_x(Gprs::A0, state);
+                frame.gpr.set_x(Gprs::A1, reason); return Outcome::Resume;
+            }
+            let pause = matches!(call, UnitCall::DebarkTeam { .. });
+            if pause { target.set_paused(true); }
+            let revision = target.revision();
+            let tasks = match branch(&target) { Ok(tasks) => tasks, Err(error) => return Outcome::fail(frame, error) };
+            if pause {
+                let mut running = false;
+                for task in &tasks {
+                    if let Some(hart) = crate::work::room::scheduler::core::running_hart(task) { crate::work::room::conductor::nudge(hart); }
+                    running |= task.tag() == TaskTag::Running;
+                }
+                if running || target.revision() != revision { return Outcome::fail(frame, UnitFail::Busy); }
+            } else {
+                if target.revision() != revision { return Outcome::fail(frame, UnitFail::Busy); }
+                target.set_paused(false);
+                for task in tasks {
+                    if task.ident.team.paused() { continue; }
+                    let parked = {
+                        let mut boarding = task.boarding.lock();
+                        if boarding.stopped { None } else { boarding.parked.take() }
+                    };
+                    if let Some(task) = parked { crate::work::room::scheduler::core::launch(task); }
+                }
+            }
+            frame.gpr.set_x(Gprs::A0, 0); Outcome::Resume
+        }
         UnitCall::SelfId => {
             let id = current()
                 .running_task()
@@ -288,4 +326,19 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             Outcome::Resume
         }
     }
+}
+
+fn branch(root: &Arc<crate::work::unit::team::Team>) -> Result<Vec<Arc<Task>>, UnitFail> {
+    let mut work = Vec::new(); work.try_reserve(1).map_err(|_| UnitFail::OoM)?; work.push(root.clone());
+    let mut tasks = Vec::new();
+    while let Some(team) = work.pop() {
+        for weak in team.tasks_checked()? {
+            if let Some(task) = weak.upgrade() {
+                let heirs = task.heirs_checked()?;
+                work.try_reserve(heirs.len()).map_err(|_| UnitFail::OoM)?; work.extend(heirs);
+                tasks.try_reserve(1).map_err(|_| UnitFail::OoM)?; tasks.push(task);
+            }
+        }
+    }
+    Ok(tasks)
 }

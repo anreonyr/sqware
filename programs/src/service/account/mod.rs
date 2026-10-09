@@ -1,4 +1,5 @@
 //! Account selection and login-session construction through public System capabilities.
+mod supplies;
 use alloc::vec::Vec;
 use env::{TaskId, Wait};
 use system_api::identity::{Grant, Reply, Subject, Wire};
@@ -8,6 +9,7 @@ const WAIT: Wait = Wait::AtMost(5000);
 struct Configuration {
     image: Vec<u8>,
     supervisor: TaskId,
+    commands: supplies::Supplies,
 }
 fn face(authority: TaskId, grant: Grant) -> Result<system_client::identity::Face, ()> {
     let entry = ipc::session::establish::find(authority, grant.mark()).map_err(|_| ())?;
@@ -36,7 +38,7 @@ pub fn run() -> Result<(), &'static str> {
     }
     let subject = Subject::new(principal, &[]).map_err(|_| "Account subject")?;
     let (image, _load) = image(supervisor)?;
-    let config = Configuration { image, supervisor };
+    let mut config = Configuration { image, supervisor, commands: supplies::Supplies::receive(supervisor)? };
     let tree = system_client::operator::Face::of(
         ipc::session::Session::open(supervisor, system_client::operator::BERTH, WAIT)
             .map_err(|_| "Account Operator session")?,
@@ -88,7 +90,8 @@ pub fn run() -> Result<(), &'static str> {
         account_api::Call::back,
     );
     loop {
-        let incoming = match receiver.receive(&mut bytes, WAIT) {
+        config.commands.sweep();
+        let incoming = match receiver.receive(&mut bytes, Wait::AtMost(50)) {
             Ok(incoming) => incoming,
             Err(_) => continue,
         };
@@ -102,7 +105,7 @@ pub fn run() -> Result<(), &'static str> {
         } else if request.account != NAME {
             Err(system_api::control::Fail::Unknown)
         } else {
-            create(&config, &tree, (from, subject))
+            create(&mut config, &tree, (from, subject))
         };
         let said = match result {
             Ok(built) => system_api::loader::Said {
@@ -193,7 +196,7 @@ fn image(supervisor: TaskId) -> Result<(Vec<u8>, ipc::session::establish::Held),
     Ok((image, load))
 }
 fn create(
-    config: &Configuration,
+    config: &mut Configuration,
     tree: &system_client::operator::Face,
     (owner, subject): (TaskId, Subject),
 ) -> Result<system_api::loader::Built, system_api::control::Fail> {
@@ -247,14 +250,16 @@ fn create(
         .call(ipc::time::Deadline::new(Wait::AtMost(5000)), |back| {
             let mut args = [0; system_api::loader::MAX_ARGS];
             args[0] = host.get() as u64;
+            args[1] = env::unit::self_id().get() as u64;
             api::Request {
+                constructor: true,
                 image: system_api::loader::Ask {
                     op: system_api::loader::BUILD,
                     image: loan.remote(),
                     offset: 0,
                     len: bytes.len() as u64,
                     stack: 0,
-                    count: 1,
+                    count: 2,
                     args,
                     back,
                 },
@@ -269,8 +274,13 @@ fn create(
     if said.task.get() == 0 || said.team == 0 {
         return Err(Fail::Bad);
     }
-    Ok(system_api::loader::Built {
-        task: said.task,
-        team: env::TeamId::new(said.team as usize),
-    })
+    let built = system_api::loader::Built { task: said.task, team: env::TeamId::new(said.team as usize) };
+    if let Err(error) = config.commands.send(built.task) {
+        crate::debug::put(error);
+        if let Ok(entry) = tree.tile(system_api::control::INSTANCE, WAIT).and_then(|tile| tile.token(WAIT)) {
+            if let Ok(lifecycle) = system_client::control::Face::of(entry) { let _ = lifecycle.instance(built.task).ruin(WAIT); }
+        }
+        return Err(Fail::Full);
+    }
+    Ok(built)
 }

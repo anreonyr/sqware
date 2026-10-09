@@ -66,7 +66,7 @@ impl Bell {
 
     /// 应铃：清掉"有待取之事"。未响返 `Busy`（没有可取之事）。
     pub fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.hole.token())
+        env::mail::hush(self.hole.token(), env::Bits::FIRST)
     }
 
     /// 自响：置"有待取之事"并唤醒听者。已响返 `Busy`。
@@ -76,6 +76,6 @@ impl Bell {
     /// （见 `driver/router/adapt/resident.rs`）。留着它是因为"自己叫自己"是正当写法——
     /// 响者由持铃者决定，不是内核的特权。
     pub fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.hole.token())
+        env::mail::ring(self.hole.token(), env::Bits::FIRST)
     }
 }

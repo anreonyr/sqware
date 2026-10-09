@@ -1,7 +1,7 @@
 extern crate self as env;
 
 pub use abi::{
-    MailCondition, MailFail, MailResult, Mark, Oversize, Permission, PieFail, PieInfo, PieKind,
+    Bit, Bits, MailCondition, MailFail, MailResult, Mark, Oversize, Permission, PieFail, PieInfo, PieKind,
     PieResult, PieToken, PullOutcome, ReleaseMode, TaskId, UnsealArgs, VirtAddr, Wait, make_fail,
 };
 
@@ -154,10 +154,10 @@ pub mod mail {
         if let Wait::AtMost(ms) = within { crate::test_backend::advance(ms as u64 * 1_000_000); }
         Ok(false)
     }
-    pub fn ring(_: PieToken) -> MailResult<()> {
+    pub fn ring(_: PieToken, _: crate::Bits) -> MailResult<()> {
         Ok(())
     }
-    pub fn hush(_: PieToken) -> MailResult<()> {
+    pub fn hush(_: PieToken, _: crate::Bits) -> MailResult<()> {
         Ok(())
     }
 }

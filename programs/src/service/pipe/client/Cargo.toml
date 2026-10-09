@@ -1,0 +1,13 @@
+[package]
+name = "pipe-client"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+pipe-api = { path = "../api" }
+stream = { path = "../../../../../crates/stream" }
+env = { path = "../../../../../crates/env" }
+wire = { path = "../../../../../crates/wire" }
+ipc = { path = "../../../../../crates/ipc" }
+resource = { path = "../../../../../crates/resource" }
+system-client = { path = "../../../system/client" }
+system-api = { path = "../../../system/api" }

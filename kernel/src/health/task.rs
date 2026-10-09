@@ -317,3 +317,40 @@ pub fn cancellation() {
     assert!(parent.release_held(&caller));
     drop(caller);
 }
+
+/// Pausing an ancestor constrains existing and subsequently created child teams.
+pub fn branch_control() {
+    use alloc::sync::Arc;
+    use crate::work::unit::weak::{Site, TaskWeak};
+    fn team(parent: Option<&Arc<crate::work::unit::task::Task>>) -> Arc<crate::work::unit::team::Team> {
+        let space = SpaceBuilder::user().build().unwrap();
+        space.with_flush(|inner| inner.dynamic(0x4000_0000));
+        let builder = TeamBuilder::new(space);
+        match parent { Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Site::Sire)), None => builder }.spawn().unwrap()
+    }
+    let root = team(None); let main = root.task().hold().unwrap(); root.observe();
+    let child = team(Some(&main)); let member = child.task().hold().unwrap();
+    let before = root.revision(); root.set_paused(true);
+    assert!(root.paused() && child.paused());
+    let later = team(Some(&member)); let grandchild = later.task().hold().unwrap();
+    assert!(later.paused()); assert!(root.revision() > before);
+    child.set_paused(true); root.set_paused(false);
+    assert!(!root.paused()); assert!(child.paused() && later.paused());
+    child.set_paused(false); assert!(!child.paused() && !later.paused());
+    assert!(later.observed()); later.completed(grandchild.ident.id, 17);
+    assert_eq!(root.status(), (2, 17)); root.completed(main.ident.id, 0);
+    assert_eq!(root.status(), (1, 17)); root.completed(main.ident.id, 99);
+    assert_eq!(root.status(), (1, 17));
+    later.release_held(&grandchild); later.prune_tasks(&grandchild); drop(grandchild);
+    member.oust(later.id); drop(later);
+    child.release_held(&member); child.prune_tasks(&member); drop(member);
+    main.oust(child.id); drop(child);
+    root.release_held(&main); root.prune_tasks(&main); drop(main); drop(root);
+    let root = team(None); let main = root.task().hold().unwrap(); root.observe();
+    let child = team(Some(&main)); let member = child.task().hold().unwrap();
+    root.completed(main.ident.id, 0);
+    root.release_held(&main); root.prune_tasks(&main); drop(main);
+    assert!(child.sire.upgrade().is_none()); assert!(child.observed());
+    child.completed(member.ident.id, 17); assert_eq!(root.status(), (1, 17));
+    child.release_held(&member); child.prune_tasks(&member); drop(member); drop(child); drop(root);
+}

@@ -248,16 +248,16 @@ fn queued() {
         assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
         assert!(!hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
         for _ in 0..4 {
-            env::mail::ring(entry).unwrap();
+            env::mail::ring(entry, env::Bits::FIRST).unwrap();
         }
-        assert!(env::mail::ring(entry).is_err());
+        assert!(env::mail::ring(entry, env::Bits::FIRST).is_err());
         assert!(hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
         assert!(!hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
         assert!(hole.push(&[cycle], Wait::POLL).is_err());
         for _ in 0..4 {
-            env::mail::hush(entry).unwrap();
+            env::mail::hush(entry, env::Bits::FIRST).unwrap();
         }
-        assert!(env::mail::hush(entry).is_err());
+        assert!(env::mail::hush(entry, env::Bits::FIRST).is_err());
         assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
         hole.push(&[cycle], Wait::POLL).unwrap();
         assert_eq!(hole.pull(&mut bytes, Wait::POLL).unwrap(), (1, owner));

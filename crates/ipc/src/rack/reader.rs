@@ -79,6 +79,7 @@ impl<M: Message> Reader<M> {
         let mut frame = [0u8; SLOT];
         match pop(self.ring, &mut self.next, &mut self.skipped, &mut frame) {
             Ok(Some(n)) => {
+                let _ = self.bell.ring_space();
                 let bytes = frame.get(..n).unwrap_or(&[]);
                 match M::fetch(bytes) {
                     Some(in_) => Ok(Some(in_)),

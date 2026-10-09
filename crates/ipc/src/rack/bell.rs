@@ -40,16 +40,19 @@ impl Bell {
 
     /// 响一下：置"有待取之事"并唤醒听者。**已响即 `Busy`，不是错**——写端不当它是失败。
     pub(crate) fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.pie)
+        env::mail::ring(self.pie, env::Bits::FIRST)
     }
+
+    pub(crate) fn ring_space(&self) -> MailResult<()> { env::mail::ring(self.pie, super::SPACE_BIT.bits()) }
+    pub(crate) fn hush_space(&self) -> MailResult<()> { env::mail::hush(self.pie, super::SPACE_BIT.bits()) }
 
     /// 等铃：`true` = 当场就绪（未挂起），`false` = 期限内没等到。**不清那一位**。
     pub(crate) fn wait(&self, within: Wait) -> MailResult<bool> {
-        ::resource::raw::Hole::from_raw(self.pie).wait(env::MailCondition::Pull, within)
+        ::resource::raw::Hole::from_raw(self.pie).wait(env::MailCondition::Signal(env::Bit::FIRST), within)
     }
 
     /// 应一下：清掉"有待取之事"。**已经清着 ⇒ `Busy`**（读端把它当"正好"）。
     pub(crate) fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.pie)
+        env::mail::hush(self.pie, env::Bits::FIRST)
     }
 }

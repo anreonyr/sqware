@@ -178,6 +178,11 @@ pub struct Instance<'a> {
     task: TaskId,
 }
 impl Instance<'_> {
+    pub fn result(&self, wait: Wait) -> Result<Option<env::Reason>, Fail> {
+        let said = read(self.face.call(frame::Req::StateInstance(self.task), wait)?)?;
+        Ok(said.completed.then_some(said.reason as usize))
+    }
+
     pub fn embark(&self, wait: Wait) -> Result<(), Fail> {
         read(
             self.face

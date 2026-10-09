@@ -73,8 +73,20 @@ impl<M: Message> Writer<M> {
         })
     }
 
-    /// **落一格**：放进去了答 `Ok`；按策略丢了答 `Err(SendFail::Full)`（**不是失败**，
-    /// 是"这一格没进架"——丢掉的数在 `lost` / `dropped` 上）。
+    /// Publish only when a free slot exists; a full rack retains all queued frames.
+    pub fn send_when_ready(&mut self, msg: &M) -> Result<bool, SendFail> {
+        if super::ring::depth(self.ring) >= super::ring::CAP as u64 {
+            let _ = self.bell.hush_space();
+            if super::ring::depth(self.ring) >= super::ring::CAP as u64 { return Ok(false); }
+        }
+        self.send(msg)?;
+        Ok(true)
+    }
+
+    /// Clear the producer's progress hint when no retained frame needs it.
+    pub fn hush_space(&self) { let _ = self.bell.hush_space(); }
+
+    /// Publish once, applying the configured full-rack policy.
     pub fn send(&mut self, msg: &M) -> Result<(), SendFail> {
         let Some(n) = msg.store(self.buf.as_mut()) else {
             return Err(SendFail::TooLong);

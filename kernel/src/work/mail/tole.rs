@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::lock::{Level, SpinLock};
 
-use env::{MailCondition, TaskId};
+use env::{Bit, MailCondition, TaskId};
 
 use crate::work::mail::hole::HoleId;
 use crate::work::mail::nole::NoleId;
@@ -32,8 +32,7 @@ pub enum ToleState {
 pub(crate) enum Mate {
     Hole(HoleId, MailCondition),
     Nole(NoleId),
-    /// **页上那一位**（架把铃并进页 ⇒ 页也能进组）。只有 `Pull` 一条方向，与门铃同。
-    Pole(PoleId),
+    Pole(PoleId, Bit),
 }
 
 impl Mate {
@@ -41,7 +40,7 @@ impl Mate {
         match self {
             Mate::Hole(id, dir) => WakeKey::Hole { hole: id.0, dir },
             Mate::Nole(id) => WakeKey::Nole { id: id.0 },
-            Mate::Pole(id) => WakeKey::Pole { id: id.0 },
+            Mate::Pole(id, bit) => WakeKey::Pole { id: id.0, bit },
         }
     }
 }

@@ -446,6 +446,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
 
 [[package]]
+name = "pipe-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "stream",
+ "wire",
+]
+
+[[package]]
+name = "pipe-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "ipc",
+ "pipe-api",
+ "resource",
+ "stream",
+ "system-api",
+ "system-client",
+ "wire",
+]
+
+[[package]]
 name = "proc-macro-error-attr3"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -489,11 +513,17 @@ dependencies = [
  "hub-api",
  "hub-client",
  "ipc",
+ "lisp",
  "mold",
+ "pipe-api",
+ "pipe-client",
  "resource",
  "router-api",
  "router-client",
  "schedule",
+ "shell-api",
+ "shell-client",
+ "stream",
  "system-api",
  "system-client",
  "terminal-api",
@@ -667,6 +697,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "shell-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "pipe-api",
+]
+
+[[package]]
+name = "shell-client"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "execution",
+ "pipe-api",
+ "pipe-client",
+ "resource",
+ "shell-api",
+]
+
+[[package]]
 name = "spinning_top"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -674,6 +724,10 @@ checksum = "d96d2d1d716fb500937168cc09353ffdc7a012be8475ac7308e1bdf0e3923300"
 dependencies = [
  "lock_api",
 ]
+
+[[package]]
+name = "stream"
+version = "0.1.0"
 
 [[package]]
 name = "strsim"

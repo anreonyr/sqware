@@ -246,29 +246,26 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
 }
 
 pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
+    let mut fwd = Fwd::empty();
     let chain = {
         let mut sites = sites(key).lock();
         let chain = match sites.get_mut(&key) {
             Some(site) => {
-                let chain = site.head.take();
-                site.tail = None;
-                if chain.is_none() {
-                    site.pend = true;
-                }
+                fwd = site.fwd.clone();
+                let chain = site.head.take(); site.tail = None;
+                if chain.is_none() { site.pend = true; }
                 chain
             }
             None => {
                 if !Life::dead(life) && sites.try_reserve(1).is_ok() {
-                    let mut site = Site::new(life);
-                    site.pend = true;
-                    sites.insert(key, site);
+                    let mut site = Site::new(life); site.pend = true; sites.insert(key, site);
                 }
                 None
             }
         };
-        prune(&mut sites, key);
-        chain
+        prune(&mut sites, key); chain
     };
+    for (id, life) in fwd.entries() { knock(WakeKey::Tole { id }, life); }
     rise(Unchain { cur: chain })
 }
 

@@ -75,6 +75,7 @@ pub(super) fn reap(mut task: Arc<Task>) {
         TaskState::Doomed => {}
         _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
     }
+    task.ident.team.completed(task.ident.id, super::EXIT_DOOM);
     hooked(&task);
     Task::exclusive(&mut task).transform(TaskState::Reaped { next: None });
     HUSKS.lock().push(task);
@@ -91,6 +92,7 @@ pub fn quit() -> usize {
         "running 容器里不是 Running 任务"
     );
     let reason = super::take_exit_reason();
+    exited.ident.team.completed(exited.ident.id, reason);
     let (note_va, note_len) = super::take_exit_note();
     let tid = exited.ident.id;
     let mut buf = [0u8; NOTE_MAX];
@@ -106,7 +108,7 @@ pub fn quit() -> usize {
         tid: tid.get(),
         reason,
     }));
-    ledger::note(tid, reason, text);
+    ledger::note(tid, reason, text, exited.ident.team.observed());
     reap(exited);
     bury();
     crate::work::room::scheduler::trap::run()

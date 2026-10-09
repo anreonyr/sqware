@@ -260,7 +260,7 @@ pub mod pile {
                             }
                             MailCondition::Empty if token.get() == 50 => !b.tip_busy,
                             MailCondition::Empty => !b.reply_busy,
-                            MailCondition::Push => false,
+                            MailCondition::Push | MailCondition::Signal(_) => false,
                         });
                 if event.is_none() {
                     if let Wait::AtMost(ms) = wait {

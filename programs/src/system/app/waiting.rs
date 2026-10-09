@@ -35,7 +35,7 @@ impl Waiting {
             let (token, direction) = self.members[at];
             let wanted = match direction {
                 MailCondition::Pull => reads,
-                MailCondition::Push => return false,
+                MailCondition::Push | MailCondition::Signal(_) => return false,
                 MailCondition::Empty => writes,
             };
             if wanted.contains(&token) {

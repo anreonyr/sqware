@@ -94,15 +94,18 @@ pub fn finish(
     }
     Ok(Progress::Done)
 }
-pub fn reclaim(control: Res<Control>, active: Res<Active>) -> Result<Progress, &'static str> {
+pub fn reclaim(mut control: ResMut<Control>, active: Res<Active>) -> Result<Progress, &'static str> {
     let item = control
         .instances
-        .iter()
+        .iter_mut()
         .find(|item| Some(item.task) == active.task)
         .ok_or("instance hook target")?;
     let Some(team) = item.team else {
         return Ok(Progress::Done);
     };
+    if let Ok((1, reason)) = unit::status(team) {
+        if item.reason.is_none() || reason != 0 { item.reason = Some(reason); }
+    }
     match unit::oust(team) {
         Ok(()) => Ok(Progress::Done),
         Err(error) if error.source == env::UnitFail::Busy => Ok(Progress::Pending),

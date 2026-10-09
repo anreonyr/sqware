@@ -47,6 +47,8 @@ pub struct Said {
     pub status: u8,
     /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）
     pub a: u8,
+    pub reason: u64,
+    pub completed: bool,
     /// **那一条的身子**（`embark` 与 `task` 填它；其余答话是 [`TaskId::new(0)`]）
     pub task: TaskId,
 }
@@ -194,6 +196,7 @@ impl Message for Request {
 /// 编一答：只有状态那一格（失败，或读不懂）
 pub const fn said_status(status: u8) -> Said {
     Said {
+        reason: 0, completed: false,
         status,
         a: 0,
         task: TaskId::new(0),
@@ -203,6 +206,7 @@ pub const fn said_status(status: u8) -> Said {
 /// 编一答：`OK` ＋ 一个 State（只有 `state` 那一问用）
 pub const fn said_state(state: State) -> Said {
     Said {
+        reason: 0, completed: false,
         status: OK,
         a: state.code(),
         task: TaskId::new(0),
@@ -212,6 +216,7 @@ pub const fn said_state(state: State) -> Said {
 /// 编一答：`OK` ＋ **那一条的身子**（只有 `embark` 那一问用）
 pub const fn said_task(task: TaskId) -> Said {
     Said {
+        reason: 0, completed: false,
         status: OK,
         a: 0,
         task,
@@ -226,4 +231,4 @@ const _: () = assert!(BACK.get() != Mark::NONE.get());
 
 // **答话那一形的宽度钉在编译期**：三格之和（状态 1 ＋ 答案 1 ＋ 身子那一格）。
 
-const _: () = assert!(Said::LEN == 2 + <TaskId as env::wire::Field>::WIDTH);
+const _: () = assert!(Said::LEN == 11 + <TaskId as env::wire::Field>::WIDTH);

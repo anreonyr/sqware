@@ -7,6 +7,8 @@ pub struct Instance {
     pub team: Option<TeamId>,
     pub state: State,
     pub claimed: bool,
+    pub started: bool,
+    pub reason: Option<env::Reason>,
     pub claim_until: u64,
     pub hook: ::schedule::Cursor,
 }

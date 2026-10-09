@@ -132,6 +132,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn branch_control_and_results() {
+        kernel::health::task::branch_control();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn first_spawn_atomic_commit() {
         kernel::health::task::construction();
     }

@@ -101,7 +101,7 @@ pub(super) struct Server {
     pub pile: Pile,
     pub attachment: Option<Attachment>,
     pub pending: VecDeque<Input>,
-    pub interrupt: bool,
+    pub event: Option<u8>,
     pub active: bool,
     pub running: bool,
     pub echo: bool,
@@ -112,7 +112,7 @@ impl Server {
         let entry = pie::unseal(env::UnsealArgs::hole(frame::ENTRY)).map_err(|_| E_TERMINAL)?;
         let pile = Pile::unseal(false).map_err(|_| E_TERMINAL)?;
         pile.attach(entry, MailCondition::Pull).map_err(|_| E_TERMINAL)?;
-        pile.attach(console.rx.bell(), MailCondition::Pull)
+        pile.attach(console.rx.bell(), MailCondition::Signal(env::Bit::FIRST))
             .map_err(|_| E_TERMINAL)?;
         pile.subscribe(Sub::Capabilities).map_err(|_| E_TERMINAL)?;
         let client = Client::injected().map_err(|_| E_TERMINAL)?;
@@ -138,7 +138,7 @@ impl Server {
             pile,
             attachment: None,
             pending: VecDeque::with_capacity(programs::driver::uart::core::frame::MAX),
-            interrupt: false,
+            event: None,
             active: false,
             running: true,
             echo: true,
@@ -147,7 +147,7 @@ impl Server {
     }
     pub fn reset(&mut self) {
         self.pending.clear();
-        self.interrupt = false;
+        self.event = None;
         if let Some(attachment) = &self.attachment {
             let mut bytes = [0; Input::LEN];
             for token in [
@@ -319,10 +319,10 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
     else {
         return Ok(Progress::Done);
     };
-    if server.interrupt {
-        match Hole::from_raw(control).push(&[frame::INTERRUPT], Wait::POLL) {
+    if let Some(event) = server.event {
+        match Hole::from_raw(control).push(&[event], Wait::POLL) {
             Ok(()) => {
-                server.interrupt = false;
+                server.event = None;
                 server.active = true;
             }
             Err(e) if e.source.is_busy() => {}

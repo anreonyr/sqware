@@ -137,6 +137,7 @@ impl HoleMeta {
                 Pending::Rung { count, .. } => *count > 0,
                 Pending::Dead => false,
             },
+            MailCondition::Signal(_) => false,
             MailCondition::Push => {
                 matches!(&*pending, Pending::Queue(q) if q.hands.len() < self.limits.max_messages && q.bytes < self.limits.max_bytes)
             }

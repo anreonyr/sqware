@@ -48,7 +48,7 @@ pub enum MailCall {
         max: usize,
         oversize: Oversize,
     },
-    /// Pull needs FETCH; Push and Empty need STORE. Nole/Pole support Pull only.
+    /// Pull and Signal need FETCH; Push and Empty need STORE.
     #[slot(2)]
     #[ret(bool)]
     Wait {
@@ -58,13 +58,40 @@ pub enum MailCall {
     },
     #[slot(3)]
     #[ret(())]
-    Hush { token: PieToken },
+    Hush { token: PieToken, bits: Bits },
     #[slot(4)]
     #[ret(())]
-    Ring { token: PieToken },
+    Ring { token: PieToken, bits: Bits },
     #[slot(5)]
     #[ret3((usize, TaskId, usize))]
     Peek { token: PieToken },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Bit(u8);
+impl Bit {
+    pub const FIRST: Self = Self(0);
+    pub const fn of(index: usize) -> Option<Self> {
+        if index < usize::BITS as usize { Some(Self(index as u8)) } else { None }
+    }
+    pub const fn index(self) -> usize { self.0 as usize }
+    pub const fn bits(self) -> Bits { Bits(1usize << self.0) }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Bits(usize);
+impl Bits {
+    pub const FIRST: Self = Self(1);
+    pub const fn of(bits: usize) -> Option<Self> { if bits == 0 { None } else { Some(Self(bits)) } }
+    pub const fn get(self) -> usize { self.0 }
+    pub fn iter(self) -> impl Iterator<Item = Bit> {
+        (0..usize::BITS as usize).filter(move |index| self.0 & (1usize << index) != 0).map(|index| Bit(index as u8))
+    }
+}
+impl crate::Wire for Bits {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) { self.get().pack(s, i); }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, crate::Decode> {
+        Self::of(usize::unpack(s, i)?).ok_or(crate::Decode::Invalid)
+    }
 }
 
 /// Readiness is a hint; another caller can change the queue before the next operation.
@@ -73,17 +100,18 @@ pub enum MailCondition {
     Pull,
     Push,
     Empty,
+    Signal(Bit),
 }
 impl MailCondition {
     pub fn wire(self) -> usize {
-        self as usize
+        match self { Self::Pull => 0, Self::Push => 1, Self::Empty => 2, Self::Signal(bit) => 3 + bit.index() }
     }
     pub fn of(raw: usize) -> Option<Self> {
         match raw {
             0 => Some(Self::Pull),
             1 => Some(Self::Push),
             2 => Some(Self::Empty),
-            _ => None,
+            _ => Bit::of(raw.checked_sub(3)?).map(Self::Signal),
         }
     }
 }

@@ -74,7 +74,7 @@ pub(super) fn receive(
                         },
                     );
                 } else {
-                    requests.0.push(crate::system::launch::Request { ask, from, delivery: crate::system::launch::Delivery { owner: from, identity: system_api::identity::Install::Inherit { parent: from }, back } });
+                    requests.0.push(crate::system::launch::Request { ask, from, delivery: crate::system::launch::Delivery { owner: from, identity: system_api::identity::Install::Inherit { parent: from }, constructor: false, back } });
                 }
             }
         }

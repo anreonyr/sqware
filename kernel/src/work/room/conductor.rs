@@ -120,7 +120,7 @@ pub(super) fn halt() -> ! {
             // 收场，而用例报绿（`kernel/tests/embedded.rs` 的 `scene` 因此看得见机器起过、看不见
             // 装配没走完）。
             let mut blame: Option<ledger::Entry> = None;
-            ledger::each(|e| {
+            ledger::failures(|e| {
                 if blame.is_none() && !clean_ending(e.reason) {
                     blame = Some(*e);
                 }
@@ -130,9 +130,10 @@ pub(super) fn halt() -> ! {
             };
             ledger::each(|x| {
                 putln!(
-                    "[verdict] tid={} reason={:#x} note: {}",
+                    "[verdict] tid={} reason={:#x} observed={} note: {}",
                     x.task.get(),
                     x.reason,
+                    x.observed,
                     x.note()
                 );
             });

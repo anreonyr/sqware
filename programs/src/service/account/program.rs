@@ -23,9 +23,15 @@ pub static PROGRAM: UnitFile = UnitFile {
         identity: &[system_api::identity::Grant::Derive],
         supply: &[
             Setup::Image {
-                name: "cat",
+                name: "shell",
                 load: "account-image",
             },
+            Setup::Image { name: "cat", load: "account-cat" },
+            Setup::Image { name: "emit", load: "account-emit" },
+            Setup::Image { name: "upper", load: "account-upper" },
+            Setup::Image { name: "fail", load: "account-fail" },
+            Setup::Image { name: "spin", load: "account-spin" },
+            Setup::Image { name: "workers", load: "account-workers" },
             Setup::Ready,
         ],
     },

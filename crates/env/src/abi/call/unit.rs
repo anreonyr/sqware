@@ -132,4 +132,12 @@ pub enum UnitCall {
     /// 销毁指定 task，保留资源撤销与其拥有的子 team 级联。
     #[ret(())]
     Slay { task: TaskId },
+    #[ret(())]
+    DebarkTeam { team: TeamId },
+    #[ret(())]
+    EmbarkTeam { team: TeamId },
+    #[ret((usize, usize))]
+    Status { team: TeamId },
+    #[ret(())]
+    Observe { team: TeamId },
 }

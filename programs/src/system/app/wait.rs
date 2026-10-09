@@ -108,7 +108,7 @@ pub(super) fn connections(
     for (token, direction) in tree.connection_interests() {
         match direction {
             env::MailCondition::Pull => wanted.tokens.push(token),
-            env::MailCondition::Push => return Err(Fail::Room),
+            env::MailCondition::Push | env::MailCondition::Signal(_) => return Err(Fail::Room),
             env::MailCondition::Empty => wanted.writes.push(token),
         }
     }

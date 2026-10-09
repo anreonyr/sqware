@@ -303,7 +303,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             )
             .unwrap();
             let said = sender
-                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request { constructor: false,
                     image: system_api::loader::Ask {
                         op: system_api::loader::BUILD,
                         image: env::PieToken::NONE,
@@ -326,7 +326,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             p.creator_request.store(true, Ordering::Release);
             until(|| p.creator_ready.load(Ordering::Acquire));
             let said = sender
-                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request { constructor: false,
                     image: system_api::loader::Ask {
                         op: system_api::loader::BUILD,
                         image: env::PieToken::NONE,

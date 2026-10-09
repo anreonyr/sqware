@@ -230,8 +230,10 @@ impl PreparedTask {
             (task, ())
         })
         .map_err(|_| MapError::OutOfMemory)?;
+        team.representative(task.ident.id);
         drop(held);
         drop(tasks);
+        team.changed();
         trace::note(EventKind::Room(RoomEvent::Spawn {
             tid: task.ident.id.get(),
         }));
@@ -365,6 +367,12 @@ impl Task {
 
     pub(crate) fn heirs(&self) -> Vec<Arc<Team>> {
         self.heir.lock().clone()
+    }
+
+    pub(crate) fn heirs_checked(&self) -> Result<Vec<Arc<Team>>, env::UnitFail> {
+        let heirs = self.heir.lock(); let mut out = Vec::new();
+        out.try_reserve(heirs.len()).map_err(|_| env::UnitFail::OoM)?;
+        out.extend(heirs.iter().cloned()); Ok(out)
     }
 
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {

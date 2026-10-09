@@ -1,0 +1,9 @@
+[package]
+name = "pipe-api"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+env = { path = "../../../../../crates/env" }
+wire = { path = "../../../../../crates/wire" }
+mold = { path = "../../../../../crates/mold" }
+stream = { path = "../../../../../crates/stream" }

@@ -1,0 +1,15 @@
+[package]
+name = "shell-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+stream = { path = "../../../crates/stream" }
+lisp = { path = "../../../crates/lisp" }
+pipe-api = { path = "../../src/service/pipe/api" }
+
+shell-api = { path = "../../src/user/shell/api" }
+abi = { package = "env", path = "../../../crates/env" }

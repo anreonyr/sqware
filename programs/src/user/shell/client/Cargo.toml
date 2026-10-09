@@ -1,0 +1,11 @@
+[package]
+name = "shell-client"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+shell-api = { path = "../api" }
+pipe-client = { path = "../../../service/pipe/client" }
+pipe-api = { path = "../../../service/pipe/api" }
+env = { path = "../../../../../crates/env" }
+resource = { path = "../../../../../crates/resource" }
+execution = { path = "../../../../../crates/execution" }

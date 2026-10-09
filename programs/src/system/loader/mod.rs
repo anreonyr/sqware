@@ -63,3 +63,5 @@ impl Default for Loader {
         Self::new()
     }
 }
+
+pub(crate) use service::Inbox;

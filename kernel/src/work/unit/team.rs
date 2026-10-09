@@ -10,6 +10,8 @@ use crate::work::unit::space::Space;
 use super::task::{Task, TaskBuilder, TaskTag};
 use super::weak::{Site, TaskWeak};
 
+struct Completion { task: TaskId, reason: Option<env::Reason>, fault: Option<env::Reason> }
+
 pub struct Team {
     pub(crate) space: Arc<Space>,
     pub(crate) tasks: SpinLock<Vec<TaskWeak>>,
@@ -19,6 +21,11 @@ pub struct Team {
     default_entry: OnceLock<usize>,
     pub(crate) ready: AtomicBool,
     operating: AtomicBool,
+    paused: AtomicBool,
+    revision: AtomicUsize,
+    completion: SpinLock<Option<Completion>>,
+    observed: AtomicBool,
+    observer: Option<Weak<Team>>,
     pub(crate) staged: SpinLock<Vec<Staging>>,
 }
 
@@ -41,6 +48,70 @@ impl Drop for Construction {
 }
 
 impl Team {
+    pub(crate) fn paused(&self) -> bool {
+        if self.paused.load(Ordering::Acquire) { return true; }
+        let mut parent = self.sire.upgrade();
+        while let Some(task) = parent {
+            let team = &task.ident.team;
+            if team.paused.load(Ordering::Acquire) { return true; }
+            parent = team.sire.upgrade();
+        }
+        false
+    }
+    pub(crate) fn set_paused(&self, paused: bool) { self.paused.store(paused, Ordering::Release); }
+    pub(crate) fn revision(&self) -> usize { self.revision.load(Ordering::Acquire) }
+    pub(crate) fn changed(&self) {
+        self.revision.fetch_add(1, Ordering::Release);
+        let mut parent = self.sire.upgrade();
+        while let Some(task) = parent {
+            task.ident.team.revision.fetch_add(1, Ordering::Release);
+            parent = task.ident.team.sire.upgrade();
+        }
+    }
+    pub(crate) fn representative(&self, task: TaskId) {
+        self.completion.lock().get_or_insert(Completion { task, reason: None, fault: None });
+    }
+    pub(crate) fn completed(&self, task: TaskId, reason: env::Reason) {
+        if let Some(result) = self.completion.lock().as_mut() {
+            if reason != 0 && reason != crate::work::room::messenger::EXIT_DOOM && reason != crate::work::room::messenger::EXIT_CASCADE { result.fault.get_or_insert(reason); }
+            if result.task == task { result.reason.get_or_insert(reason); }
+        }
+        if reason != 0 && reason != crate::work::room::messenger::EXIT_DOOM && reason != crate::work::room::messenger::EXIT_CASCADE
+            && !self.observed.load(Ordering::Acquire) && self.observed() {
+            if let Some(observer) = self.observer.as_ref().and_then(Weak::upgrade) {
+                if let Some(result) = observer.completion.lock().as_mut() { result.fault.get_or_insert(reason); }
+            }
+            let mut parent = self.sire.upgrade();
+            while let Some(task) = parent {
+                let team = &task.ident.team;
+                if let Some(result) = team.completion.lock().as_mut() { result.fault.get_or_insert(reason); }
+                if team.observed.load(Ordering::Acquire) { break; }
+                parent = team.sire.upgrade();
+            }
+        }
+    }
+    pub(crate) fn status(&self) -> (usize, env::Reason) {
+        match self.completion.lock().as_ref() {
+            Some(result) if result.reason.is_some() => (1, result.fault.or(result.reason).unwrap_or(0)),
+            Some(result) if result.fault.is_some() => (2, result.fault.unwrap_or(0)),
+            _ => (0, 0),
+        }
+    }
+    pub(crate) fn observe(&self) { self.observed.store(true, Ordering::Release); }
+    pub(crate) fn observed(&self) -> bool {
+        if self.observed.load(Ordering::Acquire) || self.observer.is_some() { return true; }
+        let mut parent = self.sire.upgrade();
+        while let Some(task) = parent {
+            if task.ident.team.observed.load(Ordering::Acquire) { return true; }
+            parent = task.ident.team.sire.upgrade();
+        }
+        false
+    }
+    pub(crate) fn tasks_checked(&self) -> Result<Vec<TaskWeak>, env::UnitFail> {
+        let tasks = self.tasks.lock(); let mut out = Vec::new();
+        out.try_reserve(tasks.len()).map_err(|_| env::UnitFail::OoM)?;
+        out.extend(tasks.iter().map(|task| task.copy_at(Site::Snapshot))); Ok(out)
+    }
     pub(crate) fn operation(self: &Arc<Self>) -> Option<Construction> {
         self.operating
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -161,6 +232,10 @@ impl TeamBuilder {
 
     pub fn spawn(self) -> Result<Arc<Team>, crate::memory::manager::MapError> {
         let id = alloc_team_id();
+        let observer = self.sire.upgrade().and_then(|task| {
+            if task.ident.team.observed.load(Ordering::Acquire) { Some(Arc::downgrade(&task.ident.team)) }
+            else { task.ident.team.observer.clone() }
+        });
         let space = crate::tag!(Space, Arc::try_new(self.space))
             .map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;
         let team = crate::tag!(
@@ -174,6 +249,11 @@ impl TeamBuilder {
                 default_entry: OnceLock::new(),
                 ready: AtomicBool::new(!self.constructing),
                 operating: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
+                revision: AtomicUsize::new(0),
+                completion: SpinLock::new(None),
+                observed: AtomicBool::new(false),
+                observer,
                 staged: SpinLock::new(Vec::new()),
             })
         )
@@ -182,6 +262,7 @@ impl TeamBuilder {
             sire.adopt(team.clone())
                 .map_err(|()| crate::memory::manager::MapError::OutOfMemory)?;
         }
+        team.changed();
         Ok(team)
     }
 }
@@ -203,6 +284,11 @@ pub(crate) fn init_kernel(space: Arc<Space>) -> Result<&'static Arc<Team>, crate
                 default_entry: OnceLock::new(),
                 ready: AtomicBool::new(true),
                 operating: AtomicBool::new(false),
+                paused: AtomicBool::new(false),
+                revision: AtomicUsize::new(0),
+                completion: SpinLock::new(None),
+                observed: AtomicBool::new(false),
+                observer: None,
                 staged: SpinLock::new(Vec::new()),
             })
         ).map_err(|_| crate::memory::manager::MapError::OutOfMemory)?

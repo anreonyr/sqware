@@ -63,6 +63,8 @@ impl Control {
             team: Some(built.team),
             state: State::Starting,
             claimed: false,
+            started: false,
+            reason: None,
             claim_until: env::chrono::clock() + system_api::loader::CLAIM_MS as u64 * 1_000_000,
             hook: Default::default(),
         });
@@ -95,6 +97,11 @@ impl Control {
         for item in &mut self.instances {
             if item.team.is_none() {
                 continue;
+            }
+            if item.reason.is_none() {
+                if let Some(team) = item.team {
+                    if let Ok((state @ 1..=2, reason)) = unit::status(team) { item.reason = Some(reason); if state == 2 { item.stop(); } }
+                }
             }
             if settling
                 || (!item.claimed && env::chrono::clock() >= item.claim_until)

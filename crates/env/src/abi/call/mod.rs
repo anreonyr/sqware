@@ -62,7 +62,7 @@ pub use self::chrono::{ChronoCall, ChronoCallRet};
 pub use self::control::{ControlCall, ControlCallRet, ControlFail, ControlResult};
 pub use self::debug::{DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult};
 pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
-pub use self::mail::{MailCondition, Oversize, PullOutcome};
+pub use self::mail::{Bit, Bits, MailCondition, Oversize, PullOutcome};
 pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
 pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
 pub use self::pie_types::{HoleLimits, PieInfo, ReleaseMode, UnsealArgs};

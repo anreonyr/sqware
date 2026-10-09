@@ -88,7 +88,7 @@ impl Scheduler {
             }
             let anchor = head.clone();
             let mut boarding = anchor.boarding.lock();
-            if boarding.stopped {
+            if boarding.stopped || anchor.ident.team.paused() {
                 debug_assert!(boarding.parked.is_none());
                 boarding.parked = Some(head);
                 continue;
@@ -172,7 +172,7 @@ impl Scheduler {
         let mut i = self.inner.lock();
         let anchor = task.clone();
         let mut boarding = anchor.boarding.lock();
-        if boarding.stopped {
+        if boarding.stopped || anchor.ident.team.paused() {
             debug_assert!(boarding.parked.is_none());
             boarding.parked = Some(task);
             return None;
@@ -220,7 +220,7 @@ impl Scheduler {
     pub(crate) fn starve(&self) -> usize {
         if self
             .running_task()
-            .is_some_and(|t| t.boarding.lock().stopped)
+            .is_some_and(|t| t.boarding.lock().stopped || t.ident.team.paused())
         {
             return self.advance().unwrap_or_else(super::fetch::fetch);
         }
@@ -245,7 +245,7 @@ impl Scheduler {
     pub(in super::super) fn advance(&self) -> Option<usize> {
         let mut i = self.inner.lock();
         let mut cur = i.running.take()?;
-        if cur.boarding.lock().stopped {
+        if cur.boarding.lock().stopped || cur.ident.team.paused() {
             Task::exclusive(&mut cur).transform(TaskState::Starved { next: None });
             self.badge.shed(&cur.ident);
             self.starved_push(&mut i, cur);

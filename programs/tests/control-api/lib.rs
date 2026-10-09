@@ -26,7 +26,7 @@ mod tests {
         };
         let mut args = [0; loader::MAX_ARGS];
         args[..2].copy_from_slice(&[7, 11]);
-        let request = construction::Request {
+        let request = construction::Request { constructor: false,
             image: loader::Ask {
                 op: loader::BUILD,
                 image: token(4),
@@ -42,7 +42,7 @@ mod tests {
         };
         let mut bytes = construction::Request::EMPTY;
         let len = request.store(&mut bytes).unwrap();
-        assert_eq!(len, 58 + 8 + 17);
+        assert_eq!(len, 58 + 8 + 17 + 1);
         let decoded = construction::Request::fetch(&bytes[..len]).unwrap();
         assert_eq!(decoded.owner, request.owner);
         assert_eq!(decoded.subject, request.subject);
@@ -155,13 +155,13 @@ mod tests {
         assert!(Request::fetch(&bytes[..len + 1]).is_none());
         let response = frame::said_task(TaskId::new(0x0102_0304_0506_0708));
         let mut answer = Said::EMPTY;
-        assert_eq!(response.store(&mut answer), Some(10));
-        assert_eq!(answer, [0, 0, 8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(response.store(&mut answer), Some(19));
+        assert_eq!(answer, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1]);
     }
 
     #[test]
     fn said_and_account_frames_keep_layout_and_validation_boundary() {
-        let said = Said {
+        let said = Said { reason: 0, completed: false,
             status: 0,
             a: 3,
             task: TaskId::new(0x0102_0304_0506_0708),
@@ -169,7 +169,7 @@ mod tests {
         let mut bytes = Said::EMPTY;
         let n = said.store(&mut bytes).unwrap();
         assert_eq!(n, Said::LEN);
-        assert_eq!(&bytes[..n], &[0, 3, 8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(&bytes[..n], &[0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 7, 6, 5, 4, 3, 2, 1]);
         assert_eq!(Said::fetch(&bytes[..n]), Some(said));
 
         let account = AccountRequest {

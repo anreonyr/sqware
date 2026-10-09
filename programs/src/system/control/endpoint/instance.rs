@@ -29,8 +29,10 @@ pub fn answer(mut control: ResMut<Control>, mut inbox: ResMut<Inbox>) -> Result<
         let result = control.command_instance(incoming.from, command);
         match result {
             Ok(Some(state)) => {
-                let said = if matches!(command, Command::State(_)) {
-                    call::frame::said_state(answer::wire_state(state))
+                let said = if let Command::State(task) = command {
+                    let mut said = call::frame::said_state(answer::wire_state(state));
+                    if let Some(item) = control.instance(task) { said.completed = item.reason.is_some(); said.reason = item.reason.unwrap_or(0) as u64; }
+                    said
                 } else {
                     call::frame::said_status(call::frame::OK)
                 };

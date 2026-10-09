@@ -40,6 +40,8 @@ fn main() -> Report<'static> {
     let Ok(_session) = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS)) else {
         panic!("probe-rack: 树那条路开不出来（装配者等的那一枚 LINK）");
     };
+    signals();
+    retained();
     let (dropped, _) = newest();
     let (lost, skipped, got) = oldest();
     programs::debug::put(&alloc::format!(
@@ -151,4 +153,45 @@ fn open(mode: Mode) -> Rack<Bytes> {
 /// 那一条载荷：与另外两台同一手（`probe::rack`）。
 fn payload(i: usize) -> Bytes {
     programs::harness::probe::rack::payload(i)
+}
+
+fn signals() {
+    use env::{Bit, Bits, MailCondition, PieToken, pie};
+    use resource::pile::Pile;
+    let page = pie::unseal(env::UnsealArgs::Pole { size: env::PAGE_SIZE, shared: true }).unwrap();
+    let a = Bit::FIRST;
+    let b = Bit::of(1).unwrap();
+    let pile = Pile::unseal(false).unwrap();
+    pile.attach(page, MailCondition::Signal(a)).unwrap();
+    pile.attach(page, MailCondition::Signal(b)).unwrap();
+    env::mail::ring(page, b.bits()).unwrap();
+    assert!(!env::mail::wait(page, MailCondition::Signal(a), Wait::POLL).unwrap());
+    assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).unwrap());
+    assert_eq!(pile.await_(Wait::POLL).unwrap(), Some((page, MailCondition::Signal(b))));
+    env::mail::ring(page, a.bits()).unwrap();
+    env::mail::hush(page, a.bits()).unwrap();
+    assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).unwrap());
+    assert!(!env::mail::wait(page, MailCondition::Signal(a), Wait::AtMost(2)).unwrap());
+    env::mail::hush(page, b.bits()).unwrap();
+    assert!(!env::mail::wait(page, MailCondition::Signal(b), Wait::AtMost(2)).unwrap());
+    env::mail::ring(page, Bits::of(3).unwrap()).unwrap();
+    pie::seal(page).unwrap();
+    assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).is_err());
+    let _ = pie::release(page, env::ReleaseMode::Revoke);
+    let _ = pie::release(pile.token(), env::ReleaseMode::Revoke);
+    let _ = PieToken::NONE;
+}
+
+fn retained() {
+    let rack = open(Mode::Oldest); let mut writer = rack.writer(); let mut reader = rack.reader();
+    for index in 0..CAP { assert!(writer.send_when_ready(&payload(index)).unwrap()); }
+    assert!(!writer.send_when_ready(&payload(CAP)).unwrap());
+    assert_eq!(writer.lost(), 0); assert_eq!(writer.dropped(), 0);
+    let condition = env::MailCondition::Signal(ipc::rack::SPACE_BIT);
+    assert!(!env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
+    assert_eq!(reader.recv(Wait::POLL).unwrap().bytes(), payload(0).bytes());
+    assert!(env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
+    assert!(writer.send_when_ready(&payload(CAP)).unwrap());
+    for index in 1..=CAP { assert_eq!(reader.recv(Wait::POLL).unwrap().bytes(), payload(index).bytes()); }
+    writer.hush_space(); assert!(!env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
 }

@@ -16,7 +16,7 @@ use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use crate::work::unit::space::{Backing, SegmentKind, Space, Span};
 
-use env::{MailFail, PieFail};
+use env::{Bit, Bits, MailFail, PieFail};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PoleId(pub usize);
@@ -56,7 +56,7 @@ pub struct PoleMeta {
     /// 等待者随资源一起醒（`messenger` 要它；[`Drop`] 与 [`seal`] 都会 `wipe`）。
     life: Arc<Life>,
     /// 页上那一位"有事"。
-    ring: SpinLock<bool>,
+    ring: SpinLock<usize>,
 }
 
 // SAFETY: backing 管理共享物理帧，状态及映射登记经锁同步。
@@ -83,7 +83,7 @@ impl PoleMeta {
             owner,
             id: alloc_id(),
             life: Life::try_new().map_err(|_| PieFail::OoM)?,
-            ring: SpinLock::new_level(Level::L3, false),
+            ring: SpinLock::new_level(Level::L3, 0),
         })
         .map_err(|_| PieFail::OoM)
     }
@@ -110,7 +110,7 @@ impl PoleMeta {
             owner,
             id: alloc_id(),
             life: Life::try_new().map_err(|_| PieFail::OoM)?,
-            ring: SpinLock::new_level(Level::L3, false),
+            ring: SpinLock::new_level(Level::L3, 0),
         })
         .map_err(|_| PieFail::OoM)
     }
@@ -132,8 +132,8 @@ impl PoleMeta {
     }
 
     /// 页上那一位此刻亮着吗。
-    pub(crate) fn ready(&self) -> bool {
-        *self.ring.lock()
+    pub(crate) fn ready(&self, bit: Bit) -> bool {
+        *self.ring.lock() & bit.bits().get() != 0
     }
 
     fn open_into(
@@ -235,7 +235,7 @@ impl Drop for PoleMeta {
     fn drop(&mut self) {
         *self.state.lock() = PoleState::Dead;
         // 睡在"页上那一位"上面的读者随资源一起醒（与 nole 同一条）。
-        messenger::wipe(key(self));
+        wipe(self);
         let mappings: Vec<(PieToken, Weak<Space>, Span, bool)> =
             core::mem::take(&mut *self.mappings.lock());
         for (token, weak, _, _) in mappings {
@@ -273,58 +273,42 @@ pub(crate) fn narrow(meta: &PoleMeta, token: PieToken, flags: PteFlags) -> Resul
     meta.narrow_into(token, flags)
 }
 
-/// 页上那一位的唤醒键（组、`messenger` 用它；号是**本机**的 `PoleId`，不是表内 `PieToken`）。
-pub(crate) fn key(meta: &PoleMeta) -> WakeKey {
-    WakeKey::Pole { id: meta.id.0 }
+pub(crate) fn key(meta: &PoleMeta, bit: Bit) -> WakeKey {
+    WakeKey::Pole { id: meta.id.0, bit }
 }
-
-/// 响一下：立起"有事"并唤醒等的人。**已响 ⇒ `Busy`**（写者当"正好"，不是失败）。
-pub(crate) fn ring(meta: &PoleMeta) -> Result<(), MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
-    }
-    {
-        let mut ring = meta.ring.lock();
-        if *ring {
-            return Err(MailFail::Busy);
-        }
-        *ring = true;
-    }
-    let _ = messenger::wake(key(meta), &meta.life());
+fn wipe(meta: &PoleMeta) {
+    for bit in Bits::of(usize::MAX).unwrap().iter() { messenger::wipe(key(meta, bit)); }
+}
+pub(crate) fn ring(meta: &PoleMeta, bits: Bits) -> Result<(), MailFail> {
+    if !meta.alive() { return Err(MailFail::Dead); }
+    let changed = {
+        let mut pending = meta.ring.lock();
+        let changed = bits.get() & !*pending;
+        *pending |= bits.get(); changed
+    };
+    let Some(changed) = Bits::of(changed) else { return Err(MailFail::Busy) };
+    for bit in changed.iter() { messenger::knock(key(meta, bit), &meta.life()); }
     Ok(())
 }
-
-/// 应一下：清掉"有事"。**没响 ⇒ `Busy`**（读端当"正好"）。
-pub(crate) fn hush(meta: &PoleMeta) -> Result<(), MailFail> {
-    let mut ring = meta.ring.lock();
-    if !*ring {
-        return Err(MailFail::Busy);
-    }
-    *ring = false;
-    Ok(())
+pub(crate) fn hush(meta: &PoleMeta, bits: Bits) -> Result<(), MailFail> {
+    if !meta.alive() { return Err(MailFail::Dead); }
+    let mut pending = meta.ring.lock();
+    let changed = *pending & bits.get();
+    *pending &= !bits.get();
+    if changed == 0 { Err(MailFail::Busy) } else { Ok(()) }
 }
-
-/// 等那一位亮（照 `nole::wait`：`true` = 当场就绪、未挂起）。
-pub(crate) fn wait(meta: &PoleMeta, dur: Duration) -> Result<Handoff<bool>, MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
-    }
-    if meta.ready() {
-        return Ok(Handoff::Resume(true));
-    }
-    if dur == Duration::ZERO {
-        return Ok(Handoff::Resume(false));
-    }
-    Ok(match messenger::wait(key(meta), meta.life(), dur)? {
-        Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready()),
+pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<bool>, MailFail> {
+    if !meta.alive() { return Err(MailFail::Dead); }
+    if meta.ready(bit) { return Ok(Handoff::Resume(true)); }
+    if dur == Duration::ZERO { return Ok(Handoff::Resume(false)); }
+    Ok(match messenger::wait(key(meta, bit), meta.life(), dur)? {
+        Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(bit)),
         Handoff::Switch(pa) => Handoff::Switch(pa),
     })
 }
-
 pub(crate) fn seal(meta: &PoleMeta) {
     *meta.state.lock() = PoleState::Dead;
-    // 封印即"再也不会有事"：等的人立刻醒，下一次 `wait` 答 `Dead`。
-    messenger::wipe(key(meta));
+    wipe(meta);
 }
 
 pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {

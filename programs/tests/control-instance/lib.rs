@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate env as abi;
 extern crate self as env;
 
-pub use abi::{TaskId, TeamId, UnitFail};
+pub use abi::{Reason, TaskId, TeamId, UnitFail};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -13,6 +13,7 @@ struct Effects {
     debarked: usize,
     doomed: usize,
     embark_fail: bool,
+    embark_busy: bool,
     debark_fail: Option<UnitFail>,
 }
 thread_local! {
@@ -27,11 +28,15 @@ pub struct Error {
     pub source: UnitFail,
 }
 pub mod unit {
+    pub fn embark_team(_: crate::TeamId) -> Result<(), crate::Error> { embark(crate::TaskId::new(0)) }
+    pub fn debark_team(_: crate::TeamId) -> Result<(), crate::Error> { debark(crate::TaskId::new(0)) }
+
     use crate::{EFFECTS, Error, TaskId, UnitFail};
     pub fn embark(_: TaskId) -> Result<(), Error> {
         EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
             effects.embarked += 1;
+            if effects.embark_busy { return Err(Error { source: UnitFail::Busy }); }
             if effects.embark_fail {
                 Err(Error {
                     source: UnitFail::Denied,
@@ -103,6 +108,8 @@ mod tests {
                 task: TaskId::new(2),
                 team: Some(TeamId::new(3)),
                 state,
+                started: matches!(state, State::Ready),
+                reason: None,
                 claimed: false,
                 claim_until: 10,
                 hook: Default::default(),
@@ -225,4 +232,15 @@ mod tests {
             );
         });
     }
+}
+
+#[test]
+fn resuming_busy_team_keeps_transition_retriable() {
+    use system::control::{instance::Command, instance::state::Instance, unit::Control, unit::table::State};
+    EFFECTS.with(|e| *e.borrow_mut() = Effects { embark_busy: true, ..Effects::default() });
+    let mut control = Control { instances: vec![Instance { owner: TaskId::new(1), task: TaskId::new(2), team: Some(TeamId::new(3)), state: State::Debarked, claimed: true, started: true, reason: None, claim_until: 0, hook: Default::default() }] };
+    assert_eq!(control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))), Ok(None));
+    assert_eq!(control.instances[0].state, State::Debarked);
+    EFFECTS.with(|e| e.borrow_mut().embark_busy = false);
+    assert_eq!(control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))), Ok(Some(State::Ready)));
 }

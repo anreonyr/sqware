@@ -61,7 +61,7 @@ fn attach(
         let latch = gate::accede::<ToleFail>(
             &task,
             member,
-            if dir == MailCondition::Pull {
+            if matches!(dir, MailCondition::Pull | MailCondition::Signal(_)) {
                 Need::Fetch
             } else {
                 Need::Store
@@ -88,7 +88,7 @@ fn detach(
         let latch = gate::accede::<ToleFail>(
             &task,
             member,
-            if dir == MailCondition::Pull {
+            if matches!(dir, MailCondition::Pull | MailCondition::Signal(_)) {
                 Need::Fetch
             } else {
                 Need::Store
@@ -274,7 +274,7 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, MailCondition)>, usize) {
                 }
             }
             // **页上那一位**（架把铃并进页）：与 `Mate::Nole` 同一形，方向恒为 `Pull`。
-            Mate::Pole(id) => {
+            Mate::Pole(id, bit) => {
                 let Some(pie) = pies.iter().find(|p| {
                     p.alive()
                         && p.heir().is_none()
@@ -287,9 +287,9 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, MailCondition)>, usize) {
                 let Some(p) = pie.snapshot().pole() else {
                     continue;
                 };
-                if p.ready() {
+                if p.ready(bit) {
                     meta.seek_cursor((at + 1) % count);
-                    return (Some((pie.token(), MailCondition::Pull)), skipped);
+                    return (Some((pie.token(), MailCondition::Signal(bit))), skipped);
                 }
             }
         }
@@ -303,15 +303,16 @@ fn rack(pie: &PieSnapshot) -> Result<Arc<ToleMeta>, ToleFail> {
 
 fn mate(pie: &PieSnapshot, dir: MailCondition) -> Result<(Mate, Weak<Life>), ToleFail> {
     if let Some(h) = pie.hole() {
+        if matches!(dir, MailCondition::Signal(_)) { return Err(ToleFail::Denied); }
         return Ok((Mate::Hole(h.id(), dir), h.life()));
     }
     if dir == MailCondition::Pull {
         if let Some(n) = pie.nole() {
             return Ok((Mate::Nole(n.id()), n.life()));
         }
-        if let Some(p) = pie.pole() {
-            return Ok((Mate::Pole(p.id()), p.life()));
-        }
+    }
+    if let MailCondition::Signal(bit) = dir {
+        if let Some(p) = pie.pole() { return Ok((Mate::Pole(p.id(), bit), p.life())); }
     }
     Err(ToleFail::Denied)
 }
@@ -332,12 +333,5 @@ fn answer_void(frame: &mut TrapContext, r: Result<(), ToleFail>) {
 
 fn answer_pair(frame: &mut TrapContext, token: PieToken, dir: MailCondition) {
     frame.gpr.set_x(Gprs::A0, token.get());
-    frame.gpr.set_x(
-        Gprs::A1,
-        match dir {
-            MailCondition::Pull => 0,
-            MailCondition::Push => 1,
-            MailCondition::Empty => 2,
-        },
-    );
+    frame.gpr.set_x(Gprs::A1, dir.wire());
 }
