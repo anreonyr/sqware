@@ -270,6 +270,12 @@ mod tests {
         kernel::health::syscall::resource_registration();
     }
 
+    #[cfg(debug_assertions)]
+    #[test]
+    fn task_transfer_relations() {
+        kernel::health::syscall::transfer_relations();
+    }
+
     #[test]
     fn scene() {
         kernel::boot::init().unwrap_or_else(|error| kernel::boot::fail(error));

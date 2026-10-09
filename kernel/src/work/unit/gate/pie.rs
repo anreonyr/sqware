@@ -1,6 +1,6 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieToken, TaskId};
 
@@ -119,6 +119,7 @@ fn alloc_id() -> PieToken {
 pub struct Pie<T: PieType> {
     pub(crate) permission: Permission,
     pub(crate) sire: Option<PieToken>,
+    pub(crate) lord: Weak<Task>,
     pub(crate) heir: Option<Heir>,
     pub(crate) token: PieToken,
     pub(crate) mark: T::Mark,
@@ -136,6 +137,7 @@ where
         Self {
             permission: self.permission,
             sire: self.sire,
+            lord: self.lord.clone(),
             heir: self.heir,
             token: self.token,
             mark: self.mark,
@@ -224,6 +226,36 @@ impl AnyPie {
         }
     }
 
+    pub(crate) fn lord(&self) -> &Weak<Task> {
+        match self {
+            Self::Hole(p) => &p.lord,
+            Self::Pole(p) => &p.lord,
+            Self::Nole(p) => &p.lord,
+            Self::Tole(p) => &p.lord,
+        }
+    }
+
+    pub(crate) fn parent(&mut self, token: PieToken, task: Weak<Task>) {
+        match self {
+            Self::Hole(p) => {
+                p.sire = Some(token);
+                p.lord = task;
+            }
+            Self::Pole(p) => {
+                p.sire = Some(token);
+                p.lord = task;
+            }
+            Self::Nole(p) => {
+                p.sire = Some(token);
+                p.lord = task;
+            }
+            Self::Tole(p) => {
+                p.sire = Some(token);
+                p.lord = task;
+            }
+        }
+    }
+
     pub fn owner(&self) -> Option<TaskId> {
         match self {
             AnyPie::Hole(p) => p.meta.alive().then(|| p.meta.owner()),
@@ -307,6 +339,7 @@ pub(crate) fn try_new_pie<T: PieType>(
         permit: meta.permit(permission)?,
         permission,
         sire,
+        lord: Weak::new(),
         heir: None,
         token: alloc_id(),
         mark,
@@ -335,7 +368,7 @@ pub(crate) fn accede<E: GateFail>(
 }
 
 pub(crate) fn allows<M: Mail>(task: &Task, resource: &Arc<M>, need: Need) -> bool {
-    let _graph = super::GRAPH.lock();
+    let _gate = task.gate.lock();
     task.pies.lock().iter().any(|pie| {
         M::same(pie, resource) && pie.alive() && pie.heir().is_none() && pie.allows(need)
     })

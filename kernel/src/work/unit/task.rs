@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
-use env::{TaskId, UnitFail};
+use env::{PieToken, TaskId, UnitFail};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::lock::{Level, SpinLock};
@@ -132,10 +132,19 @@ pub struct Task {
     pub(crate) life: Arc<Life>,
     state: TaskState,
     tag: AtomicU8,
+    /// false while accepting capabilities; true once exit cleanup starts.
+    pub(crate) gate: SpinLock<bool>,
+    pub(crate) version: AtomicUsize,
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
+    pub(crate) heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
     pub(crate) boarding: SpinLock<Boarding>,
 }
+
+// SAFETY: kernel capability records can cross harts inside their locked Task,
+// although PieToken intentionally forbids sending a raw user handle. Scheduler
+// state is accessed exclusively through Task::exclusive under its owning lock.
+unsafe impl Send for Task {}
 
 pub(crate) struct TaskIdent {
     pub(crate) id: TaskId,
@@ -195,6 +204,9 @@ impl PreparedTask {
                     life: self.life.clone(),
                     state: TaskState::Held,
                     tag: AtomicU8::new(TaskTag::Held as u8),
+                    gate: SpinLock::new(false),
+                    version: AtomicUsize::new(0),
+                    heirs: SpinLock::new(Vec::new()),
                     boarding: SpinLock::new_level(
                         Level::L3,
                         Boarding {

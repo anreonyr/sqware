@@ -1,4 +1,4 @@
-use alloc::sync::Weak;
+use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieFail, PieToken};
 
@@ -7,51 +7,46 @@ use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
 pub(crate) fn accord(
-    caller: &Task,
+    caller: &Arc<Task>,
     src: PieToken,
     dst: &Weak<Task>,
     subset: Permission,
     mark: Mark,
 ) -> Result<usize, PieFail> {
-    let _graph = super::GRAPH.lock();
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
-    let mut operation = None;
-    let granted = {
-        let mut pies = caller.pies.lock();
-        let pie = pies
-            .iter_mut()
-            .find(|p| p.token() == src)
-            .ok_or(PieFail::Denied)?;
-        if let AnyPie::Pole(p) = &*pie {
-            operation = Some(p.meta().backing().operation().ok_or(PieFail::Busy)?);
+    let token = super::with_pair(caller, &target, |source_closed, target_closed| {
+        if !super::live(caller, source_closed) || !super::live(&target, target_closed) {
+            return Err(PieFail::Dead);
+        }
+        let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
+        let _operation = if let AnyPie::Pole(p) = &pie {
+            let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
             if p.meta().backing().reserved() != 0 {
                 return Err(PieFail::HandedOver);
             }
-        }
+            Some(operation)
+        } else {
+            None
+        };
         if !pie.alive() {
             return Err(PieFail::Dead);
         }
-        if !pie.allows(Need::Grant) {
-            return Err(PieFail::Denied);
-        }
-        if !pie.covers(subset) {
-            return Err(PieFail::Denied);
-        }
-        if !super::pie::form_ok(pie.permission(), subset) {
+        if !pie.allows(Need::Grant)
+            || !pie.covers(subset)
+            || !super::pie::form_ok(pie.permission(), subset)
+        {
             return Err(PieFail::Denied);
         }
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
-        // **含状态订阅的组不许转授**：订阅里有一格是"观察订阅者自己"，组一旦易主，
-        // 那一格就与新持有者错配——不拒就会开出"借转授让别人的组替你观察"的口子。
-        if let AnyPie::Tole(p) = &*pie
+        if let AnyPie::Tole(p) = &pie
             && p.meta().has_subs()
         {
             return Err(PieFail::Denied);
         }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
-        let granted = match &*pie {
+        let mut granted = match &pie {
             AnyPie::Hole(p) => AnyPie::Hole(new_pie(p.meta().clone(), badge, subset, Some(src))),
             AnyPie::Pole(p) => AnyPie::Pole(super::try_new_pie(
                 p.meta().clone(),
@@ -62,57 +57,93 @@ pub(crate) fn accord(
             AnyPie::Nole(p) => AnyPie::Nole(new_pie(p.meta().clone(), badge, subset, Some(src))),
             AnyPie::Tole(p) => AnyPie::Tole(new_pie(p.meta().clone(), badge, subset, Some(src))),
         };
+        granted.parent(src, Arc::downgrade(caller));
+        // Reserve both records before changing either side, including ONLY's heir.
+        caller
+            .heirs
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| PieFail::OoM)?;
+        target
+            .pies
+            .lock()
+            .try_reserve(1)
+            .map_err(|_| PieFail::OoM)?;
+        let token = granted.token();
+        super::insert_heir(caller, src, Arc::downgrade(&target), token);
         if pie.permission().contains(Permission::ONLY) {
-            let h = Heir {
+            let mut pies = caller.pies.lock();
+            let source = pies
+                .iter_mut()
+                .find(|p| p.token() == src)
+                .expect("locked source");
+            let heir = Heir {
                 task: target.ident.id,
-                token: granted.token(),
+                token,
             };
-            match pie {
-                AnyPie::Hole(p) => p.heir = Some(h),
-                AnyPie::Pole(p) => p.heir = Some(h),
-                AnyPie::Nole(p) => p.heir = Some(h),
-                AnyPie::Tole(p) => p.heir = Some(h),
+            match source {
+                AnyPie::Hole(p) => p.heir = Some(heir),
+                AnyPie::Pole(p) => p.heir = Some(heir),
+                AnyPie::Nole(p) => p.heir = Some(heir),
+                AnyPie::Tole(p) => p.heir = Some(heir),
             }
         }
-        granted
-    };
-    let token = granted.token();
-    let mut kids = target.pies.lock();
-    if kids.try_reserve(1).is_err() {
-        drop(kids);
-        drop(granted);
-        clear_heir(caller, src);
-        return Err(PieFail::OoM);
-    }
-    kids.push(granted);
-    drop(kids);
-    drop(operation);
-    // 两处通知都必须在真实状态提交之后、且**出 `GRAPH`**：唤醒路径会 `kick` 到调度器锁，
-    // 在这里发等于在 GRAPH 内制造一条新的跨锁关系。
-    drop(_graph);
+        // Block the exclusive source before publishing the recipient's token.
+        target.pies.lock().push(granted);
+        super::changed(caller);
+        if !Arc::ptr_eq(caller, &target) {
+            super::changed(&target);
+        }
+        Ok(token)
+    })?;
     let _ = messenger::wake(
         WakeKey::Pies {
             task: target.ident.id,
         },
         &target.life(),
     );
-    // 外来 Accord 到达：目标的能力表变了。只要求复核，不代替任何判据；
-    // 没有观察者时 `signal` 不留站点。
-    let _ = messenger::signal(WakeKey::Capabilities {
-        task: target.ident.id,
-    });
+    for task in [caller.ident.id, target.ident.id] {
+        let _ = messenger::signal(WakeKey::Capabilities { task });
+    }
     Ok(token.get())
 }
 
-pub(crate) fn clear_heir(task: &Task, token: PieToken) -> bool {
+pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
+    let _gate = task.gate.lock();
+    let child = {
+        let heirs = task.heirs.lock();
+        heirs
+            .iter()
+            .find(|(parent, _, child)| *parent == token && *child == expected.token)
+            .and_then(|(_, task, _)| task.upgrade())
+    };
+    // Recheck after acquiring the source gate: usable() may have observed the
+    // source heir before accord finished publishing the child.
+    if child.is_some_and(|child| super::locate(&child, expected.token).is_some()) {
+        return false;
+    }
+    let cleared = clear_heir_locked(task, token, expected);
+    if cleared {
+        super::remove_heir(task, token, expected.token);
+    }
+    cleared
+}
+
+pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) -> bool {
     let mut pies = task.pies.lock();
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;
     };
-    match pie {
-        AnyPie::Hole(p) => p.heir.take().is_some(),
-        AnyPie::Pole(p) => p.heir.take().is_some(),
-        AnyPie::Nole(p) => p.heir.take().is_some(),
-        AnyPie::Tole(p) => p.heir.take().is_some(),
+    // A stale usable() observation must not clear a newer exclusive transfer.
+    if pie.heir() != Some(&expected) {
+        return false;
     }
+    match pie {
+        AnyPie::Hole(p) => p.heir = None,
+        AnyPie::Pole(p) => p.heir = None,
+        AnyPie::Nole(p) => p.heir = None,
+        AnyPie::Tole(p) => p.heir = None,
+    }
+    super::changed(task);
+    true
 }

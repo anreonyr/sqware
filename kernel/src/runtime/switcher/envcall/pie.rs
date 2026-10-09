@@ -115,7 +115,7 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
         return Err(E::handed_over());
     }
     if let Some(task) = current().running_task()
-        && clear_heir(&task, pie.token())
+        && clear_heir(&task, pie.token(), h)
     {
         // 就地清掉一格陈旧的 heir 也是能力状态变化（它改的是"这一枚还能不能授出"）。
         let _ = messenger::signal(WakeKey::Capabilities {
@@ -136,11 +136,7 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
             None,
         );
         let token = pie.token;
-        {
-            let mut pies = task.pies.lock();
-            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-            pies.push(AnyPie::Hole(pie));
-        }
+        gate::insert(&task, AnyPie::Hole(pie))?;
         // 本地造一枚：权限表的枚举结果变了。出锁之后要求复核一次
         // （没有观察者时 `signal` 不建站点）。
         let _ = messenger::signal(WakeKey::Capabilities {
@@ -171,11 +167,7 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
             None,
         );
         let token = pie.token;
-        {
-            let mut pies = task.pies.lock();
-            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-            pies.push(AnyPie::Nole(pie));
-        }
+        gate::insert(&task, AnyPie::Nole(pie))?;
         // 本地造一枚：权限表的枚举结果变了。
         let _ = messenger::signal(WakeKey::Capabilities {
             task: task.ident.id,
@@ -197,11 +189,13 @@ fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
         }
         let pie: Pie<Pole> = gate::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
         let token = pie.token;
-        task.pies.lock().try_reserve(1).map_err(|_| PieFail::OoM)?;
         let creator_flags = task_space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         mail::pole::open(&meta, token, &task_space, creator_flags)?;
-        task.pies.lock().push(AnyPie::Pole(pie));
+        if let Err(error) = gate::insert(&task, AnyPie::Pole(pie)) {
+            mail::pole::shut(&meta, token)?;
+            return Err(error);
+        }
         // 本地造一枚：权限表的枚举结果变了。
         let _ = messenger::signal(WakeKey::Capabilities {
             task: task.ident.id,
@@ -359,7 +353,7 @@ fn reserve(frame: &mut TrapContext, token: PieToken, hole_only: bool) -> Outcome
         }
         let mark = p.mark().get() as usize;
         Ok((
-            gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
+            gate::vestor(&task, token).unwrap_or(TaskId::new(0)),
             owner,
             mark,
         ))

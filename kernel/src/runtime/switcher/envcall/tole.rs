@@ -51,9 +51,10 @@ fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
         }
         let pie: Pie<gate::Tole> = gate::new_pie(meta, Mark::NONE, latch, None);
         let token = pie.token;
-        let mut pies = task.pies.lock();
-        pies.try_reserve(1).map_err(|_| ToleFail::OoM)?;
-        pies.push(AnyPie::Tole(pie));
+        gate::insert(&task, AnyPie::Tole(pie)).map_err(|error| match error {
+            env::PieFail::OoM => ToleFail::OoM,
+            _ => ToleFail::Dead,
+        })?;
         Ok(token.get())
     })();
     answer(frame, r);

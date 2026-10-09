@@ -284,7 +284,10 @@ pub(crate) fn spawn(
         for item in staged.iter() {
             operations.push(item.meta.backing().operation().ok_or(UnitFail::Busy)?);
         }
-        let graph = gate::GRAPH.lock();
+        let closed = caller.gate.lock();
+        if *closed {
+            return Err(UnitFail::Denied);
+        }
         let mut pies = caller.pies.lock();
         for item in staged.iter() {
             let Some(AnyPie::Pole(p)) = pies.iter().find(|p| p.token() == item.token) else {
@@ -314,10 +317,12 @@ pub(crate) fn spawn(
                         .expect("staged root");
                     let pie = pies.remove(index);
                     pie.invalidate();
+                    caller.heirs.lock().retain(|(parent, _, _)| *parent != item.token);
                     retired.push(pie);
                     item.meta.backing().unreserve();
                     leases.push(item);
                 }
+                gate::changed(caller);
                 target.set_default_entry(entry_va);
                 target
                     .ready
@@ -325,14 +330,14 @@ pub(crate) fn spawn(
             })
             .map_err(map_err);
         drop(pies);
-        drop(graph);
+        drop(closed);
         drop(staged);
         drop(operations);
         drop(retired);
         drop(leases);
         result
     })();
-    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出 `GRAPH`、也出了
+    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出任务的 `gate`、也出了
     // `NoAllocation` 之后才要求复核一次。
     if let Some(caller) = caller_id
         && first

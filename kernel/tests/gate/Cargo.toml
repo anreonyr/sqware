@@ -1,0 +1,11 @@
+[package]
+name = "kernel-gate-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+env = { path = "../../../crates/env" }
+bitflags = "2.13.1"

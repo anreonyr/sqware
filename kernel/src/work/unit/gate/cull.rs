@@ -1,204 +1,242 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 
-use env::{PieToken, TaskId};
+use env::{PieFail, PieToken, TaskId};
 
-use crate::work::mail::hole::{self, HoleMeta};
-use crate::work::mail::nole::{self, NoleMeta};
-use crate::work::mail::pole::{self, PoleMeta};
-use crate::work::mail::tole::{self, ToleMeta};
+use super::pie::{AnyPie, Heir};
+use crate::work::mail::{hole, nole, pole, tole};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
-use super::pie::AnyPie;
-use super::snap::{self, Snap};
-
-fn take(t: &Task, token: PieToken) -> Option<AnyPie> {
-    let mut pies = t.pies.lock();
-    let pos = pies.iter().position(|p| p.token() == token)?;
-    let pie = pies.remove(pos);
-    pie.invalidate();
-    Some(pie)
-}
-
 pub(crate) struct Cleanup {
-    root: Option<AnyPie>,
     removed: Vec<AnyPie>,
-    /// 这一趟摘过表的任务（`finish` 在锁外逐条要求复核）。
     tasks: Vec<TaskId>,
 }
 
 impl Cleanup {
     pub(crate) fn finish(self) -> usize {
-        let count = self.removed.len() + usize::from(self.root.is_some());
-        let Self {
-            root,
-            removed,
-            tasks,
-        } = self;
-        for pie in root.into_iter().chain(removed) {
+        let count = self.removed.len();
+        for pie in self.removed {
             if let AnyPie::Pole(p) = &pie {
                 pole::shut(p.meta(), p.token).expect("cull: unmap token");
             }
             drop(pie);
         }
-        // 调用点都在 `drop(GRAPH)` 之后：唤醒路径不在这里制造跨锁关系。
-        for task in tasks {
+        // All task gates have been released before unmapping and notifications.
+        for task in self.tasks {
             let _ = messenger::signal(WakeKey::Capabilities { task });
         }
         count
     }
 }
 
-pub(crate) fn cull(root: (Arc<Task>, PieToken), snap: &Snap) -> Cleanup {
-    let (root_task, root_token) = root;
-    let sole = root_task.pies.lock().iter().find(|pie| pie.token() == root_token)
-        .is_some_and(|pie| matches!(pie, AnyPie::Pole(p) if p.meta().backing().exclusive() && p.heir.is_none()));
-    if sole {
-        // 先备账再动表：名册备不下就整趟不动（与下面"改图之前先备够"同一条纪律）——
-        // 表动过而通知没处记，就是一次漏报。
-        let mut tasks = Vec::new();
-        if tasks.try_reserve(1).is_err() {
-            return Cleanup {
-                root: None,
-                removed: Vec::new(),
-                tasks,
-            };
-        }
-        let root = take(&root_task, root_token);
-        if root.is_some() {
-            tasks.push(root_task.ident.id);
-        }
-        return Cleanup {
-            root,
-            removed: Vec::new(),
-            tasks,
-        };
-    }
-    let mut root = None;
-    let mut removed = Vec::new();
+/// Collect actual transfer descendants, plus the root's parent for unlinking.
+/// Each read is under one task gate. with_tasks later validates every version.
+#[allow(clippy::type_complexity)]
+pub(super) fn collect(
+    task: &Arc<Task>,
+    token: PieToken,
+    recursive: bool,
+) -> Result<(Vec<(Arc<Task>, usize)>, Vec<(Arc<Task>, PieToken)>), PieFail> {
     let mut tasks = Vec::new();
-    let mut frontier = Vec::new();
-    // Reserve for every actual token before changing the graph.
-    let count = snap
-        .iter()
-        .filter_map(|weak| weak.upgrade())
-        .map(|task| task.pies.lock().len())
-        .sum::<usize>()
-        + 1;
-    if removed.try_reserve(count).is_err()
-        || frontier.try_reserve(count).is_err()
-        || tasks.try_reserve(count).is_err()
-    {
-        return Cleanup {
-            root,
-            removed,
-            tasks,
-        };
-    }
-    root = take(&root_task, root_token);
-    if root.is_some() {
-        tasks.push(root_task.ident.id);
-    }
-    frontier.push(root_token);
+    let mut nodes = Vec::new();
+    nodes.try_reserve(1).map_err(|_| PieFail::OoM)?;
+    nodes.push((task.clone(), token));
     let mut cursor = 0;
-    while cursor < frontier.len() {
-        let token = frontier[cursor];
-        cursor += 1;
-        let Some(kin) = snap::heirs(token, snap) else {
-            break;
-        };
-        for (task, token) in kin {
-            if let Some(pie) = take(&task, token) {
-                frontier.push(token);
-                removed.push(pie);
-                if !tasks.contains(&task.ident.id) {
-                    tasks.push(task.ident.id);
+    while cursor < nodes.len() {
+        let (task, token) = nodes[cursor].clone();
+        let parent = {
+            let _gate = task.gate.lock();
+            super::remember(&mut tasks, &task, task.version.load(Ordering::Relaxed))?;
+            let pie = super::locate(&task, token).ok_or(PieFail::Busy)?;
+            let parent = if cursor == 0 {
+                pie.lord().upgrade()
+            } else {
+                None
+            };
+            if cursor == 0 || recursive {
+                let heirs = task.heirs.lock();
+                let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
+                for (_, child, child_token) in heirs[start..]
+                    .iter()
+                    .take_while(|(source, _, _)| *source == token)
+                {
+                    if let Some(child) = child.upgrade() {
+                        nodes.try_reserve(1).map_err(|_| PieFail::OoM)?;
+                        nodes.push((child, *child_token));
+                    }
                 }
+            }
+            parent
+        };
+        if let Some(parent) = parent {
+            let _gate = parent.gate.lock();
+            super::remember(&mut tasks, &parent, parent.version.load(Ordering::Relaxed))?;
+        }
+        cursor += 1;
+    }
+    tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
+    Ok((tasks, nodes))
+}
+
+/// The root and all relevant tasks are locked; no allocation after this point.
+pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
+    let pie = {
+        let mut pies = task.pies.lock();
+        let at = pies.iter().position(|p| p.token() == token)?;
+        pies.remove(at)
+    };
+    pie.invalidate();
+    if let (Some(parent), Some(lord)) = (pie.sire(), pie.lord().upgrade()) {
+        super::remove_heir(&lord, parent, token);
+        super::accord::clear_heir_locked(
+            &lord,
+            parent,
+            Heir {
+                task: task.ident.id,
+                token,
+            },
+        );
+        super::changed(&lord);
+    }
+    task.heirs.lock().retain(|(parent, _, _)| *parent != token);
+    super::changed(task);
+    Some(pie)
+}
+
+pub(super) fn cull(
+    task: &Arc<Task>,
+    token: PieToken,
+    caller: Option<&Arc<Task>>,
+    closing: bool,
+) -> Result<Cleanup, PieFail> {
+    for _ in 0..super::RETRIES {
+        if super::locate(task, token).is_none() {
+            return Err(PieFail::Denied);
+        }
+        let (mut tasks, nodes) = match collect(task, token, true) {
+            Err(PieFail::Busy) => continue,
+            result => result?,
+        };
+        if let Some(caller) = caller {
+            let _gate = caller.gate.lock();
+            if let Err(error) =
+                super::remember(&mut tasks, caller, caller.version.load(Ordering::Relaxed))
+            {
+                if error == PieFail::Busy {
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+        tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
+        let mut removed = Vec::new();
+        let mut changed = Vec::new();
+        removed.try_reserve(nodes.len()).map_err(|_| PieFail::OoM)?;
+        changed.try_reserve(tasks.len()).map_err(|_| PieFail::OoM)?;
+        let result = super::with_tasks(&tasks, || {
+            let root = super::locate(task, token).ok_or(PieFail::Denied)?;
+            if let Some(caller) = caller {
+                let parent = root.sire().ok_or(PieFail::Denied)?;
+                let lord = root.lord().upgrade().ok_or(PieFail::Denied)?;
+                if !Arc::ptr_eq(&lord, caller) || super::locate(caller, parent).is_none() {
+                    return Err(PieFail::Denied);
+                }
+            }
+            // Exit must withdraw authority even if mapping/construction is busy.
+            // Normal release/revoke retain their existing Busy checks.
+            let _operation = if !closing && let AnyPie::Pole(p) = &root {
+                let operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
+                if p.meta().backing().reserved() != 0 {
+                    return Err(PieFail::Busy);
+                }
+                Some(operation)
+            } else {
+                None
+            };
+            // Descendants first, so each parent still exists while unlinking.
+            for (holder, token) in nodes.iter().rev() {
+                if let Some(pie) = take(holder, *token) {
+                    removed.push(pie);
+                }
+            }
+            for (holder, _) in &tasks {
+                changed.push(holder.ident.id);
+            }
+            Ok(())
+        });
+        match result {
+            Err(PieFail::Busy) => {
+                core::hint::spin_loop();
+                continue;
+            }
+            result => result??,
+        }
+        return Ok(Cleanup {
+            removed,
+            tasks: changed,
+        });
+    }
+    Err(PieFail::Busy)
+}
+
+/// Close admission before collecting. Resource sealing still runs even when
+/// allocating the removal list fails, so a dead owner cannot retain authority.
+pub(crate) fn doom(task: &Arc<Task>) {
+    let tokens = {
+        let mut closed = task.gate.lock();
+        *closed = true;
+        super::changed(task);
+        let mut tokens = Vec::new();
+        let pies = task.pies.lock();
+        if tokens.try_reserve(pies.len()).is_ok() {
+            tokens.extend(pies.iter().map(AnyPie::token));
+        }
+        tokens
+    };
+    seal_owned(task);
+    for token in tokens {
+        loop {
+            match cull(task, token, None, true) {
+                Ok(cleanup) => {
+                    cleanup.finish();
+                    break;
+                }
+                // No syscall caller can retry an exit hook. Do not abandon
+                // borrowed descendants merely because a version changed.
+                Err(PieFail::Busy) => core::hint::spin_loop(),
+                Err(_) => break,
             }
         }
     }
-    Cleanup {
-        root,
-        removed,
-        tasks,
-    }
 }
 
-/// 退场那一趟：**先封印，再看快照摘副本**。
-pub(crate) fn doom(task: &Arc<Task>) {
-    let graph = super::GRAPH.lock();
-    let tid = task.ident.id;
-    let _ = seal_owned(tid, task);
-    // **摘副本尽力而为**：它要分配（token 快照、frontier、unmaps），备不出就只少摘几枚
-    // 副本——副本被摘是清账，不是判死（判死已经在上面做完了）。
-    let tokens: Vec<PieToken> = {
-        let pies = task.pies.lock();
-        let mut v: Vec<PieToken> = Vec::new();
-        if v.try_reserve(pies.len()).is_ok() {
-            v.extend(pies.iter().map(|p| p.token()));
-        }
-        v
-    };
-    if tokens.is_empty() {
+fn seal_owned(task: &Task) {
+    if task.ident.id.get() == 0 {
         return;
     }
-    let snap = snap::snap();
-    let mut cleanups = Vec::new();
-    if cleanups.try_reserve(tokens.len()).is_err() {
-        return;
-    }
-    for token in tokens {
-        cleanups.push(cull((task.clone(), token), &snap));
-    }
-    drop(graph);
-    for cleanup in cleanups {
-        cleanup.finish();
-    }
-}
-
-/// 退场者铸的那些资源，**就地封印**（四族一起）。返封了几枚。
-///
-/// 两条凭据：`seal` 只置状态、不摘表项 ⇒ 表在整趟里是稳的，游标因此安全；"归它的枚数"在开扫
-/// 之前就定了、每轮封掉一枚 ⇒ 循环必收敛。**代价**：每轮重扫到第 `seen` 枚，O(n²)，而
-/// `n` 是一个 task 的表长（几十枚量级）——换来的是这条路上一次分配都不需要。
-fn seal_owned(tid: TaskId, task: &Arc<Task>) -> usize {
-    if tid.get() == 0 {
-        return 0;
-    }
-    let mut sealed = 0;
-    let mut seen = 0usize;
+    let mut after = 0;
     loop {
-        let hit = {
-            let pies = task.pies.lock();
-            pies.iter()
-                .filter(|p| p.owner_task() == tid)
-                .nth(seen)
-                .map(|p| match p {
-                    AnyPie::Hole(h) => Resource::Hole(h.meta().clone()),
-                    AnyPie::Pole(pl) => Resource::Pole(pl.meta().clone()),
-                    AnyPie::Nole(n) => Resource::Nole(n.meta().clone()),
-                    AnyPie::Tole(t) => Resource::Tole(t.meta().clone()),
-                })
+        let pie = {
+            let _gate = task.gate.lock();
+            task.pies
+                .lock()
+                .iter()
+                .filter(|pie| pie.owner_task() == task.ident.id)
+                .filter(|pie| pie.token().get() > after)
+                .min_by_key(|pie| pie.token().get())
+                .cloned()
         };
-        let Some(res) = hit else {
+        let Some(pie) = pie else {
             break;
         };
-        match res {
-            Resource::Hole(m) => hole::seal(&m),
-            Resource::Pole(m) => pole::seal(&m),
-            Resource::Nole(m) => nole::seal(&m),
-            Resource::Tole(m) => tole::seal(&m),
+        after = pie.token().get();
+        match pie {
+            AnyPie::Hole(p) => hole::seal(p.meta()),
+            AnyPie::Pole(p) => pole::seal(p.meta()),
+            AnyPie::Nole(p) => nole::seal(p.meta()),
+            AnyPie::Tole(p) => tole::seal(p.meta()),
         }
-        sealed += 1;
-        seen += 1;
     }
-    sealed
-}
-
-enum Resource {
-    Hole(Arc<HoleMeta>),
-    Pole(Arc<PoleMeta>),
-    Nole(Arc<NoleMeta>),
-    Tole(Arc<ToleMeta>),
 }

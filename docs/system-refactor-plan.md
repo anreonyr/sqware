@@ -363,3 +363,40 @@ System 只提供通用声明驱动的能力：
 验证覆盖生产 Construction 转授、Service 供给持有／回收、Control 查询与 RPC 来源校验、IdentityName 发布准入。完整宿主套件通过；架构守卫禁止 System 导入 Account 实现／API／客户端或持有帐号与消费者名。真实 system-fault 保留认领过期、准备／启动失败、清理 Pending／失败重试、owner 死亡与资源回收，并新增相同 Login principal 的非 Login 任务拒绝、获构造资格后的越界 Subject 拒绝。
 
 最终 release 场景验证：accept 5.39 秒、system-fault 10.76 秒、product 登录交互 2.93 秒通过；交互驱动结果为 `ok`，两个 cat 会话 Task 不同、Principal 相同，终端在 EOF／中断后恢复。权限与生命周期两项独立复审均未发现新的阻断问题。
+
+### 2026-10-09：能力转授记录与任务锁
+
+来源查询原先通过父 token 扫描所有任务的能力表；撤销和 Forget 也靠全系统扫描寻找子能力，并由全局 `GRAPH` 串行化修改。现在删除 `GRAPH` 和能力快照提供方，不新增内核全局变量。
+
+`Pie` 保留父 token 字段 `sire`，增加 `lord: Weak<Task>` 指向父能力所在任务。根能力的 lord 为空；转授和 Forget 同时设置 sire／lord。`Task` 增加 `heirs`，按父 token 排序保存父 token、接收任务弱引用和子 token；原有 `Pie.heir` 仍只表达独占转授。来源查询只访问当前任务和父任务；撤销只收集实际后代及需要解除记录的父任务，不再扫描名册。任务内能力查找和排序 Vec 的插入／删除仍有线性成本，本次不宣称它们都变为常数时间。
+
+每个 Task 的 `gate` 锁保护能力及转授关系修改，锁内 bool 表示退出清理是否已关闭能力接收；`version` 记录修改次数。转授按 TaskId 顺序锁住双方，自转授只锁一次。撤销／Forget 先逐任务收集范围及 version，再按 TaskId 顺序锁住涉及任务，复核全部 version 后提交；普通调用最多重试八轮，持续变化返回 Busy。退出没有调用者替它重试，因此继续处理版本冲突；退出仍保留原先分配失败时先封印自有资源、尽力清表的行为。
+
+授予先为两边记录预留空间，再修改独占状态并发布子能力；分配失败不提交半条关系。Forget 将直接子能力的 sire／lord 及父任务记录一起更新；释放、撤销、退出同步解除父子记录。本地创建、启动资源交付、缩权与构造提交也取得任务锁并更新 version。来源查询复核当前父关系和父 token 存在性，缓存任务身份不代替验证。
+
+任务锁按编号取得并逆序释放，最后才恢复中断；资源取消映射和通知在任务锁之外完成。debug 锁检查原来只有八个固定记录槽，现改为在多任务加锁前可失败地预留记录空间，检查本身不分配；真实自检覆盖同时取得十七个任务锁的撤销。独占来源在接收端能力发布前进入转授状态；清理旧 heir 会在取得来源任务锁后复核接收端，既不误清尚在提交的转授，也不擦掉后来建立的新 heir。
+
+退出清理须撤回借入后再次授出的内存能力，即使相关内存操作正在进行。普通释放／撤销保留 Busy 检查；退出走强制撤回路径，与原来的退出语义一致。新增回归先复现误用普通 Busy 检查导致的遗漏，再验证修复；真实内核自检也覆盖该情形。
+
+新增 `kernel/tests/gate` 直接编译生产 gate 模块，以宿主线程运行并发转授、撤销、Forget 和退出，用线程内分配失败注入验证回滚。仅任务调度、映射和通知由宿主替代，实际自旋锁、中断恢复、Permit 与映射另外由 QEMU 自检和整机场景覆盖。用例也确认：持有一个无关任务锁时，其他任务间的转授仍能完成。
+
+复现宿主测试与内核检查：
+
+```sh
+cargo test --manifest-path kernel/tests/gate/Cargo.toml --target x86_64-unknown-linux-gnu
+cargo check -p kernel --all-targets
+```
+
+独立运行健康面时，cargo-qtest 可通过字面 `--` 将 `--skip scene` 交给测试过滤器；QEMU 参数仍来自 `scripts/qemu-args.nu`。这避免将未提供 initrd 的预期 scene 失败混入健康面结果：
+
+```sh
+mapfile -t board < <(nu scripts/qemu-args.nu --board-only)
+qargs=()
+for arg in "${board[@]}"; do qargs+=("--qemu-arg=$arg"); done
+RUSTFLAGS='-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium' \
+  cargo qtest --target riscv64gc-unknown-none-elf --package kernel "${qargs[@]}" -- --skip scene
+```
+
+验证过程中，同步 Account 新提交之前的中间版本曾在第十五次 accept 出现通用安装失败：`accept: install unit: 3`，随后 `PUSHED=29 REAPED=28` 导致整机等待超时。增加失败上下文的诊断版连续二十次未再出现该失败，无法据此确定那次安装失败的原因；退出 Busy 回归的修复也不作为它的确定归因。诊断代码已移除。同步期间保留了 `2c7fa231` 的全部 Account 部署与测试改动，并重新验证合并后的实现；被停止的同步前运行不计入最终重复结果。
+
+最终合并版验证：312 项宿主测试通过（独立套件 272、内核转授 19、IdentityBook 13、mold 8；原有 6 个 ignored 文档示例不计入）。新增内核转授用例连续二十轮全部通过；真实内核健康面 32 项通过，scene 单独运行。kernel／programs 全目标检查与 diff 检查通过。无临时诊断的最终 accept 连续 20/20 通过，耗时 10.02–18.03 秒、中位数 11.70 秒；system-fault 18.41 秒通过，product 完整登录交互 7.47 秒通过且驱动结果为 ok。重复次数只描述本轮观察结果，不据此保证所有运行条件下没有超时。

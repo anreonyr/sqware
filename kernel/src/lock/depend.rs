@@ -2,6 +2,8 @@ use core::cell::UnsafeCell;
 
 use alloc::boxed::Box;
 use alloc::format;
+#[cfg(debug_assertions)]
+use alloc::vec::Vec;
 
 use super::OnceLock;
 use crate::hart;
@@ -73,20 +75,18 @@ struct Held {
 #[cfg(debug_assertions)]
 struct HeldSet {
     len: usize,
-    slots: [Held; MAX_HELD],
+    slots: Vec<Held>,
 }
 
 #[cfg(debug_assertions)]
 impl HeldSet {
-    const fn new() -> HeldSet {
-        HeldSet {
+    fn new() -> Result<HeldSet, DepInitError> {
+        let mut slots = Vec::new();
+        slots.try_reserve_exact(MAX_HELD).map_err(|_| DepInitError::OutOfMemory)?;
+        Ok(HeldSet {
             len: 0,
-            slots: [Held {
-                addr: 0,
-                level: None,
-                caller: 0,
-            }; MAX_HELD],
-        }
+            slots,
+        })
     }
 
     fn max_level(&self) -> Option<Level> {
@@ -98,14 +98,14 @@ impl HeldSet {
     }
 
     fn push(&mut self, addr: usize, level: Option<Level>, caller: usize) -> Result<(), ()> {
-        if self.len >= MAX_HELD {
+        if self.len >= self.slots.capacity() {
             return Err(());
         }
-        self.slots[self.len] = Held {
+        self.slots.push(Held {
             addr,
             level,
             caller,
-        };
+        });
         self.len += 1;
         Ok(())
     }
@@ -113,7 +113,7 @@ impl HeldSet {
     fn remove(&mut self, addr: usize) -> Result<(), ()> {
         for i in 0..self.len {
             if self.slots[i].addr == addr {
-                self.slots.copy_within(i + 1..self.len, i);
+                self.slots.remove(i);
                 self.len -= 1;
                 return Ok(());
             }
@@ -149,8 +149,18 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
     let n = hart_count.clamp(1, crate::layout::MAX_HART_SLOTS);
     let mut cells = Box::<[HeldCell]>::try_new_uninit_slice(n)
         .map_err(|_| DepInitError::OutOfMemory)?;
-    for cell in cells.iter_mut() {
-        cell.write(HeldCell(UnsafeCell::new(HeldSet::new())));
+    for index in 0..n {
+        let set = match HeldSet::new() {
+            Ok(set) => set,
+            Err(error) => {
+                for cell in &mut cells[..index] {
+                    // SAFETY: these earlier entries were initialized below.
+                    unsafe { cell.assume_init_drop(); }
+                }
+                return Err(error);
+            }
+        };
+        cells[index].write(HeldCell(UnsafeCell::new(set)));
     }
     // SAFETY: every slot has been initialized above.
     let pool: &'static [HeldCell] = Box::leak(unsafe { cells.assume_init() });
@@ -204,4 +214,28 @@ pub(crate) fn release(addr: usize) {
     if held.remove(addr).is_err() {
         report("release of unheld lock", addr, 0);
     }
+}
+
+/// Allocate before acquiring a variable number of task gates. Never allocate
+/// from acquire/check themselves, or keep a HeldSet borrow across allocation.
+pub(crate) fn reserve(_additional: usize) -> Result<(), ()> {
+    #[cfg(debug_assertions)]
+    {
+        // SAFETY: pin this hart's bookkeeping while allocation takes inner locks.
+        let _trap = unsafe { super::trap::TrapGuard::save() };
+        let Some(set) = held() else {
+            return Ok(());
+        };
+        let wanted = set.len.checked_add(_additional).ok_or(())?;
+        if set.slots.capacity() >= wanted {
+            return Ok(());
+        }
+        let mut slots = Vec::new();
+        slots.try_reserve_exact(wanted).map_err(|_| ())?;
+        let set = held().expect("depend initialized");
+        slots.extend_from_slice(&set.slots);
+        let old = core::mem::replace(&mut set.slots, slots);
+        drop(old);
+    }
+    Ok(())
 }

@@ -34,7 +34,7 @@ pub(crate) fn reduce(
     subset: Permission,
 ) -> Result<(), PieFail> {
     reduce_locked(task, token, subset)?;
-    // 表里那一枚**就地**缩了权：出 `GRAPH`/`pies` 之后要求持有者复核一次。
+    // 表里那一枚**就地**缩了权：释放任务的 `gate`/`pies` 之后要求持有者复核一次。
     let _ =
         crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Capabilities {
             task: task.ident.id,
@@ -90,19 +90,23 @@ fn reduce_locked(
                 .map_err(|_| PieFail::Denied)?;
         }
         crate::work::mail::pole::narrow(meta, token, flags)?;
-        let _graph = super::GRAPH.lock();
+        let _gate = task.gate.lock();
         let mut pies = task.pies.lock();
         let pie = pies
             .iter_mut()
             .find(|pie| pie.token() == token)
             .ok_or(PieFail::Denied)?;
-        return narrow(pie, subset);
+        narrow(pie, subset)?;
+        super::changed(task);
+        return Ok(());
     }
-    let _graph = super::GRAPH.lock();
+    let _gate = task.gate.lock();
     let mut pies = task.pies.lock();
     let pie = pies
         .iter_mut()
         .find(|pie| pie.token() == token)
         .ok_or(PieFail::Denied)?;
-    narrow(pie, subset)
+    narrow(pie, subset)?;
+    super::changed(task);
+    Ok(())
 }
