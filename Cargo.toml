@@ -26,6 +26,7 @@ members = [
     "crates/mold",
     "crates/wire",
     "crates/ipc",
+    "crates/lisp",
     "programs/src/system/client",
     "programs/src/system/api",
     "programs/src/service/account/api",
