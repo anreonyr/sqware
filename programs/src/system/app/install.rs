@@ -3,16 +3,13 @@ use super::{boot, bootstrap::Boot, life, policy, wait};
 use crate::system::{control, identity, launch, loader, publication};
 use ::schedule::Resources;
 use alloc::vec::Vec;
-pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, &'static str> {
+pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, crate::system::app::InstallError> {
     let status = boot::status();
     let mut resources = Resources::new();
     publication::register(&mut resources)?;
     resources
-        .insert(super::config::namespaces(boot.machine))
-        .map_err(|_| "publication configuration")?;
-    resources
-        .insert(Supplies::new(boot.machine, boot.accounts, boot.catalog))
-        .map_err(|_| "assembly supplies")?;
+        .insert(super::config::namespaces(boot.machine))?
+        .insert(Supplies::new(boot.machine, boot.accounts, boot.catalog))?;
     control::install(
         &mut resources,
         status.clone(),
@@ -34,36 +31,30 @@ pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, &'static str> 
     identity::install(&mut resources)?;
     loader::install(&mut resources)?;
     launch::install(&mut resources)?;
-    macro_rules! put {
-        ($value:expr) => {
-            resources
-                .insert($value)
-                .map_err(|_| "app resource capacity")?
-        };
-    }
-    put!(status);
-    put!(boot::Faces(Vec::new()));
-    put!(boot.machine);
 
-    put!(policy::Flow {
-        settling: false,
-        forced: false,
-        done: false
-    });
-    put!(policy::Activity {
-        owed: 0,
-        quiet: env::chrono::clock(),
-        walking: false
-    });
-    put!(policy::Bound(env::Wait::POLL));
-    put!(policy::Shutoff(None));
-    put!(wait::Waiting::new().map_err(|_| "app waiting pile")?);
-    put!(wait::Interests {
-        tokens: Vec::new(),
-        writes: Vec::new(),
-        subs: Vec::new(),
-        armed: false
-    });
-    put!(life::Deadline(0));
+    resources
+        .insert(status)?
+        .insert(boot::Faces(Vec::new()))?
+        .insert(boot.machine)?
+        .insert(policy::Flow {
+            settling: false,
+            forced: false,
+            done: false
+        })?
+        .insert(policy::Activity {
+            owed: 0,
+            quiet: env::chrono::clock(),
+            walking: false
+        })?
+        .insert(policy::Bound(env::Wait::POLL))?
+        .insert(policy::Shutoff(None))?
+        .insert(wait::Waiting::new()?)?
+        .insert(wait::Interests {
+            tokens: Vec::new(),
+            writes: Vec::new(),
+            subs: Vec::new(),
+            armed: false
+        })?
+        .insert(life::Deadline(0))?;
     Ok(resources)
 }

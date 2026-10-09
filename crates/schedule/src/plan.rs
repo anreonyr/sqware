@@ -15,12 +15,13 @@ pub struct Plan<E> {
     pub(crate) steps: Vec<System<E>>,
 }
 impl Cursor {
-    pub fn reset(&mut self) {
+    pub fn reset(&mut self) -> &mut Self {
         self.at = 0;
         self.finishing = false;
         if let Some(nested) = &mut self.nested {
             nested.reset();
         }
+        self
     }
 }
 impl<E> Plan<E> {
@@ -48,10 +49,11 @@ impl<E> Plan<E> {
 
 impl<E> Plan<E> {
     /// Bind declared resources before execution. Missing resources fail only when their step runs.
-    pub fn prepare(&mut self, resources: &Resources<'_>) {
+    pub fn prepare(&mut self, resources: &Resources<'_>) -> &mut Self {
         for step in &mut self.steps {
             step.prepare(resources);
         }
+        self
     }
 }
 struct Mapped<E, F, M> {

@@ -7,9 +7,9 @@ pub(crate) struct Waiting {
     subs: Vec<Sub>,
 }
 impl Waiting {
-    pub(crate) fn new() -> Result<Self, ()> {
+    pub(crate) fn new() -> env::PieResult<Self> {
         Ok(Self {
-            pile: Pile::unseal(false).map_err(|_| ())?,
+            pile: Pile::unseal(false)?,
             members: Vec::new(),
             subs: Vec::new(),
         })

@@ -50,7 +50,7 @@ impl<'r> Resources<'r> {
             entries: Vec::new(),
         }
     }
-    pub fn insert<T: 'static>(&mut self, value: T) -> Result<(), AccessError> {
+    pub fn insert<T: 'static>(&mut self, value: T) -> Result<&mut Self, AccessError> {
         if self.entries.iter().any(|e| e.id == TypeId::of::<T>()) {
             return Err(AccessError::Duplicate);
         }
@@ -59,15 +59,15 @@ impl<'r> Resources<'r> {
             id: TypeId::of::<T>(),
             value: RefCell::new(Value::Owned(Box::new(value))),
         });
-        Ok(())
+        Ok(self)
     }
-    pub fn borrow<T: 'static>(&mut self, value: &'r mut T) -> Result<(), AccessError> {
+    pub fn borrow<T: 'static>(&mut self, value: &'r mut T) -> Result<&mut Self, AccessError> {
         self.bind(TypeId::of::<T>(), Value::Write(value))
     }
-    pub fn observe<T: 'static>(&mut self, value: &'r T) -> Result<(), AccessError> {
+    pub fn observe<T: 'static>(&mut self, value: &'r T) -> Result<&mut Self, AccessError> {
         self.bind(TypeId::of::<T>(), Value::Read(value))
     }
-    fn bind(&mut self, id: TypeId, value: Value<'r>) -> Result<(), AccessError> {
+    fn bind(&mut self, id: TypeId, value: Value<'r>) -> Result<&mut Self, AccessError> {
         if self.entries.iter().any(|e| e.id == id) {
             return Err(AccessError::Duplicate);
         }
@@ -76,7 +76,7 @@ impl<'r> Resources<'r> {
             id,
             value: RefCell::new(value),
         });
-        Ok(())
+        Ok(self)
     }
     pub(crate) fn index(&self, id: TypeId, cached: usize) -> Result<usize, AccessError> {
         if self.entries.get(cached).is_some_and(|entry| entry.id == id) {
