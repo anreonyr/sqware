@@ -41,8 +41,7 @@ pub(super) fn faces(
 ) -> Result<Progress, Fail> {
     faces
         .0
-        .try_reserve_exact(Grant::ALL.len())
-        .map_err(|_| Fail::Room)?;
+        .try_reserve_exact(Grant::ALL.len())?;
     for grant in Grant::ALL {
         let (token, _) = mount::entry(grant.mark(), grant.name()).map_err(|_| Fail::Tree)?;
         port::ship(
@@ -83,7 +82,7 @@ pub(super) fn receive(
                 Err(_) => continue,
             };
             let (wire, _) = incoming.request;
-            inbox.0.try_reserve(1).map_err(|_| Fail::Room)?;
+            inbox.0.try_reserve(1)?;
             inbox.0.push_back(Incoming {
                 request: IdentityRequest {
                     from: incoming.from,
@@ -100,7 +99,7 @@ pub(super) fn budget(
     inbox: Res<Inbox>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    dispatch.begin(inbox.0.len()).map_err(|_| Fail::Room)?;
+    dispatch.begin(inbox.0.len())?;
     Ok(Progress::Done)
 }
 pub(super) fn select(
@@ -118,8 +117,7 @@ pub(super) fn select(
             .select(Invocation {
                 key: (),
                 cursor: Default::default(),
-            })
-            .map_err(|_| Fail::Room)?;
+            })?;
     }
     Ok(Progress::Done)
 }
@@ -136,8 +134,7 @@ pub(super) fn reply(mut current: ResMut<Current>) -> Result<Progress, Fail> {
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
     if dispatch
-        .take_result()
-        .map_err(|_| Fail::Room)?
+        .take_result()?
         .result
         .is_err()
     {

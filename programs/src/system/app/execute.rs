@@ -9,7 +9,10 @@ pub fn run() -> Result<(), env::Reason> {
     if list.is_empty() {
         return Err(start::E_PROGRAM);
     }
-    let resources = install::resources(boot).map_err(|_| start::E_TABLE)?;
+    let resources = install::resources(boot).map_err(|error| {
+        programs::debug::put(&alloc::format!("system: install {}", error));
+        start::E_TABLE
+    })?;
     resources
         .write::<crate::system::control::Startup>()
         .map_err(|_| start::E_TABLE)?

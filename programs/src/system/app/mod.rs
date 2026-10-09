@@ -24,3 +24,32 @@ pub(crate) enum Fault {
     Idle,
     Shutdown,
 }
+
+#[derive(Debug)]
+pub(crate) enum InstallError {
+    Resource(::schedule::resource::AccessError),
+    Capability(erra::Error<env::PieFail>),
+}
+impl From<::schedule::resource::AccessError> for InstallError {
+    fn from(error: ::schedule::resource::AccessError) -> Self { Self::Resource(error) }
+}
+impl From<erra::Error<env::PieFail>> for InstallError {
+    fn from(error: erra::Error<env::PieFail>) -> Self { Self::Capability(error) }
+}
+impl core::fmt::Display for InstallError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Resource(error) => write!(f, "resource: {:?}", error),
+            Self::Capability(error) => write!(f, "capability: {}", error),
+        }
+    }
+}
+impl From<::schedule::resource::AccessError> for Fault {
+    fn from(_: ::schedule::resource::AccessError) -> Self { Self::Room }
+}
+impl From<::schedule::DispatchError> for Fault {
+    fn from(_: ::schedule::DispatchError) -> Self { Self::Room }
+}
+impl From<alloc::collections::TryReserveError> for Fault {
+    fn from(_: alloc::collections::TryReserveError) -> Self { Self::Room }
+}

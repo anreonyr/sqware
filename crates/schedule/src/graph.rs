@@ -33,7 +33,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         name: &'static str,
         phase: L,
         f: impl IntoSystem<M, E>,
-    ) -> Result<(), BuildError> {
+    ) -> Result<&mut Self, BuildError> {
         if self.nodes.iter().any(|n| n.name == name) {
             return Err(BuildError::Duplicate);
         }
@@ -53,14 +53,14 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
             phase,
             system,
         });
-        Ok(())
+        Ok(self)
     }
     pub fn add_plan(
         &mut self,
         name: &'static str,
         phase: L,
         plan: Plan<E>,
-    ) -> Result<(), BuildError> {
+    ) -> Result<&mut Self, BuildError> {
         self.node(
             name,
             phase,
@@ -74,7 +74,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         select: impl IntoSystem<M, E>,
         children: Vec<(K, Plan<C>)>,
         finish: impl IntoSystem<N, E>,
-    ) -> Result<(), BuildError> {
+    ) -> Result<&mut Self, BuildError> {
         let select = select.into_system();
         let finish = finish.into_system();
         for system in [&select, &finish] {
@@ -99,7 +99,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
             super::compose::subplans(select, children, finish),
         )
     }
-    fn node(&mut self, name: &'static str, phase: L, system: System<E>) -> Result<(), BuildError> {
+    fn node(&mut self, name: &'static str, phase: L, system: System<E>) -> Result<&mut Self, BuildError> {
         if self.nodes.iter().any(|n| n.name == name) {
             return Err(BuildError::Duplicate);
         }
@@ -109,38 +109,40 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
             phase,
             system,
         });
-        Ok(())
+        Ok(self)
     }
-    pub fn before(&mut self, first: &'static str, second: &'static str) -> Result<(), BuildError> {
+    pub fn before(&mut self, first: &'static str, second: &'static str) -> Result<&mut Self, BuildError> {
         self.edges.try_reserve(1).map_err(|_| BuildError::Room)?;
         self.edges.push((first, second));
-        Ok(())
+        Ok(self)
     }
-    pub fn build(mut self) -> Result<Plan<E>, BuildError> {
-        if self.edges.iter().any(|(a, b)| {
-            !self.nodes.iter().any(|n| n.name == *a) || !self.nodes.iter().any(|n| n.name == *b)
+    /// Take the current configuration, leaving an empty schedule even if building fails.
+    pub fn build(&mut self) -> Result<Plan<E>, BuildError> {
+        let mut schedule = core::mem::replace(self, Self::new());
+        if schedule.edges.iter().any(|(a, b)| {
+            !schedule.nodes.iter().any(|n| n.name == *a) || !schedule.nodes.iter().any(|n| n.name == *b)
         }) {
             return Err(BuildError::Unknown);
         }
         let mut steps = Vec::new();
         steps
-            .try_reserve(self.nodes.len())
+            .try_reserve(schedule.nodes.len())
             .map_err(|_| BuildError::Room)?;
-        while !self.nodes.is_empty() {
-            let pick = self
+        while !schedule.nodes.is_empty() {
+            let pick = schedule
                 .nodes
                 .iter()
                 .enumerate()
                 .filter(|(_, n)| {
-                    !self.nodes.iter().any(|other| other.phase < n.phase)
-                        && !self.edges.iter().any(|(a, b)| {
-                            *b == n.name && self.nodes.iter().any(|other| other.name == *a)
+                    !schedule.nodes.iter().any(|other| other.phase < n.phase)
+                        && !schedule.edges.iter().any(|(a, b)| {
+                            *b == n.name && schedule.nodes.iter().any(|other| other.name == *a)
                         })
                 })
                 .next()
                 .map(|(i, _)| i)
                 .ok_or(BuildError::Cycle)?;
-            steps.push(self.nodes.remove(pick).system);
+            steps.push(schedule.nodes.remove(pick).system);
         }
         Ok(Plan { steps })
     }

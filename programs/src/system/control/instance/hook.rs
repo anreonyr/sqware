@@ -30,8 +30,7 @@ pub fn budget(
 ) -> Result<Progress, Fail> {
     active.next = 0;
     dispatch
-        .begin(control.instances.len())
-        .map_err(|_| Fail::Room)?;
+        .begin(control.instances.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -51,11 +50,10 @@ pub fn select(
             .select(Invocation {
                 key,
                 cursor: core::mem::take(&mut item.hook),
-            })
-            .map_err(|_| Fail::Room)?;
+            })?;
         return Ok(Progress::Done);
     }
-    dispatch.stop().map_err(|_| Fail::Room)?;
+    dispatch.stop()?;
     Ok(Progress::Done)
 }
 pub fn finish(
@@ -63,7 +61,7 @@ pub fn finish(
     active: Res<Active>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    let completion = dispatch.take_result().map_err(|_| Fail::Room)?;
+    let completion = dispatch.take_result()?;
     let invocation = completion.invocation;
     let item = control
         .instances

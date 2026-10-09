@@ -72,7 +72,7 @@ pub(super) fn reply(
         let at = if let Some(at) = outs.0.iter().position(|out| out.reply == reply_token) {
             at
         } else {
-            outs.0.try_reserve(1).map_err(|_| Fail::Room)?;
+            outs.0.try_reserve(1)?;
             outs.0.push(Outbox {
                 reply: reply_token,
                 send: Sender::from_raw(reply_token),

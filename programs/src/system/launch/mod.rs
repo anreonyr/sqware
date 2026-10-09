@@ -126,10 +126,9 @@ pub fn completed(
 
 pub(crate) mod hooks;
 
-pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), &'static str> {
+pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), ::schedule::resource::AccessError> {
     resources
-        .insert(Pending::default())
-        .map_err(|_| "launch resource capacity")?;
+        .insert(Pending::default())?;
     Ok(())
 }
 

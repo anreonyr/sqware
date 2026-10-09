@@ -56,7 +56,7 @@ pub(super) fn receive_tips(
             continue;
         }
         if let Some(tip) = ocall::TipIn::fetch(&frame[..n]) {
-            tips.0.try_reserve(1).map_err(|_| Fail::Room)?;
+            tips.0.try_reserve(1)?;
             tips.0.push_back((tip, from));
         }
     }
@@ -66,7 +66,7 @@ pub(super) fn budget(
     tips: Res<Tips>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    dispatch.begin(tips.0.len()).map_err(|_| Fail::Room)?;
+    dispatch.begin(tips.0.len())?;
     Ok(Progress::Done)
 }
 pub(super) fn select(
@@ -80,8 +80,7 @@ pub(super) fn select(
             .select(Invocation {
                 key: (),
                 cursor: Default::default(),
-            })
-            .map_err(|_| Fail::Room)?;
+            })?;
     }
     Ok(Progress::Done)
 }
@@ -292,8 +291,7 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
     if dispatch
-        .take_result()
-        .map_err(|_| Fail::Room)?
+        .take_result()?
         .result
         .is_err()
     {

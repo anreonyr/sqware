@@ -3,15 +3,12 @@ mod service;
 pub(crate) use service::run::serve as run;
 pub(crate) mod revision;
 
-pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), &'static str> {
+pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), crate::system::app::InstallError> {
     use ::resource::bell::Bell;
 
-    let changed = Bell::unseal().map_err(|_| "identity change bell")?;
+    let changed = Bell::unseal()?;
     resources
-        .insert(revision::Epoch::new())
-        .map_err(|_| "system resource capacity")?;
-    resources
-        .insert(revision::Changed(changed))
-        .map_err(|_| "system resource capacity")?;
+        .insert(revision::Epoch::new())?
+        .insert(revision::Changed(changed))?;
     Ok(())
 }

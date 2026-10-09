@@ -22,6 +22,77 @@ mod tests {
     fn resource_set() -> Resources<'static> {
         let mut resources = Resources::new(); resources.insert(Trace::default()).unwrap(); resources.insert(Gate::default()).unwrap(); resources
     }
+    #[test] fn chained_resource_insertion() {
+        let mut resources = Resources::new();
+        resources.insert(17u32).unwrap().insert(true).unwrap();
+        assert_eq!(*resources.read::<u32>().unwrap(), 17);
+        assert!(*resources.read::<bool>().unwrap());
+    }
+    #[test] fn chained_resource_insertion_stops_at_duplicate() {
+        let mut resources = Resources::new();
+        let result = (|| -> Result<(), AccessError> {
+            resources.insert(17u32)?.insert(23u32)?.insert(true)?;
+            Ok(())
+        })();
+        assert_eq!(result, Err(AccessError::Duplicate));
+        assert_eq!(*resources.read::<u32>().unwrap(), 17);
+        assert!(matches!(resources.read::<bool>(), Err(AccessError::Missing)));
+    }
+    #[test] fn chained_schedule_build_and_prepare() {
+        let child = Schedule::sequence().system("pre", pre).unwrap().build().unwrap();
+        let resources = resource_set();
+        let mut plan = Schedule::new()
+            .add_system("post", Phase::Mint, post).unwrap()
+            .add_plan("nested", Phase::Mint, child).unwrap()
+            .before("nested", "post").unwrap()
+            .build().unwrap();
+        let mut cursor = Cursor::default();
+        assert_eq!(plan.prepare(&resources).advance(cursor.reset(), &resources), Ok(Progress::Done));
+        assert_eq!(resources.read::<Trace>().unwrap().0, ["pre", "post"]);
+    }
+    #[test] fn chained_sequence_includes_subplans() {
+        let child = Schedule::sequence().system("child", post).unwrap().build().unwrap();
+        let mut sequence = Schedule::sequence();
+        sequence.system("pre", pre).unwrap()
+            .plan("nested", child).unwrap()
+            .subplans("children", choose, alloc::vec![(0u8, waiting())], finish).unwrap()
+            .build().unwrap();
+        let mut plan = sequence.system("pre", post).unwrap().build().unwrap();
+        let resources = resource_set();
+        plan.advance(&mut Cursor::default(), &resources).unwrap();
+        assert_eq!(resources.read::<Trace>().unwrap().0, ["post"]);
+    }
+    #[test] fn build_takes_configuration_on_success_and_failure() {
+        let mut graph = Schedule::new();
+        graph.add_system("step", Phase::Mint, pre).unwrap().build().unwrap();
+        graph.add_system("step", Phase::Mint, pre).unwrap()
+            .before("step", "missing").unwrap();
+        assert!(matches!(graph.build(), Err(BuildError::Unknown)));
+        let mut plan = graph.add_system("step", Phase::Mint, post).unwrap().build().unwrap();
+        let resources = resource_set();
+        plan.advance(&mut Cursor::default(), &resources).unwrap();
+        assert_eq!(resources.read::<Trace>().unwrap().0, ["post"]);
+    }
+    #[test] fn chained_resources_mix_owned_and_borrowed_values() {
+        let mut value = 5u16;
+        let flag = true;
+        {
+            let mut resources = Resources::new();
+            resources.insert(17u32).unwrap().borrow(&mut value).unwrap().observe(&flag).unwrap();
+            *resources.write::<u16>().unwrap() = 9;
+            assert_eq!(*resources.read::<u32>().unwrap(), 17);
+            assert!(*resources.read::<bool>().unwrap());
+            assert!(matches!(resources.write::<bool>(), Err(AccessError::Missing)));
+        }
+        assert_eq!(value, 9);
+    }
+    #[test] fn chained_dispatch_operations_preserve_state_checks() {
+        let mut dispatch = Dispatch::<u8, &'static str>::new();
+        dispatch.begin(2).unwrap().skip().unwrap().stop().unwrap()
+            .begin(3).unwrap().select(Invocation { key: 0, cursor: Cursor::default() }).unwrap();
+        assert_eq!(dispatch.remaining(), 3);
+        assert!(matches!(dispatch.stop(), Err(DispatchError::Busy)));
+    }
     #[test] fn pending_resumes_and_releases_borrows() {
         let mut schedule = Schedule::new();
         schedule.add_system("post", Phase::PostMint, post).unwrap();
@@ -62,8 +133,8 @@ mod tests {
     }
     #[test] fn duplicate_and_alias_rejected() {
         let mut schedule = Schedule::new(); schedule.add_system("pre", Phase::PreMint, pre).unwrap();
-        assert_eq!(schedule.add_system("pre", Phase::Mint, pre), Err(BuildError::Duplicate));
-        assert_eq!(schedule.add_system("alias", Phase::Mint, alias), Err(BuildError::BorrowConflict));
+        assert_eq!(schedule.add_system("pre", Phase::Mint, pre).map(|_| ()), Err(BuildError::Duplicate));
+        assert_eq!(schedule.add_system("alias", Phase::Mint, alias).map(|_| ()), Err(BuildError::BorrowConflict));
     }
     #[test] fn borrowed_resource_updates_owner() {
         let mut trace = Trace::default();
@@ -108,26 +179,26 @@ mod tests {
     }
     #[test] fn dispatch_rejects_overlap_and_consumes_completion_atomically() {
         let mut dispatch = Dispatch::<u8, &'static str>::new();
-        assert_eq!(dispatch.skip(), Err(DispatchError::Exhausted));
+        assert_eq!(dispatch.skip().map(|_| ()), Err(DispatchError::Exhausted));
         dispatch.begin(2).unwrap();
         dispatch.select(Invocation { key: 3, cursor: Cursor::default() }).unwrap();
-        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
-        assert_eq!(dispatch.skip(), Err(DispatchError::Busy));
-        assert_eq!(dispatch.stop(), Err(DispatchError::Busy));
+        assert_eq!(dispatch.begin(8).map(|_| ()), Err(DispatchError::Busy));
+        assert_eq!(dispatch.skip().map(|_| ()), Err(DispatchError::Busy));
+        assert_eq!(dispatch.stop().map(|_| ()), Err(DispatchError::Busy));
         assert!(matches!(dispatch.take_result(), Err(DispatchError::NoResult)));
         let invocation = dispatch.take_selected().unwrap();
-        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
-        assert_eq!(dispatch.skip(), Err(DispatchError::Busy));
+        assert_eq!(dispatch.begin(8).map(|_| ()), Err(DispatchError::Busy));
+        assert_eq!(dispatch.skip().map(|_| ()), Err(DispatchError::Busy));
         dispatch.complete(Completion { invocation, result: Err(RunError::Step("failed")) }).unwrap();
         assert_eq!(dispatch.remaining(), 1);
-        assert_eq!(dispatch.begin(8), Err(DispatchError::Busy));
+        assert_eq!(dispatch.begin(8).map(|_| ()), Err(DispatchError::Busy));
         let completion = dispatch.take_result().unwrap();
         assert_eq!(completion.invocation.key, 3);
         assert_eq!(completion.result, Err(RunError::Step("failed")));
         assert!(matches!(dispatch.take_result(), Err(DispatchError::NoResult)));
         dispatch.skip().unwrap();
         assert_eq!(dispatch.remaining(), 0);
-        assert_eq!(dispatch.select(Invocation { key: 0, cursor: Cursor::default() }), Err(DispatchError::Exhausted));
+        assert_eq!(dispatch.select(Invocation { key: 0, cursor: Cursor::default() }).map(|_| ()), Err(DispatchError::Exhausted));
     }
 
     #[derive(Default)] struct Queue(alloc::collections::VecDeque<(u8, Cursor)>);
@@ -239,8 +310,8 @@ mod tests {
     }
     #[test] fn subplans_reject_duplicate_keys_and_conflicting_selection_borrows() {
         let mut parent = Schedule::new();
-        assert_eq!(parent.add_subplans("duplicate", 0u8, choose, alloc::vec![(0u8, waiting()), (0, waiting())], finish), Err(BuildError::Duplicate));
-        assert_eq!(parent.add_subplans("alias", 0u8, alias, alloc::vec![(0u8, waiting())], finish), Err(BuildError::BorrowConflict));
+        assert_eq!(parent.add_subplans("duplicate", 0u8, choose, alloc::vec![(0u8, waiting()), (0, waiting())], finish).map(|_| ()), Err(BuildError::Duplicate));
+        assert_eq!(parent.add_subplans("alias", 0u8, alias, alloc::vec![(0u8, waiting())], finish).map(|_| ()), Err(BuildError::BorrowConflict));
     }
     #[test] fn child_resource_errors_are_delivered_without_erasing_their_kind() {
         fn resource_error(mut dispatch: ResMut<Dispatch<u8, &'static str>>) -> Result<Progress, &'static str> {

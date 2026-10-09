@@ -9,8 +9,7 @@ pub fn budget(
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
     dispatch
-        .begin(operations.0.len())
-        .map_err(|_| ControlFail::Room)?;
+        .begin(operations.0.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -20,14 +19,14 @@ pub fn select(
 ) -> Result<Progress, ControlFail> {
     let tracked = loop {
         let Some(tracked) = operations.0.pop_front() else {
-            dispatch.stop().map_err(|_| ControlFail::Room)?;
+            dispatch.stop()?;
             return Ok(Progress::Done);
         };
         if !tracked.complete {
             break tracked;
         }
         operations.0.push_back(tracked);
-        dispatch.skip().map_err(|_| ControlFail::Room)?;
+        dispatch.skip()?;
         if dispatch.remaining() == 0 {
             return Ok(Progress::Done);
         }
@@ -43,8 +42,7 @@ pub fn select(
         .select(Invocation {
             key,
             cursor: tracked.cursor,
-        })
-        .map_err(|_| ControlFail::Room)?;
+        })?;
     Ok(Progress::Done)
 }
 pub fn finish(
@@ -52,7 +50,7 @@ pub fn finish(
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
-    let completion = dispatch.take_result().map_err(|_| ControlFail::Room)?;
+    let completion = dispatch.take_result()?;
     let invocation = completion.invocation;
     let mut tracked = Tracked {
         operation: active.0.take().ok_or(ControlFail::Room)?,

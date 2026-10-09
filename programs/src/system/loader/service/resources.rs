@@ -1,9 +1,8 @@
 use super::answer::Inbox;
 use ::schedule::Resources;
-pub(crate) fn resources(resources: &mut Resources<'static>) -> Result<(), &'static str> {
-    resources.insert(crate::system::loader::Loader::new())
-        .map_err(|_| "Loader resource capacity")?;
+pub(crate) fn resources(resources: &mut Resources<'static>) -> Result<(), ::schedule::resource::AccessError> {
     resources
-        .insert(Inbox::new())
-        .map_err(|_| "system resource capacity")
+        .insert(crate::system::loader::Loader::new())?
+        .insert(Inbox::new())?;
+    Ok(())
 }

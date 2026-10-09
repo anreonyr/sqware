@@ -6,6 +6,22 @@ pub enum Fail {
     Room,
     Dead,
 }
+impl From<::schedule::resource::AccessError> for Fail {
+    fn from(_: ::schedule::resource::AccessError) -> Self { Self::Room }
+}
+impl From<::schedule::BuildError> for Fail {
+    fn from(_: ::schedule::BuildError) -> Self { Self::Room }
+}
+impl From<::schedule::DispatchError> for Fail {
+    fn from(_: ::schedule::DispatchError) -> Self { Self::Room }
+}
+impl From<alloc::collections::TryReserveError> for Fail {
+    fn from(_: alloc::collections::TryReserveError) -> Self { Self::Room }
+}
+impl From<erra::Error<env::PieFail>> for Fail {
+    fn from(_: erra::Error<env::PieFail>) -> Self { Self::Desk }
+}
+
 mod admission;
 mod answer;
 mod door;
@@ -34,52 +50,33 @@ use system_api::operator as ocall;
 use system_client::identity::TaskQuery;
 pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     let mut resources = Resources::new();
-    resources.insert(status).map_err(|_| Fail::Room)?;
     resources
-        .insert(Tip(PieToken::NONE))
-        .map_err(|_| Fail::Room)?;
-    resources
-        .insert(Pile::unseal(false).map_err(|_| Fail::Desk)?)
-        .map_err(|_| Fail::Room)?;
-    resources.insert(Operator::new()).map_err(|_| Fail::Room)?;
-    resources
-        .insert(events::Watchers::new())
-        .map_err(|_| Fail::Room)?;
-    resources.insert(Desk::new()).map_err(|_| Fail::Room)?;
-    resources
-        .insert(None::<TaskQuery>)
-        .map_err(|_| Fail::Room)?;
-    resources
-        .insert(Outboxes(Vec::new()))
-        .map_err(|_| Fail::Room)?;
-    resources
-        .insert(Tips(VecDeque::new()))
-        .map_err(|_| Fail::Room)?;
-    resources.insert(CurrentTip(None)).map_err(|_| Fail::Room)?;
-    resources
+        .insert(status)?
+        .insert(Tip(PieToken::NONE))?
+        .insert(Pile::unseal(false)?)?
+        .insert(Operator::new())?
+        .insert(events::Watchers::new())?
+        .insert(Desk::new())?
+        .insert(None::<TaskQuery>)?
+        .insert(Outboxes(Vec::new()))?
+        .insert(Tips(VecDeque::new()))?
+        .insert(CurrentTip(None))?
         .insert(Output::<Ack> {
             reply: None,
             changes: Vec::new(),
-        })
-        .map_err(|_| Fail::Room)?;
-    resources
+        })?
         .insert(Output::<ocall::Union> {
             reply: None,
             changes: Vec::new(),
-        })
-        .map_err(|_| Fail::Room)?;
-    resources.insert(Request(None)).map_err(|_| Fail::Room)?;
-    resources.insert(Judgment(None)).map_err(|_| Fail::Room)?;
-    resources
-        .insert(Buffer(alloc::vec![0; env::PAGE_SIZE]))
-        .map_err(|_| Fail::Room)?;
-    resources.insert(Hit(None)).map_err(|_| Fail::Room)?;
-    resources.insert(Selected(None)).map_err(|_| Fail::Room)?;
-    resources.insert(Running(true)).map_err(|_| Fail::Room)?;
-    resources
-        .insert(Dispatch::<(), Fail>::new())
-        .map_err(|_| Fail::Room)?;
-    let [mut start, mut frame, mut stop] = schedule::plans().map_err(|_| Fail::Room)?;
+        })?
+        .insert(Request(None))?
+        .insert(Judgment(None))?
+        .insert(Buffer(alloc::vec![0; env::PAGE_SIZE]))?
+        .insert(Hit(None))?
+        .insert(Selected(None))?
+        .insert(Running(true))?
+        .insert(Dispatch::<(), Fail>::new())?;
+    let [mut start, mut frame, mut stop] = schedule::plans()?;
     start.prepare(&resources);
     frame.prepare(&resources);
     stop.prepare(&resources);
@@ -87,7 +84,7 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .advance(&mut Cursor::default(), &resources)
         .map_err(|_| Fail::Tree)?;
     let mut cursor = Cursor::default();
-    while resources.read::<Running>().map_err(|_| Fail::Room)?.0 {
+    while resources.read::<Running>()?.0 {
         if frame
             .advance(&mut cursor, &resources)
             .map_err(|_| Fail::Dead)?

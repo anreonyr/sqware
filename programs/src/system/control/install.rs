@@ -16,27 +16,21 @@ pub(crate) fn install(
     resources: &mut Resources<'static>,
     status: Arc<Status>,
     config: Configuration,
-) -> Result<(), &'static str> {
-    macro_rules! put {
-        ($value:expr) => {
-            resources
-                .insert($value)
-                .map_err(|_| "Control resource capacity")?
-        };
-    }
+) -> Result<(), crate::system::app::InstallError> {
     let mut control = Control::new(status);
     control.inputs = config.inputs;
-    put!(control);
-    put!(Roster::default());
-    put!(hook::Active::default());
-    put!(Dispatch::<hook::Key, &'static str>::new());
-    put!(lifecycle::Startup::new());
-    put!(lifecycle::Operations::new());
-    put!(lifecycle::Active(None));
-    put!(Dispatch::<lifecycle::Key, verdict::Fail>::new());
-    put!(Entries::new());
-    put!(super::endpoint::construction::Construction::new()?);
-    put!(answer::Inbox(VecDeque::new()));
-    put!(answer::Buffer(alloc::vec![0; env::PAGE_SIZE]));
+    resources
+        .insert(control)?
+        .insert(Roster::default())?
+        .insert(hook::Active::default())?
+        .insert(Dispatch::<hook::Key, &'static str>::new())?
+        .insert(lifecycle::Startup::new())?
+        .insert(lifecycle::Operations::new())?
+        .insert(lifecycle::Active(None))?
+        .insert(Dispatch::<lifecycle::Key, verdict::Fail>::new())?
+        .insert(Entries::new())?
+        .insert(super::endpoint::construction::Construction::new()?)?
+        .insert(answer::Inbox(VecDeque::new()))?
+        .insert(answer::Buffer(alloc::vec![0; env::PAGE_SIZE]))?;
     Ok(())
 }

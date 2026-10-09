@@ -12,15 +12,15 @@ impl<E: 'static> Schedule<(), E> {
     }
 }
 impl<E: 'static> Sequence<E> {
-    pub fn system<M>(&mut self, name: &'static str, f: impl IntoSystem<M, E>) -> Result<(), BuildError> {
+    pub fn system<M>(&mut self, name: &'static str, f: impl IntoSystem<M, E>) -> Result<&mut Self, BuildError> {
         self.schedule.add_system(name, self.next, f)?;
         self.next += 1;
-        Ok(())
+        Ok(self)
     }
-    pub fn plan(&mut self, name: &'static str, plan: Plan<E>) -> Result<(), BuildError> {
+    pub fn plan(&mut self, name: &'static str, plan: Plan<E>) -> Result<&mut Self, BuildError> {
         self.schedule.add_plan(name, self.next, plan)?;
         self.next += 1;
-        Ok(())
+        Ok(self)
     }
     pub fn subplans<K: PartialEq + 'static, C: 'static, M, N>(
         &mut self,
@@ -28,12 +28,14 @@ impl<E: 'static> Sequence<E> {
         select: impl IntoSystem<M, E>,
         children: Vec<(K, Plan<C>)>,
         finish: impl IntoSystem<N, E>,
-    ) -> Result<(), BuildError> {
+    ) -> Result<&mut Self, BuildError> {
         self.schedule.add_subplans(name, self.next, select, children, finish)?;
         self.next += 1;
-        Ok(())
+        Ok(self)
     }
-    pub fn build(self) -> Result<Plan<E>, BuildError> {
+    /// Take the current configuration and reset declaration order, even on failure.
+    pub fn build(&mut self) -> Result<Plan<E>, BuildError> {
+        self.next = 0;
         self.schedule.build()
     }
 }
