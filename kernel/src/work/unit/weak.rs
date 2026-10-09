@@ -198,6 +198,3 @@ pub(crate) fn check_block_heldout() {
         }
     }
 }
-
-#[cfg(not(debug_assertions))]
-pub(crate) fn check_block_heldout() {}

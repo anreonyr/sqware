@@ -33,6 +33,7 @@ pub struct NoleMeta {
 }
 
 impl NoleMeta {
+    #[cfg(debug_assertions)]
     pub(crate) fn new(owner: TaskId) -> Arc<Self> {
         Self::try_new(owner).expect("nole allocation failed")
     }
