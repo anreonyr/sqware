@@ -7,6 +7,24 @@ use env::{Wait, HoleDir, MailFail, MailResult, Mark, PieResult, PieToken, TaskId
 
 pub use crate::capability::{Loan, Capability};
 
+/// Complete cleanup despite temporary contention, yielding between attempts.
+pub fn release(token: PieToken) -> PieResult<()> {
+    cleanup(|| env::pie::release(token))
+}
+
+pub fn revoke(peer: TaskId, token: PieToken) -> PieResult<()> {
+    cleanup(|| env::pie::revoke(peer, token))
+}
+
+fn cleanup(mut run: impl FnMut() -> PieResult<()>) -> PieResult<()> {
+    loop {
+        match run() {
+            Err(error) if error.source == env::PieFail::Busy => env::room::starve(),
+            result => return result,
+        }
+    }
+}
+
 /// 单调时钟读数（纳秒）——deadline 用（机器无关，不依赖 timebase 频率）。
 fn now_ns() -> u64 {
     env::chrono::clock()
@@ -149,6 +167,11 @@ impl Hole {
     /// 手上没东西 → `Err(Busy)`（没有可取之事，与 `pull` 同一个码）。
     pub fn peek(&self) -> MailResult<(usize, TaskId, usize)> {
         env::mail::peek(self.token)
+    }
+
+    /// Atomically discard the queue head only when it exceeds max bytes.
+    pub fn discard_oversized(&self, max: usize) -> MailResult<bool> {
+        env::mail::discard(self.token, max)
     }
 
     /// **队里排着几只**（`Peek` 的第三格）：写者据此知道"我还排着几手"——孔上可以排着

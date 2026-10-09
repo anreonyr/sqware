@@ -30,14 +30,14 @@ impl Capability {
 
     pub fn release(mut self) -> PieResult<()> {
         self.active = false;
-        pie::release(self.token)
+        crate::raw::release(self.token)
     }
 }
 
 impl Drop for Capability {
     fn drop(&mut self) {
         if self.active {
-            let _ = pie::release(self.token);
+            let _ = crate::raw::release(self.token);
         }
     }
 }
@@ -79,14 +79,14 @@ impl<'a> Loan<'a> {
 
     pub fn revoke(mut self) -> PieResult<()> {
         self.active = false;
-        pie::revoke(self.peer, self.remote)
+        crate::raw::revoke(self.peer, self.remote)
     }
 }
 
 impl Drop for Loan<'_> {
     fn drop(&mut self) {
         if self.active {
-            let _ = pie::revoke(self.peer, self.remote);
+            let _ = crate::raw::revoke(self.peer, self.remote);
         }
     }
 }

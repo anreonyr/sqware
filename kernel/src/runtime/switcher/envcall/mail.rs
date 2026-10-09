@@ -29,10 +29,30 @@ pub(crate) fn dispatch(
         MailCall::Push { token, msg, len } => push(frame, ident, token, msg.get(), len),
         MailCall::Pull { token, buf, max } => pull(frame, ident, token, buf.get(), max),
         MailCall::Peek { token } => peek(frame, token),
+        MailCall::Discard { token, max } => discard(frame, token, max),
         MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
         MailCall::Hush { token } => hush(frame, token),
         MailCall::Ring { token } => ring(frame, token),
     })
+}
+
+fn discard(frame: &mut TrapContext, token: PieToken, max: usize) -> Outcome {
+    let result = current()
+        .running_task()
+        .ok_or(MailFail::Denied)
+        .and_then(|task| gate::accede::<MailFail>(&task, token, Need::Fetch))
+        .and_then(|pie| {
+            usable::<MailFail>(&pie)?;
+            match pie {
+                AnyPie::Hole(p) => mail::hole::discard(p.meta(), max),
+                _ => Err(MailFail::Denied),
+            }
+        });
+    frame.gpr.set_x(Gprs::A0, match result {
+        Ok(discarded) => usize::from(discarded),
+        Err(error) => error.code() as usize,
+    });
+    Outcome::Resume
 }
 
 fn push(

@@ -145,3 +145,23 @@ fn raw_pull_path_is_the_reply_data_path() {
     assert_eq!(Hole::from_raw(token).pull(&mut buffer, Wait::POLL).unwrap(), (3, peer()));
     assert_eq!(&buffer[..3], b"raw");
 }
+
+#[test]
+fn cleanup_keeps_retrying_busy_and_yields_before_completion() {
+    for op in [Op::Release, Op::Revoke] {
+        test_backend::reset();
+        let capability = Capability::unseal_hole(Mark::of("source")).unwrap();
+        let loan = capability.grant(peer(), Permission::STORE, Mark::NONE).unwrap();
+        test_backend::busy_for(op, 12);
+        drop(loan);
+        drop(capability);
+        let events = test_backend::events();
+        assert_eq!(events.iter().filter(|event| matches!(event, Event::Starve)).count(), 12);
+        let attempts = events.iter().filter(|event| match op {
+            Op::Release => matches!(event, Event::Release(_)),
+            Op::Revoke => matches!(event, Event::Revoke(_, _)),
+            _ => unreachable!(),
+        }).count();
+        assert_eq!(attempts, 13);
+    }
+}

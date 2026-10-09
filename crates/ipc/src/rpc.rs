@@ -1,7 +1,7 @@
 //! Typed one-request, one-reply exchanges over a service entry.
 
 use core::marker::PhantomData;
-use env::{MailFail, Mark, PieFail, PieToken, TaskId, Wait, pie};
+use env::{MailFail, Mark, PieFail, PieToken, TaskId, Wait};
 use resource::{port::{Reply, ReplyError, Sender as PortSender}, raw};
 pub use wire::Contract;
 use wire::Message;
@@ -93,7 +93,16 @@ pub mod request {
         ) -> Result<Incoming<C>, Rejected<<C::Request as Message>::In>> {
             let (len, from) = match raw::Hole::from_raw(self.entry).pull(buffer, within) {
                 Ok(received) => received,
-                Err(error) => return Err(Rejected { fail: Fail::Receive(error.source), incoming: None }),
+                Err(error) => {
+                    let fail = if error.source == MailFail::Denied
+                        && raw::Hole::from_raw(self.entry).discard_oversized(buffer.len()).unwrap_or(false)
+                    {
+                        Fail::Decode
+                    } else {
+                        Fail::Receive(error.source)
+                    };
+                    return Err(Rejected { fail, incoming: None });
+                }
             };
             let bytes = match buffer.get(..len) {
                 Some(bytes) => bytes,
@@ -165,7 +174,7 @@ pub mod reply {
         fn close(&mut self) {
             if self.active {
                 self.active = false;
-                let _ = pie::release(self.token);
+                let _ = raw::release(self.token);
             }
         }
     }

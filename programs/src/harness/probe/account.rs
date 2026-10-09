@@ -175,8 +175,11 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let s = signals.clone();
     let worker = execution::unit::task::spawn(move || {
         until(|| s.entry.load(Ordering::Acquire) != 0);
+        let entry = ipc::session::establish::find(account_task, account_api::ENTRY).unwrap();
+        // Oversized input must be discarded before the valid requests below.
+        resource::raw::Hole::from_raw(entry).push(&[0; 65], WAIT).unwrap();
         let client =
-            Client::of(ipc::session::establish::find(account_task, account_api::ENTRY).unwrap())
+            Client::of(entry)
                 .unwrap();
         let lifecycle =
             Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();

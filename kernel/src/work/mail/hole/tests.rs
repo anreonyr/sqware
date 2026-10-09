@@ -214,3 +214,32 @@ pub fn reservations() {
         "hole: full reservation skips payload; out-of-order commit, cancellation and seal passed"
     );
 }
+
+pub fn discard_oversized() {
+    let meta = meta(TaskId::new(0));
+    let live = HANDS_LIVE.load(Ordering::Relaxed);
+    assert_eq!(discard(&meta, 64), Ok(false));
+    reserve(&meta).unwrap().commit(Arc::new(alloc::vec![0; 65]), TaskId::new(1)).unwrap();
+    reserve(&meta).unwrap().commit(Arc::new(alloc::vec![7; 64]), TaskId::new(2)).unwrap();
+    take(&meta).unwrap();
+    assert_eq!(discard(&meta, 64), Err(MailFail::Busy));
+    back(&meta);
+    assert_eq!(peek(&meta).unwrap().0, 65);
+    assert_eq!(discard(&meta, 64), Ok(true));
+    assert_eq!(peek(&meta).unwrap(), (64, TaskId::new(2), 1));
+    assert_eq!(discard(&meta, 64), Ok(false));
+    take(&meta).unwrap();
+    let (from, bytes) = source(&meta).unwrap();
+    assert_eq!(from, TaskId::new(2));
+    assert_eq!(bytes.as_slice(), &[7; 64]);
+    taken(&meta);
+    assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
+    let reserved = reserve(&meta).unwrap();
+    reserve(&meta).unwrap().commit(Arc::new(alloc::vec![0; 65]), TaskId::new(3)).unwrap();
+    assert_eq!(discard(&meta, 64), Ok(false));
+    drop(reserved);
+    assert_eq!(discard(&meta, 64), Ok(true));
+    seal(&meta);
+    assert_eq!(discard(&meta, 64), Err(MailFail::Dead));
+    assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
+}

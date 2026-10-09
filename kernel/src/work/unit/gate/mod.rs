@@ -75,10 +75,32 @@ pub(super) fn remember(
     Ok(())
 }
 
+/// Keep the first observation; validation under all gates detects later changes.
+pub(super) fn observe(
+    tasks: &mut Vec<(Arc<Task>, usize)>,
+    task: &Arc<Task>,
+    version: usize,
+) -> Result<(), PieFail> {
+    if tasks.iter().any(|(old, _)| Arc::ptr_eq(old, task)) {
+        return Ok(());
+    }
+    remember(tasks, task, version)
+}
+
 /// The caller sorts tasks first. No mutation occurs unless every version matches.
 /// Guards must be released in reverse order to restore interrupts last.
 pub(super) fn with_tasks<T>(
     tasks: &[(Arc<Task>, usize)],
+    run: impl FnOnce() -> T,
+) -> Result<T, PieFail> {
+    with_tasks_checked(tasks, || false, run)
+}
+
+/// A caller may validate the specific relations when unrelated changes bumped
+/// a task's version. Validation and mutation both run under every task gate.
+pub(super) fn with_tasks_checked<T>(
+    tasks: &[(Arc<Task>, usize)],
+    validate: impl FnOnce() -> bool,
     run: impl FnOnce() -> T,
 ) -> Result<T, PieFail> {
     crate::lock::reserve_depend(tasks.len() + 8).map_err(|_| PieFail::OoM)?;
@@ -94,7 +116,8 @@ pub(super) fn with_tasks<T>(
     }
     let valid = tasks
         .iter()
-        .all(|(task, version)| task.version.load(Ordering::Relaxed) == *version);
+        .all(|(task, version)| task.version.load(Ordering::Relaxed) == *version)
+        || validate();
     let result = if valid { Ok(run()) } else { Err(PieFail::Busy) };
     while guards.pop().is_some() {}
     result

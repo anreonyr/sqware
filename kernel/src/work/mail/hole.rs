@@ -317,6 +317,36 @@ pub(crate) fn back(meta: &HoleMeta) {
     }
 }
 
+/// Explicitly reject an oversized head without allocating a receive buffer.
+pub(crate) fn discard(meta: &HoleMeta, max: usize) -> Result<bool, MailFail> {
+    let removed = {
+        let mut pending = meta.pending.lock();
+        let Pending::Queue(queue) = &mut *pending else {
+            return if matches!(*pending, Pending::Dead) {
+                Err(MailFail::Dead)
+            } else {
+                Ok(false)
+            };
+        };
+        if queue.taking {
+            return Err(MailFail::Busy);
+        }
+        if !queue.hands.front().and_then(Slot::hand)
+            .is_some_and(|hand| hand.buf.len() > max)
+        {
+            return Ok(false);
+        }
+        queue.hands.pop_front()
+    };
+    // Payload destruction and wakeups run outside the queue lock.
+    if let Some(Slot::Ready(hand)) = &removed {
+        note_hand_off(meta, hand.from, hand.buf.len(), hand.at);
+    }
+    drop(removed);
+    let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
+    Ok(true)
+}
+
 //     pub(crate) fn withdraw(meta: &HoleMeta, from: TaskId) -> Result<(), MailFail>
 //
 // ——"把**我自己**伸出、还没被取走的那只手收回来"（`Hand(from) => Idle` ＋ 唤醒 `Push` 侧；

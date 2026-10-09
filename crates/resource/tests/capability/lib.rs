@@ -8,6 +8,9 @@ pub use abi::{
 pub mod chrono {
     pub fn clock() -> u64 { 0 }
 }
+pub mod room {
+    pub fn starve() { crate::test_backend::record(crate::test_backend::Event::Starve); }
+}
 
 pub mod pie {
     use crate::{
@@ -23,7 +26,8 @@ pub mod pie {
 
     pub fn release(token: PieToken) -> PieResult<()> {
         record(Event::Release(token));
-        if crate::test_backend::fail(Op::Release) { Err(make_fail(PieFail::Denied)) } else { Ok(()) }
+        if crate::test_backend::busy(Op::Release) { Err(make_fail(PieFail::Busy)) }
+        else if crate::test_backend::fail(Op::Release) { Err(make_fail(PieFail::Denied)) } else { Ok(()) }
     }
 
     pub fn seal(token: PieToken) -> PieResult<()> {
@@ -39,7 +43,8 @@ pub mod pie {
 
     pub fn revoke(peer: TaskId, remote: PieToken) -> PieResult<()> {
         record(Event::Revoke(peer, remote));
-        if crate::test_backend::fail(Op::Revoke) { Err(make_fail(PieFail::Denied)) } else { Ok(()) }
+        if crate::test_backend::busy(Op::Revoke) { Err(make_fail(PieFail::Busy)) }
+        else if crate::test_backend::fail(Op::Revoke) { Err(make_fail(PieFail::Denied)) } else { Ok(()) }
     }
 
     pub fn reserve(_: PieToken) -> PieResult<(usize, usize)> { Ok((0, 0)) }
@@ -67,6 +72,7 @@ pub mod mail {
 
     pub fn push(_: PieToken, _: VirtAddr, _: usize) -> MailResult<()> { Ok(()) }
     pub fn peek(_: PieToken) -> MailResult<(usize, TaskId, usize)> { Err(make_fail(MailFail::Busy)) }
+    pub fn discard(_: PieToken, _: usize) -> MailResult<bool> { Ok(false) }
     pub fn wait(_: PieToken, _: HoleDir, _: Wait) -> MailResult<bool> { Ok(false) }
     pub fn ring(_: PieToken) -> MailResult<()> { Ok(()) }
     pub fn hush(_: PieToken) -> MailResult<()> { Ok(()) }
@@ -82,6 +88,7 @@ pub mod test_backend {
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Event {
+        Starve,
         Unseal(PieToken, Mark),
         Release(PieToken),
         Seal(PieToken),
@@ -95,6 +102,7 @@ pub mod test_backend {
         next: usize,
         events: Vec<Event>,
         fail_next: Option<Op>,
+        busy: Option<(Op, usize)>,
         messages: VecDeque<(Vec<u8>, TaskId)>,
     }
 
@@ -103,6 +111,16 @@ pub mod test_backend {
     pub fn reset() { STATE.with(|s| *s.borrow_mut() = State { next: 100, ..State::default() }); }
     pub fn events() -> Vec<Event> { STATE.with(|s| s.borrow().events.clone()) }
     pub fn fail_next(op: Op) { STATE.with(|s| s.borrow_mut().fail_next = Some(op)); }
+    pub fn busy_for(op: Op, count: usize) { STATE.with(|s| s.borrow_mut().busy = Some((op, count))); }
+    pub fn busy(op: Op) -> bool {
+        STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            match &mut state.busy {
+                Some((operation, count)) if *operation == op && *count > 0 => { *count -= 1; true }
+                _ => false,
+            }
+        })
+    }
     pub fn queue_message(bytes: &[u8], from: TaskId) {
         STATE.with(|s| s.borrow_mut().messages.push_back((bytes.to_vec(), from)));
     }

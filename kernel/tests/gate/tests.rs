@@ -442,3 +442,80 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     assert!(c.pies.lock().is_empty());
     assert!(a.heirs.lock().is_empty());
 }
+
+#[test]
+fn unrelated_version_changes_do_not_block_release_or_revoke() {
+    for revoke in [false, true] {
+        let a = Task::new();
+        let b = Task::new();
+        let token = root(&a, rights());
+        let unrelated = root(&a, rights());
+        let ab = grant(&a, token, &b).unwrap();
+        let children: Vec<_> = (0..64).map(|_| Task::new()).collect();
+        for child in &children { grant(&b, ab, child).unwrap(); }
+        let a2 = a.clone();
+        let raw = unrelated.get();
+        crate::lock::before_locking(move || {
+            gate::reduce(&a2, PieToken::mint(raw), Permission::FETCH).unwrap();
+        });
+        let result = if revoke { gate::revoke(&a, &Arc::downgrade(&b), ab) }
+            else { gate::release(&b, ab) };
+        assert_eq!(result, Ok(65));
+        assert!(a.heirs.lock().is_empty());
+        assert!(b.pies.lock().is_empty());
+        assert!(children.iter().all(|child| child.pies.lock().is_empty()));
+    }
+}
+
+#[test]
+fn new_descendant_between_collection_and_locking_requires_recollection() {
+    let a = Task::new();
+    let b = Task::new();
+    let c = Task::new();
+    let token = root(&a, rights());
+    let ab = grant(&a, token, &b).unwrap();
+    let b2 = b.clone();
+    let c2 = c.clone();
+    let raw = ab.get();
+    crate::lock::before_locking(move || { grant(&b2, PieToken::mint(raw), &c2).unwrap(); });
+    assert_eq!(gate::release(&b, ab), Ok(2));
+    assert!(b.pies.lock().is_empty());
+    assert!(c.pies.lock().is_empty());
+    check(&a);
+}
+
+#[test]
+fn reparenting_to_an_unlocked_task_requires_recollection() {
+    let z = Task::new();
+    let a = Task::new();
+    let b = Task::new();
+    let token = root(&z, rights());
+    let za = grant(&z, token, &a).unwrap();
+    let ab = grant(&a, za, &b).unwrap();
+    let a2 = a.clone();
+    let raw = za.get();
+    crate::lock::before_locking(move || { gate::forget(&a2, PieToken::mint(raw)).unwrap(); });
+    assert_eq!(gate::release(&b, ab), Ok(1));
+    assert!(z.heirs.lock().is_empty());
+    assert!(a.pies.lock().is_empty());
+    assert!(b.pies.lock().is_empty());
+    assert!(gate::locate(&z, token).is_some());
+}
+
+#[test]
+fn discard_appends_to_mail_abi_without_changing_existing_calls() {
+    use env::{MailCall, HoleDir, VirtAddr, Wait};
+    let token = PieToken::mint(42);
+    for (index, call) in [
+        MailCall::Push { token, msg: VirtAddr::new(0), len: 1 },
+        MailCall::Pull { token, buf: VirtAddr::new(0), max: 64 },
+        MailCall::Wait { token, dir: HoleDir::Pull, millis: Wait::POLL },
+        MailCall::Hush { token },
+        MailCall::Ring { token },
+        MailCall::Peek { token },
+        MailCall::Discard { token, max: 64 },
+    ].into_iter().enumerate() {
+        assert_eq!(call.slot(), (5usize << 32) | index);
+        assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
+    }
+}

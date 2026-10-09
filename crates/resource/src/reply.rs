@@ -43,7 +43,7 @@ impl Reply {
 impl Drop for Reply {
     fn drop(&mut self) {
         if let Some(remote) = self.remote.take() {
-            let _ = pie::revoke(self.peer, remote);
+            let _ = crate::raw::revoke(self.peer, remote);
         }
         let _ = self.local.seal();
     }

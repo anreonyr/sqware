@@ -64,6 +64,7 @@ pub mod pie {
 #[path = "../../../crates/resource/src/capability.rs"]
 mod capability;
 pub mod raw {
+    pub use crate::pie::{release, revoke};
     pub use crate::capability::Capability;
 }
 pub mod port {

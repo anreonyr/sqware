@@ -98,6 +98,7 @@ pub mod pie {
 #[path = "../../../crates/resource/src/capability.rs"]
 mod capability;
 pub mod raw {
+    pub use crate::pie::{release, revoke};
     pub use crate::capability::Loan;
 }
 #[path = "../../src/system/client/src/operator/handoff.rs"]

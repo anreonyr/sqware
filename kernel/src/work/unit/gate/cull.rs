@@ -32,7 +32,8 @@ impl Cleanup {
 }
 
 /// Collect actual transfer descendants, plus the root's parent for unlinking.
-/// Each read is under one task gate. with_tasks later validates every version.
+/// Each read is under one task gate. The commit validates versions or the
+/// actual subtree after locking every collected task.
 #[allow(clippy::type_complexity)]
 pub(super) fn collect(
     task: &Arc<Task>,
@@ -48,7 +49,7 @@ pub(super) fn collect(
         let (task, token) = nodes[cursor].clone();
         let parent = {
             let _gate = task.gate.lock();
-            super::remember(&mut tasks, &task, task.version.load(Ordering::Relaxed))?;
+            super::observe(&mut tasks, &task, task.version.load(Ordering::Relaxed))?;
             let pie = super::locate(&task, token).ok_or(PieFail::Busy)?;
             let parent = if cursor == 0 {
                 pie.lord().upgrade()
@@ -72,12 +73,56 @@ pub(super) fn collect(
         };
         if let Some(parent) = parent {
             let _gate = parent.gate.lock();
-            super::remember(&mut tasks, &parent, parent.version.load(Ordering::Relaxed))?;
+            super::observe(&mut tasks, &parent, parent.version.load(Ordering::Relaxed))?;
         }
         cursor += 1;
     }
     tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
     Ok((tasks, nodes))
+}
+
+/// Validate the actual subtree rather than rejecting unrelated task changes.
+/// Every holder and the root's current parent must already be locked. A changed
+/// relation involving an uncollected task requires a fresh collection.
+fn relations_match(
+    tasks: &[(Arc<Task>, usize)],
+    nodes: &[(Arc<Task>, PieToken)],
+) -> bool {
+    for (index, (task, token)) in nodes.iter().enumerate() {
+        let Some(pie) = super::locate(task, *token) else { return false };
+        if let Some(parent) = pie.sire() {
+            let Some(lord) = pie.lord().upgrade() else { return false };
+            if index == 0 {
+                if !tasks.iter().any(|(holder, _)| Arc::ptr_eq(holder, &lord)) {
+                    return false;
+                }
+            } else if !nodes.iter().any(|(holder, source)| {
+                *source == parent && Arc::ptr_eq(holder, &lord)
+            }) {
+                return false;
+            }
+            if !lord.heirs.lock().iter().any(|(source, child, child_token)| {
+                *source == parent && *child_token == *token
+                    && child.ptr_eq(&Arc::downgrade(task))
+            }) {
+                return false;
+            }
+        } else if index != 0 {
+            return false;
+        }
+        let heirs = task.heirs.lock();
+        let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
+        for (_, child, child_token) in heirs[start..].iter()
+            .take_while(|(source, _, _)| *source == *token)
+        {
+            if child.strong_count() != 0 && !nodes.iter().skip(1).any(|(holder, token)| {
+                *token == *child_token && child.ptr_eq(&Arc::downgrade(holder))
+            }) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// The root and all relevant tasks are locked; no allocation after this point.
@@ -121,21 +166,14 @@ pub(super) fn cull(
         };
         if let Some(caller) = caller {
             let _gate = caller.gate.lock();
-            if let Err(error) =
-                super::remember(&mut tasks, caller, caller.version.load(Ordering::Relaxed))
-            {
-                if error == PieFail::Busy {
-                    continue;
-                }
-                return Err(error);
-            }
+            super::observe(&mut tasks, caller, caller.version.load(Ordering::Relaxed))?;
         }
         tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
         let mut removed = Vec::new();
         let mut changed = Vec::new();
         removed.try_reserve(nodes.len()).map_err(|_| PieFail::OoM)?;
         changed.try_reserve(tasks.len()).map_err(|_| PieFail::OoM)?;
-        let result = super::with_tasks(&tasks, || {
+        let result = super::with_tasks_checked(&tasks, || relations_match(&tasks, &nodes), || {
             let root = super::locate(task, token).ok_or(PieFail::Denied)?;
             if let Some(caller) = caller {
                 let parent = root.sire().ok_or(PieFail::Denied)?;

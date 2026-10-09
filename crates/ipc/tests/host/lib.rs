@@ -98,7 +98,18 @@ pub mod raw {
             buffer[..bytes.len()].copy_from_slice(&bytes);
             Ok((bytes.len(), from))
         }
+        pub fn discard_oversized(&self, max: usize) -> MailResult<bool> {
+            Ok(with(|state| {
+                if state.replies.get(&self.0).is_some_and(|(bytes, _)| bytes.len() > max) {
+                    state.replies.remove(&self.0);
+                    true
+                } else {
+                    false
+                }
+            }))
+        }
     }
+    pub fn release(token: PieToken) -> PieResult<()> { crate::pie::release(token) }
     pub fn reserve(_: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
         Ok(with(|state| state.reservation.unwrap_or((state.peer, state.peer, Mark::of("back")))))
     }
@@ -571,4 +582,24 @@ mod tests {
             1,
         );
     }
+    #[test]
+    fn oversized_request_is_discarded_and_next_valid_request_is_received() {
+        test_backend::reset();
+        let entry = PieToken::mint(999);
+        test_backend::with(|state| { state.replies.insert(entry, (vec![0; 65], TaskId::new(7))); });
+        let receiver = rpc::request::Receiver::<TestContract>::from_raw(entry, BACK, route);
+        let mut buffer = [0; 64];
+        let rejected = match receiver.receive(&mut buffer, Wait::POLL) {
+            Err(error) => error, Ok(_) => panic!("oversized request accepted"),
+        };
+        assert_eq!(rejected.fail, rpc::Fail::Decode);
+        test_backend::with(|state| assert!(!state.replies.contains_key(&entry)));
+        let request = Request { seed: PieToken::mint(123), fail_encode: false };
+        let size = request.store(&mut buffer).unwrap();
+        test_backend::with(|state| { state.replies.insert(entry, (buffer[..size].to_vec(), TaskId::new(7))); });
+        let incoming = receiver.receive(&mut buffer, Wait::POLL).unwrap();
+        assert_eq!(incoming.request.seed, request.seed);
+        assert_eq!(incoming.from, TaskId::new(7));
+    }
+
 }

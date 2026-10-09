@@ -19,7 +19,15 @@ mod lock {
         }
     }
     pub fn reserve_depend(_: usize) -> Result<(), ()> {
+        let hook = HOOK.with(|slot| slot.borrow_mut().take());
+        if let Some(hook) = hook { hook(); }
         Ok(())
+    }
+    thread_local! {
+        static HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> = const { std::cell::RefCell::new(None) };
+    }
+    pub fn before_locking(hook: impl FnOnce() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some(Box::new(hook)));
     }
 }
 mod memory {

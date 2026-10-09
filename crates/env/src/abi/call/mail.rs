@@ -127,5 +127,10 @@ pub enum MailCall {
     /// 三件事两格装不下 ⇒ 走**宽返回**那一档（`#[ret3]`，与 `PieCall::Collect` 同一条路）。
     #[ret3((usize, TaskId, usize))]
     Peek { token: PieToken },
+    /// Discard the queue head only if its length exceeds max. Requires FETCH.
+    /// Returns false for an empty queue or a message within the limit. The
+    /// length check and removal are atomic; an active Pull returns Busy.
+    #[ret(bool)]
+    Discard { token: PieToken, max: usize },
     //     #[ret(())] Withdraw { token: PieToken },
 }
