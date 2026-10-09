@@ -111,6 +111,7 @@ static CELLS_SHORT: AtomicUsize = AtomicUsize::new(0);
 pub(crate) static MATE_SKIP: AtomicUsize = AtomicUsize::new(0);
 
 impl ToleMeta {
+    #[cfg(debug_assertions)]
     fn new(id: ToleId, owner: TaskId) -> Arc<Self> {
         Self::try_new(id, owner).expect("tole allocation failed")
     }
@@ -316,6 +317,7 @@ pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, ToleFa
     messenger::wait(key(meta), meta.life(), dur)
 }
 
+#[cfg(debug_assertions)]
 pub(crate) fn meta(owner: TaskId) -> Arc<ToleMeta> {
     ToleMeta::new(alloc_id(), owner)
 }

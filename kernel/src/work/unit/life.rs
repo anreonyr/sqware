@@ -6,6 +6,7 @@ use env::TaskId;
 pub(crate) struct Life;
 
 impl Life {
+    #[cfg(debug_assertions)]
     pub(crate) fn new() -> Arc<Life> {
         Arc::new(Life)
     }
