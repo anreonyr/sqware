@@ -331,3 +331,16 @@ nu scripts/qtest.nu --package kernel --scene accept
 nu scripts/qtest.nu --package kernel --scene system-fault
 nu scripts/qtest.nu --package kernel --scene product --feed-script programs/tests/terminal/session.py
 ```
+
+
+### 2026-10-09：连接超时与终端发现竞态复查
+
+“时序抖动”不足以描述测试失败。复查在 `275e0f92` 上七次运行得到六次通过、一次 Terminal 失败；其父提交 `bd557643` 的隔离工作树也出现 Terminal 移交／恢复失败，不能把所有失败归入同一个 Operator 签名。
+
+Operator 接入原先对每个登记任务重新枚举整张能力表，并对每项执行 Alive／Reserve 查询。控制任务在这段工作中无法推进下一步握手。旧实现加入耗时诊断后，复现 `probe-control: no tree link`，紧邻的两轮扫描分别耗时 450 和 806 毫秒，超出探针 1000 毫秒的共享握手预算。改为每轮只枚举一次，用 Collect 返回的 owner／mark 筛选，再对新 LINK 候选核验 giver、owner、mark 和存活状态。没有延长探针期限。回归用 32 个请求任务和 2000 个无关能力检验接入成本界，同时确认伪造来源仍被拒绝。
+
+Terminal 的另一类失败表现为恢复成功后发现 OUTPUT 返回 Missing，或者探针随后再次查找数据能力返回 Missing。按下标调用 Collect 的枚举不是快照；并发撤销删除前面表项时，后续索引会跳过一项。关闭 Operator 会话后的运输能力清理也会修改调用者的能力表。Terminal 响应现在明确返回实际接收者的 input／output／control 编号，Connection 在 attach 和前台恢复确认后更新它们，Io 使用这些编号。探针也直接使用已确认的数据句柄，仍检查旧句柄被撤销、独占控制移交及子任务死亡后的恢复。Terminal Reply 由 9 字节扩为 33 字节，服务端与客户端须一起更新；角色数值、权限与 Kernel ABI 未改。子任务启动时的 injected 数据发现接口保留。
+
+新增生产 Connection 回归覆盖不枚举能力表的接入、失败移交后的新端点恢复，以及正常前台恢复时旧 Io 的撤销；编解码回归核对三个接收者编号和截断拒绝。诊断耗时与临时失败打印不进入最终实现。
+
+最终验证：277 项宿主测试通过（独立套件 256、IdentityBook 13、mold 8；6 个 ignored 文档示例不计入），programs 全目标检查与 diff 检查通过。最终 release accept 的同镜像重复运行 20/20 通过，范围 8.09–10.79 秒，中位数 9.70 秒；完整脚本的首次 accept 也通过。system-fault 15.75 秒通过；product 登录交互 5.00 秒通过，驱动结果为 ok。登录验证仍覆盖两个不同 Task、相同 Principal 的 cat 会话及终端恢复。重复运行记录的是这 20 次的结果，不据此声称所有运行条件下永不超时。

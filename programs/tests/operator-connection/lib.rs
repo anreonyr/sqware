@@ -11,6 +11,8 @@ use std::{cell::RefCell, collections::BTreeMap};
 #[derive(Default)]
 struct Backend {
     now: u64,
+    scans: usize,
+    reserves: usize,
     next: usize,
     facts: BTreeMap<usize, (TaskId, TaskId, Mark)>,
     inbox: BTreeMap<usize, Vec<(Vec<u8>, TaskId)>>,
@@ -67,18 +69,21 @@ pub mod raw {
         BACKEND.with(|b| b.borrow().facts.contains_key(&t.get()))
     }
     pub fn reserve(t: PieToken) -> Result<(TaskId, TaskId, Mark), ()> {
-        BACKEND.with(|b| b.borrow().facts.get(&t.get()).copied().ok_or(()))
+        BACKEND.with(|b| { let mut b = b.borrow_mut(); b.reserves += 1; b.facts.get(&t.get()).copied().ok_or(()) })
     }
     pub struct Entry {
         pub token: PieToken,
+        pub owner: TaskId,
+        pub mark: Mark,
     }
     pub fn pies() -> impl Iterator<Item = Entry> {
         BACKEND
             .with(|b| {
-                b.borrow()
-                    .facts
-                    .keys()
-                    .map(|v| Entry { token: token(*v) })
+                let mut b = b.borrow_mut();
+                b.scans += 1;
+                b.facts
+                    .iter()
+                    .map(|(v, (_, owner, mark))| Entry { token: token(*v), owner: *owner, mark: *mark })
                     .collect::<Vec<_>>()
             })
             .into_iter()
@@ -292,6 +297,29 @@ mod tests {
                 .entry(rx)
                 .or_default()
                 .push((bytes, TaskId::new(caller)));
+        });
+    }
+    #[test]
+    fn large_unrelated_table_does_not_consume_admission_budget() {
+        reset();
+        setup(2, 9);
+        setup(3, 8);
+        BACKEND.with(|b| {
+            let mut b = b.borrow_mut();
+            for n in 1000..3000 {
+                b.facts.insert(n, (TaskId::new(9), TaskId::new(9), Mark::NONE));
+            }
+            // Same owner/role does not establish that the caller delivered it.
+            b.facts.insert(4, (TaskId::new(7), TaskId::new(9), system_api::operator::LINK_MARK));
+        });
+        let mut book = connection::Connections::default();
+        for n in 1..=32 { book.request(TaskId::new(n)).unwrap(); }
+        book.maintain(address()).unwrap();
+        BACKEND.with(|b| {
+            let b = b.borrow();
+            assert_eq!(b.accepted, vec![2, 3]);
+            assert_eq!(b.scans, 1, "one table scan regardless of caller count");
+            assert!(b.reserves <= 3, "unrelated capabilities must not require provenance queries");
         });
     }
     #[test]

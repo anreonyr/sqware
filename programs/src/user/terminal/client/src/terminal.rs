@@ -68,6 +68,7 @@ pub struct Connection {
     terminal: Terminal,
     root: PieToken,
     authority: PieToken,
+    channels: core::cell::Cell<[PieToken; 3]>,
 }
 impl Connection {
     pub fn open(terminal: Terminal) -> Result<Self, ()> {
@@ -76,6 +77,7 @@ impl Connection {
             terminal,
             root,
             authority: PieToken::NONE,
+            channels: core::cell::Cell::new([PieToken::NONE; 3]),
         };
         let anchor = pie::accord(
             root,
@@ -84,15 +86,16 @@ impl Connection {
             frame::AUTHORITY,
         )
         .map_err(|_| ())?;
-        connection.authority = connection
+        let reply = connection
             .terminal
             .call(Command {
                 op: frame::ATTACH,
                 task: env::unit::self_id(),
                 authority: anchor,
                 back: PieToken::NONE,
-            })?
-            .authority;
+            })?;
+        connection.authority = reply.authority;
+        connection.channels.set([reply.input, reply.output, reply.control]);
         if connection.authority == PieToken::NONE {
             return Err(());
         }
@@ -102,7 +105,8 @@ impl Connection {
         self.terminal.host
     }
     pub fn io(&self) -> Result<Io, ()> {
-        Io::injected(self.host())
+        let [input, output, control] = self.channels.get();
+        Io::of(input, output, control)
     }
     fn command(&self, op: u8, task: TaskId) -> Result<(), ()> {
         // The service returns this exclusive proof before acknowledging the command.
@@ -122,7 +126,9 @@ impl Connection {
         if result.is_err() {
             let _ = pie::revoke(self.host(), proof);
         }
-        result.map(|_| ())
+        result.map(|reply| {
+            self.channels.set([reply.input, reply.output, reply.control]);
+        })
     }
     /// The target remains held until control and data grants have both moved.
     pub fn lend(&mut self, task: TaskId) -> Result<Foreground<'_>, ()> {
@@ -229,6 +235,10 @@ impl Io {
             find(frame::OUTPUT)?,
             find(frame::CONTROL)?,
         )
+    }
+    /// Task-local data handles. Foreground transitions revoke previously returned handles.
+    pub fn raw_channels(&self) -> [PieToken; 3] {
+        [self.input, self.output, self.control]
     }
     pub fn read(&self) -> Result<Read, ()> {
         let mut bytes = [0; Input::LEN];

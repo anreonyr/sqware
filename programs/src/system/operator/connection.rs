@@ -66,10 +66,17 @@ impl Connections {
                 index += 1;
             }
         }
-        for caller in self.requested.drain(..) {
+        // Collect already reports owner and mark. Scan once per turn, then
+        // verify provenance only for new LINK candidates from requested callers.
+        // Full-table Reserve calls per caller make admission grow quadratically.
+        if !self.requested.is_empty() {
             for candidate in pies() {
+                let caller = candidate.owner;
                 let reply = candidate.token;
-                if !valid(caller, reply) || self.tickets.iter().any(|ticket| ticket.reply == reply)
+                if candidate.mark != LINK_MARK
+                    || !self.requested.contains(&caller)
+                    || self.tickets.iter().any(|ticket| ticket.reply == reply)
+                    || !valid(caller, reply)
                 {
                     continue;
                 }
@@ -90,6 +97,7 @@ impl Connections {
                     state,
                 });
             }
+            self.requested.clear();
         }
         for ticket in &mut self.tickets {
             ticket.state = match core::mem::replace(&mut ticket.state, State::Rejected) {

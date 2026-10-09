@@ -289,9 +289,18 @@ pub(super) fn requests(
         if loaned && (command.op != frame::ATTACH || result.is_err()) {
             let _ = pie::release(command.authority);
         }
+        let grants = if result.is_ok() {
+            server.attachment.as_ref().filter(|a| a.foreground == from)
+                .map(|a| a.grants).unwrap_or([PieToken::NONE; 3])
+        } else {
+            [PieToken::NONE; 3]
+        };
         let reply = Reply {
             status: if result.is_ok() { 0 } else { 1 },
             authority: result.unwrap_or(PieToken::NONE),
+            input: grants[0],
+            output: grants[1],
+            control: grants[2],
         };
         let mut ack = [0; Reply::LEN];
         if let Some(n) = reply.store_at(&mut ack, 0) {

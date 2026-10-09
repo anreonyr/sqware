@@ -8,7 +8,7 @@ use terminal_client::{Connection, Terminal};
 use terminal_api::frame;
 use system_client::operator;
 use system_client::operator::Face;
-use ::resource::raw::{Hole, inspect};
+use ::resource::raw::Hole;
 use execution::{room, unit as task};
 
 extern "C" fn unused(_: usize) -> ! {
@@ -37,22 +37,9 @@ fn main() -> programs::Report<'static> {
     let mut connection = Connection::open(terminal).unwrap();
     assert!(connection.lend(TaskId::new(usize::MAX)).is_err());
     connection.io().unwrap().drain().unwrap();
-    let host = connection.host();
-    let find = |mark| establish::find(host, mark).unwrap();
-    let (input, output, control) = (
-        find(frame::INPUT),
-        find(frame::OUTPUT),
-        find(frame::CONTROL),
-    );
-    let authority = (0..)
-        .map(|index| pie::collect(index))
-        .take_while(|(token, _, _)| *token != PieToken::NONE)
-        .find_map(|(token, _, mark)| {
-            (mark == frame::AUTHORITY
-                && inspect(token).is_ok_and(|(_, owner, _)| owner == unit::self_id()))
-            .then_some(token)
-        })
-        .unwrap();
+    let [input, output, control] = connection.io().unwrap().raw_channels();
+    let authority = establish::claim(unit::self_id(), frame::AUTHORITY, Wait::AtMost(1000))
+        .expect("probe-terminal: exclusive authority");
     let io = connection.io().unwrap();
     let child = held();
     let foreground = connection.lend(child).unwrap();

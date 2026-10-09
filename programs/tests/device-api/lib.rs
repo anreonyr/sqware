@@ -40,15 +40,25 @@ mod tests {
         let reply = terminal::Reply {
             status: 0,
             authority: token(0x0807_0605_0403_0201),
+            input: token(9), output: token(10), control: token(11),
         };
-        assert_eq!(terminal::Reply::LEN, 9);
+        assert_eq!(terminal::Reply::LEN, 33);
         let mut bytes = [0; terminal::Reply::LEN];
         let n = reply.store_at(&mut bytes, 0).unwrap();
-        assert_eq!(&bytes[..n], &[0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&bytes[..9], &[0, 1, 2, 3, 4, 5, 6, 7, 8]);
+        assert_eq!(&bytes[9..17], &9u64.to_le_bytes());
+        assert_eq!(&bytes[17..25], &10u64.to_le_bytes());
+        assert_eq!(&bytes[25..33], &11u64.to_le_bytes());
         let (decoded, end) = terminal::Reply::fetch_at(&bytes[..n], 0).unwrap();
         assert_eq!(end, n);
         assert_eq!(decoded.status, reply.status);
         assert_eq!(decoded.authority, reply.authority);
+        assert_eq!(decoded.input, reply.input);
+        assert_eq!(decoded.output, reply.output);
+        assert_eq!(decoded.control, reply.control);
+        for end in 0..terminal::Reply::LEN {
+            assert!(terminal::Reply::fetch_at(&bytes[..end], 0).is_none());
+        }
     }
 
     #[test]
