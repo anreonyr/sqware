@@ -260,6 +260,7 @@ pub(crate) trait PieOps: Send {
     fn sire(&self) -> Option<PieToken>;
     fn lord(&self) -> &Weak<Task>;
     fn heir(&self) -> Option<&Heir>;
+    #[cfg(debug_assertions)]
     fn mark(&self) -> Mark;
     fn meta(&self) -> &dyn Mail;
     fn permit(&self) -> Option<&Arc<super::super::space::Permit>>;
@@ -277,6 +278,7 @@ pub(crate) trait PieOps: Send {
     fn owner_task(&self) -> TaskId {
         self.meta().owner()
     }
+    #[cfg(debug_assertions)]
     fn owner(&self) -> Option<TaskId> {
         self.alive().then(|| self.owner_task())
     }
@@ -324,6 +326,7 @@ where
     fn heir(&self) -> Option<&Heir> {
         self.heir.as_ref()
     }
+    #[cfg(debug_assertions)]
     fn mark(&self) -> Mark {
         self.mark
     }
