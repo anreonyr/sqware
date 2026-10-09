@@ -11,7 +11,7 @@ use crate::runtime::switcher::{
     envcall,
 };
 use crate::work::mail::{hole, pole};
-use crate::work::unit::gate::{self, AnyPie, Need, Permission};
+use crate::work::unit::gate::{self, Need, Permission};
 use crate::work::unit::space::{SpaceBuilder, window::HeapWindow};
 use crate::work::unit::task::{Task, TaskTag};
 use crate::work::unit::team::{Team, TeamBuilder};
@@ -81,8 +81,8 @@ pub fn abi_and_privilege() {
     assert!(user.raw(3usize << 32, [0; 6]) < 0);
     assert!(user.raw((2usize << 32) | 99, [0; 6]) < 0);
     assert!(user.raw((1usize << 32) | 5, [2, 0, 0, 0, 0, 0]) < 0);
-    assert!(user.raw((5usize << 32) | 3, [0, 2, 0, 0, 0, 0]) < 0);
-    assert!(user.raw((7usize << 32) | 6, [0, 0, usize::MAX, 0, 0, 0]) < 0);
+    assert!(user.raw((5usize << 32) | 2, [0, 3, 0, 0, 0, 0]) < 0);
+    assert!(user.raw((7usize << 32) | 4, [0, 0, usize::MAX, 0, 0, 0]) < 0);
     assert!(matches!(
         bool::unpack(&[2, 0, 0, 0, 0, 0], &mut 0),
         Err(Decode::Invalid)
@@ -96,9 +96,9 @@ pub fn abi_and_privilege() {
     assert_eq!(user.task.heir_count(), heirs);
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
-    user.task.pies.lock().push(AnyPie::Nole(gate::new_pie(
+    user.task.pies.lock().push(gate::boxed(gate::new_pie::<gate::Nole>(
         ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )));
+    )).expect("pie allocation"));
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
@@ -407,9 +407,9 @@ pub fn capability() {
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
-    let pie = gate::new_pie(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie = gate::new_pie::<gate::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
-    user.task.pies.lock().push(AnyPie::Hole(pie));
+    user.task.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
     assert!(gate::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
         gate::accede::<env::PieFail>(&user.task, token, Need::Store),
@@ -468,16 +468,15 @@ pub fn resource_registration() {
     use crate::runtime::switcher::{envcall::resources as calls, trap::resources as traps};
     use env::{Call, Mark, Name, PieFail, PieToken, Trap};
     crate::work::room::scheduler::boot::init().expect("scheduler init");
-    gate::install(crate::work::room::scheduler::core::roster);
     let system = Caller::new(true);
     let service = Caller::new(false);
     let other = Caller::new(false);
     let mut registry = Registry::default();
     calls::register(&mut registry).unwrap();
     traps::register(&mut registry).unwrap();
-    let root = || AnyPie::Nole(gate::new_pie(
+    let root = || gate::boxed(gate::new_pie::<gate::Nole>(
         calls::get().build.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     let duplicate = root();
     let token = duplicate.token();
     let error = registry.register(Name::Call(Call::Build), duplicate).unwrap_err();
@@ -525,9 +524,9 @@ pub fn resource_registration() {
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
-    let invalid = AnyPie::Nole(gate::new_pie(
+    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
         dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     crate::work::mail::nole::seal(&dead);
     let frozen = match registry.freeze() { Err(e) => e, Ok(_) => panic!("accepted dead root") };
@@ -535,9 +534,9 @@ pub fn resource_registration() {
 
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let mut registry = Registry::default();
-    let invalid = AnyPie::Nole(gate::new_pie(
+    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
         dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    ));
+    )).expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
     crate::work::mail::nole::seal(&dead);
@@ -546,4 +545,82 @@ pub fn resource_registration() {
     assert_eq!(error.reason, PieFail::Denied);
     assert_eq!(error.value.len(), 1);
     assert_eq!(other.task.pies.lock().len(), before);
+}
+
+/// Native checks use real task locks, permits, mappings and the debug lock checker.
+pub fn transfer_relations() {
+    use alloc::vec::Vec;
+    use env::{Mark, PieFail, PieToken};
+    crate::work::room::scheduler::boot::init().expect("scheduler init");
+    let a = Caller::new(false);
+    let b = Caller::new(false);
+    let c = Caller::new(false);
+    let permission = Permission::FETCH | Permission::STORE | Permission::VEST;
+    let root = |task: &Arc<Task>, permission| {
+        let pie = gate::boxed(gate::new_pie::<gate::Nole>(
+            crate::work::mail::nole::NoleMeta::new(task.ident.id), Mark::NONE, permission, None,
+        )).expect("pie allocation");
+        let token = pie.token();
+        gate::insert(task, pie).unwrap();
+        token
+    };
+    let grant = |task: &Arc<Task>, token, target: &Arc<Task>, permission| {
+        PieToken::mint(gate::accord(task, token, &Arc::downgrade(target), permission, Mark::NONE).unwrap())
+    };
+    let token = root(&a.task, permission);
+    let ab = grant(&a.task, token, &b.task, permission);
+    let bc = grant(&b.task, ab, &c.task, permission);
+    assert_eq!(gate::vestor(&c.task, bc), Some(b.task.ident.id));
+    gate::forget(&b.task, ab).unwrap();
+    assert_eq!(gate::vestor(&c.task, bc), Some(a.task.ident.id));
+    assert!(b.task.pies.lock().is_empty());
+    assert!(b.task.heirs.lock().is_empty());
+    assert_eq!(gate::release(&a.task, token), Ok(2));
+    assert!(c.task.pies.lock().is_empty());
+
+    let token = root(&a.task, permission);
+    let child = grant(&a.task, token, &a.task, permission);
+    assert_eq!(gate::vestor(&a.task, child), Some(a.task.ident.id));
+    assert_eq!(gate::release(&a.task, token), Ok(2));
+
+    let sole = permission | Permission::ONLY;
+    let token = root(&a.task, sole);
+    let ab = grant(&a.task, token, &b.task, sole);
+    let old = gate::locate(&a.task, token).unwrap().heir().copied().unwrap();
+    gate::revoke(&a.task, &Arc::downgrade(&b.task), ab).unwrap();
+    let next = grant(&a.task, token, &b.task, sole);
+    assert!(!gate::clear_heir(&a.task, token, old));
+    assert_eq!(gate::locate(&a.task, token).unwrap().heir().unwrap().token, next);
+    gate::release(&a.task, token).unwrap();
+
+    // More simultaneous gates than the previous fixed eight-lock debug limit.
+    let children: Vec<_> = (0..16).map(|_| Caller::new(false)).collect();
+    let token = root(&a.task, permission);
+    for child in &children { grant(&a.task, token, &child.task, permission); }
+    assert_eq!(gate::release(&a.task, token), Ok(17));
+    assert!(children.iter().all(|child| child.task.pies.lock().is_empty()));
+
+    // Exit also withdraws borrowed memory while a backing operation is busy.
+    let d = Caller::new(false);
+    let meta = pole::meta(PAGE_SIZE, a.task.ident.id).unwrap();
+    let pie = gate::boxed(gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap()).expect("pie allocation");
+    let memory = pie.token();
+    gate::insert(&a.task, pie).unwrap();
+    let ad = grant(&a.task, memory, &d.task, permission);
+    grant(&d.task, ad, &c.task, permission);
+    {
+        let _operation = meta.backing().operation().unwrap();
+        gate::doom(&d.task);
+    }
+    assert!(d.task.pies.lock().is_empty());
+    assert!(c.task.pies.lock().is_empty());
+
+    let token = root(&a.task, permission);
+    let ab = grant(&a.task, token, &b.task, permission);
+    grant(&b.task, ab, &c.task, permission);
+    gate::doom(&b.task);
+    assert!(b.task.pies.lock().is_empty());
+    assert!(c.task.pies.lock().is_empty());
+    assert!(a.task.heirs.lock().is_empty());
+    assert_eq!(gate::accord(&a.task, token, &Arc::downgrade(&b.task), permission, Mark::NONE), Err(PieFail::Dead));
 }

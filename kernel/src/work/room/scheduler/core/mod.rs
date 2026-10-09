@@ -12,7 +12,7 @@ pub(crate) use beacon::arm as beacon_arm;
 
 pub use ident::{Identity, ident};
 pub(crate) use table::{
-    current, kick, launch, muster, prune_dead, publish, remove_from_starved, rip, roster,
+    current, kick, launch, muster, prune_dead, publish, remove_from_starved, rip,
     running_hart,
 };
 #[cfg(debug_assertions)]

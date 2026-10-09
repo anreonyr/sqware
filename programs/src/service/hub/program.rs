@@ -10,27 +10,17 @@ pub const CHANNEL: &str = "hub";
 
 /// **末尾**铸一枚刻它的孔交回装配者，那一刻它才继续往下起别人
 pub const READY: &str = "hub-ready";
+/// Hub 的私有启动角色，保持与 Machine setup 的名称对应。
+pub const READY_MARK: env::Mark = env::Mark::of(READY);
+pub const CHANNEL_MARK: env::Mark = env::Mark::of(CHANNEL);
 
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[
         crate::unit::Publish::Entries {
-            scope: crate::unit::PublishScope::Hub,
+            scope: crate::unit::PublishScope(2),
             group: "",
             road: "svc/hub",
-            entries: &[
-                crate::unit::PublishEntry {
-                    name: "bond",
-                    mark: Some(env::Mark::of("hub-entry-bond")),
-                },
-                crate::unit::PublishEntry {
-                    name: "list",
-                    mark: Some(env::Mark::of("hub-entry-list")),
-                },
-                crate::unit::PublishEntry {
-                    name: "claim",
-                    mark: Some(env::Mark::of("hub-entry-claim")),
-                },
-            ],
+            entries: &crate::unit::PublishEntry::from_names(hub_api::PUBLICATIONS),
             public: true,
         },
         crate::unit::Publish::Devices,

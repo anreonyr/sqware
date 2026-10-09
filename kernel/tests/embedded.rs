@@ -241,6 +241,18 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn hole_limits() {
+        kernel::health::hole::limits();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn hole_reading_guard() {
+        kernel::health::hole::reading_guard();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn hole_reservations() {
         kernel::health::hole::reservations();
     }
@@ -249,6 +261,12 @@ mod tests {
     #[test]
     fn hole_queue_reuse() {
         kernel::health::hole::reuse();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn hole_discard() {
+        kernel::health::hole::discard_oversized();
     }
 
     // ── 整机用例：**一例 = 一张镜像** ──────────────────────────────────────────
@@ -268,6 +286,12 @@ mod tests {
     #[test]
     fn resource_registration_and_revocation() {
         kernel::health::syscall::resource_registration();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn task_transfer_relations() {
+        kernel::health::syscall::transfer_relations();
     }
 
     #[test]

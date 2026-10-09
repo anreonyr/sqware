@@ -1,0 +1,15 @@
+[package]
+name = "hub-api"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../../../../../crates/env" }
+wire = { path = "../../../../../crates/wire" }
+mold = { path = "../../../../../crates/mold" }
+system-api = { path = "../../../system/api" }

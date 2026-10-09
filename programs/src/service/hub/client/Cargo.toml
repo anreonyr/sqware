@@ -1,0 +1,18 @@
+[package]
+name = "hub-client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+hub-api = { path = "../api" }
+env = { path = "../../../../../crates/env" }
+wire = { path = "../../../../../crates/wire" }
+resource = { path = "../../../../../crates/resource" }
+ipc = { path = "../../../../../crates/ipc" }
+system-api = { path = "../../../system/api" }
+system-client = { path = "../../../system/client" }

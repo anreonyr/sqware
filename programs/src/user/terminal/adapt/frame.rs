@@ -3,9 +3,9 @@ use super::{E_TERMINAL, server::Server};
 use crate::core::mode::{ECHO_MAX, Input, Mode};
 use env::Wait;
 use programs::driver::uart::{client::Console, core::frame::{Bytes, MAX}};
-use protocol::common::schedule::{Progress, ResMut};
-use protocol::service::terminal::frame as stream;
-use runtime::core::res::pie::HolePie;
+use ::schedule::{Progress, ResMut};
+use terminal_api::frame as stream;
+use ::resource::raw::Hole;
 
 pub(super) struct Frame {
     incoming: Option<Bytes>,
@@ -27,7 +27,7 @@ impl Counters {
 pub(super) fn output(mut server: ResMut<Server>, mut frame: ResMut<Frame>, mut counters: ResMut<Counters>) -> Result<Progress, env::Reason> {
     let Some((token, foreground)) = server.attachment.as_ref().map(|a| (a.endpoints.output, a.foreground)) else { return Ok(Progress::Done); };
     let mut bytes = [0; stream::MAX];
-    if let Ok((n, from)) = HolePie::from_token(token).pull(&mut bytes, Wait::POLL) {
+    if let Ok((n, from)) = Hole::from_raw(token).pull(&mut bytes, Wait::POLL) {
         server.active = true;
         if from == foreground {
             for &b in &bytes[..n] {
@@ -61,7 +61,7 @@ pub(super) fn feed(
     if skipped != counters.seen {
         counters.seen = skipped;
         mode.reset();
-        protocol::debug::put(&alloc::format!("terminal: rx gap skipped={skipped}"));
+        programs::debug::put(&alloc::format!("terminal: rx gap skipped={skipped}"));
     }
     if server.attachment.is_none() { mode.reset(); return Ok(Progress::Done); }
     for &b in batch.bytes() {
@@ -96,7 +96,7 @@ pub(super) fn flush(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut 
     let lost = console.tx.lost();
     if lost != counters.lost {
         counters.lost = lost;
-        protocol::debug::put(&alloc::format!("terminal: tx lost={lost}"));
+        programs::debug::put(&alloc::format!("terminal: tx lost={lost}"));
     }
     Ok(Progress::Done)
 }

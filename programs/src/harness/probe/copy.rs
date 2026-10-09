@@ -1,12 +1,13 @@
 use crate::system::loader::{Image, Loader};
+use ::resource::raw::{Hole, pies};
 use alloc::{sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicBool, Ordering};
 use env::pie;
 use env::unit;
 use env::{Mark, PieToken, ProgramKind, TeamId, Wait};
-use runtime::core::res::pie::{HolePie, pies};
 
 pub fn acceptance() {
+    calls();
     queued();
     concurrent();
     let done = Arc::new(AtomicBool::new(false));
@@ -15,22 +16,20 @@ pub fn acceptance() {
         .unwrap()
         .token(env::Name::Call(env::Call::Build))
         .unwrap();
-    let doom = crate::boot::Accounts::take().unwrap()
-        .token(env::Name::Call(env::Call::Doom)).unwrap();
+    let doom = crate::boot::Accounts::take()
+        .unwrap()
+        .token(env::Name::Call(env::Call::Doom))
+        .unwrap();
     let doom_mark = Mark::of("copy-doom");
     let mark = Mark::of("copy-build");
-    let worker = runtime::core::task::join::closure(move || {
+    let worker = execution::unit::task::spawn(move || {
         assert!(
-            protocol::communication::session::establish::claim(
-                env::TaskId::new(0),
-                mark,
-                Wait::AtMost(2000),
-            )
-            .is_some()
+            ipc::session::establish::claim(env::TaskId::new(0), mark, Wait::AtMost(2000),).is_ok()
         );
-        assert!(protocol::communication::session::establish::claim(
-            env::TaskId::new(0), doom_mark, Wait::AtMost(2000),
-        ).is_some());
+        assert!(
+            ipc::session::establish::claim(env::TaskId::new(0), doom_mark, Wait::AtMost(2000),)
+                .is_ok()
+        );
         elf();
         cache_limits();
         finished.store(true, Ordering::Release);
@@ -42,17 +41,174 @@ pub fn acceptance() {
         done.load(Ordering::Acquire),
         "copy: loader checks did not complete"
     );
-    protocol::debug::put(
+    programs::debug::put(
         "copy: queued ownership, ELF cache identity, zero padding and private rollback passed",
+    );
+}
+
+fn calls() {
+    use env::{
+        HoleLimits, MailCondition, MailFail, Oversize, Permission, PieInfo, PieKind, PullOutcome,
+        ReleaseMode, UnsealArgs, VirtAddr,
+    };
+    let owner = unit::self_id();
+    let mark = Mark::new(u64::MAX);
+    let token = pie::unseal(UnsealArgs::Hole {
+        mark,
+        limits: HoleLimits {
+            max_len: 8,
+            max_messages: 3,
+            max_bytes: 12,
+        },
+    })
+    .unwrap();
+    let info = ::resource::raw::inspect(token).unwrap();
+    assert_eq!(
+        (info.token, info.kind, info.owner, info.mark, info.alive),
+        (token, PieKind::Hole, owner, mark, true)
+    );
+    let hole = Hole::from_raw(token);
+    hole.push(&[1; 8], Wait::POLL).unwrap();
+    hole.push(&[2; 4], Wait::POLL).unwrap();
+    assert!(!hole.wait(MailCondition::Push, Wait::POLL).unwrap());
+    assert!(!hole.wait(MailCondition::Empty, Wait::POLL).unwrap());
+    assert!(
+        hole.push(&[0; 9], Wait::POLL)
+            .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert!(
+        hole.push(&[0], Wait::POLL)
+            .is_err_and(|e| e.source == MailFail::Busy)
+    );
+    let mut bytes = [0; 4];
+    assert!(
+        hole.pull(&mut bytes, Wait::POLL)
+            .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert_eq!(hole.peek().unwrap(), (8, owner, 2));
+    assert!(
+        env::mail::pull(token, VirtAddr::new(0), 4, Oversize::Discard)
+            .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert_eq!(hole.peek().unwrap(), (8, owner, 2));
+    assert_eq!(
+        hole.pull_with(&mut bytes, Wait::POLL, Oversize::Discard)
+            .unwrap(),
+        PullOutcome::Discarded {
+            len: 8,
+            sender: owner
+        }
+    );
+    assert_eq!(hole.peek().unwrap(), (4, owner, 1));
+    assert!(hole.wait(MailCondition::Push, Wait::POLL).unwrap());
+    assert!(!hole.wait(MailCondition::Empty, Wait::POLL).unwrap());
+    let read_only = pie::accord(token, owner, Permission::FETCH, Mark::NONE).unwrap();
+    let write_only = pie::accord(token, owner, Permission::STORE, Mark::NONE).unwrap();
+    assert!(
+        env::mail::wait(read_only, MailCondition::Push, Wait::POLL)
+            .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert!(
+        env::mail::wait(read_only, MailCondition::Empty, Wait::POLL)
+            .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert!(
+        env::mail::pull(
+            write_only,
+            VirtAddr::new(bytes.as_mut_ptr() as usize),
+            4,
+            Oversize::Discard
+        )
+        .is_err_and(|e| e.source == MailFail::Denied)
+    );
+    assert_eq!(hole.peek().unwrap(), (4, owner, 1));
+    let group = ::resource::pile::Pile::unseal(false).unwrap();
+    assert!(group.attach(read_only, MailCondition::Push).is_err());
+    group.attach(write_only, MailCondition::Push).unwrap();
+    assert!(matches!(
+        group.await_(Wait::POLL).unwrap(),
+        Some((_, MailCondition::Push))
+    ));
+    group.detach(write_only, MailCondition::Push).unwrap();
+    group.attach(read_only, MailCondition::Pull).unwrap();
+    assert!(matches!(
+        group.await_(Wait::POLL).unwrap(),
+        Some((_, MailCondition::Pull))
+    ));
+    group.detach(read_only, MailCondition::Pull).unwrap();
+    group.attach(write_only, MailCondition::Empty).unwrap();
+    assert!(group.await_(Wait::POLL).unwrap().is_none());
+    assert!(group.attach(group.token(), MailCondition::Pull).is_err());
+    let bell = pie::unseal(UnsealArgs::Nole).unwrap();
+    assert!(group.attach(bell, MailCondition::Push).is_err());
+    assert!(group.attach(bell, MailCondition::Empty).is_err());
+    assert_eq!(
+        hole.pull_with(&mut bytes, Wait::POLL, Oversize::Discard)
+            .unwrap(),
+        PullOutcome::Received {
+            len: 4,
+            sender: owner
+        }
+    );
+    assert_eq!(bytes, [2; 4]);
+    assert!(matches!(
+        group.await_(Wait::POLL).unwrap(),
+        Some((_, MailCondition::Empty))
+    ));
+    pie::seal(token).unwrap();
+    let closed = ::resource::raw::inspect(token).unwrap();
+    assert!(!closed.alive);
+    assert_eq!((closed.owner, closed.mark), (owner, mark));
+    assert!(!::resource::raw::alive(token));
+    assert!(::resource::raw::reserve(token).is_err());
+    for token in [token, group.token(), bell] {
+        pie::release(token, ReleaseMode::Revoke).unwrap();
+    }
+
+    let mut noles = Vec::new();
+    for _ in 0..20 {
+        noles.push(pie::unseal(UnsealArgs::Nole).unwrap());
+    }
+    let mut words = [0; PieInfo::WORDS * 4];
+    let buf = VirtAddr::new(words.as_mut_ptr() as usize);
+    let count = pie::collect(noles[0], buf, 4).unwrap();
+    assert_eq!(count, 4);
+    let record = |words: &[usize], at: usize| {
+        PieInfo::from_words(
+            words[at * PieInfo::WORDS..(at + 1) * PieInfo::WORDS]
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    assert_eq!(record(&words, 0).token, noles[1]);
+    let after = record(&words, 3).token;
+    assert_eq!(after, noles[4]);
+    pie::release(noles[0], ReleaseMode::Revoke).unwrap();
+    pie::release(noles[1], ReleaseMode::Revoke).unwrap();
+    let count = pie::collect(after, buf, 4).unwrap();
+    assert_eq!(count, 4);
+    for i in 0..count {
+        let info = record(&words, i);
+        assert_eq!(
+            (info.token, info.kind, info.owner, info.alive),
+            (noles[i + 5], PieKind::Nole, owner, true)
+        );
+    }
+    for token in noles.into_iter().skip(2) {
+        pie::release(token, ReleaseMode::Revoke).unwrap();
+    }
+    programs::debug::put(
+        "copy: unified creation, bounded queues, Pull policy, wait permissions and token cursor passed",
     );
 }
 
 fn queued() {
     let owner = unit::self_id();
-    let entry = pie::unseal_hole(Mark::of("copy-queued")).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(Mark::of("copy-queued"))).unwrap();
     let raw_owner = owner.get();
-    let writer = runtime::core::task::join::closure(move || {
-        let entry = protocol::communication::session::establish::claim(
+    let writer = execution::unit::task::spawn(move || {
+        let entry = ipc::session::establish::claim(
             env::TaskId::new(raw_owner),
             Mark::of("copy-queued"),
             Wait::AtMost(1000),
@@ -61,10 +217,10 @@ fn queued() {
         let mut data = alloc::vec![0; 128];
         for sequence in 0..4u8 {
             data.fill(sequence);
-            HolePie::from_token(entry).push(&data, Wait::POLL).unwrap();
+            Hole::from_raw(entry).push(&data, Wait::POLL).unwrap();
         }
         assert!(
-            HolePie::from_token(entry)
+            Hole::from_raw(entry)
                 .push(&data, Wait::POLL)
                 .is_err_and(|error| error.source.is_busy()),
             "copy: queue lost its bound"
@@ -72,26 +228,14 @@ fn queued() {
         data.fill(255);
     });
     let sender = writer.id();
-    runtime::core::res::port::ship(
-        entry,
-        sender,
-        env::Access::STORE,
-        env::Policy::NONE,
-    )
-    .unwrap();
+    ::resource::port::ship(entry, sender, env::Access::STORE, env::Policy::NONE).unwrap();
     writer.join();
     let mut short = [0; 4];
-    assert!(
-        HolePie::from_token(entry)
-            .pull(&mut short, Wait::POLL)
-            .is_err()
-    );
+    assert!(Hole::from_raw(entry).pull(&mut short, Wait::POLL).is_err());
     let mut bytes = [0; 128];
     for sequence in 0..4u8 {
         assert_eq!(
-            HolePie::from_token(entry)
-                .pull(&mut bytes, Wait::POLL)
-                .unwrap(),
+            Hole::from_raw(entry).pull(&mut bytes, Wait::POLL).unwrap(),
             (bytes.len(), sender)
         );
         assert!(
@@ -99,61 +243,55 @@ fn queued() {
             "copy: queued bytes changed after sender exit"
         );
     }
-    let hole = HolePie::from_token(entry);
+    let hole = Hole::from_raw(entry);
     for cycle in 0..16u8 {
-        assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
-        assert!(!hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
+        assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
         for _ in 0..4 {
             env::mail::ring(entry).unwrap();
         }
         assert!(env::mail::ring(entry).is_err());
-        assert!(hole.wait(env::HoleDir::Pull, Wait::POLL).unwrap());
-        assert!(!hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
+        assert!(hole.wait(env::MailCondition::Pull, Wait::POLL).unwrap());
+        assert!(!hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
         assert!(hole.push(&[cycle], Wait::POLL).is_err());
         for _ in 0..4 {
             env::mail::hush(entry).unwrap();
         }
         assert!(env::mail::hush(entry).is_err());
-        assert!(hole.wait(env::HoleDir::Push, Wait::POLL).unwrap());
+        assert!(hole.wait(env::MailCondition::Empty, Wait::POLL).unwrap());
         hole.push(&[cycle], Wait::POLL).unwrap();
         assert_eq!(hole.pull(&mut bytes, Wait::POLL).unwrap(), (1, owner));
         assert_eq!(bytes[0], cycle);
     }
     pie::seal(entry).unwrap();
-    pie::release(entry).unwrap();
+    pie::release(entry, env::ReleaseMode::Revoke).unwrap();
 }
 
 fn concurrent() {
     let owner = unit::self_id();
-    let entry = pie::unseal_hole(Mark::of("copy-concurrent")).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(Mark::of("copy-concurrent"))).unwrap();
     let mut workers = Vec::new();
     for producer in 0..4u8 {
-        let worker = runtime::core::task::join::closure(move || {
-            let token = protocol::communication::session::establish::claim(
+        let worker = execution::unit::task::spawn(move || {
+            let token = ipc::session::establish::claim(
                 owner,
                 Mark::of("copy-concurrent"),
                 Wait::AtMost(2000),
             )
             .unwrap();
             for sequence in 0..32u8 {
-                HolePie::from_token(token)
+                Hole::from_raw(token)
                     .push(&[producer, sequence], Wait::AtMost(2000))
                     .unwrap();
             }
         });
-        runtime::core::res::port::ship(
-            entry,
-            worker.id(),
-            env::Access::STORE,
-            env::Policy::NONE,
-        )
-        .unwrap();
+        ::resource::port::ship(entry, worker.id(), env::Access::STORE, env::Policy::NONE).unwrap();
         workers.push(worker);
     }
     let mut counts = [0u8; 4];
     let mut bytes = [0; 2];
     for _ in 0..128 {
-        let (size, sender) = HolePie::from_token(entry)
+        let (size, sender) = Hole::from_raw(entry)
             .pull(&mut bytes, Wait::AtMost(2000))
             .unwrap();
         assert_eq!(size, 2);
@@ -168,8 +306,8 @@ fn concurrent() {
         worker.join();
     }
     pie::seal(entry).unwrap();
-    pie::release(entry).unwrap();
-    protocol::debug::put(
+    pie::release(entry, env::ReleaseMode::Revoke).unwrap();
+    programs::debug::put(
         "copy: four concurrent producers delivered 128 frames in producer FIFO order",
     );
 }
@@ -229,18 +367,18 @@ fn elf() {
     let view =
         env::pie::accord(source, unit::self_id(), env::Permission::FETCH, Mark::NONE).unwrap();
     let page = view;
-    let (at, size) = runtime::core::res::pie::open(page).unwrap();
+    let (at, size) = ::resource::raw::open(page).unwrap();
     assert_eq!(size, 8192);
     // SAFETY: Open holds a readable mapping of size bytes until Shut.
     let data = unsafe { core::slice::from_raw_parts(at as *const u8, size) };
     assert_eq!(&data[2..6], &[0x13, 0, 0, 0]);
     assert!(data[..2].iter().chain(&data[6..]).all(|&byte| byte == 0));
     assert!(
-        runtime::core::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
+        execution::memory::map(TeamId::new(0), 0, size, source, 0, 6).is_err(),
         "copy: shared source can be widened"
     );
     env::pie::shut(page).unwrap();
-    pie::release(view).unwrap();
+    pie::release(view, env::ReleaseMode::Revoke).unwrap();
     drop(
         loader
             .build(Image {

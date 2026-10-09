@@ -8,21 +8,21 @@ use super::event::desk::Replies;
 use crate::core::lines::Lines;
 use crate::core::sources::Sources;
 use crate::dev::plic::Plic;
+use ::resource::bell::Bell;
+use ::resource::pile::Pile;
+use ::resource::raw::Hole;
 use alloc::vec::Vec;
-use env::{Access, HoleDir, PieKind, Policy, Wait};
+use env::PAGE_SIZE;
+use env::pie;
+use env::unit;
+use env::{Access, MailCondition, PieKind, Policy, Wait};
+use hub_api as hcall;
+use programs::debug;
 use programs::driver::shared::context::{Context, Step};
 use programs::driver::shared::device::{Ask, Device, Hub};
 use programs::driver::shared::fail::Fail;
 use programs::unit::router::{E_ROUTER, PLIC_CLASS};
-use protocol::debug;
-use protocol::service::hub as hcall;
-use protocol::system::operator::client as operator;
-use runtime::PAGE_SIZE;
-use runtime::core::res::bell::Bell;
-use runtime::core::res::pile::Pile;
-use env::unit;
-use env::pie;
-use runtime::core::res::pie::{HolePie};
+use system_client::operator;
 
 const SERVICE: &str = "router";
 
@@ -63,15 +63,14 @@ pub struct Up {
     pub pile: Pile,
     /// 门外那一页缓冲（取消息用；**按本族最长那一枚备足**，见 `resident`）
     pub buf: Vec<u8>,
-    pub entry: HolePie,
+    pub entry: Hole,
     pub replies: Replies,
 }
 
 /// 起手
 pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
-    let entry =
-        pie::unseal_hole(protocol::driver::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
+    let entry = pie::unseal(env::UnsealArgs::hole(router_api::ENTRY_MARK)).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(
@@ -105,7 +104,7 @@ pub fn up() -> Result<Up, Fail> {
         sources.device_count(),
         sources.context()
     );
-    let bell = Bell::new(irq_deed.token);
+    let bell = Bell::from_raw(irq_deed.token);
 
     // 账：格数按控制器自报的线数要，装不下 ⇒ 拒起（"领到的线一定记得下"是构造性事实）。
     // **起域时一条都不接**：接线是登记的直接后果（见 `driver/router/mod.rs`）。
@@ -115,9 +114,9 @@ pub fn up() -> Result<Up, Fail> {
     ctx.plate(entry, SERVICE, Wait::AtMost(QUAY_MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = protocol::communication::session::establish::endpoint(
+    let _ = ipc::session::establish::endpoint(
         env::unit::sire(),
-        env::Mark::of(programs::unit::READY),
+        programs::unit::READY_MARK,
         env::Wait::POLL,
     );
 
@@ -125,16 +124,14 @@ pub fn up() -> Result<Up, Fail> {
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
-    let entry_hole = HolePie::from_token(entry);
-    if pile
-        .attach(irq_deed.token, HoleDir::Pull)
-        .is_err()
-        || pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
+    let entry_hole = Hole::from_raw(entry);
+    if pile.attach(irq_deed.token, MailCondition::Pull).is_err()
+        || pile.attach(entry_hole.token(), MailCondition::Pull).is_err()
     {
         return Err(Fail::at(E_ROUTER, "bell"));
     }
 
-    // 一问的形状是 lcall::Occupy::LEN；缓冲给**一页**（余量；孔不预设长度，装不下会答 `Denied` 且手原样）。
+    // Handoff frames are read into one page so malformed or oversized requests can be consumed and denied.
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
         return Err(Fail::at(E_ROUTER, "desk"));

@@ -3,6 +3,9 @@
 use crate::wire::{PieToken, TeamId, VirtAddr};
 use mold::{Envcall, Fail};
 
+/// 环境内存调用与装载格式使用的页粒度。
+pub const PAGE_SIZE: usize = 4096;
+
 /// Memory 域（class 2：用户堆与映射）的失败词汇。
 #[derive(Fail)]
 pub enum MemoryFail {

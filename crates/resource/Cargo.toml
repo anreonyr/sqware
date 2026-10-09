@@ -1,0 +1,13 @@
+[package]
+name = "resource"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../env" }
+erra = { version = "0.2.0", default-features = false }

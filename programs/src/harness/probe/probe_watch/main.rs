@@ -6,16 +6,20 @@
 extern crate alloc;
 extern crate programs;
 
-use env::Wait;
+use env::{Mark, Wait};
 use programs::Report;
 
-use protocol::common::path::PathBuf;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Event, Kind, EntryId, Grant, Permit};
-use env::unit;
 use env::pie;
+use env::unit;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::EntryId;
+use system_api::operator::Event;
+use system_api::operator::Kind;
+use system_api::operator::Permit;
+use system_api::operator::path::PathBuf;
+use system_client::operator;
+use system_client::operator::Face;
 
 const MS: usize = 1000;
 
@@ -42,9 +46,7 @@ fn main() -> Report<'static> {
 
     // 二、**订**：`watch` 那一面回 `OK` 之后，此后真变了才发得过来。
     let road = PathBuf::try_new(IN_ROAD).unwrap_or_else(|| panic!("probe-watch: bad road"));
-    // **柄先绑**：`Rein` 是"借这一面借出来的那一柄权"，临时的 `Rein` 活不过这一条绑定。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = rein
+    let mut watch = tree
         .watch(&road, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe refused: {fail:?}"));
 
@@ -95,7 +97,7 @@ fn main() -> Report<'static> {
     const EVENTS: usize = LANDED + 1;
     let qroad =
         PathBuf::try_new("svc/probe-watch-q").unwrap_or_else(|| panic!("probe-watch: bad q road"));
-    let mut queue = rein
+    let mut queue = tree
         .watch(&qroad, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
     for i in 0..LANDED {
@@ -121,9 +123,94 @@ fn main() -> Report<'static> {
         "队列那一条没量到：这条路上 {EVENTS} 条事件、读到 {got} 条（0 = 一条没收到，= {EVENTS} = 一条没丢）"
     );
     // **读数**（`debug!` 在 release 是空操作，故这一行走 `debug::put`）。
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-watch: queued got={got} of={EVENTS} last_seq={last}"
     ));
+
+    let publisher = system_client::control::publication::Client::injected().unwrap();
+    let dynamic = |name: &str| system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope(4),
+        group: "probe-watch-dynamic".into(),
+        name: name.into(),
+    };
+    let first = dynamic("one");
+    let second = dynamic("two");
+    let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let second_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    assert_ne!(first_entry, second_entry);
+    let denied_group = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let denied_name = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let marked_without_right = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
+    assert_eq!(
+        publisher.publish(
+            system_api::control::publication::Target::Service {
+                scope: system_api::control::publication::Scope(4),
+                group: "probe-watch-other".into(),
+                name: "one".into(),
+            },
+            denied_group,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    assert_eq!(
+        publisher.publish(
+            dynamic("../escape"),
+            denied_name,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    assert_eq!(
+        publisher.publish(
+            system_api::control::publication::Target::Service {
+                scope: system_api::control::publication::Scope(4),
+                group: "probe-watch-other".into(),
+                name: "one".into(),
+            },
+            marked_without_right,
+            Permit::Public,
+            Wait::AtMost(MS),
+        ),
+        Err(system_api::operator::Fail::Denied)
+    );
+    for token in [denied_group, denied_name, marked_without_right] {
+        pie::seal(token).unwrap();
+        pie::release(token, env::ReleaseMode::Revoke).unwrap();
+    }
+    let first_id = publisher
+        .publish(first.clone(), first_entry, Permit::Public, Wait::AtMost(MS))
+        .unwrap();
+    let second_id = publisher
+        .publish(
+            second.clone(),
+            second_entry,
+            Permit::Public,
+            Wait::AtMost(MS),
+        )
+        .unwrap();
+    let root = tree.root();
+    for (name, id) in [("one", first_id), ("two", second_id)] {
+        let road = PathBuf::try_new(&alloc::format!("svc/probe-watch-dynamic/{name}")).unwrap();
+        let tile = root.tile(&road, Wait::AtMost(MS)).unwrap();
+        assert_eq!(tile.id(), id);
+        let token = tile.token(Wait::AtMost(MS)).unwrap();
+        assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::NONE);
+        pie::release(token, env::ReleaseMode::Revoke).unwrap();
+    }
+    publisher.unpublish(first, Wait::AtMost(MS)).unwrap();
+    let first_road = PathBuf::try_new("svc/probe-watch-dynamic/one").unwrap();
+    assert!(matches!(
+        root.tile(&first_road, Wait::AtMost(MS)),
+        Err(system_api::operator::Fail::Unknown)
+    ));
+    let second_road = PathBuf::try_new("svc/probe-watch-dynamic/two").unwrap();
+    assert_eq!(
+        root.tile(&second_road, Wait::AtMost(MS)).unwrap().id(),
+        second_id
+    );
 
     return Report::note(env::EXIT_OK, OK_NOTE);
 }
@@ -147,13 +234,13 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
-    let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of(mark))).unwrap();
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope(4),
         group: group.into(),
         name: name.into(),
     };
-    let id = protocol::system::control::publication::Client::injected()
+    let id = system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target, entry, Permit::Public, Wait::AtMost(MS))
         .unwrap();

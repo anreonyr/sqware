@@ -1,0 +1,14 @@
+[package]
+name = "router-handoff-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+env = { path = "../../../crates/env" }
+router-api = { path = "../../src/driver/router/api" }

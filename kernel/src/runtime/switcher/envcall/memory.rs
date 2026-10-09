@@ -41,7 +41,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
     use crate::memory::manager::entry::PteFlags;
     use crate::work::room::scheduler::core::current;
     use crate::work::unit::{
-        gate::{self, AnyPie, Permission},
+        gate::{self, Permission},
         space::{Pending, SegmentKind},
     };
     use core::sync::atomic::Ordering;
@@ -122,24 +122,22 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if backing != env::PieToken::NONE {
                 let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
                 let pie = gate::locate(caller, backing).ok_or(MemoryFail::Denied)?;
-                let AnyPie::Pole(p) = pie else {
-                    return Err(MemoryFail::Denied);
-                };
-                operation = Some(p.meta().backing().operation().ok_or(MemoryFail::Busy)?);
-                if !p.meta().alive()
-                    || p.meta().backing().reserved() != 0
-                    || !p.meta().backing().owned()
+                let p = pie.pole().ok_or(MemoryFail::Denied)?;
+                operation = Some(p.backing().operation().ok_or(MemoryFail::Busy)?);
+                if !p.alive()
+                    || p.backing().reserved() != 0
+                    || !p.backing().owned()
                 {
                     return Err(MemoryFail::Denied);
                 }
-                let permission = p.permission();
+                let permission = pie.permission();
                 if !permission.contains(Permission::FETCH)
                     || access.contains(PteFlags::W) && !permission.contains(Permission::STORE)
                     || team_id.get() != 0 && !permission.contains(Permission::VEST)
                 {
                     return Err(MemoryFail::Denied);
                 }
-                super::pie::usable::<env::PieFail>(&AnyPie::Pole(p.clone()))
+                super::pie::usable::<env::PieFail>(&pie)
                     .map_err(|_| MemoryFail::Denied)?;
                 if team_id.get() == 0 {
                     if access.contains(PteFlags::X) {
@@ -153,14 +151,14 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         };
                 } else if permission.contains(Permission::ONLY) {
                     private = true;
-                    if p.sire.is_some()
-                        || p.meta().owner() != caller.ident.id
-                        || !p.meta().backing().exclusive()
+                    if pie.sire().is_some()
+                        || p.owner() != caller.ident.id
+                        || !p.backing().exclusive()
                         || offset != 0
-                        || size != p.meta().backing().size()
+                        || size != p.backing().size()
                         || access.contains(PteFlags::X)
-                        || !p.meta().backing().unmapped()
-                        || p.meta().mapped()
+                        || !p.backing().unmapped()
+                        || p.mapped()
                     {
                         return Err(MemoryFail::Busy);
                     }
@@ -171,16 +169,16 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         .map_err(|_| MemoryFail::OoM)?;
                     ceiling = access;
                 } else {
-                    if !p.meta().backing().readonly() {
+                    if !p.backing().readonly() {
                         return Err(MemoryFail::Busy);
                     }
                     ceiling = access;
                 }
-                p.meta()
+                p
                     .backing()
                     .address(offset, size)
                     .map_err(MemoryFail::from)?;
-                source = Some(p);
+                source = Some((pie, p));
             } else if offset != 0 || access.contains(PteFlags::X) {
                 return Err(MemoryFail::Denied);
             }
@@ -201,8 +199,8 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         va
                     };
                     inner.allocate(SegmentKind::Normal, va.as_usize(), size)?;
-                    let result = if let Some(p) = &source {
-                        inner.backed(va, p.meta().backing().clone(), offset, size, pte, ceiling)
+                    let result = if let Some((_, p)) = &source {
+                        inner.backed(va, p.backing().clone(), offset, size, pte, ceiling)
                     } else {
                         inner.map(va, size, pte, Some(Pending::Lazy))
                     };
@@ -210,9 +208,9 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         inner.deallocate(SegmentKind::Normal, va.as_usize(), size);
                         return Err(error);
                     }
-                    if let Some(p) = &source {
+                    if let Some((pie, _)) = &source {
                         if team_id.get() == 0 || private {
-                            inner.bind(va, p.token);
+                            inner.bind(va, pie.token());
                         }
                         if private {
                             inner.private(va);
@@ -223,17 +221,17 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     Ok(va)
                 })
                 .map_err(MemoryFail::from)?;
-            if let Some(p) = source {
+            if let Some((pie, p)) = source {
                 let span = crate::work::unit::space::Span::new(SegmentKind::Normal, va, size, None);
                 if private {
-                    p.meta().backing().reserve(target.id);
+                    p.backing().reserve(target.id);
                     target.staged.lock().push(crate::work::unit::team::Staging {
-                        token: p.token,
-                        meta: p.meta().clone(),
+                        token: pie.token(),
+                        meta: p.clone(),
                         span,
                     });
                 } else if team_id.get() == 0 {
-                    if let Err(error) = p.meta().record(p.token, space, span) {
+                    if let Err(error) = p.record(pie.token(), space, span) {
                         space.release(span).expect("map rollback");
                         return Err(match error {
                             env::PieFail::OoM => MemoryFail::OoM,

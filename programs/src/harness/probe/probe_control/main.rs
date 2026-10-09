@@ -14,12 +14,11 @@ use programs::Report;
 use programs::harness::probe;
 
 use env::unit;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::control as ccall;
-use protocol::system::operator::Fail;
-use protocol::system::operator::Grant;
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Fail;
+use system_client::control as ccall;
+use system_client::operator;
 
 const MS: usize = 1000;
 
@@ -46,36 +45,38 @@ fn main() -> Report<'static> {
 
     // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
     //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。
-    //       订要持柄：`watch` 是 `Grant::Watch` 那一维上的一枚（`Face::rein` 借出来）。
-    let rein = tree.rein(Grant::Watch);
-    let mut watch = match rein.watch(ccall::DIR, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch(system_api::control::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-control: /svc/sys/control 那一族订不成：{fail:?}"),
     };
 
     // 二、树上那**一格**：名字（`seek`）→ 号 → **门牌那一枚**（`find` 会把它授进本表）。
     // 那段前缀（一块 `Pane`，没有门牌可授）。
-    let road = ccall::DIR
-        .try_join(ccall::Grant::State.name())
+    let road = system_api::control::DIR
+        .try_join(system_api::control::Grant::State.name())
         .expect("probe-control: bad name");
 
     // 二之后、三之前：**那一族到齐没有**——一问 ＋ 等事件（**该有几枚 = `Grant::ALL`**：
     // 一枚 Grant = 一枚门牌 = 一格）。与 `probe_operator_gate` 数 `/svc/sys/operator` 同一把尺子。
     let parent = tree
-        .pane(ccall::DIR, Wait::AtMost(MS))
+        .pane(system_api::control::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    // Publication, account construction and instance lifecycle are separate entries.
-    let seen =
-        probe::count::count_under(&parent, ccall::Grant::ALL.len() + 3, &mut watch, FACES_MS);
+    // Publication and instance lifecycle are separate entries. Account has its own namespace.
+    let seen = probe::count::count_under(
+        &parent,
+        system_api::control::Grant::ALL.len() + 2,
+        &mut watch,
+        FACES_MS,
+    );
     debug!(
         "probe-control: faces={seen} want={}",
-        (ccall::Grant::ALL.len() + 3)
+        (system_api::control::Grant::ALL.len() + 2)
     );
     assert_eq!(
         seen,
-        (ccall::Grant::ALL.len() + 3),
+        (system_api::control::Grant::ALL.len() + 2),
         "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
-        (ccall::Grant::ALL.len() + 3)
+        (system_api::control::Grant::ALL.len() + 2)
     );
     let plate = tree
         .tile(&road, Wait::AtMost(MS))
@@ -101,15 +102,15 @@ fn main() -> Report<'static> {
     // 六、**带规矩那四面**：`mint` / `embark` / `debark` / `ruin` 各取一遍 ⇒ 期望 `Denied`（树那一层）。
     let mut denied_cells = [false; 4];
     for (i, grant) in [
-        ccall::Grant::Mint,
-        ccall::Grant::Embark,
-        ccall::Grant::Debark,
-        ccall::Grant::Ruin,
+        system_api::control::Grant::Mint,
+        system_api::control::Grant::Embark,
+        system_api::control::Grant::Debark,
+        system_api::control::Grant::Ruin,
     ]
     .into_iter()
     .enumerate()
     {
-        let road = ccall::DIR
+        let road = system_api::control::DIR
             .try_join(grant.name())
             .expect("probe-control: bad face name");
         let got = tree
@@ -119,24 +120,24 @@ fn main() -> Report<'static> {
         denied_cells[i] = matches!(got, Err(Fail::Denied));
     }
 
-    let accounts = ccall::account::Client::find(&tree, Wait::AtMost(MS))
+    let accounts = account_client::Client::find(&tree, Wait::AtMost(MS))
         .expect("probe-control: account entry");
     assert!(matches!(
         accounts.create("anran", Wait::AtMost(MS)),
-        Err(ccall::Fail::Denied)
+        Err(system_api::control::Fail::Denied)
     ));
     let instance = ccall::Face::of(
-        tree.tile(ccall::client::INSTANCE, Wait::AtMost(MS))
+        tree.tile(system_api::control::INSTANCE, Wait::AtMost(MS))
             .and_then(|tile| tile.token(Wait::AtMost(MS)))
             .unwrap(),
     )
     .unwrap();
     assert!(matches!(
         instance.service("terminal".into()).ruin(Wait::AtMost(MS)),
-        Err(ccall::Fail::Denied)
+        Err(system_api::control::Fail::Denied)
     ));
-    let loader_road = protocol::system::loader::DIR
-        .try_join(protocol::system::loader::Grant::Build.name())
+    let loader_road = system_api::operator::Path::new(system_api::loader::DIR)
+        .try_join(system_api::loader::Grant::Build.name())
         .unwrap();
     assert!(
         matches!(
@@ -163,24 +164,24 @@ fn main() -> Report<'static> {
 
     let write_ruin = control.service(nobody).ruin(Wait::AtMost(MS)).err();
     assert!(
-        matches!(write_ruin, Some(ccall::Fail::Denied)),
+        matches!(write_ruin, Some(system_api::control::Fail::Denied)),
         "问面发不出 Ruin：{write_ruin:?}"
     );
 
     // 八、判据：**一例一条**，名字即结论（`Bad` 那一格在每一条里都是红）。
     assert!(
-        matches!(missing, Err(ccall::Fail::Unknown)),
+        matches!(missing, Err(system_api::control::Fail::Unknown)),
         "control 没答出「表里没这个名字」：{missing:?}（`Bad` = 这一趟没走到对面）"
     );
     assert!(
-        matches!(alive, Ok(ccall::State::Ready)),
+        matches!(alive, Ok(system_api::control::State::Ready)),
         "control 那一面看不见本台（装配表里的一行）：{alive:?}"
     );
     for (i, grant) in [
-        ccall::Grant::Mint,
-        ccall::Grant::Embark,
-        ccall::Grant::Debark,
-        ccall::Grant::Ruin,
+        system_api::control::Grant::Mint,
+        system_api::control::Grant::Embark,
+        system_api::control::Grant::Debark,
+        system_api::control::Grant::Ruin,
     ]
     .into_iter()
     .enumerate()
@@ -192,15 +193,15 @@ fn main() -> Report<'static> {
         );
     }
     assert!(
-        matches!(write_mint, Some(ccall::Fail::Denied)),
+        matches!(write_mint, Some(system_api::control::Fail::Denied)),
         "问面发不出 Mint：{write_mint:?}（`Bad` = 这一趟没走到对面）"
     );
     assert!(
-        matches!(write_start, Some(ccall::Fail::Denied)),
+        matches!(write_start, Some(system_api::control::Fail::Denied)),
         "问面发不出 Embark：{write_start:?}"
     );
     assert!(
-        matches!(write_stop, Some(ccall::Fail::Denied)),
+        matches!(write_stop, Some(system_api::control::Fail::Denied)),
         "问面发不出 Debark：{write_stop:?}"
     );
     return Report::note(env::EXIT_OK, OK_NOTE);

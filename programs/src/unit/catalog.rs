@@ -8,20 +8,16 @@ use super::{SCENE_UNIT, UnitFile};
 
 #[path = "../harness/probe/accept/program.rs"]
 pub mod accept;
+#[path = "../service/account/program.rs"]
+pub mod account;
 #[path = "../harness/bench/again/again/program.rs"]
 pub mod again;
 #[path = "../harness/bench/beat/program.rs"]
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
-#[path = "../user/terminal/program.rs"]
-pub mod terminal;
-#[path = "../harness/probe/probe_terminal/program.rs"]
-pub mod probe_terminal;
 #[path = "../user/cat/program.rs"]
 pub mod cat;
-#[path = "../user/login/program.rs"]
-pub mod login;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
 #[path = "../harness/bench/group/group/program.rs"]
@@ -38,6 +34,8 @@ pub mod hub;
 pub mod load;
 #[path = "../harness/guest/lodger/program.rs"]
 pub mod lodger;
+#[path = "../user/login/program.rs"]
+pub mod login;
 #[path = "../harness/guest/member/program.rs"]
 pub mod member;
 #[path = "../harness/bench/load/park/program.rs"]
@@ -70,6 +68,8 @@ pub mod probe_rack_mount;
 pub mod probe_rule;
 #[path = "../harness/probe/probe_rule_other/program.rs"]
 pub mod probe_rule_other;
+#[path = "../harness/probe/probe_terminal/program.rs"]
+pub mod probe_terminal;
 #[path = "../harness/probe/probe_watch/program.rs"]
 pub mod probe_watch;
 #[path = "../harness/probe/probe_watch_after/program.rs"]
@@ -90,6 +90,8 @@ pub mod subject;
 pub mod system;
 #[path = "../harness/probe/system_fault/program.rs"]
 pub mod system_fault;
+#[path = "../user/terminal/program.rs"]
+pub mod terminal;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
 #[path = "../harness/bench/group/waiter/program.rs"]
@@ -104,6 +106,7 @@ pub mod waiter;
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
+    &account::PROGRAM,
     &terminal::PROGRAM,
     &login::PROGRAM,
     &cat::PROGRAM,
@@ -139,7 +142,7 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &probe_watch_gone::PROBE_WATCH_GONE,
     &probe_lease::PROBE_LEASE,
     &probe_bound::PROBE_BOUND,
-    // 共享内存那一具架（`communication::rack`）：单域那一台量**队列语义与唤醒协议**；
+    // 共享内存那一具架（`ipc::rack`）：单域那一台量**队列语义与唤醒协议**；
     // 另两台一对，量**跨域共映射**（页与铃当门牌过树，对端用产品同一条客人面取回）。
     &probe_rack::PROBE_RACK,
     &probe_rack_mount::PROBE_RACK_MOUNT,

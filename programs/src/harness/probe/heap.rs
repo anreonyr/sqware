@@ -5,7 +5,7 @@ pub fn acceptance() {
     pooling();
     layouts();
     concurrent();
-    protocol::debug::put("heap: pooled pages, aligned zeroing, realloc and cross-task release passed");
+    programs::debug::put("heap: pooled pages, aligned zeroing, realloc and cross-task release passed");
 }
 
 fn pooling() {
@@ -16,8 +16,8 @@ fn pooling() {
         // SAFETY: each live allocation is checked and freed with its original layout.
         let ptr = unsafe { alloc(layout) };
         assert!(!ptr.is_null());
-        let page = ptr as usize / runtime::PAGE_SIZE;
-        if !pointers[..index].iter().any(|addr| addr / runtime::PAGE_SIZE == page) {
+        let page = ptr as usize / env::PAGE_SIZE;
+        if !pointers[..index].iter().any(|addr| addr / env::PAGE_SIZE == page) {
             pages += 1;
         }
         unsafe { ptr.write_bytes(index as u8, 64) };
@@ -56,7 +56,7 @@ fn concurrent() {
     let mut workers = Vec::new();
     for byte in 0..4u8 {
         let input = alloc::vec![byte; 257];
-        workers.push(runtime::core::task::join::closure(move || {
+        workers.push(execution::unit::task::spawn(move || {
             assert!(input.iter().all(|&b| b == byte));
             drop(input);
             for size in [8, 64, 257, 2048, 4097] {

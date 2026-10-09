@@ -7,18 +7,24 @@ extern crate programs;
 
 use env::Wait;
 use programs::Report;
-use protocol::communication::session::Session;
-use protocol::system::identity::{
-    CallError, Organization, Query, SelfOps, CoalitionId, Fail, Match, Selector, Subject,
-};
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use system_client::identity::CallError;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_api::identity::CoalitionId;
+use system_api::identity::Fail;
+use system_api::identity::Match;
+use system_api::identity::Selector;
+use system_api::identity::Subject;
+use system_client::operator;
 use env::unit;
 
 const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = programs::system::identity::serve::source::authority()
+    let authority = system_client::identity::authority()
         .expect("member: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
@@ -125,7 +131,7 @@ fn main() -> Report<'static> {
     // invalidate that revision-bound cursor rather than silently continuing a new list.
     let mut cursor = None;
     let mut last = q;
-    for _ in 0..=protocol::system::identity::limits::PAGE_ITEMS {
+    for _ in 0..=system_api::identity::limits::PAGE_ITEMS {
         let page = query
             .members(c0, None, Wait::AtMost(MS))
             .expect("member: page failed");

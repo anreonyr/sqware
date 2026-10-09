@@ -4,7 +4,7 @@
 //! 在非负路径调用 `<T as FromPair>::from_pair(v0, v1)`。错误路径由
 //! 各域的**词表读法**（生成的入口里那一格）接管，故此处只见成功值。
 //!
-//! **宽返回那一格**（`#[ret3(T)]`，今天两处：`PieCall::Collect` 与 `MailCall::Peek`）走
+//! **宽返回那一格**（`#[ret3(T)]`，`MailCall::Pull` 与 `MailCall::Peek`）走
 //! [`FromTriple`]：两格寄存器装不下它那几件事实，故读 `a0..a2`。两条路的分工是**线宽**，
 //! 不是语义——能用一对说完的仍走 [`FromPair`]（三十格），别为了省一次改写把两件事挤进一格。
 //!
@@ -27,8 +27,7 @@
 //! 都不校验。有契约依据的取值（如 `(PieToken, Permission)` 从 v1 取位）不设防，
 //! 因为那个截断**就是**那条契约本身。
 
-use super::{Mark, PieToken, TaskId, TeamId, VirtAddr};
-use crate::HoleDir;
+use super::{PieToken, TaskId, TeamId, VirtAddr};
 use crate::abi::permission::Permission;
 
 /// 由内核回写的 `(a0, a1)` 还原「域 Ret 载荷」的契约（R3 蒸馏）。
@@ -44,7 +43,7 @@ pub trait FromPair: Sized {
 ///
 /// 与 [`FromPair`] 只差**线宽**：一对寄存器说不完的返回走这一条。derive 生成的
 /// `call()` 对 `#[ret3(T)]` 那几个 variant 调 `<T as FromTriple>::from_triple(v0, v1, v2)`；
-/// **同一枚枚举里两条路可以并存**（今天只有 `PieCall` 是这样），按 variant 各走各的。
+/// **同一枚枚举里两条路可以并存**（Mail 的调用表同时使用两种宽度），按 variant 各走各的。
 ///
 /// **为什么不是"给 [`FromPair`] 多加两个参数"**：那会让三十格只读 `a0`/`a1` 的
 /// 返回各自多背两个空位，而这一格只有一处用家。宽窄是**这一格自己的事实**，
@@ -70,11 +69,7 @@ impl FromPair for (usize, TaskId) {
     }
 }
 
-/// `Reserve` 的返回：两格**原样**交出——`a0` = owner 高 32 位 | vestor 低 32 位、
-/// `a1` = **整一枚记号**（打包口径的唯一真相在 `env::abi::call` 的 `Reserve` 那一格的注里）。
-///
-/// 本层**不拆**：拆法属于调用点（`runtime::core::res::pie::reserve`），同一对寄存器不许有两种
-/// 解释——这一对寄存器只有这一种解释。
+/// Two whole return words.
 impl FromPair for (usize, usize) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (v0, v1)
@@ -106,36 +101,9 @@ impl FromPair for (PieToken, PieToken) {
     }
 }
 
-/// `ToleCall::Await` 的返回：`v0` = 哪一枚（`0` = 没等到/没认出），`v1` = 哪个方向。
-///
-/// 方向只占低位两态：`0` = `Pull`、`1` = `Push`（与 `HoleDir` 的声明顺序同源）。
-impl FromPair for (PieToken, HoleDir) {
-    fn from_pair(v0: usize, v1: usize) -> Self {
-        (
-            PieToken::new(v0),
-            if v1 == 1 {
-                HoleDir::Push
-            } else {
-                HoleDir::Pull
-            },
-        )
-    }
-}
-
 impl FromPair for (PieToken, Permission) {
     fn from_pair(v0: usize, v1: usize) -> Self {
         (PieToken::new(v0), Permission::from_bits_truncate(v1 as u32))
-    }
-}
-
-/// `Collect` 返回值打包（本文件唯一一格 [`FromTriple`]）：`v0` = token、
-/// `v1` = **owner**（这扇门谁开的）、`v2` = **整一枚记号**。
-///
-/// 两条口径与内核那边逐位同形：`v0` 兼作"成 / 不成"那一格（用户态按符号读域词表），
-/// 故只装小号；记号整枚另占一格（64 位）。**`owner` 读 `0` 作哨兵**（"查不出"）。
-impl FromTriple for (PieToken, TaskId, Mark) {
-    fn from_triple(v0: usize, v1: usize, v2: usize) -> Self {
-        (PieToken::new(v0), TaskId(v1), Mark::new(v2 as u64))
     }
 }
 
@@ -176,5 +144,14 @@ impl FromPair for TeamId {
 impl FromPair for VirtAddr {
     fn from_pair(v0: usize, _v1: usize) -> Self {
         VirtAddr(v0)
+    }
+}
+
+impl FromPair for (PieToken, crate::MailCondition) {
+    fn from_pair(token: usize, condition: usize) -> Self {
+        (
+            PieToken::new(token),
+            crate::MailCondition::of(condition).expect("invalid Await condition"),
+        )
     }
 }

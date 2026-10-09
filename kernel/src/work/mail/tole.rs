@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::lock::{Level, SpinLock};
 
-use env::{HoleDir, TaskId};
+use env::{MailCondition, TaskId};
 
 use crate::work::mail::hole::HoleId;
 use crate::work::mail::nole::NoleId;
@@ -30,7 +30,7 @@ pub enum ToleState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mate {
-    Hole(HoleId, HoleDir),
+    Hole(HoleId, MailCondition),
     Nole(NoleId),
     /// **页上那一位**（架把铃并进页 ⇒ 页也能进组）。只有 `Pull` 一条方向，与门铃同。
     Pole(PoleId),
@@ -112,15 +112,21 @@ pub(crate) static MATE_SKIP: AtomicUsize = AtomicUsize::new(0);
 
 impl ToleMeta {
     fn new(id: ToleId, owner: TaskId) -> Arc<Self> {
-        Arc::new(Self {
+        Self::try_new(id, owner).expect("tole allocation failed")
+    }
+
+    fn try_new(id: ToleId, owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        let life = Life::try_new()?;
+        Arc::try_new(Self {
             state: SpinLock::new_level(Level::L3, ToleState::Live),
             id,
-            life: Life::new(),
+            life,
             cells: SpinLock::new_level(Level::L3, Vec::new()),
             subs: SpinLock::new_level(Level::L3, Vec::new()),
             owner,
             cursor: AtomicUsize::new(0),
         })
+        .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
     }
 
     /// 轮转起点（`ready()` 从这一格起扫）。
@@ -312,4 +318,8 @@ pub(crate) fn wait(meta: &ToleMeta, dur: Duration) -> Result<Handoff<()>, ToleFa
 
 pub(crate) fn meta(owner: TaskId) -> Arc<ToleMeta> {
     ToleMeta::new(alloc_id(), owner)
+}
+
+pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<ToleMeta>, crate::memory::manager::MapError> {
+    ToleMeta::try_new(alloc_id(), owner)
 }

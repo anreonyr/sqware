@@ -78,17 +78,12 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "../../../crates/protocol/src/wire/message.rs"]
-pub mod message;
-#[cfg(test)]
-mod wire { pub use crate::message; }
-#[cfg(test)]
-#[path = "../../../crates/protocol/src/service/terminal/frame.rs"]
-mod frame;
+mod frame { pub use terminal_api::frame::*; }
 
 #[cfg(test)]
 mod stream_tests {
-    use super::{frame, message::Message};
+    use super::frame;
+    use wire::message::Message;
 
     #[test]
     fn eof_is_distinct_from_a_line_and_preserves_binary_data() {

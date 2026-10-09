@@ -1,15 +1,15 @@
 //! Observe a system team's failure from an independent parent team.
-use runtime::core::res::bell::Bell;
-use crate::system::life::{Phase, Status};
+use crate::system::app::life::{Phase, Status};
 use crate::system::loader::{Image, Loader};
+use ::resource::bell::Bell;
+use ::resource::raw::Hole;
 use alloc::{boxed::Box, sync::Arc};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::pie;
 use env::room;
 use env::unit;
 use env::{Mark, Permission, TaskId, TeamId, Wait};
-use protocol::communication::session::establish;
-use runtime::core::res::pie::{HolePie};
+use ipc::session::establish;
 
 const DOOM: Mark = Mark::of("system-fault-doom");
 const REPORT: Mark = Mark::of("system-fault-report");
@@ -22,15 +22,15 @@ pub fn acceptance() {
     let catalog = crate::boot::Catalog::of_boot(&accounts).unwrap();
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
-    let payload =
-        env::pie::unseal_pole(child.elf.len().div_ceil(runtime::PAGE_SIZE) * runtime::PAGE_SIZE, true).unwrap();
-    let (at, _) = runtime::core::res::pie::open(payload).unwrap();
+    let payload = env::pie::unseal(env::UnsealArgs::Pole { size: child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, shared: true })
+    .unwrap();
+    let (at, _) = ::resource::raw::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
     }
-    let report = pie::unseal_hole(REPORT).unwrap();
-    let boot = pie::unseal_hole(BOOT).unwrap();
+    let report = pie::unseal(env::UnsealArgs::hole(REPORT)).unwrap();
+    let boot = pie::unseal(env::UnsealArgs::hole(BOOT)).unwrap();
     for mode in 0..3 {
         let image = loader
             .build(Image {
@@ -42,22 +42,10 @@ pub fn acceptance() {
         let task = image
             .spawn(&[mode, child.elf.len(), unit::self_id().get()], 0)
             .unwrap();
-        runtime::core::res::port::ship(
-            report,
-            task,
-            env::Access::STORE,
-            env::Policy::NONE,
-        )
-        .unwrap();
-        runtime::core::res::port::ship(
-            boot,
-            task,
-            env::Access::FETCH,
-            env::Policy::NONE,
-        )
-        .unwrap();
+        ::resource::port::ship(report, task, env::Access::STORE, env::Policy::NONE).unwrap();
+        ::resource::port::ship(boot, task, env::Access::FETCH, env::Policy::NONE).unwrap();
         let token = env::pie::accord(payload, task, Permission::FETCH, IMAGE).unwrap();
-        HolePie::from_token(boot)
+        Hole::from_raw(boot)
             .push(&token.to_bytes(), Wait::AtMost(5000))
             .unwrap();
         let build = accounts.token(env::Name::Call(env::Call::Build)).unwrap();
@@ -66,7 +54,7 @@ pub fn acceptance() {
         env::pie::accord(doom, task, Permission::FETCH | Permission::VEST, DOOM).unwrap();
         unit::embark(task).unwrap();
         let mut bytes = [0; 40];
-        let (n, from) = HolePie::from_token(report)
+        let (n, from) = Hole::from_raw(report)
             .pull(&mut bytes, Wait::AtMost(5000))
             .unwrap();
         assert_eq!(from, task);
@@ -83,34 +71,34 @@ pub fn acceptance() {
                     env::chrono::clock() < until,
                     "system-fault: task survived team failure"
                 );
-                runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+                execution::room::park(core::time::Duration::from_millis(1)).unwrap();
             }
         }
         unit::oust(team).unwrap();
-        protocol::debug::put(&alloc::format!(
+        programs::debug::put(&alloc::format!(
             "system-fault: role={mode}; three tasks and descendant reclaimed"
         ));
     }
     let _ = pie::seal(boot);
-    let _ = pie::release(boot);
+    let _ = pie::release(boot, env::ReleaseMode::Revoke);
     let _ = pie::seal(report);
-    let _ = pie::release(report);
+    let _ = pie::release(report, env::ReleaseMode::Revoke);
 }
 
 pub fn unit() {
     let mut loader = Loader::new();
-    let args = runtime::core::task::args::args();
+    let args = execution::boot::args::args();
     let doom = establish::claim(TaskId::new(0), DOOM, Wait::AtMost(5000)).unwrap();
     let mode = args[0];
     let sire = TaskId::new(args[2]);
     let boot = establish::find(sire, BOOT).unwrap();
     let mut bytes = [0; 8];
-    let (n, from) = HolePie::from_token(boot)
+    let (n, from) = Hole::from_raw(boot)
         .pull(&mut bytes, Wait::AtMost(5000))
         .unwrap();
     assert_eq!((n, from), (bytes.len(), sire));
     let payload = env::PieToken::from_bytes(&bytes).unwrap();
-    let dock = runtime::core::res::dock::Dock::open(payload).unwrap();
+    let dock = ::resource::dock::Dock::open(payload).unwrap();
     // SAFETY: the parent supplied an immutable ELF payload of args[1] bytes.
     let elf = unsafe { core::slice::from_raw_parts(dock.view().base() as *const u8, args[1]) };
     let child = loader
@@ -132,15 +120,15 @@ pub fn unit() {
         let state = status.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
             if mode == role {
-                runtime::core::task::exit(env::EXIT_OK, Some("system-fault: injected task exit"));
+                execution::room::reap(env::EXIT_OK, Some("system-fault: injected task exit"));
             }
             let success = if role == 1 {
-                crate::system::operator::serve::run::serve(state.clone()).is_ok()
+                crate::system::operator::run(state.clone()).is_ok()
             } else {
-                crate::system::identity::serve::run::serve(
+                crate::system::identity::run(
                     state.clone(),
-                    crate::system::identity::serve::revision::Epoch::new(),
-                    crate::system::identity::serve::revision::Changed(Bell::unseal().unwrap()),
+                    crate::system::identity::revision::Epoch::new(),
+                    crate::system::identity::revision::Changed(Bell::unseal().unwrap()),
                 )
                 .is_ok()
             };
@@ -149,9 +137,9 @@ pub fn unit() {
             }
         });
         let ptr = Box::into_raw(Box::new(body));
-        let task = runtime::core::task::spawn(
+        let task = execution::unit::spawn(
             TeamId::new(0),
-            runtime::core::task::join::trampoline as *const () as usize,
+            execution::unit::task::trampoline as *const () as usize,
             &[ptr as usize],
             0,
         )
@@ -172,7 +160,7 @@ pub fn unit() {
     ]) {
         slot.copy_from_slice(&(id as u64).to_le_bytes());
     }
-    HolePie::from_token(report)
+    Hole::from_raw(report)
         .push(&bytes, Wait::AtMost(5000))
         .unwrap();
     unit::embark(TaskId::new(operator)).unwrap();
@@ -187,6 +175,6 @@ pub fn unit() {
         {
             let _ = room::doom(unit::self_id());
         }
-        runtime::core::task::sleep(core::time::Duration::from_millis(10)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(10)).unwrap();
     }
 }

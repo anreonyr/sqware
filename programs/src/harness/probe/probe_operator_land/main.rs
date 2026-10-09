@@ -3,30 +3,30 @@
 //! Raw mutation admission and trusted publication, using real IPC.
 extern crate alloc;
 extern crate programs;
-use env::{Mark, Wait};
-use programs::Report;
-use protocol::communication::session::Session;
-use protocol::system::control::{Client, Scope, Target};
+use ::resource::raw::{Hole, reserve};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
-use protocol::system::operator::{
-    EntryId, Fail, Grant, Permit, Where,
-    client::{self as operator, Face, Mine},
-};
+use env::{Mark, Wait};
+use ipc::session::Session;
+use programs::Report;
+use system_api::control::Scope;
+use system_api::control::Target;
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_api::operator::Where;
+use system_client::control::publication::Client;
+use system_client::operator;
+use system_client::operator::Face;
+use system_client::operator::Mine;
 const MS: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> Report<'static> {
-    let session = Session::open(
-        env::unit::sire(),
-        operator::granted_berth(Grant::Land),
-        MS,
-    )
-    .unwrap_or_else(|_| panic!("no land session"));
+    let session = Session::open(env::unit::sire(), operator::BERTH, MS)
+        .unwrap_or_else(|_| panic!("no Operator session"));
     let face = Face::of(session);
-    let land = face.rein(Grant::Land);
-    let source = pie::unseal_hole(Mark::of("publication-test")).unwrap();
+    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
     assert_eq!(
-        land.land(
+        face.land(
             Where::Root,
             "idt".into(),
             source,
@@ -36,18 +36,16 @@ fn main() -> Report<'static> {
         ),
         Err(Fail::Denied)
     );
-    assert_eq!(land.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
-    assert_eq!(land.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
-    assert!(matches!(
-        land.seek(protocol::common::path::Path::new("svc"), MS),
-        Err(Fail::Denied)
-    ));
-    assert!(matches!(land.find(EntryId::new(0), MS), Err(Fail::Denied)));
-    assert!(matches!(land.list(Where::Root, MS), Err(Fail::Denied)));
-    assert!(matches!(land.name(EntryId::new(0), MS), Err(Fail::Denied)));
+    assert_eq!(face.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
+    assert_eq!(face.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
+    assert!(
+        face.seek(system_api::operator::path::Path::new("svc"), MS)
+            .is_ok()
+    );
+    assert!(face.list(Where::Root, MS).is_ok());
     let client = Client::injected().unwrap();
     let target = Target::Service {
-        scope: Scope::Fixture,
+        scope: Scope(4),
         group: "operator-fixture".into(),
         name: "entry".into(),
     };
@@ -58,7 +56,7 @@ fn main() -> Report<'static> {
         client.publish(target.clone(), source, Permit::Public, MS),
         Ok(id)
     );
-    let other = pie::unseal_hole(Mark::of("publication-test")).unwrap();
+    let other = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
     assert_eq!(
         client.publish(target.clone(), other, Permit::Public, MS),
         Err(Fail::Denied)
@@ -66,7 +64,7 @@ fn main() -> Report<'static> {
     assert_eq!(
         client.publish(
             Target::Service {
-                scope: Scope::Driver,
+                scope: Scope(1),
                 group: "".into(),
                 name: "rtc".into()
             },
@@ -94,12 +92,9 @@ fn main() -> Report<'static> {
         reserve(source).is_ok(),
         "unpublish must preserve the source resource"
     );
-    HolePie::from_token(source).push(b"live", MS).unwrap();
+    Hole::from_raw(source).push(b"live", MS).unwrap();
     let mut bytes = [0; 4];
-    assert_eq!(
-        HolePie::from_token(source).pull(&mut bytes, MS).unwrap().0,
-        4
-    );
+    assert_eq!(Hole::from_raw(source).pull(&mut bytes, MS).unwrap().0, 4);
     assert_eq!(&bytes, b"live");
     assert_ne!(
         client
@@ -108,7 +103,7 @@ fn main() -> Report<'static> {
         id
     );
     client.unpublish(target, MS).unwrap();
-    protocol::debug::put(
+    programs::debug::put(
         "hierarchy: publication duplicate/conflict/retirement and raw grant denial passed",
     );
     Report::note(

@@ -1,7 +1,7 @@
 use crate::platform::machine;
 use crate::resource::Registry;
 use crate::work::mail;
-use crate::work::unit::gate::{self, AnyPie, Permission};
+use crate::work::unit::gate::{self, Permission};
 use env::{Mark, Name, Page, PieFail, TaskId};
 
 pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
@@ -26,27 +26,27 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
             let Ok(meta) = mail::pole::region(base, size, TaskId::new(0)) else {
                 continue;
             };
-            let root = gate::try_new_pie(
+            let root = gate::try_new_pie::<gate::Pole>(
                 meta,
                 Mark::NONE,
                 Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
                 None,
             )?;
             registry
-                .register(Name::Page(Page::Region(base as u64)), AnyPie::Pole(root))
+                .register(Name::Page(Page::Region(base as u64)), gate::boxed(root)?)
                 .map_err(|e| e.into_parts().0)?;
         }
     }
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0))?;
-    let root = gate::try_new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
+    let root = gate::try_new_pie::<gate::Pole>(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
     registry
-        .register(Name::Page(Page::Dtb), AnyPie::Pole(root))
+        .register(Name::Page(Page::Dtb), gate::boxed(root)?)
         .map_err(|e| e.into_parts().0)?;
     if let Some(initrd) = machine::info().initrd() {
         let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0))?;
-        let root = gate::try_new_pie(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
+        let root = gate::try_new_pie::<gate::Pole>(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
         registry
-            .register(Name::Page(Page::Initrd), AnyPie::Pole(root))
+            .register(Name::Page(Page::Initrd), gate::boxed(root)?)
             .map_err(|e| e.into_parts().0)?;
     }
     Ok(())

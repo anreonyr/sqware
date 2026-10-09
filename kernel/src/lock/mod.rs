@@ -59,6 +59,7 @@ pub use once::OnceLock;
 pub use reentrant::RelLock;
 pub use rw::RwLock;
 pub use spin::SpinLock;
+pub(crate) use depend::reserve as reserve_depend;
 
 #[cfg(debug_assertions)]
 pub fn init_depend(hart_count: usize) -> Result<(), depend::DepInitError> {

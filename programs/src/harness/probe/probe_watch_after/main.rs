@@ -11,11 +11,12 @@ use core::time::Duration;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::PathBuf;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
+use system_api::operator::path::PathBuf;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Permit;
+use system_client::operator::Face as Face;
+use system_client::operator;
 use env::unit;
 use env::pie;
 
@@ -38,9 +39,9 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
-    let client = protocol::system::control::publication::Client::injected().unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let client = system_client::control::publication::Client::injected().unwrap();
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope(4),
         group: "probe-swatch".into(),
         name: IN.into(),
     };
@@ -48,7 +49,7 @@ fn main() -> Report<'static> {
         if i > 0 {
             client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
         }
-        let entry = pie::unseal_hole(env::Mark::of("probe-swatch-after")).unwrap();
+        let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
         let id = client
             .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
             .unwrap();
@@ -58,7 +59,7 @@ fn main() -> Report<'static> {
             panic!("probe-watch-after: the tree stopped answering after #{i}");
         };
         drop(again);
-        let _ = runtime::core::task::sleep(Duration::from_millis(STEP_MS));
+        let _ = execution::room::park(Duration::from_millis(STEP_MS));
     }
 
     let Ok(listing) = tree

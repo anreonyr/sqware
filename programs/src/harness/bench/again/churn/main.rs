@@ -27,6 +27,6 @@ fn main() -> ! {
     let burst = iters_per_ms.saturating_mul(tick::BURST_MS);
     loop {
         tick::spin(burst); // 在台上
-        let _ = runtime::core::task::sleep(Duration::from_millis(tick::BURST_MS as u64)); // 离核
+        let _ = execution::room::park(Duration::from_millis(tick::BURST_MS as u64)); // 离核
     }
 }

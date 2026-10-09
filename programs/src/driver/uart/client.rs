@@ -5,7 +5,7 @@
 //! [`Console::tx`]（本端写、对面读）。
 //!
 //! **一枚门牌后面是一具完整的架**：那一枚号既是页（字节）也是铃（页上那一位"有事"），
-//! 故 [`Reader::from_token`] / [`Writer::from_token`] 各只收**一枚号**（不像页＋铃那一版要两枚）。
+//! 故 [`Reader::from_raw`] / [`Writer::from_raw`] 各只收**一枚号**（不像页＋铃那一版要两枚）。
 //!
 //! **两端的 `mode` 各归各的写端**：`rx` 那一侧满了丢哪一头是**对面**（驱动）的规矩，
 //! 本端不必知道；`tx` 这一侧是本端自己写，故由调用方把 `tx_mode` 递进来——本层不替谁定策略。
@@ -18,10 +18,11 @@
 //! [`find`]（只是把 `road` 换成它们自己的试验场），故真机量到的就是客人这条路本身。
 
 use env::{PieToken, Wait};
-use protocol::common::path::{Path, PathBuf};
-use protocol::communication::rack::{Mode, Reader, Writer};
-use protocol::driver;
-use protocol::system::operator::Face;
+use system_api::operator::path::Path;
+use system_api::operator::path::PathBuf;
+use ipc::rack::{Mode, Reader, Writer};
+use router_api as driver;
+use system_client::operator::Face;
 
 use crate::driver::uart::core::frame::{self, Bytes};
 
@@ -34,7 +35,7 @@ pub struct Console {
 }
 
 /// 控制台那一块窗格在树上的路（`/svc/drv/uart`）——**一处说全**（名字住 [`frame`]，
-/// 路头住 `protocol::driver::ROAD`；两边都不自己拼）。
+/// 路头住 `router_api::ROAD`；两边都不自己拼）。
 pub fn road() -> Option<PathBuf> {
     driver::ROAD.try_join(frame::ME)
 }
@@ -46,8 +47,8 @@ pub fn road() -> Option<PathBuf> {
 pub fn find(tree: &Face, road: &Path, tx_mode: Mode, within: Wait) -> Option<Console> {
     let rx_page = token_of(tree, road, frame::RX, within)?;
     let tx_page = token_of(tree, road, frame::TX, within)?;
-    let rx = Reader::<Bytes>::from_token(rx_page)?;
-    let tx = Writer::<Bytes>::from_token(tx_page, tx_mode)?;
+    let rx = Reader::<Bytes>::from_raw(rx_page)?;
+    let tx = Writer::<Bytes>::from_raw(tx_page, tx_mode)?;
     Some(Console { rx, tx })
 }
 

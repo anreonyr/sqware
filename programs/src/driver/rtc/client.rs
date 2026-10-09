@@ -1,21 +1,21 @@
 //! 问一声现在几点、约一个时刻（约成之后从它等那一声）。
 //! 客人不碰设备——那台时钟归驱动持有（`ONLY`）；客人只说两句话、收两句话。
-//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`HolePie::from_token(..).push(..)`，同 Identity
+//! **问走门、答走发送端**：问那一侧推的是那扇**门**（`Hole::from_raw(..).push(..)`，同 Identity
 //! 的客侧），答那一侧是本端自己那枚孔——**上端点的发送端**（`Sender::<Time>` / `Sender::<Status>`：答的
 //! 两形各是一张实现了报文约定的表，见 super::core::frame）。
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::{PieToken, HoleDir, Wait};
-use protocol::communication::hand::Receiver;
-use protocol::communication::session::establish;
-use protocol::debug;
-use protocol::wire::message::Message;
+use env::{PieToken, MailCondition, Wait};
+use ipc::hand::Receiver;
+use ipc::session::establish;
+use programs::debug;
+use wire::Message;
 
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
 use env::wire::Span as _;
 use env::pie;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{Hole};
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）
@@ -28,26 +28,26 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
-    let door = HolePie::from_token(entry);
+    let door = Hole::from_raw(entry);
     if door.push(&frame[..n], Wait::Forever).is_err()
-        || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
+        || !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true))
     {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
     // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
     let mut buf = Time::EMPTY;
-    let answer = Receiver::<Time>::from_token(back)
+    let answer = Receiver::<Time>::from_raw(back)
         .recv(buf.as_mut(), millis)
         .map_err(|_| Fail::Denied);
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = pie::seal(back);
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
     answer
 }
 
@@ -67,56 +67,56 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
         why("store", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
-    let door = HolePie::from_token(entry);
+    let door = Hole::from_raw(entry);
     if door.push(&frame[..n], Wait::Forever).is_err() {
         why("push", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
-    if !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true)) {
+    if !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true)) {
         why("take", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
     // 收那一格答码（**恰好 1 字节**：长短都不是这一形 ⇒ 读不懂 ⇒ `Denied`）。
     let mut one = Status::EMPTY;
     let t_recv = env::chrono::clock();
-    let code = match Receiver::<Status>::from_token(back).recv(one.as_mut(), millis) {
+    let code = match Receiver::<Status>::from_raw(back).recv(one.as_mut(), millis) {
         Ok(code) => code,
         Err(e) => {
             let ms = (env::chrono::clock().saturating_sub(t_recv) / 1_000_000) as usize;
             // **（临时读数）"没等到"与"读不懂"在这里分开**（`RecvFail` 两格），再把这一趟花了
             // 多少毫秒带上——它是"预算到期"与"答话不成形"的唯一分界。前 20 次。
             match e {
-                protocol::communication::hand::RecvFail::Mail(f) => {
+                ipc::hand::RecvFail::Mail(f) => {
                     why("recv-mail", ms, &alloc::format!("fail={f:?}"))
                 }
-                protocol::communication::hand::RecvFail::Unread(len) => {
+                ipc::hand::RecvFail::Unread(len) => {
                     why("recv-unread", ms, &alloc::format!("len={len}"))
                 }
             }
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             return Err(Fail::Denied);
         }
     };
     if code == frame::OK {
         // **这一枚不还**：那一格现在收着它，到点从那枚孔回来。
         return Ok(Alarm {
-            back: HolePie::from_token(back),
+            back: Hole::from_raw(back),
         });
     }
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = pie::seal(back);
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
     why("code", 0, &alloc::format!("got={code}"));
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }
@@ -132,7 +132,7 @@ fn why(what: &str, ms: usize, extra: &str) {
 
 /// 一次**约**：那一格里收着的，就是它
 pub struct Alarm {
-    back: HolePie,
+    back: Hole,
 }
 
 impl Alarm {
@@ -141,7 +141,7 @@ impl Alarm {
     /// 不是永久挂住（寿命边随它的**开者**——这一枚是客人自己铸的）
     pub fn receive(&self) -> Result<u64, ()> {
         let mut buf = Time::EMPTY;
-        Receiver::<Time>::from_token(self.back.token())
+        Receiver::<Time>::from_raw(self.back.token())
             .recv(buf.as_mut(), Wait::Forever)
             .map_err(|_| ())
     }

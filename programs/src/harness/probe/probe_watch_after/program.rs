@@ -9,12 +9,11 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// 等不到"退场"——两台的判据靠"连改跨过那一刻"成立。
 pub static PROBE_WATCH_AFTER: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Fixture,
+        scope: crate::unit::PublishScope(4),
         group: "probe-swatch",
         road: "svc/probe-swatch",
         entries: &[crate::unit::PublishEntry {
             name: "in",
-            mark: None,
         }],
         public: false,
     }],

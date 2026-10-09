@@ -4,19 +4,27 @@
 //! 分档按特权级（[`system`] 是 S 态，[`user`] 是 U 态）；**两档都不算"特权"——只是"哪个域跑"**。
 
 extern crate alloc;
+extern crate self as programs;
+
+#[doc(hidden)]
+pub use alloc::format as __format;
+pub mod debug;
 
 pub mod boot;
 pub mod driver;
 pub mod entry;
 pub mod harness;
+#[path = "unit/interfaces.rs"]
+mod interfaces;
 pub mod service;
+pub mod support;
 pub mod system;
 pub mod unit;
 pub mod user;
 
 // 出口那一套的转发：生成物（`entry_<路径>.rs`）里写的是 `programs::…`，各 bin 的
 // `main` 返回类型也写 `programs::Report` / `programs::Exit`，故这几个名字得在 crate 根上
-pub use runtime::core::exit::{Exit, Report};
+pub use execution::boot::{Exit, Report};
 
 pub use env::Reason;
 

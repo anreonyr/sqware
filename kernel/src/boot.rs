@@ -89,7 +89,6 @@ fn register_runtime_hooks() {
     ];
     messenger::hook(EXIT_HOOKS);
 
-    crate::work::unit::gate::install(crate::work::room::scheduler::core::roster);
 
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::work::room::scheduler::core::rip,

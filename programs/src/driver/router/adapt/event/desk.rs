@@ -6,24 +6,20 @@ use alloc::vec::Vec;
 
 use crate::core::lines::Lines;
 use crate::dev::plic::{LINE_PRIORITY, Plic};
-use env::{HoleDir, Mark, TaskId, Wait};
-use protocol::communication::session::establish::{self, Held};
-use protocol::debug;
-use protocol::driver::line::frame as lcall;
-use protocol::wire::message::Message;
-use runtime::core::res::pile::Pile;
-use env::pie;
-use runtime::core::res::pie::{HolePie, table_size};
+use ::resource::pile::Pile;
+use ::resource::raw::{Hole, table_size};
+use env::{MailCondition, TaskId, Wait};
+use ipc::session::Held;
+use programs::debug;
+use router_api::frame as lcall;
+use wire::Message;
 
-/// 装泊位 / 认泊位的期限（毫秒）
-const QUAY_MS: usize = 1000;
-
-/// **一格答话存根**：那**一个字节**（登记那一答只有一格状态码）＋ 它欠着谁
+/// Reply storage stays at a stable address for the duration of the push.
 pub struct Reply {
     /// 哪一位客人（回信孔的主人）
     pub who: TaskId,
-    /// 那一个字节。**地址必须稳**：那只手记的是推出去那一刻的地址
-    pub byte: u8,
+    /// Response bytes remain at a stable address for the duration of the push.
+    pub bytes: [u8; lcall::OccupyReply::LEN],
 }
 
 pub struct Replies {
@@ -40,13 +36,16 @@ impl Replies {
             return self.slots.get_mut(at).map(|b| &mut **b);
         }
         self.slots.try_reserve(1).ok()?;
-        self.slots.push(Box::new(Reply { who, byte: 0 }));
+        self.slots.push(Box::new(Reply {
+            who,
+            bytes: lcall::OccupyReply::EMPTY,
+        }));
         self.slots.last_mut().map(|b| &mut **b)
     }
 }
 
 /// 门上那一句话：**登记**（带动作码）——报**线号** ⇒ 占住那一格 + 接上线 ⇒ 回一格状态码
-/// 答话推到**客人借过来的那枚回信孔**上（按记号认：那位给的多枚孔靠记号分开）
+/// 答话推到请求明确携带、经来源核验的回信孔上。
 pub fn serve(
     lines: &mut Lines,
     plic: &Plic,
@@ -55,53 +54,51 @@ pub fn serve(
     pile: &Pile,
     replies: &mut Replies,
 ) {
-    if let Some(line) = <lcall::Occupy as Message>::fetch(frame) {
-        let code = match take_lane(from) {
-            // 客户没把泊位交出来（或交不出来）。
-            None => lcall::DENIED,
-            Some(lane) => match lines.occupy(line, lane) {
-                Ok(()) => {
-                    // **接线是登记的直接后果。**
-                    plic.enable(line, LINE_PRIORITY);
-                    // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `exhaust`）。
-                    if let Some(lane) = lines.lane(line) {
-                        let _ = pile.attach(lane.rx(), HoleDir::Pull);
-                    }
-                    debug!("router: line {line} occupied");
-                    lcall::OK
-                }
-                Err(fail) => {
-                    debug!(
-                        "router: lane dropped line={line} pies={}",
-                        table_size()
-                    );
-                    lcall::fail_to_code(Some(fail))
-                }
-            },
+    if let Some((line, lane_seed, back_seed)) = <lcall::OccupyLane as Message>::fetch(frame) {
+        let Some(back) = super::handoff::back(from, back_seed) else {
+            debug!("router: invalid reply capability from={}", from.get());
+            return;
         };
-        if let Some(back) = establish::find(from, lcall::BACK_MARK) {
-            let reply = HolePie::from_token(back);
-            // **一个字节住进"跟着客人走"的那一格**（见 Reply），**推完就走**：
-            match replies.slot(from) {
-                Some(slot) => {
-                    slot.byte = code;
-                    let _ = reply.push(core::slice::from_ref(&slot.byte), Wait::POLL);
+        let (code, lane_reply) = match take_lane(from, lane_seed) {
+            None => (lcall::DENIED, env::PieToken::NONE),
+            Some(lane) => {
+                let lane_reply = lane.seed();
+                match lines.occupy(line, lane) {
+                    Ok(()) => {
+                        // **接线是登记的直接后果。**
+                        plic.enable(line, LINE_PRIORITY);
+                        // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `exhaust`）。
+                        if let Some(lane) = lines.lane(line) {
+                            let _ = pile.attach(lane.rx(), MailCondition::Pull);
+                        }
+                        debug!("router: line {line} occupied");
+                        (lcall::OK, lane_reply)
+                    }
+                    Err(fail) => {
+                        debug!("router: lane dropped line={line} pies={}", table_size());
+                        (lcall::fail_to_code(Some(fail)), env::PieToken::NONE)
+                    }
                 }
-                None => debug!("router: no reply slot from={}", from.get()),
             }
-            let _ = pie::release(back);
+        };
+        let reply = Hole::from_raw(back);
+        // The fixed reply buffer stays in the slot while the kernel reads it.
+        match replies.slot(from) {
+            Some(slot) => {
+                let response = lcall::OccupyReply::of(code, lane_reply);
+                if let Some(n) = response.store(&mut slot.bytes) {
+                    let _ = reply.push(&slot.bytes[..n], Wait::POLL);
+                }
+            }
+            None => debug!("router: no reply slot from={}", from.get()),
         }
+        let _ = env::pie::release(back, env::ReleaseMode::Revoke);
     }
 }
 
-/// 认下这位客户交出来的**线泊位**（记号 lcall::LANE），并把本端那一枚交给它
+/// 接受请求明确交来的线泊位，并把本端那一枚交给它。
 /// 返**那条路的持有者**（Held：本端读的那一枚 ＋ 认下来的写端）：`deliver` 往**它**推
 /// 投递（客户读的那一枚），`exhaust` 收**它的**排空
-/// **一手就是"两头都装"**（establish::endpoint：铸本端那一枚交给它 ＋ 认下它那一枚，判据
-fn take_lane(from: TaskId) -> Option<Held> {
-    // **有主地建**（`Held(..)`：那一格"有主"由类型说出来）。
-    let lane = Held(establish::endpoint(from, Mark::of(lcall::LANE), Wait::AtMost(QUAY_MS)).ok()?);
-    // **没有写端就投不出去**：这条泊位不成立。
-    lane.tx()?;
-    Some(lane)
+fn take_lane(from: TaskId, token: env::PieToken) -> Option<Held> {
+    super::handoff::lane(from, token)
 }

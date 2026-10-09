@@ -24,16 +24,17 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::Path;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::{Fail, Face as Face};
-use protocol::system::operator::client as operator;
+use system_api::operator::path::Path;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Fail;
+use system_client::operator::Face as Face;
+use system_client::operator;
 use env::unit;
-use runtime::core::res::pie::{HolePie};
+use ::resource::raw::{Hole};
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
-const DIR: &protocol::system::operator::Path = protocol::common::svc::SVC;
+const DIR: &system_api::operator::Path = system_api::operator::SVC;
 const PANE: &str = "rule";
 const IS: &str = "is";
 const UNDER: &str = "under";
@@ -78,13 +79,13 @@ fn main() -> Report<'static> {
         assert_eq!(foreign, Err(Fail::Denied))
     }
 
-    let complete = protocol::communication::session::establish::claim(
+    let complete = ipc::session::establish::claim(
         sire,
         env::Mark::of("probe-rule-verified"),
         Wait::AtMost(MS),
     )
     .expect("probe-other: completion channel");
-    HolePie::from_token(complete)
+    Hole::from_raw(complete)
         .push(&[1], Wait::AtMost(MS))
         .expect("probe-other: completion reply");
     return Report::note(E_OK, OK_NOTE);
@@ -106,7 +107,7 @@ fn denied(tree: &Face, base: &Path, leaf: &str) -> Result<(), Fail> {
         {
             Ok(()) => return Ok(()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

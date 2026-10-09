@@ -1,6 +1,6 @@
 use env::ledger::{args as boot_args, entry::Entries, manifest};
 use env::{Name, PieToken};
-use protocol::debug;
+use programs::debug;
 
 pub struct Accounts {
     view: &'static [u8],
@@ -8,7 +8,7 @@ pub struct Accounts {
 }
 impl Accounts {
     pub fn take() -> Option<Self> {
-        let a = runtime::core::task::args::args();
+        let a = execution::boot::args::args();
         if a.len() < boot_args::LEN {
             return None;
         }

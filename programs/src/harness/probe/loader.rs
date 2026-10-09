@@ -1,18 +1,20 @@
 use super::fixture::Fixture;
+use crate::system::loader::{Image, Loader};
+use ::resource::raw::Hole;
+use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Mark, Permission, TaskId, Wait};
-use protocol::{
-    common::schedule::{Cursor, Progress, Schedule},
-    communication::session::establish,
-    system::{control, loader as call, operator::client::Face as Operator},
-};
-use runtime::core::res::pie::HolePie;
+use ipc::session::establish;
+use system_client::loader as call;
+use system_client::operator::Face as Operator;
 
 const WAIT: Wait = Wait::AtMost(2000);
 
-pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
-    let road = call::DIR.try_join(call::Grant::Build.name()).unwrap();
+pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
+    let road = system_api::operator::Path::new(system_api::loader::DIR)
+        .try_join(system_api::loader::Grant::Build.name())
+        .unwrap();
     assert!(
         operator.tile(&road, WAIT).unwrap().token(WAIT).is_ok(),
         "loader: operator entry missing"
@@ -26,87 +28,74 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let r = ready.clone();
     let t = target.clone();
     let d = denied.clone();
-    let peer = runtime::core::task::join::closure(move || {
+    let peer = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire) && t.load(Ordering::Acquire) != 0);
-        let face = control::Face::of(establish::find(root, control::Grant::State.mark()).unwrap())
-            .unwrap();
+        let face = system_client::control::Face::of(
+            establish::find(root, system_api::control::Grant::State.mark()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             face.instance(TaskId::new(t.load(Ordering::Acquire)))
                 .state(WAIT),
-            Err(control::Fail::Denied)
+            Err(system_api::control::Fail::Denied)
         );
         d.store(true, Ordering::Release);
     });
     let r = ready.clone();
     let worker_done = done.clone();
     let worker_target = target.clone();
-    let worker = runtime::core::task::join::closure(move || {
+    let worker = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire));
         exercise(root, &worker_target, &denied);
         worker_done.store(true, Ordering::Release);
     });
-    let entry = assembly
-        .resources
-        .read::<crate::system::run::loading::answer::Inbox>()
-        .unwrap()
-        .entry
-        .unwrap();
+    let entry = crate::system::loader::entry(&assembly.resources).unwrap();
     env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
     for grant in [
-        control::Grant::State,
-        control::Grant::Embark,
-        control::Grant::Debark,
-        control::Grant::Ruin,
+        system_api::control::Grant::State,
+        system_api::control::Grant::Embark,
+        system_api::control::Grant::Debark,
+        system_api::control::Grant::Ruin,
     ] {
-        let entry = assembly
-            .resources
-            .read::<crate::system::control::serve::watch::Watch>()
-            .unwrap()
-            .faces[grant.index()]
-        .unwrap();
+        let entry = crate::system::control::entry(&assembly.resources, grant).unwrap();
         env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
-        if grant == control::Grant::State {
+        if grant == system_api::control::Grant::State {
             env::pie::accord(entry, peer.id(), Permission::STORE, Mark::NONE).unwrap();
         }
     }
     {
         let roster = assembly
             .resources
-            .read::<crate::system::identity::serve::install::Roster>()
+            .read::<crate::system::control::identity::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();
     }
     let mut schedule = Schedule::new();
     schedule
-        .add_plan(
-            "loader",
-            0u8,
-            crate::system::run::loading::schedule::frame().unwrap(),
-        )
+        .add_plan("loader", 0u8, crate::system::loader::frame().unwrap())
         .unwrap();
     schedule
-        .add_system("receive", 1, crate::system::control::serve::answer::receive)
+        .add_system("launch.register", 1, crate::system::launch::register)
         .unwrap();
     schedule
-        .add_system(
-            "instances",
-            2,
-            crate::system::control::serve::instance::answer,
-        )
+        .add_system("receive", 2, crate::system::control::receive)
         .unwrap();
     schedule
-        .add_system("reap", 3, crate::system::control::serve::instance::reap)
+        .add_system("instances", 3, crate::system::control::answer_instances)
+        .unwrap();
+    schedule
+        .add_system("reap", 4, crate::system::control::instance::schedule::reap)
         .unwrap();
     schedule
         .add_plan(
             "instance.hooks",
-            4,
-            crate::system::run::hooks::instance().unwrap(),
+            5,
+            crate::system::launch::hooks::instance().unwrap(),
         )
         .unwrap();
     schedule
-        .add_system("launch.completed", 5, crate::system::run::launch::completed)
+        .add_system("launch.completed", 6, crate::system::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -123,7 +112,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         if task.get() != 0
             && assembly
                 .resources
-                .read::<crate::system::run::resource::Resources>()
+                .read::<crate::system::publication::RuntimeNamespace>()
                 .unwrap()
                 .runtime_road(task)
                 .is_some()
@@ -132,10 +121,9 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         }
         let clean = assembly
             .resources
-            .read::<crate::system::control::serve::unit::Control>()
+            .read::<crate::system::control::unit::Control>()
             .unwrap()
-            .instances
-            .iter()
+            .instances()
             .all(|item| item.team.is_none());
         if done.load(Ordering::Acquire) && clean {
             break;
@@ -144,7 +132,7 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
             env::chrono::clock() < deadline,
             "loader: IPC fixture timed out"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     worker.join();
     peer.join();
@@ -157,7 +145,8 @@ pub fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         heirs,
         "loader: runtime team leaked"
     );
-    protocol::debug::put(
+    cache_clear();
+    programs::debug::put(
         "loader: operator entry, submitted ELF, instances, owner checks and unclaimed cleanup passed",
     );
 }
@@ -165,21 +154,21 @@ fn until(mut ready: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 5_000_000_000;
     while !ready() {
         assert!(env::chrono::clock() < deadline, "loader: waiting timed out");
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }
 fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     use env::wire::Span;
-    use protocol::wire::message::Message;
-    let entry = establish::find(root, call::Grant::Build.mark()).unwrap();
+    use wire::Message;
+    let entry = establish::find(root, system_api::loader::Grant::Build.mark()).unwrap();
     let loader = call::Face::of(entry).unwrap();
     assert!(
         env::unit::build(env::ProgramKind::User).is_err(),
         "loader: caller received Build authority"
     );
-    let image = env::pie::unseal_pole(8192, true).unwrap();
+    let image = env::pie::unseal(env::UnsealArgs::Pole { size: 8192, shared: true }).unwrap();
     let bytes = image_bytes();
-    let (at, size) = runtime::core::res::pie::open(image).unwrap();
+    let (at, size) = ::resource::raw::open(image).unwrap();
     // SAFETY: the locally owned writable Pole covers the complete test ELF.
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
@@ -195,51 +184,51 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     assert_ne!(first.team, second.team);
     target.store(first.task.get(), Ordering::Release);
     until(|| denied.load(Ordering::Acquire));
-    let face = |grant: control::Grant| {
-        control::Face::of(establish::find(root, grant.mark()).unwrap()).unwrap()
+    let face = |grant: system_api::control::Grant| {
+        system_client::control::Face::of(establish::find(root, grant.mark()).unwrap()).unwrap()
     };
-    let state = face(control::Grant::State);
+    let state = face(system_api::control::Grant::State);
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     assert!(
         env::unit::join(first.task, Wait::POLL).is_err_and(|e| e.source == env::UnitFail::Denied)
     );
-    face(control::Grant::Embark)
+    face(system_api::control::Grant::Embark)
         .instance(first.task)
         .embark(WAIT)
         .unwrap();
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Ready
+        system_api::control::State::Ready
     );
     until(|| {
-        face(control::Grant::Debark)
+        face(system_api::control::Grant::Debark)
             .instance(first.task)
             .debark(WAIT)
             .is_ok()
     });
     assert_eq!(
         state.instance(first.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
-    face(control::Grant::Embark)
+    face(system_api::control::Grant::Embark)
         .instance(first.task)
         .embark(WAIT)
         .unwrap();
-    face(control::Grant::Ruin)
+    face(system_api::control::Grant::Ruin)
         .instance(first.task)
         .ruin(WAIT)
         .unwrap();
-    until(|| state.instance(first.task).state(WAIT) == Ok(control::State::Dead));
+    until(|| state.instance(first.task).state(WAIT) == Ok(system_api::control::State::Dead));
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     assert!(matches!(
         loader.build(image, size, 1, &[], 0, WAIT),
-        Err(call::Fail::BadImage)
+        Err(system_api::loader::Fail::BadImage)
     ));
     // SAFETY: the caller retains write access while the service uses an independent snapshot.
     unsafe {
@@ -247,46 +236,86 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     }
     assert!(matches!(
         loader.build(image, 0, bytes.len(), &[], 0, WAIT),
-        Err(call::Fail::BadImage)
+        Err(system_api::loader::Fail::BadImage)
     ));
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
-        control::State::Debarked
+        system_api::control::State::Debarked
     );
     unsafe {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy = env::pie::accord(image, root, Permission::FETCH, call::frame::IMAGE).unwrap();
-    let (back, seed) = establish::lend_out(entry, call::frame::BACK).unwrap();
-    let ask = call::frame::Ask {
-        op: call::frame::BUILD,
+    let image_copy =
+        env::pie::accord(image, root, Permission::FETCH, system_api::loader::IMAGE).unwrap();
+    let (back, seed) = establish::lend_out(entry, system_api::loader::BACK).unwrap();
+    let ask = system_api::loader::Ask {
+        op: system_api::loader::BUILD,
         image: image_copy,
         offset: 0,
         len: bytes.len() as u64,
         stack: 0,
         count: 0,
-        args: [0; call::frame::MAX_ARGS],
+        args: [0; system_api::loader::MAX_ARGS],
         back: seed,
     };
-    let mut request = [0; call::frame::Ask::LEN];
+    let mut request = [0; system_api::loader::Ask::LEN];
     let n = ask.store_at(&mut request, 0).unwrap();
-    HolePie::from_token(entry)
-        .push(&request[..n], WAIT)
-        .unwrap();
-    let mut reply = call::frame::Said::EMPTY;
-    let said = protocol::communication::hand::Receiver::<call::frame::Said>::from_token(back)
+    Hole::from_raw(entry).push(&request[..n], WAIT).unwrap();
+    let mut reply = system_api::loader::Said::EMPTY;
+    let said = ipc::hand::Receiver::<system_api::loader::Said>::from_raw(back)
         .recv(&mut reply, WAIT)
         .unwrap();
-    assert_eq!(said.status, protocol::wire::OK);
+    assert_eq!(said.status, wire::OK);
+    assert!(
+        matches!(
+            env::pie::revoke(root, image_copy),
+            Err(error) if error.source == env::PieFail::Denied
+        ),
+        "loader: service did not release the remote image loan"
+    );
     let _ = env::pie::seal(back);
-    let _ = env::pie::release(back);
+    let _ = env::pie::release(back, env::ReleaseMode::Revoke);
     // Leave the result unclaimed while keeping its requester alive.
-    until(|| state.instance(said.task).state(WAIT) == Ok(control::State::Dead));
+    until(|| state.instance(said.task).state(WAIT) == Ok(system_api::control::State::Dead));
     env::pie::shut(image).unwrap();
-    env::pie::release(image).unwrap();
+    env::pie::release(image, env::ReleaseMode::Revoke).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
 }
+
+fn cache_clear() {
+    let bytes = image_bytes();
+    let before = ::resource::raw::table_size();
+    let mut loader = Loader::new();
+    let image = loader
+        .build(Image {
+            bytes: &bytes,
+            kind: env::ProgramKind::User,
+        })
+        .expect("loader: cache fixture image");
+    drop(image);
+    assert_eq!(
+        loader.cached_entries(),
+        1,
+        "loader: cache fixture not retained"
+    );
+    let cached = ::resource::raw::table_size();
+    assert!(
+        cached > before,
+        "loader: cached pole missing from resource table"
+    );
+    loader.clear_images();
+    assert_eq!(
+        loader.cached_entries(),
+        0,
+        "loader: clear retained cache entry"
+    );
+    assert!(
+        ::resource::raw::table_size() < cached,
+        "loader: cache clear did not release its mapped source"
+    );
+}
+
 fn image_bytes() -> alloc::vec::Vec<u8> {
     let mut bytes = alloc::vec![0; 4100];
     bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1]);

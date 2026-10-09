@@ -2,18 +2,22 @@
 #![no_main]
 extern crate alloc;
 extern crate programs;
+use ::resource::raw::{Hole, reserve};
+use env::pie;
 use env::wire::Span as _;
 use env::{Mark, PieToken, TaskId, Wait};
+use ipc::session::{Session, establish};
 use programs::harness::probe::hierarchy::{ANSWER, COMMAND};
-use protocol::communication::session::{Session, establish};
-use protocol::system::control::{Client, Object, Target};
-use protocol::system::identity::{Selector, Query, SelfOps};
-use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
-use protocol::system::operator::{
-    Fail, Permit,
-    client::{self as operator, Face},
-};
+use system_api::control::Object;
+use system_api::control::Target;
+use system_api::identity::Selector;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_client::control::publication::Client;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_client::operator;
+use system_client::operator::Face;
 const WAIT: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> programs::Report<'static> {
@@ -22,12 +26,12 @@ fn main() -> programs::Report<'static> {
     let command = establish::claim(control, COMMAND, WAIT).unwrap();
     let answer = establish::claim(control, ANSWER, WAIT).unwrap();
     let _ready = establish::Held(
-        establish::endpoint(control, Mark::of(programs::unit::READY), Wait::POLL).unwrap(),
+        establish::endpoint(control, programs::unit::READY_MARK, Wait::POLL).unwrap(),
     );
     let session = Session::open(control, operator::BERTH, WAIT)
         .unwrap_or_else(|_| panic!("hierarchy operator session"));
     let tree = Face::of(session);
-    let authority = programs::system::identity::serve::source::authority().unwrap();
+    let authority = system_client::identity::authority().unwrap();
     let query = Query::discover(&tree, authority, WAIT).unwrap();
     let self_ops = SelfOps::discover(&tree, authority, WAIT).unwrap();
     let client = Client::injected().unwrap();
@@ -37,13 +41,13 @@ fn main() -> programs::Report<'static> {
     let mut target = None;
     let mut road = None;
     loop {
-        let mut bytes = [0; 9];
-        let (n, sender) = HolePie::from_token(command)
+        let mut bytes = [0; 17];
+        let (n, sender) = Hole::from_raw(command)
             .pull(&mut bytes, Wait::Forever)
             .unwrap();
-        assert_eq!(n, 9);
+        assert_eq!(n, 17);
         assert_eq!(sender, control);
-        let task = TaskId::new(u64::from_le_bytes(bytes[1..].try_into().unwrap()) as usize);
+        let task = TaskId::new(u64::from_le_bytes(bytes[1..9].try_into().unwrap()) as usize);
         match bytes[0] {
             1 => {
                 let Object::Principal(p) = client
@@ -77,7 +81,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        pie::unseal_hole(protocol::system::control::publication::REF).unwrap(),
+                        pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF)).unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -92,13 +96,13 @@ fn main() -> programs::Report<'static> {
                                 object: Object::Principal(p),
                                 name: "forged".into()
                             },
-                            pie::unseal_hole(Mark::of("forged")).unwrap(),
+                            pie::unseal(env::UnsealArgs::hole(Mark::of("forged"))).unwrap(),
                             Permit::Public,
                             WAIT
                         )
                         .is_err()
                 );
-                resource = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                resource = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 let proxy = Target::RuntimeResource {
                     task,
                     kind: "test".into(),
@@ -158,8 +162,10 @@ fn main() -> programs::Report<'static> {
                     .unwrap();
                 assert!(tree.tile(&ownroad, WAIT).unwrap().token(WAIT).is_ok());
                 {
-                    use protocol::system::control::publication::{BACK, ENTRY, Frame};
-                    use runtime::core::res::port::{self, Access, Policy};
+                    use ::resource::port::{self, Access, Policy};
+                    use system_api::control::publication::BACK;
+                    use system_api::control::publication::ENTRY;
+                    use system_api::control::publication::Frame;
                     let abandoned = Target::RuntimeResource {
                         task: me,
                         kind: "public".into(),
@@ -173,23 +179,16 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap()
                     .seed();
-                    let closed = pie::unseal_hole(BACK).unwrap();
-                    let reply = port::ship(
-                        closed,
-                        control,
-                        Access::STORE,
-                        Policy::NONE,
-                    )
-                    .unwrap()
-                    .seed();
+                    let closed = pie::unseal(env::UnsealArgs::hole(BACK)).unwrap();
+                    let reply = port::ship(closed, control, Access::STORE, Policy::NONE)
+                        .unwrap()
+                        .seed();
                     pie::seal(closed).unwrap();
-                    let mut frame = Frame::new(1, abandoned.clone(), seed, Permit::Public);
+                    let mut frame = Frame::new(1, abandoned.clone(), (seed, Permit::Public));
                     frame.back = reply;
-                    protocol::communication::hand::Sender::<Frame>::from_token(
-                        establish::find(control, ENTRY).unwrap(),
-                    )
-                    .send_within(frame, WAIT)
-                    .unwrap_or_else(|_| panic!("abandoned request admission"));
+                    ipc::hand::Sender::<Frame>::from_raw(establish::find(control, ENTRY).unwrap())
+                        .send_within(frame, WAIT)
+                        .unwrap_or_else(|_| panic!("abandoned request admission"));
                     client.runtime(me, WAIT).unwrap();
                     assert!(
                         pie::revoke(control, seed).is_err(),
@@ -199,8 +198,8 @@ fn main() -> programs::Report<'static> {
                         .publish(abandoned.clone(), resource, Permit::Public, WAIT)
                         .unwrap();
                     client.unpublish(abandoned, WAIT).unwrap();
-                    let _ = pie::release(closed);
-                    protocol::debug::put(
+                    let _ = pie::release(closed, env::ReleaseMode::Revoke);
+                    programs::debug::put(
                         "hierarchy: abandoned request with closed reply channel drops its borrowed source and leaves no claim",
                     );
                 }
@@ -227,13 +226,13 @@ fn main() -> programs::Report<'static> {
                 for i in 1..33 {
                     client.unpublish(full(i), WAIT).unwrap();
                 }
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: full mount failure leaves no registry claim; retry after freeing capacity succeeds",
                 );
                 c = Some(coalition);
                 target = Some(proxy);
                 road = Some(resource_road);
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: named full IDs -> Identity lineage/member queries -> MemberOf Find allowed",
                 );
             }
@@ -252,10 +251,10 @@ fn main() -> programs::Report<'static> {
                     .unpublish(target.as_ref().unwrap().clone(), WAIT)
                     .unwrap();
                 assert!(matches!(tree.root().tile(road, WAIT), Err(Fail::Unknown)));
-                HolePie::from_token(acquired).push(b"kept", WAIT).unwrap();
+                Hole::from_raw(acquired).push(b"kept", WAIT).unwrap();
                 let mut read = [0; 4];
                 assert_eq!(
-                    HolePie::from_token(resource).pull(&mut read, WAIT).unwrap(),
+                    Hole::from_raw(resource).pull(&mut read, WAIT).unwrap(),
                     (4, me)
                 );
                 assert_eq!(&read, b"kept");
@@ -264,7 +263,7 @@ fn main() -> programs::Report<'static> {
                     reserve(acquired).is_err(),
                     "resource close must invalidate delivered capability"
                 );
-                let other = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                let other = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 client
                     .publish(
                         target.as_ref().unwrap().clone(),
@@ -274,7 +273,7 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap();
                 resource = other;
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: expel -> Find denied -> waive still denied; unpublish keeps delivered capability; close invalidates it",
                 );
             }
@@ -298,21 +297,30 @@ fn main() -> programs::Report<'static> {
                     reserve(resource).is_ok(),
                     "target exit must not close proxy service resource"
                 );
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: actual team/task proxy registration and child-first target exit cleanup passed",
                 );
             }
             5 => {
-                use protocol::system::control::publication::{BACK, REF, Reply};
-                use runtime::core::res::port::{self, Access, Policy};
-                let fake = establish::find(control, REF).unwrap();
+                use ::resource::port::{self, Access, Policy};
+                use system_api::control::publication::BACK;
+                use system_api::control::publication::REF;
+                use system_api::control::publication::Reply;
+                assert_eq!(
+                    establish::find(control, REF),
+                    Err(establish::DiscoveryFail::Ambiguous)
+                );
+                let fake = PieToken::from_bytes(&bytes[9..17]).unwrap();
+                assert!(
+                    matches!(reserve(fake), Ok((vestor, owner, mark)) if vestor == control && owner == control && mark == REF)
+                );
                 assert_eq!(
                     Client::reference_direct(control, authority, fake, 1, "wrong-authority", WAIT),
                     Err(Fail::Unjudged)
                 );
-                let back = pie::unseal_hole(BACK).unwrap();
+                let back = pie::unseal(env::UnsealArgs::hole(BACK)).unwrap();
                 let from = me.get();
-                let helper = runtime::core::task::join::closure(move || {
+                let helper = execution::unit::task::spawn(move || {
                     let back = establish::claim(TaskId::new(from), BACK, WAIT).unwrap();
                     let reply = Reply {
                         status: 0,
@@ -322,17 +330,11 @@ fn main() -> programs::Report<'static> {
                     };
                     let mut bytes = [0; Reply::LEN];
                     let n = reply.store_at(&mut bytes, 0).unwrap();
-                    HolePie::from_token(back).push(&bytes[..n], WAIT).unwrap();
+                    Hole::from_raw(back).push(&bytes[..n], WAIT).unwrap();
                 });
-                port::ship(
-                    back,
-                    helper.id(),
-                    Access::STORE,
-                    Policy::NONE,
-                )
-                .unwrap();
+                port::ship(back, helper.id(), Access::STORE, Policy::NONE).unwrap();
                 let mut encoded = [0; Reply::LEN];
-                let (n, actual) = HolePie::from_token(back).pull(&mut encoded, WAIT).unwrap();
+                let (n, actual) = Hole::from_raw(back).pull(&mut encoded, WAIT).unwrap();
                 assert_eq!(actual, helper.id());
                 assert_eq!(
                     Reply::from_sender(control, actual, &encoded[..n]),
@@ -340,8 +342,8 @@ fn main() -> programs::Report<'static> {
                 );
                 helper.join();
                 let _ = pie::seal(back);
-                let _ = pie::release(back);
-                protocol::debug::put(
+                let _ = pie::release(back, env::ReleaseMode::Revoke);
+                programs::debug::put(
                     "hierarchy: real ref IPC rejects wrong authority; shared reply validator rejects actual forged sender",
                 );
             }
@@ -366,12 +368,12 @@ fn main() -> programs::Report<'static> {
                     p,
                     query.resolve(me, WAIT).unwrap().unwrap().origin.principal
                 );
-                protocol::debug::put(
+                programs::debug::put(
                     "hierarchy: fresh static ref has new authority; dynamic names did not rebind",
                 );
             }
             _ => panic!("unknown hierarchy command"),
         }
-        HolePie::from_token(answer).push(&bytes[..1], WAIT).unwrap();
+        Hole::from_raw(answer).push(&bytes[..1], WAIT).unwrap();
     }
 }

@@ -7,17 +7,15 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 
 pub static PROBE_RACK_MOUNT: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Fixture,
+        scope: crate::unit::PublishScope(4),
         group: "probe-rack",
         road: "probe-rack",
         entries: &[
             crate::unit::PublishEntry {
                 name: "rx",
-                mark: None,
             },
             crate::unit::PublishEntry {
                 name: "tx",
-                mark: None,
             },
         ],
         public: false,

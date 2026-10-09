@@ -30,11 +30,10 @@
 # 跑七个景就是七次调用。`--scene` 给的景名由本脚本打印出来——报告里那一行只说 `scene`，
 # 景在这一行。
 #
-# **（`accept` 这一景会抖——判据是红率，不是一次绿/一次红）**：本脚本这条路量到过
-# `scene accept` 35 跑红 5 跑（~14%），签名每次相同（树几秒里问不动 ⇒ 一片 `no /svc*` ＋
-# `programs/src/harness/guest/guest/main.rs` 与 `programs/src/harness/probe/probe_bound/main.rs` 两处 `assert`）。病根是那两条
-# （**扳机不等读数**＋**树只有一枚线程**；"扳机"一词见 `scripts/boot.nu` 头注），都不在本脚本这一格。故：**一次绿不算绿**
-# （重复跑看红率），一次红也先看签名对不对。
+# **验收要重复跑，失败要按签名定位**：早期记录过 `accept` 35 跑红 5 跑。
+# 2026-10-09 复查复现了 Control 重复扫描能力表拖过 1 秒握手期限，以及 Terminal
+# 按下标发现能力时的漏读。修复分别改为每轮一次候选扫描、响应显式交付数据端点。
+# 重复运行结果及原提交对照见 docs/system-refactor-plan.md；一次绿不能证明没有竞态。
 #
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
 #
@@ -274,8 +273,10 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   if ($env.RUSTFLAGS? | is-empty) {
     $env.RUSTFLAGS = "-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium"
   }
-  try { ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } } catch { }
-  mut code = $env.LAST_EXIT_CODE
+  # `try` 的块作用域会丢掉外部命令的 LAST_EXIT_CODE；直接保留完整执行结果。
+  let result = (^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete)
+  print -n $result.stdout
+  mut code = $result.exit_code
   if not ($feed_script | is-empty) {
     let result = $"($cap).result"
     $env.FEED_RESULT = $result

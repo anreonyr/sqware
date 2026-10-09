@@ -14,10 +14,11 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::{Fail, Face};
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Fail;
+use system_client::operator::Face;
+use system_client::operator;
 
 use env::PieToken;
 use programs::driver::rtc::client as clock;
@@ -96,7 +97,7 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 }
 
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let road = protocol::driver::ROAD.try_join(WANT)?;
+    let road = router_api::ROAD.try_join(WANT)?;
     // Pane::tile 与 Tile::token 上。
     let root = tree.root();
     let mut left = MS;
@@ -107,7 +108,7 @@ fn find_face(tree: &Face) -> Option<PieToken> {
         {
             Ok(entry) => return Some(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

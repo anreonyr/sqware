@@ -5,31 +5,38 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use env::{HoleDir, Access, Name, MailFail, Mark, Entry as ResourceEntry, PieKind, PieToken, Policy, TaskId, Wait};
-use protocol::communication::hand::{Sender, Receiver, RecvFail};
-use protocol::communication::session::{Session, establish};
-use protocol::debug;
-use protocol::service::hub::{Wire, Said, Window, self, Deed, Enroll, Grant};
-use protocol::system::identity::{Organization, Query, CoalitionId, PageId as _, Selector};
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
-use protocol::wire::message::Message;
-use runtime::PAGE_SIZE;
-use runtime::core::res::dock::Dock;
-use runtime::core::res::pile::Pile;
-use runtime::core::res::port;
+use ::resource::dock::Dock;
+use ::resource::pile::Pile;
+use env::PAGE_SIZE;
 use env::unit;
+use env::{
+    Access, Entry as ResourceEntry, MailCondition, MailFail, Name, PieKind, PieToken, Policy, TaskId,
+    Wait,
+};
+use hub_api::{self as hub, Deed, Enroll, Grant, Said, Window, Wire};
+use ipc::hand::{Receiver, RecvFail, Sender};
+use ipc::session::{Session, establish};
+use programs::debug;
+use system_api::identity::CoalitionId;
+use system_api::identity::PageId as _;
+use system_api::identity::Selector;
+use system_api::operator::Permit;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::operator;
+use system_client::operator::Face;
+use wire::Message;
 
+use super::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
-use crate::system::common::face::mount;
-use crate::system::common::machine::Machine;
-use crate::system::control::serve::task::Start;
-use crate::unit::hub::{CHANNEL, E_HUB, READY};
-use protocol::system::control::Scope;
+use crate::support::face::mount;
+use crate::support::machine::Machine;
+use crate::unit::hub::E_HUB;
+use system_api::control::Scope;
 
 use self::sweep::alive;
+use ::resource::raw::{Hole, reserve};
 use env::pie;
-use runtime::core::res::pie::{HolePie, reserve};
 
 const MS: usize = 1000;
 
@@ -39,24 +46,27 @@ const PROBE_MS: usize = 1000;
 
 pub mod bond;
 pub mod claim;
+mod grant;
+use self::grant::ship;
 pub mod list;
 pub mod sweep;
 
 struct League {
     query: Query,
     organization: Organization,
+    activation: system_client::identity::Face,
 }
 
 /// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**
 /// **起手那几步收在一个闭包**（与持树者 / 名册 / 盟册同形）：它们清一色是"不成 ⇒ 这域起不来"
 /// 的早退步，失败域在末尾**折一次**
 pub fn serve() -> Result<(), Start> {
-    protocol::debug::put("hub: serve enter");
+    programs::debug::put("hub: serve enter");
     // 一～七：起手。
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = unit::sire();
 
-        let up = establish::endpoint(sire, Mark::of(CHANNEL), Wait::POLL)
+        let up = establish::endpoint(sire, crate::unit::hub::CHANNEL_MARK, Wait::POLL)
             .map_err(|_| Start::Load(E_HUB))?;
         let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
 
@@ -83,8 +93,8 @@ pub fn serve() -> Result<(), Start> {
             .principal;
         // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
         // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
-        // `ACTIVATE_MAX` 把关，装不下就是装配错、当场收手。
-        let mut leagues = [CoalitionId::EMPTY; hub::activation::ACTIVATE_MAX];
+        // Identity 的 `MAX_ACTIVE_COALITIONS` 把关，装不下就是装配错、当场收手。
+        let mut leagues = [CoalitionId::EMPTY; system_api::identity::limits::MAX_ACTIVE_COALITIONS];
         let mut n = 0usize;
         for class in &classes {
             let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
@@ -104,7 +114,7 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        crate::service::hub::bridge::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
+        hub_client::activate(&league.activation, me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
@@ -113,15 +123,15 @@ pub fn serve() -> Result<(), Start> {
         let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
             .map_err(|_| Start::Tree(E_HUB))?;
         // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
-        let publisher = protocol::system::control::publication::Client::injected()
+        let publisher = system_client::control::publication::Client::injected()
             .map_err(|_| Start::Tree(E_HUB))?;
         for (name, entry) in [
             (bond_name.as_str(), bond),
             (list_name.as_str(), list),
             (claim_name.as_str(), claim),
         ] {
-            let target = protocol::system::control::publication::Target::Service {
-                scope: Scope::Hub,
+            let target = system_api::control::publication::Target::Service {
+                scope: Scope(2),
                 group: "".into(),
                 name: name.into(),
             };
@@ -141,8 +151,8 @@ pub fn serve() -> Result<(), Start> {
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
             for (name, entry) in doors {
-                let target = protocol::system::control::publication::Target::Service {
-                    scope: Scope::Device,
+                let target = system_api::control::publication::Target::Service {
+                    scope: Scope(3),
                     group: class.clone(),
                     name: name.into(),
                 };
@@ -160,7 +170,8 @@ pub fn serve() -> Result<(), Start> {
 
         // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // （设备格都在树上、盟都立好了）。
-        establish::endpoint(sire, Mark::of(READY), Wait::POLL).map_err(|_| Start::Desk(E_HUB))?;
+        establish::endpoint(sire, crate::unit::hub::READY_MARK, Wait::POLL)
+            .map_err(|_| Start::Desk(E_HUB))?;
 
         // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
         let mut doors: Vec<PieToken> = Vec::new();
@@ -178,7 +189,7 @@ pub fn serve() -> Result<(), Start> {
     //     三枚"推出来，认台靠**这一枚孔自己**）。
     let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
     for token in &doors {
-        pile.attach(*token, HoleDir::Pull)
+        pile.attach(*token, MailCondition::Pull)
             .map_err(|_| Start::Desk(E_HUB))?;
     }
     let mut buf: Vec<u8> = Vec::new();
@@ -190,7 +201,7 @@ pub fn serve() -> Result<(), Start> {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
             Ok(Some((token, _))) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
-                let hole = HolePie::from_token(token);
+                let hole = Hole::from_raw(token);
                 while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
                     turn(&mut ledger, &league, plates, token, from, &buf[..len]);
                 }
@@ -245,17 +256,17 @@ fn turn(
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
         _ => send_status(mine, hub::BAD, back),
     }
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
 }
 
 pub(super) fn put_said(back: PieToken, status: u8) {
-    let mut tx = Sender::<Said>::from_token(back);
+    let mut tx = Sender::<Said>::from_raw(back);
     let _ = tx.send(Said::of(status));
 }
 
 /// 递一句 `Deed`（同上）
 pub(super) fn put_deed(back: PieToken, deed: Deed) {
-    let mut tx = Sender::<Deed>::from_token(back);
+    let mut tx = Sender::<Deed>::from_raw(back);
     let _ = tx.send(deed);
 }
 
@@ -263,7 +274,7 @@ pub(super) fn send_status(mine: Grant, status: u8, back: PieToken) {
     match mine {
         Grant::Bond => put_said(back, status),
         Grant::List => {
-            let mut tx = Sender::<Window>::from_token(back);
+            let mut tx = Sender::<Window>::from_raw(back);
             let _ = tx.send(Window {
                 status,
                 ..Window::EMPTY
@@ -288,26 +299,9 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
     }
 }
 
-/// **授出那一手**：把那台设备那一页交一份给认领者，返**在它表里**的号
-/// 给不给读写"这两件事的判据只有一处——客人那一格 ＋ 内核那一格
-pub(super) fn ship(
-    entry: Entry,
-    to: TaskId,
-    kind: PieKind,
-    access: Access,
-    policy: Policy,
-) -> Result<PieToken, ()> {
-    let shipped = match kind {
-        PieKind::Pole => port::ship(entry.page, to, access, policy),
-        PieKind::Nole => port::ship(entry.page, to, access, policy),
-        PieKind::Hole | PieKind::Tole => return Err(()),
-    };
-    shipped.map(|seat| seat.seed()).map_err(|_| ())
-}
-
 /// **三格失败分得开**（RecvFail）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
 fn take(rx: PieToken) -> Option<Enroll> {
-    let receiver = Receiver::<Enroll>::from_token(rx);
+    let receiver = Receiver::<Enroll>::from_raw(rx);
     let mut buf = Enroll::EMPTY;
     let mut left = LOAD_TRIES;
     loop {
@@ -345,7 +339,9 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let key = pair.name();
         let (name, class, line) = match key {
             k if k == Name::Page(env::Page::Dtb) => (hub::DTB, hub::BOOT, 0),
-            k if k == Name::Trap(env::Trap::SupervisorExternal) => (hub::SUPERVISOR_EXTERNAL, hub::BOOT, 0),
+            k if k == Name::Trap(env::Trap::SupervisorExternal) => {
+                (hub::SUPERVISOR_EXTERNAL, hub::BOOT, 0)
+            }
             _ => match devices.iter().find(|d| d.resource == key) {
                 Some(device) => (device.name.as_str(), device.class.as_str(), device.line),
                 None => continue,
@@ -354,7 +350,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
-        let door = pie::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
+        let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark())).map_err(|_| Start::Load(E_HUB))?;
         ledger
             .enroll(Entry {
                 name,
@@ -377,9 +373,12 @@ fn record(enroll: &Enroll, key: Name) -> Option<ResourceEntry> {
 
 /// Discover Identity through the authority anchor issued directly by Control.
 fn find_league(tree: &Face) -> Option<League> {
-    let authority = crate::system::identity::serve::source::authority()?;
+    let authority = system_client::identity::authority()?;
     Some(League {
         query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,
+        activation: system_client::identity::Face::discover(
+            tree, authority, system_api::identity::Grant::Activate, Wait::AtMost(MS),
+        ).ok()?,
     })
 }

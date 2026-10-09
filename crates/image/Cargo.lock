@@ -21,6 +21,7 @@ dependencies = [
  "bitflags",
  "erra",
  "mold",
+ "wire",
 ]
 
 [[package]]
@@ -30,11 +31,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
+name = "hub-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
 name = "image"
 version = "0.1.0"
 dependencies = [
  "elf",
  "env",
+ "hub-api",
+ "router-api",
+ "system-api",
+ "terminal-api",
+ "wire",
 ]
 
 [[package]]
@@ -65,6 +81,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "router-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -76,7 +102,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "system-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "wire",
+]
+
+[[package]]
+name = "terminal-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "wire",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954"
+
+[[package]]
+name = "wire"
+version = "0.1.0"

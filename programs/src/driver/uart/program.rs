@@ -8,18 +8,12 @@ pub const E_UART: Died = 9;
 
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Driver,
+        scope: crate::unit::PublishScope(1),
         group: "uart",
         road: "svc/drv/uart",
         entries: &[
-            crate::unit::PublishEntry {
-                name: "rx",
-                mark: Some(env::Mark::NONE),
-            },
-            crate::unit::PublishEntry {
-                name: "tx",
-                mark: Some(env::Mark::NONE),
-            },
+            crate::unit::PublishEntry { name: "rx" },
+            crate::unit::PublishEntry { name: "tx" },
         ],
         public: true,
     }],

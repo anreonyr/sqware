@@ -1,0 +1,18 @@
+[package]
+name = "interface-mark-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+env = { path = "../../../crates/env" }
+system-api = { path = "../../src/system/api" }
+hub-api = { path = "../../src/service/hub/api" }
+terminal-api = { path = "../../src/user/terminal/api" }
+router-api = { path = "../../src/driver/router/api" }
+account-api = { path = "../../src/service/account/api" }

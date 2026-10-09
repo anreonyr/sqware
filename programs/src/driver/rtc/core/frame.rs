@@ -5,7 +5,7 @@
 
 use env::wire::Span as _;
 use env::{Mark, PieToken};
-use protocol::wire::message::Message;
+use wire::Message;
 
 /// 问那一句的动作码：「现在几点」
 pub const ASK: u8 = 1;
@@ -16,10 +16,10 @@ pub const ARM: u8 = 2;
 /// 回信孔的记号：客人每趟铸一枚、借给驱动（**收方按它验那一格**）
 pub const BACK: Mark = Mark::of("rtc-back");
 
-/// 失败域与答话那一格**一处编**：三个码与两向读法由 protocol::WireCodes 从
+/// 失败域与答话那一格**一处编**：三个码与两向读法由 mold::WireCodes 从
 pub use super::fail::{BAD, PAST, TAKEN, code_to_fail, fail_to_code};
-/// 答话那一格：收下了——**全协议那一个"没失败"**（protocol::OK），本族不再写第二遍
-pub use protocol::OK;
+/// 答话那一格：收下了——**全协议那一个"没失败"**（wire::OK），本族不再写第二遍
+pub use wire::OK;
 
 /// **问那一形 · 「现在几点」**：动作码 ＋ 那一格
 /// 动作码由 Now::of 钉进来（表那一格是裸字节，是构造那一手保证的）

@@ -23,9 +23,9 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
-use protocol::communication::rack::{CAP, Mode, Rack, SendFail};
-use protocol::communication::session::Session;
-use protocol::system::operator::client as operator;
+use ipc::rack::{CAP, Mode, Rack, SendFail};
+use ipc::session::Session;
+use system_client::operator;
 use env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
@@ -42,7 +42,7 @@ fn main() -> Report<'static> {
     };
     let (dropped, _) = newest();
     let (lost, skipped, got) = oldest();
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-rack: newest_dropped={dropped} newest_pending={CAP} oldest_lost={lost} \
          oldest_skipped={skipped} oldest_got={got} quiet=false"
     ));

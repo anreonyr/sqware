@@ -1,0 +1,17 @@
+[package]
+name = "system-client"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+test = false
+bench = false
+doctest = false
+
+[dependencies]
+env = { path = "../../../../crates/env" }
+wire = { path = "../../../../crates/wire" }
+resource = { path = "../../../../crates/resource" }
+ipc = { path = "../../../../crates/ipc" }
+execution = { path = "../../../../crates/execution" }
+system-api = { path = "../api" }

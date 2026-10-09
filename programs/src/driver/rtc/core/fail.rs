@@ -7,9 +7,9 @@
 //! 客人那一侧与驱动那一侧读同一份）。
 
 /// 两个原语会失败在哪一格。**一格对应一个不同的下一步**
-use protocol::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
+use wire::OK; // `WireCodes` 派生的两向读法要用它（本文件是枚举的家）
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, protocol::WireCodes)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, mold::WireCodes)]
 pub enum Fail {
     /// 那一格有人了 ⇒ 等它到点（客人会收到那一声），或者别约
     #[code(1)]

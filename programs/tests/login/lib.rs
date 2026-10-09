@@ -3,13 +3,8 @@ extern crate alloc;
 #[cfg(test)]
 #[path = "../../src/user/login/auth.rs"]
 mod auth;
-#[path = "../../../crates/protocol/src/common/name.rs"]
-pub mod name;
-mod common {
-    pub use crate::name;
-}
-#[path = "../../../crates/protocol/src/system/control/account/frame.rs"]
-mod frame;
+#[cfg(test)]
+mod frame { pub use account_api::Request; }
 #[cfg(test)]
 mod tests {
     use crate::frame::Request;

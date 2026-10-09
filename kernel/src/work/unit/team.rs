@@ -262,7 +262,7 @@ pub(crate) fn spawn(
     }
     let caller_id = caller.map(|caller| caller.ident.id);
     let result = (|| -> Result<Arc<Task>, UnitFail> {
-        use crate::work::unit::gate::{self, AnyPie, Permission};
+        use crate::work::unit::gate::{self, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
         if !first {
             return prepared.publish(|| {}).map_err(map_err);
@@ -284,23 +284,27 @@ pub(crate) fn spawn(
         for item in staged.iter() {
             operations.push(item.meta.backing().operation().ok_or(UnitFail::Busy)?);
         }
-        let graph = gate::GRAPH.lock();
+        let closed = caller.gate.lock();
+        if *closed {
+            return Err(UnitFail::Denied);
+        }
         let mut pies = caller.pies.lock();
         for item in staged.iter() {
-            let Some(AnyPie::Pole(p)) = pies.iter().find(|p| p.token() == item.token) else {
+            let Some(pie) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
             };
-            if !Arc::ptr_eq(p.meta(), &item.meta)
-                || !p.meta().alive()
-                || p.sire.is_some()
-                || p.heir.is_some()
-                || p.meta().owner() != caller.ident.id
-                || !p
+            let p = pie.snapshot().pole().ok_or(UnitFail::Denied)?;
+            if !Arc::ptr_eq(&p, &item.meta)
+                || !p.alive()
+                || pie.sire().is_some()
+                || pie.heir().is_some()
+                || p.owner() != caller.ident.id
+                || !pie
                     .permission()
                     .contains(Permission::FETCH | Permission::VEST | Permission::ONLY)
-                || p.meta().backing().reserved() != target.id.get()
-                || !p.meta().backing().unmapped()
-                || p.meta().mapped()
+                || p.backing().reserved() != target.id.get()
+                || !p.backing().unmapped()
+                || p.mapped()
             {
                 return Err(UnitFail::Denied);
             }
@@ -314,10 +318,12 @@ pub(crate) fn spawn(
                         .expect("staged root");
                     let pie = pies.remove(index);
                     pie.invalidate();
+                    caller.heirs.lock().retain(|(parent, _, _)| *parent != item.token);
                     retired.push(pie);
                     item.meta.backing().unreserve();
                     leases.push(item);
                 }
+                gate::changed(caller);
                 target.set_default_entry(entry_va);
                 target
                     .ready
@@ -325,14 +331,14 @@ pub(crate) fn spawn(
             })
             .map_err(map_err);
         drop(pies);
-        drop(graph);
+        drop(closed);
         drop(staged);
         drop(operations);
         drop(retired);
         drop(leases);
         result
     })();
-    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出 `GRAPH`、也出了
+    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出任务的 `gate`、也出了
     // `NoAllocation` 之后才要求复核一次。
     if let Some(caller) = caller_id
         && first

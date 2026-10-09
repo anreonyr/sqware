@@ -1,6 +1,9 @@
 use alloc::sync::Arc;
 
-use env::{Mark, PieCall, PieFail, PieToken, TaskId};
+use env::{
+    HoleLimits, Mark, PieCall, PieFail, PieInfo, PieToken, ReleaseMode, TaskId, UnsealArgs,
+    VirtAddr,
+};
 
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
@@ -8,7 +11,7 @@ use crate::work::mail;
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::gate::{
-    self, AnyPie, GateFail, Hole, Need, Nole, Permission, Pie, Pole, clear_heir,
+    self, GateFail, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, clear_heir,
 };
 use crate::work::unit::task::TaskIdent;
 
@@ -35,9 +38,12 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     let _ = &ident;
     Some(match call {
-        PieCall::UnsealHole { mark } => unseal_hole(frame, &ident, mark),
-        PieCall::UnsealPole { size, shared } => unseal_pole(frame, size, shared),
-        PieCall::UnsealNole => unseal_nole(frame),
+        PieCall::Unseal { args } => match args {
+            UnsealArgs::Hole { mark, limits } => unseal_hole(frame, mark, limits),
+            UnsealArgs::Pole { size, shared } => unseal_pole(frame, size, shared),
+            UnsealArgs::Nole => unseal_nole(frame),
+            UnsealArgs::Tole { shared } => unseal_tole(frame, shared),
+        },
         PieCall::Open { token } => open(frame, ident, token),
         PieCall::Shut { token } => shut(frame, ident, token),
         PieCall::Seal { token } => seal(frame, token),
@@ -49,22 +55,13 @@ pub(crate) fn dispatch(
         } => accord(frame, src, dst, subset, mark),
         PieCall::Narrow { token, subset } => narrow(frame, token, subset),
         PieCall::Revoke { dst, token } => revoke(frame, dst, token),
-        PieCall::Collect { index } => collect(frame, index),
-        PieCall::Reserve { token } => reserve(frame, token, true),
-        PieCall::Inspect { token } => reserve(frame, token, false),
-        PieCall::Release { token } => release(frame, token),
-        PieCall::Alive { token } => alive(frame, token),
-        PieCall::Forget { token } => {
-            answer(
-                frame,
-                current()
-                    .running_task()
-                    .ok_or(PieFail::Denied)
-                    .and_then(|task| gate::forget(&task, token))
-                    .map(|_| 0),
-            );
-            Outcome::Resume
-        }
+        PieCall::Collect {
+            after,
+            buf,
+            capacity,
+        } => collect(frame, &ident, after, buf, capacity),
+        PieCall::Inspect { token, buf } => inspect(frame, &ident, token, buf),
+        PieCall::Release { token, mode } => release(frame, token, mode),
         PieCall::Same { a, b } => {
             answer(
                 frame,
@@ -99,9 +96,9 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
     }
 }
 
-pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
-    if let AnyPie::Pole(p) = pie {
-        if p.meta().backing().reserved() != 0 {
+pub(super) fn usable<E: GateFail>(pie: &PieSnapshot) -> Result<(), E> {
+    if let Some(p) = pie.pole() {
+        if p.backing().reserved() != 0 {
             return Err(E::handed_over());
         }
     }
@@ -115,7 +112,7 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
         return Err(E::handed_over());
     }
     if let Some(task) = current().running_task()
-        && clear_heir(&task, pie.token())
+        && clear_heir(&task, pie.token(), h)
     {
         // 就地清掉一格陈旧的 heir 也是能力状态变化（它改的是"这一枚还能不能授出"）。
         let _ = messenger::signal(WakeKey::Capabilities {
@@ -125,10 +122,14 @@ pub(super) fn usable<E: GateFail>(pie: &AnyPie) -> Result<(), E> {
     Ok(())
 }
 
-fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outcome {
+fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        let meta = mail::hole::meta(task.ident.id);
+        if !limits.valid() {
+            return Err(PieFail::Denied);
+        }
+        let meta =
+            mail::hole::try_meta_with_limits(task.ident.id, limits).map_err(|_| PieFail::OoM)?;
         let pie: Pie<Hole> = gate::new_pie(
             meta,
             mark,
@@ -136,11 +137,7 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
             None,
         );
         let token = pie.token;
-        {
-            let mut pies = task.pies.lock();
-            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-            pies.push(AnyPie::Hole(pie));
-        }
+        gate::insert(&task, gate::boxed(pie)?)?;
         // 本地造一枚：权限表的枚举结果变了。出锁之后要求复核一次
         // （没有观察者时 `signal` 不建站点）。
         let _ = messenger::signal(WakeKey::Capabilities {
@@ -163,7 +160,7 @@ fn unseal_hole(frame: &mut TrapContext, _ident: &TaskIdent, mark: Mark) -> Outco
 fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        let meta = mail::nole::NoleMeta::new(task.ident.id);
+        let meta = mail::nole::NoleMeta::try_new(task.ident.id).map_err(|_| PieFail::OoM)?;
         let pie: Pie<Nole> = gate::new_pie(
             meta,
             Mark::NONE,
@@ -171,11 +168,7 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
             None,
         );
         let token = pie.token;
-        {
-            let mut pies = task.pies.lock();
-            pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
-            pies.push(AnyPie::Nole(pie));
-        }
+        gate::insert(&task, gate::boxed(pie)?)?;
         // 本地造一枚：权限表的枚举结果变了。
         let _ = messenger::signal(WakeKey::Capabilities {
             task: task.ident.id,
@@ -197,11 +190,13 @@ fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
         }
         let pie: Pie<Pole> = gate::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
         let token = pie.token;
-        task.pies.lock().try_reserve(1).map_err(|_| PieFail::OoM)?;
         let creator_flags = task_space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
         mail::pole::open(&meta, token, &task_space, creator_flags)?;
-        task.pies.lock().push(AnyPie::Pole(pie));
+        if let Err(error) = gate::boxed(pie).and_then(|pie| gate::insert(&task, pie)) {
+            mail::pole::shut(&meta, token)?;
+            return Err(error);
+        }
         // 本地造一枚：权限表的枚举结果变了。
         let _ = messenger::signal(WakeKey::Capabilities {
             task: task.ident.id,
@@ -217,28 +212,22 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         .running_task()
         .ok_or(PieFail::Denied)
         .and_then(|task| gate::accede::<PieFail>(&task, token, Need::Fetch));
-    let r = match looked.and_then(|p| usable::<PieFail>(&p).map(|()| p)) {
-        Err(e) => Err(e),
-        Ok(AnyPie::Pole(p)) => {
-            let r = (|| {
-                let _operation = p.meta().backing().operation().ok_or(PieFail::Busy)?;
-                if p.meta().backing().reserved() != 0 {
-                    return Err(PieFail::HandedOver);
-                }
-                let flags = subset_to_pte(p.permission())?;
-                mail::pole::open(
-                    p.meta(),
-                    token,
-                    &ident.team.space,
-                    ident.team.space.pte_policy(flags),
-                )
-            })();
-            r
+    let r = (|| {
+        let pie = looked?;
+        usable::<PieFail>(&pie)?;
+        let p = pie.pole().ok_or(PieFail::Denied)?;
+        let _operation = p.backing().operation().ok_or(PieFail::Busy)?;
+        if p.backing().reserved() != 0 {
+            return Err(PieFail::HandedOver);
         }
-        Ok(AnyPie::Hole(_)) => Err(PieFail::Denied),
-        Ok(AnyPie::Nole(_)) => Err(PieFail::Denied),
-        Ok(AnyPie::Tole(_)) => Err(PieFail::Denied),
-    };
+        let flags = subset_to_pte(pie.permission())?;
+        mail::pole::open(
+            &p,
+            token,
+            &ident.team.space,
+            ident.team.space.pte_policy(flags),
+        )
+    })();
     answer_pair(frame, r);
     Outcome::Resume
 }
@@ -252,10 +241,8 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
             return Err(PieFail::Denied);
         }
         usable::<PieFail>(&pie)?;
-        match pie {
-            AnyPie::Pole(p) => mail::pole::shut(p.meta(), token).map(|()| 0),
-            AnyPie::Hole(_) | AnyPie::Nole(_) | AnyPie::Tole(_) => Err(PieFail::Denied),
-        }
+        let p = pie.pole().ok_or(PieFail::Denied)?;
+        mail::pole::shut(&p, token).map(|()| 0)
     })();
     answer(frame, r);
     Outcome::Resume
@@ -271,18 +258,17 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         if pie.owner() != Some(me.ident.id) {
             return Err(PieFail::Denied);
         }
-        match &pie {
-            AnyPie::Hole(h) => mail::hole::seal(h.meta()),
-            AnyPie::Pole(pl) => {
-                let _operation = pl.meta().backing().operation().ok_or(PieFail::Busy)?;
-                if pl.meta().backing().reserved() != 0 {
-                    return Err(PieFail::Busy);
-                }
-                mail::pole::seal(pl.meta());
+        let pole = pie.pole();
+        let _operation = if let Some(p) = &pole {
+            let operation = p.backing().operation().ok_or(PieFail::Busy)?;
+            if p.backing().reserved() != 0 {
+                return Err(PieFail::Busy);
             }
-            AnyPie::Nole(v) => mail::nole::seal(v.meta()),
-            AnyPie::Tole(t) => mail::tole::seal(t.meta()),
-        }
+            Some(operation)
+        } else {
+            None
+        };
+        pie.seal();
         // 资源封印让这一枚能力失效——表项还在，所以枚举结果本身就变了。
         let _ = messenger::signal(WakeKey::Capabilities { task: me.ident.id });
         Ok(0)
@@ -329,79 +315,123 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-fn collect(frame: &mut TrapContext, index: usize) -> Outcome {
-    let pie = current()
-        .running_task()
-        .and_then(|t| t.pies.lock().get(index).cloned());
-    let (token, owner_id, mark) = match &pie {
-        Some(p) => {
-            let owner = match p {
-                AnyPie::Hole(_) => p.owner().unwrap_or(TaskId::new(0)),
-                _ => TaskId::new(0),
-            };
-            (p.token(), owner, p.mark())
-        }
-        None => (PieToken::NONE, TaskId::new(0), Mark::NONE),
-    };
-    frame.gpr.set_x(Gprs::A0, token.get());
-    frame.gpr.set_x(Gprs::A1, owner_id.get());
-    frame.gpr.set_x(Gprs::A2, mark.get() as usize);
-    Outcome::Resume
+fn information(task: &Arc<crate::work::unit::task::Task>, pie: &PieSnapshot) -> PieInfo {
+    PieInfo {
+        token: pie.token(),
+        kind: pie.kind(),
+        permission: pie.permission(),
+        owner: pie.owner_task(),
+        vestor: if pie.sire().is_some() {
+            gate::vestor(task, pie.token()).unwrap_or(TaskId::new(0))
+        } else {
+            TaskId::new(0)
+        },
+        mark: pie.mark(),
+        alive: pie.alive(),
+    }
 }
 
-fn reserve(frame: &mut TrapContext, token: PieToken, hole_only: bool) -> Outcome {
-    let r = (|| -> Result<(TaskId, TaskId, usize), PieFail> {
+fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFail> {
+    let words = info.words();
+    // Every word is initialized; only its byte representation crosses the ABI.
+    let bytes = unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
+    if !mail::copy_out(&ident.team.space, bytes, buf) {
+        return Err(PieFail::Denied);
+    }
+    Ok(())
+}
+
+fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: VirtAddr) -> Outcome {
+    let r = (|| {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        let p = gate::locate(&task, token).ok_or(PieFail::Denied)?;
-        let owner = p.owner().ok_or(PieFail::Dead)?;
-        if hole_only && !matches!(p, AnyPie::Hole(_)) {
+        let pie = gate::locate(&task, token).ok_or(PieFail::Denied)?;
+        if !mail::whole(&ident.team.space, buf.get(), PieInfo::SIZE, PteFlags::W) {
             return Err(PieFail::Denied);
         }
-        let mark = p.mark().get() as usize;
-        Ok((
-            gate::vestor(&p, &gate::snap()).unwrap_or(TaskId::new(0)),
-            owner,
-            mark,
-        ))
+        write_info(ident, buf.get(), information(&task, &pie))?;
+        Ok(0)
     })();
-    match r {
-        Ok((vestor_id, owner_id, mark)) => {
-            frame.gpr.set_x(
-                Gprs::A0,
-                (owner_id.get() << 32) | (vestor_id.get() & 0xffff_ffff),
-            );
-            frame.gpr.set_x(Gprs::A1, mark);
-        }
-        Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-    }
-    Outcome::Resume
-}
-
-fn release(frame: &mut TrapContext, token: PieToken) -> Outcome {
-    let r = match current().running_task() {
-        Some(task) => gate::release(&task, token).map(|_| 0),
-        None => Err(PieFail::Denied),
-    };
     answer(frame, r);
     Outcome::Resume
 }
 
-/// **这一枚还在不在**（generic：孔 / 页 / 铃 / 组都答得出）。
-///
-/// 两件一起判：**在我表里**（`gate::locate`）＋ **资源还活着**（`AnyPie::alive`——封印即不在）。
-/// 与 `reserve` 的分工写在那两格的注里：那一格答的是孔的来历与记号（故对页与铃答
-/// `Denied`），这一格只答存活——树那一层要的正是这一件。
-///
-/// **别用 `usable` 顶替**：那一手只管"这一枚有没有交出去"（`heir`），**不看资源死活**——
-/// 页被封印之后它会照答"在"，树那一格就永远剔不掉（这条是那台探针自己抓出来的）。
-/// "交出去了"那一档由 `Accord` 那条路自己答 `HandedOver`，不必在这一格里重复。
-///
-/// **不失败**：`answer(Ok(0/1))` 恒走成功那一支，故"不在"就是 `false`，不是负码。
-fn alive(frame: &mut TrapContext, token: PieToken) -> Outcome {
-    let live = current()
+fn collect(
+    frame: &mut TrapContext,
+    ident: &TaskIdent,
+    after: PieToken,
+    buf: VirtAddr,
+    capacity: usize,
+) -> Outcome {
+    let r = (|| {
+        let task = current().running_task().ok_or(PieFail::Denied)?;
+        let len = capacity.checked_mul(PieInfo::SIZE).ok_or(PieFail::Denied)?;
+        if capacity == 0 {
+            return Ok(0);
+        }
+        if !mail::whole(&ident.team.space, buf.get(), len, PteFlags::W) {
+            return Err(PieFail::Denied);
+        }
+        // A bounded stack batch avoids heap allocation and releases the table lock before copying.
+        let capacity = capacity.min(16);
+        let mut snapshots: [Option<PieSnapshot>; 16] = core::array::from_fn(|_| None);
+        let mut count = 0;
+        {
+            let table = task.pies.lock();
+            for pie in table.iter().filter(|p| p.token().get() > after.get()) {
+                let at = snapshots[..count]
+                    .partition_point(|p| p.as_ref().unwrap().token().get() < pie.token().get());
+                if at < capacity {
+                    let next = (count + 1).min(capacity);
+                    for i in (at + 1..next).rev() {
+                        snapshots[i] = snapshots[i - 1].take();
+                    }
+                    snapshots[at] = Some(pie.snapshot());
+                    count = next;
+                }
+            }
+        }
+        for (i, pie) in snapshots[..count].iter().enumerate() {
+            write_info(
+                ident,
+                buf.get() + i * PieInfo::SIZE,
+                information(&task, pie.as_ref().unwrap()),
+            )?;
+        }
+        Ok(count)
+    })();
+    answer(frame, r);
+    Outcome::Resume
+}
+
+fn release(frame: &mut TrapContext, token: PieToken, mode: ReleaseMode) -> Outcome {
+    let r = current()
         .running_task()
-        .and_then(|task| gate::locate(&task, token))
-        .is_some_and(|pie| pie.alive());
-    answer(frame, Ok(live as usize));
+        .ok_or(PieFail::Denied)
+        .and_then(|task| match mode {
+            ReleaseMode::Revoke => gate::release(&task, token).map(|_| ()),
+            ReleaseMode::Keep => gate::forget(&task, token),
+        })
+        .map(|_| 0);
+    answer(frame, r);
+    Outcome::Resume
+}
+
+fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
+    let r = (|| {
+        let task = current().running_task().ok_or(PieFail::Denied)?;
+        let meta = mail::tole::try_meta(task.ident.id).map_err(|_| PieFail::OoM)?;
+        let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
+        if !shared {
+            permission |= Permission::ONLY;
+        }
+        let pie: Pie<gate::Tole> = gate::new_pie(meta, Mark::NONE, permission, None);
+        let token = pie.token;
+        gate::insert(&task, gate::boxed(pie)?)?;
+        let _ = messenger::signal(WakeKey::Capabilities {
+            task: task.ident.id,
+        });
+        Ok(token.get())
+    })();
+    answer(frame, r);
     Outcome::Resume
 }

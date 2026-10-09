@@ -1,0 +1,13 @@
+[package]
+name = "capability-import-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+env = { path = "../../../crates/env" }
+system-api = { path = "../../src/system/api" }
+hub-api = { path = "../../src/service/hub/api" }
+wire = { path = "../../../crates/wire" }

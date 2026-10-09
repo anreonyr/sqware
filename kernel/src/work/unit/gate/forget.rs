@@ -1,62 +1,65 @@
-use super::AnyPie;
-use crate::work::unit::task::Task;
 use alloc::sync::Arc;
+
+use crate::work::unit::task::Task;
 use env::{Permission, PieFail, PieToken};
 
 pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
-    let graph = super::GRAPH.lock();
-    let parent = {
-        let pies = task.pies.lock();
-        let pie = pies
-            .iter()
-            .find(|p| p.token() == token)
-            .ok_or(PieFail::Denied)?;
-        if pie.permission().contains(Permission::ONLY) {
+    for _ in 0..super::RETRIES {
+        if super::locate(task, token).is_none() {
             return Err(PieFail::Denied);
         }
-        pie.sire().ok_or(PieFail::Denied)?
-    };
-    // The snapshot and edge rewrite are inside the same graph transaction as Accord.
-    // No new direct child can appear between this scan and removal of the parent.
-    let snapshot = super::snap();
-    if snapshot.is_empty() {
-        return Err(PieFail::OoM);
-    }
-    for weak in snapshot {
-        let Some(holder) = weak.upgrade() else {
-            continue;
+        let (tasks, nodes) = match super::cull::collect(task, token, false) {
+            Err(PieFail::Busy) => continue,
+            result => result?,
         };
-        let mut pies = holder.pies.lock();
-        for pie in pies.iter_mut() {
-            if pie.sire() != Some(token) {
+        let result = super::with_tasks(&tasks, || {
+            let pie = super::locate(task, token).ok_or(PieFail::Denied)?;
+            if pie.permission().contains(Permission::ONLY) {
+                return Err(PieFail::Denied);
+            }
+            let parent = pie.sire().ok_or(PieFail::Denied)?;
+            let lord = pie.lord().upgrade().ok_or(PieFail::Denied)?;
+            if super::locate(&lord, parent).is_none() {
+                return Err(PieFail::Denied);
+            }
+            lord.heirs
+                .lock()
+                .try_reserve(nodes.len() - 1)
+                .map_err(|_| PieFail::OoM)?;
+            for (child, child_token) in nodes.iter().skip(1) {
+                let mut pies = child.pies.lock();
+                let pie = pies
+                    .iter_mut()
+                    .find(|p| p.token() == *child_token)
+                    .expect("locked child");
+                pie.parent(parent, Arc::downgrade(&lord));
+                drop(pies);
+                super::insert_heir(&lord, parent, Arc::downgrade(child), *child_token);
+                super::changed(child);
+            }
+            let removed = super::cull::take(task, token).expect("locked forgotten token");
+            Ok(removed)
+        });
+        let removed = match result {
+            Err(PieFail::Busy) => {
+                core::hint::spin_loop();
                 continue;
             }
-            match pie {
-                AnyPie::Hole(p) => p.sire = Some(parent),
-                AnyPie::Pole(p) => p.sire = Some(parent),
-                AnyPie::Nole(p) => p.sire = Some(parent),
-                AnyPie::Tole(p) => p.sire = Some(parent),
-            }
+            result => result??,
+        };
+        if let Some(p) = removed.snapshot().pole() {
+            let _ = crate::work::mail::pole::shut(&p, token);
         }
+        for (holder, _) in tasks {
+            let _ = crate::work::room::messenger::signal(
+                crate::work::room::messenger::WakeKey::Capabilities {
+                    task: holder.ident.id,
+                },
+            );
+        }
+        return Ok(());
     }
-    let mut pies = task.pies.lock();
-    let at = pies
-        .iter()
-        .position(|p| p.token() == token)
-        .ok_or(PieFail::Denied)?;
-    let pie = pies.remove(at);
-    pie.invalidate();
-    drop(pies);
-    drop(graph);
-    if let AnyPie::Pole(p) = pie {
-        let _ = crate::work::mail::pole::shut(p.meta(), token);
-    }
-    // 表里少了一枚：出锁之后要求持有者复核一次（没有观察者时不留站点）。
-    let _ =
-        crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Capabilities {
-            task: task.ident.id,
-        });
-    Ok(())
+    Err(PieFail::Busy)
 }
 
 pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, PieFail> {
@@ -66,15 +69,9 @@ pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, P
             .find(|p| p.token() == token)
             .ok_or(PieFail::Denied)
     };
-    let (a, b) = (find(a)?, find(b)?);
+    let (a, b) = (find(a)?.snapshot(), find(b)?.snapshot());
     if !a.alive() || !b.alive() {
         return Err(PieFail::Dead);
     }
-    Ok(match (a, b) {
-        (AnyPie::Hole(a), AnyPie::Hole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Pole(a), AnyPie::Pole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Nole(a), AnyPie::Nole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        (AnyPie::Tole(a), AnyPie::Tole(b)) => Arc::ptr_eq(a.meta(), b.meta()),
-        _ => false,
-    })
+    Ok(a.same(&b))
 }

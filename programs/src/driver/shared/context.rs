@@ -11,12 +11,12 @@
 //! `POLL` 那两半）的化身；两条路都改成一具架之后，谁也不等对方，故它们没有读者了。
 
 use env::{PieToken, TaskId, Wait};
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::driver::line::Line;
-use protocol::system::control::Scope;
-use protocol::system::operator::Permit;
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use programs::debug;
+use router_client::Line;
+use system_api::control::Scope;
+use system_api::operator::Permit;
+use system_client::operator;
 
 /// 要找的那位服务（线路由者）在树上的名字
 const ROUTER: &str = "router";
@@ -39,10 +39,10 @@ impl Context {
 
     /// 上树落**一枚门牌**（`entry` = 这一域自己铸的那一枚孔）。
     pub fn plate(&self, entry: PieToken, me: &str, ms: Wait) {
-        let client = protocol::system::control::publication::Client::injected()
+        let client = system_client::control::publication::Client::injected()
             .expect("driver: publication entry");
-        let target = protocol::system::control::publication::Target::Service {
-            scope: Scope::Driver,
+        let target = system_api::control::publication::Target::Service {
+            scope: Scope(1),
             group: "".into(),
             name: me.into(),
         };
@@ -55,7 +55,7 @@ impl Context {
     /// 编自己那两面），故 operator::Face::from 按值取一份视图（树那三格是 `Copy`）
     pub fn line(&self, line: u32, ms: Wait) -> Result<Line, ()> {
         // 路是**驱动那一族的常量**（`/svc/drv`）接上服务名——一处都不自己拼。
-        let road = protocol::driver::ROAD.try_join(ROUTER).ok_or(());
+        let road = router_api::ROAD.try_join(ROUTER).ok_or(());
         let Ok(road) = road else { return Err(()) };
         let tree = operator::Face::from(&self.session);
         let entry = match tree.tile(&road, ms) {
@@ -77,7 +77,7 @@ impl Context {
             // **那一手自己记了"死在哪一格"**（`deny(cause, code)` 两个静态）：它把七个出口折成
             // 同一个 Fail::Denied，而那两个数就是这七格的钥匙——探子把它们印出来。
             use core::sync::atomic::Ordering;
-            use protocol::driver::line::client::{OCCUPY_CODE, OCCUPY_DENY};
+            use router_client::client::{OCCUPY_CODE, OCCUPY_DENY};
             debug::put(&alloc::format!(
                 "line: occupy failed line={line} entry={} cause={} code={}",
                 entry.get(),

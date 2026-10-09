@@ -1,7 +1,7 @@
 //! `#[derive(Envcall)]` —— **环境调用枚举**的载荷 codec（方案 3，typed payload）。
 //!
 //! 输入一个带载荷的调用枚举，输出：
-//!   * `slot(&self) -> usize`       —— 调用号（`#[call(class = N)]` 的 class << 32 | 判别号）
+//!   * `slot(&self) -> usize`       —— 调用号（`#[call(class = N)]` 的 class << 32 | 操作号）
 //!   * `pack(&self) -> [usize; 6]`  —— 字段按声明顺序 wire 化（`Wire::pack`）
 //!   * `from_wire(slot, &[usize; 6])` —— 按 slot 取 variant，逐字段 `Wire::unpack`
 //!   * `Ret` 枚举                   —— 每个标 `#[ret(T)]` 的 variant 一个载荷变体
@@ -47,6 +47,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
     }
     let ret_name = Ident::new(&format!("{}Ret", name), proc_macro2::Span::call_site());
 
+    // 可用 #[slot(N)] 固定操作号；同一个枚举全部指定，避免混合编号。
     // 这一枚枚举里有没有宽返回的那一格——决定 `call()` 绑几口寄存器。
     let any_wide = vols.iter().any(|v| v.wide);
     // 第三口绑不绑名字：只有宽那一格用得上它，其余枚举绑成 `_v2`（不绑名字就不会有
@@ -80,8 +81,8 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 
     let slot_arms: Vec<_> = vols
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
+        .map(|v| {
+            let i = v.slot;
             let form = v.shape(None);
             quote! { #form => ( #class << 32 ) | #i }
         })
@@ -119,8 +120,8 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 
     let unpack_arms: Vec<_> = vols
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
+        .map(|v| {
+            let i = v.slot;
             let binds = v.binds();
             let form = v.shape(Some(&binds));
             if v.is_unit() {
@@ -159,8 +160,8 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 
     let distill_arms: Vec<_> = vols
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
+        .map(|v| {
+            let i = v.slot;
             let (id, ty) = (&v.ident, &v.ret);
             if v.wide {
                 quote! {
@@ -285,6 +286,7 @@ pub fn expand(input: TokenStream2) -> TokenStream2 {
 /// 靠下标对齐——每一处用它的地方都要写 `&vs[i]` / `&flds[i]` / `rets[i].clone()`，
 /// 下标写错一格**编得过**。绑成 struct 之后下标错当场编不过。
 struct Variant {
+    slot: usize,
     ident: Ident,
     fields: Fields,
     /// 这一格的返回载荷：`#[ret(T)]` 读 `a0`/`a1`，`#[ret3(T)]` 读 `a0..a2`。
@@ -420,9 +422,20 @@ fn variants(ast: &DeriveInput) -> syn::Result<Vec<Variant>> {
         Data::Enum(e) => e,
         _ => return Err(syn::Error::new_spanned(ast, "Envcall only supports enums")),
     };
+    let mut slots = std::collections::BTreeSet::new();
+    let explicit = data.variants.iter().any(|v| marked(&v.attrs, "slot"));
     data.variants
         .iter()
-        .map(|v| {
+        .enumerate()
+        .map(|(index, v)| {
+            let slot = match v.attrs.iter().find(|a| a.path().is_ident("slot")) {
+                Some(attr) => attr.parse_args::<syn::LitInt>()?.base10_parse::<usize>()?,
+                None if explicit => return Err(syn::Error::new_spanned(v, "every variant needs #[slot(N)] when explicit slots are used")),
+                None => index,
+            };
+            if slot > u32::MAX as usize || !slots.insert(slot) {
+                return Err(syn::Error::new_spanned(v, "duplicate or out-of-range call slot"));
+            }
             let (narrow, wide) = (ret_type(&v.attrs)?, ret_wide_type(&v.attrs)?);
             let (ret, is_wide) = match (narrow, wide) {
                 (Some(_), Some(_)) => {
@@ -441,6 +454,7 @@ fn variants(ast: &DeriveInput) -> syn::Result<Vec<Variant>> {
                 (None, Some(t)) => (t, true),
             };
             Ok(Variant {
+                slot,
                 ident: v.ident.clone(),
                 fields: v.fields.clone(),
                 ret,
@@ -558,4 +572,41 @@ fn class_module(name: &str) -> String {
     name.strip_suffix("Call")
         .unwrap_or(name)
         .to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn explicit_slots_follow_attributes_instead_of_declaration_order() {
+        let input = syn::parse_quote! {
+            enum Calls {
+                #[slot(9)] #[ret(())] Last,
+                #[slot(2)] #[ret(())] First,
+            }
+        };
+        let parsed = variants(&input).unwrap();
+        assert_eq!(parsed.iter().map(|v| v.slot).collect::<Vec<_>>(), [9, 2]);
+    }
+
+    #[test]
+    fn explicit_and_implicit_slots_cannot_be_mixed() {
+        let input = syn::parse_quote! {
+            enum Calls { #[slot(9)] #[ret(())] A, #[ret(())] B }
+        };
+        assert!(variants(&input).is_err());
+    }
+
+    #[test]
+    fn duplicate_and_out_of_range_slots_are_rejected() {
+        let duplicate = syn::parse_quote! {
+            enum Calls { #[slot(1)] #[ret(())] A, #[slot(1)] #[ret(())] B }
+        };
+        assert!(variants(&duplicate).is_err());
+        let overflow = syn::parse_quote! {
+            enum Calls { #[slot(4294967296)] #[ret(())] A }
+        };
+        assert!(variants(&overflow).is_err());
+    }
 }

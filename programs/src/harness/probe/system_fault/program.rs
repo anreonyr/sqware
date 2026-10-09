@@ -26,6 +26,7 @@ pub static DEPENDENT: UnitFile = UnitFile {
     },
     demand: Demand {
         supply: &[Setup::Ready],
+        ..Demand::DEFAULT
     },
 };
 
@@ -42,6 +43,7 @@ pub static CHILD: UnitFile = UnitFile {
     },
     demand: Demand {
         supply: &[Setup::Ready],
+        ..Demand::DEFAULT
     },
 };
 

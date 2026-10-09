@@ -3,16 +3,19 @@
 extern crate alloc;
 extern crate programs;
 use env::{TaskId, Wait, unit};
-use protocol::service::terminal::{Io, Read};
-use protocol::system::identity::{Grant, Reply, Wire, client::Face};
+use terminal_client::{Io, Read};
+use system_api::identity::Grant;
+use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_client::identity::Face;
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     run().map_err(|_| 1)
 }
 fn run() -> Result<(), ()> {
-    let owner = TaskId::new(*runtime::core::task::args::args().first().ok_or(())?);
+    let owner = TaskId::new(*execution::boot::args::args().first().ok_or(())?);
     let io = Io::injected(owner)?;
-    let entry = runtime::core::res::pie::pies()
+    let entry = ::resource::raw::pies()
         .find(|pie| pie.mark == Grant::Resolve.mark())
         .ok_or(())?;
     let resolver = Face::direct(entry.owner, Grant::Resolve, entry.token).map_err(|_| ())?;

@@ -6,12 +6,11 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// 会死的持有者：落一块**声明归自己**的门牌然后直接死，好让下一台接手
 pub static PROBE_LEASE: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Fixture,
+        scope: crate::unit::PublishScope(4),
         group: "fixtures",
         road: "svc/fixtures",
         entries: &[crate::unit::PublishEntry {
             name: "lease",
-            mark: None,
         }],
         public: false,
     }],

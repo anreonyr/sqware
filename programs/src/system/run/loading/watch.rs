@@ -1,7 +1,0 @@
-use super::answer::Inbox;
-use crate::system::control::serve::{Fail, watch::Interests};
-use protocol::common::schedule::{Progress, Res, ResMut};
-pub fn entries(inbox: Res<Inbox>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
-    wanted.tokens.extend(inbox.entry);
-    Ok(Progress::Done)
-}

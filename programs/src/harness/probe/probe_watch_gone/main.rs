@@ -18,11 +18,11 @@ use core::time::Duration;
 use env::Wait;
 use programs::Report;
 
-use protocol::common::path::PathBuf;
-use protocol::communication::session::Session;
-use protocol::system::operator::{Grant, Face as Face};
-use protocol::system::operator::client as operator;
 use env::unit;
+use ipc::session::Session;
+use system_api::operator::path::PathBuf;
+use system_client::operator;
+use system_client::operator::Face;
 
 const MS: usize = 1000;
 /// 订的那条路 —— 与 `probe-watch-after` 改的那条**逐字相同**（两份文件各写一遍：各是独立 bin）。
@@ -38,13 +38,11 @@ fn main() -> Report<'static> {
     };
     let tree = Face::from(&session);
     let road = PathBuf::try_new(ROAD).unwrap_or_else(|| panic!("probe-watch-gone: bad road"));
-    // **柄先绑**：临时的 `Rein` 活不过这一条绑定（与 `probe-watch` 那一手同形）。
-    let rein = tree.rein(Grant::Watch);
-    let watch = rein
+    let watch = tree
         .watch(&road, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-watch-gone: subscribe refused: {fail:?}"));
     let _ = watch.road();
-    let _ = runtime::core::task::sleep(Duration::from_millis(HOLD_MS));
+    let _ = execution::room::park(Duration::from_millis(HOLD_MS));
     drop(watch);
     Report::note(env::EXIT_OK, OK_NOTE)
 }

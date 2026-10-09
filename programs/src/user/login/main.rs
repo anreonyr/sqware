@@ -4,18 +4,19 @@ extern crate alloc;
 extern crate programs;
 mod auth;
 use env::{Wait, unit};
-use protocol::communication::session::Session;
-use protocol::service::terminal::{Connection, Io, Read, Terminal};
-use protocol::system::{
-    control::{Face as Lifecycle, State, account::Client},
-    operator::{self, Face},
-};
+use ipc::session::Session;
+use terminal_client::{Connection, Io, Read, Terminal};
+use system_client::control::Face as Lifecycle;
+use system_api::control::State;
+use account_client::Client;
+use system_client::operator;
+use system_client::operator::Face;
 use zeroize::Zeroizing;
 const WAIT: Wait = Wait::AtMost(5000);
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     run().map_err(|step| {
-        protocol::debug::put(step);
+        programs::debug::put(step);
         1
     })
 }
@@ -50,11 +51,15 @@ fn run_cat(
 ) -> Result<bool, ()> {
     let built = match client.create(auth::ACCOUNT, WAIT) {
         Ok(built) => built,
-        Err(_) => return Ok(false),
+        Err(fail) => {
+            programs::debug::put(&alloc::format!("login: account creation {fail:?}"));
+            return Ok(false);
+        }
     };
     let foreground = match connection.lend(built.task) {
         Ok(foreground) => foreground,
         Err(_) => {
+            programs::debug::put("login: terminal foreground grant failed");
             lifecycle.instance(built.task).ruin(WAIT).map_err(|_| ())?;
             return Ok(false);
         }
@@ -63,12 +68,14 @@ fn run_cat(
         lifecycle
             .instance(built.task)
             .embark(WAIT)
-            .map_err(|_| ())?;
+            .map_err(|fail| {
+                programs::debug::put(&alloc::format!("login: instance embark {fail:?}"));
+            })?;
         loop {
             if lifecycle.instance(built.task).state(WAIT).map_err(|_| ())? == State::Dead {
                 break;
             }
-            runtime::core::task::sleep(core::time::Duration::from_millis(10)).map_err(|_| ())?;
+            execution::room::park(core::time::Duration::from_millis(10)).map_err(|_| ())?;
         }
         Ok(())
     })();
@@ -83,12 +90,12 @@ fn run_cat(
     Ok(run.is_ok())
 }
 fn run() -> Result<(), &'static str> {
-    let session = Session::open(unit::sire(), operator::client::BERTH, WAIT)
+    let session = Session::open(unit::sire(), operator::BERTH, WAIT)
         .map_err(|_| "login: operator")?;
     let tree = Face::of(session);
     let client = Client::find(&tree, WAIT).map_err(|_| "login: account endpoint")?;
     let lifecycle = Lifecycle::of(
-        tree.tile(protocol::system::control::client::INSTANCE, WAIT)
+        tree.tile(system_api::control::INSTANCE, WAIT)
             .and_then(|tile| tile.token(WAIT))
             .map_err(|_| "login: instance endpoint")?,
     )

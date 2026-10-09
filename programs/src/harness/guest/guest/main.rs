@@ -2,7 +2,7 @@
 #![no_main]
 
 //! # 为什么两条路都走
-//! （protocol::driver::ROAD 那段目录）。
+//! （router_api::ROAD 那段目录）。
 //! # 一问一答由这两趟各自证
 //! 自己的客人（`lodger`：占一条线就死、失败那趟也走一遍）。
 //! # 特权级由清单定
@@ -14,11 +14,11 @@ use env::Wait;
 use programs::Report;
 
 use env::PieToken;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::{Fail, Face};
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Fail;
+use system_client::operator::Face;
+use system_client::operator;
 use env::unit;
 
 const WANT: &str = "router";
@@ -38,7 +38,7 @@ fn main() -> Report<'static> {
         return bail("guest: no tree link");
     };
     let tree = Face::of(session);
-    let Some(road) = protocol::driver::ROAD.try_join(WANT) else {
+    let Some(road) = router_api::ROAD.try_join(WANT) else {
         return bail("guest: bad name");
     };
 
@@ -47,15 +47,15 @@ fn main() -> Report<'static> {
     // **`BAD` / `UNKNOWN` / 没走到是同一格** Fail::Unknown）。
     // `AtMost(MS)` 是**额度不是整趟时限**（往返耗时不计账、推不进去还会等在门外）。
     let (find, at) = match find_face(&tree, &road) {
-        Ok(entry) => (ocall::OK, entry),
-        Err(fail) => (ocall::fail_to_code(Some(fail)), none),
+        Ok(entry) => (system_api::operator::OK, entry),
+        Err(fail) => (system_api::operator::fail_to_code(Some(fail)), none),
     };
 
     debug!("guest: find={find} entry={}", at.get());
 
     // 此刻就知道的期望。
     {
-        assert_eq!(find, ocall::OK)
+        assert_eq!(find, system_api::operator::OK)
     }
     {
         {
@@ -63,7 +63,7 @@ fn main() -> Report<'static> {
         }
     }
 
-    let walked = find == ocall::OK && at != none;
+    let walked = find == system_api::operator::OK && at != none;
     return Report::note(
         if walked { E_OK } else { E_TRIP },
         if walked {
@@ -74,7 +74,7 @@ fn main() -> Report<'static> {
     );
 }
 
-fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<PieToken, Fail> {
+fn find_face(tree: &Face, road: &system_api::operator::Path) -> Result<PieToken, Fail> {
     let root = tree.root();
     let mut left = MS;
     loop {
@@ -84,7 +84,7 @@ fn find_face(tree: &Face, road: &protocol::system::operator::Path) -> Result<Pie
         {
             Ok(entry) => return Ok(entry),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(fail) => return Err(fail),

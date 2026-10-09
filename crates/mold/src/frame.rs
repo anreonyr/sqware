@@ -45,17 +45,16 @@ use syn::{Data, DeriveInput, Fields, parse2};
 /// 给一枚具名字段的结构体生成 `pub const LEN` ＋ `impl env::wire::Span`。
 /// 展开见文件头。
 ///
-/// **生成的路径是 `::env::wire::Span`**（过程宏没有 `$crate`）：故调用方的 extern prelude
-/// 里要有 `env`——`protocol` / `programs` 都有。`env` 自己若要这个 derive，先写一句
-/// `extern crate self as env;`（今天没有这个需要）。
+/// 默认生成路径是 `::env::wire`（兼容既有调用点）；纯 codec 消费者可在结构体上指定
+/// `#[frame(codec = ::wire)]`，让同一派生实现直接使用独立 wire crate。
 pub fn expand(input: TokenStream) -> TokenStream {
     let ast: DeriveInput = match parse2(input) {
         Ok(ast) => ast,
         Err(e) => return e.to_compile_error(),
     };
     let name = &ast.ident;
-    let len = match frame_len(&ast.attrs) {
-        Ok(len) => len,
+    let (len, codec) = match frame_config(&ast.attrs) {
+        Ok(config) => config,
         Err(e) => return e.to_compile_error(),
     };
     let Data::Struct(data) = &ast.data else {
@@ -92,12 +91,12 @@ pub fn expand(input: TokenStream) -> TokenStream {
         };
         match shape {
             None => {
-                maxes.push(quote!(<#ty as ::env::wire::Span>::MAX));
+                maxes.push(quote!(<#ty as #codec::Span>::MAX));
                 stores.push(quote! {
-                    #at = <#ty as ::env::wire::Span>::store_at(&self.#ident, out, #at)?;
+                    #at = <#ty as #codec::Span>::store_at(&self.#ident, out, #at)?;
                 });
                 fetches.push(quote! {
-                    let #one = <#ty as ::env::wire::Span>::fetch_at(bytes, #at)?;
+                    let #one = <#ty as #codec::Span>::fetch_at(bytes, #at)?;
                     let #ident = #one.0;
                     #at = #one.1;
                 });
@@ -136,14 +135,14 @@ pub fn expand(input: TokenStream) -> TokenStream {
                 let (elem, cap) = (&array.elem, &array.len);
                 // **上界**：一段重复最长就是"每一项都是最长那一形"（定长项的 `MAX` 就是它的宽）；
                 // 元素不报上界 ⇒ 这一段也不报（`times` 交回 `None`）。
-                maxes.push(quote!(::env::wire::times(#cap, <#elem as ::env::wire::Span>::MAX)));
+                maxes.push(quote!(#codec::times(#cap, <#elem as #codec::Span>::MAX)));
                 stores.push(quote! {
                     {
                         let #k = self.#count as usize;
                         if #k > #cap {
                             return None;
                         }
-                        #at = ::env::wire::store_tail(out, #at, &self.#ident[..#k])?;
+                        #at = #codec::store_tail(out, #at, &self.#ident[..#k])?;
                     }
                 });
                 fetches.push(quote! {
@@ -153,7 +152,7 @@ pub fn expand(input: TokenStream) -> TokenStream {
                             return None;
                         }
                         let mut #arr = [const { #fill }; #cap];
-                        #at = ::env::wire::fetch_tail(bytes, #at, &mut #arr[..#k])?;
+                        #at = #codec::fetch_tail(bytes, #at, &mut #arr[..#k])?;
                         #arr
                     };
                 });
@@ -172,9 +171,9 @@ pub fn expand(input: TokenStream) -> TokenStream {
             pub const LEN: usize = #expr;
         },
         None => quote! {
-            /// 这一帧**最长那一形**占几字节：各格的 `env::wire::Span::MAX` 求和、一段重复按
+            /// 这一帧**最长那一形**占几字节：各格的 `Span::MAX` 求和、一段重复按
             /// `MAX × 条数`（一处定义）。
-            pub const LEN: usize = match ::env::wire::total(&[#(#maxes),*]) {
+            pub const LEN: usize = match #codec::total(&[#(#maxes),*]) {
                 Some(total) => total,
                 None => panic!(
                     "这一帧有格不报上界（名字是 String，MAX = None）：给这一帧写 #[frame(len = …)]"
@@ -190,7 +189,7 @@ pub fn expand(input: TokenStream) -> TokenStream {
 
         /// **这一枚结构体就是过线的那一格**：`MAX` 就是 `LEN`（最长那一形），两只手各只有
         /// 一处正文——故它可以直接当另一张字段表里的一格，不必再手写一层桥。
-        impl #impl_generics ::env::wire::Span for #name #ty_generics #where_clause {
+        impl #impl_generics #codec::Span for #name #ty_generics #where_clause {
             const MAX: Option<usize> = Some(Self::LEN);
 
             /// 从游标 `at` 写起，返**实际长度**（装不下 ⇒ `None`）。
@@ -229,8 +228,9 @@ struct Tail {
 ///
 /// **什么时候要它**：这一表里有格**不报上界**（名字那一格是 `String`，`MAX = None`）——那时各格
 /// 求和不出来，界由**族**说（协议事实：这一族最长多少）。全定长／定容的帧不必写，求和自动。
-fn frame_len(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Expr>> {
+fn frame_config(attrs: &[syn::Attribute]) -> syn::Result<(Option<syn::Expr>, syn::Path)> {
     let mut len: Option<syn::Expr> = None;
+    let mut codec: Option<syn::Path> = None;
     for attr in attrs {
         if !attr.path().is_ident("frame") {
             continue;
@@ -242,14 +242,20 @@ fn frame_len(attrs: &[syn::Attribute]) -> syn::Result<Option<syn::Expr>> {
                 }
                 len = Some(meta.value()?.parse()?);
                 Ok(())
+            } else if meta.path.is_ident("codec") {
+                if codec.is_some() {
+                    return Err(meta.error("`codec` 给了两次"));
+                }
+                codec = Some(meta.value()?.parse()?);
+                Ok(())
             } else {
                 Err(meta.error(
-                    "结构体上的 `#[frame(...)]` 只认 `len = <这一帧的上界>`（`count` / `fill` 标在字段上）",
+                    "结构体上的 `#[frame(...)]` 只认 `len = <这一帧的上界>` 与 `codec = <编解码模块>`（`count` / `fill` 标在字段上）",
                 ))
             }
         })?;
     }
-    Ok(len)
+    Ok((len, codec.unwrap_or_else(|| syn::parse_quote!(::env::wire))))
 }
 
 /// 读一格自己的形状：`#[frame(...)]` 有 ⇒ 这一段是"重复"，没有 ⇒ 定长。

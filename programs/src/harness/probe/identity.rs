@@ -1,14 +1,14 @@
 //! Trusted setup for the two Identity probes, not a product capability declaration.
 
+use ::resource::port::{self, Access, Policy};
 use env::Wait;
-use protocol::communication::session::establish;
-use protocol::system::identity::Grant;
-use runtime::core::res::port::{self, Access, Policy};
+use ipc::session::establish;
+use system_api::identity::Grant;
 
 use crate::harness::probe::fixture::Fixture;
 use crate::unit::{self, UnitFile};
+use ::resource::raw::{Hole, inspect, reserve};
 use env::pie;
-use runtime::core::res::pie::{HolePie, inspect, reserve};
 
 pub(crate) fn supply_to(
     authority: Option<env::TaskId>,
@@ -18,16 +18,21 @@ pub(crate) fn supply_to(
     if matches!(program.name(), "probe-rule" | "probe-rule-other") {
         let mark = env::Mark::of("probe-rule-verified");
         let owner = env::unit::self_id();
-        let token = establish::find(owner, mark)
-            .or_else(|| pie::unseal_hole(mark).ok())
-            .ok_or("rule verification channel")?;
+        let token = match establish::find(owner, mark) {
+            Ok(token) => token,
+            Err(establish::DiscoveryFail::Missing) => {
+                pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "rule verification channel")?
+            }
+            Err(establish::DiscoveryFail::Ambiguous) => {
+                return Err("rule verification channel ambiguous");
+            }
+        };
         let access = if program.name() == "probe-rule" {
             Access::FETCH
         } else {
             Access::STORE
         };
-        port::ship(token, task, access, Policy::NONE)
-            .map_err(|_| "rule verification supply")?;
+        port::ship(token, task, access, Policy::NONE).map_err(|_| "rule verification supply")?;
     }
     if program.name() == "system-dependent" {
         super::hierarchy::supply(task)?;
@@ -40,20 +45,20 @@ pub(crate) fn supply_to(
     let authority = authority.ok_or("identity fixture authority")?;
     for grant in [Grant::Bind, Grant::Unbind] {
         let token =
-            establish::claim(authority, grant.mark(), Wait::POLL).ok_or("identity fixture face")?;
+            establish::claim(authority, grant.mark(), Wait::POLL).map_err(
+                |failure| match failure {
+                    establish::DiscoveryFail::Missing => "identity fixture face",
+                    establish::DiscoveryFail::Ambiguous => "identity fixture face ambiguous",
+                },
+            )?;
         if !matches!(reserve(token), Ok((_, owner, mark))
             if owner == authority && mark == grant.mark())
         {
             return Err("identity fixture source");
         }
         // Transfer an entry copy, not the installer's kernel sender identity.
-        port::ship(
-            token,
-            task,
-            Access::FETCH | Access::STORE,
-            Policy::NONE,
-        )
-        .map_err(|_| "identity fixture transfer")?;
+        port::ship(token, task, Access::FETCH | Access::STORE, Policy::NONE)
+            .map_err(|_| "identity fixture transfer")?;
     }
     Ok(())
 }
@@ -62,25 +67,24 @@ pub(crate) fn supply_to(
 pub fn timeout() {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use protocol::system::identity::{
-        Wire,
-        client::{CallError, Face},
-        limits::MAX_FRAME,
-    };
+    use system_api::identity::Wire;
+    use system_api::identity::limits::MAX_FRAME;
+    use system_client::identity::CallError;
+    use system_client::identity::Face;
 
     let owner = env::unit::self_id();
-    let entry = pie::unseal_hole(Grant::Resolve.mark()).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(Grant::Resolve.mark())).unwrap();
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
-    let reader = runtime::core::task::join::closure(move || {
+    let reader = execution::unit::task::spawn(move || {
         let owner = env::TaskId::new(raw_owner);
         let entry = establish::claim(owner, Grant::Resolve.mark(), Wait::AtMost(1000)).unwrap();
         while !release_reader.load(Ordering::Acquire) {
-            runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+            execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         let mut bytes = [0; MAX_FRAME];
-        let (n, from) = HolePie::from_token(entry)
+        let (n, from) = Hole::from_raw(entry)
             .pull(&mut bytes, Wait::AtMost(1000))
             .unwrap();
         assert_eq!(from, owner);
@@ -89,27 +93,21 @@ pub fn timeout() {
             Some(Wire::Resolve(owner))
         );
     });
-    port::ship(
-        entry,
-        reader.id(),
-        Access::FETCH,
-        Policy::NONE,
-    )
-    .unwrap();
+    port::ship(entry, reader.id(), Access::FETCH, Policy::NONE).unwrap();
     let face = Face::direct(owner, Grant::Resolve, entry).unwrap();
     let result = face.call(Wire::Resolve(owner), Wait::AtMost(1));
     timed_out.store(true, Ordering::Release);
     assert_eq!(result, Err(CallError::Transport));
     reader.join();
     let _ = pie::seal(entry);
-    let _ = pie::release(entry);
-    protocol::debug::put("identity-timeout: queued request decoded after client timeout");
+    let _ = pie::release(entry, env::ReleaseMode::Revoke);
+    programs::debug::put("identity-timeout: queued request decoded after client timeout");
 }
 
 /// Isolated supervisor fixture. Every observation goes over the real Identity IPC faces.
 pub fn acceptance() {
-    use crate::system::run::{bootstrap, scene};
-    use protocol::system::identity::client::TaskQuery;
+    use crate::system::app::{bootstrap, scene};
+    use system_client::identity::TaskQuery;
 
     super::hierarchy::codecs();
     super::hierarchy::reference_lifetime();
@@ -121,7 +119,7 @@ pub fn acceptance() {
         if program.name() == "system-child" {
             assembly
                 .resources
-                .write::<crate::system::control::serve::unit::Control>()
+                .write::<crate::system::control::unit::Control>()
                 .unwrap()
                 .enlist(program)
                 .expect("identity: runtime declaration");
@@ -146,27 +144,27 @@ pub fn acceptance() {
     for name in ["operator", "identity"] {
         assert!(
             assembly
-                .action(name, crate::system::control::serve::lifecycle::Action::Mint)
+                .action(name, crate::system::control::lifecycle::Action::Mint)
                 .is_err()
         );
         assert!(
             assembly
-                .action(name, crate::system::control::serve::lifecycle::Action::Ruin)
+                .action(name, crate::system::control::lifecycle::Action::Ruin)
                 .is_err()
         );
         assert_eq!(
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .state(name.into())
                 .unwrap(),
-            crate::system::control::core::unit::State::Ready
+            crate::system::control::unit::table::State::Ready
         );
     }
     let old_authority = assembly
         .resources
-        .read::<crate::system::identity::serve::install::Roster>()
+        .read::<crate::system::control::identity::Roster>()
         .unwrap()
         .authority()
         .unwrap();
@@ -174,39 +172,43 @@ pub fn acceptance() {
     let me = env::unit::self_id();
     let host = assembly
         .resources
-        .read::<crate::system::operator::serve::install::Tree>()
+        .read::<crate::system::operator::management::Tree>()
         .unwrap()
         .host()
         .unwrap();
-    let link = establish::endpoint(
-        host,
-        env::Mark::of(protocol::system::operator::LINK),
-        Wait::POLL,
-    )
-    .expect("identity: operator request");
-    let talk = establish::give(host, protocol::system::operator::ASK_MARK)
-        .expect("identity: operator ask");
-    let tip = establish::find(host, protocol::system::operator::TIP_MARK)
-        .expect("identity: trusted operator tip");
-    let mut record = [0u8; protocol::system::operator::TIP_LEN];
-    let n = protocol::system::operator::Tip::Guest(me)
-        .store(&mut record)
-        .unwrap();
-    HolePie::from_token(tip)
+    let link = establish::endpoint(host, system_api::operator::LINK_MARK, Wait::POLL)
+        .expect("identity: operator request");
+    let (talk, ask) =
+        establish::give_at(host, system_api::operator::ASK_MARK).expect("identity: operator ask");
+    let tip = establish::find(host, system_api::operator::TIP_MARK)
+        .unwrap_or_else(|_| panic!("identity: trusted operator tip missing or ambiguous"));
+    let mut record = [0u8; system_api::operator::TIP_LEN];
+    let explicit_reply = link.seed();
+    let n = system_api::operator::Tip::Guest {
+        who: me,
+        reply: explicit_reply,
+        ask,
+    }
+    .store(&mut record)
+    .unwrap();
+    Hole::from_raw(tip)
         .push(&record[..n], Wait::AtMost(1000))
         .expect("identity: trusted guest registration");
-    let operator =
-        protocol::system::operator::client::Face::of(protocol::communication::session::Session {
-            link,
-            talk,
-            host,
-        });
+    let mut ack = [0; 1];
+    let (len, from) = Hole::from_raw(link.rx())
+        .pull(&mut ack, Wait::AtMost(1000))
+        .expect("identity: Operator admission acknowledgement");
+    assert_eq!((len, from, ack[0]), (1, host, system_api::operator::OK));
+    let operator = system_client::operator::Face::of(
+        unsafe { ipc::session::Session::from_raw(link, talk, host) }
+            .unwrap_or_else(|_| panic!("identity: owned Operator session")),
+    );
     super::loader::acceptance(&mut assembly, &operator);
     super::account::acceptance(&mut assembly, &operator);
     let protected = || {
         operator
             .tile(
-                protocol::common::path::Path::new("/svc/sys/control/mint"),
+                system_api::operator::path::Path::new("/svc/sys/control/mint"),
                 Wait::AtMost(1000),
             )
             .expect("identity: protected tile")
@@ -217,7 +219,7 @@ pub fn acceptance() {
     );
     let public = operator
         .tile(
-            protocol::common::path::Path::new("/svc/sys/control/state"),
+            system_api::operator::path::Path::new("/svc/sys/control/state"),
             Wait::AtMost(1000),
         )
         .expect("identity: public tile");
@@ -225,13 +227,13 @@ pub fn acceptance() {
     let old = old_query.resolve(me, Wait::AtMost(1000)).unwrap().unwrap();
     let old_dependent = assembly
         .resources
-        .read::<crate::system::control::serve::unit::Control>()
+        .read::<crate::system::control::unit::Control>()
         .unwrap()
         .task("system-dependent")
         .unwrap();
     let old_hub = assembly
         .resources
-        .read::<crate::system::control::serve::unit::Control>()
+        .read::<crate::system::control::unit::Control>()
         .unwrap()
         .task("hub")
         .unwrap();
@@ -249,13 +251,12 @@ pub fn acceptance() {
     let before = old_query
         .resolve(old_dependent, Wait::AtMost(1000))
         .unwrap();
+    let activation = system_client::identity::Face::direct(
+        old_authority, Grant::Activate,
+        establish::find(old_authority, Grant::Activate.mark()).unwrap(),
+    ).unwrap();
     assert!(
-        assembly
-            .resources
-            .read::<crate::system::identity::serve::install::Roster>()
-            .unwrap()
-            .activate(old_dependent, coalition)
-            .is_err(),
+        hub_client::activate(&activation, old_dependent, &[coalition]).is_err(),
         "identity: qualification was not checked"
     );
     assert_eq!(
@@ -274,14 +275,14 @@ pub fn acceptance() {
             &old_query,
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .task(name)
                 .unwrap(),
             road,
         );
     }
-    use crate::system::control::serve::lifecycle::Action;
+    use crate::system::control::lifecycle::Action;
     assert!(
         assembly.action("absent-unit", Action::Ruin).is_err(),
         "unknown Ruin must fail without terminating System"
@@ -318,11 +319,11 @@ pub fn acceptance() {
         assert_eq!(
             assembly
                 .resources
-                .read::<crate::system::control::serve::unit::Control>()
+                .read::<crate::system::control::unit::Control>()
                 .unwrap()
                 .state("system-child".into())
                 .unwrap(),
-            crate::system::control::core::unit::State::Debarked
+            crate::system::control::unit::table::State::Debarked
         );
         assert_eq!(
             old_query
@@ -350,7 +351,7 @@ pub fn acceptance() {
         );
     }
 
-    protocol::debug::put("identity: three Debark/Embark rounds preserve task and binding");
+    programs::debug::put("identity: three Debark/Embark rounds preserve task and binding");
     assert_eq!(old.current.principal.authority, old_authority);
     let dynamic = super::hierarchy::exercise(
         &mut assembly,
@@ -360,12 +361,8 @@ pub fn acceptance() {
         child,
     );
     let _ = dynamic;
-    protocol::debug::put("system: identity, device and publication acceptance passed");
-    assembly
-        .resources
-        .write::<crate::system::control::serve::frame::Flow>()
-        .unwrap()
-        .settling = true;
+    programs::debug::put("system: identity, device and publication acceptance passed");
+    assembly.settle();
     assert!(
         assembly.supervise().is_ok(),
         "system: normal team shutdown failed"
@@ -373,15 +370,16 @@ pub fn acceptance() {
 }
 
 fn revision(assembly: &mut Fixture) {
-    use crate::system::identity::serve::{
-        install::Roster,
-        revision::{Changed, Epoch},
+    use crate::system::{
+        control::identity::Roster,
+        identity::revision::{Changed, Epoch},
     };
     use core::sync::atomic::Ordering;
-    use protocol::system::identity::{
-        PrincipalId, Reply, Wire,
-        client::{CallError, Face},
-    };
+    use system_api::identity::PrincipalId;
+    use system_api::identity::Reply;
+    use system_api::identity::Wire;
+    use system_client::identity::CallError;
+    use system_client::identity::Face;
 
     assembly.progress().expect("identity: initial maintenance");
     let authority = assembly
@@ -457,11 +455,7 @@ fn revision(assembly: &mut Fixture) {
     drop(changed);
     assembly.progress().expect("identity: changed maintenance");
     assert_eq!(
-        assembly
-            .resources
-            .read::<crate::system::identity::serve::names::Registrations>()
-            .unwrap()
-            .seen,
+        crate::system::publication::observed_revision(&assembly.resources).unwrap(),
         before + 1
     );
     assert!(
@@ -474,87 +468,52 @@ fn revision(assembly: &mut Fixture) {
             .unwrap(),
         "identity: mutation notification not consumed"
     );
-    protocol::debug::put("identity: only successful mutations wake maintenance");
+    programs::debug::put("identity: only successful mutations wake maintenance");
 }
 
 fn activation_boundary(
     assembly: &Fixture,
     hub: env::TaskId,
-    coalition: protocol::system::identity::CoalitionId,
+    coalition: system_api::identity::CoalitionId,
 ) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use protocol::service::hub::activation;
-
-    let owner = env::unit::self_id();
-    let entry = establish::find(owner, activation::ENTRY).unwrap();
+    let authority = coalition.authority;
+    let entry = establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
-    let (owner, hub, authority, slot) = (
-        owner.get(),
-        hub.get(),
-        coalition.authority.get(),
-        coalition.slot,
-    );
-    let caller = runtime::core::task::join::closure(move || {
-        let owner = env::TaskId::new(owner);
-        let hub = env::TaskId::new(hub);
-        let coalition =
-            protocol::system::identity::CoalitionId::new(env::TaskId::new(authority), slot);
-        let entry = establish::claim(owner, activation::ENTRY, Wait::AtMost(1000)).unwrap();
-        assert!(
-            port::ship(
-                entry,
-                hub,
-                Access::STORE,
-                Policy::NONE
-            )
-            .is_err(),
-            "activation copy unexpectedly transferable"
-        );
-        assert!(
-            crate::service::hub::bridge::activate(hub, &[coalition]).is_err(),
-            "activation accepted a non-Hub kernel sender"
-        );
+    let caller = execution::unit::task::spawn(move || {
+        let entry = establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
+        let face = system_client::identity::Face::direct(authority, system_api::identity::Grant::Activate, entry).unwrap();
+        assert!(face.call(system_api::identity::Wire::Activate(hub, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), Wait::AtMost(1000)).is_err(), "activation accepted an unbound non-manager sender");
         finished.store(true, Ordering::Release);
     });
-    port::ship(
-        entry,
-        caller.id(),
-        Access::STORE,
-        Policy::NONE,
-    )
-    .unwrap();
+    port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        crate::service::hub::bridge::maintain(
-            assembly.resources.read().unwrap(),
-            assembly.resources.read().unwrap(),
-            assembly.resources.read().unwrap(),
-        )
-        .unwrap();
-        assert!(
-            env::chrono::clock() < until,
-            "activation boundary never answered"
-        );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        assert!(env::chrono::clock() < until, "activation boundary never answered");
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
+    let _ = assembly;
 }
 
 fn ready_driver(
-    operator: &protocol::system::operator::client::Face,
-    query: &protocol::system::identity::client::TaskQuery,
+    operator: &system_client::operator::Face,
+    query: &system_client::identity::TaskQuery,
     task: env::TaskId,
     road: &'static str,
 ) {
     let until = env::chrono::clock() + 5_000_000_000;
     loop {
         if let Ok(entry) = operator
-            .tile(protocol::common::path::Path::new(road), Wait::AtMost(1000))
+            .tile(
+                system_api::operator::path::Path::new(road),
+                Wait::AtMost(1000),
+            )
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
-            if matches!(inspect(entry), Ok((_, owner, _)) if owner == task) {
+            if matches!(inspect(entry), Ok(info) if info.alive && info.owner == task) {
                 let binding = query.resolve(task, Wait::AtMost(1000)).unwrap().unwrap();
                 assert!(
                     !binding.current.coalitions.is_empty(),
@@ -568,6 +527,6 @@ fn ready_driver(
             env::chrono::clock() < until,
             "identity: driver never republished"
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(1)).unwrap();
+        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }

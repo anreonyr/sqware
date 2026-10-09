@@ -8,16 +8,21 @@ extern crate programs;
 
 use env::Wait;
 use programs::Report;
-use protocol::communication::session::Session;
-use protocol::system::identity::{CallError, Query, SelfOps, Fail, PrincipalId, Subject};
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use system_client::identity::CallError;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_api::identity::Fail;
+use system_api::identity::PrincipalId;
+use system_api::identity::Subject;
+use system_client::operator;
 use env::unit;
 
 const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = programs::system::identity::serve::source::authority()
+    let authority = system_client::identity::authority()
         .expect("subject: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()

@@ -13,17 +13,16 @@ extern crate alloc;
 extern crate programs;
 
 use alloc::string::{String, ToString};
-use env::{HoleDir, Wait};
 use env::wire::Field;
+use env::{MailCondition, Wait};
 use programs::Report;
 
+use ::resource::raw::Hole;
 use env::PieToken;
-use protocol::communication::session::{Session, Endpoint};
-use protocol::debug;
-use protocol::system::operator as ocall;
-use protocol::system::operator::client as operator;
 use env::unit;
-use runtime::core::res::pie::{HolePie};
+use ipc::session::{Endpoint, Session};
+use programs::debug;
+use system_client::operator;
 
 const MS: usize = 1000;
 
@@ -63,13 +62,13 @@ fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
     f[10] = 1; // 名字长度那一字节
     f[11] = b'x'; // 名字那一个字节
     f[20] = 0; // `mine = false`
-    ocall::Permit::Public.store(&mut f[21..]);
+    system_api::operator::Permit::Public.store(&mut f[21..]);
     f[21] = permit_tag; // **这一格是唯一要试的那一格**
     f
 }
 
 /// `seek` 那一问的动作码：`SEEK = 7`（与 JUNK_OP 同一条：这一台**故意手写裸帧**，故它按
-/// 线上那一格写数——`crates/protocol/src/system/operator/frame/vocab.rs` 那一枚私有常量才是正文
+/// 授权请求使用 Operator API 定义的线上码。
 /// 那个码要是挪了位，这一条当场红）
 const SEEK_OP: u8 = 7;
 
@@ -90,7 +89,7 @@ const LAND_PERMIT_UNKNOWN: u8 = 9;
 const LAND_PERMIT_KNOWN: u8 = 0;
 
 /// Prefix offset remains a raw-frame acceptance check; Permit width follows its codec.
-const LAND_LEN: usize = 21 + ocall::Permit::WIDTH;
+const LAND_LEN: usize = 21 + system_api::operator::Permit::WIDTH;
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -100,10 +99,14 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
-    let (tree, hedge, _) = (&session.link, session.talk, session.host);
+    let (tree, hedge, _) = (
+        &unsafe { session.raw_link() },
+        unsafe { session.raw_talk() },
+        session.host(),
+    );
     // **正经那一问要一面 `Face`**，而它是**借**一条会话：
     let face = operator::Face::from(&session);
-    let Some(dir) = protocol::common::svc::SVC.file_name() else {
+    let Some(dir) = system_api::operator::SVC.file_name() else {
         return bail("probe-bound: bad name");
     };
 
@@ -188,13 +191,13 @@ fn junk_trip(
     dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
-    let door = HolePie::from_token(hedge);
+    let door = Hole::from_raw(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
-        && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
+        && matches!(door.wait(MailCondition::Empty, Wait::AtMost(MS)), Ok(true));
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
-    let pulled = HolePie::from_token(tree.rx())
+    let pulled = Hole::from_raw(tree.rx())
         .pull(&mut back, Wait::AtMost(MS))
         .map(|(n, _)| n);
     debug!(
@@ -204,11 +207,14 @@ fn junk_trip(
         back[0]
     );
     let said = pulled.ok();
-    let bad = matches!(said, Some(1) if back[0] == ocall::BAD);
+    let bad = matches!(said, Some(1) if back[0] == system_api::operator::BAD);
 
     // 正经的一问：**门还在答**。
     let root = face.root();
-    let after = matches!(root.open(dir, Wait::AtMost(MS)), Err(ocall::Fail::Denied));
+    let after = matches!(
+        root.open(dir, Wait::AtMost(MS)),
+        Err(system_api::operator::Fail::Denied)
+    );
     (pushed, bad, after)
 }
 

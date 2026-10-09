@@ -6,15 +6,21 @@
 
 extern crate programs;
 
-use env::{PieToken, Wait};
-use programs::Report;
-use protocol::communication::hand::Receiver;
-use protocol::communication::session::{Session, establish};
-use protocol::system::identity;
-use protocol::system::identity::{Organization, Query, SelfOps, Reply, Wire, Fail, Grant, Install};
-use protocol::system::operator::client as operator;
+use ::resource::raw::{Hole, reserve};
 use env::unit;
-use runtime::core::res::pie::{HolePie, reserve};
+use env::{PieToken, Wait};
+use ipc::hand::Receiver;
+use ipc::session::{Session, establish};
+use programs::Report;
+use system_api::identity::Fail;
+use system_api::identity::Grant;
+use system_api::identity::Install;
+use system_api::identity::Reply;
+use system_api::identity::Wire;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
+use system_client::operator;
 
 const MS: usize = 1000;
 
@@ -24,18 +30,14 @@ fn main() -> Report<'static> {
     // not evidence that an unrelated service failed to launch.
     for delay in [0, 1, 2, 0, 2, 1] {
         let request = establish::Held(
-            establish::endpoint(
-                unit::sire(),
-                env::Mark::of(protocol::system::operator::LINK),
-                Wait::POLL,
-            )
-            .expect("probe-denied: transient LINK"),
+            establish::endpoint(unit::sire(), system_api::operator::LINK_MARK, Wait::POLL)
+                .expect("probe-denied: transient LINK"),
         );
-        runtime::core::task::sleep(core::time::Duration::from_millis(delay))
+        execution::room::park(core::time::Duration::from_millis(delay))
             .expect("probe-denied: transient wait");
         drop(request);
     }
-    let authority = programs::system::identity::serve::source::authority()
+    let authority = system_client::identity::authority()
         .expect("probe-denied: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
@@ -101,14 +103,14 @@ fn main() -> Report<'static> {
 fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToken {
     if matches!(grant, Grant::Bind | Grant::Unbind) {
         let entry = establish::find(authority, grant.mark())
-            .expect("probe-denied: missing explicitly injected installer face");
+            .unwrap_or_else(|_| panic!("probe-denied: installer face missing or ambiguous"));
         let (vestor, owner, mark) = reserve(entry).unwrap();
         assert_eq!(vestor, unit::sire());
         assert_eq!(owner, authority);
         assert_eq!(mark, grant.mark());
         return entry;
     }
-    let road = identity::DIR
+    let road = system_api::operator::Path::new(system_api::identity::DIR)
         .try_join(grant.name())
         .expect("probe-denied: bad action name");
     let entry = tree
@@ -123,16 +125,16 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
 }
 
 fn raw(entry: PieToken, wire: Wire) -> Reply {
-    let (back, seed) =
-        establish::lend_out(entry, identity::BACK).expect("probe-denied: cannot establish reply");
-    let mut frame = [0u8; identity::limits::MAX_FRAME];
+    let (back, seed) = establish::lend_out(entry, system_api::identity::BACK)
+        .expect("probe-denied: cannot establish reply");
+    let mut frame = [0u8; system_api::identity::limits::MAX_FRAME];
     let n = wire
         .store(seed, &mut frame)
         .expect("probe-denied: action encode failed");
-    HolePie::from_token(entry)
+    Hole::from_raw(entry)
         .push(&frame[..n], Wait::AtMost(MS))
         .expect("probe-denied: action push failed");
-    Receiver::<Reply>::from_token(back)
+    Receiver::<Reply>::from_raw(back)
         .recv(&mut frame, Wait::AtMost(MS))
         .expect("probe-denied: no reply")
 }

@@ -20,9 +20,14 @@ publish = false
 # **两侧共读的那一份**：清单格式（`env::manifest`，坐标与启动参数同理）＋ `ProgramKind`。
 #
 # **装配表不在依赖里**：它住 `programs/src/unit/catalog.rs`，由 `src/lib.rs` 用一行 `#[path]`
-# 文本包含（那份声明只引 `env`，故宿主编得过）——见那边 `mod program;` 的头注。
+# 文本包含；产品入口声明只引用 `env` 与无 execution / protocol 的 provider API。
 env = { path = "../env" }
+wire = { path = "../wire" }
+system-api = { path = "../../programs/src/system/api" }
 elf = { version = "0.8", default-features = false }
+hub-api = { path = "../../programs/src/service/hub/api" }
+terminal-api = { path = "../../programs/src/user/terminal/api" }
+router-api = { path = "../../programs/src/driver/router/api" }
 
 [[bin]]
 name = "sqware-image"

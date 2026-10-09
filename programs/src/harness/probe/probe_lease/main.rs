@@ -9,14 +9,15 @@ extern crate programs;
 use env::Wait;
 use programs::Report;
 
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::{Permit, Face as Face};
-use protocol::system::operator::client as operator;
+use ipc::session::Session;
+use programs::debug;
+use system_api::operator::Permit;
+use system_client::operator::Face as Face;
+use system_client::operator;
 
 use env::unit;
 use env::pie;
-use runtime::core::res::pie::{reserve};
+use ::resource::raw::{reserve};
 
 const MS: usize = 1000;
 
@@ -34,19 +35,19 @@ fn main() -> Report<'static> {
         return bail("probe-lease: no tree link");
     };
     let tree = Face::of(session);
-    let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
-    let target = protocol::system::control::publication::Target::Service {
-        scope: protocol::system::control::publication::Scope::Fixture,
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("lease-entry"))).unwrap();
+    let target = system_api::control::publication::Target::Service {
+        scope: system_api::control::publication::Scope(4),
         group: "fixtures".into(),
         name: "lease".into(),
     };
-    let id = protocol::system::control::publication::Client::injected()
+    let id = system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target, entry, Permit::Public, Wait::AtMost(MS))
         .unwrap();
     let cap = tree
         .tile(
-            protocol::common::path::Path::new("svc/fixtures/lease"),
+            system_api::operator::path::Path::new("svc/fixtures/lease"),
             Wait::AtMost(MS),
         )
         .unwrap()

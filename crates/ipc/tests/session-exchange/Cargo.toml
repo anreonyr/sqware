@@ -1,0 +1,13 @@
+[package]
+name = "ipc-session-exchange-host"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "lib.rs"
+
+[workspace]
+
+[dependencies]
+system-api = { path = "../../../../programs/src/system/api" }

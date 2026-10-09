@@ -8,7 +8,7 @@
 
 use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
-use protocol::debug;
+use programs::debug;
 
 pub fn ring(lines: &mut Lines, plic: &Plic) {
     loop {

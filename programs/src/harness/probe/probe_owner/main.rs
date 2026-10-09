@@ -11,13 +11,18 @@ use programs::Report;
 
 use alloc::format;
 use alloc::string::ToString;
-use protocol::common::path::Path;
-use protocol::communication::session::Session;
-use protocol::debug;
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face as Face, Mine, Pane, EntryId, Fail, Permit};
+use system_api::operator::path::Path;
+use ipc::session::Session;
+use programs::debug;
+use system_client::operator;
+use system_client::operator::Face as Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
+use system_api::operator::EntryId;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
 
-use protocol::driver;
+use router_api as driver;
 use env::unit;
 use env::pie;
 
@@ -59,7 +64,7 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    let Ok(entry) = pie::unseal_hole(env::Mark::of("probe-entry")) else {
+    let Ok(entry) = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-entry"))) else {
         return bail("probe-owner: no entry");
     };
     // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
@@ -151,7 +156,7 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let entry = pie::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("takeover-entry"))).map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         tree.root().bind(
             "fixtures".into(),
@@ -167,7 +172,7 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
             return Ok(EntryId::new(0));
         }
-        let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+        let _ = execution::room::park(core::time::Duration::from_millis(1));
     }
     Err(Fail::Unknown)
 }
@@ -183,7 +188,7 @@ fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
         match root.tile(road, Wait::AtMost(MS)) {
             Ok(entry) => return Some(entry.id()),
             Err(Fail::Unknown) if left > 0 => {
-                let _ = runtime::core::task::sleep(core::time::Duration::from_millis(1));
+                let _ = execution::room::park(core::time::Duration::from_millis(1));
                 left = left.saturating_sub(1);
             }
             Err(_) => return None,

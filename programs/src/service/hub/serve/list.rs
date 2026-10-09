@@ -10,6 +10,6 @@ pub(super) fn list(ledger: &Ledger, class: String, from: u32, back: PieToken) {
             ..Window::EMPTY
         }
     };
-    let mut tx = Sender::<Window>::from_token(back);
+    let mut tx = Sender::<Window>::from_raw(back);
     let _ = tx.send(window);
 }

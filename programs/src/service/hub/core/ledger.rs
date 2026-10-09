@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
-use protocol::service::hub::{Fail, LIST_MAX, Window};
+use hub_api::{Fail, LIST_MAX, Window};
 
 use super::league::League;
 
@@ -81,12 +81,14 @@ impl Ledger {
         Ok(())
     }
 
-    pub fn claim(
+    /// 交付成功后才登记新主人；失败保留原账。
+    pub fn claim_with<T>(
         &mut self,
         door: PieToken,
         owner: Owner,
         alive: impl Fn(PieToken) -> bool,
-    ) -> Result<Entry, Fail> {
+        deliver: impl FnOnce(&Entry) -> Result<T, Fail>,
+    ) -> Result<(Entry, T), Fail> {
         let Some(at) = self.cells.iter().position(|c| c.entry().door == door) else {
             return Err(Fail::Unknown);
         };
@@ -96,11 +98,12 @@ impl Ledger {
             }
         }
         let entry = self.cells[at].entry().clone();
+        let delivered = deliver(&entry)?;
         self.cells[at] = Cell::Held {
             entry: entry.clone(),
             owner,
         };
-        Ok(entry)
+        Ok((entry, delivered))
     }
 
     /// 册 · 写：空出主人没了的那几格。返**空出了几格**（读数）

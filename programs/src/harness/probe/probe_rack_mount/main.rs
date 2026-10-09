@@ -21,18 +21,22 @@ extern crate programs;
 
 use alloc::vec::Vec;
 
-use env::{Mark, Wait};
+use ::resource::raw::inspect;
+use env::Wait;
+use env::pie;
+use env::unit;
+use ipc::rack::{Mode, Rack};
+use ipc::session::{Session, establish};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use protocol::communication::rack::{Mode, Rack};
-use protocol::communication::session::{Session, establish};
-use protocol::system::control::{Client, Scope, Target};
-use protocol::system::operator::client as operator;
-use protocol::system::operator::{Face, Fail, Grant, Permit};
-use env::unit;
-use env::pie;
-use runtime::core::res::pie::{inspect};
+use system_api::control::Scope;
+use system_api::control::Target;
+use system_api::operator::Fail;
+use system_api::operator::Permit;
+use system_client::control::publication::Client;
+use system_client::operator;
+use system_client::operator::Face;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -55,7 +59,7 @@ fn main() -> Report<'static> {
     let plated = land(&tree, &a, &b);
     let client = Client::injected().unwrap();
     let target = |name: &str| Target::Service {
-        scope: Scope::Fixture,
+        scope: Scope(4),
         group: rig::ROAD.into(),
         name: name.into(),
     };
@@ -78,7 +82,7 @@ fn main() -> Report<'static> {
     }
 
     // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
-    let _ = establish::endpoint(unit::sire(), Mark::of(programs::unit::READY), Wait::POLL);
+    let _ = establish::endpoint(unit::sire(), programs::unit::READY_MARK, Wait::POLL);
 
     // 等 B：见到 CAP 条 = 客人已经读完 A（它那一边的次序）。
     let mut br = b.reader();
@@ -102,7 +106,7 @@ fn main() -> Report<'static> {
         .unwrap()
         .token(Wait::AtMost(MS))
         .unwrap();
-    let mut reader = protocol::communication::rack::Reader::<Bytes>::from_token(retained).unwrap();
+    let mut reader = ipc::rack::Reader::<Bytes>::from_raw(retained).unwrap();
     client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
     assert_eq!(
         tree.root()
@@ -118,23 +122,21 @@ fn main() -> Report<'static> {
         reader.recv(Wait::AtMost(MS)).unwrap().bytes(),
         rig::payload(99).bytes()
     );
-    assert_eq!(inspect(retained).unwrap().1, unit::self_id());
-    protocol::debug::put(
+    assert_eq!(inspect(retained).unwrap().owner, unit::self_id());
+    programs::debug::put(
         "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
     );
 
     // **判据 4**：封印 A 那一枚页 ⇒ 树上那一格该被剔掉（`find` 答 `Dead`）。
-    // `find` 自成一位（那一手会转移权柄）⇒ 要 `Grant::Find` 那一柄。
     assert!(
         pie::seal(a.ship()).is_ok(),
         "probe-rack-mount: 封印自己那一枚页失败"
     );
-    let rein = tree.rein(Grant::Find);
-    match rein.find(plated[0], Wait::AtMost(MS)) {
+    match tree.find(plated[0], Wait::AtMost(MS)) {
         Err(Fail::Dead) => {}
         other => panic!("probe-rack-mount: 封印之后那一格该答 Dead，实测 {other:?}"),
     }
-    protocol::debug::put(&alloc::format!(
+    programs::debug::put(&alloc::format!(
         "probe-rack-mount: landed={} wrote={} read={} sealed=pruned",
         plated.len(),
         rig::count(),
@@ -153,13 +155,13 @@ fn open(mode: Mode) -> Rack<Bytes> {
 
 /// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Public`：谁都能查、谁都能取，
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
-fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<protocol::system::operator::EntryId> {
+fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<system_api::operator::EntryId> {
     let road = rig::road().expect("probe-rack-mount: road");
     let publisher = Client::injected().expect("probe-rack-mount: publication entry");
     let mut mounts = Vec::new();
     for (name, entry) in rig::faces(a, b) {
         let target = Target::Service {
-            scope: Scope::Fixture,
+            scope: Scope(4),
             group: rig::ROAD.into(),
             name: name.into(),
         };
