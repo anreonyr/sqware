@@ -21,7 +21,6 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
         "publication.face",
         crate::system::publication::publication_face,
     )?;
-    start.plan("account", super::account::start()?)?;
     start.system("control.faces", crate::system::publication::control_faces)?;
     start.system("instance.face", crate::system::publication::instance_face)?;
     start.system("loader", crate::system::loader::faces)?;
@@ -45,10 +44,15 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         maintenance()?.map_error(|_| Fail::Publication),
     )?;
     frame.system("health", f::health)?;
-    frame.system("account.consumers", super::account::refresh)?;
     frame.plan("control.poll", crate::system::control::poll()?)?;
-    frame.system("construction.receive", crate::system::control::receive_construction)?;
-    frame.system("construction.admit", crate::system::control::admit_construction)?;
+    frame.system(
+        "construction.receive",
+        crate::system::control::receive_construction,
+    )?;
+    frame.system(
+        "construction.admit",
+        crate::system::control::admit_construction,
+    )?;
     frame.system("construction.dispatch", crate::system::launch::dispatch)?;
     frame.plan("loader", crate::system::loader::frame()?)?;
     frame.system("launch.register", crate::system::launch::register)?;
@@ -91,7 +95,6 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     frame.system("watch.publication", watch::publication)?;
     frame.system("watch.construction", watch::construction)?;
     frame.system("watch.tasks", watch::tasks)?;
-    frame.system("watch.account", watch::account)?;
     frame.system("watch.connections", watch::connections)?;
     frame.system("watch.apply", watch::apply)?;
     frame.system("wait", watch::wait)?;
@@ -100,7 +103,6 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
 pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut stop = Schedule::sequence();
     stop.plan("loader.close", crate::system::loader::shutdown()?)?;
-    stop.system("account.stop", super::account::stop)?;
     stop.system("stopping", crate::system::app::life::stopping)?;
     stop.system("join", crate::system::app::life::join)?;
     stop.build()

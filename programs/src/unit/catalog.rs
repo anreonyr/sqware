@@ -8,6 +8,8 @@ use super::{SCENE_UNIT, UnitFile};
 
 #[path = "../harness/probe/accept/program.rs"]
 pub mod accept;
+#[path = "../service/account/program.rs"]
+pub mod account;
 #[path = "../harness/bench/again/again/program.rs"]
 pub mod again;
 #[path = "../harness/bench/beat/program.rs"]
@@ -104,6 +106,7 @@ pub mod waiter;
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
+    &account::PROGRAM,
     &terminal::PROGRAM,
     &login::PROGRAM,
     &cat::PROGRAM,

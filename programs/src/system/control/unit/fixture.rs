@@ -1,3 +1,4 @@
+//! Trusted native fixtures can register existing tasks under a deployment declaration.
 use super::{Control, start::Error};
 use crate::system::control::unit::table::{Slot, State};
 use crate::unit::UnitFile;

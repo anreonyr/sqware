@@ -6,7 +6,7 @@ pub use super::interface::{Grant, grant_of};
 impl Grant {
     pub const fn for_wire(wire: &Wire) -> Self {
         match wire {
-            Wire::State(_) | Wire::StateInstance(_) => Self::State,
+            Wire::State(_) | Wire::StateInstance(_) | Wire::Task(_) => Self::State,
             Wire::Mint(_) => Self::Mint,
             Wire::Embark(_) | Wire::EmbarkInstance(_) => Self::Embark,
             Wire::Debark(_) | Wire::DebarkInstance(_) => Self::Debark,

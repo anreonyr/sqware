@@ -1,4 +1,4 @@
-//! Trusted startup adapters: image selection, capability wiring and Hub supplies.
+//! Trusted startup adapters: image selection, capability wiring and supplies.
 use crate::system::control::{
     lifecycle::{Active, Instance},
     unit::{Control, verdict::Fail},
@@ -44,6 +44,38 @@ pub(crate) fn inject(
         .map_err(|_| Fail::Full)?;
     Ok(Progress::Done)
 }
+pub(crate) fn prepare(
+    active: Res<Active>,
+    mut construction: ResMut<crate::system::control::Construction>,
+    control: Res<Control>,
+) -> Result<Progress, Fail> {
+    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    if control
+        .input(&job.request.name)?
+        .program
+        .demand
+        .construction
+    {
+        construction
+            .grant(active.task().ok_or(Fail::NotReady)?)
+            .map_err(|_| Fail::Full)?;
+    }
+    Ok(Progress::Done)
+}
+pub(crate) fn identity_grants(
+    active: Res<Active>,
+    control: Res<Control>,
+    roster: Res<crate::system::control::identity::Roster>,
+) -> Result<Progress, Fail> {
+    let job = active.0.as_ref().ok_or(Fail::Unknown)?;
+    let task = active.task().ok_or(Fail::NotReady)?;
+    for grant in control.input(&job.request.name)?.program.demand.identity {
+        roster
+            .grant_face(task, *grant)
+            .map_err(|_| Fail::NotReady)?;
+    }
+    Ok(Progress::Done)
+}
 pub(crate) fn supply(
     mut active: ResMut<Active>,
     mut supplies: ResMut<super::supplies::Supplies>,
@@ -52,6 +84,16 @@ pub(crate) fn supply(
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.execution.instance.as_mut() {
         let program = control.input(&job.request.name)?.program;
+        for setup in program.supply() {
+            if let crate::unit::Setup::Image { name, load } = setup {
+                supplies
+                    .image(&mut instance.service, (name, load))
+                    .map_err(|why| {
+                        crate::debug::put(&alloc::format!("supply {}: {why:?}", program.name()));
+                        Fail::NotReady
+                    })?;
+            }
+        }
         if program.supply().iter().any(|setup| setup.machine()) {
             supplies
                 .enroll(&mut instance.service, program)
@@ -65,9 +107,10 @@ pub(crate) fn hooks() -> Result<crate::system::control::ActivationHooks, ::sched
     construct.system("construct", mint)?;
     construct.system("publication", inject)?;
     let mut prepare = ::schedule::Schedule::sequence();
-    prepare.system("account.consumers", super::account::consumers)?;
+    prepare.system("capabilities", self::prepare)?;
+    prepare.system("identity-grants", identity_grants)?;
     let mut supply_plan = ::schedule::Schedule::sequence();
-    supply_plan.system("hub", supply)?;
+    supply_plan.system("supplies", supply)?;
     Ok(crate::system::control::ActivationHooks {
         construct: construct.build()?,
         prepare: prepare.build()?,

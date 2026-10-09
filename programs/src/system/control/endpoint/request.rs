@@ -70,15 +70,21 @@ pub fn state(
     let count = inbox.0.len();
     for _ in 0..count {
         let incoming = inbox.0.pop_front().ok_or(crate::system::app::Fault::Room)?;
-        if let ccall::frame::Wire::State(name) = incoming.wire {
-            let said = match control.state(name) {
+        let said = match incoming.wire {
+            ccall::frame::Wire::State(name) => match control.state(name) {
                 Ok(state) => ccall::frame::said_state(wire_state(state)),
                 Err(fail) => status(fail),
-            };
-            reply(incoming.reply, said);
-        } else {
-            inbox.0.push_back(incoming);
-        }
+            },
+            ccall::frame::Wire::Task(name) => match control.named_task(&name) {
+                Ok(task) => ccall::frame::said_task(task),
+                Err(fail) => status(fail),
+            },
+            _ => {
+                inbox.0.push_back(incoming);
+                continue;
+            }
+        };
+        reply(incoming.reply, said);
     }
     Ok(::schedule::Progress::Done)
 }
@@ -99,7 +105,9 @@ pub fn enqueue(
             ),
             ccall::frame::Wire::Debark(name) => (name, Action::Debark),
             ccall::frame::Wire::Ruin(name) => (name, Action::Ruin),
-            ccall::frame::Wire::State(_) => return Err(crate::system::app::Fault::Room),
+            ccall::frame::Wire::State(_) | ccall::frame::Wire::Task(_) => {
+                return Err(crate::system::app::Fault::Room);
+            }
             _ => {
                 inbox.0.push_back(incoming);
                 continue;

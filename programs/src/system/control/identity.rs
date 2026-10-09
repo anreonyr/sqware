@@ -74,6 +74,19 @@ impl Roster {
             .map_err(|_| "inject identity authority")
     }
 
+    pub(crate) fn grant_face(&self, task: TaskId, grant: Grant) -> Result<(), &'static str> {
+        let authority = current_authority(self).ok_or("identity authority stale")?;
+        let entry = face_of(authority, grant)?;
+        if !resource::raw::alive(entry)
+            || !matches!(reserve(entry), Ok((giver, owner, mark)) if giver == authority && owner == authority && mark == grant.mark())
+        {
+            return Err("identity grant source");
+        }
+        port::ship(entry, task, Access::STORE, Policy::NONE)
+            .map(|_| ())
+            .map_err(|_| "identity face grant")
+    }
+
     pub(crate) fn unbind(&self, task: TaskId) -> Result<(), &'static str> {
         let Some(installer) = self.installer.as_ref() else {
             return Ok(());
@@ -225,12 +238,24 @@ impl Roster {
         use system_api::identity::{Reply, Wire};
         use system_client::identity::Face;
         let authority = current_authority(self).ok_or("identity authority stale")?;
-        let binding = binding(self, from).map_err(|_| "creator unbound")?.ok_or("creator unbound")?;
-        if subject.principal.authority != authority || !subject.coalitions.is_subset(&binding.current.coalitions) {
+        let binding = binding(self, from)
+            .map_err(|_| "creator unbound")?
+            .ok_or("creator unbound")?;
+        if subject.principal.authority != authority
+            || !subject.coalitions.is_subset(&binding.current.coalitions)
+        {
             return Err("creation subject outside grant");
         }
-        let face = Face::direct(authority, Grant::Heir, face_of(authority, Grant::Heir)?).map_err(|_| "creation identity face")?;
-        if face.call(Wire::Heir(binding.current.principal, subject.principal), Wait::AtMost(BOOT_MS)).map_err(|_| "creation identity query")? != Reply::Bool(true) {
+        let face = Face::direct(authority, Grant::Heir, face_of(authority, Grant::Heir)?)
+            .map_err(|_| "creation identity face")?;
+        if face
+            .call(
+                Wire::Heir(binding.current.principal, subject.principal),
+                Wait::AtMost(BOOT_MS),
+            )
+            .map_err(|_| "creation identity query")?
+            != Reply::Bool(true)
+        {
             return Err("creation subject outside subtree");
         }
         Ok(())

@@ -3,6 +3,7 @@ extern crate alloc;
 extern crate env as abi;
 extern crate self as env;
 extern crate self as ipc;
+extern crate self as resource;
 pub use abi::{Mark, PieToken, TaskId, Wait};
 use std::{cell::RefCell, collections::VecDeque};
 #[derive(Default)]
@@ -10,11 +11,31 @@ struct Effects {
     created: u64,
     fail_at: Option<u64>,
     released: Vec<u64>,
+    shut: Vec<u64>,
     joins: VecDeque<Result<bool, ()>>,
     waits: Vec<Wait>,
 }
 thread_local! { static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default()); }
+pub mod raw {
+    pub fn reserve(
+        token: crate::PieToken,
+    ) -> Result<(crate::TaskId, crate::TaskId, crate::Mark), ()> {
+        Ok((
+            crate::TaskId::new(9),
+            crate::TaskId::new(9),
+            crate::Mark::of(if token.get() % 2 == 1 {
+                "supply"
+            } else {
+                "ready"
+            }),
+        ))
+    }
+}
 pub mod pie {
+    pub fn shut(token: crate::PieToken) -> Result<(), ()> {
+        crate::EFFECTS.with(|e| e.borrow_mut().shut.push(token.get() as u64));
+        Ok(())
+    }
     pub fn release(token: crate::PieToken) -> Result<(), ()> {
         crate::EFFECTS.with(|e| e.borrow_mut().released.push(token.get() as u64));
         Ok(())
@@ -32,6 +53,9 @@ pub mod unit {
     }
     pub struct UnitFile;
     impl UnitFile {
+        pub fn valid(&self) -> bool {
+            true
+        }
         pub fn supply(&self) -> &[Setup] {
             &[Setup]
         }
@@ -90,7 +114,21 @@ pub mod session {
 }
 mod control {
     pub mod table {
+        #[derive(PartialEq)]
+        pub enum State {
+            Ready,
+        }
+        pub struct Row {
+            pub state: State,
+        }
         pub struct Table;
+        impl Table {
+            pub fn find(&self, _: &str) -> Option<Row> {
+                Some(Row {
+                    state: State::Ready,
+                })
+            }
+        }
     }
     pub mod start {
         #[derive(Debug, PartialEq)]
@@ -174,6 +212,47 @@ mod control {
             EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2]));
             drop(s);
             EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2, 3, 4]));
+        }
+        #[test]
+        fn supplied_images_are_released_once_after_ready() {
+            reset();
+            let mut s = service::Service::new(TaskId::new(9));
+            s.hold_supply(crate::PieToken::mint(41)).unwrap();
+            s.connect(&crate::unit::UnitFile).unwrap();
+            s.ready(&mut table::Table, task::Readiness { name: "boot" })
+                .unwrap();
+            EFFECTS.with(|e| {
+                assert_eq!(e.borrow().shut, [41]);
+                assert_eq!(e.borrow().released, [41]);
+            });
+            drop(s);
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [41, 1, 2]));
+        }
+        #[test]
+        fn failed_start_reclaims_image_supplies() {
+            reset();
+            let mut s = service::Service::new(TaskId::new(9));
+            s.hold_supply(crate::PieToken::mint(41)).unwrap();
+            drop(s);
+            EFFECTS.with(|e| {
+                assert_eq!(e.borrow().shut, [41]);
+                assert_eq!(e.borrow().released, [41]);
+            });
+        }
+        #[test]
+        fn supply_selection_uses_declared_channel_not_first_endpoint() {
+            reset();
+            let mut s = service::Service::new(TaskId::new(9));
+            s.connect(&crate::unit::UnitFile).unwrap();
+            assert_eq!(
+                s.claim_supply(crate::Mark::of("ready"), Wait::POLL)
+                    .unwrap(),
+                crate::PieToken::mint(2)
+            );
+            assert!(
+                s.claim_supply(crate::Mark::of("absent"), Wait::POLL)
+                    .is_err()
+            );
         }
         fn reap(results: &[Result<bool, ()>], wait_for: Wait) -> verdict::Reaped {
             reset();

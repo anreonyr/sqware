@@ -12,7 +12,7 @@ programs/src/
 │   ├── client/              # 独立 system-client：公共语义客户端
 │   ├── app/                 # 引导、配置、程序阶段、组合计划、总等待器
 │   ├── control/
-│   │   ├── unit/            # 任务登记、镜像缓存、启动物料、就绪与收割
+│   │   ├── unit/            # 任务登记、启动物料、就绪与收割
 │   │   ├── instance/        # 实例命令、认领、超时、Prepare/Retire 扩展
 │   │   ├── lifecycle/       # Mint/Embark/Debark/Ruin、队列、游标、补偿
 │   │   ├── endpoint/        # 拥有私有入口登记；子模块适配请求／实例命令
@@ -30,8 +30,8 @@ programs/src/
 │   │   └── management.rs    # System 私有命名管理通道
 │   ├── loader/              # 映像、缓存、映射、构建、任务与私有服务
 │   ├── publication/         # 发布账、名称注册、运行时命名空间、撤销
-│   ├── launch/              # 身份准备、授权接入、命名空间准备、就绪交付
-│   └── account/             # 帐号会话机制；配置由 app 注入
+│   └── launch/              # 身份准备、授权接入、命名空间准备、就绪交付
+├── service/account/         # 独立 Account ELF、部署声明、API 与客户端
 └── service/hub/、user/terminal/、driver/router/
     ├── api/                 # 软件自己的接口声明和生成元数据
     └── client/              # 软件自己的公共使用库
@@ -40,13 +40,13 @@ programs/src/
 
 System 只对独立程序开放 app::run；实现组件限制在 crate 内。普通驱动、服务和用户程序使用公共 API/客户端及 support，不导入 System 私有目录。压测与 accept 的独立二进制为薄入口，具体测具留在 harness。
 
-Control 唯一持有任务表、实例表、待放行任务和 Loader 缓存，字段仅 Control 子树可见。创建依次执行容量检查、构建、登记；外部通过命令与只读观察访问状态。受管任务的启动进度归 Control；app 保留程序阶段、空闲、整体退出策略与程序层 Fault。
+Control 唯一持有任务表、实例表和待放行任务，字段仅 Control 子树可见；Loader 自己持有镜像缓存。创建依次执行容量检查、构建、登记；外部通过命令与只读观察访问状态。受管任务的启动进度归 Control；app 保留程序阶段、空闲、整体退出策略与程序层 Fault。
 
 IdentityBook 只拥有权威身份模型。Control 的 Roster 拥有安装账，普通调用方的受信 authority 发现归 system-client。Operator management 是私有管理入口，不承担公共客户端职责。
 
-publication 拥有发布、名称与运行时命名空间的账；Operator 自己拥有会话接入，publication 不再保存连接候选账。launch 只持有等待交付的请求，通过 Control 查询实例结果，不复制实例状态。account 根据注入的帐号与镜像配置处理可信 Login 请求。
+publication 拥有发布、名称与运行时命名空间的账；Operator 自己拥有会话接入，publication 不再保存连接候选账。launch 只持有等待交付的请求，通过 Control 查询实例结果，不复制实例状态。Account 独立拥有帐号选择、用户身份与会话启动策略，通过公共 System 能力处理可信 Login 请求。
 
-Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装归 launch。Control 接受 activation 和实例 Prepare/Retire 子计划，由 app 注入 launch 流程；Control 不依赖 launch、publication 或 account 的实现。
+Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装归 launch。Control 接受 activation 和实例 Prepare/Retire 子计划，由 app 注入 launch 流程；Control 不依赖 launch、publication 或 Account 的实现；System 装配也不导入 Account 实现、API 或消费者名。
 
 ## 安装、计划和等待边界
 
@@ -55,7 +55,7 @@ Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装�
 顺序保留为：
 
 1. 引导内部服务、安装身份与公共入口、开始静态任务。
-2. 发布维护、健康检查、Control 接收、Account 接收、Loader 构建。
+2. 发布维护、健康检查、Control 接收、Loader 构建。Account 由自己的任务接收请求。
 3. Control 命令推进、发布维护、实例回收、回复、实例扩展与交付。
 4. 启动进度与运行阶段、退出策略、等待兴趣汇总与等待。
 5. 关闭 Loader 入口和缓存、通知内部服务退出、等待结束。
@@ -300,7 +300,7 @@ Land对生产Said只接受完整一字节、已知失败Status为明确拒绝；
 | 问题 | 最终边界 |
 | --- | --- |
 | 关闭的 Operator Session 被永久重试 | 只重试服务器明确返回的 Unknown；传输失败及畸形回执立即结束。生产 Session 回归先造成回复超时，再对已关闭会话使用 Forever，确认不会退避或重发。 |
-| Account 混入 System | Account 独立拥有 API、客户端、账户选择和会话启动策略。装配提供镜像、消费者和最小能力；通过授权 Control 构造入口和 Identity 事实完成创建。Control 只接受明确授予的构造者、存活 owner 和构造者当前身份子树内的 Subject，普通调用者不能指定他人身份。 |
+| Account 混入 System | Account 是独立 ELF，拥有部署声明、API、客户端、账户选择和会话启动策略。装配按声明交付映像与最小能力；通过公开 Control 构造入口和 Identity 事实完成创建。Control 只接受明确授予的构造者、存活 owner 和构造者当前身份子树内的 Subject。 |
 | Hub 激活依赖 System 私有协议 | Hub 通过来源绑定的公开 Identity Activate 分面激活联盟；Identity 校验实际管理者、资格、权威、容量和身份衰减，一批请求全部校验后才提交。旧 Hub 私有报文与两个角色退役。 |
 | Publication 写死设备拓扑 | 装配生成 owner、scope、group、目录、条目白名单和 Permit 规则；Publication 执行通用命名空间规则，保留设备白名单及联盟准入。 |
 | Control 包办 Hub Enroll | 机器供给与 Hub Enroll 属于可信装配 hook；Control 推进通用生命周期。 |
@@ -310,7 +310,7 @@ Land对生产Said只接受完整一字节、已知失败Status为明确拒绝；
 
 Account 使用 `/svc/account/create`，保留原两个账户通道的数值；新增 Control construction 两个角色和 Identity Activate 一个分面。登记角色现为 55 个，旧 Hub 激活角色的数值保留在退役清单中，禁止复用。服务 scope 改为部署配置的数字键，原 1–5 以及身份／运行时协议编号保持不变。新构造报文严格承载映像请求、owner 和 Subject，拒绝截断与尾随数据。
 
-真实集成验证还修复了内部服务接入边界：Account 所需的 Derive 能力显式授予；内部服务使用装配指定的 Control 任务，而非 Team 的 Sire；发布存活名单包含已登记的内部任务。Account 无权 Join 兄弟 Team，由可信装配刷新消费者配置，Control 在构造准入时再次检查实际 owner 存活。测具按构造、登记、准备、完成的次序推进。
+此前集成验证修复了内部服务接入边界。本次 Account 已退出内部任务配置：Derive 能力由需求声明授予，消费者通过可信 Control 查询核对，Control 在构造准入时检查实际 owner 存活。测具按构造、登记、准备、完成的次序推进。
 
 QEMU 验证脚本改为保留外部命令的执行结果，避免 `try` 作用域把失败退出码丢成 0。以退出码 23 的外部命令验证错误码传播；真实场景同时检查测试判决及交互驱动结果。
 
@@ -344,3 +344,22 @@ Terminal 的另一类失败表现为恢复成功后发现 OUTPUT 返回 Missing�
 新增生产 Connection 回归覆盖不枚举能力表的接入、失败移交后的新端点恢复，以及正常前台恢复时旧 Io 的撤销；编解码回归核对三个接收者编号和截断拒绝。诊断耗时与临时失败打印不进入最终实现。
 
 最终验证：277 项宿主测试通过（独立套件 256、IdentityBook 13、mold 8；6 个 ignored 文档示例不计入），programs 全目标检查与 diff 检查通过。最终 release accept 的同镜像重复运行 20/20 通过，范围 8.09–10.79 秒，中位数 9.70 秒；完整脚本的首次 accept 也通过。system-fault 15.75 秒通过；product 登录交互 5.00 秒通过，驱动结果为 ok。登录验证仍覆盖两个不同 Task、相同 Principal 的 cat 会话及终端恢复。重复运行记录的是这 20 次的结果，不据此声称所有运行条件下永不超时。
+
+
+### 2026-10-09：Account 退出 System 装配实现
+
+Account 以 `prog-account` 独立运行，部署声明归 `service/account/program.rs`。移除 `system/app/account.rs` 及其安装、消费者刷新、接收、等待、健康检查和退出专用分支；不存在跨任务共享的 Arc／Atomic 配置。帐号名、Login 策略、cat 会话映像选择和 Terminal 接入路径均由 Account 拥有。
+
+System 只提供通用声明驱动的能力：
+
+- `Demand.construction` 明示构造资格；实际转授成功后才登记构造者。每次创建仍校验 native sender、owner 存活与真实 Identity 子树，转授入口本身不赋予构造资格。
+- `Demand.identity` 明示附加身份分面；Account 仅申请 Derive。它派生独立的用户 principal，避免把服务身份直接作为用户会话身份。
+- `Setup::Image { name, load }` 交付页对齐的只读映像能力与严格 16 字节 recipient seed／length 帧。映像供给必须声明 Ready；服务完整复制后才交 Ready，供给根在 Ready 或失败回收时释放。空、重复及碰撞通道在启动前被拒绝。
+- Control State 新增 `Task(name)`，操作码 10；原 1–9 和 Grant／Mark 保持不变。查询只返回可信部署登记且仍存活的真实 TaskId。Account 同时核对 native sender 与 Login 身份，继承同一 principal 的子任务仍不能冒充 Login。
+- `Identity.aliases` 声明允许发布的名字，不能直接把名字绑定到服务 principal。公开 IdentityName 发布要求存活的命名部署任务、允许的名字、NONE 载荷、Bound Permit、Principal 类型及真实身份子树授权；别名随发布任务退场清理。Account 将 anran 绑定到派生的用户 principal。
+
+发布 `/svc/account/create`、领取映像、身份派生与别名安装完成后，Account 才报告就绪。Login 的部署顺序显式等待 Account。服务失败与正常退场走普通 Control 生命周期及 Publication 清理，不需要 System 识别 Account。
+
+验证覆盖生产 Construction 转授、Service 供给持有／回收、Control 查询与 RPC 来源校验、IdentityName 发布准入。完整宿主套件通过；架构守卫禁止 System 导入 Account 实现／API／客户端或持有帐号与消费者名。真实 system-fault 保留认领过期、准备／启动失败、清理 Pending／失败重试、owner 死亡与资源回收，并新增相同 Login principal 的非 Login 任务拒绝、获构造资格后的越界 Subject 拒绝。
+
+最终 release 场景验证：accept 5.39 秒、system-fault 10.76 秒、product 登录交互 2.93 秒通过；交互驱动结果为 `ok`，两个 cat 会话 Task 不同、Principal 相同，终端在 EOF／中断后恢复。权限与生命周期两项独立复审均未发现新的阻断问题。

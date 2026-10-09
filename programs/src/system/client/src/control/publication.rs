@@ -76,6 +76,29 @@ impl Client {
         result
     }
 
+    /// Publish an identity name within the deployment grant and caller identity subtree.
+    pub fn publish_identity(
+        &self,
+        object: Object,
+        name: &str,
+        wait: Wait,
+    ) -> Result<EntryId, Fail> {
+        if !valid_name(name) {
+            return Err(Fail::Denied);
+        }
+        self.call(
+            Frame::new(
+                PUBLISH,
+                Target::IdentityName {
+                    object,
+                    name: name.into(),
+                },
+                (PieToken::NONE, Permit::Bound),
+            ),
+            wait,
+        )
+        .map(|reply| EntryId::new(reply.number as usize))
+    }
     pub fn unpublish(&self, target: Target, wait: Wait) -> Result<(), Fail> {
         self.call(
             Frame::new(UNPUBLISH, target, (PieToken::NONE, Permit::Public)),

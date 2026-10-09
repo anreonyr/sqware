@@ -118,10 +118,10 @@ pub(super) fn connections(
     Ok(Progress::Done)
 }
 
-pub(crate) fn construction(construction: Res<crate::system::control::Construction>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
-    wanted.tokens.push(construction.entry); Ok(Progress::Done)
-}
-pub(crate) fn account(account: Res<crate::system::app::account::Account>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
-    if let Some(task) = account.task { wanted.subs.push(Sub::TaskCompleted(task)); }
+pub(crate) fn construction(
+    construction: Res<crate::system::control::Construction>,
+    mut wanted: ResMut<Interests>,
+) -> Result<Progress, Fail> {
+    wanted.tokens.push(construction.entry);
     Ok(Progress::Done)
 }

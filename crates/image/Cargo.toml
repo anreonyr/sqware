@@ -22,6 +22,8 @@ publish = false
 # **装配表不在依赖里**：它住 `programs/src/unit/catalog.rs`，由 `src/lib.rs` 用一行 `#[path]`
 # 文本包含；产品入口声明只引用 `env` 与无 execution / protocol 的 provider API。
 env = { path = "../env" }
+wire = { path = "../wire" }
+system-api = { path = "../../programs/src/system/api" }
 elf = { version = "0.8", default-features = false }
 hub-api = { path = "../../programs/src/service/hub/api" }
 terminal-api = { path = "../../programs/src/user/terminal/api" }

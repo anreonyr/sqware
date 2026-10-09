@@ -398,3 +398,10 @@ path = "src/user/cat/main.rs"
 test = false
 bench = false
 doctest = false
+
+[[bin]]
+name = "prog-account"
+path = "src/service/account/main.rs"
+test = false
+bench = false
+doctest = false

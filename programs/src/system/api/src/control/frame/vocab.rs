@@ -113,3 +113,6 @@ pub const INSTANCE_EMBARK: u8 = 6;
 pub const INSTANCE_DEBARK: u8 = 7;
 pub const INSTANCE_RUIN: u8 = 8;
 pub const INSTANCE_STATE: u8 = 9;
+
+/// 查询命名程序当前存活的任务。
+pub const TASK: u8 = 10;

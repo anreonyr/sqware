@@ -38,6 +38,9 @@ impl Control {
         }
     }
     pub fn enlist(&mut self, program: &UnitFile) -> Result<(), Error> {
+        if !program.valid() {
+            return Err(Error::Step("invalid supply declaration"));
+        }
         let name = program.name().to_string();
         let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
         self.table
@@ -102,7 +105,9 @@ impl Control {
         }
     }
     pub(crate) fn register_internal(&mut self, task: TaskId) -> Result<(), &'static str> {
-        self.internal.try_reserve(1).map_err(|_| "internal lifecycle capacity")?;
+        self.internal
+            .try_reserve(1)
+            .map_err(|_| "internal lifecycle capacity")?;
         self.internal.push(task);
         Ok(())
     }

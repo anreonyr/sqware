@@ -8,7 +8,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         ..Identity::DEFAULT
     },
     relation: Relation {
-        after: Some(&["operator", "terminal", crate::unit::SCENE]),
+        after: Some(&["operator", "terminal", "account", crate::unit::SCENE]),
         restart: Some(Ending::Told),
         ..Relation::DEFAULT
     },

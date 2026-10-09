@@ -70,6 +70,7 @@ pub(crate) fn admit(
     control: Res<crate::system::control::unit::Control>,
     roster: Res<crate::system::control::identity::Roster>,
 ) -> Result<Progress, crate::system::app::Fault> {
+    inbox.creators.retain(|task| control.live(*task));
     let mut index = 0;
     while index < inbox.queued.len() {
         let item = &inbox.queued[index].0;
@@ -101,6 +102,18 @@ pub(crate) fn admit(
 }
 
 impl Construction {
+    pub(crate) fn grant(&mut self, task: TaskId) -> Result<(), &'static str> {
+        if self.creators.contains(&task) {
+            return Ok(());
+        }
+        self.creators
+            .try_reserve(1)
+            .map_err(|_| "constructor grant capacity")?;
+        resource::port::ship(self.entry, task, env::Access::STORE, env::Policy::NONE)
+            .map_err(|_| "constructor grant")?;
+        self.creators.push(task);
+        Ok(())
+    }
     pub(crate) fn drain(
         &mut self,
     ) -> impl Iterator<Item = (api::Request, TaskId, rpc::reply::Sender<Said>, bool)> + '_ {

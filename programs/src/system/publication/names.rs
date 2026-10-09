@@ -50,6 +50,12 @@ impl Names {
     pub fn entries(&self) -> impl ExactSizeIterator<Item = PieToken> + '_ {
         self.aliases.iter().map(|a| a.entry)
     }
+    pub(super) fn mount_of(&self, name: &str, object: Object) -> Option<EntryId> {
+        self.aliases
+            .iter()
+            .find(|alias| alias.name == name && alias.object == object)
+            .map(|alias| alias.mount)
+    }
     pub fn register(
         &mut self,
         tree: &mut Tree,
@@ -237,27 +243,41 @@ pub(crate) fn select(
     names: Res<Names>,
     mut pending: ResMut<Registrations>,
 ) -> Result<Progress, &'static str> {
-    pending.requests.retain_mut(|request| {
-        let AliasRequest::Candidate { task, object } = *request else {
-            return true;
+    let candidates = core::mem::take(&mut pending.requests);
+    for request in candidates {
+        let AliasRequest::Candidate { task, object } = request else {
+            pending
+                .requests
+                .try_reserve(1)
+                .map_err(|_| "alias capacity")?;
+            pending.requests.push(request);
+            continue;
         };
         let Some(row) = control.find_named_task(task) else {
-            return false;
+            continue;
         };
-        if names
-            .aliases
-            .iter()
-            .any(|alias| alias.name == row.name && alias.object == object)
-        {
-            return false;
+        for name in core::iter::once(row.name.as_str()) {
+            if !pubcall::valid_name(name) {
+                return Err("deployment alias name");
+            }
+            if names
+                .aliases
+                .iter()
+                .any(|alias| alias.name == name && alias.object == object)
+            {
+                continue;
+            }
+            pending
+                .requests
+                .try_reserve(1)
+                .map_err(|_| "alias capacity")?;
+            pending.requests.push(AliasRequest::Install(Registration {
+                name: name.into(),
+                object,
+                lifetime: Some(task),
+            }));
         }
-        *request = AliasRequest::Install(Registration {
-            name: row.name.clone(),
-            object,
-            lifetime: Some(task),
-        });
-        true
-    });
+    }
     Ok(Progress::Done)
 }
 pub(crate) fn verify(

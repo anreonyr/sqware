@@ -57,9 +57,6 @@ pub(crate) mod schedule;
 pub(crate) use queue::Operations;
 
 impl Active {
-    pub(crate) fn is_named(&self, name: &str) -> bool {
-        self.0.as_ref().is_some_and(|job| job.request.name == name)
-    }
     pub(crate) fn task(&self) -> Option<TaskId> {
         self.0.as_ref().and_then(|job| job.execution.task)
     }

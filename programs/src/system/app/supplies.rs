@@ -9,19 +9,84 @@ use programs::debug;
 
 pub struct Supplies {
     pub machine: Machine,
+    catalog: crate::boot::Catalog<'static>,
     pub(super) accounts: Accounts,
     pub(super) out: ipc::hand::Sender<hub_api::Enroll>,
 }
 impl Supplies {
-    pub fn new(machine: Machine, accounts: Accounts) -> Self {
+    pub fn new(
+        machine: Machine,
+        accounts: Accounts,
+        catalog: crate::boot::Catalog<'static>,
+    ) -> Self {
         Self {
             machine,
+            catalog,
             accounts,
             out: ipc::hand::Sender::new(),
         }
     }
 }
 impl Supplies {
+    pub fn image(
+        &mut self,
+        service: &mut Service,
+        (name, load): (&str, &str),
+    ) -> Result<(), Error> {
+        use wire::Message;
+        let bytes = self
+            .catalog
+            .find(name)
+            .ok_or(Error::Step("image supply missing"))?
+            .elf;
+        let tx = service.claim_supply(Mark::of(load), Wait::AtMost(BOOT_MS))?;
+        let size = bytes
+            .len()
+            .checked_add(env::PAGE_SIZE - 1)
+            .map(|size| size / env::PAGE_SIZE * env::PAGE_SIZE)
+            .filter(|size| *size != 0)
+            .ok_or(Error::Step("image supply size"))?;
+        let root = env::pie::unseal_pole(size, true)
+            .map_err(|_| Error::Step("image supply allocation"))?;
+        let sent = (|| {
+            let (base, size) =
+                resource::raw::open(root).map_err(|_| Error::Step("image supply mapping"))?;
+            if size < bytes.len() {
+                return Err(Error::Step("image supply mapping short"));
+            }
+            // SAFETY: the newly allocated writable mapping covers the catalog payload.
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), base as *mut u8, bytes.len());
+            }
+            env::pie::shut(root).map_err(|_| Error::Step("image supply unmap"))?;
+            let sent = env::pie::accord(
+                root,
+                service.task(),
+                env::Permission::FETCH,
+                crate::unit::IMAGE_MARK,
+            )
+            .map_err(|_| Error::Step("image supply grant"))?;
+            let frame = crate::unit::ImageSupplyFrame {
+                seed: sent,
+                length: bytes.len() as u64,
+            };
+            let mut buffer = crate::unit::ImageSupplyFrame::EMPTY;
+            let length = frame
+                .store(&mut buffer)
+                .ok_or(Error::Step("image supply frame"))?;
+            resource::port::Sender::import(tx)
+                .map_err(|_| Error::Step("image supply channel"))?
+                .push(&buffer[..length], Wait::AtMost(BOOT_MS))
+                .map_err(|_| Error::Step("image supply send"))?;
+            Ok(())
+        })();
+        if let Err(error) = sent {
+            let _ = env::pie::shut(root);
+            let _ = env::pie::release(root);
+            return Err(error);
+        }
+        service.hold_supply(root)
+    }
     pub fn grant_call(&self, call: env::Call, task: env::TaskId) -> Result<(), &'static str> {
         let token = self
             .accounts

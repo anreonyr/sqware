@@ -64,6 +64,8 @@ pub enum Kind {
 /// **身份 vs 接进来是两件事**：宿主只读身份，装配关系与需求与打包无关。
 #[derive(Clone, Copy)]
 pub struct Identity {
+    /// Names this unit may publish for principals inside its own identity subtree.
+    pub aliases: &'static [&'static str],
     pub name: &'static str,
     /// `Service` 是要起的服务，`Target` 只把几条边聚在一起。
     pub kind: Kind,
@@ -132,11 +134,14 @@ pub struct Relation {
 /// 需求：实例化它要多做的那几手。
 #[derive(Clone, Copy)]
 pub struct Demand {
+    pub construction: bool,
+    pub identity: &'static [system_api::identity::Grant],
     pub supply: &'static [Setup],
 }
 
 impl Identity {
     pub const DEFAULT: Identity = Identity {
+        aliases: &[],
         name: "",
         kind: Kind::Service,
         space: ProgramKind::User,
@@ -154,47 +159,16 @@ impl Relation {
 }
 
 impl Demand {
-    pub const DEFAULT: Demand = Demand { supply: &[] };
+    pub const DEFAULT: Demand = Demand {
+        construction: false,
+        identity: &[],
+        supply: &[],
+    };
 }
 
-/// 实例化一台要多做的一手——通道名。
-pub const READY: &str = "ready";
-/// 启动关系中的 ready 角色，不是发布权利。
-pub const READY_MARK: env::Mark = env::Mark::of(READY);
-
-#[derive(Clone, Copy)]
-pub enum Setup {
-    /// 答得动了：这一台交回一枚刻 `READY` 的孔。
-    Ready,
-    /// 整机物料：这一台起手要这台机器的全部可领之物。
-    Machine {
-        /// 收物料那条通道的名字。
-        load: &'static str,
-        /// "我起完了"那条通道的名字（收方在起手末尾铸一枚刻它的孔）。
-        ready: &'static str,
-    },
-}
-
-impl Setup {
-    pub const fn channel(&self) -> &'static str {
-        match self {
-            Setup::Ready => READY,
-            Setup::Machine { load, .. } => load,
-        }
-    }
-
-    /// 还有第二条吗——`Machine` 多一格（"我起完了"）。
-    pub const fn ready(&self) -> Option<&'static str> {
-        match self {
-            Setup::Ready => None,
-            Setup::Machine { ready, .. } => Some(ready),
-        }
-    }
-
-    pub const fn machine(&self) -> bool {
-        matches!(self, Setup::Machine { .. })
-    }
-}
+mod supply;
+#[allow(unused_imports)]
+pub use supply::{READY, READY_MARK, Setup, valid_supplies};
 
 mod catalog;
 pub use catalog::*;
@@ -208,6 +182,9 @@ pub use publication::{Publish, PublishEntry, PublishScope};
 static READY_ONLY: &[Setup] = &[Setup::Ready];
 
 impl UnitFile {
+    pub fn valid(&self) -> bool {
+        valid_supplies(self.supply())
+    }
     /// 这一台要交的凭据：声明里写的；空了就按推导答——被某一台的 `after` 点过名就得交一条 [`Setup::Ready`]。
     pub fn supply(&self) -> &'static [Setup] {
         if !self.demand.supply.is_empty() {
@@ -219,3 +196,7 @@ impl UnitFile {
         }
     }
 }
+
+mod image;
+#[allow(unused_imports)]
+pub use image::{IMAGE_MARK, ImageSupplyFrame};

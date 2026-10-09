@@ -329,6 +329,19 @@ mod boundaries {
         assert!(app.items.iter().any(|item| matches!(item, syn::Item::Enum(item) if item.ident == "Fault")), "app does not own program faults");
     }
     #[test]
+    fn system_uses_declarations_not_account_service_implementation() {
+        let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
+        assert!(!system.join("app/account.rs").exists());
+        let mut paths = References::default();
+        references(&system, &mut paths);
+        assert!(!paths.0.iter().any(|path| path.starts_with("crate::service::account")
+            || path.starts_with("programs::service::account") || path.starts_with("account_api::")
+            || path.starts_with("account_client::")), "System couples Account implementation or policy: {:?}", paths.0);
+        let startup = fs::read_to_string(system.join("app/schedule.rs")).unwrap();
+        assert!(!startup.contains("account."));
+        assert!(!startup.contains("account::"));
+    }
+    #[test]
     fn ordinary_programs_do_not_depend_on_system_implementation() {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src");
         for area in ["driver", "service", "user"] {

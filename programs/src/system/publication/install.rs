@@ -196,6 +196,22 @@ pub fn alias(
     mut names: ResMut<Names>,
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
+    if let Decision::BindAlias { .. } = &*decision {
+        let old = core::mem::replace(&mut *decision, Decision::Unset);
+        let Decision::BindAlias { registration, .. } = old else {
+            unreachable!()
+        };
+        let name = registration.name.clone();
+        let object = registration.object;
+        *decision = if names.register(&mut tree, registration).is_ok() {
+            names
+                .mount_of(&name, object)
+                .map(Decision::AliasMounted)
+                .unwrap_or(Decision::Failed(Fail::Unknown))
+        } else {
+            Decision::Failed(Fail::Denied)
+        };
+    }
     if let Decision::Mounted(approved, mount) = &*decision {
         if let Target::Service { group, .. } = &approved.policy.target
             && approved.policy.alias
@@ -246,6 +262,7 @@ pub fn commit(
             outcome.0 = Some(Ok(Reply::mount(mount)));
         }
         Decision::Failed(fail) => outcome.0 = Some(Err(fail)),
+        Decision::AliasMounted(mount) => outcome.0 = Some(Ok(Reply::mount(mount))),
         Decision::Removed => outcome.0 = Some(Ok(Reply::mount(EntryId::new(0)))),
         _ => {}
     }

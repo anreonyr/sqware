@@ -13,6 +13,7 @@ pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     request.system("withdraw", p::install::withdraw)?;
     request.system("source", p::policy::source)?;
     request.system("service", p::policy::service)?;
+    request.system("alias.permission", p::policy::alias)?;
     request.system("runtime", p::policy::runtime)?;
     request.system("identity", p::policy::identity)?;
     request.system("existing", p::install::existing)?;

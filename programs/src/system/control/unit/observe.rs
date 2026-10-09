@@ -3,6 +3,14 @@ use crate::system::control::unit::table::{Service, Slot, State};
 use env::{TaskId, Wait};
 
 impl Control {
+    pub(crate) fn named_task(&self, name: &str) -> Result<TaskId, super::verdict::Fail> {
+        let task = self.task(name).ok_or(super::verdict::Fail::Unknown)?;
+        if task == TaskId::new(0) || !self.live(task) {
+            return Err(super::verdict::Fail::NotReady);
+        }
+        Ok(task)
+    }
+
     pub(crate) fn living(&self) -> impl Iterator<Item = &Service> {
         self.table.living()
     }

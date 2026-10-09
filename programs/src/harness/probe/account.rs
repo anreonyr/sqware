@@ -4,13 +4,13 @@ use crate::system::app::Fault as Fail;
 use crate::system::control::{instance::hook, unit::Control, unit::table::State as UnitState};
 
 use ::schedule::{Cursor, Progress, Schedule};
+use account_client::Client;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use env::{Permission, TaskId, Wait, unit};
 use system_api::control;
 use system_api::control::State;
 use system_client::control::Face;
-use account_client::Client;
 
 const WAIT: Wait = Wait::AtMost(2000);
 #[derive(Default)]
@@ -108,6 +108,11 @@ struct Signals {
     peer_done: AtomicBool,
     done: AtomicBool,
     entry: AtomicUsize,
+    terminal_entry: AtomicUsize,
+    inherited_ready: AtomicBool,
+    inherited_done: AtomicBool,
+    creator_request: AtomicBool,
+    creator_ready: AtomicBool,
 }
 fn until(mut condition: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 12_000_000_000;
@@ -141,7 +146,18 @@ fn reference(root: TaskId) -> control::Object {
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
     let heirs = unit::heir_count();
-    let account_task = assembly.resources.read::<crate::system::app::account::Account>().unwrap().task.unwrap();
+    let authority = assembly
+        .resources
+        .read::<crate::system::control::identity::Roster>()
+        .unwrap()
+        .authority()
+        .unwrap();
+    let account_task = assembly
+        .resources
+        .read::<Control>()
+        .unwrap()
+        .task("account")
+        .unwrap();
     let signals = Arc::new(Signals {
         pings: AtomicUsize::new(0),
         stage: AtomicUsize::new(0),
@@ -150,6 +166,11 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         peer_done: AtomicBool::new(false),
         done: AtomicBool::new(false),
         entry: AtomicUsize::new(0),
+        terminal_entry: AtomicUsize::new(0),
+        inherited_ready: AtomicBool::new(false),
+        inherited_done: AtomicBool::new(false),
+        creator_request: AtomicBool::new(false),
+        creator_ready: AtomicBool::new(false),
     });
     let s = signals.clone();
     let worker = execution::unit::task::spawn(move || {
@@ -209,8 +230,14 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
     let s = signals.clone();
-    let token = assembly.resources.read::<crate::system::app::account::Account>().unwrap().config.entry.load(Ordering::Acquire);
-    let entry = env::PieToken::from_bytes(&(token as u64).to_le_bytes()).unwrap();
+    let entry = operator
+        .tile(account_api::DIR, WAIT)
+        .unwrap()
+        .token(WAIT)
+        .unwrap();
+    assert!(
+        matches!(resource::raw::reserve(entry), Ok((_, owner, mark)) if owner == account_task && mark == account_api::ENTRY)
+    );
     let alias = operator
         .tile(
             system_api::operator::path::Path::new("/idt/principal/anran/ref"),
@@ -245,6 +272,16 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let peer_token = Arc::new(AtomicUsize::new(0));
     let token = peer_token.clone();
     let peer = execution::unit::task::spawn(move || {
+        let terminal = env::pie::unseal_hole(terminal_api::marks::ENTRY).unwrap();
+        let delivered = resource::port::ship(
+            terminal,
+            root,
+            env::Access::FETCH | env::Access::STORE,
+            env::Policy::VEST,
+        )
+        .unwrap()
+        .seed();
+        p.terminal_entry.store(delivered.get(), Ordering::Release);
         until(|| p.stage.load(Ordering::Acquire) == 1 && token.load(Ordering::Acquire) != 0);
         let client =
             Client::of(ipc::session::establish::find(account_task, account_api::ENTRY).unwrap())
@@ -255,13 +292,57 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         {
             use system_api::control::construction as api;
             let entry = ipc::session::establish::find(root, api::ENTRY).unwrap();
-            let sender = ipc::rpc::request::Sender::<api::Call>::from_raw(entry, api::Call::BACK).unwrap();
-            let forged = system_api::identity::Subject::new(system_api::identity::PrincipalId::root(root), &[]).unwrap();
-            let said = sender.call(ipc::time::Deadline::new(WAIT), |back| api::Request {
-                image: system_api::loader::Ask { op: system_api::loader::BUILD, image: env::PieToken::NONE, offset: 0, len: 0, stack: 0, count: 0, args: [0; system_api::loader::MAX_ARGS], back },
-                owner: root, subject: forged,
-            }).unwrap();
-            assert_eq!(said.status, system_api::control::frame::DENIED, "foreign creator selected another Subject");
+            let sender =
+                ipc::rpc::request::Sender::<api::Call>::from_raw(entry, api::Call::BACK).unwrap();
+            let forged = system_api::identity::Subject::new(
+                system_api::identity::PrincipalId::root(authority),
+                &[],
+            )
+            .unwrap();
+            let said = sender
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                    image: system_api::loader::Ask {
+                        op: system_api::loader::BUILD,
+                        image: env::PieToken::NONE,
+                        offset: 0,
+                        len: 0,
+                        stack: 0,
+                        count: 0,
+                        args: [0; system_api::loader::MAX_ARGS],
+                        back,
+                    },
+                    owner: root,
+                    subject: forged,
+                })
+                .unwrap();
+            assert_eq!(
+                said.status,
+                system_api::control::frame::DENIED,
+                "foreign creator selected another Subject"
+            );
+            p.creator_request.store(true, Ordering::Release);
+            until(|| p.creator_ready.load(Ordering::Acquire));
+            let said = sender
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                    image: system_api::loader::Ask {
+                        op: system_api::loader::BUILD,
+                        image: env::PieToken::NONE,
+                        offset: 0,
+                        len: 0,
+                        stack: 0,
+                        count: 0,
+                        args: [0; system_api::loader::MAX_ARGS],
+                        back,
+                    },
+                    owner: root,
+                    subject: forged,
+                })
+                .unwrap();
+            assert_eq!(
+                said.status,
+                system_api::control::frame::DENIED,
+                "authorized creator escaped its identity subtree"
+            );
         }
 
         assert!(matches!(
@@ -290,6 +371,28 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
     });
+    let inherited_signals = signals.clone();
+    let inherited = execution::unit::task::spawn(move || {
+        until(|| inherited_signals.inherited_ready.load(Ordering::Acquire));
+        let client =
+            Client::of(ipc::session::establish::find(account_task, account_api::ENTRY).unwrap())
+                .unwrap();
+        assert_eq!(
+            client.create("anran", WAIT).err(),
+            Some(control::Fail::Denied),
+            "a task inheriting Login's principal impersonated the named Login deployment"
+        );
+        inherited_signals
+            .inherited_done
+            .store(true, Ordering::Release);
+    });
+    env::pie::accord(
+        entry,
+        inherited.id(),
+        Permission::FETCH | Permission::STORE,
+        account_api::ENTRY,
+    )
+    .unwrap();
     let peer_grant = env::pie::accord(
         entry,
         peer.id(),
@@ -304,34 +407,109 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         control::ASK_MARK,
     )
     .unwrap();
-    let construction = assembly.resources.read::<crate::system::control::Construction>().unwrap().entry;
-    resource::port::ship(construction, peer.id(), env::Access::STORE, env::Policy::NONE).unwrap();
+    let construction = assembly
+        .resources
+        .read::<crate::system::control::Construction>()
+        .unwrap()
+        .entry;
+    resource::port::ship(
+        construction,
+        peer.id(),
+        env::Access::STORE,
+        env::Policy::NONE,
+    )
+    .unwrap();
     peer_token.store(peer_grant.get(), Ordering::Release);
     {
         let mut system = assembly.resources.write::<Control>().unwrap();
         system
             .fixture_attach_unit(&crate::unit::login::PROGRAM, worker.id())
             .unwrap();
-        system
-            .fixture_attach_unit(&crate::unit::terminal::PROGRAM, peer.id())
-            .unwrap();
-    }
-    {
-        let account = assembly.resources.read::<crate::system::app::account::Account>().unwrap();
-        account.config.login.store(worker.id().get(), Ordering::Release);
-        account.config.terminal.store(peer.id().get(), Ordering::Release);
+        system.register_internal(peer.id()).unwrap();
+        system.register_internal(inherited.id()).unwrap();
     }
     let login_subject = {
         let roster = assembly
             .resources
             .read::<crate::system::control::identity::Roster>()
             .unwrap();
-        roster.inherit(worker.id(), root).unwrap();
-        roster.inherit(peer.id(), root).unwrap();
-        crate::system::control::identity::binding(&roster, worker.id())
+        roster.authorize(worker.id()).unwrap();
+        roster.authorize(peer.id()).unwrap();
+        roster.inherit(inherited.id(), worker.id()).unwrap();
+        let login = crate::system::control::identity::binding(&roster, worker.id())
             .unwrap()
             .unwrap()
-            .current
+            .current;
+        let outsider = crate::system::control::identity::binding(&roster, peer.id())
+            .unwrap()
+            .unwrap()
+            .current;
+        assert_ne!(login.principal, outsider.principal);
+        let child = crate::system::control::identity::binding(&roster, inherited.id())
+            .unwrap()
+            .unwrap()
+            .current;
+        assert_eq!(child.principal, login.principal);
+        login
+    };
+    {
+        let mut names = assembly
+            .resources
+            .write::<crate::system::publication::Names>()
+            .unwrap();
+        let mut tree = assembly
+            .resources
+            .write::<crate::system::operator::management::Tree>()
+            .unwrap();
+        names
+            .register(
+                &mut tree,
+                crate::system::publication::Registration {
+                    name: "login".into(),
+                    object: control::Object::Principal(login_subject.principal),
+                    lifetime: Some(worker.id()),
+                },
+            )
+            .unwrap();
+    }
+    until(|| signals.terminal_entry.load(Ordering::Acquire) != 0);
+    let terminal = env::PieToken::from_bytes(
+        &(signals.terminal_entry.load(Ordering::Acquire) as u64).to_le_bytes(),
+    )
+    .unwrap();
+    assert!(
+        matches!(resource::raw::reserve(terminal), Ok((vestor, owner, mark)) if vestor == peer.id() && owner == peer.id() && mark == terminal_api::marks::ENTRY)
+    );
+    let terminal_mounts = {
+        use crate::system::operator::{Placement, tree::Tile};
+        use system_api::operator::{Permit, path::Path};
+        let mut tree = assembly
+            .resources
+            .write::<crate::system::operator::management::Tree>()
+            .unwrap();
+        let pane = tree
+            .mount(&Placement {
+                road: Path::new("svc/terminal").to_path_buf(),
+                tile: Tile {
+                    pie: env::PieToken::NONE,
+                    permit: Permit::Public,
+                    owner: None,
+                },
+                replace: false,
+            })
+            .unwrap();
+        let tile = tree
+            .mount(&Placement {
+                road: Path::new("svc/terminal/attach").to_path_buf(),
+                tile: Tile {
+                    pie: terminal,
+                    permit: Permit::Bound,
+                    owner: Some(peer.id()),
+                },
+                replace: false,
+            })
+            .unwrap();
+        (pane, tile)
     };
     assembly
         .resources
@@ -341,12 +519,32 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         })
         .unwrap();
     let mut schedule = Schedule::new();
-    schedule.add_system("account.consumers", 0u8, crate::system::app::account::refresh).unwrap();
-    schedule.add_system("construction.receive", 0u8, crate::system::control::receive_construction).unwrap();
-    schedule.add_system("construction.admit", 1, crate::system::control::admit_construction).unwrap();
-    schedule.add_system("construction.dispatch", 2, crate::system::launch::dispatch).unwrap();
-    schedule.add_plan("loader.build", 3, crate::system::loader::frame().unwrap()).unwrap();
-    schedule.add_system("launch.register", 4, crate::system::launch::register).unwrap();
+    schedule
+        .add_plan("control.poll", 0u8, crate::system::control::poll().unwrap())
+        .unwrap();
+    schedule
+        .add_system(
+            "construction.receive",
+            0u8,
+            crate::system::control::receive_construction,
+        )
+        .unwrap();
+    schedule
+        .add_system(
+            "construction.admit",
+            1,
+            crate::system::control::admit_construction,
+        )
+        .unwrap();
+    schedule
+        .add_system("construction.dispatch", 2, crate::system::launch::dispatch)
+        .unwrap();
+    schedule
+        .add_plan("loader.build", 3, crate::system::loader::frame().unwrap())
+        .unwrap();
+    schedule
+        .add_system("launch.register", 4, crate::system::launch::register)
+        .unwrap();
     schedule
         .add_system(
             "instances.receive",
@@ -376,10 +574,22 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     plan.prepare(&assembly.resources);
     let mut cursor = Cursor::default();
     s.entry.store(peer_entry.get(), Ordering::Release);
+    signals.inherited_ready.store(true, Ordering::Release);
     let deadline = env::chrono::clock() + 15_000_000_000;
     let mut observed = 0;
     let mut user = None;
     loop {
+        if signals.creator_request.load(Ordering::Acquire)
+            && !signals.creator_ready.load(Ordering::Acquire)
+        {
+            assembly
+                .resources
+                .write::<crate::system::control::Construction>()
+                .unwrap()
+                .grant(peer.id())
+                .unwrap();
+            signals.creator_ready.store(true, Ordering::Release);
+        }
         assembly.progress().unwrap();
         if plan.advance(&mut cursor, &assembly.resources).unwrap() == Progress::Done {
             cursor.reset();
@@ -457,6 +667,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .runtime_road(target)
             .is_some();
         if signals.done.load(Ordering::Acquire)
+            && signals.inherited_done.load(Ordering::Acquire)
             && unit::join(worker.id(), Wait::POLL).unwrap_or(true)
             && reclaimed
             && !registered
@@ -471,8 +682,24 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     }
     let worker_id = worker.id();
     let peer_id = peer.id();
+    let inherited_id = inherited.id();
     worker.join();
     peer.join();
+    inherited.join();
+    {
+        let mut tree = assembly
+            .resources
+            .write::<crate::system::operator::management::Tree>()
+            .unwrap();
+        tree.unmount(terminal_mounts.1).unwrap();
+        tree.unmount(terminal_mounts.0).unwrap();
+    }
+    let _ = env::pie::release(terminal);
+    assembly
+        .resources
+        .write::<Control>()
+        .unwrap()
+        .fixture_detach_unit("login");
     {
         let roster = assembly
             .resources
@@ -480,17 +707,13 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .unwrap();
         roster.unbind(worker_id).unwrap();
         roster.unbind(peer_id).unwrap();
+        roster.unbind(inherited_id).unwrap();
         let target = TaskId::new(signals.target.load(Ordering::Acquire));
         assert!(
             crate::system::control::identity::binding(&roster, target)
                 .unwrap()
                 .is_none()
         );
-    }
-    {
-        let mut system = assembly.resources.write::<Control>().unwrap();
-        system.fixture_detach_unit("login");
-        system.fixture_detach_unit("terminal");
     }
     assembly.progress().unwrap();
     assert!(

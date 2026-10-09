@@ -18,9 +18,22 @@ pub fn source(
     control: Res<Control>,
     mut decision: ResMut<Decision>,
 ) -> Result<Progress, &'static str> {
-    request.1 = request.0.as_ref().and_then(|incoming| control.find_named_task(incoming.from).map(|row| row.name.clone()));
+    request.1 = request.0.as_ref().and_then(|incoming| {
+        control
+            .find_named_task(incoming.from)
+            .map(|row| row.name.clone())
+    });
     let request = request.0.as_ref().ok_or("publication request")?;
     if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
+        return Ok(Progress::Done);
+    }
+    if matches!(request.frame.target(), Some(Target::IdentityName { .. })) {
+        if !control.live(request.from)
+            || request.frame.entry != env::PieToken::NONE
+            || request.frame.permit != Permit::Bound
+        {
+            *decision = Decision::Failed(Fail::Denied);
+        }
         return Ok(Progress::Done);
     }
     let target_live = match request.frame.target() {
@@ -51,18 +64,66 @@ pub fn service(
     let Some(target @ Target::Service { .. }) = request.frame.target() else {
         return Ok(Progress::Done);
     };
-    let approval = owner.and_then(|owner| namespaces.service(owner, (&target, request.frame.permit)));
+    let approval =
+        owner.and_then(|owner| namespaces.service(owner, (&target, request.frame.permit)));
     *decision = match approval {
         Some((road, (member, alias))) => Decision::Install(Approved {
-            policy: super::Approval { target, member, alias },
+            policy: super::Approval {
+                target,
+                member,
+                alias,
+            },
             placement: Placement {
                 road,
-                tile: Tile { pie: request.frame.entry, permit: request.frame.permit, owner: Some(request.from) },
+                tile: Tile {
+                    pie: request.frame.entry,
+                    permit: request.frame.permit,
+                    owner: Some(request.from),
+                },
                 replace: false,
             },
             publisher: request.from,
         }),
         None => Decision::Failed(Fail::Denied),
+    };
+    Ok(Progress::Done)
+}
+pub(crate) fn alias(
+    request: Res<Request>,
+    control: Res<Control>,
+    mut decision: ResMut<Decision>,
+) -> Result<Progress, &'static str> {
+    if !matches!(*decision, Decision::Unset) {
+        return Ok(Progress::Done);
+    }
+    let Some(incoming) = &request.0 else {
+        return Ok(Progress::Done);
+    };
+    let Some(Target::IdentityName { object, name }) = incoming.frame.target() else {
+        return Ok(Progress::Done);
+    };
+    if incoming.frame.op != pubcall::PUBLISH {
+        return Ok(Progress::Done);
+    }
+    let permitted = request
+        .1
+        .as_deref()
+        .and_then(|name| control.input(name).ok())
+        .is_some_and(|input| input.program.identity.aliases.contains(&name.as_str()));
+    *decision = if permitted
+        && pubcall::valid_name(&name)
+        && matches!(object, pubcall::Object::Principal(_))
+    {
+        Decision::BindAlias {
+            publisher: incoming.from,
+            registration: super::names::Registration {
+                name,
+                object,
+                lifetime: Some(incoming.from),
+            },
+        }
+    } else {
+        Decision::Failed(Fail::Denied)
     };
     Ok(Progress::Done)
 }
@@ -122,6 +183,21 @@ pub(crate) fn identity(
             }
             result
         }
+        Decision::BindAlias {
+            publisher,
+            registration,
+        } => match registration.object {
+            pubcall::Object::Principal(principal) => {
+                system_api::identity::Subject::new(principal, &[])
+                    .map_err(|_| Fail::Denied)
+                    .and_then(|subject| {
+                        roster
+                            .allow_subject(*publisher, subject)
+                            .map_err(|_| Fail::Denied)
+                    })
+            }
+            _ => Err(Fail::Denied),
+        },
         _ => Ok(()),
     };
     if let Err(fail) = validation {

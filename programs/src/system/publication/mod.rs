@@ -20,7 +20,8 @@ pub(crate) struct Entry(pub PieToken);
 impl Entry {
     pub(crate) fn inject(&self, task: TaskId) -> Result<(), &'static str> {
         ::resource::port::ship(self.0, task, env::Access::STORE, env::Policy::NONE)
-            .map(|_| ()).map_err(|_| "publication inject")
+            .map(|_| ())
+            .map_err(|_| "publication inject")
     }
 }
 pub struct Internal {
@@ -48,6 +49,11 @@ pub struct Approved {
 }
 pub enum Decision {
     Unset,
+    BindAlias {
+        publisher: TaskId,
+        registration: names::Registration,
+    },
+    AliasMounted(EntryId),
     OwnHole(Approved),
     Install(Approved),
     Mounted(Approved, EntryId),

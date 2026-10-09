@@ -1,5 +1,5 @@
-use super::{boot, bootstrap::Boot, life, policy, wait};
 use super::supplies::Supplies;
+use super::{boot, bootstrap::Boot, life, policy, wait};
 use crate::system::{control, identity, launch, loader, publication};
 use ::schedule::Resources;
 use alloc::vec::Vec;
@@ -7,24 +7,33 @@ pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, &'static str> 
     let status = boot::status();
     let mut resources = Resources::new();
     publication::register(&mut resources)?;
-    resources.insert(super::config::namespaces(boot.machine)).map_err(|_| "publication configuration")?;
-    resources.insert(Supplies::new(boot.machine, boot.accounts)).map_err(|_| "assembly supplies")?;
+    resources
+        .insert(super::config::namespaces(boot.machine))
+        .map_err(|_| "publication configuration")?;
+    resources
+        .insert(Supplies::new(boot.machine, boot.accounts, boot.catalog))
+        .map_err(|_| "assembly supplies")?;
     control::install(
         &mut resources,
         status.clone(),
         control::Configuration {
-            inputs: crate::unit::PROGRAMS.iter().copied()
+            inputs: crate::unit::PROGRAMS
+                .iter()
+                .copied()
                 .filter(|p| p.relation.after.is_some())
                 .map(|program| crate::system::control::unit::start::Input {
                     program,
-                    image: boot.catalog.find(program.name()).map(|entry| (entry.elf, entry.kind)),
-                }).collect(),
+                    image: boot
+                        .catalog
+                        .find(program.name())
+                        .map(|entry| (entry.elf, entry.kind)),
+                })
+                .collect(),
         },
     )?;
     identity::install(&mut resources)?;
     loader::install(&mut resources)?;
     launch::install(&mut resources)?;
-    super::account::install(&mut resources, boot.catalog)?;
     macro_rules! put {
         ($value:expr) => {
             resources

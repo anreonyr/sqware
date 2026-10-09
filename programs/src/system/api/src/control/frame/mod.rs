@@ -47,7 +47,7 @@ pub struct Said {
     pub status: u8,
     /// State 的判别值（只有 `state` 那一答用它；其余答话是 0）
     pub a: u8,
-    /// **那一条的身子**（只有 `embark` 那一答填它；其余答话是 [`TaskId::new(0)`]）
+    /// **那一条的身子**（`embark` 与 `task` 填它；其余答话是 [`TaskId::new(0)`]）
     pub task: TaskId,
 }
 
@@ -86,6 +86,8 @@ pub enum Req {
     Ruin(String),
     /// `STATE`：这一条此刻处于哪个阶段
     State(String),
+    /// 命名程序当前存活的任务。
+    Task(String),
     EmbarkInstance(TaskId),
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
@@ -110,6 +112,7 @@ impl Req {
             Req::Debark(name) => (DEBARK, name),
             Req::Ruin(name) => (RUIN, name),
             Req::State(name) => (STATE, name),
+            Req::Task(name) => (TASK, name),
             _ => return None,
         };
         Ask { op, name, back }.store_at(out, 0)
@@ -127,6 +130,8 @@ pub enum Wire {
     Debark(String),
     Ruin(String),
     State(String),
+    /// 命名程序当前存活的任务。
+    Task(String),
     EmbarkInstance(TaskId),
     DebarkInstance(TaskId),
     RuinInstance(TaskId),
@@ -161,6 +166,7 @@ impl Wire {
             DEBARK => Some(Wire::Debark(q.name)),
             RUIN => Some(Wire::Ruin(q.name)),
             STATE => Some(Wire::State(q.name)),
+            TASK => Some(Wire::Task(q.name)),
             _ => None,
         };
         Some((ask, q.back))
