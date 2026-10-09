@@ -95,7 +95,7 @@ impl Names {
             },
             replace: false,
         })?;
-        let entry = match pie::unseal_hole(pubcall::REF) {
+        let entry = match pie::unseal(env::UnsealArgs::hole(pubcall::REF)) {
             Ok(entry) => entry,
             Err(_) => {
                 let _ = tree.unmount(pane);
@@ -114,7 +114,7 @@ impl Names {
             Ok(mount) => mount,
             Err(why) => {
                 let _ = pie::seal(entry);
-                let _ = pie::release(entry);
+                let _ = pie::release(entry, env::ReleaseMode::Revoke);
                 let _ = tree.unmount(pane);
                 return Err(why);
             }
@@ -134,7 +134,7 @@ impl Names {
         tree.unmount(a.mount)?;
         tree.unmount(a.pane)?;
         let _ = pie::seal(a.entry);
-        let _ = pie::release(a.entry);
+        let _ = pie::release(a.entry, env::ReleaseMode::Revoke);
         self.aliases.remove(at);
         Ok(())
     }

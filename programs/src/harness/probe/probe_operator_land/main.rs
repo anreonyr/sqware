@@ -24,7 +24,7 @@ fn main() -> Report<'static> {
     let session = Session::open(env::unit::sire(), operator::BERTH, MS)
         .unwrap_or_else(|_| panic!("no Operator session"));
     let face = Face::of(session);
-    let source = pie::unseal_hole(Mark::of("publication-test")).unwrap();
+    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
     assert_eq!(
         face.land(
             Where::Root,
@@ -56,7 +56,7 @@ fn main() -> Report<'static> {
         client.publish(target.clone(), source, Permit::Public, MS),
         Ok(id)
     );
-    let other = pie::unseal_hole(Mark::of("publication-test")).unwrap();
+    let other = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
     assert_eq!(
         client.publish(target.clone(), other, Permit::Public, MS),
         Err(Fail::Denied)

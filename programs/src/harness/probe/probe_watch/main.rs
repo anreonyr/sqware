@@ -135,12 +135,12 @@ fn main() -> Report<'static> {
     };
     let first = dynamic("one");
     let second = dynamic("two");
-    let first_entry = pie::unseal_hole(Mark::NONE).unwrap();
-    let second_entry = pie::unseal_hole(Mark::NONE).unwrap();
+    let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let second_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
     assert_ne!(first_entry, second_entry);
-    let denied_group = pie::unseal_hole(Mark::NONE).unwrap();
-    let denied_name = pie::unseal_hole(Mark::NONE).unwrap();
-    let marked_without_right = pie::unseal_hole(system_api::operator::WATCH_MARK).unwrap();
+    let denied_group = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let denied_name = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let marked_without_right = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
     assert_eq!(
         publisher.publish(
             system_api::control::publication::Target::Service {
@@ -178,7 +178,7 @@ fn main() -> Report<'static> {
     );
     for token in [denied_group, denied_name, marked_without_right] {
         pie::seal(token).unwrap();
-        pie::release(token).unwrap();
+        pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
     let first_id = publisher
         .publish(first.clone(), first_entry, Permit::Public, Wait::AtMost(MS))
@@ -198,7 +198,7 @@ fn main() -> Report<'static> {
         assert_eq!(tile.id(), id);
         let token = tile.token(Wait::AtMost(MS)).unwrap();
         assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::NONE);
-        pie::release(token).unwrap();
+        pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
     publisher.unpublish(first, Wait::AtMost(MS)).unwrap();
     let first_road = PathBuf::try_new("svc/probe-watch-dynamic/one").unwrap();
@@ -234,7 +234,7 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
-    let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of(mark))).unwrap();
     let target = system_api::control::publication::Target::Service {
         scope: system_api::control::publication::Scope(4),
         group: group.into(),

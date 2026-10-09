@@ -20,7 +20,7 @@ pub(crate) struct Construction {
 impl Construction {
     pub(crate) fn new() -> Result<Self, &'static str> {
         Ok(Self {
-            entry: env::pie::unseal_hole(api::ENTRY).map_err(|_| "construction entry")?,
+            entry: env::pie::unseal(env::UnsealArgs::hole(api::ENTRY)).map_err(|_| "construction entry")?,
             creators: Vec::new(),
             queued: Vec::new(),
         })

@@ -82,9 +82,9 @@ pub(super) fn receive(
     Ok(Progress::Done)
 }
 pub(crate) fn release_image(ask: &Ask, from: TaskId) {
-    if matches!(inspect(ask.image), Ok((vestor, _, mark)) if vestor == from && mark == frame::IMAGE)
+    if matches!(inspect(ask.image), Ok(info) if info.alive && info.vestor == from && info.mark == frame::IMAGE)
     {
-        let _ = pie::release(ask.image);
+        let _ = pie::release(ask.image, env::ReleaseMode::Revoke);
     }
 }
 pub(super) fn reply(back: Sender<Said>, said: Said) -> bool {

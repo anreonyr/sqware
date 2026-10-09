@@ -4,7 +4,7 @@ extern crate env as abi;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{Mark, PieToken, TaskId, Wait};
+pub use abi::{ReleaseMode, Mark, PieToken, TaskId, Wait};
 use std::{cell::RefCell, collections::VecDeque};
 #[derive(Default)]
 struct Effects {
@@ -36,7 +36,7 @@ pub mod pie {
         crate::EFFECTS.with(|e| e.borrow_mut().shut.push(token.get() as u64));
         Ok(())
     }
-    pub fn release(token: crate::PieToken) -> Result<(), ()> {
+    pub fn release(token: crate::PieToken, _mode: crate::ReleaseMode) -> Result<(), ()> {
         crate::EFFECTS.with(|e| e.borrow_mut().released.push(token.get() as u64));
         Ok(())
     }

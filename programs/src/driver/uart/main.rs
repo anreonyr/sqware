@@ -23,7 +23,7 @@ mod adapt;
 mod dev;
 
 use crate::dev::uart as device;
-use env::{HoleDir, Wait};
+use env::{MailCondition, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
 use programs::unit::uart::E_UART;
@@ -41,10 +41,10 @@ fn main() -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile
-        .attach(desk.tx.ship(), HoleDir::Pull)
+        .attach(desk.tx.ship(), MailCondition::Pull)
         .is_err()
         || pile
-            .attach(lane, HoleDir::Pull)
+            .attach(lane, MailCondition::Pull)
             .is_err()
     {
         return Err(Fail::at(E_UART, "desk"));

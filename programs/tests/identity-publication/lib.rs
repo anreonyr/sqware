@@ -6,7 +6,7 @@ use system_api::control::publication::{self as api, Object, Target};
 use system_api::identity::{PrincipalId, Subject};
 use system_api::operator::{Fail, Permit};
 pub mod raw {
-    pub fn inspect(_: env::PieToken) -> Result<(env::TaskId, env::TaskId, env::Mark), ()> {
+    pub fn inspect(_: env::PieToken) -> Result<env::PieInfo, ()> {
         panic!("identity alias must not inspect or consume a supplied capability")
     }
 }

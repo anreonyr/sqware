@@ -3,7 +3,7 @@
 //! （Deed，区→线的权威在设备账那一台），本层只把它原样报上来。
 
 use ::resource::port::{self, Access, Policy};
-use env::{HoleDir, PieToken, Wait};
+use env::{MailCondition, PieToken, Wait};
 
 use ::resource::raw::Hole;
 use env::pie;
@@ -48,7 +48,7 @@ impl Line {
         };
         let lane = pair.seed();
         // 回信孔：本端铸一枚、借给它——登记那一答从它回来（单手的孔只够一个方向）。
-        let back = match pie::unseal_hole(frame::BACK_MARK) {
+        let back = match pie::unseal(env::UnsealArgs::hole(frame::BACK_MARK)) {
             Ok(back) => back,
             Err(_) => return Err(deny(3, 0)),
         };
@@ -58,7 +58,7 @@ impl Line {
             Err(_) => {
                 // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
                 let _ = pie::seal(back);
-                let _ = pie::release(back);
+                let _ = pie::release(back, env::ReleaseMode::Revoke);
                 return Err(deny(4, 0));
             }
         };
@@ -84,7 +84,7 @@ impl Line {
         if spent >= budget {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             return Err(deny(5, 0));
         }
         let mut reply = [0u8; frame::OccupyReply::LEN];
@@ -99,7 +99,7 @@ impl Line {
         // 这一份，路由者那一份由它自己放。
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         if !super::handoff::valid_source(source, host) {
             return Err(deny(7, 0));
         }
@@ -121,7 +121,7 @@ impl Line {
     pub fn receive(&self, millis: Wait) -> Result<(), ()> {
         let rx = self.pair.rx();
         if Hole::from_raw(rx)
-            .wait(HoleDir::Pull, millis)
+            .wait(MailCondition::Pull, millis)
             .map_err(|_| ())?
         {
             Hole::from_raw(rx).hush().map_err(|_| ())

@@ -1,6 +1,5 @@
 //! call::mail — **Mail 域（class 5，数据轴：消息穿孔）**：调用表（[`MailCall`]）与失败词汇（[`MailFail`]）。
 
-use super::HoleDir;
 use crate::abi::wait::Wait;
 use crate::wire::{PieToken, TaskId, VirtAddr};
 use mold::{Envcall, Fail};
@@ -28,109 +27,103 @@ pub enum MailFail {
 /// `MailFail` 的结果别名。
 pub type MailResult<T> = Result<T, erra::Error<MailFail>>;
 
-/// 通信调用（class 5，mail）—— **数据轴**：消息穿孔 + 门铃。
-///
-/// 作用在一枚 Hole（孔）上：`Push` 递出一只手、`Pull` 取走一只手、`Peek` 只看一眼、
-/// `Ring`／`Hush` 置／清孔上那一位、`Wait` 等方向就绪；
-/// 后两个动词也作用在一枚 Nole（门铃）上：`Ring` 响铃、`Hush` 应铃；
-/// 也作用在**页上那一位**（class 7 的 [`Pole`](crate::PieCall)）：架（`ipc::rack`）
-/// 把铃并进页之后，一枚页就是一具完整的架——树上一格门牌正好挂得下它。
-/// 权柄的生死与流动不在此类，见 [`PieCall`]（class 7）。
-///
-/// **wait 的分界**：事件键等待留 Room（`RoomCall::Wait/Wake` 的键是调用方命名空间
-/// 里的裸整数，内核不解释）；**资源就绪**等待归本类——`Wait` 收 `token`，由内核
-/// 解引用出资源自己的等待键，键不出内核。
-///
-/// **孔不预设长度**：孔**不持有荷载**——`Push { len }` 递出的是**发送方那段内存的一只手**，
-/// `Pull { max }` 取走时把它复制**一次**进收方那段。长度只在取的那一侧被 `max` 判：
-/// `len > max` 答 `Denied`，**手原样留在孔上**（不替调用方丢东西，可以换够大的缓冲再取）。
-/// 内核每条消息至多搬一遍字节，**没有"一条消息 ≤ 一页"那条界**——比一页大的东西走
-/// [`Pole`]（页级共享内存那一轴）仍是**推荐**，不是必需的。
-///
-/// **两种待取之事**：一只手（`Push`／`Pull`／`Peek`）与一个位（`Ring`／`Hush`）。
-/// 位不占字节，故那一路零复制、零分配、也不阻塞发送方。两者写在孔上的**同一格**里，互斥。
-/// `Wait` 复用在这三种资源上，靠 `dir` 分：Hole 两个方向，**Nole 与页上那一位只认 `Pull`**。
+/// Message transfer and resource readiness.
 #[derive(Envcall)]
 #[call(class = 5, fail = MailFail)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MailCall {
-    /// 递出一只手：token + 发送方那段 VA + 长度（`len ≥ 1`）。
-    ///
-    /// **Push 这一刻内核就抄一份**（`mail::hole::Hand.buf: Arc<[u8]>`，那格字节**归内核**）：
-    /// 登记在孔上的是那段**字节本身**，不是"发送方的那段内存"——故递出去之后它与发送方
-    /// **再无关系**：发送方可以立刻复用那段、可以退场（老那一档 `Gone` 由此消失）。
-    /// `Pull` 那一刻再复制一次进收方缓冲（两处各一次）。
-    ///
-    /// **这一格是"一次尝试"**：一只孔上排得下 `QUEUE_CAP` 只手，满了就答 `Busy`、**不丢最旧**
-    /// （丢不丢留给写者——`Wait::POLL` 那一档正是为它准备的），不睡。
-    /// **"等轮到自己"不在这一格里**——它是调用点写出来的（`Hole::push(msg, within)` 拿 `Wait`
-    /// 拼一个 `Wait{dir: Push}` 的循环），而"等自己那只手被取走"是**再写一次 `Wait`**（写端那一格
-    /// `Sender::reclaim`）。两件事在内核是同一个条件（队列空），故本类不多开动词。
+    #[slot(0)]
     #[ret(())]
     Push {
         token: PieToken,
         msg: VirtAddr,
         len: usize,
     },
-    /// 取走一只手：token + 收方缓冲 VA + 容量。返 `(实际长度, 发送者 TaskId)`。
-    ///
-    /// 发送者由**内核在 `Push` 时盖章**（syscall 上下文，不可伪造）——身份不必从报文里猜。
-    ///
-    /// `max` = **收方自己给的那段区间有多长**（不是申请，是申报）。四条不过的路
-    /// **都不消费那只手**：`max` 装不下 `len`／收方那段不可写 ⇒ `-1 Denied`；
-    /// 复制成不了（收方那段写不进去）⇒ `-6 Gone`（字节已归内核，故与发送方在不在无关）。
-    /// 唤醒等递的一方。手上没有可取之事 ⇒ `-3 Busy`；孔已封印 ⇒ `-2 Dead`（先过存活闸）。
-    /// 这一格正是 [`MailCall::Wait`] 那句"绝不返 `Busy`"的对照面：同一个"未就绪"，
-    /// 非阻塞的 `Pull` 用 `Busy` 答、阻塞的 `Wait` 用 `false` 答。
-    #[ret((usize, TaskId))]
+    /// Discard applies only to an oversized head, never to address or permission failures.
+    #[slot(1)]
+    #[ret3(PullOutcome)]
     Pull {
         token: PieToken,
         buf: VirtAddr,
         max: usize,
+        oversize: Oversize,
     },
-    /// 等某方向就绪：`millis`——**上限族**（定式见文件头）。
-    ///
-    /// 返回 `true` = 本次调用**当场就绪**（未挂起）；`false` = 未就绪（探测失败，
-    /// 或挂起过——被唤醒与超时不分）。**绝不返 `-3 Busy`**：未就绪的答案就是 `false`。
-    /// 权利：`Pull` 需 R、`Push` 需 W。
-    ///
-    /// 作用在 Nole（门铃）**或页上那一位**时：**`dir` 必须是 `Pull`**——那两位只有"响了"
-    /// 这一条方向，别的值返 `-1 Denied`（不静默忽略：ABI 不留一个白填的字段）。权利仍按 `dir` 判。
+    /// Pull needs FETCH; Push and Empty need STORE. Nole/Pole support Pull only.
+    #[slot(2)]
     #[ret(bool)]
     Wait {
         token: PieToken,
-        dir: HoleDir,
+        condition: MailCondition,
         millis: Wait,
     },
-    /// 清"有待取之事"：门铃上应铃，孔／页上**清那一位**。权利：R——听与应都在"取"这一侧。
-    ///
-    /// 未响 ⇒ `-3 Busy`（没有可取之事）。**不唤醒任何人**：没人等"铃不响"。
-    /// **门铃**那一支顺带重开本 hart 的中断闸门；**孔与页上那一位不碰闸门**（那两位不是中断响的）。
+    #[slot(3)]
     #[ret(())]
     Hush { token: PieToken },
-    /// 置"有待取之事"并唤醒听者：门铃上响铃，孔／页上**置那一位**。权利：W。
-    ///
-    /// 已响 ⇒ `-3 Busy`——多 hart 同时响合成一位，第二次起不改变状态。
-    /// 这个动词是给**自检**与"自己叫自己"的；孔上那一条（板推死亡道那一类）也走它：
-    /// **发送方不睡**，故"通知"这一类不会把两台机器的进度互锁。
-    /// 内核响中断那道门铃不走这里（它持着源实体，见 `devices.rs`）。
+    #[slot(4)]
     #[ret(())]
     Ring { token: PieToken },
-    /// 只看那只手：`(长度, 发送者, 队里排着几只)`——**一个字节都不取**。
-    ///
-    /// 不动孔的状态（**取用中的那只也照报**），也不唤醒任何人。手上没有东西 ⇒ `-3 Busy`。
-    /// **不是取消息的前一步**：取走就是一次 `Pull`，够不够由 `max` 判。
-    /// 它的读者是"等之前先看一眼"那一格（`harness` 的 waiter）。
-    ///
-    /// **第三格是队列深度**（a2；这一格此前空着 ⇒ 加一格，a0／a1 的含义一字不动）：一只孔上
-    /// 可以排着至多 `QUEUE_CAP` 只手，写者据此知道"我还排着几手"（`hand::Sender` 靠它把缓冲收回来）。
-    /// 三件事两格装不下 ⇒ 走**宽返回**那一档（`#[ret3]`，与 `PieCall::Collect` 同一条路）。
+    #[slot(5)]
     #[ret3((usize, TaskId, usize))]
     Peek { token: PieToken },
-    /// Discard the queue head only if its length exceeds max. Requires FETCH.
-    /// Returns false for an empty queue or a message within the limit. The
-    /// length check and removal are atomic; an active Pull returns Busy.
-    #[ret(bool)]
-    Discard { token: PieToken, max: usize },
-    //     #[ret(())] Withdraw { token: PieToken },
+}
+
+/// Readiness is a hint; another caller can change the queue before the next operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum MailCondition {
+    Pull,
+    Push,
+    Empty,
+}
+impl MailCondition {
+    pub fn wire(self) -> usize {
+        self as usize
+    }
+    pub fn of(raw: usize) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Pull),
+            1 => Some(Self::Push),
+            2 => Some(Self::Empty),
+            _ => None,
+        }
+    }
+}
+impl crate::Wire for MailCondition {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        self.wire().pack(s, i);
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, crate::Decode> {
+        Self::of(usize::unpack(s, i)?).ok_or(crate::Decode::Invalid)
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Oversize {
+    Keep,
+    Discard,
+}
+impl crate::Wire for Oversize {
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        (*self as usize).pack(s, i);
+    }
+    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, crate::Decode> {
+        match usize::unpack(s, i)? {
+            0 => Ok(Self::Keep),
+            1 => Ok(Self::Discard),
+            _ => Err(crate::Decode::Invalid),
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PullOutcome {
+    Received { len: usize, sender: TaskId },
+    Discarded { len: usize, sender: TaskId },
+}
+impl crate::wire::FromTriple for PullOutcome {
+    fn from_triple(len: usize, sender: usize, tag: usize) -> Self {
+        let sender = TaskId::new(sender);
+        match tag {
+            0 => Self::Received { len, sender },
+            1 => Self::Discarded { len, sender },
+            _ => unreachable!("invalid Pull result"),
+        }
+    }
 }

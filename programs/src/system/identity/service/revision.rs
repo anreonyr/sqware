@@ -21,6 +21,6 @@ pub(super) fn notify(current: Res<Current>, changed: Res<Changed>) -> Result<Pro
     Ok(Progress::Done)
 }
 pub(super) fn close(changed: Res<Changed>) -> Result<Progress, Fail> {
-    let _ = pie::release(changed.0.token());
+    let _ = pie::release(changed.0.token(), env::ReleaseMode::Revoke);
     Ok(Progress::Done)
 }

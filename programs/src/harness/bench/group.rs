@@ -165,7 +165,7 @@ pub fn run() -> Reason {
     };
     let group = pile.token();
     // ② 成员：一枚孔（用户态铸的孔不带 `ONLY` ⇒ 也可复制）。
-    let Ok(member) = pie::unseal_hole(Mark::of("member")) else {
+    let Ok(member) = pie::unseal(env::UnsealArgs::hole(Mark::of("member"))) else {
         return die("group: member hole");
     };
     let member = Hole::from_raw(member);
@@ -173,7 +173,7 @@ pub fn run() -> Reason {
     //    不是被测对象）。
     let mut report = [PieToken::NONE; WAITERS];
     for slot in report.iter_mut() {
-        let Ok(tok) = pie::unseal_hole(Mark::of("report")) else {
+        let Ok(tok) = pie::unseal(env::UnsealArgs::hole(Mark::of("report"))) else {
             return die("group: report hole");
         };
         *slot = tok;

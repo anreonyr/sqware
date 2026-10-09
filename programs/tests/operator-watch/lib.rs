@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{MailFail, Mark, Permission, PieToken, TaskId, Wait};
+pub use abi::{UnsealArgs, ReleaseMode, MailFail, Mark, Permission, PieToken, TaskId, Wait};
 pub type PieResult<T> = Result<T, ()>;
 use std::{cell::RefCell, collections::HashMap};
 use wire::Message;
@@ -22,8 +22,12 @@ struct Native {
 }
 thread_local! { static NATIVE: RefCell<Native> = RefCell::default(); }
 pub mod pie {
+    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
+        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), _ => unreachable!() }
+    }
+
     use super::*;
-    pub fn unseal_hole(mark: Mark) -> PieResult<PieToken> {
+    fn hole_token(mark: Mark) -> PieResult<PieToken> {
         assert_eq!(mark, operator::WATCH_MARK);
         NATIVE.with(|cell| {
             let mut n = cell.borrow_mut();
@@ -44,7 +48,7 @@ pub mod pie {
         });
         Ok(())
     }
-    pub fn release(token: PieToken) -> PieResult<()> {
+    pub fn release(token: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         NATIVE.with(|cell| {
             let mut n = cell.borrow_mut();
             let root = n.roots.get_mut(&token).unwrap();
@@ -64,7 +68,8 @@ pub mod pie {
 #[path = "../../../crates/resource/src/capability.rs"]
 mod capability;
 pub mod raw {
-    pub use crate::pie::{release, revoke};
+    pub use crate::pie::revoke;
+    pub fn release(token: crate::PieToken) -> crate::PieResult<()> { crate::pie::release(token, crate::ReleaseMode::Revoke) }
     pub use crate::capability::Capability;
 }
 pub mod port {

@@ -57,7 +57,7 @@ impl Service {
     pub(crate) fn hold_supply(&mut self, token: PieToken) -> Result<(), Error> {
         if self.supplies.try_reserve(1).is_err() {
             let _ = env::pie::shut(token);
-            let _ = env::pie::release(token);
+            let _ = env::pie::release(token, env::ReleaseMode::Revoke);
             return Err(Error::Step("no room for image supplies"));
         }
         self.supplies.push(token);
@@ -66,7 +66,7 @@ impl Service {
     fn clear_supplies(&mut self) {
         for token in self.supplies.drain(..) {
             let _ = env::pie::shut(token);
-            let _ = env::pie::release(token);
+            let _ = env::pie::release(token, env::ReleaseMode::Revoke);
         }
     }
     pub(crate) fn claim_supply(&mut self, mark: Mark, wait: Wait) -> Result<PieToken, Error> {
@@ -88,7 +88,7 @@ impl Drop for Service {
     fn drop(&mut self) {
         self.clear_supplies();
         for channel in &self.channels {
-            let _ = env::pie::release(channel.rx());
+            let _ = env::pie::release(channel.rx(), env::ReleaseMode::Revoke);
         }
     }
 }

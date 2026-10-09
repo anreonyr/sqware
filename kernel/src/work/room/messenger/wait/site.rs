@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{HoleDir, TaskId};
+use env::{MailCondition, TaskId};
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
@@ -18,7 +18,7 @@ pub enum WakeKey {
     },
     Hole {
         hole: usize,
-        dir: HoleDir,
+        dir: MailCondition,
     },
     Nole {
         id: usize,

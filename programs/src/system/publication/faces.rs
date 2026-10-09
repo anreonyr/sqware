@@ -48,7 +48,7 @@ pub(crate) fn instance_face(
     mut mounts: ResMut<crate::system::publication::Mounts>,
 ) -> Result<Progress, &'static str> {
     let entry =
-        env::pie::unseal_hole(system_api::control::ASK_MARK).map_err(|_| "instance entry")?;
+        env::pie::unseal(env::UnsealArgs::hole(system_api::control::ASK_MARK)).map_err(|_| "instance entry")?;
     watch.attach_instance(entry);
     mounts.0.push(crate::system::publication::Internal {
         road: system_api::control::INSTANCE.to_path_buf(),

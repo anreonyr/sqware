@@ -79,7 +79,7 @@ pub(super) fn plate(
                 let _ = tree.trim(id);
             }
             if leaf != PieToken::NONE {
-                let _ = pie::forget(leaf);
+                let _ = pie::release(leaf, env::ReleaseMode::Keep);
             }
             Err(fail)
         }

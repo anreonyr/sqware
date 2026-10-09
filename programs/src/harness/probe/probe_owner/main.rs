@@ -64,7 +64,7 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    let Ok(entry) = pie::unseal_hole(env::Mark::of("probe-entry")) else {
+    let Ok(entry) = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-entry"))) else {
         return bail("probe-owner: no entry");
     };
     // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
@@ -156,7 +156,7 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let entry = pie::unseal_hole(env::Mark::of("takeover-entry")).map_err(|_| Fail::Unknown)?;
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("takeover-entry"))).map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         tree.root().bind(
             "fixtures".into(),

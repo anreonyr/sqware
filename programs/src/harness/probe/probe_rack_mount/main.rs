@@ -122,7 +122,7 @@ fn main() -> Report<'static> {
         reader.recv(Wait::AtMost(MS)).unwrap().bytes(),
         rig::payload(99).bytes()
     );
-    assert_eq!(inspect(retained).unwrap().1, unit::self_id());
+    assert_eq!(inspect(retained).unwrap().owner, unit::self_id());
     programs::debug::put(
         "probe-rack-mount: page publication duplicate/conflict and unpublish preserves delivered mapping",
     );

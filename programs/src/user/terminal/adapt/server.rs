@@ -8,7 +8,7 @@ use ::resource::{
 use ::schedule::{Progress, Res, ResMut};
 use alloc::collections::VecDeque;
 use env::wire::Span as _;
-use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
+use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
 use system_api::control::publication::Scope;
 use system_api::control::publication::Target;
@@ -40,9 +40,9 @@ impl Attachment {
             },
             grants: [PieToken::NONE; 3],
         };
-        attachment.endpoints.input = pie::unseal_hole(frame::INPUT).map_err(|_| ())?;
-        attachment.endpoints.output = pie::unseal_hole(frame::OUTPUT).map_err(|_| ())?;
-        attachment.endpoints.control = pie::unseal_hole(frame::CONTROL).map_err(|_| ())?;
+        attachment.endpoints.input = pie::unseal(env::UnsealArgs::hole(frame::INPUT)).map_err(|_| ())?;
+        attachment.endpoints.output = pie::unseal(env::UnsealArgs::hole(frame::OUTPUT)).map_err(|_| ())?;
+        attachment.endpoints.control = pie::unseal(env::UnsealArgs::hole(frame::CONTROL)).map_err(|_| ())?;
         attachment.grant(owner)?;
         Ok(attachment)
     }
@@ -91,7 +91,7 @@ impl Drop for Attachment {
             self.authority,
         ] {
             if token != PieToken::NONE {
-                let _ = pie::release(token);
+                let _ = pie::release(token, env::ReleaseMode::Revoke);
             }
         }
     }
@@ -109,10 +109,10 @@ pub(super) struct Server {
 }
 impl Server {
     pub fn open(console: &Console) -> Result<Self, env::Reason> {
-        let entry = pie::unseal_hole(frame::ENTRY).map_err(|_| E_TERMINAL)?;
+        let entry = pie::unseal(env::UnsealArgs::hole(frame::ENTRY)).map_err(|_| E_TERMINAL)?;
         let pile = Pile::unseal(false).map_err(|_| E_TERMINAL)?;
-        pile.attach(entry, HoleDir::Pull).map_err(|_| E_TERMINAL)?;
-        pile.attach(console.rx.bell(), HoleDir::Pull)
+        pile.attach(entry, MailCondition::Pull).map_err(|_| E_TERMINAL)?;
+        pile.attach(console.rx.bell(), MailCondition::Pull)
             .map_err(|_| E_TERMINAL)?;
         pile.subscribe(Sub::Capabilities).map_err(|_| E_TERMINAL)?;
         let client = Client::injected().map_err(|_| E_TERMINAL)?;
@@ -163,9 +163,9 @@ impl Server {
         self.echo = true;
         self.reset();
         if let Some(attachment) = self.attachment.take() {
-            let _ = self.pile.detach(attachment.endpoints.output, HoleDir::Pull);
+            let _ = self.pile.detach(attachment.endpoints.output, MailCondition::Pull);
             if self.waiting_input {
-                let _ = self.pile.detach(attachment.endpoints.input, HoleDir::Push);
+                let _ = self.pile.detach(attachment.endpoints.input, MailCondition::Empty);
                 self.waiting_input = false;
             }
         }
@@ -175,7 +175,7 @@ impl Server {
             frame::ATTACH if self.attachment.is_none() && command.task == from => {
                 let attachment = Attachment::open(command.authority, from)?;
                 self.pile
-                    .attach(attachment.endpoints.output, HoleDir::Pull)
+                    .attach(attachment.endpoints.output, MailCondition::Pull)
                     .map_err(|_| ())?;
                 let authority = match pie::accord(
                     command.authority,
@@ -185,7 +185,7 @@ impl Server {
                 ) {
                     Ok(token) => token,
                     Err(_) => {
-                        let _ = self.pile.detach(attachment.endpoints.output, HoleDir::Pull);
+                        let _ = self.pile.detach(attachment.endpoints.output, MailCondition::Pull);
                         return Err(());
                     }
                 };
@@ -230,8 +230,8 @@ impl Server {
 impl Drop for Server {
     fn drop(&mut self) {
         self.detach();
-        let _ = pie::release(self.entry);
-        let _ = pie::release(self.pile.token());
+        let _ = pie::release(self.entry, env::ReleaseMode::Revoke);
+        let _ = pie::release(self.pile.token(), env::ReleaseMode::Revoke);
     }
 }
 
@@ -271,8 +271,8 @@ pub(super) fn requests(
         }
         // Inspect only identifies the loan. Await also proves that this exclusive
         // capability is currently usable, rejecting a guessed, handed-over ancestor.
-        let loaned = matches!(inspect(command.authority), Ok((vestor, _, mark))
-            if vestor == from && mark == frame::AUTHORITY)
+        let loaned = matches!(inspect(command.authority), Ok(info)
+            if info.alive && info.vestor == from && info.mark == frame::AUTHORITY)
             && env::tole::await_(command.authority, Wait::POLL).is_ok();
         let result = if loaned {
             server.command(command, from)
@@ -287,7 +287,7 @@ pub(super) fn requests(
             }
         }
         if loaned && (command.op != frame::ATTACH || result.is_err()) {
-            let _ = pie::release(command.authority);
+            let _ = pie::release(command.authority, env::ReleaseMode::Revoke);
         }
         let grants = if result.is_ok() {
             server.attachment.as_ref().filter(|a| a.foreground == from)
@@ -306,7 +306,7 @@ pub(super) fn requests(
         if let Some(n) = reply.store_at(&mut ack, 0) {
             let _ = Hole::from_raw(command.back).push(&ack[..n], Wait::POLL);
         }
-        let _ = pie::release(command.back);
+        let _ = pie::release(command.back, env::ReleaseMode::Revoke);
     }
     Ok(Progress::Done)
 }
@@ -351,12 +351,12 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
     if blocked && !server.waiting_input {
         server
             .pile
-            .attach(input, HoleDir::Push)
+            .attach(input, MailCondition::Empty)
             .map_err(|_| E_TERMINAL)?;
     } else if !blocked && server.waiting_input {
         server
             .pile
-            .detach(input, HoleDir::Push)
+            .detach(input, MailCondition::Empty)
             .map_err(|_| E_TERMINAL)?;
     }
     server.waiting_input = blocked;

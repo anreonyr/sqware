@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{HoleDir, MailFail, Mark, PieToken, TaskId, Wait};
+pub use abi::{MailCondition, MailFail, Mark, PieToken, TaskId, Wait};
 pub mod wire {
     pub use abi::wire::Field;
 }
@@ -25,7 +25,7 @@ struct Backend {
     waits: Vec<Wait>,
     tip_busy: bool,
     reply_busy: bool,
-    attachments: Vec<(PieToken, HoleDir)>,
+    attachments: Vec<(PieToken, MailCondition)>,
 }
 thread_local! { static BACKEND: RefCell<Backend> = RefCell::new(Backend { next: 100, ..Backend::default() }); }
 fn token(value: usize) -> PieToken {
@@ -229,11 +229,11 @@ pub mod pile {
         pub fn unseal(_: bool) -> Result<Self, ()> {
             Ok(Self)
         }
-        pub fn attach(&self, token: PieToken, direction: HoleDir) -> Result<(), ()> {
+        pub fn attach(&self, token: PieToken, direction: MailCondition) -> Result<(), ()> {
             BACKEND.with(|b| b.borrow_mut().attachments.push((token, direction)));
             Ok(())
         }
-        pub fn detach(&self, token: PieToken, direction: HoleDir) -> Result<(), ()> {
+        pub fn detach(&self, token: PieToken, direction: MailCondition) -> Result<(), ()> {
             BACKEND.with(|b| {
                 b.borrow_mut()
                     .attachments
@@ -247,7 +247,7 @@ pub mod pile {
         pub fn unsubscribe(&self, _: Sub) -> Result<(), ()> {
             Ok(())
         }
-        pub fn await_(&self, wait: Wait) -> Result<Option<(PieToken, HoleDir)>, ()> {
+        pub fn await_(&self, wait: Wait) -> Result<Option<(PieToken, MailCondition)>, ()> {
             BACKEND.with(|b| {
                 let mut b = b.borrow_mut();
                 let event =
@@ -255,11 +255,12 @@ pub mod pile {
                         .iter()
                         .copied()
                         .find(|(token, direction)| match direction {
-                            HoleDir::Pull => {
+                            MailCondition::Pull => {
                                 b.inbox.get(&token.get()).is_some_and(|q| !q.is_empty())
                             }
-                            HoleDir::Push if token.get() == 50 => !b.tip_busy,
-                            HoleDir::Push => !b.reply_busy,
+                            MailCondition::Empty if token.get() == 50 => !b.tip_busy,
+                            MailCondition::Empty => !b.reply_busy,
+                            MailCondition::Push => false,
                         });
                 if event.is_none() {
                     if let Wait::AtMost(ms) = wait {
@@ -384,7 +385,7 @@ mod tests {
         BACKEND.with(|b| b.borrow_mut().tip_busy = true);
         book.maintain(address()).unwrap();
         let interests: Vec<_> = book.interests(address()).collect();
-        assert_eq!(interests, vec![(token(50), HoleDir::Push)]);
+        assert_eq!(interests, vec![(token(50), MailCondition::Empty)]);
         let mut wait = waiting::Waiting::new().unwrap();
         assert!(wait.apply((&[], &[token(50)]), &[]));
         BACKEND.with(|b| b.borrow_mut().tip_busy = false);
@@ -407,7 +408,7 @@ mod tests {
         book.maintain(address()).unwrap();
         assert_eq!(
             book.interests(address()).collect::<Vec<_>>(),
-            vec![(token(2), HoleDir::Push)]
+            vec![(token(2), MailCondition::Empty)]
         );
         let mut wait = waiting::Waiting::new().unwrap();
         assert!(wait.apply((&[], &[token(2)]), &[]));
@@ -417,13 +418,13 @@ mod tests {
         let rx = BACKEND.with(|b| token(b.borrow().receivers[&2]));
         assert_eq!(
             book.interests(address()).collect::<Vec<_>>(),
-            vec![(rx, HoleDir::Pull)]
+            vec![(rx, MailCondition::Pull)]
         );
         assert!(wait.apply((&[rx], &[]), &[]));
         BACKEND.with(|b| {
             let b = b.borrow();
             assert_eq!(b.now, 0);
-            assert_eq!(b.attachments, vec![(rx, HoleDir::Pull)]);
+            assert_eq!(b.attachments, vec![(rx, MailCondition::Pull)]);
         });
     }
     #[test]

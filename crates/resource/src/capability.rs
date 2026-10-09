@@ -11,7 +11,7 @@ pub struct Capability {
 impl Capability {
     pub fn unseal_hole(mark: Mark) -> PieResult<Self> {
         Ok(Self {
-            token: pie::unseal_hole(mark)?,
+            token: pie::unseal(env::UnsealArgs::hole(mark))?,
             active: true,
         })
     }

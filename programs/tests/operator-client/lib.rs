@@ -56,6 +56,10 @@ struct Native {
 }
 thread_local! { static NATIVE: RefCell<Native> = RefCell::default(); }
 pub mod pie {
+    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
+        match args { crate::UnsealArgs::Hole { mark } => hole_token(mark) }
+    }
+
     use super::*;
     pub fn accord(
         source: PieToken,
@@ -85,20 +89,21 @@ pub mod pie {
         });
         Ok(())
     }
-    pub fn unseal_hole(_: Mark) -> PieResult<PieToken> {
+    fn hole_token(_: Mark) -> PieResult<PieToken> {
         unreachable!()
     }
     pub fn seal(_: PieToken) -> PieResult<()> {
         unreachable!()
     }
-    pub fn release(_: PieToken) -> PieResult<()> {
+    pub fn release(_: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         unreachable!()
     }
 }
 #[path = "../../../crates/resource/src/capability.rs"]
 mod capability;
 pub mod raw {
-    pub use crate::pie::{release, revoke};
+    pub use crate::pie::revoke;
+    pub fn release(token: crate::PieToken) -> crate::PieResult<()> { crate::pie::release(token, crate::ReleaseMode::Revoke) }
     pub use crate::capability::Loan;
 }
 #[path = "../../src/system/client/src/operator/handoff.rs"]
@@ -193,3 +198,9 @@ mod tests {
         NATIVE.with(|n| assert!(n.borrow().live.is_empty()));
     }
 }
+
+#[derive(Clone, Copy)]
+pub enum UnsealArgs { Hole { mark: Mark } }
+impl UnsealArgs { pub fn hole(mark: Mark) -> Self { Self::Hole { mark } } }
+#[derive(Clone, Copy)]
+pub enum ReleaseMode { Revoke, Keep }

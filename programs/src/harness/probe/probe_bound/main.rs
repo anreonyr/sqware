@@ -14,7 +14,7 @@ extern crate programs;
 
 use alloc::string::{String, ToString};
 use env::wire::Field;
-use env::{HoleDir, Wait};
+use env::{MailCondition, Wait};
 use programs::Report;
 
 use ::resource::raw::Hole;
@@ -193,7 +193,7 @@ fn junk_trip(
 ) -> (bool, bool, bool) {
     let door = Hole::from_raw(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
-        && matches!(door.wait(HoleDir::Push, Wait::AtMost(MS)), Ok(true));
+        && matches!(door.wait(MailCondition::Empty, Wait::AtMost(MS)), Ok(true));
 
     // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];

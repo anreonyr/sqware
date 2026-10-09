@@ -8,7 +8,7 @@ use ::resource::{
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::pie;
-use env::{HoleDir, PieToken, Wait};
+use env::{MailCondition, PieToken, Wait};
 use ipc::rpc;
 use system_api::identity as api;
 use system_api::identity::Call as Contract;
@@ -52,7 +52,7 @@ pub(super) fn faces(
             Policy::VEST,
         )
         .map_err(|_| Fail::Tree)?;
-        pile.attach(token, HoleDir::Pull).map_err(|_| Fail::Desk)?;
+        pile.attach(token, MailCondition::Pull).map_err(|_| Fail::Desk)?;
         faces.0.push((token, grant));
     }
     Ok(Progress::Done)
@@ -147,9 +147,9 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
-        let _ = pile.detach(*entry, HoleDir::Pull);
+        let _ = pile.detach(*entry, MailCondition::Pull);
         let _ = pie::seal(*entry);
-        let _ = pie::release(*entry);
+        let _ = pie::release(*entry, env::ReleaseMode::Revoke);
     }
     Ok(Progress::Done)
 }

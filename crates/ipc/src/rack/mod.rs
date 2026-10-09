@@ -83,7 +83,7 @@ impl<M: Message> Rack<M> {
         ring::exact::<M>();
         // **起手那一步报一行（release 也看得见）**：`debug!` 在 release 是空操作，
         // 而"页解不出来"是这一档用不了的直接成因。
-        let pie = match env::pie::unseal_pole(SIZE, true) {
+        let pie = match env::pie::unseal(env::UnsealArgs::Pole { size: SIZE, shared: true }) {
             Ok(pie) => pie,
             Err(fail) => {
                 crate::debug::put(&alloc::format!("rack: no page {:?}", fail));

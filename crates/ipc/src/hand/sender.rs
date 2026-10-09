@@ -3,7 +3,7 @@
 
 use core::marker::PhantomData;
 
-use env::{HoleDir, MailFail, MailResult, PieToken, Wait};
+use env::{MailCondition, MailFail, MailResult, PieToken, Wait};
 
 use wire::Message;
 use ::resource::raw::{Hole};
@@ -118,7 +118,7 @@ impl<M: Message> Sender<M> {
         if self.outstanding == 0 {
             return Ok(());
         }
-        let r = Hole::from_raw(hole).wait(HoleDir::Push, Wait::Forever);
+        let r = Hole::from_raw(hole).wait(MailCondition::Empty, Wait::Forever);
         if let Err(e) = &r {
             if cfg!(debug_assertions) {
                 crate::debug::put(&alloc::format!(

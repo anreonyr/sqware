@@ -3,7 +3,7 @@ use crate::system::operator::management::Tree;
 use ::schedule::{Dispatch, Resources};
 use alloc::{collections::VecDeque, vec::Vec};
 pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToken, &'static str> {
-    let entry = env::pie::unseal_hole(system_api::control::publication::ENTRY)
+    let entry = env::pie::unseal(env::UnsealArgs::hole(system_api::control::publication::ENTRY))
         .map_err(|_| "publication entry")?;
     macro_rules! put {
         ($value:expr) => {

@@ -3,8 +3,8 @@
 extern crate self as env;
 extern crate self as resource;
 
-pub use abi::{
-    Access, HoleDir, MailFail, MailResult, Mark, Permission, PieFail, PieResult, PieToken,
+pub use abi::{UnsealArgs, ReleaseMode, Oversize, PullOutcome,
+    Access, MailCondition, MailFail, MailResult, Mark, Permission, PieFail, PieResult, PieToken,
     Policy, TaskId, VirtAddr, Wait, make_fail,
 };
 
@@ -68,15 +68,17 @@ pub mod chrono {
 }
 
 pub mod pie {
+    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
+        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), _ => unreachable!() }
+    }
+
     use crate::{Mark, PieFail, PieResult, PieToken, TaskId, make_fail, test_backend::{Event, event, token, with}};
-    pub fn unseal_hole(_: Mark) -> PieResult<PieToken> { Ok(token()) }
-    pub fn release(token: PieToken) -> PieResult<()> { event(Event::Release(token)); Ok(()) }
+    fn hole_token(_: Mark) -> PieResult<PieToken> { Ok(token()) }
+    pub fn release(token: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> { event(Event::Release(token)); Ok(()) }
     pub fn seal(token: PieToken) -> PieResult<()> { event(Event::Seal(token)); Ok(()) }
     pub fn revoke(peer: TaskId, remote: PieToken) -> PieResult<()> { event(Event::Revoke(peer, remote)); Ok(()) }
     pub fn accord(_: PieToken, _: TaskId, _: crate::Permission, _: Mark) -> PieResult<PieToken> { Ok(token()) }
-    pub fn reserve(_: PieToken) -> PieResult<(usize, usize)> { Err(make_fail(PieFail::Denied)) }
-    pub fn inspect(_: PieToken) -> PieResult<(usize, usize)> { Err(make_fail(PieFail::Denied)) }
-    pub fn alive(_: PieToken) -> PieResult<bool> { Ok(true) }
+    pub fn inspect(_: PieToken, _: crate::VirtAddr) -> PieResult<()> { Err(make_fail(PieFail::Denied)) }
     pub fn open(_: PieToken) -> PieResult<(crate::VirtAddr, usize)> { Ok((crate::VirtAddr::new(0), 0)) }
     pub fn set_now(now: u64) { with(|state| state.now = now); }
 }
@@ -98,18 +100,19 @@ pub mod raw {
             buffer[..bytes.len()].copy_from_slice(&bytes);
             Ok((bytes.len(), from))
         }
-        pub fn discard_oversized(&self, max: usize) -> MailResult<bool> {
-            Ok(with(|state| {
-                if state.replies.get(&self.0).is_some_and(|(bytes, _)| bytes.len() > max) {
-                    state.replies.remove(&self.0);
-                    true
-                } else {
-                    false
+        pub fn pull_with(&self, buffer: &mut [u8], wait: Wait, oversize: crate::Oversize) -> MailResult<crate::PullOutcome> {
+            match self.pull(buffer, wait) {
+                Ok((len, sender)) => Ok(crate::PullOutcome::Received { len, sender }),
+                Err(error) if error.source == MailFail::Denied && oversize == crate::Oversize::Discard => {
+                    let (bytes, sender) = with(|state| state.replies.remove(&self.0)).unwrap();
+                    Ok(crate::PullOutcome::Discarded { len: bytes.len(), sender })
                 }
-            }))
+                Err(error) => Err(error),
+            }
         }
+
     }
-    pub fn release(token: PieToken) -> PieResult<()> { crate::pie::release(token) }
+    pub fn release(token: PieToken) -> PieResult<()> { crate::pie::release(token, env::ReleaseMode::Revoke) }
     pub fn reserve(_: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
         Ok(with(|state| state.reservation.unwrap_or((state.peer, state.peer, Mark::of("back")))))
     }
@@ -181,7 +184,7 @@ pub mod port {
         fn drop(&mut self) {
             if let Some(remote) = self.remote.take() { let _ = crate::pie::revoke(self.peer, remote); }
             with(|state| state.events.push(Event::Seal(self.local)));
-            let _ = crate::pie::release(self.local);
+            let _ = crate::pie::release(self.local, env::ReleaseMode::Revoke);
         }
     }
 }

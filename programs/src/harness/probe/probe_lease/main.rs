@@ -35,7 +35,7 @@ fn main() -> Report<'static> {
         return bail("probe-lease: no tree link");
     };
     let tree = Face::of(session);
-    let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("lease-entry"))).unwrap();
     let target = system_api::control::publication::Target::Service {
         scope: system_api::control::publication::Scope(4),
         group: "fixtures".into(),

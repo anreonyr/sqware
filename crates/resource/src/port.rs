@@ -17,7 +17,7 @@
 //! 一问一答的时序、开会话的握手都不在这里：那些属于协议（见 `crates/ipc`）。
 
 use env::{
-    HoleDir, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait, make_fail,
+    MailCondition, MailFail, MailResult, Mark, PieFail, PieResult, PieToken, TaskId, Wait, make_fail,
 };
 
 use crate::{hole::Hole, raw};
@@ -166,7 +166,7 @@ impl Port {
     /// 门也不死（它的封印只会让这一等当场答 `Dead`）。
     pub fn push(&self, frame: &[u8]) -> MailResult<()> {
         self.entry.push(frame, Wait::Forever)?;
-        self.entry.wait(HoleDir::Push, Wait::Forever).map(|_| ())
+        self.entry.wait(MailCondition::Empty, Wait::Forever).map(|_| ())
     }
 
     /// 收一帧：有界等 → **核对推者是不是对端** → 返恰好那一帧。
@@ -182,7 +182,7 @@ impl Port {
 
     /// 关：只放下回信孔（级联已含对端那枚副本），**不碰 `entry`**。
     pub fn shut(self) -> PieResult<()> {
-        env::pie::release(self.reply.token())
+        env::pie::release(self.reply.token(), env::ReleaseMode::Revoke)
     }
 
     /// 借来一条会话：对端坐标 + 入口门闩 + **对端开的**回信孔。

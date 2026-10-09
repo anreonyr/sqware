@@ -500,21 +500,210 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
 }
 
 #[test]
-fn discard_appends_to_mail_abi_without_changing_existing_calls() {
-    use env::{MailCall, HoleDir, VirtAddr, Wait};
+fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
+    use env::{
+        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, ToleCall, UnsealArgs,
+        VirtAddr, Wait,
+    };
     let token = PieToken::mint(42);
-    for (index, call) in [
-        MailCall::Push { token, msg: VirtAddr::new(0), len: 1 },
-        MailCall::Pull { token, buf: VirtAddr::new(0), max: 64 },
-        MailCall::Wait { token, dir: HoleDir::Pull, millis: Wait::POLL },
+    let buf = VirtAddr::new(4096);
+    let mail = [
+        MailCall::Push {
+            token,
+            msg: buf,
+            len: 1,
+        },
+        MailCall::Pull {
+            token,
+            buf,
+            max: 64,
+            oversize: Oversize::Discard,
+        },
+        MailCall::Wait {
+            token,
+            condition: MailCondition::Empty,
+            millis: Wait::POLL,
+        },
         MailCall::Hush { token },
         MailCall::Ring { token },
         MailCall::Peek { token },
-        MailCall::Discard { token, max: 64 },
-    ].into_iter().enumerate() {
+    ];
+    for (index, call) in mail.into_iter().enumerate() {
         assert_eq!(call.slot(), (5usize << 32) | index);
-        assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
+        assert!(
+            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call)
+        );
     }
+    let pie = [
+        PieCall::Unseal {
+            args: UnsealArgs::hole(Mark::new(u64::MAX)),
+        },
+        PieCall::Open { token },
+        PieCall::Shut { token },
+        PieCall::Seal { token },
+        PieCall::Accord {
+            src: token,
+            dst: TaskId::new(2),
+            subset: rights(),
+            mark: Mark::NONE,
+        },
+        PieCall::Narrow {
+            token,
+            subset: rights(),
+        },
+        PieCall::Revoke {
+            dst: TaskId::new(2),
+            token,
+        },
+        PieCall::Release {
+            token,
+            mode: ReleaseMode::Keep,
+        },
+        PieCall::Inspect { token, buf },
+        PieCall::Collect {
+            after: token,
+            buf,
+            capacity: 8,
+        },
+        PieCall::Same { a: token, b: token },
+    ];
+    for (index, call) in pie.into_iter().enumerate() {
+        assert_eq!(call.slot(), (7usize << 32) | index);
+        assert!(
+            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Pie(decoded)) if decoded == call)
+        );
+    }
+    let tole = [
+        ToleCall::Attach {
+            tole: token,
+            pie: token,
+            condition: MailCondition::Push,
+        },
+        ToleCall::Detach {
+            tole: token,
+            pie: token,
+            condition: MailCondition::Empty,
+        },
+        ToleCall::Await {
+            tole: token,
+            millis: Wait::POLL,
+        },
+        ToleCall::Subscribe {
+            tole: token,
+            source: env::Source::CapabilitiesChanged,
+            target: TaskId::new(2),
+        },
+        ToleCall::Unsubscribe {
+            tole: token,
+            source: env::Source::TaskCompleted,
+            target: TaskId::new(2),
+        },
+    ];
+    for (index, call) in tole.into_iter().enumerate() {
+        assert_eq!(call.slot(), (9usize << 32) | index);
+        assert!(
+            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Tole(decoded)) if decoded == call)
+        );
+    }
+    for (class, count) in [(5, 6), (7, 11), (9, 5)] {
+        assert!(env::EnvCall::from_wire((class << 32) | count, &[0; 6]).is_err());
+    }
+}
+
+#[test]
+fn creation_and_conditions_reject_invalid_wire_values() {
+    use env::{
+        Decode, HoleLimits, MailCall, MailCondition, Oversize, PieCall, ReleaseMode, UnsealArgs,
+        VirtAddr, Wait,
+    };
+    for args in [
+        UnsealArgs::hole(Mark::new(u64::MAX)),
+        UnsealArgs::Pole {
+            size: 4096,
+            shared: false,
+        },
+        UnsealArgs::Nole,
+        UnsealArgs::Tole { shared: true },
+    ] {
+        let call = PieCall::Unseal { args };
+        assert_eq!(PieCall::from_wire(call.slot(), &call.pack()), Ok(call));
+    }
+    for regs in [
+        [4, 0, 0, 0, 0, 0],
+        [1, 4096, 2, 0, 0, 0],
+        [3, 1, 1, 0, 0, 0],
+        [0, 0, 0, 4, 64, 0],
+        [0, 0, 64, 0, 64, 0],
+        [0, 0, 65, 4, 64, 0],
+    ] {
+        assert_eq!(
+            PieCall::from_wire(7usize << 32, &regs),
+            Err(Decode::Invalid)
+        );
+    }
+    assert!(
+        !HoleLimits {
+            max_len: 0,
+            max_messages: 1,
+            max_bytes: 8
+        }
+        .valid()
+    );
+    let token = PieToken::mint(42);
+    let call = MailCall::Wait {
+        token,
+        condition: MailCondition::Push,
+        millis: Wait::POLL,
+    };
+    let mut regs = call.pack();
+    regs[1] = 3;
+    assert_eq!(
+        MailCall::from_wire(call.slot(), &regs),
+        Err(Decode::Invalid)
+    );
+    let call = MailCall::Pull {
+        token,
+        buf: VirtAddr::new(4096),
+        max: 8,
+        oversize: Oversize::Keep,
+    };
+    let mut regs = call.pack();
+    regs[3] = 2;
+    assert_eq!(
+        MailCall::from_wire(call.slot(), &regs),
+        Err(Decode::Invalid)
+    );
+    let call = PieCall::Release {
+        token,
+        mode: ReleaseMode::Keep,
+    };
+    let mut regs = call.pack();
+    regs[1] = 2;
+    assert_eq!(PieCall::from_wire(call.slot(), &regs), Err(Decode::Invalid));
+}
+
+#[test]
+fn query_records_preserve_full_marks_permissions_and_closed_state() {
+    use env::TaskId;
+    let info = env::PieInfo {
+        token: PieToken::mint(42),
+        kind: env::PieKind::Pole,
+        permission: rights() | Permission::ONLY,
+        owner: TaskId::new(7),
+        vestor: TaskId::new(8),
+        mark: Mark::new(u64::MAX),
+        alive: false,
+    };
+    assert_eq!(env::PieInfo::from_words(info.words()), Some(info));
+    let mut words = info.words();
+    words[1] = 256;
+    assert_eq!(env::PieInfo::from_words(words), None);
+    let mut words = info.words();
+    words[2] |= 1usize << 40;
+    assert_eq!(env::PieInfo::from_words(words), None);
+    let mut words = info.words();
+    words[6] = 2;
+    assert_eq!(env::PieInfo::from_words(words), None);
 }
 
 #[test]

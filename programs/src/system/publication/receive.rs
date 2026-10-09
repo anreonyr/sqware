@@ -33,7 +33,7 @@ pub fn receive(
                     continue;
                 };
                 if frame.op != pubcall::PUBLISH
-                    || !matches!(inspect(frame.entry), Ok((vestor, owner, _)) if vestor == from && owner == from)
+                    || !matches!(inspect(frame.entry), Ok(info) if info.alive && info.vestor == from && info.owner == from)
                 {
                     continue;
                 }
@@ -73,10 +73,10 @@ pub fn finish(
 ) -> Result<Progress, &'static str> {
     let incoming = request.0.take().ok_or("publication request")?;
     if incoming.frame.op == pubcall::PUBLISH
-        && matches!(inspect(incoming.frame.entry), Ok((vestor, owner, _)) if vestor == incoming.from && owner == incoming.from)
+        && matches!(inspect(incoming.frame.entry), Ok(info) if info.alive && info.vestor == incoming.from && info.owner == incoming.from)
         && !publications.owns(incoming.frame.entry)
     {
-        let _ = pie::forget(incoming.frame.entry);
+        let _ = pie::release(incoming.frame.entry, env::ReleaseMode::Keep);
     }
     let Some(back) = incoming.back else {
         return Ok(Progress::Done);

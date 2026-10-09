@@ -4,7 +4,7 @@ use ::resource::port::{self, Access, Policy};
 use ::resource::raw::{Hole, alive, pies, reserve};
 use alloc::vec::Vec;
 use env::wire::Field;
-use env::{HoleDir, MailFail, PieToken, TaskId, Wait, pie};
+use env::{MailCondition, MailFail, PieToken, TaskId, Wait, pie};
 use ipc::hand::{SendFail, Sender};
 use ipc::session::establish::{self, Held};
 use system_api::operator::{LINK_MARK, Tip};
@@ -110,14 +110,14 @@ impl Connections {
     pub(super) fn interests(
         &self,
         address: (TaskId, PieToken),
-    ) -> impl Iterator<Item = (PieToken, HoleDir)> + '_ {
+    ) -> impl Iterator<Item = (PieToken, MailCondition)> + '_ {
         self.tickets
             .iter()
             .filter_map(move |ticket| match &ticket.state {
                 State::Pending(pending) => Some(match pending.step {
-                    Step::Offer => (ticket.reply, HoleDir::Push),
-                    Step::Request => (pending.link.rx(), HoleDir::Pull),
-                    Step::Handoff { .. } => (address.1, HoleDir::Push),
+                    Step::Offer => (ticket.reply, MailCondition::Empty),
+                    Step::Request => (pending.link.rx(), MailCondition::Pull),
+                    Step::Handoff { .. } => (address.1, MailCondition::Empty),
                 }),
                 _ => None,
             })

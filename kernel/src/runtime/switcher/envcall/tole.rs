@@ -1,7 +1,7 @@
 use alloc::sync::{Arc, Weak};
 use core::sync::atomic::Ordering;
 
-use env::{HoleDir, Mark, ToleCall};
+use env::{MailCondition, ToleCall};
 
 use env::{PieToken, Source, TaskId, ToleFail, Wait};
 
@@ -10,7 +10,7 @@ use crate::work::mail::tole::{MATE_SKIP, Mate, Sub};
 use crate::work::mail::{ToleMeta, tole};
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::gate::{self, Need, Permission, Pie, PieSnapshot};
+use crate::work::unit::gate::{self, Need, Permission, PieSnapshot};
 use crate::work::unit::life::Life;
 use crate::work::unit::task::TaskIdent;
 
@@ -24,9 +24,16 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     let _ = &ident;
     Some(match call {
-        ToleCall::Unseal { shared } => unseal(frame, shared),
-        ToleCall::Attach { tole, pie, dir } => attach(frame, tole, pie, dir),
-        ToleCall::Detach { tole, pie, dir } => detach(frame, tole, pie, dir),
+        ToleCall::Attach {
+            tole,
+            pie,
+            condition,
+        } => attach(frame, tole, pie, condition),
+        ToleCall::Detach {
+            tole,
+            pie,
+            condition,
+        } => detach(frame, tole, pie, condition),
         ToleCall::Await { tole, millis } => return Some(await_(frame, tole, millis)),
         ToleCall::Subscribe {
             tole,
@@ -41,34 +48,25 @@ pub(crate) fn dispatch(
     })
 }
 
-fn unseal(frame: &mut TrapContext, shared: bool) -> Outcome {
-    let r = (|| -> Result<usize, ToleFail> {
-        let task = current().running_task().ok_or(ToleFail::Denied)?;
-        let meta = tole::meta(task.ident.id);
-        let mut latch = Permission::FETCH | Permission::STORE | Permission::VEST;
-        if !shared {
-            latch |= Permission::ONLY;
-        }
-        let pie: Pie<gate::Tole> = gate::new_pie(meta, Mark::NONE, latch, None);
-        let token = pie.token;
-        gate::boxed(pie)
-            .and_then(|pie| gate::insert(&task, pie))
-            .map_err(|error| match error {
-                env::PieFail::OoM => ToleFail::OoM,
-                _ => ToleFail::Dead,
-            })?;
-        Ok(token.get())
-    })();
-    answer(frame, r);
-    Outcome::Resume
-}
-
-fn attach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
+fn attach(
+    frame: &mut TrapContext,
+    group: PieToken,
+    member: PieToken,
+    dir: MailCondition,
+) -> Outcome {
     let r = (|| -> Result<(), ToleFail> {
         let task = current().running_task().ok_or(ToleFail::Denied)?;
         let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = gate::accede::<ToleFail>(&task, member, Need::Fetch)?;
+        let latch = gate::accede::<ToleFail>(
+            &task,
+            member,
+            if dir == MailCondition::Pull {
+                Need::Fetch
+            } else {
+                Need::Store
+            },
+        )?;
         usable::<ToleFail>(&latch)?;
         let (mate, life) = mate(&latch, dir)?;
         tole::attach(&meta, mate, life)
@@ -77,12 +75,25 @@ fn attach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleD
     Outcome::Resume
 }
 
-fn detach(frame: &mut TrapContext, group: PieToken, member: PieToken, dir: HoleDir) -> Outcome {
+fn detach(
+    frame: &mut TrapContext,
+    group: PieToken,
+    member: PieToken,
+    dir: MailCondition,
+) -> Outcome {
     let r = (|| -> Result<(), ToleFail> {
         let task = current().running_task().ok_or(ToleFail::Denied)?;
         let latch = gate::accede::<ToleFail>(&task, group, Need::Store)?;
         let meta = rack(&latch)?;
-        let latch = gate::accede::<ToleFail>(&task, member, Need::Fetch)?;
+        let latch = gate::accede::<ToleFail>(
+            &task,
+            member,
+            if dir == MailCondition::Pull {
+                Need::Fetch
+            } else {
+                Need::Store
+            },
+        )?;
         let (mate, _life) = mate(&latch, dir)?;
         tole::detach(&meta, mate)
     })();
@@ -180,7 +191,7 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
         answer_pair(frame, token, dir);
         return Outcome::Resume;
     }
-    answer_pair(frame, PieToken::NONE, HoleDir::Pull);
+    answer_pair(frame, PieToken::NONE, MailCondition::Pull);
     match tole::wait(&meta, dur) {
         Ok(Handoff::Resume(())) => {
             let (hit, skipped) = ready(&meta);
@@ -203,7 +214,7 @@ fn await_(frame: &mut TrapContext, group: PieToken, millis: Wait) -> Outcome {
 
 /// **挑"哪一格有事"**：从**轮转游标**起扫一圈，取第一枚就绪的；命中之后把游标推到命中项的
 /// 下一格。返 `(命中的那一枚, 跳过的格数)`。
-fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
+fn ready(meta: &ToleMeta) -> (Option<(PieToken, MailCondition)>, usize) {
     let mut skipped = 0usize;
     let Some(task) = current().running_task() else {
         return (None, 0);
@@ -220,10 +231,16 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
         let at = (start + k) % count;
         match cells[at].mate() {
             Mate::Hole(id, dir) => {
-                let Some(pie) = pies
-                    .iter()
-                    .find(|p| p.snapshot().hole().is_some_and(|meta| meta.id() == id))
-                else {
+                let Some(pie) = pies.iter().find(|p| {
+                    p.alive()
+                        && p.heir().is_none()
+                        && p.allows(if dir == MailCondition::Pull {
+                            Need::Fetch
+                        } else {
+                            Need::Store
+                        })
+                        && p.snapshot().hole().is_some_and(|meta| meta.id() == id)
+                }) else {
                     // **成员还在组里、可本域表里已经没有那一枚了** ⇒ 这一格**永远报不出就绪**。
                     // 这一格**不被吞掉**（不 `continue`）——"组里有人、读的人却一直睡"这件事
                     // 由此落到读数上。数下来，第一次当场报一行（见 [`await_`]）。
@@ -239,10 +256,12 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                 }
             }
             Mate::Nole(id) => {
-                let Some(pie) = pies
-                    .iter()
-                    .find(|p| p.snapshot().nole().is_some_and(|meta| meta.id() == id))
-                else {
+                let Some(pie) = pies.iter().find(|p| {
+                    p.alive()
+                        && p.heir().is_none()
+                        && p.allows(Need::Fetch)
+                        && p.snapshot().nole().is_some_and(|meta| meta.id() == id)
+                }) else {
                     skipped += 1;
                     continue;
                 };
@@ -251,15 +270,17 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                 };
                 if n.ready() {
                     meta.seek_cursor((at + 1) % count);
-                    return (Some((pie.token(), HoleDir::Pull)), skipped);
+                    return (Some((pie.token(), MailCondition::Pull)), skipped);
                 }
             }
             // **页上那一位**（架把铃并进页）：与 `Mate::Nole` 同一形，方向恒为 `Pull`。
             Mate::Pole(id) => {
-                let Some(pie) = pies
-                    .iter()
-                    .find(|p| p.snapshot().pole().is_some_and(|meta| meta.id() == id))
-                else {
+                let Some(pie) = pies.iter().find(|p| {
+                    p.alive()
+                        && p.heir().is_none()
+                        && p.allows(Need::Fetch)
+                        && p.snapshot().pole().is_some_and(|meta| meta.id() == id)
+                }) else {
                     skipped += 1;
                     continue;
                 };
@@ -268,7 +289,7 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, HoleDir)>, usize) {
                 };
                 if p.ready() {
                     meta.seek_cursor((at + 1) % count);
-                    return (Some((pie.token(), HoleDir::Pull)), skipped);
+                    return (Some((pie.token(), MailCondition::Pull)), skipped);
                 }
             }
         }
@@ -280,11 +301,11 @@ fn rack(pie: &PieSnapshot) -> Result<Arc<ToleMeta>, ToleFail> {
     pie.tole().ok_or(ToleFail::Denied)
 }
 
-fn mate(pie: &PieSnapshot, dir: HoleDir) -> Result<(Mate, Weak<Life>), ToleFail> {
+fn mate(pie: &PieSnapshot, dir: MailCondition) -> Result<(Mate, Weak<Life>), ToleFail> {
     if let Some(h) = pie.hole() {
         return Ok((Mate::Hole(h.id(), dir), h.life()));
     }
-    if dir == HoleDir::Pull {
+    if dir == MailCondition::Pull {
         if let Some(n) = pie.nole() {
             return Ok((Mate::Nole(n.id()), n.life()));
         }
@@ -309,13 +330,14 @@ fn answer_void(frame: &mut TrapContext, r: Result<(), ToleFail>) {
     answer(frame, r.map(|()| 0));
 }
 
-fn answer_pair(frame: &mut TrapContext, token: PieToken, dir: HoleDir) {
+fn answer_pair(frame: &mut TrapContext, token: PieToken, dir: MailCondition) {
     frame.gpr.set_x(Gprs::A0, token.get());
     frame.gpr.set_x(
         Gprs::A1,
         match dir {
-            HoleDir::Pull => 0,
-            HoleDir::Push => 1,
+            MailCondition::Pull => 0,
+            MailCondition::Push => 1,
+            MailCondition::Empty => 2,
         },
     );
 }

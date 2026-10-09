@@ -25,7 +25,7 @@ impl Drop for Unit {
         if !self.committed {
             let _ = unit::oust(self.team);
             for token in self.private.drain(..) {
-                let _ = pie::release(token);
+                let _ = pie::release(token, env::ReleaseMode::Revoke);
             }
         }
     }

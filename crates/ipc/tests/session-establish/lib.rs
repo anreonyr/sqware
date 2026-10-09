@@ -77,9 +77,10 @@ pub struct MailError {
 }
 pub type MailResult<T> = Result<T, MailError>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HoleDir {
+pub enum MailCondition {
     Pull,
     Push,
+    Empty,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VirtAddr(usize);
@@ -333,7 +334,7 @@ pub mod raw {
         pub fn depth(&self) -> Result<usize, PullError> {
             Ok(fake::INBOX.with(|x| x.borrow().iter().filter(|(t, _, _)| *t == self.0).count()))
         }
-        pub fn wait(&self, _: HoleDir, _: Wait) -> MailResult<bool> {
+        pub fn wait(&self, _: MailCondition, _: Wait) -> MailResult<bool> {
             Ok(false)
         }
     }
@@ -366,22 +367,26 @@ pub mod raw {
                 .ok_or(PieError)
         })
     }
-    pub fn inspect(t: PieToken) -> PieResult<(TaskId, TaskId, Mark)> {
+    pub fn inspect(t: PieToken) -> PieResult<crate::PieInfo> {
         fake::CANDIDATES.with(|x| {
             x.borrow()
                 .iter()
                 .find(|c| c.token == t)
                 .and_then(|c| c.query)
-                .ok_or(PieError)
+                .map(|(vestor, owner, mark)| crate::PieInfo { vestor, owner, mark, alive: true }).ok_or(PieError)
         })
     }
 }
 pub mod pie {
+    pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
+        match args { crate::UnsealArgs::Hole { mark } => hole_token(mark) }
+    }
+
     use super::*;
     pub fn seal(_: PieToken) -> PieResult<()> {
         Ok(())
     }
-    pub fn release(t: PieToken) -> PieResult<()> {
+    pub fn release(t: PieToken, _mode: crate::ReleaseMode) -> PieResult<()> {
         fake::RELEASE.with(|x| x.borrow_mut().push(t));
         Ok(())
     }
@@ -389,7 +394,7 @@ pub mod pie {
         fake::CLEAN.with(|x| x.borrow_mut().push((peer, t)));
         Ok(())
     }
-    pub fn unseal_hole(mark: Mark) -> PieResult<PieToken> {
+    fn hole_token(mark: Mark) -> PieResult<PieToken> {
         if fake::UNSEAL_FAIL.with(|x| x.replace(false)) {
             return Err(PieError);
         }
@@ -893,3 +898,11 @@ mod tests {
         assert_eq!(fake::scans(), 0);
     }
 }
+
+#[derive(Clone, Copy)]
+pub enum UnsealArgs { Hole { mark: Mark } }
+impl UnsealArgs { pub fn hole(mark: Mark) -> Self { Self::Hole { mark } } }
+#[derive(Clone, Copy)]
+pub enum ReleaseMode { Revoke, Keep }
+
+pub struct PieInfo { pub vestor: TaskId, pub owner: TaskId, pub mark: Mark, pub alive: bool }

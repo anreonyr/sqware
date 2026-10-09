@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 
-use env::{HoleDir, MailCall, MailFail, PieToken, TaskId, Wait};
+use env::{MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcome, TaskId, Wait};
 
 use riscv::register::sie;
 
@@ -27,28 +27,21 @@ pub(crate) fn dispatch(
 ) -> Option<Outcome> {
     Some(match call {
         MailCall::Push { token, msg, len } => push(frame, ident, token, msg.get(), len),
-        MailCall::Pull { token, buf, max } => pull(frame, ident, token, buf.get(), max),
+        MailCall::Pull {
+            token,
+            buf,
+            max,
+            oversize,
+        } => pull(frame, ident, token, buf.get(), max, oversize),
         MailCall::Peek { token } => peek(frame, token),
-        MailCall::Discard { token, max } => discard(frame, token, max),
-        MailCall::Wait { token, dir, millis } => wait_dir(frame, ident, token, dir, millis),
+        MailCall::Wait {
+            token,
+            condition,
+            millis,
+        } => wait_dir(frame, ident, token, condition, millis),
         MailCall::Hush { token } => hush(frame, token),
         MailCall::Ring { token } => ring(frame, token),
     })
-}
-
-fn discard(frame: &mut TrapContext, token: PieToken, max: usize) -> Outcome {
-    let result = with_pie(token, Need::Fetch, |pie| {
-        let hole = pie.hole().ok_or(MailFail::Denied)?;
-        mail::hole::discard(&hole, max)
-    });
-    frame.gpr.set_x(
-        Gprs::A0,
-        match result {
-            Ok(discarded) => usize::from(discarded),
-            Err(error) => error.code() as usize,
-        },
-    );
-    Outcome::Resume
 }
 
 fn push(
@@ -67,7 +60,7 @@ fn push(
         if len == 0 || !mail::whole(&ident.team.space, msg, len, PteFlags::R) {
             return Err(MailFail::Denied);
         }
-        let reservation = mail::hole::reserve(&hole)?;
+        let reservation = mail::hole::reserve_len(&hole, len)?;
         let mut cell = alloc::vec::Vec::new();
         cell.try_reserve_exact(len).map_err(|_| MailFail::OoM)?;
         cell.resize(len, 0);
@@ -93,6 +86,7 @@ fn pull(
     token: PieToken,
     buf: usize,
     max: usize,
+    oversize: Oversize,
 ) -> Outcome {
     if !Space::user_range(buf, max) {
         frame.gpr.set_x(Gprs::A0, MailFail::Denied.code() as usize);
@@ -100,53 +94,56 @@ fn pull(
     }
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.hole().ok_or(MailFail::Denied)?;
-        hand_over(&hole, &ident.team.space, buf, max)
+        if !mail::whole(&ident.team.space, buf, max, PteFlags::W) {
+            return Err(MailFail::Denied);
+        }
+        hand_over(&hole, &ident.team.space, buf, max, oversize)
     });
     match r {
-        Ok((n, from)) => {
+        Ok(outcome) => {
+            let (n, from, discarded) = match outcome {
+                PullOutcome::Received { len, sender } => (len, sender, false),
+                PullOutcome::Discarded { len, sender } => (len, sender, true),
+            };
             frame.gpr.set_x(Gprs::A0, n);
             frame.gpr.set_x(Gprs::A1, from.get());
+            frame.gpr.set_x(Gprs::A2, discarded as usize);
         }
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
     }
     Outcome::Resume
 }
 
-/// **取走一只手**：认下它（`take`：置"正被取用"）→ 复制**一次** → 收尾（`taken`）。
-///
-/// 两条不过的路**都不消费那只手**（`back` 放回原处）：装不下、收方缓冲不可写 ⇒ `Denied`。
-/// **"发送方那段没了"那一档没有了**：手里那段字节是 `Push` 时抄进内核的，与发送方无关。
-///
-/// **复制在孔锁之外做**：`Space` 的锁是 `Level::Space`（2）、孔那一格是 `Level::L3`（4），
-/// 持孔锁再取空间锁是倒序（debug 档 lockdep 当场报），而复制每页都要过一遍 `translate`。
+/// Claim the head once. Discard only an oversized message; Keep and copy failures restore it.
+/// The reading guard retains the bytes while copies happen outside the queue lock.
 fn hand_over(
     meta: &Arc<mail::HoleMeta>,
     space: &Arc<Space>,
     buf: usize,
     max: usize,
-) -> Result<(usize, TaskId), MailFail> {
-    mail::hole::take(meta)?;
-    let Some((from, bytes)) = mail::hole::source(meta) else {
-        mail::hole::back(meta);
-        return Err(MailFail::Busy);
-    };
-    let len = bytes.len();
+    oversize: Oversize,
+) -> Result<PullOutcome, MailFail> {
+    let reading = mail::hole::read(meta)?;
+    let from = reading.from;
+    let len = reading.bytes.len();
+    if len > max && oversize == Oversize::Discard {
+        reading.finish();
+        return Ok(PullOutcome::Discarded { len, sender: from });
+    }
     if len > max || !mail::whole(space, buf, len, PteFlags::W) {
         // **"读不成、手放回"这一条要看得见**（诊断）：孔会因此**一直报就绪**——等在这一组上的
         // 读的人每一轮都啃同一格（读不成 ⇒ 手还在 ⇒ 下一轮又报就绪），而**别的客人的手就被饿在
-        // 后面**；递手的那一方还在等它下线（`wait(HoleDir::Push, …)`）⇒ 两边一起卡住。
+        // 后面**；递手的那一方还在等它下线（`wait(MailCondition::Empty, …)`）⇒ 两边一起卡住。
         mail::hole::note_back(len, max);
-        mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
-    if !mail::copy_out(space, &bytes, buf) {
+    if !mail::copy_out(space, &reading.bytes, buf) {
         // 收方那段写不进去（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来。
         mail::hole::note_back(len, max);
-        mail::hole::back(meta);
         return Err(MailFail::Denied);
     }
-    mail::hole::taken(meta);
-    Ok((len, from))
+    reading.finish();
+    Ok(PullOutcome::Received { len, sender: from })
 }
 
 /// 只看那只手：`(长度, 发送者, 队里排着几只)`。不动状态、不唤醒、不复制。
@@ -169,12 +166,12 @@ fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// 等某一方向就绪（`Pull` 有可取之事／`Push` 孔空着），`millis` 是上限族。
+/// 等待 Pull 可读、Push 有空间或 Empty 已清空；唤醒后调用方仍须复核。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
     token: PieToken,
-    dir: HoleDir,
+    dir: MailCondition,
     millis: Wait,
 ) -> Outcome {
     enum Ready {
@@ -184,14 +181,15 @@ fn wait_dir(
         Page(Arc<mail::pole::PoleMeta>),
     }
     let need = match dir {
-        HoleDir::Pull => Need::Fetch,
-        HoleDir::Push => Need::Store,
+        MailCondition::Pull => Need::Fetch,
+        MailCondition::Push => Need::Store,
+        MailCondition::Empty => Need::Store,
     };
     let resolved = with_pie(token, need, |pie| {
         if let Some(hole) = pie.hole() {
             return Ok(Ready::Hole(hole));
         }
-        if dir == HoleDir::Pull {
+        if dir == MailCondition::Pull {
             if let Some(nole) = pie.nole() {
                 return Ok(Ready::Bell(nole));
             }

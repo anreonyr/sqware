@@ -49,7 +49,7 @@ fn main() -> Report<'static> {
         if i > 0 {
             client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
         }
-        let entry = pie::unseal_hole(env::Mark::of("probe-swatch-after")).unwrap();
+        let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
         let id = client
             .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
             .unwrap();

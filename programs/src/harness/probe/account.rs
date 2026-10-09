@@ -275,7 +275,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let peer_token = Arc::new(AtomicUsize::new(0));
     let token = peer_token.clone();
     let peer = execution::unit::task::spawn(move || {
-        let terminal = env::pie::unseal_hole(terminal_api::marks::ENTRY).unwrap();
+        let terminal = env::pie::unseal(env::UnsealArgs::hole(terminal_api::marks::ENTRY)).unwrap();
         let delivered = resource::port::ship(
             terminal,
             root,
@@ -697,7 +697,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         tree.unmount(terminal_mounts.1).unwrap();
         tree.unmount(terminal_mounts.0).unwrap();
     }
-    let _ = env::pie::release(terminal);
+    let _ = env::pie::release(terminal, env::ReleaseMode::Revoke);
     assembly
         .resources
         .write::<Control>()

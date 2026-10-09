@@ -21,7 +21,7 @@ pub(crate) fn supply_to(
         let token = match establish::find(owner, mark) {
             Ok(token) => token,
             Err(establish::DiscoveryFail::Missing) => {
-                pie::unseal_hole(mark).map_err(|_| "rule verification channel")?
+                pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "rule verification channel")?
             }
             Err(establish::DiscoveryFail::Ambiguous) => {
                 return Err("rule verification channel ambiguous");
@@ -73,7 +73,7 @@ pub fn timeout() {
     use system_client::identity::Face;
 
     let owner = env::unit::self_id();
-    let entry = pie::unseal_hole(Grant::Resolve.mark()).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(Grant::Resolve.mark())).unwrap();
     let timed_out = Arc::new(AtomicBool::new(false));
     let release_reader = timed_out.clone();
     let raw_owner = owner.get();
@@ -100,7 +100,7 @@ pub fn timeout() {
     assert_eq!(result, Err(CallError::Transport));
     reader.join();
     let _ = pie::seal(entry);
-    let _ = pie::release(entry);
+    let _ = pie::release(entry, env::ReleaseMode::Revoke);
     programs::debug::put("identity-timeout: queued request decoded after client timeout");
 }
 
@@ -513,7 +513,7 @@ fn ready_driver(
             )
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
-            if matches!(inspect(entry), Ok((_, owner, _)) if owner == task) {
+            if matches!(inspect(entry), Ok(info) if info.alive && info.owner == task) {
                 let binding = query.resolve(task, Wait::AtMost(1000)).unwrap().unwrap();
                 assert!(
                     !binding.current.coalitions.is_empty(),

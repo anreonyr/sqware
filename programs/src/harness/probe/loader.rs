@@ -166,7 +166,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         env::unit::build(env::ProgramKind::User).is_err(),
         "loader: caller received Build authority"
     );
-    let image = env::pie::unseal_pole(8192, true).unwrap();
+    let image = env::pie::unseal(env::UnsealArgs::Pole { size: 8192, shared: true }).unwrap();
     let bytes = image_bytes();
     let (at, size) = ::resource::raw::open(image).unwrap();
     // SAFETY: the locally owned writable Pole covers the complete test ELF.
@@ -275,11 +275,11 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         "loader: service did not release the remote image loan"
     );
     let _ = env::pie::seal(back);
-    let _ = env::pie::release(back);
+    let _ = env::pie::release(back, env::ReleaseMode::Revoke);
     // Leave the result unclaimed while keeping its requester alive.
     until(|| state.instance(said.task).state(WAIT) == Ok(system_api::control::State::Dead));
     env::pie::shut(image).unwrap();
-    env::pie::release(image).unwrap();
+    env::pie::release(image, env::ReleaseMode::Revoke).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
 }
 

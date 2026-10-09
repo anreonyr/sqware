@@ -165,3 +165,28 @@ fn cleanup_keeps_retrying_busy_and_yields_before_completion() {
         assert_eq!(attempts, 13);
     }
 }
+#[test]
+fn wait_budget_includes_the_first_kernel_wait() {
+    crate::test_backend::reset();
+    let token = crate::test_backend::token();
+    assert!(!crate::raw::Hole::from_raw(token).wait(crate::MailCondition::Pull, crate::Wait::AtMost(25)).unwrap());
+    assert_eq!(crate::test_backend::now(), 25_000_000);
+    assert_eq!(crate::test_backend::events(), [crate::test_backend::Event::Wait(token, crate::MailCondition::Pull, crate::Wait::AtMost(25))]);
+}
+
+#[test]
+fn receive_policy_keeps_or_discards_only_the_oversized_head() {
+    crate::test_backend::reset();
+    let token = crate::test_backend::token();
+    let sender = crate::TaskId::new(7);
+    crate::test_backend::queue_message(&[1; 5], sender);
+    crate::test_backend::queue_message(&[2; 2], sender);
+    let hole = crate::raw::Hole::from_raw(token);
+    let mut buf = [0; 2];
+    assert!(hole.pull(&mut buf, crate::Wait::POLL).is_err_and(|e| e.source == crate::MailFail::Denied));
+    assert_eq!(hole.pull_with(&mut buf, crate::Wait::POLL, crate::Oversize::Discard).unwrap(),
+        crate::PullOutcome::Discarded { len: 5, sender });
+    assert_eq!(hole.pull_with(&mut buf, crate::Wait::POLL, crate::Oversize::Discard).unwrap(),
+        crate::PullOutcome::Received { len: 2, sender });
+    assert_eq!(buf, [2; 2]);
+}

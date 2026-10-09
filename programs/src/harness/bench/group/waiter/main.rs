@@ -19,7 +19,7 @@ extern crate programs;
 use env::Wait;
 use programs::Reason;
 
-use env::{HoleDir, Mark, PieToken};
+use env::{MailCondition, Mark, PieToken};
 use programs::debug;
 use ::resource::pile::Pile;
 use ::resource::raw::{Hole, pies};
@@ -35,14 +35,14 @@ fn main() -> Reason {
     let report = Hole::from_raw(report);
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
-    if pile.attach(member.token(), HoleDir::Pull).is_err() {
+    if pile.attach(member.token(), MailCondition::Pull).is_err() {
         return bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。
     if report.push(b"H", Wait::Forever).is_err() {
         return bail("waiter: report");
     }
-    if !matches!(report.wait(HoleDir::Push, Wait::Forever), Ok(true)) {
+    if !matches!(report.wait(MailCondition::Empty, Wait::Forever), Ok(true)) {
         return bail("waiter: report");
     }
     debug!("waiter: hung");
@@ -60,7 +60,7 @@ fn main() -> Reason {
                 // **递出 ＋ 等它被取走**：字节是这一帧的局部，不等它下线就返回，台主可能复制到死栈。
                 let word = [b'T'];
                 let _ = report.push(&word, Wait::Forever);
-                let _ = report.wait(HoleDir::Push, Wait::Forever);
+                let _ = report.wait(MailCondition::Empty, Wait::Forever);
                 break;
             }
             Err(e) if e.source.is_busy() => continue,
@@ -68,7 +68,7 @@ fn main() -> Reason {
                 debug!("waiter: err={}", e.source.code());
                 let word = [b'E'];
                 let _ = report.push(&word, Wait::Forever);
-                let _ = report.wait(HoleDir::Push, Wait::Forever);
+                let _ = report.wait(MailCondition::Empty, Wait::Forever);
                 break;
             }
         }

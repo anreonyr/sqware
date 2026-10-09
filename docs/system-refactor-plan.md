@@ -413,7 +413,7 @@ Capability、Loan、Reply 和 RPC 服务端回信能力的清理使用 resource 
 
 本轮验证：318 项宿主测试通过（独立套件 274、内核转授及 ABI 23、IdentityBook 13、mold 8；原有 6 个 ignored 文档示例不计入）。真实内核健康面 33 项通过；kernel／programs 全目标检查及 diff 检查通过。QEMU release：accept 14.29 秒、system-fault 21.46 秒、product 完整登录交互 6.31 秒，交互驱动结果为 ok。每个整机场景各运行一次，本轮不据此声称消除了所有时序抖动。
 
-### 内核引用表改用 trait 对象
+### 内核引用表改用 trait 对象（0c53dff5）
 
 保留 `Pie<Hole>`、`Pie<Pole>`、`Pie<Nole>`、`Pie<Tole>` 的字段和资源实体，将 `AnyPie` 枚举改为 `Box<dyn PieOps>`。公共引用方法在 `impl<T> PieOps for Pie<T>` 中实现一次；父引用、lord、独占 heir 和权限修改不再逐一转发四个枚举分支。资源 trait Mail 提供类型、所有者、存活、关闭、派生引用及安全的类型访问；类型不符仍由调用返回原有 Denied。
 
@@ -424,3 +424,29 @@ Capability、Loan、Reply 和 RPC 服务端回信能力的清理使用 resource 
 本轮保持 Pie、Mail、Tole 的现有调用编号、参数、返回值及错误码；统一 Unseal、调整等待条件等 API 设计尚未实施。每份引用增加一次 Box 分配并使用动态分派，本轮没有据整机场景耗时宣称性能改善。
 
 本轮验证：内核转授及 ABI 宿主测试 28 项通过，其中新增 5 项覆盖快照零分配、四种资源身份与类型访问、引用权限和父关系隔离、内存快照观察缩权／撤销、独占授予 Box 分配失败回滚。真实内核健康面 33 项通过，kernel／programs 全目标检查及 diff 检查通过。QEMU release：accept 11.71 秒、system-fault 17.95 秒、product 完整登录交互 6.75 秒，交互驱动结果为 ok；每个整机场景各运行一次。此前其他宿主套件的结果见上一轮记录，本轮没有重新运行并重复计入。
+
+### Pie、Mail、Tole 调用统一
+
+落实已确认的调用设计；按用户要求删除旧入口，不保留兼容调用。Pie、Mail、Tole 的 class 仍为 7、5、9，操作号分别显式指定为 0–10、0–5、0–4。内核与程序 ELF 一起更新，其他调用域的 ABI 不变。
+
+| 调用域 | 当前入口 |
+| --- | --- |
+| Pie（11） | Unseal、Open、Shut、Seal、Accord、Narrow、Revoke、Release、Inspect、Collect、Same |
+| Mail（6） | Push、Pull、Wait、Hush、Ring、Peek |
+| Tole（5） | Attach、Detach、Await、Subscribe、Unsubscribe |
+
+`Pie::Unseal(UnsealArgs)` 统一创建 Hole、Pole、Nole、Tole；四种资源保留自己的参数。Hole 的 `HoleLimits { max_len, max_messages, max_bytes }` 限定单条长度、包含发送预留的消息数和总字节。默认保留四个消息位置；长度与总字节默认不另设应用限制。单条超限返回 Denied，队列或字节预算暂时不足返回 Busy。预留先计入字节，失败、取消和接收归还预算，复制及分配在队列锁外进行。Nole、Tole 创建使用可失败分配，返回 OoM；Pole 创建失败仍撤回自动映射。
+
+`Release(token, ReleaseMode::Revoke)` 撤回引用及其后代；`Keep` 保留原 Forget 的限制和父子迁移语义，只移除借入的非独占引用，后代仍受上游撤销控制。用户态 RAII 的默认清理仍选择 Revoke，并在 Busy 时让出处理器继续重试。
+
+`Inspect` 返回 `PieInfo { token, kind, permission, owner, vestor, mark, alive }`。封印后仍可查询原所有者和完整 64 位 mark；表里没有引用才返回 Denied。跨 ABI 使用七个完整机器字，不依赖 Rust 结构体填充。resource::raw::inspect 返回类型化记录；Alive、Reserve 只保留为用户态便捷函数，授权判据显式检查 alive。枚举根引用直接返回无授予者，避免逐个重新查表；借入引用继续复核实际父关系。
+
+`Collect(after, buf, capacity)` 按递增 token 返回批次；游标是已返回的最后一个 token，不使用易变化的表下标。内核每批最多写 16 条，使用栈上快照，释放引用表锁后复制给调用者。resource::raw::pies 每次读取八条。删除先前表项不会使后续位置前移；并发增加和撤销仍以实际调用时状态为准，不保证整张表的冻结快照。
+
+Mail 与 Tole 共用 `MailCondition::Pull / Push / Empty`：Pull 表示可读，Push 表示队列有消息位置及字节空间，Empty 表示没有消息、发送预留或待应通知。Pull 需要 FETCH，Push／Empty 需要 STORE；Push 只是空间提示，不能保证某个长度的消息一定放得下。原先等待发送完成的调用点改用 Empty，发送重试等待 Push。Nole／Pole 只支持 Pull，Tole 不能嵌套。Tole Attach／Detach 按所选条件检查成员权限，Await 只返回当前持有且权限相符、未移交的成员引用。状态订阅仍要求复核实际状态，不承诺逐条变化历史。
+
+`Pull(..., Oversize::Keep / Discard)` 一次决定接收或拒绝超长队头；成功返回 `PullOutcome::Received / Discarded { len, sender }`。Discard 只用于确实超长的消息：非法缓冲区、类型或权限失败均保留消息。RPC 收包直接使用 Discard 策略，不再先 Pull 再调用另一个 Discard。读取守卫一次取得队头与共享载荷，失败自动恢复可读，完成后才移除。共享载荷允许读取期间资源关闭，不使字节引用失效。原来的用户态 wait 把首次阻塞排除在期限之外，这轮改为首次调用前计算期限，回归验证不会消耗两份等待预算。
+
+本轮没有新增内核全局变量，原有任务 gate、version、heirs、跨任务锁顺序和 PieSnapshot 机制保留。查询及等待都不能替代后续操作的权限检查。
+
+验证：330 项宿主测试通过（33 个独立套件 276、内核转授及 ABI 30、IdentityBook 13、mold 11；mold 原有 6 个 ignored 文档示例不计入）。真实 QEMU 内核健康面 35 项通过；kernel／programs 全目标检查和 diff 检查通过。accept 新增真实调用探针，覆盖四类创建、消息／字节限制、三种等待与成员权限、无效缓冲区及权限失败不丢消息、超长拒收后正常帧继续、封印后查询、批次之间删除前项仍不跳项。最终 release：accept 11.91 秒、system-fault 22.04 秒、product 完整登录交互 6.53 秒，驱动结果为 ok。最终版本的三个整机场景各运行一次，未进行专项性能比较。

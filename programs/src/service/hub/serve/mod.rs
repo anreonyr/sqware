@@ -10,7 +10,7 @@ use ::resource::pile::Pile;
 use env::PAGE_SIZE;
 use env::unit;
 use env::{
-    Access, Entry as ResourceEntry, HoleDir, MailFail, Name, PieKind, PieToken, Policy, TaskId,
+    Access, Entry as ResourceEntry, MailCondition, MailFail, Name, PieKind, PieToken, Policy, TaskId,
     Wait,
 };
 use hub_api::{self as hub, Deed, Enroll, Grant, Said, Window, Wire};
@@ -189,7 +189,7 @@ pub fn serve() -> Result<(), Start> {
     //     三枚"推出来，认台靠**这一枚孔自己**）。
     let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
     for token in &doors {
-        pile.attach(*token, HoleDir::Pull)
+        pile.attach(*token, MailCondition::Pull)
             .map_err(|_| Start::Desk(E_HUB))?;
     }
     let mut buf: Vec<u8> = Vec::new();
@@ -256,7 +256,7 @@ fn turn(
         // 构造上到不了（`of_wire` 那一句已经把面与码对齐过）。
         _ => send_status(mine, hub::BAD, back),
     }
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
 }
 
 pub(super) fn put_said(back: PieToken, status: u8) {
@@ -350,7 +350,7 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
-        let door = pie::unseal_hole(Grant::Claim.mark()).map_err(|_| Start::Load(E_HUB))?;
+        let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark())).map_err(|_| Start::Load(E_HUB))?;
         ledger
             .enroll(Entry {
                 name,

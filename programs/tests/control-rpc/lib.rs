@@ -59,8 +59,8 @@ pub mod raw {
             system_api::control::publication::ENTRY,
         ))
     }
-    pub fn inspect(_: PieToken) -> Result<(TaskId, TaskId, Mark), ()> {
-        Ok((TaskId::new(1), TaskId::new(1), Mark::NONE))
+    pub fn inspect(token: PieToken) -> Result<crate::abi_env::PieInfo, ()> {
+        Ok(crate::abi_env::PieInfo { token, kind: crate::abi_env::PieKind::Hole, permission: crate::abi_env::Permission::FETCH, owner: TaskId::new(1), vestor: TaskId::new(1), mark: Mark::NONE, alive: true })
     }
 }
 

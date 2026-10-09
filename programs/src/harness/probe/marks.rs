@@ -15,7 +15,7 @@ pub fn acceptance() {
     let owner = unit::self_id();
     let before = table_size();
 
-    let source = pie::unseal_hole(SOURCE).unwrap();
+    let source = pie::unseal(env::UnsealArgs::hole(SOURCE)).unwrap();
     pie::narrow(source, Permission::FETCH | Permission::VEST).unwrap();
     assert_eq!(
         reserve(source).unwrap(),
@@ -47,8 +47,8 @@ pub fn acceptance() {
     let inherited = pie::accord(source, owner, Permission::FETCH, Mark::NONE).unwrap();
     assert_eq!(reserve(inherited).unwrap(), (owner, owner, SOURCE));
 
-    let first = pie::unseal_hole(DUPLICATE).unwrap();
-    let second = pie::unseal_hole(DUPLICATE).unwrap();
+    let first = pie::unseal(env::UnsealArgs::hole(DUPLICATE)).unwrap();
+    let second = pie::unseal(env::UnsealArgs::hole(DUPLICATE)).unwrap();
     assert_ne!(first, second);
     assert_eq!(
         reserve(first).unwrap(),
@@ -67,10 +67,10 @@ pub fn acceptance() {
         ipc::session::establish::claim(owner, DUPLICATE, Wait::AtMost(1000)),
         Err(ipc::session::establish::DiscoveryFail::Ambiguous)
     );
-    pie::release(second).unwrap();
+    pie::release(second, env::ReleaseMode::Revoke).unwrap();
     assert_eq!(ipc::session::establish::find(owner, DUPLICATE), Ok(first));
 
-    let unmarked = pie::unseal_hole(Mark::NONE).unwrap();
+    let unmarked = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
     assert_eq!(
         reserve(unmarked).unwrap(),
         (env::TaskId::new(0), owner, Mark::NONE)
@@ -91,7 +91,7 @@ pub fn acceptance() {
     pie::revoke(owner, inherited).unwrap();
     for token in [first, unmarked, source] {
         pie::seal(token).unwrap();
-        pie::release(token).unwrap();
+        pie::release(token, env::ReleaseMode::Revoke).unwrap();
         assert!(reserve(token).is_err());
     }
     assert_eq!(table_size(), before, "mark probe leaked capability entries");

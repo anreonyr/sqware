@@ -324,7 +324,7 @@ fn body(
     let bytes = burst.to_le_bytes();
     let door = Hole::from_raw(at_peer);
     door.push(&bytes, Wait::Forever).map_err(|_| "post")?;
-    door.wait(env::HoleDir::Push, Wait::Forever)
+    door.wait(env::MailCondition::Empty, Wait::Forever)
         .map_err(|_| "post")?;
 
     // 诊断（默认关）：push 之后**先让出一拍**再空转。判据是 `doom: nudged` 会不会从个位数

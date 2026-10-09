@@ -4,7 +4,7 @@ extern crate env as abi;
 extern crate self as env;
 extern crate self as resource;
 pub use abi::wire;
-pub use abi::{Access, Frame, Mark, PieToken, Policy, TaskId, Wait};
+pub use abi::{UnsealArgs, Access, Frame, Mark, PieToken, Policy, TaskId, Wait};
 #[path = "../../src/unit/image.rs"]
 mod image;
 #[path = "../../src/unit/supply.rs"]
@@ -17,7 +17,11 @@ struct Effects {
 }
 thread_local! { static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default()); }
 pub mod pie {
-    pub fn unseal_hole(_: crate::Mark) -> Result<crate::PieToken, ()> {
+    pub fn unseal(args: crate::UnsealArgs) -> Result<crate::PieToken, ()> {
+        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), _ => unreachable!() }
+    }
+
+    fn hole_token(_: crate::Mark) -> Result<crate::PieToken, ()> {
         Ok(crate::PieToken::mint(1))
     }
 }

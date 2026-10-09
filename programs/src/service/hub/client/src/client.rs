@@ -6,7 +6,7 @@
 //! **传输失败折进 Fail::Bad**：借不出回信孔 / 推不出去 / 超时 / 答话形状不对——四件事对
 
 use alloc::string::String;
-use env::{Access, Policy, HoleDir, PieKind, PieToken, TaskId, Wait};
+use env::{Access, Policy, MailCondition, PieKind, PieToken, TaskId, Wait};
 use ::resource::port;
 
 use ipc::hand::{Receiver, RecvFail};
@@ -113,7 +113,7 @@ impl Face {
         let Some(n) = with(seed).store(ask.as_mut()) else {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             report("encode");
             return Err(Fail::Bad);
         };
@@ -121,7 +121,7 @@ impl Face {
         if door.push(&ask.as_ref()[..n], Wait::Forever).is_err() {
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             report("push");
             return Err(Fail::Dead);
         }
@@ -141,10 +141,10 @@ impl Face {
                 Err(Fail::Bad)
             }
         };
-        let _ = door.wait(HoleDir::Push, Wait::Forever);
+        let _ = door.wait(MailCondition::Empty, Wait::Forever);
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         got
     }
 }

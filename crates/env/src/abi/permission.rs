@@ -43,7 +43,7 @@
 //! `resource::port` 里 `pub use env::{Access, Policy};` 把名字照旧转出去（调用点不动）。
 //!
 //! `impl Wire for Permission` 仍住 `wire/mod.rs`（与另两个"类型在外、impl 在此"的
-//! `HoleDir` / `ProgramKind` 并排）：那是本仓"**非法位校验只有一处**"的落点
+//! `MailCondition` / `ProgramKind` 并排）：那是本仓"**非法位校验只有一处**"的落点
 //! （`from_bits(...).ok_or(...)`，替代 `from_bits_truncate` 的静默截断）。
 
 use bitflags::bitflags;

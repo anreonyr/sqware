@@ -56,7 +56,7 @@ fn main() -> Report<'static> {
         root.open("idt".into(), Wait::AtMost(MS)),
         Err(Fail::Denied)
     ));
-    let source = pie::unseal_hole(env::Mark::of("raw-generic")).unwrap();
+    let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("raw-generic"))).unwrap();
     assert!(matches!(
         root.bind(
             "uit".into(),
@@ -152,7 +152,7 @@ fn independent_sessions() {
 
 /// A valid transferred Hole is not a Watch endpoint unless its declared role matches.
 fn reject_wrong_watch_role(session: &Session) {
-    let local = pie::unseal_hole(env::Mark::NONE).unwrap();
+    let local = pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).unwrap();
     let borrowed =
         ::resource::port::ship(local, session.host(), env::Access::STORE, env::Policy::NONE)
             .unwrap();
@@ -170,7 +170,7 @@ fn reject_wrong_watch_role(session: &Session) {
         ::resource::raw::alive(local),
         "refusing Watch must preserve the caller's source"
     );
-    pie::release(local).unwrap();
+    pie::release(local, env::ReleaseMode::Revoke).unwrap();
     assert!(
         session
             .call::<system_api::operator::Call>(

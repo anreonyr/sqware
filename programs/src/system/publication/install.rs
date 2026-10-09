@@ -26,7 +26,7 @@ impl Publications {
         if r.address.target.is_some() {
             let entry = r.source.entry;
             if pies().any(|p| p.token == entry) {
-                pie::forget(entry).map_err(|_| "publication reference cleanup")?;
+                pie::release(entry, env::ReleaseMode::Keep).map_err(|_| "publication reference cleanup")?;
             }
         }
         self.records.remove(at);

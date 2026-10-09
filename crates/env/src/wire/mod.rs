@@ -18,7 +18,7 @@
 //! 未来可直接复用同一 codec（derive 不写死 envcall 路径）。
 //!
 //! **有三个 impl 的"类型在外"**：[`Permission`](crate::Permission) 在
-//! [`permission`](crate::permission)、[`HoleDir`](crate::HoleDir) 与
+//! [`permission`](crate::permission)、[`MailCondition`](crate::MailCondition) 与
 //! [`ProgramKind`](crate::ProgramKind) 在 [`call`](crate::abi::call)。这是**刻意**的：本仓的
 //! 口径是"非法位校验**只有一处**"（上面那一句），故三个 impl 并排住这里，而不是各回各家。
 
@@ -103,25 +103,6 @@ impl Wire for bool {
         match v {
             0 => Ok(false),
             1 => Ok(true),
-            _ => Err(Decode::Invalid),
-        }
-    }
-}
-
-impl Wire for crate::abi::call::HoleDir {
-    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
-        s[*i] = match self {
-            crate::abi::call::HoleDir::Pull => 0,
-            crate::abi::call::HoleDir::Push => 1,
-        };
-        *i += 1;
-    }
-    fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, Decode> {
-        let v = *s.get(*i).ok_or(Decode::Overflow)?;
-        *i += 1;
-        match v {
-            0 => Ok(crate::abi::call::HoleDir::Pull),
-            1 => Ok(crate::abi::call::HoleDir::Push),
             _ => Err(Decode::Invalid),
         }
     }

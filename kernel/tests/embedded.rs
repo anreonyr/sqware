@@ -241,6 +241,18 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn hole_limits() {
+        kernel::health::hole::limits();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn hole_reading_guard() {
+        kernel::health::hole::reading_guard();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn hole_reservations() {
         kernel::health::hole::reservations();
     }

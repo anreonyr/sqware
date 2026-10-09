@@ -1,9 +1,9 @@
 use ::resource::pile::{Pile, Sub};
 use alloc::vec::Vec;
-use env::{HoleDir, PieToken};
+use env::{MailCondition, PieToken};
 pub(crate) struct Waiting {
     pile: Pile,
-    members: Vec<(PieToken, HoleDir)>,
+    members: Vec<(PieToken, MailCondition)>,
     subs: Vec<Sub>,
 }
 impl Waiting {
@@ -15,7 +15,7 @@ impl Waiting {
         })
     }
     pub(crate) fn detach(&self, token: PieToken) {
-        let _ = self.pile.detach(token, HoleDir::Pull);
+        let _ = self.pile.detach(token, MailCondition::Pull);
     }
     pub(super) fn await_(&self, wait: env::Wait) -> Result<(), ()> {
         self.pile.await_(wait).map(|_| ()).map_err(|_| ())
@@ -34,8 +34,9 @@ impl Waiting {
         while at < self.members.len() {
             let (token, direction) = self.members[at];
             let wanted = match direction {
-                HoleDir::Pull => reads,
-                HoleDir::Push => writes,
+                MailCondition::Pull => reads,
+                MailCondition::Push => return false,
+                MailCondition::Empty => writes,
             };
             if wanted.contains(&token) {
                 at += 1;
@@ -44,7 +45,7 @@ impl Waiting {
                 let _ = self.pile.detach(token, direction);
             }
         }
-        for (tokens, direction) in [(reads, HoleDir::Pull), (writes, HoleDir::Push)] {
+        for (tokens, direction) in [(reads, MailCondition::Pull), (writes, MailCondition::Empty)] {
             for &token in tokens {
                 if self.members.contains(&(token, direction)) {
                     continue;

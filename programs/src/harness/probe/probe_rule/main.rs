@@ -168,7 +168,7 @@ fn main() -> Report<'static> {
     let mine_sub = look(&root, &rule_road, MINE, Wait::AtMost(MS));
     let raw = at.bind(
         MINE.to_string(),
-        pie::unseal_hole(env::Mark::of("rule-entry")).unwrap(),
+        pie::unseal(env::UnsealArgs::hole(env::Mark::of("rule-entry"))).unwrap(),
         Permit::Bound,
         Mine::Yes,
         Wait::AtMost(MS),
@@ -290,7 +290,7 @@ fn target(name: &str) -> publication::Target {
     }
 }
 fn plate(name: &str, permit: Permit) -> EntryId {
-    let entry = pie::unseal_hole(env::Mark::of("rule-entry")).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("rule-entry"))).unwrap();
     system_client::control::publication::Client::injected()
         .unwrap()
         .publish(target(name), entry, permit, Wait::AtMost(MS))

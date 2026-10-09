@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{HoleDir, Mark, PieFail, PieToken, TaskId, ToleFail};
+use env::{MailCondition, Mark, PieFail, PieToken, TaskId, ToleFail};
 
 use crate::work::mail::tole::Mate;
 use crate::work::mail::{hole, nole, tole};
@@ -78,14 +78,14 @@ pub fn members() {
     let hole = hole::meta(TaskId::new(0));
     let bell = nole::NoleMeta::new(TaskId::new(0));
 
-    let hole_mate = Mate::Hole(hole.id(), HoleDir::Pull);
+    let hole_mate = Mate::Hole(hole.id(), MailCondition::Pull);
     let bell_mate = Mate::Nole(bell.id());
 
     crate::expect!(
         hole_mate.key()
             == WakeKey::Hole {
                 hole: hole.id().0,
-                dir: HoleDir::Pull
+                dir: MailCondition::Pull
             },
         "孔的格子必须投影成 Hole 键"
     );
@@ -122,7 +122,7 @@ pub fn members() {
 
 pub fn fanout() {
     let hole = hole::meta(TaskId::new(0));
-    let mate = Mate::Hole(hole.id(), HoleDir::Pull);
+    let mate = Mate::Hole(hole.id(), MailCondition::Pull);
 
     let mut groups = Vec::new();
     for i in 0..FWD_MAX {

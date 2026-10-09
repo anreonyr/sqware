@@ -107,8 +107,9 @@ pub(super) fn connections(
     wanted.writes.try_reserve(count).map_err(|_| Fail::Room)?;
     for (token, direction) in tree.connection_interests() {
         match direction {
-            env::HoleDir::Pull => wanted.tokens.push(token),
-            env::HoleDir::Push => wanted.writes.push(token),
+            env::MailCondition::Pull => wanted.tokens.push(token),
+            env::MailCondition::Push => return Err(Fail::Room),
+            env::MailCondition::Empty => wanted.writes.push(token),
         }
     }
     bound.0 = match (bound.0, tree.connection_budget()) {

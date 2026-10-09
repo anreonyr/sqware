@@ -187,7 +187,7 @@ impl Operator {
         // `find=Err(Dead)`，四枚砖全一样）。`Alive` 那一格答的正是这件事实。
         if !alive(pie) {
             let _ = self.unlink(id);
-            let _ = pie::release(pie);
+            let _ = pie::release(pie, env::ReleaseMode::Revoke);
             return Err(Fail::Dead);
         }
         ship(pie);
@@ -213,7 +213,7 @@ impl Operator {
 
     /// **剪**：把那一号那一格剪掉
     /// 那一格得存在（否则 Fail::Unknown）；是 `Pane` 的话**必须空着**（否则 Fail::NonEmpty）
-    /// 剪掉一枚 `Tile` 时放下本地引用（pie::forget），保留已交付的副本——它是资源实体的一份引用，不放下就漏水
+    /// 剪掉一枚 `Tile` 时放下本地引用（pie::release(_, ReleaseMode::Keep)），保留已交付的副本——它是资源实体的一份引用，不放下就漏水
     /// **剪掉的那一槽留成墓碑**（`None`），不 `remove`：号是下标，一移后面全错位。故一枚剪过的
     /// 号从此答 Fail::Unknown，而**它不会被重新铸出来**（水位只增）
     /// 答**真动了什么**：剪了"一枚空的 `Pane`"与"一枚 `Tile`"都算真动了树（前者是一格没了，
@@ -232,7 +232,7 @@ impl Operator {
         let road = self.road_to(id);
         if let Some(pie) = dropped {
             if pies().any(|p| p.token == pie) {
-                pie::forget(pie).map_err(|_| Fail::Unknown)?;
+                pie::release(pie, env::ReleaseMode::Keep).map_err(|_| Fail::Unknown)?;
             }
         }
         let _ = self.unlink(id);
@@ -348,7 +348,7 @@ impl Operator {
                 };
                 if let Some(old) = old {
                     if pies().any(|p| p.token == old) {
-                        pie::forget(old).map_err(|_| Fail::Unknown)?;
+                        pie::release(old, env::ReleaseMode::Keep).map_err(|_| Fail::Unknown)?;
                     }
                 }
                 slot.node = node;

@@ -44,9 +44,9 @@ struct Owned {
 impl Drop for Owned {
     fn drop(&mut self) {
         if self.talk != PieToken::NONE {
-            let _ = pie::release(self.talk);
+            let _ = pie::release(self.talk, env::ReleaseMode::Revoke);
         }
-        let _ = pie::release(self.rx);
+        let _ = pie::release(self.rx, env::ReleaseMode::Revoke);
     }
 }
 

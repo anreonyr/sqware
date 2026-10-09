@@ -64,7 +64,7 @@ impl Hub {
             died,
             ms,
         )?;
-        let sensor = pie::unseal_hole(hub::ALIVE_MARK).map_err(|_| Fail::at(died, "hub"))?;
+        let sensor = pie::unseal(env::UnsealArgs::hole(hub::ALIVE_MARK)).map_err(|_| Fail::at(died, "hub"))?;
         Ok(Hub { bond, list, sensor })
     }
 

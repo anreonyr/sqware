@@ -2,7 +2,7 @@
 
 use super::desk;
 use crate::dev::rtc;
-use env::{HoleDir, Wait};
+use env::{MailCondition, Wait};
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use programs::driver::shared::device::Device;
@@ -31,9 +31,9 @@ pub fn run(
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
     let entry_hole = Hole::from_raw(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
-    if pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
+    if pile.attach(entry_hole.token(), MailCondition::Pull).is_err()
         || pile
-            .attach(lane, HoleDir::Pull)
+            .attach(lane, MailCondition::Pull)
             .is_err()
     {
         return Err(Fail::at(E_RTC, "desk"));
@@ -71,7 +71,7 @@ pub fn run(
                         Err(_) => debug!("rtc: notify failed"),
                     }
                 }
-                let _ = pie::release(back);
+                let _ = pie::release(back, env::ReleaseMode::Revoke);
             }
             let _ = held.exhaust();
         }

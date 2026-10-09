@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 extern crate self as system_client;
-pub use abi::{HoleDir, Mark, Permission, PieToken, TaskId, Wait};
+pub use abi::{UnsealArgs, ReleaseMode, MailCondition, Mark, Permission, PieToken, TaskId, Wait};
 pub mod wire {
     pub use abi::wire::*;
 }
@@ -44,8 +44,12 @@ pub mod unit {
     }
 }
 pub mod pie {
+    pub fn unseal(args: crate::UnsealArgs) -> Result<crate::PieToken, ()> {
+        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), crate::UnsealArgs::Tole { .. } => Ok(crate::token(1)), _ => unreachable!() }
+    }
+
     use super::*;
-    pub fn unseal_hole(_: Mark) -> Result<PieToken, ()> {
+    fn hole_token(_: Mark) -> Result<PieToken, ()> {
         NATIVE.with(|n| {
             let mut n = n.borrow_mut();
             n.next += 1;
@@ -53,20 +57,15 @@ pub mod pie {
         })
     }
     pub fn accord(source: PieToken, _: TaskId, _: Permission, _: Mark) -> Result<PieToken, ()> {
-        let remote = unseal_hole(Mark::NONE)?;
+        let remote = hole_token(Mark::NONE)?;
         NATIVE.with(|n| n.borrow_mut().loans.insert(remote.get(), source.get()));
         Ok(remote)
     }
-    pub fn release(_: PieToken) -> Result<(), ()> {
+    pub fn release(_: PieToken, _mode: crate::ReleaseMode) -> Result<(), ()> {
         Ok(())
     }
     pub fn revoke(_: TaskId, _: PieToken) -> Result<(), ()> {
         Ok(())
-    }
-}
-pub mod tole {
-    pub fn unseal(_: bool) -> Result<super::PieToken, ()> {
-        Ok(super::token(1))
     }
 }
 pub mod session {
@@ -170,7 +169,7 @@ pub mod raw {
                 Ok((reply.len(), TaskId::new(31)))
             })
         }
-        pub fn wait(&self, _: HoleDir, _: Wait) -> Result<bool, Error> {
+        pub fn wait(&self, _: MailCondition, _: Wait) -> Result<bool, Error> {
             Ok(true)
         }
     }
@@ -182,7 +181,7 @@ pub mod pile {
         pub fn unseal(_: bool) -> Result<Self, ()> {
             Ok(Self)
         }
-        pub fn attach(&self, t: PieToken, _: HoleDir) -> Result<(), ()> {
+        pub fn attach(&self, t: PieToken, _: MailCondition) -> Result<(), ()> {
             NATIVE.with(|n| n.borrow().live.contains(&t.get()).then_some(()).ok_or(()))
         }
         pub fn await_(&self, _: Wait) -> Result<(), ()> {

@@ -24,7 +24,7 @@ impl Client {
         let host = match reserve(entry) {
             Ok((_, host, mark)) if mark == ENTRY => host,
             _ => {
-                let _ = pie::release(entry);
+                let _ = pie::release(entry, env::ReleaseMode::Revoke);
                 return Err(Fail::Bad);
             }
         };
@@ -57,6 +57,6 @@ impl Client {
 }
 impl Drop for Client {
     fn drop(&mut self) {
-        let _ = pie::release(self.entry);
+        let _ = pie::release(self.entry, env::ReleaseMode::Revoke);
     }
 }

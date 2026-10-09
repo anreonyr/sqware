@@ -81,8 +81,8 @@ pub fn abi_and_privilege() {
     assert!(user.raw(3usize << 32, [0; 6]) < 0);
     assert!(user.raw((2usize << 32) | 99, [0; 6]) < 0);
     assert!(user.raw((1usize << 32) | 5, [2, 0, 0, 0, 0, 0]) < 0);
-    assert!(user.raw((5usize << 32) | 3, [0, 2, 0, 0, 0, 0]) < 0);
-    assert!(user.raw((7usize << 32) | 6, [0, 0, usize::MAX, 0, 0, 0]) < 0);
+    assert!(user.raw((5usize << 32) | 2, [0, 3, 0, 0, 0, 0]) < 0);
+    assert!(user.raw((7usize << 32) | 4, [0, 0, usize::MAX, 0, 0, 0]) < 0);
     assert!(matches!(
         bool::unpack(&[2, 0, 0, 0, 0, 0], &mut 0),
         Err(Decode::Invalid)

@@ -31,7 +31,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
     match host.ask(ask, back, now) {
         Answer::Time(now) => {
             ship_time(back, now);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             debug!("rtc: asked now={now}");
         }
         // **设备那一手紧随原语之后**（账记下了，硬件跟上）——与线那一层
@@ -50,7 +50,7 @@ pub fn serve(host: &mut Host, view: View, from: TaskId, frame: &[u8]) {
         // 拒了：答一格码 + 放下这一枚，并留一行读数。
         Answer::Refused { code, at } => {
             ship_code(back, code);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             debug!(
                 "rtc: refused={code} at={at} now={now} late_ns={}",
                 now.saturating_sub(at)

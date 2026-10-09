@@ -12,7 +12,7 @@ pub(crate) struct Source<'a> {
 
 pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
     let ask = source.ask;
-    if !matches!(inspect(ask.image), Ok((vestor, _, mark)) if vestor == source.from && mark == frame::IMAGE)
+    if !matches!(inspect(ask.image), Ok(info) if info.alive && info.vestor == source.from && info.mark == frame::IMAGE)
     {
         return Err(frame::Fail::Denied);
     }
@@ -32,7 +32,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
             .try_reserve_exact(len)
             .map_err(|_| frame::Fail::Full)?;
         bytes.resize(len, 0);
-        let copy = pie::unseal_hole(env::Mark::NONE).map_err(|_| frame::Fail::Full)?;
+        let copy = pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).map_err(|_| frame::Fail::Full)?;
         let result = (|| {
             env::mail::push(copy, VirtAddr::new(at + offset), len)
                 .map_err(|_| frame::Fail::BadImage)?;
@@ -44,7 +44,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
             }
             Ok(bytes)
         })();
-        let _ = pie::release(copy);
+        let _ = pie::release(copy, env::ReleaseMode::Revoke);
         result
     })();
     let _ = pie::shut(page);

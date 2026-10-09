@@ -14,7 +14,7 @@
 //! 两义共用一个形状是有意的：通知只要求复核，从不代替判据——调用方无论如何都要
 //! 重新读一遍实际状态。
 
-use env::{Wait, HoleDir, PieToken, Source, TaskId, ToleResult};
+use env::{Wait, MailCondition, PieToken, Source, TaskId, ToleResult};
 
 /// **一条状态订阅的描述**——两格的**名字与内核 `work::mail::tole::Sub` 逐字相同**。
 ///
@@ -51,9 +51,9 @@ impl Pile {
     /// `shared` = 允不许多个使用者（造的时候定、之后不可变）：`false` = 独占组（授出即
     /// 移交、复制不出来），`true` = 共享组（可交给多个任务各持一枚；组键的唤醒是**提示
     /// 型**——放行全链，人人醒来自己按组复核）。
-    pub fn unseal(shared: bool) -> ToleResult<Pile> {
+    pub fn unseal(shared: bool) -> env::PieResult<Pile> {
         Ok(Pile {
-            pie: env::tole::unseal(shared)?,
+            pie: env::pie::unseal(env::UnsealArgs::Tole { shared: shared })?,
         })
     }
 
@@ -63,12 +63,12 @@ impl Pile {
     }
 
     /// 把一枚成员的一个方向挂进来（同成员幂等）。
-    pub fn attach(&self, mate: PieToken, dir: HoleDir) -> ToleResult<()> {
+    pub fn attach(&self, mate: PieToken, dir: MailCondition) -> ToleResult<()> {
         env::tole::attach(self.pie, mate, dir)
     }
 
     /// 摘掉一格；没挂过即无事。
-    pub fn detach(&self, mate: PieToken, dir: HoleDir) -> ToleResult<()> {
+    pub fn detach(&self, mate: PieToken, dir: MailCondition) -> ToleResult<()> {
         env::tole::detach(self.pie, mate, dir)
     }
 
@@ -86,7 +86,7 @@ impl Pile {
 
     /// 等到任意一格有事：`Some((哪一枚, 哪个方向))`；`None` = 这一轮没等到
     /// （挂起过，或期限到）——**继续等就再叫一次**，别把 `None` 当成终局。
-    pub fn await_(&self, millis: Wait) -> ToleResult<Option<(PieToken, HoleDir)>> {
+    pub fn await_(&self, millis: Wait) -> ToleResult<Option<(PieToken, MailCondition)>> {
         let (token, dir) = env::tole::await_(self.pie, millis)?;
         Ok((token != PieToken::NONE).then_some((token, dir)))
     }

@@ -33,7 +33,7 @@
 //! 铃只有一条方向（有事/没事）。签名少一个参数就把这件事说完了，不必写注释解释
 //! "为什么只有 Pull"。
 
-use env::{HoleDir, MailResult, PieResult, PieToken, Wait};
+use env::{MailCondition, MailResult, PieResult, PieToken, Wait};
 
 use crate::hole::Hole;
 
@@ -45,7 +45,7 @@ pub struct Bell {
 impl Bell {
     /// 创建一枚门铃。
     pub fn unseal() -> PieResult<Self> {
-        Ok(Self::from_raw(env::pie::unseal_nole()?))
+        Ok(Self::from_raw(env::pie::unseal(env::UnsealArgs::Nole)?))
     }
 
     pub fn token(&self) -> PieToken {
@@ -61,7 +61,7 @@ impl Bell {
     ///
     /// 返回 `true` = 就绪，`false` = 预算走完仍未就绪。**不清**那一位。
     pub fn wait(&self, millis: Wait) -> MailResult<bool> {
-        self.hole.wait(HoleDir::Pull, millis)
+        self.hole.wait(MailCondition::Pull, millis)
     }
 
     /// 应铃：清掉"有待取之事"。未响返 `Busy`（没有可取之事）。

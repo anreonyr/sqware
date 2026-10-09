@@ -91,17 +91,23 @@ pub mod request {
             buffer: &mut [u8],
             within: Wait,
         ) -> Result<Incoming<C>, Rejected<<C::Request as Message>::In>> {
-            let (len, from) = match raw::Hole::from_raw(self.entry).pull(buffer, within) {
-                Ok(received) => received,
+            let (len, from) = match raw::Hole::from_raw(self.entry).pull_with(
+                buffer,
+                within,
+                env::Oversize::Discard,
+            ) {
+                Ok(env::PullOutcome::Received { len, sender }) => (len, sender),
+                Ok(env::PullOutcome::Discarded { .. }) => {
+                    return Err(Rejected {
+                        fail: Fail::Decode,
+                        incoming: None,
+                    });
+                }
                 Err(error) => {
-                    let fail = if error.source == MailFail::Denied
-                        && raw::Hole::from_raw(self.entry).discard_oversized(buffer.len()).unwrap_or(false)
-                    {
-                        Fail::Decode
-                    } else {
-                        Fail::Receive(error.source)
-                    };
-                    return Err(Rejected { fail, incoming: None });
+                    return Err(Rejected {
+                        fail: Fail::Receive(error.source),
+                        incoming: None,
+                    });
                 }
             };
             let bytes = match buffer.get(..len) {

@@ -14,7 +14,7 @@ use ::resource::{
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut};
 use alloc::{collections::VecDeque, sync::Arc};
 use env::pie;
-use env::{HoleDir, PieToken, TaskId, Wait};
+use env::{MailCondition, PieToken, TaskId, Wait};
 use programs::debug;
 use system_api::operator as ocall;
 use system_client::identity::TaskQuery;
@@ -31,7 +31,7 @@ pub(super) fn tip(
     mut tip: ResMut<Tip>,
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    tip.0 = pie::unseal_hole(ocall::TIP_MARK).map_err(|_| Fail::Tree)?;
+    tip.0 = pie::unseal(env::UnsealArgs::hole(ocall::TIP_MARK)).map_err(|_| Fail::Tree)?;
     let hole = Hole::from_raw(tip.0);
     port::ship(
         hole.token(),
@@ -40,7 +40,7 @@ pub(super) fn tip(
         Policy::VEST,
     )
     .map_err(|_| Fail::Tree)?;
-    pile.attach(hole.token(), HoleDir::Pull)
+    pile.attach(hole.token(), MailCondition::Pull)
         .map_err(|_| Fail::Desk)?;
     Ok(Progress::Done)
 }
@@ -149,7 +149,7 @@ pub(super) fn guest(
             return Ok(Progress::Done);
         }
     }
-    if pile.attach(*ask, HoleDir::Pull).is_err() {
+    if pile.attach(*ask, MailCondition::Pull).is_err() {
         desk.evict(*who, (*reply, *ask));
         let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
         return Ok(Progress::Done);
@@ -160,7 +160,7 @@ pub(super) fn guest(
     {
         debug::put("operator: guest acknowledgement failed");
         desk.evict(*who, (*reply, *ask));
-        let _ = pile.detach(*ask, HoleDir::Pull);
+        let _ = pile.detach(*ask, MailCondition::Pull);
     }
     Ok(Progress::Done)
 }
@@ -286,7 +286,7 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
         bytes[0] = status;
         bytes[1..].copy_from_slice(&(id.get() as u64).to_le_bytes());
         let _ = Hole::from_raw(back).push(&bytes, Wait::AtMost(1000));
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
     }
     Ok(Progress::Done)
 }
@@ -302,8 +302,8 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(tip.0, HoleDir::Pull);
+    let _ = pile.detach(tip.0, MailCondition::Pull);
     let _ = pie::seal(tip.0);
-    let _ = pie::release(tip.0);
+    let _ = pie::release(tip.0, env::ReleaseMode::Revoke);
     Ok(Progress::Done)
 }

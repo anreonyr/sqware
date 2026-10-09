@@ -42,7 +42,7 @@ pub fn source(
     };
     if !control.live(request.from)
         || !target_live
-        || !matches!(inspect(request.frame.entry), Ok((vestor, owner, _)) if vestor == request.from && owner == request.from)
+        || !matches!(inspect(request.frame.entry), Ok(info) if info.alive && info.vestor == request.from && info.owner == request.from)
     {
         *decision = Decision::Failed(Fail::Denied);
     }

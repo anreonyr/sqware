@@ -8,7 +8,7 @@ use crate::core::lines::Lines;
 use crate::dev::plic::{LINE_PRIORITY, Plic};
 use ::resource::pile::Pile;
 use ::resource::raw::{Hole, table_size};
-use env::{HoleDir, TaskId, Wait};
+use env::{MailCondition, TaskId, Wait};
 use ipc::session::Held;
 use programs::debug;
 use router_api::frame as lcall;
@@ -69,7 +69,7 @@ pub fn serve(
                         plic.enable(line, LINE_PRIORITY);
                         // ——那一格是**事件**，不是节拍（挂的是本端读的那一枚，见 `exhaust`）。
                         if let Some(lane) = lines.lane(line) {
-                            let _ = pile.attach(lane.rx(), HoleDir::Pull);
+                            let _ = pile.attach(lane.rx(), MailCondition::Pull);
                         }
                         debug!("router: line {line} occupied");
                         (lcall::OK, lane_reply)
@@ -92,7 +92,7 @@ pub fn serve(
             }
             None => debug!("router: no reply slot from={}", from.get()),
         }
-        let _ = env::pie::release(back);
+        let _ = env::pie::release(back, env::ReleaseMode::Revoke);
     }
 }
 

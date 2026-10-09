@@ -81,7 +81,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        pie::unseal_hole(system_api::control::publication::REF).unwrap(),
+                        pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF)).unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -96,13 +96,13 @@ fn main() -> programs::Report<'static> {
                                 object: Object::Principal(p),
                                 name: "forged".into()
                             },
-                            pie::unseal_hole(Mark::of("forged")).unwrap(),
+                            pie::unseal(env::UnsealArgs::hole(Mark::of("forged"))).unwrap(),
                             Permit::Public,
                             WAIT
                         )
                         .is_err()
                 );
-                resource = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                resource = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 let proxy = Target::RuntimeResource {
                     task,
                     kind: "test".into(),
@@ -179,7 +179,7 @@ fn main() -> programs::Report<'static> {
                     )
                     .unwrap()
                     .seed();
-                    let closed = pie::unseal_hole(BACK).unwrap();
+                    let closed = pie::unseal(env::UnsealArgs::hole(BACK)).unwrap();
                     let reply = port::ship(closed, control, Access::STORE, Policy::NONE)
                         .unwrap()
                         .seed();
@@ -198,7 +198,7 @@ fn main() -> programs::Report<'static> {
                         .publish(abandoned.clone(), resource, Permit::Public, WAIT)
                         .unwrap();
                     client.unpublish(abandoned, WAIT).unwrap();
-                    let _ = pie::release(closed);
+                    let _ = pie::release(closed, env::ReleaseMode::Revoke);
                     programs::debug::put(
                         "hierarchy: abandoned request with closed reply channel drops its borrowed source and leaves no claim",
                     );
@@ -263,7 +263,7 @@ fn main() -> programs::Report<'static> {
                     reserve(acquired).is_err(),
                     "resource close must invalidate delivered capability"
                 );
-                let other = pie::unseal_hole(Mark::of("hierarchy-resource")).unwrap();
+                let other = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 client
                     .publish(
                         target.as_ref().unwrap().clone(),
@@ -318,7 +318,7 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(control, authority, fake, 1, "wrong-authority", WAIT),
                     Err(Fail::Unjudged)
                 );
-                let back = pie::unseal_hole(BACK).unwrap();
+                let back = pie::unseal(env::UnsealArgs::hole(BACK)).unwrap();
                 let from = me.get();
                 let helper = execution::unit::task::spawn(move || {
                     let back = establish::claim(TaskId::new(from), BACK, WAIT).unwrap();
@@ -342,7 +342,7 @@ fn main() -> programs::Report<'static> {
                 );
                 helper.join();
                 let _ = pie::seal(back);
-                let _ = pie::release(back);
+                let _ = pie::release(back, env::ReleaseMode::Revoke);
                 programs::debug::put(
                     "hierarchy: real ref IPC rejects wrong authority; shared reply validator rejects actual forged sender",
                 );

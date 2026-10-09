@@ -27,13 +27,14 @@ pub mod ledger;
 pub mod marks;
 pub mod wire;
 
+pub use abi::call::memory::PAGE_SIZE;
 pub use abi::call::{
     ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
-    DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleDir, MailCall,
-    MailCallRet, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail, MemoryResult,
-    NOTE_MAX, PieCall, PieCallRet, PieFail, PieResult, RoomCall, RoomCallRet, RoomFail, RoomResult,
-    Source, ToleCall, ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail,
-    UnitResult,
+    DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall,
+    MailCallRet, MailCondition, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail,
+    MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult,
+    PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, ToleCall,
+    ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
@@ -45,7 +46,6 @@ pub use abi::call::{
 pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};
 pub use abi::wait::Wait;
-pub use abi::call::memory::PAGE_SIZE;
 pub use ecall::{FailCode, make_fail};
 /// **`Frame`**：定长帧的一处定义。实现在 `mold`（**过程宏**那一半），这里只转出来
 /// 兼容环境类型及现有调用方的派生路径。
@@ -57,5 +57,5 @@ pub use wire::pie_kind::PieKind;
 pub use wire::program_kind::ProgramKind;
 pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire};
 
-pub use ledger::name::{NAME_LEN, Name, Trap, Call, Page};
 pub use ledger::entry::{ENTRY_LEN, Entry};
+pub use ledger::name::{Call, NAME_LEN, Name, Page, Trap};

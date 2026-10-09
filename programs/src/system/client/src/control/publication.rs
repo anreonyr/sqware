@@ -53,7 +53,7 @@ impl Client {
             return Err(Fail::Denied);
         }
         Self::direct(self.control, self.entry)?;
-        if !matches!(inspect(entry), Ok((_, owner, _)) if owner == env::unit::self_id()) {
+        if !matches!(inspect(entry), Ok(info) if info.alive && info.owner == env::unit::self_id()) {
             return Err(Fail::Denied);
         }
         let seed = ::resource::port::ship(

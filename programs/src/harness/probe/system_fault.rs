@@ -22,18 +22,15 @@ pub fn acceptance() {
     let catalog = crate::boot::Catalog::of_boot(&accounts).unwrap();
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
-    let payload = env::pie::unseal_pole(
-        child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE,
-        true,
-    )
+    let payload = env::pie::unseal(env::UnsealArgs::Pole { size: child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, shared: true })
     .unwrap();
     let (at, _) = ::resource::raw::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.
     unsafe {
         core::ptr::copy_nonoverlapping(child.elf.as_ptr(), at as *mut u8, child.elf.len());
     }
-    let report = pie::unseal_hole(REPORT).unwrap();
-    let boot = pie::unseal_hole(BOOT).unwrap();
+    let report = pie::unseal(env::UnsealArgs::hole(REPORT)).unwrap();
+    let boot = pie::unseal(env::UnsealArgs::hole(BOOT)).unwrap();
     for mode in 0..3 {
         let image = loader
             .build(Image {
@@ -83,9 +80,9 @@ pub fn acceptance() {
         ));
     }
     let _ = pie::seal(boot);
-    let _ = pie::release(boot);
+    let _ = pie::release(boot, env::ReleaseMode::Revoke);
     let _ = pie::seal(report);
-    let _ = pie::release(report);
+    let _ = pie::release(report, env::ReleaseMode::Revoke);
 }
 
 pub fn unit() {

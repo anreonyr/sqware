@@ -121,7 +121,7 @@ impl DerefMut for Held {
 impl Drop for Held {
     fn drop(&mut self) {
         // **只放本端铸的那一枚**（对端那一枚归对端，见文件头）。
-        let _ = pie::release(self.0.rx);
+        let _ = pie::release(self.0.rx, env::ReleaseMode::Revoke);
     }
 }
 
@@ -137,13 +137,13 @@ pub fn endpoint(to: TaskId, mark: Mark, claim_for: Wait) -> Result<Endpoint, Est
         Ok(token) if bound_matches(token, to, mark) => Some(token),
         Ok(_) => {
             let _ = pie::revoke(to, seed);
-            let _ = pie::release(rx);
+            let _ = pie::release(rx, env::ReleaseMode::Revoke);
             return Err(EstablishFail::NoSeed);
         }
         Err(DiscoveryFail::Missing) => None,
         Err(DiscoveryFail::Ambiguous) => {
             let _ = pie::revoke(to, seed);
-            let _ = pie::release(rx);
+            let _ = pie::release(rx, env::ReleaseMode::Revoke);
             return Err(EstablishFail::Ambiguous);
         }
     };
@@ -184,17 +184,17 @@ pub fn give(to: TaskId, mark: Mark) -> Result<PieToken, EstablishFail> {
 
 /// Create a one-way ask hole: local STORE capability and the peer's FETCH seed.
 pub fn give_at(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
+    let hole = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| EstablishFail::NoHole)?;
     let remote = match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::NONE) {
         Ok(at) => at.seed(),
         Err(_) => {
-            let _ = pie::release(hole);
+            let _ = pie::release(hole, env::ReleaseMode::Revoke);
             return Err(EstablishFail::NoSeed);
         }
     };
     if env::pie::narrow(hole, Permission::STORE).is_err() {
         let _ = pie::revoke(to, remote);
-        let _ = pie::release(hole);
+        let _ = pie::release(hole, env::ReleaseMode::Revoke);
         return Err(EstablishFail::NoSeed);
     }
     Ok((hole, remote))
@@ -207,8 +207,8 @@ pub fn find(of: TaskId, mark: Mark) -> Result<PieToken, DiscoveryFail> {
         if !raw_alive(p.token) {
             continue;
         }
-        if let Ok((_vestor, owner, actual_mark)) = inspect(p.token) {
-            if owner != of || actual_mark != mark {
+        if let Ok(info) = inspect(p.token) {
+            if !info.alive || info.owner != of || info.mark != mark {
                 continue;
             }
             if found.is_some() {
@@ -242,12 +242,12 @@ pub fn claim(of: TaskId, mark: Mark, wait: Wait) -> Result<PieToken, DiscoveryFa
 /// 生我者，故它交出来的孔先落在生我者表里，再由生我者转授——板那条路就是这么接上的）
 /// 不给 `VEST` 的症状是**转授那一步答 `Denied`**，而两侧已经配好了对，看上去像"对面坏了"
 fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), EstablishFail> {
-    let hole = pie::unseal_hole(mark).map_err(|_| EstablishFail::NoHole)?;
+    let hole = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| EstablishFail::NoHole)?;
     match port::ship(hole, to, Access::FETCH | Access::STORE, Policy::VEST) {
         Ok(at) => Ok((hole, at.seed())),
         Err(_) => {
             // **交不出去就当场放回来**：不留一枚没人认得的孔在本端表里。
-            let _ = pie::release(hole);
+            let _ = pie::release(hole, env::ReleaseMode::Revoke);
             Err(EstablishFail::NoSeed)
         }
     }
@@ -258,11 +258,11 @@ fn seal_and_ship(to: TaskId, mark: Mark) -> Result<(PieToken, PieToken), Establi
 /// **借一枚回信孔过去、但先不推**：返 `(本端那一枚, 对端表里那一枚)`
 pub fn lend_out(entry: PieToken, mark: Mark) -> Result<(PieToken, PieToken), ()> {
     let host = opened_by(entry).ok_or(())?;
-    let back = pie::unseal_hole(mark).map_err(|_| ())?;
+    let back = pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| ())?;
     match port::ship(back, host, Access::STORE, Policy::NONE) {
         Ok(to) => Ok((back, to.seed())),
         Err(_) => {
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             Err(())
         }
     }

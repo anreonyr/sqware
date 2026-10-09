@@ -6,7 +6,7 @@ use core::time::Duration;
 use crate::lock::{Level, SpinLock};
 use crate::runtime::chrono::clock;
 
-use env::{HoleDir, TaskId};
+use env::{HoleLimits, MailCondition, TaskId};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
@@ -32,17 +32,15 @@ enum Pending {
 ///
 /// **队头正被取用**是复制那一瞬的公示：手仍在本列里，但正被一位取用者搬。取用中不算可取
 /// （别人见它答 `Busy`），故一只手只会被交付一次。它必须活在孔锁里——复制在孔锁**之外**做
-/// （锁序 `Space`(L2) < 孔(L4)，见 [`take`] 那一节）。
+/// （锁序 `Space`(L2) < 孔(L4)，见 [`read`] 那一节）。
 #[derive(Default)]
 struct Queue {
     /// 排着的那些手（先进先出）。**懒分配**：没排过队的孔一点内核堆都不占。
     hands: VecDeque<Slot>,
     /// 队头正被取用（复制中）。
     taking: bool,
+    bytes: usize,
 }
-
-/// 一只孔上最多排几只（一处常量）。**取 1 就等于改这一形之前的行为**（单槽）。
-const QUEUE_CAP: usize = 4;
 
 /// 一只孔上最多积几枚位（与手那一列同一口径：满了答 `Busy`，丢不丢留给写者）。
 ///
@@ -63,14 +61,14 @@ struct Hand {
 }
 
 enum Slot {
-    Reserved(usize),
+    Reserved(usize, usize),
     Ready(Hand),
 }
 impl Slot {
     fn hand(&self) -> Option<&Hand> {
         match self {
             Self::Ready(hand) => Some(hand),
-            Self::Reserved(_) => None,
+            Self::Reserved(..) => None,
         }
     }
 }
@@ -80,6 +78,7 @@ pub struct HoleMeta {
     life: Arc<Life>,
     owner: TaskId,
     pending: SpinLock<Pending>,
+    limits: HoleLimits,
     /// 这一只（**队头**）的中段告警已经打过了没有（一枚孔最多一行）。
     alarmed: AtomicBool,
     /// **"报不出就绪、又根本没有手"**那一格的告警打过没有（与 `alarmed` 分开：两件事）。
@@ -92,15 +91,25 @@ impl HoleMeta {
     }
 
     fn try_new(id: HoleId, owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        Self::try_new_with_limits(id, owner, HoleLimits::default())
+    }
+
+    fn try_new_with_limits(
+        id: HoleId,
+        owner: TaskId,
+        limits: HoleLimits,
+    ) -> Result<Arc<Self>, crate::memory::manager::MapError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
             id,
             life,
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Queue(Queue::default())),
+            limits,
             alarmed: AtomicBool::new(false),
             stuck: AtomicBool::new(false),
-        }).map_err(|_| crate::memory::manager::MapError::OutOfMemory)
+        })
+        .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {
@@ -119,21 +128,19 @@ impl HoleMeta {
         !matches!(*self.pending.lock(), Pending::Dead)
     }
 
-    /// 就绪：`Pull` = **队头**可取（一只手，或**至少一枚位**）；`Push` = **队列空着**。
-    ///
-    /// 两个方向仍按"一只手"的老口径读——**"有位"不是"空"**：写者要"轮到我"时走
-    /// `push(…, Wait::POLL)` 那一档（满了答 `Busy`，见 [`reserve`]）；要"我的手被取走了"时等的
-    /// 正是这一格（队列空 ⟺ 单推写者的手全下线了）。把这一格改成"有位"会让四处
-    /// `door.wait(HoleDir::Push, Wait::Forever)` 当场变成空等（它们护的是"这段字节活到被取走"）。
-    pub(crate) fn ready(&self, dir: HoleDir) -> bool {
+    /// Pull: committed head or a notification. Push: count and byte space. Empty: no messages or reservations.
+    pub(crate) fn ready(&self, dir: MailCondition) -> bool {
         let pending = self.pending.lock();
         match dir {
-            HoleDir::Pull => match &*pending {
+            MailCondition::Pull => match &*pending {
                 Pending::Queue(q) => q.hands.front().and_then(Slot::hand).is_some() && !q.taking,
                 Pending::Rung { count, .. } => *count > 0,
                 Pending::Dead => false,
             },
-            HoleDir::Push => {
+            MailCondition::Push => {
+                matches!(&*pending, Pending::Queue(q) if q.hands.len() < self.limits.max_messages && q.bytes < self.limits.max_bytes)
+            }
+            MailCondition::Empty => {
                 matches!(&*pending, Pending::Queue(q) if q.hands.is_empty() && !q.taking)
             }
         }
@@ -150,12 +157,13 @@ impl Drop for HoleMeta {
             );
         }
         drop(pending);
-        messenger::wipe(key(self, HoleDir::Pull));
-        messenger::wipe(key(self, HoleDir::Push));
+        messenger::wipe(key(self, MailCondition::Pull));
+        messenger::wipe(key(self, MailCondition::Empty));
+        messenger::wipe(key(self, MailCondition::Push));
     }
 }
 
-pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
+pub(crate) fn key(meta: &HoleMeta, dir: MailCondition) -> WakeKey {
     WakeKey::Hole {
         hole: meta.id.0,
         dir,
@@ -163,7 +171,8 @@ pub(crate) fn key(meta: &HoleMeta, dir: HoleDir) -> WakeKey {
 }
 
 /// 锁内预留 FIFO 位置；载荷分配与复制在锁外进行。
-pub(crate) fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, MailFail> {
+
+pub(crate) fn reserve_len(meta: &HoleMeta, len: usize) -> Result<Reservation<'_>, MailFail> {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
     let mut pending = meta.pending.lock();
     let q = match &mut *pending {
@@ -171,14 +180,20 @@ pub(crate) fn reserve(meta: &HoleMeta) -> Result<Reservation<'_>, MailFail> {
         Pending::Dead => return Err(MailFail::Dead),
         Pending::Rung { .. } => return Err(MailFail::Busy),
     };
-    if q.hands.len() >= QUEUE_CAP {
+    if len > meta.limits.max_len {
+        return Err(MailFail::Denied);
+    }
+    if q.hands.len() >= meta.limits.max_messages
+        || len > meta.limits.max_bytes.saturating_sub(q.bytes)
+    {
         return Err(MailFail::Busy);
     }
     q.hands.try_reserve(1).map_err(|_| MailFail::OoM)?;
     let id = NEXT
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .map_err(|_| MailFail::OoM)?;
-    q.hands.push_back(Slot::Reserved(id));
+    q.hands.push_back(Slot::Reserved(id, len));
+    q.bytes += len;
     Ok(Reservation { meta, id: Some(id) })
 }
 
@@ -198,16 +213,31 @@ impl Reservation<'_> {
             let Pending::Queue(q) = &mut *pending else {
                 return Err(MailFail::Dead);
             };
-            let slot = q
+            let at_slot = q
                 .hands
-                .iter_mut()
-                .find(|slot| matches!(slot, Slot::Reserved(id) if Some(*id) == self.id))
+                .iter()
+                .position(|slot| matches!(slot, Slot::Reserved(id, _) if Some(*id) == self.id))
                 .ok_or(MailFail::Dead)?;
-            *slot = Slot::Ready(Hand { from, buf, at });
+            let reserved_len = match q.hands[at_slot] {
+                Slot::Reserved(_, len) => len,
+                _ => unreachable!(),
+            };
+            if buf.len() > self.meta.limits.max_len {
+                return Err(MailFail::Denied);
+            }
+            if reserved_len != 0 && reserved_len != buf.len() {
+                return Err(MailFail::Denied);
+            }
+            let next_bytes = q.bytes - reserved_len;
+            if buf.len() > self.meta.limits.max_bytes.saturating_sub(next_bytes) {
+                return Err(MailFail::Busy);
+            }
+            q.bytes = next_bytes + buf.len();
+            q.hands[at_slot] = Slot::Ready(Hand { from, buf, at });
             HANDS_LIVE.fetch_add(1, Ordering::Relaxed);
             self.id = None;
         }
-        let _ = messenger::wake(key(self.meta, HoleDir::Pull), &self.meta.life());
+        let _ = messenger::wake(key(self.meta, MailCondition::Pull), &self.meta.life());
         Ok(())
     }
 }
@@ -219,72 +249,76 @@ impl Drop for Reservation<'_> {
         let removed = {
             let mut pending = self.meta.pending.lock();
             match &mut *pending {
-                Pending::Queue(q) => q
-                    .hands
-                    .iter()
-                    .position(|slot| matches!(slot, Slot::Reserved(known) if *known == id))
-                    .and_then(|at| q.hands.remove(at))
-                    .is_some(),
+                Pending::Queue(q) => {
+                    let at = q
+                        .hands
+                        .iter()
+                        .position(|slot| matches!(slot, Slot::Reserved(known, _) if *known == id));
+                    if let Some(Slot::Reserved(_, len)) = at.and_then(|at| q.hands.remove(at)) {
+                        q.bytes -= len;
+                        true
+                    } else {
+                        false
+                    }
+                }
                 _ => false,
             }
         };
         if removed {
-            let _ = messenger::wake(key(self.meta, HoleDir::Pull), &self.meta.life());
-            let _ = messenger::wake(key(self.meta, HoleDir::Push), &self.meta.life());
+            let _ = messenger::wake(key(self.meta, MailCondition::Pull), &self.meta.life());
+            let _ = messenger::wake(key(self.meta, MailCondition::Empty), &self.meta.life());
+            let _ = messenger::wake(key(self.meta, MailCondition::Push), &self.meta.life());
         }
     }
 }
 
-/// 认下要取的那只手，把它置成 `Taking`；`Ok` 之后用 [`source`] 取复制所需的四格。
-///
-/// **复制在孔锁之外做**：`Space` 的锁是 `Level::Space`（2）、孔这一格是 `Level::L3`（4），
-/// 持孔锁再取空间锁是倒序（debug 档 lockdep 当场报），而复制每页都要过一遍 `translate`。
-/// 故这里只把"正被取用"公示出去，复制成由 [`taken`] 收尾、败由 [`back`] 把手放回。
-///
-/// **字节归内核** ⇒ 这一格不会因为发送方退场而作废（从前那一档 `Gone` 由此消失），
-/// 孔回到可用——不作废的话，一位退场的发送方会把这条孔永久堵死。
-pub(crate) fn take(meta: &HoleMeta) -> Result<(), MailFail> {
-    if !meta.alive() {
-        return Err(MailFail::Dead);
+/// A read owns the current head until finish; dropping it restores readability.
+/// Resource closure may remove the queue while the retained bytes remain valid.
+pub(crate) struct Reading<'a> {
+    meta: &'a HoleMeta,
+    pub(crate) from: TaskId,
+    pub(crate) bytes: Arc<Vec<u8>>,
+    finished: bool,
+}
+impl Reading<'_> {
+    pub(crate) fn finish(mut self) {
+        taken(self.meta);
+        self.finished = true;
     }
+}
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        if !self.finished {
+            back(self.meta);
+        }
+    }
+}
+pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, MailFail> {
     let mut pending = meta.pending.lock();
-    let Pending::Queue(q) = &mut *pending else {
-        return Err(MailFail::Busy);
+    let queue = match &mut *pending {
+        Pending::Queue(queue) => queue,
+        Pending::Dead => return Err(MailFail::Dead),
+        _ => return Err(MailFail::Busy),
     };
-    if q.taking || q.hands.front().and_then(Slot::hand).is_none() {
+    if queue.taking {
         return Err(MailFail::Busy);
     }
-    // **字节归内核** ⇒ 这里不再有"发送方那段没了"那一档（取的一方也不必翻它的页表）。
-    q.taking = true;
-    Ok(())
+    let head = queue
+        .hands
+        .front()
+        .and_then(Slot::hand)
+        .ok_or(MailFail::Busy)?;
+    let reading = Reading {
+        meta,
+        from: head.from,
+        bytes: head.buf.clone(),
+        finished: false,
+    };
+    queue.taking = true;
+    Ok(reading)
 }
 
-/// 取用中的发送者与共享载荷；持有载荷期间字节保持有效。
-///
-/// 只在 [`take`] 与 [`taken`]／[`back`] 之间非 `None`——那一段窗口里只有本取用者进得来。
-pub(crate) fn source(meta: &HoleMeta) -> Option<(TaskId, Arc<Vec<u8>>)> {
-    let pending = meta.pending.lock();
-    match &*pending {
-        Pending::Queue(q) if q.taking => q
-            .hands
-            .front()
-            .and_then(Slot::hand)
-            .map(|h| (h.from, h.buf.clone())),
-        _ => None,
-    }
-}
-
-/// **那只手到此为止**：孔回到空闲，唤醒等递的那一方。
-///
-/// 两个调用点，同一个状态迁移：
-/// - **复制成了**（`hand_over` 走到尾）：送到；
-/// - **收方那段写不进去**（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来——
-///   已经回收，`Hand` 里的只是它剩下的弱引用。**这时必须就地收掉**：照 `back` 那样"手原样
-///   放回"会把孔**永远占住**（此后每一次 `Pull` 都答 `Gone` 再把手放回，谁也推不进来）——
-///   **实测过**：驱逐之后另一个人 `Push` 永远 `Busy`（无期等就挂住整台机器）。
-///
-/// **与 [`back`] 的分界**：`back` 是"这一趟没成，但**东西还在**"（装不下 / 缓冲不可写）；
-/// 这一格是"**东西没了**"。前者还能拿更大的缓冲再来，后者没有下一趟。
+/// Remove the owned head and wake readers, writers and drain waiters after unlocking.
 pub(crate) fn taken(meta: &HoleMeta) {
     let mut off = None;
     {
@@ -293,8 +327,14 @@ pub(crate) fn taken(meta: &HoleMeta) {
             if q.taking {
                 q.taking = false;
                 off = q.hands.pop_front().and_then(|slot| match slot {
-                    Slot::Ready(hand) => Some(hand),
-                    Slot::Reserved(_) => None,
+                    Slot::Ready(hand) => {
+                        q.bytes -= hand.buf.len();
+                        Some(hand)
+                    }
+                    Slot::Reserved(_, len) => {
+                        q.bytes -= len;
+                        None
+                    }
                 });
             }
         }
@@ -303,7 +343,9 @@ pub(crate) fn taken(meta: &HoleMeta) {
         let len = hand.buf.len();
         note_hand_off(meta, hand.from, len, hand.at);
     }
-    let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
+    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
+    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
+    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
 }
 
 /// 复制没成、**东西还在**：这一只手放回**原处**（它本来就是队头，`taking` 清掉即可）。
@@ -311,50 +353,16 @@ pub(crate) fn taken(meta: &HoleMeta) {
 /// 这一条与 `MailCall::Pull` 三条不消费路径是同一条口径：`max` 装不下、缓冲不可写
 /// ——**都不替调用方丢东西**（丢一条消息不可逆）。放回之后这一列照旧报就绪（那只手还压着）。
 pub(crate) fn back(meta: &HoleMeta) {
-    let mut pending = meta.pending.lock();
-    if let Pending::Queue(q) = &mut *pending {
-        q.taking = false;
+    {
+        let mut pending = meta.pending.lock();
+        if let Pending::Queue(q) = &mut *pending {
+            q.taking = false;
+        }
     }
+    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
 }
 
 /// Explicitly reject an oversized head without allocating a receive buffer.
-pub(crate) fn discard(meta: &HoleMeta, max: usize) -> Result<bool, MailFail> {
-    let removed = {
-        let mut pending = meta.pending.lock();
-        let Pending::Queue(queue) = &mut *pending else {
-            return if matches!(*pending, Pending::Dead) {
-                Err(MailFail::Dead)
-            } else {
-                Ok(false)
-            };
-        };
-        if queue.taking {
-            return Err(MailFail::Busy);
-        }
-        if !queue.hands.front().and_then(Slot::hand)
-            .is_some_and(|hand| hand.buf.len() > max)
-        {
-            return Ok(false);
-        }
-        queue.hands.pop_front()
-    };
-    // Payload destruction and wakeups run outside the queue lock.
-    if let Some(Slot::Ready(hand)) = &removed {
-        note_hand_off(meta, hand.from, hand.buf.len(), hand.at);
-    }
-    drop(removed);
-    let _ = messenger::wake(key(meta, HoleDir::Push), &meta.life());
-    Ok(true)
-}
-
-//     pub(crate) fn withdraw(meta: &HoleMeta, from: TaskId) -> Result<(), MailFail>
-//
-// ——"把**我自己**伸出、还没被取走的那只手收回来"（`Hand(from) => Idle` ＋ 唤醒 `Push` 侧；
-// `Taking` 答 `Busy`，因为那一刻复制在另一颗 hart 上做）。**这只手今天只有"被取走"与
-// "随孔一起没"两个下场**，不需要第三条路——三条凭据：①递出的字节今天住在写端那一格
-// （`Sender`）里；②孔封印时就地抹手并唤醒发送方（`seal` 那一格）；③`Hand.space` 是弱引用，
-// （字节归内核，故与发送方还在不在无关）。日后要做"押下—取回"（`Held`）那一类，按它的语义
-// 重新定形再加回来。
 
 /// 只看**队头**那一只手：`(长度, 发送者, 队里排着几只)`。**不动状态**（取用中的那只也照报）。
 ///
@@ -412,11 +420,11 @@ pub(crate) fn ring(meta: &HoleMeta) -> Result<(), MailFail> {
             _ => return Err(MailFail::Busy),
         }
     };
-    let _ = messenger::wake(key(meta, HoleDir::Pull), &meta.life());
+    let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
     Ok(())
 }
 
-/// 应一枚位。**不唤醒任何人**：没人等"位被应完"（与门铃 `hush` 同一句）。
+/// 应一枚位；队列恢复可用时唤醒 Push / Empty 等待者。
 ///
 /// **一次应一枚**：计数大于一时递减，最后一枚应完后恢复空 FIFO。故
 /// `while hush().is_ok()` 那一形（路由者 `exhaust::drain`）会把积着的每一枚都各自应掉。
@@ -428,16 +436,20 @@ pub(crate) fn hush(meta: &HoleMeta) -> Result<(), MailFail> {
             *pending = Pending::Queue(Queue {
                 hands: core::mem::take(spare),
                 taking: false,
+                bytes: 0,
             });
         }
         _ => return Err(MailFail::Busy),
     }
+    drop(pending);
+    let _ = messenger::wake(key(meta, MailCondition::Push), &meta.life());
+    let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
     Ok(())
 }
 
 pub(crate) fn wait(
     meta: &HoleMeta,
-    dir: HoleDir,
+    dir: MailCondition,
     dur: Duration,
 ) -> Result<Handoff<bool>, MailFail> {
     if !meta.alive() {
@@ -454,7 +466,7 @@ pub(crate) fn wait(
     //
     // **只在"有期限的那一档"看**：`POLL` 那一档是最热的一格（canonical 空闲时每毫秒一次），
     // 而它的下一拍（`AtMost(1)`）就在 1 ms 之内 ⇒ 照样看得到，热的那一路一分钱不花。
-    if dur != Duration::ZERO && dir == HoleDir::Push && hand_age(meta).is_none() {
+    if dur != Duration::ZERO && dir == MailCondition::Empty && hand_age(meta).is_none() {
         note_shape(meta);
     }
     if dur == Duration::ZERO {
@@ -462,8 +474,8 @@ pub(crate) fn wait(
     }
     let out = messenger::wait(key(meta, dir), meta.life(), dur)?;
     // **量的是这只手在孔上压了多久，不是这一次 `wait` 睡了多久**——见 [`hold_line`] 那一节。
-    // `Push` 方向 = 递出手的那一方在等它下线；`Pull` 方向等的是"有信来"，不记（等信是常态）。
-    if dir == HoleDir::Push
+    // `Empty` 条件 = 递出手的那一方在等它下线；`Pull` 方向等的是"有信来"，不记（等信是常态）。
+    if dir == MailCondition::Empty
         && let Some((from, len, ms)) = hand_age(meta)
     {
         note_hold(meta, from, ms);
@@ -558,7 +570,7 @@ fn hand_age(meta: &HoleMeta) -> Option<(TaskId, usize, usize)> {
 
 /// 记一笔"这一只手压了 `ms` 毫秒还没人取"。**只记账：不取锁、不打印**（`Drop` 也叫它）。
 ///
-/// `HOLD_N` 数的是**观测次数**（每次 Push 方向复探看见它还在就加一），不是手数；
+/// `HOLD_N` 数的是**观测次数**（每次 Empty 条件复探看见它还在就加一），不是手数；
 /// 要读的是 `HOLD_MAX_MS` 与 `worst`／`from` —— "最久的那一手压了多久、在哪一枚孔上、谁递的"。
 fn note_hold(meta: &HoleMeta, from: TaskId, ms: usize) {
     if ms < HOLD_MS {
@@ -625,7 +637,7 @@ pub(crate) fn hold_line() {
 // ── 诊断：**读不成、手原样放回**（`Denied`）────────────────────────────────
 //
 // 放回之后孔**仍然报就绪**（那只手还压着）⇒ 等在这一组上的读的人还会回来啃这一格、永远读不成；
-// 递手那一方还在等"它下线"（`wait(HoleDir::Push, …)` **没有期限**）⇒ 两边一起停住。
+// 递手那一方还在等"它下线"（`wait(MailCondition::Empty, …)` **没有期限**）⇒ 两边一起停住。
 // 而**别的客人不再被这一格永远挡住**：内核挑"哪一格就绪"今天从**轮转游标**起扫、取第一枚
 // （`envcall/tole.rs::ready` ）——"从头扫、取第一枚 ⇒ 后面几位客人的手被饿在后面"
 // 那一形是 `76ce954` 修的。故这一格必须看得见：第一次当场报一行（被 host 杀掉的跑走不到收场块），
@@ -653,8 +665,9 @@ pub(crate) fn seal(meta: &HoleMeta) {
         HANDS_LIVE.fetch_sub(hands.count(), Ordering::Relaxed);
     }
     drop(pending);
-    messenger::wipe(key(meta, HoleDir::Pull));
-    messenger::wipe(key(meta, HoleDir::Push));
+    messenger::wipe(key(meta, MailCondition::Pull));
+    messenger::wipe(key(meta, MailCondition::Empty));
+    messenger::wipe(key(meta, MailCondition::Push));
 }
 
 pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
@@ -663,6 +676,13 @@ pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
 
 pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<HoleMeta>, crate::memory::manager::MapError> {
     HoleMeta::try_new(alloc_id(), owner)
+}
+
+pub(crate) fn try_meta_with_limits(
+    owner: TaskId,
+    limits: HoleLimits,
+) -> Result<Arc<HoleMeta>, crate::memory::manager::MapError> {
+    HoleMeta::try_new_with_limits(alloc_id(), owner, limits)
 }
 
 #[cfg(debug_assertions)]

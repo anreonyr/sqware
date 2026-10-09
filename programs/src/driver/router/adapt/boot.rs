@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 use env::PAGE_SIZE;
 use env::pie;
 use env::unit;
-use env::{Access, HoleDir, PieKind, Policy, Wait};
+use env::{Access, MailCondition, PieKind, Policy, Wait};
 use hub_api as hcall;
 use programs::debug;
 use programs::driver::shared::context::{Context, Step};
@@ -70,7 +70,7 @@ pub struct Up {
 /// 起手
 pub fn up() -> Result<Up, Fail> {
     // **起手第一件：入系统**（服务入口 → 上板 ＋ 开会话 → 上树落门牌）。
-    let entry = pie::unseal_hole(router_api::ENTRY_MARK).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
+    let entry = pie::unseal(env::UnsealArgs::hole(router_api::ENTRY_MARK)).map_err(|_| Fail::at(E_ROUTER, "desk"))?;
     let sire = unit::sire();
     let ctx = Context::open(sire, Wait::AtMost(QUAY_MS)).map_err(|s| {
         Fail::at(
@@ -125,8 +125,8 @@ pub fn up() -> Result<Up, Fail> {
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = Hole::from_raw(entry);
-    if pile.attach(irq_deed.token, HoleDir::Pull).is_err()
-        || pile.attach(entry_hole.token(), HoleDir::Pull).is_err()
+    if pile.attach(irq_deed.token, MailCondition::Pull).is_err()
+        || pile.attach(entry_hole.token(), MailCondition::Pull).is_err()
     {
         return Err(Fail::at(E_ROUTER, "bell"));
     }

@@ -3,7 +3,7 @@ use ::resource::{
     raw::{Hole, reserve},
 };
 use env::wire::Span as _;
-use env::{HoleDir, Permission, PieToken, TaskId, Wait, pie};
+use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
 use system_api::operator::Path;
 use system_client::operator::Face;
 use terminal_api::frame::{self, Command, Input, Reply};
@@ -24,14 +24,14 @@ impl Terminal {
         let host = match reserve(entry) {
             Ok((_, host, _)) => host,
             Err(_) => {
-                let _ = pie::release(entry);
+                let _ = pie::release(entry, env::ReleaseMode::Revoke);
                 return Err(());
             }
         };
         Ok(Self { entry, host })
     }
     fn call(&self, mut command: Command) -> Result<Reply, ()> {
-        let back = pie::unseal_hole(frame::BACK).map_err(|_| ())?;
+        let back = pie::unseal(env::UnsealArgs::hole(frame::BACK)).map_err(|_| ())?;
         let result = (|| {
             command.back =
                 pie::accord(back, self.host, Permission::STORE, frame::BACK).map_err(|_| ())?;
@@ -52,14 +52,14 @@ impl Terminal {
                 Err(())
             }
         })();
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         result
     }
 }
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        let _ = pie::release(self.entry);
+        let _ = pie::release(self.entry, env::ReleaseMode::Revoke);
     }
 }
 
@@ -72,7 +72,7 @@ pub struct Connection {
 }
 impl Connection {
     pub fn open(terminal: Terminal) -> Result<Self, ()> {
-        let root = env::tole::unseal(false).map_err(|_| ())?;
+        let root = env::pie::unseal(env::UnsealArgs::Tole { shared: false }).map_err(|_| ())?;
         let mut connection = Self {
             terminal,
             root,
@@ -173,7 +173,7 @@ impl Connection {
 }
 impl Drop for Connection {
     fn drop(&mut self) {
-        let _ = pie::release(self.root);
+        let _ = pie::release(self.root, env::ReleaseMode::Revoke);
     }
 }
 
@@ -224,8 +224,8 @@ impl Io {
             control,
             pile,
         };
-        io.pile.attach(input, HoleDir::Pull).map_err(|_| ())?;
-        io.pile.attach(control, HoleDir::Pull).map_err(|_| ())?;
+        io.pile.attach(input, MailCondition::Pull).map_err(|_| ())?;
+        io.pile.attach(control, MailCondition::Pull).map_err(|_| ())?;
         Ok(io)
     }
     pub fn injected(owner: TaskId) -> Result<Self, ()> {
@@ -273,7 +273,7 @@ impl Io {
     }
     pub fn drain(&self) -> Result<(), ()> {
         Hole::from_raw(self.output)
-            .wait(HoleDir::Push, MS)
+            .wait(MailCondition::Empty, MS)
             .map_err(|_| ())?
             .then_some(())
             .ok_or(())
@@ -281,6 +281,6 @@ impl Io {
 }
 impl Drop for Io {
     fn drop(&mut self) {
-        let _ = pie::release(self.pile.token());
+        let _ = pie::release(self.pile.token(), env::ReleaseMode::Revoke);
     }
 }

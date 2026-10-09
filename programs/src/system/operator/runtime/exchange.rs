@@ -3,7 +3,7 @@ use crate::system::operator::session::{Desk, Gone, Guest};
 use ::resource::pile::Pile;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
-use env::{HoleDir, PieToken, Wait};
+use env::{MailCondition, PieToken, Wait};
 use ipc::hand::{Receiver, RecvFail, Sender, SourceFail};
 use system_api::operator as ocall;
 
@@ -92,7 +92,7 @@ pub(super) fn sweep(
     mut outs: ResMut<Outboxes>,
 ) -> Result<Progress, Fail> {
     let _ = desk.sweep_each(|gone: Gone| {
-        let _ = pile.detach(gone.ask, HoleDir::Pull);
+        let _ = pile.detach(gone.ask, MailCondition::Pull);
         if let Some(at) = outs.0.iter().position(|out| out.reply == gone.reply) {
             outs.0.swap_remove(at);
         }

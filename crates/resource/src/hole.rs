@@ -1,6 +1,6 @@
 //! 私有孔句柄：只供正式资源封装组合使用。
 
-use env::{HoleDir, MailResult, PieResult, PieToken, Wait, TaskId};
+use env::{MailCondition, MailResult, PieResult, PieToken, Wait, TaskId};
 
 pub(crate) struct Hole {
     token: PieToken,
@@ -23,11 +23,11 @@ impl Hole {
         super::raw::Hole::from_raw(self.token).pull(bytes, within)
     }
 
-    pub(crate) fn wait(&self, dir: HoleDir, within: Wait) -> MailResult<bool> {
+    pub(crate) fn wait(&self, dir: MailCondition, within: Wait) -> MailResult<bool> {
         super::raw::Hole::from_raw(self.token).wait(dir, within)
     }
 
     pub(crate) fn unseal(mark: env::Mark) -> PieResult<Self> {
-        Ok(Self::from_raw(env::pie::unseal_hole(mark)?))
+        Ok(Self::from_raw(env::pie::unseal(env::UnsealArgs::hole(mark))?))
     }
 }

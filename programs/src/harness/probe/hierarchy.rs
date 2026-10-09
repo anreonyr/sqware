@@ -10,7 +10,7 @@ pub(crate) fn supply(task: env::TaskId) -> Result<(), &'static str> {
         let token = match ipc::session::establish::find(me, mark) {
             Ok(token) => token,
             Err(ipc::session::establish::DiscoveryFail::Missing) => {
-                pie::unseal_hole(mark).map_err(|_| "hierarchy fixture channel")?
+                pie::unseal(env::UnsealArgs::hole(mark)).map_err(|_| "hierarchy fixture channel")?
             }
             Err(ipc::session::establish::DiscoveryFail::Ambiguous) => {
                 return Err("hierarchy fixture channel ambiguous");
@@ -104,7 +104,7 @@ fn execute(
                 Hole::from_raw(frame.back)
                     .push(&encoded[..n], Wait::AtMost(1000))
                     .unwrap();
-                let _ = pie::release(frame.back);
+                let _ = pie::release(frame.back, env::ReleaseMode::Revoke);
             }
         }
         if let Ok((1, from)) = Hole::from_raw(answer).pull(&mut bytes, Wait::POLL) {
@@ -352,7 +352,7 @@ pub(crate) fn exercise(
                 })
                 .unwrap();
         }
-        let source = pie::unseal_hole(env::Mark::of("hierarchy-stale-condition")).unwrap();
+        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("hierarchy-stale-condition"))).unwrap();
         assembly
             .resources
             .write::<crate::system::publication::Publications>()
@@ -381,10 +381,10 @@ pub(crate) fn exercise(
     ));
     sender_boundary(assembly);
     command(assembly, target, 1);
-    let fake = pie::unseal_hole(system_api::control::publication::REF).unwrap();
+    let fake = pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF)).unwrap();
     reference_probe(assembly, target, fake);
     let _ = pie::seal(fake);
-    let _ = pie::release(fake);
+    let _ = pie::release(fake, env::ReleaseMode::Revoke);
     let service_road = assembly
         .resources
         .read::<crate::system::publication::RuntimeNamespace>()
@@ -608,9 +608,9 @@ pub fn reference_lifetime() {
     use core::sync::atomic::{AtomicUsize, Ordering};
     use env::{Mark, Wait};
     let me = env::unit::self_id();
-    let source = pie::unseal_hole(Mark::of("forget-source")).unwrap();
+    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-source"))).unwrap();
     assert!(
-        pie::forget(source).is_err(),
+        pie::release(source, env::ReleaseMode::Keep).is_err(),
         "original resource ownership cannot be forgotten"
     );
     let borrowed = port::ship(source, me, Access::FETCH | Access::STORE, Policy::VEST)
@@ -620,9 +620,9 @@ pub fn reference_lifetime() {
         .unwrap()
         .seed();
     assert_eq!(pie::same(source, child), Ok(true));
-    let other = pie::unseal_hole(Mark::of("forget-source")).unwrap();
+    let other = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-source"))).unwrap();
     assert_eq!(pie::same(source, other), Ok(false));
-    pie::forget(borrowed).unwrap();
+    pie::release(borrowed, env::ReleaseMode::Keep).unwrap();
     Hole::from_raw(child).push(b"ok", Wait::POLL).unwrap();
     let mut bytes = [0; 2];
     assert_eq!(
@@ -635,7 +635,7 @@ pub fn reference_lifetime() {
         "reparented capability remains revocable upstream"
     );
     for round in 0..8 {
-        let root = pie::unseal_hole(Mark::of("forget-race")).unwrap();
+        let root = pie::unseal(env::UnsealArgs::hole(Mark::of("forget-race"))).unwrap();
         let middle = port::ship(root, me, Access::FETCH | Access::STORE, Policy::VEST)
             .unwrap()
             .seed();
@@ -678,24 +678,24 @@ pub fn reference_lifetime() {
             execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         stage.store(2, Ordering::Release);
-        pie::forget(middle).unwrap();
+        pie::release(middle, env::ReleaseMode::Keep).unwrap();
         while stage.load(Ordering::Acquire) < 3 {
             execution::room::park(core::time::Duration::from_millis(1)).unwrap();
         }
         if round % 2 == 0 {
             pie::revoke(worker.id(), downstream).unwrap();
         } else {
-            pie::release(root).unwrap();
+            pie::release(root, env::ReleaseMode::Revoke).unwrap();
         }
         stage.store(4, Ordering::Release);
         worker.join();
         let _ = pie::seal(root);
-        let _ = pie::release(root);
+        let _ = pie::release(root, env::ReleaseMode::Revoke);
     }
     let _ = pie::seal(source);
-    let _ = pie::release(source);
+    let _ = pie::release(source, env::ReleaseMode::Revoke);
     let _ = pie::seal(other);
-    let _ = pie::release(other);
+    let _ = pie::release(other, env::ReleaseMode::Revoke);
     programs::debug::put(
         "hierarchy: Forget preserves delivered capabilities, Same distinguishes objects, concurrent Accord keeps upstream revoke/release effective",
     );
@@ -716,7 +716,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     let done = Arc::new(AtomicBool::new(false));
     let complete = done.clone();
     let control = env::unit::self_id().get();
-    let protected = pie::unseal_hole(env::Mark::of("source-validation")).unwrap();
+    let protected = pie::unseal(env::UnsealArgs::hole(env::Mark::of("source-validation"))).unwrap();
     let raw = protected.get();
     let caller = execution::unit::task::spawn(move || {
         let control = env::TaskId::new(control);
@@ -727,7 +727,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
             group: "operator-fixture".into(),
             name: "entry".into(),
         };
-        let source = pie::unseal_hole(env::Mark::of("publication-test")).unwrap();
+        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("publication-test"))).unwrap();
         assert_eq!(
             client.publish(target.clone(), source, Permit::Public, Wait::AtMost(3000)),
             Err(Fail::Denied),
@@ -772,7 +772,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         "invalid request must not discard somebody else's reference"
     );
     let _ = pie::seal(protected);
-    let _ = pie::release(protected);
+    let _ = pie::release(protected, env::ReleaseMode::Revoke);
     programs::debug::put(
         "hierarchy: real kernel sender and transferred source checks reject unregistered caller and forged source",
     );

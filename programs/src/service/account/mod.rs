@@ -61,11 +61,11 @@ pub fn run() -> Result<(), &'static str> {
         || !matches!(resource::raw::reserve(state_entry),
         Ok((_, owner, mark)) if owner == supervisor && mark == system_api::control::Grant::State.mark())
     {
-        let _ = env::pie::release(state_entry);
+        let _ = env::pie::release(state_entry, env::ReleaseMode::Revoke);
         return Err("Account task query source");
     }
     let state = system_client::control::Face::of(state_entry).map_err(|_| "Account task query")?;
-    let entry = env::pie::unseal_hole(account_api::ENTRY).map_err(|_| "Account entry")?;
+    let entry = env::pie::unseal(env::UnsealArgs::hole(account_api::ENTRY)).map_err(|_| "Account entry")?;
     publisher
         .publish(
             system_api::control::publication::Target::Service {
@@ -149,7 +149,7 @@ fn login(
         LOGIN,
         WAIT,
     );
-    let _ = env::pie::release(entry);
+    let _ = env::pie::release(entry, env::ReleaseMode::Revoke);
     matches!(result, Ok(system_api::control::publication::Object::Principal(principal)) if principal == binding.current.principal)
 }
 fn image(supervisor: TaskId) -> Result<(Vec<u8>, ipc::session::establish::Held), &'static str> {
@@ -166,7 +166,7 @@ fn image(supervisor: TaskId) -> Result<(Vec<u8>, ipc::session::establish::Held),
         crate::unit::ImageSupplyFrame::fetch(&bytes[..length]).ok_or("Account image frame")?;
     if from != supervisor
         || !resource::raw::alive(frame.seed)
-        || !matches!(resource::raw::inspect(frame.seed), Ok((giver, owner, mark)) if giver == supervisor && owner == supervisor && mark == crate::unit::IMAGE_MARK)
+        || !matches!(resource::raw::inspect(frame.seed), Ok(info) if info.alive && info.vestor == supervisor && info.owner == supervisor && info.mark == crate::unit::IMAGE_MARK)
     {
         return Err("Account image source");
     }
@@ -174,7 +174,7 @@ fn image(supervisor: TaskId) -> Result<(Vec<u8>, ipc::session::establish::Held),
     impl Drop for Mapping {
         fn drop(&mut self) {
             let _ = env::pie::shut(self.0);
-            let _ = env::pie::release(self.0);
+            let _ = env::pie::release(self.0, env::ReleaseMode::Revoke);
         }
     }
     let _mapping = Mapping(frame.seed);
@@ -208,7 +208,7 @@ fn create(
         .map_err(|_| Fail::NotReady)?;
     let facts = resource::raw::reserve(entry);
     let live = resource::raw::alive(entry);
-    let _ = env::pie::release(entry);
+    let _ = env::pie::release(entry, env::ReleaseMode::Revoke);
     let host = match facts {
         Ok((_, owner, mark)) if live && owner.get() != 0 && mark == terminal_api::marks::ENTRY => {
             owner
@@ -216,13 +216,13 @@ fn create(
         _ => return Err(Fail::Denied),
     };
     let bytes = config.image.as_slice();
-    let image = env::pie::unseal_pole(bytes.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, true)
+    let image = env::pie::unseal(env::UnsealArgs::Pole { size: bytes.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, shared: true })
         .map_err(|_| Fail::Full)?;
     struct Image(env::PieToken);
     impl Drop for Image {
         fn drop(&mut self) {
             let _ = env::pie::shut(self.0);
-            let _ = env::pie::release(self.0);
+            let _ = env::pie::release(self.0, env::ReleaseMode::Revoke);
         }
     }
     let _image = Image(image);

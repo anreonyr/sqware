@@ -5,7 +5,7 @@
 //! 两形各是一张实现了报文约定的表，见 super::core::frame）。
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::{PieToken, HoleDir, Wait};
+use env::{PieToken, MailCondition, Wait};
 use ipc::hand::Receiver;
 use ipc::session::establish;
 use programs::debug;
@@ -28,16 +28,16 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
     let Some(n) = Now::of(seed).store_at(&mut frame, 0) else {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
     let door = Hole::from_raw(entry);
     if door.push(&frame[..n], Wait::Forever).is_err()
-        || !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true))
+        || !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true))
     {
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
     // 两格失败（没收到 / 解不动）在这一侧落同一格：`Denied`（对本端是同一个下一步）。
@@ -47,7 +47,7 @@ pub fn now(entry: PieToken, millis: Wait) -> Result<u64, Fail> {
         .map_err(|_| Fail::Denied);
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = pie::seal(back);
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
     answer
 }
 
@@ -67,7 +67,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
         why("store", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     };
     let door = Hole::from_raw(entry);
@@ -75,14 +75,14 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
         why("push", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
-    if !matches!(door.wait(HoleDir::Push, Wait::Forever), Ok(true)) {
+    if !matches!(door.wait(MailCondition::Empty, Wait::Forever), Ok(true)) {
         why("take", 0, "");
         // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
         let _ = pie::seal(back);
-        let _ = pie::release(back);
+        let _ = pie::release(back, env::ReleaseMode::Revoke);
         return Err(Fail::Denied);
     }
     // 收那一格答码（**恰好 1 字节**：长短都不是这一形 ⇒ 读不懂 ⇒ `Denied`）。
@@ -104,7 +104,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             }
             // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
             let _ = pie::seal(back);
-            let _ = pie::release(back);
+            let _ = pie::release(back, env::ReleaseMode::Revoke);
             return Err(Fail::Denied);
         }
     };
@@ -116,7 +116,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
     }
     // "这只手被取走"（Sender::Drop），而它等的这一枚只有我手里这一份。
     let _ = pie::seal(back);
-    let _ = pie::release(back);
+    let _ = pie::release(back, env::ReleaseMode::Revoke);
     why("code", 0, &alloc::format!("got={code}"));
     Err(frame::code_to_fail(code).unwrap_or(Fail::Denied))
 }
