@@ -251,13 +251,12 @@ pub fn acceptance() {
     let before = old_query
         .resolve(old_dependent, Wait::AtMost(1000))
         .unwrap();
+    let activation = system_client::identity::Face::direct(
+        old_authority, Grant::Activate,
+        establish::find(old_authority, Grant::Activate.mark()).unwrap(),
+    ).unwrap();
     assert!(
-        assembly
-            .resources
-            .read::<crate::system::control::identity::Roster>()
-            .unwrap()
-            .activate(old_dependent, coalition)
-            .is_err(),
+        hub_client::activate(&activation, old_dependent, &[coalition]).is_err(),
         "identity: qualification was not checked"
     );
     assert_eq!(
@@ -479,49 +478,24 @@ fn activation_boundary(
 ) {
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
-    use hub_api::activation;
-
-    let owner = env::unit::self_id();
-    let entry = establish::find(owner, activation::ENTRY).unwrap();
+    let authority = coalition.authority;
+    let entry = establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
-    let (owner, hub, authority, slot) = (
-        owner.get(),
-        hub.get(),
-        coalition.authority.get(),
-        coalition.slot,
-    );
     let caller = execution::unit::task::spawn(move || {
-        let owner = env::TaskId::new(owner);
-        let hub = env::TaskId::new(hub);
-        let coalition = system_api::identity::CoalitionId::new(env::TaskId::new(authority), slot);
-        let entry = establish::claim(owner, activation::ENTRY, Wait::AtMost(1000)).unwrap();
-        assert!(
-            port::ship(entry, hub, Access::STORE, Policy::NONE).is_err(),
-            "activation copy unexpectedly transferable"
-        );
-        assert!(
-            hub_client::activate(hub, &[coalition]).is_err(),
-            "activation accepted a non-Hub kernel sender"
-        );
+        let entry = establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
+        let face = system_client::identity::Face::direct(authority, system_api::identity::Grant::Activate, entry).unwrap();
+        assert!(face.call(system_api::identity::Wire::Activate(hub, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), Wait::AtMost(1000)).is_err(), "activation accepted an unbound non-manager sender");
         finished.store(true, Ordering::Release);
     });
     port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        crate::system::launch::activation::maintain(
-            assembly.resources.read().unwrap(),
-            assembly.resources.read().unwrap(),
-            assembly.resources.read().unwrap(),
-        )
-        .unwrap();
-        assert!(
-            env::chrono::clock() < until,
-            "activation boundary never answered"
-        );
+        assert!(env::chrono::clock() < until, "activation boundary never answered");
         execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();
+    let _ = assembly;
 }
 
 fn ready_driver(

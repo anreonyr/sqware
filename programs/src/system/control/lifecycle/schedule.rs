@@ -5,19 +5,21 @@ use crate::system::control::unit::verdict::Fail;
 use ::schedule::{BuildError, Plan, Schedule};
 use alloc::vec::Vec;
 pub(crate) struct ActivationHooks {
+    pub construct: Plan<Fail>,
     pub prepare: Plan<Fail>,
+    pub supply: Plan<Fail>,
     pub retire: Plan<Fail>,
 }
 pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, BuildError> {
     let mut mint = Schedule::sequence();
     mint.system("validate", work::mint::pre)?;
-    mint.system("create", work::mint::run)?;
+    mint.plan("create", hooks.construct)?;
     mint.system("commit", work::mint::post)?;
     let mut embark = Schedule::sequence();
     embark.system("bind", work::embark::pre)?;
     embark.plan("activation", hooks.prepare)?;
     embark.system("run", work::embark::run)?;
-    embark.system("supply", work::embark::supply)?;
+    embark.plan("supply", hooks.supply)?;
     embark.system("ready", work::embark::ready)?;
     embark.system("commit", work::embark::post)?;
     let mut debark = Schedule::sequence();

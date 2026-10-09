@@ -59,7 +59,7 @@ fn main() -> Report<'static> {
     let plated = land(&tree, &a, &b);
     let client = Client::injected().unwrap();
     let target = |name: &str| Target::Service {
-        scope: Scope::Fixture,
+        scope: Scope(4),
         group: rig::ROAD.into(),
         name: name.into(),
     };
@@ -161,7 +161,7 @@ fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<system_api::operat
     let mut mounts = Vec::new();
     for (name, entry) in rig::faces(a, b) {
         let target = Target::Service {
-            scope: Scope::Fixture,
+            scope: Scope(4),
             group: rig::ROAD.into(),
             name: name.into(),
         };

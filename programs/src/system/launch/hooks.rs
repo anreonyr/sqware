@@ -28,9 +28,9 @@ fn bind(
     let launch = pending
         .0
         .iter()
-        .find(|launch| Some(launch.task) == active.task)
+        .find(|launch| Some(launch.built.task) == active.task)
         .ok_or("instance installation policy")?;
-    roster.install(launch.task, launch.identity)?;
+    roster.install(launch.built.task, launch.delivery.identity)?;
     Ok(Progress::Done)
 }
 fn ready(

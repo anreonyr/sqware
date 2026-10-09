@@ -145,7 +145,7 @@ fn spawn_one(
     {
         return false;
     }
-    let Ok(task) = service::mint(
+    let Ok(task) = crate::harness::mint(
         table,
         loader,
         Image {

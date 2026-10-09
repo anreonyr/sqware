@@ -10,3 +10,4 @@ path = "lib.rs"
 argon2 = { version = "=0.5.3", default-features = false, features = ["alloc", "password-hash", "zeroize"] }
 env = { path = "../../../crates/env" }
 system-api = { path = "../../src/system/api" }
+account-api = { path = "../../src/service/account/api" }

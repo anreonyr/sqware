@@ -16,7 +16,8 @@ mod wait;
 pub struct Control {
     pub(in crate::system::control) status: Arc<Status>,
     pub(in crate::system::control) table: Table,
-    pub(in crate::system::control) loader: crate::system::loader::Loader,
+    pub(in crate::system::control) inputs: Vec<start::Input>,
+    pub(in crate::system::control) internal: Vec<TaskId>,
     pub(in crate::system::control) instances:
         Vec<crate::system::control::instance::state::Instance>,
     pub(in crate::system::control) pending: Vec<Pending>,
@@ -30,7 +31,8 @@ impl Control {
         Self {
             status,
             table: Table::new(),
-            loader: crate::system::loader::Loader::new(),
+            inputs: Vec::new(),
+            internal: Vec::new(),
             pending: Vec::new(),
             instances: Vec::new(),
         }
@@ -99,9 +101,17 @@ impl Control {
             Slot::None => None,
         }
     }
+    pub(crate) fn register_internal(&mut self, task: TaskId) -> Result<(), &'static str> {
+        self.internal.try_reserve(1).map_err(|_| "internal lifecycle capacity")?;
+        self.internal.push(task);
+        Ok(())
+    }
     pub(crate) fn live(&self, task: TaskId) -> bool {
         (task == env::unit::self_id() || self.tasks().any(|known| known == task))
             && !env::unit::join(task, Wait::POLL).unwrap_or(true)
+    }
+    pub(crate) fn internal_tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
+        self.internal.iter().copied()
     }
     pub(crate) fn tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
         self.table
@@ -114,6 +124,7 @@ impl Control {
                 }
                 _ => None,
             })
+            .chain(self.internal_tasks())
             .chain(
                 self.instances
                     .iter()
@@ -130,7 +141,6 @@ impl Control {
 }
 
 mod fixture;
-pub mod material;
 mod observe;
 pub(crate) mod reap;
 pub mod start;

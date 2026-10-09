@@ -41,7 +41,7 @@ fn main() -> Report<'static> {
 
     let client = system_client::control::publication::Client::injected().unwrap();
     let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope::Fixture,
+        scope: system_api::control::publication::Scope(4),
         group: "probe-swatch".into(),
         name: IN.into(),
     };

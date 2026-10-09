@@ -37,7 +37,7 @@ fn main() -> Report<'static> {
     let tree = Face::of(session);
     let entry = pie::unseal_hole(env::Mark::of("lease-entry")).unwrap();
     let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope::Fixture,
+        scope: system_api::control::publication::Scope(4),
         group: "fixtures".into(),
         name: "lease".into(),
     };

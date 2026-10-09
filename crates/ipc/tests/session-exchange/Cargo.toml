@@ -10,3 +10,4 @@ path = "lib.rs"
 [workspace]
 
 [dependencies]
+system-api = { path = "../../../../programs/src/system/api" }

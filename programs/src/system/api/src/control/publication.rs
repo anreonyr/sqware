@@ -16,15 +16,9 @@ pub const UNPUBLISH: u8 = 2;
 pub const RESOLVE: u8 = 3;
 pub const RUNTIME: u8 = 4;
 
+/// Deployment-defined service namespace, separated from identity/runtime wire families.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Scope {
-    Driver = 1,
-    Hub = 2,
-    Device = 3,
-    Fixture = 4,
-    Terminal = 5,
-}
-
+pub struct Scope(pub u8);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Service {
@@ -98,7 +92,7 @@ impl Frame {
     pub fn new(op: u8, target: Target, resource: (PieToken, Permit)) -> Self {
         let (entry, permit) = resource;
         let (kind, group, name, task, number) = match target {
-            Target::Service { scope, group, name } => (scope as u8, group, name, TaskId::new(0), 0),
+            Target::Service { scope, group, name } => (scope.0, group, name, TaskId::new(0), 0),
             Target::IdentityName { object, name } => (
                 10 + object.kind(),
                 String::new(),
@@ -149,14 +143,7 @@ impl Frame {
                 name: self.name.clone(),
             });
         }
-        let scope = match self.kind {
-            1 => Scope::Driver,
-            2 => Scope::Hub,
-            3 => Scope::Device,
-            4 => Scope::Fixture,
-            5 => Scope::Terminal,
-            _ => return None,
-        };
+        let scope = (1..=9).contains(&self.kind).then_some(Scope(self.kind))?;
         (self.task.get() == 0 && self.number == 0).then(|| Target::Service {
             scope,
             group: self.group.clone(),

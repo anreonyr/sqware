@@ -4,6 +4,8 @@ pub(crate) mod lifecycle;
 mod endpoint;
 pub(crate) mod unit;
 
+pub(crate) use endpoint::construction::{Construction, receive as receive_construction, admit as admit_construction};
+
 mod install;
 pub(crate) use install::{Configuration, install};
 

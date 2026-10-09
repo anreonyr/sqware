@@ -1,5 +1,6 @@
 //! Control endpoint registration and request adaptation.
 mod instance;
+pub(crate) mod construction;
 pub(super) mod request;
 pub(crate) use instance::{answer as answer_instances, receive as receive_instances};
 

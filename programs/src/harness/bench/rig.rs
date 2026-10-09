@@ -247,7 +247,7 @@ fn trial(
             restart: Ending::Transient,
         })
         .map_err(|_| "register")?;
-    let task = service::mint(
+    let task = crate::harness::mint(
         &mut table,
         loader,
         Image {

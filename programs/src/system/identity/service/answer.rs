@@ -83,6 +83,7 @@ pub fn answer(book: &mut IdentityBook, request: Request) -> Reply {
             )
             .map(|()| Reply::Unit),
         Wire::Unbind(task) => book.unbind(from, task).map(|()| Reply::Unit),
+        Wire::Activate(task, coalitions) => book.activate(from, (task, coalitions)).map(|()| Reply::Unit),
     };
     result.unwrap_or_else(Reply::Fail)
 }

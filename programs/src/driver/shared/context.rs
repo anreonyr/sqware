@@ -42,7 +42,7 @@ impl Context {
         let client = system_client::control::publication::Client::injected()
             .expect("driver: publication entry");
         let target = system_api::control::publication::Target::Service {
-            scope: Scope::Driver,
+            scope: Scope(1),
             group: "".into(),
             name: me.into(),
         };

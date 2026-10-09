@@ -8,7 +8,7 @@ use ipc::session::Session;
 use terminal_client::{Connection, Io, Read, Terminal};
 use system_client::control::Face as Lifecycle;
 use system_api::control::State;
-use system_client::control::account::Client;
+use account_client::Client;
 use system_client::operator;
 use system_client::operator::Face;
 use zeroize::Zeroizing;
@@ -51,11 +51,15 @@ fn run_cat(
 ) -> Result<bool, ()> {
     let built = match client.create(auth::ACCOUNT, WAIT) {
         Ok(built) => built,
-        Err(_) => return Ok(false),
+        Err(fail) => {
+            programs::debug::put(&alloc::format!("login: account creation {fail:?}"));
+            return Ok(false);
+        }
     };
     let foreground = match connection.lend(built.task) {
         Ok(foreground) => foreground,
         Err(_) => {
+            programs::debug::put("login: terminal foreground grant failed");
             lifecycle.instance(built.task).ruin(WAIT).map_err(|_| ())?;
             return Ok(false);
         }
@@ -64,7 +68,9 @@ fn run_cat(
         lifecycle
             .instance(built.task)
             .embark(WAIT)
-            .map_err(|_| ())?;
+            .map_err(|fail| {
+                programs::debug::put(&alloc::format!("login: instance embark {fail:?}"));
+            })?;
         loop {
             if lifecycle.instance(built.task).state(WAIT).map_err(|_| ())? == State::Dead {
                 break;

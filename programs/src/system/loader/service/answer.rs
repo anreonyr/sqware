@@ -1,6 +1,5 @@
 use ::resource::raw::inspect;
 use ::schedule::{Progress, ResMut};
-use alloc::vec::Vec;
 use env::{PieToken, TaskId, Wait, pie};
 use ipc::rpc::{self, reply::Sender};
 use system_api::loader as frame;
@@ -10,21 +9,14 @@ use system_api::loader::Said;
 use system_api::loader::Wire;
 use wire::Message;
 
-pub(crate) struct Incoming {
-    pub(crate) ask: Ask,
-    pub(crate) from: TaskId,
-    pub(crate) back: Sender<Said>,
-}
 pub(crate) struct Inbox {
     pub(crate) entry: Option<PieToken>,
-    pub(crate) requests: Vec<Incoming>,
     pub(crate) buffer: <Wire as Message>::Buf,
 }
 impl Inbox {
     pub(crate) fn new() -> Self {
         Self {
             entry: None,
-            requests: Vec::new(),
             buffer: Wire::EMPTY,
         }
     }
@@ -32,6 +24,7 @@ impl Inbox {
 pub(super) fn receive(
     mut inbox: ResMut<Inbox>,
     mut control: ResMut<crate::system::control::unit::Control>,
+    mut requests: ResMut<crate::system::launch::Requests>,
 ) -> Result<Progress, crate::system::app::Fault> {
     let Some(entry) = inbox.entry else {
         return Ok(Progress::Done);
@@ -70,7 +63,7 @@ pub(super) fn receive(
                 }
             }
             Wire::Build(ask) => {
-                if inbox.requests.len() >= 16 || inbox.requests.try_reserve(1).is_err() {
+                if requests.0.len() >= 16 || requests.0.try_reserve(1).is_err() {
                     release_image(&ask, from);
                     reply(
                         back,
@@ -81,14 +74,14 @@ pub(super) fn receive(
                         },
                     );
                 } else {
-                    inbox.requests.push(Incoming { ask, from, back });
+                    requests.0.push(crate::system::launch::Request { ask, from, delivery: crate::system::launch::Delivery { owner: from, identity: system_api::identity::Install::Inherit { parent: from }, back } });
                 }
             }
         }
     }
     Ok(Progress::Done)
 }
-pub(super) fn release_image(ask: &Ask, from: TaskId) {
+pub(crate) fn release_image(ask: &Ask, from: TaskId) {
     if matches!(inspect(ask.image), Ok((vestor, _, mark)) if vestor == from && mark == frame::IMAGE)
     {
         let _ = pie::release(ask.image);
@@ -96,18 +89,4 @@ pub(super) fn release_image(ask: &Ask, from: TaskId) {
 }
 pub(super) fn reply(back: Sender<Said>, said: Said) -> bool {
     back.send(said).is_ok()
-}
-
-pub(super) fn reject(inbox: &mut Inbox) {
-    for incoming in inbox.requests.drain(..) {
-        release_image(&incoming.ask, incoming.from);
-        reply(
-            incoming.back,
-            Said {
-                status: system_api::control::frame::NOTREADY,
-                team: 0,
-                task: TaskId::new(0),
-            },
-        );
-    }
 }

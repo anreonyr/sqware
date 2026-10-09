@@ -289,7 +289,7 @@ mod boundaries {
                 }
             }
         }
-        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs", "account/mod.rs", "publication/receive.rs", "publication/names.rs"] {
+        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs", "publication/receive.rs", "publication/names.rs"] {
             let source = fs::read_to_string(repo.join("programs/src/system").join(path)).unwrap();
             assert!(!source.contains("system_client::"), "own service binding depends on client: {path}");
         }
@@ -297,7 +297,7 @@ mod boundaries {
     #[test]
     fn system_components_have_named_ownership_and_no_legacy_classification() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for name in ["app", "control", "identity", "operator", "loader", "publication", "launch", "account"] {
+        for name in ["app", "control", "identity", "operator", "loader", "publication", "launch"] {
             assert!(system.join(name).is_dir(), "missing component {name}");
         }
         for old in ["run", "common", "boot.rs", "life.rs", "control/core", "control/serve", "identity/core", "identity/serve", "operator/core", "operator/serve", "operator/client.rs", "loader/core", "loader/serve"] {
@@ -372,7 +372,7 @@ mod boundaries {
         let hub_api = dependencies(&repo.join("programs/src/service/hub/api/Cargo.toml"));
         assert!(hub_api.iter().all(|name| ["env", "wire", "mold", "system-api"].contains(&name.as_str())));
         let hub_client = dependencies(&repo.join("programs/src/service/hub/client/Cargo.toml"));
-        assert!(hub_client.iter().all(|name| ["env", "wire", "resource", "ipc", "hub-api", "system-api"].contains(&name.as_str())));
+        assert!(hub_client.iter().all(|name| ["env", "wire", "resource", "ipc", "hub-api", "system-api", "system-client"].contains(&name.as_str())));
         for dependencies in [&terminal_api, &router_api, &hub_api, &terminal_client, &router_client, &hub_client] {
             assert!(!dependencies.iter().any(|name| name == "protocol"));
         }
@@ -557,5 +557,26 @@ mod boundaries {
             }
         }
         assert_eq!(checked, 2);
+    }
+}
+
+#[cfg(test)]
+mod revised_ownership {
+    use std::{fs, path::Path};
+    #[test]
+    fn account_has_its_own_task_and_api_and_uses_authorized_control_contract() {
+        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        assert!(!repo.join("programs/src/system/account").exists());
+        let service = fs::read_to_string(repo.join("programs/src/service/account/mod.rs")).unwrap();
+        assert!(!service.contains("crate::system::"));
+        assert!(service.contains("api::Call"));
+        assert!(repo.join("programs/src/service/account/api/Cargo.toml").is_file());
+        assert!(repo.join("programs/src/service/account/client/Cargo.toml").is_file());
+        let control = fs::read_to_string(repo.join("programs/src/system/control/unit/mod.rs")).unwrap();
+        assert!(!control.contains("loader:"));
+        let publication = fs::read_to_string(repo.join("programs/src/system/publication/policy.rs")).unwrap();
+        assert!(!publication.contains("hub_api") && !publication.contains("Machine"));
+        assert!(!repo.join("programs/src/system/launch/activation.rs").exists());
+        assert!(!repo.join("programs/src/system/control/unit/material.rs").exists());
     }
 }

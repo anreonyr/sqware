@@ -13,7 +13,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 pub static PROBE_WATCH: UnitFile = UnitFile {
     publication: &[
         crate::unit::Publish::Entries {
-            scope: crate::unit::PublishScope::Fixture,
+            scope: crate::unit::PublishScope(4),
             group: "probe-watch",
             road: "svc/probe-watch",
             entries: &[
@@ -23,13 +23,13 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
             public: false,
         },
         crate::unit::Publish::Namespace {
-            scope: crate::unit::PublishScope::Fixture,
+            scope: crate::unit::PublishScope(4),
             group: "probe-watch-dynamic",
             road: "svc/probe-watch-dynamic",
             public: false,
         },
         crate::unit::Publish::Entries {
-            scope: crate::unit::PublishScope::Fixture,
+            scope: crate::unit::PublishScope(4),
             group: "probe-watch-q",
             road: "svc/probe-watch-q",
             entries: &[

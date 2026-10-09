@@ -50,7 +50,7 @@ pub mod raw {
 
 pub mod control {
     pub use system_api::control::{frame, marks, publication, Fail, Grant, Req, Request, Said, State, Wire};
-    pub mod account { pub use system_api::control::account::*; }
+    pub mod account { pub use account_api::*; }
     pub mod client {
         include!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/system/client/src/control/client.rs"));
     }
@@ -194,8 +194,8 @@ pub mod system {
     pub mod control {
         pub use crate::control::{Fail, frame, marks, publication};
         pub mod account {
-            pub use system_api::control::account::*;
-            pub use system_api::control::marks::ACCOUNT_BACK as BACK;
+            pub use account_api::*;
+            pub use account_api::BACK as BACK;
         }
         pub use crate::control::client;
     }
@@ -237,24 +237,24 @@ mod tests {
         assert_eq!(system_api::control::Call::back(&decoded), back);
         assert_eq!(system_api::control::Call::BACK, frame::BACK);
 
-        let account = system_api::control::account::Request { account: String::from("."), back };
-        let mut bytes = system_api::control::account::Request::EMPTY;
+        let account = account_api::Request { account: String::from("."), back };
+        let mut bytes = account_api::Request::EMPTY;
         let n = account.store(&mut bytes).unwrap();
-        let decoded = system_api::control::account::Request::fetch(&bytes[..n]).unwrap();
-        assert_eq!(system_api::control::account::Call::back(&decoded), back);
+        let decoded = account_api::Request::fetch(&bytes[..n]).unwrap();
+        assert_eq!(account_api::Call::back(&decoded), back);
         assert!(decoded.1, "well-formed trailing boundary is retained for server validation");
         assert_eq!(
-            system_api::control::account::Call::BACK,
-            system_api::control::marks::ACCOUNT_BACK,
+            account_api::Call::BACK,
+            account_api::BACK,
         );
-        let decoded_with_tail = system_api::control::account::Request::fetch(&bytes[..n + 1]).unwrap();
+        let decoded_with_tail = account_api::Request::fetch(&bytes[..n + 1]).unwrap();
         assert!(!decoded_with_tail.1);
-        assert_eq!(system_api::control::account::Call::back(&decoded_with_tail), back);
+        assert_eq!(account_api::Call::back(&decoded_with_tail), back);
 
         let frame = system_api::control::publication::Frame::new(
             system_api::control::publication::PUBLISH,
             system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope::Driver,
+                scope: system_api::control::publication::Scope(1),
                 group: String::from("group"),
                 name: String::from("name"),
             },
@@ -283,7 +283,7 @@ mod tests {
 
     fn publication_target() -> system_api::control::publication::Target {
         system_api::control::publication::Target::Service {
-            scope: system_api::control::publication::Scope::Driver,
+            scope: system_api::control::publication::Scope(1),
             group: String::from("group"),
             name: String::from("service"),
         }

@@ -12,13 +12,13 @@ use super::{Inbox, Incoming, Outcome, Request};
 use ::resource::raw::inspect;
 use env::pie;
 pub fn receive(
-    images: Res<crate::system::control::unit::start::Images>,
+    entry: Res<crate::system::publication::Entry>,
     mut inbox: ResMut<Inbox>,
     mut dispatch: ResMut<::schedule::Dispatch<u8, &'static str>>,
 ) -> Result<Progress, &'static str> {
     let mut bytes = [0; Frame::LEN];
     let receiver = rpc::request::Receiver::<Publication>::from_raw(
-        images.entry,
+        entry.0,
         Publication::BACK,
         Publication::back,
     );

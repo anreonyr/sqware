@@ -61,22 +61,22 @@ fn main() -> Report<'static> {
     let parent = tree
         .pane(system_api::control::DIR, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
-    // Publication, account construction and instance lifecycle are separate entries.
+    // Publication and instance lifecycle are separate entries. Account has its own namespace.
     let seen = probe::count::count_under(
         &parent,
-        system_api::control::Grant::ALL.len() + 3,
+        system_api::control::Grant::ALL.len() + 2,
         &mut watch,
         FACES_MS,
     );
     debug!(
         "probe-control: faces={seen} want={}",
-        (system_api::control::Grant::ALL.len() + 3)
+        (system_api::control::Grant::ALL.len() + 2)
     );
     assert_eq!(
         seen,
-        (system_api::control::Grant::ALL.len() + 3),
+        (system_api::control::Grant::ALL.len() + 2),
         "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
-        (system_api::control::Grant::ALL.len() + 3)
+        (system_api::control::Grant::ALL.len() + 2)
     );
     let plate = tree
         .tile(&road, Wait::AtMost(MS))
@@ -120,7 +120,7 @@ fn main() -> Report<'static> {
         denied_cells[i] = matches!(got, Err(Fail::Denied));
     }
 
-    let accounts = system_client::control::account::Client::find(&tree, Wait::AtMost(MS))
+    let accounts = account_client::Client::find(&tree, Wait::AtMost(MS))
         .expect("probe-control: account entry");
     assert!(matches!(
         accounts.create("anran", Wait::AtMost(MS)),

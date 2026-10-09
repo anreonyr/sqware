@@ -9,7 +9,7 @@ pub const E_RTC: Died = 12;
 
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Driver,
+        scope: crate::unit::PublishScope(1),
         group: "",
         road: "svc/drv",
         entries: &[crate::unit::PublishEntry {

@@ -21,7 +21,7 @@ mod tests {
             hub_api::marks::DECLARATIONS,
             terminal_api::marks::DECLARATIONS,
         ];
-        assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 28);
+        assert_eq!(groups.iter().map(|group| group.len()).sum::<usize>(), 26);
         assert_eq!(env::marks::conflict(&groups), None);
         for definition in groups.iter().flat_map(|group| group.iter()) {
             assert_eq!(definition.mark, env::Mark::of(definition.name));
@@ -40,8 +40,8 @@ mod tests {
             .flat_map(|registry| registry.iter())
             .flat_map(|group| group.iter())
             .collect();
-        assert_eq!(actual.len(), 54);
-        assert_eq!(actual.len() + crate::baseline::RETIRED.len(), crate::baseline::VALUES.len());
+        assert_eq!(actual.len(), 55);
+        assert_eq!(actual.len() - 3 + crate::baseline::RETIRED.len(), crate::baseline::VALUES.len());
         for &(name, value) in crate::baseline::VALUES {
             let matches: Vec<_> = actual.iter().filter(|definition| definition.name == name).collect();
             if crate::baseline::RETIRED.contains(&name) {

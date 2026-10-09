@@ -22,7 +22,7 @@ pub(super) fn bond(
             .organization
             .admit(coalition, binding.current.principal, Wait::AtMost(MS))
         {
-            Ok(()) if hub_client::activate(from, &[coalition]).is_ok() => hub::OK,
+            Ok(()) if hub_client::activate(&league.activation, from, &[coalition]).is_ok() => hub::OK,
             Ok(()) => hub::DENIED,
             Err(_) => hub::DENIED,
         };

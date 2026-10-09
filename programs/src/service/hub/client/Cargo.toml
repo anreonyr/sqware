@@ -15,3 +15,4 @@ wire = { path = "../../../../../crates/wire" }
 resource = { path = "../../../../../crates/resource" }
 ipc = { path = "../../../../../crates/ipc" }
 system-api = { path = "../../../system/api" }
+system-client = { path = "../../../system/client" }

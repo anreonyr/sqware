@@ -173,18 +173,8 @@ pub(crate) fn exercise(
     .unwrap();
     let coalition = organization.found(wait).unwrap();
     organization.admit(coalition, p, wait).unwrap();
-    assembly
-        .resources
-        .read::<crate::system::control::identity::Roster>()
-        .unwrap()
-        .activate(service, coalition)
-        .unwrap();
-    assembly
-        .resources
-        .read::<crate::system::control::identity::Roster>()
-        .unwrap()
-        .activate(target, coalition)
-        .unwrap();
+    face(Grant::Activate).call(Wire::Activate(service, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), wait).unwrap();
+    face(Grant::Activate).call(Wire::Activate(target, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), wait).unwrap();
     {
         {
             let registration = crate::system::publication::Registration {
@@ -525,7 +515,7 @@ pub fn codecs() {
     let p = system_api::identity::PrincipalId::new(a, 19);
     for target in [
         Target::Service {
-            scope: Scope::Driver,
+            scope: Scope(1),
             group: "uart".into(),
             name: "rx".into(),
         },
@@ -552,7 +542,7 @@ pub fn codecs() {
     let mut bad = Frame::new(
         1,
         Target::Service {
-            scope: Scope::Fixture,
+            scope: Scope(4),
             group: "bad/name".into(),
             name: "x".into(),
         },
@@ -733,7 +723,7 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
         let entry = ipc::session::establish::claim(control, ENTRY, Wait::AtMost(1000)).unwrap();
         let client = Client::direct(control, entry).unwrap();
         let target = Target::Service {
-            scope: Scope::Fixture,
+            scope: Scope(4),
             group: "operator-fixture".into(),
             name: "entry".into(),
         };
@@ -766,9 +756,9 @@ fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
     });
     let entry = assembly
         .resources
-        .read::<crate::system::control::unit::start::Images>()
+        .read::<crate::system::publication::Entry>()
         .unwrap()
-        .entry;
+        .0;
     port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 10_000_000_000;
     while !done.load(Ordering::Acquire) {

@@ -54,17 +54,6 @@ impl Roster {
         self.inject(task)
     }
 
-    pub(crate) fn derive_subject(&self) -> Result<Subject, &'static str> {
-        let installer = self.installer.as_ref().ok_or("identity not installed")?;
-        let principal = installer
-            .derive(
-                PrincipalId::root(installer.authority()),
-                Wait::AtMost(BOOT_MS),
-            )
-            .map_err(|_| "derive subject principal")?;
-        Subject::new(principal, &[]).map_err(|_| "derived subject")
-    }
-
     pub(crate) fn install(&self, task: TaskId, identity: Install) -> Result<(), &'static str> {
         self.installer
             .as_ref()
@@ -83,63 +72,6 @@ impl Roster {
         port::ship(resolve, task, Access::STORE | Access::FETCH, Policy::NONE)
             .map(|_| ())
             .map_err(|_| "inject identity authority")
-    }
-
-    /// Explicit device grant, never a reset of a task's attenuated binding.
-    pub(crate) fn activate(
-        &self,
-        task: TaskId,
-        coalition: system_api::identity::CoalitionId,
-    ) -> Result<(), &'static str> {
-        use system_api::identity::Reply;
-        use system_api::identity::Wire;
-        use system_api::identity::limits::MAX_ACTIVE_COALITIONS;
-        use system_client::identity::Face;
-
-        let installer = self.installer.as_ref().ok_or("identity not installed")?;
-        let authority = installer.authority();
-        let resolve = Face::direct(
-            authority,
-            Grant::Resolve,
-            self.resolve.ok_or("identity authority anchor")?,
-        )
-        .map_err(|_| "identity resolve source")?;
-        let Reply::Binding(Some(binding)) = resolve
-            .call(Wire::Resolve(task), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "device identity resolve")?
-        else {
-            return Err("device identity unbound");
-        };
-        if binding.origin != binding.current || coalition.authority != authority {
-            return Err("device identity narrowed or stale");
-        }
-        let subject = binding.current;
-        let amid = Face::direct(authority, Grant::Amid, face_of(authority, Grant::Amid)?)
-            .map_err(|_| "identity amid source")?;
-        if amid
-            .call(
-                Wire::Amid(subject.principal, coalition),
-                Wait::AtMost(BOOT_MS),
-            )
-            .map_err(|_| "device qualification query")?
-            != Reply::Bool(true)
-        {
-            return Err("device identity not eligible");
-        }
-        if subject.coalitions.contains(coalition) {
-            return Ok(());
-        }
-        let len = subject.coalitions.len();
-        if len == MAX_ACTIVE_COALITIONS {
-            return Err("device identity full");
-        }
-        let mut ids = [coalition; MAX_ACTIVE_COALITIONS];
-        ids[..len].copy_from_slice(subject.coalitions.as_slice());
-        let subject = Subject::new(subject.principal, &ids[..len + 1])
-            .map_err(|_| "device identity subject")?;
-        installer
-            .bind(task, Install::Authorized(subject), Wait::AtMost(BOOT_MS))
-            .map_err(|_| "device identity activate")
     }
 
     pub(crate) fn unbind(&self, task: TaskId) -> Result<(), &'static str> {
@@ -285,5 +217,22 @@ fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'static str> {
             return Ok(entry);
         }
         return Err("identity face source");
+    }
+}
+
+impl Roster {
+    pub(crate) fn allow_subject(&self, from: TaskId, subject: Subject) -> Result<(), &'static str> {
+        use system_api::identity::{Reply, Wire};
+        use system_client::identity::Face;
+        let authority = current_authority(self).ok_or("identity authority stale")?;
+        let binding = binding(self, from).map_err(|_| "creator unbound")?.ok_or("creator unbound")?;
+        if subject.principal.authority != authority || !subject.coalitions.is_subset(&binding.current.coalitions) {
+            return Err("creation subject outside grant");
+        }
+        let face = Face::direct(authority, Grant::Heir, face_of(authority, Grant::Heir)?).map_err(|_| "creation identity face")?;
+        if face.call(Wire::Heir(binding.current.principal, subject.principal), Wait::AtMost(BOOT_MS)).map_err(|_| "creation identity query")? != Reply::Bool(true) {
+            return Err("creation subject outside subtree");
+        }
+        Ok(())
     }
 }

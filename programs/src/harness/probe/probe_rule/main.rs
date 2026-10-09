@@ -284,7 +284,7 @@ fn main() -> Report<'static> {
 /// Identity 起头就分了 /svc，故这时落出来的号不可能是 `0`
 fn target(name: &str) -> publication::Target {
     publication::Target::Service {
-        scope: publication::Scope::Fixture,
+        scope: publication::Scope(4),
         group: PANE.into(),
         name: name.into(),
     }

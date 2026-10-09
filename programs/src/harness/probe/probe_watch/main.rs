@@ -129,7 +129,7 @@ fn main() -> Report<'static> {
 
     let publisher = system_client::control::publication::Client::injected().unwrap();
     let dynamic = |name: &str| system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope::Fixture,
+        scope: system_api::control::publication::Scope(4),
         group: "probe-watch-dynamic".into(),
         name: name.into(),
     };
@@ -144,7 +144,7 @@ fn main() -> Report<'static> {
     assert_eq!(
         publisher.publish(
             system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope::Fixture,
+                scope: system_api::control::publication::Scope(4),
                 group: "probe-watch-other".into(),
                 name: "one".into(),
             },
@@ -166,7 +166,7 @@ fn main() -> Report<'static> {
     assert_eq!(
         publisher.publish(
             system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope::Fixture,
+                scope: system_api::control::publication::Scope(4),
                 group: "probe-watch-other".into(),
                 name: "one".into(),
             },
@@ -236,7 +236,7 @@ fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
     let group = parent.strip_prefix("svc/").unwrap();
     let entry = pie::unseal_hole(env::Mark::of(mark)).unwrap();
     let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope::Fixture,
+        scope: system_api::control::publication::Scope(4),
         group: group.into(),
         name: name.into(),
     };

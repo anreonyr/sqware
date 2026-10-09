@@ -34,19 +34,10 @@ pub fn entries(
     Ok(Progress::Done)
 }
 pub fn publication(
-    images: Res<crate::system::control::unit::start::Images>,
+    entry: Res<crate::system::publication::Entry>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
-    wanted.tokens.push(images.entry);
-    Ok(Progress::Done)
-}
-pub fn activation(
-    activation: Res<Option<crate::system::launch::activation::Activation>>,
-    mut wanted: ResMut<Interests>,
-) -> Result<Progress, Fail> {
-    if let Some(activation) = &*activation {
-        wanted.tokens.push(activation.entry());
-    }
+    wanted.tokens.push(entry.0);
     Ok(Progress::Done)
 }
 pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
@@ -124,5 +115,13 @@ pub(super) fn connections(
         (Wait::Forever, value) | (value, Wait::Forever) => value,
         (Wait::AtMost(left), Wait::AtMost(right)) => Wait::AtMost(left.min(right)),
     };
+    Ok(Progress::Done)
+}
+
+pub(crate) fn construction(construction: Res<crate::system::control::Construction>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
+    wanted.tokens.push(construction.entry); Ok(Progress::Done)
+}
+pub(crate) fn account(account: Res<crate::system::app::account::Account>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
+    if let Some(task) = account.task { wanted.subs.push(Sub::TaskCompleted(task)); }
     Ok(Progress::Done)
 }

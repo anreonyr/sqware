@@ -1,6 +1,6 @@
 //! Pure Control API types and wire contracts.
 
-pub mod account;
+pub mod construction;
 pub mod frame;
 pub mod grant;
 pub mod marks;
@@ -24,10 +24,10 @@ mod interface {
         Ask,
         #[channel(key = "back", legacy = "control-back", constant = BACK)]
         Back,
-        #[channel(key = "account", legacy = "control-account", constant = ACCOUNT_ENTRY)]
-        AccountEntry,
-        #[channel(key = "account-back", legacy = "control-account-back", constant = ACCOUNT_BACK)]
-        AccountBack,
+        #[channel(key = "construction", legacy = "control-construction", constant = CONSTRUCTION_ENTRY)]
+        ConstructionEntry,
+        #[channel(key = "construction-back", legacy = "control-construction-back", constant = CONSTRUCTION_BACK)]
+        ConstructionBack,
         #[channel(key = "publication", legacy = "control-publication", constant = PUBLICATION_ENTRY)]
         PublicationEntry,
         #[channel(key = "publication-back", legacy = "control-publication-back", constant = PUBLICATION_BACK)]

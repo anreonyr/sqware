@@ -91,7 +91,7 @@ pub fn run() -> Reason {
         }
 
         // spawn：`admit_start` 在 `Dead` 上是允许的（这是"重发"的准入那一格）。
-        let task = match service::mint(
+        let task = match crate::harness::mint(
             &mut table,
             &mut loader,
             Image {
@@ -181,7 +181,7 @@ pub fn run() -> Reason {
         {
             let _ = unit::oust(team);
         }
-        let Ok(task) = service::mint(
+        let Ok(task) = crate::harness::mint(
             &mut table,
             &mut loader,
             Image {

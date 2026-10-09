@@ -126,6 +126,10 @@ impl Wire {
                 put(&Task::new(task)?, bytes, &mut at)?;
                 put(&install, bytes, &mut at)?;
             }
+            Self::Activate(task, coalitions) => {
+                put(&Task::new(task)?, bytes, &mut at)?;
+                put(&coalitions, bytes, &mut at)?;
+            }
             Self::Waive | Self::Found => {}
         }
         (at <= MAX_FRAME).then_some(at)
@@ -170,6 +174,7 @@ impl Wire {
                 Grant::Expel => Self::Expel(get(bytes, &mut at)?, get(bytes, &mut at)?),
                 Grant::Bind => Self::Bind(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?),
                 Grant::Unbind => Self::Unbind(get::<Task>(bytes, &mut at)?.0),
+                Grant::Activate => Self::Activate(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?),
             };
             wire.validate()?;
             (at == bytes.len()).then_some(wire)

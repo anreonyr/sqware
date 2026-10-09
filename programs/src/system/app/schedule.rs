@@ -3,7 +3,6 @@ use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Schedule};
 pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
     let mut plan = Schedule::sequence();
-    plan.system("activation", crate::system::launch::activation::maintain)?;
     plan.plan("publication", crate::system::publication::maintenance()?)?;
     plan.build()
 }
@@ -22,7 +21,7 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
         "publication.face",
         crate::system::publication::publication_face,
     )?;
-    start.plan("account", crate::system::account::startup()?)?;
+    start.plan("account", super::account::start()?)?;
     start.system("control.faces", crate::system::publication::control_faces)?;
     start.system("instance.face", crate::system::publication::instance_face)?;
     start.system("loader", crate::system::loader::faces)?;
@@ -46,12 +45,16 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         maintenance()?.map_error(|_| Fail::Publication),
     )?;
     frame.system("health", f::health)?;
+    frame.system("account.consumers", super::account::refresh)?;
     frame.plan("control.poll", crate::system::control::poll()?)?;
-    frame.system("accounts.receive", crate::system::account::receive)?;
+    frame.system("construction.receive", crate::system::control::receive_construction)?;
+    frame.system("construction.admit", crate::system::control::admit_construction)?;
+    frame.system("construction.dispatch", crate::system::launch::dispatch)?;
     frame.plan("loader", crate::system::loader::frame()?)?;
+    frame.system("launch.register", crate::system::launch::register)?;
     frame.plan(
         "control.commands",
-        crate::system::control::commands(crate::system::launch::activation::hooks()?)?,
+        crate::system::control::commands(crate::system::app::assembly::hooks()?)?,
     )?;
     frame.plan(
         "maintain.after",
@@ -82,12 +85,13 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     )?;
     frame.system("pending", crate::system::control::pending)?;
     frame.system("watch.entries", watch::entries)?;
-    frame.system("watch.account", crate::system::account::watch)?;
+
     frame.system("watch.identity", watch::identity_changes)?;
     frame.system("watch.loader", crate::system::loader::watch)?;
     frame.system("watch.publication", watch::publication)?;
-    frame.system("watch.activation", watch::activation)?;
+    frame.system("watch.construction", watch::construction)?;
     frame.system("watch.tasks", watch::tasks)?;
+    frame.system("watch.account", watch::account)?;
     frame.system("watch.connections", watch::connections)?;
     frame.system("watch.apply", watch::apply)?;
     frame.system("wait", watch::wait)?;
@@ -96,6 +100,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
 pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut stop = Schedule::sequence();
     stop.plan("loader.close", crate::system::loader::shutdown()?)?;
+    stop.system("account.stop", super::account::stop)?;
     stop.system("stopping", crate::system::app::life::stopping)?;
     stop.system("join", crate::system::app::life::join)?;
     stop.build()

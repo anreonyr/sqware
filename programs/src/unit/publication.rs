@@ -1,10 +1,5 @@
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PublishScope {
-    Driver,
-    Hub,
-    Fixture,
-    Terminal,
-}
+pub struct PublishScope(pub u8);
 
 #[derive(Clone, Copy)]
 pub struct PublishEntry {

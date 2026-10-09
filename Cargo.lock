@@ -3,6 +3,29 @@
 version = 4
 
 [[package]]
+name = "account-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
+name = "account-client"
+version = "0.1.0"
+dependencies = [
+ "account-api",
+ "env",
+ "ipc",
+ "resource",
+ "system-api",
+ "system-client",
+ "wire",
+]
+
+[[package]]
 name = "allocator-api2"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -270,6 +293,7 @@ dependencies = [
  "ipc",
  "resource",
  "system-api",
+ "system-client",
  "wire",
 ]
 
@@ -401,6 +425,8 @@ dependencies = [
 name = "programs"
 version = "0.1.0"
 dependencies = [
+ "account-api",
+ "account-client",
  "argon2",
  "env",
  "erra",

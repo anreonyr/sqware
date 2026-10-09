@@ -136,7 +136,7 @@ fn allocation_failures_leave_the_authority_unchanged() {
 }
 
 #[test]
-fn all_seventeen_faces_reject_every_other_action_without_mutation() {
+fn all_eighteen_faces_reject_every_other_action_without_mutation() {
     use env::TaskId;
     use system::identity::*;
     let installer = TaskId::new(1);
@@ -171,6 +171,7 @@ fn all_seventeen_faces_reject_every_other_action_without_mutation() {
         Wire::Expel(c, p),
         Wire::Bind(task, Install::Authorized(subject)),
         Wire::Unbind(task),
+        Wire::Activate(task, CoalitionSet::new(&[c]).unwrap()),
     ];
     for face in Grant::ALL {
         for wire in actions {

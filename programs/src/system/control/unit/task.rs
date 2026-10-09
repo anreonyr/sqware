@@ -49,21 +49,13 @@ pub struct Launch<'a> {
     pub readiness: Readiness<'a>,
 }
 
-pub(crate) fn mint(
-    table: &mut Table,
-    loader: &mut crate::system::loader::Loader,
-    image: Image<'_>,
-) -> Result<TaskId, Fail> {
-    let Image { name, bytes, kind } = image;
-    admit_mint(table, name)?;
-
-    let minted = loader
-        .build(crate::system::loader::Image { bytes, kind })
-        .map_err(unit_fail)?;
-    let team = minted.team();
-    let Ok(task) = minted.spawn(&[], 0) else {
-        return Err(Fail::Full);
-    };
+pub(crate) fn mint(table: &mut Table, name: &str, built: system_api::loader::Built) -> Result<TaskId, Fail> {
+    let system_api::loader::Built { task, team } = built;
+    if let Err(fail) = admit_mint(table, name) {
+        let _ = room::doom(task);
+        let _ = unit::oust(team);
+        return Err(fail);
+    }
     if let Err(fail) = table.attach(
         name,
         Slot::Live {

@@ -291,3 +291,43 @@ Land对生产Said只接受完整一字节、已知失败Status为明确拒绝；
 | 层次对应功能拥有者和接入适配 | 私有字段、tree父接口、入口登记拥有者、16项架构/依赖守卫 |
 
 结论为上述范围内复审合格。原有无请求关联字段、丢回复接纳不确定、显式raw调用者协调责任等限制保留；不承诺未限定范围内不存在任何缺陷。
+
+
+## PR #4 本轮职责与失败边界修复
+
+本轮修复八个仍成立的 review 问题，以下记录更新上一轮的最终证据。
+
+| 问题 | 最终边界 |
+| --- | --- |
+| 关闭的 Operator Session 被永久重试 | 只重试服务器明确返回的 Unknown；传输失败及畸形回执立即结束。生产 Session 回归先造成回复超时，再对已关闭会话使用 Forever，确认不会退避或重发。 |
+| Account 混入 System | Account 独立拥有 API、客户端、账户选择和会话启动策略。装配提供镜像、消费者和最小能力；通过授权 Control 构造入口和 Identity 事实完成创建。Control 只接受明确授予的构造者、存活 owner 和构造者当前身份子树内的 Subject，普通调用者不能指定他人身份。 |
+| Hub 激活依赖 System 私有协议 | Hub 通过来源绑定的公开 Identity Activate 分面激活联盟；Identity 校验实际管理者、资格、权威、容量和身份衰减，一批请求全部校验后才提交。旧 Hub 私有报文与两个角色退役。 |
+| Publication 写死设备拓扑 | 装配生成 owner、scope、group、目录、条目白名单和 Permit 规则；Publication 执行通用命名空间规则，保留设备白名单及联盟准入。 |
+| Control 包办 Hub Enroll | 机器供给与 Hub Enroll 属于可信装配 hook；Control 推进通用生命周期。 |
+| Images 混合目录与发布入口 | 镜像目录由装配提供，Publication 拥有发布入口及其注入。 |
+| Control 拥有 Loader cache | Loader 独占镜像缓存和构造；Control 只登记暂停实例。登记拒绝时回收已构造任务和 Team，登记前不发送完成回复。 |
+| Loader 接入层重复转发 | service 父模块直接重导出各功能入口，移除纯转发函数。 |
+
+Account 使用 `/svc/account/create`，保留原两个账户通道的数值；新增 Control construction 两个角色和 Identity Activate 一个分面。登记角色现为 55 个，旧 Hub 激活角色的数值保留在退役清单中，禁止复用。服务 scope 改为部署配置的数字键，原 1–5 以及身份／运行时协议编号保持不变。新构造报文严格承载映像请求、owner 和 Subject，拒绝截断与尾随数据。
+
+真实集成验证还修复了内部服务接入边界：Account 所需的 Derive 能力显式授予；内部服务使用装配指定的 Control 任务，而非 Team 的 Sire；发布存活名单包含已登记的内部任务。Account 无权 Join 兄弟 Team，由可信装配刷新消费者配置，Control 在构造准入时再次检查实际 owner 存活。测具按构造、登记、准备、完成的次序推进。
+
+QEMU 验证脚本改为保留外部命令的执行结果，避免 `try` 作用域把失败退出码丢成 0。以退出码 23 的外部命令验证错误码传播；真实场景同时检查测试判决及交互驱动结果。
+
+宿主验证共 273 项通过：独立宿主套件 252 项、IdentityBook 13 项、mold 8 项；mold 原有 6 个 ignored 文档示例不计入通过数。programs 全目标检查通过。构造报文覆盖完整／截断／尾随数据，Identity 覆盖 18 个动作的编解码和错面拒绝矩阵，并检验激活的原子性、资格、错误管理者、过期权威和衰减边界。
+
+最终同一份实现的 QEMU release 验证全部通过：accept 28.95 秒、system-fault 33.06 秒、product 登录交互 8.47 秒。交互脚本覆盖错误账户／密码、密码编辑且不回显、取消登录、两次不同 Task 但相同 Principal 的 cat 会话、EOF／中断注销及终端恢复。此前运行出现过仓库已记录的 Operator 连接超时签名；本轮不声称消除了既有时序抖动。
+
+复现：
+
+```sh
+cargo check -p programs --all-targets
+for manifest in crates/schedule/src/tests/Cargo.toml crates/execution/tests/Cargo.toml crates/resource/tests/capability/Cargo.toml crates/ipc/tests/*/Cargo.toml crates/wire/tests/host/Cargo.toml programs/tests/*/Cargo.toml; do
+  cargo test --manifest-path "$manifest" --target x86_64-unknown-linux-gnu || exit
+done
+sh programs/src/system/identity/book/test-host.sh
+cargo test -p mold --target x86_64-unknown-linux-gnu
+nu scripts/qtest.nu --package kernel --scene accept
+nu scripts/qtest.nu --package kernel --scene system-fault
+nu scripts/qtest.nu --package kernel --scene product --feed-script programs/tests/terminal/session.py
+```

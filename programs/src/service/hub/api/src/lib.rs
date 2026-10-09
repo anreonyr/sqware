@@ -2,7 +2,6 @@
 
 extern crate alloc;
 
-pub mod activation;
 pub mod frame;
 pub mod grant;
 pub mod marks;
@@ -24,10 +23,6 @@ mod interface {
         Back,
         #[channel(key = "alive", legacy = "hub-alive", constant = ALIVE_MARK)]
         Alive,
-        #[channel(key = "activate", legacy = "hub-activate", constant = ACTIVATE_ENTRY)]
-        Activate,
-        #[channel(key = "activate-back", legacy = "hub-activate-back", constant = ACTIVATE_BACK)]
-        ActivateBack,
     }
 
     #[grants]

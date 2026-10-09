@@ -7,13 +7,22 @@ use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::PathBuf;
 use system_api::operator::Permit;
+extern crate alloc;
 mod admission;
+pub(crate) use admission::{Namespace, Namespaces, Permission};
 mod identity;
 mod install;
 mod internal;
 mod policy;
 mod receive;
 mod retire;
+pub(crate) struct Entry(pub PieToken);
+impl Entry {
+    pub(crate) fn inject(&self, task: TaskId) -> Result<(), &'static str> {
+        ::resource::port::ship(self.0, task, env::Access::STORE, env::Policy::NONE)
+            .map(|_| ()).map_err(|_| "publication inject")
+    }
+}
 pub struct Internal {
     pub road: PathBuf,
     pub entry: PieToken,
@@ -25,16 +34,20 @@ pub struct Incoming {
     pub back: Option<ipc::rpc::reply::Sender<Reply>>,
 }
 pub struct Inbox(pub alloc::collections::VecDeque<Incoming>);
-pub struct Request(pub Option<Incoming>);
+pub struct Request(pub Option<Incoming>, pub Option<alloc::string::String>);
 pub struct Outcome(pub Option<Result<Reply, Fail>>);
-pub struct Approved {
+pub struct Approval {
     pub target: Target,
+    pub member: bool,
+    pub alias: bool,
+}
+pub struct Approved {
+    pub policy: Approval,
     pub placement: Placement,
     pub publisher: TaskId,
 }
 pub enum Decision {
     Unset,
-    Device,
     OwnHole(Approved),
     Install(Approved),
     Mounted(Approved, EntryId),

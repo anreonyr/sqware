@@ -12,6 +12,7 @@ pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToke
                 .map_err(|_| "publication resource capacity")?
         };
     }
+    put!(super::Entry(entry));
     put!(Mounts(Vec::new()));
     put!(Tree::default());
     put!(Publications::new());
@@ -29,7 +30,7 @@ pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToke
     });
     put!(Living::new());
     put!(super::Inbox(VecDeque::new()));
-    put!(super::Request(None));
+    put!(super::Request(None, None));
     put!(super::Outcome(None));
     put!(super::Decision::Unset);
     put!(super::Kind { road: None });

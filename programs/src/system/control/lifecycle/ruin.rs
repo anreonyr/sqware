@@ -16,7 +16,7 @@ pub(crate) fn pre(
     roster: Res<Roster>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    super::super::unit::start::program_of(&job.request.name)?;
+    control.input(&job.request.name)?.program;
     let Some(task) = job
         .execution
         .task

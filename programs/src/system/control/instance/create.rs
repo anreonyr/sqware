@@ -1,25 +1,16 @@
-//! Instance creation and image-cache ownership.
-
+//! Register a constructed, paused instance; rejected delivery is reclaimed.
 use crate::system::control::unit::Control;
-use crate::system::loader::{Image, Spawn};
 use env::TaskId;
 use system_api::{control::Fail, loader::Built};
 
-pub(crate) struct Creation<'a> {
-    pub image: Image<'a>,
-    pub spawn: Spawn<'a>,
-    pub owner: TaskId,
-}
-
 impl Control {
-    pub(crate) fn create_instance(&mut self, creation: Creation<'_>) -> Result<Built, Fail> {
-        self.reserve_instance()?;
-        let built = self.loader.construct(creation.image, creation.spawn)?;
-        self.register_instance(built, creation.owner);
+    pub(crate) fn create_instance(&mut self, built: Built, owner: TaskId) -> Result<Built, Fail> {
+        if let Err(fail) = self.reserve_instance() {
+            let _ = env::room::doom(built.task);
+            let _ = env::unit::oust(built.team);
+            return Err(fail);
+        }
+        self.register_instance(built, owner);
         Ok(built)
-    }
-
-    pub(crate) fn clear_images(&mut self) {
-        self.loader.clear_images();
     }
 }

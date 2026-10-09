@@ -45,7 +45,7 @@ fn main() -> Report<'static> {
     assert!(face.list(Where::Root, MS).is_ok());
     let client = Client::injected().unwrap();
     let target = Target::Service {
-        scope: Scope::Fixture,
+        scope: Scope(4),
         group: "operator-fixture".into(),
         name: "entry".into(),
     };
@@ -64,7 +64,7 @@ fn main() -> Report<'static> {
     assert_eq!(
         client.publish(
             Target::Service {
-                scope: Scope::Driver,
+                scope: Scope(1),
                 group: "".into(),
                 name: "rtc".into()
             },

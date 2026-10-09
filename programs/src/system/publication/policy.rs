@@ -1,4 +1,3 @@
-use crate::support::machine::Machine;
 use crate::system::control::identity::Roster;
 use crate::system::control::identity::validate_permit;
 use crate::system::control::unit::Control;
@@ -7,20 +6,19 @@ use crate::system::operator::tree::Tile;
 use crate::system::publication::runtime::Resources;
 use ::schedule::{Progress, Res, ResMut};
 use system_api::control::publication as pubcall;
-use system_api::control::publication::Scope;
 use system_api::control::publication::Target;
 use system_api::identity::Selector;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
-use system_api::operator::path::Path;
 
 use super::{Approved, Decision, Request};
 use ::resource::raw::inspect;
 pub fn source(
-    request: Res<Request>,
+    mut request: ResMut<Request>,
     control: Res<Control>,
     mut decision: ResMut<Decision>,
 ) -> Result<Progress, &'static str> {
+    request.1 = request.0.as_ref().and_then(|incoming| control.find_named_task(incoming.from).map(|row| row.name.clone()));
     let request = request.0.as_ref().ok_or("publication request")?;
     if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
         return Ok(Progress::Done);
@@ -39,12 +37,13 @@ pub fn source(
 }
 pub fn service(
     request: Res<Request>,
-    control: Res<Control>,
     mut decision: ResMut<Decision>,
+    namespaces: Res<super::Namespaces>,
 ) -> Result<Progress, &'static str> {
     if !matches!(*decision, Decision::Unset) {
         return Ok(Progress::Done);
     }
+    let owner = request.1.as_deref();
     let request = request.0.as_ref().ok_or("publication request")?;
     if request.back.is_none() || request.frame.op != pubcall::PUBLISH {
         return Ok(Progress::Done);
@@ -52,90 +51,13 @@ pub fn service(
     let Some(target @ Target::Service { .. }) = request.frame.target() else {
         return Ok(Progress::Done);
     };
-    let Target::Service { scope, .. } = &target else {
-        unreachable!()
-    };
-    let program = control.find_named_task(request.from).and_then(|row| {
-        crate::unit::PROGRAMS
-            .iter()
-            .copied()
-            .find(|p| p.name() == row.name)
-    });
-    let trusted_hub = program.is_some_and(|program| program.name() == "hub");
-    let road = program.and_then(|program| {
-        super::admission::service(
-            program.publication,
-            &target,
-            request.frame.permit,
-        )
-    });
-    if program.is_some_and(|program| {
-        super::admission::devices(
-            program.publication,
-            trusted_hub,
-            (*scope, request.frame.permit),
-        )
-    }) {
-        *decision = Decision::Device;
-    }
-    if let Some(road) = road {
-        *decision = Decision::Install(Approved {
-            target,
+    let approval = owner.and_then(|owner| namespaces.service(owner, (&target, request.frame.permit)));
+    *decision = match approval {
+        Some((road, (member, alias))) => Decision::Install(Approved {
+            policy: super::Approval { target, member, alias },
             placement: Placement {
                 road,
-                tile: Tile {
-                    pie: request.frame.entry,
-                    permit: request.frame.permit,
-                    owner: Some(request.from),
-                },
-                replace: false,
-            },
-            publisher: request.from,
-        });
-    } else if !matches!(*decision, Decision::Device) {
-        *decision = Decision::Failed(Fail::Denied);
-    }
-    Ok(Progress::Done)
-}
-pub fn device(
-    request: Res<Request>,
-    machine: Res<Machine>,
-    mut decision: ResMut<Decision>,
-) -> Result<Progress, &'static str> {
-    if !matches!(*decision, Decision::Device) {
-        return Ok(Progress::Done);
-    }
-    let request = request.0.as_ref().ok_or("publication request")?;
-    let Some(target @ Target::Service { .. }) = request.frame.target() else {
-        return Err("publication device target");
-    };
-    let Target::Service { group, name, .. } = &target else {
-        unreachable!()
-    };
-    let valid = (group == hub_api::BOOT
-        && [hub_api::DTB, hub_api::SUPERVISOR_EXTERNAL].contains(&name.as_str()))
-        || machine.devices().is_some_and(|devices| {
-            devices
-                .iter()
-                .any(|d| d.class.as_str() == group && d.name.as_str() == name)
-        });
-    let road = valid
-        .then(|| {
-            Path::new("dev")
-                .try_join(group)
-                .and_then(|p| p.try_join(name))
-        })
-        .flatten();
-    *decision = match road {
-        Some(road) => Decision::Install(Approved {
-            target,
-            placement: Placement {
-                road,
-                tile: Tile {
-                    pie: request.frame.entry,
-                    permit: request.frame.permit,
-                    owner: Some(request.from),
-                },
+                tile: Tile { pie: request.frame.entry, permit: request.frame.permit, owner: Some(request.from) },
                 replace: false,
             },
             publisher: request.from,
@@ -182,13 +104,7 @@ pub(crate) fn identity(
                     }
                 });
             }
-            if matches!(
-                approved.target,
-                Target::Service {
-                    scope: Scope::Device,
-                    ..
-                }
-            ) {
+            if approved.policy.member {
                 result = result.and_then(|_| {
                     let Permit::Identity(Selector::MemberOf(coalition)) = permit else {
                         return Err(Fail::Denied);

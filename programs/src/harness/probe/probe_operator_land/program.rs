@@ -6,7 +6,7 @@ use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
 /// Unified Operator sessions permit queries; Control-only mutations remain denied to this client.
 pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Fixture,
+        scope: crate::unit::PublishScope(4),
         group: "operator-fixture",
         road: "svc/operator-fixture",
         entries: &[crate::unit::PublishEntry { name: "entry" }],

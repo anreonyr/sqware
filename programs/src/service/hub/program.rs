@@ -17,7 +17,7 @@ pub const CHANNEL_MARK: env::Mark = env::Mark::of(CHANNEL);
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[
         crate::unit::Publish::Entries {
-            scope: crate::unit::PublishScope::Hub,
+            scope: crate::unit::PublishScope(2),
             group: "",
             road: "svc/hub",
             entries: &crate::unit::PublishEntry::from_names(hub_api::PUBLICATIONS),

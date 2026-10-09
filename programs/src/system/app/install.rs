@@ -1,27 +1,30 @@
 use super::{boot, bootstrap::Boot, life, policy, wait};
-use crate::system::control::unit::{material::Supplies, start::Images};
-use crate::system::{account, control, identity, launch, loader, publication};
+use super::supplies::Supplies;
+use crate::system::{control, identity, launch, loader, publication};
 use ::schedule::Resources;
 use alloc::vec::Vec;
 pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, &'static str> {
     let status = boot::status();
     let mut resources = Resources::new();
-    let entry = publication::register(&mut resources)?;
+    publication::register(&mut resources)?;
+    resources.insert(super::config::namespaces(boot.machine)).map_err(|_| "publication configuration")?;
+    resources.insert(Supplies::new(boot.machine, boot.accounts)).map_err(|_| "assembly supplies")?;
     control::install(
         &mut resources,
         status.clone(),
         control::Configuration {
-            images: Images {
-                catalog: boot.catalog,
-                entry,
-            },
-            supplies: Supplies::new(boot.machine, boot.accounts),
+            inputs: crate::unit::PROGRAMS.iter().copied()
+                .filter(|p| p.relation.after.is_some())
+                .map(|program| crate::system::control::unit::start::Input {
+                    program,
+                    image: boot.catalog.find(program.name()).map(|entry| (entry.elf, entry.kind)),
+                }).collect(),
         },
     )?;
     identity::install(&mut resources)?;
     loader::install(&mut resources)?;
     launch::install(&mut resources)?;
-    account::install(&mut resources, super::config::account(boot.catalog))?;
+    super::account::install(&mut resources, boot.catalog)?;
     macro_rules! put {
         ($value:expr) => {
             resources

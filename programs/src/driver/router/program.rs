@@ -12,7 +12,7 @@ pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Driver,
+        scope: crate::unit::PublishScope(1),
         group: "",
         road: "svc/drv",
         entries: &crate::unit::PublishEntry::from_names(router_api::PUBLICATIONS),

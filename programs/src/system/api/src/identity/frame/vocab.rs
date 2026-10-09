@@ -47,6 +47,7 @@ pub enum Wire {
     Expel(CoalitionId, PrincipalId),
     Bind(TaskId, Install),
     Unbind(TaskId),
+    Activate(TaskId, CoalitionSet),
 }
 impl Wire {
     pub(super) fn validate(self) -> Option<()> {
@@ -61,6 +62,7 @@ impl Wire {
             Self::Memberships(p, k) => {
                 (!k.is_some_and(|k| k.target != PageTarget::Memberships(p))).then_some(())
             }
+            Self::Activate(task, coalitions) => (task.get() != 0 && !coalitions.is_empty()).then_some(()),
             _ => Some(()),
         }
     }

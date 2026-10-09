@@ -87,7 +87,7 @@ pub fn spawn(
 }
 pub fn embark(
     status: Res<Arc<Status>>,
-    supplies: Res<crate::system::control::unit::material::Supplies>,
+    supplies: Res<crate::system::app::supplies::Supplies>,
 ) -> Result<Progress, &'static str> {
     for slot in [&status.operator, &status.identity] {
         let task = TaskId::new(slot.load(Ordering::Acquire));

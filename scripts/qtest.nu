@@ -274,8 +274,10 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   if ($env.RUSTFLAGS? | is-empty) {
     $env.RUSTFLAGS = "-Crelocation-model=static -Cforce-frame-pointers=yes -Ccode-model=medium"
   }
-  try { ^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } } catch { }
-  mut code = $env.LAST_EXIT_CODE
+  # `try` 的块作用域会丢掉外部命令的 LAST_EXIT_CODE；直接保留完整执行结果。
+  let result = (^cargo ...$qtest_argv o+e>| tee { save --force $qtlog } | complete)
+  print -n $result.stdout
+  mut code = $result.exit_code
   if not ($feed_script | is-empty) {
     let result = $"($cap).result"
     $env.FEED_RESULT = $result

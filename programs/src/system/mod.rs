@@ -1,4 +1,3 @@
-pub(crate) mod account;
 pub mod app;
 pub(crate) mod control;
 pub(crate) mod identity;

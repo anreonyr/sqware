@@ -34,7 +34,7 @@ impl EntryId {
     }
 }
 
-/// 一块 Pane 的有界容量；必须容纳统一 Identity 的 17 个独立动作面。
+/// 一块 Pane 的有界容量；必须容纳统一 Identity 的 18 个独立动作面。
 /// 核心和 Listing 帧共用此界，不允许服务已落下而列表静默截断。
 pub const PANE_CAP: usize = 32;
 

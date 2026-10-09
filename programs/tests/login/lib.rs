@@ -4,7 +4,7 @@ extern crate alloc;
 #[path = "../../src/user/login/auth.rs"]
 mod auth;
 #[cfg(test)]
-mod frame { pub use system_api::control::account::Request; }
+mod frame { pub use account_api::Request; }
 #[cfg(test)]
 mod tests {
     use crate::frame::Request;

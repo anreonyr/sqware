@@ -6,7 +6,7 @@ use crate::system::{
     publication::{Internal, Mounts, Publications},
 };
 use ::schedule::{Progress, Res, ResMut};
-pub(super) fn faces(
+pub(crate) fn faces(
     roster: Res<Roster>,
     mut mounts: ResMut<Mounts>,
     mut inbox: ResMut<Inbox>,
@@ -30,7 +30,7 @@ pub(super) fn faces(
     Ok(Progress::Done)
 }
 
-pub(super) fn withdraw(
+pub(crate) fn withdraw(
     inbox: Res<Inbox>,
     mut publications: ResMut<Publications>,
     mut tree: ResMut<Tree>,

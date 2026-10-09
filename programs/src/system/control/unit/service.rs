@@ -41,7 +41,7 @@ impl Service {
     pub fn ready(&mut self, table: &mut Table, readiness: Readiness<'_>) -> Result<bool, Fail> {
         super::task::ready(table, readiness, &mut self.channels)
     }
-    pub(super) fn claim_supply(&mut self, mark: Mark, wait: Wait) -> Result<PieToken, Error> {
+    pub(crate) fn claim_supply(&mut self, mark: Mark, wait: Wait) -> Result<PieToken, Error> {
         let link = self.channels.first_mut().ok_or(Error::Step("no channel"))?;
         match link.claim(self.task, mark, wait) {
             Ok(true) => link.tx().ok_or(Error::Step("no channel")),

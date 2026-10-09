@@ -31,7 +31,7 @@ fn supply(
     control: Res<Control>,
 ) -> Result<Progress, verdict::Fail> {
     let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
-    let program = start::program_of(&job.request.name)?;
+    let program = control.input(&job.request.name)?.program;
     let task = control
         .task(&job.request.name)
         .ok_or(verdict::Fail::Unknown)?;
@@ -78,7 +78,7 @@ fn inject(
 }
 impl Fixture {
     pub(crate) fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::app::install::resources(boot).map_err(|_| ())?;
+        let mut resources = crate::system::app::install::resources(boot).map_err(|why| { programs::debug::put(why); () })?;
         resources
             .insert(Fault {
                 armed: false,
@@ -91,7 +91,7 @@ impl Fixture {
             .map_err(|_| ())?;
         let mut start = schedule::startup().map_err(|_| ())?;
         let mut children =
-            lifecycle::lifecycle(crate::system::launch::activation::hooks().map_err(|_| ())?)
+            lifecycle::lifecycle(crate::system::app::assembly::hooks().map_err(|_| ())?)
                 .map_err(|_| ())?;
         let at = children
             .iter()
@@ -131,7 +131,7 @@ impl Fixture {
         }
         start
             .advance(&mut Cursor::default(), &resources)
-            .map_err(|_| ())?;
+            .map_err(|why| { programs::debug::put(&alloc::format!("fixture startup: {why:?}")); () })?;
         Ok(Self {
             resources,
             plans,

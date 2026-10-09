@@ -163,49 +163,20 @@ impl Face {
     }
 }
 
-const RETRY_MIN_MS: usize = 10;
-
-/// 退避的封顶（毫秒）
-const RETRY_MAX_MS: usize = 100;
-
-/// 沿一条路译成号：**译不出（`UNKNOWN`）就等一拍再来**——那几格可能由别的域落下，它可能落得比
-/// **`Forever` 就是一直等**（那道护栏留在类型上，不折成"很大的毫秒数"）；`AtMost(0)` = "不再等"
-/// ⇒ 就地问一次；**节拍退避**（见 RETRY_MIN_MS）——故一趟注定译不出的路最多十来次往返
-/// **放弃时留一行读数**：哪条路、重试了几轮、退避到多少。一条"译不出的路"过去在读数上是不存在
 fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
     let until = deadline(wait);
-    let mut backoff = RETRY_MIN_MS;
-    let mut rounds: usize = 0;
-    loop {
-        match route(session, road, remain(until)) {
-            Ok(id) => return Ok(id),
-            Err(Fail::Unknown) => {
-                // 到点（或本就是"不再等"）⇒ 原样交回最后一次的答案。
-                if remain(until) == Wait::POLL {
-                    crate::debug::put(&alloc::format!(
-                        "operator: road retry gave up rounds={rounds} backoff={backoff}ms road={road}"
-                    ));
-                    return Err(Fail::Unknown);
-                }
-                rounds += 1;
-                let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
-                backoff = (backoff * 2).min(RETRY_MAX_MS);
-                // Do not enqueue a final request with no time left to receive its reply.
-                if remain(until) == Wait::POLL {
-                    return Err(Fail::Unknown);
-                }
-            }
-            Err(fail) => return Err(fail),
-        }
-    }
+    super::lookup::until(|| route(session, road, remain(until)), |backoff| {
+        if remain(until) == Wait::POLL { return false; }
+        let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
+        remain(until) != Wait::POLL
+    })
 }
-
-/// 客侧第二步（**译**）：按一条路问"那一格是几号"——**间接寻址那一手**
-fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
-    let said = session
-        .call::<Call>(ocall::Req::Road(road.to_path_buf()), wait)
-        .map_err(|_| Fail::Unknown)?;
-    said.entry().map_err(map_code)
+fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, super::lookup::Failure> {
+    use super::lookup::Failure;
+    let said = session.call::<Call>(ocall::Req::Road(road.to_path_buf()), wait)
+        .map_err(|_| Failure::Stop(Fail::Unknown))?;
+    if said.failure_status() == Some(ocall::UNKNOWN) { return Err(Failure::Missing); }
+    said.entry().map_err(|code| Failure::Stop(map_code(code)))
 }
 
 /// 线上那一格码 → 失败域；表外（含 `BAD`）折 Fail::Unknown

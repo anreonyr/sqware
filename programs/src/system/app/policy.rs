@@ -22,7 +22,8 @@ pub struct Activity {
 pub struct Bound(pub Wait);
 pub struct Shutoff(pub Option<u64>);
 
-pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
+pub fn health(status: Res<Arc<Status>>, account: Res<crate::system::app::account::Account>) -> Result<Progress, Fail> {
+    if account.task.is_some_and(|task| env::unit::join(task, Wait::POLL).unwrap_or(true)) { return Err(Fail::Dead); }
     for id in [
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),

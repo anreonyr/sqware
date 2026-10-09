@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! Identity publication acceptance: all seventeen entries exist with their discovery policy.
+//! Identity publication acceptance: all eighteen entries exist with their discovery policy.
 //! Each entry must carry its action mark and belong to the same Identity authority.
 //!
 //! # 判据为什么必须 **panic**
@@ -31,7 +31,7 @@ const FACES_MS: usize = 3_000;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 /// **量出来的那两枚数**落在这里（release 也看得见）：`debug!` 在 release 是空操作，
 /// 而这一句两边都打——所以"数到几枚"与"该有几枚"（`assert_eq!`）都得看得到。
-const OK_NOTE: &str = "probe-coalition: identity=17, all action entries home";
+const OK_NOTE: &str = "probe-coalition: identity=18, all action entries home";
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -41,7 +41,7 @@ fn main() -> Report<'static> {
     };
     let tree = Face::from(&session);
 
-    assert_eq!(system_api::identity::Grant::ALL.len(), 17);
+    assert_eq!(system_api::identity::Grant::ALL.len(), 18);
     step(
         &tree,
         "identity",

@@ -28,6 +28,8 @@ members = [
     "crates/ipc",
     "programs/src/system/client",
     "programs/src/system/api",
+    "programs/src/service/account/api",
+    "programs/src/service/account/client",
     "programs/src/service/hub/api",
     "programs/src/service/hub/client",
     "programs/src/user/terminal/api",

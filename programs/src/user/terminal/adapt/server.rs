@@ -119,7 +119,7 @@ impl Server {
         client
             .publish(
                 Target::Service {
-                    scope: Scope::Terminal,
+                    scope: Scope(5),
                     group: "".into(),
                     name: "attach".into(),
                 },

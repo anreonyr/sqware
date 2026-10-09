@@ -54,6 +54,7 @@ pub mod sweep;
 struct League {
     query: Query,
     organization: Organization,
+    activation: system_client::identity::Face,
 }
 
 /// 起服务：**收物料 → 立账 → 上树 → 立盟 → 落格 → 一枚线程招待所有客人**
@@ -92,8 +93,8 @@ pub fn serve() -> Result<(), Start> {
             .principal;
         // **先立齐，再一趟报**（原来是每类一趟 `activate`：十几类就是十几趟同步往返，
         // 全压在"报就绪"之前——那一族见 `kernel/src/layout.rs` 头注）。枚数由
-        // `ACTIVATE_MAX` 把关，装不下就是装配错、当场收手。
-        let mut leagues = [CoalitionId::EMPTY; hub::activation::ACTIVATE_MAX];
+        // Identity 的 `MAX_ACTIVE_COALITIONS` 把关，装不下就是装配错、当场收手。
+        let mut leagues = [CoalitionId::EMPTY; system_api::identity::limits::MAX_ACTIVE_COALITIONS];
         let mut n = 0usize;
         for class in &classes {
             let Ok(id) = league.organization.found(Wait::AtMost(MS)) else {
@@ -113,7 +114,7 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        hub_client::activate(me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
+        hub_client::activate(&league.activation, me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
@@ -130,7 +131,7 @@ pub fn serve() -> Result<(), Start> {
             (claim_name.as_str(), claim),
         ] {
             let target = system_api::control::publication::Target::Service {
-                scope: Scope::Hub,
+                scope: Scope(2),
                 group: "".into(),
                 name: name.into(),
             };
@@ -151,7 +152,7 @@ pub fn serve() -> Result<(), Start> {
                 .collect();
             for (name, entry) in doors {
                 let target = system_api::control::publication::Target::Service {
-                    scope: Scope::Device,
+                    scope: Scope(3),
                     group: class.clone(),
                     name: name.into(),
                 };
@@ -376,5 +377,8 @@ fn find_league(tree: &Face) -> Option<League> {
     Some(League {
         query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,
+        activation: system_client::identity::Face::discover(
+            tree, authority, system_api::identity::Grant::Activate, Wait::AtMost(MS),
+        ).ok()?,
     })
 }

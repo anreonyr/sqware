@@ -55,6 +55,8 @@ mod interface {
         Bind,
         #[grant(code = 17, key = "unbind", legacy = "identity-unbind")]
         Unbind,
+        #[grant(code = 18, key = "activate", legacy = "identity-activate")]
+        Activate,
     }
 }
 

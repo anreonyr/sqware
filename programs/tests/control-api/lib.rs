@@ -5,8 +5,8 @@ extern crate alloc;
 mod tests {
     use alloc::{string::String, vec};
     use env::{Mark, PieToken, TaskId};
+    use account_api::Request as AccountRequest;
     use system_api::control::{
-        account::Request as AccountRequest,
         frame::{self, Fail, Req, Request, Said, State, Wire},
         publication::{self, Frame, Object, Reply, Scope, Target},
         Grant,
@@ -14,6 +14,31 @@ mod tests {
     use wire::message::Message;
 
     fn token(raw: u64) -> PieToken { PieToken::from_bytes(&raw.to_le_bytes()).unwrap() }
+
+    #[test]
+    fn construction_envelope_preserves_image_owner_and_subject_and_rejects_partial_frames() {
+        use system_api::{control::construction, identity::{PrincipalId, Subject}, loader};
+        let mut args = [0; loader::MAX_ARGS];
+        args[..2].copy_from_slice(&[7, 11]);
+        let request = construction::Request {
+            image: loader::Ask { op: loader::BUILD, image: token(4), offset: 0, len: 4096,
+                stack: 0, count: 2, args, back: token(5) },
+            owner: TaskId::new(8),
+            subject: Subject::new(PrincipalId::new(TaskId::new(2), 9), &[]).unwrap(),
+        };
+        let mut bytes = construction::Request::EMPTY;
+        let len = request.store(&mut bytes).unwrap();
+        assert_eq!(len, 58 + 8 + 17);
+        let decoded = construction::Request::fetch(&bytes[..len]).unwrap();
+        assert_eq!(decoded.owner, request.owner);
+        assert_eq!(decoded.subject, request.subject);
+        assert_eq!(decoded.image.image, request.image.image);
+        assert_eq!(decoded.image.back, request.image.back);
+        assert_eq!(&decoded.image.args[..2], &[7, 11]);
+        assert_eq!(construction::Call::back(&decoded), token(5));
+        for end in 0..len { assert!(construction::Request::fetch(&bytes[..end]).is_none()); }
+        assert!(construction::Request::fetch(&bytes[..len + 1]).is_none());
+    }
 
     #[test]
     fn actions_states_grants_and_marks_keep_their_fixed_values() {
@@ -97,9 +122,9 @@ mod tests {
     #[test]
     fn publication_frames_preserve_fixed_wire_bytes_and_target_validation() {
         let entry = token(0x0102_0304_0506_0708);
-        let frame = Frame::new(publication::PUBLISH, Target::Service { scope: Scope::Driver, group: String::from("grp"), name: String::from("svc") }, (entry, system_api::operator::Permit::Public));
+        let frame = Frame::new(publication::PUBLISH, Target::Service { scope: Scope(1), group: String::from("grp"), name: String::from("svc") }, (entry, system_api::operator::Permit::Public));
         assert_eq!(frame.target(), Some(Target::Service {
-            scope: Scope::Driver, group: String::from("grp"), name: String::from("svc"),
+            scope: Scope(1), group: String::from("grp"), name: String::from("svc"),
         }));
         let mut bytes = Frame::EMPTY;
         let n = frame.store(&mut bytes).unwrap();

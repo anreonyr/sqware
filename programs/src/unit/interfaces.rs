@@ -3,6 +3,7 @@
 const LOADER: &[&[env::marks::Definition]] = &[system_api::loader::REGISTRY];
 pub const APIS: &[&[&[env::marks::Definition]]] = &[
     LOADER,
+    account_api::REGISTRY,
     system_api::identity::REGISTRY,
     system_api::operator::REGISTRY,
     system_api::control::REGISTRY,

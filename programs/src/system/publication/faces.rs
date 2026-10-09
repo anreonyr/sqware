@@ -2,18 +2,18 @@ use super::Internal;
 use crate::support::face::mount;
 use crate::system::{
     control::identity::Roster,
-    control::{Entries as Watch, unit::start::Images},
+    control::Entries as Watch,
     publication::Mounts,
 };
 use ::schedule::{Progress, Res, ResMut};
 use system_api::operator::Path;
 pub fn publication_face(
-    images: Res<Images>,
+    entry: Res<super::Entry>,
     mut mounts: ResMut<Mounts>,
 ) -> Result<Progress, &'static str> {
     mounts.0.push(Internal {
         road: Path::new("svc/sys/control/publish").to_path_buf(),
-        entry: images.entry,
+        entry: entry.0,
         access: (system_api::operator::Permit::Public, env::unit::self_id()),
     });
     Ok(Progress::Done)

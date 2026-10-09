@@ -60,6 +60,15 @@ pub mod loader {
         pub task: TaskId,
     }
 
+    impl Said {
+        pub fn from_result(result: Result<Built, crate::control::Fail>) -> Self {
+            match result {
+                Ok(built) => Self { status: wire::OK, task: built.task, team: built.team.get() as u64 },
+                Err(fail) => Self { status: crate::control::frame::fail_to_code(Some(fail)), task: TaskId::new(0), team: 0 },
+            }
+        }
+    }
+
     #[derive(Clone, Copy, PartialEq, Eq, Debug, mold::WireCodes)]
     #[wire(fallback = Bad)]
     pub enum Fail {

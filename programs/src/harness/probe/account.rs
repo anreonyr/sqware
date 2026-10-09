@@ -10,7 +10,7 @@ use env::{Permission, TaskId, Wait, unit};
 use system_api::control;
 use system_api::control::State;
 use system_client::control::Face;
-use system_client::control::account::Client;
+use account_client::Client;
 
 const WAIT: Wait = Wait::AtMost(2000);
 #[derive(Default)]
@@ -141,6 +141,7 @@ fn reference(root: TaskId) -> control::Object {
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
     let heirs = unit::heir_count();
+    let account_task = assembly.resources.read::<crate::system::app::account::Account>().unwrap().task.unwrap();
     let signals = Arc::new(Signals {
         pings: AtomicUsize::new(0),
         stage: AtomicUsize::new(0),
@@ -154,7 +155,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let worker = execution::unit::task::spawn(move || {
         until(|| s.entry.load(Ordering::Acquire) != 0);
         let client =
-            Client::of(ipc::session::establish::find(root, control::account::ENTRY).unwrap())
+            Client::of(ipc::session::establish::find(account_task, account_api::ENTRY).unwrap())
                 .unwrap();
         let lifecycle =
             Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();
@@ -208,7 +209,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
     let s = signals.clone();
-    let entry = crate::system::account::entry(&assembly.resources).unwrap();
+    let token = assembly.resources.read::<crate::system::app::account::Account>().unwrap().config.entry.load(Ordering::Acquire);
+    let entry = env::PieToken::from_bytes(&(token as u64).to_le_bytes()).unwrap();
     let alias = operator
         .tile(
             system_api::operator::path::Path::new("/idt/principal/anran/ref"),
@@ -228,7 +230,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         entry,
         worker.id(),
         Permission::FETCH | Permission::STORE,
-        control::account::ENTRY,
+        account_api::ENTRY,
     )
     .unwrap();
     let instance_entry = crate::system::control::instance_entry(&assembly.resources).unwrap();
@@ -245,11 +247,23 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     let peer = execution::unit::task::spawn(move || {
         until(|| p.stage.load(Ordering::Acquire) == 1 && token.load(Ordering::Acquire) != 0);
         let client =
-            Client::of(ipc::session::establish::find(root, control::account::ENTRY).unwrap())
+            Client::of(ipc::session::establish::find(account_task, account_api::ENTRY).unwrap())
                 .unwrap();
         let lifecycle =
             Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();
         let target = TaskId::new(p.target.load(Ordering::Acquire));
+        {
+            use system_api::control::construction as api;
+            let entry = ipc::session::establish::find(root, api::ENTRY).unwrap();
+            let sender = ipc::rpc::request::Sender::<api::Call>::from_raw(entry, api::Call::BACK).unwrap();
+            let forged = system_api::identity::Subject::new(system_api::identity::PrincipalId::root(root), &[]).unwrap();
+            let said = sender.call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                image: system_api::loader::Ask { op: system_api::loader::BUILD, image: env::PieToken::NONE, offset: 0, len: 0, stack: 0, count: 0, args: [0; system_api::loader::MAX_ARGS], back },
+                owner: root, subject: forged,
+            }).unwrap();
+            assert_eq!(said.status, system_api::control::frame::DENIED, "foreign creator selected another Subject");
+        }
+
         assert!(matches!(
             client.create("anran", WAIT),
             Err(control::Fail::Denied)
@@ -280,7 +294,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         entry,
         peer.id(),
         Permission::FETCH | Permission::STORE,
-        control::account::ENTRY,
+        account_api::ENTRY,
     )
     .unwrap();
     env::pie::accord(
@@ -290,6 +304,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         control::ASK_MARK,
     )
     .unwrap();
+    let construction = assembly.resources.read::<crate::system::control::Construction>().unwrap().entry;
+    resource::port::ship(construction, peer.id(), env::Access::STORE, env::Policy::NONE).unwrap();
     peer_token.store(peer_grant.get(), Ordering::Release);
     {
         let mut system = assembly.resources.write::<Control>().unwrap();
@@ -299,6 +315,11 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         system
             .fixture_attach_unit(&crate::unit::terminal::PROGRAM, peer.id())
             .unwrap();
+    }
+    {
+        let account = assembly.resources.read::<crate::system::app::account::Account>().unwrap();
+        account.config.login.store(worker.id().get(), Ordering::Release);
+        account.config.terminal.store(peer.id().get(), Ordering::Release);
     }
     let login_subject = {
         let roster = assembly
@@ -320,33 +341,36 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         })
         .unwrap();
     let mut schedule = Schedule::new();
-    schedule
-        .add_system("account.receive", 0u8, crate::system::account::receive)
-        .unwrap();
+    schedule.add_system("account.consumers", 0u8, crate::system::app::account::refresh).unwrap();
+    schedule.add_system("construction.receive", 0u8, crate::system::control::receive_construction).unwrap();
+    schedule.add_system("construction.admit", 1, crate::system::control::admit_construction).unwrap();
+    schedule.add_system("construction.dispatch", 2, crate::system::launch::dispatch).unwrap();
+    schedule.add_plan("loader.build", 3, crate::system::loader::frame().unwrap()).unwrap();
+    schedule.add_system("launch.register", 4, crate::system::launch::register).unwrap();
     schedule
         .add_system(
             "instances.receive",
-            1,
+            5,
             crate::system::control::receive_instances,
         )
         .unwrap();
     schedule
         .add_system(
             "instances.answer",
-            2,
+            6,
             crate::system::control::answer_instances,
         )
         .unwrap();
     schedule
         .add_system(
             "instances.reap",
-            3,
+            7,
             crate::system::control::instance::schedule::reap,
         )
         .unwrap();
-    schedule.add_plan("instance.hooks", 4, hooks()).unwrap();
+    schedule.add_plan("instance.hooks", 8, hooks()).unwrap();
     schedule
-        .add_system("launch.completed", 5, crate::system::launch::completed)
+        .add_system("launch.completed", 9, crate::system::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);

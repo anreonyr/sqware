@@ -1,56 +1,22 @@
 use super::{Control, Service, task as service};
 pub use crate::support::timing::BOOT_MS;
-use crate::system::control::unit::task::Image;
-use crate::{
-    boot::Catalog,
-    unit::{Died, PROGRAMS, UnitFile},
-};
+use crate::unit::{Died, UnitFile};
 
 pub const E_PROGRAM: Died = 3;
 pub const E_TABLE: Died = 4;
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Error {
-    Missing,
-    Table,
-    Spawn,
-    Step(&'static str),
-}
-
-pub struct Images {
-    pub catalog: Catalog<'static>,
-    pub entry: env::PieToken,
-}
-impl Images {
-    pub fn inject(&self, task: env::TaskId) -> Result<(), &'static str> {
-        ::resource::port::ship(self.entry, task, env::Access::STORE, env::Policy::NONE)
-            .map(|_| ())
-            .map_err(|_| "publication inject")
-    }
+pub enum Error { Table, Spawn, Step(&'static str) }
+#[derive(Clone, Copy)]
+pub(crate) struct Input {
+    pub program: &'static UnitFile,
+    pub image: Option<(&'static [u8], env::ProgramKind)>,
 }
 impl Control {
-    pub fn spawn(&mut self, program: &UnitFile, images: &Images) -> Result<Service, Error> {
-        let name = program.name();
-        let entry = images.catalog.find(name).ok_or(Error::Missing)?;
-        let task = service::mint(
-            &mut self.table,
-            &mut self.loader,
-            Image {
-                name,
-                bytes: entry.elf,
-                kind: entry.kind,
-            },
-        )
-        .map_err(|_| Error::Spawn)?;
-        Ok(Service::new(task))
+    pub(crate) fn input(&self, name: &str) -> Result<Input, super::verdict::Fail> {
+        self.inputs.iter().copied().find(|input| input.program.name() == name)
+            .ok_or(super::verdict::Fail::Unknown)
     }
-}
-pub(crate) fn program_of(
-    name: &str,
-) -> Result<&'static UnitFile, crate::system::control::unit::verdict::Fail> {
-    PROGRAMS
-        .iter()
-        .copied()
-        .find(|p| p.relation.after.is_some() && p.name() == name)
-        .ok_or(crate::system::control::unit::verdict::Fail::Unknown)
+    pub(crate) fn attach_service(&mut self, name: &str, built: system_api::loader::Built) -> Result<Service, Error> {
+        service::mint(&mut self.table, name, built).map(Service::new).map_err(|_| Error::Spawn)
+    }
 }

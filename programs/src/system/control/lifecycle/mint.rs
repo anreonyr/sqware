@@ -1,23 +1,21 @@
 use super::super::unit::{
-    start::{self, Images},
+
     {Control, Pending},
 };
-use super::{Action, Active, Instance, Operations};
+use super::{Action, Active, Operations};
 use crate::system::control::unit::{
     table::{Slot, State},
     verdict::Fail,
 };
 use ::schedule::{Progress, Res, ResMut};
-use alloc::vec::Vec;
 
 pub fn pre(
     active: Res<Active>,
     mut control: ResMut<Control>,
-    images: Res<Images>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    let p = super::super::unit::start::program_of(&job.request.name)?;
-    if images.catalog.find(p.name()).is_none() {
+    let p = control.input(&job.request.name)?.program;
+    if control.input(p.name())?.image.is_none() {
         return Err(Fail::BadImage);
     }
     if let Some(row) = control.table.find(p.name()) {
@@ -30,42 +28,15 @@ pub fn pre(
     control.pending.try_reserve(1).map_err(|_| Fail::Full)?;
     Ok(Progress::Done)
 }
-pub fn run(
-    mut active: ResMut<Active>,
-    mut control: ResMut<Control>,
-    images: Res<Images>,
-) -> Result<Progress, Fail> {
-    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let service = control
-        .spawn(
-            super::super::unit::start::program_of(&job.request.name)?,
-            &images,
-        )
-        .map_err(|e| match e {
-            start::Error::Missing => Fail::BadImage,
-            _ => Fail::Full,
-        })?;
-    job.execution.task = Some(service.task());
-    job.execution.instance = Some(Instance {
-        service,
-        marks: Vec::new(),
-        launched: false,
-    });
-    Ok(Progress::Done)
-}
 pub fn post(
     mut active: ResMut<Active>,
     mut control: ResMut<Control>,
-    images: Res<Images>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let instance = job.execution.instance.as_ref().ok_or(Fail::NotReady)?;
-    images
-        .inject(instance.service.task())
-        .map_err(|_| Fail::Full)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
+    let name = control.input(&job.request.name)?.program.name();
     control.pending.push(Pending {
-        name: super::super::unit::start::program_of(&job.request.name)?.name(),
+        name,
         service: instance.service,
     });
     Ok(Progress::Done)

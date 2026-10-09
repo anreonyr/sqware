@@ -6,7 +6,6 @@ use ::schedule::{Progress, Res, ResMut};
 use system_api::control::publication as pubcall;
 use system_api::control::publication::Object;
 use system_api::control::publication::Reply;
-use system_api::control::publication::Scope;
 use system_api::control::publication::Target;
 use system_api::identity::Selector;
 use system_api::operator::EntryId;
@@ -125,7 +124,7 @@ pub fn existing(
             outcome.0 = Some(
                 if record.installation.mount.is_some()
                     && record.source.publisher == approved.publisher
-                    && record.address.target.as_ref() == Some(&approved.target)
+                    && record.address.target.as_ref() == Some(&approved.policy.target)
                     && record.installation.owner == approved.placement.tile.owner.unwrap()
                     && record.source.permit == approved.placement.tile.permit
                     && pie::same(record.source.entry, approved.placement.tile.pie).unwrap_or(false)
@@ -148,7 +147,7 @@ pub fn prepare_kind(
     if let Decision::Install(approved) = &*decision {
         if let Target::RuntimeResource {
             task, kind: name, ..
-        } = &approved.target
+        } = &approved.policy.target
         {
             match resources.prepare_kind(*task, name) {
                 Ok(road) => kind.road = road,
@@ -198,11 +197,8 @@ pub fn alias(
     mut tree: ResMut<Tree>,
 ) -> Result<Progress, &'static str> {
     if let Decision::Mounted(approved, mount) = &*decision {
-        if let Target::Service {
-            scope: Scope::Device,
-            group,
-            ..
-        } = &approved.target
+        if let Target::Service { group, .. } = &approved.policy.target
+            && approved.policy.alias
         {
             if let Permit::Identity(Selector::MemberOf(c)) = approved.placement.tile.permit {
                 if names
@@ -235,7 +231,7 @@ pub fn commit(
             publications.records.push(Record {
                 address: Address {
                     road: approved.placement.road,
-                    target: Some(approved.target),
+                    target: Some(approved.policy.target),
                 },
                 source: Source {
                     publisher: approved.publisher,

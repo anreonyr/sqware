@@ -93,7 +93,7 @@ fn plate(rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
         system_client::control::publication::Client::injected().expect("uart: publication entry");
     for (name, entry) in [(RX, rx.ship()), (TX, tx.ship())] {
         let target = system_api::control::publication::Target::Service {
-            scope: Scope::Driver,
+            scope: Scope(1),
             group: "uart".into(),
             name: name.into(),
         };

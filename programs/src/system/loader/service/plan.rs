@@ -1,13 +1,13 @@
 use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Schedule};
-pub(super) fn frame() -> Result<Plan<Fail>, BuildError> {
+pub(crate) fn frame() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();
     schedule.system("receive", super::answer::receive)?;
     schedule.system("settle", super::execution::settle)?;
     schedule.system("build", super::execution::build)?;
     schedule.build()
 }
-pub(super) fn shutdown() -> Result<Plan<Fail>, BuildError> {
+pub(crate) fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();
     schedule.system("withdraw", super::publication::withdraw)?;
     schedule.system("close", super::execution::close)?;

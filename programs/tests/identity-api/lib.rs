@@ -60,6 +60,7 @@ mod tests {
             Wire::Expel(c(0), p(0)),
             Wire::Bind(task, Install::Authorized(s)),
             Wire::Unbind(task),
+            Wire::Activate(task, CoalitionSet::new(&[c(0), c(9)]).unwrap()),
         ];
         for (i, wire) in actions.into_iter().enumerate() {
             assert_eq!(Grant::for_wire(&wire), Grant::ALL[i]);
@@ -163,6 +164,19 @@ mod tests {
         for word in [5u64, 9] { expected.extend_from_slice(&word.to_le_bytes()); }
         assert_eq!(&bytes[..len], expected.as_slice());
         assert_eq!(Wire::take(&expected), Some((Some(request), back)));
+
+        let request = Wire::Activate(TaskId::new(8), CoalitionSet::new(&[c(9)]).unwrap());
+        let len = request.store(back, &mut bytes).unwrap();
+        let mut expected = 17u64.to_le_bytes().to_vec();
+        expected.push(18);
+        expected.extend_from_slice(&8u64.to_le_bytes());
+        expected.push(1);
+        for word in [5u64, 9] { expected.extend_from_slice(&word.to_le_bytes()); }
+        assert_eq!(&bytes[..len], expected.as_slice());
+        assert_eq!(Wire::take(&expected), Some((Some(request), back)));
+        expected[17] = 0;
+        expected.truncate(18);
+        assert_eq!(Wire::take(&expected), Some((None, back)));
 
         let binding = Binding {
             origin: Subject::new(p(0), &[c(0), c(9)]).unwrap(),
@@ -278,7 +292,7 @@ mod tests {
             }
         }
         assert_eq!(Grant::from_action(0), None);
-        assert_eq!(Grant::from_action(18), None);
+        assert_eq!(Grant::from_action(19), None);
         assert_eq!(grant_of(BACK), None);
         let s = Selector::MemberOf(c(0));
         let mut bytes = [0; 17];

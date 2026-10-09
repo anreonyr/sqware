@@ -8,7 +8,7 @@ pub const E_TERMINAL: Died = 24;
 
 pub static PROGRAM: UnitFile = UnitFile {
     publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope::Terminal,
+        scope: crate::unit::PublishScope(5),
         group: "",
         road: "svc/terminal",
         entries: &crate::unit::PublishEntry::from_names(terminal_api::PUBLICATIONS),

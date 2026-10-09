@@ -1,4 +1,4 @@
-use super::super::unit::{Control, material::Supplies};
+use super::super::unit::Control;
 use super::{Action, Active, Instance};
 use crate::system::control::unit::task::Readiness;
 use crate::system::{
@@ -15,7 +15,7 @@ pub(crate) fn pre(
     roster: Res<Roster>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let p = super::super::unit::start::program_of(&job.request.name)?;
+    let p = control.input(&job.request.name)?.program;
     if control
         .table
         .find(p.name())
@@ -70,27 +70,12 @@ pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<P
     }
     Ok(Progress::Done)
 }
-pub fn supply(
-    mut active: ResMut<Active>,
-    mut supplies: ResMut<Supplies>,
-) -> Result<Progress, Fail> {
-    let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    if let Some(instance) = job.execution.instance.as_mut() {
-        let program = super::super::unit::start::program_of(&job.request.name)?;
-        if program.supply().iter().any(|setup| setup.machine()) {
-            supplies
-                .enroll(&mut instance.service, program)
-                .map_err(|_| Fail::NotReady)?;
-        }
-    }
-    Ok(Progress::Done)
-}
 pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let Some(instance) = job.execution.instance.as_mut() else {
         return Ok(Progress::Done);
     };
-    let p = super::super::unit::start::program_of(&job.request.name)?;
+    let p = control.input(&job.request.name)?.program;
     match instance.service.ready(
         &mut control.table,
         Readiness {

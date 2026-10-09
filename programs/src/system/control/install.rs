@@ -3,15 +3,14 @@ use super::{
     instance::hook,
     lifecycle,
     endpoint::{request as answer, Entries},
-    unit::{Control, material::Supplies, start::Images, verdict},
+    unit::{Control, start::Input, verdict},
 };
 use crate::system::app::life::Status;
 use ::schedule::{Dispatch, Resources};
 use alloc::{collections::VecDeque, sync::Arc};
 
 pub(crate) struct Configuration {
-    pub images: Images,
-    pub supplies: Supplies,
+    pub inputs: alloc::vec::Vec<Input>,
 }
 pub(crate) fn install(
     resources: &mut Resources<'static>,
@@ -25,9 +24,9 @@ pub(crate) fn install(
                 .map_err(|_| "Control resource capacity")?
         };
     }
-    put!(Control::new(status));
-    put!(config.images);
-    put!(config.supplies);
+    let mut control = Control::new(status);
+    control.inputs = config.inputs;
+    put!(control);
     put!(Roster::default());
     put!(hook::Active::default());
     put!(Dispatch::<hook::Key, &'static str>::new());
@@ -36,6 +35,7 @@ pub(crate) fn install(
     put!(lifecycle::Active(None));
     put!(Dispatch::<lifecycle::Key, verdict::Fail>::new());
     put!(Entries::new());
+    put!(super::endpoint::construction::Construction::new()?);
     put!(answer::Inbox(VecDeque::new()));
     put!(answer::Buffer(alloc::vec![0; env::PAGE_SIZE]));
     Ok(())

@@ -1,4 +1,5 @@
 mod face;
+mod lookup;
 mod handoff;
 mod pane;
 mod tile;

@@ -30,6 +30,7 @@ impl Grant {
             Wire::Expel(..) => Self::Expel,
             Wire::Bind(..) => Self::Bind,
             Wire::Unbind(_) => Self::Unbind,
+            Wire::Activate(..) => Self::Activate,
         }
     }
 
@@ -53,7 +54,8 @@ impl Grant {
             | Self::Derive
             | Self::Found
             | Self::Admit
-            | Self::Expel => Mount::Bound,
+            | Self::Expel
+            | Self::Activate => Mount::Bound,
             Self::Bind | Self::Unbind => Mount::Installer,
         }
     }

@@ -10,3 +10,4 @@ path = "lib.rs"
 env = { path = "../../../crates/env" }
 wire = { path = "../../../crates/wire" }
 system-api = { path = "../../src/system/api" }
+account-api = { path = "../../src/service/account/api" }

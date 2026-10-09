@@ -76,23 +76,26 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .add_plan("loader", 0u8, crate::system::loader::frame().unwrap())
         .unwrap();
     schedule
-        .add_system("receive", 1, crate::system::control::receive)
+        .add_system("launch.register", 1, crate::system::launch::register)
         .unwrap();
     schedule
-        .add_system("instances", 2, crate::system::control::answer_instances)
+        .add_system("receive", 2, crate::system::control::receive)
         .unwrap();
     schedule
-        .add_system("reap", 3, crate::system::control::instance::schedule::reap)
+        .add_system("instances", 3, crate::system::control::answer_instances)
+        .unwrap();
+    schedule
+        .add_system("reap", 4, crate::system::control::instance::schedule::reap)
         .unwrap();
     schedule
         .add_plan(
             "instance.hooks",
-            4,
+            5,
             crate::system::launch::hooks::instance().unwrap(),
         )
         .unwrap();
     schedule
-        .add_system("launch.completed", 5, crate::system::launch::completed)
+        .add_system("launch.completed", 6, crate::system::launch::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
