@@ -60,7 +60,7 @@ pub mod unit {
             &[Setup]
         }
     }
-    pub fn join(_: crate::TaskId, wait: crate::Wait) -> Result<bool, ()> {
+    pub fn join_task(_: crate::TaskId, wait: crate::Wait) -> Result<bool, ()> {
         crate::EFFECTS.with(|e| {
             let mut e = e.borrow_mut();
             e.waits.push(wait);

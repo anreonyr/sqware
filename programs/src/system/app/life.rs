@@ -35,7 +35,7 @@ pub fn join(
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),
     ] {
-        if !env::unit::join(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
+        if !env::unit::join_task(env::TaskId::new(task), Wait::POLL).unwrap_or(true) {
             if env::chrono::clock() >= deadline.0 {
                 return Err(crate::system::app::Fault::Shutdown);
             }

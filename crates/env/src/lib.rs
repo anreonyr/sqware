@@ -29,19 +29,18 @@ pub mod wire;
 
 pub use abi::call::memory::PAGE_SIZE;
 pub use abi::call::{
-    ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
+    AwaitReply, Bit, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall,
     MailCallRet, MailCondition, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail,
     MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult,
-    PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, ToleCall,
-    ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
+    PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
 pub use abi::call::{
     chrono::chrono, control::control, debug::debug, mail::mail, memory::memory, pie::pie,
-    room::room, tole::tole, unit::unit,
+    room::room,
 };
 pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};
@@ -59,3 +58,19 @@ pub use wire::{Decode, FromPair, Mark, PieToken, TaskId, TeamId, VirtAddr, Wire}
 
 pub use ledger::entry::{ENTRY_LEN, Entry};
 pub use ledger::name::{Call, NAME_LEN, Name, Page, Trap};
+
+pub use abi::call::unit::{UnitTarget, ExitCause, TaskExit, JoinReply};
+/// Typed convenience wrappers; all use the same eleven Unit calls.
+pub mod unit {
+    pub use crate::abi::call::unit::unit::*;
+    use crate::{TaskId, TeamId, UnitResult, UnitTarget, Wait};
+    pub fn join_task(task: TaskId, wait: Wait) -> UnitResult<bool> {
+        join(UnitTarget::Task(task), wait, false).map(|r| r.is_reaped())
+    }
+    pub fn embark_task(task: TaskId) -> UnitResult<()> { embark(task.into()) }
+    pub fn debark_task(task: TaskId) -> UnitResult<()> { debark(task.into()) }
+    pub fn slay_task(task: TaskId) -> UnitResult<()> { slay(task.into()) }
+    pub fn embark_team(team: TeamId) -> UnitResult<()> { embark(team.into()) }
+    pub fn debark_team(team: TeamId) -> UnitResult<()> { debark(team.into()) }
+    pub fn slay_team(team: TeamId) -> UnitResult<()> { slay(team.into()) }
+}

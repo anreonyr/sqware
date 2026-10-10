@@ -2,7 +2,7 @@ use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{MailCondition, TaskId};
+use env::{Bit, MailCondition, TaskId, TeamId};
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
@@ -26,17 +26,17 @@ pub enum WakeKey {
     /// **页上那一位"有事"**（架把铃并进页之后，页也能被等——见 `mail::pole`）。
     Pole {
         id: usize,
+        bit: Bit,
     },
     Task {
         id: TaskId,
     },
+    Team { id: TeamId },
     Pies {
         task: TaskId,
     },
-    /// **能力可观察状态改变**（独立一格：`Pies` 的到达语义留给 `Fall`，一个字不扩）。
-    Capabilities {
-        task: TaskId,
-    },
+    Seal { kind: u8, id: usize },
+    Inspect { task: TaskId, token: usize },
     Tole {
         id: usize,
     },
@@ -52,16 +52,16 @@ impl WakeKey {
                 (space.get() as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot as u64
             }
             WakeKey::Hole { hole, dir } => {
-                (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir as u64
+                (hole as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ dir.wire() as u64
             }
             WakeKey::Nole { id } => (id as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9),
-            WakeKey::Pole { id } => (id as u64).wrapping_mul(0x87C3_7B91_1142_53D5),
+            WakeKey::Pole { id, bit } => (id as u64).wrapping_mul(0x87C3_7B91_1142_53D5) ^ bit.index() as u64,
+            WakeKey::Team { id } => (id.get() as u64).wrapping_mul(0x369DEA0F31A53F85),
             WakeKey::Task { id } => (id.get() as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task.get() as u64).wrapping_mul(0xA24B_AED4_963E_E407),
             WakeKey::Pies { task } => (task.get() as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F),
-            WakeKey::Capabilities { task } => {
-                (task.get() as u64).wrapping_mul(0x2545_F491_4F6C_DD1D)
-            }
+            WakeKey::Seal { kind, id } => (id as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ kind as u64,
+            WakeKey::Inspect { task, token } => (task.get() as u64).wrapping_mul(0x2545_F491_4F6C_DD1D) ^ token as u64,
             WakeKey::Tole { id } => (id as u64).wrapping_mul(0x1656_67B1_9E37_79F9),
         }
     }
@@ -194,21 +194,21 @@ impl Site {
     pub(super) fn push_back(&mut self, mut task: Arc<Task>) {
         debug_assert!(
             matches!(
-                Task::exclusive(&mut task).state(),
-                TaskState::Blocked { next: None, .. }
+                &*task.state(),
+                TaskState::Blocked { next: None, .. } | TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Blocked { next: None, .. } }
             ),
             "站点只收 Blocked 任务，且入链前不得挂在链上"
         );
         match self.tail.take() {
             None => self.head = Some(task.clone()),
-            Some(mut last) => *Task::blocked_next(&mut last) = Some(task.clone()),
+            Some(mut last) => Task::set_blocked_next(&mut last, Some(task.clone())),
         }
         self.tail = Some(task);
     }
 
     pub(super) fn pop_front(&mut self) -> Option<Arc<Task>> {
         let mut head = self.head.take()?;
-        self.head = Task::blocked_next(&mut head).take();
+        self.head = Task::take_blocked_next(&mut head);
         if self.head.is_none() {
             self.tail = None;
         }
@@ -223,10 +223,10 @@ impl Site {
         let mut cur = self.head.clone();
         while let Some(mut node) = cur {
             if hit(&mut node) {
-                let next = Task::blocked_next(&mut node).take();
+                let next = Task::take_blocked_next(&mut node);
                 let was_tail = next.is_none();
                 match &mut prev {
-                    Some(p) => *Task::blocked_next(p) = next,
+                    Some(p) => Task::set_blocked_next(p, next),
                     None => self.head = next,
                 }
                 if was_tail {
@@ -235,7 +235,7 @@ impl Site {
                 return Some(node);
             }
             prev = Some(node.clone());
-            cur = Task::blocked_next(&mut node).clone();
+            cur = Task::blocked_next(&node);
         }
         None
     }

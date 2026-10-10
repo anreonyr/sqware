@@ -51,7 +51,7 @@ pub(super) fn faces(
             Policy::VEST,
         )
         .map_err(|_| Fail::Tree)?;
-        pile.attach(token, MailCondition::Pull).map_err(|_| Fail::Desk)?;
+        pile.attach(env::Source::Mail { pie: token, condition: MailCondition::Pull }).map_err(|_| Fail::Desk)?;
         faces.0.push((token, grant));
     }
     Ok(Progress::Done)
@@ -64,7 +64,7 @@ pub(super) fn wait(
     ready.0 = pile
         .await_(Wait::AtMost(100))
         .map_err(|_| Fail::Dead)?
-        .and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
+        .mail().and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
     Ok(Progress::Done)
 }
 pub(super) fn receive(
@@ -144,7 +144,7 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
-        let _ = pile.detach(*entry, MailCondition::Pull);
+        let _ = pile.detach(env::Source::Mail { pie: *entry, condition: MailCondition::Pull });
         let _ = pie::seal(*entry);
         let _ = pie::release(*entry, env::ReleaseMode::Revoke);
     }

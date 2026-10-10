@@ -27,15 +27,3 @@ impl GateFail for env::MailFail {
         env::MailFail::HandedOver
     }
 }
-
-impl GateFail for env::ToleFail {
-    fn denied() -> Self {
-        env::ToleFail::Denied
-    }
-    fn dead() -> Self {
-        env::ToleFail::Dead
-    }
-    fn handed_over() -> Self {
-        env::ToleFail::HandedOver
-    }
-}

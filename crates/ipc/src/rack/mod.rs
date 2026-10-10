@@ -48,6 +48,8 @@ use wire::Message;
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::ring::{CAP, SIZE};
+/// Reader progress wakes a producer retaining a frame under backpressure.
+const SPACE_BIT: env::Bit = match env::Bit::of(1) { Some(bit) => bit, None => unreachable!() };
 pub use self::writer::{SendFail, Writer};
 
 /// 满了丢哪一头。默认 [`Mode::Oldest`]：最新那一格永远保得住（"树变了"比"从前变过"值钱）。

@@ -560,7 +560,7 @@ mod boundaries {
         for item in syntax.items {
             if let syn::Item::Fn(function) = item {
                 let expected: &[&str] = match function.sig.ident.to_string().as_str() {
-                    "frame" => &["receive", "settle", "build"],
+                    "frame" => &["receive"],
                     "shutdown" => &["withdraw", "close"],
                     _ => continue,
                 };

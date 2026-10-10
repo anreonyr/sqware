@@ -25,6 +25,7 @@ impl Counters {
 }
 
 pub(super) fn output(mut server: ResMut<Server>, mut frame: ResMut<Frame>, mut counters: ResMut<Counters>) -> Result<Progress, env::Reason> {
+    if frame.n != 0 { server.active = true; return Ok(Progress::Done); }
     let Some((token, foreground)) = server.attachment.as_ref().map(|a| (a.endpoints.output, a.foreground)) else { return Ok(Progress::Done); };
     let mut bytes = [0; stream::MAX];
     if let Ok((n, from)) = Hole::from_raw(token).pull(&mut bytes, Wait::POLL) {
@@ -41,7 +42,7 @@ pub(super) fn output(mut server: ResMut<Server>, mut frame: ResMut<Frame>, mut c
 }
 pub(super) fn receive(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut server: ResMut<Server>) -> Result<Progress, env::Reason> {
     frame.incoming = None;
-    if server.pending.is_empty() {
+    if server.pending.is_empty() && frame.n == 0 {
         if let Ok(batch) = console.rx.recv(Wait::POLL) {
             frame.incoming = Some(batch);
             server.active = true;
@@ -65,22 +66,25 @@ pub(super) fn feed(
     }
     if server.attachment.is_none() { mode.reset(); return Ok(Progress::Done); }
     for &b in batch.bytes() {
-        if b == 3 {
+        if b == 3 || b == 26 {
             mode.reset();
             server.reset();
-            server.interrupt = true;
-            if server.echo { frame.append(b"^C\r\n"); }
+            server.event = Some(if b == 3 { stream::INTERRUPT } else { stream::SUSPEND });
+            if server.echo { frame.append(if b == 3 { b"^C\r\n" } else { b"^Z\r\n" }); }
             continue;
         }
         let effect = mode.feed(b);
         if server.echo { frame.append(effect.echo()); }
         match effect.input {
             Input::Line(line) => {
-                let mut bytes = [0; stream::MAX];
-                bytes[..line.len()].copy_from_slice(line);
-                let mut n = line.len();
-                if b != 4 { bytes[n] = b'\n'; n += 1; }
-                server.pending.push_back(stream::Input::data(&bytes[..n]).ok_or(E_TERMINAL)?);
+                let mut chunks = line.chunks(stream::MAX).peekable();
+                while let Some(chunk) = chunks.next() {
+                    if chunks.peek().is_none() && b != 4 && chunk.len() < stream::MAX {
+                        let mut bytes = [0; stream::MAX]; bytes[..chunk.len()].copy_from_slice(chunk); bytes[chunk.len()] = b'\n';
+                        server.pending.push_back(stream::Input::data(&bytes[..chunk.len() + 1]).ok_or(E_TERMINAL)?);
+                    } else { server.pending.push_back(stream::Input::data(chunk).ok_or(E_TERMINAL)?); }
+                }
+                if b != 4 && line.len().is_multiple_of(stream::MAX) { server.pending.push_back(stream::Input::data(b"\n").ok_or(E_TERMINAL)?); }
             }
             Input::Eof => { server.pending.push_back(stream::Input::eof()); }
             Input::More => {}
@@ -88,11 +92,16 @@ pub(super) fn feed(
     }
     Ok(Progress::Done)
 }
-pub(super) fn flush(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut counters: ResMut<Counters>) -> Result<Progress, env::Reason> {
+pub(super) fn flush(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut counters: ResMut<Counters>, mut server: ResMut<Server>) -> Result<Progress, env::Reason> {
+    let mut sent = 0;
     for chunk in frame.echo[..frame.n].chunks(MAX) {
-        console.tx.send(&Bytes::of(chunk).ok_or(E_TERMINAL)?).map_err(|_| E_TERMINAL)?;
+        if !console.tx.send_when_ready(&Bytes::of(chunk).ok_or(E_TERMINAL)?).map_err(|_| E_TERMINAL)? { break; }
+        sent += chunk.len();
     }
-    frame.n = 0;
+    let remaining = frame.n;
+    frame.echo.copy_within(sent..remaining, 0);
+    frame.n -= sent;
+    if frame.n != 0 { server.active = true; } else { console.tx.hush(); }
     let lost = console.tx.lost();
     if lost != counters.lost {
         counters.lost = lost;

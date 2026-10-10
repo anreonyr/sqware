@@ -35,8 +35,10 @@ static LEDGER: SpinLock<Ring> = SpinLock::new(Ring {
     written: 0,
 });
 
-pub fn note(task: TaskId, reason: Reason, note: &str) {
-    if reason == 0 {
+pub fn note(task: TaskId, reason: Reason, note: &str, owner: Option<TaskId>) {
+    // Managed exits remain in the native member record and exit trace. The
+    // failure ledger must not be overwritten by expected application statuses.
+    if reason == 0 || owner.is_some() {
         return;
     }
     let raw = note.as_bytes();
@@ -53,6 +55,7 @@ pub fn note(task: TaskId, reason: Reason, note: &str) {
     let at = ring.written % RING;
     ring.entries[at] = entry;
     ring.written += 1;
+
 }
 
 pub fn each(f: impl FnMut(&Entry)) {

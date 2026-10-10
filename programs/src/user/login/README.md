@@ -2,7 +2,7 @@
 
 启动 product 镜像后，使用测试账户 `anran`、密码 `sqware` 登录。密码不回显，退格和 Ctrl-U 仍可编辑。
 
-认证成功后启动独立 cat ELF，显示 TaskId 和用户 Principal，随后回送输入行。Ctrl-D 或 Ctrl-C 结束此次会话并返回登录提示；`exit` 是普通输入。密码阶段的 Ctrl-D、Ctrl-C 取消登录；用户名提示处的 Ctrl-D 结束示例 Login。
+认证成功后启动独立 Lisp Shell ELF，显示 TaskId 和用户 Principal，进入 `lisp>`。Ctrl-D 取消作业并结束会话，返回登录提示；Ctrl-C 取消前台作业或当前求值，Ctrl-Z 暂停前台作业。显式管道与语言用法见 [Lisp Shell](../../../../docs/lisp-shell.md)。密码阶段的 Ctrl-D、Ctrl-C 取消登录；用户名提示处的 Ctrl-D 结束示例 Login。
 
 Login 保存带盐的 Argon2id 密码校验值。Account 服务通过 Identity 创建本次系统运行中的长期用户 Principal，以 `/idt/principal/anran/ref` 发布索引。每次登录创建新的 Team、Task 和 `/uit/<team>/<task>` 运行目录；注销清理实例及身份绑定，保留用户 Principal。重启后身份重新建立。
 

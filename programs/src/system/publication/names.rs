@@ -220,7 +220,7 @@ pub(crate) fn prepare(
         let Slot::Live { task, .. } = row.slot else {
             continue;
         };
-        if env::unit::join(task, Wait::POLL).unwrap_or(true) {
+        if env::unit::join_task(task, Wait::POLL).unwrap_or(true) {
             continue;
         }
         if let Some(binding) = crate::system::control::identity::binding(&roster, task)

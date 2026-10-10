@@ -23,7 +23,7 @@ pub(crate) fn sweep(
                 .any(|job| job.operation.request.name == row.name)
         })
         .filter_map(|row| match row.slot {
-            Slot::Live { task, .. } if unit::join(task, Wait::POLL).unwrap_or(true) => {
+            Slot::Live { task, .. } if unit::join_task(task, Wait::POLL).unwrap_or(true) => {
                 Some(row.name.clone())
             }
             _ => None,
@@ -50,19 +50,17 @@ fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
         return;
     };
     table.set_state(name, State::Dead);
-    let before = unit::heir_count();
     let ousted = match team {
         Some(team) => unit::oust(team).is_ok(),
         None => false,
     };
-    let after = unit::heir_count();
     let wait = match reaped {
         Reaped::Now => "now",
         Reaped::Waited => "waited",
         Reaped::Unsettled => "unsettled",
     };
     debug::put(&alloc::format!(
-        "system: gone {} state=Dead ousted={ousted} heir={before}→{after} wait={wait}{}",
+        "system: gone {} state=Dead ousted={ousted} wait={wait}{}",
         name,
         if team.is_none() { " inner" } else { "" }
     ));

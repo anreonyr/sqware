@@ -208,6 +208,7 @@ pub enum Read {
     Data(Input),
     Eof,
     Interrupt,
+    Suspend,
 }
 pub struct Io {
     input: PieToken,
@@ -224,8 +225,8 @@ impl Io {
             control,
             pile,
         };
-        io.pile.attach(input, MailCondition::Pull).map_err(|_| ())?;
-        io.pile.attach(control, MailCondition::Pull).map_err(|_| ())?;
+        io.pile.attach(env::Source::Mail { pie: input, condition: MailCondition::Pull }).map_err(|_| ())?;
+        io.pile.attach(env::Source::Mail { pie: control, condition: MailCondition::Pull }).map_err(|_| ())?;
         Ok(io)
     }
     pub fn injected(owner: TaskId) -> Result<Self, ()> {
@@ -240,27 +241,31 @@ impl Io {
     pub fn raw_channels(&self) -> [PieToken; 3] {
         [self.input, self.output, self.control]
     }
-    pub fn read(&self) -> Result<Read, ()> {
+    pub fn read(&self) -> Result<Read, ()> { self.read_with(Wait::Forever)?.ok_or(()) }
+    pub fn read_with(&self, within: Wait) -> Result<Option<Read>, ()> {
+        let deadline = ipc::time::Deadline::new(within);
         let mut bytes = [0; Input::LEN];
         loop {
             match Hole::from_raw(self.control).pull(&mut bytes, Wait::POLL) {
-                Ok((1, _)) if bytes[0] == frame::INTERRUPT => return Ok(Read::Interrupt),
-                Err(error) if error.source.is_busy() => {}
-                _ => return Err(()),
+                Ok((1, _)) if bytes[0] == frame::INTERRUPT => return Ok(Some(Read::Interrupt)),
+                Ok((1, _)) if bytes[0] == frame::SUSPEND => return Ok(Some(Read::Suspend)),
+                Err(error) if error.source.is_busy() => {}, _ => return Err(()),
             }
             match Hole::from_raw(self.input).pull(&mut bytes, Wait::POLL) {
                 Ok((n, _)) => {
                     let input = Input::fetch(&bytes[..n]).ok_or(())?;
-                    return Ok(if input.kind == frame::EOF {
-                        Read::Eof
-                    } else {
-                        Read::Data(input)
-                    });
+                    return Ok(Some(if input.kind == frame::EOF { Read::Eof } else { Read::Data(input) }));
                 }
-                Err(error) if error.source.is_busy() => {}
-                Err(_) => return Err(()),
+                Err(error) if error.source.is_busy() => {}, Err(_) => return Err(()),
             }
-            self.pile.await_(Wait::Forever).map_err(|_| ())?;
+            let left = deadline.remaining(); if left == Wait::POLL { return Ok(None); }
+            self.pile.await_(left).map_err(|_| ())?;
+        }
+    }
+    pub fn try_write(&self, bytes: &[u8]) -> Result<bool, ()> {
+        if bytes.len() > frame::MAX || bytes.is_empty() { return Err(()); }
+        match Hole::from_raw(self.output).push(bytes, Wait::POLL) {
+            Ok(()) => Ok(true), Err(error) if error.source.is_busy() => Ok(false), Err(_) => Err(()),
         }
     }
     pub fn write(&self, bytes: &[u8]) -> Result<(), ()> {

@@ -62,7 +62,7 @@ pub(crate) use wait::site::WakeKey;
 #[cfg(debug_assertions)]
 pub(crate) use wait::site_count;
 pub(crate) use wait::{
-    fall, forward, join, knock, park, park_until, redeem, signal, unforward, wait, wake, wipe,
+    fall, forward, knock, park, park_until, redeem, signal, unforward, wait, wake, wipe,
     wipe_space,
 };
 
@@ -83,3 +83,7 @@ pub(crate) fn probe_bookkeeping() -> (usize, usize) {
     let husks_n = HUSKS.lock().len();
     (holders_n, husks_n)
 }
+
+pub(crate) use wait::unit_join;
+
+pub(crate) use wait::{WaitCall, mail_await};

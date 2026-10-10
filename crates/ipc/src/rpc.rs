@@ -26,18 +26,30 @@ pub mod request {
     /// Client endpoint bound to one typed request/response contract.
     pub struct Sender<C: Contract> {
         entry: PortSender,
+        token: PieToken,
         back: Mark,
         _contract: PhantomData<fn() -> C>,
     }
 
     impl<C: Contract> Sender<C> {
         pub fn from_raw(entry: PieToken, back: Mark) -> Result<Self, Fail> {
+            let token = entry;
             let entry = PortSender::import(entry).map_err(|error| Fail::Open(error.source))?;
-            Ok(Self { entry, back, _contract: PhantomData })
+            Ok(Self { entry, token, back, _contract: PhantomData })
         }
 
         pub fn peer(&self) -> TaskId {
             self.entry.peer()
+        }
+
+        pub fn begin(&self, deadline: Deadline, build: impl FnOnce(PieToken) -> C::Request) -> Result<Pending<C>, Fail> {
+            let mut reply = Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
+            let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
+            let request = build(remote); let mut buffer = C::Request::EMPTY;
+            let len = request.store(buffer.as_mut()).ok_or(Fail::Encode)?;
+            if len > buffer.as_ref().len() { return Err(Fail::Encode); }
+            Ok(Pending { entry: PortSender::import(self.token).map_err(|error| Fail::Open(error.source))?, buffer, len,
+                reply: super::reply::Receiver::new(reply, deadline), deadline, sent: false, done: false })
         }
 
         /// Send one typed request and return its isolated one-shot reply endpoint.
@@ -65,6 +77,31 @@ pub mod request {
             build: impl FnOnce(PieToken) -> C::Request,
         ) -> Result<<C::Response as Message>::In, Fail> {
             self.send(deadline, build)?.receive()
+        }
+    }
+
+    pub struct Pending<C: Contract> {
+        entry: PortSender,
+        buffer: <C::Request as Message>::Buf,
+        len: usize,
+        reply: super::reply::Receiver<C::Response>,
+        deadline: Deadline,
+        sent: bool,
+        done: bool,
+    }
+    impl<C: Contract> Pending<C> {
+        pub fn poll(&mut self) -> Result<Option<<C::Response as Message>::In>, Fail> {
+            if self.done { return Err(Fail::Untrusted); }
+            if !self.sent {
+                match self.entry.push(&self.buffer.as_ref()[..self.len], Wait::POLL) {
+                    Ok(()) => self.sent = true,
+                    Err(error) if error.source.is_busy() && self.deadline.remaining() != Wait::POLL => return Ok(None),
+                    Err(error) => return Err(Fail::Send(error.source)),
+                }
+            }
+            let result = self.reply.poll()?;
+            if result.is_some() { self.done = true; }
+            Ok(result)
         }
     }
 
@@ -199,6 +236,17 @@ pub mod reply {
     impl<R: Message> Receiver<R> {
         pub(super) fn new(reply: Reply, deadline: Deadline) -> Self {
             Self { reply, deadline, _response: PhantomData }
+        }
+
+        pub fn poll(&self) -> Result<Option<R::In>, Fail> {
+            let mut buffer = R::EMPTY;
+            let bytes = match self.reply.pull(buffer.as_mut(), Wait::POLL) {
+                Ok(bytes) => bytes,
+                Err(ReplyError::Mail(fail)) if fail.is_busy() && self.deadline.remaining() != Wait::POLL => return Ok(None),
+                Err(ReplyError::Mail(fail)) => return Err(Fail::Receive(fail)),
+                Err(ReplyError::WrongSource) => return Err(Fail::WrongSource),
+            };
+            R::fetch(bytes).map(Some).ok_or(Fail::Decode)
         }
 
         pub fn receive(self) -> Result<R::In, Fail> {

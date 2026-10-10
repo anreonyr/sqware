@@ -1,4 +1,3 @@
-use env::room;
 use env::unit;
 use env::{Mark, Permission, PieFail, PieToken, ProgramKind, TaskId, UnitFail, Wait};
 
@@ -52,7 +51,7 @@ pub struct Launch<'a> {
 pub(crate) fn mint(table: &mut Table, name: &str, built: system_api::loader::Built) -> Result<TaskId, Fail> {
     let system_api::loader::Built { task, team } = built;
     if let Err(fail) = admit_mint(table, name) {
-        let _ = room::doom(task);
+        let _ = unit::slay_team(team);
         let _ = unit::oust(team);
         return Err(fail);
     }
@@ -63,7 +62,7 @@ pub(crate) fn mint(table: &mut Table, name: &str, built: system_api::loader::Bui
             task,
         },
     ) {
-        let _ = room::doom(task);
+        let _ = unit::slay_team(team);
         let _ = unit::oust(team);
         return Err(fail);
     }
@@ -87,10 +86,13 @@ pub fn embark(
         for g in grants {
             pie::accord(g.token, task, g.perm, Mark::NONE).map_err(pie_fail)?;
         }
-        unit::embark(task).map_err(unit_fail)
+        unit::embark_task(task).map_err(unit_fail)
     })();
     if let Err(e) = launched {
-        let _ = room::doom(task);
+        match table.find(name).map(|row| row.slot) {
+            Some(Slot::Live { team: Some(team), .. }) => { let _ = unit::slay_team(team); }
+            _ => { let _ = env::room::doom(task); }
+        }
         table.set_state(name, State::Dead);
         return Err(e);
     }
@@ -123,7 +125,7 @@ pub fn ready(
     let (task, announce) = (*task, *announce);
 
     if announce == Announce::None {
-        if !unit::join(task, Wait::POLL).unwrap_or(true) {
+        if !unit::join_task(task, Wait::POLL).unwrap_or(true) {
             table.set_state(name, State::Ready);
             return Ok(false);
         }
@@ -151,7 +153,7 @@ pub fn ready(
             return Ok(false);
         }
     }
-    if unit::join(task, Wait::POLL).unwrap_or(true) {
+    if unit::join_task(task, Wait::POLL).unwrap_or(true) {
         table.set_state(name, State::Dead);
         return Err(Fail::NotReady);
     }
@@ -163,14 +165,16 @@ pub fn ready(
 
 pub fn ruin(table: &mut Table, name: &str) -> Result<(), Fail> {
     let Some(Service {
-        slot: Slot::Live { task, .. },
+        slot: Slot::Live { task, team },
         ..
     }) = table.find(name)
     else {
         return Err(Fail::Unknown);
     };
-    let task = *task;
-    unit::slay(task).map_err(unit_fail)?;
+    match *team {
+        Some(team) => unit::slay_team(team).map_err(unit_fail)?,
+        None => env::room::doom(*task).map_err(|_| Fail::Unknown)?,
+    }
     table.set_state(name, State::Stopping);
     Ok(())
 }

@@ -110,7 +110,7 @@ fn concurrent_builders(
                 debug::put("group: builder doom");
                 return false;
             }
-            if unit::join(task, Wait::Forever).is_err() {
+            if unit::join_task(task, Wait::Forever).is_err() {
                 debug::put("group: builder join");
                 return false;
             }
@@ -198,7 +198,7 @@ pub fn run() -> Reason {
         {
             return die("group: accord");
         }
-        if unit::embark(task).is_err() {
+        if unit::embark_task(task).is_err() {
             return die("group: embark");
         }
     }
@@ -237,9 +237,9 @@ pub fn run() -> Reason {
 
     //    干净的任务答 `Denied`（名册里没了 = "从未分配"）⇒ 它数不出"干净"这个数。
     for &task in &tasks {
-        if !unit::join(task, Wait::AtMost(MS)).unwrap_or(false) {
+        if !unit::join_task(task, Wait::AtMost(MS)).unwrap_or(false) {
             let _ = room::doom(task);
-            let _ = unit::join(task, Wait::AtMost(MS));
+            let _ = unit::join_task(task, Wait::AtMost(MS));
         }
     }
 

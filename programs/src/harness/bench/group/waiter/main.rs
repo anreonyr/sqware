@@ -35,7 +35,7 @@ fn main() -> Reason {
     let report = Hole::from_raw(report);
 
     // 挂一格：**一个方向就够**（`Pull` = "有东西可读"）。
-    if pile.attach(member.token(), MailCondition::Pull).is_err() {
+    if pile.attach(env::Source::Mail { pie: member.token(), condition: MailCondition::Pull }).is_err() {
         return bail("waiter: attach");
     }
     // 先报"已挂"：台主收齐两枚才投信 ⇒ 投信那一刻两人**都在等**（判据成立的前提）。

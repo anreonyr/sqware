@@ -1,4 +1,4 @@
-//! 写端：**永不挂起**。满了按 `Mode` 丢一头。
+//! 写端：send 按 Mode 处理满环；send_when_ready 保留排队数据，wait 等待读端推进。
 //!
 //! 与 `hand::Sender` 的分界：那边 `send` 之后还要 `reclaim`（等这只手下线，无期等）；
 //! 这边 `send` 落地即走——丢了的算在 `lost` / `dropped` 两个数上，不由发送方等。
@@ -18,8 +18,7 @@ use wire::Message;
 
 /// **写端**：一枚页上的环 ＋ 一枚铃 ＋ 本族那只编报缓冲。
 ///
-/// 名字与 `std::sync::mpsc::SyncSender` 同位——但**不阻塞**：容量满了不是"等"，而是按
-/// [`Mode`](super::Mode) 丢（见 [`SendFail::Full`]）。
+/// send 不阻塞，容量满时按 Mode 处理；背压路径通过 send_when_ready 与 wait 配合。
 pub struct Writer<M: Message> {
     ring: &'static Ring,
     /// 本域里那一份映射（`Rack::writer` 现取时是 `None`：`Rack` 持着 `Dock`）。
@@ -30,6 +29,7 @@ pub struct Writer<M: Message> {
     buf: M::Buf,
     mode: Mode,
     bell: Bell,
+    progress: Bell,
     _m: PhantomData<M>,
 }
 
@@ -43,7 +43,8 @@ impl<M: Message> Writer<M> {
             _dock: None,
             buf: M::EMPTY,
             mode,
-            bell: Bell::from_raw(page),
+            bell: Bell::from_raw(page, env::Bit::FIRST),
+            progress: Bell::from_raw(page, super::SPACE_BIT),
             _m: PhantomData,
         }
     }
@@ -68,13 +69,26 @@ impl<M: Message> Writer<M> {
             _dock: Some(dock),
             buf: M::EMPTY,
             mode,
-            bell: Bell::from_raw(page),
+            bell: Bell::from_raw(page, env::Bit::FIRST),
+            progress: Bell::from_raw(page, super::SPACE_BIT),
             _m: PhantomData,
         })
     }
 
-    /// **落一格**：放进去了答 `Ok`；按策略丢了答 `Err(SendFail::Full)`（**不是失败**，
-    /// 是"这一格没进架"——丢掉的数在 `lost` / `dropped` 上）。
+    /// Publish only when a free slot exists; a full rack retains all queued frames.
+    pub fn send_when_ready(&mut self, msg: &M) -> Result<bool, SendFail> {
+        if super::ring::depth(self.ring) >= super::ring::CAP as u64 {
+            let _ = self.progress.hush();
+            if super::ring::depth(self.ring) >= super::ring::CAP as u64 { return Ok(false); }
+        }
+        self.send(msg)?;
+        Ok(true)
+    }
+
+    /// Clear the producer's progress hint when no retained frame needs it.
+    pub fn hush(&self) { let _ = self.progress.hush(); }
+
+    /// Publish once, applying the configured full-rack policy.
     pub fn send(&mut self, msg: &M) -> Result<(), SendFail> {
         let Some(n) = msg.store(self.buf.as_mut()) else {
             return Err(SendFail::TooLong);
@@ -85,7 +99,7 @@ impl<M: Message> Writer<M> {
         let bytes = self.buf.as_ref().get(..n).ok_or(SendFail::TooLong)?;
         // 正文在 `rack::ring::push` 那一处（与模块内的用例同一份代码）。
         push(self.ring, self.mode, bytes).map_err(|()| SendFail::Full)?;
-        // 铃是"有事"（提示型）：已响即 `Busy`，不是错——读者醒来就会把架读干。
+        // 铃是“有事”的提示；重复 Ring 幂等，读者醒来复核环。
         let _ = self.bell.ring();
         Ok(())
     }
@@ -95,9 +109,17 @@ impl<M: Message> Writer<M> {
         self.send(msg)
     }
 
-    /// 等铃（**写者不该用**：它只响、不等。留给"同一域里要等答复"的诊断口）。
+    /// 等待环有空位；清除推进提示后复查容量，并保留原截止时间。
     pub fn wait(&self, within: Wait) -> bool {
-        self.bell.wait(within).unwrap_or(false)
+        let deadline = crate::time::deadline(within);
+        loop {
+            if depth(self.ring) < super::ring::CAP as u64 { return true; }
+            if self.progress.hush().is_err() { return false; }
+            if depth(self.ring) < super::ring::CAP as u64 { return true; }
+            let left = crate::time::remain(deadline);
+            if left == Wait::POLL { return false; }
+            if self.progress.wait(left).is_err() { return false; }
+        }
     }
 
     /// 按 `Mode::Newest` 丢掉的条数（没进架的那些）。
@@ -116,6 +138,8 @@ impl<M: Message> Writer<M> {
     }
 
     /// 本端那一枚铃的号（要交给别人听时用）。
+    pub fn source(&self) -> env::Source { self.progress.source() }
+
     pub fn bell(&self) -> PieToken {
         self.bell.token()
     }

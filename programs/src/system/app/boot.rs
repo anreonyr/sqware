@@ -92,7 +92,7 @@ pub fn embark(
     for slot in [&status.operator, &status.identity] {
         let task = TaskId::new(slot.load(Ordering::Acquire));
         supplies.grant_call(env::Call::Doom, task)?;
-        env::unit::embark(task).map_err(|_| "internal task embark")?;
+        env::unit::embark_task(task).map_err(|_| "internal task embark")?;
     }
     Ok(Progress::Done)
 }

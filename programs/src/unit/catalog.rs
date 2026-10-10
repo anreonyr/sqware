@@ -8,6 +8,8 @@ use super::{SCENE_UNIT, UnitFile};
 
 #[path = "../harness/probe/accept/program.rs"]
 pub mod accept;
+#[path = "../service/pipe/program.rs"]
+pub mod pipe;
 #[path = "../service/account/program.rs"]
 pub mod account;
 #[path = "../harness/bench/again/again/program.rs"]
@@ -16,6 +18,18 @@ pub mod again;
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
+#[path = "../user/emit/program.rs"]
+pub mod emit;
+#[path = "../user/upper/program.rs"]
+pub mod upper;
+#[path = "../user/fail/program.rs"]
+pub mod fail;
+#[path = "../user/spin/program.rs"]
+pub mod spin;
+#[path = "../user/workers/program.rs"]
+pub mod workers;
+#[path = "../user/shell/program.rs"]
+pub mod shell;
 #[path = "../user/cat/program.rs"]
 pub mod cat;
 #[path = "../harness/bench/again/churn/program.rs"]
@@ -106,10 +120,18 @@ pub mod waiter;
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
     &hub::PROGRAM,
+    &pipe::PROGRAM,
     &account::PROGRAM,
     &terminal::PROGRAM,
     &login::PROGRAM,
+    &shell::PROGRAM,
     &cat::PROGRAM,
+    &emit::PROGRAM,
+    &upper::PROGRAM,
+    &fail::PROGRAM,
+    &spin::PROGRAM,
+    &workers::PROGRAM,
+
     &probe_terminal::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &guest::GUEST,

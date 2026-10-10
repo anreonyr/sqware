@@ -85,6 +85,8 @@ fn oust_round() {
     );
     let released = child.release_held(&unborn);
     crate::expect!(released, "oust: 摘出未放行线程失败");
+    *unborn.state.lock() = crate::work::unit::task::TaskState::Reaped { cause: env::ExitCause::Reap, reason: 0 };
+    crate::work::room::conductor::exit();
     drop(unborn);
     crate::expect!(child.all_reaped(), "oust: 摘净之后应当算已收尾");
     crate::expect!(sire.oust(held_id).is_some(), "oust: 摘净之后应当放得下");

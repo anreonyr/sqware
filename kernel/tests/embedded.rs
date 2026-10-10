@@ -72,6 +72,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn unit_scan_and_receipts() {
+        kernel::health::syscall::unit_scan_and_receipts();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn boot_error_reports_without_allocation() {
         kernel::health::boot_errors();
     }
@@ -128,6 +134,12 @@ mod tests {
     #[test]
     fn task_preparation_rollback() {
         kernel::health::task::preparation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn branch_control_and_results() {
+        kernel::health::task::branch_control();
     }
 
     #[cfg(debug_assertions)]
@@ -189,6 +201,10 @@ mod tests {
     fn permit_subs() {
         kernel::health::permit::subs();
     }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn permit_references() { kernel::health::permit::references(); }
 
     #[cfg(debug_assertions)]
     #[test]

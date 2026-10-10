@@ -229,3 +229,7 @@ mod production {
         }
     }
 }
+
+pub mod chrono { pub fn clock() -> u64 { 0 } }
+#[path = "../../../crates/ipc/src/time.rs"]
+pub mod time;

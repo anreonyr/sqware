@@ -20,13 +20,14 @@ use super::hart::Scheduler;
 pub(in super::super) static SCHEDULERS: OnceLock<&'static [Scheduler]> = OnceLock::new();
 
 pub(crate) fn rip() {
+    let _commit = crate::work::unit::commit();
     let Some(cs) = SCHEDULERS.get() else { return };
     for c in cs.iter() {
         let mut i = c.inner.lock();
         c.starved_clear(&mut i);
     }
     for task in roster().into_iter().filter_map(|w| w.upgrade()) {
-        task.boarding.lock().parked.take();
+        task.ident.team.release_held(&task);
     }
     messenger::rip();
     if let Some(r) = ROSTER.get() {
@@ -106,13 +107,18 @@ pub(crate) fn fail_next_reservation() {
     FAIL_RESERVE.store(true, core::sync::atomic::Ordering::Release);
 }
 
-pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc<Task>, T), ()> {
+pub(crate) fn reserve_publication() -> Result<(), ()> {
     let mut roster = roster_table().lock();
     #[cfg(debug_assertions)]
     if FAIL_RESERVE.swap(false, core::sync::atomic::Ordering::AcqRel) {
         return Err(());
     }
-    roster.try_reserve(1).map_err(|_| ())?;
+    roster.try_reserve(1).map_err(|_| ())
+}
+
+pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc<Task>, T), ()> {
+    let mut roster = roster_table().lock();
+    if roster.len() == roster.capacity() { return Err(()); }
     #[cfg(debug_assertions)]
     let _commit = crate::memory::allocator::NoAllocation::enter();
     let (task, value) = commit();
@@ -167,6 +173,7 @@ pub(crate) fn roster() -> Vec<TaskWeak> {
 }
 
 pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
+    let _commit = crate::work::unit::commit();
     for s in schedulers() {
         let mut i = s.inner.lock();
         if s.starved_remove(&mut i, target) {
@@ -175,18 +182,6 @@ pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
         }
     }
     false
-}
-
-pub(crate) fn running_hart(target: &Arc<Task>) -> Option<HartId> {
-    for s in schedulers() {
-        let i = s.inner.lock();
-        if i.running.as_ref().is_some_and(|t| Arc::ptr_eq(t, target)) {
-            let h = s.hart;
-            drop(i);
-            return Some(h);
-        }
-    }
-    None
 }
 
 pub(crate) fn current() -> &'static Scheduler {

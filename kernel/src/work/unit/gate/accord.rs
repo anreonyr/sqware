@@ -41,7 +41,7 @@ pub(crate) fn accord(
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
-        if pie.tole().is_some_and(|p| p.has_subs()) {
+        if pie.tole().is_some_and(|p| p.has_cells()) {
             return Err(PieFail::Denied);
         }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
@@ -49,19 +49,19 @@ pub(crate) fn accord(
         granted.parent(src, Arc::downgrade(caller));
         // Reserve both records before changing either side, including ONLY's heir.
         caller
-            .heirs
+            .gate.heirs
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         target
-            .pies
+            .gate.pies
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         let token = granted.token();
         super::insert_heir(caller, src, Arc::downgrade(&target), token);
         if pie.permission().contains(Permission::ONLY) {
-            let mut pies = caller.pies.lock();
+            let mut pies = caller.gate.pies.lock();
             let source = pies
                 .iter_mut()
                 .find(|p| p.token() == src)
@@ -73,7 +73,7 @@ pub(crate) fn accord(
             source.set_heir(Some(heir));
         }
         // Block the exclusive source before publishing the recipient's token.
-        target.pies.lock().push(granted);
+        target.gate.pies.lock().push(granted);
         super::changed(caller);
         if !Arc::ptr_eq(caller, &target) {
             super::changed(&target);
@@ -86,16 +86,16 @@ pub(crate) fn accord(
         },
         &target.life(),
     );
-    for task in [caller.ident.id, target.ident.id] {
-        let _ = messenger::signal(WakeKey::Capabilities { task });
-    }
+    super::notify(caller.ident.id, src);
+    super::notify(target.ident.id, token);
     Ok(token.get())
 }
 
 pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let _gate = task.gate.lock();
+    let gate_guard = task.gate.lock();
+    let commit_guard = super::super::commit();
     let child = {
-        let heirs = task.heirs.lock();
+        let heirs = task.gate.heirs.lock();
         heirs
             .iter()
             .find(|(parent, _, child)| *parent == token && *child == expected.token)
@@ -110,11 +110,13 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
     if cleared {
         super::remove_heir(task, token, expected.token);
     }
+    drop(commit_guard); drop(gate_guard);
+    if cleared { super::notify(task.ident.id, token); }
     cleared
 }
 
 pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let mut pies = task.pies.lock();
+    let mut pies = task.gate.pies.lock();
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;
     };

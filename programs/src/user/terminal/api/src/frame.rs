@@ -14,6 +14,7 @@ pub const DETACH: u8 = 3;
 pub const ECHO_OFF: u8 = 4;
 pub const ECHO_ON: u8 = 5;
 pub const INTERRUPT: u8 = 1;
+pub const SUSPEND: u8 = 2;
 pub const DATA: u8 = 1;
 pub const EOF: u8 = 2;
 pub const MAX: usize = 256;

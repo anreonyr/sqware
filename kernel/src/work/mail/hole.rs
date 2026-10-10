@@ -138,6 +138,7 @@ impl HoleMeta {
                 Pending::Rung { count, .. } => *count > 0,
                 Pending::Dead => false,
             },
+            MailCondition::Signal(_) => false,
             MailCondition::Push => {
                 matches!(&*pending, Pending::Queue(q) if q.hands.len() < self.limits.max_messages && q.bytes < self.limits.max_bytes)
             }
@@ -158,6 +159,7 @@ impl Drop for HoleMeta {
             );
         }
         drop(pending);
+        messenger::wipe(WakeKey::Seal { kind: env::PieKind::Hole as u8, id: self.id.0 });
         messenger::wipe(key(self, MailCondition::Pull));
         messenger::wipe(key(self, MailCondition::Empty));
         messenger::wipe(key(self, MailCondition::Push));
@@ -666,6 +668,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
         HANDS_LIVE.fetch_sub(hands.count(), Ordering::Relaxed);
     }
     drop(pending);
+    messenger::wipe(WakeKey::Seal { kind: env::PieKind::Hole as u8, id: meta.id.0 });
     messenger::wipe(key(meta, MailCondition::Pull));
     messenger::wipe(key(meta, MailCondition::Empty));
     messenger::wipe(key(meta, MailCondition::Push));

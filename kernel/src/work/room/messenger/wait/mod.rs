@@ -49,27 +49,39 @@ impl WaitFail for env::MailFail {
     }
 }
 
-impl WaitFail for env::ToleFail {
-    fn busy() -> Self {
-        env::ToleFail::Busy
-    }
-    fn oom() -> Self {
-        env::ToleFail::OoM
+
+fn block<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, E> {
+    Ok(finish_block(block_with_call(key, life, dur, None)?))
+}
+
+enum Blocked {
+    Resume,
+    Switch(Option<usize>),
+    Quit(usize),
+}
+fn finish_block(blocked: Blocked) -> Handoff<()> {
+    match blocked {
+        Blocked::Resume => Handoff::Resume(()),
+        Blocked::Switch(next) => Handoff::Switch(next.unwrap_or_else(run)),
+        Blocked::Quit(reason) => {
+            super::set_exit_reason(reason);
+            Handoff::Switch(super::quit())
+        }
     }
 }
 
-fn block<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<Handoff<()>, E> {
+fn block_with_call<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration, wait: Option<WaitCall>) -> Result<Blocked, E> {
     if take_beacon(key) {
-        return Ok(Handoff::Resume(()));
+        return Ok(Blocked::Resume);
     }
     let Some(me) = current().running_task() else {
         return Err(E::busy());
     };
     if let Some(reason) = super::take_doomed(me.ident.id) {
         drop(me);
-        super::set_exit_reason(reason);
-        return Ok(Handoff::Switch(super::quit()));
+        return Ok(Blocked::Quit(reason));
     }
+    let _commit = crate::work::unit::commit();
     {
         let mut sites = sites(key).lock();
         if !sites.contains_key(&key) {
@@ -89,16 +101,16 @@ fn block<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<H
         }
     }
     drop(me);
-    let (mut task, next_pa) = current().swap();
+    let (task, next_pa) = current().swap();
     trace::note(EventKind::Room(RoomEvent::Wait {
         tid: task.ident.id.get(),
         key: key.fold() as usize,
     }));
-    Task::exclusive(&mut task).transform(TaskState::Blocked {
-        key,
-        ticket,
-        next: None,
-    });
+    let stopped = task.stopped();
+    let state = if stopped { TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Blocked {
+        key, ticket, next: None, wait,
+    } } } else { TaskState::Blocked { key, ticket, next: None, wait } };
+    *task.state.lock() = state;
     let queued = {
         let mut sites = sites(key).lock();
         let queued = match sites.get_mut(&key) {
@@ -125,14 +137,19 @@ fn block<E: WaitFail>(key: WakeKey, life: Weak<Life>, dur: Duration) -> Result<H
     }
     #[cfg(debug_assertions)]
     crate::work::unit::weak::check_block_heldout();
-    Ok(Handoff::Switch(next_pa.unwrap_or_else(run)))
+    Ok(Blocked::Switch(next_pa))
 }
 
 fn rise<I: IntoIterator<Item = Arc<Task>>>(tasks: I) -> usize {
     let mut woke = 0;
     for task in tasks {
-        let mut t = task;
-        Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
+        let _commit = crate::work::unit::commit();
+        let t = task;
+        if let Some(join) = t.take_wait() {
+            let resumed = match join { WaitCall::Join(join) => resume_join(&t, join), WaitCall::Mail(wait) => resume_await(&t, wait) };
+            if !resumed { continue; }
+        }
+        if !Task::rise(&t) { continue; }
         trace::note(EventKind::Room(RoomEvent::Wake {
             tid: t.ident.id.get(),
         }));
@@ -151,8 +168,8 @@ impl Iterator for Unchain {
 
     fn next(&mut self) -> Option<Arc<Task>> {
         let mut task = self.cur.take()?;
-        void(Task::blocked_ticket(&mut task));
-        self.cur = Task::blocked_next(&mut task).take();
+        void(Task::blocked_ticket(&task));
+        self.cur = Task::take_blocked_next(&mut task);
         Some(task)
     }
 }
@@ -214,21 +231,8 @@ pub fn fall<E: WaitFail>(me: TaskLife, dur: Duration) -> Result<Handoff<bool>, E
     }
 }
 
-pub fn join<E: WaitFail>(task: TaskLife, reaped: bool, dur: Duration) -> Result<Handoff<bool>, E> {
-    if reaped {
-        return Ok(Handoff::Resume(true));
-    }
-    if dur == Duration::ZERO {
-        return Ok(Handoff::Resume(false));
-    }
-    let TaskLife { id, life } = task;
-    match block(WakeKey::Task { id }, life, dur)? {
-        Handoff::Switch(pa) => Ok(Handoff::Switch(pa)),
-        Handoff::Resume(()) => Ok(Handoff::Resume(true)),
-    }
-}
-
 pub(crate) fn wipe(key: WakeKey) -> usize {
+    let _commit = crate::work::unit::commit();
     let chain = {
         let mut sites = sites(key).lock();
         sites.remove(&key)
@@ -246,29 +250,27 @@ pub(crate) fn wipe(key: WakeKey) -> usize {
 }
 
 pub(crate) fn knock(key: WakeKey, life: &Weak<Life>) -> usize {
+    let _commit = crate::work::unit::commit();
+    let mut fwd = Fwd::empty();
     let chain = {
         let mut sites = sites(key).lock();
         let chain = match sites.get_mut(&key) {
             Some(site) => {
-                let chain = site.head.take();
-                site.tail = None;
-                if chain.is_none() {
-                    site.pend = true;
-                }
+                fwd = site.fwd.clone();
+                let chain = site.head.take(); site.tail = None;
+                if chain.is_none() { site.pend = true; }
                 chain
             }
             None => {
                 if !Life::dead(life) && sites.try_reserve(1).is_ok() {
-                    let mut site = Site::new(life);
-                    site.pend = true;
-                    sites.insert(key, site);
+                    let mut site = Site::new(life); site.pend = true; sites.insert(key, site);
                 }
                 None
             }
         };
-        prune(&mut sites, key);
-        chain
+        prune(&mut sites, key); chain
     };
+    for (id, life) in fwd.entries() { knock(WakeKey::Tole { id }, life); }
     rise(Unchain { cur: chain })
 }
 
@@ -312,6 +314,7 @@ pub(crate) fn unforward(key: WakeKey, tole: usize) {
 ///
 /// 锁：`Fwd` 快照只在分片锁内取，出锁才 knock（与 `wake` 同形，不跨 shard 嵌套加锁）。
 pub(crate) fn signal(key: WakeKey) -> usize {
+    let _commit = crate::work::unit::commit();
     let mut fwd = Fwd::empty();
     let chain = {
         let mut sites = sites(key).lock();
@@ -342,6 +345,7 @@ pub(crate) fn site_count() -> usize {
 }
 
 pub(crate) fn wipe_space(space: Asid) -> usize {
+    let _commit = crate::work::unit::commit();
     let mut woken = 0usize;
     for shard in 0..SITE_SHARDS {
         loop {
@@ -361,6 +365,7 @@ pub(crate) fn wipe_space(space: Asid) -> usize {
 }
 
 pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
+    let _commit = crate::work::unit::commit();
     debug_assert!(
         !matches!(key, WakeKey::Tole { .. }),
         "组键要走 knock（提示型/整链放行），不能走 wake（交付型/一人）"
@@ -369,8 +374,10 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
     let popped = {
         let mut sites = sites(key).lock();
         if Life::dead(life) {
-            sites.remove(&key);
-            None
+            let chain = sites.remove(&key).and_then(|site| site.head);
+            drop(sites);
+            rise(Unchain { cur: chain });
+            return false;
         } else {
             let mut beacon_only = false;
             let popped = match sites.get_mut(&key) {
@@ -399,13 +406,14 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
     for (id, life) in fwd.entries() {
         knock(WakeKey::Tole { id }, life);
     }
-    let Some(mut task) = popped else { return false };
-    void(Task::blocked_ticket(&mut task));
+    let Some(task) = popped else { return false };
+        void(Task::blocked_ticket(&task));
     rise(core::iter::once(task));
     true
 }
 
 pub fn redeem() -> bool {
+    let _commit = crate::work::unit::commit();
     const MAX_DUE: usize = 64;
     let mut due = [0u64; MAX_DUE];
     let n = timer::drain(clock::now(), &mut due);
@@ -429,4 +437,104 @@ pub fn redeem() -> bool {
     }
     let _ = woken;
     rise(tasks.iter_mut().filter_map(Option::take)) > 0
+}
+
+/// Keep the request and one deadline in Blocked, so a wakeup never becomes a
+/// false completion and observers pin the original shared record until return.
+pub(crate) fn unit_join(join: crate::work::unit::join::JoinWait)
+    -> Result<Handoff<env::JoinReply>, env::UnitFail> {
+    loop {
+        let _commit = crate::work::unit::commit();
+        let reply = join.poll()?;
+        if reply.is_reaped() || join.remaining() == Duration::ZERO { return Ok(Handoff::Resume(reply)); }
+        let blocked = block_with_call::<env::UnitFail>(join.key(), join.life(), join.remaining(), Some(WaitCall::Join(join.clone())))?;
+        // Registration is atomic with the poll. Scheduler idle waits must run
+        // after releasing Unit, so another hart can publish or wake a task.
+        drop(_commit);
+        match finish_block(blocked) {
+            Handoff::Resume(()) => continue,
+            Handoff::Switch(pa) => return Ok(Handoff::Switch(pa)),
+        }
+    }
+}
+fn resume_join(task: &Arc<Task>, join: crate::work::unit::join::JoinWait) -> bool {
+    use env::JoinReply;
+    use crate::runtime::switcher::context::TrapContext;
+    let _commit = crate::work::unit::commit();
+    let result = join.poll();
+    let result = if matches!(result, Ok(JoinReply::Pending)) && join.remaining() != Duration::ZERO {
+        match requeue_join(task, join.clone()) {
+            Ok(()) => return false,
+            Err(error) => Err(error),
+        }
+    } else { result };
+    // SAFETY: the detached blocked task is not executing; its frame remains owned.
+    let frame = unsafe { &mut *(task.ident.frame.pa.expect("blocked frame").as_usize() as *mut TrapContext) };
+    crate::work::unit::join::JoinWait::write(frame, result);
+    true
+}
+fn requeue_join(task: &Arc<Task>, join: crate::work::unit::join::JoinWait) -> Result<(), env::UnitFail> {
+    let key = join.key(); let life = join.life(); let dur = join.remaining();
+    {
+        let mut table = sites(key).lock();
+        if !table.contains_key(&key) {
+            table.try_reserve(1).map_err(|_| env::UnitFail::OoM)?;
+            table.insert(key, Site::new(&life));
+        }
+    }
+    let ticket = Ticket::alloc();
+    if dur != Duration::MAX {
+        hold(ticket, key, task).map_err(|_| env::UnitFail::OoM)?;
+        if timer::tock(ticket.raw(), clock::now().add(dur).as_ticks()).is_err() {
+            void(ticket); return Err(env::UnitFail::OoM);
+        }
+    }
+    let stopped = task.stopped();
+    let state = if stopped { TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Blocked {
+        key, ticket, next: None, wait: Some(WaitCall::Join(join)),
+    } } } else { TaskState::Blocked { key, ticket, next: None, wait: Some(WaitCall::Join(join)) } };
+    *task.state.lock() = state;
+    let mut table = sites(key).lock();
+    let site = table.get_mut(&key).expect("join site"); site.pend = false; site.push_back(task.clone());
+    Ok(())
+}
+
+#[derive(Clone)]
+pub(crate) enum WaitCall { Join(crate::work::unit::join::JoinWait), Mail(crate::work::mail::tole::AwaitWait) }
+pub(crate) fn mail_await(wait: crate::work::mail::tole::AwaitWait) -> Result<Handoff<env::AwaitReply>, env::MailFail> {
+    loop {
+        let commit = crate::work::unit::commit();
+        let reply = match wait.poll() { Ok(reply) => reply, Err(e) => { wait.unwatch(); return Err(e) } };
+        if reply != env::AwaitReply::Pending || wait.remaining() == Duration::ZERO { wait.unwatch(); return Ok(Handoff::Resume(reply)); }
+        wait.watch()?;
+        let blocked = match block_with_call::<env::MailFail>(wait.key(), wait.life(), wait.remaining(), Some(WaitCall::Mail(wait.clone()))) { Ok(blocked) => blocked, Err(e) => { wait.unwatch(); return Err(e) } };
+        drop(commit);
+        match finish_block(blocked) { Handoff::Resume(()) => continue, Handoff::Switch(pa) => return Ok(Handoff::Switch(pa)) }
+    }
+}
+fn resume_await(task: &Arc<Task>, wait: crate::work::mail::tole::AwaitWait) -> bool {
+    let _commit = crate::work::unit::commit();
+    let result = wait.poll();
+    let result = if matches!(result, Ok(env::AwaitReply::Pending)) && wait.remaining() != Duration::ZERO {
+        match requeue_await(task, wait.clone()) { Ok(()) => return false, Err(e) => Err(e) }
+    } else { result };
+    // SAFETY: this detached blocked task owns a stable frame and is not executing.
+    let frame = unsafe { &mut *(task.ident.frame.pa.expect("blocked frame").as_usize() as *mut crate::runtime::switcher::context::TrapContext) };
+    wait.unwatch(); crate::work::mail::tole::AwaitWait::write(frame, result); true
+}
+fn requeue_await(task: &Arc<Task>, wait: crate::work::mail::tole::AwaitWait) -> Result<(), env::MailFail> {
+    let key = wait.key(); let life = wait.life(); let dur = wait.remaining();
+    {
+        let mut table = sites(key).lock();
+        if !table.contains_key(&key) { table.try_reserve(1).map_err(|_| env::MailFail::OoM)?; table.insert(key, Site::new(&life)); }
+    }
+    let ticket = Ticket::alloc();
+    if dur != Duration::MAX {
+        hold(ticket, key, task).map_err(|_| env::MailFail::OoM)?;
+        if timer::tock(ticket.raw(), clock::now().add(dur).as_ticks()).is_err() { void(ticket); return Err(env::MailFail::OoM); }
+    }
+    let state = if task.stopped() { TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Blocked { key, ticket, next: None, wait: Some(WaitCall::Mail(wait)) } } }
+        else { TaskState::Blocked { key, ticket, next: None, wait: Some(WaitCall::Mail(wait)) } };
+    *task.state.lock() = state;
+    let mut table = sites(key).lock(); let site = table.get_mut(&key).expect("await site"); site.pend = false; site.push_back(task.clone()); Ok(())
 }

@@ -35,25 +35,28 @@ pub(crate) use snap::vestor;
 pub(super) const RETRIES: usize = 8;
 
 pub(crate) fn changed(task: &Task) {
-    task.version.fetch_add(1, Ordering::Relaxed);
+    task.gate.version.fetch_add(1, Ordering::Relaxed);
 }
 
-pub(super) fn live(task: &Task, closed: bool) -> bool {
-    !closed && !matches!(task.tag(), TaskTag::Doomed | TaskTag::Reaped)
+pub(crate) fn live(task: &Task, _closed: ()) -> bool {
+    !matches!(task.tag(), TaskTag::Doomed | TaskTag::Reaped)
 }
 
 /// Task gates are always acquired by TaskId; self-transfer acquires only once.
-pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce(bool, bool) -> T) -> T {
+pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce((), ()) -> T) -> T {
     if a.ident.id == b.ident.id {
         let guard = a.gate.lock();
+        let _commit = super::commit();
         run(*guard, *guard)
     } else if a.ident.id.get() < b.ident.id.get() {
         let first = a.gate.lock();
         let second = b.gate.lock();
+        let _commit = super::commit();
         run(*first, *second)
     } else {
         let second = b.gate.lock();
         let first = a.gate.lock();
+        let _commit = super::commit();
         run(*first, *second)
     }
 }
@@ -114,23 +117,25 @@ pub(super) fn with_tasks_checked<T>(
     for (task, _) in tasks {
         guards.push(task.gate.lock());
     }
+    let commit = super::commit();
     let valid = tasks
         .iter()
-        .all(|(task, version)| task.version.load(Ordering::Relaxed) == *version)
+        .all(|(task, version)| task.gate.version.load(Ordering::Relaxed) == *version)
         || validate();
     let result = if valid { Ok(run()) } else { Err(PieFail::Busy) };
+    drop(commit);
     while guards.pop().is_some() {}
     result
 }
 
 pub(super) fn insert_heir(task: &Task, parent: PieToken, child: Weak<Task>, token: PieToken) {
-    let mut heirs = task.heirs.lock();
+    let mut heirs = task.gate.heirs.lock();
     let at = heirs.partition_point(|(source, _, _)| source.get() <= parent.get());
     heirs.insert(at, (parent, child, token));
 }
 
 pub(super) fn remove_heir(task: &Task, parent: PieToken, token: PieToken) {
-    let mut heirs = task.heirs.lock();
+    let mut heirs = task.gate.heirs.lock();
     let start = heirs.partition_point(|(source, _, _)| source.get() < parent.get());
     if let Some(at) = heirs[start..]
         .iter()
@@ -143,12 +148,17 @@ pub(super) fn remove_heir(task: &Task, parent: PieToken, token: PieToken) {
 
 pub(crate) fn insert(task: &Task, pie: AnyPie) -> Result<(), PieFail> {
     let closed = task.gate.lock();
+    let _commit = super::commit();
     if !live(task, *closed) {
         return Err(PieFail::Dead);
     }
-    let mut pies = task.pies.lock();
+    let mut pies = task.gate.pies.lock();
     pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
     pies.push(pie);
     changed(task);
     Ok(())
+}
+
+pub(crate) fn notify(task: env::TaskId, token: PieToken) {
+    let _ = crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Inspect { task, token: token.get() });
 }

@@ -11,9 +11,9 @@ use programs::unit::router::E_ROUTER;
 pub fn run(up: &mut Up) -> Result<(), Fail> {
     loop {
         match up.pile.await_(Wait::Forever) {
-            Ok(Some(_)) => {}
+            Ok(env::AwaitReply::Source { .. }) => {}
             // 挂起过（不是期限）：照样往下走一遍——`claim` 领到空就什么也不做。
-            Ok(None) => {}
+            Ok(env::AwaitReply::Pending) => {}
             Err(_) => return Err(Fail::at(E_ROUTER, "bell")),
         }
         // 逐客：**每次醒来扫一遍有主的那些条**——主人没了就拆线 + 空出格子。放在最前：

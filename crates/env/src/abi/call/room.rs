@@ -28,7 +28,7 @@ pub type RoomResult<T> = Result<T, erra::Error<RoomFail>>;
 /// **时间参数的定式**（全树唯一一份，其它处只引用它）：
 ///
 /// - **上限**（"等某事发生，至多等这么久"）：`Wait` / `Fall` / `Join` / `MailCall::Wait` /
-///   `ToleCall::Await`，以及协议层的 `service::until/watch`、`ipc::hand::Receiver::recv`、
+///   `MailCall::Await`，以及协议层的 `service::until/watch`、`ipc::hand::Receiver::recv`、
 ///   `ipc::session::establish::claim`。
 ///   **参数类型是 [`Wait`](crate::abi::wait::Wait)**（上限族都在那一格上）：`Wait::AtMost(0)` =
 ///   **只探测**（当场答，不挂起）、`Wait::Forever` = **永久**、`Wait::AtMost(ms)` = 至多毫秒数。

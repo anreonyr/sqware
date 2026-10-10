@@ -47,7 +47,7 @@ fn main() -> programs::Report<'static> {
     assert!(io.read().is_err());
     assert!(io.write(b"blocked").is_err());
     assert!(
-        matches!(env::tole::await_(authority, Wait::POLL), Err(e) if e.source == env::ToleFail::HandedOver)
+        matches!(env::mail::await_(authority, Wait::POLL), Err(e) if e.source == env::MailFail::HandedOver)
     );
     assert!(
         matches!(pie::accord(authority, child, Permission::FETCH | Permission::VEST | Permission::ONLY, Mark::NONE), Err(e) if e.source == PieFail::HandedOver)
@@ -55,12 +55,12 @@ fn main() -> programs::Report<'static> {
     foreground.restore().unwrap();
     denied(input, output, control);
     connection.io().unwrap().drain().unwrap();
-    unit::slay(child).unwrap();
-    while !unit::join(child, Wait::Forever).unwrap() {}
+    unit::slay_task(child).unwrap();
+    while !unit::join_task(child, Wait::Forever).unwrap() {}
     let child = held();
     let foreground = connection.lend(child).unwrap();
-    unit::slay(child).unwrap();
-    while !unit::join(child, Wait::Forever).unwrap() {}
+    unit::slay_task(child).unwrap();
+    while !unit::join_task(child, Wait::Forever).unwrap() {}
     foreground.restore().unwrap();
     connection.io().unwrap().drain().unwrap();
     connection.close().unwrap();

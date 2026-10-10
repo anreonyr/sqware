@@ -22,7 +22,7 @@ pub fn run(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail>
     {
         return Ok(Progress::Done);
     }
-    match env::unit::debark(job.execution.task.ok_or(Fail::Unknown)?) {
+    match env::unit::debark_task(job.execution.task.ok_or(Fail::Unknown)?) {
         Ok(()) => Ok(Progress::Done),
         Err(e)
             if matches!(e.source, env::UnitFail::Busy)

@@ -36,7 +36,7 @@ pub fn startup(
         return Ok(Progress::Done);
     }
     if let Some(result) = operations.completed_local_action() {
-        let completed = result.map_err(|_| Fail::Shutdown)?;
+        let completed = result.map_err(|error| { crate::debug::put(&alloc::format!("system: startup failed {error:?}")); Fail::Shutdown })?;
         let action = match completed {
             Action::Mint => Action::Embark { parent: None },
             Action::Embark { .. } => {

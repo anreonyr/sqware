@@ -1,5 +1,5 @@
 mod answer;
-pub(crate) use answer::release_image;
+pub(crate) use answer::{release_image, Inbox};
 mod execution;
 mod plan;
 mod publication;

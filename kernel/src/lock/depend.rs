@@ -13,6 +13,7 @@ use crate::platform::machine;
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[repr(u8)]
 pub enum Level {
+    Unit = 0,
     Scheduler = 1,
     Space = 2,
     TeamTasks = 3,
@@ -23,6 +24,7 @@ pub enum Level {
     Block = 8,
     Tally = 9,
     Spare = 10,
+    UnitState = 11,
 }
 
 #[cfg(debug_assertions)]

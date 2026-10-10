@@ -3,3 +3,5 @@
 
 pub mod terminal;
 pub mod login;
+
+pub mod shell;

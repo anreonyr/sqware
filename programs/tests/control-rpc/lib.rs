@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 
-pub use abi_env::{Mark, PieToken, TaskId, Wait};
+pub use abi_env::{Mark, PieToken, Reason, TaskId, Wait};
 use core::marker::PhantomData;
 use std::{cell::RefCell, vec::Vec};
 use wire::message::Message;
@@ -344,11 +344,17 @@ mod tests {
         );
     }
 
+    fn said(status: u8, state: u8, task: usize) -> Vec<u8> {
+        use wire::Message;
+        let value = system_api::control::Said { status, a: state, task: TaskId::new(task), reason: 0, completed: false };
+        let mut bytes = vec![0; system_api::control::Said::LEN];
+        value.store(&mut bytes).unwrap(); bytes
+    }
     #[test]
     fn named_task_query_preserves_budget_and_rejects_invalid_or_wrong_source_answers() {
         let face = Face::of(token(9)).unwrap();
         RESPONSE.with(|response| {
-            *response.borrow_mut() = Some(Ok(vec![0, 0, 22, 0, 0, 0, 0, 0, 0, 0]))
+            *response.borrow_mut() = Some(Ok(said(0, 0, 22)))
         });
         assert_eq!(
             face.task(String::from("login"), Wait::AtMost(19)),
@@ -361,8 +367,8 @@ mod tests {
             Some((Some(Wire::Task(String::from("login"))), back))
         );
         for bytes in [
-            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            vec![0, 1, 22, 0, 0, 0, 0, 0, 0, 0],
+            said(0, 0, 0),
+            said(0, 1, 22),
             vec![0; 9],
             vec![0; 11],
         ] {
@@ -379,7 +385,7 @@ mod tests {
         );
         for status in [1, 4] {
             RESPONSE.with(|response| {
-                *response.borrow_mut() = Some(Ok(vec![status, 0, 0, 0, 0, 0, 0, 0, 0, 0]))
+                *response.borrow_mut() = Some(Ok(said(status, 0, 0)))
             });
             assert_eq!(
                 face.task(String::from("login"), Wait::POLL),

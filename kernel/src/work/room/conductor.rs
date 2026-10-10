@@ -112,6 +112,9 @@ pub(super) fn halt() -> ! {
                 putln!("[verdict] 一台域都没起：世界没跑起来，这一景什么都没验");
                 semihosting::process::exit(101)
             }
+            // Owned exits are evaluated by their manager; assertions or its own
+            // unowned exit report an overall failure. The ledger is diagnostic,
+            // not a second result queue. For unowned exits the criterion is:
             // **判据 = 账里每一笔都是"干净的结局"**：`EXIT_OK`（自愿结束）与内核自己那两档收场码
             // （`EXIT_DOOM` / `EXIT_CASCADE`：机器已经在收场，连坐请走的那几台）算绿，其余一律算红
             // ——装配那一族的小整数（启动握手没走通）、`EXIT_PANIC`、`EXIT_FAULT` 都在内。

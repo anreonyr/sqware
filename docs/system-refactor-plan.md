@@ -44,7 +44,7 @@ Control 唯一持有任务表、实例表和待放行任务，字段仅 Control 
 
 IdentityBook 只拥有权威身份模型。Control 的 Roster 拥有安装账，普通调用方的受信 authority 发现归 system-client。Operator management 是私有管理入口，不承担公共客户端职责。
 
-publication 拥有发布、名称与运行时命名空间的账；Operator 自己拥有会话接入，publication 不再保存连接候选账。launch 只持有等待交付的请求，通过 Control 查询实例结果，不复制实例状态。Account 独立拥有帐号选择、用户身份与会话启动策略，通过公共 System 能力处理可信 Login 请求。
+publication 拥有发布、名称与运行时命名空间的账；Operator 自己拥有会话接入，publication 不再保存连接候选账。launch 统一持有排队请求和等待交付的请求；等待项只保存 task 与交付策略，通过 Control 查询实例结果，不复制实例状态。创建先预留交付队列容量，再由 Control 检查实例容量、调用 Loader 并立即登记，不存在独立 register 阶段或 registered 标记。Account 独立拥有帐号选择、用户身份与会话启动策略，通过公共 System 能力处理可信 Login 请求。
 
 Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装归 launch。Control 接受 activation 和实例 Prepare/Retire 子计划，由 app 注入 launch 流程；Control 不依赖 launch、publication 或 Account 的实现；System 装配也不导入 Account 实现、API 或消费者名。
 
@@ -55,12 +55,14 @@ Hub 的公共 activation 调用归 hub-client，接收、验证与授权安装�
 顺序保留为：
 
 1. 引导内部服务、安装身份与公共入口、开始静态任务。
-2. 发布维护、健康检查、Control 接收、Loader 构建。Account 由自己的任务接收请求。
+2. 发布维护、健康检查、Control 接收、Launch 创建子计划（授权请求接入、Loader 接收、停止期拒绝、容量检查/构建/登记）。Account 由自己的任务接收请求。
 3. Control 命令推进、发布维护、实例回收、回复、实例扩展与交付。
 4. 启动进度与运行阶段、退出策略、等待兴趣汇总与等待。
 5. 关闭 Loader 入口和缓存、通知内部服务退出、等待结束。
 
 Mint/Embark 失败保留原失败，必要时转入 Ruin、刷新补偿期限并重置游标；携带任务的 Ruin 失败终止程序流程。实例准备失败转入 Stopping，清理 Pending 或失败时继续等待／重试，清理完成才报告 Dead。Ruin 请求也在回收完成后才回复。
+
+整体退场先回收动态实例，再由 Control 根据原有 `after` 声明选择没有存活后继的静态服务停止。后继处于 Stopping 时也要等其回收完成；独立服务可以同时停止。scene 后继先于其余服务退场，不额外保存反向依赖图或退场状态。详见 [Launch 设计及退场修复](launch-design.md)。
 
 总 Pile 与等待订阅归 app::wait::Waiting，Control 仅拥有自己的请求入口。组件交出入口和等待预算，app 汇总兴趣。关闭 Loader 时通过 Waiting 的窄 detach 入口撤掉订阅。
 

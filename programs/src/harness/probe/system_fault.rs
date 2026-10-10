@@ -52,7 +52,7 @@ pub fn acceptance() {
         env::pie::accord(build, task, Permission::FETCH, Mark::NONE).unwrap();
         let doom = accounts.token(env::Name::Call(env::Call::Doom)).unwrap();
         env::pie::accord(doom, task, Permission::FETCH | Permission::VEST, DOOM).unwrap();
-        unit::embark(task).unwrap();
+        unit::embark_task(task).unwrap();
         let mut bytes = [0; 40];
         let (n, from) = Hole::from_raw(report)
             .pull(&mut bytes, Wait::AtMost(5000))
@@ -66,7 +66,7 @@ pub fn acceptance() {
         assert_eq!(ids[0], task.get());
         let until = env::chrono::clock() + 5_000_000_000;
         for id in &ids[..4] {
-            while !unit::join(TaskId::new(*id), Wait::POLL).unwrap_or(true) {
+            while !unit::join_task(TaskId::new(*id), Wait::POLL).unwrap_or(true) {
                 assert!(
                     env::chrono::clock() < until,
                     "system-fault: task survived team failure"
@@ -109,7 +109,7 @@ pub fn unit() {
         .unwrap();
     let child_team = child.team();
     let descendant = child.spawn(&[], 0).unwrap();
-    unit::embark(descendant).unwrap();
+    unit::embark_task(descendant).unwrap();
     let status = Arc::new(Status {
         control: unit::self_id(),
         operator: AtomicUsize::new(0),
@@ -163,15 +163,15 @@ pub fn unit() {
     Hole::from_raw(report)
         .push(&bytes, Wait::AtMost(5000))
         .unwrap();
-    unit::embark(TaskId::new(operator)).unwrap();
-    unit::embark(TaskId::new(identity)).unwrap();
+    unit::embark_task(TaskId::new(operator)).unwrap();
+    unit::embark_task(TaskId::new(identity)).unwrap();
     if mode == 0 {
         return;
     }
     loop {
         if [operator, identity]
             .iter()
-            .any(|id| unit::join(TaskId::new(*id), Wait::POLL).unwrap_or(true))
+            .any(|id| unit::join_task(TaskId::new(*id), Wait::POLL).unwrap_or(true))
         {
             let _ = room::doom(unit::self_id());
         }

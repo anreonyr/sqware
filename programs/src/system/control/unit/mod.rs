@@ -58,7 +58,7 @@ impl Control {
     pub fn state(&self, name: String) -> Result<State, Fail> {
         if matches!(name.as_str(), "operator" | "identity") {
             let task = self.task(&name).ok_or(Fail::Unknown)?;
-            if env::unit::join(task, Wait::POLL).unwrap_or(true) {
+            if env::unit::join_task(task, Wait::POLL).unwrap_or(true) {
                 return Ok(State::Dead);
             }
             return Ok(
@@ -88,7 +88,7 @@ impl Control {
         {
             return Err(Fail::NotReady);
         }
-        env::unit::embark(task).map_err(|_| Fail::NotReady)?;
+        env::unit::embark_task(task).map_err(|_| Fail::NotReady)?;
         self.table.set_state(name, State::Ready);
         Ok(())
     }
@@ -113,7 +113,7 @@ impl Control {
     }
     pub(crate) fn live(&self, task: TaskId) -> bool {
         (task == env::unit::self_id() || self.tasks().any(|known| known == task))
-            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
+            && !env::unit::join_task(task, Wait::POLL).unwrap_or(true)
     }
     pub(crate) fn internal_tasks(&self) -> impl Iterator<Item = TaskId> + '_ {
         self.internal.iter().copied()

@@ -36,7 +36,7 @@ fn password(
                 input.clear();
                 Ok(password)
             }
-            Read::Eof | Read::Interrupt => Ok(None),
+            Read::Eof | Read::Interrupt | Read::Suspend => Ok(None),
         }
     })();
     let restored = connection.set_echo(true);
@@ -44,7 +44,7 @@ fn password(
     restored?;
     result
 }
-fn run_cat(
+fn run_shell(
     connection: &mut Connection,
     client: &Client,
     lifecycle: &Lifecycle,
@@ -114,7 +114,7 @@ fn run() -> Result<(), &'static str> {
                 }
                 name.to_vec()
             }
-            Read::Interrupt => {
+            Read::Interrupt | Read::Suspend => {
                 io.write(b"\n").map_err(|_| "login: write")?;
                 continue;
             }
@@ -135,7 +135,7 @@ fn run() -> Result<(), &'static str> {
         }
         io.write(b"Hello, anran.\n").map_err(|_| "login: write")?;
         io.drain().map_err(|_| "login: drain")?;
-        let completed = run_cat(&mut connection, &client, &lifecycle)
+        let completed = run_shell(&mut connection, &client, &lifecycle)
             .map_err(|_| "login: instance cleanup or terminal restore")?;
         io = connection.io().map_err(|_| "login: restore io")?;
         io.write(if completed {

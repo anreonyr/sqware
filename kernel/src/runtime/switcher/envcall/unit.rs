@@ -1,16 +1,18 @@
-use alloc::sync::{Arc, Weak};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{TaskId, UnitCall, UnitFail};
+use env::{UnitCall, UnitFail, UnitTarget};
 
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff};
-use crate::work::room::scheduler::core::{current, muster};
+use crate::work::room::scheduler::core::muster;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::{Space, SpaceKind};
-use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskTag};
+use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
+use crate::work::unit::join::{JoinTarget, JoinWait};
+use crate::work::unit::team::TeamState;
 use crate::work::unit::weak::{Site, TaskWeak};
 
 use super::ret_err;
@@ -61,231 +63,146 @@ fn copy_words(space: &Space, va: KVirt, count: usize) -> Option<Vec<usize>> {
 }
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskIdent>) -> Outcome {
+    frame.gpr.set_x(Gprs::A0, 0);
+    let Some(me) = muster(ident.id).and_then(|w| w.upgrade()) else { return Outcome::fail(frame, UnitFail::Denied) };
     match call {
-        UnitCall::Spawn {
-            team,
-            entry,
-            args,
-            count,
-            stack,
-        } => {
-            let target = if team.get() == 0 {
-                ident.team.clone()
-            } else {
-                match current().running_task().and_then(|me| me.heir(team)) {
-                    Some(t) => t,
-                    None => return Outcome::fail(frame, UnitFail::Denied),
-                }
-            };
-            let words = match copy_words(&ident.team.space, KVirt::wrap(args.get()), count) {
-                Some(w) => w,
-                None => return Outcome::fail(frame, UnitFail::Denied),
-            };
-            let caller = current().running_task();
-            let result =
-                crate::work::unit::team::spawn(&target, caller.as_ref(), entry, words, stack);
-            match result {
+        UnitCall::Spawn { team, entry, args, count, stack } => {
+            let target = if team.get() == 0 { ident.team.clone() }
+                else { match me.heir(team) { Some(t) => t, None => return Outcome::fail(frame, UnitFail::Denied) } };
+            let Some(words) = copy_words(&ident.team.space, KVirt::wrap(args.get()), count)
+                else { return Outcome::fail(frame, UnitFail::Denied) };
+            match crate::work::unit::team::spawn(&target, Some(&me), entry, words, stack) {
                 Ok(task) => frame.gpr.set_x(Gprs::A0, task.ident.id.get()),
                 Err(error) => return Outcome::fail(frame, error),
             }
-            Outcome::Resume
-        }
-        UnitCall::SelfId => {
-            let id = current()
-                .running_task()
-                .map(|t| t.ident.id)
-                .unwrap_or(TaskId::new(0));
-            frame.gpr.set_x(Gprs::A0, id.get());
-            Outcome::Resume
-        }
-        UnitCall::Sire => {
-            let id = current()
-                .running_task()
-                .and_then(|t| t.ident.team.sire())
-                .unwrap_or(TaskId::new(0));
-            frame.gpr.set_x(Gprs::A0, id.get());
-            Outcome::Resume
-        }
-        UnitCall::HeirCount => {
-            let n = current()
-                .running_task()
-                .map(|t| t.heir_count())
-                .unwrap_or(0);
-            frame.gpr.set_x(Gprs::A0, n);
-            Outcome::Resume
-        }
-        UnitCall::Heir { index } => {
-            let id = current()
-                .running_task()
-                .and_then(|t| t.heir_at(index))
-                .map(|t| t.get())
-                .unwrap_or(0);
-            frame.gpr.set_x(Gprs::A0, id);
-            Outcome::Resume
         }
         UnitCall::Build { kind } => {
-            if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor() {
-                return Outcome::fail(frame, UnitFail::Denied);
-            }
-            let Some(me) = muster(ident.id).and_then(|w| w.upgrade()) else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            if !Arc::ptr_eq(&me.ident, &ident)
-                || !crate::work::unit::gate::allows(
-                    &me, &super::resources::get().build, crate::work::unit::gate::Need::Fetch,
-                )
-            {
-                return Outcome::fail(frame, UnitFail::Denied);
-            }
+            if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor()
+                || !crate::work::unit::gate::allows(&me, &super::resources::get().build, crate::work::unit::gate::Need::Fetch)
+            { return Outcome::fail(frame, UnitFail::Denied); }
             let sire = TaskWeak::stored(Arc::downgrade(&me), Site::Sire);
             match crate::work::unit::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),
             }
-            Outcome::Resume
         }
-        UnitCall::Embark { task } | UnitCall::Debark { task } | UnitCall::Slay { task } => {
-            let Some(target) = muster(task).and_then(|w| w.upgrade()) else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            let same = Arc::ptr_eq(&target.ident.team, &ident.team);
-            let mine = current()
-                .running_task()
-                .is_some_and(|me| me.heir(target.ident.team.id).is_some());
-            if !(same || mine) {
+        UnitCall::SelfId => frame.gpr.set_x(Gprs::A0, ident.id.get()),
+        UnitCall::Sire => frame.gpr.set_x(Gprs::A0, ident.team.sire().map_or(0, |id| id.get())),
+        UnitCall::Scan { after, buf, capacity } => {
+            if !(1..=64).contains(&capacity) || !Space::user_range(buf.get(), capacity * 8) {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
-            if matches!(target.tag(), TaskTag::Doomed | TaskTag::Reaped) {
-                return Outcome::fail(frame, UnitFail::Denied);
+            let mut page = [0u64; 64]; let mut n = 0;
+            {
+                let _commit = crate::work::unit::commit();
+                let heirs = me.heir.lock(); let mut cursor = after.get();
+                while n < capacity {
+                    let next = heirs.iter().map(|t| t.id.get()).filter(|id| *id > cursor).min();
+                    let Some(id) = next else { break }; page[n] = id as u64; cursor = id; n += 1;
+                }
             }
-            match call {
-                UnitCall::Embark { .. } => {
-                    let mut boarding = target.boarding.lock();
-                    if target.tag() == TaskTag::Held {
-                        boarding.stopped = false;
-                        drop(boarding);
-                        if let Err(e) = Task::release(&target) {
-                            return Outcome::fail(frame, e);
-                        }
-                        return Outcome::Resume;
-                    }
-                    if !boarding.stopped {
-                        return Outcome::fail(frame, UnitFail::Denied);
-                    }
-                    if target.tag() == TaskTag::Running {
-                        return Outcome::fail(frame, UnitFail::Busy);
-                    }
-                    boarding.stopped = false;
-                    let parked = boarding.parked.take();
-                    drop(boarding);
-                    if let Some(task) = parked {
-                        crate::work::room::scheduler::core::launch(task);
-                    }
-                }
-                UnitCall::Debark { .. } => {
-                    target.boarding.lock().stopped = true;
-                    if target.ident.id == ident.id {
-                        frame.gpr.set_x(Gprs::A0, 0);
-                        drop(target);
-                        drop(ident);
-                        return Outcome::Switch(
-                            crate::work::room::scheduler::trap::run() as *mut TrapContext
-                        );
-                    }
-                    if let Some(hart) = crate::work::room::scheduler::core::running_hart(&target) {
-                        crate::work::room::conductor::nudge(hart);
-                    }
-                    if target.tag() == TaskTag::Running {
-                        return Outcome::fail(frame, UnitFail::Busy);
-                    }
-                }
-                UnitCall::Slay { .. } => {
-                    messenger::slay(&target);
-                    if target.ident.id == ident.id {
-                        messenger::set_exit_reason(messenger::EXIT_DOOM);
-                        drop(target);
-                        drop(ident);
-                        return Outcome::Switch(
-                            crate::work::room::messenger::quit() as *mut TrapContext
-                        );
-                    }
-                }
-                _ => unreachable!(),
-            }
-            frame.gpr.set_x(Gprs::A0, 0);
-            Outcome::Resume
+            let mut bytes = [0u8; 512];
+            for (at, id) in page[..n].iter().enumerate() { bytes[at * 8..at * 8 + 8].copy_from_slice(&id.to_le_bytes()); }
+            if !ident.team.space.copy_out(&bytes[..n * 8], buf.get()) { return Outcome::fail(frame, UnitFail::Denied); }
+            frame.gpr.set_x(Gprs::A0, n);
         }
-        UnitCall::Join { task, millis } => {
-            let dur = millis.into_duration();
-            let Some(target) = muster(task) else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            let (reaped, life) = match target.upgrade() {
-                Some(t) => {
-                    let same = Arc::ptr_eq(&t.ident.team, &ident.team);
-                    let mine = current()
-                        .running_task()
-                        .map(|me| me.heir(t.ident.team.id).is_some())
-                        .unwrap_or(false);
-                    if !(same || mine) {
-                        return Outcome::fail(frame, UnitFail::Denied);
+        UnitCall::Join { target, millis, receive } => {
+            let _commit = crate::work::unit::commit();
+            let selected = match target {
+                UnitTarget::Team(id) => {
+                    let Some(team) = me.heir(id) else { return Outcome::fail(frame, UnitFail::Denied) };
+                    JoinTarget::Team(team.life.clone())
+                }
+                UnitTarget::Task(id) => {
+                    if id == ident.id && millis != env::Wait::POLL { return Outcome::fail(frame, UnitFail::Denied); }
+                    let mut member = if !receive { ident.team.life.member(id) } else { None };
+                    let mut at = 0;
+                    while member.is_none() {
+                        let Some(root) = me.heir_node(at) else { break }; at += 1;
+                        member = if receive { root.life.find(id).filter(|m| m.pending(ident.id)) }
+                            else { root.life.member(id).or_else(|| root.life.find(id).filter(|m| m.pending(ident.id))) };
                     }
-                    (t.tag() == TaskTag::Reaped, t.life())
+                    let Some(member) = member else { return Outcome::fail(frame, UnitFail::Denied) };
+                    JoinTarget::Task(member)
                 }
-                None => (true, Weak::new()),
             };
-            frame.gpr.set_x(Gprs::A0, 0);
-            drop(ident);
-            drop(target);
-            match messenger::join::<UnitFail>(TaskLife { id: task, life }, reaped, dur) {
-                Ok(Handoff::Resume(dead)) => {
-                    frame.gpr.set_x(Gprs::A0, dead as usize);
-                    Outcome::Resume
-                }
-                Ok(Handoff::Switch(pa)) => Outcome::Switch(pa as *mut TrapContext),
-                Err(e) => Outcome::fail(frame, e),
+            let join = JoinWait::new(selected, ident.id, receive, millis);
+            drop(_commit);
+            match messenger::unit_join(join) {
+                Ok(Handoff::Resume(reply)) => JoinWait::write(frame, Ok(reply)),
+                Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
+                Err(error) => return Outcome::fail(frame, error),
             }
-        }
-        UnitCall::Fall { millis } => {
-            let dur = millis.into_duration();
-            let Some(me) = current().running_task() else {
-                return Outcome::fail(frame, UnitFail::Busy);
-            };
-            let mine = TaskLife {
-                id: me.ident.id,
-                life: me.life(),
-            };
-            frame.gpr.set_x(Gprs::A0, 0);
-            drop(ident);
-            drop(me);
-            match messenger::fall::<UnitFail>(mine, dur) {
-                Ok(Handoff::Resume(landed)) => {
-                    frame.gpr.set_x(Gprs::A0, landed as usize);
-                    Outcome::Resume
-                }
-                Ok(Handoff::Switch(pa)) => Outcome::Switch(pa as *mut TrapContext),
-                Err(e) => Outcome::fail(frame, e),
-            }
+            // Removing the last pending owner makes metadata collectible; active
+            // observers still pin their Member, not the execution resources.
+            { let _commit = crate::work::unit::commit(); ident.team.life.prune();
+              let mut at = 0; while let Some(root) = me.heir_node(at) { root.life.prune(); at += 1; } }
         }
         UnitCall::Oust { team } => {
-            let Some(me) = current().running_task() else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            let Some(child) = me.heir(team) else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            let Some(_construction) = child.operation() else {
-                return Outcome::fail(frame, UnitFail::Busy);
-            };
-            if !child.all_reaped() {
-                return Outcome::fail(frame, UnitFail::Busy);
+            let Some(child) = me.heir(team) else { return Outcome::fail(frame, UnitFail::Denied) };
+            let Some(_operation) = child.operation() else { return Outcome::fail(frame, UnitFail::Busy) };
+            {
+                let _commit = crate::work::unit::commit();
+                if !child.all_reaped() { return Outcome::fail(frame, UnitFail::Busy); }
+                // The operation lease excludes construction publication while
+                // staged resources are released. Busy does not close the team.
             }
-            if let Err(error) = child.cancel_staging() {
-                return Outcome::fail(frame, map_err(error));
+            if let Err(error) = child.cancel_staging() { return Outcome::fail(frame, map_err(error)); }
+            let retired = {
+                let _commit = crate::work::unit::commit();
+                *child.state.lock() = TeamState::Ousted;
+                child.life.clear(ident.id, Some(team)); child.life.prune(); me.oust(team)
+            };
+            drop(_operation); drop(retired); drop(child);
+        }
+        UnitCall::Fall { millis } => {
+            let mine = TaskLife { id: ident.id, life: me.life() };
+            match messenger::fall::<UnitFail>(mine, millis.into_duration()) {
+                Ok(Handoff::Resume(landed)) => frame.gpr.set_x(Gprs::A0, landed as usize),
+                Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
+                Err(error) => return Outcome::fail(frame, error),
             }
-            drop(child);
-            drop(me.oust(team));
-            Outcome::Resume
+        }
+        UnitCall::Embark { target } | UnitCall::Debark { target } | UnitCall::Slay { target } => {
+            let result = match target {
+                UnitTarget::Task(id) => {
+                    let Some(task) = muster(id).and_then(|w| w.upgrade()) else { return Outcome::fail(frame, UnitFail::Denied) };
+                    if task.ident.team.id != ident.team.id && me.heir(task.ident.team.id).is_none() {
+                        return Outcome::fail(frame, UnitFail::Denied);
+                    }
+                    match call {
+                        UnitCall::Embark { .. } => Task::embark(&task),
+                        UnitCall::Debark { .. } => {
+                            let result = Task::debark(&task);
+                            if id == ident.id && matches!(result, Err(UnitFail::Busy)) {
+                                return Outcome::Switch(crate::work::room::scheduler::trap::run() as *mut TrapContext);
+                            }
+                            result
+                        }
+                        UnitCall::Slay { .. } => {
+                            messenger::slay(&task);
+                            if id == ident.id { return Outcome::Switch(messenger::quit() as *mut TrapContext); }
+                            Ok(())
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                UnitTarget::Team(id) => {
+                    let Some(team) = me.heir(id) else { return Outcome::fail(frame, UnitFail::Denied) };
+                    match call {
+                        UnitCall::Embark { .. } => team.embark(),
+                        UnitCall::Debark { .. } => team.debark(),
+                        UnitCall::Slay { .. } => {
+                            if !crate::work::unit::gate::allows(&me, &super::resources::get().doom, crate::work::unit::gate::Need::Fetch)
+                            { return Outcome::fail(frame, UnitFail::Denied); }
+                            messenger::cull(core::slice::from_ref(&team), messenger::EXIT_DOOM); Ok(())
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+            };
+            if let Err(error) = result { return Outcome::fail(frame, error); }
         }
     }
+    Outcome::Resume
 }

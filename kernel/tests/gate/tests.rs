@@ -67,7 +67,7 @@ fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
     Err(PieFail::Busy)
 }
 fn check(task: &Arc<Task>) {
-    let edges = task.heirs.lock();
+    let edges = task.gate.heirs.lock();
     for (parent, child, token) in edges.iter() {
         assert!(gate::locate(task, *parent).is_some());
         let child = child.upgrade().expect("live child");
@@ -100,8 +100,8 @@ fn self_transfer_and_release_do_not_lock_twice() {
     let child = grant(&task, token, &task).unwrap();
     assert_eq!(gate::vestor(&task, child), Some(task.ident.id));
     assert_eq!(release(&task, token), Ok(2));
-    assert!(task.pies.lock().is_empty());
-    assert!(task.heirs.lock().is_empty());
+    assert!(task.gate.pies.lock().is_empty());
+    assert!(task.gate.heirs.lock().is_empty());
 }
 #[test]
 fn siblings_and_descendants_are_removed_but_unrelated_roots_survive() {
@@ -155,8 +155,8 @@ fn forget_updates_parent_task_and_transfer_records() {
         check(task);
     }
     assert_eq!(release(&a, token), Ok(3));
-    assert!(c.pies.lock().is_empty());
-    assert!(d.pies.lock().is_empty());
+    assert!(c.gate.pies.lock().is_empty());
+    assert!(d.gate.pies.lock().is_empty());
 }
 #[test]
 fn forget_handles_a_child_in_the_same_task() {
@@ -195,7 +195,7 @@ fn revocation_restores_exclusive_parent_and_stale_clear_cannot_erase_new_heir() 
 fn changed_version_prevents_any_commit() {
     let a = Task::new();
     let token = root(&a, rights());
-    let version = a.version.load(Ordering::Relaxed);
+    let version = a.gate.version.load(Ordering::Relaxed);
     let tasks = vec![(a.clone(), version)];
     root(&a, rights());
     let mut called = false;
@@ -219,8 +219,8 @@ fn allocation_failure_leaves_both_transfer_records_unchanged() {
         let result = gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
         FAIL.with(|count| count.set(None));
         assert_eq!(result, Err(PieFail::OoM));
-        assert!(a.heirs.lock().is_empty());
-        assert!(b.pies.lock().is_empty());
+        assert!(a.gate.heirs.lock().is_empty());
+        assert!(b.gate.pies.lock().is_empty());
         assert!(gate::locate(&a, token).unwrap().heir().is_none());
     }
 }
@@ -275,8 +275,8 @@ fn opposite_transfers_complete_without_deadlock() {
     });
     check(&a);
     check(&b);
-    assert!(a.heirs.lock().is_empty());
-    assert!(b.heirs.lock().is_empty());
+    assert!(a.gate.heirs.lock().is_empty());
+    assert!(b.gate.heirs.lock().is_empty());
 }
 #[test]
 fn concurrent_transfer_and_revoke_cannot_leave_a_descendant() {
@@ -302,8 +302,8 @@ fn concurrent_transfer_and_revoke_cannot_leave_a_descendant() {
             barrier.wait();
             assert!(release(&b, ab).is_ok());
         });
-        assert!(b.pies.lock().is_empty());
-        assert!(c.pies.lock().is_empty());
+        assert!(b.gate.pies.lock().is_empty());
+        assert!(c.gate.pies.lock().is_empty());
         check(&a);
         check(&b);
         check(&c);
@@ -334,8 +334,8 @@ fn concurrent_forget_and_revoke_cannot_leave_a_reparented_child() {
             assert!(release(&a, token).is_ok());
         });
         for task in [&a, &b, &c] {
-            assert!(task.pies.lock().is_empty());
-            assert!(task.heirs.lock().is_empty());
+            assert!(task.gate.pies.lock().is_empty());
+            assert!(task.gate.heirs.lock().is_empty());
         }
     }
 }
@@ -361,14 +361,15 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
                 let _ = grant(&a2, PieToken::mint(raw), &b2);
             });
             barrier.wait();
+            { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
             gate::doom(&b);
         });
         assert!(!meta.alive());
-        assert!(b.pies.lock().is_empty());
-        assert!(c.pies.lock().is_empty());
+        assert!(b.gate.pies.lock().is_empty());
+        assert!(c.gate.pies.lock().is_empty());
         assert_eq!(grant(&a, token, &b), Err(PieFail::Dead));
         check(&a);
-        assert!(a.heirs.lock().is_empty());
+        assert!(a.gate.heirs.lock().is_empty());
     }
 }
 #[test]
@@ -380,8 +381,8 @@ fn large_revoke_involves_only_actual_descendants() {
         grant(&a, token, child).unwrap();
     }
     assert_eq!(release(&a, token), Ok(65));
-    assert!(a.heirs.lock().is_empty());
-    assert!(children.iter().all(|child| child.pies.lock().is_empty()));
+    assert!(a.gate.heirs.lock().is_empty());
+    assert!(children.iter().all(|child| child.gate.pies.lock().is_empty()));
 }
 
 #[test]
@@ -434,10 +435,11 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let ab = grant(&a, token, &b).unwrap();
     grant(&b, ab, &c).unwrap();
     let _operation = meta.backing().operation().unwrap();
+    { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
     gate::doom(&b);
-    assert!(b.pies.lock().is_empty());
-    assert!(c.pies.lock().is_empty());
-    assert!(a.heirs.lock().is_empty());
+    assert!(b.gate.pies.lock().is_empty());
+    assert!(c.gate.pies.lock().is_empty());
+    assert!(a.gate.heirs.lock().is_empty());
 }
 
 #[test]
@@ -458,9 +460,9 @@ fn unrelated_version_changes_do_not_block_release_or_revoke() {
         let result = if revoke { gate::revoke(&a, &Arc::downgrade(&b), ab) }
             else { gate::release(&b, ab) };
         assert_eq!(result, Ok(65));
-        assert!(a.heirs.lock().is_empty());
-        assert!(b.pies.lock().is_empty());
-        assert!(children.iter().all(|child| child.pies.lock().is_empty()));
+        assert!(a.gate.heirs.lock().is_empty());
+        assert!(b.gate.pies.lock().is_empty());
+        assert!(children.iter().all(|child| child.gate.pies.lock().is_empty()));
     }
 }
 
@@ -476,8 +478,8 @@ fn new_descendant_between_collection_and_locking_requires_recollection() {
     let raw = ab.get();
     crate::lock::before_locking(move || { grant(&b2, PieToken::mint(raw), &c2).unwrap(); });
     assert_eq!(gate::release(&b, ab), Ok(2));
-    assert!(b.pies.lock().is_empty());
-    assert!(c.pies.lock().is_empty());
+    assert!(b.gate.pies.lock().is_empty());
+    assert!(c.gate.pies.lock().is_empty());
     check(&a);
 }
 
@@ -493,16 +495,16 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
     let raw = za.get();
     crate::lock::before_locking(move || { gate::forget(&a2, PieToken::mint(raw)).unwrap(); });
     assert_eq!(gate::release(&b, ab), Ok(1));
-    assert!(z.heirs.lock().is_empty());
-    assert!(a.pies.lock().is_empty());
-    assert!(b.pies.lock().is_empty());
+    assert!(z.gate.heirs.lock().is_empty());
+    assert!(a.gate.pies.lock().is_empty());
+    assert!(b.gate.pies.lock().is_empty());
     assert!(gate::locate(&z, token).is_some());
 }
 
 #[test]
 fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
     use env::{
-        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, ToleCall, UnsealArgs,
+        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, UnsealArgs,
         VirtAddr, Wait,
     };
     let token = PieToken::mint(42);
@@ -524,12 +526,12 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
             condition: MailCondition::Empty,
             millis: Wait::POLL,
         },
-        MailCall::Hush { token },
-        MailCall::Ring { token },
+        MailCall::Hush { token, bit: env::Bit::FIRST },
+        MailCall::Ring { token, bit: env::Bit::FIRST },
         MailCall::Peek { token },
     ];
     for (index, call) in mail.into_iter().enumerate() {
-        assert_eq!(call.slot(), (5usize << 32) | index);
+        assert_eq!(call.slot(), (5usize << 32) | (32 + index));
         assert!(
             matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call)
         );
@@ -573,41 +575,12 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
             matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Pie(decoded)) if decoded == call)
         );
     }
-    let tole = [
-        ToleCall::Attach {
-            tole: token,
-            pie: token,
-            condition: MailCondition::Push,
-        },
-        ToleCall::Detach {
-            tole: token,
-            pie: token,
-            condition: MailCondition::Empty,
-        },
-        ToleCall::Await {
-            tole: token,
-            millis: Wait::POLL,
-        },
-        ToleCall::Subscribe {
-            tole: token,
-            source: env::Source::CapabilitiesChanged,
-            target: TaskId::new(2),
-        },
-        ToleCall::Unsubscribe {
-            tole: token,
-            source: env::Source::TaskCompleted,
-            target: TaskId::new(2),
-        },
-    ];
-    for (index, call) in tole.into_iter().enumerate() {
-        assert_eq!(call.slot(), (9usize << 32) | index);
-        assert!(
-            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Tole(decoded)) if decoded == call)
-        );
+    let source = env::Source::Mail { pie: token, condition: MailCondition::Pull };
+    for call in [MailCall::Attach { tole: token, source }, MailCall::Detach { tole: token, source }, MailCall::Await { tole: token, millis: Wait::POLL }] {
+        assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
     }
-    for (class, count) in [(5, 6), (7, 11), (9, 5)] {
-        assert!(env::EnvCall::from_wire((class << 32) | count, &[0; 6]).is_err());
-    }
+    for class in [5, 9] { for index in 0..6 { assert!(env::EnvCall::from_wire((class << 32) | index, &[0; 6]).is_err()); } }
+
 }
 
 #[test]
@@ -656,7 +629,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
         millis: Wait::POLL,
     };
     let mut regs = call.pack();
-    regs[1] = 3;
+    regs[1] = usize::BITS as usize + 3;
     assert_eq!(
         MailCall::from_wire(call.slot(), &regs),
         Err(Decode::Invalid)
@@ -805,17 +778,17 @@ fn box_allocation_failure_does_not_publish_an_exclusive_grant() {
     let b = Task::new();
     let permission = rights() | Permission::ONLY;
     let token = root(&a, permission);
-    let before_a = a.version.load(Ordering::Relaxed);
-    let before_b = b.version.load(Ordering::Relaxed);
+    let before_a = a.gate.version.load(Ordering::Relaxed);
+    let before_b = b.gate.version.load(Ordering::Relaxed);
     FAIL.with(|count| count.set(Some(0)));
     let result = gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
     FAIL.with(|count| count.set(None));
     assert_eq!(result, Err(PieFail::OoM));
     assert!(gate::locate(&a, token).unwrap().heir().is_none());
-    assert!(a.heirs.lock().is_empty());
-    assert!(b.pies.lock().is_empty());
-    assert_eq!(a.version.load(Ordering::Relaxed), before_a);
-    assert_eq!(b.version.load(Ordering::Relaxed), before_b);
+    assert!(a.gate.heirs.lock().is_empty());
+    assert!(b.gate.pies.lock().is_empty());
+    assert_eq!(a.gate.version.load(Ordering::Relaxed), before_a);
+    assert_eq!(b.gate.version.load(Ordering::Relaxed), before_b);
     check(&a);
     check(&b);
 }

@@ -12,6 +12,7 @@ pub struct Request {
     pub image: Ask,
     pub owner: TaskId,
     pub subject: Subject,
+    pub constructor: bool,
 }
 impl Message for Request {
     type In = Self;

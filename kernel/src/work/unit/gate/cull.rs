@@ -6,7 +6,6 @@ use env::{PieFail, PieToken, TaskId};
 
 use super::pie::{AnyPie, Heir};
 use crate::work::mail::pole;
-use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
 pub(crate) struct Cleanup {
@@ -18,14 +17,12 @@ impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         let count = self.removed.len();
         for pie in self.removed {
-            if let Some(p) = pie.snapshot().pole() {
-                pole::shut(&p, pie.token()).expect("cull: unmap token");
-            }
+            // Invalidate the exact reference and notify its direct ancestor after
+            // gates are released; the ancestor may have regained exclusive use.
+            for task in &self.tasks { super::notify(*task, pie.token()); }
+            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) { super::notify(parent.ident.id, token); }
+            if let Some(p) = pie.snapshot().pole() { pole::shut(&p, pie.token()).expect("cull: unmap token"); }
             drop(pie);
-        }
-        // All task gates have been released before unmapping and notifications.
-        for task in self.tasks {
-            let _ = messenger::signal(WakeKey::Capabilities { task });
         }
         count
     }
@@ -49,7 +46,7 @@ pub(super) fn collect(
         let (task, token) = nodes[cursor].clone();
         let parent = {
             let _gate = task.gate.lock();
-            super::observe(&mut tasks, &task, task.version.load(Ordering::Relaxed))?;
+            super::observe(&mut tasks, &task, task.gate.version.load(Ordering::Relaxed))?;
             let pie = super::locate(&task, token).ok_or(PieFail::Busy)?;
             let parent = if cursor == 0 {
                 pie.lord().upgrade()
@@ -57,7 +54,7 @@ pub(super) fn collect(
                 None
             };
             if cursor == 0 || recursive {
-                let heirs = task.heirs.lock();
+                let heirs = task.gate.heirs.lock();
                 let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
                 for (_, child, child_token) in heirs[start..]
                     .iter()
@@ -73,7 +70,7 @@ pub(super) fn collect(
         };
         if let Some(parent) = parent {
             let _gate = parent.gate.lock();
-            super::observe(&mut tasks, &parent, parent.version.load(Ordering::Relaxed))?;
+            super::observe(&mut tasks, &parent, parent.gate.version.load(Ordering::Relaxed))?;
         }
         cursor += 1;
     }
@@ -101,7 +98,7 @@ fn relations_match(
             }) {
                 return false;
             }
-            if !lord.heirs.lock().iter().any(|(source, child, child_token)| {
+            if !lord.gate.heirs.lock().iter().any(|(source, child, child_token)| {
                 *source == parent && *child_token == *token
                     && child.ptr_eq(&Arc::downgrade(task))
             }) {
@@ -110,7 +107,7 @@ fn relations_match(
         } else if index != 0 {
             return false;
         }
-        let heirs = task.heirs.lock();
+        let heirs = task.gate.heirs.lock();
         let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
         for (_, child, child_token) in heirs[start..].iter()
             .take_while(|(source, _, _)| *source == *token)
@@ -128,7 +125,7 @@ fn relations_match(
 /// The root and all relevant tasks are locked; no allocation after this point.
 pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
     let pie = {
-        let mut pies = task.pies.lock();
+        let mut pies = task.gate.pies.lock();
         let at = pies.iter().position(|p| p.token() == token)?;
         pies.remove(at)
     };
@@ -145,7 +142,7 @@ pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
         );
         super::changed(&lord);
     }
-    task.heirs.lock().retain(|(parent, _, _)| *parent != token);
+    task.gate.heirs.lock().retain(|(parent, _, _)| *parent != token);
     super::changed(task);
     Some(pie)
 }
@@ -166,7 +163,7 @@ pub(super) fn cull(
         };
         if let Some(caller) = caller {
             let _gate = caller.gate.lock();
-            super::observe(&mut tasks, caller, caller.version.load(Ordering::Relaxed))?;
+            super::observe(&mut tasks, caller, caller.gate.version.load(Ordering::Relaxed))?;
         }
         tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
         let mut removed = Vec::new();
@@ -224,11 +221,10 @@ pub(super) fn cull(
 /// allocating the removal list fails, so a dead owner cannot retain authority.
 pub(crate) fn doom(task: &Arc<Task>) {
     let tokens = {
-        let mut closed = task.gate.lock();
-        *closed = true;
+        let _gate = task.gate.lock();
         super::changed(task);
         let mut tokens = Vec::new();
-        let pies = task.pies.lock();
+        let pies = task.gate.pies.lock();
         if tokens.try_reserve(pies.len()).is_ok() {
             tokens.extend(pies.iter().map(|p| p.token()));
         }
@@ -259,7 +255,7 @@ fn seal_owned(task: &Task) {
     loop {
         let pie = {
             let _gate = task.gate.lock();
-            task.pies
+            task.gate.pies
                 .lock()
                 .iter()
                 .filter(|pie| pie.owner_task() == task.ident.id)

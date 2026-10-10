@@ -1,78 +1,46 @@
-use ::resource::pile::{Pile, Sub};
+use ::resource::pile::Pile;
 use alloc::vec::Vec;
-use env::{MailCondition, PieToken};
+use env::{MailCondition, PieToken, Source};
+
 pub(crate) struct Waiting {
     pile: Pile,
-    members: Vec<(PieToken, MailCondition)>,
-    subs: Vec<Sub>,
+    sources: Vec<Source>,
 }
 impl Waiting {
     pub(crate) fn new() -> env::PieResult<Self> {
         Ok(Self {
             pile: Pile::unseal(false)?,
-            members: Vec::new(),
-            subs: Vec::new(),
+            sources: Vec::new(),
         })
     }
     pub(crate) fn detach(&self, token: PieToken) {
-        let _ = self.pile.detach(token, MailCondition::Pull);
+        let _ = self.pile.detach(Source::Mail { pie: token, condition: MailCondition::Pull });
     }
     pub(super) fn await_(&self, wait: env::Wait) -> Result<(), ()> {
         self.pile.await_(wait).map(|_| ()).map_err(|_| ())
     }
-    pub fn apply(&mut self, interests: (&[PieToken], &[PieToken]), subs: &[Sub]) -> bool {
+    pub fn apply(&mut self, interests: (&[PieToken], &[PieToken]), subs: &[Source]) -> bool {
         let (reads, writes) = interests;
-        if self
-            .members
-            .try_reserve(reads.len() + writes.len())
-            .is_err()
-            || self.subs.try_reserve(subs.len()).is_err()
-        {
-            return false;
-        }
+        if self.sources.try_reserve(reads.len() + writes.len() + subs.len()).is_err() { return false; }
+        let wanted = |source: &Source| match source {
+            Source::Mail { pie, condition: MailCondition::Pull } if reads.contains(pie) => true,
+            Source::Mail { pie, condition: MailCondition::Empty } if writes.contains(pie) => true,
+            _ => subs.contains(source),
+        };
         let mut at = 0;
-        while at < self.members.len() {
-            let (token, direction) = self.members[at];
-            let wanted = match direction {
-                MailCondition::Pull => reads,
-                MailCondition::Push => return false,
-                MailCondition::Empty => writes,
-            };
-            if wanted.contains(&token) {
-                at += 1;
-            } else {
-                self.members.swap_remove(at);
-                let _ = self.pile.detach(token, direction);
+        while at < self.sources.len() {
+            if wanted(&self.sources[at]) { at += 1; } else {
+                let source = self.sources.swap_remove(at);
+                let _ = self.pile.detach(source);
             }
         }
-        for (tokens, direction) in [(reads, MailCondition::Pull), (writes, MailCondition::Empty)] {
-            for &token in tokens {
-                if self.members.contains(&(token, direction)) {
-                    continue;
-                }
-                if self.pile.attach(token, direction).is_err() {
-                    return false;
-                }
-                self.members.push((token, direction));
-            }
-        }
-        let mut at = 0;
-        while at < self.subs.len() {
-            if subs.contains(&self.subs[at]) {
-                at += 1;
-            } else {
-                let sub = self.subs.swap_remove(at);
-                let _ = self.pile.unsubscribe(sub);
-            }
-        }
-        for &sub in subs {
-            if self.subs.contains(&sub) {
-                continue;
-            }
-            if self.pile.subscribe(sub).is_err() {
-                return false;
-            }
-            self.subs.push(sub);
+        let sources = reads.iter().map(|&pie| Source::Mail { pie, condition: MailCondition::Pull })
+            .chain(writes.iter().map(|&pie| Source::Mail { pie, condition: MailCondition::Empty }))
+            .chain(subs.iter().copied());
+        for source in sources {
+            if self.sources.contains(&source) { continue; }
+            if self.pile.attach(source).is_err() { return false; }
+            self.sources.push(source);
         }
         true
     }

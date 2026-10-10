@@ -36,12 +36,21 @@ pub(crate) fn pre(
     control.table.set_state(&job.request.name, State::Stopping);
     Ok(Progress::Done)
 }
-pub fn run(active: Res<Active>) -> Result<Progress, Fail> {
+pub fn run(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     if let Some(task) = job.execution.task {
-        if !env::unit::join(task, Wait::POLL).unwrap_or(true) {
-            let _ = env::unit::slay(task);
-            if !env::unit::join(task, Wait::POLL).unwrap_or(true) {
+        let team = match control.table.find(&job.request.name).map(|row| row.slot) {
+            Some(Slot::Live { team, .. }) => team,
+            _ => None,
+        };
+        if let Some(team) = team {
+            let _ = env::unit::slay_team(team);
+        }
+        if !env::unit::join_task(task, Wait::POLL).unwrap_or(true) {
+            if team.is_none() {
+                let _ = env::room::doom(task);
+            }
+            if !env::unit::join_task(task, Wait::POLL).unwrap_or(true) {
                 return if env::chrono::clock() < job.execution.deadline {
                     Ok(Progress::Pending)
                 } else {

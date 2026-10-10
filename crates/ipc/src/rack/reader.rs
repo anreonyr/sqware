@@ -40,6 +40,7 @@ pub struct Reader<M: Message> {
     /// 本端跳过的枚数（页里的 `lost` 由写端记，这一枚是"我看见的"）。
     skipped: u64,
     bell: Bell,
+    progress: Bell,
     _m: PhantomData<M>,
 }
 
@@ -53,7 +54,8 @@ impl<M: Message> Reader<M> {
             _dock: None,
             next: cursor(ring(view)),
             skipped: 0,
-            bell: Bell::from_raw(page),
+            bell: Bell::from_raw(page, env::Bit::FIRST),
+            progress: Bell::from_raw(page, super::SPACE_BIT),
             _m: PhantomData,
         }
     }
@@ -69,7 +71,8 @@ impl<M: Message> Reader<M> {
             _dock: Some(dock),
             next: cursor(ring(view)),
             skipped: 0,
-            bell: Bell::from_raw(page),
+            bell: Bell::from_raw(page, env::Bit::FIRST),
+            progress: Bell::from_raw(page, super::SPACE_BIT),
             _m: PhantomData,
         })
     }
@@ -79,6 +82,7 @@ impl<M: Message> Reader<M> {
         let mut frame = [0u8; SLOT];
         match pop(self.ring, &mut self.next, &mut self.skipped, &mut frame) {
             Ok(Some(n)) => {
+                let _ = self.progress.ring();
                 let bytes = frame.get(..n).unwrap_or(&[]);
                 match M::fetch(bytes) {
                     Some(in_) => Ok(Some(in_)),
@@ -150,6 +154,8 @@ impl<M: Message> Reader<M> {
     }
 
     /// 本端那一枚铃的号。
+    pub fn source(&self) -> env::Source { self.bell.source() }
+
     pub fn bell(&self) -> PieToken {
         self.bell.token()
     }

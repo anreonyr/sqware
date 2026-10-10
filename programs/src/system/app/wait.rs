@@ -4,7 +4,7 @@ use crate::system::app::Fault as Fail;
 use crate::system::control::{Entries as Watch, unit::Control, unit::table::Slot};
 use crate::system::publication::Names;
 
-use ::resource::pile::Sub;
+use env::Source;
 use alloc::vec::Vec;
 use env::{PieToken, Wait};
 use system_api::control as ccall;
@@ -13,7 +13,7 @@ use ::schedule::{Progress, Res, ResMut};
 pub struct Interests {
     pub tokens: Vec<PieToken>,
     pub writes: Vec<PieToken>,
-    pub subs: Vec<Sub>,
+    pub subs: Vec<Source>,
     pub armed: bool,
 }
 pub fn entries(
@@ -46,22 +46,17 @@ pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Pro
     wanted
         .subs
         .extend(control.living().filter_map(|row| match row.slot {
-            Slot::Live { task, .. } => Some(Sub::TaskCompleted(task)),
+            Slot::Live { task, .. } => Some(Source::Join { target: task.into() }),
             _ => None,
         }));
-    wanted.subs.push(Sub::TaskCompleted(
-        control.task("operator").ok_or(Fail::Dead)?,
-    ));
-    wanted.subs.push(Sub::TaskCompleted(
-        control.task("identity").ok_or(Fail::Dead)?,
-    ));
+    wanted.subs.push(Source::Join { target: control.task("operator").ok_or(Fail::Dead)?.into() });
+    wanted.subs.push(Source::Join { target: control.task("identity").ok_or(Fail::Dead)?.into() });
     for item in control.instances() {
         if item.team.is_some() {
-            wanted.subs.push(Sub::TaskCompleted(item.task));
+            wanted.subs.push(Source::Join { target: item.task.into() });
         }
-        wanted.subs.push(Sub::TaskCompleted(item.owner));
+        wanted.subs.push(Source::Join { target: item.owner.into() });
     }
-    wanted.subs.push(Sub::Capabilities);
     Ok(Progress::Done)
 }
 pub fn apply(
@@ -106,7 +101,7 @@ pub(super) fn connections(
     for (token, direction) in tree.connection_interests() {
         match direction {
             env::MailCondition::Pull => wanted.tokens.push(token),
-            env::MailCondition::Push => return Err(Fail::Room),
+            env::MailCondition::Push | env::MailCondition::Signal(_) => return Err(Fail::Room),
             env::MailCondition::Empty => wanted.writes.push(token),
         }
     }

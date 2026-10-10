@@ -40,25 +40,28 @@ def run(conn, capture):
     wait_for(b"login: ", 5)
     # Editing remains canonical while echo is disabled.
     credentials(b"anran", b"discard\x15sqwarx\x7fe", 5)
-    wait_for(b"cat: task=", 1)
-    # Wait for the complete identity line before providing cat input.
+    wait_for(b"shell: task=", 1)
+    # The same account retains its principal across distinct Shell tasks.
     wait_for(b"principal=", 1)
-    conn.sendall(b"first line\n")
-    wait_for(b"first line\r\n", 2)
-    conn.sendall(b"exit\n")
-    wait_for(b"exit\r\n", 2)
+    wait_for(b"lisp> ", 1)
+    conn.sendall(b"(+ 40 2)\n")
+    wait_for(b"42\r\nlisp> ", 1)
     conn.sendall(b"\x04")
     wait_for(b"login: ", 6)
     credentials(b"anran", b"sqware", 6)
-    wait_for(b"cat: task=", 2)
+    wait_for(b"shell: task=", 2)
+    wait_for(b"lisp> ", 3)
     conn.sendall(b"discarded\x03")
+    wait_for(b"^C", 1)
+    conn.sendall(b"\x04")
     wait_for(b"login: ", 7)
-    identities = re.findall(rb"cat: task=(\d+) principal=(\d+):(\d+)", received)
+    identities = re.findall(rb"shell: task=(\d+) principal=(\d+):(\d+)", received)
     assert len(identities) == 2, identities
     assert identities[0][0] != identities[1][0], identities
     assert identities[0][1:] == identities[1][1:], identities
+    password_output = received.replace(b"sqware Lisp Shell\r\n", b"")
     for secret in (b"sqware", b"wrong-secret", b"cancel-secret", b"sqwarx", b"discard\x15"):
-        assert secret not in received, f"password echoed: {secret!r}"
+        assert secret not in password_output, f"password echoed: {secret!r}"
     conn.sendall(b"\x04")
     until = time.monotonic() + 20
     while time.monotonic() < until:

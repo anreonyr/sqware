@@ -1,4 +1,4 @@
-use self::state::{self as instance, Instance};
+use self::state::Instance;
 use super::unit::table::State;
 use crate::system::app::Fault as ControlFail;
 use crate::system::control::unit::Control;
@@ -41,33 +41,6 @@ impl Control {
         }
     }
 
-    pub(super) fn reserve_instance(&mut self) -> Result<(), Fail> {
-        if self.instances.len() >= instance::INSTANCE_CAP {
-            if let Some(at) = self
-                .instances
-                .iter()
-                .position(|item| item.state == State::Dead)
-            {
-                self.instances.remove(at);
-            } else {
-                return Err(Fail::Full);
-            }
-        }
-        self.instances.try_reserve(1).map_err(|_| Fail::Full)
-    }
-
-    pub(super) fn register_instance(&mut self, built: Built, owner: TaskId) {
-        self.instances.push(Instance {
-            owner,
-            task: built.task,
-            team: Some(built.team),
-            state: State::Starting,
-            claimed: false,
-            claim_until: env::chrono::clock() + system_api::loader::CLAIM_MS as u64 * 1_000_000,
-            hook: Default::default(),
-        });
-    }
-
     pub(crate) fn stop_instance(&mut self, task: TaskId) {
         if let Some(item) = self
             .instances
@@ -96,19 +69,30 @@ impl Control {
             if item.team.is_none() {
                 continue;
             }
+            if let Some(team) = item.team {
+                // Receive every member independently; main/auxiliary policy is Control's.
+                for _ in 0..64 {
+                    match unit::join(env::UnitTarget::Team(team), Wait::POLL, true) {
+                        Ok(env::JoinReply::Reaped(exit)) => item.reap(exit),
+                        _ => break,
+                    }
+                }
+            }
             if settling
                 || (!item.claimed && env::chrono::clock() >= item.claim_until)
-                || unit::join(item.owner, Wait::POLL).unwrap_or(true)
-                || unit::join(item.task, Wait::POLL).unwrap_or(true)
+                || unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
+                || unit::join_task(item.task, Wait::POLL).unwrap_or(true)
             {
                 item.stop();
             }
             if item.state == State::Stopping {
-                let _ = env::room::doom(item.task);
+                if let Some(team) = item.team {
+                    let _ = unit::slay_team(team);
+                }
             }
         }
         self.instances.retain(|item| {
-            item.team.is_some() || !unit::join(item.owner, Wait::POLL).unwrap_or(true)
+            item.team.is_some() || !unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
         });
     }
 

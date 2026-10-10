@@ -81,7 +81,8 @@ impl Frozen {
     }
     pub(crate) fn grant(self, target: &Task) -> Result<Vec<Entry>, GrantError> {
         let closed = target.gate.lock();
-        if *closed || target.tag() != TaskTag::Held || self.entries.iter().any(|(n, p)| !valid(*n, p)) {
+        let commit = crate::work::unit::commit();
+        if target.tag() != TaskTag::Held || self.entries.iter().any(|(n, p)| !valid(*n, p)) {
             return Err(Failure {
                 reason: PieFail::Denied,
                 value: self,
@@ -94,7 +95,7 @@ impl Frozen {
                 value: self,
             });
         }
-        let mut pies = target.pies.lock();
+        let mut pies = target.gate.pies.lock();
         if pies.try_reserve(self.entries.len()).is_err() {
             return Err(Failure {
                 reason: PieFail::OoM,
@@ -107,12 +108,8 @@ impl Frozen {
         }
         drop(pies);
         gate::changed(target);
+        drop(commit);
         drop(closed);
-        let _ = crate::work::room::messenger::signal(
-            crate::work::room::messenger::WakeKey::Capabilities {
-                task: target.ident.id,
-            },
-        );
         Ok(ledger)
     }
 }

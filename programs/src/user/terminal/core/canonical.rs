@@ -3,7 +3,7 @@
 use super::mode::{Effect, Input};
 
 /// Maximum buffered line length in bytes. Further input is discarded without echo.
-pub const LINE_MAX: usize = 128;
+pub const LINE_MAX: usize = 4096;
 
 pub struct Canonical {
     raw: [u8; LINE_MAX],

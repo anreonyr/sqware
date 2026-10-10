@@ -10,10 +10,13 @@ thread_local! {
     static JOINED: RefCell<bool> = const { RefCell::new(false) };
 }
 pub mod unit {
+    pub struct Relation { pub after: Option<&'static [&'static str]> }
+    pub struct UnitFile { pub name: &'static str, pub relation: Relation }
+    pub fn is_target(name: &str) -> bool { name == "scene" }
     pub fn self_id() -> crate::TaskId {
         crate::TaskId::new(1)
     }
-    pub fn join(_: crate::TaskId, _: crate::Wait) -> Result<bool, ()> {
+    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, ()> {
         Ok(crate::JOINED.with(|value| *value.borrow()))
     }
 }
@@ -91,7 +94,7 @@ pub mod system {
                 }
                 impl Table {
                     pub fn living(&self) -> impl Iterator<Item = &Service> {
-                        self.rows.iter()
+                        self.rows.iter().filter(|row| row.state != State::Dead)
                     }
                 }
             }
@@ -115,8 +118,14 @@ pub mod system {
             }
             pub struct Control {
                 pub table: table::Table,
+                pub inputs: Vec<Input>,
             }
+            pub struct Input { pub program: &'static crate::unit::UnitFile }
             impl Control {
+                pub fn input(&self, name: &str) -> Result<&Input, verdict::Fail> {
+                    self.inputs.iter().find(|input| input.program.name == name)
+                        .ok_or(verdict::Fail::Unknown)
+                }
                 pub fn state(&self, _: String) -> Result<table::State, verdict::Fail> {
                     Ok(table::State::Ready)
                 }
@@ -127,7 +136,7 @@ pub mod system {
                     }
                 }
                 pub fn live(&self, task: crate::TaskId) -> bool {
-                    !crate::unit::join(task, crate::Wait::POLL).unwrap_or(true)
+                    !crate::unit::join_task(task, crate::Wait::POLL).unwrap_or(true)
                 }
             }
             mod observe {
@@ -200,6 +209,7 @@ mod tests {
         let mut resources = schedule::Resources::new();
         resources
             .insert(Control {
+                inputs: Vec::new(),
                 table: Table {
                     rows: vec![Service {
                         name: String::from("consumer"),
@@ -246,5 +256,68 @@ mod tests {
             run("consumer", 0, false),
             frame::said_status(frame::fail_to_code(Some(Fail::NotReady)))
         );
+    }
+
+    fn closing_fixture() -> Control {
+        use unit::{Relation, UnitFile};
+        static HUB: UnitFile = UnitFile { name: "hub", relation: Relation { after: Some(&[]) } };
+        static ROUTER: UnitFile = UnitFile { name: "router", relation: Relation { after: Some(&["hub"]) } };
+        static UART: UnitFile = UnitFile { name: "uart", relation: Relation { after: Some(&["hub", "router"]) } };
+        static PIPE: UnitFile = UnitFile { name: "pipe", relation: Relation { after: Some(&[]) } };
+        // Deliberately unrelated to startup or registration order.
+        let programs = [&ROUTER, &PIPE, &UART, &HUB];
+        Control {
+            inputs: programs.iter().map(|program| system::control::unit::Input { program }).collect(),
+            table: Table { rows: programs.iter().enumerate().map(|(i, program)| Service {
+                name: program.name.into(),
+                slot: Slot::Live { task: TaskId::new(i + 10), team: Some(abi::TeamId::new(i + 20)) },
+                state: State::Ready,
+            }).collect() },
+        }
+    }
+    fn state(control: &mut Control, name: &str, state: State) {
+        control.table.rows.iter_mut().find(|row| row.name == name).unwrap().state = state;
+    }
+    fn closing(control: &Control) -> Vec<&str> { control.closing_service_names().collect() }
+
+    #[test]
+    fn shutdown_orders_users_before_providers_and_allows_independent_services() {
+        let mut control = closing_fixture();
+        assert_eq!(closing(&control), ["pipe", "uart"]);
+        state(&mut control, "uart", State::Dead);
+        assert_eq!(closing(&control), ["router", "pipe"]);
+        state(&mut control, "router", State::Dead);
+        assert_eq!(closing(&control), ["pipe", "hub"]);
+    }
+
+    #[test]
+    fn stopping_and_debarked_users_still_hold_their_providers() {
+        let mut control = closing_fixture();
+        state(&mut control, "uart", State::Stopping);
+        assert_eq!(closing(&control), ["pipe"]);
+        state(&mut control, "uart", State::Debarked);
+        assert_eq!(closing(&control), ["pipe", "uart"]);
+    }
+
+    #[test]
+    fn scene_users_stop_before_other_services_and_do_not_hold_each_other() {
+        use unit::{Relation, UnitFile};
+        static FIRST: UnitFile = UnitFile { name: "first", relation: Relation { after: Some(&["scene"]) } };
+        static LAST: UnitFile = UnitFile { name: "last", relation: Relation { after: Some(&["scene"]) } };
+        let mut control = closing_fixture();
+        for program in [&FIRST, &LAST] {
+            control.inputs.push(system::control::unit::Input { program });
+            control.table.rows.push(Service {
+                name: program.name.into(),
+                slot: Slot::Live { task: TaskId::new(30), team: Some(abi::TeamId::new(40)) },
+                state: State::Ready,
+            });
+        }
+        assert_eq!(closing(&control), ["first", "last"]);
+        state(&mut control, "first", State::Stopping);
+        assert_eq!(closing(&control), ["last"]);
+        state(&mut control, "first", State::Dead);
+        state(&mut control, "last", State::Dead);
+        assert_eq!(closing(&control), ["pipe", "uart"]);
     }
 }
