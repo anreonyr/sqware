@@ -8,11 +8,18 @@ pub struct Sequence<E> {
 }
 impl<E: 'static> Schedule<(), E> {
     pub fn sequence() -> Sequence<E> {
-        Sequence { schedule: Schedule::new(), next: 0 }
+        Sequence {
+            schedule: Schedule::new(),
+            next: 0,
+        }
     }
 }
 impl<E: 'static> Sequence<E> {
-    pub fn system<M>(&mut self, name: &'static str, f: impl IntoSystem<M, E>) -> Result<&mut Self, BuildError> {
+    pub fn system<M>(
+        &mut self,
+        name: &'static str,
+        f: impl IntoSystem<M, E>,
+    ) -> Result<&mut Self, BuildError> {
         self.schedule.add_system(name, self.next, f)?;
         self.next += 1;
         Ok(self)
@@ -29,7 +36,8 @@ impl<E: 'static> Sequence<E> {
         children: Vec<(K, Plan<C>)>,
         finish: impl IntoSystem<N, E>,
     ) -> Result<&mut Self, BuildError> {
-        self.schedule.add_subplans(name, self.next, select, children, finish)?;
+        self.schedule
+            .add_subplans(name, self.next, select, children, finish)?;
         self.next += 1;
         Ok(self)
     }

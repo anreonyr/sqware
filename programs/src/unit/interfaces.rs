@@ -12,4 +12,7 @@ pub const APIS: &[&[&[env::marks::Definition]]] = &[
     router_api::REGISTRY,
 ];
 
-const _: () = assert!(env::marks::conflict_between(APIS).is_none(), "interface mark collision");
+const _: () = assert!(
+    env::marks::conflict_between(APIS).is_none(),
+    "interface mark collision"
+);

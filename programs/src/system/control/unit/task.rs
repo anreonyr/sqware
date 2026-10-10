@@ -48,7 +48,11 @@ pub struct Launch<'a> {
     pub readiness: Readiness<'a>,
 }
 
-pub(crate) fn mint(table: &mut Table, name: &str, built: system_api::loader::Built) -> Result<TaskId, Fail> {
+pub(crate) fn mint(
+    table: &mut Table,
+    name: &str,
+    built: system_api::loader::Built,
+) -> Result<TaskId, Fail> {
     let system_api::loader::Built { task, team } = built;
     if let Err(fail) = admit_mint(table, name) {
         let _ = unit::slay_team(team);
@@ -90,8 +94,14 @@ pub fn embark(
     })();
     if let Err(e) = launched {
         match table.find(name).map(|row| row.slot) {
-            Some(Slot::Live { team: Some(team), .. }) => { let _ = unit::slay_team(team); }
-            _ => { let _ = env::room::doom(task); }
+            Some(Slot::Live {
+                team: Some(team), ..
+            }) => {
+                let _ = unit::slay_team(team);
+            }
+            _ => {
+                let _ = env::room::doom(task);
+            }
         }
         table.set_state(name, State::Dead);
         return Err(e);

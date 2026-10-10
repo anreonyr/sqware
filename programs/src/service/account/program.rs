@@ -26,12 +26,30 @@ pub static PROGRAM: UnitFile = UnitFile {
                 name: "shell",
                 load: "account-image",
             },
-            Setup::Image { name: "cat", load: "account-cat" },
-            Setup::Image { name: "emit", load: "account-emit" },
-            Setup::Image { name: "upper", load: "account-upper" },
-            Setup::Image { name: "fail", load: "account-fail" },
-            Setup::Image { name: "spin", load: "account-spin" },
-            Setup::Image { name: "workers", load: "account-workers" },
+            Setup::Image {
+                name: "cat",
+                load: "account-cat",
+            },
+            Setup::Image {
+                name: "emit",
+                load: "account-emit",
+            },
+            Setup::Image {
+                name: "upper",
+                load: "account-upper",
+            },
+            Setup::Image {
+                name: "fail",
+                load: "account-fail",
+            },
+            Setup::Image {
+                name: "spin",
+                load: "account-spin",
+            },
+            Setup::Image {
+                name: "workers",
+                load: "account-workers",
+            },
             Setup::Ready,
         ],
     },

@@ -5,8 +5,8 @@ use core::marker::PhantomData;
 
 use env::{MailCondition, MailFail, MailResult, PieToken, Wait};
 
+use ::resource::raw::Hole;
 use wire::Message;
-use ::resource::raw::{Hole};
 
 /// **我推的那一枚孔** ＋ 这一路流的那一种报（类型）＋ 那一格缓冲 ＋ **我还排着几只**。
 pub struct Sender<M: Message> {

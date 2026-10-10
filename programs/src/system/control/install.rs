@@ -1,8 +1,8 @@
 use super::{
+    endpoint::{Entries, request as answer},
     identity::Roster,
     instance::hook,
     lifecycle,
-    endpoint::{request as answer, Entries},
     unit::{Control, start::Input, verdict},
 };
 use crate::system::app::life::Status;

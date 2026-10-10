@@ -1,10 +1,12 @@
+mod endpoint;
 pub(crate) mod identity;
 pub(crate) mod instance;
 pub(crate) mod lifecycle;
-mod endpoint;
 pub(crate) mod unit;
 
-pub(crate) use endpoint::construction::{Construction, receive as receive_construction, admit as admit_construction};
+pub(crate) use endpoint::construction::{
+    Construction, admit as admit_construction, receive as receive_construction,
+};
 
 mod install;
 pub(crate) use install::{Configuration, install};
@@ -37,6 +39,6 @@ pub(crate) use lifecycle::schedule::ActivationHooks;
 pub(crate) use lifecycle::{Startup, eligibility, startup};
 pub(crate) use plan::ruin_rest;
 
+pub(crate) use endpoint::Entries;
 pub(crate) use endpoint::request::receive;
 pub(crate) use endpoint::{answer_instances, receive_instances};
-pub(crate) use endpoint::Entries as Entries;

@@ -40,7 +40,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskI
             };
             if !Arc::ptr_eq(&me.ident, &ident)
                 || !crate::work::unit::gate::allows(
-                    &me, &super::resources::get().doom, crate::work::unit::gate::Need::Fetch,
+                    &me,
+                    &super::resources::get().doom,
+                    crate::work::unit::gate::Need::Fetch,
                 )
             {
                 return Outcome::fail(frame, RoomFail::Denied);

@@ -3,18 +3,24 @@
 extern crate alloc;
 extern crate programs;
 use env::{TaskId, Wait, unit};
-use terminal_client::{Io, Read};
 use system_api::identity::Grant;
 use system_api::identity::Reply;
 use system_api::identity::Wire;
 use system_client::identity::Face;
+use terminal_client::{Io, Read};
 #[programs::entry]
 fn main() -> Result<(), env::Reason> {
     if let Some(&owner) = execution::boot::args::args().first() {
-        if resource::raw::pies().any(|info| info.owner == TaskId::new(owner) && info.mark == shell_api::MARK) {
+        if resource::raw::pies()
+            .any(|info| info.owner == TaskId::new(owner) && info.mark == shell_api::MARK)
+        {
             let mut boot = shell_client::Boot::take().map_err(|_| 1usize)?;
-            let source = boot.port("source", pipe_client::Direction::Read).map_err(|_| 1usize)?;
-            let copy = boot.port("copy", pipe_client::Direction::Write).map_err(|_| 1usize)?;
+            let source = boot
+                .port("source", pipe_client::Direction::Read)
+                .map_err(|_| 1usize)?;
+            let copy = boot
+                .port("copy", pipe_client::Direction::Write)
+                .map_err(|_| 1usize)?;
             return shell_client::copy(source, copy, false).map_err(|_| 1usize);
         }
     }

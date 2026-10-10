@@ -1,6 +1,6 @@
 //! Reserve lifecycle capacity before invoking the builder, then publish once.
-use crate::system::control::unit::{Control, table::State};
 use super::state::{self as instance, Instance};
+use crate::system::control::unit::{Control, table::State};
 use env::TaskId;
 use system_api::{control::Fail, loader::Built};
 
@@ -43,5 +43,4 @@ impl Control {
             hook: Default::default(),
         });
     }
-
 }

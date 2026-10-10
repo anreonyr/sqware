@@ -11,7 +11,12 @@ pub(crate) fn subplans<K: PartialEq + 'static, C: 'static, E: 'static>(
 ) -> System<E> {
     System::new(
         [None; super::system::MAX_PARAMS],
-        Subplans { select, children, finish, slot: usize::MAX },
+        Subplans {
+            select,
+            children,
+            finish,
+            slot: usize::MAX,
+        },
     )
 }
 
@@ -63,8 +68,10 @@ impl<K: PartialEq + 'static, C: 'static, E> super::system::Runner<E> for Subplan
                 if self.finish.execute(resources, cursor)? == super::Progress::Pending {
                     return Ok(super::Progress::Pending);
                 }
-                if !resources.read_at::<super::Dispatch<K, C>>(self.slot)
-                    .map_err(super::RunError::Resource)?.is_idle()
+                if !resources
+                    .read_at::<super::Dispatch<K, C>>(self.slot)
+                    .map_err(super::RunError::Resource)?
+                    .is_idle()
                 {
                     return Err(super::RunError::Dispatch(super::DispatchError::Busy));
                 }
@@ -78,8 +85,10 @@ impl<K: PartialEq + 'static, C: 'static, E> super::system::Runner<E> for Subplan
             {
                 break;
             }
-            let selected = resources.read_at::<super::Dispatch<K, C>>(self.slot)
-                .map_err(super::RunError::Resource)?.has_selected();
+            let selected = resources
+                .read_at::<super::Dispatch<K, C>>(self.slot)
+                .map_err(super::RunError::Resource)?
+                .has_selected();
             if !selected && self.select.execute(resources, cursor)? == super::Progress::Pending {
                 return Ok(super::Progress::Pending);
             }
@@ -96,8 +105,10 @@ impl<K: PartialEq + 'static, C: 'static, E> super::system::Runner<E> for Subplan
                 .find(|(key, _)| *key == invocation.key)
                 .map(|(_, plan)| plan);
             let Some(plan) = plan else {
-                resources.write_at::<super::Dispatch<K, C>>(self.slot)
-                    .map_err(super::RunError::Resource)?.restore_selected(invocation)
+                resources
+                    .write_at::<super::Dispatch<K, C>>(self.slot)
+                    .map_err(super::RunError::Resource)?
+                    .restore_selected(invocation)
                     .map_err(super::RunError::Dispatch)?;
                 return Err(super::RunError::UnknownPlan);
             };
@@ -106,7 +117,8 @@ impl<K: PartialEq + 'static, C: 'static, E> super::system::Runner<E> for Subplan
                 let mut dispatch = resources
                     .write_at::<super::Dispatch<K, C>>(self.slot)
                     .map_err(super::RunError::Resource)?;
-                dispatch.complete(super::Completion { invocation, result })
+                dispatch
+                    .complete(super::Completion { invocation, result })
                     .map_err(super::RunError::Dispatch)?;
             }
             cursor.finishing = true;

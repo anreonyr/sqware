@@ -123,10 +123,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 let pie = gate::locate(caller, backing).ok_or(MemoryFail::Denied)?;
                 let p = pie.pole().ok_or(MemoryFail::Denied)?;
                 operation = Some(p.backing().operation().ok_or(MemoryFail::Busy)?);
-                if !p.alive()
-                    || p.backing().reserved() != 0
-                    || !p.backing().owned()
-                {
+                if !p.alive() || p.backing().reserved() != 0 || !p.backing().owned() {
                     return Err(MemoryFail::Denied);
                 }
                 let permission = pie.permission();
@@ -136,8 +133,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 {
                     return Err(MemoryFail::Denied);
                 }
-                super::pie::usable::<env::PieFail>(&pie)
-                    .map_err(|_| MemoryFail::Denied)?;
+                super::pie::usable::<env::PieFail>(&pie).map_err(|_| MemoryFail::Denied)?;
                 if team_id.get() == 0 {
                     if access.contains(PteFlags::X) {
                         return Err(MemoryFail::Denied);
@@ -149,7 +145,9 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                             PteFlags::empty()
                         };
                 } else if permission.contains(Permission::ONLY) {
-                    if target.ready() { return Err(MemoryFail::Denied); }
+                    if target.ready() {
+                        return Err(MemoryFail::Denied);
+                    }
                     private = true;
                     if pie.sire().is_some()
                         || p.owner() != caller.ident.id
@@ -173,8 +171,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     }
                     ceiling = access;
                 }
-                p
-                    .backing()
+                p.backing()
                     .address(offset, size)
                     .map_err(MemoryFail::from)?;
                 source = Some((pie, p));
@@ -253,11 +250,15 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             drop(operation);
-            if private { gate::notify(ident.id, backing); }
+            if private {
+                gate::notify(ident.id, backing);
+            }
             Ok(va.as_usize())
         }
         MemoryCall::Munmap { addr, .. } => {
-            let item = if target.staged_len() == 0 { None } else {
+            let item = if target.staged_len() == 0 {
+                None
+            } else {
                 target.staged().iter().position(|item| {
                     item.span.va.as_usize() == addr.get() && item.span.size.get() == size
                 })
@@ -265,7 +266,11 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if let Some(index) = item {
                 let (meta, span, token) = {
                     let items = target.staged();
-                    (items[index].meta.clone(), items[index].span, items[index].token)
+                    (
+                        items[index].meta.clone(),
+                        items[index].span,
+                        items[index].token,
+                    )
                 };
                 let _operation = meta.backing().operation().ok_or(MemoryFail::Busy)?;
                 space.release(span).map_err(MemoryFail::from)?;
@@ -275,10 +280,12 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 gate::notify(meta.owner(), token);
                 return Ok(0);
             }
-            if target.staged_len() != 0 && target.staged().iter().any(|item| {
-                addr.get() < item.span.va.as_usize() + item.span.size.get()
-                    && item.span.va.as_usize() < addr.get().saturating_add(size)
-            }) {
+            if target.staged_len() != 0
+                && target.staged().iter().any(|item| {
+                    addr.get() < item.span.va.as_usize() + item.span.size.get()
+                        && item.span.va.as_usize() < addr.get().saturating_add(size)
+                })
+            {
                 return Err(MemoryFail::Busy);
             }
             space

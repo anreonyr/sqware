@@ -1,8 +1,8 @@
 use super::lifecycle::Action;
 use super::unit::Control;
 use super::{
+    endpoint::{self, request as answer},
     lifecycle::{self, Operations},
-    endpoint::{request as answer, self},
 };
 use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};

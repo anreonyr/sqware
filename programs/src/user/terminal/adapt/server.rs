@@ -40,9 +40,12 @@ impl Attachment {
             },
             grants: [PieToken::NONE; 3],
         };
-        attachment.endpoints.input = pie::unseal(env::UnsealArgs::hole(frame::INPUT)).map_err(|_| ())?;
-        attachment.endpoints.output = pie::unseal(env::UnsealArgs::hole(frame::OUTPUT)).map_err(|_| ())?;
-        attachment.endpoints.control = pie::unseal(env::UnsealArgs::hole(frame::CONTROL)).map_err(|_| ())?;
+        attachment.endpoints.input =
+            pie::unseal(env::UnsealArgs::hole(frame::INPUT)).map_err(|_| ())?;
+        attachment.endpoints.output =
+            pie::unseal(env::UnsealArgs::hole(frame::OUTPUT)).map_err(|_| ())?;
+        attachment.endpoints.control =
+            pie::unseal(env::UnsealArgs::hole(frame::CONTROL)).map_err(|_| ())?;
         attachment.grant(owner)?;
         Ok(attachment)
     }
@@ -111,9 +114,16 @@ impl Server {
     pub fn open(console: &Console) -> Result<Self, env::Reason> {
         let entry = pie::unseal(env::UnsealArgs::hole(frame::ENTRY)).map_err(|_| E_TERMINAL)?;
         let pile = Pile::unseal(false).map_err(|_| E_TERMINAL)?;
-        pile.attach(env::Source::Mail { pie: entry, condition: MailCondition::Pull }).map_err(|_| E_TERMINAL)?;
-        pile.attach(env::Source::Mail { pie: console.rx.bell(), condition: MailCondition::Signal(env::Bit::FIRST) })
-            .map_err(|_| E_TERMINAL)?;
+        pile.attach(env::Source::Mail {
+            pie: entry,
+            condition: MailCondition::Pull,
+        })
+        .map_err(|_| E_TERMINAL)?;
+        pile.attach(env::Source::Mail {
+            pie: console.rx.bell(),
+            condition: MailCondition::Signal(env::Bit::FIRST),
+        })
+        .map_err(|_| E_TERMINAL)?;
         pile.attach(console.tx.source()).map_err(|_| E_TERMINAL)?;
         let client = Client::injected().map_err(|_| E_TERMINAL)?;
         client
@@ -163,10 +173,19 @@ impl Server {
         self.echo = true;
         self.reset();
         if let Some(attachment) = self.attachment.take() {
-            let _ = self.pile.detach(env::Source::Inspect { task: env::unit::self_id(), token: attachment.authority });
-            let _ = self.pile.detach(env::Source::Mail { pie: attachment.endpoints.output, condition: MailCondition::Pull });
+            let _ = self.pile.detach(env::Source::Inspect {
+                task: env::unit::self_id(),
+                token: attachment.authority,
+            });
+            let _ = self.pile.detach(env::Source::Mail {
+                pie: attachment.endpoints.output,
+                condition: MailCondition::Pull,
+            });
             if self.waiting_input {
-                let _ = self.pile.detach(env::Source::Mail { pie: attachment.endpoints.input, condition: MailCondition::Empty });
+                let _ = self.pile.detach(env::Source::Mail {
+                    pie: attachment.endpoints.input,
+                    condition: MailCondition::Empty,
+                });
                 self.waiting_input = false;
             }
         }
@@ -176,7 +195,10 @@ impl Server {
             frame::ATTACH if self.attachment.is_none() && command.task == from => {
                 let attachment = Attachment::open(command.authority, from)?;
                 self.pile
-                    .attach(env::Source::Mail { pie: attachment.endpoints.output, condition: MailCondition::Pull })
+                    .attach(env::Source::Mail {
+                        pie: attachment.endpoints.output,
+                        condition: MailCondition::Pull,
+                    })
                     .map_err(|_| ())?;
                 let authority = match pie::accord(
                     command.authority,
@@ -186,12 +208,25 @@ impl Server {
                 ) {
                     Ok(token) => token,
                     Err(_) => {
-                        let _ = self.pile.detach(env::Source::Mail { pie: attachment.endpoints.output, condition: MailCondition::Pull });
+                        let _ = self.pile.detach(env::Source::Mail {
+                            pie: attachment.endpoints.output,
+                            condition: MailCondition::Pull,
+                        });
                         return Err(());
                     }
                 };
-                if self.pile.attach(env::Source::Inspect { task: env::unit::self_id(), token: attachment.authority }).is_err() {
-                    let _ = self.pile.detach(env::Source::Mail { pie: attachment.endpoints.output, condition: MailCondition::Pull });
+                if self
+                    .pile
+                    .attach(env::Source::Inspect {
+                        task: env::unit::self_id(),
+                        token: attachment.authority,
+                    })
+                    .is_err()
+                {
+                    let _ = self.pile.detach(env::Source::Mail {
+                        pie: attachment.endpoints.output,
+                        condition: MailCondition::Pull,
+                    });
                     let _ = pie::revoke(from, authority);
                     return Err(());
                 }
@@ -296,8 +331,12 @@ pub(super) fn requests(
             let _ = pie::release(command.authority, env::ReleaseMode::Revoke);
         }
         let grants = if result.is_ok() {
-            server.attachment.as_ref().filter(|a| a.foreground == from)
-                .map(|a| a.grants).unwrap_or([PieToken::NONE; 3])
+            server
+                .attachment
+                .as_ref()
+                .filter(|a| a.foreground == from)
+                .map(|a| a.grants)
+                .unwrap_or([PieToken::NONE; 3])
         } else {
             [PieToken::NONE; 3]
         };
@@ -357,12 +396,18 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
     if blocked && !server.waiting_input {
         server
             .pile
-            .attach(env::Source::Mail { pie: input, condition: MailCondition::Empty })
+            .attach(env::Source::Mail {
+                pie: input,
+                condition: MailCondition::Empty,
+            })
             .map_err(|_| E_TERMINAL)?;
     } else if !blocked && server.waiting_input {
         server
             .pile
-            .detach(env::Source::Mail { pie: input, condition: MailCondition::Empty })
+            .detach(env::Source::Mail {
+                pie: input,
+                condition: MailCondition::Empty,
+            })
             .map_err(|_| E_TERMINAL)?;
     }
     server.waiting_input = blocked;
@@ -372,10 +417,20 @@ pub(super) fn deliver(mut server: ResMut<Server>) -> Result<Progress, env::Reaso
 pub(super) fn wait(mut server: ResMut<Server>) -> Result<Progress, env::Reason> {
     if !server.active {
         match server.pile.await_(Wait::Forever).map_err(|_| E_TERMINAL)? {
-            env::AwaitReply::Source { source: env::Source::Inspect { token, .. }, .. }
-                if server.attachment.as_ref().is_some_and(|a| a.authority == token) => server.detach(),
-            env::AwaitReply::Source { fail: Some(_), .. } => { server.running = false; },
-            _ => {},
+            env::AwaitReply::Source {
+                source: env::Source::Inspect { token, .. },
+                ..
+            } if server
+                .attachment
+                .as_ref()
+                .is_some_and(|a| a.authority == token) =>
+            {
+                server.detach()
+            }
+            env::AwaitReply::Source { fail: Some(_), .. } => {
+                server.running = false;
+            }
+            _ => {}
         }
     }
     Ok(Progress::Done)

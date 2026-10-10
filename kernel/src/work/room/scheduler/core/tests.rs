@@ -34,7 +34,9 @@ pub fn acceptance() {
     assert!(victim.steal().is_none());
     assert_eq!(victim.inner.lock().ready_ceiling(), timer::blind_ceiling());
 
-    *tasks[0].state.lock() = TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Starved };
+    *tasks[0].state.lock() = TaskState::Debarked {
+        state: crate::work::unit::task::TaskStopped::Starved,
+    };
     assert!(victim.push(tasks[3].clone()));
     assert!(Arc::ptr_eq(&victim.steal().unwrap(), &tasks[3]));
     assert!(victim.pull().is_none());
@@ -48,6 +50,10 @@ pub fn acceptance() {
     }
     for task in &mut tasks {
         assert!(team.release_held(task));
-        task.as_ref().transform(TaskState::Doomed { hart: None, cause: crate::work::unit::task::TaskExitCause::Slay, reason: 0 });
+        task.as_ref().transform(TaskState::Doomed {
+            hart: None,
+            cause: crate::work::unit::task::TaskExitCause::Slay,
+            reason: 0,
+        });
     }
 }

@@ -118,7 +118,9 @@ pub(crate) fn reserve_publication() -> Result<(), ()> {
 
 pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc<Task>, T), ()> {
     let mut roster = roster_table().lock();
-    if roster.len() == roster.capacity() { return Err(()); }
+    if roster.len() == roster.capacity() {
+        return Err(());
+    }
     #[cfg(debug_assertions)]
     let _commit = crate::memory::allocator::NoAllocation::enter();
     let (task, value) = commit();

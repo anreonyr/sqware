@@ -6,8 +6,8 @@ mod service;
 mod source;
 mod task;
 
+pub(crate) use build::{Source, snapshot};
 pub(crate) use image::Image;
-pub(crate) use build::{snapshot, Source};
 pub(crate) use service::release_image;
 pub(crate) use service::{entry, faces, frame, install, shutdown, watch};
 pub(crate) use task::Unit;

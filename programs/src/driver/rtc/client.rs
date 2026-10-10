@@ -5,7 +5,7 @@
 //! 两形各是一张实现了报文约定的表，见 super::core::frame）。
 //! Alarm 是**约成了才有的东西**：`receive` 只长在它上面，"没约就等"因此写不出来。
 
-use env::{PieToken, MailCondition, Wait};
+use env::{MailCondition, PieToken, Wait};
 use ipc::hand::Receiver;
 use ipc::session::establish;
 use programs::debug;
@@ -13,9 +13,9 @@ use wire::Message;
 
 use super::core::Fail;
 use super::core::frame::{self, Arm, Now, Status, Time};
-use env::wire::Span as _;
+use ::resource::raw::Hole;
 use env::pie;
-use ::resource::raw::{Hole};
+use env::wire::Span as _;
 
 /// 问一声现在几点：返**驱动读设备那一刻**的纳秒计数
 /// 事实 2：孔是单槽，一个槽只有一个读者，"我推了再读"读到的是自己推的那一句）
@@ -95,9 +95,7 @@ pub fn arm(entry: PieToken, after_ns: u64, millis: Wait) -> Result<Alarm, Fail> 
             // **（临时读数）"没等到"与"读不懂"在这里分开**（`RecvFail` 两格），再把这一趟花了
             // 多少毫秒带上——它是"预算到期"与"答话不成形"的唯一分界。前 20 次。
             match e {
-                ipc::hand::RecvFail::Mail(f) => {
-                    why("recv-mail", ms, &alloc::format!("fail={f:?}"))
-                }
+                ipc::hand::RecvFail::Mail(f) => why("recv-mail", ms, &alloc::format!("fail={f:?}")),
                 ipc::hand::RecvFail::Unread(len) => {
                     why("recv-unread", ms, &alloc::format!("len={len}"))
                 }

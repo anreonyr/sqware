@@ -11,8 +11,8 @@ use crate::work::room::messenger::{self, redeem};
 use crate::work::room::scheduler::core::{Identity, ident};
 use crate::work::room::scheduler::trap::run;
 
-mod stack;
 pub(crate) mod resources;
+mod stack;
 
 pub(crate) use stack::{TRAP_STACK_CANARY, trap_stack_guard_hart, trap_stack_hart};
 pub use stack::{arm_hart, init, trap_stack, trap_stack_base, trap_stack_edge};
@@ -220,9 +220,15 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
             if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
                 let _commit = crate::work::unit::commit();
-                if !matches!(task.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped) {
+                if !matches!(
+                    task.tag(),
+                    crate::work::unit::task::TaskTag::Doomed
+                        | crate::work::unit::task::TaskTag::Reaped
+                ) {
                     *task.state.lock() = crate::work::unit::task::TaskState::Doomed {
-                        hart: Some(crate::hart::hart_id()), cause: env::ExitCause::Fault, reason: messenger::EXIT_FAULT,
+                        hart: Some(crate::hart::hart_id()),
+                        cause: env::ExitCause::Fault,
+                        reason: messenger::EXIT_FAULT,
                     };
                 }
             }
@@ -249,14 +255,20 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     other
                 );
                 if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
-                let _commit = crate::work::unit::commit();
-                if !matches!(task.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped) {
-                    *task.state.lock() = crate::work::unit::task::TaskState::Doomed {
-                        hart: Some(crate::hart::hart_id()), cause: env::ExitCause::Fault, reason: messenger::EXIT_FAULT,
-                    };
+                    let _commit = crate::work::unit::commit();
+                    if !matches!(
+                        task.tag(),
+                        crate::work::unit::task::TaskTag::Doomed
+                            | crate::work::unit::task::TaskTag::Reaped
+                    ) {
+                        *task.state.lock() = crate::work::unit::task::TaskState::Doomed {
+                            hart: Some(crate::hart::hart_id()),
+                            cause: env::ExitCause::Fault,
+                            reason: messenger::EXIT_FAULT,
+                        };
+                    }
                 }
-            }
-            messenger::set_exit_reason(messenger::EXIT_FAULT);
+                messenger::set_exit_reason(messenger::EXIT_FAULT);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }

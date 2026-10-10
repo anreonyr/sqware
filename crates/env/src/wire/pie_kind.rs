@@ -44,6 +44,10 @@ impl PieKind {
 
 impl crate::wire::Field for PieKind {
     const WIDTH: usize = 1;
-    fn store(&self, out: &mut [u8]) { out[0] = *self as u8; }
-    fn fetch(bytes: &[u8]) -> Option<Self> { Self::of(*bytes.first()?) }
+    fn store(&self, out: &mut [u8]) {
+        out[0] = *self as u8;
+    }
+    fn fetch(bytes: &[u8]) -> Option<Self> {
+        Self::of(*bytes.first()?)
+    }
 }

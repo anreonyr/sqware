@@ -12,6 +12,6 @@ pub use system::{IntoSystem, Progress, RunError};
 pub mod dispatch;
 pub use dispatch::{Completion, Dispatch, DispatchError, Invocation};
 
-mod sequence;
 mod compose;
+mod sequence;
 pub use sequence::Sequence;

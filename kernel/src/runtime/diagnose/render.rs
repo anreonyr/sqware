@@ -17,18 +17,30 @@ pub fn render(r: &Report, sink: &mut impl Write, indent: usize) {
 fn render_paragraph(p: &Paragraph, sink: &mut impl Write) -> core::fmt::Result {
     let cols = p.items.iter().map(|row| row.len()).max().unwrap_or(0);
     for row in &p.items {
-        let height = row.iter().filter_map(|cell| cell.as_deref())
-            .map(|text| text.lines().count()).max().unwrap_or(0).max(1);
+        let height = row
+            .iter()
+            .filter_map(|cell| cell.as_deref())
+            .map(|text| text.lines().count())
+            .max()
+            .unwrap_or(0)
+            .max(1);
         for line in 0..height {
             for col in 0..cols {
-                let text = row.get(col).and_then(|cell| cell.as_deref())
-                    .and_then(|text| text.lines().nth(line)).unwrap_or("");
+                let text = row
+                    .get(col)
+                    .and_then(|cell| cell.as_deref())
+                    .and_then(|text| text.lines().nth(line))
+                    .unwrap_or("");
                 sink.write_str(text)?;
                 if col + 1 < cols {
-                    let width = p.items.iter()
+                    let width = p
+                        .items
+                        .iter()
                         .filter_map(|row| row.get(col).and_then(|cell| cell.as_deref()))
-                        .flat_map(|text| text.lines()).map(|text| text.chars().count())
-                        .max().unwrap_or(0);
+                        .flat_map(|text| text.lines())
+                        .map(|text| text.chars().count())
+                        .max()
+                        .unwrap_or(0);
                     for _ in 0..width.saturating_sub(text.chars().count()) + 2 {
                         sink.write_char(' ')?;
                     }

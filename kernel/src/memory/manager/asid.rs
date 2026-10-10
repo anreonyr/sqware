@@ -88,8 +88,11 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
         }
     }
 
-    let operation = if asid.is_kernel() { fid::Rfence::RemoteSfenceVma }
-        else { fid::Rfence::RemoteSfenceVmaAsid };
+    let operation = if asid.is_kernel() {
+        fid::Rfence::RemoteSfenceVma
+    } else {
+        fid::Rfence::RemoteSfenceVmaAsid
+    };
     let r = sbi::RfenceCall::new(operation)
         .args(SArgs {
             a0: mask,

@@ -21,12 +21,12 @@ extern crate alloc;
 extern crate programs;
 
 use env::Wait;
-use programs::Report;
-use programs::driver::uart::core::frame::Bytes;
+use env::unit;
 use ipc::rack::{CAP, Mode, Rack, SendFail};
 use ipc::session::Session;
+use programs::Report;
+use programs::driver::uart::core::frame::Bytes;
 use system_client::operator;
-use env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;
@@ -158,23 +158,39 @@ fn payload(i: usize) -> Bytes {
 fn signals() {
     use env::{Bit, MailCondition, PieToken, pie};
     use resource::pile::Pile;
-    let page = pie::unseal(env::UnsealArgs::Pole { size: env::PAGE_SIZE, shared: true }).unwrap();
+    let page = pie::unseal(env::UnsealArgs::Pole {
+        size: env::PAGE_SIZE,
+        shared: true,
+    })
+    .unwrap();
     let a = Bit::FIRST;
     let b = Bit::of(1).unwrap();
     let pile = Pile::unseal(false).unwrap();
-    pile.attach(env::Source::Mail { pie: page, condition: MailCondition::Signal(a) }).unwrap();
-    pile.attach(env::Source::Mail { pie: page, condition: MailCondition::Signal(b) }).unwrap();
+    pile.attach(env::Source::Mail {
+        pie: page,
+        condition: MailCondition::Signal(a),
+    })
+    .unwrap();
+    pile.attach(env::Source::Mail {
+        pie: page,
+        condition: MailCondition::Signal(b),
+    })
+    .unwrap();
     env::mail::ring(page, b).unwrap();
     assert!(!env::mail::wait(page, MailCondition::Signal(a), Wait::POLL).unwrap());
     assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).unwrap());
-    assert_eq!(pile.await_(Wait::POLL).unwrap().mail(), Some((page, MailCondition::Signal(b))));
+    assert_eq!(
+        pile.await_(Wait::POLL).unwrap().mail(),
+        Some((page, MailCondition::Signal(b)))
+    );
     env::mail::ring(page, a).unwrap();
     env::mail::hush(page, a).unwrap();
     assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).unwrap());
     assert!(!env::mail::wait(page, MailCondition::Signal(a), Wait::AtMost(2)).unwrap());
     env::mail::hush(page, b).unwrap();
     assert!(!env::mail::wait(page, MailCondition::Signal(b), Wait::AtMost(2)).unwrap());
-    env::mail::ring(page, a).unwrap(); env::mail::ring(page, b).unwrap();
+    env::mail::ring(page, a).unwrap();
+    env::mail::ring(page, b).unwrap();
     pie::seal(page).unwrap();
     assert!(env::mail::wait(page, MailCondition::Signal(b), Wait::POLL).is_err());
     let _ = pie::release(page, env::ReleaseMode::Revoke);
@@ -183,15 +199,28 @@ fn signals() {
 }
 
 fn retained() {
-    let rack = open(Mode::Oldest); let mut writer = rack.writer(); let mut reader = rack.reader();
-    for index in 0..CAP { assert!(writer.send_when_ready(&payload(index)).unwrap()); }
+    let rack = open(Mode::Oldest);
+    let mut writer = rack.writer();
+    let mut reader = rack.reader();
+    for index in 0..CAP {
+        assert!(writer.send_when_ready(&payload(index)).unwrap());
+    }
     assert!(!writer.send_when_ready(&payload(CAP)).unwrap());
-    assert_eq!(writer.lost(), 0); assert_eq!(writer.dropped(), 0);
-    let env::Source::Mail { condition, .. } = writer.source() else { unreachable!() };
+    assert_eq!(writer.lost(), 0);
+    assert_eq!(writer.dropped(), 0);
+    let env::Source::Mail { condition, .. } = writer.source() else {
+        unreachable!()
+    };
     assert!(!env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
     assert_eq!(reader.recv(Wait::POLL).unwrap().bytes(), payload(0).bytes());
     assert!(env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
     assert!(writer.send_when_ready(&payload(CAP)).unwrap());
-    for index in 1..=CAP { assert_eq!(reader.recv(Wait::POLL).unwrap().bytes(), payload(index).bytes()); }
-    writer.hush(); assert!(!env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
+    for index in 1..=CAP {
+        assert_eq!(
+            reader.recv(Wait::POLL).unwrap().bytes(),
+            payload(index).bytes()
+        );
+    }
+    writer.hush();
+    assert!(!env::mail::wait(rack.ship(), condition, Wait::POLL).unwrap());
 }

@@ -30,10 +30,7 @@ impl Husks {
 
     fn push(&mut self, task: Arc<Task>) {
         debug_assert!(
-            matches!(
-                task.tag(),
-                TaskTag::Reaped
-            ),
+            matches!(task.tag(), TaskTag::Reaped),
             "躯壳容器只收 Reaped 任务，且入壳前不得挂在链上"
         );
         match self.tail.take() {
@@ -77,15 +74,28 @@ pub(super) fn reap(mut task: Arc<Task>, cause: TaskExitCause, reason: usize) {
             TaskState::Reaped { .. } => return,
             TaskState::Doomed { cause, reason, .. } => {
                 let exit = (*cause, *reason);
-                *state = TaskState::Doomed { hart: None, cause: exit.0, reason: exit.1 };
+                *state = TaskState::Doomed {
+                    hart: None,
+                    cause: exit.0,
+                    reason: exit.1,
+                };
                 exit
-            },
-            _ => { *state = TaskState::Doomed { hart: None, cause, reason }; (cause, reason) }
+            }
+            _ => {
+                *state = TaskState::Doomed {
+                    hart: None,
+                    cause,
+                    reason,
+                };
+                (cause, reason)
+            }
         }
     };
     hooked(&task);
-    { let _commit = crate::work::unit::commit();
-      task.transform(TaskState::Reaped { cause, reason }); }
+    {
+        let _commit = crate::work::unit::commit();
+        task.transform(TaskState::Reaped { cause, reason });
+    }
     super::signal(WakeKey::Task { id: task.ident.id });
     task.ident.team.life.notify();
     HUSKS.lock().push(task);
@@ -103,7 +113,11 @@ pub fn quit() -> usize {
             _ => (TaskExitCause::Reap, requested),
         };
         // Publish detachment in the same critical section as slot removal.
-        *state = TaskState::Doomed { hart: None, cause, reason };
+        *state = TaskState::Doomed {
+            hart: None,
+            cause,
+            reason,
+        };
         drop(state);
         (task, next, reason)
     };
@@ -133,7 +147,11 @@ pub fn quit() -> usize {
     // diagnostic snapshot requires no Observe call or mirrored Task flag.
     let owner = {
         let _commit = crate::work::unit::commit();
-        exited.ident.team.life.member(tid)
+        exited
+            .ident
+            .team
+            .life
+            .member(tid)
             .and_then(|m| m.receipts.lock().first().map(|r| r.owner))
     };
     ledger::note(tid, reason, text, owner);

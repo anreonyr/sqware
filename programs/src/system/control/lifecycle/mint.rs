@@ -1,7 +1,4 @@
-use super::super::unit::{
-
-    {Control, Pending},
-};
+use super::super::unit::{Control, Pending};
 use super::{Action, Active, Operations};
 use crate::system::control::unit::{
     table::{Slot, State},
@@ -9,10 +6,7 @@ use crate::system::control::unit::{
 };
 use ::schedule::{Progress, Res, ResMut};
 
-pub fn pre(
-    active: Res<Active>,
-    mut control: ResMut<Control>,
-) -> Result<Progress, Fail> {
+pub fn pre(active: Res<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     let p = control.input(&job.request.name)?.program;
     if control.input(p.name())?.image.is_none() {
@@ -28,10 +22,7 @@ pub fn pre(
     control.pending.try_reserve(1).map_err(|_| Fail::Full)?;
     Ok(Progress::Done)
 }
-pub fn post(
-    mut active: ResMut<Active>,
-    mut control: ResMut<Control>,
-) -> Result<Progress, Fail> {
+pub fn post(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
     let name = control.input(&job.request.name)?.program.name();

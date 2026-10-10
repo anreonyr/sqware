@@ -14,8 +14,8 @@ mod debug;
 pub(crate) mod mail;
 mod memory;
 pub(crate) mod pie;
-mod room;
 pub(crate) mod resources;
+mod room;
 pub(crate) mod tole;
 mod unit;
 
@@ -98,7 +98,6 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         EnvCall::Debug(DebugCall::SetTrace { on }) => {
             frame.gpr.set_x(Gprs::A0, debug::set_trace(on));
         }
-
     };
     frame as *mut TrapContext
 }

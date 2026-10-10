@@ -39,9 +39,7 @@ pub(super) fn faces(
     mut faces: ResMut<Faces>,
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    faces
-        .0
-        .try_reserve_exact(Grant::ALL.len())?;
+    faces.0.try_reserve_exact(Grant::ALL.len())?;
     for grant in Grant::ALL {
         let (token, _) = mount::entry(grant.mark(), grant.name()).map_err(|_| Fail::Tree)?;
         port::ship(
@@ -51,7 +49,11 @@ pub(super) fn faces(
             Policy::VEST,
         )
         .map_err(|_| Fail::Tree)?;
-        pile.attach(env::Source::Mail { pie: token, condition: MailCondition::Pull }).map_err(|_| Fail::Desk)?;
+        pile.attach(env::Source::Mail {
+            pie: token,
+            condition: MailCondition::Pull,
+        })
+        .map_err(|_| Fail::Desk)?;
         faces.0.push((token, grant));
     }
     Ok(Progress::Done)
@@ -64,7 +66,8 @@ pub(super) fn wait(
     ready.0 = pile
         .await_(Wait::AtMost(100))
         .map_err(|_| Fail::Dead)?
-        .mail().and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
+        .mail()
+        .and_then(|(entry, _)| faces.0.iter().find(|(token, _)| *token == entry).copied());
     Ok(Progress::Done)
 }
 pub(super) fn receive(
@@ -113,11 +116,10 @@ pub(super) fn select(
         .map(Current::Received)
         .unwrap_or(Current::Empty);
     if matches!(*current, Current::Received(_)) {
-        dispatch
-            .select(Invocation {
-                key: (),
-                cursor: Default::default(),
-            })?;
+        dispatch.select(Invocation {
+            key: (),
+            cursor: Default::default(),
+        })?;
     }
     Ok(Progress::Done)
 }
@@ -133,18 +135,17 @@ pub(super) fn reply(mut current: ResMut<Current>) -> Result<Progress, Fail> {
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
-    if dispatch
-        .take_result()?
-        .result
-        .is_err()
-    {
+    if dispatch.take_result()?.result.is_err() {
         return Err(Fail::Book);
     }
     Ok(Progress::Done)
 }
 pub(super) fn close(faces: Res<Faces>, pile: Res<Pile>) -> Result<Progress, Fail> {
     for (entry, _) in &faces.0 {
-        let _ = pile.detach(env::Source::Mail { pie: *entry, condition: MailCondition::Pull });
+        let _ = pile.detach(env::Source::Mail {
+            pie: *entry,
+            condition: MailCondition::Pull,
+        });
         let _ = pie::seal(*entry);
         let _ = pie::release(*entry, env::ReleaseMode::Revoke);
     }

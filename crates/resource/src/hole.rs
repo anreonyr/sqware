@@ -1,6 +1,6 @@
 //! 私有孔句柄：只供正式资源封装组合使用。
 
-use env::{MailCondition, MailResult, PieResult, PieToken, Wait, TaskId};
+use env::{MailCondition, MailResult, PieResult, PieToken, TaskId, Wait};
 
 pub(crate) struct Hole {
     token: PieToken,
@@ -28,6 +28,8 @@ impl Hole {
     }
 
     pub(crate) fn unseal(mark: env::Mark) -> PieResult<Self> {
-        Ok(Self::from_raw(env::pie::unseal(env::UnsealArgs::hole(mark))?))
+        Ok(Self::from_raw(env::pie::unseal(env::UnsealArgs::hole(
+            mark,
+        ))?))
     }
 }

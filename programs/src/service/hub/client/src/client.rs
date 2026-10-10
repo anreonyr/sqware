@@ -5,18 +5,18 @@
 //! 答完当场放下。
 //! **传输失败折进 Fail::Bad**：借不出回信孔 / 推不出去 / 超时 / 答话形状不对——四件事对
 
-use alloc::string::String;
-use env::{Access, Policy, MailCondition, PieKind, PieToken, TaskId, Wait};
 use ::resource::port;
+use alloc::string::String;
+use env::{Access, MailCondition, PieKind, PieToken, Policy, TaskId, Wait};
 
 use ipc::hand::{Receiver, RecvFail};
 use ipc::session::establish;
 use wire::message::Message;
 
+use ::resource::raw::Hole;
+use env::pie;
 use hub_api::Fail;
 use hub_api::frame::{self, BACK_MARK};
-use env::pie;
-use ::resource::raw::{Hole};
 
 /// 一面 hub 的门牌：**树上查回来的那一枚** ＋ 它的开者（hub）
 pub struct Face {

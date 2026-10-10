@@ -5,7 +5,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use env::{Wait, TaskId, TeamId, UnitResult};
+use env::{TaskId, TeamId, UnitResult, Wait};
 
 use super::tls;
 use crate::room::{wait, wake};
@@ -67,30 +67,42 @@ impl<T> Join<T> {
                 let slot = self.slot;
                 core::mem::forget(self);
                 let result = unsafe { (*slot).result.take() }.expect("joined task lost result");
-                unsafe { drop(Box::from_raw(slot)); }
+                unsafe {
+                    drop(Box::from_raw(slot));
+                }
                 return result;
             }
             // Native completion also covers faults before the closure writes T.
             // Recheck DONE after observing Reaped: the child could have finished
             // between the first load and the kernel observation.
             if finished(self.id)
-                && unsafe { (*self.slot).state.load(Ordering::Acquire) } & DONE == 0 {
+                && unsafe { (*self.slot).state.load(Ordering::Acquire) } & DONE == 0
+            {
                 let slot = self.slot;
                 core::mem::forget(self);
-                unsafe { drop(Box::from_raw(slot)); }
+                unsafe {
+                    drop(Box::from_raw(slot));
+                }
                 panic!("joined task exited without a Rust result");
             }
             let _ = wait(self.slot as usize, Wait::AtMost(1_000));
         }
     }
-
 }
 
 // A detached Rust value is reclaimed after native Reaped, including faults
 // before DONE. This list owns heap slots, never native exit facts or receipts.
-struct Detached { task: TaskId, slot: usize, release: unsafe fn(usize) }
+struct Detached {
+    task: TaskId,
+    slot: usize,
+    release: unsafe fn(usize),
+}
 static DETACHED: crate::lock::Lock<Vec<Detached>> = crate::lock::Lock::new(Vec::new());
-unsafe fn release<T>(slot: usize) { unsafe { drop(Box::from_raw(slot as *mut Completion<T>)); } }
+unsafe fn release<T>(slot: usize) {
+    unsafe {
+        drop(Box::from_raw(slot as *mut Completion<T>));
+    }
+}
 // Private to tasks minted by this runtime in its own Team: observation authority
 // cannot be revoked. Denied here means the terminal member has been pruned,
 // so it permits freeing its heap slot, never inventing a successful T or reason.
@@ -107,21 +119,33 @@ fn sweep() {
         if finished(pending[at].task) {
             let item = pending.swap_remove(at);
             // Destructors run outside the registry lock and can drop other Joins.
-            unsafe { (item.release)(item.slot); }
-        } else { at += 1; }
+            unsafe {
+                (item.release)(item.slot);
+            }
+        } else {
+            at += 1;
+        }
     }
-    if !pending.is_empty() { DETACHED.with(|list| list.append(&mut pending)); }
+    if !pending.is_empty() {
+        DETACHED.with(|list| list.append(&mut pending));
+    }
 }
 impl<T> Drop for Join<T> {
     fn drop(&mut self) {
         sweep();
         let previous = unsafe { (*self.slot).state.fetch_or(LEFT, Ordering::AcqRel) };
         if previous & DONE != 0 {
-            unsafe { drop(Box::from_raw(self.slot)); }
+            unsafe {
+                drop(Box::from_raw(self.slot));
+            }
         } else {
-            DETACHED.with(|list| list.push(Detached {
-                task: self.id, slot: self.slot as usize, release: release::<T>,
-            }));
+            DETACHED.with(|list| {
+                list.push(Detached {
+                    task: self.id,
+                    slot: self.slot as usize,
+                    release: release::<T>,
+                })
+            });
         }
     }
 }
@@ -186,7 +210,8 @@ where
     if let Err(error) = env_task::embark_task(task_id) {
         let _ = env_task::slay_task(task_id);
         if env_task::join_task(task_id, Wait::Forever)
-            .unwrap_or_else(|error| error.source == env::UnitFail::Denied) {
+            .unwrap_or_else(|error| error.source == env::UnitFail::Denied)
+        {
             unsafe {
                 drop(Box::from_raw(ptr as *mut Box<dyn FnOnce() + Send>));
                 drop(Box::from_raw(slot));

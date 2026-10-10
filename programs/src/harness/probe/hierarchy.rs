@@ -173,8 +173,24 @@ pub(crate) fn exercise(
     .unwrap();
     let coalition = organization.found(wait).unwrap();
     organization.admit(coalition, p, wait).unwrap();
-    face(Grant::Activate).call(Wire::Activate(service, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), wait).unwrap();
-    face(Grant::Activate).call(Wire::Activate(target, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), wait).unwrap();
+    face(Grant::Activate)
+        .call(
+            Wire::Activate(
+                service,
+                system_api::identity::CoalitionSet::new(&[coalition]).unwrap(),
+            ),
+            wait,
+        )
+        .unwrap();
+    face(Grant::Activate)
+        .call(
+            Wire::Activate(
+                target,
+                system_api::identity::CoalitionSet::new(&[coalition]).unwrap(),
+            ),
+            wait,
+        )
+        .unwrap();
     {
         {
             let registration = crate::system::publication::Registration {
@@ -352,7 +368,10 @@ pub(crate) fn exercise(
                 })
                 .unwrap();
         }
-        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("hierarchy-stale-condition"))).unwrap();
+        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of(
+            "hierarchy-stale-condition",
+        )))
+        .unwrap();
         assembly
             .resources
             .write::<crate::system::publication::Publications>()

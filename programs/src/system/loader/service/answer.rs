@@ -64,11 +64,13 @@ pub(super) fn receive(
             }
             Wire::Build(ask) => {
                 pending.push(crate::system::launch::Request {
-                    ask, from,
+                    ask,
+                    from,
                     delivery: crate::system::launch::Delivery {
                         owner: from,
                         identity: system_api::identity::Install::Inherit { parent: from },
-                        constructor: false, back,
+                        constructor: false,
+                        back,
                     },
                 });
             }

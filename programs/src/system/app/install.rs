@@ -3,7 +3,9 @@ use super::{boot, bootstrap::Boot, life, policy, wait};
 use crate::system::{control, identity, launch, loader, publication};
 use ::schedule::Resources;
 use alloc::vec::Vec;
-pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, crate::system::app::InstallError> {
+pub(crate) fn resources(
+    boot: Boot,
+) -> Result<Resources<'static>, crate::system::app::InstallError> {
     let status = boot::status();
     let mut resources = Resources::new();
     publication::register(&mut resources)?;
@@ -39,12 +41,12 @@ pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, crate::system:
         .insert(policy::Flow {
             settling: false,
             forced: false,
-            done: false
+            done: false,
         })?
         .insert(policy::Activity {
             owed: 0,
             quiet: env::chrono::clock(),
-            walking: false
+            walking: false,
         })?
         .insert(policy::Bound(env::Wait::POLL))?
         .insert(policy::Shutoff(None))?
@@ -53,7 +55,7 @@ pub(crate) fn resources(boot: Boot) -> Result<Resources<'static>, crate::system:
             tokens: Vec::new(),
             writes: Vec::new(),
             subs: Vec::new(),
-            armed: false
+            armed: false,
         })?
         .insert(life::Deadline(0))?;
     Ok(resources)

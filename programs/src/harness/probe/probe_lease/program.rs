@@ -9,9 +9,7 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
         scope: crate::unit::PublishScope(4),
         group: "fixtures",
         road: "svc/fixtures",
-        entries: &[crate::unit::PublishEntry {
-            name: "lease",
-        }],
+        entries: &[crate::unit::PublishEntry { name: "lease" }],
         public: false,
     }],
     identity: Identity {

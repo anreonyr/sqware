@@ -13,7 +13,10 @@ const TITLE: &str = "sqware: boot failed";
 
 #[derive(Debug)]
 pub enum BootError {
-    Machine { dtp: usize, source: MachineError },
+    Machine {
+        dtp: usize,
+        source: MachineError,
+    },
     Allocator(erra::Error<InitError>),
     PagingMode(SatpError),
     KernelSpace(erra::Error<MapError>),
@@ -24,12 +27,27 @@ pub enum BootError {
     #[cfg(debug_assertions)]
     Dependencies(crate::lock::DepInitError),
     MissingImage,
-    InvalidEntryImage { base: usize, size: usize },
-    Mapping { operation: MapOperation, source: MapError },
-    Resources { operation: ResourceOperation, source: env::PieFail },
+    InvalidEntryImage {
+        base: usize,
+        size: usize,
+    },
+    Mapping {
+        operation: MapOperation,
+        source: MapError,
+    },
+    Resources {
+        operation: ResourceOperation,
+        source: env::PieFail,
+    },
     Bootstrap(MapError),
-    BootstrapRelease { task: env::TaskId, source: env::UnitFail },
-    HartStart { hart: HartId, source: erra::Error<sbi::ecall::SError> },
+    BootstrapRelease {
+        task: env::TaskId,
+        source: env::UnitFail,
+    },
+    HartStart {
+        hart: HartId,
+        source: erra::Error<sbi::ecall::SError>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,10 +107,14 @@ impl BootError {
             #[cfg(debug_assertions)]
             Self::Dependencies(source) => {
                 field!("operation", "initialize lock dependencies");
-                field!("reason", "{}", match source {
-                    crate::lock::DepInitError::OutOfMemory => "out of memory",
-                    crate::lock::DepInitError::AlreadyInit => "already initialized",
-                });
+                field!(
+                    "reason",
+                    "{}",
+                    match source {
+                        crate::lock::DepInitError::OutOfMemory => "out of memory",
+                        crate::lock::DepInitError::AlreadyInit => "already initialized",
+                    }
+                );
             }
             Self::MissingImage => {
                 field!("operation", "load boot image");
@@ -105,25 +127,33 @@ impl BootError {
                 field!("reason", "invalid entry descriptor or capsule range");
             }
             Self::Mapping { operation, source } => {
-                field!("operation", "{}", match operation {
-                    MapOperation::AssembleCapsule => "assemble boot capsule",
-                    MapOperation::ImageView => "map boot image",
-                    MapOperation::LedgerView => "map resource ledger",
-                });
+                field!(
+                    "operation",
+                    "{}",
+                    match operation {
+                        MapOperation::AssembleCapsule => "assemble boot capsule",
+                        MapOperation::ImageView => "map boot image",
+                        MapOperation::LedgerView => "map resource ledger",
+                    }
+                );
                 field!("reason", "{source}");
             }
             Self::Resources { operation, source } => {
-                field!("operation", "{}", match operation {
-                    ResourceOperation::InitializeTraps => "initialize trap resources",
-                    ResourceOperation::InitializeCalls => "initialize call resources",
-                    ResourceOperation::Devices => "register device resources",
-                    ResourceOperation::Traps => "register trap resources",
-                    ResourceOperation::Calls => "register call resources",
-                    ResourceOperation::Freeze => "freeze resources",
-                    ResourceOperation::LedgerSize => "size resource ledger",
-                    ResourceOperation::Grant => "grant bootstrap resources",
-                    ResourceOperation::WriteLedger => "write resource ledger",
-                });
+                field!(
+                    "operation",
+                    "{}",
+                    match operation {
+                        ResourceOperation::InitializeTraps => "initialize trap resources",
+                        ResourceOperation::InitializeCalls => "initialize call resources",
+                        ResourceOperation::Devices => "register device resources",
+                        ResourceOperation::Traps => "register trap resources",
+                        ResourceOperation::Calls => "register call resources",
+                        ResourceOperation::Freeze => "freeze resources",
+                        ResourceOperation::LedgerSize => "size resource ledger",
+                        ResourceOperation::Grant => "grant bootstrap resources",
+                        ResourceOperation::WriteLedger => "write resource ledger",
+                    }
+                );
                 field!("reason", "{source}");
             }
             Self::Bootstrap(source) => reason!("create bootstrap task", source),
@@ -164,17 +194,31 @@ pub fn fail(error: BootError) -> ! {
         semihosting::process::abort();
     }
     let _ = sbi::SystemResetCall::new(sbi::fid::SystemReset::SystemReset)
-        .args(sbi::ecall::SArgs { a0: 0, a1: 1, ..Default::default() })
+        .args(sbi::ecall::SArgs {
+            a0: 0,
+            a1: 1,
+            ..Default::default()
+        })
         .call();
     halt::halt_loop()
 }
 
 #[cfg(debug_assertions)]
 pub fn accept() {
-    struct Buffer { bytes: [u8; 2048], len: usize }
+    struct Buffer {
+        bytes: [u8; 2048],
+        len: usize,
+    }
     impl Buffer {
-        fn new() -> Self { Self { bytes: [0; 2048], len: 0 } }
-        fn text(&self) -> &str { core::str::from_utf8(&self.bytes[..self.len]).unwrap() }
+        fn new() -> Self {
+            Self {
+                bytes: [0; 2048],
+                len: 0,
+            }
+        }
+        fn text(&self) -> &str {
+            core::str::from_utf8(&self.bytes[..self.len]).unwrap()
+        }
     }
     impl Write for Buffer {
         fn write_str(&mut self, text: &str) -> fmt::Result {
@@ -189,15 +233,21 @@ pub fn accept() {
     let mut output = Buffer::new();
     {
         let _guard = crate::memory::allocator::NoAllocation::enter();
-        BootError::Allocator(erra::Error::new("initializing allocator", InitError::OutOfMemory))
-            .print(&mut output);
+        BootError::Allocator(erra::Error::new(
+            "initializing allocator",
+            InitError::OutOfMemory,
+        ))
+        .print(&mut output);
     }
-    assert_eq!(output.text(), concat!(
-        "sqware: boot failed\n\n",
-        "  operation  initialize allocator\n",
-        "  context    initializing allocator\n",
-        "  reason     memory allocation failed while initializing allocator\n\n",
-    ));
+    assert_eq!(
+        output.text(),
+        concat!(
+            "sqware: boot failed\n\n",
+            "  operation  initialize allocator\n",
+            "  context    initializing allocator\n",
+            "  reason     memory allocation failed while initializing allocator\n\n",
+        )
+    );
 
     let error = BootError::HartStart {
         hart: HartId::new(2),
@@ -208,11 +258,14 @@ pub fn accept() {
         let _guard = crate::memory::allocator::NoAllocation::enter();
         error.print(&mut output);
     }
-    assert_eq!(output.text(), concat!(
-        "sqware: boot failed\n\n",
-        "  operation  start hart\n",
-        "  hart       2\n",
-        "  context    s-mode environment call\n",
-        "  reason     access denied\n\n",
-    ));
+    assert_eq!(
+        output.text(),
+        concat!(
+            "sqware: boot failed\n\n",
+            "  operation  start hart\n",
+            "  hart       2\n",
+            "  context    s-mode environment call\n",
+            "  reason     access denied\n\n",
+        )
+    );
 }

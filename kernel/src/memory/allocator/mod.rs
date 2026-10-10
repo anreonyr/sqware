@@ -43,13 +43,15 @@ pub fn init() -> InitResult<()> {
     bump::init()?;
     portal::switch(portal::Backend::Bump);
 
-    statistics::init().map_err(|error| erra::Error::new(
-        "initializing allocator statistics",
-        match error {
-            statistics::Error::AlreadyInitialized => InitError::AlreadyInitialized,
-            statistics::Error::OutOfMemory => InitError::OutOfMemory,
-        },
-    ))?;
+    statistics::init().map_err(|error| {
+        erra::Error::new(
+            "initializing allocator statistics",
+            match error {
+                statistics::Error::AlreadyInitialized => InitError::AlreadyInitialized,
+                statistics::Error::OutOfMemory => InitError::OutOfMemory,
+            },
+        )
+    })?;
 
     hybrid::init()?;
     portal::switch(portal::Backend::Hybrid);

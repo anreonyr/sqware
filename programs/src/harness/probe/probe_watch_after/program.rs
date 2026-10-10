@@ -12,9 +12,7 @@ pub static PROBE_WATCH_AFTER: UnitFile = UnitFile {
         scope: crate::unit::PublishScope(4),
         group: "probe-swatch",
         road: "svc/probe-swatch",
-        entries: &[crate::unit::PublishEntry {
-            name: "in",
-        }],
+        entries: &[crate::unit::PublishEntry { name: "in" }],
         public: false,
     }],
     identity: Identity {

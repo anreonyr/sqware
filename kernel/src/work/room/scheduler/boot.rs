@@ -10,8 +10,8 @@ use super::trap::run;
 pub fn init() -> Result<(), MapError> {
     let n = hart::hart_count();
     assert!(n > 0, "no harts");
-    let mut sched = Box::<[Scheduler]>::try_new_uninit_slice(n)
-        .map_err(|_| MapError::OutOfMemory)?;
+    let mut sched =
+        Box::<[Scheduler]>::try_new_uninit_slice(n).map_err(|_| MapError::OutOfMemory)?;
     for (h, slot) in sched.iter_mut().enumerate() {
         slot.write(Scheduler::new(hart::HartId::new(h)));
     }

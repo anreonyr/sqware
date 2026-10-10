@@ -145,8 +145,15 @@ fn reference(root: TaskId) -> control::Object {
 }
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
-    let heirs = { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
-            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") };
+    let heirs = {
+        let mut page = [0u64; 64];
+        env::unit::scan(
+            env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize),
+            page.len(),
+        )
+        .expect("Scan heirs")
+    };
     let authority = assembly
         .resources
         .read::<crate::system::control::identity::Roster>()
@@ -178,10 +185,10 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         until(|| s.entry.load(Ordering::Acquire) != 0);
         let entry = ipc::session::establish::find(account_task, account_api::ENTRY).unwrap();
         // Oversized input must be discarded before the valid requests below.
-        resource::raw::Hole::from_raw(entry).push(&[0; 65], WAIT).unwrap();
-        let client =
-            Client::of(entry)
-                .unwrap();
+        resource::raw::Hole::from_raw(entry)
+            .push(&[0; 65], WAIT)
+            .unwrap();
+        let client = Client::of(entry).unwrap();
         let lifecycle =
             Face::of(ipc::session::establish::find(root, control::ASK_MARK).unwrap()).unwrap();
         assert_eq!(
@@ -304,7 +311,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             )
             .unwrap();
             let said = sender
-                .call(ipc::time::Deadline::new(WAIT), |back| api::Request { constructor: false,
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                    constructor: false,
                     image: system_api::loader::Ask {
                         op: system_api::loader::BUILD,
                         image: env::PieToken::NONE,
@@ -327,7 +335,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             p.creator_request.store(true, Ordering::Release);
             until(|| p.creator_ready.load(Ordering::Acquire));
             let said = sender
-                .call(ipc::time::Deadline::new(WAIT), |back| api::Request { constructor: false,
+                .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+                    constructor: false,
                     image: system_api::loader::Ask {
                         op: system_api::loader::BUILD,
                         image: env::PieToken::NONE,
@@ -732,8 +741,15 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         );
     }
     assert_eq!(
-        { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
-            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") },
+        {
+            let mut page = [0u64; 64];
+            env::unit::scan(
+                env::TeamId::new(0),
+                env::VirtAddr::new(page.as_mut_ptr() as usize),
+                page.len(),
+            )
+            .expect("Scan heirs")
+        },
         heirs,
         "account-instance: runtime team leaked"
     );

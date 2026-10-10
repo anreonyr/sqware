@@ -83,19 +83,45 @@ fn construct(
     control: &mut Control,
     request: Request,
 ) -> Option<Launch> {
-    let Request { ask, from, delivery } = request;
+    let Request {
+        ask,
+        from,
+        delivery,
+    } = request;
     let result = control.create_instance(delivery.owner, || {
         let count = ask.count as usize;
-        if count > system_api::loader::MAX_ARGS { return Err(system_api::loader::Fail::Bad.into()); }
-        let bytes = crate::system::loader::snapshot(crate::system::loader::Source { from, ask: &ask })?;
+        if count > system_api::loader::MAX_ARGS {
+            return Err(system_api::loader::Fail::Bad.into());
+        }
+        let bytes =
+            crate::system::loader::snapshot(crate::system::loader::Source { from, ask: &ask })?;
         let mut args = [0; system_api::loader::MAX_ARGS];
-        for (to, from) in args.iter_mut().zip(&ask.args[..count]) { *to = *from as usize; }
-        loader.construct(Image { bytes: &bytes, kind: env::ProgramKind::User }, Spawn { args: &args[..count], stack: ask.stack as usize }).map_err(Into::into)
+        for (to, from) in args.iter_mut().zip(&ask.args[..count]) {
+            *to = *from as usize;
+        }
+        loader
+            .construct(
+                Image {
+                    bytes: &bytes,
+                    kind: env::ProgramKind::User,
+                },
+                Spawn {
+                    args: &args[..count],
+                    stack: ask.stack as usize,
+                },
+            )
+            .map_err(Into::into)
     });
     crate::system::loader::release_image(&ask, from);
     match result {
-        Ok(built) => Some(Launch { task: built.task, delivery }),
-        Err(fail) => { reply(delivery.back, Err(fail)); None }
+        Ok(built) => Some(Launch {
+            task: built.task,
+            delivery,
+        }),
+        Err(fail) => {
+            reply(delivery.back, Err(fail));
+            None
+        }
     }
 }
 pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
@@ -126,21 +152,33 @@ pub fn completed(
 
 pub(crate) mod hooks;
 
-pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), ::schedule::resource::AccessError> {
-    resources
-        .insert(Pending::default())?;
+pub(crate) fn install(
+    resources: &mut ::schedule::Resources<'static>,
+) -> Result<(), ::schedule::resource::AccessError> {
+    resources.insert(Pending::default())?;
     Ok(())
 }
 
-fn dispatch(mut inbox: ResMut<crate::system::control::Construction>, mut pending: ResMut<Pending>) -> Result<Progress, crate::system::app::Fault> {
+fn dispatch(
+    mut inbox: ResMut<crate::system::control::Construction>,
+    mut pending: ResMut<Pending>,
+) -> Result<Progress, crate::system::app::Fault> {
     for (request, from, back, approved) in inbox.drain() {
         if !approved {
             crate::system::loader::release_image(&request.image, from);
             reply(back, Err(Fail::Denied));
             continue;
         }
-        pending.push(Request { ask: request.image, from: from,
-            delivery: Delivery { owner: request.owner, identity: system_api::identity::Install::Authorized(request.subject), constructor: request.constructor, back: back } });
+        pending.push(Request {
+            ask: request.image,
+            from: from,
+            delivery: Delivery {
+                owner: request.owner,
+                identity: system_api::identity::Install::Authorized(request.subject),
+                constructor: request.constructor,
+                back: back,
+            },
+        });
     }
     Ok(Progress::Done)
 }

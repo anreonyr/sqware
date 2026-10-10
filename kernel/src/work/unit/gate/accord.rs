@@ -49,12 +49,14 @@ pub(crate) fn accord(
         granted.parent(src, Arc::downgrade(caller));
         // Reserve both records before changing either side, including ONLY's heir.
         caller
-            .gate.heirs
+            .gate
+            .heirs
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         target
-            .gate.pies
+            .gate
+            .pies
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
@@ -110,8 +112,11 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
     if cleared {
         super::remove_heir(task, token, expected.token);
     }
-    drop(commit_guard); drop(gate_guard);
-    if cleared { super::notify(task.ident.id, token); }
+    drop(commit_guard);
+    drop(gate_guard);
+    if cleared {
+        super::notify(task.ident.id, token);
+    }
     cleared
 }
 

@@ -165,17 +165,25 @@ impl Face {
 
 fn road_to_id(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, Fail> {
     let until = deadline(wait);
-    super::lookup::until(|| route(session, road, remain(until)), |backoff| {
-        if remain(until) == Wait::POLL { return false; }
-        let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
-        remain(until) != Wait::POLL
-    })
+    super::lookup::until(
+        || route(session, road, remain(until)),
+        |backoff| {
+            if remain(until) == Wait::POLL {
+                return false;
+            }
+            let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
+            remain(until) != Wait::POLL
+        },
+    )
 }
 fn route(session: &Session, road: &Path, wait: Wait) -> Result<EntryId, super::lookup::Failure> {
     use super::lookup::Failure;
-    let said = session.call::<Call>(ocall::Req::Road(road.to_path_buf()), wait)
+    let said = session
+        .call::<Call>(ocall::Req::Road(road.to_path_buf()), wait)
         .map_err(|_| Failure::Stop(Fail::Unknown))?;
-    if said.failure_status() == Some(ocall::UNKNOWN) { return Err(Failure::Missing); }
+    if said.failure_status() == Some(ocall::UNKNOWN) {
+        return Err(Failure::Missing);
+    }
     said.entry().map_err(|code| Failure::Stop(map_code(code)))
 }
 

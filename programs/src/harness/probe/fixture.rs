@@ -78,7 +78,10 @@ fn inject(
 }
 impl Fixture {
     pub(crate) fn new(boot: Boot) -> Result<Self, ()> {
-        let mut resources = crate::system::app::install::resources(boot).map_err(|why| { programs::debug::put(&alloc::format!("system: install {}", why)); () })?;
+        let mut resources = crate::system::app::install::resources(boot).map_err(|why| {
+            programs::debug::put(&alloc::format!("system: install {}", why));
+            ()
+        })?;
         resources
             .insert(Fault {
                 armed: false,
@@ -131,7 +134,10 @@ impl Fixture {
         }
         start
             .advance(&mut Cursor::default(), &resources)
-            .map_err(|why| { programs::debug::put(&alloc::format!("fixture startup: {why:?}")); () })?;
+            .map_err(|why| {
+                programs::debug::put(&alloc::format!("fixture startup: {why:?}"));
+                ()
+            })?;
         Ok(Self {
             resources,
             plans,

@@ -13,11 +13,15 @@ pub(crate) struct StackWindow;
 
 impl StackWindow {
     pub(crate) fn locate(inner: &SpaceInner, size: usize) -> Result<VirtAddr, MapError> {
-        if size == 0 || !size.is_multiple_of(PAGE_SIZE) { return Err(MapError::NotAligned); }
+        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::NotAligned);
+        }
         let segment = inner.user.as_ref().ok_or(MapError::NoRegion)?;
-        let base = segment.gaps().rev().find_map(|(start, end)| {
-            end.checked_sub(size).filter(|&base| base >= start)
-        }).ok_or(MapError::OutOfMemory)?;
+        let base = segment
+            .gaps()
+            .rev()
+            .find_map(|(start, end)| end.checked_sub(size).filter(|&base| base >= start))
+            .ok_or(MapError::OutOfMemory)?;
         Ok(VirtAddr::wrap(base))
     }
 

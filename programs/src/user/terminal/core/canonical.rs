@@ -13,7 +13,11 @@ pub struct Canonical {
 
 impl Canonical {
     pub fn new() -> Self {
-        Self { raw: [0; LINE_MAX], n: 0, cr: false }
+        Self {
+            raw: [0; LINE_MAX],
+            n: 0,
+            cr: false,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -56,7 +60,11 @@ impl Canonical {
             0x04 => {
                 let n = self.n;
                 self.n = 0;
-                let input = if n == 0 { Input::Eof } else { Input::Line(&self.raw[..n]) };
+                let input = if n == 0 {
+                    Input::Eof
+                } else {
+                    Input::Line(&self.raw[..n])
+                };
                 Effect::new(b"^D", input)
             }
             _ => {
@@ -76,9 +84,13 @@ impl Canonical {
 
     /// Removes a UTF-8 byte sequence. Wide and combining glyphs are not measured.
     fn erase(&mut self) -> usize {
-        if self.n == 0 { return 0; }
+        if self.n == 0 {
+            return 0;
+        }
         let mut k = self.n - 1;
-        while k > 0 && (self.raw[k] & 0xC0) == 0x80 { k -= 1; }
+        while k > 0 && (self.raw[k] & 0xC0) == 0x80 {
+            k -= 1;
+        }
         self.n = k;
         if self.raw[k] < 0x20 { 2 } else { 1 }
     }

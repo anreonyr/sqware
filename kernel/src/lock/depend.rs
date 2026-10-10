@@ -84,11 +84,10 @@ struct HeldSet {
 impl HeldSet {
     fn new() -> Result<HeldSet, DepInitError> {
         let mut slots = Vec::new();
-        slots.try_reserve_exact(MAX_HELD).map_err(|_| DepInitError::OutOfMemory)?;
-        Ok(HeldSet {
-            len: 0,
-            slots,
-        })
+        slots
+            .try_reserve_exact(MAX_HELD)
+            .map_err(|_| DepInitError::OutOfMemory)?;
+        Ok(HeldSet { len: 0, slots })
     }
 
     fn max_level(&self) -> Option<Level> {
@@ -149,15 +148,17 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
         return Err(DepInitError::AlreadyInit);
     }
     let n = hart_count.clamp(1, crate::layout::MAX_HART_SLOTS);
-    let mut cells = Box::<[HeldCell]>::try_new_uninit_slice(n)
-        .map_err(|_| DepInitError::OutOfMemory)?;
+    let mut cells =
+        Box::<[HeldCell]>::try_new_uninit_slice(n).map_err(|_| DepInitError::OutOfMemory)?;
     for index in 0..n {
         let set = match HeldSet::new() {
             Ok(set) => set,
             Err(error) => {
                 for cell in &mut cells[..index] {
                     // SAFETY: these earlier entries were initialized below.
-                    unsafe { cell.assume_init_drop(); }
+                    unsafe {
+                        cell.assume_init_drop();
+                    }
                 }
                 return Err(error);
             }

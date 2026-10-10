@@ -15,7 +15,10 @@ impl Deadline {
             Wait::Forever => None,
             Wait::AtMost(ms) => Some(ms),
         };
-        Self { started: chrono::clock(), budget_ms }
+        Self {
+            started: chrono::clock(),
+            budget_ms,
+        }
     }
 
     /// Remaining time preserves the established floor-to-milliseconds conversion.

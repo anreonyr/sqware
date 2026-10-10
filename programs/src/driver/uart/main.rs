@@ -15,11 +15,11 @@ mod adapt;
 mod dev;
 
 use crate::dev::uart as device;
+use ::resource::pile::Pile;
 use env::{MailCondition, Wait};
 use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, DRAIN_MAX};
 use programs::unit::uart::E_UART;
-use ::resource::pile::Pile;
 
 const MS: usize = 1000;
 
@@ -33,11 +33,17 @@ fn main() -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile
-        .attach(env::Source::Mail { pie: desk.tx.ship(), condition: MailCondition::Signal(env::Bit::FIRST) })
+        .attach(env::Source::Mail {
+            pie: desk.tx.ship(),
+            condition: MailCondition::Signal(env::Bit::FIRST),
+        })
         .is_err()
         || pile.attach(desk.rx_w.source()).is_err()
         || pile
-            .attach(env::Source::Mail { pie: lane, condition: MailCondition::Pull })
+            .attach(env::Source::Mail {
+                pie: lane,
+                condition: MailCondition::Pull,
+            })
             .is_err()
     {
         return Err(Fail::at(E_UART, "desk"));
@@ -51,24 +57,38 @@ fn main() -> Result<(), Fail> {
             device::put(view, one.bytes());
         }
         if let Some(batch) = pending.take() {
-            if desk.rx_w.send_when_ready(&batch).map_err(|_| Fail::at(E_UART, "rx publish"))? {
+            if desk
+                .rx_w
+                .send_when_ready(&batch)
+                .map_err(|_| Fail::at(E_UART, "rx publish"))?
+            {
                 desk.line.exhaust().unwrap();
-            } else { pending = Some(batch); }
+            } else {
+                pending = Some(batch);
+            }
         }
         if pending.is_none() {
             while desk.line.receive(Wait::POLL).is_ok() {
                 let n = device::drain(view, &mut raw);
                 if let Some(batch) = Bytes::of(&raw[..n]) {
-                    if !desk.rx_w.send_when_ready(&batch).map_err(|_| Fail::at(E_UART, "rx publish"))? {
-                        pending = Some(batch); break;
+                    if !desk
+                        .rx_w
+                        .send_when_ready(&batch)
+                        .map_err(|_| Fail::at(E_UART, "rx publish"))?
+                    {
+                        pending = Some(batch);
+                        break;
                     }
                 }
                 // Hold IRQ ownership until its bytes have entered the RX ring.
                 desk.line.exhaust().unwrap();
             }
         }
-        if pending.is_none() { desk.rx_w.hush(); }
-        if pile.await_(Wait::Forever).is_err() { return Err(Fail::at(E_UART, "line gone")); }
-
+        if pending.is_none() {
+            desk.rx_w.hush();
+        }
+        if pile.await_(Wait::Forever).is_err() {
+            return Err(Fail::at(E_UART, "line gone"));
+        }
     }
 }

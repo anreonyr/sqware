@@ -2,19 +2,19 @@
 
 use super::desk;
 use crate::dev::rtc;
+use ::resource::pile::Pile;
+use ::resource::raw::Hole;
+use env::PAGE_SIZE;
+use env::pie;
 use env::{MailCondition, Wait};
+use ipc::hand::Sender;
+use programs::debug;
 use programs::driver::rtc::core::frame::Time;
 use programs::driver::rtc::core::host::{Host, Ring};
 use programs::driver::shared::device::Device;
 use programs::driver::shared::fail::Fail;
 use programs::unit::rtc::E_RTC;
-use ipc::hand::Sender;
-use programs::debug;
 use router_client as line;
-use env::PAGE_SIZE;
-use ::resource::pile::Pile;
-use env::pie;
-use ::resource::raw::{Hole};
 
 /// 常驻：**一只组等两个源**——门上有请求、线上有投递
 /// 两个源都是**事件**：请求是客人推来的，投递是设备自己拉线换来的，故等待没有期限
@@ -31,9 +31,17 @@ pub fn run(
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_RTC, "desk"))?;
     let entry_hole = Hole::from_raw(entry);
     let lane = held.hole().map_err(|_| Fail::at(E_RTC, "line"))?;
-    if pile.attach(env::Source::Mail { pie: entry_hole.token(), condition: MailCondition::Pull }).is_err()
+    if pile
+        .attach(env::Source::Mail {
+            pie: entry_hole.token(),
+            condition: MailCondition::Pull,
+        })
+        .is_err()
         || pile
-            .attach(env::Source::Mail { pie: lane, condition: MailCondition::Pull })
+            .attach(env::Source::Mail {
+                pie: lane,
+                condition: MailCondition::Pull,
+            })
             .is_err()
     {
         return Err(Fail::at(E_RTC, "desk"));

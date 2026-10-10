@@ -40,8 +40,11 @@ pub(super) fn tip(
         Policy::VEST,
     )
     .map_err(|_| Fail::Tree)?;
-    pile.attach(env::Source::Mail { pie: hole.token(), condition: MailCondition::Pull })
-        .map_err(|_| Fail::Desk)?;
+    pile.attach(env::Source::Mail {
+        pie: hole.token(),
+        condition: MailCondition::Pull,
+    })
+    .map_err(|_| Fail::Desk)?;
     Ok(Progress::Done)
 }
 pub(super) fn receive_tips(
@@ -76,11 +79,10 @@ pub(super) fn select(
 ) -> Result<Progress, Fail> {
     current.0 = tips.0.pop_front();
     if current.0.is_some() {
-        dispatch
-            .select(Invocation {
-                key: (),
-                cursor: Default::default(),
-            })?;
+        dispatch.select(Invocation {
+            key: (),
+            cursor: Default::default(),
+        })?;
     }
     Ok(Progress::Done)
 }
@@ -148,7 +150,13 @@ pub(super) fn guest(
             return Ok(Progress::Done);
         }
     }
-    if pile.attach(env::Source::Mail { pie: *ask, condition: MailCondition::Pull }).is_err() {
+    if pile
+        .attach(env::Source::Mail {
+            pie: *ask,
+            condition: MailCondition::Pull,
+        })
+        .is_err()
+    {
         desk.evict(*who, (*reply, *ask));
         let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
         return Ok(Progress::Done);
@@ -159,7 +167,10 @@ pub(super) fn guest(
     {
         debug::put("operator: guest acknowledgement failed");
         desk.evict(*who, (*reply, *ask));
-        let _ = pile.detach(env::Source::Mail { pie: *ask, condition: MailCondition::Pull });
+        let _ = pile.detach(env::Source::Mail {
+            pie: *ask,
+            condition: MailCondition::Pull,
+        });
     }
     Ok(Progress::Done)
 }
@@ -290,17 +301,16 @@ pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail
     Ok(Progress::Done)
 }
 pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progress, Fail> {
-    if dispatch
-        .take_result()?
-        .result
-        .is_err()
-    {
+    if dispatch.take_result()?.result.is_err() {
         return Err(Fail::Tree);
     }
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(env::Source::Mail { pie: tip.0, condition: MailCondition::Pull });
+    let _ = pile.detach(env::Source::Mail {
+        pie: tip.0,
+        condition: MailCondition::Pull,
+    });
     let _ = pie::seal(tip.0);
     let _ = pie::release(tip.0, env::ReleaseMode::Revoke);
     Ok(Progress::Done)

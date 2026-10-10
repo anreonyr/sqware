@@ -2,7 +2,7 @@
 extern crate alloc;
 pub mod frame;
 pub use frame::Request;
-pub use interface::{BACK, ENTRY, CHANNELS, INTERFACE_ID, REGISTRY};
+pub use interface::{BACK, CHANNELS, ENTRY, INTERFACE_ID, REGISTRY};
 pub const DIR: &system_api::operator::Path = system_api::operator::Path::new("/svc/account/create");
 fn reply_to(request: &(Request, bool)) -> env::PieToken {
     request.0.back

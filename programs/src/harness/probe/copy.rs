@@ -49,39 +49,80 @@ pub fn acceptance() {
 
 // Exercise Await's deadline through real suspension and unrelated group changes.
 fn waiting() {
-    use env::{AwaitReply, Bit, MailCondition, Source};
     use ::resource::pile::Pile;
+    use env::{AwaitReply, Bit, MailCondition, Source};
     let owner = unit::self_id();
     let mark = Mark::of("copy-wait-group");
     let group = Pile::unseal(true).unwrap();
-    let page = pie::unseal(env::UnsealArgs::Pole { size: env::PAGE_SIZE, shared: true }).unwrap();
+    let page = pie::unseal(env::UnsealArgs::Pole {
+        size: env::PAGE_SIZE,
+        shared: true,
+    })
+    .unwrap();
     let worker = execution::unit::task::spawn(move || {
         let token = ipc::session::establish::claim(owner, mark, Wait::AtMost(2000)).unwrap();
         let group = Pile::from_raw(token);
         let hole = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-        let source = Source::Mail { pie: hole, condition: MailCondition::Pull };
+        let source = Source::Mail {
+            pie: hole,
+            condition: MailCondition::Pull,
+        };
         env::room::park(20).unwrap();
         group.attach(source).unwrap();
         env::room::park(20).unwrap();
         group.detach(source).unwrap();
         pie::release(hole, env::ReleaseMode::Revoke).unwrap();
     });
-    pie::accord(group.token(), worker.id(), env::Permission::FETCH | env::Permission::STORE, mark).unwrap();
-    let first = Source::Mail { pie: page, condition: MailCondition::Signal(Bit::FIRST) };
-    let second = Source::Mail { pie: page, condition: MailCondition::Signal(Bit::of(1).unwrap()) };
-    group.attach(first).unwrap(); group.attach(second).unwrap();
+    pie::accord(
+        group.token(),
+        worker.id(),
+        env::Permission::FETCH | env::Permission::STORE,
+        mark,
+    )
+    .unwrap();
+    let first = Source::Mail {
+        pie: page,
+        condition: MailCondition::Signal(Bit::FIRST),
+    };
+    let second = Source::Mail {
+        pie: page,
+        condition: MailCondition::Signal(Bit::of(1).unwrap()),
+    };
+    group.attach(first).unwrap();
+    group.attach(second).unwrap();
     let start = env::chrono::clock();
     assert_eq!(group.await_(Wait::AtMost(80)).unwrap(), AwaitReply::Pending);
-    assert!(env::chrono::clock() - start >= 80_000_000, "copy: ordinary wake shortened Await deadline");
+    assert!(
+        env::chrono::clock() - start >= 80_000_000,
+        "copy: ordinary wake shortened Await deadline"
+    );
     worker.join();
-    env::mail::ring(page, Bit::FIRST).unwrap(); env::mail::ring(page, Bit::FIRST).unwrap();
+    env::mail::ring(page, Bit::FIRST).unwrap();
+    env::mail::ring(page, Bit::FIRST).unwrap();
     env::mail::ring(page, Bit::of(1).unwrap()).unwrap();
-    assert!(matches!(group.await_(Wait::POLL).unwrap(), AwaitReply::Source { fail: None, .. }));
-    env::mail::hush(page, Bit::FIRST).unwrap(); env::mail::hush(page, Bit::FIRST).unwrap();
-    assert_eq!(group.await_(Wait::POLL).unwrap(), AwaitReply::Source { source: second, fail: None });
+    assert!(matches!(
+        group.await_(Wait::POLL).unwrap(),
+        AwaitReply::Source { fail: None, .. }
+    ));
+    env::mail::hush(page, Bit::FIRST).unwrap();
+    env::mail::hush(page, Bit::FIRST).unwrap();
+    assert_eq!(
+        group.await_(Wait::POLL).unwrap(),
+        AwaitReply::Source {
+            source: second,
+            fail: None
+        }
+    );
     pie::release(page, env::ReleaseMode::Revoke).unwrap();
-    assert_eq!(group.await_(Wait::POLL).unwrap(), AwaitReply::Source { source: first, fail: Some(env::MailFail::Denied) });
-    group.detach(first).unwrap(); group.detach(second).unwrap();
+    assert_eq!(
+        group.await_(Wait::POLL).unwrap(),
+        AwaitReply::Source {
+            source: first,
+            fail: Some(env::MailFail::Denied)
+        }
+    );
+    group.detach(first).unwrap();
+    group.detach(second).unwrap();
     programs::debug::put("copy: page bits, source expiry and Await deadline passed");
 }
 
@@ -162,25 +203,78 @@ fn calls() {
     );
     assert_eq!(hole.peek().unwrap(), (4, owner, 1));
     let group = ::resource::pile::Pile::unseal(false).unwrap();
-    assert!(group.attach(env::Source::Mail { pie: read_only, condition: MailCondition::Push }).is_err());
-    group.attach(env::Source::Mail { pie: write_only, condition: MailCondition::Push }).unwrap();
+    assert!(
+        group
+            .attach(env::Source::Mail {
+                pie: read_only,
+                condition: MailCondition::Push
+            })
+            .is_err()
+    );
+    group
+        .attach(env::Source::Mail {
+            pie: write_only,
+            condition: MailCondition::Push,
+        })
+        .unwrap();
     assert!(matches!(
         group.await_(Wait::POLL).unwrap().mail(),
         Some((_, MailCondition::Push))
     ));
-    group.detach(env::Source::Mail { pie: write_only, condition: MailCondition::Push }).unwrap();
-    group.attach(env::Source::Mail { pie: read_only, condition: MailCondition::Pull }).unwrap();
+    group
+        .detach(env::Source::Mail {
+            pie: write_only,
+            condition: MailCondition::Push,
+        })
+        .unwrap();
+    group
+        .attach(env::Source::Mail {
+            pie: read_only,
+            condition: MailCondition::Pull,
+        })
+        .unwrap();
     assert!(matches!(
         group.await_(Wait::POLL).unwrap().mail(),
         Some((_, MailCondition::Pull))
     ));
-    group.detach(env::Source::Mail { pie: read_only, condition: MailCondition::Pull }).unwrap();
-    group.attach(env::Source::Mail { pie: write_only, condition: MailCondition::Empty }).unwrap();
+    group
+        .detach(env::Source::Mail {
+            pie: read_only,
+            condition: MailCondition::Pull,
+        })
+        .unwrap();
+    group
+        .attach(env::Source::Mail {
+            pie: write_only,
+            condition: MailCondition::Empty,
+        })
+        .unwrap();
     assert!(group.await_(Wait::POLL).unwrap().is_none());
-    assert!(group.attach(env::Source::Mail { pie: group.token(), condition: MailCondition::Pull }).is_err());
+    assert!(
+        group
+            .attach(env::Source::Mail {
+                pie: group.token(),
+                condition: MailCondition::Pull
+            })
+            .is_err()
+    );
     let bell = pie::unseal(UnsealArgs::Nole).unwrap();
-    assert!(group.attach(env::Source::Mail { pie: bell, condition: MailCondition::Push }).is_err());
-    assert!(group.attach(env::Source::Mail { pie: bell, condition: MailCondition::Empty }).is_err());
+    assert!(
+        group
+            .attach(env::Source::Mail {
+                pie: bell,
+                condition: MailCondition::Push
+            })
+            .is_err()
+    );
+    assert!(
+        group
+            .attach(env::Source::Mail {
+                pie: bell,
+                condition: MailCondition::Empty
+            })
+            .is_err()
+    );
     assert_eq!(
         hole.pull_with(&mut bytes, Wait::POLL, Oversize::Discard)
             .unwrap(),
@@ -498,8 +592,15 @@ fn elf() {
     assert_eq!(tokens(), before, "copy: loader cache survived its owner");
 
     let mut loader = Loader::new();
-    let heirs = { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
-            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") };
+    let heirs = {
+        let mut page = [0u64; 64];
+        env::unit::scan(
+            env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize),
+            page.len(),
+        )
+        .expect("Scan heirs")
+    };
     assert!(
         loader
             .build(Image {
@@ -508,8 +609,18 @@ fn elf() {
             })
             .is_err_and(|e| e.source == env::UnitFail::BadImage)
     );
-    assert_eq!({ let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
-            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") }, heirs);
+    assert_eq!(
+        {
+            let mut page = [0u64; 64];
+            env::unit::scan(
+                env::TeamId::new(0),
+                env::VirtAddr::new(page.as_mut_ptr() as usize),
+                page.len(),
+            )
+            .expect("Scan heirs")
+        },
+        heirs
+    );
     let minted = loader
         .build(Image {
             bytes: &bytes,

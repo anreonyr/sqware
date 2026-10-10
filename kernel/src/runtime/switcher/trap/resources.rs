@@ -29,19 +29,29 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
     registry
         .register(Name::Trap(Trap::SupervisorExternal), gate::boxed(external)?)
         .map_err(|e| e.into_parts().0)?;
-    let fault = gate::try_new_pie::<gate::Hole>(resources.page_fault.clone(), Mark::NONE, permission, None)?;
+    let fault = gate::try_new_pie::<gate::Hole>(
+        resources.page_fault.clone(),
+        Mark::NONE,
+        permission,
+        None,
+    )?;
     registry
         .register(Name::Trap(Trap::PageFault), gate::boxed(fault)?)
         .map_err(|e| e.into_parts().0)?;
     Ok(())
 }
 pub(crate) fn init() -> Result<(), PieFail> {
-    if RESOURCES.get().is_some() { return Ok(()) }
+    if RESOURCES.get().is_some() {
+        return Ok(());
+    }
     let resources = Resources {
         supervisor_external: nole::NoleMeta::try_new(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
         page_fault: hole::try_meta(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
     };
-    assert!(RESOURCES.set(resources).is_ok(), "trap resources already initialized");
+    assert!(
+        RESOURCES.set(resources).is_ok(),
+        "trap resources already initialized"
+    );
     Ok(())
 }
 pub(crate) fn get() -> &'static Resources {

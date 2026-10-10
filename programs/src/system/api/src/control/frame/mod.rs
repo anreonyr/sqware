@@ -196,7 +196,8 @@ impl Message for Request {
 /// 编一答：只有状态那一格（失败，或读不懂）
 pub const fn said_status(status: u8) -> Said {
     Said {
-        reason: 0, completed: false,
+        reason: 0,
+        completed: false,
         status,
         a: 0,
         task: TaskId::new(0),
@@ -206,7 +207,8 @@ pub const fn said_status(status: u8) -> Said {
 /// 编一答：`OK` ＋ 一个 State（只有 `state` 那一问用）
 pub const fn said_state(state: State) -> Said {
     Said {
-        reason: 0, completed: false,
+        reason: 0,
+        completed: false,
         status: OK,
         a: state.code(),
         task: TaskId::new(0),
@@ -216,7 +218,8 @@ pub const fn said_state(state: State) -> Said {
 /// 编一答：`OK` ＋ **那一条的身子**（只有 `embark` 那一问用）
 pub const fn said_task(task: TaskId) -> Said {
     Said {
-        reason: 0, completed: false,
+        reason: 0,
+        completed: false,
         status: OK,
         a: 0,
         task,

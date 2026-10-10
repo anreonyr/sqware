@@ -8,8 +8,7 @@ pub fn budget(
     operations: Res<Operations>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
-    dispatch
-        .begin(operations.0.len())?;
+    dispatch.begin(operations.0.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -38,11 +37,10 @@ pub fn select(
         Action::Ruin => Key::Ruin,
     };
     active.0 = Some(tracked.operation);
-    dispatch
-        .select(Invocation {
-            key,
-            cursor: tracked.cursor,
-        })?;
+    dispatch.select(Invocation {
+        key,
+        cursor: tracked.cursor,
+    })?;
     Ok(Progress::Done)
 }
 pub fn finish(

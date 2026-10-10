@@ -16,14 +16,14 @@ extern crate alloc;
 extern crate programs;
 
 use env::Wait;
+use env::unit;
+use ipc::rack::Mode;
+use ipc::session::Session;
 use programs::Report;
 use programs::driver::uart::client;
 use programs::harness::probe::rack as rig;
-use ipc::rack::Mode;
-use ipc::session::Session;
 use system_client::operator;
 use system_client::operator::Face;
-use env::unit;
 
 /// 等板 / 等树那一趟的额度（毫秒）
 const MS: usize = 1000;

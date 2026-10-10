@@ -252,9 +252,11 @@ pub fn acceptance() {
         .resolve(old_dependent, Wait::AtMost(1000))
         .unwrap();
     let activation = system_client::identity::Face::direct(
-        old_authority, Grant::Activate,
+        old_authority,
+        Grant::Activate,
         establish::find(old_authority, Grant::Activate.mark()).unwrap(),
-    ).unwrap();
+    )
+    .unwrap();
     assert!(
         hub_client::activate(&activation, old_dependent, &[coalition]).is_err(),
         "identity: qualification was not checked"
@@ -483,15 +485,34 @@ fn activation_boundary(
     let done = Arc::new(AtomicBool::new(false));
     let finished = done.clone();
     let caller = execution::unit::task::spawn(move || {
-        let entry = establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
-        let face = system_client::identity::Face::direct(authority, system_api::identity::Grant::Activate, entry).unwrap();
-        assert!(face.call(system_api::identity::Wire::Activate(hub, system_api::identity::CoalitionSet::new(&[coalition]).unwrap()), Wait::AtMost(1000)).is_err(), "activation accepted an unbound non-manager sender");
+        let entry =
+            establish::find(authority, system_api::identity::Grant::Activate.mark()).unwrap();
+        let face = system_client::identity::Face::direct(
+            authority,
+            system_api::identity::Grant::Activate,
+            entry,
+        )
+        .unwrap();
+        assert!(
+            face.call(
+                system_api::identity::Wire::Activate(
+                    hub,
+                    system_api::identity::CoalitionSet::new(&[coalition]).unwrap()
+                ),
+                Wait::AtMost(1000)
+            )
+            .is_err(),
+            "activation accepted an unbound non-manager sender"
+        );
         finished.store(true, Ordering::Release);
     });
     port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
     let until = env::chrono::clock() + 5_000_000_000;
     while !done.load(Ordering::Acquire) {
-        assert!(env::chrono::clock() < until, "activation boundary never answered");
+        assert!(
+            env::chrono::clock() < until,
+            "activation boundary never answered"
+        );
         execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
     caller.join();

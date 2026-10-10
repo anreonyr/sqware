@@ -3,14 +3,14 @@
 extern crate alloc;
 extern crate programs;
 mod auth;
+use account_client::Client;
 use env::{Wait, unit};
 use ipc::session::Session;
-use terminal_client::{Connection, Io, Read, Terminal};
-use system_client::control::Face as Lifecycle;
 use system_api::control::State;
-use account_client::Client;
+use system_client::control::Face as Lifecycle;
 use system_client::operator;
 use system_client::operator::Face;
+use terminal_client::{Connection, Io, Read, Terminal};
 use zeroize::Zeroizing;
 const WAIT: Wait = Wait::AtMost(5000);
 #[programs::entry]
@@ -90,8 +90,8 @@ fn run_shell(
     Ok(run.is_ok())
 }
 fn run() -> Result<(), &'static str> {
-    let session = Session::open(unit::sire(), operator::BERTH, WAIT)
-        .map_err(|_| "login: operator")?;
+    let session =
+        Session::open(unit::sire(), operator::BERTH, WAIT).map_err(|_| "login: operator")?;
     let tree = Face::of(session);
     let client = Client::find(&tree, WAIT).map_err(|_| "login: account endpoint")?;
     let lifecycle = Lifecycle::of(

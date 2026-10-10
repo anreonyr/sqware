@@ -140,7 +140,8 @@ fn main() -> Report<'static> {
     assert_ne!(first_entry, second_entry);
     let denied_group = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
     let denied_name = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-    let marked_without_right = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
+    let marked_without_right =
+        pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
     assert_eq!(
         publisher.publish(
             system_api::control::publication::Target::Service {

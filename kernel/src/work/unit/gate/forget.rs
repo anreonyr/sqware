@@ -22,7 +22,8 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             if super::locate(&lord, parent).is_none() {
                 return Err(PieFail::Denied);
             }
-            lord.gate.heirs
+            lord.gate
+                .heirs
                 .lock()
                 .try_reserve(nodes.len() - 1)
                 .map_err(|_| PieFail::OoM)?;
@@ -51,7 +52,9 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             let _ = crate::work::mail::pole::shut(&p, token);
         }
         super::notify(task.ident.id, token);
-        for (child, child_token) in nodes.iter().skip(1) { super::notify(child.ident.id, *child_token); }
+        for (child, child_token) in nodes.iter().skip(1) {
+            super::notify(child.ident.id, *child_token);
+        }
         return Ok(());
     }
     Err(PieFail::Busy)

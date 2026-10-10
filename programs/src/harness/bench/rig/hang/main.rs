@@ -19,10 +19,10 @@ use programs::Reason;
 
 use programs::harness::tick;
 
+use ::resource::raw::Hole;
+use env::unit;
 use ipc::session::establish;
 use programs::debug;
-use env::unit;
-use ::resource::raw::{Hole};
 
 /// 本端那枚泊位的名字（同时刻在孔上）：台主按这个名字认领它
 const MARK: &str = "wake";

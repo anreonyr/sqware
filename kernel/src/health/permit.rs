@@ -3,7 +3,7 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
-use env::{MailCondition, Mark, PieFail, PieToken, TaskId, MailFail};
+use env::{MailCondition, MailFail, Mark, PieFail, PieToken, TaskId};
 
 use crate::work::mail::tole::{Cell, Member};
 use crate::work::mail::{hole, nole, tole};
@@ -38,7 +38,8 @@ pub fn form() {
     let mark = Mark::of("permit");
     let meta = hole::meta(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
-        let mut pie = gate::boxed(gate::new_pie::<gate::Hole>(meta.clone(), mark, sole, sire)).expect("pie allocation");
+        let mut pie = gate::boxed(gate::new_pie::<gate::Hole>(meta.clone(), mark, sole, sire))
+            .expect("pie allocation");
         crate::expect!(
             gate::narrow(&mut pie, sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
@@ -74,11 +75,20 @@ pub fn form() {
 }
 
 fn cell(source: env::Source, key: WakeKey, life: alloc::sync::Weak<Life>) -> Cell {
-    Cell { source, actor: TaskId::new(0), member: Member::Mail, keys: Arc::new(alloc::vec![(key, life)]) }
+    Cell {
+        source,
+        actor: TaskId::new(0),
+        member: Member::Mail,
+        keys: Arc::new(alloc::vec![(key, life)]),
+    }
 }
 pub fn members() {
-    let group = tole::meta(TaskId::new(0)); let h = hole::meta(TaskId::new(0));
-    let source = env::Source::Mail { pie: PieToken::mint(123), condition: MailCondition::Pull };
+    let group = tole::meta(TaskId::new(0));
+    let h = hole::meta(TaskId::new(0));
+    let source = env::Source::Mail {
+        pie: PieToken::mint(123),
+        condition: MailCondition::Pull,
+    };
     let key = hole::key(&h, MailCondition::Pull);
     tole::attach(&group, cell(source, key, h.life())).unwrap();
     tole::attach(&group, cell(source, key, h.life())).unwrap();
@@ -90,25 +100,55 @@ pub fn members() {
     crate::expect!(group.cells_len() == 0, "失效后仍可幂等摘除");
 }
 pub fn fanout() {
-    let h = hole::meta(TaskId::new(0)); let key = hole::key(&h, MailCondition::Pull);
-    let source = env::Source::Mail { pie: PieToken::mint(124), condition: MailCondition::Pull };
+    let h = hole::meta(TaskId::new(0));
+    let key = hole::key(&h, MailCondition::Pull);
+    let source = env::Source::Mail {
+        pie: PieToken::mint(124),
+        condition: MailCondition::Pull,
+    };
     let mut groups = Vec::new();
-    for _ in 0..FWD_MAX { let group = tole::meta(TaskId::new(0)); tole::attach(&group, cell(source, key, h.life())).unwrap(); groups.push(group); }
+    for _ in 0..FWD_MAX {
+        let group = tole::meta(TaskId::new(0));
+        tole::attach(&group, cell(source, key, h.life())).unwrap();
+        groups.push(group);
+    }
     let extra = tole::meta(TaskId::new(0));
-    crate::expect!(matches!(tole::attach(&extra, cell(source, key, h.life())), Err(MailFail::OoM)), "转发满额显式失败");
+    crate::expect!(
+        matches!(
+            tole::attach(&extra, cell(source, key, h.life())),
+            Err(MailFail::OoM)
+        ),
+        "转发满额显式失败"
+    );
     crate::expect!(extra.cells_len() == 0, "失败完整回滚");
-    crate::expect!(groups.iter().all(|g| g.cells_len() == 1), "失败不影响既有登记");
+    crate::expect!(
+        groups.iter().all(|g| g.cells_len() == 1),
+        "失败不影响既有登记"
+    );
 }
 pub fn subs() {
-    let life = Life::new(); let key = WakeKey::Inspect { task: TaskId::new(7), token: 1 };
-    let source = env::Source::Inspect { task: TaskId::new(7), token: PieToken::mint(1) };
+    let life = Life::new();
+    let key = WakeKey::Inspect {
+        task: TaskId::new(7),
+        token: 1,
+    };
+    let source = env::Source::Inspect {
+        task: TaskId::new(7),
+        token: PieToken::mint(1),
+    };
     let group = tole::meta(TaskId::new(0));
     tole::attach(&group, cell(source, key, Arc::downgrade(&life))).unwrap();
     crate::expect!(group.has_cells(), "登记身份阻止组转授观察权");
     tole::seal(&group);
     crate::expect!(group.cells_len() == 0, "封印清理全部登记");
     let before = messenger::site_count();
-    crate::expect!(messenger::signal(WakeKey::Inspect { task: TaskId::new(9999), token: 9 }) == 0, "未登记的引用变化不建站点");
+    crate::expect!(
+        messenger::signal(WakeKey::Inspect {
+            task: TaskId::new(9999),
+            token: 9
+        }) == 0,
+        "未登记的引用变化不建站点"
+    );
     crate::expect!(messenger::site_count() == before, "没有引用观察者不留痕");
 }
 
@@ -200,7 +240,8 @@ pub fn badge() {
         reply,
         Permission::FETCH,
         None,
-    )).expect("pie allocation");
+    ))
+    .expect("pie allocation");
     crate::expect!(bell.mark() == reply, "非孔也带记号");
     crate::expect!(
         bell.owner() == Some(owner),
@@ -222,7 +263,11 @@ pub fn badge() {
             None,
         );
         let token = pie.token;
-        caller.gate.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
+        caller
+            .gate
+            .pies
+            .lock()
+            .push(gate::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);
@@ -260,67 +305,171 @@ pub fn badge() {
 
 /// Exercise production Source authorization and predicates against real gates.
 pub fn references() {
-    use env::{AwaitReply, Source, Wait};
     use crate::runtime::switcher::envcall::tole::cell as registration;
+    use env::{AwaitReply, Source, Wait};
     let space = SpaceBuilder::user().build().unwrap();
     space.with_flush(|inner| inner.dynamic(0x4000_0000));
     let team = TeamBuilder::new(space).spawn().unwrap();
-    let caller = team.task().hold().unwrap(); let target = team.task().hold().unwrap(); let stranger = team.task().hold().unwrap();
+    let caller = team.task().hold().unwrap();
+    let target = team.task().hold().unwrap();
+    let stranger = team.task().hold().unwrap();
     let group = tole::meta(caller.ident.id);
     let source_meta = hole::meta(caller.ident.id);
-    let root = gate::new_pie::<gate::Hole>(source_meta.clone(), Mark::NONE, Permission::FETCH | Permission::STORE | Permission::VEST, None);
+    let root = gate::new_pie::<gate::Hole>(
+        source_meta.clone(),
+        Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST,
+        None,
+    );
     let root_token = root.token;
     caller.gate.pies.lock().push(gate::boxed(root).unwrap());
-    let child = PieToken::mint(gate::accord(&caller, root_token, &Arc::downgrade(&target), Permission::FETCH | Permission::STORE, Mark::NONE).unwrap());
-    let source = Source::Inspect { task: target.ident.id, token: child };
-    crate::expect!(matches!(registration(&stranger, source), Err(MailFail::Denied)), "不能靠知道目标编号观察无关引用");
+    let child = PieToken::mint(
+        gate::accord(
+            &caller,
+            root_token,
+            &Arc::downgrade(&target),
+            Permission::FETCH | Permission::STORE,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
+    let source = Source::Inspect {
+        task: target.ident.id,
+        token: child,
+    };
+    crate::expect!(
+        matches!(registration(&stranger, source), Err(MailFail::Denied)),
+        "不能靠知道目标编号观察无关引用"
+    );
     tole::attach(&group, registration(&caller, source).unwrap()).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Pending, "仍有效的端点不提前关闭");
+    crate::expect!(
+        group.poll(&caller).unwrap() == AwaitReply::Pending,
+        "仍有效的端点不提前关闭"
+    );
     gate::reduce(&target, child, Permission::FETCH).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: Some(MailFail::Denied) }, "丢失登记时所需访问权必须报告具体来源");
+    crate::expect!(
+        group.poll(&caller).unwrap()
+            == AwaitReply::Source {
+                source,
+                fail: Some(MailFail::Denied)
+            },
+        "丢失登记时所需访问权必须报告具体来源"
+    );
     gate::release(&target, child).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: Some(MailFail::Denied) }, "主动 Release 被检测，任务和资源仍存活");
+    crate::expect!(
+        group.poll(&caller).unwrap()
+            == AwaitReply::Source {
+                source,
+                fail: Some(MailFail::Denied)
+            },
+        "主动 Release 被检测，任务和资源仍存活"
+    );
     tole::detach(&group, caller.ident.id, source).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Pending, "失效后可摘除原描述");
+    crate::expect!(
+        group.poll(&caller).unwrap() == AwaitReply::Pending,
+        "失效后可摘除原描述"
+    );
     // Pole bits are independent even when notifications repeat.
     let page = crate::work::mail::pole::meta(crate::memory::PAGE_SIZE, caller.ident.id).unwrap();
-    let bit0 = env::Bit::FIRST; let bit1 = env::Bit::of(1).unwrap();
+    let bit0 = env::Bit::FIRST;
+    let bit1 = env::Bit::of(1).unwrap();
     crate::work::mail::pole::ring(&page, bit0).unwrap();
     crate::work::mail::pole::ring(&page, bit0).unwrap();
     crate::work::mail::pole::ring(&page, bit1).unwrap();
     crate::work::mail::pole::hush(&page, bit0).unwrap();
     crate::work::mail::pole::hush(&page, bit0).unwrap();
-    crate::expect!(!page.ready(bit0) && page.ready(bit1), "重复清位幂等且不影响另一位");
+    crate::expect!(
+        !page.ready(bit0) && page.ready(bit1),
+        "重复清位幂等且不影响另一位"
+    );
     drop(page);
     // Shared groups expose only the calling registrant's exact sources.
-    let local = Source::Mail { pie: root_token, condition: MailCondition::Pull };
+    let local = Source::Mail {
+        pie: root_token,
+        condition: MailCondition::Pull,
+    };
     tole::attach(&group, registration(&caller, local).unwrap()).unwrap();
-    crate::expect!(matches!(group.poll(&stranger), Err(MailFail::Denied)), "共享组不转授登记者观察权");
+    crate::expect!(
+        matches!(group.poll(&stranger), Err(MailFail::Denied)),
+        "共享组不转授登记者观察权"
+    );
     let other_meta = hole::meta(stranger.ident.id);
-    let other = gate::new_pie::<gate::Hole>(other_meta, Mark::NONE, Permission::FETCH | Permission::STORE, None);
+    let other = gate::new_pie::<gate::Hole>(
+        other_meta,
+        Mark::NONE,
+        Permission::FETCH | Permission::STORE,
+        None,
+    );
     let other_token = other.token;
     stranger.gate.pies.lock().push(gate::boxed(other).unwrap());
-    let other_source = Source::Mail { pie: other_token, condition: MailCondition::Pull };
+    let other_source = Source::Mail {
+        pie: other_token,
+        condition: MailCondition::Pull,
+    };
     tole::attach(&group, registration(&stranger, other_source).unwrap()).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Pending && group.poll(&stranger).unwrap() == AwaitReply::Pending, "各登记者分别复核自己的来源");
+    crate::expect!(
+        group.poll(&caller).unwrap() == AwaitReply::Pending
+            && group.poll(&stranger).unwrap() == AwaitReply::Pending,
+        "各登记者分别复核自己的来源"
+    );
     tole::detach(&group, stranger.ident.id, other_source).unwrap();
     tole::detach(&group, caller.ident.id, local).unwrap();
     gate::release(&stranger, other_token).unwrap();
     // Exclusive Tole authority return uses the reference edge, not a Tole-to-Tole activity edge.
     let authority = tole::meta(caller.ident.id);
-    let root = gate::new_pie::<gate::Tole>(authority.clone(), Mark::NONE, Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY, None);
-    let token = root.token; caller.gate.pies.lock().push(gate::boxed(root).unwrap());
-    let child = PieToken::mint(gate::accord(&caller, token, &Arc::downgrade(&target), Permission::FETCH | Permission::ONLY, Mark::NONE).unwrap());
-    let source = Source::Inspect { task: caller.ident.id, token };
+    let root = gate::new_pie::<gate::Tole>(
+        authority.clone(),
+        Mark::NONE,
+        Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
+        None,
+    );
+    let token = root.token;
+    caller.gate.pies.lock().push(gate::boxed(root).unwrap());
+    let child = PieToken::mint(
+        gate::accord(
+            &caller,
+            token,
+            &Arc::downgrade(&target),
+            Permission::FETCH | Permission::ONLY,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
+    let source = Source::Inspect {
+        task: caller.ident.id,
+        token,
+    };
     tole::attach(&group, registration(&caller, source).unwrap()).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Pending, "独占移交期间等待归还，不能持续报告 HandedOver");
+    crate::expect!(
+        group.poll(&caller).unwrap() == AwaitReply::Pending,
+        "独占移交期间等待归还，不能持续报告 HandedOver"
+    );
     gate::release(&target, child).unwrap();
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: None }, "子引用释放后祖先恢复使用权");
+    crate::expect!(
+        group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: None },
+        "子引用释放后祖先恢复使用权"
+    );
     tole::seal(&authority);
-    crate::expect!(group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: Some(MailFail::Dead) }, "封印和归还具有不同的来源状态");
+    crate::expect!(
+        group.poll(&caller).unwrap()
+            == AwaitReply::Source {
+                source,
+                fail: Some(MailFail::Dead)
+            },
+        "封印和归还具有不同的来源状态"
+    );
     tole::detach(&group, caller.ident.id, source).unwrap();
-    tole::seal(&group); gate::release(&caller, token).unwrap(); gate::release(&caller, root_token).unwrap();
-    for task in [&caller, &target, &stranger] { let _ = team.release_held(task); team.prune_tasks(task); }
-    drop(caller); drop(target); drop(stranger); drop(team); prune_dead();
+    tole::seal(&group);
+    gate::release(&caller, token).unwrap();
+    gate::release(&caller, root_token).unwrap();
+    for task in [&caller, &target, &stranger] {
+        let _ = team.release_held(task);
+        team.prune_tasks(task);
+    }
+    drop(caller);
+    drop(target);
+    drop(stranger);
+    drop(team);
+    prune_dead();
     let _ = Wait::POLL;
 }

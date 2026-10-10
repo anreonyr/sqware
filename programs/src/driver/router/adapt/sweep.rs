@@ -8,11 +8,11 @@
 
 use crate::core::lines::Lines;
 use crate::dev::plic::Plic;
+use ::resource::pile::Pile;
+use ::resource::raw::reserve;
 use env::MailCondition;
 use ipc::session::Endpoint;
 use programs::debug;
-use ::resource::pile::Pile;
-use ::resource::raw::{reserve};
 
 /// 逐客：主人没了的那几条——拆线 + 空出格子
 /// 两个后果缺一不可：不 `unwire` 则线还在本 context 里（电平挂着 ⇒ 白报），不 `detach` 则
@@ -27,7 +27,10 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
             continue;
         }
         plic.unwire(line);
-        let _ = pile.detach(env::Source::Mail { pie: lane.rx(), condition: MailCondition::Pull });
+        let _ = pile.detach(env::Source::Mail {
+            pie: lane.rx(),
+            condition: MailCondition::Pull,
+        });
         let _ = lines.vacate(line);
         debug!("router: vacate line={line}");
     }

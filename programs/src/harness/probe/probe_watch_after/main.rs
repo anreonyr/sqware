@@ -11,14 +11,14 @@ use core::time::Duration;
 use env::Wait;
 use programs::Report;
 
-use system_api::operator::path::PathBuf;
+use env::pie;
+use env::unit;
 use ipc::session::Session;
 use programs::debug;
 use system_api::operator::Permit;
-use system_client::operator::Face as Face;
+use system_api::operator::path::PathBuf;
 use system_client::operator;
-use env::unit;
-use env::pie;
+use system_client::operator::Face;
 
 const MS: usize = 1000;
 /// 那一块窗格 —— 与 `probe-watch-gone` 订的那条路**逐字相同**（两份文件各写一遍）。
@@ -49,7 +49,8 @@ fn main() -> Report<'static> {
         if i > 0 {
             client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
         }
-        let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
+        let entry =
+            pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
         let id = client
             .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
             .unwrap();

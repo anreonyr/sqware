@@ -1,7 +1,7 @@
 //! 一次交互使用的自有回信端。
 
+use crate::{capability::Capability, hole::Hole};
 use env::{MailFail, Mark, Permission, PieFail, PieResult, PieToken, TaskId, Wait, make_fail, pie};
-use crate::{hole::Hole, capability::Capability};
 
 /// 自有回信端；只接收指定对端的回复，结束时撤销授出并封印释放本地孔。
 pub struct Reply {
@@ -19,7 +19,12 @@ pub enum ReplyError {
 
 impl Reply {
     pub fn open(peer: TaskId, mark: Mark) -> PieResult<Self> {
-        Ok(Self { local: Capability::unseal_hole(mark)?, peer, mark, remote: None })
+        Ok(Self {
+            local: Capability::unseal_hole(mark)?,
+            peer,
+            mark,
+            remote: None,
+        })
     }
 
     /// Create one grant owned by this reply endpoint and return its remote token.
@@ -33,9 +38,12 @@ impl Reply {
     }
 
     pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> Result<&'a [u8], ReplyError> {
-        let (len, from) = Hole::from_raw(self.local.token()).pull(buffer, within)
+        let (len, from) = Hole::from_raw(self.local.token())
+            .pull(buffer, within)
             .map_err(|error| ReplyError::Mail(error.source))?;
-        if from != self.peer { return Err(ReplyError::WrongSource); }
+        if from != self.peer {
+            return Err(ReplyError::WrongSource);
+        }
         buffer.get(..len).ok_or(ReplyError::Mail(MailFail::Denied))
     }
 }

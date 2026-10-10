@@ -46,8 +46,11 @@ impl Supplies {
             .map(|size| size / env::PAGE_SIZE * env::PAGE_SIZE)
             .filter(|size| *size != 0)
             .ok_or(Error::Step("image supply size"))?;
-        let root = env::pie::unseal(env::UnsealArgs::Pole { size: size, shared: true })
-            .map_err(|_| Error::Step("image supply allocation"))?;
+        let root = env::pie::unseal(env::UnsealArgs::Pole {
+            size: size,
+            shared: true,
+        })
+        .map_err(|_| Error::Step("image supply allocation"))?;
         let sent = (|| {
             let (base, size) =
                 resource::raw::open(root).map_err(|_| Error::Step("image supply mapping"))?;

@@ -212,7 +212,14 @@ impl Port {
             return Err(Fail::Invalid);
         }
         let data = resource::raw::inspect(endpoint.seed).map_err(|_| Fail::Dead)?;
-        if !data.alive || data.kind != env::PieKind::Pole || !data.permission.contains(env::Permission::FETCH | env::Permission::STORE) { return Err(Fail::Denied); }
+        if !data.alive
+            || data.kind != env::PieKind::Pole
+            || !data
+                .permission
+                .contains(env::Permission::FETCH | env::Permission::STORE)
+        {
+            return Err(Fail::Denied);
+        }
         let dock = Dock::open(endpoint.seed).map_err(|_| Fail::Dead)?;
         let port = Self {
             dock: Some(dock),

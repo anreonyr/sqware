@@ -12,9 +12,7 @@ pub static PROGRAM: UnitFile = UnitFile {
         scope: crate::unit::PublishScope(1),
         group: "",
         road: "svc/drv",
-        entries: &[crate::unit::PublishEntry {
-            name: "rtc",
-        }],
+        entries: &[crate::unit::PublishEntry { name: "rtc" }],
         public: true,
     }],
     identity: Identity {

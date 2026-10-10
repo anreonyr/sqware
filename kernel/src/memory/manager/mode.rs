@@ -25,7 +25,7 @@ pub fn detect() -> Result<satp::Mode, SatpError> {
                 MODE.set(candidate).expect("mode: detect is single-shot");
                 return Ok(candidate);
             }
-            Err(SatpError::Unsupported) => {},
+            Err(SatpError::Unsupported) => {}
             Err(error) => return Err(error),
         }
     }

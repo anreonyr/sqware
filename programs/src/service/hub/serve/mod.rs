@@ -10,8 +10,8 @@ use ::resource::pile::Pile;
 use env::PAGE_SIZE;
 use env::unit;
 use env::{
-    Access, Entry as ResourceEntry, MailCondition, MailFail, Name, PieKind, PieToken, Policy, TaskId,
-    Wait,
+    Access, Entry as ResourceEntry, MailCondition, MailFail, Name, PieKind, PieToken, Policy,
+    TaskId, Wait,
 };
 use hub_api::{self as hub, Deed, Enroll, Grant, Said, Window, Wire};
 use ipc::hand::{Receiver, RecvFail, Sender};
@@ -114,7 +114,8 @@ pub fn serve() -> Result<(), Start> {
             n += 1;
             ledger.league(class.clone(), || id);
         }
-        hub_client::activate(&league.activation, me, &leagues[..n]).map_err(|_| Start::Face(E_HUB))?;
+        hub_client::activate(&league.activation, me, &leagues[..n])
+            .map_err(|_| Start::Face(E_HUB))?;
 
         let (bond, bond_name) =
             mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
@@ -189,8 +190,11 @@ pub fn serve() -> Result<(), Start> {
     //     三枚"推出来，认台靠**这一枚孔自己**）。
     let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
     for token in &doors {
-        pile.attach(env::Source::Mail { pie: *token, condition: MailCondition::Pull })
-            .map_err(|_| Start::Desk(E_HUB))?;
+        pile.attach(env::Source::Mail {
+            pie: *token,
+            condition: MailCondition::Pull,
+        })
+        .map_err(|_| Start::Desk(E_HUB))?;
     }
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -199,7 +203,10 @@ pub fn serve() -> Result<(), Start> {
     buf.resize(PAGE_SIZE, 0);
     loop {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
-            Ok(env::AwaitReply::Source { source: env::Source::Mail { pie: token, .. }, .. }) => {
+            Ok(env::AwaitReply::Source {
+                source: env::Source::Mail { pie: token, .. },
+                ..
+            }) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                 let hole = Hole::from_raw(token);
                 while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
@@ -350,7 +357,8 @@ fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
         let (name, class) = (name.to_string(), class.to_string());
         // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
         // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
-        let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark())).map_err(|_| Start::Load(E_HUB))?;
+        let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+            .map_err(|_| Start::Load(E_HUB))?;
         ledger
             .enroll(Entry {
                 name,
@@ -378,7 +386,11 @@ fn find_league(tree: &Face) -> Option<League> {
         query: Query::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         organization: Organization::discover(tree, authority, Wait::AtMost(MS)).ok()?,
         activation: system_client::identity::Face::discover(
-            tree, authority, system_api::identity::Grant::Activate, Wait::AtMost(MS),
-        ).ok()?,
+            tree,
+            authority,
+            system_api::identity::Grant::Activate,
+            Wait::AtMost(MS),
+        )
+        .ok()?,
     })
 }

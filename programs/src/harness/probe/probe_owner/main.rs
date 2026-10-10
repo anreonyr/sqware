@@ -11,20 +11,20 @@ use programs::Report;
 
 use alloc::format;
 use alloc::string::ToString;
-use system_api::operator::path::Path;
 use ipc::session::Session;
 use programs::debug;
-use system_client::operator;
-use system_client::operator::Face as Face;
-use system_client::operator::Mine;
-use system_client::operator::Pane;
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
 use system_api::operator::Permit;
+use system_api::operator::path::Path;
+use system_client::operator;
+use system_client::operator::Face;
+use system_client::operator::Mine;
+use system_client::operator::Pane;
 
-use router_api as driver;
-use env::unit;
 use env::pie;
+use env::unit;
+use router_api as driver;
 
 /// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
@@ -156,7 +156,8 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("takeover-entry"))).map_err(|_| Fail::Unknown)?;
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("takeover-entry")))
+        .map_err(|_| Fail::Unknown)?;
     assert!(matches!(
         tree.root().bind(
             "fixtures".into(),

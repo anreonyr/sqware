@@ -94,7 +94,11 @@ pub fn construction() {
             None,
         );
         let token = root.token;
-        caller.gate.pies.lock().push(gate::boxed(root).expect("pie allocation"));
+        caller
+            .gate
+            .pies
+            .lock()
+            .push(gate::boxed(root).expect("pie allocation"));
         let open = parent
             .space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
@@ -127,7 +131,8 @@ pub fn construction() {
         if !access.contains(PteFlags::W) {
             gate::narrow(
                 caller
-                    .gate.pies
+                    .gate
+                    .pies
                     .lock()
                     .iter_mut()
                     .find(|pie| pie.token() == token)
@@ -242,7 +247,11 @@ pub fn cancellation() {
         None,
     );
     let token = root.token;
-    caller.gate.pies.lock().push(gate::boxed(root).expect("pie allocation"));
+    caller
+        .gate
+        .pies
+        .lock()
+        .push(gate::boxed(root).expect("pie allocation"));
     let at = VirtAddr::wrap(0x20000);
     child.space.with_flush(|inner| {
         inner
@@ -319,51 +328,115 @@ pub fn cancellation() {
 
 /// Pause inheritance and independent ancestor receipts share one exit state.
 pub fn branch_control() {
-    use alloc::sync::Arc;
-    use crate::work::unit::task::{Task, TaskState, TaskExitCause};
+    use crate::work::unit::task::{Task, TaskExitCause, TaskState};
     use crate::work::unit::weak::{Site, TaskWeak};
+    use alloc::sync::Arc;
     fn team(parent: Option<&Arc<Task>>) -> Arc<crate::work::unit::team::Team> {
         let space = SpaceBuilder::user().build().unwrap();
         space.with_flush(|inner| inner.dynamic(0x4000_0000));
         let builder = TeamBuilder::new(space);
-        match parent { Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Site::Sire)), None => builder }.spawn().unwrap()
+        match parent {
+            Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Site::Sire)),
+            None => builder,
+        }
+        .spawn()
+        .unwrap()
     }
-    let root = team(None); let main = root.task().hold().unwrap();
-    let child = team(Some(&main)); let member = child.task().hold().unwrap();
-    root.debark().unwrap(); assert!(root.paused() && child.paused());
-    let later = team(Some(&member)); let grandchild = later.task().hold().unwrap();
-    assert!(later.paused()); child.debark().unwrap(); root.embark().unwrap();
+    let root = team(None);
+    let main = root.task().hold().unwrap();
+    let child = team(Some(&main));
+    let member = child.task().hold().unwrap();
+    root.debark().unwrap();
+    assert!(root.paused() && child.paused());
+    let later = team(Some(&member));
+    let grandchild = later.task().hold().unwrap();
+    assert!(later.paused());
+    child.debark().unwrap();
+    root.embark().unwrap();
     assert!(!root.paused() && child.paused() && later.paused());
-    child.embark().unwrap(); assert!(!child.paused() && !later.paused());
+    child.embark().unwrap();
+    assert!(!child.paused() && !later.paused());
     let record = later.life.member(grandchild.ident.id).unwrap();
     assert!(record.pending(main.ident.id) && record.pending(member.ident.id));
     assert!(record.exit().is_none());
     use crate::work::unit::join::{JoinTarget, JoinWait};
-    let observe = JoinWait::new(JoinTarget::Task(record.clone()), main.ident.id, false, env::Wait::POLL);
-    let receive = JoinWait::new(JoinTarget::Task(record.clone()), member.ident.id, true, env::Wait::POLL);
+    let observe = JoinWait::new(
+        JoinTarget::Task(record.clone()),
+        main.ident.id,
+        false,
+        env::Wait::POLL,
+    );
+    let receive = JoinWait::new(
+        JoinTarget::Task(record.clone()),
+        member.ident.id,
+        true,
+        env::Wait::POLL,
+    );
     assert_eq!(observe.poll(), Ok(env::JoinReply::Pending));
     let space = Arc::downgrade(&later.space);
     later.release_held(&grandchild);
-    *grandchild.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 17 };
+    *grandchild.state.lock() = TaskState::Reaped {
+        cause: TaskExitCause::Reap,
+        reason: 17,
+    };
     conductor::exit();
     assert_eq!(record.exit().unwrap().reason, 17);
     assert_eq!(observe.poll(), observe.poll());
     assert!(receive.poll().unwrap().is_reaped());
     assert_eq!(receive.poll(), Err(env::UnitFail::Denied));
     assert!(record.pending(main.ident.id));
-    member.oust(later.id); drop(grandchild); drop(later);
-    assert!(space.upgrade().is_none(), "pending exits retained execution resources");
-    assert_eq!(child.life.next(main.ident.id).unwrap().exit().unwrap().reason, 17);
-    let parent = JoinWait::new(JoinTarget::Team(child.life.clone()), main.ident.id, true, env::Wait::POLL);
+    member.oust(later.id);
+    drop(grandchild);
+    drop(later);
+    assert!(
+        space.upgrade().is_none(),
+        "pending exits retained execution resources"
+    );
+    assert_eq!(
+        child
+            .life
+            .next(main.ident.id)
+            .unwrap()
+            .exit()
+            .unwrap()
+            .reason,
+        17
+    );
+    let parent = JoinWait::new(
+        JoinTarget::Team(child.life.clone()),
+        main.ident.id,
+        true,
+        env::Wait::POLL,
+    );
     assert!(parent.poll().unwrap().is_reaped());
     assert_eq!(parent.poll(), Ok(env::JoinReply::Pending));
-    assert!(observe.poll().unwrap().is_reaped(), "an enrolled observer lost the shared exit");
+    assert!(
+        observe.poll().unwrap().is_reaped(),
+        "an enrolled observer lost the shared exit"
+    );
     child.life.prune();
-    drop(parent); drop(receive); drop(observe);
+    drop(parent);
+    drop(receive);
+    drop(observe);
     drop(record);
-    child.release_held(&member); *member.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
-    conductor::exit(); child.life.clear(main.ident.id, None); child.life.prune();
-    main.oust(child.id); drop(member); drop(child);
-    root.release_held(&main); *main.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
-    conductor::exit(); root.life.prune(); drop(main); drop(root);
+    child.release_held(&member);
+    *member.state.lock() = TaskState::Reaped {
+        cause: TaskExitCause::Reap,
+        reason: 0,
+    };
+    conductor::exit();
+    child.life.clear(main.ident.id, None);
+    child.life.prune();
+    main.oust(child.id);
+    drop(member);
+    drop(child);
+    root.release_held(&main);
+    *main.state.lock() = TaskState::Reaped {
+        cause: TaskExitCause::Reap,
+        reason: 0,
+    };
+    conductor::exit();
+    root.life.prune();
+    drop(main);
+    drop(root);
 }

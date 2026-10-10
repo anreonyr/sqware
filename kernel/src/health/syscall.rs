@@ -94,12 +94,24 @@ pub fn abi_and_privilege() {
         env::UnitFail::Denied.code()
     );
     assert_eq!(user.task.heir_count(), heirs);
-    assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    assert_eq!(
+        user.call(build(ProgramKind::User)),
+        env::UnitFail::Denied.code()
+    );
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
-    user.task.gate.pies.lock().push(gate::boxed(gate::new_pie::<gate::Nole>(
-        ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )).expect("pie allocation"));
-    assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    user.task.gate.pies.lock().push(
+        gate::boxed(gate::new_pie::<gate::Nole>(
+            ordinary,
+            env::Mark::NONE,
+            Permission::FETCH | Permission::VEST,
+            None,
+        ))
+        .expect("pie allocation"),
+    );
+    assert_eq!(
+        user.call(build(ProgramKind::User)),
+        env::UnitFail::Denied.code()
+    );
     assert_eq!(
         user.call(EnvCall::Room(RoomCall::Doom {
             task: user.task.ident.id
@@ -110,16 +122,28 @@ pub fn abi_and_privilege() {
     let mut registry = crate::resource::Registry::default();
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
     registry.freeze().unwrap().grant(&user.task).unwrap();
-    assert_eq!(user.call(build(ProgramKind::Supervisor)), env::UnitFail::Denied.code());
+    assert_eq!(
+        user.call(build(ProgramKind::Supervisor)),
+        env::UnitFail::Denied.code()
+    );
     assert!(user.call(build(ProgramKind::User)) > 0);
-    assert_eq!(user.call(EnvCall::Room(RoomCall::Doom {
-        task: env::TaskId::new(usize::MAX),
-    })), env::RoomFail::Dead.code());
+    assert_eq!(
+        user.call(EnvCall::Room(RoomCall::Doom {
+            task: env::TaskId::new(usize::MAX),
+        })),
+        env::RoomFail::Dead.code()
+    );
     let supervisor = Caller::new(true);
-    assert_eq!(supervisor.call(EnvCall::Room(RoomCall::Doom {
-        task: user.task.ident.id,
-    })), env::RoomFail::Denied.code());
-    assert_eq!(supervisor.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    assert_eq!(
+        supervisor.call(EnvCall::Room(RoomCall::Doom {
+            task: user.task.ident.id,
+        })),
+        env::RoomFail::Denied.code()
+    );
+    assert_eq!(
+        supervisor.call(build(ProgramKind::User)),
+        env::UnitFail::Denied.code()
+    );
     let mut registry = crate::resource::Registry::default();
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
     registry.freeze().unwrap().grant(&supervisor.task).unwrap();
@@ -409,7 +433,11 @@ pub fn capability() {
     let meta = hole::meta(user.task.ident.id);
     let pie = gate::new_pie::<gate::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
-    user.task.gate.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
+    user.task
+        .gate
+        .pies
+        .lock()
+        .push(gate::boxed(pie).expect("pie allocation"));
     assert!(gate::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
         gate::accede::<env::PieFail>(&user.task, token, Need::Store),
@@ -462,7 +490,6 @@ pub fn capability() {
     let _ = HeapWindow::allocate(&user.team.space, PAGE_SIZE).unwrap();
 }
 
-
 pub fn resource_registration() {
     use crate::resource::Registry;
     use crate::runtime::switcher::{envcall::resources as calls, trap::resources as traps};
@@ -474,69 +501,160 @@ pub fn resource_registration() {
     let mut registry = Registry::default();
     calls::register(&mut registry).unwrap();
     traps::register(&mut registry).unwrap();
-    let root = || gate::boxed(gate::new_pie::<gate::Nole>(
-        calls::get().build.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )).expect("pie allocation");
+    let root = || {
+        gate::boxed(gate::new_pie::<gate::Nole>(
+            calls::get().build.clone(),
+            Mark::NONE,
+            Permission::FETCH | Permission::VEST,
+            None,
+        ))
+        .expect("pie allocation")
+    };
     let duplicate = root();
     let token = duplicate.token();
-    let error = registry.register(Name::Call(Call::Build), duplicate).unwrap_err();
+    let error = registry
+        .register(Name::Call(Call::Build), duplicate)
+        .unwrap_err();
     assert_eq!(error.reason, PieFail::Denied);
     assert_eq!(error.value.1.token(), token);
-    assert!(registry.register(Name::Trap(Trap::PageFault), root()).is_err());
+    assert!(
+        registry
+            .register(Name::Trap(Trap::PageFault), root())
+            .is_err()
+    );
     let entries = registry.freeze().unwrap().grant(&system.task).unwrap();
     assert_eq!(entries.len(), 4);
     assert!(entries.iter().all(env::Entry::valid));
-    let token = entries.iter().find(|e| e.name() == Name::Call(Call::Build)).unwrap().token();
+    let token = entries
+        .iter()
+        .find(|e| e.name() == Name::Call(Call::Build))
+        .unwrap()
+        .token();
     assert!(gate::allows(&system.task, &calls::get().build, Need::Fetch));
-    let token = PieToken::mint(gate::accord(
-        &system.task, token, &Arc::downgrade(&service.task), Permission::FETCH, Mark::NONE,
-    ).unwrap());
-    assert!(gate::allows(&service.task, &calls::get().build, Need::Fetch));
-    assert!(service.call(EnvCall::Unit(UnitCall::Build { kind: ProgramKind::User })) > 0);
-    assert!(matches!(gate::accord(
-        &service.task, token, &Arc::downgrade(&other.task), Permission::FETCH, Mark::NONE,
-    ), Err(PieFail::Denied)));
+    let token = PieToken::mint(
+        gate::accord(
+            &system.task,
+            token,
+            &Arc::downgrade(&service.task),
+            Permission::FETCH,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
+    assert!(gate::allows(
+        &service.task,
+        &calls::get().build,
+        Need::Fetch
+    ));
+    assert!(
+        service.call(EnvCall::Unit(UnitCall::Build {
+            kind: ProgramKind::User
+        })) > 0
+    );
+    assert!(matches!(
+        gate::accord(
+            &service.task,
+            token,
+            &Arc::downgrade(&other.task),
+            Permission::FETCH,
+            Mark::NONE,
+        ),
+        Err(PieFail::Denied)
+    ));
     gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
-    assert!(!gate::allows(&service.task, &calls::get().build, Need::Fetch));
-    assert_eq!(service.call(EnvCall::Unit(UnitCall::Build { kind: ProgramKind::User })), env::UnitFail::Denied.code());
-    let doom = entries.iter().find(|e| e.name() == Name::Call(Call::Doom)).unwrap().token();
-    let call = EnvCall::Room(RoomCall::Doom { task: env::TaskId::new(usize::MAX) });
+    assert!(!gate::allows(
+        &service.task,
+        &calls::get().build,
+        Need::Fetch
+    ));
+    assert_eq!(
+        service.call(EnvCall::Unit(UnitCall::Build {
+            kind: ProgramKind::User
+        })),
+        env::UnitFail::Denied.code()
+    );
+    let doom = entries
+        .iter()
+        .find(|e| e.name() == Name::Call(Call::Doom))
+        .unwrap()
+        .token();
+    let call = EnvCall::Room(RoomCall::Doom {
+        task: env::TaskId::new(usize::MAX),
+    });
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
-    let token = PieToken::mint(gate::accord(
-        &system.task, doom, &Arc::downgrade(&service.task), Permission::VEST, Mark::NONE,
-    ).unwrap());
+    let token = PieToken::mint(
+        gate::accord(
+            &system.task,
+            doom,
+            &Arc::downgrade(&service.task),
+            Permission::VEST,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
-    let token = PieToken::mint(gate::accord(
-        &system.task, doom, &Arc::downgrade(&service.task), Permission::FETCH, Mark::NONE,
-    ).unwrap());
+    let token = PieToken::mint(
+        gate::accord(
+            &system.task,
+            doom,
+            &Arc::downgrade(&service.task),
+            Permission::FETCH,
+            Mark::NONE,
+        )
+        .unwrap(),
+    );
     assert!(gate::allows(&service.task, &calls::get().doom, Need::Fetch));
     let victim = Caller::new(false);
-    assert_eq!(service.call(EnvCall::Room(RoomCall::Doom {
-        task: victim.task.ident.id,
-    })), 0);
-    assert!(matches!(victim.task.tag(), TaskTag::Doomed | TaskTag::Reaped));
+    assert_eq!(
+        service.call(EnvCall::Room(RoomCall::Doom {
+            task: victim.task.ident.id,
+        })),
+        0
+    );
+    assert!(matches!(
+        victim.task.tag(),
+        TaskTag::Doomed | TaskTag::Reaped
+    ));
     assert_eq!(service.call(call), env::RoomFail::Dead.code());
-    assert!(matches!(gate::accord(
-        &service.task, token, &Arc::downgrade(&other.task), Permission::FETCH, Mark::NONE,
-    ), Err(PieFail::Denied)));
+    assert!(matches!(
+        gate::accord(
+            &service.task,
+            token,
+            &Arc::downgrade(&other.task),
+            Permission::FETCH,
+            Mark::NONE,
+        ),
+        Err(PieFail::Denied)
+    ));
     gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
-        dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )).expect("pie allocation");
+        dead.clone(),
+        Mark::NONE,
+        Permission::FETCH | Permission::VEST,
+        None,
+    ))
+    .expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     crate::work::mail::nole::seal(&dead);
-    let frozen = match registry.freeze() { Err(e) => e, Ok(_) => panic!("accepted dead root") };
+    let frozen = match registry.freeze() {
+        Err(e) => e,
+        Ok(_) => panic!("accepted dead root"),
+    };
     assert_eq!(frozen.reason, PieFail::Denied);
 
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let mut registry = Registry::default();
     let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
-        dead.clone(), Mark::NONE, Permission::FETCH | Permission::VEST, None,
-    )).expect("pie allocation");
+        dead.clone(),
+        Mark::NONE,
+        Permission::FETCH | Permission::VEST,
+        None,
+    ))
+    .expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
     crate::work::mail::nole::seal(&dead);
@@ -558,14 +676,20 @@ pub fn transfer_relations() {
     let permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     let root = |task: &Arc<Task>, permission| {
         let pie = gate::boxed(gate::new_pie::<gate::Nole>(
-            crate::work::mail::nole::NoleMeta::new(task.ident.id), Mark::NONE, permission, None,
-        )).expect("pie allocation");
+            crate::work::mail::nole::NoleMeta::new(task.ident.id),
+            Mark::NONE,
+            permission,
+            None,
+        ))
+        .expect("pie allocation");
         let token = pie.token();
         gate::insert(task, pie).unwrap();
         token
     };
     let grant = |task: &Arc<Task>, token, target: &Arc<Task>, permission| {
-        PieToken::mint(gate::accord(task, token, &Arc::downgrade(target), permission, Mark::NONE).unwrap())
+        PieToken::mint(
+            gate::accord(task, token, &Arc::downgrade(target), permission, Mark::NONE).unwrap(),
+        )
     };
     let token = root(&a.task, permission);
     let ab = grant(&a.task, token, &b.task, permission);
@@ -586,31 +710,54 @@ pub fn transfer_relations() {
     let sole = permission | Permission::ONLY;
     let token = root(&a.task, sole);
     let ab = grant(&a.task, token, &b.task, sole);
-    let old = gate::locate(&a.task, token).unwrap().heir().copied().unwrap();
+    let old = gate::locate(&a.task, token)
+        .unwrap()
+        .heir()
+        .copied()
+        .unwrap();
     gate::revoke(&a.task, &Arc::downgrade(&b.task), ab).unwrap();
     let next = grant(&a.task, token, &b.task, sole);
     assert!(!gate::clear_heir(&a.task, token, old));
-    assert_eq!(gate::locate(&a.task, token).unwrap().heir().unwrap().token, next);
+    assert_eq!(
+        gate::locate(&a.task, token).unwrap().heir().unwrap().token,
+        next
+    );
     gate::release(&a.task, token).unwrap();
 
     // More simultaneous gates than the previous fixed eight-lock debug limit.
     let children: Vec<_> = (0..16).map(|_| Caller::new(false)).collect();
     let token = root(&a.task, permission);
-    for child in &children { grant(&a.task, token, &child.task, permission); }
+    for child in &children {
+        grant(&a.task, token, &child.task, permission);
+    }
     assert_eq!(gate::release(&a.task, token), Ok(17));
-    assert!(children.iter().all(|child| child.task.gate.pies.lock().is_empty()));
+    assert!(
+        children
+            .iter()
+            .all(|child| child.task.gate.pies.lock().is_empty())
+    );
 
     // Exit also withdraws borrowed memory while a backing operation is busy.
     let d = Caller::new(false);
     let meta = pole::meta(PAGE_SIZE, a.task.ident.id).unwrap();
-    let pie = gate::boxed(gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap()).expect("pie allocation");
+    let pie = gate::boxed(
+        gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
+    )
+    .expect("pie allocation");
     let memory = pie.token();
     gate::insert(&a.task, pie).unwrap();
     let ad = grant(&a.task, memory, &d.task, permission);
     grant(&d.task, ad, &c.task, permission);
     {
         let _operation = meta.backing().operation().unwrap();
-        { let _commit = crate::work::unit::commit(); *d.task.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
+        {
+            let _commit = crate::work::unit::commit();
+            *d.task.state.lock() = crate::work::unit::task::TaskState::Doomed {
+                hart: None,
+                cause: env::ExitCause::Slay,
+                reason: 0,
+            };
+        }
         gate::doom(&d.task);
     }
     assert!(d.task.gate.pies.lock().is_empty());
@@ -619,20 +766,36 @@ pub fn transfer_relations() {
     let token = root(&a.task, permission);
     let ab = grant(&a.task, token, &b.task, permission);
     grant(&b.task, ab, &c.task, permission);
-    { let _commit = crate::work::unit::commit(); *b.task.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
+    {
+        let _commit = crate::work::unit::commit();
+        *b.task.state.lock() = crate::work::unit::task::TaskState::Doomed {
+            hart: None,
+            cause: env::ExitCause::Slay,
+            reason: 0,
+        };
+    }
     gate::doom(&b.task);
     assert!(b.task.gate.pies.lock().is_empty());
     assert!(c.task.gate.pies.lock().is_empty());
     assert!(a.task.gate.heirs.lock().is_empty());
-    assert_eq!(gate::accord(&a.task, token, &Arc::downgrade(&b.task), permission, Mark::NONE), Err(PieFail::Dead));
+    assert_eq!(
+        gate::accord(
+            &a.task,
+            token,
+            &Arc::downgrade(&b.task),
+            permission,
+            Mark::NONE
+        ),
+        Err(PieFail::Dead)
+    );
 }
 
 /// Scan paginates stable IDs without consuming ownership; Join returns exit
 /// facts through registers and Oust needs ownership/termination, not Doom.
 pub fn unit_scan_and_receipts() {
-    use alloc::vec::Vec;
-    use crate::work::unit::weak::{Site, TaskWeak};
     use crate::work::unit::task::TaskState;
+    use crate::work::unit::weak::{Site, TaskWeak};
+    use alloc::vec::Vec;
     use env::{UnitFail, UnitTarget, Wait};
     crate::work::room::scheduler::boot::init().unwrap();
     let caller = Caller::new(false);
@@ -640,20 +803,36 @@ pub fn unit_scan_and_receipts() {
     for _ in 0..73 {
         let space = SpaceBuilder::user().build().unwrap();
         space.with(|inner| inner.dynamic(0x4000_0000));
-        children.push(TeamBuilder::new(space)
-            .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Site::Sire))
-            .spawn().unwrap());
+        children.push(
+            TeamBuilder::new(space)
+                .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Site::Sire))
+                .spawn()
+                .unwrap(),
+        );
     }
     let buffer = caller.allocate(PAGE_SIZE);
-    let scan = |after, capacity| EnvCall::Unit(UnitCall::Scan {
-        after, buf: VirtAddr::new(buffer), capacity,
-    });
-    assert_eq!(caller.call(scan(env::TeamId::new(0), 0)), UnitFail::Denied.code());
-    assert_eq!(caller.call(scan(env::TeamId::new(0), 65)), UnitFail::Denied.code());
+    let scan = |after, capacity| {
+        EnvCall::Unit(UnitCall::Scan {
+            after,
+            buf: VirtAddr::new(buffer),
+            capacity,
+        })
+    };
+    assert_eq!(
+        caller.call(scan(env::TeamId::new(0), 0)),
+        UnitFail::Denied.code()
+    );
+    assert_eq!(
+        caller.call(scan(env::TeamId::new(0), 65)),
+        UnitFail::Denied.code()
+    );
     assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 64);
     let mut page = [0u8; 512];
     assert!(caller.team.space.copy_in(&mut page, buffer));
-    let ids: Vec<_> = page.chunks_exact(8).map(|w| u64::from_le_bytes(w.try_into().unwrap()) as usize).collect();
+    let ids: Vec<_> = page
+        .chunks_exact(8)
+        .map(|w| u64::from_le_bytes(w.try_into().unwrap()) as usize)
+        .collect();
     assert!(ids.windows(2).all(|p| p[0] < p[1]));
     assert_eq!(ids[0], children[0].id.get());
     assert_eq!(caller.call(scan(env::TeamId::new(ids[63]), 64)), 9);
@@ -661,26 +840,47 @@ pub fn unit_scan_and_receipts() {
     let target = &children[0];
     let task = target.task().hold().unwrap();
     let observe = EnvCall::Unit(UnitCall::Join {
-        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: false,
+        target: UnitTarget::Task(task.ident.id),
+        millis: Wait::POLL,
+        receive: false,
     });
     assert_eq!(caller.call(observe), 0);
-    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Oust { team: target.id })), UnitFail::Busy.code());
+    assert_eq!(
+        caller.call(EnvCall::Unit(UnitCall::Oust { team: target.id })),
+        UnitFail::Busy.code()
+    );
     target.release_held(&task);
-    *task.state.lock() = TaskState::Reaped { cause: env::ExitCause::Reap, reason: 17 };
+    *task.state.lock() = TaskState::Reaped {
+        cause: env::ExitCause::Reap,
+        reason: 17,
+    };
     crate::work::room::conductor::exit();
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
-    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Join {
-        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: true,
-    })), env::ExitCause::Reap as isize);
+    assert_eq!(
+        caller.call(EnvCall::Unit(UnitCall::Join {
+            target: UnitTarget::Task(task.ident.id),
+            millis: Wait::POLL,
+            receive: true,
+        })),
+        env::ExitCause::Reap as isize
+    );
     let frame = unsafe { &*(caller.task.ident.frame.pa.unwrap().as_usize() as *const TrapContext) };
     assert_eq!(frame.gpr.x(Gprs::A1), task.ident.id.get());
     assert_eq!(frame.gpr.x(Gprs::A2), 17);
-    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Join {
-        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: true,
-    })), UnitFail::Denied.code());
+    assert_eq!(
+        caller.call(EnvCall::Unit(UnitCall::Join {
+            target: UnitTarget::Task(task.ident.id),
+            millis: Wait::POLL,
+            receive: true,
+        })),
+        UnitFail::Denied.code()
+    );
     for child in &children {
-        assert_eq!(caller.call(EnvCall::Unit(UnitCall::Oust { team: child.id })), 0);
+        assert_eq!(
+            caller.call(EnvCall::Unit(UnitCall::Oust { team: child.id })),
+            0
+        );
     }
     assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 0);
 }

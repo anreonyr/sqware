@@ -32,7 +32,8 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
             .try_reserve_exact(len)
             .map_err(|_| frame::Fail::Full)?;
         bytes.resize(len, 0);
-        let copy = pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).map_err(|_| frame::Fail::Full)?;
+        let copy =
+            pie::unseal(env::UnsealArgs::hole(env::Mark::NONE)).map_err(|_| frame::Fail::Full)?;
         let result = (|| {
             env::mail::push(copy, VirtAddr::new(at + offset), len)
                 .map_err(|_| frame::Fail::BadImage)?;

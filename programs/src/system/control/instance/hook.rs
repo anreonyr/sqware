@@ -29,8 +29,7 @@ pub fn budget(
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
     active.next = 0;
-    dispatch
-        .begin(control.instances.len())?;
+    dispatch.begin(control.instances.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
@@ -42,15 +41,16 @@ pub fn select(
         active.next += 1;
         let key = match item.state {
             State::Starting => Key::Prepare,
-            State::Stopping if unit::join_task(item.task, Wait::POLL).unwrap_or(true) => Key::Retire,
+            State::Stopping if unit::join_task(item.task, Wait::POLL).unwrap_or(true) => {
+                Key::Retire
+            }
             _ => continue,
         };
         active.task = Some(item.task);
-        dispatch
-            .select(Invocation {
-                key,
-                cursor: core::mem::take(&mut item.hook),
-            })?;
+        dispatch.select(Invocation {
+            key,
+            cursor: core::mem::take(&mut item.hook),
+        })?;
         return Ok(Progress::Done);
     }
     dispatch.stop()?;
@@ -92,7 +92,10 @@ pub fn finish(
     }
     Ok(Progress::Done)
 }
-pub fn reclaim(mut control: ResMut<Control>, active: Res<Active>) -> Result<Progress, &'static str> {
+pub fn reclaim(
+    mut control: ResMut<Control>,
+    active: Res<Active>,
+) -> Result<Progress, &'static str> {
     let item = control
         .instances
         .iter_mut()
@@ -106,8 +109,10 @@ pub fn reclaim(mut control: ResMut<Control>, active: Res<Active>) -> Result<Prog
             Ok(env::JoinReply::Reaped(exit)) => {
                 item.reap(exit);
                 // Do not let Oust discard results beyond this round's budget.
-                if at == 63 { return Ok(Progress::Pending); }
-            },
+                if at == 63 {
+                    return Ok(Progress::Pending);
+                }
+            }
             _ => break,
         }
     }
