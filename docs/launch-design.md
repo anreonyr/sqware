@@ -86,3 +86,11 @@ Control 的 closing_service_names 现在直接读取原有 UnitFile.relation.aft
 修复后验证：kernel/programs 全目标编译、control-query 5 项及 system-shape 18 项通过。QEMU 完整 smoke（171.98 秒）、shutdown（11.72 秒）、system-fault（23.00 秒）通过；两次交互驱动结果均为 ok。smoke 包含 1 MiB 长度检查；shutdown 在 EOF 前确认 spin 与 workers 均处于 running。两次 product 退场均正常打印 internal tasks stopped、system: done 和 all tasks exited，未记录 user fault 或缺失映射。system-fault 保留预期的 Preparation/Retirement hook 注入失败并完成回收。
 
 日志：/tmp/router-check.log、/tmp/router-query.log、/tmp/router-shape.log、/tmp/router-smoke.log、/tmp/router-smoke-console.log、/tmp/router-shutdown.log、/tmp/router-shutdown-console.log、/tmp/router-fault.log、/tmp/router-fault-console.log。交互结果与串口记录在 /tmp/router-smoke-trace 和 /tmp/router-shutdown-trace。
+
+## 合并 master
+
+整合 master 的调度链式调用与统一错误转换时，保留本设计的单一 sources 表、单一 Pending 和无 registered 的交付流程。Waiting::new 返回原始 PieResult，Launch::install 返回 AccessError，交由既有 InstallError 汇集；不恢复旧的 members/subs 或 Requests 表。Tole 的测试构造入口仅在 debug 档保留，运行时继续使用可失败的 try_meta。
+
+整合后全目标编译及 83 项相关宿主回归通过：schedule 36、control-instance 13、control-query 5、operator-connection 6、startup-authority 5、system-shape 18。system-fault 重新运行通过（18.45 秒）。本轮日志使用 /tmp/pr5-merge-* 前缀。
+
+整合后完整 smoke（135.96 秒）及保留运行中作业的 shutdown（8.94 秒）也重新通过，两次驱动结果均为 ok。核验串口结果和机侧控制台：1 MiB 长度为 1048576，系统正常完成退场，未出现 user fault 或缺失映射。

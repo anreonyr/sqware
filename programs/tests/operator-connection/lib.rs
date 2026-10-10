@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{AwaitReply, Source, MailCondition, MailFail, Mark, PieToken, TaskId, Wait};
+pub use abi::{AwaitReply, Source, MailCondition, MailFail, Mark, PieResult, PieToken, TaskId, Wait};
 pub mod wire {
     pub use abi::wire::Field;
 }
@@ -222,7 +222,7 @@ pub mod pile {
     use super::*;
     pub struct Pile;
     impl Pile {
-        pub fn unseal(_: bool) -> Result<Self, ()> {
+        pub fn unseal(_: bool) -> crate::PieResult<Self> {
             Ok(Self)
         }
         pub fn attach(&self, source: Source) -> Result<(), ()> {

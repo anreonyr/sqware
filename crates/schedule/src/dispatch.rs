@@ -30,28 +30,28 @@ impl<K, E> Dispatch<K, E> {
     pub fn new() -> Self {
         Self { remaining: 0, state: State::Idle }
     }
-    pub fn begin(&mut self, budget: usize) -> Result<(), DispatchError> {
+    pub fn begin(&mut self, budget: usize) -> Result<&mut Self, DispatchError> {
         if !self.is_idle() { return Err(DispatchError::Busy); }
         self.remaining = budget;
-        Ok(())
+        Ok(self)
     }
     pub fn remaining(&self) -> usize { self.remaining }
-    pub fn select(&mut self, invocation: Invocation<K>) -> Result<(), DispatchError> {
+    pub fn select(&mut self, invocation: Invocation<K>) -> Result<&mut Self, DispatchError> {
         if !self.is_idle() { return Err(DispatchError::Busy); }
         if self.remaining == 0 { return Err(DispatchError::Exhausted); }
         self.state = State::Selected(invocation);
-        Ok(())
+        Ok(self)
     }
     /// Charge a skipped queue item against this round's budget.
-    pub fn skip(&mut self) -> Result<(), DispatchError> {
+    pub fn skip(&mut self) -> Result<&mut Self, DispatchError> {
         if !self.is_idle() { return Err(DispatchError::Busy); }
         self.remaining = self.remaining.checked_sub(1).ok_or(DispatchError::Exhausted)?;
-        Ok(())
+        Ok(self)
     }
-    pub fn stop(&mut self) -> Result<(), DispatchError> {
+    pub fn stop(&mut self) -> Result<&mut Self, DispatchError> {
         if !self.is_idle() { return Err(DispatchError::Busy); }
         self.remaining = 0;
-        Ok(())
+        Ok(self)
     }
     /// Consume the invocation and its result together.
     pub fn take_result(&mut self) -> Result<Completion<K, E>, DispatchError> {

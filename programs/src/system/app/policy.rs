@@ -120,7 +120,7 @@ pub fn running(
         && status.phase.load(Ordering::Acquire) == Phase::Starting as u8
     {
         status.phase.store(Phase::Running as u8, Ordering::Release);
-        programs::debug::put("system: static units ready; Running");
+        programs::debug::put("system: running");
     }
     Ok(Progress::Done)
 }

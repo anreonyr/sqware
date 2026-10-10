@@ -27,8 +27,7 @@ pub fn entries(
     wanted.armed = false;
     wanted
         .tokens
-        .try_reserve(ccall::Grant::ALL.len() + names.entries().len() + 3)
-        .map_err(|_| Fail::Room)?;
+        .try_reserve(ccall::Grant::ALL.len() + names.entries().len() + 3)?;
     wanted.tokens.extend(watch.entries());
     wanted.tokens.extend(names.entries());
     Ok(Progress::Done)
@@ -43,8 +42,7 @@ pub fn publication(
 pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
     wanted
         .subs
-        .try_reserve(control.living_count() + control.instances().count() * 2 + 3)
-        .map_err(|_| Fail::Room)?;
+        .try_reserve(control.living_count() + control.instances().count() * 2 + 3)?;
     wanted
         .subs
         .extend(control.living().filter_map(|row| match row.slot {
@@ -98,8 +96,8 @@ pub(super) fn connections(
     mut bound: ResMut<super::policy::Bound>,
 ) -> Result<Progress, Fail> {
     let count = tree.connection_interests().count();
-    wanted.tokens.try_reserve(count).map_err(|_| Fail::Room)?;
-    wanted.writes.try_reserve(count).map_err(|_| Fail::Room)?;
+    wanted.tokens.try_reserve(count)?;
+    wanted.writes.try_reserve(count)?;
     for (token, direction) in tree.connection_interests() {
         match direction {
             env::MailCondition::Pull => wanted.tokens.push(token),

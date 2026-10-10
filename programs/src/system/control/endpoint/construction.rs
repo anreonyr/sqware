@@ -18,9 +18,9 @@ pub(crate) struct Construction {
     queued: Vec<(Incoming, bool)>,
 }
 impl Construction {
-    pub(crate) fn new() -> Result<Self, &'static str> {
+    pub(crate) fn new() -> env::PieResult<Self> {
         Ok(Self {
-            entry: env::pie::unseal(env::UnsealArgs::hole(api::ENTRY)).map_err(|_| "construction entry")?,
+            entry: env::pie::unseal(env::UnsealArgs::hole(api::ENTRY))?,
             creators: Vec::new(),
             queued: Vec::new(),
         })

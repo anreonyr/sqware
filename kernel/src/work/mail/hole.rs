@@ -86,6 +86,7 @@ pub struct HoleMeta {
 }
 
 impl HoleMeta {
+    #[cfg(debug_assertions)]
     pub(super) fn new(id: HoleId, owner: TaskId) -> Arc<Self> {
         Self::try_new(id, owner).expect("hole allocation failed")
     }
@@ -673,6 +674,7 @@ pub(crate) fn seal(meta: &HoleMeta) {
     messenger::wipe(key(meta, MailCondition::Push));
 }
 
+#[cfg(debug_assertions)]
 pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
     HoleMeta::new(alloc_id(), owner)
 }

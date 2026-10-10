@@ -7,8 +7,11 @@ pub(crate) struct Waiting {
     sources: Vec<Source>,
 }
 impl Waiting {
-    pub(crate) fn new() -> Result<Self, ()> {
-        Ok(Self { pile: Pile::unseal(false).map_err(|_| ())?, sources: Vec::new() })
+    pub(crate) fn new() -> env::PieResult<Self> {
+        Ok(Self {
+            pile: Pile::unseal(false)?,
+            sources: Vec::new(),
+        })
     }
     pub(crate) fn detach(&self, token: PieToken) {
         let _ = self.pile.detach(Source::Mail { pie: token, condition: MailCondition::Pull });

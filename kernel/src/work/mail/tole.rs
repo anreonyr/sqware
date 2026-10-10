@@ -179,6 +179,7 @@ pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<ToleMeta>, crate::memory::ma
         life: Life::try_new()?, cells: SpinLock::new_level(Level::L3, Vec::new()), owner, cursor: AtomicUsize::new(0),
     }).map_err(|_| crate::memory::manager::MapError::OutOfMemory)
 }
+#[cfg(debug_assertions)]
 pub(crate) fn meta(owner: TaskId) -> Arc<ToleMeta> { try_meta(owner).expect("tole allocation failed") }
 
 #[derive(Clone)]

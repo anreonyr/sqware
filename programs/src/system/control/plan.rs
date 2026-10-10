@@ -8,22 +8,22 @@ use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};
 use env::Wait;
 pub(crate) fn poll() -> Result<Plan<Fail>, BuildError> {
-    let mut plan = Schedule::sequence();
-    plan.system("reap", super::unit::reap::sweep)?;
-    plan.system("instances.receive", endpoint::receive_instances)?;
-    plan.system("requests.receive", answer::receive)?;
-    plan.system("requests.state", answer::state)?;
-    plan.build()
+    Schedule::sequence()
+        .system("reap", super::unit::reap::sweep)?
+        .system("instances.receive", endpoint::receive_instances)?
+        .system("requests.receive", answer::receive)?
+        .system("requests.state", answer::state)?
+        .build()
 }
 pub(crate) fn commands(hooks: super::ActivationHooks) -> Result<Plan<Fail>, BuildError> {
-    let mut plan = Schedule::sequence();
-    plan.system("instances.answer", endpoint::answer_instances)?;
-    plan.system("requests.enqueue", answer::enqueue)?;
-    plan.plan(
-        "lifecycle",
-        lifecycle::schedule::actions(lifecycle::schedule::lifecycle(hooks)?)?,
-    )?;
-    plan.build()
+    Schedule::sequence()
+        .system("instances.answer", endpoint::answer_instances)?
+        .system("requests.enqueue", answer::enqueue)?
+        .plan(
+            "lifecycle",
+            lifecycle::schedule::actions(lifecycle::schedule::lifecycle(hooks)?)?,
+        )?
+        .build()
 }
 pub fn reply(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
     operations.reply_completed();
