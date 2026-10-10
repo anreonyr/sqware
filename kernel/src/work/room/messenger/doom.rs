@@ -49,6 +49,7 @@ fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
             CULL_HELD.fetch_add(1, Ordering::Relaxed);
         }
     }
+    if let Some(super::WaitCall::Mail(wait)) = task.take_wait() { wait.unwatch(); }
     *task.state.lock() = TaskState::Doomed { hart: None, cause, reason };
     true
 }

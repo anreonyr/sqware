@@ -253,6 +253,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             drop(operation);
+            if private { gate::notify(ident.id, backing); }
             Ok(va.as_usize())
         }
         MemoryCall::Munmap { addr, .. } => {
@@ -262,14 +263,16 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 })
             };
             if let Some(index) = item {
-                let (meta, span) = {
+                let (meta, span, token) = {
                     let items = target.staged();
-                    (items[index].meta.clone(), items[index].span)
+                    (items[index].meta.clone(), items[index].span, items[index].token)
                 };
                 let _operation = meta.backing().operation().ok_or(MemoryFail::Busy)?;
                 space.release(span).map_err(MemoryFail::from)?;
                 meta.backing().unreserve();
                 target.staged().remove(index);
+                drop(_operation);
+                gate::notify(meta.owner(), token);
                 return Ok(0);
             }
             if target.staged_len() != 0 && target.staged().iter().any(|item| {

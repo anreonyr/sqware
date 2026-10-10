@@ -82,7 +82,6 @@ pub struct Reply {
     pub id: u64,
     pub capacity: u64,
     pub seed: PieToken,
-    pub life: PieToken,
 }
 fn reply_to(request: &Request) -> PieToken {
     request.back
@@ -118,7 +117,6 @@ pub struct Endpoint {
     pub id: u64,
     pub capacity: usize,
     pub seed: PieToken,
-    pub life: PieToken,
     pub direction: Direction,
 }
 

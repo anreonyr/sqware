@@ -183,7 +183,7 @@ impl Hole {
 
     /// **响这一位**：置"有待取之事"并唤醒听者。已响 → `Busy`。
     pub fn ring(&self) -> MailResult<()> {
-        env::mail::ring(self.token, env::Bits::FIRST)
+        env::mail::ring(self.token, env::Bit::FIRST)
     }
 
     /// **应这一位**：清掉"有待取之事"，内核随即重开本 hart 的中断闸门。
@@ -191,7 +191,7 @@ impl Hole {
     /// `wait` 不清、要显式 `hush`：清必须与"取完"同一刻——醒来之后还要处理、处理完才轮得到
     /// "没有待取之事"。
     pub fn hush(&self) -> MailResult<()> {
-        env::mail::hush(self.token, env::Bits::FIRST)
+        env::mail::hush(self.token, env::Bit::FIRST)
     }
 }
 

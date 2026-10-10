@@ -50,7 +50,7 @@ pub(crate) const MAX_ARGS: usize = 64;
 
 pub enum TaskState {
     Running { hart: crate::hart::HartId, ticks_left: u32 },
-    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, join: Option<super::join::JoinWait> },
+    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, wait: Option<crate::work::room::messenger::WaitCall> },
     Starved { next: Option<Arc<Task>> },
     Held,
     Parked,
@@ -62,7 +62,7 @@ pub enum TaskState {
 pub enum TaskStopped {
     Held,
     Starved,
-    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, join: Option<super::join::JoinWait> },
+    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, wait: Option<crate::work::room::messenger::WaitCall> },
 }
 
 /// Why a task left the scheduler. `reason` remains the caller supplied exit
@@ -343,10 +343,10 @@ impl Task {
         }
     }
 
-    pub(crate) fn take_join(&self) -> Option<super::join::JoinWait> {
+    pub(crate) fn take_wait(&self) -> Option<crate::work::room::messenger::WaitCall> {
         match &mut *self.state.lock() {
-            TaskState::Blocked { join, .. }
-            | TaskState::Debarked { state: TaskStopped::Blocked { join, .. } } => join.take(),
+            TaskState::Blocked { wait, .. }
+            | TaskState::Debarked { state: TaskStopped::Blocked { wait, .. } } => wait.take(),
             _ => None,
         }
     }
@@ -391,8 +391,8 @@ impl Task {
             TaskTag::Blocked => {
                 let mut state = task.state.lock();
                 let old = core::mem::replace(&mut *state, TaskState::Parked);
-                let TaskState::Blocked { key, ticket, next, join } = old else { unreachable!() };
-                *state = TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, join } };
+                let TaskState::Blocked { key, ticket, next, wait } = old else { unreachable!() };
+                *state = TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, wait } };
             }
             TaskTag::Running => {
                 let mut state = task.state.lock();
@@ -416,8 +416,8 @@ impl Task {
             TaskState::Debarked { state: TaskStopped::Starved } => false,
             TaskState::Debarked { state: TaskStopped::Blocked { .. } } => {
                 let old = core::mem::replace(&mut *state, TaskState::Parked);
-                let TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, join } } = old else { unreachable!() };
-                *state = TaskState::Blocked { key, ticket, next, join }; return Ok(());
+                let TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, wait } } = old else { unreachable!() };
+                *state = TaskState::Blocked { key, ticket, next, wait }; return Ok(());
             }
             TaskState::Debarking { .. } => return Err(UnitFail::Busy),
             TaskState::Doomed { .. } | TaskState::Reaped { .. } => return Err(UnitFail::Denied),

@@ -48,7 +48,7 @@ mod work {
             use env::TaskId;
             pub enum WakeKey {
                 Pies { task: TaskId },
-                Capabilities { task: TaskId },
+                Inspect { task: TaskId, token: usize },
             }
             pub fn signal(_: WakeKey) -> Result<(), ()> {
                 Ok(())
@@ -117,7 +117,7 @@ mod work {
                     pub fn backing(&self) -> &Arc<Backing> {
                         &self.backing
                     }
-                    pub fn has_subs(&self) -> bool {
+                    pub fn has_cells(&self) -> bool {
                         false
                     }
                     pub fn seal(&self) {

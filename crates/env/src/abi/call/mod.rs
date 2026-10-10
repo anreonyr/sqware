@@ -1,10 +1,10 @@
 //! call — **环境调用号那一张表**：契约与聚合（本模块）＋ **一域一份**（`room`/`unit`/`memory`/
-//! `chrono`/`mail`/`pie`/`control`/`debug`/`tole`：每份 = 该域的 `*Call` ＋ `*Fail` ＋ `Result` 别名）。
+//! `chrono`/`mail`/`pie`/`control`/`debug`：每份 = 该域的 `*Call` ＋ `*Fail` ＋ `Result` 别名）。
 //!
 //! 方案 3（typed payload）：每个原语是一个**带类型载荷的 variant**，字段类型是
 //! envcall 语义句柄（`PieToken`/`TaskId`/`VirtAddr`）或 `Permission`/裸量。调用号
 //! （a7）不再 `#[repr(usize)]`+手写 `as usize`，而由 `[derive(Envcall)]` 生成的
-//! codec 现算：`(class << 32) | slot`。Pie、Mail、Tole 通过 `#[slot(N)]` 明确指定操作号；
+//! codec 现算：`(class << 32) | slot`。Pie、Mail 通过 `#[slot(N)]` 明确指定操作号；
 //! 其他调用域仍按声明顺序编号。
 //!
 //! 返回类型（R3）：每个 variant 标 `#[ret(T)]`，derive 生成域 `*Ret` 枚举与
@@ -12,7 +12,7 @@
 //! `slot/pack/unpack` 只依赖 `Wire`——sbi 未来可复用同一 derive。
 //!
 //! 分类按**操作的归属轴**一一对应（class=高 32 位）：Room=0, Unit=1, Memory=2,
-//! Chrono=4, Mail=5, Control=6, **Pie=7**, Debug=8, **Tole=9**。命名与调度词族
+//! Chrono=4, Mail=5, Control=6, **Pie=7**, Debug=8；旧 Tole class=9 拒绝。命名与调度词族
 //! （conductor）、内核 `runtime::chrono` 域及用户侧 execution 同词。
 //!
 //! **class 3 空着不补**：设备不是内核的事——域持门闩、自己读写寄存器，控制台是服务。
@@ -31,7 +31,7 @@
 //! 改由父任务 `Accord` 下发）。
 //!
 //! **未知调用号的运行时契约（ABI 的一部分，不是实现细节）**：`a7` 由调用方
-//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（今天只有 class 3
+//! 完全控制，故它是**输入**而非可信标识。未声明的 class / index（今天 class 3、9
 //! 与 ≥ 10 的号段是空的、以及越界索引）一律 decoded 为 `Decode::BadSlot`，
 //! 内核侧按**被拒绝**处理：写回负码（`Fail::Denied`）并**续跑调用方**——
 //! 与其它用户引起的异常同走故障隔离，绝不 panic（否则用户态一发 `ebreak`
@@ -55,19 +55,17 @@ pub mod memory;
 pub mod pie;
 pub mod pie_types;
 pub mod room;
-pub mod tole;
 pub mod unit;
 
 pub use self::chrono::{ChronoCall, ChronoCallRet};
 pub use self::control::{ControlCall, ControlCallRet, ControlFail, ControlResult};
 pub use self::debug::{DBCN_MAX, DebugCall, DebugCallRet, DebugFail, DebugResult};
 pub use self::mail::{MailCall, MailCallRet, MailFail, MailResult};
-pub use self::mail::{Bit, Bits, MailCondition, Oversize, PullOutcome};
+pub use self::mail::{AwaitReply, Bit, MailCondition, Oversize, PullOutcome, Source};
 pub use self::memory::{MemoryCall, MemoryCallRet, MemoryFail, MemoryResult};
 pub use self::pie::{PieCall, PieCallRet, PieFail, PieResult};
 pub use self::pie_types::{HoleLimits, PieInfo, ReleaseMode, UnsealArgs};
 pub use self::room::{NOTE_MAX, RoomCall, RoomCallRet, RoomFail, RoomResult};
-pub use self::tole::{Source, ToleCall, ToleCallRet, ToleFail, ToleResult};
 pub use self::unit::{UnitCall, UnitCallRet, UnitFail, UnitResult};
 
 /// **无域那一层**（dispatch）：`EnvCall::from_wire` 失败——调用号读不懂。
@@ -97,8 +95,6 @@ pub enum EnvCall {
     Pie(self::pie::PieCall),
     /// 调试面（见 [`self::debug::DebugCall`]）。
     Debug(self::debug::DebugCall),
-    /// 多路等待（见 [`self::tole::ToleCall`]）。
-    Tole(self::tole::ToleCall),
 }
 
 impl EnvCall {
@@ -122,7 +118,6 @@ impl EnvCall {
             8 => Ok(EnvCall::Debug(self::debug::DebugCall::from_wire(
                 slot, regs,
             )?)),
-            9 => Ok(EnvCall::Tole(self::tole::ToleCall::from_wire(slot, regs)?)),
             _ => Err(crate::wire::Decode::BadSlot),
         }
     }

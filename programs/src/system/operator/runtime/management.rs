@@ -40,7 +40,7 @@ pub(super) fn tip(
         Policy::VEST,
     )
     .map_err(|_| Fail::Tree)?;
-    pile.attach(hole.token(), MailCondition::Pull)
+    pile.attach(env::Source::Mail { pie: hole.token(), condition: MailCondition::Pull })
         .map_err(|_| Fail::Desk)?;
     Ok(Progress::Done)
 }
@@ -149,7 +149,7 @@ pub(super) fn guest(
             return Ok(Progress::Done);
         }
     }
-    if pile.attach(*ask, MailCondition::Pull).is_err() {
+    if pile.attach(env::Source::Mail { pie: *ask, condition: MailCondition::Pull }).is_err() {
         desk.evict(*who, (*reply, *ask));
         let _ = Hole::from_raw(*reply).push(&[ocall::DENIED], Wait::POLL);
         return Ok(Progress::Done);
@@ -160,7 +160,7 @@ pub(super) fn guest(
     {
         debug::put("operator: guest acknowledgement failed");
         desk.evict(*who, (*reply, *ask));
-        let _ = pile.detach(*ask, MailCondition::Pull);
+        let _ = pile.detach(env::Source::Mail { pie: *ask, condition: MailCondition::Pull });
     }
     Ok(Progress::Done)
 }
@@ -302,7 +302,7 @@ pub(super) fn finish(mut dispatch: ResMut<Dispatch<(), Fail>>) -> Result<Progres
     Ok(Progress::Done)
 }
 pub(super) fn close(tip: Res<Tip>, pile: Res<Pile>) -> Result<Progress, Fail> {
-    let _ = pile.detach(tip.0, MailCondition::Pull);
+    let _ = pile.detach(env::Source::Mail { pie: tip.0, condition: MailCondition::Pull });
     let _ = pie::seal(tip.0);
     let _ = pie::release(tip.0, env::ReleaseMode::Revoke);
     Ok(Progress::Done)

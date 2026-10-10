@@ -72,6 +72,7 @@ impl NoleMeta {
 impl Drop for NoleMeta {
     fn drop(&mut self) {
         *self.state.lock() = NoleState::Dead;
+        messenger::wipe(WakeKey::Seal { kind: env::PieKind::Nole as u8, id: self.id.0 });
         messenger::wipe(key(self));
     }
 }
@@ -122,5 +123,6 @@ pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, Mail
 
 pub(crate) fn seal(meta: &NoleMeta) {
     *meta.state.lock() = NoleState::Dead;
+    messenger::wipe(WakeKey::Seal { kind: env::PieKind::Nole as u8, id: meta.id.0 });
     messenger::wipe(key(meta));
 }

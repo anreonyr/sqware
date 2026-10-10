@@ -3,8 +3,6 @@ use ::schedule::{BuildError, Plan, Schedule};
 pub(crate) fn frame() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();
     schedule.system("receive", super::answer::receive)?;
-    schedule.system("settle", super::execution::settle)?;
-    schedule.system("build", super::execution::build)?;
     schedule.build()
 }
 pub(crate) fn shutdown() -> Result<Plan<Fail>, BuildError> {

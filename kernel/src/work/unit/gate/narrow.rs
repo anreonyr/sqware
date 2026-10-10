@@ -12,11 +12,7 @@ pub(crate) fn reduce(
     subset: Permission,
 ) -> Result<(), PieFail> {
     reduce_locked(task, token, subset)?;
-    // 表里那一枚**就地**缩了权：释放任务的 `gate`/`pies` 之后要求持有者复核一次。
-    let _ =
-        crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Capabilities {
-            task: task.ident.id,
-        });
+    super::notify(task.ident.id, token);
     Ok(())
 }
 

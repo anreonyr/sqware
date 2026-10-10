@@ -13,10 +13,10 @@ mod control;
 mod debug;
 pub(crate) mod mail;
 mod memory;
-mod pie;
+pub(crate) mod pie;
 mod room;
 pub(crate) mod resources;
-mod tole;
+pub(crate) mod tole;
 mod unit;
 
 fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext {
@@ -98,14 +98,7 @@ fn dispatch_inner(frame: &mut TrapContext, ident: Arc<TaskIdent>) -> *mut TrapCo
         EnvCall::Debug(DebugCall::SetTrace { on }) => {
             frame.gpr.set_x(Gprs::A0, debug::set_trace(on));
         }
-        EnvCall::Tole(call) => {
-            if let Some(out) = tole::dispatch(frame, call, ident) {
-                return match out {
-                    mail::Outcome::Resume => frame as *mut TrapContext,
-                    mail::Outcome::Park(next) => next,
-                };
-            }
-        }
+
     };
     frame as *mut TrapContext
 }

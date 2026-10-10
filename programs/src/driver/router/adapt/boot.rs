@@ -125,8 +125,8 @@ pub fn up() -> Result<Up, Fail> {
     // 故等待**没有期限**（见 `resident` 里那一注）：会丢的那一次铃已在根上修掉。
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_ROUTER, "bell"))?;
     let entry_hole = Hole::from_raw(entry);
-    if pile.attach(irq_deed.token, MailCondition::Pull).is_err()
-        || pile.attach(entry_hole.token(), MailCondition::Pull).is_err()
+    if pile.attach(env::Source::Mail { pie: irq_deed.token, condition: MailCondition::Pull }).is_err()
+        || pile.attach(env::Source::Mail { pie: entry_hole.token(), condition: MailCondition::Pull }).is_err()
     {
         return Err(Fail::at(E_ROUTER, "bell"));
     }

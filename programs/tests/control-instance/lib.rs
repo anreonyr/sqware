@@ -88,6 +88,9 @@ pub mod room {
         Ok(())
     }
 }
+#[path = "../../src/system/control/instance/create.rs"]
+pub mod instance_create;
+pub use system::control::instance::state;
 #[path = "../../src/system/control/instance/hook.rs"]
 pub mod instance_hook;
 
@@ -110,6 +113,7 @@ pub mod system {
             }
         }
         pub mod instance {
+            pub use crate::instance_create as create;
             pub mod state {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
@@ -326,4 +330,53 @@ fn resuming_busy_team_keeps_transition_retriable() {
     assert_eq!(control.instances[0].state, State::Debarked);
     EFFECTS.with(|e| e.borrow_mut().embark_busy = false);
     assert_eq!(control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))), Ok(Some(State::Ready)));
+}
+
+#[test]
+fn full_instance_table_rejects_before_construction() {
+    use system::control::{instance::state::{Instance, INSTANCE_CAP}, unit::Control, unit::table::State};
+    use system_api::{control::Fail, loader::Built};
+    EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
+    let mut control = Control { instances: (0..INSTANCE_CAP).map(|n| Instance {
+        owner: TaskId::new(1), task: TaskId::new(n + 2), team: Some(TeamId::new(n + 3)),
+        state: State::Starting, claimed: false, started: false, reason: None,
+        claim_until: 0, hook: Default::default(),
+    }).collect() };
+    let invoked = std::cell::Cell::new(false);
+    let result = control.create_instance(TaskId::new(1), || {
+        invoked.set(true); Ok(Built { task: TaskId::new(1000), team: TeamId::new(1001) })
+    });
+    assert!(matches!(result, Err(Fail::Full)));
+    assert!(!invoked.get(), "capacity rejection must not create a kernel team");
+    assert_eq!(control.instances.len(), INSTANCE_CAP);
+    EFFECTS.with(|e| { let e = e.borrow(); assert_eq!((e.doomed, e.ousted), (0, 0)); });
+}
+
+#[test]
+fn failed_construction_does_not_publish_an_instance() {
+    use system::control::unit::Control;
+    use system_api::control::Fail;
+    EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
+    let mut control = Control { instances: Vec::new() };
+    assert!(matches!(control.create_instance(TaskId::new(1), || Err(Fail::BadImage)), Err(Fail::BadImage)));
+    assert!(control.instances.is_empty());
+    EFFECTS.with(|e| { let e = e.borrow(); assert_eq!((e.doomed, e.ousted), (0, 0)); });
+}
+
+#[test]
+fn successful_construction_is_registered_before_return() {
+    use system::control::{unit::Control, unit::table::State};
+    use system_api::loader::Built;
+    EFFECTS.with(|e| *e.borrow_mut() = Effects { now: 42, ..Effects::default() });
+    let mut control = Control { instances: Vec::new() };
+    let built = control.create_instance(TaskId::new(7), || Ok(Built {
+        task: TaskId::new(8), team: TeamId::new(9),
+    })).unwrap();
+    assert_eq!(built.task, TaskId::new(8));
+    assert_eq!(control.instances.len(), 1);
+    let instance = &control.instances[0];
+    assert_eq!((instance.owner, instance.task, instance.team), (TaskId::new(7), built.task, Some(built.team)));
+    assert_eq!(instance.state, State::Starting);
+    assert!(!instance.claimed && !instance.started);
+    assert_eq!(instance.claim_until, 42 + system_api::loader::CLAIM_MS as u64 * 1_000_000);
 }

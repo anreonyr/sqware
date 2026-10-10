@@ -189,7 +189,7 @@ pub fn serve() -> Result<(), Start> {
     //     三枚"推出来，认台靠**这一枚孔自己**）。
     let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
     for token in &doors {
-        pile.attach(*token, MailCondition::Pull)
+        pile.attach(env::Source::Mail { pie: *token, condition: MailCondition::Pull })
             .map_err(|_| Start::Desk(E_HUB))?;
     }
     let mut buf: Vec<u8> = Vec::new();
@@ -199,7 +199,7 @@ pub fn serve() -> Result<(), Start> {
     buf.resize(PAGE_SIZE, 0);
     loop {
         match pile.await_(Wait::AtMost(PROBE_MS)) {
-            Ok(Some((token, _))) => {
+            Ok(env::AwaitReply::Source { source: env::Source::Mail { pie: token, .. }, .. }) => {
                 // 门牌是**单槽**：一次醒来的这一批要取干净（可能不止一位客人）。
                 let hole = Hole::from_raw(token);
                 while let Ok((len, from)) = hole.pull(&mut buf, Wait::POLL) {
@@ -207,7 +207,7 @@ pub fn serve() -> Result<(), Start> {
                 }
             }
             // **挂起过 / 期限到**：这是常态（没有客人），故它顺带就是探活那一拍。
-            Ok(None) => {}
+            Ok(_) => {}
             Err(_) => return Err(Start::Dead(E_HUB)),
         }
         // 探活：主人没了的格当场空出来（读数只在真空出东西时印一行）。

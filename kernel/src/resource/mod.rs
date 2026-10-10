@@ -110,11 +110,6 @@ impl Frozen {
         gate::changed(target);
         drop(commit);
         drop(closed);
-        let _ = crate::work::room::messenger::signal(
-            crate::work::room::messenger::WakeKey::Capabilities {
-                task: target.ident.id,
-            },
-        );
         Ok(ledger)
     }
 }

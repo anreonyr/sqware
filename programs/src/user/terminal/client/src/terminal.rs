@@ -225,8 +225,8 @@ impl Io {
             control,
             pile,
         };
-        io.pile.attach(input, MailCondition::Pull).map_err(|_| ())?;
-        io.pile.attach(control, MailCondition::Pull).map_err(|_| ())?;
+        io.pile.attach(env::Source::Mail { pie: input, condition: MailCondition::Pull }).map_err(|_| ())?;
+        io.pile.attach(env::Source::Mail { pie: control, condition: MailCondition::Pull }).map_err(|_| ())?;
         Ok(io)
     }
     pub fn injected(owner: TaskId) -> Result<Self, ()> {

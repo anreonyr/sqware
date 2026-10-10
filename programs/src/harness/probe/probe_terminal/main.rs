@@ -47,7 +47,7 @@ fn main() -> programs::Report<'static> {
     assert!(io.read().is_err());
     assert!(io.write(b"blocked").is_err());
     assert!(
-        matches!(env::tole::await_(authority, Wait::POLL), Err(e) if e.source == env::ToleFail::HandedOver)
+        matches!(env::mail::await_(authority, Wait::POLL), Err(e) if e.source == env::MailFail::HandedOver)
     );
     assert!(
         matches!(pie::accord(authority, child, Permission::FETCH | Permission::VEST | Permission::ONLY, Mark::NONE), Err(e) if e.source == PieFail::HandedOver)

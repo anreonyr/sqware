@@ -39,7 +39,24 @@ impl Control {
     pub(crate) fn closing_service_names(&self) -> impl Iterator<Item = &str> {
         self.living().filter_map(|row| {
             (matches!(row.state, State::Starting | State::Ready | State::Debarked)
-                && matches!(row.slot, Slot::Live { team: Some(_), .. }))
+                && matches!(row.slot, Slot::Live { team: Some(_), .. })
+                && !self.living().any(|other| {
+                    if other.name == row.name || !matches!(other.slot, Slot::Live { .. }) {
+                        return false;
+                    }
+                    let Ok(input) = self.input(&other.name) else { return false };
+                    // Reuse the declaration: stop users before their providers.
+                    // Stopping users still hold the provider until reclaim finishes.
+                    input.program.relation.after.is_some_and(|after| {
+                        after.iter().any(|name| *name == row.name)
+                            || (after.iter().any(|name| crate::unit::is_target(name))
+                                && self.input(&row.name).is_ok_and(|input| {
+                                    !input.program.relation.after.is_some_and(|after| {
+                                        after.iter().any(|name| crate::unit::is_target(name))
+                                    })
+                                }))
+                    })
+                }))
             .then_some(row.name.as_str())
         })
     }

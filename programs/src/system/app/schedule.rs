@@ -53,9 +53,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         "construction.admit",
         crate::system::control::admit_construction,
     )?;
-    frame.system("construction.dispatch", crate::system::launch::dispatch)?;
-    frame.plan("loader", crate::system::loader::frame()?)?;
-    frame.system("launch.register", crate::system::launch::register)?;
+    frame.plan("launch", crate::system::launch::frame()?)?;
     frame.plan(
         "control.commands",
         crate::system::control::commands(crate::system::app::assembly::hooks()?)?,

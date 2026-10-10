@@ -541,13 +541,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         )
         .unwrap();
     schedule
-        .add_system("construction.dispatch", 2, crate::system::launch::dispatch)
-        .unwrap();
-    schedule
-        .add_plan("loader.build", 3, crate::system::loader::frame().unwrap())
-        .unwrap();
-    schedule
-        .add_system("launch.register", 4, crate::system::launch::register)
+        .add_plan("launch", 2, crate::system::launch::frame().unwrap())
         .unwrap();
     schedule
         .add_system(

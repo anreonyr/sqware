@@ -41,7 +41,7 @@ pub(crate) fn accord(
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
-        if pie.tole().is_some_and(|p| p.has_subs()) {
+        if pie.tole().is_some_and(|p| p.has_cells()) {
             return Err(PieFail::Denied);
         }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
@@ -86,15 +86,14 @@ pub(crate) fn accord(
         },
         &target.life(),
     );
-    for task in [caller.ident.id, target.ident.id] {
-        let _ = messenger::signal(WakeKey::Capabilities { task });
-    }
+    super::notify(caller.ident.id, src);
+    super::notify(target.ident.id, token);
     Ok(token.get())
 }
 
 pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let _gate = task.gate.lock();
-    let _commit = super::super::commit();
+    let gate_guard = task.gate.lock();
+    let commit_guard = super::super::commit();
     let child = {
         let heirs = task.gate.heirs.lock();
         heirs
@@ -111,6 +110,8 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
     if cleared {
         super::remove_heir(task, token, expected.token);
     }
+    drop(commit_guard); drop(gate_guard);
+    if cleared { super::notify(task.ident.id, token); }
     cleared
 }
 

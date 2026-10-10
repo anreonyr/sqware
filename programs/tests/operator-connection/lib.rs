@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{MailCondition, MailFail, Mark, PieToken, TaskId, Wait};
+pub use abi::{AwaitReply, Source, MailCondition, MailFail, Mark, PieToken, TaskId, Wait};
 pub mod wire {
     pub use abi::wire::Field;
 }
@@ -220,20 +220,18 @@ pub mod hand {
 }
 pub mod pile {
     use super::*;
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum Sub {
-        Capabilities,
-    }
     pub struct Pile;
     impl Pile {
         pub fn unseal(_: bool) -> Result<Self, ()> {
             Ok(Self)
         }
-        pub fn attach(&self, token: PieToken, direction: MailCondition) -> Result<(), ()> {
+        pub fn attach(&self, source: Source) -> Result<(), ()> {
+            let Source::Mail { pie: token, condition: direction } = source else { return Err(()) };
             BACKEND.with(|b| b.borrow_mut().attachments.push((token, direction)));
             Ok(())
         }
-        pub fn detach(&self, token: PieToken, direction: MailCondition) -> Result<(), ()> {
+        pub fn detach(&self, source: Source) -> Result<(), ()> {
+            let Source::Mail { pie: token, condition: direction } = source else { return Err(()) };
             BACKEND.with(|b| {
                 b.borrow_mut()
                     .attachments
@@ -241,13 +239,7 @@ pub mod pile {
             });
             Ok(())
         }
-        pub fn subscribe(&self, _: Sub) -> Result<(), ()> {
-            Ok(())
-        }
-        pub fn unsubscribe(&self, _: Sub) -> Result<(), ()> {
-            Ok(())
-        }
-        pub fn await_(&self, wait: Wait) -> Result<Option<(PieToken, MailCondition)>, ()> {
+        pub fn await_(&self, wait: Wait) -> Result<AwaitReply, ()> {
             BACKEND.with(|b| {
                 let mut b = b.borrow_mut();
                 let event =
@@ -267,7 +259,7 @@ pub mod pile {
                         b.now += ms as u64 * 1_000_000;
                     }
                 }
-                Ok(event)
+                Ok(event.map_or(AwaitReply::Pending, |(pie, condition)| AwaitReply::Source { source: Source::Mail { pie, condition }, fail: None }))
             })
         }
     }

@@ -1,6 +1,6 @@
 use alloc::sync::Arc;
 
-use env::{Bits, MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcome, TaskId, Wait};
+use env::{Bit, MailCall, MailCondition, MailFail, Oversize, PieToken, PullOutcome, TaskId, Wait};
 
 use riscv::register::sie;
 
@@ -25,6 +25,9 @@ pub(crate) fn dispatch(
     call: MailCall,
     ident: Arc<TaskIdent>,
 ) -> Option<Outcome> {
+    if matches!(call, MailCall::Attach { .. } | MailCall::Detach { .. } | MailCall::Await { .. }) {
+        return super::tole::dispatch(frame, call, ident);
+    }
     Some(match call {
         MailCall::Push { token, msg, len } => push(frame, ident, token, msg.get(), len),
         MailCall::Pull {
@@ -39,8 +42,9 @@ pub(crate) fn dispatch(
             condition,
             millis,
         } => wait_dir(frame, ident, token, condition, millis),
-        MailCall::Hush { token, bits } => hush(frame, token, bits),
-        MailCall::Ring { token, bits } => ring(frame, token, bits),
+        MailCall::Hush { token, bit } => hush(frame, token, bit),
+        MailCall::Ring { token, bit } => ring(frame, token, bit),
+        _ => unreachable!(),
     })
 }
 
@@ -221,10 +225,10 @@ fn wait_dir(
     Outcome::Resume
 }
 
-fn hush(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
+fn hush(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| {
         if let Some(nole) = pie.nole() {
-            if bits != Bits::FIRST { return Err(MailFail::Denied); }
+            if bit != Bit::FIRST { return Err(MailFail::Denied); }
             mail::nole::hush(&nole)?;
             // Only the Nole interrupt path reopens the external interrupt gate.
             unsafe {
@@ -233,11 +237,11 @@ fn hush(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
             return Ok(());
         }
         if let Some(hole) = pie.hole() {
-            if bits != Bits::FIRST { return Err(MailFail::Denied); }
+            if bit != Bit::FIRST { return Err(MailFail::Denied); }
             return mail::hole::hush(&hole);
         }
         if let Some(pole) = pie.pole() {
-            return mail::pole::hush(&pole, bits);
+            return mail::pole::hush(&pole, bit);
         }
         Err(MailFail::Denied)
     });
@@ -251,18 +255,18 @@ fn hush(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
     Outcome::Resume
 }
 
-fn ring(frame: &mut TrapContext, token: PieToken, bits: Bits) -> Outcome {
+fn ring(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
     let r = with_pie(token, Need::Store, |pie| {
         if let Some(nole) = pie.nole() {
-            if bits != Bits::FIRST { return Err(MailFail::Denied); }
+            if bit != Bit::FIRST { return Err(MailFail::Denied); }
             return mail::nole::ring(&nole);
         }
         if let Some(hole) = pie.hole() {
-            if bits != Bits::FIRST { return Err(MailFail::Denied); }
+            if bit != Bit::FIRST { return Err(MailFail::Denied); }
             return mail::hole::ring(&hole);
         }
         if let Some(pole) = pie.pole() {
-            return mail::pole::ring(&pole, bits);
+            return mail::pole::ring(&pole, bit);
         }
         Err(MailFail::Denied)
     });

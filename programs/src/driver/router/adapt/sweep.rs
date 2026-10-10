@@ -27,7 +27,7 @@ pub fn run(lines: &mut Lines, plic: &Plic, pile: &Pile) {
             continue;
         }
         plic.unwire(line);
-        let _ = pile.detach(lane.rx(), MailCondition::Pull);
+        let _ = pile.detach(env::Source::Mail { pie: lane.rx(), condition: MailCondition::Pull });
         let _ = lines.vacate(line);
         debug!("router: vacate line={line}");
     }

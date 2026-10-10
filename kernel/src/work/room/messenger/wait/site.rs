@@ -35,10 +35,8 @@ pub enum WakeKey {
     Pies {
         task: TaskId,
     },
-    /// **能力可观察状态改变**（独立一格：`Pies` 的到达语义留给 `Fall`，一个字不扩）。
-    Capabilities {
-        task: TaskId,
-    },
+    Seal { kind: u8, id: usize },
+    Inspect { task: TaskId, token: usize },
     Tole {
         id: usize,
     },
@@ -62,9 +60,8 @@ impl WakeKey {
             WakeKey::Task { id } => (id.get() as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93),
             WakeKey::Alarm { task } => (task.get() as u64).wrapping_mul(0xA24B_AED4_963E_E407),
             WakeKey::Pies { task } => (task.get() as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F),
-            WakeKey::Capabilities { task } => {
-                (task.get() as u64).wrapping_mul(0x2545_F491_4F6C_DD1D)
-            }
+            WakeKey::Seal { kind, id } => (id as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F) ^ kind as u64,
+            WakeKey::Inspect { task, token } => (task.get() as u64).wrapping_mul(0x2545_F491_4F6C_DD1D) ^ token as u64,
             WakeKey::Tole { id } => (id as u64).wrapping_mul(0x1656_67B1_9E37_79F9),
         }
     }

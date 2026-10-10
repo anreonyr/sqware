@@ -204,6 +204,10 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn permit_references() { kernel::health::permit::references(); }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn permit_order() {
         kernel::health::permit::order();
     }

@@ -6,7 +6,7 @@ use pipe_api::{Direction, Endpoint};
 pub const MARK: env::Mark = env::Mark::of("shell-launch");
 pub const CATALOGUE: env::Mark = env::Mark::of("shell-catalogue");
 pub const MAGIC: u64 = 0x7371776172656c73;
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 pub const MAX_SIZE: usize = 64 * 1024;
 pub const MAX_ARGS: usize = 64;
 pub const MAX_PORTS: usize = 64;
@@ -75,7 +75,6 @@ impl Launch {
             word(&mut bytes, binding.endpoint.id);
             word(&mut bytes, binding.endpoint.capacity as u64);
             word(&mut bytes, binding.endpoint.seed.get() as u64);
-            word(&mut bytes, binding.endpoint.life.get() as u64);
             word(
                 &mut bytes,
                 pipe_api::code(binding.endpoint.direction) as u64,
@@ -116,7 +115,6 @@ impl Launch {
             let id = decoder.word().ok_or(Fail::Invalid)?;
             let capacity = decoder.word().ok_or(Fail::Invalid)? as usize;
             let seed = decoder.pie().ok_or(Fail::Invalid)?;
-            let life = decoder.pie().ok_or(Fail::Invalid)?;
             let direction = pipe_api::direction(
                 u8::try_from(decoder.word().ok_or(Fail::Invalid)?).map_err(|_| Fail::Invalid)?,
             )
@@ -125,7 +123,6 @@ impl Launch {
                 || capacity == 0
                 || capacity > pipe_api::MAX_CAPACITY
                 || seed == PieToken::NONE
-                || life == PieToken::NONE
             {
                 return Err(Fail::Invalid);
             }
@@ -135,7 +132,6 @@ impl Launch {
                     id,
                     capacity,
                     seed,
-                    life,
                     direction,
                 },
             });

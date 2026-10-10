@@ -29,19 +29,18 @@ pub mod wire;
 
 pub use abi::call::memory::PAGE_SIZE;
 pub use abi::call::{
-    Bit, Bits, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
+    AwaitReply, Bit, ChronoCall, ChronoCallRet, ControlCall, ControlCallRet, ControlFail, ControlResult, DBCN_MAX,
     DebugCall, DebugCallRet, DebugFail, DebugResult, DispatchFail, EnvCall, HoleLimits, MailCall,
     MailCallRet, MailCondition, MailFail, MailResult, MemoryCall, MemoryCallRet, MemoryFail,
     MemoryResult, NOTE_MAX, Oversize, PieCall, PieCallRet, PieFail, PieInfo, PieResult,
-    PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, ToleCall,
-    ToleCallRet, ToleFail, ToleResult, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
+    PullOutcome, ReleaseMode, RoomCall, RoomCallRet, RoomFail, RoomResult, Source, UnitCall, UnitCallRet, UnitFail, UnitResult, UnsealArgs,
 };
 /// **每格一个精确签名的入口**（`#[derive(Envcall)]` 生成，一域一个模块）：
 /// `env::memory::allocate(size)`、`env::pie::seal(token)`、`env::room::park(millis)`…
 /// 载荷类型就是那一格的契约；标 `#[infallible]` 的格不返 `Result`。
 pub use abi::call::{
     chrono::chrono, control::control, debug::debug, mail::mail, memory::memory, pie::pie,
-    room::room, tole::tole,
+    room::room,
 };
 pub use abi::exit::{EXIT_FAULT, EXIT_OK, EXIT_PANIC, Reason};
 pub use abi::permission::{Access, Permission, Policy};

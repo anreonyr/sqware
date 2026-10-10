@@ -1,4 +1,4 @@
-use self::state::{self as instance, Instance};
+use self::state::Instance;
 use super::unit::table::State;
 use crate::system::app::Fault as ControlFail;
 use crate::system::control::unit::Control;
@@ -39,35 +39,6 @@ impl Control {
             },
             _ => Ok(Some(Err(Fail::NotReady))),
         }
-    }
-
-    pub(super) fn reserve_instance(&mut self) -> Result<(), Fail> {
-        if self.instances.len() >= instance::INSTANCE_CAP {
-            if let Some(at) = self
-                .instances
-                .iter()
-                .position(|item| item.state == State::Dead)
-            {
-                self.instances.remove(at);
-            } else {
-                return Err(Fail::Full);
-            }
-        }
-        self.instances.try_reserve(1).map_err(|_| Fail::Full)
-    }
-
-    pub(super) fn register_instance(&mut self, built: Built, owner: TaskId) {
-        self.instances.push(Instance {
-            owner,
-            task: built.task,
-            team: Some(built.team),
-            state: State::Starting,
-            claimed: false,
-            started: false,
-            reason: None,
-            claim_until: env::chrono::clock() + system_api::loader::CLAIM_MS as u64 * 1_000_000,
-            hook: Default::default(),
-        });
     }
 
     pub(crate) fn stop_instance(&mut self, task: TaskId) {

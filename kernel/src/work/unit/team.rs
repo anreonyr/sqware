@@ -305,7 +305,10 @@ impl Team {
         let mut staged = StagingLease { team: self, items: self.take_staging() };
         while let Some(item) = staged.last() {
             self.space.release(item.span)?;
-            item.meta.backing().unreserve(); staged.pop();
+            item.meta.backing().unreserve();
+            let owner = item.meta.owner(); let token = item.token;
+            staged.pop();
+            super::gate::notify(owner, token);
         }
         Ok(())
     }
@@ -472,7 +475,6 @@ pub(crate) fn spawn(
     if stack > 0 {
         builder = builder.stack(stack);
     }
-    let caller_id = caller.map(|caller| caller.ident.id);
     let result = (|| -> Result<Arc<Task>, UnitFail> {
         use crate::work::unit::gate::{self, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
@@ -544,19 +546,10 @@ pub(crate) fn spawn(
         drop(closed);
         drop(staged);
         drop(operations);
+        for pie in &retired { gate::notify(caller.ident.id, pie.token()); }
         drop(retired);
         drop(leases);
         result
     })();
-    // 首次提交会把调用者表里那几枚 staging 根移交给子域：出闭包、出任务的 `gate`、也出了
-    // `NoAllocation` 之后才要求复核一次。
-    if let Some(caller) = caller_id
-        && first
-        && result.is_ok()
-    {
-        let _ = crate::work::room::messenger::signal(
-            crate::work::room::messenger::WakeKey::Capabilities { task: caller },
-        );
-    }
     result
 }

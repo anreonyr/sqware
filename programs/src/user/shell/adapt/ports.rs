@@ -107,7 +107,7 @@ impl Pump {
         )
     }
     pub fn hush_demand(&self) {
-        let _ = env::mail::hush(self.port.token(), pipe_api::DEMAND_BIT.bits());
+        let _ = env::mail::hush(self.port.token(), pipe_api::DEMAND_BIT);
     }
     pub fn source_step(
         &mut self,

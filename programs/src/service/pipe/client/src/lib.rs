@@ -153,7 +153,6 @@ impl Client {
             id: pipe.id,
             capacity: pipe.capacity,
             seed: reply.seed,
-            life: reply.life,
             direction,
         })
     }
@@ -213,18 +212,7 @@ impl Port {
             return Err(Fail::Invalid);
         }
         let data = resource::raw::inspect(endpoint.seed).map_err(|_| Fail::Dead)?;
-        let life = resource::raw::inspect(endpoint.life).map_err(|_| Fail::Dead)?;
-        if !data.alive
-            || data.kind != env::PieKind::Pole
-            || !life.alive
-            || life.kind != env::PieKind::Tole
-            || life.owner != data.owner
-            || !life
-                .permission
-                .contains(env::Permission::FETCH | env::Permission::ONLY)
-        {
-            return Err(Fail::Denied);
-        }
+        if !data.alive || data.kind != env::PieKind::Pole || !data.permission.contains(env::Permission::FETCH | env::Permission::STORE) { return Err(Fail::Denied); }
         let dock = Dock::open(endpoint.seed).map_err(|_| Fail::Dead)?;
         let port = Self {
             dock: Some(dock),
@@ -263,14 +251,14 @@ impl Port {
         stream::Ring::attach(header, bytes, self.endpoint.capacity).map_err(Fail::from)
     }
     fn notify(&self, bit: env::Bit) -> Result<(), Fail> {
-        match env::mail::ring(self.token(), bit.bits()) {
+        match env::mail::ring(self.token(), bit) {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(Fail::Dead),
         }
     }
     fn hush(&self, bit: env::Bit) -> Result<(), Fail> {
-        match env::mail::hush(self.token(), bit.bits()) {
+        match env::mail::hush(self.token(), bit) {
             Ok(()) => Ok(()),
             Err(e) if e.source.is_busy() => Ok(()),
             Err(_) => Err(Fail::Dead),
@@ -372,6 +360,5 @@ impl Drop for Port {
             let _ = dock.shut();
         }
         let _ = env::pie::release(self.endpoint.seed, env::ReleaseMode::Revoke);
-        let _ = env::pie::release(self.endpoint.life, env::ReleaseMode::Revoke);
     }
 }

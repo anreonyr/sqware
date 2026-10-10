@@ -50,13 +50,8 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
         if let Some(p) = removed.snapshot().pole() {
             let _ = crate::work::mail::pole::shut(&p, token);
         }
-        for (holder, _) in tasks {
-            let _ = crate::work::room::messenger::signal(
-                crate::work::room::messenger::WakeKey::Capabilities {
-                    task: holder.ident.id,
-                },
-            );
-        }
+        super::notify(task.ident.id, token);
+        for (child, child_token) in nodes.iter().skip(1) { super::notify(child.ident.id, *child_token); }
         return Ok(());
     }
     Err(PieFail::Busy)

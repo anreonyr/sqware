@@ -49,7 +49,9 @@ pub fn ruin_rest(
     flow: Res<crate::system::app::policy::Flow>,
     mut operations: ResMut<Operations>,
 ) -> Result<Progress, Fail> {
-    if flow.settling {
+    // Dynamic tasks may hold resources from any static provider. Their retire
+    // hooks reclaim the teams before static services begin to relinquish them.
+    if flow.settling && control.instances().all(|item| item.team.is_none()) {
         for name in control.closing_service_names() {
             if !operations.contains(name) {
                 operations

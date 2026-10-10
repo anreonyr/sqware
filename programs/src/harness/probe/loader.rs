@@ -74,10 +74,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     }
     let mut schedule = Schedule::new();
     schedule
-        .add_plan("loader", 0u8, crate::system::loader::frame().unwrap())
-        .unwrap();
-    schedule
-        .add_system("launch.register", 1, crate::system::launch::register)
+        .add_plan("launch", 0u8, crate::system::launch::frame().unwrap())
         .unwrap();
     schedule
         .add_system("receive", 2, crate::system::control::receive)

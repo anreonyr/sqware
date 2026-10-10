@@ -66,3 +66,20 @@ impl JoinWait {
         frame.gpr.set_x(Gprs::A0, words[0]); frame.gpr.set_x(Gprs::A1, words[1]); frame.gpr.set_x(Gprs::A2, words[2]);
     }
 }
+
+/// Shared authorization for Join and non-consuming Mail observations.
+pub(crate) fn observe(me: &Arc<super::task::Task>, target: env::UnitTarget) -> Result<JoinTarget, UnitFail> {
+    let _commit = super::commit();
+    match target {
+        env::UnitTarget::Team(id) => me.heir(id).map(|t| JoinTarget::Team(t.life.clone())).ok_or(UnitFail::Denied),
+        env::UnitTarget::Task(id) => {
+            let mut member = me.ident.team.life.member(id);
+            let mut at = 0;
+            while member.is_none() {
+                let Some(root) = me.heir_node(at) else { break }; at += 1;
+                member = root.life.member(id).or_else(|| root.life.find(id).filter(|m| m.pending(me.ident.id)));
+            }
+            member.map(JoinTarget::Task).ok_or(UnitFail::Denied)
+        }
+    }
+}

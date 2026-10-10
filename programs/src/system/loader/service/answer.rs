@@ -1,7 +1,7 @@
 use ::resource::raw::inspect;
 use ::schedule::{Progress, ResMut};
 use env::{PieToken, TaskId, Wait, pie};
-use ipc::rpc::{self, reply::Sender};
+use ipc::rpc;
 use system_api::loader as frame;
 use system_api::loader::Ask;
 use system_api::loader::Call as Contract;
@@ -24,7 +24,7 @@ impl Inbox {
 pub(super) fn receive(
     mut inbox: ResMut<Inbox>,
     mut control: ResMut<crate::system::control::unit::Control>,
-    mut requests: ResMut<crate::system::launch::Requests>,
+    mut pending: ResMut<crate::system::launch::Pending>,
 ) -> Result<Progress, crate::system::app::Fault> {
     let Some(entry) = inbox.entry else {
         return Ok(Progress::Done);
@@ -63,19 +63,14 @@ pub(super) fn receive(
                 }
             }
             Wire::Build(ask) => {
-                if requests.0.len() >= 16 || requests.0.try_reserve(1).is_err() {
-                    release_image(&ask, from);
-                    reply(
-                        back,
-                        Said {
-                            status: system_api::control::frame::FULL,
-                            team: 0,
-                            task: TaskId::new(0),
-                        },
-                    );
-                } else {
-                    requests.0.push(crate::system::launch::Request { ask, from, delivery: crate::system::launch::Delivery { owner: from, identity: system_api::identity::Install::Inherit { parent: from }, constructor: false, back } });
-                }
+                pending.push(crate::system::launch::Request {
+                    ask, from,
+                    delivery: crate::system::launch::Delivery {
+                        owner: from,
+                        identity: system_api::identity::Install::Inherit { parent: from },
+                        constructor: false, back,
+                    },
+                });
             }
         }
     }
@@ -86,7 +81,4 @@ pub(crate) fn release_image(ask: &Ask, from: TaskId) {
     {
         let _ = pie::release(ask.image, env::ReleaseMode::Revoke);
     }
-}
-pub(super) fn reply(back: Sender<Said>, said: Said) -> bool {
-    back.send(said).is_ok()
 }

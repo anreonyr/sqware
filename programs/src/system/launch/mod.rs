@@ -2,7 +2,7 @@ use crate::system::{
     control::unit::Control,
     loader::{Image, Spawn},
 };
-use ::schedule::{Progress, ResMut};
+use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};
 use alloc::vec::Vec;
 use env::TaskId;
 use ipc::rpc::reply::Sender;
@@ -11,11 +11,13 @@ use system_api::identity::Install;
 use system_api::loader::Built;
 use system_api::loader::Said;
 #[derive(Default)]
-pub struct Pending(pub Vec<Launch>);
+pub struct Pending {
+    requests: Vec<Request>,
+    launches: Vec<Launch>,
+}
 pub struct Launch {
-    pub built: Built,
+    pub task: TaskId,
     pub delivery: Delivery,
-    registered: bool,
 }
 pub struct Delivery {
     pub owner: TaskId,
@@ -28,40 +30,72 @@ pub struct Request {
     pub from: TaskId,
     pub delivery: Delivery,
 }
-#[derive(Default)]
-pub struct Requests(pub Vec<Request>);
-
-pub(crate) fn register(mut pending: ResMut<Pending>, mut control: ResMut<Control>) -> Result<Progress, crate::system::app::Fault> {
-    let mut index = 0;
-    while index < pending.0.len() {
-        if !pending.0[index].registered {
-            let launch = &pending.0[index];
-            if let Err(fail) = control.create_instance(launch.built, launch.delivery.owner) {
-                let launch = pending.0.remove(index);
-                reply(launch.delivery.back, Err(fail));
-                continue;
-            }
-            pending.0[index].registered = true;
+impl Pending {
+    pub(crate) fn push(&mut self, request: Request) {
+        if self.requests.len() >= 16 || self.requests.try_reserve(1).is_err() {
+            crate::system::loader::release_image(&request.ask, request.from);
+            reply(request.delivery.back, Err(Fail::Full));
+        } else {
+            self.requests.push(request);
         }
-        index += 1;
+    }
+}
+pub(crate) fn frame() -> Result<Plan<crate::system::app::Fault>, BuildError> {
+    let mut frame = Schedule::sequence();
+    frame.system("dispatch", dispatch)?;
+    frame.plan("receive", crate::system::loader::frame()?)?;
+    frame.system("settle", settle)?;
+    frame.system("construct", build)?;
+    frame.build()
+}
+fn settle(
+    flow: Res<crate::system::app::policy::Flow>,
+    mut pending: ResMut<Pending>,
+) -> Result<Progress, crate::system::app::Fault> {
+    if flow.settling {
+        for request in pending.requests.drain(..) {
+            crate::system::loader::release_image(&request.ask, request.from);
+            reply(request.delivery.back, Err(Fail::NotReady));
+        }
     }
     Ok(Progress::Done)
 }
-pub(crate) fn construct(loader: &mut crate::system::loader::Loader, pending: &mut Pending, request: Request) {
+fn build(
+    mut loader: ResMut<crate::system::loader::Loader>,
+    mut control: ResMut<Control>,
+    mut pending: ResMut<Pending>,
+) -> Result<Progress, crate::system::app::Fault> {
+    let pending = &mut *pending;
+    for request in pending.requests.drain(..) {
+        if pending.launches.try_reserve(1).is_err() {
+            crate::system::loader::release_image(&request.ask, request.from);
+            reply(request.delivery.back, Err(Fail::Full));
+            continue;
+        }
+        if let Some(launch) = construct(&mut loader, &mut control, request) {
+            pending.launches.push(launch);
+        }
+    }
+    Ok(Progress::Done)
+}
+fn construct(
+    loader: &mut crate::system::loader::Loader,
+    control: &mut Control,
+    request: Request,
+) -> Option<Launch> {
     let Request { ask, from, delivery } = request;
-    let result = (|| {
-        let bytes = crate::system::loader::snapshot(crate::system::loader::Source { from, ask: &ask })?;
+    let result = control.create_instance(delivery.owner, || {
         let count = ask.count as usize;
-        if count > system_api::loader::MAX_ARGS { return Err(system_api::loader::Fail::Bad); }
-        pending.0.try_reserve(1).map_err(|_| system_api::loader::Fail::Full)?;
+        if count > system_api::loader::MAX_ARGS { return Err(system_api::loader::Fail::Bad.into()); }
+        let bytes = crate::system::loader::snapshot(crate::system::loader::Source { from, ask: &ask })?;
         let mut args = [0; system_api::loader::MAX_ARGS];
         for (to, from) in args.iter_mut().zip(&ask.args[..count]) { *to = *from as usize; }
-        loader.construct(Image { bytes: &bytes, kind: env::ProgramKind::User }, Spawn { args: &args[..count], stack: ask.stack as usize })
-    })();
+        loader.construct(Image { bytes: &bytes, kind: env::ProgramKind::User }, Spawn { args: &args[..count], stack: ask.stack as usize }).map_err(Into::into)
+    });
     crate::system::loader::release_image(&ask, from);
     match result {
-        Ok(built) => pending.0.push(Launch { built, delivery, registered: false }),
-        Err(fail) => { reply(delivery.back, Err(fail.into())); }
+        Ok(built) => Some(Launch { task: built.task, delivery }),
+        Err(fail) => { reply(delivery.back, Err(fail)); None }
     }
 }
 pub(super) fn reply(back: Sender<Said>, result: Result<Built, Fail>) -> bool {
@@ -73,12 +107,8 @@ pub fn completed(
     mut control: ResMut<Control>,
 ) -> Result<Progress, crate::system::app::Fault> {
     let mut index = 0;
-    while index < pending.0.len() {
-        if !pending.0[index].registered {
-            index += 1;
-            continue;
-        }
-        let task = pending.0[index].built.task;
+    while index < pending.launches.len() {
+        let task = pending.launches[index].task;
         let result = match control.instance_result(task)? {
             Some(result) => result,
             None => {
@@ -86,9 +116,9 @@ pub fn completed(
                 continue;
             }
         };
-        let launch = pending.0.remove(index);
+        let launch = pending.launches.remove(index);
         if !reply(launch.delivery.back, result) {
-            control.stop_instance(launch.built.task);
+            control.stop_instance(launch.task);
         }
     }
     Ok(Progress::Done)
@@ -97,22 +127,21 @@ pub fn completed(
 pub(crate) mod hooks;
 
 pub(crate) fn install(resources: &mut ::schedule::Resources<'static>) -> Result<(), &'static str> {
-    resources.insert(Requests::default()).map_err(|_| "launch request resource")?;
     resources
         .insert(Pending::default())
         .map_err(|_| "launch resource capacity")?;
     Ok(())
 }
 
-pub(crate) fn dispatch(mut inbox: ResMut<crate::system::control::Construction>, mut requests: ResMut<crate::system::launch::Requests>) -> Result<Progress, crate::system::app::Fault> {
+fn dispatch(mut inbox: ResMut<crate::system::control::Construction>, mut pending: ResMut<Pending>) -> Result<Progress, crate::system::app::Fault> {
     for (request, from, back, approved) in inbox.drain() {
-        if !approved || requests.0.len() >= 16 || requests.0.try_reserve(1).is_err() {
+        if !approved {
             crate::system::loader::release_image(&request.image, from);
-            crate::system::launch::reply(back, Err(system_api::control::Fail::Full));
+            reply(back, Err(Fail::Denied));
             continue;
         }
-        requests.0.push(crate::system::launch::Request { ask: request.image, from: from,
-            delivery: crate::system::launch::Delivery { owner: request.owner, identity: system_api::identity::Install::Authorized(request.subject), constructor: request.constructor, back: back } });
+        pending.push(Request { ask: request.image, from: from,
+            delivery: Delivery { owner: request.owner, identity: system_api::identity::Install::Authorized(request.subject), constructor: request.constructor, back: back } });
     }
     Ok(Progress::Done)
 }

@@ -6,7 +6,6 @@ use env::{PieFail, PieToken, TaskId};
 
 use super::pie::{AnyPie, Heir};
 use crate::work::mail::pole;
-use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
 pub(crate) struct Cleanup {
@@ -18,14 +17,12 @@ impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         let count = self.removed.len();
         for pie in self.removed {
-            if let Some(p) = pie.snapshot().pole() {
-                pole::shut(&p, pie.token()).expect("cull: unmap token");
-            }
+            // Invalidate the exact reference and notify its direct ancestor after
+            // gates are released; the ancestor may have regained exclusive use.
+            for task in &self.tasks { super::notify(*task, pie.token()); }
+            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) { super::notify(parent.ident.id, token); }
+            if let Some(p) = pie.snapshot().pole() { pole::shut(&p, pie.token()).expect("cull: unmap token"); }
             drop(pie);
-        }
-        // All task gates have been released before unmapping and notifications.
-        for task in self.tasks {
-            let _ = messenger::signal(WakeKey::Capabilities { task });
         }
         count
     }

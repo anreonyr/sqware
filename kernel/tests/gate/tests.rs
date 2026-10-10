@@ -504,7 +504,7 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
 #[test]
 fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
     use env::{
-        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, ToleCall, UnsealArgs,
+        MailCall, MailCondition, Oversize, PieCall, ReleaseMode, TaskId, UnsealArgs,
         VirtAddr, Wait,
     };
     let token = PieToken::mint(42);
@@ -526,12 +526,12 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
             condition: MailCondition::Empty,
             millis: Wait::POLL,
         },
-        MailCall::Hush { token, bits: env::Bits::FIRST },
-        MailCall::Ring { token, bits: env::Bits::FIRST },
+        MailCall::Hush { token, bit: env::Bit::FIRST },
+        MailCall::Ring { token, bit: env::Bit::FIRST },
         MailCall::Peek { token },
     ];
     for (index, call) in mail.into_iter().enumerate() {
-        assert_eq!(call.slot(), (5usize << 32) | index);
+        assert_eq!(call.slot(), (5usize << 32) | (32 + index));
         assert!(
             matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call)
         );
@@ -575,41 +575,12 @@ fn capability_and_mail_calls_roundtrip_with_explicit_numbers() {
             matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Pie(decoded)) if decoded == call)
         );
     }
-    let tole = [
-        ToleCall::Attach {
-            tole: token,
-            pie: token,
-            condition: MailCondition::Push,
-        },
-        ToleCall::Detach {
-            tole: token,
-            pie: token,
-            condition: MailCondition::Empty,
-        },
-        ToleCall::Await {
-            tole: token,
-            millis: Wait::POLL,
-        },
-        ToleCall::Subscribe {
-            tole: token,
-            source: env::Source::CapabilitiesChanged,
-            target: TaskId::new(2),
-        },
-        ToleCall::Unsubscribe {
-            tole: token,
-            source: env::Source::TaskCompleted,
-            target: TaskId::new(2),
-        },
-    ];
-    for (index, call) in tole.into_iter().enumerate() {
-        assert_eq!(call.slot(), (9usize << 32) | index);
-        assert!(
-            matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Tole(decoded)) if decoded == call)
-        );
+    let source = env::Source::Mail { pie: token, condition: MailCondition::Pull };
+    for call in [MailCall::Attach { tole: token, source }, MailCall::Detach { tole: token, source }, MailCall::Await { tole: token, millis: Wait::POLL }] {
+        assert!(matches!(env::EnvCall::from_wire(call.slot(), &call.pack()), Ok(env::EnvCall::Mail(decoded)) if decoded == call));
     }
-    for (class, count) in [(5, 6), (7, 11), (9, 5)] {
-        assert!(env::EnvCall::from_wire((class << 32) | count, &[0; 6]).is_err());
-    }
+    for class in [5, 9] { for index in 0..6 { assert!(env::EnvCall::from_wire((class << 32) | index, &[0; 6]).is_err()); } }
+
 }
 
 #[test]

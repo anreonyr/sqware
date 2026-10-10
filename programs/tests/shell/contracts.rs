@@ -13,7 +13,6 @@ fn launch_round_trip_and_all_truncations_are_rejected() {
                 id: 42,
                 capacity: 17,
                 seed: token(21),
-                life: token(22),
                 direction: Direction::Write,
             },
         }],
@@ -22,7 +21,6 @@ fn launch_round_trip_and_all_truncations_are_rejected() {
     let decoded = Launch::decode(&bytes).unwrap();
     assert_eq!(decoded.args, launch.args);
     assert_eq!(decoded.ports[0].endpoint.seed, token(21));
-    assert_eq!(decoded.ports[0].endpoint.life, token(22));
     for length in 0..bytes.len() {
         assert!(Launch::decode(&bytes[..length]).is_err(), "{length}");
     }

@@ -16,7 +16,7 @@ use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use crate::work::unit::space::{Backing, SegmentKind, Space, Span};
 
-use env::{Bit, Bits, MailFail, PieFail};
+use env::{Bit, MailFail, PieFail};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PoleId(pub usize);
@@ -133,7 +133,7 @@ impl PoleMeta {
 
     /// 页上那一位此刻亮着吗。
     pub(crate) fn ready(&self, bit: Bit) -> bool {
-        *self.ring.lock() & bit.bits().get() != 0
+        *self.ring.lock() & bit.mask() != 0
     }
 
     fn open_into(
@@ -277,25 +277,18 @@ pub(crate) fn key(meta: &PoleMeta, bit: Bit) -> WakeKey {
     WakeKey::Pole { id: meta.id.0, bit }
 }
 fn wipe(meta: &PoleMeta) {
-    for bit in Bits::of(usize::MAX).unwrap().iter() { messenger::wipe(key(meta, bit)); }
+    messenger::wipe(WakeKey::Seal { kind: env::PieKind::Pole as u8, id: meta.id.0 });
+    for index in 0..usize::BITS as usize { messenger::wipe(key(meta, Bit::of(index).unwrap())); }
 }
-pub(crate) fn ring(meta: &PoleMeta, bits: Bits) -> Result<(), MailFail> {
+pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
     if !meta.alive() { return Err(MailFail::Dead); }
-    let changed = {
-        let mut pending = meta.ring.lock();
-        let changed = bits.get() & !*pending;
-        *pending |= bits.get(); changed
-    };
-    let Some(changed) = Bits::of(changed) else { return Err(MailFail::Busy) };
-    for bit in changed.iter() { messenger::knock(key(meta, bit), &meta.life()); }
+    let changed = { let mut pending = meta.ring.lock(); let changed = *pending & bit.mask() == 0; *pending |= bit.mask(); changed };
+    if changed { messenger::knock(key(meta, bit), &meta.life()); }
     Ok(())
 }
-pub(crate) fn hush(meta: &PoleMeta, bits: Bits) -> Result<(), MailFail> {
+pub(crate) fn hush(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
     if !meta.alive() { return Err(MailFail::Dead); }
-    let mut pending = meta.ring.lock();
-    let changed = *pending & bits.get();
-    *pending &= !bits.get();
-    if changed == 0 { Err(MailFail::Busy) } else { Ok(()) }
+    *meta.ring.lock() &= !bit.mask(); Ok(())
 }
 pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<bool>, MailFail> {
     if !meta.alive() { return Err(MailFail::Dead); }

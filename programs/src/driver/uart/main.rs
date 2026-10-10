@@ -33,11 +33,11 @@ fn main() -> Result<(), Fail> {
     let pile = Pile::unseal(false).map_err(|_| Fail::at(E_UART, "desk"))?;
     let lane = desk.line.hole().map_err(|_| Fail::at(E_UART, "line"))?;
     if pile
-        .attach(desk.tx.ship(), MailCondition::Signal(env::Bit::FIRST))
+        .attach(env::Source::Mail { pie: desk.tx.ship(), condition: MailCondition::Signal(env::Bit::FIRST) })
         .is_err()
-        || pile.attach(desk._rx.ship(), MailCondition::Signal(ipc::rack::SPACE_BIT)).is_err()
+        || pile.attach(desk.rx_w.source()).is_err()
         || pile
-            .attach(lane, MailCondition::Pull)
+            .attach(env::Source::Mail { pie: lane, condition: MailCondition::Pull })
             .is_err()
     {
         return Err(Fail::at(E_UART, "desk"));
@@ -67,7 +67,7 @@ fn main() -> Result<(), Fail> {
                 desk.line.exhaust().unwrap();
             }
         }
-        if pending.is_none() { desk.rx_w.hush_space(); }
+        if pending.is_none() { desk.rx_w.hush(); }
         if pile.await_(Wait::Forever).is_err() { return Err(Fail::at(E_UART, "line gone")); }
 
     }

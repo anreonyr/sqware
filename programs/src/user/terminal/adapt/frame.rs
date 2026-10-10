@@ -101,7 +101,7 @@ pub(super) fn flush(mut console: ResMut<Console>, mut frame: ResMut<Frame>, mut 
     let remaining = frame.n;
     frame.echo.copy_within(sent..remaining, 0);
     frame.n -= sent;
-    if frame.n != 0 { server.active = true; }
+    if frame.n != 0 { server.active = true; } else { console.tx.hush(); }
     let lost = console.tx.lost();
     if lost != counters.lost {
         counters.lost = lost;
