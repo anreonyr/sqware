@@ -11,8 +11,11 @@ pub(crate) struct FrameWindow;
 impl FrameWindow {
     pub(crate) fn claim(space: &Space) -> Result<Span, MapError> {
         space.with_flush(|inner| {
-            let base = inner.kernel.gaps().find_map(|(start, end)|
-                (end - start >= PAGE_SIZE).then_some(start)).ok_or(MapError::OutOfMemory)?;
+            let base = inner
+                .kernel
+                .gaps()
+                .find_map(|(start, end)| (end - start >= PAGE_SIZE).then_some(start))
+                .ok_or(MapError::OutOfMemory)?;
             inner.allocate(SegmentKind::Kernel, base, PAGE_SIZE)?;
             let va = VirtAddr::wrap(base);
             let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;

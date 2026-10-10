@@ -93,9 +93,18 @@ fn process(
         let id = ledger.create(from.get(), capacity)?;
         match Root::create(id, capacity, request.lease) {
             Ok(root) => {
-                if pile.attach(env::Source::Inspect { task: env::unit::self_id(), token: root.owner_lease }).is_err() { ledger.release(id); return Err(Fail::Full); }
+                if pile
+                    .attach(env::Source::Inspect {
+                        task: env::unit::self_id(),
+                        token: root.owner_lease,
+                    })
+                    .is_err()
+                {
+                    ledger.release(id);
+                    return Err(Fail::Full);
+                }
                 roots.push(root);
-            },
+            }
             Err(error) => {
                 ledger.release(id);
                 return Err(error);
@@ -128,18 +137,39 @@ fn process(
                 Direction::Read => &root.read,
                 Direction::Write => &root.write,
             };
-            let seed = if let Some(grant) = old { grant.seed } else {
-                let seed = env::pie::accord(root.token, request.target,
-                    env::Permission::FETCH | env::Permission::STORE, pipe_api::DATA).map_err(|_| Fail::Denied)?;
-                let source = env::Source::Inspect { task: request.target, token: seed };
+            let seed = if let Some(grant) = old {
+                grant.seed
+            } else {
+                let seed = env::pie::accord(
+                    root.token,
+                    request.target,
+                    env::Permission::FETCH | env::Permission::STORE,
+                    pipe_api::DATA,
+                )
+                .map_err(|_| Fail::Denied)?;
+                let source = env::Source::Inspect {
+                    task: request.target,
+                    token: seed,
+                };
                 if pile.attach(source).is_err() {
-                    let _ = env::pie::revoke(request.target, seed); return Err(Fail::Denied);
+                    let _ = env::pie::revoke(request.target, seed);
+                    return Err(Fail::Denied);
                 }
-                if let Err(error) = ledger.bind(request.id, from.get(), direction, request.target.get()) {
-                    let _ = pile.detach(source); let _ = env::pie::revoke(request.target, seed); return Err(error);
+                if let Err(error) =
+                    ledger.bind(request.id, from.get(), direction, request.target.get())
+                {
+                    let _ = pile.detach(source);
+                    let _ = env::pie::revoke(request.target, seed);
+                    return Err(error);
                 }
-                let grant = Grant { seed, target: request.target };
-                match direction { Direction::Read => root.read = Some(grant), Direction::Write => root.write = Some(grant) }
+                let grant = Grant {
+                    seed,
+                    target: request.target,
+                };
+                match direction {
+                    Direction::Read => root.read = Some(grant),
+                    Direction::Write => root.write = Some(grant),
+                }
                 seed
             };
             Ok(Reply {
@@ -157,7 +187,7 @@ fn process(
                 id: request.id,
                 capacity: 0,
                 seed: PieToken::NONE,
-                })
+            })
         }
         pipe_api::RELEASE => {
             roots[at].detach(pile);
@@ -168,36 +198,70 @@ fn process(
                 id: request.id,
                 capacity: 0,
                 seed: PieToken::NONE,
-                })
+            })
         }
         _ => Err(Fail::Invalid),
     }
 }
 impl Root {
     fn detach(&self, pile: &Pile) {
-        let _ = pile.detach(env::Source::Inspect { task: env::unit::self_id(), token: self.owner_lease });
-        for grant in [&self.read, &self.write].into_iter().flatten() { let _ = pile.detach(env::Source::Inspect { task: grant.target, token: grant.seed }); }
+        let _ = pile.detach(env::Source::Inspect {
+            task: env::unit::self_id(),
+            token: self.owner_lease,
+        });
+        for grant in [&self.read, &self.write].into_iter().flatten() {
+            let _ = pile.detach(env::Source::Inspect {
+                task: grant.target,
+                token: grant.seed,
+            });
+        }
     }
 }
 fn ended(ledger: &mut Ledger, roots: &mut Vec<Root>, pile: &Pile, source: env::Source) {
-    let env::Source::Inspect { task, token } = source else { return };
+    let env::Source::Inspect { task, token } = source else {
+        return;
+    };
     let mut at = 0;
     while at < roots.len() {
         let root = &mut roots[at];
         if task == env::unit::self_id() && token == root.owner_lease {
-            root.close(Direction::Read); root.close(Direction::Write);
-            root.detach(pile); let id = root.id; roots.swap_remove(at); ledger.release(id); continue;
+            root.close(Direction::Read);
+            root.close(Direction::Write);
+            root.detach(pile);
+            let id = root.id;
+            roots.swap_remove(at);
+            ledger.release(id);
+            continue;
         }
         for direction in [Direction::Read, Direction::Write] {
-            let grant = match direction { Direction::Read => &root.read, Direction::Write => &root.write };
-            if grant.as_ref().is_some_and(|g| g.target == task && g.seed == token) {
-                root.close(direction); let _ = pile.detach(source);
-                match direction { Direction::Read => root.read = None, Direction::Write => root.write = None }
+            let grant = match direction {
+                Direction::Read => &root.read,
+                Direction::Write => &root.write,
+            };
+            if grant
+                .as_ref()
+                .is_some_and(|g| g.target == task && g.seed == token)
+            {
+                root.close(direction);
+                let _ = pile.detach(source);
+                match direction {
+                    Direction::Read => root.read = None,
+                    Direction::Write => root.write = None,
+                }
             }
         }
-        if root.header().closed(Direction::Read) && root.header().closed(Direction::Write) && root.read.is_none() && root.write.is_none() {
-            root.detach(pile); let id = root.id; roots.swap_remove(at); ledger.release(id);
-        } else { at += 1; }
+        if root.header().closed(Direction::Read)
+            && root.header().closed(Direction::Write)
+            && root.read.is_none()
+            && root.write.is_none()
+        {
+            root.detach(pile);
+            let id = root.id;
+            roots.swap_remove(at);
+            ledger.release(id);
+        } else {
+            at += 1;
+        }
     }
 }
 
@@ -229,22 +293,43 @@ pub fn run() -> Result<(), &'static str> {
         pipe_api::Call::back,
     );
     let pile = Pile::unseal(false).map_err(|_| "pipe wait group")?;
-    pile.attach(env::Source::Mail { pie: entry, condition: env::MailCondition::Pull }).map_err(|_| "pipe request wait")?;
+    pile.attach(env::Source::Mail {
+        pie: entry,
+        condition: env::MailCondition::Pull,
+    })
+    .map_err(|_| "pipe request wait")?;
     let mut ledger = Ledger::default();
     let mut roots = Vec::new();
     let mut bytes = Request::EMPTY;
     loop {
         match pile.await_(Wait::Forever).map_err(|_| "pipe wait")? {
-            env::AwaitReply::Source { source: env::Source::Inspect { task, token }, .. } => { ended(&mut ledger, &mut roots, &pile, env::Source::Inspect { task, token }); continue; }
+            env::AwaitReply::Source {
+                source: env::Source::Inspect { task, token },
+                ..
+            } => {
+                ended(
+                    &mut ledger,
+                    &mut roots,
+                    &pile,
+                    env::Source::Inspect { task, token },
+                );
+                continue;
+            }
             env::AwaitReply::Source { fail: Some(_), .. } => return Err("pipe entry lost"),
             env::AwaitReply::Pending => continue,
-            _ => {},
+            _ => {}
         }
         let incoming = match receiver.receive(&mut bytes, Wait::POLL) {
             Ok(request) => request,
             Err(_) => continue,
         };
-        let result = process(&mut ledger, &mut roots, incoming.request, incoming.from, &pile);
+        let result = process(
+            &mut ledger,
+            &mut roots,
+            incoming.request,
+            incoming.from,
+            &pile,
+        );
         let reply = match result {
             Ok(reply) => reply,
             Err(error) => Reply {
@@ -252,7 +337,7 @@ pub fn run() -> Result<(), &'static str> {
                 id: incoming.request.id,
                 capacity: 0,
                 seed: PieToken::NONE,
-                },
+            },
         };
         if incoming.reply.send(reply).is_err() && incoming.request.op == pipe_api::CREATE {
             if let Some(at) = roots.iter().position(|root| root.id == reply.id) {

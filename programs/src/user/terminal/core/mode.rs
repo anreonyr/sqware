@@ -21,10 +21,16 @@ impl<'a> Effect<'a> {
     pub(super) fn new(echo: &[u8], input: Input<'a>) -> Self {
         let mut bytes = [0; ECHO_MAX];
         bytes[..echo.len()].copy_from_slice(echo);
-        Self { echo: bytes, n: echo.len(), input }
+        Self {
+            echo: bytes,
+            n: echo.len(),
+            input,
+        }
     }
 
-    pub fn echo(&self) -> &[u8] { &self.echo[..self.n] }
+    pub fn echo(&self) -> &[u8] {
+        &self.echo[..self.n]
+    }
 }
 
 pub enum Mode {
@@ -32,17 +38,25 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub fn canonical() -> Self { Self::Canonical(Canonical::new()) }
+    pub fn canonical() -> Self {
+        Self::Canonical(Canonical::new())
+    }
 
     pub fn clear(&mut self) {
-        match self { Self::Canonical(mode) => mode.clear() }
+        match self {
+            Self::Canonical(mode) => mode.clear(),
+        }
     }
 
     pub fn reset(&mut self) {
-        match self { Self::Canonical(mode) => mode.reset() }
+        match self {
+            Self::Canonical(mode) => mode.reset(),
+        }
     }
 
     pub fn feed(&mut self, b: u8) -> Effect<'_> {
-        match self { Self::Canonical(mode) => mode.feed(b) }
+        match self {
+            Self::Canonical(mode) => mode.feed(b),
+        }
     }
 }

@@ -54,7 +54,9 @@ impl Bell {
 
     /// 借用本任务能力表中的原始编号；操作时由内核检查。
     pub fn from_raw(pie: PieToken) -> Bell {
-        Bell { hole: Hole::from_raw(pie) }
+        Bell {
+            hole: Hole::from_raw(pie),
+        }
     }
 
     /// 等铃响：`millis`（上限族，`Wait`）。

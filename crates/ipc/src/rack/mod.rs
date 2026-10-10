@@ -41,15 +41,18 @@ pub mod writer;
 
 use core::marker::PhantomData;
 
-use env::{PieResult, PieToken};
 use ::resource::dock::Dock;
+use env::{PieResult, PieToken};
 
 use wire::Message;
 
 pub use self::reader::{Reader, RecvFail};
 pub use self::ring::{CAP, SIZE};
 /// Reader progress wakes a producer retaining a frame under backpressure.
-const SPACE_BIT: env::Bit = match env::Bit::of(1) { Some(bit) => bit, None => unreachable!() };
+const SPACE_BIT: env::Bit = match env::Bit::of(1) {
+    Some(bit) => bit,
+    None => unreachable!(),
+};
 pub use self::writer::{SendFail, Writer};
 
 /// 满了丢哪一头。默认 [`Mode::Oldest`]：最新那一格永远保得住（"树变了"比"从前变过"值钱）。
@@ -85,7 +88,10 @@ impl<M: Message> Rack<M> {
         ring::exact::<M>();
         // **起手那一步报一行（release 也看得见）**：`debug!` 在 release 是空操作，
         // 而"页解不出来"是这一档用不了的直接成因。
-        let pie = match env::pie::unseal(env::UnsealArgs::Pole { size: SIZE, shared: true }) {
+        let pie = match env::pie::unseal(env::UnsealArgs::Pole {
+            size: SIZE,
+            shared: true,
+        }) {
             Ok(pie) => pie,
             Err(fail) => {
                 crate::debug::put(&alloc::format!("rack: no page {:?}", fail));

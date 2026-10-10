@@ -26,14 +26,21 @@ impl Segment {
     }
 
     pub(crate) fn gaps(&self) -> impl DoubleEndedIterator<Item = (usize, usize)> + '_ {
-        (0..=self.allocated.len()).map(|i| {
-            let start = if i == 0 { self.base } else {
-                let (start, len, _) = self.allocated[i - 1];
-                start + len
-            };
-            let end = self.allocated.get(i).map_or(self.edge, |&(start, _, _)| start);
-            (start, end)
-        }).filter(|&(start, end)| start < end)
+        (0..=self.allocated.len())
+            .map(|i| {
+                let start = if i == 0 {
+                    self.base
+                } else {
+                    let (start, len, _) = self.allocated[i - 1];
+                    start + len
+                };
+                let end = self
+                    .allocated
+                    .get(i)
+                    .map_or(self.edge, |&(start, _, _)| start);
+                (start, end)
+            })
+            .filter(|&(start, end)| start < end)
     }
 
     pub(crate) fn allocate(&mut self, addr: usize, size: usize) -> Result<(), MapError> {
@@ -51,7 +58,9 @@ impl Segment {
         {
             return Err(MapError::NoRegion);
         }
-        self.allocated.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+        self.allocated
+            .try_reserve(1)
+            .map_err(|_| MapError::OutOfMemory)?;
         self.allocated.insert(at, (addr, size, 0));
         Ok(())
     }

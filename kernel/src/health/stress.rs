@@ -22,7 +22,9 @@ pub fn accept() {
         let layout = Layout::from_size_align(size, 8).unwrap();
         let block = a.allocate(layout).expect("stress: warm size class");
         // SAFETY: block and layout come from the same allocation.
-        unsafe { a.deallocate(block.cast(), layout); }
+        unsafe {
+            a.deallocate(block.cast(), layout);
+        }
     }
     let kinds_before = crate::memory::allocator::statistics::kinds();
 

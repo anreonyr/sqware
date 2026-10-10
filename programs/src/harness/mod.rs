@@ -23,8 +23,23 @@ pub mod probe;
 pub mod bench;
 
 // Test scenes construct an image then pass its result to the lifecycle owner.
-pub(crate) fn mint(table: &mut crate::system::control::unit::table::Table, loader: &mut crate::system::loader::Loader, image: crate::system::control::unit::task::Image<'_>) -> Result<env::TaskId, crate::system::control::unit::verdict::Fail> {
+pub(crate) fn mint(
+    table: &mut crate::system::control::unit::table::Table,
+    loader: &mut crate::system::loader::Loader,
+    image: crate::system::control::unit::task::Image<'_>,
+) -> Result<env::TaskId, crate::system::control::unit::verdict::Fail> {
     use crate::system::control::unit::verdict::Fail;
-    let built = loader.construct(crate::system::loader::Image { bytes: image.bytes, kind: image.kind }, crate::system::loader::Spawn { args: &[], stack: 0 }).map_err(|_| Fail::Full)?;
+    let built = loader
+        .construct(
+            crate::system::loader::Image {
+                bytes: image.bytes,
+                kind: image.kind,
+            },
+            crate::system::loader::Spawn {
+                args: &[],
+                stack: 0,
+            },
+        )
+        .map_err(|_| Fail::Full)?;
     crate::system::control::unit::task::mint(table, image.name, built)
 }

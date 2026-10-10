@@ -160,5 +160,8 @@ pub(crate) fn insert(task: &Task, pie: AnyPie) -> Result<(), PieFail> {
 }
 
 pub(crate) fn notify(task: env::TaskId, token: PieToken) {
-    let _ = crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Inspect { task, token: token.get() });
+    let _ = crate::work::room::messenger::signal(crate::work::room::messenger::WakeKey::Inspect {
+        task,
+        token: token.get(),
+    });
 }

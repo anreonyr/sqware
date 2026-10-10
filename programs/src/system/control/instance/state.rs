@@ -16,13 +16,18 @@ pub struct Instance {
 impl Instance {
     pub(crate) fn reap(&mut self, exit: env::TaskExit) {
         if exit.task == self.task {
-            if exit.reason != 0 { self.reason = Some(exit.reason); }
-            else { self.reason.get_or_insert(0); }
+            if exit.reason != 0 {
+                self.reason = Some(exit.reason);
+            } else {
+                self.reason.get_or_insert(0);
+            }
             self.stop();
         } else if exit.cause == env::ExitCause::Fault
             || exit.cause == env::ExitCause::Reap && exit.reason != 0
         {
-            if self.reason.unwrap_or(0) == 0 { self.reason = Some(exit.reason); }
+            if self.reason.unwrap_or(0) == 0 {
+                self.reason = Some(exit.reason);
+            }
             self.stop();
         }
     }

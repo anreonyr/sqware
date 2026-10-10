@@ -23,8 +23,8 @@ extern crate programs;
 
 use core::time::Duration;
 
-use programs::debug;
 use env::chrono;
+use programs::debug;
 
 /// 每轮要的周期（毫秒）
 const PERIOD_MS: u64 = 5;

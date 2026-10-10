@@ -6,10 +6,7 @@ use env::unit;
 fn until(mut done: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 2_000_000_000;
     while !done() {
-        assert!(
-            env::chrono::clock() < deadline,
-            "lifecycle: timed out"
-        );
+        assert!(env::chrono::clock() < deadline, "lifecycle: timed out");
         execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }

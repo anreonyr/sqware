@@ -44,7 +44,9 @@ impl Control {
                     if other.name == row.name || !matches!(other.slot, Slot::Live { .. }) {
                         return false;
                     }
-                    let Ok(input) = self.input(&other.name) else { return false };
+                    let Ok(input) = self.input(&other.name) else {
+                        return false;
+                    };
                     // Reuse the declaration: stop users before their providers.
                     // Stopping users still hold the provider until reclaim finishes.
                     input.program.relation.after.is_some_and(|after| {

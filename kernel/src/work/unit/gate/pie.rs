@@ -204,8 +204,11 @@ pub enum Need {
 
 fn alloc_id() -> PieToken {
     static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    PieToken::mint(NEXT_ID.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-        .expect("Pie token identity exhausted"))
+    PieToken::mint(
+        NEXT_ID
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .expect("Pie token identity exhausted"),
+    )
 }
 
 pub struct Pie<T: PieType> {

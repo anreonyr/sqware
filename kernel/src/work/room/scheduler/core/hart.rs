@@ -60,10 +60,7 @@ impl Scheduler {
 
     fn starved_push(&self, i: &mut SchedulerInner, mut task: Arc<Task>) {
         debug_assert!(
-            matches!(
-                &*task.state(),
-                TaskState::Starved { next: None }
-            ),
+            matches!(&*task.state(), TaskState::Starved { next: None }),
             "starved 容器只收 Starved 任务，且入队前不得挂在链上"
         );
         match i.tail.take() {
@@ -87,7 +84,8 @@ impl Scheduler {
                 i.ready_since = Some(clock::now().as_ticks());
             }
             if head.stopped() || head.ident.team.paused() {
-                Task::park(head); continue;
+                Task::park(head);
+                continue;
             }
             return Some(head);
         }
@@ -126,10 +124,7 @@ impl Scheduler {
     pub(crate) fn push(&self, mut task: Arc<Task>) -> bool {
         let _commit = crate::work::unit::commit();
         debug_assert!(
-            matches!(
-                &*task.state(),
-                TaskState::Starved { .. }
-            ),
+            matches!(&*task.state(), TaskState::Starved { .. }),
             "starved 容器只收 Starved 任务"
         );
         let mut i = self.inner.lock();
@@ -172,15 +167,15 @@ impl Scheduler {
     pub(super) fn seat(&self, mut task: Arc<Task>) -> Option<usize> {
         let _commit = crate::work::unit::commit();
         let mut i = self.inner.lock();
-        if task.stopped() || task.ident.team.paused() { Task::park(task); return None; }
+        if task.stopped() || task.ident.team.paused() {
+            Task::park(task);
+            return None;
+        }
         self.prepare(&mut task, i.ready_ceiling());
         let pa = frame_pa(&task.ident).as_usize();
         self.badge.seat(&task.ident);
         debug_assert!(
-            matches!(
-                &*task.state(),
-                TaskState::Running { .. }
-            ),
+            matches!(&*task.state(), TaskState::Running { .. }),
             "running 容器只装 Running 任务"
         );
         let prev = i.running.replace(task);
@@ -216,7 +211,10 @@ impl Scheduler {
 
     pub(crate) fn starve(&self) -> usize {
         let _commit = crate::work::unit::commit();
-        if self.running_task().is_some_and(|t| matches!(t.tag(), crate::work::unit::task::TaskTag::Doomed)) {
+        if self
+            .running_task()
+            .is_some_and(|t| matches!(t.tag(), crate::work::unit::task::TaskTag::Doomed))
+        {
             drop(_commit);
             return crate::work::room::messenger::quit();
         }

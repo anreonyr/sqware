@@ -8,8 +8,8 @@
 
 use core::marker::PhantomData;
 
-use env::{PieToken, Wait};
 use ::resource::dock::{Dock, View};
+use env::{PieToken, Wait};
 
 use super::Mode;
 use super::bell::Bell;
@@ -79,14 +79,18 @@ impl<M: Message> Writer<M> {
     pub fn send_when_ready(&mut self, msg: &M) -> Result<bool, SendFail> {
         if super::ring::depth(self.ring) >= super::ring::CAP as u64 {
             let _ = self.progress.hush();
-            if super::ring::depth(self.ring) >= super::ring::CAP as u64 { return Ok(false); }
+            if super::ring::depth(self.ring) >= super::ring::CAP as u64 {
+                return Ok(false);
+            }
         }
         self.send(msg)?;
         Ok(true)
     }
 
     /// Clear the producer's progress hint when no retained frame needs it.
-    pub fn hush(&self) { let _ = self.progress.hush(); }
+    pub fn hush(&self) {
+        let _ = self.progress.hush();
+    }
 
     /// Publish once, applying the configured full-rack policy.
     pub fn send(&mut self, msg: &M) -> Result<(), SendFail> {
@@ -113,12 +117,22 @@ impl<M: Message> Writer<M> {
     pub fn wait(&self, within: Wait) -> bool {
         let deadline = crate::time::deadline(within);
         loop {
-            if depth(self.ring) < super::ring::CAP as u64 { return true; }
-            if self.progress.hush().is_err() { return false; }
-            if depth(self.ring) < super::ring::CAP as u64 { return true; }
+            if depth(self.ring) < super::ring::CAP as u64 {
+                return true;
+            }
+            if self.progress.hush().is_err() {
+                return false;
+            }
+            if depth(self.ring) < super::ring::CAP as u64 {
+                return true;
+            }
             let left = crate::time::remain(deadline);
-            if left == Wait::POLL { return false; }
-            if self.progress.wait(left).is_err() { return false; }
+            if left == Wait::POLL {
+                return false;
+            }
+            if self.progress.wait(left).is_err() {
+                return false;
+            }
         }
     }
 
@@ -138,7 +152,9 @@ impl<M: Message> Writer<M> {
     }
 
     /// 本端那一枚铃的号（要交给别人听时用）。
-    pub fn source(&self) -> env::Source { self.progress.source() }
+    pub fn source(&self) -> env::Source {
+        self.progress.source()
+    }
 
     pub fn bell(&self) -> PieToken {
         self.bell.token()

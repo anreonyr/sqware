@@ -11,12 +11,8 @@ pub static PROBE_RACK_MOUNT: UnitFile = UnitFile {
         group: "probe-rack",
         road: "probe-rack",
         entries: &[
-            crate::unit::PublishEntry {
-                name: "rx",
-            },
-            crate::unit::PublishEntry {
-                name: "tx",
-            },
+            crate::unit::PublishEntry { name: "rx" },
+            crate::unit::PublishEntry { name: "tx" },
         ],
         public: false,
     }],

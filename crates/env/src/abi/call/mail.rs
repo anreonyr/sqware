@@ -1,8 +1,8 @@
 //! call::mail — **Mail 域（class 5，数据轴：消息穿孔）**：调用表（[`MailCall`]）与失败词汇（[`MailFail`]）。
 
+use crate::UnitTarget;
 use crate::abi::wait::Wait;
 use crate::wire::{PieToken, TaskId, VirtAddr};
-use crate::UnitTarget;
 use mold::{Envcall, Fail};
 
 /// Mail 域（class 5：数据轴）的失败词汇。
@@ -86,13 +86,23 @@ pub struct Bit(u8);
 impl Bit {
     pub const FIRST: Self = Self(0);
     pub const fn of(index: usize) -> Option<Self> {
-        if index < usize::BITS as usize { Some(Self(index as u8)) } else { None }
+        if index < usize::BITS as usize {
+            Some(Self(index as u8))
+        } else {
+            None
+        }
     }
-    pub const fn index(self) -> usize { self.0 as usize }
-    pub const fn mask(self) -> usize { 1usize << self.0 }
+    pub const fn index(self) -> usize {
+        self.0 as usize
+    }
+    pub const fn mask(self) -> usize {
+        1usize << self.0
+    }
 }
 impl crate::Wire for Bit {
-    fn pack(&self, s: &mut [usize; 6], i: &mut usize) { self.index().pack(s, i); }
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        self.index().pack(s, i);
+    }
     fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, crate::Decode> {
         Self::of(usize::unpack(s, i)?).ok_or(crate::Decode::Invalid)
     }
@@ -101,33 +111,62 @@ impl crate::Wire for Bit {
 /// A precise resource condition, Unit observation, or capability reference.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    Mail { pie: PieToken, condition: MailCondition },
-    Join { target: UnitTarget },
-    Inspect { task: TaskId, token: PieToken },
+    Mail {
+        pie: PieToken,
+        condition: MailCondition,
+    },
+    Join {
+        target: UnitTarget,
+    },
+    Inspect {
+        task: TaskId,
+        token: PieToken,
+    },
 }
 impl Source {
     pub fn words(self) -> [usize; 3] {
         match self {
             Self::Mail { pie, condition } => [1, pie.get(), condition.wire()],
-            Self::Join { target: UnitTarget::Task(task) } => [2, task.get(), 0],
-            Self::Join { target: UnitTarget::Team(team) } => [3, team.get(), 0],
+            Self::Join {
+                target: UnitTarget::Task(task),
+            } => [2, task.get(), 0],
+            Self::Join {
+                target: UnitTarget::Team(team),
+            } => [3, team.get(), 0],
             Self::Inspect { task, token } => [4, task.get(), token.get()],
         }
     }
     pub fn of(words: [usize; 3]) -> Option<Self> {
         match words {
-            [1, pie, condition] if pie != 0 => Some(Self::Mail { pie: PieToken::new(pie), condition: MailCondition::of(condition)? }),
-            [2, task, 0] => Some(Self::Join { target: UnitTarget::Task(TaskId::new(task)) }),
-            [3, team, 0] => Some(Self::Join { target: UnitTarget::Team(crate::TeamId::new(team)) }),
-            [4, task, token] if token != 0 => Some(Self::Inspect { task: TaskId::new(task), token: PieToken::new(token) }),
+            [1, pie, condition] if pie != 0 => Some(Self::Mail {
+                pie: PieToken::new(pie),
+                condition: MailCondition::of(condition)?,
+            }),
+            [2, task, 0] => Some(Self::Join {
+                target: UnitTarget::Task(TaskId::new(task)),
+            }),
+            [3, team, 0] => Some(Self::Join {
+                target: UnitTarget::Team(crate::TeamId::new(team)),
+            }),
+            [4, task, token] if token != 0 => Some(Self::Inspect {
+                task: TaskId::new(task),
+                token: PieToken::new(token),
+            }),
             _ => None,
         }
     }
 }
 impl crate::Wire for Source {
-    fn pack(&self, s: &mut [usize; 6], i: &mut usize) { for word in self.words() { word.pack(s, i); } }
+    fn pack(&self, s: &mut [usize; 6], i: &mut usize) {
+        for word in self.words() {
+            word.pack(s, i);
+        }
+    }
     fn unpack(s: &[usize; 6], i: &mut usize) -> Result<Self, crate::Decode> {
-        let mut words = [0; 3]; for word in &mut words { *word = usize::unpack(s, i)?; }
+        let mut words = [0; 3];
+        for word in &mut words {
+            *word = usize::unpack(s, i)?;
+        }
         Self::of(words).ok_or(crate::Decode::Invalid)
     }
 }
@@ -137,12 +176,23 @@ impl crate::Wire for Source {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AwaitReply {
     Pending,
-    Source { source: Source, fail: Option<MailFail> },
+    Source {
+        source: Source,
+        fail: Option<MailFail>,
+    },
 }
 impl AwaitReply {
-    pub fn is_none(self) -> bool { self == Self::Pending }
+    pub fn is_none(self) -> bool {
+        self == Self::Pending
+    }
     pub fn mail(self) -> Option<(PieToken, MailCondition)> {
-        match self { Self::Source { source: Source::Mail { pie, condition }, .. } => Some((pie, condition)), _ => None }
+        match self {
+            Self::Source {
+                source: Source::Mail { pie, condition },
+                ..
+            } => Some((pie, condition)),
+            _ => None,
+        }
     }
 
     pub fn words(self) -> [usize; 3] {
@@ -152,18 +202,27 @@ impl AwaitReply {
                 let mut words = source.words();
                 // Low byte is the source kind; high byte is the existing failure code magnitude.
                 let code = fail.map_or(0, |e| (-crate::FailCode::code(e)) as usize);
-                words[0] |= code << 8; words
+                words[0] |= code << 8;
+                words
             }
         }
     }
     pub fn of(mut words: [usize; 3]) -> Option<Self> {
-        if words == [0; 3] { return Some(Self::Pending); }
-        let code = words[0] >> 8; words[0] &= 255;
+        if words == [0; 3] {
+            return Some(Self::Pending);
+        }
+        let code = words[0] >> 8;
+        words[0] &= 255;
         let source = Source::of(words)?;
         let fail = match code {
-            0 => None, 1 => Some(MailFail::Denied), 2 => Some(MailFail::Dead),
-            3 => Some(MailFail::Busy), 4 => Some(MailFail::OoM),
-            5 => Some(MailFail::HandedOver), 6 => Some(MailFail::Gone), _ => return None,
+            0 => None,
+            1 => Some(MailFail::Denied),
+            2 => Some(MailFail::Dead),
+            3 => Some(MailFail::Busy),
+            4 => Some(MailFail::OoM),
+            5 => Some(MailFail::HandedOver),
+            6 => Some(MailFail::Gone),
+            _ => return None,
         };
         Some(Self::Source { source, fail })
     }
@@ -184,7 +243,12 @@ pub enum MailCondition {
 }
 impl MailCondition {
     pub fn wire(self) -> usize {
-        match self { Self::Pull => 0, Self::Push => 1, Self::Empty => 2, Self::Signal(bit) => 3 + bit.index() }
+        match self {
+            Self::Pull => 0,
+            Self::Push => 1,
+            Self::Empty => 2,
+            Self::Signal(bit) => 3 + bit.index(),
+        }
     }
     pub fn of(raw: usize) -> Option<Self> {
         match raw {

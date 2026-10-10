@@ -89,7 +89,6 @@ fn register_runtime_hooks() {
     ];
     messenger::hook(EXIT_HOOKS);
 
-
     const SHUTDOWN_HOOKS: &[fn()] = &[
         crate::work::room::scheduler::core::rip,
         crate::memory::allocator::block::flush,
@@ -103,52 +102,92 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     };
     let blob: &'static [u8] =
         unsafe { core::slice::from_raw_parts(region.base as *const u8, region.size) };
-    let capsule = crate::platform::initrd::entry_image(blob)
-        .ok_or(BootError::InvalidEntryImage { base: region.base, size: region.size })?;
-    let team = crate::work::unit::capsule::assemble(capsule)
-        .map_err(|source| BootError::Mapping { operation: MapOperation::AssembleCapsule, source })?;
+    let capsule =
+        crate::platform::initrd::entry_image(blob).ok_or(BootError::InvalidEntryImage {
+            base: region.base,
+            size: region.size,
+        })?;
+    let team =
+        crate::work::unit::capsule::assemble(capsule).map_err(|source| BootError::Mapping {
+            operation: MapOperation::AssembleCapsule,
+            source,
+        })?;
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
-    let view = team.space.with_flush(
-        |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = crate::work::unit::space::window::HeapWindow::locate(inner, view_size)?;
-            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), view_size)?;
-            inner.borrow(
-                va,
-                crate::memory::manager::addr::PhysAddr::from_raw(region.base),
-                view_size,
-                read_only(),
-            )?;
-            Ok(va)
-        },
-    ).map_err(|source| BootError::Mapping { operation: MapOperation::ImageView, source })?;
+    let view = team
+        .space
+        .with_flush(
+            |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
+                let va = crate::work::unit::space::window::HeapWindow::locate(inner, view_size)?;
+                inner.allocate(
+                    crate::work::unit::space::SegmentKind::Normal,
+                    va.as_usize(),
+                    view_size,
+                )?;
+                inner.borrow(
+                    va,
+                    crate::memory::manager::addr::PhysAddr::from_raw(region.base),
+                    view_size,
+                    read_only(),
+                )?;
+                Ok(va)
+            },
+        )
+        .map_err(|source| BootError::Mapping {
+            operation: MapOperation::ImageView,
+            source,
+        })?;
 
     let mut registry = crate::resource::Registry::default();
-    crate::platform::devices::register(&mut registry)
-        .map_err(|source| BootError::Resources { operation: ResourceOperation::Devices, source })?;
-    crate::runtime::switcher::trap::resources::register(&mut registry)
-        .map_err(|source| BootError::Resources { operation: ResourceOperation::Traps, source })?;
-    crate::runtime::switcher::envcall::resources::register(&mut registry)
-        .map_err(|source| BootError::Resources { operation: ResourceOperation::Calls, source })?;
-    let resources = registry.freeze().map_err(|e| BootError::Resources {
-        operation: ResourceOperation::Freeze, source: e.into_parts().0,
+    crate::platform::devices::register(&mut registry).map_err(|source| BootError::Resources {
+        operation: ResourceOperation::Devices,
+        source,
     })?;
-    let ledger_len = crate::resource::boot::size(resources.len())
-        .map_err(|source| BootError::Resources { operation: ResourceOperation::LedgerSize, source })?;
+    crate::runtime::switcher::trap::resources::register(&mut registry).map_err(|source| {
+        BootError::Resources {
+            operation: ResourceOperation::Traps,
+            source,
+        }
+    })?;
+    crate::runtime::switcher::envcall::resources::register(&mut registry).map_err(|source| {
+        BootError::Resources {
+            operation: ResourceOperation::Calls,
+            source,
+        }
+    })?;
+    let resources = registry.freeze().map_err(|e| BootError::Resources {
+        operation: ResourceOperation::Freeze,
+        source: e.into_parts().0,
+    })?;
+    let ledger_len =
+        crate::resource::boot::size(resources.len()).map_err(|source| BootError::Resources {
+            operation: ResourceOperation::LedgerSize,
+            source,
+        })?;
     let (ledger_pa, ledger_bytes) = crate::resource::boot::block();
-    let ledger = team.space.with_flush(
-        |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-            let va = crate::work::unit::space::window::HeapWindow::locate(inner, ledger_bytes)?;
-            inner.allocate(crate::work::unit::space::SegmentKind::Normal, va.as_usize(), ledger_bytes)?;
-            inner.borrow(
-                va,
-                crate::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
-                ledger_bytes,
-                read_only(),
-            )?;
-            Ok(va)
-        },
-    ).map_err(|source| BootError::Mapping { operation: MapOperation::LedgerView, source })?;
+    let ledger = team
+        .space
+        .with_flush(
+            |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
+                let va = crate::work::unit::space::window::HeapWindow::locate(inner, ledger_bytes)?;
+                inner.allocate(
+                    crate::work::unit::space::SegmentKind::Normal,
+                    va.as_usize(),
+                    ledger_bytes,
+                )?;
+                inner.borrow(
+                    va,
+                    crate::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
+                    ledger_bytes,
+                    read_only(),
+                )?;
+                Ok(va)
+            },
+        )
+        .map_err(|source| BootError::Mapping {
+            operation: MapOperation::LedgerView,
+            source,
+        })?;
 
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
@@ -156,16 +195,31 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     args[env::ledger::args::LEDGER] = ledger.as_usize();
     args[env::ledger::args::LEDGER_LEN] = ledger_len;
     let mut words = alloc::vec::Vec::new();
-    words.try_reserve_exact(args.len()).map_err(|_| BootError::Bootstrap(MapError::OutOfMemory))?;
+    words
+        .try_reserve_exact(args.len())
+        .map_err(|_| BootError::Bootstrap(MapError::OutOfMemory))?;
     words.extend_from_slice(&args);
-    let bootstrap = team.task().args(words).hold().map_err(BootError::Bootstrap)?;
-    let entries = resources.grant(&bootstrap).map_err(|e| BootError::Resources {
-        operation: ResourceOperation::Grant, source: e.into_parts().0,
+    let bootstrap = team
+        .task()
+        .args(words)
+        .hold()
+        .map_err(BootError::Bootstrap)?;
+    let entries = resources
+        .grant(&bootstrap)
+        .map_err(|e| BootError::Resources {
+            operation: ResourceOperation::Grant,
+            source: e.into_parts().0,
+        })?;
+    crate::resource::boot::write(&entries).map_err(|source| BootError::Resources {
+        operation: ResourceOperation::WriteLedger,
+        source,
     })?;
-    crate::resource::boot::write(&entries)
-        .map_err(|source| BootError::Resources { operation: ResourceOperation::WriteLedger, source })?;
-    crate::work::unit::task::Task::release(&bootstrap)
-        .map_err(|source| BootError::BootstrapRelease { task: bootstrap.ident.id, source })?;
+    crate::work::unit::task::Task::release(&bootstrap).map_err(|source| {
+        BootError::BootstrapRelease {
+            task: bootstrap.ident.id,
+            source,
+        }
+    })?;
 
     #[cfg(debug_assertions)]
     team.space.audit();
@@ -200,7 +254,10 @@ fn boot_harts() -> Result<(), BootError> {
                 ..Default::default()
             })
             .call();
-        r.map_err(|source| BootError::HartStart { hart: HartId::new(hart), source })?;
+        r.map_err(|source| BootError::HartStart {
+            hart: HartId::new(hart),
+            source,
+        })?;
         hart::mark_hart_started(HartId::new(hart));
     }
     Ok(())

@@ -2,14 +2,14 @@
 #![no_main]
 extern crate programs;
 
+use ::resource::raw::Hole;
 use env::{MailFail, Mark, Permission, PieFail, PieToken, TaskId, TeamId, Wait, pie, unit};
+use execution::{room, unit as task};
 use ipc::session::{Session, establish};
-use terminal_client::{Connection, Terminal};
-use terminal_api::frame;
 use system_client::operator;
 use system_client::operator::Face;
-use ::resource::raw::Hole;
-use execution::{room, unit as task};
+use terminal_api::frame;
+use terminal_client::{Connection, Terminal};
 
 extern "C" fn unused(_: usize) -> ! {
     room::reap(0, None)

@@ -12,7 +12,8 @@ pub(crate) use beacon::arm as beacon_arm;
 
 pub use ident::{Identity, ident};
 pub(crate) use table::{
-    current, kick, launch, muster, prune_dead, publish, reserve_publication, remove_from_starved, rip,
+    current, kick, launch, muster, prune_dead, publish, remove_from_starved, reserve_publication,
+    rip,
 };
 #[cfg(debug_assertions)]
 pub(crate) use table::{fail_next_reservation, scheduler_addr};

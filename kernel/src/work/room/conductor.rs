@@ -97,8 +97,11 @@ pub(super) fn halt() -> ! {
             putln!("doom: held={held} starved={starved} blocked={blocked} nudged={nudged}");
             let (kicks, fallback) = kick_stats();
             putln!("sched: kicks={kicks} fallback={fallback}");
-            let (ring, busy, idle_ring, idle_busy) = crate::runtime::switcher::trap::resources::stats();
-            putln!("supervisor_external: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}");
+            let (ring, busy, idle_ring, idle_busy) =
+                crate::runtime::switcher::trap::resources::stats();
+            putln!(
+                "supervisor_external: ring={ring} busy={busy} idle_ring={idle_ring} idle_busy={idle_busy}"
+            );
             // 一只手有没有人取（`Push` 方向等超过 1 秒的账）——这件事由这一行接着看得见
             // （见 `work/mail/hole.rs` 的 `hold_line`）。
             crate::work::mail::hole::hold_line();

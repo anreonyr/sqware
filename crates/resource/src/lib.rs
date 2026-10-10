@@ -4,13 +4,13 @@
 //! 原始能力表查询与 token 适配集中在 [`raw`]，不表示资源已验证。持有与派生授予分别
 //! 管理释放和撤销；正式使用面是 `dock`、`port`、`bell` 与 `pile`。
 
-mod hole;
-mod capability;
-mod reply;
 pub mod bell;
+mod capability;
 pub mod dock;
+mod hole;
 pub mod pile;
 pub mod port;
 pub mod raw;
+mod reply;
 
 pub use env::PAGE_SIZE;

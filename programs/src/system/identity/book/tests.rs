@@ -405,30 +405,78 @@ fn creation_quotas_fail_without_partial_nodes() {
 fn activation_checks_all_grants_before_mutation_and_preserves_attenuation() {
     let (mut book, installer, manager, p) = setup();
     let target = TaskId::new(8);
-    book.bind(installer, BindingRequest { task: target, install: Install::Authorized(subject(p, &[])) }).unwrap();
+    book.bind(
+        installer,
+        BindingRequest {
+            task: target,
+            install: Install::Authorized(subject(p, &[])),
+        },
+    )
+    .unwrap();
     let c = book.found(manager).unwrap();
     let other = book.found(manager).unwrap();
-    book.admit(manager, Membership { coalition: c, principal: p }).unwrap();
+    book.admit(
+        manager,
+        Membership {
+            coalition: c,
+            principal: p,
+        },
+    )
+    .unwrap();
     let before = book.resolve(target);
-    assert_eq!(book.activate(manager, (target, CoalitionSet::new(&[c, other]).unwrap())), Err(Fail::NotEligible));
+    assert_eq!(
+        book.activate(manager, (target, CoalitionSet::new(&[c, other]).unwrap())),
+        Err(Fail::NotEligible)
+    );
     assert_eq!(book.resolve(target), before);
     let stale = CoalitionId::new(TaskId::new(99), c.slot);
-    assert_eq!(book.activate(manager, (target, CoalitionSet::new(&[stale]).unwrap())), Err(Fail::WrongAuthority));
+    assert_eq!(
+        book.activate(manager, (target, CoalitionSet::new(&[stale]).unwrap())),
+        Err(Fail::WrongAuthority)
+    );
     assert_eq!(book.resolve(target), before);
-    book.activate(manager, (target, CoalitionSet::new(&[c]).unwrap())).unwrap();
-    book.narrow_own(target, Selection { subject: subject(p, &[]), anchor: Anchor::Keep }).unwrap();
+    book.activate(manager, (target, CoalitionSet::new(&[c]).unwrap()))
+        .unwrap();
+    book.narrow_own(
+        target,
+        Selection {
+            subject: subject(p, &[]),
+            anchor: Anchor::Keep,
+        },
+    )
+    .unwrap();
     let narrowed = book.resolve(target);
-    assert_eq!(book.activate(manager, (target, CoalitionSet::new(&[c]).unwrap())), Err(Fail::NotNarrower));
+    assert_eq!(
+        book.activate(manager, (target, CoalitionSet::new(&[c]).unwrap())),
+        Err(Fail::NotNarrower)
+    );
     assert_eq!(book.resolve(target), narrowed);
 }
 #[test]
 fn activation_requires_the_actual_coalition_manager() {
     let (mut book, installer, manager, p) = setup();
     let c = book.found(manager).unwrap();
-    book.admit(manager, Membership { coalition: c, principal: p }).unwrap();
+    book.admit(
+        manager,
+        Membership {
+            coalition: c,
+            principal: p,
+        },
+    )
+    .unwrap();
     let stranger = TaskId::new(11);
     let principal = book.derive(installer, book.root()).unwrap();
-    book.bind(installer, BindingRequest { task: stranger, install: Install::Authorized(subject(principal, &[])) }).unwrap();
-    assert_eq!(book.activate(stranger, (manager, CoalitionSet::new(&[c]).unwrap())), Err(Fail::NotManager));
+    book.bind(
+        installer,
+        BindingRequest {
+            task: stranger,
+            install: Install::Authorized(subject(principal, &[])),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        book.activate(stranger, (manager, CoalitionSet::new(&[c]).unwrap())),
+        Err(Fail::NotManager)
+    );
     assert!(book.resolve(manager).unwrap().current.coalitions.is_empty());
 }

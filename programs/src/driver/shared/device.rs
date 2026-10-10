@@ -2,12 +2,12 @@
 
 use alloc::string::ToString;
 
-use env::{Access, Policy, PieKind, PieToken, Wait};
-use system_api::operator::path::Path;
-use hub_client as hub;
-use hub_api::Deed;
-use system_client::operator::Face;
 use ::resource::dock::{Dock, View};
+use env::{Access, PieKind, PieToken, Policy, Wait};
+use hub_api::Deed;
+use hub_client as hub;
+use system_api::operator::path::Path;
+use system_client::operator::Face;
 
 use crate::unit::Died;
 
@@ -64,7 +64,8 @@ impl Hub {
             died,
             ms,
         )?;
-        let sensor = pie::unseal(env::UnsealArgs::hole(hub::ALIVE_MARK)).map_err(|_| Fail::at(died, "hub"))?;
+        let sensor = pie::unseal(env::UnsealArgs::hole(hub::ALIVE_MARK))
+            .map_err(|_| Fail::at(died, "hub"))?;
         Ok(Hub { bond, list, sensor })
     }
 

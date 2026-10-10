@@ -42,10 +42,12 @@ pub fn init(dtp: usize) -> Result<(), boot::BootError> {
     clock::init().map_err(boot::BootError::Clock)?;
     trace::init().map_err(boot::BootError::Trace)?;
     trap::resources::init().map_err(|source| boot::BootError::Resources {
-        operation: boot::ResourceOperation::InitializeTraps, source,
+        operation: boot::ResourceOperation::InitializeTraps,
+        source,
     })?;
     runtime::switcher::envcall::resources::init().map_err(|source| boot::BootError::Resources {
-        operation: boot::ResourceOperation::InitializeCalls, source,
+        operation: boot::ResourceOperation::InitializeCalls,
+        source,
     })?;
     trap::init().map_err(boot::BootError::TrapStacks)?;
     Ok(())

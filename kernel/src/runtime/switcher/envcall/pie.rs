@@ -418,8 +418,16 @@ fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
 }
 
 pub(crate) fn observe(pie: &PieSnapshot) -> Result<(), env::MailFail> {
-    if let Some(pole) = pie.pole() && pole.backing().reserved() != 0 { return Err(env::MailFail::HandedOver); }
-    if let Some(heir) = pie.heir() && muster(heir.task).and_then(|t| t.upgrade()).is_some_and(|t| gate::locate(&t, heir.token).is_some()) {
+    if let Some(pole) = pie.pole()
+        && pole.backing().reserved() != 0
+    {
+        return Err(env::MailFail::HandedOver);
+    }
+    if let Some(heir) = pie.heir()
+        && muster(heir.task)
+            .and_then(|t| t.upgrade())
+            .is_some_and(|t| gate::locate(&t, heir.token).is_some())
+    {
         return Err(env::MailFail::HandedOver);
     }
     Ok(())

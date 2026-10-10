@@ -52,15 +52,15 @@ pub(crate) use depend_enter;
 pub(crate) use depend_release;
 
 pub use bare::BareLock;
-pub use depend::Level;
 #[cfg(debug_assertions)]
 pub use depend::DepInitError;
+pub use depend::Level;
+pub(crate) use depend::reserve as reserve_depend;
 pub use once::OnceLock;
 pub use reentrant::RelLock;
 pub use rw::RwLock;
 pub use spin::SpinLock;
 pub(crate) use spin::SpinLockGuard;
-pub(crate) use depend::reserve as reserve_depend;
 
 #[cfg(debug_assertions)]
 pub fn init_depend(hart_count: usize) -> Result<(), depend::DepInitError> {

@@ -127,7 +127,11 @@ impl Resources {
             .and_then(|p| p.try_join(name))
             .ok_or(Fail::Denied)?;
         let approved = Approved {
-            policy: super::Approval { target: target.clone(), member: false, alias: false },
+            policy: super::Approval {
+                target: target.clone(),
+                member: false,
+                alias: false,
+            },
             placement: Placement {
                 road,
                 tile: Tile {

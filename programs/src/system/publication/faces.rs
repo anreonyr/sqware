@@ -1,10 +1,6 @@
 use super::Internal;
 use crate::support::face::mount;
-use crate::system::{
-    control::identity::Roster,
-    control::Entries as Watch,
-    publication::Mounts,
-};
+use crate::system::{control::Entries as Watch, control::identity::Roster, publication::Mounts};
 use ::schedule::{Progress, Res, ResMut};
 use system_api::operator::Path;
 pub fn publication_face(
@@ -47,8 +43,8 @@ pub(crate) fn instance_face(
     mut watch: ResMut<crate::system::control::Entries>,
     mut mounts: ResMut<crate::system::publication::Mounts>,
 ) -> Result<Progress, &'static str> {
-    let entry =
-        env::pie::unseal(env::UnsealArgs::hole(system_api::control::ASK_MARK)).map_err(|_| "instance entry")?;
+    let entry = env::pie::unseal(env::UnsealArgs::hole(system_api::control::ASK_MARK))
+        .map_err(|_| "instance entry")?;
     watch.attach_instance(entry);
     mounts.0.push(crate::system::publication::Internal {
         road: system_api::control::INSTANCE.to_path_buf(),

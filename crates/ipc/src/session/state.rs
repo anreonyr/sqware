@@ -3,9 +3,8 @@
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use env::{pie, PieToken, TaskId};
 use ::resource::raw::{self, Hole};
-
+use env::{PieToken, TaskId, pie};
 
 const READY: u8 = 0;
 const BUSY: u8 = 1;
@@ -44,7 +43,10 @@ pub(super) fn begin(
     reply: PieToken,
     talk: PieToken,
 ) -> Result<CallGuard, GateFail> {
-    match state.0.compare_exchange(READY, BUSY, Ordering::AcqRel, Ordering::Acquire) {
+    match state
+        .0
+        .compare_exchange(READY, BUSY, Ordering::AcqRel, Ordering::Acquire)
+    {
         Ok(_) => {}
         Err(BUSY) => return Err(GateFail::Busy),
         Err(_) => return Err(GateFail::Closed),

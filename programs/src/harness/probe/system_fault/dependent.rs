@@ -81,7 +81,8 @@ fn main() -> programs::Report<'static> {
                     Client::reference_direct(
                         control,
                         authority,
-                        pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF)).unwrap(),
+                        pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF))
+                            .unwrap(),
                         1,
                         "named-subject",
                         WAIT
@@ -102,7 +103,8 @@ fn main() -> programs::Report<'static> {
                         )
                         .is_err()
                 );
-                resource = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
+                resource =
+                    pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 let proxy = Target::RuntimeResource {
                     task,
                     kind: "test".into(),
@@ -263,7 +265,8 @@ fn main() -> programs::Report<'static> {
                     reserve(acquired).is_err(),
                     "resource close must invalidate delivered capability"
                 );
-                let other = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
+                let other =
+                    pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
                 client
                     .publish(
                         target.as_ref().unwrap().clone(),

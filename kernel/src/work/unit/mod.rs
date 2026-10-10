@@ -1,10 +1,14 @@
 /// Serializes lifecycle publication, topology and receipt ownership. No data is
 /// exposed through the reentrant guard; scheduler nesting is same-hart only.
-static COMMIT: crate::lock::RelLock<()> = crate::lock::RelLock::new_level(crate::lock::Level::Unit, ());
+static COMMIT: crate::lock::RelLock<()> =
+    crate::lock::RelLock::new_level(crate::lock::Level::Unit, ());
 
 #[cfg(debug_assertions)]
 pub(crate) fn assert_unlocked() {
-    assert!(!COMMIT.held_by_current(), "idle wait while holding Unit commit lock");
+    assert!(
+        !COMMIT.held_by_current(),
+        "idle wait while holding Unit commit lock"
+    );
 }
 
 pub(crate) fn commit() -> crate::lock::reentrant::RelLockGuard<'static, ()> {
@@ -13,8 +17,8 @@ pub(crate) fn commit() -> crate::lock::reentrant::RelLockGuard<'static, ()> {
 
 pub(crate) mod capsule;
 pub(crate) mod gate;
-pub(crate) mod life;
 pub(crate) mod join;
+pub(crate) mod life;
 pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;
@@ -85,20 +89,24 @@ pub fn init() -> MapResult<()> {
                 })?;
             };
 
-            let ram_flags = PteFlags::V
-                | PteFlags::R
-                | PteFlags::W
-                | PteFlags::A
-                | PteFlags::D
-                | PteFlags::G;
+            let ram_flags =
+                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::G;
 
             let text_start = (&raw const _kernel_base).addr();
             let text_end = (&raw const _text_end).addr();
             let rodata_start = (&raw const _rodata_start).addr();
             let image_end = kernel_edge();
-            let ram_end = m.dram.base.checked_add(m.dram.size).ok_or(MapError::NoRegion)?;
-            if !(m.dram.base <= text_start && text_start < text_end
-                && text_end <= rodata_start && rodata_start <= image_end && image_end <= ram_end) {
+            let ram_end = m
+                .dram
+                .base
+                .checked_add(m.dram.size)
+                .ok_or(MapError::NoRegion)?;
+            if !(m.dram.base <= text_start
+                && text_start < text_end
+                && text_end <= rodata_start
+                && rodata_start <= image_end
+                && image_end <= ram_end)
+            {
                 return Err(MapError::NoRegion);
             }
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G;
@@ -110,7 +118,9 @@ pub fn init() -> MapResult<()> {
                 (rodata_start, image_end, ro_flags),
                 (image_end, ram_end, ram_flags),
             ] {
-                if start == end { continue; }
+                if start == end {
+                    continue;
+                }
                 for offset in [0, mode::lower().as_usize()] {
                     kernel_space.borrow(
                         VirtAddr::wrap(offset + start),
@@ -133,7 +143,9 @@ pub fn init() -> MapResult<()> {
                         .assume_init()
                 });
                 let mut pages = Vec::new();
-                pages.try_reserve_exact(1).map_err(|_| MapError::OutOfMemory)?;
+                pages
+                    .try_reserve_exact(1)
+                    .map_err(|_| MapError::OutOfMemory)?;
                 pages.push(page);
                 kernel_space.attach(
                     HART_FRAME_BASE + h * PAGE_SIZE,

@@ -9,8 +9,8 @@ use core::marker::PhantomData;
 
 use env::{MailFail, PieToken, Wait};
 
+use ::resource::raw::Hole;
 use wire::Message;
-use ::resource::raw::{Hole};
 
 /// **我收的那一枚孔** ＋ 这一路流的那一种报（类型）
 pub struct Receiver<M: Message> {

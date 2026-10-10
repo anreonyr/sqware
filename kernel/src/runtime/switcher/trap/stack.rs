@@ -91,15 +91,13 @@ pub fn init() -> Result<(), MapError> {
     for h in 0..segments {
         let (body_va, _edge) = trap_stack_segment(h);
         let phys = base + h * TRAP_STACK_SLOT_SIZE;
-        space
-            .borrow(
-                body_va,
-                PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
-                TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
-                flags,
-            )?;
-        space
-            .unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)?;
+        space.borrow(
+            body_va,
+            PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
+            TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
+            flags,
+        )?;
+        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)?;
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }

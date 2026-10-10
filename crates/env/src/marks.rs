@@ -21,7 +21,9 @@ pub const fn conflict(groups: &[&[Definition]]) -> Option<(&'static str, &'stati
                 let mut j = if h == g { i + 1 } else { 0 };
                 while j < groups[h].len() {
                     let b = groups[h][j];
-                    if a.mark.get() == b.mark.get() { return Some((a.name, b.name)); }
+                    if a.mark.get() == b.mark.get() {
+                        return Some((a.name, b.name));
+                    }
                     j += 1;
                 }
                 h += 1;
@@ -34,10 +36,14 @@ pub const fn conflict(groups: &[&[Definition]]) -> Option<(&'static str, &'stati
 }
 
 /// Check provider registries without repeating their channel and grant groups.
-pub const fn conflict_between(registries: &[&[&[Definition]]]) -> Option<(&'static str, &'static str)> {
+pub const fn conflict_between(
+    registries: &[&[&[Definition]]],
+) -> Option<(&'static str, &'static str)> {
     let mut a = 0;
     while a < registries.len() {
-        if let Some(pair) = conflict(registries[a]) { return Some(pair); }
+        if let Some(pair) = conflict(registries[a]) {
+            return Some(pair);
+        }
         let mut b = a + 1;
         while b < registries.len() {
             let mut g = 0;
@@ -50,7 +56,9 @@ pub const fn conflict_between(registries: &[&[&[Definition]]]) -> Option<(&'stat
                         let mut j = 0;
                         while j < registries[b][h].len() {
                             let right = registries[b][h][j];
-                            if left.mark.get() == right.mark.get() { return Some((left.name, right.name)); }
+                            if left.mark.get() == right.mark.get() {
+                                return Some((left.name, right.name));
+                            }
                             j += 1;
                         }
                         h += 1;

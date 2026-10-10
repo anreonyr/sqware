@@ -1,5 +1,5 @@
 mod answer;
-pub(crate) use answer::{release_image, Inbox};
+pub(crate) use answer::{Inbox, release_image};
 mod execution;
 mod plan;
 mod publication;
@@ -9,9 +9,9 @@ mod watch;
 use ::schedule::Resources;
 use env::PieToken;
 
-pub(crate) use resources::resources as install;
-pub(crate) use publication::faces;
 pub(crate) use plan::{frame, shutdown};
+pub(crate) use publication::faces;
+pub(crate) use resources::resources as install;
 pub(crate) use watch::entries as watch;
 
 pub(crate) fn entry(resources: &Resources<'_>) -> Result<PieToken, &'static str> {

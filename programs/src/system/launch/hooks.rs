@@ -51,18 +51,40 @@ fn unbind(active: Res<Active>, roster: Res<Roster>) -> Result<Progress, &'static
     Ok(Progress::Done)
 }
 
-fn constructor(active: Res<Active>, pending: Res<super::Pending>, mut construction: ResMut<crate::system::control::Construction>) -> Result<Progress, &'static str> {
-    let launch = pending.launches.iter().find(|launch| Some(launch.task) == active.task).ok_or("instance constructor policy")?;
+fn constructor(
+    active: Res<Active>,
+    pending: Res<super::Pending>,
+    mut construction: ResMut<crate::system::control::Construction>,
+) -> Result<Progress, &'static str> {
+    let launch = pending
+        .launches
+        .iter()
+        .find(|launch| Some(launch.task) == active.task)
+        .ok_or("instance constructor policy")?;
     if launch.delivery.constructor {
         construction.grant(launch.task)?;
     }
     Ok(Progress::Done)
 }
-fn loader(active: Res<Active>, pending: Res<super::Pending>, loader: Res<crate::system::loader::Inbox>) -> Result<Progress, &'static str> {
-    let launch = pending.launches.iter().find(|launch| Some(launch.task) == active.task).ok_or("instance constructor policy")?;
+fn loader(
+    active: Res<Active>,
+    pending: Res<super::Pending>,
+    loader: Res<crate::system::loader::Inbox>,
+) -> Result<Progress, &'static str> {
+    let launch = pending
+        .launches
+        .iter()
+        .find(|launch| Some(launch.task) == active.task)
+        .ok_or("instance constructor policy")?;
     if launch.delivery.constructor {
         let entry = loader.entry.ok_or("loader grant missing")?;
-        env::pie::accord(entry, launch.task, env::Permission::STORE, system_api::loader::Grant::Build.mark()).map_err(|_| "instance loader grant")?;
+        env::pie::accord(
+            entry,
+            launch.task,
+            env::Permission::STORE,
+            system_api::loader::Grant::Build.mark(),
+        )
+        .map_err(|_| "instance loader grant")?;
     }
     Ok(Progress::Done)
 }

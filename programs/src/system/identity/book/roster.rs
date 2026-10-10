@@ -172,28 +172,50 @@ pub struct Selection {
 impl IdentityBook {
     /// A coalition manager may activate only its own, already eligible coalitions.
     /// Preserve attenuation and perform the entire set check before changing either snapshot.
-    pub fn activate(&mut self, from: TaskId, request: (TaskId, system_api::identity::CoalitionSet)) -> Result<(), Fail> {
+    pub fn activate(
+        &mut self,
+        from: TaskId,
+        request: (TaskId, system_api::identity::CoalitionSet),
+    ) -> Result<(), Fail> {
         let (task, coalitions) = request;
-        if coalitions.is_empty() { return Err(Fail::Bad); }
+        if coalitions.is_empty() {
+            return Err(Fail::Bad);
+        }
         let manager = self.resolve(from).ok_or(Fail::Denied)?.current.principal;
         let binding = self.resolve(task).ok_or(Fail::Denied)?;
-        if binding.origin != binding.current { return Err(Fail::NotNarrower); }
-        let mut ids = [system_api::identity::CoalitionId::new(self.authority, 0); system_api::identity::limits::MAX_ACTIVE_COALITIONS];
+        if binding.origin != binding.current {
+            return Err(Fail::NotNarrower);
+        }
+        let mut ids = [system_api::identity::CoalitionId::new(self.authority, 0);
+            system_api::identity::limits::MAX_ACTIVE_COALITIONS];
         let mut n = binding.current.coalitions.len();
         ids[..n].copy_from_slice(binding.current.coalitions.as_slice());
         for coalition in coalitions.iter() {
             let index = self.coalition(coalition)?;
-            if self.coalitions[index].manager != manager { return Err(Fail::NotManager); }
-            if !self.amid(binding.current.principal, coalition)? { return Err(Fail::NotEligible); }
+            if self.coalitions[index].manager != manager {
+                return Err(Fail::NotManager);
+            }
+            if !self.amid(binding.current.principal, coalition)? {
+                return Err(Fail::NotEligible);
+            }
             if !ids[..n].contains(&coalition) {
-                if n == ids.len() { return Err(Fail::Full); }
+                if n == ids.len() {
+                    return Err(Fail::Full);
+                }
                 ids[n] = coalition;
                 n += 1;
             }
         }
         let subject = Subject::new(binding.current.principal, &ids[..n])?;
-        let row = self.bindings.iter_mut().find(|row| row.task == task).ok_or(Fail::Denied)?;
-        row.binding = Binding { origin: subject, current: subject };
+        let row = self
+            .bindings
+            .iter_mut()
+            .find(|row| row.task == task)
+            .ok_or(Fail::Denied)?;
+        row.binding = Binding {
+            origin: subject,
+            current: subject,
+        };
         Ok(())
     }
 }

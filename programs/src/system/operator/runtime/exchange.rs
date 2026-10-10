@@ -25,7 +25,8 @@ pub(super) fn wait(pile: Res<Pile>, mut hit: ResMut<Hit>) -> Result<Progress, Fa
     hit.0 = pile
         .await_(Wait::AtMost(100))
         .map_err(|_| Fail::Dead)?
-        .mail().map(|(token, _)| token);
+        .mail()
+        .map(|(token, _)| token);
     Ok(Progress::Done)
 }
 
@@ -92,7 +93,10 @@ pub(super) fn sweep(
     mut outs: ResMut<Outboxes>,
 ) -> Result<Progress, Fail> {
     let _ = desk.sweep_each(|gone: Gone| {
-        let _ = pile.detach(env::Source::Mail { pie: gone.ask, condition: MailCondition::Pull });
+        let _ = pile.detach(env::Source::Mail {
+            pie: gone.ask,
+            condition: MailCondition::Pull,
+        });
         if let Some(at) = outs.0.iter().position(|out| out.reply == gone.reply) {
             outs.0.swap_remove(at);
         }

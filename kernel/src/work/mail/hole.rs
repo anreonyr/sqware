@@ -159,7 +159,10 @@ impl Drop for HoleMeta {
             );
         }
         drop(pending);
-        messenger::wipe(WakeKey::Seal { kind: env::PieKind::Hole as u8, id: self.id.0 });
+        messenger::wipe(WakeKey::Seal {
+            kind: env::PieKind::Hole as u8,
+            id: self.id.0,
+        });
         messenger::wipe(key(self, MailCondition::Pull));
         messenger::wipe(key(self, MailCondition::Empty));
         messenger::wipe(key(self, MailCondition::Push));
@@ -668,7 +671,10 @@ pub(crate) fn seal(meta: &HoleMeta) {
         HANDS_LIVE.fetch_sub(hands.count(), Ordering::Relaxed);
     }
     drop(pending);
-    messenger::wipe(WakeKey::Seal { kind: env::PieKind::Hole as u8, id: meta.id.0 });
+    messenger::wipe(WakeKey::Seal {
+        kind: env::PieKind::Hole as u8,
+        id: meta.id.0,
+    });
     messenger::wipe(key(meta, MailCondition::Pull));
     messenger::wipe(key(meta, MailCondition::Empty));
     messenger::wipe(key(meta, MailCondition::Push));

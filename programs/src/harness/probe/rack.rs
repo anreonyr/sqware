@@ -12,8 +12,8 @@
 //! `TX` = "本端写、对面读"（客人写、铺场读）。名字本身借 `core::frame` 那一处。
 
 use env::PieToken;
-use system_api::operator::path::PathBuf;
 use ipc::rack::{CAP, Rack};
+use system_api::operator::path::PathBuf;
 
 use crate::driver::uart::core::frame::{self, Bytes};
 

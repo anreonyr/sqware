@@ -17,14 +17,14 @@ use programs::Report;
 use ipc::session::Session;
 use programs::debug;
 use system_api::operator::Fail;
-use system_client::operator::Face;
 use system_client::operator;
+use system_client::operator::Face;
 
 use env::PieToken;
+use env::unit;
 use programs::driver::rtc::client as clock;
 use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
-use env::unit;
 
 /// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
 const WANT: &str = "rtc";

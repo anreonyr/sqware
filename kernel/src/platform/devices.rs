@@ -38,13 +38,23 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
         }
     }
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0))?;
-    let root = gate::try_new_pie::<gate::Pole>(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
+    let root = gate::try_new_pie::<gate::Pole>(
+        meta,
+        Mark::NONE,
+        Permission::FETCH | Permission::VEST,
+        None,
+    )?;
     registry
         .register(Name::Page(Page::Dtb), gate::boxed(root)?)
         .map_err(|e| e.into_parts().0)?;
     if let Some(initrd) = machine::info().initrd() {
         let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0))?;
-        let root = gate::try_new_pie::<gate::Pole>(meta, Mark::NONE, Permission::FETCH | Permission::VEST, None)?;
+        let root = gate::try_new_pie::<gate::Pole>(
+            meta,
+            Mark::NONE,
+            Permission::FETCH | Permission::VEST,
+            None,
+        )?;
         registry
             .register(Name::Page(Page::Initrd), gate::boxed(root)?)
             .map_err(|e| e.into_parts().0)?;

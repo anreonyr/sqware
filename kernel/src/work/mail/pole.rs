@@ -277,23 +277,46 @@ pub(crate) fn key(meta: &PoleMeta, bit: Bit) -> WakeKey {
     WakeKey::Pole { id: meta.id.0, bit }
 }
 fn wipe(meta: &PoleMeta) {
-    messenger::wipe(WakeKey::Seal { kind: env::PieKind::Pole as u8, id: meta.id.0 });
-    for index in 0..usize::BITS as usize { messenger::wipe(key(meta, Bit::of(index).unwrap())); }
+    messenger::wipe(WakeKey::Seal {
+        kind: env::PieKind::Pole as u8,
+        id: meta.id.0,
+    });
+    for index in 0..usize::BITS as usize {
+        messenger::wipe(key(meta, Bit::of(index).unwrap()));
+    }
 }
 pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
-    if !meta.alive() { return Err(MailFail::Dead); }
-    let changed = { let mut pending = meta.ring.lock(); let changed = *pending & bit.mask() == 0; *pending |= bit.mask(); changed };
-    if changed { messenger::knock(key(meta, bit), &meta.life()); }
+    if !meta.alive() {
+        return Err(MailFail::Dead);
+    }
+    let changed = {
+        let mut pending = meta.ring.lock();
+        let changed = *pending & bit.mask() == 0;
+        *pending |= bit.mask();
+        changed
+    };
+    if changed {
+        messenger::knock(key(meta, bit), &meta.life());
+    }
     Ok(())
 }
 pub(crate) fn hush(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {
-    if !meta.alive() { return Err(MailFail::Dead); }
-    *meta.ring.lock() &= !bit.mask(); Ok(())
+    if !meta.alive() {
+        return Err(MailFail::Dead);
+    }
+    *meta.ring.lock() &= !bit.mask();
+    Ok(())
 }
 pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<bool>, MailFail> {
-    if !meta.alive() { return Err(MailFail::Dead); }
-    if meta.ready(bit) { return Ok(Handoff::Resume(true)); }
-    if dur == Duration::ZERO { return Ok(Handoff::Resume(false)); }
+    if !meta.alive() {
+        return Err(MailFail::Dead);
+    }
+    if meta.ready(bit) {
+        return Ok(Handoff::Resume(true));
+    }
+    if dur == Duration::ZERO {
+        return Ok(Handoff::Resume(false));
+    }
     Ok(match messenger::wait(key(meta, bit), meta.life(), dur)? {
         Handoff::Resume(()) => Handoff::Resume(meta.alive() && meta.ready(bit)),
         Handoff::Switch(pa) => Handoff::Switch(pa),

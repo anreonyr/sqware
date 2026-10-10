@@ -2,11 +2,17 @@
 
 use core::marker::PhantomData;
 use env::{MailFail, Mark, PieFail, PieToken, TaskId, Wait};
-use resource::{port::{Reply, ReplyError, Sender as PortSender}, raw};
+use resource::{
+    port::{Reply, ReplyError, Sender as PortSender},
+    raw,
+};
 pub use wire::Contract;
 use wire::Message;
 
-use crate::{hand::{Sender as HandSender, SendFail}, time::Deadline};
+use crate::{
+    hand::{SendFail, Sender as HandSender},
+    time::Deadline,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
@@ -35,21 +41,41 @@ pub mod request {
         pub fn from_raw(entry: PieToken, back: Mark) -> Result<Self, Fail> {
             let token = entry;
             let entry = PortSender::import(entry).map_err(|error| Fail::Open(error.source))?;
-            Ok(Self { entry, token, back, _contract: PhantomData })
+            Ok(Self {
+                entry,
+                token,
+                back,
+                _contract: PhantomData,
+            })
         }
 
         pub fn peer(&self) -> TaskId {
             self.entry.peer()
         }
 
-        pub fn begin(&self, deadline: Deadline, build: impl FnOnce(PieToken) -> C::Request) -> Result<Pending<C>, Fail> {
-            let mut reply = Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
+        pub fn begin(
+            &self,
+            deadline: Deadline,
+            build: impl FnOnce(PieToken) -> C::Request,
+        ) -> Result<Pending<C>, Fail> {
+            let mut reply =
+                Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
             let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
-            let request = build(remote); let mut buffer = C::Request::EMPTY;
+            let request = build(remote);
+            let mut buffer = C::Request::EMPTY;
             let len = request.store(buffer.as_mut()).ok_or(Fail::Encode)?;
-            if len > buffer.as_ref().len() { return Err(Fail::Encode); }
-            Ok(Pending { entry: PortSender::import(self.token).map_err(|error| Fail::Open(error.source))?, buffer, len,
-                reply: super::reply::Receiver::new(reply, deadline), deadline, sent: false, done: false })
+            if len > buffer.as_ref().len() {
+                return Err(Fail::Encode);
+            }
+            Ok(Pending {
+                entry: PortSender::import(self.token).map_err(|error| Fail::Open(error.source))?,
+                buffer,
+                len,
+                reply: super::reply::Receiver::new(reply, deadline),
+                deadline,
+                sent: false,
+                done: false,
+            })
         }
 
         /// Send one typed request and return its isolated one-shot reply endpoint.
@@ -58,7 +84,8 @@ pub mod request {
             deadline: Deadline,
             build: impl FnOnce(PieToken) -> C::Request,
         ) -> Result<super::reply::Receiver<C::Response>, Fail> {
-            let mut reply = Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
+            let mut reply =
+                Reply::open(self.peer(), self.back).map_err(|error| Fail::Open(error.source))?;
             let remote = reply.grant().map_err(|error| Fail::Grant(error.source))?;
             let request = build(remote);
             let mut buffer = C::Request::EMPTY;
@@ -91,16 +118,27 @@ pub mod request {
     }
     impl<C: Contract> Pending<C> {
         pub fn poll(&mut self) -> Result<Option<<C::Response as Message>::In>, Fail> {
-            if self.done { return Err(Fail::Untrusted); }
+            if self.done {
+                return Err(Fail::Untrusted);
+            }
             if !self.sent {
-                match self.entry.push(&self.buffer.as_ref()[..self.len], Wait::POLL) {
+                match self
+                    .entry
+                    .push(&self.buffer.as_ref()[..self.len], Wait::POLL)
+                {
                     Ok(()) => self.sent = true,
-                    Err(error) if error.source.is_busy() && self.deadline.remaining() != Wait::POLL => return Ok(None),
+                    Err(error)
+                        if error.source.is_busy() && self.deadline.remaining() != Wait::POLL =>
+                    {
+                        return Ok(None);
+                    }
                     Err(error) => return Err(Fail::Send(error.source)),
                 }
             }
             let result = self.reply.poll()?;
-            if result.is_some() { self.done = true; }
+            if result.is_some() {
+                self.done = true;
+            }
             Ok(result)
         }
     }
@@ -119,7 +157,12 @@ pub mod request {
             back: Mark,
             route: fn(&<C::Request as Message>::In) -> PieToken,
         ) -> Self {
-            Self { entry, back, route, _contract: PhantomData }
+            Self {
+                entry,
+                back,
+                route,
+                _contract: PhantomData,
+            }
         }
 
         /// Receive, decode, and validate the reply route embedded in one request.
@@ -149,18 +192,39 @@ pub mod request {
             };
             let bytes = match buffer.get(..len) {
                 Some(bytes) => bytes,
-                None => return Err(Rejected { fail: Fail::Decode, incoming: None }),
+                None => {
+                    return Err(Rejected {
+                        fail: Fail::Decode,
+                        incoming: None,
+                    });
+                }
             };
             let request = match C::Request::fetch(bytes) {
                 Some(request) => request,
-                None => return Err(Rejected { fail: Fail::Decode, incoming: None }),
+                None => {
+                    return Err(Rejected {
+                        fail: Fail::Decode,
+                        incoming: None,
+                    });
+                }
             };
             let token = (self.route)(&request);
-            let reply = match super::reply::Sender::<C::Response>::from_raw(token, from, self.back) {
+            let reply = match super::reply::Sender::<C::Response>::from_raw(token, from, self.back)
+            {
                 Ok(reply) => reply,
-                Err(fail) => return Err(Rejected { fail, incoming: Some((from, request)) }),
+                Err(fail) => {
+                    return Err(Rejected {
+                        fail,
+                        incoming: Some((from, request)),
+                    });
+                }
             };
-            Ok(Incoming { from, request, reply, _contract: PhantomData })
+            Ok(Incoming {
+                from,
+                request,
+                reply,
+                _contract: PhantomData,
+            })
         }
     }
 
@@ -193,8 +257,14 @@ pub mod reply {
         /// Import and validate an untrusted reply token at the receive boundary.
         pub fn from_raw(token: PieToken, from: TaskId, mark: Mark) -> Result<Self, Fail> {
             match raw::reserve(token) {
-                Ok((vestor, owner, actual)) if vestor == from && owner == from && actual == mark => {
-                    Ok(Self { token, active: true, _response: PhantomData })
+                Ok((vestor, owner, actual))
+                    if vestor == from && owner == from && actual == mark =>
+                {
+                    Ok(Self {
+                        token,
+                        active: true,
+                        _response: PhantomData,
+                    })
                 }
                 _ => Err(Fail::Untrusted),
             }
@@ -223,7 +293,9 @@ pub mod reply {
     }
 
     impl<R: Message> Drop for Sender<R> {
-        fn drop(&mut self) { self.close(); }
+        fn drop(&mut self) {
+            self.close();
+        }
     }
 
     /// Client-side reply endpoint. Receiving consumes it and its remote grant.
@@ -235,14 +307,22 @@ pub mod reply {
 
     impl<R: Message> Receiver<R> {
         pub(super) fn new(reply: Reply, deadline: Deadline) -> Self {
-            Self { reply, deadline, _response: PhantomData }
+            Self {
+                reply,
+                deadline,
+                _response: PhantomData,
+            }
         }
 
         pub fn poll(&self) -> Result<Option<R::In>, Fail> {
             let mut buffer = R::EMPTY;
             let bytes = match self.reply.pull(buffer.as_mut(), Wait::POLL) {
                 Ok(bytes) => bytes,
-                Err(ReplyError::Mail(fail)) if fail.is_busy() && self.deadline.remaining() != Wait::POLL => return Ok(None),
+                Err(ReplyError::Mail(fail))
+                    if fail.is_busy() && self.deadline.remaining() != Wait::POLL =>
+                {
+                    return Ok(None);
+                }
                 Err(ReplyError::Mail(fail)) => return Err(Fail::Receive(fail)),
                 Err(ReplyError::WrongSource) => return Err(Fail::WrongSource),
             };
@@ -251,12 +331,13 @@ pub mod reply {
 
         pub fn receive(self) -> Result<R::In, Fail> {
             let mut buffer = R::EMPTY;
-            let bytes = self.reply.pull(buffer.as_mut(), self.deadline.remaining()).map_err(|error| {
-                match error {
+            let bytes = self
+                .reply
+                .pull(buffer.as_mut(), self.deadline.remaining())
+                .map_err(|error| match error {
                     ReplyError::WrongSource => Fail::WrongSource,
                     ReplyError::Mail(fail) => Fail::Receive(fail),
-                }
-            })?;
+                })?;
             R::fetch(bytes).ok_or(Fail::Decode)
         }
     }

@@ -8,8 +8,6 @@ use super::{SCENE_UNIT, UnitFile};
 
 #[path = "../harness/probe/accept/program.rs"]
 pub mod accept;
-#[path = "../service/pipe/program.rs"]
-pub mod pipe;
 #[path = "../service/account/program.rs"]
 pub mod account;
 #[path = "../harness/bench/again/again/program.rs"]
@@ -18,22 +16,14 @@ pub mod again;
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
-#[path = "../user/emit/program.rs"]
-pub mod emit;
-#[path = "../user/upper/program.rs"]
-pub mod upper;
-#[path = "../user/fail/program.rs"]
-pub mod fail;
-#[path = "../user/spin/program.rs"]
-pub mod spin;
-#[path = "../user/workers/program.rs"]
-pub mod workers;
-#[path = "../user/shell/program.rs"]
-pub mod shell;
 #[path = "../user/cat/program.rs"]
 pub mod cat;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
+#[path = "../user/emit/program.rs"]
+pub mod emit;
+#[path = "../user/fail/program.rs"]
+pub mod fail;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -56,6 +46,8 @@ pub mod member;
 pub mod park;
 #[path = "../harness/guest/passer/program.rs"]
 pub mod passer;
+#[path = "../service/pipe/program.rs"]
+pub mod pipe;
 #[path = "../harness/probe/probe_bound/program.rs"]
 pub mod probe_bound;
 #[path = "../harness/probe/probe_coalition/program.rs"]
@@ -96,8 +88,12 @@ pub mod rig;
 pub mod router;
 #[path = "../driver/rtc/program.rs"]
 pub mod rtc;
+#[path = "../user/shell/program.rs"]
+pub mod shell;
 #[path = "../harness/guest/sleeper/program.rs"]
 pub mod sleeper;
+#[path = "../user/spin/program.rs"]
+pub mod spin;
 #[path = "../harness/guest/subject/program.rs"]
 pub mod subject;
 #[path = "../system/program.rs"]
@@ -108,8 +104,12 @@ pub mod system_fault;
 pub mod terminal;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
+#[path = "../user/upper/program.rs"]
+pub mod upper;
 #[path = "../harness/bench/group/waiter/program.rs"]
 pub mod waiter;
+#[path = "../user/workers/program.rs"]
+pub mod workers;
 
 /// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它同时是**装载次序**与打包时的条目
 /// 次序（`crates/image` 按这张表的位次把镜像挨个写进清单），且各景按 UnitFile::wanted_by

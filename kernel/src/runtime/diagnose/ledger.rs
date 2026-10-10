@@ -55,7 +55,6 @@ pub fn note(task: TaskId, reason: Reason, note: &str, owner: Option<TaskId>) {
     let at = ring.written % RING;
     ring.entries[at] = entry;
     ring.written += 1;
-
 }
 
 pub fn each(f: impl FnMut(&Entry)) {

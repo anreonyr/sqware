@@ -9,36 +9,16 @@ pub static PROBE_RULE: UnitFile = UnitFile {
         group: "rule",
         road: "svc/rule",
         entries: &[
-            crate::unit::PublishEntry {
-                name: "is",
-            },
-            crate::unit::PublishEntry {
-                name: "under",
-            },
-            crate::unit::PublishEntry {
-                name: "in",
-            },
-            crate::unit::PublishEntry {
-                name: "door",
-            },
-            crate::unit::PublishEntry {
-                name: "open",
-            },
-            crate::unit::PublishEntry {
-                name: "foreign",
-            },
-            crate::unit::PublishEntry {
-                name: "temp",
-            },
-            crate::unit::PublishEntry {
-                name: "at-pane",
-            },
-            crate::unit::PublishEntry {
-                name: "gone-door",
-            },
-            crate::unit::PublishEntry {
-                name: "mine",
-            },
+            crate::unit::PublishEntry { name: "is" },
+            crate::unit::PublishEntry { name: "under" },
+            crate::unit::PublishEntry { name: "in" },
+            crate::unit::PublishEntry { name: "door" },
+            crate::unit::PublishEntry { name: "open" },
+            crate::unit::PublishEntry { name: "foreign" },
+            crate::unit::PublishEntry { name: "temp" },
+            crate::unit::PublishEntry { name: "at-pane" },
+            crate::unit::PublishEntry { name: "gone-door" },
+            crate::unit::PublishEntry { name: "mine" },
         ],
         public: false,
     }],

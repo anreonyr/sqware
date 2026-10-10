@@ -44,7 +44,8 @@ const MS: usize = 1000;
 #[programs::entry]
 fn main() -> Result<(), Fail> {
     // 解门牌 → 上板 ＋ 开会话 → 上树落门牌。门牌**公开可查**（Mine::No）：谁都能查、谁都能用。
-    let entry = pie::unseal(env::UnsealArgs::hole(ENTRY_MARK)).map_err(|_| Fail::at(E_RTC, "tree"))?;
+    let entry =
+        pie::unseal(env::UnsealArgs::hole(ENTRY_MARK)).map_err(|_| Fail::at(E_RTC, "tree"))?;
     let ctx = Context::open(unit::sire(), Wait::AtMost(MS)).map_err(|s| {
         Fail::at(
             E_RTC,

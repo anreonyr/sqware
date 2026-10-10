@@ -22,8 +22,8 @@
 
 use core::marker::PhantomData;
 
-use env::{MailFail, PieToken, Wait};
 use ::resource::dock::{Dock, View};
+use env::{MailFail, PieToken, Wait};
 
 use super::bell::Bell;
 use super::ring::{Ring, SLOT, cursor, exact, lost, pop, ring};
@@ -154,7 +154,9 @@ impl<M: Message> Reader<M> {
     }
 
     /// 本端那一枚铃的号。
-    pub fn source(&self) -> env::Source { self.bell.source() }
+    pub fn source(&self) -> env::Source {
+        self.bell.source()
+    }
 
     pub fn bell(&self) -> PieToken {
         self.bell.token()

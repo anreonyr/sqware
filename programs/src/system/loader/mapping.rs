@@ -17,9 +17,15 @@ impl Drop for Source {
 pub(super) fn initialize(bytes: &[u8], region: &elf::Region) -> UnitResult<Source> {
     let private = region.flags & 4 != 0;
     let token = if private {
-        pie::unseal(env::UnsealArgs::Pole { size: region.data_size, shared: false })
+        pie::unseal(env::UnsealArgs::Pole {
+            size: region.data_size,
+            shared: false,
+        })
     } else {
-        pie::unseal(env::UnsealArgs::Pole { size: region.data_size, shared: true })
+        pie::unseal(env::UnsealArgs::Pole {
+            size: region.data_size,
+            shared: true,
+        })
     }
     .map_err(|e| {
         if matches!(e.source, env::PieFail::OoM) {

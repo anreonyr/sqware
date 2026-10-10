@@ -61,11 +61,7 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         phase: L,
         plan: Plan<E>,
     ) -> Result<&mut Self, BuildError> {
-        self.node(
-            name,
-            phase,
-            super::compose::nested(plan),
-        )
+        self.node(name, phase, super::compose::nested(plan))
     }
     pub fn add_subplans<K: PartialEq + 'static, C: 'static, M, N>(
         &mut self,
@@ -99,7 +95,12 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
             super::compose::subplans(select, children, finish),
         )
     }
-    fn node(&mut self, name: &'static str, phase: L, system: System<E>) -> Result<&mut Self, BuildError> {
+    fn node(
+        &mut self,
+        name: &'static str,
+        phase: L,
+        system: System<E>,
+    ) -> Result<&mut Self, BuildError> {
         if self.nodes.iter().any(|n| n.name == name) {
             return Err(BuildError::Duplicate);
         }
@@ -111,7 +112,11 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
         });
         Ok(self)
     }
-    pub fn before(&mut self, first: &'static str, second: &'static str) -> Result<&mut Self, BuildError> {
+    pub fn before(
+        &mut self,
+        first: &'static str,
+        second: &'static str,
+    ) -> Result<&mut Self, BuildError> {
         self.edges.try_reserve(1).map_err(|_| BuildError::Room)?;
         self.edges.push((first, second));
         Ok(self)
@@ -120,7 +125,8 @@ impl<L: Copy + Ord, E: 'static> Schedule<L, E> {
     pub fn build(&mut self) -> Result<Plan<E>, BuildError> {
         let mut schedule = core::mem::replace(self, Self::new());
         if schedule.edges.iter().any(|(a, b)| {
-            !schedule.nodes.iter().any(|n| n.name == *a) || !schedule.nodes.iter().any(|n| n.name == *b)
+            !schedule.nodes.iter().any(|n| n.name == *a)
+                || !schedule.nodes.iter().any(|n| n.name == *b)
         }) {
             return Err(BuildError::Unknown);
         }

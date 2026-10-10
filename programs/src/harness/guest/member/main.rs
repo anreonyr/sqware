@@ -6,26 +6,26 @@
 extern crate programs;
 
 use env::Wait;
-use programs::Report;
+use env::unit;
 use ipc::session::Session;
-use system_client::identity::CallError;
-use system_client::identity::Organization;
-use system_client::identity::Query;
-use system_client::identity::SelfOps;
+use programs::Report;
 use system_api::identity::CoalitionId;
 use system_api::identity::Fail;
 use system_api::identity::Match;
 use system_api::identity::Selector;
 use system_api::identity::Subject;
+use system_client::identity::CallError;
+use system_client::identity::Organization;
+use system_client::identity::Query;
+use system_client::identity::SelfOps;
 use system_client::operator;
-use env::unit;
 
 const MS: usize = 1000;
 
 #[programs::entry]
 fn main() -> Report<'static> {
-    let authority = system_client::identity::authority()
-        .expect("member: no Control-issued identity authority");
+    let authority =
+        system_client::identity::authority().expect("member: no Control-issued identity authority");
     let session = Session::open(unit::sire(), operator::BERTH, Wait::AtMost(MS))
         .ok()
         .expect("member: no tree link");

@@ -284,12 +284,18 @@ impl Span for CoalitionSet {
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
         let mut coalitions = [CoalitionId::EMPTY; MAX_ACTIVE_COALITIONS];
         coalitions[..self.len()].copy_from_slice(self.as_slice());
-        ActiveFrame { count: self.len() as u8, coalitions }.store_at(out, at)
+        ActiveFrame {
+            count: self.len() as u8,
+            coalitions,
+        }
+        .store_at(out, at)
     }
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (frame, next) = ActiveFrame::fetch_at(bytes, at)?;
         let ids = &frame.coalitions[..frame.count as usize];
-        if ids.is_empty() || ids.windows(2).any(|pair| pair[0] >= pair[1]) { return None; }
+        if ids.is_empty() || ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+            return None;
+        }
         Some((Self::new(ids).ok()?, next))
     }
 }

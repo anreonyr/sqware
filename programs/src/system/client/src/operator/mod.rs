@@ -1,6 +1,6 @@
 mod face;
-mod lookup;
 mod handoff;
+mod lookup;
 mod pane;
 mod tile;
 mod watch;

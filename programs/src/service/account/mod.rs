@@ -38,7 +38,11 @@ pub fn run() -> Result<(), &'static str> {
     }
     let subject = Subject::new(principal, &[]).map_err(|_| "Account subject")?;
     let (image, _load) = image(supervisor)?;
-    let mut config = Configuration { image, supervisor, commands: supplies::Supplies::receive(supervisor)? };
+    let mut config = Configuration {
+        image,
+        supervisor,
+        commands: supplies::Supplies::receive(supervisor)?,
+    };
     let tree = system_client::operator::Face::of(
         ipc::session::Session::open(supervisor, system_client::operator::BERTH, WAIT)
             .map_err(|_| "Account Operator session")?,
@@ -67,7 +71,8 @@ pub fn run() -> Result<(), &'static str> {
         return Err("Account task query source");
     }
     let state = system_client::control::Face::of(state_entry).map_err(|_| "Account task query")?;
-    let entry = env::pie::unseal(env::UnsealArgs::hole(account_api::ENTRY)).map_err(|_| "Account entry")?;
+    let entry =
+        env::pie::unseal(env::UnsealArgs::hole(account_api::ENTRY)).map_err(|_| "Account entry")?;
     publisher
         .publish(
             system_api::control::publication::Target::Service {
@@ -219,8 +224,11 @@ fn create(
         _ => return Err(Fail::Denied),
     };
     let bytes = config.image.as_slice();
-    let image = env::pie::unseal(env::UnsealArgs::Pole { size: bytes.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, shared: true })
-        .map_err(|_| Fail::Full)?;
+    let image = env::pie::unseal(env::UnsealArgs::Pole {
+        size: bytes.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE,
+        shared: true,
+    })
+    .map_err(|_| Fail::Full)?;
     struct Image(env::PieToken);
     impl Drop for Image {
         fn drop(&mut self) {
@@ -274,11 +282,19 @@ fn create(
     if said.task.get() == 0 || said.team == 0 {
         return Err(Fail::Bad);
     }
-    let built = system_api::loader::Built { task: said.task, team: env::TeamId::new(said.team as usize) };
+    let built = system_api::loader::Built {
+        task: said.task,
+        team: env::TeamId::new(said.team as usize),
+    };
     if let Err(error) = config.commands.send(built.task) {
         crate::debug::put(error);
-        if let Ok(entry) = tree.tile(system_api::control::INSTANCE, WAIT).and_then(|tile| tile.token(WAIT)) {
-            if let Ok(lifecycle) = system_client::control::Face::of(entry) { let _ = lifecycle.instance(built.task).ruin(WAIT); }
+        if let Ok(entry) = tree
+            .tile(system_api::control::INSTANCE, WAIT)
+            .and_then(|tile| tile.token(WAIT))
+        {
+            if let Ok(lifecycle) = system_client::control::Face::of(entry) {
+                let _ = lifecycle.instance(built.task).ruin(WAIT);
+            }
         }
         return Err(Fail::Full);
     }

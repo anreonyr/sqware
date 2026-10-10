@@ -41,7 +41,10 @@ impl Salvage {
     }
 
     pub(super) fn take_map(&mut self, mut map: Box<Map>) {
-        debug_assert!(map.left.is_none() && map.right.is_none(), "salvage: indexed map");
+        debug_assert!(
+            map.left.is_none() && map.right.is_none(),
+            "salvage: indexed map"
+        );
         map.left = self.maps.take();
         self.maps = Some(map);
     }

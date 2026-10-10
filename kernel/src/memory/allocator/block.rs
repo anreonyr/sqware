@@ -201,13 +201,17 @@ impl BlockAllocator {
                     cells.add(i).write(Meta::free());
                 }
             }
-            Box::leak(Box::try_new(Tally::new(m.free.base, cells, meta_len))
-                .map_err(|_| InitError::OutOfMemory)?)
+            Box::leak(
+                Box::try_new(Tally::new(m.free.base, cells, meta_len))
+                    .map_err(|_| InitError::OutOfMemory)?,
+            )
         };
         super::statistics::install_block_kinds(m.free.base, m.free.size)?;
 
         let mut pools = Vec::new();
-        pools.try_reserve_exact(nodes).map_err(|_| InitError::OutOfMemory)?;
+        pools
+            .try_reserve_exact(nodes)
+            .map_err(|_| InitError::OutOfMemory)?;
         for i in 0..nodes {
             let mut pool = Pool::new();
             pool.init()?;

@@ -2,8 +2,12 @@ use super::{Mounts, book::Publications, living::Living, names, runtime};
 use crate::system::operator::management::Tree;
 use ::schedule::{Dispatch, Resources};
 use alloc::{collections::VecDeque, vec::Vec};
-pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToken, crate::system::app::InstallError> {
-    let entry = env::pie::unseal(env::UnsealArgs::hole(system_api::control::publication::ENTRY))?;
+pub(crate) fn install(
+    resources: &mut Resources<'static>,
+) -> Result<env::PieToken, crate::system::app::InstallError> {
+    let entry = env::pie::unseal(env::UnsealArgs::hole(
+        system_api::control::publication::ENTRY,
+    ))?;
 
     resources
         .insert(super::Entry(entry))?
@@ -14,13 +18,13 @@ pub(crate) fn install(resources: &mut Resources<'static>) -> Result<env::PieToke
         .insert(runtime::Runtimes {
             requests: Vec::new(),
             seen: 0,
-            checked: Vec::new()
+            checked: Vec::new(),
         })?
         .insert(names::Names::new())?
         .insert(names::Registrations {
             requests: Vec::new(),
             seen: 0,
-            dirty: false
+            dirty: false,
         })?
         .insert(Living::new())?
         .insert(super::Inbox(VecDeque::new()))?

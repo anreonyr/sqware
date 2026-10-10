@@ -62,7 +62,10 @@ pub const fn total(parts: &[Option<usize>]) -> Option<usize> {
     let mut i = 0;
     while i < parts.len() {
         match parts[i] {
-            Some(n) => match sum.checked_add(n) { Some(next) => sum = next, None => return None },
+            Some(n) => match sum.checked_add(n) {
+                Some(next) => sum = next,
+                None => return None,
+            },
             None => return None,
         }
         i += 1;

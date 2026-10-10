@@ -376,7 +376,7 @@ fn advance(
                             id: root.id,
                             capacity: root.capacity,
                             seed: reply.seed,
-                                            direction: *direction,
+                            direction: *direction,
                         };
                         let link = &job.plan.links[job.link_index];
                         let end = match direction {

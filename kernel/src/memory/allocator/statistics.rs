@@ -288,14 +288,17 @@ pub fn init() -> Result<(), Error> {
     if STATS.get().is_some() {
         return Err(Error::AlreadyInitialized);
     }
-    let s: &'static Stats = Box::leak(Box::try_new(Stats {
-        frame_occupied: AtomicUsize::new(0),
-        block_occupied: AtomicUsize::new(0),
-        spare_occupied: AtomicUsize::new(0),
-        spare_total: AtomicUsize::new(0),
-        #[cfg(debug_assertions)]
-        kinds: [const { AtomicUsize::new(0) }; Kind::COUNT],
-    }).map_err(|_| Error::OutOfMemory)?);
+    let s: &'static Stats = Box::leak(
+        Box::try_new(Stats {
+            frame_occupied: AtomicUsize::new(0),
+            block_occupied: AtomicUsize::new(0),
+            spare_occupied: AtomicUsize::new(0),
+            spare_total: AtomicUsize::new(0),
+            #[cfg(debug_assertions)]
+            kinds: [const { AtomicUsize::new(0) }; Kind::COUNT],
+        })
+        .map_err(|_| Error::OutOfMemory)?,
+    );
     STATS.set(s).map_err(|_| Error::AlreadyInitialized)?;
     Ok(())
 }

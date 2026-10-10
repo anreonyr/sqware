@@ -65,7 +65,7 @@ fn reduce_locked(
         }
         crate::work::mail::pole::narrow(meta, token, flags)?;
         let _gate = task.gate.lock();
-    let _commit = super::super::commit();
+        let _commit = super::super::commit();
         let mut pies = task.gate.pies.lock();
         let pie = pies
             .iter_mut()

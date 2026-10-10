@@ -19,9 +19,15 @@ impl Cleanup {
         for pie in self.removed {
             // Invalidate the exact reference and notify its direct ancestor after
             // gates are released; the ancestor may have regained exclusive use.
-            for task in &self.tasks { super::notify(*task, pie.token()); }
-            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) { super::notify(parent.ident.id, token); }
-            if let Some(p) = pie.snapshot().pole() { pole::shut(&p, pie.token()).expect("cull: unmap token"); }
+            for task in &self.tasks {
+                super::notify(*task, pie.token());
+            }
+            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) {
+                super::notify(parent.ident.id, token);
+            }
+            if let Some(p) = pie.snapshot().pole() {
+                pole::shut(&p, pie.token()).expect("cull: unmap token");
+            }
             drop(pie);
         }
         count
@@ -70,7 +76,11 @@ pub(super) fn collect(
         };
         if let Some(parent) = parent {
             let _gate = parent.gate.lock();
-            super::observe(&mut tasks, &parent, parent.gate.version.load(Ordering::Relaxed))?;
+            super::observe(
+                &mut tasks,
+                &parent,
+                parent.gate.version.load(Ordering::Relaxed),
+            )?;
         }
         cursor += 1;
     }
@@ -81,27 +91,36 @@ pub(super) fn collect(
 /// Validate the actual subtree rather than rejecting unrelated task changes.
 /// Every holder and the root's current parent must already be locked. A changed
 /// relation involving an uncollected task requires a fresh collection.
-fn relations_match(
-    tasks: &[(Arc<Task>, usize)],
-    nodes: &[(Arc<Task>, PieToken)],
-) -> bool {
+fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]) -> bool {
     for (index, (task, token)) in nodes.iter().enumerate() {
-        let Some(pie) = super::locate(task, *token) else { return false };
+        let Some(pie) = super::locate(task, *token) else {
+            return false;
+        };
         if let Some(parent) = pie.sire() {
-            let Some(lord) = pie.lord().upgrade() else { return false };
+            let Some(lord) = pie.lord().upgrade() else {
+                return false;
+            };
             if index == 0 {
                 if !tasks.iter().any(|(holder, _)| Arc::ptr_eq(holder, &lord)) {
                     return false;
                 }
-            } else if !nodes.iter().any(|(holder, source)| {
-                *source == parent && Arc::ptr_eq(holder, &lord)
-            }) {
+            } else if !nodes
+                .iter()
+                .any(|(holder, source)| *source == parent && Arc::ptr_eq(holder, &lord))
+            {
                 return false;
             }
-            if !lord.gate.heirs.lock().iter().any(|(source, child, child_token)| {
-                *source == parent && *child_token == *token
-                    && child.ptr_eq(&Arc::downgrade(task))
-            }) {
+            if !lord
+                .gate
+                .heirs
+                .lock()
+                .iter()
+                .any(|(source, child, child_token)| {
+                    *source == parent
+                        && *child_token == *token
+                        && child.ptr_eq(&Arc::downgrade(task))
+                })
+            {
                 return false;
             }
         } else if index != 0 {
@@ -109,12 +128,15 @@ fn relations_match(
         }
         let heirs = task.gate.heirs.lock();
         let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
-        for (_, child, child_token) in heirs[start..].iter()
+        for (_, child, child_token) in heirs[start..]
+            .iter()
             .take_while(|(source, _, _)| *source == *token)
         {
-            if child.strong_count() != 0 && !nodes.iter().skip(1).any(|(holder, token)| {
-                *token == *child_token && child.ptr_eq(&Arc::downgrade(holder))
-            }) {
+            if child.strong_count() != 0
+                && !nodes.iter().skip(1).any(|(holder, token)| {
+                    *token == *child_token && child.ptr_eq(&Arc::downgrade(holder))
+                })
+            {
                 return false;
             }
         }
@@ -142,7 +164,10 @@ pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
         );
         super::changed(&lord);
     }
-    task.gate.heirs.lock().retain(|(parent, _, _)| *parent != token);
+    task.gate
+        .heirs
+        .lock()
+        .retain(|(parent, _, _)| *parent != token);
     super::changed(task);
     Some(pie)
 }
@@ -163,45 +188,53 @@ pub(super) fn cull(
         };
         if let Some(caller) = caller {
             let _gate = caller.gate.lock();
-            super::observe(&mut tasks, caller, caller.gate.version.load(Ordering::Relaxed))?;
+            super::observe(
+                &mut tasks,
+                caller,
+                caller.gate.version.load(Ordering::Relaxed),
+            )?;
         }
         tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
         let mut removed = Vec::new();
         let mut changed = Vec::new();
         removed.try_reserve(nodes.len()).map_err(|_| PieFail::OoM)?;
         changed.try_reserve(tasks.len()).map_err(|_| PieFail::OoM)?;
-        let result = super::with_tasks_checked(&tasks, || relations_match(&tasks, &nodes), || {
-            let root = super::locate(task, token).ok_or(PieFail::Denied)?;
-            if let Some(caller) = caller {
-                let parent = root.sire().ok_or(PieFail::Denied)?;
-                let lord = root.lord().upgrade().ok_or(PieFail::Denied)?;
-                if !Arc::ptr_eq(&lord, caller) || super::locate(caller, parent).is_none() {
-                    return Err(PieFail::Denied);
+        let result = super::with_tasks_checked(
+            &tasks,
+            || relations_match(&tasks, &nodes),
+            || {
+                let root = super::locate(task, token).ok_or(PieFail::Denied)?;
+                if let Some(caller) = caller {
+                    let parent = root.sire().ok_or(PieFail::Denied)?;
+                    let lord = root.lord().upgrade().ok_or(PieFail::Denied)?;
+                    if !Arc::ptr_eq(&lord, caller) || super::locate(caller, parent).is_none() {
+                        return Err(PieFail::Denied);
+                    }
                 }
-            }
-            // Exit must withdraw authority even if mapping/construction is busy.
-            // Normal release/revoke retain their existing Busy checks.
-            let pole = root.pole();
-            let _operation = if !closing && let Some(p) = &pole {
-                let operation = p.backing().operation().ok_or(PieFail::Busy)?;
-                if p.backing().reserved() != 0 {
-                    return Err(PieFail::Busy);
+                // Exit must withdraw authority even if mapping/construction is busy.
+                // Normal release/revoke retain their existing Busy checks.
+                let pole = root.pole();
+                let _operation = if !closing && let Some(p) = &pole {
+                    let operation = p.backing().operation().ok_or(PieFail::Busy)?;
+                    if p.backing().reserved() != 0 {
+                        return Err(PieFail::Busy);
+                    }
+                    Some(operation)
+                } else {
+                    None
+                };
+                // Descendants first, so each parent still exists while unlinking.
+                for (holder, token) in nodes.iter().rev() {
+                    if let Some(pie) = take(holder, *token) {
+                        removed.push(pie);
+                    }
                 }
-                Some(operation)
-            } else {
-                None
-            };
-            // Descendants first, so each parent still exists while unlinking.
-            for (holder, token) in nodes.iter().rev() {
-                if let Some(pie) = take(holder, *token) {
-                    removed.push(pie);
+                for (holder, _) in &tasks {
+                    changed.push(holder.ident.id);
                 }
-            }
-            for (holder, _) in &tasks {
-                changed.push(holder.ident.id);
-            }
-            Ok(())
-        });
+                Ok(())
+            },
+        );
         match result {
             Err(PieFail::Busy) => {
                 core::hint::spin_loop();
@@ -255,7 +288,8 @@ fn seal_owned(task: &Task) {
     loop {
         let pie = {
             let _gate = task.gate.lock();
-            task.gate.pies
+            task.gate
+                .pies
                 .lock()
                 .iter()
                 .filter(|pie| pie.owner_task() == task.ident.id)
