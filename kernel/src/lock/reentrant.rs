@@ -71,6 +71,11 @@ impl<T> RelLock<T> {
 }
 
 impl<T: ?Sized> RelLock<T> {
+    #[cfg(debug_assertions)]
+    pub(crate) fn held_by_current(&self) -> bool {
+        self.owner.load(Ordering::Relaxed) == Owner::of(hart::hart_id()).word()
+    }
+
     pub(crate) fn read_unlocked(&self) -> *const T {
         self.data.get()
     }

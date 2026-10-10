@@ -2,6 +2,7 @@
 //! 生成用 `Spawn`/`Embark`，结果经共享空间的 `Completion` 槽交回（不占权限表）。
 
 use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::{Wait, TaskId, TeamId, UnitResult};
@@ -36,14 +37,11 @@ unsafe impl<T> Send for SendSlot<T> {}
 unsafe impl<T> Sync for SendSlot<T> {}
 
 impl<T> SendSlot<T> {
-    /// 完工：写结果 → 置 DONE。若父方已弃权（LEFT 在前），本方是后到者 → 释放盒子。
+    /// Publish T before DONE. The parent or detached-slot registry owns freeing.
     unsafe fn store_result(self, r: T) {
         unsafe {
             (*self.0).result = Some(r);
-            let prev = (*self.0).state.fetch_or(DONE, Ordering::AcqRel);
-            if prev & LEFT != 0 {
-                drop(Box::from_raw(self.0));
-            }
+            (*self.0).state.fetch_or(DONE, Ordering::Release);
         }
     }
 }
@@ -61,33 +59,69 @@ impl<T> Join<T> {
         self.id
     }
 
-    /// 等结果并取走。等到 DONE 说明子任务已完工且**未**释放盒子（它当时看不到
-    /// LEFT——本方走 join 就不会置 LEFT），故由本方释放。
+    /// Wait for the Rust value; native Reaped without DONE reports abnormal exit.
     pub fn join(self) -> T {
-        let slot = self.slot;
-        core::mem::forget(self); // 结果本方取走，不再走弃权路径（Drop）
+        sweep();
         loop {
-            // SAFETY: DONE 未置位前不读 result。
-            if unsafe { (*slot).state.load(Ordering::Acquire) } & DONE != 0 {
-                // SAFETY: DONE 置位 ⇒ result 已写入且子任务不再触碰盒子。
-                let r = unsafe { (*slot).result.take() }.expect("joined task lost result");
-                unsafe { drop(Box::from_raw(slot)) };
-                return r;
+            if unsafe { (*self.slot).state.load(Ordering::Acquire) } & DONE != 0 {
+                let slot = self.slot;
+                core::mem::forget(self);
+                let result = unsafe { (*slot).result.take() }.expect("joined task lost result");
+                unsafe { drop(Box::from_raw(slot)); }
+                return result;
             }
-            let _ = wait(slot as usize, Wait::AtMost(1_000));
+            // Native completion also covers faults before the closure writes T.
+            // Recheck DONE after observing Reaped: the child could have finished
+            // between the first load and the kernel observation.
+            if finished(self.id)
+                && unsafe { (*self.slot).state.load(Ordering::Acquire) } & DONE == 0 {
+                let slot = self.slot;
+                core::mem::forget(self);
+                unsafe { drop(Box::from_raw(slot)); }
+                panic!("joined task exited without a Rust result");
+            }
+            let _ = wait(self.slot as usize, Wait::AtMost(1_000));
         }
     }
+
 }
 
+// A detached Rust value is reclaimed after native Reaped, including faults
+// before DONE. This list owns heap slots, never native exit facts or receipts.
+struct Detached { task: TaskId, slot: usize, release: unsafe fn(usize) }
+static DETACHED: crate::lock::Lock<Vec<Detached>> = crate::lock::Lock::new(Vec::new());
+unsafe fn release<T>(slot: usize) { unsafe { drop(Box::from_raw(slot as *mut Completion<T>)); } }
+// Private to tasks minted by this runtime in its own Team: observation authority
+// cannot be revoked. Denied here means the terminal member has been pruned,
+// so it permits freeing its heap slot, never inventing a successful T or reason.
+fn finished(task: TaskId) -> bool {
+    match env_task::join_task(task, Wait::POLL) {
+        Ok(done) => done,
+        Err(error) => error.source == env::UnitFail::Denied,
+    }
+}
+fn sweep() {
+    let mut pending = DETACHED.with(core::mem::take);
+    let mut at = 0;
+    while at < pending.len() {
+        if finished(pending[at].task) {
+            let item = pending.swap_remove(at);
+            // Destructors run outside the registry lock and can drop other Joins.
+            unsafe { (item.release)(item.slot); }
+        } else { at += 1; }
+    }
+    if !pending.is_empty() { DETACHED.with(|list| list.append(&mut pending)); }
+}
 impl<T> Drop for Join<T> {
-    /// 弃权：不等结果。置 LEFT；若子任务已完工（DONE 在前），本方是后到者 →
-    /// 释放盒子，否则留给子任务释放。子任务随后的 `wake(slot)` 只把地址当**键**
-    /// 用、不解引用，故先释放亦安全。
     fn drop(&mut self) {
-        // SAFETY: slot 由 spawn 分配、生命周期由本仲裁协议管辖。
-        let prev = unsafe { (*self.slot).state.fetch_or(LEFT, Ordering::AcqRel) };
-        if prev & DONE != 0 {
-            unsafe { drop(Box::from_raw(self.slot)) };
+        sweep();
+        let previous = unsafe { (*self.slot).state.fetch_or(LEFT, Ordering::AcqRel) };
+        if previous & DONE != 0 {
+            unsafe { drop(Box::from_raw(self.slot)); }
+        } else {
+            DETACHED.with(|list| list.push(Detached {
+                task: self.id, slot: self.slot as usize, release: release::<T>,
+            }));
         }
     }
 }
@@ -114,16 +148,14 @@ where
 
 /// [`spawn`] 的可失败版：把 `Spawn` / `Embark` 的错误原样交回调用方。
 ///
-/// 失败时的残骸归属：`Spawn` 失败 ⇒ 只有 `Completion` 槽与闭包装箱两笔本地
-/// 堆分配，随 `Err` 返回由调用方的作用域照常回收；`Embark` 失败 ⇒ 任务已产生
-/// （在 `Team.held` 里）但未放行，本函数**只可能**在父方被 doom 级联扑杀的
-/// 窗口里走到，那时该任务已随父域停摆、由级联的 `reap` 收尾——故此处不留孤儿。
-/// 不在这里 `kill`：本模块不该认识「杀」这条路径（它属 room）。
+/// Spawn failure releases both local allocations. A failed Embark terminates
+/// the unpublished closure task before reclaiming its startup argument.
 pub fn try_spawn<F, T>(f: F) -> UnitResult<Join<T>>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send,
 {
+    sweep();
     let slot = Box::into_raw(Box::new(Completion::new()));
     let send_slot = SendSlot(slot);
     // 先 done 后 wake：done Release 发表于 ecall 之前；唤醒后 Acquire 重查必见真值。
@@ -135,13 +167,33 @@ where
     });
     let holder: Box<Box<dyn FnOnce() + Send>> = Box::new(inner);
     let ptr = Box::into_raw(holder) as usize;
-    let task_id = super::spawn(
+    let task_id = match super::spawn(
         TeamId::new(0),
         (trampoline as extern "C" fn(usize) -> !) as usize,
         &[ptr],
         0,
-    )?;
-    env_task::embark(task_id)?;
+    ) {
+        Ok(task) => task,
+        Err(error) => {
+            unsafe {
+                drop(Box::from_raw(ptr as *mut Box<dyn FnOnce() + Send>));
+                drop(Box::from_raw(slot));
+            }
+            return Err(error);
+        }
+    };
+    // Held guarantees that the child cannot dereference the startup pointer yet.
+    if let Err(error) = env_task::embark_task(task_id) {
+        let _ = env_task::slay_task(task_id);
+        if env_task::join_task(task_id, Wait::Forever)
+            .unwrap_or_else(|error| error.source == env::UnitFail::Denied) {
+            unsafe {
+                drop(Box::from_raw(ptr as *mut Box<dyn FnOnce() + Send>));
+                drop(Box::from_raw(slot));
+            }
+        }
+        return Err(error);
+    }
     Ok(Join { slot, id: task_id })
 }
 
@@ -161,14 +213,15 @@ pub extern "C" fn trampoline(arg: usize) -> ! {
     // a0 = 启动参数区 VA（`Spawn` 的 args 写在栈顶）；args[0] = 闭包装箱薄指针。
     // 必须在任何调用（tls::alloc）之前读——a0 是 caller-saved。
     let ptr = unsafe { core::ptr::read_volatile(arg as *const usize) };
-    let tls_base = tls::allocate().expect("tls alloc failed");
+    let _tls_base = tls::allocate().expect("tls alloc failed");
+    #[cfg(target_arch = "riscv64")]
     unsafe {
-        core::arch::asm!("mv tp, {}", in(reg) tls_base, options(nomem, nostack, preserves_flags));
+        core::arch::asm!("mv tp, {}", in(reg) _tls_base, options(nomem, nostack, preserves_flags));
     }
-    let holder: Box<Box<dyn FnOnce(usize) + Send>> =
-        unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce(usize) + Send>) };
-    // closure 的参数已封进捕获，此处的形参占位 0。
-    holder(0);
+    let holder: Box<Box<dyn FnOnce() + Send>> =
+        unsafe { Box::from_raw(ptr as *mut Box<dyn FnOnce() + Send>) };
+    holder();
+    sweep();
     // **TLS 块必须在退场前归还**：它是内核给的**一整页**（`memory::allocate` 按页
     // 取整），而内核不认它是谁的——`bury` 只归还 `TaskIdent` 上记着的那两个 Span
     // （栈 / trap 帧），故不还就每任务漏一页。

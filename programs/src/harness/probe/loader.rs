@@ -20,7 +20,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         "loader: operator entry missing"
     );
     let root = env::unit::self_id();
-    let heirs = env::unit::heir_count();
+    let heirs = { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") };
     let ready = Arc::new(AtomicBool::new(false));
     let target = Arc::new(AtomicUsize::new(0));
     let denied = Arc::new(AtomicBool::new(false));
@@ -141,7 +142,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         "loader: instance missing from runtime resources"
     );
     assert_eq!(
-        env::unit::heir_count(),
+        { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") },
         heirs,
         "loader: runtime team leaked"
     );
@@ -193,7 +195,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         system_api::control::State::Debarked
     );
     assert!(
-        env::unit::join(first.task, Wait::POLL).is_err_and(|e| e.source == env::UnitFail::Denied)
+        env::unit::join_task(first.task, Wait::POLL).is_err_and(|e| e.source == env::UnitFail::Denied)
     );
     face(system_api::control::Grant::Embark)
         .instance(first.task)

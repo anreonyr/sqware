@@ -238,7 +238,7 @@ pub fn subs() {
             None,
         );
         let token = pie.token;
-        caller.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
+        caller.gate.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);
@@ -301,7 +301,7 @@ pub fn order() {
     );
     let live_token = live.token;
     {
-        let mut pies = task.pies.lock();
+        let mut pies = task.gate.pies.lock();
         pies.push(gate::boxed(dead).expect("pie allocation"));
         pies.push(gate::boxed(live).expect("pie allocation"));
     }
@@ -392,7 +392,7 @@ pub fn badge() {
             None,
         );
         let token = pie.token;
-        caller.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
+        caller.gate.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);
@@ -402,7 +402,7 @@ pub fn badge() {
         .expect("badge: accord (另刻一枚)");
     crate::expect!(inherited != remade, "两次授出各落一枚");
 
-    let kids = dst.pies.lock();
+    let kids = dst.gate.pies.lock();
     let mark_of = |token: usize| {
         kids.iter()
             .find(|p| p.token().get() == token)

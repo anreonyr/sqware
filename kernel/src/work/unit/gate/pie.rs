@@ -481,7 +481,7 @@ pub(crate) fn try_new_pie<T: PieType>(
 }
 
 pub(crate) fn locate(task: &Task, token: PieToken) -> Option<PieSnapshot> {
-    let pies = task.pies.lock();
+    let pies = task.gate.pies.lock();
     pies.iter()
         .find(|p| p.token() == token)
         .map(|p| p.snapshot())
@@ -504,7 +504,7 @@ pub(crate) fn accede<E: GateFail>(
 
 pub(crate) fn allows<M: Mail>(task: &Task, resource: &Arc<M>, need: Need) -> bool {
     let _gate = task.gate.lock();
-    task.pies.lock().iter().any(|pie| {
+    task.gate.pies.lock().iter().any(|pie| {
         core::ptr::addr_eq(pie.meta() as *const dyn Mail, Arc::as_ptr(resource))
             && pie.alive()
             && pie.heir().is_none()

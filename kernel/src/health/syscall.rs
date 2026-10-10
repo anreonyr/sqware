@@ -96,7 +96,7 @@ pub fn abi_and_privilege() {
     assert_eq!(user.task.heir_count(), heirs);
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
-    user.task.pies.lock().push(gate::boxed(gate::new_pie::<gate::Nole>(
+    user.task.gate.pies.lock().push(gate::boxed(gate::new_pie::<gate::Nole>(
         ordinary, env::Mark::NONE, Permission::FETCH | Permission::VEST, None,
     )).expect("pie allocation"));
     assert_eq!(user.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
@@ -409,7 +409,7 @@ pub fn capability() {
     let meta = hole::meta(user.task.ident.id);
     let pie = gate::new_pie::<gate::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
-    user.task.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
+    user.task.gate.pies.lock().push(gate::boxed(pie).expect("pie allocation"));
     assert!(gate::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
         gate::accede::<env::PieFail>(&user.task, token, Need::Store),
@@ -540,11 +540,11 @@ pub fn resource_registration() {
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
     crate::work::mail::nole::seal(&dead);
-    let before = other.task.pies.lock().len();
+    let before = other.task.gate.pies.lock().len();
     let error = frozen.grant(&other.task).unwrap_err();
     assert_eq!(error.reason, PieFail::Denied);
     assert_eq!(error.value.len(), 1);
-    assert_eq!(other.task.pies.lock().len(), before);
+    assert_eq!(other.task.gate.pies.lock().len(), before);
 }
 
 /// Native checks use real task locks, permits, mappings and the debug lock checker.
@@ -573,10 +573,10 @@ pub fn transfer_relations() {
     assert_eq!(gate::vestor(&c.task, bc), Some(b.task.ident.id));
     gate::forget(&b.task, ab).unwrap();
     assert_eq!(gate::vestor(&c.task, bc), Some(a.task.ident.id));
-    assert!(b.task.pies.lock().is_empty());
-    assert!(b.task.heirs.lock().is_empty());
+    assert!(b.task.gate.pies.lock().is_empty());
+    assert!(b.task.gate.heirs.lock().is_empty());
     assert_eq!(gate::release(&a.task, token), Ok(2));
-    assert!(c.task.pies.lock().is_empty());
+    assert!(c.task.gate.pies.lock().is_empty());
 
     let token = root(&a.task, permission);
     let child = grant(&a.task, token, &a.task, permission);
@@ -598,7 +598,7 @@ pub fn transfer_relations() {
     let token = root(&a.task, permission);
     for child in &children { grant(&a.task, token, &child.task, permission); }
     assert_eq!(gate::release(&a.task, token), Ok(17));
-    assert!(children.iter().all(|child| child.task.pies.lock().is_empty()));
+    assert!(children.iter().all(|child| child.task.gate.pies.lock().is_empty()));
 
     // Exit also withdraws borrowed memory while a backing operation is busy.
     let d = Caller::new(false);
@@ -610,17 +610,77 @@ pub fn transfer_relations() {
     grant(&d.task, ad, &c.task, permission);
     {
         let _operation = meta.backing().operation().unwrap();
+        { let _commit = crate::work::unit::commit(); *d.task.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
         gate::doom(&d.task);
     }
-    assert!(d.task.pies.lock().is_empty());
-    assert!(c.task.pies.lock().is_empty());
+    assert!(d.task.gate.pies.lock().is_empty());
+    assert!(c.task.gate.pies.lock().is_empty());
 
     let token = root(&a.task, permission);
     let ab = grant(&a.task, token, &b.task, permission);
     grant(&b.task, ab, &c.task, permission);
+    { let _commit = crate::work::unit::commit(); *b.task.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
     gate::doom(&b.task);
-    assert!(b.task.pies.lock().is_empty());
-    assert!(c.task.pies.lock().is_empty());
-    assert!(a.task.heirs.lock().is_empty());
+    assert!(b.task.gate.pies.lock().is_empty());
+    assert!(c.task.gate.pies.lock().is_empty());
+    assert!(a.task.gate.heirs.lock().is_empty());
     assert_eq!(gate::accord(&a.task, token, &Arc::downgrade(&b.task), permission, Mark::NONE), Err(PieFail::Dead));
+}
+
+/// Scan paginates stable IDs without consuming ownership; Join returns exit
+/// facts through registers and Oust needs ownership/termination, not Doom.
+pub fn unit_scan_and_receipts() {
+    use alloc::vec::Vec;
+    use crate::work::unit::weak::{Site, TaskWeak};
+    use crate::work::unit::task::TaskState;
+    use env::{UnitFail, UnitTarget, Wait};
+    crate::work::room::scheduler::boot::init().unwrap();
+    let caller = Caller::new(false);
+    let mut children = Vec::new();
+    for _ in 0..73 {
+        let space = SpaceBuilder::user().build().unwrap();
+        space.with(|inner| inner.dynamic(0x4000_0000));
+        children.push(TeamBuilder::new(space)
+            .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Site::Sire))
+            .spawn().unwrap());
+    }
+    let buffer = caller.allocate(PAGE_SIZE);
+    let scan = |after, capacity| EnvCall::Unit(UnitCall::Scan {
+        after, buf: VirtAddr::new(buffer), capacity,
+    });
+    assert_eq!(caller.call(scan(env::TeamId::new(0), 0)), UnitFail::Denied.code());
+    assert_eq!(caller.call(scan(env::TeamId::new(0), 65)), UnitFail::Denied.code());
+    assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 64);
+    let mut page = [0u8; 512];
+    assert!(caller.team.space.copy_in(&mut page, buffer));
+    let ids: Vec<_> = page.chunks_exact(8).map(|w| u64::from_le_bytes(w.try_into().unwrap()) as usize).collect();
+    assert!(ids.windows(2).all(|p| p[0] < p[1]));
+    assert_eq!(ids[0], children[0].id.get());
+    assert_eq!(caller.call(scan(env::TeamId::new(ids[63]), 64)), 9);
+    assert_eq!(caller.call(scan(children[72].id, 64)), 0);
+    let target = &children[0];
+    let task = target.task().hold().unwrap();
+    let observe = EnvCall::Unit(UnitCall::Join {
+        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: false,
+    });
+    assert_eq!(caller.call(observe), 0);
+    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Oust { team: target.id })), UnitFail::Busy.code());
+    target.release_held(&task);
+    *task.state.lock() = TaskState::Reaped { cause: env::ExitCause::Reap, reason: 17 };
+    crate::work::room::conductor::exit();
+    assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
+    assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
+    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Join {
+        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: true,
+    })), env::ExitCause::Reap as isize);
+    let frame = unsafe { &*(caller.task.ident.frame.pa.unwrap().as_usize() as *const TrapContext) };
+    assert_eq!(frame.gpr.x(Gprs::A1), task.ident.id.get());
+    assert_eq!(frame.gpr.x(Gprs::A2), 17);
+    assert_eq!(caller.call(EnvCall::Unit(UnitCall::Join {
+        target: UnitTarget::Task(task.ident.id), millis: Wait::POLL, receive: true,
+    })), UnitFail::Denied.code());
+    for child in &children {
+        assert_eq!(caller.call(EnvCall::Unit(UnitCall::Oust { team: child.id })), 0);
+    }
+    assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 0);
 }

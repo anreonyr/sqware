@@ -62,7 +62,7 @@ pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<P
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.execution.instance.as_mut() {
         if !instance.launched {
-            env::unit::embark(instance.service.task()).map_err(|_| Fail::NotReady)?;
+            env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
             instance.launched = true;
         }
     } else {

@@ -13,7 +13,7 @@ pub mod unit {
     pub fn self_id() -> crate::TaskId {
         crate::TaskId::new(1)
     }
-    pub fn join(_: crate::TaskId, _: crate::Wait) -> Result<bool, ()> {
+    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, ()> {
         Ok(crate::JOINED.with(|value| *value.borrow()))
     }
 }
@@ -127,7 +127,7 @@ pub mod system {
                     }
                 }
                 pub fn live(&self, task: crate::TaskId) -> bool {
-                    !crate::unit::join(task, crate::Wait::POLL).unwrap_or(true)
+                    !crate::unit::join_task(task, crate::Wait::POLL).unwrap_or(true)
                 }
             }
             mod observe {

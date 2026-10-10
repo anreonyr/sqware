@@ -14,7 +14,7 @@ fn until(mut done: impl FnMut() -> bool) {
     }
 }
 fn debark(task: env::TaskId) {
-    until(|| match unit::debark(task) {
+    until(|| match unit::debark_task(task) {
         Ok(()) => true,
         Err(e) if matches!(e.source, env::UnitFail::Busy) => false,
         Err(e) => panic!("lifecycle: debark {e:?}"),
@@ -32,7 +32,7 @@ pub fn acceptance() {
         0,
     )
     .unwrap();
-    unit::embark(worker).unwrap();
+    unit::embark_task(worker).unwrap();
     let sib = sibling.clone();
     let ending = finish.clone();
     let peer = execution::unit::task::spawn(move || {
@@ -51,14 +51,14 @@ pub fn acceptance() {
             stopped,
             "lifecycle: timer bypassed Debark"
         );
-        assert!(!unit::join(worker, Wait::POLL).unwrap());
-        unit::embark(worker).unwrap();
+        assert!(!unit::join_task(worker, Wait::POLL).unwrap());
+        unit::embark_task(worker).unwrap();
         until(|| count.load(Ordering::Acquire) > stopped);
     }
     debark(worker);
     let before = sibling.load(Ordering::Acquire);
-    unit::slay(worker).unwrap();
-    until(|| unit::join(worker, Wait::POLL).unwrap_or(true));
+    unit::slay_task(worker).unwrap();
+    until(|| unit::join_task(worker, Wait::POLL).unwrap_or(true));
     until(|| sibling.load(Ordering::Acquire) > before);
     let running = execution::unit::spawn(
         env::TeamId::new(0),
@@ -69,7 +69,7 @@ pub fn acceptance() {
     .unwrap();
     debark(running);
     let held = count.load(Ordering::Acquire);
-    unit::embark(running).unwrap();
+    unit::embark_task(running).unwrap();
     until(|| count.load(Ordering::Acquire) > held);
     debark(running);
     let stopped = count.load(Ordering::Acquire);
@@ -79,10 +79,10 @@ pub fn acceptance() {
         stopped,
         "lifecycle: running task bypassed Debark"
     );
-    unit::embark(running).unwrap();
+    unit::embark_task(running).unwrap();
     until(|| count.load(Ordering::Acquire) > stopped);
-    unit::slay(running).unwrap();
-    until(|| unit::join(running, Wait::POLL).unwrap_or(true));
+    unit::slay_task(running).unwrap();
+    until(|| unit::join_task(running, Wait::POLL).unwrap_or(true));
     let held = execution::unit::spawn(
         env::TeamId::new(0),
         spin as *const () as usize,
@@ -90,8 +90,8 @@ pub fn acceptance() {
         0,
     )
     .unwrap();
-    unit::slay(held).unwrap();
-    until(|| unit::join(held, Wait::POLL).unwrap_or(true));
+    unit::slay_task(held).unwrap();
+    until(|| unit::join_task(held, Wait::POLL).unwrap_or(true));
     finish.store(true, Ordering::Release);
     peer.join();
     programs::debug::put(

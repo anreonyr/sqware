@@ -166,6 +166,10 @@ mod work {
         }
     }
     pub mod unit {
+        pub fn commit() -> std::sync::MutexGuard<'static, ()> {
+            static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            LOCK.lock().unwrap()
+        }
         pub mod space {
             use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
             use env::Permission;
@@ -225,12 +229,24 @@ mod work {
                 Doomed,
                 Reaped,
             }
-            pub struct Task {
-                pub ident: TaskIdent,
-                pub gate: SpinLock<bool>,
+            pub enum TaskState {
+                Held,
+                Doomed { hart: Option<usize>, cause: env::ExitCause, reason: usize },
+                Reaped,
+            }
+            pub struct Gate {
+                serial: SpinLock<()>,
                 pub version: AtomicUsize,
                 pub pies: SpinLock<Vec<AnyPie>>,
                 pub heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
+            }
+            impl Gate {
+                pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> { self.serial.lock() }
+            }
+            pub struct Task {
+                pub ident: TaskIdent,
+                pub state: SpinLock<TaskState>,
+                pub gate: Gate,
                 life: Arc<()>,
             }
             // Mirrors the production Task bound for its kernel-owned handles.
@@ -249,15 +265,18 @@ mod work {
                         ident: TaskIdent {
                             id: TaskId::new(NEXT.fetch_add(1, Ordering::Relaxed)),
                         },
-                        gate: SpinLock::new(false),
-                        version: AtomicUsize::new(0),
-                        pies: SpinLock::new(Vec::new()),
-                        heirs: SpinLock::new(Vec::new()),
+                        state: SpinLock::new(TaskState::Held),
+                        gate: Gate { serial: SpinLock::new(()), version: AtomicUsize::new(0),
+                            pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()) },
                         life: Arc::new(()),
                     })
                 }
                 pub fn tag(&self) -> TaskTag {
-                    TaskTag::Held
+                    match &*self.state.lock() {
+                        TaskState::Held => TaskTag::Held,
+                        TaskState::Doomed { .. } => TaskTag::Doomed,
+                        TaskState::Reaped => TaskTag::Reaped,
+                    }
                 }
                 pub fn life(&self) -> Weak<()> {
                     Arc::downgrade(&self.life)
@@ -274,7 +293,7 @@ mod work {
 #[path = "../../src/work/unit/gate/mod.rs"]
 pub mod gate;
 
-pub use work::unit::space;
+pub use work::unit::{space, commit};
 
 #[cfg(test)]
 mod tests;

@@ -145,7 +145,8 @@ fn reference(root: TaskId) -> control::Object {
 }
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::operator::Face) {
     let root = unit::self_id();
-    let heirs = unit::heir_count();
+    let heirs = { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") };
     let authority = assembly
         .resources
         .read::<crate::system::control::identity::Roster>()
@@ -671,7 +672,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             .is_some();
         if signals.done.load(Ordering::Acquire)
             && signals.inherited_done.load(Ordering::Acquire)
-            && unit::join(worker.id(), Wait::POLL).unwrap_or(true)
+            && unit::join_task(worker.id(), Wait::POLL).unwrap_or(true)
             && reclaimed
             && !registered
         {
@@ -737,7 +738,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         );
     }
     assert_eq!(
-        unit::heir_count(),
+        { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") },
         heirs,
         "account-instance: runtime team leaked"
     );

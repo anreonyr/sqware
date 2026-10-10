@@ -107,7 +107,7 @@ pub(super) fn usable<E: GateFail>(pie: &PieSnapshot) -> Result<(), E> {
     };
     let held = muster(h.task)
         .and_then(|t| t.upgrade())
-        .is_some_and(|t| t.pies.lock().iter().any(|p| p.token() == h.token));
+        .is_some_and(|t| t.gate.pies.lock().iter().any(|p| p.token() == h.token));
     if held {
         return Err(E::handed_over());
     }
@@ -376,7 +376,7 @@ fn collect(
         let mut snapshots: [Option<PieSnapshot>; 16] = core::array::from_fn(|_| None);
         let mut count = 0;
         {
-            let table = task.pies.lock();
+            let table = task.gate.pies.lock();
             for pie in table.iter().filter(|p| p.token().get() > after.get()) {
                 let at = snapshots[..count]
                     .partition_point(|p| p.as_ref().unwrap().token().get() < pie.token().get());

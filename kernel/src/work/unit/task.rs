@@ -1,12 +1,12 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use env::{PieToken, TaskId, UnitFail};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
-use crate::lock::{Level, SpinLock};
+use crate::lock::{Level, SpinLock, SpinLockGuard};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
 use crate::memory::manager::addr::VirtAddr;
@@ -49,55 +49,50 @@ fn preparation_checkpoint(_stage: usize) -> Result<(), MapError> {
 pub(crate) const MAX_ARGS: usize = 64;
 
 pub enum TaskState {
-    Running {
-        ticks_left: u32,
-    },
-    Blocked {
-        key: WakeKey,
-        ticket: Ticket,
-        next: Option<Arc<Task>>,
-    },
-    Starved {
-        next: Option<Arc<Task>>,
-    },
+    Running { hart: crate::hart::HartId, ticks_left: u32 },
+    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, join: Option<super::join::JoinWait> },
+    Starved { next: Option<Arc<Task>> },
     Held,
-    Doomed,
-    Reaped {
-        next: Option<Arc<Task>>,
-    },
+    Parked,
+    Debarking { hart: crate::hart::HartId, ticks_left: u32 },
+    Debarked { state: TaskStopped },
+    Doomed { hart: Option<crate::hart::HartId>, cause: TaskExitCause, reason: usize },
+    Reaped { cause: TaskExitCause, reason: usize },
 }
+pub enum TaskStopped {
+    Held,
+    Starved,
+    Blocked { key: WakeKey, ticket: Ticket, next: Option<Arc<Task>>, join: Option<super::join::JoinWait> },
+}
+
+/// Why a task left the scheduler. `reason` remains the caller supplied exit
+/// word; it is not interpreted to derive this cause.
+pub use env::ExitCause as TaskExitCause;
+
+pub use env::TaskExit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
 pub enum TaskTag {
-    Held = 0,
-    Starved = 1,
-    Running = 2,
-    Blocked = 3,
-    Doomed = 4,
-    Reaped = 5,
-}
-
-impl TaskTag {
-    fn of(byte: u8) -> TaskTag {
-        match byte {
-            b if b == TaskTag::Held as u8 => TaskTag::Held,
-            b if b == TaskTag::Starved as u8 => TaskTag::Starved,
-            b if b == TaskTag::Running as u8 => TaskTag::Running,
-            b if b == TaskTag::Blocked as u8 => TaskTag::Blocked,
-            b if b == TaskTag::Doomed as u8 => TaskTag::Doomed,
-            b if b == TaskTag::Reaped as u8 => TaskTag::Reaped,
-            other => panic!("task tag 越界: {other}"),
-        }
-    }
+    Held,
+    Starved,
+    Running,
+    Parked,
+    Debarking,
+    Debarked,
+    Blocked,
+    Doomed,
+    Reaped,
 }
 
 impl core::fmt::Debug for TaskState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             TaskState::Starved { next } => write!(f, "Starved {{ next: {} }}", next.is_some()),
-            TaskState::Reaped { next } => write!(f, "Reaped {{ next: {} }}", next.is_some()),
-            TaskState::Blocked { key, ticket, next } => write!(
+            TaskState::Reaped { cause, reason } => write!(
+                f,
+                "Reaped {{ cause: {cause:?}, reason: {reason:#x} }}"
+            ),
+            TaskState::Blocked { key, ticket, next, .. } => write!(
                 f,
                 "Blocked {{ key: {:?}, ticket: {:?}, next: {} }}",
                 key,
@@ -116,34 +111,43 @@ impl TaskState {
             TaskState::Starved { .. } => TaskTag::Starved,
             TaskState::Running { .. } => TaskTag::Running,
             TaskState::Blocked { .. } => TaskTag::Blocked,
-            TaskState::Doomed => TaskTag::Doomed,
+            TaskState::Parked => TaskTag::Parked,
+            TaskState::Debarking { .. } => TaskTag::Debarking,
+            TaskState::Debarked { .. } => TaskTag::Debarked,
+            TaskState::Doomed { .. } => TaskTag::Doomed,
             TaskState::Reaped { .. } => TaskTag::Reaped,
         }
     }
 }
 
-pub(crate) struct Boarding {
-    pub(crate) stopped: bool,
-    pub(crate) parked: Option<Arc<Task>>,
-}
-
 pub struct Task {
     pub(crate) ident: Arc<TaskIdent>,
     pub(crate) life: Arc<Life>,
-    state: TaskState,
-    tag: AtomicU8,
-    /// false while accepting capabilities; true once exit cleanup starts.
-    pub(crate) gate: SpinLock<bool>,
+    pub(crate) state: Arc<SpinLock<TaskState>>,
+    /// Temporary link owned by the reap work queue, never part of TaskState.
+    reap_next: SpinLock<Option<Arc<Task>>>,
+    pub(crate) gate: Gate,
+    pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
+}
+
+/// Capability synchronization and records, without a second lifecycle flag.
+pub(crate) struct Gate {
+    serial: SpinLock<()>,
     pub(crate) version: AtomicUsize,
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
     pub(crate) heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
-    pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
-    pub(crate) boarding: SpinLock<Boarding>,
+}
+impl Gate {
+    fn new() -> Self {
+        Self { serial: SpinLock::new(()), version: AtomicUsize::new(0),
+            pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()) }
+    }
+    pub(crate) fn lock(&self) -> crate::lock::spin::SpinLockGuard<'_, ()> { self.serial.lock() }
 }
 
 // SAFETY: kernel capability records can cross harts inside their locked Task,
 // although PieToken intentionally forbids sending a raw user handle. Scheduler
-// state is accessed exclusively through Task::exclusive under its owning lock.
+// state is protected by the Unit commit lock and the shared state lock.
 unsafe impl Send for Task {}
 
 pub(crate) struct TaskIdent {
@@ -179,6 +183,7 @@ impl Drop for TaskSpans {
 pub(crate) struct PreparedTask {
     ident: Arc<TaskIdent>,
     life: Arc<Life>,
+    state: Arc<SpinLock<TaskState>>,
     slot: Option<Arc<MaybeUninit<Task>>>,
     spans: TaskSpans,
 }
@@ -186,14 +191,30 @@ pub(crate) struct PreparedTask {
 impl PreparedTask {
     pub(crate) fn publish(&mut self, commit: impl FnOnce()) -> Result<Arc<Task>, MapError> {
         let team = self.ident.team.clone();
+        let receipts = team.receipts()?;
+        let member = Arc::try_new(super::team::Member {
+            id: self.ident.id, task: super::weak::TaskWeak::empty(), node: Arc::downgrade(&team.life),
+            state: self.state.clone(), life: self.life.clone(), receipts: SpinLock::new(receipts),
+        }).map_err(|_| MapError::OutOfMemory)?;
+        scheduler::core::reserve_publication().map_err(|_| MapError::OutOfMemory)?;
+        {
+            let mut tasks = team.tasks.lock();
+            if tasks.len() >= super::team::MAX_MEMBERS { return Err(MapError::OutOfMemory); }
+            let mut held = team.tasks.held.lock();
+            tasks.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+            let held_extra = tasks.len() + 1 - held.len();
+            held.try_reserve(held_extra).map_err(|_| MapError::OutOfMemory)?;
+        }
+        let _commit = super::commit();
+        if team.life.closed() { return Err(MapError::NoRegion); }
         let mut tasks = team.tasks.lock();
-        let mut held = team.held.lock();
-        tasks.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
-        held.try_reserve(1).map_err(|_| MapError::OutOfMemory)?;
+        let mut held = team.tasks.held.lock();
+        if tasks.len() >= super::team::MAX_MEMBERS || tasks.len() == tasks.capacity()
+            || held.capacity() < tasks.len() + 1 { return Err(MapError::OutOfMemory); }
         let (task, ()) = scheduler::core::publish(|| {
             commit();
             assert!(
-                team.ready.load(Ordering::Acquire),
+                team.ready(),
                 "publish: constructing team"
             );
             let mut slot = self.slot.take().expect("prepare slot");
@@ -202,38 +223,27 @@ impl PreparedTask {
                 .write(Task {
                     ident: self.ident.clone(),
                     life: self.life.clone(),
-                    state: TaskState::Held,
-                    tag: AtomicU8::new(TaskTag::Held as u8),
-                    gate: SpinLock::new(false),
-                    version: AtomicUsize::new(0),
-                    heirs: SpinLock::new(Vec::new()),
-                    boarding: SpinLock::new_level(
-                        Level::L3,
-                        Boarding {
-                            stopped: false,
-                            parked: None,
-                        },
-                    ),
-                    pies: SpinLock::new(Vec::new()),
+                    state: self.state.clone(),
+                    reap_next: SpinLock::new(None),
+                    gate: Gate::new(),
                     heir: SpinLock::new(Vec::new()),
                 });
             // SAFETY: the unique slot now contains a completely initialized Task.
             let task = unsafe { slot.assume_init() };
             self.spans.stack = None;
             self.spans.frame = None;
-            tasks.push(super::weak::TaskWeak::stored(
-                Arc::downgrade(&task),
-                super::weak::Site::TeamTasks,
-            ));
+            let mut member = member;
+            Arc::get_mut(&mut member).expect("private member").task = super::weak::TaskWeak::stored(Arc::downgrade(&task), super::weak::Site::TeamTasks);
+            tasks.push(member);
             held.push(task.clone());
             conductor::push();
             (task, ())
         })
         .map_err(|_| MapError::OutOfMemory)?;
-        team.representative(task.ident.id);
+
         drop(held);
         drop(tasks);
-        team.changed();
+
         trace::note(EventKind::Room(RoomEvent::Spawn {
             tid: task.ident.id.get(),
         }));
@@ -242,108 +252,198 @@ impl PreparedTask {
 }
 
 impl Task {
-    pub(crate) fn transform(&mut self, next: TaskState) {
-        let legal = matches!(
-            (&self.state, &next),
+    pub(crate) fn transform(&self, next: TaskState) {
+        let mut state = self.state.lock();
+        let legal = match (&*state, &next) {
             (TaskState::Held, TaskState::Starved { .. })
-                | (TaskState::Starved { .. }, TaskState::Running { .. })
-                | (TaskState::Running { .. }, TaskState::Starved { .. })
-                | (TaskState::Running { .. }, TaskState::Blocked { .. })
-                | (TaskState::Blocked { .. }, TaskState::Starved { .. })
-                | (TaskState::Held, TaskState::Doomed)
-                | (TaskState::Starved { .. }, TaskState::Doomed)
-                | (TaskState::Blocked { .. }, TaskState::Doomed)
-                | (TaskState::Running { .. }, TaskState::Doomed)
-                | (TaskState::Doomed, TaskState::Reaped { .. })
-        );
-        assert!(
-            legal,
-            "illegal task state transform: {:?} -> {:?}",
-            self.state, next
-        );
+            | (TaskState::Starved { .. }, TaskState::Running { .. })
+            | (TaskState::Running { .. }, TaskState::Starved { .. })
+            | (TaskState::Doomed { .. }, TaskState::Reaped { .. }) => true,
+            (old, TaskState::Doomed { .. }) => !matches!(old, TaskState::Doomed { .. } | TaskState::Reaped { .. }),
+            _ => false,
+        };
+        assert!(legal, "illegal task state transition");
+        if matches!(&next, TaskState::Reaped { .. }) {
+            debug_assert!(self.reap_next.lock().is_none(), "退出前仍挂在回收链上");
+        }
         let unlinked = match &next {
-            TaskState::Starved { next } | TaskState::Reaped { next } => next.is_none(),
+            TaskState::Starved { next } => next.is_none(),
             TaskState::Blocked { next, .. } => next.is_none(),
             _ => true,
         };
         debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
-        let tag = next.tag() as u8;
-        self.state = next;
-        self.tag.store(tag, Ordering::Release);
+        *state = next;
     }
 
-    pub(crate) fn state(&mut self) -> &TaskState {
-        &self.state
+    pub(crate) fn state(&self) -> SpinLockGuard<'_, TaskState> {
+        self.state.lock()
     }
 
-    fn state_mut(&mut self) -> &mut TaskState {
-        &mut self.state
-    }
-
-    pub(crate) fn starved_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
-        match Self::exclusive(t).state_mut() {
-            TaskState::Starved { next } => next,
+    pub(crate) fn starved_next(t: &Arc<Self>) -> Option<Arc<Task>> {
+        match &*t.state.lock() {
+            TaskState::Starved { next } => next.clone(),
             other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
         }
     }
 
-    pub(crate) fn reaped_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
-        match Self::exclusive(t).state_mut() {
-            TaskState::Reaped { next } => next,
-            other => unreachable!("躯壳链只穿 Reaped 任务，实为 {:?}", other.tag()),
+    pub(crate) fn set_starved_next(t: &Arc<Self>, value: Option<Arc<Task>>) {
+        match &mut *t.state.lock() {
+            TaskState::Starved { next } => *next = value,
+            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
         }
     }
 
-    pub(crate) fn blocked_next(t: &mut Arc<Self>) -> &mut Option<Arc<Task>> {
-        match Self::exclusive(t).state_mut() {
-            TaskState::Blocked { next, .. } => next,
+    pub(crate) fn take_starved_next(t: &Arc<Self>) -> Option<Arc<Task>> {
+        match &mut *t.state.lock() {
+            TaskState::Starved { next } => next.take(),
+            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    pub(crate) fn reaped_next(t: &Arc<Self>) -> Option<Arc<Task>> {
+        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
+        t.reap_next.lock().as_ref().cloned()
+    }
+
+    pub(crate) fn set_reaped_next(t: &mut Arc<Self>, value: Option<Arc<Task>>) {
+        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
+        *t.reap_next.lock() = value;
+    }
+
+    pub(crate) fn take_reaped_next(t: &mut Arc<Self>) -> Option<Arc<Task>> {
+        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
+        t.reap_next.lock().take()
+    }
+
+    pub(crate) fn blocked_next(t: &Arc<Self>) -> Option<Arc<Task>> {
+        match &*t.state.lock() {
+            TaskState::Blocked { next, .. } | TaskState::Debarked { state: TaskStopped::Blocked { next, .. } } => next.clone(),
             other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
         }
     }
 
-    pub(crate) fn blocked_ticket(t: &mut Arc<Self>) -> Ticket {
-        match Self::exclusive(t).state_mut() {
-            TaskState::Blocked { ticket, .. } => *ticket,
+    pub(crate) fn set_blocked_next(t: &mut Arc<Self>, value: Option<Arc<Task>>) {
+        match &mut *t.state.lock() {
+            TaskState::Blocked { next, .. } | TaskState::Debarked { state: TaskStopped::Blocked { next, .. } } => *next = value,
             other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    pub(crate) fn take_blocked_next(t: &mut Arc<Self>) -> Option<Arc<Task>> {
+        match &mut *t.state.lock() {
+            TaskState::Blocked { next, .. } | TaskState::Debarked { state: TaskStopped::Blocked { next, .. } } => next.take(),
+            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    pub(crate) fn blocked_ticket(t: &Arc<Self>) -> Ticket {
+        match &*t.state.lock() {
+            TaskState::Blocked { ticket, .. } | TaskState::Debarked { state: TaskStopped::Blocked { ticket, .. } } => *ticket,
+            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
+        }
+    }
+
+    pub(crate) fn take_join(&self) -> Option<super::join::JoinWait> {
+        match &mut *self.state.lock() {
+            TaskState::Blocked { join, .. }
+            | TaskState::Debarked { state: TaskStopped::Blocked { join, .. } } => join.take(),
+            _ => None,
         }
     }
 
     pub fn tag(&self) -> TaskTag {
-        TaskTag::of(self.tag.load(Ordering::Acquire))
+        self.state.lock().tag()
     }
 
-    pub(crate) fn dec_ticks_left(&mut self) {
-        match self.state {
-            TaskState::Running { ticks_left } => {
-                debug_assert!(ticks_left >= 1, "Running 预算恒 ≥ 1");
-                self.state = TaskState::Running {
-                    ticks_left: ticks_left - 1,
-                };
+
+
+    pub(crate) fn dec_ticks_left(&self) {
+        let mut state = self.state.lock();
+        match &*state {
+            TaskState::Running { ticks_left, .. } | TaskState::Debarking { ticks_left, .. } => {
+                debug_assert!(*ticks_left >= 1, "Running 预算恒 ≥ 1");
+                let remaining = *ticks_left - 1;
+                match &mut *state { TaskState::Running { ticks_left, .. } | TaskState::Debarking { ticks_left, .. } => *ticks_left = remaining, _ => unreachable!() };
             }
             _ => unreachable!("dec_ticks_left 只对 Running 任务调用"),
         }
     }
 
-    pub(crate) fn exclusive(t: &mut Arc<Self>) -> &mut Task {
-        #[cfg(debug_assertions)]
-        assert!(
-            Arc::strong_count(t) >= 1,
-            "task #{}: no holders (strong_count == 0)",
-            t.ident.id.get()
-        );
-        // SAFETY: 至少一个容器持强引用
-        unsafe { &mut *Arc::as_ptr(t).cast_mut() }
-    }
+    // All mutable data has its own synchronization. This helper no longer
+    // creates an aliased &mut Task from Arc; owning containers still guard links.
 
     pub(crate) fn release(task: &Arc<Task>) -> Result<(), UnitFail> {
-        let team = task.ident.team.clone();
-        if !team.release_held(task) {
-            return Err(UnitFail::Denied);
+        let _commit = super::commit();
+        if task.tag() != TaskTag::Held || !task.ident.team.release_held(task) { return Err(UnitFail::Denied); }
+        *task.state.lock() = TaskState::Starved { next: None };
+        scheduler::core::launch(task.clone()); Ok(())
+    }
+    pub(crate) fn debark(task: &Arc<Task>) -> Result<(), UnitFail> {
+        let _commit = super::commit();
+        match task.tag() {
+            TaskTag::Held => *task.state.lock() = TaskState::Debarked { state: TaskStopped::Held },
+            TaskTag::Starved => {
+                if !scheduler::core::remove_from_starved(task) { return Err(UnitFail::Busy); }
+                *task.state.lock() = TaskState::Debarked { state: TaskStopped::Starved };
+                task.ident.team.park(task.clone());
+            }
+            TaskTag::Parked => *task.state.lock() = TaskState::Debarked { state: TaskStopped::Starved },
+            TaskTag::Blocked => {
+                let mut state = task.state.lock();
+                let old = core::mem::replace(&mut *state, TaskState::Parked);
+                let TaskState::Blocked { key, ticket, next, join } = old else { unreachable!() };
+                *state = TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, join } };
+            }
+            TaskTag::Running => {
+                let mut state = task.state.lock();
+                let TaskState::Running { hart, ticks_left } = &*state else { unreachable!() };
+                let hart = *hart; let ticks_left = *ticks_left;
+                *state = TaskState::Debarking { hart, ticks_left }; drop(state);
+                crate::work::room::conductor::nudge(hart); return Err(UnitFail::Busy);
+            }
+            TaskTag::Debarking => return Err(UnitFail::Busy),
+            TaskTag::Debarked => {},
+            _ => return Err(UnitFail::Denied),
         }
-        let mut t = task.clone();
-        Task::exclusive(&mut t).transform(TaskState::Starved { next: None });
-        scheduler::core::launch(t);
         Ok(())
+    }
+    pub(crate) fn embark(task: &Arc<Task>) -> Result<(), UnitFail> {
+        let _commit = super::commit();
+        if task.tag() == TaskTag::Held { return Self::release(task); }
+        let mut state = task.state.lock();
+        let held = match &*state {
+            TaskState::Debarked { state: TaskStopped::Held } => true,
+            TaskState::Debarked { state: TaskStopped::Starved } => false,
+            TaskState::Debarked { state: TaskStopped::Blocked { .. } } => {
+                let old = core::mem::replace(&mut *state, TaskState::Parked);
+                let TaskState::Debarked { state: TaskStopped::Blocked { key, ticket, next, join } } = old else { unreachable!() };
+                *state = TaskState::Blocked { key, ticket, next, join }; return Ok(());
+            }
+            TaskState::Debarking { .. } => return Err(UnitFail::Busy),
+            TaskState::Doomed { .. } | TaskState::Reaped { .. } => return Err(UnitFail::Denied),
+            _ => return Err(UnitFail::Busy),
+        };
+        *state = if held { TaskState::Held } else { TaskState::Starved { next: None } }; drop(state);
+        if held { Self::release(task) } else {
+            task.ident.team.release_held(task); scheduler::core::launch(task.clone()); Ok(())
+        }
+    }
+    pub(crate) fn stopped(&self) -> bool { matches!(&*self.state.lock(), TaskState::Debarking { .. } | TaskState::Debarked { .. }) }
+    pub(crate) fn park(task: Arc<Task>) {
+        let team = task.ident.team.clone();
+        let mut state = task.state.lock();
+        *state = if matches!(&*state, TaskState::Debarking { .. } | TaskState::Debarked { .. }) {
+            TaskState::Debarked { state: TaskStopped::Starved }
+        } else { TaskState::Parked };
+        drop(state); team.park(task);
+    }
+    pub(crate) fn rise(task: &Arc<Task>) -> bool {
+        let mut state = task.state.lock();
+        let stopped = matches!(&*state, TaskState::Debarked { .. });
+        *state = if stopped { TaskState::Debarked { state: TaskStopped::Starved } }
+            else { TaskState::Starved { next: None } };
+        drop(state);
+        if stopped { task.ident.team.park(task.clone()); false } else { true }
     }
 
     fn count_vanished(&self) {
@@ -353,27 +453,28 @@ impl Task {
     }
 
     pub(crate) fn adopt(&self, child: Arc<Team>) -> Result<(), ()> {
+        { self.heir.lock().try_reserve(1).map_err(|_| ())?; }
+        let _commit = super::commit();
+        if matches!(self.tag(), TaskTag::Doomed | TaskTag::Reaped) { return Err(()); }
         let mut g = self.heir.lock();
-        g.try_reserve(1).map_err(|_| ())?;
+        if g.len() == g.capacity() { return Err(()); }
         g.push(child);
         Ok(())
     }
 
     pub(crate) fn oust(&self, team: TeamId) -> Option<Arc<Team>> {
-        let mut g = self.heir.lock();
-        let at = g.iter().position(|t| t.id == team)?;
-        Some(g.remove(at))
+        let _commit = super::commit();
+        let child = {
+            let mut heirs = self.heir.lock();
+            let at = heirs.iter().position(|t| t.id == team)?;
+            heirs.remove(at)
+        };
+        child.life.clear(self.ident.id, Some(team));
+        child.life.prune();
+        Some(child)
     }
 
-    pub(crate) fn heirs(&self) -> Vec<Arc<Team>> {
-        self.heir.lock().clone()
-    }
-
-    pub(crate) fn heirs_checked(&self) -> Result<Vec<Arc<Team>>, env::UnitFail> {
-        let heirs = self.heir.lock(); let mut out = Vec::new();
-        out.try_reserve(heirs.len()).map_err(|_| env::UnitFail::OoM)?;
-        out.extend(heirs.iter().cloned()); Ok(out)
-    }
+    pub(crate) fn heir_node(&self, at: usize) -> Option<Arc<Team>> { self.heir.lock().get(at).cloned() }
 
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
         self.heir.lock().iter().find(|t| t.id == id).cloned()
@@ -381,10 +482,6 @@ impl Task {
 
     pub(crate) fn heir_count(&self) -> usize {
         self.heir.lock().len()
-    }
-
-    pub(crate) fn heir_at(&self, index: usize) -> Option<TeamId> {
-        self.heir.lock().get(index).map(|t| t.id)
     }
 
     pub(crate) fn life(&self) -> Weak<Life> {
@@ -449,7 +546,7 @@ impl TaskBuilder {
     }
 
     pub fn hold(self) -> Result<Arc<Task>, MapError> {
-        if !self.team.ready.load(Ordering::Acquire) {
+        if !self.team.ready() {
             return Err(MapError::WidenDenied);
         }
         self.prepare()?.publish(|| {})
@@ -462,7 +559,8 @@ impl TaskBuilder {
             .checked_next_multiple_of(PAGE_SIZE)
             .filter(|size| size.checked_add(crate::layout::TASK_STACK_GUARD).is_some())
             .ok_or(MapError::NoRegion)?;
-        let id = TaskId::new(NEXT_ID.fetch_add(1, Ordering::Relaxed));
+        let id = TaskId::new(NEXT_ID.fetch_update(Ordering::Relaxed, Ordering::Relaxed,
+            |id| (id < isize::MAX as usize).then_some(id + 1)).map_err(|_| MapError::OutOfMemory)?);
 
         let mut spans = TaskSpans {
             team: self.team.clone(),
@@ -529,6 +627,8 @@ impl TaskBuilder {
         preparation_checkpoint(3)?;
         let life = Life::try_new().map_err(|_| MapError::OutOfMemory)?;
         preparation_checkpoint(4)?;
+        let state = Arc::try_new(SpinLock::new_level(Level::UnitState, TaskState::Held))
+            .map_err(|_| MapError::OutOfMemory)?;
         let slot: Arc<MaybeUninit<Task>> = unsafe {
             let slot = crate::tag!(Task, Arc::<Task, _>::try_new_uninit_in(alloc))
                 .map_err(|_| MapError::OutOfMemory)?;
@@ -538,6 +638,7 @@ impl TaskBuilder {
         Ok(PreparedTask {
             ident,
             life,
+            state,
             slot: Some(slot),
             spans,
         })
@@ -546,7 +647,11 @@ impl TaskBuilder {
 
 impl Drop for Task {
     fn drop(&mut self) {
-        for pie in self.pies.lock().iter() {
+        let _commit = super::commit();
+        for child in self.heir.lock().iter() {
+            child.life.clear(self.ident.id, None); child.life.prune();
+        }
+        for pie in self.gate.pies.lock().iter() {
             pie.invalidate();
         }
         self.count_vanished();

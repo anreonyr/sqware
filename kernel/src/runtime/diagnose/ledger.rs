@@ -8,7 +8,6 @@ const RING: usize = 8;
 pub struct Entry {
     pub task: TaskId,
     pub reason: Reason,
-    pub observed: bool,
     bytes: [u8; NOTE_MAX],
     len: usize,
 }
@@ -17,7 +16,6 @@ impl Entry {
     const EMPTY: Self = Self {
         task: TaskId::new(0),
         reason: 0,
-        observed: false,
         bytes: [0; NOTE_MAX],
         len: 0,
     };
@@ -37,8 +35,10 @@ static LEDGER: SpinLock<Ring> = SpinLock::new(Ring {
     written: 0,
 });
 
-pub fn note(task: TaskId, reason: Reason, note: &str, observed: bool) {
-    if reason == 0 {
+pub fn note(task: TaskId, reason: Reason, note: &str, owner: Option<TaskId>) {
+    // Managed exits remain in the native member record and exit trace. The
+    // failure ledger must not be overwritten by expected application statuses.
+    if reason == 0 || owner.is_some() {
         return;
     }
     let raw = note.as_bytes();
@@ -46,7 +46,6 @@ pub fn note(task: TaskId, reason: Reason, note: &str, observed: bool) {
     let mut entry = Entry {
         task,
         reason,
-        observed,
         bytes: [0; NOTE_MAX],
         len,
     };
@@ -56,11 +55,7 @@ pub fn note(task: TaskId, reason: Reason, note: &str, observed: bool) {
     let at = ring.written % RING;
     ring.entries[at] = entry;
     ring.written += 1;
-    drop(ring);
-    if !observed {
-        let mut ring = FAILURES.lock(); let at = ring.written % RING;
-        ring.entries[at] = entry; ring.written += 1;
-    }
+
 }
 
 pub fn each(f: impl FnMut(&Entry)) {
@@ -70,10 +65,4 @@ pub fn each(f: impl FnMut(&Entry)) {
     for i in start..ring.written {
         f(&ring.entries[i % RING]);
     }
-}
-
-static FAILURES: SpinLock<Ring> = SpinLock::new(Ring { entries: [Entry::EMPTY; RING], written: 0 });
-pub fn failures(mut f: impl FnMut(&Entry)) {
-    let ring = FAILURES.lock();
-    for i in ring.written.saturating_sub(RING)..ring.written { f(&ring.entries[i % RING]); }
 }

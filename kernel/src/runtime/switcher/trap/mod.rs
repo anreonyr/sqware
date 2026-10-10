@@ -218,6 +218,14 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 stval: stval_bits,
             }));
             putln!("user fault killed: tid={tid} cause={cause_bits} stval={stval_bits:#x}");
+            if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
+                let _commit = crate::work::unit::commit();
+                if !matches!(task.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped) {
+                    *task.state.lock() = crate::work::unit::task::TaskState::Doomed {
+                        hart: Some(crate::hart::hart_id()), cause: env::ExitCause::Fault, reason: messenger::EXIT_FAULT,
+                    };
+                }
+            }
             messenger::set_exit_reason(messenger::EXIT_FAULT);
             drop(ident);
             return crate::work::room::messenger::quit() as *mut TrapContext;
@@ -240,7 +248,15 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     "user exception killed: tid={tid} cause={:?} stval={stval_bits:#x}",
                     other
                 );
-                messenger::set_exit_reason(messenger::EXIT_FAULT);
+                if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
+                let _commit = crate::work::unit::commit();
+                if !matches!(task.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped) {
+                    *task.state.lock() = crate::work::unit::task::TaskState::Doomed {
+                        hart: Some(crate::hart::hart_id()), cause: env::ExitCause::Fault, reason: messenger::EXIT_FAULT,
+                    };
+                }
+            }
+            messenger::set_exit_reason(messenger::EXIT_FAULT);
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }

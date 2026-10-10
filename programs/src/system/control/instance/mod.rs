@@ -98,24 +98,30 @@ impl Control {
             if item.team.is_none() {
                 continue;
             }
-            if item.reason.is_none() {
-                if let Some(team) = item.team {
-                    if let Ok((state @ 1..=2, reason)) = unit::status(team) { item.reason = Some(reason); if state == 2 { item.stop(); } }
+            if let Some(team) = item.team {
+                // Receive every member independently; main/auxiliary policy is Control's.
+                for _ in 0..64 {
+                    match unit::join(env::UnitTarget::Team(team), Wait::POLL, true) {
+                        Ok(env::JoinReply::Reaped(exit)) => item.reap(exit),
+                        _ => break,
+                    }
                 }
             }
             if settling
                 || (!item.claimed && env::chrono::clock() >= item.claim_until)
-                || unit::join(item.owner, Wait::POLL).unwrap_or(true)
-                || unit::join(item.task, Wait::POLL).unwrap_or(true)
+                || unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
+                || unit::join_task(item.task, Wait::POLL).unwrap_or(true)
             {
                 item.stop();
             }
             if item.state == State::Stopping {
-                let _ = env::room::doom(item.task);
+                if let Some(team) = item.team {
+                    let _ = unit::slay_team(team);
+                }
             }
         }
         self.instances.retain(|item| {
-            item.team.is_some() || !unit::join(item.owner, Wait::POLL).unwrap_or(true)
+            item.team.is_some() || !unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
         });
     }
 

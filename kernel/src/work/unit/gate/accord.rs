@@ -49,19 +49,19 @@ pub(crate) fn accord(
         granted.parent(src, Arc::downgrade(caller));
         // Reserve both records before changing either side, including ONLY's heir.
         caller
-            .heirs
+            .gate.heirs
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         target
-            .pies
+            .gate.pies
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         let token = granted.token();
         super::insert_heir(caller, src, Arc::downgrade(&target), token);
         if pie.permission().contains(Permission::ONLY) {
-            let mut pies = caller.pies.lock();
+            let mut pies = caller.gate.pies.lock();
             let source = pies
                 .iter_mut()
                 .find(|p| p.token() == src)
@@ -73,7 +73,7 @@ pub(crate) fn accord(
             source.set_heir(Some(heir));
         }
         // Block the exclusive source before publishing the recipient's token.
-        target.pies.lock().push(granted);
+        target.gate.pies.lock().push(granted);
         super::changed(caller);
         if !Arc::ptr_eq(caller, &target) {
             super::changed(&target);
@@ -94,8 +94,9 @@ pub(crate) fn accord(
 
 pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
     let _gate = task.gate.lock();
+    let _commit = super::super::commit();
     let child = {
-        let heirs = task.heirs.lock();
+        let heirs = task.gate.heirs.lock();
         heirs
             .iter()
             .find(|(parent, _, child)| *parent == token && *child == expected.token)
@@ -114,7 +115,7 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
 }
 
 pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let mut pies = task.pies.lock();
+    let mut pies = task.gate.pies.lock();
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;
     };

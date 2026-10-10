@@ -27,7 +27,7 @@ pub fn health(status: Res<Arc<Status>>) -> Result<Progress, Fail> {
         status.operator.load(Ordering::Acquire),
         status.identity.load(Ordering::Acquire),
     ] {
-        if env::unit::join(env::TaskId::new(id), Wait::POLL).unwrap_or(true) {
+        if env::unit::join_task(env::TaskId::new(id), Wait::POLL).unwrap_or(true) {
             return Err(Fail::Dead);
         }
     }

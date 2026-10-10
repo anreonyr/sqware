@@ -459,7 +459,8 @@ fn elf() {
     assert_eq!(tokens(), before, "copy: loader cache survived its owner");
 
     let mut loader = Loader::new();
-    let heirs = unit::heir_count();
+    let heirs = { let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") };
     assert!(
         loader
             .build(Image {
@@ -468,7 +469,8 @@ fn elf() {
             })
             .is_err_and(|e| e.source == env::UnitFail::BadImage)
     );
-    assert_eq!(unit::heir_count(), heirs);
+    assert_eq!({ let mut page = [0u64; 64]; env::unit::scan(env::TeamId::new(0),
+            env::VirtAddr::new(page.as_mut_ptr() as usize), page.len()).expect("Scan heirs") }, heirs);
     let minted = loader
         .build(Image {
             bytes: &bytes,
@@ -484,7 +486,7 @@ fn elf() {
         "copy: committed sources survived loader drop"
     );
     env::room::doom(task).unwrap();
-    assert!(unit::join(task, Wait::AtMost(2000)).unwrap());
+    assert!(unit::join_task(task, Wait::AtMost(2000)).unwrap());
     unit::oust(team).unwrap();
 }
 
@@ -530,7 +532,7 @@ fn cache_limits() {
     let team = held.team();
     let task = held.spawn(&[], 0).unwrap();
     env::room::doom(task).unwrap();
-    assert!(unit::join(task, Wait::AtMost(2000)).unwrap());
+    assert!(unit::join_task(task, Wait::AtMost(2000)).unwrap());
     unit::oust(team).unwrap();
     drop(loader);
     assert_eq!(tokens(), before, "copy: cache eviction leaked roots");

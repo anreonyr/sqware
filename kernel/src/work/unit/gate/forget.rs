@@ -22,12 +22,12 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             if super::locate(&lord, parent).is_none() {
                 return Err(PieFail::Denied);
             }
-            lord.heirs
+            lord.gate.heirs
                 .lock()
                 .try_reserve(nodes.len() - 1)
                 .map_err(|_| PieFail::OoM)?;
             for (child, child_token) in nodes.iter().skip(1) {
-                let mut pies = child.pies.lock();
+                let mut pies = child.gate.pies.lock();
                 let pie = pies
                     .iter_mut()
                     .find(|p| p.token() == *child_token)
@@ -63,7 +63,7 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
 }
 
 pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, PieFail> {
-    let pies = task.pies.lock();
+    let pies = task.gate.pies.lock();
     let find = |token| {
         pies.iter()
             .find(|p| p.token() == token)

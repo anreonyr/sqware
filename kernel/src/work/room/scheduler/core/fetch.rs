@@ -14,6 +14,8 @@ const WFI_FAR: u64 = 1 << 60;
 const BEACON_TICK: u64 = 250_000;
 
 pub(in super::super) fn fetch() -> usize {
+    #[cfg(debug_assertions)]
+    crate::work::unit::assert_unlocked();
     let s = current();
     loop {
         // **开闸门**：外部门闸（`SEIE`）是**按 hart 记账**的——取到外部中断而

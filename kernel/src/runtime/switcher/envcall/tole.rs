@@ -226,7 +226,7 @@ fn ready(meta: &ToleMeta) -> (Option<(PieToken, MailCondition)>, usize) {
     // **格数叫 `count`**（`Mate::Nole(n)` 那一支里有个同名绑定——叫 `n` 会被它遮住）。
     let count = cells.len();
     let start = meta.cursor() % count;
-    let pies = task.pies.lock();
+    let pies = task.gate.pies.lock();
     for k in 0..count {
         let at = (start + k) % count;
         match cells[at].mate() {

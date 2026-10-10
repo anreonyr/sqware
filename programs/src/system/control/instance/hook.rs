@@ -43,7 +43,7 @@ pub fn select(
         active.next += 1;
         let key = match item.state {
             State::Starting => Key::Prepare,
-            State::Stopping if unit::join(item.task, Wait::POLL).unwrap_or(true) => Key::Retire,
+            State::Stopping if unit::join_task(item.task, Wait::POLL).unwrap_or(true) => Key::Retire,
             _ => continue,
         };
         active.task = Some(item.task);
@@ -103,8 +103,15 @@ pub fn reclaim(mut control: ResMut<Control>, active: Res<Active>) -> Result<Prog
     let Some(team) = item.team else {
         return Ok(Progress::Done);
     };
-    if let Ok((1, reason)) = unit::status(team) {
-        if item.reason.is_none() || reason != 0 { item.reason = Some(reason); }
+    for at in 0..64 {
+        match unit::join(env::UnitTarget::Team(team), Wait::POLL, true) {
+            Ok(env::JoinReply::Reaped(exit)) => {
+                item.reap(exit);
+                // Do not let Oust discard results beyond this round's budget.
+                if at == 63 { return Ok(Progress::Pending); }
+            },
+            _ => break,
+        }
     }
     match unit::oust(team) {
         Ok(()) => Ok(Progress::Done),

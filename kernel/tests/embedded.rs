@@ -72,6 +72,12 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn unit_scan_and_receipts() {
+        kernel::health::syscall::unit_scan_and_receipts();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn boot_error_reports_without_allocation() {
         kernel::health::boot_errors();
     }

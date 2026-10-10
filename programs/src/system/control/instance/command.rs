@@ -41,7 +41,7 @@ impl Control {
         match command {
             Command::State(_) => return Ok(Some(item.state)),
             Command::Embark(_) if item.state == State::Debarked => {
-                let running = if item.started { unit::embark_team(item.team.ok_or(Fail::Unknown)?) } else { unit::embark(task) };
+                let running = if item.started { unit::embark_team(item.team.ok_or(Fail::Unknown)?) } else { unit::embark_task(task) };
                 match running {
                     Ok(()) => {},
                     Err(error) if error.source == env::UnitFail::Busy => return Ok(None),
@@ -61,9 +61,9 @@ impl Control {
                 item.state = State::Debarked;
             }
             Command::Ruin(_) => {
-                if item.team.is_some() {
+                if let Some(team) = item.team {
                     item.stop();
-                    let _ = env::room::doom(task);
+                    let _ = unit::slay_team(team);
                     return Ok(None);
                 }
             }

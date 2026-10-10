@@ -2,8 +2,9 @@
 extern crate alloc;
 extern crate env as abi;
 extern crate self as env;
+extern crate self as programs;
 
-pub use abi::{Reason, TaskId, TeamId, UnitFail};
+pub use abi::{ExitCause, JoinReply, Reason, TaskExit, TaskId, TeamId, UnitFail, UnitTarget, Wait};
 use std::cell::RefCell;
 
 #[derive(Default)]
@@ -12,6 +13,9 @@ struct Effects {
     embarked: usize,
     debarked: usize,
     doomed: usize,
+    slain_teams: Vec<TeamId>,
+    exits: std::collections::VecDeque<TaskExit>,
+    ousted: usize,
     embark_fail: bool,
     embark_busy: bool,
     debark_fail: Option<UnitFail>,
@@ -27,8 +31,29 @@ pub mod chrono {
 pub struct Error {
     pub source: UnitFail,
 }
+pub mod debug { pub fn put(_: &str) {} }
 pub mod unit {
+    pub fn join(_: crate::UnitTarget, _: crate::Wait, receive: bool) -> Result<crate::JoinReply, crate::Error> {
+        assert!(receive);
+        crate::EFFECTS.with(|effects| Ok(effects.borrow_mut().exits.pop_front()
+            .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped)))
+    }
+    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> { Ok(true) }
+    pub fn oust(_: crate::TeamId) -> Result<(), crate::Error> {
+        crate::EFFECTS.with(|effects| { let mut effects = effects.borrow_mut(); effects.ousted += 1; effects.exits.clear(); });
+        Ok(())
+    }
+
+    pub fn embark_task(task: crate::TaskId) -> Result<(), crate::Error> { embark(task) }
     pub fn embark_team(_: crate::TeamId) -> Result<(), crate::Error> { embark(crate::TaskId::new(0)) }
+    pub fn slay_team(team: crate::TeamId) -> Result<(), crate::Error> {
+        crate::EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.doomed += 1;
+            effects.slain_teams.push(team);
+        });
+        Ok(())
+    }
     pub fn debark_team(_: crate::TeamId) -> Result<(), crate::Error> { debark(crate::TaskId::new(0)) }
 
     use crate::{EFFECTS, Error, TaskId, UnitFail};
@@ -63,7 +88,18 @@ pub mod room {
         Ok(())
     }
 }
+#[path = "../../src/system/control/instance/hook.rs"]
+pub mod instance_hook;
+
 pub mod system {
+    pub mod app {
+        #[derive(Debug)]
+        pub enum Fault { Room }
+        impl From<schedule::DispatchError> for Fault {
+            fn from(_: schedule::DispatchError) -> Self { Self::Room }
+        }
+    }
+
     pub mod control {
         pub mod unit {
             pub mod table {
@@ -80,6 +116,7 @@ pub mod system {
                     "/../../src/system/control/instance/state.rs"
                 ));
             }
+            pub use crate::instance_hook as hook;
             #[cfg(test)]
             pub(crate) use command::Command;
             mod command {
@@ -207,7 +244,53 @@ mod tests {
             call(&mut control, Command::Ruin(TaskId::new(2))),
             Ok(Some(State::Dead))
         );
-        EFFECTS.with(|effects| assert_eq!(effects.borrow().doomed, 1));
+        EFFECTS.with(|effects| {
+            let effects = effects.borrow();
+            assert_eq!(effects.doomed, 1);
+            assert_eq!(effects.slain_teams, vec![TeamId::new(3)]);
+        });
+    }
+    #[test]
+    fn zero_main_exit_cannot_hide_an_auxiliary_failure() {
+        let main = TaskExit { task: TaskId::new(2), cause: ExitCause::Reap, reason: 0 };
+        let auxiliary = TaskExit { task: TaskId::new(4), cause: ExitCause::Fault, reason: 17 };
+        for exits in [[main, auxiliary], [auxiliary, main]] {
+            let mut control = fixture(State::Ready);
+            for exit in exits { control.instances[0].reap(exit); }
+            assert_eq!(control.instances[0].reason, Some(17));
+            assert_eq!(control.instances[0].state, State::Stopping);
+            control.instances[0].reap(TaskExit { reason: 23, ..main });
+            assert_eq!(control.instances[0].reason, Some(23));
+        }
+        let mut control = fixture(State::Ready);
+        control.instances[0].reap(TaskExit { cause: ExitCause::Slay, ..auxiliary });
+        assert_eq!(control.instances[0].state, State::Ready);
+        assert_eq!(control.instances[0].reason, None);
+    }
+    #[test]
+    fn reclamation_drains_late_auxiliary_failures_before_oust() {
+        use system::control::instance::hook;
+        let mut control = fixture(State::Stopping);
+        control.instances[0].reason = Some(0);
+        EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            for id in 4..134 {
+                effects.exits.push_back(TaskExit { task: TaskId::new(id), cause: ExitCause::Reap, reason: 0 });
+            }
+            effects.exits.back_mut().unwrap().cause = ExitCause::Fault;
+            effects.exits.back_mut().unwrap().reason = 17;
+        });
+        let mut resources = schedule::Resources::new();
+        resources.insert(control).unwrap();
+        resources.insert(hook::Active::default()).unwrap();
+        resources.write::<hook::Active>().unwrap().task = Some(TaskId::new(2));
+        for _ in 0..2 {
+            assert_eq!(hook::reclaim(resources.write().unwrap(), resources.read().unwrap()), Ok(schedule::Progress::Pending));
+            EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
+        }
+        assert_eq!(hook::reclaim(resources.write().unwrap(), resources.read().unwrap()), Ok(schedule::Progress::Done));
+        assert_eq!(resources.read::<Control>().unwrap().instances[0].reason, Some(17));
+        EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
     }
     #[test]
     fn missing_instance_and_invalid_transition_have_no_effects() {

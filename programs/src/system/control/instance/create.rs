@@ -5,8 +5,8 @@ use system_api::{control::Fail, loader::Built};
 
 impl Control {
     pub(crate) fn create_instance(&mut self, built: Built, owner: TaskId) -> Result<Built, Fail> {
-        if let Err(fail) = self.reserve_instance().and_then(|_| env::unit::observe(built.team).map_err(|_| Fail::Denied)) {
-            let _ = env::room::doom(built.task);
+        if let Err(fail) = self.reserve_instance() {
+            let _ = env::unit::slay_team(built.team);
             let _ = env::unit::oust(built.team);
             return Err(fail);
         }

@@ -44,7 +44,6 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
         gate::{self, Permission},
         space::{Pending, SegmentKind},
     };
-    use core::sync::atomic::Ordering;
     let raw_size = match call {
         MemoryCall::Allocate { size }
         | MemoryCall::Deallocate { size, .. }
@@ -86,7 +85,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
     } else {
         None
     };
-    if team_id.get() != 0 && target.ready.load(Ordering::Acquire) {
+    if team_id.get() != 0 && target.ready() {
         return Err(MemoryFail::Denied);
     }
     let space = &target.space;
@@ -150,6 +149,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                             PteFlags::empty()
                         };
                 } else if permission.contains(Permission::ONLY) {
+                    if target.ready() { return Err(MemoryFail::Denied); }
                     private = true;
                     if pie.sire().is_some()
                         || p.owner() != caller.ident.id
@@ -163,8 +163,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         return Err(MemoryFail::Busy);
                     }
                     target
-                        .staged
-                        .lock()
+                        .staged()
                         .try_reserve(1)
                         .map_err(|_| MemoryFail::OoM)?;
                     ceiling = access;
@@ -225,7 +224,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 let span = crate::work::unit::space::Span::new(SegmentKind::Normal, va, size, None);
                 if private {
                     p.backing().reserve(target.id);
-                    target.staged.lock().push(crate::work::unit::team::Staging {
+                    target.staged().push(crate::work::unit::team::Staging {
                         token: pie.token(),
                         meta: p.clone(),
                         span,
@@ -257,21 +256,23 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             Ok(va.as_usize())
         }
         MemoryCall::Munmap { addr, .. } => {
-            let item = target.staged.lock().iter().position(|item| {
-                item.span.va.as_usize() == addr.get() && item.span.size.get() == size
-            });
+            let item = if target.staged_len() == 0 { None } else {
+                target.staged().iter().position(|item| {
+                    item.span.va.as_usize() == addr.get() && item.span.size.get() == size
+                })
+            };
             if let Some(index) = item {
                 let (meta, span) = {
-                    let items = target.staged.lock();
+                    let items = target.staged();
                     (items[index].meta.clone(), items[index].span)
                 };
                 let _operation = meta.backing().operation().ok_or(MemoryFail::Busy)?;
                 space.release(span).map_err(MemoryFail::from)?;
                 meta.backing().unreserve();
-                target.staged.lock().remove(index);
+                target.staged().remove(index);
                 return Ok(0);
             }
-            if target.staged.lock().iter().any(|item| {
+            if target.staged_len() != 0 && target.staged().iter().any(|item| {
                 addr.get() < item.span.va.as_usize() + item.span.size.get()
                     && item.span.va.as_usize() < addr.get().saturating_add(size)
             }) {

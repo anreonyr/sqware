@@ -2,6 +2,7 @@ use super::*;
 
 #[cfg(debug_assertions)]
 pub fn acceptance() {
+    let _commit = crate::work::unit::commit();
     use crate::hart::HartId;
     use crate::work::unit::{space::SpaceBuilder, team::TeamBuilder};
 
@@ -10,7 +11,7 @@ pub fn acceptance() {
     let team = TeamBuilder::new(space).spawn().unwrap();
     let mut tasks: alloc::vec::Vec<_> = (0..4).map(|_| team.task().hold().unwrap()).collect();
     for task in &mut tasks {
-        Task::exclusive(task).transform(TaskState::Starved { next: None });
+        task.as_ref().transform(TaskState::Starved { next: None });
     }
     let victim = Scheduler::new(HartId::new(0));
     assert!(victim.push(tasks[0].clone()));
@@ -33,15 +34,11 @@ pub fn acceptance() {
     assert!(victim.steal().is_none());
     assert_eq!(victim.inner.lock().ready_ceiling(), timer::blind_ceiling());
 
-    tasks[0].boarding.lock().stopped = true;
-    assert!(victim.push(tasks[0].clone()));
-    assert!(!victim.push(tasks[3].clone()));
+    *tasks[0].state.lock() = TaskState::Debarked { state: crate::work::unit::task::TaskStopped::Starved };
+    assert!(victim.push(tasks[3].clone()));
     assert!(Arc::ptr_eq(&victim.steal().unwrap(), &tasks[3]));
     assert!(victim.pull().is_none());
-    assert!(Arc::ptr_eq(
-        &tasks[0].boarding.lock().parked.take().unwrap(),
-        &tasks[0],
-    ));
+    assert!(tasks[0].stopped());
     assert!(victim.push(tasks[2].clone()));
     {
         let mut i = victim.inner.lock();
@@ -51,6 +48,6 @@ pub fn acceptance() {
     }
     for task in &mut tasks {
         assert!(team.release_held(task));
-        Task::exclusive(task).transform(TaskState::Doomed);
+        task.as_ref().transform(TaskState::Doomed { hart: None, cause: crate::work::unit::task::TaskExitCause::Slay, reason: 0 });
     }
 }

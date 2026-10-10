@@ -55,12 +55,12 @@ fn main() -> programs::Report<'static> {
     foreground.restore().unwrap();
     denied(input, output, control);
     connection.io().unwrap().drain().unwrap();
-    unit::slay(child).unwrap();
-    while !unit::join(child, Wait::Forever).unwrap() {}
+    unit::slay_task(child).unwrap();
+    while !unit::join_task(child, Wait::Forever).unwrap() {}
     let child = held();
     let foreground = connection.lend(child).unwrap();
-    unit::slay(child).unwrap();
-    while !unit::join(child, Wait::Forever).unwrap() {}
+    unit::slay_task(child).unwrap();
+    while !unit::join_task(child, Wait::Forever).unwrap() {}
     foreground.restore().unwrap();
     connection.io().unwrap().drain().unwrap();
     connection.close().unwrap();

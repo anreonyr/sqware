@@ -8,7 +8,7 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::space::Space;
-use crate::work::unit::task::{Task, TaskState};
+use crate::work::unit::task::{Task, TaskExitCause, TaskState, TaskTag};
 
 use super::{WakeKey, wipe, wipe_space};
 
@@ -28,24 +28,24 @@ impl Husks {
         }
     }
 
-    fn push(&mut self, mut task: Arc<Task>) {
+    fn push(&mut self, task: Arc<Task>) {
         debug_assert!(
             matches!(
-                Task::exclusive(&mut task).state(),
-                TaskState::Reaped { next: None }
+                task.tag(),
+                TaskTag::Reaped
             ),
             "躯壳容器只收 Reaped 任务，且入壳前不得挂在链上"
         );
         match self.tail.take() {
             None => self.head = Some(task.clone()),
-            Some(mut last) => *Task::reaped_next(&mut last) = Some(task.clone()),
+            Some(mut last) => Task::set_reaped_next(&mut last, Some(task.clone())),
         }
         self.tail = Some(task);
     }
 
     fn pop(&mut self) -> Option<Arc<Task>> {
         let mut head = self.head.take()?;
-        self.head = Task::reaped_next(&mut head).take();
+        self.head = Task::take_reaped_next(&mut head);
         if self.head.is_none() {
             self.tail = None;
         }
@@ -56,9 +56,9 @@ impl Husks {
     pub(super) fn len(&self) -> usize {
         let mut n = 0usize;
         let mut cur = self.head.clone();
-        while let Some(mut node) = cur {
+        while let Some(node) = cur {
             n += 1;
-            cur = Task::reaped_next(&mut node).clone();
+            cur = Task::reaped_next(&node);
         }
         n
     }
@@ -69,30 +69,51 @@ impl Husks {
     }
 }
 
-pub(super) fn reap(mut task: Arc<Task>) {
-    match Task::exclusive(&mut task).state() {
-        TaskState::Reaped { .. } => return,
-        TaskState::Doomed => {}
-        _ => Task::exclusive(&mut task).transform(TaskState::Doomed),
-    }
-    task.ident.team.completed(task.ident.id, super::EXIT_DOOM);
+pub(super) fn reap(mut task: Arc<Task>, cause: TaskExitCause, reason: usize) {
+    let (cause, reason) = {
+        let _commit = crate::work::unit::commit();
+        let mut state = task.state.lock();
+        match &*state {
+            TaskState::Reaped { .. } => return,
+            TaskState::Doomed { cause, reason, .. } => {
+                let exit = (*cause, *reason);
+                *state = TaskState::Doomed { hart: None, cause: exit.0, reason: exit.1 };
+                exit
+            },
+            _ => { *state = TaskState::Doomed { hart: None, cause, reason }; (cause, reason) }
+        }
+    };
     hooked(&task);
-    Task::exclusive(&mut task).transform(TaskState::Reaped { next: None });
+    { let _commit = crate::work::unit::commit();
+      task.transform(TaskState::Reaped { cause, reason }); }
+    super::signal(WakeKey::Task { id: task.ident.id });
+    task.ident.team.life.notify();
     HUSKS.lock().push(task);
 }
 
 pub fn quit() -> usize {
     let cond = current();
-    let (mut exited, _next_pa) = cond.swap();
+    let requested = super::take_exit_reason();
+    let (exited, _next_pa, reason) = {
+        let _commit = crate::work::unit::commit();
+        let (task, next) = cond.swap();
+        let mut state = task.state.lock();
+        let (cause, reason) = match &*state {
+            TaskState::Doomed { cause, reason, .. } => (*cause, *reason),
+            _ => (TaskExitCause::Reap, requested),
+        };
+        // Publish detachment in the same critical section as slot removal.
+        *state = TaskState::Doomed { hart: None, cause, reason };
+        drop(state);
+        (task, next, reason)
+    };
     debug_assert!(
         matches!(
-            Task::exclusive(&mut exited).state(),
-            TaskState::Running { .. }
+            exited.tag(),
+            TaskTag::Running | TaskTag::Debarking | TaskTag::Doomed
         ),
         "running 容器里不是 Running 任务"
     );
-    let reason = super::take_exit_reason();
-    exited.ident.team.completed(exited.ident.id, reason);
     let (note_va, note_len) = super::take_exit_note();
     let tid = exited.ident.id;
     let mut buf = [0u8; NOTE_MAX];
@@ -108,8 +129,15 @@ pub fn quit() -> usize {
         tid: tid.get(),
         reason,
     }));
-    ledger::note(tid, reason, text, exited.ident.team.observed());
-    reap(exited);
+    // Existing receipt ownership assigns result policy to the manager. This
+    // diagnostic snapshot requires no Observe call or mirrored Task flag.
+    let owner = {
+        let _commit = crate::work::unit::commit();
+        exited.ident.team.life.member(tid)
+            .and_then(|m| m.receipts.lock().first().map(|r| r.owner))
+    };
+    ledger::note(tid, reason, text, owner);
+    reap(exited, TaskExitCause::Reap, reason);
     bury();
     crate::work::room::scheduler::trap::run()
 }

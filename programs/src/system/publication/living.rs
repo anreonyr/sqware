@@ -34,7 +34,7 @@ pub fn capture(
                 row.state,
                 State::NeverStarted | State::Starting | State::Ready | State::Debarked
             )
-            && !env::unit::join(task, Wait::POLL).unwrap_or(true)
+            && !env::unit::join_task(task, Wait::POLL).unwrap_or(true)
         {
             living.tasks.push(task);
         }

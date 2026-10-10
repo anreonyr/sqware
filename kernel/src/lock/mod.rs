@@ -6,7 +6,7 @@ mod lazy;
 mod once;
 pub(crate) mod reentrant;
 mod rw;
-mod spin;
+pub(crate) mod spin;
 mod trap;
 
 macro_rules! depend_enter {
@@ -59,6 +59,7 @@ pub use once::OnceLock;
 pub use reentrant::RelLock;
 pub use rw::RwLock;
 pub use spin::SpinLock;
+pub(crate) use spin::SpinLockGuard;
 pub(crate) use depend::reserve as reserve_depend;
 
 #[cfg(debug_assertions)]

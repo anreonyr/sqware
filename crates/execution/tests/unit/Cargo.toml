@@ -1,0 +1,11 @@
+[package]
+name = "execution-unit-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+[workspace]
+[lib]
+path = "lib.rs"
+[dependencies]
+env = { path = "../../../env" }
+erra = { version = "0.2.0", default-features = false }

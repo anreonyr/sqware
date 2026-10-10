@@ -1,6 +1,20 @@
+/// Serializes lifecycle publication, topology and receipt ownership. No data is
+/// exposed through the reentrant guard; scheduler nesting is same-hart only.
+static COMMIT: crate::lock::RelLock<()> = crate::lock::RelLock::new_level(crate::lock::Level::Unit, ());
+
+#[cfg(debug_assertions)]
+pub(crate) fn assert_unlocked() {
+    assert!(!COMMIT.held_by_current(), "idle wait while holding Unit commit lock");
+}
+
+pub(crate) fn commit() -> crate::lock::reentrant::RelLockGuard<'static, ()> {
+    COMMIT.lock()
+}
+
 pub(crate) mod capsule;
 pub(crate) mod gate;
 pub(crate) mod life;
+pub(crate) mod join;
 pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;

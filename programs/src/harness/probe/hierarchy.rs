@@ -435,7 +435,7 @@ pub(crate) fn exercise(
             crate::system::control::lifecycle::Action::Ruin,
         )
         .expect("hierarchy: scheduled ruin");
-    assert!(env::unit::join(target, wait).unwrap_or(true));
+    assert!(env::unit::join_task(target, wait).unwrap_or(true));
     assembly.progress().unwrap();
     assert!(matches!(
         operator.root().tile(&target_road, wait),

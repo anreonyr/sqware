@@ -19,7 +19,7 @@ pub fn preparation() {
             .unwrap();
         assert_eq!(conductor::counts(), counts);
         assert!(team.tasks.lock().is_empty());
-        assert!(team.held.lock().is_empty());
+        assert!(team.tasks.held.lock().is_empty());
         drop(prepared);
         assert_eq!(team.space.table_count(), tables);
         assert_eq!(conductor::counts(), counts);
@@ -49,7 +49,6 @@ pub fn construction() {
         team::{self, Staging},
     };
     use alloc::{sync::Arc, vec::Vec};
-    use core::sync::atomic::Ordering;
     use env::{Mark, Permission, UnitFail};
     scheduler::boot::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
@@ -95,7 +94,7 @@ pub fn construction() {
             None,
         );
         let token = root.token;
-        caller.pies.lock().push(gate::boxed(root).expect("pie allocation"));
+        caller.gate.pies.lock().push(gate::boxed(root).expect("pie allocation"));
         let open = parent
             .space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
@@ -128,7 +127,7 @@ pub fn construction() {
         if !access.contains(PteFlags::W) {
             gate::narrow(
                 caller
-                    .pies
+                    .gate.pies
                     .lock()
                     .iter_mut()
                     .find(|pie| pie.token() == token)
@@ -139,7 +138,7 @@ pub fn construction() {
         }
         backings.push(Arc::downgrade(meta.backing()));
         meta.backing().reserve(child.id);
-        child.staged.lock().push(Staging {
+        child.staged().push(Staging {
             token,
             meta,
             span: Span::new(SegmentKind::Normal, at, PAGE_SIZE, None),
@@ -156,7 +155,7 @@ pub fn construction() {
         assert!(
             matches!(team::spawn(&child, Some(&caller), entry, Vec::new(), stack), Err(error) if error.code() == expected.code())
         );
-        assert!(!child.ready.load(Ordering::Acquire));
+        assert!(!child.ready());
         assert_eq!(child.default_entry(), 0);
         assert_eq!(conductor::counts(), counts);
         assert_eq!(child.space.table_count(), tables);
@@ -171,15 +170,15 @@ pub fn construction() {
     ));
     assert_eq!(conductor::counts(), counts);
     assert_eq!(child.space.table_count(), tables);
-    assert!(!child.ready.load(Ordering::Acquire));
+    assert!(!child.ready());
     assert_eq!(child.default_entry(), 0);
-    assert_eq!(child.staged.lock().len(), 2);
+    assert_eq!(child.staged().len(), 2);
     assert!(matches!(
         gate::release(&caller, roots[0]),
         Err(env::PieFail::Busy)
     ));
     let task = team::spawn(&child, Some(&caller), 0x10000, Vec::new(), 0).unwrap();
-    assert!(child.ready.load(Ordering::Acquire));
+    assert!(child.ready());
     let frame_pa = task.ident.frame.pa.expect("task frame").as_usize();
     // SAFETY: the task has not run and its frame is exclusively owned by this test.
     let frame = unsafe { &*(frame_pa as *const crate::runtime::switcher::context::TrapContext) };
@@ -188,7 +187,7 @@ pub fn construction() {
         crate::memory::manager::mode::upper().as_usize()
     );
     assert_eq!(child.default_entry(), 0x10000);
-    assert!(child.staged.lock().is_empty());
+    assert!(child.staged_len() == 0);
     assert!(
         scheduler::core::muster(task.ident.id)
             .unwrap()
@@ -243,7 +242,7 @@ pub fn cancellation() {
         None,
     );
     let token = root.token;
-    caller.pies.lock().push(gate::boxed(root).expect("pie allocation"));
+    caller.gate.pies.lock().push(gate::boxed(root).expect("pie allocation"));
     let at = VirtAddr::wrap(0x20000);
     child.space.with_flush(|inner| {
         inner
@@ -267,7 +266,7 @@ pub fn cancellation() {
         inner.private(at);
     });
     meta.backing().reserve(child.id);
-    child.staged.lock().push(Staging {
+    child.staged().push(Staging {
         token,
         meta: meta.clone(),
         span: Span::new(SegmentKind::Normal, at, 3 * PAGE_SIZE, None),
@@ -318,39 +317,53 @@ pub fn cancellation() {
     drop(caller);
 }
 
-/// Pausing an ancestor constrains existing and subsequently created child teams.
+/// Pause inheritance and independent ancestor receipts share one exit state.
 pub fn branch_control() {
     use alloc::sync::Arc;
+    use crate::work::unit::task::{Task, TaskState, TaskExitCause};
     use crate::work::unit::weak::{Site, TaskWeak};
-    fn team(parent: Option<&Arc<crate::work::unit::task::Task>>) -> Arc<crate::work::unit::team::Team> {
+    fn team(parent: Option<&Arc<Task>>) -> Arc<crate::work::unit::team::Team> {
         let space = SpaceBuilder::user().build().unwrap();
         space.with_flush(|inner| inner.dynamic(0x4000_0000));
         let builder = TeamBuilder::new(space);
         match parent { Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Site::Sire)), None => builder }.spawn().unwrap()
     }
-    let root = team(None); let main = root.task().hold().unwrap(); root.observe();
+    let root = team(None); let main = root.task().hold().unwrap();
     let child = team(Some(&main)); let member = child.task().hold().unwrap();
-    let before = root.revision(); root.set_paused(true);
-    assert!(root.paused() && child.paused());
+    root.debark().unwrap(); assert!(root.paused() && child.paused());
     let later = team(Some(&member)); let grandchild = later.task().hold().unwrap();
-    assert!(later.paused()); assert!(root.revision() > before);
-    child.set_paused(true); root.set_paused(false);
-    assert!(!root.paused()); assert!(child.paused() && later.paused());
-    child.set_paused(false); assert!(!child.paused() && !later.paused());
-    assert!(later.observed()); later.completed(grandchild.ident.id, 17);
-    assert_eq!(root.status(), (2, 17)); root.completed(main.ident.id, 0);
-    assert_eq!(root.status(), (1, 17)); root.completed(main.ident.id, 99);
-    assert_eq!(root.status(), (1, 17));
-    later.release_held(&grandchild); later.prune_tasks(&grandchild); drop(grandchild);
-    member.oust(later.id); drop(later);
-    child.release_held(&member); child.prune_tasks(&member); drop(member);
-    main.oust(child.id); drop(child);
-    root.release_held(&main); root.prune_tasks(&main); drop(main); drop(root);
-    let root = team(None); let main = root.task().hold().unwrap(); root.observe();
-    let child = team(Some(&main)); let member = child.task().hold().unwrap();
-    root.completed(main.ident.id, 0);
-    root.release_held(&main); root.prune_tasks(&main); drop(main);
-    assert!(child.sire.upgrade().is_none()); assert!(child.observed());
-    child.completed(member.ident.id, 17); assert_eq!(root.status(), (1, 17));
-    child.release_held(&member); child.prune_tasks(&member); drop(member); drop(child); drop(root);
+    assert!(later.paused()); child.debark().unwrap(); root.embark().unwrap();
+    assert!(!root.paused() && child.paused() && later.paused());
+    child.embark().unwrap(); assert!(!child.paused() && !later.paused());
+    let record = later.life.member(grandchild.ident.id).unwrap();
+    assert!(record.pending(main.ident.id) && record.pending(member.ident.id));
+    assert!(record.exit().is_none());
+    use crate::work::unit::join::{JoinTarget, JoinWait};
+    let observe = JoinWait::new(JoinTarget::Task(record.clone()), main.ident.id, false, env::Wait::POLL);
+    let receive = JoinWait::new(JoinTarget::Task(record.clone()), member.ident.id, true, env::Wait::POLL);
+    assert_eq!(observe.poll(), Ok(env::JoinReply::Pending));
+    let space = Arc::downgrade(&later.space);
+    later.release_held(&grandchild);
+    *grandchild.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 17 };
+    conductor::exit();
+    assert_eq!(record.exit().unwrap().reason, 17);
+    assert_eq!(observe.poll(), observe.poll());
+    assert!(receive.poll().unwrap().is_reaped());
+    assert_eq!(receive.poll(), Err(env::UnitFail::Denied));
+    assert!(record.pending(main.ident.id));
+    member.oust(later.id); drop(grandchild); drop(later);
+    assert!(space.upgrade().is_none(), "pending exits retained execution resources");
+    assert_eq!(child.life.next(main.ident.id).unwrap().exit().unwrap().reason, 17);
+    let parent = JoinWait::new(JoinTarget::Team(child.life.clone()), main.ident.id, true, env::Wait::POLL);
+    assert!(parent.poll().unwrap().is_reaped());
+    assert_eq!(parent.poll(), Ok(env::JoinReply::Pending));
+    assert!(observe.poll().unwrap().is_reaped(), "an enrolled observer lost the shared exit");
+    child.life.prune();
+    drop(parent); drop(receive); drop(observe);
+    drop(record);
+    child.release_held(&member); *member.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
+    conductor::exit(); child.life.clear(main.ident.id, None); child.life.prune();
+    main.oust(child.id); drop(member); drop(child);
+    root.release_held(&main); *main.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
+    conductor::exit(); root.life.prune(); drop(main); drop(root);
 }
