@@ -669,7 +669,7 @@ pub fn kernel() -> Option<&'static Arc<Team>> {
 static NEXT_TEAM_ID: AtomicUsize = AtomicUsize::new(1);
 pub(crate) fn alloc_team_id() -> Result<TeamId, crate::memory::manager::MapError> {
     let id = NEXT_TEAM_ID
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             (id < isize::MAX as usize).then_some(id + 1)
         })
         .map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;

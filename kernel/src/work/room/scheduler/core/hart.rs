@@ -58,7 +58,7 @@ impl Scheduler {
         }
     }
 
-    fn starved_push(&self, i: &mut SchedulerInner, mut task: Arc<Task>) {
+    fn starved_push(&self, i: &mut SchedulerInner, task: Arc<Task>) {
         debug_assert!(
             matches!(&*task.state(), TaskState::Starved { next: None }),
             "starved 容器只收 Starved 任务，且入队前不得挂在链上"
@@ -121,7 +121,7 @@ impl Scheduler {
         while self.starved_pop(i).is_some() {}
     }
 
-    pub(crate) fn push(&self, mut task: Arc<Task>) -> bool {
+    pub(crate) fn push(&self, task: Arc<Task>) -> bool {
         let _commit = crate::work::unit::commit();
         debug_assert!(
             matches!(&*task.state(), TaskState::Starved { .. }),
@@ -203,7 +203,7 @@ impl Scheduler {
         i.running.as_ref().map(Arc::clone)
     }
 
-    fn rotate(&self, i: &mut SchedulerInner, mut cur: Arc<Task>) -> Option<Arc<Task>> {
+    fn rotate(&self, i: &mut SchedulerInner, cur: Arc<Task>) -> Option<Arc<Task>> {
         cur.transform(TaskState::Starved { next: None });
         self.starved_push(i, cur);
         self.starved_pop(i)
@@ -248,7 +248,7 @@ impl Scheduler {
     pub(in super::super) fn advance(&self) -> Option<usize> {
         let _commit = crate::work::unit::commit();
         let mut i = self.inner.lock();
-        let mut cur = i.running.take()?;
+        let cur = i.running.take()?;
         if cur.stopped() || cur.ident.team.paused() {
             self.badge.shed(&cur.ident);
             Task::park(cur);

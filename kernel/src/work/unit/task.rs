@@ -348,6 +348,7 @@ impl Task {
         }
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn reaped_next(t: &Arc<Self>) -> Option<Arc<Task>> {
         debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
         t.reap_next.lock().as_ref().cloned()
@@ -670,6 +671,7 @@ impl Task {
         found.filter(|team| !matches!(&*team.state.lock(), super::team::TeamState::Ousted))
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn heir_count(&self) -> usize {
         self.heir.lock().len()
     }
@@ -751,7 +753,7 @@ impl TaskBuilder {
             .ok_or(MapError::NoRegion)?;
         let id = TaskId::new(
             NEXT_ID
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
                     (id < isize::MAX as usize).then_some(id + 1)
                 })
                 .map_err(|_| MapError::OutOfMemory)?,

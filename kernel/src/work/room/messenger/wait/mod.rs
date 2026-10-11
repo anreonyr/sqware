@@ -403,8 +403,7 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
         !matches!(key, WakeKey::Tole { .. }),
         "组键要走 knock（提示型/整链放行），不能走 wake（交付型/一人）"
     );
-    let mut fwd = Fwd::empty();
-    let popped = {
+    let (popped, fwd) = {
         let mut sites = sites(key).lock();
         if Life::dead(life) {
             let chain = sites.remove(&key).and_then(|site| site.head);
@@ -431,9 +430,9 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
                 site.pend = true;
                 sites.insert(key, site);
             }
-            fwd = sites.get(&key).map_or_else(Fwd::empty, |s| s.fwd.clone());
+            let fwd = sites.get(&key).map_or_else(Fwd::empty, |s| s.fwd.clone());
             prune(&mut sites, key);
-            popped
+            (popped, fwd)
         }
     };
     for (id, life) in fwd.entries() {

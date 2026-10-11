@@ -205,7 +205,7 @@ impl Site {
         }
     }
 
-    pub(super) fn push_back(&mut self, mut task: Arc<Task>) {
+    pub(super) fn push_back(&mut self, task: Arc<Task>) {
         debug_assert!(
             matches!(
                 &*task.state(),

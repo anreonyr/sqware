@@ -66,7 +66,7 @@ impl Husks {
     }
 }
 
-pub(super) fn reap(mut task: Arc<Task>, cause: TaskExitCause, reason: usize) {
+pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
     let (cause, reason) = {
         let _commit = crate::work::unit::commit();
         let mut state = task.state.lock();
