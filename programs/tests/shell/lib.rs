@@ -224,3 +224,24 @@ mod tests {
         assert!(ledger.record(id).is_err());
     }
 }
+
+#[test]
+fn foreground_selection_survives_a_stable_paused_turn_before_resume() {
+    use core::{Job, JobId, JobStatus, PauseReason};
+    let mut job = Job::prepare(JobId(1), 1);
+    job.prepared().unwrap();
+    job.start().unwrap();
+    job.acknowledge(0).unwrap();
+    job.pause(PauseReason::Requested).unwrap();
+    job.acknowledge(0).unwrap();
+    assert_eq!(job.status, JobStatus::Paused);
+    job.foreground = true;
+    job.advance();
+    assert!(job.foreground);
+    job.resume().unwrap();
+    job.acknowledge(0).unwrap();
+    assert!(job.foreground);
+    job.pause(PauseReason::Requested).unwrap();
+    job.acknowledge(0).unwrap();
+    assert!(!job.foreground);
+}

@@ -166,6 +166,7 @@ impl Job {
         self.advance();
     }
     pub fn advance(&mut self) {
+        let previous = self.status;
         let complete = self.results.iter().all(Option::is_some);
         let confirmed = self
             .acknowledged
@@ -192,7 +193,7 @@ impl Job {
         {
             self.status = JobStatus::Completed;
         }
-        if self.status.terminal() || self.status == JobStatus::Paused {
+        if self.status.terminal() || self.status == JobStatus::Paused && previous != JobStatus::Paused {
             self.foreground = false;
         }
     }

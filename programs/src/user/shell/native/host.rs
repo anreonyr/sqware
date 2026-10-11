@@ -245,7 +245,7 @@ impl Host {
         }
         engine.list(&values).map_err(|e| e.render())
     }
-    fn status(&self, engine: &mut Engine, id: JobId) -> Result<RootValue, String> {
+    pub fn status(&self, engine: &mut Engine, id: JobId) -> Result<RootValue, String> {
         let job = self.controller.job(id).ok_or("unknown job")?;
         let label = engine
             .symbol(job.model.status.name())
@@ -670,6 +670,16 @@ impl Host {
         }
         self.controller.reclaim(&self.objects);
         Ok(())
+    }
+    pub fn remaining(&self) -> Wait {
+        let at = match self.pending.as_ref().map(|effect| &effect.waiting) {
+            Some(Waiting::Job { deadline, .. } | Waiting::Read { deadline, .. }
+                | Waiting::Port { deadline, .. }) => *deadline,
+            None => return Wait::Forever,
+        };
+        if at == u64::MAX { Wait::Forever } else {
+            Wait::AtMost(at.saturating_sub(env::chrono::clock()).div_ceil(1_000_000) as usize)
+        }
     }
     pub fn awaiting_input(&self) -> bool {
         matches!(self.pending.as_ref().map(|effect| &effect.waiting), Some(Waiting::Read { port, .. } | Waiting::Port { port, .. }) if matches!(self.objects.port(*port).map(|port| &port.buffer), Some(Buffer::Terminal(Direction::Read))))

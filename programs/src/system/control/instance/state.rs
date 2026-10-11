@@ -22,8 +22,8 @@ impl Instance {
                 self.reason.get_or_insert(0);
             }
             self.stop();
-        } else if exit.cause == env::ExitCause::Fault
-            || exit.cause == env::ExitCause::Reap && exit.reason != 0
+        } else if !self.claimed && (exit.cause == env::ExitCause::Fault
+            || exit.cause == env::ExitCause::Reap && exit.reason != 0)
         {
             if self.reason.unwrap_or(0) == 0 {
                 self.reason = Some(exit.reason);

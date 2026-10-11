@@ -52,7 +52,7 @@ pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {
     result
 }
 
-pub(super) fn load(loader: &mut Loader, image: Image<'_>) -> UnitResult<Unit> {
+pub(super) fn load(loader: &mut Loader, image: Image<'_>, sire: env::TaskId) -> UnitResult<Unit> {
     let Image { bytes, kind } = image;
     let plan = elf::parse(bytes).map_err(|error| {
         if error == elf::Error::Memory {
@@ -66,7 +66,7 @@ pub(super) fn load(loader: &mut Loader, image: Image<'_>) -> UnitResult<Unit> {
         .try_reserve(plan.regions.len())
         .map_err(|_| fail(UnitFail::OoM))?;
     let mut minted = Unit {
-        team: unit::build(kind)?,
+        team: unit::build(kind, sire)?,
         entry: plan.entry,
         private,
         committed: false,
@@ -125,7 +125,7 @@ pub(super) fn construct(
     image: Image<'_>,
     spawn: Spawn<'_>,
 ) -> Result<Built, frame::Fail> {
-    let unit = loader.build(image).map_err(unit_fail)?;
+    let unit = load(loader, image, spawn.sire).map_err(unit_fail)?;
     let team = unit.team();
     let task = unit.spawn(spawn.args, spawn.stack).map_err(unit_fail)?;
     Ok(Built { task, team })

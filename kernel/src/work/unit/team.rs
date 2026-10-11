@@ -568,8 +568,15 @@ impl TeamBuilder {
             Arc::try_new(self.space).map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;
         let team = make_team(space, self.sire, parent, owner, self.constructing)?;
         if let Some(sire) = team.sire.upgrade() {
-            sire.adopt(team.clone())
-                .map_err(|_| crate::memory::manager::MapError::OutOfMemory)?;
+            if sire.adopt(team.clone()).is_err() {
+                *team.state.lock() = TeamState::Ousted;
+                if let Some(parent) = &team.life.parent {
+                    parent.children.lock().retain(|node| !Arc::ptr_eq(node, &team.life));
+                }
+                return Err(if matches!(sire.tag(), TaskTag::Doomed | TaskTag::Reaped) {
+                    crate::memory::manager::MapError::NoRegion
+                } else { crate::memory::manager::MapError::OutOfMemory });
+            }
         }
         Ok(team)
     }

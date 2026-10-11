@@ -69,7 +69,11 @@ impl Control {
             if item.team.is_none() {
                 continue;
             }
-            if let Some(team) = item.team {
+            if item.claimed {
+                if let Ok(env::JoinReply::Reaped(exit)) = unit::join(item.task.into(), Wait::POLL, false) {
+                    item.reap(exit);
+                }
+            } else if let Some(team) = item.team {
                 // Receive every member independently; main/auxiliary policy is Control's.
                 for _ in 0..64 {
                     match unit::join(env::UnitTarget::Team(team), Wait::POLL, true) {

@@ -58,7 +58,8 @@ pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Pro
         target: control.task("identity").ok_or(Fail::Dead)?.into(),
     });
     for item in control.instances() {
-        if item.team.is_some() {
+        if let Some(team) = item.team {
+            if !item.claimed { wanted.subs.push(Source::Join { target: team.into() }); }
             wanted.subs.push(Source::Join {
                 target: item.task.into(),
             });
@@ -115,9 +116,14 @@ pub(super) fn connections(
             env::MailCondition::Empty => wanted.writes.push(token),
         }
     }
+    // LINK admission scans newly delivered capabilities.
     bound.0 = match (bound.0, tree.connection_budget()) {
         (Wait::Forever, value) | (value, Wait::Forever) => value,
         (Wait::AtMost(left), Wait::AtMost(right)) => Wait::AtMost(left.min(right)),
+    };
+    bound.0 = match bound.0 {
+        Wait::Forever => Wait::AtMost(100),
+        Wait::AtMost(ms) => Wait::AtMost(ms.min(100)),
     };
     Ok(Progress::Done)
 }

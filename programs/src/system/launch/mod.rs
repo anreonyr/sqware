@@ -106,6 +106,7 @@ fn construct(
                     kind: env::ProgramKind::User,
                 },
                 Spawn {
+                    sire: delivery.owner,
                     args: &args[..count],
                     stack: ask.stack as usize,
                 },

@@ -56,10 +56,24 @@ impl JoinWait {
                 Some(m.clone())
             }
             JoinTarget::Team(t) => {
-                if t.owner != self.owner || matches!(&*t.state.lock(), TeamState::Ousted) {
+                if !self.receive {
+                    return Ok(if !matches!(&*t.state.lock(), TeamState::Constructing { .. }
+                        | TeamState::Debarking { state: super::team::TeamStage::Constructing { .. } }
+                        | TeamState::Debarked { state: super::team::TeamStage::Constructing { .. } })
+                        && t.all_reaped() { JoinReply::Complete } else { JoinReply::Pending });
+                }
+                let mut node = Some(&**t);
+                let mut qualified = false;
+                while let Some(here) = node {
+                    qualified |= here.owner == self.owner;
+                    node = here.parent.as_deref();
+                }
+                if !qualified { return Err(UnitFail::Denied); }
+                let next = t.next(self.owner);
+                if next.is_none() && matches!(&*t.state.lock(), TeamState::Ousted) {
                     return Err(UnitFail::Denied);
                 }
-                t.next(self.owner)
+                next
             }
         };
         let Some(member) = member else {
@@ -85,6 +99,7 @@ impl JoinWait {
     pub fn write(frame: &mut TrapContext, result: Result<JoinReply, UnitFail>) {
         let words = match result {
             Ok(JoinReply::Pending) => [0, 0, 0],
+            Ok(JoinReply::Complete) => [5, 0, 0],
             Ok(JoinReply::Reaped(exit)) => [exit.cause as usize, exit.task.get(), exit.reason],
             Err(error) => [env::FailCode::code(error) as usize, 0, 0],
         };
@@ -101,21 +116,21 @@ pub(crate) fn observe(
 ) -> Result<JoinTarget, UnitFail> {
     let _commit = super::commit();
     match target {
-        env::UnitTarget::Team(id) => me
-            .heir(id)
-            .map(|t| JoinTarget::Team(t.life.clone()))
-            .ok_or(UnitFail::Denied),
-        env::UnitTarget::Task(id) => {
-            let mut member = me.ident.team.life.member(id);
-            let mut at = 0;
-            while member.is_none() {
-                let Some(root) = me.heir_node(at) else { break };
-                at += 1;
-                member = root
-                    .life
-                    .member(id)
-                    .or_else(|| root.life.find(id).filter(|m| m.pending(me.ident.id)));
+        env::UnitTarget::Team(id) => {
+            fn find(root: &Arc<TeamLife>, id: env::TeamId) -> Option<Arc<TeamLife>> {
+                if root.id == id { return Some(root.clone()); }
+                let mut at = 0;
+                loop {
+                    let child = root.children.lock().get(at).cloned()?;
+                    at += 1;
+                    if let Some(found) = find(&child, id) { return Some(found); }
+                }
             }
+            if id == me.ident.team.id { return Err(UnitFail::Denied); }
+            find(&me.ident.team.life, id).map(JoinTarget::Team).ok_or(UnitFail::Denied)
+        }
+        env::UnitTarget::Task(id) => {
+            let member = me.ident.team.life.member(id).or_else(|| me.ident.team.life.find(id));
             member.map(JoinTarget::Task).ok_or(UnitFail::Denied)
         }
     }

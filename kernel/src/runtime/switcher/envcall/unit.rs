@@ -8,11 +8,10 @@ use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff};
 use crate::work::room::scheduler::core::muster;
-use crate::work::unit::join::{JoinTarget, JoinWait};
+use crate::work::unit::join::JoinWait;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::{Space, SpaceKind};
 use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
-use crate::work::unit::team::TeamState;
 use crate::work::unit::weak::{Site, TaskWeak};
 
 use super::ret_err;
@@ -78,7 +77,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             let target = if team.get() == 0 {
                 ident.team.clone()
             } else {
-                match me.heir(team) {
+                match me.clan(team) {
                     Some(t) => t,
                     None => return Outcome::fail(frame, UnitFail::Denied),
                 }
@@ -91,7 +90,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 Err(error) => return Outcome::fail(frame, error),
             }
         }
-        UnitCall::Build { kind } => {
+        UnitCall::Build { kind, sire } => {
             if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor()
                 || !crate::work::unit::gate::allows(
                     &me,
@@ -101,7 +100,14 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
-            let sire = TaskWeak::stored(Arc::downgrade(&me), Site::Sire);
+            let Some(parent) = muster(sire).and_then(|w| w.upgrade()) else {
+                return Outcome::fail(frame, UnitFail::Denied);
+            };
+            if matches!(parent.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped)
+                || parent.ident.team.id != ident.team.id && me.clan(parent.ident.team.id).is_none() {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            let sire = TaskWeak::stored(Arc::downgrade(&parent), Site::Sire);
             match crate::work::unit::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),
@@ -151,43 +157,14 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             millis,
             receive,
         } => {
-            let _commit = crate::work::unit::commit();
-            let selected = match target {
-                UnitTarget::Team(id) => {
-                    let Some(team) = me.heir(id) else {
-                        return Outcome::fail(frame, UnitFail::Denied);
-                    };
-                    JoinTarget::Team(team.life.clone())
-                }
-                UnitTarget::Task(id) => {
-                    if id == ident.id && millis != env::Wait::POLL {
-                        return Outcome::fail(frame, UnitFail::Denied);
-                    }
-                    let mut member = if !receive {
-                        ident.team.life.member(id)
-                    } else {
-                        None
-                    };
-                    let mut at = 0;
-                    while member.is_none() {
-                        let Some(root) = me.heir_node(at) else { break };
-                        at += 1;
-                        member = if receive {
-                            root.life.find(id).filter(|m| m.pending(ident.id))
-                        } else {
-                            root.life
-                                .member(id)
-                                .or_else(|| root.life.find(id).filter(|m| m.pending(ident.id)))
-                        };
-                    }
-                    let Some(member) = member else {
-                        return Outcome::fail(frame, UnitFail::Denied);
-                    };
-                    JoinTarget::Task(member)
-                }
+            if target == UnitTarget::Task(ident.id) && millis != env::Wait::POLL {
+                return Outcome::fail(frame, UnitFail::Denied);
+            }
+            let selected = match crate::work::unit::join::observe(&me, target) {
+                Ok(target) => target,
+                Err(error) => return Outcome::fail(frame, error),
             };
             let join = JoinWait::new(selected, ident.id, receive, millis);
-            drop(_commit);
             match messenger::unit_join(join) {
                 Ok(Handoff::Resume(reply)) => JoinWait::write(frame, Ok(reply)),
                 Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
@@ -206,33 +183,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             }
         }
         UnitCall::Oust { team } => {
-            let Some(child) = me.heir(team) else {
-                return Outcome::fail(frame, UnitFail::Denied);
-            };
-            let Some(_operation) = child.operation() else {
-                return Outcome::fail(frame, UnitFail::Busy);
-            };
-            {
-                let _commit = crate::work::unit::commit();
-                if !child.all_reaped() {
-                    return Outcome::fail(frame, UnitFail::Busy);
-                }
-                // The operation lease excludes construction publication while
-                // staged resources are released. Busy does not close the team.
+            if let Err(error) = crate::work::unit::oust(&me, team) {
+                return Outcome::fail(frame, error);
             }
-            if let Err(error) = child.cancel_staging() {
-                return Outcome::fail(frame, map_err(error));
-            }
-            let retired = {
-                let _commit = crate::work::unit::commit();
-                *child.state.lock() = TeamState::Ousted;
-                child.life.clear(ident.id, Some(team));
-                child.life.prune();
-                me.oust(team)
-            };
-            drop(_operation);
-            drop(retired);
-            drop(child);
         }
         UnitCall::Fall { millis } => {
             let mine = TaskLife {
@@ -251,7 +204,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                     let Some(task) = muster(id).and_then(|w| w.upgrade()) else {
                         return Outcome::fail(frame, UnitFail::Denied);
                     };
-                    if task.ident.team.id != ident.team.id && me.heir(task.ident.team.id).is_none()
+                    if task.ident.team.id != ident.team.id && me.clan(task.ident.team.id).is_none()
                     {
                         return Outcome::fail(frame, UnitFail::Denied);
                     }
@@ -277,20 +230,13 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                     }
                 }
                 UnitTarget::Team(id) => {
-                    let Some(team) = me.heir(id) else {
+                    let Some(team) = me.clan(id) else {
                         return Outcome::fail(frame, UnitFail::Denied);
                     };
                     match call {
                         UnitCall::Embark { .. } => team.embark(),
                         UnitCall::Debark { .. } => team.debark(),
                         UnitCall::Slay { .. } => {
-                            if !crate::work::unit::gate::allows(
-                                &me,
-                                &super::resources::get().doom,
-                                crate::work::unit::gate::Need::Fetch,
-                            ) {
-                                return Outcome::fail(frame, UnitFail::Denied);
-                            }
                             messenger::cull(core::slice::from_ref(&team), messenger::EXIT_DOOM);
                             Ok(())
                         }

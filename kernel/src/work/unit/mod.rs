@@ -69,6 +69,28 @@ pub(crate) fn build(
         .spawn()
 }
 
+pub(crate) fn oust(me: &Arc<task::Task>, id: env::TeamId) -> Result<(), env::UnitFail> {
+    let child = me.clan(id).ok_or(env::UnitFail::Denied)?;
+    let operation = child.operation().ok_or(env::UnitFail::Busy)?;
+    {
+        let _commit = commit();
+        if !child.all_reaped() { return Err(env::UnitFail::Busy); }
+    }
+    child.cancel_staging().map_err(|_| env::UnitFail::Denied)?;
+    let retired = {
+        let _commit = commit();
+        *child.state.lock() = team::TeamState::Ousted;
+        child.life.clear(me.ident.id, None);
+        let sire = child.sire.upgrade();
+        let detached = sire.as_ref().and_then(|sire| sire.oust(id));
+        child.life.prune();
+        (sire, detached)
+    };
+    drop(operation);
+    drop(retired);
+    Ok(())
+}
+
 pub fn init() -> MapResult<()> {
     (|| -> Result<(), MapError> {
         unsafe {

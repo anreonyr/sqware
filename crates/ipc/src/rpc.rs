@@ -117,6 +117,11 @@ pub mod request {
         done: bool,
     }
     impl<C: Contract> Pending<C> {
+        pub fn source(&self) -> env::Source {
+            if self.sent { self.reply.source() } else { self.entry.source() }
+        }
+        pub fn remaining(&self) -> Wait { self.deadline.remaining() }
+
         pub fn poll(&mut self) -> Result<Option<<C::Response as Message>::In>, Fail> {
             if self.done {
                 return Err(Fail::Untrusted);
@@ -313,6 +318,8 @@ pub mod reply {
                 _response: PhantomData,
             }
         }
+
+        pub fn source(&self) -> env::Source { self.reply.source() }
 
         pub fn poll(&self) -> Result<Option<R::In>, Fail> {
             let mut buffer = R::EMPTY;

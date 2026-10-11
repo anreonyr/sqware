@@ -344,6 +344,7 @@ pub fn branch_control() {
     }
     let root = team(None);
     let main = root.task().hold().unwrap();
+    let peer = root.task().hold().unwrap();
     let child = team(Some(&main));
     let member = child.task().hold().unwrap();
     root.debark().unwrap();
@@ -351,12 +352,21 @@ pub fn branch_control() {
     let later = team(Some(&member));
     let grandchild = later.task().hold().unwrap();
     assert!(later.paused());
+    assert!(main.heir(later.id).is_none());
+    assert!(Arc::ptr_eq(&main.clan(later.id).unwrap(), &later));
+    assert!(member.clan(child.id).is_none());
+    assert!(crate::work::unit::join::observe(&main, grandchild.ident.id.into()).is_ok());
     child.debark().unwrap();
     root.embark().unwrap();
     assert!(!root.paused() && child.paused() && later.paused());
     child.embark().unwrap();
     assert!(!child.paused() && !later.paused());
     let record = later.life.member(grandchild.ident.id).unwrap();
+    assert!(Arc::ptr_eq(&peer.clan(later.id).unwrap(), &later));
+    let target = crate::work::unit::join::observe(&peer, grandchild.ident.id.into()).unwrap();
+    assert_eq!(crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(), Err(env::UnitFail::Denied));
+    let target = crate::work::unit::join::observe(&peer, later.id.into()).unwrap();
+    assert_eq!(crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(), Err(env::UnitFail::Denied));
     assert!(record.pending(main.ident.id) && record.pending(member.ident.id));
     assert!(record.exit().is_none());
     use crate::work::unit::join::{JoinTarget, JoinWait};
@@ -386,6 +396,9 @@ pub fn branch_control() {
     assert_eq!(receive.poll(), Err(env::UnitFail::Denied));
     assert!(record.pending(main.ident.id));
     member.oust(later.id);
+    let closed = JoinWait::new(JoinTarget::Team(later.life.clone()), member.ident.id, true, env::Wait::POLL);
+    assert_eq!(closed.poll(), Err(env::UnitFail::Denied));
+    drop(closed);
     drop(grandchild);
     drop(later);
     assert!(
@@ -430,6 +443,10 @@ pub fn branch_control() {
     main.oust(child.id);
     drop(member);
     drop(child);
+    root.release_held(&peer);
+    *peer.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
+    conductor::exit();
+    drop(peer);
     root.release_held(&main);
     *main.state.lock() = TaskState::Reaped {
         cause: TaskExitCause::Reap,

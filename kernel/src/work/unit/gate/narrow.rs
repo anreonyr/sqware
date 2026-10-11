@@ -48,7 +48,7 @@ fn reduce_locked(
             None
         } else {
             Some(
-                task.heir(env::TeamId::new(reserved))
+                task.clan(env::TeamId::new(reserved))
                     .ok_or(PieFail::Denied)?,
             )
         };

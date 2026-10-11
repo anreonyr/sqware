@@ -176,6 +176,9 @@ pub struct Creating {
     lease: Option<PieToken>,
 }
 impl Creating {
+    pub fn source(&self) -> env::Source { self.pending.source() }
+    pub fn remaining(&self) -> Wait { self.pending.remaining() }
+
     pub fn poll(&mut self) -> Result<Option<Pipe>, Fail> {
         let Some(reply) = self.pending.poll().map_err(|_| Fail::Dead)? else {
             return Ok(None);
@@ -277,6 +280,16 @@ impl Port {
             Direction::Write => pipe_api::WRITE_BIT,
         }
     }
+    pub fn source(&self) -> env::Source {
+        env::Source::Mail { pie: self.token(), condition: env::MailCondition::Signal(self.bit()) }
+    }
+    pub fn prepare_wait(&self) -> Result<bool, Fail> {
+        if self.closed { return Err(Fail::Closed); }
+        if self.ring()?.ready(self.direction())? { return Ok(true); }
+        self.hush(self.bit())?;
+        self.ring()?.ready(self.direction()).map_err(Fail::from)
+    }
+
     pub fn wait(&self, within: Wait) -> Result<bool, Fail> {
         let deadline = ipc::time::Deadline::new(within);
         loop {

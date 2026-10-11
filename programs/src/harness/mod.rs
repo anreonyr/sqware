@@ -36,6 +36,7 @@ pub(crate) fn mint(
                 kind: image.kind,
             },
             crate::system::loader::Spawn {
+                sire: env::unit::self_id(),
                 args: &[],
                 stack: 0,
             },
