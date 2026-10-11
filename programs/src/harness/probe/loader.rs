@@ -176,7 +176,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     let entry = establish::find(root, system_api::loader::Grant::Build.mark()).unwrap();
     let loader = call::Face::of(entry).unwrap();
     assert!(
-        env::unit::build(env::ProgramKind::User).is_err(),
+        env::unit::build(env::ProgramKind::User, env::unit::self_id()).is_err(),
         "loader: caller received Build authority"
     );
     let image = env::pie::unseal(env::UnsealArgs::Pole {
@@ -210,8 +210,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         system_api::control::State::Debarked
     );
     assert!(
-        env::unit::join_task(first.task, Wait::POLL)
-            .is_err_and(|e| e.source == env::UnitFail::Denied)
+        env::unit::join_task(first.task, Wait::POLL).is_ok_and(|done| !done)
     );
     face(system_api::control::Grant::Embark)
         .instance(first.task)

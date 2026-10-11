@@ -22,6 +22,7 @@ pub(crate) struct Loader {
 }
 
 pub(crate) struct Spawn<'a> {
+    pub sire: env::TaskId,
     pub args: &'a [usize],
     pub stack: usize,
 }
@@ -46,7 +47,7 @@ impl Loader {
     }
 
     pub(crate) fn build(&mut self, image: Image<'_>) -> UnitResult<Unit> {
-        build::load(self, image)
+        build::load(self, image, env::unit::self_id())
     }
 
     pub(crate) fn construct(

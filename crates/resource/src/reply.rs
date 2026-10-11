@@ -37,6 +37,10 @@ impl Reply {
         Ok(remote)
     }
 
+    pub fn source(&self) -> env::Source {
+        env::Source::Mail { pie: self.local.token(), condition: env::MailCondition::Pull }
+    }
+
     pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> Result<&'a [u8], ReplyError> {
         let (len, from) = Hole::from_raw(self.local.token())
             .pull(buffer, within)

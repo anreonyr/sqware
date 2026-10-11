@@ -4,7 +4,7 @@ extern crate self as env;
 extern crate self as resource;
 
 pub use abi::{UnsealArgs, ReleaseMode, Oversize, PullOutcome,
-    Access, MailCondition, MailFail, MailResult, Mark, Permission, PieFail, PieResult, PieToken,
+    Source, Access, MailCondition, MailFail, MailResult, Mark, Permission, PieFail, PieResult, PieToken,
     Policy, TaskId, VirtAddr, Wait, make_fail,
 };
 
@@ -132,6 +132,7 @@ pub mod port {
             if fail { Err(make_fail(PieFail::Denied)) } else { Ok(Self { entry, peer }) }
         }
         pub fn peer(&self) -> TaskId { self.peer }
+        pub fn source(&self) -> crate::Source { crate::Source::Mail { pie: self.entry, condition: crate::MailCondition::Push } }
         pub fn push(&self, bytes: &[u8], wait: Wait) -> MailResult<()> {
             let result = with(|state| {
                 state.events.push(Event::Push(self.entry, bytes.to_vec(), wait));
@@ -166,6 +167,7 @@ pub mod port {
             self.remote = Some(remote);
             Ok(remote)
         }
+        pub fn source(&self) -> crate::Source { crate::Source::Mail { pie: self.local, condition: crate::MailCondition::Pull } }
         pub fn pull<'a>(&self, buffer: &'a mut [u8], wait: Wait) -> Result<&'a [u8], ReplyError> {
             let result = with(|state| {
                 state.events.push(Event::Pull(self.local, wait));

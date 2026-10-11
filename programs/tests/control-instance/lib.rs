@@ -380,3 +380,16 @@ fn successful_construction_is_registered_before_return() {
     assert!(!instance.claimed && !instance.started);
     assert_eq!(instance.claim_until, 42 + system_api::loader::CLAIM_MS as u64 * 1_000_000);
 }
+
+#[test]
+fn claimed_instance_does_not_inherit_a_child_job_failure() {
+    use system::control::{instance::state::Instance, unit::table::State};
+    let mut item = Instance { owner: TaskId::new(1), task: TaskId::new(2), team: Some(TeamId::new(3)),
+        state: State::Ready, claimed: true, started: true, reason: None, claim_until: 0, hook: Default::default() };
+    item.reap(TaskExit { task: TaskId::new(9), cause: ExitCause::Reap, reason: 17 });
+    assert_eq!(item.state, State::Ready);
+    assert_eq!(item.reason, None);
+    item.reap(TaskExit { task: item.task, cause: ExitCause::Reap, reason: 0 });
+    assert_eq!(item.state, State::Stopping);
+    assert_eq!(item.reason, Some(0));
+}

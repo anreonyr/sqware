@@ -631,8 +631,11 @@ impl Task {
             let at = heirs.iter().position(|t| t.id == team)?;
             heirs.remove(at)
         };
+        *child.state.lock() = super::team::TeamState::Ousted;
         child.life.clear(self.ident.id, Some(team));
-        child.life.prune();
+        let mut root = child.life.clone();
+        while let Some(parent) = &root.parent { root = parent.clone(); }
+        root.prune();
         Some(child)
     }
 
@@ -642,6 +645,29 @@ impl Task {
 
     pub(crate) fn heir(&self, id: TeamId) -> Option<Arc<Team>> {
         self.heir.lock().iter().find(|t| t.id == id).cloned()
+    }
+
+    pub(crate) fn clan(&self, id: TeamId) -> Option<Arc<Team>> {
+        let _commit = super::commit();
+        if id == self.ident.team.id { return None; }
+        if let Some(child) = self.heir(id) { return Some(child); }
+        let mut found = None;
+        self.ident.team.life.visit(&mut |node| {
+            if node.id != id { return; }
+            found = node.parent.as_ref().and_then(|parent| parent.member(node.owner))
+                .and_then(|member| member.task.upgrade()).and_then(|sire| sire.heir(id))
+                .or_else(|| {
+                    let mut at = 0;
+                    loop {
+                        let member = node.tasks.lock().get(at).cloned()?;
+                        at += 1;
+                        if let Some(task) = member.task.upgrade() {
+                            return Some(task.ident.team.clone());
+                        }
+                    }
+                });
+        });
+        found.filter(|team| !matches!(&*team.state.lock(), super::team::TeamState::Ousted))
     }
 
     pub(crate) fn heir_count(&self) -> usize {

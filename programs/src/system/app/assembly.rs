@@ -16,6 +16,7 @@ pub(crate) fn mint(
         .construct(
             crate::system::loader::Image { bytes, kind },
             crate::system::loader::Spawn {
+                sire: env::unit::self_id(),
                 args: &[],
                 stack: 0,
             },

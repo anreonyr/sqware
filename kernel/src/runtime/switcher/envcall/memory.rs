@@ -77,7 +77,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
     } else {
         caller
             .as_ref()
-            .and_then(|task| task.heir(team_id))
+            .and_then(|task| task.clan(team_id))
             .ok_or(MemoryFail::Denied)?
     };
     let _construction = if team_id.get() != 0 {
@@ -85,7 +85,14 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
     } else {
         None
     };
-    if team_id.get() != 0 && target.ready() {
+    if team_id.get() != 0 && !matches!(&*target.state.lock(),
+        crate::work::unit::team::TeamState::Constructing { .. }
+        | crate::work::unit::team::TeamState::Debarking {
+            state: crate::work::unit::team::TeamStage::Constructing { .. }
+        }
+        | crate::work::unit::team::TeamState::Debarked {
+            state: crate::work::unit::team::TeamStage::Constructing { .. }
+        }) {
         return Err(MemoryFail::Denied);
     }
     let space = &target.space;

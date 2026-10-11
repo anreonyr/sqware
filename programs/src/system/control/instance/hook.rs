@@ -116,6 +116,9 @@ pub fn reclaim(
             _ => break,
         }
     }
+    if item.claimed && !unit::join_task(item.owner, Wait::POLL).unwrap_or(true) {
+        return Ok(Progress::Done);
+    }
     match unit::oust(team) {
         Ok(()) => Ok(Progress::Done),
         Err(error) if error.source == env::UnitFail::Busy => Ok(Progress::Pending),

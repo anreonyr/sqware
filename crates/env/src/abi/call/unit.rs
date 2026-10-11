@@ -80,6 +80,7 @@ pub struct TaskExit {
 pub enum JoinReply {
     Pending,
     Reaped(TaskExit),
+    Complete,
 }
 impl JoinReply {
     pub fn is_reaped(self) -> bool {
@@ -91,6 +92,10 @@ impl crate::wire::FromTriple for JoinReply {
         if cause == 0 {
             assert!(task == 0 && reason == 0, "invalid Pending");
             return Self::Pending;
+        }
+        if cause == 5 {
+            assert!(task == 0 && reason == 0, "invalid Complete");
+            return Self::Complete;
         }
         assert!(
             task > 0 && task <= isize::MAX as usize,
@@ -117,7 +122,7 @@ impl crate::wire::FromTriple for JoinReply {
 pub enum UnitCall {
     #[slot(32)]
     #[ret(TeamId)]
-    Build { kind: ProgramKind },
+    Build { kind: ProgramKind, sire: TaskId },
     #[slot(33)]
     #[ret(TaskId)]
     Spawn {

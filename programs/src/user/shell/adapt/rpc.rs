@@ -5,15 +5,8 @@ use ipc::{
     time::Deadline,
 };
 use shell_api::Image;
-use system_api::{control, loader};
+use system_api::loader;
 pub const WAIT: Wait = Wait::AtMost(5000);
-pub fn control(entry: PieToken, request: control::Req) -> Result<Pending<control::Call>, String> {
-    let sender = Sender::<control::Call>::from_raw(entry, control::Call::BACK)
-        .map_err(|error| format!("control entry: {error:?}"))?;
-    sender
-        .begin(Deadline::new(WAIT), |back| control::Request(request, back))
-        .map_err(|error| format!("control request: {error:?}"))
-}
 enum Phase {
     Build(Pending<loader::Call>),
     Claim(Pending<loader::Call>),
@@ -62,6 +55,10 @@ impl Loading {
             built: None,
         })
     }
+    pub fn source(&self) -> Option<env::Source> {
+        match &self.phase { Phase::Build(p) | Phase::Claim(p) => Some(p.source()), Phase::Done => None }
+    }
+    pub fn remaining(&self) -> Wait { self.deadline.remaining() }
     pub fn poll(&mut self) -> Result<Option<loader::Built>, String> {
         let result = match &mut self.phase {
             Phase::Build(pending) | Phase::Claim(pending) => pending.poll(),

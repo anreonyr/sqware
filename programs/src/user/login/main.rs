@@ -6,7 +6,6 @@ mod auth;
 use account_client::Client;
 use env::{Wait, unit};
 use ipc::session::Session;
-use system_api::control::State;
 use system_client::control::Face as Lifecycle;
 use system_client::operator;
 use system_client::operator::Face;
@@ -71,12 +70,7 @@ fn run_shell(
             .map_err(|fail| {
                 programs::debug::put(&alloc::format!("login: instance embark {fail:?}"));
             })?;
-        loop {
-            if lifecycle.instance(built.task).state(WAIT).map_err(|_| ())? == State::Dead {
-                break;
-            }
-            execution::room::park(core::time::Duration::from_millis(10)).map_err(|_| ())?;
-        }
+        env::unit::join(built.team.into(), Wait::Forever, false).map_err(|_| ())?;
         Ok(())
     })();
     let stopped = if run.is_err() {
@@ -84,6 +78,7 @@ fn run_shell(
     } else {
         Ok(())
     };
+    let _ = env::unit::oust(built.team);
     let restored = foreground.restore();
     stopped?;
     restored?;

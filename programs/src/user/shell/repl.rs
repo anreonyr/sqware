@@ -1,4 +1,4 @@
-use super::{adapt::controller::Controller, native::Host};
+use super::{adapt::{controller::Controller, waiting::{Interests, Waiting}}, native::Host};
 use alloc::{format, vec::Vec};
 use env::{TaskId, Wait};
 use lisp::{Engine, Limits, ReadState, Reader, Source, Step};
@@ -50,20 +50,18 @@ pub fn run() -> Result<(), &'static str> {
     let account = TaskId::new(*args.get(1).ok_or("shell catalogue owner")?);
     let io = Io::injected(terminal).map_err(|_| "shell terminal")?;
     let catalogue = catalogue(account)?;
-    let sire = env::unit::sire();
+    let loader = resource::raw::pies()
+        .find(|info| info.alive && info.mark == system_api::loader::Grant::Build.mark())
+        .ok_or("shell loader grant")?;
+    let sire = loader.owner;
+    let loader = loader.token;
     let session = ipc::session::Session::open(sire, system_client::operator::BERTH, WAIT)
         .map_err(|_| "shell operator")?;
     let tree = system_client::operator::Face::of(session);
     let pipe = pipe_client::Client::find(&tree, WAIT).map_err(|_| "shell pipe service")?;
-    let control = tree
-        .tile(system_api::control::INSTANCE, WAIT)
-        .and_then(|tile| tile.token(WAIT))
-        .map_err(|_| "shell instance control")?;
-    let loader = ipc::session::establish::find(sire, system_api::loader::Grant::Build.mark())
-        .map_err(|_| "shell loader grant")?;
     let mut engine = Engine::new(Limits::default()).map_err(|_| "shell language allocation")?;
     Host::install(&mut engine).map_err(|_| "shell standard library")?;
-    let mut host = Host::new(Controller::new(catalogue, pipe, control, loader));
+    let mut host = Host::new(Controller::new(catalogue, pipe, loader));
     queue(&mut host, b"sqware Lisp Shell\n");
     let grant = system_api::identity::Grant::Resolve;
     let entry = resource::raw::pies()
@@ -90,10 +88,14 @@ pub fn run() -> Result<(), &'static str> {
         )
         .as_bytes(),
     );
+    let mut waiting = Waiting::new()?;
     let mut input = Vec::new();
     let mut prompt = false;
     let mut exiting = false;
+    let mut suspended = None;
     loop {
+        let mut progressed = false;
+        let mut output_blocked = false;
         for _ in 0..4 {
             let Some(event) = io
                 .read_with(Wait::POLL)
@@ -101,6 +103,7 @@ pub fn run() -> Result<(), &'static str> {
             else {
                 break;
             };
+            progressed = true;
             match event {
                 Read::Data(bytes) => {
                     if host.controller.foreground.is_some() {
@@ -130,8 +133,11 @@ pub fn run() -> Result<(), &'static str> {
                     }
                 }
                 Read::Interrupt => {
+                    suspended = None;
                     input.clear();
                     if let Some(id) = host.controller.foreground {
+                        host.cancel_evaluation(&mut engine);
+                        prompt = false;
                         let _ = host.controller.cancel(id);
                     } else {
                         host.cancel_evaluation(&mut engine);
@@ -141,6 +147,10 @@ pub fn run() -> Result<(), &'static str> {
                 }
                 Read::Suspend => {
                     if let Some(id) = host.controller.foreground {
+                        input.clear();
+                        host.cancel_evaluation(&mut engine);
+                        suspended = Some(id);
+                        prompt = false;
                         let _ = host
                             .controller
                             .pause(id, super::core::PauseReason::Requested);
@@ -152,6 +162,20 @@ pub fn run() -> Result<(), &'static str> {
             queue(&mut host, format!("{}\n", error.render()).as_bytes());
             prompt = false;
         }
+        if let Some(id) = suspended {
+            if host.controller.job(id).is_some_and(|job| {
+                job.model.status == super::core::JobStatus::Paused || job.model.status.terminal()
+            }) {
+                match host.status(&mut engine, id) {
+                    Ok(value) => match engine.display(&value) {
+                        Ok(text) => queue(&mut host, format!("{text}\n").as_bytes()),
+                        Err(error) => queue(&mut host, format!("{}\n", error.render()).as_bytes()),
+                    },
+                    Err(error) => queue(&mut host, format!("{error}\n").as_bytes()),
+                }
+                suspended = None;
+            }
+        }
         if engine.is_idle() && !exiting && host.controller.foreground.is_none() {
             if input.is_empty() {
                 if !prompt {
@@ -162,6 +186,7 @@ pub fn run() -> Result<(), &'static str> {
                 match core::str::from_utf8(&input) {
                     Ok(text) => match Reader::default().read(Source::new("<repl>", text), false) {
                         Ok(ReadState::Complete { form, consumed }) => {
+                            progressed = true;
                             input.drain(..consumed);
                             if let Err(error) = engine.start(form) {
                                 queue(&mut host, format!("{}\n", error.render()).as_bytes());
@@ -225,12 +250,14 @@ pub fn run() -> Result<(), &'static str> {
                 for _ in 0..n {
                     host.output.pop_front();
                 }
-            }
+                progressed = true;
+            } else { output_blocked = true; }
         } else if let Some((id, bytes)) = host.controller.output() {
             let n = bytes.len();
             if io.try_write(bytes).map_err(|_| "shell job output")? {
                 host.controller.consume_output(id, n);
-            }
+                progressed = true;
+            } else { output_blocked = true; }
         }
         if exiting
             && host.controller.settled()
@@ -240,6 +267,20 @@ pub fn run() -> Result<(), &'static str> {
             io.drain().map_err(|_| "shell output drain")?;
             return Ok(());
         }
-        env::room::starve();
+        if engine.is_runnable() || progressed
+            || !exiting && engine.is_idle() && host.controller.foreground.is_none() && !prompt {
+            env::room::starve();
+            continue;
+        }
+        let mut interests = Interests::new();
+        let [input, output, control] = io.raw_channels();
+        interests.source(env::Source::Mail { pie: input, condition: env::MailCondition::Pull });
+        interests.source(env::Source::Mail { pie: control, condition: env::MailCondition::Pull });
+        if output_blocked { interests.source(env::Source::Mail { pie: output, condition: env::MailCondition::Push }); }
+        interests.budget(host.remaining());
+        host.controller.interests(&host.objects, &mut interests);
+        if interests.runnable { env::room::starve(); continue; }
+        waiting.apply(&interests)?;
+        waiting.await_(interests.within)?;
     }
 }

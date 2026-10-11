@@ -87,7 +87,7 @@ pub fn abi_and_privilege() {
         bool::unpack(&[2, 0, 0, 0, 0, 0], &mut 0),
         Err(Decode::Invalid)
     ));
-    let build = |kind| EnvCall::Unit(UnitCall::Build { kind });
+    let build = |kind| EnvCall::Unit(UnitCall::Build { kind, sire: user.task.ident.id });
     let heirs = user.task.heir_count();
     assert_eq!(
         user.call(build(ProgramKind::Supervisor)),
@@ -148,8 +148,34 @@ pub fn abi_and_privilege() {
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
     registry.freeze().unwrap().grant(&supervisor.task).unwrap();
     for kind in [ProgramKind::User, ProgramKind::Supervisor] {
-        assert!(supervisor.call(EnvCall::Unit(UnitCall::Build { kind })) > 0);
+        assert!(supervisor.call(EnvCall::Unit(UnitCall::Build { kind, sire: supervisor.task.ident.id })) > 0);
     }
+    assert_eq!(supervisor.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    let space = SpaceBuilder::user().build().unwrap();
+    space.with(|inner| inner.dynamic(0x4000_0000));
+    let child = TeamBuilder::new(space)
+        .sire(crate::work::unit::weak::TaskWeak::stored(Arc::downgrade(&supervisor.task), crate::work::unit::weak::Site::Sire))
+        .spawn().unwrap();
+    let parent = child.task().hold().unwrap();
+    let delegated = supervisor.call(EnvCall::Unit(UnitCall::Build {
+        kind: ProgramKind::User, sire: parent.ident.id,
+    }));
+    assert!(delegated > 0);
+    let delegated = env::TeamId::new(delegated as usize);
+    assert!(supervisor.task.heir(delegated).is_none());
+    assert!(parent.heir(delegated).is_some());
+    assert!(supervisor.task.clan(delegated).is_some());
+    assert_eq!(supervisor.call(EnvCall::Unit(UnitCall::Oust { team: delegated })), 0);
+    assert!(parent.heir(delegated).is_none());
+    let peer = supervisor.team.task().hold().unwrap();
+    let sibling = supervisor.call(EnvCall::Unit(UnitCall::Build {
+        kind: ProgramKind::User, sire: peer.ident.id,
+    }));
+    assert!(sibling > 0);
+    let sibling = env::TeamId::new(sibling as usize);
+    assert!(peer.heir(sibling).is_some());
+    assert!(supervisor.task.clan(sibling).is_some());
+    assert_eq!(supervisor.call(EnvCall::Unit(UnitCall::Oust { team: sibling })), 0);
     assert_eq!(
         supervisor.call(EnvCall::Room(RoomCall::Doom {
             task: env::TaskId::new(usize::MAX)
@@ -548,7 +574,7 @@ pub fn resource_registration() {
     ));
     assert!(
         service.call(EnvCall::Unit(UnitCall::Build {
-            kind: ProgramKind::User
+            kind: ProgramKind::User, sire: service.task.ident.id
         })) > 0
     );
     assert!(matches!(
@@ -569,7 +595,7 @@ pub fn resource_registration() {
     ));
     assert_eq!(
         service.call(EnvCall::Unit(UnitCall::Build {
-            kind: ProgramKind::User
+            kind: ProgramKind::User, sire: service.task.ident.id
         })),
         env::UnitFail::Denied.code()
     );

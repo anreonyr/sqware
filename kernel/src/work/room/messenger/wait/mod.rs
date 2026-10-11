@@ -480,7 +480,7 @@ pub(crate) fn unit_join(
     loop {
         let _commit = crate::work::unit::commit();
         let reply = join.poll()?;
-        if reply.is_reaped() || join.remaining() == Duration::ZERO {
+        if reply != env::JoinReply::Pending || join.remaining() == Duration::ZERO {
             return Ok(Handoff::Resume(reply));
         }
         let blocked = block_with_call::<env::UnitFail>(
