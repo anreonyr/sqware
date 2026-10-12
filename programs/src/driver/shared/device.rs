@@ -45,11 +45,13 @@ impl Hub {
         // **路是 `/svc/hub/<面>`**（容器那一段接 `hub` 那一段，末段是那一枚面）——**不是
         // `/svc/drv/...`**：hub 是**服务那一层**里的一位（与驱动平级），故头一段是 `SVC`
         // 而不是驱动那一家两段。
-        let hub_road = system_api::operator::SVC
-            .try_join(hub::NAME)
-            .ok_or(Fail::at(died, "name"))?;
+        let service = tree
+            .resolve(system_api::namespace::SERVICE, ms)
+            .map_err(|_| Fail::at(died, "name"))?;
+        let hub_road = hub::SERVICE_PATH;
         let bond = face_of(
             tree,
+            service,
             &hub_road
                 .try_join(hub::Grant::Bond.name())
                 .ok_or(Fail::at(died, "name"))?,
@@ -58,6 +60,7 @@ impl Hub {
         )?;
         let list = face_of(
             tree,
+            service,
             &hub_road
                 .try_join(hub::Grant::List.name())
                 .ok_or(Fail::at(died, "name"))?,
@@ -89,12 +92,14 @@ impl Hub {
         };
         // 设备那一轴是 `/dev/<类>/<名>`（**顶层那一层**——与 `/svc` 平级，见 hub::DEV）。
         // 轴那一段是常量（`DEV_ROAD`），类与名来自报文 ⇒ 走运行期那一手（答 `None` 就报步名）。
-        let road = hub::DEV_ROAD
-            .try_join(class.as_str())
-            .and_then(|road| road.try_join(name.as_str()))
+        let devices = tree
+            .resolve(system_api::namespace::DEVICE, ms)
+            .map_err(|_| Fail::at(died, "tree"))?;
+        let road = system_api::operator::PathBuf::try_new(&class)
+            .and_then(|path| path.as_path().try_join(&name))
             .ok_or(Fail::at(died, "name"))?;
         let door = tree
-            .tile(&road, ms)
+            .tile_from(devices, &road, ms)
             .and_then(|tile| tile.token(ms))
             .map_err(|_| Fail::at(died, "tree"))?;
         // **认领打的是那一格上挂着的那一枚**（不是 hub 的门面）：hub 据"哪一枚孔响了"认台。
@@ -108,9 +113,9 @@ impl Hub {
 
 /// 树上找一枚门牌（**沿一条路，答那一枚**）——三个客人（本手两处 ＋ 各域自己那几处）共用
 /// **它不吞错**：失败一律折 `Fail::at(died, "hub")`（"设备账那两枚面没找着"），由调用方给号
-fn face_of(tree: &Face, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
+fn face_of(tree: &Face, base: system_api::operator::Entry, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
     let door = tree
-        .tile(road, ms)
+        .tile_from(base, road, ms)
         .and_then(|entry| entry.token(ms))
         .map_err(|_| Fail::at(died, "hub"))?;
     hub::Face::of(door).map_err(|_| Fail::at(died, "hub"))

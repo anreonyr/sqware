@@ -24,6 +24,31 @@ mod tests {
     use wire::{Field, Message, Span};
 
     #[test]
+    fn relative_watch_request_preserves_entry_root_tag() {
+        let request = Req::WatchFrom {
+            base: Entry {
+                operator: TaskId::new(7),
+                target: EntryTarget::Root,
+            },
+            road: PathBuf::try_new("control").unwrap(),
+            hole: PieToken::mint(9),
+        };
+        let mut bytes = Req::EMPTY;
+        let len = request.store(&mut bytes).unwrap();
+        assert_eq!(
+            Req::fetch(&bytes[..len]),
+            Some(Wire::WatchFrom {
+                base: Entry {
+                    operator: TaskId::new(7),
+                    target: EntryTarget::Root
+                },
+                road: PathBuf::try_new("control").unwrap(),
+                hole: PieToken::mint(9),
+            })
+        );
+    }
+
+    #[test]
     fn former_shared_ask_mutation_codes_are_not_decodable() {
         for code in [1, 2, 4] {
             let mut frame = vec![code];
@@ -141,6 +166,40 @@ mod tests {
                 assert_eq!(Req::fetch(&expected[..end]), None);
             }
         }
+        let key = NamespaceKey::of("service");
+        for (request, decoded) in [
+            (
+                Req::Resolve {
+                    mark: key.mark(),
+                    name: key.name().into(),
+                },
+                Wire::Resolve {
+                    mark: key.mark(),
+                    name: key.name().into(),
+                },
+            ),
+            (
+                Req::Relative {
+                    base: Entry {
+                        operator: TaskId::new(7),
+                        target: EntryTarget::Root,
+                    },
+                    road: PathBuf::root(),
+                },
+                Wire::Relative {
+                    base: Entry {
+                        operator: TaskId::new(7),
+                        target: EntryTarget::Root,
+                    },
+                    road: PathBuf::root(),
+                },
+            ),
+        ] {
+            let mut bytes = Req::EMPTY;
+            let len = request.store(&mut bytes).unwrap();
+            assert_eq!(Req::fetch(&bytes[..len]), Some(decoded));
+            assert!(Req::fetch(&bytes[..len - 1]).is_none());
+        }
     }
 
     #[test]
@@ -149,10 +208,28 @@ mod tests {
             (Union::Status(DENIED), vec![8]),
             (Union::Entry(EntryId::new(0)), vec![0; 9]),
             (
+                Union::Reference(Entry {
+                    operator: TaskId::new(7),
+                    target: EntryTarget::Root,
+                }),
+                vec![0, 7, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+            (
+                Union::Reference(Entry {
+                    operator: TaskId::new(7),
+                    target: EntryTarget::Node(EntryId::new(0)),
+                }),
+                vec![0, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+            (
                 Union::Seed(PieToken::mint(9)),
                 vec![0, 9, 0, 0, 0, 0, 0, 0, 0],
             ),
             (Union::Name("x".into()), vec![0, b'x']),
+            (
+                Union::WatchPath(PathBuf::try_new("a/b").unwrap()),
+                vec![0, 3, b'a', b'/', b'b'],
+            ),
             (
                 Union::List(Listing::of([EntryId::new(0), EntryId::new(9)].into_iter())),
                 vec![0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 9, 0, 0, 0, 0, 0, 0, 0],
@@ -167,7 +244,9 @@ mod tests {
                 Union::Entry(id) => assert_eq!(received.entry(), Ok(id)),
                 Union::Seed(seed) => assert_eq!(received.seed(), Ok(seed)),
                 Union::Name(name) => assert_eq!(received.name(), Ok(name)),
+                Union::WatchPath(road) => assert_eq!(received.watch_path(), Ok(road)),
                 Union::List(ids) => assert_eq!(received.list(), Ok(ids)),
+                Union::Reference(entry) => assert_eq!(received.reference(), Ok(entry)),
             }
         }
         assert_eq!(Union::fetch(&[]), None);
@@ -298,6 +377,8 @@ mod tests {
         }];
         static NAMES: &[&str] = &["principal", "team/member"];
         let declaration = Namespace {
+            key: NamespaceKey::of("test-namespace"),
+            placement: crate::unit_operator::Placement::Shared,
             path: "svc/identity",
             scope: Scope::Names(NAMES),
             ops: system_api::operator::Ops::FIND,
@@ -344,6 +425,11 @@ mod tests {
         assert_eq!(super::gate::Code::Ok.wire(), OK);
         assert_eq!(super::gate::Code::Denied.wire(), DENIED);
         assert_eq!(super::gate::Code::Unjudged.wire(), UNJUDGED);
+        assert_eq!(fail_to_code(Some(Fail::Conflict)), 10);
+        assert_eq!(code_to_fail(10), Some(Fail::Conflict));
+        let key = NamespaceKey::of("service");
+        assert_eq!(key.mark(), env::Mark::of("service"));
+        assert_eq!(key.name(), "service");
     }
 
     #[test]
@@ -352,7 +438,17 @@ mod tests {
             .join("../../src/system/client/src/operator");
         let client = std::fs::read_to_string(root.join("face.rs")).unwrap();
         let module = std::fs::read_to_string(root.join("mod.rs")).unwrap();
-        for method in ["find", "list", "seek", "name", "watch"] {
+        for method in [
+            "find",
+            "list",
+            "seek",
+            "resolve",
+            "seek_from",
+            "pane_from",
+            "tile_from",
+            "name",
+            "watch",
+        ] {
             assert!(
                 client.contains(&format!("pub fn {method}(")),
                 "Face::{method} missing"

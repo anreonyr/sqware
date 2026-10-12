@@ -5,7 +5,7 @@ pub use frame::Request;
 pub use system_api::control::construction::{CANCEL, CreateId, INSPECT};
 pub const CREATE: u8 = 1;
 pub use interface::{BACK, CHANNELS, ENTRY, INTERFACE_ID, REGISTRY};
-pub const DIR: &system_api::operator::Path = system_api::operator::Path::new("/svc/account/create");
+pub const DIR: &system_api::operator::Path = system_api::operator::Path::new("account/create");
 fn reply_to(request: &(Request, bool)) -> env::PieToken {
     request.0.back
 }

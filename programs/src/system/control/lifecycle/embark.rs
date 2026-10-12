@@ -6,7 +6,6 @@ use crate::system::{
     control::unit::{table::State, verdict::Fail},
 };
 use ::schedule::{Progress, Res, ResMut};
-use alloc::vec::Vec;
 use env::{Mark, Wait};
 
 pub(crate) fn pre(
@@ -34,7 +33,6 @@ pub(crate) fn pre(
     job.progress.execution.task = Some(pending.service.task());
     job.progress.execution.instance = Some(Instance {
         service: pending.service,
-        marks: Vec::new(),
         launched: false,
         identity_install: None,
     });

@@ -9,6 +9,8 @@ pub static PROBE_LEASE: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("probe-lease"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
             path: "fixtures",
             scope: crate::unit::operator::Scope::Names(&["lease"]),
             ops: system_api::operator::Ops::BIND

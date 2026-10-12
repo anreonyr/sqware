@@ -82,6 +82,8 @@ pub enum Fail {
     /// **它不承诺"等一会儿会好"**：对面不答 / 超时（会好），与那一号是碑 / 那一格是块窗格 /
     #[code(9)]
     Unjudged,
+    #[code(10)]
+    Conflict,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -122,6 +124,9 @@ pub const LIST: u8 = 5;
 pub const NAME: u8 = 6;
 
 pub const SEEK: u8 = 7;
+pub const RESOLVE: u8 = 9;
+pub const RELATIVE: u8 = 10;
+pub const WATCH_FROM: u8 = 11;
 
 /// `watch` 那一问：订一条子树（路 ＋ 订阅者那一页 ＋ 那一枚铃）
 pub const WATCH: u8 = 8;

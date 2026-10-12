@@ -2,6 +2,9 @@
 
 pub mod frame;
 pub mod marks;
+
+/// Relative attachment path under the SERVICE namespace.
+pub const ENTRY_PATH: &str = "terminal/attach";
 pub use interface::{INTERFACE_ID, PUBLICATIONS, REGISTRY};
 
 #[mold::interface(id = "sqware.user.terminal.v1", metadata)]

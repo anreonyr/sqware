@@ -85,7 +85,7 @@ use system_api::operator as ocall;
 pub(super) struct Judgment(pub Option<(TaskId, Permit, Code)>);
 pub(super) fn validate(
     mut request: ResMut<Request>,
-    mut out: ResMut<Output<ocall::Union>>,
+    mut out: ResMut<Output>,
 ) -> Result<Progress, super::Fail> {
     out.reply = None;
     out.changes.clear();
@@ -112,7 +112,7 @@ pub(super) fn permit(
     let who = incoming.guest.who();
     let permit = match ask {
         ocall::Wire::Find(id) => tree.permit(*id),
-        ocall::Wire::Watch { .. } => ocall::Permit::Bound,
+        ocall::Wire::Watch { .. } | ocall::Wire::WatchFrom { .. } => ocall::Permit::Bound,
         _ => return Ok(Progress::Done),
     };
     judgment.0 = Some((who, permit, Code::Ok));
@@ -121,7 +121,7 @@ pub(super) fn permit(
 pub(super) fn admit(
     mut request: ResMut<Request>,
     judgment: Res<Judgment>,
-    mut out: ResMut<Output<ocall::Union>>,
+    mut out: ResMut<Output>,
 ) -> Result<Progress, super::Fail> {
     if let Some((_, _, ruling)) = judgment.0 {
         if !ruling.passed() {

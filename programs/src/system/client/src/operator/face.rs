@@ -43,8 +43,7 @@ impl Face {
     }
 
     /// 这棵树的**根**（`/`）
-    /// **它线上是独立那一形**（Where::Root：`tag = 0`），不是"零号那一格"——根没有号
-    /// 而零号是真格子（`/svc`）。故柄里存的是 Where，不是一枚 EntryId
+    /// **它线上是独立那一形**（Where::Root），不是一枚 EntryId；根没有号。
     pub fn root(&self) -> Pane<'_> {
         Pane {
             face: self,
@@ -72,11 +71,110 @@ impl Face {
         Ok(Tile { face: self, id })
     }
 
+    pub fn resolve(
+        &self,
+        key: system_api::operator::NamespaceKey,
+        wait: Wait,
+    ) -> Result<system_api::operator::Entry, Fail> {
+        if key.name().is_empty() || env::Mark::of(key.name()) != key.mark() {
+            return Err(Fail::Denied);
+        }
+        self.reference_query(
+            ocall::Req::Resolve {
+                mark: key.mark(),
+                name: String::from(key.name()),
+            },
+            wait,
+            false,
+        )
+    }
+
+    pub fn seek_from(
+        &self,
+        base: system_api::operator::Entry,
+        road: &Path,
+        wait: Wait,
+    ) -> Result<system_api::operator::Entry, Fail> {
+        if base.operator != self.host() {
+            return Err(Fail::Denied);
+        }
+        self.reference_query(
+            ocall::Req::Relative {
+                base,
+                road: road.to_path_buf(),
+            },
+            wait,
+            true,
+        )
+    }
+
+    pub fn pane_from(
+        &self,
+        base: system_api::operator::Entry,
+        road: &Path,
+        wait: Wait,
+    ) -> Result<Pane<'_>, Fail> {
+        let entry = self.seek_from(base, road, wait)?;
+        Pane::from_entry(self, entry, wait)
+    }
+
+    pub fn tile_from(
+        &self,
+        base: system_api::operator::Entry,
+        road: &Path,
+        wait: Wait,
+    ) -> Result<Tile<'_>, Fail> {
+        let entry = self.seek_from(base, road, wait)?;
+        match entry.target {
+            system_api::operator::EntryTarget::Node(id) => Ok(Tile { face: self, id }),
+            system_api::operator::EntryTarget::Root => Err(Fail::NotATile),
+        }
+    }
+
     /// 问一句、收一句（本面那枚问话孔 ＋ 本端这条树路）。
     pub(super) fn call(&self, ask: ocall::Req, wait: Wait) -> Result<ocall::Said, Fail> {
         self.session
             .call::<Call>(ask, wait)
             .map_err(|_| Fail::Unknown)
+    }
+
+    fn reference_query(
+        &self,
+        ask: ocall::Req,
+        wait: Wait,
+        retry_missing: bool,
+    ) -> Result<system_api::operator::Entry, Fail> {
+        let until = deadline(wait);
+        super::lookup::until(
+            || {
+                use super::lookup::Failure;
+                let said = self
+                    .session
+                    .call::<Call>(ask.clone(), remain(until))
+                    .map_err(|_| Failure::Stop(Fail::Unjudged))?;
+                if said.failure_status() == Some(ocall::UNKNOWN) {
+                    return if retry_missing {
+                        Err(Failure::Missing)
+                    } else {
+                        Err(Failure::Stop(Fail::Unknown))
+                    };
+                }
+                let entry = said
+                    .reference()
+                    .map_err(|code| Failure::Stop(map_code(code)))?;
+                if entry.operator != self.host() {
+                    return Err(Failure::Stop(Fail::Denied));
+                }
+                Ok(entry)
+            },
+            |backoff| {
+                if remain(until) == Wait::POLL {
+                    return false;
+                }
+                let _ = execution::room::park(core::time::Duration::from_millis(backoff as u64));
+                remain(until) != Wait::POLL
+            },
+        )
     }
 
     /// **寻**：把 `id` 那一号后面那一枚 Pie 要过来（经会话授进本端表，号随答话回来）
@@ -109,6 +207,16 @@ impl Face {
     ///
     pub fn watch(&self, road: &Path, wait: Wait) -> Result<Watch<'_>, Fail> {
         Watch::of(self, road, wait)
+    }
+
+    /// Subscribe to a path relative to a live directory Entry.
+    pub fn watch_from(
+        &self,
+        base: crate::operator::Entry,
+        road: &Path,
+        wait: Wait,
+    ) -> Result<Watch<'_>, Fail> {
+        Watch::from(self, base, road, wait)
     }
 }
 

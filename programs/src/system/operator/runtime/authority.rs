@@ -70,7 +70,10 @@ pub(super) fn handle(
 fn execute(call: &mut Call<'_>, request: entry::Request) -> entry::Response {
     use entry::*;
     let caller = call.caller;
-    if request.root > 1 || request.permit_restricted > 1 {
+    if request.root > 1
+        || (request.root == 1 && request.anchor != api::EntryId::new(0))
+        || request.permit_restricted > 1
+    {
         return entry::Response::fail(api::Fail::Denied);
     }
     if matches!(
@@ -96,6 +99,51 @@ fn execute(call: &mut Call<'_>, request: entry::Request) -> entry::Response {
         operator: call.tree.operator_task(),
         target,
     };
+    if request.op == ASSOCIATE {
+        let mark = env::Mark::new(request.resource_id);
+        if !system_root_authority(&call, caller)
+            || request.name.is_empty()
+            || env::Mark::of(&request.name) != mark
+        {
+            return entry::Response::fail(api::Fail::Denied);
+        }
+        return match call.tree.associate_namespace_parts(
+            crate::system::operator::tree::NamespaceAssociationInput {
+                mark,
+                name: &request.name,
+                entry: anchor,
+            },
+        ) {
+            Ok(()) => entry::Response {
+                status: api::OK,
+                state: 0,
+                root: 0,
+                entry: api::EntryId::new(0),
+                revision: 0,
+                grant: 0,
+                token: env::PieToken::NONE,
+                view: 0,
+                permit: api::Permit::Public,
+            },
+            Err(fail) => entry::Response::fail(fail),
+        };
+    }
+    if request.op == RESOLVE_NAMESPACE {
+        let mark = env::Mark::new(request.resource_id);
+        if !system_root_authority(&call, caller)
+            || request.name.is_empty()
+            || env::Mark::of(&request.name) != mark
+        {
+            return entry::Response::fail(api::Fail::Denied);
+        }
+        return match call.tree.resolve_namespace_parts(mark, &request.name) {
+            Ok(entry) => response_entry(entry),
+            Err(fail) => entry::Response::fail(fail),
+        };
+    }
+    if let Some(response) = missing_removal_target(call, request.op, anchor) {
+        return response;
+    }
     let authorized = match request.op {
         PART => authorize(
             call,
@@ -877,6 +925,41 @@ fn revoke(call: &mut Call<'_>, id: api::GrantId) -> entry::Response {
     grant_state(call, id)
 }
 
+fn system_root_authority(call: &Call<'_>, caller: TaskId) -> bool {
+    caller == call.tree.system_task()
+        && call.parent_id == api::GrantId(0)
+        && call
+            .tree
+            .grant_at_by_id(call.parent_key, caller)
+            .is_some_and(|(id, spec)| {
+                id == api::GrantId(0)
+                    && spec.holder == caller
+                    && spec.anchor.operator == call.tree.operator_task()
+                    && spec.anchor.target == api::EntryTarget::Root
+                    && spec.ops == api::Ops::ALL
+            })
+}
+
+fn missing_removal_target(call: &Call<'_>, op: u8, anchor: api::Entry) -> Option<entry::Response> {
+    let permission = match op {
+        entry::UNPART => api::Ops::UNPART,
+        entry::UNBIND => api::Ops::UNBIND,
+        _ => return None,
+    };
+    let (_, spec) = call.tree.grant_at_by_id(call.parent_key, call.caller)?;
+    if !spec.ops.contains(permission) {
+        return None;
+    }
+    let root = api::Entry {
+        operator: call.tree.operator_task(),
+        target: api::EntryTarget::Root,
+    };
+    call.tree
+        .relative_to(root, anchor)
+        .is_none()
+        .then(|| entry::Response::fail(api::Fail::Unknown))
+}
+
 fn authorize(call: &Call<'_>, check: Check) -> bool {
     let tree = &*call.tree;
     let Check {
@@ -902,7 +985,7 @@ fn authorize(call: &Call<'_>, check: Check) -> bool {
     } else {
         alloc::format!("{}/{}", base.as_str(), name)
     };
-    spec.scope.allows(&relative)
+    !(op == api::Ops::UNPART && relative.is_empty()) && spec.scope.allows(&relative)
 }
 
 fn valid_name(name: &str) -> bool {

@@ -9,6 +9,42 @@ pub struct Entry {
     pub target: EntryTarget,
 }
 
+/// Stable logical name for an Operator-owned namespace association.
+/// The mark is an index; the name is retained so hash collisions remain detectable.
+#[derive(Clone, Copy, Debug)]
+pub struct NamespaceKey {
+    name: &'static str,
+    mark: Mark,
+}
+
+impl PartialEq for NamespaceKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.mark == other.mark
+    }
+}
+impl Eq for NamespaceKey {}
+
+impl NamespaceKey {
+    pub const fn of(name: &'static str) -> Self {
+        Self {
+            name,
+            mark: Mark::of(name),
+        }
+    }
+
+    pub const fn from_mark(mark: Mark) -> Self {
+        Self { name: "", mark }
+    }
+
+    pub const fn mark(self) -> Mark {
+        self.mark
+    }
+
+    pub const fn name(self) -> &'static str {
+        self.name
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EntryTarget {
     Root,

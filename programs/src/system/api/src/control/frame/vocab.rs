@@ -109,7 +109,7 @@ pub use crate::control::marks::BACK;
 
 /// **本族那块窗格在树上的路**：`/svc/sys/control`（头两段是四族共用的
 /// coalition）
-pub const DIR: &Path = Path::new("svc/sys/control");
+pub const DIR: &Path = Path::new("control");
 
 pub const INSTANCE_EMBARK: u8 = 6;
 pub const INSTANCE_DEBARK: u8 = 7;

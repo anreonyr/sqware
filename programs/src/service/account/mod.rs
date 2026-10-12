@@ -103,11 +103,11 @@ pub fn run() -> Result<(), &'static str> {
     );
     let namespace = system_client::operator::Capability::injected(0, supervisor, WAIT)
         .map_err(|_| "Account Operator grant")?;
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, WAIT)
+        .map_err(|_| "Account service namespace")?;
     let state_entry = tree
-        .tile(
-            system_api::operator::Path::new("/svc/sys/control/state"),
-            WAIT,
-        )
+        .tile_from(service, system_api::operator::Path::new("control/state"), WAIT)
         .and_then(|tile| tile.token(WAIT))
         .map_err(|_| "Account task query entry")?;
     if !matches!(resource::raw::inspect(state_entry), Ok(info)
@@ -454,8 +454,10 @@ fn terminal_host(
     tree: &system_client::operator::Face,
 ) -> Result<TaskId, system_api::control::Fail> {
     let entry = tree
-        .tile(
-            system_api::operator::Path::new("svc/terminal/attach"),
+        .tile_from(
+            tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(5000))
+                .map_err(|_| system_api::control::Fail::NotReady)?,
+            system_api::operator::Path::new(terminal_api::ENTRY_PATH),
             Wait::AtMost(5000),
         )
         .and_then(|tile| tile.token(Wait::AtMost(5000)))

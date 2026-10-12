@@ -12,6 +12,8 @@ pub static PROBE_WATCH_AFTER: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("probe-watch-after"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
             path: "probe-swatch",
             scope: crate::unit::operator::Scope::Names(&["in"]),
             ops: system_api::operator::Ops::BIND

@@ -6,7 +6,7 @@ mod tests {
     use super::declaration::{Namespace, Scope};
     use system_api::{operator::{Ops, Permit, Scope as GrantedScope, Path}, identity::{CoalitionId, Selector}};
     fn rules(scope: Scope, permit: Option<Permit>) -> Namespace {
-        Namespace { path: "arbitrary/layout", scope, ops: Ops::BIND.union(Ops::FIND), permit, source_mark: None, bindings: &[] }
+        Namespace { key: system_api::namespace::SERVICE, placement: super::declaration::Placement::Shared, path: "arbitrary/layout", scope, ops: Ops::BIND.union(Ops::FIND), permit, source_mark: None, bindings: &[] }
     }
     #[test]
     fn composition_controls_layout_and_bounded_names_without_service_classes() {

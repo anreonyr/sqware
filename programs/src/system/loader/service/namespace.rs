@@ -90,8 +90,11 @@ pub(crate) fn faces(
         receipt.entry = Some(entry);
         let view = ResourceView::new(env::Access::STORE).ok_or("Loader Claim view")?;
         let input = layout::ResourceInput {
-            base: system.shared().services,
-            path: PathBuf::try_new("sys/loader").ok_or("Loader namespace path")?,
+            base: system
+                .resolve(system_api::namespace::SERVICE, Wait::AtMost(crate::support::timing::BOOT_MS))
+                .map_err(|_| "Loader namespace root")?,
+            path: PathBuf::try_new(system_api::loader::DIR).ok_or("Loader namespace path")?,
+            retain_prefix: 0,
             bindings: alloc::vec![layout::BindingInput {
                 name: String::from(grant.name()),
                 mark: grant.mark(),

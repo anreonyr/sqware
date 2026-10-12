@@ -89,7 +89,7 @@ impl Exports {
         if self.root.is_some() {
             return Ok(());
         }
-        let root = system.shared().root;
+        let root = system.root();
         let capability = Capability::direct_at(root.operator, system.capability().entrance(), root)
             .map_err(|_| "identity export root capability")?;
         self.root = Some(capability);
@@ -374,14 +374,12 @@ pub fn receive(
 enum ExportFailure {
     Bad,
     Denied,
-    Full,
 }
 
 fn export_status(failure: ExportFailure) -> u8 {
     match failure {
         ExportFailure::Bad => api::BAD,
         ExportFailure::Denied => api::DENIED,
-        ExportFailure::Full => api::FULL,
     }
 }
 

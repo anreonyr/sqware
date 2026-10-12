@@ -9,6 +9,8 @@ pub static PROBE_BOUND: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("probe-bound"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::UNIT,
+            placement: crate::unit::operator::Placement::Instance,
             path: "x",
             scope: crate::unit::operator::Scope::Names(&["x"]),
             ops: system_api::operator::Ops::BIND.union(system_api::operator::Ops::FIND),

@@ -28,9 +28,9 @@ const MS: usize = 1000;
 const WAIT_MS: usize = 3_000;
 
 /// 订的那条路（树底下一段，够短）
-const IN_ROAD: &str = "svc/probe-watch/in";
+const IN_ROAD: &str = "probe-watch/in";
 /// **不在订的范围里**的那一条（第 3 条判据用它）
-const OUT_ROAD: &str = "svc/probe-watch/out";
+const OUT_ROAD: &str = "probe-watch/out";
 
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-watch: landed=1 filtered=1";
@@ -44,6 +44,7 @@ fn main() -> Report<'static> {
         panic!("probe-watch: no tree link");
     };
     let tree = Face::from(&session);
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
     let capabilities = [
         system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap(),
         system_client::operator::Capability::injected(2, unit::sire(), Wait::AtMost(MS)).unwrap(),
@@ -52,7 +53,7 @@ fn main() -> Report<'static> {
     // 二、**订**：`watch` 那一面回 `OK` 之后，此后真变了才发得过来。
     let road = PathBuf::try_new(IN_ROAD).unwrap_or_else(|| panic!("probe-watch: bad road"));
     let mut watch = tree
-        .watch(&road, Wait::AtMost(WAIT_MS))
+        .watch_from(service, &road, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe refused: {fail:?}"));
 
     debug!("probe-watch: subscribed road={}", watch.road());
@@ -101,14 +102,14 @@ fn main() -> Report<'static> {
     const LANDED: usize = 6;
     const EVENTS: usize = LANDED + 1;
     let qroad =
-        PathBuf::try_new("svc/probe-watch-q").unwrap_or_else(|| panic!("probe-watch: bad q road"));
+        PathBuf::try_new("probe-watch-q").unwrap_or_else(|| panic!("probe-watch: bad q road"));
     let mut queue = tree
-        .watch(&qroad, Wait::AtMost(WAIT_MS))
+        .watch_from(service, &qroad, Wait::AtMost(WAIT_MS))
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
     for i in 0..LANDED {
         let _ = spot(
             (&tree, &capabilities),
-            &alloc::format!("svc/probe-watch-q/c{i}"),
+            &alloc::format!("probe-watch-q/c{i}"),
             "probe-watch-q",
         );
     }
@@ -211,24 +212,24 @@ fn main() -> Report<'static> {
         )
         .unwrap()
         .binding;
-    let root = tree.root();
+    let root = service;
     for (name, binding) in [("one", first), ("two", second)] {
-        let road = PathBuf::try_new(&alloc::format!("svc/probe-watch-dynamic/{name}")).unwrap();
-        let tile = root.tile(&road, Wait::AtMost(MS)).unwrap();
+        let road = PathBuf::try_new(&alloc::format!("probe-watch-dynamic/{name}")).unwrap();
+        let tile = tree.tile_from(root, &road, Wait::AtMost(MS)).unwrap();
         assert_eq!(tile.id(), binding.entry_id());
         let token = tile.token(Wait::AtMost(MS)).unwrap();
         assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::of("probe-watch-resource"));
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
     publisher.unbind(first, Wait::AtMost(MS)).unwrap();
-    let first_road = PathBuf::try_new("svc/probe-watch-dynamic/one").unwrap();
+    let first_road = PathBuf::try_new("probe-watch-dynamic/one").unwrap();
     assert!(matches!(
-        root.tile(&first_road, Wait::AtMost(MS)),
+        tree.tile_from(root, &first_road, Wait::AtMost(MS)),
         Err(system_api::operator::Fail::Unknown)
     ));
-    let second_road = PathBuf::try_new("svc/probe-watch-dynamic/two").unwrap();
+    let second_road = PathBuf::try_new("probe-watch-dynamic/two").unwrap();
     assert_eq!(
-        root.tile(&second_road, Wait::AtMost(MS)).unwrap().id(),
+        tree.tile_from(root, &second_road, Wait::AtMost(MS)).unwrap().id(),
         second.entry_id()
     );
 
@@ -255,7 +256,7 @@ fn spot(context: (&Face, &[system_client::operator::Capability; 2]), road: &str,
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let (tree, capabilities) = context;
     let (parent, name) = road.rsplit_once('/').unwrap();
-    let group = parent.strip_prefix("svc/").unwrap();
+    let group = parent;
     let namespace = match group {
         "probe-watch" => 0,
         "probe-watch-q" => 1,
@@ -279,8 +280,11 @@ fn spot(context: (&Face, &[system_client::operator::Capability; 2]), road: &str,
         .binding
         .entry_id();
     assert_eq!(
-        tree.root()
-            .tile(&PathBuf::try_new(road).unwrap(), Wait::AtMost(MS))
+        tree.tile_from(
+            tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap(),
+            &PathBuf::try_new(road).unwrap(),
+            Wait::AtMost(MS),
+        )
             .unwrap()
             .id(),
         id

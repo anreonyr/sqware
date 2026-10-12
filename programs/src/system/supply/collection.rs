@@ -37,6 +37,16 @@ pub struct CollectionInitError<P> {
     manifest: Option<PoleResource<P>>,
 }
 
+impl<P> core::fmt::Debug for CollectionInitError<P> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("CollectionInitError")
+            .field("failure", &self.failure())
+            .field("retained", &self.manifest.is_some())
+            .finish()
+    }
+}
+
 impl<P> CollectionInitError<P> {
     pub fn failure(&self) -> Fail {
         self.failure

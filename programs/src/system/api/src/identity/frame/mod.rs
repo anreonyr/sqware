@@ -9,4 +9,4 @@ pub use super::marks::BACK;
 pub use vocab::{Fail, Reply, Wire, code_to_fail, fail_to_code};
 pub use wire::OK;
 pub const NAME: &str = "identity";
-pub const DIR: &str = "/svc/sys/identity";
+pub const DIR: &str = "api";

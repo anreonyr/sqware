@@ -20,16 +20,14 @@ use system_api::identity::Subject;
 use system_api::operator::Fail;
 use system_api::operator::path::Path;
 use system_api::operator::{self as operator_api, Permit};
-use system_api::operator::{Binding, EntryId};
+use system_api::operator::Binding;
 use system_client::identity::Organization;
 use system_client::identity::Query;
 use system_client::identity::SelfOps;
 use system_client::operator;
 use system_client::operator::Face;
-use system_client::operator::Pane;
 
-const DIR: &system_api::operator::Path = system_api::operator::SVC;
-const PANE: &str = "rule";
+const DIR: &system_api::operator::Path = system_api::operator::Path::new("rule");
 /// 三格的名字（各挂一条规矩）
 const IS: &str = "is";
 const UNDER: &str = "under";
@@ -89,13 +87,14 @@ fn main() -> Report<'static> {
     // Boot installation deliberately selects no organizations. Admission must not
     // silently grant access; the MemberOf door below must therefore deny even p.
 
-    let rule_road = DIR.try_join(PANE).unwrap();
-    let root = tree.root();
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let identity = tree.resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS)).unwrap();
+    let rule_road = DIR.to_path_buf();
     let is_id = plate(&capability, IS, Permit::Identity(Selector::Exact(p))).entry_id();
     let under_id = plate(&capability, UNDER, Permit::Identity(Selector::DescendantOf(p))).entry_id();
     let in_id = plate(&capability, IN, Permit::Identity(Selector::MemberOf(c))).entry_id();
-    let sys = tree.pane(DIR, Wait::AtMost(MS)).unwrap();
-    let at = tree.pane(&rule_road, Wait::AtMost(MS)).unwrap();
+    let sys = tree.pane_from(service, DIR, Wait::AtMost(MS)).unwrap();
+    let at = tree.pane_from(service, &rule_road, Wait::AtMost(MS)).unwrap();
     let pane_id = at.id();
     let made = [is_id, under_id, in_id]
         .iter()
@@ -114,7 +113,7 @@ fn main() -> Report<'static> {
     // 这一问要的是**名册问面**那一格自己的号（规矩里那个 `Opener` 指它）。
     let foreign = system_api::operator::Path::new(system_api::identity::DIR)
         .try_join(system_api::identity::Grant::Resolve.name())
-        .and_then(|road| root.tile(&road, Wait::AtMost(MS)).map(|e| e.id()).ok());
+        .and_then(|road| tree.tile_from(identity, &road, Wait::AtMost(MS)).map(|e| e.id()).ok());
     if let Some(principal) = foreign {
         let _ = plate(&capability, FOREIGN, Permit::Opener(principal));
     }
@@ -136,13 +135,13 @@ fn main() -> Report<'static> {
     let _ = ipc::session::establish::lend(unit::sire(), programs::unit::READY_MARK);
 
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opener` 的正负两面。
-    let is = look(&root, &rule_road, IS, Wait::AtMost(MS));
-    let under = look(&root, &rule_road, UNDER, Wait::AtMost(MS));
-    let inside = look(&root, &rule_road, IN, Wait::AtMost(MS));
-    let open = look(&root, &rule_road, OPEN, Wait::AtMost(MS));
-    let foreign = look(&root, &rule_road, FOREIGN, Wait::AtMost(MS));
-    let on_pane = look(&root, &rule_road, AT_PANE, Wait::AtMost(MS));
-    let on_gone = look(&root, &rule_road, GONE_DOOR, Wait::AtMost(MS));
+    let is = look(&tree, service, &rule_road, IS, Wait::AtMost(MS));
+    let under = look(&tree, service, &rule_road, UNDER, Wait::AtMost(MS));
+    let inside = look(&tree, service, &rule_road, IN, Wait::AtMost(MS));
+    let open = look(&tree, service, &rule_road, OPEN, Wait::AtMost(MS));
+    let foreign = look(&tree, service, &rule_road, FOREIGN, Wait::AtMost(MS));
+    let on_pane = look(&tree, service, &rule_road, AT_PANE, Wait::AtMost(MS));
+    let on_gone = look(&tree, service, &rule_road, GONE_DOOR, Wait::AtMost(MS));
 
     // 七、**换一位代表**（同一个 TID）：领到自己派生的那条号底下。
     let adopt = iset
@@ -151,13 +150,13 @@ fn main() -> Report<'static> {
 
     //     `open` 那一格**照旧过**：开者与问的人是**同一条 TID**，换代表之后两边一起变成 `q`
     //     ——这正是"规矩随**身份**走、不随 TID 走"与 Exact 那一格（拒）的分野。
-    let is_sub = look(&root, &rule_road, IS, Wait::AtMost(MS));
-    let under_sub = look(&root, &rule_road, UNDER, Wait::AtMost(MS));
-    let in_sub = look(&root, &rule_road, IN, Wait::AtMost(MS));
-    let open_sub = look(&root, &rule_road, OPEN, Wait::AtMost(MS));
+    let is_sub = look(&tree, service, &rule_road, IS, Wait::AtMost(MS));
+    let under_sub = look(&tree, service, &rule_road, UNDER, Wait::AtMost(MS));
+    let in_sub = look(&tree, service, &rule_road, IN, Wait::AtMost(MS));
+    let open_sub = look(&tree, service, &rule_road, OPEN, Wait::AtMost(MS));
     // Bound 以 `q` 再问一遍，只判有没有绑定，不判是不是 p。
     // `mine` 那一格只被用来量「改」那一轴（下面的 `keep`），"用"那一轴没人问过它。
-    let mine_sub = look(&root, &rule_road, MINE, Wait::AtMost(MS));
+    let mine_sub = look(&tree, service, &rule_road, MINE, Wait::AtMost(MS));
     let forged = pie::unseal(env::UnsealArgs::hole(
         system_api::operator::entry::AUTH_ENTRY,
     ))
@@ -298,9 +297,9 @@ fn plate(capability: &system_client::operator::Capability, name: &str, permit: P
 /// **不走 Face::tile**：它会先 `find` 一次（授一枚没人接的副本），随后 Tile::token 再
 /// `find` 一次——这两格是自己刚落的，故译号不必重试
 /// 同一条路照样答 Fail::Unknown
-fn look(root: &Pane<'_>, base: &Path, name: &str, millis: Wait) -> Result<(), Fail> {
+fn look(tree: &Face, base_entry: system_api::operator::Entry, base: &Path, name: &str, millis: Wait) -> Result<(), Fail> {
     let road = base.try_join(name).ok_or(Fail::Unknown)?;
-    root.tile(&road, millis)?.token(millis).map(|_| ())
+    tree.tile_from(base_entry, &road, millis)?.token(millis).map(|_| ())
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）

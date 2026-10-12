@@ -261,18 +261,15 @@ impl Supplies {
             .map_err(|_| "supply provider capacity")?;
         let source = receipt.source.take().ok_or("image supply source")?;
         let source_authority = receipt.authority.take().ok_or("image supply authority")?;
-        providers.push(Provider {
-            source,
-            ids: LeaseIds::new(),
-        });
         let inventory_roots = core::mem::take(&mut receipt.roots);
-        let result = Self {
+        let mut result = Self {
             accounts,
             providers,
             leases: alloc::vec::Vec::new(),
             source_authority: Some(source_authority),
             inventory_roots,
         };
+        result.register(source)?;
         Ok(result)
     }
 

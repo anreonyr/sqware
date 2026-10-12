@@ -9,9 +9,13 @@ pub static PROBE_OPERATOR_LAND: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("probe-operator-land"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
             path: "operator-fixture",
-            scope: crate::unit::operator::Scope::Names(&["entry"]),
-            ops: system_api::operator::Ops::BIND
+            scope: crate::unit::operator::Scope::Subtree,
+            ops: system_api::operator::Ops::PART
+                .union(system_api::operator::Ops::UNPART)
+                .union(system_api::operator::Ops::BIND)
                 .union(system_api::operator::Ops::UNBIND)
                 .union(system_api::operator::Ops::FIND),
             permit: None,

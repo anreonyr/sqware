@@ -4,9 +4,13 @@ pub static PROGRAM: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("account"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
             path: "account",
-            scope: crate::unit::operator::Scope::Names(&["create"]),
-            ops: system_api::operator::Ops::BIND
+            scope: crate::unit::operator::Scope::Subtree,
+            ops: system_api::operator::Ops::PART
+                .union(system_api::operator::Ops::UNPART)
+                .union(system_api::operator::Ops::BIND)
                 .union(system_api::operator::Ops::UNBIND)
                 .union(system_api::operator::Ops::FIND),
             permit: Some(system_api::operator::Permit::Bound),

@@ -21,8 +21,11 @@ pub struct Client {
 }
 impl Client {
     pub fn find(tree: &Face, wait: Wait) -> Result<Self, Fail> {
+        let base = tree
+            .resolve(system_api::namespace::SERVICE, wait)
+            .map_err(|_| Fail::Bad)?;
         Self::of(
-            tree.tile(DIR, wait)
+            tree.tile_from(base, DIR, wait)
                 .and_then(|tile| tile.token(wait))
                 .map_err(|_| Fail::Bad)?,
         )

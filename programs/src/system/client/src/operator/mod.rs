@@ -6,7 +6,7 @@ mod tile;
 mod watch;
 use system_api::operator::*;
 
-pub use capability::{Capability, GrantInfo};
+pub use capability::{Capability, GrantInfo, PartResult};
 pub use face::{BERTH, Face};
 pub use pane::Pane;
 pub use tile::Tile;

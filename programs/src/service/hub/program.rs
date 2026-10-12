@@ -21,8 +21,10 @@ pub static PROGRAM: UnitFile = UnitFile {
     operator: crate::unit::OperatorConfig {
         namespace: &[
             crate::unit::operator::Namespace {
+                key: system_api::namespace::SERVICE,
+                placement: crate::unit::operator::Placement::Shared,
                 path: "hub",
-                scope: crate::unit::operator::Scope::Names(&["bond", "list", "claim"]),
+                scope: crate::unit::operator::Scope::Subtree,
                 ops: system_api::operator::Ops::BIND
                     .union(system_api::operator::Ops::UNBIND)
                     .union(system_api::operator::Ops::FIND),
@@ -31,7 +33,9 @@ pub static PROGRAM: UnitFile = UnitFile {
                 bindings: &[],
             },
             crate::unit::operator::Namespace {
-                path: "dev",
+                key: system_api::namespace::DEVICE,
+                placement: crate::unit::operator::Placement::Shared,
+                path: "",
                 scope: crate::unit::operator::Scope::Subtree,
                 ops: system_api::operator::Ops::PART
                     .union(system_api::operator::Ops::UNPART)

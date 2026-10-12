@@ -110,11 +110,12 @@ fn fetch(tree: &operator::Face, authority: env::TaskId, grant: Grant) -> PieToke
         assert_eq!(mark, grant.mark());
         return entry;
     }
+    let identity = tree.resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS)).unwrap();
     let road = system_api::operator::Path::new(system_api::identity::DIR)
         .try_join(grant.name())
         .expect("probe-denied: bad action name");
     let entry = tree
-        .tile(&road, Wait::AtMost(MS))
+        .tile_from(identity, &road, Wait::AtMost(MS))
         .unwrap()
         .token(Wait::AtMost(MS))
         .expect("probe-denied: action entry missing");

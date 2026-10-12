@@ -425,26 +425,6 @@ impl Ledger {
         Ok(State::Closed)
     }
 
-    pub fn fail(&mut self, key: LeaseKey, failure: Fail) -> Result<(), Fail> {
-        let state = self.find_record(key)?.phase.state();
-        match state {
-            State::Acquiring => {
-                let record = self.find_mut(key)?;
-                record.phase = LeasePhase::Closed(Some(failure));
-                self.watermark_state(
-                    key,
-                    WatermarkState {
-                        state: State::Closed,
-                        failure: Some(failure),
-                    },
-                );
-                Ok(())
-            }
-            State::Closed => Ok(()),
-            _ => Err(Fail::Conflict),
-        }
-    }
-
     pub fn abort(&mut self, key: LeaseKey, failure: Fail) -> Result<(), Fail> {
         let state = self.find_record(key)?.phase.state();
         match state {
@@ -840,10 +820,6 @@ impl PrivateRoot {
         })
     }
 
-    pub fn deliver(&self, request: DeliveryRequest<'_>) -> Result<Delivery, Fail> {
-        self.deliver_with(request, &mut NativePieEffects)
-    }
-
     pub fn deliver_with<E: PieEffects + ?Sized>(
         &self,
         request: DeliveryRequest<'_>,
@@ -874,26 +850,12 @@ impl PrivateRoot {
     pub fn token(&self) -> PieToken {
         self.token
     }
-    pub fn kind(&self) -> PieKind {
-        self.kind
-    }
-    pub fn permission(&self) -> Permission {
-        self.permission
-    }
-    pub fn lease_mark(&self) -> Mark {
-        self.lease_mark
-    }
-
     pub fn valid_for(&self, check: RootCheck) -> bool {
         self.valid
             && self.lease == check.key.id
             && self.index == check.index
             && self.source == check.owner
             && self.lease_mark == lease_mark(check.key.id, check.key.origin, check.index)
-    }
-
-    pub fn revoke(&mut self) -> Result<(), Fail> {
-        self.revoke_with(&mut NativePieEffects)
     }
 
     pub fn revoke_with<E: PieEffects + ?Sized>(&mut self, effects: &mut E) -> Result<(), Fail> {

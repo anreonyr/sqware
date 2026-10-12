@@ -33,8 +33,11 @@ pub(crate) fn prepare(
         }
         let plan = crate::system::app::namespace::Prepare::resources(
             crate::system::app::namespace::ResourceInput {
-                base: system.shared().services,
-                path: PathBuf::try_new("sys/identity").ok_or("Identity endpoint path")?,
+                base: system
+                    .resolve(system_api::namespace::IDENTITY, Wait::AtMost(crate::support::timing::BOOT_MS))
+                    .map_err(|_| "Identity namespace root")?,
+                path: PathBuf::try_new(system_api::identity::DIR).ok_or("Identity endpoint path")?,
+                retain_prefix: 0,
                 bindings, wait: Wait::AtMost(crate::support::timing::BOOT_MS),
             },
         ).ok_or("Identity endpoint plan")?;

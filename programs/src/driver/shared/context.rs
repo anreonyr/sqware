@@ -18,8 +18,6 @@ use system_api::operator::{self as operator_api, Permit};
 use system_client::operator::{self, Capability};
 
 /// 要找的那位服务（线路由者）在树上的名字
-const ROUTER: &str = "router";
-
 pub struct Context {
     pub session: Session,
     capability: Capability,
@@ -64,11 +62,9 @@ impl Context {
     /// **它拿一面借来的视图**而不是收走会话：`Context` 持着这条会话（`uart` 那一台还要从它
     /// 编自己那两面），故 operator::Face::from 按值取一份视图（树那三格是 `Copy`）
     pub fn line(&self, line: u32, ms: Wait) -> Result<Line, ()> {
-        // 路是**驱动那一族的常量**（`/svc/drv`）接上服务名——一处都不自己拼。
-        let road = router_api::ROAD.try_join(ROUTER).ok_or(());
-        let Ok(road) = road else { return Err(()) };
         let tree = operator::Face::from(&self.session);
-        let entry = match tree.tile(&road, ms) {
+        let base = tree.resolve(system_api::namespace::SERVICE, ms).map_err(|_| ())?;
+        let entry = match tree.tile_from(base, router_api::ENTRY, ms) {
             Ok(entry) => entry,
             Err(fail) => {
                 debug::put(&alloc::format!("line: tile failed {fail:?}"));

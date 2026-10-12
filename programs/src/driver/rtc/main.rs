@@ -35,8 +35,6 @@ const ASK: Ask = Ask {
     policy: Policy::ONLY,
 };
 
-const ME: &str = "rtc";
-
 /// 等板 / 等树 / 办一趟登记的总上限（毫秒）。**必须有界**
 const MS: usize = 1000;
 
@@ -68,9 +66,13 @@ fn main() -> Result<(), Fail> {
     let line = ctx
         .line(deed.line, Wait::AtMost(MS))
         .map_err(|_| Fail::at(E_RTC, "line"))?;
-    debug!("{ME}: line occupied");
+    debug!("rtc: line occupied");
 
-    ctx.plate(entry, ME, Wait::AtMost(MS));
+    ctx.plate(
+        entry,
+        programs::driver::rtc::core::frame::ENTRY_NAME,
+        Wait::AtMost(MS),
+    );
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);

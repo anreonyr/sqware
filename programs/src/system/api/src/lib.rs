@@ -4,6 +4,7 @@ extern crate alloc;
 
 pub mod control;
 pub mod identity;
+pub mod namespace;
 pub mod operator;
 pub mod supply;
 
@@ -23,7 +24,7 @@ pub mod loader {
     }
     pub use wire::OK;
 
-    pub const DIR: &str = "svc/sys/loader";
+    pub const DIR: &str = "loader";
     pub const CLAIM_MS: usize = 3000;
     pub const MAX_ARGS: usize = 64;
     pub const MAX_IMAGE: usize = 16 * 1024 * 1024;

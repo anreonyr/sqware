@@ -6,7 +6,10 @@ mod capability;
 
 #[cfg(test)]
 mod tests {
-    use super::capability::{at, coordinates, encode_scope, revoke_unaccepted, valid_descriptor};
+    use super::capability::{
+        at, coordinates, encode_scope, revoke_unaccepted, transport_fail, valid_descriptor,
+        void_reply,
+    };
     use env::TaskId;
     use system_api::operator::entry;
     use system_api::operator::{
@@ -217,5 +220,40 @@ mod tests {
             };
             assert_eq!(response.operation_state(), Ok(expected));
         }
+    }
+
+    #[test]
+    fn void_mutations_report_server_rejections_instead_of_success() {
+        let response = |status| entry::Response {
+            status,
+            state: 0,
+            root: 0,
+            entry: EntryId::new(12),
+            revision: 0,
+            grant: 0,
+            token: env::PieToken::NONE,
+            view: 0,
+            permit: system_api::operator::Permit::Public,
+        };
+        assert_eq!(
+            void_reply(response(system_api::operator::OK), anchor().operator),
+            Ok(())
+        );
+        assert_eq!(
+            void_reply(response(system_api::operator::DENIED), anchor().operator),
+            Err(system_api::operator::Fail::Denied)
+        );
+        assert_eq!(
+            void_reply(response(system_api::operator::UNKNOWN), anchor().operator),
+            Err(system_api::operator::Fail::Unknown)
+        );
+        assert_eq!(
+            transport_fail(system_api::operator::Fail::Unknown),
+            system_api::operator::Fail::Unjudged
+        );
+        assert_eq!(
+            transport_fail(system_api::operator::Fail::Denied),
+            system_api::operator::Fail::Denied
+        );
     }
 }

@@ -10,33 +10,11 @@ use system_client::operator::GrantInfo;
 const TASK_CAP: usize = 256;
 const NAMESPACE_CAP: usize = 32;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Base {
-    Root,
-    Services,
-    Drivers,
-}
-
 /// Coordinates taken from Control's live slot or instance record.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Coordinates {
     pub task: TaskId,
     pub team: Option<TeamId>,
-}
-
-/// Places one task below a team when its native Control record has a team.
-pub fn team_task_prefix(coordinates: Coordinates) -> Option<PathBuf> {
-    let team = coordinates.team?;
-    PathBuf::try_new(&alloc::format!("uit/{}/{}", team.get(), coordinates.task.get()))
-}
-
-/// Explicit app mapping; `prefix` chooses task-specific placement when needed.
-#[derive(Clone, Copy)]
-pub struct Route {
-    pub program: &'static str,
-    pub namespace: usize,
-    pub base: Base,
-    pub prefix: fn(Coordinates) -> Option<PathBuf>,
 }
 
 pub struct PrepareTask {
@@ -68,34 +46,24 @@ struct TaskReceipt {
     coordinates: Coordinates,
     program: Option<&'static str>,
     items: Vec<Receipt>,
+    placements: Vec<(system_api::operator::NamespaceKey, Receipt)>,
     delivery: Vec<Delivery>,
+    planned: bool,
     complete: bool,
 }
 
 /// Bounded, persistent prepare/retire state owned by Assembly.
 pub struct NamespaceInstallations {
-    routes: &'static [Route],
     tasks: Vec<TaskReceipt>,
     next_grant: u64,
 }
 
 impl NamespaceInstallations {
-    pub fn new(routes: &'static [Route]) -> Option<Self> {
-        if routes.len() > NAMESPACE_CAP * TASK_CAP
-            || routes.iter().enumerate().any(|(index, route)| {
-                route.program.is_empty()
-                    || routes[..index].iter().any(|previous| {
-                        previous.program == route.program && previous.namespace == route.namespace
-                    })
-            })
-        {
-            return None;
-        }
-        Some(Self {
-            routes,
+    pub fn new() -> Self {
+        Self {
             tasks: Vec::new(),
             next_grant: 1,
-        })
+        }
     }
 
     /// Reserves the task's installation receipt with coordinates read from Control.
@@ -118,7 +86,9 @@ impl NamespaceInstallations {
             coordinates,
             program: None,
             items: Vec::new(),
+            placements: Vec::new(),
             delivery: Vec::new(),
+            planned: false,
             complete: false,
         });
         Ok(())
@@ -148,57 +118,119 @@ impl NamespaceInstallations {
             if declarations.len() > NAMESPACE_CAP {
                 return Err(api::Fail::Full);
             }
-            let shared = system.shared();
-            let mut items = Vec::new();
-            items
+            if declarations.iter().any(|decl| {
+                decl.placement == crate::unit::operator::Placement::Instance
+                    && coordinates.team.is_none()
+            }) {
+                return Err(api::Fail::Denied);
+            }
+            let mut placements = Vec::new();
+            placements
                 .try_reserve_exact(declarations.len())
                 .map_err(|_| api::Fail::Full)?;
-            let mut delivery = Vec::new();
-            delivery
-                .try_reserve_exact(declarations.len())
-                .map_err(|_| api::Fail::Full)?;
-            let mut next_grant = self.next_grant;
-            for (index, declaration) in declarations.iter().copied().enumerate() {
-                let route = self
-                    .routes
-                    .iter()
-                    .find(|route| route.program == program_name && route.namespace == index)
-                    .ok_or(api::Fail::Unknown)?;
-                let base = match route.base {
-                    Base::Root => shared.root,
-                    Base::Services => shared.services,
-                    Base::Drivers => shared.drivers,
-                };
-                let prefix = (route.prefix)(coordinates).ok_or(api::Fail::Denied)?;
-                let id = api::GrantId(next_grant);
-                next_grant = next_grant.checked_add(1).ok_or(api::Fail::Full)?;
-                let plan = crate::system::app::namespace::Prepare::declared(
-                    crate::system::app::namespace::PrepareInput {
+            for declaration in declarations.iter().copied() {
+                if declaration.placement != crate::unit::operator::Placement::Instance
+                    || placements.iter().any(|(key, _)| *key == declaration.key)
+                {
+                    continue;
+                }
+                let base = system.resolve(declaration.key, request.wait)?;
+                let team = coordinates.team.ok_or(api::Fail::Denied)?;
+                let prefix = PathBuf::try_new(&alloc::format!(
+                    "{}/{}",
+                    team.get(),
+                    coordinates.task.get()
+                ))
+                .ok_or(api::Fail::Denied)?;
+                let plan = crate::system::app::namespace::Prepare::resources(
+                    crate::system::app::namespace::ResourceInput {
                         base,
-                        prefix,
-                        declaration,
-                        grant_id: id,
-                        holder: request.task,
-                        source: Some(request.task),
+                        path: prefix,
+                        retain_prefix: 1,
                         bindings: Vec::new(),
                         wait: request.wait,
                     },
                 )
                 .ok_or(api::Fail::Denied)?;
-                items.push(Receipt::Preparing(
-                    crate::system::app::namespace::Preparation::new(plan),
+                placements.push((
+                    declaration.key,
+                    Receipt::Preparing(crate::system::app::namespace::Preparation::new(plan)),
                 ));
-                delivery.push(Delivery {
-                    root: None,
-                    entrance: None,
-                    sent: false,
-                });
             }
+            let mut delivery = Vec::new();
+            delivery
+                .try_reserve_exact(declarations.len())
+                .map_err(|_| api::Fail::Full)?;
+            delivery.resize_with(declarations.len(), || Delivery {
+                root: None,
+                entrance: None,
+                sent: false,
+            });
             let record = &mut self.tasks[existing_index];
             record.program = Some(program_name);
-            record.items = items;
+            record.items = Vec::new();
+            record.placements = placements;
             record.delivery = delivery;
-            self.next_grant = next_grant;
+            record.planned = false;
+        }
+
+        {
+            let record = &mut self.tasks[existing_index];
+            for (_, item) in &mut record.placements {
+                if let Receipt::Preparing(preparation) = item {
+                    system.prepare(preparation)?;
+                    let completed = core::mem::replace(item, Receipt::Vacant);
+                    let Receipt::Preparing(preparation) = completed else {
+                        return Err(api::Fail::Dead);
+                    };
+                    *item = Receipt::Installed(preparation.into_installed().ok_or(api::Fail::Dead)?);
+                }
+            }
+            if !record.planned {
+                let mut items = Vec::new();
+                items
+                    .try_reserve_exact(declarations.len())
+                    .map_err(|_| api::Fail::Full)?;
+                let mut next_grant = self.next_grant;
+                for declaration in declarations.iter().copied() {
+                    let base = match declaration.placement {
+                        crate::unit::operator::Placement::Shared => {
+                            system.resolve(declaration.key, request.wait)?
+                        }
+                        crate::unit::operator::Placement::Instance => record
+                            .placements
+                            .iter()
+                            .find(|(key, _)| *key == declaration.key)
+                            .and_then(|(_, receipt)| match receipt {
+                                Receipt::Installed(installed) => Some(installed.anchor),
+                                Receipt::Preparing(_) | Receipt::Vacant => None,
+                            })
+                            .ok_or(api::Fail::Dead)?,
+                    };
+                    let id = api::GrantId(next_grant);
+                    next_grant = next_grant.checked_add(1).ok_or(api::Fail::Full)?;
+                    let plan = crate::system::app::namespace::Prepare::declared(
+                        crate::system::app::namespace::PrepareInput {
+                            base,
+                            prefix: PathBuf::root(),
+                            retain_prefix: 0,
+                            declaration,
+                            grant_id: id,
+                            holder: request.task,
+                            source: Some(request.task),
+                            bindings: Vec::new(),
+                            wait: request.wait,
+                        },
+                    )
+                    .ok_or(api::Fail::Denied)?;
+                    items.push(Receipt::Preparing(
+                        crate::system::app::namespace::Preparation::new(plan),
+                    ));
+                }
+                record.items = items;
+                record.planned = true;
+                self.next_grant = next_grant;
+            }
         }
 
         let record = self
@@ -266,6 +298,22 @@ impl NamespaceInstallations {
             record.items.pop();
             record.delivery.pop();
         }
+        while let Some((_, item)) = record.placements.last_mut() {
+            match item {
+                Receipt::Preparing(preparation) => {
+                    if !system.retire_preparation(preparation)? {
+                        return Ok(false);
+                    }
+                }
+                Receipt::Installed(installed) => {
+                    if !system.retire(installed)? {
+                        return Ok(false);
+                    }
+                }
+                Receipt::Vacant => return Err(api::Fail::Dead),
+            }
+            record.placements.pop();
+        }
         self.tasks.swap_remove(index);
         Ok(true)
     }
@@ -281,6 +329,7 @@ impl NamespaceInstallations {
         }
     }
 
+    #[cfg(test)]
     pub fn prepared_task(
         &self,
         task: TaskId,
@@ -293,6 +342,7 @@ impl NamespaceInstallations {
         let declarations = program.map_or(0, |program| program.operator.namespace.len());
         record.program == Some(program_name)
             && record.complete
+            && record.planned
             && record.items.len() == declarations
             && record
                 .items

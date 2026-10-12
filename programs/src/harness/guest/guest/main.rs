@@ -2,7 +2,7 @@
 #![no_main]
 
 //! # 为什么两条路都走
-//! （router_api::ROAD 那段目录）。
+//! （router_api::ENTRY 那段相对路径）。
 //! # 一问一答由这两趟各自证
 //! 自己的客人（`lodger`：占一条线就死、失败那趟也走一遍）。
 //! # 特权级由清单定
@@ -21,8 +21,6 @@ use system_api::operator::Fail;
 use system_client::operator;
 use system_client::operator::Face;
 
-const WANT: &str = "router";
-
 const MS: usize = 1000;
 
 const E_OK: usize = 0;
@@ -38,15 +36,15 @@ fn main() -> Report<'static> {
         return bail("guest: no tree link");
     };
     let tree = Face::of(session);
-    let Some(road) = router_api::ROAD.try_join(WANT) else {
-        return bail("guest: bad name");
+    let Ok(service) = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)) else {
+        return bail("guest: no service namespace");
     };
 
     // **间接寻址那一手**：名字先译成号（那一格才谈得上"挂上了没有"），拿到号再按号寻。
     // `find` 那一族的失败折成失败域那一格（按本族那张表折回数：
     // **`BAD` / `UNKNOWN` / 没走到是同一格** Fail::Unknown）。
     // `AtMost(MS)` 是**额度不是整趟时限**（往返耗时不计账、推不进去还会等在门外）。
-    let (find, at) = match find_face(&tree, &road) {
+    let (find, at) = match find_face(&tree, service, router_api::ENTRY) {
         Ok(entry) => (system_api::operator::OK, entry),
         Err(fail) => (system_api::operator::fail_to_code(Some(fail)), none),
     };
@@ -74,12 +72,15 @@ fn main() -> Report<'static> {
     );
 }
 
-fn find_face(tree: &Face, road: &system_api::operator::Path) -> Result<PieToken, Fail> {
-    let root = tree.root();
+fn find_face(
+    tree: &Face,
+    service: system_api::operator::Entry,
+    road: &system_api::operator::Path,
+) -> Result<PieToken, Fail> {
     let mut left = MS;
     loop {
-        match root
-            .tile(road, Wait::AtMost(MS))
+        match tree
+            .tile_from(service, road, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Ok(entry),

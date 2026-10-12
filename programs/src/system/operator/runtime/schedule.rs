@@ -1,6 +1,5 @@
 use super::{Fail, answer, authority, door, events, exchange, frame, management};
 use ::schedule::{Plan, Schedule};
-use system_api::operator as ocall;
 pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     let mut start = Schedule::sequence();
     start.system("tip", management::tip)?;
@@ -30,7 +29,7 @@ pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     frame.system("admit", door::admit)?;
     frame.system("subscribe", events::subscribe)?;
     frame.system("apply", answer::apply)?;
-    frame.system("publish", events::emit::<ocall::Union>)?;
+    frame.system("publish", events::emit)?;
     frame.system("reply", exchange::reply)?;
     frame.system("sweep", exchange::sweep)?;
     let mut stop = Schedule::sequence();

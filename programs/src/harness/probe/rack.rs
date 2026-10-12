@@ -18,7 +18,7 @@ use system_api::operator::path::PathBuf;
 use crate::driver::uart::core::frame::{self, Bytes};
 
 /// 试验场那条路：**测具自己的**一格（不走 `/svc/drv`——那边是产品的面）。
-pub const ROAD: &str = "svc/probe-rack";
+pub const ROAD: &str = "probe-rack";
 
 /// 两侧各要发几条：**正好一具架的容量**（不绕环 ⇒ 读数确定，丢不丢都看得出）。
 pub fn count() -> usize {

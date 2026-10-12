@@ -67,6 +67,17 @@ pub struct InitError<P> {
     resource: Option<PoleResource<P>>,
 }
 
+impl<P> core::fmt::Debug for InitError<P> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("InitError")
+            .field("failure", &self.failure())
+            .field("cleanup_failure", &self.cleanup_failure())
+            .field("retained", &self.resource.is_some())
+            .finish()
+    }
+}
+
 impl<P> InitError<P> {
     pub fn failure(&self) -> Fail {
         self.failure
@@ -75,6 +86,7 @@ impl<P> InitError<P> {
         self.cleanup_failure
     }
 
+    #[allow(dead_code, reason = "Transfers a retained failed resource as an alternative to retrying cleanup.")]
     pub fn into_resource(self) -> Option<PoleResource<P>> {
         self.resource
     }
@@ -174,10 +186,6 @@ where
         }
     }
 
-    pub(crate) fn shared_token(&self) -> PieToken {
-        self.root
-    }
-
     fn revoke_root(&mut self) -> Result<(), Fail> {
         self.cleanup_root_with(&mut NativePoleEffects)
     }
@@ -260,8 +268,4 @@ where
     fn shutdown(&mut self) -> Result<(), Fail> {
         self.revoke_root()
     }
-}
-
-pub fn pole_admit_all(_: &LeaseRequest) -> bool {
-    true
 }

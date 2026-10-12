@@ -2,7 +2,7 @@
 #![no_main]
 
 //! 问一声现在几点、约一个时刻、睡到那一声、走人。
-//! 它是 `rtc` 那台驱动的**真客人**（`/svc/drv/rtc` 那块门牌第一位用家）：那台时钟只有持有它的域
+//! 它是 `rtc` 那台驱动的**真客人**（RTC API 相对接口路径的第一位用家）：那台时钟只有持有它的域
 //! （换别人试会与它抢时间，那是竞态不是读数）。
 //! # 为什么它不碰设备
 //! # 特权级
@@ -27,8 +27,6 @@ use programs::driver::rtc::core::Fail as RFail;
 use programs::driver::rtc::core::frame as rcall;
 
 /// 要找的那位服务在树上的名字：**实时钟**（`/svc/drv/rtc`——名字用服务名）
-const WANT: &str = "rtc";
-
 /// 等板 / 等树 / 找一趟服务 / 办一趟往返的总上限（毫秒）。**必须有界**
 const MS: usize = 1000;
 
@@ -97,13 +95,11 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 }
 
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let road = router_api::ROAD.try_join(WANT)?;
-    // Pane::tile 与 Tile::token 上。
-    let root = tree.root();
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok()?;
     let mut left = MS;
     loop {
-        match root
-            .tile(&road, Wait::AtMost(MS))
+        match tree
+            .tile_from(service, programs::driver::rtc::core::frame::ENTRY_PATH, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Some(entry),

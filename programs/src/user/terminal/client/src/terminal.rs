@@ -4,7 +4,6 @@ use ::resource::{
 };
 use env::wire::Span as _;
 use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
-use system_api::operator::Path;
 use system_client::operator::Face;
 use terminal_api::frame::{self, Command, Input, Reply};
 use wire::message::Message;
@@ -17,8 +16,11 @@ pub struct Terminal {
 }
 impl Terminal {
     pub fn find(tree: &Face) -> Result<Self, ()> {
+        let base = tree
+            .resolve(system_api::namespace::SERVICE, MS)
+            .map_err(|_| ())?;
         let entry = tree
-            .tile(Path::new("/svc/terminal/attach"), MS)
+            .tile_from(base, system_api::operator::Path::new(terminal_api::ENTRY_PATH), MS)
             .and_then(|tile| tile.token(MS))
             .map_err(|_| ())?;
         let host = match reserve(entry) {

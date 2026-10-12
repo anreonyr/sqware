@@ -26,14 +26,15 @@ fn root() -> PathBuf {
 /// （riscv 内联汇编，宿主上不做代码生成就编不过）⇒ 它**不能**依赖 `programs`。
 /// 各模块的 UnitFile 声明与镜像/部署选择分开；本 crate 只读取纯配置，不依赖运行时代码。
 ///
-/// 装配声明只依赖 `env` 和纯 provider API crates（hub / terminal / router）；这些 API 不依赖
+/// 装配声明只依赖 `env` 和纯 provider API crates（router / pipe / account）；这些 API 不依赖
 /// execution 或 protocol。`programs/src/unit/mod.rs` 与这份宿主 crate 的依赖图一起检查这条边界。
-#[allow(dead_code)]
+#[allow(dead_code, unused_imports, reason = "Host projection of shared configuration and runtime reexports.")]
 #[path = "../../../programs/src/unit/mod.rs"]
 mod unit;
 
 // Pure command resource declarations are shared with the Shell UnitFile. This host module only
 // reads those declarations; it does not compile or run the Shell command loop.
+#[allow(dead_code, reason = "Image reads bindings; Shell consumes command names and ports.")]
 #[path = "../../../programs/src/user/shell/commands.rs"]
 pub(crate) mod shell_commands;
 

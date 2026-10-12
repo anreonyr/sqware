@@ -8,8 +8,9 @@ pub mod name;
 pub mod path;
 
 pub use authority::{
-    descriptor_mark, Binding, BoundResource, Entry, EntryTarget, GrantDescriptor, GrantId,
-    GrantSpec, GrantState, GrantSubmission, OperationId, OperationState, Ops, ResourceView, Scope,
+    Binding, BoundResource, Entry, EntryTarget, GrantDescriptor, GrantId, GrantSpec, GrantState,
+    GrantSubmission, NamespaceKey, OperationId, OperationState, Ops, ResourceView, Scope,
+    descriptor_mark,
 };
 pub use frame::{
     ASK_MARK, BAD, DENIED, EntryId, Event, FULL, Fail, Kind, Listing, OK, PANE_CAP, Permit, Req,
@@ -21,8 +22,6 @@ pub use marks::{DECLARATIONS as MARK_DECLARATIONS, LINK_MARK, WATCH_MARK};
 pub use path::{Path, PathBuf};
 
 pub const NAME: &str = "operator";
-pub const SVC: &Path = Path::new("svc");
-
 #[mold::interface(id = "sqware.system.operator.v1", metadata)]
 mod interface {
     #[channels]

@@ -1,16 +1,18 @@
+use super::events::Watchers;
 use super::exchange::Request;
 use crate::system::operator::tree::Operator;
 use ::resource::port::{self, Policy};
 use ::schedule::{Progress, ResMut};
 use system_api::operator as ocall;
-pub(super) struct Output<T> {
-    pub reply: Option<T>,
+pub(super) struct Output {
+    pub reply: Option<ocall::Union>,
     pub changes: alloc::vec::Vec<crate::system::operator::tree::Change>,
+    pub watchers: Watchers,
 }
 pub(super) fn apply(
     mut request: ResMut<Request>,
     mut tree: ResMut<Operator>,
-    mut out: ResMut<Output<ocall::Union>>,
+    mut out: ResMut<Output>,
 ) -> Result<Progress, super::Fail> {
     if out.reply.is_some() {
         return Ok(Progress::Done);
@@ -64,9 +66,23 @@ pub(super) fn apply(
                     Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
                 };
             }
+            ocall::Wire::Resolve { mark, name } => {
+                return match tree.resolve_namespace_parts(mark, &name) {
+                    Ok(entry) => ocall::Union::Reference(entry),
+                    Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
+                };
+            }
+            ocall::Wire::Relative { base, road } => {
+                return match tree.seek_from(base, &road) {
+                    Ok(entry) => ocall::Union::Reference(entry),
+                    Err(fail) => ocall::Union::Status(ocall::fail_to_code(Some(fail))),
+                };
+            }
             // **订一条子树**：把交来的页与铃认成写端，记下"谁订了哪条路"。**答的就是成没成**
             // （订阅者拿这一句当"此后的事件都算你的"那个点——见 `watch` 面那一节的序）。
-            ocall::Wire::Watch { .. } => ocall::Union::Status(ocall::BAD),
+            ocall::Wire::Watch { .. } | ocall::Wire::WatchFrom { .. } => {
+                ocall::Union::Status(ocall::BAD)
+            }
         }
     })();
     out.reply = Some(result);

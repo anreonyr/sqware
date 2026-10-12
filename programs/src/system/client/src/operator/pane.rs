@@ -8,9 +8,9 @@ use crate::operator as ocall;
 use crate::operator::Path;
 use crate::operator::{EntryId, Fail, Listing, Where};
 
+use super::Face;
 use super::face::map_code;
 use super::tile::Tile;
-use super::Face;
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它
 /// 它能继续分 / 落 / 列——正是"一个值决定后续操作的宾语"那一格，故给它一个柄；一枚砖只需
@@ -29,6 +29,24 @@ impl<'a> Pane<'a> {
             face,
             at: Where::At(id),
         }
+    }
+
+    pub(super) fn from_entry(
+        face: &'a Face,
+        entry: system_api::operator::Entry,
+        wait: Wait,
+    ) -> Result<Pane<'a>, Fail> {
+        if entry.operator != face.host() {
+            return Err(Fail::Denied);
+        }
+        let at = match entry.target {
+            system_api::operator::EntryTarget::Root => Where::Root,
+            system_api::operator::EntryTarget::Node(id) => Where::At(id),
+        };
+        face.call(ocall::Req::List(at), wait)?
+            .list()
+            .map_err(map_code)?;
+        Ok(Pane { face, at })
     }
 
     /// 按**窗格**读一格：`list` 它一下——`list` 的判据正是"这一号是一块 `Pane`"
@@ -50,6 +68,28 @@ impl<'a> Pane<'a> {
         }
     }
 
+    pub fn entry(&self) -> system_api::operator::Entry {
+        system_api::operator::Entry {
+            operator: self.face.host(),
+            target: match self.at {
+                Where::Root => system_api::operator::EntryTarget::Root,
+                Where::At(id) => system_api::operator::EntryTarget::Node(id),
+            },
+        }
+    }
+
+    pub fn seek(&self, road: &Path, wait: Wait) -> Result<system_api::operator::Entry, Fail> {
+        self.face.seek_from(self.entry(), road, wait)
+    }
+
+    pub fn pane(&self, road: &Path, wait: Wait) -> Result<Pane<'a>, Fail> {
+        self.face.pane_from(self.entry(), road, wait)
+    }
+
+    pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'a>, Fail> {
+        self.face.tile_from(self.entry(), road, wait)
+    }
+
     /// **列**：这一块里有哪些号（Face::root = 根那一层）
     /// 答的是那一串号（Listing 是定长值、不是借来的迭代器——它自带 `iter`）
     pub fn list(&self, wait: Wait) -> Result<Listing, Fail> {
@@ -61,16 +101,5 @@ impl<'a> Pane<'a> {
     pub fn name(&self, e: EntryId, wait: Wait) -> Result<String, Fail> {
         let said = self.face.call(ocall::Req::Name(e), wait)?;
         said.name().map_err(map_code)
-    }
-
-    /// **一条路** → 一枚砖：只译号（`seek`），**不动树、不补问**——编号由 Tile::token 认
-    /// **路从根写起，不是相对这一块**：`Road` 那一帧只带段列表，持树者从**根**解（正文明写
-    pub fn tile(&self, road: &Path, wait: Wait) -> Result<Tile<'_>, Fail> {
-        let said = self.face.call(ocall::Req::Road(road.to_path_buf()), wait)?;
-        let id = said.entry().map_err(map_code)?;
-        Ok(Tile {
-            face: self.face,
-            id,
-        })
     }
 }

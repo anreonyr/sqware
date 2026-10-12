@@ -1,0 +1,16 @@
+[package]
+name = "namespace-layout-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+env = { path = "../../../crates/env" }
+ipc = { path = "../../../crates/ipc" }
+resource = { path = "../../../crates/resource" }
+system-api = { path = "../../src/system/api" }

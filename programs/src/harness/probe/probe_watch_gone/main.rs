@@ -26,7 +26,7 @@ use system_client::operator::Face;
 
 const MS: usize = 1000;
 /// 订的那条路 —— 与 `probe-watch-after` 改的那条**逐字相同**（两份文件各写一遍：各是独立 bin）。
-const ROAD: &str = "svc/probe-swatch";
+const ROAD: &str = "probe-swatch";
 /// **订上之后还站多久**（毫秒）：够对面改头一两趟，然后本台走掉。
 const HOLD_MS: u64 = 150;
 const OK_NOTE: &str = "probe-watch-gone: subscribed then left";
@@ -37,9 +37,10 @@ fn main() -> Report<'static> {
         panic!("probe-watch-gone: no tree link");
     };
     let tree = Face::from(&session);
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
     let road = PathBuf::try_new(ROAD).unwrap_or_else(|| panic!("probe-watch-gone: bad road"));
     let watch = tree
-        .watch(&road, Wait::AtMost(MS))
+        .watch_from(service, &road, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-watch-gone: subscribe refused: {fail:?}"));
     let _ = watch.road();
     let _ = execution::room::park(Duration::from_millis(HOLD_MS));

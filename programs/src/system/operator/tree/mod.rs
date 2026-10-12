@@ -56,14 +56,6 @@ enum Want {
     Pane,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub enum Key<'a> {
-    /// 坐标：那一块 `Pane` + 那一段名字（`land` / `part` 那一问手里有的）
-    At(Where, &'a str),
-    /// 号：条目自己的号（`find` / `trim` 手里有的）
-    Id(EntryId),
-}
-
 /// **一次改动**：树真的变了才有它（那一格自己的号 ＋ 它是哪一种 ＋ 归属）。
 ///
 /// **不含"路"那一格**：路能从号现走（[`Operator::road_to`]），而 `trim` 正是"号还在、格子没了"
@@ -94,10 +86,23 @@ pub struct Operator {
     pending_import_release: Vec<PieToken>,
     operations: Vec<OperationRecord>,
     operation_watermarks: Vec<OperationWatermark>,
+    namespaces: Vec<NamespaceAssociation>,
     /// 一叠格子：**只增不减**（`unlink` 只把那一格置空，不 `pop`）
     /// ⇒ **下标即号、号不重用**：一枚旧号要么还指着原来那一格，要么指着墓碑
     /// （Fail::Unknown），不会悄悄指到后铸的那一格身上。铸号因此**不必另立水位**——水位
     slots: Vec<Option<Slot>>,
+}
+
+struct NamespaceAssociation {
+    mark: env::Mark,
+    name: String,
+    entry: system_api::operator::Entry,
+}
+
+pub struct NamespaceAssociationInput<'a> {
+    pub mark: env::Mark,
+    pub name: &'a str,
+    pub entry: system_api::operator::Entry,
 }
 
 struct Location {
@@ -219,6 +224,7 @@ impl Operator {
             pending_import_release: Vec::new(),
             operations: Vec::new(),
             operation_watermarks: Vec::new(),
+            namespaces: Vec::new(),
             slots: Vec::new(),
         }
     }
@@ -238,6 +244,78 @@ impl Operator {
         })
     }
 
+    #[cfg(test)]
+    pub fn associate_namespace(
+        &mut self,
+        key: system_api::operator::NamespaceKey,
+        entry: system_api::operator::Entry,
+    ) -> Result<(), Fail> {
+        self.associate_namespace_parts(NamespaceAssociationInput {
+            mark: key.mark(),
+            name: key.name(),
+            entry,
+        })
+    }
+
+    pub fn associate_namespace_parts(
+        &mut self,
+        input: NamespaceAssociationInput<'_>,
+    ) -> Result<(), Fail> {
+        let NamespaceAssociationInput { mark, name, entry } = input;
+        if name.is_empty() || env::Mark::of(name) != mark {
+            return Err(Fail::Denied);
+        }
+        let at = self.where_for(entry)?;
+        self.kids(at)?;
+        if let Some(old) = self.namespaces.iter().find(|old| old.mark == mark) {
+            return if old.name == name && old.entry == entry {
+                Ok(())
+            } else {
+                Err(Fail::Conflict)
+            };
+        }
+        if self.namespaces.len() >= 256 {
+            return Err(Fail::Full);
+        }
+        self.namespaces.try_reserve(1).map_err(|_| Fail::Full)?;
+        self.namespaces.push(NamespaceAssociation {
+            mark,
+            name: name.into(),
+            entry,
+        });
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub fn resolve_namespace(
+        &self,
+        key: system_api::operator::NamespaceKey,
+    ) -> Result<system_api::operator::Entry, Fail> {
+        self.resolve_namespace_parts(key.mark(), key.name())
+    }
+
+    pub fn resolve_namespace_parts(
+        &self,
+        mark: env::Mark,
+        name: &str,
+    ) -> Result<system_api::operator::Entry, Fail> {
+        if name.is_empty() || env::Mark::of(name) != mark {
+            return Err(Fail::Denied);
+        }
+        let association = self
+            .namespaces
+            .iter()
+            .find(|association| association.mark == mark)
+            .ok_or(Fail::Unknown)?;
+        if association.name != name {
+            return Err(Fail::Conflict);
+        }
+        let at = self.where_for(association.entry)?;
+        self.kids(at)?;
+        Ok(association.entry)
+    }
+
+    #[cfg(test)]
     pub fn part_entry(
         &mut self,
         anchor: system_api::operator::Entry,
@@ -579,14 +657,6 @@ impl Operator {
         Ok((self.binding(change.id)?, Some(change)))
     }
 
-    pub fn bind_replay(&self, bind: &BindEntry) -> bool {
-        self.where_for(bind.anchor).ok().and_then(|at| self.kid(at, &bind.name).ok().flatten())
-            .and_then(|id| self.slot(id)).is_some_and(|slot| {
-                slot.resource_id == bind.resource_id && slot.authority == Some(bind.authority) && slot.view == bind.view
-                    && matches!(slot.node, Node::Tile { permit, owner: Some(owner), .. } if permit == bind.permit && owner == bind.owner)
-            })
-    }
-
     pub fn replace_replay(&self, replacement: &ReplaceEntry) -> bool {
         self.where_for(replacement.binding.entry).ok().and_then(|_| self.slot(replacement.binding.entry_id()))
             .is_some_and(|slot| slot.revision == replacement.binding.revision && slot.resource_id == replacement.resource_id
@@ -656,6 +726,11 @@ impl Operator {
         relative: &Path,
     ) -> Result<system_api::operator::Entry, Fail> {
         let mut at = self.where_for(anchor)?;
+        if let Where::At(id) = at {
+            if !matches!(self.slot(id).map(|slot| &slot.node), Some(Node::Pane(_))) {
+                return Err(Fail::NotAPane);
+            }
+        }
         for part in relative.iter() {
             let id = self.kid(at, part)?.ok_or(Fail::Unknown)?;
             at = match self.slot(id).map(|s| &s.node) {
@@ -890,10 +965,6 @@ impl Operator {
         self.authority.closed(key)
     }
 
-    pub fn authority_live(&self, authority: super::authority::GrantKey) -> bool {
-        self.authority.live(authority)
-    }
-
     pub fn cleanup_progress(
         &self,
         key: super::authority::GrantKey,
@@ -948,8 +1019,7 @@ impl Operator {
         } = land;
         let Location { at, name } = location;
         let Tile { pie, permit, owner } = tile;
-        // **归属原样带过去**：`None` = 无主（谁都能接手），`Some(w)` = 有主。**不许折成零号**——
-        // `claimable` 读的就是这一格（零号是一个"永远不在场"的主人，与"无主"不是一件事）。
+        // 无主与具体 owner 在条目中保持区分。
         let who = owner.unwrap_or(TaskId::new(0));
         // **换绑还是新铸**：落之前先只读地问一遍（那一手与 `put` 开头那一趟是同一件事）。
         let was_tile = self.kid(at, name.as_str())?.is_some();
@@ -1151,12 +1221,6 @@ impl Operator {
             .ok_or(Fail::Unknown)
     }
 
-    pub fn reference(&self, id: EntryId) -> Option<PieToken> {
-        match &self.slot(id)?.node {
-            Node::Tile { pie, .. } => Some(*pie),
-            Node::Pane(_) => None,
-        }
-    }
     pub fn permit(&self, id: EntryId) -> Permit {
         match self.slot(id) {
             Some(Slot {
@@ -1164,26 +1228,6 @@ impl Operator {
                 ..
             }) => *permit,
             _ => Permit::Public,
-        }
-    }
-
-    /// **这一格此刻能不能重落**：无主 ⇒ 能；有主 ⇒ 只有主人自己，或**那一枚已经不在了**
-    /// （`establish::alive`：不在表里 / 已封印）才轮得到别人。
-    ///
-    /// **判据与 `find` 同一格**（"这一枚还能不能交出去"与"这一格能不能换人"是同一件事）：
-    /// 从前这里借 `vested_by`（孔那一套的父手），于是**页与铃那两格恒"可重落"**——任何域都能
-    /// 把别人的门牌换绑成自己的。
-    pub fn claimable(&self, key: Key<'_>, who: TaskId) -> bool {
-        let Some(Slot {
-            node: Node::Tile { pie, owner, .. },
-            ..
-        }) = self.slot_at(key)
-        else {
-            return true;
-        };
-        match owner {
-            None => true,
-            Some(owner) => *owner == who || !alive(*pie),
         }
     }
 
@@ -1307,14 +1351,6 @@ impl Operator {
     /// 按号取那一格（只读）。号不在 / 是墓碑 ⇒ `None`
     fn slot(&self, id: EntryId) -> Option<&Slot> {
         self.slots.get(id.get()).and_then(Option::as_ref)
-    }
-
-    /// 按 Key 那两把钥匙取那一格（只读）。两种寻址**打的是同一格**（见 Key）
-    fn slot_at(&self, key: Key<'_>) -> Option<&Slot> {
-        match key {
-            Key::Id(id) => self.slot(id),
-            Key::At(at, name) => self.slot(self.child(self.kids(at).ok()?, name)?),
-        }
     }
 
     /// 在这一块 `Pane` 的孩子里按名字找那个号（只读一趟扫，最多 `PANE_CAP` 次查表）

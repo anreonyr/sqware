@@ -65,7 +65,7 @@ pub(super) fn receive(
 
 pub(super) fn reply(
     mut request: ResMut<Request>,
-    mut out: ResMut<Output<ocall::Union>>,
+    mut out: ResMut<Output>,
     mut outs: ResMut<Outboxes>,
 ) -> Result<Progress, Fail> {
     if let (Some(incoming), Some(reply)) = (request.0.take(), out.reply.take()) {

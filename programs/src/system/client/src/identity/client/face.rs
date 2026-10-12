@@ -49,9 +49,12 @@ impl Face {
                 .map_err(|_| CallError::Discovery)?;
             return Self::direct(authority, grant, entry);
         }
+        let base = operator
+            .resolve(system_api::namespace::IDENTITY, wait)
+            .map_err(|_| CallError::Discovery)?;
         let road = DIR.try_join(grant.name()).ok_or(CallError::Discovery)?;
         let tile = operator
-            .tile(&road, wait)
+            .tile_from(base, &road, wait)
             .map_err(|_| CallError::Discovery)?;
         let entry = tile.token(wait).map_err(|_| CallError::Discovery)?;
         Self::direct(authority, grant, entry)

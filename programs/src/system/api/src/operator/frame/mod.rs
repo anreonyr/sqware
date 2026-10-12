@@ -1,6 +1,6 @@
 //! 帧、码、记号
 
-use env::PieToken;
+use env::{Mark, PieToken};
 
 use crate::operator::path::PathBuf;
 
@@ -49,6 +49,19 @@ pub enum Wire {
         road: PathBuf,
         hole: PieToken,
     },
+    WatchFrom {
+        base: crate::operator::Entry,
+        road: PathBuf,
+        hole: PieToken,
+    },
+    Resolve {
+        mark: Mark,
+        name: alloc::string::String,
+    },
+    Relative {
+        base: crate::operator::Entry,
+        road: PathBuf,
+    },
 }
 
 impl Message for Req {
@@ -72,6 +85,35 @@ impl Message for Req {
                 op: WATCH,
                 road: road.clone(),
                 hole: *hole,
+            }
+            .store_at(out, 0),
+            Req::WatchFrom { base, road, hole } => WatchFromFrame {
+                op: WATCH_FROM,
+                root: u8::from(base.target == crate::operator::EntryTarget::Root),
+                operator: base.operator,
+                base: match base.target {
+                    crate::operator::EntryTarget::Root => EntryId::new(0),
+                    crate::operator::EntryTarget::Node(id) => id,
+                },
+                road: road.clone(),
+                hole: *hole,
+            }
+            .store_at(out, 0),
+            Req::Resolve { mark, name } => NamespaceFrame {
+                op: RESOLVE,
+                mark: mark.get(),
+                name: name.clone(),
+            }
+            .store_at(out, 0),
+            Req::Relative { base, road } => RelativeFrame {
+                op: RELATIVE,
+                root: u8::from(base.target == crate::operator::EntryTarget::Root),
+                operator: base.operator,
+                base: match base.target {
+                    crate::operator::EntryTarget::Root => EntryId::new(0),
+                    crate::operator::EntryTarget::Node(id) => id,
+                },
+                road: road.clone(),
             }
             .store_at(out, 0),
         }
@@ -110,6 +152,58 @@ impl Message for Req {
                 Wire::Watch {
                     road: frame.road,
                     hole: frame.hole,
+                }
+            }
+            WATCH_FROM => {
+                let (frame, end) = WatchFromFrame::fetch_at(bytes, 0)?;
+                if end != bytes.len()
+                    || frame.root > 1
+                    || (frame.root == 1 && frame.base != EntryId::new(0))
+                {
+                    return None;
+                }
+                Wire::WatchFrom {
+                    base: crate::operator::Entry {
+                        operator: frame.operator,
+                        target: if frame.root == 1 {
+                            crate::operator::EntryTarget::Root
+                        } else {
+                            crate::operator::EntryTarget::Node(frame.base)
+                        },
+                    },
+                    road: frame.road,
+                    hole: frame.hole,
+                }
+            }
+            RESOLVE => {
+                let (frame, end) = NamespaceFrame::fetch_at(bytes, 0)?;
+                let mark = Mark::new(frame.mark);
+                if end != bytes.len() || frame.name.is_empty() || Mark::of(&frame.name) != mark {
+                    return None;
+                }
+                Wire::Resolve {
+                    mark,
+                    name: frame.name,
+                }
+            }
+            RELATIVE => {
+                let (frame, end) = RelativeFrame::fetch_at(bytes, 0)?;
+                if end != bytes.len()
+                    || frame.root > 1
+                    || (frame.root == 1 && frame.base != EntryId::new(0))
+                {
+                    return None;
+                }
+                Wire::Relative {
+                    base: crate::operator::Entry {
+                        operator: frame.operator,
+                        target: if frame.root == 1 {
+                            crate::operator::EntryTarget::Root
+                        } else {
+                            crate::operator::EntryTarget::Node(frame.base)
+                        },
+                    },
+                    road: frame.road,
                 }
             }
             // 没见过的动作码、或长度不是这张形状该有的那个 ⇒ 读不懂（不另立一格）。

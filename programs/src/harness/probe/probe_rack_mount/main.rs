@@ -50,12 +50,13 @@ fn main() -> Report<'static> {
         panic!("probe-rack-mount: 树那条路开不出来");
     };
     let tree = Face::of(session);
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
     // A：铺场写、客人读（与产品那两条同形）；B：客人写、铺场读。
     let a = open(Mode::Oldest);
     let b = open(Mode::Oldest);
     let capability =
         system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap();
-    let plated = land(&tree, &capability, &a, &b);
+    let plated = land(&tree, service, &capability, &a, &b);
     let anchor = capability.anchor().unwrap();
     let view = operator_api::ResourceView::new(env::Access::FETCH_STORE).unwrap();
     let replay = capability
@@ -112,7 +113,8 @@ fn main() -> Report<'static> {
     }
 
     let retained = tree
-        .tile(
+        .tile_from(
+            service,
             &rig::road().unwrap().try_join("tx").unwrap(),
             Wait::AtMost(MS),
         )
@@ -122,11 +124,11 @@ fn main() -> Report<'static> {
     let mut reader = ipc::rack::Reader::<Bytes>::from_raw(retained).unwrap();
     capability.unbind(plated[1], Wait::AtMost(MS)).unwrap();
     assert_eq!(
-        tree.root()
-            .tile(
-                &rig::road().unwrap().try_join("tx").unwrap(),
-                Wait::AtMost(MS)
-            )
+        tree.tile_from(
+            service,
+            &rig::road().unwrap().try_join("tx").unwrap(),
+            Wait::AtMost(MS)
+        )
             .map(|_| ()),
         Err(Fail::Unknown)
     );
@@ -170,6 +172,7 @@ fn open(mode: Mode) -> Rack<Bytes> {
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
 fn land(
     tree: &Face,
+    service: system_api::operator::Entry,
     publisher: &system_client::operator::Capability,
     a: &Rack<Bytes>,
     b: &Rack<Bytes>,
@@ -195,13 +198,12 @@ fn land(
             .expect("probe-rack-mount: binding")
             .binding;
         let full = road.try_join(name).unwrap();
-        tree.tile(&full, Wait::AtMost(MS))
+        tree.tile_from(service, &full, Wait::AtMost(MS))
             .unwrap()
             .token(Wait::AtMost(MS))
             .unwrap();
         assert_eq!(
-            tree.root()
-                .name(mount.entry_id(), Wait::AtMost(MS))
+            tree.name(mount.entry_id(), Wait::AtMost(MS))
                 .unwrap(),
             name
         );

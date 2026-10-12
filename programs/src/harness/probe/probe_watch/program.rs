@@ -16,6 +16,8 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
     operator: crate::unit::OperatorConfig {
         namespace: &[
             crate::unit::operator::Namespace {
+                key: system_api::namespace::SERVICE,
+                placement: crate::unit::operator::Placement::Shared,
                 path: "probe-watch",
                 scope: crate::unit::operator::Scope::Names(&["in", "out"]),
                 ops: system_api::operator::Ops::BIND
@@ -26,6 +28,8 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
                 bindings: &[],
             },
             crate::unit::operator::Namespace {
+                key: system_api::namespace::SERVICE,
+                placement: crate::unit::operator::Placement::Shared,
                 path: "probe-watch-dynamic",
                 scope: crate::unit::operator::Scope::Subtree,
                 ops: system_api::operator::Ops::BIND
@@ -36,6 +40,8 @@ pub static PROBE_WATCH: UnitFile = UnitFile {
                 bindings: &[],
             },
             crate::unit::operator::Namespace {
+                key: system_api::namespace::SERVICE,
+                placement: crate::unit::operator::Placement::Shared,
                 path: "probe-watch-q",
                 scope: crate::unit::operator::Scope::Names(&["c0", "c1", "c2", "c3", "c4", "c5"]),
                 ops: system_api::operator::Ops::BIND

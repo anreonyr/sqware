@@ -8,6 +8,8 @@ pub static PROBE_RULE: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("probe-rule"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
             path: "rule",
             scope: crate::unit::operator::Scope::Names(&[
                 "is",

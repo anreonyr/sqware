@@ -36,7 +36,6 @@ fn execute(
 ) {
     let (code, reference) = request;
     use env::Wait;
-    use env::wire::Span as _;
     use ipc::session::establish;
     let me = env::unit::self_id();
     let command = establish::find(me, COMMAND).unwrap();

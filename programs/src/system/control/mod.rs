@@ -40,6 +40,5 @@ pub(crate) use lifecycle::schedule::ActivationHooks;
 pub(crate) use lifecycle::{Startup, eligibility, startup};
 pub(crate) use plan::ruin_rest;
 
-pub(crate) use namespace::Endpoints as Entries;
 pub(crate) use endpoint::request::receive;
 pub(crate) use endpoint::{answer_instances, receive_instances};

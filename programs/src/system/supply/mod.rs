@@ -10,17 +10,20 @@ use env::{Mark, Permission, PieToken, TaskId};
 use ipc::rpc;
 use system_api::supply::{self, Delivery, Fail, Key, LeaseId, State};
 
-pub use collection::{CollectionInitError, CollectionItem, CollectionResource, CollectionSpec};
+pub use collection::{CollectionItem, CollectionResource, CollectionSpec};
 pub use lease::{
-    Accord, Begin, Completion, DeliveryRequest, DeliveryRoute, FailedRoots, LeaseKey, LeaseStart,
+    Begin, Completion, DeliveryRequest, FailedRoots, LeaseKey, LeaseStart,
     Ledger, MAX_ROOTS, NativePieEffects, Origin, Parameters, PieEffects, PrivateRoot, Provision,
-    ProvisionError, RootAssignment, RootCheck, RootRequest,
+    ProvisionError, RootCheck, RootRequest,
 };
-pub use pole::{InitError, PoleEffects, PoleResource, PoleSpec, pole_admit_all};
+pub use pole::{PoleEffects, PoleResource, PoleSpec};
+#[allow(unused_imports, reason = "Parameter and route types for custom provider effects and resources.")]
+pub use lease::{Accord, DeliveryRoute, RootAssignment};
 
 pub struct LeaseRequest {
     pub id: LeaseId,
     pub origin: Origin,
+    #[allow(dead_code, reason = "Provider admission context; built-in providers use caller and target.")]
     pub source: Key,
     pub resource: Key,
     pub target: TaskId,
@@ -44,6 +47,7 @@ impl LeaseRequest {
     }
 }
 
+#[allow(dead_code, reason = "Asynchronous provider results; built-in providers complete acquisition synchronously.")]
 pub enum Recovery {
     Pending,
     Granted(Provision),
@@ -106,7 +110,7 @@ impl core::fmt::Debug for RegistrationError {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter
             .debug_struct("RegistrationError")
-            .field("failure", &self.failure)
+            .field("failure", &self.failure())
             .finish()
     }
 }
@@ -192,13 +196,6 @@ impl Source {
     pub fn key(&self) -> Key {
         self.config.key
     }
-    pub fn authority(&self) -> PieToken {
-        self.config.authority
-    }
-    pub fn owner(&self) -> TaskId {
-        self.config.owner
-    }
-
     /// Rejects exact duplicate names and hash collisions before the definition is reachable.
     pub fn register(&mut self, definition: Box<dyn Resource>) -> Result<(), RegistrationError> {
         let key = definition.key();
@@ -402,6 +399,7 @@ impl Source {
         Ok((state, delivery))
     }
 
+    #[allow(dead_code, reason = "Local counterpart of the provider RPC cancel operation.")]
     pub fn cancel(&mut self, id: LeaseId) -> Result<State, Fail> {
         let actor = env::unit::self_id();
         self.cancel_from(SourceCall {
@@ -465,14 +463,6 @@ impl Source {
             return Ok(state);
         }
         self.cleanup(id, origin)
-    }
-
-    pub fn handle(&mut self, requester: TaskId, request: supply::Request) -> supply::Response {
-        self.handle_from(Incoming {
-            actor: env::unit::self_id(),
-            requester,
-            request,
-        })
     }
 
     fn handle_from(&mut self, incoming: Incoming) -> supply::Response {
@@ -555,6 +545,7 @@ impl Source {
     }
 
     /// Receive and process one native request. A failed reply does not roll back an accepted lease.
+    #[allow(dead_code, reason = "Provider RPC entry; current composition invokes sources directly.")]
     pub fn serve_once(&mut self, wait: Wait) -> Result<bool, Fail> {
         use wire::Message;
         let receiver = rpc::request::Receiver::<supply::Call>::from_raw(

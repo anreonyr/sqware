@@ -1,7 +1,7 @@
 //! Status/Tally/Word）与应答聚合 Union、Said。
 
 use alloc::string::String;
-use env::PieToken;
+use env::{Mark, PieToken, TaskId};
 
 use crate::operator::path::{Path, PathBuf};
 
@@ -11,17 +11,19 @@ use super::vocab::{BAD, EntryId, PANE_CAP, Where};
 use env::wire::Span as _;
 use wire::OK;
 
-/// 问话那一侧的上界：**最长那一条**（`Road`：`op` ＋ Path::LEN）
-/// 服务端按它备一只缓冲（收下来的帧不会超过它），各条问话的**实际**长度由形状说——定长那几条
-/// 是字段表求和（`LEN`），`Road` 那一格是 RoadFrame::store_at 交回的游标
-pub const REQ_LEN: usize = RoadFrame::LEN;
+/// 问话缓冲上限：为带名称的 namespace 与 Entry 相对路径留足 512 字节。
+pub const REQ_LEN: usize = 512;
 
-/// 一答的**上限**：四种答形里最大的那一形（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
+/// 一答的**上限**：列表答形最大（`[status][条数][号…]`）。一条 `Pane` 本来就不超过
 /// PANE_CAP 枚 ⇒ **一趟答得完，没有"未完"那一格**（对照 `coalition` 那一侧：盟籍
 /// 没有上限，故那里必须带一格"未完"）
-/// 本族那只缓冲就是它（Message::Buf）；另两形都短于它——编译期钉住（`名` 那一形最长是
-/// 状态 ＋ 名字那一格的上界（31 字节），`号` 那一形是状态 ＋ 8）
+/// 本族那只缓冲就是它（Message::Buf）；其他答形都短于它。
 pub const UNION_LEN: usize = 2 + PANE_CAP * 8;
+
+const _: () = assert!(NamespaceFrame::LEN <= REQ_LEN);
+const _: () = assert!(WatchFromFrame::LEN <= REQ_LEN);
+const _: () = assert!(ReferenceFrame::LEN <= UNION_LEN);
+const _: () = assert!(WatchPathFrame::LEN <= UNION_LEN);
 
 const _: () = assert!(Status::LEN + 31 <= UNION_LEN);
 
@@ -63,6 +65,47 @@ pub struct WatchFrame {
     pub hole: PieToken,
 }
 
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+pub struct WatchFromFrame {
+    pub op: u8,
+    pub root: u8,
+    pub operator: TaskId,
+    pub base: EntryId,
+    pub road: PathBuf,
+    pub hole: PieToken,
+}
+
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+#[frame(len = 512)]
+pub struct NamespaceFrame {
+    pub op: u8,
+    pub mark: u64,
+    pub name: String,
+}
+
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+pub struct RelativeFrame {
+    pub op: u8,
+    pub root: u8,
+    pub operator: TaskId,
+    pub base: EntryId,
+    pub road: PathBuf,
+}
+
+#[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ReferenceFrame {
+    pub status: u8,
+    pub operator: TaskId,
+    pub root: u8,
+    pub entry: EntryId,
+}
+
+#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
+pub struct WatchPathFrame {
+    pub status: u8,
+    pub road: PathBuf,
+}
+
 /// **一问的荷载**——一个动作一条形状，没有"报法"那一格可以填错
 /// 号那一侧全按 EntryId 走；名字只出现在两条路上：Req::Road（`seek` 收的那条路）
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -79,6 +122,19 @@ pub enum Req {
     Watch {
         road: PathBuf,
         hole: PieToken,
+    },
+    WatchFrom {
+        base: super::super::Entry,
+        road: PathBuf,
+        hole: PieToken,
+    },
+    Resolve {
+        mark: Mark,
+        name: String,
+    },
+    Relative {
+        base: super::super::Entry,
+        road: PathBuf,
     },
 }
 
@@ -148,7 +204,7 @@ pub struct Word {
     pub word: [u8; 8],
 }
 
-/// **一答的形状**——答有四种：一格状态 / 一串号 / 一枚名字 / 一枚号
+/// **一答的形状**——状态、列表、名字、树内编号、完整 Entry 或资源句柄。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Union {
     /// 一格状态（成功 / 六格失败 / 门外那两格）——**没有任何荷载**
@@ -159,6 +215,8 @@ pub enum Union {
     Name(String),
     /// `part` / `seek` 的下场：那一格**坐标**
     Entry(EntryId),
+    Reference(super::super::Entry),
+    WatchPath(PathBuf),
     /// `find` 的下场：那一格是"我给你的那一枚**在你表里**是几号"（PieToken）
     /// **与 Union::Entry 同形不同物**（都是 `[OK][8 字节]`）而**另起一格、不复用**：两枚号
     /// 类型不同，混用就是把"树的坐标"与"你表里的门闩"当成一件事
@@ -200,6 +258,39 @@ impl Said {
     /// 状态不是 OK ⇒ `Err(那一格码)`；不是那一形（长度不对）⇒ `Err(BAD)`
     pub fn entry(&self) -> Result<EntryId, u8> {
         Ok(EntryId::from_bytes(self.word()?))
+    }
+
+    pub fn watch_path(&self) -> Result<PathBuf, u8> {
+        if self.code() != OK {
+            return Err(self.code());
+        }
+        let (frame, end) = WatchPathFrame::fetch_at(self.bytes(), 0).ok_or(BAD)?;
+        if end != self.bytes().len() {
+            return Err(BAD);
+        }
+        Ok(frame.road)
+    }
+
+    pub fn reference(&self) -> Result<super::super::Entry, u8> {
+        if self.code() != OK {
+            return Err(self.code());
+        }
+        let bytes = self.bytes();
+        if bytes.len() != ReferenceFrame::LEN {
+            return Err(BAD);
+        }
+        let frame = ReferenceFrame::fetch_at(bytes, 0).ok_or(BAD)?.0;
+        if frame.root > 1 || (frame.root == 1 && frame.entry != EntryId::new(0)) {
+            return Err(BAD);
+        }
+        Ok(super::super::Entry {
+            operator: frame.operator,
+            target: if frame.root == 1 {
+                super::super::EntryTarget::Root
+            } else {
+                super::super::EntryTarget::Node(frame.entry)
+            },
+        })
     }
 
     /// 按「门闩」那一形读（`find` 的下场）：同一形状 → **你表里的那一枚号**
@@ -282,6 +373,21 @@ impl Message for Union {
             Union::Entry(id) => Word {
                 status: OK,
                 word: id.to_bytes(),
+            }
+            .store_at(out, 0),
+            Union::WatchPath(road) => WatchPathFrame {
+                status: OK,
+                road: road.clone(),
+            }
+            .store_at(out, 0),
+            Union::Reference(entry) => ReferenceFrame {
+                status: OK,
+                operator: entry.operator,
+                root: u8::from(entry.target == super::super::EntryTarget::Root),
+                entry: match entry.target {
+                    super::super::EntryTarget::Root => EntryId::new(0),
+                    super::super::EntryTarget::Node(id) => id,
+                },
             }
             .store_at(out, 0),
             Union::Seed(seed) => Word {

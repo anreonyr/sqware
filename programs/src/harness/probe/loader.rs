@@ -3,7 +3,7 @@ use crate::system::loader::{Image, Loader};
 use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use env::{Mark, Permission, TaskId, Wait};
+use env::{Permission, TaskId, Wait};
 use ipc::session::establish;
 use system_client::loader as call;
 use system_client::operator::Face as Operator;
@@ -12,13 +12,15 @@ const WAIT: Wait = Wait::AtMost(2000);
 static CONSTRUCTION: &[crate::unit::Construction] = &[crate::unit::Construction::image()];
 
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
+    let service = operator.resolve(system_api::namespace::SERVICE, WAIT).unwrap();
     let road = system_api::operator::Path::new(system_api::loader::DIR)
         .try_join(system_api::loader::Grant::Claim.name())
         .unwrap();
     assert!(
-        operator.tile(&road, WAIT).unwrap().token(WAIT).is_ok(),
+        operator.tile_from(service, &road, WAIT).unwrap().token(WAIT).is_ok(),
         "loader: operator entry missing"
     );
+    shared_prefix_retirement(assembly, operator);
     let root = env::unit::self_id();
     let authority = assembly.resources.read::<crate::system::control::identity::Roster>()
         .unwrap().authority().unwrap();
@@ -196,6 +198,62 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         "loader: operator entry, submitted ELF, instances, owner checks and unclaimed cleanup passed",
     );
 }
+/// Exercise placement cleanup against the production Operator RPC and receipts.
+fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
+    use crate::system::app::{namespace::{Preparation, Prepare, ResourceInput}, operator::Layout};
+    use system_api::operator::PathBuf;
+
+    let layouts = assembly.resources.read::<Layout>().unwrap();
+    let system = layouts.as_ref().expect("loader: namespace layout missing");
+    let unit = system.resolve(system_api::namespace::UNIT, WAIT).unwrap();
+    let mut first = Preparation::new(
+        Prepare::resources(ResourceInput {
+            base: unit,
+            path: PathBuf::try_new("namespace-cleanup/first").unwrap(),
+            retain_prefix: 1,
+            bindings: alloc::vec::Vec::new(),
+            wait: WAIT,
+        })
+        .unwrap(),
+    );
+    let mut second = Preparation::new(
+        Prepare::resources(ResourceInput {
+            base: unit,
+            path: PathBuf::try_new("namespace-cleanup/second").unwrap(),
+            retain_prefix: 1,
+            bindings: alloc::vec::Vec::new(),
+            wait: WAIT,
+        })
+        .unwrap(),
+    );
+    system.prepare_resources(&mut first).unwrap();
+    system.prepare_resources(&mut second).unwrap();
+    assert!(system.retire_resources(&mut first).unwrap());
+    assert_eq!(
+        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/first"), WAIT),
+        Err(system_api::operator::Fail::Unknown),
+        "retired placement leaf must disappear"
+    );
+    let parent = operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup"), WAIT).unwrap();
+    assert!(
+        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/second"), WAIT).is_ok(),
+        "retiring one task must preserve its live sibling"
+    );
+    assert!(system.retire_resources(&mut second).unwrap());
+    assert_eq!(
+        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/second"), WAIT),
+        Err(system_api::operator::Fail::Unknown),
+        "retired sibling leaf must disappear"
+    );
+    assert_eq!(
+        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup"), WAIT),
+        Ok(parent),
+        "the shared placement parent belongs to the System lifecycle"
+    );
+    system.capability().unpart(parent, WAIT).unwrap();
+    programs::debug::put("loader: namespace shared-parent/sibling retirement passed");
+}
+
 fn until(mut ready: impl FnMut() -> bool) {
     let deadline = env::chrono::clock() + 5_000_000_000;
     while !ready() {

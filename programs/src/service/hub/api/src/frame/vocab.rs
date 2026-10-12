@@ -1,7 +1,6 @@
 //! :frame 的词汇那一半：三面码（BOND/LIST/CLAIM）· 上限（LIST_MAX）·
 //! 记号（`BACK_MARK`/`ALIVE_MARK`）· 设备路与三枚键名（`DEV_ROAD`/`BOOT`/`DTB`/`SUPERVISOR_EXTERNAL`）· 失败词汇（`Fail`）。
 
-use system_api::operator::Path;
 use wire::OK;
 
 /// 报名：许我驱这一类
@@ -25,8 +24,9 @@ pub use crate::marks::BACK_MARK;
 /// 自己交过来
 pub use crate::marks::ALIVE_MARK;
 
-/// **设备那一轴在树上的路**：`/dev`（`/dev/<类>/<名>` 的头一段）
-pub const DEV_ROAD: &Path = Path::new("dev");
+/// Device namespace key and relative device path shape.
+pub const SERVICE_PATH: &system_api::operator::Path =
+    system_api::operator::Path::new("hub");
 
 /// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
 /// （`/dev/boot/{dtb,supervisor_external}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的

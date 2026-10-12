@@ -25,7 +25,7 @@ mod tests {
 
     #[test]
     fn loader_exposes_only_claim_and_keeps_its_stable_wire_identity() {
-        assert_eq!(loader::DIR, "svc/sys/loader");
+        assert_eq!(loader::DIR, "loader");
         assert_eq!(loader::CLAIM, 1);
         assert_eq!(loader::Claim::LEN, 17);
         assert_eq!(loader::Grant::Claim.at(), 1);

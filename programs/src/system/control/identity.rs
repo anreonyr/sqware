@@ -586,11 +586,9 @@ mod query {
     use crate::support::timing::BOOT_MS;
     use env::{TaskId, Wait};
     use ipc::session::establish;
-    use system_api::identity::Selector;
     use system_api::identity::Wire;
-    use system_api::identity::{Grant, IdentityObject};
+    use system_api::identity::Grant;
     use system_api::operator::Fail;
-    use system_api::operator::Permit;
     use system_client::identity::Face;
 
     pub(crate) fn current_authority(roster: &Roster) -> Option<TaskId> {
@@ -618,33 +616,9 @@ mod query {
             _ => Err(Fail::Unjudged),
         }
     }
-    pub(crate) fn validate(roster: &Roster, object: IdentityObject) -> Result<(), Fail> {
-        if roster.authority() != Some(object.authority()) {
-            return Err(Fail::Unjudged);
-        }
-        let (grant, wire) = match object {
-            IdentityObject::Principal(p) => (Grant::Heir, Wire::Heir(p, p)),
-            IdentityObject::Coalition(c) => (Grant::Members, Wire::Members(c, None)),
-        };
-        face(roster, grant)?
-            .call(wire, Wait::AtMost(BOOT_MS))
-            .map(|_| ())
-            .map_err(|_| Fail::Unjudged)
-    }
-    pub(crate) fn validate_permit(roster: &Roster, permit: Permit) -> Result<(), Fail> {
-        match permit {
-            Permit::Identity(Selector::Exact(p) | Selector::DescendantOf(p)) => {
-                validate(roster, IdentityObject::Principal(p))
-            }
-            Permit::Identity(Selector::MemberOf(c)) => {
-                validate(roster, IdentityObject::Coalition(c))
-            }
-            _ => Ok(()),
-        }
-    }
 }
 
-pub(crate) use query::{binding, current_authority, validate, validate_permit};
+pub(crate) use query::{binding, current_authority};
 
 fn face_of(authority: TaskId, grant: Grant) -> Result<PieToken, &'static str> {
     let mut left = BOOT_MS;

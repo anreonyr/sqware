@@ -4,116 +4,6 @@ use crate::system::{assembly, control, identity, loader, operator};
 use ::schedule::Resources;
 use alloc::vec::Vec;
 
-fn namespace_prefix(
-    _: crate::system::assembly::namespace::Coordinates,
-) -> Option<system_api::operator::PathBuf> {
-    Some(system_api::operator::PathBuf::root())
-}
-
-const NAMESPACE_ROUTES: &[crate::system::assembly::namespace::Route] = &[
-    crate::system::assembly::namespace::Route {
-        program: "router",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Drivers,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "rtc",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Drivers,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "uart",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Drivers,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "account",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "hub",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "hub",
-        namespace: 1,
-        base: crate::system::assembly::namespace::Base::Root,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "pipe",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "terminal",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-lease",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-operator-land",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-bound",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-rack-mount",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-rule",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-watch",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-watch",
-        namespace: 1,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-watch",
-        namespace: 2,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-    crate::system::assembly::namespace::Route {
-        program: "probe-watch-after",
-        namespace: 0,
-        base: crate::system::assembly::namespace::Base::Services,
-        prefix: namespace_prefix,
-    },
-];
 pub(crate) fn resources(
     boot: Boot,
 ) -> Result<Resources<'static>, crate::system::app::InstallError> {
@@ -153,6 +43,7 @@ pub(crate) fn resources(
             .map_err(crate::system::app::InstallError::Configuration)?,
     )?;
     resources.insert(super::operator::Layout::default())?;
+    resources.insert(super::operator::BootstrapReceipt::default())?;
     control::install(
         &mut resources,
         status.clone(),
@@ -166,10 +57,7 @@ pub(crate) fn resources(
     resources.insert(identity::export::Exports::default())?;
     loader::install(&mut resources)?;
     assembly::install(&mut resources)?;
-    let namespaces =
-        crate::system::assembly::namespace::NamespaceInstallations::new(NAMESPACE_ROUTES).ok_or(
-            crate::system::app::InstallError::Configuration("invalid namespace routes"),
-        )?;
+    let namespaces = crate::system::assembly::namespace::NamespaceInstallations::new();
     resources.insert(namespaces)?;
 
     resources

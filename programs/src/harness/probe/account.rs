@@ -365,8 +365,9 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
     let s = signals.clone();
+    let service = operator.resolve(system_api::namespace::SERVICE, WAIT).unwrap();
     let entry = operator
-        .tile(account_api::DIR, WAIT)
+        .tile_from(service, account_api::DIR, WAIT)
         .unwrap()
         .token(WAIT)
         .unwrap();
@@ -619,7 +620,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
     );
     let terminal_mounts = {
         let start = assembly.resources.read::<crate::system::app::operator::Layout>().unwrap()
-            .as_ref().unwrap().reserve_operations(3).unwrap().0;
+            .as_ref().unwrap().reserve_operations(2).unwrap().0;
         let info = assembly
             .resources
             .read::<crate::system::operator::management::Tree>()
@@ -630,19 +631,13 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             system_client::operator::Capability::direct(info.entry.operator, info.entrance)
                 .unwrap();
         let services = capability
-            .part(
-                info.entry,
-                "svc",
-                system_api::operator::OperationId(start),
-                Wait::AtMost(3000),
-            )
-            .unwrap()
-            .entry;
+            .resolve(system_api::namespace::SERVICE, Wait::AtMost(3000))
+            .unwrap();
         let pane = capability
             .part(
                 services,
                 "terminal",
-                system_api::operator::OperationId(start + 1),
+                system_api::operator::OperationId(start),
                 Wait::AtMost(3000),
             )
             .unwrap()
@@ -656,7 +651,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
                 terminal,
                 view,
                 system_api::operator::Permit::Bound,
-                system_api::operator::OperationId(start + 2),
+                system_api::operator::OperationId(start + 1),
                 Wait::AtMost(3000),
             )
             .unwrap()
@@ -771,7 +766,7 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
             }
         }
         if stage != 0 && stage != observed {
-            let mut roster = assembly
+            let roster = assembly
                 .resources
                 .write::<crate::system::control::identity::Roster>()
                 .unwrap();

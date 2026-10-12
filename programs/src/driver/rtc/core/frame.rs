@@ -13,6 +13,10 @@ pub const ASK: u8 = 1;
 /// 问那一句的动作码：「在 `at` 叫我」
 pub const ARM: u8 = 2;
 
+#[path = "../api.rs"]
+mod api;
+pub use api::{ENTRY_NAME, ENTRY_PATH};
+
 /// 回信孔的记号：客人每趟铸一枚、借给驱动（**收方按它验那一格**）
 pub const BACK: Mark = Mark::of("rtc-back");
 

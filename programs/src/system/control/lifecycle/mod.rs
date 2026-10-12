@@ -2,7 +2,7 @@ use super::unit::Service;
 use crate::system::control::unit::verdict::Fail;
 use ::schedule::Cursor;
 use alloc::{string::String, vec::Vec};
-use env::{Mark, TaskId};
+use env::TaskId;
 use ipc::rpc::reply::Sender as ReplySender;
 use system_api::control::frame::Said;
 
@@ -32,7 +32,6 @@ pub struct Request {
 }
 pub struct Instance {
     pub service: Service,
-    pub marks: Vec<Mark>,
     pub launched: bool,
     pub identity_install: Option<system_api::identity::InstallId>,
 }

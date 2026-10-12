@@ -8,9 +8,8 @@ pub use frame::Fail;
 pub use marks::{ENTRY_MARK, LANE, LINE_BACK, LINE_MARK};
 pub use system_api::operator::path::Path;
 
-pub const SVC: &Path = Path::new("svc");
-pub const DIR: &str = "drv";
-pub const ROAD: &Path = Path::new("svc/drv");
+pub const ENTRY_NAME: &str = "entry";
+pub const ENTRY: &Path = Path::new("router/entry");
 
 #[mold::interface(id = "sqware.driver.router.v1", metadata)]
 mod interface {

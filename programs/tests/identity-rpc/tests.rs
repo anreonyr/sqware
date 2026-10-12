@@ -56,7 +56,7 @@ fn direct_validates_authority_and_grant_mark() {
 fn discover_validates_the_discovered_authority_and_grant() {
     test_state::reset();
     let token = entry();
-    let operator = OperatorFace { entry: Some(token) };
+    let operator = OperatorFace { entry: Some(token), road: "api/resolve" };
     test_state::authorize(token, TaskId::new(2), authority(), Grant::Resolve.mark());
     assert!(Face::discover(&operator, authority(), Grant::Resolve, Wait::POLL).is_ok());
 
@@ -64,13 +64,13 @@ fn discover_validates_the_discovered_authority_and_grant() {
     assert_eq!(Face::discover(&operator, authority(), Grant::Resolve, Wait::POLL).unwrap_err(), CallError::WrongAuthority);
     test_state::authorize(token, TaskId::new(2), authority(), Grant::Waive.mark());
     assert_eq!(Face::discover(&operator, authority(), Grant::Resolve, Wait::POLL).unwrap_err(), CallError::WrongGrant);
-    assert_eq!(Face::discover(&OperatorFace { entry: None }, authority(), Grant::Resolve, Wait::POLL).unwrap_err(), CallError::Discovery);
+    assert_eq!(Face::discover(&OperatorFace { entry: None, road: "api/resolve" }, authority(), Grant::Resolve, Wait::POLL).unwrap_err(), CallError::Discovery);
 }
 
 #[test]
 fn private_faces_use_unique_native_grants_without_an_operator_fallback() {
     test_state::reset();
-    let operator = OperatorFace { entry: None };
+    let operator = OperatorFace { entry: None, road: "api/resolve" };
     let grant = Grant::Derive;
     assert_eq!(Face::discover(&operator, authority(), grant, Wait::POLL).unwrap_err(), CallError::Discovery);
     test_state::authorize(entry(), TaskId::new(2), authority(), grant.mark());

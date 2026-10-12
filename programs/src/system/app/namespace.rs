@@ -4,17 +4,10 @@ use alloc::vec::Vec;
 use core::cell::Cell;
 use env::{PieToken, TaskId, Wait};
 use system_api::operator::{
-    self as api, Binding, BoundResource, Entry, GrantId, GrantSpec, GrantState, PathBuf, Permit,
-    ResourceView, Scope,
+    self as api, Binding, Entry, GrantId, GrantSpec, GrantState, NamespaceKey,
+    OperationId, PathBuf, Permit, ResourceView, Scope,
 };
-use system_client::operator::{Capability, GrantInfo};
-
-#[derive(Clone, Copy)]
-pub struct Shared {
-    pub root: Entry,
-    pub services: Entry,
-    pub drivers: Entry,
-}
+use system_client::operator::{Capability, GrantInfo, PartResult};
 
 /// Retained by Assembly across prepare/retire so grants and bindings can be retried.
 pub struct Installed {
@@ -39,6 +32,8 @@ pub struct Prepare {
     base: Entry,
     /// App-selected relative path below `base`.
     path: PathBuf,
+    /// Created prefix entries before this index are shared placement containers.
+    retain_prefix: usize,
     grant: Option<GrantSpec>,
     bindings: Vec<BindingInput>,
     wait: Wait,
@@ -48,6 +43,7 @@ pub struct Prepare {
 pub struct ResourceInput {
     pub base: Entry,
     pub path: PathBuf,
+    pub retain_prefix: usize,
     pub bindings: Vec<BindingInput>,
     pub wait: Wait,
 }
@@ -56,6 +52,8 @@ pub struct PrepareInput {
     pub base: Entry,
     /// App-selected prefix below `base`; empty for shared named service locations.
     pub prefix: PathBuf,
+    /// Number of leading prefix segments owned by the longer-lived product layout.
+    pub retain_prefix: usize,
     pub declaration: crate::unit::operator::Namespace,
     pub grant_id: GrantId,
     pub holder: TaskId,
@@ -70,19 +68,6 @@ pub struct AuthorityInput {
     pub holder: TaskId,
     pub anchor: Entry,
     pub source: Option<TaskId>,
-}
-
-pub struct PathRequest {
-    pub base: Entry,
-    pub path: PathBuf,
-    pub operation_start: api::OperationId,
-    pub wait: Wait,
-}
-
-pub struct Lookup {
-    pub entry: Entry,
-    pub permit: Permit,
-    pub wait: Wait,
 }
 
 pub struct Preparation {
@@ -102,35 +87,48 @@ pub type ResourcePreparation = Preparation;
 
 pub struct System {
     capability: Capability,
-    shared: Shared,
+    root: Entry,
     next_operation: Cell<u64>,
 }
 
+pub struct PartRequest<'a> {
+    pub parent: Entry,
+    pub name: &'a str,
+    pub operation: OperationId,
+    pub wait: Wait,
+}
+
+pub struct AssociateRequest {
+    pub key: NamespaceKey,
+    pub entry: Entry,
+    pub wait: Wait,
+}
+
 impl System {
-    pub fn bootstrap(
-        info: crate::system::operator::management::RootInfo,
-        wait: Wait,
-    ) -> Result<Self, api::Fail> {
+    pub fn new(info: crate::system::operator::management::RootInfo) -> Result<Self, api::Fail> {
         let capability = Capability::direct_at(info.entry.operator, info.entrance, info.entry)?;
-        let services = capability
-            .part(info.entry, "svc", api::OperationId(1), wait)?
-            .entry;
-        let drivers = capability
-            .part(services, "drv", api::OperationId(2), wait)?
-            .entry;
         Ok(Self {
             capability,
-            shared: Shared {
-                root: info.entry,
-                services,
-                drivers,
-            },
-            next_operation: Cell::new(3),
+            root: info.entry,
+            next_operation: Cell::new(1),
         })
     }
 
-    pub fn shared(&self) -> Shared {
-        self.shared
+    pub fn part(&self, request: PartRequest<'_>) -> Result<PartResult, api::Fail> {
+        self.capability
+            .part(request.parent, request.name, request.operation, request.wait)
+    }
+
+    pub fn associate(&self, request: AssociateRequest) -> Result<(), api::Fail> {
+        self.capability.associate(request.key, request.entry, request.wait)
+    }
+
+    pub fn resolve(&self, key: NamespaceKey, wait: Wait) -> Result<Entry, api::Fail> {
+        self.capability.resolve(key, wait)
+    }
+
+    pub fn root(&self) -> Entry {
+        self.root
     }
 
     /// Reserves caller-owned IDs in the same sequence as namespace preparation.
@@ -197,7 +195,10 @@ impl System {
                 preparation.operations[preparation.path_cursor],
                 preparation.plan.wait,
             )?;
-            if outcome.created && !preparation.installed.entries.contains(&outcome.entry) {
+            if preparation.path_cursor >= preparation.plan.retain_prefix
+                && outcome.created
+                && !preparation.installed.entries.contains(&outcome.entry)
+            {
                 preparation.installed.entries.push(outcome.entry);
             }
             preparation.path_attempted = false;
@@ -315,7 +316,10 @@ impl System {
                 preparation.plan.wait,
             ) {
                 Ok(outcome) => {
-                    if outcome.created && !preparation.installed.entries.contains(&outcome.entry) {
+                    if index >= preparation.plan.retain_prefix
+                        && outcome.created
+                        && !preparation.installed.entries.contains(&outcome.entry)
+                    {
                         preparation.installed.entries.push(outcome.entry);
                     }
                 }
@@ -424,12 +428,6 @@ impl System {
         }
     }
 
-    /// Reads through a previously resolved, operator-qualified Entry reference.
-    pub fn lookup(&self, request: Lookup) -> Result<BoundResource, api::Fail> {
-        self.capability
-            .read(request.entry, request.permit, request.wait)
-    }
-
     pub fn capability(&self) -> &Capability {
         &self.capability
     }
@@ -446,6 +444,9 @@ impl Prepare {
         } else {
             input.prefix.as_path().try_join(declaration.path)?
         };
+        if input.retain_prefix > path.len() {
+            return None;
+        }
         let grant = authority(AuthorityInput {
             declaration,
             id: input.grant_id,
@@ -475,6 +476,7 @@ impl Prepare {
         Some(Self {
             base: input.base,
             path,
+            retain_prefix: input.retain_prefix,
             grant: Some(grant),
             bindings: input.bindings,
             wait: input.wait,
@@ -483,6 +485,9 @@ impl Prepare {
 
     /// Creates a receipt-tracked app resource publication without granting a namespace capability.
     pub fn resources(input: ResourceInput) -> Option<Self> {
+        if input.retain_prefix > input.path.len() {
+            return None;
+        }
         if input.bindings.iter().enumerate().any(|(index, binding)| {
             !system_api::operator::name::valid(&binding.name)
                 || binding.mark == env::Mark::NONE
@@ -495,6 +500,7 @@ impl Prepare {
         Some(Self {
             base: input.base,
             path: input.path,
+            retain_prefix: input.retain_prefix,
             grant: None,
             bindings: input.bindings,
             wait: input.wait,
@@ -525,12 +531,6 @@ impl Preparation {
         }
     }
 
-    pub fn installed(&self) -> &Installed {
-        &self.installed
-    }
-    pub fn ready(&self) -> bool {
-        self.ready
-    }
     pub fn into_installed(self) -> Option<Installed> {
         self.ready.then_some(self.installed)
     }
@@ -569,20 +569,4 @@ pub fn authority(input: AuthorityInput) -> Option<GrantSpec> {
         source,
         source_mark: declaration.source_mark.map(env::Mark::new),
     })
-}
-
-/// Ensures a path one segment at a time; use only for System-selected shared layout.
-pub fn ensure_path(capability: &Capability, request: &PathRequest) -> Result<Entry, api::Fail> {
-    let mut entry = request.base;
-    for (index, name) in request.path.iter().enumerate() {
-        let operation = request
-            .operation_start
-            .0
-            .checked_add(u64::try_from(index).map_err(|_| api::Fail::Full)?)
-            .ok_or(api::Fail::Full)?;
-        entry = capability
-            .part(entry, name, api::OperationId(operation), request.wait)?
-            .entry;
-    }
-    Ok(entry)
 }

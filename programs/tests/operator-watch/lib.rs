@@ -3,7 +3,7 @@ extern crate alloc;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{UnsealArgs, ReleaseMode, MailFail, Mark, Permission, PieToken, TaskId, Wait};
+pub use abi::{MailFail, Mark, Permission, PieToken, ReleaseMode, TaskId, UnsealArgs, Wait};
 pub type PieResult<T> = Result<T, ()>;
 use std::{cell::RefCell, collections::HashMap};
 use wire::Message;
@@ -23,7 +23,10 @@ struct Native {
 thread_local! { static NATIVE: RefCell<Native> = RefCell::default(); }
 pub mod pie {
     pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
-        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), _ => unreachable!() }
+        match args {
+            crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
+            _ => unreachable!(),
+        }
     }
 
     use super::*;
@@ -69,7 +72,9 @@ pub mod pie {
 mod capability;
 pub mod raw {
     pub use crate::pie::revoke;
-    pub fn release(token: crate::PieToken) -> crate::PieResult<()> { crate::pie::release(token, crate::ReleaseMode::Revoke) }
+    pub fn release(token: crate::PieToken) -> crate::PieResult<()> {
+        crate::pie::release(token, crate::ReleaseMode::Revoke)
+    }
     pub use crate::capability::Capability;
 }
 pub mod port {
@@ -134,10 +139,19 @@ pub mod operator {
             crate::TaskId::new(7)
         }
         pub(crate) fn call(&self, request: Req, _: crate::Wait) -> Result<Said, Fail> {
-            let Req::Watch { hole, road } = request else {
-                panic!("unexpected request")
+            let (hole, road) = match request {
+                Req::Watch { hole, road } => (hole, road),
+                Req::WatchFrom { base, hole, road } => {
+                    assert_eq!(base.operator, crate::TaskId::new(7));
+                    (hole, road)
+                }
+                _ => panic!("unexpected request"),
             };
-            assert_eq!(road.as_str(), "svc");
+            assert!(
+                road.as_str() == "svc"
+                    || road.as_str() == "control"
+                    || road.as_str() == "future/control"
+            );
             crate::NATIVE.with(|cell| {
                 let mut n = cell.borrow_mut();
                 assert!(n.remote.contains_key(&hole));
@@ -149,6 +163,9 @@ pub mod operator {
             })
         }
         pub fn tile(&self, _: &path::Path, _: crate::Wait) -> Result<Tile, Fail> {
+            unreachable!()
+        }
+        pub fn tile_from(&self, _: Entry, _: &path::Path, _: crate::Wait) -> Result<Tile, Fail> {
             unreachable!()
         }
     }
@@ -171,7 +188,10 @@ mod production_watch;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use operator::{DENIED, Face, OK, Watch, path::Path};
+    use crate::TaskId;
+    use operator::{
+        DENIED, Entry, EntryId, EntryTarget, Face, OK, PathBuf, Union, Watch, path::Path,
+    };
     fn reset() {
         NATIVE.with(|n| {
             *n.borrow_mut() = Native {
@@ -205,6 +225,44 @@ mod tests {
         assert_closed();
         assert_eq!(face.host(), TaskId::new(7));
     }
+    #[test]
+    fn relative_watch_uses_server_canonical_prefix() {
+        reset();
+        let mut reply = Union::EMPTY;
+        let len = Union::WatchPath(PathBuf::try_new("svc").unwrap())
+            .store(&mut reply)
+            .unwrap();
+        NATIVE.with(|n| n.borrow_mut().reply = reply[..len].to_vec());
+        let face = Face;
+        let base = Entry {
+            operator: TaskId::new(7),
+            target: EntryTarget::Node(EntryId::new(2)),
+        };
+        let watch = Watch::from(&face, base, Path::new("control"), Wait::POLL).unwrap();
+        assert_eq!(watch.road(), "control");
+        drop(watch);
+        assert_closed();
+    }
+
+    #[test]
+    fn relative_watch_can_subscribe_before_the_target_exists() {
+        reset();
+        let mut reply = Union::EMPTY;
+        let len = Union::WatchPath(PathBuf::try_new("svc").unwrap())
+            .store(&mut reply)
+            .unwrap();
+        NATIVE.with(|n| n.borrow_mut().reply = reply[..len].to_vec());
+        let face = Face;
+        let base = Entry {
+            operator: TaskId::new(7),
+            target: EntryTarget::Node(EntryId::new(2)),
+        };
+        let watch = Watch::from(&face, base, Path::new("future/control"), Wait::POLL).unwrap();
+        assert_eq!(watch.road(), "future/control");
+        drop(watch);
+        assert_closed();
+    }
+
     #[test]
     fn full_constructor_failures_seal_and_release_the_new_root() {
         for stage in 0..5 {

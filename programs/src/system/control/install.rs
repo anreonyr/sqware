@@ -1,5 +1,5 @@
 use super::{
-    endpoint::{Entries, request as answer},
+    endpoint::request as answer,
     identity::Roster,
     lifecycle,
     unit::{Control, start::Input, verdict},

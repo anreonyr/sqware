@@ -20,13 +20,11 @@ use system_client::operator::Face;
 
 use env::pie;
 use env::unit;
-use router_api as driver;
 
 /// **归自己**
 /// **（为什么不是 `/svc/drv/uart`）**：控制台是**双向**的，故 `uart` 那一格从一枚砖变成
 /// **一块 Pane**（`rx` / `tx` 两枚门牌），而**归属声明在砖上**——顶那块 Pane 本身没有意义
 /// 服务那一格（Pane）
-const SERVICE: &str = "uart";
 /// 砖那一格（`uart` 声明的归属落在这一枚上）：读口
 const ME: &str = "rx";
 
@@ -49,14 +47,16 @@ fn main() -> Report<'static> {
     let tree = Face::of(session);
 
     // 路：驱动那一族的常量（`/svc/drv`）接上服务名与砖名——一处都不自己拼。
-    let Some(road) = driver::ROAD
-        .try_join(SERVICE)
+    let Some(road) = programs::driver::uart::client::road()
         .and_then(|road| road.try_join(ME))
     else {
         return bail("probe-owner: bad name");
     };
 
-    let Some(before) = wait_id(&tree, &road) else {
+    let Some(service) = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok() else {
+        return bail("probe-owner: no service namespace");
+    };
+    let Some(before) = wait_id(&tree, service, &road) else {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
@@ -75,8 +75,7 @@ fn main() -> Report<'static> {
     let _ = pie::release(forged, env::ReleaseMode::Revoke);
 
     // 四、那一格**还在不在**（应是原来那个号）。
-    let root = tree.root();
-    let after = root.tile(&road, Wait::AtMost(MS));
+    let after = tree.tile_from(service, &road, Wait::AtMost(MS));
     let seq = match &after {
         Ok(entry) => format!("id={}", entry.id().get()),
         Err(fail) => format!("err:{fail:?}"),
@@ -103,9 +102,7 @@ fn main() -> Report<'static> {
 
     // 七、判据：一例一条。
     let took = taken.is_ok();
-    {
-        { assert!(denied, "ungranted Operator capability must be rejected") }
-    }
+    assert!(denied, "ungranted Operator capability must be rejected");
     {
         // **同一条「改」轴的另一半**：`part` 也走那一把钥匙。
         assert!(
@@ -133,9 +130,10 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
         Err(Fail::Denied)
     ));
     let _ = pie::release(forged, env::ReleaseMode::Revoke);
-    let road = Path::new("svc/fixtures/lease");
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))?;
+    let road = Path::new("fixtures/lease");
     for _ in 0..MS {
-        if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
+        if matches!(tree.tile_from(service, road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
             return Ok(EntryId::new(0));
         }
         let _ = execution::room::park(core::time::Duration::from_millis(1));
@@ -143,11 +141,10 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
     Err(Fail::Unknown)
 }
 /// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile
-fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
-    let root = tree.root();
+fn wait_id(tree: &Face, service: system_api::operator::Entry, road: &Path) -> Option<EntryId> {
     let mut left = MS;
     loop {
-        match root.tile(road, Wait::AtMost(MS)) {
+        match tree.tile_from(service, road, Wait::AtMost(MS)) {
             Ok(entry) => return Some(entry.id()),
             Err(Fail::Unknown) if left > 0 => {
                 let _ = execution::room::park(core::time::Duration::from_millis(1));

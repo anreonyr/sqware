@@ -25,7 +25,7 @@ use ::resource::port::{self, Access, Policy};
 use crate::operator::frame::Event;
 use crate::operator::frame::watch::EventFrame;
 use crate::operator::path::{Path, PathBuf};
-use crate::operator::{EntryId, Fail};
+use crate::operator::{Entry, EntryId, Fail};
 use ipc::hand::{Receiver, RecvFail, SourceFail};
 
 use super::Face;
@@ -44,6 +44,9 @@ pub struct Watch<'a> {
     face: &'a Face,
     /// 订的那条路（读数与撤订用）。
     road: String,
+    filter: PathBuf,
+    base: Option<Entry>,
+    base_path: Option<PathBuf>,
     /// **本端那一枚孔**：持着它，退场即作废（树上那一侧下一次递手就把他摘掉）。
     _hole: EventHole,
     /// 收那一侧：等"有手"＋ 取一手 ＋ 解一条。
@@ -65,36 +68,73 @@ impl Drop for EventHole {
 impl<'a> Watch<'a> {
     /// **订一条子树**：本端铸一枚孔，把它交给持树者，等它记下这一位。
     pub fn of(face: &'a Face, road: &Path, wait: Wait) -> Result<Watch<'a>, Fail> {
+        Self::create(face, None, road, wait)
+    }
+
+    pub fn from(face: &'a Face, base: Entry, road: &Path, wait: Wait) -> Result<Watch<'a>, Fail> {
+        if base.operator != face.host() {
+            return Err(Fail::Denied);
+        }
+        Self::create(face, Some(base), road, wait)
+    }
+
+    fn create(
+        face: &'a Face,
+        base: Option<Entry>,
+        road: &Path,
+        wait: Wait,
+    ) -> Result<Watch<'a>, Fail> {
         let hole = EventHole(Capability::unseal_hole(WATCH_MARK).map_err(|_| Fail::Unknown)?);
         // **那一枚孔要交给持树者**：它得推得进来（`Push` 是"把发送方那段登记到孔上"⇒ 要写权）。
         // `Policy::NONE`：接过来的人不必再授出（事件只有持树者递）。
         let shipped = port::ship(hole.0.token(), face.host(), Access::STORE, Policy::NONE)
             .map(|to| to.seed())
             .map_err(|_| Fail::Unknown)?;
-        let said = face.call(
-            ocall::Req::Watch {
+        let request = match base {
+            Some(base) => ocall::Req::WatchFrom {
+                base,
+                road: road.to_path_buf(),
+                hole: shipped,
+            },
+            None => ocall::Req::Watch {
                 road: road.to_path_buf(),
                 // **交出去的那一枚在对面表里的号**（不是我手里那一枚）：两个编号空间不同源。
                 hole: shipped,
             },
-            wait,
-        )?;
-        let code = said.status().ok_or(Fail::Unknown)?;
-        match code {
-            ocall::OK => Ok(Watch {
-                face,
-                road: String::from(road.as_str()),
-                read: Receiver::from_raw(hole.0.token()),
-                _hole: hole,
-                buf: [0u8; EventFrame::LEN],
-                seq: 0,
-            }),
-            // 那一格码原样说出去（`OK` 以外的每一档各有成因，别折成同一个 `Unknown`）。
-            code => {
-                crate::debug::put(&alloc::format!("operator: watch refused code={code}"));
-                Err(map_code(code))
+        };
+        let said = face.call(request, wait)?;
+        let (filter, base_path) = match base {
+            Some(_) => {
+                let base_path = said.watch_path().map_err(map_code)?;
+                let filter = if road.as_str().is_empty() {
+                    base_path.clone()
+                } else if base_path.as_str().is_empty() {
+                    road.to_path_buf()
+                } else {
+                    base_path.try_join(road.as_str()).ok_or(Fail::Unknown)?
+                };
+                (filter, Some(base_path))
             }
-        }
+            None => {
+                let code = said.status().ok_or(Fail::Unknown)?;
+                if code != ocall::OK {
+                    crate::debug::put(&alloc::format!("operator: watch refused code={code}"));
+                    return Err(map_code(code));
+                }
+                (road.to_path_buf(), None)
+            }
+        };
+        Ok(Watch {
+            face,
+            road: String::from(road.as_str()),
+            filter,
+            base,
+            base_path,
+            read: Receiver::from_raw(hole.0.token()),
+            _hole: hole,
+            buf: [0u8; EventFrame::LEN],
+            seq: 0,
+        })
     }
 
     /// **读一条事件**：孔上没手就等（`within` = 这一次等多久）。
@@ -151,18 +191,29 @@ impl<'a> Watch<'a> {
     /// 后一个条件不是多余的：手所指的那一格在环绕回来之后可能已经被**别条路**的改动顶掉
     /// ——持树者只保证"递出去那一刻那一格是自己的"，不保证它一直是（`Mode::Oldest` 的代价）。
     /// 不匹配的当"丢了一条"跳过：下一次 `seq` 一跳就看得出来。
-    fn accept(&mut self, ev: Event) -> Option<Event> {
+    fn accept(&mut self, mut ev: Event) -> Option<Event> {
         if ev.seq > self.seq && self.covers(ev.road.as_str()) {
             self.seq = ev.seq;
+            if let Some(base) = &self.base_path {
+                let path = ev.road.as_str();
+                let relative = if base.as_str().is_empty() {
+                    path
+                } else if path == base.as_str() {
+                    ""
+                } else {
+                    path.strip_prefix(base.as_str())?.strip_prefix('/')?
+                };
+                ev.road = PathBuf::try_new(relative)?;
+            }
             Some(ev)
         } else {
             None
         }
     }
 
-    /// `road` 落在本端订的那条路上吗（空前缀 = 全树；按**整段**比——与持树者那一侧同一句）。
+    /// Event path 落在服务端确认的 canonical subscription prefix 内吗。
     fn covers(&self, road: &str) -> bool {
-        let f = self.road.as_str();
+        let f = self.filter.as_str();
         if f.is_empty() {
             return true;
         }
@@ -178,6 +229,9 @@ impl<'a> Watch<'a> {
     /// **订过的那条路此刻译成什么号**（`None` = 译不出）——"事件里那个号对不对"靠它。
     pub fn seek(&self, wait: Wait) -> Result<EntryId, Fail> {
         let road = PathBuf::try_new(self.road.as_str()).ok_or(Fail::Unknown)?;
-        self.face.tile(&road, wait).map(|tile| tile.id())
+        match self.base {
+            Some(base) => self.face.tile_from(base, &road, wait).map(|tile| tile.id()),
+            None => self.face.tile(&road, wait).map(|tile| tile.id()),
+        }
     }
 }

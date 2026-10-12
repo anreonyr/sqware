@@ -42,8 +42,10 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
 
     assert_eq!(system_api::identity::Grant::ALL.len(), 20);
+    let identity = tree.resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS)).unwrap();
     step(
         &tree,
+        identity,
         "identity",
         system_api::operator::Path::new(system_api::identity::DIR),
         system_api::identity::Grant::ALL.len(),
@@ -55,7 +57,7 @@ fn main() -> Report<'static> {
             let road = system_api::operator::Path::new(system_api::identity::DIR)
                 .try_join(grant.name()).expect("probe-coalition: bad face name");
             if grant.mount() == system_api::identity::Mount::Installer {
-                assert_eq!(tree.tile(&road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
+                assert_eq!(tree.tile_from(identity, &road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
                     Err(system_api::operator::Fail::Denied), "installer faces must deny discovery");
                 if grant == system_api::identity::Grant::Install {
                     assert_eq!(ipc::session::establish::find(authority, grant.mark()),
@@ -75,7 +77,7 @@ fn main() -> Report<'static> {
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
-            fetch(&tree, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
+            fetch(&tree, identity, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
         };
         let (_, owner, mark) =
             reserve(entry).expect("probe-coalition: identity entry cannot be reserved");
@@ -87,15 +89,15 @@ fn main() -> Report<'static> {
 }
 
 /// 数一族：那一块窗格底下到齐没有（该有几枚由调用方那一族的 `Grant::ALL` 说）。
-fn step(tree: &Face, family: &str, dir: &Path, want: usize) {
+fn step(tree: &Face, base: system_api::operator::Entry, family: &str, dir: &Path, want: usize) {
     // **先订**（序是契约）：那一族此后每落一格都往本端这一页记一条，`Watch::of` 返回就是
     // 那个序点——故订阅排在"数一次"之前，已经到齐的族则由量具第一问当场返回。
-    let mut watch = match tree.watch(dir, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch_from(base, dir, Wait::AtMost(MS)) {
         Ok(watch) => watch,
         Err(fail) => panic!("probe-coalition: {family} 那一族订不成：{fail:?}"),
     };
     let pane = tree
-        .pane(dir, Wait::AtMost(MS))
+        .pane_from(base, dir, Wait::AtMost(MS))
         .unwrap_or_else(|fail| panic!("probe-coalition: {family} 那一格不是窗格：{fail:?}"));
     let seen = probe::count::count_under(&pane, want, &mut watch, FACES_MS);
     debug!("probe-coalition: {family} faces={seen} want={want}");
@@ -106,12 +108,12 @@ fn step(tree: &Face, family: &str, dir: &Path, want: usize) {
 }
 
 /// 取回一族某一面的那一枚门牌（`tile` 译号 → `token` 把门闩授进本表）。
-fn fetch(tree: &Face, dir: &Path, face: &str, family: &str) -> env::PieToken {
+fn fetch(tree: &Face, base: system_api::operator::Entry, dir: &Path, face: &str, family: &str) -> env::PieToken {
     // 面名由各自那一族的 `Grant` 给（单段、不含 `/`），故这一段拼不出来是**类型写错**，
     // 不是运行期的事——照仓里那几台的排法用 `expect`。
     let road = dir.try_join(face).expect("probe-coalition: bad face name");
     let got = tree
-        .tile(&road, Wait::AtMost(MS))
+        .tile_from(base, &road, Wait::AtMost(MS))
         .and_then(|tile| tile.token(Wait::AtMost(MS)));
     let Ok(entry) = got else {
         panic!("probe-coalition: {family}/{face} 那一枚取不回来（{got:?}）");

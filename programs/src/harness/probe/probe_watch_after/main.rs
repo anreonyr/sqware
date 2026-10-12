@@ -22,7 +22,7 @@ use system_client::operator::Face;
 
 const MS: usize = 1000;
 /// 那一块窗格 —— 与 `probe-watch-gone` 订的那条路**逐字相同**（两份文件各写一遍）。
-const PARENT: &str = "svc/probe-swatch";
+const PARENT: &str = "probe-swatch";
 /// 窗格底下**那一格的名字**：本台连改的就是它（不新增子格 ⇒ 不碰 `PANE_CAP`）。
 const IN: &str = "in";
 /// 连改几趟（每一趟都匹配那位订户的过滤）。
@@ -37,6 +37,7 @@ fn main() -> Report<'static> {
         panic!("probe-watch-after: no tree link");
     };
     let tree = Face::from(&session);
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
     let client =
@@ -70,7 +71,7 @@ fn main() -> Report<'static> {
         );
         binding = Some(current);
         // **树还答得动吗**：同一块窗格再问一次。
-        let Ok(again) = tree.pane(&road, Wait::AtMost(MS)) else {
+        let Ok(again) = tree.pane_from(service, &road, Wait::AtMost(MS)) else {
             panic!("probe-watch-after: the tree stopped answering after #{i}");
         };
         drop(again);
@@ -78,7 +79,7 @@ fn main() -> Report<'static> {
     }
 
     let Ok(listing) = tree
-        .pane(&road, Wait::AtMost(MS))
+        .pane_from(service, &road, Wait::AtMost(MS))
         .unwrap()
         .list(Wait::AtMost(MS))
     else {

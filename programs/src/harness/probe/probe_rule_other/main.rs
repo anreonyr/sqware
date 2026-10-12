@@ -34,8 +34,7 @@ use system_client::operator;
 use system_client::operator::Face;
 
 /// **容器那一段那一条路**（`/svc`）——那一段名字只在协议那一侧说（见 `probe_lease` 同款）
-const DIR: &system_api::operator::Path = system_api::operator::SVC;
-const PANE: &str = "rule";
+const DIR: &system_api::operator::Path = system_api::operator::Path::new("rule");
 const IS: &str = "is";
 const UNDER: &str = "under";
 /// `probe-rule` 落的第三格：规矩 = `Opener(/svc/sys/identity/resolve 那一格)`（许给**别人**）
@@ -57,13 +56,12 @@ fn main() -> Report<'static> {
         return bail("probe-other: no tree link");
     };
     let tree = Face::of(session);
-    let Some(base) = DIR.try_join(PANE) else {
-        return bail("probe-other: bad name");
-    };
+    let base = DIR.to_path_buf();
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
 
-    let is = denied(&tree, &base, IS);
-    let under = denied(&tree, &base, UNDER);
-    let foreign = denied(&tree, &base, FOREIGN);
+    let is = denied(&tree, service, &base, IS);
+    let under = denied(&tree, service, &base, UNDER);
+    let foreign = denied(&tree, service, &base, FOREIGN);
 
     // 三、一行读数。
     debug!("probe-other: tree is={is:?} under={under:?} foreign={foreign:?}");
@@ -95,13 +93,12 @@ fn main() -> Report<'static> {
 /// **（两格为什么分开写）**：新面把这两件分在
 /// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的
 /// 重试那一层
-fn denied(tree: &Face, base: &Path, leaf: &str) -> Result<(), Fail> {
+fn denied(tree: &Face, base_entry: system_api::operator::Entry, base: &Path, leaf: &str) -> Result<(), Fail> {
     let road = base.try_join(leaf).ok_or(Fail::Unknown)?;
-    let root = tree.root();
     let mut left = MS;
     loop {
-        match root
-            .tile(&road, Wait::AtMost(MS))
+        match tree
+            .tile_from(base_entry, &road, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
             .map(|_| ())
         {

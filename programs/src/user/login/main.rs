@@ -135,8 +135,11 @@ fn run() -> Result<(), &'static str> {
         Session::open(unit::sire(), operator::BERTH, WAIT).map_err(|_| "login: operator")?;
     let tree = Face::of(session);
     let client = Client::find(&tree, WAIT).map_err(|_| "login: account endpoint")?;
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, WAIT)
+        .map_err(|_| "login: service namespace")?;
     let lifecycle = Lifecycle::of(
-        tree.tile(system_api::control::INSTANCE, WAIT)
+        tree.tile_from(service, system_api::control::INSTANCE, WAIT)
             .and_then(|tile| tile.token(WAIT))
             .map_err(|_| "login: instance endpoint")?,
     )

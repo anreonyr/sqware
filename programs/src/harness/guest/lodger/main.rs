@@ -42,7 +42,6 @@ const ASK: Ask = Ask {
     policy: Policy::ONLY,
 };
 
-const SERVICE: &str = "router";
 
 const MS: usize = 1000;
 
@@ -124,17 +123,15 @@ fn main() -> Report<'static> {
     );
 }
 
-/// 上树一趟：`FIND /svc/drv/router` ⇒ 那扇门（登记从它走）
+/// 上树一趟：按 Router API 的相对入口路径取那扇门（登记从它走）
 /// **（为什么不用 Face::tile）**：`entry` 自己已经译号一次 + `find` 一次，随后
 /// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须按
 fn find_router(tree: &Face) -> Option<PieToken> {
-    // 先拼路（`/svc/drv/router`：驱动那一族的常量接上服务名），再沿那条路取入口
-    let road = router_api::ROAD.try_join(SERVICE)?;
-    let root = tree.root();
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok()?;
     let mut left = MS;
     loop {
-        match root
-            .tile(&road, Wait::AtMost(MS))
+        match tree
+            .tile_from(service, router_api::ENTRY, Wait::AtMost(MS))
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Some(entry),

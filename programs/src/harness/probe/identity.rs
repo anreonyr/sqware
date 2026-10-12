@@ -205,12 +205,10 @@ pub fn acceptance() {
     );
     super::loader::acceptance(&mut assembly, &operator);
     super::account::acceptance(&mut assembly, &operator);
+    let service = operator.resolve(system_api::namespace::SERVICE, Wait::AtMost(1000)).unwrap();
     let protected = || {
         operator
-            .tile(
-                system_api::operator::path::Path::new("/svc/sys/control/mint"),
-                Wait::AtMost(1000),
-            )
+            .tile_from(service, system_api::operator::path::Path::new("control/mint"), Wait::AtMost(1000))
             .expect("identity: protected tile")
     };
     assert!(
@@ -218,10 +216,7 @@ pub fn acceptance() {
         "identity: trusted operation"
     );
     let public = operator
-        .tile(
-            system_api::operator::path::Path::new("/svc/sys/control/state"),
-            Wait::AtMost(1000),
-        )
+        .tile_from(service, system_api::operator::path::Path::new("control/state"), Wait::AtMost(1000))
         .expect("identity: public tile");
     assert!(public.token(Wait::AtMost(1000)).is_ok());
     let old = old_query.resolve(me, Wait::AtMost(1000)).unwrap().unwrap();
@@ -267,10 +262,12 @@ pub fn acceptance() {
             .unwrap(),
         before
     );
+    let uart_rx = crate::driver::uart::client::road().unwrap()
+        .as_path().try_join("rx").unwrap();
     for (name, road) in [
-        ("router", "/svc/drv/router"),
-        ("rtc", "/svc/drv/rtc"),
-        ("uart", "/svc/drv/uart/rx"),
+        ("router", router_api::ENTRY),
+        ("rtc", crate::driver::rtc::core::frame::ENTRY_PATH),
+        ("uart", uart_rx.as_path()),
     ] {
         ready_driver(
             &operator,
@@ -524,15 +521,13 @@ fn ready_driver(
     operator: &system_client::operator::Face,
     query: &system_client::identity::TaskQuery,
     task: env::TaskId,
-    road: &'static str,
+    road: &system_api::operator::Path,
 ) {
     let until = env::chrono::clock() + 5_000_000_000;
     loop {
-        if let Ok(entry) = operator
-            .tile(
-                system_api::operator::path::Path::new(road),
-                Wait::AtMost(1000),
-            )
+        let service = operator.resolve(system_api::namespace::SERVICE, Wait::AtMost(1000));
+        if let Ok(entry) = service
+            .and_then(|base| operator.tile_from(base, road, Wait::AtMost(1000)))
             .and_then(|tile| tile.token(Wait::AtMost(1000)))
         {
             if matches!(inspect(entry), Ok(info) if info.alive && info.owner == task) {

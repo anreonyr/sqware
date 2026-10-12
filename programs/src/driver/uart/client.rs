@@ -19,7 +19,6 @@
 
 use env::{PieToken, Wait};
 use ipc::rack::{Mode, Reader, Writer};
-use router_api as driver;
 use system_api::operator::path::Path;
 use system_api::operator::path::PathBuf;
 use system_client::operator::Face;
@@ -37,7 +36,7 @@ pub struct Console {
 /// 控制台那一块窗格在树上的路（`/svc/drv/uart`）——**一处说全**（名字住 [`frame`]，
 /// 路头住 `router_api::ROAD`；两边都不自己拼）。
 pub fn road() -> Option<PathBuf> {
-    driver::ROAD.try_join(frame::ME)
+    PathBuf::try_new(frame::ME)
 }
 
 /// 找控制台：两个名字各走一趟（译号带重试 ＋ 取那一枚），拼成两端。
@@ -45,15 +44,22 @@ pub fn road() -> Option<PathBuf> {
 /// 任一格取不到（路没落 / 树答不上 / 那一枚映不进来）⇒ `None`——调用方按"这一档用不了"处置，
 /// 不猜地址、也不退化成半条路。
 pub fn find(tree: &Face, road: &Path, tx_mode: Mode, within: Wait) -> Option<Console> {
-    let rx_page = token_of(tree, road, frame::RX, within)?;
-    let tx_page = token_of(tree, road, frame::TX, within)?;
+    let service = tree.resolve(system_api::namespace::SERVICE, within).ok()?;
+    let rx_page = token_of(tree, service, road, frame::RX, within)?;
+    let tx_page = token_of(tree, service, road, frame::TX, within)?;
     let rx = Reader::<Bytes>::from_raw(rx_page)?;
     let tx = Writer::<Bytes>::from_raw(tx_page, tx_mode)?;
     Some(Console { rx, tx })
 }
 
 /// 两个名字各走的那一趟：**译号 → 取那一枚**（`Tile::token` 把那一枚经会话授进本端表）。
-fn token_of(tree: &Face, road: &Path, leaf: &str, within: Wait) -> Option<PieToken> {
+fn token_of(
+    tree: &Face,
+    service: system_api::operator::Entry,
+    road: &Path,
+    leaf: &str,
+    within: Wait,
+) -> Option<PieToken> {
     let at = road.try_join(leaf)?;
-    tree.tile(&at, within).ok()?.token(within).ok()
+    tree.tile_from(service, &at, within).ok()?.token(within).ok()
 }

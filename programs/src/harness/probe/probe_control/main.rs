@@ -43,11 +43,13 @@ fn main() -> Report<'static> {
     };
     let tree = operator::Face::from(&session);
 
+    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+
     // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
     //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。
-    let mut watch = match tree.watch(system_api::control::DIR, Wait::AtMost(MS)) {
+    let mut watch = match tree.watch_from(service, system_api::control::DIR, Wait::AtMost(MS)) {
         Ok(watch) => watch,
-        Err(fail) => panic!("probe-control: /svc/sys/control 那一族订不成：{fail:?}"),
+        Err(fail) => panic!("probe-control: SERVICE/control 那一族订不成：{fail:?}"),
     };
 
     // 二、树上那**一格**：名字（`seek`）→ 号 → **门牌那一枚**（`find` 会把它授进本表）。
@@ -57,10 +59,10 @@ fn main() -> Report<'static> {
         .expect("probe-control: bad name");
 
     // 二之后、三之前：**那一族到齐没有**——一问 ＋ 等事件（**该有几枚 = `Grant::ALL`**：
-    // 一枚 Grant = 一枚门牌 = 一格）。与 `probe_operator_gate` 数 `/svc/sys/operator` 同一把尺子。
+    // 一枚 Grant = 一枚门牌 = 一格）。与 `probe_operator_gate` 数 `SERVICE/operator` 同一把尺子。
     let parent = tree
-        .pane(system_api::control::DIR, Wait::AtMost(MS))
-        .unwrap_or_else(|fail| panic!("probe-control: /svc/sys/control is not a pane: {fail:?}"));
+        .pane_from(service, system_api::control::DIR, Wait::AtMost(MS))
+        .unwrap_or_else(|fail| panic!("probe-control: SERVICE/control is not a pane: {fail:?}"));
     // Instance lifecycle uses one entry in addition to the static action grants.
     let seen = probe::count::count_under(
         &parent,
@@ -75,14 +77,14 @@ fn main() -> Report<'static> {
     assert_eq!(
         seen,
         (system_api::control::Grant::ALL.len() + 1),
-        "/svc/sys/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
+        "SERVICE/control 底下不对齐（Grant::ALL 有 {} 枚，数到的只有 {seen} 格）",
         (system_api::control::Grant::ALL.len() + 1)
     );
     let plate = tree
-        .tile(&road, Wait::AtMost(MS))
+        .tile_from(service, &road, Wait::AtMost(MS))
         .and_then(|tile| tile.token(Wait::AtMost(MS)));
     let Ok(entry) = plate else {
-        panic!("probe-control: /svc/sys/control/state is not on the tree");
+        panic!("probe-control: SERVICE/control/state is not on the tree");
     };
 
     let Ok(control) = ccall::Face::of(entry) else {
@@ -114,7 +116,7 @@ fn main() -> Report<'static> {
             .try_join(grant.name())
             .expect("probe-control: bad face name");
         let got = tree
-            .tile(&road, Wait::AtMost(MS))
+            .tile_from(service, &road, Wait::AtMost(MS))
             .and_then(|tile| tile.token(Wait::AtMost(MS)));
         debug!("probe-control: {}=err:{got:?}", grant.name());
         denied_cells[i] = matches!(got, Err(Fail::Denied));
@@ -131,7 +133,7 @@ fn main() -> Report<'static> {
         Err(system_api::control::Fail::Denied)
     ));
     let instance = ccall::Face::of(
-        tree.tile(system_api::control::INSTANCE, Wait::AtMost(MS))
+        tree.tile_from(service, system_api::control::INSTANCE, Wait::AtMost(MS))
             .and_then(|tile| tile.token(Wait::AtMost(MS)))
             .unwrap(),
     )
@@ -145,7 +147,7 @@ fn main() -> Report<'static> {
         .unwrap();
     assert!(
         matches!(
-            tree.tile(&loader_road, Wait::AtMost(MS))
+            tree.tile_from(service, &loader_road, Wait::AtMost(MS))
                 .and_then(|tile| tile.token(Wait::AtMost(MS))),
             Err(Fail::Denied)
         ),

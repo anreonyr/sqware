@@ -85,17 +85,25 @@ pub mod session {
     }
 }
 pub mod operator {
-    pub struct Face;
-    pub struct Tile;
+    use crate::{PieToken, TaskId, Wait};
+    use system_api::operator::{Entry, EntryId, EntryTarget, NamespaceKey, Path};
+    pub struct Face { pub service: Option<Entry>, pub attach: Option<PieToken> }
+    pub struct Tile(PieToken);
     impl Face {
-        pub fn tile(&self, _: &system_api::operator::Path, _: crate::Wait) -> Result<Tile, ()> {
-            unreachable!()
+        pub fn resolve(&self, key: NamespaceKey, _: Wait) -> Result<Entry, ()> {
+            if key == system_api::namespace::SERVICE { self.service.ok_or(()) } else { Err(()) }
+        }
+        pub fn tile_from(&self, base: Entry, road: &Path, _: Wait) -> Result<Tile, ()> {
+            let service = self.service.ok_or(())?;
+            if base != service || road.as_str() != terminal_api::ENTRY_PATH { return Err(()); }
+            self.attach.map(Tile).ok_or(())
         }
     }
+    pub fn fixture_base() -> Entry {
+        Entry { operator: TaskId::new(31), target: EntryTarget::Node(EntryId::new(0)) }
+    }
     impl Tile {
-        pub fn token(&self, _: crate::Wait) -> Result<crate::PieToken, ()> {
-            unreachable!()
-        }
+        pub fn token(&self, _: Wait) -> Result<PieToken, ()> { Ok(self.0) }
     }
 }
 #[derive(Debug)]
@@ -109,8 +117,12 @@ fn denied() -> Error {
 }
 pub mod raw {
     use super::*;
-    pub fn reserve(_: PieToken) -> Result<(TaskId, TaskId, Mark), ()> {
-        unreachable!()
+    pub fn reserve(token: PieToken) -> Result<(TaskId, TaskId, Mark), ()> {
+        if token == crate::token(5) {
+            Ok((TaskId::new(31), TaskId::new(31), terminal_api::marks::ENTRY))
+        } else {
+            Err(())
+        }
     }
     pub struct Hole(PieToken);
     impl Hole {
@@ -213,6 +225,25 @@ mod production {
                 host: TaskId::new(31),
             })
             .unwrap()
+        }
+        #[test]
+        fn find_resolves_service_key_then_terminal_relative_path() {
+            crate::reset();
+            let tree = crate::operator::Face {
+                service: Some(crate::operator::fixture_base()),
+                attach: Some(crate::token(5)),
+            };
+            let terminal = Terminal::find(&tree).unwrap();
+            assert_eq!(terminal.host, TaskId::new(31));
+        }
+        #[test]
+        fn find_rejects_missing_terminal_entry_after_resolving_service() {
+            crate::reset();
+            let tree = crate::operator::Face {
+                service: Some(crate::operator::fixture_base()),
+                attach: None,
+            };
+            assert!(Terminal::find(&tree).is_err());
         }
         #[test]
         fn attachment_uses_explicit_seeds_without_discovery() {

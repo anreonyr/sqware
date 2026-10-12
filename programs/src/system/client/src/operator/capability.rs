@@ -134,6 +134,80 @@ impl Capability {
         self.anchor.ok_or(api::Fail::Denied)
     }
 
+    pub fn associate(
+        &self,
+        key: api::NamespaceKey,
+        entry: api::Entry,
+        wait: Wait,
+    ) -> Result<(), api::Fail> {
+        if key.name().is_empty() || Mark::of(key.name()) != key.mark() {
+            return Err(api::Fail::Denied);
+        }
+        let (anchor, root) = coordinates(self.operator, entry)?;
+        let reply = self
+            .call_staged(
+                Request {
+                    op: entry::ASSOCIATE,
+                    anchor,
+                    root,
+                    id: 0,
+                    parent: 0,
+                    holder: TaskId::new(0),
+                    ops: 0,
+                    permit: api::Permit::Public,
+                    permit_restricted: 0,
+                    source: TaskId::new(0),
+                    source_mark: 0,
+                    resource: PieToken::NONE,
+                    resource_id: key.mark().get(),
+                    view: 0,
+                    expected: 0,
+                    name: String::from(key.name()),
+                    scope: String::new(),
+                    back: PieToken::NONE,
+                },
+                wait,
+            )
+            .map_err(|(fail, _)| transport_fail(fail))?;
+        if reply.status == api::OK {
+            Ok(())
+        } else {
+            Err(api::frame::code_to_fail(reply.status).unwrap_or(api::Fail::Unknown))
+        }
+    }
+
+    pub fn resolve(&self, key: api::NamespaceKey, wait: Wait) -> Result<api::Entry, api::Fail> {
+        if key.name().is_empty() || Mark::of(key.name()) != key.mark() {
+            return Err(api::Fail::Denied);
+        }
+        let reply = self
+            .call_staged(
+                Request {
+                    op: entry::RESOLVE_NAMESPACE,
+                    anchor: api::EntryId::new(0),
+                    root: 1,
+                    id: 0,
+                    parent: 0,
+                    holder: TaskId::new(0),
+                    ops: 0,
+                    permit: api::Permit::Public,
+                    permit_restricted: 0,
+                    source: TaskId::new(0),
+                    source_mark: 0,
+                    resource: PieToken::NONE,
+                    resource_id: key.mark().get(),
+                    view: 0,
+                    expected: 0,
+                    name: String::from(key.name()),
+                    scope: String::new(),
+                    back: PieToken::NONE,
+                },
+                wait,
+            )
+            .map_err(|(fail, _)| transport_fail(fail))?;
+        reply.entry(self.operator)
+    }
+
     pub fn grant_info(&self) -> Option<GrantInfo> {
         self.grant
     }
@@ -294,7 +368,7 @@ impl Capability {
             scope: String::new(),
             back: PieToken::NONE,
         };
-        self.call(request, wait).map(|_| ())
+        void_reply(self.call(request, wait)?, self.operator)
     }
 
     pub fn unpart(&self, entry: api::Entry, wait: Wait) -> Result<(), api::Fail> {
@@ -319,7 +393,7 @@ impl Capability {
             scope: String::new(),
             back: PieToken::NONE,
         };
-        self.call(request, wait).map(|_| ())
+        void_reply(self.call(request, wait)?, self.operator)
     }
 
     pub fn find(
@@ -498,7 +572,8 @@ impl Capability {
     }
 
     fn call(&self, request: Request, wait: Wait) -> Result<Response, api::Fail> {
-        self.call_staged(request, wait).map_err(|(fail, _)| fail)
+        self.call_staged(request, wait)
+            .map_err(|(fail, _)| transport_fail(fail))
     }
 
     fn call_staged(&self, mut request: Request, wait: Wait) -> Result<Response, (api::Fail, bool)> {
@@ -531,6 +606,18 @@ impl Capability {
             view,
             permit: reply.permit,
         })
+    }
+}
+
+pub(super) fn void_reply(reply: Response, operator: TaskId) -> Result<(), api::Fail> {
+    reply.entry(operator).map(|_| ())
+}
+
+pub(super) fn transport_fail(fail: api::Fail) -> api::Fail {
+    if fail == api::Fail::Unknown {
+        api::Fail::Unjudged
+    } else {
+        fail
     }
 }
 

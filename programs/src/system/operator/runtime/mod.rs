@@ -56,7 +56,6 @@ use ::resource::pile::Pile;
 use ::schedule::{Cursor, Dispatch, Progress, Resources};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::PieToken;
-use system_api::operator as ocall;
 pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     let mut resources = Resources::new();
     resources
@@ -64,14 +63,14 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
         .insert(Tip(PieToken::NONE))?
         .insert(Pile::unseal(false)?)?
         .insert(Operator::new(status.control, env::unit::self_id()))?
-        .insert(events::Watchers::new())?
         .insert(Desk::new())?
         .insert(Outboxes(Vec::new()))?
         .insert(Tips(VecDeque::new()))?
         .insert(TipWork::new())?
-        .insert(Output::<ocall::Union> {
+        .insert(Output {
             reply: None,
             changes: Vec::new(),
+            watchers: events::Watchers::new(),
         })?
         .insert(Request(None))?
         .insert(Judgment(None))?

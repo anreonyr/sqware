@@ -1,4 +1,4 @@
-use crate::system::control::lifecycle::{Action, Operation, Request};
+use crate::system::control::lifecycle::{Action, Request};
 use crate::system::control::unit::Control;
 use crate::system::control::unit::table::State;
 use env::Wait;
@@ -124,24 +124,6 @@ pub fn enqueue(
         }
     }
     Ok(::schedule::Progress::Done)
-}
-pub(crate) fn complete(operation: &mut Operation) {
-    let said = match operation.progress.failure {
-        Some(fail) => status(fail),
-        None => match operation.key.request.action {
-            Action::Embark { .. } => match operation.progress.execution.task {
-                Some(task) => ccall::frame::said_task(task),
-                None => status(crate::system::control::unit::verdict::Fail::NotReady),
-            },
-            _ => ccall::frame::said_status(ccall::frame::OK),
-        },
-    };
-    if let Some(back) = operation.key.request.back.take() {
-        reply(back, said);
-    }
-    for waiter in operation.key.waiters.drain(..) {
-        reply(waiter, said);
-    }
 }
 fn status(fail: crate::system::control::unit::verdict::Fail) -> ccall::frame::Said {
     ccall::frame::said_status(ccall::frame::fail_to_code(Some(wire_fail(fail))))

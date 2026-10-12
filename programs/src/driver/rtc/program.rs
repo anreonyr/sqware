@@ -4,6 +4,10 @@
 
 use crate::unit::{Died, Ending, UnitFile};
 
+#[allow(dead_code, reason = "The declaration uses the entry name; clients use the shared path.")]
+#[path = "api.rs"]
+mod api;
+
 /// 它死在起手 / 常驻哪一步
 pub const E_RTC: Died = 12;
 
@@ -12,15 +16,19 @@ pub static PROGRAM: UnitFile = UnitFile {
     loader: crate::unit::LoaderConfig::user("rtc"),
     operator: crate::unit::OperatorConfig {
         namespace: &[crate::unit::operator::Namespace {
-            path: "",
-            scope: crate::unit::operator::Scope::Names(&["rtc"]),
-            ops: system_api::operator::Ops::BIND
+            key: system_api::namespace::SERVICE,
+            placement: crate::unit::operator::Placement::Shared,
+            path: "rtc",
+            scope: crate::unit::operator::Scope::Subtree,
+            ops: system_api::operator::Ops::PART
+                .union(system_api::operator::Ops::UNPART)
+                .union(system_api::operator::Ops::BIND)
                 .union(system_api::operator::Ops::UNBIND)
                 .union(system_api::operator::Ops::FIND),
             permit: Some(system_api::operator::Permit::Public),
             source_mark: None,
             bindings: &[crate::unit::operator::Binding {
-                name: "rtc",
+                name: api::ENTRY_NAME,
                 mark: router_api::ENTRY_MARK,
                 view: env::Access::STORE,
                 permit: system_api::operator::Permit::Public,

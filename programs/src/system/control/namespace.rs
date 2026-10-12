@@ -121,7 +121,8 @@ impl Endpoints {
         });
         let Some(plan) = crate::system::app::namespace::Prepare::resources(ResourceInput {
             base,
-            path: PathBuf::try_new("sys/control").ok_or("Control endpoint path")?,
+            path: PathBuf::try_new(system_api::control::DIR.as_str()).ok_or("Control endpoint path")?,
+            retain_prefix: 0,
             bindings,
             wait: Wait::AtMost(crate::support::timing::BOOT_MS),
         }) else {
@@ -172,7 +173,12 @@ pub(crate) fn prepare(
 ) -> Result<Progress, &'static str> {
     let principal = roster.control().ok_or("Control identity missing")?;
     let system = layout.as_ref().ok_or("Operator layout unavailable")?;
-    endpoints.plan(principal, system.shared().services)?;
+        endpoints.plan(
+            principal,
+            system
+                .resolve(system_api::namespace::SERVICE, Wait::AtMost(crate::support::timing::BOOT_MS))
+                .map_err(|_| "Service namespace root")?,
+        )?;
     let preparation = endpoints
         .preparation
         .as_mut()

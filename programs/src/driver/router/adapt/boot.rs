@@ -24,8 +24,6 @@ use programs::driver::shared::fail::Fail;
 use programs::unit::router::{E_ROUTER, PLIC_CLASS};
 use system_client::operator;
 
-const SERVICE: &str = "router";
-
 /// 它们不是树里的设备）
 const PLIC_ASK: Ask = Ask {
     class: PLIC_CLASS,
@@ -112,7 +110,7 @@ pub fn up() -> Result<Up, Fail> {
     let lines =
         Lines::new(sources.device_count()).ok_or(Fail::at(E_ROUTER, "line account full"))?;
 
-    ctx.plate(entry, SERVICE, Wait::AtMost(QUAY_MS));
+    ctx.plate(entry, router_api::ENTRY_NAME, Wait::AtMost(QUAY_MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
     let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);

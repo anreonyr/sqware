@@ -188,7 +188,6 @@ impl Default for Jobs {
     }
 }
 pub(crate) struct Launch {
-    pub job: JobId,
     pub instance: Launched,
     pub installation: InstanceInstall,
 }
@@ -219,9 +218,6 @@ pub(crate) struct JobId(NonZeroU64);
 impl JobId {
     pub(crate) fn new(raw: u64) -> Option<Self> {
         NonZeroU64::new(raw).map(Self)
-    }
-    pub(crate) fn get(self) -> u64 {
-        self.0.get()
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -1421,7 +1417,6 @@ fn construct_one(
                         resolve: env::PieToken::NONE,
                     },
                 },
-                job: job_id,
             })
         }
         Err(fail) => Err((fail, delivery)),

@@ -34,7 +34,6 @@ pub(crate) fn mint(
     job.progress.execution.task = Some(service.task());
     job.progress.execution.instance = Some(Instance {
         service,
-        marks: alloc::vec::Vec::new(),
         launched: false,
         identity_install: None,
     });

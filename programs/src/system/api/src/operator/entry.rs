@@ -17,6 +17,8 @@ pub const FIND: u8 = 9;
 pub const READ: u8 = 10;
 pub const CANCEL_OPERATION: u8 = 11;
 pub const INSPECT_OPERATION: u8 = 12;
+pub const ASSOCIATE: u8 = 13;
+pub const RESOLVE_NAMESPACE: u8 = 14;
 
 #[derive(env::Frame, Clone, Debug, PartialEq, Eq)]
 #[frame(len = 512)]

@@ -1,11 +1,21 @@
 //! Static Operator declarations consumed by System composition.
 
 use env::Access;
-use system_api::operator::{Ops, Permit};
+use system_api::operator::{NamespaceKey, Ops, Permit};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    Shared,
+    Instance,
+}
 
 #[derive(Clone, Copy)]
 pub struct Namespace {
-    /// Namespace path relative to the System-selected shared directory.
+    /// Logical namespace selected by product composition.
+    pub key: NamespaceKey,
+    /// Whether this declaration lives at the shared root or an instance prefix.
+    pub placement: Placement,
+    /// Namespace path relative to the selected entry and placement.
     pub path: &'static str,
     pub scope: Scope,
     pub ops: Ops,
@@ -31,7 +41,11 @@ pub struct Binding {
 
 impl Namespace {
     pub fn valid(self) -> bool {
-        if (!self.path.is_empty() && !valid_path(self.path)) || !self.ops.is_valid() {
+        if !system_api::operator::name::valid(self.key.name())
+            || self.key.mark() != env::Mark::of(self.key.name())
+            || (!self.path.is_empty() && !valid_path(self.path))
+            || !self.ops.is_valid()
+        {
             return false;
         }
         let scope_valid = match self.scope {

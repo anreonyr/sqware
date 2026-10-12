@@ -26,8 +26,11 @@ impl Client {
         })
     }
     pub fn find(tree: &system_client::operator::Face, within: Wait) -> Result<Self, Fail> {
+        let base = tree
+            .resolve(system_api::namespace::SERVICE, within)
+            .map_err(|_| Fail::Denied)?;
         let entry = tree
-            .tile(system_api::operator::Path::new(pipe_api::DIR), within)
+            .tile_from(base, system_api::operator::Path::new(pipe_api::DIR), within)
             .and_then(|t| t.token(within))
             .map_err(|_| Fail::Denied)?;
         Self::of(entry)
