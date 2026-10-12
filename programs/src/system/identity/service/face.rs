@@ -29,7 +29,7 @@ pub(super) enum Current {
 impl Current {
     pub(super) fn mutated(&self) -> bool {
         matches!(self, Self::Answered { incoming, reply }
-            if incoming.request.grant.mount() != api::Mount::Public
+            if incoming.request.context.grant.mount() != api::Mount::Public
                 && !matches!(reply, Reply::Fail(_)))
     }
 }
@@ -88,8 +88,11 @@ pub(super) fn receive(
             inbox.0.try_reserve(1)?;
             inbox.0.push_back(Incoming {
                 request: IdentityRequest {
-                    from: incoming.from,
-                    grant: *grant,
+                    context: super::answer::Context {
+                        from: incoming.from,
+                        endpoint: *entry,
+                        grant: *grant,
+                    },
                     wire,
                 },
                 back: incoming.reply,

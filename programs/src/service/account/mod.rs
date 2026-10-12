@@ -1,15 +1,69 @@
 //! Account selection and login-session construction through public System capabilities.
-mod supplies;
-use alloc::vec::Vec;
+use alloc::{string::String, vec::Vec};
 use env::{TaskId, Wait};
 use system_api::identity::{Grant, Reply, Subject, Wire};
 const NAME: &str = "anran";
 const LOGIN: &str = "login";
 const WAIT: Wait = Wait::AtMost(5000);
 struct Configuration {
-    image: Vec<u8>,
     supervisor: TaskId,
-    commands: supplies::Supplies,
+    next_create_id: u64,
+    operations: Vec<Operation>,
+    watermarks: Vec<(TaskId, u64)>,
+}
+#[derive(Clone)]
+struct Operation {
+    caller: TaskId,
+    id: u64,
+    account: String,
+    owner: TaskId,
+    subject: Subject,
+    host: TaskId,
+    constructor_id: system_api::control::construction::CreateId,
+    cancel_requested: bool,
+    terminal: bool,
+}
+impl Configuration {
+    fn reserve(&mut self, caller: TaskId, id: u64) -> Result<(), system_api::control::Fail> {
+        use system_api::control::Fail;
+        if id == 0 {
+            return Err(Fail::Bad);
+        }
+        if let Some((_, high)) = self.watermarks.iter().find(|(task, _)| *task == caller) {
+            if id <= *high {
+                return Err(Fail::Conflict);
+            }
+        } else {
+            if self.watermarks.len() >= 64 {
+                return Err(Fail::Full);
+            }
+            self.watermarks.try_reserve(1).map_err(|_| Fail::Full)?;
+        }
+        if self.operations.len() >= 256 {
+            if let Some(at) = self.operations.iter().position(|record| record.terminal) {
+                self.operations.swap_remove(at);
+            } else {
+                return Err(Fail::Full);
+            }
+        } else {
+            self.operations.try_reserve(1).map_err(|_| Fail::Full)?;
+        }
+        if let Some((_, high)) = self.watermarks.iter_mut().find(|(task, _)| *task == caller) {
+            *high = id;
+        } else {
+            self.watermarks.push((caller, id));
+        }
+        Ok(())
+    }
+    fn allocate(
+        &mut self,
+    ) -> Result<system_api::control::construction::CreateId, system_api::control::Fail> {
+        let value = self.next_create_id;
+        self.next_create_id = value
+            .checked_add(1)
+            .ok_or(system_api::control::Fail::Full)?;
+        Ok(system_api::control::construction::CreateId { value })
+    }
 }
 fn face(authority: TaskId, grant: Grant) -> Result<system_client::identity::Face, ()> {
     let entry = ipc::session::establish::find(authority, grant.mark()).map_err(|_| ())?;
@@ -37,25 +91,18 @@ pub fn run() -> Result<(), &'static str> {
         return Err("Account principal isolation");
     }
     let subject = Subject::new(principal, &[]).map_err(|_| "Account subject")?;
-    let (image, _load) = image(supervisor)?;
     let mut config = Configuration {
-        image,
         supervisor,
-        commands: supplies::Supplies::receive(supervisor)?,
+        next_create_id: 1,
+        operations: Vec::new(),
+        watermarks: Vec::new(),
     };
     let tree = system_client::operator::Face::of(
         ipc::session::Session::open(supervisor, system_client::operator::BERTH, WAIT)
             .map_err(|_| "Account Operator session")?,
     );
-    let publisher = system_client::control::publication::Client::injected()
-        .map_err(|_| "Account publication face")?;
-    publisher
-        .publish_identity(
-            system_api::control::publication::Object::Principal(principal),
-            NAME,
-            WAIT,
-        )
-        .map_err(|_| "Account identity publication")?;
+    let namespace = system_client::operator::Capability::injected(0, supervisor, WAIT)
+        .map_err(|_| "Account Operator grant")?;
     let state_entry = tree
         .tile(
             system_api::operator::Path::new("/svc/sys/control/state"),
@@ -63,9 +110,11 @@ pub fn run() -> Result<(), &'static str> {
         )
         .and_then(|tile| tile.token(WAIT))
         .map_err(|_| "Account task query entry")?;
-    if !resource::raw::alive(state_entry)
-        || !matches!(resource::raw::reserve(state_entry),
-        Ok((_, owner, mark)) if owner == supervisor && mark == system_api::control::Grant::State.mark())
+    if !matches!(resource::raw::inspect(state_entry), Ok(info)
+        if info.alive && info.owner == supervisor
+            && info.kind == env::PieKind::Hole
+            && info.mark == system_api::control::Grant::State.mark()
+            && info.permission.contains(env::Permission::STORE))
     {
         let _ = env::pie::release(state_entry, env::ReleaseMode::Revoke);
         return Err("Account task query source");
@@ -73,19 +122,65 @@ pub fn run() -> Result<(), &'static str> {
     let state = system_client::control::Face::of(state_entry).map_err(|_| "Account task query")?;
     let entry =
         env::pie::unseal(env::UnsealArgs::hole(account_api::ENTRY)).map_err(|_| "Account entry")?;
-    publisher
-        .publish(
-            system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope(4),
-                group: "".into(),
-                name: "create".into(),
-            },
+    let anchor = namespace.anchor().map_err(|_| "Account namespace anchor")?;
+    let view = system_api::operator::ResourceView::new(env::Access::STORE)
+        .ok_or("Account endpoint view")?;
+    let binding = namespace
+        .bind(
+            anchor,
+            "create",
             entry,
+            view,
             system_api::operator::Permit::Bound,
+            system_api::operator::OperationId(1),
             WAIT,
         )
-        .map_err(|_| "Account publication")?;
-    let _ready = ipc::session::establish::endpoint(supervisor, crate::unit::READY_MARK, Wait::POLL)
+        .map_err(|_| "Account endpoint binding")?
+        .binding;
+    let export = resource::raw::pies()
+        .find(|info| {
+            info.alive
+                && info.owner == supervisor
+                && info.vestor == supervisor
+                && info.kind == env::PieKind::Hole
+                && info.mark == system_api::identity::export::ENTRY
+                && info.permission.contains(env::Permission::STORE)
+        })
+        .map(|info| info.token)
+        .ok_or("Account identity export grant")?;
+    let entry_ref = system_api::identity::OperatorEntryRef {
+        operator: binding.entry.operator,
+        root: matches!(
+            binding.entry.target,
+            system_api::operator::EntryTarget::Root
+        ),
+        id: match binding.entry.target {
+            system_api::operator::EntryTarget::Root => 0,
+            system_api::operator::EntryTarget::Node(id) => id.get() as u64,
+        },
+        revision: binding.revision,
+    };
+    use system_client::identity::{ExportBinding, IdentityExport};
+    system_client::identity::Exporter::direct(supervisor, export)
+        .map_err(|_| "Account identity exporter")?
+        .export(
+            IdentityExport {
+                object: system_api::identity::IdentityObject::Principal(principal),
+                alias: system_api::identity::IdentityName::new(NAME)
+                    .ok_or("Account identity alias")?,
+                binding: ExportBinding {
+                    name: system_api::identity::IdentityName::new("create")
+                        .ok_or("Account endpoint name")?,
+                    entry: entry_ref,
+                },
+            },
+            WAIT,
+        )
+        .map_err(|why| {
+            crate::debug::put(&alloc::format!("Account identity export: {why:?}"));
+            "Account identity export"
+        })?;
+    let _ready = ipc::session::establish::lend(supervisor, crate::unit::READY_MARK)
         .map_err(|_| "Account ready")?;
     use wire::Message;
     let mut bytes = account_api::Request::EMPTY;
@@ -95,208 +190,310 @@ pub fn run() -> Result<(), &'static str> {
         account_api::Call::back,
     );
     loop {
-        config.commands.sweep();
         let incoming = match receiver.receive(&mut bytes, Wait::AtMost(50)) {
             Ok(incoming) => incoming,
             Err(_) => continue,
         };
         let from = incoming.from;
         let (request, exact) = incoming.request;
-        let authorized = login(&tree, &state, authority, &resolve, from);
+        let authorized = login(&state, &resolve, authority, from);
         let result = if !authorized {
             Err(system_api::control::Fail::Denied)
         } else if !exact || !system_api::operator::name::valid(&request.account) {
             Err(system_api::control::Fail::Bad)
-        } else if request.account != NAME {
-            Err(system_api::control::Fail::Unknown)
         } else {
-            create(&mut config, &tree, (from, subject))
+            operate(
+                &mut config,
+                &tree,
+                from,
+                (from, subject),
+                request.op,
+                request.id,
+                &request.account,
+            )
         };
         let said = match result {
-            Ok(built) => system_api::loader::Said {
+            Ok(said) => said,
+            Err(system_api::control::Fail::NotReady) => system_api::loader::Said {
                 status: wire::OK,
-                task: built.task,
-                team: built.team.get() as u64,
+                state: system_api::control::construction::PENDING,
+                task: TaskId::new(0),
+                team: 0,
+                startup: system_api::loader::StartupMetadata {
+                    resolve: env::PieToken::NONE,
+                },
             },
             Err(fail) => system_api::loader::Said {
                 status: system_api::control::frame::fail_to_code(Some(fail)),
+                state: system_api::control::construction::FAILED,
                 task: TaskId::new(0),
                 team: 0,
+                startup: system_api::loader::StartupMetadata {
+                    resolve: env::PieToken::NONE,
+                },
             },
         };
         let _ = incoming.reply.send(said);
     }
 }
 fn login(
-    tree: &system_client::operator::Face,
     state: &system_client::control::Face,
-    authority: TaskId,
     resolve: &system_client::identity::Face,
+    authority: TaskId,
     from: TaskId,
 ) -> bool {
     if !matches!(state.task(LOGIN.into(), WAIT), Ok(task) if task == from) {
         return false;
     }
-    let Ok(Reply::Binding(Some(binding))) = resolve.call(Wire::Resolve(from), WAIT) else {
-        return false;
-    };
-    let object = system_api::control::publication::Object::Principal(
-        system_api::identity::PrincipalId::root(authority),
-    );
-    let Some(road) = object.road(LOGIN) else {
-        return false;
-    };
-    let Ok(entry) = tree.tile(&road, WAIT).and_then(|tile| tile.token(WAIT)) else {
-        return false;
-    };
-    let result = system_client::control::publication::Client::reference_direct(
-        env::unit::sire(),
-        authority,
-        entry,
-        1,
-        LOGIN,
-        WAIT,
-    );
-    let _ = env::pie::release(entry, env::ReleaseMode::Revoke);
-    matches!(result, Ok(system_api::control::publication::Object::Principal(principal)) if principal == binding.current.principal)
-}
-fn image(supervisor: TaskId) -> Result<(Vec<u8>, ipc::session::establish::Held), &'static str> {
-    use wire::Message;
-    let load = ipc::session::establish::Held(
-        ipc::session::establish::endpoint(supervisor, env::Mark::of("account-image"), Wait::POLL)
-            .map_err(|_| "Account image channel")?,
-    );
-    let mut bytes = [0; crate::unit::ImageSupplyFrame::LEN];
-    let (length, from) = resource::raw::Hole::from_raw(load.0.rx())
-        .pull(&mut bytes, WAIT)
-        .map_err(|_| "Account image receive")?;
-    let frame =
-        crate::unit::ImageSupplyFrame::fetch(&bytes[..length]).ok_or("Account image frame")?;
-    if from != supervisor
-        || !resource::raw::alive(frame.seed)
-        || !matches!(resource::raw::inspect(frame.seed), Ok(info) if info.alive && info.vestor == supervisor && info.owner == supervisor && info.mark == crate::unit::IMAGE_MARK)
-    {
-        return Err("Account image source");
-    }
-    struct Mapping(env::PieToken);
-    impl Drop for Mapping {
-        fn drop(&mut self) {
-            let _ = env::pie::shut(self.0);
-            let _ = env::pie::release(self.0, env::ReleaseMode::Revoke);
-        }
-    }
-    let _mapping = Mapping(frame.seed);
-    let (address, capacity) =
-        resource::raw::open(frame.seed).map_err(|_| "Account image mapping")?;
-    let size = usize::try_from(frame.length).map_err(|_| "Account image length")?;
-    if size == 0 || size > capacity || address.checked_add(size).is_none() {
-        return Err("Account image range");
-    }
-    let mut image = Vec::new();
-    image
-        .try_reserve_exact(size)
-        .map_err(|_| "Account image capacity")?;
-    // SAFETY: Open verified the Pole mapping and size is bounded by its capacity.
-    image.extend_from_slice(unsafe { core::slice::from_raw_parts(address as *const u8, size) });
-    Ok((image, load))
+    matches!(resolve.call(Wire::Resolve(from), WAIT), Ok(Reply::Binding(Some(binding)))
+        if binding.origin.principal.authority == authority
+            && binding.current.principal.authority == authority
+            && binding.origin.principal.slot != 0)
 }
 fn create(
     config: &mut Configuration,
     tree: &system_client::operator::Face,
     (owner, subject): (TaskId, Subject),
-) -> Result<system_api::loader::Built, system_api::control::Fail> {
-    use resource::raw::Loan;
+    id: system_api::control::construction::CreateId,
+    host: TaskId,
+) -> Result<system_api::loader::Said, system_api::control::Fail> {
     use system_api::control::{Fail, construction as api};
-    let entry = tree
-        .tile(
-            system_api::operator::Path::new("svc/terminal/attach"),
-            Wait::AtMost(5000),
-        )
-        .and_then(|tile| tile.token(Wait::AtMost(5000)))
-        .map_err(|_| Fail::NotReady)?;
-    let facts = resource::raw::reserve(entry);
-    let live = resource::raw::alive(entry);
-    let _ = env::pie::release(entry, env::ReleaseMode::Revoke);
-    let host = match facts {
-        Ok((_, owner, mark)) if live && owner.get() != 0 && mark == terminal_api::marks::ENTRY => {
-            owner
-        }
-        _ => return Err(Fail::Denied),
-    };
-    let bytes = config.image.as_slice();
-    let image = env::pie::unseal(env::UnsealArgs::Pole {
-        size: bytes.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE,
-        shared: true,
-    })
-    .map_err(|_| Fail::Full)?;
-    struct Image(env::PieToken);
-    impl Drop for Image {
-        fn drop(&mut self) {
-            let _ = env::pie::shut(self.0);
-            let _ = env::pie::release(self.0, env::ReleaseMode::Revoke);
-        }
-    }
-    let _image = Image(image);
-    let (address, _) = resource::raw::open(image).map_err(|_| Fail::Full)?;
-    // SAFETY: This task owns a writable mapping of at least bytes.len() bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), address as *mut u8, bytes.len());
+    let _ = tree;
+    if host.get() == 0 {
+        return Err(Fail::Denied);
     }
     let sender = ipc::rpc::request::Sender::<api::Call>::from_raw(
         ipc::session::establish::find(config.supervisor, api::ENTRY).map_err(|_| Fail::Denied)?,
         api::Call::BACK,
     )
     .map_err(|_| Fail::NotReady)?;
-    let loan = Loan::accord(
-        &image,
-        sender.peer(),
-        env::Permission::FETCH,
-        system_api::loader::IMAGE,
-    )
-    .map_err(|_| Fail::Denied)?;
     let said = sender
         .call(ipc::time::Deadline::new(Wait::AtMost(5000)), |back| {
             let mut args = [0; system_api::loader::MAX_ARGS];
             args[0] = host.get() as u64;
-            args[1] = env::unit::self_id().get() as u64;
             api::Request {
-                constructor: true,
-                image: system_api::loader::Ask {
-                    op: system_api::loader::BUILD,
-                    image: loan.remote(),
-                    offset: 0,
-                    len: bytes.len() as u64,
+                op: api::BUILD,
+                id,
+                input: api::InputOption(Some(api::Input::Unit(api::UnitRef {
+                    name: "shell".into(),
                     stack: 0,
-                    count: 2,
+                    count: 1,
                     args,
-                    back,
-                },
+                }))),
                 owner,
                 subject,
+                back,
             }
         })
         .map_err(|_| Fail::NotReady)?;
-    if said.status != wire::OK {
-        return Err(system_api::control::frame::code_to_fail(said.status).unwrap_or(Fail::Bad));
+    Ok(said)
+}
+
+fn operate(
+    config: &mut Configuration,
+    tree: &system_client::operator::Face,
+    caller: TaskId,
+    (owner, subject): (TaskId, Subject),
+    op: u8,
+    id: system_api::control::construction::CreateId,
+    account: &str,
+) -> Result<system_api::loader::Said, system_api::control::Fail> {
+    use system_api::control::construction as api;
+    if id.value == 0 {
+        return Err(system_api::control::Fail::Bad);
     }
-    if said.task.get() == 0 || said.team == 0 {
-        return Err(Fail::Bad);
-    }
-    let built = system_api::loader::Built {
-        task: said.task,
-        team: env::TeamId::new(said.team as usize),
-    };
-    if let Err(error) = config.commands.send(built.task) {
-        crate::debug::put(error);
-        if let Ok(entry) = tree
-            .tile(system_api::control::INSTANCE, WAIT)
-            .and_then(|tile| tile.token(WAIT))
-        {
-            if let Ok(lifecycle) = system_client::control::Face::of(entry) {
-                let _ = lifecycle.instance(built.task).ruin(WAIT);
-            }
+    let existing = config
+        .operations
+        .iter()
+        .position(|record| record.caller == caller && record.id == id.value);
+    if let Some(at) = existing {
+        let record = config.operations[at].clone();
+        if record.account != account || record.owner != owner || record.subject != subject {
+            return Err(system_api::control::Fail::Conflict);
         }
-        return Err(Fail::Full);
+        if op == api::CANCEL {
+            config.operations[at].cancel_requested = true;
+        }
+        let said = if op == account_api::CREATE && !record.cancel_requested {
+            let observed = forward(
+                config,
+                api::INSPECT,
+                record.constructor_id,
+                (record.owner, record.subject),
+                record.host,
+            )?;
+            if observed.state == api::UNSEEN {
+                create(
+                    config,
+                    tree,
+                    (record.owner, record.subject),
+                    record.constructor_id,
+                    record.host,
+                )?
+            } else {
+                observed
+            }
+        } else if record.cancel_requested {
+            let observed = forward(
+                config,
+                api::INSPECT,
+                record.constructor_id,
+                (record.owner, record.subject),
+                record.host,
+            )?;
+            if matches!(observed.state, api::CANCELLED | api::FAILED | api::CLOSED) {
+                observed
+            } else {
+                forward(
+                    config,
+                    api::CANCEL,
+                    record.constructor_id,
+                    (record.owner, record.subject),
+                    record.host,
+                )?
+            }
+        } else {
+            forward(
+                config,
+                op,
+                record.constructor_id,
+                (record.owner, record.subject),
+                record.host,
+            )?
+        };
+        if said.state == api::COMPLETED || said.state == api::FAILED || said.state == api::CANCELLED
+        {
+            config.operations[at].terminal = true;
+        }
+        return Ok(said);
     }
-    Ok(built)
+    if let Some((_, high)) = config.watermarks.iter().find(|(task, _)| *task == caller) {
+        if id.value <= *high {
+            return match op {
+                api::INSPECT => Ok(system_api::loader::Said {
+                    status: wire::OK,
+                    state: api::CLOSED,
+                    task: TaskId::new(0),
+                    team: 0,
+                    startup: system_api::loader::StartupMetadata {
+                        resolve: env::PieToken::NONE,
+                    },
+                }),
+                api::CANCEL => Ok(system_api::loader::Said {
+                    status: wire::OK,
+                    state: api::CANCELLED,
+                    task: TaskId::new(0),
+                    team: 0,
+                    startup: system_api::loader::StartupMetadata {
+                        resolve: env::PieToken::NONE,
+                    },
+                }),
+                _ => Err(system_api::control::Fail::Conflict),
+            };
+        }
+    }
+    match op {
+        api::INSPECT => {
+            return Ok(system_api::loader::Said {
+                status: wire::OK,
+                state: api::UNSEEN,
+                task: TaskId::new(0),
+                team: 0,
+                startup: system_api::loader::StartupMetadata {
+                    resolve: env::PieToken::NONE,
+                },
+            });
+        }
+        _ => {}
+    }
+    if op != account_api::CREATE && op != api::CANCEL {
+        return Err(system_api::control::Fail::Bad);
+    }
+    if op == account_api::CREATE && account != NAME {
+        return Err(system_api::control::Fail::Unknown);
+    }
+    let host = if op == api::CANCEL {
+        TaskId::new(0)
+    } else {
+        terminal_host(tree)?
+    };
+    let constructor_id = config.allocate()?;
+    config.reserve(caller, id.value)?;
+    let record = Operation {
+        caller,
+        id: id.value,
+        account: account.into(),
+        owner,
+        subject,
+        host,
+        constructor_id,
+        cancel_requested: op == api::CANCEL,
+        terminal: false,
+    };
+    config.operations.push(record);
+    let result = if op == account_api::CREATE {
+        create(config, tree, (owner, subject), constructor_id, host)
+    } else if op == api::CANCEL {
+        forward(config, api::CANCEL, constructor_id, (owner, subject), host)
+    } else {
+        return Err(system_api::control::Fail::Bad);
+    }?;
+    if matches!(result.state, api::COMPLETED | api::FAILED | api::CANCELLED) {
+        if let Some(record) = config
+            .operations
+            .iter_mut()
+            .find(|record| record.caller == caller && record.id == id.value)
+        {
+            record.terminal = true;
+        }
+    }
+    Ok(result)
+}
+
+fn terminal_host(
+    tree: &system_client::operator::Face,
+) -> Result<TaskId, system_api::control::Fail> {
+    let entry = tree
+        .tile(
+            system_api::operator::Path::new("svc/terminal/attach"),
+            Wait::AtMost(5000),
+        )
+        .and_then(|tile| tile.token(Wait::AtMost(5000)))
+        .map_err(|_| system_api::control::Fail::NotReady)?;
+    let facts = resource::raw::reserve(entry);
+    let live = resource::raw::alive(entry);
+    let _ = env::pie::release(entry, env::ReleaseMode::Revoke);
+    match facts {
+        Ok((_, owner, mark)) if live && owner.get() != 0 && mark == terminal_api::marks::ENTRY => {
+            Ok(owner)
+        }
+        _ => Err(system_api::control::Fail::Denied),
+    }
+}
+
+fn forward(
+    config: &Configuration,
+    op: u8,
+    id: system_api::control::construction::CreateId,
+    (owner, subject): (TaskId, Subject),
+    host: TaskId,
+) -> Result<system_api::loader::Said, system_api::control::Fail> {
+    use system_api::control::construction as api;
+    let sender = ipc::rpc::request::Sender::<api::Call>::from_raw(
+        ipc::session::establish::find(config.supervisor, api::ENTRY)
+            .map_err(|_| system_api::control::Fail::Denied)?,
+        api::Call::BACK,
+    )
+    .map_err(|_| system_api::control::Fail::NotReady)?;
+    let _ = host;
+    sender
+        .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+            op,
+            id,
+            input: api::InputOption(None),
+            owner,
+            subject,
+            back,
+        })
+        .map_err(|_| system_api::control::Fail::NotReady)
 }

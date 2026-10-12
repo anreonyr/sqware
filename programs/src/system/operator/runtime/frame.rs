@@ -1,10 +1,10 @@
 use super::Fail;
 use crate::system::app::life::{Phase, Status};
+use crate::system::operator::tree::Operator;
 use ::schedule::{Progress, Res, ResMut};
 use alloc::sync::Arc;
 use core::sync::atomic::Ordering;
 use env::{TaskId, Wait};
-use system_client::identity::TaskQuery;
 pub(super) struct Running(pub bool);
 pub(super) fn health(
     status: Res<Arc<Status>>,
@@ -26,9 +26,7 @@ pub(super) fn health(
     Ok(Progress::Done)
 }
 
-pub(super) fn query(mut query: ResMut<Option<TaskQuery>>) -> Result<Progress, Fail> {
-    if query.as_ref().is_some_and(|bundle| !bundle.available()) {
-        *query = None;
-    }
+pub(super) fn query(mut tree: ResMut<Operator>) -> Result<Progress, Fail> {
+    tree.refresh_identity_query();
     Ok(Progress::Done)
 }

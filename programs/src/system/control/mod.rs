@@ -1,7 +1,8 @@
-mod endpoint;
+pub(crate) mod endpoint;
 pub(crate) mod identity;
 pub(crate) mod instance;
 pub(crate) mod lifecycle;
+pub(crate) mod namespace;
 pub(crate) mod unit;
 
 pub(crate) use endpoint::construction::{
@@ -19,7 +20,7 @@ pub(crate) fn entry(
     grant: system_api::control::Grant,
 ) -> Result<env::PieToken, &'static str> {
     resources
-        .read::<endpoint::Entries>()
+        .read::<namespace::Endpoints>()
         .map_err(|_| "Control service not installed")?
         .face(grant)
         .ok_or("Control entry not published")
@@ -28,7 +29,7 @@ pub(crate) fn instance_entry(
     resources: &::schedule::Resources<'_>,
 ) -> Result<env::PieToken, &'static str> {
     resources
-        .read::<endpoint::Entries>()
+        .read::<namespace::Endpoints>()
         .map_err(|_| "Control service not installed")?
         .instance()
         .ok_or("Control instance entry not published")
@@ -39,6 +40,6 @@ pub(crate) use lifecycle::schedule::ActivationHooks;
 pub(crate) use lifecycle::{Startup, eligibility, startup};
 pub(crate) use plan::ruin_rest;
 
-pub(crate) use endpoint::Entries;
+pub(crate) use namespace::Endpoints as Entries;
 pub(crate) use endpoint::request::receive;
 pub(crate) use endpoint::{answer_instances, receive_instances};

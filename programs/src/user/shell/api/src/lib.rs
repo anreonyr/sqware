@@ -6,7 +6,7 @@ use pipe_api::{Direction, Endpoint};
 pub const MARK: env::Mark = env::Mark::of("shell-launch");
 pub const CATALOGUE: env::Mark = env::Mark::of("shell-catalogue");
 pub const MAGIC: u64 = 0x7371776172656c73;
-pub const VERSION: u64 = 2;
+pub const VERSION: u64 = 3;
 pub const MAX_SIZE: usize = 64 * 1024;
 pub const MAX_ARGS: usize = 64;
 pub const MAX_PORTS: usize = 64;
@@ -145,6 +145,7 @@ impl Launch {
 pub struct Image {
     pub name: String,
     pub seed: PieToken,
+    pub mark: env::Mark,
     pub length: usize,
     pub ports: Vec<(String, Direction)>,
 }
@@ -163,6 +164,7 @@ impl Catalogue {
         for image in &self.images {
             string(&mut bytes, &image.name);
             word(&mut bytes, image.seed.get() as u64);
+            word(&mut bytes, image.mark.get());
             word(&mut bytes, image.length as u64);
             word(&mut bytes, image.ports.len() as u64);
             for (name, direction) in &image.ports {
@@ -194,6 +196,7 @@ impl Catalogue {
                 return Err(Fail::Invalid);
             }
             let seed = decoder.pie().ok_or(Fail::Invalid)?;
+            let mark = env::Mark::new(decoder.word().ok_or(Fail::Invalid)?);
             let length = decoder.word().ok_or(Fail::Invalid)? as usize;
             let count = decoder.word().ok_or(Fail::Invalid)? as usize;
             if count > MAX_PORTS || length == 0 || seed == PieToken::NONE {
@@ -215,6 +218,7 @@ impl Catalogue {
             images.push(Image {
                 name,
                 seed,
+                mark,
                 length,
                 ports,
             });

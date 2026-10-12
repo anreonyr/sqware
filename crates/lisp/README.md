@@ -8,5 +8,3 @@
 cargo test -p lisp --target x86_64-unknown-linux-gnu
 cargo check -p lisp --target riscv64gc-unknown-none-elf
 ```
-
-完整语义、Shell 装配、限制和实例见 [Lisp Shell](../../docs/lisp-shell.md)。

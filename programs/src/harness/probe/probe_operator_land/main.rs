@@ -8,16 +8,9 @@ use env::pie;
 use env::{Mark, Wait};
 use ipc::session::Session;
 use programs::Report;
-use system_api::control::Scope;
-use system_api::control::Target;
-use system_api::operator::EntryId;
-use system_api::operator::Fail;
-use system_api::operator::Permit;
-use system_api::operator::Where;
-use system_client::control::publication::Client;
+use system_api::operator::{self as operator_api, Fail, Permit, Where};
 use system_client::operator;
 use system_client::operator::Face;
-use system_client::operator::Mine;
 const MS: Wait = Wait::AtMost(3000);
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -25,84 +18,103 @@ fn main() -> Report<'static> {
         .unwrap_or_else(|_| panic!("no Operator session"));
     let face = Face::of(session);
     let source = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
-    assert_eq!(
-        face.land(
-            Where::Root,
-            "idt".into(),
-            source,
-            Permit::Public,
-            Mine::No,
-            MS
-        ),
+    let forged = pie::unseal(env::UnsealArgs::hole(
+        system_api::operator::entry::AUTH_ENTRY,
+    ))
+    .unwrap();
+    assert!(matches!(
+        operator::Capability::direct(face.host(), forged),
         Err(Fail::Denied)
-    );
-    assert_eq!(face.part(Where::Root, "uit".into(), MS), Err(Fail::Denied));
-    assert_eq!(face.trim(EntryId::new(usize::MAX), MS), Err(Fail::Denied));
+    ));
+    let _ = pie::release(forged, env::ReleaseMode::Revoke);
     assert!(
         face.seek(system_api::operator::path::Path::new("svc"), MS)
             .is_ok()
     );
     assert!(face.list(Where::Root, MS).is_ok());
-    let client = Client::injected().unwrap();
-    let target = Target::Service {
-        scope: Scope(4),
-        group: "operator-fixture".into(),
-        name: "entry".into(),
-    };
-    let id = client
-        .publish(target.clone(), source, Permit::Public, MS)
-        .unwrap();
+    let client = system_client::operator::Capability::injected(0, env::unit::sire(), MS).unwrap();
+    let anchor = client.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    let first = client
+        .bind(
+            anchor,
+            "entry",
+            source,
+            view,
+            Permit::Public,
+            operator_api::OperationId(1),
+            MS,
+        )
+        .unwrap()
+        .binding;
     assert_eq!(
-        client.publish(target.clone(), source, Permit::Public, MS),
-        Ok(id)
+        client
+            .bind(
+                anchor,
+                "entry",
+                source,
+                view,
+                Permit::Public,
+                operator_api::OperationId(2),
+                MS
+            )
+            .unwrap()
+            .binding
+            .entry_id(),
+        first.entry_id()
     );
     let other = pie::unseal(env::UnsealArgs::hole(Mark::of("publication-test"))).unwrap();
     assert_eq!(
-        client.publish(target.clone(), other, Permit::Public, MS),
+        client
+            .bind(
+                anchor,
+                "entry",
+                other,
+                view,
+                Permit::Public,
+                operator_api::OperationId(3),
+                MS
+            )
+            .map(|_| ()),
         Err(Fail::Denied)
     );
     assert_eq!(
-        client.publish(
-            Target::Service {
-                scope: Scope(1),
-                group: "".into(),
-                name: "rtc".into()
-            },
-            source,
-            Permit::Public,
-            MS
-        ),
+        client
+            .bind(
+                anchor,
+                "rtc",
+                source,
+                view,
+                Permit::Public,
+                operator_api::OperationId(4),
+                MS
+            )
+            .map(|_| ()),
         Err(Fail::Denied)
     );
-    assert_eq!(
-        client.publish(
-            Target::RuntimeResource {
-                task: env::unit::sire(),
-                kind: "public".into(),
-                name: "forged".into()
-            },
-            source,
-            Permit::Public,
-            MS
-        ),
-        Err(Fail::Denied)
-    );
-    client.unpublish(target.clone(), MS).unwrap();
+    client.unbind(first, MS).unwrap();
     assert!(
         reserve(source).is_ok(),
-        "unpublish must preserve the source resource"
+        "unbinding must preserve the source resource"
     );
     Hole::from_raw(source).push(b"live", MS).unwrap();
     let mut bytes = [0; 4];
     assert_eq!(Hole::from_raw(source).pull(&mut bytes, MS).unwrap().0, 4);
     assert_eq!(&bytes, b"live");
-    assert_ne!(
-        client
-            .publish(target.clone(), other, Permit::Public, MS)
-            .unwrap(),
-        id
-    );
-    client.unpublish(target, MS).unwrap();
+    let replacement = client
+        .bind(
+            anchor,
+            "entry",
+            other,
+            view,
+            Permit::Public,
+            operator_api::OperationId(5),
+            MS,
+        )
+        .unwrap()
+        .binding;
+    assert_ne!(replacement.entry_id(), first.entry_id());
+    client.unbind(replacement, MS).unwrap();
     programs::debug::put(
         "hierarchy: publication duplicate/conflict/retirement and raw grant denial passed",
     );

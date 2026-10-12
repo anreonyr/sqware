@@ -9,6 +9,7 @@ extern crate programs;
 use env::{Mark, Wait};
 use programs::Report;
 
+use core::sync::atomic::{AtomicU64, Ordering};
 use env::pie;
 use env::unit;
 use ipc::session::Session;
@@ -16,8 +17,8 @@ use programs::debug;
 use system_api::operator::EntryId;
 use system_api::operator::Event;
 use system_api::operator::Kind;
-use system_api::operator::Permit;
 use system_api::operator::path::PathBuf;
+use system_api::operator::{self as operator_api, Permit};
 use system_client::operator;
 use system_client::operator::Face;
 
@@ -43,6 +44,10 @@ fn main() -> Report<'static> {
         panic!("probe-watch: no tree link");
     };
     let tree = Face::from(&session);
+    let capabilities = [
+        system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap(),
+        system_client::operator::Capability::injected(2, unit::sire(), Wait::AtMost(MS)).unwrap(),
+    ];
 
     // 二、**订**：`watch` 那一面回 `OK` 之后，此后真变了才发得过来。
     let road = PathBuf::try_new(IN_ROAD).unwrap_or_else(|| panic!("probe-watch: bad road"));
@@ -53,7 +58,7 @@ fn main() -> Report<'static> {
     debug!("probe-watch: subscribed road={}", watch.road());
 
     // 三、**订的范围里落一格** ⇒ 等一条事件（等铃，不轮询）。
-    let inside = spot(&tree, IN_ROAD, "probe-watch-in");
+    let inside = spot((&tree, &capabilities), IN_ROAD, "probe-watch-in");
     let got = wait_event(&mut watch, "in");
     assert_eq!(got.kind, Kind::Landed, "落下来那一格该报 Landed");
     assert_eq!(
@@ -71,7 +76,7 @@ fn main() -> Report<'static> {
     );
 
     // 四、**订的范围外落一格** ⇒ 期限内收不到第二条（过滤）。
-    let outside = spot(&tree, OUT_ROAD, "probe-watch-out");
+    let outside = spot((&tree, &capabilities), OUT_ROAD, "probe-watch-out");
     let quiet = watch.next(Wait::AtMost(300));
     assert!(
         quiet.is_err(),
@@ -102,7 +107,7 @@ fn main() -> Report<'static> {
         .unwrap_or_else(|fail| panic!("probe-watch: subscribe /probe-watch/q refused: {fail:?}"));
     for i in 0..LANDED {
         let _ = spot(
-            &tree,
+            (&tree, &capabilities),
             &alloc::format!("svc/probe-watch-q/c{i}"),
             "probe-watch-q",
         );
@@ -127,81 +132,95 @@ fn main() -> Report<'static> {
         "probe-watch: queued got={got} of={EVENTS} last_seq={last}"
     ));
 
-    let publisher = system_client::control::publication::Client::injected().unwrap();
-    let dynamic = |name: &str| system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope(4),
-        group: "probe-watch-dynamic".into(),
-        name: name.into(),
-    };
-    let first = dynamic("one");
-    let second = dynamic("two");
-    let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-    let second_entry = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
+    let publisher =
+        system_client::operator::Capability::injected(1, unit::sire(), Wait::AtMost(MS)).unwrap();
+    let anchor = publisher.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
+    let second_entry = pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
     assert_ne!(first_entry, second_entry);
-    let denied_group = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-    let denied_name = pie::unseal(env::UnsealArgs::hole(Mark::NONE)).unwrap();
-    let marked_without_right =
-        pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
+    let wrong_group = env::PieToken::NONE;
+    let wrong_mark = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
     assert_eq!(
-        publisher.publish(
-            system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope(4),
-                group: "probe-watch-other".into(),
-                name: "one".into(),
-            },
-            denied_group,
-            Permit::Public,
-            Wait::AtMost(MS),
-        ),
+        publisher
+            .bind(
+                anchor,
+                "one",
+                wrong_group,
+                view,
+                Permit::Public,
+                operator_api::OperationId(1),
+                Wait::AtMost(MS)
+            )
+            .map(|_| ()),
         Err(system_api::operator::Fail::Denied)
     );
     assert_eq!(
-        publisher.publish(
-            dynamic("../escape"),
-            denied_name,
-            Permit::Public,
-            Wait::AtMost(MS),
-        ),
+        publisher
+            .bind(
+                anchor,
+                "../escape",
+                wrong_group,
+                view,
+                Permit::Public,
+                operator_api::OperationId(2),
+                Wait::AtMost(MS)
+            )
+            .map(|_| ()),
         Err(system_api::operator::Fail::Denied)
     );
     assert_eq!(
-        publisher.publish(
-            system_api::control::publication::Target::Service {
-                scope: system_api::control::publication::Scope(4),
-                group: "probe-watch-other".into(),
-                name: "one".into(),
-            },
-            marked_without_right,
-            Permit::Public,
-            Wait::AtMost(MS),
-        ),
+        publisher
+            .bind(
+                anchor,
+                "one",
+                wrong_mark,
+                view,
+                Permit::Public,
+                operator_api::OperationId(3),
+                Wait::AtMost(MS)
+            )
+            .map(|_| ()),
         Err(system_api::operator::Fail::Denied)
     );
-    for token in [denied_group, denied_name, marked_without_right] {
+    for token in [wrong_mark] {
         pie::seal(token).unwrap();
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
-    let first_id = publisher
-        .publish(first.clone(), first_entry, Permit::Public, Wait::AtMost(MS))
-        .unwrap();
-    let second_id = publisher
-        .publish(
-            second.clone(),
-            second_entry,
+    let first = publisher
+        .bind(
+            anchor,
+            "one",
+            first_entry,
+            view,
             Permit::Public,
+            operator_api::OperationId(4),
             Wait::AtMost(MS),
         )
-        .unwrap();
+        .unwrap()
+        .binding;
+    let second = publisher
+        .bind(
+            anchor,
+            "two",
+            second_entry,
+            view,
+            Permit::Public,
+            operator_api::OperationId(5),
+            Wait::AtMost(MS),
+        )
+        .unwrap()
+        .binding;
     let root = tree.root();
-    for (name, id) in [("one", first_id), ("two", second_id)] {
+    for (name, binding) in [("one", first), ("two", second)] {
         let road = PathBuf::try_new(&alloc::format!("svc/probe-watch-dynamic/{name}")).unwrap();
         let tile = root.tile(&road, Wait::AtMost(MS)).unwrap();
-        assert_eq!(tile.id(), id);
+        assert_eq!(tile.id(), binding.entry_id());
         let token = tile.token(Wait::AtMost(MS)).unwrap();
-        assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::NONE);
+        assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::of("probe-watch-resource"));
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
-    publisher.unpublish(first, Wait::AtMost(MS)).unwrap();
+    publisher.unbind(first, Wait::AtMost(MS)).unwrap();
     let first_road = PathBuf::try_new("svc/probe-watch-dynamic/one").unwrap();
     assert!(matches!(
         root.tile(&first_road, Wait::AtMost(MS)),
@@ -210,7 +229,7 @@ fn main() -> Report<'static> {
     let second_road = PathBuf::try_new("svc/probe-watch-dynamic/two").unwrap();
     assert_eq!(
         root.tile(&second_road, Wait::AtMost(MS)).unwrap().id(),
-        second_id
+        second.entry_id()
     );
 
     return Report::note(env::EXIT_OK, OK_NOTE);
@@ -232,19 +251,33 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 /// 前缀那几段由**本台自己分**（`Pane::open`：幂等，缺的就地造）——那几段是这一台自己的试验场，
 /// 不是别人的。**逐段只收号**（`Pane` 借的是上一块，攒着它就没法在循环里换新的）；
 /// 落完再沿整条路译一遍，确认"事件里那个号"与树上那一格是同一个。
-fn spot(tree: &Face, road: &str, mark: &'static str) -> EntryId {
+fn spot(context: (&Face, &[system_client::operator::Capability; 2]), road: &str, mark: &'static str) -> EntryId {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let (tree, capabilities) = context;
     let (parent, name) = road.rsplit_once('/').unwrap();
     let group = parent.strip_prefix("svc/").unwrap();
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of(mark))).unwrap();
-    let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope(4),
-        group: group.into(),
-        name: name.into(),
+    let namespace = match group {
+        "probe-watch" => 0,
+        "probe-watch-q" => 1,
+        _ => panic!("probe-watch: undeclared fixture path {group}"),
     };
-    let id = system_client::control::publication::Client::injected()
+    let capability = &capabilities[namespace];
+    let anchor = capability.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of(mark))).unwrap();
+    let id = capability
+        .bind(
+            anchor,
+            name,
+            entry,
+            view,
+            Permit::Public,
+            operator_api::OperationId(NEXT.fetch_add(1, Ordering::Relaxed)),
+            Wait::AtMost(MS),
+        )
         .unwrap()
-        .publish(target, entry, Permit::Public, Wait::AtMost(MS))
-        .unwrap();
+        .binding
+        .entry_id();
     assert_eq!(
         tree.root()
             .tile(&PathBuf::try_new(road).unwrap(), Wait::AtMost(MS))

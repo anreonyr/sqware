@@ -65,4 +65,4 @@ impl Default for Loader {
     }
 }
 
-pub(crate) use service::Inbox;
+pub(crate) use service::EndpointState;

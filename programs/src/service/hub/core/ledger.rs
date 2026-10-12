@@ -5,7 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use env::{PieToken, TaskId};
-use hub_api::{Fail, LIST_MAX, Window};
+use hub_api::{Fail, INVENTORY_MAX, LIST_MAX, Window};
 
 use super::league::League;
 
@@ -73,7 +73,9 @@ impl Ledger {
     /// 册 · 写：收一台。**撞名即拒**（名是这一台的坐标，两处写同一个名＝自述坏了）
     /// （这一台机器起不来，而不是"少收一台"）
     pub fn enroll(&mut self, entry: Entry) -> Result<(), ()> {
-        if self.cells.iter().any(|c| c.entry().name == entry.name) {
+        if self.cells.len() >= INVENTORY_MAX
+            || self.cells.iter().any(|c| c.entry().name == entry.name)
+        {
             return Err(());
         }
         self.cells.try_reserve(1).map_err(|_| ())?;

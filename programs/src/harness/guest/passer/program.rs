@@ -1,19 +1,23 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
 //! :catalog 的 `PROGRAMS`
 
-use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
+use crate::unit::{Ending, UnitFile};
 
 /// 过客：起来、挂一个名字、**直接死**（不说再见）
 pub static PASSER: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "passer",
-        ..Identity::DEFAULT
+    name: "passer",
+    loader: crate::unit::LoaderConfig::user("passer"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation {
+    control: crate::unit::ControlConfig {
         after: Some(&[]),
-        restart: Some(Ending::Transient),
-        ..Relation::DEFAULT
+        ready: crate::unit::Ready::OnSpawn,
+        ending: Some(Ending::Transient),
+
+        construction: &[],
     },
-    demand: Demand { ..Demand::DEFAULT },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

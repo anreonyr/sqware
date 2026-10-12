@@ -9,8 +9,7 @@ use programs::driver::shared::fail::Fail;
 use programs::driver::uart::core::frame::{Bytes, ME, RX, TX};
 use programs::unit::uart::E_UART;
 use router_client::Line;
-use system_api::control::Scope;
-use system_api::operator::Permit;
+use system_api::operator::{self as operator_api, Permit};
 use system_client::operator;
 
 const ASK: Ask = Ask {
@@ -66,14 +65,10 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
     let tx = Rack::<Bytes>::open(Mode::Oldest).map_err(|_| Fail::at(E_UART, "desk"))?;
     let tx_r = tx.reader();
 
-    plate(&rx, &tx, ms);
+    plate(ctx.capability(), (&rx, &tx), ms);
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = ipc::session::establish::endpoint(
-        env::unit::sire(),
-        programs::unit::READY_MARK,
-        env::Wait::POLL,
-    );
+    let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);
 
     Ok(Desk {
         _ctx: ctx,
@@ -88,17 +83,21 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
 
 /// → `rx` / `tx` 各一枚 Tile（**各是一具架的页**）→ 各查回来一遍（号 ↔ 名对得上才算真坐标）
 /// 送出去的是 `Rack::ship()` 交给对端的**那一枚页**：客人拿它既能映页、又能等页上那一位。
-fn plate(rx: &Rack<Bytes>, tx: &Rack<Bytes>, ms: Wait) {
-    let client =
-        system_client::control::publication::Client::injected().expect("uart: publication entry");
-    for (name, entry) in [(RX, rx.ship()), (TX, tx.ship())] {
-        let target = system_api::control::publication::Target::Service {
-            scope: Scope(1),
-            group: "uart".into(),
-            name: name.into(),
-        };
-        client
-            .publish(target, entry, Permit::Public, ms)
-            .expect("uart: publication");
+fn plate(capability: &system_client::operator::Capability, racks: (&Rack<Bytes>, &Rack<Bytes>), ms: Wait) {
+    let (rx, tx) = racks;
+    let anchor = capability.anchor().expect("uart: namespace anchor");
+    let view = operator_api::ResourceView::new(env::Access::FETCH_STORE).expect("uart: resource view");
+    for (index, (name, entry)) in [(RX, rx.ship()), (TX, tx.ship())].into_iter().enumerate() {
+        capability
+            .bind(
+                anchor,
+                name,
+                entry,
+                view,
+                Permit::Public,
+                operator_api::OperationId(index as u64 + 1),
+                ms,
+            )
+            .expect("uart: resource binding");
     }
 }

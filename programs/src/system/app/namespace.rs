@@ -1,0 +1,588 @@
+//! System-owned Operator namespace layout and per-task installation receipts.
+
+use alloc::vec::Vec;
+use core::cell::Cell;
+use env::{PieToken, TaskId, Wait};
+use system_api::operator::{
+    self as api, Binding, BoundResource, Entry, GrantId, GrantSpec, GrantState, PathBuf, Permit,
+    ResourceView, Scope,
+};
+use system_client::operator::{Capability, GrantInfo};
+
+#[derive(Clone, Copy)]
+pub struct Shared {
+    pub root: Entry,
+    pub services: Entry,
+    pub drivers: Entry,
+}
+
+/// Retained by Assembly across prepare/retire so grants and bindings can be retried.
+pub struct Installed {
+    pub anchor: Entry,
+    pub authority: Option<GrantInfo>,
+    /// Kept before the grant request so a lost reply can still cancel an unseen/pending grant.
+    pub grant: Option<(Entry, GrantId)>,
+    pub bindings: Vec<Binding>,
+    pub entries: Vec<Entry>,
+    pub wait: Wait,
+}
+
+pub struct BindingInput {
+    pub name: alloc::string::String,
+    pub mark: env::Mark,
+    pub resource: PieToken,
+    pub view: ResourceView,
+    pub permit: Permit,
+}
+
+pub struct Prepare {
+    base: Entry,
+    /// App-selected relative path below `base`.
+    path: PathBuf,
+    grant: Option<GrantSpec>,
+    bindings: Vec<BindingInput>,
+    wait: Wait,
+}
+
+/// A System-owned resource publication plan that needs no child authority.
+pub struct ResourceInput {
+    pub base: Entry,
+    pub path: PathBuf,
+    pub bindings: Vec<BindingInput>,
+    pub wait: Wait,
+}
+
+pub struct PrepareInput {
+    pub base: Entry,
+    /// App-selected prefix below `base`; empty for shared named service locations.
+    pub prefix: PathBuf,
+    pub declaration: crate::unit::operator::Namespace,
+    pub grant_id: GrantId,
+    pub holder: TaskId,
+    pub source: Option<TaskId>,
+    pub bindings: Vec<BindingInput>,
+    pub wait: Wait,
+}
+
+pub struct AuthorityInput {
+    pub declaration: crate::unit::operator::Namespace,
+    pub id: GrantId,
+    pub holder: TaskId,
+    pub anchor: Entry,
+    pub source: Option<TaskId>,
+}
+
+pub struct PathRequest {
+    pub base: Entry,
+    pub path: PathBuf,
+    pub operation_start: api::OperationId,
+    pub wait: Wait,
+}
+
+pub struct Lookup {
+    pub entry: Entry,
+    pub permit: Permit,
+    pub wait: Wait,
+}
+
+pub struct Preparation {
+    plan: Prepare,
+    installed: Installed,
+    path_cursor: usize,
+    binding_cursor: usize,
+    operations: Vec<api::OperationId>,
+    path_attempted: bool,
+    binding_attempted: bool,
+    ready: bool,
+    retired: bool,
+}
+
+/// Stable, retryable receipt for a shared resource publication without a holder grant.
+pub type ResourcePreparation = Preparation;
+
+pub struct System {
+    capability: Capability,
+    shared: Shared,
+    next_operation: Cell<u64>,
+}
+
+impl System {
+    pub fn bootstrap(
+        info: crate::system::operator::management::RootInfo,
+        wait: Wait,
+    ) -> Result<Self, api::Fail> {
+        let capability = Capability::direct_at(info.entry.operator, info.entrance, info.entry)?;
+        let services = capability
+            .part(info.entry, "svc", api::OperationId(1), wait)?
+            .entry;
+        let drivers = capability
+            .part(services, "drv", api::OperationId(2), wait)?
+            .entry;
+        Ok(Self {
+            capability,
+            shared: Shared {
+                root: info.entry,
+                services,
+                drivers,
+            },
+            next_operation: Cell::new(3),
+        })
+    }
+
+    pub fn shared(&self) -> Shared {
+        self.shared
+    }
+
+    /// Reserves caller-owned IDs in the same sequence as namespace preparation.
+    pub fn reserve_operations(&self, count: usize) -> Result<api::OperationId, api::Fail> {
+        let start = self.next_operation.get();
+        let end = start.checked_add(u64::try_from(count).map_err(|_| api::Fail::Full)?)
+            .ok_or(api::Fail::Full)?;
+        self.next_operation.set(end);
+        Ok(api::OperationId(start))
+    }
+
+    /// Resumes the same part/bind/grant requests after errors or lost replies.
+    pub fn prepare(&self, preparation: &mut Preparation) -> Result<(), api::Fail> {
+        if preparation.retired {
+            return Err(api::Fail::Denied);
+        }
+        if preparation.ready {
+            return Ok(());
+        }
+        if preparation.operations.is_empty() {
+            let count = preparation
+                .plan
+                .path
+                .len()
+                .checked_add(preparation.plan.bindings.len())
+                .ok_or(api::Fail::Full)?;
+            preparation
+                .operations
+                .try_reserve(count)
+                .map_err(|_| api::Fail::Full)?;
+            let start = self.reserve_operations(count)?.0;
+            for offset in 0..count {
+                preparation.operations.push(api::OperationId(start + offset as u64));
+            }
+        }
+        let mut anchor = preparation.plan.base;
+        for index in 0..preparation.path_cursor {
+            let name = preparation
+                .plan
+                .path
+                .iter()
+                .nth(index)
+                .ok_or(api::Fail::Unknown)?;
+            anchor = self
+                .capability
+                .part(
+                    anchor,
+                    name,
+                    preparation.operations[index],
+                    preparation.plan.wait,
+                )?
+                .entry;
+        }
+        while let Some(name) = preparation.plan.path.iter().nth(preparation.path_cursor) {
+            preparation
+                .installed
+                .entries
+                .try_reserve(1)
+                .map_err(|_| api::Fail::Full)?;
+            preparation.path_attempted = true;
+            let outcome = self.capability.part(
+                anchor,
+                name,
+                preparation.operations[preparation.path_cursor],
+                preparation.plan.wait,
+            )?;
+            if outcome.created && !preparation.installed.entries.contains(&outcome.entry) {
+                preparation.installed.entries.push(outcome.entry);
+            }
+            preparation.path_attempted = false;
+            preparation.path_cursor += 1;
+            anchor = outcome.entry;
+        }
+        preparation.installed.anchor = anchor;
+        while let Some(input) = preparation.plan.bindings.get(preparation.binding_cursor) {
+            preparation
+                .installed
+                .bindings
+                .try_reserve(1)
+                .map_err(|_| api::Fail::Full)?;
+            let info = ::resource::raw::inspect(input.resource).map_err(|_| api::Fail::Dead)?;
+            if !info.alive
+                || info.mark != input.mark
+                || !input.view.fits(info.permission)
+                || preparation.plan.grant.as_ref().is_some_and(|grant| {
+                    grant.source.is_some_and(|source| source != info.owner)
+                        || grant.source_mark.is_some_and(|mark| mark != info.mark)
+                })
+            {
+                return Err(api::Fail::Denied);
+            }
+            preparation.binding_attempted = true;
+            let binding = self.capability.bind(
+                anchor,
+                &input.name,
+                input.resource,
+                input.view,
+                input.permit,
+                preparation.operations[preparation.plan.path.len() + preparation.binding_cursor],
+                preparation.plan.wait,
+            )?;
+            if binding.created && !preparation.installed.bindings.contains(&binding.binding) {
+                preparation.installed.bindings.push(binding.binding);
+            }
+            preparation.binding_attempted = false;
+            preparation.binding_cursor += 1;
+        }
+        if let Some(mut grant) = preparation.plan.grant.clone() {
+            grant.anchor = anchor;
+            preparation.installed.grant = Some((anchor, grant.id));
+            preparation.installed.authority =
+                Some(self.capability.grant(grant, None, preparation.plan.wait)?);
+        }
+        preparation.ready = true;
+        Ok(())
+    }
+
+    /// Revokes first, then removes only this install's exact binding revisions and entries.
+    /// On any failure, the remaining receipt stays intact for a later retry.
+    pub fn retire(&self, installed: &mut Installed) -> Result<bool, api::Fail> {
+        if let Some((anchor, id)) = installed.grant {
+            let state = self.capability.revoke(anchor, id, installed.wait)?;
+            if state != GrantState::Closed {
+                return Err(api::Fail::Dead);
+            }
+            installed.authority = None;
+            installed.grant = None;
+        }
+        while let Some(binding) = installed.bindings.last().copied() {
+            match self.capability.unbind(binding, installed.wait) {
+                Ok(()) | Err(api::Fail::Unknown) => {
+                    installed.bindings.pop();
+                }
+                Err(fail) => return Err(fail),
+            }
+        }
+        while let Some(entry) = installed.entries.last().copied() {
+            match self.capability.unpart(entry, installed.wait) {
+                Ok(()) | Err(api::Fail::Unknown) => {
+                    installed.entries.pop();
+                }
+                Err(fail) => return Err(fail),
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn retire_preparation(&self, preparation: &mut Preparation) -> Result<bool, api::Fail> {
+        if preparation.ready {
+            return Err(api::Fail::Denied);
+        }
+        if preparation.path_attempted {
+            let mut anchor = preparation.plan.base;
+            for index in 0..preparation.path_cursor {
+                let name = preparation
+                    .plan
+                    .path
+                    .iter()
+                    .nth(index)
+                    .ok_or(api::Fail::Unknown)?;
+                anchor = self
+                    .capability
+                    .part(
+                        anchor,
+                        name,
+                        preparation.operations[index],
+                        preparation.plan.wait,
+                    )?
+                    .entry;
+            }
+            let index = preparation.path_cursor;
+            let name = preparation
+                .plan
+                .path
+                .iter()
+                .nth(index)
+                .ok_or(api::Fail::Unknown)?;
+            match self.capability.part(
+                anchor,
+                name,
+                preparation.operations[index],
+                preparation.plan.wait,
+            ) {
+                Ok(outcome) => {
+                    if outcome.created && !preparation.installed.entries.contains(&outcome.entry) {
+                        preparation.installed.entries.push(outcome.entry);
+                    }
+                }
+                Err(_)
+                    if self.capability.inspect_operation(
+                        anchor,
+                        preparation.operations[index],
+                        preparation.plan.wait,
+                    )? == api::OperationState::Failed => {}
+                Err(fail) => return Err(fail),
+            }
+            preparation.path_attempted = false;
+        }
+        if preparation.binding_attempted {
+            let mut anchor = preparation.plan.base;
+            for index in 0..preparation.plan.path.len() {
+                let name = preparation
+                    .plan
+                    .path
+                    .iter()
+                    .nth(index)
+                    .ok_or(api::Fail::Unknown)?;
+                anchor = self
+                    .capability
+                    .part(
+                        anchor,
+                        name,
+                        preparation.operations[index],
+                        preparation.plan.wait,
+                    )?
+                    .entry;
+            }
+            let index = preparation.binding_cursor;
+            let input = preparation
+                .plan
+                .bindings
+                .get(index)
+                .ok_or(api::Fail::Unknown)?;
+            match self.capability.bind(
+                anchor,
+                &input.name,
+                input.resource,
+                input.view,
+                input.permit,
+                preparation.operations[preparation.plan.path.len() + index],
+                preparation.plan.wait,
+            ) {
+                Ok(outcome) => {
+                    if outcome.created && !preparation.installed.bindings.contains(&outcome.binding)
+                    {
+                        preparation.installed.bindings.push(outcome.binding);
+                    }
+                }
+                Err(_)
+                    if self.capability.inspect_operation(
+                        anchor,
+                        preparation.operations[preparation.plan.path.len() + index],
+                        preparation.plan.wait,
+                    )? == api::OperationState::Failed => {}
+                Err(fail) => return Err(fail),
+            }
+            preparation.binding_attempted = false;
+        }
+        let count = preparation.operations.len();
+        for index in preparation.path_cursor + preparation.binding_cursor..count {
+            let id = preparation.operations[index];
+            let state = self.capability.inspect_operation(
+                preparation.installed.anchor,
+                id,
+                preparation.plan.wait,
+            )?;
+            if state == api::OperationState::Unseen {
+                self.capability.cancel_operation(
+                    preparation.installed.anchor,
+                    id,
+                    preparation.plan.wait,
+                )?;
+            } else if state == api::OperationState::Pending {
+                return Err(api::Fail::Dead);
+            }
+        }
+        let done = self.retire(&mut preparation.installed)?;
+        preparation.retired = done;
+        Ok(done)
+    }
+
+    /// Runs or retries an app-owned namespace resource publication.
+    pub fn prepare_resources(
+        &self,
+        preparation: &mut ResourcePreparation,
+    ) -> Result<(), api::Fail> {
+        self.prepare(preparation)
+    }
+
+    /// Cancels an incomplete resource plan or retires a completed plan's receipt.
+    pub fn retire_resources(
+        &self,
+        preparation: &mut ResourcePreparation,
+    ) -> Result<bool, api::Fail> {
+        if preparation.ready {
+            let done = self.retire(&mut preparation.installed)?;
+            preparation.retired = done;
+            Ok(done)
+        } else {
+            self.retire_preparation(preparation)
+        }
+    }
+
+    /// Reads through a previously resolved, operator-qualified Entry reference.
+    pub fn lookup(&self, request: Lookup) -> Result<BoundResource, api::Fail> {
+        self.capability
+            .read(request.entry, request.permit, request.wait)
+    }
+
+    pub fn capability(&self) -> &Capability {
+        &self.capability
+    }
+}
+
+impl Prepare {
+    pub fn declared(input: PrepareInput) -> Option<Self> {
+        let declaration = input.declaration;
+        if !declaration.valid() {
+            return None;
+        }
+        let path = if declaration.path.is_empty() {
+            input.prefix.clone()
+        } else {
+            input.prefix.as_path().try_join(declaration.path)?
+        };
+        let grant = authority(AuthorityInput {
+            declaration,
+            id: input.grant_id,
+            holder: input.holder,
+            anchor: input.base,
+            source: input.source,
+        })?;
+        if input.bindings.len() > declaration.bindings.len() {
+            return None;
+        }
+        for (index, binding_input) in input.bindings.iter().enumerate() {
+            let declared = declaration
+                .bindings
+                .iter()
+                .find(|declared| binding_input.name == declared.name)?;
+            if input.bindings[..index]
+                .iter()
+                .any(|previous| previous.name == binding_input.name)
+                || binding_input.name != declared.name
+                || binding_input.mark != declared.mark
+                || binding_input.view.access() != declared.view
+                || binding_input.permit != declared.permit
+            {
+                return None;
+            }
+        }
+        Some(Self {
+            base: input.base,
+            path,
+            grant: Some(grant),
+            bindings: input.bindings,
+            wait: input.wait,
+        })
+    }
+
+    /// Creates a receipt-tracked app resource publication without granting a namespace capability.
+    pub fn resources(input: ResourceInput) -> Option<Self> {
+        if input.bindings.iter().enumerate().any(|(index, binding)| {
+            !system_api::operator::name::valid(&binding.name)
+                || binding.mark == env::Mark::NONE
+                || input.bindings[..index]
+                    .iter()
+                    .any(|previous| previous.name == binding.name)
+        }) {
+            return None;
+        }
+        Some(Self {
+            base: input.base,
+            path: input.path,
+            grant: None,
+            bindings: input.bindings,
+            wait: input.wait,
+        })
+    }
+}
+
+impl Preparation {
+    pub fn new(plan: Prepare) -> Self {
+        let installed = Installed {
+            anchor: plan.base,
+            authority: None,
+            grant: None,
+            bindings: Vec::new(),
+            entries: Vec::new(),
+            wait: plan.wait,
+        };
+        Self {
+            plan,
+            installed,
+            path_cursor: 0,
+            binding_cursor: 0,
+            operations: Vec::new(),
+            path_attempted: false,
+            binding_attempted: false,
+            ready: false,
+            retired: false,
+        }
+    }
+
+    pub fn installed(&self) -> &Installed {
+        &self.installed
+    }
+    pub fn ready(&self) -> bool {
+        self.ready
+    }
+    pub fn into_installed(self) -> Option<Installed> {
+        self.ready.then_some(self.installed)
+    }
+}
+
+/// Converts a static unit declaration into a runtime grant anchored at its actual entry.
+pub fn authority(input: AuthorityInput) -> Option<GrantSpec> {
+    let AuthorityInput {
+        declaration,
+        id,
+        holder,
+        anchor,
+        source,
+    } = input;
+    if !declaration.valid() {
+        return None;
+    }
+    let scope = match declaration.scope {
+        crate::unit::operator::Scope::Subtree => Scope::Subtree,
+        crate::unit::operator::Scope::Names(names) => {
+            let mut paths = Vec::new();
+            paths.try_reserve(names.len()).ok()?;
+            for name in names {
+                paths.push(PathBuf::try_new(name)?);
+            }
+            Scope::Names(paths)
+        }
+    };
+    Some(GrantSpec {
+        id,
+        holder,
+        anchor,
+        scope,
+        ops: declaration.ops,
+        permit: declaration.permit,
+        source,
+        source_mark: declaration.source_mark.map(env::Mark::new),
+    })
+}
+
+/// Ensures a path one segment at a time; use only for System-selected shared layout.
+pub fn ensure_path(capability: &Capability, request: &PathRequest) -> Result<Entry, api::Fail> {
+    let mut entry = request.base;
+    for (index, name) in request.path.iter().enumerate() {
+        let operation = request
+            .operation_start
+            .0
+            .checked_add(u64::try_from(index).map_err(|_| api::Fail::Full)?)
+            .ok_or(api::Fail::Full)?;
+        entry = capability
+            .part(entry, name, api::OperationId(operation), request.wait)?
+            .entry;
+    }
+    Ok(entry)
+}

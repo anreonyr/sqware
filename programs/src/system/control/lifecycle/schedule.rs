@@ -27,10 +27,14 @@ pub fn lifecycle(hooks: ActivationHooks) -> Result<Vec<(Key, Plan<Fail>)>, Build
     debark.system("pause", work::debark::run)?;
     debark.system("commit", work::debark::post)?;
     let mut ruin = Schedule::sequence();
-    ruin.plan("activation", hooks.retire)?;
     ruin.system("retire", work::ruin::pre)?;
+    ruin.plan("activation", hooks.retire)?;
     ruin.system("destroy", work::ruin::run)?;
-    ruin.system("reclaim", work::ruin::post)?;
+    ruin.system("construction", work::ruin::retire_construction)?;
+    ruin.system("namespace", work::ruin::post)?;
+    ruin.system("supply", work::ruin::release_supply)?;
+    ruin.system("identity", work::ruin::retire_identity)?;
+    ruin.system("reclaim", work::ruin::finalize)?;
     Ok(alloc::vec![
         (Key::Mint, mint.build()?),
         (Key::Embark, embark.build()?),

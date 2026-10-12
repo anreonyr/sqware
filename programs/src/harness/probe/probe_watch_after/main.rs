@@ -15,8 +15,8 @@ use env::pie;
 use env::unit;
 use ipc::session::Session;
 use programs::debug;
-use system_api::operator::Permit;
 use system_api::operator::path::PathBuf;
+use system_api::operator::{self as operator_api, Permit};
 use system_client::operator;
 use system_client::operator::Face;
 
@@ -39,22 +39,36 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
     let road = PathBuf::try_new(PARENT).unwrap_or_else(|| panic!("probe-watch-after: bad road"));
 
-    let client = system_client::control::publication::Client::injected().unwrap();
-    let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope(4),
-        group: "probe-swatch".into(),
-        name: IN.into(),
-    };
+    let client =
+        system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap();
+    let anchor = client.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    let mut binding = None;
+    let mut operation = 1u64;
     for i in 0..CELLS {
-        if i > 0 {
-            client.unpublish(target.clone(), Wait::AtMost(MS)).unwrap();
+        if let Some(previous) = binding.take() {
+            client.unbind(previous, Wait::AtMost(MS)).unwrap();
         }
         let entry =
             pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-swatch-after"))).unwrap();
-        let id = client
-            .publish(target.clone(), entry, Permit::Public, Wait::AtMost(MS))
-            .unwrap();
-        debug!("probe-watch-after: republished #{i} id={}", id.get());
+        let current = client
+            .bind(
+                anchor,
+                IN,
+                entry,
+                view,
+                Permit::Public,
+                operator_api::OperationId(operation),
+                Wait::AtMost(MS),
+            )
+            .unwrap()
+            .binding;
+        operation += 1;
+        debug!(
+            "probe-watch-after: republished #{i} id={}",
+            current.entry_id().get()
+        );
+        binding = Some(current);
         // **树还答得动吗**：同一块窗格再问一次。
         let Ok(again) = tree.pane(&road, Wait::AtMost(MS)) else {
             panic!("probe-watch-after: the tree stopped answering after #{i}");

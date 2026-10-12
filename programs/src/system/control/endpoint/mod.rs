@@ -1,7 +1,7 @@
 //! Control endpoint registration and request adaptation.
 pub(crate) mod construction;
 mod instance;
-pub(super) mod request;
+pub(crate) mod request;
 pub(crate) use instance::{answer as answer_instances, receive as receive_instances};
 
 use env::PieToken;
@@ -22,6 +22,10 @@ impl Entries {
     }
     pub(crate) fn attach_instance(&mut self, entry: PieToken) {
         self.instance = Some(entry);
+    }
+    pub(crate) fn clear(&mut self) {
+        self.instance = None;
+        self.faces.fill(None);
     }
     pub(crate) fn entries(&self) -> impl Iterator<Item = PieToken> + '_ {
         self.faces.iter().flatten().copied().chain(self.instance)

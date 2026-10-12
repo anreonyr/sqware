@@ -5,7 +5,7 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 
-pub use abi_env::{Mark, Permission, PieToken, TaskId, TeamId, Wait};
+pub use abi_env::{Access, Mark, Permission, PieInfo, PieKind, PieToken, TaskId, TeamId, Wait};
 use core::cell::RefCell;
 use std::vec::Vec;
 use system_api::loader::{Said, Wire};
@@ -23,19 +23,7 @@ pub enum TransportFail {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Captured {
-    Build {
-        image: PieToken,
-        offset: u64,
-        len: u64,
-        stack: u64,
-        count: u8,
-        args: [u64; system_api::loader::MAX_ARGS],
-        back: PieToken,
-    },
-    Claim {
-        task: TaskId,
-        back: PieToken,
-    },
+    Claim { task: TaskId, back: PieToken },
 }
 
 struct State {
@@ -47,6 +35,8 @@ struct State {
     fail_open: bool,
     elapsed_after_call_ms: u64,
     elapsed_grant_ms: u64,
+    inspected: Option<PieInfo>,
+    provider_peer: TaskId,
 }
 struct CallRecord {
     request: Captured,
@@ -68,6 +58,8 @@ impl State {
             fail_open: false,
             elapsed_after_call_ms: 0,
             elapsed_grant_ms: 0,
+            inspected: None,
+            provider_peer: TaskId::new(9),
         }
     }
     fn reset(&mut self) {
@@ -82,9 +74,28 @@ pub mod chrono {
     }
 }
 
+pub mod unit {
+    pub fn self_id() -> crate::TaskId {
+        crate::TaskId::new(7)
+    }
+}
+
 pub mod raw {
     use crate::{Event, Mark, Permission, PieToken, STATE, TaskId};
     use core::marker::PhantomData;
+    pub fn inspect(token: PieToken) -> Result<crate::PieInfo, ()> {
+        Ok(STATE.with(|state| {
+            state.borrow().inspected.unwrap_or(crate::PieInfo {
+                token,
+                kind: crate::PieKind::Hole,
+                permission: Permission::STORE,
+                owner: TaskId::new(9),
+                vestor: TaskId::new(9),
+                mark: system_api::loader::Grant::Claim.mark(),
+                alive: true,
+            })
+        }))
+    }
     pub struct Loan<'a> {
         remote: PieToken,
         peer: TaskId,
@@ -184,7 +195,7 @@ pub mod rpc {
                 }
             }
             pub fn peer(&self) -> TaskId {
-                TaskId::new(7)
+                STATE.with(|state| state.borrow().provider_peer)
             }
             pub fn call(
                 &self,
@@ -196,20 +207,10 @@ pub mod rpc {
                 let mut bytes = C::Request::EMPTY;
                 let len = request.store(bytes.as_mut()).ok_or(Fail)?;
                 let decoded = Wire::fetch(&bytes.as_ref()[..len]).ok_or(Fail)?;
-                let captured = match decoded {
-                    Wire::Build(ask) => Captured::Build {
-                        image: ask.image,
-                        offset: ask.offset,
-                        len: ask.len,
-                        stack: ask.stack,
-                        count: ask.count,
-                        args: ask.args,
-                        back: ask.back,
-                    },
-                    Wire::Claim(claim) => Captured::Claim {
-                        task: claim.task,
-                        back: claim.back,
-                    },
+                let Wire::Claim(claim) = decoded;
+                let captured = Captured::Claim {
+                    task: claim.task,
+                    back: claim.back,
                 };
                 let wait = deadline.remaining();
                 let reply = STATE.with(|state| {

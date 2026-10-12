@@ -73,11 +73,7 @@ fn main() -> Result<(), Fail> {
     ctx.plate(entry, ME, Wait::AtMost(MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = ipc::session::establish::endpoint(
-        env::unit::sire(),
-        programs::unit::READY_MARK,
-        env::Wait::POLL,
-    );
+    let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);
 
     adapt::resident::run(entry, &dev, line, &mut Host::new())
 }

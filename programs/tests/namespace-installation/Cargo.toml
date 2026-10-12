@@ -1,0 +1,15 @@
+[package]
+name = "namespace-installation-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+env = { path = "../../../crates/env" }
+resource = { path = "../../../crates/resource" }
+system-api = { path = "../../src/system/api" }

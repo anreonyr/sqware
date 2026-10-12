@@ -1,27 +1,16 @@
 use super::Control;
-use crate::system::control::identity::Roster;
-use crate::system::control::unit::{
-    table::{Slot, State, Table},
-    verdict::Reaped,
-};
-use alloc::{string::String, vec::Vec};
-use env::Wait;
-use env::unit;
-use programs::debug;
+use crate::system::control::{lifecycle::Action, unit::table::Slot};
+use alloc::vec::Vec;
+use env::{Wait, unit};
+
 pub(crate) fn sweep(
-    mut control: ::schedule::ResMut<Control>,
-    roster: ::schedule::Res<Roster>,
-    operations: ::schedule::Res<crate::system::control::lifecycle::Operations>,
+    control: ::schedule::Res<Control>,
+    mut jobs: ::schedule::ResMut<crate::system::assembly::Jobs>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
-    let gone: Vec<String> = control
+    let gone: Vec<_> = control
         .table
         .living()
-        .filter(|row| {
-            !operations
-                .0
-                .iter()
-                .any(|job| job.operation.request.name == row.name)
-        })
+        .filter(|row| !jobs.contains(&row.name))
         .filter_map(|row| match row.slot {
             Slot::Live { task, .. } if unit::join_task(task, Wait::POLL).unwrap_or(true) => {
                 Some(row.name.clone())
@@ -29,39 +18,18 @@ pub(crate) fn sweep(
             _ => None,
         })
         .collect();
-    for name in &gone {
-        if let Some(task) = control.task(name.as_str()) {
-            if let Err(why) = roster.unbind(task) {
-                debug::put(&alloc::format!("system: departed {name}: {why}"));
-            }
+    for name in gone {
+        // Natural exit uses the same recoverable cleanup as an explicit retirement.
+        if jobs.submit_lifecycle(name, Action::Ruin).is_err() {
+            return Ok(::schedule::Progress::Pending);
         }
-        mark_dead(&mut control.table, name.as_str(), Reaped::Now);
     }
     Ok(::schedule::Progress::Done)
 }
-fn mark_dead(table: &mut Table, name: &str, reaped: Reaped) {
-    let Some(row) = table.find(name) else {
-        return;
-    };
-    if matches!(row.state, State::Dead) {
-        return;
-    }
-    let Slot::Live { team, .. } = row.slot else {
-        return;
-    };
-    table.set_state(name, State::Dead);
-    let ousted = match team {
-        Some(team) => unit::oust(team).is_ok(),
-        None => false,
-    };
-    let wait = match reaped {
-        Reaped::Now => "now",
-        Reaped::Waited => "waited",
-        Reaped::Unsettled => "unsettled",
-    };
-    debug::put(&alloc::format!(
-        "system: gone {} state=Dead ousted={ousted} wait={wait}{}",
-        name,
-        if team.is_none() { " inner" } else { "" }
-    ));
+
+pub(crate) fn sweep_images(
+    mut supplies: ::schedule::ResMut<crate::system::app::supplies::Supplies>,
+) -> Result<::schedule::Progress, crate::system::app::Fault> {
+    supplies.sweep_images();
+    Ok(::schedule::Progress::Done)
 }

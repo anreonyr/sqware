@@ -1,9 +1,19 @@
 use crate::system::app::Fault as Fail;
 
 use ::schedule::{BuildError, Plan, Schedule};
-pub fn maintenance() -> Result<Plan<&'static str>, BuildError> {
+pub fn maintenance() -> Result<Plan<Fail>, BuildError> {
     let mut plan = Schedule::sequence();
-    plan.plan("publication", crate::system::publication::maintenance()?)?;
+    let mut connections = Schedule::sequence();
+    connections.system("connect", crate::system::operator::connect)?;
+    plan.plan(
+        "operator.connections",
+        connections.build()?.map_error(|_| Fail::Dead),
+    )?;
+    plan.plan(
+        "identity",
+        crate::system::identity::maintenance()?.map_error(|_| Fail::Dead),
+    )?;
+    plan.system("identity.export", crate::system::identity::export::receive)?;
     plan.build()
 }
 pub fn startup() -> Result<Plan<&'static str>, BuildError> {
@@ -12,19 +22,26 @@ pub fn startup() -> Result<Plan<&'static str>, BuildError> {
     start.system("spawn", boot::spawn)?;
     start.system("embark", boot::embark)?;
     start.system("adopt", boot::adopt)?;
+    start.system("operator.root", crate::system::app::operator::bootstrap)?;
+    let mut identity_export = Schedule::sequence();
+    identity_export.system("bootstrap", crate::system::identity::export::bootstrap)?;
+    start.plan(
+        "identity.export.bootstrap",
+        identity_export
+            .build()?
+            .map_error(|_| "identity export bootstrap"),
+    )?;
     start.system("identity", boot::identity)?;
     start.system("wire", boot::wire)?;
-    start.system("identity.faces", crate::system::publication::identity_faces)?;
-    start.system("identity.publish", boot::publish)?;
-    start.system("control.name", boot::name)?;
     start.system(
-        "publication.face",
-        crate::system::publication::publication_face,
+        "identity.namespace",
+        crate::system::identity::namespace::prepare,
     )?;
-    start.system("control.faces", crate::system::publication::control_faces)?;
-    start.system("instance.face", crate::system::publication::instance_face)?;
+    start.system(
+        "control.namespace",
+        crate::system::control::namespace::prepare,
+    )?;
     start.system("loader", crate::system::loader::faces)?;
-    start.system("publish", boot::publish)?;
     let mut units = Schedule::sequence();
     units.system("begin", crate::system::control::startup)?;
     units.system("running", crate::system::app::policy::running)?;
@@ -39,10 +56,7 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
     use super::policy as f;
     use super::wait as watch;
     let mut frame = Schedule::sequence();
-    frame.plan(
-        "maintain.before",
-        maintenance()?.map_error(|_| Fail::Publication),
-    )?;
+    frame.plan("maintenance", maintenance()?)?;
     frame.system("health", f::health)?;
     frame.plan("control.poll", crate::system::control::poll()?)?;
     frame.system(
@@ -54,23 +68,23 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
         crate::system::control::admit_construction,
     )?;
     frame.plan("launch", crate::system::launch::frame()?)?;
+    frame.plan("assembly.jobs", crate::system::assembly::frame()?)?;
     frame.plan(
         "control.commands",
-        crate::system::control::commands(crate::system::app::assembly::hooks()?)?,
-    )?;
-    frame.plan(
-        "maintain.after",
-        maintenance()?.map_error(|_| Fail::Publication),
+        crate::system::control::commands(crate::system::assembly::static_plan::hooks()?)?,
     )?;
     frame.system(
         "instances.reap",
         crate::system::control::instance::schedule::reap,
     )?;
     frame.system("replies", crate::system::control::reply)?;
-    frame.plan("instance.hooks", crate::system::launch::hooks::instance()?)?;
+    frame.plan(
+        "instance.hooks",
+        crate::system::assembly::hooks::instance()?,
+    )?;
     frame.system("static", crate::system::control::startup)?;
     frame.system("retire.static", crate::system::control::retire_completed)?;
-    frame.system("launch.completed", crate::system::launch::completed)?;
+    frame.system("assembly.completed", crate::system::assembly::completed)?;
     frame.system("running", f::running)?;
     frame.system("activity", f::activity)?;
     frame.system("eligibility", crate::system::control::eligibility)?;
@@ -90,7 +104,6 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
 
     frame.system("watch.identity", watch::identity_changes)?;
     frame.system("watch.loader", crate::system::loader::watch)?;
-    frame.system("watch.publication", watch::publication)?;
     frame.system("watch.construction", watch::construction)?;
     frame.system("watch.tasks", watch::tasks)?;
     frame.system("watch.connections", watch::connections)?;
@@ -101,6 +114,22 @@ pub fn frame() -> Result<Plan<Fail>, BuildError> {
 pub fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut stop = Schedule::sequence();
     stop.plan("loader.close", crate::system::loader::shutdown()?)?;
+    let mut supplies = Schedule::sequence();
+    supplies.system("close", crate::system::app::supplies::shutdown)?;
+    stop.plan("supplies.close", supplies.build()?)?;
+    let mut resources = Schedule::sequence();
+    resources.system(
+        "control.namespace",
+        crate::system::control::namespace::retire,
+    )?;
+    resources.system(
+        "identity.namespace",
+        crate::system::identity::namespace::retire,
+    )?;
+    stop.plan(
+        "control.namespace",
+        resources.build()?.map_error(|_| Fail::Dead),
+    )?;
     stop.system("stopping", crate::system::app::life::stopping)?;
     stop.system("join", crate::system::app::life::join)?;
     stop.build()

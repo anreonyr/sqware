@@ -1,5 +1,5 @@
 use super::super::{
-    Binding, CoalitionId, Cursor, Grant, Match, Page, PageTarget, PrincipalId, Reply, Selector,
+    Binding, CoalitionId, Cursor, Grant, IdentityName, IdentityObject, Match, OperatorEntryRef, Page, PageTarget, PrincipalId, Reply, Selector,
     Wire,
 };
 use super::{CallError, Face, flag};
@@ -78,6 +78,7 @@ pub struct Query {
     amid: Face,
     members: Face,
     memberships: Face,
+    reference: Face,
 }
 impl Query {
     pub fn discover(
@@ -92,6 +93,7 @@ impl Query {
             amid: Face::discover(operator, authority, Grant::Amid, wait)?,
             members: Face::discover(operator, authority, Grant::Members, wait)?,
             memberships: Face::discover(operator, authority, Grant::Memberships, wait)?,
+            reference: Face::discover(operator, authority, Grant::Reference, wait)?,
         })
     }
     pub fn authority(&self) -> TaskId {
@@ -150,6 +152,12 @@ impl Query {
             {
                 Ok(page)
             }
+            _ => Err(CallError::Malformed),
+        }
+    }
+    pub fn reference(&self, object: IdentityObject, name: IdentityName, wait: Wait) -> Result<Option<OperatorEntryRef>, CallError> {
+        match self.reference.call(Wire::Reference(object, name), wait)? {
+            Reply::Reference(entry) => Ok(entry),
             _ => Err(CallError::Malformed),
         }
     }

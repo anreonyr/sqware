@@ -1,81 +1,36 @@
 #![no_std]
 #![no_main]
 
-//! probe-bound — 坏帧的证客：不合族的帧不把门卡死。
-//! # 为什么"坏客人"必须是一位真域
-//! 判据在核里（`Push` 的长度前置条件），而它的**执行**要一次真 envcall：宿主上没有内核，
-//! # 第四条为什么先把它那声 `BAD` 读掉
-//! 树的门对**每一条取出来的帧都答一句**（读不懂答 `BAD`）——推了 junk 之后，那声 `BAD` 就落在
-//! 本端的树路上。故这一条先把它读掉，再问正经的：留着不清，下一句问会读到上一句的答。
-//! **板那一道门同款**（第五条的 `evict` 也先读掉 junk 那一声）。
-
+//! probe-bound checks that malformed entry requests do not stall Operator service handling.
 extern crate alloc;
 extern crate programs;
 
-use alloc::string::{String, ToString};
 use env::wire::Field;
-use env::{MailCondition, Wait};
+use env::{MailCondition, PieToken, TaskId, Wait, unit};
 use programs::Report;
-
-use ::resource::raw::Hole;
-use env::PieToken;
-use env::unit;
+use resource::raw::Hole;
 use ipc::session::{Endpoint, Session};
 use programs::debug;
 use system_client::operator;
+use system_api::operator as api;
+use system_api::operator::entry;
+use wire::Message;
 
 const MS: usize = 1000;
-
-/// 本地失败编号（读数用）
 const E_OK: usize = 0;
 const E_TRIP: usize = 1;
-
-/// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）
 const OK_NOTE: &str = "probe-bound: doors held against junk";
-
 const JUNK: usize = 300;
-
-/// 那一条的首格：**第一条动作码**（树那一族的 `LAND` ＝ `1`），其余全零——于是那道门走到
-/// "动作认得、形状不对"那一支 ⇒ 答一句 `BAD`
 const JUNK_OP: u8 = 1;
+const SEEK_OP: u8 = 7;
+const ROAD_9: &[u8] = b"a/b/c/d/e/f/g/h/i";
 
-/// 编那一条 junk（点数在 JUNK，首格在 JUNK_OP）
 fn junk() -> [u8; JUNK] {
     let mut junk = [0u8; JUNK];
     junk[0] = JUNK_OP;
     junk
 }
 
-/// **形状全对、只有许可那一格陌生**的那一条 `LAND` 帧（LAND_LEN 字节）
-/// 前几格都给合法值：`[0] = LAND`、`[1] = 根`、`[10] = 1`（名字**长度那一字节**）、
-/// `[11] = "x"`、`[12..20] = 0`（入口）、`[20] = 0`（`mine` 假）；**唯一越界的是
-/// `[21] = 9`**——许可那一张表只有 `0..=3`。故这一条会一路解到许可那一格才断 ⇒
-/// **整帧读不懂** ⇒ 门答 `BAD`
-/// `[长度那一字节][字节]`（ 里 `String` 的 `Span` impl），故许可那一格落在
-/// `1 ＋ 9 ＋ (1 ＋ 名长) ＋ 8 ＋ 1`——**这一台手写裸帧，偏移只能自己数**
-/// 表外那一支自己写着"要打到它得造一条这样的 `LAND` 帧，而仓里没有这样一台客人"——上面那条
-/// 300 字节的 junk 走 Message::fetch 的长度那一闸，`match` 一次都到不了
-fn land_frame(permit_tag: u8) -> [u8; LAND_LEN] {
-    let mut f = [0u8; LAND_LEN];
-    f[0] = JUNK_OP; // `LAND` ＝ `1`（见 [`JUNK_OP`]）
-    f[1] = 0; // `Where::Root`
-    f[10] = 1; // 名字长度那一字节
-    f[11] = b'x'; // 名字那一个字节
-    f[20] = 0; // `mine = false`
-    system_api::operator::Permit::Public.store(&mut f[21..]);
-    f[21] = permit_tag; // **这一格是唯一要试的那一格**
-    f
-}
-
-/// `seek` 那一问的动作码：`SEEK = 7`（与 JUNK_OP 同一条：这一台**故意手写裸帧**，故它按
-/// 授权请求使用 Operator API 定义的线上码。
-/// 那个码要是挪了位，这一条当场红）
-const SEEK_OP: u8 = 7;
-
-/// 那一条超长的路：**9 段**（Path::MAX 是 8）
-const ROAD_9: &[u8] = b"a/b/c/d/e/f/g/h/i";
-
-/// **一条 9 段的路**（`[op][长度][那些字节]`＝19 字节）——这一台量的是"路太长"那一格挪了家
 fn oversize_road() -> [u8; JUNK] {
     let mut road = [0u8; JUNK];
     road[0] = SEEK_OP;
@@ -84,118 +39,140 @@ fn oversize_road() -> [u8; JUNK] {
     road
 }
 
-/// 表外那一格（`0..=3` 之外）：整帧读不懂
-const LAND_PERMIT_UNKNOWN: u8 = 9;
-const LAND_PERMIT_KNOWN: u8 = 0;
+const PERMIT_OFFSET: usize = <u8 as Field>::WIDTH
+    + <api::EntryId as Field>::WIDTH
+    + <u8 as Field>::WIDTH
+    + <u64 as Field>::WIDTH
+    + <u64 as Field>::WIDTH
+    + <TaskId as Field>::WIDTH
+    + <u64 as Field>::WIDTH;
 
-/// Prefix offset remains a raw-frame acceptance check; Permit width follows its codec.
-const LAND_LEN: usize = 21 + system_api::operator::Permit::WIDTH;
+fn request(anchor: api::Entry, back: PieToken) -> entry::Request {
+    let (anchor, root) = match anchor.target {
+        api::EntryTarget::Root => (api::EntryId::new(0), 1),
+        api::EntryTarget::Node(id) => (id, 0),
+    };
+    entry::Request {
+        op: entry::BIND,
+        anchor,
+        root,
+        id: 1,
+        parent: 0,
+        holder: TaskId::new(0),
+        ops: 0,
+        permit: api::Permit::Public,
+        permit_restricted: 0,
+        source: TaskId::new(0),
+        source_mark: 0,
+        resource: PieToken::NONE,
+        resource_id: 0,
+        view: api::ResourceView::new(env::Access::FETCH).unwrap().bits(),
+        expected: 0,
+        name: alloc::string::String::from("x"),
+        scope: alloc::string::String::new(),
+        back,
+    }
+}
+
+fn push_request(
+    capability: &operator::Capability,
+    request: &entry::Request,
+) -> Result<(), ()> {
+    let mut bytes = [0u8; entry::Request::LEN];
+    let n = request.store(&mut bytes).ok_or(())?;
+    Hole::from_raw(capability.entrance())
+        .push(&bytes[..n], Wait::AtMost(MS))
+        .map_err(|_| ())
+}
+
+fn release_back(operator: TaskId, endpoint: Endpoint) {
+    let _ = env::pie::revoke(operator, endpoint.seed());
+    let _ = env::pie::release(endpoint.rx(), env::ReleaseMode::Revoke);
+}
+
+fn permit_trip(capability: &operator::Capability) -> (bool, bool, bool) {
+    let anchor = capability.anchor().expect("probe-bound: capability anchor");
+    let operator_task = anchor.operator;
+    assert!(
+        PERMIT_OFFSET + api::Permit::WIDTH <= entry::Request::LEN,
+        "probe-bound: Permit field offset exceeds Request frame"
+    );
+
+    let malformed_back = ipc::session::establish::lend(operator_task, entry::AUTH_BACK)
+        .expect("probe-bound: malformed native reply back");
+    let malformed = request(anchor, malformed_back.seed());
+    let mut frame = [0u8; entry::Request::LEN];
+    let len = malformed.store(&mut frame).expect("probe-bound: encode baseline Request");
+    frame[PERMIT_OFFSET] = u8::MAX;
+    let malformed_sent = Hole::from_raw(capability.entrance())
+        .push(&frame[..len], Wait::AtMost(MS))
+        .is_ok();
+    let mut reply = [0u8; entry::Response::LEN];
+    let malformed_reply = Hole::from_raw(malformed_back.rx())
+        .pull(&mut reply, Wait::AtMost(MS));
+    let malformed_rejected = malformed_reply.is_err();
+    release_back(operator_task, malformed_back);
+
+    let valid_back = ipc::session::establish::lend(operator_task, entry::AUTH_BACK)
+        .expect("probe-bound: valid native reply back");
+    let valid = request(anchor, valid_back.seed());
+    let valid_sent = push_request(capability, &valid).is_ok();
+    let valid_reply = Hole::from_raw(valid_back.rx()).pull(&mut reply, Wait::AtMost(MS));
+    let valid_denied = match valid_reply {
+        Ok((n, sender)) if sender == operator_task => entry::Response::fetch(&reply[..n])
+            .is_some_and(|response| response.status == api::DENIED),
+        _ => false,
+    };
+    release_back(operator_task, valid_back);
+
+    let query_alive = capability
+        .find(anchor, "x", api::Permit::Public, Wait::AtMost(MS))
+        .err()
+        == Some(api::Fail::Unknown);
+    (malformed_sent && malformed_rejected, valid_sent && valid_denied, query_alive)
+}
 
 #[programs::entry]
 fn main() -> Report<'static> {
     let sire = unit::sire();
-
-    // 一、**两条路先都装上**：本端那一枚交给生我者（它再转授给对方），另铸一枚问话孔给它。
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
-    let (tree, hedge, _) = (
-        &unsafe { session.raw_link() },
-        unsafe { session.raw_talk() },
-        session.host(),
-    );
-    // **正经那一问要一面 `Face`**，而它是**借**一条会话：
+    let (tree, hedge) = (&unsafe { session.raw_link() }, unsafe { session.raw_talk() });
     let face = operator::Face::from(&session);
-    let Some(dir) = system_api::operator::SVC.file_name() else {
-        return bail("probe-bound: bad name");
-    };
 
-    // 三、往树的门上推一枚不合族的帧，再看那道门还是不是活的。
-    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, dir.to_string(), &junk());
+    let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, &junk());
+    let (oversize_in, oversize_bad, oversize_after) =
+        junk_trip(hedge, tree, &face, &oversize_road());
+    let capability = operator::Capability::injected(0, sire, Wait::AtMost(MS))
+        .expect("probe-bound: declared Operator entry capability");
+    let (unknown_sent_and_rejected, valid_sent_and_denied, query_alive) =
+        permit_trip(&capability);
 
-    let (o_junk_in, o_said_bad, o_after) =
-        junk_trip(hedge, tree, &face, dir.to_string(), &oversize_road());
+    assert!(junk_in, "ordinary session junk was not accepted");
+    assert!(said_bad, "ordinary session did not answer BAD for junk");
+    assert!(after, "ordinary session query failed after junk");
+    assert!(oversize_in, "oversized ordinary session road was not accepted");
+    assert!(oversize_bad, "oversized ordinary session road did not answer BAD");
+    assert!(oversize_after, "ordinary session query failed after oversized road");
+    assert!(unknown_sent_and_rejected, "unknown Permit tag was not decode-rejected without a reply");
+    assert!(valid_sent_and_denied, "valid Public BIND with resource NONE did not receive native semantic Denied");
+    assert!(query_alive, "Operator entry API query failed after malformed and denied requests");
 
-    // 三·三、**形状全对、只有许可那一格陌生**的那一条：同一声 `BAD`（"整帧读不懂"），
-    //       门照旧活着。这一条与上一条**不是同一件事**：上一条死在**长度**那一闸，这一条一路
-    //       解到许可那一格才断（见 junk_land ）。
-    let (l_junk_in, l_said_bad, l_after) = junk_trip(
-        hedge,
-        tree,
-        &face,
-        dir.to_string(),
-        &land_frame(LAND_PERMIT_UNKNOWN),
-    );
-    // 不管），故门不该答"读不懂"那一句——两趟并排，才证明上一趟真的断在**许可那一格**上，
-    // 而不是断在名字 / `mine` / 长度上。
-    let (k_junk_in, k_said_bad, k_after) = junk_trip(
-        hedge,
-        tree,
-        &face,
-        dir.to_string(),
-        &land_frame(LAND_PERMIT_KNOWN),
-    );
-
-    // 四、判据：**一例一条**，名字即结论。
-    {
-        {
-            assert!(junk_in, "不合族的帧推不进门（门那一枚孔不在？）");
-            assert!(said_bad, "门没把那一条取出来 / 没答 `BAD`");
-            assert!(after, "吞了 junk 之后，门不再答正经的问了");
-        }
-    }
-    {
-        {
-            assert!(l_junk_in, "那条帧推不进门（门那一枚孔不在？）");
-            assert!(
-                l_said_bad,
-                "许可那一格表外（`[51] = 9`），门该答 `BAD`（整帧读不懂），却没答那一句"
-            );
-            assert!(l_after, "吞了那条帧之后，门不再答正经的问了");
-        }
-    }
-    {
-        {
-            assert!(k_junk_in, "差分那条帧推不进门（门那一枚孔不在？）");
-            assert!(
-                !k_said_bad,
-                "只把许可那一格换成表内的 `0`，门仍答 `BAD` ⇒ 上一趟断的不是许可那一格"
-            );
-            assert!(k_after, "吞了差分那条帧之后，门不再答正经的问了");
-        }
-    }
-    {
-        {
-            assert!(o_junk_in, "那条 9 段的路推不进门（门那一枚孔不在？）");
-            assert!(
-                o_said_bad,
-                "9 段的路该答 `BAD`（`Path` 里超长根本表达不出来），却没答那一句"
-            );
-            assert!(o_after, "吞了那条帧之后，门不再答正经的问了");
-        }
-    }
     programs::harness::probe::identity::timeout();
-    return Report::note(E_OK, OK_NOTE);
+    Report::note(E_OK, OK_NOTE)
 }
 
-/// 返 `(推成了没有, 读到 BAD 没有, 正经的那一问答得出来没有)`——三格各是一件事，由调用方凑成
-/// 一条判据（"这道门没卡死"）
-/// 正经那一问取 `part(/sys)`：**幂等**（`/svc` 是服务起手时立的那一格，重复 `part` 只答同一个
-/// 号），故"答得出"就是这一条要的全部——答案对不对由别的证客管
-/// 只有**紧跟其后那句正经的问**（`part /svc`，幂等）走 `Face`：新面已没有那条自由函数那一层
-/// 一个字没变
 fn junk_trip(
     hedge: PieToken,
     tree: &Endpoint,
     face: &operator::Face,
-    dir: String,
     junk: &[u8],
 ) -> (bool, bool, bool) {
     let door = Hole::from_raw(hedge);
     let pushed = door.push(junk, Wait::AtMost(MS)).is_ok()
         && matches!(door.wait(MailCondition::Empty, Wait::AtMost(MS)), Ok(true));
 
-    // 树路那一枚（本端的读口）：`call` 那份答话就是从它读的。junk 那一声 `BAD` 先读掉。
     let mut back = [0u8; 8];
     let pulled = Hole::from_raw(tree.rx())
         .pull(&mut back, Wait::AtMost(MS))
@@ -207,19 +184,14 @@ fn junk_trip(
         back[0]
     );
     let said = pulled.ok();
-    let bad = matches!(said, Some(1) if back[0] == system_api::operator::BAD);
-
-    // 正经的一问：**门还在答**。
-    let root = face.root();
-    let after = matches!(
-        root.open(dir, Wait::AtMost(MS)),
-        Err(system_api::operator::Fail::Denied)
-    );
+    let bad = matches!(said, Some(1) if back[0] == api::BAD);
+    let after = face
+        .list(api::Where::Root, Wait::AtMost(MS))
+        .is_ok();
     (pushed, bad, after)
 }
 
-/// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）
 fn bail<'a>(note: &'a str) -> Report<'a> {
     debug!("{}", note);
-    return Report::note(E_TRIP, note);
+    Report::note(E_TRIP, note)
 }

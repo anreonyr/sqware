@@ -29,8 +29,8 @@ name = "identity-publication-tests"
 version = "0.1.0"
 dependencies = [
  "env",
- "schedule",
  "system-api",
+ "wire",
 ]
 
 [[package]]
@@ -59,10 +59,6 @@ checksum = "1fbf4db142a473a8d80c26bbf18454ed458bf8d26c8219c331daecfdbd079001"
 dependencies = [
  "proc-macro2",
 ]
-
-[[package]]
-name = "schedule"
-version = "0.1.0"
 
 [[package]]
 name = "syn"

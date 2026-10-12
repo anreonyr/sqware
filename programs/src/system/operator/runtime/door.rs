@@ -59,7 +59,6 @@ impl Facts for Court<'_> {
 
 pub(super) fn authorize(
     tree: ::schedule::Res<Operator>,
-    query: ::schedule::Res<Option<TaskQuery>>,
     mut judgment: ::schedule::ResMut<Judgment>,
 ) -> Result<::schedule::Progress, super::Fail> {
     if let Some((who, permit, ruling)) = judgment.0 {
@@ -70,7 +69,7 @@ pub(super) fn authorize(
                 verdict(
                     &Court {
                         tree: &tree,
-                        query: query.as_ref(),
+                        query: tree.identity_query(),
                     },
                     who,
                     permit,
@@ -82,12 +81,9 @@ pub(super) fn authorize(
 }
 
 use super::{answer::Output, exchange::Request};
-use crate::system::app::life::Status;
-use alloc::sync::Arc;
 use system_api::operator as ocall;
 pub(super) struct Judgment(pub Option<(TaskId, Permit, Code)>);
 pub(super) fn validate(
-    status: Res<Arc<Status>>,
     mut request: ResMut<Request>,
     mut out: ResMut<Output<ocall::Union>>,
 ) -> Result<Progress, super::Fail> {
@@ -96,14 +92,7 @@ pub(super) fn validate(
     let Some(incoming) = &mut request.0 else {
         return Ok(Progress::Done);
     };
-    let denied = incoming
-        .ask
-        .as_ref()
-        .is_some_and(|ask| !super::admission::caller(incoming.guest.who(), status.control, ask));
-    if denied {
-        incoming.ask = None;
-        out.reply = Some(ocall::Union::Status(ocall::DENIED));
-    } else if incoming.ask.is_none() {
+    if incoming.ask.is_none() {
         out.reply = Some(ocall::Union::Status(ocall::BAD));
     }
     Ok(Progress::Done)
@@ -123,16 +112,7 @@ pub(super) fn permit(
     let who = incoming.guest.who();
     let permit = match ask {
         ocall::Wire::Find(id) => tree.permit(*id),
-        ocall::Wire::Trim(id) => {
-            if !tree.claimable(crate::system::operator::tree::Key::Id(*id), who) {
-                judgment.0 = Some((who, ocall::Permit::Bound, Code::Denied));
-                return Ok(Progress::Done);
-            }
-            ocall::Permit::Bound
-        }
-        ocall::Wire::Land { .. } | ocall::Wire::Part { .. } | ocall::Wire::Watch { .. } => {
-            ocall::Permit::Bound
-        }
+        ocall::Wire::Watch { .. } => ocall::Permit::Bound,
         _ => return Ok(Progress::Done),
     };
     judgment.0 = Some((who, permit, Code::Ok));

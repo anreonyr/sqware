@@ -2,7 +2,7 @@
 use crate::system::operator::tree::Operator;
 use crate::system::operator::watch::Subscription;
 pub(super) use crate::system::operator::watch::Watchers;
-use ::schedule::{Progress, Res, ResMut};
+use ::schedule::{Progress, ResMut};
 use system_api::operator::Event;
 
 pub fn event_at(tree: &Operator, change: crate::system::operator::tree::Change) -> Option<Event> {
@@ -44,11 +44,16 @@ pub(super) fn subscribe(
     Ok(Progress::Done)
 }
 pub(super) fn emit<T: 'static>(
-    tree: Res<Operator>,
+    mut tree: ResMut<Operator>,
     mut watchers: ResMut<Watchers>,
     mut out: ResMut<Output<T>>,
 ) -> Result<Progress, Fail> {
     for change in out.changes.drain(..) {
+        if let Some(event) = event_at(&tree, change) {
+            let _ = watchers.publish(event);
+        }
+    }
+    for change in tree.take_changes() {
         if let Some(event) = event_at(&tree, change) {
             let _ = watchers.publish(event);
         }

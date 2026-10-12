@@ -30,18 +30,21 @@ impl Control {
         if item.owner != owner {
             return Err(Fail::Denied);
         }
-        if item.team.is_some()
-            && !item.claimed
-            && matches!(command, Command::Embark(_))
-            && env::chrono::clock() >= item.claim_until
-        {
-            item.stop();
-            return Err(Fail::NotReady);
-        }
         match command {
             Command::State(_) => return Ok(Some(item.state)),
+            Command::Embark(_) if item.state == State::Starting && item.started => {
+                return Ok(Some(State::Starting));
+            }
             Command::Embark(_) if item.state == State::Debarked => {
-                let running = if item.started {
+                if item.claim(env::chrono::clock()).is_none() {
+                    item.stop();
+                    if let Some(team) = item.team {
+                        let _ = unit::slay_team(team);
+                    }
+                    return Err(Fail::NotReady);
+                }
+                let resumed = item.started;
+                let running = if resumed {
                     unit::embark_team(item.team.ok_or(Fail::Unknown)?)
                 } else {
                     unit::embark_task(task)
@@ -51,12 +54,19 @@ impl Control {
                     Err(error) if error.source == env::UnitFail::Busy => return Ok(None),
                     Err(_) => {
                         item.stop();
+                        if let Some(team) = item.team {
+                            let _ = unit::slay_team(team);
+                        }
                         return Err(Fail::NotReady);
                     }
                 }
-                item.claimed = true;
                 item.started = true;
-                item.state = State::Ready;
+                // A resumed team already passed readiness before it was debarked.
+                item.state = if resumed {
+                    State::Ready
+                } else {
+                    State::Starting
+                };
             }
             Command::Embark(_) if item.state == State::Ready => {}
             Command::Debark(_) if item.state == State::Ready => {

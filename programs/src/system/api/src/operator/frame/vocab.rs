@@ -115,13 +115,7 @@ pub enum Ruling {
 // 说，每一枚码各被读一次（字段表头一格 `op`）。外面认的是类型 ⇒ 降为私有——没有读者的格不
 // 留在面上。
 
-pub const LAND: u8 = 1;
-
-pub const PART: u8 = 2;
-
 pub const FIND: u8 = 3;
-
-pub const TRIM: u8 = 4;
 
 pub const LIST: u8 = 5;
 

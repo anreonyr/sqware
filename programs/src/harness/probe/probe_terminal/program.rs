@@ -1,15 +1,21 @@
-use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
+use crate::unit::{Ending, UnitFile};
 pub static PROGRAM: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "probe-terminal",
-        wanted_by: &["accept"],
-        ..Identity::DEFAULT
+    name: "probe-terminal",
+    loader: crate::unit::LoaderConfig::user("probe-terminal"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation {
-        after: Some(&["operator", "terminal"]),
-        restart: Some(Ending::Transient),
-        ..Relation::DEFAULT
+    control: crate::unit::ControlConfig {
+        after: Some(&[
+            crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
+            crate::unit::Dependency::Unit("terminal"),
+        ]),
+        ready: crate::unit::Ready::OnSpawn,
+        ending: Some(Ending::Transient),
+
+        construction: &[],
     },
-    demand: Demand::DEFAULT,
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

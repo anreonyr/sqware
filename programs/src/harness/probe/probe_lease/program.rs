@@ -1,25 +1,36 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
 //! :catalog 的 `PROGRAMS`
 
-use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
+use crate::unit::{Ending, UnitFile};
 
 /// 会死的持有者：落一块**声明归自己**的门牌然后直接死，好让下一台接手
 pub static PROBE_LEASE: UnitFile = UnitFile {
-    publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope(4),
-        group: "fixtures",
-        road: "svc/fixtures",
-        entries: &[crate::unit::PublishEntry { name: "lease" }],
-        public: false,
-    }],
-    identity: Identity {
-        name: "probe-lease",
-        ..Identity::DEFAULT
+    name: "probe-lease",
+    loader: crate::unit::LoaderConfig::user("probe-lease"),
+    operator: crate::unit::OperatorConfig {
+        namespace: &[crate::unit::operator::Namespace {
+            path: "fixtures",
+            scope: crate::unit::operator::Scope::Names(&["lease"]),
+            ops: system_api::operator::Ops::BIND
+                .union(system_api::operator::Ops::UNBIND)
+                .union(system_api::operator::Ops::FIND),
+            permit: None,
+            source_mark: None,
+            bindings: &[],
+        }],
     },
-    relation: Relation {
-        after: Some(&["operator"]),
-        restart: Some(Ending::Transient),
-        ..Relation::DEFAULT
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    demand: Demand { ..Demand::DEFAULT },
+    control: crate::unit::ControlConfig {
+        after: Some(&[crate::unit::Dependency::Bootstrap(
+            crate::unit::Bootstrap::Operator,
+        )]),
+        ready: crate::unit::Ready::OnSpawn,
+        ending: Some(Ending::Transient),
+
+        construction: &[],
+    },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

@@ -4,10 +4,10 @@ use crate::{
     system::{identity, operator::Face as OperatorFace},
     test_state,
 };
-use system_api::identity::{Binding, CoalitionId, Cursor, Fail, Grant, Page, PageTarget, PrincipalId, Reply, Subject, Wire};
+use system_api::identity::{Binding, CoalitionId, Cursor, Fail, Grant, IdentityName, IdentityObject, OperatorEntryRef, Page, PageTarget, PrincipalId, Reply, Subject, Wire};
 use wire::Message;
 
-use identity::{CallError, Face};
+use identity::{CallError, ExportBinding, Exporter, Face, IdentityExport};
 
 fn authority() -> TaskId { TaskId::new(4) }
 fn entry() -> PieToken { PieToken::mint(71) }
@@ -68,6 +68,18 @@ fn discover_validates_the_discovered_authority_and_grant() {
 }
 
 #[test]
+fn private_faces_use_unique_native_grants_without_an_operator_fallback() {
+    test_state::reset();
+    let operator = OperatorFace { entry: None };
+    let grant = Grant::Derive;
+    assert_eq!(Face::discover(&operator, authority(), grant, Wait::POLL).unwrap_err(), CallError::Discovery);
+    test_state::authorize(entry(), TaskId::new(2), authority(), grant.mark());
+    assert!(Face::discover(&operator, authority(), grant, Wait::POLL).is_ok());
+    test_state::authorize(PieToken::mint(72), TaskId::new(2), authority(), grant.mark());
+    assert_eq!(Face::discover(&operator, authority(), grant, Wait::POLL).unwrap_err(), CallError::Discovery);
+}
+
+#[test]
 fn call_rejects_wrong_grant_before_transport_and_revalidates_entry() {
     test_state::reset();
     let face = valid_face();
@@ -107,6 +119,36 @@ fn successful_call_binds_encoded_request_and_reply_route() {
     assert_eq!(sent[0].entry, entry());
     assert_eq!(sent[0].built_back, sent[0].extracted_back);
     assert_eq!(sent[0].wait, Wait::AtMost(40));
+}
+
+#[test]
+fn exporter_checks_its_system_owned_endpoint_and_reports_capacity() {
+    test_state::reset();
+    let export = PieToken::mint(72);
+    test_state::authorize_store(export, authority(), system_api::identity::export::ENTRY);
+    let client = Exporter::direct(authority(), export).unwrap();
+    let object = IdentityObject::Principal(PrincipalId::root(authority()));
+    let alias = IdentityName::new("shell").unwrap();
+    let binding = IdentityName::new("create").unwrap();
+    let entry = OperatorEntryRef { operator: TaskId::new(12), root: false, id: 0, revision: 9 };
+    let request = IdentityExport { object, alias, binding: ExportBinding { name: binding, entry } };
+    assert_eq!(client.export(request, Wait::AtMost(40)), Ok(()));
+    let sent = test_state::sent_calls();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].entry, export);
+    assert_eq!(sent[0].built_back, sent[0].extracted_back);
+
+    reply(Reply::Fail(Fail::Full));
+    assert_eq!(client.export(request, Wait::POLL), Err(CallError::Service(Fail::Full)));
+    assert!(matches!(Exporter::direct(TaskId::new(9), export), Err(CallError::WrongAuthority)));
+
+    let broad = PieToken::mint(73);
+    test_state::authorize(broad, authority(), authority(), system_api::identity::export::ENTRY);
+    assert!(matches!(Exporter::direct(authority(), broad), Err(CallError::WrongAuthority)));
+    let untrusted = PieToken::mint(74);
+    test_state::authorize_store(untrusted, authority(), system_api::identity::export::ENTRY);
+    test_state::authorize(untrusted, TaskId::new(9), authority(), system_api::identity::export::ENTRY);
+    assert!(matches!(Exporter::direct(authority(), untrusted), Err(CallError::WrongAuthority)));
 }
 
 #[test]

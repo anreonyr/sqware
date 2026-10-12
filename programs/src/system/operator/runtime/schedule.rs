@@ -1,7 +1,4 @@
-use super::{
-    Fail, answer, door, events, exchange, frame,
-    management::{self, Ack},
-};
+use super::{Fail, answer, authority, door, events, exchange, frame, management};
 use ::schedule::{Plan, Schedule};
 use system_api::operator as ocall;
 pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
@@ -10,8 +7,7 @@ pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
     let mut hints = Schedule::sequence();
     hints.system("wired", management::wired)?;
     hints.system("guest", management::guest)?;
-    hints.system("mutation", management::mutate)?;
-    hints.system("changes", events::emit::<Ack>)?;
+    hints.system("root", management::root)?;
     hints.system("ack", management::acknowledge)?;
     let mut frame = Schedule::sequence();
     frame.system("health", frame::health)?;
@@ -25,6 +21,7 @@ pub(super) fn plans() -> Result<[Plan<Fail>; 3], ::schedule::BuildError> {
         management::finish,
     )?;
     frame.system("wait", exchange::wait)?;
+    frame.system("authority", authority::handle)?;
     frame.system("guest.select", exchange::select_guest)?;
     frame.system("receive", exchange::receive)?;
     frame.system("validate", door::validate)?;

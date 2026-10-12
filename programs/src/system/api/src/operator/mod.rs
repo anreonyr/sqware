@@ -1,10 +1,16 @@
 //! Pure Operator API: wire types, stable marks, path vocabulary, and bounds.
 
+mod authority;
+pub mod entry;
 pub mod frame;
 pub mod marks;
 pub mod name;
 pub mod path;
 
+pub use authority::{
+    descriptor_mark, Binding, BoundResource, Entry, EntryTarget, GrantDescriptor, GrantId,
+    GrantSpec, GrantState, GrantSubmission, OperationId, OperationState, Ops, ResourceView, Scope,
+};
 pub use frame::{
     ASK_MARK, BAD, DENIED, EntryId, Event, FULL, Fail, Kind, Listing, OK, PANE_CAP, Permit, Req,
     Ruling, Said, TIP_BACK, TIP_LEN, TIP_MARK, Tip, TipIn, UNJUDGED, UNKNOWN, Union, Where, Wire,
@@ -31,6 +37,10 @@ mod interface {
         Link,
         #[channel(key = "watch", legacy = "operator-watch", constant = WATCH_MARK)]
         Watch,
+        #[channel(key = "authority-entry", legacy = "operator-authority-entry", constant = AUTH_ENTRY)]
+        AuthorityEntry,
+        #[channel(key = "authority-back", legacy = "operator-authority-back", constant = AUTH_BACK)]
+        AuthorityBack,
     }
 }
 

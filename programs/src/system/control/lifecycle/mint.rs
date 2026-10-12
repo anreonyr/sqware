@@ -1,5 +1,5 @@
 use super::super::unit::{Control, Pending};
-use super::{Action, Active, Operations};
+use super::{Action, Active};
 use crate::system::control::unit::{
     table::{Slot, State},
     verdict::Fail,
@@ -8,7 +8,7 @@ use ::schedule::{Progress, Res, ResMut};
 
 pub fn pre(active: Res<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
-    let p = control.input(&job.request.name)?.program;
+    let p = control.input(&job.key.request.name)?.program;
     if control.input(p.name())?.image.is_none() {
         return Err(Fail::BadImage);
     }
@@ -24,8 +24,13 @@ pub fn pre(active: Res<Active>, mut control: ResMut<Control>) -> Result<Progress
 }
 pub fn post(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let instance = job.execution.instance.take().ok_or(Fail::NotReady)?;
-    let name = control.input(&job.request.name)?.program.name();
+    let instance = job
+        .progress
+        .execution
+        .instance
+        .take()
+        .ok_or(Fail::NotReady)?;
+    let name = control.input(&job.key.request.name)?.program.name();
     control.pending.push(Pending {
         name,
         service: instance.service,
@@ -34,20 +39,23 @@ pub fn post(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<
 }
 
 pub fn failed(
-    operations: Res<Operations>,
+    operations: Res<crate::system::assembly::Jobs>,
     mut control: ResMut<Control>,
 ) -> Result<Progress, crate::system::app::Fault> {
-    for tracked in &operations.0 {
+    for tracked in operations.lifecycle_jobs() {
         let job = &tracked.operation;
         if tracked.complete
-            && job.failure.is_some()
-            && matches!(job.request.action, Action::Mint)
-            && job.execution.task.is_none()
-            && control.table.find(&job.request.name).is_some_and(|row| {
-                row.state == State::NeverStarted && matches!(row.slot, Slot::None)
-            })
+            && job.progress.failure.is_some()
+            && matches!(job.key.request.action, Action::Mint)
+            && job.progress.execution.task.is_none()
+            && control
+                .table
+                .find(&job.key.request.name)
+                .is_some_and(|row| {
+                    row.state == State::NeverStarted && matches!(row.slot, Slot::None)
+                })
         {
-            control.table.set_state(&job.request.name, State::Dead);
+            control.table.set_state(&job.key.request.name, State::Dead);
         }
     }
     Ok(Progress::Done)

@@ -271,21 +271,23 @@ pub fn run() -> Result<(), &'static str> {
         .map_err(|_| "pipe operator session")?;
     let entry =
         env::pie::unseal(env::UnsealArgs::hole(pipe_api::ENTRY)).map_err(|_| "pipe entry")?;
-    let publisher = system_client::control::publication::Client::injected()
-        .map_err(|_| "pipe publication face")?;
-    publisher
-        .publish(
-            system_api::control::publication::Target::Service {
-                scope: system_api::control::Scope(6),
-                group: "".into(),
-                name: "create".into(),
-            },
+    let capability = system_client::operator::Capability::injected(0, sire, WAIT)
+        .map_err(|_| "pipe namespace capability")?;
+    let anchor = capability.anchor().map_err(|_| "pipe namespace anchor")?;
+    let view =
+        system_api::operator::ResourceView::new(env::Access::STORE).ok_or("pipe endpoint view")?;
+    capability
+        .bind(
+            anchor,
+            "create",
             entry,
+            view,
             system_api::operator::Permit::Public,
+            system_api::operator::OperationId(1),
             WAIT,
         )
-        .map_err(|_| "pipe publication")?;
-    let _ready = ipc::session::establish::endpoint(sire, crate::unit::READY_MARK, Wait::POLL)
+        .map_err(|_| "pipe endpoint binding")?;
+    let _ready = ipc::session::establish::lend(sire, crate::unit::READY_MARK)
         .map_err(|_| "pipe readiness")?;
     let receiver = ipc::rpc::request::Receiver::<pipe_api::Call>::from_raw(
         entry,

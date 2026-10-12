@@ -2,13 +2,14 @@ use super::lifecycle::Action;
 use super::unit::Control;
 use super::{
     endpoint::{self, request as answer},
-    lifecycle::{self, Operations},
+    lifecycle,
 };
 use crate::system::app::Fault as Fail;
 use ::schedule::{BuildError, Plan, Progress, Res, ResMut, Schedule};
 use env::Wait;
 pub(crate) fn poll() -> Result<Plan<Fail>, BuildError> {
     Schedule::sequence()
+        .system("supply.reap", super::unit::reap::sweep_images)?
         .system("reap", super::unit::reap::sweep)?
         .system("instances.receive", endpoint::receive_instances)?
         .system("requests.receive", answer::receive)?
@@ -25,12 +26,12 @@ pub(crate) fn commands(hooks: super::ActivationHooks) -> Result<Plan<Fail>, Buil
         )?
         .build()
 }
-pub fn reply(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
+pub fn reply(mut operations: ResMut<crate::system::assembly::Jobs>) -> Result<Progress, Fail> {
     operations.reply_completed();
     Ok(Progress::Done)
 }
 pub fn pending(
-    operations: Res<Operations>,
+    operations: Res<crate::system::assembly::Jobs>,
     inbox: Res<crate::system::control::endpoint::request::Inbox>,
     mut bound: ResMut<crate::system::app::policy::Bound>,
 ) -> Result<Progress, Fail> {
@@ -39,7 +40,9 @@ pub fn pending(
     }
     Ok(Progress::Done)
 }
-pub fn retire_completed(mut operations: ResMut<Operations>) -> Result<Progress, Fail> {
+pub fn retire_completed(
+    mut operations: ResMut<crate::system::assembly::Jobs>,
+) -> Result<Progress, Fail> {
     operations.retire_local_completed();
     Ok(Progress::Done)
 }
@@ -47,7 +50,7 @@ pub fn retire_completed(mut operations: ResMut<Operations>) -> Result<Progress, 
 pub fn ruin_rest(
     control: Res<Control>,
     flow: Res<crate::system::app::policy::Flow>,
-    mut operations: ResMut<Operations>,
+    mut operations: ResMut<crate::system::assembly::Jobs>,
 ) -> Result<Progress, Fail> {
     // Dynamic tasks may hold resources from any static provider. Their retire
     // hooks reclaim the teams before static services begin to relinquish them.
@@ -55,7 +58,7 @@ pub fn ruin_rest(
         for name in control.closing_service_names() {
             if !operations.contains(name) {
                 operations
-                    .submit(name.into(), Action::Ruin)
+                    .submit_lifecycle(name.into(), Action::Ruin)
                     .map_err(|_| Fail::Room)?;
             }
         }

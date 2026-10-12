@@ -7,7 +7,7 @@ pub(crate) fn frame() -> Result<Plan<Fail>, BuildError> {
 }
 pub(crate) fn shutdown() -> Result<Plan<Fail>, BuildError> {
     let mut schedule = Schedule::sequence();
-    schedule.system("withdraw", super::publication::withdraw)?;
+    schedule.system("withdraw", super::namespace::withdraw)?;
     schedule.system("close", super::execution::close)?;
     schedule.build()
 }

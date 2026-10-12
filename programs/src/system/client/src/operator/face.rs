@@ -2,12 +2,11 @@
 
 use alloc::string::String;
 
-use super::handoff;
 use env::{PieToken, TaskId, Wait};
 
 use crate::operator as ocall;
 use crate::operator::Path;
-use crate::operator::{EntryId, Fail, Listing, Permit, Where};
+use crate::operator::{EntryId, Fail, Listing, Where};
 use ipc::session::{Berth, Session};
 use ipc::time::{deadline, remain};
 use system_api::operator::Call;
@@ -19,14 +18,6 @@ pub const BERTH: Berth = Berth {
     link: super::marks::LINK_MARK,
     ask: crate::operator::ASK_MARK,
 };
-
-/// 门牌那一格声不声明归属（Pane::bind 的最后一格）
-#[derive(Clone, Copy)]
-pub enum Mine {
-    Yes,
-    /// 不声明归属
-    No,
-}
 
 /// 共享调用状态和端点寿命的命名树会话。
 pub struct Face {
@@ -88,54 +79,12 @@ impl Face {
             .map_err(|_| Fail::Unknown)
     }
 
-    /// **分**：在 `at` 那一块 `Pane` 里给 `name` 放一块空窗格；答那一格自己的号
-    /// 判据与 Pane::open 同一句（幂等 / 是一枚砖 ⇒ Fail::NotAPane / 装不下 ⇒
-    pub fn part(&self, at: Where, name: String, wait: Wait) -> Result<EntryId, Fail> {
-        let said = self.call(ocall::Req::Part { at, name }, wait)?;
-        said.entry().map_err(map_code)
-    }
-
-    /// 在容器中发布能力；明确拒绝时撤回本次转授。
-    pub fn land(
-        &self,
-        at: Where,
-        name: String,
-        entry: PieToken,
-        permit: Permit,
-        mine: Mine,
-        wait: Wait,
-    ) -> Result<EntryId, Fail> {
-        let said = handoff::offer(&entry, self.session.host(), |shipped| {
-            self.session.call::<Call>(
-                ocall::Req::Land {
-                    at,
-                    name,
-                    entry: shipped,
-                    permit,
-                    mine: matches!(mine, Mine::Yes),
-                },
-                wait,
-            )
-        })
-        .map_err(|_| Fail::Unknown)?;
-        said.entry().map_err(map_code)
-    }
-
     /// **寻**：把 `id` 那一号后面那一枚 Pie 要过来（经会话授进本端表，号随答话回来）
     /// **它是最敏感的一格**：这一步会**转移能力**（`find` 那一枚带 `VEST`，见
     /// operator 的"交出去的权柄收不回来"）。故 `find` 自成一位，不与
     pub fn find(&self, id: EntryId, wait: Wait) -> Result<PieToken, Fail> {
         let said = self.call(ocall::Req::Find(id), wait)?;
         said.seed().map_err(map_code)
-    }
-
-    /// **剪**：把 `id` 那一号剪掉
-    pub fn trim(&self, id: EntryId, wait: Wait) -> Result<(), Fail> {
-        let said = self.call(ocall::Req::Trim(id), wait)?;
-        match said.code() {
-            ocall::OK => Ok(()),
-            code => Err(map_code(code)),
-        }
     }
 
     /// **列**：`at` 那一块里有哪些号

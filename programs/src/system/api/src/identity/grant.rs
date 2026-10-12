@@ -31,6 +31,9 @@ impl Grant {
             Wire::Bind(..) => Self::Bind,
             Wire::Unbind(_) => Self::Unbind,
             Wire::Activate(..) => Self::Activate,
+            Wire::Install(..) => Self::Install,
+            Wire::Inspect(_) | Wire::Cancel(_) | Wire::Retire(_) | Wire::Associate(..) => Self::Install,
+            Wire::Reference(..) => Self::Reference,
         }
     }
 
@@ -56,7 +59,8 @@ impl Grant {
             | Self::Admit
             | Self::Expel
             | Self::Activate => Mount::Bound,
-            Self::Bind | Self::Unbind => Mount::Installer,
+            Self::Bind | Self::Unbind | Self::Install => Mount::Installer,
+            Self::Reference => Mount::Public,
         }
     }
 }

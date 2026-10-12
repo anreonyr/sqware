@@ -6,6 +6,8 @@ use wire::message::Message;
 #[derive(Clone, env::Frame)]
 #[frame(len = 64)]
 pub struct Request {
+    pub op: u8,
+    pub id: system_api::control::construction::CreateId,
     pub account: String,
     pub back: PieToken,
 }

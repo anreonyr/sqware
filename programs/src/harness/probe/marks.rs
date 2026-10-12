@@ -24,7 +24,7 @@ pub fn acceptance() {
 
     // Relabel a child with a real API Grant mark. The badge changes; the source and
     // the child's actual FETCH-only permission do not.
-    let grant_mark = system_api::loader::Grant::Build.mark();
+    let grant_mark = system_api::control::construction::ENTRY;
     let relabeled = pie::accord(source, owner, Permission::FETCH, grant_mark).unwrap();
     assert_eq!(
         reserve(source).unwrap(),

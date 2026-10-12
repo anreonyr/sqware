@@ -4,15 +4,20 @@ use crate::system::control::unit::{Control, table::State};
 use env::TaskId;
 use system_api::{control::Fail, loader::Built};
 
+pub(crate) struct Admission {
+    pub owner: TaskId,
+    pub job: crate::system::assembly::JobId,
+}
+
 impl Control {
     pub(crate) fn create_instance(
         &mut self,
-        owner: TaskId,
+        admission: Admission,
         construct: impl FnOnce() -> Result<Built, Fail>,
     ) -> Result<Built, Fail> {
         self.reserve_instance()?;
         let built = construct()?;
-        self.register_instance(built, owner);
+        self.register_instance(built, admission);
         Ok(built)
     }
     fn reserve_instance(&mut self) -> Result<(), Fail> {
@@ -30,17 +35,20 @@ impl Control {
         self.instances.try_reserve(1).map_err(|_| Fail::Full)
     }
 
-    fn register_instance(&mut self, built: Built, owner: TaskId) {
+    fn register_instance(&mut self, built: Built, admission: Admission) {
         self.instances.push(Instance {
-            owner,
+            reference: crate::system::assembly::InstanceRef {
+                job: admission.job,
+                task: built.task,
+            },
+            owner: admission.owner,
             task: built.task,
             team: Some(built.team),
             state: State::Starting,
             claimed: false,
             started: false,
             reason: None,
-            claim_until: env::chrono::clock() + system_api::loader::CLAIM_MS as u64 * 1_000_000,
-            hook: Default::default(),
+            claim_until: 0,
         });
     }
 }

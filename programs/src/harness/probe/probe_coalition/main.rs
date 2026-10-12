@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-//! Identity publication acceptance: all eighteen entries exist with their discovery policy.
+//! Identity publication acceptance: all twenty entries exist with their discovery policy.
 //! Each entry must carry its action mark and belong to the same Identity authority.
 //!
 //! # 判据为什么必须 **panic**
@@ -31,7 +31,7 @@ const FACES_MS: usize = 3_000;
 /// 走通那一句（不是 panic；kernel 会把这一句连同域号打出来）。
 /// **量出来的那两枚数**落在这里（release 也看得见）：`debug!` 在 release 是空操作，
 /// 而这一句两边都打——所以"数到几枚"与"该有几枚"（`assert_eq!`）都得看得到。
-const OK_NOTE: &str = "probe-coalition: identity=18, all action entries home";
+const OK_NOTE: &str = "probe-coalition: identity=20, all action entries home";
 
 #[programs::entry]
 fn main() -> Report<'static> {
@@ -41,7 +41,7 @@ fn main() -> Report<'static> {
     };
     let tree = Face::from(&session);
 
-    assert_eq!(system_api::identity::Grant::ALL.len(), 18);
+    assert_eq!(system_api::identity::Grant::ALL.len(), 20);
     step(
         &tree,
         "identity",
@@ -51,28 +51,31 @@ fn main() -> Report<'static> {
     let authority = system_client::identity::authority()
         .expect("probe-coalition: no Control-issued identity authority");
     for grant in system_api::identity::Grant::ALL {
-        let entry = if grant.mount() == system_api::identity::Mount::Installer {
+        let entry = if grant.mount() != system_api::identity::Mount::Public {
             let road = system_api::operator::Path::new(system_api::identity::DIR)
-                .try_join(grant.name())
-                .expect("probe-coalition: bad face name");
-            assert_eq!(
-                tree.tile(&road, Wait::AtMost(MS))
-                    .unwrap()
-                    .token(Wait::AtMost(MS)),
-                Err(system_api::operator::Fail::Denied),
-                "installer discovery must deny an ordinary principal"
-            );
+                .try_join(grant.name()).expect("probe-coalition: bad face name");
+            if grant.mount() == system_api::identity::Mount::Installer {
+                assert_eq!(tree.tile(&road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
+                    Err(system_api::operator::Fail::Denied), "installer faces must deny discovery");
+                if grant == system_api::identity::Grant::Install {
+                    assert_eq!(ipc::session::establish::find(authority, grant.mark()),
+                        Err(ipc::session::establish::DiscoveryFail::Missing),
+                        "install face must remain System-only");
+                } else {
+                    let entry = ipc::session::establish::find(authority, grant.mark()).unwrap();
+                    let info = resource::raw::inspect(entry).unwrap();
+                    assert_eq!(info.owner, authority);
+                    assert_eq!(info.vestor, unit::sire());
+                    assert!(!info.permission.contains(env::Permission::VEST));
+                }
+                continue;
+            }
             let entry = ipc::session::establish::find(authority, grant.mark())
-                .unwrap_or_else(|_| panic!("probe-coalition: installer face missing or ambiguous"));
+                .expect("probe-coalition: declared private face missing or ambiguous");
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
-            fetch(
-                &tree,
-                system_api::operator::Path::new(system_api::identity::DIR),
-                grant.name(),
-                "identity",
-            )
+            fetch(&tree, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
         };
         let (_, owner, mark) =
             reserve(entry).expect("probe-coalition: identity entry cannot be reserved");

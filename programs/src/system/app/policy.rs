@@ -1,6 +1,6 @@
 use crate::system::app::Fault as Fail;
+use crate::system::assembly::Jobs;
 use crate::system::control::Startup;
-use crate::system::control::lifecycle::Operations;
 use crate::system::control::unit::Control;
 
 use crate::system::app::life::{Phase, Status};
@@ -44,7 +44,7 @@ pub fn activity(control: Res<Control>, mut activity: ResMut<Activity>) -> Result
 }
 pub fn settle(
     startup: Res<Startup>,
-    operations: Res<Operations>,
+    operations: Res<Jobs>,
     mut flow: ResMut<Flow>,
 ) -> Result<Progress, Fail> {
     if startup.eligible() && operations.is_empty() {
@@ -79,7 +79,7 @@ pub fn idle(
 }
 pub fn done(
     control: Res<Control>,
-    operations: Res<Operations>,
+    operations: Res<Jobs>,
     mut flow: ResMut<Flow>,
 ) -> Result<Progress, Fail> {
     flow.done = flow.settling
@@ -112,7 +112,7 @@ pub fn bound(
 
 pub fn running(
     startup: Res<Startup>,
-    operations: Res<Operations>,
+    operations: Res<Jobs>,
     status: Res<Arc<Status>>,
 ) -> Result<Progress, Fail> {
     if startup.complete()

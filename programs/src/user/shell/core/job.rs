@@ -193,7 +193,9 @@ impl Job {
         {
             self.status = JobStatus::Completed;
         }
-        if self.status.terminal() || self.status == JobStatus::Paused && previous != JobStatus::Paused {
+        if self.status.terminal()
+            || self.status == JobStatus::Paused && previous != JobStatus::Paused
+        {
             self.foreground = false;
         }
     }

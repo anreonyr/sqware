@@ -70,6 +70,8 @@ pub enum Fail {
     Bad,
     #[code(6)]
     Denied,
+    #[code(7)]
+    Conflict,
 }
 
 impl From<crate::loader::Fail> for Fail {

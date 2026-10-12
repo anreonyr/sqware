@@ -12,75 +12,93 @@ use env::{Mark, Wait};
 pub(crate) fn pre(
     mut active: ResMut<Active>,
     mut control: ResMut<Control>,
-    roster: Res<Roster>,
+    mut roster: ResMut<Roster>,
 ) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let p = control.input(&job.request.name)?.program;
+    let p = control.input(&job.key.request.name)?.program;
+    crate::debug::put(&alloc::format!("system: prepare {} begin", p.name()));
     if control
         .table
         .find(p.name())
         .is_some_and(|r| r.state == State::Debarked)
     {
-        job.execution.task = control.task(p.name());
+        job.progress.execution.task = control.task(p.name());
         return Ok(Progress::Done);
     }
     let at = control
         .pending
         .iter()
-        .position(|p| p.name == job.request.name)
+        .position(|p| p.name == job.key.request.name)
         .ok_or(Fail::NotReady)?;
     let pending = control.pending.remove(at);
-    job.execution.task = Some(pending.service.task());
-    job.execution.instance = Some(Instance {
+    job.progress.execution.task = Some(pending.service.task());
+    job.progress.execution.instance = Some(Instance {
         service: pending.service,
         marks: Vec::new(),
         launched: false,
+        identity_install: None,
     });
-    let instance = job.execution.instance.as_mut().ok_or(Fail::NotReady)?;
-    match job.request.action {
+    let instance = job
+        .progress
+        .execution
+        .instance
+        .as_mut()
+        .ok_or(Fail::NotReady)?;
+    let identity_install = match job.key.request.action {
         Action::Embark {
             parent: Some(parent),
         } => roster.inherit(instance.service.task(), parent),
         Action::Embark { parent: None } => roster.authorize(instance.service.task()),
         _ => return Err(Fail::Unknown),
     }
-    .map_err(|_| Fail::NotReady)?;
-    if matches!(job.request.action, Action::Embark { parent: None }) {
+    .map_err(|why| {
+        crate::debug::put(&alloc::format!("system: identity {} failed: {why}", job.key.request.name));
+        Fail::NotReady
+    })?;
+    crate::debug::put(&alloc::format!("system: prepare {} identity installed", p.name()));
+    instance.identity_install = Some(identity_install);
+    if matches!(job.key.request.action, Action::Embark { parent: None }) {
         control.table.mark_static(instance.service.task());
     }
-    instance.service.connect(p).map_err(|_| Fail::NotReady)?;
-    for setup in p.supply() {
-        for channel in [Some(setup.channel()), setup.ready()].into_iter().flatten() {
-            instance.marks.try_reserve(1).map_err(|_| Fail::Full)?;
-            instance.marks.push(Mark::of(channel));
-        }
-    }
+    instance.service.connect(p).map_err(|why| {
+        crate::debug::put(&alloc::format!("system: channels {} failed: {why:?}", p.name()));
+        Fail::NotReady
+    })?;
     Ok(Progress::Done)
 }
 
 pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    if let Some(instance) = job.execution.instance.as_mut() {
+    if let Some(instance) = job.progress.execution.instance.as_mut() {
         if !instance.launched {
-            env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
+            crate::debug::put(&alloc::format!("system: activate {} tid={}", job.key.request.name, instance.service.task().get()));
+        env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
             instance.launched = true;
         }
     } else {
-        control.resume(&job.request.name)?;
+        control.resume(&job.key.request.name)?;
     }
     Ok(Progress::Done)
 }
 pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<Progress, Fail> {
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
-    let Some(instance) = job.execution.instance.as_mut() else {
+    let Some(instance) = job.progress.execution.instance.as_mut() else {
         return Ok(Progress::Done);
     };
-    let p = control.input(&job.request.name)?.program;
+    let p = control.input(&job.key.request.name)?.program;
+    let mut ready_mark = [Mark::NONE];
+    let marks = match p.control.ready {
+        crate::unit::Ready::OnSpawn => &ready_mark[..0],
+        crate::unit::Ready::Signal(mark) => {
+            ready_mark[0] = mark;
+            &ready_mark[..1]
+        }
+    };
     match instance.service.ready(
         &mut control.table,
         Readiness {
             name: p.name(),
-            marks: &instance.marks,
+            marks,
             wait: Wait::POLL,
         },
     ) {
@@ -93,7 +111,9 @@ pub fn ready(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result
         {
             Ok(Progress::Done)
         }
-        Ok(false) if env::chrono::clock() < job.execution.deadline => Ok(Progress::Pending),
+        Ok(false) if env::chrono::clock() < job.progress.execution.deadline => {
+            Ok(Progress::Pending)
+        }
         _ => Err(Fail::NotReady),
     }
 }
@@ -101,7 +121,7 @@ pub fn post(active: Res<Active>, control: Res<Control>) -> Result<Progress, Fail
     let job = active.0.as_ref().ok_or(Fail::Unknown)?;
     if control
         .table
-        .find(&job.request.name)
+        .find(&job.key.request.name)
         .is_some_and(|r| r.state == State::Ready)
     {
         Ok(Progress::Done)

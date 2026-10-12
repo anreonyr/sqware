@@ -1,7 +1,7 @@
 //! 线路由者（prog-router）的装配声明。
 //! **U 态**：它只读 PLIC 的寄存器、claim/complete、铸孔、挂组，全都不需要 S 态；它那枚铃是
 
-use crate::unit::{Demand, Died, Ending, Identity, Relation, UnitFile};
+use crate::unit::{Died, Ending, UnitFile};
 
 /// 它死在起手 / 常驻哪一步
 pub const E_ROUTER: Died = 5;
@@ -11,22 +11,38 @@ pub const E_ROUTER: Died = 5;
 pub const PLIC_CLASS: &str = "sifive,plic-1.0.0";
 
 pub static PROGRAM: UnitFile = UnitFile {
-    publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope(1),
-        group: "",
-        road: "svc/drv",
-        entries: &crate::unit::PublishEntry::from_names(router_api::PUBLICATIONS),
-        public: true,
-    }],
-    identity: Identity {
-        name: "router",
-        wanted_by: &["accept", "product", "system-fault"],
-        ..Identity::DEFAULT
+    name: "router",
+    loader: crate::unit::LoaderConfig::user("router"),
+    operator: crate::unit::OperatorConfig {
+        namespace: &[crate::unit::operator::Namespace {
+            path: "",
+            scope: crate::unit::operator::Scope::Names(&["router"]),
+            ops: system_api::operator::Ops::BIND
+                .union(system_api::operator::Ops::UNBIND)
+                .union(system_api::operator::Ops::FIND),
+            permit: Some(system_api::operator::Permit::Public),
+            source_mark: None,
+            bindings: &[crate::unit::operator::Binding {
+                name: "router",
+                mark: router_api::ENTRY_MARK,
+                view: env::Access::STORE,
+                permit: system_api::operator::Permit::Public,
+            }],
+        }],
     },
-    relation: Relation {
-        after: Some(&["operator", "hub"]),
-        restart: Some(Ending::Resident),
-        ..Relation::DEFAULT
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    demand: Demand { ..Demand::DEFAULT },
+    control: crate::unit::ControlConfig {
+        after: Some(&[
+            crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
+            crate::unit::Dependency::Unit("hub"),
+        ]),
+        ready: crate::unit::Ready::Signal(crate::unit::READY_MARK),
+        ending: Some(Ending::Resident),
+
+        construction: &[],
+    },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

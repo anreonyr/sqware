@@ -7,7 +7,7 @@ use system_api::loader::Built;
 
 pub(crate) struct Source<'a> {
     pub from: env::TaskId,
-    pub ask: &'a frame::Ask,
+    pub ask: &'a system_api::control::construction::Image,
 }
 
 pub(crate) fn snapshot(source: Source<'_>) -> Result<Vec<u8>, frame::Fail> {

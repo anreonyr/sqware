@@ -25,8 +25,11 @@ pub(super) fn apply(
     let reply = answer(
         book.0.as_mut().ok_or(Fail::Book)?,
         IdentityRequest {
-            from: incoming.request.from,
-            grant: incoming.request.grant,
+            context: super::answer::Context {
+                from: incoming.request.context.from,
+                endpoint: incoming.request.context.endpoint,
+                grant: incoming.request.context.grant,
+            },
             wire: incoming.request.wire.take(),
         },
     );

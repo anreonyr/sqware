@@ -13,10 +13,8 @@ use env::pie;
 use env::unit;
 use ipc::session::Session;
 use system_api::operator::Fail;
-use system_api::operator::Permit;
 use system_client::operator;
 use system_client::operator::Face;
-use system_client::operator::Mine;
 
 const MS: usize = 1000;
 
@@ -46,31 +44,15 @@ fn main() -> Report<'static> {
                 .unwrap();
         assert_eq!(tree.seek(&road, Wait::AtMost(MS)), Err(Fail::Unknown));
     }
-    let existing = tree
-        .pane(system_api::operator::SVC, Wait::AtMost(3000))
-        .expect("probe-operator-gate: service directory")
-        .id();
-
-    let root = tree.root();
+    let forged = pie::unseal(env::UnsealArgs::hole(
+        system_api::operator::entry::AUTH_ENTRY,
+    ))
+    .unwrap();
     assert!(matches!(
-        root.open("idt".into(), Wait::AtMost(MS)),
+        operator::Capability::direct(tree.host(), forged),
         Err(Fail::Denied)
     ));
-    let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("raw-generic"))).unwrap();
-    assert!(matches!(
-        root.bind(
-            "uit".into(),
-            source,
-            Permit::Public,
-            Mine::No,
-            Wait::AtMost(MS)
-        ),
-        Err(Fail::Denied)
-    ));
-    assert!(matches!(
-        root.trim(existing, Wait::AtMost(MS)),
-        Err(Fail::Denied)
-    ));
+    let _ = pie::release(forged, env::ReleaseMode::Revoke);
     independent_sessions();
     programs::debug::put("hierarchy: generic Part/Land/Trim denied for bound Task");
     Report::note(

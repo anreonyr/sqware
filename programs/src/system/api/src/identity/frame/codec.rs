@@ -36,7 +36,7 @@ fn get<T: Span>(bytes: &[u8], at: &mut usize) -> Option<T> {
 }
 
 impl Span for Install {
-    const MAX: Option<usize> = wire::total(&[<u8 as Span>::MAX, Some(Restricted::LEN)]);
+    const MAX: Option<usize> = wire::total(&[<u8 as Span>::MAX, Some(Restricted::LEN), PrincipalId::MAX]);
     fn store_at(&self, bytes: &mut [u8], mut at: usize) -> Option<usize> {
         match *self {
             Self::Authorized(subject) => {
@@ -55,6 +55,7 @@ impl Span for Install {
                 }
                 .store_at(bytes, at)?;
             }
+            Self::Derive { parent } => { put(&3u8, bytes, &mut at)?; put(&parent, bytes, &mut at)?; }
         }
         Some(at)
     }
@@ -72,6 +73,7 @@ impl Span for Install {
                     subject: frame.subject,
                 }
             }
+            3 => Self::Derive { parent: get(bytes, &mut at)? },
             _ => return None,
         };
         Some((install, at))
@@ -126,6 +128,12 @@ impl Wire {
                 put(&Task::new(task)?, bytes, &mut at)?;
                 put(&install, bytes, &mut at)?;
             }
+            Self::Install(id, spec) => { put(&0u8, bytes, &mut at)?; put(&id.value, bytes, &mut at)?; put(&spec, bytes, &mut at)?; }
+            Self::Inspect(id) => { put(&1u8, bytes, &mut at)?; put(&id.value, bytes, &mut at)?; }
+            Self::Cancel(id) => { put(&2u8, bytes, &mut at)?; put(&id.value, bytes, &mut at)?; }
+            Self::Retire(id) => { put(&3u8, bytes, &mut at)?; put(&id.value, bytes, &mut at)?; }
+            Self::Associate(object, name, entry) => { put(&4u8, bytes, &mut at)?; put(&object, bytes, &mut at)?; put(&name, bytes, &mut at)?; put(&entry, bytes, &mut at)?; }
+            Self::Reference(object, name) => { put(&object, bytes, &mut at)?; put(&name, bytes, &mut at)?; }
             Self::Activate(task, coalitions) => {
                 put(&Task::new(task)?, bytes, &mut at)?;
                 put(&coalitions, bytes, &mut at)?;
@@ -177,6 +185,15 @@ impl Wire {
                 Grant::Activate => {
                     Self::Activate(get::<Task>(bytes, &mut at)?.0, get(bytes, &mut at)?)
                 }
+                Grant::Install => match get::<u8>(bytes, &mut at)? {
+                    0 => Self::Install(InstallId { value: get(bytes, &mut at)? }, get(bytes, &mut at)?),
+                    1 => Self::Inspect(InstallId { value: get(bytes, &mut at)? }),
+                    2 => Self::Cancel(InstallId { value: get(bytes, &mut at)? }),
+                    3 => Self::Retire(InstallId { value: get(bytes, &mut at)? }),
+                    4 => Self::Associate(get(bytes, &mut at)?, get(bytes, &mut at)?, get(bytes, &mut at)?),
+                    _ => return None,
+                },
+                Grant::Reference => Self::Reference(get(bytes, &mut at)?, get(bytes, &mut at)?),
             };
             wire.validate()?;
             (at == bytes.len()).then_some(wire)
@@ -218,6 +235,8 @@ impl Message for Reply {
             Self::Bool(_) => 5,
             Self::Members(_) => 6,
             Self::Memberships(_) => 7,
+            Self::Installation(_) => 8,
+            Self::Reference(_) => 9,
             Self::Fail(_) => return None,
         };
         let mut at = ReplyHeader { status: OK, kind }.store_at(bytes, 0)?;
@@ -230,6 +249,8 @@ impl Message for Reply {
             Self::Bool(value) => put(&value, bytes, &mut at)?,
             Self::Members(value) => put(&value, bytes, &mut at)?,
             Self::Memberships(value) => put(&value, bytes, &mut at)?,
+            Self::Installation(value) => put(&value, bytes, &mut at)?,
+            Self::Reference(value) => put(&Optional(value), bytes, &mut at)?,
             Self::Fail(_) => return None,
         }
         (at <= MAX_FRAME).then_some(at)
@@ -254,6 +275,8 @@ impl Message for Reply {
             5 => Self::Bool(get(bytes, &mut at)?),
             6 => Self::Members(get(bytes, &mut at)?),
             7 => Self::Memberships(get(bytes, &mut at)?),
+            8 => Self::Installation(get(bytes, &mut at)?),
+            9 => Self::Reference(get::<Optional<OperatorEntryRef>>(bytes, &mut at)?.0),
             _ => return None,
         };
         (at == bytes.len()).then_some(reply)

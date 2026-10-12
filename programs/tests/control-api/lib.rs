@@ -4,12 +4,11 @@ extern crate alloc;
 #[cfg(test)]
 mod tests {
     use account_api::Request as AccountRequest;
-    use alloc::{string::String, vec};
+    use alloc::string::String;
     use env::{Mark, PieToken, TaskId};
     use system_api::control::{
         Grant,
         frame::{self, Fail, Req, Request, Said, State, Wire},
-        publication::{self, Frame, Object, Reply, Scope, Target},
     };
     use wire::message::Message;
 
@@ -18,42 +17,74 @@ mod tests {
     }
 
     #[test]
-    fn construction_envelope_preserves_image_owner_and_subject_and_rejects_partial_frames() {
-        use system_api::{
-            control::construction,
-            identity::{PrincipalId, Subject},
-            loader,
-        };
+    fn construction_inputs_preserve_identity_arguments_and_reject_partial_frames() {
+        use system_api::{control::construction as c, identity::{PrincipalId, Subject}, loader};
         let mut args = [0; loader::MAX_ARGS];
         args[..2].copy_from_slice(&[7, 11]);
-        let request = construction::Request { constructor: false,
-            image: loader::Ask {
-                op: loader::BUILD,
-                image: token(4),
-                offset: 0,
-                len: 4096,
-                stack: 0,
-                count: 2,
-                args,
-                back: token(5),
-            },
-            owner: TaskId::new(8),
-            subject: Subject::new(PrincipalId::new(TaskId::new(2), 9), &[]).unwrap(),
-        };
-        let mut bytes = construction::Request::EMPTY;
-        let len = request.store(&mut bytes).unwrap();
-        assert_eq!(len, 58 + 8 + 17 + 1);
-        let decoded = construction::Request::fetch(&bytes[..len]).unwrap();
-        assert_eq!(decoded.owner, request.owner);
-        assert_eq!(decoded.subject, request.subject);
-        assert_eq!(decoded.image.image, request.image.image);
-        assert_eq!(decoded.image.back, request.image.back);
-        assert_eq!(&decoded.image.args[..2], &[7, 11]);
-        assert_eq!(construction::Call::back(&decoded), token(5));
-        for end in 0..len {
-            assert!(construction::Request::fetch(&bytes[..end]).is_none());
+        for input in [
+            c::Input::Image(c::Image { image: token(4), offset: 17, len: 4096, stack: 8192, count: 2, args }),
+            c::Input::Unit(c::UnitRef { name: String::from("shell"), stack: 8192, count: 2, args }),
+        ] {
+            for op in [c::BUILD, c::INSPECT, c::CANCEL] {
+                let request = c::Request {
+                    op, id: c::CreateId { value: 41 }, input: c::InputOption(Some(input.clone())),
+                    owner: TaskId::new(8),
+                    subject: Subject::new(PrincipalId::new(TaskId::new(2), 9), &[]).unwrap(),
+                    back: token(5),
+                };
+                let mut bytes = c::Request::EMPTY;
+                let len = request.store(&mut bytes).unwrap();
+                let decoded = c::Request::fetch(&bytes[..len]).unwrap();
+                assert_eq!(decoded.op, op);
+                assert_eq!(decoded.id, request.id);
+                assert_eq!(decoded.owner, request.owner);
+                assert_eq!(decoded.subject, request.subject);
+                assert_eq!(decoded.input.0, Some(input.clone()));
+                assert_eq!(c::Call::back(&decoded), token(5));
+                for end in 0..len {
+                    assert!(c::Request::fetch(&bytes[..end]).is_none(), "accepted prefix {end}/{len}");
+                }
+                assert!(c::Request::fetch(&bytes[..len + 1]).is_none());
+                bytes[10] = 99;
+                assert!(c::Request::fetch(&bytes[..len]).is_none());
+            }
         }
-        assert!(construction::Request::fetch(&bytes[..len + 1]).is_none());
+        for op in [c::INSPECT, c::CANCEL] {
+            let request = c::Request {
+                op, id: c::CreateId { value: 41 }, input: c::InputOption(None),
+                owner: TaskId::new(8),
+                subject: Subject::new(PrincipalId::new(TaskId::new(2), 9), &[]).unwrap(),
+                back: token(5),
+            };
+            let mut bytes = c::Request::EMPTY;
+            let len = request.store(&mut bytes).unwrap();
+            let decoded = c::Request::fetch(&bytes[..len]).unwrap();
+            assert_eq!(decoded.op, op);
+            assert_eq!(decoded.id.value, 41);
+            assert!(decoded.input.0.is_none());
+            assert_eq!(c::Call::back(&decoded), token(5));
+            bytes[9] = 2;
+            assert!(c::Request::fetch(&bytes[..len]).is_none());
+        }
+    }
+
+    #[test]
+    fn construction_count_rejects_overflow_and_keeps_maximum_arguments() {
+        use env::wire::Span;
+        use system_api::{control::construction as c, loader};
+        let args = core::array::from_fn(|i| i as u64 + 1);
+        let mut bytes = [0; 1600];
+        for input in [
+            c::Input::Image(c::Image { image: token(4), offset: 0, len: 4096, stack: 0, count: loader::MAX_ARGS as u8, args }),
+            c::Input::Unit(c::UnitRef { name: String::from("shell"), stack: 0, count: loader::MAX_ARGS as u8, args }),
+        ] {
+            let len = input.store_at(&mut bytes, 0).unwrap();
+            assert_eq!(c::Input::fetch_at(&bytes[..len], 0), Some((input.clone(), len)));
+            let mut invalid = input;
+            match &mut invalid { c::Input::Image(value) => value.count += 1, c::Input::Unit(value) => value.count += 1 }
+            assert!(invalid.store_at(&mut bytes, 0).is_none());
+        }
+        assert!(c::Input::fetch_at(&[99], 0).is_none());
     }
 
     #[test]
@@ -90,7 +121,7 @@ mod tests {
         assert_eq!(frame::DEBARK, 3);
         assert_eq!(frame::STATE, 4);
         assert_eq!(frame::RUIN, 5);
-        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 7);
+        assert_eq!(system_api::control::marks::DECLARATIONS.len(), 4);
         assert_eq!(env::marks::conflict(system_api::control::REGISTRY), None);
     }
 
@@ -173,14 +204,18 @@ mod tests {
         assert_eq!(Said::fetch(&bytes[..n]), Some(said));
 
         let account = AccountRequest {
+            op: account_api::CREATE,
+            id: system_api::control::construction::CreateId { value: 13 },
             account: String::from("ab"),
             back: token(0x0102_0304_0506_0708),
         };
         let mut bytes = AccountRequest::EMPTY;
         let n = account.store(&mut bytes).unwrap();
-        assert_eq!(&bytes[..n], &[2, b'a', b'b', 8, 7, 6, 5, 4, 3, 2, 1]);
+        assert_eq!(&bytes[..n], &[1, 13, 0, 0, 0, 0, 0, 0, 0, 2, b'a', b'b', 8, 7, 6, 5, 4, 3, 2, 1]);
         let (decoded, exact) = AccountRequest::fetch(&bytes[..n]).unwrap();
         assert!(exact);
+        assert_eq!(decoded.op, account_api::CREATE);
+        assert_eq!(decoded.id.value, 13);
         assert_eq!(decoded.account, "ab");
         assert_eq!(decoded.back, account.back);
         let (decoded, exact) = AccountRequest::fetch(&bytes[..n + 1]).unwrap();
@@ -188,6 +223,8 @@ mod tests {
         assert_eq!(decoded.back, account.back);
 
         let invalid = AccountRequest {
+            op: account_api::CREATE,
+            id: account.id,
             account: String::from("."),
             back: account.back,
         };
@@ -198,61 +235,40 @@ mod tests {
     }
 
     #[test]
-    fn publication_frames_preserve_fixed_wire_bytes_and_target_validation() {
-        let entry = token(0x0102_0304_0506_0708);
-        let frame = Frame::new(
-            publication::PUBLISH,
-            Target::Service {
-                scope: Scope(1),
-                group: String::from("grp"),
-                name: String::from("svc"),
-            },
-            (entry, system_api::operator::Permit::Public),
-        );
-        assert_eq!(
-            frame.target(),
-            Some(Target::Service {
-                scope: Scope(1),
-                group: String::from("grp"),
-                name: String::from("svc"),
-            })
-        );
-        let mut bytes = Frame::EMPTY;
-        let n = frame.store(&mut bytes).unwrap();
-        let mut expected = vec![1, 1, 3, b'g', b'r', b'p', 3, b's', b'v', b'c'];
-        expected.extend_from_slice(&[0; 16]);
-        expected.extend_from_slice(&entry.to_bytes());
-        expected.extend_from_slice(&[0; 18]);
-        expected.extend_from_slice(&[0; 8]);
-        assert_eq!(n, expected.len());
-        assert_eq!(&bytes[..n], expected.as_slice());
-        assert_eq!(Frame::fetch(&bytes[..n]), Some(frame.clone()));
-        let mut invalid = frame;
-        invalid.name = String::from("bad/name");
-        let mut bytes = Frame::EMPTY;
-        let n = invalid.store(&mut bytes).unwrap();
-        let decoded = Frame::fetch(&bytes[..n]).unwrap();
-        assert!(decoded.target().is_none());
-
-        let reply = Reply {
-            status: 0,
-            kind: 2,
-            task: TaskId::new(0x0102_0304_0506_0708),
-            number: 0x1112_1314_1516_1718,
+    fn identity_exports_preserve_actual_entry_revision_and_validation_boundaries() {
+        use system_api::identity::{export, IdentityObject, IdentityName, PrincipalId, OperatorEntryRef};
+        let request = export::Request {
+            object: IdentityObject::Principal(PrincipalId::new(TaskId::new(77), 19)),
+            alias: IdentityName::new("anran").unwrap(),
+            binding: IdentityName::new("create").unwrap(),
+            entry: OperatorEntryRef { operator: TaskId::new(81), root: false, id: 0, revision: 123 },
+            back: token(9),
         };
-        let mut bytes = Reply::EMPTY;
+        assert!(request.valid(), "Node(0) is a real direct entry");
+        let mut bytes = [0; export::Request::LEN + 1];
+        let n = request.store(&mut bytes).unwrap();
+        let (decoded, exact) = export::Request::fetch(&bytes[..n]).unwrap();
+        assert!(exact && decoded.valid());
+        assert_eq!(decoded.object, request.object);
+        assert_eq!(decoded.entry, request.entry);
+        assert_eq!(decoded.alias, request.alias);
+        assert_eq!(export::Call::back(&(decoded, exact)), request.back);
+        let (_, exact) = export::Request::fetch(&bytes[..n + 1]).unwrap();
+        assert!(!exact, "trailing data is rejected by export admission");
+        for end in 0..n { assert!(export::Request::fetch(&bytes[..end]).is_none()); }
+        let mut invalid = request;
+        invalid.entry.root = true;
+        invalid.entry.id = 1;
+        assert!(!invalid.valid());
+        invalid.entry.root = false;
+        invalid.entry.operator = TaskId::new(0);
+        assert!(!invalid.valid());
+        assert!(IdentityName::new("bad/name").is_none());
+        let reply = export::Response::accepted();
+        let mut bytes = [0; export::Response::LEN + 1];
         let n = reply.store(&mut bytes).unwrap();
-        assert_eq!(
-            &bytes[..n],
-            &[0, 2, 8, 7, 6, 5, 4, 3, 2, 1, 24, 23, 22, 21, 20, 19, 18, 17]
-        );
-        assert_eq!(Reply::fetch(&bytes[..n]), Some(reply));
-        assert_eq!(
-            reply.identity(TaskId::new(0x0102_0304_0506_0708)),
-            Ok(Object::Coalition(system_api::identity::CoalitionId::new(
-                TaskId::new(0x0102_0304_0506_0708),
-                0x1112_1314_1516_1718
-            ),))
-        );
+        assert_eq!(export::Response::fetch(&bytes[..n]).unwrap().status, wire::OK);
+        assert!(export::Response::fetch(&bytes[..n + 1]).is_none());
+        for end in 0..n { assert!(export::Response::fetch(&bytes[..end]).is_none()); }
     }
 }

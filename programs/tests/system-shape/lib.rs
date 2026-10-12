@@ -138,11 +138,10 @@ mod boundaries {
     use std::{fs, path::Path};
     use syn::visit::{self, Visit};
     #[test]
-    fn control_state_and_operation_queue_are_private_to_control() {
+    fn control_state_is_private_and_assembly_owns_operation_queue() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
         for (path, name) in [
             ("control/unit/mod.rs", "Control"),
-            ("control/lifecycle/queue.rs", "Operations"),
         ] {
             let syntax = syn::parse_file(&fs::read_to_string(system.join(path)).unwrap()).unwrap();
             let state = syntax.items.iter().find_map(|item| match item {
@@ -162,6 +161,14 @@ mod boundaries {
                 }
             }
         }
+        let assembly = fs::read_to_string(system.join("assembly.rs")).unwrap();
+        assert!(assembly.contains("work: WorkQueue<Work>"), "Assembly must own the shared job queue");
+        let work = fs::read_to_string(system.join("assembly/work.rs")).unwrap();
+        assert!(work.contains("struct WorkQueue"), "the live queue implementation must be shared with host tests");
+        assert!(!assembly.contains("struct HookProgress"), "long-lived installations must not retain transient phase cursors");
+        assert!(assembly.contains("Phase"), "dynamic phase jobs must use the shared queue");
+        let instance = fs::read_to_string(system.join("control/instance/state.rs")).unwrap();
+        assert!(!instance.contains("pub hook:"), "Control instance facts must not duplicate Assembly cursors");
     }
     #[test]
     fn lifecycle_dispatch_does_not_own_task_state_or_compensation() {
@@ -205,7 +212,7 @@ mod boundaries {
         }
         let mut paths = References::default();
         references(&control.join("endpoint"), &mut paths);
-        assert!(!paths.0.iter().any(|path| path.starts_with("env::unit::") || path.starts_with("env::room::")), "request handler executes instance effects");
+        assert!(!paths.0.iter().any(|path| (path.starts_with("env::unit::") && path != "env::unit::self_id") || path.starts_with("env::room::")), "request handler executes instance effects");
         #[derive(Default)]
         struct StateFields(Vec<String>);
         impl<'a> Visit<'a> for StateFields {
@@ -258,7 +265,8 @@ mod boundaries {
         let identity = repo.join("programs/src/system/identity");
         assert!(!identity.join("client").exists());
         let mut paths = References::default();
-        references(&identity, &mut paths);
+        for core in ["book", "service"] { references(&identity.join(core), &mut paths); }
+        paths.visit_file(&syn::parse_file(&fs::read_to_string(identity.join("mod.rs")).unwrap()).unwrap());
         assert!(!paths.0.iter().any(|path| path.contains("control::identity") || path.ends_with("::Roster")));
         let source = fs::read_to_string(repo.join("programs/src/system/control/identity.rs")).unwrap();
         let syntax = syn::parse_file(&source).unwrap();
@@ -289,7 +297,7 @@ mod boundaries {
                 }
             }
         }
-        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs", "publication/receive.rs", "publication/names.rs"] {
+        for path in ["identity/service/face.rs", "control/endpoint/request.rs", "control/endpoint/instance.rs", "loader/service/answer.rs"] {
             let source = fs::read_to_string(repo.join("programs/src/system").join(path)).unwrap();
             assert!(!source.contains("system_client::"), "own service binding depends on client: {path}");
         }
@@ -297,9 +305,10 @@ mod boundaries {
     #[test]
     fn system_components_have_named_ownership_and_no_legacy_classification() {
         let system = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/system");
-        for name in ["app", "control", "identity", "operator", "loader", "publication", "launch"] {
+        for name in ["app", "control", "identity", "operator", "loader", "launch", "assembly", "supply"] {
             assert!(system.join(name).is_dir(), "missing component {name}");
         }
+        assert!(!system.join("publication/mod.rs").exists(), "the obsolete Publication owner must be removed");
         for old in ["run", "common", "boot.rs", "life.rs", "control/core", "control/serve", "identity/core", "identity/serve", "operator/core", "operator/serve", "operator/client.rs", "loader/core", "loader/serve"] {
             assert!(!system.join(old).exists(), "legacy classification remains: {old}");
         }
@@ -587,8 +596,10 @@ mod revised_ownership {
         assert!(repo.join("programs/src/service/account/client/Cargo.toml").is_file());
         let control = fs::read_to_string(repo.join("programs/src/system/control/unit/mod.rs")).unwrap();
         assert!(!control.contains("loader:"));
-        let publication = fs::read_to_string(repo.join("programs/src/system/publication/policy.rs")).unwrap();
-        assert!(!publication.contains("hub_api") && !publication.contains("Machine"));
+        let operator = fs::read_to_string(repo.join("programs/src/system/operator/runtime/authority.rs")).unwrap();
+        assert!(!operator.contains("hub_api") && !operator.contains("Machine"));
+        assert!(!repo.join("programs/src/system/api/src/control/publication.rs").exists());
+        assert!(!repo.join("programs/src/system/client/src/control/publication.rs").exists());
         assert!(!repo.join("programs/src/system/launch/activation.rs").exists());
         assert!(!repo.join("programs/src/system/control/unit/material.rs").exists());
     }

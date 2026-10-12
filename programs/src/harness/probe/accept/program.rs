@@ -1,14 +1,19 @@
-use crate::unit::{Demand, Identity, Relation, UnitFile};
+use crate::unit::UnitFile;
 
 pub static PROGRAM: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "accept-system",
-        space: env::ProgramKind::Supervisor,
-        wanted_by: &["accept"],
-        entry: &["accept"],
-        ..Identity::DEFAULT
+    name: "accept-system",
+    loader: crate::unit::LoaderConfig::supervisor("accept-system"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation::DEFAULT,
-    demand: Demand::DEFAULT,
+    control: crate::unit::ControlConfig {
+        after: None,
+        ready: crate::unit::Ready::OnSpawn,
+        ending: None,
+
+        construction: &[],
+    },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

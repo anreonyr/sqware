@@ -37,6 +37,7 @@ fn catalogue_contract_rejects_duplicate_images_ports_and_invalid_utf8() {
         images: vec![Image {
             name: "emit".into(),
             seed: token(12),
+            mark: abi::Mark::of("emit"),
             length: 100,
             ports: vec![("records".into(), Direction::Write)],
         }],
@@ -54,6 +55,7 @@ fn catalogue_contract_rejects_duplicate_images_ports_and_invalid_utf8() {
         images: vec![Image {
             name: "emit".into(),
             seed: token(12),
+            mark: abi::Mark::of("emit"),
             length: 100,
             ports: vec![
                 ("records".into(), Direction::Write),

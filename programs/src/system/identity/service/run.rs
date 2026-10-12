@@ -33,18 +33,24 @@ pub fn serve(
     stop.prepare(&resources);
     start
         .advance(&mut Cursor::default(), &resources)
-        .map_err(|_| Fail::Book)?;
+        .map_err(|error| {
+            programs::debug::put(&alloc::format!("identity: startup plan failed: {error:?}"));
+            Fail::Book
+        })?;
     let mut cursor = Cursor::default();
     while resources.read::<Running>()?.0 {
-        if frame
-            .advance(&mut cursor, &resources)
-            .map_err(|_| Fail::Dead)?
-            == Progress::Done
+        if frame.advance(&mut cursor, &resources).map_err(|error| {
+            programs::debug::put(&alloc::format!("identity: frame plan failed: {error:?}"));
+            Fail::Dead
+        })? == Progress::Done
         {
             cursor.reset();
         }
     }
     stop.advance(&mut Cursor::default(), &resources)
-        .map_err(|_| Fail::Desk)?;
+        .map_err(|error| {
+            programs::debug::put(&alloc::format!("identity: shutdown plan failed: {error:?}"));
+            Fail::Desk
+        })?;
     Ok(())
 }

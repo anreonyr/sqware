@@ -1,43 +1,69 @@
-use super::{adapt::{controller::Controller, waiting::{Interests, Waiting}}, native::Host};
-use alloc::{format, vec::Vec};
+use super::{
+    adapt::{
+        controller::Controller,
+        waiting::{Interests, Waiting},
+    },
+    native::Host,
+};
+use alloc::{format, string::String, vec::Vec};
 use env::{TaskId, Wait};
 use lisp::{Engine, Limits, ReadState, Reader, Source, Step};
 use terminal_client::{Io, Read};
 const WAIT: Wait = Wait::AtMost(5000);
-fn catalogue(owner: TaskId) -> Result<shell_api::Catalogue, &'static str> {
-    let entry = resource::raw::pies()
-        .find(|info| {
-            info.alive
-                && info.owner == owner
-                && info.vestor == owner
-                && info.kind == env::PieKind::Hole
-                && info.mark == shell_api::CATALOGUE
-        })
-        .ok_or("shell catalogue missing")?;
-    let mut bytes = alloc::vec![0; shell_api::MAX_SIZE];
-    let (n, from) = resource::raw::Hole::from_raw(entry.token)
-        .pull(&mut bytes, WAIT)
-        .map_err(|_| "shell catalogue receive")?;
-    if from != owner {
-        return Err("shell catalogue source");
-    }
-    let catalogue =
-        shell_api::Catalogue::decode(&bytes[..n]).map_err(|_| "shell catalogue format")?;
-    for image in &catalogue.images {
-        let info = resource::raw::inspect(image.seed).map_err(|_| "shell image capability")?;
-        if !info.alive
-            || info.owner != owner
-            || info.vestor != owner
-            || info.kind != env::PieKind::Pole
-            || !info
-                .permission
-                .contains(env::Permission::FETCH | env::Permission::VEST)
-        {
-            return Err("shell image source");
+fn catalogue(system: TaskId) -> Result<shell_api::Catalogue, &'static str> {
+    use wire::Message;
+    let mut images = Vec::new();
+    for command in super::commands::COMMANDS {
+        let channel = ipc::session::establish::claim(
+                system,
+                crate::unit::descriptor_mark(command.binding.slot),
+                WAIT,
+            )
+            .map_err(|_| "shell resource channel")?;
+        let mut frame_bytes = crate::unit::SupplyFrame::EMPTY;
+        let (n, from) = resource::raw::Hole::from_raw(channel)
+            .pull(&mut frame_bytes, WAIT)
+            .map_err(|_| "shell resource receive")?;
+        if from != system {
+            return Err("shell resource source");
         }
+        let frame =
+            crate::unit::SupplyFrame::fetch(&frame_bytes[..n]).ok_or("shell resource frame")?;
+        let description = &frame.description[..usize::from(frame.length)];
+        let encoded_length: [u8; 8] = description
+            .get(..8)
+            .ok_or("shell resource descriptor")?
+            .try_into()
+            .map_err(|_| "shell resource descriptor")?;
+        let length = usize::try_from(u64::from_le_bytes(encoded_length))
+            .map_err(|_| "shell resource length")?;
+        if length == 0 || length > 16 * 1024 * 1024 {
+            return Err("shell resource length");
+        }
+        let seed = resource::raw::pies()
+            .find(|info| {
+                info.alive
+                    && info.owner == system
+                    && info.vestor == system
+                    && info.kind == env::PieKind::Pole
+                    && info.mark == command.binding.slot
+                    && info.permission.contains(command.binding.permission)
+            })
+            .map(|info| info.token)
+            .ok_or("shell image resource")?;
+        images.push(shell_api::Image {
+            name: String::from(command.name),
+            seed,
+            mark: command.binding.slot,
+            length,
+            ports: command
+                .ports
+                .iter()
+                .map(|(name, direction)| (String::from(*name), *direction))
+                .collect(),
+        });
     }
-    let _ = env::pie::release(entry.token, env::ReleaseMode::Revoke);
-    Ok(catalogue)
+    Ok(shell_api::Catalogue { images })
 }
 fn queue(host: &mut Host, bytes: &[u8]) {
     if host.output.len() + bytes.len() <= 4 * 1024 * 1024 {
@@ -47,26 +73,51 @@ fn queue(host: &mut Host, bytes: &[u8]) {
 pub fn run() -> Result<(), &'static str> {
     let args = execution::boot::args::args();
     let terminal = TaskId::new(*args.first().ok_or("shell terminal owner")?);
-    let account = TaskId::new(*args.get(1).ok_or("shell catalogue owner")?);
+    let login = env::unit::sire();
+    let system = super::startup::receive(login)?;
     let io = Io::injected(terminal).map_err(|_| "shell terminal")?;
-    let catalogue = catalogue(account)?;
-    let loader = resource::raw::pies()
-        .find(|info| info.alive && info.mark == system_api::loader::Grant::Build.mark())
-        .ok_or("shell loader grant")?;
-    let sire = loader.owner;
-    let loader = loader.token;
-    let session = ipc::session::Session::open(sire, system_client::operator::BERTH, WAIT)
+    let loader_info = resource::raw::pies()
+        .find(|info| {
+            info.alive
+                && info.owner == system
+                && info.vestor == system
+                && info.mark == system_api::loader::Grant::Claim.mark()
+                && info.kind == env::PieKind::Hole
+                && info.permission.contains(env::Permission::STORE)
+        })
+        .ok_or("shell claim grant")?;
+    let loader = loader_info.token;
+    let construction = resource::raw::pies()
+        .find(|info| {
+            info.alive
+                && info.mark == system_api::control::construction::ENTRY
+                && info.owner == system
+                && info.vestor == system
+                && info.kind == env::PieKind::Hole
+                && info.permission.contains(env::Permission::STORE)
+        })
+        .ok_or("shell construction grant")?
+        .token;
+    let catalogue = catalogue(system)?;
+    let session = ipc::session::Session::open(system, system_client::operator::BERTH, WAIT)
         .map_err(|_| "shell operator")?;
     let tree = system_client::operator::Face::of(session);
     let pipe = pipe_client::Client::find(&tree, WAIT).map_err(|_| "shell pipe service")?;
     let mut engine = Engine::new(Limits::default()).map_err(|_| "shell language allocation")?;
     Host::install(&mut engine).map_err(|_| "shell standard library")?;
-    let mut host = Host::new(Controller::new(catalogue, pipe, loader));
-    queue(&mut host, b"sqware Lisp Shell\n");
     let grant = system_api::identity::Grant::Resolve;
+    let authority = system_client::identity::authority().ok_or("shell identity authority")?;
     let entry = resource::raw::pies()
-        .find(|info| info.mark == grant.mark())
+        .find(|info| {
+            info.alive
+                && info.owner == authority
+                && info.vestor == login
+                && info.mark == grant.mark()
+                && info.kind == env::PieKind::Hole
+                && info.permission.contains(env::Permission::STORE)
+        })
         .ok_or("shell identity resolver")?;
+    let identity_authority = entry.owner;
     let resolver = system_client::identity::Face::direct(entry.owner, grant, entry.token)
         .map_err(|_| "shell identity resolver")?;
     let system_api::identity::Reply::Binding(Some(binding)) = resolver
@@ -78,6 +129,15 @@ pub fn run() -> Result<(), &'static str> {
     else {
         return Err("shell identity missing");
     };
+    let mut host = Host::new(Controller::new(
+        catalogue,
+        pipe,
+        construction,
+        loader,
+        binding.current,
+        identity_authority,
+    ));
+    queue(&mut host, b"sqware Lisp Shell\n");
     queue(
         &mut host,
         format!(
@@ -251,13 +311,17 @@ pub fn run() -> Result<(), &'static str> {
                     host.output.pop_front();
                 }
                 progressed = true;
-            } else { output_blocked = true; }
+            } else {
+                output_blocked = true;
+            }
         } else if let Some((id, bytes)) = host.controller.output() {
             let n = bytes.len();
             if io.try_write(bytes).map_err(|_| "shell job output")? {
                 host.controller.consume_output(id, n);
                 progressed = true;
-            } else { output_blocked = true; }
+            } else {
+                output_blocked = true;
+            }
         }
         if exiting
             && host.controller.settled()
@@ -267,19 +331,35 @@ pub fn run() -> Result<(), &'static str> {
             io.drain().map_err(|_| "shell output drain")?;
             return Ok(());
         }
-        if engine.is_runnable() || progressed
-            || !exiting && engine.is_idle() && host.controller.foreground.is_none() && !prompt {
+        if engine.is_runnable()
+            || progressed
+            || !exiting && engine.is_idle() && host.controller.foreground.is_none() && !prompt
+        {
             env::room::starve();
             continue;
         }
         let mut interests = Interests::new();
         let [input, output, control] = io.raw_channels();
-        interests.source(env::Source::Mail { pie: input, condition: env::MailCondition::Pull });
-        interests.source(env::Source::Mail { pie: control, condition: env::MailCondition::Pull });
-        if output_blocked { interests.source(env::Source::Mail { pie: output, condition: env::MailCondition::Push }); }
+        interests.source(env::Source::Mail {
+            pie: input,
+            condition: env::MailCondition::Pull,
+        });
+        interests.source(env::Source::Mail {
+            pie: control,
+            condition: env::MailCondition::Pull,
+        });
+        if output_blocked {
+            interests.source(env::Source::Mail {
+                pie: output,
+                condition: env::MailCondition::Push,
+            });
+        }
         interests.budget(host.remaining());
         host.controller.interests(&host.objects, &mut interests);
-        if interests.runnable { env::room::starve(); continue; }
+        if interests.runnable {
+            env::room::starve();
+            continue;
+        }
         waiting.apply(&interests)?;
         waiting.await_(interests.within)?;
     }

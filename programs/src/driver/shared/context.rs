@@ -14,15 +14,15 @@ use env::{PieToken, TaskId, Wait};
 use ipc::session::Session;
 use programs::debug;
 use router_client::Line;
-use system_api::control::Scope;
-use system_api::operator::Permit;
-use system_client::operator;
+use system_api::operator::{self as operator_api, Permit};
+use system_client::operator::{self, Capability};
 
 /// 要找的那位服务（线路由者）在树上的名字
 const ROUTER: &str = "router";
 
 pub struct Context {
     pub session: Session,
+    capability: Capability,
 }
 
 pub enum Step {
@@ -34,21 +34,31 @@ impl Context {
     /// **只开会话**：入口孔不再是这一层的事（域自己那一枚由它自己铸、自己落）。
     pub fn open(sire: TaskId, ms: Wait) -> Result<Context, Step> {
         let session = Session::open(sire, operator::BERTH, ms).map_err(|_| Step::Tree)?;
-        Ok(Context { session })
+        let capability = Capability::injected(0, sire, ms).map_err(|_| Step::Tree)?;
+        Ok(Context {
+            session,
+            capability,
+        })
     }
+
+    pub fn capability(&self) -> &Capability { &self.capability }
 
     /// 上树落**一枚门牌**（`entry` = 这一域自己铸的那一枚孔）。
     pub fn plate(&self, entry: PieToken, me: &str, ms: Wait) {
-        let client = system_client::control::publication::Client::injected()
-            .expect("driver: publication entry");
-        let target = system_api::control::publication::Target::Service {
-            scope: Scope(1),
-            group: "".into(),
-            name: me.into(),
-        };
-        client
-            .publish(target, entry, Permit::Public, ms)
-            .expect("driver: publication");
+        let anchor = self.capability.anchor().expect("driver: namespace anchor");
+        let view =
+            operator_api::ResourceView::new(env::Access::STORE).expect("driver: endpoint view");
+        self.capability
+            .bind(
+                anchor,
+                me,
+                entry,
+                view,
+                Permit::Public,
+                operator_api::OperationId(1),
+                ms,
+            )
+            .expect("driver: endpoint binding");
     }
 
     /// **它拿一面借来的视图**而不是收走会话：`Context` 持着这条会话（`uart` 那一台还要从它

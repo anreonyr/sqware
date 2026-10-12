@@ -1,4 +1,4 @@
-use crate::system::control::lifecycle::{Action, Operation, Operations, Request};
+use crate::system::control::lifecycle::{Action, Operation, Request};
 use crate::system::control::unit::Control;
 use crate::system::control::unit::table::State;
 use env::Wait;
@@ -15,7 +15,7 @@ pub struct Inbox(pub alloc::collections::VecDeque<Incoming>);
 pub struct Buffer(pub alloc::vec::Vec<u8>);
 
 pub fn receive(
-    watch: ::schedule::Res<super::Entries>,
+    watch: ::schedule::Res<crate::system::control::namespace::Endpoints>,
     mut buffer: ::schedule::ResMut<Buffer>,
     mut inbox: ::schedule::ResMut<Inbox>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
@@ -89,7 +89,7 @@ pub fn state(
     Ok(::schedule::Progress::Done)
 }
 pub fn enqueue(
-    mut operations: ::schedule::ResMut<Operations>,
+    mut operations: ::schedule::ResMut<crate::system::assembly::Jobs>,
     mut inbox: ::schedule::ResMut<Inbox>,
 ) -> Result<::schedule::Progress, crate::system::app::Fault> {
     let count = inbox.0.len();
@@ -113,7 +113,7 @@ pub fn enqueue(
                 continue;
             }
         };
-        if let Err((fail, request)) = operations.push(Request {
+        if let Err((fail, request)) = operations.push_lifecycle(Request {
             name,
             action,
             back: Some(incoming.reply),
@@ -126,25 +126,27 @@ pub fn enqueue(
     Ok(::schedule::Progress::Done)
 }
 pub(crate) fn complete(operation: &mut Operation) {
-    let Some(back) = operation.request.back.take() else {
-        return;
-    };
-    let said = match operation.failure {
+    let said = match operation.progress.failure {
         Some(fail) => status(fail),
-        None => match operation.request.action {
-            Action::Embark { .. } => match operation.execution.task {
+        None => match operation.key.request.action {
+            Action::Embark { .. } => match operation.progress.execution.task {
                 Some(task) => ccall::frame::said_task(task),
                 None => status(crate::system::control::unit::verdict::Fail::NotReady),
             },
             _ => ccall::frame::said_status(ccall::frame::OK),
         },
     };
-    reply(back, said);
+    if let Some(back) = operation.key.request.back.take() {
+        reply(back, said);
+    }
+    for waiter in operation.key.waiters.drain(..) {
+        reply(waiter, said);
+    }
 }
 fn status(fail: crate::system::control::unit::verdict::Fail) -> ccall::frame::Said {
     ccall::frame::said_status(ccall::frame::fail_to_code(Some(wire_fail(fail))))
 }
-pub(super) fn reply(back: ReplySender<ccall::frame::Said>, said: ccall::frame::Said) {
+pub(crate) fn reply(back: ReplySender<ccall::frame::Said>, said: ccall::frame::Said) {
     let _ = back.send(said);
 }
 fn wire_fail(fail: crate::system::control::unit::verdict::Fail) -> ccall::Fail {

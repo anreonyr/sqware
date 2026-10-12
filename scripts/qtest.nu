@@ -33,7 +33,7 @@
 # **验收要重复跑，失败要按签名定位**：早期记录过 `accept` 35 跑红 5 跑。
 # 2026-10-09 复查复现了 Control 重复扫描能力表拖过 1 秒握手期限，以及 Terminal
 # 按下标发现能力时的漏读。修复分别改为每轮一次候选扫描、响应显式交付数据端点。
-# 重复运行结果及原提交对照见 docs/system-refactor-plan.md；一次绿不能证明没有竞态。
+# 此处记录的是历史复查，不作为本轮重构的验证结果；每轮实际结果以执行输出为准。
 #
 # # `--scene` 时：串口搬到一条**我们能喂输入的**通道上
 #
@@ -187,8 +187,14 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
   # 它跑得动的前提（debug 下每轮都挂在 20 ms 那一缝上）。
   if not ($scene | is-empty) {
     let prof = if ($profile | is-empty) { "release" } else { $profile }
+    let image = (^cargo image $scene $prof | complete)
+    if $image.exit_code != 0 {
+      print -n $image.stdout
+      print -n $image.stderr
+      exit $image.exit_code
+    }
     let at = (
-      ^cargo image $scene $prof
+      $image.stdout
       | lines
       | where { |l| ($l | str starts-with "ok") }
       | last
@@ -202,6 +208,9 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     $scene_args = ["--qemu-arg=-initrd" $"--qemu-arg=($at)"]
 
     mkdir $trapdir
+    if ($env.QEMU_TEE_LOG? | is-empty) {
+      $env.QEMU_TEE_LOG = ($trapdir | path join $"scene-($scene)-console.log")
+    }
     $cap = ($trapdir | path join $"scene-($scene)-feed.log")
     let helper = ($trapdir | path join "scene-feed.py")
     let pid_file = ($trapdir | path join "scene-feed.pid")
@@ -287,6 +296,32 @@ def main [--package: string, --scene: string, --profile: string, --feed: string,
     } else if (open --raw $result | str trim) != "ok" {
       print (open --raw $result)
       $code = 1
+    }
+  }
+
+  let completion = match $scene {
+    "accept" => "accept: done"
+    "product" => "system: done"
+    "system-fault" => "system-fault: acceptance passed"
+    _ => ""
+  }
+  if $code == 0 and not ($completion | is-empty) {
+    let console = ($env.QEMU_TEE_LOG? | default "")
+    let proof = $"exit tid=1 reason=0x0 note: ($completion)"
+    if not ($console | path exists) or not (open --raw $console | str contains $proof) {
+      print $"场景未完成：缺少入口任务的成功退出证明 ($completion)"
+      $code = 1
+    }
+  }
+
+  if $code == 0 and $scene == "accept" {
+    let console = (open --raw $env.QEMU_TEE_LOG | lines)
+    for probe in ["probe-terminal" "probe-denied" "probe-owner" "probe-rule" "probe-rule-other" "probe-watch" "probe-watch-after" "probe-watch-gone" "probe-lease" "probe-bound" "probe-rack" "probe-rack-mount" "probe-rack-guest" "probe-coalition" "probe-control" "probe-operator-gate" "probe-operator-land" "subject" "member" "guest"] {
+      let proof = $"^exit tid=[0-9]+ reason=0x0 note: ($probe):"
+      if ($console | where {|line| $line =~ $proof } | is-empty) {
+        print $"验收探针未成功完成：($probe)"
+        $code = 1
+      }
     }
   }
 

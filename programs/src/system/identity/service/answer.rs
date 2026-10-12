@@ -1,5 +1,8 @@
 //! Face admission precedes every state read or write.
-use crate::system::identity::book::{Anchor, IdentityBook};
+use crate::system::identity::book::{
+    Anchor, Association, IdentityBook, InstallAction, InstallationRequest, ReferenceQuery,
+};
+use env::PieToken;
 use env::TaskId;
 use system_api::identity::Fail;
 use system_api::identity::Grant;
@@ -8,13 +11,24 @@ use system_api::identity::Reply;
 use system_api::identity::Wire;
 
 pub struct Request {
-    pub from: TaskId,
-    pub grant: Grant,
+    pub context: Context,
     pub wire: Option<Wire>,
+}
+pub struct Context {
+    pub from: TaskId,
+    pub endpoint: PieToken,
+    pub grant: Grant,
 }
 
 pub fn answer(book: &mut IdentityBook, request: Request) -> Reply {
-    let Request { from, grant, wire } = request;
+    let Request {
+        context: Context {
+            from,
+            endpoint,
+            grant,
+        },
+        wire,
+    } = request;
     let Some(wire) = wire else {
         return Reply::Fail(Fail::Bad);
     };
@@ -86,6 +100,51 @@ pub fn answer(book: &mut IdentityBook, request: Request) -> Reply {
         Wire::Activate(task, coalitions) => book
             .activate(from, (task, coalitions))
             .map(|()| Reply::Unit),
+        Wire::Install(id, spec) => book
+            .installation(InstallationRequest {
+                endpoint,
+                caller: from,
+                id,
+                action: InstallAction::Apply(spec),
+            })
+            .map(Reply::Installation),
+        Wire::Inspect(id) => book
+            .installation(InstallationRequest {
+                endpoint,
+                caller: from,
+                id,
+                action: InstallAction::Inspect,
+            })
+            .map(Reply::Installation),
+        Wire::Cancel(id) => book
+            .installation(InstallationRequest {
+                endpoint,
+                caller: from,
+                id,
+                action: InstallAction::Cancel,
+            })
+            .map(Reply::Installation),
+        Wire::Retire(id) => book
+            .installation(InstallationRequest {
+                endpoint,
+                caller: from,
+                id,
+                action: InstallAction::Retire,
+            })
+            .map(Reply::Installation),
+        Wire::Associate(object, name, entry) => book
+            .associate(
+                from,
+                Association {
+                    object,
+                    name,
+                    entry,
+                },
+            )
+            .map(|()| Reply::Unit),
+        Wire::Reference(object, name) => book
+            .reference(ReferenceQuery { object, name })
+            .map(Reply::Reference),
     };
     result.unwrap_or_else(Reply::Fail)
 }

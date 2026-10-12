@@ -29,14 +29,6 @@ pub(crate) fn command(
     execute(assembly, task, (code, None));
 }
 
-fn reference_probe(
-    assembly: &mut crate::harness::probe::fixture::Fixture,
-    task: env::TaskId,
-    entry: env::PieToken,
-) {
-    execute(assembly, task, (5, Some(entry)));
-}
-
 fn execute(
     assembly: &mut crate::harness::probe::fixture::Fixture,
     task: env::TaskId,
@@ -73,40 +65,6 @@ fn execute(
     let until = env::chrono::clock() + 10_000_000_000;
     loop {
         assembly.progress().expect("hierarchy progress");
-        if code == 5 {
-            use system_api::control::publication::Frame;
-            use system_api::control::publication::Object;
-            use system_api::control::publication::REF;
-            use system_api::control::publication::Reply;
-            assert_eq!(
-                establish::find(me, REF),
-                Err(establish::DiscoveryFail::Ambiguous)
-            );
-            let fake = reference.expect("explicit reference probe entry");
-            let mut request = [0; Frame::LEN];
-            if let Ok((n, _)) = Hole::from_raw(fake).pull(&mut request, Wait::POLL) {
-                let frame = Frame::take(&request[..n]).unwrap();
-                let wrong = env::TaskId::new(
-                    assembly
-                        .resources
-                        .read::<crate::system::control::identity::Roster>()
-                        .unwrap()
-                        .authority()
-                        .unwrap()
-                        .get()
-                        + 10000,
-                );
-                let reply = Reply::object(Object::Principal(
-                    system_api::identity::PrincipalId::new(wrong, 0),
-                ));
-                let mut encoded = [0; Reply::LEN];
-                let n = reply.store_at(&mut encoded, 0).unwrap();
-                Hole::from_raw(frame.back)
-                    .push(&encoded[..n], Wait::AtMost(1000))
-                    .unwrap();
-                let _ = pie::release(frame.back, env::ReleaseMode::Revoke);
-            }
-        }
         if let Ok((1, from)) = Hole::from_raw(answer).pull(&mut bytes, Wait::POLL) {
             assert_eq!(
                 from,
@@ -135,331 +93,330 @@ pub(crate) fn exercise(
     service: env::TaskId,
     target: env::TaskId,
 ) -> system_api::identity::CoalitionId {
-    use env::Wait;
+    use env::{Access, Mark, Wait};
     use ipc::session::establish;
-    use system_api::control::publication::Object;
-    use system_api::identity::Grant;
-    use system_api::identity::Install;
-    use system_api::identity::Reply;
-    use system_api::identity::Selector;
-    use system_api::identity::Subject;
-    use system_api::identity::Wire;
-    use system_api::operator::Fail;
-    use system_api::operator::Permit;
-    use system_client::identity::Face;
-    use system_client::identity::Installer;
-    use system_client::identity::Organization;
+    use system_api::{identity, operator as api};
+    use system_client::{
+        identity::{Face, Installer, Organization},
+        operator::Capability,
+    };
     let wait = Wait::AtMost(3000);
-    let entry = |g: Grant| establish::find(authority, g.mark()).unwrap();
+    let entry = |g: identity::Grant| establish::find(authority, g.mark()).unwrap();
     let face = |g| Face::direct(authority, g, entry(g)).unwrap();
     let me = env::unit::self_id();
-    let Reply::Binding(Some(saved)) = face(Grant::Resolve).call(Wire::Resolve(me), wait).unwrap()
-    else {
-        panic!("control binding");
-    };
-    let Reply::Binding(Some(binding)) = face(Grant::Resolve)
-        .call(Wire::Resolve(service), wait)
+    let identity::Reply::Binding(Some(saved)) = face(identity::Grant::Resolve)
+        .call(identity::Wire::Resolve(me), wait)
         .unwrap()
     else {
-        panic!("resource service binding");
+        panic!("system binding")
+    };
+    let identity::Reply::Binding(Some(binding)) = face(identity::Grant::Resolve)
+        .call(identity::Wire::Resolve(service), wait)
+        .unwrap()
+    else {
+        panic!("service binding")
     };
     let p = binding.current.principal;
+    command(assembly, target, 1);
     let organization = Organization::direct(
         authority,
-        entry(Grant::Found),
-        entry(Grant::Admit),
-        entry(Grant::Expel),
+        entry(identity::Grant::Found),
+        entry(identity::Grant::Admit),
+        entry(identity::Grant::Expel),
     )
     .unwrap();
     let coalition = organization.found(wait).unwrap();
     organization.admit(coalition, p, wait).unwrap();
-    face(Grant::Activate)
-        .call(
-            Wire::Activate(
-                service,
-                system_api::identity::CoalitionSet::new(&[coalition]).unwrap(),
-            ),
-            wait,
-        )
+    let memberships = identity::CoalitionSet::new(&[coalition]).unwrap();
+    face(identity::Grant::Activate)
+        .call(identity::Wire::Activate(service, memberships), wait)
         .unwrap();
-    face(Grant::Activate)
-        .call(
-            Wire::Activate(
-                target,
-                system_api::identity::CoalitionSet::new(&[coalition]).unwrap(),
-            ),
-            wait,
-        )
+    face(identity::Grant::Activate)
+        .call(identity::Wire::Activate(target, memberships), wait)
         .unwrap();
-    {
-        {
-            let registration = crate::system::publication::Registration {
-                name: ("named-subject").into(),
-                object: Object::Principal(p),
-                lifetime: None,
-            };
-            crate::system::control::identity::validate(
-                &assembly
-                    .resources
-                    .read::<crate::system::control::identity::Roster>()
-                    .unwrap(),
-                registration.object,
-            )
-            .map_err(|_| "identity alias source")
-            .and_then(|_| {
-                assembly
-                    .resources
-                    .write::<crate::system::publication::Names>()
-                    .unwrap()
-                    .register(
-                        &mut assembly
-                            .resources
-                            .write::<crate::system::operator::management::Tree>()
-                            .unwrap(),
-                        registration,
-                    )
-            })
-        }
-        .unwrap();
-        {
-            let registration = crate::system::publication::Registration {
-                name: ("named-league").into(),
-                object: Object::Coalition(coalition),
-                lifetime: None,
-            };
-            crate::system::control::identity::validate(
-                &assembly
-                    .resources
-                    .read::<crate::system::control::identity::Roster>()
-                    .unwrap(),
-                registration.object,
-            )
-            .map_err(|_| "identity alias source")
-            .and_then(|_| {
-                assembly
-                    .resources
-                    .write::<crate::system::publication::Names>()
-                    .unwrap()
-                    .register(
-                        &mut assembly
-                            .resources
-                            .write::<crate::system::operator::management::Tree>()
-                            .unwrap(),
-                        registration,
-                    )
-            })
-        }
-        .unwrap();
-        {
-            let registration = crate::system::publication::Registration {
-                name: ("named-league").into(),
-                object: Object::Coalition(coalition),
-                lifetime: None,
-            };
-            crate::system::control::identity::validate(
-                &assembly
-                    .resources
-                    .read::<crate::system::control::identity::Roster>()
-                    .unwrap(),
-                registration.object,
-            )
-            .map_err(|_| "identity alias source")
-            .and_then(|_| {
-                assembly
-                    .resources
-                    .write::<crate::system::publication::Names>()
-                    .unwrap()
-                    .register(
-                        &mut assembly
-                            .resources
-                            .write::<crate::system::operator::management::Tree>()
-                            .unwrap(),
-                        registration,
-                    )
-            })
-        }
-        .unwrap();
-        let other = organization.found(wait).unwrap();
-        assert!(
-            {
-                let registration = crate::system::publication::Registration {
-                    name: ("named-league").into(),
-                    object: Object::Coalition(other),
-                    lifetime: None,
-                };
-                crate::system::control::identity::validate(
-                    &assembly
-                        .resources
-                        .read::<crate::system::control::identity::Roster>()
-                        .unwrap(),
-                    registration.object,
-                )
-                .map_err(|_| "identity alias source")
-                .and_then(|_| {
-                    assembly
-                        .resources
-                        .write::<crate::system::publication::Names>()
-                        .unwrap()
-                        .register(
-                            &mut assembly
-                                .resources
-                                .write::<crate::system::operator::management::Tree>()
-                                .unwrap(),
-                            registration,
-                        )
-                })
-            }
-            .is_err()
-        );
-        assert!(
-            {
-                let registration = crate::system::publication::Registration {
-                    name: ("bad/name").into(),
-                    object: Object::Principal(p),
-                    lifetime: None,
-                };
-                crate::system::control::identity::validate(
-                    &assembly
-                        .resources
-                        .read::<crate::system::control::identity::Roster>()
-                        .unwrap(),
-                    registration.object,
-                )
-                .map_err(|_| "identity alias source")
-                .and_then(|_| {
-                    assembly
-                        .resources
-                        .write::<crate::system::publication::Names>()
-                        .unwrap()
-                        .register(
-                            &mut assembly
-                                .resources
-                                .write::<crate::system::operator::management::Tree>()
-                                .unwrap(),
-                            registration,
-                        )
-                })
-            }
-            .is_err()
-        );
-        assembly
-            .resources
-            .write::<crate::system::publication::RuntimeNamespace>()
-            .unwrap()
-            .approve(crate::system::publication::RuntimeApproval {
-                service,
-                task: target,
-                kind: "test".into(),
-                name: "member".into(),
-                permit: Permit::Identity(Selector::MemberOf(coalition)),
-            })
-            .unwrap();
-        for i in 0..33 {
-            assembly
-                .resources
-                .write::<crate::system::publication::RuntimeNamespace>()
-                .unwrap()
-                .approve(crate::system::publication::RuntimeApproval {
-                    service,
-                    task: target,
-                    kind: "full".into(),
-                    name: alloc::format!("f{i}"),
-                    permit: Permit::Public,
-                })
-                .unwrap();
-        }
-        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of(
-            "hierarchy-stale-condition",
-        )))
-        .unwrap();
-        assembly
-            .resources
-            .write::<crate::system::publication::Publications>()
-            .unwrap()
-            .internal(
-                &mut assembly
-                    .resources
-                    .write::<crate::system::operator::management::Tree>()
-                    .unwrap(),
-                &crate::system::publication::Internal {
-                    road: (system_api::operator::path::Path::new("svc/fixtures/stale"))
-                        .to_path_buf(),
-                    entry: source,
-                    access: (Permit::Identity(Selector::MemberOf(coalition)), me),
-                },
-            )
-            .unwrap();
-    }
-    standalone_mutations(assembly);
-    assert!(matches!(
-        operator.root().tile(
-            system_api::operator::path::Path::new("idt/principal/forged/ref"),
-            wait
-        ),
-        Err(Fail::Unknown)
-    ));
-    sender_boundary(assembly);
-    command(assembly, target, 1);
-    let fake = pie::unseal(env::UnsealArgs::hole(system_api::control::publication::REF)).unwrap();
-    reference_probe(assembly, target, fake);
-    let _ = pie::seal(fake);
-    let _ = pie::release(fake, env::ReleaseMode::Revoke);
-    let service_road = assembly
+
+    let start = assembly.resources.read::<crate::system::app::operator::Layout>().unwrap()
+        .as_ref().unwrap().reserve_operations(202).unwrap().0;
+    let root = assembly
         .resources
-        .read::<crate::system::publication::RuntimeNamespace>()
+        .read::<crate::system::operator::management::Tree>()
         .unwrap()
-        .runtime_road(service)
+        .root_entry()
         .unwrap();
-    let same = service_road
-        .try_join("hole")
-        .unwrap()
-        .try_join("same-subject")
+    let capability = Capability::direct_at(root.entry.operator, root.entrance, root.entry).unwrap();
+    let pane = capability
+        .part(
+            root.entry,
+            "hierarchy-fixture",
+            api::OperationId(start),
+            wait,
+        )
+        .unwrap();
+    let replay = capability
+        .part(
+            root.entry,
+            "hierarchy-fixture",
+            api::OperationId(start),
+            wait,
+        )
         .unwrap();
     assert_eq!(
-        operator.tile(&same, wait).unwrap().token(wait),
-        Err(Fail::Denied),
-        "different principal must not obtain Exact resource"
+        pane.entry, replay.entry,
+        "PART replay must retain the original Entry"
+    );
+    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-resource"))).unwrap();
+    let view = api::ResourceView::new(Access::FETCH_STORE).unwrap();
+    let member = capability
+        .bind(
+            pane.entry,
+            "member",
+            source,
+            view,
+            api::Permit::Identity(identity::Selector::MemberOf(coalition)),
+            api::OperationId(start + 1),
+            wait,
+        )
+        .unwrap()
+        .binding;
+    let exact = capability
+        .bind(
+            pane.entry,
+            "exact",
+            source,
+            view,
+            api::Permit::Identity(identity::Selector::Exact(p)),
+            api::OperationId(start + 2),
+            wait,
+        )
+        .unwrap()
+        .binding;
+    assert_eq!(
+        capability
+            .bind(
+                pane.entry,
+                "exact",
+                source,
+                view,
+                api::Permit::Identity(identity::Selector::Exact(p)),
+                api::OperationId(start + 2),
+                wait
+            )
+            .unwrap()
+            .binding,
+        exact
+    );
+    assert_eq!(
+        capability
+            .read(
+                exact.entry,
+                api::Permit::Identity(identity::Selector::Exact(p)),
+                wait
+            )
+            .err(),
+        Some(api::Fail::Denied)
     );
     let installer = Installer::direct(
         authority,
-        entry(Grant::Bind),
-        entry(Grant::Unbind),
-        entry(Grant::Derive),
+        entry(identity::Grant::Bind),
+        entry(identity::Grant::Unbind),
+        entry(identity::Grant::Derive),
     )
     .unwrap();
     installer
-        .bind(me, Install::Authorized(Subject::new(p, &[]).unwrap()), wait)
+        .bind(
+            me,
+            identity::Install::Authorized(identity::Subject::new(p, &[coalition]).unwrap()),
+            wait,
+        )
         .unwrap();
+    let acquired = capability
+        .read(
+            exact.entry,
+            api::Permit::Identity(identity::Selector::Exact(p)),
+            wait,
+        )
+        .unwrap();
+    assert_eq!(reserve(acquired.resource).unwrap().1, me);
+    let read = capability
+        .read(
+            member.entry,
+            api::Permit::Identity(identity::Selector::MemberOf(coalition)),
+            wait,
+        )
+        .unwrap();
+    assert_eq!(
+        read.binding, member,
+        "direct reference must retain actual Binding revision"
+    );
+
+    let trusted = Installer::direct_with_install(
+        authority,
+        entry(identity::Grant::Install),
+        entry(identity::Grant::Derive),
+    )
+    .unwrap();
+    let alias = identity::IdentityName::new("named-subject").unwrap();
+    let object = identity::IdentityObject::Principal(p);
+    let reference = identity::OperatorEntryRef {
+        operator: exact.entry.operator,
+        root: matches!(exact.entry.target, api::EntryTarget::Root),
+        id: match exact.entry.target {
+            api::EntryTarget::Root => 0,
+            api::EntryTarget::Node(id) => id.get() as u64,
+        },
+        revision: exact.revision,
+    };
+    trusted.associate(object, alias, reference, wait).unwrap();
+    trusted.associate(object, alias, reference, wait).unwrap();
+    assert_eq!(
+        face(identity::Grant::Reference)
+            .call(identity::Wire::Reference(object, alias), wait)
+            .unwrap(),
+        identity::Reply::Reference(Some(reference))
+    );
+    let wrong = identity::IdentityObject::Principal(identity::PrincipalId::new(
+        env::TaskId::new(authority.get() + 10000),
+        p.slot,
+    ));
     assert!(
-        operator.tile(&same, wait).unwrap().token(wait).is_ok(),
-        "another Task representing the same principal must obtain it"
+        trusted.associate(wrong, alias, reference, wait).is_err(),
+        "foreign Identity authority must be rejected"
+    );
+    assert!(identity::IdentityName::new("bad/name").is_none());
+    let fake = pie::unseal(env::UnsealArgs::hole(identity::Grant::Resolve.mark())).unwrap();
+    assert!(
+        Face::direct(authority, identity::Grant::Resolve, fake).is_err(),
+        "a matching Mark does not establish Identity provenance"
+    );
+    pie::release(fake, env::ReleaseMode::Revoke).unwrap();
+
+    organization.expel(coalition, p, wait).unwrap();
+    assert_eq!(
+        capability
+            .read(
+                member.entry,
+                api::Permit::Identity(identity::Selector::MemberOf(coalition)),
+                wait
+            )
+            .err(),
+        Some(api::Fail::Denied)
+    );
+    capability.unbind(member, wait).unwrap();
+    assert!(
+        capability
+            .read(member.entry, api::Permit::Public, wait)
+            .is_err()
+    );
+    Hole::from_raw(read.resource).push(b"kept", wait).unwrap();
+    let mut bytes = [0; 4];
+    assert_eq!(
+        Hole::from_raw(source).pull(&mut bytes, wait).unwrap(),
+        (4, me)
+    );
+    assert_eq!(
+        &bytes, b"kept",
+        "namespace unbind must preserve delivered copies"
+    );
+    pie::seal(source).unwrap();
+    assert!(
+        reserve(read.resource).is_err(),
+        "provider close must invalidate copies"
     );
     installer
-        .bind(me, Install::Authorized(saved.current), wait)
+        .bind(me, identity::Install::Authorized(saved.current), wait)
         .unwrap();
-    programs::debug::put(
-        "hierarchy: runtime Exact permit allows another Task with same principal and denies different principal",
+    capability.unbind(exact, wait).unwrap();
+    let _ = pie::release(source, env::ReleaseMode::Revoke);
+    let _ = pie::release(acquired.resource, env::ReleaseMode::Keep);
+    let _ = pie::release(read.resource, env::ReleaseMode::Keep);
+
+    let source = pie::unseal(env::UnsealArgs::hole(Mark::of("hierarchy-capacity"))).unwrap();
+    let mut bindings = alloc::vec::Vec::new();
+    for index in 0..api::frame::PANE_CAP {
+        bindings.push(
+            capability
+                .bind(
+                    pane.entry,
+                    &alloc::format!("f{index}"),
+                    source,
+                    view,
+                    api::Permit::Public,
+                    api::OperationId(start + 100 + index as u64),
+                    wait,
+                )
+                .unwrap()
+                .binding,
+        );
+    }
+    let retry_id = api::OperationId(start + 200);
+    assert!(
+        capability
+            .bind(
+                pane.entry,
+                "overflow",
+                source,
+                view,
+                api::Permit::Public,
+                retry_id,
+                wait
+            )
+            .is_err()
     );
-    organization.expel(coalition, p, wait).unwrap();
-    command(assembly, target, 2);
-    let target_road = assembly
-        .resources
-        .read::<crate::system::publication::RuntimeNamespace>()
-        .unwrap()
-        .runtime_road(target)
-        .unwrap();
+    capability.unbind(bindings.remove(0), wait).unwrap();
+    assert!(
+        capability
+            .bind(
+                pane.entry,
+                "overflow",
+                source,
+                view,
+                api::Permit::Public,
+                retry_id,
+                wait
+            )
+            .is_err(),
+        "failed operation remains terminal"
+    );
+    bindings.push(
+        capability
+            .bind(
+                pane.entry,
+                "overflow",
+                source,
+                view,
+                api::Permit::Public,
+                api::OperationId(start + 201),
+                wait,
+            )
+            .unwrap()
+            .binding,
+    );
+    for binding in bindings {
+        capability.unbind(binding, wait).unwrap();
+    }
+    capability.unpart(pane.entry, wait).unwrap();
+    assert!(
+        capability
+            .find(root.entry, "hierarchy-fixture", api::Permit::Public, wait)
+            .is_err()
+    );
+    pie::release(source, env::ReleaseMode::Revoke).unwrap();
+    standalone_mutations(assembly);
+
     assembly
         .action(
             "system-child",
             crate::system::control::lifecycle::Action::Ruin,
         )
-        .expect("hierarchy: scheduled ruin");
+        .unwrap();
     assert!(env::unit::join_task(target, wait).unwrap_or(true));
-    assembly.progress().unwrap();
-    assert!(matches!(
-        operator.root().tile(&target_road, wait),
-        Err(Fail::Unknown)
-    ));
+    assert!(
+        !assembly
+            .resources
+            .read::<crate::system::assembly::namespace::NamespaceInstallations>()
+            .unwrap()
+            .prepared(target)
+    );
     command(assembly, target, 3);
     assembly
         .action(
@@ -488,136 +445,71 @@ pub(crate) fn exercise(
             )
             .is_err()
     );
-    let prepared = assembly
-        .resources
-        .read::<super::fixture::Fault>()
-        .unwrap()
-        .road
-        .clone()
-        .expect("injected failure must follow runtime preparation");
     assert!(
         assembly
             .resources
-            .read::<crate::system::publication::RuntimeNamespace>()
+            .read::<super::fixture::Fault>()
             .unwrap()
-            .runtime_road(failed_task)
-            .is_none()
+            .prepared,
+        "fault must follow completed namespace preparation"
+    );
+    assert!(
+        !assembly
+            .resources
+            .read::<crate::system::assembly::namespace::NamespaceInstallations>()
+            .unwrap()
+            .prepared(failed_task)
     );
     assert!(matches!(
-        operator.root().tile(&prepared, wait),
-        Err(Fail::Unknown)
-    ));
-    assert!(matches!(
-        face(Grant::Resolve).call(Wire::Resolve(failed_task), wait),
-        Ok(Reply::Binding(None))
+        face(identity::Grant::Resolve).call(identity::Wire::Resolve(failed_task), wait),
+        Ok(identity::Reply::Binding(None))
     ));
     programs::debug::put(
-        "hierarchy: failed launch after identity/runtime preparation compensates bind and directories",
+        "hierarchy: direct Entry/identity references, Exact/MemberOf permits, replay, capacity, Keep/close and preparation rollback passed",
     );
+    let _ = operator;
     coalition
 }
 
 pub fn codecs() {
     use env::wire::Span as _;
-    use env::{PieToken, TaskId};
-    use system_api::control::publication::Frame;
-    use system_api::control::publication::Object;
-    use system_api::control::publication::Reply;
-    use system_api::control::publication::Scope;
-    use system_api::control::publication::Target;
-    use system_api::operator::EntryId;
-    use system_api::operator::Permit;
-    use system_api::operator::Tip;
-    use system_api::operator::TipIn;
-    let a = TaskId::new(77);
-    let b = PieToken::from_bytes(&81u64.to_le_bytes()).unwrap();
-    let p = system_api::identity::PrincipalId::new(a, 19);
-    for target in [
-        Target::Service {
-            scope: Scope(1),
-            group: "uart".into(),
-            name: "rx".into(),
-        },
-        Target::IdentityName {
-            object: Object::Principal(p),
-            name: "named".into(),
-        },
-        Target::RuntimeResource {
-            task: a,
-            kind: "hole".into(),
-            name: "entry".into(),
-        },
-    ] {
-        let frame = Frame::new(1, target.clone(), (b, Permit::Public));
-        let mut bytes = [0; Frame::LEN + 1];
-        let n = frame.store_at(&mut bytes, 0).unwrap();
-        assert_eq!(Frame::take(&bytes[..n]), Some(frame.clone()));
-        assert_eq!(frame.target(), Some(target));
-        assert!(Frame::take(&bytes[..n + 1]).is_none());
-        for end in 0..n {
-            assert!(Frame::take(&bytes[..end]).is_none());
-        }
-    }
-    let mut bad = Frame::new(
-        1,
-        Target::Service {
-            scope: Scope(4),
-            group: "bad/name".into(),
-            name: "x".into(),
-        },
-        (b, Permit::Public),
-    );
-    assert!(bad.target().is_none());
-    bad.group = "legal".into();
-    bad.kind = 99;
-    assert!(bad.target().is_none());
-    assert!(
-        Reply::object(Object::Principal(p))
-            .identity(TaskId::new(78))
-            .is_err()
-    );
-    let mut bytes = [0; system_api::operator::TIP_LEN + 1];
-    let tip = Tip::Plate {
-        road: system_api::operator::path::Path::new("svc/test/entry").to_path_buf(),
-        leaf: b,
-        permit: Permit::Public,
-        owner: a,
-        replace: false,
-        back: b,
+    use system_api::{identity, operator as api};
+    use wire::Message;
+    let request = api::entry::Request {
+        op: api::entry::BIND,
+        anchor: api::EntryId::new(0),
+        root: 0,
+        id: 1,
+        parent: 0,
+        holder: env::TaskId::new(0),
+        ops: 0,
+        permit: api::Permit::Public,
+        permit_restricted: 0,
+        source: env::TaskId::new(0),
+        source_mark: 0,
+        resource: env::PieToken::NONE,
+        resource_id: 0,
+        view: env::Permission::STORE.bits(),
+        expected: 0,
+        name: "entry".into(),
+        scope: "".into(),
+        back: env::PieToken::NONE,
     };
-    let n = tip.store(&mut bytes).unwrap();
-    assert!(
-        matches!(TipIn::fetch(&bytes[..n]), Some(TipIn::Plate { owner, replace: false, .. }) if owner == a)
-    );
-    assert!(TipIn::fetch(&bytes[..n + 1]).is_none());
+    let mut bytes = [0; api::entry::Request::LEN + 1];
+    let n = request.store_at(&mut bytes, 0).unwrap();
+    assert_eq!(api::entry::Request::fetch(&bytes[..n]), Some(request));
+    assert!(api::entry::Request::fetch(&bytes[..n + 1]).is_none());
     for end in 0..n {
-        assert!(TipIn::fetch(&bytes[..end]).is_none());
+        assert!(api::entry::Request::fetch(&bytes[..end]).is_none());
     }
-    bytes[n - 9] = 2;
-    assert!(TipIn::fetch(&bytes[..n]).is_none());
-    for tip in [
-        Tip::Abort {
-            road: system_api::operator::path::Path::new("svc/test/entry").to_path_buf(),
-            leaf: b,
-            back: b,
-        },
-        Tip::Unplate {
-            id: EntryId::new(79),
-            back: b,
-        },
-        Tip::Empty {
-            road: system_api::operator::path::Path::new("uit/1/2").to_path_buf(),
-            back: b,
-        },
-    ] {
-        let n = tip.store(&mut bytes).unwrap();
-        assert!(TipIn::fetch(&bytes[..n]).is_some());
-        for end in 0..n {
-            assert!(TipIn::fetch(&bytes[..end]).is_none());
-        }
-    }
+    assert!(identity::IdentityName::new("bad/name").is_none());
+    let node = api::Entry {
+        operator: env::TaskId::new(77),
+        target: api::EntryTarget::Node(api::EntryId::new(0)),
+    };
+    assert_ne!(node.target, api::EntryTarget::Root);
     programs::debug::put(
-        "hierarchy: typed publication/ref/private mount codecs reject malformed and truncated frames",
+        "hierarchy: direct operator frames reject trailing/truncated payloads and retain Node(0)",
     );
 }
 
@@ -720,92 +612,13 @@ pub fn reference_lifetime() {
     );
 }
 
-fn sender_boundary(assembly: &mut crate::harness::probe::fixture::Fixture) {
-    use ::resource::port::{self, Access, Policy};
-    use alloc::sync::Arc;
-    use core::sync::atomic::{AtomicBool, Ordering};
-    use env::Wait;
-    use system_api::control::publication::ENTRY;
-    use system_api::control::publication::Frame;
-    use system_api::control::publication::Scope;
-    use system_api::control::publication::Target;
-    use system_api::operator::Fail;
-    use system_api::operator::Permit;
-    use system_client::control::publication::Client;
-    let done = Arc::new(AtomicBool::new(false));
-    let complete = done.clone();
-    let control = env::unit::self_id().get();
-    let protected = pie::unseal(env::UnsealArgs::hole(env::Mark::of("source-validation"))).unwrap();
-    let raw = protected.get();
-    let caller = execution::unit::task::spawn(move || {
-        let control = env::TaskId::new(control);
-        let entry = ipc::session::establish::claim(control, ENTRY, Wait::AtMost(1000)).unwrap();
-        let client = Client::direct(control, entry).unwrap();
-        let target = Target::Service {
-            scope: Scope(4),
-            group: "operator-fixture".into(),
-            name: "entry".into(),
-        };
-        let source = pie::unseal(env::UnsealArgs::hole(env::Mark::of("publication-test"))).unwrap();
-        assert_eq!(
-            client.publish(target.clone(), source, Permit::Public, Wait::AtMost(3000)),
-            Err(Fail::Denied),
-            "holding the entry does not install a trusted publisher record"
-        );
-        let other = env::PieToken::from_bytes(&(raw as u64).to_le_bytes()).unwrap();
-        let sender = ipc::rpc::request::Sender::<system_api::control::publication::Call>::from_raw(
-            entry,
-            system_api::control::publication::Call::BACK,
-        )
-        .unwrap();
-        let raw_result = sender
-            .call(ipc::time::Deadline::new(Wait::AtMost(3000)), |back| {
-                let mut request = Frame::new(1, target, (other, Permit::Public));
-                request.back = back;
-                request
-            })
-            .unwrap()
-            .result();
-        assert_eq!(
-            raw_result,
-            Err(Fail::Denied),
-            "source reference must come from the actual sender"
-        );
-        complete.store(true, Ordering::Release);
-    });
-    let entry = assembly
-        .resources
-        .read::<crate::system::publication::Entry>()
-        .unwrap()
-        .0;
-    port::ship(entry, caller.id(), Access::STORE, Policy::NONE).unwrap();
-    let until = env::chrono::clock() + 10_000_000_000;
-    while !done.load(Ordering::Acquire) {
-        assembly.progress().unwrap();
-        assert!(env::chrono::clock() < until, "sender boundary timeout");
-        execution::room::park(core::time::Duration::from_millis(1)).unwrap();
-    }
-    caller.join();
-    assert!(
-        reserve(protected).is_ok(),
-        "invalid request must not discard somebody else's reference"
-    );
-    let _ = pie::seal(protected);
-    let _ = pie::release(protected, env::ReleaseMode::Revoke);
-    programs::debug::put(
-        "hierarchy: real kernel sender and transferred source checks reject unregistered caller and forged source",
-    );
-}
-
 fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) {
     use ::resource::port::{self, Access, Policy};
     use alloc::sync::Arc;
     use core::sync::atomic::{AtomicBool, Ordering};
     use env::Wait;
     use ipc::session::{Session, establish};
-    use system_api::operator::EntryId;
     use system_api::operator::Fail;
-    use system_api::operator::Where;
     use system_client::operator;
     use system_client::operator::Face;
     let control = env::unit::self_id();
@@ -815,7 +628,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         .unwrap()
         .host()
         .unwrap();
-    for part in [true, false] {
+    for _ in 0..2 {
         let done = Arc::new(AtomicBool::new(false));
         let complete = done.clone();
         let released = Arc::new(AtomicBool::new(false));
@@ -829,41 +642,29 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
             let session = Session::open(control, operator::BERTH, Wait::AtMost(3000))
                 .unwrap_or_else(|_| panic!("standalone Operator session"));
             let tree = Face::of(session);
-            match part {
-                true => assert_eq!(
-                    tree.part(Where::Root, "idt".into(), Wait::AtMost(3000)),
-                    Err(Fail::Denied)
-                ),
-                false => assert_eq!(
-                    tree.trim(EntryId::new(0), Wait::AtMost(3000)),
-                    Err(Fail::Denied)
-                ),
-            }
+            let forged = env::pie::unseal(env::UnsealArgs::hole(
+                system_api::operator::entry::AUTH_ENTRY,
+            ))
+            .unwrap();
+            assert!(matches!(
+                operator::Capability::direct(tree.host(), forged),
+                Err(Fail::Denied)
+            ));
+            let _ = env::pie::release(forged, env::ReleaseMode::Revoke);
             let private = establish::claim(
                 env::TaskId::new(host.get()),
                 system_api::operator::TIP_MARK,
                 Wait::AtMost(1000),
             )
             .unwrap();
-            let tip = system_api::operator::Tip::Plate {
-                road: system_api::operator::path::Path::new("idt/principal/forged/ref")
-                    .to_path_buf(),
-                leaf: env::PieToken::NONE,
-                permit: system_api::operator::Permit::Public,
-                owner: control,
-                replace: false,
-                back: env::PieToken::NONE,
-            };
-            let mut bytes = [0; system_api::operator::TIP_LEN];
-            let n = tip.store(&mut bytes).unwrap();
             Hole::from_raw(private)
-                .push(&bytes[..n], Wait::AtMost(1000))
+                .push(&[1u8; 1], Wait::AtMost(1000))
                 .unwrap();
             complete.store(true, Ordering::Release);
         });
         assembly
             .resources
-            .read::<crate::system::control::identity::Roster>()
+            .write::<crate::system::control::identity::Roster>()
             .unwrap()
             .inherit(caller.id(), control)
             .unwrap();
@@ -884,7 +685,7 @@ fn standalone_mutations(assembly: &mut crate::harness::probe::fixture::Fixture) 
         caller.join();
         assembly
             .resources
-            .read::<crate::system::control::identity::Roster>()
+            .write::<crate::system::control::identity::Roster>()
             .unwrap()
             .unbind(caller_id)
             .unwrap();

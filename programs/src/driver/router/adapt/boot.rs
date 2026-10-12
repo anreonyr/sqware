@@ -115,11 +115,7 @@ pub fn up() -> Result<Up, Fail> {
     ctx.plate(entry, SERVICE, Wait::AtMost(QUAY_MS));
 
     // **报"答得动了"**（Setup::Ready）：牌子落了才算——装配者等它才往下起别人，于是"排在第几号"
-    let _ = ipc::session::establish::endpoint(
-        env::unit::sire(),
-        programs::unit::READY_MARK,
-        env::Wait::POLL,
-    );
+    let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);
 
     // 等三个源：**铃**（外部中断）、**门上有人**（登记）、**客人的排空**（每登记一条线
     // 就把那位客户的泊位挂进来，见 `desk`）。一只组同时等这三样——三件都是事件，

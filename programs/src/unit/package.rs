@@ -1,0 +1,73 @@
+//! Executable image inventory, independent of deployment selection.
+
+#[derive(Clone, Copy)]
+pub struct Package {
+    pub name: &'static str,
+    pub binary: &'static str,
+}
+
+macro_rules! package {
+    ($name:literal) => {
+        Package {
+            name: $name,
+            binary: concat!("prog-", $name),
+        }
+    };
+}
+
+pub const PACKAGES: &[Package] = &[
+    package!("hub"),
+    package!("pipe"),
+    package!("account"),
+    package!("terminal"),
+    package!("login"),
+    package!("shell"),
+    package!("cat"),
+    package!("emit"),
+    package!("upper"),
+    package!("fail"),
+    package!("spin"),
+    package!("workers"),
+    package!("probe-terminal"),
+    package!("guest"),
+    package!("passer"),
+    package!("lodger"),
+    package!("router"),
+    package!("uart"),
+    package!("rtc"),
+    package!("sleeper"),
+    package!("subject"),
+    package!("member"),
+    package!("system"),
+    package!("accept-system"),
+    package!("probe-denied"),
+    package!("system-fault"),
+    package!("system-fault-unit"),
+    package!("system-dependent"),
+    package!("system-child"),
+    package!("probe-owner"),
+    package!("probe-rule"),
+    package!("probe-rule-other"),
+    package!("probe-watch"),
+    package!("probe-watch-after"),
+    package!("probe-watch-gone"),
+    package!("probe-lease"),
+    package!("probe-bound"),
+    package!("probe-rack"),
+    package!("probe-rack-mount"),
+    package!("probe-rack-guest"),
+    package!("probe-coalition"),
+    package!("probe-control"),
+    package!("probe-operator-gate"),
+    package!("probe-operator-land"),
+    package!("churn"),
+    package!("rig"),
+    package!("busy"),
+    package!("park"),
+    package!("hang"),
+    package!("load"),
+    package!("beat"),
+    package!("again"),
+    package!("waiter"),
+    package!("group"),
+];

@@ -1,36 +1,29 @@
-use super::{Action, Active, Key, Operations, Tracked};
+use super::{Action, Active, Key, Tracked};
 use crate::system::app::Fault as ControlFail;
 use crate::system::control::unit::verdict::Fail;
 
 use ::schedule::{Dispatch, Invocation, Progress, Res, ResMut, RunError};
 
 pub fn budget(
-    operations: Res<Operations>,
+    operations: Res<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
-    dispatch.begin(operations.0.len())?;
+    dispatch.begin(operations.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
-    mut operations: ResMut<Operations>,
+    mut operations: ResMut<crate::system::assembly::Jobs>,
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
     let tracked = loop {
-        let Some(tracked) = operations.0.pop_front() else {
+        let Some(tracked) = operations.select_lifecycle() else {
             dispatch.stop()?;
             return Ok(Progress::Done);
         };
-        if !tracked.complete {
-            break tracked;
-        }
-        operations.0.push_back(tracked);
-        dispatch.skip()?;
-        if dispatch.remaining() == 0 {
-            return Ok(Progress::Done);
-        }
+        break tracked;
     };
-    let key = match tracked.operation.request.action {
+    let key = match tracked.operation.key.request.action {
         Action::Mint => Key::Mint,
         Action::Embark { .. } => Key::Embark,
         Action::Debark => Key::Debark,
@@ -44,7 +37,7 @@ pub fn select(
     Ok(Progress::Done)
 }
 pub fn finish(
-    mut operations: ResMut<Operations>,
+    mut operations: ResMut<crate::system::assembly::Jobs>,
     mut active: ResMut<Active>,
     mut dispatch: ResMut<Dispatch<Key, Fail>>,
 ) -> Result<Progress, ControlFail> {
@@ -60,6 +53,10 @@ pub fn finish(
         _ => Fail::Full,
     });
     tracked.finish(result)?;
-    operations.0.push_back(tracked);
+    if tracked.complete {
+        operations.complete_lifecycle(tracked);
+    } else {
+        operations.requeue_lifecycle(tracked);
+    }
     Ok(Progress::Done)
 }

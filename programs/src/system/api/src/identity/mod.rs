@@ -1,6 +1,7 @@
 //! Pure identity API vocabulary, bounds, marks, and wire representation.
 
 pub mod frame;
+pub mod export;
 pub mod grant;
 pub mod limits;
 pub mod marks;
@@ -17,6 +18,10 @@ mod interface {
     pub enum Channel {
         #[channel(key = "back", legacy = "identity-back", constant = BACK)]
         Back,
+        #[channel(key = "export", legacy = "identity/export", constant = EXPORT_ENTRY)]
+        Export,
+        #[channel(key = "export-back", legacy = "identity/export/back", constant = EXPORT_BACK)]
+        ExportBack,
     }
 
     #[grants]
@@ -57,6 +62,10 @@ mod interface {
         Unbind,
         #[grant(code = 18, key = "activate", legacy = "identity-activate")]
         Activate,
+        #[grant(code = 19, key = "install", legacy = "identity-install")]
+        Install,
+        #[grant(code = 20, key = "reference", legacy = "identity-reference")]
+        Reference,
     }
 }
 

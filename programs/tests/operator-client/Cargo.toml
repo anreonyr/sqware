@@ -11,4 +11,7 @@ path = "lib.rs"
 
 [dependencies]
 wire = { path = "../../../crates/wire" }
+env = { path = "../../../crates/env" }
+ipc = { path = "../../../crates/ipc" }
+resource = { path = "../../../crates/resource" }
 system-api = { path = "../../src/system/api" }

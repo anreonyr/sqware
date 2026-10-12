@@ -1,85 +1,50 @@
-use super::frame::{self, Ask, Fail, Wire};
-use env::{Permission, PieToken, TeamId, Wait};
-use ipc::{rpc, time::Deadline};
-use resource::raw::Loan;
-use system_api::loader::{Built, Call};
+use env::{Access, PieKind, PieToken, Wait};
+use ipc::rpc;
+use resource::raw::inspect;
+use system_api::loader::{self as frame, Built, Call, Wire};
 
 pub struct Face {
     rpc: rpc::request::Sender<Call>,
 }
+
 impl Face {
-    pub fn of(entry: PieToken) -> Result<Self, Fail> {
-        Ok(Self {
-            rpc: rpc::request::Sender::from_raw(entry, Call::BACK).map_err(|_| Fail::Bad)?,
-        })
+    pub fn of(entry: PieToken) -> Result<Self, frame::Fail> {
+        let info = inspect(entry).map_err(|_| frame::Fail::Bad)?;
+        if !info.alive
+            || info.owner.get() == 0
+            || info.owner == env::unit::self_id()
+            || info.vestor != info.owner
+            || info.kind != PieKind::Hole
+            || info.mark != frame::Grant::Claim.mark()
+            || info.permission != Access::STORE.bits()
+        {
+            return Err(frame::Fail::Denied);
+        }
+        let rpc =
+            rpc::request::Sender::from_raw(entry, Call::BACK).map_err(|_| frame::Fail::Bad)?;
+        if rpc.peer() != info.owner {
+            return Err(frame::Fail::Denied);
+        }
+        Ok(Self { rpc })
     }
 
-    pub fn build(
-        &self,
-        image: PieToken,
-        offset: usize,
-        len: usize,
-        args: &[usize],
-        stack: usize,
-        wait: Wait,
-    ) -> Result<Built, Fail> {
-        if args.len() > frame::MAX_ARGS
-            || len == 0
-            || len > frame::MAX_IMAGE
-            || offset.checked_add(len).is_none()
-        {
-            return Err(Fail::Bad);
-        }
-        // Build and Claim share one absolute budget, including image capability preparation.
-        let deadline = Deadline::new(wait);
-        let image_loan = Loan::accord(&image, self.rpc.peer(), Permission::FETCH, frame::IMAGE)
-            .map_err(|_| Fail::Denied)?;
-
+    pub fn claim(&self, task: env::TaskId, wait: Wait) -> Result<Built, frame::Fail> {
         let said = self
             .rpc
-            .call(deadline, |back| {
-                let mut words = [0; frame::MAX_ARGS];
-                for (to, from) in words.iter_mut().zip(args) {
-                    *to = *from as u64;
-                }
-                Wire::Build(Ask {
-                    op: frame::BUILD,
-                    image: image_loan.remote(),
-                    offset: offset as u64,
-                    len: len as u64,
-                    stack: stack as u64,
-                    count: args.len() as u8,
-                    args: words,
-                    back,
-                })
-            })
-            .map_err(|_| Fail::Bad)?;
-        if said.status != wire::OK {
-            return Err(frame::code_to_fail(said.status).unwrap_or(Fail::Bad));
-        }
-        if said.team == 0 || said.task.get() == 0 {
-            return Err(Fail::Bad);
-        }
-
-        let confirmed = self
-            .rpc
-            .call(deadline, |back| {
+            .call(ipc::time::Deadline::new(wait), |back| {
                 Wire::Claim(frame::Claim {
                     op: frame::CLAIM,
-                    task: said.task,
+                    task,
                     back,
                 })
             })
-            .map_err(|_| Fail::Bad)?;
-        if confirmed.status != wire::OK {
-            return Err(frame::code_to_fail(confirmed.status).unwrap_or(Fail::Bad));
-        }
-        if confirmed.task != said.task || confirmed.team != said.team {
-            return Err(Fail::Bad);
+            .map_err(|_| frame::Fail::Unknown)?;
+        if said.status != wire::OK || said.task != task || said.team == 0 {
+            return Err(frame::Fail::NotReady);
         }
         Ok(Built {
-            team: TeamId::new(said.team as usize),
-            task: said.task,
+            team: env::TeamId::new(said.team as usize),
+            task,
         })
     }
 }

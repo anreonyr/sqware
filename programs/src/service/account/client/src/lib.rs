@@ -5,9 +5,16 @@ use account_api::ENTRY;
 use account_api::{Call, DIR, Request};
 use env::{PieToken, TaskId, TeamId, Wait, pie};
 use ipc::{rpc, time::Deadline};
-use system_api::control::Fail;
+use system_api::control::{Fail, construction::CreateId};
 use system_api::control::frame::{OK, code_to_fail};
-use system_client::{loader::Built, operator::Face};
+use system_client::operator::Face;
+
+#[derive(Clone, Copy, Debug)]
+pub struct Built {
+    pub task: TaskId,
+    pub team: TeamId,
+    pub startup: system_api::loader::StartupMetadata,
+}
 pub struct Client {
     entry: PieToken,
     host: TaskId,
@@ -30,7 +37,32 @@ impl Client {
         };
         Ok(Self { entry, host })
     }
-    pub fn create(&self, account: &str, wait: Wait) -> Result<Built, Fail> {
+    pub fn create(&self, id: CreateId, account: &str, wait: Wait) -> Result<Built, Fail> {
+        let deadline = Deadline::new(wait);
+        let mut said = self.call(account_api::CREATE, id, account, deadline.remaining())?;
+        while said.status == OK && said.state == system_api::control::construction::PENDING {
+            let remaining = deadline.remaining();
+            if remaining == Wait::POLL {
+                return Err(Fail::NotReady);
+            }
+            said = self.call(account_api::INSPECT, id, account, remaining)?;
+        }
+        if said.state != system_api::control::construction::COMPLETED {
+            return Err(if said.state == system_api::control::construction::FAILED {
+                code_to_fail(said.status).unwrap_or(Fail::Bad)
+            } else {
+                Fail::NotReady
+            });
+        }
+        self.built(said)
+    }
+    pub fn inspect(&self, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
+        self.call(account_api::INSPECT, id, account, wait)
+    }
+    pub fn cancel(&self, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
+        self.call(account_api::CANCEL, id, account, wait)
+    }
+    fn call(&self, op: u8, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
         let deadline = Deadline::new(wait);
         let sender = rpc::request::Sender::<Call>::from_raw(self.entry, Call::BACK)
             .map_err(|_| Fail::Bad)?;
@@ -39,10 +71,15 @@ impl Client {
         }
         let reply = sender
             .call(deadline, |back| Request {
+                op,
+                id,
                 account: account.into(),
                 back,
             })
-            .map_err(|_| Fail::Bad)?;
+            .map_err(|_| Fail::NotReady)?;
+        Ok(reply)
+    }
+    fn built(&self, reply: system_api::loader::Said) -> Result<Built, Fail> {
         if reply.status != OK {
             return Err(code_to_fail(reply.status).unwrap_or(Fail::Bad));
         }
@@ -52,6 +89,7 @@ impl Client {
         Ok(Built {
             task: reply.task,
             team: TeamId::new(reply.team as usize),
+            startup: reply.startup,
         })
     }
 }

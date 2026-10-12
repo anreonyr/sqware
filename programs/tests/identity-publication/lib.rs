@@ -1,294 +1,254 @@
 #![allow(dead_code)]
 extern crate alloc;
-extern crate self as resource;
-use env::{PieToken, TaskId};
-use system_api::control::publication::{self as api, Object, Target};
-use system_api::identity::{PrincipalId, Subject};
-use system_api::operator::{Fail, Permit};
-pub mod raw {
-    pub fn inspect(_: env::PieToken) -> Result<env::PieInfo, ()> {
-        panic!("identity alias must not inspect or consume a supplied capability")
-    }
-}
-pub mod system {
-    pub mod control {
-        pub mod identity {
-            use std::sync::Mutex;
-            pub struct Roster {
-                pub permitted: bool,
-                pub calls: Mutex<Vec<(env::TaskId, system_api::identity::Subject)>>,
-            }
-            impl Roster {
-                pub fn allow_subject(
-                    &self,
-                    from: env::TaskId,
-                    subject: system_api::identity::Subject,
-                ) -> Result<(), ()> {
-                    self.calls.lock().unwrap().push((from, subject));
-                    if self.permitted { Ok(()) } else { Err(()) }
-                }
-            }
-            pub fn validate_permit(
-                _: &Roster,
-                _: system_api::operator::Permit,
-            ) -> Result<(), system_api::operator::Fail> {
-                Ok(())
-            }
-            pub fn binding(
-                _: &Roster,
-                _: env::TaskId,
-            ) -> Result<Option<system_api::identity::Binding>, system_api::operator::Fail>
-            {
-                unreachable!()
-            }
-        }
-        pub mod unit {
-            pub struct Identity {
-                pub aliases: &'static [&'static str],
-            }
-            pub struct Program {
-                pub identity: Identity,
-            }
-            pub struct Input {
-                pub program: Program,
-            }
-            pub struct Row {
-                pub name: alloc::string::String,
-            }
-            pub struct Control {
-                pub live: bool,
-                pub named: bool,
-                pub input: Input,
-            }
-            impl Control {
-                pub fn live(&self, _: env::TaskId) -> bool {
-                    self.live
-                }
-                pub fn find_named_task(&self, _: env::TaskId) -> Option<Row> {
-                    self.named.then(|| Row {
-                        name: "provider".into(),
-                    })
-                }
-                pub fn input(&self, _: &str) -> Result<&Input, ()> {
-                    Ok(&self.input)
-                }
-            }
-        }
-    }
-    pub mod operator {
-        pub struct Placement {
-            pub road: system_api::operator::PathBuf,
-            pub tile: tree::Tile,
-            pub replace: bool,
-        }
-        pub mod tree {
-            pub struct Tile {
-                pub pie: env::PieToken,
-                pub permit: system_api::operator::Permit,
-                pub owner: Option<env::TaskId>,
-            }
-        }
-    }
-    pub mod publication {
-        pub mod runtime {
-            pub struct Resources;
-            impl Resources {
-                pub(crate) fn policy(
-                    &self,
-                    _: &crate::Incoming,
-                ) -> Result<crate::Decision, system_api::operator::Fail> {
-                    Err(system_api::operator::Fail::Denied)
-                }
-            }
-        }
-    }
-}
-#[path = "../../src/system/publication/admission.rs"]
-mod admission;
-use admission::Namespaces;
-struct Incoming {
-    frame: api::Frame,
-    from: TaskId,
-    back: Option<()>,
-}
-struct Request(Option<Incoming>, Option<alloc::string::String>);
-struct Registration {
-    name: alloc::string::String,
-    object: Object,
-    lifetime: Option<TaskId>,
-}
-mod names {
-    pub(crate) use super::Registration;
-}
-struct Approval {
-    target: Target,
-    member: bool,
-    alias: bool,
-}
-struct Approved {
-    policy: Approval,
-    placement: system::operator::Placement,
-    publisher: TaskId,
-}
-enum Decision {
-    Unset,
-    Failed(Fail),
-    BindAlias {
-        publisher: TaskId,
-        registration: Registration,
-    },
-    OwnHole(Approved),
-    Install(Approved),
-}
-#[path = "../../src/system/publication/policy.rs"]
-mod policy;
-fn decide(
-    live: bool,
-    named: bool,
-    aliases: &'static [&'static str],
-    permitted: bool,
-    target: Target,
-    seed: PieToken,
-    permit: Permit,
-) -> (Decision, Vec<(TaskId, Subject)>) {
-    use system::control::{
-        identity::Roster,
-        unit::{Control, Identity, Input, Program},
-    };
-    let mut resources = schedule::Resources::new();
-    resources
-        .insert(Request(
-            Some(Incoming {
-                frame: api::Frame::new(api::PUBLISH, target, (seed, permit)),
-                from: TaskId::new(7),
-                back: Some(()),
-            }),
-            None,
-        ))
-        .unwrap();
-    resources.insert(Decision::Unset).unwrap();
-    resources
-        .insert(Control {
-            live,
-            named,
-            input: Input {
-                program: Program {
-                    identity: Identity { aliases },
-                },
-            },
-        })
-        .unwrap();
-    resources
-        .insert(Roster {
-            permitted,
-            calls: std::sync::Mutex::new(Vec::new()),
-        })
-        .unwrap();
-    let mut plan = schedule::Schedule::sequence();
-    plan.system("source", policy::source).unwrap();
-    plan.system("alias", policy::alias).unwrap();
-    plan.system("identity", policy::identity).unwrap();
-    let mut plan = plan.build().unwrap();
-    plan.prepare(&resources);
-    assert_eq!(
-        plan.advance(&mut schedule::Cursor::default(), &resources)
-            .unwrap(),
-        schedule::Progress::Done
-    );
-    let calls = resources
-        .read::<Roster>()
-        .unwrap()
-        .calls
-        .lock()
-        .unwrap()
-        .clone();
-    let decision = core::mem::replace(
-        &mut *resources.write::<Decision>().unwrap(),
-        Decision::Unset,
-    );
-    (decision, calls)
-}
-fn principal() -> Object {
-    Object::Principal(PrincipalId::new(TaskId::new(3), 19))
-}
-fn target() -> Target {
-    Target::IdentityName {
-        object: principal(),
-        name: "account-name".into(),
-    }
-}
+
+#[path = "../../src/system/identity/export_admission.rs"]
+mod export_admission;
+
 #[test]
-fn declared_named_live_publisher_still_requires_identity_subtree_authorization() {
-    let (decision, calls) = decide(
-        true,
-        true,
-        &["account-name"],
-        true,
-        target(),
-        PieToken::NONE,
-        Permit::Bound,
+fn identity_export_retry_requires_matching_program_and_delivered_receipt() {
+    use export_admission::ExistingGrant::{Conflict, Delivered, Retry};
+
+    assert_eq!(export_admission::existing_grant(true, true), Delivered);
+    assert_eq!(export_admission::existing_grant(true, false), Retry);
+    assert_eq!(export_admission::existing_grant(false, true), Conflict);
+    assert_eq!(export_admission::existing_grant(false, false), Conflict);
+}
+
+#[test]
+fn identity_export_uses_authoritative_operator_entry_reference() {
+    use env::{PieToken, TaskId};
+    use system_api::identity::export::{ENTRY, Request};
+    use system_api::identity::{IdentityName, IdentityObject, OperatorEntryRef, PrincipalId};
+    use wire::Message;
+    let object = IdentityObject::Principal(PrincipalId::new(TaskId::new(3), 19));
+    let alias = IdentityName::new("account-name").unwrap();
+    let binding = IdentityName::new("Account").unwrap();
+    let entry = OperatorEntryRef {
+        operator: TaskId::new(21),
+        root: false,
+        id: 0,
+        revision: 47,
+    };
+    let request = Request {
+        object,
+        alias,
+        binding,
+        entry,
+        back: PieToken::NONE,
+    };
+    let mut bytes = [0; Request::LEN];
+    let used = request.store(&mut bytes).unwrap();
+    let (decoded, exact) = Request::fetch(&bytes[..used]).unwrap();
+    assert!(exact && decoded.valid());
+    assert_eq!(decoded.object, object);
+    assert_eq!(decoded.alias, alias);
+    assert_eq!(decoded.binding, binding);
+    assert_eq!(decoded.entry, entry);
+    assert_eq!(ENTRY, system_api::identity::export::ENTRY);
+
+    let node_zero = OperatorEntryRef {
+        root: false,
+        id: 0,
+        ..entry
+    };
+    assert!(
+        Request {
+            entry: node_zero,
+            ..request
+        }
+        .valid()
     );
     assert!(
-        matches!(decision, Decision::BindAlias { publisher, registration } if publisher == TaskId::new(7) && registration.object == principal() && registration.lifetime == Some(TaskId::new(7)))
+        !Request {
+            entry: OperatorEntryRef {
+                root: true,
+                id: 1,
+                ..entry
+            },
+            ..request
+        }
+        .valid()
+    );
+    assert!(
+        !Request {
+            entry: OperatorEntryRef {
+                operator: TaskId::new(0),
+                ..entry
+            },
+            ..request
+        }
+        .valid()
+    );
+}
+
+#[test]
+fn identity_export_admission_uses_registered_source_and_roster_subtree() {
+    use env::{PieToken, TaskId};
+    use system_api::identity::{
+        IdentityName, IdentityObject, OperatorEntryRef, PrincipalId, Subject,
+    };
+    let request = system_api::identity::export::Request {
+        object: IdentityObject::Principal(PrincipalId::new(TaskId::new(3), 19)),
+        alias: IdentityName::new("account-name").unwrap(),
+        binding: IdentityName::new("Account").unwrap(),
+        entry: OperatorEntryRef {
+            operator: TaskId::new(21),
+            root: false,
+            id: 0,
+            revision: 47,
+        },
+        back: PieToken::mint(91),
+    };
+    let mut calls = Vec::new();
+    let result = export_admission::authorize_alias(
+        export_admission::CallerFacts {
+            from: TaskId::new(7),
+            owner: TaskId::new(7),
+            live: true,
+            named: true,
+        },
+        export_admission::AliasClaim {
+            aliases: &["account-name"],
+            request: &request,
+        },
+        |from, subject| {
+            calls.push((from, subject));
+            Ok(())
+        },
     );
     assert_eq!(
-        calls,
-        [(
-            TaskId::new(7),
-            Subject::new(PrincipalId::new(TaskId::new(3), 19), &[]).unwrap()
-        )]
+        result,
+        Ok(Subject::new(PrincipalId::new(TaskId::new(3), 19), &[]).unwrap())
     );
-    let (decision, calls) = decide(
-        true,
-        true,
-        &["account-name"],
-        false,
-        target(),
-        PieToken::NONE,
-        Permit::Bound,
+    assert_eq!(calls, [(TaskId::new(7), result.unwrap())]);
+
+    let denied = export_admission::authorize_alias(
+        export_admission::CallerFacts {
+            from: TaskId::new(7),
+            owner: TaskId::new(7),
+            live: true,
+            named: true,
+        },
+        export_admission::AliasClaim {
+            aliases: &["account-name"],
+            request: &request,
+        },
+        |_, _| Err(()),
     );
-    assert!(matches!(decision, Decision::Failed(Fail::Denied)));
-    assert_eq!(calls.len(), 1);
+    assert_eq!(denied, Err(export_admission::Failure::Denied));
 }
+
 #[test]
-fn aliases_are_not_available_to_unnamed_children_or_undeclared_names() {
-    for (live, named, aliases) in [
-        (false, true, &["account-name"][..]),
-        (true, false, &["account-name"][..]),
-        (true, true, &["other"][..]),
-    ] {
-        let (decision, calls) = decide(
-            live,
-            named,
-            aliases,
-            true,
-            target(),
-            PieToken::NONE,
-            Permit::Bound,
-        );
-        assert!(matches!(decision, Decision::Failed(Fail::Denied)));
-        assert!(calls.is_empty());
-    }
-}
-#[test]
-fn identity_alias_rejects_capability_payload_public_permit_and_coalition() {
-    for (target, seed, permit) in [
-        (target(), PieToken::mint(9), Permit::Bound),
-        (target(), PieToken::NONE, Permit::Public),
+fn identity_export_admission_preserves_source_owner_and_forged_reply_guards() {
+    use env::{PieToken, TaskId};
+    use system_api::identity::{IdentityName, IdentityObject, OperatorEntryRef, PrincipalId};
+    let request = system_api::identity::export::Request {
+        object: IdentityObject::Principal(PrincipalId::new(TaskId::new(3), 19)),
+        alias: IdentityName::new("account-name").unwrap(),
+        binding: IdentityName::new("Account").unwrap(),
+        entry: OperatorEntryRef {
+            operator: TaskId::new(21),
+            root: false,
+            id: 0,
+            revision: 47,
+        },
+        back: PieToken::mint(91),
+    };
+    for (caller, aliases) in [
         (
-            Target::IdentityName {
-                object: Object::Coalition(system_api::identity::CoalitionId::new(
-                    TaskId::new(3),
-                    19,
-                )),
-                name: "account-name".into(),
+            export_admission::CallerFacts {
+                from: TaskId::new(8),
+                owner: TaskId::new(7),
+                live: true,
+                named: true,
             },
-            PieToken::NONE,
-            Permit::Bound,
+            &["account-name"][..],
+        ),
+        (
+            export_admission::CallerFacts {
+                from: TaskId::new(7),
+                owner: TaskId::new(7),
+                live: false,
+                named: true,
+            },
+            &["account-name"][..],
+        ),
+        (
+            export_admission::CallerFacts {
+                from: TaskId::new(7),
+                owner: TaskId::new(7),
+                live: true,
+                named: false,
+            },
+            &["account-name"][..],
+        ),
+        (
+            export_admission::CallerFacts {
+                from: TaskId::new(7),
+                owner: TaskId::new(7),
+                live: true,
+                named: true,
+            },
+            &["other"][..],
         ),
     ] {
-        let (decision, calls) = decide(true, true, &["account-name"], true, target, seed, permit);
-        assert!(matches!(decision, Decision::Failed(Fail::Denied)));
-        assert!(calls.is_empty());
+        let mut checked_roster = false;
+        let result = export_admission::authorize_alias(
+            caller,
+            export_admission::AliasClaim {
+                aliases,
+                request: &request,
+            },
+            |_, _| {
+                checked_roster = true;
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err(export_admission::Failure::Denied));
+        assert!(!checked_roster);
     }
+
+    let trusted_back = request.back;
+    let forged = system_api::identity::export::Request {
+        back: PieToken::mint(92),
+        ..request
+    };
+    let response_target = system_api::identity::export::reply_to(&(request, true));
+    assert_eq!(response_target, trusted_back);
+    assert_ne!(
+        system_api::identity::export::reply_to(&(forged, true)),
+        trusted_back
+    );
+}
+
+#[test]
+fn private_lookup_cleanup_keeps_both_resources_and_deduplicates_shared_tokens() {
+    use env::PieToken;
+    let located = PieToken::mint(101);
+    let actual = PieToken::mint(102);
+    let mut released = Vec::new();
+    export_admission::keep_lookup_resources(located, Some(actual), |token| {
+        released.push(token);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(released, [located, actual]);
+
+    released.clear();
+    export_admission::keep_lookup_resources(located, Some(located), |token| {
+        released.push(token);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(released, [located]);
+
+    released.clear();
+    assert!(
+        export_admission::keep_lookup_resources(located, None, |token| {
+            released.push(token);
+            Err(())
+        })
+        .is_err()
+    );
+    assert_eq!(released, [located]);
 }

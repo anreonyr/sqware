@@ -15,6 +15,7 @@ pub use service::Service;
 mod wait;
 pub struct Control {
     pub(in crate::system::control) status: Arc<Status>,
+    pub(in crate::system::control) targets: &'static [crate::unit::Target],
     pub(in crate::system::control) table: Table,
     pub(in crate::system::control) inputs: Vec<start::Input>,
     pub(in crate::system::control) internal: Vec<TaskId>,
@@ -27,9 +28,10 @@ pub(crate) struct Pending {
     pub(crate) service: Service,
 }
 impl Control {
-    pub fn new(status: Arc<Status>) -> Self {
+    pub fn new(status: Arc<Status>, targets: &'static [crate::unit::Target]) -> Self {
         Self {
             status,
+            targets,
             table: Table::new(),
             inputs: Vec::new(),
             internal: Vec::new(),
@@ -42,22 +44,25 @@ impl Control {
             return Err(Error::Step("invalid supply declaration"));
         }
         let name = program.name().to_string();
-        let restart = program.relation.restart.ok_or(Error::Step("no ending"))?;
+        let restart = program.control.ending.ok_or(Error::Step("no ending"))?;
         self.table
             .register(Declaration {
                 name,
-                announce: if program.supply().is_empty() {
-                    crate::system::control::unit::table::Announce::None
-                } else {
-                    crate::system::control::unit::table::Announce::Channel
+                announce: match program.control.ready {
+                    crate::unit::Ready::OnSpawn => {
+                        crate::system::control::unit::table::Announce::None
+                    }
+                    crate::unit::Ready::Signal(_) => {
+                        crate::system::control::unit::table::Announce::Channel
+                    }
                 },
                 restart,
             })
             .map_err(|_| Error::Table)
     }
     pub fn state(&self, name: String) -> Result<State, Fail> {
-        if matches!(name.as_str(), "operator" | "identity") {
-            let task = self.task(&name).ok_or(Fail::Unknown)?;
+        if let Some(bootstrap) = bootstrap_named(&name) {
+            let task = self.bootstrap_task(bootstrap).ok_or(Fail::Unknown)?;
             if env::unit::join_task(task, Wait::POLL).unwrap_or(true) {
                 return Ok(State::Dead);
             }
@@ -93,16 +98,24 @@ impl Control {
         Ok(())
     }
     pub(crate) fn task(&self, name: &str) -> Option<TaskId> {
-        use ::core::sync::atomic::Ordering;
-        match name {
-            "operator" => return Some(TaskId::new(self.status.operator.load(Ordering::Acquire))),
-            "identity" => return Some(TaskId::new(self.status.identity.load(Ordering::Acquire))),
-            _ => {}
-        }
         match self.table.find(name)?.slot {
             Slot::Live { task, .. } => Some(task),
             Slot::None => None,
         }
+    }
+    pub(crate) fn task_team(&self, task: TaskId) -> Option<env::TeamId> {
+        self.table.rows().find_map(|row| match row.slot {
+            Slot::Live { task: live, team } if live == task => team,
+            _ => None,
+        })
+    }
+    pub(crate) fn bootstrap_task(&self, task: crate::unit::Bootstrap) -> Option<TaskId> {
+        use ::core::sync::atomic::Ordering;
+        let raw = match task {
+            crate::unit::Bootstrap::Operator => self.status.operator.load(Ordering::Acquire),
+            crate::unit::Bootstrap::Identity => self.status.identity.load(Ordering::Acquire),
+        };
+        (raw != 0).then(|| TaskId::new(raw))
     }
     pub(crate) fn register_internal(&mut self, task: TaskId) -> Result<(), &'static str> {
         self.internal
@@ -131,6 +144,14 @@ impl Control {
             })
             .chain(self.internal_tasks())
             .chain(
+                [
+                    self.bootstrap_task(crate::unit::Bootstrap::Operator),
+                    self.bootstrap_task(crate::unit::Bootstrap::Identity),
+                ]
+                .into_iter()
+                .flatten(),
+            )
+            .chain(
                 self.instances
                     .iter()
                     .filter(|item| {
@@ -142,6 +163,14 @@ impl Control {
                     })
                     .map(|item| item.task),
             )
+    }
+}
+
+fn bootstrap_named(name: &str) -> Option<crate::unit::Bootstrap> {
+    match name {
+        "operator" => Some(crate::unit::Bootstrap::Operator),
+        "identity" => Some(crate::unit::Bootstrap::Identity),
+        _ => None,
     }
 }
 

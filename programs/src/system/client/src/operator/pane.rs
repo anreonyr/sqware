@@ -2,15 +2,15 @@
 
 use alloc::string::String;
 
-use env::{PieToken, Wait};
+use env::Wait;
 
 use crate::operator as ocall;
 use crate::operator::Path;
-use crate::operator::{EntryId, Fail, Listing, Permit, Where};
+use crate::operator::{EntryId, Fail, Listing, Where};
 
 use super::face::map_code;
 use super::tile::Tile;
-use super::{Face, Mine};
+use super::Face;
 
 /// **一块窗格**：**哪一个容器**是固定下来的宾语，那几手不再重复传它
 /// 它能继续分 / 落 / 列——正是"一个值决定后续操作的宾语"那一格，故给它一个柄；一枚砖只需
@@ -50,46 +50,11 @@ impl<'a> Pane<'a> {
         }
     }
 
-    /// **分**：在这一块里给 `name` 放一块空窗格；答那一格自己的号
-    /// **幂等**：那一格已经是窗格就答它那个号（里面有没有东西不管）；是一枚砖 ⇒
-    pub fn open(&self, name: String, wait: Wait) -> Result<Pane<'_>, Fail> {
-        let said = self
-            .face
-            .call(ocall::Req::Part { at: self.at, name }, wait)?;
-        let id = said.entry().map_err(map_code)?;
-        Ok(Pane::of(self.face, id))
-    }
-
-    /// **落**：在这一块里给 `name` 贴一枚 `Tile`；答那一格自己的号
-    pub fn bind(
-        &self,
-        name: String,
-        e: PieToken,
-        permit: Permit,
-        mine: Mine,
-        wait: Wait,
-    ) -> Result<Tile<'_>, Fail> {
-        let id = self.face.land(self.at, name, e, permit, mine, wait)?;
-        Ok(Tile {
-            face: self.face,
-            id,
-        })
-    }
-
     /// **列**：这一块里有哪些号（Face::root = 根那一层）
     /// 答的是那一串号（Listing 是定长值、不是借来的迭代器——它自带 `iter`）
     pub fn list(&self, wait: Wait) -> Result<Listing, Fail> {
         let said = self.face.call(ocall::Req::List(self.at), wait)?;
         said.list().map_err(map_code)
-    }
-
-    /// **剪**：把 `e` 那一号剪掉
-    pub fn trim(&self, e: EntryId, wait: Wait) -> Result<(), Fail> {
-        let said = self.face.call(ocall::Req::Trim(e), wait)?;
-        match said.code() {
-            ocall::OK => Ok(()),
-            code => Err(map_code(code)),
-        }
     }
 
     /// **名**：`e` 那一号此刻叫什么

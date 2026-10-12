@@ -48,6 +48,12 @@ pub enum Wire {
     Bind(TaskId, Install),
     Unbind(TaskId),
     Activate(TaskId, CoalitionSet),
+    Install(InstallId, InstallSpec),
+    Inspect(InstallId),
+    Cancel(InstallId),
+    Retire(InstallId),
+    Associate(IdentityObject, IdentityName, OperatorEntryRef),
+    Reference(IdentityObject, IdentityName),
 }
 impl Wire {
     pub(super) fn validate(self) -> Option<()> {
@@ -65,6 +71,11 @@ impl Wire {
             Self::Activate(task, coalitions) => {
                 (task.get() != 0 && !coalitions.is_empty()).then_some(())
             }
+            Self::Install(id, spec) => (id.value != 0 && spec.task.get() != 0).then_some(()),
+            Self::Inspect(id) | Self::Cancel(id) | Self::Retire(id) =>
+                (id.value != 0).then_some(()),
+            Self::Associate(object, name, entry) => (object.authority().get() != 0 && entry.operator.get() != 0 && (!entry.root || entry.id == 0) && crate::operator::name::valid(name.as_str())).then_some(()),
+            Self::Reference(object, name) => (object.authority().get() != 0 && crate::operator::name::valid(name.as_str())).then_some(()),
             _ => Some(()),
         }
     }
@@ -80,7 +91,46 @@ pub enum Reply {
     Members(Page<PrincipalId>),
     Memberships(Page<CoalitionId>),
     Fail(Fail),
+    Installation(InstallStatus),
+    Reference(Option<OperatorEntryRef>),
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum IdentityObject { Principal(PrincipalId), Coalition(CoalitionId) }
+impl IdentityObject {
+    pub const fn authority(self) -> TaskId { match self { Self::Principal(p) => p.authority, Self::Coalition(c) => c.authority } }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OperatorEntryRef { pub operator: TaskId, pub root: bool, pub id: u64, pub revision: u64 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IdentityName { bytes: [u8; 31], len: u8 }
+impl IdentityName {
+    pub fn new(name: &str) -> Option<Self> {
+        if !crate::operator::name::valid(name) { return None; }
+        let mut bytes = [0; 31];
+        bytes[..name.len()].copy_from_slice(name.as_bytes());
+        Some(Self { bytes, len: name.len() as u8 })
+    }
+    pub fn as_str(&self) -> &str { core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("") }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, env::Frame)]
+pub struct InstallId { pub value: u64 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstallSpec { pub task: TaskId, pub install: Install }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallState {
+    Unseen,
+    Pending,
+    Installed,
+    Retiring,
+    Retired,
+    Cancelled,
+    Failed,
+    Closed,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InstallStatus { pub state: InstallState, pub binding: Option<Binding>, pub failure: Option<Fail> }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, env::Frame)]
 pub struct PrincipalId {
@@ -238,6 +288,7 @@ pub enum Install {
     Authorized(Subject),
     Inherit { parent: TaskId },
     Restrict { parent: TaskId, subject: Subject },
+    Derive { parent: PrincipalId },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PageTarget {

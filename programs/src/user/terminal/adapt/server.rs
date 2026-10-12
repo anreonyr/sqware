@@ -10,10 +10,7 @@ use alloc::collections::VecDeque;
 use env::wire::Span as _;
 use env::{MailCondition, Permission, PieToken, TaskId, Wait, pie};
 use programs::driver::uart::client::Console;
-use system_api::control::publication::Scope;
-use system_api::control::publication::Target;
-use system_api::operator::Permit;
-use system_client::control::publication::Client;
+use system_api::operator::{self as operator_api, Permit};
 use terminal_api::frame::{self, Command, Input, Reply};
 use wire::Message;
 
@@ -125,24 +122,23 @@ impl Server {
         })
         .map_err(|_| E_TERMINAL)?;
         pile.attach(console.tx.source()).map_err(|_| E_TERMINAL)?;
-        let client = Client::injected().map_err(|_| E_TERMINAL)?;
-        client
-            .publish(
-                Target::Service {
-                    scope: Scope(5),
-                    group: "".into(),
-                    name: "attach".into(),
-                },
+        let capability =
+            system_client::operator::Capability::injected(0, env::unit::sire(), Wait::AtMost(1000))
+                .map_err(|_| E_TERMINAL)?;
+        let anchor = capability.anchor().map_err(|_| E_TERMINAL)?;
+        let view = operator_api::ResourceView::new(env::Access::STORE).ok_or(E_TERMINAL)?;
+        capability
+            .bind(
+                anchor,
+                "attach",
                 entry,
+                view,
                 Permit::Public,
+                operator_api::OperationId(1),
                 Wait::AtMost(1000),
             )
             .map_err(|_| E_TERMINAL)?;
-        let _ = ipc::session::establish::endpoint(
-            env::unit::sire(),
-            programs::unit::READY_MARK,
-            Wait::POLL,
-        );
+        let _ = ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK);
         Ok(Self {
             entry,
             pile,

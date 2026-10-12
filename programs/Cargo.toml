@@ -7,9 +7,8 @@ edition.workspace = true
 # freestanding、无 std、无 main crt。链接在 IMAGE_BASE (0x10000)、静态 ET_EXEC；由内核 loader
 # 按绝对 VMA 装载，_start 即 e_entry。
 #
-# `crates/image` 按 bin 名（约定 `prog-<名字>`）打进 initrd——**哪几台进哪张镜像**看
-# `programs/src/unit/catalog.rs` 的 `PROGRAMS` 每行的 `wanted_by`，而"装成哪种空间"（`ProgramKind`）
-# 看同一行的 `space`；**哪一台是引导镜像**看 `entry`。
+# `crates/image` 按纯 Package 与 Deployment 配置打进 initrd；每个 UnitFile 的镜像与装载参数
+# 由其 LoaderConfig 提供，部署入口单独选择。
 [lib]
 path = "src/lib.rs"
 test = false

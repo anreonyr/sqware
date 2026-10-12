@@ -1,12 +1,9 @@
-use crate::system::publication::Mounts;
 use crate::system::{
     app::life::{Phase, Status},
     control::identity::Roster,
     control::unit::start::BOOT_MS,
     identity, operator,
     operator::management::{Tree, Wiring},
-    publication::Publications,
-    publication::{Names, Registration},
 };
 use ::resource::bell::Bell;
 use ::schedule::{Progress, Res, ResMut};
@@ -14,7 +11,11 @@ use alloc::{boxed::Box, sync::Arc, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use env::{PieToken, TaskId, Wait};
 use programs::debug;
-pub struct Faces(pub Vec<PieToken>);
+#[derive(Default)]
+pub struct Faces {
+    pub roots: Vec<PieToken>,
+    pub installer: Option<system_api::identity::PrincipalId>,
+}
 pub fn status() -> Arc<Status> {
     Arc::new(Status {
         control: env::unit::self_id(),
@@ -35,8 +36,9 @@ pub fn spawn(
         let version = (*epoch).clone();
         let bell = signal.clone();
         let body: Box<dyn FnOnce(usize) + Send> = Box::new(move |_| {
-            let success = if operator {
-                operator::run(state.clone()).is_ok()
+            let role = if operator { "operator" } else { "identity" };
+            let result = if operator {
+                operator::run(state.clone()).map_err(|error| alloc::format!("{error:?}"))
             } else {
                 identity::run(
                     state.clone(),
@@ -46,10 +48,20 @@ pub fn spawn(
                             .unwrap(),
                     )),
                 )
-                .is_ok()
+                .map_err(|error| alloc::format!("{error:?}"))
             };
-            if !success || state.phase.load(Ordering::Acquire) != Phase::Stopping as u8 {
-                debug::put("system: internal task failed; terminating team");
+            let stopping = state.phase.load(Ordering::Acquire) == Phase::Stopping as u8;
+            let failed = result.is_err();
+            match &result {
+                Err(error) => debug::put(&alloc::format!(
+                    "system: internal {role} task failed: {error}"
+                )),
+                Ok(()) if !stopping => debug::put(&alloc::format!(
+                    "system: internal {role} task returned before shutdown"
+                )),
+                Ok(()) => {}
+            }
+            if failed || !stopping {
                 let _ = env::room::doom(env::unit::self_id());
             }
         });
@@ -108,12 +120,13 @@ pub(crate) fn identity(
     mut roster: ResMut<Roster>,
     mut faces: ResMut<Faces>,
 ) -> Result<Progress, &'static str> {
-    faces.0 = crate::system::control::identity::install(
+    faces.roots = crate::system::control::identity::install(
         &mut roster,
         TaskId::new(status.operator.load(Ordering::Acquire)),
         TaskId::new(status.identity.load(Ordering::Acquire)),
     )?
     .to_vec();
+    faces.installer = roster.control();
     Ok(Progress::Done)
 }
 pub(crate) fn wire(
@@ -125,45 +138,14 @@ pub(crate) fn wire(
         authority: crate::system::control::identity::current_authority(&roster)
             .ok_or("identity authority")?,
         faces: [
-            faces.0[system_api::identity::Grant::Resolve.index()],
-            faces.0[system_api::identity::Grant::Matches.index()],
-            faces.0[system_api::identity::Grant::Same.index()],
+            faces.roots[system_api::identity::Grant::Resolve.index()],
+            faces.roots[system_api::identity::Grant::Matches.index()],
+            faces.roots[system_api::identity::Grant::Same.index()],
         ],
     })?;
     Ok(Progress::Done)
 }
 
-pub(crate) fn name(
-    roster: Res<Roster>,
-    mut names: ResMut<Names>,
-    mut tree: ResMut<Tree>,
-) -> Result<Progress, &'static str> {
-    let object = system_api::control::publication::Object::Principal(
-        roster.control().ok_or("Control identity missing")?,
-    );
-    crate::system::control::identity::validate(&roster, object)
-        .map_err(|_| "Control identity source")?;
-    names.register(
-        &mut tree,
-        Registration {
-            name: "control".into(),
-            object,
-            lifetime: None,
-        },
-    )?;
-    Ok(Progress::Done)
-}
-
-pub fn publish(
-    mut mounts: ResMut<Mounts>,
-    mut publications: ResMut<Publications>,
-    mut tree: ResMut<Tree>,
-) -> Result<Progress, &'static str> {
-    for publication in mounts.0.drain(..) {
-        publications.internal(&mut tree, &publication)?;
-    }
-    Ok(Progress::Done)
-}
 pub fn await_running(status: Res<Arc<Status>>) -> Result<Progress, &'static str> {
     Ok(
         if status.phase.load(Ordering::Acquire) == Phase::Running as u8 {

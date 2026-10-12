@@ -3,22 +3,22 @@ pub(crate) mod bootstrap;
 mod execute;
 pub(crate) mod install;
 pub(crate) mod life;
+pub(crate) mod namespace;
+pub(crate) mod operator;
 pub(crate) mod policy;
 pub(crate) mod scene;
 pub(crate) mod schedule;
 pub(crate) mod wait;
 pub use execute::run;
 
-pub(crate) mod assembly;
 mod config;
-mod supplies;
+pub(crate) mod supplies;
 
 mod waiting;
 
 #[derive(Debug)]
 pub(crate) enum Fault {
     Room,
-    Publication,
     Dead,
     Wait,
     Idle,
@@ -29,6 +29,7 @@ pub(crate) enum Fault {
 pub(crate) enum InstallError {
     Resource(::schedule::resource::AccessError),
     Capability(erra::Error<env::PieFail>),
+    Configuration(&'static str),
 }
 impl From<::schedule::resource::AccessError> for InstallError {
     fn from(error: ::schedule::resource::AccessError) -> Self {
@@ -45,6 +46,7 @@ impl core::fmt::Display for InstallError {
         match self {
             Self::Resource(error) => write!(f, "resource: {:?}", error),
             Self::Capability(error) => write!(f, "capability: {}", error),
+            Self::Configuration(reason) => write!(f, "configuration: {reason}"),
         }
     }
 }

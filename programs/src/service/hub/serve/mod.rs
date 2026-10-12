@@ -2,25 +2,22 @@
 //! （记的是**设备**那一本账）。
 //! # 三个为什么
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use ::resource::dock::Dock;
 use ::resource::pile::Pile;
 use env::PAGE_SIZE;
 use env::unit;
-use env::{
-    Access, Entry as ResourceEntry, MailCondition, MailFail, Name, PieKind, PieToken, Policy,
-    TaskId, Wait,
-};
-use hub_api::{self as hub, Deed, Enroll, Grant, Said, Window, Wire};
-use ipc::hand::{Receiver, RecvFail, Sender};
+use env::{Access, MailCondition, Name, Page, PieKind, PieToken, Policy, TaskId, Trap, Wait};
+use hub_api::{self as hub, Deed, Grant, Inventory, Said, Window, Wire};
+use ipc::hand::Sender;
 use ipc::session::{Session, establish};
 use programs::debug;
 use system_api::identity::CoalitionId;
 use system_api::identity::PageId as _;
 use system_api::identity::Selector;
-use system_api::operator::Permit;
+use system_api::operator::{self as operator_api, Permit};
 use system_client::identity::Organization;
 use system_client::identity::Query;
 use system_client::operator;
@@ -29,18 +26,14 @@ use wire::Message;
 
 use super::Start;
 use crate::service::hub::core::{Entry, Ledger, Owner};
-use crate::support::face::mount;
 use crate::support::machine::Machine;
-use crate::unit::hub::E_HUB;
-use system_api::control::Scope;
+use crate::unit::hub::{E_HUB, INVENTORY_MARK};
 
 use self::sweep::alive;
 use ::resource::raw::{Hole, reserve};
 use env::pie;
 
 const MS: usize = 1000;
-
-const LOAD_TRIES: usize = 20;
 
 const PROBE_MS: usize = 1000;
 
@@ -66,12 +59,15 @@ pub fn serve() -> Result<(), Start> {
     let (mut ledger, league, plates, doors, _dtb) = (|| {
         let sire = unit::sire();
 
-        let up = establish::endpoint(sire, crate::unit::hub::CHANNEL_MARK, Wait::POLL)
-            .map_err(|_| Start::Load(E_HUB))?;
-        let enroll = take(up.rx()).ok_or(Start::Load(E_HUB))?;
+        let inventory = receive_inventory(sire).map_err(|why| {
+            crate::debug::put("hub: inventory descriptor failed"); why
+        })?;
+        crate::debug::put("hub: inventory received");
 
-        // 二、立账：树那一页 ＋ 每一条记录对上一台（名 / 类 / 线随树一起来）。
-        let (mut ledger, dtb) = book(&enroll)?;
+        // 二、通过一个只读清单和按序直接交付的本地资源槽立账。
+        let (mut ledger, dtb) = book(sire, inventory).map_err(|why| {
+            crate::debug::put("hub: inventory ledger failed"); why
+        })?;
 
         // 三、树那条会话。
         let session = Session::open(sire, operator::BERTH, Wait::AtMost(MS))
@@ -117,62 +113,82 @@ pub fn serve() -> Result<(), Start> {
         hub_client::activate(&league.activation, me, &leagues[..n])
             .map_err(|_| Start::Face(E_HUB))?;
 
-        let (bond, bond_name) =
-            mount::entry(Grant::Bond.mark(), Grant::Bond.name()).map_err(|_| Start::Tree(E_HUB))?;
-        let (list, list_name) =
-            mount::entry(Grant::List.mark(), Grant::List.name()).map_err(|_| Start::Tree(E_HUB))?;
-        let (claim, claim_name) = mount::entry(Grant::Claim.mark(), Grant::Claim.name())
+        let bond = pie::unseal(env::UnsealArgs::hole(Grant::Bond.mark()))
             .map_err(|_| Start::Tree(E_HUB))?;
-        // 本族那一族的路：容器那一段（`/svc`）接上本族那一段（`hub`）——一处都不自己拼。
-        let publisher = system_client::control::publication::Client::injected()
+        let list = pie::unseal(env::UnsealArgs::hole(Grant::List.mark()))
             .map_err(|_| Start::Tree(E_HUB))?;
-        for (name, entry) in [
-            (bond_name.as_str(), bond),
-            (list_name.as_str(), list),
-            (claim_name.as_str(), claim),
-        ] {
-            let target = system_api::control::publication::Target::Service {
-                scope: Scope(2),
-                group: "".into(),
-                name: name.into(),
-            };
+        let claim = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+            .map_err(|_| Start::Tree(E_HUB))?;
+        let publisher = system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS))
+            .map_err(|_| Start::Tree(E_HUB))?;
+        let service_anchor = publisher.anchor().map_err(|_| Start::Tree(E_HUB))?;
+        let endpoint_view =
+            operator_api::ResourceView::new(env::Access::STORE).ok_or(Start::Tree(E_HUB))?;
+        for (index, (name, entry)) in [
+            (Grant::Bond.name(), bond),
+            (Grant::List.name(), list),
+            (Grant::Claim.name(), claim),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             publisher
-                .publish(target, entry, Permit::Public, Wait::AtMost(MS))
+                .bind(
+                    service_anchor,
+                    name,
+                    entry,
+                    endpoint_view,
+                    Permit::Public,
+                    operator_api::OperationId(index as u64 + 1),
+                    Wait::AtMost(MS),
+                )
                 .map_err(|_| Start::Tree(E_HUB))?;
         }
+        let devices = system_client::operator::Capability::injected(1, sire, Wait::AtMost(MS))
+            .map_err(|_| Start::Tree(E_HUB))?;
+        let device_anchor = devices.anchor().map_err(|_| Start::Tree(E_HUB))?;
+        let mut operation = 1u64;
 
-        // 七、**逐类落 `/dev/<类>/<名>`**：每一格带 MemberOf(c_类)，检查有效选择而不是资格。
-        //     名字取自册（`doors`），故"这一类落哪几台"与账是同一份事实。
+        // Device entries are bound beneath the actual class Entry in Hub's device namespace.
         for class in &classes {
             let Some(coalition) = ledger.coalition_of(class.clone()) else {
                 return Err(Start::Tree(E_HUB));
             };
+            let group = devices
+                .part(
+                    device_anchor,
+                    class,
+                    operator_api::OperationId(operation),
+                    Wait::AtMost(MS),
+                )
+                .map_err(|_| Start::Tree(E_HUB))?
+                .entry;
+            operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
             let doors: Vec<(&str, PieToken)> = ledger
                 .doors(class.clone())
                 .map(|(name, door)| (name.as_str(), door))
                 .collect();
             for (name, entry) in doors {
-                let target = system_api::control::publication::Target::Service {
-                    scope: Scope(3),
-                    group: class.clone(),
-                    name: name.into(),
-                };
-                publisher
-                    .publish(
-                        target,
+                devices
+                    .bind(
+                        group,
+                        name,
                         entry,
+                        endpoint_view,
                         Permit::Identity(Selector::MemberOf(coalition)),
+                        operator_api::OperationId(operation),
                         Wait::AtMost(MS),
                     )
                     .map_err(|_| Start::Tree(E_HUB))?;
+                operation = operation.checked_add(1).ok_or(Start::Tree(E_HUB))?;
             }
         }
         debug!("hub: {} devices, {} classes", ledger.count(), classes.len());
 
         // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // （设备格都在树上、盟都立好了）。
-        establish::endpoint(sire, crate::unit::hub::READY_MARK, Wait::POLL)
-            .map_err(|_| Start::Desk(E_HUB))?;
+        establish::lend(sire, crate::unit::hub::READY_MARK)
+            .map_err(|why| { crate::debug::put(&alloc::format!("hub: ready channel {why:?}")); Start::Desk(E_HUB) })?;
 
         // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
         let mut doors: Vec<PieToken> = Vec::new();
@@ -188,13 +204,13 @@ pub fn serve() -> Result<(), Start> {
 
     // 十、常驻：一只组等那几枚孔；**从哪一枚读到就是哪一面**（设备门那一枚的面由"它不是面那
     //     三枚"推出来，认台靠**这一枚孔自己**）。
-    let pile = Pile::unseal(false).map_err(|_| Start::Desk(E_HUB))?;
+    let pile = Pile::unseal(false).map_err(|why| { crate::debug::put(&alloc::format!("hub: pile creation {why:?}")); Start::Desk(E_HUB) })?;
     for token in &doors {
         pile.attach(env::Source::Mail {
             pie: *token,
             condition: MailCondition::Pull,
         })
-        .map_err(|_| Start::Desk(E_HUB))?;
+        .map_err(|why| { crate::debug::put(&alloc::format!("hub: attach {} {why:?}", token.get())); Start::Desk(E_HUB) })?;
     }
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -306,77 +322,158 @@ pub(super) fn face_of(plates: (PieToken, PieToken, PieToken), token: PieToken) -
     }
 }
 
-/// **三格失败分得开**（RecvFail）：没收到 ⇒ 再试（装配者还在授出）；那一枚孔用不动
-fn take(rx: PieToken) -> Option<Enroll> {
-    let receiver = Receiver::<Enroll>::from_raw(rx);
-    let mut buf = Enroll::EMPTY;
-    let mut left = LOAD_TRIES;
-    loop {
-        match receiver.recv(buf.as_mut(), Wait::AtMost(MS)) {
-            Ok(enroll) => return Some(enroll),
-            Err(RecvFail::Mail(e)) if !matches!(e, MailFail::Dead | MailFail::Denied) => {
-                left = left.checked_sub(1)?;
-            }
-            Err(_) => return None,
-        }
+fn receive_inventory(system: TaskId) -> Result<Inventory, Start> {
+    let descriptor = establish::claim(
+        system,
+        crate::unit::descriptor_mark(INVENTORY_MARK),
+        Wait::AtMost(MS),
+    )
+    .map_err(|_| Start::Load(E_HUB))?;
+    let mut bytes = crate::unit::SupplyFrame::EMPTY;
+    let (len, sender) = Hole::from_raw(descriptor)
+        .pull(&mut bytes, Wait::AtMost(MS))
+        .map_err(|_| Start::Load(E_HUB))?;
+    if sender != system {
+        return Err(Start::Load(E_HUB));
     }
+    let frame = crate::unit::SupplyFrame::fetch(&bytes[..len]).ok_or(Start::Load(E_HUB))?;
+    let description = &frame.description[..usize::from(frame.length)];
+    let count = usize::from(
+        *description
+            .first()
+            .filter(|_| description.len() == 1)
+            .ok_or(Start::Load(E_HUB))?,
+    );
+    Inventory::header(count).ok_or(Start::Load(E_HUB))?;
+    let mark = INVENTORY_MARK;
+    let manifest = resource::raw::pies()
+        .find(|info| {
+            info.alive
+                && info.kind == PieKind::Pole
+                && info.owner == system
+                && info.vestor == system
+                && info.mark == mark
+                && info.permission.contains(env::Permission::FETCH)
+        })
+        .map(|info| info.token)
+        .ok_or(Start::Load(E_HUB))?;
+    let dock = Dock::open(manifest).map_err(|_| Start::Load(E_HUB))?;
+    let view = dock.view();
+    let manifest_len = Inventory::encoded_len_for(count).ok_or(Start::Load(E_HUB))?;
+    let actual = if view.size() < manifest_len {
+        None
+    } else {
+        let contents =
+            unsafe { core::slice::from_raw_parts(view.base() as *const u8, manifest_len) };
+        Inventory::fetch(contents)
+    };
+    dock.shut().map_err(|_| Start::Load(E_HUB))?;
+    let inventory = actual.ok_or(Start::Load(E_HUB))?;
+    if inventory.len() != count {
+        return Err(Start::Load(E_HUB));
+    }
+    Ok(inventory)
 }
 
-/// 把装配者推来那一段读成一本账：**树那一页 ＋ 每一条记录对上一台**
-/// 两步都是硬的
-/// 的格是"名 / 类"两格 ⇒ 没有树就一台都落不下去
-/// 2. **逐条对**：段里那几条记录给的是**坐标 ＋ 号**，而"这一条是哪一台"由坐标对树
-/// （Machine::devices 那张表就是那个对照）
-/// 按坐标认出来、按 hub::BOOT 那一类入册（`/dev/boot/{dtb,supervisor_external}`）——于是"取法"只有一条
-/// （认领那一套原样用），而"哪一类"那一格也有了诚实的答案
-fn book(enroll: &Enroll) -> Result<(Ledger, Dock), Start> {
+/// Build the machine ledger from the read-only inventory and target-local lease slots.
+fn book(system: TaskId, inventory: Inventory) -> Result<(Ledger, Dock), Start> {
     let mut ledger = Ledger::new();
-    // 一、树那一页（**留着不掉**：Machine::of 借的就是它映射进来的那段字节）。
-    let Some(dtb) = record(enroll, Name::Page(env::Page::Dtb)) else {
+    if inventory.len() < 2 {
         return Err(Start::Load(E_HUB));
-    };
-    let dock = Dock::open(dtb.token()).map_err(|_| Start::Load(E_HUB))?;
+    }
+    let dtb_item = inventory.item(0).ok_or(Start::Load(E_HUB))?;
+    if dtb_item.resource != Name::Page(Page::Dtb) || dtb_item.kind != PieKind::Pole {
+        return Err(Start::Load(E_HUB));
+    }
+    let dtb = local_machine_token(system, dtb_item, 0)?;
+    let dock = Dock::open(dtb).map_err(|_| Start::Load(E_HUB))?;
     let machine = Machine::of(dock.view()).map_err(|_| Start::Load(E_HUB))?;
     let devices = machine.devices().ok_or(Start::Load(E_HUB))?;
-    // 二、逐条对：坐标 → 那一台（**对不上的跳过**：装配者按同一张表枚举，对不上说明那一条
-    for i in 0..enroll.len() {
-        let Some(pair) = enroll.record(i) else {
-            break;
-        };
-        let key = pair.name();
-        let (name, class, line) = match key {
-            k if k == Name::Page(env::Page::Dtb) => (hub::DTB, hub::BOOT, 0),
-            k if k == Name::Trap(env::Trap::SupervisorExternal) => {
-                (hub::SUPERVISOR_EXTERNAL, hub::BOOT, 0)
-            }
-            _ => match devices.iter().find(|d| d.resource == key) {
-                Some(device) => (device.name.as_str(), device.class.as_str(), device.line),
-                None => continue,
-            },
-        };
-        let (name, class) = (name.to_string(), class.to_string());
-        // **每一台铸一枚孔**：那一枚此后就挂在那一格上（"哪一台"由"哪一枚孔响了"回答）。
-        // 门与页是同一个词的两面：`page` = 装配者交来那一份（认领时授出去），
+    if inventory.len() != devices.len() + 2 {
+        return Err(Start::Load(E_HUB));
+    }
+    enroll(
+        &mut ledger,
+        Entry {
+            name: hub::DTB.into(),
+            class: hub::BOOT.into(),
+            line: 0,
+            page: dtb,
+            door: pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+                .map_err(|_| Start::Load(E_HUB))?,
+        },
+    )?;
+    let interrupt_item = inventory.item(1).ok_or(Start::Load(E_HUB))?;
+    if interrupt_item.resource != Name::Trap(Trap::SupervisorExternal)
+        || interrupt_item.kind != PieKind::Nole
+    {
+        return Err(Start::Load(E_HUB));
+    }
+    let interrupt = local_machine_token(system, interrupt_item, 1)?;
+    enroll(
+        &mut ledger,
+        Entry {
+            name: hub::SUPERVISOR_EXTERNAL.into(),
+            class: hub::BOOT.into(),
+            line: 0,
+            page: interrupt,
+            door: pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
+                .map_err(|_| Start::Load(E_HUB))?,
+        },
+    )?;
+    for (index, device) in devices.iter().enumerate() {
+        let item_index = index + 2;
+        let item = inventory.item(item_index).ok_or(Start::Load(E_HUB))?;
+        if item.resource != device.resource || item.kind != PieKind::Pole {
+            return Err(Start::Load(E_HUB));
+        }
+        let token = local_machine_token(system, item, item_index)?;
         let door = pie::unseal(env::UnsealArgs::hole(Grant::Claim.mark()))
             .map_err(|_| Start::Load(E_HUB))?;
-        ledger
-            .enroll(Entry {
-                name,
-                class,
-                line,
-                page: pair.token(),
+        enroll(
+            &mut ledger,
+            Entry {
+                name: device.name.clone(),
+                class: device.class.clone(),
+                line: device.line,
+                page: token,
                 door,
-            })
-            .map_err(|()| Start::Load(E_HUB))?;
+            },
+        )?;
     }
     Ok((ledger, dock))
 }
 
-/// 段里按坐标取那一条（照单取源那一套的读侧：坐标唯一）
-fn record(enroll: &Enroll, key: Name) -> Option<ResourceEntry> {
-    (0..enroll.len())
-        .filter_map(|i| enroll.record(i))
-        .find(|pair| pair.name() == key)
+fn local_machine_token(
+    system: TaskId,
+    item: hub::InventoryItem,
+    index: usize,
+) -> Result<PieToken, Start> {
+    let slot = hub::inventory_slot(index).ok_or(Start::Load(E_HUB))?;
+    let found = resource::raw::pies()
+        .find(|info| {
+            info.alive
+                && info.kind == item.kind
+                && info.owner == item.owner
+                && info.vestor == system
+                && info.mark == slot
+                && info.permission == item.permission
+                && info
+                    .permission
+                    .contains(env::Permission::FETCH | env::Permission::VEST)
+        })
+        .map(|info| info.token);
+    if found.is_none() {
+        crate::debug::put(&alloc::format!("hub: inventory slot {index} absent expected owner={} kind={:?} permission={:?}", item.owner.get(), item.kind, item.permission));
+        for info in resource::raw::pies().filter(|info| info.mark == slot) {
+            crate::debug::put(&alloc::format!("hub: slot actual owner={} vestor={} kind={:?} permission={:?} alive={}", info.owner.get(), info.vestor.get(), info.kind, info.permission, info.alive));
+        }
+    }
+    found.ok_or(Start::Load(E_HUB))
+}
+
+fn enroll(ledger: &mut Ledger, entry: Entry) -> Result<(), Start> {
+    ledger.enroll(entry).map_err(|()| Start::Load(E_HUB))
 }
 
 /// Discover Identity through the authority anchor issued directly by Control.

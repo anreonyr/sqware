@@ -1,3 +1,4 @@
+use env::PieToken;
 use env::TaskId;
 use system_api::identity::Binding;
 use system_api::identity::Fail;
@@ -5,12 +6,14 @@ use system_api::identity::Install;
 use system_api::identity::Match;
 use system_api::identity::Selector;
 use system_api::identity::Subject;
+use system_api::identity::{InstallId, InstallSpec, InstallState, InstallStatus};
 
 use super::{IdentityBook, limits};
 
 pub(super) struct BindingRow {
     pub(super) task: TaskId,
     pub(super) binding: Binding,
+    pub(super) install: Option<(PieToken, TaskId, InstallId)>,
 }
 
 /// What the narrowed subject replaces in the sender's own binding.
@@ -94,6 +97,12 @@ impl IdentityBook {
         if from != self.installer {
             return Err(Fail::Denied);
         }
+        if !self.bindings.iter().any(|b| b.task == task) {
+            if self.bindings.len() >= limits::MAX_BINDINGS {
+                return Err(Fail::Full);
+            }
+            self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
+        }
         let subject = match install {
             Install::Authorized(s) => {
                 self.validate(s)?;
@@ -104,6 +113,10 @@ impl IdentityBook {
                 self.narrow(self.resolve(parent).ok_or(Fail::Denied)?.current, subject)?;
                 subject
             }
+            Install::Derive { parent } => {
+                let child = self.derive(from, parent)?;
+                Subject::new(child, &[])?
+            }
         };
         let binding = Binding {
             origin: subject,
@@ -111,12 +124,13 @@ impl IdentityBook {
         };
         if let Some(b) = self.bindings.iter_mut().find(|b| b.task == task) {
             b.binding = binding;
+            b.install = None;
         } else {
-            if self.bindings.len() >= limits::MAX_BINDINGS {
-                return Err(Fail::Full);
-            }
-            self.bindings.try_reserve(1).map_err(|_| Fail::Full)?;
-            self.bindings.push(BindingRow { task, binding });
+            self.bindings.push(BindingRow {
+                task,
+                binding,
+                install: None,
+            });
         }
         Ok(())
     }
@@ -158,6 +172,190 @@ impl IdentityBook {
         b.binding.current = b.binding.origin;
         Ok(())
     }
+}
+
+impl IdentityBook {
+    pub fn installation(&mut self, request: InstallationRequest) -> Result<InstallStatus, Fail> {
+        let InstallationRequest {
+            endpoint,
+            caller,
+            id,
+            action,
+        } = request;
+        if caller != self.installer || endpoint.get() == 0 || id.value == 0 {
+            return Err(Fail::Denied);
+        }
+        let at = self
+            .installations
+            .iter()
+            .position(|row| row.endpoint == endpoint && row.caller == caller && row.id == id);
+        if let Some(at) = at {
+            let spec = match action {
+                InstallAction::Apply(spec) => Some(spec),
+                _ => None,
+            };
+            if spec.is_some() && self.installations[at].spec != spec {
+                return Err(Fail::Changed);
+            }
+            if matches!(action, InstallAction::Cancel | InstallAction::Retire) {
+                let target = self.installations[at].spec.map(|s| s.task);
+                if let Some(task) = target {
+                    self.bindings
+                        .retain(|b| b.task != task || b.install != Some((endpoint, caller, id)));
+                }
+                self.installations[at].state = if action == InstallAction::Cancel {
+                    InstallState::Cancelled
+                } else {
+                    InstallState::Retired
+                };
+                self.installations[at].failure = None;
+            }
+            return Ok(self.install_status(at));
+        }
+        let origin = self
+            .install_origins
+            .iter()
+            .position(|row| row.endpoint == endpoint && row.caller == caller);
+        if let Some(origin) = origin {
+            if id.value <= self.install_origins[origin].high {
+                return if action == InstallAction::Inspect {
+                    Ok(InstallStatus {
+                        state: InstallState::Closed,
+                        binding: None,
+                        failure: None,
+                    })
+                } else if matches!(action, InstallAction::Apply(_)) {
+                    Err(Fail::Changed)
+                } else {
+                    Ok(InstallStatus {
+                        state: InstallState::Closed,
+                        binding: None,
+                        failure: None,
+                    })
+                };
+            }
+        }
+        if action == InstallAction::Inspect {
+            return Ok(InstallStatus {
+                state: InstallState::Unseen,
+                binding: None,
+                failure: None,
+            });
+        }
+        if origin.is_none() && self.install_origins.len() >= super::MAX_INSTALL_ORIGINS {
+            return Err(Fail::Full);
+        }
+        self.reserve_install()?;
+        if origin.is_none() {
+            self.install_origins
+                .try_reserve(1)
+                .map_err(|_| Fail::Full)?;
+        }
+        if let Some(origin) = origin {
+            self.installations.retain(|row| {
+                row.endpoint != endpoint
+                    || row.caller != caller
+                    || matches!(
+                        row.state,
+                        InstallState::Installed | InstallState::Pending | InstallState::Retiring
+                    )
+            });
+            self.install_origins[origin].high = id.value;
+        } else {
+            self.install_origins.push(super::InstallOrigin {
+                endpoint,
+                caller,
+                high: id.value,
+            });
+        }
+        let spec = match action {
+            InstallAction::Apply(spec) => Some(spec),
+            _ => None,
+        };
+        let state = match action {
+            InstallAction::Cancel => InstallState::Cancelled,
+            InstallAction::Retire => InstallState::Retired,
+            _ => InstallState::Pending,
+        };
+        let at = self.installations.len();
+        self.installations.push(super::InstallRecord {
+            endpoint,
+            caller,
+            id,
+            spec,
+            state,
+            failure: None,
+        });
+        if spec.is_none() {
+            return Ok(self.install_status(at));
+        }
+        let spec = spec.unwrap();
+        if self
+            .bindings
+            .iter()
+            .any(|row| row.task == spec.task && row.install.is_some())
+        {
+            self.installations[at].state = InstallState::Failed;
+            self.installations[at].failure = Some(Fail::Changed);
+            return Ok(self.install_status(at));
+        }
+        let result = self.bind(
+            caller,
+            BindingRequest {
+                task: spec.task,
+                install: spec.install,
+            },
+        );
+        match result {
+            Ok(()) => {
+                if let Some(row) = self.bindings.iter_mut().find(|row| row.task == spec.task) {
+                    row.install = Some((endpoint, caller, id));
+                }
+                self.installations[at].state = InstallState::Installed;
+            }
+            Err(fail) => {
+                self.installations[at].state = InstallState::Failed;
+                self.installations[at].failure = Some(fail);
+            }
+        }
+        Ok(self.install_status(at))
+    }
+    fn reserve_install(&mut self) -> Result<(), Fail> {
+        if self.installations.len() >= super::MAX_INSTALLATIONS {
+            return Err(Fail::Full);
+        }
+        self.installations.try_reserve(1).map_err(|_| Fail::Full)
+    }
+    fn install_status(&self, at: usize) -> InstallStatus {
+        let row = &self.installations[at];
+        let binding = row.spec.and_then(|spec| {
+            self.bindings
+                .iter()
+                .find(|b| {
+                    b.task == spec.task && b.install == Some((row.endpoint, row.caller, row.id))
+                })
+                .map(|b| b.binding)
+        });
+        InstallStatus {
+            state: row.state,
+            binding,
+            failure: row.failure,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum InstallAction {
+    Apply(InstallSpec),
+    Inspect,
+    Cancel,
+    Retire,
+}
+pub struct InstallationRequest {
+    pub endpoint: PieToken,
+    pub caller: TaskId,
+    pub id: InstallId,
+    pub action: InstallAction,
 }
 
 pub struct BindingRequest {

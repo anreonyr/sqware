@@ -4,7 +4,7 @@ extern crate env as abi;
 extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
-pub use abi::{ReleaseMode, Mark, PieToken, TaskId, Wait};
+pub use abi::{Mark, PieToken, ReleaseMode, TaskId, Wait};
 use std::{cell::RefCell, collections::VecDeque};
 #[derive(Default)]
 struct Effects {
@@ -14,6 +14,8 @@ struct Effects {
     shut: Vec<u64>,
     joins: VecDeque<Result<bool, ()>>,
     waits: Vec<Wait>,
+    given: Vec<(TaskId, Mark, u64)>,
+    pushed: Vec<(u64, Vec<u8>)>,
 }
 thread_local! { static EFFECTS: RefCell<Effects> = RefCell::new(Effects::default()); }
 pub mod raw {
@@ -30,6 +32,21 @@ pub mod raw {
             }),
         ))
     }
+    pub struct Hole(crate::PieToken);
+    impl Hole {
+        pub fn from_raw(token: crate::PieToken) -> Self {
+            Self(token)
+        }
+        pub fn push(&self, bytes: &[u8], _: crate::Wait) -> Result<(), ()> {
+            crate::EFFECTS.with(|effects| {
+                effects
+                    .borrow_mut()
+                    .pushed
+                    .push((self.0.get() as u64, bytes.to_vec()));
+            });
+            Ok(())
+        }
+    }
 }
 pub mod pie {
     pub fn shut(token: crate::PieToken) -> Result<(), ()> {
@@ -42,22 +59,53 @@ pub mod pie {
     }
 }
 pub mod unit {
-    pub struct Setup;
-    impl Setup {
-        pub fn channel(&self) -> &'static str {
-            "supply"
-        }
-        pub fn ready(&self) -> Option<&'static str> {
-            Some("ready")
-        }
+    #[derive(Clone, Copy)]
+    pub enum Ready {
+        OnSpawn,
+        Signal(crate::Mark),
     }
-    pub struct UnitFile;
+    pub struct ControlConfig {
+        pub ready: Ready,
+    }
+    pub struct Binding {
+        pub slot: crate::Mark,
+    }
+    static BINDINGS: &[Binding] = &[
+        Binding {
+            slot: crate::Mark::of("supply-a"),
+        },
+        Binding {
+            slot: crate::Mark::of("supply-b"),
+        },
+    ];
+    pub struct UnitFile {
+        pub control: ControlConfig,
+    }
     impl UnitFile {
         pub fn valid(&self) -> bool {
             true
         }
-        pub fn supply(&self) -> &[Setup] {
-            &[Setup]
+        pub fn supply(&self) -> &'static [Binding] {
+            BINDINGS
+        }
+    }
+    pub fn descriptor_mark(slot: crate::Mark) -> crate::Mark {
+        crate::Mark::new(slot.get().rotate_left(23) ^ 0x5355_5050_4c59_4445)
+    }
+    impl UnitFile {
+        pub fn signal() -> Self {
+            Self {
+                control: ControlConfig {
+                    ready: Ready::Signal(crate::Mark::of("unit-ready")),
+                },
+            }
+        }
+        pub fn on_spawn() -> Self {
+            Self {
+                control: ControlConfig {
+                    ready: Ready::OnSpawn,
+                },
+            }
         }
     }
     pub fn join_task(_: crate::TaskId, wait: crate::Wait) -> Result<bool, ()> {
@@ -110,6 +158,18 @@ pub mod session {
                 }
             })
         }
+        pub fn give(task: crate::TaskId, mark: crate::Mark) -> Result<crate::PieToken, ()> {
+            crate::EFFECTS.with(|effects| {
+                let mut effects = effects.borrow_mut();
+                effects.created += 1;
+                if effects.fail_at == Some(effects.created) {
+                    return Err(());
+                }
+                let token = crate::PieToken::mint(effects.created as usize);
+                effects.given.push((task, mark, token.get() as u64));
+                Ok(token)
+            })
+        }
     }
 }
 mod control {
@@ -131,6 +191,7 @@ mod control {
         }
     }
     pub mod start {
+        pub const BOOT_MS: usize = 100;
         #[derive(Debug, PartialEq)]
         pub enum Error {
             Step(&'static str),
@@ -140,6 +201,7 @@ mod control {
         #[derive(Debug, PartialEq)]
         pub enum Fail {
             Unknown,
+            NotReady,
         }
         #[derive(Debug, PartialEq)]
         pub enum Reaped {
@@ -183,76 +245,58 @@ mod control {
         fn successful_boot_releases_only_owned_channels() {
             reset();
             let mut s = service::Service::new(TaskId::new(9));
-            s.connect(&crate::unit::UnitFile).unwrap();
+            s.connect(&crate::unit::UnitFile::signal()).unwrap();
             assert!(
                 s.ready(&mut table::Table, task::Readiness { name: "boot" })
                     .unwrap()
             );
             assert_eq!(s.task(), TaskId::new(9));
             drop(s);
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2]));
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3, 1, 2]));
         }
         #[test]
         fn partial_failure_rolls_back_immediately_and_keeps_previous_channels() {
             reset();
             let mut s = service::Service::new(TaskId::new(9));
-            s.connect(&crate::unit::UnitFile).unwrap();
-            EFFECTS.with(|e| e.borrow_mut().fail_at = Some(4));
-            assert!(s.connect(&crate::unit::UnitFile).is_err());
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3]));
+            s.connect(&crate::unit::UnitFile::signal()).unwrap();
+            EFFECTS.with(|e| e.borrow_mut().fail_at = Some(5));
+            assert!(s.connect(&crate::unit::UnitFile::signal()).is_err());
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [4]));
             drop(s);
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3, 1, 2]));
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [4, 3, 1, 2]));
         }
         #[test]
         fn reconnect_replaces_and_reclaims_previous_channels() {
             reset();
             let mut s = service::Service::new(TaskId::new(9));
-            s.connect(&crate::unit::UnitFile).unwrap();
-            s.connect(&crate::unit::UnitFile).unwrap();
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2]));
+            s.connect(&crate::unit::UnitFile::signal()).unwrap();
+            s.connect(&crate::unit::UnitFile::signal()).unwrap();
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3, 1, 2]));
             drop(s);
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2, 3, 4]));
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3, 1, 2, 6, 4, 5]));
         }
         #[test]
-        fn supplied_images_are_released_once_after_ready() {
+        fn descriptor_writers_use_the_declared_slot_and_release_with_the_service() {
             reset();
             let mut s = service::Service::new(TaskId::new(9));
-            s.hold_supply(crate::PieToken::mint(41)).unwrap();
-            s.connect(&crate::unit::UnitFile).unwrap();
-            s.ready(&mut table::Table, task::Readiness { name: "boot" })
+            s.connect(&crate::unit::UnitFile::signal()).unwrap();
+            s.send_descriptor(crate::Mark::of("supply-b"), &[1, 2, 3])
                 .unwrap();
+            assert!(s.send_descriptor(crate::Mark::of("absent"), &[4]).is_err());
             EFFECTS.with(|e| {
-                assert_eq!(e.borrow().shut, [41]);
-                assert_eq!(e.borrow().released, [41]);
+                assert_eq!(e.borrow().pushed, [(2, vec![1, 2, 3])]);
             });
             drop(s);
-            EFFECTS.with(|e| assert_eq!(e.borrow().released, [41, 1, 2]));
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [3, 1, 2]));
         }
         #[test]
-        fn failed_start_reclaims_image_supplies() {
+        fn on_spawn_readiness_does_not_allocate_a_ready_channel() {
             reset();
             let mut s = service::Service::new(TaskId::new(9));
-            s.hold_supply(crate::PieToken::mint(41)).unwrap();
+            s.connect(&crate::unit::UnitFile::on_spawn()).unwrap();
+            EFFECTS.with(|e| assert_eq!(e.borrow().given.len(), 2));
             drop(s);
-            EFFECTS.with(|e| {
-                assert_eq!(e.borrow().shut, [41]);
-                assert_eq!(e.borrow().released, [41]);
-            });
-        }
-        #[test]
-        fn supply_selection_uses_declared_channel_not_first_endpoint() {
-            reset();
-            let mut s = service::Service::new(TaskId::new(9));
-            s.connect(&crate::unit::UnitFile).unwrap();
-            assert_eq!(
-                s.claim_supply(crate::Mark::of("ready"), Wait::POLL)
-                    .unwrap(),
-                crate::PieToken::mint(2)
-            );
-            assert!(
-                s.claim_supply(crate::Mark::of("absent"), Wait::POLL)
-                    .is_err()
-            );
+            EFFECTS.with(|e| assert_eq!(e.borrow().released, [1, 2]));
         }
         fn reap(results: &[Result<bool, ()>], wait_for: Wait) -> verdict::Reaped {
             reset();

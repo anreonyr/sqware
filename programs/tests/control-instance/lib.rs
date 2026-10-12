@@ -31,21 +31,42 @@ pub mod chrono {
 pub struct Error {
     pub source: UnitFail,
 }
-pub mod debug { pub fn put(_: &str) {} }
+pub mod debug {
+    pub fn put(_: &str) {}
+}
 pub mod unit {
-    pub fn join(_: crate::UnitTarget, _: crate::Wait, receive: bool) -> Result<crate::JoinReply, crate::Error> {
+    pub fn join(
+        _: crate::UnitTarget,
+        _: crate::Wait,
+        receive: bool,
+    ) -> Result<crate::JoinReply, crate::Error> {
         assert!(receive);
-        crate::EFFECTS.with(|effects| Ok(effects.borrow_mut().exits.pop_front()
-            .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped)))
+        crate::EFFECTS.with(|effects| {
+            Ok(effects
+                .borrow_mut()
+                .exits
+                .pop_front()
+                .map_or(crate::JoinReply::Pending, crate::JoinReply::Reaped))
+        })
     }
-    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> { Ok(true) }
+    pub fn join_task(_: crate::TaskId, _: crate::Wait) -> Result<bool, crate::Error> {
+        Ok(true)
+    }
     pub fn oust(_: crate::TeamId) -> Result<(), crate::Error> {
-        crate::EFFECTS.with(|effects| { let mut effects = effects.borrow_mut(); effects.ousted += 1; effects.exits.clear(); });
+        crate::EFFECTS.with(|effects| {
+            let mut effects = effects.borrow_mut();
+            effects.ousted += 1;
+            effects.exits.clear();
+        });
         Ok(())
     }
 
-    pub fn embark_task(task: crate::TaskId) -> Result<(), crate::Error> { embark(task) }
-    pub fn embark_team(_: crate::TeamId) -> Result<(), crate::Error> { embark(crate::TaskId::new(0)) }
+    pub fn embark_task(task: crate::TaskId) -> Result<(), crate::Error> {
+        embark(task)
+    }
+    pub fn embark_team(_: crate::TeamId) -> Result<(), crate::Error> {
+        embark(crate::TaskId::new(0))
+    }
     pub fn slay_team(team: crate::TeamId) -> Result<(), crate::Error> {
         crate::EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
@@ -54,14 +75,20 @@ pub mod unit {
         });
         Ok(())
     }
-    pub fn debark_team(_: crate::TeamId) -> Result<(), crate::Error> { debark(crate::TaskId::new(0)) }
+    pub fn debark_team(_: crate::TeamId) -> Result<(), crate::Error> {
+        debark(crate::TaskId::new(0))
+    }
 
     use crate::{EFFECTS, Error, TaskId, UnitFail};
     pub fn embark(_: TaskId) -> Result<(), Error> {
         EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
             effects.embarked += 1;
-            if effects.embark_busy { return Err(Error { source: UnitFail::Busy }); }
+            if effects.embark_busy {
+                return Err(Error {
+                    source: UnitFail::Busy,
+                });
+            }
             if effects.embark_fail {
                 Err(Error {
                     source: UnitFail::Denied,
@@ -97,14 +124,21 @@ pub mod instance_hook;
 pub mod system {
     pub mod app {
         #[derive(Debug)]
-        pub enum Fault { Room }
+        pub enum Fault {
+            Room,
+        }
         impl From<schedule::DispatchError> for Fault {
-            fn from(_: schedule::DispatchError) -> Self { Self::Room }
+            fn from(_: schedule::DispatchError) -> Self {
+                Self::Room
+            }
         }
     }
 
     pub mod control {
         pub mod unit {
+            pub mod verdict {
+                pub use system_api::control::Fail;
+            }
             pub mod table {
                 pub use system_api::control::State;
             }
@@ -113,6 +147,12 @@ pub mod system {
             }
         }
         pub mod instance {
+            pub mod activation {
+                include!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../../src/system/control/instance/activation.rs"
+                ));
+            }
             pub use crate::instance_create as create;
             pub mod state {
                 include!(concat!(
@@ -131,6 +171,160 @@ pub mod system {
             }
         }
     }
+    pub mod assembly {
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct JobId(core::num::NonZeroU64);
+        impl JobId {
+            pub fn new(raw: u64) -> Option<Self> {
+                core::num::NonZeroU64::new(raw).map(Self)
+            }
+            pub fn get(self) -> u64 {
+                self.0.get()
+            }
+        }
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        pub struct InstanceRef {
+            pub job: JobId,
+            pub task: crate::TaskId,
+        }
+        pub struct HookSelection {
+            pub reference: InstanceRef,
+            pub job: JobId,
+            pub next: usize,
+        }
+        pub enum JobOutcome {
+            Prepare(InstanceRef),
+            Retire(InstanceRef),
+        }
+        pub enum JobFailure {
+            Installation(&'static str),
+            Construction(system_api::control::Fail),
+            Control(system_api::control::Fail),
+            Command(system_api::control::Fail),
+        }
+        pub struct JobCompletion {
+            pub id: JobId,
+            pub result: JobResult,
+        }
+        pub struct JobResult {
+            pub outcome: Result<JobOutcome, JobFailure>,
+        }
+        pub fn reference(task: crate::TaskId) -> InstanceRef {
+            InstanceRef {
+                job: JobId::new(task.get() as u64).unwrap(),
+                task,
+            }
+        }
+        pub struct Jobs {
+            pub active_instance: Option<InstanceRef>,
+            active_job: Option<JobId>,
+            phases: alloc::vec::Vec<(
+                JobId,
+                InstanceRef,
+                crate::system::control::instance::hook::Key,
+                schedule::Cursor,
+            )>,
+            completed: alloc::vec::Vec<JobCompletion>,
+            next_job: u64,
+            next: usize,
+        }
+        impl Default for Jobs {
+            fn default() -> Self {
+                Self {
+                    active_instance: None,
+                    active_job: None,
+                    phases: alloc::vec::Vec::new(),
+                    completed: alloc::vec::Vec::new(),
+                    next_job: 1,
+                    next: 0,
+                }
+            }
+        }
+        impl Jobs {
+            pub fn phase(
+                &mut self,
+                reference: InstanceRef,
+                key: crate::system::control::instance::hook::Key,
+            ) -> Result<JobId, ()> {
+                if let Some((id, ..)) = self
+                    .phases
+                    .iter()
+                    .find(|(_, found, action, _)| *found == reference && *action == key)
+                {
+                    return Ok(*id);
+                }
+                let id = JobId::new(self.next_job).unwrap();
+                self.next_job += 1;
+                self.phases
+                    .push((id, reference, key, schedule::Cursor::default()));
+                Ok(id)
+            }
+            pub fn phase_cursor(&mut self, id: JobId) -> Option<&mut schedule::Cursor> {
+                self.phases
+                    .iter_mut()
+                    .find(|item| item.0 == id)
+                    .map(|item| &mut item.3)
+            }
+            pub fn take_phase(&mut self, id: JobId) -> Option<InstanceRef> {
+                let at = self.phases.iter().position(|item| item.0 == id)?;
+                Some(self.phases.remove(at).1)
+            }
+            pub fn complete_phase(
+                &mut self,
+                id: JobId,
+                result: Result<JobOutcome, JobFailure>,
+            ) -> bool {
+                let Some(at) = self.phases.iter().position(|phase| phase.0 == id) else {
+                    return false;
+                };
+                self.phases.remove(at);
+                self.completed.push(JobCompletion {
+                    id,
+                    result: JobResult { outcome: result },
+                });
+                true
+            }
+            pub fn take(&mut self, id: JobId) -> Option<JobCompletion> {
+                let at = self.completed.iter().position(|item| item.id == id)?;
+                Some(self.completed.remove(at))
+            }
+            pub fn complete_create_prepare(&mut self, _: JobId, _: InstanceRef) -> bool {
+                true
+            }
+            pub fn instance_ref(&self, task: crate::TaskId) -> Option<InstanceRef> {
+                Some(reference(task))
+            }
+            pub fn active_hook_reference(&self) -> Option<InstanceRef> {
+                self.active_instance
+            }
+            pub fn active_hook_task(&self) -> Option<crate::TaskId> {
+                self.active_instance.map(|instance| instance.task)
+            }
+            pub fn select_hook(&mut self, selection: HookSelection) {
+                self.active_instance = Some(selection.reference);
+                self.active_job = Some(selection.job);
+                self.next = selection.next;
+            }
+            pub fn active_hook_job(&self) -> Option<JobId> {
+                self.active_job
+            }
+            pub fn advance_hook(&mut self, next: usize) {
+                self.next = next;
+            }
+            pub fn next_hook(&self) -> usize {
+                self.next
+            }
+            pub fn clear_hook(&mut self) {
+                self.active_instance = None;
+                self.active_job = None;
+            }
+            pub fn reset_hook_scan(&mut self) {
+                self.active_instance = None;
+                self.active_job = None;
+                self.next = 0;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -141,10 +335,23 @@ mod tests {
     };
     use system_api::control::Fail;
 
+    #[test]
+    fn activation_wait_is_bounded_and_preserves_failure() {
+        use system::control::instance::activation::bounded_ready;
+        assert_eq!(bounded_ready(Ok(false), 99, 100), Ok(false));
+        assert_eq!(bounded_ready(Ok(false), 100, 100), Err(Fail::NotReady));
+        assert_eq!(bounded_ready(Ok(true), 100, 100), Ok(true));
+        assert_eq!(
+            bounded_ready(Err(Fail::Unknown), 1, 100),
+            Err(Fail::Unknown)
+        );
+    }
+
     fn fixture(state: State) -> Control {
         EFFECTS.with(|effects| *effects.borrow_mut() = Effects::default());
         Control {
             instances: vec![Instance {
+                reference: crate::system::assembly::reference(TaskId::new(2)),
                 owner: TaskId::new(1),
                 task: TaskId::new(2),
                 team: Some(TeamId::new(3)),
@@ -153,9 +360,28 @@ mod tests {
                 reason: None,
                 claimed: false,
                 claim_until: 10,
-                hook: Default::default(),
             }],
         }
+    }
+    #[test]
+    fn pending_activation_claim_is_idempotent_without_extending_deadline() {
+        let mut instance = Instance {
+            reference: crate::system::assembly::reference(TaskId::new(2)),
+            owner: TaskId::new(1),
+            task: TaskId::new(2),
+            team: Some(TeamId::new(3)),
+            state: State::Starting,
+            started: true,
+            reason: None,
+            claimed: true,
+            claim_until: 77,
+        };
+        assert_eq!(instance.claim(99), Some(TeamId::new(3)));
+        assert_eq!(instance.claim_until, 77);
+
+        instance.claimed = false;
+        instance.started = false;
+        assert_eq!(instance.claim(1), None);
     }
     fn call(control: &mut Control, command: Command) -> Result<Option<State>, Fail> {
         control.command_instance(TaskId::new(1), command)
@@ -200,18 +426,18 @@ mod tests {
         let mut control = fixture(State::Debarked);
         assert_eq!(
             call(&mut control, Command::Embark(TaskId::new(2))),
-            Ok(Some(State::Ready))
+            Ok(Some(State::Starting))
         );
         assert!(control.instances[0].claimed);
         EFFECTS.with(|effects| effects.borrow_mut().now = 20);
         assert_eq!(
             call(&mut control, Command::Embark(TaskId::new(2))),
-            Ok(Some(State::Ready))
+            Ok(Some(State::Starting))
         );
         EFFECTS.with(|effects| assert_eq!(effects.borrow().embarked, 1));
     }
     #[test]
-    fn failed_embark_stops_without_claiming() {
+    fn failed_embark_stops_after_preserving_claim() {
         let mut control = fixture(State::Debarked);
         EFFECTS.with(|effects| effects.borrow_mut().embark_fail = true);
         assert_eq!(
@@ -219,7 +445,7 @@ mod tests {
             Err(Fail::NotReady)
         );
         assert_eq!(control.instances[0].state, State::Stopping);
-        assert!(!control.instances[0].claimed);
+        assert!(control.instances[0].claimed);
     }
     #[test]
     fn busy_debark_is_pending_and_can_be_retried() {
@@ -256,18 +482,31 @@ mod tests {
     }
     #[test]
     fn zero_main_exit_cannot_hide_an_auxiliary_failure() {
-        let main = TaskExit { task: TaskId::new(2), cause: ExitCause::Reap, reason: 0 };
-        let auxiliary = TaskExit { task: TaskId::new(4), cause: ExitCause::Fault, reason: 17 };
+        let main = TaskExit {
+            task: TaskId::new(2),
+            cause: ExitCause::Reap,
+            reason: 0,
+        };
+        let auxiliary = TaskExit {
+            task: TaskId::new(4),
+            cause: ExitCause::Fault,
+            reason: 17,
+        };
         for exits in [[main, auxiliary], [auxiliary, main]] {
             let mut control = fixture(State::Ready);
-            for exit in exits { control.instances[0].reap(exit); }
+            for exit in exits {
+                control.instances[0].reap(exit);
+            }
             assert_eq!(control.instances[0].reason, Some(17));
             assert_eq!(control.instances[0].state, State::Stopping);
             control.instances[0].reap(TaskExit { reason: 23, ..main });
             assert_eq!(control.instances[0].reason, Some(23));
         }
         let mut control = fixture(State::Ready);
-        control.instances[0].reap(TaskExit { cause: ExitCause::Slay, ..auxiliary });
+        control.instances[0].reap(TaskExit {
+            cause: ExitCause::Slay,
+            ..auxiliary
+        });
         assert_eq!(control.instances[0].state, State::Ready);
         assert_eq!(control.instances[0].reason, None);
     }
@@ -279,21 +518,37 @@ mod tests {
         EFFECTS.with(|effects| {
             let mut effects = effects.borrow_mut();
             for id in 4..134 {
-                effects.exits.push_back(TaskExit { task: TaskId::new(id), cause: ExitCause::Reap, reason: 0 });
+                effects.exits.push_back(TaskExit {
+                    task: TaskId::new(id),
+                    cause: ExitCause::Reap,
+                    reason: 0,
+                });
             }
             effects.exits.back_mut().unwrap().cause = ExitCause::Fault;
             effects.exits.back_mut().unwrap().reason = 17;
         });
         let mut resources = schedule::Resources::new();
         resources.insert(control).unwrap();
-        resources.insert(hook::Active::default()).unwrap();
-        resources.write::<hook::Active>().unwrap().task = Some(TaskId::new(2));
+        resources.insert(system::assembly::Jobs::default()).unwrap();
+        resources
+            .write::<system::assembly::Jobs>()
+            .unwrap()
+            .active_instance = Some(system::assembly::reference(TaskId::new(2)));
         for _ in 0..2 {
-            assert_eq!(hook::reclaim(resources.write().unwrap(), resources.read().unwrap()), Ok(schedule::Progress::Pending));
+            assert_eq!(
+                hook::reclaim(resources.write().unwrap(), resources.read().unwrap()),
+                Ok(schedule::Progress::Pending)
+            );
             EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 0));
         }
-        assert_eq!(hook::reclaim(resources.write().unwrap(), resources.read().unwrap()), Ok(schedule::Progress::Done));
-        assert_eq!(resources.read::<Control>().unwrap().instances[0].reason, Some(17));
+        assert_eq!(
+            hook::reclaim(resources.write().unwrap(), resources.read().unwrap()),
+            Ok(schedule::Progress::Done)
+        );
+        assert_eq!(
+            resources.read::<Control>().unwrap().instances[0].reason,
+            Some(17)
+        );
         EFFECTS.with(|effects| assert_eq!(effects.borrow().ousted, 1));
     }
     #[test]
@@ -323,33 +578,88 @@ mod tests {
 
 #[test]
 fn resuming_busy_team_keeps_transition_retriable() {
-    use system::control::{instance::Command, instance::state::Instance, unit::Control, unit::table::State};
-    EFFECTS.with(|e| *e.borrow_mut() = Effects { embark_busy: true, ..Effects::default() });
-    let mut control = Control { instances: vec![Instance { owner: TaskId::new(1), task: TaskId::new(2), team: Some(TeamId::new(3)), state: State::Debarked, claimed: true, started: true, reason: None, claim_until: 0, hook: Default::default() }] };
-    assert_eq!(control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))), Ok(None));
+    use system::control::{
+        instance::Command, instance::state::Instance, unit::Control, unit::table::State,
+    };
+    EFFECTS.with(|e| {
+        *e.borrow_mut() = Effects {
+            embark_busy: true,
+            ..Effects::default()
+        }
+    });
+    let mut control = Control {
+        instances: vec![Instance {
+            reference: crate::system::assembly::reference(TaskId::new(2)),
+            owner: TaskId::new(1),
+            task: TaskId::new(2),
+            team: Some(TeamId::new(3)),
+            state: State::Debarked,
+            claimed: true,
+            started: true,
+            reason: None,
+            claim_until: 0,
+        }],
+    };
+    assert_eq!(
+        control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))),
+        Ok(None)
+    );
     assert_eq!(control.instances[0].state, State::Debarked);
     EFFECTS.with(|e| e.borrow_mut().embark_busy = false);
-    assert_eq!(control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))), Ok(Some(State::Ready)));
+    assert_eq!(
+        control.command_instance(TaskId::new(1), Command::Embark(TaskId::new(2))),
+        Ok(Some(State::Ready))
+    );
 }
 
 #[test]
 fn full_instance_table_rejects_before_construction() {
-    use system::control::{instance::state::{Instance, INSTANCE_CAP}, unit::Control, unit::table::State};
+    use system::control::{
+        instance::state::{INSTANCE_CAP, Instance},
+        unit::Control,
+        unit::table::State,
+    };
     use system_api::{control::Fail, loader::Built};
     EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
-    let mut control = Control { instances: (0..INSTANCE_CAP).map(|n| Instance {
-        owner: TaskId::new(1), task: TaskId::new(n + 2), team: Some(TeamId::new(n + 3)),
-        state: State::Starting, claimed: false, started: false, reason: None,
-        claim_until: 0, hook: Default::default(),
-    }).collect() };
+    let mut control = Control {
+        instances: (0..INSTANCE_CAP)
+            .map(|n| Instance {
+                reference: crate::system::assembly::reference(TaskId::new(n + 2)),
+                owner: TaskId::new(1),
+                task: TaskId::new(n + 2),
+                team: Some(TeamId::new(n + 3)),
+                state: State::Starting,
+                claimed: false,
+                started: false,
+                reason: None,
+                claim_until: 0,
+            })
+            .collect(),
+    };
     let invoked = std::cell::Cell::new(false);
-    let result = control.create_instance(TaskId::new(1), || {
-        invoked.set(true); Ok(Built { task: TaskId::new(1000), team: TeamId::new(1001) })
-    });
+    let result = control.create_instance(
+        system::control::instance::create::Admission {
+            owner: TaskId::new(1),
+            job: crate::system::assembly::JobId::new(100).unwrap(),
+        },
+        || {
+            invoked.set(true);
+            Ok(Built {
+                task: TaskId::new(1000),
+                team: TeamId::new(1001),
+            })
+        },
+    );
     assert!(matches!(result, Err(Fail::Full)));
-    assert!(!invoked.get(), "capacity rejection must not create a kernel team");
+    assert!(
+        !invoked.get(),
+        "capacity rejection must not create a kernel team"
+    );
     assert_eq!(control.instances.len(), INSTANCE_CAP);
-    EFFECTS.with(|e| { let e = e.borrow(); assert_eq!((e.doomed, e.ousted), (0, 0)); });
+    EFFECTS.with(|e| {
+        let e = e.borrow();
+        assert_eq!((e.doomed, e.ousted), (0, 0));
+    });
 }
 
 #[test]
@@ -357,39 +667,179 @@ fn failed_construction_does_not_publish_an_instance() {
     use system::control::unit::Control;
     use system_api::control::Fail;
     EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
-    let mut control = Control { instances: Vec::new() };
-    assert!(matches!(control.create_instance(TaskId::new(1), || Err(Fail::BadImage)), Err(Fail::BadImage)));
+    let mut control = Control {
+        instances: Vec::new(),
+    };
+    assert!(matches!(
+        control.create_instance(
+            system::control::instance::create::Admission {
+                owner: TaskId::new(1),
+                job: crate::system::assembly::JobId::new(101).unwrap()
+            },
+            || Err(Fail::BadImage)
+        ),
+        Err(Fail::BadImage)
+    ));
     assert!(control.instances.is_empty());
-    EFFECTS.with(|e| { let e = e.borrow(); assert_eq!((e.doomed, e.ousted), (0, 0)); });
+    EFFECTS.with(|e| {
+        let e = e.borrow();
+        assert_eq!((e.doomed, e.ousted), (0, 0));
+    });
 }
 
 #[test]
 fn successful_construction_is_registered_before_return() {
     use system::control::{unit::Control, unit::table::State};
     use system_api::loader::Built;
-    EFFECTS.with(|e| *e.borrow_mut() = Effects { now: 42, ..Effects::default() });
-    let mut control = Control { instances: Vec::new() };
-    let built = control.create_instance(TaskId::new(7), || Ok(Built {
-        task: TaskId::new(8), team: TeamId::new(9),
-    })).unwrap();
+    EFFECTS.with(|e| {
+        *e.borrow_mut() = Effects {
+            now: 42,
+            ..Effects::default()
+        }
+    });
+    let mut control = Control {
+        instances: Vec::new(),
+    };
+    let built = control
+        .create_instance(
+            system::control::instance::create::Admission {
+                owner: TaskId::new(7),
+                job: crate::system::assembly::JobId::new(102).unwrap(),
+            },
+            || {
+                Ok(Built {
+                    task: TaskId::new(8),
+                    team: TeamId::new(9),
+                })
+            },
+        )
+        .unwrap();
     assert_eq!(built.task, TaskId::new(8));
     assert_eq!(control.instances.len(), 1);
     let instance = &control.instances[0];
-    assert_eq!((instance.owner, instance.task, instance.team), (TaskId::new(7), built.task, Some(built.team)));
+    assert_eq!(
+        (instance.owner, instance.task, instance.team),
+        (TaskId::new(7), built.task, Some(built.team))
+    );
     assert_eq!(instance.state, State::Starting);
     assert!(!instance.claimed && !instance.started);
-    assert_eq!(instance.claim_until, 42 + system_api::loader::CLAIM_MS as u64 * 1_000_000);
+    assert_eq!(
+        instance.claim_until, 0,
+        "the claim window starts after prepare"
+    );
+}
+
+#[test]
+fn one_owner_can_register_multiple_live_instances() {
+    use system::control::{unit::Control, unit::table::State};
+    use system_api::loader::Built;
+    EFFECTS.with(|e| *e.borrow_mut() = Effects::default());
+    let mut control = Control {
+        instances: Vec::new(),
+    };
+    for (task, team) in [(8, 9), (10, 11)] {
+        control
+            .create_instance(
+                system::control::instance::create::Admission {
+                    owner: TaskId::new(7),
+                    job: crate::system::assembly::JobId::new(task as u64).unwrap(),
+                },
+                || {
+                    Ok(Built {
+                        task: TaskId::new(task),
+                        team: TeamId::new(team),
+                    })
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(control.instances.len(), 2);
+    assert!(
+        control
+            .instances
+            .iter()
+            .all(|item| item.owner == TaskId::new(7))
+    );
+    assert_eq!(control.instances[0].state, State::Starting);
+    assert_eq!(control.instances[1].state, State::Starting);
+    for item in &mut control.instances {
+        item.state = State::Debarked;
+        item.claim_until = 10;
+    }
+    assert_eq!(control.instances[0].claim(0), Some(TeamId::new(9)));
+    assert!(control.instances[0].claimed);
+    assert!(!control.instances[1].claimed);
+    assert_eq!(control.instances[1].claim(0), Some(TeamId::new(11)));
+    control.instances[0].stop();
+    assert_eq!(control.instances[0].state, State::Stopping);
+    assert_eq!(control.instances[1].state, State::Debarked);
+    assert!(control.instances[1].claimed);
+}
+
+#[test]
+fn repeated_claim_after_deadline_keeps_the_successful_claim() {
+    use system::control::{instance::state::Instance, unit::table::State};
+    let mut item = Instance {
+        reference: crate::system::assembly::reference(TaskId::new(2)),
+        owner: TaskId::new(1),
+        task: TaskId::new(2),
+        team: Some(TeamId::new(3)),
+        state: State::Debarked,
+        claimed: false,
+        started: false,
+        reason: None,
+        claim_until: 10,
+    };
+    assert_eq!(item.claim(9), Some(TeamId::new(3)));
+    assert!(item.claimed);
+    assert_eq!(item.claim(20), Some(TeamId::new(3)));
+    assert_eq!(item.claim_until, 10);
+}
+
+#[test]
+fn expired_unclaimed_instance_cannot_be_claimed() {
+    use system::control::{instance::state::Instance, unit::table::State};
+    let mut item = Instance {
+        reference: crate::system::assembly::reference(TaskId::new(2)),
+        owner: TaskId::new(1),
+        task: TaskId::new(2),
+        team: Some(TeamId::new(3)),
+        state: State::Debarked,
+        claimed: false,
+        started: false,
+        reason: None,
+        claim_until: 10,
+    };
+    assert_eq!(item.claim(10), None);
+    assert!(!item.claimed);
 }
 
 #[test]
 fn claimed_instance_does_not_inherit_a_child_job_failure() {
     use system::control::{instance::state::Instance, unit::table::State};
-    let mut item = Instance { owner: TaskId::new(1), task: TaskId::new(2), team: Some(TeamId::new(3)),
-        state: State::Ready, claimed: true, started: true, reason: None, claim_until: 0, hook: Default::default() };
-    item.reap(TaskExit { task: TaskId::new(9), cause: ExitCause::Reap, reason: 17 });
+    let mut item = Instance {
+        reference: crate::system::assembly::reference(TaskId::new(2)),
+        owner: TaskId::new(1),
+        task: TaskId::new(2),
+        team: Some(TeamId::new(3)),
+        state: State::Ready,
+        claimed: true,
+        started: true,
+        reason: None,
+        claim_until: 0,
+    };
+    item.reap(TaskExit {
+        task: TaskId::new(9),
+        cause: ExitCause::Reap,
+        reason: 17,
+    });
     assert_eq!(item.state, State::Ready);
     assert_eq!(item.reason, None);
-    item.reap(TaskExit { task: item.task, cause: ExitCause::Reap, reason: 0 });
+    item.reap(TaskExit {
+        task: item.task,
+        cause: ExitCause::Reap,
+        reason: 0,
+    });
     assert_eq!(item.state, State::Stopping);
     assert_eq!(item.reason, Some(0));
 }

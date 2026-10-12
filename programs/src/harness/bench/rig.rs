@@ -50,7 +50,7 @@ use programs::system::control::unit::task as service;
 use programs::system::control::unit::verdict::Reaped;
 use programs::unit::Ending;
 
-/// 受害者的清单名（programs::unit::PROGRAMS 里 `wanted_by` 含 `rig` 的那一行）：**rig A 的握手版受害者**——铸一枚孔交给
+/// 受害者镜像名由 rig Deployment 登记：**rig A 的握手版受害者**——铸一枚孔交给
 /// 台主 → 挂在自己那枚孔上等人唤醒。**它不自己校准**：轮数由台主随第一句发过来
 const VICTIM: &str = "hang";
 

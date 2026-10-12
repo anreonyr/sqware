@@ -1,18 +1,22 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
 //! :catalog 的 `PROGRAMS`
 
-use crate::unit::{Demand, Identity, Relation, UnitFile};
-use env::ProgramKind;
+use crate::unit::UnitFile;
 
 pub static RIG: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "rig",
-        space: ProgramKind::Supervisor,
-        wanted_by: &["rig"],
-        entry: &["rig"],
-        ..Identity::DEFAULT
+    name: "rig",
+    loader: crate::unit::LoaderConfig::supervisor("rig"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation::DEFAULT,
-    demand: Demand::DEFAULT,
+    control: crate::unit::ControlConfig {
+        after: None,
+        ready: crate::unit::Ready::OnSpawn,
+        ending: None,
+
+        construction: &[],
+    },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

@@ -14,7 +14,7 @@ use ipc::rpc::request::Pending;
 use lisp::RootValue;
 use pipe_client::{Client, Creating, Direction, Pipe};
 use shell_api::{Binding, Catalogue, Launch};
-use system_api::loader;
+use system_api::{control::construction, identity::Subject, loader};
 const MEMORY: usize = 4 * 1024 * 1024;
 struct Member {
     built: Option<loader::Built>,
@@ -63,24 +63,39 @@ pub struct RuntimeJob {
 pub struct Controller {
     pub catalogue: Catalogue,
     pipe: Client,
+    construction: PieToken,
     loader: PieToken,
+    subject: Subject,
+    identity_authority: TaskId,
     pub foreground: Option<JobId>,
     jobs: Vec<RuntimeJob>,
     next: u64,
     cursor: usize,
     output_cursor: usize,
+    next_create: u64,
 }
 impl Controller {
-    pub fn new(catalogue: Catalogue, pipe: Client, loader: PieToken) -> Self {
+    pub fn new(
+        catalogue: Catalogue,
+        pipe: Client,
+        construction: PieToken,
+        loader: PieToken,
+        subject: Subject,
+        identity_authority: TaskId,
+    ) -> Self {
         Self {
             catalogue,
             pipe,
+            construction,
             loader,
+            subject,
+            identity_authority,
             foreground: None,
             jobs: Vec::new(),
             next: 0,
             cursor: 0,
             output_cursor: 0,
+            next_create: 0,
         }
     }
     pub fn job(&self, id: JobId) -> Option<&RuntimeJob> {
@@ -190,12 +205,14 @@ impl Controller {
         if job.model.status.terminal() {
             return Ok(());
         }
-        if let Some(Work::Load { index, pending }) = &job.work {
+        if let Some(Work::Load { index, pending }) = &mut job.work {
+            pending.cancel().map_err(|_| "construction cancel")?;
             if let Some(built) = pending.built {
                 job.members[*index].built = Some(built);
             }
+        } else {
+            job.work = None;
         }
-        job.work = None;
         job.model.cancel();
         Ok(())
     }
@@ -260,28 +277,40 @@ impl Controller {
     }
     pub fn interests(&self, objects: &Objects, interests: &mut Interests) {
         for job in &self.jobs {
-            if job.model.status.terminal() { continue; }
+            if job.model.status.terminal() {
+                continue;
+            }
             if let Some(work) = &job.work {
                 let (source, budget) = match work {
                     Work::Load { pending, .. } => (pending.source(), pending.remaining()),
                     Work::Create { pending } => (Some(pending.source()), pending.remaining()),
-                    Work::Bind { pending, .. } | Work::Release { pending } => (Some(pending.source()), pending.remaining()),
+                    Work::Bind { pending, .. } | Work::Release { pending } => {
+                        (Some(pending.source()), pending.remaining())
+                    }
                 };
-                if let Some(source) = source { interests.source(source); }
-                else { interests.runnable = true; }
+                if let Some(source) = source {
+                    interests.source(source);
+                } else {
+                    interests.runnable = true;
+                }
                 interests.budget(budget);
                 continue;
             }
             match job.model.status {
                 JobStatus::Preparing => interests.runnable = true,
-                JobStatus::Starting | JobStatus::Pausing | JobStatus::Resuming | JobStatus::Cancelling => {
+                JobStatus::Starting
+                | JobStatus::Pausing
+                | JobStatus::Resuming
+                | JobStatus::Cancelling => {
                     interests.budget(env::Wait::AtMost(1));
                 }
                 _ => {}
             }
             for member in &job.members {
                 if let Some(built) = member.built.filter(|_| !member.dead) {
-                    interests.source(env::Source::Join { target: built.team.into() });
+                    interests.source(env::Source::Join {
+                        target: built.team.into(),
+                    });
                 }
             }
             let all_dead = job.model.results.iter().all(Option::is_some);
@@ -289,18 +318,36 @@ impl Controller {
             if all_dead && (drained || job.model.status == JobStatus::Cancelling) {
                 interests.runnable = true;
             }
-            if !matches!(job.model.status, JobStatus::Starting | JobStatus::Running | JobStatus::Resuming) { continue; }
+            if !matches!(
+                job.model.status,
+                JobStatus::Starting | JobStatus::Running | JobStatus::Resuming
+            ) {
+                continue;
+            }
             for pump in &job.pumps {
-                if pump.done { continue; }
-                let Some(local) = objects.port(pump.local) else { interests.runnable = true; continue };
-                if local.closed { interests.runnable = true; continue; }
+                if pump.done {
+                    continue;
+                }
+                let Some(local) = objects.port(pump.local) else {
+                    interests.runnable = true;
+                    continue;
+                };
+                if local.closed {
+                    interests.runnable = true;
+                    continue;
+                }
                 if pump.source() && pump.pending.is_empty() {
                     if matches!(local.buffer, Buffer::Terminal(Direction::Read)) {
                         if !job.model.foreground {
-                            interests.source(env::Source::Mail { pie: pump.port.token(), condition: env::MailCondition::Signal(pipe_api::DEMAND_BIT) });
+                            interests.source(env::Source::Mail {
+                                pie: pump.port.token(),
+                                condition: env::MailCondition::Signal(pipe_api::DEMAND_BIT),
+                            });
                             continue;
                         }
-                        if job.input.is_empty() && !job.eof { continue; }
+                        if job.input.is_empty() && !job.eof {
+                            continue;
+                        }
                     }
                 }
                 match pump.port.prepare_wait() {
@@ -320,13 +367,22 @@ impl Controller {
         let available = MEMORY
             .saturating_sub(objects.used())
             .saturating_sub(output_used);
+        let construction = self.construction;
+        let loader = self.loader;
+        let subject = self.subject;
+        let identity_authority = self.identity_authority;
+        let next_create = &mut self.next_create;
         let job = &mut self.jobs[index];
         if let Err(error) = advance(
             job,
             objects,
             &self.catalogue,
             &self.pipe,
-            self.loader,
+            construction,
+            loader,
+            subject,
+            identity_authority,
+            next_create,
             available,
         ) {
             if let Some(Work::Load { index, pending }) = &job.work {
@@ -365,10 +421,20 @@ fn advance(
     objects: &mut Objects,
     catalogue: &Catalogue,
     pipe: &Client,
+    construction_entry: PieToken,
     loader_entry: PieToken,
+    subject: Subject,
+    identity_authority: TaskId,
+    next_create: &mut u64,
     available: usize,
 ) -> Result<(), String> {
     if job.model.status.terminal() {
+        if let Some(Work::Load { pending, .. }) = &mut job.work {
+            let _ = pending.poll();
+            if pending.done() {
+                job.work = None;
+            }
+        }
         return Ok(());
     }
     if let Some(mut work) = job.work.take() {
@@ -486,7 +552,22 @@ fn advance(
                 .ok_or("image unavailable")?;
             job.work = Some(Work::Load {
                 index,
-                pending: Loading::begin(loader_entry, image, env::unit::self_id())?,
+                pending: {
+                    *next_create = next_create
+                        .checked_add(1)
+                        .ok_or("create identifiers exhausted")?;
+                    Loading::begin(
+                        construction_entry,
+                        loader_entry,
+                        image,
+                        env::unit::self_id(),
+                        subject,
+                        identity_authority,
+                        construction::CreateId {
+                            value: *next_create,
+                        },
+                    )?
+                },
             });
             return Ok(());
         }
@@ -538,33 +619,54 @@ fn advance(
         return Ok(());
     }
     for (index, member) in job.members.iter_mut().enumerate() {
-        let Some(built) = member.built.filter(|_| !member.dead) else { continue };
+        let Some(built) = member.built.filter(|_| !member.dead) else {
+            continue;
+        };
         let mut drained = false;
         for _ in 0..64 {
             match env::unit::join(built.team.into(), env::Wait::POLL, true)
-                .map_err(|e| format!("job result: {e:?}"))? {
+                .map_err(|e| format!("job result: {e:?}"))?
+            {
                 env::JoinReply::Reaped(exit) => {
                     if exit.task == built.task {
-                        if exit.reason != 0 { member.reason = Some(exit.reason); }
-                        else { member.reason.get_or_insert(0); }
+                        if exit.reason != 0 {
+                            member.reason = Some(exit.reason);
+                        } else {
+                            member.reason.get_or_insert(0);
+                        }
                     } else if exit.cause == env::ExitCause::Fault
-                        || exit.cause == env::ExitCause::Reap && exit.reason != 0 {
-                        if member.reason.unwrap_or(0) == 0 { member.reason = Some(exit.reason); }
-                    } else { continue; }
+                        || exit.cause == env::ExitCause::Reap && exit.reason != 0
+                    {
+                        if member.reason.unwrap_or(0) == 0 {
+                            member.reason = Some(exit.reason);
+                        }
+                    } else {
+                        continue;
+                    }
                     if !member.stopping {
                         env::unit::slay_team(built.team).map_err(|e| format!("job stop: {e:?}"))?;
                         member.stopping = true;
                     }
                 }
-                _ => { drained = true; break; },
+                _ => {
+                    drained = true;
+                    break;
+                }
             }
         }
-        if !drained { continue; }
-        if matches!(env::unit::join(built.team.into(), env::Wait::POLL, false), Ok(env::JoinReply::Complete)) {
+        if !drained {
+            continue;
+        }
+        if matches!(
+            env::unit::join(built.team.into(), env::Wait::POLL, false),
+            Ok(env::JoinReply::Complete)
+        ) {
             match env::unit::oust(built.team) {
                 Ok(()) => {
                     member.dead = true;
-                    job.model.complete(index, member.reason.unwrap_or(0)).map_err(|_| "missing result")?;
+                    job.model
+                        .complete(index, member.reason.unwrap_or(0))
+                        .map_err(|_| "missing result")?;
                 }
                 Err(error) if error.source == env::UnitFail::Busy => {}
                 Err(error) => return Err(format!("job reclaim: {error:?}")),
@@ -639,7 +741,10 @@ fn advance(
         job.model.drained();
         return Ok(());
     }
-    if matches!(job.model.status, JobStatus::Starting | JobStatus::Pausing | JobStatus::Resuming) {
+    if matches!(
+        job.model.status,
+        JobStatus::Starting | JobStatus::Pausing | JobStatus::Resuming
+    ) {
         if let Some(index) = job.model.pending_member() {
             let member = &mut job.members[index];
             let built = member.built.ok_or("missing running member")?;
@@ -651,7 +756,9 @@ fn advance(
             };
             match result {
                 Ok(()) => {
-                    if job.model.status != JobStatus::Pausing { member.ran = true; }
+                    if job.model.status != JobStatus::Pausing {
+                        member.ran = true;
+                    }
                     job.model.acknowledge(index).map_err(|_| "missing member")?;
                 }
                 Err(error) if error.source == env::UnitFail::Busy => {}

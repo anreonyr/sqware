@@ -27,6 +27,8 @@ mod tests {
         ];
         for (account, valid) in cases {
             let request = Request {
+                op: account_api::CREATE,
+                id: system_api::control::construction::CreateId { value: 1 },
                 account: account.into(),
                 back: PieToken::NONE,
             };

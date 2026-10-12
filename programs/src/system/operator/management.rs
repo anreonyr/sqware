@@ -10,12 +10,11 @@ use env::pie;
 use ipc::hand::Sender;
 use ipc::session::establish;
 use system_api::operator::EntryId;
-use system_api::operator::Path;
 use system_api::operator::TIP_MARK;
 use system_api::operator::Tip;
 
 /// Consuming a bootstrap request does not prove its mutation succeeded.
-fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId, &'static str> {
+fn request_value(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<u64, &'static str> {
     let host = establish::opened_by(into).ok_or("operator:tip source")?;
     let (back, seed) = establish::lend_out(into, system_api::operator::TIP_BACK)
         .map_err(|_| "operator:tip reply")?;
@@ -39,11 +38,19 @@ fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId
         if len != 9 || from != host || status[0] != system_api::operator::OK {
             return Err("operator:tip rejected");
         }
-        Ok(EntryId::new(
-            u64::from_le_bytes(status[1..].try_into().unwrap()) as usize,
-        ))
+        Ok(u64::from_le_bytes(status[1..].try_into().unwrap()))
     })();
     result
+}
+
+fn request(into: PieToken, make: impl FnOnce(PieToken) -> Tip) -> Result<EntryId, &'static str> {
+    request_value(into, make).map(|id| EntryId::new(id as usize))
+}
+
+#[derive(Clone, Copy)]
+pub struct RootInfo {
+    pub entry: system_api::operator::Entry,
+    pub entrance: PieToken,
 }
 
 /// **持树者在装配者这一侧的状态**：持树者的号 ＋ 它那条提示之路
@@ -56,6 +63,21 @@ pub struct Tree {
 }
 
 impl Tree {
+    pub fn root_entry(&self) -> Result<RootInfo, &'static str> {
+        let host = self.host.ok_or("no tree yet")?;
+        let tip = self.tip.ok_or("no tip")?;
+        let seed = request_value(tip, |back| Tip::Root { back })?;
+        if seed == 0 {
+            return Err("operator:root seed");
+        }
+        Ok(RootInfo {
+            entry: system_api::operator::Entry {
+                operator: host,
+                target: system_api::operator::EntryTarget::Root,
+            },
+            entrance: PieToken::from_bytes(&seed.to_le_bytes()).ok_or("operator:root seed")?,
+        })
+    }
     /// 持树者那一枚的号（`None` = 还没起）
     pub fn host(&self) -> Option<TaskId> {
         self.host
@@ -106,51 +128,6 @@ impl Tree {
         self.tip = None;
         host_of(host, millis, &mut self.tip)?;
         Ok(())
-    }
-
-    pub(crate) fn mount(&mut self, placement: &super::Placement) -> Result<EntryId, &'static str> {
-        let road = &placement.road;
-        let leaf = (placement.tile.pie != PieToken::NONE).then_some(placement.tile.pie);
-        let permit = placement.tile.permit;
-        let owner = placement.tile.owner;
-        let replace = placement.replace;
-
-        let host = self.host.ok_or("no tree yet")?;
-        let tip = self.tip.ok_or("no tip")?;
-        let seed = match leaf {
-            Some(entry) => port::ship(entry, host, Access::FETCH | Access::STORE, Policy::VEST)
-                .map_err(|_| "operator:mount ship")?
-                .seed(),
-            None => PieToken::NONE,
-        };
-        let result = request(tip, |back| Tip::Plate {
-            road: road.to_path_buf(),
-            leaf: seed,
-            permit,
-            owner: owner.unwrap_or(TaskId::new(0)),
-            replace,
-            back,
-        });
-        if result.is_err() && seed != PieToken::NONE {
-            let _ = request(tip, |back| Tip::Abort {
-                road: road.to_path_buf(),
-                leaf: seed,
-                back,
-            });
-            let _ = pie::revoke(host, seed);
-        }
-        result
-    }
-
-    pub(crate) fn remove_empty(&mut self, road: &Path) -> Result<(), &'static str> {
-        request(self.tip.ok_or("no tip")?, |back| Tip::Empty {
-            road: road.to_path_buf(),
-            back,
-        })
-        .map(|_| ())
-    }
-    pub(crate) fn unmount(&mut self, id: EntryId) -> Result<(), &'static str> {
-        request(self.tip.ok_or("no tip")?, |back| Tip::Unplate { id, back }).map(|_| ())
     }
 }
 

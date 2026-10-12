@@ -47,7 +47,7 @@ use programs::system::control::unit::table::{Announce, Table};
 use programs::system::control::unit::task as service;
 use programs::unit::Ending;
 
-/// 占核者与打点者的**清单名**（programs::unit::PROGRAMS 里 `wanted_by` 含 `load` 的那两行）
+/// The hog and parker image names registered by the load Deployment.
 const HOG_ELF: &str = "busy";
 const PARKER_ELF: &str = "park";
 

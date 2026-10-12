@@ -13,7 +13,7 @@ pub enum Error {
 #[derive(Clone, Copy)]
 pub(crate) struct Input {
     pub program: &'static UnitFile,
-    pub image: Option<(&'static [u8], env::ProgramKind)>,
+    pub image: Option<&'static [u8]>,
 }
 impl Control {
     pub(crate) fn input(&self, name: &str) -> Result<Input, super::verdict::Fail> {

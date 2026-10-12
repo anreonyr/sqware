@@ -673,11 +673,16 @@ impl Host {
     }
     pub fn remaining(&self) -> Wait {
         let at = match self.pending.as_ref().map(|effect| &effect.waiting) {
-            Some(Waiting::Job { deadline, .. } | Waiting::Read { deadline, .. }
-                | Waiting::Port { deadline, .. }) => *deadline,
+            Some(
+                Waiting::Job { deadline, .. }
+                | Waiting::Read { deadline, .. }
+                | Waiting::Port { deadline, .. },
+            ) => *deadline,
             None => return Wait::Forever,
         };
-        if at == u64::MAX { Wait::Forever } else {
+        if at == u64::MAX {
+            Wait::Forever
+        } else {
             Wait::AtMost(at.saturating_sub(env::chrono::clock()).div_ceil(1_000_000) as usize)
         }
     }

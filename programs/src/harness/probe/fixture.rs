@@ -1,11 +1,11 @@
 use crate::system::app::Fault as Fail;
 use crate::system::app::schedule;
-use crate::system::publication::RuntimeNamespace as Resources;
+use crate::system::assembly::namespace::NamespaceInstallations as Resources;
 use crate::system::{
     app::bootstrap::Boot,
     control::identity::Roster,
     control::{
-        lifecycle::{Action, Active, Key, Operations, schedule as lifecycle},
+        lifecycle::{Action, Active, Key, schedule as lifecycle},
         unit::verdict,
         unit::{Control, start},
     },
@@ -18,7 +18,7 @@ use ::schedule::{
 pub struct Fault {
     pub armed: bool,
     pub task: Option<env::TaskId>,
-    pub road: Option<system_api::operator::path::PathBuf>,
+    pub prepared: bool,
 }
 pub(crate) struct Fixture {
     pub resources: Registry<'static>,
@@ -31,9 +31,9 @@ fn supply(
     control: Res<Control>,
 ) -> Result<Progress, verdict::Fail> {
     let job = active.0.as_ref().ok_or(verdict::Fail::Unknown)?;
-    let program = control.input(&job.request.name)?.program;
+    let program = control.input(&job.key.request.name)?.program;
     let task = control
-        .task(&job.request.name)
+        .task(&job.key.request.name)
         .ok_or(verdict::Fail::Unknown)?;
     super::identity::supply_to(roster.authority(), program, task)
         .map_err(|_| verdict::Fail::NotReady)?;
@@ -70,8 +70,11 @@ fn inject(
         .map_err(|_| verdict::Fail::NotReady)?;
     if fault.armed {
         fault.armed = false;
-        fault.task = active.0.as_ref().and_then(|job| job.execution.task);
-        fault.road = fault.task.and_then(|task| resources.runtime_road(task));
+        fault.task = active
+            .0
+            .as_ref()
+            .and_then(|job| job.progress.execution.task);
+        fault.prepared = fault.task.is_some_and(|task| resources.prepared(task));
         return Err(verdict::Fail::NotReady);
     }
     Ok(Progress::Done)
@@ -86,7 +89,7 @@ impl Fixture {
             .insert(Fault {
                 armed: false,
                 task: None,
-                road: None,
+                prepared: false,
             })
             .map_err(|_| ())?;
         resources
@@ -94,7 +97,7 @@ impl Fixture {
             .map_err(|_| ())?;
         let mut start = schedule::startup().map_err(|_| ())?;
         let mut children =
-            lifecycle::lifecycle(crate::system::app::assembly::hooks().map_err(|_| ())?)
+            lifecycle::lifecycle(crate::system::assembly::static_plan::hooks().map_err(|_| ())?)
                 .map_err(|_| ())?;
         let at = children
             .iter()
@@ -123,7 +126,7 @@ impl Fixture {
         let mut plans = [
             schedule::maintenance()
                 .map_err(|_| ())?
-                .map_error(|_| Fail::Publication),
+                .map_error(|_| Fail::Room),
             lifecycle::actions(children).map_err(|_| ())?,
             schedule::frame().map_err(|_| ())?,
             schedule::shutdown().map_err(|_| ())?,
@@ -152,10 +155,11 @@ impl Fixture {
         Ok(())
     }
     pub(crate) fn action(&mut self, name: &str, action: Action) -> Result<Option<env::TaskId>, ()> {
-        self.resources
-            .write::<Operations>()
+        let job = self
+            .resources
+            .write::<crate::system::assembly::Jobs>()
             .map_err(|_| ())?
-            .submit(name.into(), action)
+            .submit_lifecycle(name.into(), action)
             .map_err(|_| ())?;
         loop {
             if self.plans[1]
@@ -167,9 +171,12 @@ impl Fixture {
             }
             self.progress().map_err(|_| ())?;
             {
-                let mut operations = self.resources.write::<Operations>().map_err(|_| ())?;
-                if let Some(result) = operations.take_local_completion(name) {
-                    return result.map_err(|_| ());
+                let mut operations = self
+                    .resources
+                    .write::<crate::system::assembly::Jobs>()
+                    .map_err(|_| ())?;
+                if let Some(result) = operations.take_local(job) {
+                    return result.map(|(_, task)| task).map_err(|_| ());
                 }
             }
             execution::room::park(core::time::Duration::from_millis(1)).map_err(|_| ())?;

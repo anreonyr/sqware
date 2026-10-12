@@ -39,7 +39,7 @@ use env::unit;
 use env::{PieToken, TaskId};
 use programs::debug;
 
-/// 清单里等待者的名字（programs::unit::PROGRAMS 里 `wanted_by` 含 `group` 的那一行）
+/// The waiter image name registered by the group Deployment.
 const WAITER: &str = "waiter";
 /// 几名等待者（共享组的重点就是**不止一个**）
 const WAITERS: usize = 2;

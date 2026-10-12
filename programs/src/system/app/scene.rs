@@ -10,14 +10,40 @@ use crate::unit::UnitFile;
 
 /// 只选择声明依赖且包含在镜像中的单元。
 pub fn programs(catalog: &Catalog) -> Result<Vec<&'static UnitFile>, Error> {
-    let mut list: Vec<&'static UnitFile> = crate::unit::PROGRAMS
+    let deployment = crate::unit::select_deployment(|image| catalog.find(image).is_some())
+        .map_err(|_| Error::Step("deployment entry missing or ambiguous"))?;
+    let mut list: Vec<&'static UnitFile> = deployment
+        .start
         .iter()
-        .copied()
-        .filter(|p| p.relation.after.is_some() && catalog.find(p.name()).is_some())
-        .collect();
-    crate::unit::order_scene(&mut list).map_err(|why| {
-        debug!("system: bad deps {why:?}");
-        Error::Step("bad deps")
-    })?;
+        .map(|name| {
+            let program = crate::unit::PROGRAMS
+                .iter()
+                .copied()
+                .find(|program| program.name() == *name)
+                .ok_or_else(|| {
+                    programs::debug!(
+                        "system: deployment {} references missing UnitFile {}",
+                        deployment.name,
+                        name
+                    );
+                    Error::Step("deployment start UnitFile missing")
+                })?;
+            if catalog.find(program.loader.image).is_none() {
+                programs::debug!(
+                    "system: deployment {} start image missing {}",
+                    deployment.name,
+                    name
+                );
+                return Err(Error::Step("deployment start image missing"));
+            }
+            Ok(program)
+        })
+        .collect::<Result<_, _>>()?;
+    crate::unit::order_scene(&mut list, deployment.targets, deployment.bootstrap).map_err(
+        |why| {
+            debug!("system: bad deps {why:?}");
+            Error::Step("bad deps")
+        },
+    )?;
     Ok(list)
 }

@@ -1,56 +1,37 @@
-use crate::unit::{Demand, Ending, Identity, Relation, Setup, UnitFile};
+use crate::unit::{Ending, UnitFile};
 pub static PROGRAM: UnitFile = UnitFile {
-    publication: &[crate::unit::Publish::Entries {
-        scope: crate::unit::PublishScope(4),
-        group: "",
-        road: "svc/account",
-        entries: &[crate::unit::PublishEntry { name: "create" }],
-        public: false,
-    }],
-    identity: Identity {
-        name: "account",
+    name: "account",
+    loader: crate::unit::LoaderConfig::user("account"),
+    operator: crate::unit::OperatorConfig {
+        namespace: &[crate::unit::operator::Namespace {
+            path: "account",
+            scope: crate::unit::operator::Scope::Names(&["create"]),
+            ops: system_api::operator::Ops::BIND
+                .union(system_api::operator::Ops::UNBIND)
+                .union(system_api::operator::Ops::FIND),
+            permit: Some(system_api::operator::Permit::Bound),
+            source_mark: None,
+            bindings: &[crate::unit::operator::Binding {
+                name: "create",
+                mark: account_api::ENTRY,
+                view: env::Access::STORE,
+                permit: system_api::operator::Permit::Bound,
+            }],
+        }],
+    },
+    identity: crate::unit::Identity {
         aliases: &["anran"],
-        wanted_by: &["accept", "product", "system-fault"],
-        ..Identity::DEFAULT
+        grants: &[system_api::identity::Grant::Derive],
     },
-    relation: Relation {
-        after: Some(&["operator", "identity"]),
-        restart: Some(Ending::Resident),
-        ..Relation::DEFAULT
+    control: crate::unit::ControlConfig {
+        after: Some(&[
+            crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
+            crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Identity),
+        ]),
+        ready: crate::unit::Ready::Signal(crate::unit::READY_MARK),
+        ending: Some(Ending::Resident),
+
+        construction: &[crate::unit::Construction::unit_owned_by("shell", "login")],
     },
-    demand: Demand {
-        construction: true,
-        identity: &[system_api::identity::Grant::Derive],
-        supply: &[
-            Setup::Image {
-                name: "shell",
-                load: "account-image",
-            },
-            Setup::Image {
-                name: "cat",
-                load: "account-cat",
-            },
-            Setup::Image {
-                name: "emit",
-                load: "account-emit",
-            },
-            Setup::Image {
-                name: "upper",
-                load: "account-upper",
-            },
-            Setup::Image {
-                name: "fail",
-                load: "account-fail",
-            },
-            Setup::Image {
-                name: "spin",
-                load: "account-spin",
-            },
-            Setup::Image {
-                name: "workers",
-                load: "account-workers",
-            },
-            Setup::Ready,
-        ],
-    },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

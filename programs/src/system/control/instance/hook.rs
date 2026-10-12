@@ -4,16 +4,11 @@ use crate::system::control::unit::Control;
 use crate::system::control::unit::table::State;
 
 use ::schedule::{BuildError, Dispatch, Invocation, Plan, Progress, Res, ResMut, Schedule};
-use env::{TaskId, Wait, unit};
+use env::{Wait, unit};
 #[derive(Clone, Copy, PartialEq)]
 pub enum Key {
     Prepare,
     Retire,
-}
-#[derive(Default)]
-pub struct Active {
-    pub task: Option<TaskId>,
-    next: usize,
 }
 pub fn plan(
     children: alloc::vec::Vec<(Key, Plan<&'static str>)>,
@@ -25,81 +20,147 @@ pub fn plan(
 }
 pub fn budget(
     control: Res<Control>,
-    mut active: ResMut<Active>,
+    mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    active.next = 0;
+    jobs.reset_hook_scan();
     dispatch.begin(control.instances.len())?;
     Ok(Progress::Done)
 }
 pub fn select(
-    mut control: ResMut<Control>,
-    mut active: ResMut<Active>,
+    control: Res<Control>,
+    mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
-    while let Some(item) = control.instances.get_mut(active.next) {
-        active.next += 1;
-        let key = match item.state {
-            State::Starting => Key::Prepare,
-            State::Stopping if unit::join_task(item.task, Wait::POLL).unwrap_or(true) => {
-                Key::Retire
-            }
-            _ => continue,
+    while let Some((task, state, started, expected)) = control
+        .instances
+        .get(jobs.next_hook())
+        .map(|item| (item.task, item.state, item.started, item.reference))
+    {
+        let next = jobs.next_hook() + 1;
+        jobs.advance_hook(next);
+        let Some(reference) = jobs.instance_ref(task) else {
+            continue;
         };
-        active.task = Some(item.task);
+        if expected != reference {
+            continue;
+        }
+        let key = match state {
+            State::Starting if !started => Some(Key::Prepare),
+            State::Stopping if unit::join_task(task, Wait::POLL).unwrap_or(true) => {
+                Some(Key::Retire)
+            }
+            _ => None,
+        };
+        let Some(key) = key else { continue };
+        let job = jobs.phase(reference, key).map_err(|_| Fail::Room)?;
+        jobs.select_hook(crate::system::assembly::HookSelection {
+            reference,
+            job,
+            next,
+        });
+        let cursor = jobs.phase_cursor(job).ok_or(Fail::Room)?;
         dispatch.select(Invocation {
             key,
-            cursor: core::mem::take(&mut item.hook),
+            cursor: core::mem::take(cursor),
         })?;
         return Ok(Progress::Done);
     }
+    jobs.clear_hook();
     dispatch.stop()?;
     Ok(Progress::Done)
 }
 pub fn finish(
     mut control: ResMut<Control>,
-    active: Res<Active>,
+    mut jobs: ResMut<crate::system::assembly::Jobs>,
     mut dispatch: ResMut<Dispatch<Key, &'static str>>,
 ) -> Result<Progress, Fail> {
     let completion = dispatch.take_result()?;
     let invocation = completion.invocation;
+    let reference = jobs.active_hook_reference().ok_or(Fail::Room)?;
+    let job = jobs.active_hook_job().ok_or(Fail::Room)?;
     let item = control
         .instances
         .iter_mut()
-        .find(|item| Some(item.task) == active.task)
+        .find(|item| item.reference == reference)
         .ok_or(Fail::Room)?;
     match completion.result {
-        Ok(Progress::Pending) => item.hook = invocation.cursor,
+        Ok(Progress::Pending) => {
+            *jobs.phase_cursor(job).ok_or(Fail::Room)? = invocation.cursor;
+        }
         Ok(Progress::Done) => {
-            item.hook.reset();
-            match invocation.key {
-                Key::Prepare => item.state = State::Debarked,
-                Key::Retire => {
+            let outcome = match invocation.key {
+                Key::Prepare => crate::system::assembly::JobOutcome::Prepare(reference),
+                Key::Retire => crate::system::assembly::JobOutcome::Retire(reference),
+            };
+            if !jobs.complete_phase(job, Ok(outcome)) {
+                return Err(Fail::Room);
+            }
+            let result = jobs.take(job).ok_or(Fail::Room)?.result.outcome;
+            match (invocation.key, result) {
+                (Key::Prepare, Ok(crate::system::assembly::JobOutcome::Prepare(done)))
+                    if done == reference =>
+                {
+                    item.state = State::Debarked;
+                    item.claim_until =
+                        env::chrono::clock() + system_api::loader::CLAIM_MS as u64 * 1_000_000;
+                    if !jobs.complete_create_prepare(job, reference) {
+                        return Err(Fail::Room);
+                    }
+                }
+                (Key::Retire, Ok(crate::system::assembly::JobOutcome::Retire(done)))
+                    if done == reference =>
+                {
                     item.team = None;
                     item.state = State::Dead;
                 }
+                _ => return Err(Fail::Room),
             }
         }
         Err(error) => {
+            let failure = match error {
+                ::schedule::RunError::Step(reason) => {
+                    crate::system::assembly::JobFailure::Installation(reason)
+                }
+                _ => crate::system::assembly::JobFailure::Installation("hook dispatch"),
+            };
+            if !jobs.complete_phase(job, Err(failure)) {
+                return Err(Fail::Room);
+            }
+            let failure = jobs
+                .take(job)
+                .ok_or(Fail::Room)?
+                .result
+                .outcome
+                .err()
+                .ok_or(Fail::Room)?;
             programs::debug::put(&alloc::format!(
                 "control: instance {} hook failed {:?}",
                 item.task.get(),
-                error
+                match failure {
+                    crate::system::assembly::JobFailure::Installation(reason) => reason,
+                    crate::system::assembly::JobFailure::Construction(_) => "construction failure",
+                    crate::system::assembly::JobFailure::Control(_) => "control failure",
+                    crate::system::assembly::JobFailure::Command(_) => "command failure",
+                }
             ));
             item.stop();
-            item.hook.reset();
         }
     }
+    jobs.clear_hook();
     Ok(Progress::Done)
 }
 pub fn reclaim(
     mut control: ResMut<Control>,
-    active: Res<Active>,
+    active: Res<crate::system::assembly::Jobs>,
 ) -> Result<Progress, &'static str> {
+    let reference = active
+        .active_hook_reference()
+        .ok_or("instance hook reference")?;
     let item = control
         .instances
         .iter_mut()
-        .find(|item| Some(item.task) == active.task)
+        .find(|item| item.reference == reference)
         .ok_or("instance hook target")?;
     let Some(team) = item.team else {
         return Ok(Progress::Done);

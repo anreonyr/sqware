@@ -11,7 +11,7 @@ use programs::Report;
 
 use ipc::session::Session;
 use programs::debug;
-use system_api::operator::Permit;
+use system_api::operator::{self as operator_api, Permit};
 use system_client::operator;
 use system_client::operator::Face;
 
@@ -36,15 +36,22 @@ fn main() -> Report<'static> {
     };
     let tree = Face::of(session);
     let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("lease-entry"))).unwrap();
-    let target = system_api::control::publication::Target::Service {
-        scope: system_api::control::publication::Scope(4),
-        group: "fixtures".into(),
-        name: "lease".into(),
-    };
-    let id = system_client::control::publication::Client::injected()
+    let capability =
+        system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
+    let anchor = capability.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    let binding = capability
+        .bind(
+            anchor,
+            "lease",
+            entry,
+            view,
+            Permit::Public,
+            operator_api::OperationId(1),
+            Wait::AtMost(MS),
+        )
         .unwrap()
-        .publish(target, entry, Permit::Public, Wait::AtMost(MS))
-        .unwrap();
+        .binding;
     let cap = tree
         .tile(
             system_api::operator::path::Path::new("svc/fixtures/lease"),
@@ -58,7 +65,7 @@ fn main() -> Report<'static> {
         unit::self_id(),
         "Control must preserve publisher ownership"
     );
-    debug!("probe-lease: publication={}", id.get());
+    debug!("probe-lease: binding={}", binding.entry_id().get());
 
     return Report::note(E_OK, OK_NOTE);
 }

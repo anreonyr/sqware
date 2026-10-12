@@ -32,8 +32,8 @@ impl From<erra::Error<env::PieFail>> for Fail {
     }
 }
 
-mod admission;
 mod answer;
+mod authority;
 mod door;
 mod events;
 mod exchange;
@@ -47,7 +47,7 @@ use self::{
     door::Judgment,
     exchange::{Buffer, Hit, Outboxes, Request, Selected},
     frame::Running,
-    management::{Ack, CurrentTip, Tip, Tips},
+    management::{Tip, TipWork, Tips},
 };
 use crate::system::app::life::Status;
 use crate::system::operator::session::Desk;
@@ -57,24 +57,18 @@ use ::schedule::{Cursor, Dispatch, Progress, Resources};
 use alloc::{collections::VecDeque, sync::Arc, vec::Vec};
 use env::PieToken;
 use system_api::operator as ocall;
-use system_client::identity::TaskQuery;
 pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     let mut resources = Resources::new();
     resources
-        .insert(status)?
+        .insert(status.clone())?
         .insert(Tip(PieToken::NONE))?
         .insert(Pile::unseal(false)?)?
-        .insert(Operator::new())?
+        .insert(Operator::new(status.control, env::unit::self_id()))?
         .insert(events::Watchers::new())?
         .insert(Desk::new())?
-        .insert(None::<TaskQuery>)?
         .insert(Outboxes(Vec::new()))?
         .insert(Tips(VecDeque::new()))?
-        .insert(CurrentTip(None))?
-        .insert(Output::<Ack> {
-            reply: None,
-            changes: Vec::new(),
-        })?
+        .insert(TipWork::new())?
         .insert(Output::<ocall::Union> {
             reply: None,
             changes: Vec::new(),
@@ -92,18 +86,24 @@ pub fn serve(status: Arc<Status>) -> Result<(), Fail> {
     stop.prepare(&resources);
     start
         .advance(&mut Cursor::default(), &resources)
-        .map_err(|_| Fail::Tree)?;
+        .map_err(|error| {
+            crate::debug::put(&alloc::format!("operator: startup plan failed: {error:?}"));
+            Fail::Tree
+        })?;
     let mut cursor = Cursor::default();
     while resources.read::<Running>()?.0 {
-        if frame
-            .advance(&mut cursor, &resources)
-            .map_err(|_| Fail::Dead)?
-            == Progress::Done
+        if frame.advance(&mut cursor, &resources).map_err(|error| {
+            crate::debug::put(&alloc::format!("operator: frame plan failed: {error:?}"));
+            Fail::Dead
+        })? == Progress::Done
         {
             cursor.reset();
         }
     }
     stop.advance(&mut Cursor::default(), &resources)
-        .map_err(|_| Fail::Desk)?;
+        .map_err(|error| {
+            crate::debug::put(&alloc::format!("operator: shutdown plan failed: {error:?}"));
+            Fail::Desk
+        })?;
     Ok(())
 }

@@ -1,11 +1,20 @@
-use crate::unit::{Demand, Identity, Relation, UnitFile};
+use crate::unit::UnitFile;
 pub static PROGRAM: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "shell",
-        wanted_by: &["accept", "product", "system-fault"],
-        ..Identity::DEFAULT
+    name: "shell",
+    loader: crate::unit::LoaderConfig::user("shell"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation::DEFAULT,
-    demand: Demand::DEFAULT,
+    control: crate::unit::ControlConfig {
+        after: None,
+        ready: crate::unit::Ready::OnSpawn,
+        ending: None,
+
+        construction: &[crate::unit::Construction::image()],
+    },
+    supply: crate::unit::SupplyConfig {
+        bindings: crate::user::shell::commands::BINDINGS,
+    },
 };

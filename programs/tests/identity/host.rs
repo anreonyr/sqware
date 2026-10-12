@@ -52,6 +52,102 @@ fn without_allocating<T>(operation: impl FnOnce() -> T) -> T {
 }
 
 #[test]
+fn install_id_closes_derivation_retry_and_instance_scoped_retirement() {
+    use env::TaskId;
+    use system::identity::*;
+    fn token(value: u8) -> env::PieToken {
+        env::PieToken::from_bytes(&[value, 0, 0, 0, 0, 0, 0, 0]).unwrap()
+    }
+    fn request(from: TaskId, endpoint: env::PieToken, wire: Wire) -> answer::Request {
+        answer::Request { context: answer::Context { from, endpoint, grant: Grant::for_wire(&wire) }, wire: Some(wire) }
+    }
+    let installer = TaskId::new(1);
+    let target = TaskId::new(3);
+    let mut book = book::IdentityBook::new(TaskId::new(2), installer).unwrap();
+    let id = InstallId { value: 41 };
+    let spec = InstallSpec { task: target, install: Install::Derive { parent: book.root() } };
+    let entry = token(7);
+    let denied = answer::answer(&mut book, request(TaskId::new(9), entry, Wire::Install(id, spec)));
+    assert_eq!(denied, Reply::Fail(Fail::Denied));
+    let lost = answer::answer(&mut book, request(installer, entry, Wire::Install(id, spec)));
+    let Reply::Installation(first) = lost else { panic!("installation reply") };
+    assert_eq!(first.state, InstallState::Installed);
+    let replay = answer::answer(&mut book, request(installer, entry, Wire::Install(id, spec)));
+    assert_eq!(replay, Reply::Installation(first));
+    let inspected = answer::answer(&mut book, request(installer, entry, Wire::Inspect(id)));
+    assert_eq!(inspected, Reply::Installation(first));
+
+    let retired = answer::answer(&mut book, request(installer, entry, Wire::Retire(id)));
+    assert_eq!(retired, Reply::Installation(InstallStatus { state: InstallState::Retired, binding: None, failure: None }));
+    let other_entry = token(8);
+    let other = InstallId { value: 41 };
+    let second = answer::answer(&mut book, request(installer, other_entry, Wire::Install(other, spec)));
+    let Reply::Installation(second) = second else { panic!("second installation reply") };
+    assert_eq!(second.state, InstallState::Installed);
+    assert_ne!(first.binding.unwrap().origin.principal, second.binding.unwrap().origin.principal);
+    assert_eq!(answer::answer(&mut book, request(installer, entry, Wire::Retire(id)),), retired);
+    assert_eq!(book.resolve(target), second.binding);
+}
+
+#[test]
+fn install_id_records_failure_and_unseen_cancel_tombstones() {
+    use env::TaskId;
+    use system::identity::*;
+    let entry = env::PieToken::from_bytes(&[4, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let installer = TaskId::new(1);
+    let mut book = book::IdentityBook::new(TaskId::new(2), installer).unwrap();
+    let id = InstallId { value: 5 };
+    for value in 10..90 {
+        let unauthorized = env::PieToken::from_bytes(&[value, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+        let reply = answer::answer(&mut book, answer::Request { context: answer::Context { from: TaskId::new(9), endpoint: unauthorized, grant: Grant::Install }, wire: Some(Wire::Cancel(InstallId { value: u64::from(value) })) });
+        assert_eq!(reply, Reply::Fail(Fail::Denied));
+    }
+    let cancelled = answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Cancel(id)) });
+    assert_eq!(cancelled, Reply::Installation(InstallStatus { state: InstallState::Cancelled, binding: None, failure: None }));
+    let spec = InstallSpec { task: TaskId::new(6), install: Install::Authorized(Subject::new(book.root(), &[]).unwrap()) };
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Install(id, spec)) }), Reply::Fail(Fail::Changed));
+
+    let broken = InstallId { value: 6 };
+    let bad = InstallSpec { task: TaskId::new(7), install: Install::Derive { parent: PrincipalId::new(TaskId::new(88), 9) } };
+    let reply = answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Install(broken, bad)) });
+    let Reply::Installation(status) = reply else { panic!("failure state") };
+    assert_eq!(status.state, InstallState::Failed);
+    assert_eq!(status.failure, Some(Fail::WrongAuthority));
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Inspect(broken)) }), Reply::Installation(status));
+
+    let next = InstallId { value: 7 };
+    let good = InstallSpec { task: TaskId::new(8), install: Install::Derive { parent: book.root() } };
+    assert!(matches!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Install(next, good)) }), Reply::Installation(InstallStatus { state: InstallState::Installed, .. })));
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Inspect(broken)) }), Reply::Installation(InstallStatus { state: InstallState::Closed, binding: None, failure: None }));
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: entry, grant: Grant::Install }, wire: Some(Wire::Install(broken, bad)) }), Reply::Fail(Fail::Changed));
+}
+
+#[test]
+fn identity_owns_named_entry_references_and_validates_the_identity_object() {
+    use env::TaskId;
+    use system::identity::*;
+    let installer = TaskId::new(1);
+    let authority = TaskId::new(2);
+    let mut book = book::IdentityBook::new(authority, installer).unwrap();
+    let object = IdentityObject::Principal(book.root());
+    let name = IdentityName::new("shell").unwrap();
+    let first = OperatorEntryRef { operator: TaskId::new(12), root: false, id: 0, revision: 7 };
+    let install_entry = env::PieToken::from_bytes(&[3, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let public_entry = env::PieToken::from_bytes(&[2, 0, 0, 0, 0, 0, 0, 0]).unwrap();
+    let associate = Wire::Associate(object, name, first);
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: TaskId::new(9), endpoint: install_entry, grant: Grant::Install }, wire: Some(associate) }), Reply::Fail(Fail::Denied));
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: install_entry, grant: Grant::Install }, wire: Some(associate) }), Reply::Unit);
+    let query = Wire::Reference(object, name);
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: TaskId::new(77), endpoint: public_entry, grant: Grant::Reference }, wire: Some(query) }), Reply::Reference(Some(first)));
+
+    let invalid = IdentityObject::Principal(PrincipalId::new(authority, 99));
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: install_entry, grant: Grant::Install }, wire: Some(Wire::Associate(invalid, name, first)) }), Reply::Fail(Fail::UnknownPrincipal));
+    let replacement = OperatorEntryRef { revision: 8, ..first };
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: installer, endpoint: install_entry, grant: Grant::Install }, wire: Some(Wire::Associate(object, name, replacement)) }), Reply::Unit);
+    assert_eq!(answer::answer(&mut book, answer::Request { context: answer::Context { from: TaskId::new(77), endpoint: public_entry, grant: Grant::Reference }, wire: Some(query) }), Reply::Reference(Some(replacement)));
+}
+
+#[test]
 fn allocation_failures_leave_the_authority_unchanged() {
     use env::TaskId;
     use system::identity::*;
@@ -136,7 +232,7 @@ fn allocation_failures_leave_the_authority_unchanged() {
 }
 
 #[test]
-fn all_eighteen_faces_reject_every_other_action_without_mutation() {
+fn all_identity_faces_reject_every_other_action_without_mutation() {
     use env::TaskId;
     use system::identity::*;
     let installer = TaskId::new(1);
@@ -172,6 +268,12 @@ fn all_eighteen_faces_reject_every_other_action_without_mutation() {
         Wire::Bind(task, Install::Authorized(subject)),
         Wire::Unbind(task),
         Wire::Activate(task, CoalitionSet::new(&[c]).unwrap()),
+        Wire::Install(InstallId { value: 1 }, InstallSpec { task, install: Install::Authorized(subject) }),
+        Wire::Inspect(InstallId { value: 1 }),
+        Wire::Cancel(InstallId { value: 1 }),
+        Wire::Retire(InstallId { value: 1 }),
+        Wire::Associate(IdentityObject::Principal(p), IdentityName::new("x").unwrap(), OperatorEntryRef { operator: TaskId::new(9), root: false, id: 1, revision: 0 }),
+        Wire::Reference(IdentityObject::Principal(p), IdentityName::new("x").unwrap()),
     ];
     for face in Grant::ALL {
         for wire in actions {
@@ -183,8 +285,7 @@ fn all_eighteen_faces_reject_every_other_action_without_mutation() {
                 answer::answer(
                     &mut book,
                     answer::Request {
-                        from: installer,
-                        grant: face,
+                        context: answer::Context { from: installer, endpoint: env::PieToken::from_bytes(&[1, 0, 0, 0, 0, 0, 0, 0]).unwrap(), grant: face },
                         wire: Some(wire)
                     }
                 ),
@@ -218,8 +319,7 @@ fn adopt_keeps_the_origin_and_restrict_moves_it() {
         answer::answer(
             &mut book,
             answer::Request {
-                from: task,
-                grant: Grant::Adopt,
+                context: answer::Context { from: task, endpoint: env::PieToken::from_bytes(&[1, 0, 0, 0, 0, 0, 0, 0]).unwrap(), grant: Grant::Adopt },
                 wire: Some(Wire::Adopt(narrowed))
             }
         ),
@@ -231,8 +331,7 @@ fn adopt_keeps_the_origin_and_restrict_moves_it() {
         answer::answer(
             &mut book,
             answer::Request {
-                from: task,
-                grant: Grant::Restrict,
+                context: answer::Context { from: task, endpoint: env::PieToken::from_bytes(&[1, 0, 0, 0, 0, 0, 0, 0]).unwrap(), grant: Grant::Restrict },
                 wire: Some(Wire::Restrict(narrowed))
             }
         ),

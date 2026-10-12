@@ -1,6 +1,5 @@
 //! 帧、码、记号
 
-use alloc::string::String;
 use env::PieToken;
 
 use crate::operator::path::PathBuf;
@@ -35,28 +34,15 @@ pub use wire::OK;
 
 /// **解开的一问**（名字已经是 String，故不是借用）
 /// 与 Req 是一对：编的时候按动作分形状，解的时候也按动作分形状——`op` 与荷载不配
-/// （比如 `LAND` 那一码配上一枚号）解不出来，持树者据此答 BAD
+/// （动作码与荷载不配）解不出来，持树者据此答 BAD
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Wire {
     /// `seek`：一条路（段数与段都在 Path 里；超上限根本造不出来，故 FULL 不再来自它）
     Road(PathBuf),
     /// `list`：容器坐标
     List(Where),
-    /// `part`：容器坐标 + 新名
-    Part {
-        at: Where,
-        name: String,
-    },
-    Land {
-        at: Where,
-        name: String,
-        entry: PieToken,
-        permit: Permit,
-        mine: bool,
-    },
-    /// `find` / `trim` / `name`：一枚号（三者的形状一样，故解出来仍是三格）
+    /// `find` / `name`：一枚号
     Find(EntryId),
-    Trim(EntryId),
     Name(EntryId),
     /// `watch`：订 `road` 这条子树；`hole` 是订阅者自己铸的那一枚孔（事件往那儿递）
     Watch {
@@ -80,29 +66,7 @@ impl Message for Req {
             }
             .store_at(out, 0),
             Req::List(at) => List { op: LIST, at: *at }.store_at(out, 0),
-            Req::Part { at, name } => Part {
-                op: PART,
-                at: *at,
-                name: name.clone(),
-            }
-            .store_at(out, 0),
-            Req::Land {
-                at,
-                name,
-                entry,
-                permit,
-                mine,
-            } => Land {
-                op: LAND,
-                at: *at,
-                name: name.clone(),
-                entry: *entry,
-                mine: *mine,
-                permit: *permit,
-            }
-            .store_at(out, 0),
             Req::Find(id) => Entry { op: FIND, id: *id }.store_at(out, 0),
-            Req::Trim(id) => Entry { op: TRIM, id: *id }.store_at(out, 0),
             Req::Name(id) => Entry { op: NAME, id: *id }.store_at(out, 0),
             Req::Watch { road, hole } => WatchFrame {
                 op: WATCH,
@@ -130,39 +94,14 @@ impl Message for Req {
                 Wire::Road(frame.road)
             }
             LIST if bytes.len() == List::LEN => Wire::List(List::fetch_at(bytes, 0)?.0.at),
-            // 这两形含一枚变长名字 ⇒ **"恰好"按游标判**（帧长不再等于那张表的 `LEN`）。
-            PART => {
-                let (frame, end) = Part::fetch_at(bytes, 0)?;
-                if end != bytes.len() {
-                    return None;
-                }
-                Wire::Part {
-                    at: frame.at,
-                    name: frame.name,
-                }
-            }
-            LAND => {
-                let (frame, end) = Land::fetch_at(bytes, 0)?;
-                if end != bytes.len() {
-                    return None;
-                }
-                Wire::Land {
-                    at: frame.at,
-                    name: frame.name,
-                    entry: frame.entry,
-                    permit: frame.permit,
-                    mine: frame.mine,
-                }
-            }
-            FIND | TRIM | NAME if bytes.len() == Entry::LEN => {
+            FIND | NAME if bytes.len() == Entry::LEN => {
                 let id = Entry::fetch_at(bytes, 0)?.0.id;
                 match op {
                     FIND => Wire::Find(id),
-                    TRIM => Wire::Trim(id),
                     _ => Wire::Name(id),
                 }
             }
-            // `watch` 含一条变长路 ⇒ 与 `PART` / `LAND` 同一处置：**"恰好"按游标判**。
+            // `watch` 含一条变长路 ⇒ 按游标判。
             WATCH => {
                 let (frame, end) = WatchFrame::fetch_at(bytes, 0)?;
                 if end != bytes.len() {

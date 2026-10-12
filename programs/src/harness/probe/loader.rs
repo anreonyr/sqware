@@ -1,6 +1,5 @@
 use super::fixture::Fixture;
 use crate::system::loader::{Image, Loader};
-use ::resource::raw::Hole;
 use ::schedule::{Cursor, Progress, Schedule};
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -10,16 +9,19 @@ use system_client::loader as call;
 use system_client::operator::Face as Operator;
 
 const WAIT: Wait = Wait::AtMost(2000);
+static CONSTRUCTION: &[crate::unit::Construction] = &[crate::unit::Construction::image()];
 
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let road = system_api::operator::Path::new(system_api::loader::DIR)
-        .try_join(system_api::loader::Grant::Build.name())
+        .try_join(system_api::loader::Grant::Claim.name())
         .unwrap();
     assert!(
         operator.tile(&road, WAIT).unwrap().token(WAIT).is_ok(),
         "loader: operator entry missing"
     );
     let root = env::unit::self_id();
+    let authority = assembly.resources.read::<crate::system::control::identity::Roster>()
+        .unwrap().authority().unwrap();
     let heirs = {
         let mut page = [0u64; 64];
         env::unit::scan(
@@ -54,11 +56,17 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
     let worker_target = target.clone();
     let worker = execution::unit::task::spawn(move || {
         until(|| r.load(Ordering::Acquire));
-        exercise(root, &worker_target, &denied);
+        exercise((root, authority), &worker_target, &denied);
         worker_done.store(true, Ordering::Release);
     });
+    assembly
+        .resources
+        .write::<crate::system::control::Construction>()
+        .unwrap()
+        .grant(worker.id(), CONSTRUCTION)
+        .unwrap();
     let entry = crate::system::loader::entry(&assembly.resources).unwrap();
-    env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
+    env::pie::accord(entry, worker.id(), Permission::STORE, system_api::loader::Grant::Claim.mark()).unwrap();
     for grant in [
         system_api::control::Grant::State,
         system_api::control::Grant::Embark,
@@ -66,22 +74,48 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         system_api::control::Grant::Ruin,
     ] {
         let entry = crate::system::control::entry(&assembly.resources, grant).unwrap();
-        env::pie::accord(entry, worker.id(), Permission::STORE, Mark::NONE).unwrap();
+        env::pie::accord(entry, worker.id(), Permission::STORE, grant.mark()).unwrap();
         if grant == system_api::control::Grant::State {
-            env::pie::accord(entry, peer.id(), Permission::STORE, Mark::NONE).unwrap();
+            env::pie::accord(entry, peer.id(), Permission::STORE, grant.mark()).unwrap();
         }
     }
     {
-        let roster = assembly
+        let mut roster = assembly
             .resources
-            .read::<crate::system::control::identity::Roster>()
+            .write::<crate::system::control::identity::Roster>()
             .unwrap();
         roster.inherit(worker.id(), root).unwrap();
         roster.inherit(peer.id(), root).unwrap();
     }
+    {
+        let mut control = assembly.resources.write::<crate::system::control::unit::Control>().unwrap();
+        control.register_internal(worker.id()).unwrap();
+        control.register_internal(peer.id()).unwrap();
+    }
     let mut schedule = Schedule::new();
     schedule
+        .add_system(
+            "construction.receive",
+            0u8,
+            crate::system::control::receive_construction,
+        )
+        .unwrap();
+    schedule
+        .add_system(
+            "construction.admit",
+            0u8,
+            crate::system::control::admit_construction,
+        )
+        .unwrap();
+    schedule
         .add_plan("launch", 0u8, crate::system::launch::frame().unwrap())
+        .unwrap();
+    schedule
+        .add_plan(
+            "assembly.jobs",
+            1u8,
+            crate::system::assembly::frame().unwrap(),
+        )
         .unwrap();
     schedule
         .add_system("receive", 2, crate::system::control::receive)
@@ -96,11 +130,11 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .add_plan(
             "instance.hooks",
             5,
-            crate::system::launch::hooks::instance().unwrap(),
+            crate::system::assembly::hooks::instance().unwrap(),
         )
         .unwrap();
     schedule
-        .add_system("launch.completed", 6, crate::system::launch::completed)
+        .add_system("launch.completed", 7, crate::system::assembly::completed)
         .unwrap();
     let mut plan = schedule.build().unwrap();
     plan.prepare(&assembly.resources);
@@ -117,10 +151,9 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         if task.get() != 0
             && assembly
                 .resources
-                .read::<crate::system::publication::RuntimeNamespace>()
+                .read::<crate::system::assembly::namespace::NamespaceInstallations>()
                 .unwrap()
-                .runtime_road(task)
-                .is_some()
+                .prepared(task)
         {
             registered = true;
         }
@@ -170,11 +203,35 @@ fn until(mut ready: impl FnMut() -> bool) {
         execution::room::park(core::time::Duration::from_millis(1)).unwrap();
     }
 }
-fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
-    use env::wire::Span;
-    use wire::Message;
-    let entry = establish::find(root, system_api::loader::Grant::Build.mark()).unwrap();
-    let loader = call::Face::of(entry).unwrap();
+fn exercise(context: (TaskId, TaskId), target: &AtomicUsize, denied: &AtomicBool) {
+    let (root, authority) = context;
+    let entry = establish::find(root, system_api::control::construction::ENTRY).unwrap();
+    let loader =
+        call::Face::of(establish::find(root, system_api::loader::Grant::Claim.mark()).unwrap())
+            .unwrap();
+    let resolve = system_client::identity::Face::direct(
+        authority,
+        system_api::identity::Grant::Resolve,
+        establish::find(authority, system_api::identity::Grant::Resolve.mark()).unwrap(),
+    )
+    .unwrap();
+    let subject = match resolve
+        .call(
+            system_api::identity::Wire::Resolve(env::unit::self_id()),
+            WAIT,
+        )
+        .unwrap()
+    {
+        system_api::identity::Reply::Binding(Some(binding)) => binding.current,
+        _ => panic!("loader: requester identity missing"),
+    };
+    let constructor =
+        ipc::rpc::request::Sender::<system_api::control::construction::Call>::from_raw(
+            entry,
+            system_api::control::construction::BACK,
+        )
+        .unwrap();
+    let next_id = core::cell::Cell::new(0u64);
     assert!(
         env::unit::build(env::ProgramKind::User, env::unit::self_id()).is_err(),
         "loader: caller received Build authority"
@@ -190,13 +247,19 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
     unsafe {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), at as *mut u8, bytes.len());
     }
-    let build = || {
-        loader
-            .build(image, 0, bytes.len(), &[7, 11], 0, WAIT)
-            .unwrap()
+    let build = |offset: usize, len: usize, args: &[u64]| {
+        let id = next_id.get() + 1;
+        next_id.set(id);
+        let said = create(&constructor, image, offset, len, args, subject, id);
+        if said.status != wire::OK {
+            return Err(said.status);
+        }
+        system_client::identity::forward_resolve(said.startup.resolve, authority, root, said.task)
+            .unwrap();
+        Ok(loader.claim(said.task, WAIT).unwrap())
     };
-    let first = build();
-    let second = build();
+    let first = build(0, bytes.len(), &[7, 11]).unwrap();
+    let second = build(0, bytes.len(), &[7, 11]).unwrap();
     assert_ne!(first.task, second.task);
     assert_ne!(first.team, second.team);
     target.store(first.task.get(), Ordering::Release);
@@ -209,9 +272,7 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         state.instance(first.task).state(WAIT).unwrap(),
         system_api::control::State::Debarked
     );
-    assert!(
-        env::unit::join_task(first.task, Wait::POLL).is_ok_and(|done| !done)
-    );
+    assert!(env::unit::join_task(first.task, Wait::POLL).is_ok_and(|done| !done));
     face(system_api::control::Grant::Embark)
         .instance(first.task)
         .embark(WAIT)
@@ -239,21 +300,22 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         .ruin(WAIT)
         .unwrap();
     until(|| state.instance(first.task).state(WAIT) == Ok(system_api::control::State::Dead));
+    face(system_api::control::Grant::Ruin).instance(first.task).ruin(WAIT).unwrap();
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
         system_api::control::State::Debarked
     );
     assert!(matches!(
-        loader.build(image, size, 1, &[], 0, WAIT),
-        Err(system_api::loader::Fail::BadImage)
+        build(size, 1, &[]),
+        Err(status) if status == system_api::control::frame::fail_to_code(Some(system_api::control::Fail::BadImage))
     ));
     // SAFETY: the caller retains write access while the service uses an independent snapshot.
     unsafe {
         *(at as *mut u8) = 0;
     }
     assert!(matches!(
-        loader.build(image, 0, bytes.len(), &[], 0, WAIT),
-        Err(system_api::loader::Fail::BadImage)
+        build(0, bytes.len(), &[]),
+        Err(status) if status == system_api::control::frame::fail_to_code(Some(system_api::control::Fail::BadImage))
     ));
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
@@ -263,41 +325,53 @@ fn exercise(root: TaskId, target: &AtomicUsize, denied: &AtomicBool) {
         *(at as *mut u8) = 0x7f;
     }
 
-    let image_copy =
-        env::pie::accord(image, root, Permission::FETCH, system_api::loader::IMAGE).unwrap();
-    let (back, seed) = establish::lend_out(entry, system_api::loader::BACK).unwrap();
-    let ask = system_api::loader::Ask {
-        op: system_api::loader::BUILD,
-        image: image_copy,
-        offset: 0,
-        len: bytes.len() as u64,
-        stack: 0,
-        count: 0,
-        args: [0; system_api::loader::MAX_ARGS],
-        back: seed,
-    };
-    let mut request = [0; system_api::loader::Ask::LEN];
-    let n = ask.store_at(&mut request, 0).unwrap();
-    Hole::from_raw(entry).push(&request[..n], WAIT).unwrap();
-    let mut reply = system_api::loader::Said::EMPTY;
-    let said = ipc::hand::Receiver::<system_api::loader::Said>::from_raw(back)
-        .recv(&mut reply, WAIT)
-        .unwrap();
+    let id = next_id.get() + 1;
+    let said = create(&constructor, image, 0, bytes.len(), &[], subject, id);
     assert_eq!(said.status, wire::OK);
-    assert!(
-        matches!(
-            env::pie::revoke(root, image_copy),
-            Err(error) if error.source == env::PieFail::Denied
-        ),
-        "loader: service did not release the remote image loan"
-    );
-    let _ = env::pie::seal(back);
-    let _ = env::pie::release(back, env::ReleaseMode::Revoke);
     // Leave the result unclaimed while keeping its requester alive.
     until(|| state.instance(said.task).state(WAIT) == Ok(system_api::control::State::Dead));
     env::pie::shut(image).unwrap();
     env::pie::release(image, env::ReleaseMode::Revoke).unwrap();
     // The second, claimed Held task is reclaimed when this requester exits.
+}
+
+fn create(
+    constructor: &ipc::rpc::request::Sender<system_api::control::construction::Call>,
+    image: env::PieToken,
+    offset: usize,
+    len: usize,
+    args: &[u64],
+    subject: system_api::identity::Subject,
+    id: u64,
+) -> system_api::loader::Said {
+    use system_api::control::construction as api;
+    let peer = constructor.peer();
+    let loan = env::pie::accord(image, peer, Permission::FETCH, system_api::loader::IMAGE).unwrap();
+    let mut arguments = [0; system_api::loader::MAX_ARGS];
+    arguments[..args.len()].copy_from_slice(args);
+    let said = constructor
+        .call(ipc::time::Deadline::new(WAIT), |back| api::Request {
+            op: api::BUILD,
+            id: api::CreateId { value: id },
+            input: api::InputOption(Some(api::Input::Image(api::Image {
+                image: loan,
+                offset: offset as u64,
+                len: len as u64,
+                stack: 0,
+                count: args.len() as u8,
+                args: arguments,
+            }))),
+            owner: env::unit::self_id(),
+            subject,
+            back,
+        })
+        .unwrap();
+    assert!(
+        matches!(env::pie::revoke(peer, loan),
+        Err(error) if error.source == env::PieFail::Denied),
+        "loader: constructor did not release its image loan"
+    );
+    said
 }
 
 fn cache_clear() {

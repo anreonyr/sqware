@@ -1,7 +1,6 @@
-use super::{Fail, answer::Output};
+use super::Fail;
 use crate::system::app::life::Status;
 use crate::system::operator::session::{Desk, DeskFail};
-use crate::system::operator::tree::Tile;
 use crate::system::operator::{
     runtime::import::{valid_reply, valid_request},
     tree::Operator,
@@ -20,11 +19,22 @@ use system_api::operator as ocall;
 use system_client::identity::TaskQuery;
 pub(super) struct Tip(pub PieToken);
 pub(super) struct Tips(pub VecDeque<(ocall::TipIn, TaskId)>);
-pub(super) struct CurrentTip(pub Option<(ocall::TipIn, TaskId)>);
+pub(super) struct TipWork {
+    current: Option<(ocall::TipIn, TaskId)>,
+    reply: Option<Ack>,
+}
+impl TipWork {
+    pub fn new() -> Self {
+        Self {
+            current: None,
+            reply: None,
+        }
+    }
+}
 pub(super) struct Ack {
     pub back: PieToken,
     pub status: u8,
-    pub id: ocall::EntryId,
+    pub id: u64,
 }
 pub(super) fn tip(
     status: Res<Arc<Status>>,
@@ -74,11 +84,11 @@ pub(super) fn budget(
 }
 pub(super) fn select(
     mut tips: ResMut<Tips>,
-    mut current: ResMut<CurrentTip>,
+    mut work: ResMut<TipWork>,
     mut dispatch: ResMut<Dispatch<(), Fail>>,
 ) -> Result<Progress, Fail> {
-    current.0 = tips.0.pop_front();
-    if current.0.is_some() {
+    work.current = tips.0.pop_front();
+    if work.current.is_some() {
         dispatch.select(Invocation {
             key: (),
             cursor: Default::default(),
@@ -90,12 +100,10 @@ pub(super) fn valid_tip_back(back: PieToken, from: TaskId) -> bool {
     matches!(reserve(back), Ok((vestor, owner, mark)) if vestor == from && owner == from && mark == ocall::TIP_BACK)
 }
 pub(super) fn wired(
-    current: Res<CurrentTip>,
-    mut query: ResMut<Option<TaskQuery>>,
-    mut out: ResMut<Output<Ack>>,
+    mut tree: ResMut<Operator>,
+    mut work: ResMut<TipWork>,
 ) -> Result<Progress, Fail> {
-    out.reply = None;
-    out.changes.clear();
+    work.reply = None;
     if let Some((
         ocall::TipIn::Wired {
             authority,
@@ -105,30 +113,30 @@ pub(super) fn wired(
             back,
         },
         from,
-    )) = &current.0
+    )) = &work.current
     {
         if !valid_tip_back(*back, *from) {
             return Ok(Progress::Done);
         }
-        *query = TaskQuery::direct(*authority, *resolve, *matches, *same).ok();
-        out.reply = Some(Ack {
+        tree.set_identity_query(TaskQuery::direct(*authority, *resolve, *matches, *same).ok());
+        work.reply = Some(Ack {
             back: *back,
-            status: if query.is_some() {
+            status: if tree.identity_query().is_some() {
                 ocall::OK
             } else {
                 ocall::UNJUDGED
             },
-            id: ocall::EntryId::new(0),
+            id: 0,
         });
     }
     Ok(Progress::Done)
 }
 pub(super) fn guest(
-    current: Res<CurrentTip>,
+    work: Res<TipWork>,
     mut desk: ResMut<Desk>,
     pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    let Some((ocall::TipIn::Guest { who, reply, ask }, from)) = &current.0 else {
+    let Some((ocall::TipIn::Guest { who, reply, ask }, from)) = &work.current else {
         return Ok(Progress::Done);
     };
     if !valid_reply(*who, *reply, *from) {
@@ -174,127 +182,68 @@ pub(super) fn guest(
     }
     Ok(Progress::Done)
 }
-pub(super) fn mutate(
-    mut current: ResMut<CurrentTip>,
+pub(super) fn root(
+    mut work: ResMut<TipWork>,
     mut tree: ResMut<Operator>,
-    mut out: ResMut<Output<Ack>>,
+    pile: Res<Pile>,
 ) -> Result<Progress, Fail> {
-    let Some((rec, from)) = current.0.take() else {
+    let Some((rec, from)) = work.current.take() else {
         return Ok(Progress::Done);
     };
     match rec {
-        ocall::TipIn::Plate {
-            road,
-            leaf,
-            permit,
-            owner,
-            replace,
-            back,
-        } => {
-            if !valid_tip_back(back, from) {
+        ocall::TipIn::Root { back } => {
+            if from != tree.system_task() || !valid_tip_back(back, from) {
                 return Ok(Progress::Done);
             }
-            match tree.place(&crate::system::operator::Placement {
-                road,
-                tile: Tile {
-                    pie: leaf,
-                    permit,
-                    owner: (owner.get() != 0).then_some(owner),
-                },
-                replace,
-            }) {
-                Ok((id, changes)) => {
-                    out.changes.extend(changes);
-                    out.reply = Some(Ack {
-                        back,
-                        status: ocall::OK,
-                        id,
-                    });
+            let existing = tree.root_entrance();
+            let entrance = match existing {
+                Some(token) => token,
+                None => pie::unseal(env::UnsealArgs::hole(ocall::entry::AUTH_ENTRY))
+                    .map_err(|_| Fail::Tree)?,
+            };
+            let hole = Hole::from_raw(entrance);
+            let remote = match port::ship(hole.token(), from, Access::STORE, Policy::NONE) {
+                Ok(remote) => remote.seed(),
+                Err(_) => {
+                    if existing.is_none() {
+                        let _ = pie::seal(entrance);
+                        let _ = pie::release(entrance, env::ReleaseMode::Revoke);
+                    }
+                    return Ok(Progress::Done);
                 }
-                Err(fail) => {
-                    out.reply = Some(Ack {
-                        back,
-                        status: ocall::fail_to_code(Some(fail)),
-                        id: ocall::EntryId::new(0),
+            };
+            if existing.is_none()
+                && (pile
+                    .attach(env::Source::Mail {
+                        pie: entrance,
+                        condition: MailCondition::Pull,
                     })
-                }
-            }
-        }
-        ocall::TipIn::Abort { road, leaf, back } => {
-            if !valid_tip_back(back, from) {
+                    .is_err()
+                    || tree.bootstrap_root(from, entrance).is_err())
+            {
+                let _ = pile.detach(env::Source::Mail {
+                    pie: entrance,
+                    condition: MailCondition::Pull,
+                });
+                let _ = pie::seal(entrance);
+                let _ = pie::release(entrance, env::ReleaseMode::Revoke);
                 return Ok(Progress::Done);
             }
-            let result = match tree.seek(&road) {
-                Ok(id) if tree.reference(id) == Some(leaf) => tree.trim(id),
-                _ => Ok(None),
-            };
-            let fail = match result {
-                Ok(change) => {
-                    out.changes.extend(change);
-                    None
-                }
-                Err(fail) => Some(fail),
-            };
-            out.reply = Some(Ack {
+            work.reply = Some(Ack {
                 back,
-                status: ocall::fail_to_code(fail),
-                id: ocall::EntryId::new(0),
-            });
-        }
-        ocall::TipIn::Empty { road, back } => {
-            if !valid_tip_back(back, from) {
-                return Ok(Progress::Done);
-            }
-            let result = match tree.seek(&road) {
-                Ok(id) => tree
-                    .list(ocall::Where::At(id))
-                    .and_then(|children| {
-                        if children.count() == 0 {
-                            Ok(id)
-                        } else {
-                            Err(ocall::Fail::NonEmpty)
-                        }
-                    })
-                    .and_then(|id| tree.trim(id).map(|_| id)),
-                Err(ocall::Fail::Unknown) => Ok(ocall::EntryId::new(0)),
-                Err(fail) => Err(fail),
-            };
-            out.reply = Some(Ack {
-                back,
-                status: ocall::fail_to_code(result.err()),
-                id: ocall::EntryId::new(0),
-            });
-        }
-        ocall::TipIn::Unplate { id, back } => {
-            if !valid_tip_back(back, from) {
-                return Ok(Progress::Done);
-            }
-            let result = match tree.trim(id) {
-                Err(ocall::Fail::Unknown) => Ok(None),
-                other => other,
-            };
-            let fail = match result {
-                Ok(change) => {
-                    out.changes.extend(change);
-                    None
-                }
-                Err(fail) => Some(fail),
-            };
-            out.reply = Some(Ack {
-                back,
-                status: ocall::fail_to_code(fail),
-                id,
+                status: ocall::OK,
+                id: remote.get() as u64,
             });
         }
         _ => {}
     }
     Ok(Progress::Done)
 }
-pub(super) fn acknowledge(mut out: ResMut<Output<Ack>>) -> Result<Progress, Fail> {
-    if let Some(Ack { back, status, id }) = out.reply.take() {
+pub(super) fn acknowledge(mut work: ResMut<TipWork>) -> Result<Progress, Fail> {
+    if let Some(Ack { back, status, id }) = work.reply.take() {
         let mut bytes = [0; 9];
         bytes[0] = status;
-        bytes[1..].copy_from_slice(&(id.get() as u64).to_le_bytes());
+        bytes[1..].copy_from_slice(&id.to_le_bytes());
         let _ = Hole::from_raw(back).push(&bytes, Wait::AtMost(1000));
         let _ = pie::release(back, env::ReleaseMode::Revoke);
     }

@@ -1,19 +1,26 @@
 //! 这一台的装配声明（身子在本目录的 main.rs；"哪几台进哪张镜像"见
 //! :catalog 的 `PROGRAMS`
 
-use crate::unit::{Demand, Ending, Identity, Relation, UnitFile};
+use crate::unit::{Ending, UnitFile};
 
 /// **有身份**、但那一格归别人（声明过归属）⇒ 也拒
 pub static PROBE_OWNER: UnitFile = UnitFile {
-    publication: &[],
-    identity: Identity {
-        name: "probe-owner",
-        ..Identity::DEFAULT
+    name: "probe-owner",
+    loader: crate::unit::LoaderConfig::user("probe-owner"),
+    operator: crate::unit::OperatorConfig { namespace: &[] },
+    identity: crate::unit::Identity {
+        aliases: &[],
+        grants: &[],
     },
-    relation: Relation {
-        after: Some(&["operator", "uart"]),
-        restart: Some(Ending::Transient),
-        ..Relation::DEFAULT
+    control: crate::unit::ControlConfig {
+        after: Some(&[
+            crate::unit::Dependency::Bootstrap(crate::unit::Bootstrap::Operator),
+            crate::unit::Dependency::Unit("uart"),
+        ]),
+        ready: crate::unit::Ready::OnSpawn,
+        ending: Some(Ending::Transient),
+
+        construction: &[],
     },
-    demand: Demand { ..Demand::DEFAULT },
+    supply: crate::unit::SupplyConfig { bindings: &[] },
 };

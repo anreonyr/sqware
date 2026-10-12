@@ -5,7 +5,9 @@ extern crate self as env;
 extern crate self as ipc;
 extern crate self as resource;
 extern crate self as system_client;
-pub use abi::{UnsealArgs, ReleaseMode, MailCondition, Mark, Permission, PieToken, TaskId, Wait};
+pub use abi::{
+    MailCondition, Mark, Permission, PieToken, ReleaseMode, Source, TaskId, UnsealArgs, Wait,
+};
 pub mod wire {
     pub use abi::wire::*;
 }
@@ -45,7 +47,11 @@ pub mod unit {
 }
 pub mod pie {
     pub fn unseal(args: crate::UnsealArgs) -> Result<crate::PieToken, ()> {
-        match args { crate::UnsealArgs::Hole { mark, .. } => hole_token(mark), crate::UnsealArgs::Tole { .. } => Ok(crate::token(1)), _ => unreachable!() }
+        match args {
+            crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
+            crate::UnsealArgs::Tole { .. } => Ok(crate::token(1)),
+            _ => unreachable!(),
+        }
     }
 
     use super::*;
@@ -181,8 +187,11 @@ pub mod pile {
         pub fn unseal(_: bool) -> Result<Self, ()> {
             Ok(Self)
         }
-        pub fn attach(&self, t: PieToken, _: MailCondition) -> Result<(), ()> {
-            NATIVE.with(|n| n.borrow().live.contains(&t.get()).then_some(()).ok_or(()))
+        pub fn attach(&self, source: Source) -> Result<(), ()> {
+            let Source::Mail { pie, .. } = source else {
+                return Err(());
+            };
+            NATIVE.with(|n| n.borrow().live.contains(&pie.get()).then_some(()).ok_or(()))
         }
         pub fn await_(&self, _: Wait) -> Result<(), ()> {
             unreachable!()
@@ -230,6 +239,10 @@ mod production {
     }
 }
 
-pub mod chrono { pub fn clock() -> u64 { 0 } }
+pub mod chrono {
+    pub fn clock() -> u64 {
+        0
+    }
+}
 #[path = "../../../crates/ipc/src/time.rs"]
 pub mod time;

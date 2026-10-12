@@ -1,35 +1,43 @@
 extern crate alloc;
-#[path = "../../src/system/publication/admission.rs"]
-mod admission;
+#[path = "../../src/unit/operator.rs"]
+mod declaration;
 #[cfg(test)]
 mod tests {
-    use super::admission::*;
-    use system_api::{control::publication::{Scope, Target}, operator::{Path, Permit}, identity::{CoalitionId, Selector}};
-    fn target(name: &str) -> Target { Target::Service { scope: Scope(6), group: "custom".into(), name: name.into() } }
-    fn rules(permission: Permission) -> Namespaces { Namespaces(vec![Namespace { owner: "provider", scope: Scope(6), group: "custom".into(), road: Path::new("arbitrary/layout").to_path_buf(), entries: Some(vec!["first".into(), "second".into()]), permission, alias: false }]) }
-    #[test]
-    fn deployment_controls_namespace_and_layout_without_builtin_service_classes() {
-        let rules = rules(Permission::Any);
-        assert_eq!(rules.service("provider", (&target("first"), Permit::Public)).unwrap().0.as_str(), "arbitrary/layout/first");
-        assert!(rules.service("other", (&target("first"), Permit::Public)).is_none());
-        assert!(rules.service("provider", (&target("unlisted"), Permit::Public)).is_none());
-        assert!(rules.service("provider", (&target("../escape"), Permit::Public)).is_none());
-        let mut wrong = target("first"); if let Target::Service { scope, .. } = &mut wrong { *scope = Scope(7); }
-        assert!(rules.service("provider", (&wrong, Permit::Public)).is_none());
+    use super::declaration::{Namespace, Scope};
+    use system_api::{operator::{Ops, Permit, Scope as GrantedScope, Path}, identity::{CoalitionId, Selector}};
+    fn rules(scope: Scope, permit: Option<Permit>) -> Namespace {
+        Namespace { path: "arbitrary/layout", scope, ops: Ops::BIND.union(Ops::FIND), permit, source_mark: None, bindings: &[] }
     }
     #[test]
-    fn member_namespaces_reject_public_permissions_and_keep_whitelists() {
-        let rules = rules(Permission::Member);
-        let permit = Permit::Identity(Selector::MemberOf(CoalitionId::new(env::TaskId::new(1), 0)));
-        assert!(rules.service("provider", (&target("first"), permit)).unwrap().1.0);
-        assert!(rules.service("provider", (&target("third"), permit)).is_none());
-        assert!(rules.service("provider", (&target("first"), Permit::Public)).is_none());
+    fn composition_controls_layout_and_bounded_names_without_service_classes() {
+        let policy = rules(Scope::Names(&["first", "second"]), None);
+        assert!(policy.valid());
+        assert_eq!(policy.path, "arbitrary/layout");
+        let scope = GrantedScope::Names(alloc::vec![Path::new("first").to_path_buf(), Path::new("second").to_path_buf()]);
+        assert!(scope.allows("first"));
+        assert!(!scope.allows("unlisted"));
+        assert!(!scope.allows("../escape"));
+        let mut invalid = policy;
+        invalid.path = "../escape";
+        assert!(!invalid.valid());
     }
     #[test]
-    fn public_and_open_namespace_policies_remain_explicit() {
-        let mut rules = rules(Permission::Public);
-        assert!(rules.service("provider", (&target("first"), Permit::Bound)).is_none());
-        rules.0[0].entries = None;
-        assert!(rules.service("provider", (&target("third"), Permit::Public)).is_some());
+    fn finite_grants_can_narrow_but_cannot_escape_the_installed_scope() {
+        let parent = GrantedScope::Names(alloc::vec![Path::new("first").to_path_buf(), Path::new("second").to_path_buf()]);
+        assert!(parent.narrows(&GrantedScope::Names(alloc::vec![Path::new("first").to_path_buf()])));
+        assert!(!parent.narrows(&GrantedScope::Names(alloc::vec![Path::new("third").to_path_buf()])));
+        assert!(!parent.narrows(&GrantedScope::Subtree));
+    }
+    #[test]
+    fn permission_choice_is_explicit_and_shared_base_requires_no_extra_directory() {
+        let member = Permit::Identity(Selector::MemberOf(CoalitionId::new(env::TaskId::new(1), 0)));
+        for permit in [None, Some(Permit::Public), Some(Permit::Bound), Some(member)] {
+            let mut policy = rules(Scope::Subtree, permit);
+            assert!(policy.valid());
+            assert_eq!(policy.permit, permit);
+            policy.path = "";
+            assert!(policy.valid(), "explicit shared base is valid");
+        }
+        assert!(!rules(Scope::Names(&[]), None).valid());
     }
 }

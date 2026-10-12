@@ -21,6 +21,7 @@ pub mod controller {
                     images: vec![shell_api::Image {
                         name: "mock".into(),
                         seed: abi::PieToken::NONE,
+                        mark: abi::Mark::of("mock"),
                         length: 1,
                         ports: vec![],
                     }],

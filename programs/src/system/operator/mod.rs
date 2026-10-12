@@ -1,3 +1,4 @@
+mod authority;
 mod connection;
 pub(crate) mod management;
 mod runtime;
@@ -6,10 +7,11 @@ pub(crate) mod tree;
 mod watch;
 pub(crate) use runtime::serve as run;
 
-pub(crate) struct Placement {
-    pub road: system_api::operator::path::PathBuf,
-    pub tile: tree::Tile,
-    pub replace: bool,
+pub(crate) fn install(
+    resources: &mut ::schedule::Resources<'static>,
+) -> Result<(), ::schedule::resource::AccessError> {
+    resources.insert(management::Tree::default())?;
+    Ok(())
 }
 
 pub(crate) fn connect_task(

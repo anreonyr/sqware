@@ -7,9 +7,9 @@ pub mod grant;
 pub mod marks;
 
 pub use frame::{
-    ALIVE_MARK, BACK_MARK, BAD, BOND, BOOT, CLAIM, DEAD, DENIED, DEV_ROAD, DTB, Deed, ENROLL_CAP,
-    ENROLL_MAX, Enroll, Fail, LIST, LIST_MAX, OK, SUPERVISOR_EXTERNAL, Said, TAKEN, UNKNOWN,
-    Window, Wire,
+    ALIVE_MARK, BACK_MARK, BAD, BOND, BOOT, CLAIM, DEAD, DENIED, DEV_ROAD, DTB, Deed, Fail,
+    INVENTORY_MAX, Inventory, InventoryItem, LIST, LIST_MAX, OK, SUPERVISOR_EXTERNAL, Said, TAKEN, UNKNOWN,
+    Window, Wire, inventory_slot,
 };
 pub use grant::{Grant, grant_of};
 pub use interface::{INTERFACE_ID, PUBLICATIONS, REGISTRY};

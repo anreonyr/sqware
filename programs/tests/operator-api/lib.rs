@@ -1,61 +1,60 @@
 #![allow(dead_code)]
+extern crate alloc;
+
+#[path = "../../src/unit/operator.rs"]
+mod unit_operator;
 
 pub mod system {
     pub mod identity {
         pub use system_api::identity::*;
     }
 }
+#[path = "../../src/system/operator/authority.rs"]
+mod authority;
 #[path = "../../src/system/operator/tree/gate.rs"]
 mod gate;
 #[path = "../../src/system/operator/tree/judge.rs"]
 mod judge;
 
-#[path = "../../src/system/operator/runtime/admission.rs"]
-mod admission;
-
 #[cfg(test)]
 mod tests {
-    use env::{PieToken, TaskId};
+    use env::{Access, Mark, Permission, PieToken, TaskId};
     use system_api::identity::{PrincipalId, Selector};
     use system_api::operator::*;
     use wire::{Field, Message, Span};
 
     #[test]
-    fn native_caller_controls_mutation_on_the_unified_session() {
-        let control = TaskId::new(7);
-        let other = TaskId::new(8);
-        let requests = [
-            Req::Part {
-                at: Where::Root,
-                name: "new".into(),
-            },
-            Req::Land {
-                at: Where::Root,
-                name: "new".into(),
-                entry: PieToken::mint(9),
-                permit: Permit::Public,
-                mine: false,
-            },
-            Req::Trim(EntryId::new(0)),
-            Req::Find(EntryId::new(0)),
-            Req::List(Where::Root),
-            Req::Road(Path::new("svc").to_path_buf()),
-            Req::Name(EntryId::new(0)),
-            Req::Watch {
-                road: Path::new("svc").to_path_buf(),
-                hole: PieToken::mint(10),
-            },
-        ];
-        for (index, request) in requests.iter().enumerate() {
-            let mut bytes = Req::EMPTY;
-            let n = request.store(&mut bytes).unwrap();
-            let decoded = Req::fetch(&bytes[..n]).unwrap();
-            assert!(super::admission::caller(control, control, &decoded));
-            assert_eq!(
-                super::admission::caller(other, control, &decoded),
-                index >= 3
+    fn former_shared_ask_mutation_codes_are_not_decodable() {
+        for code in [1, 2, 4] {
+            let mut frame = vec![code];
+            frame.extend_from_slice(&[0; 60]);
+            assert!(Req::fetch(&frame).is_none(), "legacy code {code} decoded");
+        }
+    }
+
+    #[test]
+    fn former_tip_tree_mutations_are_not_decodable() {
+        for code in [1, 4, 5, 6] {
+            let mut frame = vec![code];
+            frame.extend_from_slice(&[0; TIP_LEN]);
+            assert!(
+                TipIn::fetch(&frame).is_none(),
+                "legacy TIP code {code} decoded"
             );
         }
+    }
+
+    #[test]
+    fn resource_views_are_nonempty_and_cannot_expand_source_rights() {
+        let fetch = ResourceView::new(Access::FETCH).unwrap();
+        let store = ResourceView::new(Access::STORE).unwrap();
+        assert!(ResourceView::new(Access::NONE).is_none());
+        assert_eq!(ResourceView::from_bits(fetch.bits()), Some(fetch));
+        assert_eq!(ResourceView::from_bits(1 << 2), None);
+        assert!(fetch.fits(Permission::FETCH | Permission::VEST));
+        assert!(store.fits(Permission::STORE | Permission::VEST));
+        assert!(!store.fits(Permission::FETCH | Permission::VEST));
+        assert!(!fetch.fits(Permission::FETCH));
     }
 
     fn word(bytes: &mut Vec<u8>, value: u64) {
@@ -97,57 +96,15 @@ mod tests {
     fn request_goldens_preserve_action_codes() {
         let road = Path::new("svc").to_path_buf();
         let root = vec![0; 9];
-        let mut part = vec![2];
-        part.extend_from_slice(&root);
-        part.extend_from_slice(&[1, b'x']);
-        let mut land = vec![1];
-        land.extend_from_slice(&root);
-        land.extend_from_slice(&[1, b'x']);
-        word(&mut land, 9);
-        land.push(1);
-        land.extend_from_slice(&[0; 18]);
         let mut watch = vec![8, 3, b's', b'v', b'c'];
         word(&mut watch, 9);
         let mut list = vec![5];
         list.extend_from_slice(&root);
         let cases = [
             (
-                Req::Part {
-                    at: Where::Root,
-                    name: "x".into(),
-                },
-                Wire::Part {
-                    at: Where::Root,
-                    name: "x".into(),
-                },
-                part,
-            ),
-            (
-                Req::Land {
-                    at: Where::Root,
-                    name: "x".into(),
-                    entry: PieToken::mint(9),
-                    permit: Permit::Public,
-                    mine: true,
-                },
-                Wire::Land {
-                    at: Where::Root,
-                    name: "x".into(),
-                    entry: PieToken::mint(9),
-                    permit: Permit::Public,
-                    mine: true,
-                },
-                land,
-            ),
-            (
                 Req::Find(EntryId::new(0)),
                 Wire::Find(EntryId::new(0)),
                 vec![3, 0, 0, 0, 0, 0, 0, 0, 0],
-            ),
-            (
-                Req::Trim(EntryId::new(0)),
-                Wire::Trim(EntryId::new(0)),
-                vec![4, 0, 0, 0, 0, 0, 0, 0, 0],
             ),
             (Req::List(Where::Root), Wire::List(Where::Root), list),
             (
@@ -289,6 +246,90 @@ mod tests {
     }
 
     #[test]
+    fn resource_view_is_consumer_access_separate_from_transfer_policy() {
+        assert_eq!(
+            system_api::operator::ResourceView::new(env::Access::NONE),
+            None
+        );
+        assert_eq!(
+            system_api::operator::ResourceView::new(env::Access::FETCH)
+                .map(system_api::operator::ResourceView::access),
+            Some(env::Access::FETCH)
+        );
+        assert_eq!(
+            system_api::operator::ResourceView::from_bits(
+                env::Access::FETCH.bits().bits() | env::Permission::VEST.bits()
+            ),
+            None
+        );
+        let view = system_api::operator::ResourceView::new(env::Access::FETCH).unwrap();
+        assert!(view.fits(env::Permission::FETCH | env::Permission::VEST));
+        assert!(!view.fits(env::Permission::STORE | env::Permission::VEST));
+    }
+
+    #[test]
+    fn injected_grant_descriptor_binds_exact_namespace_and_real_entry_issuer() {
+        let descriptor = GrantDescriptor {
+            id: 41,
+            entry_operator: TaskId::new(8),
+            entry_root: 0,
+            entry_id: EntryId::new(12),
+            entrance: PieToken::mint(99),
+        };
+        let mut bytes = [0; GrantDescriptor::LEN];
+        let len = descriptor.store_at(&mut bytes, 0).unwrap();
+        assert_eq!(len, GrantDescriptor::LEN);
+        assert_eq!(GrantDescriptor::fetch_at(&bytes, 0).unwrap().0, descriptor);
+        assert_eq!(descriptor_mark(0), Some(Mark::new(0x5359_534f_0000_0000)));
+        assert_ne!(descriptor_mark(0), descriptor_mark(1));
+        assert_eq!(descriptor_mark(31).is_some(), true);
+        assert_eq!(descriptor_mark(32), None);
+        assert!(GrantDescriptor::fetch_at(&bytes[..len - 1], 0).is_none());
+    }
+
+    #[test]
+    fn static_namespace_declarations_are_canonical_and_bounded() {
+        use crate::unit_operator::{Binding, Namespace, Scope};
+        static BINDINGS: [Binding; 1] = [Binding {
+            name: "ask",
+            mark: env::Mark::new(44),
+            view: env::Access::FETCH,
+            permit: system_api::operator::Permit::Public,
+        }];
+        static NAMES: &[&str] = &["principal", "team/member"];
+        let declaration = Namespace {
+            path: "svc/identity",
+            scope: Scope::Names(NAMES),
+            ops: system_api::operator::Ops::FIND,
+            permit: Some(system_api::operator::Permit::Public),
+            source_mark: None,
+            bindings: &BINDINGS,
+        };
+        assert!(declaration.valid());
+        assert!(
+            !Namespace {
+                path: "svc//identity",
+                ..declaration
+            }
+            .valid()
+        );
+        assert!(
+            !Namespace {
+                scope: Scope::Names(&["../outside"]),
+                ..declaration
+            }
+            .valid()
+        );
+        assert!(
+            !Namespace {
+                ops: system_api::operator::Ops::from_bits(1 << 12).unwrap(),
+                ..declaration
+            }
+            .valid()
+        );
+    }
+
+    #[test]
     fn marks_and_gate_codes_stay_fixed() {
         for (mark, name) in [
             (ASK_MARK, "operator-ask"),
@@ -306,17 +347,39 @@ mod tests {
     }
 
     #[test]
-    fn sdk_uses_one_face_without_grant_selected_handles() {
+    fn sdk_separates_read_discovery_from_entry_capabilities() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../src/system/client/src/operator");
         let client = std::fs::read_to_string(root.join("face.rs")).unwrap();
         let module = std::fs::read_to_string(root.join("mod.rs")).unwrap();
-        for method in [
-            "part", "land", "find", "trim", "list", "seek", "name", "watch",
-        ] {
+        for method in ["find", "list", "seek", "name", "watch"] {
             assert!(
                 client.contains(&format!("pub fn {method}(")),
                 "Face::{method} missing"
+            );
+        }
+        for method in [
+            "part",
+            "bind",
+            "replace",
+            "unpart",
+            "read",
+            "grant",
+            "inspect_grant",
+            "revoke",
+        ] {
+            assert!(
+                module.contains(&format!("pub fn {method}("))
+                    || std::fs::read_to_string(root.join("capability.rs"))
+                        .unwrap()
+                        .contains(&format!("pub fn {method}(")),
+                "Capability::{method} missing"
+            );
+        }
+        for method in ["part", "land", "trim"] {
+            assert!(
+                !client.contains(&format!("pub fn {method}(")),
+                "legacy Face::{method} remains"
             );
         }
         let api = std::fs::read_to_string(root.join("../../../api/src/operator/mod.rs")).unwrap();

@@ -5,9 +5,6 @@ use system_api::loader::{Fail, Said};
 fn token(raw: u64) -> PieToken {
     PieToken::from_bytes(&raw.to_le_bytes()).unwrap()
 }
-fn face() -> Face {
-    Face::of(token(20)).unwrap()
-}
 fn begin(replies: &[Result<Said, TransportFail>]) {
     STATE.with(|state| {
         let mut state = state.borrow_mut();
@@ -22,9 +19,9 @@ fn snapshot() -> (Vec<CallRecord>, Vec<Event>) {
             state
                 .calls
                 .iter()
-                .map(|c| CallRecord {
-                    request: c.request,
-                    wait: c.wait,
+                .map(|call| CallRecord {
+                    request: call.request,
+                    wait: call.wait,
                 })
                 .collect(),
             state.events.clone(),
@@ -34,167 +31,167 @@ fn snapshot() -> (Vec<CallRecord>, Vec<Event>) {
 fn said(status: u8, team: u64, task: usize) -> Said {
     Said {
         status,
+        state: if status == wire::OK {
+            system_api::control::construction::COMPLETED
+        } else {
+            system_api::control::construction::FAILED
+        },
         team,
         task: TaskId::new(task),
+        startup: system_api::loader::StartupMetadata {
+            resolve: PieToken::NONE,
+        },
     }
-}
-fn ok_build_and_claim() -> [Result<Said, TransportFail>; 2] {
-    [
-        Ok(said(wire::OK, 0x44, 0x55)),
-        Ok(said(wire::OK, 0x44, 0x55)),
-    ]
 }
 
 #[test]
-fn build_and_claim_share_one_deadline_and_revoke_image_loan_after_success() {
-    begin(&ok_build_and_claim());
-    STATE.with(|state| {
-        let mut state = state.borrow_mut();
-        state.elapsed_grant_ms = 5;
-        state.elapsed_after_call_ms = 37;
-    });
-    let result = face()
-        .build(token(3), 8, 12, &[4, 9], 16, Wait::AtMost(100))
+fn claim_sends_only_for_the_authorized_native_claim_face() {
+    begin(&[Ok(said(wire::OK, 0x44, 0x55))]);
+    let built = Face::of(token(20))
+        .unwrap()
+        .claim(TaskId::new(0x55), Wait::AtMost(40))
         .unwrap();
     assert_eq!(
-        (result.team, result.task),
+        (built.team, built.task),
         (TeamId::new(0x44), TaskId::new(0x55))
     );
     let (calls, events) = snapshot();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].wait, Wait::AtMost(95));
-    assert_eq!(calls[1].wait, Wait::AtMost(58));
-    assert!(
-        matches!(calls[0].request, Captured::Build { offset: 8, len: 12, stack: 16, count: 2, args, .. } if args[..2] == [4, 9])
-    );
-    assert!(matches!(calls[1].request, Captured::Claim { task, .. } if task == TaskId::new(0x55)));
-    assert_eq!(events.len(), 2);
-    assert!(
-        matches!(events[0], Event::Grant(source, peer, permission, mark, remote) if source == token(3) && peer == TaskId::new(7) && permission == Permission::FETCH && mark == system_api::loader::IMAGE && remote == token(0xabcd))
-    );
-    assert_eq!(events[1], Event::Revoke(TaskId::new(7), token(0xabcd)));
-}
-
-#[test]
-fn grant_failure_stops_before_build_and_has_no_revoke() {
-    begin(&[]);
-    STATE.with(|state| state.borrow_mut().fail_grant = true);
-    assert!(matches!(
-        face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)),
-        Err(Fail::Denied)
-    ));
-    let (calls, events) = snapshot();
-    assert!(calls.is_empty());
-    assert_eq!(events.len(), 1);
-    assert!(matches!(events[0], Event::Grant(..)));
-}
-
-#[test]
-fn build_transport_failure_does_not_retry_and_revokes_image_loan() {
-    begin(&[Err(TransportFail::Send)]);
-    assert!(matches!(
-        face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)),
-        Err(Fail::Bad)
-    ));
-    let (calls, events) = snapshot();
     assert_eq!(calls.len(), 1);
-    assert_eq!(
-        events.last(),
-        Some(&Event::Revoke(TaskId::new(7), token(0xabcd)))
+    assert!(
+        matches!(calls[0].request, Captured::Claim { task, back } if task == TaskId::new(0x55) && back == token(0x5000))
     );
+    assert_eq!(calls[0].wait, Wait::AtMost(40));
+    assert!(events.is_empty());
 }
 
 #[test]
-fn build_rejection_skips_claim_and_revokes_image_loan() {
-    begin(&[Ok(said(
-        system_api::loader::fail_to_code(Some(Fail::BadImage)),
-        0,
-        0,
-    ))]);
-    assert!(matches!(
-        face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)),
-        Err(Fail::BadImage)
-    ));
-    let (calls, events) = snapshot();
-    assert_eq!(calls.len(), 1);
-    assert!(matches!(calls[0].request, Captured::Build { .. }));
-    assert_eq!(
-        events.last(),
-        Some(&Event::Revoke(TaskId::new(7), token(0xabcd)))
-    );
-}
-
-#[test]
-fn claim_transport_failure_uses_remaining_budget_without_retry() {
-    begin(&[Ok(said(wire::OK, 0x44, 0x55)), Err(TransportFail::Receive)]);
-    STATE.with(|state| state.borrow_mut().elapsed_after_call_ms = 8);
-    assert!(matches!(
-        face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)),
-        Err(Fail::Bad)
-    ));
-    let (calls, events) = snapshot();
-    assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0].wait, Wait::AtMost(10));
-    assert_eq!(calls[1].wait, Wait::AtMost(2));
-    assert!(matches!(calls[1].request, Captured::Claim { .. }));
-    assert_eq!(
-        events.last(),
-        Some(&Event::Revoke(TaskId::new(7), token(0xabcd)))
-    );
-}
-
-#[test]
-fn claim_rejection_or_mismatched_identity_fails_and_revokes_image_loan() {
-    for claim_reply in [
+fn claim_reply_must_match_the_requested_instance_and_success_shape() {
+    for response in [
         said(system_api::loader::fail_to_code(Some(Fail::NotReady)), 0, 0),
-        said(wire::OK, 0x45, 0x55),
+        said(wire::OK, 0x44, 0x56),
+        said(wire::OK, 0, 0x55),
     ] {
-        begin(&[Ok(said(wire::OK, 0x44, 0x55)), Ok(claim_reply)]);
-        assert!(
-            matches!(face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)), Err(fail) if fail == (if claim_reply.status == wire::OK { Fail::Bad } else { Fail::NotReady }))
-        );
-        let (calls, events) = snapshot();
-        assert_eq!(calls.len(), 2);
-        assert_eq!(
-            events.last(),
-            Some(&Event::Revoke(TaskId::new(7), token(0xabcd)))
-        );
+        begin(&[Ok(response)]);
+        assert!(matches!(
+            Face::of(token(20))
+                .unwrap()
+                .claim(TaskId::new(0x55), Wait::POLL),
+            Err(Fail::NotReady)
+        ));
+        assert_eq!(snapshot().0.len(), 1);
     }
 }
 
 #[test]
-fn invalid_build_arguments_are_rejected_before_granting() {
-    begin(&[]);
+fn claim_transport_failure_is_not_retried() {
+    begin(&[Err(TransportFail::Receive)]);
     assert!(matches!(
-        face().build(token(3), 0, 0, &[], 0, Wait::POLL),
-        Err(Fail::Bad)
+        Face::of(token(20))
+            .unwrap()
+            .claim(TaskId::new(0x55), Wait::AtMost(12)),
+        Err(Fail::Unknown)
     ));
-    assert!(matches!(
-        face().build(
-            token(3),
-            0,
-            1,
-            &[0; system_api::loader::MAX_ARGS + 1],
-            0,
-            Wait::POLL
-        ),
-        Err(Fail::Bad)
-    ));
-    assert!(snapshot().1.is_empty());
+    assert_eq!(snapshot().0.len(), 1);
 }
 
 #[test]
-fn build_receive_failure_before_claim_releases_the_granted_image() {
-    begin(&[Err(TransportFail::Receive)]);
-    assert!(matches!(
-        face().build(token(3), 0, 1, &[], 0, Wait::AtMost(10)),
-        Err(Fail::Bad)
-    ));
+fn claim_face_accepts_only_the_actual_providers_store_only_system_claim_hole() {
+    use env::{PieInfo, PieKind};
+    use system_api::loader::Grant;
+    begin(&[]);
+    let token = token(20);
+    assert!(Face::of(token).is_ok());
+
+    let cases = [
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(9),
+            mark: Grant::Claim.mark(),
+            alive: false,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(0),
+            vestor: TaskId::new(9),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(7),
+            vestor: TaskId::new(7),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(7),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(10),
+            vestor: TaskId::new(10),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Pole,
+            permission: Permission::STORE,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(9),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::FETCH,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(9),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::FETCH | Permission::STORE,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(9),
+            mark: Grant::Claim.mark(),
+            alive: true,
+        },
+        PieInfo {
+            token,
+            kind: PieKind::Hole,
+            permission: Permission::STORE,
+            owner: TaskId::new(9),
+            vestor: TaskId::new(9),
+            mark: system_api::loader::IMAGE,
+            alive: true,
+        },
+    ];
+    for info in cases {
+        STATE.with(|state| state.borrow_mut().inspected = Some(info));
+        assert!(matches!(Face::of(token), Err(Fail::Denied)));
+    }
+    STATE.with(|state| state.borrow_mut().inspected = None);
+    STATE.with(|state| state.borrow_mut().provider_peer = TaskId::new(10));
+    assert!(matches!(Face::of(token), Err(Fail::Denied)));
     let (calls, events) = snapshot();
-    assert_eq!(calls.len(), 1);
-    assert!(matches!(calls[0].request, Captured::Build { .. }));
-    assert_eq!(
-        events.last(),
-        Some(&Event::Revoke(TaskId::new(7), token(0xabcd)))
-    );
+    assert!(calls.is_empty() && events.is_empty());
 }

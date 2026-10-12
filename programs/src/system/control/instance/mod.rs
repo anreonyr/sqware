@@ -15,12 +15,6 @@ impl Control {
         self.instances.iter().find(|item| item.task == task)
     }
 
-    pub(crate) fn owns_team_instance(&self, owner: TaskId) -> bool {
-        self.instances
-            .iter()
-            .any(|item| item.owner == owner && item.team.is_some())
-    }
-
     pub(crate) fn instance_result(
         &self,
         task: TaskId,
@@ -41,27 +35,66 @@ impl Control {
         }
     }
 
-    pub(crate) fn stop_instance(&mut self, task: TaskId) {
-        if let Some(item) = self
-            .instances
-            .iter_mut()
-            .find(|item| item.task == task && item.team.is_some())
-        {
-            item.stop();
-        }
-    }
-
     pub(crate) fn claim_instance(&mut self, owner: TaskId, task: TaskId) -> Option<env::TeamId> {
         let item = self
             .instances
             .iter_mut()
             .find(|item| item.task == task && item.owner == owner)?;
-        if env::chrono::clock() >= item.claim_until || item.state != State::Debarked {
-            return None;
+        item.claim(env::chrono::clock())
+    }
+
+    pub(crate) fn stop_instance(&mut self, task: TaskId) -> bool {
+        let Some(instance) = self
+            .instances
+            .iter_mut()
+            .find(|instance| instance.task == task)
+        else {
+            return false;
+        };
+        instance.stop();
+        if let Some(team) = instance.team {
+            let _ = unit::slay_team(team);
         }
-        let team = item.team?;
-        item.claimed = true;
-        Some(team)
+        true
+    }
+
+    pub(crate) fn activate_instance(
+        &mut self,
+        reference: crate::system::assembly::InstanceRef,
+    ) -> bool {
+        let Some(item) = self
+            .instances
+            .iter_mut()
+            .find(|item| item.reference == reference)
+        else {
+            return false;
+        };
+        if item.task != reference.task || item.state != State::Starting || !item.started {
+            return false;
+        }
+        item.state = State::Ready;
+        true
+    }
+
+    pub(crate) fn fail_activation(
+        &mut self,
+        reference: crate::system::assembly::InstanceRef,
+    ) -> bool {
+        let Some(item) = self
+            .instances
+            .iter_mut()
+            .find(|item| item.reference == reference)
+        else {
+            return false;
+        };
+        if item.task != reference.task || item.state != State::Starting || !item.started {
+            return false;
+        }
+        item.stop();
+        if let Some(team) = item.team {
+            let _ = unit::slay_team(team);
+        }
+        true
     }
 
     pub(crate) fn reap_instances(&mut self, settling: bool) {
@@ -70,7 +103,9 @@ impl Control {
                 continue;
             }
             if item.claimed {
-                if let Ok(env::JoinReply::Reaped(exit)) = unit::join(item.task.into(), Wait::POLL, false) {
+                if let Ok(env::JoinReply::Reaped(exit)) =
+                    unit::join(item.task.into(), Wait::POLL, false)
+                {
                     item.reap(exit);
                 }
             } else if let Some(team) = item.team {
@@ -83,7 +118,9 @@ impl Control {
                 }
             }
             if settling
-                || (!item.claimed && env::chrono::clock() >= item.claim_until)
+                || (!item.claimed
+                    && item.state == State::Debarked
+                    && env::chrono::clock() >= item.claim_until)
                 || unit::join_task(item.owner, Wait::POLL).unwrap_or(true)
                 || unit::join_task(item.task, Wait::POLL).unwrap_or(true)
             {
@@ -104,7 +141,7 @@ impl Control {
         for item in self
             .instances
             .iter()
-            .filter(|item| !item.claimed && item.team.is_some())
+            .filter(|item| !item.claimed && item.team.is_some() && item.state == State::Debarked)
         {
             let ms = item
                 .claim_until
@@ -132,6 +169,7 @@ fn min_wait(a: Wait, b: Wait) -> Wait {
     }
 }
 
+pub(crate) mod activation;
 pub(crate) mod create;
 pub(crate) mod hook;
 

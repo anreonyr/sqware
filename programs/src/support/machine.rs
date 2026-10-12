@@ -8,6 +8,9 @@ use env::{Name, Page};
 
 use crate::unit::router::PLIC_CLASS;
 
+/// Two inventory entries are reserved for the boot DTB and interrupt resource.
+pub const MAX_DEVICES: usize = hub_api::INVENTORY_MAX - 2;
+
 /// 可派发的设备区域及其驱动信息；line 为零表示没有本控制器的中断线路。
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Device {
@@ -54,6 +57,9 @@ impl Machine {
             let Some(base) = first_region(node) else {
                 continue;
             };
+            if out.len() >= MAX_DEVICES {
+                return None;
+            }
             out.try_reserve(1).ok()?;
             out.push(Device {
                 resource: Name::Page(Page::Region(base as u64)),

@@ -18,15 +18,13 @@ fn root() -> PathBuf {
     at.canonicalize().unwrap_or(at)
 }
 
-/// **宿主装配表**：文本包含 `programs` 那份**宿主安全**的声明模块（`UnitFile` 类型 +
-/// `PROGRAMS` 注册表 + 各台自己的 `program.rs`）。
+/// **宿主声明表**：文本包含 `programs` 的宿主安全声明、Deployment 场景表和 Package 镜像表。
 ///
 /// # 为什么是 `#[path]` 而不是一条依赖
 ///
 /// 本 crate 是**宿主** std 程序，而 `programs` 依赖 execution
 /// （riscv 内联汇编，宿主上不做代码生成就编不过）⇒ 它**不能**依赖 `programs`。
-/// 而装配表只有一份——每台程序自己那份 `program.rs`。故那一份源码由**两侧各编一次**：
-/// `programs` 编它给运行时用，本 crate 编它给打包用。
+/// 各模块的 UnitFile 声明与镜像/部署选择分开；本 crate 只读取纯配置，不依赖运行时代码。
 ///
 /// 装配声明只依赖 `env` 和纯 provider API crates（hub / terminal / router）；这些 API 不依赖
 /// execution 或 protocol。`programs/src/unit/mod.rs` 与这份宿主 crate 的依赖图一起检查这条边界。
@@ -34,38 +32,127 @@ fn root() -> PathBuf {
 #[path = "../../../programs/src/unit/mod.rs"]
 mod unit;
 
+// Pure command resource declarations are shared with the Shell UnitFile. This host module only
+// reads those declarations; it does not compile or run the Shell command loop.
+#[path = "../../../programs/src/user/shell/commands.rs"]
+pub(crate) mod shell_commands;
+
+mod user {
+    pub(crate) mod shell {
+        pub(crate) use crate::shell_commands as commands;
+    }
+}
+
 /// 认得的场景名——**从引导镜像那张表里收**（一个景存在 ⇔ 它有一条引导镜像），故不会与它脱节。
 fn scenes() -> Vec<&'static str> {
-    let mut out: Vec<&'static str> = Vec::new();
-    for p in unit::PROGRAMS {
-        for s in p.entry() {
-            if !out.contains(s) {
-                out.push(s);
-            }
-        }
-    }
-    out
+    unit::DEPLOYMENTS
+        .iter()
+        .map(|deployment| deployment.name)
+        .collect()
 }
 
 /// 这一景的引导镜像（哪一台的 `entry` 含这个景）。
 fn entry_of(scene: &str) -> Option<&'static str> {
-    unit::PROGRAMS
-        .iter()
-        .find(|p| p.entry().contains(&scene))
-        .map(|p| p.name())
+    unit::Deployment::find(scene).and_then(unit::Deployment::entry_image)
 }
 
-/// 这一景要装的程序（**装配表按 `wanted_by` 过滤**；次序即装载次序）。
-fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
-    let picked: Vec<(&'static str, env::ProgramKind)> = unit::PROGRAMS
+/// Expand deployed UnitFiles, constructible UnitFiles, and their image resources into packages.
+fn bins_with(
+    deployment: &'static unit::Deployment,
+    programs: &[&'static unit::UnitFile],
+    packages: &[unit::Package],
+) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
+    let scenario = deployment.name;
+    let mut names = Vec::new();
+    fn add(names: &mut Vec<&'static str>, name: &'static str) {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    let entry = programs
         .iter()
-        // **两格滤**：进这一景（`wanted_by`）**且**是要起的服务（[`unit::Kind::Service`]）。
-        // 两格判的不是同一句话：`wanted_by` 说"这一景要不要它"，`kind` 说"**它有没有身子**"——
-        // 名单里那个[目标单元](unit::Kind::Target)（这一趟装配自己）没有身子，**不许去找
-        // `prog-scene` 那样的 bin**；即使它将来写上了自己的景，这一格也照旧不装它。
-        .filter(|p| p.wanted_by().contains(&scenario) && p.kind() == unit::Kind::Service)
-        .map(|p| (p.name(), p.space()))
-        .collect();
+        .copied()
+        .find(|program| program.name() == deployment.entry)
+        .ok_or_else(|| format!("部署 {scenario} 入口 {} 没有 UnitFile", deployment.entry))?;
+    let mut pending = Vec::new();
+    let mut visited = Vec::new();
+    fn enqueue(
+        pending: &mut Vec<&'static unit::UnitFile>,
+        visited: &mut Vec<&'static str>,
+        program: &'static unit::UnitFile,
+    ) {
+        if !visited.contains(&program.name()) {
+            visited.push(program.name());
+            pending.push(program);
+        }
+    }
+    enqueue(&mut pending, &mut visited, entry);
+    for name in deployment.start {
+        let program = programs
+            .iter()
+            .copied()
+            .find(|program| program.name() == *name)
+            .ok_or_else(|| format!("部署 {scenario} 的模块引用 {name} 没有 UnitFile"))?;
+        enqueue(&mut pending, &mut visited, program);
+    }
+    while let Some(program) = pending.pop() {
+        add(&mut names, program.loader.image);
+        add_supply_images(&mut names, program, packages);
+        for construction in program.control.construction {
+            let unit::ConstructionSelector::Unit(name) = construction.selector else {
+                continue;
+            };
+            let dependency = programs
+                .iter()
+                .copied()
+                .find(|candidate| candidate.name() == name)
+                .ok_or_else(|| {
+                    format!(
+                        "Unit {} 的 construction 引用了未知 UnitFile {name}",
+                        program.name()
+                    )
+                })?;
+            enqueue(&mut pending, &mut visited, dependency);
+        }
+    }
+    for name in deployment.resources.iter().chain(deployment.sources) {
+        add(&mut names, name);
+    }
+
+    // Image resources may themselves be referenced by modules sharing that image.
+    let mut scanned = 0;
+    while scanned < names.len() {
+        let name = names[scanned];
+        for program in programs
+            .iter()
+            .copied()
+            .filter(|program| program.loader.image == name)
+        {
+            add_supply_images(&mut names, program, packages);
+        }
+        scanned += 1;
+    }
+    let entry_space = entry.loader.space;
+    let entry_image = entry.loader.image;
+    let picked: Vec<(&'static str, env::ProgramKind)> = names
+        .into_iter()
+        .map(|name| -> Result<_, String> {
+            Ok(packages
+                .iter()
+                .find(|package| package.name == name)
+                .map(|package| {
+                    (
+                        package.name,
+                        if package.name == entry_image {
+                            entry_space
+                        } else {
+                            env::ProgramKind::User
+                        },
+                    )
+                })
+                .ok_or_else(|| format!("景 {scenario} 引用了未登记镜像 {name}"))?)
+        })
+        .collect::<Result<_, _>>()?;
     if picked.is_empty() {
         return Err(format!(
             "不认得的景 {scenario}（认得的：{}）",
@@ -75,39 +162,90 @@ fn bins_for(scenario: &str) -> Result<Vec<(&'static str, env::ProgramKind)>, Str
     Ok(picked)
 }
 
+fn add_supply_images(
+    names: &mut Vec<&'static str>,
+    program: &unit::UnitFile,
+    packages: &[unit::Package],
+) {
+    let initrd = system_api::supply::Key::of("system/initrd");
+    for binding in program.supply() {
+        if binding.source.mark() == initrd.mark()
+            && binding.source.name() == initrd.name()
+            && packages
+                .iter()
+                .any(|package| package.name == binding.resource.name())
+        {
+            add_name(names, binding.resource.name());
+        }
+    }
+}
+
+fn add_name(names: &mut Vec<&'static str>, name: &'static str) {
+    if !names.contains(&name) {
+        names.push(name);
+    }
+}
+
+fn bins_for(
+    deployment: &'static unit::Deployment,
+) -> Result<Vec<(&'static str, env::ProgramKind)>, String> {
+    bins_with(deployment, unit::PROGRAMS, unit::PACKAGES)
+}
+
 /// **校验这一景的图，并返推导出的装配次序**（次序由各台声明里的 `after` 算出来，
 /// **打包这一趟是它的第一个读者**——宿主上有名字、有退出码，坏图在这里就断掉）。
 ///
 /// 三条话说得清：边指着本景没有的名字 / 被指着的那台没有"我答得动"的凭据 / 有环。
-fn order_of(scenario: &str) -> Result<Vec<&'static str>, String> {
-    let mut list: Vec<&'static unit::UnitFile> = unit::PROGRAMS
+fn order_of(
+    deployment: &'static unit::Deployment,
+    programs: &[&'static unit::UnitFile],
+) -> Result<Vec<&'static str>, String> {
+    let scenario = deployment.name;
+    let mut list: Vec<&'static unit::UnitFile> = deployment
+        .start
         .iter()
-        .copied()
-        .filter(|p| p.wanted_by().contains(&scenario) && p.listed())
-        .collect();
-    unit::order_scene(&mut list).map_err(|why| match why {
-        unit::DepsFail::Unknown(name) => {
-            format!("景 {scenario} 的 deps 里有一个名字不在本景：{name}")
-        }
-        unit::DepsFail::NoEvidence(name) => {
-            format!("景 {scenario} 的 deps 指着 {name}，而它没有'我答得动'的凭据（`setup` 空）")
-        }
-        unit::DepsFail::Cycle(name) => {
-            format!("景 {scenario} 的 deps 有环（取不出可排的台，卡在 {name}）")
-        }
-    })?;
+        .map(|name| {
+            programs
+                .iter()
+                .copied()
+                .find(|program| program.name() == *name)
+                .ok_or_else(|| format!("部署 {scenario} 启动项 {name} 没有 UnitFile"))
+        })
+        .collect::<Result<_, _>>()?;
+    unit::order_scene(&mut list, deployment.targets, deployment.bootstrap).map_err(
+        |why| match why {
+            unit::DepsFail::Unknown(name) => {
+                format!("景 {scenario} 的 deps 里有一个名字不在本景：{name}")
+            }
+            unit::DepsFail::NoEvidence(name) => {
+                format!("景 {scenario} 的 deps 指着 {name}，而它没有有效的 ready 声明")
+            }
+            unit::DepsFail::Cycle(name) => {
+                format!("景 {scenario} 的 deps 有环（取不出可排的台，卡在 {name}）")
+            }
+            unit::DepsFail::Bootstrap(task) => {
+                format!("景 {scenario} 缺少依赖的自举任务 {task:?}")
+            }
+            unit::DepsFail::DuplicateStart(name) => format!("景 {scenario} 重复启动 {name}"),
+            unit::DepsFail::DuplicateTarget(name) => {
+                format!("景 {scenario} 重复声明 Target {name}")
+            }
+        },
+    )?;
     Ok(list.iter().map(|p| p.name()).collect())
 }
 
 /// 造这一景这一档的镜像，返 `initrd.img` 的落点（内核 ELF 同目录）。
 pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
     let root = root();
-    let bins = bins_for(scenario)?;
+    let deployment = unit::Deployment::find(scenario)
+        .ok_or_else(|| format!("不认得的景 {scenario}（认得的：{}）", scenes().join(" / ")))?;
+    let bins = bins_for(deployment)?;
     // **图那一趟**：先把这一景的 after 校验一遍（坏图当场断），顺手把算出来的次序打出来——
     // 验收要核对的就是这一行。
     println!(
         "initrd: 景 {scenario} 的装配次序：{}",
-        order_of(scenario)?.join(" → ")
+        order_of(deployment, unit::PROGRAMS)?.join(" → ")
     );
 
     // 嵌套 cargo 用**独立 target 目录**：宿主 cargo 会在 target 根持有 `.cargo-build-lock`，
@@ -138,13 +276,16 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         return Err("programs 编不过（上面是它自己的报错）".to_string());
     }
 
-    // 读产物：**bin 名是约定** `prog-<名字>`（装配表里不写第二遍）；读进来就顺手瘦一遍
+    // Read and strip the binary registered by this Package.
     // （`prog-*` 那份字节不动——它是宿主调试用的那一份，见文件头的"瘦身"那段）。
     let bin_dir = work.join(TARGET).join(profile);
     let mut images = Vec::with_capacity(bins.len());
     for (name, kind) in &bins {
-        let bin = format!("prog-{name}");
-        let elf = slim(&bin_dir.join(&bin), &work)?;
+        let package = unit::PACKAGES
+            .iter()
+            .find(|package| package.name == *name)
+            .ok_or_else(|| format!("部署镜像登记丢失：{name}"))?;
+        let elf = slim(&bin_dir.join(package.binary), &work)?;
         images.push((*kind, *name, elf));
     }
     let items: Vec<(env::ProgramKind, &str, &[u8])> = images
@@ -152,12 +293,8 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
         .map(|(kind, name, elf)| (*kind, *name, elf.as_slice()))
         .collect();
     // 引导镜像由 entry 声明选择，并且必须包含在本景清单中。
-    let entry = entry_of(scenario).ok_or_else(|| {
-        format!(
-            "initrd: 不认得的景 {scenario}（认得的：{}）",
-            scenes().join(" / ")
-        )
-    })?;
+    let entry = entry_of(scenario)
+        .ok_or_else(|| format!("initrd: deployment entry image missing {scenario}"))?;
     let entry_at = bins
         .iter()
         .position(|(name, _)| *name == entry)
@@ -202,7 +339,7 @@ pub fn build(scenario: &str, profile: &str) -> Result<PathBuf, String> {
 
 /// 瘦一份程序镜像：剥掉符号与调试节，只留可装载内容（见文件头"瘦身"那段）。
 ///
-/// `src` = `prog-<名字>`——**不动它**（宿主 `gdb` 要那份）；`out` = 那一档的工作目录
+/// `src` is the Package binary; it stays unchanged for host debugging. `out` is the profile work directory.
 /// （临时文件落在它下面，随 `target/` 一起清理）。产瘦好的字节。
 ///
 /// # Errors
@@ -235,4 +372,467 @@ fn slim(src: &Path, out: &Path) -> Result<Vec<u8>, String> {
     })();
     let _ = std::fs::remove_file(&dst);
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bins_for, bins_with, order_of, unit};
+
+    #[test]
+    fn deployment_image_and_start_members_are_registered() {
+        for deployment in unit::DEPLOYMENTS {
+            let images = bins_for(deployment).unwrap();
+            order_of(deployment, unit::PROGRAMS).unwrap();
+            let entry_image = deployment.entry_image().unwrap();
+            assert!(images.iter().any(|(name, _)| *name == entry_image));
+            for (image, _) in &images {
+                assert!(unit::PACKAGES.iter().any(|package| package.name == *image));
+            }
+            for start in deployment.start {
+                let program = unit::PROGRAMS
+                    .iter()
+                    .find(|program| program.name() == *start)
+                    .unwrap();
+                assert!(
+                    images
+                        .iter()
+                        .any(|(image, _)| image == &program.loader.image)
+                );
+            }
+        }
+        let fault = unit::Deployment::find("system-fault").unwrap();
+        let fault_bins = bins_for(fault).unwrap();
+        for required in ["shell", "cat", "emit", "upper", "fail", "spin", "workers"] {
+            assert!(fault_bins.iter().any(|(image, _)| *image == required));
+        }
+        assert!(!fault.start.contains(&"shell"));
+        assert!(!order_of(fault, unit::PROGRAMS).unwrap().contains(&"shell"));
+
+        let product = bins_for(unit::Deployment::find("product").unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>();
+        for supplied in ["shell", "cat", "emit", "upper", "fail", "spin", "workers"] {
+            assert!(product.contains(&supplied));
+        }
+    }
+
+    #[test]
+    fn package_names_are_unique_and_exclude_scene_targets() {
+        for (index, package) in unit::PACKAGES.iter().enumerate() {
+            assert!(!package.name.is_empty());
+            assert!(package.binary.starts_with("prog-"));
+            assert!(unit::PACKAGES[..index]
+                .iter()
+                .all(|earlier| earlier.name != package.name && earlier.binary != package.binary));
+        }
+        assert!(!unit::PACKAGES.iter().any(|package| package.name == "scene"));
+    }
+
+    #[test]
+    fn invalid_image_and_start_references_fail_on_the_build_paths() {
+        static MISSING_IMAGE: unit::Deployment = unit::Deployment {
+            name: "invalid-image",
+            entry: "accept-system",
+            start: &[],
+            resources: &["missing"],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(
+            bins_for(&MISSING_IMAGE)
+                .unwrap_err()
+                .contains("未登记镜像 missing")
+        );
+
+        static MISSING_START: unit::Deployment = unit::Deployment {
+            name: "invalid-start",
+            entry: "accept-system",
+            start: &["missing"],
+            resources: &[],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(
+            order_of(&MISSING_START, unit::PROGRAMS)
+                .unwrap_err()
+                .contains("启动项 missing 没有 UnitFile")
+        );
+    }
+
+    #[test]
+    fn dependency_cycle_fails_through_the_build_order_path() {
+        static A: unit::UnitFile = unit::UnitFile {
+            name: "cycle-a",
+            loader: unit::LoaderConfig::user("cycle-a"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: Some(&[unit::Dependency::Unit("cycle-b")]),
+                ending: Some(unit::Ending::Transient),
+                ready: unit::Ready::OnSpawn,
+                construction: &[],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static B: unit::UnitFile = unit::UnitFile {
+            name: "cycle-b",
+            loader: unit::LoaderConfig::user("cycle-b"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: Some(&[unit::Dependency::Target(unit::SCENE)]),
+                ending: Some(unit::Ending::Transient),
+                ready: unit::Ready::OnSpawn,
+                construction: &[],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static TARGETS: &[unit::Target] = &[unit::Target {
+            name: unit::SCENE,
+            members: &["cycle-a"],
+        }];
+        static CYCLE: unit::Deployment = unit::Deployment {
+            name: "cycle",
+            entry: "cycle-a",
+            start: &["cycle-a", "cycle-b"],
+            resources: &[],
+            targets: TARGETS,
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(order_of(&CYCLE, &[&A, &B]).unwrap_err().contains("有环"));
+    }
+
+    #[test]
+    fn package_closure_allows_unitless_images_and_shared_loader_images() {
+        static ENTRY_BINDINGS: &[unit::Binding] = &[
+            unit::Binding {
+                source: system_api::supply::Key::of("system/initrd"),
+                resource: system_api::supply::Key::of("supplied-image"),
+                slot: env::Mark::of("test/supplied-image"),
+                permission: env::Permission::FETCH,
+            },
+            unit::Binding {
+                source: system_api::supply::Key::of("system/initrd"),
+                resource: system_api::supply::Key::of("runtime-data"),
+                slot: env::Mark::of("test/runtime-data"),
+                permission: env::Permission::FETCH,
+            },
+            unit::Binding {
+                source: system_api::supply::Key::of("system/operator"),
+                resource: system_api::supply::Key::of("not-an-image"),
+                slot: env::Mark::of("test/not-an-image"),
+                permission: env::Permission::FETCH,
+            },
+        ];
+        static ENTRY: unit::UnitFile = unit::UnitFile {
+            name: "test-entry",
+            loader: unit::LoaderConfig::supervisor("shared-image"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: None,
+                ending: None,
+                ready: unit::Ready::OnSpawn,
+                construction: &[unit::Construction::image()],
+            },
+            supply: unit::SupplyConfig {
+                bindings: ENTRY_BINDINGS,
+            },
+        };
+        static FIRST: unit::UnitFile = unit::UnitFile {
+            name: "test-first",
+            loader: unit::LoaderConfig::user("shared-image"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: None,
+                ending: None,
+                ready: unit::Ready::OnSpawn,
+                construction: &[unit::Construction::unit("test-second")],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static SECOND: unit::UnitFile = unit::UnitFile {
+            name: "test-second",
+            loader: unit::LoaderConfig::user("shared-image"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: None,
+                ending: None,
+                ready: unit::Ready::OnSpawn,
+                construction: &[unit::Construction::unit("test-first")],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static DEPLOYMENT: unit::Deployment = unit::Deployment {
+            name: "shared",
+            entry: "test-entry",
+            start: &["test-first", "test-second"],
+            resources: &["unitless-image"],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        static PACKAGES: &[unit::Package] = &[
+            unit::Package {
+                name: "shared-image",
+                binary: "shared-elf",
+            },
+            unit::Package {
+                name: "unitless-image",
+                binary: "raw-elf",
+            },
+            unit::Package {
+                name: "supplied-image",
+                binary: "supplied-elf",
+            },
+        ];
+
+        let bins = bins_with(&DEPLOYMENT, &[&ENTRY, &FIRST, &SECOND], PACKAGES).unwrap();
+        assert_eq!(
+            bins,
+            [
+                ("shared-image", env::ProgramKind::Supervisor),
+                ("supplied-image", env::ProgramKind::User),
+                ("unitless-image", env::ProgramKind::User),
+            ]
+        );
+    }
+
+    #[test]
+    fn construction_unit_references_must_resolve() {
+        static ENTRY: unit::UnitFile = unit::UnitFile {
+            name: "unknown-entry",
+            loader: unit::LoaderConfig::user("unknown-entry"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: None,
+                ending: None,
+                ready: unit::Ready::OnSpawn,
+                construction: &[unit::Construction::unit("missing-unit")],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static DEPLOYMENT: unit::Deployment = unit::Deployment {
+            name: "unknown-construction",
+            entry: "unknown-entry",
+            start: &[],
+            resources: &[],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        static PACKAGES: &[unit::Package] = &[unit::Package {
+            name: "unknown-entry",
+            binary: "unknown-entry-elf",
+        }];
+
+        let error = bins_with(&DEPLOYMENT, &[&ENTRY], PACKAGES).unwrap_err();
+        assert!(error.contains("未知 UnitFile missing-unit"));
+    }
+
+    #[test]
+    fn raw_image_construction_does_not_require_another_unit_file() {
+        static ENTRY: unit::UnitFile = unit::UnitFile {
+            name: "raw-entry",
+            loader: unit::LoaderConfig::user("raw-entry"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: None,
+                ending: None,
+                ready: unit::Ready::OnSpawn,
+                construction: &[unit::Construction::image()],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static DEPLOYMENT: unit::Deployment = unit::Deployment {
+            name: "raw-construction",
+            entry: "raw-entry",
+            start: &[],
+            resources: &[],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        static PACKAGES: &[unit::Package] = &[unit::Package {
+            name: "raw-entry",
+            binary: "raw-entry-elf",
+        }];
+
+        assert_eq!(
+            bins_with(&DEPLOYMENT, &[&ENTRY], PACKAGES).unwrap(),
+            [("raw-entry", env::ProgramKind::User)]
+        );
+    }
+
+    #[test]
+    fn missing_bootstrap_dependency_fails_through_the_build_order_path() {
+        static UNIT: unit::UnitFile = unit::UnitFile {
+            name: "bootstrap-check",
+            loader: unit::LoaderConfig::user("bootstrap-check"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: Some(&[unit::Dependency::Bootstrap(unit::Bootstrap::Identity)]),
+                ending: Some(unit::Ending::Transient),
+                ready: unit::Ready::OnSpawn,
+                construction: &[],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static DEPLOYMENT: unit::Deployment = unit::Deployment {
+            name: "bootstrap-check",
+            entry: "bootstrap-check",
+            start: &["bootstrap-check"],
+            resources: &[],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(
+            order_of(&DEPLOYMENT, &[&UNIT])
+                .unwrap_err()
+                .contains("Identity")
+        );
+    }
+
+    #[test]
+    fn target_dependencies_participate_in_cycle_and_duplicate_validation() {
+        static A: unit::UnitFile = unit::UnitFile {
+            name: "target-a",
+            loader: unit::LoaderConfig::user("target-a"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: Some(&[unit::Dependency::Target("after-b")]),
+                ending: Some(unit::Ending::Transient),
+                ready: unit::Ready::OnSpawn,
+                construction: &[],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static B: unit::UnitFile = unit::UnitFile {
+            name: "target-b",
+            loader: unit::LoaderConfig::user("target-b"),
+            operator: unit::OperatorConfig::DEFAULT,
+            identity: unit::Identity {
+                aliases: &[],
+                grants: &[],
+            },
+            control: unit::ControlConfig {
+                after: Some(&[unit::Dependency::Target("after-a")]),
+                ending: Some(unit::Ending::Transient),
+                ready: unit::Ready::OnSpawn,
+                construction: &[],
+            },
+            supply: unit::SupplyConfig { bindings: &[] },
+        };
+        static TARGETS: &[unit::Target] = &[
+            unit::Target {
+                name: "after-a",
+                members: &["target-a"],
+            },
+            unit::Target {
+                name: "after-b",
+                members: &["target-b"],
+            },
+        ];
+        static CYCLE: unit::Deployment = unit::Deployment {
+            name: "target-cycle",
+            entry: "target-a",
+            start: &["target-a", "target-b"],
+            resources: &[],
+            targets: TARGETS,
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(order_of(&CYCLE, &[&A, &B]).unwrap_err().contains("有环"));
+
+        static DUP_START: unit::Deployment = unit::Deployment {
+            name: "duplicate-start",
+            entry: "target-a",
+            start: &["target-a", "target-a"],
+            resources: &[],
+            targets: &[],
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(
+            order_of(&DUP_START, &[&A])
+                .unwrap_err()
+                .contains("重复启动")
+        );
+
+        static DUP_TARGETS: &[unit::Target] = &[
+            unit::Target {
+                name: "same",
+                members: &["target-a"],
+            },
+            unit::Target {
+                name: "same",
+                members: &["target-b"],
+            },
+        ];
+        static DUP_TARGET: unit::Deployment = unit::Deployment {
+            name: "duplicate-target",
+            entry: "target-a",
+            start: &["target-a"],
+            resources: &[],
+            targets: DUP_TARGETS,
+            bootstrap: &[],
+            sources: &[],
+        };
+        assert!(
+            order_of(&DUP_TARGET, &[&A])
+                .unwrap_err()
+                .contains("重复声明 Target")
+        );
+    }
+
+    #[test]
+    fn selecting_a_deployment_rejects_missing_or_multiple_entries() {
+        assert!(matches!(
+            unit::select_deployment(|_| false),
+            Err(unit::DeploymentSelectionError::Missing)
+        ));
+        assert!(matches!(
+            unit::select_deployment(|_| true),
+            Err(unit::DeploymentSelectionError::Ambiguous)
+        ));
+    }
 }

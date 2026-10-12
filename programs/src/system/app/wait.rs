@@ -1,8 +1,7 @@
 //! Supervisor interest selection and wait policy.
 pub(crate) use super::waiting::Waiting;
 use crate::system::app::Fault as Fail;
-use crate::system::control::{Entries as Watch, unit::Control, unit::table::Slot};
-use crate::system::publication::Names;
+use crate::system::control::{namespace::Endpoints as Watch, unit::Control, unit::table::Slot};
 
 use alloc::vec::Vec;
 use env::Source;
@@ -16,27 +15,13 @@ pub struct Interests {
     pub subs: Vec<Source>,
     pub armed: bool,
 }
-pub fn entries(
-    watch: Res<Watch>,
-    names: Res<Names>,
-    mut wanted: ResMut<Interests>,
-) -> Result<Progress, Fail> {
+pub fn entries(watch: Res<Watch>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
     wanted.tokens.clear();
     wanted.writes.clear();
     wanted.subs.clear();
     wanted.armed = false;
-    wanted
-        .tokens
-        .try_reserve(ccall::Grant::ALL.len() + names.entries().len() + 3)?;
+    wanted.tokens.try_reserve(ccall::Grant::ALL.len() + 3)?;
     wanted.tokens.extend(watch.entries());
-    wanted.tokens.extend(names.entries());
-    Ok(Progress::Done)
-}
-pub fn publication(
-    entry: Res<crate::system::publication::Entry>,
-    mut wanted: ResMut<Interests>,
-) -> Result<Progress, Fail> {
-    wanted.tokens.push(entry.0);
     Ok(Progress::Done)
 }
 pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Progress, Fail> {
@@ -52,14 +37,24 @@ pub fn tasks(control: Res<Control>, mut wanted: ResMut<Interests>) -> Result<Pro
             _ => None,
         }));
     wanted.subs.push(Source::Join {
-        target: control.task("operator").ok_or(Fail::Dead)?.into(),
+        target: control
+            .bootstrap_task(crate::unit::Bootstrap::Operator)
+            .ok_or(Fail::Dead)?
+            .into(),
     });
     wanted.subs.push(Source::Join {
-        target: control.task("identity").ok_or(Fail::Dead)?.into(),
+        target: control
+            .bootstrap_task(crate::unit::Bootstrap::Identity)
+            .ok_or(Fail::Dead)?
+            .into(),
     });
     for item in control.instances() {
         if let Some(team) = item.team {
-            if !item.claimed { wanted.subs.push(Source::Join { target: team.into() }); }
+            if !item.claimed {
+                wanted.subs.push(Source::Join {
+                    target: team.into(),
+                });
+            }
             wanted.subs.push(Source::Join {
                 target: item.task.into(),
             });
@@ -132,6 +127,8 @@ pub(crate) fn construction(
     construction: Res<crate::system::control::Construction>,
     mut wanted: ResMut<Interests>,
 ) -> Result<Progress, Fail> {
-    wanted.tokens.push(construction.entry);
+    let entries = construction.entries();
+    wanted.tokens.try_reserve(entries.size_hint().0)?;
+    wanted.tokens.extend(entries);
     Ok(Progress::Done)
 }

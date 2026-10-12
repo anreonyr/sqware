@@ -6,29 +6,26 @@
 extern crate alloc;
 extern crate programs;
 
-use alloc::string::ToString;
-
 use env::Wait;
 use programs::Report;
 
 use ::resource::raw::Hole;
+use core::sync::atomic::{AtomicU64, Ordering};
 use env::pie;
 use env::unit;
 use ipc::session::Session;
 use programs::debug;
-use system_api::control::publication;
 use system_api::identity::Selector;
 use system_api::identity::Subject;
-use system_api::operator::EntryId;
 use system_api::operator::Fail;
-use system_api::operator::Permit;
 use system_api::operator::path::Path;
+use system_api::operator::{self as operator_api, Permit};
+use system_api::operator::{Binding, EntryId};
 use system_client::identity::Organization;
 use system_client::identity::Query;
 use system_client::identity::SelfOps;
 use system_client::operator;
 use system_client::operator::Face;
-use system_client::operator::Mine;
 use system_client::operator::Pane;
 
 const DIR: &system_api::operator::Path = system_api::operator::SVC;
@@ -60,6 +57,7 @@ const OK_NOTE: &str = "probe-rule: the rules held";
 fn main() -> Report<'static> {
     let sire = unit::sire();
     let me = unit::self_id();
+    let capability = system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
 
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-rule: no tree link");
@@ -93,9 +91,9 @@ fn main() -> Report<'static> {
 
     let rule_road = DIR.try_join(PANE).unwrap();
     let root = tree.root();
-    let is_id = plate(IS, Permit::Identity(Selector::Exact(p)));
-    let under_id = plate(UNDER, Permit::Identity(Selector::DescendantOf(p)));
-    let in_id = plate(IN, Permit::Identity(Selector::MemberOf(c)));
+    let is_id = plate(&capability, IS, Permit::Identity(Selector::Exact(p))).entry_id();
+    let under_id = plate(&capability, UNDER, Permit::Identity(Selector::DescendantOf(p))).entry_id();
+    let in_id = plate(&capability, IN, Permit::Identity(Selector::MemberOf(c))).entry_id();
     let sys = tree.pane(DIR, Wait::AtMost(MS)).unwrap();
     let at = tree.pane(&rule_road, Wait::AtMost(MS)).unwrap();
     let pane_id = at.id();
@@ -108,8 +106,8 @@ fn main() -> Report<'static> {
     // 两个号都是**树上换来的**（`road` 把一条路译成号）——那一格的门牌在谁手里，由树说，
     // 不由别人告诉我。故这一台**没有 new 的任何机制**，只是把规矩那一格的号换了个来路。
     // `gone_id`）随之下岗（`plate` 仍照落，判据一条没动）。
-    let door_id = plate(DOOR, Permit::Bound);
-    let _ = plate(OPEN, Permit::Opener(door_id));
+    let door_id = plate(&capability, DOOR, Permit::Bound).entry_id();
+    let _ = plate(&capability, OPEN, Permit::Opener(door_id));
     // `/svc/sys/identity/resolve` 那一格的号：**点名那一手**（名字 → 号）。
     // 门闩——Pane::tile 就地问一次（不重试），Face::tile 带额度重试。本格用前者：这一台
     // 变松（见 denied 那边量同一件事的那一台）。
@@ -118,30 +116,24 @@ fn main() -> Report<'static> {
         .try_join(system_api::identity::Grant::Resolve.name())
         .and_then(|road| root.tile(&road, Wait::AtMost(MS)).map(|e| e.id()).ok());
     if let Some(principal) = foreign {
-        let _ = plate(FOREIGN, Permit::Opener(principal));
+        let _ = plate(&capability, FOREIGN, Permit::Opener(principal));
     }
 
-    let _ = plate(AT_PANE, Permit::Opener(sys.id()));
-    let temp_id = plate(TEMP, Permit::Public);
-    let trimmed = temp_id.get() != 0
-        && system_client::control::publication::Client::injected()
-            .unwrap()
-            .unpublish(target(TEMP), Wait::AtMost(MS))
-            .is_ok();
-    let _ = plate(GONE_DOOR, Permit::Opener(temp_id));
+    let _ = plate(&capability, AT_PANE, Permit::Opener(sys.id()));
+    let temp_binding = plate(&capability, TEMP, Permit::Public);
+    let temp_id = temp_binding.entry_id();
+    let trimmed = temp_id.get() != 0 && capability.unbind(temp_binding, Wait::AtMost(MS)).is_ok();
+    let _ = plate(&capability, GONE_DOOR, Permit::Opener(temp_id));
 
     // 下面在 `adopt(q)` **之后**再落一次同一格——这是要量的那件事：**归属记的是"命"而不是
     // "身份"**（`owner` 那一格记的是任务）⇒ 主人**换了代表照样能改自己的格子**，
     // 而同一次 Exact(p) 已经答了拒绝（"用"那一轴随身份走）。两条轴各问各的问题，各自自洽。
-    let mine_id = plate(MINE, Permit::Bound);
+    let mine_binding = plate(&capability, MINE, Permit::Bound);
+    let mine_id = mine_binding.entry_id();
 
     // **报"答得动了"**（Setup::Ready）：上面那几格全落完才算——`probe-rule-other` 读的就是它们
     // （与三台驱动、三台服务那几处**同一手**）。
-    let _ = ipc::session::establish::endpoint(
-        unit::sire(),
-        programs::unit::READY_MARK,
-        env::Wait::POLL,
-    );
+    let _ = ipc::session::establish::lend(unit::sire(), programs::unit::READY_MARK);
 
     // 六、以 `p` 试五遍——前三条**正证**，后两条是 `Opener` 的正负两面。
     let is = look(&root, &rule_road, IS, Wait::AtMost(MS));
@@ -166,20 +158,20 @@ fn main() -> Report<'static> {
     // Bound 以 `q` 再问一遍，只判有没有绑定，不判是不是 p。
     // `mine` 那一格只被用来量「改」那一轴（下面的 `keep`），"用"那一轴没人问过它。
     let mine_sub = look(&root, &rule_road, MINE, Wait::AtMost(MS));
-    let raw = at.bind(
-        MINE.to_string(),
-        pie::unseal(env::UnsealArgs::hole(env::Mark::of("rule-entry"))).unwrap(),
-        Permit::Bound,
-        Mine::Yes,
-        Wait::AtMost(MS),
-    );
-    assert!(matches!(raw, Err(Fail::Denied)));
-    let publisher = system_client::control::publication::Client::injected().unwrap();
-    let keep = publisher.unpublish(target(MINE), Wait::AtMost(MS));
+    let forged = pie::unseal(env::UnsealArgs::hole(
+        system_api::operator::entry::AUTH_ENTRY,
+    ))
+    .unwrap();
+    assert!(matches!(
+        operator::Capability::direct(tree.host(), forged),
+        Err(Fail::Denied)
+    ));
+    let _ = pie::release(forged, env::ReleaseMode::Revoke);
+    let keep = capability.unbind(mine_binding, Wait::AtMost(MS));
     assert_ne!(
-        plate(MINE, Permit::Bound),
+        plate(&capability, MINE, Permit::Bound).entry_id(),
         mine_id,
-        "retired mounts get new identifiers"
+        "retired bindings get new identifiers"
     );
 
     // 九、**两行**读数（**错误那一格从数字变成名字**：新面答的是 Fail，不是裸码）。
@@ -282,19 +274,23 @@ fn main() -> Report<'static> {
 
 /// 落一格，带一条规矩；答那一格自己的号（`0` = 没落成）
 /// Identity 起头就分了 /svc，故这时落出来的号不可能是 `0`
-fn target(name: &str) -> publication::Target {
-    publication::Target::Service {
-        scope: publication::Scope(4),
-        group: PANE.into(),
-        name: name.into(),
-    }
-}
-fn plate(name: &str, permit: Permit) -> EntryId {
+fn plate(capability: &system_client::operator::Capability, name: &str, permit: Permit) -> Binding {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let anchor = capability.anchor().unwrap();
     let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("rule-entry"))).unwrap();
-    system_client::control::publication::Client::injected()
+    let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
+    capability
+        .bind(
+            anchor,
+            name,
+            entry,
+            view,
+            permit,
+            operator_api::OperationId(NEXT.fetch_add(1, Ordering::Relaxed)),
+            Wait::AtMost(MS),
+        )
         .unwrap()
-        .publish(target(name), entry, permit, Wait::AtMost(MS))
-        .unwrap()
+        .binding
 }
 
 /// 拿那一格去 `find`：`Ok(())` = 放行；答不出 / 门禁答"不"落 Fail（本程序只看那一格，不看

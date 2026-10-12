@@ -4,13 +4,11 @@ pub mod construction;
 pub mod frame;
 pub mod grant;
 pub mod marks;
-pub mod publication;
 
 pub use frame::{ASK_MARK, BACK, DENIED, Fail, Req, Request, Said, State, Wire};
 pub use grant::{Grant, grant_of};
 pub use interface::{INTERFACE_ID, REGISTRY};
 pub use marks::DECLARATIONS as MARK_DECLARATIONS;
-pub use publication::{Frame, Object, Reply, Scope, Target};
 pub const NAME: &str = frame::NAME;
 pub const DIR: &crate::operator::path::Path = frame::DIR;
 pub const INSTANCE: &crate::operator::Path =
@@ -28,12 +26,6 @@ mod interface {
         ConstructionEntry,
         #[channel(key = "construction-back", legacy = "control-construction-back", constant = CONSTRUCTION_BACK)]
         ConstructionBack,
-        #[channel(key = "publication", legacy = "control-publication", constant = PUBLICATION_ENTRY)]
-        PublicationEntry,
-        #[channel(key = "publication-back", legacy = "control-publication-back", constant = PUBLICATION_BACK)]
-        PublicationBack,
-        #[channel(key = "identity-ref", legacy = "control-identity-ref", constant = IDENTITY_REF)]
-        IdentityRef,
     }
 
     #[grants]

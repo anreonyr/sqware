@@ -1,9 +1,7 @@
-use ::resource::raw::inspect;
-use ::schedule::{Progress, ResMut};
-use env::{PieToken, TaskId, Wait, pie};
+use ::schedule::{Progress, Res, ResMut};
+use env::{PieToken, Wait};
 use ipc::rpc;
-use system_api::loader as frame;
-use system_api::loader::Ask;
+use resource::raw;
 use system_api::loader::Call as Contract;
 use system_api::loader::Said;
 use system_api::loader::Wire;
@@ -12,6 +10,14 @@ use wire::Message;
 pub(crate) struct Inbox {
     pub(crate) entry: Option<PieToken>,
     pub(crate) buffer: <Wire as Message>::Buf,
+}
+
+pub(crate) fn release_image(image: &system_api::control::construction::Image, from: env::TaskId) {
+    if matches!(raw::inspect(image.image), Ok(info)
+        if info.alive && info.vestor == from && info.mark == system_api::loader::IMAGE)
+    {
+        let _ = env::pie::release(image.image, env::ReleaseMode::Revoke);
+    }
 }
 impl Inbox {
     pub(crate) fn new() -> Self {
@@ -22,10 +28,11 @@ impl Inbox {
     }
 }
 pub(super) fn receive(
-    mut inbox: ResMut<Inbox>,
+    mut endpoints: ResMut<super::namespace::EndpointState>,
     mut control: ResMut<crate::system::control::unit::Control>,
-    mut pending: ResMut<crate::system::launch::Pending>,
+    jobs: Res<crate::system::assembly::Jobs>,
 ) -> Result<Progress, crate::system::app::Fault> {
+    let inbox = &mut endpoints.inbox;
     let Some(entry) = inbox.entry else {
         return Ok(Progress::Done);
     };
@@ -35,9 +42,6 @@ pub(super) fn receive(
         let incoming = match receiver.receive(&mut inbox.buffer, Wait::POLL) {
             Ok(incoming) => incoming,
             Err(rejected) => {
-                if let Some((from, Wire::Build(ask))) = rejected.incoming {
-                    release_image(&ask, from);
-                }
                 if matches!(rejected.fail, rpc::Fail::Receive(_)) {
                     break;
                 }
@@ -49,38 +53,34 @@ pub(super) fn receive(
         match incoming.request {
             Wire::Claim(claim) => {
                 let accepted = control.claim_instance(from, claim.task);
+                let startup = if accepted.is_some() {
+                    jobs.startup(claim.task)
+                        .unwrap_or(system_api::loader::StartupMetadata {
+                            resolve: env::PieToken::NONE,
+                        })
+                } else {
+                    system_api::loader::StartupMetadata {
+                        resolve: env::PieToken::NONE,
+                    }
+                };
                 let said = Said {
                     status: if accepted.is_some() {
                         wire::OK
                     } else {
                         system_api::control::frame::NOTREADY
                     },
+                    state: if accepted.is_some() {
+                        system_api::control::construction::COMPLETED
+                    } else {
+                        system_api::control::construction::FAILED
+                    },
                     team: accepted.map_or(0, |team| team.get() as u64),
                     task: claim.task,
+                    startup,
                 };
-                if back.send(said).is_err() && accepted.is_some() {
-                    control.stop_instance(claim.task);
-                }
-            }
-            Wire::Build(ask) => {
-                pending.push(crate::system::launch::Request {
-                    ask,
-                    from,
-                    delivery: crate::system::launch::Delivery {
-                        owner: from,
-                        identity: system_api::identity::Install::Inherit { parent: from },
-                        constructor: false,
-                        back,
-                    },
-                });
+                let _ = back.send(said);
             }
         }
     }
     Ok(Progress::Done)
-}
-pub(crate) fn release_image(ask: &Ask, from: TaskId) {
-    if matches!(inspect(ask.image), Ok(info) if info.alive && info.vestor == from && info.mark == frame::IMAGE)
-    {
-        let _ = pie::release(ask.image, env::ReleaseMode::Revoke);
-    }
 }

@@ -5,6 +5,7 @@ extern crate alloc;
 pub mod control;
 pub mod identity;
 pub mod operator;
+pub mod supply;
 
 #[mold::interface(id = "sqware.system.loader.v1")]
 pub mod loader {
@@ -13,6 +14,12 @@ pub mod loader {
     pub struct Built {
         pub team: env::TeamId,
         pub task: TaskId,
+    }
+    #[derive(Clone, Copy, Debug, env::Frame)]
+    #[frame(len = 8)]
+    pub struct StartupMetadata {
+        /// Owner-local Resolve carrier already accorded by System to the instance owner.
+        pub resolve: PieToken,
     }
     pub use wire::OK;
 
@@ -31,24 +38,13 @@ pub mod loader {
 
     #[grants]
     pub enum Grant {
-        #[grant(code = 1, key = "build", legacy = "loader-entry-build")]
-        Build,
+        #[grant(code = 1, key = "claim", legacy = "loader-entry-claim")]
+        Claim,
     }
 
     #[requests]
     pub enum Wire {
-        #[operation(code = 1, grant = Build, frame = Ask)]
-        Build {
-            image: PieToken,
-            offset: u64,
-            len: u64,
-            stack: u64,
-            count: u8,
-            #[frame(count = count, fill = 0)]
-            args: [u64; MAX_ARGS],
-            back: PieToken,
-        },
-        #[operation(code = 2, grant = Build, frame = Claim)]
+        #[operation(code = 1, grant = Claim, frame = Claim)]
         Claim { task: TaskId, back: PieToken },
     }
 
@@ -56,8 +52,10 @@ pub mod loader {
     #[derive(Clone, Copy, Debug)]
     pub struct Said {
         pub status: u8,
+        pub state: u8,
         pub team: u64,
         pub task: TaskId,
+        pub startup: StartupMetadata,
     }
 
     impl Said {
@@ -65,13 +63,17 @@ pub mod loader {
             match result {
                 Ok(built) => Self {
                     status: wire::OK,
+                    state: crate::control::construction::COMPLETED,
                     task: built.task,
                     team: built.team.get() as u64,
+                    startup: StartupMetadata { resolve: PieToken::NONE },
                 },
                 Err(fail) => Self {
                     status: crate::control::frame::fail_to_code(Some(fail)),
+                    state: crate::control::construction::FAILED,
                     task: TaskId::new(0),
                     team: 0,
+                    startup: StartupMetadata { resolve: PieToken::NONE },
                 },
             }
         }
@@ -94,10 +96,7 @@ pub mod loader {
         Denied,
     }
     fn reply_to(request: &Wire) -> PieToken {
-        match request {
-            Wire::Build(ask) => ask.back,
-            Wire::Claim(claim) => claim.back,
-        }
+        match request { Wire::Claim(claim) => claim.back }
     }
 
     #[mold::contract(request = Wire, response = Said, mark = BACK, back = reply_to)]

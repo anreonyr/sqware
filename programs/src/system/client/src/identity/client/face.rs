@@ -44,6 +44,11 @@ impl Face {
         grant: Grant,
         wait: Wait,
     ) -> Result<Self, CallError> {
+        if grant.mount() != system_api::identity::Mount::Public {
+            let entry = ipc::session::establish::claim(authority, grant.mark(), wait)
+                .map_err(|_| CallError::Discovery)?;
+            return Self::direct(authority, grant, entry);
+        }
         let road = DIR.try_join(grant.name()).ok_or(CallError::Discovery)?;
         let tile = operator
             .tile(&road, wait)
@@ -105,6 +110,33 @@ fn belongs_to(reply: Reply, authority: TaskId) -> bool {
                     .next()
                     .is_none_or(|c| c.target.authority() == authority)
         }
+        Reply::Reference(Some(entry)) => entry.operator.get() != 0,
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::belongs_to;
+    use env::TaskId;
+    use system_api::identity::{OperatorEntryRef, Reply};
+
+    #[test]
+    fn reference_accepts_node_zero_but_requires_a_real_operator() {
+        let reference = Reply::Reference(Some(OperatorEntryRef {
+            operator: TaskId::new(8),
+            root: false,
+            id: 0,
+            revision: 1,
+        }));
+        assert!(belongs_to(reference, TaskId::new(3)));
+
+        let invalid_operator = Reply::Reference(Some(OperatorEntryRef {
+            operator: TaskId::new(0),
+            root: false,
+            id: 0,
+            revision: 1,
+        }));
+        assert!(!belongs_to(invalid_operator, TaskId::new(3)));
     }
 }

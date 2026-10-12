@@ -8,6 +8,7 @@ publish = false
 path = "lib.rs"
 [dependencies]
 env = { path = "../../../crates/env" }
+erra = { version = "0.2.0", default-features = false }
 ipc = { path = "../../../crates/ipc" }
 schedule = { path = "../../../crates/schedule" }
 wire = { path = "../../../crates/wire" }

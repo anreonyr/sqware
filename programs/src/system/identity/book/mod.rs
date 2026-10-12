@@ -1,14 +1,19 @@
 //! One authority owns the principal tree, coalitions, membership, and atomic task identity snapshots.
 use alloc::vec::Vec;
+use env::PieToken;
 use env::TaskId;
 use system_api::identity::CoalitionId;
 use system_api::identity::Fail;
 use system_api::identity::PrincipalId;
+use system_api::identity::{
+    IdentityName, IdentityObject, InstallId, InstallSpec, InstallState, OperatorEntryRef,
+};
 
 mod coalition;
 mod limits;
 mod membership;
 mod principal;
+mod reference;
 mod roster;
 
 use coalition::CoalitionNode;
@@ -24,6 +29,9 @@ pub struct IdentityBook {
     memberships: Vec<(PrincipalId, CoalitionId)>,
     bindings: Vec<BindingRow>,
     revision: u64,
+    installations: Vec<InstallRecord>,
+    install_origins: Vec<InstallOrigin>,
+    references: Vec<IdentityReference>,
 }
 
 impl IdentityBook {
@@ -39,12 +47,37 @@ impl IdentityBook {
             memberships: Vec::new(),
             bindings: Vec::new(),
             revision: 0,
+            installations: Vec::new(),
+            install_origins: Vec::new(),
+            references: Vec::new(),
         })
     }
+}
+
+const MAX_INSTALLATIONS: usize = 256;
+const MAX_INSTALL_ORIGINS: usize = 64;
+struct InstallOrigin {
+    endpoint: PieToken,
+    caller: TaskId,
+    high: u64,
+}
+struct IdentityReference {
+    object: IdentityObject,
+    name: IdentityName,
+    entry: OperatorEntryRef,
+}
+struct InstallRecord {
+    endpoint: PieToken,
+    caller: TaskId,
+    id: InstallId,
+    spec: Option<InstallSpec>,
+    state: InstallState,
+    failure: Option<Fail>,
 }
 
 #[cfg(test)]
 mod tests;
 
 pub use membership::Membership;
-pub use roster::{BindingRequest, Selection};
+pub use reference::{Association, ReferenceQuery};
+pub use roster::{BindingRequest, InstallAction, InstallationRequest, Selection};

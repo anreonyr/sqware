@@ -1,6 +1,6 @@
 //! 那一份份声明（#[path] 拉进来的）与 PROGRAMS 这张单。
 
-use super::{SCENE_UNIT, UnitFile};
+use super::UnitFile;
 
 // **它们不在这份文件的自然模块树里**：那些目录（`driver/uart/`、`service/hub/`…）都拖着
 // runtime / protocol 代码，`crates/image` 进不去。故只由 PROGRAMS 这一处按 `#[path]` 拉
@@ -16,14 +16,8 @@ pub mod again;
 pub mod beat;
 #[path = "../harness/bench/load/busy/program.rs"]
 pub mod busy;
-#[path = "../user/cat/program.rs"]
-pub mod cat;
 #[path = "../harness/bench/again/churn/program.rs"]
 pub mod churn;
-#[path = "../user/emit/program.rs"]
-pub mod emit;
-#[path = "../user/fail/program.rs"]
-pub mod fail;
 #[path = "../harness/bench/group/group/program.rs"]
 pub mod group;
 /// 测具那 29 台（**探针 / 试客 / 压测台**，身子在 `../harness/`）：其中 15 台由编排域起
@@ -92,8 +86,6 @@ pub mod rtc;
 pub mod shell;
 #[path = "../harness/guest/sleeper/program.rs"]
 pub mod sleeper;
-#[path = "../user/spin/program.rs"]
-pub mod spin;
 #[path = "../harness/guest/subject/program.rs"]
 pub mod subject;
 #[path = "../system/program.rs"]
@@ -104,18 +96,10 @@ pub mod system_fault;
 pub mod terminal;
 #[path = "../driver/uart/program.rs"]
 pub mod uart;
-#[path = "../user/upper/program.rs"]
-pub mod upper;
 #[path = "../harness/bench/group/waiter/program.rs"]
 pub mod waiter;
-#[path = "../user/workers/program.rs"]
-pub mod workers;
 
-/// **装配表**：镜像里可能有的全部程序。**次序是硬事实**——它同时是**装载次序**与打包时的条目
-/// 次序（`crates/image` 按这张表的位次把镜像挨个写进清单），且各景按 UnitFile::wanted_by
-/// 过滤 ⇒ 加一台要想清楚放哪
-/// **本表一行一台，`rustfmt` 请绕开**：默认那套会把每台摊成十几行，于是"哪几台进哪张镜像"
-/// 就没法一眼扫完——而这张表**就是**给人扫的
+/// Unit declarations in source registration order.
 #[rustfmt::skip]
 pub const PROGRAMS: &[&UnitFile] = &[
     // Device service.
@@ -125,13 +109,6 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &terminal::PROGRAM,
     &login::PROGRAM,
     &shell::PROGRAM,
-    &cat::PROGRAM,
-    &emit::PROGRAM,
-    &upper::PROGRAM,
-    &fail::PROGRAM,
-    &spin::PROGRAM,
-    &workers::PROGRAM,
-
     &probe_terminal::PROGRAM,
     // 客人 / 过客 / 房客：量服务用的（去掉机器照转）。
     &guest::GUEST,
@@ -188,7 +165,6 @@ pub const PROGRAMS: &[&UnitFile] = &[
     &again::AGAIN,
     &waiter::WAITER,
     &group::GROUP,
-    &SCENE_UNIT,
 ];
 
 /// 清单条数上界与注册表条数必须相容（见 env::ledger::manifest::MAX_PROGRAMS 的头注）

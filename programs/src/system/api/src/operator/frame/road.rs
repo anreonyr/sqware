@@ -7,7 +7,7 @@ use crate::operator::path::{Path, PathBuf};
 
 use wire::message::Message;
 
-use super::vocab::{BAD, EntryId, PANE_CAP, Permit, Where};
+use super::vocab::{BAD, EntryId, PANE_CAP, Where};
 use env::wire::Span as _;
 use wire::OK;
 
@@ -42,27 +42,7 @@ pub struct List {
     pub at: Where,
 }
 
-/// `Part` 那一问：动作码 ＋ 容器坐标 ＋ 新名
-#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 42)]
-pub struct Part {
-    pub op: u8,
-    pub at: Where,
-    pub name: String,
-}
-
-#[derive(env::Frame, Clone, PartialEq, Eq, Debug)]
-#[frame(len = 60)]
-pub struct Land {
-    pub op: u8,
-    pub at: Where,
-    pub name: String,
-    pub entry: PieToken,
-    pub mine: bool,
-    pub permit: Permit,
-}
-
-/// `Find` / `Trim` / `Name` 那三问**共用**的形状：动作码 ＋ 一枚号
+/// `Find` / `Name` 共用的形状：动作码 ＋ 一枚号
 #[derive(env::Frame, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Entry {
     pub op: u8,
@@ -90,25 +70,8 @@ pub enum Req {
     Road(PathBuf),
     /// `list`：列那一块 `Pane` 里的号
     List(Where),
-    /// `part`：在那一块 `Pane` 下，给这个新名分一格
-    Part {
-        at: Where,
-        name: String,
-    },
-    /// `land`：在那一块 `Pane` 下，给这个新名落一枚
-    /// `entry` 是**经会话交出去之后**、种在持树者表里的那一个号（`ship` 换回来的）
-    /// 不是"客人的 Pie 是几号"——两个编号空间不同源
-    Land {
-        at: Where,
-        name: String,
-        entry: PieToken,
-        permit: Permit,
-        mine: bool,
-    },
     /// `find`：那一号后面那一枚 Pie
     Find(EntryId),
-    /// `trim`：把那一号剪掉
-    Trim(EntryId),
     /// `name`：那一号此刻叫什么
     Name(EntryId),
     /// `watch`：订 `road` 这条子树；此后树上真变了就往 `hole` 那一枚孔上**递一只手**

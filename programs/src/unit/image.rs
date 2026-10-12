@@ -1,22 +1,39 @@
-/// Private startup image transfer; the seed is in the recipient table.
+/// Bounded metadata delivered beside a resource already held by its recipient.
 pub const IMAGE_MARK: env::Mark = env::Mark::of("unit-image");
-#[derive(env::Frame, Clone, Copy)]
-pub struct ImageSupplyFrame {
-    pub seed: env::PieToken,
-    pub length: u64,
+#[derive(Clone, Copy)]
+pub struct SupplyFrame {
+    pub length: u16,
+    pub description: [u8; system_api::supply::MAX_DESCRIPTION],
+}
+impl SupplyFrame {
+    pub const LEN: usize = 2 + system_api::supply::MAX_DESCRIPTION;
 }
 
-impl wire::Message for ImageSupplyFrame {
+impl wire::Message for SupplyFrame {
     type In = Self;
-    type Buf = [u8; Self::LEN];
-    const EMPTY: Self::Buf = [0; Self::LEN];
+    type Buf = [u8; 2 + system_api::supply::MAX_DESCRIPTION];
+    const EMPTY: Self::Buf = [0; 2 + system_api::supply::MAX_DESCRIPTION];
     fn store(&self, out: &mut [u8]) -> Option<usize> {
-        env::wire::Span::store_at(self, out, 0)
+        if out.len() != Self::LEN || usize::from(self.length) > self.description.len() {
+            return None;
+        }
+        out[..2].copy_from_slice(&self.length.to_le_bytes());
+        out[2..].copy_from_slice(&self.description);
+        Some(Self::LEN)
     }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != Self::LEN {
             return None;
         }
-        env::wire::Span::fetch_at(bytes, 0).map(|(frame, _)| frame)
+        let length = u16::from_le_bytes(bytes[..2].try_into().ok()?);
+        if usize::from(length) > system_api::supply::MAX_DESCRIPTION {
+            return None;
+        }
+        let mut description = [0; system_api::supply::MAX_DESCRIPTION];
+        description.copy_from_slice(&bytes[2..]);
+        Some(Self {
+            length,
+            description,
+        })
     }
 }

@@ -7,6 +7,32 @@ mod tests {
     use wire::message::Message;
     use env::{PieToken, TaskId};
 
+    #[test]
+    fn export_requests_roundtrip_and_reject_noncanonical_root_refs() {
+        let request = system_api::identity::export::Request {
+            object: IdentityObject::Principal(PrincipalId::new(TaskId::new(5), 0)),
+            alias: IdentityName::new("shell").unwrap(),
+            binding: IdentityName::new("create").unwrap(),
+            entry: OperatorEntryRef {
+                operator: TaskId::new(12), root: false, id: 0, revision: 17,
+            },
+            back: PieToken::from_bytes(&17u64.to_le_bytes()).unwrap(),
+        };
+        assert!(request.valid());
+        let mut bytes = [0; system_api::identity::export::Request::LEN];
+        let len = request.store(&mut bytes).unwrap();
+        let (decoded, exact) = system_api::identity::export::Request::fetch(&bytes[..len]).unwrap();
+        assert!(exact);
+        assert_eq!(decoded.entry, request.entry);
+        assert_eq!(decoded.alias, request.alias);
+        assert_eq!(decoded.binding, request.binding);
+
+        let mut bad_root = request;
+        bad_root.entry.root = true;
+        bad_root.entry.id = 1;
+        assert!(!bad_root.valid());
+    }
+
     fn p(slot: u64) -> PrincipalId {
         PrincipalId::new(TaskId::new(5), slot)
     }
@@ -81,6 +107,21 @@ mod tests {
         ));
         roundtrip(Wire::Matches(task, Selector::DescendantOf(p(0))));
         roundtrip(Wire::Matches(task, Selector::MemberOf(c(0))));
+        let id = InstallId { value: 91 };
+        let spec = InstallSpec { task, install: Install::Derive { parent: p(0) } };
+        for wire in [Wire::Install(id, spec), Wire::Inspect(id), Wire::Cancel(id), Wire::Retire(id)] {
+            roundtrip(wire);
+        }
+        let name = IdentityName::new("shell").unwrap();
+        let object = IdentityObject::Principal(p(0));
+        let entry = OperatorEntryRef { operator: TaskId::new(44), root: false, id: 12, revision: 6 };
+        roundtrip(Wire::Associate(object, name, entry));
+        roundtrip(Wire::Reference(object, name));
+        roundtrip(Wire::Associate(
+            object,
+            name,
+            OperatorEntryRef { id: 0, ..entry },
+        ));
     }
     #[test]
     fn replies_are_strict_and_zero_slots_are_real() {
@@ -108,6 +149,12 @@ mod tests {
             Reply::Members(Page::new(&[p(0)], k).unwrap()),
             Reply::Memberships(Page::new(&[c(0)], None).unwrap()),
             Reply::Fail(Fail::Changed),
+            Reply::Installation(InstallStatus { state: InstallState::Installed, binding: Some(Binding { origin: s, current: s }), failure: None }),
+            Reply::Installation(InstallStatus { state: InstallState::Failed, binding: None, failure: Some(Fail::WrongAuthority) }),
+            Reply::Installation(InstallStatus { state: InstallState::Closed, binding: None, failure: None }),
+            Reply::Reference(None),
+            Reply::Reference(Some(OperatorEntryRef { operator: TaskId::new(44), root: false, id: 12, revision: 6 })),
+            Reply::Reference(Some(OperatorEntryRef { operator: TaskId::new(44), root: false, id: 0, revision: 6 })),
         ];
         for value in values {
             let mut bytes = Reply::EMPTY;
@@ -292,7 +339,8 @@ mod tests {
             }
         }
         assert_eq!(Grant::from_action(0), None);
-        assert_eq!(Grant::from_action(19), None);
+        assert_eq!(Grant::from_action(19), Some(Grant::Install));
+        assert_eq!(Grant::from_action(20), Some(Grant::Reference));
         assert_eq!(grant_of(BACK), None);
         let s = Selector::MemberOf(c(0));
         let mut bytes = [0; 17];

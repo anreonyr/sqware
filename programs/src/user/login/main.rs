@@ -3,6 +3,7 @@
 extern crate alloc;
 extern crate programs;
 mod auth;
+mod startup;
 use account_client::Client;
 use env::{Wait, unit};
 use ipc::session::Session;
@@ -47,12 +48,56 @@ fn run_shell(
     connection: &mut Connection,
     client: &Client,
     lifecycle: &Lifecycle,
+    id: system_api::control::construction::CreateId,
 ) -> Result<bool, ()> {
-    let built = match client.create(auth::ACCOUNT, WAIT) {
+    let built = match client.create(id, auth::ACCOUNT, WAIT) {
         Ok(built) => built,
+        Err(system_api::control::Fail::NotReady) => {
+            let status = client.inspect(id, auth::ACCOUNT, WAIT).map_err(|_| ())?;
+            if status.status == wire::OK
+                && status.state == system_api::control::construction::COMPLETED
+                && status.task.get() != 0
+                && status.team != 0
+            {
+                account_client::Built {
+                    task: status.task,
+                    team: env::TeamId::new(status.team as usize),
+                    startup: status.startup,
+                }
+            } else {
+                if status.state == system_api::control::construction::PENDING
+                    || status.state == system_api::control::construction::UNSEEN
+                {
+                    // Keep the same ID for cancellation; never retry BUILD with a new ID
+                    // while its original outcome is unknown.
+                    let _ = client.cancel(id, auth::ACCOUNT, WAIT);
+                }
+                programs::debug::put("login: account creation remains unresolved");
+                return Ok(false);
+            }
+        }
         Err(fail) => {
             programs::debug::put(&alloc::format!("login: account creation {fail:?}"));
             return Ok(false);
+        }
+    };
+    let authority = system_client::identity::authority().ok_or(())?;
+    if system_client::identity::forward_resolve(
+        built.startup.resolve,
+        authority,
+        env::unit::sire(),
+        built.task,
+    )
+    .is_err()
+    {
+        let _ = lifecycle.instance(built.task).ruin(WAIT);
+        return Err(());
+    }
+    let issuer = match startup::deliver(built.task, env::unit::sire()) {
+        Ok(issuer) => issuer,
+        Err(()) => {
+            let _ = lifecycle.instance(built.task).ruin(WAIT);
+            return Err(());
         }
     };
     let foreground = match connection.lend(built.task) {
@@ -80,6 +125,7 @@ fn run_shell(
     };
     let _ = env::unit::oust(built.team);
     let restored = foreground.restore();
+    drop(issuer);
     stopped?;
     restored?;
     Ok(run.is_ok())
@@ -98,6 +144,7 @@ fn run() -> Result<(), &'static str> {
     let terminal = Terminal::find(&tree).map_err(|_| "login: terminal lookup")?;
     let mut connection = Connection::open(terminal).map_err(|_| "login: attach")?;
     let mut io = connection.io().map_err(|_| "login: io")?;
+    let mut next_create_id = 1u64;
     loop {
         io.write(b"login: ").map_err(|_| "login: write")?;
         let account = match io.read().map_err(|_| "login: read")? {
@@ -130,7 +177,13 @@ fn run() -> Result<(), &'static str> {
         }
         io.write(b"Hello, anran.\n").map_err(|_| "login: write")?;
         io.drain().map_err(|_| "login: drain")?;
-        let completed = run_shell(&mut connection, &client, &lifecycle)
+        let id = system_api::control::construction::CreateId {
+            value: next_create_id,
+        };
+        next_create_id = next_create_id
+            .checked_add(1)
+            .ok_or("login: CreateId exhausted")?;
+        let completed = run_shell(&mut connection, &client, &lifecycle, id)
             .map_err(|_| "login: instance cleanup or terminal restore")?;
         io = connection.io().map_err(|_| "login: restore io")?;
         io.write(if completed {

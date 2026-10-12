@@ -4,7 +4,7 @@
 //! 那一族正相反：那边每一位原语共用一扇门，答话才要四种形状。
 
 use alloc::string::String;
-use env::{Entry, PieToken};
+use env::PieToken;
 
 use wire::message::Message;
 
@@ -14,11 +14,13 @@ pub use wire::OK;
 pub mod bond;
 pub mod claim;
 pub mod list;
+pub mod inventory;
 pub mod vocab;
 
 pub use self::bond::*;
 pub use self::claim::*;
 pub use self::list::*;
+pub use self::inventory::*;
 pub use self::vocab::*;
 impl Message for Bond {
     type In = Bond;
@@ -110,82 +112,6 @@ impl Wire {
             }
             _ => None,
         }
-    }
-}
-
-// 那一次出现）。可它必须说得出形状——条数就在帧里，因为**收的那一侧数不出"还有没有下一条"**。
-
-/// 一段入册最多几台。**它是个旋钮，不是契约**——上界对着**内核那一侧的配对块**
-/// `kernel/src/platform/devices.rs::MAX_PAIRS = 64`（那里一张门闩一行，装不下更多）
-pub const ENROLL_MAX: usize = 64;
-
-pub const ENROLL_CAP: usize = Enroll::LEN;
-
-/// 资源登记：条数与收方持有的统一资源记录。
-#[derive(env::Frame, Clone, Copy)]
-pub struct Enroll {
-    n: u8,
-    #[frame(count = n, fill = Entry::NONE)]
-    records: [Entry; ENROLL_MAX],
-}
-
-const _: () = assert!(Enroll::LEN == 1 + env::ENTRY_LEN * ENROLL_MAX);
-
-impl Enroll {
-    /// 拒绝超出容量、重复或无效的记录。
-    pub fn of(records: &[Entry]) -> Option<Enroll> {
-        let n = records.len();
-        if n > ENROLL_MAX
-            || records.iter().enumerate().any(|(i, entry)| {
-                !entry.valid()
-                    || records[..i]
-                        .iter()
-                        .any(|prior| prior.name() == entry.name())
-            })
-        {
-            return None;
-        }
-        let mut held = [Entry::NONE; ENROLL_MAX];
-        held.get_mut(..n)?.copy_from_slice(records);
-        Some(Enroll {
-            n: n as u8,
-            records: held,
-        })
-    }
-
-    /// 几条
-    pub fn len(&self) -> usize {
-        self.n as usize
-    }
-
-    pub fn record(&self, i: usize) -> Option<Entry> {
-        (i < self.len()).then(|| self.records[i])
-    }
-}
-
-impl Message for Enroll {
-    /// **写法与读法是同一个**：这一形只有一份
-    type In = Enroll;
-    type Buf = [u8; ENROLL_CAP];
-    const EMPTY: Self::Buf = [0u8; ENROLL_CAP];
-
-    fn store(&self, out: &mut [u8]) -> Option<usize> {
-        self.store_at(out, 0)
-    }
-
-    /// 精确匹配长度，并检查类型与重复名称。
-    fn fetch(bytes: &[u8]) -> Option<Enroll> {
-        let (enroll, at) = Enroll::fetch_at(bytes, 0)?;
-        if at != bytes.len() {
-            return None;
-        }
-        for i in 0..enroll.len() {
-            let record = enroll.record(i)?;
-            if !record.valid() || (0..i).any(|j| enroll.records[j].name() == record.name()) {
-                return None;
-            }
-        }
-        Some(enroll)
     }
 }
 

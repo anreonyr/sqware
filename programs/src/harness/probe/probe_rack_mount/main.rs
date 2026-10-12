@@ -30,11 +30,8 @@ use ipc::session::{Session, establish};
 use programs::Report;
 use programs::driver::uart::core::frame::Bytes;
 use programs::harness::probe::rack as rig;
-use system_api::control::Scope;
-use system_api::control::Target;
 use system_api::operator::Fail;
-use system_api::operator::Permit;
-use system_client::control::publication::Client;
+use system_api::operator::{self as operator_api, Binding, Permit};
 use system_client::operator;
 use system_client::operator::Face;
 
@@ -56,19 +53,35 @@ fn main() -> Report<'static> {
     // A：铺场写、客人读（与产品那两条同形）；B：客人写、铺场读。
     let a = open(Mode::Oldest);
     let b = open(Mode::Oldest);
-    let plated = land(&tree, &a, &b);
-    let client = Client::injected().unwrap();
-    let target = |name: &str| Target::Service {
-        scope: Scope(4),
-        group: rig::ROAD.into(),
-        name: name.into(),
-    };
+    let capability =
+        system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap();
+    let plated = land(&tree, &capability, &a, &b);
+    let anchor = capability.anchor().unwrap();
+    let view = operator_api::ResourceView::new(env::Access::FETCH_STORE).unwrap();
+    let replay = capability
+        .bind(
+            anchor,
+            "rx",
+            a.ship(),
+            view,
+            Permit::Public,
+            operator_api::OperationId(3),
+            Wait::AtMost(MS),
+        )
+        .unwrap();
+    assert_eq!(replay.binding.entry_id(), plated[0].entry_id());
     assert_eq!(
-        client.publish(target("rx"), a.ship(), Permit::Public, Wait::AtMost(MS)),
-        Ok(plated[0])
-    );
-    assert_eq!(
-        client.publish(target("rx"), b.ship(), Permit::Public, Wait::AtMost(MS)),
+        capability
+            .bind(
+                anchor,
+                "rx",
+                b.ship(),
+                view,
+                Permit::Public,
+                operator_api::OperationId(4),
+                Wait::AtMost(MS)
+            )
+            .map(|_| ()),
         Err(Fail::Denied)
     );
 
@@ -81,11 +94,11 @@ fn main() -> Report<'static> {
         );
     }
 
-    // **响 `Ready`**：客人的装配声明指着这一台，故它等这一声才起步。
-    let _ = establish::endpoint(unit::sire(), programs::unit::READY_MARK, Wait::POLL);
+    let mut br = b.reader();
+    // The receive cursor must exist before Ready lets the peer write.
+    let _ = establish::lend(unit::sire(), programs::unit::READY_MARK);
 
     // 等 B：见到 CAP 条 = 客人已经读完 A（它那一边的次序）。
-    let mut br = b.reader();
     for i in 0..rig::count() {
         let one = match br.recv(Wait::AtMost(WAIT_MS)) {
             Ok(one) => one,
@@ -107,7 +120,7 @@ fn main() -> Report<'static> {
         .token(Wait::AtMost(MS))
         .unwrap();
     let mut reader = ipc::rack::Reader::<Bytes>::from_raw(retained).unwrap();
-    client.unpublish(target("tx"), Wait::AtMost(MS)).unwrap();
+    capability.unbind(plated[1], Wait::AtMost(MS)).unwrap();
     assert_eq!(
         tree.root()
             .tile(
@@ -132,7 +145,7 @@ fn main() -> Report<'static> {
         pie::seal(a.ship()).is_ok(),
         "probe-rack-mount: 封印自己那一枚页失败"
     );
-    match tree.find(plated[0], Wait::AtMost(MS)) {
+    match tree.find(plated[0].entry_id(), Wait::AtMost(MS)) {
         Err(Fail::Dead) => {}
         other => panic!("probe-rack-mount: 封印之后那一格该答 Dead，实测 {other:?}"),
     }
@@ -155,25 +168,43 @@ fn open(mode: Mode) -> Rack<Bytes> {
 
 /// 把那**两枚号**落到树上的试验场里（`Mine::No` ＋ `Permit::Public`：谁都能查、谁都能取，
 /// 与那两条产品门牌同一条公开口径）。返落成的那两格（判据 4 要那一号）。
-fn land(tree: &Face, a: &Rack<Bytes>, b: &Rack<Bytes>) -> Vec<system_api::operator::EntryId> {
+fn land(
+    tree: &Face,
+    publisher: &system_client::operator::Capability,
+    a: &Rack<Bytes>,
+    b: &Rack<Bytes>,
+) -> Vec<Binding> {
     let road = rig::road().expect("probe-rack-mount: road");
-    let publisher = Client::injected().expect("probe-rack-mount: publication entry");
+    let anchor = publisher
+        .anchor()
+        .expect("probe-rack-mount: namespace anchor");
+    let view = operator_api::ResourceView::new(env::Access::FETCH_STORE)
+        .expect("probe-rack-mount: resource view");
     let mut mounts = Vec::new();
-    for (name, entry) in rig::faces(a, b) {
-        let target = Target::Service {
-            scope: Scope(4),
-            group: rig::ROAD.into(),
-            name: name.into(),
-        };
+    for (index, (name, entry)) in rig::faces(a, b).into_iter().enumerate() {
         let mount = publisher
-            .publish(target, entry, Permit::Public, Wait::AtMost(MS))
-            .expect("probe-rack-mount: publication");
+            .bind(
+                anchor,
+                name,
+                entry,
+                view,
+                Permit::Public,
+                operator_api::OperationId(index as u64 + 1),
+                Wait::AtMost(MS),
+            )
+            .expect("probe-rack-mount: binding")
+            .binding;
         let full = road.try_join(name).unwrap();
         tree.tile(&full, Wait::AtMost(MS))
             .unwrap()
             .token(Wait::AtMost(MS))
             .unwrap();
-        assert_eq!(tree.root().name(mount, Wait::AtMost(MS)).unwrap(), name);
+        assert_eq!(
+            tree.root()
+                .name(mount.entry_id(), Wait::AtMost(MS))
+                .unwrap(),
+            name
+        );
         mounts.push(mount);
     }
     assert_eq!(mounts.len(), 2);

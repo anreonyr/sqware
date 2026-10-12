@@ -125,18 +125,23 @@ impl<M: Message> Reader<M> {
             if let Some(one) = self.try_recv()? {
                 return Ok(one);
             }
-            let remain = crate::time::remain(until);
-            if remain == Wait::POLL {
+            if until != u64::MAX && env::chrono::clock() >= until {
                 return Err(RecvFail::Empty);
             }
+            // `remain` rounds down to milliseconds. Keep a live sub-millisecond budget parked
+            // for one tick instead of turning it into a busy poll.
+            let remain = match crate::time::remain(until) {
+                Wait::POLL => Wait::AtMost(1),
+                remain => remain,
+            };
             // 等铃：**它只是"有事"**，醒来还得回环里读（可能已被别人读干，或读到的还是
             // 那些丢过的格）。故这里不把铃当成"有一条"的承诺。
-            if !self
+            let ready = self
                 .bell
                 .wait(remain)
-                .map_err(|e| RecvFail::Mail(e.source))?
-            {
-                return Err(RecvFail::Empty);
+                .map_err(|e| RecvFail::Mail(e.source))?;
+            if !ready && until != u64::MAX && env::chrono::clock() >= until {
+                return self.try_recv()?.ok_or(RecvFail::Empty);
             }
         }
     }

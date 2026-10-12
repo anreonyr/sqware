@@ -363,7 +363,7 @@ pub fn acceptance() {
         child,
     );
     let _ = dynamic;
-    programs::debug::put("system: identity, device and publication acceptance passed");
+    programs::debug::put("system: identity, device and direct namespace acceptance passed");
     assembly.settle();
     assert!(
         assembly.supervise().is_ok(),
@@ -457,8 +457,9 @@ fn revision(assembly: &mut Fixture) {
     drop(changed);
     assembly.progress().expect("identity: changed maintenance");
     assert_eq!(
-        crate::system::publication::observed_revision(&assembly.resources).unwrap(),
-        before + 1
+        epoch.0.load(Ordering::Acquire),
+        before + 1,
+        "maintenance must not duplicate the authoritative Identity revision"
     );
     assert!(
         !assembly

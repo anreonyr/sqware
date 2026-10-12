@@ -68,6 +68,10 @@ pub const VALUES: &[(&str, u64)] = &[
 
 /// Retired roles remain recorded so removal cannot silently renumber surviving roles.
 pub const RETIRED: &[&str] = &[
+    "control-publication",
+    "control-publication-back",
+    "control-identity-ref",
+    "loader-entry-build",
     "control",
     "hub-activate",
     "hub-activate-back",

@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "account-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "system-api",
+ "wire",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -44,9 +54,11 @@ dependencies = [
 name = "image"
 version = "0.1.0"
 dependencies = [
+ "account-api",
  "elf",
  "env",
  "hub-api",
+ "pipe-api",
  "router-api",
  "system-api",
  "terminal-api",
@@ -60,6 +72,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pipe-api"
+version = "0.1.0"
+dependencies = [
+ "env",
+ "mold",
+ "stream",
+ "wire",
 ]
 
 [[package]]
@@ -89,6 +111,10 @@ dependencies = [
  "system-api",
  "wire",
 ]
+
+[[package]]
+name = "stream"
+version = "0.1.0"
 
 [[package]]
 name = "syn"

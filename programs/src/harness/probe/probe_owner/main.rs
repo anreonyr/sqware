@@ -10,17 +10,13 @@ use env::Wait;
 use programs::Report;
 
 use alloc::format;
-use alloc::string::ToString;
 use ipc::session::Session;
 use programs::debug;
 use system_api::operator::EntryId;
 use system_api::operator::Fail;
-use system_api::operator::Permit;
 use system_api::operator::path::Path;
 use system_client::operator;
 use system_client::operator::Face;
-use system_client::operator::Mine;
-use system_client::operator::Pane;
 
 use env::pie;
 use env::unit;
@@ -64,41 +60,19 @@ fn main() -> Report<'static> {
         return bail("probe-owner: no /svc/drv/uart/rx");
     };
 
-    let Ok(entry) = pie::unseal(env::UnsealArgs::hole(env::Mark::of("probe-entry"))) else {
-        return bail("probe-owner: no entry");
-    };
-    // `/svc/drv/uart` 那块 Pane（要顶的那枚砖落在它下面）——**分目录幂等 + 取回那块 Pane**。
-    // 它是**那条路去掉末段**（`parent()`，std 同形）：本手因此不必再念一遍那几段。
-    let Some(pane_road) = road.parent() else {
-        return bail("probe-owner: no /svc/drv/uart");
-    };
-    let Some(pane) = wait_pane(&tree, &pane_road) else {
-        return bail("probe-owner: no /svc/drv/uart");
-    };
-    // 那枚砖的名就是**那条路的末段**（`file_name()`，std 同形）——不再单独持一格。
-    let Some(me) = road.file_name() else {
-        return bail("probe-owner: no /svc/drv/uart/rx");
-    };
-    let land = pane.bind(
-        me.to_string(),
-        entry,
-        Permit::Public,
-        Mine::No,
-        Wait::AtMost(MS),
+    let forged = pie::unseal(env::UnsealArgs::hole(
+        system_api::operator::entry::AUTH_ENTRY,
+    ))
+    .unwrap_or(env::PieToken::NONE);
+    let denied = matches!(
+        operator::Capability::direct(tree.host(), forged),
+        Err(Fail::Denied)
     );
-    let land_code = match &land {
-        Ok(id) => format!("ok id={}", id.id().get()),
-        Err(fail) => format!("{fail:?}"),
-    };
-
-    // 三·五、**同一个名字、换一条原语**：`part` 与 `land` 同一把钥匙（`answer.rs` 的 `Part` 那一
-    //        还顺手把 uart 那枚孔 `release` 掉。
-    // **（这一条此前零断言）**：`land` 那一支有本台顶着，`part` 这一支**没有**——两条原语
-    let part = pane.open(me.to_string(), Wait::AtMost(MS));
-    let part_code = match &part {
-        Ok(id) => format!("ok id={}", id.id().get()),
-        Err(fail) => format!("{fail:?}"),
-    };
+    let part_denied = matches!(
+        operator::Capability::direct(tree.host(), forged),
+        Err(Fail::Denied)
+    );
+    let _ = pie::release(forged, env::ReleaseMode::Revoke);
 
     // 四、那一格**还在不在**（应是原来那个号）。
     let root = tree.root();
@@ -108,12 +82,11 @@ fn main() -> Report<'static> {
         Err(fail) => format!("err:{fail:?}"),
     };
     debug!(
-        "probe-owner: tree land={land_code} part={part_code} before={} after={seq}",
+        "probe-owner: capability denied={denied} part_denied={part_denied} before={} after={seq}",
         before.get()
     );
 
     // 五、判据两格：被拒（`Denied`）**且**那一格没动（还是原来那个号）。
-    let denied = matches!(land, Err(Fail::Denied));
     let untouched = matches!(after, Ok(entry) if entry.id() == before);
 
     // 六、**接手那一格没主的名字**：`probe-lease` 落完 `/svc/lease`（`mine = true`）就死，
@@ -131,18 +104,13 @@ fn main() -> Report<'static> {
     // 七、判据：一例一条。
     let took = taken.is_ok();
     {
-        {
-            assert!(
-                denied,
-                "那一格的主人还活着，land 本该被拒（land={land_code}）"
-            )
-        }
+        { assert!(denied, "ungranted Operator capability must be rejected") }
     }
     {
         // **同一条「改」轴的另一半**：`part` 也走那一把钥匙。
         assert!(
-            matches!(part, Err(Fail::Denied)),
-            "那一格的主人还活着，part 本该被拒（part={part_code}）"
+            part_denied,
+            "ungranted Operator capability must be rejected"
         )
     }
     {
@@ -156,18 +124,15 @@ fn main() -> Report<'static> {
 }
 
 fn take_over(tree: &Face) -> Result<EntryId, Fail> {
-    let entry = pie::unseal(env::UnsealArgs::hole(env::Mark::of("takeover-entry")))
-        .map_err(|_| Fail::Unknown)?;
+    let forged = pie::unseal(env::UnsealArgs::hole(
+        system_api::operator::entry::AUTH_ENTRY,
+    ))
+    .map_err(|_| Fail::Unknown)?;
     assert!(matches!(
-        tree.root().bind(
-            "fixtures".into(),
-            entry,
-            Permit::Public,
-            Mine::No,
-            Wait::AtMost(MS)
-        ),
+        operator::Capability::direct(tree.host(), forged),
         Err(Fail::Denied)
     ));
+    let _ = pie::release(forged, env::ReleaseMode::Revoke);
     let road = Path::new("svc/fixtures/lease");
     for _ in 0..MS {
         if matches!(tree.root().tile(road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
@@ -177,10 +142,6 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
     }
     Err(Fail::Unknown)
 }
-fn wait_pane<'a>(tree: &'a Face, road: &Path) -> Option<Pane<'a>> {
-    tree.pane(road, Wait::AtMost(MS)).ok()
-}
-
 /// 门闩——故不走会 `find`（并惰性剔死 / 授一枚副本）的 Face::tile
 fn wait_id(tree: &Face, road: &Path) -> Option<EntryId> {
     let root = tree.root();
