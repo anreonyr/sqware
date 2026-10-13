@@ -1,31 +1,17 @@
 use ::core::cell::UnsafeCell;
-use ::core::marker::PhantomData;
-use ::core::ops::{Deref, DerefMut};
 use ::core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::machine::hart::{self, HartId};
+use crate::machine::hart;
 
 use super::depend;
 use super::trap::TrapGuard;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Owner(usize);
+mod guard;
+mod owner;
 
-impl Owner {
-    const FREE: Owner = Owner(0);
+pub use guard::RelLockGuard;
 
-    fn of(hart: HartId) -> Owner {
-        Owner(hart.get() + 1)
-    }
-
-    fn word(self) -> usize {
-        self.0
-    }
-
-    fn from_word(w: usize) -> Owner {
-        Owner(w)
-    }
-}
+use owner::Owner;
 
 #[derive(Debug)]
 pub struct RelLock<T: ?Sized> {
@@ -38,12 +24,6 @@ pub struct RelLock<T: ?Sized> {
 }
 
 unsafe impl<T: ?Sized + Send> Sync for RelLock<T> {}
-
-pub struct RelLockGuard<'a, T: ?Sized> {
-    lock: &'a RelLock<T>,
-    _not_send: PhantomData<*const ()>,
-    _trap: TrapGuard,
-}
 
 impl<T> RelLock<T> {
     pub const fn new(val: T) -> Self {
@@ -123,40 +103,6 @@ impl<T: ?Sized> RelLock<T> {
             }
         }
 
-        RelLockGuard {
-            lock: self,
-            _not_send: PhantomData,
-            _trap: trap,
-        }
-    }
-}
-
-impl<T: ?Sized> Deref for RelLockGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> DerefMut for RelLockGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> Drop for RelLockGuard<'_, T> {
-    fn drop(&mut self) {
-        let c = unsafe {
-            let p = self.lock.count.get();
-            *p -= 1;
-            *p
-        };
-        if c == 0 {
-            #[cfg(debug_assertions)]
-            depend::release(self.lock as *const _ as *const () as usize);
-            self.lock.caller.store(0, Ordering::Relaxed);
-            self.lock.owner.store(Owner::FREE.word(), Ordering::Release);
-        }
+        RelLockGuard::new(self, trap)
     }
 }

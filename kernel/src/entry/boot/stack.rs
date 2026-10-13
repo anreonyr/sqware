@@ -51,7 +51,9 @@ pub(super) fn init() -> Result<(), MapError> {
             frames.push(crate::tag!(TrapStack, Frame::allocate()?));
         }
         let body_va = trap_stack_base(HartId::new(h));
-        space.tree.map_frames(body_va, frames, flags, flags)?;
+        space
+            .memory
+            .map_boot_frames(body_va, frames, flags, flags)?;
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
@@ -62,10 +64,9 @@ pub(super) fn init() -> Result<(), MapError> {
     let ksatp = satp::read();
     for h in (0..hart::hart_count()).map(HartId::new) {
         let pa = space
-            .tree
-            .translate(HART_FRAME_BASE + h.get() * PAGE_SIZE)
-            .expect("kernel frame not mapped")
-            .0;
+            .memory
+            .physical_at(HART_FRAME_BASE + h.get() * PAGE_SIZE)
+            .expect("kernel frame not mapped");
         let frame = unsafe { &mut *(pa.as_usize() as *mut TrapContext) };
         frame.kernel_satp = ksatp;
         frame.kernel_sp = trap_stack_edge(h);

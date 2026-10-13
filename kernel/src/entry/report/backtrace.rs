@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use super::scene::Scene;
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::entry::report::frame::Frame;
-use crate::core::work::unit::space::SpaceKind;
+use crate::core::memory::manager::SpaceKind;
 
 fn hex(x: usize) -> String {
     format!("{x:#018x}")

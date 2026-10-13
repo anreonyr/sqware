@@ -10,7 +10,8 @@ use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::entry::call as envcall;
 use crate::core::work::mail::{Mail, hole, pole};
 use crate::core::work::pend::{self, Need, Permission};
-use crate::core::work::unit::space::{RegionId, SpaceBuilder};
+use crate::core::memory::manager::RegionId;
+use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::Task;
 use crate::core::work::unit::team::{Team, TeamBuilder};
 
@@ -29,6 +30,7 @@ impl Caller {
         .build()
         .unwrap();
         space
+            .memory
             .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
             .unwrap();
         let team = TeamBuilder::new(space).spawn().unwrap();
@@ -164,6 +166,7 @@ pub fn abi_and_privilege() {
     );
     let space = SpaceBuilder::user().build().unwrap();
     space
+        .memory
         .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
@@ -224,7 +227,8 @@ pub fn memory() {
     let before = user
         .team
         .space
-        .tree
+        .memory
+        .backend()
         .translate(KVirt::wrap(at))
         .unwrap()
         .1
@@ -241,7 +245,8 @@ pub fn memory() {
         assert_eq!(
             user.team
                 .space
-                .tree
+                .memory
+                .backend()
                 .translate(KVirt::wrap(at))
                 .unwrap()
                 .1
@@ -262,7 +267,8 @@ pub fn memory() {
         let actual = user
             .team
             .space
-            .tree
+            .memory
+            .backend()
             .translate(KVirt::wrap(at))
             .unwrap()
             .1
@@ -350,7 +356,7 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.tree.translate(KVirt::wrap(at)).is_none());
+    assert!(user.team.space.memory.backend().translate(KVirt::wrap(at)).is_none());
 
     let fixed = 0x4004_0000;
     assert_eq!(
@@ -378,16 +384,18 @@ pub fn memory() {
         (fixed + PAGE_SIZE, false),
         (fixed + 2 * PAGE_SIZE, true),
     ] {
-        let map = user.team.space.tree.find(KVirt::wrap(page)).unwrap();
+        let map = user.team.space.memory.backend().find(KVirt::wrap(page)).unwrap();
         user.team
             .space
-            .tree
+            .memory
+            .backend()
             .materialize(&map, KVirt::wrap(page), PAGE_SIZE)
             .unwrap();
         assert_eq!(
             user.team
                 .space
-                .tree
+                .memory
+                .backend()
                 .translate(KVirt::wrap(page))
                 .unwrap()
                 .1
@@ -411,14 +419,14 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.tree.translate(KVirt::wrap(fixed)).is_none());
+    assert!(user.team.space.memory.backend().translate(KVirt::wrap(fixed)).is_none());
 }
 
 pub fn pointers() {
     crate::core::work::room::scheduler::boot::init().expect("scheduler init");
     let user = Caller::new(false);
     let at = user.allocate(PAGE_SIZE);
-    assert!(user.team.space.copy_out(b"readable", at));
+    assert!(user.team.space.memory.copy_out(b"readable", at));
     let mut bytes = [0xa5; 8];
     for (va, len) in [
         (0, 8),
@@ -428,15 +436,15 @@ pub fn pointers() {
         (at, usize::MAX),
         (usize::MAX - 3, 8),
     ] {
-        assert!(!user.team.space.validate_read(va, len));
-        assert!(!user.team.space.validate_write(va, len));
+        assert!(!user.team.space.memory.validate_read(va, len));
+        assert!(!user.team.space.memory.validate_write(va, len));
         assert!(
             user.call(EnvCall::Debug(DebugCall::Put {
                 buf: VirtAddr::new(va),
                 len
             })) < 0
         );
-        if !user.team.space.validate_read(va, size_of::<usize>()) {
+        if !user.team.space.memory.validate_read(va, size_of::<usize>()) {
             assert!(
                 user.call(EnvCall::Unit(UnitCall::Spawn {
                     team: env::TeamId::new(0),
@@ -448,10 +456,10 @@ pub fn pointers() {
             );
         }
     }
-    assert!(!user.team.space.copy_in(&mut bytes, at + PAGE_SIZE - 4));
+    assert!(!user.team.space.memory.copy_in(&mut bytes, at + PAGE_SIZE - 4));
     assert_eq!(bytes, [0xa5; 8]);
-    assert!(user.team.space.copy_in(&mut [], 0));
-    assert!(user.team.space.copy_out(&[], 0));
+    assert!(user.team.space.memory.copy_in(&mut [], 0));
+    assert!(user.team.space.memory.copy_out(&[], 0));
     assert_eq!(
         user.call(EnvCall::Debug(DebugCall::Put {
             buf: VirtAddr::new(0),
@@ -488,16 +496,16 @@ pub fn pointers() {
         })),
         0
     );
-    assert!(!user.team.space.copy_in(&mut bytes, at));
+    assert!(!user.team.space.memory.copy_in(&mut bytes, at));
     assert!(
         user.call(EnvCall::Debug(DebugCall::Put {
             buf: VirtAddr::new(at),
             len: 8
         })) < 0
     );
-    assert!(user.team.space.instruction_byte(at).is_some());
+    assert!(user.team.space.memory.instruction_byte(at).is_some());
     let foreign = Caller::new(false);
-    assert!(!foreign.team.space.validate_read(at, 8));
+    assert!(!foreign.team.space.memory.validate_read(at, 8));
 }
 
 pub fn capability() {
@@ -536,6 +544,7 @@ pub fn capability() {
     let source_mapping = user
         .team
         .space
+        .memory
         .mapping_at(KVirt::wrap(source), PAGE_SIZE)
         .unwrap();
     let pole =
@@ -549,12 +558,13 @@ pub fn capability() {
     .expect("pie allocation");
     let token = pie.token();
     user.task.pend.pies.lock().push(pie);
-    let original = user.team.space.tree.find(KVirt::wrap(source)).unwrap();
+    let original = user.team.space.memory.backend().find(KVirt::wrap(source)).unwrap();
     user.task.pend.creations.claim(&original).unwrap().commit();
     pole.commit_source();
     let flags = user
         .team
         .space
+        .memory
         .pte_policy(PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::D);
     let (at, size) = pole::open(&pole, token, &user.team.space, flags).unwrap();
     for call in [
@@ -576,12 +586,12 @@ pub fn capability() {
     ] {
         assert!(user.call(EnvCall::Memory(call)) < 0);
     }
-    assert!(user.team.space.validate_read(at, size));
+    assert!(user.team.space.memory.validate_read(at, size));
     let operation = pole.operation().expect("pole operation lease");
     assert_eq!(pole::shut(&pole, token), Err(env::PieFail::Busy));
     drop(operation);
     pole::shut(&pole, token).unwrap();
-    assert!(!user.team.space.validate_read(at, size));
+    assert!(!user.team.space.memory.validate_read(at, size));
 }
 
 pub fn resource_registration() {
@@ -841,6 +851,7 @@ pub fn transfer_relations() {
     let source_mapping = a
         .team
         .space
+        .memory
         .mapping_at(KVirt::wrap(source), PAGE_SIZE)
         .unwrap();
     let meta =
@@ -897,6 +908,7 @@ pub fn unit_scan_and_receipts() {
     for _ in 0..73 {
         let space = SpaceBuilder::user().build().unwrap();
         space
+            .memory
             .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
             .unwrap();
         children.push(
@@ -924,7 +936,7 @@ pub fn unit_scan_and_receipts() {
     );
     assert_eq!(caller.call(scan(env::TeamId::new(0), 64)), 64);
     let mut page = [0u8; 512];
-    assert!(caller.team.space.copy_in(&mut page, buffer));
+    assert!(caller.team.space.memory.copy_in(&mut page, buffer));
     let ids: Vec<_> = page
         .chunks_exact(8)
         .map(|w| u64::from_le_bytes(w.try_into().unwrap()) as usize)

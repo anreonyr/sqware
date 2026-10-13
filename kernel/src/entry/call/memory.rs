@@ -2,29 +2,13 @@ use alloc::sync::Arc;
 
 use env::{MemoryCall, MemoryFail};
 
-use crate::core::memory::PAGE_SIZE;
-use crate::core::memory::manager::MapError;
+use crate::core::memory::manager::Access;
+use crate::core::memory::manager::Memory;
 use crate::core::memory::manager::addr::VirtAddr as KVirt;
-use crate::machine::switcher::context::{Gprs, TrapContext};
-use crate::core::work::unit::space::Space;
 use crate::core::work::unit::task::TaskIdent;
+use crate::machine::switcher::context::{Gprs, TrapContext};
 
 use super::ret_err;
-
-impl From<MapError> for MemoryFail {
-    fn from(e: MapError) -> Self {
-        match e {
-            MapError::OutOfMemory => MemoryFail::OoM,
-            MapError::NotAligned => MemoryFail::NotAligned,
-            MapError::NoRegion => MemoryFail::NoRegion,
-            MapError::AlreadyMapped => MemoryFail::AlreadyMapped,
-            MapError::WidenDenied => MemoryFail::WidenDenied,
-            MapError::Shootdown => MemoryFail::Busy,
-            MapError::Pinned => MemoryFail::Denied,
-            MapError::NotMapped | MapError::DramOverlap => MemoryFail::Denied,
-        }
-    }
-}
 
 pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<TaskIdent>) {
     let result = execute(call, ident);
@@ -37,11 +21,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<Ta
 }
 
 fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail> {
-    use crate::core::memory::manager::{Frame, entry::PteFlags};
     use crate::core::work::pend::{self, Permission};
     use crate::core::work::room::scheduler::core::{current, muster};
-    use crate::core::work::unit::space::RegionId;
-    use alloc::vec::Vec;
     let raw_size = match call {
         MemoryCall::Allocate { size }
         | MemoryCall::Deallocate { size, .. }
@@ -49,20 +30,15 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
         | MemoryCall::Munmap { size, .. }
         | MemoryCall::Mprotect { size, .. } => size,
     };
+    // 尺寸口径在授权之前：非 basic 报 `NotAligned`，basic 报 `Denied`，两者不换码。
     let basic = matches!(
         call,
         MemoryCall::Allocate { .. } | MemoryCall::Deallocate { .. }
     );
     let size = if basic {
-        raw_size
-            .max(1)
-            .checked_next_multiple_of(PAGE_SIZE)
-            .ok_or(MemoryFail::Denied)?
+        Memory::basic_bytes(raw_size)?
     } else {
-        if raw_size == 0 || !raw_size.is_multiple_of(PAGE_SIZE) {
-            return Err(MemoryFail::NotAligned);
-        }
-        raw_size
+        Memory::exact_bytes(raw_size)?
     };
     let team_id = match call {
         MemoryCall::Mmap { team, .. }
@@ -98,28 +74,16 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 .creations
                 .prepare()
                 .map_err(|_| MemoryFail::OoM)?;
-            let mut frames = Vec::new();
-            frames
-                .try_reserve_exact(size / PAGE_SIZE)
-                .map_err(|_| MemoryFail::OoM)?;
-            for _ in 0..size / PAGE_SIZE {
-                frames.push(Frame::allocate()?);
-            }
-            space.retry_invalidation()?;
-            let reservation = space.allocate_low(RegionId::Normal, size)?;
-            let rw = PteFlags::R | PteFlags::W;
-            let mapping = space.map_frames(
-                reservation,
-                frames,
-                rw | PteFlags::X,
-                rw | PteFlags::A | PteFlags::D,
-            )?;
-            let address = mapping.reservation.start().as_usize();
+            // 走字节入口（同一条 basic 口径）：`Layout` 表示不了的线上尺寸不在这里
+            // 被强迫失败。
+            let access = Access::READ | Access::WRITE;
+            let mapping = space.memory.allocate_bytes(raw_size, access, None)?;
+            let address = mapping.address().as_usize();
             prepared.commit(&mapping.map);
             Ok(address)
         }
         MemoryCall::Deallocate { addr, .. } => {
-            if !Space::user_range(addr.get(), size) {
+            if !Memory::user_range(addr.get(), size) {
                 return Err(MemoryFail::Denied);
             }
             let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
@@ -135,9 +99,9 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     MemoryFail::Denied
                 }
             })?;
-            space.retry_invalidation()?;
+            space.memory.retry_invalidation()?;
             if map.is_live() {
-                space.unmap_range(KVirt::wrap(addr.get()), size)?;
+                space.memory.unmap_range(KVirt::wrap(addr.get()), size)?;
             }
             creation.commit();
             Ok(0)
@@ -149,10 +113,10 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             flags,
             ..
         } => {
-            if flags & !14 != 0 || flags & 2 == 0 || flags & 12 == 12 {
+            let access = Access::from_wire(flags).ok_or(MemoryFail::Denied)?;
+            if !access.contains(Access::READ) || access.contains(Access::WRITE | Access::EXECUTE) {
                 return Err(MemoryFail::Denied);
             }
-            let access = PteFlags::from_bits(flags).ok_or(MemoryFail::Denied)?;
             let source = if pole == env::PieToken::NONE {
                 None
             } else {
@@ -166,34 +130,32 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 None => None,
             };
             let mut private = false;
-            let mut ceiling = access;
+            let mut limit = access;
             if let Some((pie, meta)) = &source {
                 if !pie.alive() || !meta.owned() || meta.reserved() != 0 {
                     return Err(MemoryFail::Denied);
                 }
                 let permission = pie.permission();
                 if !permission.contains(Permission::FETCH)
-                    || access.contains(PteFlags::W) && !permission.contains(Permission::STORE)
+                    || access.contains(Access::WRITE) && !permission.contains(Permission::STORE)
                     || team_id.get() != 0 && !permission.contains(Permission::VEST)
                 {
                     return Err(MemoryFail::Denied);
                 }
                 super::pie::usable(pie).map_err(|_| MemoryFail::Denied)?;
-                if offset % PAGE_SIZE != 0
-                    || offset.checked_add(size).is_none_or(|end| end > meta.size())
-                {
+                Memory::frame_offset(offset)?;
+                if offset.checked_add(size).is_none_or(|end| end > meta.size()) {
                     return Err(MemoryFail::NotAligned);
                 }
                 if team_id.get() == 0 {
-                    if access.contains(PteFlags::X) {
+                    if access.contains(Access::EXECUTE) {
                         return Err(MemoryFail::Denied);
                     }
-                    ceiling = PteFlags::R
-                        | if permission.contains(Permission::STORE) {
-                            PteFlags::W
-                        } else {
-                            PteFlags::empty()
-                        };
+                    limit = if permission.contains(Permission::STORE) {
+                        Access::READ | Access::WRITE
+                    } else {
+                        Access::READ
+                    };
                 } else if permission.contains(Permission::ONLY) {
                     if pie.sire().is_some()
                         || pie.heir().is_some()
@@ -201,7 +163,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         || !meta.exclusive()
                         || offset != 0
                         || size != meta.size()
-                        || access.contains(PteFlags::X)
+                        || access.contains(Access::EXECUTE)
                         || meta.mapped()
                     {
                         return Err(MemoryFail::Busy);
@@ -214,43 +176,38 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 if team_id.get() == 0 || private {
                     meta.reserve_record().map_err(|_| MemoryFail::OoM)?;
                 }
-            } else if offset != 0 || access.contains(PteFlags::X) {
+            } else if offset != 0 || access.contains(Access::EXECUTE) {
                 return Err(MemoryFail::Denied);
             }
-            if at.get() != 0 && (at.get() % PAGE_SIZE != 0 || !Space::user_range(at.get(), size)) {
-                return Err(MemoryFail::NotAligned);
-            }
-            space.retry_invalidation()?;
-            let reservation = if at.get() == 0 {
-                space.allocate_low(RegionId::Normal, size)?
+            let at = if at.get() == 0 {
+                None
             } else {
-                space.reserve(RegionId::Normal, KVirt::wrap(at.get()), size)?
+                Memory::fixed_range(KVirt::wrap(at.get()), size)?;
+                Some(KVirt::wrap(at.get()))
             };
-            let current = access | PteFlags::A | PteFlags::D;
             let mapping = match &source {
-                Some((_, meta)) => space.derive(
-                    reservation,
-                    &meta.canonical_map().ok_or(MemoryFail::Denied)?,
-                    offset,
-                    ceiling,
-                    current,
-                )?,
-                None => space.map_lazy(reservation, ceiling, current)?,
+                Some((_, meta)) => {
+                    let canonical = meta.canonical_map().ok_or(MemoryFail::Denied)?;
+                    space
+                        .memory
+                        .view_record(&canonical, offset, size, limit, access, at)?
+                }
+                None => space.memory.allocate_lazy_bytes(size, limit, access, at)?,
             };
-            let address = mapping.reservation.start().as_usize();
+            let address = mapping.address().as_usize();
             if let Some((pie, _)) = &source {
                 let permission = pie.permission();
                 if !pie.alive()
                     || !permission.contains(Permission::FETCH)
-                    || access.contains(PteFlags::W) && !permission.contains(Permission::STORE)
+                    || access.contains(Access::WRITE) && !permission.contains(Permission::STORE)
                 {
-                    let _ = space.dispose(mapping);
+                    let _ = space.memory.dispose(mapping);
                     return Err(MemoryFail::Denied);
                 }
             }
-            if access.contains(PteFlags::X) {
+            if access.contains(Access::EXECUTE) {
                 if let Err(error) = crate::core::memory::manager::sync_instructions() {
-                    let _ = space.dispose(mapping);
+                    let _ = space.memory.dispose(mapping);
                     return Err(error.into());
                 }
             }
@@ -260,7 +217,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     if let Err(mapping) =
                         meta.record(pie.token(), space, mapping, Some(target.id), false)
                     {
-                        let _ = space.dispose(mapping);
+                        let _ = space.memory.dispose(mapping);
                         return Err(MemoryFail::Denied);
                     }
                     target.push_staging(crate::core::work::unit::team::Staging {
@@ -271,7 +228,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     pend::notify(ident.id, pole);
                 } else if team_id.get() == 0 {
                     if let Err(mapping) = meta.record(pie.token(), space, mapping, None, false) {
-                        let _ = space.dispose(mapping);
+                        let _ = space.memory.dispose(mapping);
                         return Err(MemoryFail::Denied);
                     }
                 }
@@ -280,24 +237,17 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
         }
         MemoryCall::Munmap { addr, .. } => {
             if team_id.get() == 0 {
-                let ranges = space.tree.ranges()?;
+                let maps = space.memory.mappings_in(KVirt::wrap(addr.get()), size)?;
                 if let Some(caller) = &caller {
                     let pies = caller.pend.pies.lock();
-                    if ranges
-                        .iter()
-                        .filter(|(_, range)| {
-                            range.start.as_usize() < addr.get().saturating_add(size)
-                                && range.end() >= addr.get()
+                    if maps.iter().any(|map| {
+                        pies.iter().any(|pie| {
+                            pie.snapshot()
+                                .mail()
+                                .pole()
+                                .is_some_and(|meta| meta.opened(map))
                         })
-                        .any(|(map, _)| {
-                            pies.iter().any(|pie| {
-                                pie.snapshot()
-                                    .mail()
-                                    .pole()
-                                    .is_some_and(|meta| meta.opened(map))
-                            })
-                        })
-                    {
+                    }) {
                         return Err(MemoryFail::Denied);
                     }
                 }
@@ -308,7 +258,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 let entry = target.staged_at(index).ok_or(MemoryFail::Denied)?;
                 let (meta, token) = (entry.meta.clone(), entry.token);
                 let _operation = meta.operation().ok_or(MemoryFail::Busy)?;
-                space.unmap_range(KVirt::wrap(addr.get()), size)?;
+                space.memory.unmap_range(KVirt::wrap(addr.get()), size)?;
                 meta.detach_staging(token, target.id);
                 target.remove_staging(index);
                 pend::notify(meta.owner(), token);
@@ -324,49 +274,21 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             {
                 return Err(MemoryFail::Busy);
             }
-            space.unmap_range(KVirt::wrap(addr.get()), size)?;
+            space.memory.unmap_range(KVirt::wrap(addr.get()), size)?;
             Ok(0)
         }
         MemoryCall::Mprotect { addr, flags, .. } => {
-            if !Space::user_range(addr.get(), size) || addr.get() % PAGE_SIZE != 0 {
-                return Err(MemoryFail::NotAligned);
-            }
-            if flags & !14 != 0 || flags & 14 == 0 || flags & 4 != 0 && flags & 2 == 0 {
+            Memory::fixed_range(KVirt::wrap(addr.get()), size)?;
+            let access = Access::from_wire(flags).ok_or(MemoryFail::Denied)?;
+            // 空权限与没有 R 的 W 都拒；RWX 仍放行（不与 Mmap 统一成更严的 W^X）。
+            let write_without_read =
+                access.contains(Access::WRITE) && !access.contains(Access::READ);
+            if access.is_empty() || write_without_read {
                 return Err(MemoryFail::Denied);
             }
-            let access = PteFlags::from_bits(flags).ok_or(MemoryFail::Denied)?;
-            space.retry_invalidation()?;
-            let end = addr.get() + size;
-            let ranges = space.tree.ranges()?;
-            let mut updates = Vec::new();
-            updates
-                .try_reserve(ranges.len())
-                .map_err(|_| MemoryFail::OoM)?;
-            let mut covered = addr.get();
-            for (map, range) in ranges {
-                if range.start.as_usize() >= end || range.end() < addr.get() {
-                    continue;
-                }
-                let lo = range.start.as_usize().max(addr.get());
-                let hi = (range.end() + 1).min(end);
-                if lo != covered {
-                    return Err(MemoryFail::NoRegion);
-                }
-                if !range.ceiling.contains(access) {
-                    return Err(MemoryFail::WidenDenied);
-                }
-                updates.push((map, KVirt::wrap(lo), hi - lo));
-                covered = hi;
-            }
-            if covered != end {
-                return Err(MemoryFail::NoRegion);
-            }
-            for (map, start, size) in updates {
-                space.tree.protect(&map, start, size, access)?;
-            }
-            if access.contains(PteFlags::X) {
-                crate::core::memory::manager::sync_instructions()?;
-            }
+            space
+                .memory
+                .protect_range(KVirt::wrap(addr.get()), size, access)?;
             Ok(0)
         }
     }

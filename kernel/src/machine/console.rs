@@ -67,11 +67,11 @@ fn translate_kernel(va: usize, len: usize) -> Option<usize> {
         return None;
     }
     let space = &crate::core::work::unit::team::kernel()?.space;
-    let (pa0, _) = space.tree.translate(VirtAddr::from_raw(va))?;
+    let pa0 = space.memory.physical_at(VirtAddr::from_raw(va))?;
     let mut va_cur = va;
     let end = va + len;
     while va_cur < end {
-        let (pa, _) = space.tree.translate(VirtAddr::from_raw(va_cur))?;
+        let pa = space.memory.physical_at(VirtAddr::from_raw(va_cur))?;
         if pa.as_usize() != pa0.as_usize() + (va_cur - va) {
             return None;
         }

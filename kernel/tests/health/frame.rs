@@ -6,8 +6,9 @@ use alloc::vec::Vec;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::{Frame, MapError, addr::VirtAddr, asid, entry::PteFlags};
+use crate::core::memory::manager::RegionId;
 use crate::core::work::grant::Grant;
-use crate::core::work::unit::space::{RegionId, SpaceBuilder};
+use crate::core::work::unit::space::SpaceBuilder;
 
 pub fn sharing() {
     const BASE: usize = 0x4000_0000;
@@ -24,8 +25,10 @@ pub fn sharing() {
     let lifetimes: Vec<_> = frames.iter().map(Arc::downgrade).collect();
     let flags = PteFlags::R | PteFlags::A | PteFlags::D;
     let first = a
+        .memory
         .map_frames(
-            a.reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
+            a.memory
+                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
                 .unwrap(),
             frames.clone(),
             PteFlags::R,
@@ -33,8 +36,10 @@ pub fn sharing() {
         )
         .unwrap();
     let second = b
+        .memory
         .map_frames(
-            b.reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
+            b.memory
+                .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
                 .unwrap(),
             frames,
             PteFlags::R,
@@ -43,11 +48,11 @@ pub fn sharing() {
         .unwrap();
     for (index, physical) in addresses.iter().enumerate() {
         let at = VirtAddr::wrap(BASE + index * PAGE_SIZE);
-        assert_eq!(a.tree.translate(at).unwrap().0.as_usize(), *physical);
-        assert_eq!(b.tree.translate(at).unwrap().0.as_usize(), *physical);
+        assert_eq!(a.memory.backend().translate(at).unwrap().0.as_usize(), *physical);
+        assert_eq!(b.memory.backend().translate(at).unwrap().0.as_usize(), *physical);
     }
     assert_eq!(
-        a.tree.protect(
+        a.memory.backend().protect(
             &first.map,
             VirtAddr::wrap(BASE),
             3 * PAGE_SIZE,
@@ -55,13 +60,15 @@ pub fn sharing() {
         ),
         Err(MapError::WidenDenied)
     );
-    a.tree
+    a.memory
+        .backend()
         .unmap(&first.map, VirtAddr::wrap(BASE + PAGE_SIZE), PAGE_SIZE)
         .unwrap();
-    assert!(a.tree.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
-    assert!(b.tree.translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_some());
+    assert!(a.memory.backend().translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_none());
+    assert!(b.memory.backend().translate(VirtAddr::wrap(BASE + PAGE_SIZE)).is_some());
     assert_eq!(
-        a.tree
+        a.memory
+            .backend()
             .translate(VirtAddr::wrap(BASE + 2 * PAGE_SIZE))
             .unwrap()
             .0
@@ -69,7 +76,7 @@ pub fn sharing() {
         addresses[2]
     );
     assert_eq!(
-        a.tree.protect(
+        a.memory.backend().protect(
             &first.map,
             VirtAddr::wrap(BASE + 2 * PAGE_SIZE),
             PAGE_SIZE,
@@ -77,7 +84,8 @@ pub fn sharing() {
         ),
         Err(MapError::WidenDenied)
     );
-    a.tree
+    a.memory
+        .backend()
         .protect(
             &first.map,
             VirtAddr::wrap(BASE + 2 * PAGE_SIZE),
@@ -85,15 +93,16 @@ pub fn sharing() {
             PteFlags::R,
         )
         .unwrap();
-    b.tree
+    b.memory
+        .backend()
         .unmap(&second.map, VirtAddr::wrap(BASE), PAGE_SIZE)
         .unwrap();
     assert!(Arc::ptr_eq(
-        &a.tree.find(VirtAddr::wrap(BASE)).unwrap(),
+        &a.memory.backend().find(VirtAddr::wrap(BASE)).unwrap(),
         &first.map
     ));
-    a.tree.audit();
-    b.tree.audit();
+    a.memory.backend().audit();
+    b.memory.backend().audit();
     drop(a);
     assert!(lifetimes[0].upgrade().is_none());
     assert!(lifetimes[1].upgrade().is_some());
@@ -110,8 +119,10 @@ pub fn sharing() {
         addresses[index] = frame.physical_address();
         lifetimes.push(Arc::downgrade(&frame));
         space
+            .memory
             .map_frames(
                 space
+                    .memory
                     .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                     .unwrap(),
                 vec![frame],
@@ -161,8 +172,10 @@ pub fn retirement() {
     let frame = Frame::allocate().unwrap();
     let weak = Arc::downgrade(&frame);
     let mapping = space
+        .memory
         .map_frames(
             space
+                .memory
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                 .unwrap(),
             vec![frame],
@@ -170,59 +183,67 @@ pub fn retirement() {
             PteFlags::R | PteFlags::W,
         )
         .unwrap();
-    let stale = space.mapping_at(VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
-    asid::fail_next_shootdown(space.tree.asid());
-    assert_eq!(space.unmap(&mapping), Err(MapError::Shootdown));
+    let stale = space.memory.mapping_at(VirtAddr::wrap(BASE), PAGE_SIZE).unwrap();
+    asid::fail_next_shootdown(space.memory.backend().asid());
+    assert_eq!(space.memory.unmap(&mapping), Err(MapError::Shootdown));
     assert!(weak.upgrade().is_some());
     assert!(
         space
+            .memory
             .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
             .is_err()
     );
-    space.unmap(&mapping).unwrap();
+    space.memory.unmap(&mapping).unwrap();
     assert!(weak.upgrade().is_none());
     let replacement = space
+        .memory
         .map_lazy(
             space
+                .memory
                 .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
                 .unwrap(),
             PteFlags::R,
             PteFlags::R,
         )
         .unwrap();
-    space.unmap(&stale).unwrap();
+    space.memory.unmap(&stale).unwrap();
     assert!(Arc::ptr_eq(
-        &space.tree.find(VirtAddr::wrap(BASE)).unwrap(),
+        &space.memory.backend().find(VirtAddr::wrap(BASE)).unwrap(),
         &replacement.map
     ));
-    space.unmap(&replacement).unwrap();
+    space.memory.unmap(&replacement).unwrap();
 
     let reservation = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
         .unwrap();
     let frame = Frame::allocate().unwrap();
     let failed = Arc::downgrade(&frame);
-    crate::core::work::unit::space::fail_cleanup_prepare();
+    crate::core::memory::manager::memory::fail_cleanup_prepare();
     assert!(matches!(
-        space.map_frames(reservation, vec![frame], PteFlags::R, PteFlags::R),
+        space.memory.map_frames(reservation, vec![frame], PteFlags::R, PteFlags::R),
         Err(MapError::OutOfMemory)
     ));
     assert!(failed.upgrade().is_none());
     let reservation = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
         .unwrap();
-    space.release_reservation(reservation).unwrap();
+    space.memory.release_reservation(reservation).unwrap();
     let entire = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::wrap(BASE), 3 * PAGE_SIZE)
         .unwrap();
-    let (prefix, tail) = space.split_reservation(entire, PAGE_SIZE).unwrap();
-    let (middle, suffix) = space.split_reservation(tail, PAGE_SIZE).unwrap();
-    space.release_reservation(prefix).unwrap();
+    let (prefix, tail) = space.memory.split_reservation(entire, PAGE_SIZE).unwrap();
+    let (middle, suffix) = space.memory.split_reservation(tail, PAGE_SIZE).unwrap();
+    space.memory.release_reservation(prefix).unwrap();
     let reused = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::wrap(BASE), PAGE_SIZE)
         .unwrap();
     assert!(
         space
+            .memory
             .reserve(
                 RegionId::Normal,
                 VirtAddr::wrap(BASE + PAGE_SIZE),
@@ -230,15 +251,16 @@ pub fn retirement() {
             )
             .is_err()
     );
-    space.release_reservation(middle).unwrap();
+    space.memory.release_reservation(middle).unwrap();
     let middle = space
+        .memory
         .reserve(
             RegionId::Normal,
             VirtAddr::wrap(BASE + PAGE_SIZE),
             PAGE_SIZE,
         )
         .unwrap();
-    space.release_reservation(reused).unwrap();
-    space.release_reservation(middle).unwrap();
-    space.release_reservation(suffix).unwrap();
+    space.memory.release_reservation(reused).unwrap();
+    space.memory.release_reservation(middle).unwrap();
+    space.memory.release_reservation(suffix).unwrap();
 }

@@ -14,7 +14,7 @@ use crate::entry::report::frame::{self, ResolveCfg, StackReader};
 use crate::entry::report::report::Report;
 use crate::machine::switcher::context::{Gprs, TrapContext};
 use crate::core::work::room::scheduler::core::ident;
-use crate::core::work::unit::space::SpaceKind;
+use crate::core::memory::manager::SpaceKind;
 
 use super::backtrace::{backtrace_rows, symbol};
 

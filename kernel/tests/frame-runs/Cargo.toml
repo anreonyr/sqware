@@ -1,0 +1,15 @@
+[package]
+name = "kernel-frame-runs-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# 自带 workspace：主工作区被 `.cargo/config.toml` 钉在 riscv 上，这台是宿主（x86_64）
+# 侧的确定性台架，进不来（同 `kernel/tests/pend` 与 `kernel/tests/trace`）。
+[workspace]
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bitflags = "2.13.1"

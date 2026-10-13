@@ -10,6 +10,7 @@ use crate::core::work::mail;
 use crate::core::work::pend::{self, Need, PieSnapshot};
 use crate::core::work::room::messenger::Handoff;
 use crate::core::work::room::scheduler::core::current;
+use crate::core::memory::manager::Memory;
 use crate::core::work::unit::space::Space;
 
 use super::pie::usable;
@@ -64,14 +65,14 @@ fn push(
         .unwrap_or(TaskId::new(0));
     let r = with_pie(token, Need::Store, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if len == 0 || !ident.team.space.validate_access(msg, len, PteFlags::R) {
+        if len == 0 || !ident.team.space.memory.validate_access(msg, len, PteFlags::R) {
             return Err(MailFail::Denied);
         }
         let reservation = mail::hole::reserve_len(&hole, len)?;
         let mut cell = alloc::vec::Vec::new();
         cell.try_reserve_exact(len).map_err(|_| MailFail::OoM)?;
         cell.resize(len, 0);
-        if !ident.team.space.copy_in(&mut cell, msg) {
+        if !ident.team.space.memory.copy_in(&mut cell, msg) {
             return Err(MailFail::Denied);
         }
         let bytes = Arc::try_new(cell).map_err(|_| MailFail::OoM)?;
@@ -95,13 +96,13 @@ fn pull(
     max: usize,
     oversize: Oversize,
 ) -> Outcome {
-    if !Space::user_range(buf, max) {
+    if !Memory::user_range(buf, max) {
         frame.gpr.set_x(Gprs::A0, MailFail::Denied.code() as usize);
         return Outcome::Resume;
     }
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
-        if !ident.team.space.validate_access(buf, max, PteFlags::W) {
+        if !ident.team.space.memory.validate_access(buf, max, PteFlags::W) {
             return Err(MailFail::Denied);
         }
         hand_over(&hole, &ident.team.space, buf, max, oversize)
@@ -135,11 +136,11 @@ fn hand_over(
         reading.finish();
         return Ok(PullOutcome::Discarded { len, sender: from });
     }
-    if len > max || !space.validate_access(buf, len, PteFlags::W) {
+    if len > max || !space.memory.validate_access(buf, len, PteFlags::W) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
-    if !space.copy_out(&reading.bytes, buf) {
+    if !space.memory.copy_out(&reading.bytes, buf) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }

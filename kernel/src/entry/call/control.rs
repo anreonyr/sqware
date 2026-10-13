@@ -18,8 +18,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: ControlCall, ident: &Arc<T
                 ret_err(frame, ControlFail::Denied);
                 return;
             };
-            if !ident.team.space.validate_write(buf, len)
-                || !crate::core::work::unit::space::Space::user_range(sp, frame::SPAN)
+            if !ident.team.space.memory.validate_write(buf, len)
+                || !crate::core::memory::manager::Memory::user_range(sp, frame::SPAN)
             {
                 ret_err(frame, ControlFail::Denied);
                 return;
@@ -37,6 +37,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: ControlCall, ident: &Arc<T
             let ok = ident
                 .team
                 .space
+                .memory
                 .copy_out(&bytes[..keep * ::core::mem::size_of::<usize>()], buf);
             if ok {
                 frame.gpr.set_x(Gprs::A0, keep);

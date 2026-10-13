@@ -1,10 +1,13 @@
 use alloc::sync::Arc;
 use alloc::vec;
 
+use ::core::sync::atomic::Ordering;
+
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::Frame;
 use crate::core::memory::manager::addr::VirtAddr;
 use crate::core::memory::manager::entry::PteFlags;
+use crate::core::memory::manager::table::TABLE_LIVE;
 use crate::core::memory::manager::{BorrowedRegion, Tree};
 
 pub fn manager_tree() {
@@ -451,4 +454,299 @@ pub fn manager_tree() {
     derived.audit();
     derived.close().expect("tree: close derived root");
     source.close().expect("tree: close source root");
+
+    tree_hole_spanning_derive();
+    tree_lazy_current_split();
+    tree_frames_noncontiguous();
+}
+
+fn tree_hole_spanning_derive() {
+    const BASE: usize = 0x7000_0000;
+    const TARGET: usize = 0x7100_0000;
+    let before = TABLE_LIVE.load(Ordering::Relaxed);
+    let frames = vec![
+        Frame::allocate().expect("tree: hole source first"),
+        Frame::allocate().expect("tree: hole source middle"),
+        Frame::allocate().expect("tree: hole source third"),
+    ];
+    let source = Tree::new().expect("tree: hole source root");
+    let source_map = source
+        .map_frames(
+            VirtAddr::from_raw(BASE),
+            frames.clone(),
+            PteFlags::R | PteFlags::W,
+            PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+        )
+        .expect("tree: hole source map");
+    let anchor = source_map.initial_range();
+    assert_eq!(anchor, (VirtAddr::from_raw(BASE), 3 * PAGE_SIZE));
+    source
+        .unmap(&source_map, VirtAddr::from_raw(BASE + PAGE_SIZE), PAGE_SIZE)
+        .expect("tree: open source middle hole");
+    assert_eq!(source_map.initial_range(), anchor);
+    assert_eq!(source_map.ranges().expect("tree: source ranges").len(), 2);
+    let first_window = source_map
+        .frames_in(VirtAddr::from_raw(BASE), PAGE_SIZE)
+        .expect("tree: source first window");
+    assert_eq!(first_window.len(), 1);
+    assert!(Arc::ptr_eq(&first_window[0].1, &frames[0]));
+    let third_window = source_map
+        .frames_in(VirtAddr::from_raw(BASE + 2 * PAGE_SIZE), PAGE_SIZE)
+        .expect("tree: source third window");
+    assert_eq!(third_window.len(), 1);
+    assert!(Arc::ptr_eq(&third_window[0].1, &frames[2]));
+    assert!(source.translate(VirtAddr::from_raw(BASE + PAGE_SIZE)).is_none());
+
+    let target = Tree::new().expect("tree: hole target root");
+    let target_map = target
+        .derive_map(
+            &source_map,
+            0,
+            3 * PAGE_SIZE,
+            VirtAddr::from_raw(TARGET),
+            PteFlags::R | PteFlags::X,
+            PteFlags::R | PteFlags::X,
+        )
+        .expect("tree: derive window across hole");
+    assert_eq!(
+        target_map.initial_range(),
+        (VirtAddr::from_raw(TARGET), 3 * PAGE_SIZE)
+    );
+    let target_ranges = target_map.ranges().expect("tree: target ranges");
+    assert_eq!(target_ranges.len(), 2);
+    assert_eq!(target_ranges[0].start.as_usize(), TARGET);
+    assert_eq!(target_ranges[1].start.as_usize(), TARGET + 2 * PAGE_SIZE);
+    assert!(target.translate(VirtAddr::from_raw(TARGET + PAGE_SIZE)).is_none());
+    assert_eq!(
+        target
+            .translate(VirtAddr::from_raw(TARGET))
+            .expect("tree: target first window")
+            .0,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(frames[0].physical_address()),
+    );
+    assert_eq!(
+        target
+            .translate(VirtAddr::from_raw(TARGET + 2 * PAGE_SIZE))
+            .expect("tree: target third window")
+            .0,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(frames[2].physical_address()),
+    );
+    let flags = target
+        .translate(VirtAddr::from_raw(TARGET))
+        .expect("tree: target first window")
+        .1;
+    assert!(flags.contains(PteFlags::R | PteFlags::X | PteFlags::V));
+    assert!(!flags.contains(PteFlags::W));
+    assert_eq!(target_map.frame_count(), 2);
+    source.audit();
+    target.audit();
+
+    target
+        .unmap(&target_map, VirtAddr::from_raw(TARGET), PAGE_SIZE)
+        .expect("tree: unmap target first window");
+    target
+        .unmap(&target_map, VirtAddr::from_raw(TARGET + 2 * PAGE_SIZE), PAGE_SIZE)
+        .expect("tree: unmap target third window");
+    assert!(!target_map.is_live());
+    target.close().expect("tree: close hole target root");
+    source.close().expect("tree: close hole source root");
+    drop(target_map);
+    drop(target);
+    drop(source_map);
+    drop(source);
+    drop(frames);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), before);
+}
+
+fn tree_lazy_current_split() {
+    const BASE: usize = 0x7200_0000;
+    const TARGET: usize = 0x7300_0000;
+    let before = TABLE_LIVE.load(Ordering::Relaxed);
+    let tree = Tree::new().expect("tree: lazy root");
+    let lazy = tree
+        .map_lazy(
+            VirtAddr::from_raw(BASE),
+            2 * PAGE_SIZE,
+            PteFlags::R | PteFlags::W,
+            PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+        )
+        .expect("tree: lazy two pages");
+    assert!(tree.translate(VirtAddr::from_raw(BASE)).is_none());
+    assert!(tree.translate(VirtAddr::from_raw(BASE + PAGE_SIZE)).is_none());
+    tree.protect(
+        &lazy,
+        VirtAddr::from_raw(BASE + PAGE_SIZE),
+        PAGE_SIZE,
+        PteFlags::R,
+    )
+    .expect("tree: make second lazy page read-only");
+    let split = lazy.ranges().expect("tree: lazy ranges");
+    assert_eq!(split.len(), 2);
+    assert_ne!(split[0].current.bits(), split[1].current.bits());
+    assert!(split[0].current.contains(PteFlags::R | PteFlags::W));
+    assert!(split[1].current.contains(PteFlags::R));
+    assert!(!split[1].current.contains(PteFlags::W));
+
+    tree.materialize(&lazy, VirtAddr::from_raw(BASE), 2 * PAGE_SIZE)
+        .expect("tree: materialize both lazy pages");
+    let writable = tree
+        .translate(VirtAddr::from_raw(BASE))
+        .expect("tree: first lazy page")
+        .1;
+    assert!(writable.contains(PteFlags::R | PteFlags::W | PteFlags::V));
+    let readonly = tree
+        .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
+        .expect("tree: second lazy page")
+        .1;
+    assert!(readonly.contains(PteFlags::R | PteFlags::V));
+    assert!(!readonly.contains(PteFlags::W));
+    assert!(tree.check_access(VirtAddr::from_raw(BASE), PAGE_SIZE, PteFlags::W));
+    assert!(!tree.check_access(VirtAddr::from_raw(BASE + PAGE_SIZE), PAGE_SIZE, PteFlags::W));
+    assert!(tree.check_access(VirtAddr::from_raw(BASE + PAGE_SIZE), PAGE_SIZE, PteFlags::R));
+    let zeros = [0u8; PAGE_SIZE];
+    assert!(tree.copy_to(VirtAddr::from_raw(BASE), &zeros, PteFlags::W));
+    assert!(!tree.copy_to(VirtAddr::from_raw(BASE + PAGE_SIZE), &zeros, PteFlags::W));
+    let held = lazy
+        .frames_in(VirtAddr::from_raw(BASE), 2 * PAGE_SIZE)
+        .expect("tree: lazy frames");
+    assert_eq!(held.len(), 2);
+    assert!(held.iter().all(|(_, frame)| Arc::strong_count(frame) == 2));
+    tree.audit();
+
+    let derived_tree = Tree::new().expect("tree: lazy derived root");
+    let derived = derived_tree
+        .derive_map(
+            &lazy,
+            0,
+            2 * PAGE_SIZE,
+            VirtAddr::from_raw(TARGET),
+            PteFlags::R | PteFlags::W,
+            PteFlags::R,
+        )
+        .expect("tree: derive across differing source rights");
+    let derived_ranges = derived.ranges().expect("tree: derived ranges");
+    assert_eq!(derived_ranges.len(), 2);
+    assert!(
+        derived_ranges
+            .iter()
+            .all(|range| range.current.bits() == (PteFlags::R | PteFlags::V).bits())
+    );
+    assert_eq!(
+        derived_tree
+            .translate(VirtAddr::from_raw(TARGET))
+            .expect("tree: derived first page")
+            .0,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(held[0].1.physical_address()),
+    );
+    assert_eq!(
+        derived_tree
+            .translate(VirtAddr::from_raw(TARGET + PAGE_SIZE))
+            .expect("tree: derived second page")
+            .0,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(held[1].1.physical_address()),
+    );
+    assert!(!derived_tree.check_access(VirtAddr::from_raw(TARGET), PAGE_SIZE, PteFlags::W));
+    assert!(derived_tree.check_access(VirtAddr::from_raw(TARGET), PAGE_SIZE, PteFlags::R));
+    tree.audit();
+    derived_tree.audit();
+    assert!(held.iter().all(|(_, frame)| Arc::strong_count(frame) == 3));
+
+    derived_tree
+        .unmap(&derived, VirtAddr::from_raw(TARGET), 2 * PAGE_SIZE)
+        .expect("tree: unmap derived window");
+    assert!(!derived.is_live());
+    derived_tree.close().expect("tree: close lazy derived root");
+    tree.unmap(&lazy, VirtAddr::from_raw(BASE), 2 * PAGE_SIZE)
+        .expect("tree: unmap lazy window");
+    assert!(!lazy.is_live());
+    tree.close().expect("tree: close lazy root");
+    assert!(held.iter().all(|(_, frame)| Arc::strong_count(frame) == 1));
+    drop(held);
+    drop(derived);
+    drop(derived_tree);
+    drop(lazy);
+    drop(tree);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), before);
+}
+
+fn tree_frames_noncontiguous() {
+    const BASE: usize = 0x7400_0000;
+    let before = TABLE_LIVE.load(Ordering::Relaxed);
+    let mut owned = vec![
+        Frame::allocate().expect("tree: noncontiguous frame a"),
+        Frame::allocate().expect("tree: noncontiguous frame b"),
+        Frame::allocate().expect("tree: noncontiguous frame c"),
+    ];
+    owned.sort_by_key(|frame| frame.physical_address());
+    let high = owned.pop().expect("tree: noncontiguous high frame");
+    let low = owned.remove(0);
+    let middle = owned.pop().expect("tree: noncontiguous middle frame");
+    assert!(owned.is_empty());
+    assert!(high.physical_address() - low.physical_address() >= 2 * PAGE_SIZE);
+    let middle_physical = middle.physical_address();
+    let middle_held = Arc::strong_count(&middle);
+    assert_eq!(Arc::strong_count(&low), 1);
+    assert_eq!(Arc::strong_count(&high), 1);
+
+    let tree = Tree::new().expect("tree: noncontiguous root");
+    let map = tree
+        .map_frames(
+            VirtAddr::from_raw(BASE),
+            vec![low.clone(), high.clone()],
+            PteFlags::R | PteFlags::W,
+            PteFlags::R | PteFlags::W,
+        )
+        .expect("tree: map two noncontiguous frames");
+    assert_eq!(map.frame_count(), 2);
+    let first = tree
+        .translate(VirtAddr::from_raw(BASE))
+        .expect("tree: noncontiguous first page")
+        .0;
+    let second = tree
+        .translate(VirtAddr::from_raw(BASE + PAGE_SIZE))
+        .expect("tree: noncontiguous second page")
+        .0;
+    assert_eq!(
+        first,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(low.physical_address())
+    );
+    assert_eq!(
+        second,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(high.physical_address())
+    );
+    assert_ne!(
+        second,
+        crate::core::memory::manager::addr::PhysAddr::from_raw(low.physical_address() + PAGE_SIZE)
+    );
+    let listed = map
+        .frames_in(VirtAddr::from_raw(BASE), 2 * PAGE_SIZE)
+        .expect("tree: noncontiguous frames");
+    assert_eq!(listed.len(), 2);
+    assert!(Arc::ptr_eq(&listed[0].1, &low));
+    assert!(Arc::ptr_eq(&listed[1].1, &high));
+    assert!(listed.iter().all(|(_, frame)| !Arc::ptr_eq(frame, &middle)));
+    assert_eq!(Arc::strong_count(&low), 3);
+    drop(listed);
+    assert_eq!(Arc::strong_count(&low), 2);
+    assert_eq!(Arc::strong_count(&high), 2);
+    assert_eq!(Arc::strong_count(&middle), middle_held);
+    assert_eq!(middle.physical_address(), middle_physical);
+    tree.audit();
+
+    tree.unmap(&map, VirtAddr::from_raw(BASE), 2 * PAGE_SIZE)
+        .expect("tree: unmap noncontiguous pair");
+    assert!(!map.is_live());
+    assert_eq!(Arc::strong_count(&low), 1);
+    assert_eq!(Arc::strong_count(&high), 1);
+    assert_eq!(tree.map_count(), 0);
+    tree.close().expect("tree: close noncontiguous root");
+    drop(map);
+    drop(tree);
+    assert_eq!(Arc::strong_count(&low), 1);
+    assert_eq!(Arc::strong_count(&high), 1);
+    assert_eq!(Arc::strong_count(&middle), middle_held);
+    drop(low);
+    drop(high);
+    drop(middle);
+    assert_eq!(TABLE_LIVE.load(Ordering::Relaxed), before);
 }

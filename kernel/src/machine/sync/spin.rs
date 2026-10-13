@@ -1,10 +1,12 @@
 use ::core::cell::UnsafeCell;
-use ::core::marker::PhantomData;
-use ::core::ops::{Deref, DerefMut};
 use ::core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::depend;
 use super::trap::TrapGuard;
+
+mod guard;
+
+pub use guard::SpinLockGuard;
 
 pub struct SpinLock<T: ?Sized> {
     locked: AtomicBool,
@@ -15,12 +17,6 @@ pub struct SpinLock<T: ?Sized> {
 }
 
 unsafe impl<T: ?Sized> Sync for SpinLock<T> {}
-
-pub struct SpinLockGuard<'a, T: ?Sized> {
-    lock: &'a SpinLock<T>,
-    _not_send: PhantomData<*const ()>,
-    _trap: TrapGuard,
-}
 
 impl<T> SpinLock<T> {
     pub const fn new(val: T) -> Self {
@@ -61,11 +57,7 @@ impl<T: ?Sized> SpinLock<T> {
         self.caller.store(caller, Ordering::Relaxed);
         crate::machine::sync::depend_acquire!(self, caller);
 
-        SpinLockGuard {
-            lock: self,
-            _not_send: PhantomData,
-            _trap: trap,
-        }
+        SpinLockGuard::new(self, trap)
     }
 
     #[allow(dead_code)]
@@ -81,32 +73,6 @@ impl<T: ?Sized> SpinLock<T> {
         self.caller.store(caller, Ordering::Relaxed);
         crate::machine::sync::depend_acquire!(self, caller);
 
-        Some(SpinLockGuard {
-            lock: self,
-            _not_send: PhantomData,
-            _trap: trap,
-        })
-    }
-}
-
-impl<T: ?Sized> Deref for SpinLockGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> DerefMut for SpinLockGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> Drop for SpinLockGuard<'_, T> {
-    fn drop(&mut self) {
-        crate::machine::sync::depend_release!(self.lock);
-        self.lock.locked.store(false, Ordering::Release);
-        self.lock.caller.store(0, Ordering::Relaxed);
+        Some(SpinLockGuard::new(self, trap))
     }
 }

@@ -19,7 +19,7 @@ pub(super) fn put(
     let n = len.min(DBCN_MAX);
     let mut text = [0u8; DBCN_MAX];
     let space = &ident.team.space;
-    if !crate::core::work::unit::space::Space::user_range(buf, len) || !space.copy_in(&mut text[..n], buf)
+    if !crate::core::memory::manager::Memory::user_range(buf, len) || !space.memory.copy_in(&mut text[..n], buf)
     {
         return err(frame, DebugFail::Denied);
     }
@@ -38,7 +38,7 @@ pub(super) fn get(
     if len == 0 || len > DBCN_MAX {
         return err(frame, DebugFail::Denied);
     }
-    if !ident.team.space.validate_write(buf, len) {
+    if !ident.team.space.memory.validate_write(buf, len) {
         return err(frame, DebugFail::Denied);
     }
     let mut stage = [0u8; DBCN_MAX];
@@ -51,7 +51,7 @@ pub(super) fn get(
         return frame;
     }
     let space = &ident.team.space;
-    if !space.copy_out(&stage[..n], buf) {
+    if !space.memory.copy_out(&stage[..n], buf) {
         return err(frame, DebugFail::Denied);
     }
     frame.gpr.set_x(Gprs::A0, n);

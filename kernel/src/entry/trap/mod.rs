@@ -26,7 +26,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(task) = i.live() else {
         return false;
     };
-    if !task.team.space.tree.asid().is_kernel() {
+    if !task.team.space.memory.asid().is_kernel() {
         return false;
     }
     let Some(pa) = i.trap() else {
@@ -198,7 +198,11 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 .as_ref()
                 .and_then(Identity::live)
                 .expect("user page fault without running task");
-            let ok = fault::handle_page_fault(&fault, &running.team.space);
+            let ok = running
+                .team
+                .space
+                .memory
+                .resolve_fault(fault.addr, fault.pc, fault.kind);
             trace::note(EventKind::Memory(MemoryEvent::PageFault {
                 va: fault.addr.as_usize(),
                 fault: fault.kind,

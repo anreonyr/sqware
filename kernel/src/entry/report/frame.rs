@@ -3,8 +3,8 @@ use alloc::sync::Arc;
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::core::memory::manager::entry::PteFlags;
+use crate::core::memory::manager::SpaceKind;
 use crate::core::work::unit::space::Space;
-use crate::core::work::unit::space::SpaceKind;
 
 pub const SPAN: usize = 4096;
 const ALIGN: usize = 4;
@@ -90,6 +90,7 @@ impl StackReader {
         if let Some(space) = &self.space {
             let mut bytes = [0u8; size_of::<usize>()];
             return space
+                .memory
                 .copy_in(&mut bytes, addr)
                 .then(|| usize::from_le_bytes(bytes));
         }

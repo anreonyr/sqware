@@ -5,10 +5,11 @@ use core::time::Duration;
 
 use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::{Map, MapError, addr::PhysAddr, entry::PteFlags};
+use crate::core::memory::manager::{Mapping, RegionId, Reservation};
 use crate::core::work::grant::Grant;
 use crate::core::work::room::messenger::{self, Handoff, WakeKey};
 use crate::core::work::unit::life::Life;
-use crate::core::work::unit::space::{Mapping, RegionId, Reservation, Space};
+use crate::core::work::unit::space::Space;
 use crate::machine::sync::{Level, SpinLock};
 use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
 
@@ -93,10 +94,12 @@ impl PoleMeta {
             .space
             .clone();
         let reservation = kernel
+            .memory
             .allocate_high(RegionId::Resource, size)
             .map_err(pie_map_error)?;
         let rw = PteFlags::R | PteFlags::W;
         let keeper = kernel
+            .memory
             .derive(
                 reservation,
                 &mapping.map,
@@ -344,7 +347,7 @@ impl PoleMeta {
                         map: entry.map.clone(),
                         reservation,
                     };
-                    if let Err(error) = space.unmap(&mapping) {
+                    if let Err(error) = space.memory.unmap(&mapping) {
                         entry.placement = Some((weak, mapping.reservation));
                         self.maps.lock().push(entry);
                         return Err(pie_map_error(error));
@@ -370,7 +373,7 @@ impl PoleMeta {
             };
             if let Some((weak, reservation)) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.dispose(Mapping {
+                    let _ = space.memory.dispose(Mapping {
                         map: entry.map,
                         reservation,
                     });
@@ -405,7 +408,7 @@ impl Drop for PoleMeta {
             }
             if let Some((weak, reservation)) = entry.placement {
                 if let Some(space) = weak.upgrade() {
-                    let _ = space.dispose(Mapping {
+                    let _ = space.memory.dispose(Mapping {
                         map: entry.map,
                         reservation,
                     });
@@ -454,8 +457,8 @@ pub(crate) fn open(
             let rwx = PteFlags::R | PteFlags::W | PteFlags::X;
             if (range.ceiling & rwx).bits() != (flags & rwx).bits() {
                 space
-                    .tree
-                    .narrow(&map, range.start, range.size.get(), flags)
+                    .memory
+                    .narrow_record(&map, range.start, range.size.get(), flags)
                     .map_err(pie_map_error)?;
             }
         }
@@ -464,9 +467,11 @@ pub(crate) fn open(
     meta.reserve_record()?;
     let source = meta.canonical_map().ok_or(PieFail::Dead)?;
     let reservation = space
+        .memory
         .allocate_low(RegionId::Normal, meta.size)
         .map_err(pie_map_error)?;
     let mapping = space
+        .memory
         .derive(
             reservation,
             &source,
@@ -477,11 +482,11 @@ pub(crate) fn open(
         .map_err(pie_map_error)?;
     let address = mapping.reservation.start().as_usize();
     if !meta.alive() || grant.permission().is_none() {
-        let _ = space.dispose(mapping);
+        let _ = space.memory.dispose(mapping);
         return Err(PieFail::Dead);
     }
     if let Err(mapping) = meta.record(token, space, mapping, None, true) {
-        let _ = space.dispose(mapping);
+        let _ = space.memory.dispose(mapping);
         return Err(PieFail::Dead);
     }
     Ok((address, meta.size))
@@ -541,11 +546,12 @@ pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleM
         .space
         .clone();
     let reservation = kernel
+        .memory
         .allocate_high(RegionId::Resource, hi - lo)
         .map_err(pie_map_error)?;
     let rw = PteFlags::R | PteFlags::W;
     let mapping = unsafe {
-        kernel.map_borrowed(
+        kernel.memory.map_borrowed(
             reservation,
             PhysAddr::from_raw(lo),
             rw,

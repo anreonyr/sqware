@@ -120,13 +120,14 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
     let view_reservation = team
         .space
-        .allocate_low(crate::core::work::unit::space::RegionId::Normal, view_size)
+        .memory
+        .allocate_low(crate::core::memory::manager::RegionId::Normal, view_size)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::ImageView,
             source,
         })?;
     let view_mapping = unsafe {
-        team.space.map_borrowed(
+        team.space.memory.map_borrowed(
             view_reservation,
             crate::core::memory::manager::addr::PhysAddr::from_raw(region.base),
             read_only(),
@@ -168,13 +169,14 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     let (ledger_pa, ledger_bytes) = crate::entry::boot::resources::ledger::block();
     let ledger_reservation = team
         .space
-        .allocate_low(crate::core::work::unit::space::RegionId::Normal, ledger_bytes)
+        .memory
+        .allocate_low(crate::core::memory::manager::RegionId::Normal, ledger_bytes)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::LedgerView,
             source,
         })?;
     let ledger_mapping = unsafe {
-        team.space.map_borrowed(
+        team.space.memory.map_borrowed(
             ledger_reservation,
             crate::core::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
             read_only(),
@@ -220,13 +222,13 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::core::work::unit::task
     })?;
 
     #[cfg(debug_assertions)]
-    team.space.tree.audit();
+    team.space.memory.audit();
 
     #[cfg(debug_assertions)]
     kernel()
         .expect("kernel team not initialized")
         .space
-        .tree
+        .memory
         .audit();
 
     Ok(Some(bootstrap))
@@ -271,10 +273,9 @@ pub(crate) extern "C" fn boot_main() -> ! {
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
-        .tree
-        .translate(hart::hart_frame())
-        .expect("kernel frame not mapped")
-        .0;
+        .memory
+        .physical_at(hart::hart_frame())
+        .expect("kernel frame not mapped");
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
     unsafe {

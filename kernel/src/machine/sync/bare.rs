@@ -1,9 +1,11 @@
 use ::core::cell::UnsafeCell;
-use ::core::marker::PhantomData;
-use ::core::ops::{Deref, DerefMut};
 use ::core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::depend;
+
+mod guard;
+
+pub use guard::BareLockGuard;
 
 pub struct BareLock<T: ?Sized> {
     locked: AtomicBool,
@@ -14,11 +16,6 @@ pub struct BareLock<T: ?Sized> {
 }
 
 unsafe impl<T: ?Sized> Sync for BareLock<T> {}
-
-pub struct BareLockGuard<'a, T: ?Sized> {
-    lock: &'a BareLock<T>,
-    _not_send: PhantomData<*const ()>,
-}
 
 impl<T> BareLock<T> {
     #[allow(dead_code)]
@@ -55,10 +52,7 @@ impl<T: ?Sized> BareLock<T> {
         self.caller.store(caller, Ordering::Relaxed);
         crate::machine::sync::depend_acquire!(self, caller);
 
-        BareLockGuard {
-            lock: self,
-            _not_send: PhantomData,
-        }
+        BareLockGuard::new(self)
     }
 
     #[allow(dead_code)]
@@ -72,31 +66,6 @@ impl<T: ?Sized> BareLock<T> {
         self.caller.store(caller, Ordering::Relaxed);
         crate::machine::sync::depend_acquire!(self, caller);
 
-        Some(BareLockGuard {
-            lock: self,
-            _not_send: PhantomData,
-        })
-    }
-}
-
-impl<T: ?Sized> Deref for BareLockGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> DerefMut for BareLockGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> Drop for BareLockGuard<'_, T> {
-    fn drop(&mut self) {
-        crate::machine::sync::depend_release!(self.lock);
-        self.lock.locked.store(false, Ordering::Release);
-        self.lock.caller.store(0, Ordering::Relaxed);
+        Some(BareLockGuard::new(self))
     }
 }

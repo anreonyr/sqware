@@ -8,13 +8,11 @@ use super::addr::VirtAddr;
 use super::entry::PteFlags;
 use super::table::TableNode;
 
-#[derive(fack::prelude::Error, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SatpError {
-    #[error("no supported page table mode")]
-    Unsupported,
-    #[error("page table mode probe ran out of memory")]
-    OutOfMemory,
-}
+mod error;
+mod geometry;
+
+pub use error::SatpError;
+pub use geometry::{Geo, geometry};
 
 static MODE: OnceLock<satp::Mode> = OnceLock::new();
 
@@ -34,37 +32,6 @@ pub fn detect() -> Result<satp::Mode, SatpError> {
 
 pub fn mode() -> satp::Mode {
     *MODE.get().unwrap_or(&satp::Mode::Sv39)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Geo {
-    pub levels: u8,
-    pub va_bits: u8,
-}
-
-impl Geo {
-    #[inline]
-    pub fn split_bit(self) -> u8 {
-        self.va_bits - 1
-    }
-}
-
-pub fn geometry(mode: satp::Mode) -> Geo {
-    match mode {
-        satp::Mode::Sv39 => Geo {
-            levels: 3,
-            va_bits: 39,
-        },
-        satp::Mode::Sv48 => Geo {
-            levels: 4,
-            va_bits: 48,
-        },
-        satp::Mode::Sv57 => Geo {
-            levels: 5,
-            va_bits: 57,
-        },
-        _ => panic!("geometry: unsupported satp mode {mode:?}"),
-    }
 }
 
 pub fn levels() -> usize {

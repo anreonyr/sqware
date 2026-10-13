@@ -25,7 +25,7 @@ fn ret_err<E: env::FailCode>(frame: &mut TrapContext, e: E) -> *mut TrapContext 
 }
 
 fn instr_len(space: &Space, sepc: KVirt) -> usize {
-    let b0 = space.instruction_byte(sepc.as_usize()).unwrap_or(0b11);
+    let b0 = space.memory.instruction_byte(sepc.as_usize()).unwrap_or(0b11);
     if b0 & 0b11 == 0b11 { 4 } else { 2 }
 }
 

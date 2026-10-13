@@ -157,8 +157,9 @@ pub fn order() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("order: build space");
     space
+        .memory
         .attach_region(
-            crate::core::work::unit::space::RegionId::Normal,
+            crate::core::memory::manager::RegionId::Normal,
             USER_BASE,
             crate::core::memory::manager::mode::upper().as_usize(),
         )
@@ -271,8 +272,9 @@ pub fn badge() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("badge: build space");
     space
+        .memory
         .attach_region(
-            crate::core::work::unit::space::RegionId::Normal,
+            crate::core::memory::manager::RegionId::Normal,
             USER_BASE,
             crate::core::memory::manager::mode::upper().as_usize(),
         )
@@ -331,8 +333,9 @@ pub fn references() {
     use env::{AwaitReply, Source, Wait};
     let space = SpaceBuilder::user().build().unwrap();
     space
+        .memory
         .attach_region(
-            crate::core::work::unit::space::RegionId::Normal,
+            crate::core::memory::manager::RegionId::Normal,
             0x4000_0000,
             crate::core::memory::manager::mode::upper().as_usize(),
         )
@@ -402,8 +405,9 @@ pub fn references() {
         .ident
         .team
         .space
+        .memory
         .allocate_low(
-            crate::core::work::unit::space::RegionId::Normal,
+            crate::core::memory::manager::RegionId::Normal,
             crate::core::memory::PAGE_SIZE,
         )
         .unwrap();
@@ -414,6 +418,7 @@ pub fn references() {
         .ident
         .team
         .space
+        .memory
         .map_frames(reservation, alloc::vec![frame], rw, rw)
         .unwrap();
     let page = crate::core::work::mail::pole::PoleMeta::from_mapping(

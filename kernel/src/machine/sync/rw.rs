@@ -1,10 +1,14 @@
 use ::core::cell::UnsafeCell;
-use ::core::marker::PhantomData;
-use ::core::ops::{Deref, DerefMut};
 use ::core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::depend;
 use super::trap::TrapGuard;
+
+mod read_guard;
+mod write_guard;
+
+pub use read_guard::RwLockReadGuard;
+pub use write_guard::RwLockWriteGuard;
 
 const WRITER_BIT: usize = 1 << (usize::BITS - 1);
 const READER_MASK: usize = !WRITER_BIT;
@@ -16,18 +20,6 @@ pub struct RwLock<T: ?Sized> {
 }
 
 unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
-
-pub struct RwLockReadGuard<'a, T: ?Sized> {
-    lock: &'a RwLock<T>,
-    _not_send: PhantomData<*const ()>,
-    _trap: TrapGuard,
-}
-
-pub struct RwLockWriteGuard<'a, T: ?Sized> {
-    lock: &'a RwLock<T>,
-    _not_send: PhantomData<*const ()>,
-    _trap: TrapGuard,
-}
 
 impl<T> RwLock<T> {
     pub const fn new(val: T) -> Self {
@@ -59,11 +51,7 @@ impl<T: ?Sized> RwLock<T> {
             panic!("[rwlock] write->read downgrade deadlock");
         }
 
-        RwLockReadGuard {
-            lock: self,
-            _not_send: PhantomData,
-            _trap: trap,
-        }
+        RwLockReadGuard::new(self, trap)
     }
 
     #[inline(never)]
@@ -106,45 +94,6 @@ impl<T: ?Sized> RwLock<T> {
         }
         self.caller.store(caller, Ordering::Relaxed);
 
-        RwLockWriteGuard {
-            lock: self,
-            _not_send: PhantomData,
-            _trap: trap,
-        }
-    }
-}
-
-impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> Drop for RwLockReadGuard<'_, T> {
-    fn drop(&mut self) {
-        self.lock.state.fetch_sub(1, Ordering::Release);
-    }
-}
-
-impl<T: ?Sized> Deref for RwLockWriteGuard<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &T {
-        unsafe { &*self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> DerefMut for RwLockWriteGuard<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.lock.data.get() }
-    }
-}
-
-impl<T: ?Sized> Drop for RwLockWriteGuard<'_, T> {
-    fn drop(&mut self) {
-        self.lock.caller.store(0, Ordering::Relaxed);
-        self.lock.state.store(0, Ordering::Release);
+        RwLockWriteGuard::new(self, trap)
     }
 }

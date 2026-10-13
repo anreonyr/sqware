@@ -8,8 +8,9 @@ pub fn acceptance() {
 
     let space = SpaceBuilder::user().build().unwrap();
     space
+        .memory
         .attach_region(
-            crate::core::work::unit::space::RegionId::Normal,
+            crate::core::memory::manager::RegionId::Normal,
             0x4000_0000,
             crate::core::memory::manager::mode::upper().as_usize(),
         )

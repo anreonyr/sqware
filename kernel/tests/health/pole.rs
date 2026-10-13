@@ -3,8 +3,9 @@ use crate::core::memory::manager::{Frame, addr::VirtAddr, asid, entry::PteFlags,
 use crate::entry::call::pie::{create_pole, fail_pole_at};
 use crate::core::work::mail::pole;
 use crate::core::work::pend::{self, Permission};
+use crate::core::memory::manager::RegionId;
 use crate::core::work::unit::{
-    space::{RegionId, SpaceBuilder},
+    space::SpaceBuilder,
     team::TeamBuilder,
 };
 use alloc::sync::Arc;
@@ -22,6 +23,7 @@ pub fn lifecycle() {
     let rw = PteFlags::R | PteFlags::W;
     let reservation = team
         .space
+        .memory
         .allocate_low(RegionId::Normal, PAGE_SIZE)
         .unwrap();
     let frame = Frame::allocate().unwrap();
@@ -29,6 +31,7 @@ pub fn lifecycle() {
     let prepared = caller.pend.creations.prepare().unwrap();
     let input = team
         .space
+        .memory
         .map_frames(
             reservation,
             vec![frame],
@@ -49,7 +52,7 @@ pub fn lifecycle() {
         );
         assert!(caller.pend.pies.lock().is_empty());
         assert!(Arc::ptr_eq(
-            &team.space.tree.find(start).unwrap(),
+            &team.space.memory.backend().find(start).unwrap(),
             &input.map
         ));
         assert_eq!(input.map.ranges().unwrap()[0].current.bits(), original);
@@ -59,13 +62,13 @@ pub fn lifecycle() {
             tables
         );
     }
-    asid::fail_next_shootdown(kernel.tree.asid());
+    asid::fail_next_shootdown(kernel.memory.backend().asid());
     assert_eq!(
         create_pole(&caller, start, PAGE_SIZE, true),
         Err(env::PieFail::Busy)
     );
     assert!(caller.pend.pies.lock().is_empty());
-    kernel.retry_invalidation().unwrap();
+    kernel.memory.retry_invalidation().unwrap();
     assert_eq!(
         TABLE_LIVE.load(::core::sync::atomic::Ordering::Relaxed),
         tables
@@ -93,11 +96,11 @@ pub fn lifecycle() {
         .unwrap(),
     );
     let (shared, _) = pole::open(&meta, child, &peer.space, rw).unwrap();
-    let peer_map = peer.space.tree.find(VirtAddr::wrap(shared)).unwrap();
+    let peer_map = peer.space.memory.backend().find(VirtAddr::wrap(shared)).unwrap();
     assert!(meta.opened(&peer_map));
     assert_eq!(
-        peer.space.tree.translate(VirtAddr::wrap(shared)).unwrap().0,
-        team.space.tree.translate(start).unwrap().0
+        peer.space.memory.backend().translate(VirtAddr::wrap(shared)).unwrap().0,
+        team.space.memory.backend().translate(start).unwrap().0
     );
     assert_eq!(
         create_pole(&recipient, VirtAddr::wrap(shared), PAGE_SIZE, true),
@@ -108,7 +111,8 @@ pub fn lifecycle() {
     assert!(
         !team
             .space
-            .tree
+            .memory
+            .backend()
             .translate(start)
             .unwrap()
             .1
@@ -119,13 +123,13 @@ pub fn lifecycle() {
     pend::revoke(&caller, &Arc::downgrade(&recipient), child).unwrap();
     assert!(meta.readonly());
     assert!(meta.exclusive());
-    assert!(peer.space.tree.translate(VirtAddr::wrap(shared)).is_none());
+    assert!(peer.space.memory.backend().translate(VirtAddr::wrap(shared)).is_none());
     pole::shut(&meta, token).unwrap();
     assert!(weak.upgrade().is_some());
-    assert!(team.space.tree.translate(start).is_none());
+    assert!(team.space.memory.backend().translate(start).is_none());
     let (reopened, _) = pole::open(&meta, token, &team.space, PteFlags::R).unwrap();
-    assert!(team.space.validate_read(reopened, PAGE_SIZE));
-    assert!(!team.space.validate_write(reopened, PAGE_SIZE));
+    assert!(team.space.memory.validate_read(reopened, PAGE_SIZE));
+    assert!(!team.space.memory.validate_write(reopened, PAGE_SIZE));
     assert_eq!(
         create_pole(&caller, VirtAddr::wrap(reopened), PAGE_SIZE, true),
         Err(env::PieFail::Denied)

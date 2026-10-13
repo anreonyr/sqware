@@ -83,6 +83,30 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
+    fn manager_api_placement() {
+        kernel::entry::check::manager_api::placement();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn manager_api_receipt() {
+        kernel::entry::check::manager_api::receipt();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn manager_api_access_wire() {
+        kernel::entry::check::manager_api::access_wire();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn manager_api_sharing() {
+        kernel::entry::check::manager_api::sharing();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
     fn pole_mapping_and_creation_authority() {
         kernel::entry::check::pole::lifecycle();
     }

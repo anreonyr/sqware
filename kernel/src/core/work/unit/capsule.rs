@@ -2,10 +2,11 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::ledger::capsule::{Capsule, PAGE};
 
-use super::space::{RegionId, Space, SpaceBuilder};
+use super::space::SpaceBuilder;
 use super::team::{Team, TeamBuilder};
 use crate::core::memory::manager::{
     Frame, MapError,
+    Memory, RegionId,
     addr::{PhysAddr, VirtAddr},
     entry::PteFlags,
 };
@@ -19,7 +20,7 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
     for i in 0..capsule.count {
         let region = capsule.region(i).ok_or(MapError::NoRegion)?;
         let size = region.pages.checked_mul(PAGE).ok_or(MapError::NoRegion)?;
-        if !Space::user_range(region.va, size) {
+        if !Memory::user_range(region.va, size) {
             return Err(MapError::NoRegion);
         }
         image_end = image_end.max(region.va.checked_add(size).ok_or(MapError::NoRegion)?);
@@ -36,7 +37,7 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
             .checked_mul(PAGE)
             .ok_or(MapError::NoRegion)?;
         if data_size > 0 {
-            let data_reservation = space.reserve(RegionId::Normal, va, data_size)?;
+            let data_reservation = space.memory.reserve(RegionId::Normal, va, data_size)?;
             if access.contains(PteFlags::W) {
                 let mut frames = Vec::new();
                 frames
@@ -54,7 +55,7 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
                     }
                     frames.push(frame);
                 }
-                space.map_frames(data_reservation, frames, access, current)?;
+                space.memory.map_frames(data_reservation, frames, access, current)?;
             } else {
                 let physical = bytes
                     .as_ptr()
@@ -62,7 +63,7 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
                     .checked_add(region.payload)
                     .ok_or(MapError::NoRegion)?;
                 unsafe {
-                    space.map_borrowed(
+                    space.memory.map_borrowed(
                         data_reservation,
                         PhysAddr::from_raw(physical),
                         access,
@@ -74,11 +75,11 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
         if size > data_size {
             let bss_start = va + data_size;
             let bss_size = size - data_size;
-            let reservation = space.reserve(RegionId::Normal, bss_start, bss_size)?;
-            space.map_lazy(reservation, access, current)?;
+            let reservation = space.memory.reserve(RegionId::Normal, bss_start, bss_size)?;
+            space.memory.map_lazy(reservation, access, current)?;
         }
     }
-    space.advance_region(RegionId::Normal, image_end)?;
+    space.memory.advance_region(RegionId::Normal, image_end)?;
     crate::core::memory::manager::sync_instructions()?;
     let team = TeamBuilder::new(space).spawn()?;
     team.set_default_entry(capsule.entry);

@@ -6,7 +6,8 @@ use crate::core::memory::allocator::statistics;
 use crate::core::memory::manager::mode;
 use crate::core::work::room::scheduler::core::prune_dead;
 use crate::core::work::unit::copies::Origin;
-use crate::core::work::unit::space::{RegionId, SpaceBuilder};
+use crate::core::memory::manager::RegionId;
+use crate::core::work::unit::space::SpaceBuilder;
 use crate::core::work::unit::task::TaskWeak;
 use crate::core::work::unit::team::TeamBuilder;
 
@@ -34,6 +35,7 @@ const USER_BASE: usize = 0x4000_0000;
 fn shell_round() {
     let space = SpaceBuilder::user().build().expect("shell: build space");
     space
+        .memory
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let team = TeamBuilder::new(space).spawn().expect("shell: spawn team");
@@ -52,6 +54,7 @@ fn oust_round() {
         .build()
         .expect("oust: build home space");
     home_space
+        .memory
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let home = TeamBuilder::new(home_space)
@@ -61,6 +64,7 @@ fn oust_round() {
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
     space
+        .memory
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
@@ -77,6 +81,7 @@ fn oust_round() {
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
     space
+        .memory
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)

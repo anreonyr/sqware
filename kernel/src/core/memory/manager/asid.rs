@@ -1,4 +1,3 @@
-use fack::prelude::Error;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
@@ -7,6 +6,10 @@ use crate::machine::hart;
 use crate::machine::sync::{Level, SpinLock};
 
 use super::flush_asid;
+
+mod error;
+
+pub use error::Deaf;
 
 pub(crate) const ASID_BITS: u32 = 16;
 const VACANT: usize = 1 << ASID_BITS;
@@ -144,12 +147,6 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
         })
         .call();
     r.map(|_| ()).map_err(|_| Deaf { asid })
-}
-
-#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
-#[error("remote sfence failed for asid {}", asid.get())]
-pub struct Deaf {
-    pub asid: Asid,
 }
 
 const _: () = assert!(ASID_BITS == 16);

@@ -21,7 +21,7 @@ pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;
 
-use crate::core::memory::manager::MapError;
+use crate::core::memory::manager::{MapError, SpaceKind};
 use alloc::sync::Arc;
 
 use space::SpaceBuilder;
@@ -29,12 +29,12 @@ use space::SpaceBuilder;
 pub type MapResult<T> = erra::Result<T, MapError>;
 
 pub(crate) fn build(
-    kind: space::SpaceKind,
+    kind: SpaceKind,
     sire: task::TaskWeak,
 ) -> Result<Arc<team::Team>, MapError> {
     let space = match kind {
-        space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
-        space::SpaceKind::User => SpaceBuilder::user(),
+        SpaceKind::Supervisor => SpaceBuilder::supervisor(),
+        SpaceKind::User => SpaceBuilder::user(),
     }
     .build()?;
     team::TeamBuilder::new(space)

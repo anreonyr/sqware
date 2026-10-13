@@ -8,25 +8,25 @@ use alloc::vec::Vec;
 use super::OnceLock;
 use crate::machine::hart;
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-#[repr(u8)]
-pub enum Level {
-    Unit = 0,
-    Scheduler = 1,
-    Space = 2,
-    Tree = 3,
-    Map = 4,
-    TeamTasks = 5,
-    L3 = 6,
-    Roster = 7,
-    Asid = 8,
-    Frame = 9,
-    Block = 10,
-    Tally = 11,
-    Spare = 12,
-    UnitState = 13,
-}
+mod level;
+#[cfg(debug_assertions)]
+mod error;
+#[cfg(debug_assertions)]
+mod held;
+#[cfg(debug_assertions)]
+mod held_cell;
+#[cfg(debug_assertions)]
+mod held_set;
+
+pub use level::Level;
+
+#[cfg(debug_assertions)]
+pub use error::DepInitError;
+
+#[cfg(debug_assertions)]
+use held_cell::HeldCell;
+#[cfg(debug_assertions)]
+use held_set::HeldSet;
 
 #[cfg(debug_assertions)]
 pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
@@ -38,12 +38,12 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
     if caller != 0 {
         msg.push_str(&format!("\n  caller: {:#x} ({caller:#x})", caller,));
     }
-    if held.len == 0 {
+    if held.slots.is_empty() {
         msg.push_str("\n  held: (none)");
     } else {
         let max = held.max_level();
         msg.push_str("\n  held:");
-        for slot in &held.slots[..held.len] {
+        for slot in held.slots.iter() {
             let lv = slot
                 .level
                 .map(|l| format!("{l:?}"))
@@ -67,82 +67,7 @@ pub(crate) fn report(what: &'static str, lock: usize, caller: usize) -> ! {
 }
 
 #[cfg(debug_assertions)]
-const MAX_HELD: usize = 8;
-
-#[cfg(debug_assertions)]
-#[derive(Clone, Copy)]
-struct Held {
-    addr: usize,
-    level: Option<Level>,
-    caller: usize,
-}
-
-#[cfg(debug_assertions)]
-struct HeldSet {
-    len: usize,
-    slots: Vec<Held>,
-}
-
-#[cfg(debug_assertions)]
-impl HeldSet {
-    fn new() -> Result<HeldSet, DepInitError> {
-        let mut slots = Vec::new();
-        slots
-            .try_reserve_exact(MAX_HELD)
-            .map_err(|_| DepInitError::OutOfMemory)?;
-        Ok(HeldSet { len: 0, slots })
-    }
-
-    fn max_level(&self) -> Option<Level> {
-        self.slots[..self.len].iter().filter_map(|h| h.level).max()
-    }
-
-    fn contains(&self, addr: usize) -> bool {
-        self.slots[..self.len].iter().any(|h| h.addr == addr)
-    }
-
-    fn push(&mut self, addr: usize, level: Option<Level>, caller: usize) -> Result<(), ()> {
-        if self.len >= self.slots.capacity() {
-            return Err(());
-        }
-        self.slots.push(Held {
-            addr,
-            level,
-            caller,
-        });
-        self.len += 1;
-        Ok(())
-    }
-
-    fn remove(&mut self, addr: usize) -> Result<(), ()> {
-        for i in 0..self.len {
-            if self.slots[i].addr == addr {
-                self.slots.remove(i);
-                self.len -= 1;
-                return Ok(());
-            }
-        }
-        Err(())
-    }
-}
-
-#[cfg(debug_assertions)]
-struct HeldCell(UnsafeCell<HeldSet>);
-
-#[cfg(debug_assertions)]
-unsafe impl Send for HeldCell {}
-#[cfg(debug_assertions)]
-unsafe impl Sync for HeldCell {}
-
-#[cfg(debug_assertions)]
 static POOL: OnceLock<&'static [HeldCell]> = OnceLock::new();
-
-#[cfg(debug_assertions)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DepInitError {
-    OutOfMemory,
-    AlreadyInit,
-}
 
 #[cfg(debug_assertions)]
 pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
@@ -225,7 +150,7 @@ pub(crate) fn reserve(_additional: usize) -> Result<(), ()> {
         let Some(set) = held() else {
             return Ok(());
         };
-        let wanted = set.len.checked_add(_additional).ok_or(())?;
+        let wanted = set.slots.len().checked_add(_additional).ok_or(())?;
         if set.slots.capacity() >= wanted {
             return Ok(());
         }

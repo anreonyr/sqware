@@ -1,16 +1,26 @@
+pub mod access;
 pub mod addr;
 pub mod asid;
 pub mod entry;
+pub mod failure;
 pub mod fault;
 pub mod frame;
+pub mod kind;
+pub(crate) mod memory;
 pub mod mode;
 pub mod table;
 pub mod tree;
 
+pub use access::Access;
 pub use fault::FaultKind;
 pub use frame::Frame;
+pub use kind::SpaceKind;
+pub use memory::{Mapping, Memory, Reservation};
+pub(crate) use memory::RegionId;
 pub use table::MapError;
-pub use tree::{BorrowedRegion, Map, Tree};
+pub use tree::{BorrowedRegion, Map};
+#[cfg(debug_assertions)]
+pub use tree::Tree;
 
 use asid::Asid;
 

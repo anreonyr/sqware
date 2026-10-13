@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::life::{Life, TeamLife};
 use super::task::{Task, TaskBuilder, TaskExit, TaskState, TaskWeak};
+use crate::core::memory::manager::Memory;
 use crate::core::work::unit::space::Space;
 use crate::machine::sync::spin::SpinLockGuard;
 use crate::machine::sync::{Level, OnceLock, SpinLock};
@@ -238,7 +239,7 @@ impl Team {
         };
         while let Some(item) = staged.items.last() {
             let (start, size) = item.map.initial_range();
-            self.space.unmap_range(start, size)?;
+            self.space.memory.unmap_range(start, size)?;
             item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
             let token = item.token;
@@ -491,9 +492,9 @@ pub(crate) fn spawn(
         entry
     };
     if !entry_va.is_multiple_of(2)
-        || !Space::user_range(entry_va, 2)
-        || target.space.instruction_byte(entry_va).is_none()
-        || target.space.instruction_byte(entry_va + 1).is_none()
+        || !Memory::user_range(entry_va, 2)
+        || target.space.memory.instruction_byte(entry_va).is_none()
+        || target.space.memory.instruction_byte(entry_va + 1).is_none()
     {
         return Err(env::UnitFail::BadEntry);
     }

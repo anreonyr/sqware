@@ -2,32 +2,21 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
+use super::cleanup::CleanupNode;
 use crate::core::memory::manager::MapError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum RegionId {
-    Normal,
-    Kernel,
-    Resource,
-}
+mod region;
+mod region_id;
+mod slot;
 
-struct Slot {
-    start: usize,
-    size: usize,
-    ticket: usize,
-    id: usize,
-}
+use region::Region;
+use slot::Slot;
 
-struct Region {
-    id: RegionId,
-    base: usize,
-    edge: usize,
-    reserved: Vec<Slot>,
-}
+pub(crate) use region_id::RegionId;
 
 pub(crate) struct VaAllocator {
     regions: Vec<Region>,
-    cleanups: Vec<(usize, Box<super::space::CleanupNode>)>,
+    cleanups: Vec<(usize, Box<CleanupNode>)>,
 }
 
 impl VaAllocator {
@@ -100,10 +89,23 @@ impl VaAllocator {
         id: RegionId,
         size: usize,
     ) -> Result<(usize, usize), MapError> {
+        self.allocate_aligned_low(id, size, crate::core::memory::PAGE_SIZE)
+    }
+
+    /// 满足 `align`（2 的幂）的最低空档。
+    pub(crate) fn allocate_aligned_low(
+        &mut self,
+        id: RegionId,
+        size: usize,
+        align: usize,
+    ) -> Result<(usize, usize), MapError> {
         Self::check_size(size)?;
         let start = self
             .gaps(id)
-            .find_map(|(lo, hi)| (hi - lo >= size).then_some(lo))
+            .find_map(|(lo, hi)| {
+                let at = lo.checked_next_multiple_of(align)?;
+                at.checked_add(size).filter(|&end| end <= hi).map(|_| at)
+            })
             .ok_or(MapError::OutOfMemory)?;
         let id = self.reserve(id, start, size)?;
         Ok((start, id))
@@ -265,16 +267,12 @@ impl VaAllocator {
         self.cleanups
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
-        let node =
-            Box::try_new(super::space::CleanupNode::empty()).map_err(|_| MapError::OutOfMemory)?;
+        let node = Box::try_new(CleanupNode::empty()).map_err(|_| MapError::OutOfMemory)?;
         self.cleanups.push((reservation_id, node));
         Ok(())
     }
 
-    pub(crate) fn take_cleanup(
-        &mut self,
-        reservation_id: usize,
-    ) -> Option<Box<super::space::CleanupNode>> {
+    pub(crate) fn take_cleanup(&mut self, reservation_id: usize) -> Option<Box<CleanupNode>> {
         self.cleanups
             .iter()
             .position(|(id, _)| *id == reservation_id)

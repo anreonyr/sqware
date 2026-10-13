@@ -19,7 +19,8 @@ use crate::machine::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::machine::switcher::context::TrapContext;
 use crate::machine::sync::{Level, SpinLock};
 
-use crate::core::work::unit::space::{Mapping, RegionId, Reservation, Space};
+use crate::core::memory::manager::{Mapping, RegionId, Reservation};
+use crate::core::work::unit::space::Space;
 use crate::core::work::unit::team::kernel;
 
 use super::team::Team;
@@ -46,13 +47,13 @@ pub(crate) fn fail_invalidation_at(stage: usize) {
     FAIL_INVALIDATION.store(stage, Ordering::Relaxed);
 }
 
-fn invalidation_checkpoint(_stage: usize, _tree: &crate::core::memory::manager::Tree) {
+fn invalidation_checkpoint(_stage: usize, _memory: &crate::core::memory::manager::Memory) {
     #[cfg(debug_assertions)]
     if FAIL_INVALIDATION
         .compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
     {
-        crate::core::memory::manager::asid::fail_next_shootdown(_tree.asid());
+        crate::core::memory::manager::asid::fail_next_shootdown(_memory.asid());
     }
 }
 
@@ -343,15 +344,15 @@ struct TaskMemory {
 impl TaskMemory {
     fn retire(&mut self) -> Result<(), MapError> {
         if let Some(mapping) = &self.frame {
-            self.space.unmap(mapping)?;
+            self.space.memory.unmap(mapping)?;
             self.frame = None;
         }
         if let Some(mapping) = &self.stack {
-            self.space.unmap(mapping)?;
+            self.space.memory.unmap(mapping)?;
             self.stack = None;
         }
         if let Some(guard) = self.guard.take() {
-            self.space.release_reservation(guard)?;
+            self.space.memory.release_reservation(guard)?;
         }
         Ok(())
     }
@@ -360,13 +361,13 @@ impl TaskMemory {
 impl Drop for TaskMemory {
     fn drop(&mut self) {
         if let Some(mapping) = self.frame.take() {
-            let _ = self.space.dispose(mapping);
+            let _ = self.space.memory.dispose(mapping);
         }
         if let Some(mapping) = self.stack.take() {
-            let _ = self.space.dispose(mapping);
+            let _ = self.space.memory.dispose(mapping);
         }
         if let Some(guard) = self.guard.take() {
-            let _ = self.space.release_reservation(guard);
+            let _ = self.space.memory.release_reservation(guard);
         }
     }
 }
@@ -812,9 +813,9 @@ fn write_args(space: &crate::core::work::unit::space::Space, at: VirtAddr, args:
     let mut done = 0usize;
     while done < args.len() {
         let va = at + done * size_of::<usize>();
-        let (pa, _) = space
-            .tree
-            .translate(va)
+        let pa = space
+            .memory
+            .physical_at(va)
             .expect("stack page materialized before args write");
         let page_rest = PAGE_SIZE - (va.as_usize() % PAGE_SIZE);
         let n = core::cmp::min((args.len() - done) * size_of::<usize>(), page_rest)
@@ -891,26 +892,27 @@ impl TaskBuilder {
             frame: None,
             guard: None,
         };
-        let slot = self.team.space.allocate_high(
+        let slot = self.team.space.memory.allocate_high(
             RegionId::Normal,
             stack_size + crate::machine::layout::TASK_STACK_GUARD,
         )?;
         let (guard, body) = self
             .team
             .space
+            .memory
             .split_reservation(slot, crate::machine::layout::TASK_STACK_GUARD)?;
         memory.guard = Some(guard);
         let stack_body_top = body.start().as_usize() + body.size();
         let mut frames = Vec::new();
         if frames.try_reserve_exact(stack_size / PAGE_SIZE).is_err() {
-            self.team.space.release_reservation(body)?;
+            self.team.space.memory.release_reservation(body)?;
             return Err(MapError::OutOfMemory);
         }
         for _ in 0..stack_size / PAGE_SIZE {
             match Frame::allocate() {
                 Ok(frame) => frames.push(frame),
                 Err(error) => {
-                    self.team.space.release_reservation(body)?;
+                    self.team.space.memory.release_reservation(body)?;
                     return Err(error);
                 }
             }
@@ -921,8 +923,8 @@ impl TaskBuilder {
         let active = rw
             | crate::core::memory::manager::entry::PteFlags::A
             | crate::core::memory::manager::entry::PteFlags::D;
-        invalidation_checkpoint(1, &self.team.space.tree);
-        memory.stack = Some(self.team.space.map_frames(body, frames, rw, active)?);
+        invalidation_checkpoint(1, &self.team.space.memory);
+        memory.stack = Some(self.team.space.memory.map_frames(body, frames, rw, active)?);
         preparation_checkpoint(1)?;
 
         let mut frame_pages = Vec::new();
@@ -932,10 +934,10 @@ impl TaskBuilder {
         let frame = Frame::allocate()?;
         let frame_pa = PhysAddr::from_raw(frame.physical_address());
         frame_pages.push(frame);
-        let reservation = self.team.space.allocate_low(RegionId::Kernel, PAGE_SIZE)?;
+        let reservation = self.team.space.memory.allocate_low(RegionId::Kernel, PAGE_SIZE)?;
         let frame_va = reservation.start();
-        invalidation_checkpoint(2, &self.team.space.tree);
-        memory.frame = Some(self.team.space.map_frames(
+        invalidation_checkpoint(2, &self.team.space.memory);
+        memory.frame = Some(self.team.space.memory.map_frames(
             reservation,
             frame_pages,
             rw,
@@ -950,17 +952,16 @@ impl TaskBuilder {
         }
         let sp = VirtAddr::wrap(args_at & !0xF);
 
-        let satp = self.team.space.tree.satp();
+        let satp = self.team.space.memory.satp();
         let spp = self.team.space.kind().spp();
         let frame = unsafe { &mut *(frame_pa.as_usize() as *mut TrapContext) };
         unsafe {
             let ktc = kernel()
                 .expect("kernel team not initialized")
                 .space
-                .tree
-                .translate(HART_FRAME_BASE)
+                .memory
+                .physical_at(HART_FRAME_BASE)
                 .expect("kernel frame not mapped")
-                .0
                 .as_usize() as *const TrapContext;
             frame.init(
                 &*ktc,
@@ -996,7 +997,7 @@ impl TaskBuilder {
         };
         #[cfg(debug_assertions)]
         if FAIL_ROLLBACK_FENCE.swap(false, Ordering::Relaxed) {
-            crate::core::memory::manager::asid::fail_next_shootdown(self.team.space.tree.asid());
+            crate::core::memory::manager::asid::fail_next_shootdown(self.team.space.memory.asid());
         }
         preparation_checkpoint(3)?;
         let life = Life::try_new().map_err(|_| MapError::OutOfMemory)?;

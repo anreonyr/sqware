@@ -177,6 +177,7 @@ pub(crate) fn create_pole(
 ) -> Result<PieToken, PieFail> {
     let task_space = task.ident.team.space.clone();
     let mapping = task_space
+        .memory
         .mapping_at(addr, size)
         .map_err(|_| PieFail::Denied)?;
     let creation = task.pend.creations.claim(&mapping.map)?;
@@ -227,7 +228,7 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
             &p,
             token,
             &ident.team.space,
-            ident.team.space.pte_policy(flags),
+            ident.team.space.memory.pte_policy(flags),
         )
     })();
     answer_pair(frame, r);
@@ -330,7 +331,7 @@ fn information(task: &Arc<crate::core::work::unit::task::Task>, pie: &PieSnapsho
 fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFail> {
     let words = info.words();
     let bytes = unsafe { ::core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
-    if !ident.team.space.copy_out(bytes, buf) {
+    if !ident.team.space.memory.copy_out(bytes, buf) {
         return Err(PieFail::Denied);
     }
     Ok(())
@@ -343,6 +344,7 @@ fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: Vir
         if !ident
             .team
             .space
+            .memory
             .validate_access(buf.get(), PieInfo::SIZE, PteFlags::W)
         {
             return Err(PieFail::Denied);
@@ -370,6 +372,7 @@ fn collect(
         if !ident
             .team
             .space
+            .memory
             .validate_access(buf.get(), len, PteFlags::W)
         {
             return Err(PieFail::Denied);

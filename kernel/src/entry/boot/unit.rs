@@ -16,9 +16,9 @@ use crate::core::memory::manager::{
     flush_asid, mode,
 };
 use crate::machine::board;
-use crate::core::work::unit::space;
-use crate::core::work::unit::space::SpaceBuilder;
+use crate::core::memory::manager::RegionId;
 use crate::core::work::unit::team;
+use crate::core::work::unit::space::SpaceBuilder;
 
 use crate::core::work::unit::MapResult;
 
@@ -38,8 +38,8 @@ pub fn init() -> MapResult<()> {
             }
 
             let kernel_space = SpaceBuilder::kernel().build()?;
-            let _identity_ram = kernel_space.reserve(
-                space::RegionId::Normal,
+            let _identity_ram = kernel_space.memory.reserve(
+                RegionId::Normal,
                 VirtAddr::from_raw(m.dram.base),
                 m.dram.size,
             )?;
@@ -64,7 +64,7 @@ pub fn init() -> MapResult<()> {
             {
                 return Err(MapError::NoRegion);
             }
-            kernel_space.advance_region(space::RegionId::Normal, image_end)?;
+            kernel_space.memory.advance_region(RegionId::Normal, image_end)?;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G;
             let text_flags = ro_flags | PteFlags::X;
             for (start, end, flags) in [
@@ -80,7 +80,7 @@ pub fn init() -> MapResult<()> {
                 for offset in [0, mode::lower().as_usize()] {
                     let size = end - start;
                     let region = BorrowedRegion::new(PhysAddr::from_raw(start), size)?;
-                    kernel_space.tree.map_borrowed(
+                    kernel_space.memory.map_boot_borrowed(
                         VirtAddr::wrap(offset + start),
                         region,
                         0,
@@ -94,7 +94,7 @@ pub fn init() -> MapResult<()> {
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
             let trampoline = BorrowedRegion::new(trampoline_pa(), PAGE_SIZE)?;
-            kernel_space.tree.map_borrowed(
+            kernel_space.memory.map_boot_borrowed(
                 TRAMPOLINE,
                 trampoline,
                 0,
@@ -112,7 +112,7 @@ pub fn init() -> MapResult<()> {
                     .map_err(|_| MapError::OutOfMemory)?;
                 frames.push(frame);
                 let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-                kernel_space.tree.map_frames(
+                kernel_space.memory.map_boot_frames(
                     HART_FRAME_BASE + h * PAGE_SIZE,
                     frames,
                     flags,
@@ -125,11 +125,11 @@ pub fn init() -> MapResult<()> {
             hart::mark_online();
             satp::set(
                 mode::mode(),
-                kernel_space.tree.asid().get(),
-                kernel_space.tree.root_ppn(),
+                kernel_space.memory.asid().get(),
+                kernel_space.memory.root_ppn(),
             );
 
-            flush_asid(kernel_space.tree.asid());
+            flush_asid(kernel_space.memory.asid());
             #[cfg(debug_assertions)]
             crate::machine::layout::validate();
 

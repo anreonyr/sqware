@@ -25,6 +25,7 @@ pub use crate::core::work::room::scheduler::core::acceptance as scheduler;
 
 pub mod frame;
 pub mod hart;
+pub mod manager_api;
 pub mod pagetable;
 pub mod permit;
 pub mod pole;

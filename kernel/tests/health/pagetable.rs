@@ -7,7 +7,8 @@ use crate::core::memory::PAGE_SIZE;
 use crate::core::memory::manager::Frame;
 use crate::core::memory::manager::addr::{PhysAddr, VirtAddr};
 use crate::core::memory::manager::entry::PteFlags;
-use crate::core::work::unit::space::{RegionId, SpaceBuilder};
+use crate::core::memory::manager::RegionId;
+use crate::core::work::unit::space::SpaceBuilder;
 
 pub fn pagetable() {
     const BASE: usize = 0x4000_0000;
@@ -18,7 +19,7 @@ pub fn pagetable() {
         .build()
         .expect("[health] pagetable: build space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-    let base_count = space.tree.table_count();
+    let base_count = space.memory.backend().table_count();
     let held_before = crate::core::memory::allocator::statistics::frame_occupied()
         - crate::core::memory::allocator::statistics::block_occupied();
 
@@ -31,33 +32,35 @@ pub fn pagetable() {
             ));
         }
         let reservation = space
+            .memory
             .reserve(RegionId::Normal, VirtAddr::from_raw(BASE), SIZE)
             .expect("[health] pagetable: reserve");
         let mapping = space
+            .memory
             .map_frames(reservation, frames, flags, flags)
             .expect("[health] pagetable: map frames");
         assert_eq!(mapping.map.frame_count(), SIZE / PAGE_SIZE);
         crate::expect!(
-            space.tree.table_count() > base_count,
+            space.memory.backend().table_count() > base_count,
             "round {round}: map allocated no page-table nodes"
         );
         crate::expect!(
-            space.tree.translate(VirtAddr::from_raw(BASE)).is_some(),
+            space.memory.backend().translate(VirtAddr::from_raw(BASE)).is_some(),
             "round {round}: map hit"
         );
 
-        space.unmap(&mapping).expect("pagetable case: unmap");
+        space.memory.unmap(&mapping).expect("pagetable case: unmap");
         crate::expect!(
-            space.tree.table_count() == base_count,
+            space.memory.backend().table_count() == base_count,
             "round {round}: tables after unmap (got {} want {})",
-            space.tree.table_count(),
+            space.memory.backend().table_count(),
             base_count
         );
         crate::expect!(
-            space.tree.translate(VirtAddr::from_raw(BASE)).is_none(),
+            space.memory.backend().translate(VirtAddr::from_raw(BASE)).is_none(),
             "round {round}: unmap hit"
         );
-        space.tree.audit();
+        space.memory.backend().audit();
     }
 
     let held_after = crate::core::memory::allocator::statistics::frame_occupied()
@@ -73,7 +76,7 @@ pub fn pagetable() {
 pub fn kernel_layout() {
     use crate::machine::layout::{IMAGE_BASE, TRAMPOLINE};
     use crate::core::memory::manager::mode;
-    use crate::core::work::unit::space::RegionId;
+    use crate::core::memory::manager::RegionId;
 
     unsafe extern "C" {
         static _kernel_base: u8;
@@ -107,7 +110,7 @@ pub fn kernel_layout() {
         };
         for offset in [0, mode::lower().as_usize()] {
             let va = VirtAddr::wrap(offset + pa);
-            let (physical, flags) = space.tree.translate(va).expect("kernel RAM mapping");
+            let (physical, flags) = space.memory.backend().translate(va).expect("kernel RAM mapping");
             assert_eq!(physical, PhysAddr::from_raw(pa));
             assert_eq!(
                 (flags & rwx).bits(),
@@ -118,7 +121,8 @@ pub fn kernel_layout() {
         }
     }
     let (pa, flags) = space
-        .tree
+        .memory
+        .backend()
         .translate(TRAMPOLINE)
         .expect("trampoline mapping");
     assert_eq!(pa, crate::machine::layout::trampoline_pa());
@@ -127,11 +131,11 @@ pub fn kernel_layout() {
     for hart in 0..crate::machine::hart::hart_count() {
         let id = crate::machine::hart::HartId::new(hart);
         let guard = crate::machine::layout::TRAP_STACK_BASE + hart * crate::machine::layout::TRAP_STACK_SLOT_SIZE;
-        assert!(space.tree.find(guard).is_none());
-        assert!(space.tree.translate(guard).is_none());
+        assert!(space.memory.backend().find(guard).is_none());
+        assert!(space.memory.backend().translate(guard).is_none());
         let base = crate::machine::switcher::stack::trap_stack_base(id);
-        let (physical, flags) = space.tree.translate(base).expect("trap stack body mapping");
-        let map = space.tree.find(base).expect("trap stack body Map");
+        let (physical, flags) = space.memory.backend().translate(base).expect("trap stack body mapping");
+        let map = space.memory.backend().find(base).expect("trap stack body Map");
         assert_eq!(
             map.frames_in(base, PAGE_SIZE).expect("trap stack frame")[0]
                 .1
@@ -145,7 +149,8 @@ pub fn kernel_layout() {
         assert!(boot_top.is_multiple_of(PAGE_SIZE));
         assert_eq!(
             space
-                .tree
+                .memory
+                .backend()
                 .translate(VirtAddr::from_raw(boot_page))
                 .expect("boot stack physical page")
                 .0,
@@ -153,7 +158,8 @@ pub fn kernel_layout() {
         );
         let hart_frame = crate::machine::layout::HART_FRAME_BASE + hart * PAGE_SIZE;
         let (_, hart_flags) = space
-            .tree
+            .memory
+            .backend()
             .translate(hart_frame)
             .expect("hart frame mapping");
         assert!(hart_flags.contains(PteFlags::R | PteFlags::W));
@@ -162,25 +168,30 @@ pub fn kernel_layout() {
 
     assert!(
         space
+            .memory
             .reserve(RegionId::Normal, IMAGE_BASE, PAGE_SIZE)
             .is_err()
     );
     assert!(
         space
-            .tree
+            .memory
+            .backend()
             .translate(VirtAddr::from_raw(image_end))
             .is_some()
     );
     assert!(
         space
+            .memory
             .reserve(RegionId::Normal, VirtAddr::from_raw(image_end), PAGE_SIZE)
             .is_err()
     );
     let reservation = space
+        .memory
         .allocate_low(RegionId::Normal, PAGE_SIZE)
         .expect("skip reserved RAM interval");
     assert_eq!(reservation.start().as_usize(), ram.base + ram.size);
     space
+        .memory
         .release_reservation(reservation)
         .expect("release allocation above RAM");
 }
@@ -188,24 +199,27 @@ pub fn kernel_layout() {
 pub fn space_reservation_layout() {
     use crate::machine::layout::TASK_STACK_GUARD;
     use crate::core::memory::manager::mode;
-    use crate::core::work::unit::space::RegionId;
+    use crate::core::memory::manager::RegionId;
 
     const BASE: usize = 0x4000_0000;
     let edge = mode::upper().as_usize();
     let floor = BASE + 4 * PAGE_SIZE;
     let space = SpaceBuilder::user().build().expect("reservation space");
     space
+        .memory
         .advance_region(RegionId::Normal, floor)
         .expect("image boundary");
     assert!(
         space
+            .memory
             .reserve(RegionId::Normal, VirtAddr::from_raw(BASE), PAGE_SIZE)
             .is_err()
     );
-    let tables = space.tree.table_count();
+    let tables = space.memory.backend().table_count();
 
     let heap_size = 2 * PAGE_SIZE;
     let heap_reservation = space
+        .memory
         .allocate_low(RegionId::Normal, heap_size)
         .expect("heap above image");
     assert_eq!(heap_reservation.start().as_usize(), floor);
@@ -213,6 +227,7 @@ pub fn space_reservation_layout() {
         .map(|_| Frame::allocate().expect("heap frame"))
         .collect();
     let heap = space
+        .memory
         .map_frames(
             heap_reservation,
             heap_frames,
@@ -224,15 +239,18 @@ pub fn space_reservation_layout() {
     let slot_size = TASK_STACK_GUARD + 2 * PAGE_SIZE;
     let claim_stack = |space: &crate::core::work::unit::space::Space| {
         let slot = space
+            .memory
             .allocate_high(RegionId::Normal, slot_size)
             .expect("stack slot");
         let (guard, body) = space
+            .memory
             .split_reservation(slot, TASK_STACK_GUARD)
             .expect("split stack guard");
         let frames = (0..2)
             .map(|_| Frame::allocate().expect("stack frame"))
             .collect();
         let mapping = space
+            .memory
             .map_frames(
                 body,
                 frames,
@@ -252,12 +270,13 @@ pub fn space_reservation_layout() {
         second.reservation.start() + second.reservation.size(),
         first_guard.start()
     );
-    assert!(space.tree.find(first_guard.start()).is_none());
-    assert!(space.tree.translate(first_guard.start()).is_none());
+    assert!(space.memory.backend().find(first_guard.start()).is_none());
+    assert!(space.memory.backend().translate(first_guard.start()).is_none());
     for mapping in [&first, &second] {
         for offset in (0..mapping.reservation.size()).step_by(PAGE_SIZE) {
             let (_, flags) = space
-                .tree
+                .memory
+                .backend()
                 .translate(mapping.reservation.start() + offset)
                 .expect("stack body");
             assert!(flags.contains(PteFlags::U | PteFlags::R | PteFlags::W));
@@ -265,29 +284,34 @@ pub fn space_reservation_layout() {
         }
     }
     let first_va = first_guard.start();
-    space.unmap(&first).expect("release top stack");
+    space.memory.unmap(&first).expect("release top stack");
     space
+        .memory
         .release_reservation(first_guard)
         .expect("release first guard");
     let (reused_guard, reused) = claim_stack(&space);
     assert_eq!(reused_guard.start(), first_va);
-    space.unmap(&reused).expect("release reused stack");
+    space.memory.unmap(&reused).expect("release reused stack");
     space
+        .memory
         .release_reservation(reused_guard)
         .expect("release reused guard");
-    space.unmap(&second).expect("release second stack");
+    space.memory.unmap(&second).expect("release second stack");
     space
+        .memory
         .release_reservation(second_guard)
         .expect("release second guard");
-    space.unmap(&heap).expect("release heap");
-    assert_eq!(space.tree.table_count(), tables);
+    space.memory.unmap(&heap).expect("release heap");
+    assert_eq!(space.memory.backend().table_count(), tables);
 
     let fixed = edge - 3 * PAGE_SIZE;
     let fixed_res = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::from_raw(fixed), 2 * PAGE_SIZE)
         .expect("fixed reservation");
     assert!(
         space
+            .memory
             .reserve(
                 RegionId::Normal,
                 VirtAddr::from_raw(fixed + PAGE_SIZE),
@@ -296,38 +320,44 @@ pub fn space_reservation_layout() {
             .is_err()
     );
     let top = space
+        .memory
         .allocate_high(RegionId::Normal, PAGE_SIZE)
         .expect("top gap");
     assert_eq!(top.start().as_usize(), edge - PAGE_SIZE);
     let below = space
+        .memory
         .allocate_high(RegionId::Normal, 2 * PAGE_SIZE)
         .expect("below fixed reservation");
     assert_eq!(below.start().as_usize(), fixed - 2 * PAGE_SIZE);
-    space.release_reservation(fixed_res).expect("release fixed");
-    space.release_reservation(top).expect("release top");
-    space.release_reservation(below).expect("release below");
+    space.memory.release_reservation(fixed_res).expect("release fixed");
+    space.memory.release_reservation(top).expect("release top");
+    space.memory.release_reservation(below).expect("release below");
     let full_size = edge - floor - PAGE_SIZE;
     let full = space
+        .memory
         .reserve(RegionId::Normal, VirtAddr::from_raw(floor), full_size)
         .expect("fill lower gap");
     assert!(
         space
+            .memory
             .allocate_high(RegionId::Normal, 2 * PAGE_SIZE)
             .is_err()
     );
-    space.release_reservation(full).expect("release full range");
+    space.memory.release_reservation(full).expect("release full range");
     let last = space
+        .memory
         .allocate_high(RegionId::Normal, PAGE_SIZE)
         .expect("last page after reclaim");
     assert_eq!(last.start().as_usize(), edge - PAGE_SIZE);
     space
+        .memory
         .release_reservation(last)
         .expect("release reclaimed address");
-    space.tree.audit();
+    space.memory.backend().audit();
 }
 
 pub fn image_dynamic_region() {
-    use crate::core::work::unit::space::RegionId;
+    use crate::core::memory::manager::RegionId;
 
     #[repr(C, align(4096))]
     struct Image([u8; 2 * PAGE_SIZE]);
@@ -365,50 +395,60 @@ pub fn image_dynamic_region() {
     let team = crate::core::work::unit::capsule::assemble(&IMAGE.0).expect("sparse capsule");
     let lazy = team
         .space
-        .tree
+        .memory
+        .backend()
         .find(VirtAddr::from_raw(0x17000))
         .expect("lazy BSS map");
     assert!(
         team.space
-            .tree
+            .memory
+            .backend()
             .translate(VirtAddr::from_raw(0x17000))
             .is_none()
     );
     let heap = team
         .space
+        .memory
         .allocate_low(RegionId::Normal, PAGE_SIZE)
         .expect("heap after BSS");
     assert_eq!(heap.start().as_usize(), 0x18000);
     team.space
+        .memory
         .release_reservation(heap)
         .expect("release image heap");
     team.space
-        .tree
+        .memory
+        .backend()
         .unmap(&lazy, VirtAddr::from_raw(0x17000), PAGE_SIZE)
         .expect("unmap lazy image page");
     let image = team
         .space
-        .tree
+        .memory
+        .backend()
         .find(VirtAddr::from_raw(0x10000))
         .expect("borrowed image map");
     team.space
-        .tree
+        .memory
+        .backend()
         .unmap(&image, VirtAddr::from_raw(0x10000), PAGE_SIZE)
         .expect("unmap borrowed image page");
     assert!(
         team.space
+            .memory
             .reserve(RegionId::Normal, VirtAddr::from_raw(0x12000), PAGE_SIZE)
             .is_err()
     );
     let next = team
         .space
+        .memory
         .allocate_low(RegionId::Normal, PAGE_SIZE)
         .expect("dynamic mapping after BSS");
     assert_eq!(next.start().as_usize(), 0x18000);
     team.space
+        .memory
         .release_reservation(next)
         .expect("release dynamic range");
-    team.space.tree.audit();
+    team.space.memory.backend().audit();
 }
 
 pub fn interval_index() {
@@ -417,127 +457,146 @@ pub fn interval_index() {
     const STRIDE: usize = 16 * PAGE_SIZE;
     let space = SpaceBuilder::user().build().expect("interval space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-    let tables = space.tree.table_count();
+    let tables = space.memory.backend().table_count();
     let mut maps = Vec::new();
     let mut replacements = Vec::new();
     for i in (0..COUNT).rev() {
         let va = VirtAddr::wrap(BASE + i * STRIDE);
         let reservation = space
+            .memory
             .reserve(RegionId::Normal, va, 8 * PAGE_SIZE)
             .expect("reserve indexed range");
         maps.push(
             space
+                .memory
                 .map_lazy(reservation, flags, flags)
                 .expect("indexed lazy region"),
         );
     }
-    let ordered = space.tree.ranges().expect("ordered interval ranges");
+    let ordered = space.memory.backend().ranges().expect("ordered interval ranges");
     assert!(
         ordered
             .windows(2)
             .all(|pair| pair[0].1.start < pair[1].1.start)
     );
-    assert_eq!(space.tree.map_count(), COUNT + 1);
+    assert_eq!(space.memory.backend().map_count(), COUNT + 1);
     for i in 0..COUNT {
         let va = VirtAddr::wrap(BASE + i * STRIDE);
         let mapping = &maps[COUNT - i - 1];
         let read_only = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::U;
         space
-            .tree
+            .memory
+            .backend()
             .protect(&mapping.map, va + 2 * PAGE_SIZE, 2 * PAGE_SIZE, read_only)
             .expect("split permissions");
         space
-            .tree
+            .memory
+            .backend()
             .materialize(&mapping.map, va + 2 * PAGE_SIZE, PAGE_SIZE)
             .expect("protected fault");
         let (_, pte) = space
-            .tree
+            .memory
+            .backend()
             .translate(va + 2 * PAGE_SIZE)
             .expect("protected page");
         assert!(pte.contains(PteFlags::R | PteFlags::U) && !pte.contains(PteFlags::W));
         space
-            .tree
+            .memory
+            .backend()
             .materialize(&mapping.map, va + 4 * PAGE_SIZE, PAGE_SIZE)
             .expect("writable fault");
         assert!(
             space
-                .tree
+                .memory
+                .backend()
                 .translate(va + 4 * PAGE_SIZE)
                 .expect("writable page")
                 .1
                 .contains(PteFlags::W)
         );
         space
+            .memory
             .unmap_range(va, PAGE_SIZE)
             .expect("move mapping start");
         space
+            .memory
             .unmap_range(va + 3 * PAGE_SIZE, 2 * PAGE_SIZE)
             .expect("cut across mapping");
-        assert!(!space.tree.overlaps(va, PAGE_SIZE).unwrap());
-        assert!(space.tree.overlaps(va + PAGE_SIZE, PAGE_SIZE).unwrap());
+        assert!(!space.memory.backend().overlaps(va, PAGE_SIZE).unwrap());
+        assert!(space.memory.backend().overlaps(va + PAGE_SIZE, PAGE_SIZE).unwrap());
         assert!(
             !space
-                .tree
+                .memory
+                .backend()
                 .overlaps(va + 3 * PAGE_SIZE, 2 * PAGE_SIZE)
                 .unwrap()
         );
         assert!(Arc::ptr_eq(
             &mapping.map,
             &space
-                .tree
+                .memory
+                .backend()
                 .find(va + PAGE_SIZE)
                 .expect("left split retains Map")
         ));
         assert!(Arc::ptr_eq(
             &mapping.map,
             &space
-                .tree
+                .memory
+                .backend()
                 .find(va + 5 * PAGE_SIZE)
                 .expect("right split retains Map")
         ));
         let fill = space
+            .memory
             .reserve(RegionId::Normal, va + 3 * PAGE_SIZE, 2 * PAGE_SIZE)
             .expect("reserve hole");
         let replacement = space
+            .memory
             .map_lazy(fill, flags, flags)
             .expect("fill mapping hole");
         assert!(!Arc::ptr_eq(&mapping.map, &replacement.map));
         replacements.push(replacement);
-        space.tree.audit();
+        space.memory.backend().audit();
     }
     let failed = VirtAddr::wrap(BASE + 12 * PAGE_SIZE);
     let failed_reservation = space
+        .memory
         .reserve(RegionId::Normal, failed, 2 * PAGE_SIZE)
         .expect("reserve failed map range");
     let one_frame = alloc::vec![Frame::allocate().expect("failure probe frame")];
     assert!(matches!(
-        space.map_frames(failed_reservation, one_frame, flags, flags),
+        space.memory.map_frames(failed_reservation, one_frame, flags, flags),
         Err(crate::core::memory::manager::MapError::NotAligned)
     ));
-    assert!(!space.tree.overlaps(failed, 2 * PAGE_SIZE).unwrap());
+    assert!(!space.memory.backend().overlaps(failed, 2 * PAGE_SIZE).unwrap());
     let reusable = space
+        .memory
         .reserve(RegionId::Normal, failed, 2 * PAGE_SIZE)
         .expect("failed map unwinds reservation");
     space
+        .memory
         .release_reservation(reusable)
         .expect("release failure probe");
-    assert!(space.tree.translate(failed).is_none());
-    space.tree.audit();
+    assert!(space.memory.backend().translate(failed).is_none());
+    space.memory.backend().audit();
     for i in (0..COUNT).rev() {
         let map = &maps[COUNT - i - 1];
-        space.unmap(map).expect("remove split mapping");
-        space.tree.audit();
+        space.memory.unmap(map).expect("remove split mapping");
+        space.memory.backend().audit();
     }
     for mapping in &replacements {
-        space.unmap(mapping).expect("remove replacement mapping");
+        space.memory.unmap(mapping).expect("remove replacement mapping");
     }
-    assert_eq!(space.tree.table_count(), tables);
+    assert_eq!(space.memory.backend().table_count(), tables);
     let trampoline = space
-        .tree
+        .memory
+        .backend()
         .find(crate::machine::layout::TRAMPOLINE)
         .expect("seeded trampoline map");
     space
-        .tree
+        .memory
+        .backend()
         .protect(
             &trampoline,
             crate::machine::layout::TRAMPOLINE,
@@ -546,12 +605,13 @@ pub fn interval_index() {
         )
         .expect("top page protection");
     space
-        .tree
+        .memory
+        .backend()
         .unmap(&trampoline, crate::machine::layout::TRAMPOLINE, PAGE_SIZE)
         .expect("top page unmap");
-    assert!(space.tree.translate(crate::machine::layout::TRAMPOLINE).is_none());
-    assert_eq!(space.tree.table_count(), 1);
-    space.tree.audit();
+    assert!(space.memory.backend().translate(crate::machine::layout::TRAMPOLINE).is_none());
+    assert_eq!(space.memory.backend().table_count(), 1);
+    space.memory.backend().audit();
 }
 
 pub fn large_pages() {
@@ -566,26 +626,29 @@ pub fn large_pages() {
     assert!(pa.as_usize().is_multiple_of(MEGA));
     let space = SpaceBuilder::user().build().expect("large page space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U;
-    let before = space.tree.table_count();
+    let before = space.memory.backend().table_count();
     let region = unsafe { BorrowedRegion::new(pa, 2 * MEGA) }.expect("reserved DRAM interval");
     let map = space
-        .tree
+        .memory
+        .backend()
         .map_borrowed(va, region, 0, 2 * MEGA, flags, flags)
         .expect("large borrowed maps");
     assert_eq!(
-        space.tree.table_count(),
+        space.memory.backend().table_count(),
         before + crate::core::memory::manager::mode::levels() - 2
     );
     for offset in [0, 13, PAGE_SIZE + 17, MEGA + 91, 2 * MEGA - 1] {
-        assert_eq!(space.tree.translate(va + offset).unwrap().0, pa + offset);
+        assert_eq!(space.memory.backend().translate(va + offset).unwrap().0, pa + offset);
     }
     space
-        .tree
+        .memory
+        .backend()
         .protect(&map, va + PAGE_SIZE, PAGE_SIZE, flags - PteFlags::W)
         .expect("large space protect");
     assert!(
         !space
-            .tree
+            .memory
+            .backend()
             .translate(va + PAGE_SIZE)
             .unwrap()
             .1
@@ -593,28 +656,31 @@ pub fn large_pages() {
     );
     assert!(
         space
-            .tree
+            .memory
+            .backend()
             .translate(va + 2 * PAGE_SIZE)
             .unwrap()
             .1
             .contains(PteFlags::W)
     );
     space
-        .tree
+        .memory
+        .backend()
         .unmap(&map, va + MEGA + PAGE_SIZE, PAGE_SIZE)
         .expect("large space hole");
-    assert!(space.tree.translate(va + MEGA + PAGE_SIZE).is_none());
+    assert!(space.memory.backend().translate(va + MEGA + PAGE_SIZE).is_none());
     assert_eq!(
-        space.tree.translate(va + MEGA + 2 * PAGE_SIZE).unwrap().0,
+        space.memory.backend().translate(va + MEGA + 2 * PAGE_SIZE).unwrap().0,
         pa + MEGA + 2 * PAGE_SIZE
     );
-    space.tree.audit();
+    space.memory.backend().audit();
     for range in map.ranges().expect("large map ranges") {
         space
-            .tree
+            .memory
+            .backend()
             .unmap(&map, range.start, range.size.get())
             .expect("large space removal");
     }
-    assert_eq!(space.tree.table_count(), before);
-    space.tree.audit();
+    assert_eq!(space.memory.backend().table_count(), before);
+    space.memory.backend().audit();
 }

@@ -84,7 +84,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskI
         RoomCall::Wait { key, millis } => {
             let (space, wlife) = {
                 let s = &ident.team.space;
-                (s.tree.asid(), s.life())
+                (s.memory.asid(), s.life())
             };
             let wkey = WakeKey::Space { space, slot: key };
             let dur = millis.into_duration();
@@ -98,7 +98,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: RoomCall, ident: Arc<TaskI
         RoomCall::Wake { key } => {
             let (space, wlife) = {
                 let s = &ident.team.space;
-                (s.tree.asid(), s.life())
+                (s.memory.asid(), s.life())
             };
             let wkey = WakeKey::Space { space, slot: key };
             let woke = wake(wkey, &wlife);

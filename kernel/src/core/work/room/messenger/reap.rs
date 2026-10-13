@@ -126,7 +126,7 @@ fn note_out<'a>(
         return "";
     }
     let n = len.min(NOTE_MAX);
-    if !space.copy_in(&mut buf[..n], va) {
+    if !space.memory.copy_in(&mut buf[..n], va) {
         crate::putln!(
             "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
             tid.get()
@@ -167,7 +167,7 @@ fn bury() {
         wipe(WakeKey::Task { id: z.ident.id });
         wipe(WakeKey::Pies { task: z.ident.id });
         if Arc::strong_count(&z.ident.team.space) == 1 {
-            wipe_space(z.ident.team.space.tree.asid());
+            wipe_space(z.ident.team.space.memory.asid());
         }
         z.ident.team.prune_tasks();
         let _pruned = crate::core::work::room::scheduler::core::prune_dead();
