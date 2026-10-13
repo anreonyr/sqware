@@ -134,7 +134,7 @@ mod work {
         impl PoleMeta {
             pub fn withdraw(&self, _: env::PieToken) {}
             pub fn release_grant(&self, _: env::PieToken) {}
-            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::gate::Grant>) -> Result<(), env::PieFail> {
+            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::pend::Grant>) -> Result<(), env::PieFail> {
                 Ok(())
             }
         }
@@ -179,7 +179,7 @@ mod work {
             LOCK.lock().unwrap()
         }
         pub mod task {
-            use super::gate::{AnyPie, CreationRegistry};
+            use super::pend::{AnyPie, CreationRegistry};
             use crate::lock::SpinLock;
             use alloc::sync::{Arc, Weak};
             use alloc::vec::Vec;
@@ -200,20 +200,20 @@ mod work {
                 Doomed { hart: Option<usize>, cause: env::ExitCause, reason: usize },
                 Reaped,
             }
-            pub struct Gate {
+            pub struct Pend {
                 serial: SpinLock<()>,
                 pub version: AtomicUsize,
                 pub pies: SpinLock<Vec<AnyPie>>,
                 pub heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
                 pub creations: CreationRegistry,
             }
-            impl Gate {
+            impl Pend {
                 pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> { self.serial.lock() }
             }
             pub struct Task {
                 pub ident: TaskIdent,
                 pub state: SpinLock<TaskState>,
-                pub gate: Gate,
+                pub pend: Pend,
                 life: Arc<()>,
             }
             unsafe impl Send for Task {}
@@ -230,7 +230,7 @@ mod work {
                             id: TaskId::new(NEXT.fetch_add(1, Ordering::Relaxed)),
                         },
                         state: SpinLock::new(TaskState::Held),
-                        gate: Gate { serial: SpinLock::new(()), version: AtomicUsize::new(0),
+                        pend: Pend { serial: SpinLock::new(()), version: AtomicUsize::new(0),
                             pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()),
                             creations: CreationRegistry::new() },
                         life: Arc::new(()),
@@ -251,12 +251,12 @@ mod work {
                 }
             }
         }
-        pub use crate::gate;
+        pub use crate::pend;
     }
 }
 
-#[path = "../../src/work/unit/gate/mod.rs"]
-pub mod gate;
+#[path = "../../src/work/pend/mod.rs"]
+pub mod pend;
 
 pub use work::unit::commit;
 

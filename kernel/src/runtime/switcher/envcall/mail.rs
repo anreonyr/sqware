@@ -7,9 +7,9 @@ use riscv::register::sie;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail;
+use crate::work::pend::{self, Need, PieSnapshot};
 use crate::work::room::messenger::Handoff;
 use crate::work::room::scheduler::core::current;
-use crate::work::unit::gate::{self, Need, PieSnapshot};
 use crate::work::unit::space::Space;
 
 use super::pie::usable;
@@ -293,7 +293,7 @@ fn with_pie<T>(
     let found = current()
         .running_task()
         .ok_or(MailFail::Denied)
-        .and_then(|t| gate::accede::<MailFail>(&t, token, need));
+        .and_then(|t| pend::accede::<MailFail>(&t, token, need));
     match found {
         Err(e) => Err(e),
         Ok(pie) => match usable::<MailFail>(&pie) {

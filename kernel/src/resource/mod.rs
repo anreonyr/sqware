@@ -1,4 +1,4 @@
-use crate::work::unit::gate::{self, AnyPie};
+use crate::work::pend::{self, AnyPie};
 use crate::work::unit::task::{Task, TaskTag};
 use alloc::vec::Vec;
 use core::fmt;
@@ -80,7 +80,7 @@ impl Frozen {
         self.entries.len()
     }
     pub(crate) fn grant(self, target: &Task) -> Result<Vec<Entry>, GrantError> {
-        let closed = target.gate.lock();
+        let closed = target.pend.lock();
         let commit = crate::work::unit::commit();
         if target.tag() != TaskTag::Held || self.entries.iter().any(|(n, p)| !valid(*n, p)) {
             return Err(Failure {
@@ -95,7 +95,7 @@ impl Frozen {
                 value: self,
             });
         }
-        let mut pies = target.gate.pies.lock();
+        let mut pies = target.pend.pies.lock();
         if pies.try_reserve(self.entries.len()).is_err() {
             return Err(Failure {
                 reason: PieFail::OoM,
@@ -107,7 +107,7 @@ impl Frozen {
             pies.push(root);
         }
         drop(pies);
-        gate::changed(target);
+        pend::changed(target);
         drop(commit);
         drop(closed);
         Ok(ledger)

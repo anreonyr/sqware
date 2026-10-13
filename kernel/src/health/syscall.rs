@@ -11,7 +11,7 @@ use crate::runtime::switcher::{
     envcall,
 };
 use crate::work::mail::{hole, pole};
-use crate::work::unit::gate::{self, Need, Permission};
+use crate::work::pend::{self, Need, Permission};
 use crate::work::unit::space::{RegionId, SpaceBuilder};
 use crate::work::unit::task::{Task, TaskTag};
 use crate::work::unit::team::{Team, TeamBuilder};
@@ -104,8 +104,8 @@ pub fn abi_and_privilege() {
         env::UnitFail::Denied.code()
     );
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
-    user.task.gate.pies.lock().push(
-        gate::boxed(gate::new_pie::<gate::Nole>(
+    user.task.pend.pies.lock().push(
+        pend::boxed(pend::new_pie::<pend::Nole>(
             ordinary,
             env::Mark::NONE,
             Permission::FETCH | Permission::VEST,
@@ -507,29 +507,29 @@ pub fn capability() {
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
-    let pie = gate::new_pie::<gate::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie = pend::new_pie::<pend::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
     user.task
-        .gate
+        .pend
         .pies
         .lock()
-        .push(gate::boxed(pie).expect("pie allocation"));
-    assert!(gate::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
+        .push(pend::boxed(pie).expect("pie allocation"));
+    assert!(pend::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
-        gate::accede::<env::PieFail>(&user.task, token, Need::Store),
+        pend::accede::<env::PieFail>(&user.task, token, Need::Store),
         Err(env::PieFail::Denied)
     ));
     assert!(matches!(
-        gate::accede::<env::PieFail>(&foreign.task, token, Need::Fetch),
+        pend::accede::<env::PieFail>(&foreign.task, token, Need::Fetch),
         Err(env::PieFail::Denied)
     ));
     assert!(matches!(
-        gate::accede::<env::PieFail>(&user.task, env::PieToken::mint(usize::MAX), Need::Fetch),
+        pend::accede::<env::PieFail>(&user.task, env::PieToken::mint(usize::MAX), Need::Fetch),
         Err(env::PieFail::Denied)
     ));
     hole::seal(&meta);
     assert!(matches!(
-        gate::accede::<env::PieFail>(&user.task, token, Need::Fetch),
+        pend::accede::<env::PieFail>(&user.task, token, Need::Fetch),
         Err(env::PieFail::Dead)
     ));
     let source = user.allocate(PAGE_SIZE);
@@ -540,12 +540,12 @@ pub fn capability() {
         .unwrap();
     let pole =
         pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id).unwrap();
-    let pie: gate::Pie<gate::Pole> =
-        gate::new_pie(pole.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie: pend::Pie<pend::Pole> =
+        pend::new_pie(pole.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
-    user.task.gate.pies.lock().push(gate::boxed(pie).unwrap());
+    user.task.pend.pies.lock().push(pend::boxed(pie).unwrap());
     let original = user.team.space.tree.find(KVirt::wrap(source)).unwrap();
-    user.task.gate.creations.claim(&original).unwrap().commit();
+    user.task.pend.creations.claim(&original).unwrap().commit();
     pole.commit_source();
     let flags = user
         .team
@@ -591,7 +591,7 @@ pub fn resource_registration() {
     calls::register(&mut registry).unwrap();
     traps::register(&mut registry).unwrap();
     let root = || {
-        gate::boxed(gate::new_pie::<gate::Nole>(
+        pend::boxed(pend::new_pie::<pend::Nole>(
             calls::get().build.clone(),
             Mark::NONE,
             Permission::FETCH | Permission::VEST,
@@ -619,9 +619,9 @@ pub fn resource_registration() {
         .find(|e| e.name() == Name::Call(Call::Build))
         .unwrap()
         .token();
-    assert!(gate::allows(&system.task, &calls::get().build, Need::Fetch));
+    assert!(pend::allows(&system.task, &calls::get().build, Need::Fetch));
     let token = PieToken::mint(
-        gate::accord(
+        pend::accord(
             &system.task,
             token,
             &Arc::downgrade(&service.task),
@@ -630,7 +630,7 @@ pub fn resource_registration() {
         )
         .unwrap(),
     );
-    assert!(gate::allows(
+    assert!(pend::allows(
         &service.task,
         &calls::get().build,
         Need::Fetch
@@ -642,7 +642,7 @@ pub fn resource_registration() {
         })) > 0
     );
     assert!(matches!(
-        gate::accord(
+        pend::accord(
             &service.task,
             token,
             &Arc::downgrade(&other.task),
@@ -651,8 +651,8 @@ pub fn resource_registration() {
         ),
         Err(PieFail::Denied)
     ));
-    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
-    assert!(!gate::allows(
+    pend::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    assert!(!pend::allows(
         &service.task,
         &calls::get().build,
         Need::Fetch
@@ -674,7 +674,7 @@ pub fn resource_registration() {
     });
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let token = PieToken::mint(
-        gate::accord(
+        pend::accord(
             &system.task,
             doom,
             &Arc::downgrade(&service.task),
@@ -684,9 +684,9 @@ pub fn resource_registration() {
         .unwrap(),
     );
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
-    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    pend::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
     let token = PieToken::mint(
-        gate::accord(
+        pend::accord(
             &system.task,
             doom,
             &Arc::downgrade(&service.task),
@@ -695,7 +695,7 @@ pub fn resource_registration() {
         )
         .unwrap(),
     );
-    assert!(gate::allows(&service.task, &calls::get().doom, Need::Fetch));
+    assert!(pend::allows(&service.task, &calls::get().doom, Need::Fetch));
     let victim = Caller::new(false);
     assert_eq!(
         service.call(EnvCall::Room(RoomCall::Doom {
@@ -709,7 +709,7 @@ pub fn resource_registration() {
     ));
     assert_eq!(service.call(call), env::RoomFail::Dead.code());
     assert!(matches!(
-        gate::accord(
+        pend::accord(
             &service.task,
             token,
             &Arc::downgrade(&other.task),
@@ -718,11 +718,11 @@ pub fn resource_registration() {
         ),
         Err(PieFail::Denied)
     ));
-    gate::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
+    pend::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
-    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
+    let invalid = pend::boxed(pend::new_pie::<pend::Nole>(
         dead.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
@@ -739,7 +739,7 @@ pub fn resource_registration() {
 
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let mut registry = Registry::default();
-    let invalid = gate::boxed(gate::new_pie::<gate::Nole>(
+    let invalid = pend::boxed(pend::new_pie::<pend::Nole>(
         dead.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
@@ -749,11 +749,11 @@ pub fn resource_registration() {
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
     crate::work::mail::nole::seal(&dead);
-    let before = other.task.gate.pies.lock().len();
+    let before = other.task.pend.pies.lock().len();
     let error = frozen.grant(&other.task).unwrap_err();
     assert_eq!(error.reason, PieFail::Denied);
     assert_eq!(error.value.len(), 1);
-    assert_eq!(other.task.gate.pies.lock().len(), before);
+    assert_eq!(other.task.pend.pies.lock().len(), before);
 }
 
 pub fn transfer_relations() {
@@ -765,7 +765,7 @@ pub fn transfer_relations() {
     let c = Caller::new(false);
     let permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     let root = |task: &Arc<Task>, permission| {
-        let pie = gate::boxed(gate::new_pie::<gate::Nole>(
+        let pie = pend::boxed(pend::new_pie::<pend::Nole>(
             crate::work::mail::nole::NoleMeta::new(task.ident.id),
             Mark::NONE,
             permission,
@@ -773,57 +773,57 @@ pub fn transfer_relations() {
         ))
         .expect("pie allocation");
         let token = pie.token();
-        gate::insert(task, pie).unwrap();
+        pend::insert(task, pie).unwrap();
         token
     };
     let grant = |task: &Arc<Task>, token, target: &Arc<Task>, permission| {
         PieToken::mint(
-            gate::accord(task, token, &Arc::downgrade(target), permission, Mark::NONE).unwrap(),
+            pend::accord(task, token, &Arc::downgrade(target), permission, Mark::NONE).unwrap(),
         )
     };
     let token = root(&a.task, permission);
     let ab = grant(&a.task, token, &b.task, permission);
     let bc = grant(&b.task, ab, &c.task, permission);
-    assert_eq!(gate::vestor(&c.task, bc), Some(b.task.ident.id));
-    gate::forget(&b.task, ab).unwrap();
-    assert_eq!(gate::vestor(&c.task, bc), Some(a.task.ident.id));
-    assert!(b.task.gate.pies.lock().is_empty());
-    assert!(b.task.gate.heirs.lock().is_empty());
-    assert_eq!(gate::release(&a.task, token), Ok(2));
-    assert!(c.task.gate.pies.lock().is_empty());
+    assert_eq!(pend::vestor(&c.task, bc), Some(b.task.ident.id));
+    pend::forget(&b.task, ab).unwrap();
+    assert_eq!(pend::vestor(&c.task, bc), Some(a.task.ident.id));
+    assert!(b.task.pend.pies.lock().is_empty());
+    assert!(b.task.pend.heirs.lock().is_empty());
+    assert_eq!(pend::release(&a.task, token), Ok(2));
+    assert!(c.task.pend.pies.lock().is_empty());
 
     let token = root(&a.task, permission);
     let child = grant(&a.task, token, &a.task, permission);
-    assert_eq!(gate::vestor(&a.task, child), Some(a.task.ident.id));
-    assert_eq!(gate::release(&a.task, token), Ok(2));
+    assert_eq!(pend::vestor(&a.task, child), Some(a.task.ident.id));
+    assert_eq!(pend::release(&a.task, token), Ok(2));
 
     let sole = permission | Permission::ONLY;
     let token = root(&a.task, sole);
     let ab = grant(&a.task, token, &b.task, sole);
-    let old = gate::locate(&a.task, token)
+    let old = pend::locate(&a.task, token)
         .unwrap()
         .heir()
         .copied()
         .unwrap();
-    gate::revoke(&a.task, &Arc::downgrade(&b.task), ab).unwrap();
+    pend::revoke(&a.task, &Arc::downgrade(&b.task), ab).unwrap();
     let next = grant(&a.task, token, &b.task, sole);
-    assert!(!gate::clear_heir(&a.task, token, old));
+    assert!(!pend::clear_heir(&a.task, token, old));
     assert_eq!(
-        gate::locate(&a.task, token).unwrap().heir().unwrap().token,
+        pend::locate(&a.task, token).unwrap().heir().unwrap().token,
         next
     );
-    gate::release(&a.task, token).unwrap();
+    pend::release(&a.task, token).unwrap();
 
     let children: Vec<_> = (0..16).map(|_| Caller::new(false)).collect();
     let token = root(&a.task, permission);
     for child in &children {
         grant(&a.task, token, &child.task, permission);
     }
-    assert_eq!(gate::release(&a.task, token), Ok(17));
+    assert_eq!(pend::release(&a.task, token), Ok(17));
     assert!(
         children
             .iter()
-            .all(|child| child.task.gate.pies.lock().is_empty())
+            .all(|child| child.task.pend.pies.lock().is_empty())
     );
 
     let d = Caller::new(false);
@@ -835,12 +835,12 @@ pub fn transfer_relations() {
         .unwrap();
     let meta =
         pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id).unwrap();
-    let pie = gate::boxed(
-        gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
+    let pie = pend::boxed(
+        pend::try_new_pie::<pend::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
     )
     .expect("pie allocation");
     let memory = pie.token();
-    gate::insert(&a.task, pie).unwrap();
+    pend::insert(&a.task, pie).unwrap();
     meta.commit_source();
     let ad = grant(&a.task, memory, &d.task, permission);
     grant(&d.task, ad, &c.task, permission);
@@ -854,10 +854,10 @@ pub fn transfer_relations() {
                 reason: 0,
             };
         }
-        gate::doom(&d.task);
+        pend::doom(&d.task);
     }
-    assert!(d.task.gate.pies.lock().is_empty());
-    assert!(c.task.gate.pies.lock().is_empty());
+    assert!(d.task.pend.pies.lock().is_empty());
+    assert!(c.task.pend.pies.lock().is_empty());
 
     let token = root(&a.task, permission);
     let ab = grant(&a.task, token, &b.task, permission);
@@ -870,12 +870,12 @@ pub fn transfer_relations() {
             reason: 0,
         };
     }
-    gate::doom(&b.task);
-    assert!(b.task.gate.pies.lock().is_empty());
-    assert!(c.task.gate.pies.lock().is_empty());
-    assert!(a.task.gate.heirs.lock().is_empty());
+    pend::doom(&b.task);
+    assert!(b.task.pend.pies.lock().is_empty());
+    assert!(c.task.pend.pies.lock().is_empty());
+    assert!(a.task.pend.heirs.lock().is_empty());
     assert_eq!(
-        gate::accord(
+        pend::accord(
             &a.task,
             token,
             &Arc::downgrade(&b.task),

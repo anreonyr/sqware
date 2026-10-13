@@ -48,13 +48,13 @@ pub(crate) fn accord(
         let mut granted = pie.grant(badge, subset)?;
         granted.parent(src, Arc::downgrade(caller));
         caller
-            .gate
+            .pend
             .heirs
             .lock()
             .try_reserve(1)
             .map_err(|_| PieFail::OoM)?;
         target
-            .gate
+            .pend
             .pies
             .lock()
             .try_reserve(1)
@@ -62,7 +62,7 @@ pub(crate) fn accord(
         let token = granted.token();
         super::insert_heir(caller, src, Arc::downgrade(&target), token);
         if pie.permission().contains(Permission::ONLY) {
-            let mut pies = caller.gate.pies.lock();
+            let mut pies = caller.pend.pies.lock();
             let source = pies
                 .iter_mut()
                 .find(|p| p.token() == src)
@@ -73,7 +73,7 @@ pub(crate) fn accord(
             };
             source.set_heir(Some(heir));
         }
-        target.gate.pies.lock().push(granted);
+        target.pend.pies.lock().push(granted);
         super::changed(caller);
         if !Arc::ptr_eq(caller, &target) {
             super::changed(&target);
@@ -92,10 +92,10 @@ pub(crate) fn accord(
 }
 
 pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let gate_guard = task.gate.lock();
-    let commit_guard = super::super::commit();
+    let pend_guard = task.pend.lock();
+    let commit_guard = crate::work::unit::commit();
     let child = {
-        let heirs = task.gate.heirs.lock();
+        let heirs = task.pend.heirs.lock();
         heirs
             .iter()
             .find(|(parent, _, child)| *parent == token && *child == expected.token)
@@ -109,7 +109,7 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
         super::remove_heir(task, token, expected.token);
     }
     drop(commit_guard);
-    drop(gate_guard);
+    drop(pend_guard);
     if cleared {
         super::notify(task.ident.id, token);
     }
@@ -117,7 +117,7 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
 }
 
 pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) -> bool {
-    let mut pies = task.gate.pies.lock();
+    let mut pies = task.pend.pies.lock();
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;
     };

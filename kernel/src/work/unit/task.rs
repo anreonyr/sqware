@@ -13,8 +13,8 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::{Frame, MapError};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
+use crate::work::pend::{AnyPie, CreationRegistry};
 use crate::work::room::conductor;
-use crate::work::unit::gate::{AnyPie, CreationRegistry};
 use crate::work::unit::life::Life;
 
 use crate::work::unit::space::{Mapping, RegionId, Reservation, Space};
@@ -181,18 +181,18 @@ pub struct Task {
     pub(crate) life: Arc<Life>,
     pub(crate) state: Arc<SpinLock<TaskState>>,
     reap_next: SpinLock<Option<Arc<Task>>>,
-    pub(crate) gate: Gate,
+    pub(crate) pend: Pend,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
 
-pub(crate) struct Gate {
+pub(crate) struct Pend {
     serial: SpinLock<()>,
     pub(crate) version: AtomicUsize,
     pub(crate) pies: SpinLock<Vec<AnyPie>>,
     pub(crate) heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
     pub(crate) creations: CreationRegistry,
 }
-impl Gate {
+impl Pend {
     fn new() -> Self {
         Self {
             serial: SpinLock::new(()),
@@ -316,7 +316,7 @@ impl PreparedTask {
                     life: self.life.clone(),
                     state: self.state.clone(),
                     reap_next: SpinLock::new(None),
-                    gate: Gate::new(),
+                    pend: Pend::new(),
                     heir: SpinLock::new(Vec::new()),
                 });
             let task = unsafe { slot.assume_init() };
@@ -946,7 +946,7 @@ impl Drop for Task {
             child.life.clear(self.ident.id, None);
             child.life.prune();
         }
-        for pie in self.gate.pies.lock().iter() {
+        for pie in self.pend.pies.lock().iter() {
             pie.invalidate();
         }
         self.count_vanished();

@@ -7,9 +7,9 @@ use env::{MailCondition, MailFail, Mark, PieFail, PieToken, TaskId};
 
 use crate::work::mail::tole::{Cell, Member};
 use crate::work::mail::{hole, nole, tole};
+use crate::work::pend::{self, AnyPie, Need, Permission};
 use crate::work::room::messenger::{self, FWD_MAX, WakeKey};
 use crate::work::room::scheduler::core::prune_dead;
-use crate::work::unit::gate::{self, AnyPie, Need, Permission};
 use crate::work::unit::life::Life;
 use crate::work::unit::space::SpaceBuilder;
 use crate::work::unit::team::TeamBuilder;
@@ -19,45 +19,45 @@ pub fn form() {
     let sole = shared | Permission::ONLY;
 
     crate::expect!(
-        gate::form_ok(shared, shared),
+        pend::form_ok(shared, shared),
         "共享源 ＋ 不带 ONLY 的 subset 应当一致"
     );
     crate::expect!(
-        gate::form_ok(sole, sole),
+        pend::form_ok(sole, sole),
         "独占源 ＋ 带 ONLY 的 subset 应当一致"
     );
     crate::expect!(
-        !gate::form_ok(sole, shared),
+        !pend::form_ok(sole, shared),
         "想复制一枚独占资源 ⇒ 必须拒（源带 ONLY、subset 不带）"
     );
     crate::expect!(
-        !gate::form_ok(shared, sole),
+        !pend::form_ok(shared, sole),
         "想给共享资源按上形态位 ⇒ 必须拒（源不带、subset 带）"
     );
 
     let mark = Mark::of("permit");
     let meta = hole::meta(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
-        let mut pie = gate::boxed(gate::new_pie::<gate::Hole>(meta.clone(), mark, sole, sire))
+        let mut pie = pend::boxed(pend::new_pie::<pend::Hole>(meta.clone(), mark, sole, sire))
             .expect("pie allocation");
         crate::expect!(
-            gate::narrow(&mut pie, sole).is_ok(),
+            pend::narrow(&mut pie, sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
             sire
         );
         crate::expect!(
-            matches!(gate::narrow(&mut pie, shared), Err(PieFail::Denied)),
+            matches!(pend::narrow(&mut pie, shared), Err(PieFail::Denied)),
             "撤掉 ONLY 应当被拒——**自持枚也不例外**（sire = {:?}）",
             sire
         );
         crate::expect!(
-            gate::narrow(&mut pie, Permission::FETCH | Permission::ONLY).is_ok(),
+            pend::narrow(&mut pie, Permission::FETCH | Permission::ONLY).is_ok(),
             "带着 ONLY 的普通收窄应当通过（sire = {:?}）",
             sire
         );
         crate::expect!(
             matches!(
-                gate::narrow(
+                pend::narrow(
                     &mut pie,
                     Permission::FETCH | Permission::STORE | Permission::ONLY
                 ),
@@ -67,7 +67,7 @@ pub fn form() {
             sire
         );
         crate::expect!(
-            gate::narrow(&mut pie, Permission::ONLY).is_ok(),
+            pend::narrow(&mut pie, Permission::ONLY).is_ok(),
             "只留 ONLY 应当通过（形态位可以独存，sire = {:?}）",
             sire
         );
@@ -167,9 +167,9 @@ pub fn order() {
 
     let dead_meta = hole::meta(TaskId::new(0));
     hole::seal(&dead_meta);
-    let dead = gate::new_pie::<gate::Hole>(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
+    let dead = pend::new_pie::<pend::Hole>(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
     let dead_token = dead.token;
-    let live = gate::new_pie::<gate::Hole>(
+    let live = pend::new_pie::<pend::Hole>(
         hole::meta(TaskId::new(0)),
         Mark::of("live"),
         Permission::FETCH,
@@ -177,36 +177,36 @@ pub fn order() {
     );
     let live_token = live.token;
     {
-        let mut pies = task.gate.pies.lock();
-        pies.push(gate::boxed(dead).expect("pie allocation"));
-        pies.push(gate::boxed(live).expect("pie allocation"));
+        let mut pies = task.pend.pies.lock();
+        pies.push(pend::boxed(dead).expect("pie allocation"));
+        pies.push(pend::boxed(live).expect("pie allocation"));
     }
 
     crate::expect!(
         matches!(
-            gate::accede::<PieFail>(&task, dead_token, Need::Store),
+            pend::accede::<PieFail>(&task, dead_token, Need::Store),
             Err(PieFail::Dead)
         ),
         "已封印 + 权不够：必须答 Dead（死活先于权限）"
     );
     crate::expect!(
         matches!(
-            gate::accede(&task, live_token, Need::Store),
+            pend::accede(&task, live_token, Need::Store),
             Err(PieFail::Denied)
         ),
         "活着但权不够：必须答 Denied"
     );
     crate::expect!(
-        gate::accede::<PieFail>(&task, live_token, Need::Fetch).is_ok(),
+        pend::accede::<PieFail>(&task, live_token, Need::Fetch).is_ok(),
         "活着且权够：必须取到"
     );
     crate::expect!(
-        gate::locate(&task, dead_token).is_some(),
+        pend::locate(&task, dead_token).is_some(),
         "locate 不过闸：已封印的那一枚也定位得到"
     );
     crate::expect!(
         matches!(
-            gate::locate(&task, PieToken::mint(live_token.get() + 4_096)),
+            pend::locate(&task, PieToken::mint(live_token.get() + 4_096)),
             None
         ),
         "表里没有：locate 必须答 Denied"
@@ -226,9 +226,9 @@ pub fn badge() {
     let reply = Mark::of("badge-reply");
     let hole = hole::meta(owner);
 
-    let src: gate::Pie<gate::Hole> = gate::new_pie(hole.clone(), ask, Permission::FETCH, None);
-    let kid: gate::Pie<gate::Hole> =
-        gate::new_pie(hole.clone(), reply, Permission::FETCH, Some(src.token));
+    let src: pend::Pie<pend::Hole> = pend::new_pie(hole.clone(), ask, Permission::FETCH, None);
+    let kid: pend::Pie<pend::Hole> =
+        pend::new_pie(hole.clone(), reply, Permission::FETCH, Some(src.token));
     crate::expect!(src.mark == ask, "源枚刻的是它自己那一枚");
     crate::expect!(
         kid.mark == reply,
@@ -241,7 +241,7 @@ pub fn badge() {
     );
 
     let bell_meta = nole::NoleMeta::new(owner);
-    let bell: AnyPie = gate::boxed(gate::new_pie::<gate::Nole>(
+    let bell: AnyPie = pend::boxed(pend::new_pie::<pend::Nole>(
         bell_meta.clone(),
         reply,
         Permission::FETCH,
@@ -268,7 +268,7 @@ pub fn badge() {
     let dst = team.task().hold().expect("badge: hold dst");
 
     let src_token = {
-        let pie = gate::new_pie::<gate::Hole>(
+        let pie = pend::new_pie::<pend::Hole>(
             hole::meta(owner),
             ask,
             Permission::FETCH | Permission::VEST,
@@ -276,20 +276,20 @@ pub fn badge() {
         );
         let token = pie.token;
         caller
-            .gate
+            .pend
             .pies
             .lock()
-            .push(gate::boxed(pie).expect("pie allocation"));
+            .push(pend::boxed(pie).expect("pie allocation"));
         token
     };
     let dst_weak = Arc::downgrade(&dst);
-    let inherited = gate::accord(&caller, src_token, &dst_weak, Permission::FETCH, Mark::NONE)
+    let inherited = pend::accord(&caller, src_token, &dst_weak, Permission::FETCH, Mark::NONE)
         .expect("badge: accord (照源枚)");
-    let remade = gate::accord(&caller, src_token, &dst_weak, Permission::FETCH, reply)
+    let remade = pend::accord(&caller, src_token, &dst_weak, Permission::FETCH, reply)
         .expect("badge: accord (另刻一枚)");
     crate::expect!(inherited != remade, "两次授出各落一枚");
 
-    let kids = dst.gate.pies.lock();
+    let kids = dst.pend.pies.lock();
     let mark_of = |token: usize| {
         kids.iter()
             .find(|p| p.token().get() == token)
@@ -332,16 +332,16 @@ pub fn references() {
     let stranger = team.task().hold().unwrap();
     let group = tole::meta(caller.ident.id);
     let source_meta = hole::meta(caller.ident.id);
-    let root = gate::new_pie::<gate::Hole>(
+    let root = pend::new_pie::<pend::Hole>(
         source_meta.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST,
         None,
     );
     let root_token = root.token;
-    caller.gate.pies.lock().push(gate::boxed(root).unwrap());
+    caller.pend.pies.lock().push(pend::boxed(root).unwrap());
     let child = PieToken::mint(
-        gate::accord(
+        pend::accord(
             &caller,
             root_token,
             &Arc::downgrade(&target),
@@ -363,7 +363,7 @@ pub fn references() {
         group.poll(&caller).unwrap() == AwaitReply::Pending,
         "仍有效的端点不提前关闭"
     );
-    gate::reduce(&target, child, Permission::FETCH).unwrap();
+    pend::reduce(&target, child, Permission::FETCH).unwrap();
     crate::expect!(
         group.poll(&caller).unwrap()
             == AwaitReply::Source {
@@ -372,7 +372,7 @@ pub fn references() {
             },
         "丢失登记时所需访问权必须报告具体来源"
     );
-    gate::release(&target, child).unwrap();
+    pend::release(&target, child).unwrap();
     crate::expect!(
         group.poll(&caller).unwrap()
             == AwaitReply::Source {
@@ -433,14 +433,14 @@ pub fn references() {
         "共享组不转授登记者观察权"
     );
     let other_meta = hole::meta(stranger.ident.id);
-    let other = gate::new_pie::<gate::Hole>(
+    let other = pend::new_pie::<pend::Hole>(
         other_meta,
         Mark::NONE,
         Permission::FETCH | Permission::STORE,
         None,
     );
     let other_token = other.token;
-    stranger.gate.pies.lock().push(gate::boxed(other).unwrap());
+    stranger.pend.pies.lock().push(pend::boxed(other).unwrap());
     let other_source = Source::Mail {
         pie: other_token,
         condition: MailCondition::Pull,
@@ -453,18 +453,18 @@ pub fn references() {
     );
     tole::detach(&group, stranger.ident.id, other_source).unwrap();
     tole::detach(&group, caller.ident.id, local).unwrap();
-    gate::release(&stranger, other_token).unwrap();
+    pend::release(&stranger, other_token).unwrap();
     let authority = tole::meta(caller.ident.id);
-    let root = gate::new_pie::<gate::Tole>(
+    let root = pend::new_pie::<pend::Tole>(
         authority.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
         None,
     );
     let token = root.token;
-    caller.gate.pies.lock().push(gate::boxed(root).unwrap());
+    caller.pend.pies.lock().push(pend::boxed(root).unwrap());
     let child = PieToken::mint(
-        gate::accord(
+        pend::accord(
             &caller,
             token,
             &Arc::downgrade(&target),
@@ -482,7 +482,7 @@ pub fn references() {
         group.poll(&caller).unwrap() == AwaitReply::Pending,
         "独占移交期间等待归还，不能持续报告 HandedOver"
     );
-    gate::release(&target, child).unwrap();
+    pend::release(&target, child).unwrap();
     crate::expect!(
         group.poll(&caller).unwrap() == AwaitReply::Source { source, fail: None },
         "子引用释放后祖先恢复使用权"
@@ -498,8 +498,8 @@ pub fn references() {
     );
     tole::detach(&group, caller.ident.id, source).unwrap();
     tole::seal(&group);
-    gate::release(&caller, token).unwrap();
-    gate::release(&caller, root_token).unwrap();
+    pend::release(&caller, token).unwrap();
+    pend::release(&caller, root_token).unwrap();
     for task in [&caller, &target, &stranger] {
         let _ = team.release_held(task);
         team.prune_tasks(task);

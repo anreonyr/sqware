@@ -167,10 +167,7 @@ pub fn construction() {
     use crate::memory::manager::entry::PteFlags;
     use crate::work::mail::pole;
     use crate::work::room::scheduler;
-    use crate::work::unit::{
-        gate::{self},
-        team,
-    };
+    use crate::work::{pend, unit::team};
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
     use env::{Mark, Permission, UnitFail};
@@ -238,14 +235,14 @@ pub fn construction() {
         );
         drop(frames);
         let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-        let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
+        let root: pend::Pie<pend::Pole> = pend::new_pie::<pend::Pole>(
             meta.clone(),
             Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
             None,
         );
         let token = root.token;
-        gate::insert(&caller, gate::boxed(root).expect("pie allocation")).unwrap();
+        pend::insert(&caller, pend::boxed(root).expect("pie allocation")).unwrap();
         meta.commit_source();
         let open = parent
             .space
@@ -272,7 +269,7 @@ pub fn construction() {
         let staged = stage_only(&child, &meta, token, access, at);
         stage_maps.push(staged);
         if !access.contains(PteFlags::W) {
-            gate::reduce(
+            pend::reduce(
                 &caller,
                 token,
                 Permission::FETCH | Permission::VEST | Permission::ONLY,
@@ -296,7 +293,7 @@ pub fn construction() {
         assert_eq!(conductor::counts(), counts);
         assert_eq!(child.space.tree.table_count(), tables);
         for token in &roots {
-            assert!(gate::locate(&caller, *token).is_some());
+            assert!(pend::locate(&caller, *token).is_some());
         }
     }
     scheduler::core::fail_next_reservation();
@@ -310,7 +307,7 @@ pub fn construction() {
     assert_eq!(child.default_entry(), 0);
     assert_eq!(child.staged().len(), 2);
     assert!(matches!(
-        gate::release(&caller, roots[0]),
+        pend::release(&caller, roots[0]),
         Err(env::PieFail::Busy)
     ));
     let task = team::spawn(&child, Some(&caller), 0x10000, Vec::new(), 0).unwrap();
@@ -330,7 +327,7 @@ pub fn construction() {
             .is_some()
     );
     for token in roots {
-        assert!(gate::locate(&caller, token).is_none());
+        assert!(pend::locate(&caller, token).is_none());
     }
     for va in [VirtAddr::wrap(0x20000), VirtAddr::wrap(0x21000)] {
         let (_, flags) = child
@@ -363,7 +360,7 @@ pub fn cancellation() {
     use crate::memory::PAGE_SIZE;
     use crate::memory::manager::entry::PteFlags;
     use crate::work::mail::pole;
-    use crate::work::unit::gate;
+    use crate::work::pend;
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
     use env::{Mark, Permission};
@@ -407,19 +404,19 @@ pub fn cancellation() {
         .collect();
     drop(frames);
     let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-    let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
+    let root: pend::Pie<pend::Pole> = pend::new_pie::<pend::Pole>(
         meta.clone(),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
         None,
     );
     let token = root.token;
-    gate::insert(&caller, gate::boxed(root).expect("pie allocation")).unwrap();
+    pend::insert(&caller, pend::boxed(root).expect("pie allocation")).unwrap();
     meta.commit_source();
     pole::shut(&meta, token).unwrap();
     let at = VirtAddr::wrap(0x20000);
     let staged_map = stage_only(&child, &meta, token, PteFlags::R | PteFlags::W, at);
-    gate::reduce(
+    pend::reduce(
         &caller,
         token,
         Permission::FETCH | Permission::VEST | Permission::ONLY,
@@ -448,9 +445,9 @@ pub fn cancellation() {
             )
             .is_err()
     );
-    gate::reduce(&caller, token, Permission::FETCH | Permission::ONLY).unwrap();
+    pend::reduce(&caller, token, Permission::FETCH | Permission::ONLY).unwrap();
     assert!(matches!(
-        gate::release(&caller, token),
+        pend::release(&caller, token),
         Err(env::PieFail::Busy)
     ));
     let counts = conductor::counts();
@@ -458,7 +455,7 @@ pub fn cancellation() {
     assert_eq!(conductor::counts(), counts);
     assert_eq!(meta.reserved(), 0);
     assert!(child.space.tree.translate(at).is_none());
-    let remaining = gate::locate(&caller, token).unwrap().permission();
+    let remaining = pend::locate(&caller, token).unwrap().permission();
     assert_eq!(remaining, Permission::FETCH | Permission::ONLY);
     let (view, _) = pole::open(
         &meta,
@@ -474,8 +471,8 @@ pub fn cancellation() {
         .expect("read-only Pole view");
     assert!(!view_flags.contains(PteFlags::W));
     pole::shut(&meta, token).unwrap();
-    gate::release(&caller, token).unwrap();
-    assert!(gate::locate(&caller, token).is_none());
+    pend::release(&caller, token).unwrap();
+    assert!(pend::locate(&caller, token).is_none());
     drop(caller.oust(child.id));
     drop(staged_map);
     drop(meta);

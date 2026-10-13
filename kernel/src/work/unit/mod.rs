@@ -14,7 +14,6 @@ pub(crate) fn commit() -> crate::lock::reentrant::RelLockGuard<'static, ()> {
 }
 
 pub(crate) mod capsule;
-pub(crate) mod gate;
 pub(crate) mod join;
 pub(crate) mod life;
 pub mod space;

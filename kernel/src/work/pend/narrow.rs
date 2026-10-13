@@ -56,9 +56,9 @@ fn reduce_locked(
             None => None,
         };
         crate::work::mail::pole::narrow(meta, token, flags)?;
-        let _gate = task.gate.lock();
-        let _commit = super::super::commit();
-        let mut pies = task.gate.pies.lock();
+        let _pend = task.pend.lock();
+        let _commit = crate::work::unit::commit();
+        let mut pies = task.pend.pies.lock();
         let pie = pies
             .iter_mut()
             .find(|pie| pie.token() == token)
@@ -67,9 +67,9 @@ fn reduce_locked(
         super::changed(task);
         return Ok(());
     }
-    let _gate = task.gate.lock();
-    let _commit = super::super::commit();
-    let mut pies = task.gate.pies.lock();
+    let _pend = task.pend.lock();
+    let _commit = crate::work::unit::commit();
+    let mut pies = task.pend.pies.lock();
     let pie = pies
         .iter_mut()
         .find(|pie| pie.token() == token)

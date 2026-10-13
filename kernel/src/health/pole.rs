@@ -2,8 +2,8 @@ use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{Frame, addr::VirtAddr, asid, entry::PteFlags, table::TABLE_LIVE};
 use crate::runtime::switcher::envcall::pie::{create_pole, fail_pole_at};
 use crate::work::mail::pole;
+use crate::work::pend::{self, Permission};
 use crate::work::unit::{
-    gate::{self, Permission},
     space::{RegionId, SpaceBuilder},
     team::TeamBuilder,
 };
@@ -26,7 +26,7 @@ pub fn lifecycle() {
         .unwrap();
     let frame = Frame::allocate().unwrap();
     let weak = Arc::downgrade(&frame);
-    let prepared = caller.gate.creations.prepare().unwrap();
+    let prepared = caller.pend.creations.prepare().unwrap();
     let input = team
         .space
         .map_frames(
@@ -47,13 +47,13 @@ pub fn lifecycle() {
             create_pole(&caller, start, PAGE_SIZE, true),
             Err(env::PieFail::OoM)
         );
-        assert!(caller.gate.pies.lock().is_empty());
+        assert!(caller.pend.pies.lock().is_empty());
         assert!(Arc::ptr_eq(
             &team.space.tree.find(start).unwrap(),
             &input.map
         ));
         assert_eq!(input.map.ranges().unwrap()[0].current.bits(), original);
-        let _lease = caller.gate.creations.claim(&input.map).unwrap();
+        let _lease = caller.pend.creations.claim(&input.map).unwrap();
         assert_eq!(
             TABLE_LIVE.load(core::sync::atomic::Ordering::Relaxed),
             tables
@@ -64,7 +64,7 @@ pub fn lifecycle() {
         create_pole(&caller, start, PAGE_SIZE, true),
         Err(env::PieFail::Busy)
     );
-    assert!(caller.gate.pies.lock().is_empty());
+    assert!(caller.pend.pies.lock().is_empty());
     kernel.retry_invalidation().unwrap();
     assert_eq!(
         TABLE_LIVE.load(core::sync::atomic::Ordering::Relaxed),
@@ -76,14 +76,14 @@ pub fn lifecycle() {
         create_pole(&caller, start, PAGE_SIZE, true),
         Err(env::PieFail::Denied)
     );
-    let snapshot = gate::locate(&caller, token).unwrap();
+    let snapshot = pend::locate(&caller, token).unwrap();
     let meta = snapshot.pole().unwrap();
     let first = pole::open(&meta, token, &team.space, rw).unwrap();
     assert_eq!(pole::open(&meta, token, &team.space, rw).unwrap(), first);
     assert_eq!(first.0, start.as_usize());
     assert!(meta.opened(&input.map));
     let child = env::PieToken::mint(
-        gate::accord(
+        pend::accord(
             &caller,
             token,
             &Arc::downgrade(&recipient),
@@ -103,7 +103,7 @@ pub fn lifecycle() {
         create_pole(&recipient, VirtAddr::wrap(shared), PAGE_SIZE, true),
         Err(env::PieFail::Denied)
     );
-    gate::reduce(&caller, token, Permission::FETCH | Permission::VEST).unwrap();
+    pend::reduce(&caller, token, Permission::FETCH | Permission::VEST).unwrap();
     assert!(!snapshot.permission().contains(Permission::STORE));
     assert!(
         !team
@@ -116,7 +116,7 @@ pub fn lifecycle() {
     );
     assert!(!meta.readonly());
     assert!(!meta.exclusive());
-    gate::revoke(&caller, &Arc::downgrade(&recipient), child).unwrap();
+    pend::revoke(&caller, &Arc::downgrade(&recipient), child).unwrap();
     assert!(meta.readonly());
     assert!(meta.exclusive());
     assert!(peer.space.tree.translate(VirtAddr::wrap(shared)).is_none());
@@ -130,7 +130,7 @@ pub fn lifecycle() {
         create_pole(&caller, VirtAddr::wrap(reopened), PAGE_SIZE, true),
         Err(env::PieFail::Denied)
     );
-    gate::release(&caller, token).unwrap();
+    pend::release(&caller, token).unwrap();
     assert!(!snapshot.alive());
     drop(snapshot);
     drop(meta);

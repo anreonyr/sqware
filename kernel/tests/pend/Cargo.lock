@@ -25,7 +25,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc36b9bc9f9fd011eb63c44cdba19d47c4e77f4759cddb0c448b1d23d27abc1e"
 
 [[package]]
-name = "kernel-gate-tests"
+name = "kernel-pend-tests"
 version = "0.1.0"
 dependencies = [
  "bitflags",

@@ -2,7 +2,7 @@ use crate::lock::OnceLock;
 use crate::resource::Registry;
 use crate::work::mail::nole::NoleMeta;
 use crate::work::mail::{HoleMeta, hole, nole};
-use crate::work::unit::gate;
+use crate::work::pend;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use env::{Mark, Name, Permission, PieFail, TaskId, Trap};
@@ -20,23 +20,23 @@ static IDLE_BUSY: AtomicUsize = AtomicUsize::new(0);
 pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
     let resources = get();
     let permission = Permission::FETCH | Permission::VEST;
-    let external = gate::try_new_pie::<gate::Nole>(
+    let external = pend::try_new_pie::<pend::Nole>(
         resources.supervisor_external.clone(),
         Mark::NONE,
         permission,
         None,
     )?;
     registry
-        .register(Name::Trap(Trap::SupervisorExternal), gate::boxed(external)?)
+        .register(Name::Trap(Trap::SupervisorExternal), pend::boxed(external)?)
         .map_err(|e| e.into_parts().0)?;
-    let fault = gate::try_new_pie::<gate::Hole>(
+    let fault = pend::try_new_pie::<pend::Hole>(
         resources.page_fault.clone(),
         Mark::NONE,
         permission,
         None,
     )?;
     registry
-        .register(Name::Trap(Trap::PageFault), gate::boxed(fault)?)
+        .register(Name::Trap(Trap::PageFault), pend::boxed(fault)?)
         .map_err(|e| e.into_parts().0)?;
     Ok(())
 }

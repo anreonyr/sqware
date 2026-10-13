@@ -80,10 +80,8 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::work::unit::task::Task>)] = &[
-        crate::work::room::messenger::doom,
-        crate::work::unit::gate::doom,
-    ];
+    static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::work::unit::task::Task>)] =
+        &[crate::work::room::messenger::doom, crate::work::pend::doom];
     messenger::hook(EXIT_HOOKS);
 
     const SHUTDOWN_HOOKS: &[fn()] = &[

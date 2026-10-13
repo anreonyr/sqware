@@ -5,7 +5,7 @@ use env::{PieToken, TaskId};
 pub(crate) fn vestor(task: &Arc<Task>, token: PieToken) -> Option<TaskId> {
     for _ in 0..super::RETRIES {
         let observed = {
-            let _gate = task.gate.lock();
+            let _pend = task.pend.lock();
             super::locate(task, token)?
         };
         let parent = observed.sire()?;

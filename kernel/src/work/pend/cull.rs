@@ -45,8 +45,8 @@ pub(super) fn collect(
     while cursor < nodes.len() {
         let (task, token) = nodes[cursor].clone();
         let parent = {
-            let _gate = task.gate.lock();
-            super::observe(&mut tasks, &task, task.gate.version.load(Ordering::Relaxed))?;
+            let _pend = task.pend.lock();
+            super::observe(&mut tasks, &task, task.pend.version.load(Ordering::Relaxed))?;
             let pie = super::locate(&task, token).ok_or(PieFail::Busy)?;
             let parent = if cursor == 0 {
                 pie.lord().upgrade()
@@ -54,7 +54,7 @@ pub(super) fn collect(
                 None
             };
             if cursor == 0 || recursive {
-                let heirs = task.gate.heirs.lock();
+                let heirs = task.pend.heirs.lock();
                 let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
                 for (_, child, child_token) in heirs[start..]
                     .iter()
@@ -69,11 +69,11 @@ pub(super) fn collect(
             parent
         };
         if let Some(parent) = parent {
-            let _gate = parent.gate.lock();
+            let _pend = parent.pend.lock();
             super::observe(
                 &mut tasks,
                 &parent,
-                parent.gate.version.load(Ordering::Relaxed),
+                parent.pend.version.load(Ordering::Relaxed),
             )?;
         }
         cursor += 1;
@@ -102,7 +102,7 @@ fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]
                 return false;
             }
             if !lord
-                .gate
+                .pend
                 .heirs
                 .lock()
                 .iter()
@@ -117,7 +117,7 @@ fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]
         } else if index != 0 {
             return false;
         }
-        let heirs = task.gate.heirs.lock();
+        let heirs = task.pend.heirs.lock();
         let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
         for (_, child, child_token) in heirs[start..]
             .iter()
@@ -137,7 +137,7 @@ fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]
 
 pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
     let pie = {
-        let mut pies = task.gate.pies.lock();
+        let mut pies = task.pend.pies.lock();
         let at = pies.iter().position(|p| p.token() == token)?;
         pies.remove(at)
     };
@@ -154,7 +154,7 @@ pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
         );
         super::changed(&lord);
     }
-    task.gate
+    task.pend
         .heirs
         .lock()
         .retain(|(parent, _, _)| *parent != token);
@@ -177,11 +177,11 @@ pub(super) fn cull(
             result => result?,
         };
         if let Some(caller) = caller {
-            let _gate = caller.gate.lock();
+            let _pend = caller.pend.lock();
             super::observe(
                 &mut tasks,
                 caller,
-                caller.gate.version.load(Ordering::Relaxed),
+                caller.pend.version.load(Ordering::Relaxed),
             )?;
         }
         tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
@@ -239,10 +239,10 @@ pub(super) fn cull(
 
 pub(crate) fn doom(task: &Arc<Task>) {
     let tokens = {
-        let _gate = task.gate.lock();
+        let _pend = task.pend.lock();
         super::changed(task);
         let mut tokens = Vec::new();
-        let pies = task.gate.pies.lock();
+        let pies = task.pend.pies.lock();
         if tokens.try_reserve(pies.len()).is_ok() {
             tokens.extend(pies.iter().map(|p| p.token()));
         }
@@ -270,8 +270,8 @@ fn seal_owned(task: &Task) {
     let mut after = 0;
     loop {
         let pie = {
-            let _gate = task.gate.lock();
-            task.gate
+            let _pend = task.pend.lock();
+            task.pend
                 .pies
                 .lock()
                 .iter()

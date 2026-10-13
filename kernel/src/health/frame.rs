@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{Frame, MapError, addr::VirtAddr, asid, entry::PteFlags};
-use crate::work::unit::gate::Grant;
+use crate::work::pend::Grant;
 use crate::work::unit::space::{RegionId, SpaceBuilder};
 
 pub fn sharing() {

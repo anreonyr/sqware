@@ -15,7 +15,7 @@ mod release;
 mod revoke;
 
 pub(crate) use allocation::CreationRegistry;
-pub(crate) use fail::GateFail;
+pub(crate) use fail::PendFail;
 mod snap;
 
 #[cfg(debug_assertions)]
@@ -37,7 +37,7 @@ pub(crate) use snap::vestor;
 pub(super) const RETRIES: usize = 8;
 
 pub(crate) fn changed(task: &Task) {
-    task.gate.version.fetch_add(1, Ordering::Relaxed);
+    task.pend.version.fetch_add(1, Ordering::Relaxed);
 }
 
 pub(crate) fn live(task: &Task, _closed: ()) -> bool {
@@ -46,18 +46,18 @@ pub(crate) fn live(task: &Task, _closed: ()) -> bool {
 
 pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce((), ()) -> T) -> T {
     if a.ident.id == b.ident.id {
-        let guard = a.gate.lock();
-        let _commit = super::commit();
+        let guard = a.pend.lock();
+        let _commit = crate::work::unit::commit();
         run(*guard, *guard)
     } else if a.ident.id.get() < b.ident.id.get() {
-        let first = a.gate.lock();
-        let second = b.gate.lock();
-        let _commit = super::commit();
+        let first = a.pend.lock();
+        let second = b.pend.lock();
+        let _commit = crate::work::unit::commit();
         run(*first, *second)
     } else {
-        let second = b.gate.lock();
-        let first = a.gate.lock();
-        let _commit = super::commit();
+        let second = b.pend.lock();
+        let first = a.pend.lock();
+        let _commit = crate::work::unit::commit();
         run(*first, *second)
     }
 }
@@ -111,12 +111,12 @@ pub(super) fn with_tasks_checked<T>(
     let mut guards = Vec::new();
     guards.try_reserve(tasks.len()).map_err(|_| PieFail::OoM)?;
     for (task, _) in tasks {
-        guards.push(task.gate.lock());
+        guards.push(task.pend.lock());
     }
-    let commit = super::commit();
+    let commit = crate::work::unit::commit();
     let valid = tasks
         .iter()
-        .all(|(task, version)| task.gate.version.load(Ordering::Relaxed) == *version)
+        .all(|(task, version)| task.pend.version.load(Ordering::Relaxed) == *version)
         || validate();
     let result = if valid { Ok(run()) } else { Err(PieFail::Busy) };
     drop(commit);
@@ -125,13 +125,13 @@ pub(super) fn with_tasks_checked<T>(
 }
 
 pub(super) fn insert_heir(task: &Task, parent: PieToken, child: Weak<Task>, token: PieToken) {
-    let mut heirs = task.gate.heirs.lock();
+    let mut heirs = task.pend.heirs.lock();
     let at = heirs.partition_point(|(source, _, _)| source.get() <= parent.get());
     heirs.insert(at, (parent, child, token));
 }
 
 pub(super) fn remove_heir(task: &Task, parent: PieToken, token: PieToken) {
-    let mut heirs = task.gate.heirs.lock();
+    let mut heirs = task.pend.heirs.lock();
     let start = heirs.partition_point(|(source, _, _)| source.get() < parent.get());
     if let Some(at) = heirs[start..]
         .iter()
@@ -143,12 +143,12 @@ pub(super) fn remove_heir(task: &Task, parent: PieToken, token: PieToken) {
 }
 
 pub(crate) fn insert(task: &Task, pie: AnyPie) -> Result<(), PieFail> {
-    let closed = task.gate.lock();
-    let _commit = super::commit();
+    let closed = task.pend.lock();
+    let _commit = crate::work::unit::commit();
     if !live(task, *closed) {
         return Err(PieFail::Dead);
     }
-    let mut pies = task.gate.pies.lock();
+    let mut pies = task.pend.pies.lock();
     pies.try_reserve(1).map_err(|_| PieFail::OoM)?;
     pies.push(pie);
     changed(task);

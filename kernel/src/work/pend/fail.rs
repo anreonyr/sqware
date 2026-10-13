@@ -1,10 +1,10 @@
-pub(crate) trait GateFail: env::FailCode {
+pub(crate) trait PendFail: env::FailCode {
     fn denied() -> Self;
     fn dead() -> Self;
     fn handed_over() -> Self;
 }
 
-impl GateFail for env::PieFail {
+impl PendFail for env::PieFail {
     fn denied() -> Self {
         env::PieFail::Denied
     }
@@ -16,7 +16,7 @@ impl GateFail for env::PieFail {
     }
 }
 
-impl GateFail for env::MailFail {
+impl PendFail for env::MailFail {
     fn denied() -> Self {
         env::MailFail::Denied
     }

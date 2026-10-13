@@ -5,7 +5,7 @@ use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieToken, TaskId};
 
-use super::GateFail;
+use super::PendFail;
 
 use crate::work::mail::nole::NoleMeta;
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
@@ -516,13 +516,13 @@ pub(crate) fn try_new_pie<T: PieType>(
 }
 
 pub(crate) fn locate(task: &Task, token: PieToken) -> Option<PieSnapshot> {
-    let pies = task.gate.pies.lock();
+    let pies = task.pend.pies.lock();
     pies.iter()
         .find(|p| p.token() == token)
         .map(|p| p.snapshot())
 }
 
-pub(crate) fn accede<E: GateFail>(
+pub(crate) fn accede<E: PendFail>(
     task: &Arc<Task>,
     token: PieToken,
     need: Need,
@@ -538,8 +538,8 @@ pub(crate) fn accede<E: GateFail>(
 }
 
 pub(crate) fn allows<M: Mail>(task: &Task, resource: &Arc<M>, need: Need) -> bool {
-    let _gate = task.gate.lock();
-    task.gate.pies.lock().iter().any(|pie| {
+    let _pend = task.pend.lock();
+    task.pend.pies.lock().iter().any(|pie| {
         core::ptr::addr_eq(pie.meta() as *const dyn Mail, Arc::as_ptr(resource))
             && pie.alive()
             && pie.heir().is_none()

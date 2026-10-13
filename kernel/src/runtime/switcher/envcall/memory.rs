@@ -38,11 +38,9 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: MemoryCall, ident: &Arc<Ta
 
 fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail> {
     use crate::memory::manager::{Frame, entry::PteFlags};
+    use crate::work::pend::{self, Permission};
     use crate::work::room::scheduler::core::{current, muster};
-    use crate::work::unit::{
-        gate::{self, Permission},
-        space::RegionId,
-    };
+    use crate::work::unit::space::RegionId;
     use alloc::vec::Vec;
     let raw_size = match call {
         MemoryCall::Allocate { size }
@@ -96,7 +94,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
         MemoryCall::Allocate { .. } => {
             let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
             let prepared = caller
-                .gate
+                .pend
                 .creations
                 .prepare()
                 .map_err(|_| MemoryFail::OoM)?;
@@ -126,11 +124,11 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             }
             let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
             let map = caller
-                .gate
+                .pend
                 .creations
                 .locate(KVirt::wrap(addr.get()), size)
                 .ok_or(MemoryFail::Denied)?;
-            let creation = caller.gate.creations.claim(&map).map_err(|error| {
+            let creation = caller.pend.creations.claim(&map).map_err(|error| {
                 if error == env::PieFail::Busy {
                     MemoryFail::Busy
                 } else {
@@ -141,7 +139,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if map.is_live() {
                 space.unmap_range(KVirt::wrap(addr.get()), size)?;
             }
-            caller.gate.creations.forget(&map);
+            caller.pend.creations.forget(&map);
             creation.commit();
             Ok(0)
         }
@@ -160,7 +158,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 None
             } else {
                 let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
-                let pie = gate::locate(caller, pole).ok_or(MemoryFail::Denied)?;
+                let pie = pend::locate(caller, pole).ok_or(MemoryFail::Denied)?;
                 let meta = pie.pole().ok_or(MemoryFail::Denied)?;
                 Some((pie, meta))
             };
@@ -274,7 +272,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         meta: meta.clone(),
                         map: staged_map,
                     });
-                    gate::notify(ident.id, pole);
+                    pend::notify(ident.id, pole);
                 } else if team_id.get() == 0 {
                     if let Err(mapping) = meta.record(pie.token(), space, mapping, None, false) {
                         let _ = space.dispose(mapping);
@@ -288,7 +286,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if team_id.get() == 0 {
                 let ranges = space.tree.ranges()?;
                 if let Some(caller) = &caller {
-                    let pies = caller.gate.pies.lock();
+                    let pies = caller.pend.pies.lock();
                     if ranges
                         .iter()
                         .filter(|(_, range)| {
@@ -322,7 +320,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 space.unmap_range(KVirt::wrap(addr.get()), size)?;
                 meta.detach_staging(token, target.id);
                 target.staged().remove(index);
-                gate::notify(meta.owner(), token);
+                pend::notify(meta.owner(), token);
                 return Ok(0);
             }
             if target.staged_len() != 0

@@ -447,7 +447,7 @@ impl Team {
             let owner = item.meta.owner();
             let token = item.token;
             staged.pop();
-            super::gate::notify(owner, token);
+            crate::work::pend::notify(owner, token);
         }
         Ok(())
     }
@@ -724,7 +724,7 @@ pub(crate) fn spawn(
         builder = builder.stack(stack);
     }
     let result = (|| -> Result<Arc<Task>, UnitFail> {
-        use crate::work::unit::gate::{self, Permission};
+        use crate::work::pend::{self, Permission};
         let mut prepared = builder.prepare().map_err(map_err)?;
         if !first {
             return prepared.publish(|| {}).map_err(map_err);
@@ -749,11 +749,11 @@ pub(crate) fn spawn(
         for item in staged.iter() {
             operations.push(item.meta.operation().ok_or(UnitFail::Busy)?);
         }
-        let closed = caller.gate.lock();
-        if !super::gate::live(caller, ()) {
+        let closed = caller.pend.lock();
+        if !crate::work::pend::live(caller, ()) {
             return Err(UnitFail::Denied);
         }
-        let mut pies = caller.gate.pies.lock();
+        let mut pies = caller.pend.pies.lock();
         for item in staged.iter() {
             let Some(pie) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
@@ -783,7 +783,7 @@ pub(crate) fn spawn(
                     let pie = pies.remove(index);
                     pie.invalidate();
                     caller
-                        .gate
+                        .pend
                         .heirs
                         .lock()
                         .retain(|(parent, _, _)| *parent != item.token);
@@ -791,7 +791,7 @@ pub(crate) fn spawn(
                     item.meta.detach_staging(item.token, target.id);
                     leases.push(item);
                 }
-                gate::changed(caller);
+                pend::changed(caller);
                 target.set_default_entry(entry_va);
                 target.publish_entry(entry_va);
             })
@@ -801,7 +801,7 @@ pub(crate) fn spawn(
         drop(staged);
         drop(operations);
         for pie in &retired {
-            gate::notify(caller.ident.id, pie.token());
+            pend::notify(caller.ident.id, pie.token());
         }
         drop(retired);
         drop(leases);

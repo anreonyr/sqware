@@ -1,4 +1,4 @@
-use crate::gate::{self, AnyPie};
+use crate::pend::{self, AnyPie};
 use crate::work::unit::task::Task;
 use env::{Mark, Permission, PieFail, PieToken};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -41,25 +41,25 @@ unsafe impl GlobalAlloc for Allocator {
 static ALLOCATOR: Allocator = Allocator;
 
 fn root(task: &Arc<Task>, permission: Permission) -> PieToken {
-    let pie = gate::boxed(gate::new_pie::<gate::Nole>(
+    let pie = pend::boxed(pend::new_pie::<pend::Nole>(
         crate::work::mail::nole::NoleMeta::new(task.ident.id),
-        Mark::of("gate-test"),
+        Mark::of("pend-test"),
         permission,
         None,
     )).expect("pie allocation");
     let token = pie.token();
-    gate::insert(task, pie).unwrap();
+    pend::insert(task, pie).unwrap();
     token
 }
 fn rights() -> Permission {
     Permission::FETCH | Permission::STORE | Permission::VEST
 }
 fn grant(task: &Arc<Task>, token: PieToken, target: &Arc<Task>) -> Result<PieToken, PieFail> {
-    gate::accord(task, token, &Arc::downgrade(target), rights(), Mark::NONE).map(PieToken::mint)
+    pend::accord(task, token, &Arc::downgrade(target), rights(), Mark::NONE).map(PieToken::mint)
 }
 fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
     for _ in 0..1000 {
-        match gate::release(task, token) {
+        match pend::release(task, token) {
             Err(PieFail::Busy) => thread::yield_now(),
             result => return result,
         }
@@ -67,11 +67,11 @@ fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
     Err(PieFail::Busy)
 }
 fn check(task: &Arc<Task>) {
-    let edges = task.gate.heirs.lock();
+    let edges = task.pend.heirs.lock();
     for (parent, child, token) in edges.iter() {
-        assert!(gate::locate(task, *parent).is_some());
+        assert!(pend::locate(task, *parent).is_some());
         let child = child.upgrade().expect("live child");
-        let pie = gate::locate(&child, *token).expect("indexed child");
+        let pie = pend::locate(&child, *token).expect("indexed child");
         assert_eq!(pie.sire(), Some(*parent));
         assert!(pie.lord().ptr_eq(&Arc::downgrade(task)));
     }
@@ -88,8 +88,8 @@ fn source_is_found_without_registering_any_task() {
     let b = Task::new();
     let token = root(&a, rights());
     let child = grant(&a, token, &b).unwrap();
-    assert_eq!(gate::vestor(&b, child), Some(a.ident.id));
-    assert_eq!(gate::vestor(&a, token), None);
+    assert_eq!(pend::vestor(&b, child), Some(a.ident.id));
+    assert_eq!(pend::vestor(&a, token), None);
     check(&a);
     check(&b);
 }
@@ -98,10 +98,10 @@ fn self_transfer_and_release_do_not_lock_twice() {
     let task = Task::new();
     let token = root(&task, rights());
     let child = grant(&task, token, &task).unwrap();
-    assert_eq!(gate::vestor(&task, child), Some(task.ident.id));
+    assert_eq!(pend::vestor(&task, child), Some(task.ident.id));
     assert_eq!(release(&task, token), Ok(2));
-    assert!(task.gate.pies.lock().is_empty());
-    assert!(task.gate.heirs.lock().is_empty());
+    assert!(task.pend.pies.lock().is_empty());
+    assert!(task.pend.heirs.lock().is_empty());
 }
 #[test]
 fn siblings_and_descendants_are_removed_but_unrelated_roots_survive() {
@@ -116,9 +116,9 @@ fn siblings_and_descendants_are_removed_but_unrelated_roots_survive() {
     let bd = grant(&b, ab, &d).unwrap();
     assert_eq!(release(&a, token), Ok(4));
     for (task, token) in [(&b, ab), (&c, ac), (&d, bd)] {
-        assert!(gate::locate(task, token).is_none());
+        assert!(pend::locate(task, token).is_none());
     }
-    assert!(gate::locate(&b, other).is_some());
+    assert!(pend::locate(&b, other).is_some());
     for task in [&a, &b, &c, &d] {
         check(task);
     }
@@ -131,10 +131,10 @@ fn unrelated_task_cannot_revoke_a_child() {
     let token = root(&a, rights());
     let child = grant(&a, token, &b).unwrap();
     assert_eq!(
-        gate::revoke(&other, &Arc::downgrade(&b), child),
+        pend::revoke(&other, &Arc::downgrade(&b), child),
         Err(PieFail::Denied)
     );
-    assert!(gate::locate(&b, child).is_some());
+    assert!(pend::locate(&b, child).is_some());
     check(&a);
 }
 #[test]
@@ -147,16 +147,16 @@ fn forget_updates_parent_task_and_transfer_records() {
     let ab = grant(&a, token, &b).unwrap();
     let bc = grant(&b, ab, &c).unwrap();
     let cd = grant(&c, bc, &d).unwrap();
-    gate::forget(&b, ab).unwrap();
-    assert_eq!(gate::vestor(&c, bc), Some(a.ident.id));
-    assert_eq!(gate::vestor(&d, cd), Some(c.ident.id));
-    assert!(gate::locate(&b, ab).is_none());
+    pend::forget(&b, ab).unwrap();
+    assert_eq!(pend::vestor(&c, bc), Some(a.ident.id));
+    assert_eq!(pend::vestor(&d, cd), Some(c.ident.id));
+    assert!(pend::locate(&b, ab).is_none());
     for task in [&a, &b, &c, &d] {
         check(task);
     }
     assert_eq!(release(&a, token), Ok(3));
-    assert!(c.gate.pies.lock().is_empty());
-    assert!(d.gate.pies.lock().is_empty());
+    assert!(c.pend.pies.lock().is_empty());
+    assert!(d.pend.pies.lock().is_empty());
 }
 #[test]
 fn forget_handles_a_child_in_the_same_task() {
@@ -164,8 +164,8 @@ fn forget_handles_a_child_in_the_same_task() {
     let token = root(&task, rights());
     let child = grant(&task, token, &task).unwrap();
     let grandchild = grant(&task, child, &task).unwrap();
-    gate::forget(&task, child).unwrap();
-    assert_eq!(gate::locate(&task, grandchild).unwrap().sire(), Some(token));
+    pend::forget(&task, child).unwrap();
+    assert_eq!(pend::locate(&task, grandchild).unwrap().sire(), Some(token));
     check(&task);
     assert_eq!(release(&task, token), Ok(2));
 }
@@ -176,37 +176,37 @@ fn revocation_restores_exclusive_parent_and_stale_clear_cannot_erase_new_heir() 
     let permission = rights() | Permission::ONLY;
     let token = root(&a, permission);
     let first = PieToken::mint(
-        gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap(),
+        pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap(),
     );
-    let old = gate::locate(&a, token).unwrap().heir().copied().unwrap();
+    let old = pend::locate(&a, token).unwrap().heir().copied().unwrap();
     assert_eq!(
-        gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE),
+        pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE),
         Err(PieFail::HandedOver)
     );
-    gate::revoke(&a, &Arc::downgrade(&b), first).unwrap();
+    pend::revoke(&a, &Arc::downgrade(&b), first).unwrap();
     let next = PieToken::mint(
-        gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap(),
+        pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap(),
     );
-    assert!(!gate::clear_heir(&a, token, old));
-    assert_eq!(gate::locate(&a, token).unwrap().heir().unwrap().token, next);
+    assert!(!pend::clear_heir(&a, token, old));
+    assert_eq!(pend::locate(&a, token).unwrap().heir().unwrap().token, next);
     check(&a);
 }
 #[test]
 fn changed_version_prevents_any_commit() {
     let a = Task::new();
     let token = root(&a, rights());
-    let version = a.gate.version.load(Ordering::Relaxed);
+    let version = a.pend.version.load(Ordering::Relaxed);
     let tasks = vec![(a.clone(), version)];
     root(&a, rights());
     let mut called = false;
     assert_eq!(
-        gate::with_tasks(&tasks, || {
+        pend::with_tasks(&tasks, || {
             called = true;
         }),
         Err(PieFail::Busy)
     );
     assert!(!called);
-    assert!(gate::locate(&a, token).is_some());
+    assert!(pend::locate(&a, token).is_some());
 }
 #[test]
 fn allocation_failure_leaves_both_transfer_records_unchanged() {
@@ -216,12 +216,12 @@ fn allocation_failure_leaves_both_transfer_records_unchanged() {
         let permission = rights() | Permission::ONLY;
         let token = root(&a, permission);
         FAIL.with(|count| count.set(Some(successful_allocations)));
-        let result = gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
+        let result = pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
         FAIL.with(|count| count.set(None));
         assert_eq!(result, Err(PieFail::OoM));
-        assert!(a.gate.heirs.lock().is_empty());
-        assert!(b.gate.pies.lock().is_empty());
-        assert!(gate::locate(&a, token).unwrap().heir().is_none());
+        assert!(a.pend.heirs.lock().is_empty());
+        assert!(b.pend.pies.lock().is_empty());
+        assert!(pend::locate(&a, token).unwrap().heir().is_none());
     }
 }
 #[test]
@@ -231,19 +231,19 @@ fn allocation_failure_during_revoke_preserves_authority_and_records() {
     let token = root(&a, rights());
     let child = grant(&a, token, &b).unwrap();
     FAIL.with(|count| count.set(Some(0)));
-    let result = gate::revoke(&a, &Arc::downgrade(&b), child);
+    let result = pend::revoke(&a, &Arc::downgrade(&b), child);
     FAIL.with(|count| count.set(None));
     assert_eq!(result, Err(PieFail::OoM));
-    assert!(gate::locate(&b, child).is_some());
+    assert!(pend::locate(&b, child).is_some());
     check(&a);
 }
 #[test]
-fn independent_transfer_progresses_while_another_task_gate_is_held() {
+fn independent_transfer_progresses_while_another_task_pend_is_held() {
     let unrelated = Task::new();
     let a = Task::new();
     let b = Task::new();
     let token = root(&a, rights());
-    let guard = unrelated.gate.lock();
+    let guard = unrelated.pend.lock();
     let (send, receive) = std::sync::mpsc::channel();
     let raw = token.get();
     let worker = thread::spawn(move || {
@@ -275,8 +275,8 @@ fn opposite_transfers_complete_without_deadlock() {
     });
     check(&a);
     check(&b);
-    assert!(a.gate.heirs.lock().is_empty());
-    assert!(b.gate.heirs.lock().is_empty());
+    assert!(a.pend.heirs.lock().is_empty());
+    assert!(b.pend.heirs.lock().is_empty());
 }
 #[test]
 fn concurrent_transfer_and_revoke_cannot_leave_a_descendant() {
@@ -302,8 +302,8 @@ fn concurrent_transfer_and_revoke_cannot_leave_a_descendant() {
             barrier.wait();
             assert!(release(&b, ab).is_ok());
         });
-        assert!(b.gate.pies.lock().is_empty());
-        assert!(c.gate.pies.lock().is_empty());
+        assert!(b.pend.pies.lock().is_empty());
+        assert!(c.pend.pies.lock().is_empty());
         check(&a);
         check(&b);
         check(&c);
@@ -325,7 +325,7 @@ fn concurrent_forget_and_revoke_cannot_leave_a_reparented_child() {
             let raw = ab.get();
             scope.spawn(move || {
                 barrier2.wait();
-                match gate::forget(&b2, PieToken::mint(raw)) {
+                match pend::forget(&b2, PieToken::mint(raw)) {
                     Ok(()) | Err(PieFail::Denied | PieFail::Busy) => (),
                     result => panic!("{result:?}"),
                 }
@@ -334,8 +334,8 @@ fn concurrent_forget_and_revoke_cannot_leave_a_reparented_child() {
             assert!(release(&a, token).is_ok());
         });
         for task in [&a, &b, &c] {
-            assert!(task.gate.pies.lock().is_empty());
-            assert!(task.gate.heirs.lock().is_empty());
+            assert!(task.pend.pies.lock().is_empty());
+            assert!(task.pend.heirs.lock().is_empty());
         }
     }
 }
@@ -349,7 +349,7 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
         let ab = grant(&a, token, &b).unwrap();
         grant(&b, ab, &c).unwrap();
         let own = root(&b, rights());
-        let meta = gate::locate(&b, own).unwrap().nole().unwrap();
+        let meta = pend::locate(&b, own).unwrap().nole().unwrap();
         let barrier = Arc::new(Barrier::new(2));
         thread::scope(|scope| {
             let barrier2 = barrier.clone();
@@ -362,14 +362,14 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
             });
             barrier.wait();
             { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
-            gate::doom(&b);
+            pend::doom(&b);
         });
         assert!(!meta.alive());
-        assert!(b.gate.pies.lock().is_empty());
-        assert!(c.gate.pies.lock().is_empty());
+        assert!(b.pend.pies.lock().is_empty());
+        assert!(c.pend.pies.lock().is_empty());
         assert_eq!(grant(&a, token, &b), Err(PieFail::Dead));
         check(&a);
-        assert!(a.gate.heirs.lock().is_empty());
+        assert!(a.pend.heirs.lock().is_empty());
     }
 }
 #[test]
@@ -381,8 +381,8 @@ fn large_revoke_involves_only_actual_descendants() {
         grant(&a, token, child).unwrap();
     }
     assert_eq!(release(&a, token), Ok(65));
-    assert!(a.gate.heirs.lock().is_empty());
-    assert!(children.iter().all(|child| child.gate.pies.lock().is_empty()));
+    assert!(a.pend.heirs.lock().is_empty());
+    assert!(children.iter().all(|child| child.pend.pies.lock().is_empty()));
 }
 
 #[test]
@@ -391,10 +391,10 @@ fn clear_heir_rechecks_that_the_recipient_still_has_the_capability() {
     let b = Task::new();
     let permission = rights() | Permission::ONLY;
     let token = root(&a, permission);
-    gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap();
-    let observed = gate::locate(&a, token).unwrap().heir().copied().unwrap();
-    assert!(!gate::clear_heir(&a, token, observed));
-    assert_eq!(gate::locate(&a, token).unwrap().heir(), Some(&observed));
+    pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE).unwrap();
+    let observed = pend::locate(&a, token).unwrap().heir().copied().unwrap();
+    assert!(!pend::clear_heir(&a, token, observed));
+    assert_eq!(pend::locate(&a, token).unwrap().heir(), Some(&observed));
     check(&a);
 }
 
@@ -411,12 +411,12 @@ fn allocation_failure_during_forget_keeps_every_child_attached_to_its_parent() {
             .map(|child| grant(&b, ab, child).unwrap())
             .collect();
         FAIL.with(|count| count.set(Some(successful_allocations)));
-        let result = gate::forget(&b, ab);
+        let result = pend::forget(&b, ab);
         FAIL.with(|count| count.set(None));
         assert_eq!(result, Err(PieFail::OoM));
-        assert!(gate::locate(&b, ab).is_some());
+        assert!(pend::locate(&b, ab).is_some());
         for (child, token) in children.iter().zip(tokens) {
-            assert_eq!(gate::vestor(child, token), Some(b.ident.id));
+            assert_eq!(pend::vestor(child, token), Some(b.ident.id));
         }
         check(&a);
         check(&b);
@@ -429,17 +429,17 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let b = Task::new();
     let c = Task::new();
     let meta = crate::work::mail::pole::PoleMeta::new(a.ident.id);
-    let pie = gate::boxed(gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, rights(), None).unwrap()).expect("pie allocation");
+    let pie = pend::boxed(pend::try_new_pie::<pend::Pole>(meta.clone(), Mark::NONE, rights(), None).unwrap()).expect("pie allocation");
     let token = pie.token();
-    gate::insert(&a, pie).unwrap();
+    pend::insert(&a, pie).unwrap();
     let ab = grant(&a, token, &b).unwrap();
     grant(&b, ab, &c).unwrap();
     let _operation = meta.operation().unwrap();
     { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
-    gate::doom(&b);
-    assert!(b.gate.pies.lock().is_empty());
-    assert!(c.gate.pies.lock().is_empty());
-    assert!(a.gate.heirs.lock().is_empty());
+    pend::doom(&b);
+    assert!(b.pend.pies.lock().is_empty());
+    assert!(c.pend.pies.lock().is_empty());
+    assert!(a.pend.heirs.lock().is_empty());
 }
 
 #[test]
@@ -455,14 +455,14 @@ fn unrelated_version_changes_do_not_block_release_or_revoke() {
         let a2 = a.clone();
         let raw = unrelated.get();
         crate::lock::before_locking(move || {
-            gate::reduce(&a2, PieToken::mint(raw), Permission::FETCH).unwrap();
+            pend::reduce(&a2, PieToken::mint(raw), Permission::FETCH).unwrap();
         });
-        let result = if revoke { gate::revoke(&a, &Arc::downgrade(&b), ab) }
-            else { gate::release(&b, ab) };
+        let result = if revoke { pend::revoke(&a, &Arc::downgrade(&b), ab) }
+            else { pend::release(&b, ab) };
         assert_eq!(result, Ok(65));
-        assert!(a.gate.heirs.lock().is_empty());
-        assert!(b.gate.pies.lock().is_empty());
-        assert!(children.iter().all(|child| child.gate.pies.lock().is_empty()));
+        assert!(a.pend.heirs.lock().is_empty());
+        assert!(b.pend.pies.lock().is_empty());
+        assert!(children.iter().all(|child| child.pend.pies.lock().is_empty()));
     }
 }
 
@@ -477,9 +477,9 @@ fn new_descendant_between_collection_and_locking_requires_recollection() {
     let c2 = c.clone();
     let raw = ab.get();
     crate::lock::before_locking(move || { grant(&b2, PieToken::mint(raw), &c2).unwrap(); });
-    assert_eq!(gate::release(&b, ab), Ok(2));
-    assert!(b.gate.pies.lock().is_empty());
-    assert!(c.gate.pies.lock().is_empty());
+    assert_eq!(pend::release(&b, ab), Ok(2));
+    assert!(b.pend.pies.lock().is_empty());
+    assert!(c.pend.pies.lock().is_empty());
     check(&a);
 }
 
@@ -493,12 +493,12 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
     let ab = grant(&a, za, &b).unwrap();
     let a2 = a.clone();
     let raw = za.get();
-    crate::lock::before_locking(move || { gate::forget(&a2, PieToken::mint(raw)).unwrap(); });
-    assert_eq!(gate::release(&b, ab), Ok(1));
-    assert!(z.gate.heirs.lock().is_empty());
-    assert!(a.gate.pies.lock().is_empty());
-    assert!(b.gate.pies.lock().is_empty());
-    assert!(gate::locate(&z, token).is_some());
+    crate::lock::before_locking(move || { pend::forget(&a2, PieToken::mint(raw)).unwrap(); });
+    assert_eq!(pend::release(&b, ab), Ok(1));
+    assert!(z.pend.heirs.lock().is_empty());
+    assert!(a.pend.pies.lock().is_empty());
+    assert!(b.pend.pies.lock().is_empty());
+    assert!(pend::locate(&z, token).is_some());
 }
 
 #[test]
@@ -685,8 +685,8 @@ fn locating_and_accessing_snapshots_do_not_allocate() {
     let task = Task::new();
     let token = root(&task, rights());
     FAIL.with(|count| count.set(Some(0)));
-    let first = gate::locate(&task, token).unwrap();
-    let second = gate::locate(&task, token).unwrap();
+    let first = pend::locate(&task, token).unwrap();
+    let second = pend::locate(&task, token).unwrap();
     let meta = first.nole().unwrap();
     let same = first.same(&second);
     let unspent = FAIL.with(|count| count.replace(None));
@@ -704,19 +704,19 @@ fn erased_resources_keep_their_type_identity_across_grants() {
     let a = Task::new();
     let b = Task::new();
     let entries = [
-        gate::boxed(gate::new_pie::<gate::Hole>(HoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        gate::boxed(gate::new_pie::<gate::Pole>(PoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        gate::boxed(gate::new_pie::<gate::Nole>(NoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        gate::boxed(gate::new_pie::<gate::Tole>(ToleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        pend::boxed(pend::new_pie::<pend::Hole>(HoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        pend::boxed(pend::new_pie::<pend::Pole>(PoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        pend::boxed(pend::new_pie::<pend::Nole>(NoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        pend::boxed(pend::new_pie::<pend::Tole>(ToleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
     ];
     let mut previous = None;
     for entry in entries {
         let kind = entry.kind();
         let token = entry.token();
-        gate::insert(&a, entry).unwrap();
+        pend::insert(&a, entry).unwrap();
         let child = grant(&a, token, &b).unwrap();
-        let source = gate::locate(&a, token).unwrap();
-        let granted = gate::locate(&b, child).unwrap();
+        let source = pend::locate(&a, token).unwrap();
+        let granted = pend::locate(&b, child).unwrap();
         assert_eq!(source.kind(), kind);
         assert_eq!(granted.kind(), kind);
         assert!(source.same(&granted));
@@ -735,19 +735,19 @@ fn granted_references_keep_independent_permissions_and_relations() {
     let c = Task::new();
     let token = root(&a, rights());
     let badge = Mark::of("recipient");
-    let child = PieToken::mint(gate::accord(&a, token, &Arc::downgrade(&b), rights(), badge).unwrap());
+    let child = PieToken::mint(pend::accord(&a, token, &Arc::downgrade(&b), rights(), badge).unwrap());
     let descendant = grant(&b, child, &c).unwrap();
-    gate::reduce(&b, child, Permission::FETCH).unwrap();
-    assert_eq!(gate::locate(&a, token).unwrap().permission(), rights());
-    assert_eq!(gate::locate(&b, child).unwrap().permission(), Permission::FETCH);
-    assert_eq!(gate::locate(&c, descendant).unwrap().permission(), rights());
-    assert_eq!(gate::locate(&b, child).unwrap().mark(), badge);
-    assert_eq!(gate::locate(&a, token).unwrap().mark(), Mark::of("gate-test"));
-    assert_eq!(gate::vestor(&b, child), Some(a.ident.id));
-    gate::forget(&b, child).unwrap();
-    assert_eq!(gate::vestor(&c, descendant), Some(a.ident.id));
-    assert!(gate::locate(&a, token).unwrap().sire().is_none());
-    assert_eq!(gate::locate(&c, descendant).unwrap().sire(), Some(token));
+    pend::reduce(&b, child, Permission::FETCH).unwrap();
+    assert_eq!(pend::locate(&a, token).unwrap().permission(), rights());
+    assert_eq!(pend::locate(&b, child).unwrap().permission(), Permission::FETCH);
+    assert_eq!(pend::locate(&c, descendant).unwrap().permission(), rights());
+    assert_eq!(pend::locate(&b, child).unwrap().mark(), badge);
+    assert_eq!(pend::locate(&a, token).unwrap().mark(), Mark::of("pend-test"));
+    assert_eq!(pend::vestor(&b, child), Some(a.ident.id));
+    pend::forget(&b, child).unwrap();
+    assert_eq!(pend::vestor(&c, descendant), Some(a.ident.id));
+    assert!(pend::locate(&a, token).unwrap().sire().is_none());
+    assert_eq!(pend::locate(&c, descendant).unwrap().sire(), Some(token));
     check(&a);
     check(&b);
     check(&c);
@@ -758,19 +758,19 @@ fn memory_snapshots_observe_permission_reduction_and_revocation() {
     let a = Task::new();
     let b = Task::new();
     let meta = crate::work::mail::PoleMeta::new(a.ident.id);
-    let entry = gate::boxed(gate::new_pie::<gate::Pole>(meta.clone(), Mark::NONE, rights(), None)).unwrap();
+    let entry = pend::boxed(pend::new_pie::<pend::Pole>(meta.clone(), Mark::NONE, rights(), None)).unwrap();
     let token = entry.token();
-    gate::insert(&a, entry).unwrap();
+    pend::insert(&a, entry).unwrap();
     let child = grant(&a, token, &b).unwrap();
-    let retained = gate::locate(&b, child).unwrap();
+    let retained = pend::locate(&b, child).unwrap();
     let retained_copy = retained.clone();
     assert!(Arc::ptr_eq(retained.authority(), retained_copy.authority()));
-    gate::reduce(&b, child, Permission::FETCH).unwrap();
+    pend::reduce(&b, child, Permission::FETCH).unwrap();
     assert_eq!(retained.permission(), Permission::FETCH);
     assert_eq!(retained_copy.permission(), Permission::FETCH);
-    assert_eq!(gate::locate(&a, token).unwrap().permission(), rights());
-    gate::revoke(&a, &Arc::downgrade(&b), child).unwrap();
-    assert!(gate::locate(&b, child).is_none());
+    assert_eq!(pend::locate(&a, token).unwrap().permission(), rights());
+    pend::revoke(&a, &Arc::downgrade(&b), child).unwrap();
+    assert!(pend::locate(&b, child).is_none());
     assert!(retained.permission().is_empty());
     assert!(retained_copy.permission().is_empty());
     assert!(!retained.alive());
@@ -783,17 +783,17 @@ fn box_allocation_failure_does_not_publish_an_exclusive_grant() {
     let b = Task::new();
     let permission = rights() | Permission::ONLY;
     let token = root(&a, permission);
-    let before_a = a.gate.version.load(Ordering::Relaxed);
-    let before_b = b.gate.version.load(Ordering::Relaxed);
+    let before_a = a.pend.version.load(Ordering::Relaxed);
+    let before_b = b.pend.version.load(Ordering::Relaxed);
     FAIL.with(|count| count.set(Some(0)));
-    let result = gate::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
+    let result = pend::accord(&a, token, &Arc::downgrade(&b), permission, Mark::NONE);
     FAIL.with(|count| count.set(None));
     assert_eq!(result, Err(PieFail::OoM));
-    assert!(gate::locate(&a, token).unwrap().heir().is_none());
-    assert!(a.gate.heirs.lock().is_empty());
-    assert!(b.gate.pies.lock().is_empty());
-    assert_eq!(a.gate.version.load(Ordering::Relaxed), before_a);
-    assert_eq!(b.gate.version.load(Ordering::Relaxed), before_b);
+    assert!(pend::locate(&a, token).unwrap().heir().is_none());
+    assert!(a.pend.heirs.lock().is_empty());
+    assert!(b.pend.pies.lock().is_empty());
+    assert_eq!(a.pend.version.load(Ordering::Relaxed), before_a);
+    assert_eq!(b.pend.version.load(Ordering::Relaxed), before_b);
     check(&a);
     check(&b);
 }

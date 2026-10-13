@@ -1,7 +1,10 @@
 use crate::lock::{Level, SpinLock};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::join::{JoinTarget, JoinWait};
-use crate::work::unit::{gate, life::Life, task::Task};
+use crate::work::{
+    pend,
+    unit::{life::Life, task::Task},
+};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -108,11 +111,11 @@ impl Cell {
                     unreachable!()
                 };
                 let need = if matches!(condition, MailCondition::Pull | MailCondition::Signal(_)) {
-                    gate::Need::Fetch
+                    pend::Need::Fetch
                 } else {
-                    gate::Need::Store
+                    pend::Need::Store
                 };
-                let snapshot = match gate::accede::<MailFail>(actor, pie, need) {
+                let snapshot = match pend::accede::<MailFail>(actor, pie, need) {
                     Ok(p) => p,
                     Err(e) => return Some(Some(e)),
                 };
@@ -157,7 +160,7 @@ impl Cell {
                 let Some(holder) = holder.upgrade() else {
                     return Some(Some(MailFail::Denied));
                 };
-                let Some(pie) = gate::locate(&holder, token) else {
+                let Some(pie) = pend::locate(&holder, token) else {
                     return Some(Some(MailFail::Denied));
                 };
                 if !pie.alive() {
@@ -171,7 +174,7 @@ impl Cell {
                         return Some(Some(MailFail::Denied));
                     };
                     if lord.ident.id != actor.ident.id
-                        || gate::locate(&lord, *parent_token).is_none()
+                        || pend::locate(&lord, *parent_token).is_none()
                         || pie.sire() != Some(*parent_token)
                         || !pie.lord().ptr_eq(&Arc::downgrade(&lord))
                     {
@@ -360,7 +363,7 @@ impl AwaitWait {
     }
     pub fn poll(&self) -> Result<AwaitReply, MailFail> {
         let actor = self.actor.upgrade().ok_or(MailFail::Denied)?;
-        let pie = gate::accede::<MailFail>(&actor, self.token, gate::Need::Fetch)?;
+        let pie = pend::accede::<MailFail>(&actor, self.token, pend::Need::Fetch)?;
         crate::runtime::switcher::envcall::pie::observe(&pie)?;
         self.group.poll(&actor)
     }

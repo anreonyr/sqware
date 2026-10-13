@@ -2,12 +2,10 @@ use super::mail::Outcome;
 use super::pie::observe;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::tole::{self, AwaitWait, Cell, Member};
+use crate::work::pend::{self, Need};
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::room::scheduler::core::{current, muster};
-use crate::work::unit::{
-    gate::{self, Need},
-    task::{Task, TaskIdent},
-};
+use crate::work::unit::task::{Task, TaskIdent};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use env::{MailCall, MailCondition, MailFail, Source};
@@ -28,7 +26,7 @@ pub(crate) fn dispatch(
         MailCall::Attach { tole, source } => {
             let result = (|| {
                 let _commit = crate::work::unit::commit();
-                let pie = gate::accede::<MailFail>(&task, tole, Need::Store)?;
+                let pie = pend::accede::<MailFail>(&task, tole, Need::Store)?;
                 observe(&pie)?;
                 let group = pie.tole().ok_or(MailFail::Denied)?;
                 tole::attach(&group, cell(&task, source)?)
@@ -39,7 +37,7 @@ pub(crate) fn dispatch(
         MailCall::Detach { tole, source } => {
             let result = (|| {
                 let _commit = crate::work::unit::commit();
-                let pie = gate::accede::<MailFail>(&task, tole, Need::Store)?;
+                let pie = pend::accede::<MailFail>(&task, tole, Need::Store)?;
                 observe(&pie)?;
                 {
                     let group = pie.tole().ok_or(MailFail::Denied)?;
@@ -51,7 +49,7 @@ pub(crate) fn dispatch(
         }
         MailCall::Await { tole, millis } => {
             let result = (|| {
-                let pie = gate::accede::<MailFail>(&task, tole, Need::Fetch)?;
+                let pie = pend::accede::<MailFail>(&task, tole, Need::Fetch)?;
                 observe(&pie)?;
                 let group = pie.tole().ok_or(MailFail::Denied)?;
                 messenger::mail_await(AwaitWait::new(group, tole, &task, millis))
@@ -79,7 +77,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
             } else {
                 Need::Store
             };
-            let pie = gate::accede::<MailFail>(actor, token, need)?;
+            let pie = pend::accede::<MailFail>(actor, token, need)?;
             observe(&pie)?;
             let (key, life) = if let Some(meta) = pie.hole() {
                 if matches!(condition, MailCondition::Signal(_)) {
@@ -122,7 +120,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
             let holder = muster(id)
                 .and_then(|t| t.upgrade())
                 .ok_or(MailFail::Denied)?;
-            let pie = gate::locate(&holder, token).ok_or(MailFail::Denied)?;
+            let pie = pend::locate(&holder, token).ok_or(MailFail::Denied)?;
             if !pie.alive() {
                 return Err(MailFail::Dead);
             }
@@ -131,7 +129,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
             } else {
                 let parent = pie.sire().ok_or(MailFail::Denied)?;
                 if !pie.lord().ptr_eq(&Arc::downgrade(actor))
-                    || gate::locate(actor, parent).is_none()
+                    || pend::locate(actor, parent).is_none()
                 {
                     return Err(MailFail::Denied);
                 }

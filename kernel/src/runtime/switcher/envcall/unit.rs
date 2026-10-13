@@ -93,10 +93,10 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
         }
         UnitCall::Build { kind, sire } => {
             if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor()
-                || !crate::work::unit::gate::allows(
+                || !crate::work::pend::allows(
                     &me,
                     &super::resources::get().build,
-                    crate::work::unit::gate::Need::Fetch,
+                    crate::work::pend::Need::Fetch,
                 )
             {
                 return Outcome::fail(frame, UnitFail::Denied);
