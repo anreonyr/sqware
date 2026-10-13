@@ -26,6 +26,7 @@ impl Frame {
         self.page.get() as usize
     }
 
+    #[cfg(debug_assertions)]
     pub fn as_ptr(&self) -> *const u8 {
         self.page.get().cast()
     }

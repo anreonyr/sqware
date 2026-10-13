@@ -3,47 +3,57 @@ mod handoff;
 mod reap;
 mod wait;
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 use reap::HUSKS;
 use wait::holder::{holders, void};
 use wait::site::{SITE_SHARDS, prune, shard_at};
 
-static EXIT_REASON: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
-    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
+struct ExitNote {
+    reason: AtomicUsize,
+    va: AtomicUsize,
+    len: AtomicUsize,
+}
+
+impl ExitNote {
+    const fn new() -> Self {
+        Self {
+            reason: AtomicUsize::new(0),
+            va: AtomicUsize::new(0),
+            len: AtomicUsize::new(0),
+        }
+    }
+}
+
+static EXIT: [ExitNote; crate::layout::MAX_HART_SLOTS] =
+    [const { ExitNote::new() }; crate::layout::MAX_HART_SLOTS];
+
+fn slot() -> usize {
+    crate::hart::hart_id()
+        .get()
+        .min(crate::layout::MAX_HART_SLOTS - 1)
+}
 
 pub(crate) fn set_exit_reason(reason: usize) {
-    let slot = crate::hart::hart_id()
-        .get()
-        .min(crate::layout::MAX_HART_SLOTS - 1);
-    EXIT_REASON[slot].store(reason, core::sync::atomic::Ordering::Relaxed);
+    EXIT[slot()].reason.store(reason, Ordering::Relaxed);
 }
 
 fn take_exit_reason() -> usize {
-    let slot = crate::hart::hart_id()
-        .get()
-        .min(crate::layout::MAX_HART_SLOTS - 1);
-    EXIT_REASON[slot].swap(0, core::sync::atomic::Ordering::Relaxed)
+    EXIT[slot()].reason.swap(0, Ordering::Relaxed)
 }
 
-static EXIT_NOTE: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
-    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
-static EXIT_NOTE_LEN: [core::sync::atomic::AtomicUsize; crate::layout::MAX_HART_SLOTS] =
-    [const { core::sync::atomic::AtomicUsize::new(0) }; crate::layout::MAX_HART_SLOTS];
-
 pub(crate) fn set_exit_note(va: usize, len: usize) {
-    let slot = crate::hart::hart_id()
-        .get()
-        .min(crate::layout::MAX_HART_SLOTS - 1);
-    EXIT_NOTE[slot].store(va, core::sync::atomic::Ordering::Relaxed);
-    EXIT_NOTE_LEN[slot].store(len, core::sync::atomic::Ordering::Relaxed);
+    let note = &EXIT[slot()];
+    note.va.store(va, Ordering::Relaxed);
+    note.len.store(len, Ordering::Relaxed);
 }
 
 fn take_exit_note() -> (usize, usize) {
-    let slot = crate::hart::hart_id()
-        .get()
-        .min(crate::layout::MAX_HART_SLOTS - 1);
-    let va = EXIT_NOTE[slot].swap(0, core::sync::atomic::Ordering::Relaxed);
-    let len = EXIT_NOTE_LEN[slot].swap(0, core::sync::atomic::Ordering::Relaxed);
-    (va, len)
+    let note = &EXIT[slot()];
+    (
+        note.va.swap(0, Ordering::Relaxed),
+        note.len.swap(0, Ordering::Relaxed),
+    )
 }
 
 pub(crate) use env::EXIT_FAULT;
@@ -52,7 +62,7 @@ pub(crate) const EXIT_DOOM: usize = 0xFFFF_FFFE;
 
 pub(crate) const EXIT_CASCADE: usize = 0xFFFF_FFFD;
 
-pub(crate) use doom::{branch_stats, cull, doom, slay, sweep_doomed, take_doomed};
+pub(crate) use doom::{branch_stats, cull, doom, slay, take_doomed};
 pub(crate) use handoff::Handoff;
 pub(crate) use reap::{hook, quit};
 pub(crate) use wait::holder::Ticket;
@@ -73,7 +83,6 @@ pub(crate) fn rip() {
     let husks_out = HUSKS.lock().take();
     drop(husks_out);
     holders().lock().clear();
-    doom::rip();
 }
 
 #[cfg(debug_assertions)]

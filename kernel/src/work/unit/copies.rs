@@ -24,11 +24,11 @@ static SLOT_HART: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 static SLOT_ORIGIN: [AtomicUsize; SLOTS] = [const { AtomicUsize::new(0) }; SLOTS];
 
 #[cfg(debug_assertions)]
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 #[cfg(debug_assertions)]
 pub(crate) fn register(origin: Origin) -> usize {
-    let id = NEXT_ID.fetch_add(1, Relaxed);
+    let id = NEXT.fetch_add(1, Relaxed);
     let hart = crate::hart::hart_id().get();
     for i in 0..SLOTS {
         if SLOT_ID[i].compare_exchange(0, id, Relaxed, Relaxed).is_ok() {

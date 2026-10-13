@@ -14,13 +14,11 @@ mod pie;
 pub(crate) use allocation::CreationRegistry;
 
 #[cfg(debug_assertions)]
-pub(crate) use pie::form_ok;
+pub(crate) use crate::work::grant::form_ok;
 pub(crate) use pie::{Need, Permission, Pie, PieSnapshot, accede, allows, locate, vestor};
 
 pub(crate) use accord::{accord, clear_heir};
 pub(crate) use cull::{doom, release, revoke};
-#[cfg(debug_assertions)]
-pub(crate) use narrow::narrow;
 pub(crate) use narrow::reduce;
 
 pub(super) const RETRIES: usize = 8;

@@ -94,7 +94,7 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
 }
 
 pub(crate) fn usable(pie: &PieSnapshot) -> Result<(), env::PieFail> {
-    if let Some(p) = pie.pole() {
+    if let Some(p) = pie.mail().pole() {
         if p.reserved() != 0 {
             return Err(env::PieFail::HandedOver);
         }
@@ -120,15 +120,15 @@ fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outco
         if !limits.valid() {
             return Err(PieFail::Denied);
         }
-        let meta =
-            mail::hole::try_meta_with_limits(task.ident.id, limits).map_err(|_| PieFail::OoM)?;
+        let meta = mail::hole::HoleMeta::try_new_with_limits(task.ident.id, limits)
+            .map_err(|_| PieFail::OoM)?;
         let pie = pend::Pie::try_new(
             Mail::Hole(meta),
             mark,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         )?;
-        let token = pie.token;
+        let token = pie.token();
         pend::insert(&task, pie)?;
         Ok(token.get())
     })();
@@ -146,7 +146,7 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
         )?;
-        let token = pie.token;
+        let token = pie.token();
         pend::insert(&task, pie)?;
         Ok(token.get())
     })();
@@ -198,7 +198,7 @@ pub(crate) fn create_pole(
         permission |= Permission::ONLY;
     }
     let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)?;
-    let token = pie.token;
+    let token = pie.token();
     pole_checkpoint(3)?;
     pend::insert(task, pie)?;
     meta.commit_source();
@@ -231,7 +231,7 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
     let r = (|| {
         let pie = looked?;
         usable(&pie)?;
-        let p = pie.pole().ok_or(PieFail::Denied)?;
+        let p = pie.mail().pole().ok_or(PieFail::Denied)?;
         let flags = subset_to_pte(pie.permission())?;
         mail::pole::open(
             &p,
@@ -253,7 +253,7 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
             return Err(PieFail::Denied);
         }
         usable(&pie)?;
-        let p = pie.pole().ok_or(PieFail::Denied)?;
+        let p = pie.mail().pole().ok_or(PieFail::Denied)?;
         mail::pole::shut(&p, token).map(|()| 0)
     })();
     answer(frame, r);
@@ -270,13 +270,13 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
         if pie.owner() != Some(me.ident.id) {
             return Err(PieFail::Denied);
         }
-        let pole = pie.pole();
+        let pole = pie.mail().pole();
         let _operation = if let Some(p) = &pole {
             Some(p.operation().ok_or(PieFail::Busy)?)
         } else {
             None
         };
-        pie.seal();
+        pie.mail().seal();
         Ok(0)
     })();
     answer(frame, r);
@@ -324,9 +324,9 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
 fn information(task: &Arc<crate::work::unit::task::Task>, pie: &PieSnapshot) -> PieInfo {
     PieInfo {
         token: pie.token(),
-        kind: pie.kind(),
+        kind: pie.mail().kind(),
         permission: pie.permission(),
-        owner: pie.owner_task(),
+        owner: pie.mail().owner(),
         vestor: if pie.sire().is_some() {
             pend::vestor(task, pie.token()).unwrap_or(TaskId::new(0))
         } else {
@@ -431,13 +431,13 @@ fn release(frame: &mut TrapContext, token: PieToken, mode: ReleaseMode) -> Outco
 fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
     let r = (|| {
         let task = current().running_task().ok_or(PieFail::Denied)?;
-        let meta = mail::tole::try_meta(task.ident.id).map_err(|_| PieFail::OoM)?;
+        let meta = mail::tole::ToleMeta::try_new(task.ident.id).map_err(|_| PieFail::OoM)?;
         let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
         if !shared {
             permission |= Permission::ONLY;
         }
         let pie = pend::Pie::try_new(Mail::Tole(meta), Mark::NONE, permission, None)?;
-        let token = pie.token;
+        let token = pie.token();
         pend::insert(&task, pie)?;
         Ok(token.get())
     })();
@@ -446,7 +446,7 @@ fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
 }
 
 pub(crate) fn observe(pie: &PieSnapshot) -> Result<(), env::MailFail> {
-    if let Some(pole) = pie.pole()
+    if let Some(pole) = pie.mail().pole()
         && pole.reserved() != 0
     {
         return Err(env::MailFail::HandedOver);

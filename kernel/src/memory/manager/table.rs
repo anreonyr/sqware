@@ -352,6 +352,7 @@ impl TableNode {
         None
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn leaf_span_geometry(
         &self,
         vaddr: VirtAddr,
@@ -463,6 +464,7 @@ impl TableNode {
         leaf.set_flags((leaf.flags() - (PteFlags::R | PteFlags::W | PteFlags::X)) | flags);
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn protect_permissions_geometry(
         &mut self,
         va: VirtAddr,

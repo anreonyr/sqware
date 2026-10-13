@@ -3,6 +3,7 @@ use alloc::sync::{Arc, Weak};
 use env::{Mark, PieFail, PieToken};
 
 use super::pie::{Heir, Need, Permission};
+use crate::work::grant::narrows;
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::task::Task;
 
@@ -19,7 +20,7 @@ pub(crate) fn accord(
             return Err(PieFail::Dead);
         }
         let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
-        let pole = pie.pole();
+        let pole = pie.mail().pole();
         let _operation = if let Some(p) = &pole {
             let operation = p.operation().ok_or(PieFail::Busy)?;
             if p.reserved() != 0 {
@@ -32,20 +33,17 @@ pub(crate) fn accord(
         if !pie.alive() {
             return Err(PieFail::Dead);
         }
-        if !pie.allows(Need::Vest)
-            || !pie.covers(subset)
-            || !super::pie::form_ok(pie.permission(), subset)
-        {
+        if !pie.allows(Need::Vest) || !narrows(pie.permission(), subset) {
             return Err(PieFail::Denied);
         }
         if pie.heir().is_some() {
             return Err(PieFail::HandedOver);
         }
-        if pie.tole().is_some_and(|p| p.has_cells()) {
+        if pie.mail().tole().is_some_and(|p| p.has_cells()) {
             return Err(PieFail::Denied);
         }
-        let badge = if mark == Mark::NONE { pie.mark() } else { mark };
-        let mut granted = pie.vest(badge, subset)?;
+        let mark = if mark == Mark::NONE { pie.mark() } else { mark };
+        let mut granted = pie.vest(mark, subset)?;
         granted.parent(src, Arc::downgrade(caller));
         caller
             .pend

@@ -13,14 +13,8 @@ pub const CLOSE: u8 = 5;
 pub const READ: u8 = 1;
 pub const WRITE: u8 = 2;
 pub const READ_BIT: env::Bit = env::Bit::FIRST;
-pub const WRITE_BIT: env::Bit = match env::Bit::of(1) {
-    Some(bit) => bit,
-    None => unreachable!(),
-};
-pub const DEMAND_BIT: env::Bit = match env::Bit::of(2) {
-    Some(bit) => bit,
-    None => unreachable!(),
-};
+pub const WRITE_BIT: env::Bit = env::Bit::wrap(1);
+pub const DEMAND_BIT: env::Bit = env::Bit::wrap(2);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Fail {
     Denied,

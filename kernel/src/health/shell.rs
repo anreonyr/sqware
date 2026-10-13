@@ -41,7 +41,7 @@ fn shell_round() {
 
     let released = team.release_held(&task);
     crate::expect!(released, "shell: 摘出未放行任务失败");
-    team.prune_tasks(&task);
+    team.prune_tasks();
     drop(task);
     drop(team);
     prune_dead();
@@ -104,7 +104,7 @@ fn oust_round() {
 
     let released = home.release_held(&sire);
     crate::expect!(released, "oust: 摘出 sire 失败");
-    home.prune_tasks(&sire);
+    home.prune_tasks();
     drop(sire);
     drop(home);
     prune_dead();

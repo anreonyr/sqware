@@ -139,6 +139,7 @@ impl Map {
         self.state.lock().frames.len()
     }
 
+    #[cfg(debug_assertions)]
     pub fn frames_in(
         &self,
         start: VirtAddr,
@@ -364,15 +365,18 @@ impl Tree {
     pub fn asid(&self) -> Asid {
         self.asid
     }
+    #[cfg(debug_assertions)]
     pub fn geometry(&self) -> mode::Geo {
         self.geometry
     }
     pub fn root_ppn(&self) -> usize {
         self.state.lock().root.ppn()
     }
+    #[cfg(debug_assertions)]
     pub fn map_count(&self) -> usize {
         self.state.lock().len
     }
+    #[cfg(debug_assertions)]
     pub fn table_count(&self) -> usize {
         let state = self.state.lock();
         state.root.node_count()
@@ -398,6 +402,7 @@ impl Tree {
         Ok(first_overlap(state.index.as_deref(), start.as_usize(), end).is_some())
     }
 
+    #[cfg(debug_assertions)]
     pub fn maps(&self) -> Result<Vec<Arc<Map>>, MapError> {
         let state = self.state.lock();
         let mut maps = Vec::new();
@@ -411,6 +416,7 @@ impl Tree {
         self.state.lock().pending
     }
 
+    #[cfg(debug_assertions)]
     pub fn pending_maps(&self) -> Result<Vec<Arc<Map>>, MapError> {
         let state = self.state.lock();
         let mut maps = Vec::new();
@@ -1142,6 +1148,7 @@ impl Tree {
         find_map(state.index.as_deref(), address.as_usize())
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn leaf_span(&self, address: VirtAddr) -> Option<usize> {
         let state = self.ready_state().ok()?;
         find_map(state.index.as_deref(), address.as_usize())?;

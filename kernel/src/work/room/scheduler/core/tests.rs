@@ -17,7 +17,7 @@ pub fn acceptance() {
     let team = TeamBuilder::new(space).spawn().unwrap();
     let mut tasks: alloc::vec::Vec<_> = (0..4).map(|_| team.task().hold().unwrap()).collect();
     for task in &mut tasks {
-        task.as_ref().transform(TaskState::ready());
+        task.as_ref().transform_checked(TaskState::ready());
     }
     let victim = Scheduler::new(HartId::new(0));
     assert!(victim.push(tasks[0].clone()));
@@ -54,7 +54,7 @@ pub fn acceptance() {
         let mut i = victim.inner.lock();
         assert!(victim.starved_remove(&mut i, &tasks[2]));
         assert!(i.ready_since.is_none());
-        assert!(i.tail.is_none());
+        assert!(i.chain.is_empty());
     }
     for task in &mut tasks {
         assert!(team.release_held(task));

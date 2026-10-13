@@ -77,7 +77,7 @@ pub fn lifecycle() {
         Err(env::PieFail::Denied)
     );
     let snapshot = pend::locate(&caller, token).unwrap();
-    let meta = snapshot.pole().unwrap();
+    let meta = snapshot.mail().pole().unwrap();
     let first = pole::open(&meta, token, &team.space, rw).unwrap();
     assert_eq!(pole::open(&meta, token, &team.space, rw).unwrap(), first);
     assert_eq!(first.0, start.as_usize());

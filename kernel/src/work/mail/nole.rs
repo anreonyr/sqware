@@ -1,32 +1,18 @@
 use alloc::sync::{Arc, Weak};
-use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use env::TaskId;
 
+use super::Liveness;
 use crate::lock::{Level, SpinLock};
 
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use env::MailFail;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NoleId(pub usize);
-
-fn alloc_id() -> NoleId {
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    NoleId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NoleState {
-    Live,
-    Dead,
-}
-
 pub struct NoleMeta {
-    state: SpinLock<NoleState>,
-    id: NoleId,
+    state: SpinLock<Liveness>,
+    pub(crate) id: usize,
     life: Arc<Life>,
     ring: SpinLock<bool>,
     owner: TaskId,
@@ -41,8 +27,8 @@ impl NoleMeta {
     pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
-            state: SpinLock::new_level(Level::L3, NoleState::Live),
-            id: alloc_id(),
+            state: SpinLock::new_level(Level::L3, Liveness::Live),
+            id: super::next_id(),
             life,
             ring: SpinLock::new_level(Level::L3, false),
             owner,
@@ -58,12 +44,8 @@ impl NoleMeta {
         self.owner
     }
 
-    pub(crate) fn id(&self) -> NoleId {
-        self.id
-    }
-
     pub(crate) fn alive(&self) -> bool {
-        matches!(*self.state.lock(), NoleState::Live)
+        matches!(*self.state.lock(), Liveness::Live)
     }
 
     pub(crate) fn ready(&self) -> bool {
@@ -73,17 +55,12 @@ impl NoleMeta {
 
 impl Drop for NoleMeta {
     fn drop(&mut self) {
-        *self.state.lock() = NoleState::Dead;
-        messenger::wipe(WakeKey::Seal {
-            kind: env::PieKind::Nole as u8,
-            id: self.id.0,
-        });
-        messenger::wipe(key(self));
+        seal(self);
     }
 }
 
 pub(crate) fn key(meta: &NoleMeta) -> WakeKey {
-    WakeKey::Nole { id: meta.id.0 }
+    WakeKey::Nole { id: meta.id }
 }
 
 pub(crate) fn ring(meta: &NoleMeta) -> Result<(), MailFail> {
@@ -127,10 +104,7 @@ pub(crate) fn wait(meta: &NoleMeta, dur: Duration) -> Result<Handoff<bool>, Mail
 }
 
 pub(crate) fn seal(meta: &NoleMeta) {
-    *meta.state.lock() = NoleState::Dead;
-    messenger::wipe(WakeKey::Seal {
-        kind: env::PieKind::Nole as u8,
-        id: meta.id.0,
-    });
+    *meta.state.lock() = Liveness::Dead;
+    messenger::wipe(WakeKey::seal(env::PieKind::Nole, meta.id));
     messenger::wipe(key(meta));
 }

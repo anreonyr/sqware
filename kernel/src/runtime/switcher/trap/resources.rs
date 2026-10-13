@@ -1,7 +1,7 @@
 use crate::lock::OnceLock;
 use crate::resource::Registry;
 use crate::work::mail::nole::NoleMeta;
-use crate::work::mail::{HoleMeta, Mail, hole, nole};
+use crate::work::mail::{HoleMeta, Mail, nole};
 use crate::work::pend;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -46,7 +46,7 @@ pub(crate) fn init() -> Result<(), PieFail> {
     }
     let resources = Resources {
         supervisor_external: nole::NoleMeta::try_new(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
-        page_fault: hole::try_meta(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
+        page_fault: HoleMeta::try_new(TaskId::new(0)).map_err(|_| PieFail::OoM)?,
     };
     assert!(
         RESOURCES.set(resources).is_ok(),

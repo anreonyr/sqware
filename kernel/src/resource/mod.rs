@@ -37,7 +37,7 @@ fn valid(name: Name, pie: &Pie) -> bool {
     let mut bytes = [0u8; env::NAME_LEN];
     name.store(&mut bytes);
     Name::fetch(&bytes) == Some(name)
-        && name.kind() == pie.kind()
+        && name.kind() == pie.mail().kind()
         && pie.alive()
         && pie.sire().is_none()
         && pie.heir().is_none()
@@ -103,7 +103,7 @@ impl Frozen {
             });
         }
         for (name, root) in self.entries {
-            ledger.push(Entry::new(name, root.kind(), root.token()));
+            ledger.push(Entry::new(name, root.mail().kind(), root.token()));
             pies.push(root);
         }
         drop(pies);

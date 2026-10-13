@@ -3,8 +3,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use hashbrown::HashMap;
-use sbi::ecall::SArgs;
-use sbi::{self, fid};
 
 use env::TaskId;
 
@@ -66,14 +64,7 @@ pub(crate) fn kick(hart: HartId, task: Arc<Task>) {
 
 fn notify_hart(hart: HartId) {
     conductor::note_kick_ipi();
-    let (word, bit) = hart.bit();
-    let _ = sbi::IpiCall::new(fid::Ipi::SendIpi)
-        .args(SArgs {
-            a0: bit,
-            a1: word * (usize::BITS as usize),
-            ..Default::default()
-        })
-        .call();
+    conductor::nudge(hart);
 }
 
 static STEAL_CURSOR: AtomicUsize = AtomicUsize::new(0);

@@ -2,12 +2,12 @@ use alloc::sync::Arc;
 use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
-use crate::memory::manager::addr::PhysAddr;
 use crate::runtime::chrono::{clock, timer};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::runtime::switcher::trap::trap_stack_edge;
-use crate::work::unit::task::{Task, TaskIdent, TaskState};
+use crate::work::room::Chain;
+use crate::work::unit::task::{Task, TaskState};
 
 use super::ident::Badge;
 
@@ -23,8 +23,7 @@ pub(crate) struct Scheduler {
 
 pub(super) struct SchedulerInner {
     pub(super) running: Option<Arc<Task>>,
-    head: Option<Arc<Task>>,
-    tail: Option<Arc<Task>>,
+    chain: Chain,
     ready_since: Option<u64>,
 }
 
@@ -37,7 +36,7 @@ impl SchedulerInner {
     }
 
     fn starved_is_empty(&self) -> bool {
-        self.head.is_none()
+        self.chain.is_empty()
     }
 }
 
@@ -49,8 +48,7 @@ impl Scheduler {
                 Level::Scheduler,
                 SchedulerInner {
                     running: None,
-                    head: None,
-                    tail: None,
+                    chain: Chain::new(),
                     ready_since: None,
                 },
             ),
@@ -63,26 +61,20 @@ impl Scheduler {
             task.ready() && task.next().is_none(),
             "starved 容器只收就绪任务，且入队前不得挂在链上"
         );
-        match i.tail.take() {
-            None => {
-                i.ready_since = Some(clock::now().as_ticks());
-                i.head = Some(task.clone());
-            }
-            Some(last) => last.set_next(Some(task.clone())),
+        if i.chain.is_empty() {
+            i.ready_since = Some(clock::now().as_ticks());
         }
-        i.tail = Some(task);
+        i.chain.push(task);
     }
 
     fn starved_pop(&self, i: &mut SchedulerInner) -> Option<Arc<Task>> {
         loop {
-            let head = i.head.take()?;
-            i.head = head.take_next();
-            if i.head.is_none() {
-                i.tail = None;
-                i.ready_since = None;
+            let head = i.chain.pop()?;
+            i.ready_since = if i.chain.is_empty() {
+                None
             } else {
-                i.ready_since = Some(clock::now().as_ticks());
-            }
+                Some(clock::now().as_ticks())
+            };
             if head.stopped() || head.ident.team.paused() {
                 Task::park(head);
                 continue;
@@ -92,28 +84,11 @@ impl Scheduler {
     }
 
     pub(super) fn starved_remove(&self, i: &mut SchedulerInner, target: &Arc<Task>) -> bool {
-        let mut prev: Option<Arc<Task>> = None;
-        let mut cur = i.head.clone();
-        while let Some(node) = cur {
-            if Arc::ptr_eq(&node, target) {
-                let next = node.take_next();
-                let was_tail = next.is_none();
-                match &mut prev {
-                    Some(p) => p.set_next(next),
-                    None => i.head = next,
-                }
-                if was_tail {
-                    i.tail = prev;
-                }
-                if i.head.is_none() {
-                    i.ready_since = None;
-                }
-                return true;
-            }
-            prev = Some(node.clone());
-            cur = node.next();
+        let removed = i.chain.remove_if(&mut |t| Arc::ptr_eq(t, target)).is_some();
+        if removed && i.chain.is_empty() {
+            i.ready_since = None;
         }
-        false
+        removed
     }
 
     pub(super) fn starved_clear(&self, i: &mut SchedulerInner) {
@@ -144,9 +119,9 @@ impl Scheduler {
 
     fn prepare(&self, task: &mut Arc<Task>, ceiling: u64) {
         let t = task.as_ref();
-        t.transform(TaskState::running(self.hart, QUANTUM_TICKS));
+        t.transform_checked(TaskState::running(self.hart, QUANTUM_TICKS));
         unsafe {
-            let frame = &mut *(frame_pa(&t.ident).as_usize() as *mut TrapContext);
+            let frame = &mut *(t.ident.frame_pa.as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
             if t.ident.team.space.tree.asid().is_kernel() {
                 frame
@@ -165,7 +140,7 @@ impl Scheduler {
             return None;
         }
         self.prepare(&mut task, i.ready_ceiling());
-        let pa = frame_pa(&task.ident).as_usize();
+        let pa = task.ident.frame_pa.as_usize();
         self.badge.seat(&task.ident);
         debug_assert!(task.on_hart().is_some(), "running 容器只装在核上的任务");
         let prev = i.running.replace(task);
@@ -194,7 +169,7 @@ impl Scheduler {
     }
 
     fn rotate(&self, i: &mut SchedulerInner, cur: Arc<Task>) -> Option<Arc<Task>> {
-        cur.transform(TaskState::ready());
+        cur.transform_checked(TaskState::ready());
         self.starved_push(i, cur);
         self.starved_pop(i)
     }
@@ -218,7 +193,7 @@ impl Scheduler {
             panic!("starve with no running task on hart {}", self.hart);
         };
         if i.starved_is_empty() {
-            let pa = frame_pa(&cur.ident).as_usize();
+            let pa = cur.ident.frame_pa.as_usize();
             i.running = Some(cur);
             return pa;
         }
@@ -249,7 +224,7 @@ impl Scheduler {
             if ticks_left > 1 {
                 cur.dec_ticks_left();
             }
-            let pa = frame_pa(&cur.ident).as_usize();
+            let pa = cur.ident.frame_pa.as_usize();
             i.running = Some(cur);
             timer::beat_until(ceiling);
             return Some(pa);
@@ -263,10 +238,6 @@ impl Scheduler {
         trace::note(EventKind::Room(RoomEvent::Switch { prev_tid, next_tid }));
         pa
     }
-}
-
-pub(super) fn frame_pa(ident: &TaskIdent) -> PhysAddr {
-    ident.frame_pa
 }
 
 #[cfg(debug_assertions)]

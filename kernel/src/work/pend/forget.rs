@@ -48,7 +48,7 @@ pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
             }
             result => result??,
         };
-        if let Some(p) = removed.snapshot().pole() {
+        if let Some(p) = removed.snapshot().mail().pole() {
             let _ = crate::work::mail::pole::shut(&p, token);
         }
         super::notify(task.ident.id, token);
@@ -71,5 +71,5 @@ pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, P
     if !a.alive() || !b.alive() {
         return Err(PieFail::Dead);
     }
-    Ok(a.same(&b))
+    Ok(a.mail().same(b.mail()))
 }

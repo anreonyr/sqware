@@ -16,13 +16,7 @@ impl Space {
         if !Self::user_range(va, len) {
             return false;
         }
-        let need = need
-            | PteFlags::V
-            | if self.kind().is_supervisor() {
-                PteFlags::empty()
-            } else {
-                PteFlags::U
-            };
+        let need = self.pte_policy(need | PteFlags::V);
         self.tree.check_access(VirtAddr::wrap(va), len, need)
     }
 
@@ -40,13 +34,7 @@ impl Space {
         if !Self::user_range(va, dst.len()) {
             return false;
         }
-        let need = need
-            | PteFlags::V
-            | if self.kind().is_supervisor() {
-                PteFlags::empty()
-            } else {
-                PteFlags::U
-            };
+        let need = self.pte_policy(need | PteFlags::V);
         self.tree.copy_from(VirtAddr::wrap(va), dst, need)
     }
 
@@ -54,13 +42,7 @@ impl Space {
         if !Self::user_range(va, src.len()) {
             return false;
         }
-        let need = PteFlags::W
-            | PteFlags::V
-            | if self.kind().is_supervisor() {
-                PteFlags::empty()
-            } else {
-                PteFlags::U
-            };
+        let need = self.pte_policy(PteFlags::W | PteFlags::V);
         self.tree.copy_to(VirtAddr::wrap(va), src, need)
     }
 }

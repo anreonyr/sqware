@@ -2,11 +2,12 @@ use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 
-use env::{Bit, MailCondition, TaskId, TeamId};
+use env::{Bit, MailCondition, PieKind, TaskId, TeamId};
 use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::manager::asid::Asid;
+use crate::work::room::Chain;
 use crate::work::unit::life::Life;
 use crate::work::unit::task::Task;
 
@@ -26,6 +27,13 @@ pub enum WakeKey {
 }
 
 impl WakeKey {
+    pub(crate) fn seal(kind: PieKind, id: usize) -> Self {
+        WakeKey::Seal {
+            kind: kind as u8,
+            id,
+        }
+    }
+
     pub(super) fn fold(self) -> u64 {
         match self {
             WakeKey::Space { space, slot } => {
@@ -55,8 +63,7 @@ impl WakeKey {
 
 pub(in super::super) struct Site {
     pub(in super::super) pend: bool,
-    pub(in super::super) head: Option<Arc<Task>>,
-    pub(in super::super) tail: Option<Arc<Task>>,
+    pub(in super::super) chain: Chain,
     pub(in super::super) life: Weak<Life>,
     pub(in super::super) fwd: Fwd,
 }
@@ -159,7 +166,7 @@ pub(super) fn take_beacon(key: WakeKey) -> bool {
 
 pub(in super::super) fn prune(sites: &mut HashMap<WakeKey, Site>, key: WakeKey) {
     if let Some(site) = sites.get(&key)
-        && site.head.is_none()
+        && site.chain.is_empty()
         && (Life::dead(&site.life) || (!site.pend && site.fwd.is_empty()))
     {
         sites.remove(&key);
@@ -170,8 +177,7 @@ impl Site {
     pub(super) fn new(life: &Weak<Life>) -> Self {
         Self {
             pend: false,
-            head: None,
-            tail: None,
+            chain: Chain::new(),
             life: life.clone(),
             fwd: Fwd::empty(),
         }
@@ -182,44 +188,6 @@ impl Site {
             task.waiting() && task.next().is_none(),
             "站点只收 Blocked 任务，且入链前不得挂在链上"
         );
-        match self.tail.take() {
-            None => self.head = Some(task.clone()),
-            Some(last) => last.set_next(Some(task.clone())),
-        }
-        self.tail = Some(task);
-    }
-
-    pub(super) fn pop_front(&mut self) -> Option<Arc<Task>> {
-        let head = self.head.take()?;
-        self.head = head.take_next();
-        if self.head.is_none() {
-            self.tail = None;
-        }
-        Some(head)
-    }
-
-    pub(in super::super) fn remove_if(
-        &mut self,
-        hit: &mut dyn FnMut(&mut Arc<Task>) -> bool,
-    ) -> Option<Arc<Task>> {
-        let mut prev: Option<Arc<Task>> = None;
-        let mut cur = self.head.clone();
-        while let Some(mut node) = cur {
-            if hit(&mut node) {
-                let next = node.take_next();
-                let was_tail = next.is_none();
-                match &mut prev {
-                    Some(p) => p.set_next(next),
-                    None => self.head = next,
-                }
-                if was_tail {
-                    self.tail = prev;
-                }
-                return Some(node);
-            }
-            prev = Some(node.clone());
-            cur = node.next();
-        }
-        None
+        self.chain.push(task);
     }
 }

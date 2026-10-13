@@ -27,7 +27,7 @@ use crate::work::room::messenger::{Ticket, WakeKey};
 use crate::work::room::scheduler;
 use env::TeamId;
 
-static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+static NEXT: AtomicUsize = AtomicUsize::new(1);
 
 #[cfg(debug_assertions)]
 static FAIL_PREPARATION: AtomicUsize = AtomicUsize::new(0);
@@ -328,6 +328,7 @@ pub(crate) struct TaskIdent {
     pub(crate) id: TaskId,
     pub(crate) team: Arc<Team>,
     pub(crate) frame_pa: PhysAddr,
+    #[cfg(debug_assertions)]
     pub(crate) frame_va: VirtAddr,
     memory: SpinLock<TaskMemory>,
 }
@@ -455,7 +456,7 @@ impl PreparedTask {
 }
 
 impl Task {
-    pub(crate) fn transform(&self, next: TaskState) {
+    pub(crate) fn transform_checked(&self, next: TaskState) {
         let mut state = self.state.lock();
         let legal = match (&state.axis, &next.axis) {
             (TaskAxis::Held, TaskAxis::Ready { .. })
@@ -474,7 +475,7 @@ impl Task {
             | TaskAxis::Reaped { next, .. } => next.is_none(),
             _ => true,
         };
-        debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
+        debug_assert!(unlinked, "transform_checked: 入链载荷非空（有人没先摘链）");
         *state = next;
     }
 
@@ -878,11 +879,10 @@ impl TaskBuilder {
             .filter(|size| size.checked_add(crate::layout::TASK_STACK_GUARD).is_some())
             .ok_or(MapError::NoRegion)?;
         let id = TaskId::new(
-            NEXT_ID
-                .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
-                    (id < isize::MAX as usize).then_some(id + 1)
-                })
-                .map_err(|_| MapError::OutOfMemory)?,
+            NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+                (id < isize::MAX as usize).then_some(id + 1)
+            })
+            .map_err(|_| MapError::OutOfMemory)?,
         );
 
         let mut memory = TaskMemory {
@@ -979,6 +979,7 @@ impl TaskBuilder {
                         id,
                         team: self.team.clone(),
                         frame_pa,
+                        #[cfg(debug_assertions)]
                         frame_va,
                         memory: SpinLock::new(memory),
                     },

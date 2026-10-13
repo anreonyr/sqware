@@ -1,3 +1,4 @@
+use super::Liveness;
 use crate::lock::{Level, SpinLock};
 use crate::work::room::messenger::{self, WakeKey};
 use crate::work::unit::join::{JoinTarget, JoinWait};
@@ -11,56 +12,87 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 use env::{AwaitReply, MailCondition, MailFail, PieToken, Source, TaskId};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ToleId(pub usize);
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToleState {
-    Live,
-    Dead,
-}
 const MAX: usize = 1024;
 
 #[derive(Clone)]
-pub(crate) enum Member {
-    Mail,
-    Join(JoinTarget),
+pub(crate) enum Watch {
+    Mail {
+        pie: PieToken,
+        condition: MailCondition,
+    },
+    Join {
+        target: env::UnitTarget,
+        selected: JoinTarget,
+    },
     Inspect {
+        task: TaskId,
+        token: PieToken,
         holder: Weak<Task>,
         parent: Option<(Weak<Task>, PieToken)>,
         held: bool,
         access: env::Permission,
     },
 }
+
+impl Watch {
+    pub(crate) fn source(&self) -> Source {
+        match self {
+            Watch::Mail { pie, condition } => Source::Mail {
+                pie: *pie,
+                condition: *condition,
+            },
+            Watch::Join { target, .. } => Source::Join { target: *target },
+            Watch::Inspect { task, token, .. } => Source::Inspect {
+                task: *task,
+                token: *token,
+            },
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Cell {
-    pub source: Source,
     pub actor: TaskId,
-    pub member: Member,
     pub keys: Arc<Vec<(WakeKey, Weak<Life>)>>,
+    pub watch: Watch,
 }
 pub struct ToleMeta {
-    state: SpinLock<ToleState>,
-    id: ToleId,
+    state: SpinLock<Liveness>,
+    pub(crate) id: usize,
     life: Arc<Life>,
     cells: SpinLock<Vec<Cell>>,
     owner: TaskId,
     cursor: AtomicUsize,
 }
-pub(crate) fn key(meta: &ToleMeta) -> WakeKey {
-    WakeKey::Tole { id: meta.id.0 }
+fn key(meta: &ToleMeta) -> WakeKey {
+    WakeKey::Tole { id: meta.id }
 }
 impl ToleMeta {
+    #[cfg(debug_assertions)]
+    pub(crate) fn new(owner: TaskId) -> Arc<Self> {
+        Self::try_new(owner).expect("tole allocation failed")
+    }
+
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        Arc::try_new(Self {
+            state: SpinLock::new_level(Level::L3, Liveness::Live),
+            id: super::next_id(),
+            life: Life::try_new()?,
+            cells: SpinLock::new_level(Level::L3, Vec::new()),
+            owner,
+            cursor: AtomicUsize::new(0),
+        })
+        .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
+    }
+
     pub(crate) fn life(&self) -> Weak<Life> {
         Arc::downgrade(&self.life)
-    }
-    pub(crate) fn id(&self) -> ToleId {
-        self.id
     }
     pub(crate) fn owner(&self) -> TaskId {
         self.owner
     }
     pub(crate) fn alive(&self) -> bool {
-        *self.state.lock() == ToleState::Live
+        *self.state.lock() == Liveness::Live
     }
     pub(crate) fn has_cells(&self) -> bool {
         !self.cells.lock().is_empty()
@@ -91,7 +123,7 @@ impl ToleMeta {
             if let Some(fail) = status {
                 self.cursor.store((at + 1) % count, Ordering::Relaxed);
                 return Ok(AwaitReply::Source {
-                    source: cell.source,
+                    source: cell.watch.source(),
                     fail,
                 });
             }
@@ -105,62 +137,44 @@ impl ToleMeta {
 }
 impl Cell {
     fn poll(&self, actor: &Arc<Task>) -> Option<Option<MailFail>> {
-        match &self.member {
-            Member::Mail => {
-                let Source::Mail { pie, condition } = self.source else {
-                    unreachable!()
-                };
-                let need = if matches!(condition, MailCondition::Pull | MailCondition::Signal(_)) {
-                    pend::Need::Fetch
-                } else {
-                    pend::Need::Store
-                };
-                let snapshot = match pend::accede(actor, pie, need) {
+        match &self.watch {
+            Watch::Mail { pie, condition } => {
+                let need = pend::Need::of(*condition);
+                let snapshot = match pend::accede(actor, *pie, need) {
                     Ok(p) => p,
                     Err(e) => return Some(Some(super::mail_fail(e))),
                 };
                 if let Err(e) = crate::runtime::switcher::envcall::pie::observe(&snapshot) {
                     return Some(Some(e));
                 }
-                let ready = if let Some(meta) = snapshot.hole() {
-                    meta.ready(condition)
-                } else if let Some(meta) = snapshot.nole() {
-                    meta.ready()
-                } else if let (Some(meta), MailCondition::Signal(bit)) =
-                    (snapshot.pole(), condition)
-                {
-                    meta.ready(bit)
-                } else {
-                    return Some(Some(MailFail::Denied));
-                };
+                let ready = snapshot.mail().ready(*condition);
                 ready.then_some(None)
             }
-            Member::Join(target) => {
-                if let JoinTarget::Team(team) = target {
+            Watch::Join { selected, .. } => {
+                if let JoinTarget::Team(team) = selected {
                     if team.next(actor.ident.id).is_some() {
                         return Some(None);
                     }
                 }
-                let join = JoinWait::new(target.clone(), actor.ident.id, false, env::Wait::POLL);
+                let join = JoinWait::new(selected.clone(), actor.ident.id, false, env::Wait::POLL);
                 match join.poll() {
                     Ok(env::JoinReply::Pending) => None,
                     Ok(_) => Some(None),
                     Err(_) => Some(Some(MailFail::Denied)),
                 }
             }
-            Member::Inspect {
+            Watch::Inspect {
+                token,
                 holder,
                 parent,
                 held,
                 access,
+                ..
             } => {
-                let Source::Inspect { token, .. } = self.source else {
-                    unreachable!()
-                };
                 let Some(holder) = holder.upgrade() else {
                     return Some(Some(MailFail::Denied));
                 };
-                let Some(pie) = pend::locate(&holder, token) else {
+                let Some(pie) = pend::locate(&holder, *token) else {
                     return Some(Some(MailFail::Denied));
                 };
                 if !pie.alive() {
@@ -206,7 +220,7 @@ pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
         let mut cells = meta.cells.lock();
         if cells
             .iter()
-            .any(|old| old.actor == cell.actor && old.source == cell.source)
+            .any(|old| old.actor == cell.actor && old.watch.source() == cell.watch.source())
         {
             return Ok(());
         }
@@ -221,10 +235,10 @@ pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
         }
     }
     for (at, (key, life)) in cell.keys.iter().enumerate() {
-        if !shared[at] && messenger::forward(*key, life.clone(), meta.id.0, meta.life()).is_err() {
+        if !shared[at] && messenger::forward(*key, life.clone(), meta.id, meta.life()).is_err() {
             for (index, (key, _)) in cell.keys.iter().take(at).enumerate() {
                 if !shared[index] {
-                    messenger::unforward(*key, meta.id.0);
+                    messenger::unforward(*key, meta.id);
                 }
             }
             return Err(MailFail::OoM);
@@ -243,7 +257,7 @@ pub(crate) fn detach(meta: &ToleMeta, actor: TaskId, source: Source) -> Result<(
         let mut cells = meta.cells.lock();
         cells
             .iter()
-            .position(|c| c.actor == actor && c.source == source)
+            .position(|c| c.actor == actor && c.watch.source() == source)
             .map(|at| cells.remove(at))
     };
     if let Some(cell) = cell {
@@ -254,7 +268,7 @@ pub(crate) fn detach(meta: &ToleMeta, actor: TaskId, source: Source) -> Result<(
                 .iter()
                 .any(|c| c.keys.iter().any(|(k, _)| k == key));
             if !shared {
-                messenger::unforward(*key, meta.id.0);
+                messenger::unforward(*key, meta.id);
             }
         }
     }
@@ -266,15 +280,12 @@ pub(crate) fn seal(meta: &ToleMeta) {
     clear(meta);
 }
 fn clear(meta: &ToleMeta) {
-    *meta.state.lock() = ToleState::Dead;
-    messenger::wipe(WakeKey::Seal {
-        kind: env::PieKind::Tole as u8,
-        id: meta.id.0,
-    });
+    *meta.state.lock() = Liveness::Dead;
+    messenger::wipe(WakeKey::seal(env::PieKind::Tole, meta.id));
     let cells = core::mem::take(&mut *meta.cells.lock());
     for cell in cells {
         for (key, _) in cell.keys.iter() {
-            messenger::unforward(*key, meta.id.0);
+            messenger::unforward(*key, meta.id);
         }
     }
     messenger::wipe(key(meta));
@@ -283,22 +294,6 @@ impl Drop for ToleMeta {
     fn drop(&mut self) {
         clear(self);
     }
-}
-pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<ToleMeta>, crate::memory::manager::MapError> {
-    static NEXT: AtomicUsize = AtomicUsize::new(1);
-    Arc::try_new(ToleMeta {
-        state: SpinLock::new_level(Level::L3, ToleState::Live),
-        id: ToleId(NEXT.fetch_add(1, Ordering::Relaxed)),
-        life: Life::try_new()?,
-        cells: SpinLock::new_level(Level::L3, Vec::new()),
-        owner,
-        cursor: AtomicUsize::new(0),
-    })
-    .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
-}
-#[cfg(debug_assertions)]
-pub(crate) fn meta(owner: TaskId) -> Arc<ToleMeta> {
-    try_meta(owner).expect("tole allocation failed")
 }
 
 #[derive(Clone)]
@@ -338,7 +333,7 @@ impl AwaitWait {
                 token: self.token.get(),
             },
             actor.life(),
-            self.group.id.0,
+            self.group.id,
             self.group.life(),
         )
         .map_err(|_| MailFail::OoM)
@@ -350,7 +345,7 @@ impl AwaitWait {
                     task: actor.ident.id,
                     token: self.token.get(),
                 },
-                self.group.id.0,
+                self.group.id,
             );
         }
     }

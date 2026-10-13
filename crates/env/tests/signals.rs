@@ -8,7 +8,7 @@ fn token(n: u64) -> PieToken {
 #[test]
 fn independent_notifications_reject_invalid_indices_and_roundtrip() {
     for index in 0..usize::BITS as usize {
-        let bit = Bit::of(index).unwrap();
+        let bit = Bit::wrap(index);
         let condition = MailCondition::Signal(bit);
         assert_eq!(MailCondition::of(condition.wire()), Some(condition));
         for call in [
@@ -38,7 +38,7 @@ fn source_identity_roundtrip_preserves_mail_join_and_exact_reference() {
     for source in [
         Source::Mail {
             pie: token(1),
-            condition: MailCondition::Signal(Bit::of(63).unwrap()),
+            condition: MailCondition::Signal(Bit::wrap(63)),
         },
         Source::Join {
             target: UnitTarget::Task(TaskId::new(2)),

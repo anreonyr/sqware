@@ -34,6 +34,10 @@ pub(crate) struct CreationLease<'a> {
     committed: bool,
 }
 
+fn chain(head: Option<&Node>) -> impl Iterator<Item = &Node> {
+    core::iter::successors(head, |node| node.next.as_deref())
+}
+
 impl CreationRegistry {
     pub(crate) fn new() -> Self {
         Self {
@@ -60,31 +64,27 @@ impl CreationRegistry {
 
     pub(crate) fn claim(&self, map: &Arc<Map>) -> Result<CreationLease<'_>, env::PieFail> {
         let nodes = self.nodes.lock();
-        let mut cursor = nodes.as_deref();
-        while let Some(node) = cursor {
-            if node
-                .map
-                .upgrade()
-                .is_some_and(|registered| Arc::ptr_eq(&registered, map))
-            {
-                return match node.creation.state.compare_exchange(
-                    AVAILABLE,
-                    CLAIMED,
-                    Ordering::AcqRel,
-                    Ordering::Acquire,
-                ) {
-                    Ok(_) => Ok(CreationLease {
-                        registry: self,
-                        creation: node.creation.clone(),
-                        committed: false,
-                    }),
-                    Err(CLAIMED) => Err(env::PieFail::Busy),
-                    Err(_) => Err(env::PieFail::Denied),
-                };
-            }
-            cursor = node.next.as_deref();
+        let node = chain(nodes.as_deref())
+            .find(|node| {
+                node.map
+                    .upgrade()
+                    .is_some_and(|held| Arc::ptr_eq(&held, map))
+            })
+            .ok_or(env::PieFail::Denied)?;
+        match node.creation.state.compare_exchange(
+            AVAILABLE,
+            CLAIMED,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => Ok(CreationLease {
+                registry: self,
+                creation: node.creation.clone(),
+                committed: false,
+            }),
+            Err(CLAIMED) => Err(env::PieFail::Busy),
+            Err(_) => Err(env::PieFail::Denied),
         }
-        Err(env::PieFail::Denied)
     }
 
     pub(crate) fn locate(
@@ -93,40 +93,10 @@ impl CreationRegistry {
         size: usize,
     ) -> Option<Arc<Map>> {
         let nodes = self.nodes.lock();
-        let mut cursor = nodes.as_deref();
-        while let Some(node) = cursor {
-            if let Some(map) = node.map.upgrade() {
-                if map.initial_range() == (start, size) {
-                    return Some(map);
-                }
-            }
-            cursor = node.next.as_deref();
-        }
-        None
-    }
-
-    pub(crate) fn forget(&self, map: &Arc<Map>) {
-        let creation = {
-            let nodes = self.nodes.lock();
-            let mut cursor = nodes.as_deref();
-            let mut found = None;
-            while let Some(node) = cursor {
-                if node
-                    .map
-                    .upgrade()
-                    .is_some_and(|registered| Arc::ptr_eq(&registered, map))
-                {
-                    found = Some(node.creation.clone());
-                    break;
-                }
-                cursor = node.next.as_deref();
-            }
-            found
-        };
-        if let Some(creation) = creation {
-            creation.state.store(CONSUMED, Ordering::Release);
-            self.remove(&creation);
-        }
+        chain(nodes.as_deref()).find_map(|node| {
+            let map = node.map.upgrade()?;
+            (map.initial_range() == (start, size)).then_some(map)
+        })
     }
 
     fn remove(&self, creation: &Arc<Creation>) {
@@ -152,16 +122,12 @@ impl PreparedAllocation<'_> {
         let mut node = self.node.take().expect("prepared creation record");
         node.map = Arc::downgrade(map);
         let mut head = self.registry.nodes.lock();
-        let mut cursor = head.as_deref();
-        while let Some(existing) = cursor {
-            if existing
-                .map
+        if chain(head.as_deref()).any(|node| {
+            node.map
                 .upgrade()
-                .is_some_and(|registered| Arc::ptr_eq(&registered, map))
-            {
-                return;
-            }
-            cursor = existing.next.as_deref();
+                .is_some_and(|held| Arc::ptr_eq(&held, map))
+        }) {
+            return;
         }
         node.next = head.take();
         *head = Some(node);

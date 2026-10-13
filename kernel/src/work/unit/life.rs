@@ -16,7 +16,6 @@ impl Life {
         Arc::new(Life)
     }
 
-    #[allow(dead_code)]
     pub(crate) fn try_new() -> Result<Arc<Life>, crate::memory::manager::MapError> {
         Arc::try_new_in(Life, alloc::alloc::Global)
             .map_err(|_| crate::memory::manager::MapError::OutOfMemory)

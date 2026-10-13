@@ -1,6 +1,6 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::lock::{Level, SpinLock};
@@ -11,14 +11,6 @@ use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use crate::work::unit::space::{Mapping, RegionId, Reservation, Space};
 use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct PoleId(pub usize);
-
-fn alloc_id() -> PoleId {
-    static NEXT: AtomicUsize = AtomicUsize::new(1);
-    PoleId(NEXT.fetch_add(1, Ordering::Relaxed))
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Relation {
@@ -45,7 +37,7 @@ pub struct PoleMeta {
     operating: AtomicBool,
     size: usize,
     owner: TaskId,
-    id: PoleId,
+    pub(crate) id: usize,
     life: Arc<Life>,
     ring: SpinLock<usize>,
 }
@@ -64,7 +56,7 @@ impl PoleMeta {
             operating: AtomicBool::new(false),
             size,
             owner,
-            id: alloc_id(),
+            id: super::next_id(),
             life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, 0),
         })
@@ -123,9 +115,6 @@ impl PoleMeta {
     }
     pub(crate) fn owner(&self) -> TaskId {
         self.owner
-    }
-    pub(crate) fn id(&self) -> PoleId {
-        self.id
     }
     pub(crate) fn size(&self) -> usize {
         self.size
@@ -408,8 +397,7 @@ fn pie_map_error(error: MapError) -> PieFail {
 
 impl Drop for PoleMeta {
     fn drop(&mut self) {
-        self.live.store(false, Ordering::Release);
-        wipe(self);
+        seal(self);
         let maps = core::mem::take(&mut *self.maps.lock());
         for entry in maps {
             if entry.relation == Relation::Input && !self.committed.load(Ordering::Acquire) {
@@ -571,15 +559,12 @@ pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleM
 }
 
 pub(crate) fn key(meta: &PoleMeta, bit: Bit) -> WakeKey {
-    WakeKey::Pole { id: meta.id.0, bit }
+    WakeKey::Pole { id: meta.id, bit }
 }
 fn wipe(meta: &PoleMeta) {
-    messenger::wipe(WakeKey::Seal {
-        kind: env::PieKind::Pole as u8,
-        id: meta.id.0,
-    });
+    messenger::wipe(WakeKey::seal(env::PieKind::Pole, meta.id));
     for index in 0..usize::BITS as usize {
-        messenger::wipe(key(meta, Bit::of(index).unwrap()));
+        messenger::wipe(key(meta, Bit::wrap(index)));
     }
 }
 pub(crate) fn ring(meta: &PoleMeta, bit: Bit) -> Result<(), MailFail> {

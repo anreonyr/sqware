@@ -139,7 +139,6 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             if map.is_live() {
                 space.unmap_range(KVirt::wrap(addr.get()), size)?;
             }
-            caller.pend.creations.forget(&map);
             creation.commit();
             Ok(0)
         }
@@ -159,7 +158,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
             } else {
                 let caller = caller.as_ref().ok_or(MemoryFail::Denied)?;
                 let pie = pend::locate(caller, pole).ok_or(MemoryFail::Denied)?;
-                let meta = pie.pole().ok_or(MemoryFail::Denied)?;
+                let meta = pie.mail().pole().ok_or(MemoryFail::Denied)?;
                 Some((pie, meta))
             };
             let _operation = match &source {
@@ -292,7 +291,10 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         })
                         .any(|(map, _)| {
                             pies.iter().any(|pie| {
-                                pie.snapshot().pole().is_some_and(|meta| meta.opened(map))
+                                pie.snapshot()
+                                    .mail()
+                                    .pole()
+                                    .is_some_and(|meta| meta.opened(map))
                             })
                         })
                     {

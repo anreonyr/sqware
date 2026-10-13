@@ -1,9 +1,6 @@
-use super::pie::{Permission, Pie};
+use super::pie::Permission;
+use crate::work::grant::narrows;
 use env::PieFail;
-
-pub(crate) fn narrow(src: &mut Pie, subset: Permission) -> Result<(), PieFail> {
-    src.narrow(subset)
-}
 
 pub(crate) fn reduce(
     task: &alloc::sync::Arc<crate::work::unit::task::Task>,
@@ -25,12 +22,10 @@ fn reduce_locked(
     if !pie.alive() {
         return Err(PieFail::Dead);
     }
-    if !pie.covers(subset)
-        || pie.permission().contains(Permission::ONLY) && !subset.contains(Permission::ONLY)
-    {
+    if !narrows(pie.permission(), subset) {
         return Err(PieFail::Denied);
     }
-    if let Some(p) = pie.pole() {
+    if let Some(p) = pie.mail().pole() {
         if !subset.contains(Permission::FETCH) {
             return Err(PieFail::Denied);
         }
@@ -63,7 +58,7 @@ fn reduce_locked(
             .iter_mut()
             .find(|pie| pie.token() == token)
             .ok_or(PieFail::Denied)?;
-        narrow(pie, subset)?;
+        pie.narrow(subset)?;
         super::changed(task);
         return Ok(());
     }
@@ -74,7 +69,7 @@ fn reduce_locked(
         .iter_mut()
         .find(|pie| pie.token() == token)
         .ok_or(PieFail::Denied)?;
-    narrow(pie, subset)?;
+    pie.narrow(subset)?;
     super::changed(task);
     Ok(())
 }

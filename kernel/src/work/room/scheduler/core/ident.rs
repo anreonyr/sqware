@@ -6,7 +6,6 @@ use env::{TaskId, TeamId};
 use crate::memory::manager::addr::PhysAddr;
 use crate::work::unit::task::TaskIdent;
 
-use super::hart::frame_pa;
 use super::table::{SCHEDULERS, current};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,7 +127,7 @@ impl Identity {
 
     pub fn trap(&self) -> Option<PhysAddr> {
         match self {
-            Identity::Live(t) => Some(frame_pa(t)),
+            Identity::Live(t) => Some(t.frame_pa),
             Identity::Last(_) => None,
         }
     }

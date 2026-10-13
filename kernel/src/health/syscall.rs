@@ -70,7 +70,7 @@ impl Caller {
 impl Drop for Caller {
     fn drop(&mut self) {
         self.team.release_held(&self.task);
-        self.team.prune_tasks(&self.task);
+        self.team.prune_tasks();
     }
 }
 
@@ -506,7 +506,7 @@ pub fn capability() {
     crate::work::room::scheduler::boot::init().expect("scheduler init");
     let user = Caller::new(false);
     let foreign = Caller::new(false);
-    let meta = hole::meta(user.task.ident.id);
+    let meta = hole::HoleMeta::new(user.task.ident.id);
     let pie = pend::Pie::try_new(
         Mail::Hole(meta.clone()),
         env::Mark::NONE,
@@ -514,7 +514,7 @@ pub fn capability() {
         None,
     )
     .expect("pie allocation");
-    let token = pie.token;
+    let token = pie.token();
     user.task.pend.pies.lock().push(pie);
     assert!(pend::accede(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
@@ -549,7 +549,7 @@ pub fn capability() {
         None,
     )
     .expect("pie allocation");
-    let token = pie.token;
+    let token = pie.token();
     user.task.pend.pies.lock().push(pie);
     let original = user.team.space.tree.find(KVirt::wrap(source)).unwrap();
     user.task.pend.creations.claim(&original).unwrap().commit();

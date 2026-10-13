@@ -202,6 +202,7 @@ impl Space {
         Arc::downgrade(&self.life)
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn attach_region(
         &self,
         region: RegionId,
@@ -301,12 +302,7 @@ impl Space {
         let (right_start, left_id, right_id) = match split {
             Ok(split) => split,
             Err(error) => {
-                let _ = self.allocator.lock().release(
-                    reservation.region,
-                    reservation.start.as_usize(),
-                    reservation.size,
-                    reservation.id,
-                );
+                let _ = self.give_back(&reservation);
                 return Err(error);
             }
         };
@@ -329,17 +325,21 @@ impl Space {
         ))
     }
 
+    fn give_back(&self, reservation: &Reservation) -> bool {
+        self.allocator.lock().release(
+            reservation.region,
+            reservation.start.as_usize(),
+            reservation.size,
+            reservation.id,
+        )
+    }
+
     pub fn release_reservation(&self, reservation: Reservation) -> Result<(), MapError> {
         self.check_reservation(&reservation)?;
         if self.tree.overlaps(reservation.start, reservation.size)? {
             return Err(MapError::AlreadyMapped);
         }
-        if self.allocator.lock().release(
-            reservation.region,
-            reservation.start.as_usize(),
-            reservation.size,
-            reservation.id,
-        ) {
+        if self.give_back(&reservation) {
             Ok(())
         } else {
             Err(MapError::NoRegion)
@@ -392,24 +392,14 @@ impl Space {
             }
         } else {
             self.cancel_mapping_cleanup(&reservation);
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
         }
         Err(error)
     }
 
     fn ensure_unmapped_reservation(&self, reservation: &Reservation) -> Result<(), MapError> {
         if self.tree.overlaps(reservation.start, reservation.size)? {
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
             return Err(MapError::AlreadyMapped);
         }
         Ok(())
@@ -429,12 +419,7 @@ impl Space {
         }
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
             return Err(error);
         }
         match self.tree.map_frames(
@@ -457,12 +442,7 @@ impl Space {
         self.check_reservation(&reservation)?;
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
             return Err(error);
         }
         match self.tree.map_lazy(
@@ -493,12 +473,7 @@ impl Space {
             }
         };
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
             return Err(error);
         }
         match self.tree.map_borrowed(
@@ -525,12 +500,7 @@ impl Space {
         self.check_reservation(&reservation)?;
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(
-                reservation.region,
-                reservation.start.as_usize(),
-                reservation.size,
-                reservation.id,
-            );
+            let _ = self.give_back(&reservation);
             return Err(error);
         }
         match self.tree.derive_map(

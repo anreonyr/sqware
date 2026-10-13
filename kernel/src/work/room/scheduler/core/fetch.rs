@@ -87,7 +87,6 @@ fn wait() -> Option<Arc<Task>> {
         }
         #[cfg(debug_assertions)]
         crate::runtime::diagnose::ipi::wfi_exit(me, sip::read().ssoft());
-        crate::work::room::messenger::sweep_doomed();
         if messenger::redeem() {
             break;
         }

@@ -14,7 +14,7 @@ use super::site::WakeKey;
 pub struct Ticket(pub(super) u64);
 
 impl Ticket {
-    pub(super) fn alloc() -> Ticket {
+    pub(super) fn next_id() -> Ticket {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         Ticket(NEXT.fetch_add(1, Ordering::Relaxed) as u64)
     }

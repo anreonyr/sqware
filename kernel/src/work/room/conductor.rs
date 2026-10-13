@@ -1,5 +1,7 @@
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use super::Counter;
+
 use crate::hart::{self, HartId};
 use crate::lock::OnceLock;
 use crate::putln;
@@ -8,8 +10,8 @@ use crate::runtime::diagnose::ledger;
 use sbi::ecall::SArgs;
 use sbi::{self, fid};
 
-static PUSHED: AtomicUsize = AtomicUsize::new(0);
-static REAPED: AtomicUsize = AtomicUsize::new(0);
+static PUSHED: Counter = Counter::new();
+static REAPED: Counter = Counter::new();
 static ROOTED: AtomicBool = AtomicBool::new(false);
 
 const BARRIER_REPORT_AT: usize = 20_000_000;
@@ -24,26 +26,23 @@ static PICK_CURSOR: AtomicUsize = AtomicUsize::new(0);
 const WAITING_WORDS: usize = crate::layout::MAX_HART_SLOTS / usize::BITS as usize;
 
 pub(crate) fn push() {
-    PUSHED.fetch_add(1, Ordering::Relaxed);
+    PUSHED.bump();
 }
 
 pub(crate) fn exit() {
-    REAPED.fetch_add(1, Ordering::Relaxed);
+    REAPED.bump();
 }
 
 pub(super) fn done() -> bool {
     if !ROOTED.load(Ordering::Acquire) {
         return false;
     }
-    let pushed = PUSHED.load(Ordering::Relaxed);
-    pushed == 0 || REAPED.load(Ordering::Relaxed) == pushed
+    let pushed = PUSHED.get();
+    pushed == 0 || REAPED.get() == pushed
 }
 
 pub(crate) fn counts() -> (usize, usize) {
-    (
-        PUSHED.load(Ordering::Relaxed),
-        REAPED.load(Ordering::Relaxed),
-    )
+    (PUSHED.get(), REAPED.get())
 }
 
 pub(crate) fn barrier() -> (usize, usize) {
@@ -222,22 +221,19 @@ pub(crate) fn pick() -> HartId {
     }
 }
 
-static KICKS: AtomicUsize = AtomicUsize::new(0);
-static FALLBACK: AtomicUsize = AtomicUsize::new(0);
+static KICKS: Counter = Counter::new();
+static FALLBACK: Counter = Counter::new();
 
 pub(crate) fn note_kick_ipi() {
-    KICKS.fetch_add(1, Ordering::Relaxed);
+    KICKS.bump();
 }
 
 pub(crate) fn note_fallback() {
-    FALLBACK.fetch_add(1, Ordering::Relaxed);
+    FALLBACK.bump();
 }
 
 pub(crate) fn kick_stats() -> (usize, usize) {
-    (
-        KICKS.load(Ordering::Relaxed),
-        FALLBACK.load(Ordering::Relaxed),
-    )
+    (KICKS.get(), FALLBACK.get())
 }
 
 pub(super) fn yell() {

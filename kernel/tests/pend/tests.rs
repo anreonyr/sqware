@@ -354,7 +354,7 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
         let ab = grant(&a, token, &b).unwrap();
         grant(&b, ab, &c).unwrap();
         let own = root(&b, rights());
-        let meta = pend::locate(&b, own).unwrap().nole().unwrap();
+        let meta = pend::locate(&b, own).unwrap().mail().nole().unwrap();
         let barrier = Arc::new(Barrier::new(2));
         thread::scope(|scope| {
             let barrier2 = barrier.clone();
@@ -698,15 +698,15 @@ fn locating_and_accessing_snapshots_do_not_allocate() {
     FAIL.with(|count| count.set(Some(0)));
     let first = pend::locate(&task, token).unwrap();
     let second = pend::locate(&task, token).unwrap();
-    let meta = first.nole().unwrap();
-    let same = first.same(&second);
+    let meta = first.mail().nole().unwrap();
+    let same = first.mail().same(second.mail());
     let unspent = FAIL.with(|count| count.replace(None));
     assert_eq!(unspent, Some(0));
     assert!(same);
     assert!(meta.alive());
-    assert!(first.hole().is_none());
-    assert!(first.pole().is_none());
-    assert!(first.tole().is_none());
+    assert!(first.mail().hole().is_none());
+    assert!(first.mail().pole().is_none());
+    assert!(first.mail().tole().is_none());
 }
 
 #[test]
@@ -720,21 +720,21 @@ fn erased_resources_keep_their_type_identity_across_grants() {
         pie(Mail::Nole(NoleMeta::new(a.ident.id)), rights()),
         pie(Mail::Tole(ToleMeta::new(a.ident.id)), rights()),
     ];
-    let mut previous = None;
+    let mut previous: Option<pend::PieSnapshot> = None;
     for entry in entries {
-        let kind = entry.kind();
+        let kind = entry.mail().kind();
         let token = entry.token();
         pend::insert(&a, entry).unwrap();
         let child = grant(&a, token, &b).unwrap();
         let source = pend::locate(&a, token).unwrap();
         let granted = pend::locate(&b, child).unwrap();
-        assert_eq!(source.kind(), kind);
-        assert_eq!(granted.kind(), kind);
-        assert!(source.same(&granted));
+        assert_eq!(source.mail().kind(), kind);
+        assert_eq!(granted.mail().kind(), kind);
+        assert!(source.mail().same(granted.mail()));
         assert_eq!(source.owner(), Some(a.ident.id));
-        assert_eq!(usize::from(source.hole().is_some()) + usize::from(source.pole().is_some())
-            + usize::from(source.nole().is_some()) + usize::from(source.tole().is_some()), 1);
-        if let Some(previous) = &previous { assert!(!source.same(previous)); }
+        assert_eq!(usize::from(source.mail().hole().is_some()) + usize::from(source.mail().pole().is_some())
+            + usize::from(source.mail().nole().is_some()) + usize::from(source.mail().tole().is_some()), 1);
+        if let Some(previous) = &previous { assert!(!source.mail().same(previous.mail())); }
         previous = Some(source);
     }
 }
@@ -785,7 +785,7 @@ fn memory_snapshots_observe_permission_reduction_and_revocation() {
     assert!(retained.permission().is_empty());
     assert!(retained_copy.permission().is_empty());
     assert!(!retained.alive());
-    assert!(Arc::ptr_eq(&retained.pole().unwrap(), &meta));
+    assert!(Arc::ptr_eq(&retained.mail().pole().unwrap(), &meta));
 }
 
 #[test]

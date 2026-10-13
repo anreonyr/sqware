@@ -3,7 +3,7 @@ use super::pie::observe;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::{
     self,
-    tole::{self, AwaitWait, Cell, Member},
+    tole::{self, AwaitWait, Cell, Watch},
 };
 use crate::work::pend::{self, Need};
 use crate::work::room::messenger::{self, Handoff, WakeKey};
@@ -11,7 +11,7 @@ use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::task::{Task, TaskIdent};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use env::{MailCall, MailCondition, MailFail, Source};
+use env::{MailCall, MailFail, Source};
 
 pub(crate) fn dispatch(
     frame: &mut TrapContext,
@@ -31,7 +31,7 @@ pub(crate) fn dispatch(
                 let _commit = crate::work::unit::commit();
                 let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 observe(&pie)?;
-                let group = pie.tole().ok_or(MailFail::Denied)?;
+                let group = pie.mail().tole().ok_or(MailFail::Denied)?;
                 tole::attach(&group, cell(&task, source)?)
             })();
             answer(frame, result);
@@ -43,7 +43,7 @@ pub(crate) fn dispatch(
                 let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 observe(&pie)?;
                 {
-                    let group = pie.tole().ok_or(MailFail::Denied)?;
+                    let group = pie.mail().tole().ok_or(MailFail::Denied)?;
                     tole::detach(&group, task.ident.id, source)
                 }
             })();
@@ -54,7 +54,7 @@ pub(crate) fn dispatch(
             let result = (|| {
                 let pie = pend::accede(&task, tole, Need::Fetch).map_err(mail::mail_fail)?;
                 observe(&pie)?;
-                let group = pie.tole().ok_or(MailFail::Denied)?;
+                let group = pie.mail().tole().ok_or(MailFail::Denied)?;
                 messenger::mail_await(AwaitWait::new(group, tole, &task, millis))
             })();
             match result {
@@ -70,33 +70,15 @@ pub(crate) fn dispatch(
 pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> {
     let mut keys = Vec::new();
     keys.try_reserve(4).map_err(|_| MailFail::OoM)?;
-    let member = match source {
+    let watch = match source {
         Source::Mail {
             pie: token,
             condition,
         } => {
-            let need = if matches!(condition, MailCondition::Pull | MailCondition::Signal(_)) {
-                Need::Fetch
-            } else {
-                Need::Store
-            };
+            let need = Need::of(condition);
             let pie = pend::accede(actor, token, need).map_err(mail::mail_fail)?;
             observe(&pie)?;
-            let (key, life) = if let Some(meta) = pie.hole() {
-                if matches!(condition, MailCondition::Signal(_)) {
-                    return Err(MailFail::Denied);
-                }
-                (crate::work::mail::hole::key(&meta, condition), meta.life())
-            } else if let Some(meta) = pie.nole() {
-                if condition != MailCondition::Pull {
-                    return Err(MailFail::Denied);
-                }
-                (crate::work::mail::nole::key(&meta), meta.life())
-            } else if let (Some(meta), MailCondition::Signal(bit)) = (pie.pole(), condition) {
-                (crate::work::mail::pole::key(&meta, bit), meta.life())
-            } else {
-                return Err(MailFail::Denied);
-            };
+            let (key, life) = pie.mail().key(condition).ok_or(MailFail::Denied)?;
             keys.push((key, life));
             keys.push((
                 WakeKey::Inspect {
@@ -105,7 +87,10 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 },
                 actor.life(),
             ));
-            Member::Mail
+            Watch::Mail {
+                pie: token,
+                condition,
+            }
         }
         Source::Join { target } => {
             let selected =
@@ -117,7 +102,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 env::Wait::POLL,
             );
             keys.push((wait.key(), wait.life()));
-            Member::Join(selected)
+            Watch::Join { target, selected }
         }
         Source::Inspect { task: id, token } => {
             let holder = muster(id)
@@ -146,42 +131,8 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 Some((Arc::downgrade(actor), parent))
             };
             let held = parent.is_none() && matches!(observe(&pie), Err(MailFail::HandedOver));
-            let resource = if let Some(meta) = pie.hole() {
-                (
-                    WakeKey::Seal {
-                        kind: env::PieKind::Hole as u8,
-                        id: meta.id().0,
-                    },
-                    meta.life(),
-                )
-            } else if let Some(meta) = pie.pole() {
-                (
-                    WakeKey::Seal {
-                        kind: env::PieKind::Pole as u8,
-                        id: meta.id().0,
-                    },
-                    meta.life(),
-                )
-            } else if let Some(meta) = pie.nole() {
-                (
-                    WakeKey::Seal {
-                        kind: env::PieKind::Nole as u8,
-                        id: meta.id().0,
-                    },
-                    meta.life(),
-                )
-            } else if let Some(meta) = pie.tole() {
-                (
-                    WakeKey::Seal {
-                        kind: env::PieKind::Tole as u8,
-                        id: meta.id().0,
-                    },
-                    meta.life(),
-                )
-            } else {
-                return Err(MailFail::Denied);
-            };
-            keys.push(resource);
+            let mail = pie.mail();
+            keys.push((WakeKey::seal(mail.kind(), mail.id()), mail.life()));
             keys.push((
                 WakeKey::Inspect {
                     task: id,
@@ -189,7 +140,9 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
                 },
                 holder.life(),
             ));
-            Member::Inspect {
+            Watch::Inspect {
+                task: id,
+                token,
                 holder: Arc::downgrade(&holder),
                 parent,
                 held,
@@ -198,10 +151,9 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
         }
     };
     Ok(Cell {
-        source,
         actor: actor.ident.id,
-        member,
         keys: Arc::try_new(keys).map_err(|_| MailFail::OoM)?,
+        watch,
     })
 }
 fn answer(frame: &mut TrapContext, result: Result<(), MailFail>) {

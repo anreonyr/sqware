@@ -130,7 +130,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 drop(ident);
                 return crate::work::room::messenger::quit() as *mut TrapContext;
             }
-            crate::work::room::messenger::sweep_doomed();
             if from_task {
                 run() as *mut TrapContext
             } else if persist(frame) {

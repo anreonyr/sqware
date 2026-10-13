@@ -12,14 +12,6 @@ use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use env::MailFail;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct HoleId(pub usize);
-
-fn alloc_id() -> HoleId {
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    HoleId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
-}
-
 enum Pending {
     Queue(Queue),
     Rung { count: usize, spare: VecDeque<Slot> },
@@ -55,7 +47,7 @@ impl Slot {
 }
 
 pub struct HoleMeta {
-    id: HoleId,
+    pub(crate) id: usize,
     life: Arc<Life>,
     owner: TaskId,
     pending: SpinLock<Pending>,
@@ -66,22 +58,21 @@ pub struct HoleMeta {
 
 impl HoleMeta {
     #[cfg(debug_assertions)]
-    pub(super) fn new(id: HoleId, owner: TaskId) -> Arc<Self> {
-        Self::try_new(id, owner).expect("hole allocation failed")
+    pub(crate) fn new(owner: TaskId) -> Arc<Self> {
+        Self::try_new(owner).expect("hole allocation failed")
     }
 
-    fn try_new(id: HoleId, owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
-        Self::try_new_with_limits(id, owner, HoleLimits::default())
+    pub(crate) fn try_new(owner: TaskId) -> Result<Arc<Self>, crate::memory::manager::MapError> {
+        Self::try_new_with_limits(owner, HoleLimits::default())
     }
 
-    fn try_new_with_limits(
-        id: HoleId,
+    pub(crate) fn try_new_with_limits(
         owner: TaskId,
         limits: HoleLimits,
     ) -> Result<Arc<Self>, crate::memory::manager::MapError> {
         let life = Life::try_new()?;
         Arc::try_new(Self {
-            id,
+            id: super::next_id(),
             life,
             owner,
             pending: SpinLock::new_level(Level::L3, Pending::Queue(Queue::default())),
@@ -98,10 +89,6 @@ impl HoleMeta {
 
     pub(crate) fn owner(&self) -> TaskId {
         self.owner
-    }
-
-    pub(crate) fn id(&self) -> HoleId {
-        self.id
     }
 
     pub(crate) fn alive(&self) -> bool {
@@ -129,29 +116,12 @@ impl HoleMeta {
 
 impl Drop for HoleMeta {
     fn drop(&mut self) {
-        let pending = core::mem::replace(&mut *self.pending.lock(), Pending::Dead);
-        if let Pending::Queue(q) = &pending {
-            HANDS_LIVE.fetch_sub(
-                q.hands.iter().filter_map(Slot::hand).count(),
-                Ordering::Relaxed,
-            );
-        }
-        drop(pending);
-        messenger::wipe(WakeKey::Seal {
-            kind: env::PieKind::Hole as u8,
-            id: self.id.0,
-        });
-        messenger::wipe(key(self, MailCondition::Pull));
-        messenger::wipe(key(self, MailCondition::Empty));
-        messenger::wipe(key(self, MailCondition::Push));
+        seal(self);
     }
 }
 
 pub(crate) fn key(meta: &HoleMeta, dir: MailCondition) -> WakeKey {
-    WakeKey::Hole {
-        hole: meta.id.0,
-        dir,
-    }
+    WakeKey::Hole { hole: meta.id, dir }
 }
 
 pub(crate) fn reserve_len(meta: &HoleMeta, len: usize) -> Result<Reservation<'_>, MailFail> {
@@ -297,7 +267,7 @@ pub(crate) fn read(meta: &HoleMeta) -> Result<Reading<'_>, MailFail> {
     Ok(reading)
 }
 
-pub(crate) fn taken(meta: &HoleMeta) {
+fn taken(meta: &HoleMeta) {
     let mut off = None;
     {
         let mut pending = meta.pending.lock();
@@ -319,6 +289,7 @@ pub(crate) fn taken(meta: &HoleMeta) {
     }
     if let Some(hand) = off {
         let len = hand.buf.len();
+        HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
         note_hand_off(meta, hand.from, len, hand.at);
     }
     let _ = messenger::wake(key(meta, MailCondition::Empty), &meta.life());
@@ -326,7 +297,7 @@ pub(crate) fn taken(meta: &HoleMeta) {
     let _ = messenger::wake(key(meta, MailCondition::Pull), &meta.life());
 }
 
-pub(crate) fn back(meta: &HoleMeta) {
+fn back(meta: &HoleMeta) {
     {
         let mut pending = meta.pending.lock();
         if let Pending::Queue(q) = &mut *pending {
@@ -462,7 +433,7 @@ fn note_shape(meta: &HoleMeta) {
     };
     crate::putln!(
         "mail: push not ready hole#{} owner={} pending={} live={}",
-        meta.id.0,
+        meta.id,
         meta.owner.get(),
         shape,
         HANDS_LIVE.load(Ordering::Relaxed),
@@ -495,7 +466,7 @@ fn note_hold(meta: &HoleMeta, from: TaskId, ms: usize) {
     HOLD_N.fetch_add(1, Ordering::Relaxed);
     if ms > HOLD_MAX_MS.load(Ordering::Relaxed) {
         HOLD_MAX_MS.store(ms, Ordering::Relaxed);
-        HOLD_WORST.store(meta.id.0, Ordering::Relaxed);
+        HOLD_WORST.store(meta.id, Ordering::Relaxed);
         HOLD_FROM.store(from.get(), Ordering::Relaxed);
         HOLD_OWNER.store(meta.owner.get(), Ordering::Relaxed);
     }
@@ -510,7 +481,7 @@ fn alarm_stuck(meta: &HoleMeta, from: TaskId, len: usize, ms: usize) {
     }
     crate::putln!(
         "mail: hand stuck hole#{} from={} owner={} len={} age={}ms",
-        meta.id.0,
+        meta.id,
         from.get(),
         meta.owner.get(),
         len,
@@ -523,7 +494,6 @@ fn note_hand_off(meta: &HoleMeta, from: TaskId, len: usize, at: u64) {
         return;
     }
     let ms = elapsed_ms(at);
-    HANDS_LIVE.fetch_sub(1, Ordering::Relaxed);
     note_hold(meta, from, ms);
     alarm_stuck(meta, from, len, ms);
 }
@@ -557,36 +527,19 @@ pub(crate) fn note_back(len: usize, max: usize) {
 pub(crate) fn seal(meta: &HoleMeta) {
     let pending = core::mem::replace(&mut *meta.pending.lock(), Pending::Dead);
     if let Pending::Queue(q) = &pending {
-        let mut hands = q.hands.iter().filter_map(Slot::hand);
-        if let Some(head) = hands.next() {
+        if let Some(head) = q.hands.iter().filter_map(Slot::hand).next() {
             note_hand_off(meta, head.from, head.buf.len(), head.at);
         }
-        HANDS_LIVE.fetch_sub(hands.count(), Ordering::Relaxed);
+        HANDS_LIVE.fetch_sub(
+            q.hands.iter().filter_map(Slot::hand).count(),
+            Ordering::Relaxed,
+        );
     }
     drop(pending);
-    messenger::wipe(WakeKey::Seal {
-        kind: env::PieKind::Hole as u8,
-        id: meta.id.0,
-    });
+    messenger::wipe(WakeKey::seal(env::PieKind::Hole, meta.id));
     messenger::wipe(key(meta, MailCondition::Pull));
     messenger::wipe(key(meta, MailCondition::Empty));
     messenger::wipe(key(meta, MailCondition::Push));
-}
-
-#[cfg(debug_assertions)]
-pub(crate) fn meta(owner: TaskId) -> Arc<HoleMeta> {
-    HoleMeta::new(alloc_id(), owner)
-}
-
-pub(crate) fn try_meta(owner: TaskId) -> Result<Arc<HoleMeta>, crate::memory::manager::MapError> {
-    HoleMeta::try_new(alloc_id(), owner)
-}
-
-pub(crate) fn try_meta_with_limits(
-    owner: TaskId,
-    limits: HoleLimits,
-) -> Result<Arc<HoleMeta>, crate::memory::manager::MapError> {
-    HoleMeta::try_new_with_limits(alloc_id(), owner, limits)
 }
 
 #[cfg(debug_assertions)]

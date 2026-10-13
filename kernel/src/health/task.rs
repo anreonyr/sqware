@@ -239,7 +239,7 @@ pub fn construction() {
             None,
         )
         .expect("pie allocation");
-        let token = root.token;
+        let token = root.token();
         pend::insert(&caller, root).unwrap();
         meta.commit_source();
         let open = parent
@@ -409,7 +409,7 @@ pub fn cancellation() {
         None,
     )
     .expect("pie allocation");
-    let token = root.token;
+    let token = root.token();
     pend::insert(&caller, root).unwrap();
     meta.commit_source();
     pole::shut(&meta, token).unwrap();

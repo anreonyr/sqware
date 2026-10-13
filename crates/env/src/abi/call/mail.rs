@@ -85,6 +85,9 @@ pub enum MailCall {
 pub struct Bit(u8);
 impl Bit {
     pub const FIRST: Self = Self(0);
+    pub const fn wrap(index: usize) -> Self {
+        Self(index as u8)
+    }
     pub const fn of(index: usize) -> Option<Self> {
         if index < usize::BITS as usize {
             Some(Self(index as u8))

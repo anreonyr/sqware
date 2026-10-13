@@ -160,7 +160,7 @@ fn signals() {
     use resource::pile::Pile;
     let page = ::resource::raw::pole(env::PAGE_SIZE, true).unwrap();
     let a = Bit::FIRST;
-    let b = Bit::of(1).unwrap();
+    let b = Bit::wrap(1);
     let pile = Pile::unseal(false).unwrap();
     pile.attach(env::Source::Mail {
         pie: page,

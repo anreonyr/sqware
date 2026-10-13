@@ -5,8 +5,8 @@ use env::{NOTE_MAX, TaskId};
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::diagnose::ledger;
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
-use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
+use crate::work::room::{Chain, conductor};
 use crate::work::unit::space::Space;
 use crate::work::unit::task::{Task, TaskExitCause, TaskState};
 
@@ -14,17 +14,14 @@ use super::{WakeKey, wipe, wipe_space};
 
 pub(super) static HUSKS: SpinLock<Husks> = SpinLock::new_level(Level::L3, Husks::new());
 
-#[derive(Default)]
 pub(super) struct Husks {
-    head: Option<Arc<Task>>,
-    tail: Option<Arc<Task>>,
+    chain: Chain,
 }
 
 impl Husks {
     const fn new() -> Self {
         Self {
-            head: None,
-            tail: None,
+            chain: Chain::new(),
         }
     }
 
@@ -33,36 +30,20 @@ impl Husks {
             task.reaped(),
             "躯壳容器只收 Reaped 任务，且入壳前不得挂在链上"
         );
-        match self.tail.take() {
-            None => self.head = Some(task.clone()),
-            Some(last) => last.set_next(Some(task.clone())),
-        }
-        self.tail = Some(task);
+        self.chain.push(task);
     }
 
     fn pop(&mut self) -> Option<Arc<Task>> {
-        let head = self.head.take()?;
-        self.head = head.take_next();
-        if self.head.is_none() {
-            self.tail = None;
-        }
-        Some(head)
+        self.chain.pop()
     }
 
     #[cfg(debug_assertions)]
     pub(super) fn len(&self) -> usize {
-        let mut n = 0usize;
-        let mut cur = self.head.clone();
-        while let Some(node) = cur {
-            n += 1;
-            cur = node.next();
-        }
-        n
+        self.chain.len()
     }
 
     pub(super) fn take(&mut self) -> Option<Arc<Task>> {
-        self.tail = None;
-        self.head.take()
+        self.chain.take()
     }
 }
 
@@ -80,7 +61,7 @@ pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
     hooked(&task);
     {
         let _commit = crate::work::unit::commit();
-        task.transform(TaskState::reaped(cause, reason));
+        task.transform_checked(TaskState::reaped(cause, reason));
     }
     super::signal(WakeKey::Task { id: task.ident.id });
     task.ident.team.life.notify();
@@ -188,7 +169,7 @@ fn bury() {
         if Arc::strong_count(&z.ident.team.space) == 1 {
             wipe_space(z.ident.team.space.tree.asid());
         }
-        z.ident.team.prune_tasks(&z);
+        z.ident.team.prune_tasks();
         let _pruned = crate::work::room::scheduler::core::prune_dead();
         drop(z);
         conductor::exit();

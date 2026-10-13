@@ -3,6 +3,14 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use env::Permission;
 
+pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
+    src.contains(Permission::ONLY) == subset.contains(Permission::ONLY)
+}
+
+pub(crate) fn narrows(from: Permission, to: Permission) -> bool {
+    !to.is_empty() && from.contains(to) && form_ok(from, to)
+}
+
 pub(crate) struct Grant {
     permission: AtomicU32,
 }
@@ -28,10 +36,7 @@ impl Grant {
                 return Err(env::PieFail::Dead);
             }
             let permission = Permission::from_bits_retain(current);
-            if subset.is_empty()
-                || !permission.contains(subset)
-                || permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY)
-            {
+            if !narrows(permission, subset) {
                 return Err(env::PieFail::Denied);
             }
             match self.permission.compare_exchange_weak(

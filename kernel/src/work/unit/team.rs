@@ -247,7 +247,7 @@ impl Team {
         }
         Ok(())
     }
-    pub(crate) fn prune_tasks(&self, _exited: &Arc<Task>) {
+    pub(crate) fn prune_tasks(&self) {
         let _commit = super::commit();
         self.life.prune();
     }
@@ -274,9 +274,6 @@ impl Team {
         }
     }
     pub(crate) fn set_default_entry(&self, va: usize) {
-        self.publish_entry(va);
-    }
-    fn publish_entry(&self, va: usize) {
         self.state.lock().stage = TeamStage::Ready { default_entry: va };
     }
     pub(crate) fn sire(&self) -> Option<TaskId> {
@@ -383,7 +380,7 @@ fn make_team(
     constructing: bool,
 ) -> Result<Arc<Team>, crate::memory::manager::MapError> {
     use crate::memory::manager::MapError;
-    let id = alloc_team_id()?;
+    let id = next_id()?;
     let state = Arc::try_new(SpinLock::new_level(
         Level::UnitState,
         TeamState::new(if constructing {
@@ -460,9 +457,9 @@ pub(crate) fn init_kernel(
 pub fn kernel() -> Option<&'static Arc<Team>> {
     KERNEL_TEAM.get()
 }
-static NEXT_TEAM_ID: AtomicUsize = AtomicUsize::new(1);
-pub(crate) fn alloc_team_id() -> Result<TeamId, crate::memory::manager::MapError> {
-    let id = NEXT_TEAM_ID
+static NEXT: AtomicUsize = AtomicUsize::new(1);
+pub(crate) fn next_id() -> Result<TeamId, crate::memory::manager::MapError> {
+    let id = NEXT
         .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
             (id < isize::MAX as usize).then_some(id + 1)
         })
@@ -539,7 +536,7 @@ pub(crate) fn spawn(
             let Some(pie) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
             };
-            let p = pie.snapshot().pole().ok_or(UnitFail::Denied)?;
+            let p = pie.snapshot().mail().pole().ok_or(UnitFail::Denied)?;
             if !Arc::ptr_eq(&p, &item.meta)
                 || !p.alive()
                 || pie.sire().is_some()
@@ -574,7 +571,6 @@ pub(crate) fn spawn(
                 }
                 pend::changed(caller);
                 target.set_default_entry(entry_va);
-                target.publish_entry(entry_va);
             })
             .map_err(map_err);
         drop(pies);

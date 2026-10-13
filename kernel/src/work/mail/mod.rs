@@ -3,16 +3,31 @@ pub mod nole;
 pub mod pole;
 pub mod tole;
 
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
+use core::sync::atomic::{AtomicUsize, Ordering};
+use core::time::Duration;
 
-use env::{Permission, PieFail, PieKind, PieToken, TaskId};
+use env::{Bit, MailCondition, MailFail, Permission, PieFail, PieKind, PieToken, TaskId};
 
 use crate::work::grant::Grant;
+use crate::work::room::messenger::{Handoff, WakeKey};
+use crate::work::unit::life::Life;
 
 pub(crate) use hole::HoleMeta;
 pub(crate) use nole::NoleMeta;
 pub(crate) use pole::PoleMeta;
 pub(crate) use tole::ToleMeta;
+
+pub(crate) fn next_id() -> usize {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Liveness {
+    Live,
+    Dead,
+}
 
 #[derive(Clone)]
 pub(crate) enum Mail {
@@ -41,6 +56,24 @@ impl Mail {
         }
     }
 
+    pub(crate) fn id(&self) -> usize {
+        match self {
+            Mail::Hole(meta) => meta.id,
+            Mail::Pole(meta) => meta.id,
+            Mail::Nole(meta) => meta.id,
+            Mail::Tole(meta) => meta.id,
+        }
+    }
+
+    pub(crate) fn life(&self) -> Weak<Life> {
+        match self {
+            Mail::Hole(meta) => meta.life(),
+            Mail::Pole(meta) => meta.life(),
+            Mail::Nole(meta) => meta.life(),
+            Mail::Tole(meta) => meta.life(),
+        }
+    }
+
     pub(crate) fn alive(&self) -> bool {
         match self {
             Mail::Hole(meta) => meta.alive(),
@@ -59,6 +92,66 @@ impl Mail {
         }
     }
 
+    pub(crate) fn ring(&self, bit: Bit) -> Result<(), MailFail> {
+        match (self, bit) {
+            (Mail::Hole(meta), Bit::FIRST) => hole::ring(meta),
+            (Mail::Nole(meta), Bit::FIRST) => nole::ring(meta),
+            (Mail::Pole(meta), bit) => pole::ring(meta, bit),
+            _ => Err(MailFail::Denied),
+        }
+    }
+
+    pub(crate) fn hush(&self, bit: Bit) -> Result<(), MailFail> {
+        match (self, bit) {
+            (Mail::Hole(meta), Bit::FIRST) => hole::hush(meta),
+            (Mail::Nole(meta), Bit::FIRST) => nole::hush(meta),
+            (Mail::Pole(meta), bit) => pole::hush(meta, bit),
+            _ => Err(MailFail::Denied),
+        }
+    }
+
+    pub(crate) fn wait(
+        &self,
+        condition: MailCondition,
+        dur: Duration,
+    ) -> Result<Handoff<bool>, MailFail> {
+        match (self, condition) {
+            (
+                Mail::Hole(meta),
+                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
+            ) => hole::wait(meta, condition, dur),
+            (Mail::Nole(meta), MailCondition::Pull) => nole::wait(meta, dur),
+            (Mail::Pole(meta), MailCondition::Signal(bit)) => pole::wait(meta, bit, dur),
+            _ => Err(MailFail::Denied),
+        }
+    }
+
+    pub(crate) fn ready(&self, condition: MailCondition) -> bool {
+        match (self, condition) {
+            (
+                Mail::Hole(meta),
+                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
+            ) => meta.ready(condition),
+            (Mail::Nole(meta), MailCondition::Pull) => meta.ready(),
+            (Mail::Pole(meta), MailCondition::Signal(bit)) => meta.ready(bit),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn key(&self, condition: MailCondition) -> Option<(WakeKey, Weak<Life>)> {
+        match (self, condition) {
+            (
+                Mail::Hole(meta),
+                MailCondition::Pull | MailCondition::Push | MailCondition::Empty,
+            ) => Some((hole::key(meta, condition), meta.life())),
+            (Mail::Nole(meta), MailCondition::Pull) => Some((nole::key(meta), meta.life())),
+            (Mail::Pole(meta), MailCondition::Signal(bit)) => {
+                Some((pole::key(meta, bit), meta.life()))
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn hole(&self) -> Option<Arc<HoleMeta>> {
         match self {
             Mail::Hole(meta) => Some(meta.clone()),
@@ -69,13 +162,6 @@ impl Mail {
     pub(crate) fn pole(&self) -> Option<Arc<PoleMeta>> {
         match self {
             Mail::Pole(meta) => Some(meta.clone()),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn nole(&self) -> Option<Arc<NoleMeta>> {
-        match self {
-            Mail::Nole(meta) => Some(meta.clone()),
             _ => None,
         }
     }

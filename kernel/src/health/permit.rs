@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 use env::{MailCondition, MailFail, Mark, PieFail, PieToken, TaskId};
 
 use crate::work::mail::Mail;
-use crate::work::mail::tole::{Cell, Member};
+use crate::work::mail::tole::{Cell, Watch};
 use crate::work::mail::{hole, nole, tole};
 use crate::work::pend::{self, Need, Permission, Pie};
 use crate::work::room::messenger::{self, FWD_MAX, WakeKey};
@@ -37,86 +37,82 @@ pub fn form() {
     );
 
     let mark = Mark::of("permit");
-    let meta = hole::meta(TaskId::new(0));
+    let meta = hole::HoleMeta::new(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
         let mut pie =
             pend::Pie::try_new(Mail::Hole(meta.clone()), mark, sole, sire).expect("pie allocation");
         crate::expect!(
-            pend::narrow(&mut pie, sole).is_ok(),
+            pie.narrow(sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
             sire
         );
         crate::expect!(
-            matches!(pend::narrow(&mut pie, shared), Err(PieFail::Denied)),
+            matches!(pie.narrow(shared), Err(PieFail::Denied)),
             "撤掉 ONLY 应当被拒——**自持枚也不例外**（sire = {:?}）",
             sire
         );
         crate::expect!(
-            pend::narrow(&mut pie, Permission::FETCH | Permission::ONLY).is_ok(),
+            pie.narrow(Permission::FETCH | Permission::ONLY).is_ok(),
             "带着 ONLY 的普通收窄应当通过（sire = {:?}）",
             sire
         );
         crate::expect!(
             matches!(
-                pend::narrow(
-                    &mut pie,
-                    Permission::FETCH | Permission::STORE | Permission::ONLY
-                ),
+                pie.narrow(Permission::FETCH | Permission::STORE | Permission::ONLY),
                 Err(PieFail::Denied)
             ),
             "非单调收窄（要一个已被收掉的位）应当被拒（sire = {:?}）",
             sire
         );
         crate::expect!(
-            pend::narrow(&mut pie, Permission::ONLY).is_ok(),
+            pie.narrow(Permission::ONLY).is_ok(),
             "只留 ONLY 应当通过（形态位可以独存，sire = {:?}）",
             sire
         );
     }
 }
 
-fn cell(source: env::Source, key: WakeKey, life: alloc::sync::Weak<Life>) -> Cell {
+fn cell(watch: Watch, key: WakeKey, life: alloc::sync::Weak<Life>) -> Cell {
     Cell {
-        source,
         actor: TaskId::new(0),
-        member: Member::Mail,
         keys: Arc::new(alloc::vec![(key, life)]),
+        watch,
     }
 }
 pub fn members() {
-    let group = tole::meta(TaskId::new(0));
-    let h = hole::meta(TaskId::new(0));
-    let source = env::Source::Mail {
+    let group = tole::ToleMeta::new(TaskId::new(0));
+    let h = hole::HoleMeta::new(TaskId::new(0));
+    let watch = Watch::Mail {
         pie: PieToken::mint(123),
         condition: MailCondition::Pull,
     };
     let key = hole::key(&h, MailCondition::Pull);
-    tole::attach(&group, cell(source, key, h.life())).unwrap();
-    tole::attach(&group, cell(source, key, h.life())).unwrap();
+    tole::attach(&group, cell(watch.clone(), key, h.life())).unwrap();
+    tole::attach(&group, cell(watch.clone(), key, h.life())).unwrap();
     crate::expect!(group.cells_len() == 1, "重复登记幂等");
     drop(h);
     crate::expect!(group.cells_len() == 1, "失效来源保留描述以便报告和撤销");
-    tole::detach(&group, TaskId::new(0), source).unwrap();
-    tole::detach(&group, TaskId::new(0), source).unwrap();
+    tole::detach(&group, TaskId::new(0), watch.source()).unwrap();
+    tole::detach(&group, TaskId::new(0), watch.source()).unwrap();
     crate::expect!(group.cells_len() == 0, "失效后仍可幂等摘除");
 }
 pub fn fanout() {
-    let h = hole::meta(TaskId::new(0));
+    let h = hole::HoleMeta::new(TaskId::new(0));
     let key = hole::key(&h, MailCondition::Pull);
-    let source = env::Source::Mail {
+    let watch = Watch::Mail {
         pie: PieToken::mint(124),
         condition: MailCondition::Pull,
     };
     let mut groups = Vec::new();
     for _ in 0..FWD_MAX {
-        let group = tole::meta(TaskId::new(0));
-        tole::attach(&group, cell(source, key, h.life())).unwrap();
+        let group = tole::ToleMeta::new(TaskId::new(0));
+        tole::attach(&group, cell(watch.clone(), key, h.life())).unwrap();
         groups.push(group);
     }
-    let extra = tole::meta(TaskId::new(0));
+    let extra = tole::ToleMeta::new(TaskId::new(0));
     crate::expect!(
         matches!(
-            tole::attach(&extra, cell(source, key, h.life())),
+            tole::attach(&extra, cell(watch.clone(), key, h.life())),
             Err(MailFail::OoM)
         ),
         "转发满额显式失败"
@@ -133,12 +129,16 @@ pub fn subs() {
         task: TaskId::new(7),
         token: 1,
     };
-    let source = env::Source::Inspect {
+    let watch = Watch::Inspect {
         task: TaskId::new(7),
         token: PieToken::mint(1),
+        holder: alloc::sync::Weak::new(),
+        parent: None,
+        held: false,
+        access: env::Permission::empty(),
     };
-    let group = tole::meta(TaskId::new(0));
-    tole::attach(&group, cell(source, key, Arc::downgrade(&life))).unwrap();
+    let group = tole::ToleMeta::new(TaskId::new(0));
+    tole::attach(&group, cell(watch, key, Arc::downgrade(&life))).unwrap();
     crate::expect!(group.has_cells(), "登记身份阻止组转授观察权");
     tole::seal(&group);
     crate::expect!(group.cells_len() == 0, "封印清理全部登记");
@@ -166,7 +166,7 @@ pub fn order() {
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
     let task = team.task().hold().expect("order: hold task");
 
-    let dead_meta = hole::meta(TaskId::new(0));
+    let dead_meta = hole::HoleMeta::new(TaskId::new(0));
     hole::seal(&dead_meta);
     let dead = pend::Pie::try_new(
         Mail::Hole(dead_meta),
@@ -175,15 +175,15 @@ pub fn order() {
         None,
     )
     .expect("pie allocation");
-    let dead_token = dead.token;
+    let dead_token = dead.token();
     let live = pend::Pie::try_new(
-        Mail::Hole(hole::meta(TaskId::new(0))),
+        Mail::Hole(hole::HoleMeta::new(TaskId::new(0))),
         Mark::of("live"),
         Permission::FETCH,
         None,
     )
     .expect("pie allocation");
-    let live_token = live.token;
+    let live_token = live.token();
     {
         let mut pies = task.pend.pies.lock();
         pies.push(dead);
@@ -222,7 +222,7 @@ pub fn order() {
 
     let released = team.release_held(&task);
     crate::expect!(released, "order: 摘出未放行任务失败");
-    team.prune_tasks(&task);
+    team.prune_tasks();
     drop(task);
     drop(team);
     prune_dead();
@@ -232,7 +232,7 @@ pub fn badge() {
     let owner = TaskId::new(7);
     let ask = Mark::of("badge-ask");
     let reply = Mark::of("badge-reply");
-    let hole = hole::meta(owner);
+    let hole = hole::HoleMeta::new(owner);
 
     let src = pend::Pie::try_new(Mail::Hole(hole.clone()), ask, Permission::FETCH, None)
         .expect("pie allocation");
@@ -240,7 +240,7 @@ pub fn badge() {
         Mail::Hole(hole.clone()),
         reply,
         Permission::FETCH,
-        Some(src.token),
+        Some(src.token()),
     )
     .expect("pie allocation");
     crate::expect!(src.mark() == ask, "源枚刻的是它自己那一枚");
@@ -248,7 +248,7 @@ pub fn badge() {
         kid.mark() == reply,
         "子枚刻的是**自己**那一枚——同一份资源的两枚 Pie 带不同记号"
     );
-    crate::expect!(src.token != kid.token, "两枚各自一号");
+    crate::expect!(src.token() != kid.token(), "两枚各自一号");
     crate::expect!(
         hole.owner() == owner,
         "owner 是**资源**的事实：同一份资源只有一格"
@@ -283,13 +283,13 @@ pub fn badge() {
 
     let src_token = {
         let pie = pend::Pie::try_new(
-            Mail::Hole(hole::meta(owner)),
+            Mail::Hole(hole::HoleMeta::new(owner)),
             ask,
             Permission::FETCH | Permission::VEST,
             None,
         )
         .expect("pie allocation");
-        let token = pie.token;
+        let token = pie.token();
         caller.pend.pies.lock().push(pie);
         token
     };
@@ -318,8 +318,8 @@ pub fn badge() {
 
     let _ = team.release_held(&caller);
     let _ = team.release_held(&dst);
-    team.prune_tasks(&caller);
-    team.prune_tasks(&dst);
+    team.prune_tasks();
+    team.prune_tasks();
     drop(caller);
     drop(dst);
     drop(team);
@@ -341,8 +341,8 @@ pub fn references() {
     let caller = team.task().hold().unwrap();
     let target = team.task().hold().unwrap();
     let stranger = team.task().hold().unwrap();
-    let group = tole::meta(caller.ident.id);
-    let source_meta = hole::meta(caller.ident.id);
+    let group = tole::ToleMeta::new(caller.ident.id);
+    let source_meta = hole::HoleMeta::new(caller.ident.id);
     let root = pend::Pie::try_new(
         Mail::Hole(source_meta.clone()),
         Mark::NONE,
@@ -350,7 +350,7 @@ pub fn references() {
         None,
     )
     .expect("pie allocation");
-    let root_token = root.token;
+    let root_token = root.token();
     caller.pend.pies.lock().push(root);
     let child = PieToken::mint(
         pend::accord(
@@ -424,7 +424,7 @@ pub fn references() {
     .unwrap();
     page.commit_source();
     let bit0 = env::Bit::FIRST;
-    let bit1 = env::Bit::of(1).unwrap();
+    let bit1 = env::Bit::wrap(1);
     crate::work::mail::pole::ring(&page, bit0).unwrap();
     crate::work::mail::pole::ring(&page, bit0).unwrap();
     crate::work::mail::pole::ring(&page, bit1).unwrap();
@@ -444,7 +444,7 @@ pub fn references() {
         matches!(group.poll(&stranger), Err(MailFail::Denied)),
         "共享组不转授登记者观察权"
     );
-    let other_meta = hole::meta(stranger.ident.id);
+    let other_meta = hole::HoleMeta::new(stranger.ident.id);
     let other = pend::Pie::try_new(
         Mail::Hole(other_meta),
         Mark::NONE,
@@ -452,7 +452,7 @@ pub fn references() {
         None,
     )
     .expect("pie allocation");
-    let other_token = other.token;
+    let other_token = other.token();
     stranger.pend.pies.lock().push(other);
     let other_source = Source::Mail {
         pie: other_token,
@@ -467,7 +467,7 @@ pub fn references() {
     tole::detach(&group, stranger.ident.id, other_source).unwrap();
     tole::detach(&group, caller.ident.id, local).unwrap();
     pend::release(&stranger, other_token).unwrap();
-    let authority = tole::meta(caller.ident.id);
+    let authority = tole::ToleMeta::new(caller.ident.id);
     let root = pend::Pie::try_new(
         Mail::Tole(authority.clone()),
         Mark::NONE,
@@ -475,7 +475,7 @@ pub fn references() {
         None,
     )
     .expect("pie allocation");
-    let token = root.token;
+    let token = root.token();
     caller.pend.pies.lock().push(root);
     let child = PieToken::mint(
         pend::accord(
@@ -516,7 +516,7 @@ pub fn references() {
     pend::release(&caller, root_token).unwrap();
     for task in [&caller, &target, &stranger] {
         let _ = team.release_held(task);
-        team.prune_tasks(task);
+        team.prune_tasks();
     }
     drop(caller);
     drop(target);

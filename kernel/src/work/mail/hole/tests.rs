@@ -11,7 +11,7 @@ fn storage(meta: &HoleMeta) -> (usize, usize) {
 }
 
 pub fn reuse() {
-    let meta = meta(TaskId::new(0));
+    let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
     assert_eq!(storage(&meta).0, 0);
     assert!(meta.ready(MailCondition::Empty));
@@ -91,7 +91,7 @@ pub fn reuse() {
     seal(&meta);
     drop(meta);
     assert_eq!(HANDS_LIVE.load(Ordering::Relaxed), live);
-    let rung = super::meta(TaskId::new(0));
+    let rung = HoleMeta::new(TaskId::new(0));
     reserve(&rung)
         .and_then(|slot| slot.commit(Arc::new(alloc::vec![1]), TaskId::new(0)))
         .unwrap();
@@ -117,7 +117,7 @@ fn receive(meta: &HoleMeta) -> (TaskId, u8) {
 }
 
 pub fn reservations() {
-    let meta = super::meta(TaskId::new(0));
+    let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
     let first = reserve(&meta).unwrap();
     let middle = reserve(&meta).unwrap();
@@ -216,7 +216,7 @@ pub fn reservations() {
 }
 
 pub fn discard_oversized() {
-    let meta = meta(TaskId::new(0));
+    let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
     assert!(matches!(read(&meta), Err(MailFail::Busy)));
     reserve_len(&meta, 65)
@@ -260,7 +260,7 @@ pub fn limits() {
         max_messages: 2,
         max_bytes: 6,
     };
-    let meta = try_meta_with_limits(TaskId::new(0), limits).unwrap();
+    let meta = HoleMeta::try_new_with_limits(TaskId::new(0), limits).unwrap();
     assert!(meta.ready(MailCondition::Push));
     let first = reserve_len(&meta, 4).unwrap();
     assert!(!meta.ready(MailCondition::Empty));
@@ -307,7 +307,7 @@ pub fn limits() {
 }
 
 pub fn reading_guard() {
-    let meta = meta(TaskId::new(0));
+    let meta = HoleMeta::new(TaskId::new(0));
     let live = HANDS_LIVE.load(Ordering::Relaxed);
     reserve_len(&meta, 3)
         .unwrap()

@@ -3,10 +3,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use alloc::sync::{Arc, Weak};
 
-use env::{Mark, PieToken, TaskId};
+use env::{MailCondition, Mark, PieToken, TaskId};
 
-use crate::work::grant::Grant;
-use crate::work::mail::{HoleMeta, Mail, NoleMeta, PoleMeta, ToleMeta};
+use crate::work::grant::{Grant, narrows};
+use crate::work::mail::Mail;
 use crate::work::unit::task::Task;
 
 pub(crate) struct Pie {
@@ -20,7 +20,7 @@ impl Pie {
         permission: Permission,
         sire: Option<PieToken>,
     ) -> Result<Pie, env::PieFail> {
-        let token = alloc_id();
+        let token = next_id();
         Ok(Pie {
             core: PieSnapshot {
                 token,
@@ -51,22 +51,14 @@ impl Pie {
         self.core.heir = heir;
     }
 
-    pub(crate) fn set_permission(&mut self, subset: Permission) -> Result<(), env::PieFail> {
-        self.core.grant.narrow(subset)
-    }
-
     pub(crate) fn narrow(&mut self, subset: Permission) -> Result<(), env::PieFail> {
         if !self.core.alive() {
             return Err(env::PieFail::Dead);
         }
-        let permission = self.core.permission();
-        if subset.is_empty()
-            || !permission.contains(subset)
-            || permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY)
-        {
+        if !narrows(self.core.permission(), subset) {
             return Err(env::PieFail::Denied);
         }
-        self.set_permission(subset)
+        self.core.grant.narrow(subset)
     }
 }
 
@@ -101,31 +93,36 @@ pub enum Need {
     Vest,
 }
 
-fn alloc_id() -> PieToken {
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+impl Need {
+    pub(crate) fn of(condition: MailCondition) -> Need {
+        match condition {
+            MailCondition::Pull | MailCondition::Signal(_) => Need::Fetch,
+            MailCondition::Push | MailCondition::Empty => Need::Store,
+        }
+    }
+}
+
+fn next_id() -> PieToken {
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
     PieToken::mint(
-        NEXT_ID
-            .try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+        NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
             .expect("Pie token identity exhausted"),
     )
 }
 
-pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
-    src.contains(Permission::ONLY) == subset.contains(Permission::ONLY)
-}
-
 #[derive(Clone)]
 pub(crate) struct PieSnapshot {
-    pub(crate) token: PieToken,
+    token: PieToken,
     grant: Arc<Grant>,
     mark: Mark,
-    pub(crate) sire: Option<PieToken>,
+    sire: Option<PieToken>,
     lord: Weak<Task>,
     heir: Option<Heir>,
     meta: Mail,
 }
 
 impl PieSnapshot {
+    #[cfg(test)]
     pub(crate) fn grant(&self) -> &Arc<Grant> {
         &self.grant
     }
@@ -136,10 +133,6 @@ impl PieSnapshot {
 
     pub(crate) fn permission(&self) -> Permission {
         self.grant.permission().unwrap_or_else(Permission::empty)
-    }
-
-    pub(crate) fn kind(&self) -> env::PieKind {
-        self.meta.kind()
     }
 
     pub(crate) fn sire(&self) -> Option<PieToken> {
@@ -158,12 +151,8 @@ impl PieSnapshot {
         self.mark
     }
 
-    pub(crate) fn owner_task(&self) -> TaskId {
-        self.meta.owner()
-    }
-
     pub(crate) fn owner(&self) -> Option<TaskId> {
-        self.alive().then(|| self.owner_task())
+        self.alive().then(|| self.meta.owner())
     }
 
     pub(crate) fn alive(&self) -> bool {
@@ -174,32 +163,8 @@ impl PieSnapshot {
         allows_permission(self.permission(), need)
     }
 
-    pub(crate) fn covers(&self, subset: Permission) -> bool {
-        self.permission().contains(subset) && !subset.is_empty()
-    }
-
-    pub(crate) fn hole(&self) -> Option<Arc<HoleMeta>> {
-        self.meta.hole()
-    }
-
-    pub(crate) fn pole(&self) -> Option<Arc<PoleMeta>> {
-        self.meta.pole()
-    }
-
-    pub(crate) fn nole(&self) -> Option<Arc<NoleMeta>> {
-        self.meta.nole()
-    }
-
-    pub(crate) fn tole(&self) -> Option<Arc<ToleMeta>> {
-        self.meta.tole()
-    }
-
-    pub(crate) fn seal(&self) {
-        self.meta.seal();
-    }
-
-    pub(crate) fn same(&self, other: &Self) -> bool {
-        self.meta.same(&other.meta)
+    pub(crate) fn mail(&self) -> &Mail {
+        &self.meta
     }
 
     pub(crate) fn vest(&self, mark: Mark, permission: Permission) -> Result<Pie, env::PieFail> {

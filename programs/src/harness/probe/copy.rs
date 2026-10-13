@@ -82,7 +82,7 @@ fn waiting() {
     };
     let second = Source::Mail {
         pie: page,
-        condition: MailCondition::Signal(Bit::of(1).unwrap()),
+        condition: MailCondition::Signal(Bit::wrap(1)),
     };
     group.attach(first).unwrap();
     group.attach(second).unwrap();
@@ -95,7 +95,7 @@ fn waiting() {
     worker.join();
     env::mail::ring(page, Bit::FIRST).unwrap();
     env::mail::ring(page, Bit::FIRST).unwrap();
-    env::mail::ring(page, Bit::of(1).unwrap()).unwrap();
+    env::mail::ring(page, Bit::wrap(1)).unwrap();
     assert!(matches!(
         group.await_(Wait::POLL).unwrap(),
         AwaitReply::Source { fail: None, .. }

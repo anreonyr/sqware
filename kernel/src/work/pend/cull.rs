@@ -22,7 +22,7 @@ impl Cleanup {
             if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) {
                 super::notify(parent.ident.id, token);
             }
-            if let Some(p) = pie.snapshot().pole() {
+            if let Some(p) = pie.snapshot().mail().pole() {
                 p.withdraw(pie.token());
             }
             drop(pie);
@@ -201,7 +201,7 @@ pub(super) fn cull(
                         return Err(PieFail::Denied);
                     }
                 }
-                let pole = root.pole();
+                let pole = root.mail().pole();
                 let _operation = if !closing && let Some(p) = &pole {
                     let operation = p.operation().ok_or(PieFail::Busy)?;
                     if p.reserved() != 0 {
@@ -288,7 +288,7 @@ fn seal_owned(task: &Task) {
                 .pies
                 .lock()
                 .iter()
-                .filter(|pie| pie.owner_task() == task.ident.id)
+                .filter(|pie| pie.mail().owner() == task.ident.id)
                 .filter(|pie| pie.token().get() > after)
                 .min_by_key(|pie| pie.token().get())
                 .map(|p| p.snapshot())
@@ -297,6 +297,6 @@ fn seal_owned(task: &Task) {
             break;
         };
         after = pie.token().get();
-        pie.seal();
+        pie.mail().seal();
     }
 }

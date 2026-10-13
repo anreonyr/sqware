@@ -59,6 +59,7 @@ impl VaAllocator {
         Ok(())
     }
 
+    #[cfg(debug_assertions)]
     pub(crate) fn configure(
         &mut self,
         id: RegionId,
@@ -175,7 +176,7 @@ impl VaAllocator {
         r.reserved
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
-        let id = next_reservation_id();
+        let id = next_id();
         r.reserved.insert(
             at,
             Slot {
@@ -215,8 +216,8 @@ impl VaAllocator {
         r.reserved
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
-        let left_id = next_reservation_id();
-        let right_id = next_reservation_id();
+        let left_id = next_id();
+        let right_id = next_id();
         r.reserved[at] = Slot {
             start: addr,
             size: left_size,
@@ -414,7 +415,7 @@ impl VaAllocator {
     }
 }
 
-fn next_reservation_id() -> usize {
+fn next_id() -> usize {
     static NEXT: AtomicUsize = AtomicUsize::new(1);
     let id = NEXT.fetch_add(1, Ordering::Relaxed);
     assert_ne!(id, 0, "address reservation identities exhausted");

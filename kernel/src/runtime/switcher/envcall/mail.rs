@@ -63,7 +63,7 @@ fn push(
         .map(|t| t.ident.id)
         .unwrap_or(TaskId::new(0));
     let r = with_pie(token, Need::Store, |pie| {
-        let hole = pie.hole().ok_or(MailFail::Denied)?;
+        let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
         if len == 0 || !ident.team.space.validate_access(msg, len, PteFlags::R) {
             return Err(MailFail::Denied);
         }
@@ -100,7 +100,7 @@ fn pull(
         return Outcome::Resume;
     }
     let r = with_pie(token, Need::Fetch, |pie| {
-        let hole = pie.hole().ok_or(MailFail::Denied)?;
+        let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
         if !ident.team.space.validate_access(buf, max, PteFlags::W) {
             return Err(MailFail::Denied);
         }
@@ -149,7 +149,7 @@ fn hand_over(
 
 fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| {
-        let hole = pie.hole().ok_or(MailFail::Denied)?;
+        let hole = pie.mail().hole().ok_or(MailFail::Denied)?;
         mail::hole::peek(&hole)
     });
     match r {
@@ -170,81 +170,31 @@ fn wait_dir(
     dir: MailCondition,
     millis: Wait,
 ) -> Outcome {
-    enum Ready {
-        Hole(Arc<mail::hole::HoleMeta>),
-        Bell(Arc<mail::nole::NoleMeta>),
-        Page(Arc<mail::pole::PoleMeta>),
-    }
-    let need = match dir {
-        MailCondition::Pull | MailCondition::Signal(_) => Need::Fetch,
-        MailCondition::Push => Need::Store,
-        MailCondition::Empty => Need::Store,
-    };
-    let resolved = with_pie(token, need, |pie| {
-        if let Some(hole) = pie.hole() {
-            if matches!(dir, MailCondition::Signal(_)) {
-                return Err(MailFail::Denied);
-            }
-            return Ok(Ready::Hole(hole));
-        }
-        if dir == MailCondition::Pull {
-            if let Some(nole) = pie.nole() {
-                return Ok(Ready::Bell(nole));
-            }
-        }
-        if let MailCondition::Signal(_) = dir {
-            if let Some(pole) = pie.pole() {
-                return Ok(Ready::Page(pole));
-            }
-        }
-        Err(MailFail::Denied)
-    });
+    let need = Need::of(dir);
     let dur = millis.into_duration();
-    match resolved {
+    let r = with_pie(token, need, |pie| {
+        frame.gpr.set_x(Gprs::A0, 0);
+        drop(ident);
+        pie.mail().wait(dir, dur)
+    });
+    match r {
+        Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
+        Ok(Handoff::Switch(pa)) => return Outcome::Park(pa as *mut TrapContext),
         Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-        Ok(ready) => {
-            frame.gpr.set_x(Gprs::A0, 0);
-            drop(ident);
-            let parked = match &ready {
-                Ready::Hole(meta) => mail::hole::wait(meta, dir, dur),
-                Ready::Bell(meta) => mail::nole::wait(meta, dur),
-                Ready::Page(meta) => match dir {
-                    MailCondition::Signal(bit) => mail::pole::wait(meta, bit, dur),
-                    _ => Err(MailFail::Denied),
-                },
-            };
-            match parked {
-                Ok(Handoff::Resume(ready)) => frame.gpr.set_x(Gprs::A0, ready as usize),
-                Ok(Handoff::Switch(pa)) => return Outcome::Park(pa as *mut TrapContext),
-                Err(e) => frame.gpr.set_x(Gprs::A0, e.code() as usize),
-            }
-        }
     }
     Outcome::Resume
 }
 
 fn hush(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| {
-        if let Some(nole) = pie.nole() {
-            if bit != Bit::FIRST {
-                return Err(MailFail::Denied);
-            }
-            mail::nole::hush(&nole)?;
+        let mail = pie.mail();
+        mail.hush(bit)?;
+        if mail.kind() == env::PieKind::Nole {
             unsafe {
                 sie::set_sext();
             }
-            return Ok(());
         }
-        if let Some(hole) = pie.hole() {
-            if bit != Bit::FIRST {
-                return Err(MailFail::Denied);
-            }
-            return mail::hole::hush(&hole);
-        }
-        if let Some(pole) = pie.pole() {
-            return mail::pole::hush(&pole, bit);
-        }
-        Err(MailFail::Denied)
+        Ok(())
     });
     frame.gpr.set_x(
         Gprs::A0,
@@ -257,24 +207,7 @@ fn hush(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
 }
 
 fn ring(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
-    let r = with_pie(token, Need::Store, |pie| {
-        if let Some(nole) = pie.nole() {
-            if bit != Bit::FIRST {
-                return Err(MailFail::Denied);
-            }
-            return mail::nole::ring(&nole);
-        }
-        if let Some(hole) = pie.hole() {
-            if bit != Bit::FIRST {
-                return Err(MailFail::Denied);
-            }
-            return mail::hole::ring(&hole);
-        }
-        if let Some(pole) = pie.pole() {
-            return mail::pole::ring(&pole, bit);
-        }
-        Err(MailFail::Denied)
-    });
+    let r = with_pie(token, Need::Store, |pie| pie.mail().ring(bit));
     frame.gpr.set_x(
         Gprs::A0,
         match r {
