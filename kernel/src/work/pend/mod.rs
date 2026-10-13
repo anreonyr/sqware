@@ -16,13 +16,12 @@ mod revoke;
 
 pub(crate) use allocation::CreationRegistry;
 pub(crate) use fail::PendFail;
-mod snap;
 
 #[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
 pub(crate) use pie::{
     AnyPie, Grant, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, Tole, accede, allows,
-    boxed, locate, new_pie, try_new_pie,
+    boxed, locate, new_pie, try_new_pie, vestor,
 };
 
 pub(crate) use accord::{accord, clear_heir};
@@ -32,7 +31,6 @@ pub(crate) use narrow::narrow;
 pub(crate) use narrow::reduce;
 pub(crate) use release::release;
 pub(crate) use revoke::revoke;
-pub(crate) use snap::vestor;
 
 pub(super) const RETRIES: usize = 8;
 

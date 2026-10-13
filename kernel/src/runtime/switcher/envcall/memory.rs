@@ -253,7 +253,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 }
             }
             if access.contains(PteFlags::X) {
-                if let Err(error) = crate::work::unit::space::sync_instructions() {
+                if let Err(error) = crate::memory::manager::sync_instructions() {
                     let _ = space.dispose(mapping);
                     return Err(error.into());
                 }
@@ -373,7 +373,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 space.tree.protect(&map, start, size, access)?;
             }
             if access.contains(PteFlags::X) {
-                crate::work::unit::space::sync_instructions()?;
+                crate::memory::manager::sync_instructions()?;
             }
             Ok(0)
         }

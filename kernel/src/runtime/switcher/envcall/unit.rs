@@ -8,11 +8,11 @@ use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff};
 use crate::work::room::scheduler::core::muster;
+use crate::work::unit::copies::Site;
 use crate::work::unit::join::JoinWait;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::{Space, SpaceKind};
-use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent};
-use crate::work::unit::weak::{Site, TaskWeak};
+use crate::work::unit::task::{MAX_ARGS, Task, TaskIdent, TaskWeak};
 
 use super::ret_err;
 

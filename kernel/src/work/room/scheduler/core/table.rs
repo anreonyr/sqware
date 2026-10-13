@@ -12,8 +12,8 @@ use crate::hart::HartId;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
-use crate::work::unit::task::Task;
-use crate::work::unit::weak::{Site, TaskWeak};
+use crate::work::unit::copies::Site;
+use crate::work::unit::task::{Task, TaskWeak};
 
 use super::hart::Scheduler;
 

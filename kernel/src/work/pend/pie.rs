@@ -522,6 +522,30 @@ pub(crate) fn locate(task: &Task, token: PieToken) -> Option<PieSnapshot> {
         .map(|p| p.snapshot())
 }
 
+pub(crate) fn vestor(task: &Arc<Task>, token: PieToken) -> Option<TaskId> {
+    for _ in 0..super::RETRIES {
+        let observed = {
+            let _pend = task.pend.lock();
+            locate(task, token)?
+        };
+        let parent = observed.sire()?;
+        let lord = observed.lord().upgrade()?;
+        let result = super::with_pair(task, &lord, |_, _| {
+            let Some(current) = locate(task, token) else {
+                return Some(None);
+            };
+            if current.sire() != Some(parent) || !current.lord().ptr_eq(observed.lord()) {
+                return None;
+            }
+            Some(locate(&lord, parent).map(|_| lord.ident.id))
+        });
+        if let Some(result) = result {
+            return result;
+        }
+    }
+    None
+}
+
 pub(crate) fn accede<E: PendFail>(
     task: &Arc<Task>,
     token: PieToken,

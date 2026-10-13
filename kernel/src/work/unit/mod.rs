@@ -13,45 +13,25 @@ pub(crate) fn commit() -> crate::lock::reentrant::RelLockGuard<'static, ()> {
     COMMIT.lock()
 }
 
+pub(crate) mod boot;
 pub(crate) mod capsule;
+pub(crate) mod copies;
 pub(crate) mod join;
 pub(crate) mod life;
 pub mod space;
 pub(crate) mod task;
 pub(crate) mod team;
-pub(crate) mod weak;
 
+use crate::memory::manager::MapError;
 use alloc::sync::Arc;
-use alloc::vec::Vec;
-use erra::ResultExt;
 
-use riscv::register::satp;
-
-use crate::hart;
-use crate::layout::kernel_edge;
-use crate::memory::PAGE_SIZE;
-use crate::memory::manager::{
-    BorrowedRegion, Frame, MapError,
-    addr::{PhysAddr, VirtAddr},
-    entry::PteFlags,
-    flush_asid, mode,
-};
-use crate::platform::machine;
-
-use crate::layout::{HART_FRAME_BASE, TRAMPOLINE, trampoline_pa};
 use space::SpaceBuilder;
-
-unsafe extern "C" {
-    static _kernel_base: u8;
-    static _text_end: u8;
-    static _rodata_start: u8;
-}
 
 pub type MapResult<T> = erra::Result<T, MapError>;
 
 pub(crate) fn build(
     kind: space::SpaceKind,
-    sire: weak::TaskWeak,
+    sire: task::TaskWeak,
 ) -> Result<Arc<team::Team>, MapError> {
     let space = match kind {
         space::SpaceKind::Supervisor => SpaceBuilder::supervisor(),
@@ -86,115 +66,4 @@ pub(crate) fn oust(me: &Arc<task::Task>, id: env::TeamId) -> Result<(), env::Uni
     drop(operation);
     drop(retired);
     Ok(())
-}
-
-pub fn init() -> MapResult<()> {
-    (|| -> Result<(), MapError> {
-        unsafe {
-            let m = machine::info();
-
-            if VirtAddr::from_raw(m.dram.base + m.dram.size) > mode::upper() {
-                return Err(MapError::DramOverlap);
-            }
-
-            let kernel_space = SpaceBuilder::kernel().build()?;
-            let _identity_ram = kernel_space.reserve(
-                space::RegionId::Normal,
-                VirtAddr::from_raw(m.dram.base),
-                m.dram.size,
-            )?;
-
-            let ram_flags =
-                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::G;
-
-            let text_start = (&raw const _kernel_base).addr();
-            let text_end = (&raw const _text_end).addr();
-            let rodata_start = (&raw const _rodata_start).addr();
-            let image_end = kernel_edge();
-            let ram_end = m
-                .dram
-                .base
-                .checked_add(m.dram.size)
-                .ok_or(MapError::NoRegion)?;
-            if !(m.dram.base <= text_start
-                && text_start < text_end
-                && text_end <= rodata_start
-                && rodata_start <= image_end
-                && image_end <= ram_end)
-            {
-                return Err(MapError::NoRegion);
-            }
-            kernel_space.advance_region(space::RegionId::Normal, image_end)?;
-            let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G;
-            let text_flags = ro_flags | PteFlags::X;
-            for (start, end, flags) in [
-                (m.dram.base, text_start, ram_flags),
-                (text_start, text_end, text_flags),
-                (text_end, rodata_start, ram_flags),
-                (rodata_start, image_end, ro_flags),
-                (image_end, ram_end, ram_flags),
-            ] {
-                if start == end {
-                    continue;
-                }
-                for offset in [0, mode::lower().as_usize()] {
-                    let size = end - start;
-                    let region = BorrowedRegion::new(PhysAddr::from_raw(start), size)?;
-                    kernel_space.tree.map_borrowed(
-                        VirtAddr::wrap(offset + start),
-                        region,
-                        0,
-                        size,
-                        flags,
-                        flags,
-                    )?;
-                }
-            }
-
-            let tramp_flags =
-                PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-            let trampoline = BorrowedRegion::new(trampoline_pa(), PAGE_SIZE)?;
-            kernel_space.tree.map_borrowed(
-                TRAMPOLINE,
-                trampoline,
-                0,
-                PAGE_SIZE,
-                tramp_flags,
-                tramp_flags,
-            )?;
-
-            let n = hart::hart_count();
-            for h in 0..n {
-                let frame = crate::tag!(HartFrame, Frame::allocate()?);
-                let mut frames = Vec::new();
-                frames
-                    .try_reserve_exact(1)
-                    .map_err(|_| MapError::OutOfMemory)?;
-                frames.push(frame);
-                let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
-                kernel_space.tree.map_frames(
-                    HART_FRAME_BASE + h * PAGE_SIZE,
-                    frames,
-                    flags,
-                    flags,
-                )?;
-            }
-
-            let kernel_space = Arc::try_new(kernel_space).map_err(|_| MapError::OutOfMemory)?;
-            team::init_kernel(kernel_space.clone())?;
-            hart::mark_online();
-            satp::set(
-                mode::mode(),
-                kernel_space.tree.asid().get(),
-                kernel_space.tree.root_ppn(),
-            );
-
-            flush_asid(kernel_space.tree.asid());
-            #[cfg(debug_assertions)]
-            crate::layout::validate();
-
-            Ok(())
-        }
-    })()
-    .annotate("initializing unit (kernel space + team)")
 }

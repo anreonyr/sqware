@@ -169,9 +169,9 @@ pub fn abi_and_privilege() {
         .attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
-        .sire(crate::work::unit::weak::TaskWeak::stored(
+        .sire(crate::work::unit::task::TaskWeak::stored(
             Arc::downgrade(&supervisor.task),
-            crate::work::unit::weak::Site::Sire,
+            crate::work::unit::copies::Site::Sire,
         ))
         .spawn()
         .unwrap();
@@ -887,8 +887,8 @@ pub fn transfer_relations() {
 }
 
 pub fn unit_scan_and_receipts() {
-    use crate::work::unit::task::TaskState;
-    use crate::work::unit::weak::{Site, TaskWeak};
+    use crate::work::unit::copies::Site;
+    use crate::work::unit::task::{TaskState, TaskWeak};
     use alloc::vec::Vec;
     use env::{UnitFail, UnitTarget, Wait};
     crate::work::room::scheduler::boot::init().unwrap();

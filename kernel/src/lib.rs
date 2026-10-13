@@ -38,7 +38,7 @@ pub fn init(dtp: usize) -> Result<(), boot::BootError> {
     platform::machine::init(dtp).map_err(|source| boot::BootError::Machine { dtp, source })?;
     allocator::init().map_err(boot::BootError::Allocator)?;
     memory::manager::mode::detect().map_err(boot::BootError::PagingMode)?;
-    unit::init().map_err(boot::BootError::KernelSpace)?;
+    unit::boot::init().map_err(boot::BootError::KernelSpace)?;
     clock::init().map_err(boot::BootError::Clock)?;
     trace::init().map_err(boot::BootError::Trace)?;
     trap::resources::init().map_err(|source| boot::BootError::Resources {

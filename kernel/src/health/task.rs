@@ -184,7 +184,7 @@ pub fn construction() {
     let caller = parent.task().hold().unwrap();
     let child = crate::work::unit::build(
         crate::work::unit::space::SpaceKind::User,
-        crate::work::unit::weak::TaskWeak::empty(),
+        crate::work::unit::task::TaskWeak::empty(),
     )
     .unwrap();
     caller.adopt(child.clone()).unwrap();
@@ -376,7 +376,7 @@ pub fn cancellation() {
     let caller = parent.task().hold().unwrap();
     let child = crate::work::unit::build(
         crate::work::unit::space::SpaceKind::User,
-        crate::work::unit::weak::TaskWeak::empty(),
+        crate::work::unit::task::TaskWeak::empty(),
     )
     .unwrap();
     caller.adopt(child.clone()).unwrap();
@@ -482,9 +482,9 @@ pub fn cancellation() {
 }
 
 pub fn branch_control() {
+    use crate::work::unit::copies::Site;
     use crate::work::unit::space::RegionId;
-    use crate::work::unit::task::{Task, TaskExitCause, TaskState};
-    use crate::work::unit::weak::{Site, TaskWeak};
+    use crate::work::unit::task::{Task, TaskExitCause, TaskState, TaskWeak};
     use alloc::sync::Arc;
     fn team(parent: Option<&Arc<Task>>) -> Arc<crate::work::unit::team::Team> {
         let space = SpaceBuilder::user().build().unwrap();

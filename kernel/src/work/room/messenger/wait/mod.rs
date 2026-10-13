@@ -154,7 +154,7 @@ fn block_with_call<E: WaitFail>(
         rise(core::iter::once(task));
     }
     #[cfg(debug_assertions)]
-    crate::work::unit::weak::check_block_heldout();
+    crate::work::unit::copies::check_block_heldout();
     Ok(Blocked::Switch(next_pa))
 }
 

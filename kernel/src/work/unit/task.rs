@@ -1,7 +1,10 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
+use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
+
+use super::copies::Site;
 
 use env::{PieToken, TaskId, UnitFail};
 
@@ -209,6 +212,49 @@ impl Pend {
 
 unsafe impl Send for Task {}
 
+#[repr(C)]
+pub(crate) struct TaskWeak {
+    w: Weak<Task>,
+    id: usize,
+    site: Site,
+}
+
+impl TaskWeak {
+    pub(crate) fn stored(w: Weak<Task>, site: Site) -> TaskWeak {
+        #[cfg(debug_assertions)]
+        let id = super::copies::register(site);
+        #[cfg(not(debug_assertions))]
+        let id = 0;
+        TaskWeak { w, id, site }
+    }
+
+    pub(crate) fn copy_at(&self, site: Site) -> TaskWeak {
+        TaskWeak::stored(self.w.clone(), site)
+    }
+
+    pub(crate) fn empty() -> TaskWeak {
+        TaskWeak {
+            w: Weak::new(),
+            id: 0,
+            site: Site::Empty,
+        }
+    }
+}
+
+impl Deref for TaskWeak {
+    type Target = Weak<Task>;
+    fn deref(&self) -> &Weak<Task> {
+        &self.w
+    }
+}
+
+impl Drop for TaskWeak {
+    fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        super::copies::release(self.id);
+    }
+}
+
 pub(crate) struct TaskIdent {
     pub(crate) id: TaskId,
     pub(crate) team: Arc<Team>,
@@ -274,7 +320,7 @@ impl PreparedTask {
         let receipts = team.receipts()?;
         let member = Arc::try_new(super::team::Member {
             id: self.ident.id,
-            task: super::weak::TaskWeak::empty(),
+            task: TaskWeak::empty(),
             node: Arc::downgrade(&team.life),
             state: self.state.clone(),
             life: self.life.clone(),
@@ -322,7 +368,7 @@ impl PreparedTask {
             let task = unsafe { slot.assume_init() };
             let mut member = member;
             Arc::get_mut(&mut member).expect("private member").task =
-                super::weak::TaskWeak::stored(Arc::downgrade(&task), super::weak::Site::TeamTasks);
+                TaskWeak::stored(Arc::downgrade(&task), Site::TeamTasks);
             tasks.push(member);
             held.push(task.clone());
             conductor::push();

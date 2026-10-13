@@ -1,4 +1,5 @@
-use super::team::{Member, TeamLife, TeamState};
+use super::life::TeamLife;
+use super::team::{Member, TeamState};
 use crate::runtime::chrono::clock;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use alloc::sync::Arc;
