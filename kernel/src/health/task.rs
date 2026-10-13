@@ -165,7 +165,7 @@ pub fn preparation() {
 pub fn construction() {
     use crate::memory::PAGE_SIZE;
     use crate::memory::manager::entry::PteFlags;
-    use crate::work::mail::pole;
+    use crate::work::mail::{Mail, pole};
     use crate::work::room::scheduler;
     use crate::work::{pend, unit::team};
     use alloc::sync::{Arc, Weak};
@@ -235,14 +235,15 @@ pub fn construction() {
         );
         drop(frames);
         let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-        let root: pend::Pie<pend::Pole> = pend::new_pie::<pend::Pole>(
-            meta.clone(),
+        let root = pend::Pie::try_new(
+            Mail::Pole(meta.clone()),
             Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
             None,
-        );
+        )
+        .expect("pie allocation");
         let token = root.token;
-        pend::insert(&caller, pend::boxed(root).expect("pie allocation")).unwrap();
+        pend::insert(&caller, root).unwrap();
         meta.commit_source();
         let open = parent
             .space
@@ -359,7 +360,7 @@ pub fn construction() {
 pub fn cancellation() {
     use crate::memory::PAGE_SIZE;
     use crate::memory::manager::entry::PteFlags;
-    use crate::work::mail::pole;
+    use crate::work::mail::{Mail, pole};
     use crate::work::pend;
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
@@ -404,14 +405,15 @@ pub fn cancellation() {
         .collect();
     drop(frames);
     let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
-    let root: pend::Pie<pend::Pole> = pend::new_pie::<pend::Pole>(
-        meta.clone(),
+    let root = pend::Pie::try_new(
+        Mail::Pole(meta.clone()),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
         None,
-    );
+    )
+    .expect("pie allocation");
     let token = root.token;
-    pend::insert(&caller, pend::boxed(root).expect("pie allocation")).unwrap();
+    pend::insert(&caller, root).unwrap();
     meta.commit_source();
     pole::shut(&meta, token).unwrap();
     let at = VirtAddr::wrap(0x20000);

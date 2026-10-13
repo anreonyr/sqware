@@ -1,7 +1,7 @@
-use super::pie::{AnyPie, Permission};
+use super::pie::{Permission, Pie};
 use env::PieFail;
 
-pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail> {
+pub(crate) fn narrow(src: &mut Pie, subset: Permission) -> Result<(), PieFail> {
     src.narrow(subset)
 }
 

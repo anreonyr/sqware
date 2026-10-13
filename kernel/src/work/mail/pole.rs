@@ -6,7 +6,7 @@ use core::time::Duration;
 use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{Map, MapError, addr::PhysAddr, entry::PteFlags};
-use crate::work::pend::Grant;
+use crate::work::grant::Grant;
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::unit::life::Life;
 use crate::work::unit::space::{Mapping, RegionId, Reservation, Space};

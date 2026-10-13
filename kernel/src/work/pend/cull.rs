@@ -1,14 +1,14 @@
-use alloc::sync::Arc;
+use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 
 use env::{PieFail, PieToken, TaskId};
 
-use super::pie::{AnyPie, Heir};
+use super::pie::{Heir, Pie};
 use crate::work::unit::task::Task;
 
 pub(crate) struct Cleanup {
-    removed: Vec<AnyPie>,
+    removed: Vec<Pie>,
     tasks: Vec<TaskId>,
 }
 
@@ -135,7 +135,7 @@ fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]
     true
 }
 
-pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
+pub(super) fn take(task: &Task, token: PieToken) -> Option<Pie> {
     let pie = {
         let mut pies = task.pend.pies.lock();
         let at = pies.iter().position(|p| p.token() == token)?;
@@ -235,6 +235,19 @@ pub(super) fn cull(
         });
     }
     Err(PieFail::Busy)
+}
+
+pub(crate) fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
+    cull(task, token, None, false).map(|cleanup| cleanup.finish())
+}
+
+pub(crate) fn revoke(
+    caller: &Arc<Task>,
+    target: &Weak<Task>,
+    token: PieToken,
+) -> Result<usize, PieFail> {
+    let target = target.upgrade().ok_or(PieFail::Denied)?;
+    cull(&target, token, Some(caller), false).map(|cleanup| cleanup.finish())
 }
 
 pub(crate) fn doom(task: &Arc<Task>) {

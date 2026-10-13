@@ -1,6 +1,6 @@
 use crate::platform::machine;
 use crate::resource::Registry;
-use crate::work::mail;
+use crate::work::mail::{self, Mail};
 use crate::work::pend::{self, Permission};
 use env::{Mark, Name, Page, PieFail, TaskId};
 
@@ -25,37 +25,37 @@ pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
             let Ok(meta) = mail::pole::region(base, size, TaskId::new(0)) else {
                 continue;
             };
-            let root = pend::try_new_pie::<pend::Pole>(
-                meta,
+            let root = pend::Pie::try_new(
+                Mail::Pole(meta),
                 Mark::NONE,
                 Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
                 None,
             )?;
             registry
-                .register(Name::Page(Page::Region(base as u64)), pend::boxed(root)?)
+                .register(Name::Page(Page::Region(base as u64)), root)
                 .map_err(|e| e.into_parts().0)?;
         }
     }
     let meta = mail::pole::region(dtb.base, dtb.size, TaskId::new(0))?;
-    let root = pend::try_new_pie::<pend::Pole>(
-        meta,
+    let root = pend::Pie::try_new(
+        Mail::Pole(meta),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
         None,
     )?;
     registry
-        .register(Name::Page(Page::Dtb), pend::boxed(root)?)
+        .register(Name::Page(Page::Dtb), root)
         .map_err(|e| e.into_parts().0)?;
     if let Some(initrd) = machine::info().initrd() {
         let meta = mail::pole::region(initrd.base, initrd.size, TaskId::new(0))?;
-        let root = pend::try_new_pie::<pend::Pole>(
-            meta,
+        let root = pend::Pie::try_new(
+            Mail::Pole(meta),
             Mark::NONE,
             Permission::FETCH | Permission::VEST,
             None,
         )?;
         registry
-            .register(Name::Page(Page::Initrd), pend::boxed(root)?)
+            .register(Name::Page(Page::Initrd), root)
             .map_err(|e| e.into_parts().0)?;
     }
     Ok(())

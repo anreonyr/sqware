@@ -1,4 +1,5 @@
-use crate::pend::{self, AnyPie};
+use crate::pend::{self, Pie};
+use crate::work::mail::Mail;
 use crate::work::unit::task::Task;
 use env::{Mark, Permission, PieFail, PieToken};
 use std::alloc::{GlobalAlloc, Layout, System};
@@ -41,15 +42,19 @@ unsafe impl GlobalAlloc for Allocator {
 static ALLOCATOR: Allocator = Allocator;
 
 fn root(task: &Arc<Task>, permission: Permission) -> PieToken {
-    let pie = pend::boxed(pend::new_pie::<pend::Nole>(
-        crate::work::mail::nole::NoleMeta::new(task.ident.id),
+    let pie = pend::Pie::try_new(
+        crate::work::mail::Mail::Nole(crate::work::mail::nole::NoleMeta::new(task.ident.id)),
         Mark::of("pend-test"),
         permission,
         None,
-    )).expect("pie allocation");
+    )
+    .expect("pie allocation");
     let token = pie.token();
     pend::insert(task, pie).unwrap();
     token
+}
+fn pie(meta: crate::work::mail::Mail, permission: Permission) -> Pie {
+    pend::Pie::try_new(meta, Mark::NONE, permission, None).expect("pie allocation")
 }
 fn rights() -> Permission {
     Permission::FETCH | Permission::STORE | Permission::VEST
@@ -429,7 +434,13 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let b = Task::new();
     let c = Task::new();
     let meta = crate::work::mail::pole::PoleMeta::new(a.ident.id);
-    let pie = pend::boxed(pend::try_new_pie::<pend::Pole>(meta.clone(), Mark::NONE, rights(), None).unwrap()).expect("pie allocation");
+    let pie = pend::Pie::try_new(
+        crate::work::mail::Mail::Pole(meta.clone()),
+        Mark::NONE,
+        rights(),
+        None,
+    )
+    .expect("pie allocation");
     let token = pie.token();
     pend::insert(&a, pie).unwrap();
     let ab = grant(&a, token, &b).unwrap();
@@ -700,14 +711,14 @@ fn locating_and_accessing_snapshots_do_not_allocate() {
 
 #[test]
 fn erased_resources_keep_their_type_identity_across_grants() {
-    use crate::work::mail::{HoleMeta, NoleMeta, PoleMeta, ToleMeta};
+    use crate::work::mail::{HoleMeta, Mail, NoleMeta, PoleMeta, ToleMeta};
     let a = Task::new();
     let b = Task::new();
     let entries = [
-        pend::boxed(pend::new_pie::<pend::Hole>(HoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        pend::boxed(pend::new_pie::<pend::Pole>(PoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        pend::boxed(pend::new_pie::<pend::Nole>(NoleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
-        pend::boxed(pend::new_pie::<pend::Tole>(ToleMeta::new(a.ident.id), Mark::NONE, rights(), None)).unwrap(),
+        pie(Mail::Hole(HoleMeta::new(a.ident.id)), rights()),
+        pie(Mail::Pole(PoleMeta::new(a.ident.id)), rights()),
+        pie(Mail::Nole(NoleMeta::new(a.ident.id)), rights()),
+        pie(Mail::Tole(ToleMeta::new(a.ident.id)), rights()),
     ];
     let mut previous = None;
     for entry in entries {
@@ -758,7 +769,7 @@ fn memory_snapshots_observe_permission_reduction_and_revocation() {
     let a = Task::new();
     let b = Task::new();
     let meta = crate::work::mail::PoleMeta::new(a.ident.id);
-    let entry = pend::boxed(pend::new_pie::<pend::Pole>(meta.clone(), Mark::NONE, rights(), None)).unwrap();
+    let entry = pie(Mail::Pole(meta.clone()), rights());
     let token = entry.token();
     pend::insert(&a, entry).unwrap();
     let child = grant(&a, token, &b).unwrap();

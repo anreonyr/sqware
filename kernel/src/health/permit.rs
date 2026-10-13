@@ -5,9 +5,10 @@ use alloc::vec::Vec;
 
 use env::{MailCondition, MailFail, Mark, PieFail, PieToken, TaskId};
 
+use crate::work::mail::Mail;
 use crate::work::mail::tole::{Cell, Member};
 use crate::work::mail::{hole, nole, tole};
-use crate::work::pend::{self, AnyPie, Need, Permission};
+use crate::work::pend::{self, Need, Permission, Pie};
 use crate::work::room::messenger::{self, FWD_MAX, WakeKey};
 use crate::work::room::scheduler::core::prune_dead;
 use crate::work::unit::life::Life;
@@ -38,8 +39,8 @@ pub fn form() {
     let mark = Mark::of("permit");
     let meta = hole::meta(TaskId::new(0));
     for sire in [None, Some(PieToken::mint(1))] {
-        let mut pie = pend::boxed(pend::new_pie::<pend::Hole>(meta.clone(), mark, sole, sire))
-            .expect("pie allocation");
+        let mut pie =
+            pend::Pie::try_new(Mail::Hole(meta.clone()), mark, sole, sire).expect("pie allocation");
         crate::expect!(
             pend::narrow(&mut pie, sole).is_ok(),
             "重写同一个权限集应当通过（sire = {:?}）",
@@ -167,19 +168,26 @@ pub fn order() {
 
     let dead_meta = hole::meta(TaskId::new(0));
     hole::seal(&dead_meta);
-    let dead = pend::new_pie::<pend::Hole>(dead_meta, Mark::of("sealed"), Permission::FETCH, None);
+    let dead = pend::Pie::try_new(
+        Mail::Hole(dead_meta),
+        Mark::of("sealed"),
+        Permission::FETCH,
+        None,
+    )
+    .expect("pie allocation");
     let dead_token = dead.token;
-    let live = pend::new_pie::<pend::Hole>(
-        hole::meta(TaskId::new(0)),
+    let live = pend::Pie::try_new(
+        Mail::Hole(hole::meta(TaskId::new(0))),
         Mark::of("live"),
         Permission::FETCH,
         None,
-    );
+    )
+    .expect("pie allocation");
     let live_token = live.token;
     {
         let mut pies = task.pend.pies.lock();
-        pies.push(pend::boxed(dead).expect("pie allocation"));
-        pies.push(pend::boxed(live).expect("pie allocation"));
+        pies.push(dead);
+        pies.push(live);
     }
 
     crate::expect!(
@@ -226,12 +234,18 @@ pub fn badge() {
     let reply = Mark::of("badge-reply");
     let hole = hole::meta(owner);
 
-    let src: pend::Pie<pend::Hole> = pend::new_pie(hole.clone(), ask, Permission::FETCH, None);
-    let kid: pend::Pie<pend::Hole> =
-        pend::new_pie(hole.clone(), reply, Permission::FETCH, Some(src.token));
-    crate::expect!(src.mark == ask, "源枚刻的是它自己那一枚");
+    let src = pend::Pie::try_new(Mail::Hole(hole.clone()), ask, Permission::FETCH, None)
+        .expect("pie allocation");
+    let kid = pend::Pie::try_new(
+        Mail::Hole(hole.clone()),
+        reply,
+        Permission::FETCH,
+        Some(src.token),
+    )
+    .expect("pie allocation");
+    crate::expect!(src.mark() == ask, "源枚刻的是它自己那一枚");
     crate::expect!(
-        kid.mark == reply,
+        kid.mark() == reply,
         "子枚刻的是**自己**那一枚——同一份资源的两枚 Pie 带不同记号"
     );
     crate::expect!(src.token != kid.token, "两枚各自一号");
@@ -241,17 +255,17 @@ pub fn badge() {
     );
 
     let bell_meta = nole::NoleMeta::new(owner);
-    let bell: AnyPie = pend::boxed(pend::new_pie::<pend::Nole>(
-        bell_meta.clone(),
+    let bell: Pie = pend::Pie::try_new(
+        Mail::Nole(bell_meta.clone()),
         reply,
         Permission::FETCH,
         None,
-    ))
+    )
     .expect("pie allocation");
     crate::expect!(bell.mark() == reply, "非孔也带记号");
     crate::expect!(
         bell.owner() == Some(owner),
-        "`AnyPie::owner` 答**资源**来历（四种 Mail 都答）⇒ 孔那道闸在 `Collect` 里"
+        "`Pie` 的 owner 答**资源**来历（四种 Mail 都答）⇒ 孔那道闸在 `Collect` 里"
     );
 
     const USER_BASE: usize = 0x4000_0000;
@@ -268,18 +282,15 @@ pub fn badge() {
     let dst = team.task().hold().expect("badge: hold dst");
 
     let src_token = {
-        let pie = pend::new_pie::<pend::Hole>(
-            hole::meta(owner),
+        let pie = pend::Pie::try_new(
+            Mail::Hole(hole::meta(owner)),
             ask,
             Permission::FETCH | Permission::VEST,
             None,
-        );
+        )
+        .expect("pie allocation");
         let token = pie.token;
-        caller
-            .pend
-            .pies
-            .lock()
-            .push(pend::boxed(pie).expect("pie allocation"));
+        caller.pend.pies.lock().push(pie);
         token
     };
     let dst_weak = Arc::downgrade(&dst);
@@ -332,14 +343,15 @@ pub fn references() {
     let stranger = team.task().hold().unwrap();
     let group = tole::meta(caller.ident.id);
     let source_meta = hole::meta(caller.ident.id);
-    let root = pend::new_pie::<pend::Hole>(
-        source_meta.clone(),
+    let root = pend::Pie::try_new(
+        Mail::Hole(source_meta.clone()),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST,
         None,
-    );
+    )
+    .expect("pie allocation");
     let root_token = root.token;
-    caller.pend.pies.lock().push(pend::boxed(root).unwrap());
+    caller.pend.pies.lock().push(root);
     let child = PieToken::mint(
         pend::accord(
             &caller,
@@ -433,14 +445,15 @@ pub fn references() {
         "共享组不转授登记者观察权"
     );
     let other_meta = hole::meta(stranger.ident.id);
-    let other = pend::new_pie::<pend::Hole>(
-        other_meta,
+    let other = pend::Pie::try_new(
+        Mail::Hole(other_meta),
         Mark::NONE,
         Permission::FETCH | Permission::STORE,
         None,
-    );
+    )
+    .expect("pie allocation");
     let other_token = other.token;
-    stranger.pend.pies.lock().push(pend::boxed(other).unwrap());
+    stranger.pend.pies.lock().push(other);
     let other_source = Source::Mail {
         pie: other_token,
         condition: MailCondition::Pull,
@@ -455,14 +468,15 @@ pub fn references() {
     tole::detach(&group, caller.ident.id, local).unwrap();
     pend::release(&stranger, other_token).unwrap();
     let authority = tole::meta(caller.ident.id);
-    let root = pend::new_pie::<pend::Tole>(
-        authority.clone(),
+    let root = pend::Pie::try_new(
+        Mail::Tole(authority.clone()),
         Mark::NONE,
         Permission::FETCH | Permission::STORE | Permission::VEST | Permission::ONLY,
         None,
-    );
+    )
+    .expect("pie allocation");
     let token = root.token;
-    caller.pend.pies.lock().push(pend::boxed(root).unwrap());
+    caller.pend.pies.lock().push(root);
     let child = PieToken::mint(
         pend::accord(
             &caller,

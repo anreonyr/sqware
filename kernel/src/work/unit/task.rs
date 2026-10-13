@@ -16,7 +16,7 @@ use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::{Frame, MapError};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
-use crate::work::pend::{AnyPie, CreationRegistry};
+use crate::work::pend::{CreationRegistry, Pie};
 use crate::work::room::conductor;
 use crate::work::unit::life::Life;
 
@@ -191,7 +191,7 @@ pub struct Task {
 pub(crate) struct Pend {
     serial: SpinLock<()>,
     pub(crate) version: AtomicUsize,
-    pub(crate) pies: SpinLock<Vec<AnyPie>>,
+    pub(crate) pies: SpinLock<Vec<Pie>>,
     pub(crate) heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
     pub(crate) creations: CreationRegistry,
 }

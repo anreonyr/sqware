@@ -48,6 +48,7 @@ mod memory {
     }
 }
 mod work {
+    pub use crate::grant;
     pub mod room {
         pub mod messenger {
             use alloc::sync::Weak;
@@ -134,8 +135,98 @@ mod work {
         impl PoleMeta {
             pub fn withdraw(&self, _: env::PieToken) {}
             pub fn release_grant(&self, _: env::PieToken) {}
-            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::pend::Grant>) -> Result<(), env::PieFail> {
+            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::work::grant::Grant>) -> Result<(), env::PieFail> {
                 Ok(())
+            }
+        }
+        #[derive(Clone)]
+        pub enum Mail {
+            Hole(Arc<HoleMeta>),
+            Pole(Arc<PoleMeta>),
+            Nole(Arc<NoleMeta>),
+            Tole(Arc<ToleMeta>),
+        }
+        impl Mail {
+            pub fn kind(&self) -> env::PieKind {
+                match self {
+                    Mail::Hole(_) => env::PieKind::Hole,
+                    Mail::Pole(_) => env::PieKind::Pole,
+                    Mail::Nole(_) => env::PieKind::Nole,
+                    Mail::Tole(_) => env::PieKind::Tole,
+                }
+            }
+            pub fn owner(&self) -> TaskId {
+                match self {
+                    Mail::Hole(meta) => meta.owner(),
+                    Mail::Pole(meta) => meta.owner(),
+                    Mail::Nole(meta) => meta.owner(),
+                    Mail::Tole(meta) => meta.owner(),
+                }
+            }
+            pub fn alive(&self) -> bool {
+                match self {
+                    Mail::Hole(meta) => meta.alive(),
+                    Mail::Pole(meta) => meta.alive(),
+                    Mail::Nole(meta) => meta.alive(),
+                    Mail::Tole(meta) => meta.alive(),
+                }
+            }
+            pub fn seal(&self) {
+                match self {
+                    Mail::Hole(meta) => meta.seal(),
+                    Mail::Pole(meta) => meta.seal(),
+                    Mail::Nole(meta) => meta.seal(),
+                    Mail::Tole(meta) => meta.seal(),
+                }
+            }
+            pub fn hole(&self) -> Option<Arc<HoleMeta>> {
+                match self {
+                    Mail::Hole(meta) => Some(meta.clone()),
+                    _ => None,
+                }
+            }
+            pub fn pole(&self) -> Option<Arc<PoleMeta>> {
+                match self {
+                    Mail::Pole(meta) => Some(meta.clone()),
+                    _ => None,
+                }
+            }
+            pub fn nole(&self) -> Option<Arc<NoleMeta>> {
+                match self {
+                    Mail::Nole(meta) => Some(meta.clone()),
+                    _ => None,
+                }
+            }
+            pub fn tole(&self) -> Option<Arc<ToleMeta>> {
+                match self {
+                    Mail::Tole(meta) => Some(meta.clone()),
+                    _ => None,
+                }
+            }
+            pub fn same(&self, other: &Mail) -> bool {
+                match (self, other) {
+                    (Mail::Hole(a), Mail::Hole(b)) => Arc::ptr_eq(a, b),
+                    (Mail::Pole(a), Mail::Pole(b)) => Arc::ptr_eq(a, b),
+                    (Mail::Nole(a), Mail::Nole(b)) => Arc::ptr_eq(a, b),
+                    (Mail::Tole(a), Mail::Tole(b)) => Arc::ptr_eq(a, b),
+                    _ => false,
+                }
+            }
+            pub fn new_grant(
+                &self,
+                permission: env::Permission,
+                token: env::PieToken,
+            ) -> Result<Arc<crate::work::grant::Grant>, env::PieFail> {
+                let grant = crate::work::grant::Grant::try_new(permission)?;
+                if let Mail::Pole(meta) = self {
+                    meta.register_grant(token, grant.clone())?;
+                }
+                Ok(grant)
+            }
+            pub fn release_grant(&self, token: env::PieToken) {
+                if let Mail::Pole(meta) = self {
+                    meta.release_grant(token);
+                }
             }
         }
         pub mod hole {
@@ -179,7 +270,7 @@ mod work {
             LOCK.lock().unwrap()
         }
         pub mod task {
-            use super::pend::{AnyPie, CreationRegistry};
+            use crate::pend::{CreationRegistry, Pie};
             use crate::lock::SpinLock;
             use alloc::sync::{Arc, Weak};
             use alloc::vec::Vec;
@@ -203,7 +294,7 @@ mod work {
             pub struct Pend {
                 serial: SpinLock<()>,
                 pub version: AtomicUsize,
-                pub pies: SpinLock<Vec<AnyPie>>,
+                pub pies: SpinLock<Vec<Pie>>,
                 pub heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
                 pub creations: CreationRegistry,
             }
@@ -254,6 +345,9 @@ mod work {
         pub use crate::pend;
     }
 }
+
+#[path = "../../src/work/grant.rs"]
+pub mod grant;
 
 #[path = "../../src/work/pend/mod.rs"]
 pub mod pend;

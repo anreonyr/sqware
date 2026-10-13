@@ -1,4 +1,4 @@
-use crate::work::pend::{self, AnyPie};
+use crate::work::pend::{self, Pie};
 use crate::work::unit::task::{Task, TaskTag};
 use alloc::vec::Vec;
 use core::fmt;
@@ -21,19 +21,19 @@ impl<T> fmt::Debug for Failure<T> {
         self.reason.fmt(f)
     }
 }
-pub(crate) type RegisterError = Failure<(Name, AnyPie)>;
+pub(crate) type RegisterError = Failure<(Name, Pie)>;
 pub(crate) type FreezeError = Failure<Registry>;
 pub(crate) type GrantError = Failure<Frozen>;
 
 #[derive(Default)]
 pub(crate) struct Registry {
-    entries: Vec<(Name, AnyPie)>,
+    entries: Vec<(Name, Pie)>,
 }
 pub(crate) struct Frozen {
-    entries: Vec<(Name, AnyPie)>,
+    entries: Vec<(Name, Pie)>,
 }
 
-fn valid(name: Name, pie: &AnyPie) -> bool {
+fn valid(name: Name, pie: &Pie) -> bool {
     let mut bytes = [0u8; env::NAME_LEN];
     name.store(&mut bytes);
     Name::fetch(&bytes) == Some(name)
@@ -45,7 +45,7 @@ fn valid(name: Name, pie: &AnyPie) -> bool {
 }
 
 impl Registry {
-    pub(crate) fn register(&mut self, name: Name, root: AnyPie) -> Result<(), RegisterError> {
+    pub(crate) fn register(&mut self, name: Name, root: Pie) -> Result<(), RegisterError> {
         let reason = if !valid(name, &root) || self.entries.iter().any(|(n, _)| *n == name) {
             Some(PieFail::Denied)
         } else if self.entries.try_reserve(1).is_err() {

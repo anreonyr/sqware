@@ -7,10 +7,8 @@ use env::{
 
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail;
-use crate::work::pend::{
-    self, Hole, Need, Nole, PendFail, Permission, Pie, PieSnapshot, Pole, clear_heir,
-};
+use crate::work::mail::{self, Mail};
+use crate::work::pend::{self, Need, PendFail, Permission, PieSnapshot, clear_heir};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::task::TaskIdent;
 
@@ -124,14 +122,14 @@ fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outco
         }
         let meta =
             mail::hole::try_meta_with_limits(task.ident.id, limits).map_err(|_| PieFail::OoM)?;
-        let pie: Pie<Hole> = pend::new_pie(
-            meta,
+        let pie = pend::Pie::try_new(
+            Mail::Hole(meta),
             mark,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
-        );
+        )?;
         let token = pie.token;
-        pend::insert(&task, pend::boxed(pie)?)?;
+        pend::insert(&task, pie)?;
         Ok(token.get())
     })();
     answer(frame, r);
@@ -142,14 +140,14 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let meta = mail::nole::NoleMeta::try_new(task.ident.id).map_err(|_| PieFail::OoM)?;
-        let pie: Pie<Nole> = pend::new_pie(
-            meta,
+        let pie = pend::Pie::try_new(
+            Mail::Nole(meta),
             Mark::NONE,
             Permission::FETCH | Permission::STORE | Permission::VEST,
             None,
-        );
+        )?;
         let token = pie.token;
-        pend::insert(&task, pend::boxed(pie)?)?;
+        pend::insert(&task, pie)?;
         Ok(token.get())
     })();
     answer(frame, r);
@@ -199,9 +197,8 @@ pub(crate) fn create_pole(
     if !shared {
         permission |= Permission::ONLY;
     }
-    let pie: Pie<Pole> = pend::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
+    let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)?;
     let token = pie.token;
-    let pie = pend::boxed(pie)?;
     pole_checkpoint(3)?;
     pend::insert(task, pie)?;
     meta.commit_source();
@@ -431,9 +428,9 @@ fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
         if !shared {
             permission |= Permission::ONLY;
         }
-        let pie: Pie<pend::Tole> = pend::new_pie(meta, Mark::NONE, permission, None);
+        let pie = pend::Pie::try_new(Mail::Tole(meta), Mark::NONE, permission, None)?;
         let token = pie.token;
-        pend::insert(&task, pend::boxed(pie)?)?;
+        pend::insert(&task, pie)?;
         Ok(token.get())
     })();
     answer(frame, r);

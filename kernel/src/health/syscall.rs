@@ -10,7 +10,7 @@ use crate::runtime::switcher::{
     context::{Gprs, TrapContext},
     envcall,
 };
-use crate::work::mail::{hole, pole};
+use crate::work::mail::{Mail, hole, pole};
 use crate::work::pend::{self, Need, Permission};
 use crate::work::unit::space::{RegionId, SpaceBuilder};
 use crate::work::unit::task::{Task, TaskTag};
@@ -105,12 +105,12 @@ pub fn abi_and_privilege() {
     );
     let ordinary = crate::work::mail::nole::NoleMeta::new(user.task.ident.id);
     user.task.pend.pies.lock().push(
-        pend::boxed(pend::new_pie::<pend::Nole>(
-            ordinary,
+        pend::Pie::try_new(
+            Mail::Nole(ordinary),
             env::Mark::NONE,
             Permission::FETCH | Permission::VEST,
             None,
-        ))
+        )
         .expect("pie allocation"),
     );
     assert_eq!(
@@ -507,13 +507,15 @@ pub fn capability() {
     let user = Caller::new(false);
     let foreign = Caller::new(false);
     let meta = hole::meta(user.task.ident.id);
-    let pie = pend::new_pie::<pend::Hole>(meta.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie = pend::Pie::try_new(
+        Mail::Hole(meta.clone()),
+        env::Mark::NONE,
+        Permission::FETCH,
+        None,
+    )
+    .expect("pie allocation");
     let token = pie.token;
-    user.task
-        .pend
-        .pies
-        .lock()
-        .push(pend::boxed(pie).expect("pie allocation"));
+    user.task.pend.pies.lock().push(pie);
     assert!(pend::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
         pend::accede::<env::PieFail>(&user.task, token, Need::Store),
@@ -540,10 +542,15 @@ pub fn capability() {
         .unwrap();
     let pole =
         pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id).unwrap();
-    let pie: pend::Pie<pend::Pole> =
-        pend::new_pie(pole.clone(), env::Mark::NONE, Permission::FETCH, None);
+    let pie = pend::Pie::try_new(
+        Mail::Pole(pole.clone()),
+        env::Mark::NONE,
+        Permission::FETCH,
+        None,
+    )
+    .expect("pie allocation");
     let token = pie.token;
-    user.task.pend.pies.lock().push(pend::boxed(pie).unwrap());
+    user.task.pend.pies.lock().push(pie);
     let original = user.team.space.tree.find(KVirt::wrap(source)).unwrap();
     user.task.pend.creations.claim(&original).unwrap().commit();
     pole.commit_source();
@@ -591,12 +598,12 @@ pub fn resource_registration() {
     calls::register(&mut registry).unwrap();
     traps::register(&mut registry).unwrap();
     let root = || {
-        pend::boxed(pend::new_pie::<pend::Nole>(
-            calls::get().build.clone(),
+        pend::Pie::try_new(
+            Mail::Nole(calls::get().build.clone()),
             Mark::NONE,
             Permission::FETCH | Permission::VEST,
             None,
-        ))
+        )
         .expect("pie allocation")
     };
     let duplicate = root();
@@ -619,7 +626,11 @@ pub fn resource_registration() {
         .find(|e| e.name() == Name::Call(Call::Build))
         .unwrap()
         .token();
-    assert!(pend::allows(&system.task, &calls::get().build, Need::Fetch));
+    assert!(pend::allows(
+        &system.task,
+        &Mail::Nole(calls::get().build.clone()),
+        Need::Fetch,
+    ));
     let token = PieToken::mint(
         pend::accord(
             &system.task,
@@ -632,7 +643,7 @@ pub fn resource_registration() {
     );
     assert!(pend::allows(
         &service.task,
-        &calls::get().build,
+        &Mail::Nole(calls::get().build.clone()),
         Need::Fetch
     ));
     assert!(
@@ -654,7 +665,7 @@ pub fn resource_registration() {
     pend::revoke(&system.task, &Arc::downgrade(&service.task), token).unwrap();
     assert!(!pend::allows(
         &service.task,
-        &calls::get().build,
+        &Mail::Nole(calls::get().build.clone()),
         Need::Fetch
     ));
     assert_eq!(
@@ -695,7 +706,11 @@ pub fn resource_registration() {
         )
         .unwrap(),
     );
-    assert!(pend::allows(&service.task, &calls::get().doom, Need::Fetch));
+    assert!(pend::allows(
+        &service.task,
+        &Mail::Nole(calls::get().doom.clone()),
+        Need::Fetch,
+    ));
     let victim = Caller::new(false);
     assert_eq!(
         service.call(EnvCall::Room(RoomCall::Doom {
@@ -722,12 +737,12 @@ pub fn resource_registration() {
     assert_eq!(service.call(call), env::RoomFail::Denied.code());
     let mut registry = Registry::default();
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
-    let invalid = pend::boxed(pend::new_pie::<pend::Nole>(
-        dead.clone(),
+    let invalid = pend::Pie::try_new(
+        Mail::Nole(dead.clone()),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
         None,
-    ))
+    )
     .expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     crate::work::mail::nole::seal(&dead);
@@ -739,12 +754,12 @@ pub fn resource_registration() {
 
     let dead = crate::work::mail::nole::NoleMeta::new(env::TaskId::new(0));
     let mut registry = Registry::default();
-    let invalid = pend::boxed(pend::new_pie::<pend::Nole>(
-        dead.clone(),
+    let invalid = pend::Pie::try_new(
+        Mail::Nole(dead.clone()),
         Mark::NONE,
         Permission::FETCH | Permission::VEST,
         None,
-    ))
+    )
     .expect("pie allocation");
     registry.register(Name::Call(Call::Build), invalid).unwrap();
     let frozen = registry.freeze().unwrap();
@@ -765,12 +780,12 @@ pub fn transfer_relations() {
     let c = Caller::new(false);
     let permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     let root = |task: &Arc<Task>, permission| {
-        let pie = pend::boxed(pend::new_pie::<pend::Nole>(
-            crate::work::mail::nole::NoleMeta::new(task.ident.id),
+        let pie = pend::Pie::try_new(
+            Mail::Nole(crate::work::mail::nole::NoleMeta::new(task.ident.id)),
             Mark::NONE,
             permission,
             None,
-        ))
+        )
         .expect("pie allocation");
         let token = pie.token();
         pend::insert(task, pie).unwrap();
@@ -835,10 +850,8 @@ pub fn transfer_relations() {
         .unwrap();
     let meta =
         pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id).unwrap();
-    let pie = pend::boxed(
-        pend::try_new_pie::<pend::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
-    )
-    .expect("pie allocation");
+    let pie = pend::Pie::try_new(Mail::Pole(meta.clone()), Mark::NONE, permission, None)
+        .expect("pie allocation");
     let memory = pie.token();
     pend::insert(&a.task, pie).unwrap();
     meta.commit_source();

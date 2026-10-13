@@ -95,7 +95,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             if kind == env::ProgramKind::Supervisor && !ident.team.space.kind().is_supervisor()
                 || !crate::work::pend::allows(
                     &me,
-                    &super::resources::get().build,
+                    &crate::work::mail::Mail::Nole(super::resources::get().build.clone()),
                     crate::work::pend::Need::Fetch,
                 )
             {
