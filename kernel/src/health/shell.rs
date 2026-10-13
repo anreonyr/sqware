@@ -5,7 +5,7 @@ use alloc::sync::Arc;
 use crate::memory::allocator::statistics;
 use crate::memory::manager::mode;
 use crate::work::room::scheduler::core::prune_dead;
-use crate::work::unit::copies::Site;
+use crate::work::unit::copies::Origin;
 use crate::work::unit::space::{RegionId, SpaceBuilder};
 use crate::work::unit::task::TaskWeak;
 use crate::work::unit::team::TeamBuilder;
@@ -64,7 +64,7 @@ fn oust_round() {
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
-        .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
+        .sire(TaskWeak::stored(Arc::downgrade(&sire), Origin::Sire))
         .spawn()
         .expect("oust: spawn child");
     let empty_id = child.id;
@@ -80,7 +80,7 @@ fn oust_round() {
         .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
         .unwrap();
     let child = TeamBuilder::new(space)
-        .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
+        .sire(TaskWeak::stored(Arc::downgrade(&sire), Origin::Sire))
         .spawn()
         .expect("oust: spawn child");
     let held_id = child.id;

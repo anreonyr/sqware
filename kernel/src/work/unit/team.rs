@@ -612,7 +612,7 @@ pub(crate) fn spawn(
             operations.push(item.meta.operation().ok_or(UnitFail::Busy)?);
         }
         let closed = caller.pend.lock();
-        if !crate::work::pend::live(caller, ()) {
+        if !crate::work::pend::live(caller) {
             return Err(UnitFail::Denied);
         }
         let mut pies = caller.pend.pies.lock();

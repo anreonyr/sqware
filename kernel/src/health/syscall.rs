@@ -171,7 +171,7 @@ pub fn abi_and_privilege() {
     let child = TeamBuilder::new(space)
         .sire(crate::work::unit::task::TaskWeak::stored(
             Arc::downgrade(&supervisor.task),
-            crate::work::unit::copies::Site::Sire,
+            crate::work::unit::copies::Origin::Sire,
         ))
         .spawn()
         .unwrap();
@@ -516,22 +516,22 @@ pub fn capability() {
     .expect("pie allocation");
     let token = pie.token;
     user.task.pend.pies.lock().push(pie);
-    assert!(pend::accede::<env::PieFail>(&user.task, token, Need::Fetch).is_ok());
+    assert!(pend::accede(&user.task, token, Need::Fetch).is_ok());
     assert!(matches!(
-        pend::accede::<env::PieFail>(&user.task, token, Need::Store),
+        pend::accede(&user.task, token, Need::Store),
         Err(env::PieFail::Denied)
     ));
     assert!(matches!(
-        pend::accede::<env::PieFail>(&foreign.task, token, Need::Fetch),
+        pend::accede(&foreign.task, token, Need::Fetch),
         Err(env::PieFail::Denied)
     ));
     assert!(matches!(
-        pend::accede::<env::PieFail>(&user.task, env::PieToken::mint(usize::MAX), Need::Fetch),
+        pend::accede(&user.task, env::PieToken::mint(usize::MAX), Need::Fetch),
         Err(env::PieFail::Denied)
     ));
     hole::seal(&meta);
     assert!(matches!(
-        pend::accede::<env::PieFail>(&user.task, token, Need::Fetch),
+        pend::accede(&user.task, token, Need::Fetch),
         Err(env::PieFail::Dead)
     ));
     let source = user.allocate(PAGE_SIZE);
@@ -900,7 +900,7 @@ pub fn transfer_relations() {
 }
 
 pub fn unit_scan_and_receipts() {
-    use crate::work::unit::copies::Site;
+    use crate::work::unit::copies::Origin;
     use crate::work::unit::task::{TaskState, TaskWeak};
     use alloc::vec::Vec;
     use env::{UnitFail, UnitTarget, Wait};
@@ -914,7 +914,7 @@ pub fn unit_scan_and_receipts() {
             .unwrap();
         children.push(
             TeamBuilder::new(space)
-                .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Site::Sire))
+                .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Origin::Sire))
                 .spawn()
                 .unwrap(),
         );

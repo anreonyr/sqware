@@ -5,8 +5,6 @@ use alloc::sync::{Arc, Weak};
 
 use env::{Mark, PieToken, TaskId};
 
-use super::PendFail;
-
 use crate::work::grant::Grant;
 use crate::work::mail::{HoleMeta, Mail, NoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
@@ -128,7 +126,7 @@ pub(crate) struct PieSnapshot {
 }
 
 impl PieSnapshot {
-    pub(crate) fn authority(&self) -> &Arc<Grant> {
+    pub(crate) fn grant(&self) -> &Arc<Grant> {
         &self.grant
     }
 
@@ -204,7 +202,7 @@ impl PieSnapshot {
         self.meta.same(&other.meta)
     }
 
-    pub(crate) fn grant(&self, mark: Mark, permission: Permission) -> Result<Pie, env::PieFail> {
+    pub(crate) fn vest(&self, mark: Mark, permission: Permission) -> Result<Pie, env::PieFail> {
         Pie::try_new(self.meta.clone(), mark, permission, Some(self.token))
     }
 }
@@ -232,7 +230,7 @@ pub(crate) fn vestor(task: &Arc<Task>, token: PieToken) -> Option<TaskId> {
         };
         let parent = observed.sire()?;
         let lord = observed.lord().upgrade()?;
-        let result = super::with_pair(task, &lord, |_, _| {
+        let result = super::with_pair(task, &lord, || {
             let Some(current) = locate(task, token) else {
                 return Some(None);
             };
@@ -248,17 +246,17 @@ pub(crate) fn vestor(task: &Arc<Task>, token: PieToken) -> Option<TaskId> {
     None
 }
 
-pub(crate) fn accede<E: PendFail>(
+pub(crate) fn accede(
     task: &Arc<Task>,
     token: PieToken,
     need: Need,
-) -> Result<PieSnapshot, E> {
-    let pie = locate(task, token).ok_or_else(E::denied)?;
+) -> Result<PieSnapshot, env::PieFail> {
+    let pie = locate(task, token).ok_or(env::PieFail::Denied)?;
     if !pie.alive() {
-        return Err(E::dead());
+        return Err(env::PieFail::Dead);
     }
     if !pie.allows(need) {
-        return Err(E::denied());
+        return Err(env::PieFail::Denied);
     }
     Ok(pie)
 }

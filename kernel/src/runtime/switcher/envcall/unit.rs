@@ -8,7 +8,7 @@ use crate::memory::manager::addr::VirtAddr as KVirt;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::room::messenger::{self, Handoff};
 use crate::work::room::scheduler::core::muster;
-use crate::work::unit::copies::Site;
+use crate::work::unit::copies::Origin;
 use crate::work::unit::join::JoinWait;
 use crate::work::unit::life::TaskLife;
 use crate::work::unit::space::{Space, SpaceKind};
@@ -111,7 +111,7 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
-            let sire = TaskWeak::stored(Arc::downgrade(&parent), Site::Sire);
+            let sire = TaskWeak::stored(Arc::downgrade(&parent), Origin::Sire);
             match crate::work::unit::build(SpaceKind::from(kind), sire) {
                 Ok(team) => frame.gpr.set_x(Gprs::A0, team.id.get()),
                 Err(error) => return Outcome::fail(frame, map_err(error)),

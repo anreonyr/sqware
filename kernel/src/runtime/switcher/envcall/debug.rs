@@ -51,7 +51,7 @@ pub(super) fn get(
         return frame;
     }
     let space = &ident.team.space;
-    if !crate::work::mail::copy_out(space, &stage[..n], buf) {
+    if !space.copy_out(&stage[..n], buf) {
         return err(frame, DebugFail::Denied);
     }
     frame.gpr.set_x(Gprs::A0, n);

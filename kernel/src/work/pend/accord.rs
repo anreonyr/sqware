@@ -14,8 +14,8 @@ pub(crate) fn accord(
     mark: Mark,
 ) -> Result<usize, PieFail> {
     let target = dst.upgrade().ok_or(PieFail::Denied)?;
-    let token = super::with_pair(caller, &target, |source_closed, target_closed| {
-        if !super::live(caller, source_closed) || !super::live(&target, target_closed) {
+    let token = super::with_pair(caller, &target, || {
+        if !super::live(caller) || !super::live(&target) {
             return Err(PieFail::Dead);
         }
         let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
@@ -45,7 +45,7 @@ pub(crate) fn accord(
             return Err(PieFail::Denied);
         }
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
-        let mut granted = pie.grant(badge, subset)?;
+        let mut granted = pie.vest(badge, subset)?;
         granted.parent(src, Arc::downgrade(caller));
         caller
             .pend

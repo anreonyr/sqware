@@ -8,12 +8,10 @@ pub(crate) use forget::{forget, same};
 mod accord;
 mod allocation;
 mod cull;
-mod fail;
 mod narrow;
 mod pie;
 
 pub(crate) use allocation::CreationRegistry;
-pub(crate) use fail::PendFail;
 
 #[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
@@ -31,25 +29,25 @@ pub(crate) fn changed(task: &Task) {
     task.pend.version.fetch_add(1, Ordering::Relaxed);
 }
 
-pub(crate) fn live(task: &Task, _closed: ()) -> bool {
+pub(crate) fn live(task: &Task) -> bool {
     !matches!(task.tag(), TaskTag::Doomed | TaskTag::Reaped)
 }
 
-pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce((), ()) -> T) -> T {
+pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce() -> T) -> T {
     if a.ident.id == b.ident.id {
-        let guard = a.pend.lock();
+        let _guard = a.pend.lock();
         let _commit = crate::work::unit::commit();
-        run(*guard, *guard)
+        run()
     } else if a.ident.id.get() < b.ident.id.get() {
-        let first = a.pend.lock();
-        let second = b.pend.lock();
+        let _first = a.pend.lock();
+        let _second = b.pend.lock();
         let _commit = crate::work::unit::commit();
-        run(*first, *second)
+        run()
     } else {
-        let second = b.pend.lock();
-        let first = a.pend.lock();
+        let _second = b.pend.lock();
+        let _first = a.pend.lock();
         let _commit = crate::work::unit::commit();
-        run(*first, *second)
+        run()
     }
 }
 
@@ -134,9 +132,9 @@ pub(super) fn remove_heir(task: &Task, parent: PieToken, token: PieToken) {
 }
 
 pub(crate) fn insert(task: &Task, pie: Pie) -> Result<(), PieFail> {
-    let closed = task.pend.lock();
+    let _closed = task.pend.lock();
     let _commit = crate::work::unit::commit();
-    if !live(task, *closed) {
+    if !live(task) {
         return Err(PieFail::Dead);
     }
     let mut pies = task.pend.pies.lock();

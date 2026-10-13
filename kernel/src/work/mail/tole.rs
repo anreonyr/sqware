@@ -115,9 +115,9 @@ impl Cell {
                 } else {
                     pend::Need::Store
                 };
-                let snapshot = match pend::accede::<MailFail>(actor, pie, need) {
+                let snapshot = match pend::accede(actor, pie, need) {
                     Ok(p) => p,
-                    Err(e) => return Some(Some(e)),
+                    Err(e) => return Some(Some(super::mail_fail(e))),
                 };
                 if let Err(e) = crate::runtime::switcher::envcall::pie::observe(&snapshot) {
                     return Some(Some(e));
@@ -363,7 +363,7 @@ impl AwaitWait {
     }
     pub fn poll(&self) -> Result<AwaitReply, MailFail> {
         let actor = self.actor.upgrade().ok_or(MailFail::Denied)?;
-        let pie = pend::accede::<MailFail>(&actor, self.token, pend::Need::Fetch)?;
+        let pie = pend::accede(&actor, self.token, pend::Need::Fetch).map_err(super::mail_fail)?;
         crate::runtime::switcher::envcall::pie::observe(&pie)?;
         self.group.poll(&actor)
     }

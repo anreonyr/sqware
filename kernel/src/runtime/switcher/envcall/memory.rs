@@ -179,7 +179,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                 {
                     return Err(MemoryFail::Denied);
                 }
-                super::pie::usable::<env::PieFail>(pie).map_err(|_| MemoryFail::Denied)?;
+                super::pie::usable(pie).map_err(|_| MemoryFail::Denied)?;
                 if offset % PAGE_SIZE != 0
                     || offset.checked_add(size).is_none_or(|end| end > meta.size())
                 {

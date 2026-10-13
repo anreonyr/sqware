@@ -34,11 +34,10 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: ControlCall, ident: &Arc<T
                 bytes[i * core::mem::size_of::<usize>()..][..core::mem::size_of::<usize>()]
                     .copy_from_slice(&pc_arr[i].pc.as_usize().to_le_bytes());
             }
-            let ok = crate::work::mail::copy_out(
-                &ident.team.space,
-                &bytes[..keep * core::mem::size_of::<usize>()],
-                buf,
-            );
+            let ok = ident
+                .team
+                .space
+                .copy_out(&bytes[..keep * core::mem::size_of::<usize>()], buf);
             if ok {
                 frame.gpr.set_x(Gprs::A0, keep);
             } else {

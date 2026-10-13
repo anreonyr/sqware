@@ -1,7 +1,10 @@
 use super::mail::Outcome;
 use super::pie::observe;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
-use crate::work::mail::tole::{self, AwaitWait, Cell, Member};
+use crate::work::mail::{
+    self,
+    tole::{self, AwaitWait, Cell, Member},
+};
 use crate::work::pend::{self, Need};
 use crate::work::room::messenger::{self, Handoff, WakeKey};
 use crate::work::room::scheduler::core::{current, muster};
@@ -26,7 +29,7 @@ pub(crate) fn dispatch(
         MailCall::Attach { tole, source } => {
             let result = (|| {
                 let _commit = crate::work::unit::commit();
-                let pie = pend::accede::<MailFail>(&task, tole, Need::Store)?;
+                let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 observe(&pie)?;
                 let group = pie.tole().ok_or(MailFail::Denied)?;
                 tole::attach(&group, cell(&task, source)?)
@@ -37,7 +40,7 @@ pub(crate) fn dispatch(
         MailCall::Detach { tole, source } => {
             let result = (|| {
                 let _commit = crate::work::unit::commit();
-                let pie = pend::accede::<MailFail>(&task, tole, Need::Store)?;
+                let pie = pend::accede(&task, tole, Need::Store).map_err(mail::mail_fail)?;
                 observe(&pie)?;
                 {
                     let group = pie.tole().ok_or(MailFail::Denied)?;
@@ -49,7 +52,7 @@ pub(crate) fn dispatch(
         }
         MailCall::Await { tole, millis } => {
             let result = (|| {
-                let pie = pend::accede::<MailFail>(&task, tole, Need::Fetch)?;
+                let pie = pend::accede(&task, tole, Need::Fetch).map_err(mail::mail_fail)?;
                 observe(&pie)?;
                 let group = pie.tole().ok_or(MailFail::Denied)?;
                 messenger::mail_await(AwaitWait::new(group, tole, &task, millis))
@@ -77,7 +80,7 @@ pub(crate) fn cell(actor: &Arc<Task>, source: Source) -> Result<Cell, MailFail> 
             } else {
                 Need::Store
             };
-            let pie = pend::accede::<MailFail>(actor, token, need)?;
+            let pie = pend::accede(actor, token, need).map_err(mail::mail_fail)?;
             observe(&pie)?;
             let (key, life) = if let Some(meta) = pie.hole() {
                 if matches!(condition, MailCondition::Signal(_)) {

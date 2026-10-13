@@ -169,7 +169,7 @@ fn note_out<'a>(
         return "";
     }
     let n = len.min(NOTE_MAX);
-    if !crate::work::mail::copy_in(space, &mut buf[..n], va) {
+    if !space.copy_in(&mut buf[..n], va) {
         crate::putln!(
             "exit tid={} reason={reason:#x} note=<unreadable {len} bytes at {va:#x}>",
             tid.get()

@@ -7,9 +7,7 @@ use alloc::sync::Arc;
 
 use env::{Permission, PieFail, PieKind, PieToken, TaskId};
 
-use crate::memory::manager::entry::PteFlags;
 use crate::work::grant::Grant;
-use crate::work::unit::space::Space;
 
 pub(crate) use hole::HoleMeta;
 pub(crate) use nole::NoleMeta;
@@ -118,14 +116,13 @@ impl Mail {
     }
 }
 
-pub(crate) fn whole(space: &Space, va: usize, len: usize, need: PteFlags) -> bool {
-    space.validate_access(va, len, need)
-}
-
-pub(crate) fn copy_in(space: &Space, dst: &mut [u8], va: usize) -> bool {
-    space.copy_in(dst, va)
-}
-
-pub(crate) fn copy_out(space: &Space, src: &[u8], va: usize) -> bool {
-    space.copy_out(src, va)
+pub(crate) fn mail_fail(error: env::PieFail) -> env::MailFail {
+    match error {
+        env::PieFail::Denied => env::MailFail::Denied,
+        env::PieFail::Dead => env::MailFail::Dead,
+        env::PieFail::OoM => env::MailFail::OoM,
+        env::PieFail::NotAligned => env::MailFail::Denied,
+        env::PieFail::HandedOver => env::MailFail::HandedOver,
+        env::PieFail::Busy => env::MailFail::Busy,
+    }
 }

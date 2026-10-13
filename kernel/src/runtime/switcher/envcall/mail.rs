@@ -64,14 +64,14 @@ fn push(
         .unwrap_or(TaskId::new(0));
     let r = with_pie(token, Need::Store, |pie| {
         let hole = pie.hole().ok_or(MailFail::Denied)?;
-        if len == 0 || !mail::whole(&ident.team.space, msg, len, PteFlags::R) {
+        if len == 0 || !ident.team.space.validate_access(msg, len, PteFlags::R) {
             return Err(MailFail::Denied);
         }
         let reservation = mail::hole::reserve_len(&hole, len)?;
         let mut cell = alloc::vec::Vec::new();
         cell.try_reserve_exact(len).map_err(|_| MailFail::OoM)?;
         cell.resize(len, 0);
-        if !mail::copy_in(&ident.team.space, &mut cell, msg) {
+        if !ident.team.space.copy_in(&mut cell, msg) {
             return Err(MailFail::Denied);
         }
         let bytes = Arc::try_new(cell).map_err(|_| MailFail::OoM)?;
@@ -101,7 +101,7 @@ fn pull(
     }
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.hole().ok_or(MailFail::Denied)?;
-        if !mail::whole(&ident.team.space, buf, max, PteFlags::W) {
+        if !ident.team.space.validate_access(buf, max, PteFlags::W) {
             return Err(MailFail::Denied);
         }
         hand_over(&hole, &ident.team.space, buf, max, oversize)
@@ -135,11 +135,11 @@ fn hand_over(
         reading.finish();
         return Ok(PullOutcome::Discarded { len, sender: from });
     }
-    if len > max || !mail::whole(space, buf, len, PteFlags::W) {
+    if len > max || !space.validate_access(buf, len, PteFlags::W) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
-    if !mail::copy_out(space, &reading.bytes, buf) {
+    if !space.copy_out(&reading.bytes, buf) {
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
@@ -293,10 +293,10 @@ fn with_pie<T>(
     let found = current()
         .running_task()
         .ok_or(MailFail::Denied)
-        .and_then(|t| pend::accede::<MailFail>(&t, token, need));
+        .and_then(|t| pend::accede(&t, token, need).map_err(mail::mail_fail));
     match found {
         Err(e) => Err(e),
-        Ok(pie) => match usable::<MailFail>(&pie) {
+        Ok(pie) => match usable(&pie).map_err(mail::mail_fail) {
             Err(e) => Err(e),
             Ok(()) => op(&pie),
         },

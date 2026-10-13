@@ -8,7 +8,7 @@ use env::{
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use crate::work::mail::{self, Mail};
-use crate::work::pend::{self, Need, PendFail, Permission, PieSnapshot, clear_heir};
+use crate::work::pend::{self, Need, Permission, PieSnapshot, clear_heir};
 use crate::work::room::scheduler::core::{current, muster};
 use crate::work::unit::task::TaskIdent;
 
@@ -93,10 +93,10 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
     }
 }
 
-pub(crate) fn usable<E: PendFail>(pie: &PieSnapshot) -> Result<(), E> {
+pub(crate) fn usable(pie: &PieSnapshot) -> Result<(), env::PieFail> {
     if let Some(p) = pie.pole() {
         if p.reserved() != 0 {
-            return Err(E::handed_over());
+            return Err(env::PieFail::HandedOver);
         }
     }
     let Some(h) = pie.heir().copied() else {
@@ -106,7 +106,7 @@ pub(crate) fn usable<E: PendFail>(pie: &PieSnapshot) -> Result<(), E> {
         .and_then(|t| t.upgrade())
         .is_some_and(|t| t.pend.pies.lock().iter().any(|p| p.token() == h.token));
     if held {
-        return Err(E::handed_over());
+        return Err(env::PieFail::HandedOver);
     }
     if let Some(task) = current().running_task() {
         clear_heir(&task, pie.token(), h);
@@ -227,10 +227,10 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
     let looked = current()
         .running_task()
         .ok_or(PieFail::Denied)
-        .and_then(|task| pend::accede::<PieFail>(&task, token, Need::Fetch));
+        .and_then(|task| pend::accede(&task, token, Need::Fetch));
     let r = (|| {
         let pie = looked?;
-        usable::<PieFail>(&pie)?;
+        usable(&pie)?;
         let p = pie.pole().ok_or(PieFail::Denied)?;
         let flags = subset_to_pte(pie.permission())?;
         mail::pole::open(
@@ -252,7 +252,7 @@ fn shut(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         if !pie.allows(Need::Fetch) {
             return Err(PieFail::Denied);
         }
-        usable::<PieFail>(&pie)?;
+        usable(&pie)?;
         let p = pie.pole().ok_or(PieFail::Denied)?;
         mail::pole::shut(&p, token).map(|()| 0)
     })();
@@ -293,7 +293,7 @@ fn accord(
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
-        usable::<PieFail>(&src)?;
+        usable(&src)?;
         let dst = muster(dst_id).ok_or(PieFail::Denied)?;
         pend::accord(&caller, src_token, &dst, subset, mark)
     })();
@@ -340,7 +340,7 @@ fn information(task: &Arc<crate::work::unit::task::Task>, pie: &PieSnapshot) -> 
 fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFail> {
     let words = info.words();
     let bytes = unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
-    if !mail::copy_out(&ident.team.space, bytes, buf) {
+    if !ident.team.space.copy_out(bytes, buf) {
         return Err(PieFail::Denied);
     }
     Ok(())
@@ -350,7 +350,11 @@ fn inspect(frame: &mut TrapContext, ident: &TaskIdent, token: PieToken, buf: Vir
     let r = (|| {
         let task = current().running_task().ok_or(PieFail::Denied)?;
         let pie = pend::locate(&task, token).ok_or(PieFail::Denied)?;
-        if !mail::whole(&ident.team.space, buf.get(), PieInfo::SIZE, PteFlags::W) {
+        if !ident
+            .team
+            .space
+            .validate_access(buf.get(), PieInfo::SIZE, PteFlags::W)
+        {
             return Err(PieFail::Denied);
         }
         write_info(ident, buf.get(), information(&task, &pie))?;
@@ -373,7 +377,11 @@ fn collect(
         if capacity == 0 {
             return Ok(0);
         }
-        if !mail::whole(&ident.team.space, buf.get(), len, PteFlags::W) {
+        if !ident
+            .team
+            .space
+            .validate_access(buf.get(), len, PteFlags::W)
+        {
             return Err(PieFail::Denied);
         }
         let capacity = capacity.min(16);

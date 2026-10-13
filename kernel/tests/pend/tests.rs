@@ -775,7 +775,7 @@ fn memory_snapshots_observe_permission_reduction_and_revocation() {
     let child = grant(&a, token, &b).unwrap();
     let retained = pend::locate(&b, child).unwrap();
     let retained_copy = retained.clone();
-    assert!(Arc::ptr_eq(retained.authority(), retained_copy.authority()));
+    assert!(Arc::ptr_eq(retained.grant(), retained_copy.grant()));
     pend::reduce(&b, child, Permission::FETCH).unwrap();
     assert_eq!(retained.permission(), Permission::FETCH);
     assert_eq!(retained_copy.permission(), Permission::FETCH);

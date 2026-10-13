@@ -4,7 +4,7 @@ use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use super::copies::Site;
+use super::copies::Origin;
 
 use env::{PieToken, TaskId, UnitFail};
 
@@ -212,31 +212,32 @@ impl Pend {
 
 unsafe impl Send for Task {}
 
-#[repr(C)]
 pub(crate) struct TaskWeak {
     w: Weak<Task>,
-    id: usize,
-    site: Site,
+    #[cfg(debug_assertions)]
+    slot: usize,
 }
 
 impl TaskWeak {
-    pub(crate) fn stored(w: Weak<Task>, site: Site) -> TaskWeak {
-        #[cfg(debug_assertions)]
-        let id = super::copies::register(site);
+    pub(crate) fn stored(w: Weak<Task>, origin: Origin) -> TaskWeak {
         #[cfg(not(debug_assertions))]
-        let id = 0;
-        TaskWeak { w, id, site }
+        let _ = origin;
+        TaskWeak {
+            w,
+            #[cfg(debug_assertions)]
+            slot: super::copies::register(origin),
+        }
     }
 
-    pub(crate) fn copy_at(&self, site: Site) -> TaskWeak {
-        TaskWeak::stored(self.w.clone(), site)
+    pub(crate) fn copy_at(&self, origin: Origin) -> TaskWeak {
+        TaskWeak::stored(self.w.clone(), origin)
     }
 
     pub(crate) fn empty() -> TaskWeak {
         TaskWeak {
             w: Weak::new(),
-            id: 0,
-            site: Site::Empty,
+            #[cfg(debug_assertions)]
+            slot: 0,
         }
     }
 }
@@ -251,7 +252,7 @@ impl Deref for TaskWeak {
 impl Drop for TaskWeak {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
-        super::copies::release(self.id);
+        super::copies::release(self.slot);
     }
 }
 
@@ -368,7 +369,7 @@ impl PreparedTask {
             let task = unsafe { slot.assume_init() };
             let mut member = member;
             Arc::get_mut(&mut member).expect("private member").task =
-                TaskWeak::stored(Arc::downgrade(&task), Site::TeamTasks);
+                TaskWeak::stored(Arc::downgrade(&task), Origin::TeamTasks);
             tasks.push(member);
             held.push(task.clone());
             conductor::push();

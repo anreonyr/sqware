@@ -5,7 +5,7 @@ use hashbrown::HashMap;
 
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::runtime::chrono::timer;
-use crate::work::unit::copies::Site;
+use crate::work::unit::copies::Origin;
 use crate::work::unit::task::{Task, TaskWeak};
 
 use super::site::WakeKey;
@@ -36,7 +36,7 @@ pub(super) fn hold(ticket: Ticket, key: WakeKey, task: &Arc<Task>) -> Result<(),
     table.try_reserve(1).map_err(|_| ())?;
     table.insert(
         ticket,
-        (key, TaskWeak::stored(Arc::downgrade(task), Site::Holder)),
+        (key, TaskWeak::stored(Arc::downgrade(task), Origin::Holder)),
     );
     Ok(())
 }

@@ -12,7 +12,7 @@ use crate::hart::HartId;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::room::conductor;
 use crate::work::room::messenger;
-use crate::work::unit::copies::Site;
+use crate::work::unit::copies::Origin;
 use crate::work::unit::task::{Task, TaskWeak};
 
 use super::hart::Scheduler;
@@ -125,7 +125,7 @@ pub(crate) fn publish<T>(commit: impl FnOnce() -> (Arc<Task>, T)) -> Result<(Arc
     let _commit = crate::memory::allocator::NoAllocation::enter();
     let (task, value) = commit();
     let id = task.ident.id;
-    let previous = roster.insert(id, TaskWeak::stored(Arc::downgrade(&task), Site::Roster));
+    let previous = roster.insert(id, TaskWeak::stored(Arc::downgrade(&task), Origin::Roster));
     assert!(previous.is_none(), "publish: duplicate task id");
     Ok((task, value))
 }
@@ -134,7 +134,7 @@ pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {
     roster_table()
         .lock()
         .get(&id)
-        .map(|w| w.copy_at(Site::Muster))
+        .map(|w| w.copy_at(Origin::Muster))
 }
 
 pub(crate) fn prune_dead() -> usize {
@@ -170,7 +170,7 @@ pub(crate) fn roster() -> Vec<TaskWeak> {
     if out.try_reserve(g.len()).is_err() {
         return Vec::new();
     }
-    out.extend(g.values().map(|w| w.copy_at(Site::Snapshot)));
+    out.extend(g.values().map(|w| w.copy_at(Origin::Snapshot)));
     out
 }
 

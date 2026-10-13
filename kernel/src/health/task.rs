@@ -484,7 +484,7 @@ pub fn cancellation() {
 }
 
 pub fn branch_control() {
-    use crate::work::unit::copies::Site;
+    use crate::work::unit::copies::Origin;
     use crate::work::unit::space::RegionId;
     use crate::work::unit::task::{Task, TaskExitCause, TaskState, TaskWeak};
     use alloc::sync::Arc;
@@ -493,7 +493,7 @@ pub fn branch_control() {
         space.advance_region(RegionId::Normal, 0x4000_0000).unwrap();
         let builder = TeamBuilder::new(space);
         match parent {
-            Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Site::Sire)),
+            Some(parent) => builder.sire(TaskWeak::stored(Arc::downgrade(parent), Origin::Sire)),
             None => builder,
         }
         .spawn()
