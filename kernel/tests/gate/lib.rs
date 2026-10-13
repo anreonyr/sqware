@@ -1,12 +1,9 @@
-//! Host concurrency tests compile the production gate modules. Task scheduling,
-//! resource mappings and notifications are replaced; QEMU tests cover those.
 #![allow(dead_code, unused_imports)]
 #![feature(allocator_api)]
 extern crate alloc;
 
 mod lock {
     pub struct SpinLock<T>(std::sync::Mutex<T>);
-    // Matches the kernel lock: raw capability handles stay inside locked records.
     unsafe impl<T> Sync for SpinLock<T> {}
     impl<T> SpinLock<T> {
         pub fn new(value: T) -> Self {
@@ -219,7 +216,6 @@ mod work {
                 pub gate: Gate,
                 life: Arc<()>,
             }
-            // Mirrors the production Task bound for its kernel-owned handles.
             unsafe impl Send for Task {}
             pub struct Team;
             impl Team {

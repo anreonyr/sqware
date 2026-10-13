@@ -44,7 +44,6 @@ pub(crate) fn live(task: &Task, _closed: ()) -> bool {
     !matches!(task.tag(), TaskTag::Doomed | TaskTag::Reaped)
 }
 
-/// Task gates are always acquired by TaskId; self-transfer acquires only once.
 pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce((), ()) -> T) -> T {
     if a.ident.id == b.ident.id {
         let guard = a.gate.lock();
@@ -80,7 +79,6 @@ pub(super) fn remember(
     Ok(())
 }
 
-/// Keep the first observation; validation under all gates detects later changes.
 pub(super) fn observe(
     tasks: &mut Vec<(Arc<Task>, usize)>,
     task: &Arc<Task>,
@@ -92,8 +90,6 @@ pub(super) fn observe(
     remember(tasks, task, version)
 }
 
-/// The caller sorts tasks first. No mutation occurs unless every version matches.
-/// Guards must be released in reverse order to restore interrupts last.
 pub(super) fn with_tasks<T>(
     tasks: &[(Arc<Task>, usize)],
     run: impl FnOnce() -> T,
@@ -101,8 +97,6 @@ pub(super) fn with_tasks<T>(
     with_tasks_checked(tasks, || false, run)
 }
 
-/// A caller may validate the specific relations when unrelated changes bumped
-/// a task's version. Validation and mutation both run under every task gate.
 pub(super) fn with_tasks_checked<T>(
     tasks: &[(Arc<Task>, usize)],
     validate: impl FnOnce() -> bool,

@@ -121,7 +121,6 @@ pub fn sharing() {
             .unwrap();
     }
     assert_ne!(addresses[0], addresses[1]);
-    // SAFETY: separate live Maps own these separate physical pages.
     unsafe {
         *(addresses[0] as *mut u8) = 0x5a;
         assert_eq!(*(addresses[0] as *const u8), 0x5a);

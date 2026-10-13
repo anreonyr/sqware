@@ -132,22 +132,12 @@ fn unseal_hole(frame: &mut TrapContext, mark: Mark, limits: HoleLimits) -> Outco
         );
         let token = pie.token;
         gate::insert(&task, gate::boxed(pie)?)?;
-        // 本地造一枚：权限表的枚举结果变了。出锁之后要求复核一次
-        // （没有观察者时 `signal` 不建站点）。
         Ok(token.get())
     })();
     answer(frame, r);
     Outcome::Resume
 }
 
-/// 解封一枚 Nole：**谁都能造**。
-///
-/// **这里曾有一道 `is_supervisor()` 的门**（`80400b2` 那次带进来的），已撤：一枚 Nole 能换来的
-/// 只有"一次唤醒"——它的全部内容是"这一枚存在 ＋ 一位"，没有数据面（见 `mail::nole::NoleMeta`）。
-/// **凭证是"谁把它交给你"（`Accord`），不是"谁造的"**：自铸一枚铃不构成提权。同一句话在
-/// `env::call::unit::Build` 那一格已经写过一次——那道以 Nole 为凭证的门被撤掉，理由正是
-/// "`UnsealNole` 无代价可自铸 ⇒ 那道门与'是 S 态'等价，白收一个载荷"。故这一道一并撤掉，
-/// 与 `unseal_hole` / `unseal_pole` 同一口径（那两处本来就没有特权级门）。
 fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let task = current().running_task().ok_or(PieFail::Denied)?;
@@ -160,7 +150,6 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
         );
         let token = pie.token;
         gate::insert(&task, gate::boxed(pie)?)?;
-        // 本地造一枚：权限表的枚举结果变了。
         Ok(token.get())
     })();
     answer(frame, r);
@@ -291,7 +280,6 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
             None
         };
         pie.seal();
-        // 资源封印让这一枚能力失效——表项还在，所以枚举结果本身就变了。
         Ok(0)
     })();
     answer(frame, r);
@@ -354,7 +342,6 @@ fn information(task: &Arc<crate::work::unit::task::Task>, pie: &PieSnapshot) -> 
 
 fn write_info(ident: &TaskIdent, buf: usize, info: PieInfo) -> Result<(), PieFail> {
     let words = info.words();
-    // Every word is initialized; only its byte representation crosses the ABI.
     let bytes = unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), PieInfo::SIZE) };
     if !mail::copy_out(&ident.team.space, bytes, buf) {
         return Err(PieFail::Denied);
@@ -392,7 +379,6 @@ fn collect(
         if !mail::whole(&ident.team.space, buf.get(), len, PteFlags::W) {
             return Err(PieFail::Denied);
         }
-        // A bounded stack batch avoids heap allocation and releases the table lock before copying.
         let capacity = capacity.min(16);
         let mut snapshots: [Option<PieSnapshot>; 16] = core::array::from_fn(|_| None);
         let mut count = 0;

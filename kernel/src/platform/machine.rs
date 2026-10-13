@@ -71,7 +71,6 @@ pub enum MachineError {
 }
 
 pub fn init(dtp: usize) -> Result<(), MachineError> {
-    // SAFETY: firmware supplies a readable DTB pointer.
     let fdt = unsafe { fdt::Fdt::from_ptr(dtp as *const u8) }.map_err(MachineError::DeviceTree)?;
     let cpus = fdt.find_node("/cpus").ok_or(MachineError::MissingCpus)?;
     let count = cpus

@@ -54,7 +54,6 @@ unsafe impl Allocator for PortalAllocator {
         let Some(allocator) = backend() else {
             return Err(AllocError);
         };
-        // SAFETY: 默认 grow = 分配新块 → 拷贝 → 释放旧块
         unsafe { allocator.grow(ptr, old_layout, new_layout) }
     }
 }

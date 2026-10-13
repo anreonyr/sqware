@@ -19,7 +19,6 @@ struct Node {
     next: Option<Box<Node>>,
 }
 
-/// Records which eagerly allocated Map may become a root Pole.
 pub(crate) struct CreationRegistry {
     nodes: SpinLock<Option<Box<Node>>>,
 }
@@ -42,7 +41,6 @@ impl CreationRegistry {
         }
     }
 
-    /// Reserve every registry allocation before publishing the page-table map.
     pub(crate) fn prepare(&self) -> Result<PreparedAllocation<'_>, env::PieFail> {
         let creation = Arc::try_new(Creation {
             state: AtomicU8::new(AVAILABLE),
@@ -150,7 +148,6 @@ impl CreationRegistry {
 }
 
 impl PreparedAllocation<'_> {
-    /// Install the preallocated record after the Map has been published.
     pub(crate) fn commit(mut self, map: &Arc<Map>) {
         let mut node = self.node.take().expect("prepared creation record");
         node.map = Arc::downgrade(map);
@@ -172,7 +169,6 @@ impl PreparedAllocation<'_> {
 }
 
 impl CreationLease<'_> {
-    /// Consume the one-time right once Pole construction commits.
     pub(crate) fn commit(mut self) {
         self.creation.state.store(CONSUMED, Ordering::Release);
         self.registry.remove(&self.creation);

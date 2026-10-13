@@ -8,7 +8,6 @@ pub struct LazyLock<T> {
     init: fn() -> T,
 }
 
-// SAFETY: OnceLock<T> 已保证 T: Send + Sync 时跨 hart 安全；init 为函数指针
 unsafe impl<T: Send + Sync> Sync for LazyLock<T> {}
 
 #[allow(dead_code)]

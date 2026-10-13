@@ -15,7 +15,6 @@ pub fn init() -> Result<(), MapError> {
     for (h, slot) in sched.iter_mut().enumerate() {
         slot.write(Scheduler::new(hart::HartId::new(h)));
     }
-    // SAFETY: every slot has been initialized above.
     let mut sched = unsafe { sched.assume_init() };
     for (h, c) in sched.iter_mut().enumerate() {
         hart::set_scheduler(hart::HartId::new(h), c as *mut Scheduler as *mut ());

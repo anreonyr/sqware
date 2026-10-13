@@ -80,7 +80,6 @@ impl Kind {
 #[cfg(debug_assertions)]
 struct MarkCell(core::cell::Cell<Kind>);
 
-// SAFETY: 每核只碰自己那一格
 #[cfg(debug_assertions)]
 unsafe impl Sync for MarkCell {}
 
@@ -145,7 +144,6 @@ struct FrameKinds {
     len: usize,
 }
 
-// SAFETY: 句柄装配一次后不变；所指内存只经 record_* 在帧分配器锁内读写
 #[cfg(debug_assertions)]
 unsafe impl Send for FrameKinds {}
 #[cfg(debug_assertions)]
@@ -180,7 +178,6 @@ fn frame_kind_table() -> &'static mut [Kind] {
     let h = FRAME_KINDS
         .get()
         .expect("frame kinds not installed (frame::init 应先调 install_frame_kinds)");
-    // SAFETY: 指针来自 Box::leak；独占性由调用方持帧锁保证
     unsafe { core::slice::from_raw_parts_mut(h.ptr, h.len) }
 }
 

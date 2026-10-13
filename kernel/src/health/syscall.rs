@@ -39,7 +39,6 @@ impl Caller {
     }
 
     fn raw(&self, slot: usize, regs: [usize; 6]) -> isize {
-        // SAFETY: the task is held and never scheduled during this test.
         let frame = unsafe { &mut *(self.task.ident.frame_pa.as_usize() as *mut TrapContext) };
         for (i, value) in regs.into_iter().enumerate() {
             frame.gpr.set_x(Gprs::A0 + i, value);
@@ -757,7 +756,6 @@ pub fn resource_registration() {
     assert_eq!(other.task.gate.pies.lock().len(), before);
 }
 
-/// Native checks use real task locks, permits, mappings and the debug lock checker.
 pub fn transfer_relations() {
     use alloc::vec::Vec;
     use env::{Mark, PieFail, PieToken};
@@ -816,7 +814,6 @@ pub fn transfer_relations() {
     );
     gate::release(&a.task, token).unwrap();
 
-    // More simultaneous gates than the previous fixed eight-lock debug limit.
     let children: Vec<_> = (0..16).map(|_| Caller::new(false)).collect();
     let token = root(&a.task, permission);
     for child in &children {
@@ -829,7 +826,6 @@ pub fn transfer_relations() {
             .all(|child| child.task.gate.pies.lock().is_empty())
     );
 
-    // Exit withdraws borrowed authority while the memory operation lease is busy.
     let d = Caller::new(false);
     let source = a.allocate(PAGE_SIZE);
     let source_mapping = a
@@ -890,8 +886,6 @@ pub fn transfer_relations() {
     );
 }
 
-/// Scan paginates stable IDs without consuming ownership; Join returns exit
-/// facts through registers and Oust needs ownership/termination, not Doom.
 pub fn unit_scan_and_receipts() {
     use crate::work::unit::task::TaskState;
     use crate::work::unit::weak::{Site, TaskWeak};

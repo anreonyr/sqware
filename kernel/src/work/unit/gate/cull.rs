@@ -16,8 +16,6 @@ impl Cleanup {
     pub(crate) fn finish(self) -> usize {
         let count = self.removed.len();
         for pie in self.removed {
-            // Invalidate the exact reference and notify its direct ancestor after
-            // gates are released; the ancestor may have regained exclusive use.
             for task in &self.tasks {
                 super::notify(*task, pie.token());
             }
@@ -33,9 +31,6 @@ impl Cleanup {
     }
 }
 
-/// Collect actual transfer descendants, plus the root's parent for unlinking.
-/// Each read is under one task gate. The commit validates versions or the
-/// actual subtree after locking every collected task.
 #[allow(clippy::type_complexity)]
 pub(super) fn collect(
     task: &Arc<Task>,
@@ -87,9 +82,6 @@ pub(super) fn collect(
     Ok((tasks, nodes))
 }
 
-/// Validate the actual subtree rather than rejecting unrelated task changes.
-/// Every holder and the root's current parent must already be locked. A changed
-/// relation involving an uncollected task requires a fresh collection.
 fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]) -> bool {
     for (index, (task, token)) in nodes.iter().enumerate() {
         let Some(pie) = super::locate(task, *token) else {
@@ -143,7 +135,6 @@ fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]
     true
 }
 
-/// The root and all relevant tasks are locked; no allocation after this point.
 pub(super) fn take(task: &Task, token: PieToken) -> Option<AnyPie> {
     let pie = {
         let mut pies = task.gate.pies.lock();
@@ -210,8 +201,6 @@ pub(super) fn cull(
                         return Err(PieFail::Denied);
                     }
                 }
-                // Exit must withdraw authority even if mapping/construction is busy.
-                // Normal release/revoke retain their existing Busy checks.
                 let pole = root.pole();
                 let _operation = if !closing && let Some(p) = &pole {
                     let operation = p.operation().ok_or(PieFail::Busy)?;
@@ -222,7 +211,6 @@ pub(super) fn cull(
                 } else {
                     None
                 };
-                // Descendants first, so each parent still exists while unlinking.
                 for (holder, token) in nodes.iter().rev() {
                     if let Some(pie) = take(holder, *token) {
                         removed.push(pie);
@@ -249,8 +237,6 @@ pub(super) fn cull(
     Err(PieFail::Busy)
 }
 
-/// Close admission before collecting. Resource sealing still runs even when
-/// allocating the removal list fails, so a dead owner cannot retain authority.
 pub(crate) fn doom(task: &Arc<Task>) {
     let tokens = {
         let _gate = task.gate.lock();
@@ -270,8 +256,6 @@ pub(crate) fn doom(task: &Arc<Task>) {
                     cleanup.finish();
                     break;
                 }
-                // No syscall caller can retry an exit hook. Do not abandon
-                // borrowed descendants merely because a version changed.
                 Err(PieFail::Busy) => core::hint::spin_loop(),
                 Err(_) => break,
             }

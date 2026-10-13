@@ -85,7 +85,6 @@ impl Scene {
         let (sp, fp) = match crate::runtime::diagnose::halt::scene() {
             (0, 0) => {
                 let (sp, fp): (usize, usize);
-                // SAFETY: 只读本 hart 当前 sp/s0
                 unsafe {
                     asm!("mv {0}, sp", out(reg) sp);
                     asm!("mv {0}, s0", out(reg) fp);
@@ -122,7 +121,6 @@ impl Scene {
     fn capture_normal() -> Option<Scene> {
         let info = ident()?;
         let pa = info.trap()?;
-        // SAFETY: Live 轴上本核任务帧未回收，PA 在用户 Frame 窗口（DRAM 恒等映射）
         let frame = unsafe { &*(pa.as_usize() as *const TrapContext) };
         let world = info
             .live()

@@ -123,7 +123,6 @@ pub struct Trace {
 impl Trace {
     fn note(&self, kind: EventKind, when: u64) {
         let i = self.cursor.fetch_add(1, Ordering::Relaxed) % BUFFER_SIZE;
-        // SAFETY: i < BUFFER_SIZE；单生产者（本 hart 唯一写者），跨核读者由 halt 停写互斥
         unsafe { *(self.buffer.as_ptr() as *mut Event).add(i) = Event { when, kind } };
     }
 
@@ -177,7 +176,6 @@ pub fn dump<F: FnMut(&Event)>(hart: usize, k: usize, mut f: F) {
     let w = t.cursor.load(Ordering::Relaxed);
     let start = w.saturating_sub(k);
     for i in start..w {
-        // SAFETY: i % BUFFER_SIZE < BUFFER_SIZE；panic 期无写者
         f(unsafe { &*t.buffer.as_ptr().add(i % BUFFER_SIZE) });
     }
 }
@@ -189,18 +187,15 @@ pub fn init() -> Result<(), TraceInitError> {
     let chunk = spare::spare()
         .allocate(layout)
         .map_err(|_| TraceInitError::OutOfMemory)?;
-    // SAFETY: chunk 为 spare 仓内块（16B 对齐）；下分窗口表区 + 事件槽区，互不重叠
     let base = chunk.as_ptr() as *mut u8 as usize;
     let traces = base as *mut Trace;
     let events = (base + h * size_of::<Trace>()) as *mut Event;
     for i in 0..h {
-        // SAFETY: 槽区总长 = h × BUFFER_SIZE × size_of<Event>，本窗口切片在界内
         let buf =
             unsafe { core::slice::from_raw_parts_mut(events.add(i * BUFFER_SIZE), BUFFER_SIZE) };
         for slot in buf.iter_mut() {
             *slot = Event::EMPTY;
         }
-        // SAFETY: traces 区内第 i 个 Trace 未初始化；boot 单核写入，无并发
         unsafe {
             traces.add(i).write(Trace {
                 cursor: AtomicUsize::new(0),
@@ -208,7 +203,6 @@ pub fn init() -> Result<(), TraceInitError> {
             });
         }
     }
-    // SAFETY: 全部 h 个 Trace 已初始化；此后只读结构
     let pool = unsafe { core::slice::from_raw_parts(traces, h) };
     POOL.set(pool).map_err(|_| TraceInitError::AlreadyInit)?;
     Ok(())

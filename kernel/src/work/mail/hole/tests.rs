@@ -341,7 +341,6 @@ fn take(meta: &HoleMeta) -> Result<(), MailFail> {
     if q.taking || q.hands.front().and_then(Slot::hand).is_none() {
         return Err(MailFail::Busy);
     }
-    // **字节归内核** ⇒ 这里不再有"发送方那段没了"那一档（取的一方也不必翻它的页表）。
     q.taking = true;
     Ok(())
 }

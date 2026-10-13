@@ -145,8 +145,6 @@ pub(crate) fn doom(task: &Arc<Task>) {
         cull_life(&child.life, TaskExitCause::Cascade, super::EXIT_CASCADE);
     }
 }
-/// Running termination is stored only in TaskState; the hart checks it before
-/// returning to userspace. No allocating request map or mirrored reason.
 pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {
     let task = muster(tid)?.upgrade()?;
     match &*task.state.lock() {

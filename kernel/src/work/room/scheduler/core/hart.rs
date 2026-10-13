@@ -151,7 +151,6 @@ impl Scheduler {
             hart: self.hart,
             ticks_left: QUANTUM_TICKS,
         });
-        // SAFETY: 帧 PA 恒等映射可写；帧属 task 独占
         unsafe {
             let frame = &mut *(frame_pa(&t.ident).as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);

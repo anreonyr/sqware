@@ -5,7 +5,6 @@ use env::{Entry, PieFail};
 pub(crate) const BLOCK_BYTES: usize = crate::memory::PAGE_SIZE;
 #[repr(C, align(4096))]
 struct Block(core::cell::UnsafeCell<[u8; BLOCK_BYTES]>);
-// SAFETY: written by the boot hart before the initial task is released; then read-only.
 unsafe impl Sync for Block {}
 static BLOCK: Block = Block(core::cell::UnsafeCell::new([0; BLOCK_BYTES]));
 
@@ -25,7 +24,6 @@ pub(crate) fn size(count: usize) -> Result<usize, PieFail> {
 pub(crate) fn write(entries: &[Entry]) -> Result<usize, PieFail> {
     let len = size(entries.len())?;
     let count = u32::try_from(entries.len()).map_err(|_| PieFail::OoM)?;
-    // SAFETY: single boot writer, and no task has been released to read this mapping yet.
     let out = unsafe { &mut *BLOCK.0.get() };
     let at = Header {
         version: VERSION,

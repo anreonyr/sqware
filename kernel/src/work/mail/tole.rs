@@ -59,8 +59,6 @@ impl ToleMeta {
     pub(crate) fn alive(&self) -> bool {
         *self.state.lock() == ToleState::Live
     }
-    // Every registration is tied to the registering task. Transferring a populated
-    // group cannot transfer source authority; Accord refuses this case.
     pub(crate) fn has_cells(&self) -> bool {
         !self.cells.lock().is_empty()
     }
@@ -80,7 +78,6 @@ impl ToleMeta {
         let mut own = false;
         for offset in 0..count {
             let at = (start + offset) % count;
-            // Clone one registration, not the whole table. No allocation in scan.
             let cell = { self.cells.lock().get(at).cloned() };
             let Some(cell) = cell else { continue };
             if cell.actor != task.ident.id {
@@ -180,7 +177,6 @@ impl Cell {
                     {
                         return Some(Some(MailFail::Denied));
                     }
-                    // Existing, usable direct child remains owned by the endpoint.
                     match crate::runtime::switcher::envcall::pie::observe(&pie) {
                         Ok(()) => None,
                         Err(e) => Some(Some(e)),
@@ -221,8 +217,6 @@ pub(crate) fn attach(meta: &ToleMeta, cell: Cell) -> Result<(), MailFail> {
                 .any(|old| old.keys.iter().any(|(k, _)| k == key));
         }
     }
-    // Unit serializes publication; the L3 registration lock must not be held
-    // while acquiring an L3 messenger site or waking another task.
     for (at, (key, life)) in cell.keys.iter().enumerate() {
         if !shared[at] && messenger::forward(*key, life.clone(), meta.id.0, meta.life()).is_err() {
             for (index, (key, _)) in cell.keys.iter().take(at).enumerate() {
@@ -282,7 +276,6 @@ fn clear(meta: &ToleMeta) {
     }
     messenger::wipe(key(meta));
 }
-// The last Arc cannot race an Attach; dropping may occur beneath a gate lock.
 impl Drop for ToleMeta {
     fn drop(&mut self) {
         clear(self);
@@ -386,11 +379,7 @@ impl AwaitWait {
     }
 }
 
-// SAFETY: kernel-only token values are identifiers; every observation validates
-// authority under Unit and the original gate tables. Locks protect registrations.
 unsafe impl Send for ToleMeta {}
 unsafe impl Sync for ToleMeta {}
-// SAFETY: the token is used only to revalidate the original weak task's gate;
-// it does not authorize a different task or expose a transferable user handle.
 unsafe impl Send for AwaitWait {}
 unsafe impl Sync for AwaitWait {}

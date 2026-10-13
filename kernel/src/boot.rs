@@ -80,8 +80,6 @@ fn register_runtime_hooks() {
     use crate::work::room::conductor;
     use crate::work::room::messenger;
 
-    /// 退场那两位的签名：**收 `&Arc<Task>`**（号那一格逼得封印去问清册快照，而快照会分配，
-    /// 备不出容量就空表——故直接收 `Arc`）。
     static EXIT_HOOKS: &[fn(&alloc::sync::Arc<crate::work::unit::task::Task>)] = &[
         crate::work::room::messenger::doom,
         crate::work::unit::gate::doom,
@@ -120,7 +118,6 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
             operation: MapOperation::ImageView,
             source,
         })?;
-    // SAFETY: the initrd region remains reserved for the boot task's lifetime.
     let view_mapping = unsafe {
         team.space.map_borrowed(
             view_reservation,
@@ -169,7 +166,6 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
             operation: MapOperation::LedgerView,
             source,
         })?;
-    // SAFETY: the boot ledger is static memory retained for the initial task.
     let ledger_mapping = unsafe {
         team.space.map_borrowed(
             ledger_reservation,

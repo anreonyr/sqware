@@ -2,7 +2,6 @@ use crate::work::unit::task::Task;
 use alloc::sync::Arc;
 use env::{PieToken, TaskId};
 
-/// Resolve the current parent under both task gates. No task roster is scanned.
 pub(crate) fn vestor(task: &Arc<Task>, token: PieToken) -> Option<TaskId> {
     for _ in 0..super::RETRIES {
         let observed = {

@@ -15,7 +15,6 @@ pub struct RwLock<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: 读者需 T: Sync；写者需 T: Send
 unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 
 pub struct RwLockReadGuard<'a, T: ?Sized> {
@@ -44,9 +43,7 @@ impl<T: ?Sized> RwLock<T> {
     #[inline(never)]
     pub fn read(&self) -> RwLockReadGuard<'_, T> {
         let caller: usize;
-        // SAFETY: 读 ra（asm 未声明视为 clobber）
         unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
-        // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入
         let trap = unsafe { TrapGuard::save() };
 
         let s = self.state.fetch_add(1, Ordering::Acquire);
@@ -72,9 +69,7 @@ impl<T: ?Sized> RwLock<T> {
     #[inline(never)]
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         let caller: usize;
-        // SAFETY: 读 ra（asm 未声明视为 clobber）
         unsafe { core::arch::asm!("mv {}, ra", out(reg) caller) };
-        // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入
         let trap = unsafe { TrapGuard::save() };
 
         loop {
@@ -123,7 +118,6 @@ impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        // SAFETY: 持读锁期间无写者
         unsafe { &*self.lock.data.get() }
     }
 }
@@ -138,14 +132,12 @@ impl<T: ?Sized> Deref for RwLockWriteGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        // SAFETY: 写锁独占
         unsafe { &*self.lock.data.get() }
     }
 }
 
 impl<T: ?Sized> DerefMut for RwLockWriteGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: 写锁独占
         unsafe { &mut *self.lock.data.get() }
     }
 }

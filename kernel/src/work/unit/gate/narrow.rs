@@ -5,7 +5,6 @@ pub(crate) fn narrow(src: &mut AnyPie, subset: Permission) -> Result<(), PieFail
     src.narrow(subset)
 }
 
-/// Lower token-associated views and staged program ceilings before removing authority.
 pub(crate) fn reduce(
     task: &alloc::sync::Arc<crate::work::unit::task::Task>,
     token: env::PieToken,

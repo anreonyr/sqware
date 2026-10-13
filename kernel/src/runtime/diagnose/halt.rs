@@ -22,7 +22,6 @@ pub fn hush() {
 
 fn hunker() -> ! {
     crate::memory::manager::asid::vacate();
-    // SAFETY: 仅清 sstatus.SIE（写本 hart CSR）
     unsafe { core::arch::asm!("csrci sstatus, 2") };
     let _ = sbi::HsmCall::new(fid::Hsm::Stop).call();
     loop {
@@ -78,7 +77,6 @@ fn alarm() -> bool {
 static mut SCENE: [usize; 2] = [0; 2];
 
 pub(crate) fn scene() -> (usize, usize) {
-    // SAFETY: 单写单读同 hart；volatile 防 asm 写入被缓存
     let s = unsafe { core::ptr::read_volatile(core::ptr::addr_of!(SCENE)) };
     (s[0], s[1])
 }
@@ -128,7 +126,6 @@ extern "C" fn home(_info: &PanicInfo) -> ! {
 
 #[allow(improper_ctypes_definitions)]
 extern "C" fn info(info: &PanicInfo) -> ! {
-    // SAFETY: volatile 读 root 栈底哨兵
     let root_ok = unsafe { (crate::layout::root_stack_base() as *const usize).read_volatile() }
         == crate::layout::ROOT_STACK_CANARY;
 
@@ -179,7 +176,6 @@ extern "C" fn info(info: &PanicInfo) -> ! {
 }
 
 pub(crate) fn stop_boot() {
-    // SAFETY: disable interrupts on the reporting hart.
     unsafe { core::arch::asm!("csrci sstatus, 2") };
     if claim() && crate::platform::machine::dram_edge().is_some() {
         broadcast();
@@ -187,7 +183,6 @@ pub(crate) fn stop_boot() {
 }
 
 pub(crate) fn halt_loop() -> ! {
-    // SAFETY: 仅清 sstatus.SIE（写本 hart CSR）
     unsafe { core::arch::asm!("csrci sstatus, 2") };
     loop {
         let _ = sbi::SystemResetCall::new(fid::SystemReset::SystemReset).call();

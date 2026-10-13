@@ -122,8 +122,6 @@ pub enum TaskStopped {
     },
 }
 
-/// Why a task left the scheduler. `reason` remains the caller supplied exit
-/// word; it is not interpreted to derive this cause.
 pub use env::ExitCause as TaskExitCause;
 
 pub use env::TaskExit;
@@ -182,13 +180,11 @@ pub struct Task {
     pub(crate) ident: Arc<TaskIdent>,
     pub(crate) life: Arc<Life>,
     pub(crate) state: Arc<SpinLock<TaskState>>,
-    /// Temporary link owned by the reap work queue, never part of TaskState.
     reap_next: SpinLock<Option<Arc<Task>>>,
     pub(crate) gate: Gate,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
 
-/// Capability synchronization and records, without a second lifecycle flag.
 pub(crate) struct Gate {
     serial: SpinLock<()>,
     pub(crate) version: AtomicUsize,
@@ -211,9 +207,6 @@ impl Gate {
     }
 }
 
-// SAFETY: kernel capability records can cross harts inside their locked Task,
-// although PieToken intentionally forbids sending a raw user handle. Scheduler
-// state is protected by the Unit commit lock and the shared state lock.
 unsafe impl Send for Task {}
 
 pub(crate) struct TaskIdent {
@@ -326,7 +319,6 @@ impl PreparedTask {
                     gate: Gate::new(),
                     heir: SpinLock::new(Vec::new()),
                 });
-            // SAFETY: the unique slot now contains a completely initialized Task.
             let task = unsafe { slot.assume_init() };
             let mut member = member;
             Arc::get_mut(&mut member).expect("private member").task =
@@ -484,9 +476,6 @@ impl Task {
             _ => unreachable!("dec_ticks_left 只对 Running 任务调用"),
         }
     }
-
-    // All mutable data has its own synchronization. This helper no longer
-    // creates an aliased &mut Task from Arc; owning containers still guard links.
 
     pub(crate) fn release(task: &Arc<Task>) -> Result<(), UnitFail> {
         let _commit = super::commit();
@@ -757,7 +746,6 @@ fn write_args(space: &crate::work::unit::space::Space, at: VirtAddr, args: &[usi
             / size_of::<usize>();
         let dst = pa.as_usize() as *mut usize;
         for i in 0..n {
-            // SAFETY: 帧由本空间独占持有
             unsafe { core::ptr::write_volatile(dst.add(i), args[done + i]) };
         }
         done += n;
@@ -871,7 +859,6 @@ impl TaskBuilder {
         frame_pages.push(frame);
         let reservation = self.team.space.allocate_low(RegionId::Kernel, PAGE_SIZE)?;
         let frame_va = reservation.start();
-        // The trap context is supervisor-only even in a user address space.
         invalidation_checkpoint(2, &self.team.space.tree);
         memory.frame = Some(self.team.space.map_frames(
             reservation,

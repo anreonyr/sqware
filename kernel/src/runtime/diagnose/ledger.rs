@@ -36,8 +36,6 @@ static LEDGER: SpinLock<Ring> = SpinLock::new(Ring {
 });
 
 pub fn note(task: TaskId, reason: Reason, note: &str, owner: Option<TaskId>) {
-    // Managed exits remain in the native member record and exit trace. The
-    // failure ledger must not be overwritten by expected application statuses.
     if reason == 0 || owner.is_some() {
         return;
     }

@@ -187,6 +187,5 @@ pub(crate) fn remove_from_starved(target: &Arc<Task>) -> bool {
 }
 
 pub(crate) fn current() -> &'static Scheduler {
-    // SAFETY: tp 直达读出的指针非空
     unsafe { &*(crate::hart::scheduler() as *const Scheduler) }
 }

@@ -69,7 +69,6 @@ struct Tally {
     lock: SpinLock<()>,
 }
 
-// SAFETY: cells 指向 'static bump 内存；全部访问经 lock 串行
 unsafe impl Send for Tally {}
 unsafe impl Sync for Tally {}
 
@@ -99,21 +98,18 @@ impl Tally {
 
     fn owner_of(&self, pa: usize) -> Option<usize> {
         let _g = self.lock.lock();
-        // SAFETY: idx 通过上下界检查；lock 串行
         let m = unsafe { self.cells.add(self.idx(pa)?).read() };
         m.owner()
     }
 
     fn read_idx(&self, idx: usize) -> Meta {
         let _g = self.lock.lock();
-        // SAFETY: idx < len 已由调用方保证
         unsafe { self.cells.add(idx).read() }
     }
 
     fn write(&self, page: usize, m: Meta) {
         let _g = self.lock.lock();
         let idx = self.idx(page).expect("block tally: page out of table");
-        // SAFETY: idx 已检查；lock 串行
         unsafe {
             self.cells.add(idx).write(m);
         }
@@ -122,7 +118,6 @@ impl Tally {
     fn inc_used(&self, page: usize) -> Meta {
         let _g = self.lock.lock();
         let idx = self.idx(page).expect("block tally: page out of table");
-        // SAFETY: idx 已检查；lock 串行，RMW 原子
         unsafe {
             let mut m = self.cells.add(idx).read();
             m = m.inc_used();
@@ -134,7 +129,6 @@ impl Tally {
     fn dec_used(&self, page: usize) -> (Meta, bool) {
         let _g = self.lock.lock();
         let idx = self.idx(page).expect("block tally: page out of table");
-        // SAFETY: idx 已检查；lock 串行，RMW 原子
         unsafe {
             let m = self.cells.add(idx).read();
             let (m, empty) = m.dec_used();
@@ -352,7 +346,6 @@ impl BlockInner {
             if n > 1 << 16 {
                 panic!("block allocator: drain[{power}] walk exceeded depth — cyclic chain?");
             }
-            // SAFETY: 链中块均已在 freepool（free 状态），首字为 next 指针
             let next = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
             let addr = node.as_ptr() as usize;
             if addr >= page && addr < page + PAGE_SIZE {
@@ -398,7 +391,6 @@ impl BlockInner {
 
     fn feed(&self, ptr: NonNull<u8>, power: usize) {
         let mut g = self.pump[power].lock();
-        // SAFETY: 块已被释放；首 8 字节空闲可写
         unsafe { g.push(ptr) };
     }
 
@@ -417,7 +409,6 @@ impl BlockInner {
                         "block allocator: pump[{power}] walk exceeded depth — cyclic chain (double feed?)"
                     );
                 }
-                // SAFETY: 链中块均已被释放、首字为 next 指针
                 let next = unsafe { node.cast::<Option<NonNull<u8>>>().read() };
                 self.push(node, power);
                 this = next;

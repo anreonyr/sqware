@@ -12,7 +12,6 @@ mod trap;
 macro_rules! depend_enter {
     ($lock:expr) => {{
         let caller: usize;
-        // SAFETY: 读 ra（asm 未声明视为 clobber）
         unsafe { core::arch::asm!("mv {0}, ra", out(reg) caller) };
         caller
     }};

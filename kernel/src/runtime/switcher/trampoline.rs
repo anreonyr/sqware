@@ -124,12 +124,10 @@ global_asm!(
     "    ld    t0,  0x140(sp)",
     "    csrw  sscratch, t0",
     "2:",
-    // Kernel tp still addresses PerHart; publish the occupied lease before checking pending.
     "    fence rw, rw",
     "    ld    t0, {instruction_sync}(tp)",
     "    beqz  t0, 3f",
     "    addi  t0, tp, {instruction_sync}",
-    // Clear before fencing so a concurrent publication can leave another pending request.
     "    amoswap.d.aq t1, zero, (t0)",
     "    fence.i",
     "3:",
@@ -183,7 +181,6 @@ unsafe extern "C" {
 }
 
 pub fn restore(frame_pa: usize) -> ! {
-    // SAFETY: frame_pa 为有效帧物理地址
     asid::occupy(Asid::from_raw(unsafe {
         (*(frame_pa as *const TrapContext)).user_satp.asid()
     }));

@@ -63,7 +63,6 @@ pub fn hart_count() -> usize {
 #[inline]
 pub fn hart_id() -> HartId {
     let id: usize;
-    // SAFETY: 内核态 tp 恒为本 hart PerHart 指针
     unsafe {
         core::arch::asm!(
             "ld {0}, 0(tp)",
@@ -103,11 +102,9 @@ static PER_HART: [PerHart; MAX_HART_SLOTS] = {
     let ptr = a.as_mut_ptr().cast::<PerHart>();
     let mut i = 0;
     while i < MAX_HART_SLOTS {
-        // SAFETY: i < MAX_HART_SLOTS
         unsafe { ptr.add(i).write(PerHart::at(i)) };
         i += 1;
     }
-    // SAFETY: MAX_HART_SLOTS 个元素已全部写入
     unsafe { a.assume_init() }
 };
 
@@ -137,7 +134,6 @@ pub(crate) fn request_instruction_sync() {
 #[inline]
 pub fn scheduler() -> *mut () {
     let p: usize;
-    // SAFETY: 内核态 tp 恒为本 hart PerHart 指针
     unsafe {
         core::arch::asm!(
             "ld {0}, 0x10(tp)",
@@ -151,7 +147,6 @@ pub fn scheduler() -> *mut () {
 #[inline]
 pub fn hart_frame() -> VirtAddr {
     let f: usize;
-    // SAFETY: 内核态 tp 恒为本 hart PerHart 指针
     unsafe {
         core::arch::asm!(
             "ld {0}, 0x08(tp)",

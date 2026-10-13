@@ -45,7 +45,6 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
                 for page in 0..region.data_pages {
                     let frame = crate::tag!(Image, Frame::allocate()?);
                     let start = region.payload + page * PAGE;
-                    // SAFETY: each newly allocated frame is not yet mapped.
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             bytes[start..start + PAGE].as_ptr(),
@@ -62,7 +61,6 @@ pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
                     .addr()
                     .checked_add(region.payload)
                     .ok_or(MapError::NoRegion)?;
-                // SAFETY: `bytes` is static, page-aligned, and remains reserved for every map.
                 unsafe {
                     space.map_borrowed(
                         data_reservation,

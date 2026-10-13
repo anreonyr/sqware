@@ -158,7 +158,6 @@ fn send(target: crate::hart::HartId, broadcast: bool) {
 fn wait_until(budget: u64, pred: impl Fn() -> bool) -> bool {
     let deadline = time::read() as u64 + budget;
     loop {
-        // SAFETY fence: relaxed 原子读必须不被 LLVM 提出自旋环
         core::sync::atomic::compiler_fence(Ordering::Acquire);
         if pred() {
             return true;

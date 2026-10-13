@@ -83,7 +83,6 @@ pub struct Mapping {
 
 unsafe impl Send for Space {}
 unsafe impl Sync for Space {}
-// SAFETY: Tree and Map state is internally synchronized; allocator identity is immutable.
 unsafe impl Send for Reservation {}
 unsafe impl Sync for Reservation {}
 unsafe impl Send for Mapping {}
@@ -477,7 +476,6 @@ impl Space {
         }
     }
 
-    /// The caller keeps external physical storage reserved for the full mapping lifetime.
     pub unsafe fn map_borrowed(
         &self,
         reservation: Reservation,

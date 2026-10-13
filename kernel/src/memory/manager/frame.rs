@@ -7,7 +7,6 @@ use crate::memory::PAGE_SIZE;
 
 use super::MapError;
 
-/// One allocator-owned physical page. Cloning an `Arc<Frame>` shares the page.
 #[derive(Debug)]
 pub struct Frame {
     page: Box<UnsafeCell<[u8; PAGE_SIZE]>, &'static dyn Allocator>,
@@ -36,6 +35,5 @@ impl Frame {
     }
 }
 
-// SAFETY: access to the shared physical page is synchronized by its mapping owner.
 unsafe impl Send for Frame {}
 unsafe impl Sync for Frame {}

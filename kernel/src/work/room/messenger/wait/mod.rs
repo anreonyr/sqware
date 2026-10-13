@@ -332,20 +332,6 @@ pub(crate) fn unforward(key: WakeKey, tole: usize) {
     prune(&mut sites, key);
 }
 
-/// **只投给已登记的观察者**。
-///
-/// 与另外两条的分界一句话成族：`wake` 交付**一个**等待者（顺带提示转发组）、`knock` 是
-/// 提示型（整链放行，**允许就地建站点**）、本函数**只对已经站着的那个站点说话**：
-/// 有转发边就逐条把它转成对观察组的 `knock`，有直等链就整链摘下来放行；
-/// **站点不在 ⇒ 直接返回 0，不建站点、不分配、不置位**——没有观察者的键不留痕。
-///
-/// 那条"不留痕"是承重的：能力变化走的是造门闩那条热路径，若为每个改过表的任务都留下
-/// 一个站点，站点表会随任务数单调长大。
-///
-/// **不写站点自己的 `pend`**：这个键的合法消费者只有经转发边挂上来的组——把提示留在
-/// 本键上无人消费，反而会让站点永远过不了 [`prune`]。
-///
-/// 锁：`Fwd` 快照只在分片锁内取，出锁才 knock（与 `wake` 同形，不跨 shard 嵌套加锁）。
 pub(crate) fn signal(key: WakeKey) -> usize {
     let _commit = crate::work::unit::commit();
     let mut fwd = Fwd::empty();
@@ -369,7 +355,6 @@ pub(crate) fn signal(key: WakeKey) -> usize {
     rise(Unchain { cur: chain })
 }
 
-/// 站点总数（只给健康面读：证"没有观察者就不建站点"这一条）。
 #[cfg(debug_assertions)]
 pub(crate) fn site_count() -> usize {
     (0..SITE_SHARDS)
@@ -471,8 +456,6 @@ pub fn redeem() -> bool {
     rise(tasks.iter_mut().filter_map(Option::take)) > 0
 }
 
-/// Keep the request and one deadline in Blocked, so a wakeup never becomes a
-/// false completion and observers pin the original shared record until return.
 pub(crate) fn unit_join(
     join: crate::work::unit::join::JoinWait,
 ) -> Result<Handoff<env::JoinReply>, env::UnitFail> {
@@ -488,8 +471,6 @@ pub(crate) fn unit_join(
             join.remaining(),
             Some(WaitCall::Join(join.clone())),
         )?;
-        // Registration is atomic with the poll. Scheduler idle waits must run
-        // after releasing Unit, so another hart can publish or wake a task.
         drop(_commit);
         match finish_block(blocked) {
             Handoff::Resume(()) => continue,
@@ -510,7 +491,6 @@ fn resume_join(task: &Arc<Task>, join: crate::work::unit::join::JoinWait) -> boo
     } else {
         result
     };
-    // SAFETY: the detached blocked task is not executing; its frame remains owned.
     let frame = unsafe { &mut *(task.ident.frame_pa.as_usize() as *mut TrapContext) };
     crate::work::unit::join::JoinWait::write(frame, result);
     true
@@ -616,7 +596,6 @@ fn resume_await(task: &Arc<Task>, wait: crate::work::mail::tole::AwaitWait) -> b
         } else {
             result
         };
-    // SAFETY: this detached blocked task owns a stable frame and is not executing.
     let frame = unsafe {
         &mut *(task.ident.frame_pa.as_usize()
             as *mut crate::runtime::switcher::context::TrapContext)

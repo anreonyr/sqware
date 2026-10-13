@@ -258,7 +258,6 @@ impl TableNode {
                     .map_err(|_| MapError::OutOfMemory)?;
                 let ppn = child.ppn() as u64;
                 node.children.push((idx, child));
-                // Publish the complete child table before replacing the leaf.
                 core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
                 node.page.entries[idx].set(ppn, PteFlags::V);
             }
@@ -272,7 +271,6 @@ impl TableNode {
         Ok(())
     }
 
-    // Splitting preserves translations and flags, even if a later allocation fails.
     fn prepare_with(
         &mut self,
         va: VirtAddr,
@@ -330,7 +328,6 @@ impl TableNode {
             return None;
         }
         for level in (0..levels).rev() {
-            // SAFETY: tbl 已过 ok 校验；调用方保证只读、无并发写
             let pte = unsafe {
                 *((tbl.as_usize() + page_va.vpn(level as u8) * 8) as *const PageTableEntry)
             };
@@ -668,7 +665,6 @@ pub(crate) fn large_pages_accept() {
     assert_eq!(root.count(), 1);
     drop(guard);
 
-    // Unaligned ends retain base pages around an aligned megapage.
     let start = va - PAGE_SIZE;
     root.prepare_range_geometry(start, pa - PAGE_SIZE, MEGA + 2 * PAGE_SIZE, geo)
         .expect("mixed map");
@@ -707,7 +703,6 @@ pub(crate) fn large_pages_accept() {
     root.reclaim_empty_tables(&mut retired);
     assert_eq!(root.count(), 1);
 
-    // An existing lower table must not be overwritten by a large leaf.
     root.prepare_range_geometry(va + PAGE_SIZE, pa + PAGE_SIZE, PAGE_SIZE, geo)
         .unwrap();
     root.map_range_prepared_geometry(va + PAGE_SIZE, pa + PAGE_SIZE, PAGE_SIZE, rw, geo);

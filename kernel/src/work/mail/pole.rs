@@ -38,7 +38,6 @@ struct HeldMap {
     relation: Relation,
 }
 
-/// Mapping ownership, authorization relations and notifications for one memory resource.
 pub struct PoleMeta {
     maps: SpinLock<Vec<HeldMap>>,
     live: AtomicBool,
@@ -51,7 +50,6 @@ pub struct PoleMeta {
     ring: SpinLock<usize>,
 }
 
-// SAFETY: token-bearing kernel records are protected by maps and the operation lease.
 unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
@@ -558,7 +556,6 @@ pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleM
         .allocate_high(RegionId::Resource, hi - lo)
         .map_err(pie_map_error)?;
     let rw = PteFlags::R | PteFlags::W;
-    // SAFETY: boot resource discovery keeps these external pages reserved.
     let mapping = unsafe {
         kernel.map_borrowed(
             reservation,

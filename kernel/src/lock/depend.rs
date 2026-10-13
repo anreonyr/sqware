@@ -128,7 +128,6 @@ impl HeldSet {
 #[cfg(debug_assertions)]
 struct HeldCell(UnsafeCell<HeldSet>);
 
-// SAFETY: 每核只写自己那份
 #[cfg(debug_assertions)]
 unsafe impl Send for HeldCell {}
 #[cfg(debug_assertions)]
@@ -157,7 +156,6 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
             Ok(set) => set,
             Err(error) => {
                 for cell in &mut cells[..index] {
-                    // SAFETY: these earlier entries were initialized below.
                     unsafe {
                         cell.assume_init_drop();
                     }
@@ -167,7 +165,6 @@ pub(crate) fn init(hart_count: usize) -> Result<(), DepInitError> {
         };
         cells[index].write(HeldCell(UnsafeCell::new(set)));
     }
-    // SAFETY: every slot has been initialized above.
     let pool: &'static [HeldCell] = Box::leak(unsafe { cells.assume_init() });
     POOL.set(pool).map_err(|_| DepInitError::AlreadyInit)
 }
@@ -181,7 +178,6 @@ fn held() -> Option<&'static mut HeldSet> {
     }
     Some({
         let this = &pool[h.get()];
-        // SAFETY: 每核 + SIE 关
         unsafe { &mut *this.0.get() }
     })
 }
@@ -221,12 +217,9 @@ pub(crate) fn release(addr: usize) {
     }
 }
 
-/// Allocate before acquiring a variable number of task gates. Never allocate
-/// from acquire/check themselves, or keep a HeldSet borrow across allocation.
 pub(crate) fn reserve(_additional: usize) -> Result<(), ()> {
     #[cfg(debug_assertions)]
     {
-        // SAFETY: pin this hart's bookkeeping while allocation takes inner locks.
         let _trap = unsafe { super::trap::TrapGuard::save() };
         let Some(set) = held() else {
             return Ok(());

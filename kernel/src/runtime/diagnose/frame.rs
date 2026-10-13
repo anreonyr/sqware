@@ -98,7 +98,6 @@ impl StackReader {
         }
         let page = addr & !(PAGE_SIZE - 1);
         let base = self.leaf(page)?;
-        // SAFETY: 该页已 walk 命中且带 R；S 态直读
         Some(unsafe {
             (base.as_usize() as *const u8)
                 .add(addr - page)

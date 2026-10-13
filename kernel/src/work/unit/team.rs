@@ -23,8 +23,6 @@ pub(crate) enum TeamState {
     Doomed { staged: Vec<Staging> },
     Ousted,
 }
-// SAFETY: staging capability tokens are kernel records, accessed only under
-// the TeamState lock and operation lease; no user handle is sent across harts.
 unsafe impl Send for TeamState {}
 
 pub(crate) enum TeamStage {
@@ -69,8 +67,6 @@ impl Member {
     }
 }
 
-/// Resource-free topology. Reciprocal metadata edges are detached by prune,
-/// after Ousted and the last receipt/descendant disappears; never retain Space.
 pub(crate) struct TeamLife {
     pub id: TeamId,
     pub owner: TaskId,
@@ -208,8 +204,6 @@ impl TeamLife {
     }
 }
 
-/// Group the shared member records and execution-only keepalive index. TeamLife
-/// clones only members, so retaining exit metadata never retains held Tasks.
 pub(crate) struct Tasks {
     members: Arc<SpinLock<Vec<Arc<Member>>>>,
     pub(crate) held: SpinLock<Vec<Arc<Task>>>,
@@ -695,7 +689,6 @@ pub(crate) fn alloc_team_id() -> Result<TeamId, crate::memory::manager::MapError
     Ok(TeamId::new(id))
 }
 
-/// Prepare and atomically publish one Held task, consuming private roots only at commit.
 pub(crate) fn spawn(
     target: &Arc<Team>,
     caller: Option<&Arc<Task>>,
@@ -712,8 +705,6 @@ pub(crate) fn spawn(
             UnitFail::Denied
         }
     }
-    // Every publication shares the operation lease with Oust, including an
-    // already Ready team. Checking emptiness must exclude a late Spawn.
     let _construction = target.operation().ok_or(UnitFail::Busy)?;
     let first = !target.ready();
     let entry_va = if entry == 0 {

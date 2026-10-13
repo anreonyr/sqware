@@ -62,7 +62,6 @@ pub fn init() -> InitResult<()> {
     Ok(())
 }
 
-/// Debug guard for publication sections whose capacity has already been reserved.
 #[cfg(debug_assertions)]
 static FORBIDDEN: [core::sync::atomic::AtomicBool; crate::layout::MAX_HART_SLOTS] =
     [const { core::sync::atomic::AtomicBool::new(false) }; crate::layout::MAX_HART_SLOTS];

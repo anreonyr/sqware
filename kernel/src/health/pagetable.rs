@@ -356,7 +356,6 @@ pub fn image_dynamic_region() {
         put(&mut bytes, 48, 1, 8);
         put(&mut bytes, 56, PAGE_SIZE as u64, 8);
         put(&mut bytes, 64, 5, 4);
-        // A sparse image ending in four lazy BSS pages.
         put(&mut bytes, 72, 0x14000, 8);
         put(&mut bytes, 80, 4, 8);
         put(&mut bytes, 104, 3, 4);
@@ -383,7 +382,6 @@ pub fn image_dynamic_region() {
     team.space
         .release_reservation(heap)
         .expect("release image heap");
-    // Removing image pages must not move the dynamic region's lower boundary.
     team.space
         .tree
         .unmap(&lazy, VirtAddr::from_raw(0x17000), PAGE_SIZE)
@@ -534,7 +532,6 @@ pub fn interval_index() {
         space.unmap(mapping).expect("remove replacement mapping");
     }
     assert_eq!(space.tree.table_count(), tables);
-    // The last virtual page must also support protection and full removal.
     let trampoline = space
         .tree
         .find(crate::layout::TRAMPOLINE)
@@ -570,7 +567,6 @@ pub fn large_pages() {
     let space = SpaceBuilder::user().build().expect("large page space");
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U;
     let before = space.tree.table_count();
-    // SAFETY: this interval is part of the machine's reserved DRAM.
     let region = unsafe { BorrowedRegion::new(pa, 2 * MEGA) }.expect("reserved DRAM interval");
     let map = space
         .tree

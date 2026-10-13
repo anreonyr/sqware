@@ -51,7 +51,6 @@ pub fn read(buf: &mut [u8]) -> Option<usize> {
     } else {
         translate_kernel(va, buf.len())?
     };
-    // SAFETY: pa 指向可写、物理连续的缓冲
     let got = DbcnCall::new(Dbcn::ConsoleRead)
         .args(SArgs {
             a0: buf.len(),

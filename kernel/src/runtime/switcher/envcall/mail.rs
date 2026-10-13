@@ -121,8 +121,6 @@ fn pull(
     Outcome::Resume
 }
 
-/// Claim the head once. Discard only an oversized message; Keep and copy failures restore it.
-/// The reading guard retains the bytes while copies happen outside the queue lock.
 fn hand_over(
     meta: &Arc<mail::HoleMeta>,
     space: &Arc<Space>,
@@ -138,14 +136,10 @@ fn hand_over(
         return Ok(PullOutcome::Discarded { len, sender: from });
     }
     if len > max || !mail::whole(space, buf, len, PteFlags::W) {
-        // **"读不成、手放回"这一条要看得见**（诊断）：孔会因此**一直报就绪**——等在这一组上的
-        // 读的人每一轮都啃同一格（读不成 ⇒ 手还在 ⇒ 下一轮又报就绪），而**别的客人的手就被饿在
-        // 后面**；递手的那一方还在等它下线（`wait(MailCondition::Empty, …)`）⇒ 两边一起卡住。
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
     if !mail::copy_out(space, &reading.bytes, buf) {
-        // 收方那段写不进去（同一格的另一个成因）：手放回原处，下一次换够大的缓冲再来。
         mail::hole::note_back(len, max);
         return Err(MailFail::Denied);
     }
@@ -153,10 +147,6 @@ fn hand_over(
     Ok(PullOutcome::Received { len, sender: from })
 }
 
-/// 只看那只手：`(长度, 发送者, 队里排着几只)`。不动状态、不唤醒、不复制。
-///
-/// 第三格（A2）此前空着：单槽时代"排着几只"恒为一件事，没有可报的。队列化之后它是写者
-/// 唯一的凭据——"我还排着几手"（`hand::Sender` 那一侧靠它把缓冲收回来）。
 fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     let r = with_pie(token, Need::Fetch, |pie| {
         let hole = pie.hole().ok_or(MailFail::Denied)?;
@@ -173,7 +163,6 @@ fn peek(frame: &mut TrapContext, token: PieToken) -> Outcome {
     Outcome::Resume
 }
 
-/// 等待 Pull 可读、Push 有空间或 Empty 已清空；唤醒后调用方仍须复核。
 fn wait_dir(
     frame: &mut TrapContext,
     ident: Arc<TaskIdent>,
@@ -184,7 +173,6 @@ fn wait_dir(
     enum Ready {
         Hole(Arc<mail::hole::HoleMeta>),
         Bell(Arc<mail::nole::NoleMeta>),
-        /// **页上那一位**（架把铃并进页；只有 `Pull` 一条方向，与门铃同）。
         Page(Arc<mail::pole::PoleMeta>),
     }
     let need = match dir {
@@ -242,7 +230,6 @@ fn hush(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
                 return Err(MailFail::Denied);
             }
             mail::nole::hush(&nole)?;
-            // Only the Nole interrupt path reopens the external interrupt gate.
             unsafe {
                 sie::set_sext();
             }
@@ -298,7 +285,6 @@ fn ring(frame: &mut TrapContext, token: PieToken, bit: Bit) -> Outcome {
     Outcome::Resume
 }
 
-/// 认一枚门闩、验权、把 `op` 作用上去——门铃与孔上那一位共用这两手。
 fn with_pie<T>(
     token: PieToken,
     need: Need,

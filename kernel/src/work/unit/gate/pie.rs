@@ -294,8 +294,6 @@ pub(crate) fn form_ok(src: Permission, subset: Permission) -> bool {
     src.contains(Permission::ONLY) == subset.contains(Permission::ONLY)
 }
 
-/// One independently mutable reference in a task's table. Resource entities
-/// remain shared; snapshots never allocate another boxed reference.
 pub(crate) type AnyPie = Box<dyn PieOps>;
 
 pub(crate) trait PieOps: Send {
@@ -408,8 +406,6 @@ where
     Ok(Box::try_new(pie).map_err(|_| env::PieFail::OoM)?)
 }
 
-/// Copies reference facts and shares the original resource and grant allocations.
-/// Retaining a snapshot does not preserve authority after its grant changes.
 #[derive(Clone)]
 pub(crate) struct PieSnapshot {
     pub(crate) token: PieToken,

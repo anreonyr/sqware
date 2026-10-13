@@ -316,7 +316,6 @@ pub fn construction() {
     let task = team::spawn(&child, Some(&caller), 0x10000, Vec::new(), 0).unwrap();
     assert!(child.ready());
     let frame_pa = task.ident.frame_pa.as_usize();
-    // SAFETY: the task has not run and its frame is exclusively owned by this test.
     let frame = unsafe { &*(frame_pa as *const crate::runtime::switcher::context::TrapContext) };
     assert_eq!(
         frame.gpr.x(crate::runtime::switcher::context::Gprs::SP),
@@ -485,7 +484,6 @@ pub fn cancellation() {
     drop(caller);
 }
 
-/// Pause inheritance and independent ancestor receipts share one exit state.
 pub fn branch_control() {
     use crate::work::unit::space::RegionId;
     use crate::work::unit::task::{Task, TaskExitCause, TaskState};

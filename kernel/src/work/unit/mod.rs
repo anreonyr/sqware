@@ -1,5 +1,3 @@
-/// Serializes lifecycle publication, topology and receipt ownership. No data is
-/// exposed through the reentrant guard; scheduler nesting is same-hart only.
 static COMMIT: crate::lock::RelLock<()> =
     crate::lock::RelLock::new_level(crate::lock::Level::Unit, ());
 

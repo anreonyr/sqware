@@ -96,13 +96,11 @@ fn try_mode(candidate: satp::Mode) -> Result<(), SatpError> {
         va += crate::memory::PAGE_SIZE;
     }
     let ppn = root.ppn();
-    // SAFETY: 恒等临时根已覆盖探测执行区；回读后立即写回 Bare
     unsafe {
         satp::set(candidate, 0, ppn);
         core::arch::asm!("sfence.vma");
     }
     let got = satp::read().mode();
-    // SAFETY: 立即关闭翻译
     unsafe {
         satp::set(satp::Mode::Bare, 0, 0);
         core::arch::asm!("sfence.vma");

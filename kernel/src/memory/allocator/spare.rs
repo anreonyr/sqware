@@ -25,7 +25,6 @@ struct Blk {
 impl Blk {
     unsafe fn write(addr: usize, size: usize) -> NonNull<Blk> {
         let blk = unsafe { NonNull::new_unchecked(addr as *mut Blk) };
-        // SAFETY: blk 指向本区块首，写入头 16 字节 Link + size 不越区
         unsafe {
             blk.write(Blk {
                 link: Link::new(None, None),
@@ -65,7 +64,6 @@ impl SpareInner {
     }
 
     fn unlink(&mut self, blk: NonNull<Blk>) {
-        // SAFETY: blk 必在链中；头 16 字节是 Link
         unsafe {
             let l = blk.read().link;
             match l.prev {
@@ -81,7 +79,6 @@ impl SpareInner {
     fn pull(&mut self, need: usize) -> Option<NonNull<Blk>> {
         let mut cur = self.head;
         while let Some(blk) = cur {
-            // SAFETY: 链节点恒为仓内空闲块
             if unsafe { blk.read() }.payload() >= need {
                 self.split(blk, need);
                 return Some(blk);
@@ -93,12 +90,10 @@ impl SpareInner {
 
     fn split(&mut self, blk: NonNull<Blk>, need: usize) {
         let start = blk.as_ptr() as usize;
-        // SAFETY: blk 在链中，其 size 为块首写的真实总长
         let size = unsafe { blk.read() }.size;
         let left = size - HEADER - need;
         if left >= HEADER {
             let rest = unsafe { Blk::write(start + HEADER + need, left) };
-            // SAFETY: 邻居指针与 rest 均在仓内
             unsafe {
                 let l = blk.read().link;
                 (*rest.as_ptr()).link = l;
@@ -128,7 +123,6 @@ impl SpareInner {
             prev = Some(n);
             cur = unsafe { n.read() }.next();
         }
-        // SAFETY: prev/cur/neighbors 均为仓内空闲块
         unsafe {
             (*blk.as_ptr()).link.prev = prev.map(|p| p.cast());
             (*blk.as_ptr()).link.next = cur.map(|n| n.cast());
@@ -143,7 +137,6 @@ impl SpareInner {
         if let Some(p) = prev {
             let pend = (p.as_ptr() as usize) + unsafe { p.read() }.size;
             if pend == addr {
-                // SAFETY: p、blk 相邻且均在链中
                 unsafe {
                     (*p.as_ptr()).size += blk.read().size;
                 }
@@ -154,7 +147,6 @@ impl SpareInner {
         if let Some(n) = unsafe { blk.read() }.next() {
             let bend = (blk.as_ptr() as usize) + unsafe { blk.read() }.size;
             if bend == n.as_ptr() as usize {
-                // SAFETY: blk、n 相邻且均在链中
                 unsafe {
                     (*blk.as_ptr()).size += n.read().size;
                 }
@@ -209,7 +201,6 @@ unsafe impl Allocator for SpareAllocator {
             return Err(AllocError);
         };
         let addr = blk.as_ptr() as usize;
-        // SAFETY: blk 在链中，size 为块首真实总长
         let size = unsafe { blk.read() }.size;
         super::statistics::record_spare_take(size);
         Ok(NonNull::slice_from_raw_parts(

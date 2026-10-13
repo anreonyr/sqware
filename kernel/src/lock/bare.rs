@@ -13,7 +13,6 @@ pub struct BareLock<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: 单 guard 持 &mut T；guard !Send（锁在本 hart 释放）
 unsafe impl<T: ?Sized> Sync for BareLock<T> {}
 
 pub struct BareLockGuard<'a, T: ?Sized> {
@@ -66,7 +65,6 @@ impl<T: ?Sized> BareLock<T> {
     #[inline(never)]
     pub unsafe fn try_lock(&self) -> Option<BareLockGuard<'_, T>> {
         let caller: usize;
-        // SAFETY: 读 ra（asm 未声明视为 clobber）
         unsafe { core::arch::asm!("mv {0}, ra", out(reg) caller) };
         if self.locked.swap(true, Ordering::Acquire) {
             return None;
@@ -85,14 +83,12 @@ impl<T: ?Sized> Deref for BareLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        // SAFETY: 同一时刻只有一个 guard 存在
         unsafe { &*self.lock.data.get() }
     }
 }
 
 impl<T: ?Sized> DerefMut for BareLockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: 同一时刻只有一个 guard 存在
         unsafe { &mut *self.lock.data.get() }
     }
 }

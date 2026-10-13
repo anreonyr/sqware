@@ -315,7 +315,6 @@ pub fn badge() {
     prune_dead();
 }
 
-/// Exercise production Source authorization and predicates against real gates.
 pub fn references() {
     use crate::runtime::switcher::envcall::tole::cell as registration;
     use env::{AwaitReply, Source, Wait};
@@ -387,7 +386,6 @@ pub fn references() {
         group.poll(&caller).unwrap() == AwaitReply::Pending,
         "失效后可摘除原描述"
     );
-    // Pole bits are independent even when notifications repeat.
     let reservation = caller
         .ident
         .team
@@ -425,7 +423,6 @@ pub fn references() {
         "重复清位幂等且不影响另一位"
     );
     drop(page);
-    // Shared groups expose only the calling registrant's exact sources.
     let local = Source::Mail {
         pie: root_token,
         condition: MailCondition::Pull,
@@ -457,7 +454,6 @@ pub fn references() {
     tole::detach(&group, stranger.ident.id, other_source).unwrap();
     tole::detach(&group, caller.ident.id, local).unwrap();
     gate::release(&stranger, other_token).unwrap();
-    // Exclusive Tole authority return uses the reference edge, not a Tole-to-Tole activity edge.
     let authority = tole::meta(caller.ident.id);
     let root = gate::new_pie::<gate::Tole>(
         authority.clone(),

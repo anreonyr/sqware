@@ -53,15 +53,12 @@ struct MapState {
     lazy: bool,
 }
 
-/// A caller-owned physical interval that must remain valid while maps retain it.
 pub struct BorrowedRegion {
     start: PhysAddr,
     size: NonZeroUsize,
 }
 
 impl BorrowedRegion {
-    /// # Safety
-    /// The interval must remain valid and reserved until the last Arc is dropped.
     pub unsafe fn new(start: PhysAddr, size: usize) -> Result<Arc<Self>, MapError> {
         if !start.is_aligned() || size == 0 || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
@@ -142,7 +139,6 @@ impl Map {
         self.state.lock().frames.len()
     }
 
-    /// Extract every owned frame in a completely live, page-aligned range.
     pub fn frames_in(
         &self,
         start: VirtAddr,
@@ -270,7 +266,6 @@ struct TreeState {
     closed: bool,
 }
 
-/// One address-space root, its map interval index, and its deferred resources.
 pub struct Tree {
     asid: Asid,
     geometry: mode::Geo,
@@ -330,12 +325,10 @@ impl Tree {
                     .store(true, Ordering::Release);
                 Ok(tree)
             }
-            // The failed Arc allocation drops the unpublished Tree, releasing its ASID.
             Err(_) => Err(MapError::OutOfMemory),
         }
     }
 
-    /// Construct the ASID-0 address space used for kernel mappings.
     pub fn new_kernel() -> Result<Arc<Self>, MapError> {
         let root = TableNode::root()?;
         let tree = Arc::try_new(Self {
@@ -418,7 +411,6 @@ impl Tree {
         self.state.lock().pending
     }
 
-    /// Maps whose PTEs were published but whose global fence has not completed.
     pub fn pending_maps(&self) -> Result<Vec<Arc<Map>>, MapError> {
         let state = self.state.lock();
         let mut maps = Vec::new();
@@ -589,7 +581,6 @@ impl Tree {
         Ok(map)
     }
 
-    /// Map a caller-owned physical interval. The region token keeps its reservation alive.
     pub fn map_borrowed(
         self: &Arc<Self>,
         start: VirtAddr,
@@ -655,7 +646,6 @@ impl Tree {
         Ok(map)
     }
 
-    /// Materialize any still-lazy pages in a live range.
     pub fn materialize(
         &self,
         map: &Arc<Map>,
@@ -1233,8 +1223,6 @@ impl Tree {
             let within = at & (PAGE_SIZE - 1);
             let count = (PAGE_SIZE - within).min(size - offset);
             let physical = physical.as_usize() as *mut u8;
-            // SAFETY: Tree and Map locks keep the live Map and its owned Frame or borrowed
-            // region alive, and the full range was validated while the Tree lock is held.
             unsafe {
                 if write_to_user {
                     core::ptr::copy(buffer.add(offset), physical.add(within), count);
@@ -1737,7 +1725,6 @@ impl Drop for Tree {
                 Asid::release_unpublished(self.asid);
             }
         } else if self.asid.is_kernel() {
-            // The kernel root may be installed in SATP; its storage has process lifetime.
             return;
         } else if !self.asid_released.load(Ordering::Acquire) {
             if self.close().is_err() || asid::deallocate(self.asid).is_err() {
@@ -1745,7 +1732,6 @@ impl Drop for Tree {
             }
             self.asid_released.store(true, Ordering::Release);
         }
-        // SAFETY: ASID deallocation performs a completed shootdown before root pages are freed.
         unsafe { ManuallyDrop::drop(&mut self.state) };
     }
 }

@@ -14,7 +14,6 @@ pub struct SpinLock<T: ?Sized> {
     data: UnsafeCell<T>,
 }
 
-// SAFETY: 单 guard 持 &mut T；guard !Send（锁在本 hart 释放）
 unsafe impl<T: ?Sized> Sync for SpinLock<T> {}
 
 pub struct SpinLockGuard<'a, T: ?Sized> {
@@ -52,7 +51,6 @@ impl<T: ?Sized> SpinLock<T> {
     #[inline(never)]
     pub fn lock(&self) -> SpinLockGuard<'_, T> {
         let caller = crate::lock::depend_enter!(self);
-        // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入
         let trap = unsafe { TrapGuard::save() };
         crate::lock::depend_check!(self, caller);
 
@@ -74,9 +72,7 @@ impl<T: ?Sized> SpinLock<T> {
     #[inline(never)]
     pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T>> {
         let caller: usize;
-        // SAFETY: 读 ra（asm 未声明视为 clobber）
         unsafe { core::arch::asm!("mv {0}, ra", out(reg) caller) };
-        // SAFETY: 处于 S-mode；关中断防止本 hart 中断重入
         let trap = unsafe { TrapGuard::save() };
 
         if self.locked.swap(true, Ordering::Acquire) {
@@ -97,14 +93,12 @@ impl<T: ?Sized> Deref for SpinLockGuard<'_, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        // SAFETY: 单 guard 持锁期间无其他持有者
         unsafe { &*self.lock.data.get() }
     }
 }
 
 impl<T: ?Sized> DerefMut for SpinLockGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: 单 guard 持锁期间无其他持有者
         unsafe { &mut *self.lock.data.get() }
     }
 }

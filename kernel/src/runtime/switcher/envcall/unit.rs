@@ -174,8 +174,6 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
                 Ok(Handoff::Switch(pa)) => return Outcome::Switch(pa as *mut TrapContext),
                 Err(error) => return Outcome::fail(frame, error),
             }
-            // Removing the last pending owner makes metadata collectible; active
-            // observers still pin their Member, not the execution resources.
             {
                 let _commit = crate::work::unit::commit();
                 ident.team.life.prune();

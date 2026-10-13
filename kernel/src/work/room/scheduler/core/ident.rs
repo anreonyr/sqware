@@ -95,19 +95,15 @@ impl Badge {
         match Payload::of(self.raw.load(Ordering::Acquire)) {
             Payload::Empty => None,
             Payload::Last(l) => Some(Identity::Last(l)),
-            Payload::Live(p) => {
-                // SAFETY: 未标签 = TaskIdent 载荷；槽持有者对 p 保有一份计数
-                unsafe {
-                    Arc::increment_strong_count(p);
-                    Some(Identity::Live(Arc::from_raw(p)))
-                }
-            }
+            Payload::Live(p) => unsafe {
+                Arc::increment_strong_count(p);
+                Some(Identity::Live(Arc::from_raw(p)))
+            },
         }
     }
 
     fn reclaim(prev: Payload) {
         if let Payload::Live(p) = prev {
-            // SAFETY: swap 取走后槽对其不再持有，此处 from_raw 收回该份计数
             unsafe {
                 drop(Arc::from_raw(p));
             }

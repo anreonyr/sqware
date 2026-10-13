@@ -39,7 +39,7 @@ doctest = false
 # **（`cargo-qtest` 那条注入为什么指望不上）**：`cargo-qemu-test` 对 riscv 有
 # "manifest 目录里已经有 `.x` ⇒ 认为你有自己的脚本、不再注入"的分支——`kernel/link.x` 正好命中
 # ⇒ 它**两枚都不注入**；而上游这枚的构建脚本只发 `rustc-link-search`、**不发 `DEP_…_LINK`**
-# ⇒ 由本 crate 的 `build.rs` 自己交代那枚脚本（读源文件 + 哈希自检，见它的头注）。
+# ⇒ 由本 crate 的 `build.rs` 自己交代那枚脚本（读源文件 + 哈希自检）。
 embedded-test-linker-script = "0.1"
 
 env = { path = "../crates/env" }
@@ -92,7 +92,7 @@ embedded-test = { version = "0.7", default-features = false, features = ["semiho
 [lints.cargo]
 # 上面那一格 `embedded-test-linker-script` 的用法**这条 lint 看不见**：它不产代码（没有 crate 可
 # `use`），承重的是两样东西——上游构建脚本发的 `-L` 搜索路径，以及 `build.rs` 从 registry 源文件
-# 读出上游那份 `embedded-test.x` 来复核哈希（见 `build.rs` 头注"哈希自检是故意的"）。
+# 读出上游那份 `embedded-test.x` 来复核哈希。
 # 删掉它 ⇒ 复核那一路**静默跳过**（`upstream_source()` 答 `None`），两份脚本又能悄悄漂移。
 # 故在此声明一次，而不是删一格承重的依赖。
 unused_dependencies = "allow"

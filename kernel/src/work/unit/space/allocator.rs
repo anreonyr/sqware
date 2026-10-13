@@ -25,7 +25,6 @@ struct Region {
     reserved: Vec<Slot>,
 }
 
-/// Owns address regions and keeps retired intervals unavailable until eviction completes.
 pub(crate) struct VaAllocator {
     regions: Vec<Region>,
     cleanups: Vec<(usize, Box<super::space::CleanupNode>)>,

@@ -124,7 +124,6 @@ impl JoinWait {
     }
 }
 
-/// Shared authorization for Join and non-consuming Mail observations.
 pub(crate) fn observe(
     me: &Arc<super::task::Task>,
     target: env::UnitTarget,

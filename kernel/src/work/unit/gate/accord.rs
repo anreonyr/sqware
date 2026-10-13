@@ -47,7 +47,6 @@ pub(crate) fn accord(
         let badge = if mark == Mark::NONE { pie.mark() } else { mark };
         let mut granted = pie.grant(badge, subset)?;
         granted.parent(src, Arc::downgrade(caller));
-        // Reserve both records before changing either side, including ONLY's heir.
         caller
             .gate
             .heirs
@@ -74,7 +73,6 @@ pub(crate) fn accord(
             };
             source.set_heir(Some(heir));
         }
-        // Block the exclusive source before publishing the recipient's token.
         target.gate.pies.lock().push(granted);
         super::changed(caller);
         if !Arc::ptr_eq(caller, &target) {
@@ -103,8 +101,6 @@ pub(crate) fn clear_heir(task: &Task, token: PieToken, expected: Heir) -> bool {
             .find(|(parent, _, child)| *parent == token && *child == expected.token)
             .and_then(|(_, task, _)| task.upgrade())
     };
-    // Recheck after acquiring the source gate: usable() may have observed the
-    // source heir before accord finished publishing the child.
     if child.is_some_and(|child| super::locate(&child, expected.token).is_some()) {
         return false;
     }
@@ -125,7 +121,6 @@ pub(super) fn clear_heir_locked(task: &Task, token: PieToken, expected: Heir) ->
     let Some(pie) = pies.iter_mut().find(|p| p.token() == token) else {
         return false;
     };
-    // A stale usable() observation must not clear a newer exclusive transfer.
     if pie.heir() != Some(&expected) {
         return false;
     }

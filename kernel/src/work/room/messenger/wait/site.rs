@@ -12,45 +12,17 @@ use crate::work::unit::task::{Task, TaskState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
-    Space {
-        space: Asid,
-        slot: usize,
-    },
-    Hole {
-        hole: usize,
-        dir: MailCondition,
-    },
-    Nole {
-        id: usize,
-    },
-    /// **页上那一位"有事"**（架把铃并进页之后，页也能被等——见 `mail::pole`）。
-    Pole {
-        id: usize,
-        bit: Bit,
-    },
-    Task {
-        id: TaskId,
-    },
-    Team {
-        id: TeamId,
-    },
-    Pies {
-        task: TaskId,
-    },
-    Seal {
-        kind: u8,
-        id: usize,
-    },
-    Inspect {
-        task: TaskId,
-        token: usize,
-    },
-    Tole {
-        id: usize,
-    },
-    Alarm {
-        task: TaskId,
-    },
+    Space { space: Asid, slot: usize },
+    Hole { hole: usize, dir: MailCondition },
+    Nole { id: usize },
+    Pole { id: usize, bit: Bit },
+    Task { id: TaskId },
+    Team { id: TeamId },
+    Pies { task: TaskId },
+    Seal { kind: u8, id: usize },
+    Inspect { task: TaskId, token: usize },
+    Tole { id: usize },
+    Alarm { task: TaskId },
 }
 
 impl WakeKey {

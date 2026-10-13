@@ -11,7 +11,6 @@ pub struct OnceLock<T> {
     data: UnsafeCell<MaybeUninit<T>>,
 }
 
-// SAFETY: 仅由 set() 写入 T 一次，之后仅提供不可变引用
 unsafe impl<T: Send + Sync> Sync for OnceLock<T> {}
 
 impl<T> OnceLock<T> {
@@ -26,7 +25,6 @@ impl<T> OnceLock<T> {
     #[inline]
     pub fn get(&self) -> Option<&T> {
         if self.state.load(Ordering::Acquire) == READY {
-            // SAFETY: READY 仅写完 data 的一方置位
             Some(unsafe { (*self.data.get()).assume_init_ref() })
         } else {
             None
@@ -39,7 +37,6 @@ impl<T> OnceLock<T> {
             .compare_exchange(EMPTY, WRITING, Ordering::AcqRel, Ordering::Acquire)
         {
             Ok(_) => {
-                // SAFETY: CAS 获胜 = 唯一写入者，data 尚未初始化
                 unsafe { (*self.data.get()).as_mut_ptr().write(value) }
                 self.state.store(READY, Ordering::Release);
                 Ok(())
@@ -62,7 +59,6 @@ impl<T> OnceLock<T> {
         }
         let val = f();
         if let Err(ours) = self.set(val) {
-            // SAFETY: ours 未存入 data，drop 即可
             drop(ours);
         }
         self.get().unwrap()

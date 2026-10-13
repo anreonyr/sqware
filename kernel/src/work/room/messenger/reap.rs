@@ -112,7 +112,6 @@ pub fn quit() -> usize {
             TaskState::Doomed { cause, reason, .. } => (*cause, *reason),
             _ => (TaskExitCause::Reap, requested),
         };
-        // Publish detachment in the same critical section as slot removal.
         *state = TaskState::Doomed {
             hart: None,
             cause,
@@ -143,8 +142,6 @@ pub fn quit() -> usize {
         tid: tid.get(),
         reason,
     }));
-    // Existing receipt ownership assigns result policy to the manager. This
-    // diagnostic snapshot requires no Observe call or mirrored Task flag.
     let owner = {
         let _commit = crate::work::unit::commit();
         exited
@@ -222,7 +219,6 @@ fn bury() {
     }
 }
 
-/// 退场那一趟的钩子：**给的是这一具任务本身，不是它的号**。
 type Hook = fn(&Arc<Task>);
 
 static HOOKS: OnceLock<&'static [Hook]> = OnceLock::new();

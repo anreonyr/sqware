@@ -23,7 +23,6 @@ impl Drop for TrapGuard {
     #[inline(always)]
     fn drop(&mut self) {
         if self.sie_was_enabled {
-            // SAFETY: 恢复 SIE；与 save 同序
             unsafe {
                 sstatus::set_sie();
             }

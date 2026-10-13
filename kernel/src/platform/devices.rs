@@ -6,7 +6,6 @@ use env::{Mark, Name, Page, PieFail, TaskId};
 
 pub(crate) fn register(registry: &mut Registry) -> Result<(), PieFail> {
     let dtb = machine::info().dtb();
-    // SAFETY: boot retains the DTB physical region for the machine's lifetime.
     let fdt = unsafe { fdt::Fdt::from_ptr(dtb.base as *const u8) }.map_err(|_| PieFail::Denied)?;
     for node in fdt.all_nodes() {
         if exempt(node.name) {

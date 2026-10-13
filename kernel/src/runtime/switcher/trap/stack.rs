@@ -98,7 +98,6 @@ pub fn init() -> Result<(), MapError> {
         }
         let (body_va, _edge) = trap_stack_segment(h);
         space.tree.map_frames(body_va, frames, flags, flags)?;
-        // The guard page has no mapping in the Tree.
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }

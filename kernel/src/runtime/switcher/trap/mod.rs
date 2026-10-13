@@ -32,7 +32,6 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
         return false;
     };
     let dst = pa.as_usize() as *mut TrapContext;
-    // SAFETY: 任务专属帧 PA 恒等映射可写；当前 running 任务独占
     unsafe {
         (*dst).gpr = frame.gpr;
         (*dst).sstatus = frame.sstatus;
@@ -42,7 +41,6 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
 }
 
 fn hart_frame_pa() -> usize {
-    // SAFETY: kernel satp 下本 hart 帧恒映射
     unsafe {
         (*(hart::hart_frame().as_usize() as *const TrapContext))
             .user_pa
@@ -53,19 +51,16 @@ fn hart_frame_pa() -> usize {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapContext {
     let sp: usize;
-    // SAFETY: 读当前栈指针
     unsafe {
         core::arch::asm!("mv {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags));
     }
     let hart = trap_stack_hart(sp).unwrap_or(HartId::new(0));
     let tp = crate::hart::per_hart_ptr(hart);
-    // SAFETY: 写线程指针
     unsafe {
         core::arch::asm!("mv tp, {}", in(reg) tp, options(nomem, nostack, preserves_flags));
     }
 
     let frame_va = crate::hart::hart_frame().as_usize();
-    // SAFETY: 写 sscratch（内核态约定 = 本 hart 帧 VA）
     unsafe {
         core::arch::asm!(
             "csrw sscratch, {}",
@@ -288,7 +283,6 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
         "trap stack corrupted on hart {me} after handler"
     );
 
-    // SAFETY: next 恒指向本核有效帧
     asid::occupy(Asid::from_raw(unsafe { (*next).user_satp.asid() }));
 
     next

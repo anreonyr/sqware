@@ -367,7 +367,6 @@ impl FrameInner {
             if node.as_ptr() as usize == target {
                 return true;
             }
-            // SAFETY: freelist 节点恒为已释放块，头 16 字节是 Link
             cur = unsafe { node.read() }.next;
         }
         false
@@ -384,11 +383,9 @@ pub fn allocator() -> &'static dyn Allocator {
 
 pub fn init() -> InitResult<()> {
     (|| -> Result<(), InitError> {
-        // Reserve the allocator itself before calculating the first free frame.
         let mut slot =
             Box::<FrameAllocator>::try_new_uninit().map_err(|_| InitError::OutOfMemory)?;
         slot.write(FrameAllocator::init()?);
-        // SAFETY: initialization filled the reserved slot.
         let heap = Box::leak(unsafe { slot.assume_init() });
         FRAME_ALLOCATOR
             .set(heap)

@@ -17,7 +17,6 @@ const FRAME_HELD: usize = 8;
 
 pub fn accept() {
     let a = hybrid::allocator();
-    // Fill a page per class so even classes with permanent boot allocations have a spare.
     let mut warm = Vec::new();
     warm.try_reserve_exact(PAGE_SIZE / 8)
         .expect("stress: warm slots");
@@ -28,7 +27,6 @@ pub fn accept() {
             warm.push(a.allocate(layout).expect("stress: warm size class"));
         }
         for block in warm.drain(..) {
-            // SAFETY: each block was allocated with this class layout.
             unsafe { a.deallocate(block.cast(), layout) };
         }
     }
@@ -37,7 +35,6 @@ pub fn accept() {
 
     for i in 0..STEPS {
         let l = Layout::from_size_align(SIZES[i % SIZES.len()], 8).unwrap();
-        // SAFETY: 分配块当轮即释（闭环）
         unsafe {
             let b = a.allocate(l).expect("stress: alloc 1");
             a.deallocate(b.cast(), l);
@@ -51,11 +48,9 @@ pub fn accept() {
         held.push((b, l));
     }
     for (b, l) in held.drain(..) {
-        // SAFETY: b 来自本幕 allocate、layout 同源
         unsafe { a.deallocate(b.cast(), l) };
     }
     let l = Layout::from_size_align(1024, 8).unwrap();
-    // SAFETY: 复验块当轮即释
     unsafe {
         let b = a.allocate(l).expect("stress: re-alloc after merge");
         a.deallocate(b.cast(), l);
@@ -64,7 +59,6 @@ pub fn accept() {
     for i in 0..FRAME_STEPS {
         let size = FRAME_SIZES[i % FRAME_SIZES.len()];
         let l = Layout::from_size_align(size, PAGE_SIZE).unwrap();
-        // SAFETY: 块当轮即释（闭环）
         unsafe {
             let b = a.allocate(l).expect("stress: frame alloc");
             a.deallocate(b.cast(), l);
@@ -78,7 +72,6 @@ pub fn accept() {
         fheld.push((b, l));
     }
     for (b, l) in fheld.drain(..) {
-        // SAFETY: b 来自本幕 allocate、layout 同源
         unsafe { a.deallocate(b.cast(), l) };
     }
 
@@ -101,11 +94,9 @@ pub fn accept() {
         "frame drain: alloc after exhaustion must fail"
     );
     for (b, l) in drained.drain(..) {
-        // SAFETY: b 来自本幕 allocate、layout 同源
         unsafe { a.deallocate(b.cast(), l) };
     }
     let l = Layout::from_size_align(PAGE_SIZE * 2, PAGE_SIZE).unwrap();
-    // SAFETY: 复验块当轮即释
     unsafe {
         let b = a.allocate(l).expect("stress: frame after drain");
         a.deallocate(b.cast(), l);

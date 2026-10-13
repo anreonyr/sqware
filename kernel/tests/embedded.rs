@@ -1,25 +1,6 @@
 #![no_std]
 #![no_main]
 
-//! 内核内用例的**登记与逐例打点** —— `embedded-test` 的测试目标。
-//!
-//! **（用户裁定"去掉所有的测试 / 迁移到 embedded-test"）**：这一份替掉了自研的
-//! `kernel/src/framework/`（4 文件 274 行：`.tests` 段 + `test!` 宏 + `discover()` +
-//! 逐例打点运行器）与 `health/mod.rs` 里那 8 个 `test!` 块。发现与汇报都归
-//! `embedded-test`；**用例体一个字没动**，还在 `kernel::health::*` 那五个模块里。
-//!
-//! # 一起来（一例一个 QEMU 实例）
-//!
-//! runner 是 `cargo-qtest`，它对**每一例**起一个 QEMU、用 semihosting `SYS_GET_CMDLINE`
-//! 告诉固件跑哪一例，固件跑完用 `SYS_EXIT` 回退出码 ⇒ 一次启动 = 一次设备复位。
-//! 跑法：`nu scripts/qtest.nu`（见那份脚本的头注）。
-//!
-//! # 这一份 `_start` 与 bin 那一份的差别
-//!
-//! 只多两行：`embedded-test` 的入口**不收参数**，故 OpenSBI 给的设备树指针（`a1`）得自己
-//! 存下来，供 `#[init]` 取用。其余（`tp` / canary / 栈）与 `src/main.rs` **逐字相同**——
-//! 那是内核的入口约定，不是测试的事。
-
 use core::arch::global_asm;
 use core::sync::atomic::AtomicUsize;
 
@@ -42,7 +23,6 @@ global_asm!(
     "    tail main",         //   `main` = embedded-test 导出的那一个
 );
 
-/// OpenSBI 交过来的设备树指针。**必须 `no_mangle`**：上面那段汇编靠 `la` 按名字取它。
 #[unsafe(no_mangle)]
 static BOOT_DTP: AtomicUsize = AtomicUsize::new(0);
 
@@ -52,23 +32,12 @@ mod tests {
     use super::BOOT_DTP;
     use core::sync::atomic::Ordering;
 
-    /// 每一例开跑前：先置"在跑用例"（panic 通道据此判"这一例失败"，见
-    /// `kernel::testing_mode`），再把内核起到 `trap` 就绪。
-    ///
-    /// **不起服务**：用例要的是调度器、分配器、页表、`Space` 原语；起了服务反而要收场。
     #[init]
     fn init() {
         kernel::testing_mode();
         kernel::init(BOOT_DTP.load(Ordering::Relaxed))
             .unwrap_or_else(|error| kernel::boot::fail(error));
     }
-
-    // 用例：**健康面那十例只在 debug 档存在**——它们的身体是 `kernel::health::*`，而那些
-    // 模块本身 `#![cfg(debug_assertions)]`。不 gate 的话 **release 档的测试目标编不过**
-    // （`cannot find `spare` in `health``），而整机用例恰恰要在 **release** 下才稳：
-    // 同一个 `root` 景，release 产品路 **6/6 稳、14 笔结局**；debug 产品路结局笔数
-    // **5 / 11 / 6 / 11** 乱跳、偶发 panic。故 release 档的测试目标里**只剩整机那一例**
-    // （`--scene` 会带 `-r`，见 `scripts/qtest.nu`），健康面由默认那轮（debug）覆盖。
 
     #[cfg(debug_assertions)]
     #[test]
@@ -238,7 +207,6 @@ mod tests {
         kernel::health::permit::badge();
     }
 
-    // 第九例（后补）：钉住参数表那颗 `-smp` 默认——见 `kernel/src/health/hart.rs` 的头注。
     #[cfg(debug_assertions)]
     #[test]
     fn scheduler_ready_and_steal() {
@@ -304,19 +272,6 @@ mod tests {
     fn hole_discard() {
         kernel::health::hole::discard_oversized();
     }
-
-    // ── 整机用例：**一例 = 一张镜像** ──────────────────────────────────────────
-    //
-    // 体是"装台 → 开演"两句。差别**不在代码里**，在 runner 给的那张镜像里
-    // （`nu scripts/qtest.nu --scene <景>` 造它、并把 `-initrd` 指过去）。
-    //
-    // **（为什么只有一例，不是每景一例）**：`cargo-qtest` 没有逐例过滤器
-    // （`--help` 里只有 `--test <目标名>`，那是**测试目标**名不是用例名），而
-    // `--qemu-arg=` 是**整次运行**的 ⇒ 一张镜像服务一轮，七个"景用例"只会把**同一张**
-    // 镜像各跑一遍。故收成一例：景由 `--scene` 定，跑七次就是七个景。
-    //
-    // 判据**不在这里**（`boot::run` 不返回）：它在 `conductor::halt` 的 testing 分支
-    // ——账里没有一笔 `EXIT_PANIC` 即绿。
 
     #[cfg(debug_assertions)]
     #[test]

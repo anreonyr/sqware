@@ -97,7 +97,6 @@ pub(crate) fn fail_next_shootdown(asid: Asid) {
 
 pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     crate::memory::allocator::assert_allocation_allowed();
-    // SAFETY: 页表已改完，刷后翻译即新映射
     unsafe { flush_asid(asid) };
 
     #[cfg(debug_assertions)]
