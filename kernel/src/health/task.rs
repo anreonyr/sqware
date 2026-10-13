@@ -38,10 +38,7 @@ fn stage_only(
 ) -> alloc::sync::Arc<crate::memory::manager::Map> {
     use crate::memory::manager::entry::PteFlags;
     meta.reserve_record().expect("reserve Pole record");
-    child
-        .staged()
-        .try_reserve(1)
-        .expect("reserve staged record");
+    child.reserve_staging(1).expect("reserve staged record");
     let source = meta.canonical_map().expect("canonical Pole map");
     let reservation = child
         .space
@@ -64,7 +61,7 @@ fn stage_only(
         meta.record(token, &child.space, mapping, Some(child.id), false)
             .is_ok()
     );
-    child.staged().push(crate::work::unit::team::Staging {
+    child.push_staging(crate::work::unit::team::Staging {
         token,
         meta: meta.clone(),
         map: map.clone(),
@@ -91,7 +88,7 @@ pub fn preparation() {
             .prepare()
             .unwrap();
         assert_eq!(conductor::counts(), counts);
-        assert!(team.tasks.lock().is_empty());
+        assert!(team.tasks.members.lock().is_empty());
         assert!(team.tasks.held.lock().is_empty());
         drop(prepared);
         assert_eq!(team.space.tree.table_count(), tables);
@@ -102,14 +99,14 @@ pub fn preparation() {
         assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
         assert_eq!(conductor::counts(), counts);
         assert_eq!(team.space.tree.table_count(), tables);
-        assert!(team.tasks.lock().is_empty());
+        assert!(team.tasks.members.lock().is_empty());
     }
     let maps = team.space.tree.map_count();
     for stage in 1..=2 {
         crate::work::unit::task::fail_invalidation_at(stage);
         assert!(matches!(team.task().prepare(), Err(MapError::Shootdown)));
         assert_eq!(conductor::counts(), counts);
-        assert!(team.tasks.lock().is_empty());
+        assert!(team.tasks.members.lock().is_empty());
         assert!(team.space.tree.map_count() > maps);
         team.space
             .retry_invalidation()
@@ -306,7 +303,7 @@ pub fn construction() {
     assert_eq!(child.space.tree.table_count(), tables);
     assert!(!child.ready());
     assert_eq!(child.default_entry(), 0);
-    assert_eq!(child.staged().len(), 2);
+    assert_eq!(child.staged_len(), 2);
     assert!(matches!(
         pend::release(&caller, roots[0]),
         Err(env::PieFail::Busy)

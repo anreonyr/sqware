@@ -207,10 +207,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     {
                         return Err(MemoryFail::Busy);
                     }
-                    target
-                        .staged()
-                        .try_reserve(1)
-                        .map_err(|_| MemoryFail::OoM)?;
+                    target.reserve_staging(1).map_err(|_| MemoryFail::OoM)?;
                     private = true;
                 } else if !meta.readonly() {
                     return Err(MemoryFail::Busy);
@@ -267,7 +264,7 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                         let _ = space.dispose(mapping);
                         return Err(MemoryFail::Denied);
                     }
-                    target.staged().push(crate::work::unit::team::Staging {
+                    target.push_staging(crate::work::unit::team::Staging {
                         token: pie.token(),
                         meta: meta.clone(),
                         map: staged_map,
@@ -303,32 +300,25 @@ fn execute(call: MemoryCall, ident: &Arc<TaskIdent>) -> Result<usize, MemoryFail
                     }
                 }
             }
-            let staged = if target.staged_len() == 0 {
-                None
-            } else {
-                target
-                    .staged()
-                    .iter()
-                    .position(|item| item.map.initial_range() == (KVirt::wrap(addr.get()), size))
-            };
+            let staged = target
+                .find_staging(|item| item.map.initial_range() == (KVirt::wrap(addr.get()), size));
             if let Some(index) = staged {
-                let (meta, token) = {
-                    let items = target.staged();
-                    (items[index].meta.clone(), items[index].token)
-                };
+                let entry = target.staged_at(index).ok_or(MemoryFail::Denied)?;
+                let (meta, token) = (entry.meta.clone(), entry.token);
                 let _operation = meta.operation().ok_or(MemoryFail::Busy)?;
                 space.unmap_range(KVirt::wrap(addr.get()), size)?;
                 meta.detach_staging(token, target.id);
-                target.staged().remove(index);
+                target.remove_staging(index);
                 pend::notify(meta.owner(), token);
                 return Ok(0);
             }
-            if target.staged_len() != 0
-                && target.staged().iter().any(|item| {
+            if target
+                .find_staging(|item| {
                     let (start, len) = item.map.initial_range();
                     addr.get() < start.as_usize() + len
                         && start.as_usize() < addr.get().saturating_add(size)
                 })
+                .is_some()
             {
                 return Err(MemoryFail::Busy);
             }

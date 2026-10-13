@@ -56,7 +56,7 @@ pub(crate) fn oust(me: &Arc<task::Task>, id: env::TeamId) -> Result<(), env::Uni
     child.cancel_staging().map_err(|_| env::UnitFail::Denied)?;
     let retired = {
         let _commit = commit();
-        *child.state.lock() = team::TeamState::Ousted;
+        child.state.lock().phase = team::TeamPhase::Ousted;
         child.life.clear(me.ident.id, None);
         let sire = child.sire.upgrade();
         let detached = sire.as_ref().and_then(|sire| sire.oust(id));

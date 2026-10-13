@@ -5,7 +5,7 @@ use env::{TaskId, TeamId};
 
 use crate::lock::SpinLock;
 
-use super::team::{Member, TeamStage, TeamState};
+use super::team::{Member, TeamPhase, TeamState};
 
 #[derive(Debug)]
 pub(crate) struct Life;
@@ -47,16 +47,13 @@ pub(crate) struct TeamLife {
 }
 impl TeamLife {
     pub fn paused(&self) -> bool {
-        let local = matches!(
-            &*self.state.lock(),
-            TeamState::Debarking { .. } | TeamState::Debarked { .. }
-        );
+        let local = matches!(self.state.lock().phase, TeamPhase::Paused);
         local || self.parent.as_ref().is_some_and(|p| p.paused())
     }
     pub fn closed(&self) -> bool {
         let local = matches!(
-            &*self.state.lock(),
-            TeamState::Doomed { .. } | TeamState::Ousted
+            self.state.lock().phase,
+            TeamPhase::Doomed | TeamPhase::Ousted
         );
         local || self.parent.as_ref().is_some_and(|p| p.closed())
     }
@@ -135,7 +132,7 @@ impl TeamLife {
             let child = self.children.lock().get(at).cloned();
             let Some(child) = child else { break };
             child.prune();
-            let terminal = matches!(&*child.state.lock(), TeamState::Ousted);
+            let terminal = matches!(child.state.lock().phase, TeamPhase::Ousted);
             let empty = child.tasks.lock().is_empty() && child.children.lock().is_empty();
             if terminal && empty {
                 self.children.lock().remove(at);
@@ -148,18 +145,9 @@ impl TeamLife {
         let _commit = super::commit();
         self.visit(&mut |node| {
             let mut state = node.state.lock();
-            let old = core::mem::replace(&mut *state, TeamState::Ousted);
-            *state = match old {
-                TeamState::Constructing { staged }
-                | TeamState::Debarking {
-                    state: TeamStage::Constructing { staged },
-                }
-                | TeamState::Debarked {
-                    state: TeamStage::Constructing { staged },
-                } => TeamState::Doomed { staged },
-                old @ (TeamState::Ousted | TeamState::Doomed { .. }) => old,
-                _ => TeamState::Doomed { staged: Vec::new() },
-            };
+            if !matches!(state.phase, TeamPhase::Doomed | TeamPhase::Ousted) {
+                state.phase = TeamPhase::Doomed;
+            }
         });
     }
     pub fn notify(&self) {

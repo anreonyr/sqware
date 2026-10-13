@@ -1,5 +1,5 @@
 use super::life::TeamLife;
-use super::team::{Member, TeamState};
+use super::team::{Member, TeamPhase, TeamStage};
 use crate::runtime::chrono::clock;
 use crate::runtime::switcher::context::{Gprs, TrapContext};
 use alloc::sync::Arc;
@@ -58,23 +58,16 @@ impl JoinWait {
             }
             JoinTarget::Team(t) => {
                 if !self.receive {
-                    return Ok(
-                        if !matches!(
-                            &*t.state.lock(),
-                            TeamState::Constructing { .. }
-                                | TeamState::Debarking {
-                                    state: super::team::TeamStage::Constructing { .. }
-                                }
-                                | TeamState::Debarked {
-                                    state: super::team::TeamStage::Constructing { .. }
-                                }
-                        ) && t.all_reaped()
-                        {
-                            JoinReply::Complete
-                        } else {
-                            JoinReply::Pending
-                        },
-                    );
+                    let constructing = {
+                        let state = t.state.lock();
+                        matches!(state.stage, TeamStage::Constructing)
+                            && !matches!(state.phase, TeamPhase::Doomed | TeamPhase::Ousted)
+                    };
+                    return Ok(if !constructing && t.all_reaped() {
+                        JoinReply::Complete
+                    } else {
+                        JoinReply::Pending
+                    });
                 }
                 let mut node = Some(&**t);
                 let mut qualified = false;
@@ -86,7 +79,7 @@ impl JoinWait {
                     return Err(UnitFail::Denied);
                 }
                 let next = t.next(self.owner);
-                if next.is_none() && matches!(&*t.state.lock(), TeamState::Ousted) {
+                if next.is_none() && matches!(t.state.lock().phase, TeamPhase::Ousted) {
                     return Err(UnitFail::Denied);
                 }
                 next

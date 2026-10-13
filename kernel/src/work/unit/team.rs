@@ -14,19 +14,33 @@ pub(crate) const MAX_DEPTH: usize = 32;
 pub(crate) const MAX_MEMBERS: usize = 1024;
 pub(crate) const MAX_CHILDREN: usize = 1024;
 
-pub(crate) enum TeamState {
-    Constructing { staged: Vec<Staging> },
-    Ready { default_entry: usize },
-    Debarking { state: TeamStage },
-    Debarked { state: TeamStage },
-    Doomed { staged: Vec<Staging> },
-    Ousted,
+pub(crate) struct TeamState {
+    pub(crate) stage: TeamStage,
+    pub(crate) phase: TeamPhase,
+    pub(crate) staged: Vec<Staging>,
 }
 unsafe impl Send for TeamState {}
 
+impl TeamState {
+    fn new(stage: TeamStage) -> TeamState {
+        TeamState {
+            stage,
+            phase: TeamPhase::Live,
+            staged: Vec::new(),
+        }
+    }
+}
+
 pub(crate) enum TeamStage {
-    Constructing { staged: Vec<Staging> },
+    Constructing,
     Ready { default_entry: usize },
+}
+
+pub(crate) enum TeamPhase {
+    Live,
+    Paused,
+    Doomed,
+    Ousted,
 }
 
 pub(crate) struct Receipt {
@@ -65,14 +79,8 @@ impl Member {
 }
 
 pub(crate) struct Tasks {
-    members: Arc<SpinLock<Vec<Arc<Member>>>>,
+    pub(crate) members: Arc<SpinLock<Vec<Arc<Member>>>>,
     pub(crate) held: SpinLock<Vec<Arc<Task>>>,
-}
-impl Deref for Tasks {
-    type Target = SpinLock<Vec<Arc<Member>>>;
-    fn deref(&self) -> &Self::Target {
-        &self.members
-    }
 }
 pub struct Team {
     pub(crate) space: Arc<Space>,
@@ -86,40 +94,11 @@ pub struct Team {
 unsafe impl Sync for Team {}
 unsafe impl Send for Team {}
 
+#[derive(Clone)]
 pub(crate) struct Staging {
     pub(crate) token: env::PieToken,
     pub(crate) meta: Arc<crate::work::mail::pole::PoleMeta>,
     pub(crate) map: Arc<crate::memory::manager::Map>,
-}
-pub(crate) struct Staged<'a>(SpinLockGuard<'a, TeamState>);
-impl Deref for Staged<'_> {
-    type Target = Vec<Staging>;
-    fn deref(&self) -> &Self::Target {
-        match &*self.0 {
-            TeamState::Constructing { staged } | TeamState::Doomed { staged } => staged,
-            TeamState::Debarking {
-                state: TeamStage::Constructing { staged },
-            }
-            | TeamState::Debarked {
-                state: TeamStage::Constructing { staged },
-            } => staged,
-            _ => panic!("staging outside construction"),
-        }
-    }
-}
-impl DerefMut for Staged<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        match &mut *self.0 {
-            TeamState::Constructing { staged } | TeamState::Doomed { staged } => staged,
-            TeamState::Debarking {
-                state: TeamStage::Constructing { staged },
-            }
-            | TeamState::Debarked {
-                state: TeamStage::Constructing { staged },
-            } => staged,
-            _ => panic!("staging outside construction"),
-        }
-    }
 }
 struct StagingLease<'a> {
     team: &'a Team,
@@ -157,20 +136,11 @@ impl Team {
         let _commit = super::commit();
         {
             let mut state = self.state.lock();
-            let old = core::mem::replace(&mut *state, TeamState::Ousted);
-            *state = match old {
-                TeamState::Constructing { staged } => TeamState::Debarking {
-                    state: TeamStage::Constructing { staged },
-                },
-                TeamState::Ready { default_entry } => TeamState::Debarking {
-                    state: TeamStage::Ready { default_entry },
-                },
-                old @ (TeamState::Debarking { .. } | TeamState::Debarked { .. }) => old,
-                old => {
-                    *state = old;
-                    return Err(env::UnitFail::Denied);
-                }
-            };
+            match state.phase {
+                TeamPhase::Live => state.phase = TeamPhase::Paused,
+                TeamPhase::Paused => {}
+                TeamPhase::Doomed | TeamPhase::Ousted => return Err(env::UnitFail::Denied),
+            }
         }
         let mut running = false;
         self.life.visit(&mut |node| {
@@ -189,30 +159,17 @@ impl Team {
         if running {
             return Err(env::UnitFail::Busy);
         }
-        let mut state = self.state.lock();
-        let old = core::mem::replace(&mut *state, TeamState::Ousted);
-        *state = match old {
-            TeamState::Debarking { state } => TeamState::Debarked { state },
-            other => other,
-        };
         Ok(())
     }
     pub(crate) fn embark(&self) -> Result<(), env::UnitFail> {
         let _commit = super::commit();
         {
             let mut state = self.state.lock();
-            let old = core::mem::replace(&mut *state, TeamState::Ousted);
-            *state = match old {
-                TeamState::Debarking { state } | TeamState::Debarked { state } => match state {
-                    TeamStage::Constructing { staged } => TeamState::Constructing { staged },
-                    TeamStage::Ready { default_entry } => TeamState::Ready { default_entry },
-                },
-                old @ (TeamState::Ready { .. } | TeamState::Constructing { .. }) => old,
-                old => {
-                    *state = old;
-                    return Err(env::UnitFail::Denied);
-                }
-            };
+            match state.phase {
+                TeamPhase::Paused => state.phase = TeamPhase::Live,
+                TeamPhase::Live => {}
+                TeamPhase::Doomed | TeamPhase::Ousted => return Err(env::UnitFail::Denied),
+            }
         }
         self.life.visit(&mut |node| {
             if node.paused() {
@@ -239,55 +196,52 @@ impl Team {
         self.life.paused()
     }
     pub(crate) fn ready(&self) -> bool {
-        matches!(
-            &*self.state.lock(),
-            TeamState::Ready { .. }
-                | TeamState::Debarking {
-                    state: TeamStage::Ready { .. }
-                }
-                | TeamState::Debarked {
-                    state: TeamStage::Ready { .. }
-                }
-        )
+        let state = self.state.lock();
+        matches!(state.stage, TeamStage::Ready { .. }) && !Self::terminal(&state)
     }
     pub(crate) fn constructing(&self) -> bool {
-        matches!(
-            &*self.state.lock(),
-            TeamState::Constructing { .. }
-                | TeamState::Debarking {
-                    state: TeamStage::Constructing { .. }
-                }
-                | TeamState::Debarked {
-                    state: TeamStage::Constructing { .. }
-                }
-        )
+        let state = self.state.lock();
+        matches!(state.stage, TeamStage::Constructing) && !Self::terminal(&state)
+    }
+    fn terminal(state: &TeamState) -> bool {
+        matches!(state.phase, TeamPhase::Doomed | TeamPhase::Ousted)
     }
 
-    pub(crate) fn staged(&self) -> Staged<'_> {
-        Staged(self.state.lock())
-    }
+    #[cfg(debug_assertions)]
     pub(crate) fn staged_len(&self) -> usize {
-        match &*self.state.lock() {
-            TeamState::Constructing { staged }
-            | TeamState::Doomed { staged }
-            | TeamState::Debarking {
-                state: TeamStage::Constructing { staged },
-            }
-            | TeamState::Debarked {
-                state: TeamStage::Constructing { staged },
-            } => staged.len(),
-            _ => 0,
+        self.state.lock().staged.len()
+    }
+    pub(crate) fn reserve_staging(
+        &self,
+        extra: usize,
+    ) -> Result<(), crate::memory::manager::MapError> {
+        self.state
+            .lock()
+            .staged
+            .try_reserve(extra)
+            .map_err(|_| crate::memory::manager::MapError::OutOfMemory)
+    }
+    pub(crate) fn push_staging(&self, item: Staging) {
+        self.state.lock().staged.push(item);
+    }
+    pub(crate) fn find_staging(&self, hit: impl FnMut(&Staging) -> bool) -> Option<usize> {
+        self.state.lock().staged.iter().position(hit)
+    }
+    pub(crate) fn staged_at(&self, index: usize) -> Option<Staging> {
+        self.state.lock().staged.get(index).cloned()
+    }
+    pub(crate) fn remove_staging(&self, index: usize) {
+        let mut state = self.state.lock();
+        if index < state.staged.len() {
+            state.staged.remove(index);
         }
     }
     pub(crate) fn take_staging(&self) -> Vec<Staging> {
-        if self.staged_len() == 0 {
-            return Vec::new();
-        }
-        core::mem::take(&mut *self.staged())
+        core::mem::take(&mut self.state.lock().staged)
     }
     fn restore_staging(&self, items: Vec<Staging>) {
         if !items.is_empty() {
-            self.staged().extend(items);
+            self.state.lock().staged.extend(items);
         }
     }
     pub(crate) fn operation(&self) -> Option<SpinLockGuard<'_, ()>> {
@@ -329,14 +283,9 @@ impl Team {
         }
     }
     pub(crate) fn default_entry(&self) -> usize {
-        match &*self.state.lock() {
-            TeamState::Ready { default_entry }
-            | TeamState::Debarking {
-                state: TeamStage::Ready { default_entry },
-            }
-            | TeamState::Debarked {
-                state: TeamStage::Ready { default_entry },
-            } => *default_entry,
+        let state = self.state.lock();
+        match (&state.stage, Self::terminal(&state)) {
+            (TeamStage::Ready { default_entry }, false) => *default_entry,
             _ => 0,
         }
     }
@@ -344,17 +293,7 @@ impl Team {
         self.publish_entry(va);
     }
     fn publish_entry(&self, va: usize) {
-        let mut state = self.state.lock();
-        let next = match &*state {
-            TeamState::Debarking { .. } => TeamState::Debarking {
-                state: TeamStage::Ready { default_entry: va },
-            },
-            TeamState::Debarked { .. } => TeamState::Debarked {
-                state: TeamStage::Ready { default_entry: va },
-            },
-            _ => TeamState::Ready { default_entry: va },
-        };
-        *state = next;
+        self.state.lock().stage = TeamStage::Ready { default_entry: va };
     }
     pub(crate) fn sire(&self) -> Option<TaskId> {
         self.sire.upgrade().map(|t| t.ident.id)
@@ -398,7 +337,7 @@ impl Drop for Team {
     fn drop(&mut self) {
         self.cancel_staging().expect("team staging release");
         let _commit = super::commit();
-        *self.state.lock() = TeamState::Ousted;
+        self.state.lock().phase = TeamPhase::Ousted;
         self.life.prune();
         if let Some(parent) = &self.life.parent {
             parent.prune();
@@ -435,7 +374,7 @@ impl TeamBuilder {
         let team = make_team(space, self.sire, parent, owner, self.constructing)?;
         if let Some(sire) = team.sire.upgrade() {
             if sire.adopt(team.clone()).is_err() {
-                *team.state.lock() = TeamState::Ousted;
+                team.state.lock().phase = TeamPhase::Ousted;
                 if let Some(parent) = &team.life.parent {
                     parent
                         .children
@@ -463,11 +402,11 @@ fn make_team(
     let id = alloc_team_id()?;
     let state = Arc::try_new(SpinLock::new_level(
         Level::UnitState,
-        if constructing {
-            TeamState::Constructing { staged: Vec::new() }
+        TeamState::new(if constructing {
+            TeamStage::Constructing
         } else {
-            TeamState::Ready { default_entry: 0 }
-        },
+            TeamStage::Ready { default_entry: 0 }
+        }),
     ))
     .map_err(|_| MapError::OutOfMemory)?;
     let tasks = Arc::try_new(SpinLock::new_level(Level::TeamTasks, Vec::new()))

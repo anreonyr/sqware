@@ -368,7 +368,7 @@ impl PreparedTask {
         .map_err(|_| MapError::OutOfMemory)?;
         scheduler::core::reserve_publication().map_err(|_| MapError::OutOfMemory)?;
         {
-            let mut tasks = team.tasks.lock();
+            let mut tasks = team.tasks.members.lock();
             if tasks.len() >= super::team::MAX_MEMBERS {
                 return Err(MapError::OutOfMemory);
             }
@@ -382,7 +382,7 @@ impl PreparedTask {
         if team.life.closed() {
             return Err(MapError::NoRegion);
         }
-        let mut tasks = team.tasks.lock();
+        let mut tasks = team.tasks.members.lock();
         let mut held = team.tasks.held.lock();
         if tasks.len() >= super::team::MAX_MEMBERS
             || tasks.len() == tasks.capacity()
@@ -691,7 +691,7 @@ impl Task {
             let at = heirs.iter().position(|t| t.id == team)?;
             heirs.remove(at)
         };
-        *child.state.lock() = super::team::TeamState::Ousted;
+        child.state.lock().phase = super::team::TeamPhase::Ousted;
         child.life.clear(self.ident.id, Some(team));
         let mut root = child.life.clone();
         while let Some(parent) = &root.parent {
@@ -739,7 +739,7 @@ impl Task {
                     }
                 });
         });
-        found.filter(|team| !matches!(&*team.state.lock(), super::team::TeamState::Ousted))
+        found.filter(|team| !matches!(team.state.lock().phase, super::team::TeamPhase::Ousted))
     }
 
     #[cfg(debug_assertions)]
