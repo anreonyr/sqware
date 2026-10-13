@@ -24,7 +24,7 @@
 //! - **class 7 `Pie` = 权柄轴**：权柄的生死与流动。`Unseal`/`Seal`/`Open`/`Shut`
 //!   /`Accord`/`Narrow`/`Revoke`/`Collect`/`Inspect`/`Release`——传的是**许可**。
 //!
-//! 两轴正交的判据在代码里：数据轴的臂从**不**调用 `gate` 的权柄函数
+//! 两轴正交的判据在代码里：数据轴的臂从**不**调用 `pend` 的权柄函数
 //! （`accord`/`narrow`/`revoke`/`release`/`vestor`/`snap`），权柄轴的臂从**不**搬运
 //! 载荷。
 //! `Pie` 复用原 `ServiceCall` 的空出的 7 号（后者是入口策略而非原语：目录入口门闩

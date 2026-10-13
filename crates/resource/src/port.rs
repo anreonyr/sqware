@@ -9,7 +9,7 @@
 //! Port              两枚孔的配对（往哪推 / 从哪收 / 对面是谁）+ 收发关
 //! ```
 //!
-//! **本层不是内核对象**：槽在内核 `mail`、权柄判定与级联在内核 `gate`、报文布局与
+//! **本层不是内核对象**：槽在内核 `mail`、权柄判定与级联在内核 `pend`、报文布局与
 //! 一次往返在 `crates/ipc`，这里只有"怎么用"。
 //!
 //! **`Port` 不加新动词**：`open` / `push` / `pull` / `shut` 与 Hole 的使用面同名同形，
@@ -116,7 +116,7 @@ impl To {
 /// - `HandedOver`  — 源枚**已经交出去过**（一枚门闩至多一个 heir）——不是失败，交回即复原
 /// - `OoM`    — 对端表备不出容量（锚已回滚：等于没交出过）
 ///
-/// 四个码都不折平（内核 `gate::accord` 的判决原样过线）："已被关住"的码是
+/// 四个码都不折平（内核 `pend::accord` 的判决原样过线）："已被关住"的码是
 /// `HandedOver`(-7)，**不是** `Denied`——两者不要混。
 pub fn ship(pie: PieToken, peer: TaskId, access: Access, policy: Policy) -> PieResult<To> {
     let subset = access.bits() | policy.bits();

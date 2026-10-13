@@ -43,7 +43,7 @@ use super::{Decode, Wire};
 /// `from_bytes` 收号；[`new`] 是 `pub(crate)` 的解码面。
 ///
 /// ：`mint` 不动能力面——`from_bytes` 本来就公开，用户态今天就能把任意数字拼
-/// 成号；而伪造的号在**调用方自己那张表**里查不到（`gate::locate` 只查表）⇒ 照旧
+/// 成号；而伪造的号在**调用方自己那张表**里查不到（`pend::locate` 只查表）⇒ 照旧
 /// `Denied`。两扇门的分工因此是**词汇**的分工："我收到一枚号" vs "我是这枚号的来源"。
 ///
 /// [`from_bytes`]: PieToken::from_bytes
