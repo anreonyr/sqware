@@ -86,7 +86,10 @@ impl<P> InitError<P> {
         self.cleanup_failure
     }
 
-    #[allow(dead_code, reason = "Transfers a retained failed resource as an alternative to retrying cleanup.")]
+    #[allow(
+        dead_code,
+        reason = "Transfers a retained failed resource as an alternative to retrying cleanup."
+    )]
     pub fn into_resource(self) -> Option<PoleResource<P>> {
         self.resource
     }

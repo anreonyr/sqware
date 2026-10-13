@@ -158,8 +158,7 @@ fn payload(i: usize) -> Bytes {
 fn signals() {
     use env::{Bit, MailCondition, PieToken, pie};
     use resource::pile::Pile;
-    let page = ::resource::raw::pole(env::PAGE_SIZE, true)
-    .unwrap();
+    let page = ::resource::raw::pole(env::PAGE_SIZE, true).unwrap();
     let a = Bit::FIRST;
     let b = Bit::of(1).unwrap();
     let pile = Pile::unseal(false).unwrap();

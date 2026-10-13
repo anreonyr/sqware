@@ -51,7 +51,10 @@ fn namespace(
         .copied()
         .find(|program| program.name() == job.key.request.name)
         .ok_or(Fail::Unknown)?;
-    crate::debug::put(&alloc::format!("system: prepare {} namespace", program.name()));
+    crate::debug::put(&alloc::format!(
+        "system: prepare {} namespace",
+        program.name()
+    ));
     let system = layout.as_ref().ok_or(Fail::NotReady)?;
     let done = namespaces
         .prepare_task(
@@ -63,7 +66,10 @@ fn namespace(
             },
         )
         .map_err(|fail| {
-            crate::debug::put(&alloc::format!("system: namespace {} failed {fail:?}", job.key.request.name));
+            crate::debug::put(&alloc::format!(
+                "system: namespace {} failed {fail:?}",
+                job.key.request.name
+            ));
             Fail::NotReady
         })?;
     Ok(if done {

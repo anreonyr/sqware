@@ -7,8 +7,7 @@ impl Manifest {
     pub fn install(launch: &Launch, task: TaskId) -> Result<Self, &'static str> {
         let bytes = launch.encode().map_err(|_| "invalid launch manifest")?;
         let size = (bytes.len() + 8).div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE;
-        let token = ::resource::raw::pole(size, true)
-            .map_err(|_| "manifest allocation")?;
+        let token = ::resource::raw::pole(size, true).map_err(|_| "manifest allocation")?;
         let manifest = Self { token };
         let (address, mapped) = resource::raw::open(token).map_err(|_| "manifest mapping")?;
         if mapped < bytes.len() + 8 {

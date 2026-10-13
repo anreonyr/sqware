@@ -42,7 +42,9 @@ fn main() -> Report<'static> {
     let tree = Face::from(&session);
 
     assert_eq!(system_api::identity::Grant::ALL.len(), 20);
-    let identity = tree.resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS)).unwrap();
+    let identity = tree
+        .resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS))
+        .unwrap();
     step(
         &tree,
         identity,
@@ -55,14 +57,22 @@ fn main() -> Report<'static> {
     for grant in system_api::identity::Grant::ALL {
         let entry = if grant.mount() != system_api::identity::Mount::Public {
             let road = system_api::operator::Path::new(system_api::identity::DIR)
-                .try_join(grant.name()).expect("probe-coalition: bad face name");
+                .try_join(grant.name())
+                .expect("probe-coalition: bad face name");
             if grant.mount() == system_api::identity::Mount::Installer {
-                assert_eq!(tree.tile_from(identity, &road, Wait::AtMost(MS)).unwrap().token(Wait::AtMost(MS)),
-                    Err(system_api::operator::Fail::Denied), "installer faces must deny discovery");
+                assert_eq!(
+                    tree.tile_from(identity, &road, Wait::AtMost(MS))
+                        .unwrap()
+                        .token(Wait::AtMost(MS)),
+                    Err(system_api::operator::Fail::Denied),
+                    "installer faces must deny discovery"
+                );
                 if grant == system_api::identity::Grant::Install {
-                    assert_eq!(ipc::session::establish::find(authority, grant.mark()),
+                    assert_eq!(
+                        ipc::session::establish::find(authority, grant.mark()),
                         Err(ipc::session::establish::DiscoveryFail::Missing),
-                        "install face must remain System-only");
+                        "install face must remain System-only"
+                    );
                 } else {
                     let entry = ipc::session::establish::find(authority, grant.mark()).unwrap();
                     let info = resource::raw::inspect(entry).unwrap();
@@ -77,7 +87,13 @@ fn main() -> Report<'static> {
             assert_eq!(reserve(entry).unwrap().0, unit::sire());
             entry
         } else {
-            fetch(&tree, identity, system_api::operator::Path::new(system_api::identity::DIR), grant.name(), "identity")
+            fetch(
+                &tree,
+                identity,
+                system_api::operator::Path::new(system_api::identity::DIR),
+                grant.name(),
+                "identity",
+            )
         };
         let (_, owner, mark) =
             reserve(entry).expect("probe-coalition: identity entry cannot be reserved");
@@ -108,7 +124,13 @@ fn step(tree: &Face, base: system_api::operator::Entry, family: &str, dir: &Path
 }
 
 /// 取回一族某一面的那一枚门牌（`tile` 译号 → `token` 把门闩授进本表）。
-fn fetch(tree: &Face, base: system_api::operator::Entry, dir: &Path, face: &str, family: &str) -> env::PieToken {
+fn fetch(
+    tree: &Face,
+    base: system_api::operator::Entry,
+    dir: &Path,
+    face: &str,
+    family: &str,
+) -> env::PieToken {
     // 面名由各自那一族的 `Grant` 给（单段、不含 `/`），故这一段拼不出来是**类型写错**，
     // 不是运行期的事——照仓里那几台的排法用 `expect`。
     let road = dir.try_join(face).expect("probe-coalition: bad face name");

@@ -52,7 +52,9 @@ fn main() -> Report<'static> {
         )
         .unwrap()
         .binding;
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
     let cap = tree
         .tile_from(
             service,

@@ -17,10 +17,10 @@ use ipc::session::Session;
 use programs::debug;
 use system_api::identity::Selector;
 use system_api::identity::Subject;
+use system_api::operator::Binding;
 use system_api::operator::Fail;
 use system_api::operator::path::Path;
 use system_api::operator::{self as operator_api, Permit};
-use system_api::operator::Binding;
 use system_client::identity::Organization;
 use system_client::identity::Query;
 use system_client::identity::SelfOps;
@@ -55,7 +55,8 @@ const OK_NOTE: &str = "probe-rule: the rules held";
 fn main() -> Report<'static> {
     let sire = unit::sire();
     let me = unit::self_id();
-    let capability = system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
+    let capability =
+        system_client::operator::Capability::injected(0, sire, Wait::AtMost(MS)).unwrap();
 
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-rule: no tree link");
@@ -87,14 +88,25 @@ fn main() -> Report<'static> {
     // Boot installation deliberately selects no organizations. Admission must not
     // silently grant access; the MemberOf door below must therefore deny even p.
 
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
-    let identity = tree.resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
+    let identity = tree
+        .resolve(system_api::namespace::IDENTITY, Wait::AtMost(MS))
+        .unwrap();
     let rule_road = DIR.to_path_buf();
     let is_id = plate(&capability, IS, Permit::Identity(Selector::Exact(p))).entry_id();
-    let under_id = plate(&capability, UNDER, Permit::Identity(Selector::DescendantOf(p))).entry_id();
+    let under_id = plate(
+        &capability,
+        UNDER,
+        Permit::Identity(Selector::DescendantOf(p)),
+    )
+    .entry_id();
     let in_id = plate(&capability, IN, Permit::Identity(Selector::MemberOf(c))).entry_id();
     let sys = tree.pane_from(service, DIR, Wait::AtMost(MS)).unwrap();
-    let at = tree.pane_from(service, &rule_road, Wait::AtMost(MS)).unwrap();
+    let at = tree
+        .pane_from(service, &rule_road, Wait::AtMost(MS))
+        .unwrap();
     let pane_id = at.id();
     let made = [is_id, under_id, in_id]
         .iter()
@@ -113,7 +125,11 @@ fn main() -> Report<'static> {
     // 这一问要的是**名册问面**那一格自己的号（规矩里那个 `Opener` 指它）。
     let foreign = system_api::operator::Path::new(system_api::identity::DIR)
         .try_join(system_api::identity::Grant::Resolve.name())
-        .and_then(|road| tree.tile_from(identity, &road, Wait::AtMost(MS)).map(|e| e.id()).ok());
+        .and_then(|road| {
+            tree.tile_from(identity, &road, Wait::AtMost(MS))
+                .map(|e| e.id())
+                .ok()
+        });
     if let Some(principal) = foreign {
         let _ = plate(&capability, FOREIGN, Permit::Opener(principal));
     }
@@ -297,9 +313,17 @@ fn plate(capability: &system_client::operator::Capability, name: &str, permit: P
 /// **不走 Face::tile**：它会先 `find` 一次（授一枚没人接的副本），随后 Tile::token 再
 /// `find` 一次——这两格是自己刚落的，故译号不必重试
 /// 同一条路照样答 Fail::Unknown
-fn look(tree: &Face, base_entry: system_api::operator::Entry, base: &Path, name: &str, millis: Wait) -> Result<(), Fail> {
+fn look(
+    tree: &Face,
+    base_entry: system_api::operator::Entry,
+    base: &Path,
+    name: &str,
+    millis: Wait,
+) -> Result<(), Fail> {
     let road = base.try_join(name).ok_or(Fail::Unknown)?;
-    tree.tile_from(base_entry, &road, millis)?.token(millis).map(|_| ())
+    tree.tile_from(base_entry, &road, millis)?
+        .token(millis)
+        .map(|_| ())
 }
 
 /// 哪里算不下去就报哪一句（kernel 收场时把这一句连同域号打出来）

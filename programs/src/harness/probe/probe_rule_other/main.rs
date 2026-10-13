@@ -57,7 +57,9 @@ fn main() -> Report<'static> {
     };
     let tree = Face::of(session);
     let base = DIR.to_path_buf();
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
 
     let is = denied(&tree, service, &base, IS);
     let under = denied(&tree, service, &base, UNDER);
@@ -93,7 +95,12 @@ fn main() -> Report<'static> {
 /// **（两格为什么分开写）**：新面把这两件分在
 /// 而这一台量的正是门禁那一格（`Denied`），故两格各写一次，读的人一眼看得见"拒"是从哪一问来的
 /// 重试那一层
-fn denied(tree: &Face, base_entry: system_api::operator::Entry, base: &Path, leaf: &str) -> Result<(), Fail> {
+fn denied(
+    tree: &Face,
+    base_entry: system_api::operator::Entry,
+    base: &Path,
+    leaf: &str,
+) -> Result<(), Fail> {
     let road = base.try_join(leaf).ok_or(Fail::Unknown)?;
     let mut left = MS;
     loop {

@@ -107,7 +107,11 @@ pub fn run() -> Result<(), &'static str> {
         .resolve(system_api::namespace::SERVICE, WAIT)
         .map_err(|_| "Account service namespace")?;
     let state_entry = tree
-        .tile_from(service, system_api::operator::Path::new("control/state"), WAIT)
+        .tile_from(
+            service,
+            system_api::operator::Path::new("control/state"),
+            WAIT,
+        )
         .and_then(|tile| tile.token(WAIT))
         .map_err(|_| "Account task query entry")?;
     if !matches!(resource::raw::inspect(state_entry), Ok(info)

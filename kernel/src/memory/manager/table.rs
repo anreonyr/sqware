@@ -108,7 +108,11 @@ impl TableNode {
         for (slot, child) in &self.children {
             let entry = self.page.entries[*slot];
             assert!(entry.is_branch(), "child table lacks a branch PTE");
-            assert_eq!(entry.paddr() as usize, child.ppn() << PAGE_SHIFT, "branch PTE points at the wrong table");
+            assert_eq!(
+                entry.paddr() as usize,
+                child.ppn() << PAGE_SHIFT,
+                "branch PTE points at the wrong table"
+            );
         }
         let span = Self::span(level);
         for (slot, entry) in self.page.entries.iter().enumerate() {
@@ -117,7 +121,11 @@ impl TableNode {
             }
             let base = node_va + slot * span;
             if entry.is_leaf() {
-                assert_eq!(entry.paddr() as usize & (span - 1), 0, "misaligned superpage PTE");
+                assert_eq!(
+                    entry.paddr() as usize & (span - 1),
+                    0,
+                    "misaligned superpage PTE"
+                );
                 let mask = (1usize << geo.va_bits) - 1;
                 let canonical = if base & (1usize << (geo.va_bits - 1)) != 0 {
                     base | !mask
@@ -132,7 +140,11 @@ impl TableNode {
                 );
             } else if entry.is_branch() {
                 assert!(level > 0, "branch PTE at the final page-table level");
-                let child = self.children.iter().find(|(s, _)| *s == slot).map(|(_, child)| child)
+                let child = self
+                    .children
+                    .iter()
+                    .find(|(s, _)| *s == slot)
+                    .map(|(_, child)| child)
                     .expect("branch PTE has no owned child table");
                 child.visit_leaves(level - 1, base, geo, visit);
             }
@@ -566,9 +578,19 @@ impl TableNode {
         )
     }
 
-    pub(crate) fn set_permissions_prepared_geometry(&mut self, va: VirtAddr, flags: PteFlags, geo: super::mode::Geo) {
-        let leaf = self.walk_mut(va, false, geo.levels as usize).expect("preflighted page-table path");
-        debug_assert!(leaf.is_valid() && leaf.is_leaf(), "preflighted leaf mapping");
+    pub(crate) fn set_permissions_prepared_geometry(
+        &mut self,
+        va: VirtAddr,
+        flags: PteFlags,
+        geo: super::mode::Geo,
+    ) {
+        let leaf = self
+            .walk_mut(va, false, geo.levels as usize)
+            .expect("preflighted page-table path");
+        debug_assert!(
+            leaf.is_valid() && leaf.is_leaf(),
+            "preflighted leaf mapping"
+        );
         leaf.set_flags((leaf.flags() - (PteFlags::R | PteFlags::W | PteFlags::X)) | flags);
     }
 

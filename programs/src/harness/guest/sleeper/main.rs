@@ -95,11 +95,17 @@ fn refused(result: Result<clock::Alarm, RFail>) -> u8 {
 }
 
 fn find_face(tree: &Face) -> Option<PieToken> {
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok()?;
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .ok()?;
     let mut left = MS;
     loop {
         match tree
-            .tile_from(service, programs::driver::rtc::core::frame::ENTRY_PATH, Wait::AtMost(MS))
+            .tile_from(
+                service,
+                programs::driver::rtc::core::frame::ENTRY_PATH,
+                Wait::AtMost(MS),
+            )
             .and_then(|entry| entry.token(Wait::AtMost(MS)))
         {
             Ok(entry) => return Some(entry),

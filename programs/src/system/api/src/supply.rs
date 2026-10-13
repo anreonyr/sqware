@@ -1,7 +1,7 @@
 //! Host-safe declarations and wire contract for generic resource leases.
 
-use env::{Mark, Permission, PieToken, TaskId};
 use env::wire::Span as _;
+use env::{Mark, Permission, PieToken, TaskId};
 
 pub const MAX_DESCRIPTION: usize = 128;
 pub const MAX_LEASES: usize = 256;
@@ -14,13 +14,18 @@ pub struct Key {
 }
 
 impl PartialEq for Key {
-    fn eq(&self, other: &Self) -> bool { self.mark == other.mark }
+    fn eq(&self, other: &Self) -> bool {
+        self.mark == other.mark
+    }
 }
 impl Eq for Key {}
 
 impl Key {
     pub const fn of(name: &'static str) -> Self {
-        Self { name, mark: Mark::of(name) }
+        Self {
+            name,
+            mark: Mark::of(name),
+        }
     }
 
     pub const fn from_mark(mark: Mark) -> Self {
@@ -43,10 +48,14 @@ pub struct LeaseId(pub u64);
 
 /// Per-provider caller sequence. Reserve once before the first send and never reuse a value.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct LeaseIds { next: u64 }
+pub struct LeaseIds {
+    next: u64,
+}
 
 impl LeaseIds {
-    pub const fn new() -> Self { Self { next: 0 } }
+    pub const fn new() -> Self {
+        Self { next: 0 }
+    }
 
     pub fn reserve(&mut self) -> Result<LeaseId, Fail> {
         self.next = self.next.checked_add(1).ok_or(Fail::Full)?;
@@ -70,12 +79,20 @@ pub struct Config {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConfigError { MissingSource, BadKey, BadSlot, BadPermission, Collision }
+pub enum ConfigError {
+    MissingSource,
+    BadKey,
+    BadSlot,
+    BadPermission,
+    Collision,
+}
 
 /// Check source-name resolution and distinguish logical keys from receiver Marks.
 pub fn validate(config: &Config, sources: &[Key]) -> Result<(), ConfigError> {
     for (at, source) in sources.iter().enumerate() {
-        if source.name().is_empty() { return Err(ConfigError::BadKey); }
+        if source.name().is_empty() {
+            return Err(ConfigError::BadKey);
+        }
         if sources[..at].iter().any(|old| old.mark() == source.mark()) {
             return Err(ConfigError::Collision);
         }
@@ -84,20 +101,31 @@ pub fn validate(config: &Config, sources: &[Key]) -> Result<(), ConfigError> {
         if binding.source.name().is_empty() || binding.resource.name().is_empty() {
             return Err(ConfigError::BadKey);
         }
-        if binding.slot == Mark::NONE { return Err(ConfigError::BadSlot); }
-        if binding.permission.is_empty() { return Err(ConfigError::BadPermission); }
-        if !sources.iter().any(|source| source.mark() == binding.source.mark() && source.name() == binding.source.name()) {
+        if binding.slot == Mark::NONE {
+            return Err(ConfigError::BadSlot);
+        }
+        if binding.permission.is_empty() {
+            return Err(ConfigError::BadPermission);
+        }
+        if !sources.iter().any(|source| {
+            source.mark() == binding.source.mark() && source.name() == binding.source.name()
+        }) {
             return Err(ConfigError::MissingSource);
         }
         if config.bindings[..at].iter().any(|old| {
             old.source.mark() == binding.source.mark()
                 && old.resource.mark() == binding.resource.mark()
                 && old.resource.name() != binding.resource.name()
-        }) { return Err(ConfigError::Collision); }
+        }) {
+            return Err(ConfigError::Collision);
+        }
         if config.bindings[..at].iter().any(|old| {
-            old.source.mark() == binding.source.mark() && old.resource.mark() == binding.resource.mark()
+            old.source.mark() == binding.source.mark()
+                && old.resource.mark() == binding.resource.mark()
                 && old.slot == binding.slot
-        }) { return Err(ConfigError::Collision); }
+        }) {
+            return Err(ConfigError::Collision);
+        }
     }
     Ok(())
 }
@@ -219,7 +247,11 @@ pub struct Reply {
 impl Reply {
     pub fn result(result: Result<(State, Delivery), Fail>) -> Self {
         match result {
-            Ok((state, delivery)) => Self { status: wire::OK, state, delivery },
+            Ok((state, delivery)) => Self {
+                status: wire::OK,
+                state,
+                delivery,
+            },
             Err(fail) => Self {
                 status: fail.code(),
                 state: State::Bad,
@@ -267,7 +299,9 @@ impl wire::Message for Request {
     type In = Self;
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         let (request, end) = Self::fetch_at(bytes, 0)?;
         (end == bytes.len()).then_some(request)
@@ -286,7 +320,9 @@ impl wire::Message for InspectRequest {
     type In = Self;
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         let (request, end) = Self::fetch_at(bytes, 0)?;
         (end == bytes.len()).then_some(request)
@@ -305,7 +341,9 @@ impl wire::Message for CancelRequest {
     type In = Self;
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         let (request, end) = Self::fetch_at(bytes, 0)?;
         (end == bytes.len()).then_some(request)
@@ -332,16 +370,22 @@ impl wire::Message for Response {
         out[2..10].copy_from_slice(&self.seed.to_bytes());
         out[10..12].copy_from_slice(&self.len.to_le_bytes());
         let len = self.len as usize;
-        if len > MAX_DESCRIPTION { return None; }
+        if len > MAX_DESCRIPTION {
+            return None;
+        }
         out[12..12 + len].copy_from_slice(&self.description[..len]);
         out[12 + len..140].fill(0);
         Some(140)
     }
     fn fetch(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 140 { return None; }
+        if bytes.len() != 140 {
+            return None;
+        }
         let len = u16::from_le_bytes(bytes[10..12].try_into().ok()?);
         let count = len as usize;
-        if count > MAX_DESCRIPTION { return None; }
+        if count > MAX_DESCRIPTION {
+            return None;
+        }
         let mut description = [0; MAX_DESCRIPTION];
         description[..count].copy_from_slice(&bytes[12..12 + count]);
         Some(Self {

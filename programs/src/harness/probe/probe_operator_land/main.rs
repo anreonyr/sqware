@@ -33,12 +33,20 @@ fn main() -> Report<'static> {
         system_api::namespace::IDENTITY,
         system_api::namespace::UNIT,
     ] {
-        assert!(face.resolve(key, MS).is_ok(), "logical namespace did not resolve");
+        assert!(
+            face.resolve(key, MS).is_ok(),
+            "logical namespace did not resolve"
+        );
     }
     let service = face.resolve(system_api::namespace::SERVICE, MS).unwrap();
-    assert!(face
-        .seek_from(service, system_api::operator::Path::new("operator-fixture"), MS)
-        .is_ok());
+    assert!(
+        face.seek_from(
+            service,
+            system_api::operator::Path::new("operator-fixture"),
+            MS
+        )
+        .is_ok()
+    );
     assert!(face.list(Where::Root, MS).is_ok());
     let client = system_client::operator::Capability::injected(0, env::unit::sire(), MS).unwrap();
     let anchor = client.anchor().unwrap();

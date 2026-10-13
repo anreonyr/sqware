@@ -5,8 +5,8 @@ use account_api::ENTRY;
 use account_api::{Call, DIR, Request};
 use env::{PieToken, TaskId, TeamId, Wait, pie};
 use ipc::{rpc, time::Deadline};
-use system_api::control::{Fail, construction::CreateId};
 use system_api::control::frame::{OK, code_to_fail};
+use system_api::control::{Fail, construction::CreateId};
 use system_client::operator::Face;
 
 #[derive(Clone, Copy, Debug)]
@@ -59,13 +59,29 @@ impl Client {
         }
         self.built(said)
     }
-    pub fn inspect(&self, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
+    pub fn inspect(
+        &self,
+        id: CreateId,
+        account: &str,
+        wait: Wait,
+    ) -> Result<system_api::loader::Said, Fail> {
         self.call(account_api::INSPECT, id, account, wait)
     }
-    pub fn cancel(&self, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
+    pub fn cancel(
+        &self,
+        id: CreateId,
+        account: &str,
+        wait: Wait,
+    ) -> Result<system_api::loader::Said, Fail> {
         self.call(account_api::CANCEL, id, account, wait)
     }
-    fn call(&self, op: u8, id: CreateId, account: &str, wait: Wait) -> Result<system_api::loader::Said, Fail> {
+    fn call(
+        &self,
+        op: u8,
+        id: CreateId,
+        account: &str,
+        wait: Wait,
+    ) -> Result<system_api::loader::Said, Fail> {
         let deadline = Deadline::new(wait);
         let sender = rpc::request::Sender::<Call>::from_raw(self.entry, Call::BACK)
             .map_err(|_| Fail::Bad)?;

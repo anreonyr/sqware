@@ -4,8 +4,8 @@ use alloc::vec::Vec;
 use core::cell::Cell;
 use env::{PieToken, TaskId, Wait};
 use system_api::operator::{
-    self as api, Binding, Entry, GrantId, GrantSpec, GrantState, NamespaceKey,
-    OperationId, PathBuf, Permit, ResourceView, Scope,
+    self as api, Binding, Entry, GrantId, GrantSpec, GrantState, NamespaceKey, OperationId,
+    PathBuf, Permit, ResourceView, Scope,
 };
 use system_client::operator::{Capability, GrantInfo, PartResult};
 
@@ -115,12 +115,17 @@ impl System {
     }
 
     pub fn part(&self, request: PartRequest<'_>) -> Result<PartResult, api::Fail> {
-        self.capability
-            .part(request.parent, request.name, request.operation, request.wait)
+        self.capability.part(
+            request.parent,
+            request.name,
+            request.operation,
+            request.wait,
+        )
     }
 
     pub fn associate(&self, request: AssociateRequest) -> Result<(), api::Fail> {
-        self.capability.associate(request.key, request.entry, request.wait)
+        self.capability
+            .associate(request.key, request.entry, request.wait)
     }
 
     pub fn resolve(&self, key: NamespaceKey, wait: Wait) -> Result<Entry, api::Fail> {
@@ -134,7 +139,8 @@ impl System {
     /// Reserves caller-owned IDs in the same sequence as namespace preparation.
     pub fn reserve_operations(&self, count: usize) -> Result<api::OperationId, api::Fail> {
         let start = self.next_operation.get();
-        let end = start.checked_add(u64::try_from(count).map_err(|_| api::Fail::Full)?)
+        let end = start
+            .checked_add(u64::try_from(count).map_err(|_| api::Fail::Full)?)
             .ok_or(api::Fail::Full)?;
         self.next_operation.set(end);
         Ok(api::OperationId(start))
@@ -161,7 +167,9 @@ impl System {
                 .map_err(|_| api::Fail::Full)?;
             let start = self.reserve_operations(count)?.0;
             for offset in 0..count {
-                preparation.operations.push(api::OperationId(start + offset as u64));
+                preparation
+                    .operations
+                    .push(api::OperationId(start + offset as u64));
             }
         }
         let mut anchor = preparation.plan.base;

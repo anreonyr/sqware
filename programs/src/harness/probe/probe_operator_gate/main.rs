@@ -36,11 +36,18 @@ fn main() -> Report<'static> {
         .expect("closed Watch must permit same-path resubscription");
     drop(replacement);
 
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
-    for operation in ["part", "land", "find", "trim", "list", "seek", "name", "watch"] {
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
+    for operation in [
+        "part", "land", "find", "trim", "list", "seek", "name", "watch",
+    ] {
         let road = system_api::operator::PathBuf::try_new(&alloc::format!("operator/{operation}"))
             .unwrap();
-        assert_eq!(tree.seek_from(service, &road, Wait::AtMost(MS)), Err(Fail::Unknown));
+        assert_eq!(
+            tree.seek_from(service, &road, Wait::AtMost(MS)),
+            Err(Fail::Unknown)
+        );
     }
     let forged = pie::unseal(env::UnsealArgs::hole(
         system_api::operator::entry::AUTH_ENTRY,

@@ -4,7 +4,10 @@
 
 use crate::unit::{Died, Ending, UnitFile};
 
-#[allow(dead_code, reason = "The declaration uses the entry name; clients use the shared path.")]
+#[allow(
+    dead_code,
+    reason = "The declaration uses the entry name; clients use the shared path."
+)]
 #[path = "api.rs"]
 mod api;
 

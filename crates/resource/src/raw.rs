@@ -318,18 +318,18 @@ pub fn pole(size: usize, shared: bool) -> PieResult<PieToken> {
     })?;
     match env::pie::unseal(env::UnsealArgs::Pole { addr, size, shared }) {
         Ok(token) => Ok(token),
-        Err(error) => {
-            loop {
-                match env::memory::deallocate(addr, size) {
-                    Err(cleanup) if cleanup.source == env::MemoryFail::Busy => env::room::starve(),
-                    Err(cleanup) => return Err(env::make_fail(match cleanup.source {
+        Err(error) => loop {
+            match env::memory::deallocate(addr, size) {
+                Err(cleanup) if cleanup.source == env::MemoryFail::Busy => env::room::starve(),
+                Err(cleanup) => {
+                    return Err(env::make_fail(match cleanup.source {
                         env::MemoryFail::OoM => env::PieFail::OoM,
                         _ => env::PieFail::Denied,
-                    })),
-                    Ok(()) => return Err(error),
+                    }));
                 }
+                Ok(()) => return Err(error),
             }
-        }
+        },
     }
 }
 

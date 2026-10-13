@@ -3,7 +3,10 @@
 use ::schedule::{Progress, Res, ResMut};
 use alloc::vec::Vec;
 use env::{Access, Wait};
-use system_api::{identity::{Grant, Mount}, operator::{PathBuf, Permit, ResourceView}};
+use system_api::{
+    identity::{Grant, Mount},
+    operator::{PathBuf, Permit, ResourceView},
+};
 
 #[derive(Default)]
 pub(crate) struct Endpoints(Option<crate::system::app::namespace::ResourcePreparation>);
@@ -17,11 +20,19 @@ pub(crate) fn prepare(
     if endpoints.0.is_none() {
         let view = ResourceView::new(Access::STORE).ok_or("Identity endpoint view")?;
         let mut bindings = Vec::new();
-        bindings.try_reserve_exact(Grant::ALL.len()).map_err(|_| "Identity endpoint capacity")?;
+        bindings
+            .try_reserve_exact(Grant::ALL.len())
+            .map_err(|_| "Identity endpoint capacity")?;
         for grant in Grant::ALL {
-            let resource = *faces.roots.get(grant.index()).ok_or("Identity face missing")?;
+            let resource = *faces
+                .roots
+                .get(grant.index())
+                .ok_or("Identity face missing")?;
             bindings.push(crate::system::app::namespace::BindingInput {
-                name: grant.name().into(), mark: grant.mark(), resource, view,
+                name: grant.name().into(),
+                mark: grant.mark(),
+                resource,
+                view,
                 permit: match grant.mount() {
                     Mount::Public => Permit::Public,
                     Mount::Bound => Permit::Bound,
@@ -34,16 +45,25 @@ pub(crate) fn prepare(
         let plan = crate::system::app::namespace::Prepare::resources(
             crate::system::app::namespace::ResourceInput {
                 base: system
-                    .resolve(system_api::namespace::IDENTITY, Wait::AtMost(crate::support::timing::BOOT_MS))
+                    .resolve(
+                        system_api::namespace::IDENTITY,
+                        Wait::AtMost(crate::support::timing::BOOT_MS),
+                    )
                     .map_err(|_| "Identity namespace root")?,
-                path: PathBuf::try_new(system_api::identity::DIR).ok_or("Identity endpoint path")?,
+                path: PathBuf::try_new(system_api::identity::DIR)
+                    .ok_or("Identity endpoint path")?,
                 retain_prefix: 0,
-                bindings, wait: Wait::AtMost(crate::support::timing::BOOT_MS),
+                bindings,
+                wait: Wait::AtMost(crate::support::timing::BOOT_MS),
             },
-        ).ok_or("Identity endpoint plan")?;
-        endpoints.0 = Some(crate::system::app::namespace::ResourcePreparation::new(plan));
+        )
+        .ok_or("Identity endpoint plan")?;
+        endpoints.0 = Some(crate::system::app::namespace::ResourcePreparation::new(
+            plan,
+        ));
     }
-    system.prepare_resources(endpoints.0.as_mut().ok_or("Identity endpoint receipt")?)
+    system
+        .prepare_resources(endpoints.0.as_mut().ok_or("Identity endpoint receipt")?)
         .map_err(|_| "Identity endpoint preparation")?;
     Ok(Progress::Done)
 }
@@ -54,7 +74,10 @@ pub(crate) fn retire(
 ) -> Result<Progress, &'static str> {
     if let Some(receipt) = endpoints.0.as_mut() {
         let system = layout.as_ref().ok_or("Identity namespace layout")?;
-        if !system.retire_resources(receipt).map_err(|_| "Identity endpoint retirement")? {
+        if !system
+            .retire_resources(receipt)
+            .map_err(|_| "Identity endpoint retirement")?
+        {
             return Ok(Progress::Pending);
         }
         endpoints.0 = None;

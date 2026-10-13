@@ -113,7 +113,13 @@ impl Hub {
 
 /// 树上找一枚门牌（**沿一条路，答那一枚**）——三个客人（本手两处 ＋ 各域自己那几处）共用
 /// **它不吞错**：失败一律折 `Fail::at(died, "hub")`（"设备账那两枚面没找着"），由调用方给号
-fn face_of(tree: &Face, base: system_api::operator::Entry, road: &Path, died: Died, ms: Wait) -> Result<hub::Face, Fail> {
+fn face_of(
+    tree: &Face,
+    base: system_api::operator::Entry,
+    road: &Path,
+    died: Died,
+    ms: Wait,
+) -> Result<hub::Face, Fail> {
     let door = tree
         .tile_from(base, road, ms)
         .and_then(|entry| entry.token(ms))

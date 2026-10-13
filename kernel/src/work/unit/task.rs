@@ -8,9 +8,9 @@ use env::{PieToken, TaskId, UnitFail};
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
 use crate::lock::{Level, SpinLock, SpinLockGuard};
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::{Frame, MapError};
 use crate::memory::manager::addr::PhysAddr;
 use crate::memory::manager::addr::VirtAddr;
+use crate::memory::manager::{Frame, MapError};
 use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::runtime::switcher::context::TrapContext;
 use crate::work::room::conductor;
@@ -46,13 +46,17 @@ pub(crate) fn fail_invalidation_at(stage: usize) {
 
 fn invalidation_checkpoint(_stage: usize, _tree: &crate::memory::manager::Tree) {
     #[cfg(debug_assertions)]
-    if FAIL_INVALIDATION.compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed).is_ok() {
+    if FAIL_INVALIDATION
+        .compare_exchange(_stage, 0, Ordering::Relaxed, Ordering::Relaxed)
+        .is_ok()
+    {
         crate::memory::manager::asid::fail_next_shootdown(_tree.asid());
     }
 }
 
 #[cfg(debug_assertions)]
-static FAIL_ROLLBACK_FENCE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static FAIL_ROLLBACK_FENCE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(debug_assertions)]
 pub(crate) fn fail_rollback_fence() {
@@ -246,9 +250,15 @@ impl TaskMemory {
 
 impl Drop for TaskMemory {
     fn drop(&mut self) {
-        if let Some(mapping) = self.frame.take() { let _ = self.space.dispose(mapping); }
-        if let Some(mapping) = self.stack.take() { let _ = self.space.dispose(mapping); }
-        if let Some(guard) = self.guard.take() { let _ = self.space.release_reservation(guard); }
+        if let Some(mapping) = self.frame.take() {
+            let _ = self.space.dispose(mapping);
+        }
+        if let Some(mapping) = self.stack.take() {
+            let _ = self.space.dispose(mapping);
+        }
+        if let Some(guard) = self.guard.take() {
+            let _ = self.space.release_reservation(guard);
+        }
     }
 }
 
@@ -676,7 +686,9 @@ impl Task {
         *child.state.lock() = super::team::TeamState::Ousted;
         child.life.clear(self.ident.id, Some(team));
         let mut root = child.life.clone();
-        while let Some(parent) = &root.parent { root = parent.clone(); }
+        while let Some(parent) = &root.parent {
+            root = parent.clone();
+        }
         root.prune();
         Some(child)
     }
@@ -691,13 +703,23 @@ impl Task {
 
     pub(crate) fn clan(&self, id: TeamId) -> Option<Arc<Team>> {
         let _commit = super::commit();
-        if id == self.ident.team.id { return None; }
-        if let Some(child) = self.heir(id) { return Some(child); }
+        if id == self.ident.team.id {
+            return None;
+        }
+        if let Some(child) = self.heir(id) {
+            return Some(child);
+        }
         let mut found = None;
         self.ident.team.life.visit(&mut |node| {
-            if node.id != id { return; }
-            found = node.parent.as_ref().and_then(|parent| parent.member(node.owner))
-                .and_then(|member| member.task.upgrade()).and_then(|sire| sire.heir(id))
+            if node.id != id {
+                return;
+            }
+            found = node
+                .parent
+                .as_ref()
+                .and_then(|parent| parent.member(node.owner))
+                .and_then(|member| member.task.upgrade())
+                .and_then(|sire| sire.heir(id))
                 .or_else(|| {
                     let mut at = 0;
                     loop {
@@ -811,7 +833,10 @@ impl TaskBuilder {
             RegionId::Normal,
             stack_size + crate::layout::TASK_STACK_GUARD,
         )?;
-        let (guard, body) = self.team.space.split_reservation(slot, crate::layout::TASK_STACK_GUARD)?;
+        let (guard, body) = self
+            .team
+            .space
+            .split_reservation(slot, crate::layout::TASK_STACK_GUARD)?;
         memory.guard = Some(guard);
         let stack_body_top = body.start().as_usize() + body.size();
         let mut frames = Vec::new();
@@ -828,16 +853,19 @@ impl TaskBuilder {
                 }
             }
         }
-        let rw = crate::memory::manager::entry::PteFlags::R
-            | crate::memory::manager::entry::PteFlags::W;
-        let active = rw | crate::memory::manager::entry::PteFlags::A
+        let rw =
+            crate::memory::manager::entry::PteFlags::R | crate::memory::manager::entry::PteFlags::W;
+        let active = rw
+            | crate::memory::manager::entry::PteFlags::A
             | crate::memory::manager::entry::PteFlags::D;
         invalidation_checkpoint(1, &self.team.space.tree);
         memory.stack = Some(self.team.space.map_frames(body, frames, rw, active)?);
         preparation_checkpoint(1)?;
 
         let mut frame_pages = Vec::new();
-        frame_pages.try_reserve_exact(1).map_err(|_| MapError::OutOfMemory)?;
+        frame_pages
+            .try_reserve_exact(1)
+            .map_err(|_| MapError::OutOfMemory)?;
         let frame = Frame::allocate()?;
         let frame_pa = PhysAddr::from_raw(frame.physical_address());
         frame_pages.push(frame);

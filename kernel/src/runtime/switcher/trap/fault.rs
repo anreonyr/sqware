@@ -60,35 +60,59 @@ pub fn handle_page_fault(fault: &PageFault, space: &Space) -> bool {
     }
     if let Some((_physical, flags)) = space.tree.translate(fault.addr) {
         if satisfies(flags, fault.kind) {
-            info!("page fault resolved by re-walk: {:?} at {:?}", fault.kind, fault.addr);
+            info!(
+                "page fault resolved by re-walk: {:?} at {:?}",
+                fault.kind, fault.addr
+            );
             return true;
         }
-        error!("page fault permission violation: {:?} at {:?}", fault.kind, fault.addr);
+        error!(
+            "page fault permission violation: {:?} at {:?}",
+            fault.kind, fault.addr
+        );
         return false;
     }
     if fault.addr.is_user() {
         let Some(map) = space.tree.find(fault.addr) else {
-            error!("unmapped or guard access: {:?} at {:?}, pc={:#x}", fault.kind, fault.addr, fault.pc);
+            error!(
+                "unmapped or guard access: {:?} at {:?}, pc={:#x}",
+                fault.kind, fault.addr, fault.pc
+            );
             return false;
         };
         let permitted = map.ranges().is_ok_and(|ranges| {
             ranges.iter().any(|range| {
-                range.start <= fault.addr && range.end() >= fault.addr.as_usize()
+                range.start <= fault.addr
+                    && range.end() >= fault.addr.as_usize()
                     && satisfies(range.current, fault.kind)
             })
         });
         if !permitted {
-            error!("lazy page permission violation: {:?} at {:?}", fault.kind, fault.addr);
+            error!(
+                "lazy page permission violation: {:?} at {:?}",
+                fault.kind, fault.addr
+            );
             return false;
         }
-        match space.tree.materialize(&map, fault.addr.page_align(), PAGE_SIZE) {
-            Ok(()) => return space.tree.translate(fault.addr).is_some_and(|(_, flags)| satisfies(flags, fault.kind)),
+        match space
+            .tree
+            .materialize(&map, fault.addr.page_align(), PAGE_SIZE)
+        {
+            Ok(()) => {
+                return space
+                    .tree
+                    .translate(fault.addr)
+                    .is_some_and(|(_, flags)| satisfies(flags, fault.kind));
+            }
             Err(error) => {
                 error!("failed to materialize page: {:?}", error);
                 return false;
             }
         }
     }
-    error!("kernel page fault: {:?} at {:?}, pc={:#x}", fault.kind, fault.addr, fault.pc);
+    error!(
+        "kernel page fault: {:?} at {:?}, pc={:#x}",
+        fault.kind, fault.addr, fault.pc
+    );
     false
 }

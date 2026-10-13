@@ -67,14 +67,18 @@ pub mod loader {
                     state: crate::control::construction::COMPLETED,
                     task: built.task,
                     team: built.team.get() as u64,
-                    startup: StartupMetadata { resolve: PieToken::NONE },
+                    startup: StartupMetadata {
+                        resolve: PieToken::NONE,
+                    },
                 },
                 Err(fail) => Self {
                     status: crate::control::frame::fail_to_code(Some(fail)),
                     state: crate::control::construction::FAILED,
                     task: TaskId::new(0),
                     team: 0,
-                    startup: StartupMetadata { resolve: PieToken::NONE },
+                    startup: StartupMetadata {
+                        resolve: PieToken::NONE,
+                    },
                 },
             }
         }
@@ -97,7 +101,9 @@ pub mod loader {
         Denied,
     }
     fn reply_to(request: &Wire) -> PieToken {
-        match request { Wire::Claim(claim) => claim.back }
+        match request {
+            Wire::Claim(claim) => claim.back,
+        }
     }
 
     #[mold::contract(request = Wire, response = Said, mark = BACK, back = reply_to)]

@@ -43,7 +43,9 @@ fn main() -> Report<'static> {
     };
     let tree = operator::Face::from(&session);
 
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
 
     // 一·五、**先订**（序是契约）：那一族此后每落一面都往本端这一页记一条，`Watch::of`
     //       返回就是那个序点——已经落齐的情形由量具第一问当场返回，不必等事件。

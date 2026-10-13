@@ -25,8 +25,7 @@ pub use crate::marks::BACK_MARK;
 pub use crate::marks::ALIVE_MARK;
 
 /// Device namespace key and relative device path shape.
-pub const SERVICE_PATH: &system_api::operator::Path =
-    system_api::operator::Path::new("hub");
+pub const SERVICE_PATH: &system_api::operator::Path = system_api::operator::Path::new("hub");
 
 /// **boot 那一类**：引导期那两件不按 `compatible` 认的东西（设备树本体 / 门铃）落在它底下
 /// （`/dev/boot/{dtb,supervisor_external}`）——它们与设备同一条账（认领读法一模一样），只是"类"不是树里给的

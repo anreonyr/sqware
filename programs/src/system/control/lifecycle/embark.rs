@@ -50,16 +50,25 @@ pub(crate) fn pre(
         _ => return Err(Fail::Unknown),
     }
     .map_err(|why| {
-        crate::debug::put(&alloc::format!("system: identity {} failed: {why}", job.key.request.name));
+        crate::debug::put(&alloc::format!(
+            "system: identity {} failed: {why}",
+            job.key.request.name
+        ));
         Fail::NotReady
     })?;
-    crate::debug::put(&alloc::format!("system: prepare {} identity installed", p.name()));
+    crate::debug::put(&alloc::format!(
+        "system: prepare {} identity installed",
+        p.name()
+    ));
     instance.identity_install = Some(identity_install);
     if matches!(job.key.request.action, Action::Embark { parent: None }) {
         control.table.mark_static(instance.service.task());
     }
     instance.service.connect(p).map_err(|why| {
-        crate::debug::put(&alloc::format!("system: channels {} failed: {why:?}", p.name()));
+        crate::debug::put(&alloc::format!(
+            "system: channels {} failed: {why:?}",
+            p.name()
+        ));
         Fail::NotReady
     })?;
     Ok(Progress::Done)
@@ -69,8 +78,12 @@ pub fn run(mut active: ResMut<Active>, mut control: ResMut<Control>) -> Result<P
     let job = active.0.as_mut().ok_or(Fail::Unknown)?;
     if let Some(instance) = job.progress.execution.instance.as_mut() {
         if !instance.launched {
-            crate::debug::put(&alloc::format!("system: activate {} tid={}", job.key.request.name, instance.service.task().get()));
-        env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
+            crate::debug::put(&alloc::format!(
+                "system: activate {} tid={}",
+                job.key.request.name,
+                instance.service.task().get()
+            ));
+            env::unit::embark_task(instance.service.task()).map_err(|_| Fail::NotReady)?;
             instance.launched = true;
         }
     } else {

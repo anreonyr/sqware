@@ -107,7 +107,11 @@ impl Exports {
         if program.identity.aliases.is_empty() {
             return Ok(());
         }
-        if let Some(index) = self.grants.iter().position(|grant| grant.owner.task == task) {
+        if let Some(index) = self
+            .grants
+            .iter()
+            .position(|grant| grant.owner.task == task)
+        {
             match admission::existing_grant(
                 self.grants[index].owner.program.name() == program.name(),
                 self.grants[index].delivered,
@@ -195,13 +199,19 @@ impl Exports {
                     Ok(incoming) => incoming,
                     Err(rejected) if matches!(rejected.fail, rpc::Fail::Receive(_)) => break,
                     Err(rejected) => {
-                        crate::debug::put(&alloc::format!("identity: export request rejected {:?}", rejected.fail));
+                        crate::debug::put(&alloc::format!(
+                            "identity: export request rejected {:?}",
+                            rejected.fail
+                        ));
                         continue;
-                    },
+                    }
                 };
                 let (request, exact) = incoming.request;
                 let status = if !exact || !request.valid() {
-                    crate::debug::put(&alloc::format!("identity: export bad request exact={exact} valid={}", request.valid()));
+                    crate::debug::put(&alloc::format!(
+                        "identity: export bad request exact={exact} valid={}",
+                        request.valid()
+                    ));
                     api::BAD
                 } else {
                     self.associate(Admission {
@@ -240,16 +250,21 @@ impl Exports {
                 aliases: grant.owner.program.identity.aliases,
                 request: &request,
             },
-            |task, subject| roster.allow_subject(task, subject).map_err(|why| {
-                crate::debug::put(&alloc::format!("identity: export subject rejected: {why}"));
-            }),
+            |task, subject| {
+                roster.allow_subject(task, subject).map_err(|why| {
+                    crate::debug::put(&alloc::format!("identity: export subject rejected: {why}"));
+                })
+            },
         )
         .map_err(|failure| {
-            crate::debug::put(&alloc::format!("identity: export alias admission {failure:?}"));
+            crate::debug::put(&alloc::format!(
+                "identity: export alias admission {failure:?}"
+            ));
             match failure {
-            admission::Failure::Bad => ExportFailure::Bad,
-            admission::Failure::Denied => ExportFailure::Denied,
-        }})?;
+                admission::Failure::Bad => ExportFailure::Bad,
+                admission::Failure::Denied => ExportFailure::Denied,
+            }
+        })?;
         let binding_name = request.binding.as_str();
         let mut selected = None;
         for namespace in &grant.namespaces {
@@ -266,8 +281,14 @@ impl Exports {
             }
             selected = Some((declared, namespace.grant));
         }
-        let (declared, authority) = selected.ok_or_else(|| { crate::debug::put("identity: export binding undeclared"); ExportFailure::Denied })?;
-        let root = self.root.as_ref().ok_or_else(|| { crate::debug::put("identity: export root absent"); ExportFailure::Denied })?;
+        let (declared, authority) = selected.ok_or_else(|| {
+            crate::debug::put("identity: export binding undeclared");
+            ExportFailure::Denied
+        })?;
+        let root = self.root.as_ref().ok_or_else(|| {
+            crate::debug::put("identity: export root absent");
+            ExportFailure::Denied
+        })?;
         if Some(authority.entry.operator) != self.root_entry.map(|entry| entry.operator) {
             crate::debug::put("identity: export operator mismatch");
             return Err(ExportFailure::Denied);
@@ -288,7 +309,9 @@ impl Exports {
             system_api::operator::Permit::Bound,
             Wait::AtMost(500),
         );
-        if let Err(fail) = &actual { crate::debug::put(&alloc::format!("identity: export read {fail:?}")); }
+        if let Err(fail) = &actual {
+            crate::debug::put(&alloc::format!("identity: export read {fail:?}"));
+        }
         let actual_resource = actual.as_ref().ok().map(|actual| actual.resource);
         let result = actual.map_or(Err(ExportFailure::Denied), |actual| {
             self.verify_actual(ActualAdmission {
@@ -303,7 +326,10 @@ impl Exports {
         admission::keep_lookup_resources(located.resource, actual_resource, |resource| {
             env::pie::release(resource, env::ReleaseMode::Keep).map_err(|_| ())
         })
-        .map_err(|_| { crate::debug::put("identity: export lookup release failed"); ExportFailure::Denied })?;
+        .map_err(|_| {
+            crate::debug::put("identity: export lookup release failed");
+            ExportFailure::Denied
+        })?;
         result
     }
 
@@ -334,7 +360,15 @@ impl Exports {
             || info.mark != declared.mark
             || info.permission != declared.view.bits()
         {
-            crate::debug::put(&alloc::format!("identity: export source mismatch owner={} caller={} mark_match={} permission={:?} expected={:?} alive={}", info.owner.get(), from.get(), info.mark == declared.mark, info.permission, declared.view.bits(), info.alive));
+            crate::debug::put(&alloc::format!(
+                "identity: export source mismatch owner={} caller={} mark_match={} permission={:?} expected={:?} alive={}",
+                info.owner.get(),
+                from.get(),
+                info.mark == declared.mark,
+                info.permission,
+                declared.view.bits(),
+                info.alive
+            ));
             return Err(ExportFailure::Denied);
         }
         roster

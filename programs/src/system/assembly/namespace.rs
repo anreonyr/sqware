@@ -136,12 +136,9 @@ impl NamespaceInstallations {
                 }
                 let base = system.resolve(declaration.key, request.wait)?;
                 let team = coordinates.team.ok_or(api::Fail::Denied)?;
-                let prefix = PathBuf::try_new(&alloc::format!(
-                    "{}/{}",
-                    team.get(),
-                    coordinates.task.get()
-                ))
-                .ok_or(api::Fail::Denied)?;
+                let prefix =
+                    PathBuf::try_new(&alloc::format!("{}/{}", team.get(), coordinates.task.get()))
+                        .ok_or(api::Fail::Denied)?;
                 let plan = crate::system::app::namespace::Prepare::resources(
                     crate::system::app::namespace::ResourceInput {
                         base,
@@ -183,7 +180,8 @@ impl NamespaceInstallations {
                     let Receipt::Preparing(preparation) = completed else {
                         return Err(api::Fail::Dead);
                     };
-                    *item = Receipt::Installed(preparation.into_installed().ok_or(api::Fail::Dead)?);
+                    *item =
+                        Receipt::Installed(preparation.into_installed().ok_or(api::Fail::Dead)?);
                 }
             }
             if !record.planned {
@@ -271,7 +269,11 @@ impl NamespaceInstallations {
         system: &crate::system::app::namespace::System,
         task: TaskId,
     ) -> Result<bool, api::Fail> {
-        let Some(index) = self.tasks.iter().position(|record| record.coordinates.task == task) else {
+        let Some(index) = self
+            .tasks
+            .iter()
+            .position(|record| record.coordinates.task == task)
+        else {
             return Ok(true);
         };
         let record = &mut self.tasks[index];
@@ -319,7 +321,10 @@ impl NamespaceInstallations {
     }
 
     pub fn grant(&self, task: TaskId, namespace: usize) -> Option<GrantInfo> {
-        let record = self.tasks.iter().find(|record| record.coordinates.task == task)?;
+        let record = self
+            .tasks
+            .iter()
+            .find(|record| record.coordinates.task == task)?;
         if !record.delivery.get(namespace)?.sent {
             return None;
         }
@@ -335,7 +340,11 @@ impl NamespaceInstallations {
         task: TaskId,
         program: Option<&'static crate::unit::UnitFile>,
     ) -> bool {
-        let Some(record) = self.tasks.iter().find(|record| record.coordinates.task == task) else {
+        let Some(record) = self
+            .tasks
+            .iter()
+            .find(|record| record.coordinates.task == task)
+        else {
             return false;
         };
         let program_name = program.map_or("", crate::unit::UnitFile::name);

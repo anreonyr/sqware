@@ -39,7 +39,9 @@ impl Context {
         })
     }
 
-    pub fn capability(&self) -> &Capability { &self.capability }
+    pub fn capability(&self) -> &Capability {
+        &self.capability
+    }
 
     /// 上树落**一枚门牌**（`entry` = 这一域自己铸的那一枚孔）。
     pub fn plate(&self, entry: PieToken, me: &str, ms: Wait) {
@@ -63,7 +65,9 @@ impl Context {
     /// 编自己那两面），故 operator::Face::from 按值取一份视图（树那三格是 `Copy`）
     pub fn line(&self, line: u32, ms: Wait) -> Result<Line, ()> {
         let tree = operator::Face::from(&self.session);
-        let base = tree.resolve(system_api::namespace::SERVICE, ms).map_err(|_| ())?;
+        let base = tree
+            .resolve(system_api::namespace::SERVICE, ms)
+            .map_err(|_| ())?;
         let entry = match tree.tile_from(base, router_api::ENTRY, ms) {
             Ok(entry) => entry,
             Err(fail) => {

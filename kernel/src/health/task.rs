@@ -5,17 +5,28 @@ use crate::work::room::conductor;
 use crate::work::unit::space::{Mapping, RegionId, Space, SpaceBuilder};
 use crate::work::unit::team::TeamBuilder;
 
-fn own_pages(space: &Space, start: VirtAddr, size: usize, access: crate::memory::manager::entry::PteFlags) -> Mapping {
+fn own_pages(
+    space: &Space,
+    start: VirtAddr,
+    size: usize,
+    access: crate::memory::manager::entry::PteFlags,
+) -> Mapping {
     use crate::memory::manager::{Frame, entry::PteFlags};
     use alloc::vec::Vec;
-    let reservation = space.reserve(RegionId::Normal, start, size).expect("reserve owned pages");
+    let reservation = space
+        .reserve(RegionId::Normal, start, size)
+        .expect("reserve owned pages");
     let mut frames = Vec::new();
-    frames.try_reserve_exact(size / crate::memory::PAGE_SIZE).expect("owned frame list");
+    frames
+        .try_reserve_exact(size / crate::memory::PAGE_SIZE)
+        .expect("owned frame list");
     for _ in 0..size / crate::memory::PAGE_SIZE {
         frames.push(crate::tag!(Pole, Frame::allocate().expect("owned frame")));
     }
     let current = space.pte_policy(access | PteFlags::V | PteFlags::A | PteFlags::D);
-    space.map_frames(reservation, frames, access, current).expect("map owned pages")
+    space
+        .map_frames(reservation, frames, access, current)
+        .expect("map owned pages")
 }
 
 fn stage_only(
@@ -27,29 +38,49 @@ fn stage_only(
 ) -> alloc::sync::Arc<crate::memory::manager::Map> {
     use crate::memory::manager::entry::PteFlags;
     meta.reserve_record().expect("reserve Pole record");
-    child.staged().try_reserve(1).expect("reserve staged record");
+    child
+        .staged()
+        .try_reserve(1)
+        .expect("reserve staged record");
     let source = meta.canonical_map().expect("canonical Pole map");
-    let reservation = child.space.reserve(RegionId::Normal, start, meta.size()).expect("reserve staged range");
-    let mapping = child.space.derive(
-        reservation,
-        &source,
-        0,
-        access,
-        child.space.pte_policy(access | PteFlags::V | PteFlags::A | PteFlags::D),
-    ).expect("derive staged map");
+    let reservation = child
+        .space
+        .reserve(RegionId::Normal, start, meta.size())
+        .expect("reserve staged range");
+    let mapping = child
+        .space
+        .derive(
+            reservation,
+            &source,
+            0,
+            access,
+            child
+                .space
+                .pte_policy(access | PteFlags::V | PteFlags::A | PteFlags::D),
+        )
+        .expect("derive staged map");
     let map = mapping.map.clone();
-    assert!(meta.record(token, &child.space, mapping, Some(child.id), false).is_ok());
-    child.staged().push(crate::work::unit::team::Staging { token, meta: meta.clone(), map: map.clone() });
+    assert!(
+        meta.record(token, &child.space, mapping, Some(child.id), false)
+            .is_ok()
+    );
+    child.staged().push(crate::work::unit::team::Staging {
+        token,
+        meta: meta.clone(),
+        map: map.clone(),
+    });
     map
 }
 
 pub fn preparation() {
     let space = SpaceBuilder::user().build().unwrap();
-    space.attach_region(
-        crate::work::unit::space::RegionId::Normal,
-        0x4000_0000,
-        crate::memory::manager::mode::upper().as_usize(),
-    ).unwrap();
+    space
+        .attach_region(
+            crate::work::unit::space::RegionId::Normal,
+            0x4000_0000,
+            crate::memory::manager::mode::upper().as_usize(),
+        )
+        .unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
     let counts = conductor::counts();
     let tables = team.space.tree.table_count();
@@ -80,7 +111,9 @@ pub fn preparation() {
         assert_eq!(conductor::counts(), counts);
         assert!(team.tasks.lock().is_empty());
         assert!(team.space.tree.map_count() > maps);
-        team.space.retry_invalidation().expect("prepare: recover failed installation");
+        team.space
+            .retry_invalidation()
+            .expect("prepare: recover failed installation");
         assert_eq!(team.space.tree.map_count(), maps);
         assert_eq!(team.space.tree.table_count(), tables);
         let prepared = team.task().prepare().unwrap();
@@ -88,18 +121,36 @@ pub fn preparation() {
         assert_eq!(team.space.tree.map_count(), maps);
         assert_eq!(team.space.tree.table_count(), tables);
     }
-    let expected = team.space.allocate_low(crate::work::unit::space::RegionId::Kernel, crate::memory::PAGE_SIZE).unwrap();
+    let expected = team
+        .space
+        .allocate_low(
+            crate::work::unit::space::RegionId::Kernel,
+            crate::memory::PAGE_SIZE,
+        )
+        .unwrap();
     let first_frame = expected.start();
     team.space.release_reservation(expected).unwrap();
     crate::work::unit::task::fail_preparation_at(3);
     crate::work::unit::task::fail_rollback_fence();
     assert!(matches!(team.task().prepare(), Err(MapError::OutOfMemory)));
     assert_eq!(conductor::counts(), counts);
-    let reserved = team.space.allocate_low(crate::work::unit::space::RegionId::Kernel, crate::memory::PAGE_SIZE).unwrap();
+    let reserved = team
+        .space
+        .allocate_low(
+            crate::work::unit::space::RegionId::Kernel,
+            crate::memory::PAGE_SIZE,
+        )
+        .unwrap();
     assert_ne!(reserved.start(), first_frame);
     team.space.release_reservation(reserved).unwrap();
     team.space.retry_invalidation().unwrap();
-    let reused = team.space.allocate_low(crate::work::unit::space::RegionId::Kernel, crate::memory::PAGE_SIZE).unwrap();
+    let reused = team
+        .space
+        .allocate_low(
+            crate::work::unit::space::RegionId::Kernel,
+            crate::memory::PAGE_SIZE,
+        )
+        .unwrap();
     assert_eq!(reused.start(), first_frame);
     team.space.release_reservation(reused).unwrap();
     assert_eq!(team.space.tree.table_count(), tables);
@@ -126,7 +177,11 @@ pub fn construction() {
     scheduler::boot::init().expect("scheduler init");
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
-        .attach_region(RegionId::Normal, PAGE_SIZE, crate::memory::manager::mode::upper().as_usize())
+        .attach_region(
+            RegionId::Normal,
+            PAGE_SIZE,
+            crate::memory::manager::mode::upper().as_usize(),
+        )
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
     let caller = parent.task().hold().unwrap();
@@ -136,10 +191,26 @@ pub fn construction() {
     )
     .unwrap();
     caller.adopt(child.clone()).unwrap();
-    child.space.attach_region(RegionId::Normal, PAGE_SIZE, crate::memory::manager::mode::upper().as_usize()).unwrap();
-    let code = own_pages(&child.space, VirtAddr::wrap(0x10000), PAGE_SIZE, PteFlags::R | PteFlags::X);
+    child
+        .space
+        .attach_region(
+            RegionId::Normal,
+            PAGE_SIZE,
+            crate::memory::manager::mode::upper().as_usize(),
+        )
+        .unwrap();
+    let code = own_pages(
+        &child.space,
+        VirtAddr::wrap(0x10000),
+        PAGE_SIZE,
+        PteFlags::R | PteFlags::X,
+    );
     assert_eq!(code.map.initial_range().0, VirtAddr::wrap(0x10000));
-    let (_, code_flags) = child.space.tree.translate(VirtAddr::wrap(0x10000)).expect("owned entry mapping");
+    let (_, code_flags) = child
+        .space
+        .tree
+        .translate(VirtAddr::wrap(0x10000))
+        .expect("owned entry mapping");
     assert!(code_flags.contains(PteFlags::R | PteFlags::X));
     assert!(!code_flags.contains(PteFlags::W));
     let mut roots = Vec::new();
@@ -155,10 +226,19 @@ pub fn construction() {
             PAGE_SIZE,
             PteFlags::R | PteFlags::W,
         );
-        let frames = input.map.frames_in(input.reservation.start(), PAGE_SIZE).unwrap();
-        frame_weak.push(frames.iter().map(|(_, frame)| Arc::downgrade(frame)).collect());
+        let frames = input
+            .map
+            .frames_in(input.reservation.start(), PAGE_SIZE)
+            .unwrap();
+        frame_weak.push(
+            frames
+                .iter()
+                .map(|(_, frame)| Arc::downgrade(frame))
+                .collect(),
+        );
         drop(frames);
-        let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id, false).unwrap();
+        let meta =
+            pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id, false).unwrap();
         let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
             meta.clone(),
             Mark::NONE,
@@ -172,16 +252,33 @@ pub fn construction() {
             .space
             .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W);
         let (open_va, _) = pole::open(&meta, token, &parent.space, open).unwrap();
-        assert!(parent.space.tree.translate(VirtAddr::wrap(open_va)).is_some());
+        assert!(
+            parent
+                .space
+                .tree
+                .translate(VirtAddr::wrap(open_va))
+                .is_some()
+        );
         assert!(meta.mapped());
         pole::shut(&meta, token).unwrap();
         assert!(!meta.mapped());
-        assert!(parent.space.tree.translate(VirtAddr::wrap(open_va)).is_none());
+        assert!(
+            parent
+                .space
+                .tree
+                .translate(VirtAddr::wrap(open_va))
+                .is_none()
+        );
         let at = VirtAddr::wrap(0x20000 + index * PAGE_SIZE);
         let staged = stage_only(&child, &meta, token, access, at);
         stage_maps.push(staged);
         if !access.contains(PteFlags::W) {
-            gate::reduce(&caller, token, Permission::FETCH | Permission::VEST | Permission::ONLY).unwrap();
+            gate::reduce(
+                &caller,
+                token,
+                Permission::FETCH | Permission::VEST | Permission::ONLY,
+            )
+            .unwrap();
         }
         roots.push(token);
     }
@@ -238,7 +335,11 @@ pub fn construction() {
         assert!(gate::locate(&caller, token).is_none());
     }
     for va in [VirtAddr::wrap(0x20000), VirtAddr::wrap(0x21000)] {
-        let (_, flags) = child.space.tree.translate(va).expect("published staged map");
+        let (_, flags) = child
+            .space
+            .tree
+            .translate(va)
+            .expect("published staged map");
         assert!(flags.contains(PteFlags::R));
         assert_eq!(flags.contains(PteFlags::W), va == VirtAddr::wrap(0x21000));
     }
@@ -264,15 +365,17 @@ pub fn cancellation() {
     use crate::memory::PAGE_SIZE;
     use crate::memory::manager::entry::PteFlags;
     use crate::work::mail::pole;
-    use crate::work::unit::{
-        gate,
-    };
+    use crate::work::unit::gate;
     use alloc::sync::{Arc, Weak};
     use alloc::vec::Vec;
     use env::{Mark, Permission};
     let parent_space = SpaceBuilder::supervisor().build().unwrap();
     parent_space
-        .attach_region(RegionId::Normal, PAGE_SIZE, crate::memory::manager::mode::upper().as_usize())
+        .attach_region(
+            RegionId::Normal,
+            PAGE_SIZE,
+            crate::memory::manager::mode::upper().as_usize(),
+        )
         .unwrap();
     let parent = TeamBuilder::new(parent_space).spawn().unwrap();
     let caller = parent.task().hold().unwrap();
@@ -282,15 +385,28 @@ pub fn cancellation() {
     )
     .unwrap();
     caller.adopt(child.clone()).unwrap();
-    child.space.attach_region(RegionId::Normal, PAGE_SIZE, crate::memory::manager::mode::upper().as_usize()).unwrap();
+    child
+        .space
+        .attach_region(
+            RegionId::Normal,
+            PAGE_SIZE,
+            crate::memory::manager::mode::upper().as_usize(),
+        )
+        .unwrap();
     let input = own_pages(
         &parent.space,
         VirtAddr::wrap(0x30000),
         3 * PAGE_SIZE,
         PteFlags::R | PteFlags::W,
     );
-    let frames = input.map.frames_in(input.reservation.start(), 3 * PAGE_SIZE).unwrap();
-    let weak_frames: Vec<Weak<crate::memory::manager::Frame>> = frames.iter().map(|(_, frame)| Arc::downgrade(frame)).collect();
+    let frames = input
+        .map
+        .frames_in(input.reservation.start(), 3 * PAGE_SIZE)
+        .unwrap();
+    let weak_frames: Vec<Weak<crate::memory::manager::Frame>> = frames
+        .iter()
+        .map(|(_, frame)| Arc::downgrade(frame))
+        .collect();
     drop(frames);
     let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id, false).unwrap();
     let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
@@ -312,18 +428,28 @@ pub fn cancellation() {
     )
     .unwrap();
     assert!(!child.space.validate_write(at.as_usize(), PAGE_SIZE));
-    child.space.tree.protect(
-        &staged_map,
-        at + PAGE_SIZE,
-        PAGE_SIZE,
-        PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::U,
-    ).unwrap();
-    assert!(child.space.tree.protect(
-        &staged_map,
-        at + PAGE_SIZE,
-        PAGE_SIZE,
-        PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U,
-    ).is_err());
+    child
+        .space
+        .tree
+        .protect(
+            &staged_map,
+            at + PAGE_SIZE,
+            PAGE_SIZE,
+            PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::U,
+        )
+        .unwrap();
+    assert!(
+        child
+            .space
+            .tree
+            .protect(
+                &staged_map,
+                at + PAGE_SIZE,
+                PAGE_SIZE,
+                PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::U,
+            )
+            .is_err()
+    );
     gate::reduce(&caller, token, Permission::FETCH | Permission::ONLY).unwrap();
     assert!(matches!(
         gate::release(&caller, token),
@@ -343,7 +469,11 @@ pub fn cancellation() {
         parent.space.pte_policy(PteFlags::V | PteFlags::R),
     )
     .unwrap();
-    let (_, view_flags) = parent.space.tree.translate(VirtAddr::wrap(view)).expect("read-only Pole view");
+    let (_, view_flags) = parent
+        .space
+        .tree
+        .translate(VirtAddr::wrap(view))
+        .expect("read-only Pole view");
     assert!(!view_flags.contains(PteFlags::W));
     pole::shut(&meta, token).unwrap();
     gate::release(&caller, token).unwrap();
@@ -358,9 +488,9 @@ pub fn cancellation() {
 
 /// Pause inheritance and independent ancestor receipts share one exit state.
 pub fn branch_control() {
+    use crate::work::unit::space::RegionId;
     use crate::work::unit::task::{Task, TaskExitCause, TaskState};
     use crate::work::unit::weak::{Site, TaskWeak};
-    use crate::work::unit::space::RegionId;
     use alloc::sync::Arc;
     fn team(parent: Option<&Arc<Task>>) -> Arc<crate::work::unit::team::Team> {
         let space = SpaceBuilder::user().build().unwrap();
@@ -395,9 +525,15 @@ pub fn branch_control() {
     let record = later.life.member(grandchild.ident.id).unwrap();
     assert!(Arc::ptr_eq(&peer.clan(later.id).unwrap(), &later));
     let target = crate::work::unit::join::observe(&peer, grandchild.ident.id.into()).unwrap();
-    assert_eq!(crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(), Err(env::UnitFail::Denied));
+    assert_eq!(
+        crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(),
+        Err(env::UnitFail::Denied)
+    );
     let target = crate::work::unit::join::observe(&peer, later.id.into()).unwrap();
-    assert_eq!(crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(), Err(env::UnitFail::Denied));
+    assert_eq!(
+        crate::work::unit::join::JoinWait::new(target, peer.ident.id, true, env::Wait::POLL).poll(),
+        Err(env::UnitFail::Denied)
+    );
     assert!(record.pending(main.ident.id) && record.pending(member.ident.id));
     assert!(record.exit().is_none());
     use crate::work::unit::join::{JoinTarget, JoinWait};
@@ -427,7 +563,12 @@ pub fn branch_control() {
     assert_eq!(receive.poll(), Err(env::UnitFail::Denied));
     assert!(record.pending(main.ident.id));
     member.oust(later.id);
-    let closed = JoinWait::new(JoinTarget::Team(later.life.clone()), member.ident.id, true, env::Wait::POLL);
+    let closed = JoinWait::new(
+        JoinTarget::Team(later.life.clone()),
+        member.ident.id,
+        true,
+        env::Wait::POLL,
+    );
     assert_eq!(closed.poll(), Err(env::UnitFail::Denied));
     drop(closed);
     drop(grandchild);
@@ -475,7 +616,10 @@ pub fn branch_control() {
     drop(member);
     drop(child);
     root.release_held(&peer);
-    *peer.state.lock() = TaskState::Reaped { cause: TaskExitCause::Reap, reason: 0 };
+    *peer.state.lock() = TaskState::Reaped {
+        cause: TaskExitCause::Reap,
+        reason: 0,
+    };
     conductor::exit();
     drop(peer);
     root.release_held(&main);

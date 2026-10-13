@@ -42,7 +42,6 @@ const ASK: Ask = Ask {
     policy: Policy::ONLY,
 };
 
-
 const MS: usize = 1000;
 
 const E_OK: usize = 0;
@@ -127,7 +126,9 @@ fn main() -> Report<'static> {
 /// **（为什么不用 Face::tile）**：`entry` 自己已经译号一次 + `find` 一次，随后
 /// （`lodger: pies=`，表里还剩几枚）把这一点量成判据 ⇒ 必须按
 fn find_router(tree: &Face) -> Option<PieToken> {
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok()?;
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .ok()?;
     let mut left = MS;
     loop {
         match tree

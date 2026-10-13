@@ -399,9 +399,16 @@ impl Team {
         )
     }
     pub(crate) fn constructing(&self) -> bool {
-        matches!(&*self.state.lock(), TeamState::Constructing { .. }
-            | TeamState::Debarking { state: TeamStage::Constructing { .. } }
-            | TeamState::Debarked { state: TeamStage::Constructing { .. } })
+        matches!(
+            &*self.state.lock(),
+            TeamState::Constructing { .. }
+                | TeamState::Debarking {
+                    state: TeamStage::Constructing { .. }
+                }
+                | TeamState::Debarked {
+                    state: TeamStage::Constructing { .. }
+                }
+        )
     }
 
     pub(crate) fn staged(&self) -> Staged<'_> {
@@ -578,11 +585,16 @@ impl TeamBuilder {
             if sire.adopt(team.clone()).is_err() {
                 *team.state.lock() = TeamState::Ousted;
                 if let Some(parent) = &team.life.parent {
-                    parent.children.lock().retain(|node| !Arc::ptr_eq(node, &team.life));
+                    parent
+                        .children
+                        .lock()
+                        .retain(|node| !Arc::ptr_eq(node, &team.life));
                 }
                 return Err(if matches!(sire.tag(), TaskTag::Doomed | TaskTag::Reaped) {
                     crate::memory::manager::MapError::NoRegion
-                } else { crate::memory::manager::MapError::OutOfMemory });
+                } else {
+                    crate::memory::manager::MapError::OutOfMemory
+                });
             }
         }
         Ok(team)

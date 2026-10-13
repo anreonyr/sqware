@@ -32,5 +32,8 @@ fn mmap_encodes_pole_offset_and_target_domain() {
         flags: 10,
     };
     assert_eq!(call.pack(), [7, 0x5000_0000, 8192, 13, 4096, 10]);
-    assert_eq!(MemoryCall::from_wire(call.slot(), &call.pack()).unwrap(), call);
+    assert_eq!(
+        MemoryCall::from_wire(call.slot(), &call.pack()).unwrap(),
+        call
+    );
 }

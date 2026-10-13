@@ -4,7 +4,11 @@ use env::ledger::capsule::{Capsule, PAGE};
 
 use super::space::{RegionId, Space, SpaceBuilder};
 use super::team::{Team, TeamBuilder};
-use crate::memory::manager::{Frame, MapError, addr::{PhysAddr, VirtAddr}, entry::PteFlags};
+use crate::memory::manager::{
+    Frame, MapError,
+    addr::{PhysAddr, VirtAddr},
+    entry::PteFlags,
+};
 
 pub(crate) fn assemble(bytes: &'static [u8]) -> Result<Arc<Team>, MapError> {
     let capsule = Capsule::parse(bytes).ok_or(MapError::NoRegion)?;

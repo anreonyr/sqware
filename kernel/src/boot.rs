@@ -220,7 +220,11 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     team.space.tree.audit();
 
     #[cfg(debug_assertions)]
-    kernel().expect("kernel team not initialized").space.tree.audit();
+    kernel()
+        .expect("kernel team not initialized")
+        .space
+        .tree
+        .audit();
 
     Ok(Some(bootstrap))
 }

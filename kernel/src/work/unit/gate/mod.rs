@@ -6,23 +6,23 @@ use env::{PieFail, PieToken};
 mod forget;
 pub(crate) use forget::{forget, same};
 mod accord;
+mod allocation;
 mod cull;
 mod fail;
 mod narrow;
-mod allocation;
 mod pie;
 mod release;
 mod revoke;
 
-pub(crate) use fail::GateFail;
 pub(crate) use allocation::CreationRegistry;
+pub(crate) use fail::GateFail;
 mod snap;
 
 #[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
 pub(crate) use pie::{
-    AnyPie, Grant, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, Tole, accede, allows, boxed,
-    locate, new_pie, try_new_pie,
+    AnyPie, Grant, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, Tole, accede, allows,
+    boxed, locate, new_pie, try_new_pie,
 };
 
 pub(crate) use accord::{accord, clear_heir};

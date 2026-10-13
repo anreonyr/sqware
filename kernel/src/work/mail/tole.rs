@@ -137,7 +137,9 @@ impl Cell {
             }
             Member::Join(target) => {
                 if let JoinTarget::Team(team) = target {
-                    if team.next(actor.ident.id).is_some() { return Some(None); }
+                    if team.next(actor.ident.id).is_some() {
+                        return Some(None);
+                    }
                 }
                 let join = JoinWait::new(target.clone(), actor.ident.id, false, env::Wait::POLL);
                 match join.poll() {

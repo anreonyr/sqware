@@ -50,7 +50,9 @@ fn main() -> Report<'static> {
         panic!("probe-rack-mount: 树那条路开不出来");
     };
     let tree = Face::of(session);
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
     // A：铺场写、客人读（与产品那两条同形）；B：客人写、铺场读。
     let a = open(Mode::Oldest);
     let b = open(Mode::Oldest);
@@ -129,7 +131,7 @@ fn main() -> Report<'static> {
             &rig::road().unwrap().try_join("tx").unwrap(),
             Wait::AtMost(MS)
         )
-            .map(|_| ()),
+        .map(|_| ()),
         Err(Fail::Unknown)
     );
     b.writer().send(&rig::payload(99)).unwrap();
@@ -202,11 +204,7 @@ fn land(
             .unwrap()
             .token(Wait::AtMost(MS))
             .unwrap();
-        assert_eq!(
-            tree.name(mount.entry_id(), Wait::AtMost(MS))
-                .unwrap(),
-            name
-        );
+        assert_eq!(tree.name(mount.entry_id(), Wait::AtMost(MS)).unwrap(), name);
         mounts.push(mount);
     }
     assert_eq!(mounts.len(), 2);

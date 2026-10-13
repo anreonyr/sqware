@@ -80,8 +80,7 @@ pub(crate) fn lease(hart: crate::hart::HartId) -> Option<Asid> {
 }
 
 #[cfg(debug_assertions)]
-static FAIL_NEXT: core::sync::atomic::AtomicUsize =
-    core::sync::atomic::AtomicUsize::new(VACANT);
+static FAIL_NEXT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(VACANT);
 
 #[cfg(debug_assertions)]
 pub(crate) fn fail_next_shootdown(asid: Asid) {
@@ -126,7 +125,9 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
         }
     }
 
-    if mask == 0 { return Ok(()); }
+    if mask == 0 {
+        return Ok(());
+    }
 
     let operation = if asid.is_kernel() {
         fid::Rfence::RemoteSfenceVma

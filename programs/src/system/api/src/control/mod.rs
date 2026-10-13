@@ -11,8 +11,7 @@ pub use interface::{INTERFACE_ID, REGISTRY};
 pub use marks::DECLARATIONS as MARK_DECLARATIONS;
 pub const NAME: &str = frame::NAME;
 pub const DIR: &crate::operator::path::Path = frame::DIR;
-pub const INSTANCE: &crate::operator::Path =
-    crate::operator::Path::new("control/instance");
+pub const INSTANCE: &crate::operator::Path = crate::operator::Path::new("control/instance");
 
 #[mold::interface(id = "sqware.system.control.v1", metadata)]
 mod interface {

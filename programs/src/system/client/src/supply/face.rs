@@ -74,9 +74,13 @@ impl Face {
         let state = supply::State::from_code(response.state);
         let delivery = (state == supply::State::Granted && response.seed != PieToken::NONE)
             .then(|| decode_delivery(response));
-        let failure = (response.status != wire::OK)
-            .then(|| supply::fail_from_code(response.status));
-        Ok(Observation { state, delivery, failure })
+        let failure =
+            (response.status != wire::OK).then(|| supply::fail_from_code(response.status));
+        Ok(Observation {
+            state,
+            delivery,
+            failure,
+        })
     }
 
     pub fn release(&self, lease: supply::LeaseId, wait: Wait) -> Result<supply::State, CallError> {

@@ -86,7 +86,11 @@ pub(crate) trait Mail: Send + Sync + 'static {
 
     fn release_grant(&self, _token: PieToken) {}
 
-    fn new_grant(&self, permission: Permission, _token: PieToken) -> Result<Arc<Grant>, env::PieFail> {
+    fn new_grant(
+        &self,
+        permission: Permission,
+        _token: PieToken,
+    ) -> Result<Arc<Grant>, env::PieFail> {
         Grant::try_new(permission)
     }
 }
@@ -133,8 +137,14 @@ impl Mail for PoleMeta {
     fn pole(self: Arc<Self>) -> Option<Arc<PoleMeta>> {
         Some(self)
     }
-    fn release_grant(&self, token: PieToken) { PoleMeta::release_grant(self, token); }
-    fn new_grant(&self, permission: Permission, _token: PieToken) -> Result<Arc<Grant>, env::PieFail> {
+    fn release_grant(&self, token: PieToken) {
+        PoleMeta::release_grant(self, token);
+    }
+    fn new_grant(
+        &self,
+        permission: Permission,
+        _token: PieToken,
+    ) -> Result<Arc<Grant>, env::PieFail> {
         let grant = Grant::try_new(permission)?;
         self.register_grant(_token, grant.clone())?;
         Ok(grant)

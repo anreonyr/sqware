@@ -44,7 +44,9 @@ fn main() -> Report<'static> {
         panic!("probe-watch: no tree link");
     };
     let tree = Face::from(&session);
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
     let capabilities = [
         system_client::operator::Capability::injected(0, unit::sire(), Wait::AtMost(MS)).unwrap(),
         system_client::operator::Capability::injected(2, unit::sire(), Wait::AtMost(MS)).unwrap(),
@@ -138,7 +140,8 @@ fn main() -> Report<'static> {
     let anchor = publisher.anchor().unwrap();
     let view = operator_api::ResourceView::new(env::Access::STORE).unwrap();
     let first_entry = pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
-    let second_entry = pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
+    let second_entry =
+        pie::unseal(env::UnsealArgs::hole(Mark::of("probe-watch-resource"))).unwrap();
     assert_ne!(first_entry, second_entry);
     let wrong_group = env::PieToken::NONE;
     let wrong_mark = pie::unseal(env::UnsealArgs::hole(system_api::operator::WATCH_MARK)).unwrap();
@@ -218,7 +221,10 @@ fn main() -> Report<'static> {
         let tile = tree.tile_from(root, &road, Wait::AtMost(MS)).unwrap();
         assert_eq!(tile.id(), binding.entry_id());
         let token = tile.token(Wait::AtMost(MS)).unwrap();
-        assert_eq!(::resource::raw::reserve(token).unwrap().2, Mark::of("probe-watch-resource"));
+        assert_eq!(
+            ::resource::raw::reserve(token).unwrap().2,
+            Mark::of("probe-watch-resource")
+        );
         pie::release(token, env::ReleaseMode::Revoke).unwrap();
     }
     publisher.unbind(first, Wait::AtMost(MS)).unwrap();
@@ -229,7 +235,9 @@ fn main() -> Report<'static> {
     ));
     let second_road = PathBuf::try_new("probe-watch-dynamic/two").unwrap();
     assert_eq!(
-        tree.tile_from(root, &second_road, Wait::AtMost(MS)).unwrap().id(),
+        tree.tile_from(root, &second_road, Wait::AtMost(MS))
+            .unwrap()
+            .id(),
         second.entry_id()
     );
 
@@ -252,7 +260,11 @@ fn wait_event(watch: &mut operator::Watch<'_>, what: &str) -> Event {
 /// 前缀那几段由**本台自己分**（`Pane::open`：幂等，缺的就地造）——那几段是这一台自己的试验场，
 /// 不是别人的。**逐段只收号**（`Pane` 借的是上一块，攒着它就没法在循环里换新的）；
 /// 落完再沿整条路译一遍，确认"事件里那个号"与树上那一格是同一个。
-fn spot(context: (&Face, &[system_client::operator::Capability; 2]), road: &str, mark: &'static str) -> EntryId {
+fn spot(
+    context: (&Face, &[system_client::operator::Capability; 2]),
+    road: &str,
+    mark: &'static str,
+) -> EntryId {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     let (tree, capabilities) = context;
     let (parent, name) = road.rsplit_once('/').unwrap();
@@ -281,12 +293,13 @@ fn spot(context: (&Face, &[system_client::operator::Capability; 2]), road: &str,
         .entry_id();
     assert_eq!(
         tree.tile_from(
-            tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap(),
+            tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+                .unwrap(),
             &PathBuf::try_new(road).unwrap(),
             Wait::AtMost(MS),
         )
-            .unwrap()
-            .id(),
+        .unwrap()
+        .id(),
         id
     );
     id

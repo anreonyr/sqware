@@ -60,13 +60,15 @@ pub fn serve() -> Result<(), Start> {
         let sire = unit::sire();
 
         let inventory = receive_inventory(sire).map_err(|why| {
-            crate::debug::put("hub: inventory descriptor failed"); why
+            crate::debug::put("hub: inventory descriptor failed");
+            why
         })?;
         crate::debug::put("hub: inventory received");
 
         // 二、通过一个只读清单和按序直接交付的本地资源槽立账。
         let (mut ledger, dtb) = book(sire, inventory).map_err(|why| {
-            crate::debug::put("hub: inventory ledger failed"); why
+            crate::debug::put("hub: inventory ledger failed");
+            why
         })?;
 
         // 三、树那条会话。
@@ -187,8 +189,10 @@ pub fn serve() -> Result<(), Start> {
 
         // **八、报"我起完了"**（Setup::Machine 的 `ready` 那条通道）：铸一枚刻它的孔、**交给
         // （设备格都在树上、盟都立好了）。
-        establish::lend(sire, crate::unit::hub::READY_MARK)
-            .map_err(|why| { crate::debug::put(&alloc::format!("hub: ready channel {why:?}")); Start::Desk(E_HUB) })?;
+        establish::lend(sire, crate::unit::hub::READY_MARK).map_err(|why| {
+            crate::debug::put(&alloc::format!("hub: ready channel {why:?}"));
+            Start::Desk(E_HUB)
+        })?;
 
         // 九、挂组那一张表：三枚面 ＋ 每一台那一枚门（**挂在孔上，面由孔推**）。
         let mut doors: Vec<PieToken> = Vec::new();
@@ -204,13 +208,19 @@ pub fn serve() -> Result<(), Start> {
 
     // 十、常驻：一只组等那几枚孔；**从哪一枚读到就是哪一面**（设备门那一枚的面由"它不是面那
     //     三枚"推出来，认台靠**这一枚孔自己**）。
-    let pile = Pile::unseal(false).map_err(|why| { crate::debug::put(&alloc::format!("hub: pile creation {why:?}")); Start::Desk(E_HUB) })?;
+    let pile = Pile::unseal(false).map_err(|why| {
+        crate::debug::put(&alloc::format!("hub: pile creation {why:?}"));
+        Start::Desk(E_HUB)
+    })?;
     for token in &doors {
         pile.attach(env::Source::Mail {
             pie: *token,
             condition: MailCondition::Pull,
         })
-        .map_err(|why| { crate::debug::put(&alloc::format!("hub: attach {} {why:?}", token.get())); Start::Desk(E_HUB) })?;
+        .map_err(|why| {
+            crate::debug::put(&alloc::format!("hub: attach {} {why:?}", token.get()));
+            Start::Desk(E_HUB)
+        })?;
     }
     let mut buf: Vec<u8> = Vec::new();
     if buf.try_reserve_exact(PAGE_SIZE).is_err() {
@@ -464,9 +474,21 @@ fn local_machine_token(
         })
         .map(|info| info.token);
     if found.is_none() {
-        crate::debug::put(&alloc::format!("hub: inventory slot {index} absent expected owner={} kind={:?} permission={:?}", item.owner.get(), item.kind, item.permission));
+        crate::debug::put(&alloc::format!(
+            "hub: inventory slot {index} absent expected owner={} kind={:?} permission={:?}",
+            item.owner.get(),
+            item.kind,
+            item.permission
+        ));
         for info in resource::raw::pies().filter(|info| info.mark == slot) {
-            crate::debug::put(&alloc::format!("hub: slot actual owner={} vestor={} kind={:?} permission={:?} alive={}", info.owner.get(), info.vestor.get(), info.kind, info.permission, info.alive));
+            crate::debug::put(&alloc::format!(
+                "hub: slot actual owner={} vestor={} kind={:?} permission={:?} alive={}",
+                info.owner.get(),
+                info.vestor.get(),
+                info.kind,
+                info.permission,
+                info.alive
+            ));
         }
     }
     found.ok_or(Start::Load(E_HUB))

@@ -135,7 +135,10 @@ fn announce(signals: &Signals, stage: usize, task: TaskId) {
 fn closed(client: &Face, task: TaskId) {
     until(|| client.instance(task).state(WAIT).unwrap() == State::Dead);
 }
-fn reference(context: (&system_client::operator::Face, TaskId), task: TaskId) -> system_api::identity::OperatorEntryRef {
+fn reference(
+    context: (&system_client::operator::Face, TaskId),
+    task: TaskId,
+) -> system_api::identity::OperatorEntryRef {
     use system_api::identity::{Grant, IdentityName, IdentityObject, Reply, Wire};
     let (tree, authority) = context;
     let entry = ipc::session::establish::find(authority, Grant::Resolve.mark()).unwrap();
@@ -143,7 +146,8 @@ fn reference(context: (&system_client::operator::Face, TaskId), task: TaskId) ->
     let Reply::Binding(Some(binding)) = face.call(Wire::Resolve(task), WAIT).unwrap() else {
         panic!("account child binding")
     };
-    let reference_face = system_client::identity::Face::discover(tree, authority, Grant::Reference, WAIT).unwrap();
+    let reference_face =
+        system_client::identity::Face::discover(tree, authority, Grant::Reference, WAIT).unwrap();
     let Reply::Reference(Some(reference)) = reference_face
         .call(
             Wire::Reference(
@@ -283,7 +287,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         .unwrap();
         let second_issuer = crate::user::login::startup::deliver(second.task, root)
             .expect("account-instance: issue second Shell system context");
-        s.terminal_target.store(second.task.get(), Ordering::Release);
+        s.terminal_target
+            .store(second.task.get(), Ordering::Release);
         until(|| s.terminal_ready.load(Ordering::Acquire) == second.task.get());
         lifecycle.instance(second.task).embark(WAIT).unwrap();
         lifecycle.instance(second.task).ruin(WAIT).unwrap();
@@ -365,7 +370,9 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         // Exiting with a unclaimed instance exercises automatic owner-death cleanup.
     });
     let s = signals.clone();
-    let service = operator.resolve(system_api::namespace::SERVICE, WAIT).unwrap();
+    let service = operator
+        .resolve(system_api::namespace::SERVICE, WAIT)
+        .unwrap();
     let entry = operator
         .tile_from(service, account_api::DIR, WAIT)
         .unwrap()
@@ -389,7 +396,8 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         let terminal = env::pie::unseal(env::UnsealArgs::hole(terminal_api::marks::ENTRY)).unwrap();
         let input = env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::INPUT)).unwrap();
         let output = env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::OUTPUT)).unwrap();
-        let control = env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::CONTROL)).unwrap();
+        let control =
+            env::pie::unseal(env::UnsealArgs::hole(terminal_api::frame::CONTROL)).unwrap();
         let delivered = resource::port::ship(
             terminal,
             root,
@@ -403,8 +411,13 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         let mut terminals = alloc::vec::Vec::new();
         let drain = |terminals: &[TaskId]| {
             let mut bytes = [0; terminal_api::frame::MAX];
-            while let Ok((n, from)) = resource::raw::Hole::from_raw(output).pull(&mut bytes, Wait::POLL) {
-                assert!(n > 0 && terminals.contains(&from), "fixture Terminal source");
+            while let Ok((n, from)) =
+                resource::raw::Hole::from_raw(output).pull(&mut bytes, Wait::POLL)
+            {
+                assert!(
+                    n > 0 && terminals.contains(&from),
+                    "fixture Terminal source"
+                );
             }
         };
         while p.stage.load(Ordering::Acquire) != 1 || token.load(Ordering::Acquire) == 0 {
@@ -619,8 +632,15 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &system_client::opera
         matches!(resource::raw::reserve(terminal), Ok((vestor, owner, mark)) if vestor == peer.id() && owner == peer.id() && mark == terminal_api::marks::ENTRY)
     );
     let terminal_mounts = {
-        let start = assembly.resources.read::<crate::system::app::operator::Layout>().unwrap()
-            .as_ref().unwrap().reserve_operations(2).unwrap().0;
+        let start = assembly
+            .resources
+            .read::<crate::system::app::operator::Layout>()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .reserve_operations(2)
+            .unwrap()
+            .0;
         let info = assembly
             .resources
             .read::<crate::system::operator::management::Tree>()

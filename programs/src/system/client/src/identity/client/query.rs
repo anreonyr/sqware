@@ -1,6 +1,6 @@
 use super::super::{
-    Binding, CoalitionId, Cursor, Grant, IdentityName, IdentityObject, Match, OperatorEntryRef, Page, PageTarget, PrincipalId, Reply, Selector,
-    Wire,
+    Binding, CoalitionId, Cursor, Grant, IdentityName, IdentityObject, Match, OperatorEntryRef,
+    Page, PageTarget, PrincipalId, Reply, Selector, Wire,
 };
 use super::{CallError, Face, flag};
 use env::{PieToken, TaskId, Wait};
@@ -155,7 +155,12 @@ impl Query {
             _ => Err(CallError::Malformed),
         }
     }
-    pub fn reference(&self, object: IdentityObject, name: IdentityName, wait: Wait) -> Result<Option<OperatorEntryRef>, CallError> {
+    pub fn reference(
+        &self,
+        object: IdentityObject,
+        name: IdentityName,
+        wait: Wait,
+    ) -> Result<Option<OperatorEntryRef>, CallError> {
         match self.reference.call(Wire::Reference(object, name), wait)? {
             Reply::Reference(entry) => Ok(entry),
             _ => Err(CallError::Malformed),

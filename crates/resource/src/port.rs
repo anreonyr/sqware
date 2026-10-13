@@ -62,7 +62,10 @@ impl Sender {
     }
 
     pub fn source(&self) -> env::Source {
-        env::Source::Mail { pie: self.entry.token(), condition: MailCondition::Push }
+        env::Source::Mail {
+            pie: self.entry.token(),
+            condition: MailCondition::Push,
+        }
     }
 
     pub fn push(&self, bytes: &[u8], within: Wait) -> MailResult<()> {

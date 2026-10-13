@@ -19,10 +19,22 @@ struct RootPart {
 
 // The product chooses this layout. System itself only exposes generic part/associate/resolve.
 const ROOT_PARTS: &[RootPart] = &[
-    RootPart { key: system_api::namespace::SERVICE, name: "service" },
-    RootPart { key: system_api::namespace::DEVICE, name: "device" },
-    RootPart { key: system_api::namespace::IDENTITY, name: "identity" },
-    RootPart { key: system_api::namespace::UNIT, name: "unit" },
+    RootPart {
+        key: system_api::namespace::SERVICE,
+        name: "service",
+    },
+    RootPart {
+        key: system_api::namespace::DEVICE,
+        name: "device",
+    },
+    RootPart {
+        key: system_api::namespace::IDENTITY,
+        name: "identity",
+    },
+    RootPart {
+        key: system_api::namespace::UNIT,
+        name: "unit",
+    },
 ];
 
 const WAIT: env::Wait = env::Wait::AtMost(crate::support::timing::BOOT_MS);
@@ -42,7 +54,9 @@ pub(crate) fn bootstrap(
     let system = layout.as_ref().ok_or("operator root namespace")?;
     if receipt.operation_start.is_none() {
         receipt.operation_start = Some(
-            system.reserve_operations(ROOT_PARTS.len()).map_err(|_| "namespace operations")?,
+            system
+                .reserve_operations(ROOT_PARTS.len())
+                .map_err(|_| "namespace operations")?,
         );
     }
     let start = receipt.operation_start.ok_or("namespace operations")?;
@@ -50,7 +64,10 @@ pub(crate) fn bootstrap(
         if receipt.pending.is_none() {
             let operation = api::OperationId(start.0 + receipt.cursor as u64);
             let outcome = match system.part(crate::system::app::namespace::PartRequest {
-                parent: system.root(), name: part.name, operation, wait: WAIT,
+                parent: system.root(),
+                name: part.name,
+                operation,
+                wait: WAIT,
             }) {
                 Ok(outcome) => outcome,
                 Err(api::Fail::Unjudged) => return Ok(Progress::Pending),
@@ -60,7 +77,9 @@ pub(crate) fn bootstrap(
         }
         let pending = receipt.pending.ok_or("namespace part receipt")?;
         match system.associate(crate::system::app::namespace::AssociateRequest {
-            key: part.key, entry: pending.entry, wait: WAIT,
+            key: part.key,
+            entry: pending.entry,
+            wait: WAIT,
         }) {
             Ok(()) => {}
             Err(api::Fail::Unjudged) => return Ok(Progress::Pending),

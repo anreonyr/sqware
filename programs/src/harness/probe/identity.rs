@@ -205,10 +205,16 @@ pub fn acceptance() {
     );
     super::loader::acceptance(&mut assembly, &operator);
     super::account::acceptance(&mut assembly, &operator);
-    let service = operator.resolve(system_api::namespace::SERVICE, Wait::AtMost(1000)).unwrap();
+    let service = operator
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(1000))
+        .unwrap();
     let protected = || {
         operator
-            .tile_from(service, system_api::operator::path::Path::new("control/mint"), Wait::AtMost(1000))
+            .tile_from(
+                service,
+                system_api::operator::path::Path::new("control/mint"),
+                Wait::AtMost(1000),
+            )
             .expect("identity: protected tile")
     };
     assert!(
@@ -216,7 +222,11 @@ pub fn acceptance() {
         "identity: trusted operation"
     );
     let public = operator
-        .tile_from(service, system_api::operator::path::Path::new("control/state"), Wait::AtMost(1000))
+        .tile_from(
+            service,
+            system_api::operator::path::Path::new("control/state"),
+            Wait::AtMost(1000),
+        )
         .expect("identity: public tile");
     assert!(public.token(Wait::AtMost(1000)).is_ok());
     let old = old_query.resolve(me, Wait::AtMost(1000)).unwrap().unwrap();
@@ -262,8 +272,11 @@ pub fn acceptance() {
             .unwrap(),
         before
     );
-    let uart_rx = crate::driver::uart::client::road().unwrap()
-        .as_path().try_join("rx").unwrap();
+    let uart_rx = crate::driver::uart::client::road()
+        .unwrap()
+        .as_path()
+        .try_join("rx")
+        .unwrap();
     for (name, road) in [
         ("router", router_api::ENTRY),
         ("rtc", crate::driver::rtc::core::frame::ENTRY_PATH),

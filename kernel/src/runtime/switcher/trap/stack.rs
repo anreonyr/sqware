@@ -8,9 +8,9 @@ use crate::layout::{
 };
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::{Frame, MapError};
 use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::{Frame, MapError};
 use crate::runtime::chrono::timer;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::{alltraps_va, check_fits_page};
@@ -57,11 +57,7 @@ pub(crate) fn trap_stack_guard_hart(addr: usize) -> Option<HartId> {
 }
 
 pub(crate) fn boot_stack(hart: usize) -> usize {
-    BOOT_STACKS
-        .get()
-        .expect("boot stacks not initialized")[hart]
-        .physical_address()
-        + PAGE_SIZE
+    BOOT_STACKS.get().expect("boot stacks not initialized")[hart].physical_address() + PAGE_SIZE
 }
 
 pub fn init() -> Result<(), MapError> {
@@ -101,15 +97,16 @@ pub fn init() -> Result<(), MapError> {
             frames.push(crate::tag!(TrapStack, Frame::allocate()?));
         }
         let (body_va, _edge) = trap_stack_segment(h);
-        space
-            .tree
-            .map_frames(body_va, frames, flags, flags)?;
+        space.tree.map_frames(body_va, frames, flags, flags)?;
         // The guard page has no mapping in the Tree.
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
     }
-    assert!(BOOT_STACKS.set(boot_stacks).is_ok(), "boot stacks double init");
+    assert!(
+        BOOT_STACKS.set(boot_stacks).is_ok(),
+        "boot stacks double init"
+    );
 
     check_fits_page();
 

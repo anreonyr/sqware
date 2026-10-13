@@ -72,7 +72,9 @@ pub(crate) fn oust(me: &Arc<task::Task>, id: env::TeamId) -> Result<(), env::Uni
     let operation = child.operation().ok_or(env::UnitFail::Busy)?;
     {
         let _commit = commit();
-        if !child.all_reaped() { return Err(env::UnitFail::Busy); }
+        if !child.all_reaped() {
+            return Err(env::UnitFail::Busy);
+        }
     }
     child.cancel_staging().map_err(|_| env::UnitFail::Denied)?;
     let retired = {
@@ -172,8 +174,7 @@ pub fn init() -> MapResult<()> {
                     .try_reserve_exact(1)
                     .map_err(|_| MapError::OutOfMemory)?;
                 frames.push(frame);
-                let flags =
-                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+                let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
                 kernel_space.tree.map_frames(
                     HART_FRAME_BASE + h * PAGE_SIZE,
                     frames,

@@ -12,18 +12,28 @@ const WAIT: Wait = Wait::AtMost(2000);
 static CONSTRUCTION: &[crate::unit::Construction] = &[crate::unit::Construction::image()];
 
 pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
-    let service = operator.resolve(system_api::namespace::SERVICE, WAIT).unwrap();
+    let service = operator
+        .resolve(system_api::namespace::SERVICE, WAIT)
+        .unwrap();
     let road = system_api::operator::Path::new(system_api::loader::DIR)
         .try_join(system_api::loader::Grant::Claim.name())
         .unwrap();
     assert!(
-        operator.tile_from(service, &road, WAIT).unwrap().token(WAIT).is_ok(),
+        operator
+            .tile_from(service, &road, WAIT)
+            .unwrap()
+            .token(WAIT)
+            .is_ok(),
         "loader: operator entry missing"
     );
     shared_prefix_retirement(assembly, operator);
     let root = env::unit::self_id();
-    let authority = assembly.resources.read::<crate::system::control::identity::Roster>()
-        .unwrap().authority().unwrap();
+    let authority = assembly
+        .resources
+        .read::<crate::system::control::identity::Roster>()
+        .unwrap()
+        .authority()
+        .unwrap();
     let heirs = {
         let mut page = [0u64; 64];
         env::unit::scan(
@@ -68,7 +78,13 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         .grant(worker.id(), CONSTRUCTION)
         .unwrap();
     let entry = crate::system::loader::entry(&assembly.resources).unwrap();
-    env::pie::accord(entry, worker.id(), Permission::STORE, system_api::loader::Grant::Claim.mark()).unwrap();
+    env::pie::accord(
+        entry,
+        worker.id(),
+        Permission::STORE,
+        system_api::loader::Grant::Claim.mark(),
+    )
+    .unwrap();
     for grant in [
         system_api::control::Grant::State,
         system_api::control::Grant::Embark,
@@ -90,7 +106,10 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
         roster.inherit(peer.id(), root).unwrap();
     }
     {
-        let mut control = assembly.resources.write::<crate::system::control::unit::Control>().unwrap();
+        let mut control = assembly
+            .resources
+            .write::<crate::system::control::unit::Control>()
+            .unwrap();
         control.register_internal(worker.id()).unwrap();
         control.register_internal(peer.id()).unwrap();
     }
@@ -200,7 +219,10 @@ pub(crate) fn acceptance(assembly: &mut Fixture, operator: &Operator) {
 }
 /// Exercise placement cleanup against the production Operator RPC and receipts.
 fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
-    use crate::system::app::{namespace::{Preparation, Prepare, ResourceInput}, operator::Layout};
+    use crate::system::app::{
+        namespace::{Preparation, Prepare, ResourceInput},
+        operator::Layout,
+    };
     use system_api::operator::PathBuf;
 
     let layouts = assembly.resources.read::<Layout>().unwrap();
@@ -230,23 +252,47 @@ fn shared_prefix_retirement(assembly: &Fixture, operator: &Operator) {
     system.prepare_resources(&mut second).unwrap();
     assert!(system.retire_resources(&mut first).unwrap());
     assert_eq!(
-        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/first"), WAIT),
+        operator.seek_from(
+            unit,
+            system_api::operator::Path::new("namespace-cleanup/first"),
+            WAIT
+        ),
         Err(system_api::operator::Fail::Unknown),
         "retired placement leaf must disappear"
     );
-    let parent = operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup"), WAIT).unwrap();
+    let parent = operator
+        .seek_from(
+            unit,
+            system_api::operator::Path::new("namespace-cleanup"),
+            WAIT,
+        )
+        .unwrap();
     assert!(
-        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/second"), WAIT).is_ok(),
+        operator
+            .seek_from(
+                unit,
+                system_api::operator::Path::new("namespace-cleanup/second"),
+                WAIT
+            )
+            .is_ok(),
         "retiring one task must preserve its live sibling"
     );
     assert!(system.retire_resources(&mut second).unwrap());
     assert_eq!(
-        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup/second"), WAIT),
+        operator.seek_from(
+            unit,
+            system_api::operator::Path::new("namespace-cleanup/second"),
+            WAIT
+        ),
         Err(system_api::operator::Fail::Unknown),
         "retired sibling leaf must disappear"
     );
     assert_eq!(
-        operator.seek_from(unit, system_api::operator::Path::new("namespace-cleanup"), WAIT),
+        operator.seek_from(
+            unit,
+            system_api::operator::Path::new("namespace-cleanup"),
+            WAIT
+        ),
         Ok(parent),
         "the shared placement parent belongs to the System lifecycle"
     );
@@ -294,8 +340,7 @@ fn exercise(context: (TaskId, TaskId), target: &AtomicUsize, denied: &AtomicBool
         env::unit::build(env::ProgramKind::User, env::unit::self_id()).is_err(),
         "loader: caller received Build authority"
     );
-    let image = ::resource::raw::pole(8192, true)
-    .unwrap();
+    let image = ::resource::raw::pole(8192, true).unwrap();
     let bytes = image_bytes();
     let (at, size) = ::resource::raw::open(image).unwrap();
     // SAFETY: the locally owned writable Pole covers the complete test ELF.
@@ -355,7 +400,10 @@ fn exercise(context: (TaskId, TaskId), target: &AtomicUsize, denied: &AtomicBool
         .ruin(WAIT)
         .unwrap();
     until(|| state.instance(first.task).state(WAIT) == Ok(system_api::control::State::Dead));
-    face(system_api::control::Grant::Ruin).instance(first.task).ruin(WAIT).unwrap();
+    face(system_api::control::Grant::Ruin)
+        .instance(first.task)
+        .ruin(WAIT)
+        .unwrap();
     assert_eq!(
         state.instance(second.task).state(WAIT).unwrap(),
         system_api::control::State::Debarked

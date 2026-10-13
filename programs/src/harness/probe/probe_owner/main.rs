@@ -47,13 +47,15 @@ fn main() -> Report<'static> {
     let tree = Face::of(session);
 
     // 路：驱动那一族的常量（`/svc/drv`）接上服务名与砖名——一处都不自己拼。
-    let Some(road) = programs::driver::uart::client::road()
-        .and_then(|road| road.try_join(ME))
+    let Some(road) = programs::driver::uart::client::road().and_then(|road| road.try_join(ME))
     else {
         return bail("probe-owner: bad name");
     };
 
-    let Some(service) = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).ok() else {
+    let Some(service) = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .ok()
+    else {
         return bail("probe-owner: no service namespace");
     };
     let Some(before) = wait_id(&tree, service, &road) else {
@@ -133,7 +135,10 @@ fn take_over(tree: &Face) -> Result<EntryId, Fail> {
     let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))?;
     let road = Path::new("fixtures/lease");
     for _ in 0..MS {
-        if matches!(tree.tile_from(service, road, Wait::AtMost(MS)), Err(Fail::Unknown)) {
+        if matches!(
+            tree.tile_from(service, road, Wait::AtMost(MS)),
+            Err(Fail::Unknown)
+        ) {
             return Ok(EntryId::new(0));
         }
         let _ = execution::room::park(core::time::Duration::from_millis(1));

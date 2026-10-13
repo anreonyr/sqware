@@ -134,8 +134,15 @@ pub(crate) fn exercise(
         .call(identity::Wire::Activate(target, memberships), wait)
         .unwrap();
 
-    let start = assembly.resources.read::<crate::system::app::operator::Layout>().unwrap()
-        .as_ref().unwrap().reserve_operations(202).unwrap().0;
+    let start = assembly
+        .resources
+        .read::<crate::system::app::operator::Layout>()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .reserve_operations(202)
+        .unwrap()
+        .0;
     let root = assembly
         .resources
         .read::<crate::system::operator::management::Tree>()

@@ -37,7 +37,9 @@ fn main() -> Report<'static> {
         panic!("probe-watch-gone: no tree link");
     };
     let tree = Face::from(&session);
-    let service = tree.resolve(system_api::namespace::SERVICE, Wait::AtMost(MS)).unwrap();
+    let service = tree
+        .resolve(system_api::namespace::SERVICE, Wait::AtMost(MS))
+        .unwrap();
     let road = PathBuf::try_new(ROAD).unwrap_or_else(|| panic!("probe-watch-gone: bad road"));
     let watch = tree
         .watch_from(service, &road, Wait::AtMost(MS))

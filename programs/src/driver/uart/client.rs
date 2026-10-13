@@ -61,5 +61,8 @@ fn token_of(
     within: Wait,
 ) -> Option<PieToken> {
     let at = road.try_join(leaf)?;
-    tree.tile_from(service, &at, within).ok()?.token(within).ok()
+    tree.tile_from(service, &at, within)
+        .ok()?
+        .token(within)
+        .ok()
 }

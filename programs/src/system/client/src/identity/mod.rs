@@ -6,7 +6,10 @@ use system_api::operator::Path;
 
 const DIR: &Path = Path::new(system_api::identity::DIR);
 
-pub use client::{CallError, ExportBinding, Exporter, Face, IdentityExport, Installer, Organization, Query, SelfOps, TaskQuery};
+pub use client::{
+    CallError, ExportBinding, Exporter, Face, IdentityExport, Installer, Organization, Query,
+    SelfOps, TaskQuery,
+};
 
 mod discovery;
 pub use discovery::authority;

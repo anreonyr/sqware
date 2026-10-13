@@ -91,7 +91,10 @@ pub(crate) fn faces(
         let view = ResourceView::new(env::Access::STORE).ok_or("Loader Claim view")?;
         let input = layout::ResourceInput {
             base: system
-                .resolve(system_api::namespace::SERVICE, Wait::AtMost(crate::support::timing::BOOT_MS))
+                .resolve(
+                    system_api::namespace::SERVICE,
+                    Wait::AtMost(crate::support::timing::BOOT_MS),
+                )
                 .map_err(|_| "Loader namespace root")?,
             path: PathBuf::try_new(system_api::loader::DIR).ok_or("Loader namespace path")?,
             retain_prefix: 0,

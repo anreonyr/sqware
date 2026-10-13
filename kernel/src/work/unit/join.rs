@@ -57,10 +57,23 @@ impl JoinWait {
             }
             JoinTarget::Team(t) => {
                 if !self.receive {
-                    return Ok(if !matches!(&*t.state.lock(), TeamState::Constructing { .. }
-                        | TeamState::Debarking { state: super::team::TeamStage::Constructing { .. } }
-                        | TeamState::Debarked { state: super::team::TeamStage::Constructing { .. } })
-                        && t.all_reaped() { JoinReply::Complete } else { JoinReply::Pending });
+                    return Ok(
+                        if !matches!(
+                            &*t.state.lock(),
+                            TeamState::Constructing { .. }
+                                | TeamState::Debarking {
+                                    state: super::team::TeamStage::Constructing { .. }
+                                }
+                                | TeamState::Debarked {
+                                    state: super::team::TeamStage::Constructing { .. }
+                                }
+                        ) && t.all_reaped()
+                        {
+                            JoinReply::Complete
+                        } else {
+                            JoinReply::Pending
+                        },
+                    );
                 }
                 let mut node = Some(&**t);
                 let mut qualified = false;
@@ -68,7 +81,9 @@ impl JoinWait {
                     qualified |= here.owner == self.owner;
                     node = here.parent.as_deref();
                 }
-                if !qualified { return Err(UnitFail::Denied); }
+                if !qualified {
+                    return Err(UnitFail::Denied);
+                }
                 let next = t.next(self.owner);
                 if next.is_none() && matches!(&*t.state.lock(), TeamState::Ousted) {
                     return Err(UnitFail::Denied);
@@ -118,19 +133,32 @@ pub(crate) fn observe(
     match target {
         env::UnitTarget::Team(id) => {
             fn find(root: &Arc<TeamLife>, id: env::TeamId) -> Option<Arc<TeamLife>> {
-                if root.id == id { return Some(root.clone()); }
+                if root.id == id {
+                    return Some(root.clone());
+                }
                 let mut at = 0;
                 loop {
                     let child = root.children.lock().get(at).cloned()?;
                     at += 1;
-                    if let Some(found) = find(&child, id) { return Some(found); }
+                    if let Some(found) = find(&child, id) {
+                        return Some(found);
+                    }
                 }
             }
-            if id == me.ident.team.id { return Err(UnitFail::Denied); }
-            find(&me.ident.team.life, id).map(JoinTarget::Team).ok_or(UnitFail::Denied)
+            if id == me.ident.team.id {
+                return Err(UnitFail::Denied);
+            }
+            find(&me.ident.team.life, id)
+                .map(JoinTarget::Team)
+                .ok_or(UnitFail::Denied)
         }
         env::UnitTarget::Task(id) => {
-            let member = me.ident.team.life.member(id).or_else(|| me.ident.team.life.find(id));
+            let member = me
+                .ident
+                .team
+                .life
+                .member(id)
+                .or_else(|| me.ident.team.life.find(id));
             member.map(JoinTarget::Task).ok_or(UnitFail::Denied)
         }
     }

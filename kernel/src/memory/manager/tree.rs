@@ -283,9 +283,15 @@ impl Tree {
     fn ready_state(&self) -> Result<SpinLockGuard<'_, TreeState>, MapError> {
         loop {
             let state = self.state.lock();
-            if state.closed { return Err(MapError::NoRegion); }
-            if !state.pending { return Ok(state); }
-            if state.failed && !state.fencing { return Err(MapError::Shootdown); }
+            if state.closed {
+                return Err(MapError::NoRegion);
+            }
+            if !state.pending {
+                return Ok(state);
+            }
+            if state.failed && !state.fencing {
+                return Err(MapError::Shootdown);
+            }
             drop(state);
             self.finish_invalidation()?;
         }
@@ -377,9 +383,12 @@ impl Tree {
     pub fn table_count(&self) -> usize {
         let state = self.state.lock();
         state.root.node_count()
-            + state.retired_tables.iter().map(TableNode::node_count).sum::<usize>()
+            + state
+                .retired_tables
+                .iter()
+                .map(TableNode::node_count)
+                .sum::<usize>()
     }
-
 
     pub fn map_at(&self, address: VirtAddr) -> Option<Arc<Map>> {
         find_map(self.state.lock().index.as_deref(), address.as_usize())
@@ -388,11 +397,13 @@ impl Tree {
         if size == 0 || start.offset() != 0 || size & (PAGE_SIZE - 1) != 0 {
             return Err(MapError::NotAligned);
         }
-        let end = start.as_usize().checked_add(size - 1).ok_or(MapError::NotAligned)?;
+        let end = start
+            .as_usize()
+            .checked_add(size - 1)
+            .ok_or(MapError::NotAligned)?;
         let state = self.state.lock();
         Ok(first_overlap(state.index.as_deref(), start.as_usize(), end).is_some())
     }
-
 
     pub fn maps(&self) -> Result<Vec<Arc<Map>>, MapError> {
         let state = self.state.lock();
@@ -1156,7 +1167,12 @@ impl Tree {
     }
 
     pub fn copy_to(&self, start: VirtAddr, src: &[u8], need: PteFlags) -> bool {
-        self.access_range(start, src.len(), need, Some((src.as_ptr() as *mut u8, true)))
+        self.access_range(
+            start,
+            src.len(),
+            need,
+            Some((src.as_ptr() as *mut u8, true)),
+        )
     }
 
     fn access_range(
@@ -1166,36 +1182,65 @@ impl Tree {
         need: PteFlags,
         buffer: Option<(*mut u8, bool)>,
     ) -> bool {
-        if start.as_usize().checked_add(size).is_none() { return false; }
-        let Ok(state) = self.ready_state() else { return false };
+        if start.as_usize().checked_add(size).is_none() {
+            return false;
+        }
+        let Ok(state) = self.ready_state() else {
+            return false;
+        };
         let mut offset = 0;
         while offset < size {
             let at = start.as_usize() + offset;
-            let Some(map) = find_map(state.index.as_deref(), at) else { return false };
+            let Some(map) = find_map(state.index.as_deref(), at) else {
+                return false;
+            };
             let map_state = map.state.lock();
-            let Some(range) = map_state.ranges.iter().find(|range| range.start.as_usize() <= at && range.end() >= at) else { return false };
+            let Some(range) = map_state
+                .ranges
+                .iter()
+                .find(|range| range.start.as_usize() <= at && range.end() >= at)
+            else {
+                return false;
+            };
             let page = VirtAddr::from_raw(at & !(PAGE_SIZE - 1));
-            let Ok((_, hardware)) = state.root.walk_ref_geometry(page, self.geometry) else { return false };
-            if !range.current.contains(need) || !hardware.contains(need) || hardware.contains(PteFlags::G) { return false; }
+            let Ok((_, hardware)) = state.root.walk_ref_geometry(page, self.geometry) else {
+                return false;
+            };
+            if !range.current.contains(need)
+                || !hardware.contains(need)
+                || hardware.contains(PteFlags::G)
+            {
+                return false;
+            }
             let count = (PAGE_SIZE - (at & (PAGE_SIZE - 1))).min(size - offset);
             offset += count;
         }
-        let Some((buffer, write_to_user)) = buffer else { return true };
+        let Some((buffer, write_to_user)) = buffer else {
+            return true;
+        };
         offset = 0;
         while offset < size {
             let at = start.as_usize() + offset;
-            let Some(map) = find_map(state.index.as_deref(), at) else { unreachable!("Tree held across access validation and copy") };
+            let Some(map) = find_map(state.index.as_deref(), at) else {
+                unreachable!("Tree held across access validation and copy")
+            };
             let _map_state = map.state.lock();
             let page = VirtAddr::from_raw(at & !(PAGE_SIZE - 1));
-            let (physical, _) = state.root.walk_ref_geometry(page, self.geometry).expect("validated page table leaf");
+            let (physical, _) = state
+                .root
+                .walk_ref_geometry(page, self.geometry)
+                .expect("validated page table leaf");
             let within = at & (PAGE_SIZE - 1);
             let count = (PAGE_SIZE - within).min(size - offset);
             let physical = physical.as_usize() as *mut u8;
             // SAFETY: Tree and Map locks keep the live Map and its owned Frame or borrowed
             // region alive, and the full range was validated while the Tree lock is held.
             unsafe {
-                if write_to_user { core::ptr::copy(buffer.add(offset), physical.add(within), count); }
-                else { core::ptr::copy(physical.add(within), buffer.add(offset), count); }
+                if write_to_user {
+                    core::ptr::copy(buffer.add(offset), physical.add(within), count);
+                } else {
+                    core::ptr::copy(physical.add(within), buffer.add(offset), count);
+                }
             }
             offset += count;
         }
@@ -1403,8 +1448,12 @@ impl Tree {
         }
         let mut state = loop {
             let state = self.state.lock();
-            if state.closed { return Ok(()); }
-            if !state.pending { break state; }
+            if state.closed {
+                return Ok(());
+            }
+            if !state.pending {
+                break state;
+            }
             drop(state);
             self.finish_invalidation()?;
         };
@@ -1475,28 +1524,48 @@ impl Tree {
                     .expect("hardware leaf is absent from the Tree index");
                 let end_map = find_map(state.index.as_deref(), end)
                     .expect("hardware leaf extends beyond the Tree index");
-                assert!(Arc::ptr_eq(&map, &end_map), "hardware leaf crosses Map identity");
+                assert!(
+                    Arc::ptr_eq(&map, &end_map),
+                    "hardware leaf crosses Map identity"
+                );
                 let map_state = map.state.lock();
                 assert!(
                     ranges_cover(&map_state.ranges, start.as_usize(), end),
                     "hardware leaf crosses an unmapped Map range"
                 );
                 let mut expected_flags: Option<PteFlags> = None;
-                for range in map_state
-                    .ranges
-                    .iter()
-                    .filter(|range| range.start.as_usize() <= end && range.end() >= start.as_usize())
-                {
-                    let normalized = range.current & (PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::U | PteFlags::G);
+                for range in map_state.ranges.iter().filter(|range| {
+                    range.start.as_usize() <= end && range.end() >= start.as_usize()
+                }) {
+                    let normalized = range.current
+                        & (PteFlags::V
+                            | PteFlags::R
+                            | PteFlags::W
+                            | PteFlags::X
+                            | PteFlags::U
+                            | PteFlags::G);
                     if let Some(expected) = expected_flags {
-                        assert_eq!(normalized.bits(), expected.bits(), "hardware leaf crosses permission state");
+                        assert_eq!(
+                            normalized.bits(),
+                            expected.bits(),
+                            "hardware leaf crosses permission state"
+                        );
                     } else {
                         expected_flags = Some(normalized);
                     }
                 }
                 assert_eq!(
-                    (flags & (PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::U | PteFlags::G)).bits(),
-                    expected_flags.expect("hardware leaf belongs to a live range").bits(),
+                    (flags
+                        & (PteFlags::V
+                            | PteFlags::R
+                            | PteFlags::W
+                            | PteFlags::X
+                            | PteFlags::U
+                            | PteFlags::G))
+                        .bits(),
+                    expected_flags
+                        .expect("hardware leaf belongs to a live range")
+                        .bits(),
                     "hardware PTE permissions differ from Map state"
                 );
                 if let Some(region) = &map_state.borrowed {
@@ -1510,16 +1579,33 @@ impl Tree {
                         .checked_add(map_state.borrowed_offset)
                         .and_then(|base| base.checked_add(offset))
                         .expect("borrowed physical interval is representable");
-                    assert_eq!(physical.as_usize(), expected, "borrowed PTE physical address differs");
+                    assert_eq!(
+                        physical.as_usize(),
+                        expected,
+                        "borrowed PTE physical address differs"
+                    );
                 } else {
                     let first_page = (start.as_usize() - map.initial_start.as_usize()) / PAGE_SIZE;
                     let pages = size / PAGE_SIZE;
-                    let first = map_state.frames.partition_point(|(page, _)| *page < first_page);
+                    let first = map_state
+                        .frames
+                        .partition_point(|(page, _)| *page < first_page);
                     let last_page = first_page + pages;
-                    let last = map_state.frames.partition_point(|(page, _)| *page < last_page);
-                    assert_eq!(last - first, pages, "hardware leaf has pages without owned Frames");
-                    for (offset, (page, frame)) in map_state.frames[first..last].iter().enumerate() {
-                        assert_eq!(*page, first_page + offset, "owned Frame index gap under hardware leaf");
+                    let last = map_state
+                        .frames
+                        .partition_point(|(page, _)| *page < last_page);
+                    assert_eq!(
+                        last - first,
+                        pages,
+                        "hardware leaf has pages without owned Frames"
+                    );
+                    for (offset, (page, frame)) in map_state.frames[first..last].iter().enumerate()
+                    {
+                        assert_eq!(
+                            *page,
+                            first_page + offset,
+                            "owned Frame index gap under hardware leaf"
+                        );
                         assert_eq!(
                             frame.physical_address(),
                             physical.as_usize() + offset * PAGE_SIZE,
@@ -1555,12 +1641,20 @@ fn audit_maps(node: Option<&IndexNode>, tree: &Tree, root: &TableNode, geo: mode
         "borrowed Map is marked lazy"
     );
     assert!(
-        map_state.frames.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        map_state
+            .frames
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0),
         "owned Frame indexes are not strictly ordered"
     );
     for (page, frame) in &map_state.frames {
-        let offset = page.checked_mul(PAGE_SIZE).expect("Frame page offset overflow");
-        assert!(offset < map.initial_size.get(), "owned Frame exceeds initial Map extent");
+        let offset = page
+            .checked_mul(PAGE_SIZE)
+            .expect("Frame page offset overflow");
+        assert!(
+            offset < map.initial_size.get(),
+            "owned Frame exceeds initial Map extent"
+        );
         let address = map.initial_start + offset;
         assert!(
             ranges_cover(&map_state.ranges, address.as_usize(), address.as_usize()),
@@ -1569,16 +1663,36 @@ fn audit_maps(node: Option<&IndexNode>, tree: &Tree, root: &TableNode, geo: mode
         let (physical, flags) = root
             .walk_ref_geometry(address, geo)
             .expect("owned Frame has no hardware PTE");
-        assert_eq!(physical.as_usize(), frame.physical_address(), "owned Frame PTE physical address");
+        assert_eq!(
+            physical.as_usize(),
+            frame.physical_address(),
+            "owned Frame PTE physical address"
+        );
         let expected = map_state
             .ranges
             .iter()
-            .find(|range| range.start.as_usize() <= address.as_usize() && range.end() >= address.as_usize())
+            .find(|range| {
+                range.start.as_usize() <= address.as_usize() && range.end() >= address.as_usize()
+            })
             .expect("Frame range exists")
             .current;
         assert_eq!(
-            (flags & (PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::U | PteFlags::G)).bits(),
-            (expected & (PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::X | PteFlags::U | PteFlags::G)).bits(),
+            (flags
+                & (PteFlags::V
+                    | PteFlags::R
+                    | PteFlags::W
+                    | PteFlags::X
+                    | PteFlags::U
+                    | PteFlags::G))
+                .bits(),
+            (expected
+                & (PteFlags::V
+                    | PteFlags::R
+                    | PteFlags::W
+                    | PteFlags::X
+                    | PteFlags::U
+                    | PteFlags::G))
+                .bits(),
             "Frame PTE permissions differ from Map state"
         );
     }
@@ -1599,7 +1713,10 @@ fn audit_maps(node: Option<&IndexNode>, tree: &Tree, root: &TableNode, geo: mode
                 let span = root.leaf_span_geometry(address, geo);
                 let step = match span {
                     Some(span) => {
-                        assert!(span <= range.size.get() - offset, "hardware leaf crosses a live range boundary");
+                        assert!(
+                            span <= range.size.get() - offset,
+                            "hardware leaf crosses a live range boundary"
+                        );
                         span
                     }
                     None if map_state.lazy => PAGE_SIZE,

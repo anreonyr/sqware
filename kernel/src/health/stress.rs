@@ -19,7 +19,8 @@ pub fn accept() {
     let a = hybrid::allocator();
     // Fill a page per class so even classes with permanent boot allocations have a spare.
     let mut warm = Vec::new();
-    warm.try_reserve_exact(PAGE_SIZE / 8).expect("stress: warm slots");
+    warm.try_reserve_exact(PAGE_SIZE / 8)
+        .expect("stress: warm slots");
     for power in 3..=11 {
         let size = 1 << power;
         let layout = Layout::from_size_align(size, 8).unwrap();

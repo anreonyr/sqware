@@ -32,7 +32,9 @@ impl Grant {
             Wire::Unbind(_) => Self::Unbind,
             Wire::Activate(..) => Self::Activate,
             Wire::Install(..) => Self::Install,
-            Wire::Inspect(_) | Wire::Cancel(_) | Wire::Retire(_) | Wire::Associate(..) => Self::Install,
+            Wire::Inspect(_) | Wire::Cancel(_) | Wire::Retire(_) | Wire::Associate(..) => {
+                Self::Install
+            }
             Wire::Reference(..) => Self::Reference,
         }
     }

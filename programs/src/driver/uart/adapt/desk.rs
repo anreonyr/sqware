@@ -83,10 +83,15 @@ pub fn start(ms: Wait) -> Result<Desk, Fail> {
 
 /// → `rx` / `tx` 各一枚 Tile（**各是一具架的页**）→ 各查回来一遍（号 ↔ 名对得上才算真坐标）
 /// 送出去的是 `Rack::ship()` 交给对端的**那一枚页**：客人拿它既能映页、又能等页上那一位。
-fn plate(capability: &system_client::operator::Capability, racks: (&Rack<Bytes>, &Rack<Bytes>), ms: Wait) {
+fn plate(
+    capability: &system_client::operator::Capability,
+    racks: (&Rack<Bytes>, &Rack<Bytes>),
+    ms: Wait,
+) {
     let (rx, tx) = racks;
     let anchor = capability.anchor().expect("uart: namespace anchor");
-    let view = operator_api::ResourceView::new(env::Access::FETCH_STORE).expect("uart: resource view");
+    let view =
+        operator_api::ResourceView::new(env::Access::FETCH_STORE).expect("uart: resource view");
     for (index, (name, entry)) in [(RX, rx.ship()), (TX, tx.ship())].into_iter().enumerate() {
         capability
             .bind(

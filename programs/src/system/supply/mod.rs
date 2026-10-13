@@ -11,19 +11,25 @@ use ipc::rpc;
 use system_api::supply::{self, Delivery, Fail, Key, LeaseId, State};
 
 pub use collection::{CollectionItem, CollectionResource, CollectionSpec};
+#[allow(
+    unused_imports,
+    reason = "Parameter and route types for custom provider effects and resources."
+)]
+pub use lease::{Accord, DeliveryRoute, RootAssignment};
 pub use lease::{
-    Begin, Completion, DeliveryRequest, FailedRoots, LeaseKey, LeaseStart,
-    Ledger, MAX_ROOTS, NativePieEffects, Origin, Parameters, PieEffects, PrivateRoot, Provision,
-    ProvisionError, RootCheck, RootRequest,
+    Begin, Completion, DeliveryRequest, FailedRoots, LeaseKey, LeaseStart, Ledger, MAX_ROOTS,
+    NativePieEffects, Origin, Parameters, PieEffects, PrivateRoot, Provision, ProvisionError,
+    RootCheck, RootRequest,
 };
 pub use pole::{PoleEffects, PoleResource, PoleSpec};
-#[allow(unused_imports, reason = "Parameter and route types for custom provider effects and resources.")]
-pub use lease::{Accord, DeliveryRoute, RootAssignment};
 
 pub struct LeaseRequest {
     pub id: LeaseId,
     pub origin: Origin,
-    #[allow(dead_code, reason = "Provider admission context; built-in providers use caller and target.")]
+    #[allow(
+        dead_code,
+        reason = "Provider admission context; built-in providers use caller and target."
+    )]
     pub source: Key,
     pub resource: Key,
     pub target: TaskId,
@@ -47,7 +53,10 @@ impl LeaseRequest {
     }
 }
 
-#[allow(dead_code, reason = "Asynchronous provider results; built-in providers complete acquisition synchronously.")]
+#[allow(
+    dead_code,
+    reason = "Asynchronous provider results; built-in providers complete acquisition synchronously."
+)]
 pub enum Recovery {
     Pending,
     Granted(Provision),
@@ -399,7 +408,10 @@ impl Source {
         Ok((state, delivery))
     }
 
-    #[allow(dead_code, reason = "Local counterpart of the provider RPC cancel operation.")]
+    #[allow(
+        dead_code,
+        reason = "Local counterpart of the provider RPC cancel operation."
+    )]
     pub fn cancel(&mut self, id: LeaseId) -> Result<State, Fail> {
         let actor = env::unit::self_id();
         self.cancel_from(SourceCall {
@@ -545,7 +557,10 @@ impl Source {
     }
 
     /// Receive and process one native request. A failed reply does not roll back an accepted lease.
-    #[allow(dead_code, reason = "Provider RPC entry; current composition invokes sources directly.")]
+    #[allow(
+        dead_code,
+        reason = "Provider RPC entry; current composition invokes sources directly."
+    )]
     pub fn serve_once(&mut self, wait: Wait) -> Result<bool, Fail> {
         use wire::Message;
         let receiver = rpc::request::Receiver::<supply::Call>::from_raw(

@@ -7,7 +7,7 @@ extern crate programs;
 fn main() -> programs::Report<'static> {
     let _ready = ipc::session::establish::Held(
         ipc::session::establish::lend(env::unit::sire(), programs::unit::READY_MARK)
-        .expect("system-child: ready"),
+            .expect("system-child: ready"),
     );
     loop {
         execution::room::park(core::time::Duration::from_millis(100)).expect("system-child: wait");

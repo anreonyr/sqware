@@ -54,8 +54,7 @@ fn waiting() {
     let owner = unit::self_id();
     let mark = Mark::of("copy-wait-group");
     let group = Pile::unseal(true).unwrap();
-    let page = ::resource::raw::pole(env::PAGE_SIZE, true)
-    .unwrap();
+    let page = ::resource::raw::pole(env::PAGE_SIZE, true).unwrap();
     let worker = execution::unit::task::spawn(move || {
         let token = ipc::session::establish::claim(owner, mark, Wait::AtMost(2000)).unwrap();
         let group = Pile::from_raw(token);

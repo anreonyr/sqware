@@ -12,10 +12,14 @@ pub static PROBE_COALITION: UnitFile = UnitFile {
     identity: crate::unit::Identity {
         aliases: &[],
         grants: &[
-            system_api::identity::Grant::Adopt, system_api::identity::Grant::Waive,
-            system_api::identity::Grant::Restrict, system_api::identity::Grant::Derive,
-            system_api::identity::Grant::Found, system_api::identity::Grant::Admit,
-            system_api::identity::Grant::Expel, system_api::identity::Grant::Activate,
+            system_api::identity::Grant::Adopt,
+            system_api::identity::Grant::Waive,
+            system_api::identity::Grant::Restrict,
+            system_api::identity::Grant::Derive,
+            system_api::identity::Grant::Found,
+            system_api::identity::Grant::Admit,
+            system_api::identity::Grant::Expel,
+            system_api::identity::Grant::Activate,
         ],
     },
     control: crate::unit::ControlConfig {

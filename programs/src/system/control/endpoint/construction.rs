@@ -135,7 +135,17 @@ pub(crate) fn admit(
                     && !grant.revoked
             })
             .map(|grant| grant.policy);
-        let selected = policy.filter(|policy| !build || admits(*policy, item, Authority { control: &control, identity: &roster }));
+        let selected = policy.filter(|policy| {
+            !build
+                || admits(
+                    *policy,
+                    item,
+                    Authority {
+                        control: &control,
+                        identity: &roster,
+                    },
+                )
+        });
         let allowed = (build && selected.is_some() || query && policy.is_some())
             && control.live(item.provenance.from);
         let failure = if !build && !query {
@@ -173,16 +183,29 @@ impl Construction {
                 Err("invalid construction policy")
             };
         }
-        let missing = policies.iter().enumerate().filter(|(index, policy)| {
-            !policies[..*index].contains(policy)
-                && !self.grants.iter().any(|grant| grant.task == task && grant.policy == **policy)
-        }).count();
+        let missing = policies
+            .iter()
+            .enumerate()
+            .filter(|(index, policy)| {
+                !policies[..*index].contains(policy)
+                    && !self
+                        .grants
+                        .iter()
+                        .any(|grant| grant.task == task && grant.policy == **policy)
+            })
+            .count();
         if self.grants.len().saturating_add(missing) > 256 {
             return Err("construction grant capacity");
         }
-        self.grants.try_reserve(missing).map_err(|_| "constructor grant capacity")?;
+        self.grants
+            .try_reserve(missing)
+            .map_err(|_| "constructor grant capacity")?;
         for policy in policies.iter().copied() {
-            let index = if let Some(index) = self.grants.iter().position(|grant| grant.task == task && grant.policy == policy) {
+            let index = if let Some(index) = self
+                .grants
+                .iter()
+                .position(|grant| grant.task == task && grant.policy == policy)
+            {
                 if self.grants[index].delivered && !self.grants[index].revoked {
                     continue;
                 }
@@ -193,7 +216,13 @@ impl Construction {
             } else {
                 let entry = env::pie::unseal(env::UnsealArgs::hole(api::ENTRY))
                     .map_err(|_| "constructor entry")?;
-                self.grants.push(ConstructionGrant { entry, task, policy, delivered: false, revoked: false });
+                self.grants.push(ConstructionGrant {
+                    entry,
+                    task,
+                    policy,
+                    delivered: false,
+                    revoked: false,
+                });
                 self.grants.len() - 1
             };
             let grant = &mut self.grants[index];
@@ -240,8 +269,13 @@ fn deliver_grant(grant: &mut ConstructionGrant) -> Result<(), &'static str> {
     {
         return Err("constructor provenance");
     }
-    resource::port::ship(grant.entry, grant.task, env::Access::STORE, env::Policy::NONE)
-        .map_err(|_| "constructor grant")?;
+    resource::port::ship(
+        grant.entry,
+        grant.task,
+        env::Access::STORE,
+        env::Policy::NONE,
+    )
+    .map_err(|_| "constructor grant")?;
     grant.delivered = true;
     Ok(())
 }
@@ -261,12 +295,11 @@ struct Authority<'a> {
     identity: &'a crate::system::control::identity::Roster,
 }
 
-fn admits(
-    policy: crate::unit::Construction,
-    item: &Incoming,
-    authority: Authority<'_>,
-) -> bool {
-    let Authority { control, identity: roster } = authority;
+fn admits(policy: crate::unit::Construction, item: &Incoming, authority: Authority<'_>) -> bool {
+    let Authority {
+        control,
+        identity: roster,
+    } = authority;
     use crate::unit::{ConstructionIdentity, ConstructionOwner, ConstructionSelector};
     use system_api::control::construction::Input;
     let (stack, count, selected) = match (&policy.selector, &item.call.request.input.0) {

@@ -31,9 +31,7 @@ fn main() -> programs::Report<'static> {
         "a locally forged role Mark cannot replace the Identity authority"
     );
     env::pie::release(forged, env::ReleaseMode::Revoke).unwrap();
-    let _ready = establish::Held(
-        establish::lend(control, programs::unit::READY_MARK).unwrap(),
-    );
+    let _ready = establish::Held(establish::lend(control, programs::unit::READY_MARK).unwrap());
     loop {
         let mut bytes = [0; 17];
         let (n, sender) = Hole::from_raw(command)

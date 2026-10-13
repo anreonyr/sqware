@@ -1,8 +1,5 @@
 pub use super::marks::{CONSTRUCTION_BACK as BACK, CONSTRUCTION_ENTRY as ENTRY};
-use crate::{
-    identity::Subject,
-    loader::Said,
-};
+use crate::{identity::Subject, loader::Said};
 use alloc::string::String;
 use env::wire::Span as _;
 use env::{PieToken, TaskId};
@@ -98,8 +95,14 @@ impl env::wire::Span for Input {
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (tag, payload) = u8::fetch_at(bytes, at)?;
         let (value, end) = match tag {
-            1 => { let (value, end) = UnitRef::fetch_at(bytes, payload)?; (Self::Unit(value), end) }
-            2 => { let (value, end) = Image::fetch_at(bytes, payload)?; (Self::Image(value), end) }
+            1 => {
+                let (value, end) = UnitRef::fetch_at(bytes, payload)?;
+                (Self::Unit(value), end)
+            }
+            2 => {
+                let (value, end) = Image::fetch_at(bytes, payload)?;
+                (Self::Image(value), end)
+            }
             _ => return None,
         };
         Some((value, end))

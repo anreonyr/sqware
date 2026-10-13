@@ -15,11 +15,11 @@ fn catalogue(system: TaskId) -> Result<shell_api::Catalogue, &'static str> {
     let mut images = Vec::new();
     for command in super::commands::COMMANDS {
         let channel = ipc::session::establish::claim(
-                system,
-                crate::unit::descriptor_mark(command.binding.slot),
-                WAIT,
-            )
-            .map_err(|_| "shell resource channel")?;
+            system,
+            crate::unit::descriptor_mark(command.binding.slot),
+            WAIT,
+        )
+        .map_err(|_| "shell resource channel")?;
         let mut frame_bytes = crate::unit::SupplyFrame::EMPTY;
         let (n, from) = resource::raw::Hole::from_raw(channel)
             .pull(&mut frame_bytes, WAIT)

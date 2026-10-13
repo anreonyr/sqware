@@ -20,7 +20,11 @@ impl Terminal {
             .resolve(system_api::namespace::SERVICE, MS)
             .map_err(|_| ())?;
         let entry = tree
-            .tile_from(base, system_api::operator::Path::new(terminal_api::ENTRY_PATH), MS)
+            .tile_from(
+                base,
+                system_api::operator::Path::new(terminal_api::ENTRY_PATH),
+                MS,
+            )
             .and_then(|tile| tile.token(MS))
             .map_err(|_| ())?;
         let host = match reserve(entry) {

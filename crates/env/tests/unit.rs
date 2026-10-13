@@ -56,8 +56,14 @@ fn nonzero_normal_exit_and_zero_fault_preserve_the_cause() {
 
 #[test]
 fn build_encodes_sire_and_team_completion_has_no_task_exit() {
-    let call = UnitCall::Build { kind: env::ProgramKind::User, sire: TaskId::new(23) };
-    assert_eq!(UnitCall::from_wire(call.slot(), &call.pack()).unwrap(), call);
+    let call = UnitCall::Build {
+        kind: env::ProgramKind::User,
+        sire: TaskId::new(23),
+    };
+    assert_eq!(
+        UnitCall::from_wire(call.slot(), &call.pack()).unwrap(),
+        call
+    );
     assert_eq!(JoinReply::from_triple(5, 0, 0), JoinReply::Complete);
     assert!(!JoinReply::Complete.is_reaped());
 }

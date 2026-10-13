@@ -7,13 +7,13 @@ extern crate programs;
 
 use env::wire::Field;
 use env::{MailCondition, PieToken, TaskId, Wait, unit};
-use programs::Report;
-use resource::raw::Hole;
 use ipc::session::{Endpoint, Session};
+use programs::Report;
 use programs::debug;
-use system_client::operator;
+use resource::raw::Hole;
 use system_api::operator as api;
 use system_api::operator::entry;
+use system_client::operator;
 use wire::Message;
 
 const MS: usize = 1000;
@@ -74,10 +74,7 @@ fn request(anchor: api::Entry, back: PieToken) -> entry::Request {
     }
 }
 
-fn push_request(
-    capability: &operator::Capability,
-    request: &entry::Request,
-) -> Result<(), ()> {
+fn push_request(capability: &operator::Capability, request: &entry::Request) -> Result<(), ()> {
     let mut bytes = [0u8; entry::Request::LEN];
     let n = request.store(&mut bytes).ok_or(())?;
     Hole::from_raw(capability.entrance())
@@ -102,14 +99,15 @@ fn permit_trip(capability: &operator::Capability) -> (bool, bool, bool) {
         .expect("probe-bound: malformed native reply back");
     let malformed = request(anchor, malformed_back.seed());
     let mut frame = [0u8; entry::Request::LEN];
-    let len = malformed.store(&mut frame).expect("probe-bound: encode baseline Request");
+    let len = malformed
+        .store(&mut frame)
+        .expect("probe-bound: encode baseline Request");
     frame[PERMIT_OFFSET] = u8::MAX;
     let malformed_sent = Hole::from_raw(capability.entrance())
         .push(&frame[..len], Wait::AtMost(MS))
         .is_ok();
     let mut reply = [0u8; entry::Response::LEN];
-    let malformed_reply = Hole::from_raw(malformed_back.rx())
-        .pull(&mut reply, Wait::AtMost(MS));
+    let malformed_reply = Hole::from_raw(malformed_back.rx()).pull(&mut reply, Wait::AtMost(MS));
     let malformed_rejected = malformed_reply.is_err();
     release_back(operator_task, malformed_back);
 
@@ -129,7 +127,11 @@ fn permit_trip(capability: &operator::Capability) -> (bool, bool, bool) {
         .find(anchor, "x", api::Permit::Public, Wait::AtMost(MS))
         .err()
         == Some(api::Fail::Unknown);
-    (malformed_sent && malformed_rejected, valid_sent && valid_denied, query_alive)
+    (
+        malformed_sent && malformed_rejected,
+        valid_sent && valid_denied,
+        query_alive,
+    )
 }
 
 #[programs::entry]
@@ -138,7 +140,9 @@ fn main() -> Report<'static> {
     let Ok(session) = Session::open(sire, operator::BERTH, Wait::AtMost(MS)) else {
         return bail("probe-bound: no tree link");
     };
-    let (tree, hedge) = (&unsafe { session.raw_link() }, unsafe { session.raw_talk() });
+    let (tree, hedge) = (&unsafe { session.raw_link() }, unsafe {
+        session.raw_talk()
+    });
     let face = operator::Face::from(&session);
 
     let (junk_in, said_bad, after) = junk_trip(hedge, tree, &face, &junk());
@@ -146,18 +150,35 @@ fn main() -> Report<'static> {
         junk_trip(hedge, tree, &face, &oversize_road());
     let capability = operator::Capability::injected(0, sire, Wait::AtMost(MS))
         .expect("probe-bound: declared Operator entry capability");
-    let (unknown_sent_and_rejected, valid_sent_and_denied, query_alive) =
-        permit_trip(&capability);
+    let (unknown_sent_and_rejected, valid_sent_and_denied, query_alive) = permit_trip(&capability);
 
     assert!(junk_in, "ordinary session junk was not accepted");
     assert!(said_bad, "ordinary session did not answer BAD for junk");
     assert!(after, "ordinary session query failed after junk");
-    assert!(oversize_in, "oversized ordinary session road was not accepted");
-    assert!(oversize_bad, "oversized ordinary session road did not answer BAD");
-    assert!(oversize_after, "ordinary session query failed after oversized road");
-    assert!(unknown_sent_and_rejected, "unknown Permit tag was not decode-rejected without a reply");
-    assert!(valid_sent_and_denied, "valid Public BIND with resource NONE did not receive native semantic Denied");
-    assert!(query_alive, "Operator entry API query failed after malformed and denied requests");
+    assert!(
+        oversize_in,
+        "oversized ordinary session road was not accepted"
+    );
+    assert!(
+        oversize_bad,
+        "oversized ordinary session road did not answer BAD"
+    );
+    assert!(
+        oversize_after,
+        "ordinary session query failed after oversized road"
+    );
+    assert!(
+        unknown_sent_and_rejected,
+        "unknown Permit tag was not decode-rejected without a reply"
+    );
+    assert!(
+        valid_sent_and_denied,
+        "valid Public BIND with resource NONE did not receive native semantic Denied"
+    );
+    assert!(
+        query_alive,
+        "Operator entry API query failed after malformed and denied requests"
+    );
 
     programs::harness::probe::identity::timeout();
     Report::note(E_OK, OK_NOTE)
@@ -185,9 +206,7 @@ fn junk_trip(
     );
     let said = pulled.ok();
     let bad = matches!(said, Some(1) if back[0] == api::BAD);
-    let after = face
-        .list(api::Where::Root, Wait::AtMost(MS))
-        .is_ok();
+    let after = face.list(api::Where::Root, Wait::AtMost(MS)).is_ok();
     (pushed, bad, after)
 }
 

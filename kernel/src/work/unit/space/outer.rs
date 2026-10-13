@@ -34,7 +34,12 @@ pub(super) struct CleanupNode {
 }
 
 impl CleanupNode {
-    pub(super) const fn empty() -> Self { Self { record: None, next: None } }
+    pub(super) const fn empty() -> Self {
+        Self {
+            record: None,
+            next: None,
+        }
+    }
 }
 
 pub(super) enum Reclaim {
@@ -125,10 +130,16 @@ impl SpaceBuilder {
         )?;
         if self.kernel {
             let dram = crate::platform::machine::info().dram;
-            let base = crate::memory::manager::mode::lower().as_usize()
-                .checked_add(dram.base).and_then(|base| base.checked_add(dram.size))
+            let base = crate::memory::manager::mode::lower()
+                .as_usize()
+                .checked_add(dram.base)
+                .and_then(|base| base.checked_add(dram.size))
                 .ok_or(MapError::DramOverlap)?;
-            allocator.attach(RegionId::Resource, base, crate::layout::TRAP_STACK_BASE.as_usize())?;
+            allocator.attach(
+                RegionId::Resource,
+                base,
+                crate::layout::TRAP_STACK_BASE.as_usize(),
+            )?;
         }
         let space = Space {
             tree,
@@ -173,11 +184,19 @@ impl Space {
     }
 
     pub fn pte_policy(&self, flags: PteFlags) -> PteFlags {
-        if self.kind.is_supervisor() { flags - PteFlags::U } else { flags | PteFlags::U }
+        if self.kind.is_supervisor() {
+            flags - PteFlags::U
+        } else {
+            flags | PteFlags::U
+        }
     }
 
     fn mapping_policy(&self, region: RegionId, flags: PteFlags) -> PteFlags {
-        if region != RegionId::Normal { flags - PteFlags::U } else { self.pte_policy(flags) }
+        if region != RegionId::Normal {
+            flags - PteFlags::U
+        } else {
+            self.pte_policy(flags)
+        }
     }
 
     pub fn life(&self) -> Weak<Life> {
@@ -197,11 +216,7 @@ impl Space {
         self.allocator.lock().advance(region, base)
     }
 
-    pub fn mapping_at(
-        &self,
-        start: VirtAddr,
-        size: usize,
-    ) -> Result<Mapping, MapError> {
+    pub fn mapping_at(&self, start: VirtAddr, size: usize) -> Result<Mapping, MapError> {
         if size == 0 || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
@@ -217,7 +232,13 @@ impl Space {
             .ok_or(MapError::NoRegion)?;
         Ok(Mapping {
             map,
-            reservation: Reservation { tree: Arc::downgrade(&self.tree), region: region.0, start, size, id: region.1 },
+            reservation: Reservation {
+                tree: Arc::downgrade(&self.tree),
+                region: region.0,
+                start,
+                size,
+                id: region.1,
+            },
         })
     }
 
@@ -230,18 +251,39 @@ impl Space {
         if size == 0 || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        let id = self.allocator.lock().reserve(region, start.as_usize(), size)?;
-        Ok(Reservation { tree: Arc::downgrade(&self.tree), region, start, size, id })
+        let id = self
+            .allocator
+            .lock()
+            .reserve(region, start.as_usize(), size)?;
+        Ok(Reservation {
+            tree: Arc::downgrade(&self.tree),
+            region,
+            start,
+            size,
+            id,
+        })
     }
 
     pub fn allocate_low(&self, region: RegionId, size: usize) -> Result<Reservation, MapError> {
         let (start, id) = self.allocator.lock().allocate_low(region, size)?;
-        Ok(Reservation { tree: Arc::downgrade(&self.tree), region, start: VirtAddr::from_raw(start), size, id })
+        Ok(Reservation {
+            tree: Arc::downgrade(&self.tree),
+            region,
+            start: VirtAddr::from_raw(start),
+            size,
+            id,
+        })
     }
 
     pub fn allocate_high(&self, region: RegionId, size: usize) -> Result<Reservation, MapError> {
         let (start, id) = self.allocator.lock().allocate_high(region, size)?;
-        Ok(Reservation { tree: Arc::downgrade(&self.tree), region, start: VirtAddr::from_raw(start), size, id })
+        Ok(Reservation {
+            tree: Arc::downgrade(&self.tree),
+            region,
+            start: VirtAddr::from_raw(start),
+            size,
+            id,
+        })
     }
 
     pub fn split_reservation(
@@ -250,13 +292,42 @@ impl Space {
         left_size: usize,
     ) -> Result<(Reservation, Reservation), MapError> {
         self.check_reservation(&reservation)?;
-        let split = self.allocator.lock().split(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id, left_size);
+        let split = self.allocator.lock().split(
+            reservation.region,
+            reservation.start.as_usize(),
+            reservation.size,
+            reservation.id,
+            left_size,
+        );
         let (right_start, left_id, right_id) = match split {
             Ok(split) => split,
-            Err(error) => { let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id); return Err(error); }
+            Err(error) => {
+                let _ = self.allocator.lock().release(
+                    reservation.region,
+                    reservation.start.as_usize(),
+                    reservation.size,
+                    reservation.id,
+                );
+                return Err(error);
+            }
         };
         let owner = Arc::downgrade(&self.tree);
-        Ok((Reservation { tree: owner.clone(), region: reservation.region, start: reservation.start, size: left_size, id: left_id }, Reservation { tree: owner, region: reservation.region, start: VirtAddr::from_raw(right_start), size: reservation.size - left_size, id: right_id }))
+        Ok((
+            Reservation {
+                tree: owner.clone(),
+                region: reservation.region,
+                start: reservation.start,
+                size: left_size,
+                id: left_id,
+            },
+            Reservation {
+                tree: owner,
+                region: reservation.region,
+                start: VirtAddr::from_raw(right_start),
+                size: reservation.size - left_size,
+                id: right_id,
+            },
+        ))
     }
 
     pub fn release_reservation(&self, reservation: Reservation) -> Result<(), MapError> {
@@ -291,7 +362,9 @@ impl Space {
 
     fn prepare_mapping_cleanup(&self, reservation: &Reservation) -> Result<(), MapError> {
         #[cfg(debug_assertions)]
-        if FAIL_CLEANUP.swap(false, core::sync::atomic::Ordering::Relaxed) { return Err(MapError::OutOfMemory); }
+        if FAIL_CLEANUP.swap(false, core::sync::atomic::Ordering::Relaxed) {
+            return Err(MapError::OutOfMemory);
+        }
         self.allocator.lock().prepare_cleanup(reservation.id)
     }
 
@@ -299,11 +372,18 @@ impl Space {
         let _ = self.allocator.lock().take_cleanup(reservation.id);
     }
 
-    fn record_map_failure(&self, reservation: Reservation, error: MapError) -> Result<Mapping, MapError> {
+    fn record_map_failure(
+        &self,
+        reservation: Reservation,
+        error: MapError,
+    ) -> Result<Mapping, MapError> {
         let map = self.tree.map_at(reservation.start).filter(|map| {
             let (start, size) = map.initial_range();
-            start == reservation.start && size == reservation.size
-                && map.tree().is_some_and(|tree| Arc::ptr_eq(&tree, &self.tree))
+            start == reservation.start
+                && size == reservation.size
+                && map
+                    .tree()
+                    .is_some_and(|tree| Arc::ptr_eq(&tree, &self.tree))
         });
         if let Some(map) = map {
             let node = self.allocator.lock().take_cleanup(reservation.id);
@@ -313,72 +393,156 @@ impl Space {
             }
         } else {
             self.cancel_mapping_cleanup(&reservation);
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
         }
         Err(error)
     }
 
     fn ensure_unmapped_reservation(&self, reservation: &Reservation) -> Result<(), MapError> {
         if self.tree.overlaps(reservation.start, reservation.size)? {
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
             return Err(MapError::AlreadyMapped);
         }
         Ok(())
     }
 
-    pub fn map_frames(&self, reservation: Reservation, frames: Vec<Arc<Frame>>, ceiling: PteFlags, current: PteFlags) -> Result<Mapping, MapError> {
+    pub fn map_frames(
+        &self,
+        reservation: Reservation,
+        frames: Vec<Arc<Frame>>,
+        ceiling: PteFlags,
+        current: PteFlags,
+    ) -> Result<Mapping, MapError> {
         self.check_reservation(&reservation)?;
-        if frames.len().checked_mul(PAGE_SIZE) != Some(reservation.size) { let _ = self.release_reservation(reservation); return Err(MapError::NotAligned); }
+        if frames.len().checked_mul(PAGE_SIZE) != Some(reservation.size) {
+            let _ = self.release_reservation(reservation);
+            return Err(MapError::NotAligned);
+        }
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
             return Err(error);
         }
-        match self.tree.map_frames(reservation.start, frames, ceiling, self.mapping_policy(reservation.region, current)) {
+        match self.tree.map_frames(
+            reservation.start,
+            frames,
+            ceiling,
+            self.mapping_policy(reservation.region, current),
+        ) {
             Ok(map) => Ok(Mapping { map, reservation }),
             Err(error) => self.record_map_failure(reservation, error),
         }
     }
 
-    pub fn map_lazy(&self, reservation: Reservation, ceiling: PteFlags, current: PteFlags) -> Result<Mapping, MapError> {
+    pub fn map_lazy(
+        &self,
+        reservation: Reservation,
+        ceiling: PteFlags,
+        current: PteFlags,
+    ) -> Result<Mapping, MapError> {
         self.check_reservation(&reservation)?;
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
             return Err(error);
         }
-        match self.tree.map_lazy(reservation.start, reservation.size, ceiling, self.mapping_policy(reservation.region, current)) {
+        match self.tree.map_lazy(
+            reservation.start,
+            reservation.size,
+            ceiling,
+            self.mapping_policy(reservation.region, current),
+        ) {
             Ok(map) => Ok(Mapping { map, reservation }),
             Err(error) => self.record_map_failure(reservation, error),
         }
     }
 
     /// The caller keeps external physical storage reserved for the full mapping lifetime.
-    pub unsafe fn map_borrowed(&self, reservation: Reservation, physical: PhysAddr, ceiling: PteFlags, current: PteFlags) -> Result<Mapping, MapError> {
+    pub unsafe fn map_borrowed(
+        &self,
+        reservation: Reservation,
+        physical: PhysAddr,
+        ceiling: PteFlags,
+        current: PteFlags,
+    ) -> Result<Mapping, MapError> {
         self.check_reservation(&reservation)?;
         self.ensure_unmapped_reservation(&reservation)?;
         let region = match unsafe { BorrowedRegion::new(physical, reservation.size) } {
             Ok(region) => region,
-            Err(error) => { let _ = self.release_reservation(reservation); return Err(error); }
+            Err(error) => {
+                let _ = self.release_reservation(reservation);
+                return Err(error);
+            }
         };
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
             return Err(error);
         }
-        match self.tree.map_borrowed(reservation.start, region, 0, reservation.size, ceiling, self.mapping_policy(reservation.region, current)) {
+        match self.tree.map_borrowed(
+            reservation.start,
+            region,
+            0,
+            reservation.size,
+            ceiling,
+            self.mapping_policy(reservation.region, current),
+        ) {
             Ok(map) => Ok(Mapping { map, reservation }),
             Err(error) => self.record_map_failure(reservation, error),
         }
     }
 
-    pub fn derive(&self, reservation: Reservation, source: &Arc<Map>, source_offset: usize, ceiling: PteFlags, current: PteFlags) -> Result<Mapping, MapError> {
+    pub fn derive(
+        &self,
+        reservation: Reservation,
+        source: &Arc<Map>,
+        source_offset: usize,
+        ceiling: PteFlags,
+        current: PteFlags,
+    ) -> Result<Mapping, MapError> {
         self.check_reservation(&reservation)?;
         self.ensure_unmapped_reservation(&reservation)?;
         if let Err(error) = self.prepare_mapping_cleanup(&reservation) {
-            let _ = self.allocator.lock().release(reservation.region, reservation.start.as_usize(), reservation.size, reservation.id);
+            let _ = self.allocator.lock().release(
+                reservation.region,
+                reservation.start.as_usize(),
+                reservation.size,
+                reservation.id,
+            );
             return Err(error);
         }
-        match self.tree.derive_map(source, source_offset, reservation.size, reservation.start, ceiling, self.mapping_policy(reservation.region, current)) {
+        match self.tree.derive_map(
+            source,
+            source_offset,
+            reservation.size,
+            reservation.start,
+            ceiling,
+            self.mapping_policy(reservation.region, current),
+        ) {
             Ok(map) => Ok(Mapping { map, reservation }),
             Err(error) => self.record_map_failure(reservation, error),
         }
@@ -404,46 +568,75 @@ impl Space {
     }
 
     pub(crate) fn unmap_range(&self, start: VirtAddr, size: usize) -> Result<(), MapError> {
-        if !Self::user_range(start.as_usize(), size) || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
+        if !Self::user_range(start.as_usize(), size)
+            || start.offset() != 0
+            || !size.is_multiple_of(PAGE_SIZE)
+        {
             return Err(MapError::NotAligned);
         }
         self.retry_invalidation()?;
         let end = start.as_usize() + size;
         let ranges = self.tree.ranges()?;
         let mut maps = Vec::new();
-        maps.try_reserve(ranges.len()).map_err(|_| MapError::OutOfMemory)?;
+        maps.try_reserve(ranges.len())
+            .map_err(|_| MapError::OutOfMemory)?;
         for (map, range) in ranges {
             let lo = start.as_usize().max(range.start.as_usize());
-            if range.start.as_usize() >= end || range.end() < start.as_usize() { continue; }
+            if range.start.as_usize() >= end || range.end() < start.as_usize() {
+                continue;
+            }
             let hi = (range.end() + 1).min(end);
-            if lo < hi { maps.push((map, VirtAddr::wrap(lo), hi - lo)); }
+            if lo < hi {
+                maps.push((map, VirtAddr::wrap(lo), hi - lo));
+            }
         }
-        if maps.is_empty() { return Err(MapError::NoRegion); }
+        if maps.is_empty() {
+            return Err(MapError::NoRegion);
+        }
         let mut cuts = Vec::new();
         for (_, at, len) in &maps {
-            let part = self.allocator.lock().cuts(RegionId::Normal, at.as_usize(), *len)?;
-            if part.iter().map(|(_, len, _)| len).sum::<usize>() != *len { return Err(MapError::NoRegion); }
-            cuts.try_reserve(part.len()).map_err(|_| MapError::OutOfMemory)?;
+            let part = self
+                .allocator
+                .lock()
+                .cuts(RegionId::Normal, at.as_usize(), *len)?;
+            if part.iter().map(|(_, len, _)| len).sum::<usize>() != *len {
+                return Err(MapError::NoRegion);
+            }
+            cuts.try_reserve(part.len())
+                .map_err(|_| MapError::OutOfMemory)?;
             cuts.extend(part);
         }
         let mut tickets = Vec::new();
-        tickets.try_reserve(cuts.len()).map_err(|_| MapError::OutOfMemory)?;
+        tickets
+            .try_reserve(cuts.len())
+            .map_err(|_| MapError::OutOfMemory)?;
         let mut cleanup = Box::try_new(CleanupNode::empty()).map_err(|_| MapError::OutOfMemory)?;
         {
             let mut allocator = self.allocator.lock();
             if let Err(error) = allocator.reserve_cuts(RegionId::Normal, cuts.len() * 2) {
                 return Err(error);
             }
-            for (at, len, id) in cuts { tickets.push(allocator.retire(RegionId::Normal, at, len, id)); }
+            for (at, len, id) in cuts {
+                tickets.push(allocator.retire(RegionId::Normal, at, len, id));
+            }
         }
-        let mut record = RangeReclaim { maps, tickets, cursor: 0 };
+        let mut record = RangeReclaim {
+            maps,
+            tickets,
+            cursor: 0,
+        };
         let result = self.finish_range(&mut record);
-        if result.is_err() { cleanup.record = Some(Reclaim::Range(record)); self.enqueue_cleanup(cleanup); }
+        if result.is_err() {
+            cleanup.record = Some(Reclaim::Range(record));
+            self.enqueue_cleanup(cleanup);
+        }
         result
     }
 
     fn finish_range(&self, record: &mut RangeReclaim) -> Result<(), MapError> {
-        if self.tree.has_pending_invalidation() { self.tree.retry_invalidation()?; }
+        if self.tree.has_pending_invalidation() {
+            self.tree.retry_invalidation()?;
+        }
         while record.cursor < record.maps.len() {
             let (map, start, size) = &record.maps[record.cursor];
             let end = start.as_usize() + size;
@@ -451,12 +644,16 @@ impl Space {
             for range in ranges {
                 let lo = start.as_usize().max(range.start.as_usize());
                 let hi = end.min(range.end() + 1);
-                if lo < hi { self.tree.unmap(map, VirtAddr::wrap(lo), hi - lo)?; }
+                if lo < hi {
+                    self.tree.unmap(map, VirtAddr::wrap(lo), hi - lo)?;
+                }
             }
             record.cursor += 1;
         }
         let mut allocator = self.allocator.lock();
-        for ticket in record.tickets.drain(..) { allocator.reclaim(RegionId::Normal, ticket); }
+        for ticket in record.tickets.drain(..) {
+            allocator.reclaim(RegionId::Normal, ticket);
+        }
         Ok(())
     }
 
@@ -465,7 +662,9 @@ impl Space {
         let id = mapping.reservation.id;
         let mut node = self.allocator.lock().take_cleanup(id);
         if node.is_none() {
-            if mapping.map.ranges()?.is_empty() { return Ok(()); }
+            if mapping.map.ranges()?.is_empty() {
+                return Ok(());
+            }
             return Err(MapError::Shootdown);
         }
         let mut node = node.take().expect("cleanup node");
@@ -487,7 +686,9 @@ impl Space {
         if start != mapping.reservation.start || size != mapping.reservation.size {
             return Err(MapError::NoRegion);
         }
-        if self.tree.has_pending_invalidation() { self.tree.retry_invalidation()?; }
+        if self.tree.has_pending_invalidation() {
+            self.tree.retry_invalidation()?;
+        }
         let ranges = mapping.map.ranges()?;
         if ranges.is_empty() {
             self.release_range(&mapping.reservation);
@@ -500,7 +701,8 @@ impl Space {
                 self.release_range(&mapping.reservation);
                 return Ok(());
             };
-            self.tree.unmap(&mapping.map, range.start, range.size.get())?;
+            self.tree
+                .unmap(&mapping.map, range.start, range.size.get())?;
         }
     }
 
@@ -516,14 +718,19 @@ impl Space {
 
     fn check_tree_identity(&self, reservation: &Reservation) -> Result<(), MapError> {
         let owner = reservation.tree.upgrade().ok_or(MapError::NoRegion)?;
-        if !Arc::ptr_eq(&owner, &self.tree) { return Err(MapError::NoRegion); }
+        if !Arc::ptr_eq(&owner, &self.tree) {
+            return Err(MapError::NoRegion);
+        }
         Ok(())
     }
 
     fn check_reservation(&self, reservation: &Reservation) -> Result<(), MapError> {
         let owner = reservation.tree.upgrade().ok_or(MapError::NoRegion)?;
         if !Arc::ptr_eq(&owner, &self.tree)
-            || !self.allocator.lock().has_id(reservation.region, reservation.id)
+            || !self
+                .allocator
+                .lock()
+                .has_id(reservation.region, reservation.id)
         {
             return Err(MapError::NoRegion);
         }

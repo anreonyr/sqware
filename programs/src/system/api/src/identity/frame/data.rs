@@ -9,9 +9,21 @@ use env::{
 
 impl Field for super::vocab::InstallState {
     const WIDTH: usize = 1;
-    fn store(&self, out: &mut [u8]) { out[0] = *self as u8; }
+    fn store(&self, out: &mut [u8]) {
+        out[0] = *self as u8;
+    }
     fn fetch(bytes: &[u8]) -> Option<Self> {
-        Some(match *bytes.first()? { 0 => Self::Unseen, 1 => Self::Pending, 2 => Self::Installed, 3 => Self::Retiring, 4 => Self::Retired, 5 => Self::Cancelled, 6 => Self::Failed, 7 => Self::Closed, _ => return None })
+        Some(match *bytes.first()? {
+            0 => Self::Unseen,
+            1 => Self::Pending,
+            2 => Self::Installed,
+            3 => Self::Retiring,
+            4 => Self::Retired,
+            5 => Self::Cancelled,
+            6 => Self::Failed,
+            7 => Self::Closed,
+            _ => return None,
+        })
     }
 }
 
@@ -44,43 +56,99 @@ impl Field for Back {
 }
 
 #[derive(env::Frame)]
-struct InstallSpecFrame { task: Task, install: super::vocab::Install }
+struct InstallSpecFrame {
+    task: Task,
+    install: super::vocab::Install,
+}
 impl Span for super::vocab::InstallSpec {
     const MAX: Option<usize> = Some(InstallSpecFrame::LEN);
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
-        InstallSpecFrame { task: Task::new(self.task)?, install: self.install }.store_at(out, at)
+        InstallSpecFrame {
+            task: Task::new(self.task)?,
+            install: self.install,
+        }
+        .store_at(out, at)
     }
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (frame, end) = InstallSpecFrame::fetch_at(bytes, at)?;
-        Some((Self { task: frame.task.0, install: frame.install }, end))
+        Some((
+            Self {
+                task: frame.task.0,
+                install: frame.install,
+            },
+            end,
+        ))
     }
 }
 #[derive(env::Frame)]
-struct IdentityObjectFrame { kind: u8, authority: Task, slot: u64 }
+struct IdentityObjectFrame {
+    kind: u8,
+    authority: Task,
+    slot: u64,
+}
 impl Span for super::vocab::IdentityObject {
     const MAX: Option<usize> = Some(IdentityObjectFrame::LEN);
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
-        let (kind, authority, slot) = match *self { Self::Principal(p) => (0, p.authority, p.slot), Self::Coalition(c) => (1, c.authority, c.slot) };
-        IdentityObjectFrame { kind, authority: Task::new(authority)?, slot }.store_at(out, at)
+        let (kind, authority, slot) = match *self {
+            Self::Principal(p) => (0, p.authority, p.slot),
+            Self::Coalition(c) => (1, c.authority, c.slot),
+        };
+        IdentityObjectFrame {
+            kind,
+            authority: Task::new(authority)?,
+            slot,
+        }
+        .store_at(out, at)
     }
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (frame, end) = IdentityObjectFrame::fetch_at(bytes, at)?;
-        let object = match frame.kind { 0 => Self::Principal(super::vocab::PrincipalId::new(frame.authority.0, frame.slot)), 1 => Self::Coalition(super::vocab::CoalitionId::new(frame.authority.0, frame.slot)), _ => return None };
+        let object = match frame.kind {
+            0 => Self::Principal(super::vocab::PrincipalId::new(
+                frame.authority.0,
+                frame.slot,
+            )),
+            1 => Self::Coalition(super::vocab::CoalitionId::new(
+                frame.authority.0,
+                frame.slot,
+            )),
+            _ => return None,
+        };
         Some((object, end))
     }
 }
 #[derive(env::Frame)]
-struct EntryRefFrame { operator: Task, root: u8, id: u64, revision: u64 }
+struct EntryRefFrame {
+    operator: Task,
+    root: u8,
+    id: u64,
+    revision: u64,
+}
 impl Span for super::vocab::OperatorEntryRef {
     const MAX: Option<usize> = Some(EntryRefFrame::LEN);
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
         (self.operator.get() != 0).then_some(())?;
-        EntryRefFrame { operator: Task::new(self.operator)?, root: u8::from(self.root), id: self.id, revision: self.revision }.store_at(out, at)
+        EntryRefFrame {
+            operator: Task::new(self.operator)?,
+            root: u8::from(self.root),
+            id: self.id,
+            revision: self.revision,
+        }
+        .store_at(out, at)
     }
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (frame, end) = EntryRefFrame::fetch_at(bytes, at)?;
-        if frame.root > 1 { return None; }
-        Some((Self { operator: frame.operator.0, root: frame.root == 1, id: frame.id, revision: frame.revision }, end))
+        if frame.root > 1 {
+            return None;
+        }
+        Some((
+            Self {
+                operator: frame.operator.0,
+                root: frame.root == 1,
+                id: frame.id,
+                revision: frame.revision,
+            },
+            end,
+        ))
     }
 }
 impl Span for super::vocab::IdentityName {
@@ -98,23 +166,45 @@ impl Span for super::vocab::IdentityName {
         let end = at.checked_add(32)?;
         let frame = bytes.get(at..end)?;
         let len = *frame.first()? as usize;
-        if len == 0 || len > 31 || frame[1 + len..].iter().any(|byte| *byte != 0) { return None; }
+        if len == 0 || len > 31 || frame[1 + len..].iter().any(|byte| *byte != 0) {
+            return None;
+        }
         let name = core::str::from_utf8(&frame[1..1 + len]).ok()?;
         Some((super::vocab::IdentityName::new(name)?, end))
     }
 }
 #[derive(env::Frame)]
-struct InstallStatusFrame { state: super::vocab::InstallState, binding: Optional<super::vocab::Binding>, failure: u8 }
+struct InstallStatusFrame {
+    state: super::vocab::InstallState,
+    binding: Optional<super::vocab::Binding>,
+    failure: u8,
+}
 impl Span for super::vocab::InstallStatus {
     const MAX: Option<usize> = Some(InstallStatusFrame::LEN);
     fn store_at(&self, out: &mut [u8], at: usize) -> Option<usize> {
         let failure = self.failure.map_or(0, |fail| fail_to_code(Some(fail)));
-        InstallStatusFrame { state: self.state, binding: Optional(self.binding), failure }.store_at(out, at)
+        InstallStatusFrame {
+            state: self.state,
+            binding: Optional(self.binding),
+            failure,
+        }
+        .store_at(out, at)
     }
     fn fetch_at(bytes: &[u8], at: usize) -> Option<(Self, usize)> {
         let (frame, end) = InstallStatusFrame::fetch_at(bytes, at)?;
-        let failure = if frame.failure == 0 { None } else { Some(code_to_fail(frame.failure)?) };
-        Some((Self { state: frame.state, binding: frame.binding.0, failure }, end))
+        let failure = if frame.failure == 0 {
+            None
+        } else {
+            Some(code_to_fail(frame.failure)?)
+        };
+        Some((
+            Self {
+                state: frame.state,
+                binding: frame.binding.0,
+                failure,
+            },
+            end,
+        ))
     }
 }
 

@@ -1,14 +1,14 @@
 //! Capability subsets over one authority, using one-shot reply holes.
 //! Discovery requires the trusted assembly authority, not just a matching mark.
-mod face;
 mod export;
+mod face;
 mod installer;
 mod organization;
 mod query;
 mod self_ops;
 
-pub use face::{CallError, Face};
 pub use export::{ExportBinding, Exporter, IdentityExport};
+pub use face::{CallError, Face};
 pub use installer::Installer;
 pub use organization::Organization;
 pub use query::{Query, TaskQuery};

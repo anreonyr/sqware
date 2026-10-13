@@ -13,14 +13,14 @@ pub use wire::OK;
 
 pub mod bond;
 pub mod claim;
-pub mod list;
 pub mod inventory;
+pub mod list;
 pub mod vocab;
 
 pub use self::bond::*;
 pub use self::claim::*;
-pub use self::list::*;
 pub use self::inventory::*;
+pub use self::list::*;
 pub use self::vocab::*;
 impl Message for Bond {
     type In = Bond;

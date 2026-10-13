@@ -3,9 +3,9 @@
 use alloc::sync::Arc;
 
 use crate::memory::allocator::statistics;
+use crate::memory::manager::mode;
 use crate::work::room::scheduler::core::prune_dead;
 use crate::work::unit::space::{RegionId, SpaceBuilder};
-use crate::memory::manager::mode;
 use crate::work::unit::team::TeamBuilder;
 use crate::work::unit::weak::{Site, TaskWeak};
 
@@ -32,7 +32,9 @@ const USER_BASE: usize = 0x4000_0000;
 
 fn shell_round() {
     let space = SpaceBuilder::user().build().expect("shell: build space");
-    space.attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize()).unwrap();
+    space
+        .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
+        .unwrap();
     let team = TeamBuilder::new(space).spawn().expect("shell: spawn team");
     let task = team.task().hold().expect("shell: hold task");
 
@@ -48,14 +50,18 @@ fn oust_round() {
     let home_space = SpaceBuilder::user()
         .build()
         .expect("oust: build home space");
-    home_space.attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize()).unwrap();
+    home_space
+        .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
+        .unwrap();
     let home = TeamBuilder::new(home_space)
         .spawn()
         .expect("oust: spawn home");
     let sire = home.task().hold().expect("oust: hold sire");
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
-    space.attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize()).unwrap();
+    space
+        .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
+        .unwrap();
     let child = TeamBuilder::new(space)
         .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
         .spawn()
@@ -69,7 +75,9 @@ fn oust_round() {
     crate::expect!(sire.oust(empty_id).is_none(), "oust: 重复放下应当答没有");
 
     let space = SpaceBuilder::user().build().expect("oust: build space");
-    space.attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize()).unwrap();
+    space
+        .attach_region(RegionId::Normal, USER_BASE, mode::upper().as_usize())
+        .unwrap();
     let child = TeamBuilder::new(space)
         .sire(TaskWeak::stored(Arc::downgrade(&sire), Site::Sire))
         .spawn()

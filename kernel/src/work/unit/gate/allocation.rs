@@ -2,8 +2,8 @@ use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
 use core::sync::atomic::{AtomicU8, Ordering};
 
-use crate::memory::manager::Map;
 use crate::lock::SpinLock;
+use crate::memory::manager::Map;
 
 const AVAILABLE: u8 = 0;
 const CLAIMED: u8 = 1;
@@ -37,23 +37,38 @@ pub(crate) struct CreationLease<'a> {
 
 impl CreationRegistry {
     pub(crate) fn new() -> Self {
-        Self { nodes: SpinLock::new(None) }
+        Self {
+            nodes: SpinLock::new(None),
+        }
     }
 
     /// Reserve every registry allocation before publishing the page-table map.
     pub(crate) fn prepare(&self) -> Result<PreparedAllocation<'_>, env::PieFail> {
-        let creation = Arc::try_new(Creation { state: AtomicU8::new(AVAILABLE) })
-            .map_err(|_| env::PieFail::OoM)?;
-        let node = Box::try_new(Node { map: Weak::new(), creation, next: None })
-            .map_err(|_| env::PieFail::OoM)?;
-        Ok(PreparedAllocation { registry: self, node: Some(node) })
+        let creation = Arc::try_new(Creation {
+            state: AtomicU8::new(AVAILABLE),
+        })
+        .map_err(|_| env::PieFail::OoM)?;
+        let node = Box::try_new(Node {
+            map: Weak::new(),
+            creation,
+            next: None,
+        })
+        .map_err(|_| env::PieFail::OoM)?;
+        Ok(PreparedAllocation {
+            registry: self,
+            node: Some(node),
+        })
     }
 
     pub(crate) fn claim(&self, map: &Arc<Map>) -> Result<CreationLease<'_>, env::PieFail> {
         let nodes = self.nodes.lock();
         let mut cursor = nodes.as_deref();
         while let Some(node) = cursor {
-            if node.map.upgrade().is_some_and(|registered| Arc::ptr_eq(&registered, map)) {
+            if node
+                .map
+                .upgrade()
+                .is_some_and(|registered| Arc::ptr_eq(&registered, map))
+            {
                 return match node.creation.state.compare_exchange(
                     AVAILABLE,
                     CLAIMED,
@@ -74,12 +89,18 @@ impl CreationRegistry {
         Err(env::PieFail::Denied)
     }
 
-    pub(crate) fn locate(&self, start: crate::memory::manager::addr::VirtAddr, size: usize) -> Option<Arc<Map>> {
+    pub(crate) fn locate(
+        &self,
+        start: crate::memory::manager::addr::VirtAddr,
+        size: usize,
+    ) -> Option<Arc<Map>> {
         let nodes = self.nodes.lock();
         let mut cursor = nodes.as_deref();
         while let Some(node) = cursor {
             if let Some(map) = node.map.upgrade() {
-                if map.initial_range() == (start, size) { return Some(map); }
+                if map.initial_range() == (start, size) {
+                    return Some(map);
+                }
             }
             cursor = node.next.as_deref();
         }
@@ -92,8 +113,13 @@ impl CreationRegistry {
             let mut cursor = nodes.as_deref();
             let mut found = None;
             while let Some(node) = cursor {
-                if node.map.upgrade().is_some_and(|registered| Arc::ptr_eq(&registered, map)) {
-                    found = Some(node.creation.clone()); break;
+                if node
+                    .map
+                    .upgrade()
+                    .is_some_and(|registered| Arc::ptr_eq(&registered, map))
+                {
+                    found = Some(node.creation.clone());
+                    break;
                 }
                 cursor = node.next.as_deref();
             }
@@ -109,7 +135,9 @@ impl CreationRegistry {
         let mut nodes = self.nodes.lock();
         let mut link = &mut *nodes;
         loop {
-            let found = link.as_ref().is_some_and(|node| Arc::ptr_eq(&node.creation, creation));
+            let found = link
+                .as_ref()
+                .is_some_and(|node| Arc::ptr_eq(&node.creation, creation));
             if found {
                 let mut removed = link.take().expect("matching creation node");
                 *link = removed.next.take();
@@ -129,7 +157,11 @@ impl PreparedAllocation<'_> {
         let mut head = self.registry.nodes.lock();
         let mut cursor = head.as_deref();
         while let Some(existing) = cursor {
-            if existing.map.upgrade().is_some_and(|registered| Arc::ptr_eq(&registered, map)) {
+            if existing
+                .map
+                .upgrade()
+                .is_some_and(|registered| Arc::ptr_eq(&registered, map))
+            {
                 return;
             }
             cursor = existing.next.as_deref();
@@ -174,7 +206,10 @@ mod tests {
         registry.prepare().unwrap().commit(&root);
         registry.prepare().unwrap().commit(&root);
 
-        assert!(matches!(registry.claim(&derived), Err(env::PieFail::Denied)));
+        assert!(matches!(
+            registry.claim(&derived),
+            Err(env::PieFail::Denied)
+        ));
         let lease = registry.claim(&root).unwrap();
         assert!(matches!(registry.claim(&root), Err(env::PieFail::Busy)));
         lease.commit();
@@ -189,7 +224,10 @@ mod tests {
         {
             let _lease = registry.claim(&root).unwrap();
         }
-        registry.claim(&root).expect("dropped lease restores availability").commit();
+        registry
+            .claim(&root)
+            .expect("dropped lease restores availability")
+            .commit();
         assert!(matches!(registry.claim(&root), Err(env::PieFail::Denied)));
     }
 }

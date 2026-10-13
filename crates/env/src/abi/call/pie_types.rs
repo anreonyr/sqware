@@ -27,10 +27,19 @@ impl HoleLimits {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnsealArgs {
-    Hole { mark: Mark, limits: HoleLimits },
-    Pole { addr: VirtAddr, size: usize, shared: bool },
+    Hole {
+        mark: Mark,
+        limits: HoleLimits,
+    },
+    Pole {
+        addr: VirtAddr,
+        size: usize,
+        shared: bool,
+    },
     Nole,
-    Tole { shared: bool },
+    Tole {
+        shared: bool,
+    },
 }
 impl UnsealArgs {
     pub fn hole(mark: Mark) -> Self {

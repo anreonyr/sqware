@@ -289,7 +289,10 @@ impl Engine {
         self.peak_frames
     }
     pub fn is_runnable(&self) -> bool {
-        !matches!(self.state, State::Idle | State::Waiting { issued: true, .. })
+        !matches!(
+            self.state,
+            State::Idle | State::Waiting { issued: true, .. }
+        )
     }
     pub fn is_idle(&self) -> bool {
         matches!(self.state, State::Idle)

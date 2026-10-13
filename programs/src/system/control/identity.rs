@@ -586,8 +586,8 @@ mod query {
     use crate::support::timing::BOOT_MS;
     use env::{TaskId, Wait};
     use ipc::session::establish;
-    use system_api::identity::Wire;
     use system_api::identity::Grant;
+    use system_api::identity::Wire;
     use system_api::operator::Fail;
     use system_client::identity::Face;
 

@@ -38,7 +38,10 @@ impl Reply {
     }
 
     pub fn source(&self) -> env::Source {
-        env::Source::Mail { pie: self.local.token(), condition: env::MailCondition::Pull }
+        env::Source::Mail {
+            pie: self.local.token(),
+            condition: env::MailCondition::Pull,
+        }
     }
 
     pub fn pull<'a>(&self, buffer: &'a mut [u8], within: Wait) -> Result<&'a [u8], ReplyError> {

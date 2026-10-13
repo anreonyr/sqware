@@ -21,8 +21,7 @@ struct Root {
 impl Root {
     fn create(id: u64, capacity: usize, lease: PieToken) -> Result<Self, Fail> {
         let size = (pipe_api::HEADER_SIZE + capacity).div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE;
-        let token = ::resource::raw::pole(size, true)
-            .map_err(|_| Fail::Full)?;
+        let token = ::resource::raw::pole(size, true).map_err(|_| Fail::Full)?;
         let (address, mapped) = match resource::raw::open(token) {
             Ok(view) => view,
             Err(_) => {

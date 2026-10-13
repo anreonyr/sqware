@@ -5,7 +5,7 @@ use env::PieToken;
 use wire::Message;
 use wire::Span as _;
 
-pub use super::interface::{EXPORT_ENTRY as ENTRY, EXPORT_BACK as BACK};
+pub use super::interface::{EXPORT_BACK as BACK, EXPORT_ENTRY as ENTRY};
 pub const OK: u8 = wire::OK;
 pub const DENIED: u8 = 1;
 pub const BAD: u8 = 2;
@@ -33,7 +33,9 @@ impl Message for Request {
     type In = (Self, bool);
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
     fn fetch(bytes: &[u8]) -> Option<Self::In> {
         let (request, end) = Self::fetch_at(bytes, 0)?;
         Some((request, end == bytes.len()))
@@ -46,21 +48,29 @@ pub struct Response {
     pub status: u8,
 }
 impl Response {
-    pub const fn accepted() -> Self { Self { status: OK } }
-    pub const fn rejected(status: u8) -> Self { Self { status } }
+    pub const fn accepted() -> Self {
+        Self { status: OK }
+    }
+    pub const fn rejected(status: u8) -> Self {
+        Self { status }
+    }
 }
 impl Message for Response {
     type In = Self;
     type Buf = [u8; Self::LEN];
     const EMPTY: Self::Buf = [0; Self::LEN];
-    fn store(&self, out: &mut [u8]) -> Option<usize> { self.store_at(out, 0) }
+    fn store(&self, out: &mut [u8]) -> Option<usize> {
+        self.store_at(out, 0)
+    }
     fn fetch(bytes: &[u8]) -> Option<Self> {
         let (response, end) = Self::fetch_at(bytes, 0)?;
         (end == bytes.len()).then_some(response)
     }
 }
 
-pub fn reply_to(request: &(Request, bool)) -> PieToken { request.0.back }
+pub fn reply_to(request: &(Request, bool)) -> PieToken {
+    request.0.back
+}
 
 #[mold::contract(request = Request, response = Response, mark = BACK, back = reply_to)]
 pub struct Call;

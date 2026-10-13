@@ -118,9 +118,15 @@ pub mod request {
     }
     impl<C: Contract> Pending<C> {
         pub fn source(&self) -> env::Source {
-            if self.sent { self.reply.source() } else { self.entry.source() }
+            if self.sent {
+                self.reply.source()
+            } else {
+                self.entry.source()
+            }
         }
-        pub fn remaining(&self) -> Wait { self.deadline.remaining() }
+        pub fn remaining(&self) -> Wait {
+            self.deadline.remaining()
+        }
 
         pub fn poll(&mut self) -> Result<Option<<C::Response as Message>::In>, Fail> {
             if self.done {
@@ -319,7 +325,9 @@ pub mod reply {
             }
         }
 
-        pub fn source(&self) -> env::Source { self.reply.source() }
+        pub fn source(&self) -> env::Source {
+            self.reply.source()
+        }
 
         pub fn poll(&self) -> Result<Option<R::In>, Fail> {
             let mut buffer = R::EMPTY;

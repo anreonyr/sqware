@@ -1,5 +1,5 @@
-use env::{Mark, Name, Permission, PieKind, TaskId};
 use env::wire::Field as _;
+use env::{Mark, Name, Permission, PieKind, TaskId};
 
 /// Maximum machine leaves plus the two boot resources under one bounded lease.
 pub const INVENTORY_MAX: usize = 64;
@@ -41,19 +41,35 @@ pub struct Inventory {
 
 impl Inventory {
     pub const fn header(count: usize) -> Option<u8> {
-        if count <= INVENTORY_MAX { Some(count as u8) } else { None }
+        if count <= INVENTORY_MAX {
+            Some(count as u8)
+        } else {
+            None
+        }
     }
 
-    pub const fn len(self) -> usize { self.count as usize }
+    pub const fn len(self) -> usize {
+        self.count as usize
+    }
 
     pub fn of(items: &[InventoryItem]) -> Option<Self> {
-        if items.len() > INVENTORY_MAX || items.iter().enumerate().any(|(at, item)| {
-            item.resource.kind() != item.kind || item.permission.is_empty()
-                || items[..at].iter().any(|prior| prior.resource == item.resource)
-        }) { return None; }
+        if items.len() > INVENTORY_MAX
+            || items.iter().enumerate().any(|(at, item)| {
+                item.resource.kind() != item.kind
+                    || item.permission.is_empty()
+                    || items[..at]
+                        .iter()
+                        .any(|prior| prior.resource == item.resource)
+            })
+        {
+            return None;
+        }
         let mut stored = [InventoryItem::EMPTY; INVENTORY_MAX];
         stored.get_mut(..items.len())?.copy_from_slice(items);
-        Some(Self { count: items.len() as u8, items: stored })
+        Some(Self {
+            count: items.len() as u8,
+            items: stored,
+        })
     }
 
     pub fn item(self, index: usize) -> Option<InventoryItem> {
@@ -61,10 +77,16 @@ impl Inventory {
     }
 
     pub const fn encoded_len_for(count: usize) -> Option<usize> {
-        if count <= INVENTORY_MAX { Some(1 + count * ITEM_LEN) } else { None }
+        if count <= INVENTORY_MAX {
+            Some(1 + count * ITEM_LEN)
+        } else {
+            None
+        }
     }
 
-    pub const fn encoded_len(self) -> usize { 1 + self.len() * ITEM_LEN }
+    pub const fn encoded_len(self) -> usize {
+        1 + self.len() * ITEM_LEN
+    }
 
     pub fn store(self, out: &mut [u8]) -> Option<usize> {
         let len = self.encoded_len();
@@ -86,21 +108,29 @@ impl Inventory {
 
     pub fn fetch(bytes: &[u8]) -> Option<Self> {
         let count = usize::from(*bytes.first()?);
-        if count > INVENTORY_MAX || bytes.len() != 1 + count * ITEM_LEN { return None; }
+        if count > INVENTORY_MAX || bytes.len() != 1 + count * ITEM_LEN {
+            return None;
+        }
         let mut items = [InventoryItem::EMPTY; INVENTORY_MAX];
         let mut at = 1;
         for item in &mut items[..count] {
             item.resource = Name::fetch(bytes.get(at..at + 16)?)?;
             at += 16;
-            let owner = usize::try_from(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?)).ok()?;
+            let owner =
+                usize::try_from(u64::from_le_bytes(bytes.get(at..at + 8)?.try_into().ok()?))
+                    .ok()?;
             item.owner = TaskId::new(owner);
             at += 8;
             item.kind = PieKind::of(*bytes.get(at)?)?;
             at += 1;
-            item.permission = Permission::from_bits(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))?;
+            item.permission =
+                Permission::from_bits(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))?;
             at += 4;
         }
-        let inventory = Self { count: count as u8, items };
+        let inventory = Self {
+            count: count as u8,
+            items,
+        };
         (Self::of(&inventory.items[..count]) == Some(inventory)).then_some(inventory)
     }
 }
