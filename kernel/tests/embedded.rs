@@ -97,7 +97,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn space_reservation_layout() {
-        kernel::health::pagetable::window_layout();
+        kernel::health::pagetable::space_reservation_layout();
     }
 
     #[cfg(debug_assertions)]

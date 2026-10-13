@@ -181,21 +181,6 @@ mod work {
             static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
             LOCK.lock().unwrap()
         }
-        pub mod space {
-            pub struct Space;
-            impl Space {
-                pub fn with_shootdown<T>(&self, run: impl FnOnce(&mut Self) -> T) -> Result<T, ()> {
-                    Ok(run(&mut Self))
-                }
-                pub fn narrow_token(
-                    &mut self,
-                    _: env::PieToken,
-                    _: crate::memory::manager::entry::PteFlags,
-                ) -> Result<(), ()> {
-                    Ok(())
-                }
-            }
-        }
         pub mod task {
             use super::gate::{AnyPie, CreationRegistry};
             use crate::lock::SpinLock;
@@ -236,9 +221,7 @@ mod work {
             }
             // Mirrors the production Task bound for its kernel-owned handles.
             unsafe impl Send for Task {}
-            pub struct Team {
-                pub space: super::space::Space,
-            }
+            pub struct Team;
             impl Team {
                 pub fn operation(&self) -> Option<()> {
                     Some(())
@@ -279,7 +262,7 @@ mod work {
 #[path = "../../src/work/unit/gate/mod.rs"]
 pub mod gate;
 
-pub use work::unit::{space, commit};
+pub use work::unit::commit;
 
 #[cfg(test)]
 mod tests;

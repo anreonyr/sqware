@@ -24,7 +24,7 @@ Team ──共享 Space 与构造/成员状态
 
 `Reservation` 持有 Tree 弱身份、区域、起点、长度和 allocator 生成的 reservation id。Map 与该预留组成 `Mapping`。Space 的 reserve/allocate/map/derive/unmap 操作负责把完整 VA 预留与 Map 生命周期协同起来，并通过 reservation id 防止过期或错误的预留释放当前区间。
 
-Task 的 `TaskMemory` 持有栈和陷阱帧的 Mapping 及 guard Reservation。显式退休通过 `Space.unmap` 完成；`TaskMemory::drop` 把尚存的 `Mapping` 交给 `Space.dispose`，由 Space 持有清理责任。`TaskIdent` 缓存陷阱帧的 `PhysAddr` 和 `KVirtAddr`，供调度和陷阱路径直接访问；这两个缓存对应同一个由 Mapping 保活的帧，不取代其所有权。Team 持有共享 Space；任务发布与 Pole 私有映射交付仍由 Team 的构造状态控制。
+Task 的 `TaskMemory` 持有栈和陷阱帧的 Mapping 及 guard Reservation。显式退休通过 `Space.unmap` 完成；`TaskMemory::drop` 把尚存的 `Mapping` 交给 `Space.dispose`，由 Space 持有清理责任。`TaskIdent` 缓存陷阱帧的 `PhysAddr`，调度和陷阱路径直接读它；同一帧的内核 `VirtAddr` 只给健康面核验该页不在用户可访问的范围内。Team 持有共享 Space；任务发布与 Pole 私有映射交付仍由 Team 的构造状态控制。
 
 ## Pole 与授权
 

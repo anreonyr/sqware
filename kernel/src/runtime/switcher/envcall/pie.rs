@@ -204,7 +204,7 @@ pub(crate) fn create_pole(
         .map_err(|_| PieFail::Denied)?;
     let creation = task.gate.creations.claim(&mapping.map)?;
     pole_checkpoint(1)?;
-    let meta = mail::pole::PoleMeta::from_mapping(&task_space, mapping, task.ident.id, shared)?;
+    let meta = mail::pole::PoleMeta::from_mapping(&task_space, mapping, task.ident.id)?;
     pole_checkpoint(2)?;
     let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
     if !shared {

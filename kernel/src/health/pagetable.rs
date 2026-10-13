@@ -185,7 +185,7 @@ pub fn kernel_layout() {
         .expect("release allocation above RAM");
 }
 
-pub fn window_layout() {
+pub fn space_reservation_layout() {
     use crate::layout::TASK_STACK_GUARD;
     use crate::memory::manager::mode;
     use crate::work::unit::space::RegionId;
@@ -193,7 +193,7 @@ pub fn window_layout() {
     const BASE: usize = 0x4000_0000;
     let edge = mode::upper().as_usize();
     let floor = BASE + 4 * PAGE_SIZE;
-    let space = SpaceBuilder::user().build().expect("window space");
+    let space = SpaceBuilder::user().build().expect("reservation space");
     space
         .advance_region(RegionId::Normal, floor)
         .expect("image boundary");

@@ -77,7 +77,6 @@ impl PoleMeta {
         space: &Arc<Space>,
         mapping: Mapping,
         owner: TaskId,
-        _shared: bool,
     ) -> Result<Arc<Self>, PieFail> {
         let (start, size) = mapping.map.initial_range();
         if size == 0

@@ -381,7 +381,7 @@ pub fn memory() {
         (fixed + PAGE_SIZE, false),
         (fixed + 2 * PAGE_SIZE, true),
     ] {
-        let map = user.team.space.tree.map_at(KVirt::wrap(page)).unwrap();
+        let map = user.team.space.tree.find(KVirt::wrap(page)).unwrap();
         user.team
             .space
             .tree
@@ -540,13 +540,12 @@ pub fn capability() {
         .mapping_at(KVirt::wrap(source), PAGE_SIZE)
         .unwrap();
     let pole =
-        pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id, true)
-            .unwrap();
+        pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id).unwrap();
     let pie: gate::Pie<gate::Pole> =
         gate::new_pie(pole.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
     user.task.gate.pies.lock().push(gate::boxed(pie).unwrap());
-    let original = user.team.space.tree.map_at(KVirt::wrap(source)).unwrap();
+    let original = user.team.space.tree.find(KVirt::wrap(source)).unwrap();
     user.task.gate.creations.claim(&original).unwrap().commit();
     pole.commit_source();
     let flags = user
@@ -839,7 +838,7 @@ pub fn transfer_relations() {
         .mapping_at(KVirt::wrap(source), PAGE_SIZE)
         .unwrap();
     let meta =
-        pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id, true).unwrap();
+        pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id).unwrap();
     let pie = gate::boxed(
         gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
     )

@@ -1,11 +1,11 @@
 mod access;
 mod allocator;
-mod outer;
+mod space;
 
 pub(crate) use allocator::RegionId;
 #[cfg(debug_assertions)]
-pub(crate) use outer::fail_cleanup_prepare;
-pub use outer::{Mapping, Reservation, Space, SpaceBuilder};
+pub(crate) use space::fail_cleanup_prepare;
+pub use space::{Mapping, Reservation, Space, SpaceBuilder};
 
 pub(crate) fn sync_instructions() -> Result<(), crate::memory::manager::MapError> {
     // SAFETY: callers have finished writing the pages before publishing executable mappings.

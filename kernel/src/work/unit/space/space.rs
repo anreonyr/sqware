@@ -220,7 +220,7 @@ impl Space {
         if size == 0 || start.offset() != 0 || !size.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::NotAligned);
         }
-        let map = self.tree.map_at(start).ok_or(MapError::NoRegion)?;
+        let map = self.tree.find(start).ok_or(MapError::NoRegion)?;
         let (map_start, map_size) = map.initial_range();
         if map_start != start || map_size != size || !map.is_live() {
             return Err(MapError::NoRegion);
@@ -377,7 +377,7 @@ impl Space {
         reservation: Reservation,
         error: MapError,
     ) -> Result<Mapping, MapError> {
-        let map = self.tree.map_at(reservation.start).filter(|map| {
+        let map = self.tree.probe(reservation.start).filter(|map| {
             let (start, size) = map.initial_range();
             start == reservation.start
                 && size == reservation.size

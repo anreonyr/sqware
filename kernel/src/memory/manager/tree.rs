@@ -390,7 +390,7 @@ impl Tree {
                 .sum::<usize>()
     }
 
-    pub fn map_at(&self, address: VirtAddr) -> Option<Arc<Map>> {
+    pub(crate) fn probe(&self, address: VirtAddr) -> Option<Arc<Map>> {
         find_map(self.state.lock().index.as_deref(), address.as_usize())
     }
     pub fn overlaps(&self, start: VirtAddr, size: usize) -> Result<bool, MapError> {

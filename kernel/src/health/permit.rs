@@ -410,7 +410,6 @@ pub fn references() {
         &caller.ident.team.space,
         mapping,
         caller.ident.id,
-        true,
     )
     .unwrap();
     page.commit_source();

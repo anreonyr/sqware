@@ -28,7 +28,7 @@ struct Region {
 /// Owns address regions and keeps retired intervals unavailable until eviction completes.
 pub(crate) struct VaAllocator {
     regions: Vec<Region>,
-    cleanups: Vec<(usize, Box<super::outer::CleanupNode>)>,
+    cleanups: Vec<(usize, Box<super::space::CleanupNode>)>,
 }
 
 impl VaAllocator {
@@ -266,7 +266,7 @@ impl VaAllocator {
             .try_reserve(1)
             .map_err(|_| MapError::OutOfMemory)?;
         let node =
-            Box::try_new(super::outer::CleanupNode::empty()).map_err(|_| MapError::OutOfMemory)?;
+            Box::try_new(super::space::CleanupNode::empty()).map_err(|_| MapError::OutOfMemory)?;
         self.cleanups.push((reservation_id, node));
         Ok(())
     }
@@ -274,7 +274,7 @@ impl VaAllocator {
     pub(crate) fn take_cleanup(
         &mut self,
         reservation_id: usize,
-    ) -> Option<Box<super::outer::CleanupNode>> {
+    ) -> Option<Box<super::space::CleanupNode>> {
         self.cleanups
             .iter()
             .position(|(id, _)| *id == reservation_id)

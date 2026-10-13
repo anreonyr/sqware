@@ -237,8 +237,7 @@ pub fn construction() {
                 .collect(),
         );
         drop(frames);
-        let meta =
-            pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id, false).unwrap();
+        let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
         let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
             meta.clone(),
             Mark::NONE,
@@ -408,7 +407,7 @@ pub fn cancellation() {
         .map(|(_, frame)| Arc::downgrade(frame))
         .collect();
     drop(frames);
-    let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id, false).unwrap();
+    let meta = pole::PoleMeta::from_mapping(&parent.space, input, caller.ident.id).unwrap();
     let root: gate::Pie<gate::Pole> = gate::new_pie::<gate::Pole>(
         meta.clone(),
         Mark::NONE,
