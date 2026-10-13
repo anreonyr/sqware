@@ -4,15 +4,16 @@
 关机审计里一块内存还在册；那道审计已按用户裁决整体删除）。
 本 crate 是**测试侧**的同一刀：
 
-* 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/memory/allocator/`
-  的 `bump.rs` / `frame.rs` / `block.rs`；
-* 平台垫片（`lock` / `machine` / `statistics` / `PAGE_SIZE` / `InitError`）把内核依赖顶掉，
+* 把内核**逐字未改**的分配器源码 `include!` 进来 —— `kernel/src/core/memory/allocator/`
+  的 `bump.rs` / `frame.rs` / `block.rs` / `hybrid.rs` / `spare.rs`；
+* 平台垫片把内核依赖顶掉：核身份 `machine::hart`、机器事实 `machine::board`、锁 `machine::sync`、
+  页大小与分配器 `core::memory`、环尺寸 `core::work::record::trace`（路径与内核同形，全是宿主版），
   **分配器自己的簿记分配落在宿主堆上**，于是泄漏检测器能直接看见"分配器有没有漏掉自己的元数据"；
 * 内核对象的生命周期不在场 ⇒ 任何失败都只能归因于分配器。
 
 > 垫片是**垫片**：内核改了 `statistics` 的**写侧**签名，这里就得跟着改（`lib.rs` 的
-> `memory::allocator::statistics`）。`include!` 进来的源码一个字都不改 —— 那是本 crate
-> 全部结论的前提。
+> `memory::allocator::statistics`，内核那份现在在 `core/memory/allocator/statistics.rs`）。
+> `include!` 进来的源码一个字都不改 —— 那是本 crate 全部结论的前提。
 
 ---
 
@@ -83,7 +84,7 @@ mockalloc 那条腿拿"一次 `Box` 往返 = 1 笔分配"当凭证、并另有�
 ## 多线程（扩展）：并发压力下的判据
 
 **支点：线程即 hart。** 内核按 hart 选 per-hart 池（`block.rs` 的 `blocks[hart_id]`），于是宿主
-shim 的 `machine::hart_id()` 改成按线程分配 id（`hart_bind` 给确定性绑定）。这一改让并发层压到
+shim 的 `machine::hart::hart_id()` 改成按线程分配 id（`machine::hart::hart_bind` 给确定性绑定）。这一改让并发层压到
 三条平时压不到的路径：**per-hart 池分家**、**跨 hart 归还**（`home != me` ⇒ `feed` 进泵，本池
 下次 `pull` 先 `suck` 抽回）、**同池并发**（线程数 > hart 数时两线程共用一池）。
 
@@ -108,7 +109,7 @@ bench Larson 2.32 Mops/s（System 100.54 ⇒ 0.02×）/ Mstress 2.42（System 16
 `bench` 的形状要交代清楚（否则读数会被当成内核性能）：宿主 `SpinLock` 是**阻塞 `Mutex`** 不是
 自旋锁、台面只有 16 MiB（池频繁借还页）、`Tally` 是一把**全局**锁 —— 三条都让宿主读数偏悲观。
 它只回答"分流在真并发下是什么量级"，**不是**内核性能结论，也不是真机多 hart 的数据（那要在
-QEMU 里由内核框架档量）。
+QEMU 里由内核内用例量）。
 
 ### 裁决一：Loom / Shuttle **现在挂不上**（不是不想挂）
 
@@ -201,7 +202,7 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
 
 ## 已知边界（本 crate 自己的，都要交代）
 
-1. **类目表不进宿主账**：内核 debug/framework 档的 `statistics::install_frame_kinds` /
+1. **类目表不进宿主账**：内核 debug 档的 `statistics::install_frame_kinds` /
    `install_block_kinds` 会分配逐帧、逐页的类目表（那套标注账）。宿主 shim 里它们是
    **空壳**（`Ok(())`，见 `lib.rs` 的 shim 注①）—— 在宿主上再实现一遍表尺寸必然与内核漂移
    （"一个事实只有一份账"）。**代价**：本 crate 的宿主用量读数**不含**那份类目表，
@@ -226,8 +227,8 @@ dhat         static HOST_ALLOCATOR: dhat::Alloc                       = dhat::Al
 
 内核是 `no_std` + `riscv64gc-unknown-none-elf`：没有 host 的 `malloc` 可拦截，sanitizer
 运行时要 std；`smartalloc` / `mockalloc` / `dhat` 都按 host ABI 工作。故它们是**宿主侧**工具。
-内核侧对应的判据是**框架档的用例**（`health/{pagetable,spare,stress}.rs`，跑在启动后、逐例
-打点），不是这里的账 —— 两边不共享代码，只共享同一批不变量。
+内核侧对应的判据是**内核内用例**（`kernel/tests/health/{pagetable,spare,stress}.rs`，debug 档下
+随启动逐例跑），不是这里的账 —— 两边不共享代码，只共享同一批不变量。
 
 ## 判据从哪来
 

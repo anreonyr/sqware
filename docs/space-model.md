@@ -18,7 +18,7 @@ Team ──共享 Space 与构造/成员状态
 
 `Frame` 用分配器提供的 `Box<UnsafeCell<[u8; PAGE_SIZE]>>` 持有一页物理内存。它的 `Arc` 是帧共享和释放的所有权依据。`BorrowedRegion` 单独表示调用者保证仍被保留的物理区间，创建它是 `unsafe` 操作；它不冒充分配器拥有的 Frame。
 
-`Tree` 持有 ASID、页表几何规则和根页表状态。它创建、查询、拆分、保护和移除 `Map`。`kernel/src/memory/manager` 不引用 `work`；任务、团队与 Pole 的组合留在工作层。`Map` 仅保存所属 `Tree` 的 `Weak`、初始 VA 范围和映射状态；状态保存仍存活的子范围、所持 Frame、借用区间与 lazy 标记。Map 自身没有 AVL 左右链、高度、最大区间或回收链字段。区间查找用的 `IndexNode` 和 shootdown 期间保留的 Map/Frame/页表页都属于 Tree 内部状态，没有 `work::unit::space::Index` 外观层。
+`Tree` 持有 ASID、页表几何规则和根页表状态。它创建、查询、拆分、保护和移除 `Map`。`kernel/src/core/memory/manager` 不引用 `work`；任务、团队与 Pole 的组合留在工作层。`Map` 仅保存所属 `Tree` 的 `Weak`、初始 VA 范围和映射状态；状态保存仍存活的子范围、所持 Frame、借用区间与 lazy 标记。Map 自身没有 AVL 左右链、高度、最大区间或回收链字段。区间查找用的 `IndexNode` 和 shootdown 期间保留的 Map/Frame/页表页都属于 Tree 内部状态，没有 `work::unit::space::Index` 外观层。
 
 `Space` 组合 `Arc<Tree>`、VA 分配器、延迟清理链、地址空间 kind 和等待生命期。清理链头直接是 `SpinLock<Option<Box<CleanupNode>>>`；没有单字段 `PendingCleanup` 包装。普通区间在构造时已接入；`attach_region` 用于配置已有边界，镜像装载后的 `advance_region` 单调抬高分配下界。内核 Space 另有 `RegionId::Resource`，范围为 `[mode.lower() + DRAM.base + DRAM.size, TRAP_STACK_BASE)`；内核 keeper 和 device 大区映射从此区域选址。Team 的 `RegionId::Kernel` 仍限于 64 MiB 的 frame-context 窗口。该分区让 256 MiB PCIe 映射不再受原 64 MiB 窗口限制，且没有恢复 `Window` 或 `Segment`。查询、物化和保护直接针对 `space.tree`。Space 仍执行用户地址范围、U 位和 supervisor 策略检查；这些访问策略不是 Tree 的薄转发。
 
@@ -72,3 +72,58 @@ ASID shootdown 总是刷新本 hart。远端 kernel shootdown 依据 `ONLINE` �
 - `git diff --check` 通过；manager 不引用工作层类型，旧 Backing、SpaceInner、空间 Window、独立 Index 门面及 with_flush/with_shootdown 路径已退出。
 
 健康检查覆盖共享 Frame 的单侧撤销与最终释放、Map 稳定身份、部分保护/撤销、大小页拆分、AVL 与硬件页表一致性、lazy/guard、失效失败保留与重试、ASID 复用身份、任务逐点失败和首次 Spawn 提交，以及 Pole 创建失败、重复 Open、关闭后重开、授权收窄/撤销和禁止重铸。相关检查比较帧、页表分配及真实授权关联，确认被测试的成功及恢复失败路径无残留。永久 shootdown 失败依约保留资源；本记录不将其列为已经释放，也不宣称设备 DMA 或 IOMMU 页表已经实现。
+
+## 当前内核组织
+
+生产顶层为 `core / machine / entry`，不保留旧顶层兼容模块：
+
+- `core/memory`：分配器、页表、映射、ASID 与失效后的资源回收。
+- `core/work`：运行实体、通信、授权、调度、等待和记录。
+- `machine`：机器信息、每核执行信息、时钟、上下文、同步和处理器停机机制。
+- `entry`：启动装配、异常与调用接入、资源交付、报告和测试接入。
+
+本仓模块写 `crate::core::…`，Rust 核心库写 `::core::…`。
+
+| 契约 | 核心或机器事实 | 接入与组合 |
+| --- | --- | --- |
+| 翻译与上下文 | `Tree::satp` 编码；`machine/switcher` 安装寄存器 | Task 选择空间与 SPP；启动、探测、恢复保留写入时机 |
+| 定时 | room 保存期限队列、选择预算；machine 编程硬件定时器 | 中断入口领取到期票据并唤醒 |
+| 初始资源 | machine 提供设备树视图；room 持有中断通信对象 | entry 创建、登记、冻结和交付能力 |
+| 记录与报告 | `core/work/record` 保存 Trace 与退出账 | `entry/report` 格式化、导出、报告与测试判决 |
+
+Trace 的环与可选 sink 使用同一次发布。OOM 不发布环，也不留下阻止重试的 sink。
+没有第二份事件队列。导出外层 `{h, when, kind}` 的 JSONL/fs 运行路径尚未独立做整机导出验收。
+
+停机顺序保持为：各核发布到达 → 屏障完成 → 报告与 Halt 记录 → 调度资源清理 →
+分配器 flush → 测试判决或系统复位。已有 hook 集合保存清理顺序，等待报告使用独立直接
+函数指针，不通过数组位置派发事件。
+
+`machine/image` 仅定义链接器边界及启动栈；共享虚拟地址窗口仍在 `machine/layout`。
+两者不全量再导出同名事实。地址类型保留在 memory。
+
+内核内用例位于 `kernel/tests/health`。白盒用例通过受控路径保持原逻辑子模块身份，
+没有为迁移测试公开生产字段；登记仍由 `kernel/tests/embedded.rs` 完成。
+Pend 与 Trace 的宿主套件通过 `#[path]` 编译生产实现，运行时必须显式指定宿主 target。
+`crates/alloc-probe` 被 workspace 排除，但直接 include 生产分配器，须从该 crate 目录
+单独验证，让其 CFLAGS 与串行测试配置生效。
+
+### 本次顶层迁移验收
+
+- workspace 生产目标 debug/release、kernel all-targets debug/release 通过。
+- kernel 的 semihosting feature debug/release 编译通过；未将此记作整机导出验证。
+- QEMU 健康检查 41 项通过；无 initrd 的 scene 哨兵失败单独记录。
+- release accept/product 场景各 1 项通过。
+- Pend 宿主 34 项通过，包含新增的只读交付与 staging 观察回归。
+- Trace 宿主默认/semihosting 各 1 项通过：首次分配失败不发布，重试后环与 sink 一致，
+  再次初始化返回 AlreadyInit。
+- resource 宿主 16 项、env ABI 宿主 13 项通过。
+- alloc-probe 的 all-targets 宿主编译、默认 6 项、plain 10 项与正式多核入口 4 项通过。
+- `core/machine` 对 entry 的直接路径引用均为 0；顶层声明由 11 个降为 3 个。
+
+workspace `--all-targets` 会把 stream 的宿主 std 测试编译到裸机目标，在迁移前即失败；
+生产 workspace 与 kernel 测试目标分别检查，不修改源码掩盖这个目标口径差异。
+
+第一批没有宣称全树一型一文件已经完成。独立类型、状态、构造器与守卫的分文件，
+scheduler/conductor 按领域词义归位，以及局部布局和诊断状态收窄，属于第二批。
+普通数据类型的双向引用不自动构成协议倒置，不能为了画 DAG 复制事实或拆断清理责任。
+字段搬迁不计作字段净减少。

@@ -1,0 +1,75 @@
+use alloc::sync::Arc;
+
+use crate::core::work::unit::task::Task;
+use env::{Permission, PieFail, PieToken};
+
+pub(crate) fn forget(task: &Arc<Task>, token: PieToken) -> Result<(), PieFail> {
+    for _ in 0..super::RETRIES {
+        if super::locate(task, token).is_none() {
+            return Err(PieFail::Denied);
+        }
+        let (tasks, nodes) = match super::cull::collect(task, token, false) {
+            Err(PieFail::Busy) => continue,
+            result => result?,
+        };
+        let result = super::with_tasks(&tasks, || {
+            let pie = super::locate(task, token).ok_or(PieFail::Denied)?;
+            if pie.permission().contains(Permission::ONLY) {
+                return Err(PieFail::Denied);
+            }
+            let parent = pie.sire().ok_or(PieFail::Denied)?;
+            let lord = pie.lord().upgrade().ok_or(PieFail::Denied)?;
+            if super::locate(&lord, parent).is_none() {
+                return Err(PieFail::Denied);
+            }
+            lord.pend
+                .heirs
+                .lock()
+                .try_reserve(nodes.len() - 1)
+                .map_err(|_| PieFail::OoM)?;
+            for (child, child_token) in nodes.iter().skip(1) {
+                let mut pies = child.pend.pies.lock();
+                let pie = pies
+                    .iter_mut()
+                    .find(|p| p.token() == *child_token)
+                    .expect("locked child");
+                pie.parent(parent, Arc::downgrade(&lord));
+                drop(pies);
+                super::insert_heir(&lord, parent, Arc::downgrade(child), *child_token);
+                super::changed(child);
+            }
+            let removed = super::cull::take(task, token).expect("locked forgotten token");
+            Ok(removed)
+        });
+        let removed = match result {
+            Err(PieFail::Busy) => {
+                core::hint::spin_loop();
+                continue;
+            }
+            result => result??,
+        };
+        if let Some(p) = removed.snapshot().mail().pole() {
+            let _ = crate::core::work::mail::pole::shut(&p, token);
+        }
+        super::notify(task.ident.id, token);
+        for (child, child_token) in nodes.iter().skip(1) {
+            super::notify(child.ident.id, *child_token);
+        }
+        return Ok(());
+    }
+    Err(PieFail::Busy)
+}
+
+pub(crate) fn same(task: &Arc<Task>, a: PieToken, b: PieToken) -> Result<bool, PieFail> {
+    let pies = task.pend.pies.lock();
+    let find = |token| {
+        pies.iter()
+            .find(|p| p.token() == token)
+            .ok_or(PieFail::Denied)
+    };
+    let (a, b) = (find(a)?.snapshot(), find(b)?.snapshot());
+    if !a.alive() || !b.alive() {
+        return Err(PieFail::Dead);
+    }
+    Ok(a.mail().same(b.mail()))
+}

@@ -85,7 +85,7 @@ harness = false
 # **永不同框**（测试目标不链 bin：`[[bin]] test = false`）。
 #
 # `default-features = false`：默认那套带 `panic-handler`，它会定义 `#[panic_handler]`，
-# 与内核自己那一个（`runtime::diagnose::halt`）直接撞。取 `semihosting` 是因为
+# 与内核自己那一个（`entry::report::halt`）直接撞。取 `semihosting` 是因为
 # `embedded-test` 的 `hosting` 模块**必须**有一个传输实现（std / semihosting 二选一）。
 embedded-test = { version = "0.7", default-features = false, features = ["semihosting"] }
 

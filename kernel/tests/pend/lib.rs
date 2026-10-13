@@ -2,6 +2,13 @@
 #![feature(allocator_api)]
 extern crate alloc;
 
+mod core {
+    pub(crate) use crate::{memory, work};
+}
+mod machine {
+    pub(crate) use crate::lock as sync;
+}
+
 mod lock {
     pub struct SpinLock<T>(std::sync::Mutex<T>);
     unsafe impl<T> Sync for SpinLock<T> {}
@@ -50,6 +57,30 @@ mod memory {
 mod work {
     pub use crate::grant;
     pub mod room {
+        pub mod scheduler {
+            pub mod core {
+                use alloc::sync::{Arc, Weak};
+                use crate::core::work::unit::task::Task;
+                use env::TaskId;
+
+                static ROSTER: std::sync::Mutex<Vec<Weak<Task>>> =
+                    std::sync::Mutex::new(Vec::new());
+
+                pub fn register(task: &Arc<Task>) {
+                    let mut roster = ROSTER.lock().unwrap();
+                    roster.retain(|known| known.strong_count() != 0);
+                    roster.push(Arc::downgrade(task));
+                }
+
+                pub fn muster(id: TaskId) -> Option<Weak<Task>> {
+                    ROSTER.lock().unwrap().iter().find_map(|known| {
+                        known.upgrade()
+                            .filter(|task| task.ident.id == id)
+                            .map(|_| known.clone())
+                    })
+                }
+            }
+        }
         pub mod messenger {
             use alloc::sync::Weak;
             use env::TaskId;
@@ -67,7 +98,7 @@ mod work {
     }
     pub mod mail {
         use alloc::sync::Arc;
-        use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use ::core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         use env::TaskId;
         pub struct OperationState {
             busy: AtomicBool,
@@ -135,7 +166,10 @@ mod work {
         impl PoleMeta {
             pub fn withdraw(&self, _: env::PieToken) {}
             pub fn release_grant(&self, _: env::PieToken) {}
-            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::work::grant::Grant>) -> Result<(), env::PieFail> {
+            pub fn stage_for(&self, team: usize) {
+                self.control.reserved.store(team, Ordering::Relaxed);
+            }
+            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::core::work::grant::Grant>) -> Result<(), env::PieFail> {
                 Ok(())
             }
         }
@@ -216,8 +250,8 @@ mod work {
                 &self,
                 permission: env::Permission,
                 token: env::PieToken,
-            ) -> Result<Arc<crate::work::grant::Grant>, env::PieFail> {
-                let grant = crate::work::grant::Grant::try_new(permission)?;
+            ) -> Result<Arc<crate::core::work::grant::Grant>, env::PieFail> {
+                let grant = crate::core::work::grant::Grant::try_new(permission)?;
                 if let Mail::Pole(meta) = self {
                     meta.register_grant(token, grant.clone())?;
                 }
@@ -258,7 +292,7 @@ mod work {
             pub fn narrow(
                 _: &PoleMeta,
                 _: env::PieToken,
-                _: crate::memory::manager::entry::PteFlags,
+                _: crate::core::memory::manager::entry::PteFlags,
             ) -> Result<(), env::PieFail> {
                 Ok(())
             }
@@ -271,10 +305,10 @@ mod work {
         }
         pub mod task {
             use crate::pend::{CreationRegistry, Pie};
-            use crate::lock::SpinLock;
+            use crate::machine::sync::SpinLock;
             use alloc::sync::{Arc, Weak};
             use alloc::vec::Vec;
-            use core::sync::atomic::{AtomicUsize, Ordering};
+            use ::core::sync::atomic::{AtomicUsize, Ordering};
             use env::{PieToken, TaskId};
             static NEXT: AtomicUsize = AtomicUsize::new(1);
             pub struct TaskIdent {
@@ -327,7 +361,7 @@ mod work {
             }
             impl Task {
                 pub fn new() -> Arc<Self> {
-                    Arc::new(Self {
+                    let task = Arc::new(Self {
                         ident: TaskIdent {
                             id: TaskId::new(NEXT.fetch_add(1, Ordering::Relaxed)),
                         },
@@ -336,7 +370,9 @@ mod work {
                             pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()),
                             creations: CreationRegistry::new() },
                         life: Arc::new(()),
-                    })
+                    });
+                    crate::core::work::room::scheduler::core::register(&task);
+                    task
                 }
                 pub fn dead(&self) -> bool {
                     matches!(
@@ -356,10 +392,10 @@ mod work {
     }
 }
 
-#[path = "../../src/work/grant.rs"]
+#[path = "../../src/core/work/grant.rs"]
 pub mod grant;
 
-#[path = "../../src/work/pend/mod.rs"]
+#[path = "../../src/core/work/pend/mod.rs"]
 pub mod pend;
 
 pub use work::unit::commit;

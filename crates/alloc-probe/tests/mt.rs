@@ -192,14 +192,14 @@ fn harness_handles_are_dropped() {
     let counters = std::sync::Mutex::new(counters);
     let start = std::sync::Barrier::new(THREADS);
     let layout = Layout::from_size_align(256, 16).expect("块级请求");
-    let harts = machine::hart_count().max(1);
+    let harts = machine::hart::hart_count().max(1);
 
     std::thread::scope(|s| {
         for t in 0..THREADS {
             let counters = &counters;
             let start = &start;
             s.spawn(move || {
-                machine::hart_bind(t % harts);
+                machine::hart::hart_bind(t % harts);
                 let alloc = block::allocator();
                 start.wait();
                 let mut held: Vec<(NonNull<u8>, Layout, dropcount::Counter)> =

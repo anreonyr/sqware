@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# 宿主测试 crate，独立于默认裸机工作区。
+[workspace]
+
 # 宿主（x86_64）专用 crate：把**内核真实的**帧/块分配器源码按 `include!` 编进来单独压测。
 #
 # 为什么单独一个 crate：内核里一次分配器失败与"某个内核对象没析构"在读数上长得一样

@@ -18,7 +18,7 @@
 #
 # **（不带 `--scene` 那一轮，`scene` 那一例必红——那是设计）**：`scene` 的判据是"这台
 # 机器真的起过一次"，而**镜像由 `--scene` 那一格给**（`-initrd`）；不带景就没有镜像，
-# `kernel/src/boot.rs` 在测试模式下**当场 panic** 指着这句话（宁可红，也不要"静默起一台没有
+# `kernel/src/entry/boot/mod.rs` 在测试模式下报告缺失镜像（宁可红，也不要"静默起一台没有
 # 程序的机器"）。故"全部用例绿"的跑法是**两轮**：
 #
 #   nu scripts/qtest.nu --package kernel            # 健康面（十四例，只在 debug 档）

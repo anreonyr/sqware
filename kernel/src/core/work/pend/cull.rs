@@ -1,0 +1,302 @@
+use alloc::sync::{Arc, Weak};
+use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
+
+use env::{PieFail, PieToken, TaskId};
+
+use super::pie::{Heir, Pie};
+use crate::core::work::unit::task::Task;
+
+pub(crate) struct Cleanup {
+    removed: Vec<Pie>,
+    tasks: Vec<TaskId>,
+}
+
+impl Cleanup {
+    pub(crate) fn finish(self) -> usize {
+        let count = self.removed.len();
+        for pie in self.removed {
+            for task in &self.tasks {
+                super::notify(*task, pie.token());
+            }
+            if let (Some(token), Some(parent)) = (pie.sire(), pie.lord().upgrade()) {
+                super::notify(parent.ident.id, token);
+            }
+            if let Some(p) = pie.snapshot().mail().pole() {
+                p.withdraw(pie.token());
+            }
+            drop(pie);
+        }
+        count
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub(super) fn collect(
+    task: &Arc<Task>,
+    token: PieToken,
+    recursive: bool,
+) -> Result<(Vec<(Arc<Task>, usize)>, Vec<(Arc<Task>, PieToken)>), PieFail> {
+    let mut tasks = Vec::new();
+    let mut nodes = Vec::new();
+    nodes.try_reserve(1).map_err(|_| PieFail::OoM)?;
+    nodes.push((task.clone(), token));
+    let mut cursor = 0;
+    while cursor < nodes.len() {
+        let (task, token) = nodes[cursor].clone();
+        let parent = {
+            let _pend = task.pend.lock();
+            super::observe(&mut tasks, &task, task.pend.version.load(Ordering::Relaxed))?;
+            let pie = super::locate(&task, token).ok_or(PieFail::Busy)?;
+            let parent = if cursor == 0 {
+                pie.lord().upgrade()
+            } else {
+                None
+            };
+            if cursor == 0 || recursive {
+                let heirs = task.pend.heirs.lock();
+                let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
+                for (_, child, child_token) in heirs[start..]
+                    .iter()
+                    .take_while(|(source, _, _)| *source == token)
+                {
+                    if let Some(child) = child.upgrade() {
+                        nodes.try_reserve(1).map_err(|_| PieFail::OoM)?;
+                        nodes.push((child, *child_token));
+                    }
+                }
+            }
+            parent
+        };
+        if let Some(parent) = parent {
+            let _pend = parent.pend.lock();
+            super::observe(
+                &mut tasks,
+                &parent,
+                parent.pend.version.load(Ordering::Relaxed),
+            )?;
+        }
+        cursor += 1;
+    }
+    tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
+    Ok((tasks, nodes))
+}
+
+fn relations_match(tasks: &[(Arc<Task>, usize)], nodes: &[(Arc<Task>, PieToken)]) -> bool {
+    for (index, (task, token)) in nodes.iter().enumerate() {
+        let Some(pie) = super::locate(task, *token) else {
+            return false;
+        };
+        if let Some(parent) = pie.sire() {
+            let Some(lord) = pie.lord().upgrade() else {
+                return false;
+            };
+            if index == 0 {
+                if !tasks.iter().any(|(holder, _)| Arc::ptr_eq(holder, &lord)) {
+                    return false;
+                }
+            } else if !nodes
+                .iter()
+                .any(|(holder, source)| *source == parent && Arc::ptr_eq(holder, &lord))
+            {
+                return false;
+            }
+            if !lord
+                .pend
+                .heirs
+                .lock()
+                .iter()
+                .any(|(source, child, child_token)| {
+                    *source == parent
+                        && *child_token == *token
+                        && child.ptr_eq(&Arc::downgrade(task))
+                })
+            {
+                return false;
+            }
+        } else if index != 0 {
+            return false;
+        }
+        let heirs = task.pend.heirs.lock();
+        let start = heirs.partition_point(|(source, _, _)| source.get() < token.get());
+        for (_, child, child_token) in heirs[start..]
+            .iter()
+            .take_while(|(source, _, _)| *source == *token)
+        {
+            if child.strong_count() != 0
+                && !nodes.iter().skip(1).any(|(holder, token)| {
+                    *token == *child_token && child.ptr_eq(&Arc::downgrade(holder))
+                })
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+pub(super) fn take(task: &Task, token: PieToken) -> Option<Pie> {
+    let pie = {
+        let mut pies = task.pend.pies.lock();
+        let at = pies.iter().position(|p| p.token() == token)?;
+        pies.remove(at)
+    };
+    pie.invalidate();
+    if let (Some(parent), Some(lord)) = (pie.sire(), pie.lord().upgrade()) {
+        super::remove_heir(&lord, parent, token);
+        super::accord::clear_heir_locked(
+            &lord,
+            parent,
+            Heir {
+                task: task.ident.id,
+                token,
+            },
+        );
+        super::changed(&lord);
+    }
+    task.pend
+        .heirs
+        .lock()
+        .retain(|(parent, _, _)| *parent != token);
+    super::changed(task);
+    Some(pie)
+}
+
+pub(super) fn cull(
+    task: &Arc<Task>,
+    token: PieToken,
+    caller: Option<&Arc<Task>>,
+    closing: bool,
+) -> Result<Cleanup, PieFail> {
+    for _ in 0..super::RETRIES {
+        if super::locate(task, token).is_none() {
+            return Err(PieFail::Denied);
+        }
+        let (mut tasks, nodes) = match collect(task, token, true) {
+            Err(PieFail::Busy) => continue,
+            result => result?,
+        };
+        if let Some(caller) = caller {
+            let _pend = caller.pend.lock();
+            super::observe(
+                &mut tasks,
+                caller,
+                caller.pend.version.load(Ordering::Relaxed),
+            )?;
+        }
+        tasks.sort_unstable_by_key(|(task, _)| task.ident.id.get());
+        let mut removed = Vec::new();
+        let mut changed = Vec::new();
+        removed.try_reserve(nodes.len()).map_err(|_| PieFail::OoM)?;
+        changed.try_reserve(tasks.len()).map_err(|_| PieFail::OoM)?;
+        let result = super::with_tasks_checked(
+            &tasks,
+            || relations_match(&tasks, &nodes),
+            || {
+                let root = super::locate(task, token).ok_or(PieFail::Denied)?;
+                if let Some(caller) = caller {
+                    let parent = root.sire().ok_or(PieFail::Denied)?;
+                    let lord = root.lord().upgrade().ok_or(PieFail::Denied)?;
+                    if !Arc::ptr_eq(&lord, caller) || super::locate(caller, parent).is_none() {
+                        return Err(PieFail::Denied);
+                    }
+                }
+                let pole = root.mail().pole();
+                let _operation = if !closing && let Some(p) = &pole {
+                    let operation = p.operation().ok_or(PieFail::Busy)?;
+                    if p.reserved() != 0 {
+                        return Err(PieFail::Busy);
+                    }
+                    Some(operation)
+                } else {
+                    None
+                };
+                for (holder, token) in nodes.iter().rev() {
+                    if let Some(pie) = take(holder, *token) {
+                        removed.push(pie);
+                    }
+                }
+                for (holder, _) in &tasks {
+                    changed.push(holder.ident.id);
+                }
+                Ok(())
+            },
+        );
+        match result {
+            Err(PieFail::Busy) => {
+                core::hint::spin_loop();
+                continue;
+            }
+            result => result??,
+        }
+        return Ok(Cleanup {
+            removed,
+            tasks: changed,
+        });
+    }
+    Err(PieFail::Busy)
+}
+
+pub(crate) fn release(task: &Arc<Task>, token: PieToken) -> Result<usize, PieFail> {
+    cull(task, token, None, false).map(|cleanup| cleanup.finish())
+}
+
+pub(crate) fn revoke(
+    caller: &Arc<Task>,
+    target: &Weak<Task>,
+    token: PieToken,
+) -> Result<usize, PieFail> {
+    let target = target.upgrade().ok_or(PieFail::Denied)?;
+    cull(&target, token, Some(caller), false).map(|cleanup| cleanup.finish())
+}
+
+pub(crate) fn doom(task: &Arc<Task>) {
+    let tokens = {
+        let _pend = task.pend.lock();
+        super::changed(task);
+        let mut tokens = Vec::new();
+        let pies = task.pend.pies.lock();
+        if tokens.try_reserve(pies.len()).is_ok() {
+            tokens.extend(pies.iter().map(|p| p.token()));
+        }
+        tokens
+    };
+    seal_owned(task);
+    for token in tokens {
+        loop {
+            match cull(task, token, None, true) {
+                Ok(cleanup) => {
+                    cleanup.finish();
+                    break;
+                }
+                Err(PieFail::Busy) => core::hint::spin_loop(),
+                Err(_) => break,
+            }
+        }
+    }
+}
+
+fn seal_owned(task: &Task) {
+    if task.ident.id.get() == 0 {
+        return;
+    }
+    let mut after = 0;
+    loop {
+        let pie = {
+            let _pend = task.pend.lock();
+            task.pend
+                .pies
+                .lock()
+                .iter()
+                .filter(|pie| pie.mail().owner() == task.ident.id)
+                .filter(|pie| pie.token().get() > after)
+                .min_by_key(|pie| pie.token().get())
+                .map(|p| p.snapshot())
+        };
+        let Some(pie) = pie else {
+            break;
+        };
+        after = pie.token().get();
+        pie.mail().seal();
+    }
+}

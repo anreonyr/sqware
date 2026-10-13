@@ -165,7 +165,7 @@ pub const SPARE_PAGES_PER_POOL: usize = 9;
 
 /// 帧级/池级差值的上界：**每池**迟滞 × 池数（池按 hart 数建，见 `block.rs::init`）。
 pub fn spare_pages_max() -> usize {
-    machine::hart_count().max(1) * SPARE_PAGES_PER_POOL
+    machine::hart::hart_count().max(1) * SPARE_PAGES_PER_POOL
 }
 
 // ── 并发计划的执行 ───────────────────────────────────────────────────────────
@@ -401,8 +401,8 @@ pub fn concurrent_churn(
             ));
             let start = &start;
             handles.push(s.spawn(move || {
-                let harts = machine::hart_count().max(1);
-                machine::hart_bind(t % harts);
+                let harts = machine::hart::hart_count().max(1);
+                machine::hart::hart_bind(t % harts);
                 start.wait(); // 同一起跑线：真并发，不是排队
                 run_plan(&plan, budget)
             }));
@@ -466,7 +466,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
 
     let (a, b) = std::thread::scope(|s| {
         let ha = s.spawn(move || -> Result<(usize, usize), Violation> {
-            machine::hart_bind(0);
+            machine::hart::hart_bind(0);
             let alloc = block::allocator();
             let heap = block::heap();
             let mut mine: Vec<(usize, usize, core::alloc::Layout, u8)> = Vec::with_capacity(blocks);
@@ -515,7 +515,7 @@ pub fn cross_hart_handoff(blocks: usize) -> Result<Handoff, Violation> {
         });
 
         let hb = s.spawn(move || -> Result<usize, Violation> {
-            machine::hart_bind(1);
+            machine::hart::hart_bind(1);
             let alloc = block::allocator();
             let heap = block::heap();
             // 先取一块**自己的**：登记 per-hart 池真的分家（这一块的归属应是池 1）。

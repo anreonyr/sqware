@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::arch::global_asm;
+use ::core::arch::global_asm;
 
 global_asm!(
     ".section .text._start",
@@ -22,8 +22,8 @@ global_asm!(
 
 #[unsafe(no_mangle)]
 extern "C" fn main(_hartid: usize, dtp: usize) -> ! {
-    match kernel::init(dtp).and_then(|_| kernel::boot::init()) {
-        Ok(()) => kernel::boot::run(),
-        Err(error) => kernel::boot::fail(error),
+    match kernel::entry::boot::init(dtp).and_then(|_| kernel::entry::boot::start()) {
+        Ok(()) => kernel::entry::boot::run(),
+        Err(error) => kernel::entry::boot::fail(error),
     }
 }

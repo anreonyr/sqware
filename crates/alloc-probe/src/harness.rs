@@ -74,7 +74,7 @@ impl Arena {
         Self { v, base, pages }
     }
 
-    /// 台面基址（喂给 `machine::configure` 当"物理内存起点"）。
+    /// 台面基址（喂给 `machine::board::configure` 当"物理内存起点"）。
     pub fn base(&self) -> usize {
         self.base
     }
@@ -113,7 +113,7 @@ pub fn init() {
     INIT.get_or_init(|| {
         let a = arena();
         let run = || {
-            machine::configure(a.base(), a.size(), HARTS);
+            machine::board::configure(a.base(), a.size(), HARTS);
             bump::init().expect("bump::init");
             // **block 必须在 frame 之前**（`block.rs` 的 `init` 文档：池的页要向 frame 借，
             // 而簿记表要覆盖 free 区；顺序反了帧链的链头就是毒化内存 —— 实测过）。

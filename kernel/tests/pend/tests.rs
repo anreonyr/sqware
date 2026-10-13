@@ -1,6 +1,6 @@
 use crate::pend::{self, Pie};
-use crate::work::mail::Mail;
-use crate::work::unit::task::Task;
+use crate::core::work::mail::Mail;
+use crate::core::work::unit::task::Task;
 use env::{Mark, Permission, PieFail, PieToken};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -43,7 +43,7 @@ static ALLOCATOR: Allocator = Allocator;
 
 fn root(task: &Arc<Task>, permission: Permission) -> PieToken {
     let pie = pend::Pie::try_new(
-        crate::work::mail::Mail::Nole(crate::work::mail::nole::NoleMeta::new(task.ident.id)),
+        crate::core::work::mail::Mail::Nole(crate::core::work::mail::nole::NoleMeta::new(task.ident.id)),
         Mark::of("pend-test"),
         permission,
         None,
@@ -53,12 +53,48 @@ fn root(task: &Arc<Task>, permission: Permission) -> PieToken {
     pend::insert(task, pie).unwrap();
     token
 }
-fn pie(meta: crate::work::mail::Mail, permission: Permission) -> Pie {
+fn pie(meta: crate::core::work::mail::Mail, permission: Permission) -> Pie {
     pend::Pie::try_new(meta, Mark::NONE, permission, None).expect("pie allocation")
 }
 fn rights() -> Permission {
     Permission::FETCH | Permission::STORE | Permission::VEST
 }
+
+#[test]
+fn availability_rechecks_delivery_without_clearing_cached_relations() {
+    let owner = Task::new();
+    let recipient = Task::new();
+    let permission = rights() | Permission::ONLY;
+    let token = root(&owner, permission);
+    let child = pend::accord(
+        &owner, token, &Arc::downgrade(&recipient), permission, Mark::NONE,
+    ).map(PieToken::mint).unwrap();
+    let snapshot = pend::locate(&owner, token).unwrap();
+    let version = owner.pend.version.load(Ordering::Relaxed);
+    assert!(snapshot.heir().is_some());
+    assert_eq!(pend::available(&snapshot), Err(env::MailFail::HandedOver));
+    assert_eq!(owner.pend.version.load(Ordering::Relaxed), version);
+
+    assert_eq!(release(&recipient, child), Ok(1));
+    assert_eq!(pend::available(&snapshot), Ok(()));
+    assert!(snapshot.heir().is_some());
+}
+
+#[test]
+fn availability_observes_staging_without_a_second_authority_record() {
+    let owner = Task::new();
+    let meta = crate::core::work::mail::PoleMeta::new(owner.ident.id);
+    let reference = pie(Mail::Pole(meta.clone()), rights());
+    let token = reference.token();
+    pend::insert(&owner, reference).unwrap();
+    let snapshot = pend::locate(&owner, token).unwrap();
+    assert_eq!(pend::available(&snapshot), Ok(()));
+    meta.stage_for(9);
+    assert_eq!(pend::available(&snapshot), Err(env::MailFail::HandedOver));
+    meta.stage_for(0);
+    assert_eq!(pend::available(&snapshot), Ok(()));
+}
+
 fn grant(task: &Arc<Task>, token: PieToken, target: &Arc<Task>) -> Result<PieToken, PieFail> {
     pend::accord(task, token, &Arc::downgrade(target), rights(), Mark::NONE).map(PieToken::mint)
 }
@@ -366,7 +402,7 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
                 let _ = grant(&a2, PieToken::mint(raw), &b2);
             });
             barrier.wait();
-            { let _commit = crate::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
+            { let _commit = crate::core::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
             pend::doom(&b);
         });
         assert!(!meta.alive());
@@ -433,9 +469,9 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let a = Task::new();
     let b = Task::new();
     let c = Task::new();
-    let meta = crate::work::mail::pole::PoleMeta::new(a.ident.id);
+    let meta = crate::core::work::mail::pole::PoleMeta::new(a.ident.id);
     let pie = pend::Pie::try_new(
-        crate::work::mail::Mail::Pole(meta.clone()),
+        crate::core::work::mail::Mail::Pole(meta.clone()),
         Mark::NONE,
         rights(),
         None,
@@ -446,7 +482,7 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let ab = grant(&a, token, &b).unwrap();
     grant(&b, ab, &c).unwrap();
     let _operation = meta.operation().unwrap();
-    { let _commit = crate::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
+    { let _commit = crate::core::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
     pend::doom(&b);
     assert!(b.pend.pies.lock().is_empty());
     assert!(c.pend.pies.lock().is_empty());
@@ -465,7 +501,7 @@ fn unrelated_version_changes_do_not_block_release_or_revoke() {
         for child in &children { grant(&b, ab, child).unwrap(); }
         let a2 = a.clone();
         let raw = unrelated.get();
-        crate::lock::before_locking(move || {
+        crate::machine::sync::before_locking(move || {
             pend::reduce(&a2, PieToken::mint(raw), Permission::FETCH).unwrap();
         });
         let result = if revoke { pend::revoke(&a, &Arc::downgrade(&b), ab) }
@@ -487,7 +523,7 @@ fn new_descendant_between_collection_and_locking_requires_recollection() {
     let b2 = b.clone();
     let c2 = c.clone();
     let raw = ab.get();
-    crate::lock::before_locking(move || { grant(&b2, PieToken::mint(raw), &c2).unwrap(); });
+    crate::machine::sync::before_locking(move || { grant(&b2, PieToken::mint(raw), &c2).unwrap(); });
     assert_eq!(pend::release(&b, ab), Ok(2));
     assert!(b.pend.pies.lock().is_empty());
     assert!(c.pend.pies.lock().is_empty());
@@ -504,7 +540,7 @@ fn reparenting_to_an_unlocked_task_requires_recollection() {
     let ab = grant(&a, za, &b).unwrap();
     let a2 = a.clone();
     let raw = za.get();
-    crate::lock::before_locking(move || { pend::forget(&a2, PieToken::mint(raw)).unwrap(); });
+    crate::machine::sync::before_locking(move || { pend::forget(&a2, PieToken::mint(raw)).unwrap(); });
     assert_eq!(pend::release(&b, ab), Ok(1));
     assert!(z.pend.heirs.lock().is_empty());
     assert!(a.pend.pies.lock().is_empty());
@@ -711,7 +747,7 @@ fn locating_and_accessing_snapshots_do_not_allocate() {
 
 #[test]
 fn erased_resources_keep_their_type_identity_across_grants() {
-    use crate::work::mail::{HoleMeta, Mail, NoleMeta, PoleMeta, ToleMeta};
+    use crate::core::work::mail::{HoleMeta, Mail, NoleMeta, PoleMeta, ToleMeta};
     let a = Task::new();
     let b = Task::new();
     let entries = [
@@ -768,7 +804,7 @@ fn granted_references_keep_independent_permissions_and_relations() {
 fn memory_snapshots_observe_permission_reduction_and_revocation() {
     let a = Task::new();
     let b = Task::new();
-    let meta = crate::work::mail::PoleMeta::new(a.ident.id);
+    let meta = crate::core::work::mail::PoleMeta::new(a.ident.id);
     let entry = pie(Mail::Pole(meta.clone()), rights());
     let token = entry.token();
     pend::insert(&a, entry).unwrap();
