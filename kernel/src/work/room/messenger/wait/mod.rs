@@ -11,7 +11,7 @@ use crate::work::room::conductor;
 use crate::work::room::scheduler::core::{current, kick};
 use crate::work::room::scheduler::trap::run;
 use crate::work::unit::life::{Life, TaskLife};
-use crate::work::unit::task::{Task, TaskState};
+use crate::work::unit::task::{Task, TaskAxis};
 
 use self::holder::{Ticket, hold, void};
 use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
@@ -110,25 +110,12 @@ fn block_with_call<E: WaitFail>(
         tid: task.ident.id.get(),
         key: key.fold() as usize,
     }));
-    let stopped = task.stopped();
-    let state = if stopped {
-        TaskState::Debarked {
-            state: crate::work::unit::task::TaskStopped::Blocked {
-                key,
-                ticket,
-                next: None,
-                wait,
-            },
-        }
-    } else {
-        TaskState::Blocked {
-            key,
-            ticket,
-            next: None,
-            wait,
-        }
+    task.state.lock().axis = TaskAxis::Waiting {
+        key,
+        ticket,
+        next: None,
+        wait,
     };
-    *task.state.lock() = state;
     let queued = {
         let mut sites = sites(key).lock();
         let queued = match sites.get_mut(&key) {
@@ -192,9 +179,9 @@ impl Iterator for Unchain {
     type Item = Arc<Task>;
 
     fn next(&mut self) -> Option<Arc<Task>> {
-        let mut task = self.cur.take()?;
-        void(Task::blocked_ticket(&task));
-        self.cur = Task::take_blocked_next(&mut task);
+        let task = self.cur.take()?;
+        void(task.wait_ticket());
+        self.cur = task.take_next();
         Some(task)
     }
 }
@@ -424,7 +411,7 @@ pub fn wake(key: WakeKey, life: &Weak<Life>) -> bool {
         knock(WakeKey::Tole { id }, life);
     }
     let Some(task) = popped else { return false };
-    void(Task::blocked_ticket(&task));
+    void(task.wait_ticket());
     rise(core::iter::once(task));
     true
 }
@@ -443,7 +430,7 @@ pub fn redeem() -> bool {
         drop(holder);
         let popped = {
             let mut sites = sites(key).lock();
-            let pick = &mut |t: &mut Arc<Task>| Task::blocked_ticket(t) == Ticket(handle);
+            let pick = &mut |t: &mut Arc<Task>| t.wait_ticket() == Ticket(handle);
             let w = sites.get_mut(&key).and_then(|site| site.remove_if(pick));
             prune(&mut sites, key);
             w
@@ -517,25 +504,12 @@ fn requeue_join(
             return Err(env::UnitFail::OoM);
         }
     }
-    let stopped = task.stopped();
-    let state = if stopped {
-        TaskState::Debarked {
-            state: crate::work::unit::task::TaskStopped::Blocked {
-                key,
-                ticket,
-                next: None,
-                wait: Some(WaitCall::Join(join)),
-            },
-        }
-    } else {
-        TaskState::Blocked {
-            key,
-            ticket,
-            next: None,
-            wait: Some(WaitCall::Join(join)),
-        }
+    task.state.lock().axis = TaskAxis::Waiting {
+        key,
+        ticket,
+        next: None,
+        wait: Some(WaitCall::Join(join)),
     };
-    *task.state.lock() = state;
     let mut table = sites(key).lock();
     let site = table.get_mut(&key).expect("join site");
     site.pend = false;
@@ -626,24 +600,12 @@ fn requeue_await(
             return Err(env::MailFail::OoM);
         }
     }
-    let state = if task.stopped() {
-        TaskState::Debarked {
-            state: crate::work::unit::task::TaskStopped::Blocked {
-                key,
-                ticket,
-                next: None,
-                wait: Some(WaitCall::Mail(wait)),
-            },
-        }
-    } else {
-        TaskState::Blocked {
-            key,
-            ticket,
-            next: None,
-            wait: Some(WaitCall::Mail(wait)),
-        }
+    task.state.lock().axis = TaskAxis::Waiting {
+        key,
+        ticket,
+        next: None,
+        wait: Some(WaitCall::Mail(wait)),
     };
-    *task.state.lock() = state;
     let mut table = sites(key).lock();
     let site = table.get_mut(&key).expect("await site");
     site.pend = false;

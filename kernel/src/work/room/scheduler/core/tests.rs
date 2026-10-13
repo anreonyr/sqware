@@ -17,7 +17,7 @@ pub fn acceptance() {
     let team = TeamBuilder::new(space).spawn().unwrap();
     let mut tasks: alloc::vec::Vec<_> = (0..4).map(|_| team.task().hold().unwrap()).collect();
     for task in &mut tasks {
-        task.as_ref().transform(TaskState::Starved { next: None });
+        task.as_ref().transform(TaskState::ready());
     }
     let victim = Scheduler::new(HartId::new(0));
     assert!(victim.push(tasks[0].clone()));
@@ -40,9 +40,11 @@ pub fn acceptance() {
     assert!(victim.steal().is_none());
     assert_eq!(victim.inner.lock().ready_ceiling(), timer::blind_ceiling());
 
-    *tasks[0].state.lock() = TaskState::Debarked {
-        state: crate::work::unit::task::TaskStopped::Starved,
-    };
+    {
+        let mut state = tasks[0].state.lock();
+        state.axis = crate::work::unit::task::TaskAxis::Ready { next: None };
+        state.paused = true;
+    }
     assert!(victim.push(tasks[3].clone()));
     assert!(Arc::ptr_eq(&victim.steal().unwrap(), &tasks[3]));
     assert!(victim.pull().is_none());
@@ -56,10 +58,10 @@ pub fn acceptance() {
     }
     for task in &mut tasks {
         assert!(team.release_held(task));
-        task.as_ref().transform(TaskState::Doomed {
-            hart: None,
-            cause: crate::work::unit::task::TaskExitCause::Slay,
-            reason: 0,
-        });
+        task.as_ref().transform(TaskState::doomed(
+            None,
+            crate::work::unit::task::TaskExitCause::Slay,
+            0,
+        ));
     }
 }

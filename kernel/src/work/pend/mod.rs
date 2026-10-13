@@ -1,4 +1,4 @@
-use crate::work::unit::task::{Task, TaskTag};
+use crate::work::unit::task::Task;
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
@@ -30,7 +30,7 @@ pub(crate) fn changed(task: &Task) {
 }
 
 pub(crate) fn live(task: &Task) -> bool {
-    !matches!(task.tag(), TaskTag::Doomed | TaskTag::Reaped)
+    !task.dead()
 }
 
 pub(super) fn with_pair<T>(a: &Task, b: &Task, run: impl FnOnce() -> T) -> T {

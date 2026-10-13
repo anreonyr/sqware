@@ -8,7 +8,7 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::space::Space;
-use crate::work::unit::task::{Task, TaskExitCause, TaskState, TaskTag};
+use crate::work::unit::task::{Task, TaskAxis, TaskExitCause, TaskState};
 
 use super::{WakeKey, wipe, wipe_space};
 
@@ -30,19 +30,19 @@ impl Husks {
 
     fn push(&mut self, task: Arc<Task>) {
         debug_assert!(
-            matches!(task.tag(), TaskTag::Reaped),
+            task.reaped(),
             "躯壳容器只收 Reaped 任务，且入壳前不得挂在链上"
         );
         match self.tail.take() {
             None => self.head = Some(task.clone()),
-            Some(mut last) => Task::set_reaped_next(&mut last, Some(task.clone())),
+            Some(last) => last.set_next(Some(task.clone())),
         }
         self.tail = Some(task);
     }
 
     fn pop(&mut self) -> Option<Arc<Task>> {
-        let mut head = self.head.take()?;
-        self.head = Task::take_reaped_next(&mut head);
+        let head = self.head.take()?;
+        self.head = head.take_next();
         if self.head.is_none() {
             self.tail = None;
         }
@@ -55,7 +55,7 @@ impl Husks {
         let mut cur = self.head.clone();
         while let Some(node) = cur {
             n += 1;
-            cur = Task::reaped_next(&node);
+            cur = node.next();
         }
         n
     }
@@ -70,31 +70,24 @@ pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
     let (cause, reason) = {
         let _commit = crate::work::unit::commit();
         let mut state = task.state.lock();
-        match &*state {
-            TaskState::Reaped { .. } => return,
-            TaskState::Doomed { cause, reason, .. } => {
-                let exit = (*cause, *reason);
-                *state = TaskState::Doomed {
-                    hart: None,
-                    cause: exit.0,
-                    reason: exit.1,
-                };
-                exit
-            }
-            _ => {
-                *state = TaskState::Doomed {
-                    hart: None,
-                    cause,
-                    reason,
-                };
-                (cause, reason)
-            }
+        if state.exit().is_some() {
+            return;
         }
+        let (cause, reason) = match &state.axis {
+            TaskAxis::Doomed { cause, reason, .. } => (*cause, *reason),
+            _ => (cause, reason),
+        };
+        state.axis = TaskAxis::Doomed {
+            hart: None,
+            cause,
+            reason,
+        };
+        (cause, reason)
     };
     hooked(&task);
     {
         let _commit = crate::work::unit::commit();
-        task.transform(TaskState::Reaped { cause, reason });
+        task.transform(TaskState::reaped(cause, reason));
     }
     super::signal(WakeKey::Task { id: task.ident.id });
     task.ident.team.life.notify();
@@ -108,11 +101,11 @@ pub fn quit() -> usize {
         let _commit = crate::work::unit::commit();
         let (task, next) = cond.swap();
         let mut state = task.state.lock();
-        let (cause, reason) = match &*state {
-            TaskState::Doomed { cause, reason, .. } => (*cause, *reason),
+        let (cause, reason) = match &state.axis {
+            TaskAxis::Doomed { cause, reason, .. } => (*cause, *reason),
             _ => (TaskExitCause::Reap, requested),
         };
-        *state = TaskState::Doomed {
+        state.axis = TaskAxis::Doomed {
             hart: None,
             cause,
             reason,
@@ -122,10 +115,10 @@ pub fn quit() -> usize {
     };
     debug_assert!(
         matches!(
-            exited.tag(),
-            TaskTag::Running | TaskTag::Debarking | TaskTag::Doomed
+            exited.state().axis,
+            TaskAxis::OnHart { .. } | TaskAxis::Doomed { .. }
         ),
-        "running 容器里不是 Running 任务"
+        "running 容器里不是在核上的任务"
     );
     let (note_va, note_len) = super::take_exit_note();
     let tid = exited.ident.id;

@@ -548,10 +548,7 @@ pub fn branch_control() {
     assert_eq!(observe.poll(), Ok(env::JoinReply::Pending));
     let space = Arc::downgrade(&later.space);
     later.release_held(&grandchild);
-    *grandchild.state.lock() = TaskState::Reaped {
-        cause: TaskExitCause::Reap,
-        reason: 17,
-    };
+    *grandchild.state.lock() = TaskState::reaped(TaskExitCause::Reap, 17);
     conductor::exit();
     assert_eq!(record.exit().unwrap().reason, 17);
     assert_eq!(observe.poll(), observe.poll());
@@ -601,10 +598,7 @@ pub fn branch_control() {
     drop(observe);
     drop(record);
     child.release_held(&member);
-    *member.state.lock() = TaskState::Reaped {
-        cause: TaskExitCause::Reap,
-        reason: 0,
-    };
+    *member.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
     conductor::exit();
     child.life.clear(main.ident.id, None);
     child.life.prune();
@@ -612,17 +606,11 @@ pub fn branch_control() {
     drop(member);
     drop(child);
     root.release_held(&peer);
-    *peer.state.lock() = TaskState::Reaped {
-        cause: TaskExitCause::Reap,
-        reason: 0,
-    };
+    *peer.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
     conductor::exit();
     drop(peer);
     root.release_held(&main);
-    *main.state.lock() = TaskState::Reaped {
-        cause: TaskExitCause::Reap,
-        reason: 0,
-    };
+    *main.state.lock() = TaskState::reaped(TaskExitCause::Reap, 0);
     conductor::exit();
     root.life.prune();
     drop(main);

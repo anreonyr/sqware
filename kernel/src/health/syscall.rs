@@ -13,7 +13,7 @@ use crate::runtime::switcher::{
 use crate::work::mail::{Mail, hole, pole};
 use crate::work::pend::{self, Need, Permission};
 use crate::work::unit::space::{RegionId, SpaceBuilder};
-use crate::work::unit::task::{Task, TaskTag};
+use crate::work::unit::task::Task;
 use crate::work::unit::team::{Team, TeamBuilder};
 
 struct Caller {
@@ -123,7 +123,7 @@ pub fn abi_and_privilege() {
         })),
         env::RoomFail::Denied.code()
     );
-    assert_eq!(user.task.tag(), TaskTag::Held);
+    assert!(user.task.held());
     let mut registry = crate::resource::Registry::default();
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
     registry.freeze().unwrap().grant(&user.task).unwrap();
@@ -718,10 +718,7 @@ pub fn resource_registration() {
         })),
         0
     );
-    assert!(matches!(
-        victim.task.tag(),
-        TaskTag::Doomed | TaskTag::Reaped
-    ));
+    assert!(victim.task.dead());
     assert_eq!(service.call(call), env::RoomFail::Dead.code());
     assert!(matches!(
         pend::accord(
@@ -861,11 +858,8 @@ pub fn transfer_relations() {
         let _operation = meta.operation().unwrap();
         {
             let _commit = crate::work::unit::commit();
-            *d.task.state.lock() = crate::work::unit::task::TaskState::Doomed {
-                hart: None,
-                cause: env::ExitCause::Slay,
-                reason: 0,
-            };
+            *d.task.state.lock() =
+                crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0);
         }
         pend::doom(&d.task);
     }
@@ -877,11 +871,8 @@ pub fn transfer_relations() {
     grant(&b.task, ab, &c.task, permission);
     {
         let _commit = crate::work::unit::commit();
-        *b.task.state.lock() = crate::work::unit::task::TaskState::Doomed {
-            hart: None,
-            cause: env::ExitCause::Slay,
-            reason: 0,
-        };
+        *b.task.state.lock() =
+            crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0);
     }
     pend::doom(&b.task);
     assert!(b.task.pend.pies.lock().is_empty());
@@ -959,10 +950,7 @@ pub fn unit_scan_and_receipts() {
         UnitFail::Busy.code()
     );
     target.release_held(&task);
-    *task.state.lock() = TaskState::Reaped {
-        cause: env::ExitCause::Reap,
-        reason: 17,
-    };
+    *task.state.lock() = TaskState::reaped(env::ExitCause::Reap, 17);
     crate::work::room::conductor::exit();
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);
     assert_eq!(caller.call(observe), env::ExitCause::Reap as isize);

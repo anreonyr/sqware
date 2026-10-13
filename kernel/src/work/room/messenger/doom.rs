@@ -4,7 +4,7 @@ use super::wait::site::{SITE_SHARDS, WakeKey, shard_at};
 use super::{prune, void};
 use crate::work::room::scheduler::core::muster;
 use crate::work::unit::life::TeamLife;
-use crate::work::unit::task::{Task, TaskExitCause, TaskState, TaskStopped, TaskTag};
+use crate::work::unit::task::{Task, TaskAxis, TaskExitCause, TaskState};
 use crate::work::unit::team::Team;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -25,60 +25,32 @@ pub(super) fn rip() {}
 
 fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
     let _commit = crate::work::unit::commit();
-    match task.tag() {
-        TaskTag::Doomed | TaskTag::Reaped => return false,
-        TaskTag::Running | TaskTag::Debarking => {
-            let hart = match &*task.state.lock() {
-                TaskState::Running { hart, .. } | TaskState::Debarking { hart, .. } => *hart,
-                _ => unreachable!(),
-            };
-            *task.state.lock() = TaskState::Doomed {
-                hart: Some(hart),
-                cause,
-                reason,
-            };
-            NUDGED.fetch_add(1, Ordering::Relaxed);
-            crate::work::room::conductor::nudge(hart);
-            return false;
-        }
-        TaskTag::Starved => {
-            assert!(crate::work::room::scheduler::core::remove_from_starved(
-                task
-            ));
-            CULL_STARVED.fetch_add(1, Ordering::Relaxed);
-        }
-        TaskTag::Blocked => {
-            let ticket = pop_waiter(task).expect("published blocked waiter");
-            void(ticket);
-            CULL_BLOCKED.fetch_add(1, Ordering::Relaxed);
-        }
-        TaskTag::Debarked => {
-            let blocked = matches!(
-                &*task.state.lock(),
-                TaskState::Debarked {
-                    state: TaskStopped::Blocked { .. }
-                }
-            );
-            if blocked {
-                let ticket = pop_waiter(task).expect("stopped blocked waiter");
-                void(ticket);
-            } else {
-                task.ident.team.release_held(task);
-            }
-        }
-        TaskTag::Held | TaskTag::Parked => {
-            assert!(task.ident.team.release_held(task));
-            CULL_HELD.fetch_add(1, Ordering::Relaxed);
-        }
+    if task.dead() {
+        return false;
+    }
+    if let Some(hart) = task.on_hart() {
+        *task.state.lock() = TaskState::doomed(Some(hart), cause, reason);
+        NUDGED.fetch_add(1, Ordering::Relaxed);
+        crate::work::room::conductor::nudge(hart);
+        return false;
+    }
+    if task.ready() && !task.stopped() {
+        assert!(crate::work::room::scheduler::core::remove_from_starved(
+            task
+        ));
+        CULL_STARVED.fetch_add(1, Ordering::Relaxed);
+    } else if task.waiting() {
+        let ticket = pop_waiter(task).expect("published blocked waiter");
+        void(ticket);
+        CULL_BLOCKED.fetch_add(1, Ordering::Relaxed);
+    } else {
+        assert!(task.ident.team.release_held(task));
+        CULL_HELD.fetch_add(1, Ordering::Relaxed);
     }
     if let Some(super::WaitCall::Mail(wait)) = task.take_wait() {
         wait.unwatch();
     }
-    *task.state.lock() = TaskState::Doomed {
-        hart: None,
-        cause,
-        reason,
-    };
+    *task.state.lock() = TaskState::doomed(None, cause, reason);
     true
 }
 fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
@@ -88,7 +60,7 @@ fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
         for (key, site) in sites.iter_mut() {
             if let Some(ticket) = site
                 .remove_if(&mut |t| Arc::ptr_eq(t, task))
-                .map(|mut node| Task::blocked_ticket(&mut node))
+                .map(|node| node.wait_ticket())
             {
                 hit = Some((*key, ticket));
                 break;
@@ -148,8 +120,8 @@ pub(crate) fn doom(task: &Arc<Task>) {
 }
 pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {
     let task = muster(tid)?.upgrade()?;
-    match &*task.state.lock() {
-        TaskState::Doomed {
+    match &task.state.lock().axis {
+        TaskAxis::Doomed {
             hart: Some(_),
             reason,
             ..

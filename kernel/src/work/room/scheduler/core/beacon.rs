@@ -26,10 +26,7 @@ pub(super) fn shutting_down() -> bool {
         None => true,
         Some(w) => match w.upgrade() {
             None => true,
-            Some(t) => matches!(
-                t.tag(),
-                crate::work::unit::task::TaskTag::Reaped | crate::work::unit::task::TaskTag::Doomed
-            ),
+            Some(t) => t.dead(),
         },
     }
 }

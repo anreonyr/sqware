@@ -81,29 +81,27 @@ fn preparation_checkpoint(_stage: usize) -> Result<(), MapError> {
 
 pub(crate) const MAX_ARGS: usize = 64;
 
-pub enum TaskState {
-    Running {
+pub struct TaskState {
+    pub(crate) axis: TaskAxis,
+    pub(crate) paused: bool,
+}
+
+pub enum TaskAxis {
+    OnHart {
         hart: crate::hart::HartId,
         ticks_left: u32,
     },
-    Blocked {
+    Ready {
+        next: Option<Arc<Task>>,
+    },
+    Waiting {
         key: WakeKey,
         ticket: Ticket,
         next: Option<Arc<Task>>,
         wait: Option<crate::work::room::messenger::WaitCall>,
     },
-    Starved {
-        next: Option<Arc<Task>>,
-    },
     Held,
     Parked,
-    Debarking {
-        hart: crate::hart::HartId,
-        ticks_left: u32,
-    },
-    Debarked {
-        state: TaskStopped,
-    },
     Doomed {
         hart: Option<crate::hart::HartId>,
         cause: TaskExitCause,
@@ -112,16 +110,7 @@ pub enum TaskState {
     Reaped {
         cause: TaskExitCause,
         reason: usize,
-    },
-}
-pub enum TaskStopped {
-    Held,
-    Starved,
-    Blocked {
-        key: WakeKey,
-        ticket: Ticket,
         next: Option<Arc<Task>>,
-        wait: Option<crate::work::room::messenger::WaitCall>,
     },
 }
 
@@ -129,53 +118,103 @@ pub use env::ExitCause as TaskExitCause;
 
 pub use env::TaskExit;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TaskTag {
-    Held,
-    Starved,
-    Running,
-    Parked,
-    Debarking,
-    Debarked,
-    Blocked,
-    Doomed,
-    Reaped,
-}
+impl TaskState {
+    pub(crate) fn held() -> TaskState {
+        TaskState {
+            axis: TaskAxis::Held,
+            paused: false,
+        }
+    }
 
-impl core::fmt::Debug for TaskState {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            TaskState::Starved { next } => write!(f, "Starved {{ next: {} }}", next.is_some()),
-            TaskState::Reaped { cause, reason } => {
-                write!(f, "Reaped {{ cause: {cause:?}, reason: {reason:#x} }}")
-            }
-            TaskState::Blocked {
-                key, ticket, next, ..
-            } => write!(
-                f,
-                "Blocked {{ key: {:?}, ticket: {:?}, next: {} }}",
-                key,
-                ticket,
-                next.is_some()
-            ),
-            other => write!(f, "{:?}", other.tag()),
+    pub(crate) fn on_hart(hart: crate::hart::HartId, ticks_left: u32) -> TaskState {
+        TaskState {
+            axis: TaskAxis::OnHart { hart, ticks_left },
+            paused: false,
+        }
+    }
+
+    pub(crate) fn ready() -> TaskState {
+        TaskState {
+            axis: TaskAxis::Ready { next: None },
+            paused: false,
+        }
+    }
+
+    pub(crate) fn doomed(
+        hart: Option<crate::hart::HartId>,
+        cause: TaskExitCause,
+        reason: usize,
+    ) -> TaskState {
+        TaskState {
+            axis: TaskAxis::Doomed {
+                hart,
+                cause,
+                reason,
+            },
+            paused: false,
+        }
+    }
+
+    pub(crate) fn reaped(cause: TaskExitCause, reason: usize) -> TaskState {
+        TaskState {
+            axis: TaskAxis::Reaped {
+                cause,
+                reason,
+                next: None,
+            },
+            paused: false,
+        }
+    }
+
+    pub(crate) fn exit(&self) -> Option<(TaskExitCause, usize)> {
+        match &self.axis {
+            TaskAxis::Reaped { cause, reason, .. } => Some((*cause, *reason)),
+            _ => None,
         }
     }
 }
 
-impl TaskState {
-    pub fn tag(&self) -> TaskTag {
+impl core::fmt::Debug for TaskAxis {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            TaskState::Held => TaskTag::Held,
-            TaskState::Starved { .. } => TaskTag::Starved,
-            TaskState::Running { .. } => TaskTag::Running,
-            TaskState::Blocked { .. } => TaskTag::Blocked,
-            TaskState::Parked => TaskTag::Parked,
-            TaskState::Debarking { .. } => TaskTag::Debarking,
-            TaskState::Debarked { .. } => TaskTag::Debarked,
-            TaskState::Doomed { .. } => TaskTag::Doomed,
-            TaskState::Reaped { .. } => TaskTag::Reaped,
+            TaskAxis::OnHart { hart, ticks_left } => write!(
+                f,
+                "OnHart {{ hart: {}, ticks_left: {ticks_left} }}",
+                hart.get()
+            ),
+            TaskAxis::Ready { next } => write!(f, "Ready {{ next: {} }}", next.is_some()),
+            TaskAxis::Waiting {
+                key, ticket, next, ..
+            } => write!(
+                f,
+                "Waiting {{ key: {key:?}, ticket: {ticket:?}, next: {} }}",
+                next.is_some()
+            ),
+            TaskAxis::Held => write!(f, "Held"),
+            TaskAxis::Parked => write!(f, "Parked"),
+            TaskAxis::Doomed {
+                hart,
+                cause,
+                reason,
+            } => write!(
+                f,
+                "Doomed {{ hart: {}, cause: {cause:?}, reason: {reason:#x} }}",
+                hart.map_or(0, crate::hart::HartId::get)
+            ),
+            TaskAxis::Reaped { cause, reason, .. } => {
+                write!(f, "Reaped {{ cause: {cause:?}, reason: {reason:#x} }}")
+            }
         }
+    }
+}
+
+impl core::fmt::Debug for TaskState {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{:?}", self.axis)?;
+        if self.paused {
+            write!(f, " (paused)")?;
+        }
+        Ok(())
     }
 }
 
@@ -183,7 +222,6 @@ pub struct Task {
     pub(crate) ident: Arc<TaskIdent>,
     pub(crate) life: Arc<Life>,
     pub(crate) state: Arc<SpinLock<TaskState>>,
-    reap_next: SpinLock<Option<Arc<Task>>>,
     pub(crate) pend: Pend,
     pub(crate) heir: SpinLock<Vec<Arc<Team>>>,
 }
@@ -362,7 +400,6 @@ impl PreparedTask {
                     ident: self.ident.clone(),
                     life: self.life.clone(),
                     state: self.state.clone(),
-                    reap_next: SpinLock::new(None),
                     pend: Pend::new(),
                     heir: SpinLock::new(Vec::new()),
                 });
@@ -390,23 +427,21 @@ impl PreparedTask {
 impl Task {
     pub(crate) fn transform(&self, next: TaskState) {
         let mut state = self.state.lock();
-        let legal = match (&*state, &next) {
-            (TaskState::Held, TaskState::Starved { .. })
-            | (TaskState::Starved { .. }, TaskState::Running { .. })
-            | (TaskState::Running { .. }, TaskState::Starved { .. })
-            | (TaskState::Doomed { .. }, TaskState::Reaped { .. }) => true,
-            (old, TaskState::Doomed { .. }) => {
-                !matches!(old, TaskState::Doomed { .. } | TaskState::Reaped { .. })
+        let legal = match (&state.axis, &next.axis) {
+            (TaskAxis::Held, TaskAxis::Ready { .. })
+            | (TaskAxis::Ready { .. }, TaskAxis::OnHart { .. })
+            | (TaskAxis::OnHart { .. }, TaskAxis::Ready { .. })
+            | (TaskAxis::Doomed { .. }, TaskAxis::Reaped { .. }) => true,
+            (old, TaskAxis::Doomed { .. }) => {
+                !matches!(old, TaskAxis::Doomed { .. } | TaskAxis::Reaped { .. })
             }
             _ => false,
         };
         assert!(legal, "illegal task state transition");
-        if matches!(&next, TaskState::Reaped { .. }) {
-            debug_assert!(self.reap_next.lock().is_none(), "退出前仍挂在回收链上");
-        }
-        let unlinked = match &next {
-            TaskState::Starved { next } => next.is_none(),
-            TaskState::Blocked { next, .. } => next.is_none(),
+        let unlinked = match &next.axis {
+            TaskAxis::Ready { next }
+            | TaskAxis::Waiting { next, .. }
+            | TaskAxis::Reaped { next, .. } => next.is_none(),
             _ => true,
         };
         debug_assert!(unlinked, "transform: 入链载荷非空（有人没先摘链）");
@@ -417,230 +452,179 @@ impl Task {
         self.state.lock()
     }
 
-    pub(crate) fn starved_next(t: &Arc<Self>) -> Option<Arc<Task>> {
-        match &*t.state.lock() {
-            TaskState::Starved { next } => next.clone(),
-            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
-        }
+    pub fn held(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Held)
     }
 
-    pub(crate) fn set_starved_next(t: &Arc<Self>, value: Option<Arc<Task>>) {
-        match &mut *t.state.lock() {
-            TaskState::Starved { next } => *next = value,
-            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
-        }
+    pub(crate) fn parked(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Parked)
     }
 
-    pub(crate) fn take_starved_next(t: &Arc<Self>) -> Option<Arc<Task>> {
-        match &mut *t.state.lock() {
-            TaskState::Starved { next } => next.take(),
-            other => unreachable!("就绪链只穿 Starved 任务，实为 {:?}", other.tag()),
-        }
+    pub fn dead(&self) -> bool {
+        matches!(
+            self.state.lock().axis,
+            TaskAxis::Doomed { .. } | TaskAxis::Reaped { .. }
+        )
     }
 
-    #[cfg(debug_assertions)]
-    pub(crate) fn reaped_next(t: &Arc<Self>) -> Option<Arc<Task>> {
-        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
-        t.reap_next.lock().as_ref().cloned()
+    pub(crate) fn doomed(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Doomed { .. })
     }
 
-    pub(crate) fn set_reaped_next(t: &mut Arc<Self>, value: Option<Arc<Task>>) {
-        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
-        *t.reap_next.lock() = value;
+    pub(crate) fn reaped(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Reaped { .. })
     }
 
-    pub(crate) fn take_reaped_next(t: &mut Arc<Self>) -> Option<Arc<Task>> {
-        debug_assert!(matches!(&*t.state.lock(), TaskState::Reaped { .. }));
-        t.reap_next.lock().take()
+    pub(crate) fn stopped(&self) -> bool {
+        self.state.lock().paused
     }
 
-    pub(crate) fn blocked_next(t: &Arc<Self>) -> Option<Arc<Task>> {
-        match &*t.state.lock() {
-            TaskState::Blocked { next, .. }
-            | TaskState::Debarked {
-                state: TaskStopped::Blocked { next, .. },
-            } => next.clone(),
-            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
-        }
-    }
-
-    pub(crate) fn set_blocked_next(t: &mut Arc<Self>, value: Option<Arc<Task>>) {
-        match &mut *t.state.lock() {
-            TaskState::Blocked { next, .. }
-            | TaskState::Debarked {
-                state: TaskStopped::Blocked { next, .. },
-            } => *next = value,
-            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
-        }
-    }
-
-    pub(crate) fn take_blocked_next(t: &mut Arc<Self>) -> Option<Arc<Task>> {
-        match &mut *t.state.lock() {
-            TaskState::Blocked { next, .. }
-            | TaskState::Debarked {
-                state: TaskStopped::Blocked { next, .. },
-            } => next.take(),
-            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
-        }
-    }
-
-    pub(crate) fn blocked_ticket(t: &Arc<Self>) -> Ticket {
-        match &*t.state.lock() {
-            TaskState::Blocked { ticket, .. }
-            | TaskState::Debarked {
-                state: TaskStopped::Blocked { ticket, .. },
-            } => *ticket,
-            other => unreachable!("等待链只穿 Blocked 任务，实为 {:?}", other.tag()),
-        }
-    }
-
-    pub(crate) fn take_wait(&self) -> Option<crate::work::room::messenger::WaitCall> {
-        match &mut *self.state.lock() {
-            TaskState::Blocked { wait, .. }
-            | TaskState::Debarked {
-                state: TaskStopped::Blocked { wait, .. },
-            } => wait.take(),
+    pub(crate) fn on_hart(&self) -> Option<crate::hart::HartId> {
+        match self.state.lock().axis {
+            TaskAxis::OnHart { hart, .. } => Some(hart),
             _ => None,
         }
     }
 
-    pub fn tag(&self) -> TaskTag {
-        self.state.lock().tag()
+    pub(crate) fn ready(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Ready { .. })
+    }
+
+    pub(crate) fn waiting(&self) -> bool {
+        matches!(self.state.lock().axis, TaskAxis::Waiting { .. })
+    }
+
+    fn link(state: &mut TaskState) -> &mut Option<Arc<Task>> {
+        match &mut state.axis {
+            TaskAxis::Ready { next }
+            | TaskAxis::Waiting { next, .. }
+            | TaskAxis::Reaped { next, .. } => next,
+            other => unreachable!("链只穿就绪/等待/躯壳任务，实为 {other:?}"),
+        }
+    }
+
+    pub(crate) fn next(&self) -> Option<Arc<Task>> {
+        Self::link(&mut self.state.lock()).clone()
+    }
+
+    pub(crate) fn set_next(&self, value: Option<Arc<Task>>) {
+        *Self::link(&mut self.state.lock()) = value;
+    }
+
+    pub(crate) fn take_next(&self) -> Option<Arc<Task>> {
+        Self::link(&mut self.state.lock()).take()
+    }
+
+    pub(crate) fn wait_ticket(&self) -> Ticket {
+        match &self.state.lock().axis {
+            TaskAxis::Waiting { ticket, .. } => *ticket,
+            other => unreachable!("等待链只穿 Waiting 任务，实为 {other:?}"),
+        }
+    }
+
+    pub(crate) fn take_wait(&self) -> Option<crate::work::room::messenger::WaitCall> {
+        match &mut self.state.lock().axis {
+            TaskAxis::Waiting { wait, .. } => wait.take(),
+            _ => None,
+        }
     }
 
     pub(crate) fn dec_ticks_left(&self) {
         let mut state = self.state.lock();
-        match &*state {
-            TaskState::Running { ticks_left, .. } | TaskState::Debarking { ticks_left, .. } => {
-                debug_assert!(*ticks_left >= 1, "Running 预算恒 ≥ 1");
-                let remaining = *ticks_left - 1;
-                match &mut *state {
-                    TaskState::Running { ticks_left, .. }
-                    | TaskState::Debarking { ticks_left, .. } => *ticks_left = remaining,
-                    _ => unreachable!(),
-                };
-            }
-            _ => unreachable!("dec_ticks_left 只对 Running 任务调用"),
-        }
+        let TaskAxis::OnHart { ticks_left, .. } = &mut state.axis else {
+            unreachable!("dec_ticks_left 只对在核上的任务调用")
+        };
+        debug_assert!(*ticks_left >= 1, "OnHart 预算恒 ≥ 1");
+        *ticks_left -= 1;
     }
 
     pub(crate) fn release(task: &Arc<Task>) -> Result<(), UnitFail> {
         let _commit = super::commit();
-        if task.tag() != TaskTag::Held || !task.ident.team.release_held(task) {
+        if !task.held() || !task.ident.team.release_held(task) {
             return Err(UnitFail::Denied);
         }
-        *task.state.lock() = TaskState::Starved { next: None };
+        *task.state.lock() = TaskState::ready();
         scheduler::core::launch(task.clone());
         Ok(())
     }
+
     pub(crate) fn debark(task: &Arc<Task>) -> Result<(), UnitFail> {
+        enum Step {
+            Done,
+            LeaveReady,
+            Nudge(crate::hart::HartId),
+        }
         let _commit = super::commit();
-        match task.tag() {
-            TaskTag::Held => {
-                *task.state.lock() = TaskState::Debarked {
-                    state: TaskStopped::Held,
+        let step = {
+            let mut state = task.state.lock();
+            match &state.axis {
+                TaskAxis::Doomed { .. } | TaskAxis::Reaped { .. } => {
+                    return Err(UnitFail::Denied);
+                }
+                TaskAxis::OnHart { .. } if state.paused => return Err(UnitFail::Busy),
+                _ if state.paused => return Ok(()),
+                TaskAxis::OnHart { hart, .. } => {
+                    let hart = *hart;
+                    state.paused = true;
+                    Step::Nudge(hart)
+                }
+                TaskAxis::Ready { .. } => Step::LeaveReady,
+                TaskAxis::Parked => {
+                    state.paused = true;
+                    state.axis = TaskAxis::Ready { next: None };
+                    Step::Done
+                }
+                TaskAxis::Held | TaskAxis::Waiting { .. } => {
+                    state.paused = true;
+                    Step::Done
                 }
             }
-            TaskTag::Starved => {
+        };
+        match step {
+            Step::Done => Ok(()),
+            Step::LeaveReady => {
                 if !scheduler::core::remove_from_starved(task) {
                     return Err(UnitFail::Busy);
                 }
-                *task.state.lock() = TaskState::Debarked {
-                    state: TaskStopped::Starved,
-                };
+                task.state.lock().paused = true;
                 task.ident.team.park(task.clone());
+                Ok(())
             }
-            TaskTag::Parked => {
-                *task.state.lock() = TaskState::Debarked {
-                    state: TaskStopped::Starved,
-                }
-            }
-            TaskTag::Blocked => {
-                let mut state = task.state.lock();
-                let old = core::mem::replace(&mut *state, TaskState::Parked);
-                let TaskState::Blocked {
-                    key,
-                    ticket,
-                    next,
-                    wait,
-                } = old
-                else {
-                    unreachable!()
-                };
-                *state = TaskState::Debarked {
-                    state: TaskStopped::Blocked {
-                        key,
-                        ticket,
-                        next,
-                        wait,
-                    },
-                };
-            }
-            TaskTag::Running => {
-                let mut state = task.state.lock();
-                let TaskState::Running { hart, ticks_left } = &*state else {
-                    unreachable!()
-                };
-                let hart = *hart;
-                let ticks_left = *ticks_left;
-                *state = TaskState::Debarking { hart, ticks_left };
-                drop(state);
+            Step::Nudge(hart) => {
                 crate::work::room::conductor::nudge(hart);
-                return Err(UnitFail::Busy);
+                Err(UnitFail::Busy)
             }
-            TaskTag::Debarking => return Err(UnitFail::Busy),
-            TaskTag::Debarked => {}
-            _ => return Err(UnitFail::Denied),
         }
-        Ok(())
     }
+
     pub(crate) fn embark(task: &Arc<Task>) -> Result<(), UnitFail> {
         let _commit = super::commit();
-        if task.tag() == TaskTag::Held {
+        if task.held() {
             return Self::release(task);
         }
-        let mut state = task.state.lock();
-        let held = match &*state {
-            TaskState::Debarked {
-                state: TaskStopped::Held,
-            } => true,
-            TaskState::Debarked {
-                state: TaskStopped::Starved,
-            } => false,
-            TaskState::Debarked {
-                state: TaskStopped::Blocked { .. },
-            } => {
-                let old = core::mem::replace(&mut *state, TaskState::Parked);
-                let TaskState::Debarked {
-                    state:
-                        TaskStopped::Blocked {
-                            key,
-                            ticket,
-                            next,
-                            wait,
-                        },
-                } = old
-                else {
-                    unreachable!()
-                };
-                *state = TaskState::Blocked {
-                    key,
-                    ticket,
-                    next,
-                    wait,
-                };
-                return Ok(());
+        let held = {
+            let mut state = task.state.lock();
+            if !state.paused {
+                return Err(UnitFail::Busy);
             }
-            TaskState::Debarking { .. } => return Err(UnitFail::Busy),
-            TaskState::Doomed { .. } | TaskState::Reaped { .. } => return Err(UnitFail::Denied),
-            _ => return Err(UnitFail::Busy),
+            match &state.axis {
+                TaskAxis::Doomed { .. } | TaskAxis::Reaped { .. } => {
+                    return Err(UnitFail::Denied);
+                }
+                TaskAxis::Waiting { .. } => {
+                    state.paused = false;
+                    return Ok(());
+                }
+                TaskAxis::Held => true,
+                TaskAxis::Ready { .. } => false,
+                TaskAxis::OnHart { .. } | TaskAxis::Parked => return Err(UnitFail::Busy),
+            }
         };
-        *state = if held {
-            TaskState::Held
+        *task.state.lock() = if held {
+            TaskState::held()
         } else {
-            TaskState::Starved { next: None }
+            TaskState::ready()
         };
-        drop(state);
         if held {
             Self::release(task)
         } else {
@@ -649,40 +633,28 @@ impl Task {
             Ok(())
         }
     }
-    pub(crate) fn stopped(&self) -> bool {
-        matches!(
-            &*self.state.lock(),
-            TaskState::Debarking { .. } | TaskState::Debarked { .. }
-        )
-    }
+
     pub(crate) fn park(task: Arc<Task>) {
         let team = task.ident.team.clone();
-        let mut state = task.state.lock();
-        *state = if matches!(
-            &*state,
-            TaskState::Debarking { .. } | TaskState::Debarked { .. }
-        ) {
-            TaskState::Debarked {
-                state: TaskStopped::Starved,
-            }
-        } else {
-            TaskState::Parked
-        };
-        drop(state);
+        {
+            let mut state = task.state.lock();
+            let paused = state.paused;
+            state.axis = if paused {
+                TaskAxis::Ready { next: None }
+            } else {
+                TaskAxis::Parked
+            };
+        }
         team.park(task);
     }
+
     pub(crate) fn rise(task: &Arc<Task>) -> bool {
-        let mut state = task.state.lock();
-        let stopped = matches!(&*state, TaskState::Debarked { .. });
-        *state = if stopped {
-            TaskState::Debarked {
-                state: TaskStopped::Starved,
-            }
-        } else {
-            TaskState::Starved { next: None }
+        let paused = {
+            let mut state = task.state.lock();
+            state.axis = TaskAxis::Ready { next: None };
+            state.paused
         };
-        drop(state);
-        if stopped {
+        if paused {
             task.ident.team.park(task.clone());
             false
         } else {
@@ -691,7 +663,7 @@ impl Task {
     }
 
     fn count_vanished(&self) {
-        if self.tag() != TaskTag::Reaped {
+        if !self.reaped() {
             crate::work::room::conductor::exit();
         }
     }
@@ -701,7 +673,7 @@ impl Task {
             self.heir.lock().try_reserve(1).map_err(|_| ())?;
         }
         let _commit = super::commit();
-        if matches!(self.tag(), TaskTag::Doomed | TaskTag::Reaped) {
+        if self.dead() {
             return Err(());
         }
         let mut g = self.heir.lock();
@@ -969,7 +941,7 @@ impl TaskBuilder {
         preparation_checkpoint(3)?;
         let life = Life::try_new().map_err(|_| MapError::OutOfMemory)?;
         preparation_checkpoint(4)?;
-        let state = Arc::try_new(SpinLock::new_level(Level::UnitState, TaskState::Held))
+        let state = Arc::try_new(SpinLock::new_level(Level::UnitState, TaskState::held()))
             .map_err(|_| MapError::OutOfMemory)?;
         let slot: Arc<MaybeUninit<Task>> = unsafe {
             let slot = crate::tag!(Task, Arc::<Task, _>::try_new_uninit_in(alloc))

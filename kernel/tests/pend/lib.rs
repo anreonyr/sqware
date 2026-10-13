@@ -280,16 +280,26 @@ mod work {
             pub struct TaskIdent {
                 pub id: TaskId,
             }
-            #[derive(Clone, Copy)]
-            pub enum TaskTag {
-                Held,
-                Doomed,
-                Reaped,
+            pub struct TaskState {
+                pub axis: TaskAxis,
+                pub paused: bool,
             }
-            pub enum TaskState {
+            pub enum TaskAxis {
+                OnHart { hart: usize, ticks_left: u32 },
+                Ready { next: Option<Arc<Task>> },
+                Waiting { key: usize, ticket: usize, next: Option<Arc<Task>> },
                 Held,
+                Parked,
                 Doomed { hart: Option<usize>, cause: env::ExitCause, reason: usize },
-                Reaped,
+                Reaped { cause: env::ExitCause, reason: usize, next: Option<Arc<Task>> },
+            }
+            impl TaskState {
+                pub fn held() -> TaskState {
+                    TaskState { axis: TaskAxis::Held, paused: false }
+                }
+                pub fn doomed(hart: Option<usize>, cause: env::ExitCause, reason: usize) -> TaskState {
+                    TaskState { axis: TaskAxis::Doomed { hart, cause, reason }, paused: false }
+                }
             }
             pub struct Pend {
                 serial: SpinLock<()>,
@@ -320,19 +330,18 @@ mod work {
                         ident: TaskIdent {
                             id: TaskId::new(NEXT.fetch_add(1, Ordering::Relaxed)),
                         },
-                        state: SpinLock::new(TaskState::Held),
+                        state: SpinLock::new(TaskState::held()),
                         pend: Pend { serial: SpinLock::new(()), version: AtomicUsize::new(0),
                             pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()),
                             creations: CreationRegistry::new() },
                         life: Arc::new(()),
                     })
                 }
-                pub fn tag(&self) -> TaskTag {
-                    match &*self.state.lock() {
-                        TaskState::Held => TaskTag::Held,
-                        TaskState::Doomed { .. } => TaskTag::Doomed,
-                        TaskState::Reaped => TaskTag::Reaped,
-                    }
+                pub fn dead(&self) -> bool {
+                    matches!(
+                        self.state.lock().axis,
+                        TaskAxis::Doomed { .. } | TaskAxis::Reaped { .. }
+                    )
                 }
                 pub fn life(&self) -> Weak<()> {
                     Arc::downgrade(&self.life)

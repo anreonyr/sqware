@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::life::{Life, TeamLife};
-use super::task::{Task, TaskBuilder, TaskExit, TaskState, TaskTag, TaskWeak};
+use super::task::{Task, TaskAxis, TaskBuilder, TaskExit, TaskState, TaskWeak};
 use crate::lock::spin::SpinLockGuard;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
@@ -43,14 +43,12 @@ pub(crate) struct Member {
 }
 impl Member {
     pub fn exit(&self) -> Option<TaskExit> {
-        match &*self.state.lock() {
-            TaskState::Reaped { cause, reason } => Some(TaskExit {
-                task: self.id,
-                cause: *cause,
-                reason: *reason,
-            }),
-            _ => None,
-        }
+        let (cause, reason) = self.state.lock().exit()?;
+        Some(TaskExit {
+            task: self.id,
+            cause,
+            reason,
+        })
     }
     pub fn pending(&self, owner: TaskId) -> bool {
         self.receipts.lock().iter().any(|r| r.owner == owner)
@@ -177,11 +175,9 @@ impl Team {
         let mut running = false;
         self.life.visit(&mut |node| {
             for member in node.tasks.lock().iter() {
-                let hart = match &*member.state.lock() {
-                    TaskState::Running { hart, .. } | TaskState::Debarking { hart, .. } => {
-                        Some(*hart)
-                    }
-                    TaskState::Doomed { hart, .. } => *hart,
+                let hart = match &member.state.lock().axis {
+                    TaskAxis::OnHart { hart, .. } => Some(*hart),
+                    TaskAxis::Doomed { hart, .. } => *hart,
                     _ => None,
                 };
                 if let Some(hart) = hart {
@@ -230,8 +226,8 @@ impl Team {
                 let Some(task) = member.task.upgrade() else {
                     continue;
                 };
-                if task.tag() == TaskTag::Parked {
-                    *task.state.lock() = TaskState::Starved { next: None };
+                if task.parked() {
+                    *task.state.lock() = TaskState::ready();
                     task.ident.team.release_held(&task);
                     crate::work::room::scheduler::core::launch(task);
                 }
@@ -446,7 +442,7 @@ impl TeamBuilder {
                         .lock()
                         .retain(|node| !Arc::ptr_eq(node, &team.life));
                 }
-                return Err(if matches!(sire.tag(), TaskTag::Doomed | TaskTag::Reaped) {
+                return Err(if sire.dead() {
                     crate::memory::manager::MapError::NoRegion
                 } else {
                     crate::memory::manager::MapError::OutOfMemory

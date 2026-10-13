@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::manager::asid::Asid;
 use crate::work::unit::life::Life;
-use crate::work::unit::task::{Task, TaskState};
+use crate::work::unit::task::{Task, TaskAxis};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
@@ -179,25 +179,19 @@ impl Site {
 
     pub(super) fn push_back(&mut self, task: Arc<Task>) {
         debug_assert!(
-            matches!(
-                &*task.state(),
-                TaskState::Blocked { next: None, .. }
-                    | TaskState::Debarked {
-                        state: crate::work::unit::task::TaskStopped::Blocked { next: None, .. }
-                    }
-            ),
+            matches!(&task.state().axis, TaskAxis::Waiting { next: None, .. }),
             "站点只收 Blocked 任务，且入链前不得挂在链上"
         );
         match self.tail.take() {
             None => self.head = Some(task.clone()),
-            Some(mut last) => Task::set_blocked_next(&mut last, Some(task.clone())),
+            Some(last) => last.set_next(Some(task.clone())),
         }
         self.tail = Some(task);
     }
 
     pub(super) fn pop_front(&mut self) -> Option<Arc<Task>> {
-        let mut head = self.head.take()?;
-        self.head = Task::take_blocked_next(&mut head);
+        let head = self.head.take()?;
+        self.head = head.take_next();
         if self.head.is_none() {
             self.tail = None;
         }
@@ -212,10 +206,10 @@ impl Site {
         let mut cur = self.head.clone();
         while let Some(mut node) = cur {
             if hit(&mut node) {
-                let next = Task::take_blocked_next(&mut node);
+                let next = node.take_next();
                 let was_tail = next.is_none();
                 match &mut prev {
-                    Some(p) => Task::set_blocked_next(p, next),
+                    Some(p) => p.set_next(next),
                     None => self.head = next,
                 }
                 if was_tail {
@@ -224,7 +218,7 @@ impl Site {
                 return Some(node);
             }
             prev = Some(node.clone());
-            cur = Task::blocked_next(&node);
+            cur = node.next();
         }
         None
     }

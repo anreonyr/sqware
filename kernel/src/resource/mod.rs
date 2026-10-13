@@ -1,5 +1,5 @@
 use crate::work::pend::{self, Pie};
-use crate::work::unit::task::{Task, TaskTag};
+use crate::work::unit::task::Task;
 use alloc::vec::Vec;
 use core::fmt;
 use env::wire::Field;
@@ -82,7 +82,7 @@ impl Frozen {
     pub(crate) fn grant(self, target: &Task) -> Result<Vec<Entry>, GrantError> {
         let closed = target.pend.lock();
         let commit = crate::work::unit::commit();
-        if target.tag() != TaskTag::Held || self.entries.iter().any(|(n, p)| !valid(*n, p)) {
+        if !target.held() || self.entries.iter().any(|(n, p)| !valid(*n, p)) {
             return Err(Failure {
                 reason: PieFail::Denied,
                 value: self,

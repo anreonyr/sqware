@@ -104,10 +104,8 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             let Some(parent) = muster(sire).and_then(|w| w.upgrade()) else {
                 return Outcome::fail(frame, UnitFail::Denied);
             };
-            if matches!(
-                parent.tag(),
-                crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped
-            ) || parent.ident.team.id != ident.team.id && me.clan(parent.ident.team.id).is_none()
+            if parent.dead()
+                || parent.ident.team.id != ident.team.id && me.clan(parent.ident.team.id).is_none()
             {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
