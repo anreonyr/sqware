@@ -41,14 +41,14 @@ pub enum MemoryCall {
     Deallocate { addr: VirtAddr, size: usize },
     /// 安装页映射；team=0 是当前域，非零必须是调用者的 Constructing 子域。
     /// at=0 自动选址；size/offset 按页对齐；flags 是 R/W/X 位 1/2/3。
-    /// backing=NONE 创建 R/RW lazy-zero；Pole 提供受授权上限约束的物理页。
+    /// pole=NONE 创建 R/RW lazy-zero；Pole 提供受授权上限约束的物理页。
     /// 共享程序页无写授权；ONLY 根页在首次 Spawn 时原子消费。
     #[ret(VirtAddr)]
     Mmap {
         team: TeamId,
         at: VirtAddr,
         size: usize,
-        backing: PieToken,
+        pole: PieToken,
         offset: usize,
         flags: u64,
     },

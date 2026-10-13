@@ -1,3 +1,5 @@
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use riscv::register::{satp, sie, stvec};
 
 use crate::hart::HartId;
@@ -6,8 +8,8 @@ use crate::layout::{
 };
 use crate::lock::OnceLock;
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::MapError;
-use crate::memory::manager::addr::{PhysAddr, VirtAddr};
+use crate::memory::manager::{Frame, MapError};
+use crate::memory::manager::addr::VirtAddr;
 use crate::memory::manager::entry::PteFlags;
 use crate::runtime::chrono::timer;
 use crate::runtime::switcher::context::TrapContext;
@@ -16,7 +18,7 @@ use crate::work::unit::team::kernel;
 
 pub(crate) const TRAP_STACK_CANARY: usize = 0x5EED_CAFE_51A7_0000;
 
-static TRAP_STACK_PHYS: OnceLock<usize> = OnceLock::new();
+static BOOT_STACKS: OnceLock<Vec<Arc<Frame>>> = OnceLock::new();
 
 fn trap_stack_segment(hart: usize) -> (VirtAddr, VirtAddr) {
     let base = TRAP_STACK_BASE.as_usize() + hart * TRAP_STACK_SLOT_SIZE;
@@ -54,17 +56,15 @@ pub(crate) fn trap_stack_guard_hart(addr: usize) -> Option<HartId> {
     }
 }
 
-pub fn trap_stack() -> usize {
-    *TRAP_STACK_PHYS.get().expect("trap stacks not initialized")
+pub(crate) fn boot_stack(hart: usize) -> usize {
+    BOOT_STACKS
+        .get()
+        .expect("boot stacks not initialized")[hart]
+        .physical_address()
+        + PAGE_SIZE
 }
 
 pub fn init() -> Result<(), MapError> {
-    let per_hart = TRAP_STACK_SLOT_SIZE + PAGE_SIZE;
-    let need = crate::hart::hart_count() * per_hart;
-    if crate::platform::machine::info().free.size < need {
-        return Err(MapError::OutOfMemory);
-    }
-
     let segments = crate::hart::hart_count();
     assert!(segments > 0, "no harts");
     assert_eq!(
@@ -72,36 +72,44 @@ pub fn init() -> Result<(), MapError> {
         1 << TRAP_STACK_SLOT_SHIFT,
         "trap stack segment must be 2^SHIFT"
     );
-    let total = segments * TRAP_STACK_SLOT_SIZE;
-    let layout = core::alloc::Layout::from_size_align(total, PAGE_SIZE).expect("trap stack layout");
-    let block = crate::tag!(
-        TrapStack,
-        crate::memory::allocator::frame::allocator()
-            .allocate(layout)
-            .map_err(|_| MapError::OutOfMemory)?
-    );
-    let base = block.cast::<u8>().as_ptr() as usize;
-    assert!(
-        TRAP_STACK_PHYS.set(base).is_ok(),
-        "trap stack phys double init"
-    );
+    let body_size = TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD;
+    let body_pages = body_size / PAGE_SIZE;
+    let pages_per_hart = body_pages + 1;
+    let need = segments
+        .checked_mul(pages_per_hart)
+        .and_then(|pages| pages.checked_mul(PAGE_SIZE))
+        .ok_or(MapError::OutOfMemory)?;
+    if crate::platform::machine::info().free.size < need {
+        return Err(MapError::OutOfMemory);
+    }
 
+    let mut boot_stacks = Vec::new();
+    boot_stacks
+        .try_reserve_exact(segments)
+        .map_err(|_| MapError::OutOfMemory)?;
     let space = &kernel().expect("kernel team not initialized").space;
     let flags = PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
     for h in 0..segments {
+        let boot = crate::tag!(TrapStack, Frame::allocate()?);
+        boot_stacks.push(boot);
+
+        let mut frames = Vec::new();
+        frames
+            .try_reserve_exact(body_pages)
+            .map_err(|_| MapError::OutOfMemory)?;
+        for _ in 0..body_pages {
+            frames.push(crate::tag!(TrapStack, Frame::allocate()?));
+        }
         let (body_va, _edge) = trap_stack_segment(h);
-        let phys = base + h * TRAP_STACK_SLOT_SIZE;
-        space.borrow(
-            body_va,
-            PhysAddr::from_raw(phys + TRAP_STACK_GUARD),
-            TRAP_STACK_SLOT_SIZE - TRAP_STACK_GUARD,
-            flags,
-        )?;
-        space.unmap(VirtAddr::from_raw(phys), TRAP_STACK_GUARD)?;
+        space
+            .tree
+            .map_frames(body_va, frames, flags, flags)?;
+        // The guard page has no mapping in the Tree.
         unsafe {
             (body_va.as_usize() as *mut usize).write(TRAP_STACK_CANARY);
         }
     }
+    assert!(BOOT_STACKS.set(boot_stacks).is_ok(), "boot stacks double init");
 
     check_fits_page();
 
@@ -110,6 +118,7 @@ pub fn init() -> Result<(), MapError> {
         let pa = kernel()
             .expect("kernel team not initialized")
             .space
+            .tree
             .translate(HART_FRAME_BASE + h.get() * PAGE_SIZE)
             .expect("kernel frame not mapped")
             .0;

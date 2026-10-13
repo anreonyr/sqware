@@ -434,7 +434,7 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     gate::insert(&a, pie).unwrap();
     let ab = grant(&a, token, &b).unwrap();
     grant(&b, ab, &c).unwrap();
-    let _operation = meta.backing().operation().unwrap();
+    let _operation = meta.operation().unwrap();
     { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::Doomed { hart: None, cause: env::ExitCause::Slay, reason: 0 }; }
     gate::doom(&b);
     assert!(b.gate.pies.lock().is_empty());
@@ -592,6 +592,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
     for args in [
         UnsealArgs::hole(Mark::new(u64::MAX)),
         UnsealArgs::Pole {
+            addr: env::VirtAddr::new(0x4100_0000),
             size: 4096,
             shared: false,
         },
@@ -603,7 +604,7 @@ fn creation_and_conditions_reject_invalid_wire_values() {
     }
     for regs in [
         [4, 0, 0, 0, 0, 0],
-        [1, 4096, 2, 0, 0, 0],
+        [1, 0x4000, 4096, 2, 0, 0],
         [3, 1, 1, 0, 0, 0],
         [0, 0, 0, 4, 64, 0],
         [0, 0, 64, 0, 64, 0],
@@ -762,13 +763,17 @@ fn memory_snapshots_observe_permission_reduction_and_revocation() {
     gate::insert(&a, entry).unwrap();
     let child = grant(&a, token, &b).unwrap();
     let retained = gate::locate(&b, child).unwrap();
+    let retained_copy = retained.clone();
+    assert!(Arc::ptr_eq(retained.authority(), retained_copy.authority()));
     gate::reduce(&b, child, Permission::FETCH).unwrap();
     assert_eq!(retained.permission(), Permission::FETCH);
+    assert_eq!(retained_copy.permission(), Permission::FETCH);
     assert_eq!(gate::locate(&a, token).unwrap().permission(), rights());
     gate::revoke(&a, &Arc::downgrade(&b), child).unwrap();
     assert!(gate::locate(&b, child).is_none());
     assert!(retained.permission().is_empty());
-    assert!(retained.alive());
+    assert!(retained_copy.permission().is_empty());
+    assert!(!retained.alive());
     assert!(Arc::ptr_eq(&retained.pole().unwrap(), &meta));
 }
 

@@ -155,7 +155,7 @@ pub fn subs() {
 pub fn order() {
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("order: build space");
-    space.with_flush(|inner| inner.dynamic(USER_BASE));
+    space.attach_region(crate::work::unit::space::RegionId::Normal, USER_BASE, crate::memory::manager::mode::upper().as_usize()).unwrap();
     let team = TeamBuilder::new(space).spawn().expect("order: spawn team");
     let task = team.task().hold().expect("order: hold task");
 
@@ -250,7 +250,7 @@ pub fn badge() {
 
     const USER_BASE: usize = 0x4000_0000;
     let space = SpaceBuilder::user().build().expect("badge: build space");
-    space.with_flush(|inner| inner.dynamic(USER_BASE));
+    space.attach_region(crate::work::unit::space::RegionId::Normal, USER_BASE, crate::memory::manager::mode::upper().as_usize()).unwrap();
     let team = TeamBuilder::new(space).spawn().expect("badge: spawn team");
     let caller = team.task().hold().expect("badge: hold caller");
     let dst = team.task().hold().expect("badge: hold dst");
@@ -308,7 +308,7 @@ pub fn references() {
     use crate::runtime::switcher::envcall::tole::cell as registration;
     use env::{AwaitReply, Source, Wait};
     let space = SpaceBuilder::user().build().unwrap();
-    space.with_flush(|inner| inner.dynamic(0x4000_0000));
+    space.attach_region(crate::work::unit::space::RegionId::Normal, 0x4000_0000, crate::memory::manager::mode::upper().as_usize()).unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
     let caller = team.task().hold().unwrap();
     let target = team.task().hold().unwrap();
@@ -370,7 +370,12 @@ pub fn references() {
         "失效后可摘除原描述"
     );
     // Pole bits are independent even when notifications repeat.
-    let page = crate::work::mail::pole::meta(crate::memory::PAGE_SIZE, caller.ident.id).unwrap();
+    let reservation = caller.ident.team.space.allocate_low(crate::work::unit::space::RegionId::Normal, crate::memory::PAGE_SIZE).unwrap();
+    let frame = crate::memory::manager::Frame::allocate().unwrap();
+    let rw = crate::memory::manager::entry::PteFlags::R | crate::memory::manager::entry::PteFlags::W;
+    let mapping = caller.ident.team.space.map_frames(reservation, alloc::vec![frame], rw, rw).unwrap();
+    let page = crate::work::mail::pole::PoleMeta::from_mapping(&caller.ident.team.space, mapping, caller.ident.id, true).unwrap();
+    page.commit_source();
     let bit0 = env::Bit::FIRST;
     let bit1 = env::Bit::of(1).unwrap();
     crate::work::mail::pole::ring(&page, bit0).unwrap();

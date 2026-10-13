@@ -39,7 +39,7 @@ pub(crate) fn dispatch(
     Some(match call {
         PieCall::Unseal { args } => match args {
             UnsealArgs::Hole { mark, limits } => unseal_hole(frame, mark, limits),
-            UnsealArgs::Pole { size, shared } => unseal_pole(frame, size, shared),
+            UnsealArgs::Pole { addr, size, shared } => unseal_pole(frame, addr, size, shared),
             UnsealArgs::Nole => unseal_nole(frame),
             UnsealArgs::Tole { shared } => unseal_tole(frame, shared),
         },
@@ -97,7 +97,7 @@ fn answer_pair(frame: &mut TrapContext, r: Result<(usize, usize), PieFail>) {
 
 pub(crate) fn usable<E: GateFail>(pie: &PieSnapshot) -> Result<(), E> {
     if let Some(p) = pie.pole() {
-        if p.backing().reserved() != 0 {
+        if p.reserved() != 0 {
             return Err(E::handed_over());
         }
     }
@@ -167,28 +167,45 @@ fn unseal_nole(frame: &mut TrapContext) -> Outcome {
     Outcome::Resume
 }
 
-fn unseal_pole(frame: &mut TrapContext, size: usize, shared: bool) -> Outcome {
-    let r = (|| -> Result<usize, PieFail> {
-        let task = current().running_task().ok_or(PieFail::Denied)?;
-        let meta = mail::pole::meta(size, task.ident.id)?;
-        let task_space = task.ident.team.space.clone();
-        let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
-        if !shared {
-            permission |= Permission::ONLY;
-        }
-        let pie: Pie<Pole> = gate::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
-        let token = pie.token;
-        let creator_flags = task_space
-            .pte_policy(PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D);
-        mail::pole::open(&meta, token, &task_space, creator_flags)?;
-        if let Err(error) = gate::boxed(pie).and_then(|pie| gate::insert(&task, pie)) {
-            mail::pole::shut(&meta, token)?;
-            return Err(error);
-        }
-        // 本地造一枚：权限表的枚举结果变了。
-        Ok(token.get())
-    })();
-    answer(frame, r);
+#[cfg(debug_assertions)]
+static FAIL_POLE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(debug_assertions)]
+pub(crate) fn fail_pole_at(stage: usize) {
+    assert!(crate::testing());
+    FAIL_POLE.store(stage, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn pole_checkpoint(_stage: usize) -> Result<(), PieFail> {
+    #[cfg(debug_assertions)]
+    if FAIL_POLE.compare_exchange(_stage, 0, core::sync::atomic::Ordering::Relaxed, core::sync::atomic::Ordering::Relaxed).is_ok() { return Err(PieFail::OoM); }
+    Ok(())
+}
+
+pub(crate) fn create_pole(task: &Arc<crate::work::unit::task::Task>, addr: crate::memory::manager::addr::VirtAddr, size: usize, shared: bool) -> Result<PieToken, PieFail> {
+    let task_space = task.ident.team.space.clone();
+    let mapping = task_space.mapping_at(addr, size).map_err(|_| PieFail::Denied)?;
+    let creation = task.gate.creations.claim(&mapping.map)?;
+    pole_checkpoint(1)?;
+    let meta = mail::pole::PoleMeta::from_mapping(&task_space, mapping, task.ident.id, shared)?;
+    pole_checkpoint(2)?;
+    let mut permission = Permission::FETCH | Permission::STORE | Permission::VEST;
+    if !shared { permission |= Permission::ONLY; }
+    let pie: Pie<Pole> = gate::try_new_pie(meta.clone(), Mark::NONE, permission, None)?;
+    let token = pie.token;
+    let pie = gate::boxed(pie)?;
+    pole_checkpoint(3)?;
+    gate::insert(task, pie)?;
+    meta.commit_source();
+    creation.commit();
+    Ok(token)
+}
+
+fn unseal_pole(frame: &mut TrapContext, addr: VirtAddr, size: usize, shared: bool) -> Outcome {
+    let result = current().running_task().ok_or(PieFail::Denied).and_then(|task| {
+        create_pole(&task, crate::memory::manager::addr::VirtAddr::wrap(addr.get()), size, shared).map(|token| token.get())
+    });
+    answer(frame, result);
     Outcome::Resume
 }
 
@@ -201,10 +218,6 @@ fn open(frame: &mut TrapContext, ident: Arc<TaskIdent>, token: PieToken) -> Outc
         let pie = looked?;
         usable::<PieFail>(&pie)?;
         let p = pie.pole().ok_or(PieFail::Denied)?;
-        let _operation = p.backing().operation().ok_or(PieFail::Busy)?;
-        if p.backing().reserved() != 0 {
-            return Err(PieFail::HandedOver);
-        }
         let flags = subset_to_pte(pie.permission())?;
         mail::pole::open(
             &p,
@@ -244,15 +257,7 @@ fn seal(frame: &mut TrapContext, token: PieToken) -> Outcome {
             return Err(PieFail::Denied);
         }
         let pole = pie.pole();
-        let _operation = if let Some(p) = &pole {
-            let operation = p.backing().operation().ok_or(PieFail::Busy)?;
-            if p.backing().reserved() != 0 {
-                return Err(PieFail::Busy);
-            }
-            Some(operation)
-        } else {
-            None
-        };
+        let _operation = if let Some(p) = &pole { Some(p.operation().ok_or(PieFail::Busy)?)} else {None};
         pie.seal();
         // 资源封印让这一枚能力失效——表项还在，所以枚举结果本身就变了。
         Ok(0)
@@ -419,7 +424,7 @@ fn unseal_tole(frame: &mut TrapContext, shared: bool) -> Outcome {
 
 pub(crate) fn observe(pie: &PieSnapshot) -> Result<(), env::MailFail> {
     if let Some(pole) = pie.pole()
-        && pole.backing().reserved() != 0
+        && pole.reserved() != 0
     {
         return Err(env::MailFail::HandedOver);
     }

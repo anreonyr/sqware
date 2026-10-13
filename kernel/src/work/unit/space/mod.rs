@@ -1,28 +1,11 @@
 mod access;
-mod backing;
-mod index;
-mod inner;
-mod map;
+mod allocator;
 mod outer;
-mod salvage;
-mod segment;
-pub(crate) mod window;
 
-pub(crate) use backing::Backing;
-pub(crate) use backing::Permit;
+pub(crate) use allocator::RegionId;
+pub use outer::{Mapping, Reservation, Space, SpaceBuilder};
 #[cfg(debug_assertions)]
-pub(crate) use index::accept as index_accept;
-pub(crate) use map::{Pending, PendingState};
-pub use outer::{Space, SpaceBuilder};
-#[cfg(debug_assertions)]
-pub(crate) use salvage::Salvage;
-pub(crate) use salvage::Span;
-pub(crate) use segment::SegmentKind;
-
-pub(crate) fn inner_frame()
--> Result<crate::memory::manager::table::Frame, crate::memory::manager::MapError> {
-    inner::SpaceInner::frame()
-}
+pub(crate) use outer::fail_cleanup_prepare;
 
 pub(crate) fn sync_instructions() -> Result<(), crate::memory::manager::MapError> {
     // SAFETY: callers have finished writing the pages before publishing executable mappings.

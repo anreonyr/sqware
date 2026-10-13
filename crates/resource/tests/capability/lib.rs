@@ -2,7 +2,7 @@ extern crate self as env;
 
 pub use abi::{
     Bit, MailCondition, MailFail, MailResult, Mark, Oversize, Permission, PieFail, PieInfo, PieKind,
-    PieResult, PieToken, PullOutcome, ReleaseMode, TaskId, UnsealArgs, VirtAddr, Wait, make_fail,
+    MemoryFail, MemoryResult, PAGE_SIZE, PieResult, PieToken, PullOutcome, ReleaseMode, Source, TaskId, UnsealArgs, VirtAddr, Wait, make_fail,
 };
 
 pub mod chrono {
@@ -20,6 +20,15 @@ pub mod pie {
     pub fn unseal(args: crate::UnsealArgs) -> PieResult<PieToken> {
         match args {
             crate::UnsealArgs::Hole { mark, .. } => hole_token(mark),
+            crate::UnsealArgs::Pole { addr, size, shared } => {
+                let token = token();
+                record(Event::Pole(addr.get(), size, shared, token));
+                if crate::test_backend::fail(Op::Unseal) {
+                    Err(make_fail(PieFail::Denied))
+                } else {
+                    Ok(token)
+                }
+            }
             _ => unreachable!(),
         }
     }
@@ -162,6 +171,27 @@ pub mod mail {
     }
 }
 
+pub mod memory {
+    use crate::{MemoryFail, MemoryResult, VirtAddr, make_fail};
+    use crate::test_backend::{self, Event, Op};
+    pub fn allocate(size: usize) -> MemoryResult<VirtAddr> {
+        test_backend::record(Event::Allocate(size));
+        if test_backend::fail(Op::Allocate) {
+            Err(make_fail(MemoryFail::OoM))
+        } else {
+            Ok(VirtAddr::new(0x4000))
+        }
+    }
+    pub fn deallocate(addr: VirtAddr, size: usize) -> MemoryResult<()> {
+        test_backend::record(Event::Deallocate(addr.get(), size));
+        if test_backend::busy(Op::Deallocate) {
+            Err(make_fail(MemoryFail::Busy))
+        } else {
+            Ok(())
+        }
+    }
+}
+
 pub mod test_backend {
     use abi::{MailCondition, Mark, Permission, PieToken, TaskId, Wait};
     use std::cell::RefCell;
@@ -169,6 +199,8 @@ pub mod test_backend {
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum Op {
+        Allocate,
+        Deallocate,
         Unseal,
         Release,
         Seal,
@@ -178,6 +210,9 @@ pub mod test_backend {
 
     #[derive(Clone, Copy, PartialEq, Eq, Debug)]
     pub enum Event {
+        Allocate(usize),
+        Deallocate(usize, usize),
+        Pole(usize, usize, bool, PieToken),
         Starve,
         Unseal(PieToken, Mark),
         Release(PieToken),

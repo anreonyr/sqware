@@ -155,7 +155,7 @@ impl Scheduler {
         unsafe {
             let frame = &mut *(frame_pa(&t.ident).as_usize() as *mut TrapContext);
             frame.kernel_sp = trap_stack_edge(self.hart);
-            if t.ident.team.space.asid().is_kernel() {
+            if t.ident.team.space.tree.asid().is_kernel() {
                 frame
                     .gpr
                     .set_x(Gprs::TP, crate::hart::per_hart_ptr(self.hart));
@@ -282,7 +282,7 @@ impl Scheduler {
 }
 
 pub(super) fn frame_pa(ident: &TaskIdent) -> PhysAddr {
-    ident.frame.pa.expect("frame span has pa")
+    ident.frame_pa
 }
 
 #[cfg(debug_assertions)]

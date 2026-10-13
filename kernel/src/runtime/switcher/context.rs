@@ -85,8 +85,8 @@ impl TrapContext {
         self.user_pa = pa;
         self.user_satp = satp::Satp::from_bits(
             (crate::memory::manager::mode::mode().into_usize() << 60)
-                | (team.space.asid().get() << 44)
-                | team.space.root(),
+                | (team.space.tree.asid().get() << 44)
+                | team.space.tree.root_ppn(),
         );
         self.self_va = self_va;
         self.sepc = entry;

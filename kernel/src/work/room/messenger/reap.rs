@@ -203,26 +203,20 @@ fn bury() {
             };
             z
         };
+        if z.ident.retire().is_err() {
+            HUSKS.lock().push(z);
+            break;
+        }
         trace::note(EventKind::Room(RoomEvent::Reap {
             tid: z.ident.id.get(),
         }));
         wipe(WakeKey::Task { id: z.ident.id });
         wipe(WakeKey::Pies { task: z.ident.id });
         if Arc::strong_count(&z.ident.team.space) == 1 {
-            wipe_space(z.ident.team.space.asid());
+            wipe_space(z.ident.team.space.tree.asid());
         }
         z.ident.team.prune_tasks(&z);
         let _pruned = crate::work::room::scheduler::core::prune_dead();
-        z.ident
-            .team
-            .space
-            .release(z.ident.stack)
-            .expect("release: span mismatch");
-        z.ident
-            .team
-            .space
-            .release(z.ident.frame)
-            .expect("release: span mismatch");
         drop(z);
         conductor::exit();
     }

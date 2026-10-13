@@ -294,10 +294,7 @@ fn exercise(context: (TaskId, TaskId), target: &AtomicUsize, denied: &AtomicBool
         env::unit::build(env::ProgramKind::User, env::unit::self_id()).is_err(),
         "loader: caller received Build authority"
     );
-    let image = env::pie::unseal(env::UnsealArgs::Pole {
-        size: 8192,
-        shared: true,
-    })
+    let image = ::resource::raw::pole(8192, true)
     .unwrap();
     let bytes = image_bytes();
     let (at, size) = ::resource::raw::open(image).unwrap();

@@ -7,7 +7,6 @@ use core::arch::global_asm;
 use riscv::register::satp;
 
 use crate::hart::{self, HartId};
-use crate::layout::TRAP_STACK_SLOT_SIZE;
 use crate::layout::{ROOT_STACK_CANARY, root_stack_base};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::MapError;
@@ -16,7 +15,7 @@ use crate::platform::machine;
 use crate::runtime::diagnose::trace;
 use crate::runtime::switcher::context::TrapContext;
 use crate::runtime::switcher::trampoline::restore;
-use crate::runtime::switcher::trap::{arm_hart, trap_stack};
+use crate::runtime::switcher::trap::{arm_hart, boot_stack};
 use crate::work::room::scheduler;
 use crate::work::unit::team::kernel;
 
@@ -114,29 +113,27 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
         })?;
 
     let view_size = region.size.next_multiple_of(PAGE_SIZE);
-    let view = team
+    let view_reservation = team
         .space
-        .with_flush(
-            |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-                let va = crate::work::unit::space::window::HeapWindow::locate(inner, view_size)?;
-                inner.allocate(
-                    crate::work::unit::space::SegmentKind::Normal,
-                    va.as_usize(),
-                    view_size,
-                )?;
-                inner.borrow(
-                    va,
-                    crate::memory::manager::addr::PhysAddr::from_raw(region.base),
-                    view_size,
-                    read_only(),
-                )?;
-                Ok(va)
-            },
-        )
+        .allocate_low(crate::work::unit::space::RegionId::Normal, view_size)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::ImageView,
             source,
         })?;
+    // SAFETY: the initrd region remains reserved for the boot task's lifetime.
+    let view_mapping = unsafe {
+        team.space.map_borrowed(
+            view_reservation,
+            crate::memory::manager::addr::PhysAddr::from_raw(region.base),
+            read_only(),
+            read_only(),
+        )
+    }
+    .map_err(|source| BootError::Mapping {
+        operation: MapOperation::ImageView,
+        source,
+    })?;
+    let view = view_mapping.reservation.start();
 
     let mut registry = crate::resource::Registry::default();
     crate::platform::devices::register(&mut registry).map_err(|source| BootError::Resources {
@@ -165,29 +162,27 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
             source,
         })?;
     let (ledger_pa, ledger_bytes) = crate::resource::boot::block();
-    let ledger = team
+    let ledger_reservation = team
         .space
-        .with_flush(
-            |inner| -> Result<crate::memory::manager::addr::VirtAddr, MapError> {
-                let va = crate::work::unit::space::window::HeapWindow::locate(inner, ledger_bytes)?;
-                inner.allocate(
-                    crate::work::unit::space::SegmentKind::Normal,
-                    va.as_usize(),
-                    ledger_bytes,
-                )?;
-                inner.borrow(
-                    va,
-                    crate::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
-                    ledger_bytes,
-                    read_only(),
-                )?;
-                Ok(va)
-            },
-        )
+        .allocate_low(crate::work::unit::space::RegionId::Normal, ledger_bytes)
         .map_err(|source| BootError::Mapping {
             operation: MapOperation::LedgerView,
             source,
         })?;
+    // SAFETY: the boot ledger is static memory retained for the initial task.
+    let ledger_mapping = unsafe {
+        team.space.map_borrowed(
+            ledger_reservation,
+            crate::memory::manager::addr::PhysAddr::from_raw(ledger_pa),
+            read_only(),
+            read_only(),
+        )
+    }
+    .map_err(|source| BootError::Mapping {
+        operation: MapOperation::LedgerView,
+        source,
+    })?;
+    let ledger = ledger_mapping.reservation.start();
 
     let mut args = [0usize; env::ledger::args::LEN];
     args[env::ledger::args::VIEW] = view.as_usize();
@@ -222,10 +217,10 @@ fn spawn_entry() -> Result<Option<alloc::sync::Arc<crate::work::unit::task::Task
     })?;
 
     #[cfg(debug_assertions)]
-    team.space.audit();
+    team.space.tree.audit();
 
     #[cfg(debug_assertions)]
-    kernel().expect("kernel team not initialized").space.audit();
+    kernel().expect("kernel team not initialized").space.tree.audit();
 
     Ok(Some(bootstrap))
 }
@@ -244,7 +239,7 @@ fn boot_harts() -> Result<(), BootError> {
         if HartId::new(hart) == me {
             continue;
         }
-        let stack_top = trap_stack() + (hart + 1) * TRAP_STACK_SLOT_SIZE;
+        let stack_top = boot_stack(hart);
         trace::note(trace::EventKind::Boot(trace::BootEvent::Launch { hart }));
         let r = sbi::HsmCall::new(sbi::fid::Hsm::Start)
             .args(sbi::ecall::SArgs {
@@ -269,12 +264,14 @@ pub(crate) extern "C" fn boot_main() -> ! {
     let ktc = kernel()
         .expect("kernel team not initialized")
         .space
+        .tree
         .translate(hart::hart_frame())
         .expect("kernel frame not mapped")
         .0;
     let frame = unsafe { &*(ktc.as_usize() as *const TrapContext) };
     let ksatp = frame.kernel_satp;
     unsafe {
+        hart::mark_online();
         satp::set(mode::mode(), ksatp.asid(), ksatp.ppn());
         core::arch::asm!("sfence.vma", "fence.i");
     }

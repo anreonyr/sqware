@@ -1,3 +1,4 @@
+pub(crate) mod fault;
 use riscv::interrupt::{Exception, Interrupt, Trap};
 use riscv::register::{scause, sepc, sie, sip, stval};
 
@@ -14,8 +15,8 @@ use crate::work::room::scheduler::trap::run;
 pub(crate) mod resources;
 mod stack;
 
-pub(crate) use stack::{TRAP_STACK_CANARY, trap_stack_guard_hart, trap_stack_hart};
-pub use stack::{arm_hart, init, trap_stack, trap_stack_base, trap_stack_edge};
+pub(crate) use stack::{TRAP_STACK_CANARY, boot_stack, trap_stack_guard_hart, trap_stack_hart};
+pub use stack::{arm_hart, init, trap_stack_base, trap_stack_edge};
 
 pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(i) = ident() else {
@@ -24,7 +25,7 @@ pub(crate) fn persist(frame: &TrapContext) -> bool {
     let Some(task) = i.live() else {
         return false;
     };
-    if !task.team.space.asid().is_kernel() {
+    if !task.team.space.tree.asid().is_kernel() {
         return false;
     }
     let Some(pa) = i.trap() else {
@@ -195,12 +196,12 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                     stval::read()
                 );
             }
-            let fault = unsafe { crate::memory::manager::fault::PageFault::capture() };
+            let fault = unsafe { fault::PageFault::capture() };
             let running = ident
                 .as_ref()
                 .and_then(Identity::live)
                 .expect("user page fault without running task");
-            let ok = crate::memory::manager::fault::handle_page_fault(&fault, &running.team.space);
+            let ok = fault::handle_page_fault(&fault, &running.team.space);
             trace::note(EventKind::Memory(MemoryEvent::PageFault {
                 va: fault.addr.as_usize(),
                 fault: fault.kind,

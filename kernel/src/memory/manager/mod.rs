@@ -1,11 +1,14 @@
 pub mod addr;
 pub mod asid;
 pub mod entry;
-pub mod fault;
+pub mod frame;
 pub mod mode;
 pub mod table;
+pub mod tree;
 
+pub use frame::Frame;
 pub use table::MapError;
+pub use tree::{BorrowedRegion, Map, Tree};
 
 use asid::Asid;
 

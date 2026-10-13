@@ -33,6 +33,15 @@ mod lock {
 }
 mod memory {
     pub mod manager {
+        pub struct Map;
+        impl Map {
+            pub fn initial_range(&self) -> (addr::VirtAddr, usize) { (addr::VirtAddr::wrap(0), 4096) }
+        }
+        pub mod addr {
+            #[derive(Clone, Copy, PartialEq, Eq)]
+            pub struct VirtAddr(usize);
+            impl VirtAddr { pub const fn wrap(value: usize) -> Self { Self(value) } }
+        }
         pub mod entry {
             bitflags::bitflags! {
                 #[derive(Clone, Copy)]
@@ -59,15 +68,14 @@ mod work {
         }
     }
     pub mod mail {
-        use crate::work::unit::space::Permit;
         use alloc::sync::Arc;
         use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-        use env::{Permission, TaskId};
-        pub struct Backing {
+        use env::TaskId;
+        pub struct OperationState {
             busy: AtomicBool,
             reserved: AtomicUsize,
         }
-        impl Backing {
+        impl OperationState {
             pub fn new() -> Arc<Self> {
                 Arc::new(Self {
                     busy: AtomicBool::new(false),
@@ -83,11 +91,8 @@ mod work {
             pub fn reserved(&self) -> usize {
                 self.reserved.load(Ordering::Relaxed)
             }
-            pub fn try_permit(&self, permission: Permission) -> Result<Arc<Permit>, ()> {
-                Ok(Arc::new(Permit::new(permission)))
-            }
         }
-        pub struct Operation(Arc<Backing>);
+        pub struct Operation(Arc<OperationState>);
         impl Drop for Operation {
             fn drop(&mut self) {
                 self.0.busy.store(false, Ordering::Release);
@@ -98,14 +103,14 @@ mod work {
                 pub struct $name {
                     owner: TaskId,
                     live: AtomicBool,
-                    backing: Arc<Backing>,
+                    control: Arc<OperationState>,
                 }
                 impl $name {
                     pub fn new(owner: TaskId) -> Arc<Self> {
                         Arc::new(Self {
                             owner,
                             live: AtomicBool::new(true),
-                            backing: Backing::new(),
+                            control: OperationState::new(),
                         })
                     }
                     pub fn owner(&self) -> TaskId {
@@ -114,9 +119,8 @@ mod work {
                     pub fn alive(&self) -> bool {
                         self.live.load(Ordering::Acquire)
                     }
-                    pub fn backing(&self) -> &Arc<Backing> {
-                        &self.backing
-                    }
+                    pub fn operation(self: &Arc<Self>) -> Option<Operation> { self.control.operation() }
+                    pub fn reserved(&self) -> usize { self.control.reserved() }
                     pub fn has_cells(&self) -> bool {
                         false
                     }
@@ -130,6 +134,13 @@ mod work {
         meta!(NoleMeta);
         meta!(PoleMeta);
         meta!(ToleMeta);
+        impl PoleMeta {
+            pub fn withdraw(&self, _: env::PieToken) {}
+            pub fn release_grant(&self, _: env::PieToken) {}
+            pub fn register_grant(&self, _: env::PieToken, _: alloc::sync::Arc<crate::gate::Grant>) -> Result<(), env::PieFail> {
+                Ok(())
+            }
+        }
         pub mod hole {
             pub use super::HoleMeta;
             pub fn seal(meta: &HoleMeta) {
@@ -171,33 +182,6 @@ mod work {
             LOCK.lock().unwrap()
         }
         pub mod space {
-            use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-            use env::Permission;
-            pub struct Permit {
-                live: AtomicBool,
-                permission: AtomicU32,
-            }
-            impl Permit {
-                pub fn new(permission: Permission) -> Self {
-                    Self {
-                        live: AtomicBool::new(true),
-                        permission: AtomicU32::new(permission.bits()),
-                    }
-                }
-                pub fn permission(&self) -> Permission {
-                    if self.live.load(Ordering::Acquire) {
-                        Permission::from_bits_retain(self.permission.load(Ordering::Relaxed))
-                    } else {
-                        Permission::empty()
-                    }
-                }
-                pub fn narrow(&self, permission: Permission) {
-                    self.permission.store(permission.bits(), Ordering::Relaxed);
-                }
-                pub fn invalidate(&self) {
-                    self.live.store(false, Ordering::Release);
-                }
-            }
             pub struct Space;
             impl Space {
                 pub fn with_shootdown<T>(&self, run: impl FnOnce(&mut Self) -> T) -> Result<T, ()> {
@@ -213,7 +197,7 @@ mod work {
             }
         }
         pub mod task {
-            use super::gate::AnyPie;
+            use super::gate::{AnyPie, CreationRegistry};
             use crate::lock::SpinLock;
             use alloc::sync::{Arc, Weak};
             use alloc::vec::Vec;
@@ -239,6 +223,7 @@ mod work {
                 pub version: AtomicUsize,
                 pub pies: SpinLock<Vec<AnyPie>>,
                 pub heirs: SpinLock<Vec<(PieToken, Weak<Task>, PieToken)>>,
+                pub creations: CreationRegistry,
             }
             impl Gate {
                 pub fn lock(&self) -> std::sync::MutexGuard<'_, ()> { self.serial.lock() }
@@ -267,7 +252,8 @@ mod work {
                         },
                         state: SpinLock::new(TaskState::Held),
                         gate: Gate { serial: SpinLock::new(()), version: AtomicUsize::new(0),
-                            pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()) },
+                            pies: SpinLock::new(Vec::new()), heirs: SpinLock::new(Vec::new()),
+                            creations: CreationRegistry::new() },
                         life: Arc::new(()),
                     })
                 }
@@ -281,7 +267,7 @@ mod work {
                 pub fn life(&self) -> Weak<()> {
                     Arc::downgrade(&self.life)
                 }
-                pub fn heir(&self, _: env::TeamId) -> Option<Team> {
+                pub fn clan(&self, _: env::TeamId) -> Option<Arc<Team>> {
                     None
                 }
             }

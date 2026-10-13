@@ -42,8 +42,8 @@ fn reduce_locked(
                 PteFlags::empty()
             };
         let meta = &p;
-        let _operation = meta.backing().operation().ok_or(PieFail::Busy)?;
-        let reserved = meta.backing().reserved();
+        let _operation = meta.operation().ok_or(PieFail::Busy)?;
+        let reserved = meta.reserved();
         let target = if reserved == 0 {
             None
         } else {
@@ -56,13 +56,6 @@ fn reduce_locked(
             Some(target) => Some(target.operation().ok_or(PieFail::Busy)?),
             None => None,
         };
-        if let Some(target) = &target {
-            target
-                .space
-                .with_shootdown(|inner| inner.narrow_token(token, flags))
-                .expect("staged narrow: shootdown failed")
-                .map_err(|_| PieFail::Denied)?;
-        }
         crate::work::mail::pole::narrow(meta, token, flags)?;
         let _gate = task.gate.lock();
         let _commit = super::super::commit();

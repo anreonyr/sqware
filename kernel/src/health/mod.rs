@@ -23,15 +23,18 @@ pub use crate::boot::error::accept as boot_errors;
 pub use crate::work::mail::hole::tests as hole;
 pub use crate::work::room::scheduler::core::acceptance as scheduler;
 
-pub mod backing;
+pub mod frame;
 pub mod hart;
 pub mod pagetable;
 pub mod permit;
+pub mod pole;
 pub mod shell;
 pub mod spare;
 pub mod stress;
 pub mod syscall;
 pub mod task;
+pub mod tree;
+pub mod tree_failure;
 
 pub fn run() {
     #[cfg(debug_assertions)]

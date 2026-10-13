@@ -12,7 +12,7 @@ use crate::runtime::switcher::{
 };
 use crate::work::mail::{hole, pole};
 use crate::work::unit::gate::{self, Need, Permission};
-use crate::work::unit::space::{SpaceBuilder, window::HeapWindow};
+use crate::work::unit::space::{SpaceBuilder, RegionId};
 use crate::work::unit::task::{Task, TaskTag};
 use crate::work::unit::team::{Team, TeamBuilder};
 
@@ -30,7 +30,7 @@ impl Caller {
         }
         .build()
         .unwrap();
-        space.with(|inner| inner.dynamic(0x4000_0000));
+        space.attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize()).unwrap();
         let team = TeamBuilder::new(space).spawn().unwrap();
         let task = team.task().hold().unwrap();
         Self { team, task }
@@ -39,7 +39,7 @@ impl Caller {
     fn raw(&self, slot: usize, regs: [usize; 6]) -> isize {
         // SAFETY: the task is held and never scheduled during this test.
         let frame =
-            unsafe { &mut *(self.task.ident.frame.pa.unwrap().as_usize() as *mut TrapContext) };
+            unsafe { &mut *(self.task.ident.frame_pa.as_usize() as *mut TrapContext) };
         for (i, value) in regs.into_iter().enumerate() {
             frame.gpr.set_x(Gprs::A0 + i, value);
         }
@@ -87,7 +87,12 @@ pub fn abi_and_privilege() {
         bool::unpack(&[2, 0, 0, 0, 0, 0], &mut 0),
         Err(Decode::Invalid)
     ));
-    let build = |kind| EnvCall::Unit(UnitCall::Build { kind, sire: user.task.ident.id });
+    let build = |kind| {
+        EnvCall::Unit(UnitCall::Build {
+            kind,
+            sire: user.task.ident.id,
+        })
+    };
     let heirs = user.task.heir_count();
     assert_eq!(
         user.call(build(ProgramKind::Supervisor)),
@@ -148,34 +153,54 @@ pub fn abi_and_privilege() {
     crate::runtime::switcher::envcall::resources::register(&mut registry).unwrap();
     registry.freeze().unwrap().grant(&supervisor.task).unwrap();
     for kind in [ProgramKind::User, ProgramKind::Supervisor] {
-        assert!(supervisor.call(EnvCall::Unit(UnitCall::Build { kind, sire: supervisor.task.ident.id })) > 0);
+        assert!(
+            supervisor.call(EnvCall::Unit(UnitCall::Build {
+                kind,
+                sire: supervisor.task.ident.id
+            })) > 0
+        );
     }
-    assert_eq!(supervisor.call(build(ProgramKind::User)), env::UnitFail::Denied.code());
+    assert_eq!(
+        supervisor.call(build(ProgramKind::User)),
+        env::UnitFail::Denied.code()
+    );
     let space = SpaceBuilder::user().build().unwrap();
-    space.with(|inner| inner.dynamic(0x4000_0000));
+    space.attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize()).unwrap();
     let child = TeamBuilder::new(space)
-        .sire(crate::work::unit::weak::TaskWeak::stored(Arc::downgrade(&supervisor.task), crate::work::unit::weak::Site::Sire))
-        .spawn().unwrap();
+        .sire(crate::work::unit::weak::TaskWeak::stored(
+            Arc::downgrade(&supervisor.task),
+            crate::work::unit::weak::Site::Sire,
+        ))
+        .spawn()
+        .unwrap();
     let parent = child.task().hold().unwrap();
     let delegated = supervisor.call(EnvCall::Unit(UnitCall::Build {
-        kind: ProgramKind::User, sire: parent.ident.id,
+        kind: ProgramKind::User,
+        sire: parent.ident.id,
     }));
     assert!(delegated > 0);
     let delegated = env::TeamId::new(delegated as usize);
     assert!(supervisor.task.heir(delegated).is_none());
     assert!(parent.heir(delegated).is_some());
     assert!(supervisor.task.clan(delegated).is_some());
-    assert_eq!(supervisor.call(EnvCall::Unit(UnitCall::Oust { team: delegated })), 0);
+    assert_eq!(
+        supervisor.call(EnvCall::Unit(UnitCall::Oust { team: delegated })),
+        0
+    );
     assert!(parent.heir(delegated).is_none());
     let peer = supervisor.team.task().hold().unwrap();
     let sibling = supervisor.call(EnvCall::Unit(UnitCall::Build {
-        kind: ProgramKind::User, sire: peer.ident.id,
+        kind: ProgramKind::User,
+        sire: peer.ident.id,
     }));
     assert!(sibling > 0);
     let sibling = env::TeamId::new(sibling as usize);
     assert!(peer.heir(sibling).is_some());
     assert!(supervisor.task.clan(sibling).is_some());
-    assert_eq!(supervisor.call(EnvCall::Unit(UnitCall::Oust { team: sibling })), 0);
+    assert_eq!(
+        supervisor.call(EnvCall::Unit(UnitCall::Oust { team: sibling })),
+        0
+    );
     assert_eq!(
         supervisor.call(EnvCall::Room(RoomCall::Doom {
             task: env::TaskId::new(usize::MAX)
@@ -196,7 +221,7 @@ pub fn memory() {
         0
     );
     let at = user.allocate(2 * PAGE_SIZE);
-    let before = user.team.space.translate(KVirt::wrap(at)).unwrap().1.bits();
+    let before = user.team.space.tree.translate(KVirt::wrap(at)).unwrap().1.bits();
     for flags in [1, 16, 32, 64, 128, 256, 1u64 << 63, 0, 4] {
         assert!(
             user.call(EnvCall::Memory(MemoryCall::Mprotect {
@@ -207,7 +232,7 @@ pub fn memory() {
             })) < 0
         );
         assert_eq!(
-            user.team.space.translate(KVirt::wrap(at)).unwrap().1.bits(),
+            user.team.space.tree.translate(KVirt::wrap(at)).unwrap().1.bits(),
             before
         );
     }
@@ -221,12 +246,12 @@ pub fn memory() {
             })),
             0
         );
-        let actual = user.team.space.translate(KVirt::wrap(at)).unwrap().1.bits();
+        let actual = user.team.space.tree.translate(KVirt::wrap(at)).unwrap().1.bits();
         assert_eq!(actual & !14, before & !14);
         assert_eq!(actual & 14, flags);
     }
     for internal in [
-        user.task.ident.frame.va.as_usize(),
+        user.task.ident.frame_va.as_usize(),
         crate::layout::TRAMPOLINE.as_usize(),
         mode::lower().as_usize(),
         at + (mode::upper().as_usize() << 1),
@@ -249,7 +274,7 @@ pub fn memory() {
             },
             MemoryCall::Mmap {
                 team: env::TeamId::new(0),
-                backing: env::PieToken::NONE,
+                pole: env::PieToken::NONE,
                 offset: 0,
                 flags: 6,
                 at: VirtAddr::new(internal),
@@ -268,7 +293,7 @@ pub fn memory() {
             },
             MemoryCall::Mmap {
                 team: env::TeamId::new(0),
-                backing: env::PieToken::NONE,
+                pole: env::PieToken::NONE,
                 offset: 0,
                 flags: 6,
                 at: VirtAddr::new(0),
@@ -305,13 +330,13 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.translate(KVirt::wrap(at)).is_none());
+    assert!(user.team.space.tree.translate(KVirt::wrap(at)).is_none());
 
     let fixed = 0x4004_0000;
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Mmap {
             team: env::TeamId::new(0),
-            backing: env::PieToken::NONE,
+            pole: env::PieToken::NONE,
             offset: 0,
             flags: 6,
             at: VirtAddr::new(fixed),
@@ -333,13 +358,12 @@ pub fn memory() {
         (fixed + PAGE_SIZE, false),
         (fixed + 2 * PAGE_SIZE, true),
     ] {
-        user.team
-            .space
-            .materialize(KVirt::wrap(page), PAGE_SIZE)
-            .unwrap();
+        let map = user.team.space.tree.map_at(KVirt::wrap(page)).unwrap();
+        user.team.space.tree.materialize(&map, KVirt::wrap(page), PAGE_SIZE).unwrap();
         assert_eq!(
             user.team
                 .space
+                .tree
                 .translate(KVirt::wrap(page))
                 .unwrap()
                 .1
@@ -363,7 +387,7 @@ pub fn memory() {
         })),
         0
     );
-    assert!(user.team.space.translate(KVirt::wrap(fixed)).is_none());
+    assert!(user.team.space.tree.translate(KVirt::wrap(fixed)).is_none());
 }
 
 pub fn pointers() {
@@ -374,7 +398,7 @@ pub fn pointers() {
     let mut bytes = [0xa5; 8];
     for (va, len) in [
         (0, 8),
-        (user.task.ident.frame.va.as_usize(), 8),
+        (user.task.ident.frame_va.as_usize(), 8),
         (crate::layout::TRAMPOLINE.as_usize(), 8),
         (at + PAGE_SIZE - 4, 8),
         (at, usize::MAX),
@@ -413,13 +437,13 @@ pub fn pointers() {
     );
     assert!(
         user.call(EnvCall::Debug(DebugCall::Get {
-            buf: VirtAddr::new(user.task.ident.frame.va.as_usize()),
+            buf: VirtAddr::new(user.task.ident.frame_va.as_usize()),
             len: 8
         })) < 0
     );
     assert!(
         user.call(EnvCall::Control(ControlCall::Backtrace {
-            buf: user.task.ident.frame.va.as_usize(),
+            buf: user.task.ident.frame_va.as_usize(),
             frames: 1
         })) < 0
     );
@@ -430,7 +454,7 @@ pub fn pointers() {
         })) < 0
     );
     let mut reader = StackReader::user(user.team.space.clone());
-    assert!(reader.word(user.task.ident.frame.va.as_usize()).is_none());
+    assert!(reader.word(user.task.ident.frame_va.as_usize()).is_none());
     assert_eq!(
         user.call(EnvCall::Memory(MemoryCall::Mprotect {
             team: env::TeamId::new(0),
@@ -482,10 +506,16 @@ pub fn capability() {
         gate::accede::<env::PieFail>(&user.task, token, Need::Fetch),
         Err(env::PieFail::Dead)
     ));
-    let pole = pole::meta(PAGE_SIZE, user.task.ident.id).unwrap();
+    let source = user.allocate(PAGE_SIZE);
+    let source_mapping = user.team.space.mapping_at(KVirt::wrap(source), PAGE_SIZE).unwrap();
+    let pole = pole::PoleMeta::from_mapping(&user.team.space, source_mapping, user.task.ident.id, true).unwrap();
     let pie: gate::Pie<gate::Pole> =
         gate::new_pie(pole.clone(), env::Mark::NONE, Permission::FETCH, None);
     let token = pie.token;
+    user.task.gate.pies.lock().push(gate::boxed(pie).unwrap());
+    let original = user.team.space.tree.map_at(KVirt::wrap(source)).unwrap();
+    user.task.gate.creations.claim(&original).unwrap().commit();
+    pole.commit_source();
     let flags = user
         .team
         .space
@@ -511,9 +541,12 @@ pub fn capability() {
         assert!(user.call(EnvCall::Memory(call)) < 0);
     }
     assert!(user.team.space.validate_read(at, size));
+    let operation = pole.operation().expect("pole operation lease");
+    assert_eq!(pole::shut(&pole, token), Err(env::PieFail::Busy));
+    drop(operation);
     pole::shut(&pole, token).unwrap();
     assert!(!user.team.space.validate_read(at, size));
-    let _ = HeapWindow::allocate(&user.team.space, PAGE_SIZE).unwrap();
+
 }
 
 pub fn resource_registration() {
@@ -574,7 +607,8 @@ pub fn resource_registration() {
     ));
     assert!(
         service.call(EnvCall::Unit(UnitCall::Build {
-            kind: ProgramKind::User, sire: service.task.ident.id
+            kind: ProgramKind::User,
+            sire: service.task.ident.id
         })) > 0
     );
     assert!(matches!(
@@ -595,7 +629,8 @@ pub fn resource_registration() {
     ));
     assert_eq!(
         service.call(EnvCall::Unit(UnitCall::Build {
-            kind: ProgramKind::User, sire: service.task.ident.id
+            kind: ProgramKind::User,
+            sire: service.task.ident.id
         })),
         env::UnitFail::Denied.code()
     );
@@ -763,19 +798,22 @@ pub fn transfer_relations() {
             .all(|child| child.task.gate.pies.lock().is_empty())
     );
 
-    // Exit also withdraws borrowed memory while a backing operation is busy.
+    // Exit withdraws borrowed authority while the memory operation lease is busy.
     let d = Caller::new(false);
-    let meta = pole::meta(PAGE_SIZE, a.task.ident.id).unwrap();
+    let source = a.allocate(PAGE_SIZE);
+    let source_mapping = a.team.space.mapping_at(KVirt::wrap(source), PAGE_SIZE).unwrap();
+    let meta = pole::PoleMeta::from_mapping(&a.team.space, source_mapping, a.task.ident.id, true).unwrap();
     let pie = gate::boxed(
         gate::try_new_pie::<gate::Pole>(meta.clone(), Mark::NONE, permission, None).unwrap(),
     )
     .expect("pie allocation");
     let memory = pie.token();
     gate::insert(&a.task, pie).unwrap();
+    meta.commit_source();
     let ad = grant(&a.task, memory, &d.task, permission);
     grant(&d.task, ad, &c.task, permission);
     {
-        let _operation = meta.backing().operation().unwrap();
+        let _operation = meta.operation().unwrap();
         {
             let _commit = crate::work::unit::commit();
             *d.task.state.lock() = crate::work::unit::task::TaskState::Doomed {
@@ -828,7 +866,7 @@ pub fn unit_scan_and_receipts() {
     let mut children = Vec::new();
     for _ in 0..73 {
         let space = SpaceBuilder::user().build().unwrap();
-        space.with(|inner| inner.dynamic(0x4000_0000));
+        space.attach_region(RegionId::Normal, 0x4000_0000, mode::upper().as_usize()).unwrap();
         children.push(
             TeamBuilder::new(space)
                 .sire(TaskWeak::stored(Arc::downgrade(&caller.task), Site::Sire))
@@ -891,7 +929,7 @@ pub fn unit_scan_and_receipts() {
         })),
         env::ExitCause::Reap as isize
     );
-    let frame = unsafe { &*(caller.task.ident.frame.pa.unwrap().as_usize() as *const TrapContext) };
+    let frame = unsafe { &*(caller.task.ident.frame_pa.as_usize() as *const TrapContext) };
     assert_eq!(frame.gpr.x(Gprs::A1), task.ident.id.get());
     assert_eq!(frame.gpr.x(Gprs::A2), 17);
     assert_eq!(

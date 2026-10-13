@@ -7,7 +7,7 @@ pub fn acceptance() {
     use crate::work::unit::{space::SpaceBuilder, team::TeamBuilder};
 
     let space = SpaceBuilder::user().build().unwrap();
-    space.with(|inner| inner.dynamic(0x4000_0000));
+    space.attach_region(crate::work::unit::space::RegionId::Normal, 0x4000_0000, crate::memory::manager::mode::upper().as_usize()).unwrap();
     let team = TeamBuilder::new(space).spawn().unwrap();
     let mut tasks: alloc::vec::Vec<_> = (0..4).map(|_| team.task().hold().unwrap()).collect();
     for task in &mut tasks {

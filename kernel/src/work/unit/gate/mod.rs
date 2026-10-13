@@ -9,17 +9,19 @@ mod accord;
 mod cull;
 mod fail;
 mod narrow;
+mod allocation;
 mod pie;
 mod release;
 mod revoke;
 
 pub(crate) use fail::GateFail;
+pub(crate) use allocation::CreationRegistry;
 mod snap;
 
 #[cfg(debug_assertions)]
 pub(crate) use pie::form_ok;
 pub(crate) use pie::{
-    AnyPie, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, Tole, accede, allows, boxed,
+    AnyPie, Grant, Hole, Need, Nole, Permission, Pie, PieSnapshot, Pole, Tole, accede, allows, boxed,
     locate, new_pie, try_new_pie,
 };
 

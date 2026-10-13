@@ -512,7 +512,7 @@ fn resume_join(task: &Arc<Task>, join: crate::work::unit::join::JoinWait) -> boo
     };
     // SAFETY: the detached blocked task is not executing; its frame remains owned.
     let frame = unsafe {
-        &mut *(task.ident.frame.pa.expect("blocked frame").as_usize() as *mut TrapContext)
+        &mut *(task.ident.frame_pa.as_usize() as *mut TrapContext)
     };
     crate::work::unit::join::JoinWait::write(frame, result);
     true
@@ -620,7 +620,7 @@ fn resume_await(task: &Arc<Task>, wait: crate::work::mail::tole::AwaitWait) -> b
         };
     // SAFETY: this detached blocked task owns a stable frame and is not executing.
     let frame = unsafe {
-        &mut *(task.ident.frame.pa.expect("blocked frame").as_usize()
+        &mut *(task.ident.frame_pa.as_usize()
             as *mut crate::runtime::switcher::context::TrapContext)
     };
     wait.unwatch();

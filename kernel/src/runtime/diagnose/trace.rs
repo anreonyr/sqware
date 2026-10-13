@@ -13,7 +13,7 @@ use fack::prelude::Error;
 use crate::hart;
 use crate::lock::OnceLock;
 use crate::memory::allocator::spare;
-use crate::memory::manager::fault::FaultKind;
+use crate::runtime::switcher::trap::fault::FaultKind;
 use crate::runtime::diagnose::report::Report;
 
 pub const BUFFER_SIZE: usize = 512;

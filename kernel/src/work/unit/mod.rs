@@ -24,7 +24,6 @@ pub(crate) mod task;
 pub(crate) mod team;
 pub(crate) mod weak;
 
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use erra::ResultExt;
@@ -35,7 +34,7 @@ use crate::hart;
 use crate::layout::kernel_edge;
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::{
-    MapError,
+    BorrowedRegion, Frame, MapError,
     addr::{PhysAddr, VirtAddr},
     entry::PteFlags,
     flush_asid, mode,
@@ -62,7 +61,6 @@ pub(crate) fn build(
         space::SpaceKind::User => SpaceBuilder::user(),
     }
     .build()?;
-    space.with(|inner| inner.dynamic(PAGE_SIZE));
     team::TeamBuilder::new(space)
         .sire(sire)
         .constructing()
@@ -101,15 +99,11 @@ pub fn init() -> MapResult<()> {
             }
 
             let kernel_space = SpaceBuilder::kernel().build()?;
-
-            {
-                let this = &kernel_space;
-                let base = crate::layout::IMAGE_BASE.as_usize();
-                this.with(|inner| {
-                    inner.dynamic(base);
-                    inner.allocate(space::SegmentKind::Normal, m.dram.base, m.dram.size)
-                })?;
-            };
+            let _identity_ram = kernel_space.reserve(
+                space::RegionId::Normal,
+                VirtAddr::from_raw(m.dram.base),
+                m.dram.size,
+            )?;
 
             let ram_flags =
                 PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D | PteFlags::G;
@@ -131,6 +125,7 @@ pub fn init() -> MapResult<()> {
             {
                 return Err(MapError::NoRegion);
             }
+            kernel_space.advance_region(space::RegionId::Normal, image_end)?;
             let ro_flags = PteFlags::V | PteFlags::R | PteFlags::A | PteFlags::G;
             let text_flags = ro_flags | PteFlags::X;
             for (start, end, flags) in [
@@ -144,10 +139,14 @@ pub fn init() -> MapResult<()> {
                     continue;
                 }
                 for offset in [0, mode::lower().as_usize()] {
-                    kernel_space.borrow(
+                    let size = end - start;
+                    let region = BorrowedRegion::new(PhysAddr::from_raw(start), size)?;
+                    kernel_space.tree.map_borrowed(
                         VirtAddr::wrap(offset + start),
-                        PhysAddr::from_raw(start),
-                        end - start,
+                        region,
+                        0,
+                        size,
+                        flags,
                         flags,
                     )?;
                 }
@@ -155,32 +154,44 @@ pub fn init() -> MapResult<()> {
 
             let tramp_flags =
                 PteFlags::V | PteFlags::R | PteFlags::X | PteFlags::A | PteFlags::D | PteFlags::G;
-            kernel_space.borrow(TRAMPOLINE, trampoline_pa(), PAGE_SIZE, tramp_flags)?;
+            let trampoline = BorrowedRegion::new(trampoline_pa(), PAGE_SIZE)?;
+            kernel_space.tree.map_borrowed(
+                TRAMPOLINE,
+                trampoline,
+                0,
+                PAGE_SIZE,
+                tramp_flags,
+                tramp_flags,
+            )?;
 
             let n = hart::hart_count();
             for h in 0..n {
-                let page: crate::memory::manager::table::Frame = crate::tag!(HartFrame, {
-                    Box::try_new_zeroed_in(crate::memory::allocator::frame::allocator())
-                        .map_err(|_| MapError::OutOfMemory)?
-                        .assume_init()
-                });
-                let mut pages = Vec::new();
-                pages
+                let frame = crate::tag!(HartFrame, Frame::allocate()?);
+                let mut frames = Vec::new();
+                frames
                     .try_reserve_exact(1)
                     .map_err(|_| MapError::OutOfMemory)?;
-                pages.push(page);
-                kernel_space.attach(
+                frames.push(frame);
+                let flags =
+                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D;
+                kernel_space.tree.map_frames(
                     HART_FRAME_BASE + h * PAGE_SIZE,
-                    pages,
-                    PteFlags::V | PteFlags::R | PteFlags::W | PteFlags::A | PteFlags::D,
+                    frames,
+                    flags,
+                    flags,
                 )?;
             }
 
             let kernel_space = Arc::try_new(kernel_space).map_err(|_| MapError::OutOfMemory)?;
             team::init_kernel(kernel_space.clone())?;
-            satp::set(mode::mode(), kernel_space.asid().get(), kernel_space.root());
+            hart::mark_online();
+            satp::set(
+                mode::mode(),
+                kernel_space.tree.asid().get(),
+                kernel_space.tree.root_ppn(),
+            );
 
-            flush_asid(kernel_space.asid());
+            flush_asid(kernel_space.tree.asid());
             #[cfg(debug_assertions)]
             crate::layout::validate();
 

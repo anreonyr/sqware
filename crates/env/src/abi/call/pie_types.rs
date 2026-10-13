@@ -1,5 +1,5 @@
 //! Parameters shared by capability creation and queries.
-use crate::{Decode, Mark, Permission, PieKind, PieToken, TaskId, Wire};
+use crate::{Decode, Mark, Permission, PieKind, PieToken, TaskId, VirtAddr, Wire};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HoleLimits {
@@ -28,7 +28,7 @@ impl HoleLimits {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnsealArgs {
     Hole { mark: Mark, limits: HoleLimits },
-    Pole { size: usize, shared: bool },
+    Pole { addr: VirtAddr, size: usize, shared: bool },
     Nole,
     Tole { shared: bool },
 }
@@ -50,7 +50,7 @@ impl Wire for UnsealArgs {
                 limits.max_messages,
                 limits.max_bytes,
             ],
-            Self::Pole { size, shared } => [1, size, shared as usize, 0, 0],
+            Self::Pole { addr, size, shared } => [1, addr.get(), size, shared as usize, 0],
             Self::Nole => [2, 0, 0, 0, 0],
             Self::Tole { shared } => [3, shared as usize, 0, 0, 0],
         };
@@ -78,7 +78,8 @@ impl Wire for UnsealArgs {
                     limits,
                 })
             }
-            [1, size, shared @ 0..=1, 0, 0] => Ok(Self::Pole {
+            [1, addr, size, shared @ 0..=1, 0] => Ok(Self::Pole {
+                addr: VirtAddr::new(addr),
                 size,
                 shared: shared != 0,
             }),

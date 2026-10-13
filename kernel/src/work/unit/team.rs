@@ -235,7 +235,7 @@ unsafe impl Send for Team {}
 pub(crate) struct Staging {
     pub(crate) token: env::PieToken,
     pub(crate) meta: Arc<crate::work::mail::pole::PoleMeta>,
-    pub(crate) span: super::space::Span,
+    pub(crate) map: Arc<crate::memory::manager::Map>,
 }
 pub(crate) struct Staged<'a>(SpinLockGuard<'a, TeamState>);
 impl Deref for Staged<'_> {
@@ -398,6 +398,12 @@ impl Team {
                 }
         )
     }
+    pub(crate) fn constructing(&self) -> bool {
+        matches!(&*self.state.lock(), TeamState::Constructing { .. }
+            | TeamState::Debarking { state: TeamStage::Constructing { .. } }
+            | TeamState::Debarked { state: TeamStage::Constructing { .. } })
+    }
+
     pub(crate) fn staged(&self) -> Staged<'_> {
         Staged(self.state.lock())
     }
@@ -434,8 +440,9 @@ impl Team {
             items: self.take_staging(),
         };
         while let Some(item) = staged.last() {
-            self.space.release(item.span)?;
-            item.meta.backing().unreserve();
+            let (start, size) = item.map.initial_range();
+            self.space.unmap_range(start, size)?;
+            item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
             let token = item.token;
             staged.pop();
@@ -737,7 +744,7 @@ pub(crate) fn spawn(
             .try_reserve(staged.len())
             .map_err(|_| UnitFail::OoM)?;
         for item in staged.iter() {
-            operations.push(item.meta.backing().operation().ok_or(UnitFail::Busy)?);
+            operations.push(item.meta.operation().ok_or(UnitFail::Busy)?);
         }
         let closed = caller.gate.lock();
         if !super::gate::live(caller, ()) {
@@ -757,8 +764,7 @@ pub(crate) fn spawn(
                 || !pie
                     .permission()
                     .contains(Permission::FETCH | Permission::VEST | Permission::ONLY)
-                || p.backing().reserved() != target.id.get()
-                || !p.backing().unmapped()
+                || p.reserved() != target.id.get()
                 || p.mapped()
             {
                 return Err(UnitFail::Denied);
@@ -779,7 +785,7 @@ pub(crate) fn spawn(
                         .lock()
                         .retain(|(parent, _, _)| *parent != item.token);
                     retired.push(pie);
-                    item.meta.backing().unreserve();
+                    item.meta.detach_staging(item.token, target.id);
                     leases.push(item);
                 }
                 gate::changed(caller);

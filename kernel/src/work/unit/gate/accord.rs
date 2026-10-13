@@ -21,8 +21,8 @@ pub(crate) fn accord(
         let pie = super::locate(caller, src).ok_or(PieFail::Denied)?;
         let pole = pie.pole();
         let _operation = if let Some(p) = &pole {
-            let operation = p.backing().operation().ok_or(PieFail::Busy)?;
-            if p.backing().reserved() != 0 {
+            let operation = p.operation().ok_or(PieFail::Busy)?;
+            if p.reserved() != 0 {
                 return Err(PieFail::HandedOver);
             }
             Some(operation)

@@ -31,6 +31,16 @@ impl core::fmt::Display for HartId {
     }
 }
 
+static ONLINE: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn mark_online() {
+    ONLINE.fetch_or(hart_id().bit().1, Ordering::Release);
+}
+
+pub(crate) fn online(hart: HartId) -> bool {
+    ONLINE.load(Ordering::Acquire) & hart.bit().1 != 0
+}
+
 static STARTED_HARTS: AtomicUsize = AtomicUsize::new(1);
 
 pub fn mark_hart_started(hart: HartId) {

@@ -5,7 +5,6 @@ use core::sync::atomic::Ordering;
 use env::{PieFail, PieToken, TaskId};
 
 use super::pie::{AnyPie, Heir};
-use crate::work::mail::pole;
 use crate::work::unit::task::Task;
 
 pub(crate) struct Cleanup {
@@ -26,7 +25,7 @@ impl Cleanup {
                 super::notify(parent.ident.id, token);
             }
             if let Some(p) = pie.snapshot().pole() {
-                pole::shut(&p, pie.token()).expect("cull: unmap token");
+                p.withdraw(pie.token());
             }
             drop(pie);
         }
@@ -215,8 +214,8 @@ pub(super) fn cull(
                 // Normal release/revoke retain their existing Busy checks.
                 let pole = root.pole();
                 let _operation = if !closing && let Some(p) = &pole {
-                    let operation = p.backing().operation().ok_or(PieFail::Busy)?;
-                    if p.backing().reserved() != 0 {
+                    let operation = p.operation().ok_or(PieFail::Busy)?;
+                    if p.reserved() != 0 {
                         return Err(PieFail::Busy);
                     }
                     Some(operation)

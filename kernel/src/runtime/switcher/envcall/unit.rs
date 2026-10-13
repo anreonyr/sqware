@@ -36,8 +36,9 @@ fn map_err(e: MapError) -> UnitFail {
         | MapError::NotMapped
         | MapError::NoRegion
         | MapError::WidenDenied
-        | MapError::SegmentMismatch
-        | MapError::DramOverlap => UnitFail::Denied,
+        | MapError::DramOverlap
+        | MapError::Shootdown
+        | MapError::Pinned => UnitFail::Denied,
     }
 }
 
@@ -103,8 +104,11 @@ pub(super) fn dispatch(frame: &mut TrapContext, call: UnitCall, ident: Arc<TaskI
             let Some(parent) = muster(sire).and_then(|w| w.upgrade()) else {
                 return Outcome::fail(frame, UnitFail::Denied);
             };
-            if matches!(parent.tag(), crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped)
-                || parent.ident.team.id != ident.team.id && me.clan(parent.ident.team.id).is_none() {
+            if matches!(
+                parent.tag(),
+                crate::work::unit::task::TaskTag::Doomed | crate::work::unit::task::TaskTag::Reaped
+            ) || parent.ident.team.id != ident.team.id && me.clan(parent.ident.team.id).is_none()
+            {
                 return Outcome::fail(frame, UnitFail::Denied);
             }
             let sire = TaskWeak::stored(Arc::downgrade(&parent), Site::Sire);

@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 use alloc::boxed::Box;
 use alloc::sync::{Arc, Weak};
@@ -10,6 +10,54 @@ use super::GateFail;
 use crate::work::mail::nole::NoleMeta;
 use crate::work::mail::{HoleMeta, PoleMeta, ToleMeta};
 use crate::work::unit::task::Task;
+
+pub(crate) struct Grant {
+    permission: AtomicU32,
+}
+
+impl Grant {
+    pub(crate) fn try_new(permission: Permission) -> Result<Arc<Self>, env::PieFail> {
+        Arc::try_new(Self {
+            permission: AtomicU32::new(permission.bits()),
+        })
+        .map_err(|_| env::PieFail::OoM)
+    }
+
+    pub(crate) fn permission(&self) -> Option<Permission> {
+        let bits = self.permission.load(Ordering::Acquire);
+        (bits != 0).then(|| Permission::from_bits_retain(bits))
+    }
+
+    pub(crate) fn narrow(&self, subset: Permission) -> Result<(), env::PieFail> {
+        let subset_bits = subset.bits();
+        let mut current = self.permission.load(Ordering::Acquire);
+        loop {
+            if current == 0 {
+                return Err(env::PieFail::Dead);
+            }
+            let permission = Permission::from_bits_retain(current);
+            if subset.is_empty()
+                || !permission.contains(subset)
+                || permission.contains(Permission::ONLY) && !subset.contains(Permission::ONLY)
+            {
+                return Err(env::PieFail::Denied);
+            }
+            match self.permission.compare_exchange_weak(
+                current,
+                current & subset_bits,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+
+    pub(crate) fn invalidate(&self) {
+        self.permission.store(0, Ordering::Release);
+    }
+}
 
 pub(crate) trait Mail: Send + Sync + 'static {
     fn kind(&self) -> env::PieKind;
@@ -36,11 +84,10 @@ pub(crate) trait Mail: Send + Sync + 'static {
         None
     }
 
-    fn permit(
-        &self,
-        _permission: Permission,
-    ) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
-        Ok(None)
+    fn release_grant(&self, _token: PieToken) {}
+
+    fn new_grant(&self, permission: Permission, _token: PieToken) -> Result<Arc<Grant>, env::PieFail> {
+        Grant::try_new(permission)
     }
 }
 
@@ -86,6 +133,12 @@ impl Mail for PoleMeta {
     fn pole(self: Arc<Self>) -> Option<Arc<PoleMeta>> {
         Some(self)
     }
+    fn release_grant(&self, token: PieToken) { PoleMeta::release_grant(self, token); }
+    fn new_grant(&self, permission: Permission, _token: PieToken) -> Result<Arc<Grant>, env::PieFail> {
+        let grant = Grant::try_new(permission)?;
+        self.register_grant(_token, grant.clone())?;
+        Ok(grant)
+    }
     fn grant(
         self: Arc<Self>,
         mark: Mark,
@@ -93,15 +146,6 @@ impl Mail for PoleMeta {
         sire: PieToken,
     ) -> Result<AnyPie, env::PieFail> {
         boxed(try_new_pie::<Pole>(self, mark, permission, Some(sire))?)
-    }
-    fn permit(
-        &self,
-        permission: Permission,
-    ) -> Result<Option<Arc<super::super::space::Permit>>, env::PieFail> {
-        self.backing()
-            .try_permit(permission)
-            .map(Some)
-            .map_err(|_| env::PieFail::OoM)
     }
 }
 
@@ -212,41 +256,27 @@ fn alloc_id() -> PieToken {
 }
 
 pub struct Pie<T: PieType> {
-    pub(crate) permission: Permission,
+    pub(crate) grant: Arc<Grant>,
     pub(crate) sire: Option<PieToken>,
     pub(crate) lord: Weak<Task>,
     pub(crate) heir: Option<Heir>,
     pub(crate) token: PieToken,
     pub(crate) mark: T::Mark,
     pub(crate) meta: Arc<T::Mail>,
-    pub(crate) permit: Option<Arc<super::super::space::Permit>>,
 }
 
 unsafe impl<T: PieType> Send for Pie<T> where T::Mark: Send {}
 
-impl<T: PieType> Clone for Pie<T>
-where
-    T::Mark: Copy,
-{
-    fn clone(&self) -> Self {
-        Self {
-            permission: self.permission,
-            sire: self.sire,
-            lord: self.lord.clone(),
-            heir: self.heir,
-            token: self.token,
-            mark: self.mark,
-            meta: self.meta.clone(),
-            permit: self.permit.clone(),
-        }
+impl<T: PieType> Drop for Pie<T> {
+    fn drop(&mut self) {
+        self.grant.invalidate();
+        self.meta.release_grant(self.token);
     }
 }
 
 impl<T: PieType> Pie<T> {
     pub(crate) fn permission(&self) -> Permission {
-        self.permit
-            .as_ref()
-            .map_or(self.permission, |permit| permit.permission())
+        self.grant.permission().unwrap_or_else(Permission::empty)
     }
 }
 
@@ -267,17 +297,17 @@ pub(crate) trait PieOps: Send {
     #[cfg(debug_assertions)]
     fn mark(&self) -> Mark;
     fn meta(&self) -> &dyn Mail;
-    fn permit(&self) -> Option<&Arc<super::super::space::Permit>>;
+    fn authority(&self) -> &Arc<Grant>;
     fn snapshot(&self) -> PieSnapshot;
     fn parent(&mut self, token: PieToken, task: Weak<Task>);
     fn set_heir(&mut self, heir: Option<Heir>);
-    fn set_permission(&mut self, subset: Permission);
+    fn set_permission(&mut self, subset: Permission) -> Result<(), env::PieFail>;
 
     fn kind(&self) -> env::PieKind {
         self.meta().kind()
     }
     fn alive(&self) -> bool {
-        self.meta().alive()
+        self.meta().alive() && self.authority().permission().is_some()
     }
     fn owner_task(&self) -> TaskId {
         self.meta().owner()
@@ -290,9 +320,7 @@ pub(crate) trait PieOps: Send {
         allows_permission(self.permission(), need)
     }
     fn invalidate(&self) {
-        if let Some(permit) = self.permit() {
-            permit.invalidate();
-        }
+        self.authority().invalidate();
     }
     fn narrow(&mut self, subset: Permission) -> Result<(), env::PieFail> {
         if !self.alive() {
@@ -305,8 +333,7 @@ pub(crate) trait PieOps: Send {
         {
             return Err(env::PieFail::Denied);
         }
-        self.set_permission(subset);
-        Ok(())
+        self.set_permission(subset)
     }
 }
 
@@ -337,19 +364,18 @@ where
     fn meta(&self) -> &dyn Mail {
         self.meta.as_ref()
     }
-    fn permit(&self) -> Option<&Arc<super::super::space::Permit>> {
-        self.permit.as_ref()
+    fn authority(&self) -> &Arc<Grant> {
+        &self.grant
     }
     fn snapshot(&self) -> PieSnapshot {
         PieSnapshot {
             token: self.token,
-            permission: self.permission,
+            grant: self.grant.clone(),
             mark: self.mark,
             sire: self.sire,
             lord: self.lord.clone(),
             heir: self.heir,
             meta: self.meta.clone(),
-            permit: self.permit.clone(),
         }
     }
     fn parent(&mut self, token: PieToken, task: Weak<Task>) {
@@ -359,11 +385,8 @@ where
     fn set_heir(&mut self, heir: Option<Heir>) {
         self.heir = heir;
     }
-    fn set_permission(&mut self, subset: Permission) {
-        self.permission = subset;
-        if let Some(permit) = &self.permit {
-            permit.narrow(subset);
-        }
+    fn set_permission(&mut self, subset: Permission) -> Result<(), env::PieFail> {
+        self.grant.narrow(subset)
     }
 }
 
@@ -375,29 +398,28 @@ where
     Ok(Box::try_new(pie).map_err(|_| env::PieFail::OoM)?)
 }
 
-/// Copies reference facts and shares the original resource/permit allocations.
-/// Retaining this snapshot keeps memory valid, not authority: operations still
-/// validate resource state, permits and the existing task relations.
+/// Copies reference facts and shares the original resource and grant allocations.
+/// Retaining a snapshot does not preserve authority after its grant changes.
 #[derive(Clone)]
 pub(crate) struct PieSnapshot {
     pub(crate) token: PieToken,
-    permission: Permission,
+    grant: Arc<Grant>,
     mark: Mark,
     pub(crate) sire: Option<PieToken>,
     lord: Weak<Task>,
     heir: Option<Heir>,
     meta: Arc<dyn Mail>,
-    permit: Option<Arc<super::super::space::Permit>>,
 }
 
 impl PieSnapshot {
+    pub(crate) fn authority(&self) -> &Arc<Grant> {
+        &self.grant
+    }
     pub(crate) fn token(&self) -> PieToken {
         self.token
     }
     pub(crate) fn permission(&self) -> Permission {
-        self.permit
-            .as_ref()
-            .map_or(self.permission, |p| p.permission())
+        self.grant.permission().unwrap_or_else(Permission::empty)
     }
     pub(crate) fn kind(&self) -> env::PieKind {
         self.meta.kind()
@@ -421,7 +443,7 @@ impl PieSnapshot {
         self.alive().then(|| self.owner_task())
     }
     pub(crate) fn alive(&self) -> bool {
-        self.meta.alive()
+        self.meta.alive() && self.grant.permission().is_some()
     }
     pub(crate) fn allows(&self, need: Need) -> bool {
         allows_permission(self.permission(), need)
@@ -475,13 +497,13 @@ pub(crate) fn try_new_pie<T: PieType>(
     permission: Permission,
     sire: Option<PieToken>,
 ) -> Result<Pie<T>, env::PieFail> {
+    let token = alloc_id();
     Ok(Pie {
-        permit: meta.permit(permission)?,
-        permission,
+        grant: meta.new_grant(permission, token)?,
         sire,
         lord: Weak::new(),
         heir: None,
-        token: alloc_id(),
+        token,
         mark,
         meta,
     })

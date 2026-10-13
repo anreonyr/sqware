@@ -39,7 +39,7 @@ global_asm!(
     "    add  sp, sp, t0",
     "    la   t0, BOOT_DTP", // ← bin 那一份没有这两行
     "    sd   a1, 0(t0)",    //   设备树指针（embedded-test 的 `main` 不收参数）
-    "    j    main",         //   `main` = embedded-test 导出的那一个
+    "    tail main",         //   `main` = embedded-test 导出的那一个
 );
 
 /// OpenSBI 交过来的设备树指针。**必须 `no_mangle`**：上面那段汇编靠 `la` 按名字取它。
@@ -96,8 +96,26 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn space_window_layout() {
+    fn space_reservation_layout() {
         kernel::health::pagetable::window_layout();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn manager_tree_mapping() {
+        kernel::health::tree::manager_tree();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn manager_tree_invalidation_failure() {
+        kernel::health::tree_failure::invalidation();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn pole_mapping_and_creation_authority() {
+        kernel::health::pole::lifecycle();
     }
 
     #[cfg(debug_assertions)]
@@ -126,8 +144,8 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn backing_sharing_and_recycle() {
-        kernel::health::backing::sharing();
+    fn frame_sharing_and_recycle() {
+        kernel::health::frame::sharing();
     }
 
     #[cfg(debug_assertions)]
@@ -156,14 +174,14 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn backing_authority_tracks_actual_holders() {
-        kernel::health::backing::authority();
+    fn grant_authority_tracks_actual_references() {
+        kernel::health::frame::authority();
     }
 
     #[cfg(debug_assertions)]
     #[test]
     fn retirement_waits_for_eviction() {
-        kernel::health::backing::retirement();
+        kernel::health::frame::retirement();
     }
 
     #[cfg(debug_assertions)]

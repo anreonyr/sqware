@@ -36,7 +36,7 @@ struct NativePoleEffects;
 
 impl PoleEffects for NativePoleEffects {
     fn unseal(&mut self, size: usize) -> Result<PieToken, Fail> {
-        env::pie::unseal(env::UnsealArgs::Pole { size, shared: true }).map_err(|_| Fail::Full)
+        ::resource::raw::pole(size, true).map_err(|_| Fail::Full)
     }
     fn open(&mut self, token: PieToken) -> Result<(usize, usize), Fail> {
         resource::raw::open(token).map_err(|_| Fail::SourceLost)

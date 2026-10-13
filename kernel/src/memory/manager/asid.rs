@@ -30,12 +30,20 @@ impl Asid {
         Self(raw & 0xFFFF)
     }
 
-    pub(crate) fn allocate() -> Self {
-        let (asid, _) = ASID_ALLOCATOR
+    pub(crate) fn try_allocate() -> Option<Self> {
+        ASID_ALLOCATOR
             .lock()
             .allocate(1)
-            .expect("asid: 16-bit ASID space exhausted (65535 tasks)");
-        Self(asid)
+            .ok()
+            .map(|(asid, _)| Self(asid))
+    }
+
+    pub(crate) fn release_unpublished(asid: Self) {
+        debug_assert!(!asid.is_kernel());
+        ASID_ALLOCATOR
+            .lock()
+            .deallocate(asid.get(), 1)
+            .expect("asid: unpublished allocation must be owned");
     }
 
     pub fn get(self) -> usize {
@@ -71,10 +79,40 @@ pub(crate) fn lease(hart: crate::hart::HartId) -> Option<Asid> {
     }
 }
 
+#[cfg(debug_assertions)]
+static FAIL_NEXT: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(VACANT);
+
+#[cfg(debug_assertions)]
+pub(crate) fn fail_next_shootdown(asid: Asid) {
+    assert!(crate::testing(), "shootdown injection requires a test run");
+    FAIL_NEXT
+        .compare_exchange(
+            VACANT,
+            asid.get(),
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+        )
+        .expect("shootdown injection already armed");
+}
+
 pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
     crate::memory::allocator::assert_allocation_allowed();
     // SAFETY: 页表已改完，刷后翻译即新映射
     unsafe { flush_asid(asid) };
+
+    #[cfg(debug_assertions)]
+    if FAIL_NEXT
+        .compare_exchange(
+            asid.get(),
+            VACANT,
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+        )
+        .is_ok()
+    {
+        return Err(Deaf { asid });
+    }
 
     let me = hart::hart_id();
     let mut mask = 0usize;
@@ -82,11 +120,13 @@ pub fn shootdown(asid: Asid) -> Result<(), Deaf> {
         if hart == me {
             continue;
         }
-        if asid.is_kernel() || lease(hart) == Some(asid) {
+        if (asid.is_kernel() && crate::hart::online(hart)) || lease(hart) == Some(asid) {
             let (_, bit) = hart.bit();
             mask |= bit;
         }
     }
+
+    if mask == 0 { return Ok(()); }
 
     let operation = if asid.is_kernel() {
         fid::Rfence::RemoteSfenceVma

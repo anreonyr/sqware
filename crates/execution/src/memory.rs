@@ -21,11 +21,11 @@ pub fn map(
     team: TeamId,
     at: usize,
     size: usize,
-    backing: PieToken,
+    pole: PieToken,
     offset: usize,
     flags: u64,
 ) -> MemoryResult<usize> {
-    env::memory::mmap(team, VirtAddr::new(at), size, backing, offset, flags)
+    env::memory::mmap(team, VirtAddr::new(at), size, pole, offset, flags)
         .map(|address| address.get())
 }
 

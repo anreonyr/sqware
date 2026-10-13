@@ -80,7 +80,7 @@ impl Loading {
             return Err("image source bounds".into());
         }
         let size = image.length.div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE;
-        let root = env::pie::unseal(env::UnsealArgs::Pole { size, shared: true })
+        let root = ::resource::raw::pole(size, true)
             .map_err(|e| format!("image snapshot allocation: {e:?}"))?;
         let (target, target_size) = match resource::raw::open(root) {
             Ok(mapped) => mapped,

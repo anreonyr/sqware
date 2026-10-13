@@ -190,3 +190,40 @@ fn receive_policy_keeps_or_discards_only_the_oversized_head() {
         crate::PullOutcome::Received { len: 2, sender });
     assert_eq!(buf, [2; 2]);
 }
+
+#[test]
+fn pole_creation_keeps_the_successful_source_mapping() {
+    test_backend::reset();
+    let token = crate::raw::pole(crate::PAGE_SIZE, true).unwrap();
+    assert_eq!(test_backend::events(), [
+        Event::Allocate(crate::PAGE_SIZE),
+        Event::Pole(0x4000, crate::PAGE_SIZE, true, token),
+    ]);
+}
+
+#[test]
+fn failed_pole_creation_releases_only_its_allocation() {
+    test_backend::reset();
+    test_backend::fail_next(Op::Unseal);
+    test_backend::busy_for(Op::Deallocate, 1);
+    assert!(crate::raw::pole(crate::PAGE_SIZE, false).is_err());
+    let events = test_backend::events();
+    assert!(matches!(events[1], Event::Pole(0x4000, _, false, _)));
+    assert_eq!(&events[2..], [
+        Event::Deallocate(0x4000, crate::PAGE_SIZE),
+        Event::Starve,
+        Event::Deallocate(0x4000, crate::PAGE_SIZE),
+    ]);
+}
+
+#[test]
+fn pole_allocation_failure_and_invalid_sizes_create_no_capability() {
+    test_backend::reset();
+    test_backend::fail_next(Op::Allocate);
+    assert!(crate::raw::pole(crate::PAGE_SIZE, true).is_err());
+    assert_eq!(test_backend::events(), [Event::Allocate(crate::PAGE_SIZE)]);
+    test_backend::reset();
+    assert!(crate::raw::pole(0, true).is_err());
+    assert!(crate::raw::pole(crate::PAGE_SIZE - 1, true).is_err());
+    assert!(test_backend::events().is_empty());
+}

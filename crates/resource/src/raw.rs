@@ -304,6 +304,35 @@ pub(crate) fn wait(token: PieToken, dir: MailCondition, within: Wait) -> MailRes
     }
 }
 
+/// Allocate a materialized mapping and create a Pole from it.
+pub fn pole(size: usize, shared: bool) -> PieResult<PieToken> {
+    if size == 0 || !size.is_multiple_of(env::PAGE_SIZE) {
+        return Err(env::make_fail(env::PieFail::NotAligned));
+    }
+    let addr = env::memory::allocate(size).map_err(|error| {
+        env::make_fail(match error.source {
+            env::MemoryFail::OoM => env::PieFail::OoM,
+            env::MemoryFail::Busy => env::PieFail::Busy,
+            _ => env::PieFail::Denied,
+        })
+    })?;
+    match env::pie::unseal(env::UnsealArgs::Pole { addr, size, shared }) {
+        Ok(token) => Ok(token),
+        Err(error) => {
+            loop {
+                match env::memory::deallocate(addr, size) {
+                    Err(cleanup) if cleanup.source == env::MemoryFail::Busy => env::room::starve(),
+                    Err(cleanup) => return Err(env::make_fail(match cleanup.source {
+                        env::MemoryFail::OoM => env::PieFail::OoM,
+                        _ => env::PieFail::Denied,
+                    })),
+                    Ok(()) => return Err(error),
+                }
+            }
+        }
+    }
+}
+
 /// 借映共享页，返回映射起点与长度。
 pub fn open(token: PieToken) -> PieResult<(usize, usize)> {
     env::pie::open(token).map(|(va, size)| (va.get(), size))

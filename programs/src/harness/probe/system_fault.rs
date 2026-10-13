@@ -22,10 +22,7 @@ pub fn acceptance() {
     let catalog = crate::boot::Catalog::of_boot(&accounts).unwrap();
     let victim = catalog.find("system-fault-unit").unwrap();
     let child = catalog.find("system-child").unwrap();
-    let payload = env::pie::unseal(env::UnsealArgs::Pole {
-        size: child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE,
-        shared: true,
-    })
+    let payload = ::resource::raw::pole(child.elf.len().div_ceil(env::PAGE_SIZE) * env::PAGE_SIZE, true)
     .unwrap();
     let (at, _) = ::resource::raw::open(payload).unwrap();
     // SAFETY: the owned writable Pole covers the complete ELF payload.

@@ -17,7 +17,7 @@ global_asm!(
     "    la   t0, _stack",
     "    ld   t0, 0(t0)",
     "    add  sp, sp, t0",
-    "    j    main",
+    "    tail main",
 );
 
 #[unsafe(no_mangle)]

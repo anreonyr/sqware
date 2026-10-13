@@ -1,276 +1,307 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
-use env::TaskId;
-
-use env::PieToken;
-
+use env::{Bit, MailFail, Permission, PieFail, PieToken, TaskId, TeamId};
 use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
-use crate::memory::manager::MapError;
-use crate::memory::manager::addr::VirtAddr;
-use crate::memory::manager::entry::PteFlags;
+use crate::memory::manager::{Map, MapError, addr::PhysAddr, entry::PteFlags};
 use crate::work::room::messenger::{self, Handoff, WakeKey};
+use crate::work::unit::gate::Grant;
 use crate::work::unit::life::Life;
-use crate::work::unit::space::{Backing, SegmentKind, Space, Span};
-
-use env::{Bit, MailFail, PieFail};
+use crate::work::unit::space::{Mapping, RegionId, Reservation, Space};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PoleId(pub usize);
 
 fn alloc_id() -> PoleId {
-    static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
-    PoleId(NEXT_ID.fetch_add(1, Ordering::Relaxed))
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    PoleId(NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PoleState {
-    Live,
-    Dead,
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Relation { Input, Keeper, Authority, Open, View, Staged(TeamId) }
+
+struct HeldMap {
+    map: Arc<Map>,
+    token: Option<PieToken>,
+    grant: Option<Arc<Grant>>,
+    placement: Option<(Weak<Space>, Reservation)>,
+    relation: Relation,
 }
 
-/// 一枚页：一段由 backing 管理的页级安全内存与页上的"有事"位。
-///
-/// # 页上为什么有"有事"
-/// 一具架（`ipc::rack`）是"一枚页 ＋ 一枚铃"两件东西；把**铃并进页**
-/// 之后，一具架就只剩**一枚 Pie** ——树上一格门牌挂得下的正是它。那一位与孔/铃上那位同义：
-/// 写者落完一格响一下（`ring`），读者读干应一下（`hush`），等它走 `wait`。
-///
-/// **它不碰中断闸门**（与 [`crate::work::mail::nole`] 的铃不同）：页上那一位不是中断响的，
-/// 故 `envcall` 那一侧 `Hush` 的 Pole 支照孔那一支写、**不调 `sie::set_sext`**。
-///
-/// **一位（bool）而不是一列位**：架的写者每落一格响一次，而读者用的是"读干 → 应铃 → 复探
-/// → 等"四拍（见 `rack::reader`）——重复的响本就该并成一枚，多响的那几次答 `Busy`、写者当
-/// "正好"忽略。落一列位会把 `hush` 变成"应几次"，与那四拍多出没有读者的一档。
+/// Mapping ownership, authorization relations and notifications for one memory resource.
 pub struct PoleMeta {
-    state: SpinLock<PoleState>,
-    backing: Arc<Backing>,
+    maps: SpinLock<Vec<HeldMap>>,
+    live: AtomicBool,
+    committed: AtomicBool,
+    operating: AtomicBool,
     size: usize,
-    mappings: SpinLock<Vec<(PieToken, Weak<Space>, Span, bool)>>,
     owner: TaskId,
-    /// 这一枚在本机里的号（组、唤醒键用它——`PieToken` 是**表内**的号，跨域没有意义）。
     id: PoleId,
-    /// 等待者随资源一起醒（`messenger` 要它；[`Drop`] 与 [`seal`] 都会 `wipe`）。
     life: Arc<Life>,
-    /// 页上那一位"有事"。
     ring: SpinLock<usize>,
 }
 
-// SAFETY: backing 管理共享物理帧，状态及映射登记经锁同步。
+// SAFETY: token-bearing kernel records are protected by maps and the operation lease.
 unsafe impl Send for PoleMeta {}
 unsafe impl Sync for PoleMeta {}
 
 impl PoleMeta {
-    pub(crate) fn backing(&self) -> &Arc<Backing> {
-        &self.backing
-    }
-    pub(super) fn allocate(size: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
-        if size == 0 || !size.is_multiple_of(PAGE_SIZE) {
-            return Err(PieFail::NotAligned);
-        }
-        let backing = Backing::allocate(size).map_err(|e| match e {
-            MapError::OutOfMemory => PieFail::OoM,
-            _ => PieFail::NotAligned,
-        })?;
+    fn new(size: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
+        let mut maps = Vec::new();
+        maps.try_reserve_exact(3).map_err(|_| PieFail::OoM)?;
         Arc::try_new(Self {
-            state: SpinLock::new_level(Level::L3, PoleState::Live),
-            backing,
-            size,
-            mappings: SpinLock::new(Vec::new()),
-            owner,
-            id: alloc_id(),
-            life: Life::try_new().map_err(|_| PieFail::OoM)?,
+            maps: SpinLock::new(maps), live: AtomicBool::new(true),
+            committed: AtomicBool::new(false), operating: AtomicBool::new(false),
+            size, owner, id: alloc_id(), life: Life::try_new().map_err(|_| PieFail::OoM)?,
             ring: SpinLock::new_level(Level::L3, 0),
-        })
-        .map_err(|_| PieFail::OoM)
+        }).map_err(|_| PieFail::OoM)
     }
 
-    pub(super) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<Self>, PieFail> {
-        if reg == 0 {
-            return Err(PieFail::NotAligned);
+    pub(crate) fn from_mapping(space: &Arc<Space>, mapping: Mapping, owner: TaskId, _shared: bool) -> Result<Arc<Self>, PieFail> {
+        let (start, size) = mapping.map.initial_range();
+        if size == 0 || start != mapping.reservation.start() || size != mapping.reservation.size()
+            || mapping.map.frame_count() != size / PAGE_SIZE {
+            return Err(PieFail::Denied);
         }
-        let end = base.checked_add(reg).ok_or(PieFail::NotAligned)?;
-        let lo = base & !(PAGE_SIZE - 1);
-        let hi = end
-            .checked_next_multiple_of(PAGE_SIZE)
-            .ok_or(PieFail::NotAligned)?;
-        let size = hi - lo;
-        let backing = Backing::region(lo, size).map_err(|e| match e {
-            MapError::OutOfMemory => PieFail::OoM,
-            _ => PieFail::NotAligned,
-        })?;
-        Arc::try_new(Self {
-            state: SpinLock::new_level(Level::L3, PoleState::Live),
-            backing,
-            size,
-            mappings: SpinLock::new(Vec::new()),
-            owner,
-            id: alloc_id(),
-            life: Life::try_new().map_err(|_| PieFail::OoM)?,
-            ring: SpinLock::new_level(Level::L3, 0),
-        })
-        .map_err(|_| PieFail::OoM)
-    }
-
-    pub(crate) fn owner(&self) -> TaskId {
-        self.owner
-    }
-
-    pub(crate) fn id(&self) -> PoleId {
-        self.id
-    }
-
-    pub(crate) fn life(&self) -> Weak<Life> {
-        Arc::downgrade(&self.life)
-    }
-
-    pub(crate) fn alive(&self) -> bool {
-        *self.state.lock() == PoleState::Live
-    }
-
-    /// 页上那一位此刻亮着吗。
-    pub(crate) fn ready(&self, bit: Bit) -> bool {
-        *self.ring.lock() & bit.mask() != 0
-    }
-
-    fn open_into(
-        &self,
-        token: PieToken,
-        space: &Arc<Space>,
-        flags: PteFlags,
-    ) -> Result<usize, PieFail> {
-        {
-            let m = self.mappings.lock();
-            if let Some((_, _, span, _)) = m.iter().find(|(t, _, _, open)| *t == token && *open) {
-                return Ok(span.va.as_usize());
-            }
+        let ranges = mapping.map.ranges().map_err(pie_map_error)?;
+        let mut covered = 0;
+        for range in ranges {
+            if start.as_usize().checked_add(covered) != Some(range.start.as_usize()) { return Err(PieFail::Denied); }
+            covered += range.size.get();
         }
-        let va = space
-            .with_flush(|inner| {
-                let va = crate::work::unit::space::window::HeapWindow::locate(inner, self.size)?;
-                inner.allocate(SegmentKind::Normal, va.as_usize(), self.size)?;
-                if let Err(e) = inner.backed(va, self.backing.clone(), 0, self.size, flags, flags) {
-                    inner.deallocate(SegmentKind::Normal, va.as_usize(), self.size);
-                    return Err(e);
-                }
-                inner.bind(va, token);
-                inner.mark_open(va);
-                Ok::<_, MapError>(va)
-            })
-            .map_err(|_| PieFail::OoM)?;
-        let mut maps = self.mappings.lock();
-        if maps.try_reserve(1).is_err() {
-            drop(maps);
-            let _ = space.release(Span::new(SegmentKind::Normal, va, self.size, None));
-            return Err(PieFail::OoM);
-        }
-        maps.push((
-            token,
-            Arc::downgrade(space),
-            Span::new(SegmentKind::Normal, va, self.size, None),
-            true,
-        ));
-        Ok(va.as_usize())
+        if covered != size { return Err(PieFail::Denied); }
+        let meta = Self::new(size, owner)?;
+        let kernel = crate::work::unit::team::kernel().ok_or(PieFail::Dead)?.space.clone();
+        let reservation = kernel.allocate_high(RegionId::Resource, size).map_err(pie_map_error)?;
+        let rw = PteFlags::R | PteFlags::W;
+        let keeper = kernel.derive(reservation, &mapping.map, 0, rw, rw | PteFlags::A | PteFlags::D).map_err(pie_map_error)?;
+        meta.add(mapping, space, None, None, Relation::Input);
+        meta.add(keeper, &kernel, None, None, Relation::Keeper);
+        Ok(meta)
     }
 
-    fn narrow_into(&self, token: PieToken, flags: PteFlags) -> Result<(), PieFail> {
-        let target = {
-            let m = self.mappings.lock();
-            m.iter()
-                .find(|(t, _, _, _)| *t == token)
-                .and_then(|(_, w, s, _)| {
-                    w.upgrade()
-                        .map(|space| (space, s.va.as_usize(), s.size.get()))
-                })
-        };
-        if let Some((space, _, _)) = target {
-            space
-                .with_shootdown(|inner| inner.narrow_token(token, flags))
-                .expect("narrow: shootdown failed")
-                .map_err(|_| PieFail::Denied)?;
+    pub(crate) fn commit_source(&self) { self.committed.store(true, Ordering::Release); }
+    pub(crate) fn owner(&self) -> TaskId { self.owner }
+    pub(crate) fn id(&self) -> PoleId { self.id }
+    pub(crate) fn size(&self) -> usize { self.size }
+    pub(crate) fn life(&self) -> Weak<Life> { Arc::downgrade(&self.life) }
+    pub(crate) fn alive(&self) -> bool { self.live.load(Ordering::Acquire) }
+    pub(crate) fn ready(&self, bit: Bit) -> bool { *self.ring.lock() & bit.mask() != 0 }
+
+    pub(crate) fn canonical_map(&self) -> Option<Arc<Map>> {
+        let maps = self.maps.lock();
+        maps.iter().filter(|entry| entry.relation == Relation::Keeper)
+            .chain(maps.iter().filter(|entry| entry.placement.is_some()))
+            .find(|entry| entry.map.is_live()).map(|entry| entry.map.clone())
+    }
+
+    pub(crate) fn owned(&self) -> bool {
+        self.canonical_map().is_some_and(|map| map.frame_count() == self.size / PAGE_SIZE)
+    }
+
+    pub(crate) fn register_grant(&self, token: PieToken, grant: Arc<Grant>) -> Result<(), PieFail> {
+        let source = self.canonical_map().ok_or(PieFail::Dead)?;
+        let mut maps = self.maps.lock();
+        maps.try_reserve(1).map_err(|_| PieFail::OoM)?;
+        if let Some(input) = maps.iter_mut().find(|entry| entry.relation == Relation::Input && entry.token.is_none()) {
+            input.token = Some(token);
+            input.grant = Some(grant.clone());
         }
+        maps.push(HeldMap { map: source, token: Some(token), grant: Some(grant), placement: None, relation: Relation::Authority });
         Ok(())
+    }
+
+    pub(crate) fn release_grant(&self, token: PieToken) {
+        self.maps.lock().retain(|entry| !(entry.token == Some(token) && entry.relation == Relation::Authority));
+    }
+
+    pub(crate) fn grant(&self, token: PieToken) -> Option<Arc<Grant>> {
+        self.maps.lock().iter().find(|entry| entry.relation == Relation::Authority && entry.token == Some(token))
+            .and_then(|entry| entry.grant.clone())
+    }
+
+    pub(crate) fn readonly(&self) -> bool {
+        let maps = self.maps.lock();
+        for entry in maps.iter() {
+            if entry.relation == Relation::Authority && entry.grant.as_ref().and_then(|grant| grant.permission()).is_some_and(|permission| permission.contains(Permission::STORE)) { return false; }
+            if entry.placement.is_some() && entry.relation != Relation::Keeper && entry.map.is_live()
+                && entry.map.ranges().map_or(true, |ranges| ranges.iter().any(|range| range.current.contains(PteFlags::W))) { return false; }
+        }
+        true
+    }
+
+    pub(crate) fn exclusive(&self) -> bool {
+        self.maps.lock().iter().filter(|entry| entry.relation == Relation::Authority && entry.grant.as_ref().and_then(|grant| grant.permission()).is_some()).count() == 1
+    }
+
+    pub(crate) fn reserved(&self) -> usize {
+        self.maps.lock().iter().find_map(|entry| if let Relation::Staged(team) = entry.relation { Some(team.get()) } else { None }).unwrap_or(0)
+    }
+
+    pub(crate) fn opened(&self, map: &Arc<Map>) -> bool {
+        self.maps.lock().iter().any(|entry| matches!(entry.relation, Relation::Input | Relation::Open)
+            && Arc::ptr_eq(&entry.map, map) && entry.map.is_live())
     }
 
     pub(crate) fn mapped(&self) -> bool {
-        self.mappings
-            .lock()
-            .iter()
-            .any(|(token, weak, _, _)| weak.upgrade().is_some_and(|space| space.has_token(*token)))
+        self.maps.lock().iter().any(|entry| matches!(entry.relation, Relation::Input | Relation::Open | Relation::View) && entry.map.is_live())
     }
 
-    pub(crate) fn record(
-        &self,
-        token: PieToken,
-        space: &Arc<Space>,
-        span: Span,
-    ) -> Result<(), PieFail> {
-        let mut mappings = self.mappings.lock();
-        mappings.try_reserve(1).map_err(|_| PieFail::OoM)?;
-        mappings.push((token, Arc::downgrade(space), span, false));
+    pub(crate) fn operation(self: &Arc<Self>) -> Option<PoleOperation> {
+        self.operating.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).ok()?;
+        Some(PoleOperation(self.clone()))
+    }
+
+    pub(crate) fn reserve_record(&self) -> Result<(), PieFail> {
+        self.maps.lock().try_reserve(1).map_err(|_| PieFail::OoM)
+    }
+
+    fn add(&self, mapping: Mapping, space: &Arc<Space>, token: Option<PieToken>, grant: Option<Arc<Grant>>, relation: Relation) {
+        self.maps.lock().push(HeldMap { map: mapping.map, token, grant, placement: Some((Arc::downgrade(space), mapping.reservation)), relation });
+    }
+
+    pub(crate) fn record(&self, token: PieToken, space: &Arc<Space>, mapping: Mapping, staged: Option<TeamId>, opened: bool) -> Result<(), Mapping> {
+        let mut maps = self.maps.lock();
+        let grant = maps.iter().find(|entry| entry.relation == Relation::Authority && entry.token == Some(token)).and_then(|entry| entry.grant.clone());
+        if !self.alive() || grant.as_ref().and_then(|grant| grant.permission()).is_none() { return Err(mapping); }
+        maps.push(HeldMap {
+            map: mapping.map, token: Some(token), grant,
+            placement: Some((Arc::downgrade(space), mapping.reservation)),
+            relation: staged.map_or(if opened { Relation::Open } else { Relation::View }, Relation::Staged),
+        });
         Ok(())
     }
 
-    fn shut_from(&self, token: PieToken) -> Result<(), PieFail> {
+    pub(crate) fn detach_staging(&self, token: PieToken, team: TeamId) {
+        self.maps.lock().retain(|entry| !(entry.token == Some(token) && entry.relation == Relation::Staged(team)));
+    }
+
+    fn close_token(&self, token: PieToken) -> Result<(), PieFail> {
         loop {
-            let target = self
-                .mappings
-                .lock()
-                .iter()
-                .find(|(t, _, _, _)| *t == token)
-                .map(|(_, weak, _, _)| weak.clone());
-            let Some(weak) = target else { return Ok(()) };
-            if let Some(space) = weak.upgrade() {
-                space.unmap_token(token).map_err(|_| PieFail::Denied)?;
+            let mut entry = {
+                let mut maps = self.maps.lock();
+                let index = maps.iter().position(|entry| entry.token == Some(token) && entry.placement.is_some() && !matches!(entry.relation, Relation::Keeper | Relation::Staged(_)));
+                match index { Some(index) => maps.remove(index), None => return Ok(()) }
+            };
+            if let Some((weak, reservation)) = entry.placement.take() {
+                if let Some(space) = weak.upgrade() {
+                    let mapping = Mapping { map: entry.map.clone(), reservation };
+                    if let Err(error) = space.unmap(&mapping) {
+                        entry.placement = Some((weak, mapping.reservation));
+                        self.maps.lock().push(entry);
+                        return Err(pie_map_error(error));
+                    }
+                }
             }
-            self.mappings.lock().retain(|(t, _, _, _)| *t != token);
         }
     }
+
+    pub(crate) fn withdraw(&self, token: PieToken) {
+        loop {
+            let entry = {
+                let mut maps = self.maps.lock();
+                let index = maps.iter().position(|entry| entry.token == Some(token) && entry.placement.is_some()
+                    && !matches!(entry.relation, Relation::Keeper | Relation::Staged(_)));
+                match index { Some(index) => maps.remove(index), None => return }
+            };
+            if let Some((weak, reservation)) = entry.placement {
+                if let Some(space) = weak.upgrade() { let _ = space.dispose(Mapping { map: entry.map, reservation }); }
+            }
+        }
+    }
+
+
+}
+
+pub(crate) struct PoleOperation(Arc<PoleMeta>);
+impl Drop for PoleOperation { fn drop(&mut self) { self.0.operating.store(false, Ordering::Release); } }
+
+fn pie_map_error(error: MapError) -> PieFail {
+    match error { MapError::OutOfMemory => PieFail::OoM, MapError::Shootdown => PieFail::Busy, _ => PieFail::Denied }
 }
 
 impl Drop for PoleMeta {
     fn drop(&mut self) {
-        *self.state.lock() = PoleState::Dead;
-        // 睡在"页上那一位"上面的读者随资源一起醒（与 nole 同一条）。
+        self.live.store(false, Ordering::Release);
         wipe(self);
-        let mappings: Vec<(PieToken, Weak<Space>, Span, bool)> =
-            core::mem::take(&mut *self.mappings.lock());
-        for (token, weak, _, _) in mappings {
-            if let Some(space) = weak.upgrade() {
-                let _ = space.unmap_token(token);
+        let maps = core::mem::take(&mut *self.maps.lock());
+        for entry in maps {
+            if entry.relation == Relation::Input && !self.committed.load(Ordering::Acquire) { continue; }
+            if let Some((weak, reservation)) = entry.placement {
+                if let Some(space) = weak.upgrade() {
+                    let _ = space.dispose(Mapping { map: entry.map, reservation });
+                }
             }
         }
     }
 }
 
-pub(crate) fn open(
-    meta: &PoleMeta,
-    token: PieToken,
-    space: &Arc<Space>,
-    flags: PteFlags,
-) -> Result<(usize, usize), PieFail> {
-    if !meta.alive() {
-        return Err(PieFail::Dead);
+pub(crate) fn open(meta: &Arc<PoleMeta>, token: PieToken, space: &Arc<Space>, flags: PteFlags) -> Result<(usize, usize), PieFail> {
+    let _operation = meta.operation().ok_or(PieFail::Busy)?;
+    if !meta.alive() { return Err(PieFail::Dead); }
+    if meta.reserved() != 0 { return Err(PieFail::HandedOver); }
+    let grant = meta.grant(token).ok_or(PieFail::Denied)?;
+    let permission = grant.permission().ok_or(PieFail::Dead)?;
+    if !permission.contains(Permission::FETCH) || flags.contains(PteFlags::W) && !permission.contains(Permission::STORE) { return Err(PieFail::Denied); }
+    let reusable = {
+        let maps = meta.maps.lock();
+        maps.iter().find(|entry| entry.token == Some(token) && matches!(entry.relation, Relation::Input | Relation::Open)
+            && entry.placement.as_ref().is_some_and(|(weak, _)| weak.ptr_eq(&Arc::downgrade(space))) && entry.map.is_live()).map(|entry| entry.map.clone())
+    };
+    if let Some(map) = reusable {
+        for range in map.ranges().map_err(pie_map_error)? {
+            let rwx = PteFlags::R | PteFlags::W | PteFlags::X;
+            if (range.ceiling & rwx).bits() != (flags & rwx).bits() { space.tree.narrow(&map, range.start, range.size.get(), flags).map_err(pie_map_error)?; }
+        }
+        return Ok((map.initial_range().0.as_usize(), meta.size));
     }
-    let va = meta.open_into(token, space, flags)?;
-    space
-        .protect(VirtAddr::from_raw(va), meta.size, flags)
-        .map_err(|_| PieFail::Denied)?;
-    Ok((va, meta.size))
+    meta.reserve_record()?;
+    let source = meta.canonical_map().ok_or(PieFail::Dead)?;
+    let reservation = space.allocate_low(RegionId::Normal, meta.size).map_err(pie_map_error)?;
+    let mapping = space.derive(reservation, &source, 0, flags, flags | PteFlags::A | PteFlags::D).map_err(pie_map_error)?;
+    let address = mapping.reservation.start().as_usize();
+    if !meta.alive() || grant.permission().is_none() { let _ = space.dispose(mapping); return Err(PieFail::Dead); }
+    if let Err(mapping) = meta.record(token, space, mapping, None, true) { let _ = space.dispose(mapping); return Err(PieFail::Dead); }
+    Ok((address, meta.size))
 }
 
-pub(crate) fn shut(meta: &PoleMeta, token: PieToken) -> Result<(), PieFail> {
-    meta.shut_from(token)
+pub(crate) fn shut(meta: &Arc<PoleMeta>, token: PieToken) -> Result<(), PieFail> {
+    let _operation = meta.operation().ok_or(PieFail::Busy)?;
+    meta.close_token(token)
 }
 
-pub(crate) fn narrow(meta: &PoleMeta, token: PieToken, flags: PteFlags) -> Result<(), PieFail> {
-    if !meta.alive() {
-        return Err(PieFail::Dead);
+pub(crate) fn narrow(meta: &Arc<PoleMeta>, token: PieToken, flags: PteFlags) -> Result<(), PieFail> {
+    if !meta.alive() { return Err(PieFail::Dead); }
+    let mut targets = Vec::new();
+    {
+        let maps = meta.maps.lock();
+        targets.try_reserve(maps.len()).map_err(|_| PieFail::OoM)?;
+        for entry in maps.iter().filter(|entry| entry.token == Some(token) && entry.placement.is_some()) {
+            if let Some(tree) = entry.map.tree() { targets.push((tree, entry.map.clone(), entry.map.ranges().map_err(pie_map_error)?)); }
+        }
     }
-    meta.narrow_into(token, flags)
+    for (tree, map, ranges) in targets {
+        for range in ranges { tree.narrow(&map, range.start, range.size.get(), flags).map_err(pie_map_error)?; }
+    }
+    Ok(())
+}
+
+pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {
+    let end = base.checked_add(reg).filter(|_| reg != 0).ok_or(PieFail::NotAligned)?;
+    let lo = base & !(PAGE_SIZE - 1);
+    let hi = end.checked_next_multiple_of(PAGE_SIZE).ok_or(PieFail::NotAligned)?;
+    let meta = PoleMeta::new(hi - lo, owner)?;
+    let kernel = crate::work::unit::team::kernel().ok_or(PieFail::Dead)?.space.clone();
+    let reservation = kernel.allocate_high(RegionId::Resource, hi - lo).map_err(pie_map_error)?;
+    let rw = PteFlags::R | PteFlags::W;
+    // SAFETY: boot resource discovery keeps these external pages reserved.
+    let mapping = unsafe { kernel.map_borrowed(reservation, PhysAddr::from_raw(lo), rw, rw | PteFlags::A | PteFlags::D) }.map_err(pie_map_error)?;
+    meta.add(mapping, &kernel, None, None, Relation::Keeper);
+    meta.commit_source();
+    Ok(meta)
 }
 
 pub(crate) fn key(meta: &PoleMeta, bit: Bit) -> WakeKey {
@@ -323,14 +354,6 @@ pub(crate) fn wait(meta: &PoleMeta, bit: Bit, dur: Duration) -> Result<Handoff<b
     })
 }
 pub(crate) fn seal(meta: &PoleMeta) {
-    *meta.state.lock() = PoleState::Dead;
+    meta.live.store(false, Ordering::Release);
     wipe(meta);
-}
-
-pub(crate) fn meta(size: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {
-    PoleMeta::allocate(size, owner)
-}
-
-pub(crate) fn region(base: usize, reg: usize, owner: TaskId) -> Result<Arc<PoleMeta>, PieFail> {
-    PoleMeta::region(base, reg, owner)
 }

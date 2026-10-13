@@ -17,15 +17,21 @@ const FRAME_HELD: usize = 8;
 
 pub fn accept() {
     let a = hybrid::allocator();
-    // Each size class retains one spare page after its first use.
-    for size in SIZES {
+    // Fill a page per class so even classes with permanent boot allocations have a spare.
+    let mut warm = Vec::new();
+    warm.try_reserve_exact(PAGE_SIZE / 8).expect("stress: warm slots");
+    for power in 3..=11 {
+        let size = 1 << power;
         let layout = Layout::from_size_align(size, 8).unwrap();
-        let block = a.allocate(layout).expect("stress: warm size class");
-        // SAFETY: block and layout come from the same allocation.
-        unsafe {
-            a.deallocate(block.cast(), layout);
+        for _ in 0..PAGE_SIZE / size {
+            warm.push(a.allocate(layout).expect("stress: warm size class"));
+        }
+        for block in warm.drain(..) {
+            // SAFETY: each block was allocated with this class layout.
+            unsafe { a.deallocate(block.cast(), layout) };
         }
     }
+    drop(warm);
     let kinds_before = crate::memory::allocator::statistics::kinds();
 
     for i in 0..STEPS {
