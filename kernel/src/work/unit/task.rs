@@ -1,7 +1,6 @@
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::mem::MaybeUninit;
-use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::copies::Origin;
@@ -9,7 +8,7 @@ use super::copies::Origin;
 use env::{PieToken, TaskId, UnitFail};
 
 use crate::layout::{HART_FRAME_BASE, IMAGE_BASE, TASK_STACK_SIZE};
-use crate::lock::{Level, SpinLock, SpinLockGuard};
+use crate::lock::{Level, SpinLock};
 use crate::memory::PAGE_SIZE;
 use crate::memory::manager::addr::PhysAddr;
 use crate::memory::manager::addr::VirtAddr;
@@ -82,8 +81,8 @@ fn preparation_checkpoint(_stage: usize) -> Result<(), MapError> {
 pub(crate) const MAX_ARGS: usize = 64;
 
 pub struct TaskState {
-    pub(crate) axis: TaskAxis,
-    pub(crate) paused: bool,
+    axis: TaskAxis,
+    paused: bool,
 }
 
 pub enum TaskAxis {
@@ -126,7 +125,7 @@ impl TaskState {
         }
     }
 
-    pub(crate) fn on_hart(hart: crate::hart::HartId, ticks_left: u32) -> TaskState {
+    pub(crate) fn running(hart: crate::hart::HartId, ticks_left: u32) -> TaskState {
         TaskState {
             axis: TaskAxis::OnHart { hart, ticks_left },
             paused: false,
@@ -140,18 +139,34 @@ impl TaskState {
         }
     }
 
-    pub(crate) fn doomed(
+    pub(crate) fn doom(
+        &mut self,
         hart: Option<crate::hart::HartId>,
         cause: TaskExitCause,
         reason: usize,
-    ) -> TaskState {
-        TaskState {
-            axis: TaskAxis::Doomed {
-                hart,
-                cause,
-                reason,
-            },
-            paused: false,
+    ) {
+        self.axis = TaskAxis::Doomed {
+            hart,
+            cause,
+            reason,
+        };
+        self.paused = false;
+    }
+
+    pub(crate) fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub(crate) fn resume(&mut self) {
+        self.paused = false;
+    }
+
+    pub(crate) fn dying(&self) -> Option<(TaskExitCause, usize)> {
+        match &self.axis {
+            TaskAxis::Doomed { cause, reason, .. } | TaskAxis::Reaped { cause, reason, .. } => {
+                Some((*cause, *reason))
+            }
+            _ => None,
         }
     }
 
@@ -163,6 +178,16 @@ impl TaskState {
                 next: None,
             },
             paused: false,
+        }
+    }
+
+    pub(crate) fn on_hart(&self) -> Option<crate::hart::HartId> {
+        match &self.axis {
+            TaskAxis::OnHart { hart, .. }
+            | TaskAxis::Doomed {
+                hart: Some(hart), ..
+            } => Some(*hart),
+            _ => None,
         }
     }
 
@@ -267,6 +292,18 @@ impl TaskWeak {
         }
     }
 
+    pub(crate) fn live(&self) -> bool {
+        self.w.strong_count() > 0
+    }
+
+    pub(crate) fn as_weak(&self) -> &Weak<Task> {
+        &self.w
+    }
+
+    pub(crate) fn upgrade(&self) -> Option<Arc<Task>> {
+        self.w.upgrade()
+    }
+
     pub(crate) fn copy_at(&self, origin: Origin) -> TaskWeak {
         TaskWeak::stored(self.w.clone(), origin)
     }
@@ -277,13 +314,6 @@ impl TaskWeak {
             #[cfg(debug_assertions)]
             slot: 0,
         }
-    }
-}
-
-impl Deref for TaskWeak {
-    type Target = Weak<Task>;
-    fn deref(&self) -> &Weak<Task> {
-        &self.w
     }
 }
 
@@ -448,10 +478,6 @@ impl Task {
         *state = next;
     }
 
-    pub(crate) fn state(&self) -> SpinLockGuard<'_, TaskState> {
-        self.state.lock()
-    }
-
     pub fn held(&self) -> bool {
         matches!(self.state.lock().axis, TaskAxis::Held)
     }
@@ -480,10 +506,39 @@ impl Task {
     }
 
     pub(crate) fn on_hart(&self) -> Option<crate::hart::HartId> {
-        match self.state.lock().axis {
-            TaskAxis::OnHart { hart, .. } => Some(hart),
+        self.state.lock().on_hart()
+    }
+
+    pub(crate) fn ticks_left(&self) -> u32 {
+        match &self.state.lock().axis {
+            TaskAxis::OnHart { ticks_left, .. } => *ticks_left,
+            other => unreachable!("预算只在核上的任务身上，实为 {other:?}"),
+        }
+    }
+
+    pub(crate) fn doomed_on_hart(&self) -> Option<usize> {
+        match &self.state.lock().axis {
+            TaskAxis::Doomed {
+                hart: Some(_),
+                reason,
+                ..
+            } => Some(*reason),
             _ => None,
         }
+    }
+
+    pub(crate) fn block(
+        &self,
+        key: WakeKey,
+        ticket: Ticket,
+        wait: Option<crate::work::room::messenger::WaitCall>,
+    ) {
+        self.state.lock().axis = TaskAxis::Waiting {
+            key,
+            ticket,
+            next: None,
+            wait,
+        };
     }
 
     pub(crate) fn ready(&self) -> bool {
@@ -534,7 +589,7 @@ impl Task {
         let TaskAxis::OnHart { ticks_left, .. } = &mut state.axis else {
             unreachable!("dec_ticks_left 只对在核上的任务调用")
         };
-        debug_assert!(*ticks_left >= 1, "OnHart 预算恒 ≥ 1");
+        debug_assert!(*ticks_left >= 1, "既有预算恒 ≥ 1");
         *ticks_left -= 1;
     }
 
@@ -565,17 +620,17 @@ impl Task {
                 _ if state.paused => return Ok(()),
                 TaskAxis::OnHart { hart, .. } => {
                     let hart = *hart;
-                    state.paused = true;
+                    state.pause();
                     Step::Nudge(hart)
                 }
                 TaskAxis::Ready { .. } => Step::LeaveReady,
                 TaskAxis::Parked => {
-                    state.paused = true;
+                    state.pause();
                     state.axis = TaskAxis::Ready { next: None };
                     Step::Done
                 }
                 TaskAxis::Held | TaskAxis::Waiting { .. } => {
-                    state.paused = true;
+                    state.pause();
                     Step::Done
                 }
             }
@@ -586,7 +641,7 @@ impl Task {
                 if !scheduler::core::remove_from_starved(task) {
                     return Err(UnitFail::Busy);
                 }
-                task.state.lock().paused = true;
+                task.state.lock().pause();
                 task.ident.team.park(task.clone());
                 Ok(())
             }
@@ -612,7 +667,7 @@ impl Task {
                     return Err(UnitFail::Denied);
                 }
                 TaskAxis::Waiting { .. } => {
-                    state.paused = false;
+                    state.resume();
                     return Ok(());
                 }
                 TaskAxis::Held => true,

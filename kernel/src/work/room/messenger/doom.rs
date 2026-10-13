@@ -4,7 +4,7 @@ use super::wait::site::{SITE_SHARDS, WakeKey, shard_at};
 use super::{prune, void};
 use crate::work::room::scheduler::core::muster;
 use crate::work::unit::life::TeamLife;
-use crate::work::unit::task::{Task, TaskAxis, TaskExitCause, TaskState};
+use crate::work::unit::task::{Task, TaskExitCause};
 use crate::work::unit::team::Team;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -29,7 +29,7 @@ fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
         return false;
     }
     if let Some(hart) = task.on_hart() {
-        *task.state.lock() = TaskState::doomed(Some(hart), cause, reason);
+        task.state.lock().doom(Some(hart), cause, reason);
         NUDGED.fetch_add(1, Ordering::Relaxed);
         crate::work::room::conductor::nudge(hart);
         return false;
@@ -50,7 +50,7 @@ fn suspend(task: &Arc<Task>, cause: TaskExitCause, reason: usize) -> bool {
     if let Some(super::WaitCall::Mail(wait)) = task.take_wait() {
         wait.unwatch();
     }
-    *task.state.lock() = TaskState::doomed(None, cause, reason);
+    task.state.lock().doom(None, cause, reason);
     true
 }
 fn pop_waiter(task: &Arc<Task>) -> Option<Ticket> {
@@ -120,14 +120,7 @@ pub(crate) fn doom(task: &Arc<Task>) {
 }
 pub(crate) fn take_doomed(tid: TaskId) -> Option<usize> {
     let task = muster(tid)?.upgrade()?;
-    match &task.state.lock().axis {
-        TaskAxis::Doomed {
-            hart: Some(_),
-            reason,
-            ..
-        } => Some(*reason),
-        _ => None,
-    }
+    task.doomed_on_hart()
 }
 pub(crate) fn sweep_doomed() -> usize {
     0

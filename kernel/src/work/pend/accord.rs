@@ -32,7 +32,7 @@ pub(crate) fn accord(
         if !pie.alive() {
             return Err(PieFail::Dead);
         }
-        if !pie.allows(Need::Grant)
+        if !pie.allows(Need::Vest)
             || !pie.covers(subset)
             || !super::pie::form_ok(pie.permission(), subset)
         {

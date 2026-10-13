@@ -140,7 +140,7 @@ pub(crate) fn muster(id: TaskId) -> Option<TaskWeak> {
 pub(crate) fn prune_dead() -> usize {
     let mut g = roster_table().lock();
     let before = g.len();
-    g.retain(|_, w| w.strong_count() > 0);
+    g.retain(|_, w| w.live());
     before - g.len()
 }
 
@@ -151,7 +151,7 @@ pub(crate) fn roster_live_ids() -> (usize, [usize; 8]) {
     let mut n = 0usize;
     let mut more = 0usize;
     for (id, w) in g.iter() {
-        if w.strong_count() == 0 {
+        if !w.live() {
             continue;
         }
         if n < 8 {

@@ -98,7 +98,7 @@ pub(crate) struct Heir {
 pub enum Need {
     Fetch,
     Store,
-    Grant,
+    Vest,
 }
 
 fn alloc_id() -> PieToken {
@@ -211,7 +211,7 @@ fn allows_permission(permission: Permission, need: Need) -> bool {
     permission.contains(match need {
         Need::Fetch => Permission::FETCH,
         Need::Store => Permission::STORE,
-        Need::Grant => Permission::VEST,
+        Need::Vest => Permission::VEST,
     })
 }
 

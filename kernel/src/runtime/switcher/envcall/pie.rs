@@ -295,7 +295,7 @@ fn accord(
         let src = pend::locate(&caller, src_token).ok_or(PieFail::Denied)?;
         usable(&src)?;
         let dst = muster(dst_id).ok_or(PieFail::Denied)?;
-        pend::accord(&caller, src_token, &dst, subset, mark)
+        pend::accord(&caller, src_token, dst.as_weak(), subset, mark)
     })();
     answer(frame, r);
     Outcome::Resume
@@ -315,7 +315,7 @@ fn revoke(frame: &mut TrapContext, dst_id: TaskId, token: PieToken) -> Outcome {
     let r = (|| -> Result<usize, PieFail> {
         let caller = current().running_task().ok_or(PieFail::Denied)?;
         let target = muster(dst_id).ok_or(PieFail::Denied)?;
-        pend::revoke(&caller, &target, token).map(|_| 0)
+        pend::revoke(&caller, target.as_weak(), token).map(|_| 0)
     })();
     answer(frame, r);
     Outcome::Resume

@@ -11,7 +11,7 @@ use crate::work::room::conductor;
 use crate::work::room::scheduler::core::{current, kick};
 use crate::work::room::scheduler::trap::run;
 use crate::work::unit::life::{Life, TaskLife};
-use crate::work::unit::task::{Task, TaskAxis};
+use crate::work::unit::task::Task;
 
 use self::holder::{Ticket, hold, void};
 use self::site::{Fwd, SITE_SHARDS, Site, WakeKey, prune, shard_at, sites, take_beacon};
@@ -110,12 +110,7 @@ fn block_with_call<E: WaitFail>(
         tid: task.ident.id.get(),
         key: key.fold() as usize,
     }));
-    task.state.lock().axis = TaskAxis::Waiting {
-        key,
-        ticket,
-        next: None,
-        wait,
-    };
+    task.block(key, ticket, wait);
     let queued = {
         let mut sites = sites(key).lock();
         let queued = match sites.get_mut(&key) {
@@ -504,12 +499,7 @@ fn requeue_join(
             return Err(env::UnitFail::OoM);
         }
     }
-    task.state.lock().axis = TaskAxis::Waiting {
-        key,
-        ticket,
-        next: None,
-        wait: Some(WaitCall::Join(join)),
-    };
+    task.block(key, ticket, Some(WaitCall::Join(join)));
     let mut table = sites(key).lock();
     let site = table.get_mut(&key).expect("join site");
     site.pend = false;
@@ -600,12 +590,7 @@ fn requeue_await(
             return Err(env::MailFail::OoM);
         }
     }
-    task.state.lock().axis = TaskAxis::Waiting {
-        key,
-        ticket,
-        next: None,
-        wait: Some(WaitCall::Mail(wait)),
-    };
+    task.block(key, ticket, Some(WaitCall::Mail(wait)));
     let mut table = sites(key).lock();
     let site = table.get_mut(&key).expect("await site");
     site.pend = false;

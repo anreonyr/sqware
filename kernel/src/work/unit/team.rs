@@ -1,10 +1,9 @@
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use super::life::{Life, TeamLife};
-use super::task::{Task, TaskAxis, TaskBuilder, TaskExit, TaskState, TaskWeak};
+use super::task::{Task, TaskBuilder, TaskExit, TaskState, TaskWeak};
 use crate::lock::spin::SpinLockGuard;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::work::unit::space::Space;
@@ -104,17 +103,6 @@ struct StagingLease<'a> {
     team: &'a Team,
     items: Vec<Staging>,
 }
-impl Deref for StagingLease<'_> {
-    type Target = Vec<Staging>;
-    fn deref(&self) -> &Vec<Staging> {
-        &self.items
-    }
-}
-impl DerefMut for StagingLease<'_> {
-    fn deref_mut(&mut self) -> &mut Vec<Staging> {
-        &mut self.items
-    }
-}
 impl Drop for StagingLease<'_> {
     fn drop(&mut self) {
         self.team.restore_staging(core::mem::take(&mut self.items));
@@ -145,11 +133,7 @@ impl Team {
         let mut running = false;
         self.life.visit(&mut |node| {
             for member in node.tasks.lock().iter() {
-                let hart = match &member.state.lock().axis {
-                    TaskAxis::OnHart { hart, .. } => Some(*hart),
-                    TaskAxis::Doomed { hart, .. } => *hart,
-                    _ => None,
-                };
+                let hart = member.state.lock().on_hart();
                 if let Some(hart) = hart {
                     running = true;
                     crate::work::room::conductor::nudge(hart);
@@ -252,13 +236,13 @@ impl Team {
             team: self,
             items: self.take_staging(),
         };
-        while let Some(item) = staged.last() {
+        while let Some(item) = staged.items.last() {
             let (start, size) = item.map.initial_range();
             self.space.unmap_range(start, size)?;
             item.meta.detach_staging(item.token, self.id);
             let owner = item.meta.owner();
             let token = item.token;
-            staged.pop();
+            staged.items.pop();
             crate::work::pend::notify(owner, token);
         }
         Ok(())
@@ -535,15 +519,15 @@ pub(crate) fn spawn(
         let mut retired = Vec::new();
         let mut leases = Vec::new();
         operations
-            .try_reserve(staged.len())
+            .try_reserve(staged.items.len())
             .map_err(|_| UnitFail::OoM)?;
         retired
-            .try_reserve(staged.len())
+            .try_reserve(staged.items.len())
             .map_err(|_| UnitFail::OoM)?;
         leases
-            .try_reserve(staged.len())
+            .try_reserve(staged.items.len())
             .map_err(|_| UnitFail::OoM)?;
-        for item in staged.iter() {
+        for item in staged.items.iter() {
             operations.push(item.meta.operation().ok_or(UnitFail::Busy)?);
         }
         let closed = caller.pend.lock();
@@ -551,7 +535,7 @@ pub(crate) fn spawn(
             return Err(UnitFail::Denied);
         }
         let mut pies = caller.pend.pies.lock();
-        for item in staged.iter() {
+        for item in staged.items.iter() {
             let Some(pie) = pies.iter().find(|p| p.token() == item.token) else {
                 return Err(UnitFail::Denied);
             };
@@ -572,7 +556,7 @@ pub(crate) fn spawn(
         }
         let result = prepared
             .publish(|| {
-                for item in staged.drain(..) {
+                for item in staged.items.drain(..) {
                     let index = pies
                         .iter()
                         .position(|p| p.token() == item.token)

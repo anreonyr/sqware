@@ -858,8 +858,7 @@ pub fn transfer_relations() {
         let _operation = meta.operation().unwrap();
         {
             let _commit = crate::work::unit::commit();
-            *d.task.state.lock() =
-                crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0);
+            d.task.state.lock().doom(None, env::ExitCause::Slay, 0);
         }
         pend::doom(&d.task);
     }
@@ -871,8 +870,7 @@ pub fn transfer_relations() {
     grant(&b.task, ab, &c.task, permission);
     {
         let _commit = crate::work::unit::commit();
-        *b.task.state.lock() =
-            crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0);
+        b.task.state.lock().doom(None, env::ExitCause::Slay, 0);
     }
     pend::doom(&b.task);
     assert!(b.task.pend.pies.lock().is_empty());

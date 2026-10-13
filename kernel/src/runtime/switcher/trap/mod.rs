@@ -217,7 +217,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
             if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
                 let _commit = crate::work::unit::commit();
                 if !task.dead() {
-                    *task.state.lock() = crate::work::unit::task::TaskState::doomed(
+                    task.state.lock().doom(
                         Some(crate::hart::hart_id()),
                         env::ExitCause::Fault,
                         messenger::EXIT_FAULT,
@@ -249,7 +249,7 @@ pub(crate) extern "C" fn trap_handler(frame: &mut TrapContext) -> *mut TrapConte
                 if let Some(task) = crate::work::room::scheduler::core::current().running_task() {
                     let _commit = crate::work::unit::commit();
                     if !task.dead() {
-                        *task.state.lock() = crate::work::unit::task::TaskState::doomed(
+                        task.state.lock().doom(
                             Some(crate::hart::hart_id()),
                             env::ExitCause::Fault,
                             messenger::EXIT_FAULT,

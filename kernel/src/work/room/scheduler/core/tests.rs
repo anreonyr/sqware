@@ -42,8 +42,8 @@ pub fn acceptance() {
 
     {
         let mut state = tasks[0].state.lock();
-        state.axis = crate::work::unit::task::TaskAxis::Ready { next: None };
-        state.paused = true;
+        *state = crate::work::unit::task::TaskState::ready();
+        state.pause();
     }
     assert!(victim.push(tasks[3].clone()));
     assert!(Arc::ptr_eq(&victim.steal().unwrap(), &tasks[3]));
@@ -58,10 +58,8 @@ pub fn acceptance() {
     }
     for task in &mut tasks {
         assert!(team.release_held(task));
-        task.as_ref().transform(TaskState::doomed(
-            None,
-            crate::work::unit::task::TaskExitCause::Slay,
-            0,
-        ));
+        task.state
+            .lock()
+            .doom(None, crate::work::unit::task::TaskExitCause::Slay, 0);
     }
 }

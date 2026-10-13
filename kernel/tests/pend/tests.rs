@@ -366,7 +366,7 @@ fn exit_closes_delivery_and_removes_incoming_and_outgoing_transfers() {
                 let _ = grant(&a2, PieToken::mint(raw), &b2);
             });
             barrier.wait();
-            { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0); }
+            { let _commit = crate::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
             pend::doom(&b);
         });
         assert!(!meta.alive());
@@ -446,7 +446,7 @@ fn exit_removes_borrowed_memory_even_while_an_operation_is_in_progress() {
     let ab = grant(&a, token, &b).unwrap();
     grant(&b, ab, &c).unwrap();
     let _operation = meta.operation().unwrap();
-    { let _commit = crate::work::unit::commit(); *b.state.lock() = crate::work::unit::task::TaskState::doomed(None, env::ExitCause::Slay, 0); }
+    { let _commit = crate::work::unit::commit(); b.state.lock().doom(None, env::ExitCause::Slay, 0); }
     pend::doom(&b);
     assert!(b.pend.pies.lock().is_empty());
     assert!(c.pend.pies.lock().is_empty());

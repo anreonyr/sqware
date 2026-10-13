@@ -281,8 +281,8 @@ mod work {
                 pub id: TaskId,
             }
             pub struct TaskState {
-                pub axis: TaskAxis,
-                pub paused: bool,
+                axis: TaskAxis,
+                paused: bool,
             }
             pub enum TaskAxis {
                 OnHart { hart: usize, ticks_left: u32 },
@@ -297,8 +297,9 @@ mod work {
                 pub fn held() -> TaskState {
                     TaskState { axis: TaskAxis::Held, paused: false }
                 }
-                pub fn doomed(hart: Option<usize>, cause: env::ExitCause, reason: usize) -> TaskState {
-                    TaskState { axis: TaskAxis::Doomed { hart, cause, reason }, paused: false }
+                pub fn doom(&mut self, hart: Option<usize>, cause: env::ExitCause, reason: usize) {
+                    self.axis = TaskAxis::Doomed { hart, cause, reason };
+                    self.paused = false;
                 }
             }
             pub struct Pend {

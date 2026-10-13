@@ -8,7 +8,7 @@ use hashbrown::HashMap;
 use crate::lock::{Level, OnceLock, SpinLock};
 use crate::memory::manager::asid::Asid;
 use crate::work::unit::life::Life;
-use crate::work::unit::task::{Task, TaskAxis};
+use crate::work::unit::task::Task;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum WakeKey {
@@ -179,7 +179,7 @@ impl Site {
 
     pub(super) fn push_back(&mut self, task: Arc<Task>) {
         debug_assert!(
-            matches!(&task.state().axis, TaskAxis::Waiting { next: None, .. }),
+            task.waiting() && task.next().is_none(),
             "站点只收 Blocked 任务，且入链前不得挂在链上"
         );
         match self.tail.take() {

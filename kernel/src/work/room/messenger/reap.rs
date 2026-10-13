@@ -8,7 +8,7 @@ use crate::runtime::diagnose::trace::{self, EventKind, RoomEvent};
 use crate::work::room::conductor;
 use crate::work::room::scheduler::core::current;
 use crate::work::unit::space::Space;
-use crate::work::unit::task::{Task, TaskAxis, TaskExitCause, TaskState};
+use crate::work::unit::task::{Task, TaskExitCause, TaskState};
 
 use super::{WakeKey, wipe, wipe_space};
 
@@ -73,15 +73,8 @@ pub(super) fn reap(task: Arc<Task>, cause: TaskExitCause, reason: usize) {
         if state.exit().is_some() {
             return;
         }
-        let (cause, reason) = match &state.axis {
-            TaskAxis::Doomed { cause, reason, .. } => (*cause, *reason),
-            _ => (cause, reason),
-        };
-        state.axis = TaskAxis::Doomed {
-            hart: None,
-            cause,
-            reason,
-        };
+        let (cause, reason) = state.dying().unwrap_or((cause, reason));
+        state.doom(None, cause, reason);
         (cause, reason)
     };
     hooked(&task);
@@ -101,23 +94,13 @@ pub fn quit() -> usize {
         let _commit = crate::work::unit::commit();
         let (task, next) = cond.swap();
         let mut state = task.state.lock();
-        let (cause, reason) = match &state.axis {
-            TaskAxis::Doomed { cause, reason, .. } => (*cause, *reason),
-            _ => (TaskExitCause::Reap, requested),
-        };
-        state.axis = TaskAxis::Doomed {
-            hart: None,
-            cause,
-            reason,
-        };
+        let (cause, reason) = state.dying().unwrap_or((TaskExitCause::Reap, requested));
+        state.doom(None, cause, reason);
         drop(state);
         (task, next, reason)
     };
     debug_assert!(
-        matches!(
-            exited.state().axis,
-            TaskAxis::OnHart { .. } | TaskAxis::Doomed { .. }
-        ),
+        exited.on_hart().is_some() || exited.doomed(),
         "running 容器里不是在核上的任务"
     );
     let (note_va, note_len) = super::take_exit_note();
